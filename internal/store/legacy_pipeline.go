@@ -450,9 +450,9 @@ func readLegacyRequestRows(ctx context.Context, p *profile, q audit.Query, cohor
 	return readLegacyRequestRowsMode(ctx, p, q, cohort, after, pipeline, maxRows, records, bytes, false)
 }
 func readLegacyRequestRowsMode(ctx context.Context, p *profile, q audit.Query, cohort [5]string, after *pageCursor, pipeline mongo.Pipeline, maxRows int, records, bytes *atomic.Int64, overlap bool) ([]pageRow, error) {
-	return readLegacyRequestRowsSorted(ctx, p, q, cohort, after, pipeline, maxRows, records, bytes, overlap, false)
+	return readLegacyRequestRowsSorted(ctx, p, q, cohort, after, pipeline, maxRows, records, bytes, overlap, nil)
 }
-func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query, cohort [5]string, after *pageCursor, pipeline mongo.Pipeline, maxRows int, records, bytes *atomic.Int64, overlap, slowest bool) ([]pageRow, error) {
+func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query, cohort [5]string, after *pageCursor, pipeline mongo.Pipeline, maxRows int, records, bytes *atomic.Int64, overlap bool, slow *slowFilter) ([]pageRow, error) {
 	cur, err := p.shared.client.Aggregate(ctx, p.source.Database, p.source.Collection, pipeline)
 	if err != nil {
 		return nil, err
@@ -486,7 +486,7 @@ func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query,
 		if audit.IsStatusClassOutcome(q.Outcome) && !audit.OutcomeFilterMatches(q.Outcome, record.Outcome, record.StatusClass) {
 			continue
 		}
-		if after != nil {
+		if after != nil && slow == nil {
 			cursorRow := pageRow{at: after.At, object: legacyObjectID(after.ObjectID), request: audit.RequestRecord{SourceID: after.SourceID}}
 			candidate := pageRow{at: *record.At, object: record.ID, request: audit.RequestRecord{SourceID: p.source.ID}}
 			if !pageRowBefore(cursorRow, candidate) {
@@ -502,9 +502,16 @@ func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query,
 			UserID: record.UserID, UserIP: record.UserIP, UserAgent: record.UserAgent, UIVersion: record.UIVersion,
 			CreatedOn: record.CreatedOn, UpdatedOn: record.UpdatedOn, PollingTypeRaw: record.PollingTypeRaw,
 		}, at: *record.At, object: record.ID}
-		if slowest {
-			if audit.RequestMetric(row.request, q.Metric) == nil {
+		if slow != nil {
+			value := audit.RequestMetric(row.request, q.Metric)
+			if value == nil || (slow.min != nil && *value < *slow.min) {
 				continue
+			}
+			if after != nil && after.Metric != nil {
+				cursorRow := pageRow{at: after.At, object: legacyObjectID(after.ObjectID), request: audit.RequestRecord{SourceID: after.SourceID, DurationMs: after.Metric, ApiTimeMs: after.Metric}}
+				if !slowRowBefore(cursorRow, row, q.Metric) {
+					continue
+				}
 			}
 			rows = append(rows, row)
 			sort.Slice(rows, func(i, j int) bool { return slowRowBefore(rows[i], rows[j], q.Metric) })

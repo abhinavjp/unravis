@@ -48,7 +48,7 @@ export const api = {
   addSource: (input: SourceInput) => request<Source>('/sources', json(input)),
   deleteSource: (id: string) => request<void>('/sources/' + encodeURIComponent(id), { method: 'DELETE' }),
   analyze: (query: Query, signal?: AbortSignal) => request<Analysis>('/analyze', json(query), signal),
-  slowest: (query:Query,signal?:AbortSignal)=>request<Page>('/slowest',json({query,limit:50,apiKey:'',cursor:''}),signal),
+  slowest: (query:Query,signal?:AbortSignal,options:{cursor?:string;minMs?:number|null}={})=>request<Page>('/slowest',json({query,limit:50,apiKey:'',cursor:options.cursor??'',...(options.minMs==null?{}:{minMs:options.minMs})}),signal),
   requests: (query: Query, apiKey: string, cursor = '', signal?: AbortSignal) =>
     request<Page>('/requests', json({ query, apiKey, cursor, limit: 100 }), signal),
   payload: (sourceId: string, id: string, signal?: AbortSignal) =>

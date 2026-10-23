@@ -332,6 +332,8 @@ type PageInput struct {
 	APIKey string `json:"apiKey"`
 	Cursor string `json:"cursor"`
 	Limit  int    `json:"limit"`
+
+	MinMs *float64 `json:"minMs,omitempty"`
 }
 
 type Page struct {
