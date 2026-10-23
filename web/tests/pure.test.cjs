@@ -585,7 +585,13 @@ test('breakdown copy promises matching requests and explains text matching, non-
   for (const dim of ['userId', 'uiVersion', 'userIp', 'pollingType']) assert.equal(breakdown.matchingNote(dim), null);
   assert.ok(breakdown.breakdownNotes('userAgent', false).includes(breakdown.matchingNote('userAgent')));
   assert.ok(breakdown.breakdownNotes('userId', false).every(note => note === breakdown.nonAtomicNote));
-  assert.match(breakdown.nonAtomicNote, /two passes.*drift/);
+  assert.match(breakdown.nonAtomicNote, /separate reads.*drift/);
+  assert.doesNotMatch(breakdown.nonAtomicNote, /two passes/);
+  // A status code is matched whole (trimmed, ignoring case); only a user agent is matched as contained text.
+  assert.doesNotMatch(breakdown.matchingNote('statusCode'), /contain/);
+  assert.match(breakdown.matchingNote('userAgent'), /contained/);
+  assert.match(panel, /class:breakdown-note-pooled=\{note === pooledKindsNote\}/);
+  assert.doesNotMatch(panel, /startsWith\('Choose'\)/);
   assert.match(breakdown.completeTitle, /Requests minus Missing timing.*invalid.*valid timings/);
   assert.match(panel, /title=\{completeTitle\}>Complete</);
   // The empty-state rows span every column: nine headers.
@@ -597,15 +603,29 @@ test('a breakdown row that cannot be listed says why in one sentence and never i
   const other = breakdown.breakdownPickTitle('userAgent', null);
   const missing = breakdown.breakdownPickTitle('userAgent', { value: '(not yet written)', missing: true, count: 4 });
   const polling = breakdown.breakdownPickTitle('pollingType', { value: 'Synchronous', count: 4 });
-  const cut = breakdown.breakdownPickTitle('userAgent', { value: 'x'.repeat(300), count: 4 });
+  const long = breakdown.breakdownPickTitle('userAgent', { value: 'x'.repeat(300), count: 4 });
+  const multibyte = breakdown.breakdownPickTitle('userAgent', { value: '\u00e9'.repeat(101), count: 4 });
+  const userId = ['0', '-3', 'abc', '2147483648'].map(value => breakdown.breakdownPickTitle('userId', { value, count: 4 }));
+  const blank = breakdown.breakdownPickTitle('userAgent', { value: '   ', count: 4 });
+  const nul = breakdown.breakdownPickTitle('userAgent', { value: 'Mozilla\u0000', count: 4 });
+  const invalid = breakdown.breakdownPickTitle('userAgent', { value: 'Mozilla\uFFFD', count: 4 });
+  const neutral = breakdown.breakdownPickTitle('userAgent', { value: 'Mozilla/5.0', count: 4 });
   const listable = breakdown.breakdownPickTitle('userId', { value: '7', count: 4, filter: { userIds: [7] } });
   assert.match(other, /remaining values/);
   assert.match(missing, /missing value/);
   assert.match(polling, /Polling type is not a request filter/);
-  assert.match(cut, /too long or cut off/);
+  assert.match(long, /too long/);
+  assert.match(multibyte, /too long/, 'the limit is 200 bytes, not characters');
+  for (const title of userId) assert.match(title, /user id below 1/);
+  assert.match(blank, /blank value/);
+  assert.match(nul, /unreadable characters/);
+  assert.match(invalid, /unreadable characters/);
+  assert.match(neutral, /cannot be used as a filter/);
+  // Only the genuinely long value is called long; no branch claims a cut-off for a value that is not.
+  for (const title of [...userId, blank, nul, invalid, neutral]) assert.doesNotMatch(title, /too long|cut off/);
   assert.equal(listable, 'Show matching requests');
-  assert.equal(new Set([other, missing, polling, cut, listable]).size, 5);
-  for (const title of [other, missing, polling, cut]) assert.equal(title.split('. ').length, 1, 'one sentence: ' + title);
+  assert.equal(new Set([other, missing, polling, long, userId[0], blank, nul, neutral, listable]).size, 9);
+  for (const title of [other, missing, polling, long, multibyte, ...userId, blank, nul, invalid, neutral]) assert.equal(title.split('. ').length, 1, 'one sentence: ' + title);
   // A row without a filter yields no filter, whatever its dimension.
   assert.equal(breakdown.breakdownRowFilter({ value: '(not yet written)', missing: true, count: 4 }), null);
   assert.equal(breakdown.breakdownRowFilter({ value: 'Synchronous', count: 4 }), null);

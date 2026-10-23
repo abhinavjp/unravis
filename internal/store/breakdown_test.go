@@ -993,8 +993,18 @@ func TestBreakdownPooledKindsOmitPercentiles(t *testing.T) {
 		for _, kind := range []string{"all", "http", "synchronous", "asynchronous", "hangfire", "http_unknown"} {
 			t.Run(fmt.Sprintf("%s/legacy=%v", kind, legacy), func(t *testing.T) {
 				docs := bdDocs(bdCases(now))
+				// Every row is of the queried kind, so each single kind has rows to time.
 				for _, d := range docs {
-					d["RequestPollingType"] = "Synchronous"
+					switch kind {
+					case "asynchronous":
+						d["RequestPollingType"] = "Asynchronous"
+					case "hangfire":
+						d["RequestPollingType"] = "Hangfire"
+					case "http_unknown":
+						delete(d, "RequestPollingType")
+					default:
+						d["RequestPollingType"] = "Synchronous"
+					}
 				}
 				h := bdStore(t, legacy, docs)
 				q := bdQuery(now)
@@ -1013,8 +1023,13 @@ func TestBreakdownPooledKindsOmitPercentiles(t *testing.T) {
 						if row.Stats.Count != 0 || row.Stats.P50 != nil || row.Stats.P95 != nil {
 							t.Errorf("%q carries a pooled latency under kind %q: %#v", row.Value, kind, row.Stats)
 						}
-					} else if got.Total > 0 && row.Value == "UA-A" && (row.Stats.Count == 0 || row.Stats.P50 == nil || row.Stats.P95 == nil) {
+					} else if row.Value == "UA-A" && (row.Stats.Count == 0 || row.Stats.P50 == nil || row.Stats.P95 == nil) {
 						t.Errorf("%q has no percentiles under single kind %q: %#v", row.Value, kind, row.Stats)
+					}
+				}
+				if !pooled {
+					if got.Total != 17 || len(got.Rows) == 0 || got.Rows[0].Value != "UA-A" || got.Rows[0].Stats.Count == 0 {
+						t.Fatalf("kind %q must return the 17 timed rows with percentiles: total=%d rows=%#v", kind, got.Total, got.Rows)
 					}
 				}
 				if pooled {

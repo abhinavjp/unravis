@@ -89,8 +89,8 @@ export function recordFilterChips(query: Partial<Record<keyof RecordFilters, unk
 /** Shown above the table when the query kind pools request types: percentiles are never mixed across Synchronous, Asynchronous and Hangfire. */
 export const pooledKindsNote = 'Choose Synchronous, Asynchronous or Hangfire to see percentiles; types are never pooled.';
 
-/** Shown on every breakdown: the counters and the percentile bins are two separate reads. */
-export const nonAtomicNote = 'Totals and percentiles are read in two passes, so they can drift slightly while requests are still being written.';
+/** Shown on every breakdown: the counters and the percentile bins can come from separate reads. */
+export const nonAtomicNote = 'Counts and percentiles can come from separate reads of live data, so they can drift slightly while requests are still being written.';
 
 /** The Complete column is Requests minus Missing timing: it includes completed requests whose duration is invalid. Percentiles use only the valid timings, counted in the P50 and P95 tooltips. */
 export const completeTitle = 'Requests minus Missing timing. Includes completed requests whose duration is invalid; percentiles use only the valid timings, counted in the P50 and P95 tooltips.';
@@ -98,7 +98,7 @@ export const completeTitle = 'Requests minus Missing timing. Includes completed 
 /** Only a user agent and a status code are matched as text, so their lists can hold more requests than the row count. */
 export function matchingNote(dim: BreakdownDim): string | null {
   if (dim === 'userAgent') return 'User agent matching is by text contained in the value, ignoring case, so the list may include more requests than the row count.';
-  if (dim === 'statusCode') return 'Status code matching is by contained text, ignoring case, so the list may include more requests than the row count.';
+  if (dim === 'statusCode') return 'Status codes are matched ignoring case, so the list may include more requests than the row count.';
   return null;
 }
 
@@ -113,7 +113,12 @@ export function breakdownPickTitle(dim: BreakdownDim, row: BreakdownRow | null):
   if (breakdownRowFilter(row)) return dim === 'userAgent' ? 'Show requests whose user agent contains this text (not case sensitive)' : 'Show matching requests';
   if (row.missing) return 'No filter selects a missing value, so these requests cannot be listed from here.';
   if (dim === 'pollingType') return 'Polling type is not a request filter, so these requests cannot be listed from here.';
-  return 'This value cannot be used as a filter (too long or cut off), so these requests cannot be listed from here.';
+  const value = row.value;
+  if (dim === 'userId' && !(/^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 2147483647)) return 'A user id below 1 cannot be used as a filter, so these requests cannot be listed from here.';
+  if (value.trim() === '') return 'A blank value cannot be used as a filter, so these requests cannot be listed from here.';
+  if (value.includes('\u0000') || value.includes('\uFFFD')) return 'A value with unreadable characters cannot be used as a filter, so these requests cannot be listed from here.';
+  if (new TextEncoder().encode(value).length > 200) return 'This value is too long to use as a filter, so these requests cannot be listed from here.';
+  return 'This value cannot be used as a filter, so these requests cannot be listed from here.';
 }
 
 /** A percentile cell: an em dash when the kind is pooled, N/A without a valid timing. */

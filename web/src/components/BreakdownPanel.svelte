@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { api } from '../lib/api';
-  import { breakdownDims, breakdownNotes, breakdownPickTitle, breakdownRowFilter, completeTitle, percentileText, withoutDimension } from '../lib/breakdown';
+  import { breakdownDims, breakdownNotes, breakdownPickTitle, breakdownRowFilter, completeTitle, percentileText, pooledKindsNote, withoutDimension } from '../lib/breakdown';
   import type { Breakdown, BreakdownDim, BreakdownFilter, BreakdownRow, Query } from '../lib/types';
   let { query, sourceLabels, onDrill }: {
     query: Query; sourceLabels: Map<string, string>; onDrill: (filter: BreakdownFilter, row: BreakdownRow, dim: BreakdownDim) => void;
@@ -63,7 +63,7 @@
   {:else}
     {#if error}<div class="inline-error" role="alert">{error}</div>{/if}
     {#if failing.length}<div class="source-failure compact-failure" role="alert">{#each failing as failed}<span>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}: {failed.error || 'Source unavailable'}</span>{/each}<span>Counts exclude sources that failed.</span></div>{/if}
-    <ul class="breakdown-notes" aria-label="About these numbers">{#each notes as note (note)}<li class:breakdown-note-pooled={pooled && note.startsWith('Choose')}>{note}</li>{/each}</ul>
+    <ul class="breakdown-notes" aria-label="About these numbers">{#each notes as note (note)}<li class:breakdown-note-pooled={note === pooledKindsNote}>{note}</li>{/each}</ul>
     <div class="table-scroll breakdown-scroll" aria-busy={loading}>
       <table class="breakdown-table">
         <thead><tr><th>{label}</th><th title="Requests in this group">Requests</th><th title="Median total time, from valid completed requests only">P50</th><th title="About 95 in 100 of these requests finished within this time">P95</th><th title="Responses with a 4xx status">4xx</th><th title="Responses with a 5xx status, and failed jobs">5xx</th><th title={completeTitle}>Complete</th><th title="Requests with no complete duration recorded">Missing timing</th><th title="Asynchronous requests that only answered 202 Accepted">Pending</th></tr></thead>

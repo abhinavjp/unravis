@@ -471,11 +471,14 @@ func evalExpr(t *testing.T, expr any, doc map[string]any) any {
 			return false
 		case "$substrCP":
 			a := args()
-			text, isText := "", false
-			if len(a) >= 3 {
-				text, isText = a[0].(string)
+			if len(a) < 3 {
+				t.Fatalf("$substrCP takes three arguments, got %d", len(a))
 			}
+			text, isText := a[0].(string)
 			if !isText {
+				if _, missing := a[0].(pipelineMissing); a[0] != nil && !missing {
+					t.Fatalf("$substrCP simulator does not model a %T input", a[0])
+				}
 				return ""
 			}
 			runes := []rune(text)
