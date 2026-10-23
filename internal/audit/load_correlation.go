@@ -28,6 +28,33 @@ type Rollup struct {
 
 	ClientErrorRate *float64 `json:"clientErrorRate,omitempty"`
 	ServerErrorRate *float64 `json:"serverErrorRate,omitempty"`
+
+	// Events counts every audit row of the API in the current window, Completed
+	// only the valid (timed) ones; CompletionRate is their share. P95Ms is the
+	// current P95 estimate, nil below 20 valid samples.
+	Events         int64    `json:"events"`
+	Completed      int64    `json:"completed"`
+	CompletionRate *float64 `json:"completionRate,omitempty"`
+	P95Ms          *float64 `json:"p95Ms,omitempty"`
+
+	// Reference window. The counts are always present; the rates and P95 are nil
+	// when the reference has fewer than 20 valid samples, and then so are the
+	// deltas (current minus reference; TrafficDelta is relative change of events
+	// per minute). An API that stopped keeps a rollup with zero Requests.
+	ReferenceRequests        int64    `json:"referenceRequests"`
+	ReferenceFailures        int64    `json:"referenceFailures"`
+	ReferenceEvents          int64    `json:"referenceEvents"`
+	ReferenceCompleted       int64    `json:"referenceCompleted"`
+	ReferenceErrorRate       *float64 `json:"referenceErrorRate,omitempty"`
+	ReferenceClientErrorRate *float64 `json:"referenceClientErrorRate,omitempty"`
+	ReferenceServerErrorRate *float64 `json:"referenceServerErrorRate,omitempty"`
+	ReferenceCompletionRate  *float64 `json:"referenceCompletionRate,omitempty"`
+	ReferenceP95Ms           *float64 `json:"referenceP95Ms,omitempty"`
+	TrafficDelta             *float64 `json:"trafficDelta,omitempty"`
+	CompletionDelta          *float64 `json:"completionDelta,omitempty"`
+	ClientErrorDelta         *float64 `json:"clientErrorDelta,omitempty"`
+	ServerErrorDelta         *float64 `json:"serverErrorDelta,omitempty"`
+	P95DeltaMs               *float64 `json:"p95DeltaMs,omitempty"`
 }
 
 // buildRollups folds the current-window outcome-split cohorts into one row per

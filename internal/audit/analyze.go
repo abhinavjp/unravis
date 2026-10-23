@@ -148,7 +148,11 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 			analysis.Timeline = append(analysis.Timeline, series)
 		}
 	}
-	analysis.Rollups = buildRollups(cohorts, windowMinutes(q.Start, q.End), q.Outcome == "all")
+	rollups, err := withRollupComparison(buildRollups(cohorts, windowMinutes(q.Start, q.End), q.Outcome == "all"), cohorts, q)
+	if err != nil {
+		return Analysis{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	analysis.Rollups = rollups
 	volume, err := requestVolume(q, current)
 	if err != nil {
 		return Analysis{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
@@ -159,6 +163,11 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 		return Analysis{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	analysis.LoadWindows = load
+	overview, err := buildOverview(q, current, reference)
+	if err != nil {
+		return Analysis{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	analysis.Overview = overview
 	return analysis, nil
 }
 

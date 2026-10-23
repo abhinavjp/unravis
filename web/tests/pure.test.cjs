@@ -642,3 +642,195 @@ test('query fingerprint covers record filters and treats empty as absent', () =>
   }
   assert.equal(presentation.queryFingerprint({ ...recordFilterBase, userIds: [2, 1] }), presentation.queryFingerprint({ ...recordFilterBase, userIds: [1, 2] }));
 });
+test('quickRange 24h yields previous 24h baseline and respects 7d cap', () => {
+  const now = new Date('2026-10-22T12:00:37.123Z');
+  const day = time.quickRange('24h', now);
+  assert.equal(day.end, '2026-10-22T12:00:37.123Z');
+  assert.equal(day.start, '2026-10-21T12:00:37.123Z');
+  assert.equal(day.baselineEnd, day.start, 'the baseline ends where the investigated window starts');
+  assert.equal(day.baselineStart, '2026-10-20T12:00:37.123Z');
+  assert.equal(Date.parse(day.end) - Date.parse(day.start), Date.parse(day.baselineEnd) - Date.parse(day.baselineStart), 'equal-length windows');
+  const week = time.quickRange('7d', now);
+  assert.equal(Date.parse(week.end) - Date.parse(week.start), 7 * 86_400_000, 'a 7 day window is the longest allowed');
+  assert.equal(Date.parse(week.baselineEnd) - Date.parse(week.baselineStart), 7 * 86_400_000);
+  assert.deepEqual(time.quickRanges.map(range => range.id), ['15m', '1h', '4h', '24h', '7d']);
+  for (const { id } of time.quickRanges) {
+    const range = time.quickRange(id, now);
+    const span = Date.parse(range.end) - Date.parse(range.start);
+    assert.ok(span <= 7 * 86_400_000, `${id} stays inside the 7 day cap`);
+    assert.ok(range.bucketSeconds >= 10 && range.bucketSeconds <= 86_400);
+    assert.ok(charts.countEpochBuckets(range.start, range.end, range.bucketSeconds) <= 120, `${id} current window fits 120 buckets`);
+    assert.ok(charts.countEpochBuckets(range.baselineStart, range.baselineEnd, range.bucketSeconds) <= 120, `${id} baseline window fits 120 buckets`);
+  }
+  assert.throws(() => time.quickRange('30d', now), /Unknown quick range/);
+});
+
+test('overview delta text shows relative traffic, percentage points and milliseconds, and a dash for nil', () => {
+  const overview = loadTypeScript('src/lib/overview.ts');
+  assert.equal(overview.changeText(0.25), '+25.0%');
+  assert.equal(overview.changeText(-0.5), '-50.0%');
+  assert.equal(overview.changeText(0), '0.0%');
+  assert.equal(overview.changeText(null), '—');
+  assert.equal(overview.changeText(undefined), '—');
+  assert.equal(overview.changeText(Number.NaN), '—');
+  assert.equal(overview.pointsText(0.012), '+1.2 pp');
+  assert.equal(overview.pointsText(-0.034), '-3.4 pp');
+  assert.equal(overview.pointsText(null), '—');
+  assert.equal(overview.msChangeText(120.4), '+120 ms');
+  assert.equal(overview.msChangeText(-3.46), '-3.5 ms');
+  assert.equal(overview.msChangeText(1500), '+1.5 s');
+  assert.equal(overview.msChangeText(undefined), '—');
+  assert.equal(overview.rateText(0.0734), '7.3%');
+  assert.equal(overview.rateText(null), '—');
+});
+
+test('overview tiles drill into the existing state, kind and outcome filters; unknown maps to http_unknown', () => {
+  const { overviewDrill } = loadTypeScript('src/lib/overview.ts');
+  assert.deepEqual({ ...overviewDrill('synchronous', 'events') }, { kind: 'synchronous', state: 'all', outcome: '', label: 'synchronous · every event', note: '' });
+  assert.deepEqual({ ...overviewDrill('hangfire', 'completed') }, { kind: 'hangfire', state: 'complete', outcome: '', label: 'hangfire · Complete', note: '' });
+  assert.deepEqual({ ...overviewDrill('asynchronous', 'clientErrors') }, { kind: 'asynchronous', state: 'all', outcome: 'client_error', label: 'asynchronous · client errors (4xx)', note: '' });
+  assert.deepEqual({ ...overviewDrill('asynchronous', 'serverErrors') }, { kind: 'asynchronous', state: 'all', outcome: 'server_error', label: 'asynchronous · server errors (5xx)', note: '' });
+  assert.equal(overviewDrill('unknown', 'events').kind, 'http_unknown');
+  assert.match(overviewDrill('unknown', 'events').label, /polling type unknown/);
+});
+
+test('overview drills say how the opened list differs from the tile', () => {
+  const { overviewDrill, drillHeading } = loadTypeScript('src/lib/overview.ts');
+  const notes = (kind, tile, context) => overviewDrill(kind, tile, context).note;
+  // Events: Synchronous and Asynchronous lists also hold the unknown type's incomplete and invalid rows, exactly.
+  assert.equal(notes('synchronous', 'events', { unknownKindRows: 3, unknownResults: 2 }), 'also lists 3 incomplete or unusable rows of unknown request type');
+  assert.equal(notes('asynchronous', 'events', { unknownKindRows: 1 }), 'also lists 1 incomplete or unusable row of unknown request type');
+  assert.equal(notes('synchronous', 'events', { unknownKindRows: 0 }), '');
+  assert.equal(notes('synchronous', 'events'), '');
+  assert.equal(notes('hangfire', 'events', { unknownKindRows: 3, unknownResults: 2 }), '');
+  assert.equal(notes('unknown', 'events', { unknownKindRows: 3, unknownResults: 2 }), '');
+  assert.equal(notes('synchronous', 'completed', { unknownKindRows: 3, unknownResults: 2 }), '');
+  // 4xx and 5xx lists also keep every row of unknown result, so the bound is "up to".
+  assert.equal(notes('synchronous', 'clientErrors', { unknownKindRows: 3, unknownResults: 2 }), 'also lists up to 5 rows with an unknown result or request type');
+  assert.equal(notes('asynchronous', 'serverErrors', { unknownKindRows: 3 }), 'also lists up to 3 incomplete or unusable rows of unknown request type');
+  assert.equal(notes('hangfire', 'serverErrors', { unknownKindRows: 3, unknownResults: 2 }), 'also lists up to 2 rows whose result is unknown');
+  assert.equal(notes('unknown', 'clientErrors', { unknownKindRows: 3, unknownResults: 1 }), 'also lists up to 1 row whose result is unknown');
+  assert.equal(notes('hangfire', 'clientErrors', {}), '');
+  // The tile drill replaces a narrower outcome filter and says so; Events and Completed keep the user's filter.
+  assert.equal(notes('hangfire', 'serverErrors', { outcomeFilter: 'failure' }), 'replaces the failure outcome filter, so counts may differ');
+  assert.equal(notes('hangfire', 'clientErrors', { outcomeFilter: 'server_error' }), 'replaces the server error outcome filter, so counts may differ');
+  assert.equal(notes('hangfire', 'serverErrors', { outcomeFilter: 'server_error' }), '');
+  assert.equal(notes('hangfire', 'serverErrors', { outcomeFilter: 'all' }), '');
+  assert.equal(notes('hangfire', 'events', { outcomeFilter: 'success' }), '');
+  assert.equal(notes('synchronous', 'clientErrors', { unknownKindRows: 3, outcomeFilter: 'failure' }), 'also lists up to 3 incomplete or unusable rows of unknown request type; replaces the failure outcome filter, so counts may differ');
+  // The heading shows the label and the note together.
+  assert.equal(drillHeading({ label: 'synchronous · every event', note: '' }), 'synchronous · every event');
+  assert.equal(drillHeading({ label: 'synchronous · every event', note: 'also lists 3 incomplete or unusable rows of unknown request type' }), 'synchronous · every event (also lists 3 incomplete or unusable rows of unknown request type)');
+});
+
+test('operation rows drill into their controller, action and request type', () => {
+  const { operationDrill } = loadTypeScript('src/lib/overview.ts');
+  assert.deepEqual({ ...operationDrill({ controller: 'Payroll', action: 'Run', kind: 'synchronous' }) }, {
+    kind: 'synchronous', state: 'all', outcome: '', label: 'Payroll.Run · synchronous · every event', note: 'also lists any incomplete or unusable rows of unknown request type', controller: 'Payroll', action: 'Run'
+  });
+  assert.equal(operationDrill({ controller: 'Payroll', action: 'Run', kind: 'asynchronous' }).note, 'also lists any incomplete or unusable rows of unknown request type');
+  const hangfire = operationDrill({ controller: 'Jobs', action: 'Nightly', kind: 'hangfire' });
+  assert.deepEqual({ kind: hangfire.kind, note: hangfire.note, controller: hangfire.controller, action: hangfire.action }, { kind: 'hangfire', note: '', controller: 'Jobs', action: 'Nightly' });
+  const unknown = operationDrill({ controller: 'Payroll', action: 'Run', kind: 'unknown' });
+  assert.equal(unknown.kind, 'http_unknown');
+  assert.match(unknown.label, /polling type unknown/);
+  assert.equal(operationDrill({ controller: 'Payroll', action: 'Run' }).kind, 'all');
+});
+
+test('unknown-type tiles and operations say what a Synchronous or Asynchronous query leaves out', () => {
+  const { overviewDrill, operationDrill, drillHeading } = loadTypeScript('src/lib/overview.ts');
+  const gapNote = (kind) => 'also lists any rows of unknown request type that the ' + kind + ' filter leaves out of this count';
+  // The unknown row's counts leave out valid unknown-type rows under these queries, but its http_unknown list includes them: no number, every tile.
+  for (const queryKind of ['synchronous', 'asynchronous']) {
+    for (const tile of ['events', 'completed', 'clientErrors', 'serverErrors']) {
+      const drill = overviewDrill('unknown', tile, { queryKind, unknownKindRows: 3, unknownResults: 2 });
+      assert.equal(drill.kind, 'http_unknown');
+      assert.equal(drill.note, gapNote(queryKind), queryKind + ' ' + tile);
+    }
+  }
+  assert.equal(overviewDrill('unknown', 'serverErrors', { queryKind: 'synchronous', outcomeFilter: 'success' }).note, gapNote('synchronous') + '; replaces the success outcome filter, so counts may differ');
+  assert.equal(drillHeading(overviewDrill('unknown', 'events', { queryKind: 'asynchronous' })), 'HTTP (polling type unknown) · every event (' + gapNote('asynchronous') + ')');
+  // Any other query keeps the unknown row exact, and no other row takes this note.
+  for (const queryKind of [undefined, 'all', 'http', 'http_unknown', 'hangfire']) {
+    assert.equal(overviewDrill('unknown', 'events', { queryKind }).note, '');
+    assert.equal(overviewDrill('unknown', 'completed', { queryKind }).note, '');
+  }
+  assert.equal(overviewDrill('unknown', 'clientErrors', { queryKind: 'all', unknownResults: 2 }).note, 'also lists up to 2 rows whose result is unknown');
+  for (const kind of ['synchronous', 'asynchronous', 'hangfire']) assert.doesNotMatch(overviewDrill(kind, 'completed', { queryKind: 'synchronous' }).note, /leaves out/);
+  assert.equal(overviewDrill('hangfire', 'events', { queryKind: 'synchronous' }).note, '');
+  // Operation rows of unknown type say the same, and only under those queries.
+  assert.equal(operationDrill({ controller: 'Payroll', action: 'Run', kind: 'unknown' }, 'synchronous').note, gapNote('synchronous'));
+  assert.equal(operationDrill({ controller: 'Payroll', action: 'Run', kind: 'unknown' }, 'asynchronous').note, gapNote('asynchronous'));
+  for (const queryKind of [undefined, 'all', 'http', 'http_unknown', 'hangfire']) assert.equal(operationDrill({ controller: 'Payroll', action: 'Run', kind: 'unknown' }, queryKind).note, '');
+  assert.equal(operationDrill({ controller: 'Jobs', action: 'Nightly', kind: 'hangfire' }, 'synchronous').note, '');
+});
+
+test('a zero-count tile still opens when its list can hold rows the count leaves out', () => {
+  const { tileCanOpen, overviewDrill } = loadTypeScript('src/lib/overview.ts');
+  // The unknown row under a Synchronous or Asynchronous query counts no valid unknown-type rows, so its Completed (and any zero) tile is 0
+  // although the list it opens is not empty: the tile stays enabled and its note is shown.
+  for (const queryKind of ['synchronous', 'asynchronous']) {
+    for (const tile of ['events', 'completed', 'clientErrors', 'serverErrors']) {
+      const context = { queryKind };
+      assert.equal(tileCanOpen('unknown', tile, 0, context), true, queryKind + ' ' + tile);
+      assert.notEqual(overviewDrill('unknown', tile, context).note, '');
+    }
+  }
+  // With no gap a zero count stays disabled: other queries, other rows, and a note that only concerns the outcome filter.
+  for (const queryKind of [undefined, 'all', 'http', 'http_unknown', 'hangfire']) {
+    for (const tile of ['events', 'completed', 'clientErrors', 'serverErrors']) assert.equal(tileCanOpen('unknown', tile, 0, { queryKind }), false, String(queryKind) + ' ' + tile);
+  }
+  for (const kind of ['synchronous', 'asynchronous', 'hangfire']) {
+    for (const tile of ['events', 'completed', 'clientErrors', 'serverErrors']) {
+      assert.equal(tileCanOpen(kind, tile, 0, { queryKind: 'synchronous' }), false, kind + ' ' + tile);
+      assert.equal(tileCanOpen(kind, tile, 0), false, kind + ' ' + tile);
+    }
+  }
+  assert.equal(tileCanOpen('hangfire', 'serverErrors', 0, { outcomeFilter: 'success' }), false);
+  // A count above zero always opens; so does a zero count whose list still holds unusable unknown-type rows or unknown results.
+  assert.equal(tileCanOpen('hangfire', 'events', 4, {}), true);
+  assert.equal(tileCanOpen('synchronous', 'events', 0, { unknownKindRows: 3 }), true);
+  assert.equal(tileCanOpen('synchronous', 'completed', 0, { unknownKindRows: 3 }), false);
+  assert.equal(tileCanOpen('hangfire', 'clientErrors', 0, { unknownResults: 2 }), true);
+});
+
+test('operation rows sort by a delta with missing deltas always last', () => {
+  const { sortOperations } = loadTypeScript('src/lib/overview.ts');
+  const rollup = (action, trafficDelta, p95DeltaMs, events = 10) => ({ controller: 'C', action, kind: 'synchronous', requests: events, failures: 0, perMinute: 1, events, trafficDelta, p95DeltaMs });
+  const rows = [rollup('a', 0.1, undefined), rollup('b', -0.9, 30), rollup('c', undefined, 5), rollup('d', 0.5, -4, 99)];
+  assert.deepEqual(sortOperations(rows, 'trafficDelta', -1).map(r => r.action), ['d', 'a', 'b', 'c']);
+  assert.deepEqual(sortOperations(rows, 'trafficDelta', 1).map(r => r.action), ['b', 'a', 'd', 'c']);
+  assert.deepEqual(sortOperations(rows, 'p95DeltaMs', -1).map(r => r.action), ['b', 'c', 'd', 'a']);
+  assert.deepEqual(sortOperations(rows, 'events', -1).map(r => r.action)[0], 'd');
+  assert.deepEqual(rows.map(r => r.action), ['a', 'b', 'c', 'd']);
+});
+
+test('the overview strip, quick range presets and operation view are wired into the UI', () => {
+  const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+  const strip = read('src/components/OverviewStrip.svelte');
+  assert.match(strip, /overviewDrill/);
+  assert.match(strip, /unknownKindRows/);
+  assert.match(strip, /queryKind: kindFilter/);
+  assert.match(strip, /disabled=\{!canOpen\(row, tile, count\)\}/);
+  assert.match(strip, /tileCanOpen\(/);
+  assert.match(strip, /outcomeFilter/);
+  assert.match(strip, /\{@render quality\(\)\}/);
+  const app = read('src/App.svelte');
+  assert.match(app, /<OverviewStrip/);
+  assert.match(app, /drillOverview/);
+  assert.match(app, /drillHeading\(drillOverview\)/);
+  assert.match(app, /<OverviewStrip[^\n]*kindFilter=\{analysis\.query\.kind\}/);
+  assert.match(app, /copy\.controller = drillOverview\.controller/);
+  assert.match(app, /copy\.action = drillOverview\.action/);
+  assert.match(app, /<ComparisonTable[\s\S]*?onDrill=\{drillFromOverview\}/);
+  assert.match(app, /drillQuality\('incomplete'\)/);
+  assert.match(read('src/components/QueryControls.svelte'), /quickRanges/);
+  const table = read('src/components/ComparisonTable.svelte');
+  assert.match(table, /<OperationTable[^>]*\{onDrill\}[^>]*\{kindFilter\}/);
+  const operations = read('src/components/OperationTable.svelte');
+  assert.match(operations, /operationDrill\(row, kindFilter\)/);
+  assert.match(operations, /<button[^>]*class="api-select"[^>]*onclick=\{\(\) => onDrill\?\.\(operationDrill\(row, kindFilter\)\)\}/);
+  assert.doesNotMatch(operations, /Every stored event/);
+  assert.match(table, />Operation</);
+  assert.match(read('src/components/OperationTable.svelte'), /Δ traffic[\s\S]*Δ P95[\s\S]*Δ 4xx[\s\S]*Δ 5xx[\s\S]*Δ completion/);
+});

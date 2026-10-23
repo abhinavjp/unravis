@@ -1,11 +1,11 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { Completion, Query } from '../lib/types';
-  import { bucketForWindows, fromLocalParts, toLocalDatePart, toLocalTimePart, zones } from '../lib/time';
+  import { bucketForWindows, fromLocalParts, quickRange, quickRanges, toLocalDatePart, toLocalTimePart, zones, type QuickRangeId } from '../lib/time';
   import { metricLabels } from '../lib/presentation';
   import { isValidOperation, isValidUserId, splitList, syncListDraft, syncOperationDraft } from '../lib/investigation';
   import DateTimeField from './DateTimeField.svelte';
-  let { query = $bindable(), zone = $bindable(), targetMs = $bindable(), dateInputsValid = $bindable(), groupNames = [] }: { query: Query; zone: string; targetMs: number | null; dateInputsValid: boolean; groupNames?: string[] } = $props();
+  let { query = $bindable(), zone = $bindable(), targetMs = $bindable(), dateInputsValid = $bindable(), groupNames = [], now = '' }: { query: Query; zone: string; targetMs: number | null; dateInputsValid: boolean; groupNames?: string[]; now?: string } = $props();
   let timeInputError = $state('');
   let invalidWindows = $state<string[]>([]);
   $effect(() => { dateInputsValid = invalidWindows.length === 0; });
@@ -102,9 +102,19 @@
       timeInputError = error instanceof Error ? error.message : 'Choose a valid local date and time.';
     }
   };
+  // A quick range ends now (the server's clock) and compares with the equal-length period right before it.
+  const applyQuickRange = (id: QuickRangeId) => {
+    const base = new Date(now);
+    Object.assign(query, quickRange(id, Number.isFinite(base.getTime()) ? base : new Date()));
+    invalidWindows = []; timeInputError = '';
+  };
 </script>
 
 <section class="query-controls" aria-label="Comparison settings">
+  <div class="quick-ranges" role="group" aria-label="Quick ranges">
+    <span>Quick range</span>
+    {#each quickRanges as preset (preset.id)}<button type="button" class="secondary-button" title={'Investigate the ' + preset.label.toLowerCase() + ' and compare with the period right before it.'} onclick={() => applyQuickRange(preset.id)}>{preset.label}</button>{/each}
+  </div>
   <div class="query-ranges">
     <section class="range-group" aria-labelledby="current-range-label">
       <div class="range-title"><h2 id="current-range-label">Investigate</h2><p>Requests in the period you want to inspect.</p></div>

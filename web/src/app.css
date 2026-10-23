@@ -655,3 +655,24 @@ td small { font-size: 12px; }
 .state-badge.state-incomplete { background: #fdf3e0; color: #8a5a00; }
 .state-badge.state-invalid { background: #fbe9e7; color: #a12c1f; }
 .record-id { font-size: 11px; color: #5c6e84; user-select: all; }
+
+/* Overview strip, quick ranges and the operation view (Task 12). Existing tokens only. */
+.quick-ranges { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.quick-ranges > span { color: var(--muted); font-size: 12px; font-weight: 650; margin-right: 4px; }
+.quick-ranges .secondary-button { padding: 5px 10px; }
+.view-toggle { display: flex; gap: 6px; padding: 12px 16px 0; }
+.view-toggle .secondary-button[aria-pressed="true"] { border-color: var(--cobalt); color: var(--cobalt); }
+.overview-strip { display: grid; gap: 12px; margin-bottom: 12px; }
+.overview-kind { display: grid; gap: 8px; padding: 12px 14px; background: var(--paper); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow); }
+.overview-kind > header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.overview-kind h4 { margin: 0; color: var(--ink); font-size: 14px; }
+.overview-rate { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.overview-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px; }
+.overview-tile { display: grid; align-content: start; gap: 1px; min-width: 0; padding: 8px 10px; border: 1px solid var(--soft-line); border-radius: 5px; background: var(--paper); color: var(--ink); text-align: left; font: inherit; }
+.overview-tile strong { font-size: 17px; font-variant-numeric: tabular-nums; }
+.overview-tile span { color: var(--muted); font-size: 12px; }
+.overview-tile small { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.overview-drill { cursor: pointer; }
+.overview-drill:hover:not(:disabled) { border-color: var(--cobalt); }
+.overview-drill:disabled { cursor: default; }
+.overview-drill:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
