@@ -559,6 +559,12 @@ func evalMatch(t *testing.T, match bson.D, doc map[string]any) bool {
 			}
 			for _, op := range condition {
 				switch op.Key {
+				case "$lt", "$gt":
+					order, comparable := compareMatchValues(value, op.Value)
+					// MongoDB compares only values of one type: a missing or mismatched value never matches.
+					if !comparable || (op.Key == "$lt" && order >= 0) || (op.Key == "$gt" && order <= 0) {
+						return false
+					}
 				case "$ne":
 					if reflect.DeepEqual(value, op.Value) {
 						return false
@@ -1248,4 +1254,30 @@ func TestRequestPipelineKindScope(t *testing.T) {
 			}
 		}
 	}
+}
+
+// compareMatchValues orders two values of the same type the way $lt and $gt do:
+// dates by instant and ObjectIDs bytewise. ok is false for any other pair.
+func compareMatchValues(a, b any) (order int, ok bool) {
+	switch left := a.(type) {
+	case time.Time:
+		right, same := b.(time.Time)
+		if !same {
+			return 0, false
+		}
+		switch {
+		case left.Before(right):
+			return -1, true
+		case left.After(right):
+			return 1, true
+		}
+		return 0, true
+	case bson.ObjectID:
+		right, same := b.(bson.ObjectID)
+		if !same {
+			return 0, false
+		}
+		return strings.Compare(string(left[:]), string(right[:])), true
+	}
+	return 0, false
 }

@@ -33,6 +33,39 @@ func NewDemo(now time.Time) Repository {
 	return d
 }
 
+// NewDemoWithStaleWork is the demo plus work that never finished, so the
+// incomplete-requests view has something to show. Per source it adds three
+// Payroll.Run requests that are still incomplete, three Reports.Generate requests
+// that only answered 202 Accepted (pending asynchronous work) and one Employees.List
+// request with unusable data (invalid, which is counted apart from unfinished).
+// Reports.Generate becomes an asynchronous operation here, because only an
+// asynchronous request can be pending. NewDemo is unchanged: other tests rely on
+// its rows all being complete.
+func NewDemoWithStaleWork(now time.Time) Repository {
+	repo := NewDemo(now).(*demoRepository)
+	for i := range repo.records {
+		if repo.records[i].Controller == "Reports" {
+			repo.records[i].Kind, repo.records[i].PollingTypeRaw = "asynchronous", "Asynchronous "
+		}
+	}
+	unfinished := func(sourceID, controller, action, kind, status, state string, label string, sample int, age time.Duration) RequestRecord {
+		initiated := repo.now.Add(-age)
+		created := initiated.Add(40 * time.Millisecond)
+		userID := 1000 + sample
+		return RequestRecord{ID: fmt.Sprintf("%s-%s-%s-%d", sourceID, controller, label, sample), SourceID: sourceID, Controller: controller, Action: action, Kind: kind, Outcome: "unknown", Status: status, State: state, URL: "/" + strings.ToLower(controller) + "/" + strings.ToLower(action), InitiatedAt: &initiated, RequestKB: 1, ResponseKB: 1, UserID: &userID, UserIP: fmt.Sprintf("203.0.113.%d", 50+sample), UserAgent: demoAgents[sample%len(demoAgents)], UIVersion: demoVersions[sample%len(demoVersions)], CreatedOn: &created}
+	}
+	for _, source := range repo.sources {
+		for sample, age := range []time.Duration{14 * time.Minute, 11 * time.Minute, 4 * time.Minute} {
+			repo.records = append(repo.records, unfinished(source.ID, "Payroll", "Run", "synchronous", "", "incomplete", "stale", sample, age))
+		}
+		for sample, age := range []time.Duration{13 * time.Minute, 9 * time.Minute, 2 * time.Minute} {
+			repo.records = append(repo.records, unfinished(source.ID, "Reports", "Generate", "asynchronous", "Accepted", "incomplete", "queued", sample, age))
+		}
+		repo.records = append(repo.records, unfinished(source.ID, "Employees", "List", "synchronous", "200 OK", "invalid", "unusable", 0, 6*time.Minute))
+	}
+	return repo
+}
+
 // DemoTime returns the fixed clock used to generate the demo records.
 func (d *demoRepository) DemoTime() time.Time { return d.now }
 
@@ -343,6 +376,11 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 	if err := ValidateState(input.State); err != nil {
 		return Page{}, err
 	}
+	order, err := ValidateOrder(input.Query, input.Order)
+	if err != nil {
+		return Page{}, err
+	}
+	oldest := order == OrderOldest
 	state := input.State
 	if state == StateAll {
 		state = ""
@@ -370,11 +408,17 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 	if !selected || (keyed && ((input.Query.Controller != "" && input.Query.Controller != fields[1]) || (input.Query.Action != "" && input.Query.Action != fields[2]) || !CohortMatchesQuery(input.Query, fields[3], fields[4]))) {
 		return Page{}, fmt.Errorf("%w: API key does not match query", ErrInvalidInput)
 	}
+	fingerprintOrder := ""
+	if oldest {
+		fingerprintOrder = OrderOldest
+	}
 	fingerprintBytes, _ := json.Marshal(struct {
 		Query  Query  `json:"query"`
 		APIKey string `json:"apiKey"`
 		State  string `json:"state"`
-	}{input.Query, input.APIKey, state})
+		// Order is only set for oldest, so a newest cursor keeps its fingerprint.
+		Order string `json:"order,omitempty"`
+	}{input.Query, input.APIKey, state, fingerprintOrder})
 	sum := sha256.Sum256(fingerprintBytes)
 	fingerprint := base64.RawURLEncoding.EncodeToString(sum[:])
 	offset := 0
@@ -411,7 +455,13 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 	sort.Slice(rows, func(i, j int) bool {
 		a, b := rows[i], rows[j]
 		if !a.InitiatedAt.Equal(*b.InitiatedAt) {
+			if oldest {
+				return a.InitiatedAt.Before(*b.InitiatedAt)
+			}
 			return a.InitiatedAt.After(*b.InitiatedAt)
+		}
+		if oldest {
+			return a.ID < b.ID
 		}
 		return a.ID > b.ID
 	})

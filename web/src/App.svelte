@@ -19,6 +19,8 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
   import RequestTable from './components/RequestTable.svelte';
   import RecordDetailPanel from './components/RecordDetail.svelte';
   import OverviewStrip from './components/OverviewStrip.svelte';
+  import IncompletePanel from './components/IncompletePanel.svelte';
+  import { applyStaleFilters } from './lib/incomplete';
   import { drillHeading, type OverviewDrill } from './lib/overview';
 
   let info = $state<Info | null>(null);
@@ -659,6 +661,8 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
       if (drillOverview.outcome) copy.outcome = drillOverview.outcome;
       if (drillOverview.controller !== undefined) copy.controller = drillOverview.controller;
       if (drillOverview.action !== undefined) copy.action = drillOverview.action;
+      // The stale list: unfinished requests open at least the threshold. A latency range describes completed rows, so it cannot apply.
+      applyStaleFilters(copy, drillOverview);
     }
     return copy;
   }
@@ -669,7 +673,7 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
     const run = ++requestSequence;
     requestLoading = true; requestError = '';
     try {
-      const page = await api.requests(drillQuery(breakdownQuery ?? analysis.query), queryWide ? '' : selectedKey, cursor, requestController.signal, requestState);
+      const page = await api.requests(drillQuery(breakdownQuery ?? analysis.query), queryWide ? '' : selectedKey, cursor, requestController.signal, requestState, drillOverview?.order ?? '');
       if (run !== requestSequence) return;
       requestPage = page;
       requestRows = page.rows.slice(0, info?.limits.maxPageSize ?? 100);
@@ -689,7 +693,7 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
     if (!selected && !queryWide) return;
     requestError = '';
     try {
-      const result = await api.export(drillQuery(analysis?.query ?? query), queryWide ? '' : (selected?.key ?? ''), undefined, requestState);
+      const result = await api.export(drillQuery(analysis?.query ?? query), queryWide ? '' : (selected?.key ?? ''), undefined, requestState, drillOverview?.order ?? '');
       const url = URL.createObjectURL(result.blob);
       const link = document.createElement('a'); link.href = url; link.download = 'unravis-requests.csv';
       document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -876,6 +880,7 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
           </div>
             {/if}{/snippet}
           </OverviewStrip>
+          <IncompletePanel rollups={analysis.rollups ?? []} kindFilter={analysis.query.kind} onDrill={drillFromOverview} />
           <RequestVolume {analysis} {zone} />
           <TrafficSlowness {analysis} {zone} {sourceLabels} cohort={selected} onContext={async(row)=>{contextAnchor=row;await tick();document.getElementById('nearby-activity')?.scrollIntoView({block:'start'});}} />
           {#if breakdownQuery}<FailurePanel {analysis} query={breakdownQuery} {sourceLabels} {zone} onDrill={drillInto} />{/if}

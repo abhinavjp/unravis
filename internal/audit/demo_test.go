@@ -390,3 +390,135 @@ func TestDemoTimelinePointsCarryFailureCountsAndPercentiles(t *testing.T) {
 		t.Fatalf("timeline incomplete=%d (quality %d) 5xx=%d 4xx=%d timed=%d, want no 5xx and no 4xx: unfinished rows are never failures", incomplete, analysis.Quality.Incomplete, server, client, timed)
 	}
 }
+
+func TestDemoOldestFirstListsUnfinishedWorkAndBindsCursorToOrder(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	d := NewDemoWithStaleWork(now)
+	ctx := context.Background()
+	q := demoQuery(now)
+	q.Completion = "incomplete"
+	all := func(order string, completion string) []RequestRecord {
+		t.Helper()
+		qq := q
+		qq.Completion = completion
+		var rows []RequestRecord
+		cursor := ""
+		for pages := 0; pages < 20; pages++ {
+			page, err := d.Requests(ctx, PageInput{Query: qq, Order: order, Cursor: cursor, Limit: 5})
+			if err != nil {
+				t.Fatalf("order %q completion %q: %v", order, completion, err)
+			}
+			rows = append(rows, page.Rows...)
+			if page.NextCursor == "" {
+				return rows
+			}
+			cursor = page.NextCursor
+		}
+		t.Fatal("paging did not finish")
+		return nil
+	}
+	oldest, newest := all("oldest", "incomplete"), all("newest", "incomplete")
+	if len(oldest) != 12 || len(newest) != 12 {
+		t.Fatalf("the demo should hold 12 unfinished requests (6 per source), got %d oldest and %d newest", len(oldest), len(newest))
+	}
+	seen := map[string]bool{}
+	for i, row := range oldest {
+		if seen[row.ID] {
+			t.Fatalf("duplicate row %s while paging oldest first", row.ID)
+		}
+		seen[row.ID] = true
+		if row.State != "incomplete" || row.Outcome != "unknown" {
+			t.Errorf("row %s: state %q outcome %q, want an unfinished unknown-outcome row", row.ID, row.State, row.Outcome)
+		}
+		if i == 0 {
+			continue
+		}
+		prev := oldest[i-1]
+		if row.InitiatedAt.Before(*prev.InitiatedAt) || (row.InitiatedAt.Equal(*prev.InitiatedAt) && row.ID <= prev.ID) {
+			t.Fatalf("oldest-first order broken between %s and %s", prev.ID, row.ID)
+		}
+		// Newest is exactly the reverse of oldest.
+		if newest[len(newest)-1-i].ID != row.ID {
+			t.Fatalf("newest is not the reverse of oldest at %d: %s vs %s", i, newest[len(newest)-1-i].ID, row.ID)
+		}
+	}
+	if pending := all("oldest", "pending"); len(pending) != 6 {
+		t.Fatalf("pending list = %d rows, want 6 (3 per source)", len(pending))
+	}
+	// Only an incomplete completion filter (or an age range) may ask for oldest first.
+	plain := demoQuery(now)
+	if _, err := d.Requests(ctx, PageInput{Query: plain, Order: "oldest", Limit: 5}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("oldest without an incomplete filter = %v, want invalid input", err)
+	}
+	if _, err := d.Requests(ctx, PageInput{Query: q, Order: "sideways", Limit: 5}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("an unknown order = %v, want invalid input", err)
+	}
+	aged := demoQuery(now)
+	ten := float64(10 * time.Minute / time.Millisecond)
+	aged.IncompleteAgeMs = &Range{Min: &ten}
+	page, err := d.Requests(ctx, PageInput{Query: aged, Order: "oldest", Limit: 5})
+	if err != nil || len(page.Rows) == 0 {
+		t.Fatalf("an age range allows oldest first: rows=%d err=%v", len(page.Rows), err)
+	}
+	for _, row := range page.Rows {
+		if age := now.Sub(*row.InitiatedAt); age < 10*time.Minute {
+			t.Errorf("row %s is %s old, under the 10 minute threshold", row.ID, age)
+		}
+	}
+	// A cursor belongs to the order that made it.
+	first, err := d.Requests(ctx, PageInput{Query: q, Order: "oldest", Limit: 5})
+	if err != nil || first.NextCursor == "" {
+		t.Fatalf("first oldest page: cursor=%q err=%v", first.NextCursor, err)
+	}
+	if _, err := d.Requests(ctx, PageInput{Query: q, Order: "newest", Cursor: first.NextCursor, Limit: 5}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("an oldest cursor under newest = %v, want invalid input", err)
+	}
+	if _, err := d.Requests(ctx, PageInput{Query: q, Order: "oldest", Cursor: first.NextCursor, Limit: 5}); err != nil {
+		t.Fatalf("an oldest cursor under oldest: %v", err)
+	}
+}
+
+func TestDemoWithStaleWorkReportsCompletionTalliesAndKeepsTheBaseDemoClean(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	// The plain demo has nothing unfinished, which other tests rely on.
+	base, err := NewDemo(now).Analyze(context.Background(), demoQuery(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range base.APIs {
+		if c.Current.Incomplete != 0 || c.Current.Pending != 0 || c.Current.Invalid != 0 {
+			t.Fatalf("the base demo must stay all complete: %#v", c.Current)
+		}
+	}
+	analysis, err := NewDemoWithStaleWork(now).Analyze(context.Background(), demoQuery(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var run, generate, list *Rollup
+	for i := range analysis.Rollups {
+		switch analysis.Rollups[i].Action {
+		case "Run":
+			run = &analysis.Rollups[i]
+		case "Generate":
+			generate = &analysis.Rollups[i]
+		case "List":
+			list = &analysis.Rollups[i]
+		}
+	}
+	if run == nil || generate == nil || list == nil {
+		t.Fatalf("rollups = %#v", analysis.Rollups)
+	}
+	if run.Incomplete != 6 || run.Pending != 0 || run.CompletionShare == nil || *run.CompletionShare >= 1 {
+		t.Fatalf("Payroll Run should have unfinished requests: %#v share=%v", run, run.CompletionShare)
+	}
+	if generate.Pending != 6 || generate.Incomplete != 0 {
+		t.Fatalf("Reports Generate has 6 pending asynchronous requests and no other unfinished ones: %#v", generate)
+	}
+	if list.Invalid != 2 || list.Incomplete != 0 {
+		t.Fatalf("Employees List should show invalid rows apart from incomplete: %#v", list)
+	}
+	// Invalid rows never enter the denominator: List has only complete + invalid, so its share is 1.
+	if list.CompletionShare == nil || *list.CompletionShare != 1 {
+		t.Fatalf("List completion share = %v, want 1 (invalid excluded)", list.CompletionShare)
+	}
+}

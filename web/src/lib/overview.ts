@@ -23,7 +23,11 @@ export type OverviewTile = 'events' | 'completed' | 'clientErrors' | 'serverErro
  * A drill-down from the overview or the operation view. note says how the opened list can differ from the count that was clicked (empty when it cannot);
  * controller and action are only set by an operation drill and narrow the list to that API.
  */
-export interface OverviewDrill { kind: Kind; state: string; outcome: Outcome | ''; label: string; note: string; controller?: string; action?: string }
+export interface OverviewDrill {
+  kind: Kind; state: string; outcome: Outcome | ''; label: string; note: string; controller?: string; action?: string;
+  /** Only the stale list sets these: a completion filter, an incomplete-age range (ms) and the oldest-first order. */
+  completion?: 'incomplete' | 'pending'; incompleteAgeMs?: { min: number }; order?: 'oldest';
+}
 /** What the strip knows about the gap between a tile and its list: the unknown-type row's incomplete+invalid count, this row's own unknown results, and the user's outcome filter. */
 export interface DrillContext { unknownKindRows?: number; unknownResults?: number; outcomeFilter?: string; queryKind?: string }
 

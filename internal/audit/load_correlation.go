@@ -37,6 +37,16 @@ type Rollup struct {
 	CompletionRate *float64 `json:"completionRate,omitempty"`
 	P95Ms          *float64 `json:"p95Ms,omitempty"`
 
+	// Incomplete (unfinished, not pending), Pending (accepted asynchronous work)
+	// and Invalid split the current window's documents that are not Completed.
+	// CompletionShare is Completed / (Completed + Incomplete + Pending): invalid
+	// documents are counted apart and never in the denominator, and it is nil
+	// when that denominator is 0. CompletionRate above stays Completed / Events.
+	Incomplete      int64    `json:"incomplete,omitempty"`
+	Pending         int64    `json:"pending,omitempty"`
+	Invalid         int64    `json:"invalid,omitempty"`
+	CompletionShare *float64 `json:"completionShare,omitempty"`
+
 	// Reference window. The counts are always present; the rates and P95 are nil
 	// when the reference has fewer than 20 valid samples, and then so are the
 	// deltas (current minus reference; TrafficDelta is relative change of events

@@ -79,7 +79,8 @@ func run(args []string, getenv func(string) string) error {
 	var repo audit.Repository
 	var serverOptions []server.Option
 	if *demo {
-		repo = audit.NewDemo(time.Now())
+		// The shipped demo carries a little unfinished work so the incomplete panel has something to show.
+		repo = audit.NewDemoWithStaleWork(time.Now())
 	} else {
 		repo = store.New()
 		if savedHistory, historyErr := history.NewDefault(getenv); historyErr == nil {
