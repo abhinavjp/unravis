@@ -15,10 +15,17 @@ type cohortAccumulator struct {
 	currentEvents, referenceEvents              int64
 	current, reference                          *histogramAccumulator
 	currentAt                                   map[int64]*histogramAccumulator
+	// currentSlots holds each current-window slot's failure counters over every
+	// state, so a slot with no valid timing still reports its failures.
+	currentSlots map[int64]*slotCounts
 
 	currentClientErrors, currentServerErrors     int64
 	referenceClientErrors, referenceServerErrors int64
 }
+
+// slotCounts are one timeline slot's counters over valid, incomplete and invalid
+// documents alike: 4xx, 5xx plus failed Hangfire jobs, and incomplete ones.
+type slotCounts struct{ client, server, incomplete int64 }
 
 func CohortKey(sourceID, controller, action, kind, outcome string) string {
 	encoded, _ := json.Marshal([]string{sourceID, controller, action, kind, outcome})
@@ -129,22 +136,33 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 		comparison.PhaseDeltaMs = phaseDelta(currentStats, referenceStats)
 		analysis.APIs = append(analysis.APIs, comparison)
 
-		if len(c.currentAt) > 0 {
-			times := make([]int64, 0, len(c.currentAt))
-			for at := range c.currentAt {
+		// A slot gets a point when it has a valid timing or any failure or
+		// incomplete document; counters come from every state, percentiles from
+		// valid timings only.
+		times := make([]int64, 0, len(c.currentSlots))
+		for at, slot := range c.currentSlots {
+			if c.currentAt[at] != nil || slot.client != 0 || slot.server != 0 || slot.incomplete != 0 {
 				times = append(times, at)
 			}
+		}
+		if len(times) > 0 {
 			sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
 			series := Series{Key: key, Points: make([]Point, 0, len(times))}
+			// The load correlation only looks at slots that have a timing.
+			timed, timedPoints := make([]int64, 0, len(c.currentAt)), make([]Point, 0, len(c.currentAt))
 			for _, at := range times {
-				stats := c.currentAt[at].stats()
-				point := Point{At: time.Unix(0, at).UTC(), Count: stats.Count, P50: stats.P50, P95: stats.P95}
-				if comparison.State == "compared" {
-					point.P95Ratio = ratio(stats.P95, referenceStats.P95)
+				point := Point{At: time.Unix(0, at).UTC(), Count4xx: c.currentSlots[at].client, Count5xx: c.currentSlots[at].server, Incomplete: c.currentSlots[at].incomplete}
+				if h := c.currentAt[at]; h != nil {
+					stats := h.stats()
+					point.Count, point.P50, point.P90, point.P95, point.P99 = stats.Count, stats.P50, stats.P90, stats.P95, stats.P99
+					if comparison.State == "compared" {
+						point.P95Ratio = ratio(stats.P95, referenceStats.P95)
+					}
+					timed, timedPoints = append(timed, at), append(timedPoints, point)
 				}
 				series.Points = append(series.Points, point)
 			}
-			series.LoadCorrelation = seriesLoadCorrelation(series.Points, others.forCohort(k, times), q)
+			series.LoadCorrelation = seriesLoadCorrelation(timedPoints, others.forCohort(k, timed), q)
 			analysis.Timeline = append(analysis.Timeline, series)
 		}
 	}
@@ -264,7 +282,7 @@ func addBucket(cohorts map[string]*cohortAccumulator, b Bucket, isCurrent bool) 
 	key := CohortKey(b.SourceID, b.Controller, b.Action, b.Kind, b.Outcome)
 	c := cohorts[key]
 	if c == nil {
-		c = &cohortAccumulator{sourceID: b.SourceID, controller: b.Controller, action: b.Action, kind: b.Kind, outcome: b.Outcome, key: key, current: newHistogramAccumulator(), reference: newHistogramAccumulator(), currentAt: make(map[int64]*histogramAccumulator)}
+		c = &cohortAccumulator{sourceID: b.SourceID, controller: b.Controller, action: b.Action, kind: b.Kind, outcome: b.Outcome, key: key, current: newHistogramAccumulator(), reference: newHistogramAccumulator(), currentAt: make(map[int64]*histogramAccumulator), currentSlots: make(map[int64]*slotCounts)}
 		cohorts[key] = c
 	}
 	events := &c.referenceEvents
@@ -287,6 +305,26 @@ func addBucket(cohorts map[string]*cohortAccumulator, b Bucket, isCurrent bool) 
 	}
 	if err := checkedAdd(serverErrors, b.CountHangfireFailed); err != nil {
 		return fmt.Errorf("cohort %s hangfire failure count: %w", key, err)
+	}
+	if isCurrent {
+		at := b.At.UTC().UnixNano()
+		slot := c.currentSlots[at]
+		if slot == nil {
+			slot = &slotCounts{}
+			c.currentSlots[at] = slot
+		}
+		incomplete := int64(0)
+		if b.State == "incomplete" {
+			incomplete = b.Count
+		}
+		for _, add := range []struct {
+			dst *int64
+			n   int64
+		}{{&slot.client, b.Count4xx}, {&slot.server, b.Count5xx}, {&slot.server, b.CountHangfireFailed}, {&slot.incomplete, incomplete}} {
+			if err := checkedAdd(add.dst, add.n); err != nil {
+				return fmt.Errorf("timeline cohort %s slot count: %w", key, err)
+			}
+		}
 	}
 	if b.State != "valid" {
 		return nil

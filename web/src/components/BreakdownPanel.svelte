@@ -3,10 +3,13 @@
   import { api } from '../lib/api';
   import { breakdownDims, breakdownNotes, breakdownPickTitle, breakdownRowFilter, completeTitle, percentileText, pooledKindsNote, withoutDimension } from '../lib/breakdown';
   import type { Breakdown, BreakdownDim, BreakdownFilter, BreakdownRow, Query } from '../lib/types';
-  let { query, sourceLabels, onDrill }: {
+  // lockedDim fixes the dimension and hides the tabs (the failure panel's status table); panelId keeps a second panel's id unique.
+  let { query, sourceLabels, onDrill, lockedDim, panelId = 'breakdown', heading = 'Break these requests down' }: {
     query: Query; sourceLabels: Map<string, string>; onDrill: (filter: BreakdownFilter, row: BreakdownRow, dim: BreakdownDim) => void;
+    lockedDim?: BreakdownDim; panelId?: string; heading?: string;
   } = $props();
-  let dim = $state<BreakdownDim>('statusCode');
+  let picked = $state<BreakdownDim>('statusCode');
+  const dim = $derived<BreakdownDim>(lockedDim ?? picked);
   let ipOpen = $state(false);
   let result = $state<Breakdown | null>(null);
   let loading = $state(false);
@@ -51,13 +54,13 @@
   onMount(() => () => { sequence++; controller?.abort(); });
 </script>
 
-<section class="data-section breakdown-panel" id="breakdown" aria-label="Request breakdown">
-  <div class="section-heading"><div><h3>Break these requests down</h3><p>See which {label.toLowerCase()} values the requests in the current period share. Choose a row to list matching requests. Counts follow the request type and result filters above; the current period only.</p></div></div>
-  <div class="breakdown-tabs" role="tablist" aria-label="Breakdown by">
+<section class="data-section breakdown-panel" id={panelId} aria-label="Request breakdown">
+  <div class="section-heading"><div><h3>{heading}</h3><p>See which {label.toLowerCase()} values the requests in the current period share. Choose a row to list matching requests. Counts follow the request type and result filters above; the current period only.</p></div></div>
+  {#if !lockedDim}<div class="breakdown-tabs" role="tablist" aria-label="Breakdown by">
     {#each breakdownDims as item (item.dim)}
-      <button role="tab" aria-selected={dim === item.dim} class:active={dim === item.dim} onclick={() => dim = item.dim}>{item.label}</button>
+      <button role="tab" aria-selected={dim === item.dim} class:active={dim === item.dim} onclick={() => picked = item.dim}>{item.label}</button>
     {/each}
-  </div>
+  </div>{/if}
   {#if dim === 'userIp' && !ipOpen}
     <div class="breakdown-collapsed"><p>User IP addresses are personal data and are hidden until you ask for them.</p><button class="secondary-button" onclick={() => ipOpen = true}>Show user IP breakdown</button></div>
   {:else}

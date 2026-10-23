@@ -8,6 +8,7 @@
 import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Source, SourceInput, TLSMode } from './lib/types';
   import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './lib/breakdown';
   import BreakdownPanel from './components/BreakdownPanel.svelte';
+  import FailurePanel from './components/FailurePanel.svelte';
   import QueryControls from './components/QueryControls.svelte';
   import Charts from './components/Charts.svelte';
   import MultiTimeline from './components/MultiTimeline.svelte';
@@ -877,6 +878,7 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
           </OverviewStrip>
           <RequestVolume {analysis} {zone} />
           <TrafficSlowness {analysis} {zone} {sourceLabels} cohort={selected} onContext={async(row)=>{contextAnchor=row;await tick();document.getElementById('nearby-activity')?.scrollIntoView({block:'start'});}} />
+          {#if breakdownQuery}<FailurePanel {analysis} query={breakdownQuery} {sourceLabels} {zone} onDrill={drillInto} />{/if}
           {#if breakdownQuery}<BreakdownPanel query={breakdownQuery} {sourceLabels} onDrill={drillInto} />{/if}
           <section class="data-section" id="api-group-results">
             <div class="section-heading"><div><h3>Explore {analysis.apis.length.toLocaleString()} API groups</h3><p>Largest slowdowns first. Each group keeps one source, API action, request type, and outcome together. P95 is the time within which about 95 of 100 requests finish.</p></div></div>

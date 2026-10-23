@@ -54,6 +54,53 @@ export const alignedPoints = (analysis: Analysis, cohortKey: string | null): Poi
   return aligned;
 };
 
+export type FailureField = 'count4xx' | 'count5xx' | 'incomplete';
+/** A slot's failure counter: null when the slot has no point (no observation), 0 only when a real point carried none. */
+export const failureField = (point: Point | undefined, field: FailureField): number | null => point == null || point.count == null ? null : (point[field] ?? 0);
+/**
+ * One value per chart slot for one cohort, or summed across every cohort when
+ * cohortKey is null. A slot that no selected cohort has a point for is null, never zero.
+ */
+export const failureSeries = (analysis: Analysis, cohortKey: string | null, field: FailureField): Array<number | null> => {
+  if (cohortKey != null) return alignedPoints(analysis, cohortKey).map(point => failureField(point, field));
+  const perCohort = analysis.timeline.map(series => alignedPoints(analysis, series.key));
+  return alignedPoints(analysis, null).map((_, index) => perCohort.reduce<number | null>((total, points) => {
+    const value = failureField(points[index], field);
+    return value == null ? total : (total ?? 0) + value;
+  }, null));
+};
+
+const red = '#b74545';
+export const failureTrendOption = (analysis: Analysis, zone: string) => {
+  const points = alignedPoints(analysis, null);
+  const labels = axisTimeLabels(points, zone);
+  const client = failureSeries(analysis, null, 'count4xx');
+  const server = failureSeries(analysis, null, 'count5xx');
+  const incomplete = failureSeries(analysis, null, 'incomplete');
+  const text = (value: number | null) => value == null ? 'No observations' : value.toLocaleString();
+  return {
+    animation: false,
+    grid: { left: 76, right: 18, top: 40, bottom: 58 },
+    tooltip: {
+      trigger: 'axis',
+      formatter: (items: Array<{ dataIndex: number }>) => {
+        const index = items[0]?.dataIndex ?? 0;
+        return (points[index] ? tooltipTimestamp(points[index].at, zone) + '<br/>' : '') +
+          '4xx client errors: ' + text(client[index] ?? null) + '<br/>5xx server errors and failed jobs: ' + text(server[index] ?? null) +
+          ((incomplete[index] ?? 0) > 0 ? '<br/>Missing timing (not a failure): ' + (incomplete[index] ?? 0).toLocaleString() : '');
+      }
+    },
+    legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 76, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: '#526176', fontSize: 11 } },
+    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, hideOverlap: true }, axisLine: { lineStyle: { color: '#dbe2eb' } } },
+    yAxis: { type: 'value', name: 'Responses per interval', nameLocation: 'middle', nameGap: 44, min: 0, minInterval: 1, axisLabel: { color: axis }, splitLine: { lineStyle: { color: '#edf0f5' } } },
+    dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, { type: 'slider', height: 16, bottom: 8, borderColor: 'transparent', fillerColor: '#315bd422' }],
+    series: [
+      { name: '4xx client errors', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: client, lineStyle: { color: amber, width: 2.5 }, itemStyle: { color: amber } },
+      { name: '5xx server errors and failed jobs', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: server, lineStyle: { color: red, width: 2.5 }, itemStyle: { color: red } }
+    ]
+  };
+};
+
 export const histogramBinBounds = (bin: number): { lower: number; upper: number | null } => {
   if (bin === 0) return { lower: 0, upper: 1 };
   if (bin >= 1 && bin <= 192) return { lower: Math.pow(1.1, bin - 1), upper: Math.pow(1.1, bin) };
@@ -192,16 +239,28 @@ export const heatmapOption = (analysis: Analysis, sources: Map<string, string>, 
   };
 };
 
-export const baselineChange = (row: Comparison, point: Point | undefined, mode: 'percent' | 'milliseconds'): number | null => {
-  const current = finite(point?.p95?.valueMs);
-  const reference = finite(row.reference.p95?.valueMs);
+export type PercentileSeries = 'p50' | 'p90' | 'p95' | 'p99';
+export type FailureSeries = 'count4xx' | 'count5xx';
+export type TimelineSeries = PercentileSeries | FailureSeries;
+export const timelineSeriesOptions: Array<{ value: TimelineSeries; label: string }> = [
+  { value: 'p50', label: 'P50 (median)' }, { value: 'p90', label: 'P90' }, { value: 'p95', label: 'P95' }, { value: 'p99', label: 'P99' },
+  { value: 'count4xx', label: '4xx responses' }, { value: 'count5xx', label: '5xx responses and failed jobs' }
+];
+export const isFailureSeries = (series: TimelineSeries): series is FailureSeries => series === 'count4xx' || series === 'count5xx';
+export const baselineChange = (row: Comparison, point: Point | undefined, mode: 'percent' | 'milliseconds', series: PercentileSeries = 'p95'): number | null => {
+  const current = finite(point?.[series]?.valueMs);
+  const reference = finite(row.reference[series]?.valueMs);
   if (current == null || reference == null) return null;
   if (mode === 'milliseconds') return current - reference;
-  if (reference <= 0 || (row.reference.p95?.lowerMs ?? 0) <= 0) return null;
+  if (reference <= 0 || (row.reference[series]?.lowerMs ?? 0) <= 0) return null;
   return (current / reference - 1) * 100;
 };
 export const timelineColors = ['#146b58', '#315bd4', '#ad6511', '#9956a1', '#b74545', '#157d94', '#6e6f24', '#76563f'];
-export const multiTimelineOption = (analysis: Analysis, keys: string[], sources: Map<string, string>, zone: string, mode: 'percent' | 'milliseconds') => {
+export const multiTimelineOption = (analysis: Analysis, keys: string[], sources: Map<string, string>, zone: string, mode: 'percent' | 'milliseconds', series: TimelineSeries = 'p95') => {
+  const failure = isFailureSeries(series);
+  const seriesLabel = timelineSeriesOptions.find(item => item.value === series)?.label ?? series;
+  // A percentile is a change from its own reference; a failure count is absolute, and null where the slot has no point.
+  const valueAt = (row: Comparison, point: Point | undefined) => isFailureSeries(series) ? failureField(point, series) : baselineChange(row, point, mode, series);
   const rows = keys.flatMap(key => { const row = analysis.apis.find(item => item.key === key); return row ? [row] : []; });
   const aligned = rows.map(row => alignedPoints(analysis, row.key));
   const slots = aligned[0] ?? [];
@@ -215,17 +274,18 @@ export const multiTimelineOption = (analysis: Analysis, keys: string[], sources:
       const index = items[0]?.dataIndex ?? 0;
       return (displaySlots[index] ? tooltipTimestamp(displaySlots[index].at, zone) + '<br/>' : '') + rows.map((row, i) => {
         const point = aligned[i][index];
-        const change = baselineChange(row, point, mode);
+        const change = baselineChange(row, point, mode, failure ? 'p95' : series as PercentileSeries);
         const reliable = (point?.count ?? 0) >= 20 && row.state === 'compared';
-        return `<b>${i + 1}. ${escapeHTML(row.controller)}.${escapeHTML(row.action)}</b><br/>${escapeHTML(sources.get(row.sourceId) ?? row.sourceId)} · ${escapeHTML(row.kind)} · ${escapeHTML(row.outcome)}<br/>Change: ${change == null ? 'Unavailable' : (change > 0 ? '+' : '') + change.toFixed(1) + (mode === 'percent' ? '%' : ' ms')} · Usable timings: ${point?.count ?? 0}<br/>Current P95: ${finite(point?.p95?.valueMs)?.toFixed(1) ?? 'N/A'} ms · Reference P95: ${finite(row.reference.p95?.valueMs)?.toFixed(1) ?? 'N/A'} ms${reliable ? '' : '<br/>Few or missing samples — treat this point cautiously.'}`;
+        if (failure) return `<b>${i + 1}. ${escapeHTML(row.controller)}.${escapeHTML(row.action)}</b><br/>${escapeHTML(sources.get(row.sourceId) ?? row.sourceId)} · ${escapeHTML(row.kind)} · ${escapeHTML(row.outcome)}<br/>${seriesLabel}: ${point?.count == null ? 'No observations' : String(failureField(point, series as FailureSeries))}${(point?.incomplete ?? 0) > 0 ? ' · ' + point?.incomplete + ' missing timing (not counted as failures)' : ''}`;
+        return `<b>${i + 1}. ${escapeHTML(row.controller)}.${escapeHTML(row.action)}</b><br/>${escapeHTML(sources.get(row.sourceId) ?? row.sourceId)} · ${escapeHTML(row.kind)} · ${escapeHTML(row.outcome)}<br/>Change: ${change == null ? 'Unavailable' : (change > 0 ? '+' : '') + change.toFixed(1) + (mode === 'percent' ? '%' : ' ms')} · Usable timings: ${point?.count ?? 0}<br/>Current ${series.toUpperCase()}: ${finite(point?.[series as PercentileSeries]?.valueMs)?.toFixed(1) ?? 'N/A'} ms · Reference ${series.toUpperCase()}: ${finite(row.reference[series as PercentileSeries]?.valueMs)?.toFixed(1) ?? 'N/A'} ms${reliable ? '' : '<br/>Few or missing samples — treat this point cautiously.'}`;
       }).join('<br/><br/>');
     } },
     xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, hideOverlap: true } },
-    yAxis: { type: 'value', name: mode === 'percent' ? 'Change from own reference (%)' : 'Change from own reference (ms)', nameLocation: 'middle', nameGap: 58, axisLabel: { color: axis }, splitLine: { lineStyle: { color: '#edf0f5' } } },
+    yAxis: { type: 'value', name: failure ? 'Responses per interval' : mode === 'percent' ? 'Change from own reference (%)' : 'Change from own reference (ms)', nameLocation: 'middle', nameGap: 58, ...(failure ? { min: 0, minInterval: 1 } : {}), axisLabel: { color: axis }, splitLine: { lineStyle: { color: '#edf0f5' } } },
     dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, { type: 'slider', height: 16, bottom: 8, borderColor: 'transparent', fillerColor: '#146b5822' }],
     series: rows.map((row, i) => ({ name: `${i + 1}. ${row.controller}.${row.action}`, type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, lineStyle: { color: timelineColors[i], width: 2 }, itemStyle: { color: timelineColors[i] },
-      data: aligned[i].map(point => ({ value: baselineChange(row, point, mode), symbol: (point.count ?? 0) < 20 || row.state !== 'compared' ? 'emptyCircle' : 'circle', itemStyle: { opacity: (point.count ?? 0) < 20 || row.state !== 'compared' ? .45 : 1 } })),
-      ...(i === 0 ? { markLine: { symbol: 'none', label: { formatter: 'Reference', position: 'insideEndTop' }, lineStyle: { type: 'dashed', color: '#7b8c84' }, data: [{ yAxis: 0 }] } } : {})
+      data: aligned[i].map(point => ({ value: valueAt(row, point), symbol: !failure && ((point.count ?? 0) < 20 || row.state !== 'compared') ? 'emptyCircle' : 'circle', itemStyle: { opacity: !failure && ((point.count ?? 0) < 20 || row.state !== 'compared') ? .45 : 1 } })),
+      ...(i === 0 && !failure ? { markLine: { symbol: 'none', label: { formatter: 'Reference', position: 'insideEndTop' }, lineStyle: { type: 'dashed', color: '#7b8c84' }, data: [{ yAxis: 0 }] } } : {})
     }))
   };
 };
