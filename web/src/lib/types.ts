@@ -21,10 +21,17 @@ export interface Info {
 }
 /** Record-level completion: complete rows have a usable duration, pending rows are accepted asynchronous jobs. */
 export type Completion = 'all' | 'complete' | 'incomplete' | 'pending' | 'invalid';
+/** An inclusive numeric bound; either end may be absent, and a range with neither end is not in use. */
+export interface NumberRange { min?: number; max?: number }
+/** The range filters the server accepts, with the JSON key each travels under. */
+export type RangeKey = 'observedMs' | 'apiTimeMs' | 'auditCreateTimeMs' | 'requestKb' | 'responseKb' | 'incompleteAgeMs';
 /** Additive record filters; every field is absent when it is not in use and the server drops absent ones. */
 export interface RecordFilters {
   userIds?: number[]; uiVersions?: string[]; userAgentContains?: string; userIps?: string[]; urlContains?: string;
   auditId?: string; statusCodes?: string[]; completion?: Completion; /** "Controller.Action", split on the first dot. */ operation?: string;
+  /** Range filters. A time range implies Complete and the age range implies Incomplete or Pending; a row without the field never matches a bounded range. */
+  observedMs?: NumberRange; apiTimeMs?: NumberRange; auditCreateTimeMs?: NumberRange;
+  requestKb?: NumberRange; responseKb?: NumberRange; incompleteAgeMs?: NumberRange;
 }
 export interface Query extends RecordFilters {
   sourceIds: string[]; start: string; end: string; baselineStart: string; baselineEnd: string;

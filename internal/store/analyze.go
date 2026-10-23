@@ -57,6 +57,10 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 	if err := audit.ValidateQuery(q); err != nil {
 		return audit.Analysis{}, fmt.Errorf("%w: %v", audit.ErrInvalidInput, err)
 	}
+	if q.HasAgeRange() {
+		// One clock for every source and both intervals, rendered as a literal.
+		q.Now = s.clock()
+	}
 	queryCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 	workCtx, cancelWork := context.WithCancel(queryCtx)

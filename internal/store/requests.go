@@ -23,6 +23,10 @@ type pageCursor struct {
 	ObjectID    string    `json:"objectId"`
 	Metric      *float64  `json:"metric,omitempty"`
 	Fingerprint string    `json:"fingerprint"`
+	// Now is the clock page one measured an incomplete-age range against. Later
+	// pages reuse it so the age of a row does not move while paging. It is set
+	// only for a query with an age range and is not part of the fingerprint.
+	Now *time.Time `json:"now,omitempty"`
 }
 
 type requestDocument struct {
@@ -100,7 +104,9 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 	var slow *slowFilter
 	if slowest {
 		fingerprint = slowFingerprint(input.Query, input.MinMs)
-		slow = &slowFilter{min: input.MinMs}
+		// The floor is the explicit minimum or the range minimum for the ranking
+		// metric, whichever is higher. The fingerprint stays on the raw inputs.
+		slow = &slowFilter{min: audit.EffectiveSlowestMin(input.Query, input.MinMs)}
 	}
 	var after *pageCursor
 	if input.Cursor != "" {
@@ -127,6 +133,22 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		}
 		parsed.ObjectID = objectID.Hex()
 		after = &parsed
+	}
+	// An age range is measured against one clock for the whole listing: page one
+	// reads it and the cursor carries it, so a later page cannot shift rows.
+	var pageNow *time.Time
+	if input.Query.HasAgeRange() {
+		switch {
+		case after == nil:
+			now := s.clock()
+			pageNow = &now
+		case after.Now == nil || after.Now.IsZero():
+			return audit.Page{}, fmt.Errorf("%w: cursor does not match this query", audit.ErrInvalidInput)
+		default:
+			now := after.Now.UTC().Truncate(time.Millisecond)
+			pageNow = &now
+		}
+		input.Query.Now = *pageNow
 	}
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -255,7 +277,7 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 	}
 	if more && len(rows) > 0 {
 		last := rows[len(rows)-1]
-		cursor := pageCursor{At: last.at.UTC(), SourceID: last.request.SourceID, ObjectID: last.object.Hex(), Fingerprint: fingerprint}
+		cursor := pageCursor{At: last.at.UTC(), SourceID: last.request.SourceID, ObjectID: last.object.Hex(), Fingerprint: fingerprint, Now: pageNow}
 		if slowest {
 			page.Truncated = true
 			cursor.Metric = audit.RequestMetric(last.request, input.Query.Metric)
@@ -314,7 +336,7 @@ func requestPipelineScoped(q audit.Query, cohort [5]string, state string, summar
 	statusClass := statusClassExpr(kind, statusText, statusNumber)
 	outcome := outcomeFromClassExpr()
 	completed := date("RequestCompletedAt", "RequestCompletedAt")
-	observed := bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}}, bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditCompleted"}}, "date"}}}}}}, bson.D{{Key: "$subtract", Value: bson.A{"$_auditCompleted", "$_auditAt"}}}, nil}}}
+	observed := observedDurationExpr()
 	duration := bson.D{{Key: "$cond", Value: bson.A{"$_auditPending", nil, observed}}}
 	// The state follows the summary's metric (total or api), not the observed
 	// duration shown in the row.

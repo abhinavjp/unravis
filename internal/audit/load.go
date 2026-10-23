@@ -109,9 +109,12 @@ func (d *demoRepository) Slowest(ctx context.Context, input PageInput) (Page, er
 		return Page{}, err
 	}
 	q := input.Query.Normalized()
+	q.Now = d.now
+	// The floor is the explicit minimum or the range minimum for the ranking
+	// metric, whichever is higher; the cursor stays bound to the raw inputs below.
 	min := 0.0
-	if input.MinMs != nil {
-		min = *input.MinMs
+	if floor := EffectiveSlowestMin(q, input.MinMs); floor != nil {
+		min = *floor
 	}
 	fingerprintBytes, _ := json.Marshal(struct {
 		Query Query    `json:"query"`

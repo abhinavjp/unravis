@@ -19,7 +19,7 @@ const maxUserID = 2147483647
 func (q Query) HasRecordFilters() bool {
 	return len(q.UserIDs) > 0 || len(q.UIVersions) > 0 || q.UserAgentContains != "" || len(q.UserIPs) > 0 ||
 		q.URLContains != "" || q.AuditID != "" || len(q.StatusCodes) > 0 ||
-		(q.Completion != "" && q.Completion != StateAll) || q.Operation != ""
+		(q.Completion != "" && q.Completion != StateAll) || q.Operation != "" || q.HasRanges()
 }
 
 // SplitOperation splits "Controller.Action" on the first dot. Both halves must
@@ -175,7 +175,7 @@ func validateRecordFilters(q Query) error {
 			return invalidInputf("operation conflicts with the controller and action filters")
 		}
 	}
-	return nil
+	return validateRanges(q)
 }
 
 // plainText reports whether value is valid UTF-8 without a NUL character, which

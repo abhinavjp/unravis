@@ -642,3 +642,97 @@ test('query fingerprint covers record filters and treats empty as absent', () =>
   }
   assert.equal(presentation.queryFingerprint({ ...recordFilterBase, userIds: [2, 1] }), presentation.queryFingerprint({ ...recordFilterBase, userIds: [1, 2] }));
 });
+
+test('range filters serialize only usable bounds in a fixed order', () => {
+  const { serializeRecordFilters } = investigation;
+  assert.deepEqual(serializeRecordFilters({ observedMs: {}, apiTimeMs: { min: undefined }, requestKb: null, responseKb: 'x', incompleteAgeMs: [] }), {});
+  assert.deepEqual(serializeRecordFilters({ responseKb: { max: 9 }, observedMs: { max: 500, min: 100 }, incompleteAgeMs: { min: 0 } }), { observedMs: { min: 100, max: 500 }, responseKb: { max: 9 }, incompleteAgeMs: { min: 0 } });
+  assert.deepEqual(Object.keys(serializeRecordFilters({ incompleteAgeMs: { min: 1 }, requestKb: { min: 1 }, auditCreateTimeMs: { min: 1 }, apiTimeMs: { min: 1 }, observedMs: { min: 1 }, responseKb: { min: 1 } })), ['observedMs', 'apiTimeMs', 'auditCreateTimeMs', 'requestKb', 'responseKb', 'incompleteAgeMs']);
+  // A range the server would reject, or a value of the wrong type, never reaches a request.
+  assert.deepEqual(serializeRecordFilters({ observedMs: { min: 9, max: 1 }, apiTimeMs: { min: -1 }, requestKb: { min: NaN, max: Infinity }, responseKb: { min: '5' }, auditCreateTimeMs: { max: 1_000_000_001 } }), {});
+  assert.deepEqual(serializeRecordFilters({ apiTimeMs: { min: -1, max: 4 } }), { apiTimeMs: { max: 4 } });
+  assert.deepEqual(serializeRecordFilters({ requestKb: { max: 10_000_000 } }), { requestKb: { max: 10_000_000 } });
+  assert.deepEqual(serializeRecordFilters({ requestKb: { max: 10_000_001 } }), {});
+});
+
+test('range drafts build, explain what is wrong and resync from a restored query', () => {
+  const { buildRange, rangeBoundProblem, syncRangeDraft, MAX_RANGE_MS } = investigation;
+  assert.deepEqual(buildRange('', '', MAX_RANGE_MS), { range: undefined, problems: [] });
+  assert.deepEqual(buildRange(' 100 ', '2.5', MAX_RANGE_MS), { range: undefined, problems: ['The minimum is above the maximum, so neither is applied'] });
+  assert.deepEqual(buildRange('1.5', '', MAX_RANGE_MS), { range: { min: 1.5 }, problems: [] });
+  assert.deepEqual(buildRange('', '0', MAX_RANGE_MS), { range: { max: 0 }, problems: [] });
+  assert.deepEqual(buildRange('5', '5', MAX_RANGE_MS).range, { min: 5, max: 5 });
+  // A bad bound is not applied but the other one still is.
+  const negative = buildRange('-3', '8', MAX_RANGE_MS);
+  assert.deepEqual(negative.range, { max: 8 });
+  assert.match(negative.problems[0], /negative/);
+  assert.match(buildRange('abc', '', MAX_RANGE_MS).problems[0], /not a number/);
+  assert.match(buildRange('0x10', '', MAX_RANGE_MS).problems[0], /not a number/);
+  assert.match(buildRange('1e3', '', MAX_RANGE_MS).problems[0], /not a number/);
+  assert.match(buildRange('', '2000000000', MAX_RANGE_MS).problems[0], /above the limit/);
+  assert.equal(buildRange('', '2000000000', MAX_RANGE_MS).range, undefined);
+  assert.equal(rangeBoundProblem('1000000000', MAX_RANGE_MS), '');
+  assert.equal(rangeBoundProblem('  ', MAX_RANGE_MS), '');
+  assert.equal(rangeBoundProblem('.5', MAX_RANGE_MS), '');
+  // The drafts follow the applied range, and partial typing survives.
+  const same = { min: '5.', max: '' };
+  assert.equal(syncRangeDraft(same, { min: 5 }, MAX_RANGE_MS), same);
+  assert.deepEqual(syncRangeDraft({ min: '', max: '' }, { min: 100, max: 500 }, MAX_RANGE_MS), { min: '100', max: '500' });
+  assert.deepEqual(syncRangeDraft({ min: '9', max: '1' }, undefined, MAX_RANGE_MS), { min: '9', max: '1' });
+  assert.deepEqual(syncRangeDraft({ min: '100', max: '500' }, undefined, MAX_RANGE_MS), { min: '', max: '' });
+  assert.deepEqual(syncRangeDraft({ min: '100', max: '' }, { max: 7 }, MAX_RANGE_MS), { min: '', max: '7' });
+});
+
+test('range conflicts name the completion or range the server would refuse', () => {
+  const { rangeConflict } = investigation;
+  assert.equal(rangeConflict({}), '');
+  assert.equal(rangeConflict({ observedMs: { min: 1 }, completion: 'complete' }), '');
+  assert.equal(rangeConflict({ observedMs: { min: 1 }, completion: 'all' }), '');
+  assert.equal(rangeConflict({ requestKb: { min: 1 }, completion: 'pending' }), '');
+  assert.equal(rangeConflict({ incompleteAgeMs: { min: 1 }, completion: 'pending' }), '');
+  assert.equal(rangeConflict({ incompleteAgeMs: { min: 1 }, completion: 'incomplete' }), '');
+  for (const key of ['observedMs', 'apiTimeMs', 'auditCreateTimeMs']) {
+    for (const completion of ['incomplete', 'pending', 'invalid']) assert.match(rangeConflict({ [key]: { max: 5 }, completion }), /only describes complete/, `${key} ${completion}`);
+  }
+  for (const completion of ['complete', 'invalid']) assert.match(rangeConflict({ incompleteAgeMs: { max: 5 }, completion }), /only describes incomplete/, completion);
+  assert.match(rangeConflict({ observedMs: { min: 1 }, incompleteAgeMs: { min: 1 } }), /cannot be combined/);
+  // An empty range does not count as in use.
+  assert.equal(rangeConflict({ observedMs: {}, incompleteAgeMs: { min: 1 } }), '');
+});
+
+test('ranges survive a saved investigation and an old snapshot without them still loads', () => {
+  const ranges = { observedMs: { min: 250 }, responseKb: { min: 1, max: 64 }, incompleteAgeMs: undefined, requestKb: { min: 5, max: 1 } };
+  const snapshot = investigation.createInvestigationSnapshot({ ...recordFilterBase, ...ranges }, [], 'UTC', null);
+  assert.deepEqual(Object.keys(snapshot.query).filter(key => !(key in recordFilterBase)), ['observedMs', 'responseKb']);
+  const parsed = investigation.parseInvestigationSnapshot(JSON.stringify(snapshot));
+  assert.deepEqual(parsed.query.observedMs, { min: 250 });
+  assert.deepEqual(investigation.restoreInvestigation(parsed, []).responseKb, { min: 1, max: 64 });
+  assert.equal('requestKb' in investigation.restoreInvestigation(parsed, []), false);
+  const { sourceIds, ...legacyQuery } = recordFilterBase;
+  const tampered = investigation.parseInvestigationSnapshot(JSON.stringify({ version: 1, query: { ...legacyQuery, observedMs: 'fast', apiTimeMs: { min: -4 } }, selectedSources: [], zone: 'UTC', targetMs: null }));
+  assert.ok(tampered);
+  assert.equal('observedMs' in tampered.query || 'apiTimeMs' in tampered.query, false);
+});
+
+test('query fingerprint covers every range and treats an empty range as absent', () => {
+  const plain = presentation.queryFingerprint(recordFilterBase);
+  assert.equal(presentation.queryFingerprint({ ...recordFilterBase, observedMs: {}, apiTimeMs: undefined, requestKb: { min: undefined } }), plain);
+  const keys = ['observedMs', 'apiTimeMs', 'auditCreateTimeMs', 'requestKb', 'responseKb', 'incompleteAgeMs'];
+  const seen = new Set([plain]);
+  for (const key of keys) {
+    for (const range of [{ min: 1 }, { max: 1 }, { min: 1, max: 2 }]) seen.add(presentation.queryFingerprint({ ...recordFilterBase, [key]: range }));
+  }
+  assert.equal(seen.size, 1 + keys.length * 3);
+});
+
+test('QueryControls offers the ranges inside the record filters panel only', () => {
+  const source = fs.readFileSync(path.join(root, 'src/components/QueryControls.svelte'), 'utf8');
+  const panelStart = source.indexOf('record-filters"');
+  const panel = source.slice(panelStart, source.indexOf('</details>', panelStart));
+  assert.match(panel, /RANGE_FIELDS/);
+  assert.match(panel, /rangeNote/);
+  const earlier = source.slice(source.indexOf('advanced-filters">'), panelStart);
+  assert.equal(/RANGE_FIELDS|rf-observedMs/.test(earlier), false);
+  assert.match(source, /syncRangeDraft\(/);
+  assert.equal(/#[0-9a-fA-F]{3,8}\b/.test(source.slice(source.indexOf('<style>'))), false);
+});

@@ -328,6 +328,10 @@ type legacyRecord struct {
 	UserIP, UserAgent, UIVersion              string
 	PollingTypeRaw                            string
 	CreatedOn, UpdatedOn                      *time.Time
+	// RequestKBValue and ResponseKBValue are the payload sizes as stored: nil when
+	// the field is missing or not a number, where RequestKB and ResponseKB show 0.
+	// A range filter reads these, so a missing size never matches a bounded range.
+	RequestKBValue, ResponseKBValue *float64
 }
 
 func readLegacyBuckets(ctx context.Context, p *profile, q audit.Query, start time.Time, pipeline mongo.Pipeline, total, totalBytes, records, bytes *atomic.Int64) ([]audit.Bucket, error) {
@@ -582,11 +586,15 @@ func legacyRecordFilterMatches(q audit.Query, record, stateRecord legacyRecord) 
 	if q.Action != "" && record.Action != q.Action {
 		return false
 	}
-	if !audit.StateMatches(q.Completion, stateRecord.State, stateRecord.PendingAsync, record.Outcome) {
+	// A latency range implies complete rows and an age range incomplete ones.
+	if !audit.StateMatches(audit.EffectiveCompletion(q), stateRecord.State, stateRecord.PendingAsync, record.Outcome) {
 		return false
 	}
 	if !q.HasRecordFilters() {
 		return true
+	}
+	if q.HasRanges() && !audit.RangeFilterMatches(q, legacyRangeFacts(q, record)) {
+		return false
 	}
 	capped := func(value, field string) bool {
 		return utf8.RuneCountInString(value) >= legacyMetadataStringCaps[field]
@@ -598,6 +606,27 @@ func legacyRecordFilterMatches(q audit.Query, record, stateRecord legacyRecord) 
 		TruncatedIP: capped(record.UserIP, "UserIp"), TruncatedVersion: capped(record.UIVersion, "PayrollUIVersion"),
 		TruncatedStatus: capped(record.Status, "StatusCode"),
 	})
+}
+
+// legacyRangeFacts reads the values the range filters need from a projected
+// record, as the _auditRange* fields of the server pipelines do: the observed
+// time is completed minus start whatever the ranking metric, and the age of a
+// record that has not completed is the injected clock minus its start (CreatedOn
+// when it has none).
+func legacyRangeFacts(q audit.Query, record legacyRecord) audit.RangeFacts {
+	facts := audit.RangeFacts{
+		ApiTimeMs: record.API, AuditCreateTimeMs: record.AuditCreate,
+		RequestKB: record.RequestKBValue, ResponseKB: record.ResponseKBValue,
+	}
+	if record.At != nil && record.Completed != nil {
+		observed := float64(record.Completed.UnixMilli() - record.At.UnixMilli())
+		facts.ObservedMs = &observed
+	}
+	if record.At != nil && (record.Completed == nil || record.PendingAsync) && !q.Now.IsZero() {
+		age := float64(q.Now.UnixMilli() - record.At.UnixMilli())
+		facts.AgeMs = &age
+	}
+	return facts
 }
 
 func legacyObjectID(value string) bson.ObjectID {
@@ -638,6 +667,8 @@ func normalizeLegacyRecord(raw bson.Raw, metric string) (legacyRecord, bool) {
 	record.API = legacyNumber(raw.Lookup("ApiTime"))
 	record.AuditCreate = legacyNumber(raw.Lookup("AuditCreateTime"))
 	record.PayloadRecord = legacyNumber(raw.Lookup("PayloadRecordTime"))
+	record.RequestKBValue = legacyNumber(raw.Lookup("RequestLengthInKiloBytes"))
+	record.ResponseKBValue = legacyNumber(raw.Lookup("ResponseLengthInKiloBytes"))
 	record.RequestKB = legacyNumberDefault(raw.Lookup("RequestLengthInKiloBytes"))
 	record.ResponseKB = legacyNumberDefault(raw.Lookup("ResponseLengthInKiloBytes"))
 	record.UserID = legacyInt(raw.Lookup("UserId"))

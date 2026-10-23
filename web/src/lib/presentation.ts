@@ -1,4 +1,4 @@
-import type { Comparison, Metric, Quality, Query, Rollup } from './types';
+import type { Comparison, Metric, NumberRange, Quality, Query, Rollup } from './types';
 
 export type RankField = 'impact' | 'ratio' | 'delta' | 'count';
 
@@ -20,12 +20,16 @@ export const initialComparison = (rows: Comparison[]) => rankComparisons(rows, r
 // are sets, so their order does not matter.
 const filterList = (values: readonly (string | number)[] | undefined) => [...new Set((values ?? []).map(value => String(value).trim()).filter(Boolean))].sort();
 const filterText = (value: string | undefined) => (value ?? '').trim();
+// A range with neither bound is unused, the same as an absent one.
+const filterRange = (range: NumberRange | undefined) => range && (range.min != null || range.max != null) ? [range.min ?? null, range.max ?? null] : null;
 export const queryFingerprint = (query: Query) => JSON.stringify([
   [...query.sourceIds].sort(), ...[query.start, query.end, query.baselineStart, query.baselineEnd].map(value => Date.parse(value)),
   query.kind, query.outcome, query.metric, query.bucketSeconds, query.controller ?? '', query.action ?? '',
   filterList(query.userIds), filterList(query.uiVersions), filterText(query.userAgentContains), filterList(query.userIps),
   filterText(query.urlContains), filterText(query.auditId), filterList(query.statusCodes),
-  query.completion === 'all' ? '' : query.completion ?? '', filterText(query.operation)
+  query.completion === 'all' ? '' : query.completion ?? '', filterText(query.operation),
+  filterRange(query.observedMs), filterRange(query.apiTimeMs), filterRange(query.auditCreateTimeMs),
+  filterRange(query.requestKb), filterRange(query.responseKb), filterRange(query.incompleteAgeMs)
 ]);
 
 export const resultNotes = (rows: Comparison[]) => {

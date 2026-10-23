@@ -111,6 +111,7 @@ func (d *demoRepository) Analyze(ctx context.Context, q Query) (Analysis, error)
 	if err := ValidateQuery(q); err != nil {
 		return Analysis{}, err
 	}
+	q.Now = d.now
 	selected := make(map[string]bool, len(q.SourceIDs))
 	for _, id := range q.SourceIDs {
 		if !d.hasSource(id) {
@@ -274,13 +275,43 @@ func demoSummaryRow(r RequestRecord, q Query) (state, class string, value *float
 // rules the Mongo pipelines and the legacy reader apply. q must already be
 // normalized so that Operation is folded into Controller and Action.
 func demoRecordMatches(q Query, r RequestRecord, state, class string) bool {
-	if !StateMatches(q.Completion, state, class == StatusPending, r.Outcome) {
+	if !StateMatches(EffectiveCompletion(q), state, class == StatusPending, r.Outcome) {
 		return false
 	}
-	return RecordFilterMatches(q, RecordFacts{
+	if !RecordFilterMatches(q, RecordFacts{
 		ID: r.ID, UserID: r.UserID, UserIP: r.UserIP, UserAgent: r.UserAgent,
 		UIVersion: r.UIVersion, URL: r.URL, Status: r.Status,
-	})
+	}) {
+		return false
+	}
+	return !q.HasRanges() || RangeFilterMatches(q, demoRangeFacts(q, r, class == StatusPending))
+}
+
+// demoRangeFacts reads the values a range filter needs from one demo row. The
+// observed duration is completion minus start, the same expression the pipelines
+// use (not the stored DurationMs); age is measured from the repository clock
+// (q.Now) against the start, falling back to CreatedOn. Only a record that has not
+// completed (or a pending async request) has an age, as in the pipelines.
+func demoRangeFacts(q Query, r RequestRecord, pending bool) RangeFacts {
+	facts := RangeFacts{
+		ApiTimeMs: r.ApiTimeMs, AuditCreateTimeMs: r.AuditCreateTimeMs,
+		RequestKB: &r.RequestKB, ResponseKB: &r.ResponseKB,
+	}
+	at := r.InitiatedAt
+	if at == nil {
+		at = r.CreatedOn
+	}
+	if at != nil {
+		if r.CompletedAt != nil {
+			v := float64(r.CompletedAt.UnixMilli() - at.UnixMilli())
+			facts.ObservedMs = &v
+		}
+		if !q.Now.IsZero() && (r.CompletedAt == nil || pending) {
+			v := float64(q.Now.UnixMilli() - at.UnixMilli())
+			facts.AgeMs = &v
+		}
+	}
+	return facts
 }
 
 func addDemoPhase(sum *float64, n *int64, value *float64) {
@@ -298,6 +329,7 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 		return Page{}, err
 	}
 	input.Query = input.Query.Normalized()
+	input.Query.Now = d.now
 	if input.Limit < 1 || input.Limit > MaxPageSize {
 		return Page{}, fmt.Errorf("%w: page limit must be between 1 and %d", ErrLimit, MaxPageSize)
 	}
