@@ -89,13 +89,28 @@ type BreakdownRow struct {
 
 // Breakdown is the top rows of one dimension plus the remainder. Total is the
 // number of rows the query selected, so Rows plus Other always add up to it.
+//
+// PooledKinds is set when the query's kind pools request types (all or http).
+// Latency is never pooled across kinds, so every row's Stats is then empty (no
+// percentiles, mean or histogram); counts, 4xx, 5xx, incomplete and pending stay.
 type Breakdown struct {
-	Dim      string         `json:"dim"`
-	Rows     []BreakdownRow `json:"rows"`
-	Other    *BreakdownRow  `json:"other"`
-	Total    int64          `json:"total"`
-	Distinct int            `json:"distinct"`
-	Sources  []SourceResult `json:"sources"`
+	Dim         string         `json:"dim"`
+	Rows        []BreakdownRow `json:"rows"`
+	Other       *BreakdownRow  `json:"other"`
+	Total       int64          `json:"total"`
+	Distinct    int            `json:"distinct"`
+	Sources     []SourceResult `json:"sources"`
+	PooledKinds bool           `json:"pooledKinds,omitempty"`
+}
+
+// PooledKind reports whether a query kind mixes request types, so that a latency
+// figure over it would pool Synchronous, Asynchronous (or unknown) rows.
+func PooledKind(kind string) bool {
+	switch kind {
+	case "synchronous", "asynchronous", "hangfire", KindHTTPUnknown:
+		return false
+	}
+	return true
 }
 
 // BreakdownReader is an optional Repository capability, like SlowestReader.
@@ -244,7 +259,12 @@ type BreakdownBuilder struct {
 	otherBins map[int]*breakdownBin
 	pinned    map[string]bool
 	capRunes  int
+	pooled    bool
 }
+
+// SetPooled says the query's kind pools request types (see PooledKind): Build
+// then leaves every row's Stats empty and sets Breakdown.PooledKinds.
+func (b *BreakdownBuilder) SetPooled(pooled bool) { b.pooled = pooled }
 
 // SetValueCap says values of n runes or more may have been cut at the storage
 // cap, so their rows get no drill-down filter (see NewBreakdownFilter).
@@ -414,6 +434,14 @@ func statsOf(bins ...map[int]*breakdownBin) (Stats, error) {
 	return stats, nil
 }
 
+// rowStats is statsOf, or an empty Stats when the query pools request types.
+func (b *BreakdownBuilder) rowStats(bins ...map[int]*breakdownBin) (Stats, error) {
+	if b.pooled {
+		return Stats{Histogram: []BinCount{}}, nil
+	}
+	return statsOf(bins...)
+}
+
 func rowOf(c BreakdownCounts) BreakdownRow {
 	return BreakdownRow{Count: c.Count, Complete: c.Count - c.Incomplete, Incomplete: c.Incomplete, Pending: c.Pending, Count4xx: c.Count4xx, Count5xx: c.Count5xx}
 }
@@ -421,7 +449,7 @@ func rowOf(c BreakdownCounts) BreakdownRow {
 // Build returns the top rows, the remainder and the total.
 func (b *BreakdownBuilder) Build() (Breakdown, error) {
 	top, others := b.listed()
-	out := Breakdown{Dim: b.dim, Rows: []BreakdownRow{}, Distinct: len(top) + len(others), Sources: []SourceResult{}}
+	out := Breakdown{Dim: b.dim, Rows: []BreakdownRow{}, Distinct: len(top) + len(others), Sources: []SourceResult{}, PooledKinds: b.pooled}
 	var rest BreakdownCounts
 	restBins := []map[int]*breakdownBin{b.otherBins}
 	for _, g := range others {
@@ -437,7 +465,7 @@ func (b *BreakdownBuilder) Build() (Breakdown, error) {
 			row.Value = BreakdownMissingLabel
 		}
 		row.Filter = NewBreakdownFilter(b.dim, g.key, b.capRunes)
-		stats, err := statsOf(g.bins)
+		stats, err := b.rowStats(g.bins)
 		if err != nil {
 			return Breakdown{}, err
 		}
@@ -447,7 +475,7 @@ func (b *BreakdownBuilder) Build() (Breakdown, error) {
 	if len(others) > 0 {
 		other := rowOf(rest)
 		other.Value, other.Values = BreakdownOtherLabel, len(others)
-		stats, err := statsOf(restBins...)
+		stats, err := b.rowStats(restBins...)
 		if err != nil {
 			return Breakdown{}, err
 		}

@@ -85,3 +85,39 @@ export function recordFilterChips(query: Partial<Record<keyof RecordFilters, unk
   add('userIp', 'User IP', active.userIps);
   return chips;
 }
+
+/** Shown above the table when the query kind pools request types: percentiles are never mixed across Synchronous, Asynchronous and Hangfire. */
+export const pooledKindsNote = 'Choose Synchronous, Asynchronous or Hangfire to see percentiles; types are never pooled.';
+
+/** Shown on every breakdown: the counters and the percentile bins are two separate reads. */
+export const nonAtomicNote = 'Totals and percentiles are read in two passes, so they can drift slightly while requests are still being written.';
+
+/** The Complete column is Requests minus Missing timing: it includes completed requests whose duration is invalid. Percentiles use only the valid timings, counted in the P50 and P95 tooltips. */
+export const completeTitle = 'Requests minus Missing timing. Includes completed requests whose duration is invalid; percentiles use only the valid timings, counted in the P50 and P95 tooltips.';
+
+/** Only a user agent and a status code are matched as text, so their lists can hold more requests than the row count. */
+export function matchingNote(dim: BreakdownDim): string | null {
+  if (dim === 'userAgent') return 'User agent matching is by text contained in the value, ignoring case, so the list may include more requests than the row count.';
+  if (dim === 'statusCode') return 'Status code matching is by contained text, ignoring case, so the list may include more requests than the row count.';
+  return null;
+}
+
+/** The notes the panel shows for one breakdown, in order. */
+export function breakdownNotes(dim: BreakdownDim, pooledKinds: boolean | undefined): string[] {
+  return [pooledKinds ? pooledKindsNote : null, matchingNote(dim), nonAtomicNote].filter((note): note is string => note !== null);
+}
+
+/** The tooltip of a row's button. A row with no filter says why in one sentence; the UI never invents a filter. */
+export function breakdownPickTitle(dim: BreakdownDim, row: BreakdownRow | null): string {
+  if (!row) return 'These are the remaining values, so they cannot be listed together; narrow the period or filters to see them.';
+  if (breakdownRowFilter(row)) return dim === 'userAgent' ? 'Show requests whose user agent contains this text (not case sensitive)' : 'Show matching requests';
+  if (row.missing) return 'No filter selects a missing value, so these requests cannot be listed from here.';
+  if (dim === 'pollingType') return 'Polling type is not a request filter, so these requests cannot be listed from here.';
+  return 'This value cannot be used as a filter (too long or cut off), so these requests cannot be listed from here.';
+}
+
+/** A percentile cell: an em dash when the kind is pooled, N/A without a valid timing. */
+export function percentileText(quantile: { valueMs?: number | null } | null | undefined, pooledKinds: boolean | undefined): string {
+  if (pooledKinds) return '—';
+  return quantile?.valueMs == null ? 'N/A' : '≈ ' + quantile.valueMs.toFixed(1) + ' ms';
+}

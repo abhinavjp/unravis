@@ -89,9 +89,10 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 		src.ok = true
 		merged.Merge(src.builder)
 	}
+	pooled := audit.PooledKind(q.Kind)
 	keys := merged.TopKeys()
 	for _, src := range sources {
-		if !src.ok || src.legacy || len(keys) == 0 {
+		if !src.ok || src.legacy || len(keys) == 0 || pooled {
 			continue
 		}
 		release, code, message := s.admit(ctx, src.p)
@@ -111,6 +112,7 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 	}
 	final := audit.NewBreakdownBuilder(input.Dim, input.Top)
 	final.SetValueCap(breakdownValueCap(input.Dim))
+	final.SetPooled(pooled)
 	results := make([]audit.SourceResult, 0, len(sources))
 	for _, src := range sources {
 		if src.ok {

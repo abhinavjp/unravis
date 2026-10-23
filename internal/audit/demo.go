@@ -422,6 +422,7 @@ func (d *demoRepository) Breakdown(ctx context.Context, input BreakdownInput) (B
 		sources[id] = true
 	}
 	builder := NewBreakdownBuilder(input.Dim, input.Top)
+	builder.SetPooled(PooledKind(q.Kind))
 	for _, r := range d.records {
 		if !sources[r.SourceID] || r.InitiatedAt == nil || r.InitiatedAt.Before(q.Start) || !r.InitiatedAt.Before(q.End) {
 			continue

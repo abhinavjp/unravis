@@ -471,7 +471,14 @@ func evalExpr(t *testing.T, expr any, doc map[string]any) any {
 			return false
 		case "$substrCP":
 			a := args()
-			runes := []rune(a[0].(string))
+			text, isText := "", false
+			if len(a) >= 3 {
+				text, isText = a[0].(string)
+			}
+			if !isText {
+				return ""
+			}
+			runes := []rune(text)
 			start, _ := pipelineNum(a[1])
 			length, _ := pipelineNum(a[2])
 			if int(start) >= len(runes) {

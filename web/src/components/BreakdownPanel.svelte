@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { api } from '../lib/api';
-  import { breakdownDims, breakdownRowFilter, withoutDimension } from '../lib/breakdown';
-  import type { Breakdown, BreakdownDim, BreakdownFilter, BreakdownRow, Quantile, Query } from '../lib/types';
+  import { breakdownDims, breakdownNotes, breakdownPickTitle, breakdownRowFilter, completeTitle, percentileText, withoutDimension } from '../lib/breakdown';
+  import type { Breakdown, BreakdownDim, BreakdownFilter, BreakdownRow, Query } from '../lib/types';
   let { query, sourceLabels, onDrill }: {
     query: Query; sourceLabels: Map<string, string>; onDrill: (filter: BreakdownFilter, row: BreakdownRow, dim: BreakdownDim) => void;
   } = $props();
@@ -17,7 +17,9 @@
   const requestKey = $derived(JSON.stringify([withoutDimension(query, dim), dim, visible]));
   const label = $derived(breakdownDims.find(item => item.dim === dim)?.label ?? '');
   const failing = $derived((result?.sources ?? []).filter(source => !source.ok));
-  const ms = (q: Quantile | null | undefined) => q?.valueMs == null ? 'N/A' : '≈ ' + q.valueMs.toFixed(1) + ' ms';
+  const pooled = $derived(result?.pooledKinds === true);
+  const notes = $derived(breakdownNotes(dim, pooled));
+  const timings = (row: BreakdownRow) => pooled ? 'Percentiles are not shown for pooled request types' : row.stats.count + ' valid timings';
   const whole = (value: number) => value.toLocaleString();
 
   async function load(key: string) {
@@ -50,7 +52,7 @@
 </script>
 
 <section class="data-section breakdown-panel" id="breakdown" aria-label="Request breakdown">
-  <div class="section-heading"><div><h3>Break these requests down</h3><p>See which {label.toLowerCase()} values the requests in the current period share. Choose a row to list exactly those requests. Counts follow the request type and result filters above; the current period only.</p></div></div>
+  <div class="section-heading"><div><h3>Break these requests down</h3><p>See which {label.toLowerCase()} values the requests in the current period share. Choose a row to list matching requests. Counts follow the request type and result filters above; the current period only.</p></div></div>
   <div class="breakdown-tabs" role="tablist" aria-label="Breakdown by">
     {#each breakdownDims as item (item.dim)}
       <button role="tab" aria-selected={dim === item.dim} class:active={dim === item.dim} onclick={() => dim = item.dim}>{item.label}</button>
@@ -61,27 +63,28 @@
   {:else}
     {#if error}<div class="inline-error" role="alert">{error}</div>{/if}
     {#if failing.length}<div class="source-failure compact-failure" role="alert">{#each failing as failed}<span>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}: {failed.error || 'Source unavailable'}</span>{/each}<span>Counts exclude sources that failed.</span></div>{/if}
+    <ul class="breakdown-notes" aria-label="About these numbers">{#each notes as note (note)}<li class:breakdown-note-pooled={pooled && note.startsWith('Choose')}>{note}</li>{/each}</ul>
     <div class="table-scroll breakdown-scroll" aria-busy={loading}>
       <table class="breakdown-table">
-        <thead><tr><th>{label}</th><th title="Requests in this group">Requests</th><th title="Median total time, from valid completed requests only">P50</th><th title="About 95 in 100 of these requests finished within this time">P95</th><th title="Responses with a 4xx status">4xx</th><th title="Responses with a 5xx status, and failed jobs">5xx</th><th title="No complete duration was recorded">Missing timing</th><th title="Asynchronous requests that only answered 202 Accepted">Pending</th></tr></thead>
+        <thead><tr><th>{label}</th><th title="Requests in this group">Requests</th><th title="Median total time, from valid completed requests only">P50</th><th title="About 95 in 100 of these requests finished within this time">P95</th><th title="Responses with a 4xx status">4xx</th><th title="Responses with a 5xx status, and failed jobs">5xx</th><th title={completeTitle}>Complete</th><th title="Requests with no complete duration recorded">Missing timing</th><th title="Asynchronous requests that only answered 202 Accepted">Pending</th></tr></thead>
         <tbody>
           {#if result}
             {#each result.rows as row (row.value + '|' + row.missing)}
               {@const filter = breakdownRowFilter(row)}
               <tr>
-                <td><button class="breakdown-pick" class:breakdown-missing={row.missing} disabled={!filter} title={filter ? (dim === 'userAgent' ? 'Show requests whose user agent contains this text (not case sensitive)' : 'Show these requests') : 'These requests cannot be listed by this value'} onclick={() => filter && onDrill(filter, row, dim)}>{row.value}</button></td>
-                <td class="numeric">{whole(row.count)}</td><td title={row.stats.count + ' valid timings'}>{ms(row.stats.p50)}</td><td title={row.stats.count + ' valid timings'}>{ms(row.stats.p95)}</td>
-                <td>{whole(row.count4xx)}</td><td>{whole(row.count5xx)}</td><td>{whole(row.incomplete)}</td><td>{whole(row.pending)}</td>
+                <td title={filter ? undefined : breakdownPickTitle(dim, row)}><button class="breakdown-pick" class:breakdown-missing={row.missing} disabled={!filter} title={breakdownPickTitle(dim, row)} onclick={() => filter && onDrill(filter, row, dim)}>{row.value}</button></td>
+                <td class="numeric">{whole(row.count)}</td><td title={timings(row)}>{percentileText(row.stats.p50, pooled)}</td><td title={timings(row)}>{percentileText(row.stats.p95, pooled)}</td>
+                <td>{whole(row.count4xx)}</td><td>{whole(row.count5xx)}</td><td>{whole(row.complete)}</td><td>{whole(row.incomplete)}</td><td>{whole(row.pending)}</td>
               </tr>
-            {:else}<tr><td colspan="8" class="table-empty">{loading ? 'Reading the breakdown…' : 'No requests match the current filters.'}</td></tr>{/each}
+            {:else}<tr><td colspan="9" class="table-empty">{loading ? 'Reading the breakdown…' : 'No requests match the current filters.'}</td></tr>{/each}
             {#if result.other}
               <tr class="breakdown-other">
-                <td>Other{result.other.values ? ` (${whole(result.other.values)} values)` : ''}<small>Not selectable: narrow the period or filters to see these.</small></td>
-                <td class="numeric">{whole(result.other.count)}</td><td>{ms(result.other.stats.p50)}</td><td>{ms(result.other.stats.p95)}</td>
-                <td>{whole(result.other.count4xx)}</td><td>{whole(result.other.count5xx)}</td><td>{whole(result.other.incomplete)}</td><td>{whole(result.other.pending)}</td>
+                <td title={breakdownPickTitle(dim, null)}>Other{result.other.values ? ` (${whole(result.other.values)} values)` : ''}<small>Not selectable: narrow the period or filters to see these.</small></td>
+                <td class="numeric">{whole(result.other.count)}</td><td>{percentileText(result.other.stats.p50, pooled)}</td><td>{percentileText(result.other.stats.p95, pooled)}</td>
+                <td>{whole(result.other.count4xx)}</td><td>{whole(result.other.count5xx)}</td><td>{whole(result.other.complete)}</td><td>{whole(result.other.incomplete)}</td><td>{whole(result.other.pending)}</td>
               </tr>
             {/if}
-          {:else}<tr><td colspan="8" class="table-empty">{loading ? 'Reading the breakdown…' : 'The breakdown is not available.'}</td></tr>{/if}
+          {:else}<tr><td colspan="9" class="table-empty">{loading ? 'Reading the breakdown…' : 'The breakdown is not available.'}</td></tr>{/if}
         </tbody>
       </table>
     </div>

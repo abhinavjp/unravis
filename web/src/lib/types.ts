@@ -109,5 +109,6 @@ export interface BreakdownRow {
   value: string; missing: boolean; count: number; complete: number; incomplete: number; pending: number;
   count4xx: number; count5xx: number; stats: Stats; filter?: BreakdownFilter; values?: number;
 }
-export interface Breakdown { dim: BreakdownDim; rows: BreakdownRow[]; other: BreakdownRow | null; total: number; distinct: number; sources: SourceResult[] }
+/** pooledKinds is set when the query kind (All, HTTP) pools request types: counts stay, but no row carries a percentile. */
+export interface Breakdown { dim: BreakdownDim; rows: BreakdownRow[]; other: BreakdownRow | null; total: number; distinct: number; pooledKinds?: boolean; sources: SourceResult[] }
 export interface BreakdownInput { query: Query; dim: BreakdownDim; top: number }

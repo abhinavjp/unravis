@@ -1,11 +1,13 @@
 package audit
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func breakdownFacts(r RequestRecord) RecordFacts {
@@ -138,6 +140,75 @@ func TestBreakdownBuilderRanksAndBuildsOther(t *testing.T) {
 	}
 	if out.Rows[1].Stats.Count != 3 || out.Rows[0].Stats.Count != 0 {
 		t.Fatalf("stats must come from valid bins only: %#v %#v", out.Rows[1].Stats, out.Rows[0].Stats)
+	}
+}
+
+func TestPooledKindNeverPoolsAcrossKinds(t *testing.T) {
+	for kind, want := range map[string]bool{
+		"all": true, KindHTTP: true, "": true,
+		"synchronous": false, "asynchronous": false, "hangfire": false, KindHTTPUnknown: false,
+	} {
+		if got := PooledKind(kind); got != want {
+			t.Errorf("PooledKind(%q) = %v, want %v", kind, got, want)
+		}
+	}
+}
+
+func TestBreakdownBuilderPooledDropsPercentilesKeepsCounts(t *testing.T) {
+	for _, pooled := range []bool{false, true} {
+		b := NewBreakdownBuilder(BreakdownUserID, 1)
+		b.SetPooled(pooled)
+		b.AddCounts("3", BreakdownCounts{Count: 4, Incomplete: 1, Count4xx: 1})
+		b.AddCounts("9", BreakdownCounts{Count: 2, Count5xx: 1})
+		b.AddBin("3", BinIndex(100), 3, 300, 100, 100)
+		b.AddBin("9", BinIndex(200), 1, 200, 200, 200)
+		out, err := b.Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.PooledKinds != pooled || out.Total != 6 || len(out.Rows) != 1 || out.Other == nil {
+			t.Fatalf("pooled=%v: %#v", pooled, out)
+		}
+		row := out.Rows[0]
+		if row.Count != 4 || row.Incomplete != 1 || row.Count4xx != 1 || out.Other.Count != 2 || out.Other.Count5xx != 1 {
+			t.Fatalf("pooled=%v: counts changed: %#v %#v", pooled, row, out.Other)
+		}
+		for name, stats := range map[string]Stats{"row": row.Stats, "other": out.Other.Stats} {
+			if pooled && (stats.Count != 0 || stats.P50 != nil || stats.P95 != nil) {
+				t.Errorf("%s carries a pooled percentile: %#v", name, stats)
+			}
+			if !pooled && (stats.Count == 0 || stats.P50 == nil || stats.P95 == nil) {
+				t.Errorf("%s lost its percentiles under a single kind: %#v", name, stats)
+			}
+		}
+	}
+}
+
+func TestDemoBreakdownFlagsPooledKinds(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	reader, ok := NewDemo(now).(BreakdownReader)
+	if !ok {
+		t.Fatal("demo repository must implement BreakdownReader")
+	}
+	for _, kind := range []string{"all", "http", "synchronous"} {
+		q := Query{
+			SourceIDs: []string{"demo-west", "demo-east"}, Start: now.Add(-15 * time.Minute), End: now,
+			BaselineStart: now.Add(-30 * time.Minute), BaselineEnd: now.Add(-15 * time.Minute),
+			Kind: kind, Outcome: "all", Metric: "total", BucketSeconds: 10,
+		}
+		got, err := reader.Breakdown(context.Background(), BreakdownInput{Query: q, Dim: BreakdownUserAgent, Top: 50})
+		if err != nil {
+			t.Fatalf("%s: %v", kind, err)
+		}
+		pooled := kind != "synchronous"
+		if got.PooledKinds != pooled || len(got.Rows) == 0 {
+			t.Fatalf("%s: PooledKinds = %v, rows = %d", kind, got.PooledKinds, len(got.Rows))
+		}
+		for _, row := range got.Rows {
+			if pooled && (row.Stats.P50 != nil || row.Stats.P95 != nil) {
+				t.Errorf("%s: %q carries a pooled percentile", kind, row.Value)
+			}
+		}
 	}
 }
 

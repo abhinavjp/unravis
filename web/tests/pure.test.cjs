@@ -558,6 +558,59 @@ test('breakdown helpers cover every record filter key', () => {
   assert.deepEqual(Object.keys(investigation.serializeRecordFilters(every)).sort(), Object.keys(every).sort());
   assert.deepEqual(breakdown.activeRecordFilter(breakdown.clearRecordFilter({ ...breakdownBase(), ...every })), {});
 });
+test('a pooled-kinds breakdown says why it has no percentiles and shows an em dash', () => {
+  assert.equal(breakdown.pooledKindsNote, 'Choose Synchronous, Asynchronous or Hangfire to see percentiles; types are never pooled.');
+  assert.ok(breakdown.breakdownNotes('userId', true).includes(breakdown.pooledKindsNote));
+  assert.ok(!breakdown.breakdownNotes('userId', false).includes(breakdown.pooledKindsNote));
+  assert.ok(!breakdown.breakdownNotes('userId', undefined).includes(breakdown.pooledKindsNote));
+  const quantile = { lowerMs: 90, upperMs: 110, valueMs: 100 };
+  assert.equal(breakdown.percentileText(quantile, true), '—');
+  assert.equal(breakdown.percentileText(null, true), '—');
+  assert.equal(breakdown.percentileText(quantile, false), '≈ 100.0 ms');
+  assert.equal(breakdown.percentileText(null, false), 'N/A');
+  const panel = fs.readFileSync(path.join(root, 'src/components/BreakdownPanel.svelte'), 'utf8');
+  assert.match(panel, /result\?\.pooledKinds === true/);
+  assert.match(panel, /percentileText\(row\.stats\.p50, pooled\)/);
+  assert.match(panel, /percentileText\(result\.other\.stats\.p95, pooled\)/);
+  assert.match(panel, /breakdownNotes\(dim, pooled\)/);
+  assert.match(fs.readFileSync(path.join(root, 'src/lib/types.ts'), 'utf8'), /pooledKinds\?: boolean/);
+});
+
+test('breakdown copy promises matching requests and explains text matching, non-atomic reads and Complete', () => {
+  const panel = fs.readFileSync(path.join(root, 'src/components/BreakdownPanel.svelte'), 'utf8');
+  assert.match(panel, /Choose a row to list matching requests/);
+  assert.doesNotMatch(panel, /exactly those requests/);
+  assert.match(breakdown.matchingNote('userAgent'), /ignoring case.*more requests than the row count/);
+  assert.match(breakdown.matchingNote('statusCode'), /ignoring case.*more requests than the row count/);
+  for (const dim of ['userId', 'uiVersion', 'userIp', 'pollingType']) assert.equal(breakdown.matchingNote(dim), null);
+  assert.ok(breakdown.breakdownNotes('userAgent', false).includes(breakdown.matchingNote('userAgent')));
+  assert.ok(breakdown.breakdownNotes('userId', false).every(note => note === breakdown.nonAtomicNote));
+  assert.match(breakdown.nonAtomicNote, /two passes.*drift/);
+  assert.match(breakdown.completeTitle, /Requests minus Missing timing.*invalid.*valid timings/);
+  assert.match(panel, /title=\{completeTitle\}>Complete</);
+  // The empty-state rows span every column: nine headers.
+  assert.equal((panel.match(/<th[ >]/g) ?? []).length, 9);
+  assert.equal((panel.match(/colspan="9"/g) ?? []).length, 2);
+});
+
+test('a breakdown row that cannot be listed says why in one sentence and never invents a filter', () => {
+  const other = breakdown.breakdownPickTitle('userAgent', null);
+  const missing = breakdown.breakdownPickTitle('userAgent', { value: '(not yet written)', missing: true, count: 4 });
+  const polling = breakdown.breakdownPickTitle('pollingType', { value: 'Synchronous', count: 4 });
+  const cut = breakdown.breakdownPickTitle('userAgent', { value: 'x'.repeat(300), count: 4 });
+  const listable = breakdown.breakdownPickTitle('userId', { value: '7', count: 4, filter: { userIds: [7] } });
+  assert.match(other, /remaining values/);
+  assert.match(missing, /missing value/);
+  assert.match(polling, /Polling type is not a request filter/);
+  assert.match(cut, /too long or cut off/);
+  assert.equal(listable, 'Show matching requests');
+  assert.equal(new Set([other, missing, polling, cut, listable]).size, 5);
+  for (const title of [other, missing, polling, cut]) assert.equal(title.split('. ').length, 1, 'one sentence: ' + title);
+  // A row without a filter yields no filter, whatever its dimension.
+  assert.equal(breakdown.breakdownRowFilter({ value: '(not yet written)', missing: true, count: 4 }), null);
+  assert.equal(breakdown.breakdownRowFilter({ value: 'Synchronous', count: 4 }), null);
+});
+
 test('percentileThreshold uses cohort p95/p99 and returns null below sample floor', () => {
   const { percentileThreshold, percentileLabel } = loadTypeScript('src/lib/slowness.ts');
   const quantile = (valueMs) => ({ lowerMs: valueMs * 0.95, upperMs: valueMs * 1.05, valueMs });

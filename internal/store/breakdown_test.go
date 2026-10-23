@@ -455,13 +455,34 @@ func bdExpect(cases []bdCase, dim string) map[string]*audit.BreakdownRow {
 
 func TestBreakdownMatchesIndependentOracleOnEveryDimension(t *testing.T) {
 	now := bdNow()
-	cases := bdCases(now)
+	// Latency is only reported for one request type. The pooled kind "all" keeps
+	// the counts but carries no percentiles; the "synchronous" run uses rows that
+	// are all synchronous, so the percentile oracle is exact.
+	for _, kind := range []string{"all", "synchronous"} {
+		cases := bdCases(now)
+		if kind == "synchronous" {
+			for i := range cases {
+				// Pending means an accepted asynchronous request, so it goes too.
+				cases[i].doc["RequestPollingType"], cases[i].pending = "Synchronous", false
+			}
+		}
+		bdOracle(t, now, cases, kind)
+	}
+}
+
+func bdOracle(t *testing.T, now time.Time, cases []bdCase, kind string) {
+	pooled := audit.PooledKind(kind)
 	for _, legacy := range []bool{false, true} {
 		for _, dim := range bdDims {
-			t.Run(fmt.Sprintf("%s/legacy=%v", dim, legacy), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/%s/legacy=%v", kind, dim, legacy), func(t *testing.T) {
 				h := bdStore(t, legacy, bdDocs(cases))
-				got := bdBreakdown(t, h, bdQuery(now), dim, 50)
+				q := bdQuery(now)
+				q.Kind = kind
+				got := bdBreakdown(t, h, q, dim, 50)
 				want := bdExpect(cases, dim)
+				if got.PooledKinds != pooled {
+					t.Fatalf("PooledKinds = %v for kind %q, want %v", got.PooledKinds, kind, pooled)
+				}
 				if got.Other != nil || len(got.Rows) != len(want) || got.Total != 17 {
 					t.Fatalf("rows=%d want %d, other=%v, total=%d", len(got.Rows), len(want), got.Other, got.Total)
 				}
@@ -481,6 +502,12 @@ func TestBreakdownMatchesIndependentOracleOnEveryDimension(t *testing.T) {
 						t.Errorf("%q counts = %d/%d/%d/%d/%d/%d, want %d/%d/%d/%d/%d/%d", key,
 							row.Count, row.Complete, row.Incomplete, row.Pending, row.Count4xx, row.Count5xx,
 							w.Count, w.Complete, w.Incomplete, w.Pending, w.Count4xx, w.Count5xx)
+					}
+					if pooled {
+						if row.Stats.Count != 0 || row.Stats.P50 != nil || row.Stats.P95 != nil || row.Stats.MinMs != nil || row.Stats.MaxMs != nil {
+							t.Errorf("%q must not carry latency under pooled kind %q: %#v", key, kind, row.Stats)
+						}
+						continue
 					}
 					if row.Stats.Count != w.Stats.Count {
 						t.Errorf("%q latency samples = %d, want %d valid rows only", key, row.Stats.Count, w.Stats.Count)
@@ -882,10 +909,28 @@ func TestBreakdownMergesSourcesAndKeepsTopRowsConsistent(t *testing.T) {
 	if got.Total != 34 || len(got.Rows) != 2 || got.Rows[0].Count != 10 || got.Rows[1].Count != 8 || got.Other == nil || got.Other.Count != 16 {
 		t.Fatalf("two identical sources must double every count: %#v", got)
 	}
-	// UA-A has five rows per source; two of them are incomplete, so three are valid.
-	if got.Rows[0].Value != "UA-A" || got.Rows[0].Stats.Count != 6 || got.Rows[0].Incomplete != 4 {
-		t.Fatalf("top row = %#v, want UA-A with 3 valid rows and 2 incomplete per source", got.Rows[0])
+	// Kind "all" pools request types, so no row carries latency.
+	if got.Rows[0].Value != "UA-A" || got.Rows[0].Incomplete != 4 || !got.PooledKinds || got.Rows[0].Stats.Count != 0 {
+		t.Fatalf("top row = %#v, want UA-A with 2 incomplete per source and no pooled latency", got.Rows[0])
 	}
+	// One kind keeps latency. UA-A has five rows per source, one asynchronous and
+	// incomplete (not part of a synchronous query) and one more incomplete, so
+	// three are valid in each source.
+	q := bdQuery(now)
+	q.Kind = "synchronous"
+	one := bdBreakdown(t, h, q, audit.BreakdownUserAgent, 50)
+	if one.PooledKinds {
+		t.Fatal("a single kind must not be flagged as pooled")
+	}
+	for _, row := range one.Rows {
+		if row.Value == "UA-A" {
+			if row.Stats.Count != 6 || row.Stats.P50 == nil || row.Stats.P95 == nil {
+				t.Fatalf("UA-A synchronous stats = %#v, want 6 samples with percentiles", row.Stats)
+			}
+			return
+		}
+	}
+	t.Fatal("UA-A row missing under the synchronous kind")
 }
 
 func TestBreakdownRowFilterDrillCountMatches(t *testing.T) {
@@ -938,6 +983,49 @@ func TestBreakdownRowFilterDrillCountMatches(t *testing.T) {
 		}
 		if sum != got.Total {
 			t.Errorf("%s: rows plus other = %d, total %d", dim, sum, got.Total)
+		}
+	}
+}
+
+func TestBreakdownPooledKindsOmitPercentiles(t *testing.T) {
+	now := bdNow()
+	for _, legacy := range []bool{false, true} {
+		for _, kind := range []string{"all", "http", "synchronous", "asynchronous", "hangfire", "http_unknown"} {
+			t.Run(fmt.Sprintf("%s/legacy=%v", kind, legacy), func(t *testing.T) {
+				docs := bdDocs(bdCases(now))
+				for _, d := range docs {
+					d["RequestPollingType"] = "Synchronous"
+				}
+				h := bdStore(t, legacy, docs)
+				q := bdQuery(now)
+				q.Kind = kind
+				got := bdBreakdown(t, h, q, audit.BreakdownUserAgent, 3)
+				pooled := kind == "all" || kind == "http"
+				if got.PooledKinds != pooled {
+					t.Fatalf("PooledKinds = %v, want %v", got.PooledKinds, pooled)
+				}
+				rows := append([]audit.BreakdownRow{}, got.Rows...)
+				if got.Other != nil {
+					rows = append(rows, audit.BreakdownRow{Value: got.Other.Value, Stats: got.Other.Stats})
+				}
+				for _, row := range rows {
+					if pooled {
+						if row.Stats.Count != 0 || row.Stats.P50 != nil || row.Stats.P95 != nil {
+							t.Errorf("%q carries a pooled latency under kind %q: %#v", row.Value, kind, row.Stats)
+						}
+					} else if got.Total > 0 && row.Value == "UA-A" && (row.Stats.Count == 0 || row.Stats.P50 == nil || row.Stats.P95 == nil) {
+						t.Errorf("%q has no percentiles under single kind %q: %#v", row.Value, kind, row.Stats)
+					}
+				}
+				if pooled {
+					if got.Total != 17 || got.Rows[0].Count != 5 || got.Rows[0].Incomplete != 2 || got.Other == nil || got.Other.Count != 5 {
+						t.Fatalf("counts must survive pooling: total=%d rows=%#v other=%v", got.Total, got.Rows, got.Other)
+					}
+					if !legacy && len(h.pipelines) != 1 {
+						t.Errorf("a pooled breakdown needs no histogram pass, got %d aggregations", len(h.pipelines))
+					}
+				}
+			})
 		}
 	}
 }
