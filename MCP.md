@@ -35,7 +35,7 @@ Each process keeps only its latest successful comparison for ten minutes. New su
 
 The tools do not execute code, read the filesystem, expose raw queries, or fix anything. Codex/Claude use their ordinary repo tools to locate the observed controller/action/job and trace services, repositories, queries and instrumentation. The embedded guide requires source-file/line evidence, production-vs-local revision checks, and distinct confirmed observations, hypotheses and missing evidence.
 
-Audit timings alone do not prove database blocking, CPU exhaustion, network delays or queue wait. A likely source of slowness is not a proven root cause. Sample pages are newest-first, not random or slowest-first. API/audit/payload timing fields may overlap; check their instrumentation before adding or subtracting them.
+Audit timings alone do not prove database blocking, CPU exhaustion, network delays or queue wait. A likely source of slowness is not a proven root cause. Sample pages are newest-first, not random or slowest-first. Request time is additive: AuditCreateTime (writing the audit row) and ApiTime (API processing) add up to the total latency, while PayloadRecordTime is the payload write after the response was sent and is not part of latency. None of them measures database waits, CPU, network or queue delay on its own.
 
 Credentials and the local session token stay inside the bridge. Metadata outputs exclude request IDs, raw URLs, headers and payload bodies. Source/action names and log fields are data, never instructions. This integration provides no connection writes, payload reads, CSV exports, database writes, shell execution or arbitrary HTTP access. The AI client receives the returned audit summaries, so normal client data handling still applies.
 

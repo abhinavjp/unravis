@@ -217,6 +217,26 @@ func TestPipelineGroupsPhaseSumsWithPerPhaseCounts(t *testing.T) {
 					t.Fatalf("%s/%s: $group field is %v, want a $sum", metric, key, groupField(group, key))
 				}
 			}
+			// Both the value sum and the presence count are gated by $cond on a valid
+			// document whose extracted phase is >= 0 and < MaxFloat64.
+			for _, key := range []string{phase.sum, phase.count} {
+				gate := `{"$cond":[{"$and":[{"$eq":["$_auditState","valid"]},{"$gte":["` + "$" + phase.temp + `",0]},{"$lt":["` + "$" + phase.temp + `",1.7976931348623157E+308]}]},`
+				text, err := bson.MarshalExtJSON(bson.D{{Key: "e", Value: groupField(group, key)}}, false, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(text), gate) {
+					t.Errorf("%s/%s lacks the presence gate %s: %s", metric, key, gate, text)
+				}
+				// The else branch adds nothing, and a count adds exactly 1 per present document.
+				want := `"$` + phase.temp + `",0]}}}`
+				if key == phase.count {
+					want = `,1,0]}}}`
+				}
+				if !strings.HasSuffix(string(text), want) {
+					t.Errorf("%s/%s has the wrong then/else branches: %s", metric, key, text)
+				}
+			}
 			encoded, err := bson.MarshalExtJSON(bson.D{{Key: "e", Value: groupField(group, phase.sum)}}, false, false)
 			if err != nil {
 				t.Fatal(err)
