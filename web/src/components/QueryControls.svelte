@@ -3,7 +3,7 @@
   import type { Completion, Query } from '../lib/types';
   import { bucketForWindows, fromLocalParts, toLocalDatePart, toLocalTimePart, zones } from '../lib/time';
   import { metricLabels } from '../lib/presentation';
-  import { isValidOperation, isValidUserId } from '../lib/investigation';
+  import { isValidOperation, isValidUserId, splitList, syncListDraft, syncOperationDraft } from '../lib/investigation';
   import DateTimeField from './DateTimeField.svelte';
   let { query = $bindable(), zone = $bindable(), targetMs = $bindable(), dateInputsValid = $bindable(), groupNames = [] }: { query: Query; zone: string; targetMs: number | null; dateInputsValid: boolean; groupNames?: string[] } = $props();
   let timeInputError = $state('');
@@ -14,7 +14,6 @@
   // their own draft so that typing "1, " is not rewritten under the cursor.
   const MAX_OPERATION_SUGGESTIONS = 500;
   const AUDIT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
-  const splitList = (text: string) => [...new Set(text.split(',').map(item => item.trim()).filter(Boolean))];
   const joinList = (items: readonly (string | number)[] | undefined) => (items ?? []).join(', ');
   const initialText = untrack(() => ({ userIds: joinList(query.userIds), uiVersions: joinList(query.uiVersions), userIps: joinList(query.userIps), statusCodes: joinList(query.statusCodes), operation: query.operation ?? '' }));
   let userIdsText = $state(initialText.userIds);
@@ -23,6 +22,19 @@
   let statusCodesText = $state(initialText.statusCodes);
   let operationText = $state(initialText.operation);
   const userIdOk = (item: string) => /^\d{1,10}$/.test(item) && isValidUserId(Number(item));
+  // The query can be replaced after this component mounts (a restored or saved
+  // investigation), so each draft follows the query. A draft that still parses to
+  // the applied values is left alone, which keeps partial typing intact.
+  $effect(() => {
+    const applied = { userIds: query.userIds, uiVersions: query.uiVersions, userIps: query.userIps, statusCodes: query.statusCodes, operation: query.operation };
+    untrack(() => {
+      userIdsText = syncListDraft(userIdsText, applied.userIds, userIdOk);
+      uiVersionsText = syncListDraft(uiVersionsText, applied.uiVersions);
+      userIpsText = syncListDraft(userIpsText, applied.userIps);
+      statusCodesText = syncListDraft(statusCodesText, applied.statusCodes);
+      operationText = syncOperationDraft(operationText, applied.operation);
+    });
+  });
   const rejectedUserIds = $derived(splitList(userIdsText).filter(item => !userIdOk(item)));
   const auditIdInvalid = $derived(!!query.auditId && !AUDIT_ID_PATTERN.test(query.auditId));
   const operationInvalid = $derived(!!operationText.trim() && !isValidOperation(operationText));

@@ -21,6 +21,27 @@ export const isValidOperation = (text: string): boolean => {
   const dot = value.indexOf('.');
   return dot > 0 && dot < value.length - 1;
 };
+/** Splits comma-separated text into trimmed, distinct, non-empty items. */
+export const splitList = (text: string): string[] => [...new Set(text.split(',').map(item => item.trim()).filter(Boolean))];
+const sameItems = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((item, index) => item === b[index]);
+/**
+ * syncListDraft returns the text a comma-list box should show for the applied
+ * filter values. The draft is kept as typed while it parses (keeping only items
+ * that pass `keep`, in the numeric case compared as numbers) to exactly the applied
+ * values, so "1, " or a rejected token survives typing; otherwise it is rewritten
+ * from the applied values, which is how a restored or cleared query reaches the box.
+ */
+export const syncListDraft = (draft: string, applied: readonly (string | number)[] | undefined, keep: (item: string) => boolean = () => true): string => {
+  const want = (applied ?? []).map(String);
+  const numeric = (applied ?? []).some(item => typeof item === 'number');
+  const parsed = splitList(draft).filter(keep).map(item => (numeric ? String(Number(item)) : item));
+  return sameItems([...new Set(parsed)], want) ? draft : want.join(', ');
+};
+/** The same for the Operation box, whose applied value is undefined while the draft is invalid. */
+export const syncOperationDraft = (draft: string, applied: string | undefined): string => {
+  const parsed = draft.trim() && isValidOperation(draft) ? draft.trim() : undefined;
+  return parsed === applied ? draft : (applied ?? '');
+};
 const cleanStrings = (value: unknown, max: number): string[] | undefined => {
   if (!Array.isArray(value)) return undefined;
   const items = [...new Set(value.filter((item): item is string => typeof item === 'string').map(item => item.trim()).filter(Boolean))].slice(0, max);

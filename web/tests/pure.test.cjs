@@ -588,6 +588,36 @@ test('operation and user id validity match the server rules', () => {
   assert.deepEqual(serializeRecordFilters({ operation: 'PayrollRun', userIds: [0, -3, 2147483648, 5] }), { userIds: [5] });
 });
 
+test('filter drafts resync from a restored query without clobbering partial typing', () => {
+  const { syncListDraft, syncOperationDraft, isValidUserId } = investigation;
+  // A restored query fills a blank draft.
+  assert.equal(syncOperationDraft('', 'Payroll.Run'), 'Payroll.Run');
+  assert.equal(syncListDraft('', ['2.1', '2.2']), '2.1, 2.2');
+  assert.equal(syncListDraft('', [7, 9]), '7, 9');
+  // A cleared query empties a draft that was applied, and a stale one is replaced.
+  assert.equal(syncOperationDraft('Payroll.Run', undefined), '');
+  assert.equal(syncListDraft('7, 9', undefined), '');
+  assert.equal(syncListDraft('7', [8]), '8');
+  assert.equal(syncOperationDraft('Old.Op', 'Payroll.Run'), 'Payroll.Run');
+  // What the user is typing stays as typed while it parses to the applied value.
+  assert.equal(syncOperationDraft(' Payroll.Run ', 'Payroll.Run'), ' Payroll.Run ');
+  assert.equal(syncOperationDraft('Payroll', undefined), 'Payroll');
+  assert.equal(syncOperationDraft('Payroll.', undefined), 'Payroll.');
+  assert.equal(syncListDraft('2.1, ', ['2.1']), '2.1, ');
+  assert.equal(syncListDraft('2.1,2.1', ['2.1']), '2.1,2.1');
+  assert.equal(syncListDraft('', undefined), '');
+  const ok = (item) => /^\d{1,10}$/.test(item) && isValidUserId(Number(item));
+  assert.equal(syncListDraft('007, abc, ', [7], ok), '007, abc, ');
+  assert.equal(syncListDraft('7, 07', [7], ok), '7, 07');
+});
+
+test('QueryControls resyncs its drafts from the query', () => {
+  const source = fs.readFileSync(path.join(root, 'src/components/QueryControls.svelte'), 'utf8');
+  assert.match(source, /syncOperationDraft\(/);
+  assert.equal((source.match(/syncListDraft\(/g) ?? []).length >= 4, true);
+  assert.match(source, /\$effect\(/);
+});
+
 test('record filters survive a saved investigation and an old snapshot without them still loads', () => {
   const filters = { userIds: [7], completion: 'pending', operation: 'Payroll.Run', urlContains: '/pay' };
   const snapshot = investigation.createInvestigationSnapshot({ ...recordFilterBase, ...filters, uiVersions: [], auditId: '' }, [], 'UTC', null);
