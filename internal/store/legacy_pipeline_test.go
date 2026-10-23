@@ -501,3 +501,56 @@ func TestLegacyOutcomeFiltersSelectStatusClasses(t *testing.T) {
 		}
 	}
 }
+
+func legacyIncompleteDoc(polling, status any, at time.Time) bson.D {
+	var doc bson.D
+	for _, e := range legacyStatusDoc(polling, status, at) {
+		if e.Key != "RequestCompletedAt" && e.Key != "ApiTime" {
+			doc = append(doc, e)
+		}
+	}
+	return doc
+}
+
+func TestLegacyClassFilterDropsKnownOtherClassWhateverTheState(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	q.Kind = "all"
+	at := q.Start.Add(time.Second)
+	docs := []bson.D{
+		legacyStatusDoc("Synchronous", "NotFound", at),
+		legacyStatusDoc("Synchronous", "InternalServerError", at),
+		legacyIncompleteDoc("Synchronous", "NotFound", at),
+		legacyIncompleteDoc("Synchronous", "InternalServerError", at),
+		legacyIncompleteDoc("Synchronous", "Weird", at),
+		legacyIncompleteDoc("Asynchronous", "Accepted", at),
+	}
+	cases := []struct {
+		outcome             string
+		count, c4xx, c5xx   int64
+		failureBucketsTotal int64
+	}{
+		// An incomplete 500 is a known server error, so a client_error view drops it,
+		// and the reverse. Unknown and pending rows stay for the quality counts.
+		{"client_error", 4, 2, 0, 2},
+		{"server_error", 4, 0, 2, 2},
+		{"failure", 6, 2, 2, 4},
+		{"all", 6, 2, 2, 4},
+	}
+	for _, c := range cases {
+		q.Outcome = c.outcome
+		buckets := legacyBucketsFor(t, q, docs...)
+		count, c4xx, c5xx, _ := legacyStatusTotals(buckets)
+		if count != c.count || c4xx != c.c4xx || c5xx != c.c5xx {
+			t.Errorf("%s: count/4xx/5xx = %d/%d/%d, want %d/%d/%d", c.outcome, count, c4xx, c5xx, c.count, c.c4xx, c.c5xx)
+		}
+		var failures int64
+		for _, b := range buckets {
+			if b.Outcome == "failure" {
+				failures += b.Count
+			}
+		}
+		if failures != c.failureBucketsTotal {
+			t.Errorf("%s: failure-outcome rows = %d, want %d (the rows a requestVolume or drill-down would count)", c.outcome, failures, c.failureBucketsTotal)
+		}
+	}
+}

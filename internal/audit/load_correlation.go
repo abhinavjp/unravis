@@ -32,7 +32,9 @@ type Rollup struct {
 // when allOutcomes is false the failure share is unknowable and ErrorRate stays
 // nil; throughput is still reported. ClientErrorRate (4xx) and ServerErrorRate
 // (5xx plus failed hangfire jobs) split ErrorRate and follow the same rule;
-// together they never exceed it.
+// together they never exceed it. They are also nil when the status counters do
+// not account for every failure of the API (buckets that carry no counters), so
+// a missing split is never shown as 0%.
 func buildRollups(cohorts map[string]*cohortAccumulator, windowMinutes float64, allOutcomes bool) []Rollup {
 	type name struct{ controller, action string }
 	byName := map[name]*Rollup{}
@@ -62,9 +64,11 @@ func buildRollups(cohorts map[string]*cohortAccumulator, windowMinutes float64, 
 			if allOutcomes {
 				rate := float64(r.Failures) / float64(r.Requests)
 				r.ErrorRate = &rate
-				client := float64(clientErrors[key]) / float64(r.Requests)
-				server := float64(serverErrors[key]) / float64(r.Requests)
-				r.ClientErrorRate, r.ServerErrorRate = &client, &server
+				if saturatingAdd(clientErrors[key], serverErrors[key]) == r.Failures {
+					client := float64(clientErrors[key]) / float64(r.Requests)
+					server := float64(serverErrors[key]) / float64(r.Requests)
+					r.ClientErrorRate, r.ServerErrorRate = &client, &server
+				}
 			}
 			if windowMinutes > 0 {
 				r.PerMinute = float64(r.Requests) / windowMinutes

@@ -34,7 +34,7 @@ var statusCodes = map[string]int{
 	"BADREQUEST": 400, "UNAUTHORIZED": 401, "PAYMENTREQUIRED": 402, "FORBIDDEN": 403, "NOTFOUND": 404,
 	"METHODNOTALLOWED": 405, "NOTACCEPTABLE": 406, "PROXYAUTHENTICATIONREQUIRED": 407, "REQUESTTIMEOUT": 408,
 	"CONFLICT": 409, "GONE": 410, "LENGTHREQUIRED": 411, "PRECONDITIONFAILED": 412,
-	"REQUESTENTITYTOOLARGE": 413, "PAYLOADTOOLARGE": 413,
+	"REQUESTENTITYTOOLARGE": 413, "PAYLOADTOOLARGE": 413, "CONTENTTOOLARGE": 413,
 	"REQUESTURITOOLONG": 414, "URITOOLONG": 414,
 	"UNSUPPORTEDMEDIATYPE": 415,
 	"REQUESTEDRANGENOTSATISFIABLE": 416, "RANGENOTSATISFIABLE": 416,
@@ -48,9 +48,10 @@ var statusCodes = map[string]int{
 }
 
 // StatusCodeNumber returns the HTTP status number for a .NET HttpStatusCode
-// name (case-insensitive, aliases included) or for a plain three-digit number
-// between 100 and 599. Anything else, including empty text, decimals, signs and
-// surrounding whitespace, reports false.
+// name (case-insensitive, aliases included) or for an integer string between 100
+// and 599. Like the server's $convert to int, a numeric string may carry one
+// leading plus sign and leading zeros ("+404", "0404"). Anything else, including
+// empty text, decimals, a minus sign and surrounding whitespace, reports false.
 func StatusCodeNumber(name string) (int, bool) {
 	if name == "" {
 		return 0, false
@@ -58,17 +59,21 @@ func StatusCodeNumber(name string) (int, bool) {
 	if code, ok := statusCodes[strings.ToUpper(name)]; ok {
 		return code, true
 	}
-	if len(name) != 3 {
+	digits := strings.TrimPrefix(name, "+")
+	if digits == "" {
 		return 0, false
 	}
 	code := 0
-	for i := 0; i < len(name); i++ {
-		if name[i] < '0' || name[i] > '9' {
+	for i := 0; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
 			return 0, false
 		}
-		code = code*10 + int(name[i]-'0')
+		code = code*10 + int(digits[i]-'0')
+		if code > 599 {
+			return 0, false
+		}
 	}
-	if code < 100 || code > 599 {
+	if code < 100 {
 		return 0, false
 	}
 	return code, true

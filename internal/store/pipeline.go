@@ -152,7 +152,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 		stages = append(stages, bson.D{{Key: "$match", Value: bson.D{{Key: "$or", Value: bson.A{bson.D{{Key: "_auditKind", Value: q.Kind}}, bson.D{{Key: "_auditState", Value: bson.D{{Key: "$ne", Value: "valid"}}}}}}}}})
 	}
 	if q.Outcome != "all" {
-		stages = append(stages, bson.D{{Key: "$match", Value: bson.D{{Key: "$or", Value: bson.A{bson.D{outcomeFilterElem(q.Outcome)}, bson.D{{Key: "_auditOutcome", Value: "unknown"}}, bson.D{{Key: "_auditState", Value: bson.D{{Key: "$ne", Value: "valid"}}}}}}}}})
+		stages = append(stages, bson.D{{Key: "$match", Value: outcomeFilterMatch(q.Outcome)}})
 	}
 	stages = append(stages,
 		bson.D{{Key: "$group", Value: bson.D{
@@ -179,7 +179,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 	return stages
 }
 
-// statusClassSets holds the upper-cased .NET status names of each numeric class,
+// statusClassNameSets holds the upper-cased .NET status names of each numeric class,
 // taken from audit.StatusNames so the server pipeline and the Go classifier share
 // one table.
 type statusClassNameSets struct{ success, redirect, clientError, serverError bson.A }
@@ -250,6 +250,20 @@ func outcomeFromClassExpr() bson.D {
 // kind, outcome).
 func statusClassCount(class string) bson.D {
 	return bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$_statusClass", class}}}, 1, 0}}}}}
+}
+
+// outcomeFilterMatch is the summary $match for a query outcome filter. success
+// and failure keep every row that is unknown or not valid, so the quality counts
+// stay honest. client_error and server_error select by status class instead: a
+// row whose class is known but outside the filter is dropped whatever its state,
+// so an incomplete 500 never sits in a client_error cohort. Only rows whose
+// outcome is unknown (class unknown or pending) are kept besides the match.
+func outcomeFilterMatch(outcome string) bson.D {
+	unknown := bson.D{{Key: "_auditOutcome", Value: "unknown"}}
+	if audit.IsStatusClassOutcome(outcome) {
+		return bson.D{{Key: "$or", Value: bson.A{bson.D{outcomeFilterElem(outcome)}, unknown}}}
+	}
+	return bson.D{{Key: "$or", Value: bson.A{bson.D{outcomeFilterElem(outcome)}, unknown, bson.D{{Key: "_auditState", Value: bson.D{{Key: "$ne", Value: "valid"}}}}}}}
 }
 
 // outcomeFilterElem is the $match condition for a query outcome filter. success

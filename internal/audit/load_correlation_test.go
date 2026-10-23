@@ -309,7 +309,7 @@ func TestRollupSplitsClientAndServerErrorRates(t *testing.T) {
 	var current []Bucket
 	current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "success", "valid", anchor, 80, 10)...)
 	failures := makeBuckets("s1", "Payroll", "Run", "synchronous", "failure", "valid", anchor, 20, 10)
-	failures[0].Count4xx, failures[0].Count5xx, failures[0].CountHangfireFailed = failures[0].Count/2, failures[0].Count/4, 0
+	failures[0].Count4xx, failures[0].Count5xx, failures[0].CountHangfireFailed = failures[0].Count/2, failures[0].Count/4, failures[0].Count-failures[0].Count/2-failures[0].Count/4
 	var fourXX, serverSide int64
 	for _, b := range failures {
 		fourXX += b.Count4xx
@@ -338,6 +338,46 @@ func TestRollupSplitsClientAndServerErrorRates(t *testing.T) {
 	}
 	if got := filtered.Rollups[0]; got.ErrorRate != nil || got.ClientErrorRate != nil || got.ServerErrorRate != nil {
 		t.Fatalf("rates under an outcome filter = %#v, want nil", got)
+	}
+}
+
+func TestRollupSplitIsNilWhenCountersDoNotCoverEveryFailure(t *testing.T) {
+	q := analysisQuery()
+	var current []Bucket
+	current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "success", "valid", anchor, 80, 10)...)
+	// Failure buckets without status counters (a source that predates them, or demo
+	// data) still give a merged error rate, but no 4xx/5xx split: 0% would be false.
+	current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "failure", "valid", anchor, 20, 10)...)
+	// A second API whose counters cover only part of its failures is not split either.
+	current = append(current, makeBuckets("s1", "Other", "Go", "synchronous", "success", "valid", anchor, 80, 10)...)
+	partial := makeBuckets("s1", "Other", "Go", "synchronous", "failure", "valid", anchor, 20, 10)
+	partial[0].Count4xx = 5
+	current = append(current, partial...)
+	// A third API is fully covered and keeps its split.
+	current = append(current, makeBuckets("s1", "Third", "Go", "synchronous", "success", "valid", anchor, 80, 10)...)
+	covered := makeBuckets("s1", "Third", "Go", "synchronous", "failure", "valid", anchor, 20, 10)
+	covered[0].Count4xx, covered[0].Count5xx = 5, covered[0].Count-5
+	current = append(current, covered...)
+	analysis, err := BuildAnalysis(q, current, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Rollup{}
+	for _, r := range analysis.Rollups {
+		byName[r.Controller+"."+r.Action] = r
+	}
+	for _, name := range []string{"Payroll.Run", "Other.Go"} {
+		r := byName[name]
+		if r.ErrorRate == nil || math.Abs(*r.ErrorRate-0.2) > 1e-12 {
+			t.Fatalf("%s ErrorRate = %v, want 0.2", name, r.ErrorRate)
+		}
+		if r.ClientErrorRate != nil || r.ServerErrorRate != nil {
+			t.Errorf("%s split = %v/%v, want nil when the counters miss failures", name, r.ClientErrorRate, r.ServerErrorRate)
+		}
+	}
+	third := byName["Third.Go"]
+	if third.ClientErrorRate == nil || third.ServerErrorRate == nil || math.Abs(*third.ClientErrorRate-0.05) > 1e-12 || math.Abs(*third.ServerErrorRate-0.15) > 1e-12 {
+		t.Errorf("Third.Go split = %v/%v, want 0.05/0.15", third.ClientErrorRate, third.ServerErrorRate)
 	}
 }
 

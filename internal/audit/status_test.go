@@ -24,7 +24,7 @@ var dotNetStatuses = []struct {
 	{"BadRequest", 400}, {"Unauthorized", 401}, {"PaymentRequired", 402}, {"Forbidden", 403}, {"NotFound", 404},
 	{"MethodNotAllowed", 405}, {"NotAcceptable", 406}, {"ProxyAuthenticationRequired", 407}, {"RequestTimeout", 408},
 	{"Conflict", 409}, {"Gone", 410}, {"LengthRequired", 411}, {"PreconditionFailed", 412},
-	{"RequestEntityTooLarge", 413}, {"PayloadTooLarge", 413},
+	{"RequestEntityTooLarge", 413}, {"PayloadTooLarge", 413}, {"ContentTooLarge", 413},
 	{"RequestUriTooLong", 414}, {"UriTooLong", 414},
 	{"UnsupportedMediaType", 415},
 	{"RequestedRangeNotSatisfiable", 416}, {"RangeNotSatisfiable", 416},
@@ -51,9 +51,16 @@ func TestStatusCodeNumberCoversDotNetEnum(t *testing.T) {
 			t.Errorf("StatusCodeNumber(%d) = %d, %v; want the same number back", status.code, numeric, ok)
 		}
 	}
-	for _, name := range []string{"", "Weird", "OKAY", "99", "600", "20x", "-200", "+200", "2000", "200.5", " 200"} {
+	for _, name := range []string{"", "Weird", "OKAY", "99", "600", "20x", "-200", "2000", "200.5", " 200", "200 ", "+", "++200", "+-200", "000099", "0600", "99999999999999999999"} {
 		if got, ok := StatusCodeNumber(name); ok {
 			t.Errorf("StatusCodeNumber(%q) = %d, true; want no match", name, got)
+		}
+	}
+	// The server's $convert to int accepts a leading plus and leading zeros, so
+	// the Go classifier must too or the two paths would disagree.
+	for name, want := range map[string]int{"+200": 200, "0404": 404, "+404": 404, "00500": 500, "+0503": 503} {
+		if got, ok := StatusCodeNumber(name); !ok || got != want {
+			t.Errorf("StatusCodeNumber(%q) = %d, %v; want %d, true", name, got, ok, want)
 		}
 	}
 }

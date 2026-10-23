@@ -162,6 +162,9 @@ test('statusRates splits 4xx and 5xx', () => {
   // A rollup without the split, or without any known result, shows no rate rather than 0%.
   assert.equal(presentation.statusRates({ ...rollup, clientErrorRate: undefined, serverErrorRate: null }, 'all').client, '—');
   assert.equal(presentation.statusRates({ ...rollup, serverErrorRate: null }, 'all').server, '—');
+  const unsplit = presentation.statusRates({ ...rollup, clientErrorRate: null, serverErrorRate: null }, 'all', 'all');
+  assert.deepEqual([unsplit.client, unsplit.server, unsplit.merged], ['—', '—', '15.0%']);
+  assert.match(unsplit.tip, /split is unavailable/);
   assert.equal(presentation.statusRates(undefined, 'all').client, '—');
   assert.match(presentation.statusRates(undefined, 'all').tip, /No requests with a known/);
   assert.match(presentation.statusRates(rollup, 'all', 'hangfire').tip, /Covers only the hangfire requests/);

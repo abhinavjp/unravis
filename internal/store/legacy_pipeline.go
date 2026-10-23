@@ -321,7 +321,7 @@ func readLegacyBuckets(ctx context.Context, p *profile, q audit.Query, start tim
 		if q.Kind != "all" && record.State == "valid" && record.Kind != q.Kind {
 			continue
 		}
-		if record.State == "valid" && record.Outcome != "unknown" && !audit.OutcomeFilterMatches(q.Outcome, record.Outcome, record.StatusClass) {
+		if record.Outcome != "unknown" && (record.State == "valid" || audit.IsStatusClassOutcome(q.Outcome)) && !audit.OutcomeFilterMatches(q.Outcome, record.Outcome, record.StatusClass) {
 			continue
 		}
 		bin := 0

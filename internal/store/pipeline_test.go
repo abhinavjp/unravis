@@ -1,6 +1,7 @@
 package store
 
 import (
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -382,7 +383,27 @@ func evalExpr(t *testing.T, expr any, doc map[string]any) any {
 					return s
 				}
 				return field("onError")
-			case "int", "double":
+			case "int":
+				// A double truncates toward zero and a string must be an integer
+				// (a leading sign and leading zeros are accepted, whitespace and
+				// decimals are not). Anything outside the int32 range is an error.
+				var n float64
+				if v, ok := pipelineNum(in); ok {
+					n = math.Trunc(v)
+				} else if s, ok := in.(string); ok {
+					parsed, err := strconv.ParseInt(s, 10, 64)
+					if err != nil {
+						return field("onError")
+					}
+					n = float64(parsed)
+				} else {
+					return field("onError")
+				}
+				if n < math.MinInt32 || n > math.MaxInt32 {
+					return field("onError")
+				}
+				return n
+			case "double":
 				if n, ok := pipelineNum(in); ok {
 					return n
 				}
@@ -464,6 +485,86 @@ func evalExpr(t *testing.T, expr any, doc map[string]any) any {
 		t.Fatalf("unsupported operator %s", op)
 	}
 	return expr
+}
+
+// evalMatch reports whether doc satisfies a $match document of the shapes the
+// summary and drill-down pipelines emit: field equality, $in, $ne and $type
+// conditions combined with $or and $and. Anything else fails the test.
+func evalMatch(t *testing.T, match bson.D, doc map[string]any) bool {
+	t.Helper()
+	for _, e := range match {
+		switch e.Key {
+		case "$or", "$and":
+			matched := e.Key == "$and"
+			for _, branch := range e.Value.(bson.A) {
+				ok := evalMatch(t, branch.(bson.D), doc)
+				if e.Key == "$or" && ok {
+					matched = true
+				}
+				if e.Key == "$and" && !ok {
+					matched = false
+				}
+			}
+			if !matched {
+				return false
+			}
+		default:
+			value, present := doc[e.Key]
+			if !present {
+				value = pipelineMissing{}
+			}
+			condition, isOps := e.Value.(bson.D)
+			if !isOps {
+				if !reflect.DeepEqual(value, e.Value) {
+					return false
+				}
+				continue
+			}
+			for _, op := range condition {
+				switch op.Key {
+				case "$ne":
+					if reflect.DeepEqual(value, op.Value) {
+						return false
+					}
+				case "$in":
+					found := false
+					for _, item := range op.Value.(bson.A) {
+						found = found || reflect.DeepEqual(value, item)
+					}
+					if !found {
+						return false
+					}
+				case "$type":
+					if pipelineTypeName(value) != op.Value {
+						return false
+					}
+				default:
+					t.Fatalf("unsupported $match operator %s on %s", op.Key, e.Key)
+				}
+			}
+		}
+	}
+	return true
+}
+
+// evalRowSurvives runs doc through the pipeline's $set stages and then every
+// $match stage after the first (the raw-document prefilter), up to any $group.
+// It returns the derived document and whether the row stays in.
+func evalRowSurvives(t *testing.T, pipeline mongo.Pipeline, doc map[string]any) (map[string]any, bool) {
+	t.Helper()
+	derived := evalSetStages(t, pipeline, doc)
+	for i, stage := range pipeline {
+		if stage[0].Key == "$group" {
+			break
+		}
+		if i == 0 || stage[0].Key != "$match" {
+			continue
+		}
+		if !evalMatch(t, stage[0].Value.(bson.D), derived) {
+			return derived, false
+		}
+	}
+	return derived, true
 }
 
 // evalSetStages runs the pipeline's $set stages over doc and returns the
@@ -773,12 +874,14 @@ func TestSummaryPipelineOutcomeFilterSelectsStatusClasses(t *testing.T) {
 				t.Errorf("%s: $match mentions %s = %v, want %v: %s", outcome, class, !want, want, text)
 			}
 		}
-		// Rows with an unknown outcome and rows that are not valid stay in, so the
-		// quality counts remain honest.
-		for _, kept := range []string{`"_auditOutcome":"unknown"`, `"_auditState":{"$ne":"valid"}`} {
-			if !strings.Contains(text, kept) {
-				t.Errorf("%s: $match dropped %s: %s", outcome, kept, text)
-			}
+		// Rows with an unknown outcome stay in, so the quality counts remain
+		// honest. A class filter selects by class whatever the row state, so it
+		// has no state clause that would let a known other-class row through.
+		if !strings.Contains(text, `"_auditOutcome":"unknown"`) {
+			t.Errorf("%s: $match dropped the unknown outcome: %s", outcome, text)
+		}
+		if strings.Contains(text, `"_auditState"`) {
+			t.Errorf("%s: $match keeps non-valid rows of other classes: %s", outcome, text)
 		}
 	}
 	// success and failure keep matching on the coarse outcome.
@@ -787,6 +890,107 @@ func TestSummaryPipelineOutcomeFilterSelectsStatusClasses(t *testing.T) {
 	whole, _ := bson.MarshalExtJSON(bson.D{{Key: "p", Value: buildPipeline(q, q.Start, q.End)}}, false, false)
 	if !strings.Contains(string(whole), `{"_auditOutcome":"failure"}`) {
 		t.Errorf("failure filter lost its coarse outcome match")
+	}
+}
+
+// incompleteDoc is a status fixture row with no completion time, so its state is
+// incomplete (not valid) while its status class is still known.
+func incompleteDoc(fixture statusClassFixture) map[string]any {
+	doc := statusClassDoc(fixture)
+	delete(doc, "RequestCompletedAt")
+	delete(doc, "ApiTime")
+	return doc
+}
+
+func TestSummaryPipelineClassFilterDropsKnownOtherClassWhateverTheState(t *testing.T) {
+	variants := []struct {
+		name string
+		doc  func(statusClassFixture) map[string]any
+		want string
+	}{
+		{"complete", statusClassDoc, "valid"},
+		{"incomplete", incompleteDoc, "incomplete"},
+	}
+	for _, outcome := range []string{"client_error", "server_error"} {
+		q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+		q.Kind, q.Outcome = "all", outcome
+		pipeline := buildPipeline(q, q.Start, q.End)
+		for _, variant := range variants {
+			for _, fixture := range statusClassFixtures() {
+				t.Run(outcome+"/"+variant.name+"/"+fixture.name, func(t *testing.T) {
+					derived, kept := evalRowSurvives(t, pipeline, variant.doc(fixture))
+					if derived["_statusClass"] != fixture.wantClass {
+						t.Fatalf("_statusClass = %v, want %s", derived["_statusClass"], fixture.wantClass)
+					}
+					if fixture.wantClass != "pending" && derived["_auditState"] != variant.want {
+						t.Fatalf("_auditState = %v, want %s", derived["_auditState"], variant.want)
+					}
+					coarse := audit.ClassOutcome(fixture.wantClass)
+					want := coarse == "unknown" || audit.OutcomeFilterMatches(outcome, coarse, fixture.wantClass)
+					if kept != want {
+						t.Fatalf("kept = %v, want %v (class %s, state %v)", kept, want, fixture.wantClass, derived["_auditState"])
+					}
+				})
+			}
+		}
+	}
+	// The two cases the review named, spelled out.
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	q.Kind = "all"
+	incomplete500 := incompleteDoc(statusClassFixture{polling: "Synchronous", status: "InternalServerError"})
+	incomplete404 := incompleteDoc(statusClassFixture{polling: "Synchronous", status: "NotFound"})
+	cases := []struct {
+		outcome string
+		doc     map[string]any
+		want    bool
+	}{
+		{"client_error", incomplete500, false},
+		{"client_error", incomplete404, true},
+		{"server_error", incomplete404, false},
+		{"server_error", incomplete500, true},
+	}
+	for _, c := range cases {
+		q.Outcome = c.outcome
+		if _, kept := evalRowSurvives(t, buildPipeline(q, q.Start, q.End), c.doc); kept != c.want {
+			t.Errorf("incomplete %v under %s: kept = %v, want %v", c.doc["StatusCode"], c.outcome, kept, c.want)
+		}
+	}
+	// success and failure still keep non-valid rows so the quality counts stay honest.
+	q.Outcome = "success"
+	if _, kept := evalRowSurvives(t, buildPipeline(q, q.Start, q.End), incomplete500); !kept {
+		t.Error("an incomplete 500 must stay in a success query so the quality counts see it")
+	}
+}
+
+func TestSummaryCohortCountsReconcileWithDrillDownUnderClassFilters(t *testing.T) {
+	var docs []map[string]any
+	for _, fixture := range statusClassFixtures() {
+		docs = append(docs, statusClassDoc(fixture), incompleteDoc(fixture))
+	}
+	for _, outcome := range []string{"client_error", "server_error"} {
+		q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+		q.Kind, q.Outcome = "all", outcome
+		summary := buildPipeline(q, q.Start, q.End)
+		group := groupStage(t, summary)
+		drill := requestPipeline(q, [5]string{"source", "", "", "all", "failure"}, "source", nil, 100)
+		var cohortRows, classRows, drillRows int
+		for _, doc := range docs {
+			derived, kept := evalRowSurvives(t, summary, doc)
+			if kept && derived["_auditOutcome"] == "failure" {
+				cohortRows++
+				for _, key := range []string{"c4xx", "c5xx", "cHangfireFailed"} {
+					classRows += int(evalAccumulator(t, group, key, derived))
+				}
+			}
+			if _, inDrill := evalRowSurvives(t, drill, doc); inDrill {
+				drillRows++
+			}
+		}
+		// requestVolume and the stats count the failure cohort; the drill-down lists
+		// it; the class counters split it. All three must agree.
+		if cohortRows == 0 || cohortRows != drillRows || cohortRows != classRows {
+			t.Errorf("%s: failure cohort rows = %d, drill-down rows = %d, 4xx+5xx+hangfire = %d; want all equal and non-zero", outcome, cohortRows, drillRows, classRows)
+		}
 	}
 }
 
@@ -832,5 +1036,106 @@ func TestRequestPipelineFiltersByStatusClass(t *testing.T) {
 	}
 	if err := validateCohortQuery(audit.Query{SourceIDs: []string{"source"}, Kind: "all", Outcome: "server_error"}, [5]string{"source", "", "", "all", "success"}); err == nil {
 		t.Error("a success cohort must not satisfy a server_error query")
+	}
+}
+
+// dotNetStatusTable repeats the System.Net.HttpStatusCode enum, aliases and the
+// names newer .NET versions added, independently of audit.statusCodes, so the
+// agreement test below catches a name that one side forgot.
+var dotNetStatusTable = []struct {
+	name string
+	code int
+}{
+	{"Continue", 100}, {"SwitchingProtocols", 101}, {"Processing", 102}, {"EarlyHints", 103},
+	{"OK", 200}, {"Created", 201}, {"Accepted", 202}, {"NonAuthoritativeInformation", 203}, {"NoContent", 204},
+	{"ResetContent", 205}, {"PartialContent", 206}, {"MultiStatus", 207}, {"AlreadyReported", 208}, {"IMUsed", 226},
+	{"MultipleChoices", 300}, {"Ambiguous", 300}, {"MovedPermanently", 301}, {"Moved", 301},
+	{"Found", 302}, {"Redirect", 302}, {"SeeOther", 303}, {"RedirectMethod", 303},
+	{"NotModified", 304}, {"UseProxy", 305}, {"Unused", 306},
+	{"TemporaryRedirect", 307}, {"RedirectKeepVerb", 307}, {"PermanentRedirect", 308},
+	{"BadRequest", 400}, {"Unauthorized", 401}, {"PaymentRequired", 402}, {"Forbidden", 403}, {"NotFound", 404},
+	{"MethodNotAllowed", 405}, {"NotAcceptable", 406}, {"ProxyAuthenticationRequired", 407}, {"RequestTimeout", 408},
+	{"Conflict", 409}, {"Gone", 410}, {"LengthRequired", 411}, {"PreconditionFailed", 412},
+	{"RequestEntityTooLarge", 413}, {"PayloadTooLarge", 413}, {"ContentTooLarge", 413},
+	{"RequestUriTooLong", 414}, {"UriTooLong", 414}, {"UnsupportedMediaType", 415},
+	{"RequestedRangeNotSatisfiable", 416}, {"RangeNotSatisfiable", 416},
+	{"ExpectationFailed", 417}, {"ImATeapot", 418}, {"MisdirectedRequest", 421},
+	{"UnprocessableEntity", 422}, {"UnprocessableContent", 422},
+	{"Locked", 423}, {"FailedDependency", 424}, {"TooEarly", 425}, {"UpgradeRequired", 426},
+	{"PreconditionRequired", 428}, {"TooManyRequests", 429}, {"RequestHeaderFieldsTooLarge", 431}, {"UnavailableForLegalReasons", 451},
+	{"InternalServerError", 500}, {"NotImplemented", 501}, {"BadGateway", 502}, {"ServiceUnavailable", 503},
+	{"GatewayTimeout", 504}, {"HttpVersionNotSupported", 505}, {"VariantAlsoNegotiates", 506},
+	{"InsufficientStorage", 507}, {"LoopDetected", 508}, {"NotExtended", 510}, {"NetworkAuthenticationRequired", 511},
+}
+
+func classForCode(code int) string {
+	return map[int]string{2: "success", 3: "redirect", 4: "client_error", 5: "server_error"}[code/100]
+}
+
+// TestStatusClassifiersAgreeOnEveryStatusValue runs the Go classifier, the
+// legacy (Mongo 3.4) reader and the Mongo pipeline expression over the same
+// StatusCode values and asserts they all return the expected class.
+func TestStatusClassifiersAgreeOnEveryStatusValue(t *testing.T) {
+	type value struct {
+		label  string
+		status any
+		want   string
+	}
+	var values []value
+	for _, entry := range dotNetStatusTable {
+		want := classForCode(entry.code)
+		if want == "" {
+			want = "unknown"
+		}
+		for _, text := range []string{entry.name, strings.ToUpper(entry.name), strings.ToLower(entry.name), strconv.Itoa(entry.code)} {
+			values = append(values, value{"string " + text, text, want})
+		}
+		values = append(values,
+			value{"int32 " + entry.name, int32(entry.code), want},
+			value{"int64 " + entry.name, int64(entry.code), want},
+			value{"double " + entry.name, float64(entry.code), want},
+		)
+	}
+	values = append(values,
+		value{"padded name", " NotFound ", "unknown"},
+		value{"padded number", " 404 ", "unknown"},
+		value{"zero text", "0", "unknown"},
+		value{"999 text", "999", "unknown"},
+		value{"minus one text", "-1", "unknown"},
+		value{"decimal text", "404.0", "unknown"},
+		value{"leading zeros", "0404", "client_error"},
+		value{"leading plus", "+404", "client_error"},
+		value{"leading plus 5xx", "+0503", "server_error"},
+		value{"zero int32", int32(0), "unknown"},
+		value{"999 int32", int32(999), "unknown"},
+		value{"minus one int64", int64(-1), "unknown"},
+		value{"huge int64", int64(5000000000), "unknown"},
+		value{"999 double", float64(999), "unknown"},
+		value{"fractional double", float64(404.9), "client_error"},
+		value{"fractional 2xx double", float64(200.5), "success"},
+		value{"empty", "", "unknown"},
+	)
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	q.Kind, q.Outcome = "all", "all"
+	pipeline := buildPipeline(q, q.Start, q.End)
+	for _, v := range values {
+		t.Run(v.label, func(t *testing.T) {
+			derived := evalSetStages(t, pipeline, statusClassDoc(statusClassFixture{polling: "Synchronous", status: v.status}))
+			if derived["_statusClass"] != v.want {
+				t.Errorf("Mongo pipeline class = %v, want %s", derived["_statusClass"], v.want)
+			}
+			encoded, err := bson.Marshal(bson.D{{Key: "v", Value: v.status}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := legacyStatusClass("synchronous", bson.Raw(encoded).Lookup("v")); got != v.want {
+				t.Errorf("legacy class = %s, want %s", got, v.want)
+			}
+			if text, ok := v.status.(string); ok {
+				if got := audit.StatusClass("synchronous", "valid", text); got != v.want {
+					t.Errorf("Go class = %s, want %s", got, v.want)
+				}
+			}
+		})
 	}
 }

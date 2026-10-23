@@ -57,7 +57,9 @@ export const statusRates = (rollup: Rollup | undefined, outcomeFilter = 'all', k
   let tip: string;
   if (outcomeFilter !== 'all') tip = '4xx and 5xx shares need the outcome filter set to All.';
   else if (!rollup || rollup.errorRate == null) tip = 'No requests with a known success or failure result in the current period.';
-  else {
+  else if (rollup.clientErrorRate == null || rollup.serverErrorRate == null) {
+    tip = 'Combined error rate ' + merged + ': ' + rollup.failures.toLocaleString() + ' failed of ' + rollup.requests.toLocaleString() + ' requests with a known result. The 4xx and 5xx split is unavailable because the status counts do not cover every failure of this API.';
+  } else {
     const scope = kindFilter === 'all' ? 'Covers every source and kind of this API' : 'Covers only the ' + kindFilter + ' requests of this API (kind filter on)';
     tip = '4xx are client errors; 5xx are server errors, including failed Hangfire jobs. Combined error rate ' + merged + ': ' + rollup.failures.toLocaleString() + ' failed of ' + rollup.requests.toLocaleString() + ' requests with a known result. ' + scope + '; unclassified results are left out.';
   }
