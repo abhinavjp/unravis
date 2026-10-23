@@ -196,7 +196,7 @@ func TestRecordClassificationMatchesPipelineExpressions(t *testing.T) {
 	}
 	var fixtures []fixture
 	for _, f := range completionFixtures() {
-		fixtures = append(fixtures, fixture{name: f.name, polling: f.polling, status: f.status, wantState: f.wantState, wantOutcome: f.wantOutcome, checkExpected: true})
+		fixtures = append(fixtures, fixture{name: f.name, polling: f.polling, status: f.status, userAgent: f.agent, wantState: f.wantState, wantOutcome: f.wantOutcome, checkExpected: true})
 	}
 	fixtures = append(fixtures,
 		fixture{name: "hangfire by user agent", polling: "Synchronous", status: "OK", userAgent: "Hangfire"},
@@ -206,10 +206,7 @@ func TestRecordClassificationMatchesPipelineExpressions(t *testing.T) {
 	)
 	for _, f := range fixtures {
 		t.Run(f.name, func(t *testing.T) {
-			doc := completionDoc(f.polling, f.status)
-			if f.userAgent != "" {
-				doc["UserAgent"] = f.userAgent
-			}
+			doc := completionDoc(completionFixture{polling: f.polling, status: f.status, agent: f.userAgent})
 			expected := evalSetStages(t, buildSummaryPipeline(q, q.Start, q.End, true), doc)
 
 			id := bson.NewObjectID()
