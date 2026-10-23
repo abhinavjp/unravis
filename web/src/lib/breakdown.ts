@@ -114,11 +114,16 @@ export function breakdownPickTitle(dim: BreakdownDim, row: BreakdownRow | null):
   if (row.missing) return 'No filter selects a missing value, so these requests cannot be listed from here.';
   if (dim === 'pollingType') return 'Polling type is not a request filter, so these requests cannot be listed from here.';
   const value = row.value;
-  if (dim === 'userId' && !(/^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 2147483647)) return 'A user id below 1 cannot be used as a filter, so these requests cannot be listed from here.';
-  if (value.trim() === '') return 'A blank value cannot be used as a filter, so these requests cannot be listed from here.';
-  if (value.includes('\u0000') || value.includes('\uFFFD')) return 'A value with unreadable characters cannot be used as a filter, so these requests cannot be listed from here.';
-  if (new TextEncoder().encode(value).length > 200) return 'This value is too long to use as a filter, so these requests cannot be listed from here.';
-  return 'This value cannot be used as a filter, so these requests cannot be listed from here.';
+  const why = ', so these requests cannot be listed from here.';
+  // The checks run from the most general to the most specific, in the order the server applies them: a blank value, then the length, then the characters, then the user id range.
+  if (value.trim() === '') return 'A blank value cannot be used as a filter' + why;
+  if (new TextEncoder().encode(value).length > 200) return 'This value is too long to use as a filter' + why;
+  if (value.includes('\u0000') || value.includes('\uFFFD')) return 'A value with unreadable characters cannot be used as a filter' + why;
+  if (dim === 'userId') {
+    if (!/^[+-]?\d+$/.test(value)) return 'A user id must be a whole number to be used as a filter' + why;
+    if (Number(value) < 1) return 'A user id below 1 cannot be used as a filter' + why;
+    if (Number(value) > 2147483647) return 'A user id above 2147483647 cannot be used as a filter' + why;
+  }  return 'This value cannot be used as a filter, so these requests cannot be listed from here.';
 }
 
 /** A percentile cell: an em dash when the kind is pooled, N/A without a valid timing. */

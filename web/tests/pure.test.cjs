@@ -605,7 +605,12 @@ test('a breakdown row that cannot be listed says why in one sentence and never i
   const polling = breakdown.breakdownPickTitle('pollingType', { value: 'Synchronous', count: 4 });
   const long = breakdown.breakdownPickTitle('userAgent', { value: 'x'.repeat(300), count: 4 });
   const multibyte = breakdown.breakdownPickTitle('userAgent', { value: '\u00e9'.repeat(101), count: 4 });
-  const userId = ['0', '-3', 'abc', '2147483648'].map(value => breakdown.breakdownPickTitle('userId', { value, count: 4 }));
+  const pickUserId = value => breakdown.breakdownPickTitle('userId', { value, count: 4 });
+  const userId = ['0', '-3', 'abc', '2147483648'].map(pickUserId);
+  const [zero, negative, word, huge] = userId;
+  const blankUserId = pickUserId('  ');
+  const longWithReplacement = breakdown.breakdownPickTitle('userAgent', { value: '\uFFFD' + 'x'.repeat(250), count: 4 });
+  const longUserId = pickUserId('1'.repeat(250));
   const blank = breakdown.breakdownPickTitle('userAgent', { value: '   ', count: 4 });
   const nul = breakdown.breakdownPickTitle('userAgent', { value: 'Mozilla\u0000', count: 4 });
   const invalid = breakdown.breakdownPickTitle('userAgent', { value: 'Mozilla\uFFFD', count: 4 });
@@ -616,16 +621,30 @@ test('a breakdown row that cannot be listed says why in one sentence and never i
   assert.match(polling, /Polling type is not a request filter/);
   assert.match(long, /too long/);
   assert.match(multibyte, /too long/, 'the limit is 200 bytes, not characters');
-  for (const title of userId) assert.match(title, /user id below 1/);
+  // Each user id value gets its own reason, and none gets another one's.
+  assert.match(zero, /user id below 1/);
+  assert.match(negative, /user id below 1/);
+  assert.match(word, /must be a whole number/);
+  assert.match(huge, /above 2147483647/);
+  for (const [title, wrong] of [[zero, /whole number|above 2147483647/], [negative, /whole number|above 2147483647/], [word, /below 1|above 2147483647/], [huge, /below 1|whole number/]]) assert.doesNotMatch(title, wrong);
+  // A valid id in range is not rejected by the user id rules; it gets the neutral reason.
+  assert.match(pickUserId('7'), /cannot be used as a filter/);
+  assert.doesNotMatch(pickUserId('7'), /below 1|above 2147483647|whole number/);
+  assert.match(blankUserId, /blank value/);
+  assert.doesNotMatch(blankUserId, /user id|whole number/);
+  // The length is judged before the characters: a long value that happens to hold U+FFFD is long, not unreadable.
+  assert.match(longWithReplacement, /too long/);
+  assert.doesNotMatch(longWithReplacement, /unreadable/);
+  assert.match(longUserId, /too long/);
   assert.match(blank, /blank value/);
   assert.match(nul, /unreadable characters/);
   assert.match(invalid, /unreadable characters/);
   assert.match(neutral, /cannot be used as a filter/);
   // Only the genuinely long value is called long; no branch claims a cut-off for a value that is not.
-  for (const title of [...userId, blank, nul, invalid, neutral]) assert.doesNotMatch(title, /too long|cut off/);
+  for (const title of [...userId, blankUserId, blank, nul, invalid, neutral]) assert.doesNotMatch(title, /too long|cut off/);
   assert.equal(listable, 'Show matching requests');
-  assert.equal(new Set([other, missing, polling, long, userId[0], blank, nul, neutral, listable]).size, 9);
-  for (const title of [other, missing, polling, long, multibyte, ...userId, blank, nul, invalid, neutral]) assert.equal(title.split('. ').length, 1, 'one sentence: ' + title);
+  assert.equal(new Set([other, missing, polling, long, zero, word, huge, blank, nul, neutral, listable]).size, 11);
+  for (const title of [other, missing, polling, long, multibyte, longWithReplacement, ...userId, blankUserId, blank, nul, invalid, neutral]) assert.equal(title.split('. ').length, 1, 'one sentence: ' + title);
   // A row without a filter yields no filter, whatever its dimension.
   assert.equal(breakdown.breakdownRowFilter({ value: '(not yet written)', missing: true, count: 4 }), null);
   assert.equal(breakdown.breakdownRowFilter({ value: 'Synchronous', count: 4 }), null);
