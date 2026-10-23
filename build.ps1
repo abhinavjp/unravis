@@ -5,24 +5,42 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $UtilityRoot = $PSScriptRoot
-$WorkspaceRoot = (Resolve-Path (Join-Path $UtilityRoot '..\..')).Path
+
+# Walk up from the repo (including itself) to find a shared .dev\toolchains\go\bin\go.exe.
+$ToolchainRoot = $null
+$Probe = $UtilityRoot
+while ($Probe) {
+    if (Test-Path -LiteralPath (Join-Path $Probe '.dev\toolchains\go\bin\go.exe') -PathType Leaf) {
+        $ToolchainRoot = $Probe
+        break
+    }
+    $Probe = Split-Path -Parent $Probe
+}
 
 if ($GoPath) {
     if (-not (Test-Path -LiteralPath $GoPath -PathType Leaf)) { throw "Go executable not found: $GoPath" }
     $GoExe = (Resolve-Path -LiteralPath $GoPath).Path
+} elseif ($env:AUDIT_EXPLORER_GO) {
+    if (-not (Test-Path -LiteralPath $env:AUDIT_EXPLORER_GO -PathType Leaf)) { throw "AUDIT_EXPLORER_GO does not point to a file: $env:AUDIT_EXPLORER_GO" }
+    $GoExe = (Resolve-Path -LiteralPath $env:AUDIT_EXPLORER_GO).Path
 } else {
     $GoCommand = Get-Command go.exe -ErrorAction SilentlyContinue
     if ($GoCommand) {
         $GoExe = $GoCommand.Source
+    } elseif ($env:GOROOT -and (Test-Path -LiteralPath (Join-Path $env:GOROOT 'bin\go.exe') -PathType Leaf)) {
+        $GoExe = Join-Path $env:GOROOT 'bin\go.exe'
+    } elseif ($ToolchainRoot) {
+        $GoExe = Join-Path $ToolchainRoot '.dev\toolchains\go\bin\go.exe'
     } else {
-        $GoExe = Join-Path $WorkspaceRoot '.dev\toolchains\go\bin\go.exe'
-        if (-not (Test-Path -LiteralPath $GoExe -PathType Leaf)) {
-            throw "Go was not found on PATH or at the workspace toolchain path: $GoExe"
-        }
+        throw "Go was not found: pass -GoPath, set AUDIT_EXPLORER_GO, put go.exe on PATH, set GOROOT, or provide .dev\toolchains\go\bin\go.exe in the repo or an ancestor directory."
     }
 }
 
-$CacheRoot = Join-Path $WorkspaceRoot '.dev\toolchains\cache'
+if ($ToolchainRoot) {
+    $CacheRoot = Join-Path $ToolchainRoot '.dev\toolchains\cache'
+} else {
+    $CacheRoot = Join-Path $UtilityRoot '.dev\toolchains\cache'
+}
 $env:GOCACHE = Join-Path $CacheRoot 'build'
 $env:GOMODCACHE = Join-Path $CacheRoot 'mod'
 $env:GOPATH = Join-Path $CacheRoot 'gopath'
