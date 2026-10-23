@@ -642,7 +642,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
     try {
       const result = await api.export(JSON.parse(JSON.stringify(analysis?.query ?? query)) as Query, selected.key);
       const url = URL.createObjectURL(result.blob);
-      const link = document.createElement('a'); link.href = url; link.download = 'api-audit-requests.csv';
+      const link = document.createElement('a'); link.href = url; link.download = 'unravis-requests.csv';
       document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
       if (result.limited) requestError = 'Export reached a server-configured row or byte cap.';
     } catch (cause) { requestError = message(cause); }
@@ -650,11 +650,11 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
 
 </script>
 
-<svelte:head><title>API Audit Explorer</title></svelte:head>
+<svelte:head><title>Unravis</title></svelte:head>
 
 <div class="app-shell">
   <header class="topbar">
-    <div class="brand-lockup"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><div><h1>API Audit Explorer</h1><p>Compare each API with its own recent history</p></div></div>
+    <div class="brand-lockup"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><div><h1>Unravis</h1><p>API audit investigation</p></div></div>
     <div class="topbar-meta">
       {#if info}<span class:demo-badge={info.demo} class="mode-badge">{info.demo ? 'Demo data' : 'Live mode'}</span>{/if}
       {#if info?.demo}<span class="updated-label">Data reference time <time>{new Date(info.now).toLocaleString()}</time></span>{/if}

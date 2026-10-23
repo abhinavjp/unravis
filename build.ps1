@@ -70,7 +70,10 @@ try {
     Invoke-Checked $GoExe @('test', './...')
     Invoke-Checked $GoExe @('vet', './...')
     New-Item -ItemType Directory -Force -Path (Join-Path $UtilityRoot 'dist') | Out-Null
-    Invoke-Checked $GoExe @('build', '-o', (Join-Path $UtilityRoot 'dist\api-audit-explorer.exe'), './cmd/audit-explorer')
+    Invoke-Checked $GoExe @('build', '-o', (Join-Path $UtilityRoot 'dist\unravis.exe'), './cmd/audit-explorer')
+    # Compatibility copy for MCP client configs that still point at dist\api-audit-explorer.exe.
+    # Remove this copy and the MCP.md note after 2026-12-31 (one release after the rename).
+    Copy-Item -LiteralPath (Join-Path $UtilityRoot 'dist\unravis.exe') -Destination (Join-Path $UtilityRoot 'dist\api-audit-explorer.exe') -Force
 } finally {
     Pop-Location
 }
