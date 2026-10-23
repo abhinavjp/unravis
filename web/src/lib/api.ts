@@ -59,11 +59,11 @@ export const api = {
   record: (sourceId: string, id: string, signal?: AbortSignal) =>
     request<RecordDetail>('/record', json({ sourceId, id }), signal),
   activity: (input: import('./types').ActivityInput, signal?: AbortSignal) => request<Page>('/activity', json(input), signal),
-  export: async (query: Query, apiKey: string, signal?: AbortSignal, state = '') => {
+  export: async (query: Query, apiKey: string, signal?: AbortSignal, state = '', order = '') => {
     const response = await fetch(base + '/export', {
       method: 'POST', credentials: 'same-origin', signal,
       headers: { 'X-Audit-Token': token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, apiKey, cursor: '', limit: 100, state })
+      body: JSON.stringify({ query, apiKey, cursor: '', limit: 100, state, ...(order ? { order } : {}) })
     });
     if (!response.ok) {
       let message = 'Export failed (' + response.status + ')';

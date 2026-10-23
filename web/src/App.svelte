@@ -19,6 +19,7 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
   import RecordDetailPanel from './components/RecordDetail.svelte';
   import OverviewStrip from './components/OverviewStrip.svelte';
   import IncompletePanel from './components/IncompletePanel.svelte';
+  import { applyStaleFilters } from './lib/incomplete';
   import { drillHeading, type OverviewDrill } from './lib/overview';
 
   let info = $state<Info | null>(null);
@@ -660,8 +661,7 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
       if (drillOverview.controller !== undefined) copy.controller = drillOverview.controller;
       if (drillOverview.action !== undefined) copy.action = drillOverview.action;
       // The stale list: unfinished requests open at least the threshold. A latency range describes completed rows, so it cannot apply.
-      if (drillOverview.completion) copy.completion = drillOverview.completion;
-      if (drillOverview.incompleteAgeMs) { copy.incompleteAgeMs = { ...drillOverview.incompleteAgeMs }; delete copy.observedMs; }
+      applyStaleFilters(copy, drillOverview);
     }
     return copy;
   }
@@ -692,7 +692,7 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
     if (!selected && !queryWide) return;
     requestError = '';
     try {
-      const result = await api.export(drillQuery(analysis?.query ?? query), queryWide ? '' : (selected?.key ?? ''), undefined, requestState);
+      const result = await api.export(drillQuery(analysis?.query ?? query), queryWide ? '' : (selected?.key ?? ''), undefined, requestState, drillOverview?.order ?? '');
       const url = URL.createObjectURL(result.blob);
       const link = document.createElement('a'); link.href = url; link.download = 'unravis-requests.csv';
       document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);

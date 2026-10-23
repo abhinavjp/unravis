@@ -41,7 +41,7 @@
       </header>
       <div class="overview-tiles">
         {@render countTile(row, 'events', 'Events', row.events, 'vs reference ' + changeText(row.delta.traffic), 'Events of this request type in the current window that match the filters, including incomplete and pending ones. Incomplete rows whose request type is not known yet are counted under HTTP (polling type unknown), not here.')}
-        {@render countTile(row, 'completed', 'Completed', row.completed, 'Completion ' + rateText(row.completionRate) + ' · ' + pointsText(row.delta.completionRate), 'Events with a valid, complete timing. Incomplete and pending events are never counted as fast or successful.')}
+        {@render countTile(row, 'completed', 'Completed', row.completed, 'Completed ÷ all events ' + rateText(row.completionRate) + ' · ' + pointsText(row.delta.completionRate), 'Events with a valid, complete timing, shown as a share of all events including unusable ones. The Completion % column elsewhere divides by completed, incomplete and pending instead. Incomplete and pending events are never counted as fast or successful.')}
         {@render countTile(row, 'clientErrors', '4xx', row.clientErrors, rateText(row.clientErrorRate) + ' · ' + pointsText(row.delta.clientErrorRate), 'Client errors. The share is of events with a known result. ' + sharesNote)}
         {@render countTile(row, 'serverErrors', '5xx', row.serverErrors, rateText(row.serverErrorRate) + ' · ' + pointsText(row.delta.serverErrorRate), 'Server errors, including failed Hangfire jobs. The share is of events with a known result. ' + sharesNote)}
         {#each percentiles(row) as item (item.id)}

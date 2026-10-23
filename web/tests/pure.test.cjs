@@ -1169,3 +1169,69 @@ test('the incomplete panel and the Completion % column use existing tokens and s
 });
 
 function overviewRate(value) { return loadTypeScript('src/lib/overview.ts').rateText(value); }
+
+test('the stale drill drops every latency range, because the server refuses one beside an age range', () => {
+  const drill = incomplete.staleDrill(null, 'incomplete', 10);
+  const query = { kind: 'all', outcome: 'all', observedMs: { min: 5 }, apiTimeMs: { max: 900 }, auditCreateTimeMs: { min: 1, max: 2 }, requestKb: { min: 1 }, responseKb: { max: 4 } };
+  const applied = incomplete.applyStaleFilters(query, drill);
+  assert.equal(applied, query);
+  assert.equal(applied.completion, 'incomplete');
+  assert.deepEqual(applied.incompleteAgeMs, { min: 600000 });
+  for (const key of ['observedMs', 'apiTimeMs', 'auditCreateTimeMs']) assert.equal(key in applied, false, key);
+  // Size ranges can sit beside an age range and stay.
+  assert.deepEqual(applied.requestKb, { min: 1 });
+  assert.deepEqual(applied.responseKb, { max: 4 });
+  // A drill with no age range leaves latency ranges alone.
+  const untouched = incomplete.applyStaleFilters({ apiTimeMs: { max: 900 } }, { completion: undefined, incompleteAgeMs: undefined });
+  assert.deepEqual(untouched, { apiTimeMs: { max: 900 } });
+  const source = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  assert.match(source, /applyStaleFilters\(copy, drillOverview\)/);
+});
+
+test('the stale list buttons say what the list returns and that the counts cover every age', () => {
+  const counts = { incomplete: 4, pending: 3 };
+  const unfinished = incomplete.staleButtonText('incomplete', counts, 10);
+  assert.match(unfinished.text, /oldest first/);
+  assert.match(unfinished.text, /7 in total/);
+  assert.match(unfinished.text, /includes pending/);
+  assert.doesNotMatch(unfinished.text, /stale incomplete \(4\)/);
+  assert.match(unfinished.tip, /every age/);
+  assert.match(unfinished.tip, /at least 10 min/);
+  assert.match(unfinished.tip, /pending/);
+  const pending = incomplete.staleButtonText('pending', counts, 2.5);
+  assert.match(pending.text, /pending async/);
+  assert.match(pending.text, /3 in total/);
+  assert.match(pending.tip, /every age/);
+  assert.match(pending.tip, /2\.5 min/);
+  assert.match(incomplete.staleButtonText('incomplete', counts, null).tip, /stale threshold/);
+  assert.match(incomplete.staleDrill(null, 'incomplete', 10).label, /includes pending/);
+  const strip = fs.readFileSync(path.join(root, 'src/components/OverviewStrip.svelte'), 'utf8');
+  assert.match(strip, /Completed . all events/);
+});
+
+test('an export from the stale list carries the same oldest-first order, and a plain export carries none', async () => {
+  const bodies = [];
+  const saved = { document: global.document, fetch: global.fetch };
+  global.document = { querySelector: () => null };
+  global.fetch = async (url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return { ok: true, status: 200, blob: async () => 'csv', headers: { get: () => null } };
+  };
+  try {
+    const { api } = loadTypeScript('src/lib/api.ts');
+    await api.export({ kind: 'all' }, '', undefined, 'all', 'oldest');
+    await api.export({ kind: 'all' }, '', undefined, 'all');
+    await api.export({ kind: 'all' }, '', undefined, 'all', '');
+  } finally {
+    global.document = saved.document;
+    global.fetch = saved.fetch;
+    if (saved.document === undefined) delete global.document;
+    if (saved.fetch === undefined) delete global.fetch;
+  }
+  assert.equal(bodies[0].order, 'oldest');
+  assert.equal(bodies[0].state, 'all');
+  assert.equal('order' in bodies[1], false);
+  assert.equal('order' in bodies[2], false);
+  const source = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  assert.match(source, /api\.export\([^\n]*requestState, drillOverview\?\.order \?\? ''\)/);
+});

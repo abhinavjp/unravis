@@ -1,4 +1,4 @@
-import type { Rollup } from './types';
+import type { Query, Rollup } from './types';
 import type { OverviewDrill } from './overview';
 
 /**
@@ -83,10 +83,47 @@ export const staleDrill = (
   const name = operation ? operation.controller + '.' + operation.action : 'Every API';
   const drill: StaleDrill = {
     kind: kind as OverviewDrill['kind'], state: 'all', outcome: '',
-    label: name + ' · ' + (completion === 'pending' ? 'pending async' : 'incomplete') + ' for at least ' + minutesText(minutes) + ' min · oldest first',
+    label: name + ' · ' + (completion === 'pending' ? 'pending async' : 'incomplete, includes pending') + ' for at least ' + minutesText(minutes) + ' min · oldest first',
     note: '',
     completion, order: 'oldest', incompleteAgeMs: { min: staleThresholdMs(minutes) }
   };
   if (operation) { drill.controller = operation.controller; drill.action = operation.action; }
   return drill;
+};
+
+/** Every latency range the server counts as one; none of them can be combined with an age range. */
+const LATENCY_RANGE_KEYS = ['observedMs', 'apiTimeMs', 'auditCreateTimeMs'] as const;
+
+/**
+ * Applies a stale drill's completion and age range to a copy of the query. A latency range (observed, API time or audit create time)
+ * describes completed rows and the server refuses it together with an age range, so every one of them is dropped.
+ */
+export const applyStaleFilters = (query: Query, drill: Pick<OverviewDrill, 'completion' | 'incompleteAgeMs'>): Query => {
+  if (drill.completion) query.completion = drill.completion;
+  if (drill.incompleteAgeMs) {
+    query.incompleteAgeMs = { ...drill.incompleteAgeMs };
+    for (const key of LATENCY_RANGE_KEYS) delete query[key];
+  }
+  return query;
+};
+
+export interface StaleButtonText { text: string; tip: string }
+
+/**
+ * What a stale list button says. The "incomplete" list also returns pending asynchronous requests (they are unfinished rows too),
+ * so its count is incomplete plus pending. Both counts cover every age in the query: the list itself only holds those open at least the threshold.
+ */
+export const staleButtonText = (completion: 'incomplete' | 'pending', counts: { incomplete: number; pending: number }, minutes: number | null): StaleButtonText => {
+  const age = minutes == null ? 'the stale threshold' : minutesText(minutes) + ' min';
+  const allAges = 'The count covers every age in this search; the list only holds requests open at least ' + age + ', oldest first.';
+  if (completion === 'pending') {
+    return {
+      text: 'List pending async, oldest first (' + counts.pending.toLocaleString() + ' in total)',
+      tip: 'Accepted asynchronous requests with no final result yet. ' + allAges
+    };
+  }
+  return {
+    text: 'List incomplete, oldest first (' + (counts.incomplete + counts.pending).toLocaleString() + ' in total, includes pending)',
+    tip: 'Unfinished requests, including pending asynchronous ones. ' + allAges
+  };
 };

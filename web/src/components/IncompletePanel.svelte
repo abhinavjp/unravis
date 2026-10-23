@@ -2,7 +2,7 @@
   import type { Rollup } from '../lib/types';
   import { rateText, type OverviewDrill } from '../lib/overview';
   import { kindLabel } from '../lib/presentation';
-  import { DEFAULT_STALE_MINUTES, MAX_STALE_MINUTES, parseStaleMinutes, rankByCompletion, staleDrill } from '../lib/incomplete';
+  import { DEFAULT_STALE_MINUTES, MAX_STALE_MINUTES, parseStaleMinutes, rankByCompletion, staleButtonText, staleDrill } from '../lib/incomplete';
   let { rollups, kindFilter = 'all', onDrill }: { rollups: Rollup[]; kindFilter?: string; onDrill: (drill: OverviewDrill) => void } = $props();
   // The threshold is text while it is being typed; an unusable value disables the stale lists instead of guessing one.
   let minutesText = $state(String(DEFAULT_STALE_MINUTES));
@@ -12,7 +12,10 @@
   let worst = $derived(ranked.filter(item => item.unfinished > 0).slice(0, shown));
   let totals = $derived(rollups.reduce((sum, row) => ({ incomplete: sum.incomplete + (row.incomplete ?? 0), pending: sum.pending + (row.pending ?? 0), invalid: sum.invalid + (row.invalid ?? 0) }), { incomplete: 0, pending: 0, invalid: 0 }));
   const open = (operation: Rollup | null, completion: 'incomplete' | 'pending') => { if (minutes != null) onDrill(staleDrill(operation, completion, minutes, kindFilter)); };
-  const thresholdTip = 'Opens the requests that have been unfinished for at least the stale threshold, oldest first.';
+  let incompleteButton = $derived(staleButtonText('incomplete', totals, minutes));
+  let pendingButton = $derived(staleButtonText('pending', totals, minutes));
+  const rowIncompleteTip = 'Opens the unfinished requests of this operation, oldest first. The list includes pending asynchronous ones and only holds requests open at least the stale threshold; this count is every age and leaves pending out.';
+  const rowPendingTip = 'Opens the pending asynchronous requests of this operation, oldest first, only those open at least the stale threshold; this count is every age.';
 </script>
 
 {#if rollups.length}
@@ -20,8 +23,8 @@
   <div class="section-heading"><div><h3>Incomplete requests</h3><p>Completion % is completed / (completed + incomplete + pending). Unusable rows are counted apart and never in that share. A dash means there was nothing to measure, not 0%.</p></div></div>
   <div class="group-toolbar">
     <label>Stale after (minutes)<input type="text" inputmode="decimal" bind:value={minutesText} aria-invalid={minutes == null} aria-describedby="stale-threshold-note" /></label>
-    <button type="button" class="secondary-button" disabled={minutes == null || !totals.incomplete} title={thresholdTip} onclick={() => open(null, 'incomplete')}>List stale incomplete ({totals.incomplete.toLocaleString()})</button>
-    <button type="button" class="secondary-button" disabled={minutes == null || !totals.pending} title={thresholdTip} onclick={() => open(null, 'pending')}>List stale pending async ({totals.pending.toLocaleString()})</button>
+    <button type="button" class="secondary-button" disabled={minutes == null || !(totals.incomplete + totals.pending)} title={incompleteButton.tip} onclick={() => open(null, 'incomplete')}>{incompleteButton.text}</button>
+    <button type="button" class="secondary-button" disabled={minutes == null || !totals.pending} title={pendingButton.tip} onclick={() => open(null, 'pending')}>{pendingButton.text}</button>
     <span id="stale-threshold-note" class:stale-error={minutes == null}>{minutes == null ? 'Enter a number of minutes above 0 and up to ' + MAX_STALE_MINUTES.toLocaleString() + '.' : 'The ' + DEFAULT_STALE_MINUTES + ' minute default is a starting point taken from the code, not measured from live data; change it to suit your system.'}</span>
   </div>
   <div class="table-scroll group-table-scroll">
@@ -39,8 +42,8 @@
             <td data-label="Operation">{item.rollup.controller}.{item.rollup.action}</td>
             <td data-label="Request type">{kindLabel(item.rollup.kind ?? '') || '—'}</td>
             <td class="numeric" data-label="Completion %">{rateText(item.rate)}</td>
-            <td class="numeric" data-label="Incomplete">{#if item.rollup.incomplete}<button type="button" class="api-select" disabled={minutes == null} title={thresholdTip} onclick={() => open(item.rollup, 'incomplete')}>{item.rollup.incomplete.toLocaleString()}</button>{:else}0{/if}</td>
-            <td class="numeric" data-label="Pending async">{#if item.rollup.pending}<button type="button" class="api-select" disabled={minutes == null} title={thresholdTip} onclick={() => open(item.rollup, 'pending')}>{item.rollup.pending.toLocaleString()}</button>{:else}0{/if}</td>
+            <td class="numeric" data-label="Incomplete">{#if item.rollup.incomplete}<button type="button" class="api-select" disabled={minutes == null} title={rowIncompleteTip} onclick={() => open(item.rollup, 'incomplete')}>{item.rollup.incomplete.toLocaleString()}</button>{:else}0{/if}</td>
+            <td class="numeric" data-label="Pending async">{#if item.rollup.pending}<button type="button" class="api-select" disabled={minutes == null} title={rowPendingTip} onclick={() => open(item.rollup, 'pending')}>{item.rollup.pending.toLocaleString()}</button>{:else}0{/if}</td>
             <td class="numeric" data-label="Unusable">{(item.rollup.invalid ?? 0).toLocaleString()}</td>
           </tr>
         {:else}<tr><td colspan="6" class="table-empty">{ranked.length ? 'No operation has incomplete or pending requests in this window.' : 'No operation has anything to measure a completion share from.'}</td></tr>{/each}
