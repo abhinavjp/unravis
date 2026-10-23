@@ -167,13 +167,44 @@ func TestRollupErrorRateIgnoresUnknownOutcome(t *testing.T) {
 	}
 }
 
-func TestSeriesLoadCorrelationWiredFromBucketSums(t *testing.T) {
+func seriesByKey(a Analysis) map[string]Series {
+	out := map[string]Series{}
+	for _, s := range a.Timeline {
+		out[s.Key] = s
+	}
+	return out
+}
+
+func TestSeriesLoadCorrelationIgnoresOwnLatency(t *testing.T) {
 	q := analysisQuery()
 	q.End = anchor.Add(100 * time.Second)
-	// Ten 10 s buckets where more work per bucket goes with a higher latency.
+	// Constant arrival rate, latency rising 100 -> 500 ms, and nothing else running:
+	// the load did not change, so there is nothing to correlate with.
 	var current []Bucket
 	for i := 0; i < 10; i++ {
-		current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "success", "valid", anchor.Add(time.Duration(i)*10*time.Second), int64(i+1), float64(10*(i+1)))...)
+		current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "success", "valid", anchor.Add(time.Duration(i)*10*time.Second), 10, float64(100+i*45))...)
+	}
+	analysis, err := BuildAnalysis(q, current, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := seriesByKey(analysis)[CohortKey("s1", "Payroll", "Run", "synchronous", "success")]
+	if run.LoadCorrelation != nil {
+		t.Fatalf("a lone series with constant volume got rho = %v, want nil", *run.LoadCorrelation)
+	}
+}
+
+func TestSeriesLoadCorrelationUsesOtherTrafficLoad(t *testing.T) {
+	q := analysisQuery()
+	q.End = anchor.Add(100 * time.Second)
+	var current []Bucket
+	for i := 0; i < 10; i++ {
+		at := anchor.Add(time.Duration(i) * 10 * time.Second)
+		// Payroll.Run keeps a constant 10 requests per bucket; its latency follows the other API's volume.
+		current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "success", "valid", at, 10, float64(100+i*45))...)
+		current = append(current, makeBuckets("s1", "Other", "Go", "synchronous", "success", "valid", at, int64(5+i*5), 500)...)
+		// Calm control: its latency falls while the other API's volume rises.
+		current = append(current, makeBuckets("s1", "Calm", "Run", "synchronous", "success", "valid", at, 10, float64(500-i*45))...)
 	}
 	// A cohort that spans too few buckets gets no correlation.
 	current = append(current, makeBuckets("s1", "Few", "Run", "synchronous", "success", "valid", anchor, 5, 10)...)
@@ -181,15 +212,56 @@ func TestSeriesLoadCorrelationWiredFromBucketSums(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	byKey := map[string]Series{}
-	for _, s := range analysis.Timeline {
-		byKey[s.Key] = s
-	}
+	byKey := seriesByKey(analysis)
 	run := byKey[CohortKey("s1", "Payroll", "Run", "synchronous", "success")]
-	if run.LoadCorrelation == nil || math.Abs(*run.LoadCorrelation-1.0) > 1e-9 {
-		t.Fatalf("LoadCorrelation = %v, want 1", run.LoadCorrelation)
+	if run.LoadCorrelation == nil || *run.LoadCorrelation < 0.6 {
+		t.Fatalf("Payroll.Run rho = %v, want clearly positive against the other traffic's load", run.LoadCorrelation)
+	}
+	// Calm.Run's other traffic includes Payroll.Run and Other.Go; both are rising overall, latency falls.
+	calm := byKey[CohortKey("s1", "Calm", "Run", "synchronous", "success")]
+	if calm.LoadCorrelation == nil || *calm.LoadCorrelation > -0.6 {
+		t.Fatalf("Calm.Run rho = %v, want clearly negative", calm.LoadCorrelation)
 	}
 	if few := byKey[CohortKey("s1", "Few", "Run", "synchronous", "success")]; few.LoadCorrelation != nil {
 		t.Fatalf("one-bucket series got correlation %v, want nil", *few.LoadCorrelation)
+	}
+}
+
+func TestBucketLoadScaleDividesByInWindowOverlap(t *testing.T) {
+	start, end := anchor.Add(5*time.Second), anchor.Add(25*time.Second)
+	cases := []struct {
+		at   time.Time
+		want float64
+	}{
+		{anchor, 2},                       // 5 s of a 10 s bucket fall in the window
+		{anchor.Add(10 * time.Second), 1}, // fully inside
+		{anchor.Add(20 * time.Second), 2}, // 5 s inside
+		{anchor.Add(40 * time.Second), 1}, // outside the window: leave unscaled
+	}
+	for _, c := range cases {
+		if got := bucketLoadScale(c.at, 10, start, end); math.Abs(got-c.want) > 1e-12 {
+			t.Fatalf("scale at +%v = %v, want %v", c.at.Sub(anchor), got, c.want)
+		}
+	}
+}
+
+func TestRollupErrorRateNilUnderOutcomeFilter(t *testing.T) {
+	q := analysisQuery()
+	q.Outcome = "success"
+	// The sources already applied the outcome filter, so only successes arrive; a rate of 0% would be false.
+	current := makeBuckets("s1", "Payroll", "Run", "synchronous", "success", "valid", anchor, 40, 10)
+	analysis, err := BuildAnalysis(q, current, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(analysis.Rollups) != 1 {
+		t.Fatalf("rollups = %v", analysis.Rollups)
+	}
+	r := analysis.Rollups[0]
+	if r.ErrorRate != nil {
+		t.Fatalf("ErrorRate = %v under outcome filter, want nil", *r.ErrorRate)
+	}
+	if r.Requests != 40 || math.Abs(r.PerMinute-40) > 1e-9 {
+		t.Fatalf("throughput must still be reported: %#v", r)
 	}
 }

@@ -11,7 +11,18 @@ export function trafficData(query:Pick<Query,'start'|'end'|'bucketSeconds'>,rows
 }
 
 /** Error rate as a percent; "—" when the API has no known-outcome requests. */
-export const errorRateText=(rate:number|null|undefined)=>rate==null||!Number.isFinite(rate)?'—':(rate*100).toFixed(1)+'%';
+export const errorRateText=(rate:number|null|undefined,outcomeFilter='all')=>outcomeFilter!=='all'||rate==null||!Number.isFinite(rate)?'—':(rate*100).toFixed(1)+'%';
+/** Tooltip for the error-rate cell. The sources apply the outcome and kind filters before summarizing, so the rate only exists under outcome All. */
+export const errorRateTip=(rollup:Rollup|undefined,outcomeFilter='all',kindFilter='all')=>{
+ if(outcomeFilter!=='all')return 'Error rate needs the outcome filter set to All.';
+ if(!rollup||rollup.errorRate==null)return 'No requests with a known success or failure result in the current period.';
+ const scope=kindFilter==='all'?'Covers every source and kind of this API':'Covers only the '+kindFilter+' requests of this API (kind filter on)';
+ return rollup.failures.toLocaleString()+' failed of '+rollup.requests.toLocaleString()+' requests with a known result (about '+rollup.perMinute.toFixed(1)+' per minute). '+scope+'; unclassified results are left out.';
+};
+/** Sign-aware tooltip for the load badge. */
+export const loadTip=(rho:number)=>rho>0
+ ?"This group's P95 tends to be higher in buckets where other traffic puts more load on the system (summed request time of all other API groups). A correlation, not proof of cause."
+ :"This group's latency falls as load rises, measured as the summed request time of all other API groups. A correlation, not proof of cause.";
 /** The rollup for a cohort's API; rollups are per controller and action across sources and kinds. */
 export const rollupFor=(rollups:Rollup[]|undefined,row:Pick<Comparison,'controller'|'action'>)=>rollups?.find(r=>r.controller===row.controller&&r.action===row.action);
 export const LOAD_BADGE_MIN_ABS_RHO=0.6,LOAD_BADGE_MIN_POINTS=8;

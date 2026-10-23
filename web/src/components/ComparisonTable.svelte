@@ -1,10 +1,10 @@
 <script lang="ts">
   import type { Comparison, Rollup, Series } from '../lib/types';
-  import { errorRateText, loadBadge, rollupFor } from '../lib/traffic';
+  import { errorRateText, errorRateTip, loadBadge, loadTip, rollupFor } from '../lib/traffic';
   import { outcomeRateText, rankComparisons, type RankField } from '../lib/presentation';
-  let { rows, selectedKey, sources, outcomeFilter, onSelect, timelineKeys = [], onToggleTimeline = () => {}, rollups = [], timeline = [] }: {
+  let { rows, selectedKey, sources, outcomeFilter, onSelect, timelineKeys = [], onToggleTimeline = () => {}, rollups = [], timeline = [], kindFilter = 'all' }: {
     rows: Comparison[]; selectedKey: string; sources: Map<string, string>; outcomeFilter: string; onSelect: (key: string) => void
-    timelineKeys?: string[]; onToggleTimeline?: (key: string) => void; rollups?: Rollup[]; timeline?: Series[];
+    timelineKeys?: string[]; onToggleTimeline?: (key: string) => void; rollups?: Rollup[]; timeline?: Series[]; kindFilter?: string;
   } = $props();
   let sort = $state<RankField>('impact');
   let direction = $state(-1);
@@ -53,12 +53,6 @@
     : 'Extra time versus the reference average, summed over the current requests (volume × mean change).'
       + (row.shiftZ == null ? '' : ` Distribution shift z = ${row.shiftZ.toFixed(1)}; ${row.significant ? 'a clear, larger-than-bin shift.' : 'not a clear shift beyond histogram resolution.'}`);
   let loadByKey = $derived(new Map(timeline.map(series => [series.key, series.loadCorrelation])));
-  const errorTip = (row: Comparison) => {
-    const rollup = rollupFor(rollups, row);
-    return !rollup || rollup.errorRate == null
-      ? 'No requests with a known success or failure result in the current period.'
-      : `${rollup.failures.toLocaleString()} failed of ${rollup.requests.toLocaleString()} requests with a known result (about ${rollup.perMinute.toFixed(1)} per minute). Covers every source and kind of this API; unclassified results are left out.`;
-  };
   // P99 needs at least 100 samples per period; the bin-width caveat applies to every histogram quantile.
   const p99Tip = (row: Comparison) => row.current.p99 == null || row.reference.p99 == null
     ? 'P99 needs at least 100 valid samples in each period.'
@@ -82,7 +76,7 @@
       <th aria-sort={sort === 'impact' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button class="sort-button" title="Extra time versus the reference average, summed over all current requests. A marker means the whole latency distribution clearly shifted." onclick={() => sortBy('impact')}>Total impact{sort === 'impact' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button></th>
       <th aria-sort={sort === 'ratio' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button class="sort-button" title="P95 is the time within which about 95 of 100 requests finish. 2× means twice as long; 0.5× means half as long." onclick={() => sortBy('ratio')}>P95 vs reference{sort === 'ratio' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button></th>
       <th><button class="sort-button" title="Difference between current and earlier reference P95 estimates, in milliseconds. P95 is the estimated time within which about 95 of 100 requests with usable timings finish." onclick={() => sortBy('delta')}>P95 difference (ms)</button></th>
-      <th title="Share of current-period requests with a known result that failed, for the whole API across sources and kinds.">Error rate</th>
+      <th title="Share of current-period requests with a known result that failed, for the whole API. Needs the outcome filter set to All.">Error rate</th>
       <th title="Shows whether the available samples support a comparison.">Comparison</th>
     </tr></thead>
     <tbody>
@@ -93,8 +87,8 @@
           <td class="group-kind" data-label="Kind and outcome">{row.kind}<small>{outcomeRateText(rows, row, outcomeFilter)}</small></td><td data-label="Current requests">{row.current.count.toLocaleString()}</td><td data-label="Reference requests">{row.reference.count.toLocaleString()}</td>
           <td class="numeric" data-label="Total impact" title={impactTip(row)}>{impactText(row.impactMs)}{#if row.significant}<small>significant shift</small>{/if}</td>
           <td class="numeric" data-label="P95 vs reference" title={p99Tip(row)}>{ratio(row.p95Ratio)}</td><td class="numeric" data-label="P95 difference (ms)">{row.p95DeltaMs == null ? 'N/A' : '≈ ' + row.p95DeltaMs.toFixed(1)}</td>
-          <td class="numeric" data-label="Error rate" title={errorTip(row)}>{errorRateText(rollupFor(rollups, row)?.errorRate)}</td>
-          <td class="group-status" data-label="Comparison"><span class="state-pill" title={stateDetails[row.state] ?? 'Comparison status'}>{stateLabels[row.state] ?? row.state.replaceAll('_', ' ')}</span>{#if loadBadge(loadByKey.get(row.key))}<span class="state-pill" title="Estimated concurrency (summed request time per bucket) rises and falls with this group's P95 across the current period. A correlation, not proof of cause.">{loadBadge(loadByKey.get(row.key))}</span>{/if}</td>
+          <td class="numeric" data-label="Error rate" title={errorRateTip(rollupFor(rollups, row), outcomeFilter, kindFilter)}>{errorRateText(rollupFor(rollups, row)?.errorRate, outcomeFilter)}</td>
+          <td class="group-status" data-label="Comparison"><span class="state-pill" title={stateDetails[row.state] ?? 'Comparison status'}>{stateLabels[row.state] ?? row.state.replaceAll('_', ' ')}</span>{#if loadBadge(loadByKey.get(row.key))}<span class="state-pill" title={loadTip(loadByKey.get(row.key) ?? 0)}>{loadBadge(loadByKey.get(row.key))}</span>{/if}</td>
         </tr>
       {:else}<tr><td colspan="10" class="table-empty">{rows.length ? 'No API groups match this search and view. Clear the search or choose All API groups.' : 'No API comparisons are available for this query.'}</td></tr>{/each}
     </tbody>

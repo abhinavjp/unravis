@@ -72,6 +72,13 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 	})
 
 	q.Start, q.End, q.BaselineStart, q.BaselineEnd = q.Start.UTC(), q.End.UTC(), q.BaselineStart.UTC(), q.BaselineEnd.UTC()
+	// Summed request time per bucket across every cohort: the system-wide load.
+	totalSum := make(map[int64]float64)
+	for _, c := range cohorts {
+		for at, h := range c.currentAt {
+			totalSum[at] += h.sum
+		}
+	}
 	analysis := Analysis{Query: q, APIs: make([]Comparison, 0, len(keys)), Timeline: make([]Series, 0), Sources: sources, Quality: quality, Approximate: true, Warnings: []string{"Latency quantiles are estimated from logarithmic histogram buckets; compared does not mean healthy."}}
 	for _, key := range keys {
 		c := cohorts[key]
@@ -109,21 +116,21 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 			}
 			sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
 			series := Series{Key: key, Points: make([]Point, 0, len(times))}
-			sums := make([]float64, 0, len(times))
+			ownSum := make(map[int64]float64, len(times))
 			for _, at := range times {
 				stats := c.currentAt[at].stats()
-				sums = append(sums, c.currentAt[at].sum)
+				ownSum[at] = c.currentAt[at].sum
 				point := Point{At: time.Unix(0, at).UTC(), Count: stats.Count, P50: stats.P50, P95: stats.P95}
 				if comparison.State == "compared" {
 					point.P95Ratio = ratio(stats.P95, referenceStats.P95)
 				}
 				series.Points = append(series.Points, point)
 			}
-			series.LoadCorrelation = seriesLoadCorrelation(series.Points, sums, q.BucketSeconds)
+			series.LoadCorrelation = seriesLoadCorrelation(series.Points, otherLoadSums(totalSum, ownSum, times), q)
 			analysis.Timeline = append(analysis.Timeline, series)
 		}
 	}
-	analysis.Rollups = buildRollups(cohorts, windowMinutes(q.Start, q.End))
+	analysis.Rollups = buildRollups(cohorts, windowMinutes(q.Start, q.End), q.Outcome == "all")
 	volume, err := requestVolume(q, current)
 	if err != nil {
 		return Analysis{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)

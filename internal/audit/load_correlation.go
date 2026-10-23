@@ -25,8 +25,10 @@ type Rollup struct {
 
 // buildRollups folds the current-window outcome-split cohorts into one row per
 // (controller, action), sorted by name. windowMinutes is the length of the
-// current window.
-func buildRollups(cohorts map[string]*cohortAccumulator, windowMinutes float64) []Rollup {
+// current window. The sources apply the outcome filter before summarizing, so
+// when allOutcomes is false the failure share is unknowable and ErrorRate stays
+// nil; throughput is still reported.
+func buildRollups(cohorts map[string]*cohortAccumulator, windowMinutes float64, allOutcomes bool) []Rollup {
 	type name struct{ controller, action string }
 	byName := map[name]*Rollup{}
 	for _, c := range cohorts {
@@ -49,8 +51,10 @@ func buildRollups(cohorts map[string]*cohortAccumulator, windowMinutes float64) 
 	rows := make([]Rollup, 0, len(byName))
 	for _, r := range byName {
 		if r.Requests > 0 {
-			rate := float64(r.Failures) / float64(r.Requests)
-			r.ErrorRate = &rate
+			if allOutcomes {
+				rate := float64(r.Failures) / float64(r.Requests)
+				r.ErrorRate = &rate
+			}
 			if windowMinutes > 0 {
 				r.PerMinute = float64(r.Requests) / windowMinutes
 			}
@@ -113,9 +117,12 @@ func SpearmanLoad(concurrency []float64, p95 []*float64) *float64 {
 	n := float64(len(rx))
 	var mx, my float64
 	for i := range rx {
-		mx += rx[i] / n
-		my += ry[i] / n
+		mx += rx[i]
+		my += ry[i]
 	}
+	// Ranks are multiples of 0.5, so these sums are exact and a constant side
+	// has exactly zero variance below.
+	mx, my = mx/n, my/n
 	var sxy, sxx, syy float64
 	for i := range rx {
 		dx, dy := rx[i]-mx, ry[i]-my
@@ -156,18 +163,58 @@ func averageRanks(values []float64) []float64 {
 	return ranks
 }
 
-// seriesLoadCorrelation correlates a cohort's per-bucket estimated concurrency
-// with its per-bucket P95. points and sums are aligned and ordered by time.
-func seriesLoadCorrelation(points []Point, sums []float64, bucketSeconds int) *float64 {
+// otherLoadSums returns, per time bucket, the summed request time of every
+// cohort except one: the work everything else put on the system. total and own
+// are keyed by bucket time. Float noise from the subtraction is flushed to zero
+// so a series with no neighbours reads as constant, not as a tiny wobble.
+func otherLoadSums(total, own map[int64]float64, times []int64) []float64 {
+	out := make([]float64, len(times))
+	for i, at := range times {
+		diff := total[at] - own[at]
+		if diff <= 1e-9*math.Max(total[at], 1) {
+			diff = 0
+		}
+		out[i] = diff
+	}
+	return out
+}
+
+// seriesLoadCorrelation correlates the load other traffic put on the system in
+// each bucket with this series' per-bucket P95. Using the series' own summed
+// time would be circular (it is count x mean latency), so otherSums holds the
+// other cohorts' summed request time per bucket, aligned with points. Edge
+// buckets that the window only partly covers are scaled to a rate over the
+// covered part.
+func seriesLoadCorrelation(points []Point, otherSums []float64, q Query) *float64 {
 	buckets := make([]Bucket, len(points))
 	p95 := make([]*float64, len(points))
 	for i, p := range points {
-		buckets[i] = Bucket{At: p.At, Count: p.Count, SumMs: sums[i]}
+		buckets[i] = Bucket{At: p.At, Count: p.Count, SumMs: otherSums[i] * bucketLoadScale(p.At, q.BucketSeconds, q.Start, q.End)}
 		if p.P95 != nil {
 			p95[i] = p.P95.ValueMs
 		}
 	}
-	return SpearmanLoad(EstimateConcurrency(buckets, bucketSeconds), p95)
+	return SpearmanLoad(EstimateConcurrency(buckets, q.BucketSeconds), p95)
+}
+
+// bucketLoadScale is bucket width divided by the part of the bucket inside
+// [start, end). Requests only exist inside the window, so a partial bucket's
+// summed time spans less than a full bucket width. It is 1 for full buckets and
+// for buckets that do not overlap the window at all.
+func bucketLoadScale(at time.Time, bucketSeconds int, start, end time.Time) float64 {
+	width := time.Duration(bucketSeconds) * time.Second
+	lo, hi := at, at.Add(width)
+	if start.After(lo) {
+		lo = start
+	}
+	if end.Before(hi) {
+		hi = end
+	}
+	overlap := hi.Sub(lo)
+	if overlap <= 0 || width <= 0 {
+		return 1
+	}
+	return float64(width) / float64(overlap)
 }
 
 // windowMinutes is the length of the current window in minutes.
