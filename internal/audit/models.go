@@ -139,13 +139,13 @@ type Quantile struct {
 }
 
 type Stats struct {
-	Count     int64      `json:"count"`
-	MeanMs    *float64   `json:"meanMs"`
-	MinMs     *float64   `json:"minMs"`
-	MaxMs     *float64   `json:"maxMs"`
-	P50       *Quantile  `json:"p50"`
-	P90       *Quantile  `json:"p90,omitempty"`
-	P95       *Quantile  `json:"p95"`
+	Count  int64     `json:"count"`
+	MeanMs *float64  `json:"meanMs"`
+	MinMs  *float64  `json:"minMs"`
+	MaxMs  *float64  `json:"maxMs"`
+	P50    *Quantile `json:"p50"`
+	P90    *Quantile `json:"p90,omitempty"`
+	P95    *Quantile `json:"p95"`
 	// P99 is nil below 100 samples; the nearest-rank P99 would otherwise be the maximum.
 	P99       *Quantile  `json:"p99,omitempty"`
 	Histogram []BinCount `json:"histogram"`
@@ -174,6 +174,10 @@ type Comparison struct {
 	P95DeltaMs      *float64 `json:"p95DeltaMs"`
 	P99Ratio        *float64 `json:"p99Ratio,omitempty"`
 	P99DeltaMs      *float64 `json:"p99DeltaMs,omitempty"`
+	ImpactMs        *float64 `json:"impactMs,omitempty"`
+	TotalTimeMs     float64  `json:"totalTimeMs"`
+	ShiftZ          *float64 `json:"shiftZ,omitempty"`
+	Significant     bool     `json:"significant,omitempty"`
 }
 
 type Point struct {

@@ -99,6 +99,7 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 			comparison.P95Ratio = ratio(currentStats.P95, referenceStats.P95)
 			comparison.P99Ratio = ratio(currentStats.P99, referenceStats.P99)
 		}
+		applyImpact(&comparison)
 		analysis.APIs = append(analysis.APIs, comparison)
 
 		if len(c.currentAt) > 0 {

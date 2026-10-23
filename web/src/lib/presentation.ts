@@ -1,15 +1,18 @@
 import type { Comparison, Query } from './types';
 
-// Rank comparable groups by slowdown; groups without a ratio always stay last.
-export const rankComparisons = (rows: Comparison[], field: 'ratio' | 'delta' | 'count' = 'ratio', direction = -1) => rows.slice().sort((a, b) => {
-  const value = (row: Comparison) => field === 'ratio' ? row.p95Ratio : field === 'delta' ? row.p95DeltaMs : row.current.count;
+export type RankField = 'impact' | 'ratio' | 'delta' | 'count';
+
+// Rank comparable groups by the chosen field; groups without a value always stay last.
+// 'impact' is the extra time spent versus the reference across all current requests.
+export const rankComparisons = (rows: Comparison[], field: RankField = 'ratio', direction = -1) => rows.slice().sort((a, b) => {
+  const value = (row: Comparison) => field === 'impact' ? row.impactMs : field === 'ratio' ? row.p95Ratio : field === 'delta' ? row.p95DeltaMs : row.current.count;
   const av = value(a), bv = value(b);
   if (av == null || !Number.isFinite(av)) return bv == null || !Number.isFinite(bv) ? a.key.localeCompare(b.key) : 1;
   if (bv == null || !Number.isFinite(bv)) return -1;
   return direction * (av - bv) || b.current.count - a.current.count || a.key.localeCompare(b.key);
 });
 
-export const initialComparison = (rows: Comparison[]) => rankComparisons(rows).find(row => row.state === 'compared' && row.current.count > 0)
+export const initialComparison = (rows: Comparison[]) => rankComparisons(rows, rows.some(row => row.impactMs != null) ? 'impact' : 'ratio').find(row => row.state === 'compared' && row.current.count > 0)
   ?? rows.slice().sort((a, b) => b.current.count - a.current.count)[0] ?? null;
 
 export const queryFingerprint = (query: Query) => JSON.stringify([

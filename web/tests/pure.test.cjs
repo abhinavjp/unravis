@@ -318,6 +318,14 @@ test('production-sized results rank real slowdowns first and keep unavailable ra
  assert.ok(!notes.join(' ').includes('g-0'));
 });
 
+test('impact sort puts the largest total added time first and keeps rows without impact last', () => {
+ const row=(key,impactMs,count)=>({...comparison(key,'API'+key),impactMs,current:stats({count}),p95Ratio:1});
+ const rows=[row('small',500*20,20),row('none',undefined,500),row('big',200*1000,1000),row('negative',-3000,100),row('null',null,50)];
+ assert.deepEqual(presentation.rankComparisons(rows,'impact').map(r=>r.key),['big','small','negative','none','null']);
+ assert.deepEqual(presentation.rankComparisons(rows,'impact',1).map(r=>r.key),['negative','small','big','none','null']);
+ assert.equal(presentation.initialComparison(rows).key,'big');
+});
+
 test('stale-run detection ignores JSON property order and equivalent UTC timestamps but catches real edits', () => {
  const q=analysis({start:'2026-10-22T10:00:00.000Z',end:'2026-10-22T12:00:00.000Z',bucketSeconds:600}).query;
  const reordered=Object.fromEntries(Object.entries(q).reverse());

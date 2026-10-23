@@ -36,6 +36,10 @@ export interface Comparison {
   medianDeltaMs: number | null; p95DeltaMs: number | null; currentEvents: number; referenceEvents: number;
   /** Additive: absent when undefined (fewer than 100 samples in either window). */
   p99Ratio?: number | null; p99DeltaMs?: number | null;
+  /** Additive. impactMs = (current mean - reference mean) x current count; absent unless state is compared. */
+  impactMs?: number | null; totalTimeMs?: number;
+  /** Mann-Whitney z from histogram counts (positive = current slower); absent below 20 samples. */
+  shiftZ?: number | null; significant?: boolean;
 }
 export interface Point { at: string; count: number | null; p50: Quantile | null; p95: Quantile | null; p95Ratio: number | null }
 export interface Series { key: string; points: Point[] }
