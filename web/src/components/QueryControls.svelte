@@ -1,9 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import type { Completion, Query } from '../lib/types';
+  import type { Completion, NumberRange, Query, RangeKey } from '../lib/types';
   import { bucketForWindows, fromLocalParts, quickRange, quickRanges, toLocalDatePart, toLocalTimePart, zones, type QuickRangeId } from '../lib/time';
   import { metricLabels } from '../lib/presentation';
-  import { isValidOperation, isValidUserId, splitList, syncListDraft, syncOperationDraft } from '../lib/investigation';
+  import { RANGE_FIELDS, buildRange, isValidOperation, isValidUserId, rangeConflict, splitList, syncListDraft, syncOperationDraft, syncRangeDraft } from '../lib/investigation';
   import DateTimeField from './DateTimeField.svelte';
   let { query = $bindable(), zone = $bindable(), targetMs = $bindable(), dateInputsValid = $bindable(), groupNames = [], now = '' }: { query: Query; zone: string; targetMs: number | null; dateInputsValid: boolean; groupNames?: string[]; now?: string } = $props();
   let timeInputError = $state('');
@@ -22,17 +22,53 @@
   let statusCodesText = $state(initialText.statusCodes);
   let operationText = $state(initialText.operation);
   const userIdOk = (item: string) => /^\d{1,10}$/.test(item) && isValidUserId(Number(item));
+  // Range filters: each has a min and a max box whose text is a draft, because a
+  // bound that cannot be applied (negative, not a number, above the limit, or a
+  // minimum above the maximum) stays visible with a hint instead of being rewritten.
+  const rangeMeta: Record<RangeKey, { label: string; implies: string }> = {
+    observedMs: { label: 'Observed time', implies: 'From the request start to its completion. Applies to complete requests only, so it sets Completion to Complete. Its minimum also raises the slowest-requests floor.' },
+    apiTimeMs: { label: 'API time', implies: 'Time spent in the API itself. Applies to complete requests only, so it sets Completion to Complete. Its minimum also raises the slowest-requests floor when the time measured is API time.' },
+    auditCreateTimeMs: { label: 'Audit write time', implies: 'Time spent creating the audit record. Applies to complete requests only, so it sets Completion to Complete.' },
+    requestKb: { label: 'Request size', implies: 'Size of the request body. Requests that do not record a size never match a bounded range.' },
+    responseKb: { label: 'Response size', implies: 'Size of the response body. Requests that do not record a size never match a bounded range.' },
+    incompleteAgeMs: { label: 'Time without finishing', implies: 'How long a request has gone without finishing, measured when the search runs. Applies to incomplete and pending requests only, so it sets Completion to Incomplete. It cannot be combined with a time range.' }
+  };
+  type RangeDraft = { min: string; max: string };
+  const draftOf = (range: NumberRange | undefined): RangeDraft => ({ min: range?.min != null ? String(range.min) : '', max: range?.max != null ? String(range.max) : '' });
+  let rangeText = $state<Record<RangeKey, RangeDraft>>(untrack(() => Object.fromEntries(RANGE_FIELDS.map(field => [field.key, draftOf(query[field.key])])) as Record<RangeKey, RangeDraft>));
+  const rangeProblems = $derived(Object.fromEntries(RANGE_FIELDS.map(field => [field.key, buildRange(rangeText[field.key].min, rangeText[field.key].max, field.limit).problems])) as Record<RangeKey, string[]>);
+  const rangeNote = $derived(rangeConflict(query));
+  const setRange = (key: RangeKey, side: 'min' | 'max', text: string, limit: number) => {
+    const draft = { ...rangeText[key], [side]: text };
+    rangeText[key] = draft;
+    query[key] = buildRange(draft.min, draft.max, limit).range;
+  };
+  const clearRange = (key: RangeKey) => {
+    rangeText[key] = { min: '', max: '' };
+    query[key] = undefined;
+  };
+  const describeRange = (key: RangeKey, range: NumberRange) => {
+    const unit = RANGE_FIELDS.find(field => field.key === key)?.unit ?? '';
+    const bound = (value: number) => value.toLocaleString('en-US', { maximumFractionDigits: 6 });
+    if (range.min != null && range.max != null) return `${bound(range.min)} to ${bound(range.max)} ${unit}`;
+    return range.min != null ? `at least ${bound(range.min)} ${unit}` : `at most ${bound(range.max ?? 0)} ${unit}`;
+  };
   // The query can be replaced after this component mounts (a restored or saved
   // investigation), so each draft follows the query. A draft that still parses to
   // the applied values is left alone, which keeps partial typing intact.
   $effect(() => {
     const applied = { userIds: query.userIds, uiVersions: query.uiVersions, userIps: query.userIps, statusCodes: query.statusCodes, operation: query.operation };
+    const ranges = RANGE_FIELDS.map(field => ({ key: field.key, limit: field.limit, min: query[field.key]?.min, max: query[field.key]?.max }));
     untrack(() => {
       userIdsText = syncListDraft(userIdsText, applied.userIds, userIdOk);
       uiVersionsText = syncListDraft(uiVersionsText, applied.uiVersions);
       userIpsText = syncListDraft(userIpsText, applied.userIps);
       statusCodesText = syncListDraft(statusCodesText, applied.statusCodes);
       operationText = syncOperationDraft(operationText, applied.operation);
+      for (const { key, limit, min, max } of ranges) {
+        const next = syncRangeDraft(rangeText[key], min != null || max != null ? { ...(min != null ? { min } : {}), ...(max != null ? { max } : {}) } : undefined, limit);
+        if (next !== rangeText[key]) rangeText[key] = next;
+      }
     });
   });
   const rejectedUserIds = $derived(splitList(userIdsText).filter(item => !userIdOk(item)));
@@ -73,12 +109,17 @@
     for (const value of query.statusCodes ?? []) out.push({ id: `status-${value}`, label: `Status ${value}`, remove: () => setList('statusCodes', joinList((query.statusCodes ?? []).filter(item => item !== value))) });
     if (query.completion && query.completion !== 'all') out.push({ id: 'completion', label: `Completion: ${completionLabels[query.completion]}`, remove: () => setCompletion('') });
     if (query.operation) out.push({ id: 'operation', label: `Operation ${query.operation}`, remove: () => setOperation('') });
+    for (const field of RANGE_FIELDS) {
+      const range = query[field.key];
+      if (range && (range.min != null || range.max != null)) out.push({ id: `range-${field.key}`, label: `${rangeMeta[field.key].label} ${describeRange(field.key, range)}`, remove: () => clearRange(field.key) });
+    }
     return out;
   });
   const clearRecordFilters = () => {
     userIdsText = ''; uiVersionsText = ''; userIpsText = ''; statusCodesText = ''; operationText = '';
     query.userIds = undefined; query.uiVersions = undefined; query.userAgentContains = undefined; query.userIps = undefined;
     query.urlContains = undefined; query.auditId = undefined; query.statusCodes = undefined; query.completion = undefined; query.operation = undefined;
+    for (const field of RANGE_FIELDS) clearRange(field.key);
   };
   const completionLabels: Record<Completion, string> = { all: 'Any', complete: 'Complete', incomplete: 'Incomplete', pending: 'Pending (accepted, not finished)', invalid: 'Invalid timing' };
   const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time';
@@ -168,6 +209,24 @@
           <div class="control-group"><label for="rf-completion">Completion</label><select id="rf-completion" value={query.completion ?? ''} onchange={(event) => setCompletion(event.currentTarget.value)}><option value="">Any</option>{#each ['complete', 'incomplete', 'pending', 'invalid'] as value}<option value={value}>{completionLabels[value as Completion]}</option>{/each}</select></div>
         </div>
         <div class="control-group"><label for="rf-operation">Operation</label><input id="rf-operation" list="rf-operation-options" maxlength="200" autocomplete="off" aria-invalid={operationInvalid} value={operationText} oninput={(event) => setOperation(event.currentTarget.value)} placeholder="Controller.Action" />{#if operationInvalid}<p class="inline-error" role="alert">Not applied. Write the operation as Controller.Action, with a name on both sides of the dot.</p>{/if}<datalist id="rf-operation-options">{#each operationSuggestions as name (name)}<option value={name}></option>{/each}</datalist><p class="field-note">Suggestions come from the API groups of the loaded results. It is the controller before the first dot and the action after it.</p></div>
+        <div class="range-filters" role="group" aria-labelledby="rf-ranges-title">
+          <p id="rf-ranges-title" class="range-heading">Ranges</p>
+          <p class="field-note">Both ends are optional and included. A request that does not record the value never matches a range.</p>
+          {#if rangeNote}<p class="inline-error" role="alert">{rangeNote}</p>{/if}
+          <div class="field-grid">
+            {#each RANGE_FIELDS as field (field.key)}
+              <div class="control-group" role="group" aria-labelledby="rf-{field.key}-label" title={rangeMeta[field.key].implies}>
+                <span id="rf-{field.key}-label" class="range-label">{rangeMeta[field.key].label} ({field.unit})</span>
+                <div class="range-pair">
+                  <input id="rf-{field.key}-min" type="text" inputmode="decimal" autocomplete="off" aria-label="{rangeMeta[field.key].label} minimum ({field.unit})" aria-invalid={rangeProblems[field.key].length > 0} value={rangeText[field.key].min} oninput={(event) => setRange(field.key, 'min', event.currentTarget.value, field.limit)} placeholder="Min" />
+                  <input id="rf-{field.key}-max" type="text" inputmode="decimal" autocomplete="off" aria-label="{rangeMeta[field.key].label} maximum ({field.unit})" aria-invalid={rangeProblems[field.key].length > 0} value={rangeText[field.key].max} oninput={(event) => setRange(field.key, 'max', event.currentTarget.value, field.limit)} placeholder="Max" />
+                </div>
+                {#each rangeProblems[field.key] as problem (problem)}<p class="inline-error" role="alert">Not applied. {problem}.</p>{/each}
+                <p class="field-note">{rangeMeta[field.key].implies}</p>
+              </div>
+            {/each}
+          </div>
+        </div>
       </div>
     </details>
   </div>
@@ -183,4 +242,8 @@
   .record-clear { justify-self: start; margin-top: 4px; border: 0; background: transparent; color: var(--cobalt); cursor: pointer; font-size: 12px; font-weight: 600; padding: 2px 0; }
   .record-clear:hover { text-decoration: underline; }
   input[aria-invalid='true'] { border-color: var(--danger); }
+  .range-filters { display: grid; gap: 6px; }
+  .range-heading { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+  .range-label { font-size: 13px; font-weight: 600; color: var(--ink); }
+  .range-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 </style>

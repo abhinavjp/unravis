@@ -1,9 +1,11 @@
 package store
 
 import (
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"api-audit-explorer/internal/audit"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -77,10 +79,90 @@ func containsMatch(text string) bson.D {
 // _auditPending are set. The MongoDB 3.4 adapter does not use it; it applies the
 // same rule in Go with audit.StateMatches.
 func recordPostMatch(q audit.Query) bson.D {
-	if stage, ok := stateMatchStage(q.Completion); ok {
-		return stage
+	post := bson.D{}
+	// A latency range implies the complete state and an age range the incomplete
+	// one; EffectiveCompletion returns the requested Completion when there is one.
+	if stage, ok := stateMatchStage(audit.EffectiveCompletion(q)); ok {
+		post = append(post, stage...)
 	}
-	return bson.D{}
+	for _, field := range rangeFields(q) {
+		post = append(post, bson.E{Key: field.name, Value: rangeBounds(field.r)})
+	}
+	return post
+}
+
+// rangeField is one bounded range filter and the derived field it is matched on.
+type rangeField struct {
+	name string
+	r    *audit.Range
+	// expr computes the field from the document and the stages' derived fields.
+	expr func(q audit.Query) any
+}
+
+// rangeFields lists the bounded ranges of q in a fixed order. A range that
+// constrains nothing is skipped.
+func rangeFields(q audit.Query) []rangeField {
+	all := []rangeField{
+		{"_auditRangeObserved", q.ObservedMs, func(audit.Query) any { return observedDurationExpr() }},
+		{"_auditRangeApi", q.ApiTimeMs, func(audit.Query) any { return numberExpr("$ApiTime") }},
+		{"_auditRangeAuditCreate", q.AuditCreateTimeMs, func(audit.Query) any { return numberExpr("$AuditCreateTime") }},
+		// A payload size that is missing or not a number stays null here, never 0,
+		// so the record cannot match a bounded range.
+		{"_auditRangeReq", q.RequestKB, func(audit.Query) any { return numberExpr("$RequestLengthInKiloBytes") }},
+		{"_auditRangeResp", q.ResponseKB, func(audit.Query) any { return numberExpr("$ResponseLengthInKiloBytes") }},
+		{"_auditRangeAge", q.IncompleteAgeMs, incompleteAgeExpr},
+	}
+	out := make([]rangeField, 0, len(all))
+	for _, f := range all {
+		if f.r != nil && (f.r.Min != nil || f.r.Max != nil) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// rangeBounds is the $match condition of one range on a derived numeric field.
+// The lower bound is always present (zero when the range has no minimum) and
+// the upper bound falls back to below MaxFloat64, so null, missing, negative,
+// NaN and infinite values never match, as audit.Range.contains reads them.
+func rangeBounds(r *audit.Range) bson.D {
+	lower := 0.0
+	if r.Min != nil && *r.Min > 0 {
+		lower = *r.Min
+	}
+	if r.Max != nil {
+		return bson.D{{Key: "$gte", Value: lower}, {Key: "$lte", Value: *r.Max}}
+	}
+	return bson.D{{Key: "$gte", Value: lower}, {Key: "$lt", Value: math.MaxFloat64}}
+}
+
+// incompleteAgeExpr is the age of a record that has not completed, in
+// milliseconds: the injected clock minus its start (CreatedOn when it has no
+// start). A completed record has no age, except a pending async request, which
+// was accepted but not run. The clock is a literal date, never the server's.
+func incompleteAgeExpr(q audit.Query) any {
+	now := q.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	started := bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}}
+	notCompleted := bson.D{{Key: "$or", Value: bson.A{
+		bson.D{{Key: "$ne", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditCompleted"}}, "date"}}},
+		"$_auditPending",
+	}}}
+	elapsed := bson.D{{Key: "$subtract", Value: bson.A{bson.D{{Key: "$literal", Value: now.UTC().Truncate(time.Millisecond)}}, "$_auditAt"}}}
+	return bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$and", Value: bson.A{started, notCompleted}}}, elapsed, nil}}}
+}
+
+// recordRangeSet is the $set stage that derives each bounded range's field. It is
+// empty when q has no range, and must run after _auditAt, _auditCompleted and
+// _auditPending are set.
+func recordRangeSet(q audit.Query) bson.D {
+	set := bson.D{}
+	for _, f := range rangeFields(q) {
+		set = append(set, bson.E{Key: f.name, Value: f.expr(q)})
+	}
+	return set
 }
 
 // stateMatchStage is the one Mongo form of a row-state filter on the derived
@@ -104,6 +186,9 @@ func stateMatchStage(state string) (bson.D, bool) {
 // appendRecordPostMatch adds recordPostMatch as a $match stage when it is not
 // empty.
 func appendRecordPostMatch(stages []bson.D, q audit.Query) []bson.D {
+	if set := recordRangeSet(q); len(set) > 0 {
+		stages = append(stages, bson.D{{Key: "$set", Value: set}})
+	}
 	if post := recordPostMatch(q); len(post) > 0 {
 		stages = append(stages, bson.D{{Key: "$match", Value: post}})
 	}

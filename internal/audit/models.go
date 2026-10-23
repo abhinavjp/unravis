@@ -62,6 +62,22 @@ type Query struct {
 	Completion string `json:"completion,omitempty"`
 	// Operation is "Controller.Action", split on the first dot.
 	Operation string `json:"operation,omitempty"`
+
+	// Range filters bound a numeric field inclusively (see ranges.go). ObservedMs,
+	// ApiTimeMs and AuditCreateTimeMs are latency ranges and imply complete
+	// records; IncompleteAgeMs implies incomplete records; the KB ranges read the
+	// stored payload sizes and imply nothing. An unset or empty range is no filter.
+	ObservedMs        *Range `json:"observedMs,omitempty"`
+	ApiTimeMs         *Range `json:"apiTimeMs,omitempty"`
+	AuditCreateTimeMs *Range `json:"auditCreateTimeMs,omitempty"`
+	RequestKB         *Range `json:"requestKb,omitempty"`
+	ResponseKB        *Range `json:"responseKb,omitempty"`
+	IncompleteAgeMs   *Range `json:"incompleteAgeMs,omitempty"`
+
+	// Now is the server clock an age range is measured against. It is set by the
+	// store, never read from a request and never serialized, so it cannot enter a
+	// cursor fingerprint (a cursor carries the page-one value itself).
+	Now time.Time `json:"-"`
 }
 
 type Source struct {

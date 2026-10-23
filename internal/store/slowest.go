@@ -64,9 +64,11 @@ func slowestPipeline(q audit.Query, source string, after *pageCursor, min *float
 	bounds := func(lower float64) bson.D {
 		return bson.D{{Key: "$gte", Value: lower}, {Key: "$lt", Value: math.MaxFloat64}}
 	}
+	// The floor is the higher of the explicit minimum and the range minimum for the
+	// ranking metric; the range filter itself is already in the shared post match.
 	lower := 0.0
-	if min != nil && *min > 0 {
-		lower = *min
+	if floor := audit.EffectiveSlowestMin(q, min); floor != nil && *floor > 0 {
+		lower = *floor
 	}
 	valid := bson.D{{Key: "durationMs", Value: bounds(lower)}}
 	if field != "durationMs" {

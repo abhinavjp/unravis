@@ -35,7 +35,7 @@ func pendingAsyncExpr(kind, statusText bson.D) bson.D {
 // behind it always agree.
 func auditDurationExpr(metric string) bson.D {
 	var duration any
-	timed := bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}}, bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditCompleted"}}, "date"}}}}}}
+	timed := auditTimedExpr()
 	if metric == "api" {
 		duration = bson.D{{Key: "$cond", Value: bson.A{timed,
 			bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$ApiTime"}, {Key: "to", Value: "double"}, {Key: "onError", Value: nil}, {Key: "onNull", Value: nil}}}}, nil,
@@ -46,6 +46,20 @@ func auditDurationExpr(metric string) bson.D {
 		}}}
 	}
 	return bson.D{{Key: "$cond", Value: bson.A{"$_auditPending", nil, duration}}}
+}
+
+// auditTimedExpr is true when both effective timestamps (_auditAt, the start or
+// its CreatedOn fallback, and _auditCompleted) are dates.
+func auditTimedExpr() bson.D {
+	return bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}}, bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditCompleted"}}, "date"}}}}}}
+}
+
+// observedDurationExpr is the observed time of a row, completed minus start in
+// milliseconds (AuditCreateTime + ApiTime), null when either timestamp is
+// missing. The request pipeline shows it as durationMs and the observed range
+// filter reads it; both use this one expression.
+func observedDurationExpr() bson.D {
+	return bson.D{{Key: "$cond", Value: bson.A{auditTimedExpr(), bson.D{{Key: "$subtract", Value: bson.A{"$_auditCompleted", "$_auditAt"}}}, nil}}}
 }
 
 // auditStateExpr derives a row's state from its metric duration field: a pending

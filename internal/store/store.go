@@ -30,6 +30,19 @@ type Store struct {
 	newClient clientFactory
 	global    chan struct{}
 	perSource map[string]chan struct{}
+	// now is the server clock an incomplete-age range is measured against. It is a
+	// field so tests can inject one; nil means the wall clock.
+	now func() time.Time
+}
+
+// clock returns the current time in UTC at millisecond precision, the precision
+// MongoDB dates carry, so the literal rendered into a pipeline is exact.
+func (s *Store) clock() time.Time {
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	return now().UTC().Truncate(time.Millisecond)
 }
 
 // New creates a store with bounded MongoDB connection settings.
