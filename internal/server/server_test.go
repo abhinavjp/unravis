@@ -1007,3 +1007,46 @@ func TestProcessingLimitsHaveSpecificSafeExplanations(t *testing.T) {
 		}
 	}
 }
+
+func TestRequestsStateFilterOverHTTP(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	h := New(audit.NewDemo(now), nil, testToken, true)
+	query := testQuery()
+	query.SourceIDs = []string{"demo-west"}
+	query.Start, query.End = now.Add(-15*time.Minute), now
+	query.BaselineStart, query.BaselineEnd = now.Add(-30*time.Minute), now.Add(-15*time.Minute)
+	page := func(state string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(audit.PageInput{Query: query, State: state, Limit: 5})
+		return request(h, http.MethodPost, "/api/requests", string(body), true)
+	}
+	// A query-wide page (no API key) with a state returns rows that carry the id and state.
+	res := page("complete")
+	if res.Code != http.StatusOK {
+		t.Fatalf("complete status=%d body=%s", res.Code, res.Body.String())
+	}
+	var got audit.Page
+	if err := json.Unmarshal(res.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Rows) != 5 {
+		t.Fatalf("rows=%d, want 5", len(got.Rows))
+	}
+	for _, row := range got.Rows {
+		if row.ID == "" || row.State != "valid" {
+			t.Fatalf("row id=%q state=%q, want an id and state valid", row.ID, row.State)
+		}
+	}
+	// Nothing in the demo is incomplete, so that state is a valid, empty page.
+	res = page("incomplete")
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"rows":[]`) {
+		t.Fatalf("incomplete status=%d body=%s", res.Code, res.Body.String())
+	}
+	// An unknown state is a client error on the page and the export route.
+	if res = page("bogus"); res.Code != http.StatusBadRequest {
+		t.Fatalf("unknown state status=%d body=%s", res.Code, res.Body.String())
+	}
+	body, _ := json.Marshal(audit.PageInput{Query: query, State: "bogus", Limit: 5})
+	if res = request(h, http.MethodPost, "/api/export", string(body), true); res.Code != http.StatusBadRequest {
+		t.Fatalf("export unknown state status=%d", res.Code)
+	}
+}

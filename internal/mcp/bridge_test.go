@@ -85,7 +85,7 @@ func TestRequestMetadataProjectionExcludesSensitiveFields(t *testing.T) {
 		if r.URL.Path != "/api/requests" {
 			t.Fatalf("unexpected request %s", r.URL.Path)
 		}
-		json.NewEncoder(w).Encode(audit.Page{Rows: []audit.RequestRecord{{ID: "private-record-id", URL: "https://private.example/?password=secret", Status: "OK", DurationMs: func() *float64 { v := 42.0; return &v }()}}, Sources: []audit.SourceResult{{SourceID: "s1", OK: true}}})
+		json.NewEncoder(w).Encode(audit.Page{Rows: []audit.RequestRecord{{ID: "record-id-1", State: "incomplete", URL: "https://private.example/?password=secret", Status: "OK", DurationMs: func() *float64 { v := 42.0; return &v }()}}, Sources: []audit.SourceResult{{SourceID: "s1", OK: true}}})
 	}))
 	defer upstream.Close()
 	b := newBridge(upstream.URL, upstream.Client())
@@ -97,9 +97,15 @@ func TestRequestMetadataProjectionExcludesSensitiveFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := json.Marshal(result)
-	for _, private := range []string{"password", "private.example", "private-record-id", token} {
+	for _, private := range []string{"password", "private.example", token} {
 		if strings.Contains(string(data), private) {
 			t.Fatalf("projection exposed %s", private)
+		}
+	}
+	// The record id and state identify the record; they are not sensitive.
+	for _, want := range []string{`"id":"record-id-1"`, `"state":"incomplete"`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("projection lost %s", want)
 		}
 	}
 	if !strings.Contains(string(data), `"durationMs":42`) {

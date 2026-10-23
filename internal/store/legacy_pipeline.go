@@ -453,6 +453,14 @@ func readLegacyRequestRowsMode(ctx context.Context, p *profile, q audit.Query, c
 	return readLegacyRequestRowsSorted(ctx, p, q, cohort, after, pipeline, maxRows, records, bytes, overlap, false)
 }
 func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query, cohort [5]string, after *pageCursor, pipeline mongo.Pipeline, maxRows int, records, bytes *atomic.Int64, overlap, slowest bool) ([]pageRow, error) {
+	return readLegacyRequestRowsState(ctx, p, q, cohort, "", after, pipeline, maxRows, records, bytes, overlap, slowest)
+}
+
+// readLegacyRequestRowsState is the Mongo 3.4 twin of requestPipelineState: a
+// plain page (neither activity nor slowest) keeps the rows the summary counted
+// for the query and, in a keyed page, the cohort, narrowed to state.
+func readLegacyRequestRowsState(ctx context.Context, p *profile, q audit.Query, cohort [5]string, state string, after *pageCursor, pipeline mongo.Pipeline, maxRows int, records, bytes *atomic.Int64, overlap, slowest bool) ([]pageRow, error) {
+	summary := !overlap && !slowest
 	cur, err := p.shared.client.Aggregate(ctx, p.source.Database, p.source.Collection, pipeline)
 	if err != nil {
 		return nil, err
@@ -477,14 +485,35 @@ func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query,
 		if record.ID.IsZero() || record.At == nil || (!overlap && (record.At.Before(q.Start) || !record.At.Before(q.End))) || (overlap && !audit.ActivityOverlaps(record.At, record.Completed, q.Start, q.End)) {
 			continue
 		}
-		if cohort[3] != "" && cohort[3] != "all" && !audit.KindMatches(cohort[3], record.Kind, true) {
-			continue
+		// The state follows the summary's metric, which only api changes.
+		stateRecord := record
+		if q.Metric == "api" {
+			stateRecord, _ = normalizeLegacyRecord(raw, "api")
 		}
-		if cohort[4] != "" && !audit.OutcomeFilterMatches(cohort[4], record.Outcome, record.StatusClass) {
-			continue
-		}
-		if audit.IsStatusClassOutcome(q.Outcome) && !audit.OutcomeFilterMatches(q.Outcome, record.Outcome, record.StatusClass) {
-			continue
+		if summary {
+			kindFilter, outcomeFilter := cohort[3], cohort[4]
+			if cohort[0] != "" {
+				kindFilter, outcomeFilter = q.Kind, q.Outcome
+			}
+			if !audit.RowInSummary(kindFilter, outcomeFilter, record.Kind, stateRecord.State, record.Outcome, record.StatusClass) {
+				continue
+			}
+			if cohort[0] != "" && ((cohort[3] != "" && cohort[3] != "all" && !audit.KindMatches(cohort[3], record.Kind, true)) || (cohort[4] != "" && !audit.OutcomeFilterMatches(cohort[4], record.Outcome, record.StatusClass))) {
+				continue
+			}
+			if !audit.StateMatches(state, stateRecord.State, stateRecord.PendingAsync, record.Outcome) {
+				continue
+			}
+		} else {
+			if cohort[3] != "" && cohort[3] != "all" && !audit.KindMatches(cohort[3], record.Kind, true) {
+				continue
+			}
+			if cohort[4] != "" && !audit.OutcomeFilterMatches(cohort[4], record.Outcome, record.StatusClass) {
+				continue
+			}
+			if audit.IsStatusClassOutcome(q.Outcome) && !audit.OutcomeFilterMatches(q.Outcome, record.Outcome, record.StatusClass) {
+				continue
+			}
 		}
 		if after != nil {
 			cursorRow := pageRow{at: after.At, object: legacyObjectID(after.ObjectID), request: audit.RequestRecord{SourceID: after.SourceID}}
@@ -495,7 +524,7 @@ func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query,
 		}
 		row := pageRow{request: audit.RequestRecord{
 			ID: record.ID.Hex(), SourceID: p.source.ID, Controller: record.Controller, Action: record.Action,
-			Kind: record.Kind, Outcome: record.Outcome, Status: record.Status, URL: record.URL,
+			Kind: record.Kind, Outcome: record.Outcome, State: stateRecord.State, Status: record.Status, URL: record.URL,
 			InitiatedAt: record.At, CompletedAt: record.Completed, DurationMs: record.Duration,
 			ApiTimeMs: record.API, AuditCreateTimeMs: record.AuditCreate, PayloadRecordTimeMs: record.PayloadRecord,
 			RequestKB: record.RequestKB, ResponseKB: record.ResponseKB,

@@ -180,3 +180,91 @@ func mustObjectID(value string) bson.ObjectID {
 	result, _ := bson.ObjectIDFromHex(value)
 	return result
 }
+
+func TestUnknownKindCohortDrillableUnderSynchronousFilter(t *testing.T) {
+	q := queryForTest(time.Now().UTC())
+	q.SourceIDs = []string{"src"}
+	q.Kind, q.Outcome = "synchronous", "success"
+	// An incomplete row without a polling type has kind unknown and outcome
+	// unknown; the summary keeps it under a synchronous filter, so its cohort
+	// must open.
+	if err := validateCohortQuery(q, [5]string{"src", "c", "a", "unknown", "unknown"}); err != nil {
+		t.Fatalf("unknown-kind cohort under a synchronous filter: %v", err)
+	}
+	q.Kind = "asynchronous"
+	if err := validateCohortQuery(q, [5]string{"src", "c", "a", "unknown", "unknown"}); err != nil {
+		t.Fatalf("unknown-kind cohort under an asynchronous filter: %v", err)
+	}
+	for _, kind := range []string{"synchronous", "asynchronous", "http", "all"} {
+		for _, outcome := range []string{"all", "success", "failure", "client_error", "server_error"} {
+			q.Kind, q.Outcome = kind, outcome
+			if err := validateCohortQuery(q, [5]string{"src", "c", "a", "unknown", "unknown"}); err != nil {
+				t.Errorf("unknown/unknown cohort under %s/%s: %v", kind, outcome, err)
+			}
+		}
+	}
+}
+
+func TestHangfireCohortRejectedUnderSynchronousFilter(t *testing.T) {
+	q := queryForTest(time.Now().UTC())
+	q.SourceIDs = []string{"src"}
+	q.Kind, q.Outcome = "synchronous", "success"
+	if err := validateCohortQuery(q, [5]string{"src", "c", "a", "hangfire", "success"}); !errors.Is(err, audit.ErrInvalidInput) {
+		t.Fatalf("hangfire cohort under a synchronous filter = %v, want ErrInvalidInput", err)
+	}
+	q.Kind = "hangfire"
+	if err := validateCohortQuery(q, [5]string{"src", "c", "a", "unknown", "unknown"}); !errors.Is(err, audit.ErrInvalidInput) {
+		t.Fatalf("unknown-kind cohort under a hangfire filter = %v, want ErrInvalidInput", err)
+	}
+	q.Kind, q.Outcome = "all", "server_error"
+	if err := validateCohortQuery(q, [5]string{"src", "c", "a", "synchronous", "success"}); !errors.Is(err, audit.ErrInvalidInput) {
+		t.Fatalf("success cohort under server_error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestRequestsStateFilterIncomplete(t *testing.T) {
+	var handle *fakeClient
+	s := newStore(func(context.Context, string, *tls.Config) (clientHandle, error) {
+		handle = &fakeClient{}
+		return handle, nil
+	})
+	source := addFakeSource(t, s, "audit")
+	var pipelines []mongo.Pipeline
+	handle.aggregateFn = func(_ context.Context, _, _ string, pipeline mongo.Pipeline) (mongoCursor, error) {
+		pipelines = append(pipelines, pipeline)
+		return &fakeCursor{}, nil
+	}
+	q := queryForTest(time.Now().UTC().Truncate(time.Second))
+	q.SourceIDs, q.Kind, q.Outcome = []string{source.ID}, "all", "all"
+	if _, err := s.Requests(context.Background(), audit.PageInput{Query: q, State: "incomplete", Limit: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Requests(context.Background(), audit.PageInput{Query: q, State: "all", Limit: 10}); err != nil {
+		t.Fatal(err)
+	}
+	if len(pipelines) != 2 {
+		t.Fatalf("pipelines = %d, want 2", len(pipelines))
+	}
+	text := func(p mongo.Pipeline) string {
+		b, err := bson.MarshalExtJSON(bson.D{{Key: "pipeline", Value: p}}, false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	if got := text(pipelines[0]); !strings.Contains(got, `{"_auditState":"incomplete"}`) || !strings.Contains(got, `"state":"$_auditState"`) {
+		t.Errorf("incomplete drill-down pipeline has no state match or projection: %s", got)
+	}
+	if got := text(pipelines[1]); strings.Contains(got, `{"_auditState":"incomplete"}`) {
+		t.Errorf("state=all must not filter: %s", got)
+	}
+	if _, err := s.Requests(context.Background(), audit.PageInput{Query: q, State: "bogus", Limit: 10}); !errors.Is(err, audit.ErrInvalidInput) {
+		t.Errorf("unknown state error = %v, want ErrInvalidInput", err)
+	}
+	// A cursor minted for one state must not page another.
+	cursor, _ := json.Marshal(pageCursor{At: time.Now().UTC(), SourceID: source.ID, ObjectID: bson.NewObjectID().Hex(), Fingerprint: pageFingerprint(q, "")})
+	input := audit.PageInput{Query: q, State: "incomplete", Cursor: base64.RawURLEncoding.EncodeToString(cursor), Limit: 10}
+	if _, err := s.Requests(context.Background(), input); !errors.Is(err, audit.ErrInvalidInput) {
+		t.Errorf("cursor from another state error = %v, want ErrInvalidInput", err)
+	}
+}
