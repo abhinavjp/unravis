@@ -60,6 +60,9 @@ func ValidateQuery(q Query) error {
 	if utf8.RuneCountInString(q.Action) > MaxFilterLength {
 		return invalidInputf("action must be at most %d characters", MaxFilterLength)
 	}
+	if err := q.RecordFilter.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 

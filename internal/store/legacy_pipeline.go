@@ -502,6 +502,9 @@ func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query,
 			UserID: record.UserID, UserIP: record.UserIP, UserAgent: record.UserAgent, UIVersion: record.UIVersion,
 			CreatedOn: record.CreatedOn, UpdatedOn: record.UpdatedOn, PollingTypeRaw: record.PollingTypeRaw,
 		}, at: *record.At, object: record.ID}
+		if !q.RecordFilter.Matches(row.request) {
+			continue
+		}
 		if slowest {
 			if audit.RequestMetric(row.request, q.Metric) == nil {
 				continue

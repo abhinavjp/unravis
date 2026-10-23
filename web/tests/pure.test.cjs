@@ -468,3 +468,39 @@ test('the quality strip shows pending async only when it is above zero', () => {
   const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
   assert.match(app, /\{#if analysis\.quality\.pendingAsync\}[^\n]*pending async/);
 });
+
+const breakdown = loadTypeScript('src/lib/breakdown.ts');
+
+test('breakdownRowFilter merges into query without dropping existing filters', () => {
+  const base = analysis({ start: '2026-10-22T12:00:00Z', end: '2026-10-22T13:00:00Z', bucketSeconds: 60 }).query;
+  // The server flattens the record filter into the Query, so a row's filter is a Query fragment.
+  const query = { ...base, controller: 'Pay', uiVersions: ['2.0'], userAgents: ['old'] };
+  const row = { value: 'UA-A', count: 3, filter: { userAgents: ['UA-A'] } };
+  const merged = breakdown.mergeRecordFilter(query, breakdown.breakdownRowFilter(row));
+  assert.deepEqual(breakdown.activeRecordFilter(merged), { uiVersions: ['2.0'], userAgents: ['UA-A'] });
+  assert.equal(merged.controller, 'Pay');
+  assert.deepEqual(merged.sourceIds, base.sourceIds);
+  assert.deepEqual(query.userAgents, ['old'], 'the input query is not mutated');
+  assert.equal(breakdown.mergeRecordFilter(base, { userIdMissing: true }).userIdMissing, true);
+  // A user id value replaces a missing-user selection (and the reverse): they are one dimension.
+  const swapped = breakdown.mergeRecordFilter({ ...base, userIdMissing: true }, { userIds: [7] });
+  assert.deepEqual(breakdown.activeRecordFilter(swapped), { userIds: [7] });
+  assert.equal('userIdMissing' in swapped && swapped.userIdMissing, false);
+  // "Other" has no filter, so there is nothing to apply.
+  assert.equal(breakdown.breakdownRowFilter({ value: 'Other', count: 9 }), null);
+  assert.equal(breakdown.mergeRecordFilter(query, null), query);
+});
+
+test('a breakdown request leaves its own dimension out of the active filter', () => {
+  const active = { userAgents: ['a'], statusCodes: ['200 OK'], userIdMissing: true };
+  const base = analysis({ start: '2026-10-22T12:00:00Z', end: '2026-10-22T13:00:00Z', bucketSeconds: 60 }).query;
+  const full = { ...base, ...active };
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.withoutDimension(full, 'userAgent')), { statusCodes: ['200 OK'], userIdMissing: true });
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.withoutDimension(full, 'userId')), { userAgents: ['a'], statusCodes: ['200 OK'] });
+  assert.deepEqual(breakdown.withoutDimension(full, 'userAgent').sourceIds, base.sourceIds);
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.clearRecordFilter(full)), {});
+  assert.deepEqual(breakdown.clearRecordFilter(full).sourceIds, base.sourceIds);
+  assert.equal(breakdown.hasRecordFilter({}), false);
+  assert.equal(breakdown.hasRecordFilter({ userIps: [''] }), true);
+  assert.equal(breakdown.hasRecordFilter({ userIdMissing: true }), true);
+});

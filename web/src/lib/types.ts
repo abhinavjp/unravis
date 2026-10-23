@@ -18,7 +18,12 @@ export interface Info {
   limits: { maxSources: number; maxPageSize: number; maxSummaryRows: number; maxTimeBuckets: number };
   now: string;
 }
-export interface Query {
+/** Additive record filters. The server flattens them into Query: OR inside a list, AND across lists; "" in a text list means the value is missing. Only requests and breakdown read them. */
+export interface RecordFilter {
+  userIds?: number[]; userIdMissing?: boolean; uiVersions?: string[]; userAgents?: string[];
+  userIps?: string[]; statusCodes?: string[]; pollingTypes?: string[];
+}
+export interface Query extends RecordFilter {
   sourceIds: string[]; start: string; end: string; baselineStart: string; baselineEnd: string;
   kind: Kind; outcome: Outcome; metric: Metric; bucketSeconds: number; controller: string; action: string;
 }
@@ -89,3 +94,11 @@ export interface RecordDetail extends RequestRecord { state: string; pendingAsyn
 export interface ActivityInput { sourceIds: string[]; start: string; end: string; cursor: string; limit: number }
 export interface VolumeBucket { controller: string; action: string; at: string; count: number }
 export interface LoadWindow { at:string; count:number; timing:Stats }
+export type BreakdownDim = 'statusCode' | 'userId' | 'uiVersion' | 'userAgent' | 'userIp' | 'pollingType';
+/** One value of a breakdown dimension. filter is the Query fragment that selects exactly this value; the Other row has none. stats percentiles come from valid completed records only. */
+export interface BreakdownRow {
+  value: string; missing: boolean; count: number; complete: number; incomplete: number; pending: number;
+  count4xx: number; count5xx: number; stats: Stats; filter?: RecordFilter; values?: number;
+}
+export interface Breakdown { dim: BreakdownDim; rows: BreakdownRow[]; other: BreakdownRow | null; total: number; distinct: number; sources: SourceResult[] }
+export interface BreakdownInput { query: Query; dim: BreakdownDim; top: number }

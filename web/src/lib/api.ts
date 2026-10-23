@@ -1,4 +1,4 @@
-import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput } from './types';
+import type { Analysis, Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput } from './types';
 
 const token = document.querySelector<HTMLMetaElement>('meta[name="audit-session"]')?.content ?? '';
 const base = '/api';
@@ -48,6 +48,8 @@ export const api = {
   addSource: (input: SourceInput) => request<Source>('/sources', json(input)),
   deleteSource: (id: string) => request<void>('/sources/' + encodeURIComponent(id), { method: 'DELETE' }),
   analyze: (query: Query, signal?: AbortSignal) => request<Analysis>('/analyze', json(query), signal),
+  breakdown: (query: Query, dim: BreakdownDim, top = 20, signal?: AbortSignal) =>
+    request<Breakdown>('/breakdown', json({ query, dim, top }), signal),
   slowest: (query:Query,signal?:AbortSignal)=>request<Page>('/slowest',json({query,limit:50,apiKey:'',cursor:''}),signal),
   requests: (query: Query, apiKey: string, cursor = '', signal?: AbortSignal) =>
     request<Page>('/requests', json({ query, apiKey, cursor, limit: 100 }), signal),

@@ -44,6 +44,7 @@ type Query struct {
 	BucketSeconds int       `json:"bucketSeconds"`
 	Controller    string    `json:"controller"`
 	Action        string    `json:"action"`
+	RecordFilter
 }
 
 type Source struct {

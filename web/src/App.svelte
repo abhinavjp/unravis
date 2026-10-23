@@ -5,7 +5,9 @@
   import { countEpochBuckets } from './lib/time';
   import { initialComparison, queryFingerprint, resultNotes, rankComparisons } from './lib/presentation';
   import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, shouldSelectAddedSource, writeInvestigationSnapshot } from './lib/investigation';
-import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RequestRecord, Source, SourceInput, TLSMode } from './lib/types';
+import type { Analysis, BreakdownRow, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilter, RequestRecord, Source, SourceInput, TLSMode } from './lib/types';
+  import { activeRecordFilter, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './lib/breakdown';
+  import BreakdownPanel from './components/BreakdownPanel.svelte';
   import QueryControls from './components/QueryControls.svelte';
   import Charts from './components/Charts.svelte';
   import MultiTimeline from './components/MultiTimeline.svelte';
@@ -36,6 +38,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
   let requestPage = $state<Page | null>(null);
   let requestRows = $state<RequestRecord[]>([]);
   let requestPageNumber = $state(1);
+  let drill = $state<RecordFilter>({});
   let record = $state<RecordDetail | null>(null);
   let loading = $state(false);
   let requestLoading = $state(false);
@@ -119,6 +122,9 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
   const querySignature = $derived(queryFingerprint(query));
   const displayedRunIsStale = $derived(analysis != null && queryFingerprint(analysis.query) !== querySignature);
   const calculationNotes = $derived(resultNotes(analysis?.apis ?? []));
+  const drillActive = $derived(hasRecordFilter(drill));
+  const drillChips = $derived(recordFilterChips(drill));
+  const breakdownQuery = $derived<Query | null>(analysis ? { ...analysis.query, ...drill } : null);
   const targetAssessment = $derived.by(() => {
     if (targetMs == null || !Number.isFinite(targetMs) || targetMs < 0 || !selected) return '';
     const p95 = selected.current.p95;
@@ -401,7 +407,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
   function invalidateDetails() {
     requestController?.abort(); recordController?.abort();
     requestController = null; recordController = null;
-    requestPage = null; requestRows = []; record = null;
+    requestPage = null; requestRows = []; record = null; drill = {};
     requestPageNumber = 1;
     requestError = ''; recordError = ''; recordLoadingId = '';
   }
@@ -614,13 +620,23 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
     selectedKey = key; invalidateDetails();
     await loadRequests('', 1);
   }
+  async function drillInto(filter: RecordFilter, _row: BreakdownRow) {
+    if (!breakdownQuery) return;
+    const merged = activeRecordFilter(mergeRecordFilter(breakdownQuery, filter));
+    contextAnchor = null; selectedKey = ''; invalidateDetails();
+    drill = merged;
+    await loadRequests('', 1);
+    await tick();
+    document.getElementById('request-history')?.scrollIntoView({ block: 'start' });
+  }
+  function clearDrill() { drill = {}; requestController?.abort(); requestPage = null; requestRows = []; requestError = ''; requestLoading = false; }
   async function loadRequests(cursor: string, pageNumber: number) {
-    if (!selectedKey || !analysis) return;
+    if ((!selectedKey && !drillActive) || !analysis) return;
     requestController?.abort(); requestController = new AbortController();
     const run = ++requestSequence;
     requestLoading = true; requestError = '';
     try {
-      const page = await api.requests(JSON.parse(JSON.stringify(analysis.query)) as Query, selectedKey, cursor, requestController.signal);
+      const page = await api.requests(JSON.parse(JSON.stringify({ ...analysis.query, ...drill })) as Query, selectedKey, cursor, requestController.signal);
       if (run !== requestSequence) return;
       requestPage = page;
       requestRows = page.rows.slice(0, info?.limits.maxPageSize ?? 100);
@@ -824,6 +840,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
           </div>
           <RequestVolume {analysis} {zone} />
           <TrafficSlowness {analysis} {zone} {sourceLabels} onContext={async(row)=>{contextAnchor=row;await tick();document.getElementById('nearby-activity')?.scrollIntoView({block:'start'});}} />
+          {#if breakdownQuery}<BreakdownPanel query={breakdownQuery} {sourceLabels} onDrill={drillInto} />{/if}
           <section class="data-section" id="api-group-results">
             <div class="section-heading"><div><h3>Explore {analysis.apis.length.toLocaleString()} API groups</h3><p>Largest slowdowns first. Each group keeps one source, API action, request type, and outcome together. P95 is the time within which about 95 of 100 requests finish.</p></div></div>
             <ComparisonTable rows={analysis.apis} rollups={analysis.rollups ?? []} timeline={analysis.timeline} kindFilter={analysis.query.kind} {selectedKey} {timelineKeys} onToggleTimeline={(key) => timelineKeys = timelineKeys.includes(key) ? timelineKeys.filter(item => item !== key) : timelineKeys.length < 8 ? [...timelineKeys, key] : timelineKeys} sources={sourceLabels} outcomeFilter={analysis.query.outcome} onSelect={async (key) => { void selectAPI(key); await tick(); const details = document.getElementById('selected-api-details'); details?.scrollIntoView({ block: 'start' }); details?.focus({ preventScroll: true }); }} />
@@ -839,9 +856,10 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
             </section>
             <Charts {analysis} {selected} {zone} {targetMs} />
           {/if}
-          <section class="data-section request-section">
-            <div class="section-heading"><div><h3>Request history</h3><p>{selected ? selected.controller + '.' + selected.action + ' · ' + selected.kind + ' · ' + selected.outcome : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
+          <section class="data-section request-section" id="request-history">
+            <div class="section-heading"><div><h3>Request history</h3><p>{selected ? selected.controller + '.' + selected.action + ' · ' + selected.kind + ' · ' + selected.outcome : drillActive ? 'Requests matching ' + drillChips.map(chip => chip.text).join(' · ') + '.' : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
               {#if selected}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
+              {#if drillActive}<button class="quiet-button" onclick={clearDrill}>Clear breakdown filter</button>{/if}
             </div>
             {#if requestError}<div class="inline-error" role="alert">{requestError}</div>{/if}
             {#if requestPage?.sources.some(source => !source.ok)}<div class="source-failure compact-failure" role="alert">{#each requestPage.sources.filter(source => !source.ok) as failed}<span>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}: {failed.error}</span>{/each}</div>{/if}

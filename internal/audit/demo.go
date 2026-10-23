@@ -64,6 +64,13 @@ func (d *demoRepository) generate() {
 	}
 }
 
+// The demo spreads clients over a few agents and UI versions so each breakdown
+// dimension has more than one value to show.
+var (
+	demoAgents   = []string{"Demo Browser/1.0", "Demo Browser/2.0", "Demo Mobile/1.0", "Demo Automation/0.9"}
+	demoVersions = []string{"demo-1.0", "demo-1.1", "demo-2.0"}
+)
+
 func demoRecord(sourceID, controller, action string, initiated time.Time, duration float64, apiIndex, sample int, period string) RequestRecord {
 	id := fmt.Sprintf("%s-%s-%s-%02d", sourceID, controller, period, sample)
 	completed := initiated.Add(time.Duration(duration * float64(time.Millisecond)))
@@ -74,7 +81,7 @@ func demoRecord(sourceID, controller, action string, initiated time.Time, durati
 	userID := 1000 + sample%7
 	created := initiated.Add(time.Duration(auditTime * float64(time.Millisecond)))
 	updated := completed.Add(time.Duration(payloadTime * float64(time.Millisecond)))
-	return RequestRecord{ID: id, SourceID: sourceID, Controller: controller, Action: action, Kind: "synchronous", Outcome: "success", Status: "200 OK", URL: "/" + strings.ToLower(controller) + "/" + strings.ToLower(action), InitiatedAt: &initiated, CompletedAt: &completed, DurationMs: &duration, ApiTimeMs: &apiTime, AuditCreateTimeMs: &auditTime, PayloadRecordTimeMs: &payloadTime, RequestKB: float64((sample+apiIndex)%5 + 1), ResponseKB: float64((sample+apiIndex)%7 + 2), UserID: &userID, UserIP: fmt.Sprintf("203.0.113.%d", 10+sample%20), UserAgent: "Demo Browser/1.0", UIVersion: "demo-1.0", CreatedOn: &created, UpdatedOn: &updated, PollingTypeRaw: "Synchronous "}
+	return RequestRecord{ID: id, SourceID: sourceID, Controller: controller, Action: action, Kind: "synchronous", Outcome: "success", Status: "200 OK", URL: "/" + strings.ToLower(controller) + "/" + strings.ToLower(action), InitiatedAt: &initiated, CompletedAt: &completed, DurationMs: &duration, ApiTimeMs: &apiTime, AuditCreateTimeMs: &auditTime, PayloadRecordTimeMs: &payloadTime, RequestKB: float64((sample+apiIndex)%5 + 1), ResponseKB: float64((sample+apiIndex)%7 + 2), UserID: &userID, UserIP: fmt.Sprintf("203.0.113.%d", 10+sample%20), UserAgent: demoAgents[sample%len(demoAgents)], UIVersion: demoVersions[sample%len(demoVersions)], CreatedOn: &created, UpdatedOn: &updated, PollingTypeRaw: "Synchronous "}
 }
 
 func (d *demoRepository) Sources(ctx context.Context) ([]Source, error) {
@@ -240,9 +247,13 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 	if input.Limit < 1 || input.Limit > MaxPageSize {
 		return Page{}, fmt.Errorf("%w: page limit must be between 1 and %d", ErrLimit, MaxPageSize)
 	}
-	fields, err := decodeCohortKey(input.APIKey)
-	if err != nil {
-		return Page{}, fmt.Errorf("%w: API key is invalid", ErrInvalidInput)
+	// An empty API key pages every row the query selects, like the store does.
+	fields := [5]string{"", input.Query.Controller, input.Query.Action, input.Query.Kind, input.Query.Outcome}
+	if input.APIKey != "" {
+		var err error
+		if fields, err = decodeCohortKey(input.APIKey); err != nil {
+			return Page{}, fmt.Errorf("%w: API key is invalid", ErrInvalidInput)
+		}
 	}
 	selected := false
 	for _, id := range input.Query.SourceIDs {
@@ -253,7 +264,7 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 			return Page{}, fmt.Errorf("%w: source was not found", ErrNotFound)
 		}
 	}
-	if !selected || (input.Query.Controller != "" && input.Query.Controller != fields[1]) || (input.Query.Action != "" && input.Query.Action != fields[2]) || (input.Query.Kind != "all" && input.Query.Kind != fields[3]) || !BucketOutcomeMatches(input.Query.Outcome, fields[4]) {
+	if input.APIKey != "" && (!selected || (input.Query.Controller != "" && input.Query.Controller != fields[1]) || (input.Query.Action != "" && input.Query.Action != fields[2]) || (input.Query.Kind != "all" && input.Query.Kind != fields[3]) || !BucketOutcomeMatches(input.Query.Outcome, fields[4])) {
 		return Page{}, fmt.Errorf("%w: API key does not match query", ErrInvalidInput)
 	}
 	fingerprintBytes, _ := json.Marshal(struct {
@@ -280,6 +291,15 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 		if r.InitiatedAt.Before(start) || !r.InitiatedAt.Before(end) {
 			continue
 		}
+		if input.APIKey == "" {
+			if d.matchesQuery(r, input.Query) {
+				rows = append(rows, r)
+			}
+			continue
+		}
+		if !input.Query.RecordFilter.Matches(r) {
+			continue
+		}
 		if !r.InitiatedAt.Before(start) && r.InitiatedAt.Before(end) && r.SourceID == fields[0] && r.Controller == fields[1] && r.Action == fields[2] && r.Kind == fields[3] && r.Outcome == fields[4] {
 			rows = append(rows, r)
 		}
@@ -298,12 +318,76 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 	if endIndex > len(rows) {
 		endIndex = len(rows)
 	}
-	page := Page{Rows: append([]RequestRecord(nil), rows[offset:endIndex]...), Sources: []SourceResult{{SourceID: fields[0], OK: true, Version: "demo"}}}
+	results := []SourceResult{{SourceID: fields[0], OK: true, Version: "demo"}}
+	if input.APIKey == "" {
+		results = results[:0]
+		for _, id := range input.Query.SourceIDs {
+			results = append(results, SourceResult{SourceID: id, OK: true, Version: "demo"})
+		}
+	}
+	page := Page{Rows: append([]RequestRecord(nil), rows[offset:endIndex]...), Sources: results}
 	if endIndex < len(rows) {
 		raw, _ := json.Marshal(demoCursor{Offset: endIndex, Fingerprint: fingerprint})
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	return page, nil
+}
+
+// matchesQuery reports whether a record is one the query selects: source,
+// window, controller, action, kind, outcome and record filter.
+func (d *demoRepository) matchesQuery(r RequestRecord, q Query) bool {
+	selected := false
+	for _, id := range q.SourceIDs {
+		selected = selected || id == r.SourceID
+	}
+	if !selected || r.InitiatedAt == nil || r.InitiatedAt.Before(q.Start) || !r.InitiatedAt.Before(q.End) {
+		return false
+	}
+	if q.Controller != "" && r.Controller != q.Controller || q.Action != "" && r.Action != q.Action {
+		return false
+	}
+	if q.Kind != "all" && r.Kind != q.Kind || !BucketOutcomeMatches(q.Outcome, r.Outcome) {
+		return false
+	}
+	return q.RecordFilter.Matches(r)
+}
+
+func (d *demoRepository) Breakdown(ctx context.Context, input BreakdownInput) (Breakdown, error) {
+	if err := ctx.Err(); err != nil {
+		return Breakdown{}, err
+	}
+	if err := ValidateBreakdown(input); err != nil {
+		return Breakdown{}, err
+	}
+	q := input.Query
+	for _, id := range q.SourceIDs {
+		if !d.hasSource(id) {
+			return Breakdown{}, fmt.Errorf("%w: source was not found", ErrNotFound)
+		}
+	}
+	builder := NewBreakdownBuilder(input.Dim, input.Top)
+	for _, r := range d.records {
+		if !d.matchesQuery(r, q) {
+			continue
+		}
+		value := r.DurationMs
+		if q.Metric == "api" {
+			value = r.ApiTimeMs
+		}
+		state := "valid"
+		if value == nil || *value < 0 {
+			state = "invalid"
+		}
+		builder.AddRecord(r, state, false, StatusClass(r.Kind, state, r.Status), value)
+	}
+	out, err := builder.Build()
+	if err != nil {
+		return Breakdown{}, err
+	}
+	for _, id := range q.SourceIDs {
+		out.Sources = append(out.Sources, SourceResult{SourceID: id, OK: true, Version: "demo"})
+	}
+	return out, ctx.Err()
 }
 
 func (d *demoRepository) Payload(ctx context.Context, input PayloadInput) (Payload, error) {

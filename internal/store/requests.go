@@ -70,6 +70,9 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 	if input.Limit < 1 || input.Limit > audit.MaxPageSize {
 		return audit.Page{}, fmt.Errorf("%w: page limit must be between 1 and %d", audit.ErrLimit, audit.MaxPageSize)
 	}
+	if (overlap || slowest) && !input.Query.RecordFilter.IsZero() {
+		return audit.Page{}, fmt.Errorf("%w: a record filter applies to the request list and the breakdown only", audit.ErrInvalidInput)
+	}
 	cohort := [5]string{"", input.Query.Controller, input.Query.Action, input.Query.Kind, input.Query.Outcome}
 	if input.APIKey != "" {
 		var err error
@@ -300,6 +303,9 @@ func requestPipeline(q audit.Query, cohort [5]string, sourceID string, after *pa
 		}
 	}
 	stages = append(stages, bson.D{{Key: "$match", Value: cohortMatch}})
+	if filter, ok := recordFilterStage(q.RecordFilter); ok {
+		stages = append(stages, filter)
+	}
 	if after != nil {
 		lastID, _ := bson.ObjectIDFromHex(after.ObjectID)
 		var afterMatch bson.A
