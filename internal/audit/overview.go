@@ -64,10 +64,11 @@ type OverviewDelta struct {
 // kinds. State is compared, missing_current, missing_reference or
 // insufficient_data, judged on valid samples like Comparison.State. The
 // reference window's rates and quantiles are absent below minReferenceSamples
-// valid samples. The current window is not gated: its completion and error
-// shares are reported even with no valid sample, and its quantiles whenever it
-// has at least one, however few, so insufficient_data is the guard against
-// reading too much into them.
+// valid samples. The current window is not gated on valid samples: its
+// completion share needs only Events > 0, its error shares need known outcomes
+// with every outcome returned (so both can appear with no valid sample), and
+// its quantiles need at least one valid sample, however few, so
+// insufficient_data is the guard against reading too much into them.
 type OverviewRow struct {
 	Kind string `json:"kind"`
 	OverviewWindow
@@ -126,12 +127,14 @@ func (w *kindWindow) add(b Bucket) error {
 // finish turns the accumulator into a window summary. A window with fewer than
 // minSamples valid samples keeps its raw counts but reports no rates or
 // quantiles. The reference window passes minReferenceSamples; the current window
-// passes 0, so the guard Completed < minSamples never holds for it: its
-// completion and error shares are reported even with zero valid samples, its
-// quantiles whenever it has at least one valid sample (however few), and
-// OverviewRow.State (insufficient_data) is what tells the reader that they are
-// rough. allOutcomes says whether the sources returned every outcome; with an
-// outcome filter the failure share is unknowable.
+// passes 0, so the guard Completed < minSamples never holds for it. Past the
+// guard the completion share still needs Events > 0, the error shares need
+// allOutcomes, known outcomes and status counters that account for every
+// failure, and the quantiles need at least one valid sample. A current window
+// can therefore show shares with zero valid samples, and OverviewRow.State
+// (insufficient_data) is what tells the reader that they are rough. allOutcomes
+// says whether the sources returned every outcome; with an outcome filter the
+// failure share is unknowable.
 func (w *kindWindow) finish(minSamples int64, minutes float64, allOutcomes bool) OverviewWindow {
 	out := OverviewWindow{Events: w.events, Incomplete: w.incomplete, Invalid: w.invalid, UnknownOutcome: w.unknown, ClientErrors: w.client, ServerErrors: w.server}
 	if w.hist != nil {

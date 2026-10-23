@@ -678,6 +678,35 @@ test('unknown-type tiles and operations say what a Synchronous or Asynchronous q
   assert.equal(operationDrill({ controller: 'Jobs', action: 'Nightly', kind: 'hangfire' }, 'synchronous').note, '');
 });
 
+test('a zero-count tile still opens when its list can hold rows the count leaves out', () => {
+  const { tileCanOpen, overviewDrill } = loadTypeScript('src/lib/overview.ts');
+  // The unknown row under a Synchronous or Asynchronous query counts no valid unknown-type rows, so its Completed (and any zero) tile is 0
+  // although the list it opens is not empty: the tile stays enabled and its note is shown.
+  for (const queryKind of ['synchronous', 'asynchronous']) {
+    for (const tile of ['events', 'completed', 'clientErrors', 'serverErrors']) {
+      const context = { queryKind };
+      assert.equal(tileCanOpen('unknown', tile, 0, context), true, queryKind + ' ' + tile);
+      assert.notEqual(overviewDrill('unknown', tile, context).note, '');
+    }
+  }
+  // With no gap a zero count stays disabled: other queries, other rows, and a note that only concerns the outcome filter.
+  for (const queryKind of [undefined, 'all', 'http', 'http_unknown', 'hangfire']) {
+    for (const tile of ['events', 'completed', 'clientErrors', 'serverErrors']) assert.equal(tileCanOpen('unknown', tile, 0, { queryKind }), false, String(queryKind) + ' ' + tile);
+  }
+  for (const kind of ['synchronous', 'asynchronous', 'hangfire']) {
+    for (const tile of ['events', 'completed', 'clientErrors', 'serverErrors']) {
+      assert.equal(tileCanOpen(kind, tile, 0, { queryKind: 'synchronous' }), false, kind + ' ' + tile);
+      assert.equal(tileCanOpen(kind, tile, 0), false, kind + ' ' + tile);
+    }
+  }
+  assert.equal(tileCanOpen('hangfire', 'serverErrors', 0, { outcomeFilter: 'success' }), false);
+  // A count above zero always opens; so does a zero count whose list still holds unusable unknown-type rows or unknown results.
+  assert.equal(tileCanOpen('hangfire', 'events', 4, {}), true);
+  assert.equal(tileCanOpen('synchronous', 'events', 0, { unknownKindRows: 3 }), true);
+  assert.equal(tileCanOpen('synchronous', 'completed', 0, { unknownKindRows: 3 }), false);
+  assert.equal(tileCanOpen('hangfire', 'clientErrors', 0, { unknownResults: 2 }), true);
+});
+
 test('operation rows sort by a delta with missing deltas always last', () => {
   const { sortOperations } = loadTypeScript('src/lib/overview.ts');
   const rollup = (action, trafficDelta, p95DeltaMs, events = 10) => ({ controller: 'C', action, kind: 'synchronous', requests: events, failures: 0, perMinute: 1, events, trafficDelta, p95DeltaMs });
@@ -695,6 +724,8 @@ test('the overview strip, quick range presets and operation view are wired into 
   assert.match(strip, /overviewDrill/);
   assert.match(strip, /unknownKindRows/);
   assert.match(strip, /queryKind: kindFilter/);
+  assert.match(strip, /disabled=\{!canOpen\(row, tile, count\)\}/);
+  assert.match(strip, /tileCanOpen\(/);
   assert.match(strip, /outcomeFilter/);
   assert.match(strip, /\{@render quality\(\)\}/);
   const app = read('src/App.svelte');

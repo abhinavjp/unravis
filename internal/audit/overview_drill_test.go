@@ -38,19 +38,27 @@ func demoDrillRepoWithValidUnknown(now time.Time) *demoRepository {
 }
 
 // TestDemoOverviewTileCountsMatchTheDrilledList compares every overview tile
-// with the request list its drill opens, through the demo repository. The
-// Completed tile and the Events tile of the Hangfire and unknown rows are
-// exact. On the Synchronous and Asynchronous rows the list also holds the
-// incomplete and invalid rows of unknown request type (they cannot be told
-// apart), so the Events tile differs by exactly the unknown row's
-// incomplete+invalid count. Under client_error and server_error the summary
-// keeps every row whose result is unknown, so those two tiles differ by at most
-// the row's own unknown results plus (on Synchronous and Asynchronous) that
-// same unknown-type count. The UI states these numbers. The unknown row's
-// tiles under a Synchronous or Asynchronous query are different: the overview
-// there leaves out valid rows of unknown request type but the http_unknown drill
-// lists them, so the gap has no bound and the UI states that instead of a
-// number.
+// with the request list its drill opens, through the demo repository, for each
+// query kind. Except for the unknown row under a Synchronous or Asynchronous
+// query (below):
+//   - The Completed tile is exact on every row.
+//   - The Events tile is exact on the Hangfire and unknown rows. On the
+//     Synchronous and Asynchronous rows the list also holds the incomplete and
+//     invalid rows of unknown request type (they cannot be told apart), so it
+//     is larger by exactly the unknown row's incomplete+invalid count, which the
+//     UI states ("also lists N ...").
+//   - Under client_error and server_error the summary keeps every row whose
+//     result is unknown, so the 4xx and 5xx lists are larger by at most the
+//     row's own unknown results plus, on Synchronous and Asynchronous, that same
+//     unknown-type count; the UI states it as "up to".
+//
+// The unknown row's four tiles under a Synchronous or Asynchronous query have no
+// numeric bound: the overview there is scoped to the exact kind and leaves out
+// valid rows of unknown request type, while the http_unknown drill lists them.
+// The UI shows an unbounded note on those tiles (and keeps them enabled at a
+// count of 0) instead of a number. The test only asserts the direction: with
+// the fixture's valid unknown-kind row the Events and Completed lists are
+// larger than their tiles, and no list is smaller than its tile.
 func TestDemoOverviewTileCountsMatchTheDrilledList(t *testing.T) {
 	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	d := demoDrillRepoWithValidUnknown(now)

@@ -48,7 +48,15 @@ const unknownTypeNote = (queryKind?: string) => 'also lists any rows of unknown 
  * Under a Synchronous or Asynchronous query the unknown row leaves out valid rows of unknown request type but its http_unknown list includes
  * them, so every tile of that row carries an unbounded note instead of a number.
  */
-export const overviewDrill = (kind: string, tile: OverviewTile, context: DrillContext = {}): OverviewDrill => {
+export const overviewDrill = (kind: string, tile: OverviewTile, context: DrillContext = {}): OverviewDrill => describeDrill(kind, tile, context).drill;
+
+/**
+ * Whether a tile can be opened. A tile with a count always can. A tile whose count is 0 still can when its list can hold rows the count leaves
+ * out (the unknown row's unbounded gap, unusable unknown-type rows, unknown results), so the note is shown instead of a false "nothing to list".
+ */
+export const tileCanOpen = (kind: string, tile: OverviewTile, count: number, context: DrillContext = {}) => count > 0 || describeDrill(kind, tile, context).listsMore;
+
+const describeDrill = (kind: string, tile: OverviewTile, context: DrillContext): { drill: OverviewDrill; listsMore: boolean } => {
   const label = drillLabel(kind);
   const notes: string[] = [];
   const compatible = compatibleKind(kind);
@@ -56,22 +64,23 @@ export const overviewDrill = (kind: string, tile: OverviewTile, context: DrillCo
   const unknownKind = compatible ? Math.max(0, context.unknownKindRows ?? 0) : 0;
   const unknownResults = Math.max(0, context.unknownResults ?? 0);
   const base = { kind: drillKind(kind), state: 'all', outcome: '' as Outcome | '' };
-  const classDrill = (outcome: 'client_error' | 'server_error', name: string): OverviewDrill => {
+  const classDrill = (outcome: 'client_error' | 'server_error', name: string) => {
     const bound = unknownKind + unknownResults;
     if (gap) notes.push(unknownTypeNote(context.queryKind));
     else if (bound > 0) {
       const what = unknownKind > 0 && unknownResults > 0 ? 'with an unknown result or request type' : unknownKind > 0 ? 'of unknown request type' : 'whose result is unknown';
       notes.push('also lists up to ' + rowsText(bound, unknownKind > 0 && unknownResults === 0 ? unusableRows : '') + ' ' + what);
     }
+    const listsMore = gap || bound > 0;
     const chosen = context.outcomeFilter;
     if (chosen && chosen !== 'all' && chosen !== outcome) notes.push('replaces the ' + chosen.replaceAll('_', ' ') + ' outcome filter, so counts may differ');
-    return { ...base, outcome, label: label + ' · ' + name, note: notes.join('; ') };
+    return { drill: { ...base, outcome, label: label + ' · ' + name, note: notes.join('; ') }, listsMore };
   };
   switch (tile) {
-    case 'completed': return { ...base, state: 'complete', label: label + ' · Complete', note: gap ? unknownTypeNote(context.queryKind) : '' };
+    case 'completed': return { drill: { ...base, state: 'complete', label: label + ' · Complete', note: gap ? unknownTypeNote(context.queryKind) : '' }, listsMore: gap };
     case 'clientErrors': return classDrill('client_error', 'client errors (4xx)');
     case 'serverErrors': return classDrill('server_error', 'server errors (5xx)');
-    default: return { ...base, label: label + ' · every event', note: gap ? unknownTypeNote(context.queryKind) : unknownKind > 0 ? 'also lists ' + rowsText(unknownKind, unusableRows) + ' of unknown request type' : '' };
+    default: return { drill: { ...base, label: label + ' · every event', note: gap ? unknownTypeNote(context.queryKind) : unknownKind > 0 ? 'also lists ' + rowsText(unknownKind, unusableRows) + ' of unknown request type' : '' }, listsMore: gap || unknownKind > 0 };
   }
 };
 

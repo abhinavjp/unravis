@@ -33,7 +33,7 @@
     <thead><tr>
       <th>Operation</th>
       <th>Request type</th>
-      <th aria-sort={ariaSort('events')}><button class="sort-button" title="Events of this operation and request type in the current period that match the filters, including incomplete and pending ones. Rows whose request type is not known are counted under HTTP (polling type unknown), not here." onclick={() => sortBy('events')}>Events{arrow('events')}</button></th>
+      <th aria-sort={ariaSort('events')}><button class="sort-button" title="Events of this operation and request type in the current period that match the filters, including incomplete and pending ones. Rows whose request type is unknown are not added to the Synchronous or Asynchronous operations; they appear as their own HTTP (polling type unknown) operations." onclick={() => sortBy('events')}>Events{arrow('events')}</button></th>
       <th aria-sort={ariaSort('trafficDelta')}><button class="sort-button" title="Change in events per minute against the reference period. +25% means a quarter more traffic." onclick={() => sortBy('trafficDelta')}>Δ traffic{arrow('trafficDelta')}</button></th>
       <th aria-sort={ariaSort('p95DeltaMs')}><button class="sort-button" title="Change in the estimated P95 response time against the reference period, in milliseconds." onclick={() => sortBy('p95DeltaMs')}>Δ P95{arrow('p95DeltaMs')}</button></th>
       <th aria-sort={ariaSort('clientErrorDelta')}><button class="sort-button" title="Change in the 4xx share of events with a known result, in percentage points." onclick={() => sortBy('clientErrorDelta')}>Δ 4xx{arrow('clientErrorDelta')}</button></th>
