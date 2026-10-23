@@ -258,7 +258,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		for _, record := range page.Rows {
 			rows = append(rows, projectRecord(record))
 		}
-		return map[string]any{"resultId": args.ResultID, "sourceId": row.SourceID, "controller": row.Controller, "action": row.Action, "kind": row.Kind, "outcome": row.Outcome, "query": result.Query, "rows": rows, "nextCursor": page.NextCursor, "sources": page.Sources, "truncated": page.Truncated, "note": "Newest-first metadata page; not a random sample or a complete ranking of slow requests. AuditCreateTime plus ApiTime make up total latency; PayloadRecordTime happens after the response and is not latency. Do not infer database, network or queue wait from them without checking their instrumentation in code."}, nil
+		return map[string]any{"resultId": args.ResultID, "sourceId": row.SourceID, "controller": row.Controller, "action": row.Action, "kind": row.Kind, "outcome": row.Outcome, "query": echoQuery(result.Query), "rows": rows, "nextCursor": page.NextCursor, "sources": page.Sources, "truncated": page.Truncated, "note": "Newest-first metadata page; not a random sample or a complete ranking of slow requests. AuditCreateTime plus ApiTime make up total latency; PayloadRecordTime happens after the response and is not latency. Do not infer database, network or queue wait from them without checking their instrumentation in code."}, nil
 	case "audit_get_slowest":
 		return b.slowest(ctx, raw)
 	case "audit_get_breakdown":

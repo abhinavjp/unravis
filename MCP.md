@@ -1,6 +1,6 @@
 # AI slowdown investigations through local MCP
 
-The same `unravis.exe` serves the dashboard normally and, with `--mcp`, provides eight read-only MCP tools over standard input/output. Codex and Claude Code can use the tools alongside their existing access to this repository. No model API key, Cloudflare service, new runtime or npm package is required.
+The same `unravis.exe` serves the dashboard normally and, with `--mcp`, provides ten read-only MCP tools over standard input/output. Codex and Claude Code can use the tools alongside their existing access to this repository. No model API key, Cloudflare service, new runtime or npm package is required.
 
 ## Use it
 
@@ -25,6 +25,8 @@ The browser's session-only filters are not shared with MCP. State the desired fi
 | `audit_get_timeline` | Selected group's time slots and fixed reference statistics | None; cached |
 | `audit_compare_timelines` | Align up to 8 APIs against their own reference, with changes in milliseconds/percent, counts and sample flags | None; cached |
 | `audit_get_requests` | Bounded newest-first request timing metadata for the selected group | Read-only metadata query |
+| `audit_get_slowest` | Slowest completed requests for the cached comparison's query, with record IDs and timing phases (no payloads, URLs, IPs or agents) | Read-only metadata query |
+| `audit_get_breakdown` | Top values of one dimension (status code, user, UI version, user agent, polling type; IP only with `includeIp`) with an Other row | Read-only aggregate query |
 | `audit_get_activity` | Timing metadata across selected sources in an explicit window, including known earlier overlaps | Read-only metadata query |
 
 The default group ranking is largest absolute P95 increase in milliseconds; the AI should also inspect ratios, medians, sample counts and workload rates. Timing values are estimates. Missing timings or failed sources remain visible; no partial failure may be described as complete coverage.
