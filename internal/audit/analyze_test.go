@@ -259,3 +259,32 @@ func TestReferenceCompactionPreservesAnalysis(t *testing.T) {
 		t.Fatal("reference compaction changed comparisons, histogram, sample counts, quality, warnings or current timeline")
 	}
 }
+
+func TestBuildAnalysisP99RatioAndDeltaFollowComparisonState(t *testing.T) {
+	q := analysisQuery()
+	analysis, err := BuildAnalysis(q, repeatedBuckets(100, 10.5, anchor), repeatedBuckets(100, 3.5, anchor.Add(-time.Minute)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := analysis.APIs[0]
+	if c.State != "compared" || c.P99Ratio == nil || math.Abs(*c.P99Ratio-3) > 1e-12 || c.P99DeltaMs == nil || math.Abs(*c.P99DeltaMs-7) > 1e-12 {
+		t.Fatalf("p99 ratio/delta = %v, %v (state %s)", c.P99Ratio, c.P99DeltaMs, c.State)
+	}
+	// Compared with fewer than 100 samples: P99 is undefined, so its ratio is null.
+	analysis, err = BuildAnalysis(q, repeatedBuckets(20, 10.5, anchor), repeatedBuckets(20, 3.5, anchor.Add(-time.Minute)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c = analysis.APIs[0]
+	if c.State != "compared" || c.P99Ratio != nil || c.P99DeltaMs != nil || c.P95Ratio == nil {
+		t.Fatalf("sparse p99 must be null while p95 is present: %#v", c)
+	}
+	// Insufficient data: ratio stays null even with a reference P99.
+	analysis, err = BuildAnalysis(q, repeatedBuckets(19, 10.5, anchor), repeatedBuckets(100, 3.5, anchor.Add(-time.Minute)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c = analysis.APIs[0]; c.State != "insufficient_data" || c.P99Ratio != nil {
+		t.Fatalf("insufficient data must have null p99 ratio: %#v", c)
+	}
+}

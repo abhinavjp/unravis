@@ -109,7 +109,12 @@ func (h *histogramAccumulator) stats() Stats {
 	}
 	sort.Slice(stats.Histogram, func(i, j int) bool { return stats.Histogram[i].Bin < stats.Histogram[j].Bin })
 	stats.P50 = h.quantile(.50)
+	stats.P90 = h.quantile(.90)
 	stats.P95 = h.quantile(.95)
+	// Below 100 samples the nearest-rank P99 is just the maximum, so report none.
+	if h.count >= 100 {
+		stats.P99 = h.quantile(.99)
+	}
 	return stats
 }
 

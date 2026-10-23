@@ -93,9 +93,11 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 		}
 		comparison.MedianDeltaMs = difference(currentStats.P50, referenceStats.P50)
 		comparison.P95DeltaMs = difference(currentStats.P95, referenceStats.P95)
+		comparison.P99DeltaMs = difference(currentStats.P99, referenceStats.P99)
 		if comparison.State == "compared" {
 			comparison.MedianRatio = ratio(currentStats.P50, referenceStats.P50)
 			comparison.P95Ratio = ratio(currentStats.P95, referenceStats.P95)
+			comparison.P99Ratio = ratio(currentStats.P99, referenceStats.P99)
 		}
 		analysis.APIs = append(analysis.APIs, comparison)
 

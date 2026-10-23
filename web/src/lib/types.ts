@@ -27,11 +27,15 @@ export interface BinCount { bin: number; count: number }
 export interface Stats {
   count: number; meanMs: number | null; minMs: number | null; maxMs: number | null;
   p50: Quantile | null; p95: Quantile | null; histogram: BinCount[];
+  /** Additive: absent from older payloads. p99 is also absent below 100 samples. */
+  p90?: Quantile | null; p99?: Quantile | null;
 }
 export interface Comparison {
   key: string; sourceId: string; controller: string; action: string; kind: string; outcome: string;
   state: string; current: Stats; reference: Stats; medianRatio: number | null; p95Ratio: number | null;
   medianDeltaMs: number | null; p95DeltaMs: number | null; currentEvents: number; referenceEvents: number;
+  /** Additive: absent when undefined (fewer than 100 samples in either window). */
+  p99Ratio?: number | null; p99DeltaMs?: number | null;
 }
 export interface Point { at: string; count: number | null; p50: Quantile | null; p95: Quantile | null; p95Ratio: number | null }
 export interface Series { key: string; points: Point[] }

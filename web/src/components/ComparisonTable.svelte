@@ -39,6 +39,11 @@
     page = 0;
   };
   const ratio = (value: number | null) => value == null ? 'N/A' : '≈ ' + value.toFixed(2) + '×';
+  const ms = (q: Comparison['current']['p99']) => q?.valueMs == null ? 'N/A' : '≈ ' + q.valueMs.toFixed(1) + ' ms';
+  // P99 needs at least 100 samples per period; the bin-width caveat applies to every histogram quantile.
+  const p99Tip = (row: Comparison) => row.current.p99 == null || row.reference.p99 == null
+    ? 'P99 needs at least 100 valid samples in each period.'
+    : `P99 current ${ms(row.current.p99)}, reference ${ms(row.reference.p99)}` + (row.p99Ratio == null ? '' : ` (${ratio(row.p99Ratio)})`) + '. Estimates carry about ±5% error from the histogram bin width.';
 </script>
 
 <div class="group-toolbar">
@@ -65,7 +70,7 @@
           <td class="timeline-choice"><label><input type="checkbox" checked={timelineKeys.includes(row.key)} disabled={timelineKeys.length >= 8 && !timelineKeys.includes(row.key)} aria-label={'Compare timeline for ' + row.controller + '.' + row.action + ' in ' + (sources.get(row.sourceId) ?? row.sourceId) + ' · ' + row.kind + ' · ' + row.outcome} onchange={() => onToggleTimeline(row.key)} /><span>Compare</span></label></td>
           <td><button class="api-select" aria-pressed={row.key === selectedKey} onclick={() => onSelect(row.key)}>{row.controller}.{row.action}</button><small title={sources.get(row.sourceId) ?? row.sourceId}>{sources.get(row.sourceId) ?? row.sourceId}</small></td>
           <td class="group-kind" data-label="Kind and outcome">{row.kind}<small>{outcomeRateText(rows, row, outcomeFilter)}</small></td><td data-label="Current requests">{row.current.count.toLocaleString()}</td><td data-label="Reference requests">{row.reference.count.toLocaleString()}</td>
-          <td class="numeric" data-label="P95 vs reference">{ratio(row.p95Ratio)}</td><td class="numeric" data-label="P95 difference (ms)">{row.p95DeltaMs == null ? 'N/A' : '≈ ' + row.p95DeltaMs.toFixed(1)}</td>
+          <td class="numeric" data-label="P95 vs reference" title={p99Tip(row)}>{ratio(row.p95Ratio)}</td><td class="numeric" data-label="P95 difference (ms)">{row.p95DeltaMs == null ? 'N/A' : '≈ ' + row.p95DeltaMs.toFixed(1)}</td>
           <td class="group-status" data-label="Comparison"><span class="state-pill" title={stateDetails[row.state] ?? 'Comparison status'}>{stateLabels[row.state] ?? row.state.replaceAll('_', ' ')}</span></td>
         </tr>
       {:else}<tr><td colspan="8" class="table-empty">{rows.length ? 'No API groups match this search and view. Clear the search or choose All API groups.' : 'No API comparisons are available for this query.'}</td></tr>{/each}

@@ -121,3 +121,44 @@ func TestHistogramRejectsInvalidAndOverflowingInputs(t *testing.T) {
 		t.Fatal("expected sum overflow")
 	}
 }
+
+func uniformHistogram(t *testing.T, n int) *histogramAccumulator {
+	t.Helper()
+	h := newHistogramAccumulator()
+	for i := 1; i <= n; i++ {
+		ms := float64(i)
+		if err := h.add(BinIndex(ms), 1, ms, ms, ms); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return h
+}
+
+func TestQuantileP99WithinBinBounds(t *testing.T) {
+	stats := uniformHistogram(t, 1000).stats()
+	if stats.P99 == nil || stats.P99.UpperMs == nil || stats.P99.ValueMs == nil {
+		t.Fatalf("p99 should be present with bounds: %#v", stats.P99)
+	}
+	if stats.P99.LowerMs > 990 || *stats.P99.UpperMs < 990 {
+		t.Fatalf("p99 bounds [%g, %g] must contain 990", stats.P99.LowerMs, *stats.P99.UpperMs)
+	}
+	if math.Abs(*stats.P99.ValueMs-990) > 99 {
+		t.Fatalf("p99 value %g not within 10%% of 990", *stats.P99.ValueMs)
+	}
+	if stats.P90 == nil || stats.P90.UpperMs == nil || stats.P90.ValueMs == nil || stats.P90.LowerMs > 900 || *stats.P90.UpperMs < 900 {
+		t.Fatalf("p90 bounds must contain 900: %#v", stats.P90)
+	}
+}
+
+func TestP99NilWhenCountBelow100(t *testing.T) {
+	stats := uniformHistogram(t, 99).stats()
+	if stats.P99 != nil {
+		t.Fatalf("p99 must be nil below 100 samples, got %#v", stats.P99)
+	}
+	if stats.P90 == nil || stats.P95 == nil {
+		t.Fatal("p90 and p95 keep their existing behaviour below 100 samples")
+	}
+	if uniformHistogram(t, 100).stats().P99 == nil {
+		t.Fatal("p99 should be defined at exactly 100 samples")
+	}
+}
