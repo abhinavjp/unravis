@@ -807,7 +807,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
 
     <main class="analysis-workspace" inert={connectionsOpen}>
       <div class="frozen-run-note" role="status">{restoredInTab ? 'Restored this tab’s investigation filters. ' : ''}{investigationNotice} <button class="quiet-button" onclick={resetInvestigation}>Reset investigation</button></div>
-      {#key controlsResetKey}<QueryControls bind:query bind:zone bind:targetMs bind:dateInputsValid />{/key}
+      {#key controlsResetKey}<QueryControls bind:query bind:zone bind:targetMs bind:dateInputsValid groupNames={(analysis?.apis ?? []).map(row => row.controller + '.' + row.action)} />{/key}
       <section class="analysis-main">
         <div class="analysis-heading">
           <div><h2>Compare API speed</h2><p>See how the selected period compares with earlier requests.</p></div>

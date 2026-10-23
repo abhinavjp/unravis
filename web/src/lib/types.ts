@@ -19,7 +19,14 @@ export interface Info {
   limits: { maxSources: number; maxPageSize: number; maxSummaryRows: number; maxTimeBuckets: number };
   now: string;
 }
-export interface Query {
+/** Record-level completion: complete rows have a usable duration, pending rows are accepted asynchronous jobs. */
+export type Completion = 'all' | 'complete' | 'incomplete' | 'pending' | 'invalid';
+/** Additive record filters; every field is absent when it is not in use and the server drops absent ones. */
+export interface RecordFilters {
+  userIds?: number[]; uiVersions?: string[]; userAgentContains?: string; userIps?: string[]; urlContains?: string;
+  auditId?: string; statusCodes?: string[]; completion?: Completion; /** "Controller.Action", split on the first dot. */ operation?: string;
+}
+export interface Query extends RecordFilters {
   sourceIds: string[]; start: string; end: string; baselineStart: string; baselineEnd: string;
   kind: Kind; outcome: Outcome; metric: Metric; bucketSeconds: number; controller: string; action: string;
 }

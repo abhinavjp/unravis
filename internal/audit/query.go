@@ -60,7 +60,7 @@ func ValidateQuery(q Query) error {
 	if utf8.RuneCountInString(q.Action) > MaxFilterLength {
 		return invalidInputf("action must be at most %d characters", MaxFilterLength)
 	}
-	return nil
+	return validateRecordFilters(q)
 }
 
 func validateInterval(start, end time.Time, name string) error {

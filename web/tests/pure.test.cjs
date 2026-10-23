@@ -554,3 +554,91 @@ test('stateLabel names every row state and drill-down filter', () => {
   assert.equal(presentation.stateLabel('valid'), 'Complete');
   assert.equal(presentation.stateLabel(undefined), '');
 });
+
+const recordFilterBase = { sourceIds: ['s'], start: '2026-10-22T12:00:00.000Z', end: '2026-10-22T12:15:00.000Z', baselineStart: '2026-10-22T11:45:00.000Z', baselineEnd: '2026-10-22T12:00:00.000Z', kind: 'all', outcome: 'all', metric: 'total', bucketSeconds: 10, controller: '', action: '' };
+
+test('serializeRecordFilters omits empties', () => {
+  assert.deepEqual(investigation.serializeRecordFilters({}), {});
+  assert.deepEqual(investigation.serializeRecordFilters(null), {});
+  assert.deepEqual(investigation.serializeRecordFilters({
+    userIds: [], uiVersions: [' ', ''], userAgentContains: '   ', userIps: [], urlContains: '', auditId: '', statusCodes: [], completion: 'all', operation: ' '
+  }), {});
+  assert.deepEqual(investigation.serializeRecordFilters({
+    userIds: [7, 7, 9], uiVersions: [' 2.1 ', '2.1'], userAgentContains: ' Firefox ', userIps: ['203.0.113.7'], urlContains: '/pay', auditId: '0123456789abcdef01234567',
+    statusCodes: ['404', ''], completion: 'incomplete', operation: 'Payroll.Run'
+  }), {
+    userIds: [7, 9], uiVersions: ['2.1'], userAgentContains: 'Firefox', userIps: ['203.0.113.7'], urlContains: '/pay', auditId: '0123456789abcdef01234567',
+    statusCodes: ['404'], completion: 'incomplete', operation: 'Payroll.Run'
+  });
+  assert.equal('userIds' in investigation.serializeRecordFilters({ userIds: [] }), false);
+  // Wrong types are dropped rather than trusted.
+  assert.deepEqual(investigation.serializeRecordFilters({ userIds: ['7', 1.5, NaN], uiVersions: 'x', completion: 'everything', operation: 5 }), {});
+  assert.equal(investigation.serializeRecordFilters({ userIds: Array.from({ length: 80 }, (_, i) => i) }).userIds.length, 50);
+  assert.equal(investigation.serializeRecordFilters({ statusCodes: Array.from({ length: 30 }, (_, i) => String(400 + i)) }).statusCodes.length, 20);
+});
+
+test('operation and user id validity match the server rules', () => {
+  const { isValidOperation, isValidUserId, serializeRecordFilters } = investigation;
+  for (const good of ['Payroll.Run', 'Payroll.Run.Now', ' Payroll.Run ']) assert.equal(isValidOperation(good), true, good);
+  for (const bad of ['', 'PayrollRun', 'Payroll.', '.Run', '.', '  ']) assert.equal(isValidOperation(bad), false, bad);
+  assert.equal(isValidUserId(1), true);
+  assert.equal(isValidUserId(2147483647), true);
+  for (const bad of [0, -1, 2147483648, 1.5, NaN]) assert.equal(isValidUserId(bad), false, String(bad));
+  // An operation the server would reject never reaches a request.
+  assert.deepEqual(serializeRecordFilters({ operation: 'PayrollRun', userIds: [0, -3, 2147483648, 5] }), { userIds: [5] });
+});
+
+test('filter drafts resync from a restored query without clobbering partial typing', () => {
+  const { syncListDraft, syncOperationDraft, isValidUserId } = investigation;
+  // A restored query fills a blank draft.
+  assert.equal(syncOperationDraft('', 'Payroll.Run'), 'Payroll.Run');
+  assert.equal(syncListDraft('', ['2.1', '2.2']), '2.1, 2.2');
+  assert.equal(syncListDraft('', [7, 9]), '7, 9');
+  // A cleared query empties a draft that was applied, and a stale one is replaced.
+  assert.equal(syncOperationDraft('Payroll.Run', undefined), '');
+  assert.equal(syncListDraft('7, 9', undefined), '');
+  assert.equal(syncListDraft('7', [8]), '8');
+  assert.equal(syncOperationDraft('Old.Op', 'Payroll.Run'), 'Payroll.Run');
+  // What the user is typing stays as typed while it parses to the applied value.
+  assert.equal(syncOperationDraft(' Payroll.Run ', 'Payroll.Run'), ' Payroll.Run ');
+  assert.equal(syncOperationDraft('Payroll', undefined), 'Payroll');
+  assert.equal(syncOperationDraft('Payroll.', undefined), 'Payroll.');
+  assert.equal(syncListDraft('2.1, ', ['2.1']), '2.1, ');
+  assert.equal(syncListDraft('2.1,2.1', ['2.1']), '2.1,2.1');
+  assert.equal(syncListDraft('', undefined), '');
+  const ok = (item) => /^\d{1,10}$/.test(item) && isValidUserId(Number(item));
+  assert.equal(syncListDraft('007, abc, ', [7], ok), '007, abc, ');
+  assert.equal(syncListDraft('7, 07', [7], ok), '7, 07');
+});
+
+test('QueryControls resyncs its drafts from the query', () => {
+  const source = fs.readFileSync(path.join(root, 'src/components/QueryControls.svelte'), 'utf8');
+  assert.match(source, /syncOperationDraft\(/);
+  assert.equal((source.match(/syncListDraft\(/g) ?? []).length >= 4, true);
+  assert.match(source, /\$effect\(/);
+});
+
+test('record filters survive a saved investigation and an old snapshot without them still loads', () => {
+  const filters = { userIds: [7], completion: 'pending', operation: 'Payroll.Run', urlContains: '/pay' };
+  const snapshot = investigation.createInvestigationSnapshot({ ...recordFilterBase, ...filters, uiVersions: [], auditId: '' }, [], 'UTC', null);
+  assert.deepEqual(Object.keys(snapshot.query).filter(key => !(key in recordFilterBase)), ['userIds', 'urlContains', 'completion', 'operation']);
+  const parsed = investigation.parseInvestigationSnapshot(JSON.stringify(snapshot));
+  assert.deepEqual(parsed.query.userIds, [7]);
+  assert.deepEqual(investigation.restoreInvestigation(parsed, []).operation, 'Payroll.Run');
+  const { sourceIds, ...legacyQuery } = recordFilterBase;
+  const legacy = investigation.parseInvestigationSnapshot(JSON.stringify({ version: 1, query: legacyQuery, selectedSources: [], zone: 'UTC', targetMs: null }));
+  assert.ok(legacy);
+  assert.deepEqual(Object.keys(investigation.restoreInvestigation(legacy, [])).sort(), [...Object.keys(recordFilterBase), 'targetMs', 'zone'].sort());
+  const tampered = investigation.parseInvestigationSnapshot(JSON.stringify({ version: 1, query: { ...legacyQuery, userIds: 'oops', completion: 'x' }, selectedSources: [], zone: 'UTC', targetMs: null }));
+  assert.ok(tampered);
+  assert.equal('userIds' in tampered.query || 'completion' in tampered.query, false);
+});
+
+test('query fingerprint covers record filters and treats empty as absent', () => {
+  const plain = presentation.queryFingerprint(recordFilterBase);
+  assert.equal(presentation.queryFingerprint({ ...recordFilterBase, userIds: [], uiVersions: [], userAgentContains: '', userIps: [], urlContains: ' ', auditId: '', statusCodes: [], completion: 'all', operation: '' }), plain);
+  for (const filter of [{ userIds: [1] }, { uiVersions: ['2'] }, { userAgentContains: 'a' }, { userIps: ['1.1.1.1'] }, { urlContains: 'u' }, { auditId: 'a'.repeat(24) }, { statusCodes: ['500'] }, { completion: 'invalid' }, { operation: 'A.b' }]) {
+    assert.notEqual(presentation.queryFingerprint({ ...recordFilterBase, ...filter }), plain, JSON.stringify(filter));
+  }
+  assert.equal(presentation.queryFingerprint({ ...recordFilterBase, userIds: [2, 1] }), presentation.queryFingerprint({ ...recordFilterBase, userIds: [1, 2] }));
+});

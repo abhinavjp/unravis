@@ -18,6 +18,10 @@ const (
 	MaxPayloadBytes = 262144
 	MaxInterval     = 7 * 24 * time.Hour
 	MaxFilterLength = 200
+	// Record filter list bounds.
+	MaxStatusCodes  = 20
+	MaxFilterValues = 20
+	MaxUserIDs      = 50
 )
 
 var (
@@ -44,6 +48,20 @@ type Query struct {
 	BucketSeconds int       `json:"bucketSeconds"`
 	Controller    string    `json:"controller"`
 	Action        string    `json:"action"`
+
+	// Record filters narrow every aggregate and every request list alike. All are
+	// additive and omitted when empty, so a saved query without them is unchanged.
+	UserIDs           []int    `json:"userIds,omitempty"`
+	UIVersions        []string `json:"uiVersions,omitempty"`
+	UserAgentContains string   `json:"userAgentContains,omitempty"`
+	UserIPs           []string `json:"userIps,omitempty"`
+	URLContains       string   `json:"urlContains,omitempty"`
+	AuditID           string   `json:"auditId,omitempty"`
+	StatusCodes       []string `json:"statusCodes,omitempty"`
+	// Completion is complete, incomplete, pending, invalid or all (the default).
+	Completion string `json:"completion,omitempty"`
+	// Operation is "Controller.Action", split on the first dot.
+	Operation string `json:"operation,omitempty"`
 }
 
 type Source struct {

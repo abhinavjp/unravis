@@ -108,7 +108,7 @@ func (d *demoRepository) Slowest(ctx context.Context, input PageInput) (Page, er
 	if err := ValidateSlowest(input); err != nil {
 		return Page{}, err
 	}
-	q := input.Query
+	q := input.Query.Normalized()
 	min := 0.0
 	if input.MinMs != nil {
 		min = *input.MinMs
@@ -140,6 +140,10 @@ func (d *demoRepository) Slowest(ctx context.Context, input PageInput) (Page, er
 	}
 	for _, r := range d.records {
 		if !selected[r.SourceID] || r.InitiatedAt == nil || r.InitiatedAt.Before(q.Start) || !r.InitiatedAt.Before(q.End) || (q.Controller != "" && r.Controller != q.Controller) || (q.Action != "" && r.Action != q.Action) || !KindMatches(q.Kind, r.Kind, true) || !BucketOutcomeMatches(q.Outcome, r.Outcome) {
+			continue
+		}
+		rowState := demoState(r)
+		if !demoRecordMatches(q, r, rowState, StatusClass(r.Kind, rowState, r.Status)) {
 			continue
 		}
 		value := RequestMetric(r, q.Metric)

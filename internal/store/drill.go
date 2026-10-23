@@ -58,15 +58,8 @@ func drillMatchStages(q audit.Query, cohort [5]string, state string, summary boo
 			stages = append(stages, exact)
 		}
 	}
-	switch state {
-	case audit.StateComplete:
-		stages = append(stages, bson.D{{Key: "_auditState", Value: "valid"}})
-	case audit.StateIncomplete, audit.StateInvalid:
-		stages = append(stages, bson.D{{Key: "_auditState", Value: state}})
-	case audit.StatePending:
-		stages = append(stages, bson.D{{Key: "_auditPending", Value: true}})
-	case audit.StateUnclassified:
-		stages = append(stages, bson.D{{Key: "_auditOutcome", Value: "unknown"}})
+	if stage, ok := stateMatchStage(state); ok {
+		stages = append(stages, stage)
 	}
 	return stages
 }
