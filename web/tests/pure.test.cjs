@@ -650,6 +650,34 @@ test('operation rows drill into their controller, action and request type', () =
   assert.equal(operationDrill({ controller: 'Payroll', action: 'Run' }).kind, 'all');
 });
 
+test('unknown-type tiles and operations say what a Synchronous or Asynchronous query leaves out', () => {
+  const { overviewDrill, operationDrill, drillHeading } = loadTypeScript('src/lib/overview.ts');
+  const gapNote = (kind) => 'also lists any rows of unknown request type that the ' + kind + ' filter leaves out of this count';
+  // The unknown row's counts leave out valid unknown-type rows under these queries, but its http_unknown list includes them: no number, every tile.
+  for (const queryKind of ['synchronous', 'asynchronous']) {
+    for (const tile of ['events', 'completed', 'clientErrors', 'serverErrors']) {
+      const drill = overviewDrill('unknown', tile, { queryKind, unknownKindRows: 3, unknownResults: 2 });
+      assert.equal(drill.kind, 'http_unknown');
+      assert.equal(drill.note, gapNote(queryKind), queryKind + ' ' + tile);
+    }
+  }
+  assert.equal(overviewDrill('unknown', 'serverErrors', { queryKind: 'synchronous', outcomeFilter: 'success' }).note, gapNote('synchronous') + '; replaces the success outcome filter, so counts may differ');
+  assert.equal(drillHeading(overviewDrill('unknown', 'events', { queryKind: 'asynchronous' })), 'HTTP (polling type unknown) · every event (' + gapNote('asynchronous') + ')');
+  // Any other query keeps the unknown row exact, and no other row takes this note.
+  for (const queryKind of [undefined, 'all', 'http', 'http_unknown', 'hangfire']) {
+    assert.equal(overviewDrill('unknown', 'events', { queryKind }).note, '');
+    assert.equal(overviewDrill('unknown', 'completed', { queryKind }).note, '');
+  }
+  assert.equal(overviewDrill('unknown', 'clientErrors', { queryKind: 'all', unknownResults: 2 }).note, 'also lists up to 2 rows whose result is unknown');
+  for (const kind of ['synchronous', 'asynchronous', 'hangfire']) assert.doesNotMatch(overviewDrill(kind, 'completed', { queryKind: 'synchronous' }).note, /leaves out/);
+  assert.equal(overviewDrill('hangfire', 'events', { queryKind: 'synchronous' }).note, '');
+  // Operation rows of unknown type say the same, and only under those queries.
+  assert.equal(operationDrill({ controller: 'Payroll', action: 'Run', kind: 'unknown' }, 'synchronous').note, gapNote('synchronous'));
+  assert.equal(operationDrill({ controller: 'Payroll', action: 'Run', kind: 'unknown' }, 'asynchronous').note, gapNote('asynchronous'));
+  for (const queryKind of [undefined, 'all', 'http', 'http_unknown', 'hangfire']) assert.equal(operationDrill({ controller: 'Payroll', action: 'Run', kind: 'unknown' }, queryKind).note, '');
+  assert.equal(operationDrill({ controller: 'Jobs', action: 'Nightly', kind: 'hangfire' }, 'synchronous').note, '');
+});
+
 test('operation rows sort by a delta with missing deltas always last', () => {
   const { sortOperations } = loadTypeScript('src/lib/overview.ts');
   const rollup = (action, trafficDelta, p95DeltaMs, events = 10) => ({ controller: 'C', action, kind: 'synchronous', requests: events, failures: 0, perMinute: 1, events, trafficDelta, p95DeltaMs });
@@ -666,22 +694,25 @@ test('the overview strip, quick range presets and operation view are wired into 
   const strip = read('src/components/OverviewStrip.svelte');
   assert.match(strip, /overviewDrill/);
   assert.match(strip, /unknownKindRows/);
+  assert.match(strip, /queryKind: kindFilter/);
   assert.match(strip, /outcomeFilter/);
   assert.match(strip, /\{@render quality\(\)\}/);
   const app = read('src/App.svelte');
   assert.match(app, /<OverviewStrip/);
   assert.match(app, /drillOverview/);
   assert.match(app, /drillHeading\(drillOverview\)/);
+  assert.match(app, /<OverviewStrip[^\n]*kindFilter=\{analysis\.query\.kind\}/);
   assert.match(app, /copy\.controller = drillOverview\.controller/);
   assert.match(app, /copy\.action = drillOverview\.action/);
   assert.match(app, /<ComparisonTable[\s\S]*?onDrill=\{drillFromOverview\}/);
   assert.match(app, /drillQuality\('incomplete'\)/);
   assert.match(read('src/components/QueryControls.svelte'), /quickRanges/);
   const table = read('src/components/ComparisonTable.svelte');
-  assert.match(table, /<OperationTable[^>]*\{onDrill\}/);
+  assert.match(table, /<OperationTable[^>]*\{onDrill\}[^>]*\{kindFilter\}/);
   const operations = read('src/components/OperationTable.svelte');
-  assert.match(operations, /operationDrill\(row\)/);
-  assert.match(operations, /<button[^>]*class="api-select"[^>]*onclick=\{\(\) => onDrill\?\.\(operationDrill\(row\)\)\}/);
+  assert.match(operations, /operationDrill\(row, kindFilter\)/);
+  assert.match(operations, /<button[^>]*class="api-select"[^>]*onclick=\{\(\) => onDrill\?\.\(operationDrill\(row, kindFilter\)\)\}/);
+  assert.doesNotMatch(operations, /Every stored event/);
   assert.match(table, />Operation</);
   assert.match(read('src/components/OperationTable.svelte'), /Δ traffic[\s\S]*Δ P95[\s\S]*Δ 4xx[\s\S]*Δ 5xx[\s\S]*Δ completion/);
 });

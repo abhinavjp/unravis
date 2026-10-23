@@ -844,7 +844,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
             </div>
           {/if}
           <details class="result-notes"><summary>About these results and sample sizes</summary><div class="calculation-notes">{#each calculationNotes as note}<p>{note}</p>{/each}</div></details>
-          <OverviewStrip overview={analysis.overview ?? []} outcomeFilter={analysis.query.outcome} onDrill={drillFromOverview}>
+          <OverviewStrip overview={analysis.overview ?? []} outcomeFilter={analysis.query.outcome} kindFilter={analysis.query.kind} onDrill={drillFromOverview}>
             {#snippet quality()}{#if analysis}
           <div class="quality-strip">
             <div><strong>{analysis.apis.length.toLocaleString()}</strong><span>API groups</span></div>

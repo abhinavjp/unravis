@@ -71,7 +71,7 @@
   <button type="button" class="secondary-button" aria-pressed={view === 'operation'} title="One row per API action and request type, with changes against the reference period." onclick={() => view = 'operation'}>Operation</button>
 </div>
 {#if view === 'operation'}
-  <OperationTable {rollups} {onDrill} />
+  <OperationTable {rollups} {onDrill} {kindFilter} />
 {:else}
 <div class="group-toolbar">
   <label>Find an API<input type="search" placeholder="Search API name or source" bind:value={search} oninput={() => page = 0} /></label>

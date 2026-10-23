@@ -3,14 +3,14 @@
   import type { OverviewRow, Quantile } from '../lib/types';
   import { kindLabel, unknownKindTip } from '../lib/presentation';
   import { changeText, msChangeText, overviewDrill, overviewStateNote, pointsText, rateText, type OverviewDrill, type OverviewTile } from '../lib/overview';
-  let { overview, outcomeFilter = 'all', onDrill, quality }: {
-    overview: OverviewRow[]; outcomeFilter?: string; onDrill: (drill: OverviewDrill) => void; quality: Snippet;
+  let { overview, outcomeFilter = 'all', kindFilter = 'all', onDrill, quality }: {
+    overview: OverviewRow[]; outcomeFilter?: string; kindFilter?: string; onDrill: (drill: OverviewDrill) => void; quality: Snippet;
   } = $props();
   const latency = (q: Quantile | null | undefined) => q?.valueMs == null ? 'N/A' : '≈ ' + q.valueMs.toFixed(1) + ' ms';
   const sharesNote = $derived(outcomeFilter === 'all' ? '' : 'Error shares need the outcome filter set to All.');
   // Incomplete and invalid rows of unknown request type: the Synchronous and Asynchronous lists also hold them, the tiles do not.
   const unknownKindRows = $derived.by(() => { const row = overview.find(item => item.kind === 'unknown'); return row ? row.incomplete + row.invalid : 0; });
-  const drillFor = (row: OverviewRow, tile: OverviewTile) => overviewDrill(row.kind, tile, { unknownKindRows, unknownResults: row.unknownOutcome, outcomeFilter });
+  const drillFor = (row: OverviewRow, tile: OverviewTile) => overviewDrill(row.kind, tile, { unknownKindRows, unknownResults: row.unknownOutcome, outcomeFilter, queryKind: kindFilter });
   const drill = (row: OverviewRow, tile: OverviewTile) => onDrill(drillFor(row, tile));
   const drillTip = (row: OverviewRow, tile: OverviewTile, tip: string) => {
     const note = drillFor(row, tile).note;

@@ -25,30 +25,41 @@ export type OverviewTile = 'events' | 'completed' | 'clientErrors' | 'serverErro
  */
 export interface OverviewDrill { kind: Kind; state: string; outcome: Outcome | ''; label: string; note: string; controller?: string; action?: string }
 /** What the strip knows about the gap between a tile and its list: the unknown-type row's incomplete+invalid count, this row's own unknown results, and the user's outcome filter. */
-export interface DrillContext { unknownKindRows?: number; unknownResults?: number; outcomeFilter?: string }
+export interface DrillContext { unknownKindRows?: number; unknownResults?: number; outcomeFilter?: string; queryKind?: string }
 
 // Same wording as presentation.kindLabel; not imported so this module stays loadable on its own in the pure tests.
 const drillLabel = (kind: string) => kind === 'unknown' ? 'HTTP (polling type unknown)' : kind;
 const drillKind = (kind: string) => (kind === 'unknown' ? 'http_unknown' : kind) as Kind;
 const rowsText = (count: number, kind = '') => count + ' ' + (kind ? kind + ' ' : '') + (count === 1 ? 'row' : 'rows');
 const unusableRows = 'incomplete or unusable';
+const compatibleKind = (kind?: string) => kind === 'synchronous' || kind === 'asynchronous';
+/**
+ * Under a Synchronous or Asynchronous query valid rows of unknown request type are scoped out, so an unknown-type count leaves them out,
+ * while the http_unknown list it opens includes every unknown-type row that matches the filters. There is no known bound, so no number.
+ */
+const unknownTypeGap = (kind: string, queryKind?: string) => kind === 'unknown' && compatibleKind(queryKind);
+const unknownTypeNote = (queryKind?: string) => 'also lists any rows of unknown request type that the ' + queryKind + ' filter leaves out of this count';
 
 /**
  * The drill-down a tile opens, using the filters the request list already supports. Rows with no recorded polling type are the http_unknown kind.
  * The list is not always identical to the tile. Incomplete and invalid rows of unknown request type cannot be told apart as Synchronous or
  * Asynchronous, so those two lists include them (exactly, for Events). Under a 4xx or 5xx filter the summary also keeps every row whose result is
- * unknown, so those lists hold up to that many more. The 4xx and 5xx drills also replace a narrower outcome filter the user had chosen.
+ * unknown, so those lists hold up to that many more. The 4xx and 5xx drills also replace any other outcome filter the user had chosen.
+ * Under a Synchronous or Asynchronous query the unknown row leaves out valid rows of unknown request type but its http_unknown list includes
+ * them, so every tile of that row carries an unbounded note instead of a number.
  */
 export const overviewDrill = (kind: string, tile: OverviewTile, context: DrillContext = {}): OverviewDrill => {
   const label = drillLabel(kind);
   const notes: string[] = [];
-  const compatible = kind === 'synchronous' || kind === 'asynchronous';
+  const compatible = compatibleKind(kind);
+  const gap = unknownTypeGap(kind, context.queryKind);
   const unknownKind = compatible ? Math.max(0, context.unknownKindRows ?? 0) : 0;
   const unknownResults = Math.max(0, context.unknownResults ?? 0);
   const base = { kind: drillKind(kind), state: 'all', outcome: '' as Outcome | '' };
   const classDrill = (outcome: 'client_error' | 'server_error', name: string): OverviewDrill => {
     const bound = unknownKind + unknownResults;
-    if (bound > 0) {
+    if (gap) notes.push(unknownTypeNote(context.queryKind));
+    else if (bound > 0) {
       const what = unknownKind > 0 && unknownResults > 0 ? 'with an unknown result or request type' : unknownKind > 0 ? 'of unknown request type' : 'whose result is unknown';
       notes.push('also lists up to ' + rowsText(bound, unknownKind > 0 && unknownResults === 0 ? unusableRows : '') + ' ' + what);
     }
@@ -57,21 +68,25 @@ export const overviewDrill = (kind: string, tile: OverviewTile, context: DrillCo
     return { ...base, outcome, label: label + ' · ' + name, note: notes.join('; ') };
   };
   switch (tile) {
-    case 'completed': return { ...base, state: 'complete', label: label + ' · Complete', note: '' };
+    case 'completed': return { ...base, state: 'complete', label: label + ' · Complete', note: gap ? unknownTypeNote(context.queryKind) : '' };
     case 'clientErrors': return classDrill('client_error', 'client errors (4xx)');
     case 'serverErrors': return classDrill('server_error', 'server errors (5xx)');
-    default: return { ...base, label: label + ' · every event', note: unknownKind > 0 ? 'also lists ' + rowsText(unknownKind, unusableRows) + ' of unknown request type' : '' };
+    default: return { ...base, label: label + ' · every event', note: gap ? unknownTypeNote(context.queryKind) : unknownKind > 0 ? 'also lists ' + rowsText(unknownKind, unusableRows) + ' of unknown request type' : '' };
   }
 };
 
-/** The drill-down an operation row opens: every event of that controller, action and request type. Synchronous and Asynchronous lists can also hold unknown-type rows that are incomplete or unusable. */
-export const operationDrill = (rollup: Pick<Rollup, 'controller' | 'action' | 'kind'>): OverviewDrill => {
+/**
+ * The drill-down an operation row opens: every event of that controller, action and request type that matches the filters. Synchronous and
+ * Asynchronous lists can also hold unknown-type rows that are incomplete or unusable. An unknown-type operation under a Synchronous or
+ * Asynchronous query (queryKind) leaves out valid unknown-type rows that its list includes.
+ */
+export const operationDrill = (rollup: Pick<Rollup, 'controller' | 'action' | 'kind'>, queryKind = ''): OverviewDrill => {
   const kind = rollup.kind ?? '';
-  const compatible = kind === 'synchronous' || kind === 'asynchronous';
+  const compatible = compatibleKind(kind);
   return {
     kind: kind ? drillKind(kind) : 'all', state: 'all', outcome: '',
     label: rollup.controller + '.' + rollup.action + ' · ' + (kind ? drillLabel(kind) : 'any request type') + ' · every event',
-    note: compatible ? 'also lists any incomplete or unusable rows of unknown request type' : '',
+    note: compatible ? 'also lists any incomplete or unusable rows of unknown request type' : unknownTypeGap(kind, queryKind) ? unknownTypeNote(queryKind) : '',
     controller: rollup.controller, action: rollup.action
   };
 };

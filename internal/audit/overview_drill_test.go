@@ -25,6 +25,18 @@ func tileDrillCount(t *testing.T, d *demoRepository, q Query, kind, outcome, sta
 	return got
 }
 
+// demoDrillRepoWithValidUnknown adds a valid, complete row of unknown request
+// type to demoDrillRepo. Under a Synchronous or Asynchronous query it is
+// removed from the overview (valid rows need the exact kind), but the
+// http_unknown drill of the unknown row's tiles lists it.
+func demoDrillRepoWithValidUnknown(now time.Time) *demoRepository {
+	d := demoDrillRepo(now)
+	initiated := now.Add(-5 * time.Minute)
+	duration := 120.0
+	d.records = append(d.records, RequestRecord{ID: "x-unknown-kind-valid", SourceID: "demo-west", Controller: "Payroll", Action: "Run", Kind: "unknown", State: "valid", Status: "200 OK", Outcome: "success", InitiatedAt: &initiated, DurationMs: &duration, ApiTimeMs: &duration})
+	return d
+}
+
 // TestDemoOverviewTileCountsMatchTheDrilledList compares every overview tile
 // with the request list its drill opens, through the demo repository. The
 // Completed tile and the Events tile of the Hangfire and unknown rows are
@@ -34,11 +46,15 @@ func tileDrillCount(t *testing.T, d *demoRepository, q Query, kind, outcome, sta
 // incomplete+invalid count. Under client_error and server_error the summary
 // keeps every row whose result is unknown, so those two tiles differ by at most
 // the row's own unknown results plus (on Synchronous and Asynchronous) that
-// same unknown-type count. The UI states these numbers.
+// same unknown-type count. The UI states these numbers. The unknown row's
+// tiles under a Synchronous or Asynchronous query are different: the overview
+// there leaves out valid rows of unknown request type but the http_unknown drill
+// lists them, so the gap has no bound and the UI states that instead of a
+// number.
 func TestDemoOverviewTileCountsMatchTheDrilledList(t *testing.T) {
 	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-	d := demoDrillRepo(now)
-	sawGap := false
+	d := demoDrillRepoWithValidUnknown(now)
+	sawGap, sawUnknownGap := false, false
 	for _, kind := range []string{"all", "http", "synchronous", "asynchronous", "hangfire", "http_unknown"} {
 		q := demoQuery(now)
 		q.Kind = kind
@@ -55,10 +71,22 @@ func TestDemoOverviewTileCountsMatchTheDrilledList(t *testing.T) {
 		for _, row := range analysis.Overview {
 			label := fmt.Sprintf("%s/%s", kind, row.Kind)
 			compatible := row.Kind == "synchronous" || row.Kind == "asynchronous"
+			// The same condition the UI uses to add its unbounded unknown-kind note.
+			unknownKindGap := row.Kind == KindUnknown && (kind == "synchronous" || kind == "asynchronous")
 			events := int64(tileDrillCount(t, d, q, row.Kind, "", "all"))
 			completed := int64(tileDrillCount(t, d, q, row.Kind, "", "complete"))
 			client := int64(tileDrillCount(t, d, q, row.Kind, "client_error", "all"))
 			server := int64(tileDrillCount(t, d, q, row.Kind, "server_error", "all"))
+			if unknownKindGap {
+				if events <= row.Events || completed <= row.Completed {
+					t.Errorf("%s: the valid unknown-kind row must make the list (%d events, %d complete) larger than the tiles (%d, %d)", label, events, completed, row.Events, row.Completed)
+				}
+				if client < row.ClientErrors || server < row.ServerErrors {
+					t.Errorf("%s: the list (%d 4xx, %d 5xx) must not be smaller than the tiles (%d, %d)", label, client, server, row.ClientErrors, row.ServerErrors)
+				}
+				sawUnknownGap = true
+				continue
+			}
 			if completed != row.Completed {
 				t.Errorf("%s: Completed tile %d, drilled list %d", label, row.Completed, completed)
 			}
@@ -82,6 +110,9 @@ func TestDemoOverviewTileCountsMatchTheDrilledList(t *testing.T) {
 	}
 	if !sawGap {
 		t.Fatal("the fixture must contain unknown-kind incomplete rows so the gap is exercised")
+	}
+	if !sawUnknownGap {
+		t.Fatal("the fixture must contain a valid unknown-kind row so the unknown tiles' unbounded gap is exercised")
 	}
 }
 
