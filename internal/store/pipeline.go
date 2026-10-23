@@ -64,22 +64,11 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 	}}}
 	statusText := bson.D{{Key: "$toUpper", Value: bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$StatusCode"}, {Key: "to", Value: "string"}, {Key: "onError", Value: ""}, {Key: "onNull", Value: ""}}}}}}
 	statusNumber := bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$StatusCode"}, {Key: "to", Value: "int"}, {Key: "onError", Value: nil}, {Key: "onNull", Value: nil}}}}
-	statusSets := statusNames()
 	// An asynchronous request that answered 202 Accepted has only been queued:
 	// its work is not done, so it is neither a success nor a timing sample.
 	pending := pendingAsyncExpr(kind, statusText)
-	outcome := bson.D{{Key: "$switch", Value: bson.D{
-		{Key: "branches", Value: bson.A{
-			bson.D{{Key: "case", Value: "$_auditPending"}, {Key: "then", Value: "unknown"}},
-			bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{kind, "hangfire"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "SUCCEEDED"}}}}}}}, {Key: "then", Value: "success"}},
-			bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{kind, "hangfire"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "FAILED"}}}}}}}, {Key: "then", Value: "failure"}},
-			bson.D{{Key: "case", Value: bson.D{{Key: "$in", Value: bson.A{statusText, statusSets.success}}}}, {Key: "then", Value: "success"}},
-			bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$gte", Value: bson.A{statusNumber, 200}}}, bson.D{{Key: "$lt", Value: bson.A{statusNumber, 400}}}}}}}, {Key: "then", Value: "success"}},
-			bson.D{{Key: "case", Value: bson.D{{Key: "$in", Value: bson.A{statusText, statusSets.failure}}}}, {Key: "then", Value: "failure"}},
-			bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$gte", Value: bson.A{statusNumber, 400}}}, bson.D{{Key: "$lt", Value: bson.A{statusNumber, 600}}}}}}}, {Key: "then", Value: "failure"}},
-		}},
-		{Key: "default", Value: "unknown"},
-	}}}
+	statusClass := statusClassExpr(kind, statusText, statusNumber)
+	outcome := outcomeFromClassExpr()
 	var duration any
 	missingDuration := any(bson.D{{Key: "$or", Value: bson.A{
 		bson.D{{Key: "$ne", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}},
@@ -153,6 +142,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 	stages := mongo.Pipeline{
 		bson.D{{Key: "$match", Value: firstMatch}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditAt", Value: dateOrFallback("RequestInitiatedAt", "CreatedOn")}, {Key: "_auditCompleted", Value: dateOrFallback("RequestCompletedAt", "RequestCompletedAt")}, {Key: "_auditKind", Value: kind}, {Key: "_auditPending", Value: pending}}}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "_statusClass", Value: statusClass}}}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditOutcome", Value: outcome}}}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditDuration", Value: duration}}}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditState", Value: state}, {Key: "_auditBin", Value: bin}, {Key: "_auditBucketAt", Value: bucketAt}}}},
@@ -162,7 +152,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 		stages = append(stages, bson.D{{Key: "$match", Value: bson.D{{Key: "$or", Value: bson.A{bson.D{{Key: "_auditKind", Value: q.Kind}}, bson.D{{Key: "_auditState", Value: bson.D{{Key: "$ne", Value: "valid"}}}}}}}}})
 	}
 	if q.Outcome != "all" {
-		stages = append(stages, bson.D{{Key: "$match", Value: bson.D{{Key: "$or", Value: bson.A{bson.D{{Key: "_auditOutcome", Value: q.Outcome}}, bson.D{{Key: "_auditOutcome", Value: "unknown"}}, bson.D{{Key: "_auditState", Value: bson.D{{Key: "$ne", Value: "valid"}}}}}}}}})
+		stages = append(stages, bson.D{{Key: "$match", Value: bson.D{{Key: "$or", Value: bson.A{bson.D{outcomeFilterElem(q.Outcome)}, bson.D{{Key: "_auditOutcome", Value: "unknown"}}, bson.D{{Key: "_auditState", Value: bson.D{{Key: "$ne", Value: "valid"}}}}}}}}})
 	}
 	stages = append(stages,
 		bson.D{{Key: "$group", Value: bson.D{
@@ -179,18 +169,100 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 			{Key: "nPayload", Value: phaseCount("$_auditPayloadMs")},
 			{Key: "pendingAsync", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{"$_auditPending", 1, 0}}}}}},
 			{Key: "observedPartial", Value: observedPartial},
+			{Key: "c4xx", Value: statusClassCount(audit.StatusClientError)},
+			{Key: "c5xx", Value: statusClassCount(audit.StatusServerError)},
+			{Key: "cHangfireFailed", Value: statusClassCount(audit.StatusHangfireFailed)},
 		}}},
 		bson.D{{Key: "$limit", Value: maxBucketRows}},
-		bson.D{{Key: "$project", Value: bson.D{{Key: "_id", Value: 0}, {Key: "controller", Value: "$_id.controller"}, {Key: "action", Value: "$_id.action"}, {Key: "kind", Value: "$_id.kind"}, {Key: "outcome", Value: "$_id.outcome"}, {Key: "state", Value: "$_id.state"}, {Key: "at", Value: "$_id.at"}, {Key: "bin", Value: "$_id.bin"}, {Key: "count", Value: 1}, {Key: "sumMs", Value: 1}, {Key: "sumAuditMs", Value: 1}, {Key: "sumApiMs", Value: 1}, {Key: "sumPayloadMs", Value: 1}, {Key: "nAudit", Value: 1}, {Key: "nApi", Value: 1}, {Key: "nPayload", Value: 1}, {Key: "pendingAsync", Value: 1}, {Key: "observedPartial", Value: 1}, {Key: "minMs", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$minMs", 0}}}}, {Key: "maxMs", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$maxMs", 0}}}}}}},
+		bson.D{{Key: "$project", Value: bson.D{{Key: "_id", Value: 0}, {Key: "controller", Value: "$_id.controller"}, {Key: "action", Value: "$_id.action"}, {Key: "kind", Value: "$_id.kind"}, {Key: "outcome", Value: "$_id.outcome"}, {Key: "state", Value: "$_id.state"}, {Key: "at", Value: "$_id.at"}, {Key: "bin", Value: "$_id.bin"}, {Key: "count", Value: 1}, {Key: "sumMs", Value: 1}, {Key: "sumAuditMs", Value: 1}, {Key: "sumApiMs", Value: 1}, {Key: "sumPayloadMs", Value: 1}, {Key: "nAudit", Value: 1}, {Key: "nApi", Value: 1}, {Key: "nPayload", Value: 1}, {Key: "pendingAsync", Value: 1}, {Key: "observedPartial", Value: 1}, {Key: "c4xx", Value: 1}, {Key: "c5xx", Value: 1}, {Key: "cHangfireFailed", Value: 1}, {Key: "minMs", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$minMs", 0}}}}, {Key: "maxMs", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$maxMs", 0}}}}}}},
 	)
 	return stages
 }
 
-func statusNames() struct{ success, failure bson.A } {
-	return struct{ success, failure bson.A }{
-		success: stringsToBSON("OK", "CREATED", "ACCEPTED", "NONAUTHORITATIVEINFORMATION", "NOCONTENT", "RESETCONTENT", "PARTIALCONTENT", "MULTISTATUS", "ALREADYREPORTED", "IMUSED", "MULTIPLECHOICES", "MOVEDPERMANENTLY", "FOUND", "SEEOTHER", "NOTMODIFIED", "USEPROXY", "TEMPORARYREDIRECT", "PERMANENTREDIRECT"),
-		failure: stringsToBSON("BADREQUEST", "UNAUTHORIZED", "PAYMENTREQUIRED", "FORBIDDEN", "NOTFOUND", "METHODNOTALLOWED", "NOTACCEPTABLE", "PROXYAUTHENTICATIONREQUIRED", "REQUESTTIMEOUT", "CONFLICT", "GONE", "LENGTHREQUIRED", "PRECONDITIONFAILED", "PAYLOADTOOLARGE", "URITOOLONG", "UNSUPPORTEDMEDIATYPE", "RANGENOTSATISFIABLE", "EXPECTATIONFAILED", "IMATEAPOT", "MISDIRECTEDREQUEST", "UNPROCESSABLEENTITY", "LOCKED", "FAILEDDEPENDENCY", "TOOEARLY", "UPGRADEREQUIRED", "PRECONDITIONREQUIRED", "TOOMANYREQUESTS", "REQUESTHEADERFIELDSTOOLARGE", "UNAVAILABLEFORLEGALREASONS", "INTERNALSERVERERROR", "NOTIMPLEMENTED", "BADGATEWAY", "SERVICEUNAVAILABLE", "GATEWAYTIMEOUT", "HTTPVERSIONNOTSUPPORTED", "VARIANTALSONEGOTIATES", "INSUFFICIENTSTORAGE", "LOOPDETECTED", "NOTEXTENDED", "NETWORKAUTHENTICATIONREQUIRED"),
+// statusClassSets holds the upper-cased .NET status names of each numeric class,
+// taken from audit.StatusNames so the server pipeline and the Go classifier share
+// one table.
+type statusClassNameSets struct{ success, redirect, clientError, serverError bson.A }
+
+func statusClassSets() statusClassNameSets {
+	toBSON := func(class string) bson.A {
+		names := audit.StatusNames(class)
+		return stringsToBSON(names...)
 	}
+	return statusClassNameSets{
+		success:     toBSON(audit.StatusSuccess),
+		redirect:    toBSON(audit.StatusRedirect),
+		clientError: toBSON(audit.StatusClientError),
+		serverError: toBSON(audit.StatusServerError),
+	}
+}
+
+// statusClassExpr is the server-side twin of audit.StatusClass: pending first,
+// then the hangfire Succeeded/Failed statuses, then the status name or number by
+// range. Anything unmatched, including a missing status, is unknown. It reads
+// $_auditPending, so it must run in a $set after the stage that defines it.
+func statusClassExpr(kind, statusText, statusNumber bson.D) bson.D {
+	sets := statusClassSets()
+	hangfire := func(status string) bson.D {
+		return bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{kind, "hangfire"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, status}}}}}}
+	}
+	named := func(set bson.A) bson.D { return bson.D{{Key: "$in", Value: bson.A{statusText, set}}} }
+	ranged := func(from, to int) bson.D {
+		return bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$gte", Value: bson.A{statusNumber, from}}}, bson.D{{Key: "$lt", Value: bson.A{statusNumber, to}}}}}}
+	}
+	branch := func(condition any, class string) bson.D {
+		return bson.D{{Key: "case", Value: condition}, {Key: "then", Value: class}}
+	}
+	return bson.D{{Key: "$switch", Value: bson.D{
+		{Key: "branches", Value: bson.A{
+			branch("$_auditPending", audit.StatusPending),
+			branch(hangfire("SUCCEEDED"), audit.StatusSuccess),
+			branch(hangfire("FAILED"), audit.StatusHangfireFailed),
+			branch(named(sets.success), audit.StatusSuccess),
+			branch(ranged(200, 300), audit.StatusSuccess),
+			branch(named(sets.redirect), audit.StatusRedirect),
+			branch(ranged(300, 400), audit.StatusRedirect),
+			branch(named(sets.clientError), audit.StatusClientError),
+			branch(ranged(400, 500), audit.StatusClientError),
+			branch(named(sets.serverError), audit.StatusServerError),
+			branch(ranged(500, 600), audit.StatusServerError),
+		}},
+		{Key: "default", Value: audit.StatusUnknown},
+	}}}
+}
+
+// outcomeFromClassExpr folds $_statusClass into the coarse cohort outcome the
+// same way audit.ClassOutcome does: success and redirect succeed; 4xx, 5xx and a
+// failed hangfire job fail; pending and unrecognised statuses are unknown.
+func outcomeFromClassExpr() bson.D {
+	class := "$_statusClass"
+	return bson.D{{Key: "$switch", Value: bson.D{
+		{Key: "branches", Value: bson.A{
+			bson.D{{Key: "case", Value: bson.D{{Key: "$in", Value: bson.A{class, bson.A{audit.StatusSuccess, audit.StatusRedirect}}}}}, {Key: "then", Value: "success"}},
+			bson.D{{Key: "case", Value: bson.D{{Key: "$in", Value: bson.A{class, bson.A{audit.StatusClientError, audit.StatusServerError, audit.StatusHangfireFailed}}}}}, {Key: "then", Value: "failure"}},
+		}},
+		{Key: "default", Value: "unknown"},
+	}}}
+}
+
+// statusClassCount is a $group accumulator that counts rows of one status class.
+// It is never a group key, so the cohort key stays (source, controller, action,
+// kind, outcome).
+func statusClassCount(class string) bson.D {
+	return bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$_statusClass", class}}}, 1, 0}}}}}
+}
+
+// outcomeFilterElem is the $match condition for a query outcome filter. success
+// and failure test the coarse outcome; client_error selects 4xx only and
+// server_error selects 5xx plus failed hangfire jobs.
+func outcomeFilterElem(outcome string) bson.E {
+	switch outcome {
+	case audit.StatusClientError:
+		return bson.E{Key: "_statusClass", Value: audit.StatusClientError}
+	case audit.StatusServerError:
+		return bson.E{Key: "_statusClass", Value: bson.D{{Key: "$in", Value: bson.A{audit.StatusServerError, audit.StatusHangfireFailed}}}}
+	}
+	return bson.E{Key: "_auditOutcome", Value: outcome}
 }
 
 func stringsToBSON(values ...string) bson.A {

@@ -38,6 +38,10 @@ type bucketDocument struct {
 
 	PendingAsync    int64 `bson:"pendingAsync"`
 	ObservedPartial int64 `bson:"observedPartial"`
+
+	C4xx            int64 `bson:"c4xx"`
+	C5xx            int64 `bson:"c5xx"`
+	CHangfireFailed int64 `bson:"cHangfireFailed"`
 }
 
 type sourceAnalysis struct {
@@ -214,6 +218,7 @@ func (s *Store) readBuckets(ctx context.Context, p *profile, q audit.Query, star
 			SumAuditMs: doc.SumAuditMs, SumApiMs: doc.SumApiMs, SumPayloadMs: doc.SumPayloadMs,
 			NAudit: doc.NAudit, NApi: doc.NApi, NPayload: doc.NPayload,
 			PendingAsync: doc.PendingAsync, ObservedPartial: doc.ObservedPartial,
+			Count4xx: doc.C4xx, Count5xx: doc.C5xx, CountHangfireFailed: doc.CHangfireFailed,
 		}
 		encoded, err := json.Marshal(bucket)
 		if err != nil || totalBytes.Add(int64(len(encoded)+1)) > maxAnalysisBytes {

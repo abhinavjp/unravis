@@ -142,6 +142,10 @@ type Bucket struct {
 
 	PendingAsync    int64 `json:"pendingAsync,omitempty"`
 	ObservedPartial int64 `json:"observedPartial,omitempty"`
+
+	Count4xx            int64 `json:"count4xx,omitempty"`
+	Count5xx            int64 `json:"count5xx,omitempty"`
+	CountHangfireFailed int64 `json:"countHangfireFailed,omitempty"`
 }
 
 type Quantile struct {
@@ -165,6 +169,11 @@ type Stats struct {
 	Phases *PhaseMeans `json:"phases,omitempty"`
 
 	ObservedPartial int64 `json:"observedPartial,omitempty"`
+
+	ClientErrors    int64    `json:"clientErrors,omitempty"`
+	ServerErrors    int64    `json:"serverErrors,omitempty"`
+	ClientErrorRate *float64 `json:"clientErrorRate,omitempty"`
+	ServerErrorRate *float64 `json:"serverErrorRate,omitempty"`
 }
 
 // PhaseMeans splits request time into the audit-row write and API processing,

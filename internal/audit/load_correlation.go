@@ -21,16 +21,22 @@ type Rollup struct {
 	Failures   int64    `json:"failures"`
 	ErrorRate  *float64 `json:"errorRate,omitempty"`
 	PerMinute  float64  `json:"perMinute"`
+
+	ClientErrorRate *float64 `json:"clientErrorRate,omitempty"`
+	ServerErrorRate *float64 `json:"serverErrorRate,omitempty"`
 }
 
 // buildRollups folds the current-window outcome-split cohorts into one row per
 // (controller, action), sorted by name. windowMinutes is the length of the
 // current window. The sources apply the outcome filter before summarizing, so
 // when allOutcomes is false the failure share is unknowable and ErrorRate stays
-// nil; throughput is still reported.
+// nil; throughput is still reported. ClientErrorRate (4xx) and ServerErrorRate
+// (5xx plus failed hangfire jobs) split ErrorRate and follow the same rule;
+// together they never exceed it.
 func buildRollups(cohorts map[string]*cohortAccumulator, windowMinutes float64, allOutcomes bool) []Rollup {
 	type name struct{ controller, action string }
 	byName := map[name]*Rollup{}
+	clientErrors, serverErrors := map[name]int64{}, map[name]int64{}
 	for _, c := range cohorts {
 		if c.currentEvents <= 0 {
 			continue
@@ -46,14 +52,19 @@ func buildRollups(cohorts map[string]*cohortAccumulator, windowMinutes float64, 
 		case "failure":
 			r.Requests = saturatingAdd(r.Requests, c.currentEvents)
 			r.Failures = saturatingAdd(r.Failures, c.currentEvents)
+			clientErrors[name{c.controller, c.action}] = saturatingAdd(clientErrors[name{c.controller, c.action}], c.currentClientErrors)
+			serverErrors[name{c.controller, c.action}] = saturatingAdd(serverErrors[name{c.controller, c.action}], c.currentServerErrors)
 		}
 	}
 	rows := make([]Rollup, 0, len(byName))
-	for _, r := range byName {
+	for key, r := range byName {
 		if r.Requests > 0 {
 			if allOutcomes {
 				rate := float64(r.Failures) / float64(r.Requests)
 				r.ErrorRate = &rate
+				client := float64(clientErrors[key]) / float64(r.Requests)
+				server := float64(serverErrors[key]) / float64(r.Requests)
+				r.ClientErrorRate, r.ServerErrorRate = &client, &server
 			}
 			if windowMinutes > 0 {
 				r.PerMinute = float64(r.Requests) / windowMinutes

@@ -1,5 +1,5 @@
 export type Kind = 'synchronous' | 'asynchronous' | 'hangfire' | 'all';
-export type Outcome = 'success' | 'failure' | 'all';
+export type Outcome = 'success' | 'failure' | 'client_error' | 'server_error' | 'all';
 export type Metric = 'total' | 'api';
 
 export interface Source { selectionKey?: string; connectionId?: string; connectionLabel?: string; id: string; label: string; database: string; collection: string }
@@ -31,6 +31,8 @@ export interface Stats {
   p90?: Quantile | null; p99?: Quantile | null;
   /** Additive: mean of each phase over the documents that carry it; absent when none do. */
   phases?: PhaseMeans | null;
+  /** Additive: documents of this cohort that were 4xx (clientErrors) or 5xx plus failed Hangfire jobs (serverErrors), and their share of the cohort's events; rates are absent for unknown-outcome cohorts. */
+  clientErrors?: number; serverErrors?: number; clientErrorRate?: number | null; serverErrorRate?: number | null;
   /** Additive: valid samples whose observed time lacks AuditCreateTime (legacy rows without RequestInitiatedAt); absent when none. */
   observedPartial?: number;
 }
@@ -53,7 +55,11 @@ export interface Point { at: string; count: number | null; p50: Quantile | null;
 /** loadCorrelation: Spearman rho of other traffic's estimated concurrency vs this series' per-bucket P95; absent below 8 paired buckets. */
 export interface Series { key: string; points: Point[]; loadCorrelation?: number | null }
 /** Per-API current-window throughput; requests and failures count known outcomes only. errorRate is absent when requests is 0. */
-export interface Rollup { controller: string; action: string; requests: number; failures: number; errorRate?: number | null; perMinute: number }
+export interface Rollup {
+  controller: string; action: string; requests: number; failures: number; errorRate?: number | null; perMinute: number;
+  /** Additive split of errorRate: 4xx, and 5xx plus failed Hangfire jobs. Absent when errorRate is, or under an outcome filter. */
+  clientErrorRate?: number | null; serverErrorRate?: number | null;
+}
 /** pendingAsync is additive and absent when zero: Asynchronous requests that only answered 202 Accepted, counted inside incomplete. */
 export interface Quality { incomplete: number; invalid: number; unknownOutcome: number; pendingAsync?: number }
 export interface Analysis {

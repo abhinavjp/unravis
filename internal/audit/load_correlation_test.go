@@ -303,3 +303,53 @@ func TestSeriesLoadCorrelationConstantNoisyNeighboursIsNilAndDeterministic(t *te
 		}
 	}
 }
+
+func TestRollupSplitsClientAndServerErrorRates(t *testing.T) {
+	q := analysisQuery()
+	var current []Bucket
+	current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "success", "valid", anchor, 80, 10)...)
+	failures := makeBuckets("s1", "Payroll", "Run", "synchronous", "failure", "valid", anchor, 20, 10)
+	failures[0].Count4xx, failures[0].Count5xx, failures[0].CountHangfireFailed = failures[0].Count/2, failures[0].Count/4, 0
+	var fourXX, serverSide int64
+	for _, b := range failures {
+		fourXX += b.Count4xx
+		serverSide += b.Count5xx + b.CountHangfireFailed
+	}
+	current = append(current, failures...)
+	analysis, err := BuildAnalysis(q, current, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := analysis.Rollups[0]
+	if r.ErrorRate == nil || r.ClientErrorRate == nil || r.ServerErrorRate == nil {
+		t.Fatalf("rates missing: %#v", r)
+	}
+	if math.Abs(*r.ClientErrorRate-float64(fourXX)/100) > 1e-12 || math.Abs(*r.ServerErrorRate-float64(serverSide)/100) > 1e-12 {
+		t.Fatalf("client/server rates = %v/%v, want %v/%v", *r.ClientErrorRate, *r.ServerErrorRate, float64(fourXX)/100, float64(serverSide)/100)
+	}
+	if *r.ClientErrorRate+*r.ServerErrorRate > *r.ErrorRate+1e-12 {
+		t.Fatalf("4xx + 5xx rates %v exceed the merged error rate %v", *r.ClientErrorRate+*r.ServerErrorRate, *r.ErrorRate)
+	}
+	// Under an outcome filter the share is unknowable, exactly like ErrorRate.
+	q.Outcome = "client_error"
+	filtered, err := BuildAnalysis(q, failures, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := filtered.Rollups[0]; got.ErrorRate != nil || got.ClientErrorRate != nil || got.ServerErrorRate != nil {
+		t.Fatalf("rates under an outcome filter = %#v, want nil", got)
+	}
+}
+
+func TestBuildAnalysisRejectsInconsistentStatusCounts(t *testing.T) {
+	q := analysisQuery()
+	buckets := makeBuckets("s1", "Payroll", "Run", "synchronous", "failure", "valid", anchor, 10, 10)
+	buckets[0].Count4xx, buckets[0].Count5xx = buckets[0].Count, 1
+	if _, err := BuildAnalysis(q, buckets, nil, nil); err == nil {
+		t.Fatal("4xx + 5xx above the bucket count must be rejected")
+	}
+	buckets[0].Count4xx, buckets[0].Count5xx = -1, 0
+	if _, err := BuildAnalysis(q, buckets, nil, nil); err == nil {
+		t.Fatal("negative 4xx count must be rejected")
+	}
+}

@@ -15,6 +15,9 @@ type cohortAccumulator struct {
 	currentEvents, referenceEvents              int64
 	current, reference                          *histogramAccumulator
 	currentAt                                   map[int64]*histogramAccumulator
+
+	currentClientErrors, currentServerErrors     int64
+	referenceClientErrors, referenceServerErrors int64
 }
 
 func CohortKey(sourceID, controller, action, kind, outcome string) string {
@@ -86,6 +89,14 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 	for k, key := range keys {
 		c := cohorts[key]
 		currentStats, referenceStats := c.current.stats(), c.reference.stats()
+		// Error counts cover every document in the cohort, valid or not, so they
+		// are divided by the cohort's events rather than its valid samples.
+		currentStats.ClientErrors, currentStats.ServerErrors = c.currentClientErrors, c.currentServerErrors
+		currentStats.ClientErrorRate = errorShare(c.currentClientErrors, c.currentEvents, c.outcome)
+		currentStats.ServerErrorRate = errorShare(c.currentServerErrors, c.currentEvents, c.outcome)
+		referenceStats.ClientErrors, referenceStats.ServerErrors = c.referenceClientErrors, c.referenceServerErrors
+		referenceStats.ClientErrorRate = errorShare(c.referenceClientErrors, c.referenceEvents, c.outcome)
+		referenceStats.ServerErrorRate = errorShare(c.referenceServerErrors, c.referenceEvents, c.outcome)
 		comparison := Comparison{Key: key, SourceID: c.sourceID, Controller: c.controller, Action: c.action, Kind: c.kind, Outcome: c.outcome, CurrentEvents: c.currentEvents, ReferenceEvents: c.referenceEvents, Current: currentStats, Reference: referenceStats}
 		switch {
 		case currentStats.Count == 0:
@@ -195,6 +206,9 @@ func addBucket(cohorts map[string]*cohortAccumulator, b Bucket, isCurrent bool) 
 	if b.State != "valid" && b.State != "incomplete" && b.State != "invalid" {
 		return fmt.Errorf("bucket state %q is invalid", b.State)
 	}
+	if b.Count4xx < 0 || b.Count5xx < 0 || b.CountHangfireFailed < 0 || b.Count4xx > b.Count || b.Count5xx > b.Count-b.Count4xx || b.CountHangfireFailed > b.Count-b.Count4xx-b.Count5xx {
+		return fmt.Errorf("status class counts %d/%d/%d must be non-negative and sum to at most the bucket count %d", b.Count4xx, b.Count5xx, b.CountHangfireFailed, b.Count)
+	}
 	key := CohortKey(b.SourceID, b.Controller, b.Action, b.Kind, b.Outcome)
 	c := cohorts[key]
 	if c == nil {
@@ -207,6 +221,20 @@ func addBucket(cohorts map[string]*cohortAccumulator, b Bucket, isCurrent bool) 
 	}
 	if err := checkedAdd(events, b.Count); err != nil {
 		return fmt.Errorf("cohort %s event count: %w", key, err)
+	}
+	clientErrors, serverErrors := &c.referenceClientErrors, &c.referenceServerErrors
+	if isCurrent {
+		clientErrors, serverErrors = &c.currentClientErrors, &c.currentServerErrors
+	}
+	// 5xx and failed hangfire jobs both count as server errors; 4xx stays apart.
+	if err := checkedAdd(clientErrors, b.Count4xx); err != nil {
+		return fmt.Errorf("cohort %s client error count: %w", key, err)
+	}
+	if err := checkedAdd(serverErrors, b.Count5xx); err != nil {
+		return fmt.Errorf("cohort %s server error count: %w", key, err)
+	}
+	if err := checkedAdd(serverErrors, b.CountHangfireFailed); err != nil {
+		return fmt.Errorf("cohort %s hangfire failure count: %w", key, err)
 	}
 	if b.State != "valid" {
 		return nil
@@ -230,6 +258,17 @@ func addBucket(cohorts map[string]*cohortAccumulator, b Bucket, isCurrent bool) 
 		}
 	}
 	return nil
+}
+
+// errorShare is errors divided by the cohort's events. It is nil when the
+// cohort's outcome is unknown or it has no events, so a missing denominator is
+// never reported as a zero error rate.
+func errorShare(errors, events int64, outcome string) *float64 {
+	if outcome == "unknown" || events <= 0 {
+		return nil
+	}
+	value := float64(errors) / float64(events)
+	return &value
 }
 
 func ratio(current, reference *Quantile) *float64 {

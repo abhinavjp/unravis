@@ -152,12 +152,12 @@ func TestSummaryPipelineMissingStatusIsUnknown(t *testing.T) {
 	}
 	var statusSets []bson.A
 	for _, set := range sets {
-		if len(set) > 0 && set[len(set)-1] == "PERMANENTREDIRECT" || len(set) > 0 && set[len(set)-1] == "NETWORKAUTHENTICATIONREQUIRED" {
+		if len(set) > 0 && set[len(set)-1] == "IMUSED" || len(set) > 0 && set[len(set)-1] == "PERMANENTREDIRECT" || len(set) > 0 && set[len(set)-1] == "UNAVAILABLEFORLEGALREASONS" || len(set) > 0 && set[len(set)-1] == "NETWORKAUTHENTICATIONREQUIRED" {
 			statusSets = append(statusSets, set)
 		}
 	}
-	if len(statusSets) != 2 {
-		t.Fatalf("found %d status $in arrays, want 2 (success, failure)", len(statusSets))
+	if len(statusSets) != 4 {
+		t.Fatalf("found %d status $in arrays, want 4 (2xx, 3xx, 4xx, 5xx)", len(statusSets))
 	}
 	for _, set := range statusSets {
 		rendered, err := bson.MarshalExtJSON(bson.D{{Key: "set", Value: set}}, true, false)
@@ -168,9 +168,9 @@ func TestSummaryPipelineMissingStatusIsUnknown(t *testing.T) {
 			t.Fatalf("status $in array contains null: %s", rendered)
 		}
 	}
-	sets2 := statusNames()
-	if len(statusSets[0]) != len(sets2.success) || len(statusSets[1]) != len(sets2.failure) {
-		t.Fatalf("set sizes diverge from statusNames: success=%d failure=%d", len(statusSets[0]), len(statusSets[1]))
+	want := statusClassSets()
+	if len(statusSets[0]) != len(want.success) || len(statusSets[1]) != len(want.redirect) || len(statusSets[2]) != len(want.clientError) || len(statusSets[3]) != len(want.serverError) {
+		t.Fatalf("set sizes diverge from statusClassSets: %d/%d/%d/%d", len(statusSets[0]), len(statusSets[1]), len(statusSets[2]), len(statusSets[3]))
 	}
 	for _, set := range statusSets {
 		for _, entry := range set {
@@ -623,5 +623,214 @@ func TestPipelineCountsPendingAsyncAndObservedPartial(t *testing.T) {
 				t.Errorf("%s/%s legacy: observedPartial = %v, want %v (state %v)", metric, fixture.name, got, want, derived["_auditState"])
 			}
 		}
+	}
+}
+
+type statusClassFixture struct {
+	name            string
+	polling, status any
+	wantClass       string
+	c4xx, c5xx, hf  float64
+}
+
+func statusClassFixtures() []statusClassFixture {
+	return []statusClassFixture{
+		{"sync OK", "Synchronous", "OK", "success", 0, 0, 0},
+		{"sync 200 text", "Synchronous", "200", "success", 0, 0, 0},
+		{"sync redirect alias", "Synchronous", "Redirect", "redirect", 0, 0, 0},
+		{"sync 304 number", "Synchronous", int32(304), "redirect", 0, 0, 0},
+		{"sync NotFound", "Synchronous", "NotFound", "client_error", 1, 0, 0},
+		{"sync 404 text", "Synchronous", "404", "client_error", 1, 0, 0},
+		{"sync 429 number", "Synchronous", int32(429), "client_error", 1, 0, 0},
+		{"sync RequestEntityTooLarge alias", "Synchronous", "RequestEntityTooLarge", "client_error", 1, 0, 0},
+		{"sync UnprocessableContent alias", "Synchronous", "UnprocessableContent", "client_error", 1, 0, 0},
+		{"sync InternalServerError", "Synchronous", "InternalServerError", "server_error", 0, 1, 0},
+		{"sync 502 text", "Synchronous", "502", "server_error", 0, 1, 0},
+		{"sync 503 number", "Synchronous", int32(503), "server_error", 0, 1, 0},
+		{"hangfire failed", "Hangfire", "Failed", "hangfire_failed", 0, 0, 1},
+		{"hangfire succeeded", "Hangfire", "Succeeded", "success", 0, 0, 0},
+		{"sync Failed is not a hangfire status", "Synchronous", "Failed", "unknown", 0, 0, 0},
+		{"async Accepted is pending", "Asynchronous", "Accepted", "pending", 0, 0, 0},
+		{"missing status", "Synchronous", "", "unknown", 0, 0, 0},
+		{"unrecognised status", "Synchronous", "Weird", "unknown", 0, 0, 0},
+		{"1xx status", "Synchronous", "Continue", "unknown", 0, 0, 0},
+		{"out of range number", "Synchronous", int32(700), "unknown", 0, 0, 0},
+	}
+}
+
+func statusClassDoc(fixture statusClassFixture) map[string]any {
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	return map[string]any{
+		"RequestPollingType": fixture.polling, "StatusCode": fixture.status,
+		"RequestInitiatedAt": at, "RequestCompletedAt": at.Add(500 * time.Millisecond), "ApiTime": 480.0,
+	}
+}
+
+func TestSummaryPipelineCounts4xx5xxSeparately(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	q.Kind = "all"
+	pipeline := buildPipeline(q, q.Start, q.End)
+	group := groupStage(t, pipeline)
+	project := pipeline[len(pipeline)-1][0].Value.(bson.D)
+	// The counters are accumulators, never group keys: the cohort key is unchanged.
+	var keys []string
+	for _, e := range groupField(group, "_id").(bson.D) {
+		keys = append(keys, e.Key)
+	}
+	if want := []string{"controller", "action", "kind", "outcome", "state", "at", "bin"}; !reflect.DeepEqual(keys, want) {
+		t.Fatalf("$group _id keys = %v, want %v", keys, want)
+	}
+	for _, key := range []string{"c4xx", "c5xx", "cHangfireFailed"} {
+		if accumulator, ok := groupField(group, key).(bson.D); !ok || len(accumulator) != 1 || accumulator[0].Key != "$sum" {
+			t.Errorf("$group %s = %#v, want one $sum accumulator", key, groupField(group, key))
+		}
+		if groupField(project, key) == nil {
+			t.Errorf("$project drops %s", key)
+		}
+	}
+	for _, fixture := range statusClassFixtures() {
+		t.Run(fixture.name, func(t *testing.T) {
+			derived := evalSetStages(t, pipeline, statusClassDoc(fixture))
+			if derived["_statusClass"] != fixture.wantClass {
+				t.Fatalf("_statusClass = %v, want %s", derived["_statusClass"], fixture.wantClass)
+			}
+			if want := audit.ClassOutcome(fixture.wantClass); derived["_auditOutcome"] != want {
+				t.Fatalf("_auditOutcome = %v, want %s", derived["_auditOutcome"], want)
+			}
+			for key, want := range map[string]float64{"c4xx": fixture.c4xx, "c5xx": fixture.c5xx, "cHangfireFailed": fixture.hf} {
+				if got := evalAccumulator(t, group, key, derived); got != want {
+					t.Errorf("%s = %v, want %v", key, got, want)
+				}
+			}
+		})
+	}
+	// 4xx and 5xx never share a counter: each row feeds at most one of the three.
+	for _, fixture := range statusClassFixtures() {
+		if fixture.c4xx+fixture.c5xx+fixture.hf > 1 {
+			t.Errorf("%s feeds more than one error counter", fixture.name)
+		}
+	}
+}
+
+func TestSummaryPipelineStatusClassNamesAreDisjointByRange(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	var sets []bson.A
+	for _, stage := range buildPipeline(q, q.Start, q.End) {
+		collectInSets(stage, &sets)
+	}
+	bounds := map[string][2]int{"IMUSED": {200, 299}, "PERMANENTREDIRECT": {300, 399}, "UNAVAILABLEFORLEGALREASONS": {400, 499}, "NETWORKAUTHENTICATIONREQUIRED": {500, 599}}
+	seen := 0
+	for _, set := range sets {
+		last, _ := set[len(set)-1].(string)
+		bound, ok := bounds[last]
+		if !ok {
+			continue
+		}
+		seen++
+		for _, entry := range set {
+			code, ok := audit.StatusCodeNumber(entry.(string))
+			if !ok || code < bound[0] || code > bound[1] {
+				t.Errorf("set ending %s holds %v = %d, outside %d-%d", last, entry, code, bound[0], bound[1])
+			}
+		}
+	}
+	if seen != 4 {
+		t.Fatalf("found %d class name sets, want 4", seen)
+	}
+}
+
+func TestSummaryPipelineOutcomeFilterSelectsStatusClasses(t *testing.T) {
+	filters := map[string][]string{
+		"client_error": {"client_error"},
+		"server_error": {"server_error", "hangfire_failed"},
+	}
+	for outcome, classes := range filters {
+		q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+		q.Outcome = outcome
+		var match bson.D
+		for _, stage := range buildPipeline(q, q.Start, q.End) {
+			if stage[0].Key != "$match" {
+				continue
+			}
+			if text, _ := bson.MarshalExtJSON(stage, false, false); strings.Contains(string(text), "_statusClass") {
+				match = stage[0].Value.(bson.D)
+			}
+		}
+		if match == nil {
+			t.Fatalf("%s: no outcome $match on _statusClass", outcome)
+		}
+		encoded, err := bson.MarshalExtJSON(match, false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(encoded)
+		for _, class := range []string{"client_error", "server_error", "hangfire_failed"} {
+			want := false
+			for _, c := range classes {
+				want = want || c == class
+			}
+			if strings.Contains(text, `"`+class+`"`) != want {
+				t.Errorf("%s: $match mentions %s = %v, want %v: %s", outcome, class, !want, want, text)
+			}
+		}
+		// Rows with an unknown outcome and rows that are not valid stay in, so the
+		// quality counts remain honest.
+		for _, kept := range []string{`"_auditOutcome":"unknown"`, `"_auditState":{"$ne":"valid"}`} {
+			if !strings.Contains(text, kept) {
+				t.Errorf("%s: $match dropped %s: %s", outcome, kept, text)
+			}
+		}
+	}
+	// success and failure keep matching on the coarse outcome.
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	q.Outcome = "failure"
+	whole, _ := bson.MarshalExtJSON(bson.D{{Key: "p", Value: buildPipeline(q, q.Start, q.End)}}, false, false)
+	if !strings.Contains(string(whole), `{"_auditOutcome":"failure"}`) {
+		t.Errorf("failure filter lost its coarse outcome match")
+	}
+}
+
+func TestRequestPipelineFiltersByStatusClass(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	q.Outcome = "client_error"
+	cases := []struct {
+		name   string
+		cohort [5]string
+		want   []string
+		reject []string
+	}{
+		{"query filter only", [5]string{"source", "", "", "all", "client_error"}, []string{`"_statusClass":"client_error"`}, []string{`"_auditOutcome":"client_error"`}},
+		{"api key narrows to failure", [5]string{"source", "", "", "all", "failure"}, []string{`"_auditOutcome":"failure"`, `"_statusClass":"client_error"`}, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			pipeline := requestPipeline(q, c.cohort, "source", nil, 10)
+			encoded, err := bson.MarshalExtJSON(bson.D{{Key: "p", Value: pipeline}}, false, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range c.want {
+				if !strings.Contains(string(encoded), want) {
+					t.Errorf("pipeline lacks %s", want)
+				}
+			}
+			for _, reject := range c.reject {
+				if strings.Contains(string(encoded), reject) {
+					t.Errorf("pipeline contains %s", reject)
+				}
+			}
+			for _, fixture := range statusClassFixtures() {
+				derived := evalSetStages(t, pipeline, statusClassDoc(fixture))
+				if derived["_statusClass"] != fixture.wantClass || derived["_auditOutcome"] != audit.ClassOutcome(fixture.wantClass) {
+					t.Errorf("%s: class/outcome = %v/%v, want %s/%s", fixture.name, derived["_statusClass"], derived["_auditOutcome"], fixture.wantClass, audit.ClassOutcome(fixture.wantClass))
+				}
+			}
+		})
+	}
+	if err := validateCohortQuery(audit.Query{SourceIDs: []string{"source"}, Kind: "all", Outcome: "client_error"}, [5]string{"source", "", "", "all", "failure"}); err != nil {
+		t.Errorf("a failure cohort must satisfy a client_error query: %v", err)
+	}
+	if err := validateCohortQuery(audit.Query{SourceIDs: []string{"source"}, Kind: "all", Outcome: "server_error"}, [5]string{"source", "", "", "all", "success"}); err == nil {
+		t.Error("a success cohort must not satisfy a server_error query")
 	}
 }

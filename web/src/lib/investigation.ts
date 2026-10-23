@@ -74,7 +74,7 @@ export function validateInvestigationSnapshot(value: unknown): value is Investig
   if (!(baselineStart < baselineEnd && baselineEnd <= start && start < end)
       || end - start > 7 * 86_400_000 || baselineEnd - baselineStart > 7 * 86_400_000
       || typeof query.kind !== 'string' || !['synchronous', 'asynchronous', 'hangfire', 'all'].includes(query.kind)
-      || typeof query.outcome !== 'string' || !['success', 'failure', 'all'].includes(query.outcome)
+      || typeof query.outcome !== 'string' || !['success', 'failure', 'client_error', 'server_error', 'all'].includes(query.outcome)
       || typeof query.metric !== 'string' || !['total', 'api'].includes(query.metric)
       || !Number.isInteger(query.bucketSeconds) || Number(query.bucketSeconds) < 10 || Number(query.bucketSeconds) > 86_400
       || typeof query.controller !== 'string' || query.controller.length > 200

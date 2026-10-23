@@ -231,32 +231,23 @@ func legacyKind(polling, userAgent string) string {
 	}
 }
 
-func legacyOutcome(kind string, value bson.RawValue) string {
-	status := strings.ToUpper(legacyString(value))
-	if kind == "hangfire" {
-		if status == "SUCCEEDED" {
-			return "success"
+// legacyStatusClass classifies a StatusCode value in Go with audit.StatusClass,
+// the same table the server pipeline uses. Only string values are matched by
+// name; any other BSON type, such as a date, is classified by its number alone.
+func legacyStatusClass(kind string, value bson.RawValue) string {
+	if value.Type == bson.TypeString {
+		if class := audit.StatusClass(kind, "", value.StringValue()); class != audit.StatusUnknown {
+			return class
 		}
-		if status == "FAILED" {
-			return "failure"
-		}
-	}
-	sets := statusNames()
-	if containsString(sets.success, status) {
-		return "success"
-	}
-	if containsString(sets.failure, status) {
-		return "failure"
 	}
 	if number := legacyStatusNumber(value); number != nil {
-		if *number >= 200 && *number < 400 {
-			return "success"
-		}
-		if *number >= 400 && *number < 600 {
-			return "failure"
-		}
+		return audit.StatusClass(kind, "", strconv.Itoa(int(*number)))
 	}
-	return "unknown"
+	return audit.StatusUnknown
+}
+
+func legacyOutcome(kind string, value bson.RawValue) string {
+	return audit.ClassOutcome(legacyStatusClass(kind, value))
 }
 
 func legacyStatusNumber(value bson.RawValue) *float64 {
@@ -283,19 +274,10 @@ func legacyStatusNumber(value bson.RawValue) *float64 {
 	return nil
 }
 
-func containsString(values bson.A, needle string) bool {
-	for _, value := range values {
-		if text, ok := value.(string); ok && text == needle {
-			return true
-		}
-	}
-	return false
-}
-
 type legacyRecord struct {
 	ID                                        bson.ObjectID
 	Controller, Action                        string
-	Kind, Outcome, Status                     string
+	Kind, Outcome, Status, StatusClass        string
 	URL                                       string
 	At, Completed                             *time.Time
 	Duration, API, AuditCreate, PayloadRecord *float64
@@ -339,7 +321,7 @@ func readLegacyBuckets(ctx context.Context, p *profile, q audit.Query, start tim
 		if q.Kind != "all" && record.State == "valid" && record.Kind != q.Kind {
 			continue
 		}
-		if q.Outcome != "all" && record.State == "valid" && record.Outcome != q.Outcome && record.Outcome != "unknown" {
+		if record.State == "valid" && record.Outcome != "unknown" && !audit.OutcomeFilterMatches(q.Outcome, record.Outcome, record.StatusClass) {
 			continue
 		}
 		bin := 0
@@ -358,6 +340,14 @@ func readLegacyBuckets(ctx context.Context, p *profile, q audit.Query, start tim
 		bucket.Count++
 		if record.PendingAsync {
 			bucket.PendingAsync++
+		}
+		switch record.StatusClass {
+		case audit.StatusClientError:
+			bucket.Count4xx++
+		case audit.StatusServerError:
+			bucket.Count5xx++
+		case audit.StatusHangfireFailed:
+			bucket.CountHangfireFailed++
 		}
 		if record.State == "valid" && record.AuditCreateMissing && q.Metric != "api" {
 			bucket.ObservedPartial++
@@ -450,7 +440,10 @@ func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query,
 		if cohort[3] != "" && cohort[3] != "all" && record.Kind != cohort[3] {
 			continue
 		}
-		if cohort[4] != "" && cohort[4] != "all" && record.Outcome != cohort[4] {
+		if cohort[4] != "" && !audit.OutcomeFilterMatches(cohort[4], record.Outcome, record.StatusClass) {
+			continue
+		}
+		if audit.IsStatusClassOutcome(q.Outcome) && !audit.OutcomeFilterMatches(q.Outcome, record.Outcome, record.StatusClass) {
 			continue
 		}
 		if after != nil {
@@ -512,11 +505,9 @@ func normalizeLegacyRecord(raw bson.Raw, metric string) (legacyRecord, bool) {
 	record.Status = legacyString(raw.Lookup("StatusCode"))
 	record.URL = legacyString(raw.Lookup("RequestMainUrl"))
 	record.Kind = legacyKind(legacyString(raw.Lookup("RequestPollingType")), legacyString(raw.Lookup("UserAgent")))
-	record.Outcome = legacyOutcome(record.Kind, raw.Lookup("StatusCode"))
-	record.PendingAsync = record.Kind == "asynchronous" && strings.ToUpper(record.Status) == "ACCEPTED"
-	if record.PendingAsync {
-		record.Outcome = "unknown"
-	}
+	record.StatusClass = legacyStatusClass(record.Kind, raw.Lookup("StatusCode"))
+	record.Outcome = audit.ClassOutcome(record.StatusClass)
+	record.PendingAsync = record.StatusClass == audit.StatusPending
 	record.At = legacyDate(raw.Lookup("RequestInitiatedAt"))
 	if raw.Lookup("RequestInitiatedAt").Type == 0 || raw.Lookup("RequestInitiatedAt").Type == bson.TypeNull {
 		record.At = legacyDate(raw.Lookup("CreatedOn"))

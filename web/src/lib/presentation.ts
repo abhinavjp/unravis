@@ -1,4 +1,4 @@
-import type { Comparison, Metric, Query } from './types';
+import type { Comparison, Metric, Query, Rollup } from './types';
 
 export type RankField = 'impact' | 'ratio' | 'delta' | 'count';
 
@@ -44,6 +44,24 @@ export const outcomeRateText = (rows: Comparison[], row: Comparison, outcomeFilt
   }
   const percentage = (row.currentEvents / denominator * 100).toFixed(1);
   return row.outcome + ' · ' + row.currentEvents.toLocaleString() + ' / ' + denominator.toLocaleString() + ' known events (' + percentage + '%)';
+};
+
+/**
+ * Client (4xx) and server (5xx, including failed Hangfire jobs) error shares of an API's requests
+ * with a known result, with the combined rate in the tooltip. The sources apply the outcome and kind
+ * filters before summarizing, so the shares only exist under outcome All: otherwise every cell is "—".
+ */
+export const statusRates = (rollup: Rollup | undefined, outcomeFilter = 'all', kindFilter = 'all') => {
+  const percent = (rate: number | null | undefined) => outcomeFilter !== 'all' || rate == null || !Number.isFinite(rate) ? '—' : (rate * 100).toFixed(1) + '%';
+  const client = percent(rollup?.clientErrorRate), server = percent(rollup?.serverErrorRate), merged = percent(rollup?.errorRate);
+  let tip: string;
+  if (outcomeFilter !== 'all') tip = '4xx and 5xx shares need the outcome filter set to All.';
+  else if (!rollup || rollup.errorRate == null) tip = 'No requests with a known success or failure result in the current period.';
+  else {
+    const scope = kindFilter === 'all' ? 'Covers every source and kind of this API' : 'Covers only the ' + kindFilter + ' requests of this API (kind filter on)';
+    tip = '4xx are client errors; 5xx are server errors, including failed Hangfire jobs. Combined error rate ' + merged + ': ' + rollup.failures.toLocaleString() + ' failed of ' + rollup.requests.toLocaleString() + ' requests with a known result. ' + scope + '; unclassified results are left out.';
+  }
+  return { client, server, merged, tip };
 };
 
 export const metricLabels: Record<Metric, string> = {

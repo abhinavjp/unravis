@@ -148,6 +148,25 @@ test('outcome percentages use all known events, including events without valid d
   assert.doesNotMatch(presentation.outcomeRateText([success, failure], success, 'success'), /%/);
 });
 
+test('statusRates splits 4xx and 5xx', () => {
+  const rollup = { controller: 'Orders', action: 'Create', requests: 200, failures: 30, errorRate: 0.15, clientErrorRate: 0.1, serverErrorRate: 0.05, perMinute: 2 };
+  const rates = presentation.statusRates(rollup, 'all', 'all');
+  assert.equal(rates.client, '10.0%');
+  assert.equal(rates.server, '5.0%');
+  assert.equal(rates.merged, '15.0%');
+  assert.match(rates.tip, /Combined error rate 15\.0%/);
+  assert.match(rates.tip, /30 failed of 200/);
+  // Under an outcome filter the share is unknowable: never show 0%.
+  const filtered = presentation.statusRates(rollup, 'client_error', 'all');
+  assert.deepEqual([filtered.client, filtered.server, filtered.merged], ['—', '—', '—']);
+  // A rollup without the split, or without any known result, shows no rate rather than 0%.
+  assert.equal(presentation.statusRates({ ...rollup, clientErrorRate: undefined, serverErrorRate: null }, 'all').client, '—');
+  assert.equal(presentation.statusRates({ ...rollup, serverErrorRate: null }, 'all').server, '—');
+  assert.equal(presentation.statusRates(undefined, 'all').client, '—');
+  assert.match(presentation.statusRates(undefined, 'all').tip, /No requests with a known/);
+  assert.match(presentation.statusRates(rollup, 'all', 'hangfire').tip, /Covers only the hangfire requests/);
+});
+
 test('API-by-time heatmap preserves exact cohort rows and missing timeline cells', () => {
   const start = '1970-01-01T00:00:00.000Z';
   const end = '1970-01-01T00:00:30.000Z';

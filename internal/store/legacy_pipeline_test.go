@@ -426,3 +426,78 @@ func TestLegacyBucketsCountPendingAsyncAsIncompleteWithoutTiming(t *testing.T) {
 		t.Fatalf("pending/incomplete/valid/sum/hangfire = %d/%d/%d/%v/%d, want 2/2/2/60/1", pending, incompleteCount, validCount, validSum, hangfireCount)
 	}
 }
+
+func legacyStatusDoc(polling, status any, at time.Time) bson.D {
+	return bson.D{{Key: "_auditMetadataOversized", Value: false}, {Key: "ControllerName", Value: "Payroll"}, {Key: "ActionName", Value: "Run"}, {Key: "RequestPollingType", Value: polling}, {Key: "StatusCode", Value: status}, {Key: "RequestInitiatedAt", Value: at}, {Key: "RequestCompletedAt", Value: at.Add(30 * time.Millisecond)}, {Key: "ApiTime", Value: 30.0}}
+}
+
+func legacyStatusTotals(buckets []audit.Bucket) (count, c4xx, c5xx, hangfireFailed int64) {
+	for _, b := range buckets {
+		count += b.Count
+		c4xx += b.Count4xx
+		c5xx += b.Count5xx
+		hangfireFailed += b.CountHangfireFailed
+	}
+	return
+}
+
+func TestLegacyCounts4xx5xxSeparately(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	q.Kind, q.Outcome = "all", "all"
+	at := q.Start.Add(time.Second)
+	for _, fixture := range statusClassFixtures() {
+		t.Run(fixture.name, func(t *testing.T) {
+			doc := legacyStatusDoc(fixture.polling, fixture.status, at)
+			buckets := legacyBucketsFor(t, q, doc, doc)
+			count, c4xx, c5xx, hf := legacyStatusTotals(buckets)
+			if count != 2 || c4xx != int64(2*fixture.c4xx) || c5xx != int64(2*fixture.c5xx) || hf != int64(2*fixture.hf) {
+				t.Fatalf("count/4xx/5xx/hangfire = %d/%d/%d/%d, want 2/%v/%v/%v", count, c4xx, c5xx, hf, 2*fixture.c4xx, 2*fixture.c5xx, 2*fixture.hf)
+			}
+			for _, b := range buckets {
+				if want := audit.ClassOutcome(fixture.wantClass); b.Outcome != want {
+					t.Fatalf("bucket outcome = %s, want %s", b.Outcome, want)
+				}
+			}
+			// The Go classifier agrees with the server pipeline on every fixture.
+			raw, err := bson.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record, ok := normalizeLegacyRecord(bson.Raw(raw), "total")
+			if !ok || record.StatusClass != fixture.wantClass {
+				t.Fatalf("legacy class = %q, want %q", record.StatusClass, fixture.wantClass)
+			}
+		})
+	}
+}
+
+func TestLegacyOutcomeFiltersSelectStatusClasses(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	q.Kind = "all"
+	at := q.Start.Add(time.Second)
+	docs := []bson.D{
+		legacyStatusDoc("Synchronous", "NotFound", at),
+		legacyStatusDoc("Synchronous", int32(502), at),
+		legacyStatusDoc("Hangfire", "Failed", at),
+		legacyStatusDoc("Synchronous", "OK", at),
+		legacyStatusDoc("Synchronous", "Weird", at),
+	}
+	cases := []struct {
+		outcome                  string
+		count, c4xx, c5xx, hfail int64
+	}{
+		// Unknown outcomes stay in every filtered view so the quality counts stay honest.
+		{"client_error", 2, 1, 0, 0},
+		{"server_error", 3, 0, 1, 1},
+		{"failure", 4, 1, 1, 1},
+		{"success", 2, 0, 0, 0},
+		{"all", 5, 1, 1, 1},
+	}
+	for _, c := range cases {
+		q.Outcome = c.outcome
+		count, c4xx, c5xx, hf := legacyStatusTotals(legacyBucketsFor(t, q, docs...))
+		if count != c.count || c4xx != c.c4xx || c5xx != c.c5xx || hf != c.hfail {
+			t.Errorf("%s: count/4xx/5xx/hangfire = %d/%d/%d/%d, want %d/%d/%d/%d", c.outcome, count, c4xx, c5xx, hf, c.count, c.c4xx, c.c5xx, c.hfail)
+		}
+	}
+}

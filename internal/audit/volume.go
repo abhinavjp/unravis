@@ -12,7 +12,7 @@ func requestVolume(q Query, buckets []Bucket) ([]VolumeBucket, error) {
 		if q.Kind != "all" && b.Kind != q.Kind {
 			continue
 		}
-		if q.Outcome != "all" && b.Outcome != q.Outcome {
+		if !BucketOutcomeMatches(q.Outcome, b.Outcome) {
 			continue
 		}
 		k := key{b.Controller, b.Action, b.At.UnixNano()}

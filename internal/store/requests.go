@@ -268,23 +268,16 @@ func requestPipeline(q audit.Query, cohort [5]string, sourceID string, after *pa
 	}}, {Key: "default", Value: "unknown"}}}}
 	statusText := bson.D{{Key: "$toUpper", Value: bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$StatusCode"}, {Key: "to", Value: "string"}, {Key: "onError", Value: ""}, {Key: "onNull", Value: ""}}}}}}
 	statusNumber := bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$StatusCode"}, {Key: "to", Value: "int"}, {Key: "onError", Value: nil}, {Key: "onNull", Value: nil}}}}
-	sets := statusNames()
 	pending := pendingAsyncExpr(kind, statusText)
-	outcome := bson.D{{Key: "$switch", Value: bson.D{{Key: "branches", Value: bson.A{
-		bson.D{{Key: "case", Value: "$_auditPending"}, {Key: "then", Value: "unknown"}},
-		bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{kind, "hangfire"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "SUCCEEDED"}}}}}}}, {Key: "then", Value: "success"}},
-		bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{kind, "hangfire"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "FAILED"}}}}}}}, {Key: "then", Value: "failure"}},
-		bson.D{{Key: "case", Value: bson.D{{Key: "$in", Value: bson.A{statusText, sets.success}}}}, {Key: "then", Value: "success"}},
-		bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$gte", Value: bson.A{statusNumber, 200}}}, bson.D{{Key: "$lt", Value: bson.A{statusNumber, 400}}}}}}}, {Key: "then", Value: "success"}},
-		bson.D{{Key: "case", Value: bson.D{{Key: "$in", Value: bson.A{statusText, sets.failure}}}}, {Key: "then", Value: "failure"}},
-		bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$gte", Value: bson.A{statusNumber, 400}}}, bson.D{{Key: "$lt", Value: bson.A{statusNumber, 600}}}}}}}, {Key: "then", Value: "failure"}},
-	}}, {Key: "default", Value: "unknown"}}}}
+	statusClass := statusClassExpr(kind, statusText, statusNumber)
+	outcome := outcomeFromClassExpr()
 	completed := date("RequestCompletedAt", "RequestCompletedAt")
 	observed := bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}}, bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditCompleted"}}, "date"}}}}}}, bson.D{{Key: "$subtract", Value: bson.A{"$_auditCompleted", "$_auditAt"}}}, nil}}}
 	duration := bson.D{{Key: "$cond", Value: bson.A{"$_auditPending", nil, observed}}}
 	stages := mongo.Pipeline{
 		bson.D{{Key: "$match", Value: match}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditAt", Value: date("RequestInitiatedAt", "CreatedOn")}, {Key: "_auditCompleted", Value: completed}, {Key: "_auditKind", Value: kind}, {Key: "_auditPending", Value: pending}}}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "_statusClass", Value: statusClass}}}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditOutcome", Value: outcome}, {Key: "_auditDuration", Value: duration}}}},
 	}
 	cohortMatch := bson.D{{Key: "_auditAt", Value: bson.D{{Key: "$type", Value: "date"}}}}
@@ -292,7 +285,10 @@ func requestPipeline(q audit.Query, cohort [5]string, sourceID string, after *pa
 		cohortMatch = append(cohortMatch, bson.E{Key: "_auditKind", Value: cohort[3]})
 	}
 	if cohort[4] != "" && cohort[4] != "all" {
-		cohortMatch = append(cohortMatch, bson.E{Key: "_auditOutcome", Value: cohort[4]})
+		cohortMatch = append(cohortMatch, outcomeFilterElem(cohort[4]))
+		if q.Outcome != cohort[4] && audit.IsStatusClassOutcome(q.Outcome) {
+			cohortMatch = append(cohortMatch, outcomeFilterElem(q.Outcome))
+		}
 	}
 	stages = append(stages, bson.D{{Key: "$match", Value: cohortMatch}})
 	if after != nil {
@@ -351,7 +347,7 @@ func validateCohortQuery(q audit.Query, cohort [5]string) error {
 			selected = true
 		}
 	}
-	if !selected || (q.Controller != "" && q.Controller != cohort[1]) || (q.Action != "" && q.Action != cohort[2]) || (q.Kind != "all" && q.Kind != cohort[3]) || (q.Outcome != "all" && q.Outcome != cohort[4]) {
+	if !selected || (q.Controller != "" && q.Controller != cohort[1]) || (q.Action != "" && q.Action != cohort[2]) || (q.Kind != "all" && q.Kind != cohort[3]) || !audit.BucketOutcomeMatches(q.Outcome, cohort[4]) {
 		return fmt.Errorf("%w: API key does not match query", audit.ErrInvalidInput)
 	}
 	return nil

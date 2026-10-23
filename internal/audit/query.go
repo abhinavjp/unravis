@@ -45,9 +45,9 @@ func ValidateQuery(q Query) error {
 		return invalidInputf("kind must be synchronous, asynchronous, hangfire, or all")
 	}
 	switch q.Outcome {
-	case "success", "failure", "all":
+	case "success", "failure", "client_error", "server_error", "all":
 	default:
-		return invalidInputf("outcome must be success, failure, or all")
+		return invalidInputf("outcome must be success, failure, client_error, server_error, or all")
 	}
 	switch q.Metric {
 	case "total", "api":

@@ -35,7 +35,7 @@ func tools() []map[string]any {
 	query := object(map[string]any{
 		"sourceIds": map[string]any{"type": "array", "items": textSchema("Connected source ID"), "minItems": 1, "maxItems": 8, "uniqueItems": true},
 		"start":     stamp(), "end": stamp(), "baselineStart": stamp(), "baselineEnd": stamp(),
-		"kind": enum("all", "synchronous", "asynchronous", "hangfire"), "outcome": enum("all", "success", "failure"), "metric": enum("total", "api"), "bucketSeconds": integer(10, 86400),
+		"kind": enum("all", "synchronous", "asynchronous", "hangfire"), "outcome": enum("all", "success", "failure", "client_error", "server_error"), "metric": enum("total", "api"), "bucketSeconds": integer(10, 86400),
 		"controller": textSchema("Optional exact controller/job type filter; empty means all"), "action": textSchema("Optional exact action/job method filter; empty means all"),
 	}, "sourceIds", "start", "end", "baselineStart", "baselineEnd", "kind", "outcome", "metric", "bucketSeconds")
 	resultID := textSchema("Opaque resultId from the latest successful audit_compare, valid for ten minutes")
