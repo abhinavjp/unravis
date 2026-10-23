@@ -42,7 +42,10 @@ export interface Comparison {
   shiftZ?: number | null; significant?: boolean;
 }
 export interface Point { at: string; count: number | null; p50: Quantile | null; p95: Quantile | null; p95Ratio: number | null }
-export interface Series { key: string; points: Point[] }
+/** loadCorrelation: Spearman rho of estimated concurrency vs per-bucket P95; absent below 8 paired buckets. */
+export interface Series { key: string; points: Point[]; loadCorrelation?: number | null }
+/** Per-API current-window throughput; requests and failures count known outcomes only. errorRate is absent when requests is 0. */
+export interface Rollup { controller: string; action: string; requests: number; failures: number; errorRate?: number | null; perMinute: number }
 export interface Quality { incomplete: number; invalid: number; unknownOutcome: number }
 export interface Analysis {
   loadWindows?: LoadWindow[];
@@ -50,6 +53,7 @@ export interface Analysis {
   query: Query; apis: Comparison[]; timeline: Series[]; sources: SourceResult[];
   quality: Quality; approximate: boolean; warnings: string[];
   timings?: SourceTiming[];
+  rollups?: Rollup[];
 }
 export interface SourceTiming { sourceId: string; window: 'current' | 'reference'; readMs: number; rows: number }
 export interface FieldPresence { name: string; present: number; types: string[] }

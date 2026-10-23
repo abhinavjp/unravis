@@ -188,9 +188,12 @@ type Point struct {
 	P95Ratio *float64  `json:"p95Ratio"`
 }
 
+// LoadCorrelation is the Spearman rho between estimated concurrency and
+// per-bucket P95; it is nil below 8 paired buckets.
 type Series struct {
-	Key    string  `json:"key"`
-	Points []Point `json:"points"`
+	Key             string   `json:"key"`
+	Points          []Point  `json:"points"`
+	LoadCorrelation *float64 `json:"loadCorrelation,omitempty"`
 }
 
 type Quality struct {
@@ -212,6 +215,8 @@ type Analysis struct {
 	// Timings reports how long each source spent answering each window. It is
 	// additive and absent for repositories that do not measure it.
 	Timings []SourceTiming `json:"timings,omitempty"`
+	// Rollups is one row per API with current-window throughput and error rate.
+	Rollups []Rollup `json:"rollups,omitempty"`
 }
 
 // SourceTiming is the database read time for one source and one window.

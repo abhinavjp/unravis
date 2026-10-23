@@ -367,3 +367,26 @@ test('traffic scatter flags any slow request, uses measured complete-window deno
  const rows=[{at:'2026-10-22T12:00:00Z',count:4,timing:timing(2000)},{at:'2026-10-22T12:00:10Z',count:4,timing:timing(2000)},{at:'2026-10-22T12:00:20Z',count:5,timing:timing(20)},{at:'2026-10-22T12:00:30Z',count:5,timing:timing(null,0)}];
  const d=trafficData(q,rows,1000,'p95');assert.equal(d.windows[0].partial,true);assert.equal(d.points[0].slow,true);assert.equal(d.points[0].latency,10);assert.equal(d.buckets.length,1);assert.equal(d.buckets[0].measured,2);assert.equal(d.buckets[0].slow,1);assert.equal(d.buckets[0].percent,50);assert.equal(d.unmeasured,1);
 });
+
+test('error rate shows as a percent, and the load badge needs |rho| >= 0.6 over at least 8 paired points', () => {
+  const { errorRateText, loadBadge, rollupFor } = loadTypeScript('src/lib/traffic.ts');
+  assert.equal(errorRateText(null), '—');
+  assert.equal(errorRateText(undefined), '—');
+  assert.equal(errorRateText(0), '0.0%');
+  assert.equal(errorRateText(0.05), '5.0%');
+  assert.equal(errorRateText(0.0123), '1.2%');
+  assert.equal(loadBadge(0.8), 'slows under load (ρ=0.8)');
+  assert.equal(loadBadge(0.6), 'slows under load (ρ=0.6)');
+  assert.equal(loadBadge(0.59), null);
+  assert.equal(loadBadge(-0.9), 'faster under load (ρ=-0.9)', 'a strong negative correlation must not read as slowing');
+  assert.equal(loadBadge(-0.5), null);
+  assert.equal(loadBadge(0.8, 7), null);
+  assert.equal(loadBadge(0.8, 8), 'slows under load (ρ=0.8)');
+  assert.equal(loadBadge(null), null);
+  assert.equal(loadBadge(undefined), null);
+  assert.equal(loadBadge(Number.NaN), null);
+  const rollups = [{ controller: 'A', action: 'Run', requests: 10, failures: 1, errorRate: 0.1, perMinute: 2 }];
+  assert.equal(rollupFor(rollups, { controller: 'A', action: 'Run' }).errorRate, 0.1);
+  assert.equal(rollupFor(rollups, { controller: 'A', action: 'Other' }), undefined);
+  assert.equal(rollupFor(undefined, { controller: 'A', action: 'Run' }), undefined);
+});
