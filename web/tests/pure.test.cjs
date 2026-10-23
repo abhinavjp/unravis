@@ -577,6 +577,17 @@ test('serializeRecordFilters omits empties', () => {
   assert.equal(investigation.serializeRecordFilters({ statusCodes: Array.from({ length: 30 }, (_, i) => String(400 + i)) }).statusCodes.length, 20);
 });
 
+test('operation and user id validity match the server rules', () => {
+  const { isValidOperation, isValidUserId, serializeRecordFilters } = investigation;
+  for (const good of ['Payroll.Run', 'Payroll.Run.Now', ' Payroll.Run ']) assert.equal(isValidOperation(good), true, good);
+  for (const bad of ['', 'PayrollRun', 'Payroll.', '.Run', '.', '  ']) assert.equal(isValidOperation(bad), false, bad);
+  assert.equal(isValidUserId(1), true);
+  assert.equal(isValidUserId(2147483647), true);
+  for (const bad of [0, -1, 2147483648, 1.5, NaN]) assert.equal(isValidUserId(bad), false, String(bad));
+  // An operation the server would reject never reaches a request.
+  assert.deepEqual(serializeRecordFilters({ operation: 'PayrollRun', userIds: [0, -3, 2147483648, 5] }), { userIds: [5] });
+});
+
 test('record filters survive a saved investigation and an old snapshot without them still loads', () => {
   const filters = { userIds: [7], completion: 'pending', operation: 'Payroll.Run', urlContains: '/pay' };
   const snapshot = investigation.createInvestigationSnapshot({ ...recordFilterBase, ...filters, uiVersions: [], auditId: '' }, [], 'UTC', null);

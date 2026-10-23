@@ -41,16 +41,23 @@ func recordMatch(q audit.Query) bson.D {
 	if q.AuditID != "" {
 		if id, err := bson.ObjectIDFromHex(q.AuditID); err == nil {
 			match = append(match, bson.E{Key: "_id", Value: id})
+		} else {
+			// Validation already rejects this. If one reaches here, match
+			// nothing instead of dropping the condition and widening the query.
+			match = append(match, bson.E{Key: "_id", Value: bson.D{{Key: "$in", Value: bson.A{}}}})
 		}
 	}
 	if len(q.StatusCodes) > 0 {
 		// StatusCode holds the .NET enum name or its number. A name matches
-		// case-insensitively, as text; a number also matches a numeric value.
+		// case-insensitively, as text; a number also matches a numeric value,
+		// but only when written canonically. "0404" or "+404" would otherwise
+		// match the number 404 here and nothing on the Go paths, which compare
+		// the text.
 		codes := make(bson.A, 0, 2*len(q.StatusCodes))
 		for _, code := range q.StatusCodes {
 			code = strings.TrimSpace(code)
 			codes = append(codes, bson.Regex{Pattern: `^\s*` + regexp.QuoteMeta(code) + `\s*$`, Options: "i"})
-			if number, err := strconv.Atoi(code); err == nil {
+			if number, err := strconv.Atoi(code); err == nil && strconv.Itoa(number) == code {
 				codes = append(codes, number)
 			}
 		}
@@ -70,15 +77,28 @@ func containsMatch(text string) bson.D {
 // _auditPending are set. The MongoDB 3.4 adapter does not use it; it applies the
 // same rule in Go with audit.StateMatches.
 func recordPostMatch(q audit.Query) bson.D {
-	switch q.Completion {
-	case audit.StateComplete:
-		return bson.D{{Key: "_auditState", Value: "valid"}}
-	case audit.StateIncomplete, audit.StateInvalid:
-		return bson.D{{Key: "_auditState", Value: q.Completion}}
-	case audit.StatePending:
-		return bson.D{{Key: "_auditPending", Value: true}}
+	if stage, ok := stateMatchStage(q.Completion); ok {
+		return stage
 	}
 	return bson.D{}
+}
+
+// stateMatchStage is the one Mongo form of a row-state filter on the derived
+// fields, used by the request drill-down and by the completion record filter.
+// It must select the rows audit.StateMatches selects. Empty, "all" and unknown
+// states have no stage.
+func stateMatchStage(state string) (bson.D, bool) {
+	switch state {
+	case audit.StateComplete:
+		return bson.D{{Key: "_auditState", Value: "valid"}}, true
+	case audit.StateIncomplete, audit.StateInvalid:
+		return bson.D{{Key: "_auditState", Value: state}}, true
+	case audit.StatePending:
+		return bson.D{{Key: "_auditPending", Value: true}}, true
+	case audit.StateUnclassified:
+		return bson.D{{Key: "_auditOutcome", Value: "unknown"}}, true
+	}
+	return nil, false
 }
 
 // appendRecordPostMatch adds recordPostMatch as a $match stage when it is not

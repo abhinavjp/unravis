@@ -12,6 +12,15 @@ const validZone = (zone: string) => {
 const COMPLETIONS: readonly string[] = ['complete', 'incomplete', 'pending', 'invalid'];
 const MAX_FILTER_VALUES = 20;
 const MAX_USER_IDS = 50;
+const MAX_USER_ID = 2_147_483_647;
+/** User ids are stored as 32-bit integers, so the server accepts 1 to 2147483647. */
+export const isValidUserId = (id: number): boolean => Number.isSafeInteger(id) && id >= 1 && id <= MAX_USER_ID;
+/** An operation is Controller.Action: a dot with text on both sides. */
+export const isValidOperation = (text: string): boolean => {
+  const value = text.trim();
+  const dot = value.indexOf('.');
+  return dot > 0 && dot < value.length - 1;
+};
 const cleanStrings = (value: unknown, max: number): string[] | undefined => {
   if (!Array.isArray(value)) return undefined;
   const items = [...new Set(value.filter((item): item is string => typeof item === 'string').map(item => item.trim()).filter(Boolean))].slice(0, max);
@@ -33,7 +42,7 @@ export function serializeRecordFilters(source: Partial<Record<keyof RecordFilter
   const out: RecordFilters = {};
   if (!source) return out;
   if (Array.isArray(source.userIds)) {
-    const ids = [...new Set(source.userIds.filter((id): id is number => typeof id === 'number' && Number.isSafeInteger(id)))].slice(0, MAX_USER_IDS);
+    const ids = [...new Set(source.userIds.filter((id): id is number => typeof id === 'number' && isValidUserId(id)))].slice(0, MAX_USER_IDS);
     if (ids.length) out.userIds = ids;
   }
   const uiVersions = cleanStrings(source.uiVersions, MAX_FILTER_VALUES);
@@ -50,7 +59,7 @@ export function serializeRecordFilters(source: Partial<Record<keyof RecordFilter
   if (statusCodes) out.statusCodes = statusCodes;
   if (typeof source.completion === 'string' && COMPLETIONS.includes(source.completion)) out.completion = source.completion as Completion;
   const operation = cleanText(source.operation);
-  if (operation) out.operation = operation;
+  if (operation && isValidOperation(operation)) out.operation = operation;
   return out;
 }
 

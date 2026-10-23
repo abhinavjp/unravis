@@ -209,7 +209,7 @@ func TestValidateQueryBoundsRecordFilters(t *testing.T) {
 		versions[i] = "v" + strings.Repeat("1", i+1)
 	}
 	for i := range ids {
-		ids[i] = i
+		ids[i] = i + 1
 	}
 	cases := map[string]func(*Query){
 		"201 byte url filter":       func(q *Query) { q.URLContains = long },

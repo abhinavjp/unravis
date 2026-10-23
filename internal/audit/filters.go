@@ -2,7 +2,12 @@ package audit
 
 import (
 	"strings"
+	"unicode/utf8"
 )
+
+// maxUserID is the largest user id a record filter accepts: ids are stored as
+// 32-bit integers, so a larger number can never match.
+const maxUserID = 2147483647
 
 // Record filters are shared by the summary, the request lists, the slowest list
 // and the demo repository. The server pipelines apply them to raw fields; the
@@ -127,27 +132,30 @@ func validateRecordFilters(q Query) error {
 	if len(q.StatusCodes) > MaxStatusCodes {
 		return invalidInputf("statusCodes must contain at most %d values", MaxStatusCodes)
 	}
-	for name, value := range map[string]string{"userAgentContains": q.UserAgentContains, "urlContains": q.URLContains, "operation": q.Operation} {
+	for _, id := range q.UserIDs {
+		if id < 1 || id > maxUserID {
+			return invalidInputf("userIds must be between 1 and %d", maxUserID)
+		}
+	}
+	for name, value := range map[string]string{"userAgentContains": q.UserAgentContains, "urlContains": q.URLContains, "operation": q.Operation, "auditId": q.AuditID} {
 		if len(value) > MaxFilterLength {
 			return invalidInputf("%s must be at most %d bytes", name, MaxFilterLength)
 		}
-	}
-	for _, value := range q.UIVersions {
-		if len(value) > MaxFilterLength {
-			return invalidInputf("uiVersions values must be at most %d bytes", MaxFilterLength)
+		if !plainText(value) {
+			return invalidInputf("%s must be valid text without NUL characters", name)
 		}
 	}
-	for _, value := range q.UserIPs {
-		if len(value) > MaxFilterLength {
-			return invalidInputf("userIps values must be at most %d bytes", MaxFilterLength)
-		}
-	}
-	for _, value := range q.StatusCodes {
-		if strings.TrimSpace(value) == "" {
-			return invalidInputf("statusCodes must not contain blank values")
-		}
-		if len(value) > MaxFilterLength {
-			return invalidInputf("statusCodes values must be at most %d bytes", MaxFilterLength)
+	for name, values := range map[string][]string{"uiVersions": q.UIVersions, "userIps": q.UserIPs, "statusCodes": q.StatusCodes} {
+		for _, value := range values {
+			if strings.TrimSpace(value) == "" {
+				return invalidInputf("%s must not contain blank values", name)
+			}
+			if len(value) > MaxFilterLength {
+				return invalidInputf("%s values must be at most %d bytes", name, MaxFilterLength)
+			}
+			if !plainText(value) {
+				return invalidInputf("%s values must be valid text without NUL characters", name)
+			}
 		}
 	}
 	if q.AuditID != "" && !isObjectIDHex(q.AuditID) {
@@ -168,6 +176,12 @@ func validateRecordFilters(q Query) error {
 		}
 	}
 	return nil
+}
+
+// plainText reports whether value is valid UTF-8 without a NUL character, which
+// a server pattern or a stored string comparison cannot carry safely.
+func plainText(value string) bool {
+	return utf8.ValidString(value) && !strings.ContainsRune(value, 0)
 }
 
 func isObjectIDHex(value string) bool {

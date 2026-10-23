@@ -3,6 +3,7 @@
   import type { Completion, Query } from '../lib/types';
   import { bucketForWindows, fromLocalParts, toLocalDatePart, toLocalTimePart, zones } from '../lib/time';
   import { metricLabels } from '../lib/presentation';
+  import { isValidOperation, isValidUserId } from '../lib/investigation';
   import DateTimeField from './DateTimeField.svelte';
   let { query = $bindable(), zone = $bindable(), targetMs = $bindable(), dateInputsValid = $bindable(), groupNames = [] }: { query: Query; zone: string; targetMs: number | null; dateInputsValid: boolean; groupNames?: string[] } = $props();
   let timeInputError = $state('');
@@ -15,25 +16,34 @@
   const AUDIT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
   const splitList = (text: string) => [...new Set(text.split(',').map(item => item.trim()).filter(Boolean))];
   const joinList = (items: readonly (string | number)[] | undefined) => (items ?? []).join(', ');
-  const initialText = untrack(() => ({ userIds: joinList(query.userIds), uiVersions: joinList(query.uiVersions), userIps: joinList(query.userIps), statusCodes: joinList(query.statusCodes) }));
+  const initialText = untrack(() => ({ userIds: joinList(query.userIds), uiVersions: joinList(query.uiVersions), userIps: joinList(query.userIps), statusCodes: joinList(query.statusCodes), operation: query.operation ?? '' }));
   let userIdsText = $state(initialText.userIds);
   let uiVersionsText = $state(initialText.uiVersions);
   let userIpsText = $state(initialText.userIps);
   let statusCodesText = $state(initialText.statusCodes);
-  const rejectedUserIds = $derived(splitList(userIdsText).filter(item => !/^-?\d{1,15}$/.test(item)));
+  let operationText = $state(initialText.operation);
+  const userIdOk = (item: string) => /^\d{1,10}$/.test(item) && isValidUserId(Number(item));
+  const rejectedUserIds = $derived(splitList(userIdsText).filter(item => !userIdOk(item)));
   const auditIdInvalid = $derived(!!query.auditId && !AUDIT_ID_PATTERN.test(query.auditId));
+  const operationInvalid = $derived(!!operationText.trim() && !isValidOperation(operationText));
   const operationSuggestions = $derived([...new Set(groupNames)].slice(0, MAX_OPERATION_SUGGESTIONS));
   const setUserIds = (text: string) => {
     userIdsText = text;
-    const ids = splitList(text).filter(item => /^-?\d{1,15}$/.test(item)).map(Number);
+    const ids = splitList(text).filter(userIdOk).map(Number);
     query.userIds = ids.length ? [...new Set(ids)] : undefined;
+  };
+  // An operation without a dot, or with nothing on one side of it, is shown as a
+  // hint and not applied, so the query never carries a value the server rejects.
+  const setOperation = (value: string) => {
+    operationText = value;
+    query.operation = value.trim() && isValidOperation(value) ? value.trim() : undefined;
   };
   const setList = (key: 'uiVersions' | 'userIps' | 'statusCodes', text: string) => {
     if (key === 'uiVersions') uiVersionsText = text; else if (key === 'userIps') userIpsText = text; else statusCodesText = text;
     const items = splitList(text);
     query[key] = items.length ? items : undefined;
   };
-  const setText = (key: 'userAgentContains' | 'urlContains' | 'auditId' | 'operation', value: string) => {
+  const setText = (key: 'userAgentContains' | 'urlContains' | 'auditId', value: string) => {
     query[key] = value.trim() ? value.trim() : undefined;
   };
   const setCompletion = (value: string) => {
@@ -50,11 +60,11 @@
     if (query.auditId) out.push({ id: 'audit-id', label: `Audit ID ${query.auditId}`, remove: () => setText('auditId', '') });
     for (const value of query.statusCodes ?? []) out.push({ id: `status-${value}`, label: `Status ${value}`, remove: () => setList('statusCodes', joinList((query.statusCodes ?? []).filter(item => item !== value))) });
     if (query.completion && query.completion !== 'all') out.push({ id: 'completion', label: `Completion: ${completionLabels[query.completion]}`, remove: () => setCompletion('') });
-    if (query.operation) out.push({ id: 'operation', label: `Operation ${query.operation}`, remove: () => setText('operation', '') });
+    if (query.operation) out.push({ id: 'operation', label: `Operation ${query.operation}`, remove: () => setOperation('') });
     return out;
   });
   const clearRecordFilters = () => {
-    userIdsText = ''; uiVersionsText = ''; userIpsText = ''; statusCodesText = '';
+    userIdsText = ''; uiVersionsText = ''; userIpsText = ''; statusCodesText = ''; operationText = '';
     query.userIds = undefined; query.uiVersions = undefined; query.userAgentContains = undefined; query.userIps = undefined;
     query.urlContains = undefined; query.auditId = undefined; query.statusCodes = undefined; query.completion = undefined; query.operation = undefined;
   };
@@ -126,7 +136,7 @@
           <button type="button" class="record-clear" onclick={clearRecordFilters}>Clear all record filters</button>
         {/if}
         <div class="field-grid">
-          <div class="control-group"><label for="rf-user-ids">User IDs</label><input id="rf-user-ids" inputmode="numeric" autocomplete="off" aria-invalid={rejectedUserIds.length > 0} value={userIdsText} oninput={(event) => setUserIds(event.currentTarget.value)} placeholder="e.g. 1042, 1043" />{#if rejectedUserIds.length}<p class="inline-error" role="alert">Ignored, not whole numbers: {rejectedUserIds.join(', ')}.</p>{/if}</div>
+          <div class="control-group"><label for="rf-user-ids">User IDs</label><input id="rf-user-ids" inputmode="numeric" autocomplete="off" aria-invalid={rejectedUserIds.length > 0} value={userIdsText} oninput={(event) => setUserIds(event.currentTarget.value)} placeholder="e.g. 1042, 1043" />{#if rejectedUserIds.length}<p class="inline-error" role="alert">Ignored, not whole numbers from 1 to 2147483647: {rejectedUserIds.join(', ')}.</p>{/if}</div>
           <div class="control-group"><label for="rf-ui-versions">UI versions</label><input id="rf-ui-versions" autocomplete="off" value={uiVersionsText} oninput={(event) => setList('uiVersions', event.currentTarget.value)} placeholder="e.g. 2.14.0" /><p class="field-note">Exact match.</p></div>
           <div class="control-group"><label for="rf-user-ips">User IPs</label><input id="rf-user-ips" autocomplete="off" value={userIpsText} oninput={(event) => setList('userIps', event.currentTarget.value)} placeholder="e.g. 203.0.113.7" /><p class="field-note">Exact match.</p></div>
           <div class="control-group"><label for="rf-status-codes">Status codes</label><input id="rf-status-codes" autocomplete="off" value={statusCodesText} oninput={(event) => setList('statusCodes', event.currentTarget.value)} placeholder="e.g. 404, 500" /></div>
@@ -135,7 +145,7 @@
           <div class="control-group"><label for="rf-audit-id">Audit ID</label><input id="rf-audit-id" maxlength="24" autocomplete="off" spellcheck="false" aria-invalid={auditIdInvalid} value={query.auditId ?? ''} oninput={(event) => setText('auditId', event.currentTarget.value)} placeholder="24 hexadecimal characters" />{#if auditIdInvalid}<p class="inline-error" role="alert">An audit ID is exactly 24 hexadecimal characters.</p>{/if}</div>
           <div class="control-group"><label for="rf-completion">Completion</label><select id="rf-completion" value={query.completion ?? ''} onchange={(event) => setCompletion(event.currentTarget.value)}><option value="">Any</option>{#each ['complete', 'incomplete', 'pending', 'invalid'] as value}<option value={value}>{completionLabels[value as Completion]}</option>{/each}</select></div>
         </div>
-        <div class="control-group"><label for="rf-operation">Operation</label><input id="rf-operation" list="rf-operation-options" maxlength="200" autocomplete="off" value={query.operation ?? ''} oninput={(event) => setText('operation', event.currentTarget.value)} placeholder="Controller.Action" /><datalist id="rf-operation-options">{#each operationSuggestions as name (name)}<option value={name}></option>{/each}</datalist><p class="field-note">Suggestions come from the API groups of the loaded results. It is the controller before the first dot and the action after it.</p></div>
+        <div class="control-group"><label for="rf-operation">Operation</label><input id="rf-operation" list="rf-operation-options" maxlength="200" autocomplete="off" aria-invalid={operationInvalid} value={operationText} oninput={(event) => setOperation(event.currentTarget.value)} placeholder="Controller.Action" />{#if operationInvalid}<p class="inline-error" role="alert">Not applied. Write the operation as Controller.Action, with a name on both sides of the dot.</p>{/if}<datalist id="rf-operation-options">{#each operationSuggestions as name (name)}<option value={name}></option>{/each}</datalist><p class="field-note">Suggestions come from the API groups of the loaded results. It is the controller before the first dot and the action after it.</p></div>
       </div>
     </details>
   </div>
