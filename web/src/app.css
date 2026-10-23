@@ -228,6 +228,15 @@ td small { display: block; margin-top: 2px; color: #8a96a5; font-size: 12px; max
 .payload-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
 .payload-columns h4 { font-size: 12px; color: #65748a; margin: 0 0 4px; }
 .payload-columns pre { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; padding: 9px; border: 1px solid #e0e6ed; border-radius: 4px; background: #fff; color: #31435b; font: 10px/1.5 "Cascadia Code", Consolas, monospace; }
+.record-panel { border-top: 1px solid var(--line); background: #f9fafc; padding: 12px; }
+.record-panel .payload-panel { border-top: 0; padding: 0; margin-top: 10px; background: transparent; }
+.record-note { margin: 3px 0 0; color: #77869a; font-size: 12px; }
+.record-tables { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-top: 8px; align-items: start; }
+.record-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e0e6ed; border-radius: 4px; font-size: 12px; }
+.record-table caption { text-align: left; font-size: 12px; color: #65748a; padding-bottom: 4px; }
+.record-table th, .record-table td { text-align: left; padding: 4px 8px; border-top: 1px solid #eef1f5; vertical-align: top; overflow-wrap: anywhere; }
+.record-table th { width: 38%; color: #5c6e84; font-weight: 550; font-family: "Cascadia Code", Consolas, monospace; font-size: 11px; }
+.record-none { color: #8995a4; font-style: italic; }
 .loading-state, .welcome-state { min-height: 410px; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; border: 1px dashed #d5deea; border-radius: 7px; background: #fbfcfe; padding: 24px; }
 .welcome-state .large { width: 58px; height: 58px; }
 .welcome-state .large:before { inset: 10px; }
@@ -288,7 +297,7 @@ td small { display: block; margin-top: 2px; color: #8a96a5; font-size: 12px; max
   .chart { height: 255px; }
   .compact-chart { height: 215px; }
   .heatmap-chart { min-height: 260px; }
-  .payload-columns { grid-template-columns: 1fr; }
+  .payload-columns, .record-tables { grid-template-columns: 1fr; }
   .section-heading { padding: 10px; }
   .welcome-state, .loading-state { min-height: 330px; }
 }

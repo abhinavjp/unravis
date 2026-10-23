@@ -37,7 +37,13 @@ var legacyMetadataStringCaps = map[string]int{
 	"StatusCode": 128, "RequestPollingType": 128, "UserAgent": 512,
 	"ApiTime": 128, "AuditCreateTime": 128, "PayloadRecordTime": 128,
 	"RequestLengthInKiloBytes": 128, "ResponseLengthInKiloBytes": 128,
+	"UserId": 128, "UserIp": 64, "PayrollUIVersion": 128,
 }
+
+// legacyRowMetadataFields adds the audit-evidence columns that only request
+// rows and the record detail show. Summary scans keep the narrower
+// legacyMetadataFields so these extra bytes never count against their limits.
+var legacyRowMetadataFields = append(append([]string(nil), legacyMetadataFields...), "UserId", "UserIp", "PayrollUIVersion", "UpdatedOn")
 
 type legacyBucketKey struct {
 	controller, action, kind, outcome, state string
@@ -76,6 +82,16 @@ func isLegacyMetadataPipeline(pipeline mongo.Pipeline) bool {
 }
 
 func legacyMetadataPipeline(pipeline mongo.Pipeline) mongo.Pipeline {
+	return legacyMetadataPipelineFor(pipeline, legacyMetadataFields)
+}
+
+// legacyRowMetadataPipeline is legacyMetadataPipeline for request rows: it also
+// projects the audit-evidence columns.
+func legacyRowMetadataPipeline(pipeline mongo.Pipeline) mongo.Pipeline {
+	return legacyMetadataPipelineFor(pipeline, legacyRowMetadataFields)
+}
+
+func legacyMetadataPipelineFor(pipeline mongo.Pipeline, fields []string) mongo.Pipeline {
 	if isLegacyMetadataPipeline(pipeline) {
 		return pipeline
 	}
@@ -86,13 +102,17 @@ func legacyMetadataPipeline(pipeline mongo.Pipeline) mongo.Pipeline {
 	if !ok {
 		return nil
 	}
-	return rawLegacyMetadataPipeline(match)
+	return rawLegacyMetadataPipelineFor(match, fields)
 }
 
 func rawLegacyMetadataPipeline(match bson.D) mongo.Pipeline {
+	return rawLegacyMetadataPipelineFor(match, legacyMetadataFields)
+}
+
+func rawLegacyMetadataPipelineFor(match bson.D, fields []string) mongo.Pipeline {
 	projection := bson.D{{Key: "_id", Value: 1}, {Key: legacyMetadataMarker, Value: "v1"}}
 	var oversized bson.A
-	for _, field := range legacyMetadataFields {
+	for _, field := range fields {
 		cap, isString := legacyMetadataStringCaps[field]
 		if isString {
 			oversized = append(oversized, bson.D{{Key: "$cond", Value: bson.A{
@@ -209,6 +229,17 @@ func legacyNumber(value bson.RawValue) *float64 {
 	return &number
 }
 
+// legacyInt reads a whole-number identifier such as UserId; fractional or
+// out-of-range numbers are reported as absent rather than rounded.
+func legacyInt(value bson.RawValue) *int {
+	number := legacyNumber(value)
+	if number == nil || *number != math.Trunc(*number) || math.Abs(*number) > math.MaxInt32 {
+		return nil
+	}
+	result := int(*number)
+	return &result
+}
+
 func legacyNumberDefault(value bson.RawValue) float64 {
 	if n := legacyNumber(value); n != nil {
 		return *n
@@ -302,6 +333,10 @@ type legacyRecord struct {
 	RequestKB, ResponseKB                     float64
 	State                                     string
 	AuditCreateMissing, PendingAsync          bool
+	UserID                                    *int
+	UserIP, UserAgent, UIVersion              string
+	PollingTypeRaw                            string
+	CreatedOn, UpdatedOn                      *time.Time
 }
 
 func readLegacyBuckets(ctx context.Context, p *profile, q audit.Query, start time.Time, pipeline mongo.Pipeline, total, totalBytes, records, bytes *atomic.Int64) ([]audit.Bucket, error) {
@@ -466,6 +501,8 @@ func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query,
 			InitiatedAt: record.At, CompletedAt: record.Completed, DurationMs: record.Duration,
 			ApiTimeMs: record.API, AuditCreateTimeMs: record.AuditCreate, PayloadRecordTimeMs: record.PayloadRecord,
 			RequestKB: record.RequestKB, ResponseKB: record.ResponseKB,
+			UserID: record.UserID, UserIP: record.UserIP, UserAgent: record.UserAgent, UIVersion: record.UIVersion,
+			CreatedOn: record.CreatedOn, UpdatedOn: record.UpdatedOn, PollingTypeRaw: record.PollingTypeRaw,
 		}, at: *record.At, object: record.ID}
 		if slowest {
 			if audit.RequestMetric(row.request, q.Metric) == nil {
@@ -528,6 +565,13 @@ func normalizeLegacyRecord(raw bson.Raw, metric string) (legacyRecord, bool) {
 	record.PayloadRecord = legacyNumber(raw.Lookup("PayloadRecordTime"))
 	record.RequestKB = legacyNumberDefault(raw.Lookup("RequestLengthInKiloBytes"))
 	record.ResponseKB = legacyNumberDefault(raw.Lookup("ResponseLengthInKiloBytes"))
+	record.UserID = legacyInt(raw.Lookup("UserId"))
+	record.UserIP = legacyString(raw.Lookup("UserIp"))
+	record.UserAgent = legacyString(raw.Lookup("UserAgent"))
+	record.UIVersion = legacyString(raw.Lookup("PayrollUIVersion"))
+	record.PollingTypeRaw = legacyString(raw.Lookup("RequestPollingType"))
+	record.CreatedOn = legacyDate(raw.Lookup("CreatedOn"))
+	record.UpdatedOn = legacyDate(raw.Lookup("UpdatedOn"))
 	var duration *float64
 	missing := record.At == nil || record.Completed == nil
 	if metric == "api" {

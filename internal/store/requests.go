@@ -41,6 +41,13 @@ type requestDocument struct {
 	PayloadRecordTimeMs *float64      `bson:"payloadRecordTimeMs"`
 	RequestKB           float64       `bson:"requestKB"`
 	ResponseKB          float64       `bson:"responseKB"`
+	UserID              *int          `bson:"userId"`
+	UserIP              string        `bson:"userIp"`
+	UserAgent           string        `bson:"userAgent"`
+	UIVersion           string        `bson:"uiVersion"`
+	CreatedOn           *time.Time    `bson:"createdOn"`
+	UpdatedOn           *time.Time    `bson:"updatedOn"`
+	PollingTypeRaw      string        `bson:"pollingTypeRaw"`
 }
 
 type pageRow struct {
@@ -161,7 +168,7 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		}
 		var err error
 		if usesLegacyMongo(p.shared.client) {
-			sourceRows, err = readLegacyRequestRowsSorted(ctx, p, input.Query, cohort, after, legacyMetadataPipeline(pipeline), input.Limit+1, &legacyRecords, &legacyBytes, overlap, slowest)
+			sourceRows, err = readLegacyRequestRowsSorted(ctx, p, input.Query, cohort, after, legacyRowMetadataPipeline(pipeline), input.Limit+1, &legacyRecords, &legacyBytes, overlap, slowest)
 			if err == nil {
 				rows = append(rows, sourceRows...)
 			}
@@ -185,6 +192,8 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 						InitiatedAt: doc.InitiatedAt, CompletedAt: doc.CompletedAt, DurationMs: doc.DurationMs,
 						ApiTimeMs: doc.ApiTimeMs, AuditCreateTimeMs: doc.AuditCreateTimeMs, PayloadRecordTimeMs: doc.PayloadRecordTimeMs,
 						RequestKB: doc.RequestKB, ResponseKB: doc.ResponseKB,
+						UserID: doc.UserID, UserIP: doc.UserIP, UserAgent: doc.UserAgent, UIVersion: doc.UIVersion,
+						CreatedOn: doc.CreatedOn, UpdatedOn: doc.UpdatedOn, PollingTypeRaw: doc.PollingTypeRaw,
 					}, at: *doc.InitiatedAt, object: doc.ID})
 				}
 				if err == nil {
@@ -313,6 +322,8 @@ func requestPipeline(q audit.Query, cohort [5]string, sourceID string, after *pa
 		bson.D{{Key: "$project", Value: bson.D{
 			{Key: "_id", Value: 1}, {Key: "sourceId", Value: sourceID}, {Key: "controller", Value: stringExpr("$ControllerName")}, {Key: "action", Value: stringExpr("$ActionName")}, {Key: "kind", Value: "$_auditKind"}, {Key: "outcome", Value: "$_auditOutcome"}, {Key: "status", Value: stringExpr("$StatusCode")}, {Key: "url", Value: stringExpr("$RequestMainUrl")}, {Key: "initiatedAt", Value: "$_auditAt"}, {Key: "completedAt", Value: "$_auditCompleted"}, {Key: "durationMs", Value: duration},
 			{Key: "apiTimeMs", Value: numberExpr("$ApiTime")}, {Key: "auditCreateTimeMs", Value: numberExpr("$AuditCreateTime")}, {Key: "payloadRecordTimeMs", Value: numberExpr("$PayloadRecordTime")}, {Key: "requestKB", Value: numberExprDefault("$RequestLengthInKiloBytes")}, {Key: "responseKB", Value: numberExprDefault("$ResponseLengthInKiloBytes")},
+				{Key: "userId", Value: userIDExpr("$UserId")}, {Key: "userIp", Value: stringExpr("$UserIp")}, {Key: "userAgent", Value: stringExpr("$UserAgent")}, {Key: "uiVersion", Value: stringExpr("$PayrollUIVersion")},
+				{Key: "createdOn", Value: dateOnlyExpr("$CreatedOn")}, {Key: "updatedOn", Value: dateOnlyExpr("$UpdatedOn")}, {Key: "pollingTypeRaw", Value: stringExpr("$RequestPollingType")},
 		}}},
 	)
 	return stages
@@ -324,6 +335,16 @@ func numberExpr(input string) bson.D {
 
 func stringExpr(input string) bson.D {
 	return bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: input}, {Key: "to", Value: "string"}, {Key: "onError", Value: ""}, {Key: "onNull", Value: ""}}}}
+}
+
+// userIDExpr converts to a 32-bit integer, yielding null for anything that is
+// not a whole number in range.
+func userIDExpr(input string) bson.D {
+	return bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: input}, {Key: "to", Value: "int"}, {Key: "onError", Value: nil}, {Key: "onNull", Value: nil}}}}
+}
+
+func dateOnlyExpr(input string) bson.D {
+	return bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: input}}, "date"}}}, input, nil}}}
 }
 
 func numberExprDefault(input string) bson.D {

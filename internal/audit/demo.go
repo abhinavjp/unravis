@@ -71,7 +71,10 @@ func demoRecord(sourceID, controller, action string, initiated time.Time, durati
 	auditTime := duration * .2
 	apiTime := duration - auditTime
 	payloadTime := duration * .1
-	return RequestRecord{ID: id, SourceID: sourceID, Controller: controller, Action: action, Kind: "synchronous", Outcome: "success", Status: "200 OK", URL: "/" + strings.ToLower(controller) + "/" + strings.ToLower(action), InitiatedAt: &initiated, CompletedAt: &completed, DurationMs: &duration, ApiTimeMs: &apiTime, AuditCreateTimeMs: &auditTime, PayloadRecordTimeMs: &payloadTime, RequestKB: float64((sample+apiIndex)%5 + 1), ResponseKB: float64((sample+apiIndex)%7 + 2)}
+	userID := 1000 + sample%7
+	created := initiated.Add(time.Duration(auditTime * float64(time.Millisecond)))
+	updated := completed.Add(time.Duration(payloadTime * float64(time.Millisecond)))
+	return RequestRecord{ID: id, SourceID: sourceID, Controller: controller, Action: action, Kind: "synchronous", Outcome: "success", Status: "200 OK", URL: "/" + strings.ToLower(controller) + "/" + strings.ToLower(action), InitiatedAt: &initiated, CompletedAt: &completed, DurationMs: &duration, ApiTimeMs: &apiTime, AuditCreateTimeMs: &auditTime, PayloadRecordTimeMs: &payloadTime, RequestKB: float64((sample+apiIndex)%5 + 1), ResponseKB: float64((sample+apiIndex)%7 + 2), UserID: &userID, UserIP: fmt.Sprintf("203.0.113.%d", 10+sample%20), UserAgent: "Demo Browser/1.0", UIVersion: "demo-1.0", CreatedOn: &created, UpdatedOn: &updated, PollingTypeRaw: "Synchronous "}
 }
 
 func (d *demoRepository) Sources(ctx context.Context) ([]Source, error) {
@@ -313,6 +316,18 @@ func (d *demoRepository) Payload(ctx context.Context, input PayloadInput) (Paylo
 		}
 	}
 	return Payload{}, fmt.Errorf("%w: request was not found", ErrNotFound)
+}
+
+func (d *demoRepository) Record(ctx context.Context, input RecordInput) (RecordDetail, error) {
+	if err := ctx.Err(); err != nil {
+		return RecordDetail{}, err
+	}
+	for _, r := range d.records {
+		if r.ID == input.ID && r.SourceID == input.SourceID {
+			return RecordDetail{RequestRecord: r, State: "valid", Payload: Payload{Request: "Illustrative demo request for " + r.ID, Response: "Illustrative demo response for " + r.ID}}, nil
+		}
+	}
+	return RecordDetail{}, fmt.Errorf("%w: request was not found", ErrNotFound)
 }
 
 func (d *demoRepository) Close(ctx context.Context) error { return ctx.Err() }
