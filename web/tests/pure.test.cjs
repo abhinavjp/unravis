@@ -599,12 +599,55 @@ test('overview delta text shows relative traffic, percentage points and millisec
 
 test('overview tiles drill into the existing state, kind and outcome filters; unknown maps to http_unknown', () => {
   const { overviewDrill } = loadTypeScript('src/lib/overview.ts');
-  assert.deepEqual({ ...overviewDrill('synchronous', 'events') }, { kind: 'synchronous', state: 'all', outcome: '', label: 'synchronous · every event' });
-  assert.deepEqual({ ...overviewDrill('hangfire', 'completed') }, { kind: 'hangfire', state: 'complete', outcome: '', label: 'hangfire · Complete' });
-  assert.deepEqual({ ...overviewDrill('asynchronous', 'clientErrors') }, { kind: 'asynchronous', state: 'all', outcome: 'client_error', label: 'asynchronous · client errors (4xx)' });
-  assert.deepEqual({ ...overviewDrill('asynchronous', 'serverErrors') }, { kind: 'asynchronous', state: 'all', outcome: 'server_error', label: 'asynchronous · server errors (5xx)' });
+  assert.deepEqual({ ...overviewDrill('synchronous', 'events') }, { kind: 'synchronous', state: 'all', outcome: '', label: 'synchronous · every event', note: '' });
+  assert.deepEqual({ ...overviewDrill('hangfire', 'completed') }, { kind: 'hangfire', state: 'complete', outcome: '', label: 'hangfire · Complete', note: '' });
+  assert.deepEqual({ ...overviewDrill('asynchronous', 'clientErrors') }, { kind: 'asynchronous', state: 'all', outcome: 'client_error', label: 'asynchronous · client errors (4xx)', note: '' });
+  assert.deepEqual({ ...overviewDrill('asynchronous', 'serverErrors') }, { kind: 'asynchronous', state: 'all', outcome: 'server_error', label: 'asynchronous · server errors (5xx)', note: '' });
   assert.equal(overviewDrill('unknown', 'events').kind, 'http_unknown');
   assert.match(overviewDrill('unknown', 'events').label, /polling type unknown/);
+});
+
+test('overview drills say how the opened list differs from the tile', () => {
+  const { overviewDrill, drillHeading } = loadTypeScript('src/lib/overview.ts');
+  const notes = (kind, tile, context) => overviewDrill(kind, tile, context).note;
+  // Events: Synchronous and Asynchronous lists also hold the unknown type's incomplete and invalid rows, exactly.
+  assert.equal(notes('synchronous', 'events', { unknownKindRows: 3, unknownResults: 2 }), 'also lists 3 incomplete or unusable rows of unknown request type');
+  assert.equal(notes('asynchronous', 'events', { unknownKindRows: 1 }), 'also lists 1 incomplete or unusable row of unknown request type');
+  assert.equal(notes('synchronous', 'events', { unknownKindRows: 0 }), '');
+  assert.equal(notes('synchronous', 'events'), '');
+  assert.equal(notes('hangfire', 'events', { unknownKindRows: 3, unknownResults: 2 }), '');
+  assert.equal(notes('unknown', 'events', { unknownKindRows: 3, unknownResults: 2 }), '');
+  assert.equal(notes('synchronous', 'completed', { unknownKindRows: 3, unknownResults: 2 }), '');
+  // 4xx and 5xx lists also keep every row of unknown result, so the bound is "up to".
+  assert.equal(notes('synchronous', 'clientErrors', { unknownKindRows: 3, unknownResults: 2 }), 'also lists up to 5 rows with an unknown result or request type');
+  assert.equal(notes('asynchronous', 'serverErrors', { unknownKindRows: 3 }), 'also lists up to 3 incomplete or unusable rows of unknown request type');
+  assert.equal(notes('hangfire', 'serverErrors', { unknownKindRows: 3, unknownResults: 2 }), 'also lists up to 2 rows whose result is unknown');
+  assert.equal(notes('unknown', 'clientErrors', { unknownKindRows: 3, unknownResults: 1 }), 'also lists up to 1 row whose result is unknown');
+  assert.equal(notes('hangfire', 'clientErrors', {}), '');
+  // The tile drill replaces a narrower outcome filter and says so; Events and Completed keep the user's filter.
+  assert.equal(notes('hangfire', 'serverErrors', { outcomeFilter: 'failure' }), 'replaces the failure outcome filter, so counts may differ');
+  assert.equal(notes('hangfire', 'clientErrors', { outcomeFilter: 'server_error' }), 'replaces the server error outcome filter, so counts may differ');
+  assert.equal(notes('hangfire', 'serverErrors', { outcomeFilter: 'server_error' }), '');
+  assert.equal(notes('hangfire', 'serverErrors', { outcomeFilter: 'all' }), '');
+  assert.equal(notes('hangfire', 'events', { outcomeFilter: 'success' }), '');
+  assert.equal(notes('synchronous', 'clientErrors', { unknownKindRows: 3, outcomeFilter: 'failure' }), 'also lists up to 3 incomplete or unusable rows of unknown request type; replaces the failure outcome filter, so counts may differ');
+  // The heading shows the label and the note together.
+  assert.equal(drillHeading({ label: 'synchronous · every event', note: '' }), 'synchronous · every event');
+  assert.equal(drillHeading({ label: 'synchronous · every event', note: 'also lists 3 incomplete or unusable rows of unknown request type' }), 'synchronous · every event (also lists 3 incomplete or unusable rows of unknown request type)');
+});
+
+test('operation rows drill into their controller, action and request type', () => {
+  const { operationDrill } = loadTypeScript('src/lib/overview.ts');
+  assert.deepEqual({ ...operationDrill({ controller: 'Payroll', action: 'Run', kind: 'synchronous' }) }, {
+    kind: 'synchronous', state: 'all', outcome: '', label: 'Payroll.Run · synchronous · every event', note: 'also lists any incomplete or unusable rows of unknown request type', controller: 'Payroll', action: 'Run'
+  });
+  assert.equal(operationDrill({ controller: 'Payroll', action: 'Run', kind: 'asynchronous' }).note, 'also lists any incomplete or unusable rows of unknown request type');
+  const hangfire = operationDrill({ controller: 'Jobs', action: 'Nightly', kind: 'hangfire' });
+  assert.deepEqual({ kind: hangfire.kind, note: hangfire.note, controller: hangfire.controller, action: hangfire.action }, { kind: 'hangfire', note: '', controller: 'Jobs', action: 'Nightly' });
+  const unknown = operationDrill({ controller: 'Payroll', action: 'Run', kind: 'unknown' });
+  assert.equal(unknown.kind, 'http_unknown');
+  assert.match(unknown.label, /polling type unknown/);
+  assert.equal(operationDrill({ controller: 'Payroll', action: 'Run' }).kind, 'all');
 });
 
 test('operation rows sort by a delta with missing deltas always last', () => {
@@ -622,14 +665,23 @@ test('the overview strip, quick range presets and operation view are wired into 
   const read = file => fs.readFileSync(path.join(root, file), 'utf8');
   const strip = read('src/components/OverviewStrip.svelte');
   assert.match(strip, /overviewDrill/);
+  assert.match(strip, /unknownKindRows/);
+  assert.match(strip, /outcomeFilter/);
   assert.match(strip, /\{@render quality\(\)\}/);
   const app = read('src/App.svelte');
   assert.match(app, /<OverviewStrip/);
   assert.match(app, /drillOverview/);
+  assert.match(app, /drillHeading\(drillOverview\)/);
+  assert.match(app, /copy\.controller = drillOverview\.controller/);
+  assert.match(app, /copy\.action = drillOverview\.action/);
+  assert.match(app, /<ComparisonTable[\s\S]*?onDrill=\{drillFromOverview\}/);
   assert.match(app, /drillQuality\('incomplete'\)/);
   assert.match(read('src/components/QueryControls.svelte'), /quickRanges/);
   const table = read('src/components/ComparisonTable.svelte');
-  assert.match(table, /<OperationTable/);
+  assert.match(table, /<OperationTable[^>]*\{onDrill\}/);
+  const operations = read('src/components/OperationTable.svelte');
+  assert.match(operations, /operationDrill\(row\)/);
+  assert.match(operations, /<button[^>]*class="api-select"[^>]*onclick=\{\(\) => onDrill\?\.\(operationDrill\(row\)\)\}/);
   assert.match(table, />Operation</);
   assert.match(read('src/components/OperationTable.svelte'), /Δ traffic[\s\S]*Δ P95[\s\S]*Δ 4xx[\s\S]*Δ 5xx[\s\S]*Δ completion/);
 });

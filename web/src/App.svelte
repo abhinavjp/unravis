@@ -16,7 +16,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
   import RequestTable from './components/RequestTable.svelte';
   import RecordDetailPanel from './components/RecordDetail.svelte';
   import OverviewStrip from './components/OverviewStrip.svelte';
-  import type { OverviewDrill } from './lib/overview';
+  import { drillHeading, type OverviewDrill } from './lib/overview';
 
   let info = $state<Info | null>(null);
   let sources = $state<Source[]>([]);
@@ -638,7 +638,12 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
   // The comparison's query with the overview drill-down's kind and status class applied; unchanged without one.
   function drillQuery(source: Query): Query {
     const copy = JSON.parse(JSON.stringify(source)) as Query;
-    if (drillOverview) { copy.kind = drillOverview.kind; if (drillOverview.outcome) copy.outcome = drillOverview.outcome; }
+    if (drillOverview) {
+      copy.kind = drillOverview.kind;
+      if (drillOverview.outcome) copy.outcome = drillOverview.outcome;
+      if (drillOverview.controller !== undefined) copy.controller = drillOverview.controller;
+      if (drillOverview.action !== undefined) copy.action = drillOverview.action;
+    }
     return copy;
   }
   async function loadRequests(cursor: string, pageNumber: number) {
@@ -858,7 +863,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
           <TrafficSlowness {analysis} {zone} {sourceLabels} cohort={selected} onContext={async(row)=>{contextAnchor=row;await tick();document.getElementById('nearby-activity')?.scrollIntoView({block:'start'});}} />
           <section class="data-section" id="api-group-results">
             <div class="section-heading"><div><h3>Explore {analysis.apis.length.toLocaleString()} API groups</h3><p>Largest slowdowns first. Each group keeps one source, API action, request type, and outcome together. P95 is the time within which about 95 of 100 requests finish.</p></div></div>
-            <ComparisonTable rows={analysis.apis} rollups={analysis.rollups ?? []} timeline={analysis.timeline} kindFilter={analysis.query.kind} {selectedKey} {timelineKeys} onToggleTimeline={(key) => timelineKeys = timelineKeys.includes(key) ? timelineKeys.filter(item => item !== key) : timelineKeys.length < 8 ? [...timelineKeys, key] : timelineKeys} sources={sourceLabels} outcomeFilter={analysis.query.outcome} onSelect={async (key) => { void selectAPI(key); await tick(); const details = document.getElementById('selected-api-details'); details?.scrollIntoView({ block: 'start' }); details?.focus({ preventScroll: true }); }} />
+            <ComparisonTable rows={analysis.apis} rollups={analysis.rollups ?? []} timeline={analysis.timeline} kindFilter={analysis.query.kind} {selectedKey} {timelineKeys} onToggleTimeline={(key) => timelineKeys = timelineKeys.includes(key) ? timelineKeys.filter(item => item !== key) : timelineKeys.length < 8 ? [...timelineKeys, key] : timelineKeys} sources={sourceLabels} outcomeFilter={analysis.query.outcome} onDrill={drillFromOverview} onSelect={async (key) => { void selectAPI(key); await tick(); const details = document.getElementById('selected-api-details'); details?.scrollIntoView({ block: 'start' }); details?.focus({ preventScroll: true }); }} />
           </section>
           <MultiTimeline {analysis} keys={timelineKeys} sources={sourceLabels} {zone} onRemove={(key) => timelineKeys = timelineKeys.filter(item => item !== key)} />
           {#if selected}
@@ -872,7 +877,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
             <Charts {analysis} {selected} {zone} {targetMs} />
           {/if}
           <section class="data-section request-section" id="request-history">
-            <div class="section-heading"><div><h3>Request history</h3><p>{queryWide ? (drillOverview?.label ?? stateLabel(requestState)) + ' · every API group in this comparison' : selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
+            <div class="section-heading"><div><h3>Request history</h3><p>{queryWide ? (drillOverview ? drillHeading(drillOverview) : stateLabel(requestState)) + ' · every API group in this comparison' : selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
               {#if selected || queryWide}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
             </div>
             {#if requestError}<div class="inline-error" role="alert">{requestError}</div>{/if}

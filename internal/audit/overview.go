@@ -47,7 +47,7 @@ type OverviewWindow struct {
 // shares; the latency fields are milliseconds. Every field is nil when the
 // reference has fewer than minReferenceSamples valid samples or when either
 // side of the difference is unknown. Latency deltas also need the current
-// window to have enough samples (state "compared").
+// window to have at least minReferenceSamples valid samples (state "compared").
 type OverviewDelta struct {
 	Traffic         *float64 `json:"traffic,omitempty"`
 	CompletionRate  *float64 `json:"completionRate,omitempty"`
@@ -62,7 +62,10 @@ type OverviewDelta struct {
 // OverviewRow is the current window of one kind plus its reference window and
 // the deltas between them. Histograms are merged within a kind, never across
 // kinds. State is compared, missing_current, missing_reference or
-// insufficient_data, judged on valid samples like Comparison.State.
+// insufficient_data, judged on valid samples like Comparison.State. The
+// reference window's rates and quantiles are absent below minReferenceSamples
+// valid samples; the current window's are reported whenever it has any valid
+// sample, so insufficient_data is the guard against reading too much into them.
 type OverviewRow struct {
 	Kind string `json:"kind"`
 	OverviewWindow
@@ -120,8 +123,11 @@ func (w *kindWindow) add(b Bucket) error {
 
 // finish turns the accumulator into a window summary. A window with fewer than
 // minSamples valid samples keeps its raw counts but reports no rates or
-// quantiles. allOutcomes says whether the sources returned every outcome; with
-// an outcome filter the failure share is unknowable.
+// quantiles. The reference window passes minReferenceSamples; the current window
+// passes 0, so its rates and quantiles are always reported when it has any valid
+// sample, however few, and OverviewRow.State (insufficient_data) is what tells
+// the reader that they are rough. allOutcomes says whether the sources returned
+// every outcome; with an outcome filter the failure share is unknowable.
 func (w *kindWindow) finish(minSamples int64, minutes float64, allOutcomes bool) OverviewWindow {
 	out := OverviewWindow{Events: w.events, Incomplete: w.incomplete, Invalid: w.invalid, UnknownOutcome: w.unknown, ClientErrors: w.client, ServerErrors: w.server}
 	if w.hist != nil {
@@ -162,22 +168,25 @@ func knownOverviewKind(kind string) bool {
 }
 
 // buildOverview folds the (kind-scoped) buckets of both windows into one row
-// per kind present in either window. It rejects kinds outside the fixed set
-// rather than merging them into another kind.
+// per kind present in either window. A bucket whose kind is outside the fixed
+// set is counted in the unknown row rather than failing the analysis or being
+// merged into a derived kind, so the strip never silently drops events. The
+// error return only reports counter overflow.
 func buildOverview(q Query, current, reference []Bucket) ([]OverviewRow, error) {
 	cur, ref := map[string]*kindWindow{}, map[string]*kindWindow{}
 	fold := func(into map[string]*kindWindow, buckets []Bucket) error {
 		for _, b := range buckets {
-			if !knownOverviewKind(b.Kind) {
-				return fmt.Errorf("bucket kind %q is not recognised", b.Kind)
+			kind := b.Kind
+			if !knownOverviewKind(kind) {
+				kind = KindUnknown
 			}
-			w := into[b.Kind]
+			w := into[kind]
 			if w == nil {
 				w = &kindWindow{}
-				into[b.Kind] = w
+				into[kind] = w
 			}
 			if err := w.add(b); err != nil {
-				return fmt.Errorf("overview %s: %w", b.Kind, err)
+				return fmt.Errorf("overview %s: %w", kind, err)
 			}
 		}
 		return nil

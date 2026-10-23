@@ -1,7 +1,6 @@
 package audit
 
 import (
-	"errors"
 	"math"
 	"testing"
 	"time"
@@ -102,9 +101,21 @@ func TestOverviewIsBoundedByTheFourKindsAndUnknownAppearsOnlyWhenPresent(t *test
 	if len(analysis.Overview) != 4 || analysis.Overview[3].Kind != "unknown" {
 		t.Fatalf("overview = %+v, want exactly four rows ending with unknown", analysis.Overview)
 	}
-	bad := makeBuckets("s1", "Payroll", "Run", "mystery", "success", "valid", anchor, 1, 10)
-	if _, err := BuildAnalysis(q, bad, nil, nil); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("an unrecognised kind must be rejected, got %v", err)
+	// A kind the overview does not know must not fail the whole analysis: it
+	// is counted in the unknown row so the strip never silently drops events.
+	odd := makeBuckets("s1", "Payroll", "Run", "mystery", "success", "valid", anchor, 7, 10)
+	odd = append(odd, makeBuckets("s1", "Payroll", "Run", "synchronous", "success", "valid", anchor, 3, 10)...)
+	odd = append(odd, makeBuckets("s1", "Payroll", "Run", "mystery", "unknown", "incomplete", anchor.Add(-time.Minute), 4, 0)...)
+	got, err := BuildAnalysis(q, odd[:2], odd[2:], nil)
+	if err != nil {
+		t.Fatalf("an unrecognised kind must be counted as unknown, not rejected: %v", err)
+	}
+	rows := overviewByKind(t, got)
+	if len(got.Overview) > 2 || rows["unknown"].Events != 7 || rows["synchronous"].Events != 3 {
+		t.Fatalf("overview = %+v, want 7 mystery events in the unknown row and 3 synchronous", got.Overview)
+	}
+	if rows["unknown"].Completed != 7 || rows["unknown"].Reference.Events != 4 || rows["unknown"].Reference.Incomplete != 4 {
+		t.Fatalf("unknown row must fold both windows: %+v", rows["unknown"])
 	}
 }
 

@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { Rollup } from '../lib/types';
   import { kindLabel, unknownKindTip } from '../lib/presentation';
-  import { changeText, msChangeText, pointsText, sortOperations, type OperationSort } from '../lib/overview';
-  let { rollups }: { rollups: Rollup[] } = $props();
+  import { changeText, msChangeText, operationDrill, pointsText, sortOperations, type OperationSort, type OverviewDrill } from '../lib/overview';
+  let { rollups, onDrill }: { rollups: Rollup[]; onDrill?: (drill: OverviewDrill) => void } = $props();
   let sort = $state<OperationSort>('events');
   let direction = $state(-1);
   let page = $state(0);
@@ -43,7 +43,7 @@
     <tbody>
       {#each visible as row (row.controller + '|' + row.action + '|' + (row.kind ?? ''))}
         <tr>
-          <td data-label="Operation">{row.controller}.{row.action}</td>
+          <td data-label="Operation">{#if onDrill}<button type="button" class="api-select" title={'List every event of this operation and request type in the current period. ' + (operationDrill(row).note ? 'The list ' + operationDrill(row).note + '.' : '')} onclick={() => onDrill?.(operationDrill(row))}>{row.controller}.{row.action}</button>{:else}{row.controller}.{row.action}{/if}</td>
           <td data-label="Request type" title={row.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(row.kind) || '—'}</td>
           <td class="numeric" data-label="Events" title={'Reference period: ' + (row.referenceEvents ?? 0).toLocaleString() + ' events.'}>{(row.events ?? 0).toLocaleString()}</td>
           <td class="numeric" data-label="Δ traffic" title={referenceNote}>{changeText(row.trafficDelta)}</td>

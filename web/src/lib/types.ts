@@ -72,7 +72,7 @@ export interface Rollup {
 export interface QualityCounts { incomplete: number; invalid: number; unknownOutcome: number; pendingAsync?: number }
 /** byKind splits the counts by row kind (synchronous, asynchronous, hangfire, unknown); only kinds with something to report appear. */
 export interface Quality { incomplete: number; invalid: number; unknownOutcome: number; pendingAsync?: number; byKind?: Record<string, QualityCounts> }
-/** One window of one kind's overview. Rates and quantiles are absent below 20 valid samples; incomplete and pending rows are counted in events but never treated as fast or successful. */
+/** One window of one kind's overview. The reference window's rates and quantiles are absent below 20 valid samples; the current window's are reported whenever it has any valid sample, so the row's state (insufficient_data) is what flags them as rough. Incomplete and pending rows are counted in events but never treated as fast or successful. */
 export interface OverviewWindow {
   events: number; completed: number; incomplete: number; invalid: number; unknownOutcome: number; clientErrors: number; serverErrors: number;
   perMinute: number; completionRate?: number | null; clientErrorRate?: number | null; serverErrorRate?: number | null;

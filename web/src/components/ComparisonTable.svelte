@@ -1,13 +1,15 @@
 <script lang="ts">
   import type { Comparison, Rollup, Series } from '../lib/types';
+  import type { OverviewDrill } from '../lib/overview';
   import { loadBadge, loadTip, rollupFor } from '../lib/traffic';
   import { kindLabel, observedPartialTip, outcomeRateText, rankComparisons, statusRates, unknownKindTip, type RankField } from '../lib/presentation';
   import PhaseBar from './PhaseBar.svelte';
   import OperationTable from './OperationTable.svelte';
   import { p99NeedsSamples, quantileText } from '../lib/slowness';
-  let { rows, selectedKey, sources, outcomeFilter, onSelect, timelineKeys = [], onToggleTimeline = () => {}, rollups = [], timeline = [], kindFilter = 'all' }: {
+  let { rows, selectedKey, sources, outcomeFilter, onSelect, timelineKeys = [], onToggleTimeline = () => {}, rollups = [], timeline = [], kindFilter = 'all', onDrill }: {
     rows: Comparison[]; selectedKey: string; sources: Map<string, string>; outcomeFilter: string; onSelect: (key: string) => void
     timelineKeys?: string[]; onToggleTimeline?: (key: string) => void; rollups?: Rollup[]; timeline?: Series[]; kindFilter?: string;
+    onDrill?: (drill: OverviewDrill) => void;
   } = $props();
   let sort = $state<RankField>('impact');
   let direction = $state(-1);
@@ -69,7 +71,7 @@
   <button type="button" class="secondary-button" aria-pressed={view === 'operation'} title="One row per API action and request type, with changes against the reference period." onclick={() => view = 'operation'}>Operation</button>
 </div>
 {#if view === 'operation'}
-  <OperationTable {rollups} />
+  <OperationTable {rollups} {onDrill} />
 {:else}
 <div class="group-toolbar">
   <label>Find an API<input type="search" placeholder="Search API name or source" bind:value={search} oninput={() => page = 0} /></label>
