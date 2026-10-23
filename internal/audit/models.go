@@ -257,6 +257,19 @@ type Point struct {
 	P50      *Quantile `json:"p50"`
 	P95      *Quantile `json:"p95"`
 	P95Ratio *float64  `json:"p95Ratio"`
+
+	// Count is the slot's valid timings, which are all the percentiles below
+	// are drawn from. The failure counters cover every document in the slot,
+	// valid or not, so a slot with no timing can still report its failures.
+	// Count5xx includes failed Hangfire jobs, as every server-error count does;
+	// Incomplete is the documents with no complete duration (pending async
+	// included), never counted as success or failure. P90 and P99 follow the
+	// Stats rule: P99 is nil below 100 samples.
+	Count4xx   int64     `json:"count4xx,omitempty"`
+	Count5xx   int64     `json:"count5xx,omitempty"`
+	Incomplete int64     `json:"incomplete,omitempty"`
+	P90        *Quantile `json:"p90,omitempty"`
+	P99        *Quantile `json:"p99,omitempty"`
 }
 
 // LoadCorrelation is the Spearman rho between the load other cohorts put on

@@ -432,3 +432,108 @@ func TestKindHTTPCoversUnknownAndNeverHangfire(t *testing.T) {
 		t.Error("an unknown kind must be rejected")
 	}
 }
+
+func failureBucket(state string, at time.Time, count, c4, c5 int64, ms float64) Bucket {
+	outcome := "failure"
+	if state == "incomplete" {
+		outcome = "unknown"
+	}
+	b := Bucket{SourceID: "s1", Controller: "Payroll", Action: "Run", Kind: "synchronous", Outcome: outcome, State: state, At: at, Count: count, Count4xx: c4, Count5xx: c5}
+	if state == "valid" {
+		b.Bin, b.SumMs, b.MinMs, b.MaxMs = BinIndex(ms), float64(count)*ms, ms, ms
+	}
+	return b
+}
+
+func timelineSeriesFor(t *testing.T, analysis Analysis, outcome string) Series {
+	t.Helper()
+	for _, c := range analysis.APIs {
+		if c.Outcome != outcome {
+			continue
+		}
+		for _, s := range analysis.Timeline {
+			if s.Key == c.Key {
+				return s
+			}
+		}
+	}
+	t.Fatalf("no %s timeline series in %#v", outcome, analysis.Timeline)
+	return Series{}
+}
+
+func TestTimelinePointCountsFailuresFromAllStatesPercentilesFromValid(t *testing.T) {
+	q := analysisQuery()
+	slot0, slot1 := anchor, anchor.Add(10*time.Second)
+	current := []Bucket{
+		failureBucket("valid", slot0, 5, 3, 2, 40),     // five timed failures: 3 are 4xx, 2 are 5xx
+		failureBucket("invalid", slot0, 1, 0, 1, 0),    // a 5xx whose timing is unusable still counts as a failure
+		failureBucket("incomplete", slot0, 2, 0, 0, 0), // missing timing: neither success nor failure
+		failureBucket("incomplete", slot1, 3, 0, 3, 0), // a slot with no valid timing at all
+	}
+	analysis, err := BuildAnalysis(q, current, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	series := timelineSeriesFor(t, analysis, "failure")
+	if len(series.Points) != 1 {
+		t.Fatalf("failure cohort points = %#v, want the one timed slot", series.Points)
+	}
+	first := series.Points[0]
+	if first.Count != 5 || first.Count4xx != 3 || first.Count5xx != 3 || first.Incomplete != 0 {
+		t.Fatalf("first slot = %#v, want 5 valid timings, 3 4xx, 3 5xx (timed and untimed)", first)
+	}
+	if first.P50 == nil || first.P90 == nil || first.P95 == nil || first.P99 != nil {
+		t.Fatalf("first slot percentiles come from the five valid timings only: %#v", first)
+	}
+	// The incomplete rows have outcome unknown, so they live in their own cohort, and a
+	// slot with no valid timing still gets a point carrying its counts but no percentile.
+	unknown := timelineSeriesFor(t, analysis, "unknown")
+	if len(unknown.Points) != 2 {
+		t.Fatalf("incomplete cohort points = %#v, want two slots", unknown.Points)
+	}
+	a, b := unknown.Points[0], unknown.Points[1]
+	if a.Incomplete != 2 || a.Count != 0 || a.P50 != nil || a.P90 != nil || a.P95 != nil || a.P99 != nil {
+		t.Fatalf("first incomplete slot = %#v", a)
+	}
+	if b.Incomplete != 3 || b.Count5xx != 3 || b.Count != 0 || b.P50 != nil {
+		t.Fatalf("second incomplete slot = %#v", b)
+	}
+	for _, c := range analysis.APIs {
+		if c.Outcome == "failure" && c.Current.Count != 5 {
+			t.Fatalf("failure-only slots changed the cohort's valid sample count: %#v", c.Current)
+		}
+	}
+}
+
+func TestTimelinePointP99NilBelow100(t *testing.T) {
+	q := analysisQuery()
+	for _, tc := range []struct {
+		n       int64
+		wantP99 bool
+	}{{99, false}, {100, true}} {
+		analysis, err := BuildAnalysis(q, repeatedBuckets(tc.n, 12, anchor), nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := analysis.Timeline[0].Points[0]
+		if p.P90 == nil || (p.P99 != nil) != tc.wantP99 {
+			t.Fatalf("n=%d: p90=%v p99=%v, want p99 present=%v", tc.n, p.P90, p.P99, tc.wantP99)
+		}
+		raw, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if _, has := fields["p99"]; has != tc.wantP99 {
+			t.Fatalf("n=%d: json %s, p99 key present=%v want %v", tc.n, raw, has, tc.wantP99)
+		}
+		for _, key := range []string{"count4xx", "count5xx", "incomplete"} {
+			if _, has := fields[key]; has {
+				t.Fatalf("n=%d: zero %s must be omitted: %s", tc.n, key, raw)
+			}
+		}
+	}
+}

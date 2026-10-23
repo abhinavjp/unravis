@@ -361,3 +361,32 @@ func TestDemoCohortDrillMatchesSummaryUnderKindFilter(t *testing.T) {
 		t.Fatalf("hangfire cohort under synchronous = %v, want ErrInvalidInput", err)
 	}
 }
+
+// The demo's timeline carries the failure counters and percentiles of every
+// point: the hand-made unfinished rows reach the points as Incomplete counts
+// only (an unfinished 500 is never a failure), and the timed rows keep P90 but
+// no P99 below 100 samples.
+func TestDemoTimelinePointsCarryFailureCountsAndPercentiles(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	analysis, err := demoDrillRepo(now).Analyze(context.Background(), demoQuery(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var incomplete, server, client, timed int64
+	for _, s := range analysis.Timeline {
+		for _, p := range s.Points {
+			incomplete, server, client = incomplete+p.Incomplete, server+p.Count5xx, client+p.Count4xx
+			if p.Count > 0 {
+				timed++
+				if p.P90 == nil || p.P99 != nil {
+					t.Fatalf("timed demo point has p90=%v p99=%v with %d samples", p.P90, p.P99, p.Count)
+				}
+			} else if p.P50 != nil || p.P90 != nil || p.P95 != nil || p.P99 != nil {
+				t.Fatalf("point with no timings has percentiles: %#v", p)
+			}
+		}
+	}
+	if incomplete != analysis.Quality.Incomplete || server != 0 || client != 0 || timed == 0 {
+		t.Fatalf("timeline incomplete=%d (quality %d) 5xx=%d 4xx=%d timed=%d, want no 5xx and no 4xx: unfinished rows are never failures", incomplete, analysis.Quality.Incomplete, server, client, timed)
+	}
+}

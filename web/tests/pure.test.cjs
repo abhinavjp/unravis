@@ -1090,3 +1090,62 @@ test('breakdown drill-down keeps and clears range filters like any other record 
   assert.deepEqual(breakdown.activeRecordFilter(breakdown.clearRecordFilter(base)), {});
   assert.deepEqual(breakdown.activeRecordFilter(breakdown.applyDrill({ observedMs: { min: 1 } }, { apiTimeMs: { min: 9 } })), { apiTimeMs: { min: 9 } });
 });
+
+// Task 10: failure investigation. A slot with no point is null, never a zero:
+// a gap means no observation, while a real zero means the slot had none.
+function failurePoint(at, extra = {}) {
+  return { at, count: 5, p50: null, p95: null, p95Ratio: null, ...extra };
+}
+test('failureSeries returns null for missing slots, never zero', () => {
+  const start = '2026-10-22T12:00:00.000Z';
+  const end = '2026-10-22T12:30:00.000Z';
+  const result = analysis({
+    start, end, bucketSeconds: 600,
+    timeline: [
+      { key: 'a', points: [failurePoint('2026-10-22T12:00:00.000Z', { count5xx: 3, count4xx: 1 }), failurePoint('2026-10-22T12:20:00.000Z')] },
+      { key: 'b', points: [failurePoint('2026-10-22T12:00:00.000Z', { count5xx: 2 })] }
+    ]
+  });
+  // One cohort: the middle slot has no point (null), the last has a point with no failures (0).
+  assert.deepEqual(charts.failureSeries(result, 'a', 'count5xx'), [3, null, 0]);
+  assert.deepEqual(charts.failureSeries(result, 'a', 'count4xx'), [1, null, 0]);
+  // All cohorts: slots sum across the cohorts that have a point and stay null where none does.
+  assert.deepEqual(charts.failureSeries(result, null, 'count5xx'), [5, null, 0]);
+  // A cohort with no timeline series at all is entirely null.
+  assert.deepEqual(charts.failureSeries(result, 'missing', 'count5xx'), [null, null, null]);
+  // A point carrying only unfinished rows (count 0) is a real observation, so its failures are 0.
+  const incompleteOnly = analysis({ start, end, bucketSeconds: 600, timeline: [{ key: 'a', points: [failurePoint('2026-10-22T12:10:00.000Z', { count: 0, incomplete: 2 })] }] });
+  assert.deepEqual(charts.failureSeries(incompleteOnly, 'a', 'count5xx'), [null, 0, null]);
+  assert.deepEqual(charts.failureSeries(incompleteOnly, 'a', 'incomplete'), [null, 2, null]);
+  const trend = charts.failureTrendOption(result, 'UTC');
+  assert.deepEqual(trend.series.map(item => item.name), ['4xx client errors', '5xx server errors and failed jobs']);
+  assert.deepEqual(trend.series[1].data, [5, null, 0]);
+  assert.equal(trend.series.every(item => item.connectNulls === false), true);
+});
+
+test('multi-timeline series toggle: percentiles change from their own reference, failure counts are absolute and null in gaps', () => {
+  const start = '2026-10-22T12:00:00.000Z';
+  const end = '2026-10-22T12:20:00.000Z';
+  const q = (valueMs) => ({ lowerMs: valueMs - 1, upperMs: valueMs + 1, valueMs });
+  const row = { ...comparison('a', 'A'), reference: { ...stats({ p50: q(100), p95: q(200) }), p90: q(150), p99: null } };
+  const sample = failurePoint('2026-10-22T12:00:00.000Z', { p50: q(110), p90: q(180), p95: q(300), p99: q(400), count5xx: 4 });
+  assert.equal(charts.baselineChange(row, sample, 'milliseconds'), 100);
+  assert.equal(charts.baselineChange(row, sample, 'milliseconds', 'p50'), 10);
+  assert.equal(charts.baselineChange(row, sample, 'milliseconds', 'p90'), 30);
+  assert.equal(charts.baselineChange(row, sample, 'milliseconds', 'p99'), null);
+  const result = analysis({ start, end, bucketSeconds: 600, apis: [row], timeline: [{ key: 'a', points: [sample] }] });
+  const p90 = charts.multiTimelineOption(result, ['a'], new Map(), 'UTC', 'milliseconds', 'p90');
+  assert.deepEqual(p90.series[0].data.map(item => item.value), [30, null]);
+  const fives = charts.multiTimelineOption(result, ['a'], new Map(), 'UTC', 'milliseconds', 'count5xx');
+  assert.deepEqual(fives.series[0].data.map(item => item.value), [4, null]);
+  assert.equal(charts.multiTimelineOption(result, ['a'], new Map(), 'UTC', 'milliseconds').series[0].data[0].value, 100);
+});
+
+test('FailurePanel reuses BreakdownPanel on status codes and the colours stay out of the markup', () => {
+  const panel = fs.readFileSync(path.join(root, 'src/components/FailurePanel.svelte'), 'utf8');
+  assert.match(panel, /<BreakdownPanel[^>]*lockedDim="statusCode"/);
+  assert.match(panel, /failureTrendOption/);
+  assert.equal(/#[0-9a-fA-F]{3,8}\b/.test(panel), false);
+  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  assert.match(app, /<FailurePanel[^>]*onDrill=\{drillInto\}/);
+});

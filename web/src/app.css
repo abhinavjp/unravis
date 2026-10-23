@@ -689,3 +689,12 @@ td small { font-size: 12px; }
 .overview-drill:hover:not(:disabled) { border-color: var(--cobalt); }
 .overview-drill:disabled { cursor: default; }
 .overview-drill:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.failure-summary { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 10px 16px 0; color: var(--muted); font-size: 13px; }
+.failure-summary strong { color: var(--ink); font-size: 15px; margin-right: 4px; }
+.failure-chart-stage { position: relative; height: 280px; margin: 8px 16px; }
+.failure-chart { width: 100%; height: 280px; }
+.failure-chart-empty { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 24px; color: var(--muted); background: var(--soft-line); text-align: center; font-size: 14px; }
+.failure-chart-empty p { max-width: 60ch; line-height: 1.6; }
+@media (max-width: 720px) { .failure-chart-stage { margin: 8px 4px; } }
+.multi-timeline .timeline-controls { display: flex; flex-wrap: wrap; gap: 10px 14px; flex-shrink: 0; }
+.multi-timeline .timeline-controls > label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }

@@ -66,7 +66,8 @@ export interface Comparison {
   /** Additive: change in each phase's mean (current minus reference); a phase is absent when either window has no samples for it. */
   phaseDeltaMs?: PhaseMeans | null;
 }
-export interface Point { at: string; count: number | null; p50: Quantile | null; p95: Quantile | null; p95Ratio: number | null }
+/** count, p50, p95 and the other percentiles describe the slot's valid timings; count is null only for a chart placeholder that has no point. Additive: count4xx, count5xx (5xx plus failed Hangfire jobs) and incomplete count every state and are absent when zero; p99 is absent below 100 samples. */
+export interface Point { at: string; count: number | null; p50: Quantile | null; p95: Quantile | null; p95Ratio: number | null; count4xx?: number; count5xx?: number; incomplete?: number; p90?: Quantile | null; p99?: Quantile | null }
 /** loadCorrelation: Spearman rho of other traffic's estimated concurrency vs this series' per-bucket P95; absent below 8 paired buckets. */
 export interface Series { key: string; points: Point[]; loadCorrelation?: number | null }
 /** Per-API, per-kind current-window throughput (sources merged); requests and failures count known outcomes only. errorRate is absent when requests is 0. */
