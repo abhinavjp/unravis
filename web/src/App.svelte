@@ -818,6 +818,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Paylo
             <div><strong>{analysis.quality.invalid.toLocaleString()}</strong><span>Unusable timing</span></div>
             <div><strong>{analysis.quality.unknownOutcome.toLocaleString()}</strong><span>Unclassified result</span></div>
             {#if analysis.quality.pendingAsync}<div><strong>{analysis.quality.pendingAsync.toLocaleString()}</strong><span>pending async</span></div>{/if}
+            {#if analysis.query.outcome === 'client_error' || analysis.query.outcome === 'server_error'}<div class="quality-filter-note"><span>Counts above cover only the selected status class.</span></div>{/if}
           <p>Response times are estimates. A comparison shows change, not a health verdict.</p>
           <details class="quality-definitions"><summary>What these counts mean</summary><p><strong>Missing timing:</strong> no complete duration was recorded. <strong>Unusable timing:</strong> a duration was present but could not be used. <strong>Unclassified result:</strong> the request could not be identified as a success or failure. <strong>Pending async:</strong> an asynchronous request that only answered 202 Accepted; its work is not finished, so it is counted as missing timing and never as a response-time sample.</p></details>
           </div>
