@@ -17,6 +17,8 @@ type histogramAccumulator struct {
 	// Phase totals and the number of documents that contributed to each.
 	sumAudit, sumApi, sumPayload float64
 	nAudit, nApi, nPayload       int64
+
+	observedPartial int64
 }
 
 func BinIndex(ms float64) int {
@@ -111,10 +113,14 @@ func (h *histogramAccumulator) addBucket(b Bucket) error {
 	h.nAudit += b.NAudit
 	h.nApi += b.NApi
 	h.nPayload += b.NPayload
+	h.observedPartial += b.ObservedPartial
 	return nil
 }
 
 func validPhases(b Bucket) error {
+	if b.ObservedPartial < 0 || b.ObservedPartial > b.Count {
+		return fmt.Errorf("observedPartial %d must be between 0 and the bucket count %d", b.ObservedPartial, b.Count)
+	}
 	for _, p := range []struct {
 		name string
 		sum  float64
@@ -151,7 +157,7 @@ func (h *histogramAccumulator) phaseMeans() *PhaseMeans {
 }
 
 func (h *histogramAccumulator) stats() Stats {
-	stats := Stats{Count: h.count, Histogram: make([]BinCount, 0)}
+	stats := Stats{Count: h.count, Histogram: make([]BinCount, 0), ObservedPartial: h.observedPartial}
 	if h.count == 0 {
 		return stats
 	}

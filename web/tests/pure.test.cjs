@@ -427,3 +427,22 @@ test('phase bar segments split audit and api shares, tolerate gaps, and describe
   assert.match(tip, /audit 0\.0 ms/);
   assert.doesNotMatch(phaseTip(null), /Change versus reference/);
 });
+
+test('the total metric is labelled as observed API time and never as a total request', () => {
+  assert.equal(presentation.metricLabels.total, 'Observed API time (AuditCreateTime + ApiTime)');
+  assert.equal(presentation.metricLabels.api, 'API processing');
+  for (const file of ['src/components/QueryControls.svelte', 'src/App.svelte', 'src/components/ComparisonTable.svelte']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(root, file), 'utf8'), /Total request/);
+  }
+});
+
+test('the partial-sample tooltip appears only when legacy samples lack AuditCreateTime', () => {
+  assert.equal(presentation.observedPartialTip(undefined), undefined);
+  assert.equal(presentation.observedPartialTip(0), undefined);
+  assert.equal(presentation.observedPartialTip(1234), `${(1234).toLocaleString()} samples lack AuditCreateTime (legacy)`);
+});
+
+test('the quality strip shows pending async only when it is above zero', () => {
+  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  assert.match(app, /\{#if analysis\.quality\.pendingAsync\}[^\n]*pending async/);
+});

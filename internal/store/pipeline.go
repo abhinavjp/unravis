@@ -53,8 +53,12 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 	statusText := bson.D{{Key: "$toUpper", Value: bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$StatusCode"}, {Key: "to", Value: "string"}, {Key: "onError", Value: ""}, {Key: "onNull", Value: ""}}}}}}
 	statusNumber := bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$StatusCode"}, {Key: "to", Value: "int"}, {Key: "onError", Value: nil}, {Key: "onNull", Value: nil}}}}
 	statusSets := statusNames()
+	// An asynchronous request that answered 202 Accepted has only been queued:
+	// its work is not done, so it is neither a success nor a timing sample.
+	pending := bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{polling, "asynchronous"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "ACCEPTED"}}}}}}
 	outcome := bson.D{{Key: "$switch", Value: bson.D{
 		{Key: "branches", Value: bson.A{
+			bson.D{{Key: "case", Value: "$_auditPending"}, {Key: "then", Value: "unknown"}},
 			bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{kind, "hangfire"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "SUCCEEDED"}}}}}}}, {Key: "then", Value: "success"}},
 			bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{kind, "hangfire"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "FAILED"}}}}}}}, {Key: "then", Value: "failure"}},
 			bson.D{{Key: "case", Value: bson.D{{Key: "$in", Value: bson.A{statusText, statusSets.success}}}}, {Key: "then", Value: "success"}},
@@ -81,6 +85,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 			bson.D{{Key: "$subtract", Value: bson.A{"$_auditCompleted", "$_auditAt"}}}, nil,
 		}}}
 	}
+	duration = bson.D{{Key: "$cond", Value: bson.A{"$_auditPending", nil, duration}}}
 	validDuration := bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$gte", Value: bson.A{"$_auditDuration", 0}}}, bson.D{{Key: "$lt", Value: bson.A{"$_auditDuration", math.MaxFloat64}}}}}}
 	// Phase times use the same $convert-to-double extraction as ApiTime (the
 	// writer stores TimeSpan.TotalMilliseconds as a double), so the sums are in
@@ -102,8 +107,21 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 	phaseCount := func(field string) bson.D {
 		return bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{phasePresent(field), 1, 0}}}}}
 	}
+	// Observed time is AuditCreateTime + ApiTime = completed - initiated. A valid
+	// document without RequestInitiatedAt fell back to CreatedOn, so its figure
+	// is partial. The api metric never measures that interval.
+	observedPartial := bson.D{{Key: "$sum", Value: 0}}
+	if q.Metric != "api" {
+		observedPartial = bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{
+			bson.D{{Key: "$and", Value: bson.A{
+				bson.D{{Key: "$eq", Value: bson.A{"$_auditState", "valid"}}},
+				bson.D{{Key: "$ne", Value: bson.A{bson.D{{Key: "$type", Value: "$RequestInitiatedAt"}}, "date"}}},
+			}}}, 1, 0,
+		}}}}}
+	}
 	state := bson.D{{Key: "$switch", Value: bson.D{
 		{Key: "branches", Value: bson.A{
+			bson.D{{Key: "case", Value: "$_auditPending"}, {Key: "then", Value: "incomplete"}},
 			bson.D{{Key: "case", Value: bson.D{{Key: "$eq", Value: bson.A{"$_auditDuration", nil}}}}, {Key: "then", Value: bson.D{{Key: "$cond", Value: bson.A{missingDuration, "incomplete", "invalid"}}}}},
 			bson.D{{Key: "case", Value: validDuration}, {Key: "then", Value: "valid"}},
 		}},
@@ -122,7 +140,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 
 	stages := mongo.Pipeline{
 		bson.D{{Key: "$match", Value: firstMatch}},
-		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditAt", Value: dateOrFallback("RequestInitiatedAt", "CreatedOn")}, {Key: "_auditCompleted", Value: dateOrFallback("RequestCompletedAt", "RequestCompletedAt")}, {Key: "_auditKind", Value: kind}}}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditAt", Value: dateOrFallback("RequestInitiatedAt", "CreatedOn")}, {Key: "_auditCompleted", Value: dateOrFallback("RequestCompletedAt", "RequestCompletedAt")}, {Key: "_auditKind", Value: kind}, {Key: "_auditPending", Value: pending}}}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditOutcome", Value: outcome}}}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditDuration", Value: duration}}}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditState", Value: state}, {Key: "_auditBin", Value: bin}, {Key: "_auditBucketAt", Value: bucketAt}}}},
@@ -147,9 +165,11 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 			{Key: "nAudit", Value: phaseCount("$_auditAuditMs")},
 			{Key: "nApi", Value: phaseCount("$_auditApiMs")},
 			{Key: "nPayload", Value: phaseCount("$_auditPayloadMs")},
+			{Key: "pendingAsync", Value: bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{"$_auditPending", 1, 0}}}}}},
+			{Key: "observedPartial", Value: observedPartial},
 		}}},
 		bson.D{{Key: "$limit", Value: maxBucketRows}},
-		bson.D{{Key: "$project", Value: bson.D{{Key: "_id", Value: 0}, {Key: "controller", Value: "$_id.controller"}, {Key: "action", Value: "$_id.action"}, {Key: "kind", Value: "$_id.kind"}, {Key: "outcome", Value: "$_id.outcome"}, {Key: "state", Value: "$_id.state"}, {Key: "at", Value: "$_id.at"}, {Key: "bin", Value: "$_id.bin"}, {Key: "count", Value: 1}, {Key: "sumMs", Value: 1}, {Key: "sumAuditMs", Value: 1}, {Key: "sumApiMs", Value: 1}, {Key: "sumPayloadMs", Value: 1}, {Key: "nAudit", Value: 1}, {Key: "nApi", Value: 1}, {Key: "nPayload", Value: 1}, {Key: "minMs", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$minMs", 0}}}}, {Key: "maxMs", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$maxMs", 0}}}}}}},
+		bson.D{{Key: "$project", Value: bson.D{{Key: "_id", Value: 0}, {Key: "controller", Value: "$_id.controller"}, {Key: "action", Value: "$_id.action"}, {Key: "kind", Value: "$_id.kind"}, {Key: "outcome", Value: "$_id.outcome"}, {Key: "state", Value: "$_id.state"}, {Key: "at", Value: "$_id.at"}, {Key: "bin", Value: "$_id.bin"}, {Key: "count", Value: 1}, {Key: "sumMs", Value: 1}, {Key: "sumAuditMs", Value: 1}, {Key: "sumApiMs", Value: 1}, {Key: "sumPayloadMs", Value: 1}, {Key: "nAudit", Value: 1}, {Key: "nApi", Value: 1}, {Key: "nPayload", Value: 1}, {Key: "pendingAsync", Value: 1}, {Key: "observedPartial", Value: 1}, {Key: "minMs", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$minMs", 0}}}}, {Key: "maxMs", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$maxMs", 0}}}}}}},
 	)
 	return stages
 }

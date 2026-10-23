@@ -287,3 +287,133 @@ func TestLegacyBucketsCarryPhaseSumsAndPerPhaseCounts(t *testing.T) {
 		t.Fatalf("sums audit=%v api=%v payload=%v, want 20/150/5", sumAudit, sumApi, sumPayload)
 	}
 }
+
+func legacyCompletionRaw(t *testing.T, polling, status string) bson.Raw {
+	t.Helper()
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	encoded, err := bson.Marshal(bson.D{
+		{Key: "_id", Value: bson.NewObjectID()}, {Key: "RequestPollingType", Value: polling}, {Key: "StatusCode", Value: status},
+		{Key: "RequestInitiatedAt", Value: at}, {Key: "RequestCompletedAt", Value: at.Add(500 * time.Millisecond)}, {Key: "ApiTime", Value: 480.0},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bson.Raw(encoded)
+}
+
+func TestLegacyAsyncAcceptedIsIncomplete(t *testing.T) {
+	for _, metric := range []string{"total", "api"} {
+		for _, fixture := range completionFixtures() {
+			t.Run(metric+"/"+fixture.name, func(t *testing.T) {
+				record, ok := normalizeLegacyRecord(legacyCompletionRaw(t, fixture.polling, fixture.status), metric)
+				if !ok {
+					t.Fatal("record was not normalised")
+				}
+				if record.State != fixture.wantState || record.Outcome != fixture.wantOutcome {
+					t.Fatalf("state/outcome = %s/%s, want %s/%s", record.State, record.Outcome, fixture.wantState, fixture.wantOutcome)
+				}
+				if (record.Duration == nil) != fixture.wantDurationNil {
+					t.Fatalf("duration = %v, want nil=%v", record.Duration, fixture.wantDurationNil)
+				}
+			})
+		}
+	}
+}
+
+func legacyBucketsFor(t *testing.T, q audit.Query, docs ...bson.D) []audit.Bucket {
+	t.Helper()
+	var handle *fakeClient
+	s := newStore(func(context.Context, string, *tls.Config) (clientHandle, error) {
+		handle = &fakeClient{}
+		return handle, nil
+	})
+	src := addFakeSource(t, s, "audit")
+	p, release, err := s.leaseSource(src.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	raws := make([]any, 0, len(docs))
+	for _, d := range docs {
+		encoded, e := bson.Marshal(d)
+		if e != nil {
+			t.Fatal(e)
+		}
+		raws = append(raws, bson.Raw(encoded))
+	}
+	handle.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
+		return &fakeCursor{docs: raws}, nil
+	}
+	var rows, bytes, records, rawBytes atomic.Int64
+	got, err := readLegacyBuckets(context.Background(), p, q, q.Start, nil, &rows, &bytes, &records, &rawBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func TestLegacyMissingInitiatedMarksObservedPartial(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	q.Kind, q.Outcome = "all", "all"
+	at := q.Start.Add(time.Second)
+	base := func(fields ...bson.E) bson.D {
+		return append(bson.D{{Key: "_auditMetadataOversized", Value: false}, {Key: "ControllerName", Value: "Payroll"}, {Key: "ActionName", Value: "Run"}, {Key: "RequestPollingType", Value: "synchronous"}, {Key: "StatusCode", Value: "OK"}, {Key: "ApiTime", Value: 80.0}}, fields...)
+	}
+	onlyCreated := base(bson.E{Key: "CreatedOn", Value: at}, bson.E{Key: "RequestCompletedAt", Value: at.Add(80 * time.Millisecond)})
+	full := base(bson.E{Key: "RequestInitiatedAt", Value: at}, bson.E{Key: "CreatedOn", Value: at}, bson.E{Key: "AuditCreateTime", Value: 20.0}, bson.E{Key: "RequestCompletedAt", Value: at.Add(100 * time.Millisecond)})
+	raw, _ := bson.Marshal(onlyCreated)
+	record, _ := normalizeLegacyRecord(bson.Raw(raw), "total")
+	if !record.AuditCreateMissing || record.Duration == nil || *record.Duration != 80 || record.State != "valid" {
+		t.Fatalf("CreatedOn-only record = %#v, want AuditCreateMissing with duration equal to ApiTime", record)
+	}
+	rawFull, _ := bson.Marshal(full)
+	if complete, _ := normalizeLegacyRecord(bson.Raw(rawFull), "total"); complete.AuditCreateMissing {
+		t.Fatal("a record with RequestInitiatedAt is not partial")
+	}
+
+	var partial, count int64
+	var sum float64
+	for _, b := range legacyBucketsFor(t, q, onlyCreated, full) {
+		partial, count, sum = partial+b.ObservedPartial, count+b.Count, sum+b.SumMs
+	}
+	if partial != 1 || count != 2 || sum != 180 {
+		t.Fatalf("observedPartial/count/sum = %d/%d/%v, want 1/2/180", partial, count, sum)
+	}
+
+	// Under the api metric nothing is partial: Observed time is not being measured.
+	q.Metric = "api"
+	for _, b := range legacyBucketsFor(t, q, onlyCreated) {
+		if b.ObservedPartial != 0 {
+			t.Fatalf("api metric reported observedPartial %d", b.ObservedPartial)
+		}
+	}
+}
+
+func TestLegacyBucketsCountPendingAsyncAsIncompleteWithoutTiming(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	q.Kind, q.Outcome = "all", "all"
+	at := q.Start.Add(time.Second)
+	doc := func(polling, status string) bson.D {
+		return bson.D{{Key: "_auditMetadataOversized", Value: false}, {Key: "ControllerName", Value: "Payroll"}, {Key: "ActionName", Value: "Run"}, {Key: "RequestPollingType", Value: polling}, {Key: "StatusCode", Value: status}, {Key: "RequestInitiatedAt", Value: at}, {Key: "RequestCompletedAt", Value: at.Add(30 * time.Millisecond)}, {Key: "ApiTime", Value: 30.0}}
+	}
+	var pending, incompleteCount, validCount int64
+	var validSum float64
+	for _, b := range legacyBucketsFor(t, q, doc("Asynchronous ", "Accepted"), doc("Asynchronous ", "Accepted"), doc("Synchronous ", "Accepted")) {
+		pending += b.PendingAsync
+		switch b.State {
+		case "incomplete":
+			incompleteCount += b.Count
+			if b.Outcome != "unknown" || b.SumMs != 0 {
+				t.Fatalf("pending bucket %#v must have outcome unknown and no timing", b)
+			}
+		case "valid":
+			validCount, validSum = validCount+b.Count, validSum+b.SumMs
+			if b.Outcome != "success" || b.PendingAsync != 0 {
+				t.Fatalf("valid bucket %#v must be a success with no pending rows", b)
+			}
+		}
+	}
+	if pending != 2 || incompleteCount != 2 || validCount != 1 || validSum != 30 {
+		t.Fatalf("pending/incomplete/valid/sum = %d/%d/%d/%v, want 2/2/1/30", pending, incompleteCount, validCount, validSum)
+	}
+}

@@ -35,6 +35,9 @@ type bucketDocument struct {
 	NAudit       int64   `bson:"nAudit"`
 	NApi         int64   `bson:"nApi"`
 	NPayload     int64   `bson:"nPayload"`
+
+	PendingAsync    int64 `bson:"pendingAsync"`
+	ObservedPartial int64 `bson:"observedPartial"`
 }
 
 type sourceAnalysis struct {
@@ -210,6 +213,7 @@ func (s *Store) readBuckets(ctx context.Context, p *profile, q audit.Query, star
 			Count: doc.Count, SumMs: doc.SumMs, MinMs: doc.MinMs, MaxMs: doc.MaxMs,
 			SumAuditMs: doc.SumAuditMs, SumApiMs: doc.SumApiMs, SumPayloadMs: doc.SumPayloadMs,
 			NAudit: doc.NAudit, NApi: doc.NApi, NPayload: doc.NPayload,
+			PendingAsync: doc.PendingAsync, ObservedPartial: doc.ObservedPartial,
 		}
 		encoded, err := json.Marshal(bucket)
 		if err != nil || totalBytes.Add(int64(len(encoded)+1)) > maxAnalysisBytes {

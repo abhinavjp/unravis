@@ -1,6 +1,8 @@
 package store
 
 import (
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -271,6 +273,291 @@ func TestPipelinePhaseFieldsAreProjected(t *testing.T) {
 	pipeline := buildPipeline(q, q.Start, q.End)
 	project := pipeline[len(pipeline)-1][0].Value.(bson.D)
 	for _, key := range []string{"sumAuditMs", "sumApiMs", "sumPayloadMs", "nAudit", "nApi", "nPayload"} {
+		if groupField(project, key) == nil {
+			t.Errorf("$project drops %s", key)
+		}
+	}
+}
+
+// pipelineMissing marks a field that is absent from the document.
+type pipelineMissing struct{}
+
+func pipelineNum(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case float64:
+		return n, true
+	}
+	return 0, false
+}
+
+func pipelineTypeName(v any) string {
+	switch v.(type) {
+	case pipelineMissing:
+		return "missing"
+	case nil:
+		return "null"
+	case time.Time:
+		return "date"
+	case string:
+		return "string"
+	}
+	return "double"
+}
+
+// evalExpr evaluates the subset of aggregation expressions that the _audit*
+// $set stages use, against one document. It is a test double for the server.
+func evalExpr(t *testing.T, expr any, doc map[string]any) any {
+	t.Helper()
+	switch x := expr.(type) {
+	case string:
+		if strings.HasPrefix(x, "$") {
+			if v, ok := doc[x[1:]]; ok {
+				return v
+			}
+			return pipelineMissing{}
+		}
+		return x
+	case bson.A:
+		out := make([]any, len(x))
+		for i, item := range x {
+			out[i] = evalExpr(t, item, doc)
+		}
+		return out
+	case bson.D:
+		if len(x) == 0 {
+			t.Fatal("empty expression document")
+		}
+		op, arg := x[0].Key, x[0].Value
+		args := func() []any {
+			list, ok := arg.(bson.A)
+			if !ok {
+				t.Fatalf("%s takes an array, got %T", op, arg)
+			}
+			out := make([]any, len(list))
+			for i, item := range list {
+				out[i] = evalExpr(t, item, doc)
+			}
+			return out
+		}
+		field := func(name string) any {
+			for _, e := range arg.(bson.D) {
+				if e.Key == name {
+					return e.Value
+				}
+			}
+			return nil
+		}
+		switch op {
+		case "$literal":
+			return arg
+		case "$type":
+			return pipelineTypeName(evalExpr(t, arg, doc))
+		case "$ifNull":
+			a := args()
+			if _, missing := a[0].(pipelineMissing); missing || a[0] == nil {
+				return a[1]
+			}
+			return a[0]
+		case "$trim":
+			return strings.TrimSpace(evalExpr(t, field("input"), doc).(string))
+		case "$toLower":
+			return strings.ToLower(evalExpr(t, arg, doc).(string))
+		case "$toUpper":
+			return strings.ToUpper(evalExpr(t, arg, doc).(string))
+		case "$convert":
+			in := evalExpr(t, field("input"), doc)
+			to := field("to").(string)
+			if _, missing := in.(pipelineMissing); missing || in == nil {
+				return field("onNull")
+			}
+			switch to {
+			case "string":
+				if s, ok := in.(string); ok {
+					return s
+				}
+				return field("onError")
+			case "int", "double":
+				if n, ok := pipelineNum(in); ok {
+					return n
+				}
+				if s, ok := in.(string); ok {
+					if n, err := strconv.ParseFloat(s, 64); err == nil {
+						return n
+					}
+				}
+				return field("onError")
+			}
+			t.Fatalf("unsupported $convert target %q", to)
+		case "$eq":
+			a := args()
+			an, aok := pipelineNum(a[0])
+			bn, bok := pipelineNum(a[1])
+			if aok && bok {
+				return an == bn
+			}
+			return reflect.DeepEqual(a[0], a[1])
+		case "$ne":
+			a := args()
+			return !reflect.DeepEqual(a[0], a[1])
+		case "$gte", "$lt":
+			a := args()
+			an, aok := pipelineNum(a[0])
+			bn, bok := pipelineNum(a[1])
+			if !aok || !bok {
+				return false
+			}
+			if op == "$gte" {
+				return an >= bn
+			}
+			return an < bn
+		case "$and":
+			for _, v := range args() {
+				if b, _ := v.(bool); !b {
+					return false
+				}
+			}
+			return true
+		case "$or":
+			for _, v := range args() {
+				if b, _ := v.(bool); b {
+					return true
+				}
+			}
+			return false
+		case "$in":
+			a := args()
+			for _, item := range a[1].([]any) {
+				if reflect.DeepEqual(item, a[0]) {
+					return true
+				}
+			}
+			return false
+		case "$subtract":
+			a := args()
+			l, lok := a[0].(time.Time)
+			r, rok := a[1].(time.Time)
+			if !lok || !rok {
+				t.Fatalf("$subtract on %T/%T", a[0], a[1])
+			}
+			return float64(l.UnixMilli() - r.UnixMilli())
+		case "$cond":
+			a, _ := arg.(bson.A)
+			if b, _ := evalExpr(t, a[0], doc).(bool); b {
+				return evalExpr(t, a[1], doc)
+			}
+			return evalExpr(t, a[2], doc)
+		case "$switch":
+			for _, branch := range field("branches").(bson.A) {
+				pair := branch.(bson.D)
+				if b, _ := evalExpr(t, pair[0].Value, doc).(bool); b {
+					return evalExpr(t, pair[1].Value, doc)
+				}
+			}
+			return evalExpr(t, field("default"), doc)
+		}
+		t.Fatalf("unsupported operator %s", op)
+	}
+	return expr
+}
+
+// evalSetStages runs the pipeline's $set stages over doc and returns the
+// document with its derived fields. The bucket slot and histogram bin are
+// skipped because they do not influence state or outcome.
+func evalSetStages(t *testing.T, pipeline mongo.Pipeline, doc map[string]any) map[string]any {
+	t.Helper()
+	derived := make(map[string]any, len(doc)+8)
+	for k, v := range doc {
+		derived[k] = v
+	}
+	for _, stage := range pipeline {
+		if stage[0].Key == "$group" {
+			break
+		}
+		if stage[0].Key != "$set" {
+			continue
+		}
+		for _, e := range stage[0].Value.(bson.D) {
+			if e.Key == "_auditBucketAt" || e.Key == "_auditBin" {
+				continue
+			}
+			derived[e.Key] = evalExpr(t, e.Value, derived)
+		}
+	}
+	return derived
+}
+
+type completionFixture struct {
+	name            string
+	polling, status string
+	wantState       string
+	wantOutcome     string
+	wantDurationNil bool
+}
+
+func completionFixtures() []completionFixture {
+	return []completionFixture{
+		{"async accepted is pending", "Asynchronous ", "Accepted", "incomplete", "unknown", true},
+		{"async accepted is case-insensitive on the status", " asynchronous", "ACCEPTED", "incomplete", "unknown", true},
+		{"sync accepted is an inline 202", "Synchronous ", "Accepted", "valid", "success", false},
+		{"async ok is complete", "Asynchronous ", "OK", "valid", "success", false},
+		{"async created is complete", "Asynchronous ", "Created", "valid", "success", false},
+	}
+}
+
+func completionDoc(polling, status string) map[string]any {
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	return map[string]any{
+		"RequestPollingType": polling, "StatusCode": status,
+		"RequestInitiatedAt": at, "RequestCompletedAt": at.Add(500 * time.Millisecond), "ApiTime": 480.0,
+	}
+}
+
+func TestSummaryPipelineAsyncAcceptedIsIncomplete(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	for _, metric := range []string{"total", "api"} {
+		q.Metric = metric
+		for _, fixture := range completionFixtures() {
+			t.Run(metric+"/"+fixture.name, func(t *testing.T) {
+				got := evalSetStages(t, buildSummaryPipeline(q, q.Start, q.End, true), completionDoc(fixture.polling, fixture.status))
+				if got["_auditState"] != fixture.wantState || got["_auditOutcome"] != fixture.wantOutcome {
+					t.Fatalf("state/outcome = %v/%v, want %s/%s", got["_auditState"], got["_auditOutcome"], fixture.wantState, fixture.wantOutcome)
+				}
+				if (got["_auditDuration"] == nil) != fixture.wantDurationNil {
+					t.Fatalf("duration = %v, want nil=%v", got["_auditDuration"], fixture.wantDurationNil)
+				}
+			})
+		}
+	}
+}
+
+func TestRequestPipelineAsyncAcceptedHasUnknownOutcomeAndNoDuration(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	for _, fixture := range completionFixtures() {
+		t.Run(fixture.name, func(t *testing.T) {
+			pipeline := requestPipeline(q, [5]string{"source", "", "", "all", "all"}, "source", nil, 10)
+			got := evalSetStages(t, pipeline, completionDoc(fixture.polling, fixture.status))
+			if got["_auditOutcome"] != fixture.wantOutcome || (got["_auditDuration"] == nil) != fixture.wantDurationNil {
+				t.Fatalf("outcome/duration = %v/%v, want %s, nil=%v", got["_auditOutcome"], got["_auditDuration"], fixture.wantOutcome, fixture.wantDurationNil)
+			}
+		})
+	}
+}
+
+func TestPipelineCountsPendingAsyncAndObservedPartial(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	pipeline := buildPipeline(q, q.Start, q.End)
+	group := groupStage(t, pipeline)
+	project := pipeline[len(pipeline)-1][0].Value.(bson.D)
+	for _, key := range []string{"pendingAsync", "observedPartial"} {
+		if groupField(group, key) == nil {
+			t.Errorf("$group lacks %s", key)
+		}
 		if groupField(project, key) == nil {
 			t.Errorf("$project drops %s", key)
 		}

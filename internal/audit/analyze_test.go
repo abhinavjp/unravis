@@ -288,3 +288,39 @@ func TestBuildAnalysisP99RatioAndDeltaFollowComparisonState(t *testing.T) {
 		t.Fatalf("insufficient data must have null p99 ratio: %#v", c)
 	}
 }
+
+func TestBuildAnalysisCountsPendingAsyncInQualityAndObservedPartialInStats(t *testing.T) {
+	q := analysisQuery()
+	valid := repeatedBuckets(20, 2, anchor)
+	valid[0].ObservedPartial = 4
+	pending := makeBuckets("s1", "Payroll", "Run", "asynchronous", "unknown", "incomplete", anchor, 3, 0)
+	pending[0].PendingAsync = 3
+	other := makeBuckets("s1", "Payroll", "Run", "synchronous", "unknown", "incomplete", anchor, 2, 0)
+	analysis, err := BuildAnalysis(q, append(append(valid, pending...), other...), repeatedBuckets(20, 2, anchor.Add(-time.Minute)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.Quality.PendingAsync != 3 || analysis.Quality.Incomplete != 5 {
+		t.Fatalf("quality = %#v, want 3 pending of 5 incomplete", analysis.Quality)
+	}
+	for _, c := range analysis.APIs {
+		if c.Kind == "synchronous" && c.Outcome == "success" && (c.Current.ObservedPartial != 4 || c.Reference.ObservedPartial != 0) {
+			t.Fatalf("observedPartial current/reference = %d/%d, want 4/0", c.Current.ObservedPartial, c.Reference.ObservedPartial)
+		}
+		if c.Kind == "asynchronous" && (c.Current.Count != 0 || c.CurrentEvents != 3) {
+			t.Fatalf("pending async cohort %#v must have events but no timing samples", c)
+		}
+	}
+	encoded, _ := json.Marshal(Quality{Incomplete: 1})
+	if string(encoded) != `{"incomplete":1,"invalid":0,"unknownOutcome":0}` {
+		t.Fatalf("an unset pendingAsync must be omitted: %s", encoded)
+	}
+}
+
+func TestBucketRejectsObservedPartialAboveCount(t *testing.T) {
+	bucket := repeatedBuckets(2, 2, anchor)[0]
+	bucket.ObservedPartial = 3
+	if _, err := BuildAnalysis(analysisQuery(), []Bucket{bucket}, nil, nil); err == nil {
+		t.Fatal("observedPartial greater than the bucket count must be rejected")
+	}
+}

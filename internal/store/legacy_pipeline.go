@@ -301,6 +301,7 @@ type legacyRecord struct {
 	Duration, API, AuditCreate, PayloadRecord *float64
 	RequestKB, ResponseKB                     float64
 	State                                     string
+	AuditCreateMissing, PendingAsync          bool
 }
 
 func readLegacyBuckets(ctx context.Context, p *profile, q audit.Query, start time.Time, pipeline mongo.Pipeline, total, totalBytes, records, bytes *atomic.Int64) ([]audit.Bucket, error) {
@@ -355,6 +356,12 @@ func readLegacyBuckets(ctx context.Context, p *profile, q audit.Query, start tim
 			grouped[key] = bucket
 		}
 		bucket.Count++
+		if record.PendingAsync {
+			bucket.PendingAsync++
+		}
+		if record.State == "valid" && record.AuditCreateMissing && q.Metric != "api" {
+			bucket.ObservedPartial++
+		}
 		if record.State == "valid" && record.Duration != nil {
 			ms := *record.Duration
 			bucket.SumMs += ms
@@ -506,9 +513,14 @@ func normalizeLegacyRecord(raw bson.Raw, metric string) (legacyRecord, bool) {
 	record.URL = legacyString(raw.Lookup("RequestMainUrl"))
 	record.Kind = legacyKind(legacyString(raw.Lookup("RequestPollingType")), legacyString(raw.Lookup("UserAgent")))
 	record.Outcome = legacyOutcome(record.Kind, raw.Lookup("StatusCode"))
+	record.PendingAsync = strings.ToLower(strings.TrimSpace(legacyString(raw.Lookup("RequestPollingType")))) == "asynchronous" && strings.ToUpper(record.Status) == "ACCEPTED"
+	if record.PendingAsync {
+		record.Outcome = "unknown"
+	}
 	record.At = legacyDate(raw.Lookup("RequestInitiatedAt"))
 	if raw.Lookup("RequestInitiatedAt").Type == 0 || raw.Lookup("RequestInitiatedAt").Type == bson.TypeNull {
 		record.At = legacyDate(raw.Lookup("CreatedOn"))
+		record.AuditCreateMissing = true
 	}
 	record.Completed = legacyDate(raw.Lookup("RequestCompletedAt"))
 	record.API = legacyNumber(raw.Lookup("ApiTime"))
@@ -529,8 +541,13 @@ func normalizeLegacyRecord(raw bson.Raw, metric string) (legacyRecord, bool) {
 		value := float64(record.Completed.UnixMilli()) - float64(record.At.UnixMilli())
 		duration = &value
 	}
+	if record.PendingAsync {
+		duration = nil
+	}
 	record.Duration = duration
-	if duration == nil {
+	if record.PendingAsync {
+		record.State = "incomplete"
+	} else if duration == nil {
 		if missing {
 			record.State = "incomplete"
 		} else {

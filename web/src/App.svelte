@@ -817,8 +817,9 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Paylo
             <div><strong>{analysis.quality.incomplete.toLocaleString()}</strong><span>Missing timing</span></div>
             <div><strong>{analysis.quality.invalid.toLocaleString()}</strong><span>Unusable timing</span></div>
             <div><strong>{analysis.quality.unknownOutcome.toLocaleString()}</strong><span>Unclassified result</span></div>
+            {#if analysis.quality.pendingAsync}<div><strong>{analysis.quality.pendingAsync.toLocaleString()}</strong><span>pending async</span></div>{/if}
           <p>Response times are estimates. A comparison shows change, not a health verdict.</p>
-          <details class="quality-definitions"><summary>What these counts mean</summary><p><strong>Missing timing:</strong> no complete duration was recorded. <strong>Unusable timing:</strong> a duration was present but could not be used. <strong>Unclassified result:</strong> the request could not be identified as a success or failure.</p></details>
+          <details class="quality-definitions"><summary>What these counts mean</summary><p><strong>Missing timing:</strong> no complete duration was recorded. <strong>Unusable timing:</strong> a duration was present but could not be used. <strong>Unclassified result:</strong> the request could not be identified as a success or failure. <strong>Pending async:</strong> an asynchronous request that only answered 202 Accepted; its work is not finished, so it is counted as missing timing and never as a response-time sample.</p></details>
           </div>
           <RequestVolume {analysis} {zone} />
           <TrafficSlowness {analysis} {zone} {sourceLabels} onContext={async(row)=>{contextAnchor=row;await tick();document.getElementById('nearby-activity')?.scrollIntoView({block:'start'});}} />

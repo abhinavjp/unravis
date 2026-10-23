@@ -31,6 +31,8 @@ export interface Stats {
   p90?: Quantile | null; p99?: Quantile | null;
   /** Additive: mean of each phase over the documents that carry it; absent when none do. */
   phases?: PhaseMeans | null;
+  /** Additive: valid samples whose observed time lacks AuditCreateTime (legacy rows without RequestInitiatedAt); absent when none. */
+  observedPartial?: number;
 }
 /** Audit and api time add up to the total; payload is written after the response and is not latency. Each is absent without samples; in phaseDeltaMs it is current minus reference. */
 export interface PhaseMeans { auditMs?: number | null; apiMs?: number | null; payloadMs?: number | null }
@@ -52,7 +54,8 @@ export interface Point { at: string; count: number | null; p50: Quantile | null;
 export interface Series { key: string; points: Point[]; loadCorrelation?: number | null }
 /** Per-API current-window throughput; requests and failures count known outcomes only. errorRate is absent when requests is 0. */
 export interface Rollup { controller: string; action: string; requests: number; failures: number; errorRate?: number | null; perMinute: number }
-export interface Quality { incomplete: number; invalid: number; unknownOutcome: number }
+/** pendingAsync is additive and absent when zero: Asynchronous requests that only answered 202 Accepted, counted inside incomplete. */
+export interface Quality { incomplete: number; invalid: number; unknownOutcome: number; pendingAsync?: number }
 export interface Analysis {
   loadWindows?: LoadWindow[];
   requestVolume?: VolumeBucket[];

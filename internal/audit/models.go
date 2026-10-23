@@ -139,6 +139,9 @@ type Bucket struct {
 	NAudit       int64   `json:"nAudit,omitempty"`
 	NApi         int64   `json:"nApi,omitempty"`
 	NPayload     int64   `json:"nPayload,omitempty"`
+
+	PendingAsync    int64 `json:"pendingAsync,omitempty"`
+	ObservedPartial int64 `json:"observedPartial,omitempty"`
 }
 
 type Quantile struct {
@@ -160,6 +163,8 @@ type Stats struct {
 	Histogram []BinCount `json:"histogram"`
 	// Phases holds each phase's mean over the documents that carry it; nil when none do.
 	Phases *PhaseMeans `json:"phases,omitempty"`
+
+	ObservedPartial int64 `json:"observedPartial,omitempty"`
 }
 
 // PhaseMeans splits request time into the audit-row write and API processing,
@@ -224,6 +229,8 @@ type Quality struct {
 	Incomplete     int64 `json:"incomplete"`
 	Invalid        int64 `json:"invalid"`
 	UnknownOutcome int64 `json:"unknownOutcome"`
+
+	PendingAsync int64 `json:"pendingAsync,omitempty"`
 }
 
 type Analysis struct {

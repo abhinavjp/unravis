@@ -1,4 +1,4 @@
-import type { Comparison, Query } from './types';
+import type { Comparison, Metric, Query } from './types';
 
 export type RankField = 'impact' | 'ratio' | 'delta' | 'count';
 
@@ -45,3 +45,12 @@ export const outcomeRateText = (rows: Comparison[], row: Comparison, outcomeFilt
   const percentage = (row.currentEvents / denominator * 100).toFixed(1);
   return row.outcome + ' · ' + row.currentEvents.toLocaleString() + ' / ' + denominator.toLocaleString() + ' known events (' + percentage + '%)';
 };
+
+export const metricLabels: Record<Metric, string> = {
+  total: 'Observed API time (AuditCreateTime + ApiTime)',
+  api: 'API processing'
+};
+
+export const observedPartialTip = (count?: number) => count && count > 0
+  ? `${count.toLocaleString()} samples lack AuditCreateTime (legacy)`
+  : undefined;

@@ -269,7 +269,9 @@ func requestPipeline(q audit.Query, cohort [5]string, sourceID string, after *pa
 	statusText := bson.D{{Key: "$toUpper", Value: bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$StatusCode"}, {Key: "to", Value: "string"}, {Key: "onError", Value: ""}, {Key: "onNull", Value: ""}}}}}}
 	statusNumber := bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$StatusCode"}, {Key: "to", Value: "int"}, {Key: "onError", Value: nil}, {Key: "onNull", Value: nil}}}}
 	sets := statusNames()
+	pending := bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{polling, "asynchronous"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "ACCEPTED"}}}}}}
 	outcome := bson.D{{Key: "$switch", Value: bson.D{{Key: "branches", Value: bson.A{
+		bson.D{{Key: "case", Value: "$_auditPending"}, {Key: "then", Value: "unknown"}},
 		bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{kind, "hangfire"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "SUCCEEDED"}}}}}}}, {Key: "then", Value: "success"}},
 		bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{kind, "hangfire"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "FAILED"}}}}}}}, {Key: "then", Value: "failure"}},
 		bson.D{{Key: "case", Value: bson.D{{Key: "$in", Value: bson.A{statusText, sets.success}}}}, {Key: "then", Value: "success"}},
@@ -278,10 +280,11 @@ func requestPipeline(q audit.Query, cohort [5]string, sourceID string, after *pa
 		bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$gte", Value: bson.A{statusNumber, 400}}}, bson.D{{Key: "$lt", Value: bson.A{statusNumber, 600}}}}}}}, {Key: "then", Value: "failure"}},
 	}}, {Key: "default", Value: "unknown"}}}}
 	completed := date("RequestCompletedAt", "RequestCompletedAt")
-	duration := bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}}, bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditCompleted"}}, "date"}}}}}}, bson.D{{Key: "$subtract", Value: bson.A{"$_auditCompleted", "$_auditAt"}}}, nil}}}
+	observed := bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}}, bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditCompleted"}}, "date"}}}}}}, bson.D{{Key: "$subtract", Value: bson.A{"$_auditCompleted", "$_auditAt"}}}, nil}}}
+	duration := bson.D{{Key: "$cond", Value: bson.A{"$_auditPending", nil, observed}}}
 	stages := mongo.Pipeline{
 		bson.D{{Key: "$match", Value: match}},
-		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditAt", Value: date("RequestInitiatedAt", "CreatedOn")}, {Key: "_auditCompleted", Value: completed}, {Key: "_auditKind", Value: kind}}}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditAt", Value: date("RequestInitiatedAt", "CreatedOn")}, {Key: "_auditCompleted", Value: completed}, {Key: "_auditKind", Value: kind}, {Key: "_auditPending", Value: pending}}}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditOutcome", Value: outcome}, {Key: "_auditDuration", Value: duration}}}},
 	}
 	cohortMatch := bson.D{{Key: "_auditAt", Value: bson.D{{Key: "$type", Value: "date"}}}}

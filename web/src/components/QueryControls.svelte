@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Query } from '../lib/types';
   import { bucketForWindows, fromLocalParts, toLocalDatePart, toLocalTimePart, zones } from '../lib/time';
+  import { metricLabels } from '../lib/presentation';
   import DateTimeField from './DateTimeField.svelte';
   let { query = $bindable(), zone = $bindable(), targetMs = $bindable(), dateInputsValid = $bindable() }: { query: Query; zone: string; targetMs: number | null; dateInputsValid: boolean } = $props();
   let timeInputError = $state('');
@@ -52,7 +53,7 @@
         <div class="field-grid">
           <div class="control-group"><label for="kind">Request type</label><select id="kind" bind:value={query.kind}><option value="synchronous">Synchronous</option><option value="asynchronous">Asynchronous</option><option value="hangfire">Hangfire</option><option value="all">All types</option></select></div>
           <div class="control-group"><label for="outcome">Status</label><select id="outcome" bind:value={query.outcome}><option value="all">All statuses</option><option value="success">Success</option><option value="failure">Failure</option></select></div>
-          <div class="control-group"><label for="metric">Time measured</label><select id="metric" bind:value={query.metric}><option value="total">Total request</option><option value="api">API processing</option></select></div>
+          <div class="control-group"><label for="metric">Time measured</label><select id="metric" bind:value={query.metric}><option value="total">{metricLabels.total}</option><option value="api">{metricLabels.api}</option></select></div>
           <div class="control-group"><label for="bucket">Chart interval (seconds)</label><input id="bucket" type="number" min="10" max="86400" step="1" bind:value={query.bucketSeconds} /><p class="field-note">10–86,400 seconds; no more than 120 points.</p></div>
         </div>
         <div class="control-group"><label for="latency-target">Optional response-time target (ms)</label><input id="latency-target" type="number" min="0.01" step="any" bind:value={targetMs} placeholder="No target" /><p class="field-note">Adds a chart line and compares it with P95: the estimated time within which about 95 of 100 requests with usable timings finish.</p></div>

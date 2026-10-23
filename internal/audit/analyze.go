@@ -168,7 +168,10 @@ func addQuality(quality *Quality, b Bucket) error {
 			return err
 		}
 	}
-	return nil
+	if b.PendingAsync < 0 || b.PendingAsync > b.Count {
+		return fmt.Errorf("pendingAsync %d must be between 0 and the bucket count %d", b.PendingAsync, b.Count)
+	}
+	return checkedAdd(&quality.PendingAsync, b.PendingAsync)
 }
 
 func checkedAdd(dst *int64, n int64) error {
