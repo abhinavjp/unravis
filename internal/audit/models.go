@@ -269,6 +269,9 @@ type Analysis struct {
 	Timings []SourceTiming `json:"timings,omitempty"`
 	// Rollups is one row per API with current-window throughput and error rate.
 	Rollups []Rollup `json:"rollups,omitempty"`
+	// Overview is one row per request kind in scope (at most four), each with its
+	// reference window and the deltas against it.
+	Overview []OverviewRow `json:"overview,omitempty"`
 }
 
 // SourceTiming is the database read time for one source and one window.

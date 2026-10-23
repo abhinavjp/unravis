@@ -554,3 +554,82 @@ test('stateLabel names every row state and drill-down filter', () => {
   assert.equal(presentation.stateLabel('valid'), 'Complete');
   assert.equal(presentation.stateLabel(undefined), '');
 });
+
+test('quickRange 24h yields previous 24h baseline and respects 7d cap', () => {
+  const now = new Date('2026-10-22T12:00:37.123Z');
+  const day = time.quickRange('24h', now);
+  assert.equal(day.end, '2026-10-22T12:00:37.123Z');
+  assert.equal(day.start, '2026-10-21T12:00:37.123Z');
+  assert.equal(day.baselineEnd, day.start, 'the baseline ends where the investigated window starts');
+  assert.equal(day.baselineStart, '2026-10-20T12:00:37.123Z');
+  assert.equal(Date.parse(day.end) - Date.parse(day.start), Date.parse(day.baselineEnd) - Date.parse(day.baselineStart), 'equal-length windows');
+  const week = time.quickRange('7d', now);
+  assert.equal(Date.parse(week.end) - Date.parse(week.start), 7 * 86_400_000, 'a 7 day window is the longest allowed');
+  assert.equal(Date.parse(week.baselineEnd) - Date.parse(week.baselineStart), 7 * 86_400_000);
+  assert.deepEqual(time.quickRanges.map(range => range.id), ['15m', '1h', '4h', '24h', '7d']);
+  for (const { id } of time.quickRanges) {
+    const range = time.quickRange(id, now);
+    const span = Date.parse(range.end) - Date.parse(range.start);
+    assert.ok(span <= 7 * 86_400_000, `${id} stays inside the 7 day cap`);
+    assert.ok(range.bucketSeconds >= 10 && range.bucketSeconds <= 86_400);
+    assert.ok(charts.countEpochBuckets(range.start, range.end, range.bucketSeconds) <= 120, `${id} current window fits 120 buckets`);
+    assert.ok(charts.countEpochBuckets(range.baselineStart, range.baselineEnd, range.bucketSeconds) <= 120, `${id} baseline window fits 120 buckets`);
+  }
+  assert.throws(() => time.quickRange('30d', now), /Unknown quick range/);
+});
+
+test('overview delta text shows relative traffic, percentage points and milliseconds, and a dash for nil', () => {
+  const overview = loadTypeScript('src/lib/overview.ts');
+  assert.equal(overview.changeText(0.25), '+25.0%');
+  assert.equal(overview.changeText(-0.5), '-50.0%');
+  assert.equal(overview.changeText(0), '0.0%');
+  assert.equal(overview.changeText(null), '—');
+  assert.equal(overview.changeText(undefined), '—');
+  assert.equal(overview.changeText(Number.NaN), '—');
+  assert.equal(overview.pointsText(0.012), '+1.2 pp');
+  assert.equal(overview.pointsText(-0.034), '-3.4 pp');
+  assert.equal(overview.pointsText(null), '—');
+  assert.equal(overview.msChangeText(120.4), '+120 ms');
+  assert.equal(overview.msChangeText(-3.46), '-3.5 ms');
+  assert.equal(overview.msChangeText(1500), '+1.5 s');
+  assert.equal(overview.msChangeText(undefined), '—');
+  assert.equal(overview.rateText(0.0734), '7.3%');
+  assert.equal(overview.rateText(null), '—');
+});
+
+test('overview tiles drill into the existing state, kind and outcome filters; unknown maps to http_unknown', () => {
+  const { overviewDrill } = loadTypeScript('src/lib/overview.ts');
+  assert.deepEqual({ ...overviewDrill('synchronous', 'events') }, { kind: 'synchronous', state: 'all', outcome: '', label: 'synchronous · every event' });
+  assert.deepEqual({ ...overviewDrill('hangfire', 'completed') }, { kind: 'hangfire', state: 'complete', outcome: '', label: 'hangfire · Complete' });
+  assert.deepEqual({ ...overviewDrill('asynchronous', 'clientErrors') }, { kind: 'asynchronous', state: 'all', outcome: 'client_error', label: 'asynchronous · client errors (4xx)' });
+  assert.deepEqual({ ...overviewDrill('asynchronous', 'serverErrors') }, { kind: 'asynchronous', state: 'all', outcome: 'server_error', label: 'asynchronous · server errors (5xx)' });
+  assert.equal(overviewDrill('unknown', 'events').kind, 'http_unknown');
+  assert.match(overviewDrill('unknown', 'events').label, /polling type unknown/);
+});
+
+test('operation rows sort by a delta with missing deltas always last', () => {
+  const { sortOperations } = loadTypeScript('src/lib/overview.ts');
+  const rollup = (action, trafficDelta, p95DeltaMs, events = 10) => ({ controller: 'C', action, kind: 'synchronous', requests: events, failures: 0, perMinute: 1, events, trafficDelta, p95DeltaMs });
+  const rows = [rollup('a', 0.1, undefined), rollup('b', -0.9, 30), rollup('c', undefined, 5), rollup('d', 0.5, -4, 99)];
+  assert.deepEqual(sortOperations(rows, 'trafficDelta', -1).map(r => r.action), ['d', 'a', 'b', 'c']);
+  assert.deepEqual(sortOperations(rows, 'trafficDelta', 1).map(r => r.action), ['b', 'a', 'd', 'c']);
+  assert.deepEqual(sortOperations(rows, 'p95DeltaMs', -1).map(r => r.action), ['b', 'c', 'd', 'a']);
+  assert.deepEqual(sortOperations(rows, 'events', -1).map(r => r.action)[0], 'd');
+  assert.deepEqual(rows.map(r => r.action), ['a', 'b', 'c', 'd']);
+});
+
+test('the overview strip, quick range presets and operation view are wired into the UI', () => {
+  const read = file => fs.readFileSync(path.join(root, file), 'utf8');
+  const strip = read('src/components/OverviewStrip.svelte');
+  assert.match(strip, /overviewDrill/);
+  assert.match(strip, /\{@render quality\(\)\}/);
+  const app = read('src/App.svelte');
+  assert.match(app, /<OverviewStrip/);
+  assert.match(app, /drillOverview/);
+  assert.match(app, /drillQuality\('incomplete'\)/);
+  assert.match(read('src/components/QueryControls.svelte'), /quickRanges/);
+  const table = read('src/components/ComparisonTable.svelte');
+  assert.match(table, /<OperationTable/);
+  assert.match(table, />Operation</);
+  assert.match(read('src/components/OperationTable.svelte'), /Δ traffic[\s\S]*Δ P95[\s\S]*Δ 4xx[\s\S]*Δ 5xx[\s\S]*Δ completion/);
+});

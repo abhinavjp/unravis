@@ -46,3 +46,26 @@ export const bucketForWindows = (start: string, end: string, baselineStart: stri
   while (width < 86400 && (countEpochBuckets(start, end, width) > 120 || countEpochBuckets(baselineStart, baselineEnd, width) > 120)) width++;
   return Math.min(86400, width);
 };
+
+// Quick range presets: the investigated window ends at "now" and the reference
+// is the equal-length window right before it. Nothing is longer than the 7 day
+// cap the server enforces per window.
+export type QuickRangeId = '15m' | '1h' | '4h' | '24h' | '7d';
+export const quickRanges: { id: QuickRangeId; label: string; minutes: number }[] = [
+  { id: '15m', label: 'Last 15 min', minutes: 15 },
+  { id: '1h', label: 'Last hour', minutes: 60 },
+  { id: '4h', label: 'Last 4 hours', minutes: 240 },
+  { id: '24h', label: 'Last 24 hours', minutes: 1440 },
+  { id: '7d', label: 'Last 7 days', minutes: 10080 }
+];
+const maxWindowMs = 7 * 86_400_000;
+export const quickRange = (id: QuickRangeId, now: Date): Pick<Query, 'start' | 'end' | 'baselineStart' | 'baselineEnd' | 'bucketSeconds'> => {
+  const preset = quickRanges.find(range => range.id === id);
+  if (!preset) throw new RangeError(`Unknown quick range: ${id}`);
+  const span = Math.min(preset.minutes * 60_000, maxWindowMs);
+  const end = new Date(now.getTime());
+  const start = new Date(end.getTime() - span);
+  const baselineStart = new Date(start.getTime() - span);
+  const range = { start: start.toISOString(), end: end.toISOString(), baselineStart: baselineStart.toISOString(), baselineEnd: start.toISOString() };
+  return { ...range, bucketSeconds: bucketForWindows(range.start, range.end, range.baselineStart, range.baselineEnd) };
+};

@@ -3,6 +3,7 @@
   import { loadBadge, loadTip, rollupFor } from '../lib/traffic';
   import { kindLabel, observedPartialTip, outcomeRateText, rankComparisons, statusRates, unknownKindTip, type RankField } from '../lib/presentation';
   import PhaseBar from './PhaseBar.svelte';
+  import OperationTable from './OperationTable.svelte';
   import { p99NeedsSamples, quantileText } from '../lib/slowness';
   let { rows, selectedKey, sources, outcomeFilter, onSelect, timelineKeys = [], onToggleTimeline = () => {}, rollups = [], timeline = [], kindFilter = 'all' }: {
     rows: Comparison[]; selectedKey: string; sources: Map<string, string>; outcomeFilter: string; onSelect: (key: string) => void
@@ -13,6 +14,8 @@
   let search = $state('');
   let scope = $state('all');
   let page = $state(0);
+  // 'groups' is the per-source group table; 'operation' is one row per API action with deltas against the reference.
+  let view = $state<'groups' | 'operation'>('groups');
   const pageSize = 10;
   const stateLabels: Record<string, string> = {
     compared: 'Compared',
@@ -61,6 +64,13 @@
     : `P99 current ${ms(row.current.p99)}, reference ${ms(row.reference.p99)}` + (row.p99Ratio == null ? '' : ` (${ratio(row.p99Ratio)})`) + '. Estimates carry about ±5% error from the histogram bin width.';
 </script>
 
+<div class="view-toggle" role="group" aria-label="Table view">
+  <button type="button" class="secondary-button" aria-pressed={view === 'groups'} onclick={() => view = 'groups'}>API groups</button>
+  <button type="button" class="secondary-button" aria-pressed={view === 'operation'} title="One row per API action and request type, with changes against the reference period." onclick={() => view = 'operation'}>Operation</button>
+</div>
+{#if view === 'operation'}
+  <OperationTable {rollups} />
+{:else}
 <div class="group-toolbar">
   <label>Find an API<input type="search" placeholder="Search API name or source" bind:value={search} oninput={() => page = 0} /></label>
   <label>Show<select bind:value={scope} onchange={() => page = 0}><option value="all">All API groups</option><option value="slower">Slower than reference</option><option value="compared">Comparable groups</option><option value="unavailable">Unable to compare</option></select></label>
@@ -109,3 +119,4 @@
   <span aria-live="polite">{ordered.length ? currentPage * pageSize + 1 : 0}–{Math.min((currentPage + 1) * pageSize, ordered.length)} of {ordered.length} groups{filtered.length !== rows.length ? ` (${rows.length} total)` : ''} · Page {currentPage + 1} of {pageCount}</span>
   <div class="page-actions"><button class="secondary-button" disabled={currentPage === 0} onclick={() => page = currentPage - 1}>Previous groups</button><button class="secondary-button" disabled={currentPage + 1 >= pageCount} onclick={() => page = currentPage + 1}>Next groups</button></div>
 </div>
+{/if}

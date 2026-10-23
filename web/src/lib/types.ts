@@ -60,12 +60,35 @@ export interface Rollup {
   controller: string; action: string; kind?: string; requests: number; failures: number; errorRate?: number | null; perMinute: number;
   /** Additive split of errorRate: 4xx, and 5xx plus failed Hangfire jobs. Absent when errorRate is, or under an outcome filter. */
   clientErrorRate?: number | null; serverErrorRate?: number | null;
+  /** Additive, Task 12: all events and valid completions in the current window, and the same measures for the reference window. Reference rates, P95 and every delta are absent when the reference has fewer than 20 valid samples. */
+  events?: number; completed?: number; completionRate?: number | null; p95Ms?: number | null;
+  referenceRequests?: number; referenceFailures?: number; referenceEvents?: number; referenceCompleted?: number;
+  referenceErrorRate?: number | null; referenceClientErrorRate?: number | null; referenceServerErrorRate?: number | null;
+  referenceCompletionRate?: number | null; referenceP95Ms?: number | null;
+  /** trafficDelta is a relative change (0.25 = +25%); the rate deltas are percentage points as fractions; p95DeltaMs is milliseconds. */
+  trafficDelta?: number | null; completionDelta?: number | null; clientErrorDelta?: number | null; serverErrorDelta?: number | null; p95DeltaMs?: number | null;
 }
 /** pendingAsync is additive and absent when zero: Asynchronous requests that only answered 202 Accepted, counted inside incomplete. */
 export interface QualityCounts { incomplete: number; invalid: number; unknownOutcome: number; pendingAsync?: number }
 /** byKind splits the counts by row kind (synchronous, asynchronous, hangfire, unknown); only kinds with something to report appear. */
 export interface Quality { incomplete: number; invalid: number; unknownOutcome: number; pendingAsync?: number; byKind?: Record<string, QualityCounts> }
+/** One window of one kind's overview. Rates and quantiles are absent below 20 valid samples; incomplete and pending rows are counted in events but never treated as fast or successful. */
+export interface OverviewWindow {
+  events: number; completed: number; incomplete: number; invalid: number; unknownOutcome: number; clientErrors: number; serverErrors: number;
+  perMinute: number; completionRate?: number | null; clientErrorRate?: number | null; serverErrorRate?: number | null;
+  p50?: Quantile | null; p90?: Quantile | null; p95?: Quantile | null; p99?: Quantile | null;
+}
+/** Deltas against the reference window; every one is absent unless the reference has at least 20 valid samples. Traffic is relative, rates are percentage points as fractions, latency is ms. */
+export interface OverviewDelta {
+  traffic?: number | null; completionRate?: number | null; clientErrorRate?: number | null; serverErrorRate?: number | null;
+  p50Ms?: number | null; p90Ms?: number | null; p95Ms?: number | null; p99Ms?: number | null;
+}
+/** One row per kind in scope (synchronous, asynchronous, hangfire, plus unknown only when present); histograms are never merged across kinds. */
+export interface OverviewRow extends OverviewWindow {
+  kind: string; state: string; reference: OverviewWindow; delta: OverviewDelta;
+}
 export interface Analysis {
+  overview?: OverviewRow[];
   loadWindows?: LoadWindow[];
   requestVolume?: VolumeBucket[];
   query: Query; apis: Comparison[]; timeline: Series[]; sources: SourceResult[];

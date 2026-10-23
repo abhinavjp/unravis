@@ -15,6 +15,8 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
   import ComparisonTable from './components/ComparisonTable.svelte';
   import RequestTable from './components/RequestTable.svelte';
   import RecordDetailPanel from './components/RecordDetail.svelte';
+  import OverviewStrip from './components/OverviewStrip.svelte';
+  import type { OverviewDrill } from './lib/overview';
 
   let info = $state<Info | null>(null);
   let sources = $state<Source[]>([]);
@@ -34,6 +36,8 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
   // A quality drill-down pages the whole comparison (no API group) narrowed to one state.
   let requestState = $state('');
   let queryWide = $state(false);
+  // An overview tile drill-down narrows the same request list to one kind (and status class) of this comparison.
+  let drillOverview = $state<OverviewDrill | null>(null);
   let contextAnchor = $state<RequestRecord | null>(null);
   let timelineKeys = $state<string[]>([]);
   let requestPage = $state<Page | null>(null);
@@ -405,7 +409,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
     requestController?.abort(); recordController?.abort();
     requestController = null; recordController = null;
     requestPage = null; requestRows = []; record = null;
-    requestPageNumber = 1; requestState = ''; queryWide = false;
+    requestPageNumber = 1; requestState = ''; queryWide = false; drillOverview = null;
     requestError = ''; recordError = ''; recordLoadingId = '';
   }
 
@@ -624,13 +628,26 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
     await tick();
     document.getElementById('request-history')?.scrollIntoView({ block: 'start' });
   }
+  async function drillFromOverview(drill: OverviewDrill) {
+    contextAnchor = null; invalidateDetails(); selectedKey = '';
+    queryWide = true; requestState = drill.state; drillOverview = drill;
+    await loadRequests('', 1);
+    await tick();
+    document.getElementById('request-history')?.scrollIntoView({ block: 'start' });
+  }
+  // The comparison's query with the overview drill-down's kind and status class applied; unchanged without one.
+  function drillQuery(source: Query): Query {
+    const copy = JSON.parse(JSON.stringify(source)) as Query;
+    if (drillOverview) { copy.kind = drillOverview.kind; if (drillOverview.outcome) copy.outcome = drillOverview.outcome; }
+    return copy;
+  }
   async function loadRequests(cursor: string, pageNumber: number) {
     if ((!selectedKey && !queryWide) || !analysis) return;
     requestController?.abort(); requestController = new AbortController();
     const run = ++requestSequence;
     requestLoading = true; requestError = '';
     try {
-      const page = await api.requests(JSON.parse(JSON.stringify(analysis.query)) as Query, queryWide ? '' : selectedKey, cursor, requestController.signal, requestState);
+      const page = await api.requests(drillQuery(analysis.query), queryWide ? '' : selectedKey, cursor, requestController.signal, requestState);
       if (run !== requestSequence) return;
       requestPage = page;
       requestRows = page.rows.slice(0, info?.limits.maxPageSize ?? 100);
@@ -650,7 +667,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
     if (!selected && !queryWide) return;
     requestError = '';
     try {
-      const result = await api.export(JSON.parse(JSON.stringify(analysis?.query ?? query)) as Query, queryWide ? '' : (selected?.key ?? ''), undefined, requestState);
+      const result = await api.export(drillQuery(analysis?.query ?? query), queryWide ? '' : (selected?.key ?? ''), undefined, requestState);
       const url = URL.createObjectURL(result.blob);
       const link = document.createElement('a'); link.href = url; link.download = 'unravis-requests.csv';
       document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -807,7 +824,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
 
     <main class="analysis-workspace" inert={connectionsOpen}>
       <div class="frozen-run-note" role="status">{restoredInTab ? 'Restored this tab’s investigation filters. ' : ''}{investigationNotice} <button class="quiet-button" onclick={resetInvestigation}>Reset investigation</button></div>
-      {#key controlsResetKey}<QueryControls bind:query bind:zone bind:targetMs bind:dateInputsValid />{/key}
+      {#key controlsResetKey}<QueryControls bind:query bind:zone bind:targetMs bind:dateInputsValid now={info?.now ?? ''} />{/key}
       <section class="analysis-main">
         <div class="analysis-heading">
           <div><h2>Compare API speed</h2><p>See how the selected period compares with earlier requests.</p></div>
@@ -822,6 +839,8 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
             </div>
           {/if}
           <details class="result-notes"><summary>About these results and sample sizes</summary><div class="calculation-notes">{#each calculationNotes as note}<p>{note}</p>{/each}</div></details>
+          <OverviewStrip overview={analysis.overview ?? []} outcomeFilter={analysis.query.outcome} onDrill={drillFromOverview}>
+            {#snippet quality()}{#if analysis}
           <div class="quality-strip">
             <div><strong>{analysis.apis.length.toLocaleString()}</strong><span>API groups</span></div>
             <div><button type="button" class="quality-count" disabled={!analysis.quality.incomplete} title="List the requests behind this count" onclick={() => drillQuality('incomplete')}><strong>{analysis.quality.incomplete.toLocaleString()}</strong><span>Missing timing</span></button></div>
@@ -833,6 +852,8 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
           <p>Response times are estimates. A comparison shows change, not a health verdict.</p>
           <details class="quality-definitions"><summary>What these counts mean</summary><p><strong>Missing timing:</strong> no complete duration was recorded. <strong>Unusable timing:</strong> a duration was present but could not be used. <strong>Unclassified result:</strong> the request could not be identified as a success or failure. <strong>Pending async:</strong> an asynchronous request that only answered 202 Accepted; its work is not finished, so it is counted as missing timing and never as a response-time sample.</p></details>
           </div>
+            {/if}{/snippet}
+          </OverviewStrip>
           <RequestVolume {analysis} {zone} />
           <TrafficSlowness {analysis} {zone} {sourceLabels} cohort={selected} onContext={async(row)=>{contextAnchor=row;await tick();document.getElementById('nearby-activity')?.scrollIntoView({block:'start'});}} />
           <section class="data-section" id="api-group-results">
@@ -851,7 +872,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
             <Charts {analysis} {selected} {zone} {targetMs} />
           {/if}
           <section class="data-section request-section" id="request-history">
-            <div class="section-heading"><div><h3>Request history</h3><p>{queryWide ? stateLabel(requestState) + ' · every API group in this comparison' : selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
+            <div class="section-heading"><div><h3>Request history</h3><p>{queryWide ? (drillOverview?.label ?? stateLabel(requestState)) + ' · every API group in this comparison' : selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
               {#if selected || queryWide}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
             </div>
             {#if requestError}<div class="inline-error" role="alert">{requestError}</div>{/if}
