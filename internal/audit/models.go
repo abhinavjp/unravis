@@ -188,8 +188,9 @@ type Point struct {
 	P95Ratio *float64  `json:"p95Ratio"`
 }
 
-// LoadCorrelation is the Spearman rho between estimated concurrency and
-// per-bucket P95; it is nil below 8 paired buckets.
+// LoadCorrelation is the Spearman rho between the load other cohorts put on
+// the system (Little's-law concurrency) and this series' per-bucket P95; it is
+// nil below 8 paired buckets or when either side is constant.
 type Series struct {
 	Key             string   `json:"key"`
 	Points          []Point  `json:"points"`

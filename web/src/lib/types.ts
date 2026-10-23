@@ -42,7 +42,7 @@ export interface Comparison {
   shiftZ?: number | null; significant?: boolean;
 }
 export interface Point { at: string; count: number | null; p50: Quantile | null; p95: Quantile | null; p95Ratio: number | null }
-/** loadCorrelation: Spearman rho of estimated concurrency vs per-bucket P95; absent below 8 paired buckets. */
+/** loadCorrelation: Spearman rho of other traffic's estimated concurrency vs this series' per-bucket P95; absent below 8 paired buckets. */
 export interface Series { key: string; points: Point[]; loadCorrelation?: number | null }
 /** Per-API current-window throughput; requests and failures count known outcomes only. errorRate is absent when requests is 0. */
 export interface Rollup { controller: string; action: string; requests: number; failures: number; errorRate?: number | null; perMinute: number }
