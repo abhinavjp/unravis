@@ -8,7 +8,7 @@
     query: Query; sourceLabels: Map<string, string>; onDrill: (filter: BreakdownFilter, row: BreakdownRow, dim: BreakdownDim) => void;
     lockedDim?: BreakdownDim; panelId?: string; heading?: string;
   } = $props();
-  let picked = $state<BreakdownDim>('statusCode');
+  let picked = $state<BreakdownDim>('userId');
   const dim = $derived<BreakdownDim>(lockedDim ?? picked);
   let ipOpen = $state(false);
   let result = $state<Breakdown | null>(null);

@@ -74,7 +74,7 @@ func compareTimelines(result *audit.Analysis, id string, keys []string) (any, er
 				}
 			}
 			status := "missing"
-			if observed {
+			if observed && point.Count > 0 {
 				status = "few_samples"
 				if point.Count >= 20 && group.State == "compared" {
 					status = "enough_samples"
