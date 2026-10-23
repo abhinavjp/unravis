@@ -66,7 +66,8 @@ type OverviewDelta struct {
 // reference window's rates and quantiles are absent below minReferenceSamples
 // valid samples. The current window is not gated on valid samples: its
 // completion share needs only Events > 0, its error shares need known outcomes
-// with every outcome returned (so both can appear with no valid sample), and
+// with every outcome returned and status counters that account for every
+// failure (so both can appear with no valid sample), and
 // its quantiles need at least one valid sample, however few, so
 // insufficient_data is the guard against reading too much into them.
 type OverviewRow struct {
@@ -129,6 +130,7 @@ func (w *kindWindow) add(b Bucket) error {
 // quantiles. The reference window passes minReferenceSamples; the current window
 // passes 0, so the guard Completed < minSamples never holds for it. Past the
 // guard the completion share still needs Events > 0, the error shares need
+// Events > 0 and
 // allOutcomes, known outcomes and status counters that account for every
 // failure, and the quantiles need at least one valid sample. A current window
 // can therefore show shares with zero valid samples, and OverviewRow.State
