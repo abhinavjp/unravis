@@ -82,7 +82,7 @@ func (b *Bridge) session(ctx context.Context) (string, error) {
 }
 func (b *Bridge) request(ctx context.Context, path string, input, output any) error {
 	switch path {
-	case "/api/info", "/api/sources", "/api/analyze", "/api/requests", "/api/activity":
+	case "/api/info", "/api/sources", "/api/analyze", "/api/requests", "/api/activity", "/api/slowest", "/api/breakdown":
 	default:
 		return errors.New("audit operation is not allowed")
 	}

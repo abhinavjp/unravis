@@ -97,10 +97,15 @@ func TestRequestMetadataProjectionExcludesSensitiveFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := json.Marshal(result)
-	for _, private := range []string{"password", "private.example", "private-record-id", token} {
+	for _, private := range []string{"password", "private.example", token} {
 		if strings.Contains(string(data), private) {
 			t.Fatalf("projection exposed %s", private)
 		}
+	}
+	// Deliberately changed from "no record id": a finding must cite the record id
+	// (see TestMCPRequestsExposeIDNotPayloadOrIP for the full allow-list).
+	if !strings.Contains(string(data), `"id":"private-record-id"`) {
+		t.Fatal("record id not returned")
 	}
 	if !strings.Contains(string(data), `"durationMs":42`) {
 		t.Fatal("timing lost")

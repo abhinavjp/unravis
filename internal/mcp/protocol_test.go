@@ -40,7 +40,7 @@ func TestProtocolLifecycleAndReadOnlyDiscovery(t *testing.T) {
 	io.WriteString(clientInput, `{"jsonrpc":"2.0","method":"notifications/initialized"}`+"\n")
 	listed := send(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	definitions := listed["result"].(map[string]any)["tools"].([]any)
-	if len(definitions) != 8 {
+	if len(definitions) != 10 {
 		t.Fatalf("tools=%d", len(definitions))
 	}
 	for _, item := range definitions {
