@@ -48,6 +48,32 @@ func testConnection(uri string) audit.ConnectionInput {
 	return audit.ConnectionInput{URI: uri, Username: "reader", AuthSource: "admin", TLSMode: "system", CACertificate: ""}
 }
 
+func TestHistoryDirStillAPIAuditExplorer(t *testing.T) {
+	override := t.TempDir()
+	service, err := NewDefault(func(key string) string {
+		if key == "AUDIT_CONFIG_DIR" {
+			return override
+		}
+		return ""
+	})
+	if err != nil {
+		t.Skipf("default storage needs the Windows DPAPI protector: %v", err)
+	}
+	if want := filepath.Join(override, "connections.dat"); service.path != want {
+		t.Fatalf("AUDIT_CONFIG_DIR override path=%q want %q", service.path, want)
+	}
+	appData := t.TempDir()
+	t.Setenv("APPDATA", appData)
+	t.Setenv("XDG_CONFIG_HOME", appData)
+	service, err = NewDefault(nil)
+	if err != nil {
+		t.Skipf("default storage needs the Windows DPAPI protector: %v", err)
+	}
+	if want := filepath.Join(appData, "APIAuditExplorer", "connections.dat"); service.path != want {
+		t.Fatalf("default path=%q want %q", service.path, want)
+	}
+}
+
 func TestPasswordIsEncryptedOnDiskAndNeverInPublicRecent(t *testing.T) {
 	service, path := testService(t)
 	input := testConnection("mongodb://db.example")

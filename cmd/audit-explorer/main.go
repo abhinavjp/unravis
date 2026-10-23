@@ -42,7 +42,7 @@ func main() {
 }
 
 func run(args []string, getenv func(string) string) error {
-	flags := flag.NewFlagSet("api-audit-explorer", flag.ContinueOnError)
+	flags := flag.NewFlagSet("unravis", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	demo := flags.Bool("demo", false, "run with deterministic illustrative data")
 	port := flags.Int("port", defaultPort, "loopback HTTP port (0 chooses an available port)")
@@ -112,7 +112,7 @@ func run(args []string, getenv func(string) string) error {
 	if !*noBrowser && runtime.GOOS == "windows" {
 		_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", localURL).Start()
 	}
-	log.Printf("API Audit Explorer listening at %s (demo=%t)", localURL, *demo)
+	log.Printf("Unravis listening at %s (demo=%t)", localURL, *demo)
 
 	signalContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

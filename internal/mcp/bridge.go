@@ -63,7 +63,7 @@ func (b *Bridge) session(ctx context.Context) (string, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, b.base+"/", nil)
 	response, err := b.client.Do(req)
 	if err != nil {
-		return "", errors.New("API Audit Explorer is unavailable. Start the dashboard and check the configured port")
+		return "", errors.New("Unravis is unavailable. Start the dashboard and check the configured port")
 	}
 	defer response.Body.Close()
 	data, err := boundedBody(response.Body, 1<<20)

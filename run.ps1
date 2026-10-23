@@ -5,13 +5,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$Executable = Join-Path $PSScriptRoot 'dist\api-audit-explorer.exe'
+$Executable = Join-Path $PSScriptRoot 'dist\unravis.exe'
 if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
-    throw "API Audit Explorer is not built. Run .\build.ps1 first."
+    throw "Unravis is not built. Run .\build.ps1 first."
 }
 
 $Arguments = @('--port', [string]$Port)
 if ($Demo) { $Arguments += '--demo' }
 if ($NoBrowser) { $Arguments += '--no-browser' }
 & $Executable @Arguments
-if ($LASTEXITCODE -ne 0) { throw "API Audit Explorer exited with code $LASTEXITCODE." }
+if ($LASTEXITCODE -ne 0) { throw "Unravis exited with code $LASTEXITCODE." }

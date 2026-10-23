@@ -1,10 +1,10 @@
 # AI slowdown investigations through local MCP
 
-The same `api-audit-explorer.exe` serves the dashboard normally and, with `--mcp`, provides eight read-only MCP tools over standard input/output. Codex and Claude Code can use the tools alongside their existing access to this repository. No model API key, Cloudflare service, new runtime or npm package is required.
+The same `unravis.exe` serves the dashboard normally and, with `--mcp`, provides eight read-only MCP tools over standard input/output. Codex and Claude Code can use the tools alongside their existing access to this repository. No model API key, Cloudflare service, new runtime or npm package is required.
 
 ## Use it
 
-1. Keep API Audit Explorer running at `http://127.0.0.1:18765` and connect the databases you want available. Connections can span servers and databases. The MCP process reuses the dashboard's active sources; it cannot create connections or retrieve passwords.
+1. Keep Unravis running at `http://127.0.0.1:18765` and connect the databases you want available. Connections can span servers and databases. The MCP process reuses the dashboard's active sources; it cannot create connections or retrieve passwords.
 2. Reload the Codex/Claude MCP configuration after installation. This repo's `.mcp.json` registers `api_audit_explorer` for Claude Code; `.codex/config.toml` registers it for Codex in a trusted project. Client workspace trust/server approval still applies. The running conversation does not automatically gain newly registered tools.
 3. Ask for an investigation with the symptom, exact interval and time zone, and sources. Name a suitable earlier reference period, or ask the AI to propose one before querying.
 
@@ -41,16 +41,16 @@ Credentials and the local session token stay inside the bridge. Metadata outputs
 
 ## Client configuration
 
-The installed project entries use the canonical executable at the current checkout path. On another machine update `command` to that checkout's built executable. Keep the `--port` value aligned with the running dashboard. Client timeout 310 seconds leaves room for the app's five-minute operation budget.
+The installed project entries use the canonical executable at the current checkout path. On another machine update `command` to that checkout's built executable. Keep the `--port` value aligned with the running dashboard. Client timeout 310 seconds leaves room for the app's five-minute operation budget. Existing client configs that point at `dist/api-audit-explorer.exe` keep working for one release, because `build.ps1` also writes a compatibility copy there.
 
 Claude Code `.mcp.json` entry (merge with existing servers):
 
 ```json
 {
   "mcpServers": {
-    "api_audit_explorer": {
+    "unravis": {
       "type": "stdio",
-      "command": "D:/Projects/brain-payroll-all-portals/tools/api-audit-explorer/dist/api-audit-explorer.exe",
+      "command": "D:/Projects/brain-payroll-all-portals/tools/api-audit-explorer/dist/unravis.exe",
       "args": ["--mcp", "--port", "18765"],
       "timeout": 310000
     }
@@ -61,8 +61,8 @@ Claude Code `.mcp.json` entry (merge with existing servers):
 Codex trusted-project `.codex/config.toml` entry:
 
 ```toml
-[mcp_servers.api_audit_explorer]
-command = "D:/Projects/brain-payroll-all-portals/tools/api-audit-explorer/dist/api-audit-explorer.exe"
+[mcp_servers.unravis]
+command = "D:/Projects/brain-payroll-all-portals/tools/api-audit-explorer/dist/unravis.exe"
 args = ["--mcp", "--port", "18765"]
 startup_timeout_sec = 10
 tool_timeout_sec = 310

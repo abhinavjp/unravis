@@ -1,12 +1,12 @@
-# API Audit Explorer
+# Unravis
 
-API Audit Explorer is a local Windows utility for comparing API request durations with a fixed, preceding reference period. It runs an HTTP service bound only to `127.0.0.1` and embeds the dashboard in the executable.
+Unravis is a local Windows utility for comparing API request durations with a fixed, preceding reference period. It runs an HTTP service bound only to `127.0.0.1` and embeds the dashboard in the executable.
 
 ## Start
 
 Double-click `Start Live.cmd` to open live mode on an available local port, even when a demo is already running. Keep its terminal open while using the dashboard. Startup errors remain visible in that window.
 
-The prebuilt `dist\api-audit-explorer.exe` runs without Go or Node installed. Double-click it for live connections, or use `run.ps1 -Demo` for samples. To rebuild from source:
+The prebuilt `dist\unravis.exe` runs without Go or Node installed. Double-click it for live connections, or use `run.ps1 -Demo` for samples. To rebuild from source:
 
 ```powershell
 .\build.ps1
@@ -92,7 +92,7 @@ Use the same token value in both terminals. The frontend dev server binds to loo
 
 ## Build and checks
 
-`build.ps1` resolves Go from `PATH` or the workspace-local `.dev/toolchains/go/bin/go.exe`. Pass `-GoPath` to select a specific executable. It keeps Go caches under `.dev/toolchains/cache`, installs the isolated web dependencies with `npm ci`, runs the frontend check and production build, runs `go test ./...` and `go vet ./...`, and builds `dist/api-audit-explorer.exe` with CGO disabled.
+`build.ps1` resolves Go from `PATH` or the workspace-local `.dev/toolchains/go/bin/go.exe`. Pass `-GoPath` to select a specific executable. It keeps Go caches under `.dev/toolchains/cache`, installs the isolated web dependencies with `npm ci`, runs the frontend check and production build, runs `go test ./...` and `go vet ./...`, and builds `dist/unravis.exe` with CGO disabled, plus a `dist/api-audit-explorer.exe` compatibility copy for one release.
 
 To skip web dependency installation and rebuild only the Go executable using the existing `web/dist` assets:
 

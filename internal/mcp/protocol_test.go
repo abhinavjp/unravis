@@ -68,6 +68,40 @@ func TestProtocolLifecycleAndReadOnlyDiscovery(t *testing.T) {
 	clientOutput.Close()
 }
 
+func TestServerInfoNameIsUnravis(t *testing.T) {
+	input, clientInput := io.Pipe()
+	clientOutput, output := io.Pipe()
+	b, _ := New(18765)
+	done := make(chan error, 1)
+	go func() { done <- b.Serve(context.Background(), input, output); output.Close() }()
+	scanner := bufio.NewScanner(clientOutput)
+	if _, err := io.WriteString(clientInput, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if !scanner.Scan() {
+		t.Fatal("no MCP response")
+	}
+	var response struct {
+		Result struct {
+			ServerInfo struct {
+				Name string `json:"name"`
+			} `json:"serverInfo"`
+			Instructions string `json:"instructions"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Result.ServerInfo.Name != "unravis" || !strings.HasPrefix(response.Result.Instructions, "Unravis:") {
+		t.Fatalf("serverInfo=%q instructions=%q", response.Result.ServerInfo.Name, response.Result.Instructions)
+	}
+	clientInput.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	clientOutput.Close()
+}
+
 func TestCacheExpiresAndPagingDoesNotMutateResults(t *testing.T) {
 	b := newBridge("http://127.0.0.1:1", nil)
 	now := time.Now()
