@@ -554,3 +554,50 @@ test('stateLabel names every row state and drill-down filter', () => {
   assert.equal(presentation.stateLabel('valid'), 'Complete');
   assert.equal(presentation.stateLabel(undefined), '');
 });
+
+const recordFilterBase = { sourceIds: ['s'], start: '2026-10-22T12:00:00.000Z', end: '2026-10-22T12:15:00.000Z', baselineStart: '2026-10-22T11:45:00.000Z', baselineEnd: '2026-10-22T12:00:00.000Z', kind: 'all', outcome: 'all', metric: 'total', bucketSeconds: 10, controller: '', action: '' };
+
+test('serializeRecordFilters omits empties', () => {
+  assert.deepEqual(investigation.serializeRecordFilters({}), {});
+  assert.deepEqual(investigation.serializeRecordFilters(null), {});
+  assert.deepEqual(investigation.serializeRecordFilters({
+    userIds: [], uiVersions: [' ', ''], userAgentContains: '   ', userIps: [], urlContains: '', auditId: '', statusCodes: [], completion: 'all', operation: ' '
+  }), {});
+  assert.deepEqual(investigation.serializeRecordFilters({
+    userIds: [7, 7, 9], uiVersions: [' 2.1 ', '2.1'], userAgentContains: ' Firefox ', userIps: ['203.0.113.7'], urlContains: '/pay', auditId: '0123456789abcdef01234567',
+    statusCodes: ['404', ''], completion: 'incomplete', operation: 'Payroll.Run'
+  }), {
+    userIds: [7, 9], uiVersions: ['2.1'], userAgentContains: 'Firefox', userIps: ['203.0.113.7'], urlContains: '/pay', auditId: '0123456789abcdef01234567',
+    statusCodes: ['404'], completion: 'incomplete', operation: 'Payroll.Run'
+  });
+  assert.equal('userIds' in investigation.serializeRecordFilters({ userIds: [] }), false);
+  // Wrong types are dropped rather than trusted.
+  assert.deepEqual(investigation.serializeRecordFilters({ userIds: ['7', 1.5, NaN], uiVersions: 'x', completion: 'everything', operation: 5 }), {});
+  assert.equal(investigation.serializeRecordFilters({ userIds: Array.from({ length: 80 }, (_, i) => i) }).userIds.length, 50);
+  assert.equal(investigation.serializeRecordFilters({ statusCodes: Array.from({ length: 30 }, (_, i) => String(400 + i)) }).statusCodes.length, 20);
+});
+
+test('record filters survive a saved investigation and an old snapshot without them still loads', () => {
+  const filters = { userIds: [7], completion: 'pending', operation: 'Payroll.Run', urlContains: '/pay' };
+  const snapshot = investigation.createInvestigationSnapshot({ ...recordFilterBase, ...filters, uiVersions: [], auditId: '' }, [], 'UTC', null);
+  assert.deepEqual(Object.keys(snapshot.query).filter(key => !(key in recordFilterBase)), ['userIds', 'urlContains', 'completion', 'operation']);
+  const parsed = investigation.parseInvestigationSnapshot(JSON.stringify(snapshot));
+  assert.deepEqual(parsed.query.userIds, [7]);
+  assert.deepEqual(investigation.restoreInvestigation(parsed, []).operation, 'Payroll.Run');
+  const { sourceIds, ...legacyQuery } = recordFilterBase;
+  const legacy = investigation.parseInvestigationSnapshot(JSON.stringify({ version: 1, query: legacyQuery, selectedSources: [], zone: 'UTC', targetMs: null }));
+  assert.ok(legacy);
+  assert.deepEqual(Object.keys(investigation.restoreInvestigation(legacy, [])).sort(), [...Object.keys(recordFilterBase), 'targetMs', 'zone'].sort());
+  const tampered = investigation.parseInvestigationSnapshot(JSON.stringify({ version: 1, query: { ...legacyQuery, userIds: 'oops', completion: 'x' }, selectedSources: [], zone: 'UTC', targetMs: null }));
+  assert.ok(tampered);
+  assert.equal('userIds' in tampered.query || 'completion' in tampered.query, false);
+});
+
+test('query fingerprint covers record filters and treats empty as absent', () => {
+  const plain = presentation.queryFingerprint(recordFilterBase);
+  assert.equal(presentation.queryFingerprint({ ...recordFilterBase, userIds: [], uiVersions: [], userAgentContains: '', userIps: [], urlContains: ' ', auditId: '', statusCodes: [], completion: 'all', operation: '' }), plain);
+  for (const filter of [{ userIds: [1] }, { uiVersions: ['2'] }, { userAgentContains: 'a' }, { userIps: ['1.1.1.1'] }, { urlContains: 'u' }, { auditId: 'a'.repeat(24) }, { statusCodes: ['500'] }, { completion: 'invalid' }, { operation: 'A.b' }]) {
+    assert.notEqual(presentation.queryFingerprint({ ...recordFilterBase, ...filter }), plain, JSON.stringify(filter));
+  }
+  assert.equal(presentation.queryFingerprint({ ...recordFilterBase, userIds: [2, 1] }), presentation.queryFingerprint({ ...recordFilterBase, userIds: [1, 2] }));
+});

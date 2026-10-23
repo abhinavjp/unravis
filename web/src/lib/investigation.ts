@@ -1,4 +1,4 @@
-import type { Query, Source } from './types';
+import type { Completion, Query, RecordFilters, Source } from './types';
 
 export const INVESTIGATION_STORAGE_KEY = 'api-audit-explorer.investigation.v1';
 const VERSION = 1;
@@ -8,6 +8,51 @@ export const investigationStorageKey = (mode: InvestigationMode) => `${INVESTIGA
 const validZone = (zone: string) => {
   try { new Intl.DateTimeFormat(undefined, { timeZone: zone }); return true; } catch { return false; }
 };
+
+const COMPLETIONS: readonly string[] = ['complete', 'incomplete', 'pending', 'invalid'];
+const MAX_FILTER_VALUES = 20;
+const MAX_USER_IDS = 50;
+const cleanStrings = (value: unknown, max: number): string[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  const items = [...new Set(value.filter((item): item is string => typeof item === 'string').map(item => item.trim()).filter(Boolean))].slice(0, max);
+  return items.length ? items : undefined;
+};
+const cleanText = (value: unknown): string | undefined => {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text ? text : undefined;
+};
+
+/**
+ * serializeRecordFilters keeps only the record filters that are in use, in a
+ * fixed key order, so that an unused filter never reaches the server, the saved
+ * investigation or the staleness fingerprint. Anything that is not the expected
+ * type is dropped, which lets a snapshot saved before these filters existed (or
+ * a hand-edited one) load as "no filters".
+ */
+export function serializeRecordFilters(source: Partial<Record<keyof RecordFilters, unknown>> | null | undefined): RecordFilters {
+  const out: RecordFilters = {};
+  if (!source) return out;
+  if (Array.isArray(source.userIds)) {
+    const ids = [...new Set(source.userIds.filter((id): id is number => typeof id === 'number' && Number.isSafeInteger(id)))].slice(0, MAX_USER_IDS);
+    if (ids.length) out.userIds = ids;
+  }
+  const uiVersions = cleanStrings(source.uiVersions, MAX_FILTER_VALUES);
+  if (uiVersions) out.uiVersions = uiVersions;
+  const agent = cleanText(source.userAgentContains);
+  if (agent) out.userAgentContains = agent;
+  const ips = cleanStrings(source.userIps, MAX_FILTER_VALUES);
+  if (ips) out.userIps = ips;
+  const url = cleanText(source.urlContains);
+  if (url) out.urlContains = url;
+  const auditId = cleanText(source.auditId);
+  if (auditId) out.auditId = auditId;
+  const statusCodes = cleanStrings(source.statusCodes, MAX_FILTER_VALUES);
+  if (statusCodes) out.statusCodes = statusCodes;
+  if (typeof source.completion === 'string' && COMPLETIONS.includes(source.completion)) out.completion = source.completion as Completion;
+  const operation = cleanText(source.operation);
+  if (operation) out.operation = operation;
+  return out;
+}
 
 export interface InvestigationSnapshot {
   version: 1;
@@ -50,7 +95,7 @@ export function createInvestigationSnapshot(query: Query, sources: Source[], zon
     query: {
       start: query.start, end: query.end, baselineStart: query.baselineStart, baselineEnd: query.baselineEnd,
       kind: query.kind, outcome: query.outcome, metric: query.metric, bucketSeconds: query.bucketSeconds,
-      controller: query.controller, action: query.action
+      controller: query.controller, action: query.action, ...serializeRecordFilters(query)
     },
     selectedSources: uniqueDescriptors([...currentSelected, ...unresolvedSelected]).slice(0, 8),
     knownSources,
@@ -99,7 +144,7 @@ export function parseInvestigationSnapshot(raw: string | null): InvestigationSna
       query: {
         start: q.start, end: q.end, baselineStart: q.baselineStart, baselineEnd: q.baselineEnd,
         kind: q.kind, outcome: q.outcome, metric: q.metric, bucketSeconds: q.bucketSeconds,
-        controller: q.controller, action: q.action
+        controller: q.controller, action: q.action, ...serializeRecordFilters(q)
       },
       selectedSources: parsed.selectedSources.map(source => ({ id: source.id, ...(source.selectionKey ? { selectionKey: source.selectionKey } : {}) })),
       knownSources: (parsed.knownSources ?? parsed.selectedSources).map(source => ({ id: source.id, ...(source.selectionKey ? { selectionKey: source.selectionKey } : {}) })),
@@ -122,7 +167,7 @@ export function restoreInvestigation(snapshot: InvestigationSnapshot, sources: S
   return {
     start: query.start, end: query.end, baselineStart: query.baselineStart, baselineEnd: query.baselineEnd,
     kind: query.kind, outcome: query.outcome, metric: query.metric, bucketSeconds: query.bucketSeconds,
-    controller: query.controller, action: query.action, sourceIds: [...new Set(ids)], zone: snapshot.zone, targetMs: snapshot.targetMs
+    controller: query.controller, action: query.action, ...serializeRecordFilters(query), sourceIds: [...new Set(ids)], zone: snapshot.zone, targetMs: snapshot.targetMs
   };
 }
 

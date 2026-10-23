@@ -142,6 +142,7 @@ func aggregateDemo(records []RequestRecord, q Query, selected map[string]bool, c
 		set           bool
 		phases        Bucket // only the phase sums and counts and the pending and status class counts are used
 	}
+	q = q.Normalized()
 	groups := map[bucketKey]*aggregate{}
 	start, end := q.BaselineStart, q.BaselineEnd
 	if current {
@@ -155,7 +156,7 @@ func aggregateDemo(records []RequestRecord, q Query, selected map[string]bool, c
 			continue
 		}
 		state, class, value, ok := demoSummaryRow(r, q)
-		if !ok {
+		if !ok || !demoRecordMatches(q, r, state, class) {
 			continue
 		}
 		bin := 0
@@ -268,6 +269,20 @@ func demoSummaryRow(r RequestRecord, q Query) (state, class string, value *float
 	return state, class, value, true
 }
 
+// demoRecordMatches applies the shared record filters to one demo row: the
+// identity, client, URL and status filters and the completion filter, the same
+// rules the Mongo pipelines and the legacy reader apply. q must already be
+// normalized so that Operation is folded into Controller and Action.
+func demoRecordMatches(q Query, r RequestRecord, state, class string) bool {
+	if !StateMatches(q.Completion, state, class == StatusPending, r.Outcome) {
+		return false
+	}
+	return RecordFilterMatches(q, RecordFacts{
+		ID: r.ID, UserID: r.UserID, UserIP: r.UserIP, UserAgent: r.UserAgent,
+		UIVersion: r.UIVersion, URL: r.URL, Status: r.Status,
+	})
+}
+
 func addDemoPhase(sum *float64, n *int64, value *float64) {
 	if value != nil && *value >= 0 {
 		*sum += *value
@@ -282,6 +297,7 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 	if err := ValidateQuery(input.Query); err != nil {
 		return Page{}, err
 	}
+	input.Query = input.Query.Normalized()
 	if input.Limit < 1 || input.Limit > MaxPageSize {
 		return Page{}, fmt.Errorf("%w: page limit must be between 1 and %d", ErrLimit, MaxPageSize)
 	}
@@ -347,7 +363,7 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 			continue
 		}
 		rowState, class, _, ok := demoSummaryRow(r, input.Query)
-		if !ok || !StateMatches(state, rowState, class == StatusPending, r.Outcome) {
+		if !ok || !StateMatches(state, rowState, class == StatusPending, r.Outcome) || !demoRecordMatches(input.Query, r, rowState, class) {
 			continue
 		}
 		r.State = rowState

@@ -15,9 +15,17 @@ export const rankComparisons = (rows: Comparison[], field: RankField = 'ratio', 
 export const initialComparison = (rows: Comparison[]) => rankComparisons(rows, rows.some(row => row.impactMs != null) ? 'impact' : 'ratio').find(row => row.state === 'compared' && row.current.count > 0)
   ?? rows.slice().sort((a, b) => b.current.count - a.current.count)[0] ?? null;
 
+// Record filters count as unused when absent, empty or blank, so a draft with an
+// emptied field and the server's echo of it (which drops empties) match; lists
+// are sets, so their order does not matter.
+const filterList = (values: readonly (string | number)[] | undefined) => [...new Set((values ?? []).map(value => String(value).trim()).filter(Boolean))].sort();
+const filterText = (value: string | undefined) => (value ?? '').trim();
 export const queryFingerprint = (query: Query) => JSON.stringify([
   [...query.sourceIds].sort(), ...[query.start, query.end, query.baselineStart, query.baselineEnd].map(value => Date.parse(value)),
-  query.kind, query.outcome, query.metric, query.bucketSeconds, query.controller ?? '', query.action ?? ''
+  query.kind, query.outcome, query.metric, query.bucketSeconds, query.controller ?? '', query.action ?? '',
+  filterList(query.userIds), filterList(query.uiVersions), filterText(query.userAgentContains), filterList(query.userIps),
+  filterText(query.urlContains), filterText(query.auditId), filterList(query.statusCodes),
+  query.completion === 'all' ? '' : query.completion ?? '', filterText(query.operation)
 ]);
 
 export const resultNotes = (rows: Comparison[]) => {

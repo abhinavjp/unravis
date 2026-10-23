@@ -69,6 +69,9 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 	if err := audit.ValidateQuery(input.Query); err != nil {
 		return audit.Page{}, fmt.Errorf("%w: %v", audit.ErrInvalidInput, err)
 	}
+	// The record filters and Operation reach the pipelines through the normalized
+	// query, so Operation becomes one controller and one action condition.
+	input.Query = input.Query.Normalized()
 	if input.Limit < 1 || input.Limit > audit.MaxPageSize {
 		return audit.Page{}, fmt.Errorf("%w: page limit must be between 1 and %d", audit.ErrLimit, audit.MaxPageSize)
 	}
@@ -290,6 +293,8 @@ func requestPipelineScoped(q audit.Query, cohort [5]string, state string, summar
 	if cohort[2] != "" {
 		match = append(match, bson.E{Key: "ActionName", Value: cohort[2]})
 	}
+	q = q.Normalized()
+	match = append(match, recordMatch(q)...)
 	if sourceID == "" {
 		return nil
 	}
@@ -321,6 +326,7 @@ func requestPipelineScoped(q audit.Query, cohort [5]string, state string, summar
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditOutcome", Value: outcome}, {Key: "_auditDuration", Value: duration}, {Key: "_auditMetricDuration", Value: metricDuration}}}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditState", Value: auditStateExpr("$_auditMetricDuration")}}}},
 	}
+	stages = appendRecordPostMatch(stages, q)
 	for _, stage := range drillMatchStages(q, cohort, state, summary) {
 		stages = append(stages, bson.D{{Key: "$match", Value: stage}})
 	}

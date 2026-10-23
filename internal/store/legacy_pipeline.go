@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"api-audit-explorer/internal/audit"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -30,6 +31,9 @@ var legacyMetadataFields = []string{
 	"RequestPollingType", "UserAgent", "ControllerName", "ActionName",
 	"RequestMainUrl", "ApiTime", "AuditCreateTime", "PayloadRecordTime",
 	"RequestLengthInKiloBytes", "ResponseLengthInKiloBytes",
+	// The record filters (user, UI version, client IP) are rechecked in Go on
+	// every legacy scan, so the summary stream carries their fields too.
+	"UserId", "UserIp", "PayrollUIVersion", "UpdatedOn",
 }
 
 var legacyMetadataStringCaps = map[string]int{
@@ -45,10 +49,10 @@ var legacyMetadataStringCaps = map[string]int{
 // _auditMetadataOversized, so it cannot fail a whole legacy scan.
 var legacyTruncateOnlyFields = map[string]bool{"UserId": true, "UserIp": true, "PayrollUIVersion": true}
 
-// legacyRowMetadataFields adds the audit-evidence columns that only request
-// rows and the record detail show. Summary scans keep the narrower
-// legacyMetadataFields so these extra bytes never count against their limits.
-var legacyRowMetadataFields = append(append([]string(nil), legacyMetadataFields...), "UserId", "UserIp", "PayrollUIVersion", "UpdatedOn")
+// legacyRowMetadataFields are the columns request rows and the record detail
+// show. They are the summary's fields: the record filters need the audit-evidence
+// columns on both, so one list keeps a count and the rows behind it in step.
+var legacyRowMetadataFields = append([]string(nil), legacyMetadataFields...)
 
 type legacyBucketKey struct {
 	controller, action, kind, outcome, state string
@@ -354,6 +358,9 @@ func readLegacyBuckets(ctx context.Context, p *profile, q audit.Query, start tim
 		if record.At.Before(start) {
 			continue
 		}
+		if !legacyRecordFilterMatches(q, record, record) {
+			continue
+		}
 		bucketAt := legacyBucketAt(*record.At, q.BucketSeconds)
 		if start.Equal(q.BaselineStart) {
 			bucketAt = start.UTC()
@@ -490,6 +497,9 @@ func readLegacyRequestRowsState(ctx context.Context, p *profile, q audit.Query, 
 		if q.Metric == "api" {
 			stateRecord, _ = normalizeLegacyRecord(raw, "api")
 		}
+		if !legacyRecordFilterMatches(q, record, stateRecord) {
+			continue
+		}
 		if summary {
 			kindFilter, outcomeFilter := cohort[3], cohort[4]
 			if cohort[0] != "" {
@@ -555,6 +565,39 @@ func readLegacyRequestRowsState(ctx context.Context, p *profile, q audit.Query, 
 		return nil, err
 	}
 	return rows, nil
+}
+
+// legacyRecordFilterMatches applies q's record filters to one projected legacy
+// record: the raw-field filters through audit.RecordFilterMatches and the derived
+// completion through audit.StateMatches, the same rules recordMatch and
+// recordPostMatch give a modern server. The first $match already made the raw
+// filters on the full documents, so a value cut at its projection cap cannot
+// disprove a match (the Truncated flags). stateRecord is the record normalized
+// with the query's metric.
+func legacyRecordFilterMatches(q audit.Query, record, stateRecord legacyRecord) bool {
+	q = q.Normalized()
+	if q.Controller != "" && record.Controller != q.Controller {
+		return false
+	}
+	if q.Action != "" && record.Action != q.Action {
+		return false
+	}
+	if !audit.StateMatches(q.Completion, stateRecord.State, stateRecord.PendingAsync, record.Outcome) {
+		return false
+	}
+	if !q.HasRecordFilters() {
+		return true
+	}
+	capped := func(value, field string) bool {
+		return utf8.RuneCountInString(value) >= legacyMetadataStringCaps[field]
+	}
+	return audit.RecordFilterMatches(q, audit.RecordFacts{
+		ID: record.ID.Hex(), UserID: record.UserID, UserIP: record.UserIP, UserAgent: record.UserAgent,
+		UIVersion: record.UIVersion, URL: record.URL, Status: record.Status,
+		TruncatedURL: capped(record.URL, "RequestMainUrl"), TruncatedAgent: capped(record.UserAgent, "UserAgent"),
+		TruncatedIP: capped(record.UserIP, "UserIp"), TruncatedVersion: capped(record.UIVersion, "PayrollUIVersion"),
+		TruncatedStatus: capped(record.Status, "StatusCode"),
+	})
 }
 
 func legacyObjectID(value string) bson.ObjectID {

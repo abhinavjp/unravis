@@ -76,6 +76,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 		bson.D{{Key: "$or", Value: bson.A{bson.D{{Key: "RequestInitiatedAt", Value: bson.D{{Key: "$exists", Value: false}}}}, bson.D{{Key: "RequestInitiatedAt", Value: nil}}}}},
 		bson.D{{Key: "CreatedOn", Value: bson.D{{Key: "$gte", Value: start}, {Key: "$lt", Value: end}}}},
 	}}}
+	q = q.Normalized()
 	firstMatch := bson.D{{Key: "$or", Value: bson.A{timingMatch, legacyMatch}}}
 	if q.Controller != "" {
 		firstMatch = append(firstMatch, bson.E{Key: "ControllerName", Value: q.Controller})
@@ -83,6 +84,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 	if q.Action != "" {
 		firstMatch = append(firstMatch, bson.E{Key: "ActionName", Value: q.Action})
 	}
+	firstMatch = append(firstMatch, recordMatch(q)...)
 
 	dateOrFallback := func(primary, fallback string) bson.D {
 		return bson.D{{Key: "$cond", Value: bson.A{
@@ -163,6 +165,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditState", Value: state}, {Key: "_auditBin", Value: bin}, {Key: "_auditBucketAt", Value: bucketAt}}}},
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditAuditMs", Value: phaseValue("AuditCreateTime")}, {Key: "_auditApiMs", Value: phaseValue("ApiTime")}, {Key: "_auditPayloadMs", Value: phaseValue("PayloadRecordTime")}}}},
 	}
+	stages = appendRecordPostMatch(stages, q)
 	if q.Kind != "all" {
 		stages = append(stages, bson.D{{Key: "$match", Value: kindFilterMatch(q.Kind)}})
 	}

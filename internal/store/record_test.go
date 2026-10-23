@@ -403,8 +403,12 @@ func TestRequestRowsCarryAuditEvidenceColumns(t *testing.T) {
 	}
 	analysis := rawLegacyMetadataPipeline(bson.D{})
 	plain, _ := bson.MarshalExtJSON(bson.D{{Key: "pipeline", Value: analysis}}, false, false)
-	if strings.Contains(string(plain), "UserIp") || strings.Contains(string(plain), "PayrollUIVersion") {
-		t.Error("analysis scans must not pay for row-only evidence columns")
+	// Record filters are rechecked in Go on every legacy scan, so analysis scans
+	// carry the evidence columns the filters read (truncated, never oversized).
+	for _, field := range []string{"UserId", "UserIp", "PayrollUIVersion"} {
+		if !strings.Contains(string(plain), "\""+field+"\"") {
+			t.Errorf("analysis scans must project %s for the record filters", field)
+		}
 	}
 	id := bson.NewObjectID()
 	row, _ := normalizeLegacyRecord(recordDocument(id), "total")

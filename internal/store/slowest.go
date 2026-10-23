@@ -49,6 +49,7 @@ func slowRowBefore(a, b pageRow, metric string) bool {
 	return pageRowBefore(a, b)
 }
 func slowestPipeline(q audit.Query, source string, after *pageCursor, min *float64, limit int) mongo.Pipeline {
+	q = q.Normalized()
 	original := requestPipeline(q, [5]string{"", q.Controller, q.Action, q.Kind, q.Outcome}, source, nil, limit)
 	out := mongo.Pipeline{}
 	for _, stage := range original {
