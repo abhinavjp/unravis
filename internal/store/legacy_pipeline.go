@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"api-audit-explorer/internal/audit"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -30,6 +31,9 @@ var legacyMetadataFields = []string{
 	"RequestPollingType", "UserAgent", "ControllerName", "ActionName",
 	"RequestMainUrl", "ApiTime", "AuditCreateTime", "PayloadRecordTime",
 	"RequestLengthInKiloBytes", "ResponseLengthInKiloBytes",
+	// The record filters (user, UI version, client IP) are rechecked in Go on
+	// every legacy scan, so the summary stream carries their fields too.
+	"UserId", "UserIp", "PayrollUIVersion", "UpdatedOn",
 }
 
 var legacyMetadataStringCaps = map[string]int{
@@ -45,10 +49,10 @@ var legacyMetadataStringCaps = map[string]int{
 // _auditMetadataOversized, so it cannot fail a whole legacy scan.
 var legacyTruncateOnlyFields = map[string]bool{"UserId": true, "UserIp": true, "PayrollUIVersion": true}
 
-// legacyRowMetadataFields adds the audit-evidence columns that only request
-// rows and the record detail show. Summary scans keep the narrower
-// legacyMetadataFields so these extra bytes never count against their limits.
-var legacyRowMetadataFields = append(append([]string(nil), legacyMetadataFields...), "UserId", "UserIp", "PayrollUIVersion", "UpdatedOn")
+// legacyRowMetadataFields are the columns request rows and the record detail
+// show. They are the summary's fields: the record filters need the audit-evidence
+// columns on both, so one list keeps a count and the rows behind it in step.
+var legacyRowMetadataFields = append([]string(nil), legacyMetadataFields...)
 
 type legacyBucketKey struct {
 	controller, action, kind, outcome, state string
@@ -354,11 +358,14 @@ func readLegacyBuckets(ctx context.Context, p *profile, q audit.Query, start tim
 		if record.At.Before(start) {
 			continue
 		}
+		if !legacyRecordFilterMatches(q, record, record) {
+			continue
+		}
 		bucketAt := legacyBucketAt(*record.At, q.BucketSeconds)
 		if start.Equal(q.BaselineStart) {
 			bucketAt = start.UTC()
 		}
-		if q.Kind != "all" && record.State == "valid" && record.Kind != q.Kind {
+		if !audit.KindMatches(q.Kind, record.Kind, record.State == "valid") {
 			continue
 		}
 		if record.Outcome != "unknown" && (record.State == "valid" || audit.IsStatusClassOutcome(q.Outcome)) && !audit.OutcomeFilterMatches(q.Outcome, record.Outcome, record.StatusClass) {
@@ -450,9 +457,17 @@ func readLegacyRequestRows(ctx context.Context, p *profile, q audit.Query, cohor
 	return readLegacyRequestRowsMode(ctx, p, q, cohort, after, pipeline, maxRows, records, bytes, false)
 }
 func readLegacyRequestRowsMode(ctx context.Context, p *profile, q audit.Query, cohort [5]string, after *pageCursor, pipeline mongo.Pipeline, maxRows int, records, bytes *atomic.Int64, overlap bool) ([]pageRow, error) {
-	return readLegacyRequestRowsSorted(ctx, p, q, cohort, after, pipeline, maxRows, records, bytes, overlap, false)
+	return readLegacyRequestRowsSorted(ctx, p, q, cohort, after, pipeline, maxRows, records, bytes, overlap, nil)
 }
-func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query, cohort [5]string, after *pageCursor, pipeline mongo.Pipeline, maxRows int, records, bytes *atomic.Int64, overlap, slowest bool) ([]pageRow, error) {
+func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query, cohort [5]string, after *pageCursor, pipeline mongo.Pipeline, maxRows int, records, bytes *atomic.Int64, overlap bool, slow *slowFilter) ([]pageRow, error) {
+	return readLegacyRequestRowsState(ctx, p, q, cohort, "", after, pipeline, maxRows, records, bytes, overlap, slow)
+}
+
+// readLegacyRequestRowsState is the Mongo 3.4 twin of requestPipelineState: a
+// plain page (neither activity nor slowest) keeps the rows the summary counted
+// for the query and, in a keyed page, the cohort, narrowed to state.
+func readLegacyRequestRowsState(ctx context.Context, p *profile, q audit.Query, cohort [5]string, state string, after *pageCursor, pipeline mongo.Pipeline, maxRows int, records, bytes *atomic.Int64, overlap bool, slow *slowFilter) ([]pageRow, error) {
+	summary := !overlap && slow == nil
 	cur, err := p.shared.client.Aggregate(ctx, p.source.Database, p.source.Collection, pipeline)
 	if err != nil {
 		return nil, err
@@ -477,16 +492,40 @@ func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query,
 		if record.ID.IsZero() || record.At == nil || (!overlap && (record.At.Before(q.Start) || !record.At.Before(q.End))) || (overlap && !audit.ActivityOverlaps(record.At, record.Completed, q.Start, q.End)) {
 			continue
 		}
-		if cohort[3] != "" && cohort[3] != "all" && record.Kind != cohort[3] {
+		// The state follows the summary's metric, which only api changes.
+		stateRecord := record
+		if q.Metric == "api" {
+			stateRecord, _ = normalizeLegacyRecord(raw, "api")
+		}
+		if !legacyRecordFilterMatches(q, record, stateRecord) {
 			continue
 		}
-		if cohort[4] != "" && !audit.OutcomeFilterMatches(cohort[4], record.Outcome, record.StatusClass) {
-			continue
+		if summary {
+			kindFilter, outcomeFilter := cohort[3], cohort[4]
+			if cohort[0] != "" {
+				kindFilter, outcomeFilter = q.Kind, q.Outcome
+			}
+			if !audit.RowInSummary(kindFilter, outcomeFilter, record.Kind, stateRecord.State, record.Outcome, record.StatusClass) {
+				continue
+			}
+			if cohort[0] != "" && ((cohort[3] != "" && cohort[3] != "all" && !audit.KindMatches(cohort[3], record.Kind, true)) || (cohort[4] != "" && !audit.OutcomeFilterMatches(cohort[4], record.Outcome, record.StatusClass))) {
+				continue
+			}
+			if !audit.StateMatches(state, stateRecord.State, stateRecord.PendingAsync, record.Outcome) {
+				continue
+			}
+		} else {
+			if cohort[3] != "" && cohort[3] != "all" && !audit.KindMatches(cohort[3], record.Kind, true) {
+				continue
+			}
+			if cohort[4] != "" && !audit.OutcomeFilterMatches(cohort[4], record.Outcome, record.StatusClass) {
+				continue
+			}
+			if audit.IsStatusClassOutcome(q.Outcome) && !audit.OutcomeFilterMatches(q.Outcome, record.Outcome, record.StatusClass) {
+				continue
+			}
 		}
-		if audit.IsStatusClassOutcome(q.Outcome) && !audit.OutcomeFilterMatches(q.Outcome, record.Outcome, record.StatusClass) {
-			continue
-		}
-		if after != nil {
+		if after != nil && slow == nil {
 			cursorRow := pageRow{at: after.At, object: legacyObjectID(after.ObjectID), request: audit.RequestRecord{SourceID: after.SourceID}}
 			candidate := pageRow{at: *record.At, object: record.ID, request: audit.RequestRecord{SourceID: p.source.ID}}
 			if !pageRowBefore(cursorRow, candidate) {
@@ -495,19 +534,23 @@ func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query,
 		}
 		row := pageRow{request: audit.RequestRecord{
 			ID: record.ID.Hex(), SourceID: p.source.ID, Controller: record.Controller, Action: record.Action,
-			Kind: record.Kind, Outcome: record.Outcome, Status: record.Status, URL: record.URL,
+			Kind: record.Kind, Outcome: record.Outcome, State: stateRecord.State, Status: record.Status, URL: record.URL,
 			InitiatedAt: record.At, CompletedAt: record.Completed, DurationMs: record.Duration,
 			ApiTimeMs: record.API, AuditCreateTimeMs: record.AuditCreate, PayloadRecordTimeMs: record.PayloadRecord,
 			RequestKB: record.RequestKB, ResponseKB: record.ResponseKB,
 			UserID: record.UserID, UserIP: record.UserIP, UserAgent: record.UserAgent, UIVersion: record.UIVersion,
 			CreatedOn: record.CreatedOn, UpdatedOn: record.UpdatedOn, PollingTypeRaw: record.PollingTypeRaw,
 		}, at: *record.At, object: record.ID}
-		if !q.RecordFilter.Matches(row.request) {
-			continue
-		}
-		if slowest {
-			if audit.RequestMetric(row.request, q.Metric) == nil {
+		if slow != nil {
+			value := audit.RequestMetric(row.request, q.Metric)
+			if value == nil || (slow.min != nil && *value < *slow.min) {
 				continue
+			}
+			if after != nil && after.Metric != nil {
+				cursorRow := pageRow{at: after.At, object: legacyObjectID(after.ObjectID), request: audit.RequestRecord{SourceID: after.SourceID, DurationMs: after.Metric, ApiTimeMs: after.Metric}}
+				if !slowRowBefore(cursorRow, row, q.Metric) {
+					continue
+				}
 			}
 			rows = append(rows, row)
 			sort.Slice(rows, func(i, j int) bool { return slowRowBefore(rows[i], rows[j], q.Metric) })
@@ -522,6 +565,39 @@ func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query,
 		return nil, err
 	}
 	return rows, nil
+}
+
+// legacyRecordFilterMatches applies q's record filters to one projected legacy
+// record: the raw-field filters through audit.RecordFilterMatches and the derived
+// completion through audit.StateMatches, the same rules recordMatch and
+// recordPostMatch give a modern server. The first $match already made the raw
+// filters on the full documents, so a value cut at its projection cap cannot
+// disprove a match (the Truncated flags). stateRecord is the record normalized
+// with the query's metric.
+func legacyRecordFilterMatches(q audit.Query, record, stateRecord legacyRecord) bool {
+	q = q.Normalized()
+	if q.Controller != "" && record.Controller != q.Controller {
+		return false
+	}
+	if q.Action != "" && record.Action != q.Action {
+		return false
+	}
+	if !audit.StateMatches(q.Completion, stateRecord.State, stateRecord.PendingAsync, record.Outcome) {
+		return false
+	}
+	if !q.HasRecordFilters() {
+		return true
+	}
+	capped := func(value, field string) bool {
+		return utf8.RuneCountInString(value) >= legacyMetadataStringCaps[field]
+	}
+	return audit.RecordFilterMatches(q, audit.RecordFacts{
+		ID: record.ID.Hex(), UserID: record.UserID, UserIP: record.UserIP, UserAgent: record.UserAgent,
+		UIVersion: record.UIVersion, URL: record.URL, Status: record.Status,
+		TruncatedURL: capped(record.URL, "RequestMainUrl"), TruncatedAgent: capped(record.UserAgent, "UserAgent"),
+		TruncatedIP: capped(record.UserIP, "UserIp"), TruncatedVersion: capped(record.UIVersion, "PayrollUIVersion"),
+		TruncatedStatus: capped(record.Status, "StatusCode"),
+	})
 }
 
 func legacyObjectID(value string) bson.ObjectID {

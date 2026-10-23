@@ -238,3 +238,126 @@ func TestDemoAnalysisCarriesAdditivePhases(t *testing.T) {
 		}
 	}
 }
+
+// demoDrillRepo is a demo repository plus hand-made rows in every quality
+// state (the generated demo rows are all complete): an unfinished row, an
+// unusable timing, pending and unclassified rows, an unknown-kind row and a
+// Hangfire row, each inside the current window.
+func demoDrillRepo(now time.Time) *demoRepository {
+	d := NewDemo(now).(*demoRepository)
+	at := now.Add(-5 * time.Minute)
+	negative := -50.0
+	add := func(id, kind, state, status, outcome string, duration *float64) {
+		initiated := at
+		d.records = append(d.records, RequestRecord{ID: id, SourceID: "demo-west", Controller: "Payroll", Action: "Run", Kind: kind, State: state, Status: status, Outcome: outcome, InitiatedAt: &initiated, DurationMs: duration, ApiTimeMs: duration})
+	}
+	add("x-incomplete", "synchronous", "incomplete", "", "unknown", nil)
+	add("x-incomplete-500", "synchronous", "incomplete", "500 Internal Server Error", "failure", nil)
+	add("x-invalid", "synchronous", "invalid", "200 OK", "success", &negative)
+	add("x-pending", "asynchronous", "incomplete", "Accepted", "unknown", nil)
+	add("x-unknown-kind", "unknown", "incomplete", "", "unknown", nil)
+	add("x-unclassified", "synchronous", "valid", "", "unknown", new(float64))
+	add("x-hangfire-incomplete", "hangfire", "incomplete", "", "unknown", nil)
+	return d
+}
+
+func demoDrillCount(t *testing.T, d *demoRepository, q Query, state string) (int, map[string]bool) {
+	t.Helper()
+	seen := map[string]bool{}
+	cursor := ""
+	for {
+		page, err := d.Requests(context.Background(), PageInput{Query: q, State: state, Cursor: cursor, Limit: 100})
+		if err != nil {
+			t.Fatalf("state %q: %v", state, err)
+		}
+		for _, row := range page.Rows {
+			if seen[row.ID] {
+				t.Fatalf("duplicate row %s", row.ID)
+			}
+			seen[row.ID] = true
+			if row.State == "" {
+				t.Fatalf("row %s has no state", row.ID)
+			}
+		}
+		if page.NextCursor == "" {
+			return len(seen), seen
+		}
+		cursor = page.NextCursor
+	}
+}
+
+func TestDemoRequestsStateFilterIncomplete(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	d := demoDrillRepo(now)
+	q := demoQuery(now)
+	page, err := d.Requests(context.Background(), PageInput{Query: q, State: "incomplete", Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Rows) == 0 {
+		t.Fatal("no incomplete rows returned")
+	}
+	for _, row := range page.Rows {
+		if row.State != "incomplete" {
+			t.Errorf("row %s has state %q, want incomplete", row.ID, row.State)
+		}
+	}
+	if _, err := d.Requests(context.Background(), PageInput{Query: q, State: "bogus", Limit: 100}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("unknown state error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestDemoQualityCountEqualsDrillCount(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	d := demoDrillRepo(now)
+	for _, kind := range []string{"all", "http", "synchronous", "asynchronous", "hangfire"} {
+		for _, outcome := range []string{"all", "success", "failure", "client_error", "server_error"} {
+			q := demoQuery(now)
+			q.Kind, q.Outcome = kind, outcome
+			analysis, err := d.Analyze(context.Background(), q)
+			if err != nil {
+				t.Fatal(err)
+			}
+			quality := analysis.Quality
+			for state, want := range map[string]int64{"incomplete": quality.Incomplete, "invalid": quality.Invalid, "pending": quality.PendingAsync, "unclassified": quality.UnknownOutcome} {
+				got, _ := demoDrillCount(t, d, q, state)
+				if int64(got) != want {
+					t.Errorf("%s/%s: quality count for %s = %d, drill-down rows = %d", kind, outcome, state, want, got)
+				}
+			}
+			all, _ := demoDrillCount(t, d, q, "")
+			complete, _ := demoDrillCount(t, d, q, "complete")
+			incomplete, _ := demoDrillCount(t, d, q, "incomplete")
+			invalid, _ := demoDrillCount(t, d, q, "invalid")
+			if all != complete+incomplete+invalid {
+				t.Errorf("%s/%s: %d rows, but complete %d + incomplete %d + invalid %d", kind, outcome, all, complete, incomplete, invalid)
+			}
+		}
+	}
+	// The hand-made rows are really counted: the default view sees each of them.
+	analysis, err := d.Analyze(context.Background(), demoQuery(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q := analysis.Quality; q.Incomplete != 5 || q.Invalid != 1 || q.PendingAsync != 1 || q.UnknownOutcome != 5 {
+		t.Fatalf("quality = %+v, want 5 incomplete, 1 invalid, 1 pending, 5 unclassified", q)
+	}
+}
+
+func TestDemoCohortDrillMatchesSummaryUnderKindFilter(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	d := demoDrillRepo(now)
+	q := demoQuery(now)
+	q.Kind, q.Outcome = "synchronous", "success"
+	// The unknown-kind cohort exists under a synchronous filter and opens.
+	page, err := d.Requests(context.Background(), PageInput{Query: q, APIKey: CohortKey("demo-west", "Payroll", "Run", "unknown", "unknown"), Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Rows) != 1 || page.Rows[0].ID != "x-unknown-kind" || page.Rows[0].State != "incomplete" {
+		t.Fatalf("unknown-kind cohort rows = %+v", page.Rows)
+	}
+	if _, err := d.Requests(context.Background(), PageInput{Query: q, APIKey: CohortKey("demo-west", "Payroll", "Run", "hangfire", "unknown"), Limit: 100}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("hangfire cohort under synchronous = %v, want ErrInvalidInput", err)
+	}
+}

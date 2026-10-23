@@ -1,69 +1,123 @@
 package audit
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
 	"testing"
 )
 
-func TestBreakdownFilterSelectsExactlyItsKey(t *testing.T) {
-	uid := 7
+func breakdownFacts(r RequestRecord) RecordFacts {
+	return RecordFacts{ID: r.ID, UserID: r.UserID, UserIP: r.UserIP, UserAgent: r.UserAgent, UIVersion: r.UIVersion, URL: r.URL, Status: r.Status}
+}
+
+// The fragment of a row, applied to a query, selects every record of that row
+// through the shared record filters, and no record of another value, except the
+// documented widening: a user agent is a case-insensitive substring.
+func TestBreakdownFilterDrillsIntoItsRow(t *testing.T) {
+	uid, other := 7, 77
 	rows := []RequestRecord{
-		{Status: " OK ", UserID: &uid, UserIP: "10.0.0.1", UserAgent: "UA", UIVersion: "1.0", PollingTypeRaw: "Synchronous "},
-		{Status: "OK", UserIP: "10.0.0.2", UIVersion: "2.0", PollingTypeRaw: "   "},
-		{Status: "", UserID: &uid, UserAgent: "$path", PollingTypeRaw: "Asynchronous"},
+		{Status: " OK ", UserID: &uid, UserIP: "10.0.0.1", UserAgent: "UA", UIVersion: "1.0"},
+		{Status: "OK", UserID: &other, UserIP: "10.0.0.2", UserAgent: "UA/2", UIVersion: "2.0"},
+		{Status: "NotFound", UserID: &uid, UserAgent: "$path", UIVersion: "1.0"},
+		{Status: "", UserIP: "10.0.0.1"},
 	}
-	for _, dim := range []string{BreakdownStatusCode, BreakdownUserID, BreakdownUIVersion, BreakdownUserAgent, BreakdownUserIP, BreakdownPollingType} {
-		for _, key := range rows {
-			want := BreakdownKey(dim, key)
-			filter := BreakdownFilter(dim, want)
+	for _, dim := range []string{BreakdownStatusCode, BreakdownUserID, BreakdownUIVersion, BreakdownUserAgent, BreakdownUserIP} {
+		for _, keyRow := range rows {
+			key := BreakdownKey(dim, keyRow)
+			filter := NewBreakdownFilter(dim, key, 0)
+			if key == "" {
+				if filter != nil {
+					t.Errorf("%s: a missing value has no filter, got %#v", dim, filter)
+				}
+				continue
+			}
+			if filter == nil {
+				t.Fatalf("%s key %q: no filter", dim, key)
+			}
+			q := filter.Apply(validQuery())
+			if err := ValidateQuery(q); err != nil {
+				t.Errorf("%s key %q: the merged query is invalid: %v", dim, key, err)
+			}
 			for i, r := range rows {
-				if got := filter.Matches(r); got != (BreakdownKey(dim, r) == want) {
-					t.Errorf("%s key %q row %d: filter match = %v, but its key is %q", dim, want, i, got, BreakdownKey(dim, r))
+				got := RecordFilterMatches(q, breakdownFacts(r))
+				same := BreakdownKey(dim, r) == key
+				if same && !got {
+					t.Errorf("%s key %q row %d: the filter drops a row of the value", dim, key, i)
+				}
+				if got && !same && dim != BreakdownUserAgent {
+					t.Errorf("%s key %q row %d: the filter selects a row of value %q", dim, key, i, BreakdownKey(dim, r))
 				}
 			}
 		}
 	}
+	// The substring widening is real: "UA" also selects "UA/2".
+	q := NewBreakdownFilter(BreakdownUserAgent, "UA", 0).Apply(validQuery())
+	if !RecordFilterMatches(q, breakdownFacts(rows[1])) {
+		t.Error("a user agent filter is a substring; it should reach UA/2")
+	}
 }
 
-func TestRecordFilterAndsFieldsAndOrsValues(t *testing.T) {
-	uid := 3
-	r := RequestRecord{UserID: &uid, UserAgent: "A", UIVersion: "1"}
+func TestBreakdownFilterIsAbsentWhenNoRecordFilterFits(t *testing.T) {
+	long := strings.Repeat("x", MaxFilterLength+1)
 	for name, tc := range map[string]struct {
-		f    RecordFilter
-		want bool
+		dim, key string
+		cap      int
 	}{
-		"empty selects all":      {RecordFilter{}, true},
-		"or inside a list":       {RecordFilter{UserAgents: []string{"B", "A"}}, true},
-		"and across lists":       {RecordFilter{UserAgents: []string{"A"}, UIVersions: []string{"2"}}, false},
-		"missing user is not 3":  {RecordFilter{UserIDMissing: true}, false},
-		"missing or 3":           {RecordFilter{UserIDMissing: true, UserIDs: []int{3}}, true},
-		"empty text means blank": {RecordFilter{UserIPs: []string{""}}, true},
-		"blank is not wildcard":  {RecordFilter{UserAgents: []string{""}}, false},
+		"missing status":      {BreakdownStatusCode, "", 0},
+		"missing user":        {BreakdownUserID, "", 0},
+		"polling type":        {BreakdownPollingType, "Synchronous", 0},
+		"blank version":       {BreakdownUIVersion, "   ", 0},
+		"user id zero":        {BreakdownUserID, "0", 0},
+		"user id too large":   {BreakdownUserID, "2147483648", 0},
+		"user id not numeric": {BreakdownUserID, "abc", 0},
+		"too long":            {BreakdownUserAgent, long, 0},
+		"nul byte":            {BreakdownUserIP, "10.0\x00.1", 0},
+		"invalid utf8":        {BreakdownUIVersion, "\xff", 0},
+		"may be cut":          {BreakdownUserIP, strings.Repeat("1", 64), 64},
 	} {
-		if got := tc.f.Matches(r); got != tc.want {
-			t.Errorf("%s: Matches = %v, want %v", name, got, tc.want)
+		if f := NewBreakdownFilter(tc.dim, tc.key, tc.cap); f != nil {
+			t.Errorf("%s: want no filter, got %#v", name, f)
 		}
 	}
-}
-
-func TestRecordFilterValidateBoundsLists(t *testing.T) {
-	many := make([]string, MaxRecordFilterValues+1)
-	if err := (RecordFilter{UserAgents: many}).Validate(); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("51 values: %v", err)
-	}
-	if err := (RecordFilter{UserIDs: make([]int, MaxRecordFilterValues+1)}).Validate(); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("51 user ids: %v", err)
-	}
-	if err := (RecordFilter{UserIPs: []string{strings.Repeat("x", 65)}}).Validate(); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("65-character ip: %v", err)
-	}
-	if err := (RecordFilter{UserIPs: []string{strings.Repeat("x", 64)}, UserAgents: []string{"ok"}}).Validate(); err != nil {
-		t.Errorf("valid filter: %v", err)
+	if f := NewBreakdownFilter(BreakdownUserIP, strings.Repeat("1", 63), 64); f == nil {
+		t.Error("a value below the cap is not cut and keeps its filter")
 	}
 }
 
+// The fragment travels as Query JSON: each field must carry the name and meaning
+// of the Query field it merges into.
+func TestBreakdownFilterJSONIsQueryJSON(t *testing.T) {
+	raw, err := json.Marshal(BreakdownFilter{UserIDs: []int{7}, UIVersions: []string{"1.0"}, UserAgentContains: "UA", UserIPs: []string{"10.0.0.1"}, StatusCodes: []string{"OK"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var q Query
+	if err := json.Unmarshal(raw, &q); err != nil {
+		t.Fatal(err)
+	}
+	if len(q.UserIDs) != 1 || q.UserIDs[0] != 7 || len(q.UIVersions) != 1 || q.UserAgentContains != "UA" || len(q.UserIPs) != 1 || len(q.StatusCodes) != 1 {
+		t.Fatalf("the fragment %s does not decode into the matching Query fields: %#v", raw, q)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil || len(keys) != 5 {
+		t.Fatalf("the fragment must carry exactly its five filters: %s", raw)
+	}
+}
+
+func TestBreakdownFilterApplyKeepsOtherFilters(t *testing.T) {
+	q := validQuery()
+	q.UIVersions = []string{"9"}
+	q.Completion = StateIncomplete
+	got := NewBreakdownFilter(BreakdownUserID, "7", 0).Apply(q)
+	if len(got.UserIDs) != 1 || got.UserIDs[0] != 7 || len(got.UIVersions) != 1 || got.UIVersions[0] != "9" || got.Completion != StateIncomplete {
+		t.Fatalf("Apply = %#v", got)
+	}
+	if len(q.UserIDs) != 0 {
+		t.Fatal("Apply must not modify its argument")
+	}
+}
 func TestBreakdownBuilderRanksAndBuildsOther(t *testing.T) {
 	b := NewBreakdownBuilder(BreakdownUserID, 2)
 	for id, n := range map[int]int64{12: 3, 3: 3, 9: 1, 4: 1} {

@@ -93,6 +93,10 @@ func NewDefault(getenv func(string) string) (*Service, error) {
 		if err != nil {
 			return nil, ErrUnavailable
 		}
+		// The product is Unravis, but this folder keeps its original name on purpose.
+		// Renaming it would orphan the DPAPI-encrypted saved connections, and an old
+		// and a new build could write the same file during an upgrade. The
+		// single-instance mutex and the localStorage key follow the same rule.
 		base = filepath.Join(base, "APIAuditExplorer")
 	}
 	protector, err := currentUserProtector()

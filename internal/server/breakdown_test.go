@@ -21,7 +21,7 @@ func (r *breakdownTestRepo) Breakdown(_ context.Context, in audit.BreakdownInput
 	if r.err != nil {
 		return audit.Breakdown{}, r.err
 	}
-	return audit.Breakdown{Dim: in.Dim, Rows: []audit.BreakdownRow{{Value: "UA", Count: 2, Filter: audit.BreakdownFilter(in.Dim, "UA")}}, Total: 2, Distinct: 1}, nil
+	return audit.Breakdown{Dim: in.Dim, Rows: []audit.BreakdownRow{{Value: "UA", Count: 2, Filter: audit.NewBreakdownFilter(in.Dim, "UA", 0)}}, Total: 2, Distinct: 1}, nil
 }
 
 func TestBreakdownEndpointValidatesBeforeReadingAndMapsErrors(t *testing.T) {
@@ -33,7 +33,7 @@ func TestBreakdownEndpointValidatesBeforeReadingAndMapsErrors(t *testing.T) {
 	}
 	res := request(h, http.MethodPost, "/api/breakdown", body(audit.BreakdownUserAgent, 5), true)
 	var got audit.Breakdown
-	if res.Code != http.StatusOK || repo.calls != 1 || json.Unmarshal(res.Body.Bytes(), &got) != nil || len(got.Rows) != 1 || got.Rows[0].Filter == nil || got.Rows[0].Filter.UserAgents[0] != "UA" {
+	if res.Code != http.StatusOK || repo.calls != 1 || json.Unmarshal(res.Body.Bytes(), &got) != nil || len(got.Rows) != 1 || got.Rows[0].Filter == nil || got.Rows[0].Filter.UserAgentContains != "UA" {
 		t.Fatalf("valid breakdown: %d %s", res.Code, res.Body.String())
 	}
 	for name, raw := range map[string]string{"unknown dim": body("controller", 5), "top over 50": body(audit.BreakdownUserAgent, 51)} {

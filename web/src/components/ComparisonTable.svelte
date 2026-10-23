@@ -1,8 +1,9 @@
 <script lang="ts">
   import type { Comparison, Rollup, Series } from '../lib/types';
   import { loadBadge, loadTip, rollupFor } from '../lib/traffic';
-  import { observedPartialTip, outcomeRateText, rankComparisons, statusRates, type RankField } from '../lib/presentation';
+  import { kindLabel, observedPartialTip, outcomeRateText, rankComparisons, statusRates, unknownKindTip, type RankField } from '../lib/presentation';
   import PhaseBar from './PhaseBar.svelte';
+  import { p99NeedsSamples, quantileText } from '../lib/slowness';
   let { rows, selectedKey, sources, outcomeFilter, onSelect, timelineKeys = [], onToggleTimeline = () => {}, rollups = [], timeline = [], kindFilter = 'all' }: {
     rows: Comparison[]; selectedKey: string; sources: Map<string, string>; outcomeFilter: string; onSelect: (key: string) => void
     timelineKeys?: string[]; onToggleTimeline?: (key: string) => void; rollups?: Rollup[]; timeline?: Series[]; kindFilter?: string;
@@ -28,7 +29,7 @@
     undefined_baseline: 'The reference response time is too close to zero to calculate a meaningful ratio.'
   };
   let filtered = $derived(rows.filter(row => {
-    const text = `${row.controller}.${row.action} ${sources.get(row.sourceId) ?? ''} ${row.kind} ${row.outcome}`.toLowerCase();
+    const text = `${row.controller}.${row.action} ${sources.get(row.sourceId) ?? ''} ${row.kind} ${kindLabel(row.kind)} ${row.outcome}`.toLowerCase();
     return text.includes(search.trim().toLowerCase()) && (scope === 'all' || (scope === 'slower' ? (row.p95Ratio ?? 0) > 1 : scope === 'compared' ? row.state === 'compared' : row.state !== 'compared'));
   }));
   let ordered = $derived(rankComparisons(filtered, sort, direction));
@@ -79,6 +80,9 @@
       <th><button class="sort-button" title="Difference between current and earlier reference P95 estimates, in milliseconds. P95 is the estimated time within which about 95 of 100 requests with usable timings finish." onclick={() => sortBy('delta')}>P95 difference (ms)</button></th>
       <th title="Share of current-period requests with a known result that were client errors (4xx), for the whole API. Needs the outcome filter set to All.">4xx %</th>
       <th title="Share of current-period requests with a known result that were server errors (5xx, including failed Hangfire jobs), for the whole API. Needs the outcome filter set to All.">5xx %</th>
+      <th title="Median: half of the current-period requests finished sooner. A histogram estimate.">P50</th>
+      <th title="About 90 of 100 current-period requests finished within this time. A histogram estimate.">P90</th>
+      <th title="About 99 of 100 current-period requests finished within this time. A histogram estimate; shown only with at least 100 samples.">P99</th>
       <th title="Shows whether the available samples support a comparison.">Comparison</th>
     </tr></thead>
     <tbody>
@@ -87,14 +91,17 @@
         <tr class:chosen={row.key === selectedKey}>
           <td class="timeline-choice"><label><input type="checkbox" checked={timelineKeys.includes(row.key)} disabled={timelineKeys.length >= 8 && !timelineKeys.includes(row.key)} aria-label={'Compare timeline for ' + row.controller + '.' + row.action + ' in ' + (sources.get(row.sourceId) ?? row.sourceId) + ' · ' + row.kind + ' · ' + row.outcome} onchange={() => onToggleTimeline(row.key)} /><span>Compare</span></label></td>
           <td><button class="api-select" aria-pressed={row.key === selectedKey} onclick={() => onSelect(row.key)}>{row.controller}.{row.action}</button><small title={sources.get(row.sourceId) ?? row.sourceId}>{sources.get(row.sourceId) ?? row.sourceId}</small><PhaseBar phases={row.current.phases} delta={row.phaseDeltaMs} /></td>
-          <td class="group-kind" data-label="Kind and outcome">{row.kind}<small>{outcomeRateText(rows, row, outcomeFilter)}</small></td><td data-label="Current requests" title={observedPartialTip(row.current.observedPartial)}>{row.current.count.toLocaleString()}</td><td data-label="Reference requests" title={observedPartialTip(row.reference.observedPartial)}>{row.reference.count.toLocaleString()}</td>
+          <td class="group-kind" data-label="Kind and outcome" title={row.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(row.kind)}<small>{outcomeRateText(rows, row, outcomeFilter)}</small></td><td data-label="Current requests" title={observedPartialTip(row.current.observedPartial)}>{row.current.count.toLocaleString()}</td><td data-label="Reference requests" title={observedPartialTip(row.reference.observedPartial)}>{row.reference.count.toLocaleString()}</td>
           <td class="numeric" data-label="Total impact" title={impactTip(row)}>{impactText(row.impactMs)}{#if row.significant}<small>significant shift</small>{/if}</td>
           <td class="numeric" data-label="P95 vs reference" title={p99Tip(row)}>{ratio(row.p95Ratio)}</td><td class="numeric" data-label="P95 difference (ms)">{row.p95DeltaMs == null ? 'N/A' : '≈ ' + row.p95DeltaMs.toFixed(1)}</td>
           <td class="numeric" data-label="4xx %" title={rates.tip}>{rates.client}</td>
           <td class="numeric" data-label="5xx %" title={rates.tip}>{rates.server}</td>
+          <td class="numeric" data-label="P50" title="Histogram estimate; carries about ±5% bin-width error.">{quantileText(row.current.p50)}</td>
+          <td class="numeric" data-label="P90" title="Histogram estimate; carries about ±5% bin-width error.">{quantileText(row.current.p90)}</td>
+          <td class="numeric" data-label="P99" title={p99Tip(row)}>{quantileText(row.current.p99, p99NeedsSamples)}</td>
           <td class="group-status" data-label="Comparison"><span class="state-pill" title={stateDetails[row.state] ?? 'Comparison status'}>{stateLabels[row.state] ?? row.state.replaceAll('_', ' ')}</span>{#if loadBadge(loadByKey.get(row.key))}<span class="state-pill" title={loadTip(loadByKey.get(row.key) ?? 0)}>{loadBadge(loadByKey.get(row.key))}</span>{/if}</td>
         </tr>
-      {:else}<tr><td colspan="11" class="table-empty">{rows.length ? 'No API groups match this search and view. Clear the search or choose All API groups.' : 'No API comparisons are available for this query.'}</td></tr>{/each}
+      {:else}<tr><td colspan="14" class="table-empty">{rows.length ? 'No API groups match this search and view. Clear the search or choose All API groups.' : 'No API comparisons are available for this query.'}</td></tr>{/each}
     </tbody>
   </table>
 </div>

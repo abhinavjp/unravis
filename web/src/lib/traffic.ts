@@ -16,15 +16,16 @@ export const errorRateText=(rate:number|null|undefined,outcomeFilter='all')=>out
 export const errorRateTip=(rollup:Rollup|undefined,outcomeFilter='all',kindFilter='all')=>{
  if(outcomeFilter!=='all')return 'Error rate needs the outcome filter set to All.';
  if(!rollup||rollup.errorRate==null)return 'No requests with a known success or failure result in the current period.';
- const scope=kindFilter==='all'?'Covers every source and kind of this API':'Covers only the '+kindFilter+' requests of this API (kind filter on)';
+ const kind=rollup.kind||(kindFilter==='all'?'':kindFilter);
+ const scope='Covers all sources merged'+(kind?', for the '+kind+' requests of this API':' (rollup without a kind)');
  return rollup.failures.toLocaleString()+' failed of '+rollup.requests.toLocaleString()+' requests with a known result (about '+rollup.perMinute.toFixed(1)+' per minute). '+scope+'; unclassified results are left out.';
 };
 /** Sign-aware tooltip for the load badge. */
 export const loadTip=(rho:number)=>rho>0
  ?"This group's P95 tends to be higher in buckets where other traffic puts more load on the system (summed request time of all other API groups). A correlation, not proof of cause."
  :"This group's latency falls as load rises, measured as the summed request time of all other API groups. A correlation, not proof of cause.";
-/** The rollup for a cohort's API; rollups are per controller and action across sources and kinds. */
-export const rollupFor=(rollups:Rollup[]|undefined,row:Pick<Comparison,'controller'|'action'>)=>rollups?.find(r=>r.controller===row.controller&&r.action===row.action);
+/** The rollup for a cohort's API and kind; rollups are per controller, action and kind across sources, never merged across kinds. */
+export const rollupFor=(rollups:Rollup[]|undefined,row:Pick<Comparison,'controller'|'action'|'kind'>)=>rollups?.find(r=>r.controller===row.controller&&r.action===row.action&&(r.kind??row.kind)===row.kind);
 export const LOAD_BADGE_MIN_ABS_RHO=0.6,LOAD_BADGE_MIN_POINTS=8;
 /**
  * Badge text for a series' load correlation, or null when it is too weak or too thin.

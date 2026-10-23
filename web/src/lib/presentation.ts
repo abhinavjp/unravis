@@ -1,4 +1,4 @@
-import type { Comparison, Metric, Query, Rollup } from './types';
+import type { Comparison, Metric, Quality, Query, Rollup } from './types';
 
 export type RankField = 'impact' | 'ratio' | 'delta' | 'count';
 
@@ -15,9 +15,17 @@ export const rankComparisons = (rows: Comparison[], field: RankField = 'ratio', 
 export const initialComparison = (rows: Comparison[]) => rankComparisons(rows, rows.some(row => row.impactMs != null) ? 'impact' : 'ratio').find(row => row.state === 'compared' && row.current.count > 0)
   ?? rows.slice().sort((a, b) => b.current.count - a.current.count)[0] ?? null;
 
+// Record filters count as unused when absent, empty or blank, so a draft with an
+// emptied field and the server's echo of it (which drops empties) match; lists
+// are sets, so their order does not matter.
+const filterList = (values: readonly (string | number)[] | undefined) => [...new Set((values ?? []).map(value => String(value).trim()).filter(Boolean))].sort();
+const filterText = (value: string | undefined) => (value ?? '').trim();
 export const queryFingerprint = (query: Query) => JSON.stringify([
   [...query.sourceIds].sort(), ...[query.start, query.end, query.baselineStart, query.baselineEnd].map(value => Date.parse(value)),
-  query.kind, query.outcome, query.metric, query.bucketSeconds, query.controller ?? '', query.action ?? ''
+  query.kind, query.outcome, query.metric, query.bucketSeconds, query.controller ?? '', query.action ?? '',
+  filterList(query.userIds), filterList(query.uiVersions), filterText(query.userAgentContains), filterList(query.userIps),
+  filterText(query.urlContains), filterText(query.auditId), filterList(query.statusCodes),
+  query.completion === 'all' ? '' : query.completion ?? '', filterText(query.operation)
 ]);
 
 export const resultNotes = (rows: Comparison[]) => {
@@ -60,11 +68,29 @@ export const statusRates = (rollup: Rollup | undefined, outcomeFilter = 'all', k
   else if (rollup.clientErrorRate == null || rollup.serverErrorRate == null) {
     tip = 'Combined error rate ' + merged + ': ' + rollup.failures.toLocaleString() + ' failed of ' + rollup.requests.toLocaleString() + ' requests with a known result. The 4xx and 5xx split is unavailable because the status counts do not cover every failure of this API.';
   } else {
-    const scope = kindFilter === 'all' ? 'Covers every source and kind of this API' : 'Covers only the ' + kindFilter + ' requests of this API (kind filter on)';
+    const kind = rollup.kind || (kindFilter === 'all' ? '' : kindFilter);
+    const scope = 'Covers all sources merged' + (kind ? ', for the ' + kind + ' requests of this API' : ' (rollup without a kind)');
     tip = '4xx are client errors; 5xx are server errors, including failed Hangfire jobs. Combined error rate ' + merged + ': ' + rollup.failures.toLocaleString() + ' failed of ' + rollup.requests.toLocaleString() + ' requests with a known result. ' + scope + '; unclassified results are left out.';
   }
   return { client, server, merged, tip };
 };
+
+export const unknownKindTip = 'Incomplete HTTP rows have no polling type until the audit update is written; they cannot be attributed to Synchronous or Asynchronous.';
+
+/** Display label for a row or rollup kind; the pipeline value unknown means an HTTP row whose polling type is not recorded yet. */
+export const kindLabel = (kind?: string) => kind === 'unknown' ? 'HTTP (polling type unknown)' : kind ?? '';
+
+/** One line splitting the quality counts by row kind; empty when there is nothing to split. */
+export const qualityByKindText = (quality?: Quality) => {
+  const parts = Object.entries(quality?.byKind ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([kind, c]) => {
+    const bits = [c.incomplete ? c.incomplete.toLocaleString() + ' missing timing' : '', c.invalid ? c.invalid.toLocaleString() + ' unusable timing' : '', c.unknownOutcome ? c.unknownOutcome.toLocaleString() + ' unclassified result' : ''].filter(Boolean);
+    return bits.length ? kindLabel(kind) + ': ' + bits.join(', ') : '';
+  }).filter(Boolean);
+  return parts.length ? 'By request type: ' + parts.join(' · ') : '';
+};
+
+/** Display label for a row state (valid, incomplete, invalid) and for a quality drill-down filter (pending, unclassified). */
+export const stateLabel = (state?: string) => ({ valid: 'Complete', incomplete: 'Missing timing', invalid: 'Unusable timing', pending: 'Pending async', unclassified: 'Unclassified result' } as Record<string, string>)[state ?? ''] ?? state ?? '';
 
 export const metricLabels: Record<Metric, string> = {
   total: 'Observed API time (AuditCreateTime + ApiTime)',

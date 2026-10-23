@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -551,6 +552,48 @@ func TestLegacyClassFilterDropsKnownOtherClassWhateverTheState(t *testing.T) {
 		}
 		if failures != c.failureBucketsTotal {
 			t.Errorf("%s: failure-outcome rows = %d, want %d (the rows a requestVolume or drill-down would count)", c.outcome, failures, c.failureBucketsTotal)
+		}
+	}
+}
+
+func TestLegacyKindHTTPIncludesUnknownExcludesHangfire(t *testing.T) {
+	// legacyKind is the Go twin of the server pipeline's kind expression.
+	for polling, want := range map[string]string{"Synchronous": "synchronous", " asynchronous ": "asynchronous", "": "unknown", "Weird": "unknown", "Hangfire": "hangfire"} {
+		if got := legacyKind(polling, ""); got != want {
+			t.Errorf("legacyKind(%q) = %s, want %s", polling, got, want)
+		}
+	}
+	if got := legacyKind("Asynchronous", "Hangfire"); got != "hangfire" {
+		t.Errorf("a Hangfire user agent must win over the polling type, got %s", got)
+	}
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC).Add(-time.Minute)
+	docs := []bson.D{
+		legacyStatusDoc("Synchronous", "OK", at),
+		legacyIncompleteDoc("Synchronous", "OK", at),
+		legacyStatusDoc("Asynchronous", "OK", at),
+		legacyIncompleteDoc("Asynchronous", "OK", at),
+		legacyStatusDoc("", "OK", at),
+		legacyIncompleteDoc("", "OK", at),
+		legacyStatusDoc("Hangfire", "Succeeded", at),
+		legacyIncompleteDoc("Hangfire", "Succeeded", at),
+	}
+	want := map[string]map[string]int64{
+		"synchronous":  {"synchronous/valid": 1, "synchronous/incomplete": 1, "unknown/incomplete": 1},
+		"asynchronous": {"asynchronous/valid": 1, "asynchronous/incomplete": 1, "unknown/incomplete": 1},
+		"http":         {"synchronous/valid": 1, "synchronous/incomplete": 1, "asynchronous/valid": 1, "asynchronous/incomplete": 1, "unknown/valid": 1, "unknown/incomplete": 1},
+		"http_unknown": {"unknown/valid": 1, "unknown/incomplete": 1},
+		"hangfire":     {"hangfire/valid": 1, "hangfire/incomplete": 1},
+		"all":          {"synchronous/valid": 1, "synchronous/incomplete": 1, "asynchronous/valid": 1, "asynchronous/incomplete": 1, "unknown/valid": 1, "unknown/incomplete": 1, "hangfire/valid": 1, "hangfire/incomplete": 1},
+	}
+	for kind, wantCounts := range want {
+		q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+		q.Kind, q.Outcome = kind, "all"
+		got := map[string]int64{}
+		for _, b := range legacyBucketsFor(t, q, docs...) {
+			got[b.Kind+"/"+b.State] += b.Count
+		}
+		if !reflect.DeepEqual(got, wantCounts) {
+			t.Errorf("legacy kind=%s buckets = %v, want %v", kind, got, wantCounts)
 		}
 	}
 }

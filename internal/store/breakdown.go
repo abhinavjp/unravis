@@ -35,6 +35,7 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 	if err := audit.ValidateBreakdown(input); err != nil {
 		return audit.Breakdown{}, err
 	}
+	input.Query = input.Query.Normalized()
 	q := input.Query
 	prefix, err := breakdownPrefix(q)
 	if err != nil {
@@ -109,6 +110,7 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 		}
 	}
 	final := audit.NewBreakdownBuilder(input.Dim, input.Top)
+	final.SetValueCap(breakdownValueCap(input.Dim))
 	results := make([]audit.SourceResult, 0, len(sources))
 	for _, src := range sources {
 		if src.ok {
@@ -194,79 +196,71 @@ func breakdownLiteral(dim string, keys []string) bson.D {
 	return bson.D{{Key: "$literal", Value: list}}
 }
 
-// recordFilterStage is the $match that keeps the rows a RecordFilter selects. It
-// compares the same capped expressions the breakdown groups by, so a breakdown
-// row's filter returns exactly that row's records. It reports false for a filter
-// that selects everything.
-func recordFilterStage(f audit.RecordFilter) (bson.D, bool) {
-	if f.IsZero() {
-		return nil, false
+// breakdownValueCap is the storage cap, in runes, of the field a dimension reads,
+// or zero when the value is never cut (a user id is a number). A value that
+// reaches it may have been cut, so its row gets no drill-down filter.
+func breakdownValueCap(dim string) int {
+	switch dim {
+	case audit.BreakdownStatusCode:
+		return legacyMetadataStringCaps["StatusCode"]
+	case audit.BreakdownUIVersion:
+		return legacyMetadataStringCaps["PayrollUIVersion"]
+	case audit.BreakdownUserAgent:
+		return legacyMetadataStringCaps["UserAgent"]
+	case audit.BreakdownUserIP:
+		return legacyMetadataStringCaps["UserIp"]
 	}
-	var clauses bson.A
-	text := func(dim string, values []string) {
-		if len(values) > 0 {
-			clauses = append(clauses, bson.D{{Key: "$in", Value: bson.A{breakdownDimExpr(dim), breakdownLiteral(dim, values)}}})
-		}
-	}
-	text(audit.BreakdownStatusCode, f.StatusCodes)
-	text(audit.BreakdownPollingType, f.PollingTypes)
-	text(audit.BreakdownUIVersion, f.UIVersions)
-	text(audit.BreakdownUserAgent, f.UserAgents)
-	text(audit.BreakdownUserIP, f.UserIPs)
-	if len(f.UserIDs) > 0 || f.UserIDMissing {
-		user := breakdownDimExpr(audit.BreakdownUserID)
-		var either bson.A
-		if len(f.UserIDs) > 0 {
-			ids := make([]string, len(f.UserIDs))
-			for i, id := range f.UserIDs {
-				ids[i] = strconv.Itoa(id)
-			}
-			either = append(either, bson.D{{Key: "$in", Value: bson.A{user, breakdownLiteral(audit.BreakdownUserID, ids)}}})
-		}
-		if f.UserIDMissing {
-			either = append(either, bson.D{{Key: "$eq", Value: bson.A{user, nil}}})
-		}
-		clauses = append(clauses, bson.D{{Key: "$or", Value: either}})
-	}
-	return bson.D{{Key: "$match", Value: bson.D{{Key: "$expr", Value: bson.D{{Key: "$and", Value: clauses}}}}}}, true
+	return 0
 }
 
-// breakdownPrefix is the request drill-down pipeline up to its sort: the same
-// match, derived kind, status class and outcome, cohort filter and record
-// filter. Sharing it is what makes breakdown counts equal drill-down counts. It
-// then derives the duration, state and histogram bin for the query metric from
-// the summary pipeline's own expressions, so a latency sample means the same
-// thing here as in the summary.
+// breakdownDerivedFields are the derived fields the breakdown's $group and bin
+// stages read. They come from the request drill-down pipeline, which is what
+// makes a count equal the rows behind it; breakdownPrefix fails if that
+// pipeline stops defining one of them.
+var breakdownDerivedFields = []string{"_auditMetricDuration", "_auditState", "_auditPending", "_statusClass"}
+
+// breakdownPrefix is the request drill-down pipeline (requestPipelineState with
+// no state and no API key) up to its sort: the same time window, record filters
+// (recordMatch and recordPostMatch), derived kind, status class, outcome and
+// state (auditStateExpr), and the same kind and outcome filters as the summary.
+// Sharing it is what makes breakdown counts equal drill-down counts. It adds the
+// histogram bin of the metric duration, binned like the summary's.
 func breakdownPrefix(q audit.Query) (mongo.Pipeline, error) {
 	cohort := [5]string{"", q.Controller, q.Action, q.Kind, q.Outcome}
 	var prefix mongo.Pipeline
-	for _, stage := range requestPipeline(q, cohort, "breakdown", nil, 1) {
+	for _, stage := range requestPipelineState(q, cohort, "", "breakdown", nil, 1) {
 		if stage[0].Key == "$sort" {
 			break
 		}
 		prefix = append(prefix, stage)
 	}
-	found := map[string]any{}
-	for _, stage := range buildSummaryPipeline(q, q.Start, q.End, false) {
+	if err := checkBreakdownFields(prefix); err != nil {
+		return nil, err
+	}
+	return append(prefix, bson.D{{Key: "$set", Value: bson.D{{Key: "_auditBin", Value: auditBinExpr("$_auditMetricDuration")}}}}), nil
+}
+
+// checkBreakdownFields fails when a $set stage of prefix does not define one of
+// breakdownDerivedFields, so a rename in the request pipeline stops the
+// breakdown loudly instead of silently grouping on a missing field.
+func checkBreakdownFields(prefix mongo.Pipeline) error {
+	defined := map[string]bool{}
+	for _, stage := range prefix {
 		if stage[0].Key != "$set" {
 			continue
 		}
-		for _, e := range stage[0].Value.(bson.D) {
-			switch e.Key {
-			case "_auditDuration", "_auditState", "_auditBin":
-				found[e.Key] = e.Value
+		if fields, ok := stage[0].Value.(bson.D); ok {
+			for _, e := range fields {
+				defined[e.Key] = true
 			}
 		}
 	}
-	for _, key := range []string{"_auditDuration", "_auditState", "_auditBin"} {
-		if found[key] == nil {
-			return nil, fmt.Errorf("breakdown pipeline: the summary pipeline no longer defines %s", key)
+	for _, field := range breakdownDerivedFields {
+		if !defined[field] {
+			return fmt.Errorf("breakdown pipeline: the request pipeline no longer defines %s", field)
 		}
 	}
-	return append(prefix,
-		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditDuration", Value: found["_auditDuration"]}}}},
-		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditState", Value: found["_auditState"]}, {Key: "_auditBin", Value: found["_auditBin"]}}}},
-	), nil
+	return nil
 }
 
 func sumWhen(condition any) bson.D {
@@ -364,9 +358,9 @@ func readBreakdownBins(ctx context.Context, p *profile, prefix mongo.Pipeline, i
 				{Key: "bin", Value: "$_auditBin"},
 			}},
 			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
-			{Key: "sum", Value: bson.D{{Key: "$sum", Value: "$_auditDuration"}}},
-			{Key: "min", Value: bson.D{{Key: "$min", Value: "$_auditDuration"}}},
-			{Key: "max", Value: bson.D{{Key: "$max", Value: "$_auditDuration"}}},
+			{Key: "sum", Value: bson.D{{Key: "$sum", Value: "$_auditMetricDuration"}}},
+			{Key: "min", Value: bson.D{{Key: "$min", Value: "$_auditMetricDuration"}}},
+			{Key: "max", Value: bson.D{{Key: "$max", Value: "$_auditMetricDuration"}}},
 		}}},
 	)
 	cur, err := p.shared.client.Aggregate(ctx, p.source.Database, p.source.Collection, pipeline)
@@ -397,10 +391,13 @@ func readBreakdownBins(ctx context.Context, p *profile, prefix mongo.Pipeline, i
 }
 
 // readLegacyBreakdown is the MongoDB 3.4 path. It streams the bounded metadata
-// projection once and classifies in Go, applying the same row rules as the
-// legacy request drill-down.
+// projection of the drill-down pipeline once and classifies in Go with the same
+// rules as the legacy request drill-down: the record filters through
+// legacyRecordFilterMatches (audit.RecordFilterMatches and audit.StateMatches),
+// and the summary's kind and outcome filters through audit.RowInSummary. The
+// record carries the query metric's duration and state.
 func readLegacyBreakdown(ctx context.Context, p *profile, q audit.Query, cohort [5]string, input audit.BreakdownInput, records, bytes *atomic.Int64) (*audit.BreakdownBuilder, error) {
-	pipeline := legacyRowMetadataPipeline(requestPipeline(q, cohort, p.source.ID, nil, 1))
+	pipeline := legacyRowMetadataPipeline(requestPipelineState(q, cohort, "", p.source.ID, nil, 1))
 	cur, err := p.shared.client.Aggregate(ctx, p.source.Database, p.source.Collection, pipeline)
 	if err != nil {
 		return nil, err
@@ -425,18 +422,15 @@ func readLegacyBreakdown(ctx context.Context, p *profile, q audit.Query, cohort 
 		if record.ID.IsZero() || record.At == nil || record.At.Before(q.Start) || !record.At.Before(q.End) {
 			continue
 		}
-		if cohort[3] != "" && cohort[3] != "all" && record.Kind != cohort[3] {
+		if !legacyRecordFilterMatches(q, record, record) {
 			continue
 		}
-		if cohort[4] != "" && !audit.OutcomeFilterMatches(cohort[4], record.Outcome, record.StatusClass) {
+		if !audit.RowInSummary(cohort[3], cohort[4], record.Kind, record.State, record.Outcome, record.StatusClass) {
 			continue
 		}
 		row := audit.RequestRecord{
 			Status: record.Status, UserID: record.UserID, UserIP: record.UserIP, UserAgent: record.UserAgent,
 			UIVersion: record.UIVersion, PollingTypeRaw: record.PollingTypeRaw,
-		}
-		if !q.RecordFilter.Matches(row) {
-			continue
 		}
 		builder.AddRecord(row, record.State, record.PendingAsync, record.StatusClass, record.Duration)
 	}

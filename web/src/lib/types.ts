@@ -1,4 +1,5 @@
-export type Kind = 'synchronous' | 'asynchronous' | 'hangfire' | 'all';
+/** http is synchronous, asynchronous and unknown HTTP rows together; http_unknown is only the unknown ones. */
+export type Kind = 'synchronous' | 'asynchronous' | 'hangfire' | 'http' | 'http_unknown' | 'all';
 export type Outcome = 'success' | 'failure' | 'client_error' | 'server_error' | 'all';
 export type Metric = 'total' | 'api';
 
@@ -18,12 +19,14 @@ export interface Info {
   limits: { maxSources: number; maxPageSize: number; maxSummaryRows: number; maxTimeBuckets: number };
   now: string;
 }
-/** Additive record filters. The server flattens them into Query: OR inside a list, AND across lists; "" in a text list means the value is missing. Only requests and breakdown read them. */
-export interface RecordFilter {
-  userIds?: number[]; userIdMissing?: boolean; uiVersions?: string[]; userAgents?: string[];
-  userIps?: string[]; statusCodes?: string[]; pollingTypes?: string[];
+/** Record-level completion: complete rows have a usable duration, pending rows are accepted asynchronous jobs. */
+export type Completion = 'all' | 'complete' | 'incomplete' | 'pending' | 'invalid';
+/** Additive record filters; every field is absent when it is not in use and the server drops absent ones. */
+export interface RecordFilters {
+  userIds?: number[]; uiVersions?: string[]; userAgentContains?: string; userIps?: string[]; urlContains?: string;
+  auditId?: string; statusCodes?: string[]; completion?: Completion; /** "Controller.Action", split on the first dot. */ operation?: string;
 }
-export interface Query extends RecordFilter {
+export interface Query extends RecordFilters {
   sourceIds: string[]; start: string; end: string; baselineStart: string; baselineEnd: string;
   kind: Kind; outcome: Outcome; metric: Metric; bucketSeconds: number; controller: string; action: string;
 }
@@ -59,14 +62,16 @@ export interface Comparison {
 export interface Point { at: string; count: number | null; p50: Quantile | null; p95: Quantile | null; p95Ratio: number | null }
 /** loadCorrelation: Spearman rho of other traffic's estimated concurrency vs this series' per-bucket P95; absent below 8 paired buckets. */
 export interface Series { key: string; points: Point[]; loadCorrelation?: number | null }
-/** Per-API current-window throughput; requests and failures count known outcomes only. errorRate is absent when requests is 0. */
+/** Per-API, per-kind current-window throughput (sources merged); requests and failures count known outcomes only. errorRate is absent when requests is 0. */
 export interface Rollup {
-  controller: string; action: string; requests: number; failures: number; errorRate?: number | null; perMinute: number;
+  controller: string; action: string; kind?: string; requests: number; failures: number; errorRate?: number | null; perMinute: number;
   /** Additive split of errorRate: 4xx, and 5xx plus failed Hangfire jobs. Absent when errorRate is, or under an outcome filter. */
   clientErrorRate?: number | null; serverErrorRate?: number | null;
 }
 /** pendingAsync is additive and absent when zero: Asynchronous requests that only answered 202 Accepted, counted inside incomplete. */
-export interface Quality { incomplete: number; invalid: number; unknownOutcome: number; pendingAsync?: number }
+export interface QualityCounts { incomplete: number; invalid: number; unknownOutcome: number; pendingAsync?: number }
+/** byKind splits the counts by row kind (synchronous, asynchronous, hangfire, unknown); only kinds with something to report appear. */
+export interface Quality { incomplete: number; invalid: number; unknownOutcome: number; pendingAsync?: number; byKind?: Record<string, QualityCounts> }
 export interface Analysis {
   loadWindows?: LoadWindow[];
   requestVolume?: VolumeBucket[];
@@ -80,6 +85,8 @@ export interface FieldPresence { name: string; present: number; types: string[] 
 export interface SchemaCensus { sampled: number; fields: FieldPresence[] }
 export interface RequestRecord {
   id: string; sourceId: string; controller: string; action: string; kind: string; outcome: string;
+  /** Additive: the row's own state (valid, incomplete or invalid) as the summary classed it. */
+  state?: string;
   status: string; url: string; initiatedAt: string | null; completedAt: string | null;
   durationMs: number | null; apiTimeMs: number | null; auditCreateTimeMs: number | null;
   payloadRecordTimeMs: number | null; requestKB: number; responseKB: number;
@@ -95,10 +102,12 @@ export interface ActivityInput { sourceIds: string[]; start: string; end: string
 export interface VolumeBucket { controller: string; action: string; at: string; count: number }
 export interface LoadWindow { at:string; count:number; timing:Stats }
 export type BreakdownDim = 'statusCode' | 'userId' | 'uiVersion' | 'userAgent' | 'userIp' | 'pollingType';
-/** One value of a breakdown dimension. filter is the Query fragment that selects exactly this value; the Other row has none. stats percentiles come from valid completed records only. */
+/** The Query fragment of a breakdown row: a few of the record filters, merged into the query to list the row's requests. The polling type, a missing value, a value that may have been cut and the Other row have none. */
+export type BreakdownFilter = Pick<RecordFilters, 'userIds' | 'uiVersions' | 'userAgentContains' | 'userIps' | 'statusCodes'>;
+/** One value of a breakdown dimension. filter selects this value (a user agent filter is a case-insensitive substring, so it can list more rows than the count); stats percentiles come from valid completed records only. */
 export interface BreakdownRow {
   value: string; missing: boolean; count: number; complete: number; incomplete: number; pending: number;
-  count4xx: number; count5xx: number; stats: Stats; filter?: RecordFilter; values?: number;
+  count4xx: number; count5xx: number; stats: Stats; filter?: BreakdownFilter; values?: number;
 }
 export interface Breakdown { dim: BreakdownDim; rows: BreakdownRow[]; other: BreakdownRow | null; total: number; distinct: number; sources: SourceResult[] }
 export interface BreakdownInput { query: Query; dim: BreakdownDim; top: number }

@@ -1,15 +1,22 @@
-import type { BreakdownDim, BreakdownRow, Query, RecordFilter } from './types';
+import { serializeRecordFilters } from './investigation';
+import type { BreakdownDim, BreakdownFilter, BreakdownRow, Query, RecordFilters } from './types';
 
-/** The Query keys each breakdown dimension owns. A row's filter replaces exactly these keys. */
-const dimensionKeys: Record<BreakdownDim, (keyof RecordFilter)[]> = {
-  statusCode: ['statusCodes'],
-  userId: ['userIds', 'userIdMissing'],
-  uiVersion: ['uiVersions'],
-  userAgent: ['userAgents'],
-  userIp: ['userIps'],
-  pollingType: ['pollingTypes']
+/** Every record filter the query carries. The Record type makes a new RecordFilters key fail to compile until it is listed here. */
+const recordKeySet: Record<keyof RecordFilters, true> = {
+  userIds: true, uiVersions: true, userAgentContains: true, userIps: true, urlContains: true,
+  auditId: true, statusCodes: true, completion: true, operation: true
 };
-const allKeys = (Object.values(dimensionKeys) as (keyof RecordFilter)[][]).flat();
+const recordKeys = Object.keys(recordKeySet) as (keyof RecordFilters)[];
+
+/** The Query keys each breakdown dimension owns. A row's filter replaces exactly these keys. Polling type has no record filter. */
+const dimensionKeys: Record<BreakdownDim, (keyof RecordFilters)[]> = {
+  statusCode: ['statusCodes'],
+  userId: ['userIds'],
+  uiVersion: ['uiVersions'],
+  userAgent: ['userAgentContains'],
+  userIp: ['userIps'],
+  pollingType: []
+};
 
 export const breakdownDims: { dim: BreakdownDim; label: string }[] = [
   { dim: 'statusCode', label: 'Status code' },
@@ -20,62 +27,61 @@ export const breakdownDims: { dim: BreakdownDim; label: string }[] = [
   { dim: 'userIp', label: 'User IP' }
 ];
 
-const isSet = (value: unknown) => Array.isArray(value) ? value.length > 0 : value === true;
-
-/** The filter fields that are actually active on a query (empty lists and false flags are not). */
-export function activeRecordFilter(query: RecordFilter): RecordFilter {
-  const out: Record<string, unknown> = {};
-  for (const key of allKeys) {
-    const value = query[key];
-    if (isSet(value)) out[key] = Array.isArray(value) ? [...value] : value;
-  }
-  return out as RecordFilter;
+function dropKeys<T extends object>(query: T, keys: readonly (keyof RecordFilters)[]): T {
+  const next = { ...query } as Record<string, unknown>;
+  for (const key of keys) delete next[key];
+  return next as T;
 }
 
-export const hasRecordFilter = (query: RecordFilter) => Object.keys(activeRecordFilter(query)).length > 0;
+/** The record filters that are in use on a query, in the Task 5 wire form (unused ones are absent). */
+export const activeRecordFilter = (query: Partial<Record<keyof RecordFilters, unknown>>): RecordFilters => serializeRecordFilters(query);
 
-/** The Query fragment a row selects, or null for the Other row. The server builds it; the UI applies it unchanged. */
-export const breakdownRowFilter = (row: BreakdownRow): RecordFilter | null => row.filter && hasRecordFilter(row.filter) ? row.filter : null;
+export const hasRecordFilter = (query: Partial<Record<keyof RecordFilters, unknown>>) => Object.keys(serializeRecordFilters(query)).length > 0;
 
-const dimensionOf = (key: keyof RecordFilter): BreakdownDim => {
-  for (const dim of Object.keys(dimensionKeys) as BreakdownDim[]) if (dimensionKeys[dim].includes(key)) return dim;
-  throw new Error('unknown record filter key ' + key);
-};
-
-function drop(query: Query, dims: Set<BreakdownDim>): Query {
-  const next: Query = { ...query };
-  for (const key of allKeys) if (dims.has(dimensionOf(key))) delete next[key];
-  return next;
+/**
+ * The Query fragment a row selects, or null when the row cannot be listed (a missing value, a polling type,
+ * a value too long or cut off, or the Other row). The server builds it; the UI only checks that it still
+ * survives the shared record filter serialization.
+ */
+export function breakdownRowFilter(row: BreakdownRow): BreakdownFilter | null {
+  if (!row.filter) return null;
+  const { userIds, uiVersions, userAgentContains, userIps, statusCodes } = serializeRecordFilters(row.filter);
+  const out: BreakdownFilter = {
+    ...(userIds ? { userIds } : {}), ...(uiVersions ? { uiVersions } : {}), ...(userAgentContains ? { userAgentContains } : {}),
+    ...(userIps ? { userIps } : {}), ...(statusCodes ? { statusCodes } : {})
+  };
+  return Object.keys(out).length ? out : null;
 }
 
 /** Applies a row's filter to the query. The row's dimension is replaced; every other filter and query field is kept. Never mutates its input. */
-export function mergeRecordFilter(query: Query, filter: RecordFilter | null): Query {
+export function mergeRecordFilter(query: Query, filter: BreakdownFilter | null): Query {
   if (!filter) return query;
-  const touched = new Set<BreakdownDim>();
-  for (const key of allKeys) if (isSet(filter[key])) touched.add(dimensionOf(key));
-  const next = drop(query, touched);
-  return { ...next, ...activeRecordFilter(filter) };
+  const touched = breakdownDims.flatMap(({ dim }) => dimensionKeys[dim].filter(key => filter[key as keyof BreakdownFilter] !== undefined));
+  const merged = { ...dropKeys(query, touched), ...filter };
+  return { ...dropKeys(merged, recordKeys), ...serializeRecordFilters(merged) };
 }
 
 /** The query without one dimension's filter, so that dimension's breakdown still lists every value. */
-export const withoutDimension = (query: Query, dim: BreakdownDim): Query => drop(query, new Set([dim]));
+export const withoutDimension = (query: Query, dim: BreakdownDim): Query => dropKeys(query, dimensionKeys[dim]);
 
 /** The query with no record filter at all. */
-export const clearRecordFilter = (query: Query): Query => drop(query, new Set(Object.keys(dimensionKeys) as BreakdownDim[]));
+export const clearRecordFilter = (query: Query): Query => dropKeys(query, recordKeys);
 
-/** Readable chips for the active filter, one per dimension: for example "User agent: Demo Browser/1.0". */
-export function recordFilterChips(query: RecordFilter, missingLabel = '(not yet written)'): { dim: BreakdownDim; text: string }[] {
+/** The base query with the drill-down's record filters in place of its own. An empty drill-down leaves the base untouched. */
+export const applyDrill = (base: Query, drill: RecordFilters): Query => hasRecordFilter(drill) ? { ...clearRecordFilter(base), ...serializeRecordFilters(drill) } : base;
+
+/** Readable chips for the breakdown dimensions that are filtered on a query: for example "User agent contains: Demo Browser/1.0". */
+export function recordFilterChips(query: Partial<Record<keyof RecordFilters, unknown>>): { dim: BreakdownDim; text: string }[] {
+  const active = serializeRecordFilters(query);
   const chips: { dim: BreakdownDim; text: string }[] = [];
-  for (const { dim, label } of breakdownDims) {
-    const values: string[] = [];
-    if (dim === 'userId') {
-      if (query.userIdMissing) values.push(missingLabel);
-      for (const id of query.userIds ?? []) values.push(String(id));
-    } else {
-      const list = dim === 'statusCode' ? query.statusCodes : dim === 'uiVersion' ? query.uiVersions : dim === 'userAgent' ? query.userAgents : dim === 'userIp' ? query.userIps : query.pollingTypes;
-      for (const value of list ?? []) values.push(value.trim() === '' ? missingLabel : value);
-    }
-    if (values.length) chips.push({ dim, text: label + ': ' + values.join(', ') });
-  }
+  const add = (dim: BreakdownDim, label: string, values: readonly (string | number)[] | string | undefined) => {
+    const list = typeof values === 'string' ? [values] : (values ?? []);
+    if (list.length) chips.push({ dim, text: label + ': ' + list.join(', ') });
+  };
+  add('statusCode', 'Status code', active.statusCodes);
+  add('userId', 'User', active.userIds);
+  add('uiVersion', 'UI version', active.uiVersions);
+  add('userAgent', 'User agent contains', active.userAgentContains);
+  add('userIp', 'User IP', active.userIps);
   return chips;
 }

@@ -1166,3 +1166,76 @@ func TestStatusClassifiersAgreeOnEveryStatusValue(t *testing.T) {
 		})
 	}
 }
+
+// kindScopeDocs are one valid and one incomplete document per derived kind.
+func kindScopeDocs() map[string]map[string]any {
+	docs := map[string]map[string]any{}
+	for name, polling := range map[string]any{"sync": "Synchronous", "async": "Asynchronous", "unknown": "", "hangfire": "Hangfire"} {
+		fixture := statusClassFixture{polling: polling, status: "OK"}
+		docs[name+"/valid"] = statusClassDoc(fixture)
+		docs[name+"/incomplete"] = incompleteDoc(fixture)
+	}
+	return docs
+}
+
+func TestKindHTTPIncludesUnknownExcludesHangfire(t *testing.T) {
+	all := []string{"sync/valid", "sync/incomplete", "async/valid", "async/incomplete", "unknown/valid", "unknown/incomplete", "hangfire/valid", "hangfire/incomplete"}
+	want := map[string][]string{
+		"synchronous":  {"sync/valid", "sync/incomplete", "unknown/incomplete"},
+		"asynchronous": {"async/valid", "async/incomplete", "unknown/incomplete"},
+		"http":         {"sync/valid", "sync/incomplete", "async/valid", "async/incomplete", "unknown/valid", "unknown/incomplete"},
+		"http_unknown": {"unknown/valid", "unknown/incomplete"},
+		"hangfire":     {"hangfire/valid", "hangfire/incomplete"},
+		"all":          all,
+	}
+	docs := kindScopeDocs()
+	for kind, kept := range want {
+		q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+		q.Kind, q.Outcome = kind, "all"
+		pipeline := buildPipeline(q, q.Start, q.End)
+		wantSet := map[string]bool{}
+		for _, name := range kept {
+			wantSet[name] = true
+		}
+		for _, name := range all {
+			derived, survives := evalRowSurvives(t, pipeline, docs[name])
+			if survives != wantSet[name] {
+				t.Errorf("kind=%s %s (derived kind %v, state %v): kept = %v, want %v", kind, name, derived["_auditKind"], derived["_auditState"], survives, wantSet[name])
+			}
+		}
+	}
+	// A Hangfire-only incomplete row must never reach an HTTP view, and the
+	// pipeline still reports the derived value "unknown" for the HTTP-unknown kind.
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	q.Kind, q.Outcome = "http_unknown", "all"
+	derived, _ := evalRowSurvives(t, buildPipeline(q, q.Start, q.End), docs["unknown/valid"])
+	if derived["_auditKind"] != "unknown" {
+		t.Fatalf("derived kind = %v, want unknown", derived["_auditKind"])
+	}
+}
+
+func TestRequestPipelineKindScope(t *testing.T) {
+	docs := kindScopeDocs()
+	names := []string{"sync/valid", "async/valid", "unknown/valid", "hangfire/valid"}
+	want := map[string][]string{
+		"synchronous":  {"sync/valid"},
+		"asynchronous": {"async/valid"},
+		"unknown":      {"unknown/valid"},
+		"http":         {"sync/valid", "async/valid", "unknown/valid"},
+		"http_unknown": {"unknown/valid"},
+		"hangfire":     {"hangfire/valid"},
+	}
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	for kind, kept := range want {
+		wantSet := map[string]bool{}
+		for _, name := range kept {
+			wantSet[name] = true
+		}
+		pipeline := requestPipeline(q, [5]string{"source", "", "", kind, "all"}, "source", nil, 10)
+		for _, name := range names {
+			if _, survives := evalRowSurvives(t, pipeline, docs[name]); survives != wantSet[name] {
+				t.Errorf("request listing kind=%s %s: kept = %v, want %v", kind, name, survives, wantSet[name])
+			}
+		}
+	}
+}

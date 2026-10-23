@@ -1,12 +1,12 @@
-# API Audit Explorer
+# Unravis
 
-API Audit Explorer is a local Windows utility for comparing API request durations with a fixed, preceding reference period. It runs an HTTP service bound only to `127.0.0.1` and embeds the dashboard in the executable.
+Unravis is a local Windows utility for comparing API request durations with a fixed, preceding reference period. It runs an HTTP service bound only to `127.0.0.1` and embeds the dashboard in the executable.
 
 ## Start
 
 Double-click `Start Live.cmd` to open live mode on an available local port, even when a demo is already running. Keep its terminal open while using the dashboard. Startup errors remain visible in that window.
 
-The prebuilt `dist\api-audit-explorer.exe` runs without Go or Node installed. Double-click it for live connections, or use `run.ps1 -Demo` for samples. To rebuild from source:
+The prebuilt `dist\unravis.exe` runs without Go or Node installed. Double-click it for live connections, or use `run.ps1 -Demo` for samples. To rebuild from source:
 
 ```powershell
 .\build.ps1
@@ -92,7 +92,7 @@ Use the same token value in both terminals. The frontend dev server binds to loo
 
 ## Build and checks
 
-`build.ps1` resolves Go from `PATH` or the workspace-local `.dev/toolchains/go/bin/go.exe`. Pass `-GoPath` to select a specific executable. It keeps Go caches under `.dev/toolchains/cache`, installs the isolated web dependencies with `npm ci`, runs the frontend check and production build, runs `go test ./...` and `go vet ./...`, and builds `dist/api-audit-explorer.exe` with CGO disabled.
+`build.ps1` resolves Go from `PATH` or the workspace-local `.dev/toolchains/go/bin/go.exe`. Pass `-GoPath` to select a specific executable. It keeps Go caches under `.dev/toolchains/cache`, installs the isolated web dependencies with `npm ci`, runs the frontend check and production build, runs `go test ./...` and `go vet ./...`, and builds `dist/unravis.exe` with CGO disabled, plus a `dist/api-audit-explorer.exe` compatibility copy for one release.
 
 To skip web dependency installation and rebuild only the Go executable using the existing `web/dist` assets:
 
@@ -126,6 +126,6 @@ The traffic/latency scatter pairs request starts per comparison time window with
 
 A red window has at least one measured request longer than the editable duration threshold (initially1000ms). This initial setting is an investigation aid, not an agreed performance target. Baseline change stays contextual in the slowest-request table so tiny-but-multiplied durations are not automatically treated as unhealthy. The orange line is the fraction of measured complete windows with a known threshold exceedance within doubling request-count ranges. Hover or expand exact windows for counts/denominators. Partial boundary windows and windows with no usable timings are excluded from the fraction; mixed API workload and incomplete source/timing coverage can confound the relationship.
 
-Click a dot or Inspect window to read up to50 globally slowest requests for that clipped interval; the Load50 button uses the full investigation when no window is selected. Ranking uses the selected full-request/API-processing metric across selected sources, with one bounded metadata read per source, not a sorted newest-page sample. The legacy metadata scan retains existing record/byte limits. URL and payload bodies are excluded. Partial-source results remain explicit. Nearby activity opens the existing surrounding API/job timeline. Request time is additive: the audit phase (AuditCreateTime, writing the audit row before the API runs) and the API phase (ApiTime) add up to the total latency. The payload write (PayloadRecordTime) happens after the response is sent, so it is shown separately as "after response, not latency" and is never part of the total. Each API group shows its current-period mean audit and API time as a bar, with the change versus the reference period in its tooltip; a phase mean divides by the requests that carry that phase. Earlier P95 ratios use an exact source/API/kind/outcome match with at least20 reference timings.
+Click a dot or Inspect window to read up to50 globally slowest requests for that clipped interval; the Load50 button uses the full investigation when no window is selected. Ranking uses the selected full-request/API-processing metric across selected sources, with one bounded metadata read per source, not a sorted newest-page sample. The threshold box is applied by the server as an inclusive minimum, and results arrive 50 at a time with Load more: a cursor on duration, start time, source and record ID that stays stable across pages and is bound to the query and minimum. The minimum can instead be the P95 or P99 of the selected API group, converted to milliseconds in the browser from its histogram and labelled as a histogram estimate (P95 needs at least 20 samples, P99 at least 100). The API table also lists P50, P90 and P99. The legacy metadata scan retains existing record/byte limits. URL and payload bodies are excluded. Partial-source results remain explicit. Nearby activity opens the existing surrounding API/job timeline. Request time is additive: the audit phase (AuditCreateTime, writing the audit row before the API runs) and the API phase (ApiTime) add up to the total latency. The payload write (PayloadRecordTime) happens after the response is sent, so it is shown separately as "after response, not latency" and is never part of the total. Each API group shows its current-period mean audit and API time as a bar, with the change versus the reference period in its tooltip; a phase mean divides by the requests that carry that phase. Earlier P95 ratios use an exact source/API/kind/outcome match with at least20 reference timings.
 
 Design rationale: [Google SRE monitoring](https://sre.google/workbook/monitoring/) recommends examining traffic and latency percentiles; [Prometheus histogram guidance](https://prometheus.io/docs/practices/histograms/) explains merging histogram observations and using duration thresholds. Neither prescribes our editable one-second starting value. Correlation is evidence to investigate, not proof of root cause.

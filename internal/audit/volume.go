@@ -9,7 +9,7 @@ func requestVolume(q Query, buckets []Bucket) ([]VolumeBucket, error) {
 	}
 	counts := make(map[key]int64)
 	for _, b := range buckets {
-		if q.Kind != "all" && b.Kind != q.Kind {
+		if !KindMatches(q.Kind, b.Kind, b.State == "valid") {
 			continue
 		}
 		if !BucketOutcomeMatches(q.Outcome, b.Outcome) {

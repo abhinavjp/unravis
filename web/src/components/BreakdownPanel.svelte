@@ -2,9 +2,9 @@
   import { onMount, untrack } from 'svelte';
   import { api } from '../lib/api';
   import { breakdownDims, breakdownRowFilter, withoutDimension } from '../lib/breakdown';
-  import type { Breakdown, BreakdownDim, BreakdownRow, Quantile, Query, RecordFilter } from '../lib/types';
+  import type { Breakdown, BreakdownDim, BreakdownFilter, BreakdownRow, Quantile, Query } from '../lib/types';
   let { query, sourceLabels, onDrill }: {
-    query: Query; sourceLabels: Map<string, string>; onDrill: (filter: RecordFilter, row: BreakdownRow, dim: BreakdownDim) => void;
+    query: Query; sourceLabels: Map<string, string>; onDrill: (filter: BreakdownFilter, row: BreakdownRow, dim: BreakdownDim) => void;
   } = $props();
   let dim = $state<BreakdownDim>('statusCode');
   let ipOpen = $state(false);
@@ -69,7 +69,7 @@
             {#each result.rows as row (row.value + '|' + row.missing)}
               {@const filter = breakdownRowFilter(row)}
               <tr>
-                <td><button class="breakdown-pick" class:breakdown-missing={row.missing} disabled={!filter} title="Show these requests" onclick={() => filter && onDrill(filter, row, dim)}>{row.value}</button></td>
+                <td><button class="breakdown-pick" class:breakdown-missing={row.missing} disabled={!filter} title={filter ? (dim === 'userAgent' ? 'Show requests whose user agent contains this text (not case sensitive)' : 'Show these requests') : 'These requests cannot be listed by this value'} onclick={() => filter && onDrill(filter, row, dim)}>{row.value}</button></td>
                 <td class="numeric">{whole(row.count)}</td><td title={row.stats.count + ' valid timings'}>{ms(row.stats.p50)}</td><td title={row.stats.count + ' valid timings'}>{ms(row.stats.p95)}</td>
                 <td>{whole(row.count4xx)}</td><td>{whole(row.count5xx)}</td><td>{whole(row.incomplete)}</td><td>{whole(row.pending)}</td>
               </tr>

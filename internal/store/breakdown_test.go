@@ -156,12 +156,11 @@ func bdSimulate(t *testing.T, pipeline mongo.Pipeline, docs []map[string]any) []
 	for i, stage := range pipeline {
 		switch stage[0].Key {
 		case "$match":
-			if i == 0 {
-				continue
-			}
 			kept := rows[:0:0]
 			for _, row := range rows {
-				if evalMatch(t, stage[0].Value.(bson.D), row) {
+				// The first $match is the raw prefilter: the time window, the
+				// controller and the record filters. Later ones read derived fields.
+				if i == 0 && evalFirstMatch(t, stage[0].Value.(bson.D), row) || i > 0 && evalMatch(t, stage[0].Value.(bson.D), row) {
 					kept = append(kept, row)
 				}
 			}
@@ -394,7 +393,7 @@ func TestBreakdownTopNPlusOtherSumsToTotal(t *testing.T) {
 				count int64
 			}{{"UA-A", 5}, {"UA-B", 4}, {"UA-C", 3}} {
 				row := got.Rows[i]
-				if row.Value != want.value || row.Count != want.count || row.Filter == nil || len(row.Filter.UserAgents) != 1 || row.Filter.UserAgents[0] != want.value {
+				if row.Value != want.value || row.Count != want.count || row.Filter == nil || row.Filter.UserAgentContains != want.value {
 					t.Fatalf("row %d = %#v, want %s x%d", i, row, want.value, want.count)
 				}
 				sum += row.Count
@@ -521,10 +520,10 @@ func TestBreakdownPollingTypeMissingLabel(t *testing.T) {
 			if missing.Value != "(not yet written)" || !missing.Missing || missing.Count != 3 {
 				t.Fatalf("missing row = %#v", missing)
 			}
-			if missing.Filter == nil || !reflect.DeepEqual(missing.Filter.PollingTypes, []string{""}) {
-				t.Fatalf("missing row filter = %#v, want the empty polling type", missing.Filter)
+			if missing.Filter != nil {
+				t.Fatalf("missing row filter = %#v; the record filters have no polling type", missing.Filter)
 			}
-			if sync.Value != "Synchronous" || sync.Missing || sync.Count != 2 || sync.Filter == nil || !reflect.DeepEqual(sync.Filter.PollingTypes, []string{"Synchronous"}) {
+			if sync.Value != "Synchronous" || sync.Missing || sync.Count != 2 || sync.Filter != nil {
 				t.Fatalf("trimmed row = %#v", sync)
 			}
 		})
@@ -557,88 +556,233 @@ func TestLegacyBreakdownMatchesModern(t *testing.T) {
 	}
 }
 
-// bdRowFilterDocs counts the documents a RecordFilter keeps under the request
-// drill-down pipeline, using the same first-stage skip the other pipeline tests use.
-func bdDrillCount(t *testing.T, q audit.Query, filter audit.RecordFilter, docs []map[string]any) int {
+// bdSurvives runs one document through a drill-down pipeline: the raw first
+// $match, then the derived-field $match stages, as the server would.
+func bdSurvives(t *testing.T, pipeline mongo.Pipeline, doc map[string]any) bool {
 	t.Helper()
-	q.RecordFilter = filter
+	if !evalFirstMatch(t, pipeline[0][0].Value.(bson.D), doc) {
+		return false
+	}
+	_, ok := evalRowSurvives(t, pipeline, doc)
+	return ok
+}
+
+// bdDrillCount counts the documents the request drill-down returns for a row:
+// the query with the row's filter fragment merged in, the whole cohort.
+func bdDrillCount(t *testing.T, q audit.Query, filter *audit.BreakdownFilter, docs []map[string]any) int {
+	t.Helper()
+	if filter != nil {
+		q = filter.Apply(q)
+	}
 	cohort := [5]string{"", q.Controller, q.Action, q.Kind, q.Outcome}
-	pipeline := requestPipeline(q, cohort, "source", nil, 1)
+	pipeline := requestPipelineState(q, cohort, "", "source", nil, 1)
 	n := 0
 	for _, doc := range docs {
-		if _, ok := evalRowSurvives(t, pipeline, doc); ok {
+		if bdSurvives(t, pipeline, doc) {
 			n++
 		}
 	}
 	return n
 }
 
+// bdFilterless fails unless a row without a drill-down filter is one that cannot
+// have one: a missing value, or the polling type.
+func bdFilterless(t *testing.T, dim string, row audit.BreakdownRow) {
+	t.Helper()
+	if !row.Missing && dim != audit.BreakdownPollingType {
+		t.Errorf("%s: row %q has no filter, but only a missing value or the polling type may lack one", dim, row.Value)
+	}
+}
+
 func TestBreakdownRowFilterDrillCountMatchesPipelines(t *testing.T) {
 	now := bdNow()
 	docs := bdDocs(bdCases(now))
 	for _, outcome := range []string{"all", "success"} {
-		for _, dim := range bdDims {
-			q := bdQuery(now)
-			q.Outcome = outcome
-			modern := bdBreakdown(t, bdStore(t, false, docs), q, dim, 50)
-			legacy := bdStore(t, true, docs)
-			for _, row := range modern.Rows {
-				if row.Filter == nil {
-					t.Fatalf("%s/%s: row %q has no filter", outcome, dim, row.Value)
-				}
-				if got := bdDrillCount(t, q, *row.Filter, docs); int64(got) != row.Count {
-					t.Errorf("%s/%s %q: server drill-down returns %d rows, breakdown says %d", outcome, dim, row.Value, got, row.Count)
-				}
-				dq := q
-				dq.SourceIDs = legacy.ids()
-				dq.RecordFilter = *row.Filter
-				page, err := legacy.store.Requests(context.Background(), audit.PageInput{Query: dq, Limit: audit.MaxPageSize})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if int64(len(page.Rows)) != row.Count {
-					t.Errorf("%s/%s %q: legacy drill-down returns %d rows, breakdown says %d", outcome, dim, row.Value, len(page.Rows), row.Count)
+		for _, completion := range []string{"", audit.StateComplete, audit.StateIncomplete} {
+			for _, dim := range bdDims {
+				q := bdQuery(now)
+				q.Outcome, q.Completion = outcome, completion
+				modern := bdBreakdown(t, bdStore(t, false, docs), q, dim, 50)
+				legacy := bdStore(t, true, docs)
+				for _, row := range modern.Rows {
+					if row.Filter == nil {
+						bdFilterless(t, dim, row)
+						continue
+					}
+					name := fmt.Sprintf("%s/%s/%s %q", outcome, completion, dim, row.Value)
+					if got := bdDrillCount(t, q, row.Filter, docs); int64(got) != row.Count {
+						t.Errorf("%s: server drill-down returns %d rows, breakdown says %d", name, got, row.Count)
+					}
+					dq := row.Filter.Apply(q)
+					dq.SourceIDs = legacy.ids()
+					page, err := legacy.store.Requests(context.Background(), audit.PageInput{Query: dq, Limit: audit.MaxPageSize})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if int64(len(page.Rows)) != row.Count {
+						t.Errorf("%s: legacy drill-down returns %d rows, breakdown says %d", name, len(page.Rows), row.Count)
+					}
 				}
 			}
 		}
 	}
 }
 
-func TestBreakdownRowFilterOnlyKeepsExactValues(t *testing.T) {
+func TestBreakdownRowFilterKeepsItsValues(t *testing.T) {
 	now := bdNow()
 	docs := bdDocs(bdCases(now))
 	q := bdQuery(now)
-	// "OK" and " OK " are one status value once trimmed, so one filter keeps both:
-	// 17 rows minus 3 NotFound, 3 InternalServerError, the Accepted one and the blank one.
-	if got := bdDrillCount(t, q, audit.RecordFilter{StatusCodes: []string{"OK"}}, docs); got != 9 {
+	count := func(mutate func(*audit.Query)) int {
+		w := q
+		mutate(&w)
+		return bdDrillCount(t, w, nil, docs)
+	}
+	// "OK" and " OK " are one status once trimmed, and the match ignores case:
+	// 17 rows minus 3 NotFound, 3 InternalServerError, the Accepted one and the
+	// one without a status.
+	if got := count(func(w *audit.Query) { w.StatusCodes = []string{"OK"} }); got != 9 {
 		t.Fatalf("status OK keeps %d rows, want 9", got)
 	}
-	// An empty entry means "missing", and it is not a wildcard.
-	if got := bdDrillCount(t, q, audit.RecordFilter{UserAgents: []string{""}}, docs); got != 1 {
-		t.Fatalf("missing user agent keeps %d rows, want 1", got)
+	if got := count(func(w *audit.Query) { w.StatusCodes = []string{"ok"} }); got != 9 {
+		t.Fatalf("status ok keeps %d rows, want 9", got)
 	}
-	if got := bdDrillCount(t, q, audit.RecordFilter{UserIDMissing: true}, docs); got != 5 {
-		t.Fatalf("missing user keeps %d rows, want 5", got)
+	// A user agent is a case-insensitive substring: "ua" reaches UA-A to UA-E but
+	// not the one that looks like a field path or the missing one.
+	if got := count(func(w *audit.Query) { w.UserAgentContains = "ua" }); got != 15 {
+		t.Fatalf("agent ua keeps %d rows, want 15", got)
 	}
-	if got := bdDrillCount(t, q, audit.RecordFilter{UserIDMissing: true, UserIDs: []int{100}}, docs); got <= 5 {
-		t.Fatalf("missing-or-100 keeps %d rows, want more than the 5 missing", got)
+	if got := count(func(w *audit.Query) { w.UserAgentContains = "UA-A" }); got != 5 {
+		t.Fatalf("agent UA-A keeps %d rows, want 5", got)
 	}
-	// Lists combine with AND across fields and OR inside one.
-	if got := bdDrillCount(t, q, audit.RecordFilter{UserAgents: []string{"UA-A", "UA-B"}, UIVersions: []string{"1.0"}}, docs); got != 5 {
-		t.Fatalf("UA-A or UA-B with ui 1.0 keeps %d rows, want 5", got)
+	// A user id of 100 is i%3 == 0 and not missing (i%4 == 0): rows 3, 6, 9, 15.
+	if got := count(func(w *audit.Query) { w.UserIDs = []int{100} }); got != 4 {
+		t.Fatalf("user 100 keeps %d rows, want 4", got)
+	}
+	// Fields combine with AND, and the values of one field with OR.
+	if got := count(func(w *audit.Query) { w.UserAgentContains, w.UIVersions = "UA-A", []string{"1.0"} }); got != 3 {
+		t.Fatalf("UA-A with ui 1.0 keeps %d rows, want 3", got)
+	}
+	if got := count(func(w *audit.Query) { w.UserIPs, w.UIVersions = []string{"10.0.0.0", "10.0.0.1"}, []string{"1.0"} }); got != 4 {
+		t.Fatalf("ip .0 or .1 with ui 1.0 keeps %d rows, want 4", got)
+	}
+	if got := count(func(w *audit.Query) { w.UIVersions = []string{"1.0", "2.0"} }); got != 17 {
+		t.Fatalf("both versions keep %d rows, want all 17", got)
 	}
 	// A value that looks like a field path is only ever a literal.
-	if got := bdDrillCount(t, q, audit.RecordFilter{UserAgents: []string{"$pathLike"}}, docs); got != 1 {
+	if got := count(func(w *audit.Query) { w.UserAgentContains = "$pathLike" }); got != 1 {
 		t.Fatalf("$pathLike keeps %d rows, want 1", got)
 	}
 }
 
+// Every record filter and the completion state narrow the breakdown itself, and
+// the legacy reader agrees with the aggregation on each.
+func TestBreakdownHonorsRecordFiltersAndStates(t *testing.T) {
+	now := bdNow()
+	cases := bdCases(now)
+	ipOf := func(c bdCase) string { return bdText(c.doc, "UserIp") }
+	for _, tc := range []struct {
+		name string
+		set  func(*audit.Query)
+		keep func(bdCase) bool
+	}{
+		{"complete", func(q *audit.Query) { q.Completion = audit.StateComplete }, func(c bdCase) bool { return c.state == "valid" }},
+		{"incomplete", func(q *audit.Query) { q.Completion = audit.StateIncomplete }, func(c bdCase) bool { return c.state == "incomplete" }},
+		{"invalid", func(q *audit.Query) { q.Completion = audit.StateInvalid }, func(c bdCase) bool { return c.state == "invalid" }},
+		{"pending", func(q *audit.Query) { q.Completion = audit.StatePending }, func(c bdCase) bool { return c.pending }},
+		{"version", func(q *audit.Query) { q.UIVersions = []string{"1.0"} }, func(c bdCase) bool { return bdText(c.doc, "PayrollUIVersion") == "1.0" }},
+		{"status", func(q *audit.Query) { q.StatusCodes = []string{"ok"} }, func(c bdCase) bool { return strings.EqualFold(strings.TrimSpace(bdText(c.doc, "StatusCode")), "OK") }},
+		{"agent and ips", func(q *audit.Query) { q.UserAgentContains, q.UserIPs = "ua-a", []string{"10.0.0.0", "10.0.0.1"} }, func(c bdCase) bool {
+			return bdText(c.doc, "UserAgent") == "UA-A" && (ipOf(c) == "10.0.0.0" || ipOf(c) == "10.0.0.1")
+		}},
+		{"user", func(q *audit.Query) { q.UserIDs = []int{101} }, func(c bdCase) bool { v, ok := c.doc["UserId"].(int32); return ok && v == 101 }},
+	} {
+		var want int64
+		for _, c := range cases {
+			if tc.keep(c) {
+				want++
+			}
+		}
+		if want == 0 || want == int64(len(cases)) {
+			t.Fatalf("%s: the filter keeps %d of %d rows; the fixture must split", tc.name, want, len(cases))
+		}
+		for _, dim := range bdDims {
+			t.Run(tc.name+"/"+dim, func(t *testing.T) {
+				q := bdQuery(now)
+				tc.set(&q)
+				modern := bdBreakdown(t, bdStore(t, false, bdDocs(cases)), q, dim, 3)
+				old := bdBreakdown(t, bdStore(t, true, bdDocs(cases)), q, dim, 3)
+				if modern.Total != want || old.Total != want {
+					t.Fatalf("total modern %d, legacy %d, want %d", modern.Total, old.Total, want)
+				}
+				modern.Sources, old.Sources = nil, nil
+				if !reflect.DeepEqual(modern, old) {
+					t.Fatalf("legacy differs from modern\nmodern: %#v\nlegacy: %#v", modern, old)
+				}
+			})
+		}
+	}
+}
+
+// The breakdown reads the request drill-down pipeline. Its prefix must carry the
+// raw record filters, the state filter, and every derived field the group reads;
+// when the request pipeline stops defining one, the breakdown fails loudly.
+func TestBreakdownPrefixReadsTheDrillDownPipeline(t *testing.T) {
+	q := bdQuery(bdNow(), "source")
+	q.UserIPs, q.Completion = []string{"10.0.0.1"}, audit.StateIncomplete
+	q = q.Normalized()
+	prefix, err := breakdownPrefix(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsElems(prefix[0][0].Value.(bson.D), recordMatch(q)) {
+		t.Error("the first $match lost the raw record filters")
+	}
+	post := false
+	for _, stage := range prefix[1:] {
+		if stage[0].Key == "$match" && reflect.DeepEqual(stage[0].Value, recordPostMatch(q)) {
+			post = true
+		}
+		switch stage[0].Key {
+		case "$sort", "$limit", "$project", "$group", "$skip":
+			t.Errorf("the prefix keeps %s, which belongs to paging", stage[0].Key)
+		}
+	}
+	if !post {
+		t.Error("the prefix lost the state filter, so counts could differ from the drill-down")
+	}
+	last := prefix[len(prefix)-1]
+	if fields, ok := last[0].Value.(bson.D); last[0].Key != "$set" || !ok || len(fields) != 1 || fields[0].Key != "_auditBin" {
+		t.Errorf("the prefix must end with the histogram bin, got %v", last)
+	}
+	if err := checkBreakdownFields(prefix); err != nil {
+		t.Fatal(err)
+	}
+	// The check is what keeps a rename loud: a prefix without a field fails.
+	for _, field := range breakdownDerivedFields {
+		var cut mongo.Pipeline
+		for _, stage := range prefix {
+			if fields, ok := stage[0].Value.(bson.D); stage[0].Key == "$set" && ok {
+				kept := bson.D{}
+				for _, e := range fields {
+					if e.Key != field {
+						kept = append(kept, e)
+					}
+				}
+				stage = bson.D{{Key: "$set", Value: kept}}
+			}
+			cut = append(cut, stage)
+		}
+		if err := checkBreakdownFields(cut); err == nil || !strings.Contains(err.Error(), field) {
+			t.Errorf("a pipeline without %s must fail the check naming it, got %v", field, err)
+		}
+	}
+}
 func TestLegacyBreakdownAvoidsServerSideOperators(t *testing.T) {
 	now := bdNow()
 	h := bdStore(t, true, bdDocs(bdCases(now)))
 	for _, dim := range bdDims {
 		q := bdQuery(now)
-		q.RecordFilter = audit.RecordFilter{UserAgents: []string{"UA-A"}}
+		q.UserAgentContains = "UA-A"
 		bdBreakdown(t, h, q, dim, 5)
 	}
 	if len(h.pipelines) != len(bdDims) {
@@ -699,7 +843,7 @@ func TestBreakdownValidatesInputAndKeepsLimits(t *testing.T) {
 		"top over 50":       {Query: q, Dim: audit.BreakdownUserAgent, Top: 51},
 		"negative top":      {Query: q, Dim: audit.BreakdownUserAgent, Top: -1},
 		"range over 7 days": {Query: func() audit.Query { w := q; w.Start = w.End.Add(-8 * 24 * time.Hour); return w }(), Dim: audit.BreakdownUserAgent},
-		"filter too long":   {Query: func() audit.Query { w := q; w.UserIPs = []string{strings.Repeat("x", 65)}; return w }(), Dim: audit.BreakdownUserAgent},
+		"filter too long":   {Query: func() audit.Query { w := q; w.UserIPs = []string{strings.Repeat("x", audit.MaxFilterLength+1)}; return w }(), Dim: audit.BreakdownUserAgent},
 	} {
 		if _, err := h.store.Breakdown(context.Background(), in); !errors.Is(err, audit.ErrInvalidInput) {
 			t.Errorf("%s: err = %v, want invalid input", name, err)
@@ -767,8 +911,11 @@ func TestBreakdownRowFilterDrillCountMatches(t *testing.T) {
 		}
 		for _, row := range got.Rows {
 			sum += row.Count
-			dq := q
-			dq.RecordFilter = *row.Filter
+			if row.Filter == nil {
+				bdFilterless(t, dim, row)
+				continue
+			}
+			dq := row.Filter.Apply(q)
 			var seen int64
 			cursor := ""
 			for {

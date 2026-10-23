@@ -3,10 +3,10 @@
   import { api } from './lib/api';
   import { defaultQuery } from './lib/time';
   import { countEpochBuckets } from './lib/time';
-  import { initialComparison, queryFingerprint, resultNotes, rankComparisons } from './lib/presentation';
-  import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, shouldSelectAddedSource, writeInvestigationSnapshot } from './lib/investigation';
-import type { Analysis, BreakdownRow, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilter, RequestRecord, Source, SourceInput, TLSMode } from './lib/types';
-  import { activeRecordFilter, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './lib/breakdown';
+  import { initialComparison, kindLabel, queryFingerprint, qualityByKindText, resultNotes, rankComparisons, stateLabel, unknownKindTip } from './lib/presentation';
+  import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, serializeRecordFilters, shouldSelectAddedSource, writeInvestigationSnapshot } from './lib/investigation';
+import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Source, SourceInput, TLSMode } from './lib/types';
+  import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './lib/breakdown';
   import BreakdownPanel from './components/BreakdownPanel.svelte';
   import QueryControls from './components/QueryControls.svelte';
   import Charts from './components/Charts.svelte';
@@ -33,12 +33,15 @@ import type { Analysis, BreakdownRow, ConnectionInput, ConnectionTestResult, Inf
   let investigationIntent = null as ReturnType<typeof readInvestigationSnapshot>;
   let analysis = $state<Analysis | null>(null);
   let selectedKey = $state('');
+  // A quality drill-down pages the whole comparison (no API group) narrowed to one state.
+  let requestState = $state('');
+  let queryWide = $state(false);
   let contextAnchor = $state<RequestRecord | null>(null);
   let timelineKeys = $state<string[]>([]);
   let requestPage = $state<Page | null>(null);
   let requestRows = $state<RequestRecord[]>([]);
   let requestPageNumber = $state(1);
-  let drill = $state<RecordFilter>({});
+  let drill = $state<RecordFilters>({});
   let record = $state<RecordDetail | null>(null);
   let loading = $state(false);
   let requestLoading = $state(false);
@@ -124,7 +127,7 @@ import type { Analysis, BreakdownRow, ConnectionInput, ConnectionTestResult, Inf
   const calculationNotes = $derived(resultNotes(analysis?.apis ?? []));
   const drillActive = $derived(hasRecordFilter(drill));
   const drillChips = $derived(recordFilterChips(drill));
-  const breakdownQuery = $derived<Query | null>(analysis ? { ...analysis.query, ...drill } : null);
+  const breakdownQuery = $derived<Query | null>(analysis ? applyDrill(analysis.query, drill) : null);
   const targetAssessment = $derived.by(() => {
     if (targetMs == null || !Number.isFinite(targetMs) || targetMs < 0 || !selected) return '';
     const p95 = selected.current.p95;
@@ -408,7 +411,7 @@ import type { Analysis, BreakdownRow, ConnectionInput, ConnectionTestResult, Inf
     requestController?.abort(); recordController?.abort();
     requestController = null; recordController = null;
     requestPage = null; requestRows = []; record = null; drill = {};
-    requestPageNumber = 1;
+    requestPageNumber = 1; requestState = ''; queryWide = false;
     requestError = ''; recordError = ''; recordLoadingId = '';
   }
 
@@ -620,23 +623,30 @@ import type { Analysis, BreakdownRow, ConnectionInput, ConnectionTestResult, Inf
     selectedKey = key; invalidateDetails();
     await loadRequests('', 1);
   }
-  async function drillInto(filter: RecordFilter, _row: BreakdownRow) {
+  async function drillInto(filter: BreakdownFilter, _row: BreakdownRow) {
     if (!breakdownQuery) return;
-    const merged = activeRecordFilter(mergeRecordFilter(breakdownQuery, filter));
+    const merged = serializeRecordFilters(mergeRecordFilter(breakdownQuery, filter));
     contextAnchor = null; selectedKey = ''; invalidateDetails();
     drill = merged;
     await loadRequests('', 1);
     await tick();
     document.getElementById('request-history')?.scrollIntoView({ block: 'start' });
   }
+  async function drillQuality(state: string) {
+    contextAnchor = null; invalidateDetails(); selectedKey = '';
+    queryWide = true; requestState = state;
+    await loadRequests('', 1);
+    await tick();
+    document.getElementById('request-history')?.scrollIntoView({ block: 'start' });
+  }
   function clearDrill() { drill = {}; requestController?.abort(); requestPage = null; requestRows = []; requestError = ''; requestLoading = false; }
   async function loadRequests(cursor: string, pageNumber: number) {
-    if ((!selectedKey && !drillActive) || !analysis) return;
+    if ((!selectedKey && !queryWide && !drillActive) || !analysis) return;
     requestController?.abort(); requestController = new AbortController();
     const run = ++requestSequence;
     requestLoading = true; requestError = '';
     try {
-      const page = await api.requests(JSON.parse(JSON.stringify({ ...analysis.query, ...drill })) as Query, selectedKey, cursor, requestController.signal);
+      const page = await api.requests(JSON.parse(JSON.stringify(breakdownQuery ?? analysis.query)) as Query, queryWide ? '' : selectedKey, cursor, requestController.signal, requestState);
       if (run !== requestSequence) return;
       requestPage = page;
       requestRows = page.rows.slice(0, info?.limits.maxPageSize ?? 100);
@@ -653,12 +663,12 @@ import type { Analysis, BreakdownRow, ConnectionInput, ConnectionTestResult, Inf
     finally { if (recordLoadingId === row.id) recordLoadingId = ''; }
   }
   async function exportCSV() {
-    if (!selected) return;
+    if (!selected && !queryWide) return;
     requestError = '';
     try {
-      const result = await api.export(JSON.parse(JSON.stringify(analysis?.query ?? query)) as Query, selected.key);
+      const result = await api.export(JSON.parse(JSON.stringify(analysis?.query ?? query)) as Query, queryWide ? '' : (selected?.key ?? ''), undefined, requestState);
       const url = URL.createObjectURL(result.blob);
-      const link = document.createElement('a'); link.href = url; link.download = 'api-audit-requests.csv';
+      const link = document.createElement('a'); link.href = url; link.download = 'unravis-requests.csv';
       document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
       if (result.limited) requestError = 'Export reached a server-configured row or byte cap.';
     } catch (cause) { requestError = message(cause); }
@@ -666,11 +676,11 @@ import type { Analysis, BreakdownRow, ConnectionInput, ConnectionTestResult, Inf
 
 </script>
 
-<svelte:head><title>API Audit Explorer</title></svelte:head>
+<svelte:head><title>Unravis</title></svelte:head>
 
 <div class="app-shell">
   <header class="topbar">
-    <div class="brand-lockup"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><div><h1>API Audit Explorer</h1><p>Compare each API with its own recent history</p></div></div>
+    <div class="brand-lockup"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><div><h1>Unravis</h1><p>API audit investigation</p></div></div>
     <div class="topbar-meta">
       {#if info}<span class:demo-badge={info.demo} class="mode-badge">{info.demo ? 'Demo data' : 'Live mode'}</span>{/if}
       {#if info?.demo}<span class="updated-label">Data reference time <time>{new Date(info.now).toLocaleString()}</time></span>{/if}
@@ -813,7 +823,7 @@ import type { Analysis, BreakdownRow, ConnectionInput, ConnectionTestResult, Inf
 
     <main class="analysis-workspace" inert={connectionsOpen}>
       <div class="frozen-run-note" role="status">{restoredInTab ? 'Restored this tab’s investigation filters. ' : ''}{investigationNotice} <button class="quiet-button" onclick={resetInvestigation}>Reset investigation</button></div>
-      {#key controlsResetKey}<QueryControls bind:query bind:zone bind:targetMs bind:dateInputsValid />{/key}
+      {#key controlsResetKey}<QueryControls bind:query bind:zone bind:targetMs bind:dateInputsValid groupNames={(analysis?.apis ?? []).map(row => row.controller + '.' + row.action)} />{/key}
       <section class="analysis-main">
         <div class="analysis-heading">
           <div><h2>Compare API speed</h2><p>See how the selected period compares with earlier requests.</p></div>
@@ -830,16 +840,17 @@ import type { Analysis, BreakdownRow, ConnectionInput, ConnectionTestResult, Inf
           <details class="result-notes"><summary>About these results and sample sizes</summary><div class="calculation-notes">{#each calculationNotes as note}<p>{note}</p>{/each}</div></details>
           <div class="quality-strip">
             <div><strong>{analysis.apis.length.toLocaleString()}</strong><span>API groups</span></div>
-            <div><strong>{analysis.quality.incomplete.toLocaleString()}</strong><span>Missing timing</span></div>
-            <div><strong>{analysis.quality.invalid.toLocaleString()}</strong><span>Unusable timing</span></div>
-            <div><strong>{analysis.quality.unknownOutcome.toLocaleString()}</strong><span>Unclassified result</span></div>
-            {#if analysis.quality.pendingAsync}<div><strong>{analysis.quality.pendingAsync.toLocaleString()}</strong><span>pending async</span></div>{/if}
+            <div><button type="button" class="quality-count" disabled={!analysis.quality.incomplete} title="List the requests behind this count" onclick={() => drillQuality('incomplete')}><strong>{analysis.quality.incomplete.toLocaleString()}</strong><span>Missing timing</span></button></div>
+            <div><button type="button" class="quality-count" disabled={!analysis.quality.invalid} title="List the requests behind this count" onclick={() => drillQuality('invalid')}><strong>{analysis.quality.invalid.toLocaleString()}</strong><span>Unusable timing</span></button></div>
+            <div><button type="button" class="quality-count" disabled={!analysis.quality.unknownOutcome} title="List the requests behind this count" onclick={() => drillQuality('unclassified')}><strong>{analysis.quality.unknownOutcome.toLocaleString()}</strong><span>Unclassified result</span></button></div>
+            {#if analysis.quality.pendingAsync}<div><button type="button" class="quality-count" title="List the requests behind this count" onclick={() => drillQuality('pending')}><strong>{analysis.quality.pendingAsync.toLocaleString()}</strong><span>pending async</span></button></div>{/if}
+            {#if qualityByKindText(analysis.quality)}<div class="quality-filter-note" title={unknownKindTip}><span>{qualityByKindText(analysis.quality)}</span></div>{/if}
             {#if analysis.query.outcome === 'client_error' || analysis.query.outcome === 'server_error'}<div class="quality-filter-note"><span>Counts above cover only the selected status class.</span></div>{/if}
           <p>Response times are estimates. A comparison shows change, not a health verdict.</p>
           <details class="quality-definitions"><summary>What these counts mean</summary><p><strong>Missing timing:</strong> no complete duration was recorded. <strong>Unusable timing:</strong> a duration was present but could not be used. <strong>Unclassified result:</strong> the request could not be identified as a success or failure. <strong>Pending async:</strong> an asynchronous request that only answered 202 Accepted; its work is not finished, so it is counted as missing timing and never as a response-time sample.</p></details>
           </div>
           <RequestVolume {analysis} {zone} />
-          <TrafficSlowness {analysis} {zone} {sourceLabels} onContext={async(row)=>{contextAnchor=row;await tick();document.getElementById('nearby-activity')?.scrollIntoView({block:'start'});}} />
+          <TrafficSlowness {analysis} {zone} {sourceLabels} cohort={selected} onContext={async(row)=>{contextAnchor=row;await tick();document.getElementById('nearby-activity')?.scrollIntoView({block:'start'});}} />
           {#if breakdownQuery}<BreakdownPanel query={breakdownQuery} {sourceLabels} onDrill={drillInto} />{/if}
           <section class="data-section" id="api-group-results">
             <div class="section-heading"><div><h3>Explore {analysis.apis.length.toLocaleString()} API groups</h3><p>Largest slowdowns first. Each group keeps one source, API action, request type, and outcome together. P95 is the time within which about 95 of 100 requests finish.</p></div></div>
@@ -850,15 +861,15 @@ import type { Analysis, BreakdownRow, ConnectionInput, ConnectionTestResult, Inf
             <section class="selected-api-heading" id="selected-api-details" aria-label="Selected API" aria-live="polite" tabindex="-1">
               <a class="back-to-groups" href="#api-group-results">Back to API groups</a>
               <h3>{selected.controller}.{selected.action}</h3>
-              <p>{sourceLabels.get(selected.sourceId) ?? 'Source unavailable'} · {selected.kind} · {selected.outcome}</p>
+              <p>{sourceLabels.get(selected.sourceId) ?? 'Source unavailable'} · <span title={selected.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(selected.kind)}</span> · {selected.outcome}</p>
               <div class="selected-api-stats"><span><strong>{selected.current.count.toLocaleString()}</strong> current timings</span><span><strong>{selected.reference.count.toLocaleString()}</strong> reference timings</span><span><strong>{selected.p95Ratio == null ? 'Unavailable' : '≈ ' + selected.p95Ratio.toFixed(2) + '×'}</strong> P95 vs reference</span>{#if targetMs != null}<span>Target {targetMs} ms: {targetAssessment}</span>{/if}</div>
               {#if selected.current.count < 20 || selected.reference.count < 20}<p class="sample-note">{selected.current.count === 0 ? 'No usable timings in the current period.' : selected.reference.count === 0 ? 'No usable timings in the reference period.' : 'Fewer than 20 usable timings in at least one period.'} A slowdown comparison needs at least 20 usable timings in each period.</p>{/if}
             </section>
             <Charts {analysis} {selected} {zone} {targetMs} />
           {/if}
           <section class="data-section request-section" id="request-history">
-            <div class="section-heading"><div><h3>Request history</h3><p>{selected ? selected.controller + '.' + selected.action + ' · ' + selected.kind + ' · ' + selected.outcome : drillActive ? 'Requests matching ' + drillChips.map(chip => chip.text).join(' · ') + '.' : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
-              {#if selected}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
+            <div class="section-heading"><div><h3>Request history</h3><p>{queryWide ? stateLabel(requestState) + ' · every API group in this comparison' : selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome : drillActive ? 'Requests matching ' + drillChips.map(chip => chip.text).join(' · ') + '.' : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
+              {#if selected || queryWide}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
               {#if drillActive}<button class="quiet-button" onclick={clearDrill}>Clear breakdown filter</button>{/if}
             </div>
             {#if requestError}<div class="inline-error" role="alert">{requestError}</div>{/if}

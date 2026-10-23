@@ -188,6 +188,7 @@ func failedSource(p *profile, message string) sourceAnalysis {
 }
 
 func (s *Store) readBuckets(ctx context.Context, p *profile, q audit.Query, start, end time.Time, total, totalBytes, legacyRecords, legacyBytes *atomic.Int64) ([]audit.Bucket, error) {
+	q = q.Normalized()
 	pipeline := buildSummaryPipeline(q, start, end, !start.Equal(q.BaselineStart) || !end.Equal(q.BaselineEnd))
 	if usesLegacyMongo(p.shared.client) {
 		pipeline = legacyMetadataPipeline(pipeline)

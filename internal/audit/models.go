@@ -18,6 +18,10 @@ const (
 	MaxPayloadBytes = 262144
 	MaxInterval     = 7 * 24 * time.Hour
 	MaxFilterLength = 200
+	// Record filter list bounds.
+	MaxStatusCodes  = 20
+	MaxFilterValues = 20
+	MaxUserIDs      = 50
 )
 
 var (
@@ -44,7 +48,20 @@ type Query struct {
 	BucketSeconds int       `json:"bucketSeconds"`
 	Controller    string    `json:"controller"`
 	Action        string    `json:"action"`
-	RecordFilter
+
+	// Record filters narrow every aggregate and every request list alike. All are
+	// additive and omitted when empty, so a saved query without them is unchanged.
+	UserIDs           []int    `json:"userIds,omitempty"`
+	UIVersions        []string `json:"uiVersions,omitempty"`
+	UserAgentContains string   `json:"userAgentContains,omitempty"`
+	UserIPs           []string `json:"userIps,omitempty"`
+	URLContains       string   `json:"urlContains,omitempty"`
+	AuditID           string   `json:"auditId,omitempty"`
+	StatusCodes       []string `json:"statusCodes,omitempty"`
+	// Completion is complete, incomplete, pending, invalid or all (the default).
+	Completion string `json:"completion,omitempty"`
+	// Operation is "Controller.Action", split on the first dot.
+	Operation string `json:"operation,omitempty"`
 }
 
 type Source struct {
@@ -241,6 +258,18 @@ type Quality struct {
 	UnknownOutcome int64 `json:"unknownOutcome"`
 
 	PendingAsync int64 `json:"pendingAsync,omitempty"`
+
+	// ByKind splits the counts above by row kind (synchronous, asynchronous,
+	// hangfire, unknown). Only kinds with something to report are present.
+	ByKind map[string]QualityCounts `json:"byKind,omitempty"`
+}
+
+// QualityCounts is one kind's share of the quality counters.
+type QualityCounts struct {
+	Incomplete     int64 `json:"incomplete"`
+	Invalid        int64 `json:"invalid"`
+	UnknownOutcome int64 `json:"unknownOutcome"`
+	PendingAsync   int64 `json:"pendingAsync,omitempty"`
 }
 
 type Analysis struct {
@@ -286,6 +315,7 @@ type RequestRecord struct {
 	Action              string     `json:"action"`
 	Kind                string     `json:"kind"`
 	Outcome             string     `json:"outcome"`
+	State               string     `json:"state,omitempty"`
 	Status              string     `json:"status"`
 	URL                 string     `json:"url"`
 	InitiatedAt         *time.Time `json:"initiatedAt"`
@@ -331,8 +361,11 @@ type RecordDetail struct {
 type PageInput struct {
 	Query  Query  `json:"query"`
 	APIKey string `json:"apiKey"`
+	State  string `json:"state"`
 	Cursor string `json:"cursor"`
 	Limit  int    `json:"limit"`
+
+	MinMs *float64 `json:"minMs,omitempty"`
 }
 
 type Page struct {

@@ -139,6 +139,7 @@ func (d *demoRepository) Analyze(ctx context.Context, q Query) (Analysis, error)
 func aggregateDemo(records []RequestRecord, q Query, selected map[string]bool, current bool) []Bucket {
 	type bucketKey struct {
 		source, controller, action, kind, outcome string
+		state                                     string
 		at                                        int64
 		bin                                       int
 	}
@@ -146,8 +147,9 @@ func aggregateDemo(records []RequestRecord, q Query, selected map[string]bool, c
 		count         int64
 		sum, min, max float64
 		set           bool
-		phases        Bucket // only the phase sums and counts are used
+		phases        Bucket // only the phase sums and counts and the pending and status class counts are used
 	}
+	q = q.Normalized()
 	groups := map[bucketKey]*aggregate{}
 	start, end := q.BaselineStart, q.BaselineEnd
 	if current {
@@ -160,39 +162,48 @@ func aggregateDemo(records []RequestRecord, q Query, selected map[string]bool, c
 		if q.Controller != "" && r.Controller != q.Controller || q.Action != "" && r.Action != q.Action {
 			continue
 		}
-		if q.Kind != "all" && r.Kind != q.Kind || !BucketOutcomeMatches(q.Outcome, r.Outcome) {
+		state, class, value, ok := demoSummaryRow(r, q)
+		if !ok || !demoRecordMatches(q, r, state, class) {
 			continue
 		}
-		value := r.DurationMs
-		if q.Metric == "api" {
-			value = r.ApiTimeMs
-		}
-		if value == nil || *value < 0 {
-			continue
-		}
-		bin := BinIndex(*value)
-		if bin < 0 {
-			continue
+		bin := 0
+		if state == "valid" {
+			bin = BinIndex(*value)
 		}
 		seconds := int64(q.BucketSeconds)
 		epoch := r.InitiatedAt.Unix()
 		at := epoch - epoch%seconds
-		key := bucketKey{r.SourceID, r.Controller, r.Action, r.Kind, r.Outcome, at, bin}
+		key := bucketKey{r.SourceID, r.Controller, r.Action, r.Kind, r.Outcome, state, at, bin}
 		a := groups[key]
 		if a == nil {
-			a = &aggregate{min: *value, max: *value}
+			a = &aggregate{}
+			if state == "valid" {
+				a.min, a.max = *value, *value
+			}
 			groups[key] = a
 		}
 		a.count++
-		a.sum += *value
-		addDemoPhase(&a.phases.SumAuditMs, &a.phases.NAudit, r.AuditCreateTimeMs)
-		addDemoPhase(&a.phases.SumApiMs, &a.phases.NApi, r.ApiTimeMs)
-		addDemoPhase(&a.phases.SumPayloadMs, &a.phases.NPayload, r.PayloadRecordTimeMs)
-		if *value < a.min {
-			a.min = *value
+		switch class {
+		case StatusPending:
+			a.phases.PendingAsync++
+		case StatusClientError:
+			a.phases.Count4xx++
+		case StatusServerError:
+			a.phases.Count5xx++
+		case StatusHangfireFailed:
+			a.phases.CountHangfireFailed++
 		}
-		if *value > a.max {
-			a.max = *value
+		if state == "valid" {
+			a.sum += *value
+			addDemoPhase(&a.phases.SumAuditMs, &a.phases.NAudit, r.AuditCreateTimeMs)
+			addDemoPhase(&a.phases.SumApiMs, &a.phases.NApi, r.ApiTimeMs)
+			addDemoPhase(&a.phases.SumPayloadMs, &a.phases.NPayload, r.PayloadRecordTimeMs)
+			if *value < a.min {
+				a.min = *value
+			}
+			if *value > a.max {
+				a.max = *value
+			}
 		}
 		a.set = true
 	}
@@ -217,6 +228,9 @@ func aggregateDemo(records []RequestRecord, q Query, selected map[string]bool, c
 		if a.outcome != b.outcome {
 			return a.outcome < b.outcome
 		}
+		if a.state != b.state {
+			return a.state < b.state
+		}
 		if a.at != b.at {
 			return a.at < b.at
 		}
@@ -225,9 +239,55 @@ func aggregateDemo(records []RequestRecord, q Query, selected map[string]bool, c
 	buckets := make([]Bucket, 0, len(keys))
 	for _, k := range keys {
 		a := groups[k]
-		buckets = append(buckets, Bucket{SourceID: k.source, Controller: k.controller, Action: k.action, Kind: k.kind, Outcome: k.outcome, State: "valid", At: time.Unix(k.at, 0).UTC(), Bin: k.bin, Count: a.count, SumMs: a.sum, MinMs: a.min, MaxMs: a.max, SumAuditMs: a.phases.SumAuditMs, SumApiMs: a.phases.SumApiMs, SumPayloadMs: a.phases.SumPayloadMs, NAudit: a.phases.NAudit, NApi: a.phases.NApi, NPayload: a.phases.NPayload})
+		buckets = append(buckets, Bucket{SourceID: k.source, Controller: k.controller, Action: k.action, Kind: k.kind, Outcome: k.outcome, State: k.state, At: time.Unix(k.at, 0).UTC(), Bin: k.bin, Count: a.count, SumMs: a.sum, MinMs: a.min, MaxMs: a.max, PendingAsync: a.phases.PendingAsync, Count4xx: a.phases.Count4xx, Count5xx: a.phases.Count5xx, CountHangfireFailed: a.phases.CountHangfireFailed, SumAuditMs: a.phases.SumAuditMs, SumApiMs: a.phases.SumApiMs, SumPayloadMs: a.phases.SumPayloadMs, NAudit: a.phases.NAudit, NApi: a.phases.NApi, NPayload: a.phases.NPayload})
 	}
 	return buckets
+}
+
+// demoState is a demo row's state; the generated rows leave it empty and are
+// complete.
+func demoState(r RequestRecord) string {
+	if r.State == "" {
+		return "valid"
+	}
+	return r.State
+}
+
+// demoSummaryRow applies the summary's rules to one demo row: its state and
+// status class, and its metric value. ok is false when the query's kind and
+// outcome filters leave the row out of the summary, or when a complete row has
+// no usable duration (the summary cannot bin it).
+func demoSummaryRow(r RequestRecord, q Query) (state, class string, value *float64, ok bool) {
+	state = demoState(r)
+	class = StatusClass(r.Kind, state, r.Status)
+	if !RowInSummary(q.Kind, q.Outcome, r.Kind, state, r.Outcome, class) {
+		return state, class, nil, false
+	}
+	if state != "valid" {
+		return state, class, nil, true
+	}
+	value = r.DurationMs
+	if q.Metric == "api" {
+		value = r.ApiTimeMs
+	}
+	if value == nil || *value < 0 || BinIndex(*value) < 0 {
+		return state, class, nil, false
+	}
+	return state, class, value, true
+}
+
+// demoRecordMatches applies the shared record filters to one demo row: the
+// identity, client, URL and status filters and the completion filter, the same
+// rules the Mongo pipelines and the legacy reader apply. q must already be
+// normalized so that Operation is folded into Controller and Action.
+func demoRecordMatches(q Query, r RequestRecord, state, class string) bool {
+	if !StateMatches(q.Completion, state, class == StatusPending, r.Outcome) {
+		return false
+	}
+	return RecordFilterMatches(q, RecordFacts{
+		ID: r.ID, UserID: r.UserID, UserIP: r.UserIP, UserAgent: r.UserAgent,
+		UIVersion: r.UIVersion, URL: r.URL, Status: r.Status,
+	})
 }
 
 func addDemoPhase(sum *float64, n *int64, value *float64) {
@@ -244,33 +304,45 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 	if err := ValidateQuery(input.Query); err != nil {
 		return Page{}, err
 	}
+	input.Query = input.Query.Normalized()
 	if input.Limit < 1 || input.Limit > MaxPageSize {
 		return Page{}, fmt.Errorf("%w: page limit must be between 1 and %d", ErrLimit, MaxPageSize)
 	}
-	// An empty API key pages every row the query selects, like the store does.
-	fields := [5]string{"", input.Query.Controller, input.Query.Action, input.Query.Kind, input.Query.Outcome}
-	if input.APIKey != "" {
+	if err := ValidateState(input.State); err != nil {
+		return Page{}, err
+	}
+	state := input.State
+	if state == StateAll {
+		state = ""
+	}
+	// Without an API key the page is query-wide: every selected source.
+	keyed := input.APIKey != ""
+	var fields [5]string
+	if keyed {
 		var err error
 		if fields, err = decodeCohortKey(input.APIKey); err != nil {
 			return Page{}, fmt.Errorf("%w: API key is invalid", ErrInvalidInput)
 		}
 	}
-	selected := false
+	selected := !keyed
+	sources := make(map[string]bool, len(input.Query.SourceIDs))
 	for _, id := range input.Query.SourceIDs {
-		if id == fields[0] {
+		if keyed && id == fields[0] {
 			selected = true
 		}
 		if !d.hasSource(id) {
 			return Page{}, fmt.Errorf("%w: source was not found", ErrNotFound)
 		}
+		sources[id] = true
 	}
-	if input.APIKey != "" && (!selected || (input.Query.Controller != "" && input.Query.Controller != fields[1]) || (input.Query.Action != "" && input.Query.Action != fields[2]) || (input.Query.Kind != "all" && input.Query.Kind != fields[3]) || !BucketOutcomeMatches(input.Query.Outcome, fields[4])) {
+	if !selected || (keyed && ((input.Query.Controller != "" && input.Query.Controller != fields[1]) || (input.Query.Action != "" && input.Query.Action != fields[2]) || !CohortMatchesQuery(input.Query, fields[3], fields[4]))) {
 		return Page{}, fmt.Errorf("%w: API key does not match query", ErrInvalidInput)
 	}
 	fingerprintBytes, _ := json.Marshal(struct {
 		Query  Query  `json:"query"`
 		APIKey string `json:"apiKey"`
-	}{input.Query, input.APIKey})
+		State  string `json:"state"`
+	}{input.Query, input.APIKey, state})
 	sum := sha256.Sum256(fingerprintBytes)
 	fingerprint := base64.RawURLEncoding.EncodeToString(sum[:])
 	offset := 0
@@ -288,21 +360,21 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 	start, end := input.Query.Start, input.Query.End
 	rows := make([]RequestRecord, 0)
 	for _, r := range d.records {
-		if r.InitiatedAt.Before(start) || !r.InitiatedAt.Before(end) {
+		if !sources[r.SourceID] || r.InitiatedAt == nil || r.InitiatedAt.Before(start) || !r.InitiatedAt.Before(end) {
 			continue
 		}
-		if input.APIKey == "" {
-			if d.matchesQuery(r, input.Query) {
-				rows = append(rows, r)
-			}
+		if input.Query.Controller != "" && r.Controller != input.Query.Controller || input.Query.Action != "" && r.Action != input.Query.Action {
 			continue
 		}
-		if !input.Query.RecordFilter.Matches(r) {
+		if keyed && (r.SourceID != fields[0] || r.Controller != fields[1] || r.Action != fields[2] || r.Kind != fields[3] || r.Outcome != fields[4]) {
 			continue
 		}
-		if !r.InitiatedAt.Before(start) && r.InitiatedAt.Before(end) && r.SourceID == fields[0] && r.Controller == fields[1] && r.Action == fields[2] && r.Kind == fields[3] && r.Outcome == fields[4] {
-			rows = append(rows, r)
+		rowState, class, _, ok := demoSummaryRow(r, input.Query)
+		if !ok || !StateMatches(state, rowState, class == StatusPending, r.Outcome) || !demoRecordMatches(input.Query, r, rowState, class) {
+			continue
 		}
+		r.State = rowState
+		rows = append(rows, r)
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		a, b := rows[i], rows[j]
@@ -318,14 +390,12 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 	if endIndex > len(rows) {
 		endIndex = len(rows)
 	}
-	results := []SourceResult{{SourceID: fields[0], OK: true, Version: "demo"}}
-	if input.APIKey == "" {
-		results = results[:0]
-		for _, id := range input.Query.SourceIDs {
-			results = append(results, SourceResult{SourceID: id, OK: true, Version: "demo"})
+	page := Page{Rows: append([]RequestRecord(nil), rows[offset:endIndex]...), Sources: make([]SourceResult, 0, len(input.Query.SourceIDs))}
+	for _, id := range input.Query.SourceIDs {
+		if !keyed || id == fields[0] {
+			page.Sources = append(page.Sources, SourceResult{SourceID: id, OK: true, Version: "demo"})
 		}
 	}
-	page := Page{Rows: append([]RequestRecord(nil), rows[offset:endIndex]...), Sources: results}
 	if endIndex < len(rows) {
 		raw, _ := json.Marshal(demoCursor{Offset: endIndex, Fingerprint: fingerprint})
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
@@ -333,25 +403,9 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 	return page, nil
 }
 
-// matchesQuery reports whether a record is one the query selects: source,
-// window, controller, action, kind, outcome and record filter.
-func (d *demoRepository) matchesQuery(r RequestRecord, q Query) bool {
-	selected := false
-	for _, id := range q.SourceIDs {
-		selected = selected || id == r.SourceID
-	}
-	if !selected || r.InitiatedAt == nil || r.InitiatedAt.Before(q.Start) || !r.InitiatedAt.Before(q.End) {
-		return false
-	}
-	if q.Controller != "" && r.Controller != q.Controller || q.Action != "" && r.Action != q.Action {
-		return false
-	}
-	if q.Kind != "all" && r.Kind != q.Kind || !BucketOutcomeMatches(q.Outcome, r.Outcome) {
-		return false
-	}
-	return q.RecordFilter.Matches(r)
-}
-
+// Breakdown counts the rows the query's summary and request list select, by one
+// dimension. It applies the same row rules as Requests, so a row's count equals
+// the number of requests its filter lists.
 func (d *demoRepository) Breakdown(ctx context.Context, input BreakdownInput) (Breakdown, error) {
 	if err := ctx.Err(); err != nil {
 		return Breakdown{}, err
@@ -359,26 +413,27 @@ func (d *demoRepository) Breakdown(ctx context.Context, input BreakdownInput) (B
 	if err := ValidateBreakdown(input); err != nil {
 		return Breakdown{}, err
 	}
-	q := input.Query
+	q := input.Query.Normalized()
+	sources := make(map[string]bool, len(q.SourceIDs))
 	for _, id := range q.SourceIDs {
 		if !d.hasSource(id) {
 			return Breakdown{}, fmt.Errorf("%w: source was not found", ErrNotFound)
 		}
+		sources[id] = true
 	}
 	builder := NewBreakdownBuilder(input.Dim, input.Top)
 	for _, r := range d.records {
-		if !d.matchesQuery(r, q) {
+		if !sources[r.SourceID] || r.InitiatedAt == nil || r.InitiatedAt.Before(q.Start) || !r.InitiatedAt.Before(q.End) {
 			continue
 		}
-		value := r.DurationMs
-		if q.Metric == "api" {
-			value = r.ApiTimeMs
+		if q.Controller != "" && r.Controller != q.Controller || q.Action != "" && r.Action != q.Action {
+			continue
 		}
-		state := "valid"
-		if value == nil || *value < 0 {
-			state = "invalid"
+		state, class, value, ok := demoSummaryRow(r, q)
+		if !ok || !demoRecordMatches(q, r, state, class) {
+			continue
 		}
-		builder.AddRecord(r, state, false, StatusClass(r.Kind, state, r.Status), value)
+		builder.AddRecord(r, state, class == StatusPending, class, value)
 	}
 	out, err := builder.Build()
 	if err != nil {
@@ -408,7 +463,8 @@ func (d *demoRepository) Record(ctx context.Context, input RecordInput) (RecordD
 	}
 	for _, r := range d.records {
 		if r.ID == input.ID && r.SourceID == input.SourceID {
-			return RecordDetail{RequestRecord: r, State: "valid", Payload: Payload{Request: "Illustrative demo request for " + r.ID, Response: "Illustrative demo response for " + r.ID}}, nil
+			r.State = demoState(r)
+			return RecordDetail{RequestRecord: r, State: r.State, Payload: Payload{Request: "Illustrative demo request for " + r.ID, Response: "Illustrative demo response for " + r.ID}}, nil
 		}
 	}
 	return RecordDetail{}, fmt.Errorf("%w: request was not found", ErrNotFound)

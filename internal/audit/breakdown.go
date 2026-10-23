@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Breakdown dimensions. Each groups the requests a query selects by one audit
@@ -66,21 +67,24 @@ func (in BreakdownInput) TopN() int {
 // rows that are not incomplete. Pending is a subset of Incomplete. 4xx and 5xx
 // stay separate.
 //
-// Filter selects exactly these rows when applied to the same query. Other has
-// no Filter: it is a remainder, not a value, and Values counts the distinct
-// values it folds together.
+// Filter is the query fragment that drills into these rows: merge it into the
+// query the breakdown ran for, after dropping that query's own filters on the
+// dimension. It is absent when no record filter selects exactly the value (a
+// missing value, a polling type, a value cut at its storage cap), and on Other,
+// which is a remainder, not a value. Values counts the distinct values Other
+// folds together.
 type BreakdownRow struct {
-	Value      string        `json:"value"`
-	Missing    bool          `json:"missing"`
-	Count      int64         `json:"count"`
-	Complete   int64         `json:"complete"`
-	Incomplete int64         `json:"incomplete"`
-	Pending    int64         `json:"pending"`
-	Count4xx   int64         `json:"count4xx"`
-	Count5xx   int64         `json:"count5xx"`
-	Stats      Stats         `json:"stats"`
-	Filter     *RecordFilter `json:"filter,omitempty"`
-	Values     int           `json:"values,omitempty"`
+	Value      string           `json:"value"`
+	Missing    bool             `json:"missing"`
+	Count      int64            `json:"count"`
+	Complete   int64            `json:"complete"`
+	Incomplete int64            `json:"incomplete"`
+	Pending    int64            `json:"pending"`
+	Count4xx   int64            `json:"count4xx"`
+	Count5xx   int64            `json:"count5xx"`
+	Stats      Stats            `json:"stats"`
+	Filter     *BreakdownFilter `json:"filter,omitempty"`
+	Values     int              `json:"values,omitempty"`
 }
 
 // Breakdown is the top rows of one dimension plus the remainder. Total is the
@@ -114,8 +118,8 @@ func ValidateBreakdown(in BreakdownInput) error {
 }
 
 // BreakdownKey is the value of dim on one row, as text. An empty key means the
-// field is missing or blank. Status and polling type are trimmed, as the
-// RecordFilter compares them; a user id is its decimal digits.
+// field is missing or blank. Status and polling type are trimmed, as the record
+// filters compare them; a user id is its decimal digits.
 func BreakdownKey(dim string, r RequestRecord) string {
 	switch dim {
 	case BreakdownStatusCode:
@@ -137,29 +141,72 @@ func BreakdownKey(dim string, r RequestRecord) string {
 	return ""
 }
 
-// BreakdownFilter is the RecordFilter that selects exactly the rows whose
-// BreakdownKey for dim is key.
-func BreakdownFilter(dim, key string) *RecordFilter {
-	f := &RecordFilter{}
+// BreakdownFilter is the part of a Query that drills into one breakdown row. Its
+// fields are the record filters of Query with the same JSON names, so a client
+// merges the fragment into its query as is, and every pipeline applies it
+// through the shared record filters. The match is never narrower than the row,
+// but it can be wider: UserAgentContains is a case-insensitive substring, so the
+// drill-down of an agent also lists the rows of a longer agent that contains it,
+// and a status compares without regard to case.
+type BreakdownFilter struct {
+	UserIDs           []int    `json:"userIds,omitempty"`
+	UIVersions        []string `json:"uiVersions,omitempty"`
+	UserAgentContains string   `json:"userAgentContains,omitempty"`
+	UserIPs           []string `json:"userIps,omitempty"`
+	StatusCodes       []string `json:"statusCodes,omitempty"`
+}
+
+// NewBreakdownFilter returns the fragment for the rows whose BreakdownKey for dim
+// is key, or nil when no record filter can select them: a missing value (there
+// is no filter for "blank"), the polling type (the query has no such field; its
+// kind filter groups differently), a value the filters would reject (blank,
+// invalid text or longer than MaxFilterLength bytes, a user id outside the
+// range), and a value of capRunes runes or more, which may have been cut at its
+// storage cap and then matches nothing on the full field. capRunes zero means
+// values are never cut.
+func NewBreakdownFilter(dim, key string, capRunes int) *BreakdownFilter {
+	if strings.TrimSpace(key) == "" || len(key) > MaxFilterLength || !plainText(key) {
+		return nil
+	}
+	if capRunes > 0 && utf8.RuneCountInString(key) >= capRunes {
+		return nil
+	}
 	switch dim {
 	case BreakdownStatusCode:
-		f.StatusCodes = []string{key}
-	case BreakdownPollingType:
-		f.PollingTypes = []string{key}
+		return &BreakdownFilter{StatusCodes: []string{key}}
 	case BreakdownUIVersion:
-		f.UIVersions = []string{key}
+		return &BreakdownFilter{UIVersions: []string{key}}
 	case BreakdownUserAgent:
-		f.UserAgents = []string{key}
+		return &BreakdownFilter{UserAgentContains: key}
 	case BreakdownUserIP:
-		f.UserIPs = []string{key}
+		return &BreakdownFilter{UserIPs: []string{key}}
 	case BreakdownUserID:
-		if key == "" {
-			f.UserIDMissing = true
-		} else if id, err := strconv.Atoi(key); err == nil {
-			f.UserIDs = []int{id}
+		if id, err := strconv.Atoi(key); err == nil && id >= 1 && id <= maxUserID {
+			return &BreakdownFilter{UserIDs: []int{id}}
 		}
 	}
-	return f
+	return nil
+}
+
+// Apply returns q with f's filters set. A field f leaves empty is not touched,
+// so the caller drops the dimension's own filters from q first.
+func (f BreakdownFilter) Apply(q Query) Query {
+	if len(f.UserIDs) > 0 {
+		q.UserIDs = f.UserIDs
+	}
+	if len(f.UIVersions) > 0 {
+		q.UIVersions = f.UIVersions
+	}
+	if f.UserAgentContains != "" {
+		q.UserAgentContains = f.UserAgentContains
+	}
+	if len(f.UserIPs) > 0 {
+		q.UserIPs = f.UserIPs
+	}
+	if len(f.StatusCodes) > 0 {
+		q.StatusCodes = f.StatusCodes
+	}
+	return q
 }
 
 // BreakdownCounts are the per-value counters. Incomplete includes Pending.
@@ -196,7 +243,12 @@ type BreakdownBuilder struct {
 	groups    map[string]*breakdownGroup
 	otherBins map[int]*breakdownBin
 	pinned    map[string]bool
+	capRunes  int
 }
+
+// SetValueCap says values of n runes or more may have been cut at the storage
+// cap, so their rows get no drill-down filter (see NewBreakdownFilter).
+func (b *BreakdownBuilder) SetValueCap(n int) { b.capRunes = n }
 
 // NewBreakdownBuilder returns a builder for dim listing top values (zero means
 // DefaultBreakdownTop).
@@ -384,7 +436,7 @@ func (b *BreakdownBuilder) Build() (Breakdown, error) {
 		if row.Missing {
 			row.Value = BreakdownMissingLabel
 		}
-		row.Filter = BreakdownFilter(b.dim, g.key)
+		row.Filter = NewBreakdownFilter(b.dim, g.key, b.capRunes)
 		stats, err := statsOf(g.bins)
 		if err != nil {
 			return Breakdown{}, err

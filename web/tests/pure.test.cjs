@@ -13,7 +13,12 @@ function loadTypeScript(relativePath) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
   }).outputText;
   const module = { exports: {} };
-  new Function('require', 'module', 'exports', output)(createRequire(filename), module, module.exports);
+  const nodeRequire = createRequire(filename);
+  // A relative import of another TypeScript file in src/lib is transpiled the same way.
+  const load = (request) => request.startsWith('./') && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
+    ? loadTypeScript(path.relative(root, path.join(path.dirname(filename), request + '.ts')))
+    : nodeRequire(request);
+  new Function('require', 'module', 'exports', output)(load, module, module.exports);
   return module.exports;
 }
 
@@ -167,7 +172,21 @@ test('statusRates splits 4xx and 5xx', () => {
   assert.match(unsplit.tip, /split is unavailable/);
   assert.equal(presentation.statusRates(undefined, 'all').client, '—');
   assert.match(presentation.statusRates(undefined, 'all').tip, /No requests with a known/);
-  assert.match(presentation.statusRates(rollup, 'all', 'hangfire').tip, /Covers only the hangfire requests/);
+  assert.match(presentation.statusRates(rollup, 'all', 'hangfire').tip, /for the hangfire requests of this API/);
+  assert.match(presentation.statusRates({ ...rollup, kind: 'asynchronous' }, 'all', 'all').tip, /sources merged, for the asynchronous requests/);
+  assert.match(presentation.statusRates(rollup, 'all', 'all').tip, /rollup without a kind/);
+});
+
+test('kind labels and quality by kind keep unknown HTTP rows distinct', () => {
+  assert.equal(presentation.kindLabel('unknown'), 'HTTP (polling type unknown)');
+  assert.equal(presentation.kindLabel('synchronous'), 'synchronous');
+  assert.equal(presentation.kindLabel(undefined), '');
+  assert.match(presentation.unknownKindTip, /cannot be attributed to Synchronous or Asynchronous/);
+  assert.equal(presentation.qualityByKindText(undefined), '');
+  assert.equal(presentation.qualityByKindText({ incomplete: 0, invalid: 0, unknownOutcome: 0 }), '');
+  const text = presentation.qualityByKindText({ incomplete: 5, invalid: 1, unknownOutcome: 0, byKind: {
+    unknown: { incomplete: 4, invalid: 0, unknownOutcome: 0 }, hangfire: { incomplete: 1, invalid: 1, unknownOutcome: 0 }, synchronous: { incomplete: 0, invalid: 0, unknownOutcome: 0 } } });
+  assert.equal(text, 'By request type: hangfire: 1 missing timing, 1 unusable timing · HTTP (polling type unknown): 4 missing timing');
 });
 
 test('API-by-time heatmap preserves exact cohort rows and missing timeline cells', () => {
@@ -252,6 +271,13 @@ test('snapshot parser ignores malformed, unsupported-version, and invalid-schema
   assert.equal(investigation.parseInvestigationSnapshot('{'), null);
   assert.equal(investigation.parseInvestigationSnapshot(JSON.stringify({ version: 2 })), null);
   assert.equal(investigation.parseInvestigationSnapshot(JSON.stringify({ version: 1, query: {}, selectedSources: [], zone: 'UTC', targetMs: null })), null);
+});
+
+test('saved investigations accept the http kinds and reject unknown kinds', () => {
+  const query = { start: '2026-10-22T12:00:00.000Z', end: '2026-10-22T12:15:00.000Z', baselineStart: '2026-10-22T11:45:00.000Z', baselineEnd: '2026-10-22T12:00:00.000Z', outcome: 'all', metric: 'total', bucketSeconds: 10, controller: '', action: '' };
+  const snap = kind => ({ version: 1, query: { ...query, kind }, selectedSources: [], zone: 'UTC', targetMs: null });
+  for (const kind of ['http', 'http_unknown']) assert.equal(investigation.validateInvestigationSnapshot(snap(kind)), true, kind);
+  assert.equal(investigation.validateInvestigationSnapshot(snap('unknown')), false);
 });
 
 test('snapshot parsing and restore project query fields and source descriptors onto the allowlist', () => {
@@ -413,8 +439,8 @@ test('error rate shows as a percent, and the load badge needs |rho| >= 0.6 over 
   const { errorRateTip, loadTip } = loadTypeScript('src/lib/traffic.ts');
   const r = { controller: 'A', action: 'Run', requests: 200, failures: 10, errorRate: 0.05, perMinute: 3.33 };
   assert.match(errorRateTip(r, 'all', 'all'), /10 failed of 200/);
-  assert.match(errorRateTip(r, 'all', 'all'), /every source and kind/);
-  assert.doesNotMatch(errorRateTip(r, 'all', 'hangfire'), /every source and kind/);
+  assert.match(errorRateTip(r, 'all', 'all'), /all sources merged/);
+  assert.match(errorRateTip({ ...r, kind: 'synchronous' }, 'all', 'all'), /for the synchronous requests/);
   assert.match(errorRateTip(r, 'all', 'hangfire'), /hangfire/);
   assert.match(errorRateTip(r, 'success', 'all'), /outcome filter set to All/);
   assert.match(errorRateTip(undefined, 'all', 'all'), /known/);
@@ -422,9 +448,14 @@ test('error rate shows as a percent, and the load badge needs |rho| >= 0.6 over 
   assert.match(loadTip(-0.9), /latency falls as load rises/);
   assert.doesNotMatch(loadTip(-0.9), /rises and falls/);
   const rollups = [{ controller: 'A', action: 'Run', requests: 10, failures: 1, errorRate: 0.1, perMinute: 2 }];
-  assert.equal(rollupFor(rollups, { controller: 'A', action: 'Run' }).errorRate, 0.1);
-  assert.equal(rollupFor(rollups, { controller: 'A', action: 'Other' }), undefined);
-  assert.equal(rollupFor(undefined, { controller: 'A', action: 'Run' }), undefined);
+  assert.equal(rollupFor(rollups, { controller: 'A', action: 'Run', kind: 'synchronous' }).errorRate, 0.1);
+  assert.equal(rollupFor(rollups, { controller: 'A', action: 'Other', kind: 'synchronous' }), undefined);
+  assert.equal(rollupFor(undefined, { controller: 'A', action: 'Run', kind: 'synchronous' }), undefined);
+  const byKind = [
+    { controller: 'A', action: 'Run', kind: 'synchronous', requests: 10, failures: 1, errorRate: 0.1, perMinute: 2 },
+    { controller: 'A', action: 'Run', kind: 'asynchronous', requests: 10, failures: 5, errorRate: 0.5, perMinute: 2 }];
+  assert.equal(rollupFor(byKind, { controller: 'A', action: 'Run', kind: 'asynchronous' }).errorRate, 0.5, 'rollups are never merged across kinds');
+  assert.equal(rollupFor(byKind, { controller: 'A', action: 'Run', kind: 'unknown' }), undefined);
 });
 
 test('phase bar segments split audit and api shares, tolerate gaps, and describe the additive model', () => {
@@ -470,37 +501,207 @@ test('the quality strip shows pending async only when it is above zero', () => {
 });
 
 const breakdown = loadTypeScript('src/lib/breakdown.ts');
+const breakdownBase = () => analysis({ start: '2026-10-22T12:00:00Z', end: '2026-10-22T13:00:00Z', bucketSeconds: 60 }).query;
 
-test('breakdownRowFilter merges into query without dropping existing filters', () => {
-  const base = analysis({ start: '2026-10-22T12:00:00Z', end: '2026-10-22T13:00:00Z', bucketSeconds: 60 }).query;
-  // The server flattens the record filter into the Query, so a row's filter is a Query fragment.
-  const query = { ...base, controller: 'Pay', uiVersions: ['2.0'], userAgents: ['old'] };
-  const row = { value: 'UA-A', count: 3, filter: { userAgents: ['UA-A'] } };
+test('a breakdown row filter merges into the query without dropping other filters', () => {
+  const base = breakdownBase();
+  // The server builds a row's filter as a fragment of the shared record filter fields.
+  const query = { ...base, controller: 'Pay', uiVersions: ['2.0'], userAgentContains: 'old', urlContains: '/pay', completion: 'incomplete' };
+  const row = { value: 'UA-A', count: 3, filter: { userAgentContains: 'UA-A' } };
   const merged = breakdown.mergeRecordFilter(query, breakdown.breakdownRowFilter(row));
-  assert.deepEqual(breakdown.activeRecordFilter(merged), { uiVersions: ['2.0'], userAgents: ['UA-A'] });
+  assert.deepEqual(breakdown.activeRecordFilter(merged), { uiVersions: ['2.0'], userAgentContains: 'UA-A', urlContains: '/pay', completion: 'incomplete' });
   assert.equal(merged.controller, 'Pay');
   assert.deepEqual(merged.sourceIds, base.sourceIds);
-  assert.deepEqual(query.userAgents, ['old'], 'the input query is not mutated');
-  assert.equal(breakdown.mergeRecordFilter(base, { userIdMissing: true }).userIdMissing, true);
-  // A user id value replaces a missing-user selection (and the reverse): they are one dimension.
-  const swapped = breakdown.mergeRecordFilter({ ...base, userIdMissing: true }, { userIds: [7] });
+  assert.equal(query.userAgentContains, 'old', 'the input query is not mutated');
+  // A user id value replaces the earlier user ids: one dimension.
+  const swapped = breakdown.mergeRecordFilter({ ...base, userIds: [3, 4] }, { userIds: [7] });
   assert.deepEqual(breakdown.activeRecordFilter(swapped), { userIds: [7] });
-  assert.equal('userIdMissing' in swapped && swapped.userIdMissing, false);
-  // "Other" has no filter, so there is nothing to apply.
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.mergeRecordFilter(base, { statusCodes: ['OK'] })), { statusCodes: ['OK'] });
+  // "Other" and every row without a filter (missing value, polling type, capped) cannot be listed.
   assert.equal(breakdown.breakdownRowFilter({ value: 'Other', count: 9 }), null);
+  assert.equal(breakdown.breakdownRowFilter({ value: '(not yet written)', missing: true, count: 9 }), null);
+  assert.equal(breakdown.breakdownRowFilter({ value: 'Synchronous', count: 9, filter: {} }), null);
+  // A fragment the shared serialization would drop selects nothing and is not clickable.
+  assert.equal(breakdown.breakdownRowFilter({ value: '0', count: 1, filter: { userIds: [0] } }), null);
   assert.equal(breakdown.mergeRecordFilter(query, null), query);
 });
 
 test('a breakdown request leaves its own dimension out of the active filter', () => {
-  const active = { userAgents: ['a'], statusCodes: ['200 OK'], userIdMissing: true };
-  const base = analysis({ start: '2026-10-22T12:00:00Z', end: '2026-10-22T13:00:00Z', bucketSeconds: 60 }).query;
-  const full = { ...base, ...active };
-  assert.deepEqual(breakdown.activeRecordFilter(breakdown.withoutDimension(full, 'userAgent')), { statusCodes: ['200 OK'], userIdMissing: true });
-  assert.deepEqual(breakdown.activeRecordFilter(breakdown.withoutDimension(full, 'userId')), { userAgents: ['a'], statusCodes: ['200 OK'] });
+  const base = breakdownBase();
+  const full = { ...base, userAgentContains: 'a', statusCodes: ['OK'], userIds: [7], operation: 'Pay.Run' };
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.withoutDimension(full, 'userAgent')), { userIds: [7], statusCodes: ['OK'], operation: 'Pay.Run' });
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.withoutDimension(full, 'userId')), { userAgentContains: 'a', statusCodes: ['OK'], operation: 'Pay.Run' });
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.withoutDimension(full, 'pollingType')), breakdown.activeRecordFilter(full));
   assert.deepEqual(breakdown.withoutDimension(full, 'userAgent').sourceIds, base.sourceIds);
   assert.deepEqual(breakdown.activeRecordFilter(breakdown.clearRecordFilter(full)), {});
   assert.deepEqual(breakdown.clearRecordFilter(full).sourceIds, base.sourceIds);
   assert.equal(breakdown.hasRecordFilter({}), false);
-  assert.equal(breakdown.hasRecordFilter({ userIps: [''] }), true);
-  assert.equal(breakdown.hasRecordFilter({ userIdMissing: true }), true);
+  assert.equal(breakdown.hasRecordFilter({ userIps: [''] }), false);
+  assert.equal(breakdown.hasRecordFilter({ userIps: ['10.0.0.1'] }), true);
+});
+
+test('a drill-down replaces the record filters of the base query and nothing else', () => {
+  const base = { ...breakdownBase(), urlContains: '/pay', userIds: [3] };
+  assert.equal(breakdown.applyDrill(base, {}), base);
+  const drill = breakdown.activeRecordFilter(breakdown.mergeRecordFilter(base, { userIds: [7] }));
+  const effective = breakdown.applyDrill(base, drill);
+  assert.deepEqual(breakdown.activeRecordFilter(effective), { userIds: [7], urlContains: '/pay' });
+  assert.equal(effective.controller, base.controller);
+  assert.deepEqual(breakdown.activeRecordFilter(base), { userIds: [3], urlContains: '/pay' });
+  assert.deepEqual(breakdown.recordFilterChips(effective), [{ dim: 'userId', text: 'User: 7' }]);
+  assert.deepEqual(breakdown.recordFilterChips({ statusCodes: ['OK'], userAgentContains: 'Fire', uiVersions: ['2.1'], userIps: ['10.0.0.1'] }).map(chip => chip.dim), ['statusCode', 'uiVersion', 'userAgent', 'userIp']);
+});
+
+test('breakdown helpers cover every record filter key', () => {
+  // clearRecordFilter must drop every key serializeRecordFilters can emit, or a stale filter would leak into a drill-down.
+  const every = { userIds: [1], uiVersions: ['1'], userAgentContains: 'a', userIps: ['1.1.1.1'], urlContains: 'u', auditId: 'a'.repeat(24), statusCodes: ['OK'], completion: 'pending', operation: 'A.b' };
+  assert.deepEqual(Object.keys(investigation.serializeRecordFilters(every)).sort(), Object.keys(every).sort());
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.clearRecordFilter({ ...breakdownBase(), ...every })), {});
+});
+test('percentileThreshold uses cohort p95/p99 and returns null below sample floor', () => {
+  const { percentileThreshold, percentileLabel } = loadTypeScript('src/lib/slowness.ts');
+  const quantile = (valueMs) => ({ lowerMs: valueMs * 0.95, upperMs: valueMs * 1.05, valueMs });
+  const cohort = (count, p95, p99) => ({ ...stats({ count, p95: p95 == null ? null : quantile(p95) }), p99: p99 == null ? null : quantile(p99) });
+  assert.equal(percentileThreshold(cohort(400, 820, 1900), 'p95'), 820);
+  assert.equal(percentileThreshold(cohort(400, 820, 1900), 'p99'), 1900);
+  assert.equal(percentileThreshold(cohort(20, 820, null), 'p95'), 820);
+  assert.equal(percentileThreshold(cohort(19, 820, null), 'p95'), null);
+  assert.equal(percentileThreshold(cohort(99, 820, 1900), 'p99'), null);
+  assert.equal(percentileThreshold(cohort(100, 820, 1900), 'p99'), 1900);
+  assert.equal(percentileThreshold(cohort(400, 820, null), 'p99'), null);
+  assert.equal(percentileThreshold(cohort(400, 0, null), 'p95'), null);
+  assert.equal(percentileThreshold(cohort(400, null, null), 'p95'), null);
+  assert.equal(percentileThreshold(null, 'p95'), null);
+  assert.equal(percentileThreshold(undefined, 'p99'), null);
+  assert.match(percentileLabel('p95', 820), /≥ P95/);
+  assert.match(percentileLabel('p99', 1900), /histogram estimate/);
+});
+
+test('quantileText shows the sample-floor note for a missing P99 only', () => {
+  const { quantileText } = loadTypeScript('src/lib/slowness.ts');
+  assert.equal(quantileText({ lowerMs: 1, upperMs: 2, valueMs: 12.34 }), '≈ 12.3 ms');
+  assert.equal(quantileText(null), 'N/A');
+  assert.equal(quantileText(undefined), 'N/A');
+  assert.equal(quantileText(null, 'needs ≥ 100 samples'), 'needs ≥ 100 samples');
+});
+
+test('slowest requests send the minimum and cursor, and the UI offers load more', () => {
+  const api = fs.readFileSync(path.join(root, 'src/lib/api.ts'), 'utf8');
+  assert.match(api, /slowest:[^\n]*minMs/);
+  assert.match(api, /slowest:[^\n]*cursor/);
+  const component = fs.readFileSync(path.join(root, 'src/components/TrafficSlowness.svelte'), 'utf8');
+  assert.match(component, /Load more/);
+  assert.match(component, /nextCursor/);
+  assert.match(component, /histogram estimate/);
+  const table = fs.readFileSync(path.join(root, 'src/components/ComparisonTable.svelte'), 'utf8');
+  for (const heading of ['>P50<', '>P90<', '>P99<']) assert.ok(table.includes(heading), heading);
+  assert.match(table, /quantileText\(row\.current\.p99, p99NeedsSamples\)/);
+  assert.equal(loadTypeScript('src/lib/slowness.ts').p99NeedsSamples, 'needs ≥ 100 samples');
+});
+test('every quality count is a button that drills into the requests behind it', () => {
+  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  for (const state of ['incomplete', 'invalid', 'unclassified', 'pending']) {
+    assert.match(app, new RegExp(`drillQuality\\('${state}'\\)`));
+  }
+  assert.match(app, /requestController\.signal, requestState\)/);
+  const table = fs.readFileSync(path.join(root, 'src/components/RequestTable.svelte'), 'utf8');
+  assert.match(table, /row\.id/);
+  assert.match(table, /stateLabel\(row\.state\)/);
+});
+
+test('stateLabel names every row state and drill-down filter', () => {
+  assert.equal(presentation.stateLabel('incomplete'), 'Missing timing');
+  assert.equal(presentation.stateLabel('invalid'), 'Unusable timing');
+  assert.equal(presentation.stateLabel('pending'), 'Pending async');
+  assert.equal(presentation.stateLabel('unclassified'), 'Unclassified result');
+  assert.equal(presentation.stateLabel('valid'), 'Complete');
+  assert.equal(presentation.stateLabel(undefined), '');
+});
+
+const recordFilterBase = { sourceIds: ['s'], start: '2026-10-22T12:00:00.000Z', end: '2026-10-22T12:15:00.000Z', baselineStart: '2026-10-22T11:45:00.000Z', baselineEnd: '2026-10-22T12:00:00.000Z', kind: 'all', outcome: 'all', metric: 'total', bucketSeconds: 10, controller: '', action: '' };
+
+test('serializeRecordFilters omits empties', () => {
+  assert.deepEqual(investigation.serializeRecordFilters({}), {});
+  assert.deepEqual(investigation.serializeRecordFilters(null), {});
+  assert.deepEqual(investigation.serializeRecordFilters({
+    userIds: [], uiVersions: [' ', ''], userAgentContains: '   ', userIps: [], urlContains: '', auditId: '', statusCodes: [], completion: 'all', operation: ' '
+  }), {});
+  assert.deepEqual(investigation.serializeRecordFilters({
+    userIds: [7, 7, 9], uiVersions: [' 2.1 ', '2.1'], userAgentContains: ' Firefox ', userIps: ['203.0.113.7'], urlContains: '/pay', auditId: '0123456789abcdef01234567',
+    statusCodes: ['404', ''], completion: 'incomplete', operation: 'Payroll.Run'
+  }), {
+    userIds: [7, 9], uiVersions: ['2.1'], userAgentContains: 'Firefox', userIps: ['203.0.113.7'], urlContains: '/pay', auditId: '0123456789abcdef01234567',
+    statusCodes: ['404'], completion: 'incomplete', operation: 'Payroll.Run'
+  });
+  assert.equal('userIds' in investigation.serializeRecordFilters({ userIds: [] }), false);
+  // Wrong types are dropped rather than trusted.
+  assert.deepEqual(investigation.serializeRecordFilters({ userIds: ['7', 1.5, NaN], uiVersions: 'x', completion: 'everything', operation: 5 }), {});
+  assert.equal(investigation.serializeRecordFilters({ userIds: Array.from({ length: 80 }, (_, i) => i) }).userIds.length, 50);
+  assert.equal(investigation.serializeRecordFilters({ statusCodes: Array.from({ length: 30 }, (_, i) => String(400 + i)) }).statusCodes.length, 20);
+});
+
+test('operation and user id validity match the server rules', () => {
+  const { isValidOperation, isValidUserId, serializeRecordFilters } = investigation;
+  for (const good of ['Payroll.Run', 'Payroll.Run.Now', ' Payroll.Run ']) assert.equal(isValidOperation(good), true, good);
+  for (const bad of ['', 'PayrollRun', 'Payroll.', '.Run', '.', '  ']) assert.equal(isValidOperation(bad), false, bad);
+  assert.equal(isValidUserId(1), true);
+  assert.equal(isValidUserId(2147483647), true);
+  for (const bad of [0, -1, 2147483648, 1.5, NaN]) assert.equal(isValidUserId(bad), false, String(bad));
+  // An operation the server would reject never reaches a request.
+  assert.deepEqual(serializeRecordFilters({ operation: 'PayrollRun', userIds: [0, -3, 2147483648, 5] }), { userIds: [5] });
+});
+
+test('filter drafts resync from a restored query without clobbering partial typing', () => {
+  const { syncListDraft, syncOperationDraft, isValidUserId } = investigation;
+  // A restored query fills a blank draft.
+  assert.equal(syncOperationDraft('', 'Payroll.Run'), 'Payroll.Run');
+  assert.equal(syncListDraft('', ['2.1', '2.2']), '2.1, 2.2');
+  assert.equal(syncListDraft('', [7, 9]), '7, 9');
+  // A cleared query empties a draft that was applied, and a stale one is replaced.
+  assert.equal(syncOperationDraft('Payroll.Run', undefined), '');
+  assert.equal(syncListDraft('7, 9', undefined), '');
+  assert.equal(syncListDraft('7', [8]), '8');
+  assert.equal(syncOperationDraft('Old.Op', 'Payroll.Run'), 'Payroll.Run');
+  // What the user is typing stays as typed while it parses to the applied value.
+  assert.equal(syncOperationDraft(' Payroll.Run ', 'Payroll.Run'), ' Payroll.Run ');
+  assert.equal(syncOperationDraft('Payroll', undefined), 'Payroll');
+  assert.equal(syncOperationDraft('Payroll.', undefined), 'Payroll.');
+  assert.equal(syncListDraft('2.1, ', ['2.1']), '2.1, ');
+  assert.equal(syncListDraft('2.1,2.1', ['2.1']), '2.1,2.1');
+  assert.equal(syncListDraft('', undefined), '');
+  const ok = (item) => /^\d{1,10}$/.test(item) && isValidUserId(Number(item));
+  assert.equal(syncListDraft('007, abc, ', [7], ok), '007, abc, ');
+  assert.equal(syncListDraft('7, 07', [7], ok), '7, 07');
+});
+
+test('QueryControls resyncs its drafts from the query', () => {
+  const source = fs.readFileSync(path.join(root, 'src/components/QueryControls.svelte'), 'utf8');
+  assert.match(source, /syncOperationDraft\(/);
+  assert.equal((source.match(/syncListDraft\(/g) ?? []).length >= 4, true);
+  assert.match(source, /\$effect\(/);
+});
+
+test('record filters survive a saved investigation and an old snapshot without them still loads', () => {
+  const filters = { userIds: [7], completion: 'pending', operation: 'Payroll.Run', urlContains: '/pay' };
+  const snapshot = investigation.createInvestigationSnapshot({ ...recordFilterBase, ...filters, uiVersions: [], auditId: '' }, [], 'UTC', null);
+  assert.deepEqual(Object.keys(snapshot.query).filter(key => !(key in recordFilterBase)), ['userIds', 'urlContains', 'completion', 'operation']);
+  const parsed = investigation.parseInvestigationSnapshot(JSON.stringify(snapshot));
+  assert.deepEqual(parsed.query.userIds, [7]);
+  assert.deepEqual(investigation.restoreInvestigation(parsed, []).operation, 'Payroll.Run');
+  const { sourceIds, ...legacyQuery } = recordFilterBase;
+  const legacy = investigation.parseInvestigationSnapshot(JSON.stringify({ version: 1, query: legacyQuery, selectedSources: [], zone: 'UTC', targetMs: null }));
+  assert.ok(legacy);
+  assert.deepEqual(Object.keys(investigation.restoreInvestigation(legacy, [])).sort(), [...Object.keys(recordFilterBase), 'targetMs', 'zone'].sort());
+  const tampered = investigation.parseInvestigationSnapshot(JSON.stringify({ version: 1, query: { ...legacyQuery, userIds: 'oops', completion: 'x' }, selectedSources: [], zone: 'UTC', targetMs: null }));
+  assert.ok(tampered);
+  assert.equal('userIds' in tampered.query || 'completion' in tampered.query, false);
+});
+
+test('query fingerprint covers record filters and treats empty as absent', () => {
+  const plain = presentation.queryFingerprint(recordFilterBase);
+  assert.equal(presentation.queryFingerprint({ ...recordFilterBase, userIds: [], uiVersions: [], userAgentContains: '', userIps: [], urlContains: ' ', auditId: '', statusCodes: [], completion: 'all', operation: '' }), plain);
+  for (const filter of [{ userIds: [1] }, { uiVersions: ['2'] }, { userAgentContains: 'a' }, { userIps: ['1.1.1.1'] }, { urlContains: 'u' }, { auditId: 'a'.repeat(24) }, { statusCodes: ['500'] }, { completion: 'invalid' }, { operation: 'A.b' }]) {
+    assert.notEqual(presentation.queryFingerprint({ ...recordFilterBase, ...filter }), plain, JSON.stringify(filter));
+  }
+  assert.equal(presentation.queryFingerprint({ ...recordFilterBase, userIds: [2, 1] }), presentation.queryFingerprint({ ...recordFilterBase, userIds: [1, 2] }));
 });

@@ -656,3 +656,12 @@ td small { font-size: 12px; }
 .breakdown-pick:hover:not(:disabled) { text-decoration: underline; }
 .breakdown-missing { font-style: italic; color: #7d8998; }
 .breakdown-other td { color: #7d8998; background: #fafbfd; }
+.quality-strip > div > .quality-count { display: grid; padding: 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.quality-strip > div > .quality-count span { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+.quality-strip > div > .quality-count:disabled { cursor: default; }
+.quality-strip > div > .quality-count:disabled span { cursor: default; text-decoration: none; }
+.quality-strip > div > .quality-count:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.state-badge { display: inline-block; padding: 0 5px; border-radius: 3px; background: #eef2f6; color: #4a5a6e; font-size: 11px; }
+.state-badge.state-incomplete { background: #fdf3e0; color: #8a5a00; }
+.state-badge.state-invalid { background: #fbe9e7; color: #a12c1f; }
+.record-id { font-size: 11px; color: #5c6e84; user-select: all; }
