@@ -21,6 +21,7 @@ type pageCursor struct {
 	At          time.Time `json:"at"`
 	SourceID    string    `json:"sourceId"`
 	ObjectID    string    `json:"objectId"`
+	Metric      *float64  `json:"metric,omitempty"`
 	Fingerprint string    `json:"fingerprint"`
 }
 
@@ -85,6 +86,11 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 	if overlap {
 		fingerprint = pageFingerprint(input.Query, "activity-context")
 	}
+	var slow *slowFilter
+	if slowest {
+		fingerprint = slowFingerprint(input.Query, input.MinMs)
+		slow = &slowFilter{min: input.MinMs}
+	}
 	var after *pageCursor
 	if input.Cursor != "" {
 		raw, err := base64.RawURLEncoding.DecodeString(input.Cursor)
@@ -92,7 +98,7 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 			return audit.Page{}, fmt.Errorf("%w: cursor is invalid", audit.ErrInvalidInput)
 		}
 		var parsed pageCursor
-		if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Fingerprint != fingerprint || parsed.At.IsZero() {
+		if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Fingerprint != fingerprint || parsed.At.IsZero() || (slowest && !slowCursorMetricValid(parsed.Metric)) {
 			return audit.Page{}, fmt.Errorf("%w: cursor does not match this query", audit.ErrInvalidInput)
 		}
 		objectID, err := bson.ObjectIDFromHex(parsed.ObjectID)
@@ -164,11 +170,11 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 			pipeline = activityPipeline(input.Query, p.source.ID, after, input.Limit+1)
 		}
 		if slowest {
-			pipeline = slowestPipeline(input.Query, p.source.ID, input.Limit+1)
+			pipeline = slowestPipeline(input.Query, p.source.ID, after, input.MinMs, input.Limit+1)
 		}
 		var err error
 		if usesLegacyMongo(p.shared.client) {
-			sourceRows, err = readLegacyRequestRowsSorted(ctx, p, input.Query, cohort, after, legacyRowMetadataPipeline(pipeline), input.Limit+1, &legacyRecords, &legacyBytes, overlap, slowest)
+			sourceRows, err = readLegacyRequestRowsSorted(ctx, p, input.Query, cohort, after, legacyRowMetadataPipeline(pipeline), input.Limit+1, &legacyRecords, &legacyBytes, overlap, slow)
 			if err == nil {
 				rows = append(rows, sourceRows...)
 			}
@@ -237,12 +243,12 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		page.Rows[i] = rows[i].request
 	}
 	if more && len(rows) > 0 {
-		if slowest {
-			page.Truncated = true
-			return page, nil
-		}
 		last := rows[len(rows)-1]
 		cursor := pageCursor{At: last.at.UTC(), SourceID: last.request.SourceID, ObjectID: last.object.Hex(), Fingerprint: fingerprint}
+		if slowest {
+			page.Truncated = true
+			cursor.Metric = audit.RequestMetric(last.request, input.Query.Metric)
+		}
 		raw, _ := json.Marshal(cursor)
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}

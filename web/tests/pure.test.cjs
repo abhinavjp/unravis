@@ -494,3 +494,44 @@ test('the quality strip shows pending async only when it is above zero', () => {
   const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
   assert.match(app, /\{#if analysis\.quality\.pendingAsync\}[^\n]*pending async/);
 });
+
+test('percentileThreshold uses cohort p95/p99 and returns null below sample floor', () => {
+  const { percentileThreshold, percentileLabel } = loadTypeScript('src/lib/slowness.ts');
+  const quantile = (valueMs) => ({ lowerMs: valueMs * 0.95, upperMs: valueMs * 1.05, valueMs });
+  const cohort = (count, p95, p99) => ({ ...stats({ count, p95: p95 == null ? null : quantile(p95) }), p99: p99 == null ? null : quantile(p99) });
+  assert.equal(percentileThreshold(cohort(400, 820, 1900), 'p95'), 820);
+  assert.equal(percentileThreshold(cohort(400, 820, 1900), 'p99'), 1900);
+  assert.equal(percentileThreshold(cohort(20, 820, null), 'p95'), 820);
+  assert.equal(percentileThreshold(cohort(19, 820, null), 'p95'), null);
+  assert.equal(percentileThreshold(cohort(99, 820, 1900), 'p99'), null);
+  assert.equal(percentileThreshold(cohort(100, 820, 1900), 'p99'), 1900);
+  assert.equal(percentileThreshold(cohort(400, 820, null), 'p99'), null);
+  assert.equal(percentileThreshold(cohort(400, 0, null), 'p95'), null);
+  assert.equal(percentileThreshold(cohort(400, null, null), 'p95'), null);
+  assert.equal(percentileThreshold(null, 'p95'), null);
+  assert.equal(percentileThreshold(undefined, 'p99'), null);
+  assert.match(percentileLabel('p95', 820), /≥ P95/);
+  assert.match(percentileLabel('p99', 1900), /histogram estimate/);
+});
+
+test('quantileText shows the sample-floor note for a missing P99 only', () => {
+  const { quantileText } = loadTypeScript('src/lib/slowness.ts');
+  assert.equal(quantileText({ lowerMs: 1, upperMs: 2, valueMs: 12.34 }), '≈ 12.3 ms');
+  assert.equal(quantileText(null), 'N/A');
+  assert.equal(quantileText(undefined), 'N/A');
+  assert.equal(quantileText(null, 'needs ≥ 100 samples'), 'needs ≥ 100 samples');
+});
+
+test('slowest requests send the minimum and cursor, and the UI offers load more', () => {
+  const api = fs.readFileSync(path.join(root, 'src/lib/api.ts'), 'utf8');
+  assert.match(api, /slowest:[^\n]*minMs/);
+  assert.match(api, /slowest:[^\n]*cursor/);
+  const component = fs.readFileSync(path.join(root, 'src/components/TrafficSlowness.svelte'), 'utf8');
+  assert.match(component, /Load more/);
+  assert.match(component, /nextCursor/);
+  assert.match(component, /histogram estimate/);
+  const table = fs.readFileSync(path.join(root, 'src/components/ComparisonTable.svelte'), 'utf8');
+  for (const heading of ['>P50<', '>P90<', '>P99<']) assert.ok(table.includes(heading), heading);
+  assert.match(table, /quantileText\(row\.current\.p99, p99NeedsSamples\)/);
+  assert.equal(loadTypeScript('src/lib/slowness.ts').p99NeedsSamples, 'needs ≥ 100 samples');
+});
