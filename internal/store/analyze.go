@@ -34,6 +34,7 @@ type sourceAnalysis struct {
 	result    audit.SourceResult
 	current   []audit.Bucket
 	reference []audit.Bucket
+	timings   []audit.SourceTiming
 	err       error
 }
 
@@ -95,13 +96,20 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 				return
 			}
 			defer func() { <-per }()
-			current, err := s.readBuckets(workCtx, p, q, q.Start, q.End, &rows, &rowBytes, &legacyRecords, &legacyBytes)
+			var timings []audit.SourceTiming
+			timed := func(window string, start, end time.Time) ([]audit.Bucket, error) {
+				began := time.Now()
+				buckets, err := s.readBuckets(workCtx, p, q, start, end, &rows, &rowBytes, &legacyRecords, &legacyBytes)
+				timings = append(timings, audit.SourceTiming{SourceID: p.source.ID, Window: window, ReadMs: time.Since(began).Milliseconds(), Rows: int64(len(buckets))})
+				return buckets, err
+			}
+			current, err := timed("current", q.Start, q.End)
 			var reference []audit.Bucket
 			if err == nil {
-				reference, err = s.readBuckets(workCtx, p, q, q.BaselineStart, q.BaselineEnd, &rows, &rowBytes, &legacyRecords, &legacyBytes)
+				reference, err = timed("reference", q.BaselineStart, q.BaselineEnd)
 			}
 			if err == nil {
-				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: true, Version: p.version, IndexWarning: p.indexWarning}, current: current, reference: reference}
+				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: true, Version: p.version, IndexWarning: p.indexWarning}, current: current, reference: reference, timings: timings}
 				return
 			}
 			if errors.Is(err, audit.ErrLimit) {
@@ -110,7 +118,7 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 				return
 			}
 			code, message := sourceQueryError(queryCtx, err)
-			results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}, err: err}
+			results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}, timings: timings, err: err}
 		}(i, p)
 	}
 	workers.Wait()
@@ -123,8 +131,10 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 	current := make([]audit.Bucket, 0)
 	reference := make([]audit.Bucket, 0)
 	sourceResults := make([]audit.SourceResult, 0, len(results))
+	var timings []audit.SourceTiming
 	for _, result := range results {
 		sourceResults = append(sourceResults, result.result)
+		timings = append(timings, result.timings...)
 		if result.result.OK {
 			current = append(current, result.current...)
 			reference = append(reference, result.reference...)
@@ -134,6 +144,7 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 	if err != nil {
 		return audit.Analysis{}, err
 	}
+	analysis.Timings = timings
 	analysis.Warnings = append(analysis.Warnings, "Legacy records without RequestInitiatedAt use CreatedOn when it contains a BSON date.")
 	serialized, err := json.Marshal(analysis)
 	if err != nil || len(serialized) > maxAnalysisBytes {

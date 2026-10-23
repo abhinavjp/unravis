@@ -189,6 +189,14 @@ func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if strings.HasPrefix(route, "/api/sources/") && strings.HasSuffix(route, "/schema") {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		h.schema(w, r, strings.TrimSuffix(strings.TrimPrefix(route, "/api/sources/"), "/schema"))
+		return
+	}
 	if strings.HasPrefix(route, "/api/sources/") && r.Method == http.MethodDelete {
 		h.deleteSource(w, r, strings.TrimPrefix(route, "/api/sources/"))
 		return

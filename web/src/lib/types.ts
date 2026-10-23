@@ -41,7 +41,11 @@ export interface Analysis {
   requestVolume?: VolumeBucket[];
   query: Query; apis: Comparison[]; timeline: Series[]; sources: SourceResult[];
   quality: Quality; approximate: boolean; warnings: string[];
+  timings?: SourceTiming[];
 }
+export interface SourceTiming { sourceId: string; window: 'current' | 'reference'; readMs: number; rows: number }
+export interface FieldPresence { name: string; present: number; types: string[] }
+export interface SchemaCensus { sampled: number; fields: FieldPresence[] }
 export interface RequestRecord {
   id: string; sourceId: string; controller: string; action: string; kind: string; outcome: string;
   status: string; url: string; initiatedAt: string | null; completedAt: string | null;

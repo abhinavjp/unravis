@@ -200,6 +200,19 @@ type Analysis struct {
 	Quality       Quality        `json:"quality"`
 	Approximate   bool           `json:"approximate"`
 	Warnings      []string       `json:"warnings"`
+	// Timings reports how long each source spent answering each window. It is
+	// additive and absent for repositories that do not measure it.
+	Timings []SourceTiming `json:"timings,omitempty"`
+}
+
+// SourceTiming is the database read time for one source and one window.
+// Window is "current" or "reference". Rows is the number of summary rows the
+// source returned for that window.
+type SourceTiming struct {
+	SourceID string `json:"sourceId"`
+	Window   string `json:"window"`
+	ReadMs   int64  `json:"readMs"`
+	Rows     int64  `json:"rows"`
 }
 
 // VolumeBucket counts starts, including records without a usable duration.
@@ -253,6 +266,33 @@ type Payload struct {
 	Request   string `json:"request"`
 	Response  string `json:"response"`
 	Truncated bool   `json:"truncated"`
+}
+
+const (
+	// DefaultSchemaSample is used when a schema census does not name a size.
+	DefaultSchemaSample = 200
+	// MaxSchemaSample caps the documents a schema census may inspect.
+	MaxSchemaSample = 1000
+)
+
+// SchemaCensus lists which top-level fields appear in a sample of audit
+// documents. It carries names, BSON types and counts only, never values.
+type SchemaCensus struct {
+	Sampled int             `json:"sampled"`
+	Fields  []FieldPresence `json:"fields"`
+}
+
+// FieldPresence counts the sampled documents that contain a field and the
+// sorted, de-duplicated BSON type names seen for it.
+type FieldPresence struct {
+	Name    string   `json:"name"`
+	Present int      `json:"present"`
+	Types   []string `json:"types"`
+}
+
+// SchemaSampler is an optional repository capability for schema census.
+type SchemaSampler interface {
+	SampleSchema(ctx context.Context, sourceID string, n int) (SchemaCensus, error)
 }
 
 type Repository interface {
