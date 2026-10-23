@@ -128,9 +128,14 @@ func TestSchemaCensusCapsSampleSizeAndFallsBackToLimitOnLegacy(t *testing.T) {
 				return handle, nil
 			})
 			source := addFakeSource(t, s, "audit")
-			var first bson.E
+			var first bson.E // the $sample or $limit stage
 			handle.aggregateFn = func(_ context.Context, _, _ string, pipeline mongo.Pipeline) (mongoCursor, error) {
-				first = pipeline[0][0]
+				for _, stage := range pipeline {
+					if stage[0].Key == "$sample" || stage[0].Key == "$limit" {
+						first = stage[0]
+						break
+					}
+				}
 				return &fakeCursor{}, nil
 			}
 			got, err := s.SampleSchema(context.Background(), source.ID, tc.n)
@@ -141,7 +146,7 @@ func TestSchemaCensusCapsSampleSizeAndFallsBackToLimitOnLegacy(t *testing.T) {
 				t.Fatalf("empty sample = %#v", got)
 			}
 			if first.Key != tc.wantStage {
-				t.Fatalf("first stage = %s, want %s", first.Key, tc.wantStage)
+				t.Fatalf("sampling stage = %s, want %s", first.Key, tc.wantStage)
 			}
 			var size int64
 			switch v := first.Value.(type) {
@@ -152,7 +157,11 @@ func TestSchemaCensusCapsSampleSizeAndFallsBackToLimitOnLegacy(t *testing.T) {
 			case int64:
 				size = v
 			case bson.D:
-				size = int64(v[0].Value.(int32))
+				inner, ok := v[0].Value.(int32)
+				if !ok {
+					t.Fatalf("$sample size is %T, want int32", v[0].Value)
+				}
+				size = int64(inner)
 			default:
 				t.Fatalf("stage value %T", first.Value)
 			}
@@ -195,5 +204,28 @@ func TestSchemaCensusUsesAdmissionAndReportsSanitizedFailures(t *testing.T) {
 	cancel()
 	if _, err := s.SampleSchema(ctx, source.ID, 5); !errors.Is(err, audit.ErrBusy) {
 		t.Fatalf("busy global capacity error = %v", err)
+	}
+}
+
+// Every MongoDB 3.4 request goes through rewriteLegacyPipeline, which rejects
+// pipelines that do not start with $match. The census must survive it intact.
+func TestLegacySchemaPipelineSurvivesLegacyRewriter(t *testing.T) {
+	pipeline := schemaPipeline(25, true)
+	rewritten, err := rewriteLegacyPipeline(pipeline)
+	if err != nil {
+		t.Fatalf("legacy rewriter rejected census pipeline: %v", err)
+	}
+	if !reflect.DeepEqual(rewritten, pipeline) {
+		t.Fatalf("rewriter altered census pipeline: got %#v want %#v", rewritten, pipeline)
+	}
+	if len(rewritten) != 3 || rewritten[0][0].Key != "$match" || rewritten[1][0].Key != "$limit" || rewritten[2][0].Key != "$project" {
+		t.Fatalf("stages = %#v, want $match, $limit, $project", rewritten)
+	}
+	match, ok := rewritten[0][0].Value.(bson.D)
+	if !ok || len(match) != 0 {
+		t.Fatalf("$match = %#v, want empty document", rewritten[0][0].Value)
+	}
+	if limit, ok := rewritten[1][0].Value.(int32); !ok || limit != 25 {
+		t.Fatalf("$limit = %#v, want int32 25", rewritten[1][0].Value)
 	}
 }

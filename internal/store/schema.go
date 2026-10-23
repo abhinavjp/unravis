@@ -118,12 +118,18 @@ func clampSchemaSample(n int) int {
 
 // schemaPipeline selects n documents and projects, for each, only the list of
 // its top-level field names with their BSON type names. $$e.v is referenced
-// only inside $type, so values cannot be returned. MongoDB 3.4 gets a plain
-// $limit of the first n documents instead of a random $sample.
+// only inside $type, so values cannot be returned. MongoDB 3.4 gets an empty
+// $match and a $limit of the first n documents (natural order, not random)
+// instead of a $sample.
 func schemaPipeline(n int, legacy bool) mongo.Pipeline {
-	pick := bson.D{{Key: "$sample", Value: bson.D{{Key: "size", Value: int32(n)}}}}
+	pick := mongo.Pipeline{bson.D{{Key: "$sample", Value: bson.D{{Key: "size", Value: int32(n)}}}}}
 	if legacy {
-		pick = bson.D{{Key: "$limit", Value: int32(n)}}
+		// rewriteLegacyPipeline only accepts pipelines that start with $match,
+		// so the legacy form opens with an empty one.
+		pick = mongo.Pipeline{
+			bson.D{{Key: "$match", Value: bson.D{}}},
+			bson.D{{Key: "$limit", Value: int32(n)}},
+		}
 	}
 	fields := bson.D{{Key: "$map", Value: bson.D{
 		{Key: "input", Value: bson.D{{Key: "$objectToArray", Value: "$$ROOT"}}},
@@ -133,10 +139,7 @@ func schemaPipeline(n int, legacy bool) mongo.Pipeline {
 			{Key: "t", Value: bson.D{{Key: "$type", Value: "$$e.v"}}},
 		}},
 	}}}
-	return mongo.Pipeline{
-		pick,
-		bson.D{{Key: "$project", Value: bson.D{{Key: "_id", Value: 0}, {Key: "f", Value: fields}}}},
-	}
+	return append(pick, bson.D{{Key: "$project", Value: bson.D{{Key: "_id", Value: 0}, {Key: "f", Value: fields}}}})
 }
 
 func schemaQueryError(ctx context.Context, err error) error {
