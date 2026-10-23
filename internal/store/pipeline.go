@@ -82,6 +82,17 @@ func auditStateExpr(durationField string) bson.D {
 	}}}
 }
 
+// auditBinExpr is the histogram bin of a duration field: bin 0 below one
+// millisecond, then 192 bins growing by 10 percent, and a last bin above them.
+// The summary and the breakdown both bin through it, so a latency percentile
+// means the same in either.
+func auditBinExpr(durationField string) bson.D {
+	branches := bson.A{bson.D{{Key: "case", Value: bson.D{{Key: "$lt", Value: bson.A{durationField, 1}}}}, {Key: "then", Value: 0}}}
+	for i := 1; i <= 192; i++ {
+		branches = append(branches, bson.D{{Key: "case", Value: bson.D{{Key: "$lt", Value: bson.A{durationField, math.Pow(1.1, float64(i))}}}}, {Key: "then", Value: i}})
+	}
+	return bson.D{{Key: "$switch", Value: bson.D{{Key: "branches", Value: branches}, {Key: "default", Value: 193}}}}
+}
 // Reference statistics use the whole interval; only current results need time slots.
 func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mongo.Pipeline {
 	intervalMS := int64(q.BucketSeconds) * 1000
@@ -159,11 +170,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 		}}}}}
 	}
 	state := auditStateExpr("$_auditDuration")
-	branches := bson.A{bson.D{{Key: "case", Value: bson.D{{Key: "$lt", Value: bson.A{"$_auditDuration", 1}}}}, {Key: "then", Value: 0}}}
-	for i := 1; i <= 192; i++ {
-		branches = append(branches, bson.D{{Key: "case", Value: bson.D{{Key: "$lt", Value: bson.A{"$_auditDuration", math.Pow(1.1, float64(i))}}}}, {Key: "then", Value: i}})
-	}
-	bin := bson.D{{Key: "$switch", Value: bson.D{{Key: "branches", Value: branches}, {Key: "default", Value: 193}}}}
+	bin := auditBinExpr("$_auditDuration")
 	dateMillis := bson.D{{Key: "$toLong", Value: "$_auditAt"}}
 	var bucketAt any = bson.D{{Key: "$toDate", Value: bson.D{{Key: "$subtract", Value: bson.A{dateMillis, bson.D{{Key: "$mod", Value: bson.A{dateMillis, intervalMS}}}}}}}}
 	if !timeline {

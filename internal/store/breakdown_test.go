@@ -1,0 +1,1046 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"reflect"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"api-audit-explorer/internal/audit"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+)
+
+// bdCase is one audit row plus what a correct breakdown must say about it. The
+// expectations are written down at construction, not derived from the code under
+// test, so they are an independent oracle.
+type bdCase struct {
+	doc     map[string]any
+	state   string
+	pending bool
+	class   string
+	ms      float64
+}
+
+var bdAbsent = pipelineMissing{}
+
+func bdNow() time.Time { return time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC) }
+
+func bdQuery(now time.Time, sourceIDs ...string) audit.Query {
+	q := queryForTest(now)
+	q.SourceIDs, q.Kind, q.Outcome = sourceIDs, "all", "all"
+	return q
+}
+
+// bdCases builds 17 rows. User agents are A x5, B x4, C x3, D x2, then E, a
+// value that looks like a field path, and a missing one, once each. The other
+// columns are varied so every dimension has several values, blanks and padding.
+func bdCases(now time.Time) []bdCase {
+	var cases []bdCase
+	for i := 0; i < 17; i++ {
+		at := now.Add(-5*time.Minute - time.Duration(i)*10*time.Second)
+		ms := float64(100 + 37*i)
+		doc := map[string]any{
+			"ControllerName": "Payroll", "ActionName": "Run", "RequestInitiatedAt": at, "CreatedOn": at.Add(5 * time.Millisecond),
+			"RequestCompletedAt": at.Add(time.Duration(ms) * time.Millisecond), "ApiTime": float64(50 + 3*i),
+			"StatusCode": "OK", "RequestPollingType": "Synchronous ", "UserIp": fmt.Sprintf("10.0.0.%d", i%5),
+			"PayrollUIVersion": []string{"1.0", "2.0"}[i%2], "UserId": int32(100 + i%3),
+		}
+		switch {
+		case i < 5:
+			doc["UserAgent"] = "UA-A"
+		case i < 9:
+			doc["UserAgent"] = "UA-B"
+		case i < 12:
+			doc["UserAgent"] = "UA-C"
+		case i < 14:
+			doc["UserAgent"] = "UA-D"
+		case i == 14:
+			doc["UserAgent"] = "UA-E"
+		case i == 15:
+			doc["UserAgent"] = "$pathLike"
+		default:
+			delete(doc, "UserAgent")
+		}
+		c := bdCase{doc: doc, state: "valid", ms: ms}
+		if i%4 == 0 {
+			delete(doc, "UserId")
+		}
+		if i%5 == 2 {
+			doc["StatusCode"], c.class = "NotFound", audit.StatusClientError
+		}
+		if i%6 == 3 {
+			doc["StatusCode"], c.class = "InternalServerError", audit.StatusServerError
+		}
+		if i%5 == 1 {
+			doc["RequestPollingType"] = "Synchronous"
+		}
+		switch i {
+		case 1:
+			doc["RequestPollingType"], doc["StatusCode"] = "Asynchronous ", "Accepted"
+			delete(doc, "RequestCompletedAt")
+			c.state, c.pending, c.ms = "incomplete", true, 0
+		case 4:
+			delete(doc, "RequestCompletedAt")
+			c.state, c.ms = "incomplete", 0
+		case 6:
+			doc["RequestCompletedAt"] = at.Add(-time.Second)
+			c.state, c.ms = "invalid", 0
+		case 10:
+			delete(doc, "RequestPollingType")
+		case 13:
+			doc["RequestPollingType"] = "   "
+		case 14:
+			doc["StatusCode"] = " OK "
+		case 16:
+			delete(doc, "StatusCode")
+		}
+		cases = append(cases, c)
+	}
+	return cases
+}
+
+func bdDocs(cases []bdCase) []map[string]any {
+	docs := make([]map[string]any, len(cases))
+	for i, c := range cases {
+		docs[i] = c.doc
+	}
+	return docs
+}
+
+func bdText(doc map[string]any, field string) string {
+	if v, ok := doc[field].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// bdKey is the oracle's value of dim for one document, as the breakdown reports it.
+func bdKey(dim string, doc map[string]any) string {
+	switch dim {
+	case audit.BreakdownStatusCode:
+		return strings.TrimSpace(bdText(doc, "StatusCode"))
+	case audit.BreakdownPollingType:
+		return strings.TrimSpace(bdText(doc, "RequestPollingType"))
+	case audit.BreakdownUserID:
+		if v, ok := doc["UserId"].(int32); ok {
+			return strconv.Itoa(int(v))
+		}
+		return ""
+	case audit.BreakdownUIVersion:
+		return bdText(doc, "PayrollUIVersion")
+	case audit.BreakdownUserAgent:
+		return bdText(doc, "UserAgent")
+	case audit.BreakdownUserIP:
+		return bdText(doc, "UserIp")
+	}
+	panic("unknown dim " + dim)
+}
+
+var bdDims = []string{audit.BreakdownStatusCode, audit.BreakdownUserID, audit.BreakdownUIVersion, audit.BreakdownUserAgent, audit.BreakdownUserIP, audit.BreakdownPollingType}
+
+// bdSimulate runs a pipeline over documents with the evaluators in this package.
+// It supports the stages the breakdown emits: $match, $set, $group and $limit. A
+// $set sees the document as the stage received it, as on a server.
+func bdSimulate(t *testing.T, pipeline mongo.Pipeline, docs []map[string]any) []bson.Raw {
+	t.Helper()
+	rows := make([]map[string]any, len(docs))
+	copy(rows, docs)
+	for i, stage := range pipeline {
+		switch stage[0].Key {
+		case "$match":
+			kept := rows[:0:0]
+			for _, row := range rows {
+				// The first $match is the raw prefilter: the time window, the
+				// controller and the record filters. Later ones read derived fields.
+				if i == 0 && evalFirstMatch(t, stage[0].Value.(bson.D), row) || i > 0 && evalMatch(t, stage[0].Value.(bson.D), row) {
+					kept = append(kept, row)
+				}
+			}
+			rows = kept
+		case "$set":
+			for r, row := range rows {
+				next := make(map[string]any, len(row)+4)
+				for k, v := range row {
+					next[k] = v
+				}
+				for _, e := range stage[0].Value.(bson.D) {
+					next[e.Key] = evalExpr(t, e.Value, row)
+				}
+				rows[r] = next
+			}
+		case "$limit":
+			if n := int(reflect.ValueOf(stage[0].Value).Int()); len(rows) > n {
+				rows = rows[:n]
+			}
+		case "$group":
+			return bdGroup(t, stage[0].Value.(bson.D), rows)
+		default:
+			t.Fatalf("simulator does not support %s", stage[0].Key)
+		}
+	}
+	t.Fatal("pipeline has no $group")
+	return nil
+}
+
+type bdAccumulated struct {
+	id    bson.D
+	sums  map[string]float64
+	ints  map[string]bool
+	mins  map[string]float64
+	maxes map[string]float64
+}
+
+func bdGroup(t *testing.T, group bson.D, rows []map[string]any) []bson.Raw {
+	t.Helper()
+	var idSpec bson.D
+	switch id := group[0].Value.(type) {
+	case bson.D:
+		idSpec = id
+	default:
+		t.Fatalf("group _id %T not supported", id)
+	}
+	accs := group[1:]
+	var order []string
+	groups := map[string]*bdAccumulated{}
+	for _, row := range rows {
+		id := make(bson.D, 0, len(idSpec))
+		for _, e := range idSpec {
+			value := evalExpr(t, e.Value, row)
+			if _, missing := value.(pipelineMissing); missing {
+				value = nil
+			}
+			id = append(id, bson.E{Key: e.Key, Value: value})
+		}
+		key := fmt.Sprintf("%#v", id)
+		g := groups[key]
+		if g == nil {
+			g = &bdAccumulated{id: id, sums: map[string]float64{}, ints: map[string]bool{}, mins: map[string]float64{}, maxes: map[string]float64{}}
+			groups[key] = g
+			order = append(order, key)
+		}
+		for _, acc := range accs {
+			spec := acc.Value.(bson.D)[0]
+			value := evalExpr(t, spec.Value, row)
+			n, ok := pipelineNum(value)
+			switch spec.Key {
+			case "$sum":
+				if _, seen := g.ints[acc.Key]; !seen {
+					g.ints[acc.Key] = true
+				}
+				if ok {
+					g.sums[acc.Key] += n
+					if _, isInt := value.(float64); isInt {
+						g.ints[acc.Key] = false
+					}
+				}
+			case "$min":
+				if ok {
+					if cur, have := g.mins[acc.Key]; !have || n < cur {
+						g.mins[acc.Key] = n
+					}
+				}
+			case "$max":
+				if ok {
+					if cur, have := g.maxes[acc.Key]; !have || n > cur {
+						g.maxes[acc.Key] = n
+					}
+				}
+			default:
+				t.Fatalf("accumulator %s not supported", spec.Key)
+			}
+		}
+	}
+	out := make([]bson.Raw, 0, len(order))
+	for _, key := range order {
+		g := groups[key]
+		doc := bson.D{{Key: "_id", Value: g.id}}
+		for _, acc := range accs {
+			op := acc.Value.(bson.D)[0].Key
+			switch op {
+			case "$sum":
+				if g.ints[acc.Key] {
+					doc = append(doc, bson.E{Key: acc.Key, Value: int64(g.sums[acc.Key])})
+				} else {
+					doc = append(doc, bson.E{Key: acc.Key, Value: g.sums[acc.Key]})
+				}
+			case "$min":
+				if v, ok := g.mins[acc.Key]; ok {
+					doc = append(doc, bson.E{Key: acc.Key, Value: v})
+				} else {
+					doc = append(doc, bson.E{Key: acc.Key, Value: nil})
+				}
+			case "$max":
+				if v, ok := g.maxes[acc.Key]; ok {
+					doc = append(doc, bson.E{Key: acc.Key, Value: v})
+				} else {
+					doc = append(doc, bson.E{Key: acc.Key, Value: nil})
+				}
+			}
+		}
+		raw, err := bson.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, raw)
+	}
+	return out
+}
+
+// bdLegacyDocs encodes documents as the MongoDB 3.4 metadata projection returns
+// them: one raw document each, with an object id and the oversize flag.
+func bdLegacyDocs(t *testing.T, docs []map[string]any) []any {
+	t.Helper()
+	out := make([]any, len(docs))
+	for i, doc := range docs {
+		encoded := bson.D{{Key: "_id", Value: bson.NewObjectID()}, {Key: "_auditMetadataOversized", Value: false}}
+		keys := make([]string, 0, len(doc))
+		for k := range doc {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if _, missing := doc[k].(pipelineMissing); !missing {
+				encoded = append(encoded, bson.E{Key: k, Value: doc[k]})
+			}
+		}
+		raw, err := bson.Marshal(encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[i] = bson.Raw(raw)
+	}
+	return out
+}
+
+type bdHarness struct {
+	store     *Store
+	handle    *fakeClient
+	sources   []audit.Source
+	mu        sync.Mutex
+	pipelines []mongo.Pipeline
+}
+
+// bdStore wires a store whose server is the simulator (modern) or a metadata
+// stream (legacy) over docs. Every source serves the same documents.
+func bdStore(t *testing.T, legacy bool, docs []map[string]any, extraCollections ...string) *bdHarness {
+	t.Helper()
+	s, first, handle := recordStore(t, legacy)
+	h := &bdHarness{store: s, handle: handle, sources: []audit.Source{first}}
+	for _, collection := range extraCollections {
+		h.sources = append(h.sources, addFakeSource(t, s, collection))
+	}
+	legacyRaw := bdLegacyDocs(t, docs)
+	handle.aggregateFn = func(ctx context.Context, _, _ string, pipeline mongo.Pipeline) (mongoCursor, error) {
+		h.mu.Lock()
+		h.pipelines = append(h.pipelines, pipeline)
+		h.mu.Unlock()
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) > audit.OperationTimeout {
+			t.Errorf("breakdown query must carry a deadline of at most %v", audit.OperationTimeout)
+		}
+		if legacy {
+			return &fakeCursor{docs: legacyRaw}, nil
+		}
+		raws := bdSimulate(t, pipeline, docs)
+		out := make([]any, len(raws))
+		for i, raw := range raws {
+			out[i] = raw
+		}
+		return &fakeCursor{docs: out}, nil
+	}
+	return h
+}
+
+func (h *bdHarness) ids() []string {
+	ids := make([]string, len(h.sources))
+	for i, s := range h.sources {
+		ids[i] = s.ID
+	}
+	return ids
+}
+
+func bdBreakdown(t *testing.T, h *bdHarness, q audit.Query, dim string, top int) audit.Breakdown {
+	t.Helper()
+	q.SourceIDs = h.ids()
+	got, err := h.store.Breakdown(context.Background(), audit.BreakdownInput{Query: q, Dim: dim, Top: top})
+	if err != nil {
+		t.Fatalf("%s: %v", dim, err)
+	}
+	return got
+}
+
+func TestBreakdownTopNPlusOtherSumsToTotal(t *testing.T) {
+	now := bdNow()
+	cases := bdCases(now)
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprint("legacy=", legacy), func(t *testing.T) {
+			h := bdStore(t, legacy, bdDocs(cases))
+			got := bdBreakdown(t, h, bdQuery(now), audit.BreakdownUserAgent, 3)
+			if got.Total != 17 || got.Distinct != 7 || len(got.Rows) != 3 || got.Other == nil {
+				t.Fatalf("total=%d distinct=%d rows=%d other=%v", got.Total, got.Distinct, len(got.Rows), got.Other)
+			}
+			var sum int64
+			for i, want := range []struct {
+				value string
+				count int64
+			}{{"UA-A", 5}, {"UA-B", 4}, {"UA-C", 3}} {
+				row := got.Rows[i]
+				if row.Value != want.value || row.Count != want.count || row.Filter == nil || row.Filter.UserAgentContains != want.value {
+					t.Fatalf("row %d = %#v, want %s x%d", i, row, want.value, want.count)
+				}
+				sum += row.Count
+			}
+			if got.Other.Value != "Other" || got.Other.Values != 4 || got.Other.Count != 5 || got.Other.Filter != nil {
+				t.Fatalf("other = %#v, want 4 values / 5 rows and no filter", got.Other)
+			}
+			if sum+got.Other.Count != got.Total {
+				t.Fatalf("rows %d + other %d != total %d", sum, got.Other.Count, got.Total)
+			}
+			full := bdBreakdown(t, h, bdQuery(now), audit.BreakdownUserAgent, 50)
+			if full.Other != nil || len(full.Rows) != 7 || full.Total != 17 {
+				t.Fatalf("top 50 must list all 7 values without Other: rows=%d other=%v total=%d", len(full.Rows), full.Other, full.Total)
+			}
+		})
+	}
+}
+
+func bdExpect(cases []bdCase, dim string) map[string]*audit.BreakdownRow {
+	want := map[string]*audit.BreakdownRow{}
+	valid := map[string][]float64{}
+	for _, c := range cases {
+		key := bdKey(dim, c.doc)
+		row := want[key]
+		if row == nil {
+			row = &audit.BreakdownRow{}
+			want[key] = row
+		}
+		row.Count++
+		if c.state == "incomplete" {
+			row.Incomplete++
+		}
+		if c.pending {
+			row.Pending++
+		}
+		switch c.class {
+		case audit.StatusClientError:
+			row.Count4xx++
+		case audit.StatusServerError:
+			row.Count5xx++
+		}
+		if c.state == "valid" {
+			valid[key] = append(valid[key], c.ms)
+		}
+	}
+	for key, row := range want {
+		row.Complete = row.Count - row.Incomplete
+		row.Stats.Count = int64(len(valid[key]))
+		if len(valid[key]) > 0 {
+			lo, hi := math.Inf(1), math.Inf(-1)
+			for _, ms := range valid[key] {
+				lo, hi = math.Min(lo, ms), math.Max(hi, ms)
+			}
+			row.Stats.MinMs, row.Stats.MaxMs = &lo, &hi
+		}
+	}
+	return want
+}
+
+func TestBreakdownMatchesIndependentOracleOnEveryDimension(t *testing.T) {
+	now := bdNow()
+	// Latency is only reported for one request type. The pooled kind "all" keeps
+	// the counts but carries no percentiles; the "synchronous" run uses rows that
+	// are all synchronous, so the percentile oracle is exact.
+	for _, kind := range []string{"all", "synchronous"} {
+		cases := bdCases(now)
+		if kind == "synchronous" {
+			for i := range cases {
+				// Pending means an accepted asynchronous request, so it goes too.
+				cases[i].doc["RequestPollingType"], cases[i].pending = "Synchronous", false
+			}
+		}
+		bdOracle(t, now, cases, kind)
+	}
+}
+
+func bdOracle(t *testing.T, now time.Time, cases []bdCase, kind string) {
+	pooled := audit.PooledKind(kind)
+	for _, legacy := range []bool{false, true} {
+		for _, dim := range bdDims {
+			t.Run(fmt.Sprintf("%s/%s/legacy=%v", kind, dim, legacy), func(t *testing.T) {
+				h := bdStore(t, legacy, bdDocs(cases))
+				q := bdQuery(now)
+				q.Kind = kind
+				got := bdBreakdown(t, h, q, dim, 50)
+				want := bdExpect(cases, dim)
+				if got.PooledKinds != pooled {
+					t.Fatalf("PooledKinds = %v for kind %q, want %v", got.PooledKinds, kind, pooled)
+				}
+				if got.Other != nil || len(got.Rows) != len(want) || got.Total != 17 {
+					t.Fatalf("rows=%d want %d, other=%v, total=%d", len(got.Rows), len(want), got.Other, got.Total)
+				}
+				for _, row := range got.Rows {
+					key := row.Value
+					if row.Missing {
+						key = ""
+						if row.Value != "(not yet written)" {
+							t.Fatalf("missing row labelled %q", row.Value)
+						}
+					}
+					w := want[key]
+					if w == nil {
+						t.Fatalf("unexpected row %q", row.Value)
+					}
+					if row.Count != w.Count || row.Complete != w.Complete || row.Incomplete != w.Incomplete || row.Pending != w.Pending || row.Count4xx != w.Count4xx || row.Count5xx != w.Count5xx {
+						t.Errorf("%q counts = %d/%d/%d/%d/%d/%d, want %d/%d/%d/%d/%d/%d", key,
+							row.Count, row.Complete, row.Incomplete, row.Pending, row.Count4xx, row.Count5xx,
+							w.Count, w.Complete, w.Incomplete, w.Pending, w.Count4xx, w.Count5xx)
+					}
+					if pooled {
+						if row.Stats.Count != 0 || row.Stats.P50 != nil || row.Stats.P95 != nil || row.Stats.MinMs != nil || row.Stats.MaxMs != nil {
+							t.Errorf("%q must not carry latency under pooled kind %q: %#v", key, kind, row.Stats)
+						}
+						continue
+					}
+					if row.Stats.Count != w.Stats.Count {
+						t.Errorf("%q latency samples = %d, want %d valid rows only", key, row.Stats.Count, w.Stats.Count)
+					}
+					if w.Stats.Count > 0 {
+						if row.Stats.MinMs == nil || *row.Stats.MinMs != *w.Stats.MinMs || *row.Stats.MaxMs != *w.Stats.MaxMs || row.Stats.P50 == nil || row.Stats.P95 == nil {
+							t.Errorf("%q stats = %#v, want min %v max %v with P50 and P95", key, row.Stats, *w.Stats.MinMs, *w.Stats.MaxMs)
+						}
+					} else if row.Stats.P50 != nil || row.Stats.P95 != nil {
+						t.Errorf("%q has percentiles without a valid row", key)
+					}
+					if len(row.Stats.Histogram) != 0 {
+						t.Errorf("%q row must not carry a histogram", key)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestBreakdownPollingTypeMissingLabel(t *testing.T) {
+	now := bdNow()
+	var docs []map[string]any
+	for i, polling := range []any{bdAbsent, "", "   ", "Synchronous ", "Synchronous"} {
+		doc := bdCases(now)[i].doc
+		doc["RequestPollingType"] = polling
+		docs = append(docs, doc)
+	}
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprint("legacy=", legacy), func(t *testing.T) {
+			h := bdStore(t, legacy, docs)
+			got := bdBreakdown(t, h, bdQuery(now), audit.BreakdownPollingType, 20)
+			if len(got.Rows) != 2 || got.Total != 5 {
+				t.Fatalf("rows = %#v, want a missing row and one Synchronous row", got.Rows)
+			}
+			missing, sync := got.Rows[0], got.Rows[1]
+			if missing.Value != "(not yet written)" || !missing.Missing || missing.Count != 3 {
+				t.Fatalf("missing row = %#v", missing)
+			}
+			if missing.Filter != nil {
+				t.Fatalf("missing row filter = %#v; the record filters have no polling type", missing.Filter)
+			}
+			if sync.Value != "Synchronous" || sync.Missing || sync.Count != 2 || sync.Filter != nil {
+				t.Fatalf("trimmed row = %#v", sync)
+			}
+		})
+	}
+}
+
+func TestLegacyBreakdownMatchesModern(t *testing.T) {
+	now := bdNow()
+	docs := bdDocs(bdCases(now))
+	// A row that is pending under the modern rules but has no status at all, and
+	// an ApiTime that is absent, so the api metric has an incomplete row too.
+	delete(docs[5], "ApiTime")
+	for _, metric := range []string{"total", "api"} {
+		for _, outcome := range []string{"all", "success", "failure", "client_error", "server_error"} {
+			for _, kind := range []string{"all", "synchronous"} {
+				for _, dim := range bdDims {
+					t.Run(fmt.Sprintf("%s/%s/%s/%s", metric, outcome, kind, dim), func(t *testing.T) {
+						q := bdQuery(now)
+						q.Metric, q.Outcome, q.Kind = metric, outcome, kind
+						modern := bdBreakdown(t, bdStore(t, false, docs), q, dim, 3)
+						old := bdBreakdown(t, bdStore(t, true, docs), q, dim, 3)
+						modern.Sources, old.Sources = nil, nil
+						if !reflect.DeepEqual(modern, old) {
+							t.Fatalf("legacy differs from modern\nmodern: %#v\nlegacy: %#v", modern, old)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+// bdSurvives runs one document through a drill-down pipeline: the raw first
+// $match, then the derived-field $match stages, as the server would.
+func bdSurvives(t *testing.T, pipeline mongo.Pipeline, doc map[string]any) bool {
+	t.Helper()
+	if !evalFirstMatch(t, pipeline[0][0].Value.(bson.D), doc) {
+		return false
+	}
+	_, ok := evalRowSurvives(t, pipeline, doc)
+	return ok
+}
+
+// bdDrillCount counts the documents the request drill-down returns for a row:
+// the query with the row's filter fragment merged in, the whole cohort.
+func bdDrillCount(t *testing.T, q audit.Query, filter *audit.BreakdownFilter, docs []map[string]any) int {
+	t.Helper()
+	if filter != nil {
+		q = filter.Apply(q)
+	}
+	cohort := [5]string{"", q.Controller, q.Action, q.Kind, q.Outcome}
+	pipeline := requestPipelineState(q, cohort, "", "source", nil, 1)
+	n := 0
+	for _, doc := range docs {
+		if bdSurvives(t, pipeline, doc) {
+			n++
+		}
+	}
+	return n
+}
+
+// bdFilterless fails unless a row without a drill-down filter is one that cannot
+// have one: a missing value, or the polling type.
+func bdFilterless(t *testing.T, dim string, row audit.BreakdownRow) {
+	t.Helper()
+	if !row.Missing && dim != audit.BreakdownPollingType {
+		t.Errorf("%s: row %q has no filter, but only a missing value or the polling type may lack one", dim, row.Value)
+	}
+}
+
+func TestBreakdownRowFilterDrillCountMatchesPipelines(t *testing.T) {
+	now := bdNow()
+	docs := bdDocs(bdCases(now))
+	for _, outcome := range []string{"all", "success"} {
+		for _, completion := range []string{"", audit.StateComplete, audit.StateIncomplete} {
+			for _, dim := range bdDims {
+				q := bdQuery(now)
+				q.Outcome, q.Completion = outcome, completion
+				modern := bdBreakdown(t, bdStore(t, false, docs), q, dim, 50)
+				legacy := bdStore(t, true, docs)
+				for _, row := range modern.Rows {
+					if row.Filter == nil {
+						bdFilterless(t, dim, row)
+						continue
+					}
+					name := fmt.Sprintf("%s/%s/%s %q", outcome, completion, dim, row.Value)
+					if got := bdDrillCount(t, q, row.Filter, docs); int64(got) != row.Count {
+						t.Errorf("%s: server drill-down returns %d rows, breakdown says %d", name, got, row.Count)
+					}
+					dq := row.Filter.Apply(q)
+					dq.SourceIDs = legacy.ids()
+					page, err := legacy.store.Requests(context.Background(), audit.PageInput{Query: dq, Limit: audit.MaxPageSize})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if int64(len(page.Rows)) != row.Count {
+						t.Errorf("%s: legacy drill-down returns %d rows, breakdown says %d", name, len(page.Rows), row.Count)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestBreakdownRowFilterKeepsItsValues(t *testing.T) {
+	now := bdNow()
+	docs := bdDocs(bdCases(now))
+	q := bdQuery(now)
+	count := func(mutate func(*audit.Query)) int {
+		w := q
+		mutate(&w)
+		return bdDrillCount(t, w, nil, docs)
+	}
+	// "OK" and " OK " are one status once trimmed, and the match ignores case:
+	// 17 rows minus 3 NotFound, 3 InternalServerError, the Accepted one and the
+	// one without a status.
+	if got := count(func(w *audit.Query) { w.StatusCodes = []string{"OK"} }); got != 9 {
+		t.Fatalf("status OK keeps %d rows, want 9", got)
+	}
+	if got := count(func(w *audit.Query) { w.StatusCodes = []string{"ok"} }); got != 9 {
+		t.Fatalf("status ok keeps %d rows, want 9", got)
+	}
+	// A user agent is a case-insensitive substring: "ua" reaches UA-A to UA-E but
+	// not the one that looks like a field path or the missing one.
+	if got := count(func(w *audit.Query) { w.UserAgentContains = "ua" }); got != 15 {
+		t.Fatalf("agent ua keeps %d rows, want 15", got)
+	}
+	if got := count(func(w *audit.Query) { w.UserAgentContains = "UA-A" }); got != 5 {
+		t.Fatalf("agent UA-A keeps %d rows, want 5", got)
+	}
+	// A user id of 100 is i%3 == 0 and not missing (i%4 == 0): rows 3, 6, 9, 15.
+	if got := count(func(w *audit.Query) { w.UserIDs = []int{100} }); got != 4 {
+		t.Fatalf("user 100 keeps %d rows, want 4", got)
+	}
+	// Fields combine with AND, and the values of one field with OR.
+	if got := count(func(w *audit.Query) { w.UserAgentContains, w.UIVersions = "UA-A", []string{"1.0"} }); got != 3 {
+		t.Fatalf("UA-A with ui 1.0 keeps %d rows, want 3", got)
+	}
+	if got := count(func(w *audit.Query) { w.UserIPs, w.UIVersions = []string{"10.0.0.0", "10.0.0.1"}, []string{"1.0"} }); got != 4 {
+		t.Fatalf("ip .0 or .1 with ui 1.0 keeps %d rows, want 4", got)
+	}
+	if got := count(func(w *audit.Query) { w.UIVersions = []string{"1.0", "2.0"} }); got != 17 {
+		t.Fatalf("both versions keep %d rows, want all 17", got)
+	}
+	// A value that looks like a field path is only ever a literal.
+	if got := count(func(w *audit.Query) { w.UserAgentContains = "$pathLike" }); got != 1 {
+		t.Fatalf("$pathLike keeps %d rows, want 1", got)
+	}
+}
+
+// Every record filter and the completion state narrow the breakdown itself, and
+// the legacy reader agrees with the aggregation on each.
+func TestBreakdownHonorsRecordFiltersAndStates(t *testing.T) {
+	now := bdNow()
+	cases := bdCases(now)
+	ipOf := func(c bdCase) string { return bdText(c.doc, "UserIp") }
+	for _, tc := range []struct {
+		name string
+		set  func(*audit.Query)
+		keep func(bdCase) bool
+	}{
+		{"complete", func(q *audit.Query) { q.Completion = audit.StateComplete }, func(c bdCase) bool { return c.state == "valid" }},
+		{"incomplete", func(q *audit.Query) { q.Completion = audit.StateIncomplete }, func(c bdCase) bool { return c.state == "incomplete" }},
+		{"invalid", func(q *audit.Query) { q.Completion = audit.StateInvalid }, func(c bdCase) bool { return c.state == "invalid" }},
+		{"pending", func(q *audit.Query) { q.Completion = audit.StatePending }, func(c bdCase) bool { return c.pending }},
+		{"version", func(q *audit.Query) { q.UIVersions = []string{"1.0"} }, func(c bdCase) bool { return bdText(c.doc, "PayrollUIVersion") == "1.0" }},
+		{"status", func(q *audit.Query) { q.StatusCodes = []string{"ok"} }, func(c bdCase) bool { return strings.EqualFold(strings.TrimSpace(bdText(c.doc, "StatusCode")), "OK") }},
+		{"agent and ips", func(q *audit.Query) { q.UserAgentContains, q.UserIPs = "ua-a", []string{"10.0.0.0", "10.0.0.1"} }, func(c bdCase) bool {
+			return bdText(c.doc, "UserAgent") == "UA-A" && (ipOf(c) == "10.0.0.0" || ipOf(c) == "10.0.0.1")
+		}},
+		{"user", func(q *audit.Query) { q.UserIDs = []int{101} }, func(c bdCase) bool { v, ok := c.doc["UserId"].(int32); return ok && v == 101 }},
+	} {
+		var want int64
+		for _, c := range cases {
+			if tc.keep(c) {
+				want++
+			}
+		}
+		if want == 0 || want == int64(len(cases)) {
+			t.Fatalf("%s: the filter keeps %d of %d rows; the fixture must split", tc.name, want, len(cases))
+		}
+		for _, dim := range bdDims {
+			t.Run(tc.name+"/"+dim, func(t *testing.T) {
+				q := bdQuery(now)
+				tc.set(&q)
+				modern := bdBreakdown(t, bdStore(t, false, bdDocs(cases)), q, dim, 3)
+				old := bdBreakdown(t, bdStore(t, true, bdDocs(cases)), q, dim, 3)
+				if modern.Total != want || old.Total != want {
+					t.Fatalf("total modern %d, legacy %d, want %d", modern.Total, old.Total, want)
+				}
+				modern.Sources, old.Sources = nil, nil
+				if !reflect.DeepEqual(modern, old) {
+					t.Fatalf("legacy differs from modern\nmodern: %#v\nlegacy: %#v", modern, old)
+				}
+			})
+		}
+	}
+}
+
+// The breakdown reads the request drill-down pipeline. Its prefix must carry the
+// raw record filters, the state filter, and every derived field the group reads;
+// when the request pipeline stops defining one, the breakdown fails loudly.
+func TestBreakdownPrefixReadsTheDrillDownPipeline(t *testing.T) {
+	q := bdQuery(bdNow(), "source")
+	q.UserIPs, q.Completion = []string{"10.0.0.1"}, audit.StateIncomplete
+	q = q.Normalized()
+	prefix, err := breakdownPrefix(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsElems(prefix[0][0].Value.(bson.D), recordMatch(q)) {
+		t.Error("the first $match lost the raw record filters")
+	}
+	post := false
+	for _, stage := range prefix[1:] {
+		if stage[0].Key == "$match" && reflect.DeepEqual(stage[0].Value, recordPostMatch(q)) {
+			post = true
+		}
+		switch stage[0].Key {
+		case "$sort", "$limit", "$project", "$group", "$skip":
+			t.Errorf("the prefix keeps %s, which belongs to paging", stage[0].Key)
+		}
+	}
+	if !post {
+		t.Error("the prefix lost the state filter, so counts could differ from the drill-down")
+	}
+	last := prefix[len(prefix)-1]
+	if fields, ok := last[0].Value.(bson.D); last[0].Key != "$set" || !ok || len(fields) != 1 || fields[0].Key != "_auditBin" {
+		t.Errorf("the prefix must end with the histogram bin, got %v", last)
+	}
+	if err := checkBreakdownFields(prefix); err != nil {
+		t.Fatal(err)
+	}
+	// The check is what keeps a rename loud: a prefix without a field fails.
+	for _, field := range breakdownDerivedFields {
+		var cut mongo.Pipeline
+		for _, stage := range prefix {
+			if fields, ok := stage[0].Value.(bson.D); stage[0].Key == "$set" && ok {
+				kept := bson.D{}
+				for _, e := range fields {
+					if e.Key != field {
+						kept = append(kept, e)
+					}
+				}
+				stage = bson.D{{Key: "$set", Value: kept}}
+			}
+			cut = append(cut, stage)
+		}
+		if err := checkBreakdownFields(cut); err == nil || !strings.Contains(err.Error(), field) {
+			t.Errorf("a pipeline without %s must fail the check naming it, got %v", field, err)
+		}
+	}
+}
+func TestLegacyBreakdownAvoidsServerSideOperators(t *testing.T) {
+	now := bdNow()
+	h := bdStore(t, true, bdDocs(bdCases(now)))
+	for _, dim := range bdDims {
+		q := bdQuery(now)
+		q.UserAgentContains = "UA-A"
+		bdBreakdown(t, h, q, dim, 5)
+	}
+	if len(h.pipelines) != len(bdDims) {
+		t.Fatalf("legacy breakdown ran %d pipelines for %d dimensions; it must scan once", len(h.pipelines), len(bdDims))
+	}
+	for _, pipeline := range h.pipelines {
+		text, err := bson.MarshalExtJSON(bson.D{{Key: "p", Value: pipeline}}, false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, banned := range []string{"$convert", "$toString", "$regexMatch", "$dateDiff", "$group", "$facet", "$expr"} {
+			if strings.Contains(string(text), banned) {
+				t.Errorf("legacy pipeline uses %s: %s", banned, text)
+			}
+		}
+		if !strings.Contains(string(text), legacyMetadataMarker) {
+			t.Errorf("legacy breakdown must read the bounded metadata projection: %s", text)
+		}
+	}
+}
+
+func TestLegacyBreakdownFailsClosedOnOversizedMetadata(t *testing.T) {
+	now := bdNow()
+	h := bdStore(t, true, bdDocs(bdCases(now)))
+	oversized, _ := bson.Marshal(bson.D{{Key: "_id", Value: bson.NewObjectID()}, {Key: "_auditMetadataOversized", Value: true}})
+	h.handle.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
+		return &fakeCursor{docs: []any{bson.Raw(oversized)}}, nil
+	}
+	_, err := h.store.Breakdown(context.Background(), audit.BreakdownInput{Query: bdQuery(now, h.sources[0].ID), Dim: audit.BreakdownUserAgent})
+	if !errors.Is(err, audit.ErrLimit) || !errors.Is(err, audit.ErrLegacyScanLimit) {
+		t.Fatalf("oversized metadata must fail the request with the legacy scan limit, got %v", err)
+	}
+}
+
+func TestBreakdownGroupLimitFailsClosed(t *testing.T) {
+	now := bdNow()
+	s, source, handle := recordStore(t, false)
+	handle.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
+		docs := make([]any, audit.MaxBreakdownGroups+1)
+		for i := range docs {
+			raw, _ := bson.Marshal(bson.D{{Key: "_id", Value: bson.D{{Key: "v", Value: fmt.Sprint("ua-", i)}}}, {Key: "count", Value: int64(1)}})
+			docs[i] = bson.Raw(raw)
+		}
+		return &fakeCursor{docs: docs}, nil
+	}
+	_, err := s.Breakdown(context.Background(), audit.BreakdownInput{Query: bdQuery(now, source.ID), Dim: audit.BreakdownUserAgent})
+	if !errors.Is(err, audit.ErrLimit) || !errors.Is(err, audit.ErrBreakdownGroupLimit) {
+		t.Fatalf("too many distinct values must fail closed, got %v", err)
+	}
+}
+
+func TestBreakdownValidatesInputAndKeepsLimits(t *testing.T) {
+	now := bdNow()
+	h := bdStore(t, false, nil)
+	q := bdQuery(now, h.sources[0].ID)
+	for name, in := range map[string]audit.BreakdownInput{
+		"unknown dimension": {Query: q, Dim: "controller"},
+		"top over 50":       {Query: q, Dim: audit.BreakdownUserAgent, Top: 51},
+		"negative top":      {Query: q, Dim: audit.BreakdownUserAgent, Top: -1},
+		"range over 7 days": {Query: func() audit.Query { w := q; w.Start = w.End.Add(-8 * 24 * time.Hour); return w }(), Dim: audit.BreakdownUserAgent},
+		"filter too long":   {Query: func() audit.Query { w := q; w.UserIPs = []string{strings.Repeat("x", audit.MaxFilterLength+1)}; return w }(), Dim: audit.BreakdownUserAgent},
+	} {
+		if _, err := h.store.Breakdown(context.Background(), in); !errors.Is(err, audit.ErrInvalidInput) {
+			t.Errorf("%s: err = %v, want invalid input", name, err)
+		}
+	}
+	if _, err := h.store.Breakdown(context.Background(), audit.BreakdownInput{Query: q, Dim: audit.BreakdownUserAgent, Top: 0}); err != nil {
+		t.Fatalf("top 0 means the default: %v", err)
+	}
+}
+
+func TestBreakdownReportsPartialSourceFailureWithoutItsRows(t *testing.T) {
+	now := bdNow()
+	docs := bdDocs(bdCases(now))
+	h := bdStore(t, false, docs, "broken")
+	inner := h.handle.aggregateFn
+	h.handle.aggregateFn = func(ctx context.Context, db, collection string, pipeline mongo.Pipeline) (mongoCursor, error) {
+		if collection == "broken" {
+			return nil, errors.New("mongodb://reader:secret@host: network error")
+		}
+		return inner(ctx, db, collection, pipeline)
+	}
+	got := bdBreakdown(t, h, bdQuery(now), audit.BreakdownUserAgent, 50)
+	if got.Total != 17 {
+		t.Fatalf("total = %d, want only the healthy source's 17 rows", got.Total)
+	}
+	if len(got.Sources) != 2 || !got.Sources[0].OK || got.Sources[1].OK || got.Sources[1].Error == "" || strings.Contains(got.Sources[1].Error, "secret") {
+		t.Fatalf("sources = %#v", got.Sources)
+	}
+}
+
+func TestBreakdownMergesSourcesAndKeepsTopRowsConsistent(t *testing.T) {
+	now := bdNow()
+	docs := bdDocs(bdCases(now))
+	h := bdStore(t, false, docs, "second")
+	got := bdBreakdown(t, h, bdQuery(now), audit.BreakdownUserAgent, 2)
+	if got.Total != 34 || len(got.Rows) != 2 || got.Rows[0].Count != 10 || got.Rows[1].Count != 8 || got.Other == nil || got.Other.Count != 16 {
+		t.Fatalf("two identical sources must double every count: %#v", got)
+	}
+	// Kind "all" pools request types, so no row carries latency.
+	if got.Rows[0].Value != "UA-A" || got.Rows[0].Incomplete != 4 || !got.PooledKinds || got.Rows[0].Stats.Count != 0 {
+		t.Fatalf("top row = %#v, want UA-A with 2 incomplete per source and no pooled latency", got.Rows[0])
+	}
+	// One kind keeps latency. UA-A has five rows per source, one asynchronous and
+	// incomplete (not part of a synchronous query) and one more incomplete, so
+	// three are valid in each source.
+	q := bdQuery(now)
+	q.Kind = "synchronous"
+	one := bdBreakdown(t, h, q, audit.BreakdownUserAgent, 50)
+	if one.PooledKinds {
+		t.Fatal("a single kind must not be flagged as pooled")
+	}
+	for _, row := range one.Rows {
+		if row.Value == "UA-A" {
+			if row.Stats.Count != 6 || row.Stats.P50 == nil || row.Stats.P95 == nil {
+				t.Fatalf("UA-A synchronous stats = %#v, want 6 samples with percentiles", row.Stats)
+			}
+			return
+		}
+	}
+	t.Fatal("UA-A row missing under the synchronous kind")
+}
+
+func TestBreakdownRowFilterDrillCountMatches(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	repo := audit.NewDemo(now)
+	reader, ok := repo.(audit.BreakdownReader)
+	if !ok {
+		t.Fatal("demo repository must implement BreakdownReader")
+	}
+	q := audit.Query{
+		SourceIDs: []string{"demo-west", "demo-east"}, Start: now.Add(-15 * time.Minute), End: now,
+		BaselineStart: now.Add(-30 * time.Minute), BaselineEnd: now.Add(-15 * time.Minute),
+		Kind: "all", Outcome: "all", Metric: "total", BucketSeconds: 10,
+	}
+	for _, dim := range bdDims {
+		got, err := reader.Breakdown(context.Background(), audit.BreakdownInput{Query: q, Dim: dim, Top: 50})
+		if err != nil {
+			t.Fatalf("%s: %v", dim, err)
+		}
+		var sum int64
+		if len(got.Rows) < 2 && dim != audit.BreakdownStatusCode && dim != audit.BreakdownPollingType {
+			t.Errorf("%s: the demo should show more than one value, got %d", dim, len(got.Rows))
+		}
+		for _, row := range got.Rows {
+			sum += row.Count
+			if row.Filter == nil {
+				bdFilterless(t, dim, row)
+				continue
+			}
+			dq := row.Filter.Apply(q)
+			var seen int64
+			cursor := ""
+			for {
+				page, err := repo.Requests(context.Background(), audit.PageInput{Query: dq, Limit: audit.MaxPageSize, Cursor: cursor})
+				if err != nil {
+					t.Fatalf("%s %q: %v", dim, row.Value, err)
+				}
+				seen += int64(len(page.Rows))
+				if page.NextCursor == "" {
+					break
+				}
+				cursor = page.NextCursor
+			}
+			if seen != row.Count {
+				t.Errorf("%s %q: drill-down pages %d records, breakdown says %d", dim, row.Value, seen, row.Count)
+			}
+		}
+		if got.Other != nil {
+			sum += got.Other.Count
+		}
+		if sum != got.Total {
+			t.Errorf("%s: rows plus other = %d, total %d", dim, sum, got.Total)
+		}
+	}
+}
+
+func TestBreakdownPooledKindsOmitPercentiles(t *testing.T) {
+	now := bdNow()
+	for _, legacy := range []bool{false, true} {
+		for _, kind := range []string{"all", "http", "synchronous", "asynchronous", "hangfire", "http_unknown"} {
+			t.Run(fmt.Sprintf("%s/legacy=%v", kind, legacy), func(t *testing.T) {
+				docs := bdDocs(bdCases(now))
+				// Every row is of the queried kind, so each single kind has rows to time.
+				for _, d := range docs {
+					switch kind {
+					case "asynchronous":
+						d["RequestPollingType"] = "Asynchronous"
+					case "hangfire":
+						d["RequestPollingType"] = "Hangfire"
+					case "http_unknown":
+						delete(d, "RequestPollingType")
+					default:
+						d["RequestPollingType"] = "Synchronous"
+					}
+				}
+				h := bdStore(t, legacy, docs)
+				q := bdQuery(now)
+				q.Kind = kind
+				got := bdBreakdown(t, h, q, audit.BreakdownUserAgent, 3)
+				pooled := kind == "all" || kind == "http"
+				if got.PooledKinds != pooled {
+					t.Fatalf("PooledKinds = %v, want %v", got.PooledKinds, pooled)
+				}
+				rows := append([]audit.BreakdownRow{}, got.Rows...)
+				if got.Other != nil {
+					rows = append(rows, audit.BreakdownRow{Value: got.Other.Value, Stats: got.Other.Stats})
+				}
+				for _, row := range rows {
+					if pooled {
+						if row.Stats.Count != 0 || row.Stats.P50 != nil || row.Stats.P95 != nil {
+							t.Errorf("%q carries a pooled latency under kind %q: %#v", row.Value, kind, row.Stats)
+						}
+					} else if row.Value == "UA-A" && (row.Stats.Count == 0 || row.Stats.P50 == nil || row.Stats.P95 == nil) {
+						t.Errorf("%q has no percentiles under single kind %q: %#v", row.Value, kind, row.Stats)
+					}
+				}
+				if !pooled {
+					if got.Total != 17 || len(got.Rows) == 0 || got.Rows[0].Value != "UA-A" || got.Rows[0].Stats.Count == 0 {
+						t.Fatalf("kind %q must return the 17 timed rows with percentiles: total=%d rows=%#v", kind, got.Total, got.Rows)
+					}
+				}
+				if pooled {
+					if got.Total != 17 || got.Rows[0].Count != 5 || got.Rows[0].Incomplete != 2 || got.Other == nil || got.Other.Count != 5 {
+						t.Fatalf("counts must survive pooling: total=%d rows=%#v other=%v", got.Total, got.Rows, got.Other)
+					}
+					if !legacy && len(h.pipelines) != 1 {
+						t.Errorf("a pooled breakdown needs no histogram pass, got %d aggregations", len(h.pipelines))
+					}
+				}
+			})
+		}
+	}
+}

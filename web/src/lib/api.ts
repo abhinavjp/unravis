@@ -1,4 +1,4 @@
-import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput } from './types';
+import type { Analysis, Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput } from './types';
 
 const token = document.querySelector<HTMLMetaElement>('meta[name="audit-session"]')?.content ?? '';
 const base = '/api';
@@ -48,6 +48,8 @@ export const api = {
   addSource: (input: SourceInput) => request<Source>('/sources', json(input)),
   deleteSource: (id: string) => request<void>('/sources/' + encodeURIComponent(id), { method: 'DELETE' }),
   analyze: (query: Query, signal?: AbortSignal) => request<Analysis>('/analyze', json(query), signal),
+  breakdown: (query: Query, dim: BreakdownDim, top = 20, signal?: AbortSignal) =>
+    request<Breakdown>('/breakdown', json({ query, dim, top }), signal),
   slowest: (query:Query,signal?:AbortSignal,options:{cursor?:string;minMs?:number|null}={})=>request<Page>('/slowest',json({query,limit:50,apiKey:'',cursor:options.cursor??'',...(options.minMs==null?{}:{minMs:options.minMs})}),signal),
   /** state narrows the page to one quality state (complete, incomplete, invalid, pending, unclassified); an empty apiKey pages the whole query. */
   requests: (query: Query, apiKey: string, cursor = '', signal?: AbortSignal, state = '') =>

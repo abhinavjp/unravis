@@ -453,12 +453,45 @@ func evalExpr(t *testing.T, expr any, doc map[string]any) any {
 			return false
 		case "$in":
 			a := args()
-			for _, item := range a[1].([]any) {
-				if reflect.DeepEqual(item, a[0]) {
+			list, _ := a[1].([]any)
+			if literal, ok := a[1].(bson.A); ok {
+				list = literal
+			}
+			for _, item := range list {
+				in, inOK := pipelineNum(item)
+				want, wantOK := pipelineNum(a[0])
+				if inOK && wantOK {
+					if in == want {
+						return true
+					}
+				} else if reflect.DeepEqual(item, a[0]) {
 					return true
 				}
 			}
 			return false
+		case "$substrCP":
+			a := args()
+			if len(a) < 3 {
+				t.Fatalf("$substrCP takes three arguments, got %d", len(a))
+			}
+			text, isText := a[0].(string)
+			if !isText {
+				if _, missing := a[0].(pipelineMissing); a[0] != nil && !missing {
+					t.Fatalf("$substrCP simulator does not model a %T input", a[0])
+				}
+				return ""
+			}
+			runes := []rune(text)
+			start, _ := pipelineNum(a[1])
+			length, _ := pipelineNum(a[2])
+			if int(start) >= len(runes) {
+				return ""
+			}
+			end := int(start) + int(length)
+			if end > len(runes) {
+				end = len(runes)
+			}
+			return string(runes[int(start):end])
 		case "$subtract":
 			a := args()
 			l, lok := a[0].(time.Time)
@@ -506,6 +539,10 @@ func evalMatch(t *testing.T, match bson.D, doc map[string]any) bool {
 				}
 			}
 			if !matched {
+				return false
+			}
+		case "$expr":
+			if ok, _ := evalExpr(t, e.Value, doc).(bool); !ok {
 				return false
 			}
 		default:

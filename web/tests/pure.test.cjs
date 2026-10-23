@@ -13,7 +13,12 @@ function loadTypeScript(relativePath) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
   }).outputText;
   const module = { exports: {} };
-  new Function('require', 'module', 'exports', output)(createRequire(filename), module, module.exports);
+  const nodeRequire = createRequire(filename);
+  // A relative import of another TypeScript file in src/lib is transpiled the same way.
+  const load = (request) => request.startsWith('./') && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
+    ? loadTypeScript(path.relative(root, path.join(path.dirname(filename), request + '.ts')))
+    : nodeRequire(request);
+  new Function('require', 'module', 'exports', output)(load, module, module.exports);
   return module.exports;
 }
 
@@ -495,6 +500,156 @@ test('the quality strip shows pending async only when it is above zero', () => {
   assert.match(app, /\{#if analysis\.quality\.pendingAsync\}[^\n]*pending async/);
 });
 
+const breakdown = loadTypeScript('src/lib/breakdown.ts');
+const breakdownBase = () => analysis({ start: '2026-10-22T12:00:00Z', end: '2026-10-22T13:00:00Z', bucketSeconds: 60 }).query;
+
+test('a breakdown row filter merges into the query without dropping other filters', () => {
+  const base = breakdownBase();
+  // The server builds a row's filter as a fragment of the shared record filter fields.
+  const query = { ...base, controller: 'Pay', uiVersions: ['2.0'], userAgentContains: 'old', urlContains: '/pay', completion: 'incomplete' };
+  const row = { value: 'UA-A', count: 3, filter: { userAgentContains: 'UA-A' } };
+  const merged = breakdown.mergeRecordFilter(query, breakdown.breakdownRowFilter(row));
+  assert.deepEqual(breakdown.activeRecordFilter(merged), { uiVersions: ['2.0'], userAgentContains: 'UA-A', urlContains: '/pay', completion: 'incomplete' });
+  assert.equal(merged.controller, 'Pay');
+  assert.deepEqual(merged.sourceIds, base.sourceIds);
+  assert.equal(query.userAgentContains, 'old', 'the input query is not mutated');
+  // A user id value replaces the earlier user ids: one dimension.
+  const swapped = breakdown.mergeRecordFilter({ ...base, userIds: [3, 4] }, { userIds: [7] });
+  assert.deepEqual(breakdown.activeRecordFilter(swapped), { userIds: [7] });
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.mergeRecordFilter(base, { statusCodes: ['OK'] })), { statusCodes: ['OK'] });
+  // "Other" and every row without a filter (missing value, polling type, capped) cannot be listed.
+  assert.equal(breakdown.breakdownRowFilter({ value: 'Other', count: 9 }), null);
+  assert.equal(breakdown.breakdownRowFilter({ value: '(not yet written)', missing: true, count: 9 }), null);
+  assert.equal(breakdown.breakdownRowFilter({ value: 'Synchronous', count: 9, filter: {} }), null);
+  // A fragment the shared serialization would drop selects nothing and is not clickable.
+  assert.equal(breakdown.breakdownRowFilter({ value: '0', count: 1, filter: { userIds: [0] } }), null);
+  assert.equal(breakdown.mergeRecordFilter(query, null), query);
+});
+
+test('a breakdown request leaves its own dimension out of the active filter', () => {
+  const base = breakdownBase();
+  const full = { ...base, userAgentContains: 'a', statusCodes: ['OK'], userIds: [7], operation: 'Pay.Run' };
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.withoutDimension(full, 'userAgent')), { userIds: [7], statusCodes: ['OK'], operation: 'Pay.Run' });
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.withoutDimension(full, 'userId')), { userAgentContains: 'a', statusCodes: ['OK'], operation: 'Pay.Run' });
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.withoutDimension(full, 'pollingType')), breakdown.activeRecordFilter(full));
+  assert.deepEqual(breakdown.withoutDimension(full, 'userAgent').sourceIds, base.sourceIds);
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.clearRecordFilter(full)), {});
+  assert.deepEqual(breakdown.clearRecordFilter(full).sourceIds, base.sourceIds);
+  assert.equal(breakdown.hasRecordFilter({}), false);
+  assert.equal(breakdown.hasRecordFilter({ userIps: [''] }), false);
+  assert.equal(breakdown.hasRecordFilter({ userIps: ['10.0.0.1'] }), true);
+});
+
+test('a drill-down replaces the record filters of the base query and nothing else', () => {
+  const base = { ...breakdownBase(), urlContains: '/pay', userIds: [3] };
+  assert.equal(breakdown.applyDrill(base, {}), base);
+  const drill = breakdown.activeRecordFilter(breakdown.mergeRecordFilter(base, { userIds: [7] }));
+  const effective = breakdown.applyDrill(base, drill);
+  assert.deepEqual(breakdown.activeRecordFilter(effective), { userIds: [7], urlContains: '/pay' });
+  assert.equal(effective.controller, base.controller);
+  assert.deepEqual(breakdown.activeRecordFilter(base), { userIds: [3], urlContains: '/pay' });
+  assert.deepEqual(breakdown.recordFilterChips(effective), [{ dim: 'userId', text: 'User: 7' }]);
+  assert.deepEqual(breakdown.recordFilterChips({ statusCodes: ['OK'], userAgentContains: 'Fire', uiVersions: ['2.1'], userIps: ['10.0.0.1'] }).map(chip => chip.dim), ['statusCode', 'uiVersion', 'userAgent', 'userIp']);
+});
+
+test('breakdown helpers cover every record filter key', () => {
+  // clearRecordFilter must drop every key serializeRecordFilters can emit, or a stale filter would leak into a drill-down.
+  const every = { userIds: [1], uiVersions: ['1'], userAgentContains: 'a', userIps: ['1.1.1.1'], urlContains: 'u', auditId: 'a'.repeat(24), statusCodes: ['OK'], completion: 'pending', operation: 'A.b' };
+  assert.deepEqual(Object.keys(investigation.serializeRecordFilters(every)).sort(), Object.keys(every).sort());
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.clearRecordFilter({ ...breakdownBase(), ...every })), {});
+});
+test('a pooled-kinds breakdown says why it has no percentiles and shows an em dash', () => {
+  assert.equal(breakdown.pooledKindsNote, 'Choose Synchronous, Asynchronous or Hangfire to see percentiles; types are never pooled.');
+  assert.ok(breakdown.breakdownNotes('userId', true).includes(breakdown.pooledKindsNote));
+  assert.ok(!breakdown.breakdownNotes('userId', false).includes(breakdown.pooledKindsNote));
+  assert.ok(!breakdown.breakdownNotes('userId', undefined).includes(breakdown.pooledKindsNote));
+  const quantile = { lowerMs: 90, upperMs: 110, valueMs: 100 };
+  assert.equal(breakdown.percentileText(quantile, true), '—');
+  assert.equal(breakdown.percentileText(null, true), '—');
+  assert.equal(breakdown.percentileText(quantile, false), '≈ 100.0 ms');
+  assert.equal(breakdown.percentileText(null, false), 'N/A');
+  const panel = fs.readFileSync(path.join(root, 'src/components/BreakdownPanel.svelte'), 'utf8');
+  assert.match(panel, /result\?\.pooledKinds === true/);
+  assert.match(panel, /percentileText\(row\.stats\.p50, pooled\)/);
+  assert.match(panel, /percentileText\(result\.other\.stats\.p95, pooled\)/);
+  assert.match(panel, /breakdownNotes\(dim, pooled\)/);
+  assert.match(fs.readFileSync(path.join(root, 'src/lib/types.ts'), 'utf8'), /pooledKinds\?: boolean/);
+});
+
+test('breakdown copy promises matching requests and explains text matching, non-atomic reads and Complete', () => {
+  const panel = fs.readFileSync(path.join(root, 'src/components/BreakdownPanel.svelte'), 'utf8');
+  assert.match(panel, /Choose a row to list matching requests/);
+  assert.doesNotMatch(panel, /exactly those requests/);
+  assert.match(breakdown.matchingNote('userAgent'), /ignoring case.*more requests than the row count/);
+  assert.match(breakdown.matchingNote('statusCode'), /ignoring case.*more requests than the row count/);
+  for (const dim of ['userId', 'uiVersion', 'userIp', 'pollingType']) assert.equal(breakdown.matchingNote(dim), null);
+  assert.ok(breakdown.breakdownNotes('userAgent', false).includes(breakdown.matchingNote('userAgent')));
+  assert.ok(breakdown.breakdownNotes('userId', false).every(note => note === breakdown.nonAtomicNote));
+  assert.match(breakdown.nonAtomicNote, /separate reads.*drift/);
+  assert.doesNotMatch(breakdown.nonAtomicNote, /two passes/);
+  // A status code is matched whole (trimmed, ignoring case); only a user agent is matched as contained text.
+  assert.doesNotMatch(breakdown.matchingNote('statusCode'), /contain/);
+  assert.match(breakdown.matchingNote('userAgent'), /contained/);
+  assert.match(panel, /class:breakdown-note-pooled=\{note === pooledKindsNote\}/);
+  assert.doesNotMatch(panel, /startsWith\('Choose'\)/);
+  assert.match(breakdown.completeTitle, /Requests minus Missing timing.*invalid.*valid timings/);
+  assert.match(panel, /title=\{completeTitle\}>Complete</);
+  // The empty-state rows span every column: nine headers.
+  assert.equal((panel.match(/<th[ >]/g) ?? []).length, 9);
+  assert.equal((panel.match(/colspan="9"/g) ?? []).length, 2);
+});
+
+test('a breakdown row that cannot be listed says why in one sentence and never invents a filter', () => {
+  const other = breakdown.breakdownPickTitle('userAgent', null);
+  const missing = breakdown.breakdownPickTitle('userAgent', { value: '(not yet written)', missing: true, count: 4 });
+  const polling = breakdown.breakdownPickTitle('pollingType', { value: 'Synchronous', count: 4 });
+  const long = breakdown.breakdownPickTitle('userAgent', { value: 'x'.repeat(300), count: 4 });
+  const multibyte = breakdown.breakdownPickTitle('userAgent', { value: '\u00e9'.repeat(101), count: 4 });
+  const pickUserId = value => breakdown.breakdownPickTitle('userId', { value, count: 4 });
+  const userId = ['0', '-3', 'abc', '2147483648'].map(pickUserId);
+  const [zero, negative, word, huge] = userId;
+  const blankUserId = pickUserId('  ');
+  const longWithReplacement = breakdown.breakdownPickTitle('userAgent', { value: '\uFFFD' + 'x'.repeat(250), count: 4 });
+  const longUserId = pickUserId('1'.repeat(250));
+  const blank = breakdown.breakdownPickTitle('userAgent', { value: '   ', count: 4 });
+  const nul = breakdown.breakdownPickTitle('userAgent', { value: 'Mozilla\u0000', count: 4 });
+  const invalid = breakdown.breakdownPickTitle('userAgent', { value: 'Mozilla\uFFFD', count: 4 });
+  const neutral = breakdown.breakdownPickTitle('userAgent', { value: 'Mozilla/5.0', count: 4 });
+  const listable = breakdown.breakdownPickTitle('userId', { value: '7', count: 4, filter: { userIds: [7] } });
+  assert.match(other, /remaining values/);
+  assert.match(missing, /missing value/);
+  assert.match(polling, /Polling type is not a request filter/);
+  assert.match(long, /too long/);
+  assert.match(multibyte, /too long/, 'the limit is 200 bytes, not characters');
+  // Each user id value gets its own reason, and none gets another one's.
+  assert.match(zero, /user id below 1/);
+  assert.match(negative, /user id below 1/);
+  assert.match(word, /must be a whole number/);
+  assert.match(huge, /above 2147483647/);
+  for (const [title, wrong] of [[zero, /whole number|above 2147483647/], [negative, /whole number|above 2147483647/], [word, /below 1|above 2147483647/], [huge, /below 1|whole number/]]) assert.doesNotMatch(title, wrong);
+  // A valid id in range is not rejected by the user id rules; it gets the neutral reason.
+  assert.match(pickUserId('7'), /cannot be used as a filter/);
+  assert.doesNotMatch(pickUserId('7'), /below 1|above 2147483647|whole number/);
+  assert.match(blankUserId, /blank value/);
+  assert.doesNotMatch(blankUserId, /user id|whole number/);
+  // The length is judged before the characters: a long value that happens to hold U+FFFD is long, not unreadable.
+  assert.match(longWithReplacement, /too long/);
+  assert.doesNotMatch(longWithReplacement, /unreadable/);
+  assert.match(longUserId, /too long/);
+  assert.match(blank, /blank value/);
+  assert.match(nul, /unreadable characters/);
+  assert.match(invalid, /unreadable characters/);
+  assert.match(neutral, /cannot be used as a filter/);
+  // Only the genuinely long value is called long; no branch claims a cut-off for a value that is not.
+  for (const title of [...userId, blankUserId, blank, nul, invalid, neutral]) assert.doesNotMatch(title, /too long|cut off/);
+  assert.equal(listable, 'Show matching requests');
+  assert.equal(new Set([other, missing, polling, long, zero, word, huge, blank, nul, neutral, listable]).size, 11);
+  for (const title of [other, missing, polling, long, multibyte, longWithReplacement, ...userId, blankUserId, blank, nul, invalid, neutral]) assert.equal(title.split('. ').length, 1, 'one sentence: ' + title);
+  // A row without a filter yields no filter, whatever its dimension.
+  assert.equal(breakdown.breakdownRowFilter({ value: '(not yet written)', missing: true, count: 4 }), null);
+  assert.equal(breakdown.breakdownRowFilter({ value: 'Synchronous', count: 4 }), null);
+});
+
 test('percentileThreshold uses cohort p95/p99 and returns null below sample floor', () => {
   const { percentileThreshold, percentileLabel } = loadTypeScript('src/lib/slowness.ts');
   const quantile = (valueMs) => ({ lowerMs: valueMs * 0.95, upperMs: valueMs * 1.05, valueMs });
@@ -927,4 +1082,11 @@ test('QueryControls offers the ranges inside the record filters panel only', () 
   assert.equal(/RANGE_FIELDS|rf-observedMs/.test(earlier), false);
   assert.match(source, /syncRangeDraft\(/);
   assert.equal(/#[0-9a-fA-F]{3,8}\b/.test(source.slice(source.indexOf('<style>'))), false);
+});
+
+test('breakdown drill-down keeps and clears range filters like any other record filter', () => {
+  const base = { observedMs: { min: 500 }, incompleteAgeMs: { max: 60000 } };
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.mergeRecordFilter(base, { userIds: [7] })), { userIds: [7], observedMs: { min: 500 }, incompleteAgeMs: { max: 60000 } });
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.clearRecordFilter(base)), {});
+  assert.deepEqual(breakdown.activeRecordFilter(breakdown.applyDrill({ observedMs: { min: 1 } }, { apiTimeMs: { min: 9 } })), { apiTimeMs: { min: 9 } });
 });

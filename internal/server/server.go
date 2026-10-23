@@ -217,6 +217,10 @@ func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 		h.slowest(w, r)
 		return
 	}
+	if route == "/api/breakdown" && r.Method == http.MethodPost {
+		h.breakdown(w, r)
+		return
+	}
 	if route == "/api/payload" && r.Method == http.MethodPost {
 		h.payload(w, r)
 		return
@@ -665,6 +669,8 @@ func writeRepoError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusRequestEntityTooLarge, "The grouped timing measurements exceed the 16 MiB memory budget across all selected sources and both periods. Your settings are kept. Increase the time interval in chart settings, or add a controller or action filter.")
 	case errors.Is(err, audit.ErrAnalysisBytesLimit):
 		writeError(w, http.StatusRequestEntityTooLarge, "The comparison results exceed the 16 MiB display budget. Your settings are kept. Increase the time interval in chart settings, or add a controller or action filter.")
+	case errors.Is(err, audit.ErrBreakdownGroupLimit):
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("This breakdown has more than %d distinct values in one source. Your settings are kept. Narrow the time range or add a filter.", audit.MaxBreakdownGroups))
 	case errors.Is(err, audit.ErrLimit):
 		writeError(w, http.StatusRequestEntityTooLarge, "Request exceeds a configured limit.")
 	case errors.Is(err, audit.ErrBusy):

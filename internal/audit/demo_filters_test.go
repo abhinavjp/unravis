@@ -17,9 +17,9 @@ type demoFilterCase struct {
 func demoFilterCases() []demoFilterCase {
 	return []demoFilterCase{
 		{"user ids", func(q *Query) { q.UserIDs = []int{1003, 1005} }, func(r RequestRecord) bool { return *r.UserID == 1003 || *r.UserID == 1005 }},
-		{"ui version hit", func(q *Query) { q.UIVersions = []string{"demo-1.0"} }, func(r RequestRecord) bool { return true }},
-		{"ui version miss", func(q *Query) { q.UIVersions = []string{"demo-2.0"} }, func(r RequestRecord) bool { return false }},
-		{"agent contains is case-insensitive", func(q *Query) { q.UserAgentContains = "BROWSER/1" }, func(r RequestRecord) bool { return true }},
+		{"ui version hit", func(q *Query) { q.UIVersions = []string{"demo-1.0"} }, func(r RequestRecord) bool { return r.UIVersion == "demo-1.0" }},
+		{"ui version miss", func(q *Query) { q.UIVersions = []string{"demo-9.9"} }, func(r RequestRecord) bool { return false }},
+		{"agent contains is case-insensitive", func(q *Query) { q.UserAgentContains = "BROWSER/1" }, func(r RequestRecord) bool { return strings.Contains(strings.ToLower(r.UserAgent), "browser/1") }},
 		{"ip list", func(q *Query) { q.UserIPs = []string{"203.0.113.10", "203.0.113.11"} }, func(r RequestRecord) bool { return r.UserIP == "203.0.113.10" || r.UserIP == "203.0.113.11" }},
 		{"url contains", func(q *Query) { q.URLContains = "/PAYROLL/" }, func(r RequestRecord) bool { return strings.Contains(r.URL, "/payroll/") }},
 		{"url contains is literal", func(q *Query) { q.URLContains = "/.*" }, func(r RequestRecord) bool { return false }},

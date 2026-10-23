@@ -131,3 +131,14 @@ export interface RecordDetail extends RequestRecord { state: string; pendingAsyn
 export interface ActivityInput { sourceIds: string[]; start: string; end: string; cursor: string; limit: number }
 export interface VolumeBucket { controller: string; action: string; at: string; count: number }
 export interface LoadWindow { at:string; count:number; timing:Stats }
+export type BreakdownDim = 'statusCode' | 'userId' | 'uiVersion' | 'userAgent' | 'userIp' | 'pollingType';
+/** The Query fragment of a breakdown row: a few of the record filters, merged into the query to list the row's requests. The polling type, a missing value, a value that may have been cut and the Other row have none. */
+export type BreakdownFilter = Pick<RecordFilters, 'userIds' | 'uiVersions' | 'userAgentContains' | 'userIps' | 'statusCodes'>;
+/** One value of a breakdown dimension. filter selects this value (a user agent filter is a case-insensitive substring, so it can list more rows than the count); stats percentiles come from valid completed records only. */
+export interface BreakdownRow {
+  value: string; missing: boolean; count: number; complete: number; incomplete: number; pending: number;
+  count4xx: number; count5xx: number; stats: Stats; filter?: BreakdownFilter; values?: number;
+}
+/** pooledKinds is set when the query kind (All, HTTP) pools request types: counts stay, but no row carries a percentile. */
+export interface Breakdown { dim: BreakdownDim; rows: BreakdownRow[]; other: BreakdownRow | null; total: number; distinct: number; pooledKinds?: boolean; sources: SourceResult[] }
+export interface BreakdownInput { query: Query; dim: BreakdownDim; top: number }

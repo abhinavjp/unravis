@@ -64,6 +64,13 @@ func (d *demoRepository) generate() {
 	}
 }
 
+// The demo spreads clients over a few agents and UI versions so each breakdown
+// dimension has more than one value to show.
+var (
+	demoAgents   = []string{"Demo Browser/1.0", "Demo Browser/2.0", "Demo Mobile/1.0", "Demo Automation/0.9"}
+	demoVersions = []string{"demo-1.0", "demo-1.1", "demo-2.0"}
+)
+
 func demoRecord(sourceID, controller, action string, initiated time.Time, duration float64, apiIndex, sample int, period string) RequestRecord {
 	id := fmt.Sprintf("%s-%s-%s-%02d", sourceID, controller, period, sample)
 	completed := initiated.Add(time.Duration(duration * float64(time.Millisecond)))
@@ -74,7 +81,7 @@ func demoRecord(sourceID, controller, action string, initiated time.Time, durati
 	userID := 1000 + sample%7
 	created := initiated.Add(time.Duration(auditTime * float64(time.Millisecond)))
 	updated := completed.Add(time.Duration(payloadTime * float64(time.Millisecond)))
-	return RequestRecord{ID: id, SourceID: sourceID, Controller: controller, Action: action, Kind: "synchronous", Outcome: "success", Status: "200 OK", URL: "/" + strings.ToLower(controller) + "/" + strings.ToLower(action), InitiatedAt: &initiated, CompletedAt: &completed, DurationMs: &duration, ApiTimeMs: &apiTime, AuditCreateTimeMs: &auditTime, PayloadRecordTimeMs: &payloadTime, RequestKB: float64((sample+apiIndex)%5 + 1), ResponseKB: float64((sample+apiIndex)%7 + 2), UserID: &userID, UserIP: fmt.Sprintf("203.0.113.%d", 10+sample%20), UserAgent: "Demo Browser/1.0", UIVersion: "demo-1.0", CreatedOn: &created, UpdatedOn: &updated, PollingTypeRaw: "Synchronous "}
+	return RequestRecord{ID: id, SourceID: sourceID, Controller: controller, Action: action, Kind: "synchronous", Outcome: "success", Status: "200 OK", URL: "/" + strings.ToLower(controller) + "/" + strings.ToLower(action), InitiatedAt: &initiated, CompletedAt: &completed, DurationMs: &duration, ApiTimeMs: &apiTime, AuditCreateTimeMs: &auditTime, PayloadRecordTimeMs: &payloadTime, RequestKB: float64((sample+apiIndex)%5 + 1), ResponseKB: float64((sample+apiIndex)%7 + 2), UserID: &userID, UserIP: fmt.Sprintf("203.0.113.%d", 10+sample%20), UserAgent: demoAgents[sample%len(demoAgents)], UIVersion: demoVersions[sample%len(demoVersions)], CreatedOn: &created, UpdatedOn: &updated, PollingTypeRaw: "Synchronous "}
 }
 
 func (d *demoRepository) Sources(ctx context.Context) ([]Source, error) {
@@ -426,6 +433,49 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	return page, nil
+}
+
+// Breakdown counts the rows the query's summary and request list select, by one
+// dimension. It applies the same row rules as Requests, so a row's count equals
+// the number of requests its filter lists.
+func (d *demoRepository) Breakdown(ctx context.Context, input BreakdownInput) (Breakdown, error) {
+	if err := ctx.Err(); err != nil {
+		return Breakdown{}, err
+	}
+	if err := ValidateBreakdown(input); err != nil {
+		return Breakdown{}, err
+	}
+	q := input.Query.Normalized()
+	sources := make(map[string]bool, len(q.SourceIDs))
+	for _, id := range q.SourceIDs {
+		if !d.hasSource(id) {
+			return Breakdown{}, fmt.Errorf("%w: source was not found", ErrNotFound)
+		}
+		sources[id] = true
+	}
+	builder := NewBreakdownBuilder(input.Dim, input.Top)
+	builder.SetPooled(PooledKind(q.Kind))
+	for _, r := range d.records {
+		if !sources[r.SourceID] || r.InitiatedAt == nil || r.InitiatedAt.Before(q.Start) || !r.InitiatedAt.Before(q.End) {
+			continue
+		}
+		if q.Controller != "" && r.Controller != q.Controller || q.Action != "" && r.Action != q.Action {
+			continue
+		}
+		state, class, value, ok := demoSummaryRow(r, q)
+		if !ok || !demoRecordMatches(q, r, state, class) {
+			continue
+		}
+		builder.AddRecord(r, state, class == StatusPending, class, value)
+	}
+	out, err := builder.Build()
+	if err != nil {
+		return Breakdown{}, err
+	}
+	for _, id := range q.SourceIDs {
+		out.Sources = append(out.Sources, SourceResult{SourceID: id, OK: true, Version: "demo"})
+	}
+	return out, ctx.Err()
 }
 
 func (d *demoRepository) Payload(ctx context.Context, input PayloadInput) (Payload, error) {
