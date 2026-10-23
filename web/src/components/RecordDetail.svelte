@@ -2,6 +2,9 @@
   import type { RecordDetail } from '../lib/types';
   import PayloadViewer from './PayloadViewer.svelte';
   let { detail, sourceLabel, onClose }: { detail: RecordDetail | null; sourceLabel: string; onClose: () => void } = $props();
+  let panel: HTMLElement | undefined = $state();
+  // Move focus to the panel when a record opens so keyboard and screen-reader users land on it.
+  $effect(() => { if (detail && panel) panel.focus(); });
   const NONE = 'not recorded';
   const text = (value: string | undefined | null) => value === undefined || value === null || value === '' ? NONE : value;
   const stamp = (value: string | undefined | null) => value ? value : NONE;
@@ -25,7 +28,7 @@
 </script>
 
 {#if detail}
-  <section class="record-panel" aria-label="Record details">
+  <section class="record-panel" aria-label="Record details" tabindex="-1" bind:this={panel}>
     <div class="payload-head">
       <div><h3>Record {detail.id}</h3><p class="record-note">Every field stored for this audit record. Payloads are limited by the server.</p></div>
       <button class="quiet-button" onclick={onClose} aria-label="Close record details">Close</button>
@@ -40,6 +43,6 @@
         <tbody>{#each evidence as [name, value]}<tr><th scope="row">{name}</th><td class:record-none={value === NONE}>{value}</td></tr>{/each}</tbody>
       </table>
     </div>
-    <PayloadViewer payload={detail.payload} onClose={onClose} />
+    <PayloadViewer payload={detail.payload} embedded />
   </section>
 {/if}

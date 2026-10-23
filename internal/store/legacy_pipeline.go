@@ -40,6 +40,11 @@ var legacyMetadataStringCaps = map[string]int{
 	"UserId": 128, "UserIp": 64, "PayrollUIVersion": 128,
 }
 
+// legacyTruncateOnlyFields are display-only evidence columns: they are capped
+// with $substrCP like the others, but an over-long value never counts towards
+// _auditMetadataOversized, so it cannot fail a whole legacy scan.
+var legacyTruncateOnlyFields = map[string]bool{"UserId": true, "UserIp": true, "PayrollUIVersion": true}
+
 // legacyRowMetadataFields adds the audit-evidence columns that only request
 // rows and the record detail show. Summary scans keep the narrower
 // legacyMetadataFields so these extra bytes never count against their limits.
@@ -114,7 +119,7 @@ func rawLegacyMetadataPipelineFor(match bson.D, fields []string) mongo.Pipeline 
 	var oversized bson.A
 	for _, field := range fields {
 		cap, isString := legacyMetadataStringCaps[field]
-		if isString {
+		if isString && !legacyTruncateOnlyFields[field] {
 			oversized = append(oversized, bson.D{{Key: "$cond", Value: bson.A{
 				bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$" + field}}, "string"}}},
 				bson.D{{Key: "$gt", Value: bson.A{bson.D{{Key: "$strLenCP", Value: "$" + field}}, cap}}}, false,

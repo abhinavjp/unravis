@@ -322,7 +322,7 @@ func requestPipeline(q audit.Query, cohort [5]string, sourceID string, after *pa
 		bson.D{{Key: "$project", Value: bson.D{
 			{Key: "_id", Value: 1}, {Key: "sourceId", Value: sourceID}, {Key: "controller", Value: stringExpr("$ControllerName")}, {Key: "action", Value: stringExpr("$ActionName")}, {Key: "kind", Value: "$_auditKind"}, {Key: "outcome", Value: "$_auditOutcome"}, {Key: "status", Value: stringExpr("$StatusCode")}, {Key: "url", Value: stringExpr("$RequestMainUrl")}, {Key: "initiatedAt", Value: "$_auditAt"}, {Key: "completedAt", Value: "$_auditCompleted"}, {Key: "durationMs", Value: duration},
 			{Key: "apiTimeMs", Value: numberExpr("$ApiTime")}, {Key: "auditCreateTimeMs", Value: numberExpr("$AuditCreateTime")}, {Key: "payloadRecordTimeMs", Value: numberExpr("$PayloadRecordTime")}, {Key: "requestKB", Value: numberExprDefault("$RequestLengthInKiloBytes")}, {Key: "responseKB", Value: numberExprDefault("$ResponseLengthInKiloBytes")},
-				{Key: "userId", Value: userIDExpr("$UserId")}, {Key: "userIp", Value: stringExpr("$UserIp")}, {Key: "userAgent", Value: stringExpr("$UserAgent")}, {Key: "uiVersion", Value: stringExpr("$PayrollUIVersion")},
+				{Key: "userId", Value: userIDExpr("$UserId")}, {Key: "userIp", Value: cappedStringExpr("$UserIp", "UserIp")}, {Key: "userAgent", Value: cappedStringExpr("$UserAgent", "UserAgent")}, {Key: "uiVersion", Value: cappedStringExpr("$PayrollUIVersion", "PayrollUIVersion")},
 				{Key: "createdOn", Value: dateOnlyExpr("$CreatedOn")}, {Key: "updatedOn", Value: dateOnlyExpr("$UpdatedOn")}, {Key: "pollingTypeRaw", Value: stringExpr("$RequestPollingType")},
 		}}},
 	)
@@ -337,8 +337,18 @@ func stringExpr(input string) bson.D {
 	return bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: input}, {Key: "to", Value: "string"}, {Key: "onError", Value: ""}, {Key: "onNull", Value: ""}}}}
 }
 
-// userIDExpr converts to a 32-bit integer, yielding null for anything that is
-// not a whole number in range.
+// cappedStringExpr is stringExpr limited to the legacy metadata cap for field,
+// so display-only columns cannot grow a row without bound.
+func cappedStringExpr(input, field string) bson.D {
+	return bson.D{{Key: "$substrCP", Value: bson.A{stringExpr(input), 0, legacyMetadataStringCaps[field]}}}
+}
+
+// userIDExpr converts with $convert to a 32-bit integer. $convert truncates a
+// fractional double or decimal toward zero (77.9 becomes 77) and returns null
+// (onError) for out-of-range numbers and for strings that are not whole
+// integers. The legacy path (legacyInt) is stricter: it returns null for any
+// fractional value, so the two differ only for fractional numeric UserId
+// values, which the audit schema should never contain.
 func userIDExpr(input string) bson.D {
 	return bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: input}, {Key: "to", Value: "int"}, {Key: "onError", Value: nil}, {Key: "onNull", Value: nil}}}}
 }

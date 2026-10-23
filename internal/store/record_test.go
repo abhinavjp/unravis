@@ -183,76 +183,195 @@ func TestRecordPayloadsUseTheExistingCap(t *testing.T) {
 	}
 }
 
-func TestLegacyRecordDerivesStateLikeModern(t *testing.T) {
-	created := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
-	completed := created.Add(750 * time.Millisecond)
-	cases := []struct {
-		name                           string
-		doc                            func(bson.ObjectID) bson.Raw
-		kind, outcome, state, status   string
-		observedMs                     *float64
-		pendingAsync, initiatedPresent bool
-	}{
-		{
-			name: "legacy row without RequestInitiatedAt and numeric status",
-			doc: func(id bson.ObjectID) bson.Raw {
-				raw, _ := bson.Marshal(bson.D{{Key: "_id", Value: id}, {Key: "CreatedOn", Value: created}, {Key: "RequestCompletedAt", Value: completed},
-					{Key: "RequestPollingType", Value: "Synchronous "}, {Key: "StatusCode", Value: int32(500)}, {Key: "ApiTime", Value: "750"}})
-				return raw
-			},
-			kind: "synchronous", outcome: "failure", state: "valid", status: "500", observedMs: ptr(750),
-		},
-		{
-			name: "pending async accepted",
-			doc: func(id bson.ObjectID) bson.Raw {
-				raw, _ := bson.Marshal(bson.D{{Key: "_id", Value: id}, {Key: "RequestInitiatedAt", Value: created}, {Key: "CreatedOn", Value: created},
-					{Key: "RequestPollingType", Value: "Asynchronous "}, {Key: "StatusCode", Value: "Accepted"}, {Key: "RequestCompletedAt", Value: completed}})
-				return raw
-			},
-			kind: "asynchronous", outcome: "unknown", state: "incomplete", status: "Accepted", pendingAsync: true, initiatedPresent: true,
-		},
-		{
-			name: "hangfire job whose update never landed",
-			doc: func(id bson.ObjectID) bson.Raw {
-				raw, _ := bson.Marshal(bson.D{{Key: "_id", Value: id}, {Key: "RequestInitiatedAt", Value: created}, {Key: "CreatedOn", Value: created},
-					{Key: "RequestPollingType", Value: "Hangfire"}, {Key: "UserAgent", Value: "Hangfire"}})
-				return raw
-			},
-			kind: "hangfire", outcome: "unknown", state: "incomplete", initiatedPresent: true,
-		},
-		{
-			name: "modern complete row",
-			doc:  func(id bson.ObjectID) bson.Raw { return recordDocument(id) },
-			kind: "synchronous", outcome: "success", state: "valid", status: "OK", observedMs: ptr(540), initiatedPresent: true,
-		},
+// TestRecordClassificationMatchesPipelineExpressions checks the Go-side
+// classification Store.Record relies on (normalizeLegacyRecord, shared with the
+// legacy path) against the server-side pipeline expressions for the shared
+// completion fixtures plus a few kind-only documents.
+func TestRecordClassificationMatchesPipelineExpressions(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	type fixture struct {
+		name, polling, status, userAgent string
+		wantState, wantOutcome           string
+		checkExpected                    bool
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	var fixtures []fixture
+	for _, f := range completionFixtures() {
+		fixtures = append(fixtures, fixture{name: f.name, polling: f.polling, status: f.status, wantState: f.wantState, wantOutcome: f.wantOutcome, checkExpected: true})
+	}
+	fixtures = append(fixtures,
+		fixture{name: "hangfire by user agent", polling: "Synchronous", status: "OK", userAgent: "Hangfire"},
+		fixture{name: "hangfire by polling type", polling: " HANGFIRE ", status: "OK"},
+		fixture{name: "no polling type", polling: "", status: "OK"},
+		fixture{name: "failure status", polling: "Synchronous", status: "500"},
+	)
+	for _, f := range fixtures {
+		t.Run(f.name, func(t *testing.T) {
+			doc := completionDoc(f.polling, f.status)
+			if f.userAgent != "" {
+				doc["UserAgent"] = f.userAgent
+			}
+			expected := evalSetStages(t, buildSummaryPipeline(q, q.Start, q.End, true), doc)
+
 			id := bson.NewObjectID()
-			var results [2]audit.RecordDetail
-			for i, legacy := range []bool{false, true} {
-				s, source, handle := recordStore(t, legacy)
-				handle.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
-					return &fakeCursor{docs: []any{tc.doc(id)}}, nil
-				}
-				detail, err := s.Record(context.Background(), audit.RecordInput{SourceID: source.ID, ID: id.Hex()})
-				if err != nil {
-					t.Fatal(err)
-				}
-				detail.SourceID = ""
-				results[i] = detail
+			encoded := map[string]any{"_id": id}
+			for k, v := range doc {
+				encoded[k] = v
 			}
-			if !reflect.DeepEqual(results[0], results[1]) {
-				t.Fatalf("legacy and modern details differ:\nmodern=%#v\nlegacy=%#v", results[0], results[1])
+			raw, err := bson.Marshal(encoded)
+			if err != nil {
+				t.Fatal(err)
 			}
-			d := results[1]
-			if d.Kind != tc.kind || d.Outcome != tc.outcome || d.State != tc.state || d.Status != tc.status || d.PendingAsync != tc.pendingAsync || (d.InitiatedAt != nil) != tc.initiatedPresent {
-				t.Fatalf("derived fields = kind %q outcome %q state %q status %q pending %t initiated %v", d.Kind, d.Outcome, d.State, d.Status, d.PendingAsync, d.InitiatedAt)
+			s, source, handle := recordStore(t, false)
+			handle.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
+				return &fakeCursor{docs: []any{bson.Raw(raw)}}, nil
 			}
-			if (d.DurationMs == nil) != (tc.observedMs == nil) || (tc.observedMs != nil && *d.DurationMs != *tc.observedMs) {
-				t.Fatalf("observed time = %v, want %v", d.DurationMs, tc.observedMs)
+			detail, err := s.Record(context.Background(), audit.RecordInput{SourceID: source.ID, ID: id.Hex()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if detail.Kind != expected["_auditKind"] || detail.State != expected["_auditState"] || detail.Outcome != expected["_auditOutcome"] {
+				t.Fatalf("Go kind/state/outcome = %s/%s/%s, pipeline = %v/%v/%v", detail.Kind, detail.State, detail.Outcome,
+					expected["_auditKind"], expected["_auditState"], expected["_auditOutcome"])
+			}
+			wantDuration, hasDuration := expected["_auditDuration"].(float64)
+			if (detail.DurationMs != nil) != hasDuration || (hasDuration && *detail.DurationMs != wantDuration) {
+				t.Fatalf("Go observed time = %v, pipeline = %v", detail.DurationMs, expected["_auditDuration"])
+			}
+			if f.checkExpected && (detail.State != f.wantState || detail.Outcome != f.wantOutcome) {
+				t.Fatalf("state/outcome = %s/%s, want %s/%s", detail.State, detail.Outcome, f.wantState, f.wantOutcome)
 			}
 		})
+	}
+}
+
+// TestRecordPipelinePassesThroughTheLegacyAdapter proves a MongoDB 3.4 source
+// runs the record lookup exactly as written, and that it uses no operator
+// introduced after 3.4.
+func TestRecordPipelinePassesThroughTheLegacyAdapter(t *testing.T) {
+	pipeline := recordPipeline(bson.NewObjectID())
+	rewritten, err := rewriteLegacyPipeline(pipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rewritten, pipeline) {
+		t.Fatalf("legacy adapter rewrote the record pipeline:\n got %v\nwant %v", rewritten, pipeline)
+	}
+	encoded, err := bson.MarshalExtJSON(bson.D{{Key: "pipeline", Value: pipeline}}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"$convert", "$toString", "$toInt", "$toDouble", "$toDate", "$toLong", "$toObjectId", "$toBool", "$toDecimal", "\"$set\"", "\"$unset\"", "$replaceWith", "$trim", "$ltrim", "$rtrim", "$regexMatch", "$regexFind", "$dateFromString", "$round", "$isNumber"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Errorf("record pipeline uses %s, which MongoDB 3.4 does not support", forbidden)
+		}
+	}
+	for _, required := range []string{"$substrCP", "$type", "$cond"} {
+		if !strings.Contains(string(encoded), required) {
+			t.Errorf("record pipeline lacks %s", required)
+		}
+	}
+}
+
+func TestRecordCapsMetadataStringsInTheProjection(t *testing.T) {
+	var project bson.D
+	for _, stage := range recordPipeline(bson.NewObjectID()) {
+		if stage[0].Key == "$project" {
+			project, _ = stage[0].Value.(bson.D)
+		}
+	}
+	for field, want := range map[string]int{"ControllerName": 1024, "ActionName": 1024, "RequestMainUrl": 8192, "UserAgent": 512, "UserIp": 64, "PayrollUIVersion": 128, "UserId": 128, "StatusCode": 128, "RequestPollingType": 128} {
+		var value any
+		for _, e := range project {
+			if e.Key == field {
+				value = e.Value
+			}
+		}
+		if !reflect.DeepEqual(value, boundedMetadataValue(field, want, true)) {
+			t.Errorf("%s projection = %v, want boundedMetadataValue cap %d", field, value, want)
+		}
+	}
+}
+
+func TestRecordFlagsAbsentOrNonTextPayloads(t *testing.T) {
+	// boundedPayloadExpr yields null for a payload that is absent or not a
+	// string, so a real MongoDB response carries explicit nulls, not a missing key.
+	for name, extra := range map[string][]bson.E{
+		"request payload null":  {{Key: "RequestPayload", Value: nil}},
+		"response payload null": {{Key: "ResponsePayload", Value: nil}},
+		"both null":             {{Key: "RequestPayload", Value: nil}, {Key: "ResponsePayload", Value: nil}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, source, handle := recordStore(t, false)
+			id := bson.NewObjectID()
+			doc := bson.D{{Key: "_id", Value: id}, {Key: "RequestPayload", Value: "{}"}, {Key: "ResponsePayload", Value: "{}"}}
+			for _, e := range extra {
+				for i := range doc {
+					if doc[i].Key == e.Key {
+						doc[i].Value = e.Value
+					}
+				}
+			}
+			raw, _ := bson.Marshal(doc)
+			handle.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
+				return &fakeCursor{docs: []any{bson.Raw(raw)}}, nil
+			}
+			detail, err := s.Record(context.Background(), audit.RecordInput{SourceID: source.ID, ID: id.Hex()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !detail.Payload.Truncated {
+				t.Fatalf("absent or non-text payload was not flagged: %#v", detail.Payload)
+			}
+		})
+	}
+}
+
+func TestRecordLookupTimeoutsStayDistinguishable(t *testing.T) {
+	s, source, handle := recordStore(t, false)
+	handle.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
+		return nil, context.DeadlineExceeded
+	}
+	_, err := s.Record(context.Background(), audit.RecordInput{SourceID: source.ID, ID: bson.NewObjectID().Hex()})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v, want context.DeadlineExceeded", err)
+	}
+	handle.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
+		return nil, errors.New("mongodb://user:secret@host exploded")
+	}
+	_, err = s.Record(context.Background(), audit.RecordInput{SourceID: source.ID, ID: bson.NewObjectID().Hex()})
+	if err == nil || errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("generic failure error = %v", err)
+	}
+}
+
+func TestLegacyRowMetadataTruncatesEvidenceColumnsWithoutFailingTheScan(t *testing.T) {
+	pipeline := rawLegacyMetadataPipelineFor(bson.D{}, legacyRowMetadataFields)
+	project, _ := pipeline[len(pipeline)-1][0].Value.(bson.D)
+	var oversized any
+	for _, e := range project {
+		if e.Key == "_auditMetadataOversized" {
+			oversized = e.Value
+		}
+	}
+	encoded, _ := bson.MarshalExtJSON(bson.D{{Key: "x", Value: oversized}}, false, false)
+	for _, truncateOnly := range []string{"$UserId", "$UserIp", "$PayrollUIVersion"} {
+		if strings.Contains(string(encoded), truncateOnly) {
+			t.Errorf("%s participates in the oversized check; a long value would fail the whole scan", truncateOnly)
+		}
+	}
+	if !strings.Contains(string(encoded), "$UserAgent") || !strings.Contains(string(encoded), "$ControllerName") {
+		t.Error("existing oversized checks were lost")
+	}
+	for _, field := range []string{"UserId", "UserIp", "PayrollUIVersion"} {
+		var value any
+		for _, e := range project {
+			if e.Key == field {
+				value = e.Value
+			}
+		}
+		if !reflect.DeepEqual(value, boundedMetadataValue(field, legacyMetadataStringCaps[field], true)) {
+			t.Errorf("%s is no longer truncated with $substrCP", field)
+		}
 	}
 }
 
@@ -269,6 +388,13 @@ func TestRequestRowsCarryAuditEvidenceColumns(t *testing.T) {
 	for _, key := range []string{"userId", "userIp", "userAgent", "uiVersion", "createdOn", "updatedOn", "pollingTypeRaw"} {
 		if !keys[key] {
 			t.Errorf("request projection lacks %s", key)
+		}
+	}
+	for key, field := range map[string]string{"userIp": "UserIp", "userAgent": "UserAgent", "uiVersion": "PayrollUIVersion"} {
+		for _, e := range project {
+			if e.Key == key && !reflect.DeepEqual(e.Value, cappedStringExpr("$"+field, field)) {
+				t.Errorf("modern %s projection is not capped with $substrCP: %v", key, e.Value)
+			}
 		}
 	}
 	legacy := legacyRowMetadataPipeline(pipeline)

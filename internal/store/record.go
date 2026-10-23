@@ -23,11 +23,15 @@ var recordSchemaFields = []string{
 
 // recordPipeline fetches one document by _id with an explicit projection of the
 // 21 schema fields. It uses only operators available in MongoDB 3.4, so modern
-// and legacy sources share it.
+// and legacy sources share it. Metadata strings are capped with $substrCP using
+// the same caps and helper as the legacy metadata scan, so one oversized
+// UserAgent or URL cannot push the response over its byte limit and hide the
+// payloads; values of an unexpected type are returned as null.
 func recordPipeline(id bson.ObjectID) mongo.Pipeline {
 	projection := bson.D{{Key: "_id", Value: 1}}
 	for _, field := range recordSchemaFields {
-		projection = append(projection, bson.E{Key: field, Value: 1})
+		stringCap, isString := legacyMetadataStringCaps[field]
+		projection = append(projection, bson.E{Key: field, Value: boundedMetadataValue(field, stringCap, isString)})
 	}
 	projection = append(projection,
 		bson.E{Key: "RequestPayload", Value: boundedPayloadExpr("$RequestPayload")},
@@ -75,12 +79,12 @@ func (s *Store) Record(ctx context.Context, input audit.RecordInput) (audit.Reco
 	defer func() { <-per }()
 	cur, err := p.shared.client.Aggregate(ctx, p.source.Database, p.source.Collection, recordPipeline(objectID))
 	if err != nil {
-		return audit.RecordDetail{}, errors.New("MongoDB record lookup failed; check source availability and read permissions")
+		return audit.RecordDetail{}, recordLookupError(ctx, err)
 	}
 	defer closeMongoCursor(cur)
 	if !cur.Next(ctx) {
 		if err := cur.Err(); err != nil {
-			return audit.RecordDetail{}, errors.New("MongoDB record lookup failed; check source availability and read permissions")
+			return audit.RecordDetail{}, recordLookupError(ctx, err)
 		}
 		return audit.RecordDetail{}, fmt.Errorf("%w: record was not found", audit.ErrNotFound)
 	}
@@ -92,7 +96,9 @@ func (s *Store) Record(ctx context.Context, input audit.RecordInput) (audit.Reco
 	request, requestOK := raw.Lookup("RequestPayload").StringValueOK()
 	response, responseOK := raw.Lookup("ResponsePayload").StringValueOK()
 	payload := audit.Payload{Request: strings.ToValidUTF8(request, "�"), Response: strings.ToValidUTF8(response, "�")}
-	if (!requestOK && isPresent(raw.Lookup("RequestPayload"))) || (!responseOK && isPresent(raw.Lookup("ResponsePayload"))) {
+	// Same rule as the payload endpoint: boundedPayloadExpr yields null for a
+	// payload that is absent or not text, and that is reported as truncated.
+	if !requestOK || !responseOK {
 		payload.Truncated = true
 	}
 	return audit.RecordDetail{
@@ -111,7 +117,11 @@ func (s *Store) Record(ctx context.Context, input audit.RecordInput) (audit.Reco
 	}, nil
 }
 
-// isPresent reports whether a looked-up BSON value exists and is not null.
-func isPresent(value bson.RawValue) bool {
-	return value.Type != 0 && value.Type != bson.TypeNull
+// recordLookupError keeps timeouts distinguishable (the server maps
+// context.DeadlineExceeded to 504) and hides driver detail for everything else.
+func recordLookupError(ctx context.Context, err error) error {
+	if code, _ := sourceQueryError(ctx, err); code == "query_timeout" {
+		return fmt.Errorf("%w: MongoDB record lookup timed out", context.DeadlineExceeded)
+	}
+	return errors.New("MongoDB record lookup failed; check source availability and read permissions")
 }

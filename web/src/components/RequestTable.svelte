@@ -21,7 +21,7 @@
           <td>{number(row.auditCreateTimeMs)}</td><td>{row.userId ?? 'N/A'}</td><td>{row.uiVersion || 'N/A'}</td>
           <td><button class="secondary-button" disabled={!row.initiatedAt} onclick={() => onContext(row)}>Nearby activity</button> <button class="quiet-button payload-button" aria-label={'Inspect record ' + row.id} disabled={recordId === row.id} onclick={() => onInspect(row)}>{recordId === row.id ? 'Loading…' : 'Inspect'}</button></td>
         </tr>
-      {:else}<tr><td colspan="10"class="table-empty">{loading ? 'Loading request records…' : 'Select an API group to inspect its requests.'}</td></tr>{/each}
+      {:else}<tr><td colspan="10" class="table-empty">{loading ? 'Loading request records…' : 'Select an API group to inspect its requests.'}</td></tr>{/each}
     </tbody>
   </table>
 </div>
