@@ -163,18 +163,66 @@ func averageRanks(values []float64) []float64 {
 	return ranks
 }
 
-// otherLoadSums returns, per time bucket, the summed request time of every
-// cohort except one: the work everything else put on the system. total and own
-// are keyed by bucket time. Float noise from the subtraction is flushed to zero
-// so a series with no neighbours reads as constant, not as a tiny wobble.
-func otherLoadSums(total, own map[int64]float64, times []int64) []float64 {
-	out := make([]float64, len(times))
-	for i, at := range times {
-		diff := total[at] - own[at]
-		if diff <= 1e-9*math.Max(total[at], 1) {
-			diff = 0
+// otherLoad answers, for any cohort, the summed request time per time bucket
+// of every other cohort. It never subtracts from a grand total: prefix and
+// suffix sums over the cohorts in sorted order mean a cohort's own value (and
+// map iteration order) never enters the arithmetic, so constant neighbours give
+// bit-identical values in every bucket and in every run.
+type otherLoad struct {
+	slot           map[int64]int
+	prefix, suffix [][]float64 // prefix[k] sums cohorts before k, suffix[k] cohorts after k
+}
+
+// newOtherLoad takes each cohort's per-bucket summed time, in sorted-key order.
+func newOtherLoad(sums []map[int64]float64) *otherLoad {
+	o := &otherLoad{slot: map[int64]int{}}
+	var times []int64
+	for _, m := range sums {
+		for at := range m {
+			if _, ok := o.slot[at]; !ok {
+				o.slot[at] = 0
+				times = append(times, at)
+			}
 		}
-		out[i] = diff
+	}
+	sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
+	for i, at := range times {
+		o.slot[at] = i
+	}
+	n, width := len(sums), len(times)
+	o.prefix, o.suffix = make([][]float64, n+1), make([][]float64, n+1)
+	for k := range o.prefix {
+		o.prefix[k], o.suffix[k] = make([]float64, width), make([]float64, width)
+	}
+	for k := 0; k < n; k++ {
+		copy(o.prefix[k+1], o.prefix[k])
+		for at, v := range sums[k] {
+			o.prefix[k+1][o.slot[at]] += v
+		}
+	}
+	for k := n - 1; k >= 0; k-- {
+		copy(o.suffix[k], o.suffix[k+1])
+		for at, v := range sums[k] {
+			o.suffix[k][o.slot[at]] += v
+		}
+	}
+	return o
+}
+
+// forCohort returns the other cohorts' summed time at each of times for cohort k.
+// Values are rounded to a grid relative to their largest, so loads that are equal
+// up to float noise compare equal (and rank as ties) rather than getting random ranks.
+func (o *otherLoad) forCohort(k int, times []int64) []float64 {
+	out := make([]float64, len(times))
+	maxV := 1.0
+	for i, at := range times {
+		s := o.slot[at]
+		out[i] = o.prefix[k][s] + o.suffix[k+1][s]
+		maxV = math.Max(maxV, out[i])
+	}
+	grid := 1e-9 * maxV
+	for i := range out {
+		out[i] = math.Round(out[i]/grid) * grid
 	}
 	return out
 }

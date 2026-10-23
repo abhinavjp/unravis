@@ -72,15 +72,18 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 	})
 
 	q.Start, q.End, q.BaselineStart, q.BaselineEnd = q.Start.UTC(), q.End.UTC(), q.BaselineStart.UTC(), q.BaselineEnd.UTC()
-	// Summed request time per bucket across every cohort: the system-wide load.
-	totalSum := make(map[int64]float64)
-	for _, c := range cohorts {
-		for at, h := range c.currentAt {
-			totalSum[at] += h.sum
+	// Each cohort's summed request time per bucket, in sorted-key order, so a
+	// series can be compared with the load of every other cohort.
+	cohortSums := make([]map[int64]float64, len(keys))
+	for k, key := range keys {
+		cohortSums[k] = make(map[int64]float64, len(cohorts[key].currentAt))
+		for at, h := range cohorts[key].currentAt {
+			cohortSums[k][at] = h.sum
 		}
 	}
+	others := newOtherLoad(cohortSums)
 	analysis := Analysis{Query: q, APIs: make([]Comparison, 0, len(keys)), Timeline: make([]Series, 0), Sources: sources, Quality: quality, Approximate: true, Warnings: []string{"Latency quantiles are estimated from logarithmic histogram buckets; compared does not mean healthy."}}
-	for _, key := range keys {
+	for k, key := range keys {
 		c := cohorts[key]
 		currentStats, referenceStats := c.current.stats(), c.reference.stats()
 		comparison := Comparison{Key: key, SourceID: c.sourceID, Controller: c.controller, Action: c.action, Kind: c.kind, Outcome: c.outcome, CurrentEvents: c.currentEvents, ReferenceEvents: c.referenceEvents, Current: currentStats, Reference: referenceStats}
@@ -116,17 +119,15 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 			}
 			sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
 			series := Series{Key: key, Points: make([]Point, 0, len(times))}
-			ownSum := make(map[int64]float64, len(times))
 			for _, at := range times {
 				stats := c.currentAt[at].stats()
-				ownSum[at] = c.currentAt[at].sum
 				point := Point{At: time.Unix(0, at).UTC(), Count: stats.Count, P50: stats.P50, P95: stats.P95}
 				if comparison.State == "compared" {
 					point.P95Ratio = ratio(stats.P95, referenceStats.P95)
 				}
 				series.Points = append(series.Points, point)
 			}
-			series.LoadCorrelation = seriesLoadCorrelation(series.Points, otherLoadSums(totalSum, ownSum, times), q)
+			series.LoadCorrelation = seriesLoadCorrelation(series.Points, others.forCohort(k, times), q)
 			analysis.Timeline = append(analysis.Timeline, series)
 		}
 	}

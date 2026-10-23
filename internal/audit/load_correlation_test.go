@@ -265,3 +265,41 @@ func TestRollupErrorRateNilUnderOutcomeFilter(t *testing.T) {
 		t.Fatalf("throughput must still be reported: %#v", r)
 	}
 }
+
+func TestSeriesLoadCorrelationConstantNoisyNeighboursIsNilAndDeterministic(t *testing.T) {
+	q := analysisQuery()
+	q.End = anchor.Add(100 * time.Second)
+	// Constant but non-integer neighbours: subtracting a running total would leave
+	// rounding residue that varies with the series' own latency and with map order.
+	var current []Bucket
+	for i := 0; i < 10; i++ {
+		at := anchor.Add(time.Duration(i) * 10 * time.Second)
+		current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "success", "valid", at, 10, 100.1+45.3*float64(i))...)
+		current = append(current, makeBuckets("s1", "Other", "Go", "synchronous", "success", "valid", at, 7, 333.37)...)
+		current = append(current, makeBuckets("s1", "Third", "Go", "synchronous", "success", "valid", at, 3, 91.13)...)
+	}
+	key := CohortKey("s1", "Payroll", "Run", "synchronous", "success")
+	var first []*float64
+	for run := 0; run < 20; run++ {
+		analysis, err := BuildAnalysis(q, current, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []*float64
+		for _, s := range analysis.Timeline {
+			got = append(got, s.LoadCorrelation)
+		}
+		if p := seriesByKey(analysis)[key].LoadCorrelation; p != nil {
+			t.Fatalf("run %d: constant neighbours gave rho = %v, want nil", run, *p)
+		}
+		if run == 0 {
+			first = got
+			continue
+		}
+		for i := range got {
+			if (got[i] == nil) != (first[i] == nil) || (got[i] != nil && *got[i] != *first[i]) {
+				t.Fatalf("run %d: series %d correlation differs between builds", run, i)
+			}
+		}
+	}
+}
