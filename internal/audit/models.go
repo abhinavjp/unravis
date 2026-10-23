@@ -297,6 +297,7 @@ type RequestRecord struct {
 	Action              string     `json:"action"`
 	Kind                string     `json:"kind"`
 	Outcome             string     `json:"outcome"`
+	State               string     `json:"state,omitempty"`
 	Status              string     `json:"status"`
 	URL                 string     `json:"url"`
 	InitiatedAt         *time.Time `json:"initiatedAt"`
@@ -342,6 +343,7 @@ type RecordDetail struct {
 type PageInput struct {
 	Query  Query  `json:"query"`
 	APIKey string `json:"apiKey"`
+	State  string `json:"state"`
 	Cursor string `json:"cursor"`
 	Limit  int    `json:"limit"`
 

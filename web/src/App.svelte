@@ -3,7 +3,7 @@
   import { api } from './lib/api';
   import { defaultQuery } from './lib/time';
   import { countEpochBuckets } from './lib/time';
-  import { initialComparison, kindLabel, queryFingerprint, qualityByKindText, resultNotes, rankComparisons, unknownKindTip } from './lib/presentation';
+  import { initialComparison, kindLabel, queryFingerprint, qualityByKindText, resultNotes, rankComparisons, stateLabel, unknownKindTip } from './lib/presentation';
   import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, shouldSelectAddedSource, writeInvestigationSnapshot } from './lib/investigation';
 import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RequestRecord, Source, SourceInput, TLSMode } from './lib/types';
   import QueryControls from './components/QueryControls.svelte';
@@ -31,6 +31,9 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
   let investigationIntent = null as ReturnType<typeof readInvestigationSnapshot>;
   let analysis = $state<Analysis | null>(null);
   let selectedKey = $state('');
+  // A quality drill-down pages the whole comparison (no API group) narrowed to one state.
+  let requestState = $state('');
+  let queryWide = $state(false);
   let contextAnchor = $state<RequestRecord | null>(null);
   let timelineKeys = $state<string[]>([]);
   let requestPage = $state<Page | null>(null);
@@ -402,7 +405,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
     requestController?.abort(); recordController?.abort();
     requestController = null; recordController = null;
     requestPage = null; requestRows = []; record = null;
-    requestPageNumber = 1;
+    requestPageNumber = 1; requestState = ''; queryWide = false;
     requestError = ''; recordError = ''; recordLoadingId = '';
   }
 
@@ -614,13 +617,20 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
     selectedKey = key; invalidateDetails();
     await loadRequests('', 1);
   }
+  async function drillQuality(state: string) {
+    contextAnchor = null; invalidateDetails(); selectedKey = '';
+    queryWide = true; requestState = state;
+    await loadRequests('', 1);
+    await tick();
+    document.getElementById('request-history')?.scrollIntoView({ block: 'start' });
+  }
   async function loadRequests(cursor: string, pageNumber: number) {
-    if (!selectedKey || !analysis) return;
+    if ((!selectedKey && !queryWide) || !analysis) return;
     requestController?.abort(); requestController = new AbortController();
     const run = ++requestSequence;
     requestLoading = true; requestError = '';
     try {
-      const page = await api.requests(JSON.parse(JSON.stringify(analysis.query)) as Query, selectedKey, cursor, requestController.signal);
+      const page = await api.requests(JSON.parse(JSON.stringify(analysis.query)) as Query, queryWide ? '' : selectedKey, cursor, requestController.signal, requestState);
       if (run !== requestSequence) return;
       requestPage = page;
       requestRows = page.rows.slice(0, info?.limits.maxPageSize ?? 100);
@@ -637,10 +647,10 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
     finally { if (recordLoadingId === row.id) recordLoadingId = ''; }
   }
   async function exportCSV() {
-    if (!selected) return;
+    if (!selected && !queryWide) return;
     requestError = '';
     try {
-      const result = await api.export(JSON.parse(JSON.stringify(analysis?.query ?? query)) as Query, selected.key);
+      const result = await api.export(JSON.parse(JSON.stringify(analysis?.query ?? query)) as Query, queryWide ? '' : (selected?.key ?? ''), undefined, requestState);
       const url = URL.createObjectURL(result.blob);
       const link = document.createElement('a'); link.href = url; link.download = 'unravis-requests.csv';
       document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -814,10 +824,10 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
           <details class="result-notes"><summary>About these results and sample sizes</summary><div class="calculation-notes">{#each calculationNotes as note}<p>{note}</p>{/each}</div></details>
           <div class="quality-strip">
             <div><strong>{analysis.apis.length.toLocaleString()}</strong><span>API groups</span></div>
-            <div><strong>{analysis.quality.incomplete.toLocaleString()}</strong><span>Missing timing</span></div>
-            <div><strong>{analysis.quality.invalid.toLocaleString()}</strong><span>Unusable timing</span></div>
-            <div><strong>{analysis.quality.unknownOutcome.toLocaleString()}</strong><span>Unclassified result</span></div>
-            {#if analysis.quality.pendingAsync}<div><strong>{analysis.quality.pendingAsync.toLocaleString()}</strong><span>pending async</span></div>{/if}
+            <div><button type="button" class="quality-count" disabled={!analysis.quality.incomplete} title="List the requests behind this count" onclick={() => drillQuality('incomplete')}><strong>{analysis.quality.incomplete.toLocaleString()}</strong><span>Missing timing</span></button></div>
+            <div><button type="button" class="quality-count" disabled={!analysis.quality.invalid} title="List the requests behind this count" onclick={() => drillQuality('invalid')}><strong>{analysis.quality.invalid.toLocaleString()}</strong><span>Unusable timing</span></button></div>
+            <div><button type="button" class="quality-count" disabled={!analysis.quality.unknownOutcome} title="List the requests behind this count" onclick={() => drillQuality('unclassified')}><strong>{analysis.quality.unknownOutcome.toLocaleString()}</strong><span>Unclassified result</span></button></div>
+            {#if analysis.quality.pendingAsync}<div><button type="button" class="quality-count" title="List the requests behind this count" onclick={() => drillQuality('pending')}><strong>{analysis.quality.pendingAsync.toLocaleString()}</strong><span>pending async</span></button></div>{/if}
             {#if qualityByKindText(analysis.quality)}<div class="quality-filter-note" title={unknownKindTip}><span>{qualityByKindText(analysis.quality)}</span></div>{/if}
             {#if analysis.query.outcome === 'client_error' || analysis.query.outcome === 'server_error'}<div class="quality-filter-note"><span>Counts above cover only the selected status class.</span></div>{/if}
           <p>Response times are estimates. A comparison shows change, not a health verdict.</p>
@@ -840,9 +850,9 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
             </section>
             <Charts {analysis} {selected} {zone} {targetMs} />
           {/if}
-          <section class="data-section request-section">
-            <div class="section-heading"><div><h3>Request history</h3><p>{selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
-              {#if selected}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
+          <section class="data-section request-section" id="request-history">
+            <div class="section-heading"><div><h3>Request history</h3><p>{queryWide ? stateLabel(requestState) + ' · every API group in this comparison' : selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
+              {#if selected || queryWide}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
             </div>
             {#if requestError}<div class="inline-error" role="alert">{requestError}</div>{/if}
             {#if requestPage?.sources.some(source => !source.ok)}<div class="source-failure compact-failure" role="alert">{#each requestPage.sources.filter(source => !source.ok) as failed}<span>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}: {failed.error}</span>{/each}</div>{/if}

@@ -49,18 +49,19 @@ export const api = {
   deleteSource: (id: string) => request<void>('/sources/' + encodeURIComponent(id), { method: 'DELETE' }),
   analyze: (query: Query, signal?: AbortSignal) => request<Analysis>('/analyze', json(query), signal),
   slowest: (query:Query,signal?:AbortSignal,options:{cursor?:string;minMs?:number|null}={})=>request<Page>('/slowest',json({query,limit:50,apiKey:'',cursor:options.cursor??'',...(options.minMs==null?{}:{minMs:options.minMs})}),signal),
-  requests: (query: Query, apiKey: string, cursor = '', signal?: AbortSignal) =>
-    request<Page>('/requests', json({ query, apiKey, cursor, limit: 100 }), signal),
+  /** state narrows the page to one quality state (complete, incomplete, invalid, pending, unclassified); an empty apiKey pages the whole query. */
+  requests: (query: Query, apiKey: string, cursor = '', signal?: AbortSignal, state = '') =>
+    request<Page>('/requests', json({ query, apiKey, cursor, limit: 100, state }), signal),
   payload: (sourceId: string, id: string, signal?: AbortSignal) =>
     request<Payload>('/payload', json({ sourceId, id }), signal),
   record: (sourceId: string, id: string, signal?: AbortSignal) =>
     request<RecordDetail>('/record', json({ sourceId, id }), signal),
   activity: (input: import('./types').ActivityInput, signal?: AbortSignal) => request<Page>('/activity', json(input), signal),
-  export: async (query: Query, apiKey: string, signal?: AbortSignal) => {
+  export: async (query: Query, apiKey: string, signal?: AbortSignal, state = '') => {
     const response = await fetch(base + '/export', {
       method: 'POST', credentials: 'same-origin', signal,
       headers: { 'X-Audit-Token': token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, apiKey, cursor: '', limit: 100 })
+      body: JSON.stringify({ query, apiKey, cursor: '', limit: 100, state })
     });
     if (!response.ok) {
       let message = 'Export failed (' + response.status + ')';

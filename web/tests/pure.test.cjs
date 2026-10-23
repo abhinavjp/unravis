@@ -535,3 +535,22 @@ test('slowest requests send the minimum and cursor, and the UI offers load more'
   assert.match(table, /quantileText\(row\.current\.p99, p99NeedsSamples\)/);
   assert.equal(loadTypeScript('src/lib/slowness.ts').p99NeedsSamples, 'needs ≥ 100 samples');
 });
+test('every quality count is a button that drills into the requests behind it', () => {
+  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  for (const state of ['incomplete', 'invalid', 'unclassified', 'pending']) {
+    assert.match(app, new RegExp(`drillQuality\\('${state}'\\)`));
+  }
+  assert.match(app, /requestController\.signal, requestState\)/);
+  const table = fs.readFileSync(path.join(root, 'src/components/RequestTable.svelte'), 'utf8');
+  assert.match(table, /row\.id/);
+  assert.match(table, /stateLabel\(row\.state\)/);
+});
+
+test('stateLabel names every row state and drill-down filter', () => {
+  assert.equal(presentation.stateLabel('incomplete'), 'Missing timing');
+  assert.equal(presentation.stateLabel('invalid'), 'Unusable timing');
+  assert.equal(presentation.stateLabel('pending'), 'Pending async');
+  assert.equal(presentation.stateLabel('unclassified'), 'Unclassified result');
+  assert.equal(presentation.stateLabel('valid'), 'Complete');
+  assert.equal(presentation.stateLabel(undefined), '');
+});

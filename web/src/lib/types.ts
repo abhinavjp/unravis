@@ -78,6 +78,8 @@ export interface FieldPresence { name: string; present: number; types: string[] 
 export interface SchemaCensus { sampled: number; fields: FieldPresence[] }
 export interface RequestRecord {
   id: string; sourceId: string; controller: string; action: string; kind: string; outcome: string;
+  /** Additive: the row's own state (valid, incomplete or invalid) as the summary classed it. */
+  state?: string;
   status: string; url: string; initiatedAt: string | null; completedAt: string | null;
   durationMs: number | null; apiTimeMs: number | null; auditCreateTimeMs: number | null;
   payloadRecordTimeMs: number | null; requestKB: number; responseKB: number;

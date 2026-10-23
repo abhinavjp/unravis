@@ -28,6 +28,46 @@ func pendingAsyncExpr(kind, statusText bson.D) bson.D {
 	}}}
 }
 
+// auditDurationExpr is the metric duration of one row (the total from initiated
+// to completed, or ApiTime for the api metric), null when either time is missing
+// and for a pending async request, whose work has not run. The summary and the
+// drill-down pipelines both derive a row's state from it, so a count and the rows
+// behind it always agree.
+func auditDurationExpr(metric string) bson.D {
+	var duration any
+	timed := bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}}, bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditCompleted"}}, "date"}}}}}}
+	if metric == "api" {
+		duration = bson.D{{Key: "$cond", Value: bson.A{timed,
+			bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$ApiTime"}, {Key: "to", Value: "double"}, {Key: "onError", Value: nil}, {Key: "onNull", Value: nil}}}}, nil,
+		}}}
+	} else {
+		duration = bson.D{{Key: "$cond", Value: bson.A{timed,
+			bson.D{{Key: "$subtract", Value: bson.A{"$_auditCompleted", "$_auditAt"}}}, nil,
+		}}}
+	}
+	return bson.D{{Key: "$cond", Value: bson.A{"$_auditPending", nil, duration}}}
+}
+
+// auditStateExpr derives a row's state from its metric duration field: a pending
+// async request or a row that lacks a completion time or ApiTime is incomplete, a
+// row whose duration is unusable is invalid, and the rest are valid.
+func auditStateExpr(durationField string) bson.D {
+	missingDuration := bson.D{{Key: "$or", Value: bson.A{
+		bson.D{{Key: "$ne", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}},
+		bson.D{{Key: "$ne", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditCompleted"}}, "date"}}},
+		bson.D{{Key: "$in", Value: bson.A{bson.D{{Key: "$type", Value: "$ApiTime"}}, bson.A{"missing", "null"}}}},
+	}}}
+	validDuration := bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$gte", Value: bson.A{durationField, 0}}}, bson.D{{Key: "$lt", Value: bson.A{durationField, math.MaxFloat64}}}}}}
+	return bson.D{{Key: "$switch", Value: bson.D{
+		{Key: "branches", Value: bson.A{
+			bson.D{{Key: "case", Value: "$_auditPending"}, {Key: "then", Value: "incomplete"}},
+			bson.D{{Key: "case", Value: bson.D{{Key: "$eq", Value: bson.A{durationField, nil}}}}, {Key: "then", Value: bson.D{{Key: "$cond", Value: bson.A{missingDuration, "incomplete", "invalid"}}}}},
+			bson.D{{Key: "case", Value: validDuration}, {Key: "then", Value: "valid"}},
+		}},
+		{Key: "default", Value: "invalid"},
+	}}}
+}
+
 // Reference statistics use the whole interval; only current results need time slots.
 func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mongo.Pipeline {
 	intervalMS := int64(q.BucketSeconds) * 1000
@@ -69,25 +109,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 	pending := pendingAsyncExpr(kind, statusText)
 	statusClass := statusClassExpr(kind, statusText, statusNumber)
 	outcome := outcomeFromClassExpr()
-	var duration any
-	missingDuration := any(bson.D{{Key: "$or", Value: bson.A{
-		bson.D{{Key: "$ne", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}},
-		bson.D{{Key: "$ne", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditCompleted"}}, "date"}}},
-		bson.D{{Key: "$in", Value: bson.A{bson.D{{Key: "$type", Value: "$ApiTime"}}, bson.A{"missing", "null"}}}},
-	}}})
-	if q.Metric == "api" {
-		duration = bson.D{{Key: "$cond", Value: bson.A{
-			bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}}, bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditCompleted"}}, "date"}}}}}},
-			bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$ApiTime"}, {Key: "to", Value: "double"}, {Key: "onError", Value: nil}, {Key: "onNull", Value: nil}}}}, nil,
-		}}}
-	} else {
-		duration = bson.D{{Key: "$cond", Value: bson.A{
-			bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}}, bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditCompleted"}}, "date"}}}}}},
-			bson.D{{Key: "$subtract", Value: bson.A{"$_auditCompleted", "$_auditAt"}}}, nil,
-		}}}
-	}
-	duration = bson.D{{Key: "$cond", Value: bson.A{"$_auditPending", nil, duration}}}
-	validDuration := bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$gte", Value: bson.A{"$_auditDuration", 0}}}, bson.D{{Key: "$lt", Value: bson.A{"$_auditDuration", math.MaxFloat64}}}}}}
+	duration := auditDurationExpr(q.Metric)
 	// Phase times use the same $convert-to-double extraction as ApiTime (the
 	// writer stores TimeSpan.TotalMilliseconds as a double), so the sums are in
 	// milliseconds like the total. A phase counts only for a valid document and
@@ -120,14 +142,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 			}}}, 1, 0,
 		}}}}}
 	}
-	state := bson.D{{Key: "$switch", Value: bson.D{
-		{Key: "branches", Value: bson.A{
-			bson.D{{Key: "case", Value: "$_auditPending"}, {Key: "then", Value: "incomplete"}},
-			bson.D{{Key: "case", Value: bson.D{{Key: "$eq", Value: bson.A{"$_auditDuration", nil}}}}, {Key: "then", Value: bson.D{{Key: "$cond", Value: bson.A{missingDuration, "incomplete", "invalid"}}}}},
-			bson.D{{Key: "case", Value: validDuration}, {Key: "then", Value: "valid"}},
-		}},
-		{Key: "default", Value: "invalid"},
-	}}}
+	state := auditStateExpr("$_auditDuration")
 	branches := bson.A{bson.D{{Key: "case", Value: bson.D{{Key: "$lt", Value: bson.A{"$_auditDuration", 1}}}}, {Key: "then", Value: 0}}}
 	for i := 1; i <= 192; i++ {
 		branches = append(branches, bson.D{{Key: "case", Value: bson.D{{Key: "$lt", Value: bson.A{"$_auditDuration", math.Pow(1.1, float64(i))}}}}, {Key: "then", Value: i}})

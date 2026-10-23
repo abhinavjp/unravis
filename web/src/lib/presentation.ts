@@ -81,6 +81,9 @@ export const qualityByKindText = (quality?: Quality) => {
   return parts.length ? 'By request type: ' + parts.join(' · ') : '';
 };
 
+/** Display label for a row state (valid, incomplete, invalid) and for a quality drill-down filter (pending, unclassified). */
+export const stateLabel = (state?: string) => ({ valid: 'Complete', incomplete: 'Missing timing', invalid: 'Unusable timing', pending: 'Pending async', unclassified: 'Unclassified result' } as Record<string, string>)[state ?? ''] ?? state ?? '';
+
 export const metricLabels: Record<Metric, string> = {
   total: 'Observed API time (AuditCreateTime + ApiTime)',
   api: 'API processing'
