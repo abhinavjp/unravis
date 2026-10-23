@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -430,5 +431,98 @@ func TestKindHTTPCoversUnknownAndNeverHangfire(t *testing.T) {
 	q.Kind = "bogus"
 	if err := ValidateQuery(q); err == nil {
 		t.Error("an unknown kind must be rejected")
+	}
+}
+
+// completionBuckets is one asynchronous operation with 5 complete rows, 3 pending
+// asynchronous rows, 1 other incomplete row and 4 invalid rows, plus a
+// synchronous operation that only has invalid rows.
+func completionBuckets() []Bucket {
+	var buckets []Bucket
+	buckets = append(buckets, makeBuckets("s1", "Payroll", "Run", "asynchronous", "success", "valid", anchor, 5, 10)...)
+	pending := makeBuckets("s1", "Payroll", "Run", "asynchronous", "unknown", "incomplete", anchor, 3, 0)
+	pending[0].PendingAsync = 3
+	buckets = append(buckets, pending...)
+	buckets = append(buckets, makeBuckets("s1", "Payroll", "Run", "asynchronous", "unknown", "incomplete", anchor.Add(10*time.Second), 1, 0)...)
+	buckets = append(buckets, makeBuckets("s1", "Payroll", "Run", "asynchronous", "unknown", "invalid", anchor, 4, 0)...)
+	buckets = append(buckets, makeBuckets("s1", "Payroll", "Only", "synchronous", "unknown", "invalid", anchor, 3, 0)...)
+	return buckets
+}
+
+func TestCompletionRateExcludesInvalidCountsPending(t *testing.T) {
+	analysis, err := BuildAnalysis(analysisQuery(), completionBuckets(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	near := func(got *float64, want float64) bool { return got != nil && math.Abs(*got-want) < 1e-9 }
+	var sawComplete, sawUnfinished, sawInvalidOnly bool
+	for _, c := range analysis.APIs {
+		s := c.Current
+		switch {
+		case c.Action == "Run" && c.Outcome == "success":
+			sawComplete = true
+			if s.Events != 5 || s.Incomplete != 0 || s.Pending != 0 || s.Invalid != 0 || !near(s.CompletionRate, 1) {
+				t.Fatalf("complete cohort stats = %#v", s)
+			}
+		case c.Action == "Run" && c.Outcome == "unknown":
+			sawUnfinished = true
+			// 1 incomplete + 3 pending are unfinished; the 4 invalid rows are counted apart.
+			if s.Events != 8 || s.Incomplete != 1 || s.Pending != 3 || s.Invalid != 4 || !near(s.CompletionRate, 0) {
+				t.Fatalf("unfinished cohort stats = %#v rate=%v", s, s.CompletionRate)
+			}
+		case c.Action == "Only":
+			sawInvalidOnly = true
+			if s.Events != 3 || s.Invalid != 3 || s.CompletionRate != nil {
+				t.Fatalf("an invalid-only cohort has no rate: %#v", s)
+			}
+			encoded, _ := json.Marshal(s)
+			if strings.Contains(string(encoded), "completionRate") {
+				t.Fatalf("a missing rate must be omitted: %s", encoded)
+			}
+		}
+	}
+	if !sawComplete || !sawUnfinished || !sawInvalidOnly {
+		t.Fatalf("cohorts missing: %v %v %v", sawComplete, sawUnfinished, sawInvalidOnly)
+	}
+	var run, only *Rollup
+	for i := range analysis.Rollups {
+		switch analysis.Rollups[i].Action {
+		case "Run":
+			run = &analysis.Rollups[i]
+		case "Only":
+			only = &analysis.Rollups[i]
+		}
+	}
+	if run == nil || only == nil {
+		t.Fatalf("rollups = %#v", analysis.Rollups)
+	}
+	// complete / (complete + incomplete + pending) = 5 / 9, not 5 / 13: invalid rows never enter the denominator.
+	if run.Completed != 5 || run.Incomplete != 1 || run.Pending != 3 || run.Invalid != 4 || !near(run.CompletionShare, 5.0/9.0) {
+		t.Fatalf("rollup = %#v share=%v", run, run.CompletionShare)
+	}
+	if only.Invalid != 3 || only.CompletionShare != nil {
+		t.Fatalf("an invalid-only operation has no rate: %#v", only)
+	}
+	if run.CompletionRate == nil || !near(run.CompletionRate, 5.0/13.0) {
+		t.Fatalf("the existing events-based completionRate must be unchanged: %v", run.CompletionRate)
+	}
+}
+
+func TestCompletionTalliesAddUpAndIgnoreStrayPendingFlags(t *testing.T) {
+	// PendingAsync on a bucket that is not incomplete says nothing about completion.
+	valid := repeatedBuckets(4, 2, anchor)
+	valid[0].PendingAsync = 2
+	analysis, err := BuildAnalysis(analysisQuery(), append(valid, makeBuckets("s1", "Payroll", "Run", "synchronous", "unknown", "incomplete", anchor, 1, 0)...), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range analysis.APIs {
+		s := c.Current
+		if s.Count+s.Incomplete+s.Pending+s.Invalid != s.Events {
+			t.Fatalf("tallies do not add up to events: %#v", s)
+		}
+		if c.Outcome == "success" && s.Pending != 0 {
+			t.Fatalf("a stray pendingAsync on a valid bucket became pending: %#v", s)
+		}
 	}
 }

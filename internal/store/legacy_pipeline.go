@@ -471,6 +471,13 @@ func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query,
 // plain page (neither activity nor slowest) keeps the rows the summary counted
 // for the query and, in a keyed page, the cohort, narrowed to state.
 func readLegacyRequestRowsState(ctx context.Context, p *profile, q audit.Query, cohort [5]string, state string, after *pageCursor, pipeline mongo.Pipeline, maxRows int, records, bytes *atomic.Int64, overlap bool, slow *slowFilter) ([]pageRow, error) {
+	return readLegacyRequestRowsOrdered(ctx, p, q, cohort, state, after, pipeline, maxRows, records, bytes, overlap, slow, false)
+}
+
+// readLegacyRequestRowsOrdered is readLegacyRequestRowsState in either order.
+// Oldest keeps the earliest rows (time, then _id, ascending) and the cursor test
+// mirrors the newest one; both are decided in Go because 3.4 pages by scan.
+func readLegacyRequestRowsOrdered(ctx context.Context, p *profile, q audit.Query, cohort [5]string, state string, after *pageCursor, pipeline mongo.Pipeline, maxRows int, records, bytes *atomic.Int64, overlap bool, slow *slowFilter, oldest bool) ([]pageRow, error) {
 	summary := !overlap && slow == nil
 	cur, err := p.shared.client.Aggregate(ctx, p.source.Database, p.source.Collection, pipeline)
 	if err != nil {
@@ -532,7 +539,7 @@ func readLegacyRequestRowsState(ctx context.Context, p *profile, q audit.Query, 
 		if after != nil && slow == nil {
 			cursorRow := pageRow{at: after.At, object: legacyObjectID(after.ObjectID), request: audit.RequestRecord{SourceID: after.SourceID}}
 			candidate := pageRow{at: *record.At, object: record.ID, request: audit.RequestRecord{SourceID: p.source.ID}}
-			if !pageRowBefore(cursorRow, candidate) {
+			if !pageRowBeforeOrdered(cursorRow, candidate, oldest) {
 				continue
 			}
 		}
@@ -562,7 +569,7 @@ func readLegacyRequestRowsState(ctx context.Context, p *profile, q audit.Query, 
 				rows = rows[:maxRows]
 			}
 		} else {
-			insertPageRow(&rows, row, maxRows)
+			insertPageRowOrdered(&rows, row, maxRows, oldest)
 		}
 	}
 	if err := cur.Err(); err != nil {
@@ -635,7 +642,11 @@ func legacyObjectID(value string) bson.ObjectID {
 }
 
 func insertPageRow(rows *[]pageRow, candidate pageRow, limit int) {
-	index := sort.Search(len(*rows), func(i int) bool { return pageRowBefore(candidate, (*rows)[i]) })
+	insertPageRowOrdered(rows, candidate, limit, false)
+}
+
+func insertPageRowOrdered(rows *[]pageRow, candidate pageRow, limit int, oldest bool) {
+	index := sort.Search(len(*rows), func(i int) bool { return pageRowBeforeOrdered(candidate, (*rows)[i], oldest) })
 	if index >= limit {
 		return
 	}

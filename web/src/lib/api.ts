@@ -52,8 +52,8 @@ export const api = {
     request<Breakdown>('/breakdown', json({ query, dim, top }), signal),
   slowest: (query:Query,signal?:AbortSignal,options:{cursor?:string;minMs?:number|null}={})=>request<Page>('/slowest',json({query,limit:50,apiKey:'',cursor:options.cursor??'',...(options.minMs==null?{}:{minMs:options.minMs})}),signal),
   /** state narrows the page to one quality state (complete, incomplete, invalid, pending, unclassified); an empty apiKey pages the whole query. */
-  requests: (query: Query, apiKey: string, cursor = '', signal?: AbortSignal, state = '') =>
-    request<Page>('/requests', json({ query, apiKey, cursor, limit: 100, state }), signal),
+  requests: (query: Query, apiKey: string, cursor = '', signal?: AbortSignal, state = '', order = '') =>
+    request<Page>('/requests', json({ query, apiKey, cursor, limit: 100, state, ...(order ? { order } : {}) }), signal),
   payload: (sourceId: string, id: string, signal?: AbortSignal) =>
     request<Payload>('/payload', json({ sourceId, id }), signal),
   record: (sourceId: string, id: string, signal?: AbortSignal) =>

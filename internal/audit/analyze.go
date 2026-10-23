@@ -18,6 +18,48 @@ type cohortAccumulator struct {
 
 	currentClientErrors, currentServerErrors     int64
 	referenceClientErrors, referenceServerErrors int64
+
+	currentStates, referenceStates stateTally
+}
+
+// stateTally counts the documents of a cohort that are not valid, split the way
+// the completion rate needs: unfinished (not pending), pending asynchronous work
+// and invalid. The valid documents are the histogram's count. A PendingAsync
+// flag only counts on an incomplete bucket.
+type stateTally struct{ incomplete, pending, invalid int64 }
+
+func (t *stateTally) add(b Bucket) error {
+	switch b.State {
+	case "incomplete":
+		pending := b.PendingAsync
+		if pending < 0 || pending > b.Count {
+			return fmt.Errorf("pendingAsync %d must be between 0 and the bucket count %d", pending, b.Count)
+		}
+		if err := checkedAdd(&t.pending, pending); err != nil {
+			return err
+		}
+		return checkedAdd(&t.incomplete, b.Count-pending)
+	case "invalid":
+		return checkedAdd(&t.invalid, b.Count)
+	}
+	return nil
+}
+
+// completionRate is complete / (complete + incomplete + pending), or nil when
+// that denominator is 0. Invalid documents are never in it.
+func completionRate(complete, incomplete, pending int64) *float64 {
+	denominator := complete + incomplete + pending
+	if complete < 0 || incomplete < 0 || pending < 0 || denominator <= 0 {
+		return nil
+	}
+	value := float64(complete) / float64(denominator)
+	return &value
+}
+
+// applyStates fills the state tallies and the completion rate of one window.
+func applyStates(stats *Stats, events int64, t stateTally) {
+	stats.Events, stats.Incomplete, stats.Pending, stats.Invalid = events, t.incomplete, t.pending, t.invalid
+	stats.CompletionRate = completionRate(stats.Count, t.incomplete, t.pending)
 }
 
 func CohortKey(sourceID, controller, action, kind, outcome string) string {
@@ -102,6 +144,8 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 		referenceStats.ClientErrors, referenceStats.ServerErrors = c.referenceClientErrors, c.referenceServerErrors
 		referenceStats.ClientErrorRate = errorShare(c.referenceClientErrors, c.referenceEvents, c.outcome)
 		referenceStats.ServerErrorRate = errorShare(c.referenceServerErrors, c.referenceEvents, c.outcome)
+		applyStates(&currentStats, c.currentEvents, c.currentStates)
+		applyStates(&referenceStats, c.referenceEvents, c.referenceStates)
 		comparison := Comparison{Key: key, SourceID: c.sourceID, Controller: c.controller, Action: c.action, Kind: c.kind, Outcome: c.outcome, CurrentEvents: c.currentEvents, ReferenceEvents: c.referenceEvents, Current: currentStats, Reference: referenceStats}
 		switch {
 		case currentStats.Count == 0:
@@ -287,6 +331,13 @@ func addBucket(cohorts map[string]*cohortAccumulator, b Bucket, isCurrent bool) 
 	}
 	if err := checkedAdd(serverErrors, b.CountHangfireFailed); err != nil {
 		return fmt.Errorf("cohort %s hangfire failure count: %w", key, err)
+	}
+	states := &c.referenceStates
+	if isCurrent {
+		states = &c.currentStates
+	}
+	if err := states.add(b); err != nil {
+		return fmt.Errorf("cohort %s: %w", key, err)
 	}
 	if b.State != "valid" {
 		return nil

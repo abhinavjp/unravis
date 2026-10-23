@@ -695,7 +695,7 @@ test('every quality count is a button that drills into the requests behind it', 
   for (const state of ['incomplete', 'invalid', 'unclassified', 'pending']) {
     assert.match(app, new RegExp(`drillQuality\\('${state}'\\)`));
   }
-  assert.match(app, /requestController\.signal, requestState\)/);
+  assert.match(app, /requestController\.signal, requestState, drillOverview\?\.order \?\? ''\)/);
   const table = fs.readFileSync(path.join(root, 'src/components/RequestTable.svelte'), 'utf8');
   assert.match(table, /row\.id/);
   assert.match(table, /stateLabel\(row\.state\)/);
@@ -1090,3 +1090,82 @@ test('breakdown drill-down keeps and clears range filters like any other record 
   assert.deepEqual(breakdown.activeRecordFilter(breakdown.clearRecordFilter(base)), {});
   assert.deepEqual(breakdown.activeRecordFilter(breakdown.applyDrill({ observedMs: { min: 1 } }, { apiTimeMs: { min: 9 } })), { apiTimeMs: { min: 9 } });
 });
+
+const incomplete = loadTypeScript('src/lib/incomplete.ts');
+
+test('completionRate is null when events is 0', () => {
+  assert.equal(incomplete.completionRate({ events: 0, complete: 0, incomplete: 0, pending: 0 }), null);
+  assert.equal(incomplete.completionRate({}), null);
+  // Nothing but unusable rows: invalid is never in the denominator, so there is no rate to show (not 0%).
+  assert.equal(incomplete.completionRate({ events: 4, complete: 0, incomplete: 0, pending: 0 }), null);
+  // complete / (complete + incomplete + pending); the 4 invalid rows are only part of events.
+  assert.equal(incomplete.completionRate({ events: 13, complete: 5, incomplete: 1, pending: 3 }), 5 / 9);
+  assert.equal(incomplete.completionRate({ events: 3, complete: 3 }), 1);
+  assert.equal(incomplete.completionRate({ events: 2, complete: 0, incomplete: 2 }), 0);
+});
+
+test('operations are ranked by completion rate, worst first, and a missing rate is left out', () => {
+  const rollup = (action, completed, incompleteRows, pending, invalid, share) => ({ controller: 'Api', action, kind: 'synchronous', requests: 0, failures: 0, perMinute: 0, events: completed + incompleteRows + pending + invalid, completed, incomplete: incompleteRows, pending, invalid, ...(share === undefined ? {} : { completionShare: share }) });
+  const ranked = incomplete.rankByCompletion([
+    rollup('Healthy', 10, 0, 0, 0),
+    rollup('Stuck', 1, 8, 1, 0, 0.1),
+    rollup('Slow', 5, 5, 0, 0),
+    rollup('AllBad', 0, 0, 0, 7),
+    rollup('Tie', 5, 5, 0, 0)
+  ]);
+  assert.deepEqual(ranked.map(row => row.rollup.action), ['Stuck', 'Slow', 'Tie', 'Healthy']);
+  assert.deepEqual(ranked.map(row => row.rate), [0.1, 0.5, 0.5, 1]);
+  assert.deepEqual(ranked.map(row => row.unfinished), [9, 5, 5, 0]);
+  // The server's share wins over a rate worked out from the counts.
+  assert.equal(incomplete.rankByCompletion([rollup('Share', 5, 5, 0, 0, 0.25)])[0].rate, 0.25);
+  assert.deepEqual(incomplete.rankByCompletion([]), []);
+});
+
+test('the stale threshold is a positive number of minutes with a code-derived default', () => {
+  assert.equal(incomplete.DEFAULT_STALE_MINUTES, 10);
+  assert.equal(incomplete.parseStaleMinutes('10'), 10);
+  assert.equal(incomplete.parseStaleMinutes(' 2.5 '), 2.5);
+  for (const bad of ['', '  ', '0', '-3', 'abc', '1e3', '5 min', 'NaN', 'Infinity', '99999999']) assert.equal(incomplete.parseStaleMinutes(bad), null, bad);
+  assert.equal(incomplete.staleThresholdMs(10), 600000);
+  assert.equal(incomplete.staleThresholdMs(0.5), 30000);
+  const source = fs.readFileSync(path.join(root, 'src/lib/incomplete.ts'), 'utf8');
+  assert.match(source, /code-derived default/);
+  assert.match(source, /not measured/);
+});
+
+test('the stale list opens the shared request list, oldest first, with the age threshold', () => {
+  const drill = incomplete.staleDrill({ controller: 'Payroll', action: 'Run', kind: 'synchronous' }, 'incomplete', 10);
+  assert.equal(drill.completion, 'incomplete');
+  assert.equal(drill.order, 'oldest');
+  assert.deepEqual(drill.incompleteAgeMs, { min: 600000 });
+  assert.equal(drill.controller, 'Payroll');
+  assert.equal(drill.action, 'Run');
+  assert.equal(drill.kind, 'synchronous');
+  assert.equal(drill.state, 'all');
+  assert.equal(drill.outcome, '');
+  assert.match(drill.label, /Payroll\.Run/);
+  assert.match(drill.label, /10 min/);
+  assert.match(drill.label, /oldest first/);
+  const pending = incomplete.staleDrill(null, 'pending', 2.5);
+  assert.equal(pending.completion, 'pending');
+  assert.deepEqual(pending.incompleteAgeMs, { min: 150000 });
+  assert.equal(pending.kind, 'all');
+  assert.equal('controller' in pending || 'action' in pending, false);
+  assert.match(pending.label, /2\.5 min/);
+});
+
+test('the incomplete panel and the Completion % column use existing tokens and show a dash for no rate', () => {
+  const panel = fs.readFileSync(path.join(root, 'src/components/IncompletePanel.svelte'), 'utf8');
+  assert.equal(/#[0-9a-fA-F]{3,8}\b/.test(panel.slice(panel.indexOf('<style>'))), false);
+  assert.match(panel, /rankByCompletion/);
+  assert.match(panel, /staleDrill/);
+  assert.match(panel, /parseStaleMinutes/);
+  const table = fs.readFileSync(path.join(root, 'src/components/ComparisonTable.svelte'), 'utf8');
+  assert.match(table, /Completion %/);
+  assert.match(table, /colspan="15"/);
+  assert.equal(overviewRate(null), '—');
+  assert.equal(overviewRate(undefined), '—');
+  assert.equal(overviewRate(0), '0.0%');
+});
+
+function overviewRate(value) { return loadTypeScript('src/lib/overview.ts').rateText(value); }

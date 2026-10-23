@@ -6,6 +6,8 @@
   import PhaseBar from './PhaseBar.svelte';
   import OperationTable from './OperationTable.svelte';
   import { p99NeedsSamples, quantileText } from '../lib/slowness';
+  import { rollupCompletionRate } from '../lib/incomplete';
+  import { rateText } from '../lib/overview';
   let { rows, selectedKey, sources, outcomeFilter, onSelect, timelineKeys = [], onToggleTimeline = () => {}, rollups = [], timeline = [], kindFilter = 'all', onDrill }: {
     rows: Comparison[]; selectedKey: string; sources: Map<string, string>; outcomeFilter: string; onSelect: (key: string) => void
     timelineKeys?: string[]; onToggleTimeline?: (key: string) => void; rollups?: Rollup[]; timeline?: Series[]; kindFilter?: string;
@@ -59,6 +61,9 @@
     ? 'Total impact needs a comparable group with enough samples in both periods.'
     : 'Extra time versus the reference average, summed over the current requests (volume × mean change).'
       + (row.shiftZ == null ? '' : ` Distribution shift z = ${row.shiftZ.toFixed(1)}; ${row.significant ? 'a clear, larger-than-bin shift.' : 'not a clear shift beyond histogram resolution.'}`);
+  // Per API, not per group: an unfinished request has no known result, so a group's own share would read 100% or 0% by its outcome alone.
+  const completionText = (row: Comparison) => { const rollup = rollupFor(rollups, row); return rollup ? rateText(rollupCompletionRate(rollup)) : '—'; };
+  const completionTip = 'Whole API and request type: completed / (completed + incomplete + pending). Unusable rows are not in the share. A dash means no data to measure.';
   let loadByKey = $derived(new Map(timeline.map(series => [series.key, series.loadCorrelation])));
   // P99 needs at least 100 samples per period; the bin-width caveat applies to every histogram quantile.
   const p99Tip = (row: Comparison) => row.current.p99 == null || row.reference.p99 == null
@@ -92,6 +97,7 @@
       <th><button class="sort-button" title="Difference between current and earlier reference P95 estimates, in milliseconds. P95 is the estimated time within which about 95 of 100 requests with usable timings finish." onclick={() => sortBy('delta')}>P95 difference (ms)</button></th>
       <th title="Share of current-period requests with a known result that were client errors (4xx), for the whole API. Needs the outcome filter set to All.">4xx %</th>
       <th title="Share of current-period requests with a known result that were server errors (5xx, including failed Hangfire jobs), for the whole API. Needs the outcome filter set to All.">5xx %</th>
+      <th title="Completed requests as a share of completed, incomplete and pending ones, for the whole API. Unusable rows are counted apart and never in the share. A dash means there was nothing to measure, not 0%.">Completion %</th>
       <th title="Median: half of the current-period requests finished sooner. A histogram estimate.">P50</th>
       <th title="About 90 of 100 current-period requests finished within this time. A histogram estimate.">P90</th>
       <th title="About 99 of 100 current-period requests finished within this time. A histogram estimate; shown only with at least 100 samples.">P99</th>
@@ -108,12 +114,13 @@
           <td class="numeric" data-label="P95 vs reference" title={p99Tip(row)}>{ratio(row.p95Ratio)}</td><td class="numeric" data-label="P95 difference (ms)">{row.p95DeltaMs == null ? 'N/A' : '≈ ' + row.p95DeltaMs.toFixed(1)}</td>
           <td class="numeric" data-label="4xx %" title={rates.tip}>{rates.client}</td>
           <td class="numeric" data-label="5xx %" title={rates.tip}>{rates.server}</td>
+          <td class="numeric" data-label="Completion %" title={completionTip}>{completionText(row)}</td>
           <td class="numeric" data-label="P50" title="Histogram estimate; carries about ±5% bin-width error.">{quantileText(row.current.p50)}</td>
           <td class="numeric" data-label="P90" title="Histogram estimate; carries about ±5% bin-width error.">{quantileText(row.current.p90)}</td>
           <td class="numeric" data-label="P99" title={p99Tip(row)}>{quantileText(row.current.p99, p99NeedsSamples)}</td>
           <td class="group-status" data-label="Comparison"><span class="state-pill" title={stateDetails[row.state] ?? 'Comparison status'}>{stateLabels[row.state] ?? row.state.replaceAll('_', ' ')}</span>{#if loadBadge(loadByKey.get(row.key))}<span class="state-pill" title={loadTip(loadByKey.get(row.key) ?? 0)}>{loadBadge(loadByKey.get(row.key))}</span>{/if}</td>
         </tr>
-      {:else}<tr><td colspan="14" class="table-empty">{rows.length ? 'No API groups match this search and view. Clear the search or choose All API groups.' : 'No API comparisons are available for this query.'}</td></tr>{/each}
+      {:else}<tr><td colspan="15" class="table-empty">{rows.length ? 'No API groups match this search and view. Clear the search or choose All API groups.' : 'No API comparisons are available for this query.'}</td></tr>{/each}
     </tbody>
   </table>
 </div>

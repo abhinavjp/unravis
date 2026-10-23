@@ -208,6 +208,18 @@ type Stats struct {
 	ServerErrors    int64    `json:"serverErrors,omitempty"`
 	ClientErrorRate *float64 `json:"clientErrorRate,omitempty"`
 	ServerErrorRate *float64 `json:"serverErrorRate,omitempty"`
+
+	// Events is every document of the cohort in this window. Count (valid),
+	// Incomplete (unfinished, not pending), Pending (accepted asynchronous work)
+	// and Invalid add up to it; each is omitted when zero. CompletionRate is
+	// Count / (Count + Incomplete + Pending): invalid documents are counted
+	// apart and never enter the denominator, and the rate is nil (omitted) when
+	// that denominator is 0.
+	Events         int64    `json:"events,omitempty"`
+	Incomplete     int64    `json:"incomplete,omitempty"`
+	Pending        int64    `json:"pending,omitempty"`
+	Invalid        int64    `json:"invalid,omitempty"`
+	CompletionRate *float64 `json:"completionRate,omitempty"`
 }
 
 // PhaseMeans splits request time into the audit-row write and API processing,
@@ -383,6 +395,9 @@ type PageInput struct {
 	State  string `json:"state"`
 	Cursor string `json:"cursor"`
 	Limit  int    `json:"limit"`
+	// Order is newest (the default) or oldest. Oldest first is only allowed with
+	// an incomplete or pending completion filter or an incomplete-age range.
+	Order string `json:"order,omitempty"`
 
 	MinMs *float64 `json:"minMs,omitempty"`
 }

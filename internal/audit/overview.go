@@ -302,11 +302,15 @@ func (h *histogramAccumulator) merge(o *histogramAccumulator) error {
 // cohorts, that is over sources and outcomes.
 type rollupSide struct {
 	events, requests, failures, client, server int64
+	incomplete, pending, invalid               int64
 	hist                                       *histogramAccumulator
 }
 
-func (s *rollupSide) fold(outcome string, events, client, server int64, valid *histogramAccumulator) error {
+func (s *rollupSide) fold(outcome string, events, client, server int64, valid *histogramAccumulator, states stateTally) error {
 	s.events = saturatingAdd(s.events, events)
+	s.incomplete = saturatingAdd(s.incomplete, states.incomplete)
+	s.pending = saturatingAdd(s.pending, states.pending)
+	s.invalid = saturatingAdd(s.invalid, states.invalid)
 	switch outcome {
 	case "success":
 		s.requests = saturatingAdd(s.requests, events)
@@ -352,12 +356,12 @@ func withRollupComparison(rows []Rollup, cohorts map[string]*cohortAccumulator, 
 	for _, c := range cohorts {
 		key := name{c.controller, c.action, c.kind}
 		if c.currentEvents > 0 {
-			if err := side(cur, key).fold(c.outcome, c.currentEvents, c.currentClientErrors, c.currentServerErrors, c.current); err != nil {
+			if err := side(cur, key).fold(c.outcome, c.currentEvents, c.currentClientErrors, c.currentServerErrors, c.current, c.currentStates); err != nil {
 				return nil, fmt.Errorf("rollup %s.%s: %w", c.controller, c.action, err)
 			}
 		}
 		if c.referenceEvents > 0 {
-			if err := side(ref, key).fold(c.outcome, c.referenceEvents, c.referenceClientErrors, c.referenceServerErrors, c.reference); err != nil {
+			if err := side(ref, key).fold(c.outcome, c.referenceEvents, c.referenceClientErrors, c.referenceServerErrors, c.reference, c.referenceStates); err != nil {
 				return nil, fmt.Errorf("rollup %s.%s: %w", c.controller, c.action, err)
 			}
 		}
@@ -393,6 +397,8 @@ func withRollupComparison(rows []Rollup, cohorts map[string]*cohortAccumulator, 
 func fillRollup(r *Rollup, cur, ref *rollupSide, currentMinutes, referenceMinutes float64, allOutcomes bool) {
 	if cur != nil {
 		r.Events, r.Completed = cur.events, cur.completed()
+		r.Incomplete, r.Pending, r.Invalid = cur.incomplete, cur.pending, cur.invalid
+		r.CompletionShare = completionRate(r.Completed, r.Incomplete, r.Pending)
 		if r.Completed >= minReferenceSamples {
 			r.P95Ms = quantileValue(cur.hist.quantile(.95))
 		}

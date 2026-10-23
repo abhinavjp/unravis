@@ -86,6 +86,16 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 	if state == audit.StateAll || overlap || slowest {
 		state = ""
 	}
+	// Only the plain request history takes an order; the activity and slowest lists
+	// rank by their own keys. Oldest first is the stale-work list's order.
+	oldest := false
+	if !overlap && !slowest {
+		order, err := audit.ValidateOrder(input.Query, input.Order)
+		if err != nil {
+			return audit.Page{}, err
+		}
+		oldest = order == audit.OrderOldest
+	}
 	cohort := [5]string{"", input.Query.Controller, input.Query.Action, input.Query.Kind, input.Query.Outcome}
 	if input.APIKey != "" {
 		var err error
@@ -97,7 +107,13 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 			return audit.Page{}, err
 		}
 	}
-	fingerprint := pageFingerprint(input.Query, input.APIKey+stateFingerprint(state))
+	// A cursor belongs to the order that made it. Newest adds nothing, so a cursor
+	// from before orders existed (or from a default listing) still continues.
+	orderSuffix := ""
+	if oldest {
+		orderSuffix = "|order:oldest"
+	}
+	fingerprint := pageFingerprint(input.Query, input.APIKey+stateFingerprint(state)+orderSuffix)
 	if overlap {
 		fingerprint = pageFingerprint(input.Query, "activity-context")
 	}
@@ -198,7 +214,7 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 			continue
 		}
 		var sourceRows []pageRow
-		pipeline := requestPipelineState(input.Query, cohort, state, p.source.ID, after, input.Limit+1)
+		pipeline := requestPipelineOrdered(input.Query, cohort, state, true, oldest, p.source.ID, after, input.Limit+1)
 		if overlap {
 			pipeline = activityPipeline(input.Query, p.source.ID, after, input.Limit+1)
 		}
@@ -207,7 +223,7 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		}
 		var err error
 		if usesLegacyMongo(p.shared.client) {
-			sourceRows, err = readLegacyRequestRowsState(ctx, p, input.Query, cohort, state, after, legacyRowMetadataPipeline(pipeline), input.Limit+1, &legacyRecords, &legacyBytes, overlap, slow)
+			sourceRows, err = readLegacyRequestRowsOrdered(ctx, p, input.Query, cohort, state, after, legacyRowMetadataPipeline(pipeline), input.Limit+1, &legacyRecords, &legacyBytes, overlap, slow, oldest)
 			if err == nil {
 				rows = append(rows, sourceRows...)
 			}
@@ -265,7 +281,7 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		if slowest {
 			return slowRowBefore(rows[i], rows[j], input.Query.Metric)
 		}
-		return pageRowBefore(rows[i], rows[j])
+		return pageRowBeforeOrdered(rows[i], rows[j], oldest)
 	})
 	more := len(rows) > input.Limit
 	if more {
@@ -303,6 +319,18 @@ func requestPipelineState(q audit.Query, cohort [5]string, state string, sourceI
 }
 
 func requestPipelineScoped(q audit.Query, cohort [5]string, state string, summary bool, sourceID string, after *pageCursor, limit int) mongo.Pipeline {
+	return requestPipelineOrdered(q, cohort, state, summary, false, sourceID, after, limit)
+}
+
+// requestPipelineOrdered is requestPipelineScoped with a direction. Newest sorts
+// (time, _id) downward; oldest sorts both upward, so rows that share a timestamp
+// keep one stable order across pages (the _id tie-break) and the keyset after a
+// cursor mirrors the newest one with $gt in place of $lt. Mongo 3.4 allows both.
+func requestPipelineOrdered(q audit.Query, cohort [5]string, state string, summary bool, oldest bool, sourceID string, after *pageCursor, limit int) mongo.Pipeline {
+	direction, past := -1, "$lt"
+	if oldest {
+		direction, past = 1, "$gt"
+	}
 	startMatch := bson.D{{Key: "RequestInitiatedAt", Value: bson.D{{Key: "$gte", Value: q.Start}, {Key: "$lt", Value: q.End}}}}
 	fallback := bson.D{{Key: "$and", Value: bson.A{
 		bson.D{{Key: "$or", Value: bson.A{bson.D{{Key: "RequestInitiatedAt", Value: bson.D{{Key: "$exists", Value: false}}}}, bson.D{{Key: "RequestInitiatedAt", Value: nil}}}}},
@@ -356,16 +384,16 @@ func requestPipelineScoped(q audit.Query, cohort [5]string, state string, summar
 		lastID, _ := bson.ObjectIDFromHex(after.ObjectID)
 		var afterMatch bson.A
 		if sourceID > after.SourceID {
-			afterMatch = bson.A{bson.D{{Key: "_auditAt", Value: bson.D{{Key: "$lt", Value: after.At}}}}, bson.D{{Key: "_auditAt", Value: after.At}}}
+			afterMatch = bson.A{bson.D{{Key: "_auditAt", Value: bson.D{{Key: past, Value: after.At}}}}, bson.D{{Key: "_auditAt", Value: after.At}}}
 		} else if sourceID == after.SourceID {
-			afterMatch = bson.A{bson.D{{Key: "_auditAt", Value: bson.D{{Key: "$lt", Value: after.At}}}}, bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "_auditAt", Value: after.At}}, bson.D{{Key: "_id", Value: bson.D{{Key: "$lt", Value: lastID}}}}}}}}
+			afterMatch = bson.A{bson.D{{Key: "_auditAt", Value: bson.D{{Key: past, Value: after.At}}}}, bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "_auditAt", Value: after.At}}, bson.D{{Key: "_id", Value: bson.D{{Key: past, Value: lastID}}}}}}}}
 		} else {
-			afterMatch = bson.A{bson.D{{Key: "_auditAt", Value: bson.D{{Key: "$lt", Value: after.At}}}}}
+			afterMatch = bson.A{bson.D{{Key: "_auditAt", Value: bson.D{{Key: past, Value: after.At}}}}}
 		}
 		stages = append(stages, bson.D{{Key: "$match", Value: bson.D{{Key: "$or", Value: afterMatch}}}})
 	}
 	stages = append(stages,
-		bson.D{{Key: "$sort", Value: bson.D{{Key: "_auditAt", Value: -1}, {Key: "_id", Value: -1}}}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "_auditAt", Value: direction}, {Key: "_id", Value: direction}}}},
 		bson.D{{Key: "$limit", Value: limit}},
 		bson.D{{Key: "$project", Value: bson.D{
 			{Key: "_id", Value: 1}, {Key: "sourceId", Value: sourceID}, {Key: "controller", Value: stringExpr("$ControllerName")}, {Key: "action", Value: stringExpr("$ActionName")}, {Key: "kind", Value: "$_auditKind"}, {Key: "outcome", Value: "$_auditOutcome"}, {Key: "state", Value: "$_auditState"}, {Key: "status", Value: stringExpr("$StatusCode")}, {Key: "url", Value: stringExpr("$RequestMainUrl")}, {Key: "initiatedAt", Value: "$_auditAt"}, {Key: "completedAt", Value: "$_auditCompleted"}, {Key: "durationMs", Value: duration},
@@ -455,6 +483,22 @@ func pageRowBefore(a, b pageRow) bool {
 		return a.request.SourceID < b.request.SourceID
 	}
 	return a.object.Hex() > b.object.Hex()
+}
+
+// pageRowBeforeOrdered is pageRowBefore for either order. Oldest walks time and
+// _id upward; the source id stays ascending in both so merged sources interleave
+// the same way the keyset after a cursor assumes.
+func pageRowBeforeOrdered(a, b pageRow, oldest bool) bool {
+	if !oldest {
+		return pageRowBefore(a, b)
+	}
+	if !a.at.Equal(b.at) {
+		return a.at.Before(b.at)
+	}
+	if a.request.SourceID != b.request.SourceID {
+		return a.request.SourceID < b.request.SourceID
+	}
+	return a.object.Hex() < b.object.Hex()
 }
 
 func closeMongoCursor(cur mongoCursor) {

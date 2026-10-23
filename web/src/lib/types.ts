@@ -50,6 +50,8 @@ export interface Stats {
   clientErrors?: number; serverErrors?: number; clientErrorRate?: number | null; serverErrorRate?: number | null;
   /** Additive: valid samples whose observed time lacks AuditCreateTime (legacy rows without RequestInitiatedAt); absent when none. */
   observedPartial?: number;
+  /** Additive: events is every document of the cohort; count (valid), incomplete (unfinished, not pending), pending (accepted asynchronous work) and invalid add up to it, each absent when zero. completionRate = count / (count + incomplete + pending); invalid is never in the denominator and the rate is absent when it is 0. */
+  events?: number; incomplete?: number; pending?: number; invalid?: number; completionRate?: number | null;
 }
 /** Audit and api time add up to the total; payload is written after the response and is not latency. Each is absent without samples; in phaseDeltaMs it is current minus reference. */
 export interface PhaseMeans { auditMs?: number | null; apiMs?: number | null; payloadMs?: number | null }
@@ -81,6 +83,8 @@ export interface Rollup {
   referenceCompletionRate?: number | null; referenceP95Ms?: number | null;
   /** trafficDelta is a relative change (0.25 = +25%); the rate deltas are percentage points as fractions; p95DeltaMs is milliseconds. */
   trafficDelta?: number | null; completionDelta?: number | null; clientErrorDelta?: number | null; serverErrorDelta?: number | null; p95DeltaMs?: number | null;
+  /** Additive: the current window's events that are not completed, split into incomplete (not pending), pending (accepted asynchronous work) and invalid, each absent when zero. completionShare = completed / (completed + incomplete + pending): invalid is never in the denominator and the share is absent when it is 0. completionRate above stays completed / events. */
+  incomplete?: number; pending?: number; invalid?: number; completionShare?: number | null;
 }
 /** pendingAsync is additive and absent when zero: Asynchronous requests that only answered 202 Accepted, counted inside incomplete. */
 export interface QualityCounts { incomplete: number; invalid: number; unknownOutcome: number; pendingAsync?: number }
