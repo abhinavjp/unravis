@@ -291,7 +291,7 @@ func requestPipeline(q audit.Query, cohort [5]string, sourceID string, after *pa
 	}
 	cohortMatch := bson.D{{Key: "_auditAt", Value: bson.D{{Key: "$type", Value: "date"}}}}
 	if cohort[3] != "" && cohort[3] != "all" {
-		cohortMatch = append(cohortMatch, bson.E{Key: "_auditKind", Value: cohort[3]})
+		cohortMatch = append(cohortMatch, bson.E{Key: "_auditKind", Value: bson.D{{Key: "$in", Value: stringsToBSON(audit.KindMembers(cohort[3])...)}}})
 	}
 	if cohort[4] != "" && cohort[4] != "all" {
 		cohortMatch = append(cohortMatch, outcomeFilterElem(cohort[4]))
@@ -378,7 +378,7 @@ func validateCohortQuery(q audit.Query, cohort [5]string) error {
 			selected = true
 		}
 	}
-	if !selected || (q.Controller != "" && q.Controller != cohort[1]) || (q.Action != "" && q.Action != cohort[2]) || (q.Kind != "all" && q.Kind != cohort[3]) || !audit.BucketOutcomeMatches(q.Outcome, cohort[4]) {
+	if !selected || (q.Controller != "" && q.Controller != cohort[1]) || (q.Action != "" && q.Action != cohort[2]) || !audit.KindMatches(q.Kind, cohort[3], false) || !audit.BucketOutcomeMatches(q.Outcome, cohort[4]) {
 		return fmt.Errorf("%w: API key does not match query", audit.ErrInvalidInput)
 	}
 	return nil

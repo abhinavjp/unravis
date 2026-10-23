@@ -40,9 +40,9 @@ func ValidateQuery(q Query) error {
 		return invalidInputf("each interval may contain at most %d time buckets", MaxTimeBuckets)
 	}
 	switch q.Kind {
-	case "synchronous", "asynchronous", "hangfire", "all":
+	case "synchronous", "asynchronous", "hangfire", KindHTTP, KindHTTPUnknown, "all":
 	default:
-		return invalidInputf("kind must be synchronous, asynchronous, hangfire, or all")
+		return invalidInputf("kind must be synchronous, asynchronous, hangfire, http, http_unknown, or all")
 	}
 	switch q.Outcome {
 	case "success", "failure", "client_error", "server_error", "all":

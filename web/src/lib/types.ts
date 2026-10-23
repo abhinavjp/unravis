@@ -1,4 +1,5 @@
-export type Kind = 'synchronous' | 'asynchronous' | 'hangfire' | 'all';
+/** http is synchronous, asynchronous and unknown HTTP rows together; http_unknown is only the unknown ones. */
+export type Kind = 'synchronous' | 'asynchronous' | 'hangfire' | 'http' | 'http_unknown' | 'all';
 export type Outcome = 'success' | 'failure' | 'client_error' | 'server_error' | 'all';
 export type Metric = 'total' | 'api';
 
@@ -54,14 +55,16 @@ export interface Comparison {
 export interface Point { at: string; count: number | null; p50: Quantile | null; p95: Quantile | null; p95Ratio: number | null }
 /** loadCorrelation: Spearman rho of other traffic's estimated concurrency vs this series' per-bucket P95; absent below 8 paired buckets. */
 export interface Series { key: string; points: Point[]; loadCorrelation?: number | null }
-/** Per-API current-window throughput; requests and failures count known outcomes only. errorRate is absent when requests is 0. */
+/** Per-API, per-kind current-window throughput (sources merged); requests and failures count known outcomes only. errorRate is absent when requests is 0. */
 export interface Rollup {
-  controller: string; action: string; requests: number; failures: number; errorRate?: number | null; perMinute: number;
+  controller: string; action: string; kind?: string; requests: number; failures: number; errorRate?: number | null; perMinute: number;
   /** Additive split of errorRate: 4xx, and 5xx plus failed Hangfire jobs. Absent when errorRate is, or under an outcome filter. */
   clientErrorRate?: number | null; serverErrorRate?: number | null;
 }
 /** pendingAsync is additive and absent when zero: Asynchronous requests that only answered 202 Accepted, counted inside incomplete. */
-export interface Quality { incomplete: number; invalid: number; unknownOutcome: number; pendingAsync?: number }
+export interface QualityCounts { incomplete: number; invalid: number; unknownOutcome: number; pendingAsync?: number }
+/** byKind splits the counts by row kind (synchronous, asynchronous, hangfire, unknown); only kinds with something to report appear. */
+export interface Quality { incomplete: number; invalid: number; unknownOutcome: number; pendingAsync?: number; byKind?: Record<string, QualityCounts> }
 export interface Analysis {
   loadWindows?: LoadWindow[];
   requestVolume?: VolumeBucket[];

@@ -3,7 +3,7 @@
   import { api } from './lib/api';
   import { defaultQuery } from './lib/time';
   import { countEpochBuckets } from './lib/time';
-  import { initialComparison, queryFingerprint, resultNotes, rankComparisons } from './lib/presentation';
+  import { initialComparison, kindLabel, queryFingerprint, qualityByKindText, resultNotes, rankComparisons, unknownKindTip } from './lib/presentation';
   import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, shouldSelectAddedSource, writeInvestigationSnapshot } from './lib/investigation';
 import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RequestRecord, Source, SourceInput, TLSMode } from './lib/types';
   import QueryControls from './components/QueryControls.svelte';
@@ -818,6 +818,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
             <div><strong>{analysis.quality.invalid.toLocaleString()}</strong><span>Unusable timing</span></div>
             <div><strong>{analysis.quality.unknownOutcome.toLocaleString()}</strong><span>Unclassified result</span></div>
             {#if analysis.quality.pendingAsync}<div><strong>{analysis.quality.pendingAsync.toLocaleString()}</strong><span>pending async</span></div>{/if}
+            {#if qualityByKindText(analysis.quality)}<div class="quality-filter-note" title={unknownKindTip}><span>{qualityByKindText(analysis.quality)}</span></div>{/if}
             {#if analysis.query.outcome === 'client_error' || analysis.query.outcome === 'server_error'}<div class="quality-filter-note"><span>Counts above cover only the selected status class.</span></div>{/if}
           <p>Response times are estimates. A comparison shows change, not a health verdict.</p>
           <details class="quality-definitions"><summary>What these counts mean</summary><p><strong>Missing timing:</strong> no complete duration was recorded. <strong>Unusable timing:</strong> a duration was present but could not be used. <strong>Unclassified result:</strong> the request could not be identified as a success or failure. <strong>Pending async:</strong> an asynchronous request that only answered 202 Accepted; its work is not finished, so it is counted as missing timing and never as a response-time sample.</p></details>
@@ -833,14 +834,14 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query
             <section class="selected-api-heading" id="selected-api-details" aria-label="Selected API" aria-live="polite" tabindex="-1">
               <a class="back-to-groups" href="#api-group-results">Back to API groups</a>
               <h3>{selected.controller}.{selected.action}</h3>
-              <p>{sourceLabels.get(selected.sourceId) ?? 'Source unavailable'} · {selected.kind} · {selected.outcome}</p>
+              <p>{sourceLabels.get(selected.sourceId) ?? 'Source unavailable'} · <span title={selected.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(selected.kind)}</span> · {selected.outcome}</p>
               <div class="selected-api-stats"><span><strong>{selected.current.count.toLocaleString()}</strong> current timings</span><span><strong>{selected.reference.count.toLocaleString()}</strong> reference timings</span><span><strong>{selected.p95Ratio == null ? 'Unavailable' : '≈ ' + selected.p95Ratio.toFixed(2) + '×'}</strong> P95 vs reference</span>{#if targetMs != null}<span>Target {targetMs} ms: {targetAssessment}</span>{/if}</div>
               {#if selected.current.count < 20 || selected.reference.count < 20}<p class="sample-note">{selected.current.count === 0 ? 'No usable timings in the current period.' : selected.reference.count === 0 ? 'No usable timings in the reference period.' : 'Fewer than 20 usable timings in at least one period.'} A slowdown comparison needs at least 20 usable timings in each period.</p>{/if}
             </section>
             <Charts {analysis} {selected} {zone} {targetMs} />
           {/if}
           <section class="data-section request-section">
-            <div class="section-heading"><div><h3>Request history</h3><p>{selected ? selected.controller + '.' + selected.action + ' · ' + selected.kind + ' · ' + selected.outcome : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
+            <div class="section-heading"><div><h3>Request history</h3><p>{selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
               {#if selected}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
             </div>
             {#if requestError}<div class="inline-error" role="alert">{requestError}</div>{/if}

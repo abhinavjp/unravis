@@ -32,6 +32,11 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 	if len(current) > MaxSummaryRows || len(reference) > MaxSummaryRows || len(current)+len(reference) > MaxSummaryRows {
 		return Analysis{}, fmt.Errorf("%w: %w", ErrLimit, ErrSummaryRowLimit)
 	}
+	// Sources may return rows of other kinds for the quality counts (the
+	// pipeline keeps incomplete rows); only rows that can belong to the selected
+	// kind take part, so a Hangfire-only incomplete row never inflates an HTTP
+	// view and vice versa.
+	current, reference = scopeToKind(q, current), scopeToKind(q, reference)
 	cohorts := make(map[string]*cohortAccumulator)
 	var quality Quality
 	for _, b := range current {
@@ -157,32 +162,70 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 	return analysis, nil
 }
 
+// scopeToKind keeps the buckets that belong to the query's kind (see
+// KindMatches). Under "all" it returns the input unchanged.
+func scopeToKind(q Query, buckets []Bucket) []Bucket {
+	if q.Kind == "all" {
+		return buckets
+	}
+	scoped := make([]Bucket, 0, len(buckets))
+	for _, b := range buckets {
+		if KindMatches(q.Kind, b.Kind, b.State == "valid") {
+			scoped = append(scoped, b)
+		}
+	}
+	return scoped
+}
+
 func addQuality(quality *Quality, b Bucket) error {
 	if b.Count <= 0 {
 		return fmt.Errorf("bucket count must be positive")
 	}
+	if b.PendingAsync < 0 || b.PendingAsync > b.Count {
+		return fmt.Errorf("pendingAsync %d must be between 0 and the bucket count %d", b.PendingAsync, b.Count)
+	}
+	var incomplete, invalid, unknownOutcome int64
 	switch b.State {
 	case "incomplete":
-		if err := checkedAdd(&quality.Incomplete, b.Count); err != nil {
-			return err
-		}
+		incomplete = b.Count
 	case "invalid":
-		if err := checkedAdd(&quality.Invalid, b.Count); err != nil {
-			return err
-		}
+		invalid = b.Count
 	case "valid":
 	default:
 		return fmt.Errorf("bucket state %q is invalid", b.State)
 	}
 	if b.Outcome == "unknown" {
-		if err := checkedAdd(&quality.UnknownOutcome, b.Count); err != nil {
+		unknownOutcome = b.Count
+	}
+	next := *quality
+	for _, add := range []struct {
+		dst *int64
+		n   int64
+	}{{&next.Incomplete, incomplete}, {&next.Invalid, invalid}, {&next.UnknownOutcome, unknownOutcome}, {&next.PendingAsync, b.PendingAsync}} {
+		if err := checkedAdd(add.dst, add.n); err != nil {
 			return err
 		}
 	}
-	if b.PendingAsync < 0 || b.PendingAsync > b.Count {
-		return fmt.Errorf("pendingAsync %d must be between 0 and the bucket count %d", b.PendingAsync, b.Count)
+	if incomplete == 0 && invalid == 0 && unknownOutcome == 0 && b.PendingAsync == 0 {
+		return nil
 	}
-	return checkedAdd(&quality.PendingAsync, b.PendingAsync)
+	byKind := next.ByKind
+	counts := byKind[b.Kind]
+	for _, add := range []struct {
+		dst *int64
+		n   int64
+	}{{&counts.Incomplete, incomplete}, {&counts.Invalid, invalid}, {&counts.UnknownOutcome, unknownOutcome}, {&counts.PendingAsync, b.PendingAsync}} {
+		if err := checkedAdd(add.dst, add.n); err != nil {
+			return err
+		}
+	}
+	if byKind == nil {
+		byKind = make(map[string]QualityCounts)
+	}
+	byKind[b.Kind] = counts
+	next.ByKind = byKind
+	*quality = next
+	return nil
 }
 
 func checkedAdd(dst *int64, n int64) error {

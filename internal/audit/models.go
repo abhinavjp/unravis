@@ -240,6 +240,18 @@ type Quality struct {
 	UnknownOutcome int64 `json:"unknownOutcome"`
 
 	PendingAsync int64 `json:"pendingAsync,omitempty"`
+
+	// ByKind splits the counts above by row kind (synchronous, asynchronous,
+	// hangfire, unknown). Only kinds with something to report are present.
+	ByKind map[string]QualityCounts `json:"byKind,omitempty"`
+}
+
+// QualityCounts is one kind's share of the quality counters.
+type QualityCounts struct {
+	Incomplete     int64 `json:"incomplete"`
+	Invalid        int64 `json:"invalid"`
+	UnknownOutcome int64 `json:"unknownOutcome"`
+	PendingAsync   int64 `json:"pendingAsync,omitempty"`
 }
 
 type Analysis struct {

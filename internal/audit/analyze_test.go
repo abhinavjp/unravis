@@ -334,3 +334,101 @@ func TestBucketRejectsObservedPartialAboveCount(t *testing.T) {
 		t.Fatal("observedPartial greater than the bucket count must be rejected")
 	}
 }
+
+func TestQualityRespectsKindFilter(t *testing.T) {
+	var current []Bucket
+	current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "success", "valid", anchor, 30, 10)...)
+	current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "unknown", "incomplete", anchor, 2, 0)...)
+	current = append(current, makeBuckets("s1", "Jobs", "Nightly", "hangfire", "unknown", "incomplete", anchor, 7, 0)...)
+	current = append(current, makeBuckets("s1", "Jobs", "Nightly", "hangfire", "unknown", "invalid", anchor, 3, 0)...)
+	current = append(current, makeBuckets("s1", "Payroll", "Export", "unknown", "unknown", "incomplete", anchor, 4, 0)...)
+	current = append(current, makeBuckets("s1", "Payroll", "Export", "asynchronous", "unknown", "incomplete", anchor, 5, 0)...)
+
+	q := analysisQuery()
+	q.Kind = "synchronous"
+	analysis, err := BuildAnalysis(q, current, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Synchronous keeps its own incomplete rows and the polling-type-unknown ones; never Hangfire or Asynchronous.
+	if analysis.Quality.Incomplete != 6 || analysis.Quality.Invalid != 0 {
+		t.Fatalf("Quality incomplete/invalid = %d/%d, want 6/0 (hangfire and asynchronous rows must not count)", analysis.Quality.Incomplete, analysis.Quality.Invalid)
+	}
+	if analysis.Quality.UnknownOutcome != 6 {
+		t.Fatalf("Quality.UnknownOutcome = %d, want 6", analysis.Quality.UnknownOutcome)
+	}
+	if got := analysis.Quality.ByKind["synchronous"]; got.Incomplete != 2 {
+		t.Fatalf("ByKind[synchronous] = %+v, want incomplete 2", got)
+	}
+	if got := analysis.Quality.ByKind["unknown"]; got.Incomplete != 4 {
+		t.Fatalf("ByKind[unknown] = %+v, want incomplete 4", got)
+	}
+	if _, ok := analysis.Quality.ByKind["hangfire"]; ok {
+		t.Fatalf("ByKind must not report hangfire under a synchronous query: %+v", analysis.Quality.ByKind)
+	}
+	for _, c := range analysis.APIs {
+		if c.Kind == "hangfire" || c.Kind == "asynchronous" {
+			t.Fatalf("a %s cohort leaked into the synchronous view", c.Kind)
+		}
+	}
+
+	q.Kind = "hangfire"
+	analysis, err = BuildAnalysis(q, current, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.Quality.Incomplete != 7 || analysis.Quality.Invalid != 3 || len(analysis.Quality.ByKind) != 1 {
+		t.Fatalf("hangfire quality = %+v, want only the 7 incomplete and 3 invalid hangfire rows", analysis.Quality)
+	}
+
+	q.Kind = "all"
+	analysis, err = BuildAnalysis(q, current, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.Quality.Incomplete != 18 || analysis.Quality.Invalid != 3 || len(analysis.Quality.ByKind) != 4 {
+		t.Fatalf("all-kinds quality = %+v, want every row counted and reported per kind", analysis.Quality)
+	}
+}
+
+func TestKindHTTPCoversUnknownAndNeverHangfire(t *testing.T) {
+	cases := []struct {
+		query, row string
+		valid      bool
+		want       bool
+	}{
+		{"http", "synchronous", true, true},
+		{"http", "asynchronous", true, true},
+		{"http", "unknown", true, true},
+		{"http", "unknown", false, true},
+		{"http", "hangfire", false, false},
+		{"http", "hangfire", true, false},
+		{"http_unknown", "unknown", true, true},
+		{"http_unknown", "unknown", false, true},
+		{"http_unknown", "synchronous", false, false},
+		{"synchronous", "unknown", false, true},
+		{"synchronous", "unknown", true, false},
+		{"asynchronous", "unknown", false, true},
+		{"asynchronous", "synchronous", false, false},
+		{"synchronous", "asynchronous", false, false},
+		{"hangfire", "unknown", false, false},
+		{"hangfire", "hangfire", false, true},
+		{"all", "hangfire", false, true},
+	}
+	for _, c := range cases {
+		if got := KindMatches(c.query, c.row, c.valid); got != c.want {
+			t.Errorf("KindMatches(%q, %q, valid=%v) = %v, want %v", c.query, c.row, c.valid, got, c.want)
+		}
+	}
+	q := analysisQuery()
+	for _, kind := range []string{"http", "http_unknown"} {
+		q.Kind = kind
+		if err := ValidateQuery(q); err != nil {
+			t.Errorf("kind %q should validate: %v", kind, err)
+		}
+	}
+	q.Kind = "bogus"
+	if err := ValidateQuery(q); err == nil {
+		t.Error("an unknown kind must be rejected")
+	}
+}

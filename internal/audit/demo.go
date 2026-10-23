@@ -153,7 +153,7 @@ func aggregateDemo(records []RequestRecord, q Query, selected map[string]bool, c
 		if q.Controller != "" && r.Controller != q.Controller || q.Action != "" && r.Action != q.Action {
 			continue
 		}
-		if q.Kind != "all" && r.Kind != q.Kind || !BucketOutcomeMatches(q.Outcome, r.Outcome) {
+		if !KindMatches(q.Kind, r.Kind, true) || !BucketOutcomeMatches(q.Outcome, r.Outcome) {
 			continue
 		}
 		value := r.DurationMs
@@ -253,7 +253,7 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 			return Page{}, fmt.Errorf("%w: source was not found", ErrNotFound)
 		}
 	}
-	if !selected || (input.Query.Controller != "" && input.Query.Controller != fields[1]) || (input.Query.Action != "" && input.Query.Action != fields[2]) || (input.Query.Kind != "all" && input.Query.Kind != fields[3]) || !BucketOutcomeMatches(input.Query.Outcome, fields[4]) {
+	if !selected || (input.Query.Controller != "" && input.Query.Controller != fields[1]) || (input.Query.Action != "" && input.Query.Action != fields[2]) || !KindMatches(input.Query.Kind, fields[3], false) || !BucketOutcomeMatches(input.Query.Outcome, fields[4]) {
 		return Page{}, fmt.Errorf("%w: API key does not match query", ErrInvalidInput)
 	}
 	fingerprintBytes, _ := json.Marshal(struct {

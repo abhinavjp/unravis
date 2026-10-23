@@ -167,7 +167,21 @@ test('statusRates splits 4xx and 5xx', () => {
   assert.match(unsplit.tip, /split is unavailable/);
   assert.equal(presentation.statusRates(undefined, 'all').client, '—');
   assert.match(presentation.statusRates(undefined, 'all').tip, /No requests with a known/);
-  assert.match(presentation.statusRates(rollup, 'all', 'hangfire').tip, /Covers only the hangfire requests/);
+  assert.match(presentation.statusRates(rollup, 'all', 'hangfire').tip, /for the hangfire requests of this API/);
+  assert.match(presentation.statusRates({ ...rollup, kind: 'asynchronous' }, 'all', 'all').tip, /sources merged, for the asynchronous requests/);
+  assert.match(presentation.statusRates(rollup, 'all', 'all').tip, /rollup without a kind/);
+});
+
+test('kind labels and quality by kind keep unknown HTTP rows distinct', () => {
+  assert.equal(presentation.kindLabel('unknown'), 'HTTP (polling type unknown)');
+  assert.equal(presentation.kindLabel('synchronous'), 'synchronous');
+  assert.equal(presentation.kindLabel(undefined), '');
+  assert.match(presentation.unknownKindTip, /cannot be attributed to Synchronous or Asynchronous/);
+  assert.equal(presentation.qualityByKindText(undefined), '');
+  assert.equal(presentation.qualityByKindText({ incomplete: 0, invalid: 0, unknownOutcome: 0 }), '');
+  const text = presentation.qualityByKindText({ incomplete: 5, invalid: 1, unknownOutcome: 0, byKind: {
+    unknown: { incomplete: 4, invalid: 0, unknownOutcome: 0 }, hangfire: { incomplete: 1, invalid: 1, unknownOutcome: 0 }, synchronous: { incomplete: 0, invalid: 0, unknownOutcome: 0 } } });
+  assert.equal(text, 'By request type: hangfire: 1 missing timing, 1 unusable timing · HTTP (polling type unknown): 4 missing timing');
 });
 
 test('API-by-time heatmap preserves exact cohort rows and missing timeline cells', () => {
@@ -252,6 +266,13 @@ test('snapshot parser ignores malformed, unsupported-version, and invalid-schema
   assert.equal(investigation.parseInvestigationSnapshot('{'), null);
   assert.equal(investigation.parseInvestigationSnapshot(JSON.stringify({ version: 2 })), null);
   assert.equal(investigation.parseInvestigationSnapshot(JSON.stringify({ version: 1, query: {}, selectedSources: [], zone: 'UTC', targetMs: null })), null);
+});
+
+test('saved investigations accept the http kinds and reject unknown kinds', () => {
+  const query = { start: '2026-10-22T12:00:00.000Z', end: '2026-10-22T12:15:00.000Z', baselineStart: '2026-10-22T11:45:00.000Z', baselineEnd: '2026-10-22T12:00:00.000Z', outcome: 'all', metric: 'total', bucketSeconds: 10, controller: '', action: '' };
+  const snap = kind => ({ version: 1, query: { ...query, kind }, selectedSources: [], zone: 'UTC', targetMs: null });
+  for (const kind of ['http', 'http_unknown']) assert.equal(investigation.validateInvestigationSnapshot(snap(kind)), true, kind);
+  assert.equal(investigation.validateInvestigationSnapshot(snap('unknown')), false);
 });
 
 test('snapshot parsing and restore project query fields and source descriptors onto the allowlist', () => {
@@ -413,8 +434,8 @@ test('error rate shows as a percent, and the load badge needs |rho| >= 0.6 over 
   const { errorRateTip, loadTip } = loadTypeScript('src/lib/traffic.ts');
   const r = { controller: 'A', action: 'Run', requests: 200, failures: 10, errorRate: 0.05, perMinute: 3.33 };
   assert.match(errorRateTip(r, 'all', 'all'), /10 failed of 200/);
-  assert.match(errorRateTip(r, 'all', 'all'), /every source and kind/);
-  assert.doesNotMatch(errorRateTip(r, 'all', 'hangfire'), /every source and kind/);
+  assert.match(errorRateTip(r, 'all', 'all'), /all sources merged/);
+  assert.match(errorRateTip({ ...r, kind: 'synchronous' }, 'all', 'all'), /for the synchronous requests/);
   assert.match(errorRateTip(r, 'all', 'hangfire'), /hangfire/);
   assert.match(errorRateTip(r, 'success', 'all'), /outcome filter set to All/);
   assert.match(errorRateTip(undefined, 'all', 'all'), /known/);
@@ -422,9 +443,14 @@ test('error rate shows as a percent, and the load badge needs |rho| >= 0.6 over 
   assert.match(loadTip(-0.9), /latency falls as load rises/);
   assert.doesNotMatch(loadTip(-0.9), /rises and falls/);
   const rollups = [{ controller: 'A', action: 'Run', requests: 10, failures: 1, errorRate: 0.1, perMinute: 2 }];
-  assert.equal(rollupFor(rollups, { controller: 'A', action: 'Run' }).errorRate, 0.1);
-  assert.equal(rollupFor(rollups, { controller: 'A', action: 'Other' }), undefined);
-  assert.equal(rollupFor(undefined, { controller: 'A', action: 'Run' }), undefined);
+  assert.equal(rollupFor(rollups, { controller: 'A', action: 'Run', kind: 'synchronous' }).errorRate, 0.1);
+  assert.equal(rollupFor(rollups, { controller: 'A', action: 'Other', kind: 'synchronous' }), undefined);
+  assert.equal(rollupFor(undefined, { controller: 'A', action: 'Run', kind: 'synchronous' }), undefined);
+  const byKind = [
+    { controller: 'A', action: 'Run', kind: 'synchronous', requests: 10, failures: 1, errorRate: 0.1, perMinute: 2 },
+    { controller: 'A', action: 'Run', kind: 'asynchronous', requests: 10, failures: 5, errorRate: 0.5, perMinute: 2 }];
+  assert.equal(rollupFor(byKind, { controller: 'A', action: 'Run', kind: 'asynchronous' }).errorRate, 0.5, 'rollups are never merged across kinds');
+  assert.equal(rollupFor(byKind, { controller: 'A', action: 'Run', kind: 'unknown' }), undefined);
 });
 
 test('phase bar segments split audit and api shares, tolerate gaps, and describe the additive model', () => {

@@ -44,7 +44,7 @@ func buildLoadWindows(q Query, buckets []Bucket) ([]LoadWindow, error) {
 	}
 	groups := map[string]*accumulator{}
 	for _, b := range buckets {
-		if (q.Kind != "all" && b.Kind != q.Kind) || !BucketOutcomeMatches(q.Outcome, b.Outcome) {
+		if !KindMatches(q.Kind, b.Kind, b.State == "valid") || !BucketOutcomeMatches(q.Outcome, b.Outcome) {
 			continue
 		}
 		key := b.At.UTC().Format(time.RFC3339Nano)
@@ -87,7 +87,7 @@ func (d *demoRepository) Slowest(ctx context.Context, input PageInput) (Page, er
 		p.Sources = append(p.Sources, SourceResult{SourceID: id, OK: true, Version: "demo"})
 	}
 	for _, r := range d.records {
-		if !selected[r.SourceID] || r.InitiatedAt == nil || r.InitiatedAt.Before(q.Start) || !r.InitiatedAt.Before(q.End) || (q.Controller != "" && r.Controller != q.Controller) || (q.Action != "" && r.Action != q.Action) || (q.Kind != "all" && r.Kind != q.Kind) || !BucketOutcomeMatches(q.Outcome, r.Outcome) || RequestMetric(r, q.Metric) == nil {
+		if !selected[r.SourceID] || r.InitiatedAt == nil || r.InitiatedAt.Before(q.Start) || !r.InitiatedAt.Before(q.End) || (q.Controller != "" && r.Controller != q.Controller) || (q.Action != "" && r.Action != q.Action) || !KindMatches(q.Kind, r.Kind, true) || !BucketOutcomeMatches(q.Outcome, r.Outcome) || RequestMetric(r, q.Metric) == nil {
 			continue
 		}
 		p.Rows = append(p.Rows, r)

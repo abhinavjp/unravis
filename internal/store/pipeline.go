@@ -149,7 +149,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditAuditMs", Value: phaseValue("AuditCreateTime")}, {Key: "_auditApiMs", Value: phaseValue("ApiTime")}, {Key: "_auditPayloadMs", Value: phaseValue("PayloadRecordTime")}}}},
 	}
 	if q.Kind != "all" {
-		stages = append(stages, bson.D{{Key: "$match", Value: bson.D{{Key: "$or", Value: bson.A{bson.D{{Key: "_auditKind", Value: q.Kind}}, bson.D{{Key: "_auditState", Value: bson.D{{Key: "$ne", Value: "valid"}}}}}}}}})
+		stages = append(stages, bson.D{{Key: "$match", Value: kindFilterMatch(q.Kind)}})
 	}
 	if q.Outcome != "all" {
 		stages = append(stages, bson.D{{Key: "$match", Value: outcomeFilterMatch(q.Outcome)}})
@@ -250,6 +250,22 @@ func outcomeFromClassExpr() bson.D {
 // kind, outcome).
 func statusClassCount(class string) bson.D {
 	return bson.D{{Key: "$sum", Value: bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{"$_statusClass", class}}}, 1, 0}}}}}
+}
+
+// kindFilterMatch is the summary $match for a query kind. A valid row (a timed
+// sample) needs a derived kind that belongs to the query kind. A row that is not
+// valid is kept when its kind can belong to it: an unknown kind, usually an
+// incomplete row without a polling type yet, stays under synchronous,
+// asynchronous and http but never under hangfire. Hangfire detection itself
+// is unchanged.
+func kindFilterMatch(kind string) bson.D {
+	inKinds := func(kinds []string) bson.D {
+		return bson.D{{Key: "$in", Value: stringsToBSON(kinds...)}}
+	}
+	return bson.D{{Key: "$or", Value: bson.A{
+		bson.D{{Key: "_auditState", Value: "valid"}, {Key: "_auditKind", Value: inKinds(audit.KindMembers(kind))}},
+		bson.D{{Key: "_auditState", Value: bson.D{{Key: "$ne", Value: "valid"}}}, {Key: "_auditKind", Value: inKinds(audit.KindCompatibleMembers(kind))}},
+	}}}
 }
 
 // outcomeFilterMatch is the summary $match for a query outcome filter. success

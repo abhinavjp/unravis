@@ -10,13 +10,17 @@ import (
 // correlation is reported; below it the coefficient is mostly noise.
 const minCorrelationPoints = 8
 
-// Rollup is one API's current-window request volume and error rate, summed over
-// sources, kinds and outcomes. Requests and Failures count only requests with a
-// known outcome: unknown outcomes are left out of numerator and denominator and
-// are reported in Quality.UnknownOutcome instead.
+// Rollup is one API's current-window request volume and error rate for one
+// kind, summed over sources and outcomes (the UI labels the merge "all
+// sources"). Kinds are never merged: Synchronous, Asynchronous, Hangfire and
+// unknown HTTP rows of the same controller and action are separate rollups.
+// Requests and Failures count only requests with a known outcome: unknown
+// outcomes are left out of numerator and denominator and are reported in
+// Quality.UnknownOutcome instead.
 type Rollup struct {
 	Controller string   `json:"controller"`
 	Action     string   `json:"action"`
+	Kind       string   `json:"kind,omitempty"`
 	Requests   int64    `json:"requests"`
 	Failures   int64    `json:"failures"`
 	ErrorRate  *float64 `json:"errorRate,omitempty"`
@@ -27,7 +31,7 @@ type Rollup struct {
 }
 
 // buildRollups folds the current-window outcome-split cohorts into one row per
-// (controller, action), sorted by name. windowMinutes is the length of the
+// (controller, action, kind), sorted by name and then kind. windowMinutes is the length of the
 // current window. The sources apply the outcome filter before summarizing, so
 // when allOutcomes is false the failure share is unknowable and ErrorRate stays
 // nil; throughput is still reported. ClientErrorRate (4xx) and ServerErrorRate
@@ -36,17 +40,18 @@ type Rollup struct {
 // not account for every failure of the API (buckets that carry no counters), so
 // a missing split is never shown as 0%.
 func buildRollups(cohorts map[string]*cohortAccumulator, windowMinutes float64, allOutcomes bool) []Rollup {
-	type name struct{ controller, action string }
+	type name struct{ controller, action, kind string }
 	byName := map[name]*Rollup{}
 	clientErrors, serverErrors := map[name]int64{}, map[name]int64{}
 	for _, c := range cohorts {
 		if c.currentEvents <= 0 {
 			continue
 		}
-		r := byName[name{c.controller, c.action}]
+		key := name{c.controller, c.action, c.kind}
+		r := byName[key]
 		if r == nil {
-			r = &Rollup{Controller: c.controller, Action: c.action}
-			byName[name{c.controller, c.action}] = r
+			r = &Rollup{Controller: c.controller, Action: c.action, Kind: c.kind}
+			byName[key] = r
 		}
 		switch c.outcome {
 		case "success":
@@ -54,8 +59,8 @@ func buildRollups(cohorts map[string]*cohortAccumulator, windowMinutes float64, 
 		case "failure":
 			r.Requests = saturatingAdd(r.Requests, c.currentEvents)
 			r.Failures = saturatingAdd(r.Failures, c.currentEvents)
-			clientErrors[name{c.controller, c.action}] = saturatingAdd(clientErrors[name{c.controller, c.action}], c.currentClientErrors)
-			serverErrors[name{c.controller, c.action}] = saturatingAdd(serverErrors[name{c.controller, c.action}], c.currentServerErrors)
+			clientErrors[key] = saturatingAdd(clientErrors[key], c.currentClientErrors)
+			serverErrors[key] = saturatingAdd(serverErrors[key], c.currentServerErrors)
 		}
 	}
 	rows := make([]Rollup, 0, len(byName))
@@ -80,7 +85,10 @@ func buildRollups(cohorts map[string]*cohortAccumulator, windowMinutes float64, 
 		if rows[i].Controller != rows[j].Controller {
 			return rows[i].Controller < rows[j].Controller
 		}
-		return rows[i].Action < rows[j].Action
+		if rows[i].Action != rows[j].Action {
+			return rows[i].Action < rows[j].Action
+		}
+		return rows[i].Kind < rows[j].Kind
 	})
 	return rows
 }

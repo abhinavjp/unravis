@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Comparison, Rollup, Series } from '../lib/types';
   import { loadBadge, loadTip, rollupFor } from '../lib/traffic';
-  import { observedPartialTip, outcomeRateText, rankComparisons, statusRates, type RankField } from '../lib/presentation';
+  import { kindLabel, observedPartialTip, outcomeRateText, rankComparisons, statusRates, unknownKindTip, type RankField } from '../lib/presentation';
   import PhaseBar from './PhaseBar.svelte';
   let { rows, selectedKey, sources, outcomeFilter, onSelect, timelineKeys = [], onToggleTimeline = () => {}, rollups = [], timeline = [], kindFilter = 'all' }: {
     rows: Comparison[]; selectedKey: string; sources: Map<string, string>; outcomeFilter: string; onSelect: (key: string) => void
@@ -28,7 +28,7 @@
     undefined_baseline: 'The reference response time is too close to zero to calculate a meaningful ratio.'
   };
   let filtered = $derived(rows.filter(row => {
-    const text = `${row.controller}.${row.action} ${sources.get(row.sourceId) ?? ''} ${row.kind} ${row.outcome}`.toLowerCase();
+    const text = `${row.controller}.${row.action} ${sources.get(row.sourceId) ?? ''} ${row.kind} ${kindLabel(row.kind)} ${row.outcome}`.toLowerCase();
     return text.includes(search.trim().toLowerCase()) && (scope === 'all' || (scope === 'slower' ? (row.p95Ratio ?? 0) > 1 : scope === 'compared' ? row.state === 'compared' : row.state !== 'compared'));
   }));
   let ordered = $derived(rankComparisons(filtered, sort, direction));
@@ -87,7 +87,7 @@
         <tr class:chosen={row.key === selectedKey}>
           <td class="timeline-choice"><label><input type="checkbox" checked={timelineKeys.includes(row.key)} disabled={timelineKeys.length >= 8 && !timelineKeys.includes(row.key)} aria-label={'Compare timeline for ' + row.controller + '.' + row.action + ' in ' + (sources.get(row.sourceId) ?? row.sourceId) + ' · ' + row.kind + ' · ' + row.outcome} onchange={() => onToggleTimeline(row.key)} /><span>Compare</span></label></td>
           <td><button class="api-select" aria-pressed={row.key === selectedKey} onclick={() => onSelect(row.key)}>{row.controller}.{row.action}</button><small title={sources.get(row.sourceId) ?? row.sourceId}>{sources.get(row.sourceId) ?? row.sourceId}</small><PhaseBar phases={row.current.phases} delta={row.phaseDeltaMs} /></td>
-          <td class="group-kind" data-label="Kind and outcome">{row.kind}<small>{outcomeRateText(rows, row, outcomeFilter)}</small></td><td data-label="Current requests" title={observedPartialTip(row.current.observedPartial)}>{row.current.count.toLocaleString()}</td><td data-label="Reference requests" title={observedPartialTip(row.reference.observedPartial)}>{row.reference.count.toLocaleString()}</td>
+          <td class="group-kind" data-label="Kind and outcome" title={row.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(row.kind)}<small>{outcomeRateText(rows, row, outcomeFilter)}</small></td><td data-label="Current requests" title={observedPartialTip(row.current.observedPartial)}>{row.current.count.toLocaleString()}</td><td data-label="Reference requests" title={observedPartialTip(row.reference.observedPartial)}>{row.reference.count.toLocaleString()}</td>
           <td class="numeric" data-label="Total impact" title={impactTip(row)}>{impactText(row.impactMs)}{#if row.significant}<small>significant shift</small>{/if}</td>
           <td class="numeric" data-label="P95 vs reference" title={p99Tip(row)}>{ratio(row.p95Ratio)}</td><td class="numeric" data-label="P95 difference (ms)">{row.p95DeltaMs == null ? 'N/A' : '≈ ' + row.p95DeltaMs.toFixed(1)}</td>
           <td class="numeric" data-label="4xx %" title={rates.tip}>{rates.client}</td>

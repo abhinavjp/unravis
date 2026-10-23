@@ -358,7 +358,7 @@ func readLegacyBuckets(ctx context.Context, p *profile, q audit.Query, start tim
 		if start.Equal(q.BaselineStart) {
 			bucketAt = start.UTC()
 		}
-		if q.Kind != "all" && record.State == "valid" && record.Kind != q.Kind {
+		if !audit.KindMatches(q.Kind, record.Kind, record.State == "valid") {
 			continue
 		}
 		if record.Outcome != "unknown" && (record.State == "valid" || audit.IsStatusClassOutcome(q.Outcome)) && !audit.OutcomeFilterMatches(q.Outcome, record.Outcome, record.StatusClass) {
@@ -477,7 +477,7 @@ func readLegacyRequestRowsSorted(ctx context.Context, p *profile, q audit.Query,
 		if record.ID.IsZero() || record.At == nil || (!overlap && (record.At.Before(q.Start) || !record.At.Before(q.End))) || (overlap && !audit.ActivityOverlaps(record.At, record.Completed, q.Start, q.End)) {
 			continue
 		}
-		if cohort[3] != "" && cohort[3] != "all" && record.Kind != cohort[3] {
+		if cohort[3] != "" && cohort[3] != "all" && !audit.KindMatches(cohort[3], record.Kind, true) {
 			continue
 		}
 		if cohort[4] != "" && !audit.OutcomeFilterMatches(cohort[4], record.Outcome, record.StatusClass) {

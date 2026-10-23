@@ -130,7 +130,7 @@ func TestRollupErrorRateIgnoresUnknownOutcome(t *testing.T) {
 	current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "failure", "valid", anchor, 10, 10)...)
 	// Unknown outcomes must not dilute the rate, and must be reported in Quality.
 	current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "unknown", "valid", anchor, 50, 10)...)
-	// A second source and kind for the same API fold into one rollup.
+	// The same API under another kind is a separate rollup (see TestRollupsNeverMergeKinds).
 	current = append(current, makeBuckets("s2", "Payroll", "Run", "hangfire", "success", "valid", anchor, 100, 10)...)
 	// An API with no known outcomes gets no error rate.
 	current = append(current, makeBuckets("s1", "Other", "Go", "synchronous", "unknown", "valid", anchor, 5, 10)...)
@@ -143,25 +143,28 @@ func TestRollupErrorRateIgnoresUnknownOutcome(t *testing.T) {
 	}
 	byName := map[string]Rollup{}
 	for _, r := range analysis.Rollups {
-		byName[r.Controller+"."+r.Action] = r
+		byName[r.Controller+"."+r.Action+"."+r.Kind] = r
 	}
-	run := byName["Payroll.Run"]
-	if run.Requests != 200 || run.Failures != 10 {
-		t.Fatalf("Payroll.Run = %d requests / %d failures, want 200 / 10", run.Requests, run.Failures)
+	run := byName["Payroll.Run.synchronous"]
+	if run.Requests != 100 || run.Failures != 10 {
+		t.Fatalf("Payroll.Run synchronous = %d requests / %d failures, want 100 / 10", run.Requests, run.Failures)
 	}
-	if run.ErrorRate == nil || math.Abs(*run.ErrorRate-0.05) > 1e-12 {
-		t.Fatalf("ErrorRate = %v, want 0.05", run.ErrorRate)
+	if run.ErrorRate == nil || math.Abs(*run.ErrorRate-0.1) > 1e-12 {
+		t.Fatalf("ErrorRate = %v, want 0.1", run.ErrorRate)
 	}
-	if math.Abs(run.PerMinute-200) > 1e-9 {
-		t.Fatalf("PerMinute = %v, want 200 over a one minute window", run.PerMinute)
+	if math.Abs(run.PerMinute-100) > 1e-9 {
+		t.Fatalf("PerMinute = %v, want 100 over a one minute window", run.PerMinute)
 	}
-	other, ok := byName["Other.Go"]
+	if hf := byName["Payroll.Run.hangfire"]; hf.Requests != 100 || hf.Failures != 0 {
+		t.Fatalf("Payroll.Run hangfire = %d requests / %d failures, want 100 / 0", hf.Requests, hf.Failures)
+	}
+	other, ok := byName["Other.Go.synchronous"]
 	if !ok || other.Requests != 0 || other.ErrorRate != nil {
 		t.Fatalf("unknown-only API must have zero requests and nil error rate: %#v", other)
 	}
 	for i := 1; i < len(analysis.Rollups); i++ {
 		a, b := analysis.Rollups[i-1], analysis.Rollups[i]
-		if a.Controller > b.Controller || (a.Controller == b.Controller && a.Action >= b.Action) {
+		if a.Controller > b.Controller || (a.Controller == b.Controller && (a.Action > b.Action || (a.Action == b.Action && a.Kind >= b.Kind))) {
 			t.Fatalf("rollups are not sorted: %v", analysis.Rollups)
 		}
 	}
@@ -391,5 +394,44 @@ func TestBuildAnalysisRejectsInconsistentStatusCounts(t *testing.T) {
 	buckets[0].Count4xx, buckets[0].Count5xx = -1, 0
 	if _, err := BuildAnalysis(q, buckets, nil, nil); err == nil {
 		t.Fatal("negative 4xx count must be rejected")
+	}
+}
+
+func TestRollupsNeverMergeKinds(t *testing.T) {
+	q := analysisQuery() // kind all, 1 minute current window
+	var current []Bucket
+	current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "success", "valid", anchor, 40, 10)...)
+	current = append(current, makeBuckets("s1", "Payroll", "Run", "synchronous", "failure", "valid", anchor, 10, 10)...)
+	current = append(current, makeBuckets("s1", "Payroll", "Run", "asynchronous", "success", "valid", anchor, 30, 10)...)
+	// A second source folds into the same (controller, action, kind) rollup.
+	current = append(current, makeBuckets("s2", "Payroll", "Run", "synchronous", "success", "valid", anchor, 10, 10)...)
+	current = append(current, makeBuckets("s1", "Payroll", "Run", "hangfire", "success", "valid", anchor, 100, 10)...)
+	analysis, err := BuildAnalysis(q, current, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(analysis.Rollups) != 3 {
+		t.Fatalf("got %d rollups, want 3 (synchronous, asynchronous, hangfire): %+v", len(analysis.Rollups), analysis.Rollups)
+	}
+	byKind := map[string]Rollup{}
+	for _, r := range analysis.Rollups {
+		if r.Controller != "Payroll" || r.Action != "Run" {
+			t.Fatalf("unexpected rollup %+v", r)
+		}
+		byKind[r.Kind] = r
+	}
+	if r := byKind["synchronous"]; r.Requests != 60 || r.Failures != 10 {
+		t.Fatalf("synchronous = %d requests / %d failures, want 60 / 10 (sources merged)", r.Requests, r.Failures)
+	}
+	if r := byKind["asynchronous"]; r.Requests != 30 || r.Failures != 0 {
+		t.Fatalf("asynchronous = %d requests / %d failures, want 30 / 0", r.Requests, r.Failures)
+	}
+	if r := byKind["hangfire"]; r.Requests != 100 {
+		t.Fatalf("hangfire requests = %d, want 100", r.Requests)
+	}
+	for i := 1; i < len(analysis.Rollups); i++ {
+		if analysis.Rollups[i-1].Kind >= analysis.Rollups[i].Kind {
+			t.Fatalf("rollups of one API must be sorted by kind: %+v", analysis.Rollups)
+		}
 	}
 }
