@@ -78,9 +78,14 @@ export interface RequestRecord {
   status: string; url: string; initiatedAt: string | null; completedAt: string | null;
   durationMs: number | null; apiTimeMs: number | null; auditCreateTimeMs: number | null;
   payloadRecordTimeMs: number | null; requestKB: number; responseKB: number;
+  /** Additive audit-evidence columns: absent from older servers and when the stored field is empty. */
+  userId?: number; userIp?: string; userAgent?: string; uiVersion?: string;
+  createdOn?: string; updatedOn?: string; pollingTypeRaw?: string;
 }
 export interface Page { rows: RequestRecord[]; nextCursor: string; sources: SourceResult[]; truncated: boolean }
 export interface Payload { request: string; response: string; truncated: boolean }
+/** One record with every schema field, its derived kind/state/outcome, and capped payloads. */
+export interface RecordDetail extends RequestRecord { state: string; pendingAsync?: boolean; payload: Payload }
 export interface ActivityInput { sourceIds: string[]; start: string; end: string; cursor: string; limit: number }
 export interface VolumeBucket { controller: string; action: string; at: string; count: number }
 export interface LoadWindow { at:string; count:number; timing:Stats }

@@ -5,7 +5,7 @@
   import { countEpochBuckets } from './lib/time';
   import { initialComparison, queryFingerprint, resultNotes, rankComparisons } from './lib/presentation';
   import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, shouldSelectAddedSource, writeInvestigationSnapshot } from './lib/investigation';
-import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Payload, Query, RecentConnection, RequestRecord, Source, SourceInput, TLSMode } from './lib/types';
+import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RequestRecord, Source, SourceInput, TLSMode } from './lib/types';
   import QueryControls from './components/QueryControls.svelte';
   import Charts from './components/Charts.svelte';
   import MultiTimeline from './components/MultiTimeline.svelte';
@@ -14,7 +14,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Paylo
   import TrafficSlowness from './components/TrafficSlowness.svelte';
   import ComparisonTable from './components/ComparisonTable.svelte';
   import RequestTable from './components/RequestTable.svelte';
-  import PayloadViewer from './components/PayloadViewer.svelte';
+  import RecordDetailPanel from './components/RecordDetail.svelte';
 
   let info = $state<Info | null>(null);
   let sources = $state<Source[]>([]);
@@ -36,17 +36,17 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Paylo
   let requestPage = $state<Page | null>(null);
   let requestRows = $state<RequestRecord[]>([]);
   let requestPageNumber = $state(1);
-  let payload = $state<Payload | null>(null);
+  let record = $state<RecordDetail | null>(null);
   let loading = $state(false);
   let requestLoading = $state(false);
-  let payloadLoadingId = $state('');
+  let recordLoadingId = $state('');
   let sourceBusy = $state(false);
   let busyDelete = $state('');
   let error = $state('');
   let sourceError = $state('');
   let sourceSuccess = $state('');
   let requestError = $state('');
-  let payloadError = $state('');
+  let recordError = $state('');
   let initError = $state('');
   let addLabel = $state('');
   let addUri = $state('');
@@ -89,7 +89,7 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Paylo
   let connectionObservedSignature = '';
   let analysisController: AbortController | null = null;
   let requestController: AbortController | null = null;
-  let payloadController: AbortController | null = null;
+  let recordController: AbortController | null = null;
   let analysisSequence = 0;
   let requestSequence = 0;
   let querySnapshot = '';
@@ -399,11 +399,11 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Paylo
     }
   }
   function invalidateDetails() {
-    requestController?.abort(); payloadController?.abort();
-    requestController = null; payloadController = null;
-    requestPage = null; requestRows = []; payload = null;
+    requestController?.abort(); recordController?.abort();
+    requestController = null; recordController = null;
+    requestPage = null; requestRows = []; record = null;
     requestPageNumber = 1;
-    requestError = ''; payloadError = ''; payloadLoadingId = '';
+    requestError = ''; recordError = ''; recordLoadingId = '';
   }
 
   function setDatabaseSelected(database: string, checked: boolean) {
@@ -629,12 +629,12 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Paylo
       if (run === requestSequence && !(cause instanceof DOMException && cause.name === 'AbortError')) requestError = message(cause);
     } finally { if (run === requestSequence) requestLoading = false; }
   }
-  async function showPayload(row: RequestRecord) {
-    payloadController?.abort(); payloadController = new AbortController();
-    payloadError = ''; payload = null; payloadLoadingId = row.id;
-    try { payload = await api.payload(row.sourceId, row.id, payloadController.signal); }
-    catch (cause) { if (!(cause instanceof DOMException && cause.name === 'AbortError')) payloadError = message(cause); }
-    finally { if (payloadLoadingId === row.id) payloadLoadingId = ''; }
+  async function showRecord(row: RequestRecord) {
+    recordController?.abort(); recordController = new AbortController();
+    recordError = ''; record = null; recordLoadingId = row.id;
+    try { record = await api.record(row.sourceId, row.id, recordController.signal); }
+    catch (cause) { if (!(cause instanceof DOMException && cause.name === 'AbortError')) recordError = message(cause); }
+    finally { if (recordLoadingId === row.id) recordLoadingId = ''; }
   }
   async function exportCSV() {
     if (!selected) return;
@@ -840,14 +840,14 @@ import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Paylo
             <Charts {analysis} {selected} {zone} {targetMs} />
           {/if}
           <section class="data-section request-section">
-            <div class="section-heading"><div><h3>Request history</h3><p>{selected ? selected.controller + '.' + selected.action + ' · ' + selected.kind + ' · ' + selected.outcome : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Payload shows captured request and response text.</p></div>
+            <div class="section-heading"><div><h3>Request history</h3><p>{selected ? selected.controller + '.' + selected.action + ' · ' + selected.kind + ' · ' + selected.outcome : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
               {#if selected}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
             </div>
             {#if requestError}<div class="inline-error" role="alert">{requestError}</div>{/if}
             {#if requestPage?.sources.some(source => !source.ok)}<div class="source-failure compact-failure" role="alert">{#each requestPage.sources.filter(source => !source.ok) as failed}<span>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}: {failed.error}</span>{/each}</div>{/if}
-            <RequestTable rows={requestRows} {sourceLabels} loading={requestLoading} pageNumber={requestPageNumber} nextCursor={requestPage?.nextCursor ?? ''} truncated={requestPage?.truncated ?? false} payloadId={payloadLoadingId} onFirst={() => loadRequests('', 1)} onNext={() => loadRequests(requestPage?.nextCursor ?? '', requestPageNumber + 1)} onPayload={showPayload} onContext={async (row) => {contextAnchor=row;await tick();document.getElementById('nearby-activity')?.scrollIntoView({block:'start'});}} />
-            {#if payloadError}<div class="inline-error" role="alert">{payloadError}</div>{/if}
-            <PayloadViewer {payload} onClose={() => payload = null} />
+            <RequestTable rows={requestRows} {sourceLabels} loading={requestLoading} pageNumber={requestPageNumber} nextCursor={requestPage?.nextCursor ?? ''} truncated={requestPage?.truncated ?? false} recordId={recordLoadingId} onFirst={() => loadRequests('', 1)} onNext={() => loadRequests(requestPage?.nextCursor ?? '', requestPageNumber + 1)} onInspect={showRecord} onContext={async (row) => {contextAnchor=row;await tick();document.getElementById('nearby-activity')?.scrollIntoView({block:'start'});}} />
+            {#if recordError}<div class="inline-error" role="alert">{recordError}</div>{/if}
+            <RecordDetailPanel detail={record} sourceLabel={record ? (sourceLabels.get(record.sourceId) ?? record.sourceId) : ''} onClose={() => record = null} />
           </section>
           {#if contextAnchor}<ActivityContext anchor={contextAnchor} sourceIds={analysis.query.sourceIds} {sourceLabels} {zone} />{/if}
         {:else if loading}

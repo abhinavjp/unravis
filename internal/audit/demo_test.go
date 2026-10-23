@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -158,6 +159,32 @@ func TestDemoPayloadIsExplicitlyIllustrative(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "mongodb") {
 		t.Fatalf("demo payload contains connection detail: %s", encoded)
+	}
+}
+
+func TestDemoRecordIsIllustrativeAndComplete(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	d := NewDemo(now)
+	page, err := d.Requests(context.Background(), PageInput{Query: demoQuery(now), APIKey: CohortKey("demo-west", "Payroll", "Run", "synchronous", "success"), Limit: 1})
+	if err != nil || len(page.Rows) != 1 {
+		t.Fatalf("rows=%d err=%v", len(page.Rows), err)
+	}
+	row := page.Rows[0]
+	detail, err := d.Record(context.Background(), RecordInput{SourceID: row.SourceID, ID: row.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.ID != row.ID || detail.State != "valid" || detail.UserID == nil || detail.UserIP == "" || detail.UIVersion == "" || detail.CreatedOn == nil || detail.UpdatedOn == nil || detail.PollingTypeRaw == "" {
+		t.Fatalf("demo detail lacks audit evidence: %#v", detail)
+	}
+	if !strings.Contains(detail.Payload.Request, "Illustrative demo") || !strings.Contains(detail.Payload.Response, "Illustrative demo") {
+		t.Fatalf("demo payload isn't labeled illustrative: %#v", detail.Payload)
+	}
+	if row.UserID == nil || row.UIVersion == "" {
+		t.Fatalf("demo table rows lack the new evidence columns: %#v", row)
+	}
+	if _, err := d.Record(context.Background(), RecordInput{SourceID: row.SourceID, ID: "missing"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing record error = %v", err)
 	}
 }
 

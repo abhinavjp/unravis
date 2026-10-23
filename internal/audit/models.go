@@ -295,6 +295,36 @@ type RequestRecord struct {
 	PayloadRecordTimeMs *float64   `json:"payloadRecordTimeMs"`
 	RequestKB           float64    `json:"requestKB"`
 	ResponseKB          float64    `json:"responseKB"`
+	UserID              *int       `json:"userId,omitempty"`
+	UserIP              string     `json:"userIp,omitempty"`
+	UserAgent           string     `json:"userAgent,omitempty"`
+	UIVersion           string     `json:"uiVersion,omitempty"`
+	CreatedOn           *time.Time `json:"createdOn,omitempty"`
+	UpdatedOn           *time.Time `json:"updatedOn,omitempty"`
+	PollingTypeRaw      string     `json:"pollingTypeRaw,omitempty"`
+}
+
+// RequestRecord's last seven fields are additive audit evidence for the table,
+// the CSV export and RecordDetail. PollingTypeRaw keeps the stored
+// RequestPollingType verbatim, including its trailing space.
+
+// RecordInput selects one audit document by source and Mongo ObjectID.
+type RecordInput struct {
+	SourceID string `json:"sourceId"`
+	ID       string `json:"id"`
+}
+
+// RecordDetail is the complete underlying audit evidence for one document: the
+// 19 non-payload schema fields (RequestRecord), the state derived from them and
+// both capped payloads. InitiatedAt is the stored RequestInitiatedAt and is nil
+// when the document lacks it; Kind, Outcome (status class), State and
+// DurationMs (observed time) come from the same normalisation the table and
+// the summaries use.
+type RecordDetail struct {
+	RequestRecord
+	State        string  `json:"state"`
+	PendingAsync bool    `json:"pendingAsync,omitempty"`
+	Payload      Payload `json:"payload"`
 }
 
 type PageInput struct {
@@ -356,5 +386,6 @@ type Repository interface {
 	Analyze(context.Context, Query) (Analysis, error)
 	Requests(context.Context, PageInput) (Page, error)
 	Payload(context.Context, PayloadInput) (Payload, error)
+	Record(context.Context, RecordInput) (RecordDetail, error)
 	Close(context.Context) error
 }

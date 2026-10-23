@@ -1,4 +1,4 @@
-import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Payload, Query, RecentConnection, RememberConnectionInput, Source, SourceInput } from './types';
+import type { Analysis, ConnectionInput, ConnectionTestResult, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput } from './types';
 
 const token = document.querySelector<HTMLMetaElement>('meta[name="audit-session"]')?.content ?? '';
 const base = '/api';
@@ -53,6 +53,8 @@ export const api = {
     request<Page>('/requests', json({ query, apiKey, cursor, limit: 100 }), signal),
   payload: (sourceId: string, id: string, signal?: AbortSignal) =>
     request<Payload>('/payload', json({ sourceId, id }), signal),
+  record: (sourceId: string, id: string, signal?: AbortSignal) =>
+    request<RecordDetail>('/record', json({ sourceId, id }), signal),
   activity: (input: import('./types').ActivityInput, signal?: AbortSignal) => request<Page>('/activity', json(input), signal),
   export: async (query: Query, apiKey: string, signal?: AbortSignal) => {
     const response = await fetch(base + '/export', {
