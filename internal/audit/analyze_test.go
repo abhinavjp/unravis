@@ -303,13 +303,23 @@ func TestBuildAnalysisCountsPendingAsyncInQualityAndObservedPartialInStats(t *te
 	if analysis.Quality.PendingAsync != 3 || analysis.Quality.Incomplete != 5 {
 		t.Fatalf("quality = %#v, want 3 pending of 5 incomplete", analysis.Quality)
 	}
+	foundValid, foundPending := false, false
 	for _, c := range analysis.APIs {
-		if c.Kind == "synchronous" && c.Outcome == "success" && (c.Current.ObservedPartial != 4 || c.Reference.ObservedPartial != 0) {
-			t.Fatalf("observedPartial current/reference = %d/%d, want 4/0", c.Current.ObservedPartial, c.Reference.ObservedPartial)
+		if c.Kind == "synchronous" && c.Outcome == "success" {
+			foundValid = true
+			if c.Current.ObservedPartial != 4 || c.Reference.ObservedPartial != 0 {
+				t.Fatalf("observedPartial current/reference = %d/%d, want 4/0", c.Current.ObservedPartial, c.Reference.ObservedPartial)
+			}
 		}
-		if c.Kind == "asynchronous" && (c.Current.Count != 0 || c.CurrentEvents != 3) {
-			t.Fatalf("pending async cohort %#v must have events but no timing samples", c)
+		if c.Kind == "asynchronous" {
+			foundPending = true
+			if c.Current.Count != 0 || c.CurrentEvents != 3 {
+				t.Fatalf("pending async cohort %#v must have events but no timing samples", c)
+			}
 		}
+	}
+	if !foundValid || !foundPending {
+		t.Fatalf("expected both the synchronous success and the pending asynchronous cohorts, found valid=%v pending=%v in %d cohorts", foundValid, foundPending, len(analysis.APIs))
 	}
 	encoded, _ := json.Marshal(Quality{Incomplete: 1})
 	if string(encoded) != `{"incomplete":1,"invalid":0,"unknownOutcome":0}` {

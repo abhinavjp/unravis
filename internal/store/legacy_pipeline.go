@@ -513,7 +513,7 @@ func normalizeLegacyRecord(raw bson.Raw, metric string) (legacyRecord, bool) {
 	record.URL = legacyString(raw.Lookup("RequestMainUrl"))
 	record.Kind = legacyKind(legacyString(raw.Lookup("RequestPollingType")), legacyString(raw.Lookup("UserAgent")))
 	record.Outcome = legacyOutcome(record.Kind, raw.Lookup("StatusCode"))
-	record.PendingAsync = strings.ToLower(strings.TrimSpace(legacyString(raw.Lookup("RequestPollingType")))) == "asynchronous" && strings.ToUpper(record.Status) == "ACCEPTED"
+	record.PendingAsync = record.Kind == "asynchronous" && strings.ToUpper(record.Status) == "ACCEPTED"
 	if record.PendingAsync {
 		record.Outcome = "unknown"
 	}

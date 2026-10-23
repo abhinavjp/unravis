@@ -288,11 +288,11 @@ func TestLegacyBucketsCarryPhaseSumsAndPerPhaseCounts(t *testing.T) {
 	}
 }
 
-func legacyCompletionRaw(t *testing.T, polling, status string) bson.Raw {
+func legacyCompletionRaw(t *testing.T, fixture completionFixture) bson.Raw {
 	t.Helper()
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	encoded, err := bson.Marshal(bson.D{
-		{Key: "_id", Value: bson.NewObjectID()}, {Key: "RequestPollingType", Value: polling}, {Key: "StatusCode", Value: status},
+		{Key: "_id", Value: bson.NewObjectID()}, {Key: "RequestPollingType", Value: fixture.polling}, {Key: "UserAgent", Value: fixture.agent}, {Key: "StatusCode", Value: fixture.status},
 		{Key: "RequestInitiatedAt", Value: at}, {Key: "RequestCompletedAt", Value: at.Add(500 * time.Millisecond)}, {Key: "ApiTime", Value: 480.0},
 	})
 	if err != nil {
@@ -305,9 +305,12 @@ func TestLegacyAsyncAcceptedIsIncomplete(t *testing.T) {
 	for _, metric := range []string{"total", "api"} {
 		for _, fixture := range completionFixtures() {
 			t.Run(metric+"/"+fixture.name, func(t *testing.T) {
-				record, ok := normalizeLegacyRecord(legacyCompletionRaw(t, fixture.polling, fixture.status), metric)
+				record, ok := normalizeLegacyRecord(legacyCompletionRaw(t, fixture), metric)
 				if !ok {
 					t.Fatal("record was not normalised")
+				}
+				if record.Kind != fixture.wantKind || record.PendingAsync != fixture.wantPending {
+					t.Fatalf("kind/pending = %s/%v, want %s/%v", record.Kind, record.PendingAsync, fixture.wantKind, fixture.wantPending)
 				}
 				if record.State != fixture.wantState || record.Outcome != fixture.wantOutcome {
 					t.Fatalf("state/outcome = %s/%s, want %s/%s", record.State, record.Outcome, fixture.wantState, fixture.wantOutcome)
@@ -393,13 +396,19 @@ func TestLegacyBucketsCountPendingAsyncAsIncompleteWithoutTiming(t *testing.T) {
 	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
 	q.Kind, q.Outcome = "all", "all"
 	at := q.Start.Add(time.Second)
-	doc := func(polling, status string) bson.D {
-		return bson.D{{Key: "_auditMetadataOversized", Value: false}, {Key: "ControllerName", Value: "Payroll"}, {Key: "ActionName", Value: "Run"}, {Key: "RequestPollingType", Value: polling}, {Key: "StatusCode", Value: status}, {Key: "RequestInitiatedAt", Value: at}, {Key: "RequestCompletedAt", Value: at.Add(30 * time.Millisecond)}, {Key: "ApiTime", Value: 30.0}}
+	doc := func(polling, agent, status string) bson.D {
+		return bson.D{{Key: "_auditMetadataOversized", Value: false}, {Key: "ControllerName", Value: "Payroll"}, {Key: "ActionName", Value: "Run"}, {Key: "RequestPollingType", Value: polling}, {Key: "UserAgent", Value: agent}, {Key: "StatusCode", Value: status}, {Key: "RequestInitiatedAt", Value: at}, {Key: "RequestCompletedAt", Value: at.Add(30 * time.Millisecond)}, {Key: "ApiTime", Value: 30.0}}
 	}
-	var pending, incompleteCount, validCount int64
+	var pending, incompleteCount, validCount, hangfireCount int64
 	var validSum float64
-	for _, b := range legacyBucketsFor(t, q, doc("Asynchronous ", "Accepted"), doc("Asynchronous ", "Accepted"), doc("Synchronous ", "Accepted")) {
+	for _, b := range legacyBucketsFor(t, q, doc("Asynchronous ", "", "Accepted"), doc("Asynchronous ", "", "Accepted"), doc("Synchronous ", "", "Accepted"), doc("Asynchronous ", "Hangfire", "Accepted")) {
 		pending += b.PendingAsync
+		if b.Kind == "hangfire" {
+			hangfireCount += b.Count
+			if b.State != "valid" || b.Outcome != "success" || b.PendingAsync != 0 {
+				t.Fatalf("hangfire bucket %#v must be a valid success with no pending rows", b)
+			}
+		}
 		switch b.State {
 		case "incomplete":
 			incompleteCount += b.Count
@@ -413,7 +422,7 @@ func TestLegacyBucketsCountPendingAsyncAsIncompleteWithoutTiming(t *testing.T) {
 			}
 		}
 	}
-	if pending != 2 || incompleteCount != 2 || validCount != 1 || validSum != 30 {
-		t.Fatalf("pending/incomplete/valid/sum = %d/%d/%d/%v, want 2/2/1/30", pending, incompleteCount, validCount, validSum)
+	if pending != 2 || incompleteCount != 2 || validCount != 2 || validSum != 60 || hangfireCount != 1 {
+		t.Fatalf("pending/incomplete/valid/sum/hangfire = %d/%d/%d/%v/%d, want 2/2/2/60/1", pending, incompleteCount, validCount, validSum, hangfireCount)
 	}
 }

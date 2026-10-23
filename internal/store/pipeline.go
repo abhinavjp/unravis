@@ -16,6 +16,18 @@ func buildPipeline(q audit.Query, start, end time.Time) mongo.Pipeline {
 	return buildSummaryPipeline(q, start, end, true)
 }
 
+// pendingAsyncExpr is the single definition of a pending async request, shared
+// by the summary and request-page pipelines: the derived cohort kind is
+// asynchronous (so a Hangfire user agent keeps a row in the hangfire cohort)
+// and the status text is ACCEPTED. The legacy Go path applies the same rule to
+// record.Kind.
+func pendingAsyncExpr(kind, statusText bson.D) bson.D {
+	return bson.D{{Key: "$and", Value: bson.A{
+		bson.D{{Key: "$eq", Value: bson.A{kind, "asynchronous"}}},
+		bson.D{{Key: "$eq", Value: bson.A{statusText, "ACCEPTED"}}},
+	}}}
+}
+
 // Reference statistics use the whole interval; only current results need time slots.
 func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mongo.Pipeline {
 	intervalMS := int64(q.BucketSeconds) * 1000
@@ -55,7 +67,7 @@ func buildSummaryPipeline(q audit.Query, start, end time.Time, timeline bool) mo
 	statusSets := statusNames()
 	// An asynchronous request that answered 202 Accepted has only been queued:
 	// its work is not done, so it is neither a success nor a timing sample.
-	pending := bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{polling, "asynchronous"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "ACCEPTED"}}}}}}
+	pending := pendingAsyncExpr(kind, statusText)
 	outcome := bson.D{{Key: "$switch", Value: bson.D{
 		{Key: "branches", Value: bson.A{
 			bson.D{{Key: "case", Value: "$_auditPending"}, {Key: "then", Value: "unknown"}},

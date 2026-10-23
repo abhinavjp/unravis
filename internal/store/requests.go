@@ -269,7 +269,7 @@ func requestPipeline(q audit.Query, cohort [5]string, sourceID string, after *pa
 	statusText := bson.D{{Key: "$toUpper", Value: bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$StatusCode"}, {Key: "to", Value: "string"}, {Key: "onError", Value: ""}, {Key: "onNull", Value: ""}}}}}}
 	statusNumber := bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$StatusCode"}, {Key: "to", Value: "int"}, {Key: "onError", Value: nil}, {Key: "onNull", Value: nil}}}}
 	sets := statusNames()
-	pending := bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{polling, "asynchronous"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "ACCEPTED"}}}}}}
+	pending := pendingAsyncExpr(kind, statusText)
 	outcome := bson.D{{Key: "$switch", Value: bson.D{{Key: "branches", Value: bson.A{
 		bson.D{{Key: "case", Value: "$_auditPending"}, {Key: "then", Value: "unknown"}},
 		bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{kind, "hangfire"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "SUCCEEDED"}}}}}}}, {Key: "then", Value: "success"}},

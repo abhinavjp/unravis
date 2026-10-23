@@ -493,29 +493,37 @@ func evalSetStages(t *testing.T, pipeline mongo.Pipeline, doc map[string]any) ma
 }
 
 type completionFixture struct {
-	name            string
-	polling, status string
-	wantState       string
-	wantOutcome     string
-	wantDurationNil bool
+	name                   string
+	polling, agent, status string
+	wantKind               string
+	wantState              string
+	wantOutcome            string
+	wantPending            bool
+	wantDurationNil        bool
 }
 
 func completionFixtures() []completionFixture {
 	return []completionFixture{
-		{"async accepted is pending", "Asynchronous ", "Accepted", "incomplete", "unknown", true},
-		{"async accepted is case-insensitive on the status", " asynchronous", "ACCEPTED", "incomplete", "unknown", true},
-		{"sync accepted is an inline 202", "Synchronous ", "Accepted", "valid", "success", false},
-		{"async ok is complete", "Asynchronous ", "OK", "valid", "success", false},
-		{"async created is complete", "Asynchronous ", "Created", "valid", "success", false},
+		{"async accepted is pending", "Asynchronous ", "", "Accepted", "asynchronous", "incomplete", "unknown", true, true},
+		{"async accepted is case-insensitive on the status", " asynchronous", "", "ACCEPTED", "asynchronous", "incomplete", "unknown", true, true},
+		{"sync accepted is an inline 202", "Synchronous ", "", "Accepted", "synchronous", "valid", "success", false, false},
+		{"async ok is complete", "Asynchronous ", "", "OK", "asynchronous", "valid", "success", false, false},
+		{"async created is complete", "Asynchronous ", "", "Created", "asynchronous", "valid", "success", false, false},
+		{"hangfire user agent keeps an async accepted row in the hangfire cohort", "Asynchronous ", "Hangfire", "Accepted", "hangfire", "valid", "success", false, false},
+		{"hangfire polling type accepted is not pending", "Hangfire", "", "Accepted", "hangfire", "valid", "success", false, false},
 	}
 }
 
-func completionDoc(polling, status string) map[string]any {
+func completionDoc(fixture completionFixture) map[string]any {
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-	return map[string]any{
-		"RequestPollingType": polling, "StatusCode": status,
+	doc := map[string]any{
+		"RequestPollingType": fixture.polling, "StatusCode": fixture.status,
 		"RequestInitiatedAt": at, "RequestCompletedAt": at.Add(500 * time.Millisecond), "ApiTime": 480.0,
 	}
+	if fixture.agent != "" {
+		doc["UserAgent"] = fixture.agent
+	}
+	return doc
 }
 
 func TestSummaryPipelineAsyncAcceptedIsIncomplete(t *testing.T) {
@@ -524,7 +532,10 @@ func TestSummaryPipelineAsyncAcceptedIsIncomplete(t *testing.T) {
 		q.Metric = metric
 		for _, fixture := range completionFixtures() {
 			t.Run(metric+"/"+fixture.name, func(t *testing.T) {
-				got := evalSetStages(t, buildSummaryPipeline(q, q.Start, q.End, true), completionDoc(fixture.polling, fixture.status))
+				got := evalSetStages(t, buildSummaryPipeline(q, q.Start, q.End, true), completionDoc(fixture))
+				if got["_auditKind"] != fixture.wantKind || got["_auditPending"] != fixture.wantPending {
+					t.Fatalf("kind/pending = %v/%v, want %s/%v", got["_auditKind"], got["_auditPending"], fixture.wantKind, fixture.wantPending)
+				}
 				if got["_auditState"] != fixture.wantState || got["_auditOutcome"] != fixture.wantOutcome {
 					t.Fatalf("state/outcome = %v/%v, want %s/%s", got["_auditState"], got["_auditOutcome"], fixture.wantState, fixture.wantOutcome)
 				}
@@ -541,7 +552,10 @@ func TestRequestPipelineAsyncAcceptedHasUnknownOutcomeAndNoDuration(t *testing.T
 	for _, fixture := range completionFixtures() {
 		t.Run(fixture.name, func(t *testing.T) {
 			pipeline := requestPipeline(q, [5]string{"source", "", "", "all", "all"}, "source", nil, 10)
-			got := evalSetStages(t, pipeline, completionDoc(fixture.polling, fixture.status))
+			got := evalSetStages(t, pipeline, completionDoc(fixture))
+			if got["_auditKind"] != fixture.wantKind || got["_auditPending"] != fixture.wantPending {
+				t.Fatalf("kind/pending = %v/%v, want %s/%v", got["_auditKind"], got["_auditPending"], fixture.wantKind, fixture.wantPending)
+			}
 			if got["_auditOutcome"] != fixture.wantOutcome || (got["_auditDuration"] == nil) != fixture.wantDurationNil {
 				t.Fatalf("outcome/duration = %v/%v, want %s, nil=%v", got["_auditOutcome"], got["_auditDuration"], fixture.wantOutcome, fixture.wantDurationNil)
 			}
@@ -549,17 +563,65 @@ func TestRequestPipelineAsyncAcceptedHasUnknownOutcomeAndNoDuration(t *testing.T
 	}
 }
 
+// evalAccumulator evaluates the per-document expression inside a $group $sum
+// accumulator and returns the amount that document contributes.
+func evalAccumulator(t *testing.T, group bson.D, key string, doc map[string]any) float64 {
+	t.Helper()
+	accumulator, ok := groupField(group, key).(bson.D)
+	if !ok || len(accumulator) != 1 || accumulator[0].Key != "$sum" {
+		t.Fatalf("$group %s = %#v, want a single $sum accumulator", key, groupField(group, key))
+	}
+	value, ok := pipelineNum(evalExpr(t, accumulator[0].Value, doc))
+	if !ok {
+		t.Fatalf("$group %s did not evaluate to a number", key)
+	}
+	return value
+}
+
 func TestPipelineCountsPendingAsyncAndObservedPartial(t *testing.T) {
 	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
-	pipeline := buildPipeline(q, q.Start, q.End)
-	group := groupStage(t, pipeline)
-	project := pipeline[len(pipeline)-1][0].Value.(bson.D)
-	for _, key := range []string{"pendingAsync", "observedPartial"} {
-		if groupField(group, key) == nil {
-			t.Errorf("$group lacks %s", key)
+	q.Kind = "all"
+	for _, metric := range []string{"total", "api"} {
+		q.Metric = metric
+		pipeline := buildPipeline(q, q.Start, q.End)
+		group := groupStage(t, pipeline)
+		project := pipeline[len(pipeline)-1][0].Value.(bson.D)
+		for _, key := range []string{"pendingAsync", "observedPartial"} {
+			if groupField(group, key) == nil {
+				t.Errorf("%s: $group lacks %s", metric, key)
+			}
+			if groupField(project, key) == nil {
+				t.Errorf("%s: $project drops %s", metric, key)
+			}
 		}
-		if groupField(project, key) == nil {
-			t.Errorf("$project drops %s", key)
+		for _, fixture := range completionFixtures() {
+			derived := evalSetStages(t, pipeline, completionDoc(fixture))
+			wantPending := 0.0
+			if fixture.wantPending {
+				wantPending = 1
+			}
+			if got := evalAccumulator(t, group, "pendingAsync", derived); got != wantPending {
+				t.Errorf("%s/%s: pendingAsync = %v, want %v", metric, fixture.name, got, wantPending)
+			}
+			// Every fixture carries RequestInitiatedAt, so none is partial.
+			if got := evalAccumulator(t, group, "observedPartial", derived); got != 0 {
+				t.Errorf("%s/%s: observedPartial = %v, want 0", metric, fixture.name, got)
+			}
+		}
+		// A valid legacy row has no RequestInitiatedAt and falls back to CreatedOn:
+		// partial under the total metric only. A pending or incomplete row never is.
+		for _, fixture := range completionFixtures() {
+			legacy := completionDoc(fixture)
+			legacy["CreatedOn"] = legacy["RequestInitiatedAt"]
+			delete(legacy, "RequestInitiatedAt")
+			derived := evalSetStages(t, pipeline, legacy)
+			want := 0.0
+			if metric == "total" && fixture.wantState == "valid" {
+				want = 1
+			}
+			if got := evalAccumulator(t, group, "observedPartial", derived); got != want {
+				t.Errorf("%s/%s legacy: observedPartial = %v, want %v (state %v)", metric, fixture.name, got, want, derived["_auditState"])
+			}
 		}
 	}
 }
