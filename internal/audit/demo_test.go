@@ -191,3 +191,23 @@ func TestDemoResponsesMatchJSONContracts(t *testing.T) {
 		t.Fatalf("unexpected contract JSON: %s", encoded)
 	}
 }
+
+func TestDemoAnalysisCarriesAdditivePhases(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	analysis, err := NewDemo(now).Analyze(context.Background(), demoQuery(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range analysis.APIs {
+		p := c.Current.Phases
+		if p == nil || p.AuditMs == nil || p.ApiMs == nil || p.PayloadMs == nil || c.Current.MeanMs == nil {
+			t.Fatalf("%s.%s has no phases: %+v", c.Controller, c.Action, p)
+		}
+		if got := *p.AuditMs + *p.ApiMs; got < *c.Current.MeanMs-1e-6 || got > *c.Current.MeanMs+1e-6 {
+			t.Fatalf("%s.%s audit+api = %v, want the total mean %v", c.Controller, c.Action, got, *c.Current.MeanMs)
+		}
+		if c.PhaseDeltaMs == nil || c.PhaseDeltaMs.ApiMs == nil {
+			t.Fatalf("%s.%s has no phase delta", c.Controller, c.Action)
+		}
+	}
+}

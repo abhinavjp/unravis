@@ -29,7 +29,11 @@ export interface Stats {
   p50: Quantile | null; p95: Quantile | null; histogram: BinCount[];
   /** Additive: absent from older payloads. p99 is also absent below 100 samples. */
   p90?: Quantile | null; p99?: Quantile | null;
+  /** Additive: mean of each phase over the documents that carry it; absent when none do. */
+  phases?: PhaseMeans | null;
 }
+/** Audit and api time add up to the total; payload is written after the response and is not latency. Each is absent without samples; in phaseDeltaMs it is current minus reference. */
+export interface PhaseMeans { auditMs?: number | null; apiMs?: number | null; payloadMs?: number | null }
 export interface Comparison {
   key: string; sourceId: string; controller: string; action: string; kind: string; outcome: string;
   state: string; current: Stats; reference: Stats; medianRatio: number | null; p95Ratio: number | null;
@@ -40,6 +44,8 @@ export interface Comparison {
   impactMs?: number | null; totalTimeMs?: number;
   /** Mann-Whitney z from histogram counts (positive = current slower); absent below 20 samples. */
   shiftZ?: number | null; significant?: boolean;
+  /** Additive: change in each phase's mean (current minus reference); a phase is absent when either window has no samples for it. */
+  phaseDeltaMs?: PhaseMeans | null;
 }
 export interface Point { at: string; count: number | null; p50: Quantile | null; p95: Quantile | null; p95Ratio: number | null }
 /** loadCorrelation: Spearman rho of other traffic's estimated concurrency vs this series' per-bucket P95; absent below 8 paired buckets. */

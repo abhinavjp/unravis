@@ -28,6 +28,13 @@ type bucketDocument struct {
 	SumMs      float64   `bson:"sumMs"`
 	MinMs      float64   `bson:"minMs"`
 	MaxMs      float64   `bson:"maxMs"`
+	// Phase sums and per-phase sample counts.
+	SumAuditMs   float64 `bson:"sumAuditMs"`
+	SumApiMs     float64 `bson:"sumApiMs"`
+	SumPayloadMs float64 `bson:"sumPayloadMs"`
+	NAudit       int64   `bson:"nAudit"`
+	NApi         int64   `bson:"nApi"`
+	NPayload     int64   `bson:"nPayload"`
 }
 
 type sourceAnalysis struct {
@@ -201,6 +208,8 @@ func (s *Store) readBuckets(ctx context.Context, p *profile, q audit.Query, star
 			SourceID: p.source.ID, Controller: doc.Controller, Action: doc.Action, Kind: doc.Kind,
 			Outcome: doc.Outcome, State: doc.State, At: doc.At.UTC(), Bin: doc.Bin,
 			Count: doc.Count, SumMs: doc.SumMs, MinMs: doc.MinMs, MaxMs: doc.MaxMs,
+			SumAuditMs: doc.SumAuditMs, SumApiMs: doc.SumApiMs, SumPayloadMs: doc.SumPayloadMs,
+			NAudit: doc.NAudit, NApi: doc.NApi, NPayload: doc.NPayload,
 		}
 		encoded, err := json.Marshal(bucket)
 		if err != nil || totalBytes.Add(int64(len(encoded)+1)) > maxAnalysisBytes {

@@ -14,6 +14,9 @@ type histogramAccumulator struct {
 	sum    float64
 	min    float64
 	max    float64
+	// Phase totals and the number of documents that contributed to each.
+	sumAudit, sumApi, sumPayload float64
+	nAudit, nApi, nPayload       int64
 }
 
 func BinIndex(ms float64) int {
@@ -94,6 +97,59 @@ func (h *histogramAccumulator) add(bin int, count int64, sum, min, max float64) 
 	return nil
 }
 
+// addBucket merges one valid bucket: its histogram bin and its phase totals.
+func (h *histogramAccumulator) addBucket(b Bucket) error {
+	if err := validPhases(b); err != nil {
+		return err
+	}
+	if err := h.add(b.Bin, b.Count, b.SumMs, b.MinMs, b.MaxMs); err != nil {
+		return err
+	}
+	h.sumAudit += b.SumAuditMs
+	h.sumApi += b.SumApiMs
+	h.sumPayload += b.SumPayloadMs
+	h.nAudit += b.NAudit
+	h.nApi += b.NApi
+	h.nPayload += b.NPayload
+	return nil
+}
+
+func validPhases(b Bucket) error {
+	for _, p := range []struct {
+		name string
+		sum  float64
+		n    int64
+	}{{"audit", b.SumAuditMs, b.NAudit}, {"api", b.SumApiMs, b.NApi}, {"payload", b.SumPayloadMs, b.NPayload}} {
+		if math.IsNaN(p.sum) || math.IsInf(p.sum, 0) || p.sum < 0 {
+			return fmt.Errorf("%s phase sum must be finite and nonnegative", p.name)
+		}
+		if p.n < 0 || p.n > b.Count {
+			return fmt.Errorf("%s phase count %d must be between 0 and the bucket count %d", p.name, p.n, b.Count)
+		}
+		if p.n == 0 && p.sum != 0 {
+			return fmt.Errorf("%s phase has a sum but no samples", p.name)
+		}
+	}
+	return nil
+}
+
+// phaseMeans divides each phase total by that phase's own sample count, so a
+// document missing one phase does not drag its mean toward zero.
+func (h *histogramAccumulator) phaseMeans() *PhaseMeans {
+	mean := func(sum float64, n int64) *float64 {
+		if n == 0 {
+			return nil
+		}
+		value := sum / float64(n)
+		return &value
+	}
+	means := &PhaseMeans{AuditMs: mean(h.sumAudit, h.nAudit), ApiMs: mean(h.sumApi, h.nApi), PayloadMs: mean(h.sumPayload, h.nPayload)}
+	if means.AuditMs == nil && means.ApiMs == nil && means.PayloadMs == nil {
+		return nil
+	}
+	return means
+}
+
 func (h *histogramAccumulator) stats() Stats {
 	stats := Stats{Count: h.count, Histogram: make([]BinCount, 0)}
 	if h.count == 0 {
@@ -102,6 +158,7 @@ func (h *histogramAccumulator) stats() Stats {
 	mean := h.sum / float64(h.count)
 	min, max := h.min, h.max
 	stats.MeanMs, stats.MinMs, stats.MaxMs = &mean, &min, &max
+	stats.Phases = h.phaseMeans()
 	for bin, count := range h.counts {
 		if count > 0 {
 			stats.Histogram = append(stats.Histogram, BinCount{Bin: bin, Count: count})

@@ -67,8 +67,9 @@ func (d *demoRepository) generate() {
 func demoRecord(sourceID, controller, action string, initiated time.Time, duration float64, apiIndex, sample int, period string) RequestRecord {
 	id := fmt.Sprintf("%s-%s-%s-%02d", sourceID, controller, period, sample)
 	completed := initiated.Add(time.Duration(duration * float64(time.Millisecond)))
-	apiTime := duration * .7
+	// Audit and API time add up to the total; the payload write happens after the response.
 	auditTime := duration * .2
+	apiTime := duration - auditTime
 	payloadTime := duration * .1
 	return RequestRecord{ID: id, SourceID: sourceID, Controller: controller, Action: action, Kind: "synchronous", Outcome: "success", Status: "200 OK", URL: "/" + strings.ToLower(controller) + "/" + strings.ToLower(action), InitiatedAt: &initiated, CompletedAt: &completed, DurationMs: &duration, ApiTimeMs: &apiTime, AuditCreateTimeMs: &auditTime, PayloadRecordTimeMs: &payloadTime, RequestKB: float64((sample+apiIndex)%5 + 1), ResponseKB: float64((sample+apiIndex)%7 + 2)}
 }
@@ -135,6 +136,7 @@ func aggregateDemo(records []RequestRecord, q Query, selected map[string]bool, c
 		count         int64
 		sum, min, max float64
 		set           bool
+		phases        Bucket // only the phase sums and counts are used
 	}
 	groups := map[bucketKey]*aggregate{}
 	start, end := q.BaselineStart, q.BaselineEnd
@@ -173,6 +175,9 @@ func aggregateDemo(records []RequestRecord, q Query, selected map[string]bool, c
 		}
 		a.count++
 		a.sum += *value
+		addDemoPhase(&a.phases.SumAuditMs, &a.phases.NAudit, r.AuditCreateTimeMs)
+		addDemoPhase(&a.phases.SumApiMs, &a.phases.NApi, r.ApiTimeMs)
+		addDemoPhase(&a.phases.SumPayloadMs, &a.phases.NPayload, r.PayloadRecordTimeMs)
 		if *value < a.min {
 			a.min = *value
 		}
@@ -210,9 +215,16 @@ func aggregateDemo(records []RequestRecord, q Query, selected map[string]bool, c
 	buckets := make([]Bucket, 0, len(keys))
 	for _, k := range keys {
 		a := groups[k]
-		buckets = append(buckets, Bucket{SourceID: k.source, Controller: k.controller, Action: k.action, Kind: k.kind, Outcome: k.outcome, State: "valid", At: time.Unix(k.at, 0).UTC(), Bin: k.bin, Count: a.count, SumMs: a.sum, MinMs: a.min, MaxMs: a.max})
+		buckets = append(buckets, Bucket{SourceID: k.source, Controller: k.controller, Action: k.action, Kind: k.kind, Outcome: k.outcome, State: "valid", At: time.Unix(k.at, 0).UTC(), Bin: k.bin, Count: a.count, SumMs: a.sum, MinMs: a.min, MaxMs: a.max, SumAuditMs: a.phases.SumAuditMs, SumApiMs: a.phases.SumApiMs, SumPayloadMs: a.phases.SumPayloadMs, NAudit: a.phases.NAudit, NApi: a.phases.NApi, NPayload: a.phases.NPayload})
 	}
 	return buckets
+}
+
+func addDemoPhase(sum *float64, n *int64, value *float64) {
+	if value != nil && *value >= 0 {
+		*sum += *value
+		*n++
+	}
 }
 
 func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, error) {

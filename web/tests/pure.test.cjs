@@ -404,3 +404,26 @@ test('error rate shows as a percent, and the load badge needs |rho| >= 0.6 over 
   assert.equal(rollupFor(rollups, { controller: 'A', action: 'Other' }), undefined);
   assert.equal(rollupFor(undefined, { controller: 'A', action: 'Run' }), undefined);
 });
+
+test('phase bar segments split audit and api shares, tolerate gaps, and describe the additive model', () => {
+  const { phaseSegments, phaseMs, phaseTip } = loadTypeScript('src/lib/phases.ts');
+  const s = phaseSegments({ auditMs: 20, apiMs: 80, payloadMs: 5 });
+  assert.equal(s.total, 100);
+  assert.equal(s.auditPct, 20);
+  assert.equal(s.apiPct, 80);
+  const apiOnly = phaseSegments({ apiMs: 50 });
+  assert.equal(apiOnly.audit, null);
+  assert.equal(apiOnly.apiPct, 100);
+  assert.equal(phaseSegments(null), null);
+  assert.equal(phaseSegments(undefined), null);
+  assert.equal(phaseSegments({ payloadMs: 5 }), null, 'payload alone is not latency');
+  assert.equal(phaseSegments({ auditMs: 0, apiMs: 0 }), null);
+  assert.equal(phaseMs(null), 'N/A');
+  assert.equal(phaseMs(12.34), '12.3 ms');
+  assert.equal(phaseMs(1500), '1.50 s');
+  const tip = phaseTip({ auditMs: 0, apiMs: 200 });
+  assert.match(tip, /after the response/);
+  assert.match(tip, /api \+200 ms/);
+  assert.match(tip, /audit 0\.0 ms/);
+  assert.doesNotMatch(phaseTip(null), /Change versus reference/);
+});

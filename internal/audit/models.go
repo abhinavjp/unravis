@@ -130,6 +130,15 @@ type Bucket struct {
 	SumMs      float64   `json:"sumMs"`
 	MinMs      float64   `json:"minMs"`
 	MaxMs      float64   `json:"maxMs"`
+	// Phase sums cover valid documents only. The per-phase counts say how many
+	// of them carried that phase as a number, so a phase mean divides by its own
+	// count rather than Count.
+	SumAuditMs   float64 `json:"sumAuditMs,omitempty"`
+	SumApiMs     float64 `json:"sumApiMs,omitempty"`
+	SumPayloadMs float64 `json:"sumPayloadMs,omitempty"`
+	NAudit       int64   `json:"nAudit,omitempty"`
+	NApi         int64   `json:"nApi,omitempty"`
+	NPayload     int64   `json:"nPayload,omitempty"`
 }
 
 type Quantile struct {
@@ -149,6 +158,18 @@ type Stats struct {
 	// P99 is nil below 100 samples; the nearest-rank P99 would otherwise be the maximum.
 	P99       *Quantile  `json:"p99,omitempty"`
 	Histogram []BinCount `json:"histogram"`
+	// Phases holds each phase's mean over the documents that carry it; nil when none do.
+	Phases *PhaseMeans `json:"phases,omitempty"`
+}
+
+// PhaseMeans splits request time into the audit-row write and API processing,
+// which add up to the total, plus the payload write, which happens after the
+// response and is not part of latency. A field is nil when it has no samples.
+// In Comparison.PhaseDeltaMs it holds current minus reference.
+type PhaseMeans struct {
+	AuditMs   *float64 `json:"auditMs,omitempty"`
+	ApiMs     *float64 `json:"apiMs,omitempty"`
+	PayloadMs *float64 `json:"payloadMs,omitempty"`
 }
 
 type BinCount struct {
@@ -178,6 +199,8 @@ type Comparison struct {
 	TotalTimeMs     float64  `json:"totalTimeMs"`
 	ShiftZ          *float64 `json:"shiftZ,omitempty"`
 	Significant     bool     `json:"significant,omitempty"`
+	// PhaseDeltaMs is the change in each phase's mean, current minus reference.
+	PhaseDeltaMs *PhaseMeans `json:"phaseDeltaMs,omitempty"`
 }
 
 type Point struct {

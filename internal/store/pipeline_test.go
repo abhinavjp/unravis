@@ -7,6 +7,7 @@ import (
 
 	"api-audit-explorer/internal/audit"
 	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 func TestBuildPipelineStartsWithHalfOpenIndexedTimingMatch(t *testing.T) {
@@ -174,6 +175,84 @@ func TestSummaryPipelineMissingStatusIsUnknown(t *testing.T) {
 			if s, ok := entry.(string); !ok || s == "" {
 				t.Fatalf("status set has non-string or empty entry: %#v", entry)
 			}
+		}
+	}
+}
+
+func groupStage(t *testing.T, pipeline mongo.Pipeline) bson.D {
+	t.Helper()
+	for _, stage := range pipeline {
+		if stage[0].Key == "$group" {
+			return stage[0].Value.(bson.D)
+		}
+	}
+	t.Fatal("pipeline has no $group stage")
+	return nil
+}
+
+func groupField(group bson.D, key string) any {
+	for _, e := range group {
+		if e.Key == key {
+			return e.Value
+		}
+	}
+	return nil
+}
+
+func TestPipelineGroupsPhaseSumsWithPerPhaseCounts(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	phases := []struct{ sum, count, field, temp string }{
+		{"sumAuditMs", "nAudit", "AuditCreateTime", "_auditAuditMs"},
+		{"sumApiMs", "nApi", "ApiTime", "_auditApiMs"},
+		{"sumPayloadMs", "nPayload", "PayloadRecordTime", "_auditPayloadMs"},
+	}
+	for _, metric := range []string{"total", "api"} {
+		q.Metric = metric
+		pipeline := buildPipeline(q, q.Start, q.End)
+		group := groupStage(t, pipeline)
+		for _, phase := range phases {
+			for _, key := range []string{phase.sum, phase.count} {
+				expr, ok := groupField(group, key).(bson.D)
+				if !ok || len(expr) != 1 || expr[0].Key != "$sum" {
+					t.Fatalf("%s/%s: $group field is %v, want a $sum", metric, key, groupField(group, key))
+				}
+			}
+			encoded, err := bson.MarshalExtJSON(bson.D{{Key: "e", Value: groupField(group, phase.sum)}}, false, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The sum adds the extracted phase value, never a literal count of documents.
+			if !strings.Contains(string(encoded), phase.temp) {
+				t.Errorf("%s/%s does not sum the extracted %s: %s", metric, phase.sum, phase.field, encoded)
+			}
+		}
+		// Phase values use the same $convert-to-double extraction as ApiTime, so units stay milliseconds.
+		whole, err := bson.MarshalExtJSON(bson.D{{Key: "pipeline", Value: pipeline}}, false, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(whole)
+		for _, phase := range phases {
+			convert := `"input":"$` + phase.field + `","to":"double","onError":null,"onNull":null`
+			if !strings.Contains(text, convert) {
+				t.Errorf("%s: %s is not extracted with $convert to double: %s", metric, phase.field, text)
+			}
+		}
+		for _, forbidden := range []string{"$multiply", "$divide", "$toDouble"} {
+			if strings.Contains(text, forbidden) {
+				t.Errorf("%s: pipeline rescales units with %s", metric, forbidden)
+			}
+		}
+	}
+}
+
+func TestPipelinePhaseFieldsAreProjected(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	pipeline := buildPipeline(q, q.Start, q.End)
+	project := pipeline[len(pipeline)-1][0].Value.(bson.D)
+	for _, key := range []string{"sumAuditMs", "sumApiMs", "sumPayloadMs", "nAudit", "nApi", "nPayload"} {
+		if groupField(project, key) == nil {
+			t.Errorf("$project drops %s", key)
 		}
 	}
 }

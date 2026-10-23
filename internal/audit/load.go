@@ -57,7 +57,7 @@ func buildLoadWindows(q Query, buckets []Bucket) ([]LoadWindow, error) {
 			return nil, err
 		}
 		if b.State == "valid" {
-			if err := a.hist.add(b.Bin, b.Count, b.SumMs, b.MinMs, b.MaxMs); err != nil {
+			if err := a.hist.addBucket(b); err != nil {
 				return nil, err
 			}
 		}

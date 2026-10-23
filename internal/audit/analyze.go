@@ -110,6 +110,7 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 			comparison.P99Ratio = ratio(currentStats.P99, referenceStats.P99)
 		}
 		applyImpact(&comparison)
+		comparison.PhaseDeltaMs = phaseDelta(currentStats, referenceStats)
 		analysis.APIs = append(analysis.APIs, comparison)
 
 		if len(c.currentAt) > 0 {
@@ -211,7 +212,7 @@ func addBucket(cohorts map[string]*cohortAccumulator, b Bucket, isCurrent bool) 
 	if isCurrent {
 		h = c.current
 	}
-	if err := h.add(b.Bin, b.Count, b.SumMs, b.MinMs, b.MaxMs); err != nil {
+	if err := h.addBucket(b); err != nil {
 		return fmt.Errorf("cohort %s: %w", key, err)
 	}
 	if isCurrent {
@@ -221,7 +222,7 @@ func addBucket(cohorts map[string]*cohortAccumulator, b Bucket, isCurrent bool) 
 			point = newHistogramAccumulator()
 			c.currentAt[at] = point
 		}
-		if err := point.add(b.Bin, b.Count, b.SumMs, b.MinMs, b.MaxMs); err != nil {
+		if err := point.addBucket(b); err != nil {
 			return fmt.Errorf("timeline cohort %s: %w", key, err)
 		}
 	}

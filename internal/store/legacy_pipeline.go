@@ -364,6 +364,9 @@ func readLegacyBuckets(ctx context.Context, p *profile, q audit.Query, start tim
 			if bucket.Count == 1 || ms > bucket.MaxMs {
 				bucket.MaxMs = ms
 			}
+			addLegacyPhase(&bucket.SumAuditMs, &bucket.NAudit, record.AuditCreate)
+			addLegacyPhase(&bucket.SumApiMs, &bucket.NApi, record.API)
+			addLegacyPhase(&bucket.SumPayloadMs, &bucket.NPayload, record.PayloadRecord)
 		}
 	}
 	if err := cur.Err(); err != nil {
@@ -381,6 +384,15 @@ func readLegacyBuckets(ctx context.Context, p *profile, q audit.Query, start tim
 		result = append(result, *bucket)
 	}
 	return result, nil
+}
+
+// addLegacyPhase mirrors the server pipeline: a phase counts for a valid
+// document only when it is a finite non-negative number.
+func addLegacyPhase(sum *float64, n *int64, value *float64) {
+	if value != nil && *value >= 0 && *value < math.MaxFloat64 {
+		*sum += *value
+		*n++
+	}
 }
 
 func legacyBucketAt(at time.Time, seconds int) time.Time {

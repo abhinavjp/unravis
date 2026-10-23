@@ -237,3 +237,53 @@ func TestLegacyReferenceCompactsTimeSlotsAndRetainsScanAccounting(t *testing.T) 
 		})
 	}
 }
+
+func TestLegacyBucketsCarryPhaseSumsAndPerPhaseCounts(t *testing.T) {
+	var handle *fakeClient
+	s := newStore(func(context.Context, string, *tls.Config) (clientHandle, error) {
+		handle = &fakeClient{}
+		return handle, nil
+	})
+	src := addFakeSource(t, s, "audit")
+	p, release, err := s.leaseSource(src.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	at := q.Start.Add(time.Second)
+	doc := func(fields ...bson.E) any {
+		base := bson.D{{Key: "_auditMetadataOversized", Value: false}, {Key: "ControllerName", Value: "Payroll"}, {Key: "ActionName", Value: "Run"}, {Key: "RequestPollingType", Value: "synchronous"}, {Key: "StatusCode", Value: 200}, {Key: "RequestInitiatedAt", Value: at}, {Key: "RequestCompletedAt", Value: at.Add(100 * time.Millisecond)}}
+		encoded, e := bson.Marshal(append(base, fields...))
+		if e != nil {
+			t.Fatal(e)
+		}
+		return bson.Raw(encoded)
+	}
+	docs := []any{
+		doc(bson.E{Key: "AuditCreateTime", Value: 20.0}, bson.E{Key: "ApiTime", Value: 80.0}, bson.E{Key: "PayloadRecordTime", Value: 5.0}),
+		doc(bson.E{Key: "ApiTime", Value: "70"}),
+		doc(bson.E{Key: "AuditCreateTime", Value: nil}, bson.E{Key: "ApiTime", Value: -3.0}),
+	}
+	handle.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
+		return &fakeCursor{docs: docs}, nil
+	}
+	var rows, bytes, records, rawBytes atomic.Int64
+	got, err := readLegacyBuckets(context.Background(), p, q, q.Start, nil, &rows, &bytes, &records, &rawBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sumAudit, sumApi, sumPayload float64
+	var nAudit, nApi, nPayload, count int64
+	for _, b := range got {
+		sumAudit, sumApi, sumPayload = sumAudit+b.SumAuditMs, sumApi+b.SumApiMs, sumPayload+b.SumPayloadMs
+		nAudit, nApi, nPayload, count = nAudit+b.NAudit, nApi+b.NApi, nPayload+b.NPayload, count+b.Count
+	}
+	// The null audit time and the negative api time are not counted as present.
+	if count != 3 || nAudit != 1 || nApi != 2 || nPayload != 1 {
+		t.Fatalf("counts total=%d audit=%d api=%d payload=%d, want 3/1/2/1", count, nAudit, nApi, nPayload)
+	}
+	if sumAudit != 20 || sumApi != 150 || sumPayload != 5 {
+		t.Fatalf("sums audit=%v api=%v payload=%v, want 20/150/5", sumAudit, sumApi, sumPayload)
+	}
+}
