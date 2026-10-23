@@ -1,0 +1,44 @@
+import type { Comparison, Query } from './types';
+
+// Rank comparable groups by slowdown; groups without a ratio always stay last.
+export const rankComparisons = (rows: Comparison[], field: 'ratio' | 'delta' | 'count' = 'ratio', direction = -1) => rows.slice().sort((a, b) => {
+  const value = (row: Comparison) => field === 'ratio' ? row.p95Ratio : field === 'delta' ? row.p95DeltaMs : row.current.count;
+  const av = value(a), bv = value(b);
+  if (av == null || !Number.isFinite(av)) return bv == null || !Number.isFinite(bv) ? a.key.localeCompare(b.key) : 1;
+  if (bv == null || !Number.isFinite(bv)) return -1;
+  return direction * (av - bv) || b.current.count - a.current.count || a.key.localeCompare(b.key);
+});
+
+export const initialComparison = (rows: Comparison[]) => rankComparisons(rows).find(row => row.state === 'compared' && row.current.count > 0)
+  ?? rows.slice().sort((a, b) => b.current.count - a.current.count)[0] ?? null;
+
+export const queryFingerprint = (query: Query) => JSON.stringify([
+  [...query.sourceIds].sort(), ...[query.start, query.end, query.baselineStart, query.baselineEnd].map(value => Date.parse(value)),
+  query.kind, query.outcome, query.metric, query.bucketSeconds, query.controller ?? '', query.action ?? ''
+]);
+
+export const resultNotes = (rows: Comparison[]) => {
+  const lowSamples = rows.filter(row => row.state === 'insufficient_data').length;
+  const noCurrent = rows.filter(row => row.state === 'missing_current').length;
+  const noReference = rows.filter(row => row.state === 'missing_reference').length;
+  const nearZero = rows.filter(row => row.state === 'undefined_baseline').length;
+  return [
+    'Response times are estimates. P95 means about 95 out of 100 requests with usable timings finish within that time. A change does not by itself tell you whether an API is healthy.',
+    ...(lowSamples ? [`${lowSamples} API groups have fewer than 20 usable timings in at least one period. Their slowdown ratios are unavailable because the sample is too small.`] : []),
+    ...(noCurrent ? [`${noCurrent} API groups have no usable timings in the investigation period.`] : []),
+    ...(noReference ? [`${noReference} API groups have no usable timings in the reference period.`] : []),
+    ...(nearZero ? [`${nearZero} API groups have a reference time too close to zero to calculate a meaningful slowdown ratio.`] : [])
+  ];
+};
+
+export const outcomeRateText = (rows: Comparison[], row: Comparison, outcomeFilter: string) => {
+  if (row.outcome === 'unknown') return 'unknown · ' + row.currentEvents.toLocaleString() + ' events';
+  const denominator = rows
+    .filter(item => item.sourceId === row.sourceId && item.controller === row.controller && item.action === row.action && item.kind === row.kind && (item.outcome === 'success' || item.outcome === 'failure'))
+    .reduce((sum, item) => sum + item.currentEvents, 0);
+  if (outcomeFilter !== 'all' || denominator <= 0 || (row.outcome !== 'success' && row.outcome !== 'failure')) {
+    return row.outcome + ' · ' + row.currentEvents.toLocaleString() + ' events';
+  }
+  const percentage = (row.currentEvents / denominator * 100).toFixed(1);
+  return row.outcome + ' · ' + row.currentEvents.toLocaleString() + ' / ' + denominator.toLocaleString() + ' known events (' + percentage + '%)';
+};

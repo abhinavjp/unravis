@@ -1,0 +1,15 @@
+{
+  "name": "api-audit-explorer-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": { "dev": "vite", "build": "vite build", "check": "svelte-check --tsconfig ./tsconfig.json", "test": "node --test tests/pure.test.cjs" },
+  "dependencies": { "echarts": "6.1.0" },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "svelte": "5.57.2",
+    "svelte-check": "4.7.7",
+    "typescript": "5.9.3",
+    "vite": "8.3.5"
+  }
+}

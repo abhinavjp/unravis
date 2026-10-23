@@ -1,0 +1,7 @@
+/node_modules/
+/web/node_modules/
+/dist/
+*.exe
+*.test
+.superpowers/
+.diagnostics/
