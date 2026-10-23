@@ -108,3 +108,72 @@ func TestReferencePipelineRetainsFiltersAndHistogramWithoutTimelineGrouping(t *t
 		}
 	}
 }
+
+func TestStringsToBSONHasNoNilEntries(t *testing.T) {
+	got := stringsToBSON("OK", "CREATED")
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2: %v", len(got), got)
+	}
+	if got[0] != "OK" || got[1] != "CREATED" {
+		t.Fatalf("unexpected entries: %v", got)
+	}
+}
+
+// collectInSets finds every {$in: [<expr>, <array>]} in v and returns the arrays.
+func collectInSets(v any, out *[]bson.A) {
+	switch x := v.(type) {
+	case bson.D:
+		for _, e := range x {
+			if e.Key == "$in" {
+				if args, ok := e.Value.(bson.A); ok && len(args) == 2 {
+					if set, ok := args[1].(bson.A); ok {
+						*out = append(*out, set)
+					}
+				}
+			}
+			collectInSets(e.Value, out)
+		}
+	case bson.A:
+		for _, item := range x {
+			collectInSets(item, out)
+		}
+	}
+}
+
+func TestSummaryPipelineMissingStatusIsUnknown(t *testing.T) {
+	q := queryForTest(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC))
+	pipeline := buildSummaryPipeline(q, q.Start, q.End, true)
+	var sets []bson.A
+	for _, stage := range pipeline {
+		collectInSets(stage, &sets)
+	}
+	var statusSets []bson.A
+	for _, set := range sets {
+		if len(set) > 0 && set[len(set)-1] == "PERMANENTREDIRECT" || len(set) > 0 && set[len(set)-1] == "NETWORKAUTHENTICATIONREQUIRED" {
+			statusSets = append(statusSets, set)
+		}
+	}
+	if len(statusSets) != 2 {
+		t.Fatalf("found %d status $in arrays, want 2 (success, failure)", len(statusSets))
+	}
+	for _, set := range statusSets {
+		rendered, err := bson.MarshalExtJSON(bson.D{{Key: "set", Value: set}}, true, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(rendered), "null") {
+			t.Fatalf("status $in array contains null: %s", rendered)
+		}
+	}
+	sets2 := statusNames()
+	if len(statusSets[0]) != len(sets2.success) || len(statusSets[1]) != len(sets2.failure) {
+		t.Fatalf("set sizes diverge from statusNames: success=%d failure=%d", len(statusSets[0]), len(statusSets[1]))
+	}
+	for _, set := range statusSets {
+		for _, entry := range set {
+			if s, ok := entry.(string); !ok || s == "" {
+				t.Fatalf("status set has non-string or empty entry: %#v", entry)
+			}
+		}
+	}
+}

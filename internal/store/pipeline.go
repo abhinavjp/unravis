@@ -135,7 +135,7 @@ func statusNames() struct{ success, failure bson.A } {
 }
 
 func stringsToBSON(values ...string) bson.A {
-	result := make(bson.A, len(values))
+	result := make(bson.A, 0, len(values))
 	for _, value := range values {
 		result = append(result, value)
 	}
