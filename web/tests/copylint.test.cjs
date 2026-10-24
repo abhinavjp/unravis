@@ -22,7 +22,7 @@ function loadTypeScript(relativePath) {
   return module.exports;
 }
 
-const { lintCopy, fleschKincaidGrade, JARGON } = loadTypeScript('src/lib/copy/copylint.ts');
+const { lintCopy, lintTerms, lintScreenStrings, fleschKincaidGrade, JARGON } = loadTypeScript('src/lib/copy/copylint.ts');
 const wordings = loadTypeScript('src/lib/copy/wordings.ts');
 
 function term(name, aliases = []) {
@@ -55,6 +55,14 @@ const POSITIVE = [
   'The middle response time was 90 ms. One in twenty requests took longer than 400 ms.',
   'Coverage is the share of the window that the source recorded.',
   'The P95 is the time that 95 out of 100 requests beat.',
+  'It does not prove one caused the other.',
+  "It doesn't prove that the slow save was caused by the database.",
+  "This isn't proof that the lock was the reason.",
+  "It can't show that the save was slow due to the lock.",
+  'This cannot prove that the cause was the lock.',
+  'It is not the cause of the delay.',
+  'It does not mean the queue is responsible for the delay.',
+  `${wordings.auditCreate(28)} This was slow.`,
   'Short.',
   ''
 ];
@@ -116,8 +124,10 @@ test('paraphrased section 6.6 wordings fail', () => {
     'Possible overlap (ambiguous: 3 options).',
     'Audit create took 28 s from the database side.',
     'Audit create took 28 seconds as measured from the client side.',
-    `${wordings.auditCreate(28)} This was slow.`,
-    `Result: ${wordings.overlapAmbiguous(3)}`
+    `Result: ${wordings.overlapAmbiguous(3)}`,
+    `Detail. ${wordings.notObservedGap('the source was off')} Not observed (sampling gap: the source was off).`,
+    'Some words first. Audit create took 28 seconds from the database side. Some words after.',
+    `Intro sentence here. ${wordings.overlapUnique('SQL', 'lock wait', 28).replace(' (Correlation)', '')} More.`
   ];
   for (const text of paraphrases) {
     assert.ok(rules(text, TERMS).includes('wording'), text);
@@ -171,4 +181,157 @@ test('findings carry the entry id', () => {
   const findings = lintCopy([{ id: 'a', text: 'Fine words.' }, { id: 'b', text: 'It was slow because of that.' }], TERMS);
   assert.deepEqual(findings.map((f) => f.id), ['b']);
   assert.equal(findings[0].rule, 'causal');
+});
+
+// ---- Review fixes: scoped negation ----
+
+test('a negation exempts a causal word only inside its own clause', () => {
+  const failing = [
+    'This does not prove a link, but it is because of the database.',
+    'It does not show much, yet the save was slow due to the lock.',
+    'It does not mean X, it was due to SQL.',
+    'It does not mean X; it was due to SQL.',
+    'It does not mean X. It was due to SQL.',
+    'It does not prove a link, and the lock is the reason.',
+    "It doesn't show much, but the save was blocked by the lock.",
+    'It was not slow and it was blocked by the queue.'
+  ];
+  for (const text of failing) assert.ok(rules(text).includes('causal'), text);
+  const passing = [
+    'It does not prove one caused the other.',
+    "doesn't prove that X caused Y",
+    "It doesn't prove that X caused Y.",
+    "It isn't proof of a link caused by the lock.",
+    "It can't tell us the save was slow because of the lock.",
+    'It cannot show that the delay was due to the lock.',
+    'It is not because of the lock.'
+  ];
+  for (const text of passing) assert.deepEqual(lint(text), [], text);
+});
+
+test('contractions count as negation for "prove" and "proof"', () => {
+  assert.deepEqual(lint("This doesn't prove anything."), []);
+  assert.deepEqual(lint("That isn't proof of anything."), []);
+  assert.deepEqual(lint("It can't prove a link."), []);
+  assert.deepEqual(lint('It cannot prove a link.'), []);
+  assert.ok(rules('This will prove the link.').includes('causal'));
+  assert.ok(rules('That is proof of the link.').includes('causal'));
+});
+
+// ---- Review fixes: more causal phrases ----
+
+test('more causal phrases fail alone, and pass when negated', () => {
+  const failing = [
+    'The save took 28 seconds and the root cause was the lock.',
+    'The save was slow. The cause of the delay was the queue.',
+    'The lock causes slow saves.',
+    'The lock is causing slow saves.',
+    'A cause was found for the delay.',
+    'The save waited for the database.',
+    'The save is waiting for the lock.',
+    'The queue is the reason for the delay.',
+    'The lock was the reason.',
+    'The lock led to the delay.',
+    'The delay resulted from the lock.',
+    'The lock results in slow saves.',
+    'The queue is responsible for the delay.'
+  ];
+  for (const text of failing) {
+    assert.deepEqual(rules(text), ['causal'], text);
+  }
+  const passing = [
+    'It does not mean the lock causes slow saves.',
+    'This does not show the root cause.',
+    'It is not the cause of the slow save.',
+    "It doesn't show that the save waited for the database.",
+    'It does not prove the queue led to the delay.',
+    'It does not show that the delay resulted from the lock.',
+    'The save took 28 seconds. Nothing here is a reason to worry.'
+  ];
+  for (const text of passing) assert.deepEqual(lint(text), [], text);
+});
+
+// ---- Review fixes: wording inside longer text ----
+
+test('a permitted wording may be a whole sentence inside longer text', () => {
+  const texts = [
+    `Details follow. ${wordings.notObservedGap('the source was off from 14:40 to 14:45')} Check the coverage note.`,
+    `${wordings.notObservedThreshold('system_health', 'lock waits above 30 s')} Nothing else is known.`,
+    `Here is what we saw. ${wordings.overlapUnique('SQL Server', 'lock wait', 28)} It is listed once.`,
+    `The save was slow. ${wordings.auditCreate(28)}`,
+    `One. ${wordings.overlapAmbiguous(3)} Two.`,
+    `Intro here.\n${wordings.auditCreate(28)}\nOutro here.`
+  ];
+  for (const text of texts) assert.deepEqual(lint(text), [], text);
+});
+
+test('a paraphrased wording inside longer text still fails', () => {
+  const texts = [
+    'Details follow. Not observed (sampling gap: the source was off). Done.',
+    `${wordings.notObservedGap('the source was off')} Not observed in system_health. It only records waits above 30 s.`,
+    'The save was slow. Audit create took 28 seconds from the database side.',
+    `Intro sentence. Possible overlap with 3 candidates. ${wordings.auditCreate(28)}`,
+    'One. A SQL Server session had a lock wait of 28 s overlapping this interval. Two.',
+    `Note: ${wordings.auditCreate(28)}`
+  ];
+  for (const text of texts) assert.ok(rules(text, []).includes('wording'), text);
+});
+
+test('reading level scores the remainder without the exact permitted sentences', () => {
+  const hardDetail = 'notwithstanding considerable methodological heterogeneity throughout administrative infrastructure environments';
+  const gap = wordings.notObservedGap(hardDetail);
+  const text = `The save was slow today. ${gap} It was then fast again.`;
+  assert.ok(fleschKincaidGrade(text) > 8.5);
+  assert.deepEqual(rules(text), []);
+  const hardRemainder = 'Notwithstanding considerable methodological heterogeneity, the aforementioned instrumentation demonstrates substantially disproportionate computational responsiveness characteristics throughout administrative infrastructure environments.';
+  assert.ok(rules(`${wordings.auditCreate(28)} ${hardRemainder}`, []).includes('reading-level'));
+});
+
+// ---- Review fixes: term lint and screen strings ----
+
+function fullTerm(name, fields = {}) {
+  return {
+    id: name.toLowerCase().replace(/\W+/g, '-'),
+    term: name,
+    hint: 'A short plain hint.',
+    definition: 'A plain definition. It has two short sentences.',
+    notMeaning: 'It does not mean more than it says.',
+    ...fields
+  };
+}
+
+test('lintTerms passes plain terms and exempts the bare label from the wording rule only', () => {
+  const terms = [fullTerm('Not observed'), fullTerm('Strong correlation'), fullTerm('Possible overlap'), fullTerm('Symptom')];
+  assert.deepEqual(lintTerms(terms), []);
+});
+
+test('lintTerms checks the hint, definition and notMeaning fields', () => {
+  const cases = [
+    [{ hint: 'The save was slow because of the lock.' }, 'causal', 'hint'],
+    [{ definition: 'It is the root cause. It is short.' }, 'causal', 'definition'],
+    [{ notMeaning: 'It is proven to be true.' }, 'causal', 'notMeaning'],
+    [{ hint: 'Not observed (sampling gap: the source was off).' }, 'wording', 'hint'],
+    [{ definition: 'Say this. Audit create took 28 seconds from the database side.' }, 'wording', 'definition'],
+    [{ notMeaning: 'The P95 is a term.' }, 'undefined-term', 'notMeaning']
+  ];
+  for (const [fields, rule, field] of cases) {
+    const findings = lintTerms([fullTerm('Probe', fields)]);
+    assert.ok(findings.some((f) => f.rule === rule && f.id === `probe.${field}`), `${field}: ${JSON.stringify(findings)}`);
+  }
+});
+
+test('lintTerms also lints the name, except a bare wording label', () => {
+  const caused = lintTerms([fullTerm('Slow because of the lock')]);
+  assert.ok(caused.some((f) => f.rule === 'causal'));
+  const phrase = lintTerms([fullTerm('Not observed because the lock waited')]);
+  assert.ok(phrase.some((f) => f.rule === 'wording'));
+  assert.ok(phrase.some((f) => f.rule === 'causal'));
+  assert.deepEqual(lintTerms([fullTerm('Not observed')]), []);
+  assert.deepEqual(lintTerms([]), []);
+});
+
+test('lintScreenStrings is the entry point for fixed UI strings and matches lintCopy', () => {
+  const entries = [{ id: 'a', text: 'Fine words.' }, { id: 'b', text: 'It was slow because of that.' }, { id: 'c', text: 'Not observed (sampling gap: x).' }];
+  assert.deepEqual(lintScreenStrings(entries, TERMS), lintCopy(entries, TERMS));
+  assert.deepEqual(lintScreenStrings(entries, TERMS).map((f) => f.id), ['b', 'c']);
 });
