@@ -1,0 +1,3 @@
+<log4j:event logger="Synthetic.Api.OrdersController" timestamp="1003971751400" level="INFO" thread="17"><log4j:message>Request handled</log4j:message></log4j:event>
+<log4j:event logger="Synthetic.Api.OrdersController" timestamp="SENTINEL-7f3a" level="INFO" thread="17"><log4j:message>Bad stamp</log4j:message></log4j:event>
+<log4j:event logger="Synthetic.Api.OrdersController" timestamp="1003971753400" level="INFO" thread="17"><log4j:message>Request handled again</log4j:message></log4j:event>

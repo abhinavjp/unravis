@@ -1,0 +1,6 @@
+2001-10-25 14:02:30,950 [12] INFO  Synthetic.Api.OrdersController - Request handled for alice@example.test
+2001-10-25 14:02:31,123 [17] WARN  StackExchange.Redis.ConnectionMultiplexer - Timeout performing GET (5000ms), next: GET session:key-1, inst: 0, qu: 0, qs: 41, aw: False, bw: SpinningDown, rs: ReadAsync, ws: Idle, in: 8192, serverEndpoint: redis-a.example.test:6379, mgr: 10 of 10 available, IOCP: (Busy=0,Free=1000,Min=8,Max=1000), WORKER: (Busy=63,Free=32704,Min=8,Max=32767), v: 2.6.122.38350
+2001-10-25 14:02:31,400 [17] ERROR Synthetic.Api.OrdersController - Unhandled error for order-1
+System.TimeoutException: The operation has timed out. ---> System.Data.SqlClient.SqlException: Timeout expired.  The timeout period elapsed prior to obtaining a connection from the pool.
+   at Synthetic.Api.OrdersController.Get(Int32 id) in C:\src\Synthetic\OrdersController.cs:line 42
+2001-10-25 14:02:35,500 [5] FATAL Synthetic.Api.Global - Application_End
