@@ -1,0 +1,4 @@
+{"currentOpTime":"2001-09-09T01:00:10.000+00:00","op":"query","ns":"app.orders","planSummary":"COLLSCAN","waitingForLock":false,"numYields":3,"microsecs_running":2500000,"command":{"find":"orders","filter":{"c":"DROPPED-4d2e"}},"client":"192.0.2.10:51000","appName":"DROPPED-4d2e","host":"mongo-a.example.test:27017"}
+{"currentOpTime":"2001-09-09T01:00:10.000+00:00","op":"update","ns":"app.orders","waitingForLock":true,"numYields":0,"secs_running":4,"command":{"update":"orders","updates":[{"q":{"id":"DROPPED-4d2e"}}]},"client":"192.0.2.11:51001","host":"mongo-a.example.test:27017"}
+{"currentOpTime":{"$date":"2001-09-09T01:00:20.000Z"},"op":"command","ns":"admin.$cmd","planSummary":"IXSCAN { a: 1 }, FETCH","waitingForLock":false,"numYields":12,"microsecs_running":{"$numberLong":"15000000"},"command":{"aggregate":"orders"}}
+{"currentOpTime":{"$date":999997240000},"op":"getmore","ns":"app.orders","waitingForLock":false,"microsecs_running":3200000}
