@@ -6,6 +6,7 @@ require (
 	github.com/ncruces/go-sqlite3 v0.35.6
 	go.mongodb.org/mongo-driver v1.10.6
 	go.mongodb.org/mongo-driver/v2 v2.9.2
+	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0
 )
 
@@ -22,6 +23,5 @@ require (
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
 	lukechampine.com/adiantum v1.1.1 // indirect
 )
