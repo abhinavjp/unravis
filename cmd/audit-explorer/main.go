@@ -164,8 +164,10 @@ func run(args []string, getenv func(string) string) error {
 	// The token travels only in the fragment, which the browser never sends to
 	// the server; the page reads it and removes it from the address bar.
 	launchURL := localURL + "/#t=" + url.QueryEscape(token)
+	served := server.New(repo, explorer.Assets(), token, *demo, serverOptions...)
+	defer server.LogAnalyzeRepeats(served)
 	httpServer := &http.Server{
-		Handler:           server.New(repo, explorer.Assets(), token, *demo, serverOptions...),
+		Handler:           served,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       httpReadTimeout,
 		WriteTimeout:      httpWriteTimeout,
