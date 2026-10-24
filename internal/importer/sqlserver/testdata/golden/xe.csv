@@ -1,0 +1,4 @@
+timestamp_utc,name,wait_type,duration
+2001-06-15 01:50:12.5000000,wait_info,PAGELATCH_EX,16250
+2001-06-15 02:00:35.0000000,wait_info,LCK_M_X,35000
+2001-06-15 02:30:00.0000000,wait_info,LCK_M_S,31000

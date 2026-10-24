@@ -1,0 +1,8 @@
+2001-06-15 08:00:01.23 Server      Microsoft SQL Server 2019 (RTM) - 15.0.2000.5 (X64) SENTINEL-7f3a
+	SENTINEL-7f3a continuation line
+2001-06-15 08:00:02.10 spid9s      Starting up database 'SENTINEL-7f3a'.
+2001-06-15 13:30:00.00 Logon       Login failed for user 'SENTINEL-7f3a'. [CLIENT: 192.0.2.10]
+2001-06-15 14:00:35.00 spid8s      SQL Server has encountered 3 occurrence(s) of I/O requests taking longer than 15 seconds to complete on file [D:\SENTINEL-7f3a.mdf] in database id 5.
+2001-02-30 10:00:00.00 Server      SENTINEL-7f3a on a date that does not exist
+2001-06-15 14:10:00.00 spid21s     Error: SENTINEL-7f3a, Severity: 17, State: 2.
+2001-06-15 14:10:00.00 spid21s     Error: 9002, Severity: 99, State: 2.

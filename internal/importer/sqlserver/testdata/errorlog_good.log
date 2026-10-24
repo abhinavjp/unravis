@@ -1,0 +1,14 @@
+2001-06-15 08:00:01.23 Server      Microsoft SQL Server 2019 (RTM) - 15.0.2000.5 (X64)
+	Synthetic build line for tests
+	Copyright (C) 2019 Microsoft Corporation
+2001-06-15 08:00:01.25 Server      UTC adjustment: 12:00
+2001-06-15 08:00:01.25 Server      (c) Microsoft Corporation.
+2001-06-15 08:00:01.30 Server      SQL Server is starting at normal priority base (=7). This is an informational message only. No user action is required.
+2001-06-15 08:00:02.10 spid9s      Starting up database 'db-alpha'.
+2001-06-15 13:30:00.00 Logon       Error: 18456, Severity: 14, State: 8.
+2001-06-15 13:30:00.00 Logon       Login failed for user 'user-alpha'. Reason: Password did not match that for the login provided. [CLIENT: 192.0.2.10]
+2001-06-15 13:45:10.50 spid21s     Error: 9002, Severity: 17, State: 2.
+2001-06-15 13:45:10.50 spid21s     The transaction log for database 'db-alpha' is full.
+2001-06-15 14:00:35.00 spid8s      SQL Server has encountered 3 occurrence(s) of I/O requests taking longer than 15 seconds to complete on file [D:\synthetic\db-alpha.mdf] in database id 5.  The OS file handle is 0x0000000000000ABC.  The offset of the latest long I/O is: 0x00000012340000.  The duration of the long I/O is: 16021 ms.
+2001-06-15 14:20:00.00 Server      Process 0:0:0 (0x1a2b) Worker 0x00000000ABCDEF00 appears to be non-yielding on Scheduler 2. Thread creation time: 12345678901234. Approx Thread CPU Used: kernel 0 ms, user 70000 ms. Process Utilization 25%. System Idle 70%. Interval: 70010 ms.
+2001-06-15 23:00:00.00 spid12s     SQL Server is terminating in response to a 'stop' request from Service Control Manager. This is an informational message only. No user action is required.

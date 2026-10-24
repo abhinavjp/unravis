@@ -1,0 +1,5 @@
+2001-06-15 08:00:01.23 Server      Microsoft SQL Server 2019 (RTM) - 15.0.2000.5 (X64)
+2001-06-15 08:00:01.25 Server      UTC adjustment: 12:00
+2001-06-15 08:00:01.30 Server      SQL Server is starting at normal priority base (=7). This is an informational message only. No user action is required.
+2001-06-15 14:00:35.00 spid8s      SQL Server has encountered 2 occurrence(s) of I/O requests taking longer than 15 seconds to complete on file [D:\synthetic\db-alpha.mdf] in database id 5.
+2001-06-15 16:00:00.00 spid21s     Error: 9002, Severity: 17, State: 2.

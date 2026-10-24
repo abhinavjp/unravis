@@ -1,0 +1,9 @@
+timestamp_utc,name,wait_type,duration,component,state,error_number,severity,session_id,file_offset
+2001-06-15 01:40:00.0000000,sp_server_diagnostics_component_result,,,QUERY_PROCESSING,CLEAN,,,0,1024
+2001-06-15 01:45:00.0000000,sp_server_diagnostics_component_result,,,IO_SUBSYSTEM,WARNING,,,0,2048
+2001-06-15 01:50:12.5000000,wait_info,PAGELATCH_EX,16250,,,,,57,3072
+2001-06-15 01:55:03.0000000,error_reported,,,,,823,24,0,4096
+2001-06-15 01:57:00.0000000,connectivity_ring_buffer_recorded,,,,,,,0,5120
+2001-06-15 02:00:35.0000000,wait_info,LCK_M_X,35000,,,,,61,6144
+2001-06-15 02:05:00.0000000,wait_info_external,PREEMPTIVE_OS_WRITEFILE,6000,,,,,0,7168
+2001-06-15 02:10:00.0000000,scheduler_monitor_non_yielding_ring_buffer_recorded,,,,,,,0,8192

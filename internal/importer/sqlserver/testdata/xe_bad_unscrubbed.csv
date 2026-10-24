@@ -1,0 +1,2 @@
+timestamp_utc,name,wait_type,duration,sql_text
+2001-06-15 02:00:35.0000000,wait_info,LCK_M_X,35000,SELECT 1 /* SENTINEL-7f3a */
