@@ -296,6 +296,7 @@ func (s *store) Update(id string, in Input) (Hypothesis, error) {
 	h.State = in.State
 	h.EvidenceIDs = in.EvidenceIDs
 	h.Notes = in.Notes
+	h.SettlingObservation = in.SettlingObservation
 	h.Facts = in.Facts
 	h.UpdatedAt = time.Now().UTC()
 	next := s.snapshot()
@@ -321,6 +322,7 @@ func (s *store) Reuse(id string) (Hypothesis, error) {
 	}
 	old := s.items[i]
 	h := s.newEntry(old.Text)
+	h.SettlingObservation = old.SettlingObservation
 	h.History = []HistoryEntry{{State: old.State, At: h.CreatedAt, Note: reuseNote}}
 	next := append(s.snapshot(), h)
 	if err := s.checkBudget(next); err != nil {
@@ -511,6 +513,10 @@ func validateInput(in Input) (Input, error) {
 	if err := checkText("the notes", in.Notes); err != nil {
 		return Input{}, err
 	}
+	in.SettlingObservation = strings.TrimSpace(in.SettlingObservation)
+	if err := checkSettling(in.SettlingObservation); err != nil {
+		return Input{}, err
+	}
 	if len(in.EvidenceIDs) > MaxListLen {
 		return Input{}, invalid(fmt.Sprintf("at most %d evidence references are allowed", MaxListLen))
 	}
@@ -559,6 +565,22 @@ func checkHypothesisText(text string) error {
 		return invalid("the hypothesis text cannot be empty")
 	}
 	return checkText("the hypothesis text", text)
+}
+
+// checkSettling validates the settling observation: at most MaxSettlingLen
+// characters, no control characters (a line break or tab is allowed), and the
+// same identifier checks as the notes. s is already trimmed.
+func checkSettling(s string) error {
+	const what = "the settling observation"
+	if utf8.RuneCountInString(s) > MaxSettlingLen {
+		return invalid(fmt.Sprintf("%s is longer than %d characters", what, MaxSettlingLen))
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t' {
+			return invalid(what + " contains a control character")
+		}
+	}
+	return checkText(what, s)
 }
 
 // checkText enforces the length limit and keeps identifiers out of the ledger.
