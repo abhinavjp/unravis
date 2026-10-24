@@ -15,7 +15,7 @@ function loadTypeScript(relativePath) {
   const module = { exports: {} };
   const nodeRequire = createRequire(filename);
   // A relative import of another TypeScript file in src/lib is transpiled the same way.
-  const load = (request) => request.startsWith('./') && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
+  const load = (request) => /^\.\.?\//.test(request) && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
     ? loadTypeScript(path.relative(root, path.join(path.dirname(filename), request + '.ts')))
     : nodeRequire(request);
   new Function('require', 'module', 'exports', output)(load, module, module.exports);

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { MIN_SAMPLE, P99_MIN_SAMPLE } from '../lib/thresholds';
   import type { Snippet } from 'svelte';
   import type { OverviewRow, Quantile } from '../lib/types';
   import { kindLabel, unknownKindTip } from '../lib/presentation';
@@ -46,7 +47,7 @@
         {@render countTile(row, 'clientErrors', '4xx', row.clientErrors, rateText(row.clientErrorRate) + ' · ' + pointsText(row.delta.clientErrorRate), 'Client errors. The share is of events with a known result. ' + sharesNote)}
         {@render countTile(row, 'serverErrors', '5xx', row.serverErrors, rateText(row.serverErrorRate) + ' · ' + pointsText(row.delta.serverErrorRate), 'Server errors, including failed Hangfire jobs. The share is of events with a known result. ' + sharesNote)}
         {#each percentiles(row) as item (item.id)}
-          <div class="overview-tile" title="Histogram estimate over usable timings of this request type only. With few usable timings it is only a rough figure{item.id === 'P99' ? ' (P99 appears from 100 timings)' : ''}; the change against the reference needs at least 20 usable timings in both periods{item.id === 'P99' ? ' (100 for P99)' : ''}.">
+          <div class="overview-tile" title="Histogram estimate over usable timings of this request type only. With few usable timings it is only a rough figure{item.id === 'P99' ? ' (P99 appears from ' + P99_MIN_SAMPLE + ' timings)' : ''}; the change against the reference needs at least {MIN_SAMPLE} usable timings in both periods{item.id === 'P99' ? ' (100 for P99)' : ''}.">
             <span>{item.id}</span><strong>{latency(item.quantile)}</strong><small>{msChangeText(item.delta)}</small>
           </div>
         {/each}

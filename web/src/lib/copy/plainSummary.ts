@@ -20,7 +20,7 @@
  *                                 metric from Query.metric.
  *  - plainLowSample            <- Stats.count (valid timings) and Stats.events (all documents) of one cohort, or Rollup.completed and
  *                                 Rollup.events; Comparison.state === 'insufficient_data' is the same condition. Floors mirror
- *                                 percentileFloors in lib/volume.ts (20 for P95, 100 for P99).
+ *                                 MIN_SAMPLE and P99_MIN_SAMPLE in lib/thresholds.ts.
  *  - plainIncomplete           <- Rollup.completed / incomplete / pending / invalid / events (or Stats.count / incomplete / pending /
  *                                 invalid / events) and the Query window.
  *
@@ -32,6 +32,7 @@
 import { auditCreate, notObservedGap, notObservedThreshold, overlapAmbiguous, overlapUnique, plainAuditCreate } from './wordings';
 import type { EvidenceLabel } from './types';
 import type { Comparison, Metric } from '../types';
+import { MIN_SAMPLE, P99_MIN_SAMPLE } from '../thresholds';
 
 export interface PlainSummary {
   /** One line in everyday words: what was measured, with unit and window. */
@@ -214,7 +215,7 @@ export function plainTypicalVsSlowest(input: TypicalVsSlowestInput): PlainSummar
     detail: join(
       'P50 (the typical request, half were quicker): ' + (nowP50 != null ? 'about ' + durationWords(nowP50) : 'not available') +
         (refP50 != null ? ', earlier about ' + durationWords(refP50) : '') + '.',
-      'P95 (95 of every 100 requests were quicker): ' + (nowP95 != null ? 'about ' + durationWords(nowP95) : 'not available, it needs at least 20 timed requests') +
+      'P95 (95 of every 100 requests were quicker): ' + (nowP95 != null ? 'about ' + durationWords(nowP95) : 'not available, it needs at least ' + MIN_SAMPLE + ' timed requests') +
         (refP95 != null ? ', earlier about ' + durationWords(refP95) : '') + '.',
       ratioLine,
       'Based on ' + requests(n) + ' ' + now + '.',
@@ -231,8 +232,8 @@ export function plainTypicalVsSlowest(input: TypicalVsSlowestInput): PlainSummar
 
 /** Which percentile the reader is about to trust; each has its own minimum number of timed requests. */
 export type SampleLevel = 'p95' | 'p99';
-/** Minimum timed requests per percentile. Mirrors percentileFloors in lib/volume.ts. */
-export const sampleFloors: Record<SampleLevel, number> = { p95: 20, p99: 100 };
+/** Minimum timed requests per percentile. Mirrors lib/thresholds.ts. */
+export const sampleFloors: Record<SampleLevel, number> = { p95: MIN_SAMPLE, p99: P99_MIN_SAMPLE };
 
 export interface LowSampleInput {
   /** Stats.count (or Rollup.completed): requests with a usable timing. */
