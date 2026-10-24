@@ -1,11 +1,12 @@
 import type { Quantile, Stats } from './types';
+import { MIN_SAMPLE, P99_MIN_SAMPLE } from './thresholds';
 
 export type PercentileLevel = 'p95' | 'p99';
 
 /** Histogram quantiles are only quoted above these sample counts (matches the server's floors). */
-export const percentileFloors: Record<PercentileLevel, number> = { p95: 20, p99: 100 };
+export const percentileFloors: Record<PercentileLevel, number> = { p95: MIN_SAMPLE, p99: P99_MIN_SAMPLE };
 
-export const p99NeedsSamples = 'needs ≥ 100 samples';
+export const p99NeedsSamples = 'needs ≥ ' + P99_MIN_SAMPLE + ' samples';
 
 /**
  * Converts "at least the cohort's P95/P99" into a minimum in milliseconds for the

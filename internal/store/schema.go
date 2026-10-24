@@ -31,20 +31,11 @@ func (s *Store) SampleSchema(ctx context.Context, sourceID string, n int) (audit
 		return audit.SchemaCensus{}, err
 	}
 	defer release()
-	if err := acquire(ctx, s.global); err != nil {
-		return audit.SchemaCensus{}, fmt.Errorf("%w: query capacity is busy", audit.ErrBusy)
+	releaseSlots, denied := s.admit(ctx, p)
+	if denied != nil {
+		return audit.SchemaCensus{}, denied.lookupError()
 	}
-	defer func() { <-s.global }()
-	s.mu.RLock()
-	per := s.perSource[p.source.ID]
-	s.mu.RUnlock()
-	if per == nil {
-		return audit.SchemaCensus{}, fmt.Errorf("%w: source was removed before the query started", audit.ErrNotFound)
-	}
-	if err := acquire(ctx, per); err != nil {
-		return audit.SchemaCensus{}, fmt.Errorf("%w: source query capacity is busy", audit.ErrBusy)
-	}
-	defer func() { <-per }()
+	defer releaseSlots()
 
 	pipeline := schemaPipeline(n, usesLegacyMongo(p.shared.client) || isMongo34(p.version))
 	cur, err := p.shared.client.Aggregate(ctx, p.source.Database, p.source.Collection, pipeline)

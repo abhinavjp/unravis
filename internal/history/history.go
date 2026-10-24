@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/sealedfile"
 )
 
 const (
@@ -55,10 +56,7 @@ type vault struct {
 }
 
 // Protector encrypts and decrypts the complete history document.
-type Protector interface {
-	Protect([]byte) ([]byte, error)
-	Unprotect([]byte) ([]byte, error)
-}
+type Protector = sealedfile.Protector
 
 type Service struct {
 	path           string
@@ -386,32 +384,7 @@ func (s *Service) writeLocked(v vault) error {
 	if err != nil || len(ciphertext) == 0 || len(ciphertext) > maxFileSize {
 		return ErrUnavailable
 	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return ErrUnavailable
-	}
-	tmp, err := os.CreateTemp(dir, ".connections-*.tmp")
-	if err != nil {
-		return ErrUnavailable
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if err := tmp.Chmod(0600); err != nil {
-		_ = tmp.Close()
-		return ErrUnavailable
-	}
-	if _, err := tmp.Write(ciphertext); err != nil {
-		_ = tmp.Close()
-		return ErrUnavailable
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return ErrUnavailable
-	}
-	if err := tmp.Close(); err != nil {
-		return ErrUnavailable
-	}
-	if err := replaceFile(tmpName, s.path); err != nil {
+	if err := sealedfile.WriteAtomic(s.path, ".connections-*.tmp", ciphertext); err != nil {
 		return ErrUnavailable
 	}
 	return nil

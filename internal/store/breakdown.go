@@ -84,9 +84,9 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 	for i, p := range profiles {
 		src := &breakdownSource{p: p, legacy: usesLegacyMongo(p.shared.client)}
 		sources[i] = src
-		release, code, message := s.admit(ctx, p)
-		if release == nil {
-			src.fail(code, message)
+		release, denied := s.admit(ctx, p)
+		if denied != nil {
+			src.fail(denied.Code, denied.Message)
 			continue
 		}
 		// Hint mode: calibrate after admission. The legacy reader streams metadata
@@ -123,9 +123,9 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 		if !src.ok || src.legacy || len(keys) == 0 || pooled {
 			continue
 		}
-		release, code, message := s.admit(ctx, src.p)
-		if release == nil {
-			src.fail(code, message)
+		release, denied := s.admit(ctx, src.p)
+		if denied != nil {
+			src.fail(denied.Code, denied.Message)
 			continue
 		}
 		began := time.Now()
@@ -178,31 +178,6 @@ func (b *breakdownSource) provenance(q audit.Query) audit.Provenance {
 	pv.Note = b.note
 	finishProvenance(&pv, b.matched, b.matched, b.elapsed, b.code)
 	return pv
-}
-
-// admit takes the global and per-source query slots. On failure the release
-// function is nil and the code and message describe why the source was skipped.
-func (s *Store) admit(ctx context.Context, p *profile) (func(), string, string) {
-	if err := acquire(ctx, s.global); err != nil {
-		code, message := sourceAdmissionError(err)
-		return nil, code, message
-	}
-	s.mu.RLock()
-	per := s.perSource[p.source.ID]
-	s.mu.RUnlock()
-	if per == nil {
-		<-s.global
-		return nil, "source_unavailable", audit.SourceQueryErrorMessage("source_unavailable")
-	}
-	if err := acquire(ctx, per); err != nil {
-		<-s.global
-		code, message := sourceAdmissionError(err)
-		return nil, code, message
-	}
-	return func() {
-		<-per
-		<-s.global
-	}, "", ""
 }
 
 // breakdownDimExpr is the value of dim on a raw document, capped like the

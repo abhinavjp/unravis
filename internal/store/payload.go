@@ -30,20 +30,11 @@ func (s *Store) Payload(ctx context.Context, input audit.PayloadInput) (audit.Pa
 		return audit.Payload{}, err
 	}
 	defer release()
-	if err := acquire(ctx, s.global); err != nil {
-		return audit.Payload{}, fmt.Errorf("%w: query capacity is busy", audit.ErrBusy)
+	releaseSlots, denied := s.admit(ctx, p)
+	if denied != nil {
+		return audit.Payload{}, denied.lookupError()
 	}
-	defer func() { <-s.global }()
-	s.mu.RLock()
-	per := s.perSource[p.source.ID]
-	s.mu.RUnlock()
-	if per == nil {
-		return audit.Payload{}, fmt.Errorf("%w: source was removed before the query started", audit.ErrNotFound)
-	}
-	if err := acquire(ctx, per); err != nil {
-		return audit.Payload{}, fmt.Errorf("%w: source query capacity is busy", audit.ErrBusy)
-	}
-	defer func() { <-per }()
+	defer releaseSlots()
 	pipeline := mongo.Pipeline{
 		bson.D{{Key: "$match", Value: bson.D{{Key: "_id", Value: objectID}}}},
 		bson.D{{Key: "$limit", Value: 1}},

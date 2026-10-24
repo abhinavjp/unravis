@@ -205,26 +205,10 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		page.Provenance = append(page.Provenance, failedProvenance(p, "page", input.Query.Start, input.Query.End, audit.QueryModeExact, nil, notRunNote(input.Query.QueryMode), code, 0))
 	}
 	for _, p := range profiles {
-		if err := acquire(ctx, s.global); err != nil {
-			code, message := sourceAdmissionError(err)
-			page.Sources = append(page.Sources, audit.SourceResult{SourceID: p.source.ID, ErrorCode: code, Error: message})
-			notRun(p, code)
-			continue
-		}
-		s.mu.RLock()
-		per := s.perSource[p.source.ID]
-		s.mu.RUnlock()
-		if per == nil {
-			<-s.global
-			page.Sources = append(page.Sources, audit.SourceResult{SourceID: p.source.ID, ErrorCode: "source_unavailable", Error: audit.SourceQueryErrorMessage("source_unavailable")})
-			notRun(p, "source_unavailable")
-			continue
-		}
-		if err := acquire(ctx, per); err != nil {
-			<-s.global
-			code, message := sourceAdmissionError(err)
-			page.Sources = append(page.Sources, audit.SourceResult{SourceID: p.source.ID, ErrorCode: code, Error: message})
-			notRun(p, code)
+		release, denied := s.admit(ctx, p)
+		if denied != nil {
+			page.Sources = append(page.Sources, audit.SourceResult{SourceID: p.source.ID, ErrorCode: denied.Code, Error: denied.Message})
+			notRun(p, denied.Code)
 			continue
 		}
 		// Hint mode: calibrate after admission. The legacy reader and the activity
@@ -290,8 +274,7 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 				}
 			}
 		}
-		<-per
-		<-s.global
+		release()
 		elapsed := time.Since(began)
 		pv := newProvenance(p, "page", input.Query.Start, input.Query.End, ranMode, margin)
 		pv.Note = hintNote
@@ -350,6 +333,34 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 	return page, nil
 }
 
+// keysetScanWindow narrows the indexed window match of a continuation page to
+// the part of the window the cursor has not passed. The keyset condition on the
+// derived time (_auditAt) runs after the per-document $set stages, so on its own
+// it cannot stop the server scanning and computing every row of the window on
+// every page; a 100-page export would read the window 100 times. The derived
+// time is RequestInitiatedAt when that is a date, otherwise CreatedOn, and the
+// window match tests the same two fields, so bounding them by the cursor time
+// drops only rows the keyset condition would drop anyway. The bound keeps ties
+// with the cursor time (the keyset still decides them by source and _id), and
+// BSON dates are whole milliseconds, so the exclusive newest-first end is the
+// cursor time rounded down to the millisecond plus one. The result is never
+// wider than the query window.
+func keysetScanWindow(start, end time.Time, after *pageCursor, oldest bool) (time.Time, time.Time) {
+	if after == nil {
+		return start, end
+	}
+	if oldest {
+		if after.At.After(start) {
+			start = after.At
+		}
+		return start, end
+	}
+	if cut := after.At.Truncate(time.Millisecond).Add(time.Millisecond); cut.Before(end) {
+		end = cut
+	}
+	return start, end
+}
+
 // requestPipeline pages rows by the exact cohort (kind members and outcome), the
 // scope the activity and slow-request lists use.
 func requestPipeline(q audit.Query, cohort [5]string, sourceID string, after *pageCursor, limit int) mongo.Pipeline {
@@ -377,10 +388,11 @@ func requestPipelineOrdered(q audit.Query, cohort [5]string, state string, summa
 	if oldest {
 		direction, past = 1, "$gt"
 	}
-	startMatch := bson.D{{Key: "RequestInitiatedAt", Value: bson.D{{Key: "$gte", Value: q.Start}, {Key: "$lt", Value: q.End}}}}
+	scanStart, scanEnd := keysetScanWindow(q.Start, q.End, after, oldest)
+	startMatch := bson.D{{Key: "RequestInitiatedAt", Value: bson.D{{Key: "$gte", Value: scanStart}, {Key: "$lt", Value: scanEnd}}}}
 	fallback := bson.D{{Key: "$and", Value: bson.A{
 		bson.D{{Key: "$or", Value: bson.A{bson.D{{Key: "RequestInitiatedAt", Value: bson.D{{Key: "$exists", Value: false}}}}, bson.D{{Key: "RequestInitiatedAt", Value: nil}}}}},
-		bson.D{{Key: "CreatedOn", Value: bson.D{{Key: "$gte", Value: q.Start}, {Key: "$lt", Value: q.End}}}},
+		bson.D{{Key: "CreatedOn", Value: bson.D{{Key: "$gte", Value: scanStart}, {Key: "$lt", Value: scanEnd}}}},
 	}}}
 	match := bson.D{{Key: "$or", Value: bson.A{startMatch, fallback}}}
 	if cohort[1] != "" {

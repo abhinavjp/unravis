@@ -23,6 +23,18 @@ export default defineConfig(({ command }) => {
       host: '127.0.0.1',
       ...(command === 'serve' ? { proxy: { '/api': { target: apiTarget, changeOrigin: false } } } : {})
     },
-    preview: { host: '127.0.0.1' }
+    preview: { host: '127.0.0.1' },
+    build: {
+      rollupOptions: {
+        output: {
+          // ECharts and its canvas layer (zrender) dominate the bundle and change rarely; keeping
+          // them in their own chunk lets the app code reload without re-downloading them.
+          manualChunks(id: string) {
+            if (id.includes('/node_modules/echarts/') || id.includes('/node_modules/zrender/')) return 'vendor-echarts';
+            return undefined;
+          }
+        }
+      }
+    }
   };
 });

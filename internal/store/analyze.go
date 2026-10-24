@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"api-audit-explorer/internal/audit"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -101,26 +104,17 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 			notRun := func(code string) []audit.Provenance {
 				return []audit.Provenance{failedProvenance(p, "current", q.Start, q.End, audit.QueryModeExact, nil, notRunNote(q.QueryMode), code, 0)}
 			}
-			if err := acquire(workCtx, s.global); err != nil {
-				code, message := sourceAdmissionError(err)
-				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}, provenance: notRun(code)}
+			release, denied := s.admit(workCtx, p)
+			if denied != nil {
+				if denied.Stage == admitRemoved {
+					results[i] = failedSource(p, denied.Message)
+				} else {
+					results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: denied.Code, Error: denied.Message}}
+				}
+				results[i].provenance = notRun(denied.Code)
 				return
 			}
-			defer func() { <-s.global }()
-			s.mu.RLock()
-			per := s.perSource[p.source.ID]
-			s.mu.RUnlock()
-			if per == nil {
-				results[i] = failedSource(p, "Source was removed before the query started.")
-				results[i].provenance = notRun("source_unavailable")
-				return
-			}
-			if err := acquire(workCtx, per); err != nil {
-				code, message := sourceAdmissionError(err)
-				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}, provenance: notRun(code)}
-				return
-			}
-			defer func() { <-per }()
+			defer release()
 			// Hint mode: calibrate once per source, after admission. When it cannot
 			// run the source is read exact and each entry says why.
 			margin, note := s.resolveHint(workCtx, p, q.QueryMode, "")
@@ -202,6 +196,135 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 	return analysis, nil
 }
 
+// estimateBucketJSON is an upper bound on len(json.Marshal(bucket)) that is
+// exact for everything except string escaping: no allocation and no reflection,
+// so the early byte bail-out in readBuckets costs a few number formats per
+// bucket instead of an encode. It never under-counts, so the bail-out cannot let
+// through more than json.Marshal would have; the exact check on the whole
+// Analysis (in Analyze) is what decides the final size. ok is false for a bucket
+// json.Marshal would refuse (NaN or infinite float, a time outside years 0 to
+// 9999), which readBuckets reports as the same byte-limit error.
+//
+// Keys are counted with their quotes and colon, and the commas between fields.
+// Omitempty fields cost nothing at zero. Floats and the time are measured with
+// the formatting encoding/json uses, so they are exact; a float is at most 25
+// bytes (sign, 0., five zeros and 17 digits for a negative value in [1e-6, 1e-5)). A string
+// is counted per byte as one for a safe ASCII byte, two for a quote or
+// backslash and six (\u00XX or \ufffd) for any other byte that is escaped, so
+// it is exact unless the string holds control characters, which have a shorter
+// escape for \b \f \n \r \t.
+func estimateBucketJSON(b audit.Bucket) (size int64, ok bool) {
+	if year := b.At.Year(); year < 0 || year > 9999 {
+		return 0, false
+	}
+	var timeBuf [48]byte
+	timeLen := int64(len(b.At.AppendFormat(timeBuf[:0], time.RFC3339Nano))) + 2 // quotes
+	// Twelve fields always present, so eleven commas between them; each omitted
+	// field present adds its own comma below.
+	size = 2 + 11 +
+		int64(len(`"sourceId":`)+len(`"controller":`)+len(`"action":`)+len(`"kind":`)+len(`"outcome":`)+len(`"state":`)+
+			len(`"at":`)+len(`"bin":`)+len(`"count":`)+len(`"sumMs":`)+len(`"minMs":`)+len(`"maxMs":`)) +
+		jsonStringBound(b.SourceID) + jsonStringBound(b.Controller) + jsonStringBound(b.Action) +
+		jsonStringBound(b.Kind) + jsonStringBound(b.Outcome) + jsonStringBound(b.State) +
+		timeLen + decimalLen(int64(b.Bin)) + decimalLen(b.Count)
+	for _, v := range [...]float64{b.SumMs, b.MinMs, b.MaxMs} {
+		n, finite := jsonFloatLen(v)
+		if !finite {
+			return 0, false
+		}
+		size += n
+	}
+	for _, f := range [...]struct {
+		key string
+		v   float64
+	}{{`"sumAuditMs":`, b.SumAuditMs}, {`"sumApiMs":`, b.SumApiMs}, {`"sumPayloadMs":`, b.SumPayloadMs}} {
+		n, finite := jsonFloatLen(f.v)
+		if !finite {
+			return 0, false
+		}
+		if f.v != 0 {
+			size += int64(len(f.key)) + 1 + n
+		}
+	}
+	for _, c := range [...]struct {
+		key string
+		v   int64
+	}{
+		{`"nAudit":`, b.NAudit}, {`"nApi":`, b.NApi}, {`"nPayload":`, b.NPayload},
+		{`"pendingAsync":`, b.PendingAsync}, {`"observedPartial":`, b.ObservedPartial},
+		{`"count4xx":`, b.Count4xx}, {`"count5xx":`, b.Count5xx}, {`"countHangfireFailed":`, b.CountHangfireFailed},
+	} {
+		if c.v != 0 {
+			size += int64(len(c.key)) + 1 + decimalLen(c.v)
+		}
+	}
+	return size, true
+}
+
+// jsonFloatLen is the length encoding/json gives a float64, using its format
+// choice: exponent form below 1e-6 and from 1e21, plain decimal otherwise, and
+// e-09 trimmed to e-9. finite is false for NaN and infinities, which it refuses.
+func jsonFloatLen(v float64) (n int64, finite bool) {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	var buf [32]byte
+	format := byte('f')
+	if abs := math.Abs(v); abs != 0 && (abs < 1e-6 || abs >= 1e21) {
+		format = 'e'
+	}
+	b := strconv.AppendFloat(buf[:0], v, format, -1, 64)
+	n = int64(len(b))
+	if format == 'e' {
+		if l := len(b); l >= 4 && b[l-4] == 'e' && b[l-3] == '-' && b[l-2] == '0' {
+			n--
+		}
+	}
+	return n, true
+}
+
+// jsonStringBound bounds the encoded length of s, quotes included.
+func jsonStringBound(s string) int64 {
+	n := int64(2)
+	for i := 0; i < len(s); {
+		c := s[i]
+		switch {
+		case c >= utf8.RuneSelf:
+			r, width := utf8.DecodeRuneInString(s[i:])
+			if r == utf8.RuneError || r == '\u2028' || r == '\u2029' {
+				n += 6 // \ufffd for an invalid byte, \u2028 and \u2029 for the separators
+			} else {
+				n += int64(width)
+			}
+			i += width
+			continue
+		case c == '"' || c == '\\':
+			n += 2
+		case c < 0x20 || c == '<' || c == '>' || c == '&':
+			n += 6
+		default:
+			n++
+		}
+		i++
+	}
+	return n
+}
+
+// decimalLen is the length of v in base ten, sign included.
+func decimalLen(v int64) int64 {
+	n := int64(1)
+	u := uint64(v)
+	if v < 0 {
+		n++
+		u = -u
+	}
+	for u >= 10 {
+		u /= 10
+		n++
+	}
+	return n
+}
+
 func acquire(ctx context.Context, sem chan struct{}) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -259,8 +382,8 @@ func (s *Store) readBuckets(ctx context.Context, p *profile, q audit.Query, star
 			PendingAsync: doc.PendingAsync, ObservedPartial: doc.ObservedPartial,
 			Count4xx: doc.C4xx, Count5xx: doc.C5xx, CountHangfireFailed: doc.CHangfireFailed,
 		}
-		encoded, err := json.Marshal(bucket)
-		if err != nil || totalBytes.Add(int64(len(encoded)+1)) > maxAnalysisBytes {
+		size, ok := estimateBucketJSON(bucket)
+		if !ok || totalBytes.Add(size+1) > maxAnalysisBytes {
 			return nil, fmt.Errorf("%w: %w", audit.ErrLimit, audit.ErrSummaryBytesLimit)
 		}
 		result = append(result, bucket)

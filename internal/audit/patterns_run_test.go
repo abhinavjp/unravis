@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -23,8 +24,13 @@ type patternFakeRepo struct {
 	results []SourceResult
 	listed  []Source
 
+	// mu guards the call logs: RunPatterns reads different sources in parallel.
+	mu         sync.Mutex
 	slowCalls  []PageInput
 	auditCalls []PageInput
+	// slowHook and auditHook run before the read and may fail it or block on ctx.
+	slowHook  func(context.Context, PageInput) error
+	auditHook func(context.Context, PageInput) error
 }
 
 // patternFakeSlow adds SlowestReader.
@@ -83,14 +89,21 @@ func fakePage(rows []RequestRecord, input PageInput) (Page, error) {
 	return page, nil
 }
 
-func (f *patternFakeRepo) Requests(_ context.Context, input PageInput) (Page, error) {
+func (f *patternFakeRepo) Requests(ctx context.Context, input PageInput) (Page, error) {
 	if err := ValidateQuery(input.Query); err != nil {
 		return Page{}, err
 	}
 	if input.Limit < 1 || input.Limit > MaxPageSize {
 		return Page{}, ErrLimit
 	}
+	f.mu.Lock()
 	f.auditCalls = append(f.auditCalls, input)
+	f.mu.Unlock()
+	if f.auditHook != nil {
+		if err := f.auditHook(ctx, input); err != nil {
+			return Page{}, err
+		}
+	}
 	var rows []RequestRecord
 	for _, r := range f.audit {
 		if r.SourceID == input.Query.SourceIDs[0] {
@@ -100,11 +113,18 @@ func (f *patternFakeRepo) Requests(_ context.Context, input PageInput) (Page, er
 	return fakePage(rows, input)
 }
 
-func (f patternFakeSlow) Slowest(_ context.Context, input PageInput) (Page, error) {
+func (f patternFakeSlow) Slowest(ctx context.Context, input PageInput) (Page, error) {
 	if err := ValidateSlowest(input); err != nil {
 		return Page{}, err
 	}
+	f.mu.Lock()
 	f.slowCalls = append(f.slowCalls, input)
+	f.mu.Unlock()
+	if f.slowHook != nil {
+		if err := f.slowHook(ctx, input); err != nil {
+			return Page{}, err
+		}
+	}
 	var rows []RequestRecord
 	for _, r := range f.slow {
 		if r.SourceID != input.Query.SourceIDs[0] {
@@ -558,10 +578,17 @@ func TestRunPatternsPerSourceAndProvenance(t *testing.T) {
 	if len(r.Stalls) != 2 || len(repo.slowCalls) != 2 || len(repo.auditCalls) != 2 {
 		t.Fatalf("stalls %d slow calls %d audit calls %d", len(r.Stalls), len(repo.slowCalls), len(repo.auditCalls))
 	}
+	// Sources run in parallel, so call order is not fixed; each call still reads
+	// exactly one source, and each source is read once per rule.
+	perSource := map[string]int{}
 	for i, c := range append(repo.slowCalls, repo.auditCalls...) {
-		if len(c.Query.SourceIDs) != 1 || c.Query.SourceIDs[0] != in.SourceIDs[i%2] {
+		if len(c.Query.SourceIDs) != 1 {
 			t.Fatalf("call %d reads %v, want one source at a time", i, c.Query.SourceIDs)
 		}
+		perSource[c.Query.SourceIDs[0]]++
+	}
+	if perSource["s1"] != 2 || perSource["s2"] != 2 {
+		t.Fatalf("calls per source %v", perSource)
 	}
 	if len(r.Provenance) != 4 {
 		t.Fatalf("provenance %+v", r.Provenance)

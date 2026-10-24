@@ -15,7 +15,7 @@ function loadTypeScript(relativePath) {
   const module = { exports: {} };
   const nodeRequire = createRequire(filename);
   // A relative import of another TypeScript file in src/lib is transpiled the same way.
-  const load = (request) => request.startsWith('./') && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
+  const load = (request) => /^\.\.?\//.test(request) && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
     ? loadTypeScript(path.relative(root, path.join(path.dirname(filename), request + '.ts')))
     : nodeRequire(request);
   new Function('require', 'module', 'exports', output)(load, module, module.exports);
@@ -55,6 +55,8 @@ test('windowText states UTC day and clock, and handles odd input', () => {
   assert.equal(plain.windowText({ start: '2026-10-24T14:45:00Z' }), 'on 24 Oct, 14:45 UTC');
   assert.equal(plain.windowText(null), '');
   assert.equal(plain.windowText({ start: 'nonsense', end: 'x' }), '');
+  assert.equal(plain.windowText({ start: '2026-10-24T14:45:00Z', end: '2026-10-24T14:50:00Z', zone: 'Asia/Dubai' }), 'on 24 Oct, 18:45–18:50 GMT+4');
+  assert.equal(plain.windowText({ start: '2026-10-24T22:00:00Z', end: '2026-10-24T23:00:00Z', zone: 'Asia/Dubai' }), 'on 25 Oct, 02:00–03:00 GMT+4');
 });
 
 test('durationWords picks a unit', () => {

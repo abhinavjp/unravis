@@ -175,7 +175,7 @@ func (h *histogramAccumulator) stats() Stats {
 	stats.P90 = h.quantile(.90)
 	stats.P95 = h.quantile(.95)
 	// Below 100 samples the nearest-rank P99 is just the maximum, so report none.
-	if h.count >= 100 {
+	if h.count >= P99MinSampleCount {
 		stats.P99 = h.quantile(.99)
 	}
 	return stats

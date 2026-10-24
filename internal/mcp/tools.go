@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -176,7 +177,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		page["approximate"] = result.Approximate
 		withProvenance(page, result.Provenance)
 		page["expiresInSeconds"] = int(resultTTL.Seconds())
-		page["interpretation"] = "Statistics are approximate; groups with fewer than 20 usable timings in either period have no reliable slowdown ratio. Source failures mean incomplete coverage. Counts/rates reflect these filters, not all server traffic. Read audit_get_guide before drawing conclusions."
+		page["interpretation"] = fmt.Sprintf("Statistics are approximate; groups with fewer than %d usable timings in either period have no reliable slowdown ratio. Source failures mean incomplete coverage. Counts/rates reflect these filters, not all server traffic. Read audit_get_guide before drawing conclusions.", audit.MinSampleCount)
 		return page, nil
 	case "audit_get_groups":
 		var args groupArgs

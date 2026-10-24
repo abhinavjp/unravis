@@ -124,20 +124,14 @@ func (s *Store) Coverage(ctx context.Context, in audit.CoverageInput) (audit.Cov
 	opCtx, cancelOp := context.WithTimeout(ctx, queryTimeout)
 	defer cancelOp()
 
-	if err := acquire(opCtx, s.global); err != nil {
-		return audit.CoverageReport{}, err
+	releaseSlots, denied := s.admit(opCtx, p)
+	if denied != nil {
+		if denied.Stage == admitRemoved {
+			return audit.CoverageReport{}, errSourceNotFound
+		}
+		return audit.CoverageReport{}, denied.Err
 	}
-	defer func() { <-s.global }()
-	s.mu.RLock()
-	per := s.perSource[p.source.ID]
-	s.mu.RUnlock()
-	if per == nil {
-		return audit.CoverageReport{}, errSourceNotFound
-	}
-	if err := acquire(opCtx, per); err != nil {
-		return audit.CoverageReport{}, err
-	}
-	defer func() { <-per }()
+	defer releaseSlots()
 
 	// The size check is a source query too, so it runs only while both
 	// admission slots are held. The deferred releases cover every return.

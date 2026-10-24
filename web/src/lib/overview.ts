@@ -1,4 +1,5 @@
 import type { Kind, OverviewRow, Outcome, Rollup } from './types';
+import { MIN_SAMPLE } from './thresholds';
 
 const missing = '—';
 const finite = (value: number | null | undefined): value is number => value != null && Number.isFinite(value);
@@ -113,10 +114,10 @@ export const allOperationsDrill = (queryKind: Kind = 'all'): OverviewDrill => ({
 export const drillHeading = (drill: Pick<OverviewDrill, 'label' | 'note'>) => drill.note ? drill.label + ' (' + drill.note + ')' : drill.label;
 
 const stateNotes: Record<string, string> = {
-  compared: 'Both periods have at least 20 valid timings, so the changes are shown.',
-  insufficient_data: 'At least one period has fewer than 20 valid timings, so response-time changes are hidden.',
-  missing_current: 'No valid timings in the current period.',
-  missing_reference: 'No valid timings in the reference period, so no changes are shown.'
+  compared: 'Both periods have at least ' + MIN_SAMPLE + ' usable timings, so the changes are shown.',
+  insufficient_data: 'At least one period has fewer than ' + MIN_SAMPLE + ' usable timings, so response-time changes are hidden.',
+  missing_current: 'No usable timings in the current period.',
+  missing_reference: 'No usable timings in the reference period, so no changes are shown.'
 };
 export const overviewStateNote = (row: Pick<OverviewRow, 'state'>) => stateNotes[row.state] ?? '';
 

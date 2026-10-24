@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { MIN_SAMPLE } from '../lib/thresholds';
+  import { formatCount, countNoun } from '../lib/format';
   import type { Rollup } from '../lib/types';
   import { kindLabel, unknownKindTip } from '../lib/presentation';
   import { changeText, msChangeText, operationDrill, pointsText, sortOperations, type OperationSort, type OverviewDrill } from '../lib/overview';
@@ -18,7 +20,7 @@
   };
   const arrow = (field: OperationSort) => sort === field ? direction < 0 ? ' ↓' : ' ↑' : '';
   const ariaSort = (field: OperationSort) => sort === field ? direction < 0 ? 'descending' : 'ascending' : 'none';
-  const referenceNote = 'Changes are hidden (shown as —) unless the reference period has at least 20 valid timings for this API; the P95 change also needs 20 in the current period.';
+  const referenceNote = 'Changes are hidden (shown as —) unless the reference period has at least ' + MIN_SAMPLE + ' usable timings for this API; the P95 change also needs ' + MIN_SAMPLE + ' in the current period.';
 </script>
 
 <div class="group-toolbar">
@@ -38,14 +40,14 @@
       <th aria-sort={ariaSort('p95DeltaMs')}><button class="sort-button" title="Change in the estimated P95 response time against the reference period, in milliseconds." onclick={() => sortBy('p95DeltaMs')}>Δ P95{arrow('p95DeltaMs')}</button></th>
       <th aria-sort={ariaSort('clientErrorDelta')}><button class="sort-button" title="Change in the 4xx share of events with a known result, in percentage points." onclick={() => sortBy('clientErrorDelta')}>Δ 4xx{arrow('clientErrorDelta')}</button></th>
       <th aria-sort={ariaSort('serverErrorDelta')}><button class="sort-button" title="Change in the 5xx share (including failed Hangfire jobs) of events with a known result, in percentage points." onclick={() => sortBy('serverErrorDelta')}>Δ 5xx{arrow('serverErrorDelta')}</button></th>
-      <th aria-sort={ariaSort('completionDelta')}><button class="sort-button" title="Change in the share of events that completed with a valid timing, in percentage points." onclick={() => sortBy('completionDelta')}>Δ completion{arrow('completionDelta')}</button></th>
+      <th aria-sort={ariaSort('completionDelta')}><button class="sort-button" title="Change in the share of events that completed with a usable timing, in percentage points." onclick={() => sortBy('completionDelta')}>Δ completion{arrow('completionDelta')}</button></th>
     </tr></thead>
     <tbody>
       {#each visible as row (row.controller + '|' + row.action + '|' + (row.kind ?? ''))}
         <tr>
           <td data-label="Operation">{#if onDrill}<button type="button" class="api-select" title={'List the events of this operation and request type that match the filters. ' + (operationDrill(row, kindFilter).note ? 'The list ' + operationDrill(row, kindFilter).note + '.' : '')} onclick={() => onDrill?.(operationDrill(row, kindFilter))}>{row.controller}.{row.action}</button>{:else}{row.controller}.{row.action}{/if}</td>
           <td data-label="Request type" title={row.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(row.kind) || '—'}</td>
-          <td class="numeric" data-label="Events" title={'Reference period: ' + (row.referenceEvents ?? 0).toLocaleString() + ' events.'}>{(row.events ?? 0).toLocaleString()}</td>
+          <td class="numeric" data-label="Events" title={'Reference period: ' + countNoun(row.referenceEvents ?? 0, 'event') + '.'}>{formatCount(row.events ?? 0)}</td>
           <td class="numeric" data-label="Δ traffic" title={referenceNote}>{changeText(row.trafficDelta)}</td>
           <td class="numeric" data-label="Δ P95" title={referenceNote}>{msChangeText(row.p95DeltaMs)}</td>
           <td class="numeric" data-label="Δ 4xx" title={referenceNote}>{pointsText(row.clientErrorDelta)}</td>

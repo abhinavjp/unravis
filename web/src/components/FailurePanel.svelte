@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatCount } from '../lib/format';
   import { onMount } from 'svelte';
   import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Query } from '../lib/types';
   import { echarts, failureSeriesFor, failureTrendOption } from '../lib/charts';
@@ -30,7 +31,7 @@
 <section class="failure-panel" id="failure-investigation" aria-label="Failure investigation">
   <section class="data-section">
     <div class="section-heading"><div><h3>Are requests failing, and with what status?</h3><p>The trend counts 4xx client errors and 5xx server errors separately; 5xx includes failed background jobs. Requests that are missing a timing or still pending are not counted as failures. Choose a status below to list the requests behind it.</p></div></div>
-    <div class="failure-summary"><span><strong>{clientTotal.toLocaleString()}</strong> 4xx client errors</span><span><strong>{serverTotal.toLocaleString()}</strong> 5xx server errors and failed jobs</span></div>
+    <div class="failure-summary"><span><strong>{formatCount(clientTotal)}</strong> 4xx client errors</span><span><strong>{formatCount(serverTotal)}</strong> 5xx server errors and failed jobs</span></div>
     <div class="failure-chart-stage"><div class="failure-chart" class:chart-hidden={!observed} bind:this={node} role="img" aria-hidden={!observed} aria-label={'4xx and 5xx responses per interval, in ' + zone}></div>{#if !observed}<div class="failure-chart-empty"><strong>No observations in this period</strong><p>Gaps mean no requests were seen in that interval, not zero failures.</p></div>{/if}</div>
   </section>
   <BreakdownPanel {query} {sourceLabels} {onDrill} lockedDim="statusCode" panelId="failure-status" heading="Which statuses are the requests returning?" />

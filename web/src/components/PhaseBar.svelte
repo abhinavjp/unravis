@@ -13,9 +13,9 @@
         {#if segments.audit != null && segments.auditPct > 0}<span class="phase-audit" style:width={segments.auditPct + '%'}></span>{/if}
         {#if segments.api != null && segments.apiPct > 0}<span class="phase-api" style:width={segments.apiPct + '%'}></span>{/if}
       </div>
-      <small>audit {phaseMs(segments.audit)} · api {phaseMs(segments.api)}</small>
+      <small>Audit write {phaseMs(segments.audit)} · API work {phaseMs(segments.api)}</small>
     {/if}
-    {#if hasPayload}<small>payload {phaseMs(phases?.payloadMs)} (after response, not latency)</small>{/if}
+    {#if hasPayload}<small>Payload write {phaseMs(phases?.payloadMs)}, after the user got the response</small>{/if}
   </div>
 {/if}
 

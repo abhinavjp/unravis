@@ -1,6 +1,6 @@
 //go:build windows
 
-package history
+package sealedfile
 
 import (
 	"crypto/sha256"
@@ -33,7 +33,9 @@ type dataBlob struct {
 
 type dpapiProtector struct{}
 
-func currentUserProtector() (Protector, error) { return dpapiProtector{}, nil }
+// CurrentUser returns a Protector that seals data with Windows DPAPI for the
+// current user (never the machine scope).
+func CurrentUser() (Protector, error) { return dpapiProtector{}, nil }
 
 func (dpapiProtector) Protect(plain []byte) ([]byte, error) {
 	return dpapi(true, plain)
@@ -63,13 +65,15 @@ func dpapi(protect bool, input []byte) ([]byte, error) {
 	if ok == 0 {
 		return nil, fmt.Errorf("Windows DPAPI operation failed: %w", callErr)
 	}
-	if out.Data == nil || out.Size == 0 || out.Size > maxFileSize {
+	if out.Data == nil || out.Size == 0 || out.Size > maxBlob {
 		return nil, errors.New("Windows DPAPI returned invalid data")
 	}
 	return append([]byte(nil), unsafe.Slice(out.Data, out.Size)...), nil
 }
 
-func acquireVaultLock(path string) (func(), error) {
+// Lock takes a named, per-path mutex that also serialises separate processes.
+// The caller must call the returned function to release it.
+func Lock(path string) (func(), error) {
 	canonical, err := filepath.Abs(path)
 	if err != nil {
 		return nil, ErrUnavailable
@@ -97,7 +101,8 @@ func acquireVaultLock(path string) (func(), error) {
 	}, nil
 }
 
-func replaceFile(from, to string) error {
+// Replace moves from over to, replacing it, and flushes the move to disk.
+func Replace(from, to string) error {
 	source, err := syscall.UTF16PtrFromString(from)
 	if err != nil {
 		return err

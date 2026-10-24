@@ -15,7 +15,7 @@ function loadTypeScript(relativePath) {
   const module = { exports: {} };
   const nodeRequire = createRequire(filename);
   // A relative import of another TypeScript file in src/lib is transpiled the same way.
-  const load = (request) => request.startsWith('./') && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
+  const load = (request) => /^\.\.?\//.test(request) && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
     ? loadTypeScript(path.relative(root, path.join(path.dirname(filename), request + '.ts')))
     : nodeRequire(request);
   new Function('require', 'module', 'exports', output)(load, module, module.exports);
@@ -26,6 +26,13 @@ const charts = loadTypeScript('src/lib/charts.ts');
 const time = loadTypeScript('src/lib/time.ts');
 const presentation = loadTypeScript('src/lib/presentation.ts');
 const investigation = loadTypeScript('src/lib/investigation.ts');
+
+// App.svelte is a thin shell; its state and logic live in lib/appState.svelte.ts and its regions in these components.
+// Source checks on the app read them together.
+const APP_FILES = ['src/App.svelte', 'src/lib/appState.svelte.ts', 'src/components/AppHeader.svelte', 'src/components/SubBar.svelte', 'src/components/Landing.svelte', 'src/components/ConnectionsDrawer.svelte', 'src/components/WhereView.svelte', 'src/components/EvidenceView.svelte', 'src/components/Drawer.svelte'];
+function appSource() {
+  return APP_FILES.map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
+}
 
 function stats({ count = 0, p50 = null, p95 = null, histogram = [] } = {}) {
   return { count, meanMs: null, minMs: null, maxMs: null, p50, p95, histogram };
@@ -484,7 +491,7 @@ test('phase bar segments split audit and api shares, tolerate gaps, and describe
 test('the total metric is labelled as observed API time and never as a total request', () => {
   assert.equal(presentation.metricLabels.total, 'Observed API time (AuditCreateTime + ApiTime)');
   assert.equal(presentation.metricLabels.api, 'API processing');
-  for (const file of ['src/components/QueryControls.svelte', 'src/App.svelte', 'src/components/ComparisonTable.svelte']) {
+  for (const file of ['src/components/QueryControls.svelte', ...APP_FILES, 'src/components/ComparisonTable.svelte']) {
     assert.doesNotMatch(fs.readFileSync(path.join(root, file), 'utf8'), /Total request/);
   }
 });
@@ -496,7 +503,7 @@ test('the partial-sample tooltip appears only when legacy samples lack AuditCrea
 });
 
 test('the quality strip shows pending async only when it is above zero', () => {
-  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  const app = appSource();
   assert.match(app, /\{#if analysis\.quality\.pendingAsync\}[^\n]*pending async/);
 });
 
@@ -691,7 +698,7 @@ test('slowest requests send the minimum and cursor, and the UI offers load more'
   assert.equal(loadTypeScript('src/lib/slowness.ts').p99NeedsSamples, 'needs ≥ 100 samples');
 });
 test('every quality count is a button that drills into the requests behind it', () => {
-  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  const app = appSource();
   for (const state of ['incomplete', 'invalid', 'unclassified', 'pending']) {
     assert.match(app, new RegExp(`drillQuality\\('${state}'\\)`));
   }
@@ -970,7 +977,7 @@ test('the overview strip, quick range presets and operation view are wired into 
   assert.match(strip, /tileCanOpen\(/);
   assert.match(strip, /outcomeFilter/);
   assert.match(strip, /\{@render quality\(\)\}/);
-  const app = read('src/App.svelte');
+  const app = appSource();
   assert.match(app, /<OverviewStrip/);
   assert.match(app, /drillOverview/);
   assert.match(app, /drillHeading\(drillOverview\)/);
@@ -1146,7 +1153,7 @@ test('FailurePanel reuses BreakdownPanel on status codes and the colours stay ou
   assert.match(panel, /<BreakdownPanel[^>]*lockedDim="statusCode"/);
   assert.match(panel, /failureTrendOption/);
   assert.equal(/#[0-9a-fA-F]{3,8}\b/.test(panel), false);
-  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  const app = appSource();
   assert.match(app, /<FailurePanel[^>]*onDrill=\{drillInto\}/);
 });
 
@@ -1243,7 +1250,7 @@ test('the stale drill drops every latency range, because the server refuses one 
   // A drill with no age range leaves latency ranges alone.
   const untouched = incomplete.applyStaleFilters({ apiTimeMs: { max: 900 } }, { completion: undefined, incompleteAgeMs: undefined });
   assert.deepEqual(untouched, { apiTimeMs: { max: 900 } });
-  const source = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  const source = appSource();
   assert.match(source, /applyStaleFilters\(copy, drillOverview\)/);
 });
 
@@ -1292,7 +1299,7 @@ test('an export from the stale list carries the same oldest-first order, and a p
   assert.equal(bodies[0].state, 'all');
   assert.equal('order' in bodies[1], false);
   assert.equal('order' in bodies[2], false);
-  const source = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  const source = appSource();
   assert.match(source, /api\.export\([^\n]*requestState, drillOverview\?\.order \?\? ''\)/);
 });
 
@@ -1599,7 +1606,7 @@ test('the all-operations drill is comparison-wide: no controller or action, ever
 test('the redesign keeps its contrast, status and navigation fixes in the sources', () => {
   const css = fs.readFileSync(path.join(root, 'src/app.css'), 'utf8');
   const phaseBar = fs.readFileSync(path.join(root, 'src/components/PhaseBar.svelte'), 'utf8');
-  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  const app = appSource();
   assert.equal((css.match(/--control-line:\s*#[0-9a-f]{6}/gi) ?? []).length, 3, 'one control boundary per theme block');
   assert.match(css, /input, select[^{]*\{[^}]*border[^;]*var\(--control-line\)/);
   assert.match(css, /::placeholder\s*\{[^}]*opacity:\s*1/);
@@ -1611,19 +1618,19 @@ test('the redesign keeps its contrast, status and navigation fixes in the source
 });
 
 test('the run hint is a persistent status region tied to the run button, the back link has a full label, and no screen says "Run comparison"', () => {
-  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  const app = appSource();
   assert.match(app, /<span class="run-hint" id="run-hint" role="status">\{runHint\}<\/span>/);
   assert.doesNotMatch(app, /\{#if runHint\}/);
   assert.match(app, /class="primary-button" aria-describedby="run-hint"/);
   assert.match(fs.readFileSync(path.join(root, 'src/components/Breadcrumb.svelte'), 'utf8'), /aria-label=\{'Back to ' \+ crumb\.label\}/);
   for (const name of ['RequestVolume', 'TrafficSlowness']) assert.doesNotMatch(fs.readFileSync(path.join(root, 'src/components/' + name + '.svelte'), 'utf8'), /Run comparison/);
   const slowness = fs.readFileSync(path.join(root, 'src/components/TrafficSlowness.svelte'), 'utf8');
-  assert.match(slowness, /const narrowed=\$derived\(mode!=='ms'&&cohort\?cohort:null\)/);
+  assert.match(slowness, /const narrowed=\$derived\(percentile&&cohort\?cohort:null\)/);
   assert.match(slowness, /\{headingScope\} · /);
 });
 
 test('the CSV export reads the same drill query as the on-screen request list', () => {
-  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  const app = appSource();
   const list = app.match(/api\.requests\(drillQuery\(([^)]*)\)/);
   const exported = app.match(/api\.export\(drillQuery\(([^)]*)\)/);
   assert.ok(list && exported, 'both calls build their query with drillQuery');
