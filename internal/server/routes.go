@@ -179,6 +179,7 @@ var routes = []route{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.getHosts(w, r) },
 		http.MethodPut: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.putHosts(w, r) },
 	}},
+	{pattern: "/api/importers", match: exactPath("/api/importers"), methods: get((*handler).listImporters)},
 }
 
 // lookup returns the first route that owns path.

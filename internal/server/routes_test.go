@@ -58,6 +58,7 @@ var routeCases = []routeCase{
 	{"/api/cases/{id}/timeline", "/api/cases/c1/timeline", "POST"},
 	{"/api/cases/{id}", "/api/cases/c1", "DELETE"},
 	{"/api/hosts", "/api/hosts", "GET, PUT"},
+	{"/api/importers", "/api/importers", "GET"},
 }
 
 var routeTestMethods = []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete}
