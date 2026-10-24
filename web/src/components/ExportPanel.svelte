@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '../lib/api';
-  import { formatLocal } from '../lib/time';
+  import { formatTime } from '../lib/time';
   import {
     EXPORT_TEXT, RECORD_FIELDS, canSave, contentMatches, describeCount, downloadName, errorText, exportInput, exportSummary, qualityRows, savedLine, stateLabel,
     type ExportPhase
@@ -21,8 +21,7 @@
   let controller: AbortController | null = null;
 
   const sources = $derived(query.sourceIds.map((id) => sourceLabels.get(id) ?? id).join(', '));
-  const timeOptions: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-  const at = (value: string) => formatLocal(value, zone, timeOptions);
+  const at = (value: string) => formatTime(value, { zone });
   const busy = $derived(phase.kind === 'previewing' || phase.kind === 'saving');
 
   onMount(() => firstOption?.focus());

@@ -9,6 +9,7 @@
   import { p99NeedsSamples, quantileText } from '../lib/slowness';
   import { rollupCompletionRate } from '../lib/incomplete';
   import { rateText } from '../lib/overview';
+  import { formatCount, formatDuration } from '../lib/format';
   let { rows, selectedKey, sources, outcomeFilter, onSelect, timelineKeys = [], onToggleTimeline = () => {}, rollups = [], timeline = [], kindFilter = 'all', onDrill }: {
     rows: Comparison[]; selectedKey: string; sources: Map<string, string>; outcomeFilter: string; onSelect: (key: string) => void
     timelineKeys?: string[]; onToggleTimeline?: (key: string) => void; rollups?: Rollup[]; timeline?: Series[]; kindFilter?: string;
@@ -30,10 +31,10 @@
     undefined_baseline: 'No usable reference'
   };
   const stateDetails: Record<string, string> = {
-    compared: 'Both periods have enough valid response-time samples for a comparison. This is not a service-health verdict.',
-    missing_current: 'No valid response-time samples were found in the current period.',
-    missing_reference: 'No valid response-time samples were found in the reference period.',
-    insufficient_data: 'At least one period has fewer than 20 valid response-time samples.',
+    compared: 'Both periods have enough usable response-time samples for a comparison. This is not a service-health verdict.',
+    missing_current: 'No usable response-time samples were found in the current period.',
+    missing_reference: 'No usable response-time samples were found in the reference period.',
+    insufficient_data: 'At least one period has fewer than 20 usable response-time samples.',
     undefined_baseline: 'The reference response time is too close to zero to calculate a meaningful ratio.'
   };
   let filtered = $derived(rows.filter(row => {
@@ -50,12 +51,12 @@
     page = 0;
   };
   const ratio = (value: number | null) => value == null ? 'N/A' : '≈ ' + value.toFixed(2) + '×';
-  const ms = (q: Comparison['current']['p99']) => q?.valueMs == null ? 'N/A' : '≈ ' + q.valueMs.toFixed(1) + ' ms';
+  const ms = (q: Comparison['current']['p99']) => q?.valueMs == null ? 'N/A' : '≈ ' + formatDuration(q.valueMs);
   const impactText = (value: number | null | undefined) => {
     if (value == null) return 'N/A';
     const sign = value > 0 ? '+' : value < 0 ? '−' : '';
     const abs = Math.abs(value);
-    return '≈ ' + sign + (abs >= 1000 ? (abs / 1000).toFixed(1) + ' s' : abs.toFixed(0) + ' ms');
+    return '≈ ' + sign + formatDuration(abs);
   };
   // Impact is the extra time versus the reference mean across all current requests; z comes from the whole histogram.
   const impactTip = (row: Comparison) => row.impactMs == null
@@ -68,7 +69,7 @@
   let loadByKey = $derived(new Map(timeline.map(series => [series.key, series.loadCorrelation])));
   // P99 needs at least 100 samples per period; the bin-width caveat applies to every histogram quantile.
   const p99Tip = (row: Comparison) => row.current.p99 == null || row.reference.p99 == null
-    ? 'P99 needs at least 100 valid samples in each period.'
+    ? 'P99 needs at least 100 usable samples in each period.'
     : `P99 current ${ms(row.current.p99)}, reference ${ms(row.reference.p99)}` + (row.p99Ratio == null ? '' : ` (${ratio(row.p99Ratio)})`) + '. Estimates carry about ±5% error from the histogram bin width.';
 </script>
 
@@ -83,7 +84,7 @@
   <label>Find an API<input type="search" placeholder="Search API name or source" bind:value={search} oninput={() => page = 0} /></label>
   <label>Show<select bind:value={scope} onchange={() => page = 0}><option value="all">All API groups</option><option value="slower">Slower than reference</option><option value="compared">Comparable groups</option><option value="unavailable">Unable to compare</option></select></label>
   <label class="mobile-group-sort">Sort by<select value={sort + ':' + direction} onchange={(event) => { const [field, order] = event.currentTarget.value.split(':'); sort = field as RankField; direction = Number(order); page = 0; }}><option value="impact:-1">Largest total impact</option><option value="ratio:-1">Largest slowdown</option><option value="ratio:1">Smallest ratio</option><option value="delta:-1">Largest time increase</option><option value="count:-1">Most current requests</option></select></label>
-  <span>Choose an API name to inspect its charts and requests below.</span>
+  <span>Choose an API name to inspect its charts and requests below. These request counts include only requests with a usable response time, so they can be lower than the event counts in the overview and the Operation view.</span>
 </div>
 <div class="table-scroll group-table-scroll">
   <table class="comparison-table">
@@ -110,7 +111,7 @@
         <tr class:chosen={row.key === selectedKey}>
           <td class="timeline-choice"><label><input type="checkbox" checked={timelineKeys.includes(row.key)} disabled={timelineKeys.length >= 8 && !timelineKeys.includes(row.key)} aria-label={'Compare timeline for ' + row.controller + '.' + row.action + ' in ' + (sources.get(row.sourceId) ?? row.sourceId) + ' · ' + row.kind + ' · ' + row.outcome} onchange={() => onToggleTimeline(row.key)} /><span>Compare</span></label></td>
           <td><button class="api-select" aria-pressed={row.key === selectedKey} onclick={() => onSelect(row.key)}>{row.controller}.{row.action}</button><small title={sources.get(row.sourceId) ?? row.sourceId}>{sources.get(row.sourceId) ?? row.sourceId}</small><PhaseBar phases={row.current.phases} delta={row.phaseDeltaMs} /></td>
-          <td class="group-kind" data-label="Kind and outcome" title={row.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(row.kind)}<small>{outcomeRateText(rows, row, outcomeFilter)}</small></td><td data-label="Current requests" title={observedPartialTip(row.current.observedPartial)}>{row.current.count.toLocaleString()}</td><td data-label="Reference requests" title={observedPartialTip(row.reference.observedPartial)}>{row.reference.count.toLocaleString()}</td>
+          <td class="group-kind" data-label="Kind and outcome" title={row.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(row.kind)}<small>{outcomeRateText(rows, row, outcomeFilter)}</small></td><td data-label="Current requests" title={observedPartialTip(row.current.observedPartial)}>{formatCount(row.current.count)}</td><td data-label="Reference requests" title={observedPartialTip(row.reference.observedPartial)}>{formatCount(row.reference.count)}</td>
           <td class="numeric" data-label="Extra waiting (total)" title={impactTip(row)}>{impactText(row.impactMs)}{#if row.significant}<small>clear shift</small>{/if}</td>
           <td class="numeric" data-label="P95 vs reference" title={p99Tip(row)}>{ratio(row.p95Ratio)}</td><td class="numeric" data-label="P95 difference (ms)">{row.p95DeltaMs == null ? 'N/A' : '≈ ' + row.p95DeltaMs.toFixed(1)}</td>
           <td class="numeric" data-label="4xx %" title={rates.tip}>{rates.client}</td>

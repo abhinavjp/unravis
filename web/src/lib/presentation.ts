@@ -1,4 +1,5 @@
 import type { Comparison, Metric, NumberRange, Quality, Query, Rollup } from './types';
+import { countNoun } from './format';
 
 export type RankField = 'impact' | 'ratio' | 'delta' | 'count';
 
@@ -46,15 +47,14 @@ export const resultNotes = (rows: Comparison[]) => {
   ];
 };
 
-const eventsText = (count: number) => count.toLocaleString() + (count === 1 ? ' event' : ' events');
 
 export const outcomeRateText = (rows: Comparison[], row: Comparison, outcomeFilter: string) => {
-  if (row.outcome === 'unknown') return 'unknown · ' + eventsText(row.currentEvents) + ' · final status never recorded';
+  if (row.outcome === 'unknown') return 'unknown · ' + countNoun(row.currentEvents, 'event') + ' · final status never recorded';
   const denominator = rows
     .filter(item => item.sourceId === row.sourceId && item.controller === row.controller && item.action === row.action && item.kind === row.kind && (item.outcome === 'success' || item.outcome === 'failure'))
     .reduce((sum, item) => sum + item.currentEvents, 0);
   if (outcomeFilter !== 'all' || denominator <= 0 || (row.outcome !== 'success' && row.outcome !== 'failure')) {
-    return row.outcome + ' · ' + eventsText(row.currentEvents);
+    return row.outcome + ' · ' + countNoun(row.currentEvents, 'event');
   }
   const percentage = (row.currentEvents / denominator * 100).toFixed(1);
   return row.outcome + ' · ' + row.currentEvents.toLocaleString() + ' / ' + denominator.toLocaleString() + ' known events (' + percentage + '%)';

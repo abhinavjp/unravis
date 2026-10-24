@@ -6,6 +6,7 @@
  import { echarts, palette } from '../lib/charts';
  import { theme } from '../lib/theme.svelte';
  import { trafficData } from '../lib/traffic';
+ import { formatTime } from '../lib/time';
  // scope narrows the slowest-request list (not the traffic chart) to one operation; without it the list covers the whole comparison.
  let {analysis,zone,sourceLabels,onContext,cohort=null,scope=null}:{analysis:Analysis;zone:string;sourceLabels:Map<string,string>;onContext:(row:RequestRecord)=>void;cohort?:Comparison|null;scope?:{controller?:string;action?:string;kind:Query['kind'];label:string}|null}=$props();
  let threshold=$state(1000),metric=$state<'p95'|'median'|'max'>('p95'),log=$state(true),selected=$state<number|null>(null),windowPage=$state(0),mode=$state<'ms'|'p95'|'p99'>('ms'),loaded=$state<{query:Query;min:number|null;label:string}|null>(null);
@@ -17,7 +18,7 @@
  const selectedWindow=$derived(selected==null?null:data.windows.find(row=>row.at===selected)??null);
  const scopeStart=$derived(selectedWindow?new Date(selectedWindow.start).toISOString():analysis.query.start),scopeEnd=$derived(selectedWindow?new Date(selectedWindow.end).toISOString():analysis.query.end);
  const baseline=$derived(new Map(analysis.apis.map(row=>[JSON.stringify([row.sourceId,row.controller,row.action,row.kind,row.outcome]),row.reference])));
- const stamp=(at:number|string)=>new Intl.DateTimeFormat(undefined,{timeZone:zone,month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(new Date(at));
+const stamp=(at:number|string)=>formatTime(at,{zone,suffix:false});
  const ms=(value:number|null|undefined)=>value==null?'Unavailable':value>=1000?(value/1000).toLocaleString(undefined,{maximumFractionDigits:2})+' s':value.toLocaleString(undefined,{maximumFractionDigits:1})+' ms';
  const duration=(row:RequestRecord)=>analysis.query.metric==='api'?row.apiTimeMs:row.durationMs;
  function reference(row:RequestRecord){const r=baseline.get(JSON.stringify([row.sourceId,row.controller,row.action,row.kind,row.outcome]));return r&&r.count>=20&&r.p95?.valueMs!=null&&r.p95.valueMs>0&&duration(row)!=null?'≈ '+(duration(row)!/r.p95.valueMs).toFixed(2)+'×':'Unavailable';}

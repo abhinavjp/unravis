@@ -3,6 +3,7 @@ import { LineChart, BarChart, HeatmapChart, ScatterChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, LegendComponent, MarkLineComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { Analysis, Comparison, Point } from './types';
+import { formatTime } from './time';
 
 echarts.use([LineChart, BarChart, HeatmapChart, ScatterChart, GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
 export { echarts };
@@ -35,18 +36,12 @@ export const palette = (): Palette => {
 };
 const finite = (value: number | null | undefined) => value != null && Number.isFinite(value) ? value : null;
 const escapeHTML = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char);
-const axisDateFormatter = (zone: string) => new Intl.DateTimeFormat(undefined, { timeZone: zone, year: 'numeric', month: 'short', day: '2-digit' });
-const axisClockFormatter = (zone: string) => new Intl.DateTimeFormat(undefined, { timeZone: zone, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
 const axisTimeLabels = (points: Point[], zone: string) => {
-  const dateFormatter = axisDateFormatter(zone);
-  const clockFormatter = axisClockFormatter(zone);
-  const dates = points.map(point => dateFormatter.format(new Date(point.at)));
-  const clocks = points.map(point => clockFormatter.format(new Date(point.at)));
+  const dates = points.map(point => formatTime(point.at, { zone, suffix: false, fallback: '' }).split(' ').slice(0, 2).join(' '));
   const includeDate = new Set(dates).size > 1;
-  return points.map((_, index) => includeDate ? dates[index] + ' ' + clocks[index] : clocks[index]);
+  return points.map(point => formatTime(point.at, { zone, date: includeDate, suffix: false, fallback: '' }));
 };
-const tooltipTimestamp = (value: string, zone: string) =>
-  new Intl.DateTimeFormat(undefined, { timeZone: zone, year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(new Date(value)) + ' (' + escapeHTML(zone) + ')';
+const tooltipTimestamp = (value: string, zone: string) => formatTime(value, { zone });
 const comparisonStateLabels: Record<string, string> = {
   compared: 'Compared',
   missing_current: 'No current samples',

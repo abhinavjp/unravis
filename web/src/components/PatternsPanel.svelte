@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '../lib/api';
-  import { formatLocal, quickRange, quickRanges, type QuickRangeId } from '../lib/time';
+  import { formatLocal, formatTime, quickRange, quickRanges, type QuickRangeId } from '../lib/time';
   import { activeRangeId } from '../lib/depth';
   import { app, closeSidePanel, onScopeChange, scope, showRecord } from '../lib/appState.svelte';
   import { citeInLedger } from '../lib/citeInLedger';
@@ -31,8 +31,8 @@
   let controller: AbortController | null = null;
 
   const sources = $derived(query.sourceIds.map((id) => sourceLabels.get(id) ?? id).join(', '));
-  const timeOptions: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-  const at = (value: string) => formatLocal(value, zone, timeOptions);
+  // Stalls and episodes can sit a few milliseconds apart, so every time here shows milliseconds.
+  const at = (value: string) => formatTime(value, { zone, precision: 'ms' });
   const clock = (value: string) => formatLocal(value, zone, { hour: '2-digit', minute: '2-digit', hour12: false });
   const labelOf = (id: string) => sourceLabels.get(id) ?? id;
   const activeRange = $derived(activeRangeId(query, quickRanges));

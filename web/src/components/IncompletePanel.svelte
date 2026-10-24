@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatCount } from '../lib/format';
   import type { Rollup } from '../lib/types';
   import { rateText, type OverviewDrill } from '../lib/overview';
   import { kindLabel } from '../lib/presentation';
@@ -26,7 +27,7 @@
     <label>Stale after (minutes)<input type="text" inputmode="decimal" bind:value={minutesText} aria-invalid={minutes == null} aria-describedby="stale-threshold-note" /></label>
     <button type="button" class="secondary-button" disabled={minutes == null || !(totals.incomplete + totals.pending)} title={incompleteButton.tip} onclick={() => open(null, 'incomplete')}>{incompleteButton.text}</button>
     <button type="button" class="secondary-button" disabled={minutes == null || !totals.pending} title={pendingButton.tip} onclick={() => open(null, 'pending')}>{pendingButton.text}</button>
-    <span id="stale-threshold-note" class:stale-error={minutes == null}>{minutes == null ? 'Enter a number of minutes above 0 and up to ' + MAX_STALE_MINUTES.toLocaleString() + '.' : 'The ' + DEFAULT_STALE_MINUTES + ' minute default is a starting point taken from the code, not measured from live data; change it to suit your system.'}</span>
+    <span id="stale-threshold-note" class:stale-error={minutes == null}>{minutes == null ? 'Enter a number of minutes above 0 and up to ' + formatCount(MAX_STALE_MINUTES) + '.' : 'The ' + DEFAULT_STALE_MINUTES + ' minute default is a starting point taken from the code, not measured from live data; change it to suit your system.'}</span>
   </div>
   <div class="table-scroll group-table-scroll">
     <table class="comparison-table incomplete-table">
@@ -43,15 +44,15 @@
             <td data-label="Operation">{item.rollup.controller}.{item.rollup.action}</td>
             <td data-label="Request type">{kindLabel(item.rollup.kind ?? '') || '—'}</td>
             <td class="numeric" data-label="Completion %">{rateText(item.rate)}</td>
-            <td class="numeric" data-label="Incomplete">{#if item.rollup.incomplete}<button type="button" class="api-select" disabled={minutes == null} title={rowIncompleteTip} onclick={() => open(item.rollup, 'incomplete')}>{item.rollup.incomplete.toLocaleString()}</button>{:else}0{/if}</td>
-            <td class="numeric" data-label="Pending async">{#if item.rollup.pending}<button type="button" class="api-select" disabled={minutes == null} title={rowPendingTip} onclick={() => open(item.rollup, 'pending')}>{item.rollup.pending.toLocaleString()}</button>{:else}0{/if}</td>
-            <td class="numeric" data-label="Unusable">{(item.rollup.invalid ?? 0).toLocaleString()}</td>
+            <td class="numeric" data-label="Incomplete">{#if item.rollup.incomplete}<button type="button" class="api-select" disabled={minutes == null} title={rowIncompleteTip} onclick={() => open(item.rollup, 'incomplete')}>{formatCount(item.rollup.incomplete)}</button>{:else}0{/if}</td>
+            <td class="numeric" data-label="Pending async">{#if item.rollup.pending}<button type="button" class="api-select" disabled={minutes == null} title={rowPendingTip} onclick={() => open(item.rollup, 'pending')}>{formatCount(item.rollup.pending)}</button>{:else}0{/if}</td>
+            <td class="numeric" data-label="Unusable">{formatCount(item.rollup.invalid ?? 0)}</td>
           </tr>
         {:else}<tr><td colspan="6" class="table-empty">{ranked.length ? 'No operation has incomplete or pending requests in this window.' : 'No operation has anything to measure a completion share from.'}</td></tr>{/each}
       </tbody>
     </table>
   </div>
-  {#if totals.invalid}<p class="incomplete-note">{totals.invalid.toLocaleString()} unusable {totals.invalid === 1 ? 'row is' : 'rows are'} left out of every share above.</p>{/if}
+  {#if totals.invalid}<p class="incomplete-note">{formatCount(totals.invalid)} unusable {totals.invalid === 1 ? 'row is' : 'rows are'} left out of every share above.</p>{/if}
 </section>
 {/if}
 

@@ -3,6 +3,7 @@
   import type { Analysis } from '../lib/types';
   import { alignedPoints, baselineChange, echarts, failureField, isFailureSeries, multiTimelineOption, seriesColors, timelineSeriesOptions, type PercentileSeries, type TimelineSeries } from '../lib/charts';
   import { theme } from '../lib/theme.svelte';
+  import { formatTime } from '../lib/time';
   let { analysis, keys, sources, zone, onRemove }: { analysis: Analysis; keys: string[]; sources: Map<string, string>; zone: string; onRemove: (key: string) => void } = $props();
   let mode = $state<'percent' | 'milliseconds'>('percent');
   let series = $state<TimelineSeries>('p95');
@@ -12,7 +13,7 @@
   let chart = $state<ReturnType<typeof echarts.init>>();
   const rows = $derived(keys.flatMap(key => { const row = analysis.apis.find(item => item.key === key); return row ? [row] : []; }));
   const plotted = $derived(rows.some(row => alignedPoints(analysis, row.key).some(point => isFailureSeries(series) ? failureField(point, series) != null : baselineChange(row, point, mode, series as PercentileSeries) != null)));
-  const stamp = (value: string) => new Intl.DateTimeFormat(undefined, { timeZone: zone, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(value));
+  const stamp = (value: string) => formatTime(value, { zone, suffix: false, precision: 'minute' });
   onMount(() => {
     if (!node) return;
     chart = echarts.init(node);
