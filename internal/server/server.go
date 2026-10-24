@@ -189,6 +189,14 @@ func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if strings.HasPrefix(route, "/api/sources/") && strings.HasSuffix(route, "/schema") {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		h.schema(w, r, strings.TrimSuffix(strings.TrimPrefix(route, "/api/sources/"), "/schema"))
+		return
+	}
 	if strings.HasPrefix(route, "/api/sources/") && r.Method == http.MethodDelete {
 		h.deleteSource(w, r, strings.TrimPrefix(route, "/api/sources/"))
 		return
@@ -209,8 +217,16 @@ func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 		h.slowest(w, r)
 		return
 	}
+	if route == "/api/breakdown" && r.Method == http.MethodPost {
+		h.breakdown(w, r)
+		return
+	}
 	if route == "/api/payload" && r.Method == http.MethodPost {
 		h.payload(w, r)
+		return
+	}
+	if route == "/api/record" && r.Method == http.MethodPost {
+		h.record(w, r)
 		return
 	}
 	if route == "/api/export" && r.Method == http.MethodPost {
@@ -566,15 +582,34 @@ func normalizePage(value *audit.Page) {
 		normalizeSourceResult(&value.Sources[i])
 	}
 	for i := range value.Rows {
-		if value.Rows[i].InitiatedAt != nil {
-			utc := value.Rows[i].InitiatedAt.UTC()
-			value.Rows[i].InitiatedAt = &utc
-		}
-		if value.Rows[i].CompletedAt != nil {
-			utc := value.Rows[i].CompletedAt.UTC()
-			value.Rows[i].CompletedAt = &utc
+		normalizeRowTimes(&value.Rows[i])
+	}
+}
+
+// normalizeRowTimes renders every timestamp on a row in UTC.
+func normalizeRowTimes(row *audit.RequestRecord) {
+	for _, field := range []**time.Time{&row.InitiatedAt, &row.CompletedAt, &row.CreatedOn, &row.UpdatedOn} {
+		if *field != nil {
+			utc := (*field).UTC()
+			*field = &utc
 		}
 	}
+}
+
+func (h *handler) record(w http.ResponseWriter, r *http.Request) {
+	var input audit.RecordInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+	value, err := h.repo.Record(ctx, input)
+	if err != nil {
+		writeRepoError(w, err)
+		return
+	}
+	normalizeRowTimes(&value.RequestRecord)
+	writeJSON(w, http.StatusOK, value, audit.MaxPayloadBytes+128*1024)
 }
 
 func (h *handler) payload(w http.ResponseWriter, r *http.Request) {
@@ -634,6 +669,8 @@ func writeRepoError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusRequestEntityTooLarge, "The grouped timing measurements exceed the 16 MiB memory budget across all selected sources and both periods. Your settings are kept. Increase the time interval in chart settings, or add a controller or action filter.")
 	case errors.Is(err, audit.ErrAnalysisBytesLimit):
 		writeError(w, http.StatusRequestEntityTooLarge, "The comparison results exceed the 16 MiB display budget. Your settings are kept. Increase the time interval in chart settings, or add a controller or action filter.")
+	case errors.Is(err, audit.ErrBreakdownGroupLimit):
+		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("This breakdown has more than %d distinct values in one source. Your settings are kept. Narrow the time range or add a filter.", audit.MaxBreakdownGroups))
 	case errors.Is(err, audit.ErrLimit):
 		writeError(w, http.StatusRequestEntityTooLarge, "Request exceeds a configured limit.")
 	case errors.Is(err, audit.ErrBusy):
@@ -703,7 +740,7 @@ func (h *handler) export(w http.ResponseWriter, r *http.Request) {
 	var output boundedBuffer
 	output.limit = maxResponseBytes
 	usedBytes := 0
-	if !writeCSVRow(&output, []string{"id", "sourceId", "controller", "action", "kind", "outcome", "status", "url", "initiatedAt", "completedAt", "durationMs", "apiTimeMs", "auditCreateTimeMs", "payloadRecordTimeMs", "requestKB", "responseKB"}, &usedBytes) {
+	if !writeCSVRow(&output, []string{"id", "sourceId", "controller", "action", "kind", "outcome", "status", "url", "initiatedAt", "completedAt", "durationMs", "apiTimeMs", "auditCreateTimeMs", "payloadRecordTimeMs", "requestKB", "responseKB", "userId", "userIp", "userAgent", "uiVersion", "createdOn", "updatedOn", "pollingTypeRaw"}, &usedBytes) {
 		return
 	}
 	rows := 0
@@ -754,7 +791,7 @@ func (h *handler) export(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", "attachment; filename=api-audit-requests.csv")
+	w.Header().Set("Content-Disposition", "attachment; filename=unravis-requests.csv")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Export-Limit", strconv.Itoa(maxExportRows))
 	if truncated {
@@ -807,7 +844,11 @@ func requestCSVRow(row audit.RequestRecord) []string {
 		}
 		return strconv.FormatFloat(*value, 'f', -1, 64)
 	}
-	return []string{str(row.ID), str(row.SourceID), str(row.Controller), str(row.Action), str(row.Kind), str(row.Outcome), str(row.Status), str(row.URL), str(timeValue(row.InitiatedAt)), str(timeValue(row.CompletedAt)), number(row.DurationMs), number(row.ApiTimeMs), number(row.AuditCreateTimeMs), number(row.PayloadRecordTimeMs), strconv.FormatFloat(row.RequestKB, 'f', -1, 64), strconv.FormatFloat(row.ResponseKB, 'f', -1, 64)}
+	userID := ""
+	if row.UserID != nil {
+		userID = strconv.Itoa(*row.UserID)
+	}
+	return []string{str(row.ID), str(row.SourceID), str(row.Controller), str(row.Action), str(row.Kind), str(row.Outcome), str(row.Status), str(row.URL), str(timeValue(row.InitiatedAt)), str(timeValue(row.CompletedAt)), number(row.DurationMs), number(row.ApiTimeMs), number(row.AuditCreateTimeMs), number(row.PayloadRecordTimeMs), strconv.FormatFloat(row.RequestKB, 'f', -1, 64), strconv.FormatFloat(row.ResponseKB, 'f', -1, 64), userID, str(row.UserIP), str(row.UserAgent), str(row.UIVersion), str(timeValue(row.CreatedOn)), str(timeValue(row.UpdatedOn)), str(row.PollingTypeRaw)}
 }
 
 func spreadsheetSafe(value string) string {

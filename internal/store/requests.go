@@ -21,7 +21,12 @@ type pageCursor struct {
 	At          time.Time `json:"at"`
 	SourceID    string    `json:"sourceId"`
 	ObjectID    string    `json:"objectId"`
+	Metric      *float64  `json:"metric,omitempty"`
 	Fingerprint string    `json:"fingerprint"`
+	// Now is the clock page one measured an incomplete-age range against. Later
+	// pages reuse it so the age of a row does not move while paging. It is set
+	// only for a query with an age range and is not part of the fingerprint.
+	Now *time.Time `json:"now,omitempty"`
 }
 
 type requestDocument struct {
@@ -31,6 +36,7 @@ type requestDocument struct {
 	Action              string        `bson:"action"`
 	Kind                string        `bson:"kind"`
 	Outcome             string        `bson:"outcome"`
+	State               string        `bson:"state"`
 	Status              string        `bson:"status"`
 	URL                 string        `bson:"url"`
 	InitiatedAt         *time.Time    `bson:"initiatedAt"`
@@ -41,6 +47,13 @@ type requestDocument struct {
 	PayloadRecordTimeMs *float64      `bson:"payloadRecordTimeMs"`
 	RequestKB           float64       `bson:"requestKB"`
 	ResponseKB          float64       `bson:"responseKB"`
+	UserID              *int          `bson:"userId"`
+	UserIP              string        `bson:"userIp"`
+	UserAgent           string        `bson:"userAgent"`
+	UIVersion           string        `bson:"uiVersion"`
+	CreatedOn           *time.Time    `bson:"createdOn"`
+	UpdatedOn           *time.Time    `bson:"updatedOn"`
+	PollingTypeRaw      string        `bson:"pollingTypeRaw"`
 }
 
 type pageRow struct {
@@ -60,8 +73,28 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 	if err := audit.ValidateQuery(input.Query); err != nil {
 		return audit.Page{}, fmt.Errorf("%w: %v", audit.ErrInvalidInput, err)
 	}
+	// The record filters and Operation reach the pipelines through the normalized
+	// query, so Operation becomes one controller and one action condition.
+	input.Query = input.Query.Normalized()
 	if input.Limit < 1 || input.Limit > audit.MaxPageSize {
 		return audit.Page{}, fmt.Errorf("%w: page limit must be between 1 and %d", audit.ErrLimit, audit.MaxPageSize)
+	}
+	state := input.State
+	if err := audit.ValidateState(state); err != nil {
+		return audit.Page{}, err
+	}
+	if state == audit.StateAll || overlap || slowest {
+		state = ""
+	}
+	// Only the plain request history takes an order; the activity and slowest lists
+	// rank by their own keys. Oldest first is the stale-work list's order.
+	oldest := false
+	if !overlap && !slowest {
+		order, err := audit.ValidateOrder(input.Query, input.Order)
+		if err != nil {
+			return audit.Page{}, err
+		}
+		oldest = order == audit.OrderOldest
 	}
 	cohort := [5]string{"", input.Query.Controller, input.Query.Action, input.Query.Kind, input.Query.Outcome}
 	if input.APIKey != "" {
@@ -74,9 +107,22 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 			return audit.Page{}, err
 		}
 	}
-	fingerprint := pageFingerprint(input.Query, input.APIKey)
+	// A cursor belongs to the order that made it. Newest adds nothing, so a cursor
+	// from before orders existed (or from a default listing) still continues.
+	orderSuffix := ""
+	if oldest {
+		orderSuffix = "|order:oldest"
+	}
+	fingerprint := pageFingerprint(input.Query, input.APIKey+stateFingerprint(state)+orderSuffix)
 	if overlap {
 		fingerprint = pageFingerprint(input.Query, "activity-context")
+	}
+	var slow *slowFilter
+	if slowest {
+		fingerprint = slowFingerprint(input.Query, input.MinMs)
+		// The floor is the explicit minimum or the range minimum for the ranking
+		// metric, whichever is higher. The fingerprint stays on the raw inputs.
+		slow = &slowFilter{min: audit.EffectiveSlowestMin(input.Query, input.MinMs)}
 	}
 	var after *pageCursor
 	if input.Cursor != "" {
@@ -85,7 +131,7 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 			return audit.Page{}, fmt.Errorf("%w: cursor is invalid", audit.ErrInvalidInput)
 		}
 		var parsed pageCursor
-		if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Fingerprint != fingerprint || parsed.At.IsZero() {
+		if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Fingerprint != fingerprint || parsed.At.IsZero() || (slowest && !slowCursorMetricValid(parsed.Metric)) {
 			return audit.Page{}, fmt.Errorf("%w: cursor does not match this query", audit.ErrInvalidInput)
 		}
 		objectID, err := bson.ObjectIDFromHex(parsed.ObjectID)
@@ -103,6 +149,22 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		}
 		parsed.ObjectID = objectID.Hex()
 		after = &parsed
+	}
+	// An age range is measured against one clock for the whole listing: page one
+	// reads it and the cursor carries it, so a later page cannot shift rows.
+	var pageNow *time.Time
+	if input.Query.HasAgeRange() {
+		switch {
+		case after == nil:
+			now := s.clock()
+			pageNow = &now
+		case after.Now == nil || after.Now.IsZero():
+			return audit.Page{}, fmt.Errorf("%w: cursor does not match this query", audit.ErrInvalidInput)
+		default:
+			now := after.Now.UTC().Truncate(time.Millisecond)
+			pageNow = &now
+		}
+		input.Query.Now = *pageNow
 	}
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -152,16 +214,16 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 			continue
 		}
 		var sourceRows []pageRow
-		pipeline := requestPipeline(input.Query, cohort, p.source.ID, after, input.Limit+1)
+		pipeline := requestPipelineOrdered(input.Query, cohort, state, true, oldest, p.source.ID, after, input.Limit+1)
 		if overlap {
 			pipeline = activityPipeline(input.Query, p.source.ID, after, input.Limit+1)
 		}
 		if slowest {
-			pipeline = slowestPipeline(input.Query, p.source.ID, input.Limit+1)
+			pipeline = slowestPipeline(input.Query, p.source.ID, after, input.MinMs, input.Limit+1)
 		}
 		var err error
 		if usesLegacyMongo(p.shared.client) {
-			sourceRows, err = readLegacyRequestRowsSorted(ctx, p, input.Query, cohort, after, legacyMetadataPipeline(pipeline), input.Limit+1, &legacyRecords, &legacyBytes, overlap, slowest)
+			sourceRows, err = readLegacyRequestRowsOrdered(ctx, p, input.Query, cohort, state, after, legacyRowMetadataPipeline(pipeline), input.Limit+1, &legacyRecords, &legacyBytes, overlap, slow, oldest)
 			if err == nil {
 				rows = append(rows, sourceRows...)
 			}
@@ -181,10 +243,12 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 					}
 					sourceRows = append(sourceRows, pageRow{request: audit.RequestRecord{
 						ID: doc.ID.Hex(), SourceID: p.source.ID, Controller: doc.Controller, Action: doc.Action,
-						Kind: doc.Kind, Outcome: doc.Outcome, Status: doc.Status, URL: doc.URL,
+						Kind: doc.Kind, Outcome: doc.Outcome, State: doc.State, Status: doc.Status, URL: doc.URL,
 						InitiatedAt: doc.InitiatedAt, CompletedAt: doc.CompletedAt, DurationMs: doc.DurationMs,
 						ApiTimeMs: doc.ApiTimeMs, AuditCreateTimeMs: doc.AuditCreateTimeMs, PayloadRecordTimeMs: doc.PayloadRecordTimeMs,
 						RequestKB: doc.RequestKB, ResponseKB: doc.ResponseKB,
+						UserID: doc.UserID, UserIP: doc.UserIP, UserAgent: doc.UserAgent, UIVersion: doc.UIVersion,
+						CreatedOn: doc.CreatedOn, UpdatedOn: doc.UpdatedOn, PollingTypeRaw: doc.PollingTypeRaw,
 					}, at: *doc.InitiatedAt, object: doc.ID})
 				}
 				if err == nil {
@@ -217,7 +281,7 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		if slowest {
 			return slowRowBefore(rows[i], rows[j], input.Query.Metric)
 		}
-		return pageRowBefore(rows[i], rows[j])
+		return pageRowBeforeOrdered(rows[i], rows[j], oldest)
 	})
 	more := len(rows) > input.Limit
 	if more {
@@ -228,19 +292,45 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		page.Rows[i] = rows[i].request
 	}
 	if more && len(rows) > 0 {
+		last := rows[len(rows)-1]
+		cursor := pageCursor{At: last.at.UTC(), SourceID: last.request.SourceID, ObjectID: last.object.Hex(), Fingerprint: fingerprint, Now: pageNow}
 		if slowest {
 			page.Truncated = true
-			return page, nil
+			cursor.Metric = audit.RequestMetric(last.request, input.Query.Metric)
 		}
-		last := rows[len(rows)-1]
-		cursor := pageCursor{At: last.at.UTC(), SourceID: last.request.SourceID, ObjectID: last.object.Hex(), Fingerprint: fingerprint}
 		raw, _ := json.Marshal(cursor)
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	return page, nil
 }
 
+// requestPipeline pages rows by the exact cohort (kind members and outcome), the
+// scope the activity and slow-request lists use.
 func requestPipeline(q audit.Query, cohort [5]string, sourceID string, after *pageCursor, limit int) mongo.Pipeline {
+	return requestPipelineScoped(q, cohort, "", false, sourceID, after, limit)
+}
+
+// requestPipelineState is the drill-down pipeline: it returns exactly the rows
+// the summary counted. The query's kind and outcome filters apply as in the
+// summary (a keyed cohort adds its exact kind and outcome), and state narrows
+// the rows to one quality state. Every row carries its derived state.
+func requestPipelineState(q audit.Query, cohort [5]string, state string, sourceID string, after *pageCursor, limit int) mongo.Pipeline {
+	return requestPipelineScoped(q, cohort, state, true, sourceID, after, limit)
+}
+
+func requestPipelineScoped(q audit.Query, cohort [5]string, state string, summary bool, sourceID string, after *pageCursor, limit int) mongo.Pipeline {
+	return requestPipelineOrdered(q, cohort, state, summary, false, sourceID, after, limit)
+}
+
+// requestPipelineOrdered is requestPipelineScoped with a direction. Newest sorts
+// (time, _id) downward; oldest sorts both upward, so rows that share a timestamp
+// keep one stable order across pages (the _id tie-break) and the keyset after a
+// cursor mirrors the newest one with $gt in place of $lt. Mongo 3.4 allows both.
+func requestPipelineOrdered(q audit.Query, cohort [5]string, state string, summary bool, oldest bool, sourceID string, after *pageCursor, limit int) mongo.Pipeline {
+	direction, past := -1, "$lt"
+	if oldest {
+		direction, past = 1, "$gt"
+	}
 	startMatch := bson.D{{Key: "RequestInitiatedAt", Value: bson.D{{Key: "$gte", Value: q.Start}, {Key: "$lt", Value: q.End}}}}
 	fallback := bson.D{{Key: "$and", Value: bson.A{
 		bson.D{{Key: "$or", Value: bson.A{bson.D{{Key: "RequestInitiatedAt", Value: bson.D{{Key: "$exists", Value: false}}}}, bson.D{{Key: "RequestInitiatedAt", Value: nil}}}}},
@@ -253,6 +343,8 @@ func requestPipeline(q audit.Query, cohort [5]string, sourceID string, after *pa
 	if cohort[2] != "" {
 		match = append(match, bson.E{Key: "ActionName", Value: cohort[2]})
 	}
+	q = q.Normalized()
+	match = append(match, recordMatch(q)...)
 	if sourceID == "" {
 		return nil
 	}
@@ -268,48 +360,46 @@ func requestPipeline(q audit.Query, cohort [5]string, sourceID string, after *pa
 	}}, {Key: "default", Value: "unknown"}}}}
 	statusText := bson.D{{Key: "$toUpper", Value: bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$StatusCode"}, {Key: "to", Value: "string"}, {Key: "onError", Value: ""}, {Key: "onNull", Value: ""}}}}}}
 	statusNumber := bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: "$StatusCode"}, {Key: "to", Value: "int"}, {Key: "onError", Value: nil}, {Key: "onNull", Value: nil}}}}
-	sets := statusNames()
-	outcome := bson.D{{Key: "$switch", Value: bson.D{{Key: "branches", Value: bson.A{
-		bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{kind, "hangfire"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "SUCCEEDED"}}}}}}}, {Key: "then", Value: "success"}},
-		bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{kind, "hangfire"}}}, bson.D{{Key: "$eq", Value: bson.A{statusText, "FAILED"}}}}}}}, {Key: "then", Value: "failure"}},
-		bson.D{{Key: "case", Value: bson.D{{Key: "$in", Value: bson.A{statusText, sets.success}}}}, {Key: "then", Value: "success"}},
-		bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$gte", Value: bson.A{statusNumber, 200}}}, bson.D{{Key: "$lt", Value: bson.A{statusNumber, 400}}}}}}}, {Key: "then", Value: "success"}},
-		bson.D{{Key: "case", Value: bson.D{{Key: "$in", Value: bson.A{statusText, sets.failure}}}}, {Key: "then", Value: "failure"}},
-		bson.D{{Key: "case", Value: bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$gte", Value: bson.A{statusNumber, 400}}}, bson.D{{Key: "$lt", Value: bson.A{statusNumber, 600}}}}}}}, {Key: "then", Value: "failure"}},
-	}}, {Key: "default", Value: "unknown"}}}}
+	pending := pendingAsyncExpr(kind, statusText)
+	statusClass := statusClassExpr(kind, statusText, statusNumber)
+	outcome := outcomeFromClassExpr()
 	completed := date("RequestCompletedAt", "RequestCompletedAt")
-	duration := bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditAt"}}, "date"}}}, bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: "$_auditCompleted"}}, "date"}}}}}}, bson.D{{Key: "$subtract", Value: bson.A{"$_auditCompleted", "$_auditAt"}}}, nil}}}
+	observed := observedDurationExpr()
+	duration := bson.D{{Key: "$cond", Value: bson.A{"$_auditPending", nil, observed}}}
+	// The state follows the summary's metric (total or api), not the observed
+	// duration shown in the row.
+	metricDuration := auditDurationExpr(q.Metric)
 	stages := mongo.Pipeline{
 		bson.D{{Key: "$match", Value: match}},
-		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditAt", Value: date("RequestInitiatedAt", "CreatedOn")}, {Key: "_auditCompleted", Value: completed}, {Key: "_auditKind", Value: kind}}}},
-		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditOutcome", Value: outcome}, {Key: "_auditDuration", Value: duration}}}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditAt", Value: date("RequestInitiatedAt", "CreatedOn")}, {Key: "_auditCompleted", Value: completed}, {Key: "_auditKind", Value: kind}, {Key: "_auditPending", Value: pending}}}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "_statusClass", Value: statusClass}}}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditOutcome", Value: outcome}, {Key: "_auditDuration", Value: duration}, {Key: "_auditMetricDuration", Value: metricDuration}}}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "_auditState", Value: auditStateExpr("$_auditMetricDuration")}}}},
 	}
-	cohortMatch := bson.D{{Key: "_auditAt", Value: bson.D{{Key: "$type", Value: "date"}}}}
-	if cohort[3] != "" && cohort[3] != "all" {
-		cohortMatch = append(cohortMatch, bson.E{Key: "_auditKind", Value: cohort[3]})
+	stages = appendRecordPostMatch(stages, q)
+	for _, stage := range drillMatchStages(q, cohort, state, summary) {
+		stages = append(stages, bson.D{{Key: "$match", Value: stage}})
 	}
-	if cohort[4] != "" && cohort[4] != "all" {
-		cohortMatch = append(cohortMatch, bson.E{Key: "_auditOutcome", Value: cohort[4]})
-	}
-	stages = append(stages, bson.D{{Key: "$match", Value: cohortMatch}})
 	if after != nil {
 		lastID, _ := bson.ObjectIDFromHex(after.ObjectID)
 		var afterMatch bson.A
 		if sourceID > after.SourceID {
-			afterMatch = bson.A{bson.D{{Key: "_auditAt", Value: bson.D{{Key: "$lt", Value: after.At}}}}, bson.D{{Key: "_auditAt", Value: after.At}}}
+			afterMatch = bson.A{bson.D{{Key: "_auditAt", Value: bson.D{{Key: past, Value: after.At}}}}, bson.D{{Key: "_auditAt", Value: after.At}}}
 		} else if sourceID == after.SourceID {
-			afterMatch = bson.A{bson.D{{Key: "_auditAt", Value: bson.D{{Key: "$lt", Value: after.At}}}}, bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "_auditAt", Value: after.At}}, bson.D{{Key: "_id", Value: bson.D{{Key: "$lt", Value: lastID}}}}}}}}
+			afterMatch = bson.A{bson.D{{Key: "_auditAt", Value: bson.D{{Key: past, Value: after.At}}}}, bson.D{{Key: "$and", Value: bson.A{bson.D{{Key: "_auditAt", Value: after.At}}, bson.D{{Key: "_id", Value: bson.D{{Key: past, Value: lastID}}}}}}}}
 		} else {
-			afterMatch = bson.A{bson.D{{Key: "_auditAt", Value: bson.D{{Key: "$lt", Value: after.At}}}}}
+			afterMatch = bson.A{bson.D{{Key: "_auditAt", Value: bson.D{{Key: past, Value: after.At}}}}}
 		}
 		stages = append(stages, bson.D{{Key: "$match", Value: bson.D{{Key: "$or", Value: afterMatch}}}})
 	}
 	stages = append(stages,
-		bson.D{{Key: "$sort", Value: bson.D{{Key: "_auditAt", Value: -1}, {Key: "_id", Value: -1}}}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "_auditAt", Value: direction}, {Key: "_id", Value: direction}}}},
 		bson.D{{Key: "$limit", Value: limit}},
 		bson.D{{Key: "$project", Value: bson.D{
-			{Key: "_id", Value: 1}, {Key: "sourceId", Value: sourceID}, {Key: "controller", Value: stringExpr("$ControllerName")}, {Key: "action", Value: stringExpr("$ActionName")}, {Key: "kind", Value: "$_auditKind"}, {Key: "outcome", Value: "$_auditOutcome"}, {Key: "status", Value: stringExpr("$StatusCode")}, {Key: "url", Value: stringExpr("$RequestMainUrl")}, {Key: "initiatedAt", Value: "$_auditAt"}, {Key: "completedAt", Value: "$_auditCompleted"}, {Key: "durationMs", Value: duration},
+			{Key: "_id", Value: 1}, {Key: "sourceId", Value: sourceID}, {Key: "controller", Value: stringExpr("$ControllerName")}, {Key: "action", Value: stringExpr("$ActionName")}, {Key: "kind", Value: "$_auditKind"}, {Key: "outcome", Value: "$_auditOutcome"}, {Key: "state", Value: "$_auditState"}, {Key: "status", Value: stringExpr("$StatusCode")}, {Key: "url", Value: stringExpr("$RequestMainUrl")}, {Key: "initiatedAt", Value: "$_auditAt"}, {Key: "completedAt", Value: "$_auditCompleted"}, {Key: "durationMs", Value: duration},
 			{Key: "apiTimeMs", Value: numberExpr("$ApiTime")}, {Key: "auditCreateTimeMs", Value: numberExpr("$AuditCreateTime")}, {Key: "payloadRecordTimeMs", Value: numberExpr("$PayloadRecordTime")}, {Key: "requestKB", Value: numberExprDefault("$RequestLengthInKiloBytes")}, {Key: "responseKB", Value: numberExprDefault("$ResponseLengthInKiloBytes")},
+				{Key: "userId", Value: userIDExpr("$UserId")}, {Key: "userIp", Value: cappedStringExpr("$UserIp", "UserIp")}, {Key: "userAgent", Value: cappedStringExpr("$UserAgent", "UserAgent")}, {Key: "uiVersion", Value: cappedStringExpr("$PayrollUIVersion", "PayrollUIVersion")},
+				{Key: "createdOn", Value: dateOnlyExpr("$CreatedOn")}, {Key: "updatedOn", Value: dateOnlyExpr("$UpdatedOn")}, {Key: "pollingTypeRaw", Value: stringExpr("$RequestPollingType")},
 		}}},
 	)
 	return stages
@@ -321,6 +411,26 @@ func numberExpr(input string) bson.D {
 
 func stringExpr(input string) bson.D {
 	return bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: input}, {Key: "to", Value: "string"}, {Key: "onError", Value: ""}, {Key: "onNull", Value: ""}}}}
+}
+
+// cappedStringExpr is stringExpr limited to the legacy metadata cap for field,
+// so display-only columns cannot grow a row without bound.
+func cappedStringExpr(input, field string) bson.D {
+	return bson.D{{Key: "$substrCP", Value: bson.A{stringExpr(input), 0, legacyMetadataStringCaps[field]}}}
+}
+
+// userIDExpr converts with $convert to a 32-bit integer. $convert truncates a
+// fractional double or decimal toward zero (77.9 becomes 77) and returns null
+// (onError) for out-of-range numbers and for strings that are not whole
+// integers. The legacy path (legacyInt) is stricter: it returns null for any
+// fractional value, so the two differ only for fractional numeric UserId
+// values, which the audit schema should never contain.
+func userIDExpr(input string) bson.D {
+	return bson.D{{Key: "$convert", Value: bson.D{{Key: "input", Value: input}, {Key: "to", Value: "int"}, {Key: "onError", Value: nil}, {Key: "onNull", Value: nil}}}}
+}
+
+func dateOnlyExpr(input string) bson.D {
+	return bson.D{{Key: "$cond", Value: bson.A{bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: input}}, "date"}}}, input, nil}}}
 }
 
 func numberExprDefault(input string) bson.D {
@@ -348,7 +458,7 @@ func validateCohortQuery(q audit.Query, cohort [5]string) error {
 			selected = true
 		}
 	}
-	if !selected || (q.Controller != "" && q.Controller != cohort[1]) || (q.Action != "" && q.Action != cohort[2]) || (q.Kind != "all" && q.Kind != cohort[3]) || (q.Outcome != "all" && q.Outcome != cohort[4]) {
+	if !selected || (q.Controller != "" && q.Controller != cohort[1]) || (q.Action != "" && q.Action != cohort[2]) || !audit.CohortMatchesQuery(q, cohort[3], cohort[4]) {
 		return fmt.Errorf("%w: API key does not match query", audit.ErrInvalidInput)
 	}
 	return nil
@@ -373,6 +483,22 @@ func pageRowBefore(a, b pageRow) bool {
 		return a.request.SourceID < b.request.SourceID
 	}
 	return a.object.Hex() > b.object.Hex()
+}
+
+// pageRowBeforeOrdered is pageRowBefore for either order. Oldest walks time and
+// _id upward; the source id stays ascending in both so merged sources interleave
+// the same way the keyset after a cursor assumes.
+func pageRowBeforeOrdered(a, b pageRow, oldest bool) bool {
+	if !oldest {
+		return pageRowBefore(a, b)
+	}
+	if !a.at.Equal(b.at) {
+		return a.at.Before(b.at)
+	}
+	if a.request.SourceID != b.request.SourceID {
+		return a.request.SourceID < b.request.SourceID
+	}
+	return a.object.Hex() < b.object.Hex()
 }
 
 func closeMongoCursor(cur mongoCursor) {

@@ -40,7 +40,7 @@ func TestProtocolLifecycleAndReadOnlyDiscovery(t *testing.T) {
 	io.WriteString(clientInput, `{"jsonrpc":"2.0","method":"notifications/initialized"}`+"\n")
 	listed := send(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	definitions := listed["result"].(map[string]any)["tools"].([]any)
-	if len(definitions) != 8 {
+	if len(definitions) != 10 {
 		t.Fatalf("tools=%d", len(definitions))
 	}
 	for _, item := range definitions {
@@ -60,6 +60,40 @@ func TestProtocolLifecycleAndReadOnlyDiscovery(t *testing.T) {
 	unknown := send(`{"jsonrpc":"2.0","id":"unknown","method":"shell/exec"}`)
 	if unknown["error"] == nil {
 		t.Fatal("unknown method accepted")
+	}
+	clientInput.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	clientOutput.Close()
+}
+
+func TestServerInfoNameIsUnravis(t *testing.T) {
+	input, clientInput := io.Pipe()
+	clientOutput, output := io.Pipe()
+	b, _ := New(18765)
+	done := make(chan error, 1)
+	go func() { done <- b.Serve(context.Background(), input, output); output.Close() }()
+	scanner := bufio.NewScanner(clientOutput)
+	if _, err := io.WriteString(clientInput, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if !scanner.Scan() {
+		t.Fatal("no MCP response")
+	}
+	var response struct {
+		Result struct {
+			ServerInfo struct {
+				Name string `json:"name"`
+			} `json:"serverInfo"`
+			Instructions string `json:"instructions"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Result.ServerInfo.Name != "unravis" || !strings.HasPrefix(response.Result.Instructions, "Unravis:") {
+		t.Fatalf("serverInfo=%q instructions=%q", response.Result.ServerInfo.Name, response.Result.Instructions)
 	}
 	clientInput.Close()
 	if err := <-done; err != nil {

@@ -168,7 +168,7 @@ func (b *Bridge) Serve(parent context.Context, input io.Reader, output io.Writer
 				version = "2025-11-25"
 			}
 			initialized = true
-			send(request.ID, map[string]any{"protocolVersion": version, "serverInfo": map[string]any{"name": "api-audit-explorer", "version": "1.0.0"}, "capabilities": map[string]any{"tools": map[string]any{}}, "instructions": "Local read-only Brain Payroll audit investigations. Start with audit_get_guide and audit_list_sources. Do not infer browser filters. Use explicit source IDs and incident/reference windows. No credentials, payloads, connection writes or code execution are exposed."}, 0, "")
+			send(request.ID, map[string]any{"protocolVersion": version, "serverInfo": map[string]any{"name": "unravis", "version": "1.0.0"}, "capabilities": map[string]any{"tools": map[string]any{}}, "instructions": "Unravis: local read-only Brain Payroll audit investigations. Start with audit_get_guide and audit_list_sources. Do not infer browser filters. Use explicit source IDs and incident/reference windows. No credentials, payloads, connection writes or code execution are exposed."}, 0, "")
 			continue
 		}
 		if request.Method == "ping" {

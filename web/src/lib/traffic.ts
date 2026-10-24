@@ -1,4 +1,4 @@
-import type {LoadWindow,Query} from './types';
+import type {Comparison,LoadWindow,Query,Rollup} from './types';
 export function trafficData(query:Pick<Query,'start'|'end'|'bucketSeconds'>,rows:LoadWindow[],threshold:number,metric:'p95'|'median'|'max'){
  const start=Date.parse(query.start),end=Date.parse(query.end),width=query.bucketSeconds*1000;
  const observed=new Map(rows.map(row=>[Date.parse(row.at),row]));
@@ -9,3 +9,29 @@ export function trafficData(query:Pick<Query,'start'|'end'|'bucketSeconds'>,rows
  for(const row of windows){if(row.partial||row.count<=0||!row.timings)continue;const lower=2**Math.floor(Math.log2(row.count));let b=grouped.get(lower);if(!b){b={lower,upper:lower*2,measured:0,slow:0,percent:0};grouped.set(lower,b);}b.measured++;if(row.slow)b.slow++;b.percent=b.slow/b.measured*100;}
  return {windows,points,buckets:[...grouped.values()].sort((a,b)=>a.lower-b.lower),unmeasured:windows.filter(row=>row.count>0&&!row.timings).length};
 }
+
+/** Error rate as a percent; "—" when the API has no known-outcome requests. */
+export const errorRateText=(rate:number|null|undefined,outcomeFilter='all')=>outcomeFilter!=='all'||rate==null||!Number.isFinite(rate)?'—':(rate*100).toFixed(1)+'%';
+/** Tooltip for the error-rate cell. The sources apply the outcome and kind filters before summarizing, so the rate only exists under outcome All. */
+export const errorRateTip=(rollup:Rollup|undefined,outcomeFilter='all',kindFilter='all')=>{
+ if(outcomeFilter!=='all')return 'Error rate needs the outcome filter set to All.';
+ if(!rollup||rollup.errorRate==null)return 'No requests with a known success or failure result in the current period.';
+ const kind=rollup.kind||(kindFilter==='all'?'':kindFilter);
+ const scope='Covers all sources merged'+(kind?', for the '+kind+' requests of this API':' (rollup without a kind)');
+ return rollup.failures.toLocaleString()+' failed of '+rollup.requests.toLocaleString()+' requests with a known result (about '+rollup.perMinute.toFixed(1)+' per minute). '+scope+'; unclassified results are left out.';
+};
+/** Sign-aware tooltip for the load badge. */
+export const loadTip=(rho:number)=>rho>0
+ ?"This group's P95 tends to be higher in buckets where other traffic puts more load on the system (summed request time of all other API groups). A correlation, not proof of cause."
+ :"This group's latency falls as load rises, measured as the summed request time of all other API groups. A correlation, not proof of cause.";
+/** The rollup for a cohort's API and kind; rollups are per controller, action and kind across sources, never merged across kinds. */
+export const rollupFor=(rollups:Rollup[]|undefined,row:Pick<Comparison,'controller'|'action'|'kind'>)=>rollups?.find(r=>r.controller===row.controller&&r.action===row.action&&(r.kind??row.kind)===row.kind);
+export const LOAD_BADGE_MIN_ABS_RHO=0.6,LOAD_BADGE_MIN_POINTS=8;
+/**
+ * Badge text for a series' load correlation, or null when it is too weak or too thin.
+ * points defaults to the minimum because the backend only reports rho with at least that many paired buckets.
+ */
+export const loadBadge=(rho:number|null|undefined,points=LOAD_BADGE_MIN_POINTS)=>{
+ if(rho==null||!Number.isFinite(rho)||points<LOAD_BADGE_MIN_POINTS||Math.abs(rho)<LOAD_BADGE_MIN_ABS_RHO)return null;
+ return (rho>0?'slows under load':'faster under load')+' (ρ='+rho.toFixed(1)+')';
+};

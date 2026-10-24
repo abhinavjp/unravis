@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -274,6 +275,75 @@ func TestPayloadIsPlaintextInsideValidJSON(t *testing.T) {
 	}
 }
 
+func TestServerRecordRouteDisallowsUnknownFields(t *testing.T) {
+	uid := 7
+	created := time.Date(2026, 10, 1, 9, 0, 0, 0, time.FixedZone("x", 3600))
+	repo := &fakeRepository{record: audit.RecordDetail{
+		RequestRecord: audit.RequestRecord{ID: "r", SourceID: "s", UserID: &uid, UserIP: "203.0.113.9", UIVersion: "9.4.1", CreatedOn: &created, PollingTypeRaw: "Synchronous "},
+		State:         "valid",
+		Payload:       audit.Payload{Request: "q", Response: "p"},
+	}}
+	h := New(repo, nil, testToken, false)
+	for _, body := range []string{`{"sourceId":"s","id":"r","extra":1}`, `{"sourceId":"s","id":"r","payload":true}`, `{"sourceId":"s","id":"r"} {}`} {
+		if res := request(h, http.MethodPost, "/api/record", body, true); res.Code != http.StatusBadRequest {
+			t.Fatalf("body %s status=%d, want 400: %s", body, res.Code, res.Body.String())
+		}
+	}
+	if repo.recordInput != (audit.RecordInput{}) {
+		t.Fatalf("rejected body reached the repository: %#v", repo.recordInput)
+	}
+	if res := request(h, http.MethodPost, "/api/record", `{"sourceId":"s","id":"r"}`, false); res.Code == http.StatusOK {
+		t.Fatal("record route must require the session token")
+	}
+	res := request(h, http.MethodPost, "/api/record", `{"sourceId":"s","id":"r"}`, true)
+	if res.Code != http.StatusOK || repo.recordInput != (audit.RecordInput{SourceID: "s", ID: "r"}) {
+		t.Fatalf("status=%d input=%#v body=%s", res.Code, repo.recordInput, res.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["userId"] != float64(7) || body["uiVersion"] != "9.4.1" || body["pollingTypeRaw"] != "Synchronous " || body["state"] != "valid" || body["createdOn"] != "2026-10-01T08:00:00Z" {
+		t.Fatalf("record JSON wrong: %s", res.Body.String())
+	}
+	if _, present := body["updatedOn"]; present {
+		t.Fatalf("absent timestamps must be omitted: %s", res.Body.String())
+	}
+	repo.recordErr = fmt.Errorf("%w: request was not found", audit.ErrNotFound)
+	if res := request(h, http.MethodPost, "/api/record", `{"sourceId":"s","id":"r"}`, true); res.Code != http.StatusNotFound {
+		t.Fatalf("not found status=%d", res.Code)
+	}
+}
+
+func TestExportIncludesAuditEvidenceColumns(t *testing.T) {
+	uid := 7
+	created := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	row := audit.RequestRecord{ID: "r", SourceID: "s", UserID: &uid, UserIP: "203.0.113.9", UserAgent: "=cmd", UIVersion: "9.4.1", CreatedOn: &created, PollingTypeRaw: "Synchronous "}
+	h := New(&fakeRepository{requestPages: []audit.Page{{Rows: []audit.RequestRecord{row}}}}, nil, testToken, false)
+	q, _ := json.Marshal(audit.PageInput{Query: testQuery(), Limit: 100})
+	res := request(h, http.MethodPost, "/api/export", string(q), true)
+	records, err := csv.NewReader(strings.NewReader(res.Body.String())).ReadAll()
+	if err != nil || res.Code != http.StatusOK || len(records) != 2 {
+		t.Fatalf("status=%d err=%v records=%d body=%s", res.Code, err, len(records), res.Body.String())
+	}
+	if disposition := res.Header().Get("Content-Disposition"); disposition != "attachment; filename=unravis-requests.csv" {
+		t.Errorf("Content-Disposition = %q, want the unravis-requests.csv attachment", disposition)
+	}
+	got := map[string]string{}
+	for i, name := range records[0] {
+		got[name] = records[1][i]
+	}
+	want := map[string]string{"userId": "7", "userIp": "203.0.113.9", "userAgent": "'=cmd", "uiVersion": "9.4.1", "createdOn": "2026-10-01T09:00:00Z", "updatedOn": "", "pollingTypeRaw": "Synchronous ", "auditCreateTimeMs": ""}
+	for name, value := range want {
+		if v, ok := got[name]; !ok || v != value {
+			t.Errorf("column %s = %q (present=%t), want %q", name, v, ok, value)
+		}
+	}
+	if records[0][0] != "id" || records[0][15] != "responseKB" {
+		t.Errorf("existing column order changed: %v", records[0])
+	}
+}
+
 func TestExportEscapesFormulaPrefixesAndCapsRows(t *testing.T) {
 	repo := &fakeRepository{exportRows: 10005}
 	h := New(repo, nil, testToken, false)
@@ -297,6 +367,9 @@ type fakeRepository struct {
 	validationCalls int
 	analysis        audit.Analysis
 	payload         audit.Payload
+	record          audit.RecordDetail
+	recordInput     audit.RecordInput
+	recordErr       error
 	exportRows      int
 	largeURL        string
 	requestPages    []audit.Page
@@ -365,6 +438,10 @@ func (f *fakeRepository) Requests(_ context.Context, in audit.PageInput) (audit.
 }
 func (f *fakeRepository) Payload(context.Context, audit.PayloadInput) (audit.Payload, error) {
 	return f.payload, nil
+}
+func (f *fakeRepository) Record(_ context.Context, in audit.RecordInput) (audit.RecordDetail, error) {
+	f.recordInput = in
+	return f.record, f.recordErr
 }
 func (f *fakeRepository) Close(context.Context) error { return nil }
 
@@ -931,5 +1008,48 @@ func TestProcessingLimitsHaveSpecificSafeExplanations(t *testing.T) {
 		if w.Code != http.StatusRequestEntityTooLarge || !strings.Contains(w.Body.String(), tc.want) || strings.Contains(w.Body.String(), "secret") {
 			t.Fatalf("unsafe or incorrect limit response: %d %s", w.Code, w.Body.String())
 		}
+	}
+}
+
+func TestRequestsStateFilterOverHTTP(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	h := New(audit.NewDemo(now), nil, testToken, true)
+	query := testQuery()
+	query.SourceIDs = []string{"demo-west"}
+	query.Start, query.End = now.Add(-15*time.Minute), now
+	query.BaselineStart, query.BaselineEnd = now.Add(-30*time.Minute), now.Add(-15*time.Minute)
+	page := func(state string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(audit.PageInput{Query: query, State: state, Limit: 5})
+		return request(h, http.MethodPost, "/api/requests", string(body), true)
+	}
+	// A query-wide page (no API key) with a state returns rows that carry the id and state.
+	res := page("complete")
+	if res.Code != http.StatusOK {
+		t.Fatalf("complete status=%d body=%s", res.Code, res.Body.String())
+	}
+	var got audit.Page
+	if err := json.Unmarshal(res.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Rows) != 5 {
+		t.Fatalf("rows=%d, want 5", len(got.Rows))
+	}
+	for _, row := range got.Rows {
+		if row.ID == "" || row.State != "valid" {
+			t.Fatalf("row id=%q state=%q, want an id and state valid", row.ID, row.State)
+		}
+	}
+	// Nothing in the demo is incomplete, so that state is a valid, empty page.
+	res = page("incomplete")
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"rows":[]`) {
+		t.Fatalf("incomplete status=%d body=%s", res.Code, res.Body.String())
+	}
+	// An unknown state is a client error on the page and the export route.
+	if res = page("bogus"); res.Code != http.StatusBadRequest {
+		t.Fatalf("unknown state status=%d body=%s", res.Code, res.Body.String())
+	}
+	body, _ := json.Marshal(audit.PageInput{Query: query, State: "bogus", Limit: 5})
+	if res = request(h, http.MethodPost, "/api/export", string(body), true); res.Code != http.StatusBadRequest {
+		t.Fatalf("export unknown state status=%d", res.Code)
 	}
 }

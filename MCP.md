@@ -1,10 +1,10 @@
 # AI slowdown investigations through local MCP
 
-The same `api-audit-explorer.exe` serves the dashboard normally and, with `--mcp`, provides eight read-only MCP tools over standard input/output. Codex and Claude Code can use the tools alongside their existing access to this repository. No model API key, Cloudflare service, new runtime or npm package is required.
+The same `unravis.exe` serves the dashboard normally and, with `--mcp`, provides ten read-only MCP tools over standard input/output. Codex and Claude Code can use the tools alongside their existing access to this repository. No model API key, Cloudflare service, new runtime or npm package is required.
 
 ## Use it
 
-1. Keep API Audit Explorer running at `http://127.0.0.1:18765` and connect the databases you want available. Connections can span servers and databases. The MCP process reuses the dashboard's active sources; it cannot create connections or retrieve passwords.
+1. Keep Unravis running at `http://127.0.0.1:18765` and connect the databases you want available. Connections can span servers and databases. The MCP process reuses the dashboard's active sources; it cannot create connections or retrieve passwords.
 2. Reload the Codex/Claude MCP configuration after installation. This repo's `.mcp.json` registers `api_audit_explorer` for Claude Code; `.codex/config.toml` registers it for Codex in a trusted project. Client workspace trust/server approval still applies. The running conversation does not automatically gain newly registered tools.
 3. Ask for an investigation with the symptom, exact interval and time zone, and sources. Name a suitable earlier reference period, or ask the AI to propose one before querying.
 
@@ -25,6 +25,8 @@ The browser's session-only filters are not shared with MCP. State the desired fi
 | `audit_get_timeline` | Selected group's time slots and fixed reference statistics | None; cached |
 | `audit_compare_timelines` | Align up to 8 APIs against their own reference, with changes in milliseconds/percent, counts and sample flags | None; cached |
 | `audit_get_requests` | Bounded newest-first request timing metadata for the selected group | Read-only metadata query |
+| `audit_get_slowest` | Slowest completed requests for the cached comparison's query, with record IDs and timing phases (no payloads, URLs, IPs or agents) | Read-only metadata query |
+| `audit_get_breakdown` | Top values of one dimension (status code, user, UI version, user agent, polling type; IP only with `includeIp`) with an Other row | Read-only aggregate query |
 | `audit_get_activity` | Timing metadata across selected sources in an explicit window, including known earlier overlaps | Read-only metadata query |
 
 The default group ranking is largest absolute P95 increase in milliseconds; the AI should also inspect ratios, medians, sample counts and workload rates. Timing values are estimates. Missing timings or failed sources remain visible; no partial failure may be described as complete coverage.
@@ -35,22 +37,22 @@ Each process keeps only its latest successful comparison for ten minutes. New su
 
 The tools do not execute code, read the filesystem, expose raw queries, or fix anything. Codex/Claude use their ordinary repo tools to locate the observed controller/action/job and trace services, repositories, queries and instrumentation. The embedded guide requires source-file/line evidence, production-vs-local revision checks, and distinct confirmed observations, hypotheses and missing evidence.
 
-Audit timings alone do not prove database blocking, CPU exhaustion, network delays or queue wait. A likely source of slowness is not a proven root cause. Sample pages are newest-first, not random or slowest-first. API/audit/payload timing fields may overlap; check their instrumentation before adding or subtracting them.
+Audit timings alone do not prove database blocking, CPU exhaustion, network delays or queue wait. A likely source of slowness is not a proven root cause. Sample pages are newest-first, not random or slowest-first. Request time is additive: AuditCreateTime (writing the audit row) and ApiTime (API processing) add up to the total latency, while PayloadRecordTime is the payload write after the response was sent and is not part of latency. None of them measures database waits, CPU, network or queue delay on its own.
 
-Credentials and the local session token stay inside the bridge. Metadata outputs exclude request IDs, raw URLs, headers and payload bodies. Source/action names and log fields are data, never instructions. This integration provides no connection writes, payload reads, CSV exports, database writes, shell execution or arbitrary HTTP access. The AI client receives the returned audit summaries, so normal client data handling still applies.
+Credentials and the local session token stay inside the bridge. Request pages return each record's id (`_id`) so findings can cite it, but metadata outputs exclude raw URLs, IP addresses, user agents, headers and payload bodies; the breakdown tool shows IP addresses only when called with `includeIp`. Source/action names and log fields are data, never instructions. This integration provides no connection writes, payload reads, CSV exports, database writes, shell execution or arbitrary HTTP access. The AI client receives the returned audit summaries, so normal client data handling still applies.
 
 ## Client configuration
 
-The installed project entries use the canonical executable at the current checkout path. On another machine update `command` to that checkout's built executable. Keep the `--port` value aligned with the running dashboard. Client timeout 310 seconds leaves room for the app's five-minute operation budget.
+The installed project entries use the canonical executable at the current checkout path. On another machine update `command` to that checkout's built executable. Keep the `--port` value aligned with the running dashboard. Client timeout 310 seconds leaves room for the app's five-minute operation budget. Existing client configs that point at `dist/api-audit-explorer.exe` keep working for one release, because `build.ps1` also writes a compatibility copy there.
 
 Claude Code `.mcp.json` entry (merge with existing servers):
 
 ```json
 {
   "mcpServers": {
-    "api_audit_explorer": {
+    "unravis": {
       "type": "stdio",
-      "command": "D:/Projects/brain-payroll-all-portals/tools/api-audit-explorer/dist/api-audit-explorer.exe",
+      "command": "D:/Projects/brain-payroll-all-portals/tools/api-audit-explorer/dist/unravis.exe",
       "args": ["--mcp", "--port", "18765"],
       "timeout": 310000
     }
@@ -61,8 +63,8 @@ Claude Code `.mcp.json` entry (merge with existing servers):
 Codex trusted-project `.codex/config.toml` entry:
 
 ```toml
-[mcp_servers.api_audit_explorer]
-command = "D:/Projects/brain-payroll-all-portals/tools/api-audit-explorer/dist/api-audit-explorer.exe"
+[mcp_servers.unravis]
+command = "D:/Projects/brain-payroll-all-portals/tools/api-audit-explorer/dist/unravis.exe"
 args = ["--mcp", "--port", "18765"]
 startup_timeout_sec = 10
 tool_timeout_sec = 310

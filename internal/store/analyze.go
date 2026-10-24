@@ -28,12 +28,27 @@ type bucketDocument struct {
 	SumMs      float64   `bson:"sumMs"`
 	MinMs      float64   `bson:"minMs"`
 	MaxMs      float64   `bson:"maxMs"`
+	// Phase sums and per-phase sample counts.
+	SumAuditMs   float64 `bson:"sumAuditMs"`
+	SumApiMs     float64 `bson:"sumApiMs"`
+	SumPayloadMs float64 `bson:"sumPayloadMs"`
+	NAudit       int64   `bson:"nAudit"`
+	NApi         int64   `bson:"nApi"`
+	NPayload     int64   `bson:"nPayload"`
+
+	PendingAsync    int64 `bson:"pendingAsync"`
+	ObservedPartial int64 `bson:"observedPartial"`
+
+	C4xx            int64 `bson:"c4xx"`
+	C5xx            int64 `bson:"c5xx"`
+	CHangfireFailed int64 `bson:"cHangfireFailed"`
 }
 
 type sourceAnalysis struct {
 	result    audit.SourceResult
 	current   []audit.Bucket
 	reference []audit.Bucket
+	timings   []audit.SourceTiming
 	err       error
 }
 
@@ -41,6 +56,10 @@ type sourceAnalysis struct {
 func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, error) {
 	if err := audit.ValidateQuery(q); err != nil {
 		return audit.Analysis{}, fmt.Errorf("%w: %v", audit.ErrInvalidInput, err)
+	}
+	if q.HasAgeRange() {
+		// One clock for every source and both intervals, rendered as a literal.
+		q.Now = s.clock()
 	}
 	queryCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
@@ -95,13 +114,20 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 				return
 			}
 			defer func() { <-per }()
-			current, err := s.readBuckets(workCtx, p, q, q.Start, q.End, &rows, &rowBytes, &legacyRecords, &legacyBytes)
+			var timings []audit.SourceTiming
+			timed := func(window string, start, end time.Time) ([]audit.Bucket, error) {
+				began := time.Now()
+				buckets, err := s.readBuckets(workCtx, p, q, start, end, &rows, &rowBytes, &legacyRecords, &legacyBytes)
+				timings = append(timings, audit.SourceTiming{SourceID: p.source.ID, Window: window, ReadMs: time.Since(began).Milliseconds(), Rows: int64(len(buckets))})
+				return buckets, err
+			}
+			current, err := timed("current", q.Start, q.End)
 			var reference []audit.Bucket
 			if err == nil {
-				reference, err = s.readBuckets(workCtx, p, q, q.BaselineStart, q.BaselineEnd, &rows, &rowBytes, &legacyRecords, &legacyBytes)
+				reference, err = timed("reference", q.BaselineStart, q.BaselineEnd)
 			}
 			if err == nil {
-				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: true, Version: p.version, IndexWarning: p.indexWarning}, current: current, reference: reference}
+				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: true, Version: p.version, IndexWarning: p.indexWarning}, current: current, reference: reference, timings: timings}
 				return
 			}
 			if errors.Is(err, audit.ErrLimit) {
@@ -110,7 +136,7 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 				return
 			}
 			code, message := sourceQueryError(queryCtx, err)
-			results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}, err: err}
+			results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}, timings: timings, err: err}
 		}(i, p)
 	}
 	workers.Wait()
@@ -123,8 +149,10 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 	current := make([]audit.Bucket, 0)
 	reference := make([]audit.Bucket, 0)
 	sourceResults := make([]audit.SourceResult, 0, len(results))
+	var timings []audit.SourceTiming
 	for _, result := range results {
 		sourceResults = append(sourceResults, result.result)
+		timings = append(timings, result.timings...)
 		if result.result.OK {
 			current = append(current, result.current...)
 			reference = append(reference, result.reference...)
@@ -134,6 +162,7 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 	if err != nil {
 		return audit.Analysis{}, err
 	}
+	analysis.Timings = timings
 	analysis.Warnings = append(analysis.Warnings, "Legacy records without RequestInitiatedAt use CreatedOn when it contains a BSON date.")
 	serialized, err := json.Marshal(analysis)
 	if err != nil || len(serialized) > maxAnalysisBytes {
@@ -163,6 +192,7 @@ func failedSource(p *profile, message string) sourceAnalysis {
 }
 
 func (s *Store) readBuckets(ctx context.Context, p *profile, q audit.Query, start, end time.Time, total, totalBytes, legacyRecords, legacyBytes *atomic.Int64) ([]audit.Bucket, error) {
+	q = q.Normalized()
 	pipeline := buildSummaryPipeline(q, start, end, !start.Equal(q.BaselineStart) || !end.Equal(q.BaselineEnd))
 	if usesLegacyMongo(p.shared.client) {
 		pipeline = legacyMetadataPipeline(pipeline)
@@ -190,6 +220,10 @@ func (s *Store) readBuckets(ctx context.Context, p *profile, q audit.Query, star
 			SourceID: p.source.ID, Controller: doc.Controller, Action: doc.Action, Kind: doc.Kind,
 			Outcome: doc.Outcome, State: doc.State, At: doc.At.UTC(), Bin: doc.Bin,
 			Count: doc.Count, SumMs: doc.SumMs, MinMs: doc.MinMs, MaxMs: doc.MaxMs,
+			SumAuditMs: doc.SumAuditMs, SumApiMs: doc.SumApiMs, SumPayloadMs: doc.SumPayloadMs,
+			NAudit: doc.NAudit, NApi: doc.NApi, NPayload: doc.NPayload,
+			PendingAsync: doc.PendingAsync, ObservedPartial: doc.ObservedPartial,
+			Count4xx: doc.C4xx, Count5xx: doc.C5xx, CountHangfireFailed: doc.CHangfireFailed,
 		}
 		encoded, err := json.Marshal(bucket)
 		if err != nil || totalBytes.Add(int64(len(encoded)+1)) > maxAnalysisBytes {

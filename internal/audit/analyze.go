@@ -15,7 +15,59 @@ type cohortAccumulator struct {
 	currentEvents, referenceEvents              int64
 	current, reference                          *histogramAccumulator
 	currentAt                                   map[int64]*histogramAccumulator
+	// currentSlots holds each current-window slot's failure counters over every
+	// state, so a slot with no valid timing still reports its failures.
+	currentSlots map[int64]*slotCounts
+
+	currentClientErrors, currentServerErrors     int64
+	referenceClientErrors, referenceServerErrors int64
+
+	currentStates, referenceStates stateTally
 }
+
+// stateTally counts the documents of a cohort that are not valid, split the way
+// the completion rate needs: unfinished (not pending), pending asynchronous work
+// and invalid. The valid documents are the histogram's count. A PendingAsync
+// flag only counts on an incomplete bucket.
+type stateTally struct{ incomplete, pending, invalid int64 }
+
+func (t *stateTally) add(b Bucket) error {
+	switch b.State {
+	case "incomplete":
+		pending := b.PendingAsync
+		if pending < 0 || pending > b.Count {
+			return fmt.Errorf("pendingAsync %d must be between 0 and the bucket count %d", pending, b.Count)
+		}
+		if err := checkedAdd(&t.pending, pending); err != nil {
+			return err
+		}
+		return checkedAdd(&t.incomplete, b.Count-pending)
+	case "invalid":
+		return checkedAdd(&t.invalid, b.Count)
+	}
+	return nil
+}
+
+// completionRate is complete / (complete + incomplete + pending), or nil when
+// that denominator is 0. Invalid documents are never in it.
+func completionRate(complete, incomplete, pending int64) *float64 {
+	denominator := complete + incomplete + pending
+	if complete < 0 || incomplete < 0 || pending < 0 || denominator <= 0 {
+		return nil
+	}
+	value := float64(complete) / float64(denominator)
+	return &value
+}
+
+// applyStates fills the state tallies and the completion rate of one window.
+func applyStates(stats *Stats, events int64, t stateTally) {
+	stats.Events, stats.Incomplete, stats.Pending, stats.Invalid = events, t.incomplete, t.pending, t.invalid
+	stats.CompletionRate = completionRate(stats.Count, t.incomplete, t.pending)
+}
+
+// slotCounts are one timeline slot's counters over valid, incomplete and invalid
+// documents alike: 4xx, 5xx plus failed Hangfire jobs, and incomplete ones.
+type slotCounts struct{ client, server, incomplete int64 }
 
 func CohortKey(sourceID, controller, action, kind, outcome string) string {
 	encoded, _ := json.Marshal([]string{sourceID, controller, action, kind, outcome})
@@ -29,6 +81,11 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 	if len(current) > MaxSummaryRows || len(reference) > MaxSummaryRows || len(current)+len(reference) > MaxSummaryRows {
 		return Analysis{}, fmt.Errorf("%w: %w", ErrLimit, ErrSummaryRowLimit)
 	}
+	// Sources may return rows of other kinds for the quality counts (the
+	// pipeline keeps incomplete rows); only rows that can belong to the selected
+	// kind take part, so a Hangfire-only incomplete row never inflates an HTTP
+	// view and vice versa.
+	current, reference = scopeToKind(q, current), scopeToKind(q, reference)
 	cohorts := make(map[string]*cohortAccumulator)
 	var quality Quality
 	for _, b := range current {
@@ -72,10 +129,30 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 	})
 
 	q.Start, q.End, q.BaselineStart, q.BaselineEnd = q.Start.UTC(), q.End.UTC(), q.BaselineStart.UTC(), q.BaselineEnd.UTC()
+	// Each cohort's summed request time per bucket, in sorted-key order, so a
+	// series can be compared with the load of every other cohort.
+	cohortSums := make([]map[int64]float64, len(keys))
+	for k, key := range keys {
+		cohortSums[k] = make(map[int64]float64, len(cohorts[key].currentAt))
+		for at, h := range cohorts[key].currentAt {
+			cohortSums[k][at] = h.sum
+		}
+	}
+	others := newOtherLoad(cohortSums)
 	analysis := Analysis{Query: q, APIs: make([]Comparison, 0, len(keys)), Timeline: make([]Series, 0), Sources: sources, Quality: quality, Approximate: true, Warnings: []string{"Latency quantiles are estimated from logarithmic histogram buckets; compared does not mean healthy."}}
-	for _, key := range keys {
+	for k, key := range keys {
 		c := cohorts[key]
 		currentStats, referenceStats := c.current.stats(), c.reference.stats()
+		// Error counts cover every document in the cohort, valid or not, so they
+		// are divided by the cohort's events rather than its valid samples.
+		currentStats.ClientErrors, currentStats.ServerErrors = c.currentClientErrors, c.currentServerErrors
+		currentStats.ClientErrorRate = errorShare(c.currentClientErrors, c.currentEvents, c.outcome)
+		currentStats.ServerErrorRate = errorShare(c.currentServerErrors, c.currentEvents, c.outcome)
+		referenceStats.ClientErrors, referenceStats.ServerErrors = c.referenceClientErrors, c.referenceServerErrors
+		referenceStats.ClientErrorRate = errorShare(c.referenceClientErrors, c.referenceEvents, c.outcome)
+		referenceStats.ServerErrorRate = errorShare(c.referenceServerErrors, c.referenceEvents, c.outcome)
+		applyStates(&currentStats, c.currentEvents, c.currentStates)
+		applyStates(&referenceStats, c.referenceEvents, c.referenceStates)
 		comparison := Comparison{Key: key, SourceID: c.sourceID, Controller: c.controller, Action: c.action, Kind: c.kind, Outcome: c.outcome, CurrentEvents: c.currentEvents, ReferenceEvents: c.referenceEvents, Current: currentStats, Reference: referenceStats}
 		switch {
 		case currentStats.Count == 0:
@@ -93,30 +170,51 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 		}
 		comparison.MedianDeltaMs = difference(currentStats.P50, referenceStats.P50)
 		comparison.P95DeltaMs = difference(currentStats.P95, referenceStats.P95)
+		comparison.P99DeltaMs = difference(currentStats.P99, referenceStats.P99)
 		if comparison.State == "compared" {
 			comparison.MedianRatio = ratio(currentStats.P50, referenceStats.P50)
 			comparison.P95Ratio = ratio(currentStats.P95, referenceStats.P95)
+			comparison.P99Ratio = ratio(currentStats.P99, referenceStats.P99)
 		}
+		applyImpact(&comparison)
+		comparison.PhaseDeltaMs = phaseDelta(currentStats, referenceStats)
 		analysis.APIs = append(analysis.APIs, comparison)
 
-		if len(c.currentAt) > 0 {
-			times := make([]int64, 0, len(c.currentAt))
-			for at := range c.currentAt {
+		// A slot gets a point when it has a valid timing or any failure or
+		// incomplete document; counters come from every state, percentiles from
+		// valid timings only.
+		times := make([]int64, 0, len(c.currentSlots))
+		for at, slot := range c.currentSlots {
+			if c.currentAt[at] != nil || slot.client != 0 || slot.server != 0 || slot.incomplete != 0 {
 				times = append(times, at)
 			}
+		}
+		if len(times) > 0 {
 			sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
 			series := Series{Key: key, Points: make([]Point, 0, len(times))}
+			// The load correlation only looks at slots that have a timing.
+			timed, timedPoints := make([]int64, 0, len(c.currentAt)), make([]Point, 0, len(c.currentAt))
 			for _, at := range times {
-				stats := c.currentAt[at].stats()
-				point := Point{At: time.Unix(0, at).UTC(), Count: stats.Count, P50: stats.P50, P95: stats.P95}
-				if comparison.State == "compared" {
-					point.P95Ratio = ratio(stats.P95, referenceStats.P95)
+				point := Point{At: time.Unix(0, at).UTC(), Count4xx: c.currentSlots[at].client, Count5xx: c.currentSlots[at].server, Incomplete: c.currentSlots[at].incomplete}
+				if h := c.currentAt[at]; h != nil {
+					stats := h.stats()
+					point.Count, point.P50, point.P90, point.P95, point.P99 = stats.Count, stats.P50, stats.P90, stats.P95, stats.P99
+					if comparison.State == "compared" {
+						point.P95Ratio = ratio(stats.P95, referenceStats.P95)
+					}
+					timed, timedPoints = append(timed, at), append(timedPoints, point)
 				}
 				series.Points = append(series.Points, point)
 			}
+			series.LoadCorrelation = seriesLoadCorrelation(timedPoints, others.forCohort(k, timed), q)
 			analysis.Timeline = append(analysis.Timeline, series)
 		}
 	}
+	rollups, err := withRollupComparison(buildRollups(cohorts, windowMinutes(q.Start, q.End), q.Outcome == "all"), cohorts, q)
+	if err != nil {
+		return Analysis{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	analysis.Rollups = rollups
 	volume, err := requestVolume(q, current)
 	if err != nil {
 		return Analysis{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
@@ -127,31 +225,77 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 		return Analysis{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	analysis.LoadWindows = load
+	overview, err := buildOverview(q, current, reference)
+	if err != nil {
+		return Analysis{}, fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	analysis.Overview = overview
 	return analysis, nil
+}
+
+// scopeToKind keeps the buckets that belong to the query's kind (see
+// KindMatches). Under "all" it returns the input unchanged.
+func scopeToKind(q Query, buckets []Bucket) []Bucket {
+	if q.Kind == "all" {
+		return buckets
+	}
+	scoped := make([]Bucket, 0, len(buckets))
+	for _, b := range buckets {
+		if KindMatches(q.Kind, b.Kind, b.State == "valid") {
+			scoped = append(scoped, b)
+		}
+	}
+	return scoped
 }
 
 func addQuality(quality *Quality, b Bucket) error {
 	if b.Count <= 0 {
 		return fmt.Errorf("bucket count must be positive")
 	}
+	if b.PendingAsync < 0 || b.PendingAsync > b.Count {
+		return fmt.Errorf("pendingAsync %d must be between 0 and the bucket count %d", b.PendingAsync, b.Count)
+	}
+	var incomplete, invalid, unknownOutcome int64
 	switch b.State {
 	case "incomplete":
-		if err := checkedAdd(&quality.Incomplete, b.Count); err != nil {
-			return err
-		}
+		incomplete = b.Count
 	case "invalid":
-		if err := checkedAdd(&quality.Invalid, b.Count); err != nil {
-			return err
-		}
+		invalid = b.Count
 	case "valid":
 	default:
 		return fmt.Errorf("bucket state %q is invalid", b.State)
 	}
 	if b.Outcome == "unknown" {
-		if err := checkedAdd(&quality.UnknownOutcome, b.Count); err != nil {
+		unknownOutcome = b.Count
+	}
+	next := *quality
+	for _, add := range []struct {
+		dst *int64
+		n   int64
+	}{{&next.Incomplete, incomplete}, {&next.Invalid, invalid}, {&next.UnknownOutcome, unknownOutcome}, {&next.PendingAsync, b.PendingAsync}} {
+		if err := checkedAdd(add.dst, add.n); err != nil {
 			return err
 		}
 	}
+	if incomplete == 0 && invalid == 0 && unknownOutcome == 0 && b.PendingAsync == 0 {
+		return nil
+	}
+	byKind := next.ByKind
+	counts := byKind[b.Kind]
+	for _, add := range []struct {
+		dst *int64
+		n   int64
+	}{{&counts.Incomplete, incomplete}, {&counts.Invalid, invalid}, {&counts.UnknownOutcome, unknownOutcome}, {&counts.PendingAsync, b.PendingAsync}} {
+		if err := checkedAdd(add.dst, add.n); err != nil {
+			return err
+		}
+	}
+	if byKind == nil {
+		byKind = make(map[string]QualityCounts)
+	}
+	byKind[b.Kind] = counts
+	next.ByKind = byKind
+	*quality = next
 	return nil
 }
 
@@ -176,10 +320,13 @@ func addBucket(cohorts map[string]*cohortAccumulator, b Bucket, isCurrent bool) 
 	if b.State != "valid" && b.State != "incomplete" && b.State != "invalid" {
 		return fmt.Errorf("bucket state %q is invalid", b.State)
 	}
+	if b.Count4xx < 0 || b.Count5xx < 0 || b.CountHangfireFailed < 0 || b.Count4xx > b.Count || b.Count5xx > b.Count-b.Count4xx || b.CountHangfireFailed > b.Count-b.Count4xx-b.Count5xx {
+		return fmt.Errorf("status class counts %d/%d/%d must be non-negative and sum to at most the bucket count %d", b.Count4xx, b.Count5xx, b.CountHangfireFailed, b.Count)
+	}
 	key := CohortKey(b.SourceID, b.Controller, b.Action, b.Kind, b.Outcome)
 	c := cohorts[key]
 	if c == nil {
-		c = &cohortAccumulator{sourceID: b.SourceID, controller: b.Controller, action: b.Action, kind: b.Kind, outcome: b.Outcome, key: key, current: newHistogramAccumulator(), reference: newHistogramAccumulator(), currentAt: make(map[int64]*histogramAccumulator)}
+		c = &cohortAccumulator{sourceID: b.SourceID, controller: b.Controller, action: b.Action, kind: b.Kind, outcome: b.Outcome, key: key, current: newHistogramAccumulator(), reference: newHistogramAccumulator(), currentAt: make(map[int64]*histogramAccumulator), currentSlots: make(map[int64]*slotCounts)}
 		cohorts[key] = c
 	}
 	events := &c.referenceEvents
@@ -189,6 +336,47 @@ func addBucket(cohorts map[string]*cohortAccumulator, b Bucket, isCurrent bool) 
 	if err := checkedAdd(events, b.Count); err != nil {
 		return fmt.Errorf("cohort %s event count: %w", key, err)
 	}
+	clientErrors, serverErrors := &c.referenceClientErrors, &c.referenceServerErrors
+	if isCurrent {
+		clientErrors, serverErrors = &c.currentClientErrors, &c.currentServerErrors
+	}
+	// 5xx and failed hangfire jobs both count as server errors; 4xx stays apart.
+	if err := checkedAdd(clientErrors, b.Count4xx); err != nil {
+		return fmt.Errorf("cohort %s client error count: %w", key, err)
+	}
+	if err := checkedAdd(serverErrors, b.Count5xx); err != nil {
+		return fmt.Errorf("cohort %s server error count: %w", key, err)
+	}
+	if err := checkedAdd(serverErrors, b.CountHangfireFailed); err != nil {
+		return fmt.Errorf("cohort %s hangfire failure count: %w", key, err)
+	}
+	if isCurrent {
+		at := b.At.UTC().UnixNano()
+		slot := c.currentSlots[at]
+		if slot == nil {
+			slot = &slotCounts{}
+			c.currentSlots[at] = slot
+		}
+		incomplete := int64(0)
+		if b.State == "incomplete" {
+			incomplete = b.Count
+		}
+		for _, add := range []struct {
+			dst *int64
+			n   int64
+		}{{&slot.client, b.Count4xx}, {&slot.server, b.Count5xx}, {&slot.server, b.CountHangfireFailed}, {&slot.incomplete, incomplete}} {
+			if err := checkedAdd(add.dst, add.n); err != nil {
+				return fmt.Errorf("timeline cohort %s slot count: %w", key, err)
+			}
+		}
+	}
+	states := &c.referenceStates
+	if isCurrent {
+		states = &c.currentStates
+	}
+	if err := states.add(b); err != nil {
+		return fmt.Errorf("cohort %s: %w", key, err)
+	}
 	if b.State != "valid" {
 		return nil
 	}
@@ -196,7 +384,7 @@ func addBucket(cohorts map[string]*cohortAccumulator, b Bucket, isCurrent bool) 
 	if isCurrent {
 		h = c.current
 	}
-	if err := h.add(b.Bin, b.Count, b.SumMs, b.MinMs, b.MaxMs); err != nil {
+	if err := h.addBucket(b); err != nil {
 		return fmt.Errorf("cohort %s: %w", key, err)
 	}
 	if isCurrent {
@@ -206,11 +394,22 @@ func addBucket(cohorts map[string]*cohortAccumulator, b Bucket, isCurrent bool) 
 			point = newHistogramAccumulator()
 			c.currentAt[at] = point
 		}
-		if err := point.add(b.Bin, b.Count, b.SumMs, b.MinMs, b.MaxMs); err != nil {
+		if err := point.addBucket(b); err != nil {
 			return fmt.Errorf("timeline cohort %s: %w", key, err)
 		}
 	}
 	return nil
+}
+
+// errorShare is errors divided by the cohort's events. It is nil when the
+// cohort's outcome is unknown or it has no events, so a missing denominator is
+// never reported as a zero error rate.
+func errorShare(errors, events int64, outcome string) *float64 {
+	if outcome == "unknown" || events <= 0 {
+		return nil
+	}
+	value := float64(errors) / float64(events)
+	return &value
 }
 
 func ratio(current, reference *Quantile) *float64 {

@@ -248,3 +248,46 @@ func TestAnalyzeAllowsFiveMinutesAndHonorsShorterCallerDeadline(t *testing.T) {
 		})
 	}
 }
+
+func TestAnalyzeReportsPerWindowTimings(t *testing.T) {
+	var handle *fakeClient
+	s := newStore(func(context.Context, string, *tls.Config) (clientHandle, error) {
+		handle = &fakeClient{}
+		return handle, nil
+	})
+	first := addFakeSource(t, s, "first")
+	second := addFakeSource(t, s, "second")
+	now := time.Now().UTC().Truncate(time.Second)
+	q := queryForTest(now)
+	q.SourceIDs = []string{first.ID, second.ID}
+	rowsFor := map[string]int{"first": 3, "second": 1}
+	handle.aggregateFn = func(_ context.Context, _, collection string, _ mongo.Pipeline) (mongoCursor, error) {
+		docs := make([]any, rowsFor[collection])
+		for i := range docs {
+			docs[i] = bucketDocument{Controller: "Payroll", Action: fmt.Sprint("Run", i), Kind: "synchronous", Outcome: "success", State: "valid", At: now.Add(-time.Minute), Bin: audit.BinIndex(10), Count: 1, SumMs: 10, MinMs: 10, MaxMs: 10}
+		}
+		return &fakeCursor{docs: docs}, nil
+	}
+	analysis, err := s.Analyze(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(analysis.Timings) != 4 {
+		t.Fatalf("timings = %#v, want 4 rows", analysis.Timings)
+	}
+	want := []audit.SourceTiming{
+		{SourceID: first.ID, Window: "current", Rows: 3},
+		{SourceID: first.ID, Window: "reference", Rows: 3},
+		{SourceID: second.ID, Window: "current", Rows: 1},
+		{SourceID: second.ID, Window: "reference", Rows: 1},
+	}
+	for i, timing := range analysis.Timings {
+		if timing.ReadMs < 0 {
+			t.Errorf("row %d ReadMs = %d", i, timing.ReadMs)
+		}
+		timing.ReadMs = 0
+		if timing != want[i] {
+			t.Errorf("row %d = %#v, want %#v", i, timing, want[i])
+		}
+	}
+}
