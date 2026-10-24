@@ -18,7 +18,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	sqlite3 "github.com/ncruces/go-sqlite3"
 	"github.com/ncruces/go-sqlite3/driver"
@@ -33,17 +32,17 @@ const (
 	dbName    = "case.db"
 	retention = 30 * 24 * time.Hour
 
-	maxTitleRunes = 200
-
 	// Defaults for the size caps (storage decision, "Size caps").
 	defaultMaxFileBytes  = 2 << 30
 	defaultMaxFileRows   = 10_000_000
 	defaultMaxCaseBytes  = 4 << 30
+	defaultMaxDBBytes    = 8 << 30
 	defaultMaxTotalBytes = 20 << 30
 	defaultMinFreeBytes  = 2 << 30
 
 	// expansionRatio is a deliberately high guess at database bytes per source
-	// byte, used only for the pre-import size check when the body reports its size.
+	// byte, used only for the pre-import database size check when the body
+	// reports its size.
 	expansionRatio = 2
 )
 
@@ -59,9 +58,15 @@ type Options struct {
 	// MaxFileBytes and MaxFileRows cap one imported file (default 2 GiB and 10M
 	// rows). An importer's own, smaller limit applies first.
 	MaxFileBytes, MaxFileRows int64
-	// MaxCaseBytes caps one case database (default 4 GiB). It is enforced inside
-	// SQLite with max_page_count as well as before each import.
+	// MaxCaseBytes caps the imported files of one case, summed (default 4 GiB),
+	// as casestore.Caps.MaxCaseBytes defines it. It is checked before an import
+	// when the body reports its size, and again once the file has been read.
 	MaxCaseBytes int64
+	// MaxDBBytes caps one case database file (default 8 GiB, twice the default
+	// MaxCaseBytes). It is enforced inside SQLite with max_page_count and before
+	// each import, and bounds the disk one case can take whatever the ratio of
+	// database to source bytes.
+	MaxDBBytes int64
 	// MaxTotalBytes caps all cases together (default 20 GiB).
 	MaxTotalBytes int64
 	// MinFreeBytes is the free-disk floor checked before an import (default 2
@@ -98,7 +103,7 @@ type Store struct {
 	root string
 
 	mu      sync.Mutex // guards open and erasing, and serialises Open with the start of Erase
-	open    map[casestore.CaseID]*Case
+	open    map[casestore.CaseID]*caseState
 	erasing map[casestore.CaseID]bool // IDs with an Erase in flight; Open refuses them
 }
 
@@ -133,6 +138,9 @@ func New(opt Options) (*Store, error) {
 	if opt.MaxCaseBytes <= 0 {
 		opt.MaxCaseBytes = defaultMaxCaseBytes
 	}
+	if opt.MaxDBBytes <= 0 {
+		opt.MaxDBBytes = defaultMaxDBBytes
+	}
 	if opt.MaxTotalBytes <= 0 {
 		opt.MaxTotalBytes = defaultMaxTotalBytes
 	}
@@ -153,7 +161,7 @@ func New(opt Options) (*Store, error) {
 	if err := casestore.RejectReparse(filepath.VolumeName(root)+string(filepath.Separator), root); err != nil {
 		return nil, err
 	}
-	return &Store{opt: opt, root: root, open: map[casestore.CaseID]*Case{}, erasing: map[casestore.CaseID]bool{}}, nil
+	return &Store{opt: opt, root: root, open: map[casestore.CaseID]*caseState{}, erasing: map[casestore.CaseID]bool{}}, nil
 }
 
 // Root is the absolute cases folder.
@@ -170,8 +178,8 @@ func (s *Store) logf(format string, args ...any) {
 // caseDir joins the root and a validated ID and refuses any reparse point on the
 // way (section 4 rule 7).
 func (s *Store) caseDir(id casestore.CaseID) (string, error) {
-	if !validID(id) {
-		return "", casestore.ErrNotFound
+	if !id.Valid() {
+		return "", casestore.ErrBadID
 	}
 	dir := filepath.Join(s.root, string(id))
 	if err := casestore.RejectReparse(s.root, dir); err != nil {
@@ -180,15 +188,11 @@ func (s *Store) caseDir(id casestore.CaseID) (string, error) {
 	return dir, nil
 }
 
+// cleanTitle trims the title and applies F0's rule (casestore.ValidTitle).
 func cleanTitle(title string) (string, error) {
 	title = strings.TrimSpace(title)
-	if title == "" || len([]rune(title)) > maxTitleRunes {
-		return "", fmt.Errorf("%w: case title must be 1 to %d characters", ErrInvalid, maxTitleRunes)
-	}
-	for _, r := range title {
-		if unicode.IsControl(r) {
-			return "", fmt.Errorf("%w: case title has control characters", ErrInvalid)
-		}
+	if !casestore.ValidTitle(title) {
+		return "", casestore.ErrBadTitle
 	}
 	return title, nil
 }
@@ -196,6 +200,9 @@ func cleanTitle(title string) (string, error) {
 // Create makes a new case folder with its sealed key, an empty encrypted
 // database and a manifest. The case is left closed (no handle held).
 func (s *Store) Create(ctx context.Context, title string) (casestore.CaseInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return casestore.CaseInfo{}, err
+	}
 	title, err := cleanTitle(title)
 	if err != nil {
 		return casestore.CaseInfo{}, err
@@ -240,7 +247,7 @@ func (s *Store) Create(ctx context.Context, title string) (casestore.CaseInfo, e
 	}
 	ok = true
 	s.logf("case %s created", id)
-	return casestore.CaseInfo{ID: id, Title: title, Created: now, Bytes: dirBytes(dir)}, nil
+	return casestore.CaseInfo{ID: id, Title: title, Created: now}, nil
 }
 
 // createDB builds the schema in a new database, then turns page checksums on
@@ -306,7 +313,7 @@ func (s *Store) openDB(ctx context.Context, dir string, keys casestore.Keys, cre
 	}
 	dsn := "file:" + escapeURIPath(path) + "?vfs=adiantum&mode=" + mode
 	hexKey := hex.EncodeToString(keys.DB)
-	maxPages := s.opt.MaxCaseBytes / pageSize
+	maxPages := s.opt.MaxDBBytes / pageSize
 	if maxPages < 1 {
 		maxPages = 1
 	}
@@ -314,8 +321,8 @@ func (s *Store) openDB(ctx context.Context, dir string, keys casestore.Keys, cre
 	if err != nil {
 		return nil, errors.New("opening case database failed")
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetMaxOpenConns(4) // one import transaction plus readers (WAL: readers see the last commit)
+	db.SetMaxIdleConns(2)
 	db.SetConnMaxLifetime(0)
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
@@ -369,9 +376,13 @@ func mapOpenErr(err error) error {
 	return fmt.Errorf("opening case database: %w", err)
 }
 
-// List returns every readable case, newest first. A folder whose manifest cannot
-// be read is listed without a title, so it can still be erased.
+// List returns every case, oldest first (F0 contract). A folder whose manifest
+// cannot be read is listed without a title, so it can still be erased. Bytes is
+// the sum of the imported files, as Info reports it.
 func (s *Store) List(ctx context.Context) ([]casestore.CaseInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
 		return nil, err
@@ -389,7 +400,7 @@ func (s *Store) List(ctx context.Context) ([]casestore.CaseInfo, error) {
 		if casestore.RejectReparse(s.root, dir) != nil {
 			continue
 		}
-		info := casestore.CaseInfo{ID: id, Title: "(unreadable case)", Bytes: dirBytes(dir)}
+		info := casestore.CaseInfo{ID: id, Title: "(unreadable case)"}
 		if erasePending(dir) {
 			info.Title = "(erase pending)"
 			out = append(out, info)
@@ -397,45 +408,62 @@ func (s *Store) List(ctx context.Context) ([]casestore.CaseInfo, error) {
 		}
 		if m, err := readManifest(dir, s.opt.Protector); err == nil && m.CaseID == string(id) {
 			info.Title, info.Created, info.Closed, info.Imports = m.Title, m.Created, m.Closed, len(m.Imports)
+			info.Bytes = manifestBytes(m)
 		}
 		out = append(out, info)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].Created.Equal(out[j].Created) {
-			return out[i].Created.After(out[j].Created)
+			return out[i].Created.Before(out[j].Created)
 		}
 		return out[i].ID < out[j].ID
 	})
 	return out, nil
 }
 
-// Open returns the case handle. One handle exists per case in a Store, so the
-// database keeps a single connection; each Open must be paired with a Close.
+// Open returns a new handle on the case. All handles of a case in a Store share
+// one database pool, which closes with the last handle; each Open must be paired
+// with a Close.
 func (s *Store) Open(ctx context.Context, id casestore.CaseID) (casestore.Case, error) {
-	if !validID(id) {
-		return nil, casestore.ErrNotFound
+	if !id.Valid() {
+		return nil, casestore.ErrBadID
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.erasing[id] {
 		return nil, casestore.ErrNotFound // an Erase is in flight: never revive the case
 	}
-	if c := s.open[id]; c != nil {
-		c.mu.Lock()
-		c.refs++
-		c.mu.Unlock()
-		return c, nil
+	if st := s.open[id]; st != nil {
+		st.mu.Lock()
+		st.refs++
+		st.mu.Unlock()
+		return &Case{caseState: st}, nil
 	}
-	c, err := s.load(ctx, id)
+	st, err := s.load(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	s.open[id] = c
-	return c, nil
+	s.open[id] = st
+	return &Case{caseState: st}, nil
+}
+
+// Close closes every case this Store still holds open and zeroes their keys.
+// Handles that were not closed answer ErrHandleClosed afterwards. It is for
+// shutdown (and for tests that leave handles open); it never touches files.
+func (s *Store) Close() error {
+	s.mu.Lock()
+	open := s.open
+	s.open = map[casestore.CaseID]*caseState{}
+	s.mu.Unlock()
+	var errs []error
+	for _, st := range open {
+		errs = append(errs, st.shutdown())
+	}
+	return errors.Join(errs...)
 }
 
 // load opens, verifies and reconciles one case (storage decision, "On open").
-func (s *Store) load(ctx context.Context, id casestore.CaseID) (*Case, error) {
+func (s *Store) load(ctx context.Context, id casestore.CaseID) (*caseState, error) {
 	dir, err := s.caseDir(id)
 	if err != nil {
 		return nil, err
@@ -452,13 +480,13 @@ func (s *Store) load(ctx context.Context, id casestore.CaseID) (*Case, error) {
 		keys.Zero()
 		return nil, err
 	}
-	c := &Case{s: s, id: id, dir: dir, db: db, keys: keys, man: man, refs: 1}
-	if err := c.verify(ctx); err != nil {
+	st := &caseState{s: s, id: id, dir: dir, db: db, keys: keys, man: man, refs: 1}
+	if err := (&Case{caseState: st}).verify(ctx); err != nil {
 		_ = db.Close()
 		keys.Zero()
 		return nil, err
 	}
-	return c, nil
+	return st, nil
 }
 
 // readCaseFiles reads the key and manifest under the folder lock, so an Erase in
@@ -585,10 +613,7 @@ func erasePending(dir string) bool {
 func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 	dir, err := s.caseDir(id)
 	if err != nil {
-		if errors.Is(err, casestore.ErrNotFound) {
-			return nil // not a case ID, so nothing of ours exists
-		}
-		return err
+		return err // ErrBadID for a malformed ID
 	}
 	s.mu.Lock()
 	if s.erasing[id] {
@@ -605,6 +630,9 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 		s.mu.Unlock()
 	}()
 	if h != nil {
+		h.mu.Lock()
+		h.erased = true // open handles now answer ErrNotFound, not ErrHandleClosed
+		h.mu.Unlock()
 		_ = h.shutdown()
 	}
 	if s.opt.duringErase != nil {

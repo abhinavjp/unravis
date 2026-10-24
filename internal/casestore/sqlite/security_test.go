@@ -63,7 +63,7 @@ func TestNoKeyBytesOrPlaintextInFiles(t *testing.T) {
 		[]byte(sentinel), []byte("SQLite format 3"), []byte("CREATE TABLE")}
 
 	c := mustOpen(t, s, info.ID)
-	evs := storetest.Events("s", 200)
+	evs := tEvents(c, "s", 200)
 	for i := range evs {
 		evs[i].Host = sentinel + "-host"
 		evs[i].Attrs = map[string]string{"counter": sentinel}
@@ -71,7 +71,7 @@ func TestNoKeyBytesOrPlaintextInFiles(t *testing.T) {
 	body := bytes.NewReader([]byte(sentinel + " body\n"))
 	midImport := map[string][]byte{}
 	run := func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
-		rep, err := storetest.Run(evs)(r, emit)
+		rep, err := tRun(evs)(r, emit)
 		// While the transaction is open, whatever has reached the WAL and SHM must be ciphertext.
 		for _, n := range []string{dbName, dbName + "-wal", dbName + "-shm"} {
 			if b, rerr := os.ReadFile(filepath.Join(dir, n)); rerr == nil {
@@ -80,7 +80,7 @@ func TestNoKeyBytesOrPlaintextInFiles(t *testing.T) {
 		}
 		return rep, err
 	}
-	if _, err := c.Import(ctx, storetest.Meta(sentinel+".csv"), body, run); err != nil {
+	if _, err := c.Import(ctx, tMeta(sentinel+".csv"), body, run); err != nil {
 		t.Fatal(err)
 	}
 	// Positive control: the sentinel really is stored, and readable through the store.
@@ -170,7 +170,7 @@ func TestKillBeforeCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The killed file can be imported again.
-	if _, err := c2.Import(ctx, storetest.Meta("killed.csv"), storetest.Body("killed"), storetest.Run(storetest.Events("k", 4))); err != nil {
+	if _, err := c2.Import(ctx, tMeta("killed.csv"), tBody("killed"), tRun(tEvents(c, "k", 4))); err != nil {
 		t.Fatalf("re-import after kill: %v", err)
 	}
 }
@@ -191,7 +191,7 @@ func killChild() {
 	}
 	run := func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
 		_, _ = io.Copy(io.Discard, r)
-		for _, e := range storetest.Events("doomed", 3000) {
+		for _, e := range tEvents(c, "doomed", 3000) {
 			if err := emit(e); err != nil {
 				os.Exit(13)
 			}
@@ -199,7 +199,7 @@ func killChild() {
 		os.Exit(3) // no commit, no rollback, no close
 		return importer.Report{}, nil
 	}
-	_, _ = c.Import(context.Background(), storetest.Meta("doomed.csv"), storetest.Body("doomed"), run)
+	_, _ = c.Import(context.Background(), tMeta("doomed.csv"), tBody("doomed"), run)
 	os.Exit(14)
 }
 
@@ -312,17 +312,17 @@ func TestCapsRefusedWithCaseUntouched(t *testing.T) {
 	}{
 		{"file bytes, streamed", func(o *Options) { o.MaxFileBytes = 1000 }, func() io.Reader { return bytes.NewReader(make([]byte, 5000)) }, 3},
 		{"file bytes, reported size", func(o *Options) { o.MaxFileBytes = 1000 }, func() io.Reader { return sized(50_000) }, 3},
-		{"file rows", func(o *Options) { o.MaxFileRows = 5 }, func() io.Reader { return storetest.Body("rows") }, 10},
-		{"case bytes inside sqlite", func(o *Options) { o.MaxCaseBytes = 256 << 10 }, func() io.Reader { return storetest.Body("big") }, 6000},
+		{"file rows", func(o *Options) { o.MaxFileRows = 5 }, func() io.Reader { return tBody("rows") }, 10},
+		{"database size inside sqlite", func(o *Options) { o.MaxDBBytes = 256 << 10 }, func() io.Reader { return tBody("big") }, 6000},
 		{"case bytes, reported size", func(o *Options) { o.MaxCaseBytes = 256 << 10 }, func() io.Reader { return sized(1 << 20) }, 3},
-		{"all cases bytes", func(o *Options) { o.MaxTotalBytes = 1 }, func() io.Reader { return storetest.Body("total") }, 3},
-		{"free disk floor", func(o *Options) { o.MinFreeBytes = 1 << 60 }, func() io.Reader { return storetest.Body("disk") }, 3},
+		{"all cases bytes", func(o *Options) { o.MaxTotalBytes = 1 }, func() io.Reader { return tBody("total") }, 3},
+		{"free disk floor", func(o *Options) { o.MinFreeBytes = 1 << 60 }, func() io.Reader { return tBody("disk") }, 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := newTestStore(t, tc.opt)
 			c := mustOpen(t, s, mustCreate(t, s, "Case").ID)
-			_, err := c.Import(ctx, storetest.Meta("cap.csv"), tc.body(), storetest.Run(storetest.Events("cap", tc.n)))
+			_, err := c.Import(ctx, tMeta("cap.csv"), tc.body(), tRun(tEvents(c, "cap", tc.n)))
 			if !errors.Is(err, casestore.ErrCapExceeded) {
 				t.Fatalf("Import = %v, want ErrCapExceeded", err)
 			}
@@ -340,9 +340,9 @@ func TestCapsRefusedWithCaseUntouched(t *testing.T) {
 		})
 	}
 	t.Run("a small import still fits under the case cap", func(t *testing.T) {
-		s, _ := newTestStore(t, func(o *Options) { o.MaxCaseBytes = 256 << 10 })
+		s, _ := newTestStore(t, func(o *Options) { o.MaxDBBytes = 256 << 10 })
 		c := mustOpen(t, s, mustCreate(t, s, "Case").ID)
-		if _, err := c.Import(ctx, storetest.Meta("big.csv"), storetest.Body("big"), storetest.Run(storetest.Events("big", 6000))); !errors.Is(err, casestore.ErrCapExceeded) {
+		if _, err := c.Import(ctx, tMeta("big.csv"), tBody("big"), tRun(tEvents(c, "big", 6000))); !errors.Is(err, casestore.ErrCapExceeded) {
 			t.Fatalf("big import = %v", err)
 		}
 		mustImport(t, c, "small", 5)
@@ -358,11 +358,11 @@ func TestEraseMakesSavedCopyUnreadable(t *testing.T) {
 	info := mustCreate(t, s, "Case")
 	dir := filepath.Join(root, string(info.ID))
 	c := mustOpen(t, s, info.ID)
-	evs := storetest.Events("e", 300)
+	evs := tEvents(c, "e", 300)
 	for i := range evs {
 		evs[i].Attrs = map[string]string{"counter": sentinel}
 	}
-	if _, err := c.Import(ctx, storetest.Meta("e.csv"), storetest.Body("e"), storetest.Run(evs)); err != nil {
+	if _, err := c.Import(ctx, tMeta("e.csv"), tBody("e"), tRun(evs)); err != nil {
 		t.Fatal(err)
 	}
 	keys, err := casestore.ReadKeyFile(filepath.Join(dir, keyName), s.opt.Protector)
@@ -463,8 +463,8 @@ func TestEraseWhileOpenAndRetryAfterHookFailure(t *testing.T) {
 	if _, err := s.Open(ctx, info.ID); !errors.Is(err, casestore.ErrNotFound) {
 		t.Fatalf("Open of a half-erased case = %v, want ErrNotFound", err)
 	}
-	if _, err := c.Events(ctx, casestore.EventQuery{}); !errors.Is(err, ErrClosed) {
-		t.Fatalf("handle after erase = %v, want ErrClosed", err)
+	if _, err := c.Events(ctx, casestore.EventQuery{}); !errors.Is(err, casestore.ErrNotFound) {
+		t.Fatalf("handle after erase = %v, want ErrNotFound", err)
 	}
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close after erase: %v", err)
@@ -517,7 +517,7 @@ func TestConcurrentImportsAreSerialised(t *testing.T) {
 				}
 			}
 			time.Sleep(60 * time.Millisecond)
-			rep, err := storetest.Run(storetest.Events(label, 50))(r, emit)
+			rep, err := tRun(tEvents(c, label, 50))(r, emit)
 			active.Add(-1)
 			return rep, err
 		}
@@ -530,7 +530,7 @@ func TestConcurrentImportsAreSerialised(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			label := string(rune('a' + i))
-			_, errs[i] = c.Import(ctx, storetest.Meta(label+".csv"), storetest.Body(label), run(label))
+			_, errs[i] = c.Import(ctx, tMeta(label+".csv"), tBody(label), run(label))
 		}()
 	}
 	wg.Wait()
@@ -581,9 +581,9 @@ func TestTwoStoresImportAtOnce(t *testing.T) {
 			label := string(rune('p' + i))
 			run := func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
 				time.Sleep(40 * time.Millisecond)
-				return storetest.Run(storetest.Events(label, 20))(r, emit)
+				return tRun(tEvents(c, label, 20))(r, emit)
 			}
-			if _, err := c.Import(ctx, storetest.Meta(label+".csv"), storetest.Body(label), run); err != nil {
+			if _, err := c.Import(ctx, tMeta(label+".csv"), tBody(label), run); err != nil {
 				t.Errorf("import %s: %v", label, err)
 				fails.Add(1)
 			}
@@ -606,7 +606,7 @@ func TestDuplicateHashReturnsEarlierRecord(t *testing.T) {
 	s, _ := newTestStore(t)
 	c := mustOpen(t, s, mustCreate(t, s, "Case").ID)
 	first := mustImport(t, c, "dup", 3)
-	res, err := c.Import(ctx, storetest.Meta("again.csv"), storetest.Body("dup"), storetest.Run(storetest.Events("zz", 9)))
+	res, err := c.Import(ctx, tMeta("again.csv"), tBody("dup"), tRun(tEvents(c, "zz", 9)))
 	if !errors.Is(err, casestore.ErrDuplicate) {
 		t.Fatalf("err = %v, want ErrDuplicate", err)
 	}
@@ -635,13 +635,13 @@ func TestAckGatingZeroRefusedByTheDatabase(t *testing.T) {
 		called = true
 		return importer.Report{}, nil
 	}
-	m := storetest.Meta("a.csv")
+	m := tMeta("a.csv")
 	m.AckGating = false
-	if _, err := c.Import(ctx, m, storetest.Body("a"), run); !errors.Is(err, casestore.ErrAckRequired) || called {
+	if _, err := c.Import(ctx, m, tBody("a"), run); !errors.Is(err, casestore.ErrAckRequired) || called {
 		t.Fatalf("Import with ack_gating=false: err=%v called=%v", err, called)
 	}
 	m.AckGating, m.AckText = true, "   "
-	if _, err := c.Import(ctx, m, storetest.Body("a"), run); !errors.Is(err, casestore.ErrAckRequired) || called {
+	if _, err := c.Import(ctx, m, tBody("a"), run); !errors.Is(err, casestore.ErrAckRequired) || called {
 		t.Fatalf("Import with a blank acknowledgement: err=%v called=%v", err, called)
 	}
 }
@@ -654,12 +654,12 @@ func TestQuarantineIsARowAndKeepsNoBytes(t *testing.T) {
 	c := mustOpen(t, s, info.ID)
 	body := []byte("header,sql_text\n" + sentinel + "\n")
 	run := func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
-		for _, e := range storetest.Events("q", 5) {
+		for _, e := range tEvents(c, "q", 5) {
 			_ = emit(e)
 		}
 		return importer.Report{Rows: 1}, &importer.QuarantineError{Reason: importer.ReasonUnscrubbedColumn, Column: "sql_text"}
 	}
-	res, err := c.Import(ctx, storetest.Meta("q.csv"), bytes.NewReader(body), run)
+	res, err := c.Import(ctx, tMeta("q.csv"), bytes.NewReader(body), run)
 	if !errors.Is(err, importer.ErrQuarantine) {
 		t.Fatalf("err = %v, want ErrQuarantine", err)
 	}
@@ -670,7 +670,7 @@ func TestQuarantineIsARowAndKeepsNoBytes(t *testing.T) {
 	if imports != 0 || events != 0 || quarantined != 1 {
 		t.Fatalf("%d imports, %d events, %d quarantined", imports, events, quarantined)
 	}
-	qs, err := c.Quarantined(ctx)
+	qs, err := c.Quarantines(ctx)
 	if err != nil || len(qs) != 1 || qs[0].Reason != "unscrubbed-column" || qs[0].Column != "sql_text" || qs[0].FileName != "q.csv" {
 		t.Fatalf("quarantine rows = %+v, %v", qs, err)
 	}
@@ -693,12 +693,12 @@ func TestImporterLimitRollsBack(t *testing.T) {
 	s, _ := newTestStore(t)
 	c := mustOpen(t, s, mustCreate(t, s, "Case").ID)
 	run := func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
-		for _, e := range storetest.Events("l", 20) {
+		for _, e := range tEvents(c, "l", 20) {
 			_ = emit(e)
 		}
 		return importer.Report{}, &importer.LimitError{Limit: "rows", Max: 10, At: 11}
 	}
-	_, err := c.Import(ctx, storetest.Meta("l.csv"), storetest.Body("l"), run)
+	_, err := c.Import(ctx, tMeta("l.csv"), tBody("l"), run)
 	var le *importer.LimitError
 	if !errors.As(err, &le) || !errors.Is(err, importer.ErrLimit) {
 		t.Fatalf("err = %v", err)
@@ -717,9 +717,9 @@ func TestBadEventsRollBack(t *testing.T) {
 		"zero start":            func(e []evidence.Event) { e[3].Start = time.Time{} },
 		"duplicate evidence id": func(e []evidence.Event) { e[4].EvidenceID = e[1].EvidenceID },
 	} {
-		evs := storetest.Events("b", 8)
+		evs := tEvents(c, "b", 8)
 		mutate(evs)
-		if _, err := c.Import(ctx, storetest.Meta("b.csv"), storetest.Body("b"), storetest.Run(evs)); err == nil {
+		if _, err := c.Import(ctx, tMeta("b.csv"), tBody("b"), tRun(evs)); err == nil {
 			t.Fatalf("%s: import succeeded", name)
 		}
 		if imports, events, _ := counts(t, c); imports != 0 || events != 0 {
@@ -773,19 +773,19 @@ func TestLogsCarryNoRowContent(t *testing.T) {
 	s, _ := newTestStore(t, func(o *Options) { o.Logf = logf })
 	info := mustCreate(t, s, sentinel+" title")
 	c := mustOpen(t, s, info.ID)
-	evs := storetest.Events("g", 5)
+	evs := tEvents(c, "g", 5)
 	for i := range evs {
 		evs[i].Attrs = map[string]string{"counter": sentinel}
 		evs[i].Host = sentinel
 	}
-	res, err := c.Import(ctx, storetest.Meta("g.csv"), bytes.NewReader([]byte(sentinel)), storetest.Run(evs))
+	res, err := c.Import(ctx, tMeta("g.csv"), bytes.NewReader([]byte(sentinel)), tRun(evs))
 	if err != nil {
 		t.Fatal(err)
 	}
 	q := func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
 		return importer.Report{}, &importer.QuarantineError{Reason: importer.ReasonFieldCount, Column: "c1"}
 	}
-	_, _ = c.Import(ctx, storetest.Meta("g2.csv"), bytes.NewReader([]byte(sentinel+"2")), q)
+	_, _ = c.Import(ctx, tMeta("g2.csv"), bytes.NewReader([]byte(sentinel+"2")), q)
 	_ = s.CloseCase(ctx, info.ID)
 	_ = c.Close()
 	_ = s.Erase(ctx, info.ID)

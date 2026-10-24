@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -39,54 +40,79 @@ const (
 
 var importerName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
 
-// Case is one open case. Imports are serialised by importMu; reads share the
-// database's single connection, so they wait for a running import to finish.
-type Case struct {
+// caseState is what every handle of one case shares: the database pool, keys,
+// manifest and the import lock. A running import holds one pooled connection
+// inside its transaction; readers use the others and, in WAL mode, see only
+// what was committed before they started.
+type caseState struct {
 	s    *Store
 	id   casestore.CaseID
 	dir  string
-	refs int // guarded by mu
+	refs int // open handles; guarded by mu
 
 	importMu sync.Mutex
 
-	mu   sync.Mutex // guards the fields below
-	db   *sql.DB
-	keys casestore.Keys
-	man  manifest
+	mu     sync.Mutex // guards the fields below
+	db     *sql.DB
+	keys   casestore.Keys
+	man    manifest
+	erased bool // Erase destroyed the case: handles answer ErrNotFound, not ErrHandleClosed
 }
 
-var _ casestore.Case = (*Case)(nil)
-
-// QuarantineRecord is one refused file (quarantine table).
-type QuarantineRecord struct {
-	ID                                 int64
-	Importer, FileName, SHA256, Reason string
-	Column                             string
-	RowsSeen                           int64
-	At                                 time.Time
+// Case is one handle from Store.Open. Handles of the same case share a
+// caseState; closing one handle leaves the others working.
+type Case struct {
+	*caseState
+	closed atomic.Bool
 }
+
+var (
+	_ casestore.Case        = (*Case)(nil)
+	_ casestore.Quarantiner = (*Case)(nil)
+)
 
 func (c *Case) handle() (*sql.DB, error) {
+	if c.closed.Load() {
+		return nil, ErrClosed
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.db == nil {
+		if c.erased {
+			return nil, casestore.ErrNotFound
+		}
 		return nil, ErrClosed
 	}
 	return c.db, nil
 }
 
-// Info reports the case summary. Bytes is read from disk on each call.
+// manifestBytes sums the bytes of the imports a manifest lists: what the case
+// holds, as the plan's per-case cap counts it (not the size of the database).
+func manifestBytes(m manifest) int64 {
+	var n int64
+	for _, im := range m.Imports {
+		n += im.Bytes
+	}
+	return n
+}
+
+// Info reports the case summary. Bytes is the total size of the imported files
+// (quarantined, duplicate and failed files do not count).
 func (c *Case) Info() casestore.CaseInfo {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return casestore.CaseInfo{
 		ID: c.id, Title: c.man.Title, Created: c.man.Created, Closed: c.man.Closed,
-		Bytes: dirBytes(c.dir), Imports: len(c.man.Imports),
+		Bytes: manifestBytes(c.man), Imports: len(c.man.Imports),
 	}
 }
 
-// Close releases the handle. The database closes when the last Open is closed.
+// Close releases this handle; closing twice is harmless. The database closes
+// when the last handle of the case is closed.
 func (c *Case) Close() error {
+	if !c.closed.CompareAndSwap(false, true) {
+		return nil
+	}
 	c.s.mu.Lock()
 	defer c.s.mu.Unlock()
 	c.mu.Lock()
@@ -100,14 +126,14 @@ func (c *Case) Close() error {
 	if !last {
 		return nil
 	}
-	if c.s.open[c.id] == c {
+	if c.s.open[c.id] == c.caseState {
 		delete(c.s.open, c.id)
 	}
 	return c.shutdown()
 }
 
 // shutdown closes the database and zeroes the keys. Erase calls it directly.
-func (c *Case) shutdown() error {
+func (c *caseState) shutdown() error {
 	c.importMu.Lock() // let a running import finish first
 	defer c.importMu.Unlock()
 	c.mu.Lock()
@@ -128,23 +154,23 @@ func (c *Case) shutdown() error {
 // Pseudonymize is HMAC-SHA256 under the case pseudonym key, shown as
 // "<kind>-<8 hex>". The key lives in case.key and dies with it.
 //
-// After Close, Erase or Sweep the keys are gone. The method then fails closed:
-// it returns the fixed, non-identifying "<kind>-unavailable" and never a value
-// derived from a zeroed key. (The casestore.Case signature has no error to
-// return; see the hand-back note.)
+// An empty value maps to "" (there is nothing to hide). After Close, Erase or
+// Sweep the keys are gone and the method fails closed, as F0's fake does: it
+// returns "", never a value derived from a zeroed key and never the input. (The
+// casestore.Case signature has no error to return.)
 func (c *Case) Pseudonymize(kind, value string) string {
+	if value == "" || c.closed.Load() {
+		return ""
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.db == nil || len(c.keys.Pseudo) != 32 || allZero(c.keys.Pseudo) {
-		return kind + "-" + pseudonymUnavailable
+		return ""
 	}
 	m := hmac.New(sha256.New, c.keys.Pseudo)
 	m.Write([]byte(kind + "\x00" + value))
 	return kind + "-" + hex.EncodeToString(m.Sum(nil))[:8]
 }
-
-// pseudonymUnavailable is what Pseudonymize returns once the case keys are gone.
-const pseudonymUnavailable = "unavailable"
 
 func allZero(b []byte) bool {
 	for _, x := range b {
@@ -341,7 +367,9 @@ func cleanMeta(m casestore.ImportMeta) (casestore.ImportMeta, error) {
 	if !m.AckGating || strings.TrimSpace(m.AckText) == "" {
 		return m, casestore.ErrAckRequired
 	}
-	if !importerName.MatchString(m.Importer) {
+	// An empty importer is allowed: the events then carry their own Source and
+	// each is checked against it (F0 contract).
+	if m.Importer != "" && !importerName.MatchString(m.Importer) {
 		return m, fmt.Errorf("%w: importer name", ErrInvalid)
 	}
 	if len(m.AckText) > maxAckText {
@@ -370,9 +398,16 @@ func (c *capReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// precheck refuses an import before any byte is read: free-disk floor, this
-// case's size, all cases' size, and, when the body reports its size, the
-// expected growth.
+// importedBytes is the total size of the files imported so far.
+func (c *Case) importedBytes() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return manifestBytes(c.man)
+}
+
+// precheck refuses an import before any byte is read: free-disk floor, the size
+// of this case's database, all cases' size, and, when the body reports its
+// size, the file cap, the imported-bytes cap and the expected database growth.
 func (c *Case) precheck(body io.Reader) error {
 	o := c.s.opt
 	if o.MinFreeBytes > 0 {
@@ -381,16 +416,19 @@ func (c *Case) precheck(body io.Reader) error {
 		}
 	}
 	used := dirBytes(c.dir)
-	if used >= o.MaxCaseBytes {
-		return capErr("case size")
+	if used >= o.MaxDBBytes {
+		return capErr("case database size")
 	}
 	if sz, ok := body.(interface{ Size() int64 }); ok {
 		n := sz.Size()
 		if n > o.MaxFileBytes {
 			return capErr("file size")
 		}
-		if used+n*expansionRatio > o.MaxCaseBytes {
+		if c.importedBytes()+n > o.MaxCaseBytes {
 			return capErr("case size")
+		}
+		if used+n*expansionRatio > o.MaxDBBytes {
+			return capErr("case database size")
 		}
 	}
 	if c.s.totalBytes() >= o.MaxTotalBytes {
@@ -411,6 +449,9 @@ const insertEvent = `INSERT INTO events(evidence_id, import_id, source, kind, ho
 // recorded in the quarantine table. A duplicate returns the earlier record with
 // Status "duplicate" and casestore.ErrDuplicate.
 func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Reader, run casestore.RunFunc) (casestore.ImportResult, error) {
+	if err := ctx.Err(); err != nil {
+		return casestore.ImportResult{}, err
+	}
 	meta, err := cleanMeta(meta)
 	if err != nil {
 		return casestore.ImportResult{}, err
@@ -480,7 +521,10 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 	}
 	defer stmt.Close()
 
+	caseID := string(c.id)
 	var emitted int64
+	// emitErr is sticky: the first refusal fails the import, and every later emit
+	// repeats it, whether or not run passes the error on.
 	var emitErr error
 	emit := func(e evidence.Event) error {
 		if emitErr != nil {
@@ -490,13 +534,33 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 			emitErr = capErr("file rows")
 			return emitErr
 		}
+		who := meta.Importer
+		if who == "" {
+			who = e.Source
+		}
+		allowed := meta.AllowedAttrs
+		if allowed == nil {
+			// No allowlist supplied: only the generic bounds apply.
+			allowed = make(map[string]bool, len(e.Attrs))
+			for k := range e.Attrs {
+				allowed[k] = true
+			}
+		}
+		if err := e.ValidateFor(caseID, who, allowed); err != nil {
+			emitErr = err
+			return err
+		}
 		args, err := eventArgs(importID, e)
 		if err != nil {
 			emitErr = err
 			return err
 		}
 		if _, err := stmt.ExecContext(ctx, args...); err != nil {
-			emitErr = c.mapDBErr(err)
+			if errors.Is(err, sqlite3.CONSTRAINT_PRIMARYKEY) || errors.Is(err, sqlite3.CONSTRAINT_UNIQUE) {
+				emitErr = casestore.ErrDuplicateEvent
+			} else {
+				emitErr = c.mapDBErr(err)
+			}
 			return emitErr
 		}
 		emitted++
@@ -509,20 +573,35 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 	if cr.err != nil {
 		runErr = cr.err
 	}
-	if runErr == nil {
+	if runErr == nil || errors.Is(runErr, importer.ErrQuarantine) || errors.Is(runErr, casestore.ErrDuplicateEvent) {
 		// The hash must cover the whole file even if the importer stopped early.
-		if _, err := io.Copy(io.Discard, src); err != nil {
-			runErr = err
-		}
+		_, drainErr := io.Copy(io.Discard, src)
 		if cr.err != nil {
 			runErr = cr.err
+		} else if drainErr != nil {
+			runErr = drainErr // the body failed: no hash, so no import and no record
 		}
+	}
+	if runErr == nil {
+		if err := ctx.Err(); err != nil {
+			runErr = err
+		}
+	}
+	if runErr == nil && c.importedBytes()+cr.n > c.s.opt.MaxCaseBytes {
+		runErr = capErr("case size")
 	}
 	if runErr != nil {
 		_ = tx.Rollback()
 		done = true
-		if errors.Is(runErr, importer.ErrQuarantine) {
-			return c.quarantine(ctx, conn, meta, runErr, rep, src, hash)
+		switch {
+		case errors.Is(runErr, importer.ErrQuarantine) && cr.err == nil:
+			return c.quarantine(ctx, conn, meta, runErr, rep, cr, hash)
+		case errors.Is(runErr, casestore.ErrDuplicateEvent) && cr.err == nil:
+			// Re-importing the same file repeats its event IDs. Report that as a
+			// duplicate file, not as a duplicate event, when the bytes are known.
+			if res, err := c.duplicate(ctx, conn, hex.EncodeToString(hash.Sum(nil))); res.Record.ID != 0 {
+				return res, err
+			}
 		}
 		return casestore.ImportResult{}, c.mapDBErr(runErr)
 	}
@@ -634,41 +713,42 @@ func (c *Case) duplicate(ctx context.Context, db queryer, sum string) (casestore
 	if err != nil || len(recs) == 0 {
 		return casestore.ImportResult{}, casestore.ErrDuplicate
 	}
-	rec := recs[0]
-	rec.Status = "duplicate"
-	return casestore.ImportResult{Record: rec}, casestore.ErrDuplicate
+	existing := recs[0]
+	rec := existing
+	rec.Status = casestore.StatusDuplicate
+	return casestore.ImportResult{Record: rec}, &casestore.DuplicateError{Existing: existing}
 }
 
-// quarantine records a refused file in its own small transaction after the
-// import transaction rolled back. No raw bytes are kept.
+// quarantine records a refused file after the import transaction rolled back.
+// The body has been read to the end (so the hash covers all of it) and was
+// within the byte cap. No raw bytes are kept, and the file does not count
+// against the case.
 func (c *Case) quarantine(ctx context.Context, db *sql.Conn, meta casestore.ImportMeta, cause error,
-	rep importer.Report, src io.Reader, hash interface{ Sum([]byte) []byte }) (casestore.ImportResult, error) {
+	rep importer.Report, cr *capReader, hash interface{ Sum([]byte) []byte }) (casestore.ImportResult, error) {
 	var qe *importer.QuarantineError
 	reason, column := importer.Reason(""), ""
 	if errors.As(cause, &qe) {
 		reason, column = qe.Reason, cleanText(qe.Column, maxLabelRune)
 	}
-	sum := ""
-	if _, err := io.Copy(io.Discard, src); err == nil {
-		sum = hex.EncodeToString(hash.Sum(nil))
-	}
+	sum := hex.EncodeToString(hash.Sum(nil))
 	now := c.s.now()
 	rec := casestore.ImportRecord{
-		Importer: meta.Importer, FileName: meta.FileName, SHA256: sum, Rows: rep.Rows, Rejected: rep.Rejected,
+		Importer: meta.Importer, FileName: meta.FileName, SHA256: sum, Bytes: cr.n, Rows: rep.Rows, Rejected: rep.Rejected,
 		HostLabel: meta.HostLabel, TZRule: meta.TZRule, Quality: rep.Quality, KnownGaps: rep.KnownGaps,
-		Imported: now, Status: "quarantined", Reason: reason,
+		Imported: now, Status: casestore.StatusQuarantined, Reason: reason,
 	}
-	res, err := db.ExecContext(ctx, `INSERT INTO quarantine(importer, file_name, sha256, reason, column_name, rows_seen, at_utc)
+	_, err := db.ExecContext(ctx, `INSERT INTO quarantine(importer, file_name, sha256, reason, column_name, rows_seen, at_utc)
 		VALUES(?,?,?,?,?,?,?)`, meta.Importer, meta.FileName, sum, string(reason), column, rep.Rows, now.UnixMilli())
-	if err == nil {
-		rec.ID, _ = res.LastInsertId()
+	if err != nil {
+		c.s.logf("case %s quarantine record not stored file=%q sha256=%s reason=%s", c.id, meta.FileName, sum, reason)
+	} else {
+		c.s.logf("case %s quarantined %s file=%q sha256=%s reason=%s", c.id, meta.Importer, meta.FileName, sum, reason)
 	}
-	c.s.logf("case %s quarantined %s file=%q sha256=%s reason=%s", c.id, meta.Importer, meta.FileName, sum, reason)
 	return casestore.ImportResult{Record: rec, Report: rep}, cause
 }
 
-// Quarantined lists the refused files, newest last.
-func (c *Case) Quarantined(ctx context.Context) ([]QuarantineRecord, error) {
+// Quarantines lists the refused files, oldest first (casestore.Quarantiner).
+func (c *Case) Quarantines(ctx context.Context) ([]casestore.QuarantineRecord, error) {
 	db, err := c.handle()
 	if err != nil {
 		return nil, err
@@ -679,16 +759,16 @@ func (c *Case) Quarantined(ctx context.Context) ([]QuarantineRecord, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []QuarantineRecord{}
+	out := []casestore.QuarantineRecord{}
 	for rows.Next() {
-		var q QuarantineRecord
+		var q casestore.QuarantineRecord
 		var imp, name, sum, reason, col sql.NullString
 		var seen, at sql.NullInt64
 		if err := rows.Scan(&q.ID, &imp, &name, &sum, &reason, &col, &seen, &at); err != nil {
 			return nil, err
 		}
-		q.Importer, q.FileName, q.SHA256, q.Reason, q.Column = imp.String, name.String, sum.String, reason.String, col.String
-		q.RowsSeen = seen.Int64
+		q.Importer, q.FileName, q.SHA256, q.Reason, q.Column = imp.String, name.String, sum.String, importer.Reason(reason.String), col.String
+		q.Rows = seen.Int64
 		q.At = time.UnixMilli(at.Int64).UTC()
 		out = append(out, q)
 	}
@@ -731,8 +811,8 @@ func (c *Case) Imports(ctx context.Context) ([]casestore.ImportRecord, error) {
 	return c.records(ctx, db, "")
 }
 
-// queryer is what *sql.DB and *sql.Conn share. Import holds the only connection,
-// so its helpers must run on that connection rather than the pool.
+// queryer is what *sql.DB and *sql.Conn share. Import's helpers run on the
+// connection Import holds, so they see its own state, not another pooled one.
 type queryer interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
@@ -775,8 +855,9 @@ func (c *Case) records(ctx context.Context, db queryer, where string, args ...an
 	return out, rows.Err()
 }
 
-// Events returns events whose interval overlaps the window, filtered, ordered by
-// start time. Limit defaults to and never exceeds 50 000.
+// Events returns events whose Start lies in the window (inclusive), filtered,
+// ordered by start time then evidence ID. Limit defaults to and never exceeds
+// 50 000.
 func (c *Case) Events(ctx context.Context, q casestore.EventQuery) ([]evidence.Event, error) {
 	db, err := c.handle()
 	if err != nil {
@@ -785,7 +866,7 @@ func (c *Case) Events(ctx context.Context, q casestore.EventQuery) ([]evidence.E
 	var where []string
 	var args []any
 	if !q.Window.From.IsZero() {
-		where = append(where, "te_ms >= ?")
+		where = append(where, "ts_ms >= ?")
 		args = append(args, q.Window.From.UnixMilli())
 	}
 	if !q.Window.To.IsZero() {

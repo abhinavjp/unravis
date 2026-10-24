@@ -1,6 +1,10 @@
 package sqlite
 
-import "errors"
+import (
+	"errors"
+
+	"api-audit-explorer/internal/casestore"
+)
 
 var (
 	// ErrDamaged marks a case whose database or manifest failed a check at open
@@ -11,8 +15,8 @@ var (
 	ErrWrongKey = errors.New("case database does not open with its key, or is damaged")
 	// ErrNewerSchema means the case was written by a newer build.
 	ErrNewerSchema = errors.New("case was written by a newer version")
-	// ErrClosed is returned by a Case after Close.
-	ErrClosed = errors.New("case is closed")
+	// ErrClosed is returned by a Case after Close. It is F0's casestore.ErrHandleClosed.
+	ErrClosed = casestore.ErrHandleClosed
 	// ErrInvalid wraps every rejected caller input. Its text never echoes the input.
 	ErrInvalid = errors.New("invalid input")
 )

@@ -109,7 +109,7 @@ func TestPseudonymizeFailsClosedAfterCloseAndErase(t *testing.T) {
 	b := mustCreate(t, s, "B")
 	ca, cb := mustOpen(t, s, a.ID), mustOpen(t, s, b.ID)
 	live := ca.Pseudonymize("user", "alice@example.test")
-	if live == "user-"+pseudonymUnavailable || live == zeroKey("user", "alice@example.test") {
+	if live == "" || live == zeroKey("user", "alice@example.test") {
 		t.Fatalf("live pseudonym = %q", live)
 	}
 
@@ -121,14 +121,14 @@ func TestPseudonymizeFailsClosedAfterCloseAndErase(t *testing.T) {
 	}
 	for name, c := range map[string]*Case{"closed": ca, "erased": cb} {
 		got := c.Pseudonymize("user", "alice@example.test")
-		if got != "user-"+pseudonymUnavailable {
-			t.Errorf("%s case: Pseudonymize = %q, want the unavailable sentinel", name, got)
+		if got != "" {
+			t.Errorf("%s case: Pseudonymize = %q, want the empty fail-closed answer", name, got)
 		}
 		if got == zeroKey("user", "alice@example.test") {
 			t.Errorf("%s case: pseudonym derived from a zeroed key", name)
 		}
 		if c.Pseudonymize("user", "bob@example.test") != got {
-			t.Errorf("%s case: sentinel varies with the value", name)
+			t.Errorf("%s case: answer varies with the value", name)
 		}
 	}
 }

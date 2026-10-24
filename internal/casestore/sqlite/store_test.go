@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/casestore"
-	"api-audit-explorer/internal/casestore/storetest"
 )
 
 func TestCreateValidatesTitle(t *testing.T) {
@@ -19,8 +18,8 @@ func TestCreateValidatesTitle(t *testing.T) {
 	for name, title := range map[string]string{
 		"empty": "", "blank": "   ", "control": "a\x00b", "newline": "a\nb", "too long": strings.Repeat("x", 201),
 	} {
-		if _, err := s.Create(ctx, title); !errors.Is(err, ErrInvalid) {
-			t.Errorf("%s: Create = %v, want ErrInvalid", name, err)
+		if _, err := s.Create(ctx, title); !errors.Is(err, casestore.ErrBadTitle) {
+			t.Errorf("%s: Create = %v, want ErrBadTitle", name, err)
 		}
 	}
 	info, err := s.Create(ctx, "  Padded title  ")
@@ -51,14 +50,14 @@ func TestIDsAreValidatedBeforeAnyPathJoin(t *testing.T) {
 		"C:\\Windows", "aaaaaaaaaaaaaaaaaaaaaaaaa.", "aaaaaaaaaaaaaaaaaaaaaaaaa ",
 	}
 	for _, id := range bad {
-		if _, err := s.Open(ctx, id); !errors.Is(err, casestore.ErrNotFound) {
-			t.Errorf("Open(%q) = %v, want ErrNotFound", id, err)
+		if _, err := s.Open(ctx, id); !errors.Is(err, casestore.ErrBadID) {
+			t.Errorf("Open(%q) = %v, want ErrBadID", id, err)
 		}
-		if err := s.CloseCase(ctx, id); !errors.Is(err, casestore.ErrNotFound) {
-			t.Errorf("CloseCase(%q) = %v, want ErrNotFound", id, err)
+		if err := s.CloseCase(ctx, id); !errors.Is(err, casestore.ErrBadID) {
+			t.Errorf("CloseCase(%q) = %v, want ErrBadID", id, err)
 		}
-		if err := s.Erase(ctx, id); err != nil {
-			t.Errorf("Erase(%q) = %v, want nil (nothing of ours)", id, err)
+		if err := s.Erase(ctx, id); !errors.Is(err, casestore.ErrBadID) {
+			t.Errorf("Erase(%q) = %v, want ErrBadID", id, err)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(victim, "keep.txt")); err != nil {
@@ -70,29 +69,29 @@ func TestImportMetaIsCleaned(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)
 	c := mustOpen(t, s, mustCreate(t, s, "Case").ID)
-	m := storetest.Meta(`C:\Users\someone\Desktop\..\export file.csv`)
+	m := tMeta(`C:\Users\someone\Desktop\..\export file.csv`)
 	m.HostLabel = "web-a\x00\x1b[31m"
-	res, err := c.Import(ctx, m, storetest.Body("m"), storetest.Run(storetest.Events("m", 1)))
+	res, err := c.Import(ctx, m, tBody("m"), tRun(tEvents(c, "m", 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Record.FileName != "export file.csv" || strings.ContainsAny(res.Record.HostLabel, "\x00\x1b") {
 		t.Fatalf("record = %+v", res.Record)
 	}
-	res, err = c.Import(ctx, storetest.Meta("/a/b/c.csv"), storetest.Body("m2"), storetest.Run(nil))
+	res, err = c.Import(ctx, tMeta("/a/b/c.csv"), tBody("m2"), tRun(nil))
 	if err != nil || res.Record.FileName != "c.csv" {
 		t.Fatalf("unix path name = %+v, %v", res.Record, err)
 	}
-	for _, name := range []string{"", "../x", "a b", strings.Repeat("a", 65)} {
-		m := storetest.Meta("n.csv")
+	for _, name := range []string{"../x", "a b", strings.Repeat("a", 65)} {
+		m := tMeta("n.csv")
 		m.Importer = name
-		if _, err := c.Import(ctx, m, storetest.Body("n"), storetest.Run(nil)); !errors.Is(err, ErrInvalid) {
+		if _, err := c.Import(ctx, m, tBody("n"), tRun(nil)); !errors.Is(err, ErrInvalid) {
 			t.Errorf("importer name %q: err = %v, want ErrInvalid", name, err)
 		}
 	}
 }
 
-func TestListNewestFirstAndUnreadableCaseCanBeErased(t *testing.T) {
+func TestListOldestFirstAndUnreadableCaseCanBeErased(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
 	s, root := newTestStore(t, func(o *Options) {
@@ -101,7 +100,7 @@ func TestListNewestFirstAndUnreadableCaseCanBeErased(t *testing.T) {
 	a := mustCreate(t, s, "first")
 	b := mustCreate(t, s, "second")
 	infos, err := s.List(ctx)
-	if err != nil || len(infos) != 2 || infos[0].ID != b.ID || infos[1].ID != a.ID {
+	if err != nil || len(infos) != 2 || infos[0].ID != a.ID || infos[1].ID != b.ID {
 		t.Fatalf("List = %+v, %v", infos, err)
 	}
 	// Stray entries are ignored.
@@ -196,7 +195,7 @@ func TestNewerSchemaIsRefused(t *testing.T) {
 	}
 }
 
-func TestOpenSharesOneHandlePerCase(t *testing.T) {
+func TestOpenGivesOneHandlePerOpenOverOneDatabase(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)
 	info := mustCreate(t, s, "Case")
@@ -208,8 +207,8 @@ func TestOpenSharesOneHandlePerCase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c1 != c2 {
-		t.Fatal("two Opens gave two handles (two connections on one database)")
+	if c1 == c2 {
+		t.Fatal("two Opens gave one handle; F0 requires a handle per Open")
 	}
 	mustImport(t, c1.(*Case), "a", 2)
 	if err := c1.Close(); err != nil {
