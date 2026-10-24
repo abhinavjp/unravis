@@ -1,0 +1,44 @@
+2001-03-04 05:06:07 info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://web-a.example.test:5000
+2001-03-04 05:06:08 info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+2001-03-04 05:06:09 info: MyApp.Worker[0]
+      Tick 1
+2001-03-04 05:06:10 info: MyApp.Worker[0]
+      Tick 2
+2001-03-04 05:06:11 info: MyApp.Worker[0]
+      Tick 3
+2001-03-04 05:06:12 info: MyApp.Worker[0]
+      Tick 4
+2001-03-04 05:06:13 info: MyApp.Worker[0]
+      Tick 5
+2001-03-04 05:06:14 info: MyApp.Worker[0]
+      Tick 6
+2001-03-04 05:06:15 info: MyApp.Worker[0]
+      Tick 7
+2001-03-04 05:06:16 info: MyApp.Worker[0]
+      Tick 8
+2001-03-04 05:06:17 info: MyApp.Worker[0]
+      Tick 9
+2001-03-04 05:06:18 info: MyApp.Worker[0]
+      Tick 10
+2001-03-04 05:06:19 info: MyApp.Worker[0]
+      Tick 11
+2001-03-04 05:06:20 info: MyApp.Worker[0]
+      Tick 12
+2001-03-04 05:06:21 info: MyApp.Worker[0]
+      Tick 13
+2001-03-04 05:06:22 info: MyApp.Worker[0]
+      Tick 14
+2001-03-04 05:06:23 info: MyApp.Worker[0]
+      Tick 15
+2001-03-04 05:06:24 info: MyApp.Worker[0]
+      Tick 16
+2001-03-04 05:06:25 info: MyApp.Worker[0]
+      Tick 17
+2001-03-04 05:06:26 info: MyApp.Worker[0]
+      Tick 18
+2001-03-04 05:06:27 info: MyApp.Worker[0]
+      Tick 19
+2001-03-04 99:99:99 SENTINEL-7f3a info: MyApp.Worker[0]
+      Tick 21

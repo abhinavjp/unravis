@@ -1,0 +1,42 @@
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://web-a.example.test:5000
+info: MyApp.Worker[0]
+      Tick 1
+info: MyApp.Worker[0]
+      Tick 2
+info: MyApp.Worker[0]
+      Tick 3
+info: MyApp.Worker[0]
+      Tick 4
+info: MyApp.Worker[0]
+      Tick 5
+info: MyApp.Worker[0]
+      Tick 6
+info: MyApp.Worker[0]
+      Tick 7
+info: MyApp.Worker[0]
+      Tick 8
+info: MyApp.Worker[0]
+      Tick 9
+info: MyApp.Worker[0]
+      Tick 10
+info: MyApp.Worker[0]
+      Tick 11
+info: MyApp.Worker[0]
+      Tick 12
+info: MyApp.Worker[0]
+      Tick 13
+info: MyApp.Worker[0]
+      Tick 14
+info: MyApp.Worker[0]
+      Tick 15
+info: MyApp.Worker[0]
+      Tick 16
+info: MyApp.Worker[0]
+      Tick 17
+info: MyApp.Worker[0]
+      Tick 18
+warn: Microsoft.AspNetCore.Server.Kestrel[22]
+      As of "03/04/2001 05:06:30 +00:00", the heartbeat has been running for "00:00:01.5000000" which is longer than "00:00:01".
+warn: Microsoft.AspNetCore.Server.Kestrel[22]
+      As of "SENTINEL-7f3a", the heartbeat has been running for "00:00:01.5000000" which is longer than "00:00:01".
