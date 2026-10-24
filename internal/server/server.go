@@ -8,20 +8,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"io/fs"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/history"
 	"api-audit-explorer/internal/ledger"
+	"api-audit-explorer/internal/sessionproof"
 )
 
 const (
@@ -39,6 +41,12 @@ type handler struct {
 	demo    bool
 	history savedHistory
 	ledger  ledger.Store
+	tests   connectionTestLimiter
+	adds    connectionTestLimiter
+	proofs  connectionTestLimiter
+
+	exportOnce  sync.Once
+	exportStore *exportStore
 }
 
 type savedHistory interface {
@@ -54,17 +62,74 @@ func WithHistory(value savedHistory) Option { return func(h *handler) { h.histor
 
 func New(repo audit.Repository, assets fs.FS, token string, demo bool, options ...Option) http.Handler {
 	h := &handler{repo: repo, assets: assets, token: token, demo: demo}
+	h.tests.limit = connectionTestsPerWindow
+	h.adds.limit = sourceAddsPerWindow
+	h.proofs.limit = sessionProofsPerWindow
 	for _, option := range options {
 		if option != nil {
 			option(h)
 		}
 	}
 	if assets != nil {
+		// The page is served as built. The session token is never written into it:
+		// GET / is unauthenticated and loopback is shared by every local user, so
+		// the browser receives the token only in the launch URL's fragment (#t=),
+		// which browsers never send to a server.
 		if data, err := fs.ReadFile(assets, "index.html"); err == nil {
-			h.index = []byte(strings.Replace(string(data), `name="audit-session" content=""`, `name="audit-session" content="`+html.EscapeString(token)+`"`, 1))
+			h.index = data
 		}
 	}
 	return h
+}
+
+// connectionTestsPerWindow caps connection tests per connectionTestWindow. A
+// test reports distinct network outcomes (refused, timeout, DNS, handshake), so
+// an unlimited test endpoint would map hosts and ports reachable from this
+// machine. A person testing connections by hand stays well under the cap.
+//
+// Adding a source dials the server the same way, and its response time still
+// tells refused from filtered ports, so it has its own cap; eight sources (the
+// most one investigation holds) fit in one window with room for retries.
+//
+// The session proof is unauthenticated. It only returns an HMAC of a caller's
+// nonce, which reveals nothing about the token, but each answer costs a hash,
+// so it is capped too, far above what one MCP bridge needs.
+const (
+	connectionTestsPerWindow = 10
+	sourceAddsPerWindow      = 20
+	sessionProofsPerWindow   = 600
+	connectionTestWindow     = time.Minute
+)
+
+// connectionTestLimiter is a sliding-window count of recent calls, at most
+// limit per connectionTestWindow.
+type connectionTestLimiter struct {
+	mu    sync.Mutex
+	limit int
+	times []time.Time
+	now   func() time.Time
+}
+
+// allow records one test and reports whether it fits in the window.
+func (l *connectionTestLimiter) allow() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	if l.now != nil {
+		now = l.now()
+	}
+	kept := l.times[:0]
+	for _, at := range l.times {
+		if now.Sub(at) < connectionTestWindow {
+			kept = append(kept, at)
+		}
+	}
+	l.times = kept
+	if len(l.times) >= l.limit {
+		return false
+	}
+	l.times = append(l.times, now)
+	return true
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +144,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.serveIndex(w, r)
+		return
+	}
+	if r.URL.Path == sessionproof.Path {
+		h.sessionProof(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -108,6 +177,32 @@ func (h *handler) authorized(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(got), []byte(h.token)) == 1
 }
 
+// sessionProof answers GET /api/session-proof?n=<nonce> without a token. The
+// MCP bridge calls it on every new connection and sends X-Audit-Token only when
+// the answer proves this process holds the token. The proof is bound to the
+// address this server accepted the connection on, so a process squatting a
+// stale port cannot relay the nonce to the real dashboard on another port.
+func (h *handler) sessionProof(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed.")
+		return
+	}
+	nonce := r.URL.Query().Get("n")
+	local, _ := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if h.token == "" || local == nil || !sessionproof.ValidNonce(nonce) {
+		writeError(w, http.StatusBadRequest, "Invalid session proof request.")
+		return
+	}
+	if !h.proofs.allow() {
+		writeError(w, http.StatusTooManyRequests, "Too many session proof requests.")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, struct {
+		Proof string `json:"proof"`
+	}{sessionproof.Compute(h.token, local.String(), nonce)}, 4096)
+}
+
 func (h *handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 	if len(h.index) == 0 {
 		http.NotFound(w, r)
@@ -131,11 +226,29 @@ func (h *handler) serveAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clean := path.Clean("/" + r.URL.Path)
-	if clean == "/" || !fs.ValidPath(strings.TrimPrefix(clean, "/")) {
+	name := strings.TrimPrefix(clean, "/")
+	if clean == "/" || clean != r.URL.Path || !fs.ValidPath(name) {
 		http.NotFound(w, r)
 		return
 	}
-	http.FileServer(http.FS(h.assets)).ServeHTTP(w, r)
+	// Only exact files are served: a directory path is a 404, never a listing.
+	file, err := h.assets.Open(name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	content, ok := file.(io.ReadSeeker)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeContent(w, r, info.Name(), info.ModTime(), content)
 }
 
 func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
@@ -239,6 +352,14 @@ func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 		h.patterns(w, r)
 		return
 	}
+	if route == "/api/export/preview" && r.Method == http.MethodPost {
+		h.exportPreview(w, r)
+		return
+	}
+	if route == "/api/export/confirm" && r.Method == http.MethodPost {
+		h.exportConfirm(w, r)
+		return
+	}
 	if route == "/api/ledger" || strings.HasPrefix(route, "/api/ledger/") {
 		h.serveLedger(w, r)
 		return
@@ -259,6 +380,10 @@ func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) testConnection(w http.ResponseWriter, r *http.Request) {
+	if !h.tests.allow() {
+		writeError(w, http.StatusTooManyRequests, "Too many connection tests in the last minute. Wait a minute, then test again.")
+		return
+	}
 	var input audit.ConnectionInput
 	if !decodeJSON(w, r, &input) {
 		return
@@ -454,6 +579,10 @@ func (h *handler) sources(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) addSource(w http.ResponseWriter, r *http.Request) {
+	if !h.adds.allow() {
+		writeError(w, http.StatusTooManyRequests, "Too many sources added in the last minute. Wait a minute, then add again.")
+		return
+	}
 	var input audit.SourceInput
 	if !decodeJSON(w, r, &input) {
 		return

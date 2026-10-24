@@ -1,6 +1,6 @@
 param(
     [switch]$Demo,
-    [int]$Port = 18765,
+    [int]$Port = 0,
     [switch]$NoBrowser
 )
 

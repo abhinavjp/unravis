@@ -314,7 +314,6 @@ func pipelineTypeName(v any) string {
 // evalExpr evaluates the subset of aggregation expressions that the _audit*
 // $set stages use, against one document. It is a test double for the server.
 func evalExpr(t *testing.T, expr any, doc map[string]any) any {
-	t.Helper()
 	switch x := expr.(type) {
 	case string:
 		if strings.HasPrefix(x, "$") {
@@ -524,7 +523,6 @@ func evalExpr(t *testing.T, expr any, doc map[string]any) any {
 // summary and drill-down pipelines emit: field equality, $in, $ne and $type
 // conditions combined with $or and $and. Anything else fails the test.
 func evalMatch(t *testing.T, match bson.D, doc map[string]any) bool {
-	t.Helper()
 	for _, e := range match {
 		switch e.Key {
 		case "$or", "$and":
@@ -594,7 +592,6 @@ func evalMatch(t *testing.T, match bson.D, doc map[string]any) bool {
 // $match stage after the first (the raw-document prefilter), up to any $group.
 // It returns the derived document and whether the row stays in.
 func evalRowSurvives(t *testing.T, pipeline mongo.Pipeline, doc map[string]any) (map[string]any, bool) {
-	t.Helper()
 	derived := evalSetStages(t, pipeline, doc)
 	for i, stage := range pipeline {
 		if stage[0].Key == "$group" {
@@ -614,7 +611,6 @@ func evalRowSurvives(t *testing.T, pipeline mongo.Pipeline, doc map[string]any) 
 // document with its derived fields. The bucket slot and histogram bin are
 // skipped because they do not influence state or outcome.
 func evalSetStages(t *testing.T, pipeline mongo.Pipeline, doc map[string]any) map[string]any {
-	t.Helper()
 	derived := make(map[string]any, len(doc)+8)
 	for k, v := range doc {
 		derived[k] = v
@@ -710,7 +706,6 @@ func TestRequestPipelineAsyncAcceptedHasUnknownOutcomeAndNoDuration(t *testing.T
 // evalAccumulator evaluates the per-document expression inside a $group $sum
 // accumulator and returns the amount that document contributes.
 func evalAccumulator(t *testing.T, group bson.D, key string, doc map[string]any) float64 {
-	t.Helper()
 	accumulator, ok := groupField(group, key).(bson.D)
 	if !ok || len(accumulator) != 1 || accumulator[0].Key != "$sum" {
 		t.Fatalf("$group %s = %#v, want a single $sum accumulator", key, groupField(group, key))

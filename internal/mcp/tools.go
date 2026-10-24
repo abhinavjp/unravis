@@ -125,7 +125,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if err := audit.ValidateQuery(args.Query); err != nil {
 			return nil, err
 		}
-		if err := b.checkIdentifierFilters(ctx, args.Query); err != nil {
+		if err := b.checkIdentifierFilters(args.Query); err != nil {
 			return nil, err
 		}
 		pageArgs := groupArgs{Limit: args.Limit, Sort: args.Sort}

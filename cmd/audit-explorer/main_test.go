@@ -1,16 +1,23 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/store"
 )
 
 func TestDefaultPort(t *testing.T) {
-	if defaultPort != 18765 {
-		t.Fatalf("defaultPort=%d, want 18765", defaultPort)
+	// 0 lets the OS choose a free port, so no local process can squat a
+	// well-known one; the real port reaches --mcp through the session file.
+	if defaultPort != 0 {
+		t.Fatalf("defaultPort=%d, want 0", defaultPort)
 	}
 }
 
@@ -115,4 +122,49 @@ func TestDefaultFlagsLeaveBroadScansOff(t *testing.T) {
 	}
 	// New accepts exactly what storeOptions builds.
 	_ = store.New(storeOptions(f)...)
+}
+
+type fakeShutdown struct {
+	path       string
+	fileAtStop bool
+	budget     time.Duration
+	err        error
+	closed     bool
+}
+
+func (f *fakeShutdown) Shutdown(ctx context.Context) error {
+	_, err := os.Stat(f.path)
+	f.fileAtStop = err == nil
+	if deadline, ok := ctx.Deadline(); ok {
+		f.budget = time.Until(deadline)
+	}
+	return f.err
+}
+
+func (f *fakeShutdown) Close() error { f.closed = true; return nil }
+
+// TestSignalRemovesSessionFileBeforeShutdown is the M-A cleanup regression: on
+// Ctrl+C, SIGTERM or console close the session file goes first, and draining
+// fits inside the time Windows allows after a console window closes.
+func TestSignalRemovesSessionFileBeforeShutdown(t *testing.T) {
+	token := strings.Repeat("s", 40)
+	path := filepath.Join(t.TempDir(), mcp.SessionFileName)
+	if err := mcp.WriteSessionFile(path, 41234, token); err != nil {
+		t.Fatal(err)
+	}
+	remove := func() { _ = mcp.RemoveSessionFile(path, token) }
+	srv := &fakeShutdown{path: path}
+	if err := shutdownOnSignal(remove, srv); err != nil {
+		t.Fatal(err)
+	}
+	if srv.fileAtStop {
+		t.Fatal("session file still present when shutdown began")
+	}
+	if srv.budget <= 0 || srv.budget > 5*time.Second {
+		t.Fatalf("shutdown budget %v, want under 5s", srv.budget)
+	}
+	failing := &fakeShutdown{path: path, err: errors.New("busy")}
+	if err := shutdownOnSignal(func() {}, failing); err == nil || !failing.closed {
+		t.Fatalf("failed shutdown: err=%v closed=%v", err, failing.closed)
+	}
 }

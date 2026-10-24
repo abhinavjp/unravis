@@ -18,7 +18,7 @@ Try the deterministic sample data first:
 .\run.ps1 -Demo
 ```
 
-For live data, start without `-Demo` and add MongoDB sources in the dashboard. Connections are made when you test or add a source. The browser opens the local dashboard by default; use `-NoBrowser` to suppress that. `-Port` changes the local port (the default is `18765`). The session token is kept in backend memory, injected into the dashboard HTML, and never printed or stored.
+For live data, start without `-Demo` and add MongoDB sources in the dashboard. Connections are made when you test or add a source. The browser opens the local dashboard by default; use `-NoBrowser` to suppress that. By default the dashboard picks a free loopback port each time; `-Port` fixes one. At start it prints the link to open, `http://127.0.0.1:<port>/#t=<token>`, and opens that link in the browser. The session token travels only in the part after `#`, which the browser never sends to the server; the page reads it, keeps it in that tab's `sessionStorage`, and removes it from the address bar. Keeping it in `sessionStorage` rather than only in memory is intentional: the tab survives a reload, while other tabs and windows do not see the token and it is cleared when the tab closes. The token is never written into the dashboard page. If a tab shows "Open Unravis from the link it printed when it started, or restart it.", use the printed link again. The port and token are also written owner-only to `%APPDATA%\APIAuditExplorer\session.json` (or `%AUDIT_CONFIG_DIR%\session.json`) so `--mcp` can find the dashboard; the file is removed when the dashboard shuts down cleanly or is stopped with Ctrl+C or by closing its console window. `--mcp` checks that the dashboard holds the token before sending it (see [MCP.md](MCP.md#how-mcp-finds-the-dashboard)).
 
 ## Live sources and privacy
 
@@ -64,13 +64,13 @@ P50 (the middle response time) estimates a duration that about half of measured 
 
 ## Limits
 
-The utility limits profiles to 8, active operations to 4 overall and 2 per source, request pages to 100 rows, API groups to 10,000, and aggregation output to 40,000 bucket rows and 16 MiB. Summaries that exceed their limits fail instead of presenting partial statistics as complete. Request payload text is capped at 256 KiB. CSV exports contain at most 10,000 metadata rows and report truncation with `X-Export-Truncated` when the cap or response byte limit is reached. API request bodies are limited to 1 MiB, and connection tests and data operations have a five-minute deadline.
+The utility limits profiles to 8, active operations to 4 overall and 1 per source, request pages to 100 rows, API groups to 10,000, and aggregation output to 40,000 bucket rows and 16 MiB. Summaries that exceed their limits fail instead of presenting partial statistics as complete. Request payload text is capped at 256 KiB. CSV exports contain at most 10,000 metadata rows and report truncation with `X-Export-Truncated` when the cap or response byte limit is reached. API request bodies are limited to 1 MiB, and connection tests and data operations have a five-minute deadline.
 
 The Go runtime uses a 256 MiB soft memory target. This is a runtime target, not an RSS guarantee or a machine benchmark. No unbounded result cache is used.
 
 ## Frontend development
 
-Run the backend and Vite in separate PowerShell terminals. Set the same explicit token in each terminal; it must contain at least 32 characters. The dev server injects that token only in serve mode. `AUDIT_API_TARGET` optionally overrides Vite's loopback proxy target (default `http://127.0.0.1:18765`).
+Run the backend and Vite in separate PowerShell terminals. Set the same explicit token in each terminal; it must contain at least 32 characters. The backend needs an explicit `--port` here so Vite knows where to proxy. In serve mode Vite prints a link of the form `http://127.0.0.1:<vite port>/#t=<token>`; open that link. `AUDIT_API_TARGET` optionally overrides Vite's loopback proxy target (default `http://127.0.0.1:18765`).
 
 Backend terminal:
 
@@ -110,7 +110,7 @@ The **Patterns** and **Ledger** buttons in the header open two side panels.
 - **Patterns** reads the audit requests the app already reads for the selected sources and window, under the same time, concurrency and 7-day limits. It adds no new MongoDB query, and it never runs by itself: a run starts only when you press its button.
 - Patterns counts stalls (requests of 45 seconds or longer), episodes (stalls separated by a quiet gap of at least 10 minutes), volleys (two or more stalls from one user starting within 1 second) and audit-insert stalls. A presence rate reads as k of n episodes.
 - Each finding shows one evidence label: Symptom, Correlation or Strong correlation. It also shows n, a low-sample flag, the incomplete, pending and invalid counts, and coverage. A pattern is called recurring only over 3 or more independent episodes; one episode is shown as a single episode.
-- **Ledger** is a local file of hypotheses, their states, references and notes. It holds no row data or identifiers. It never sets a state itself: you choose each state, and guards can only block "strong correlation" when its requirements are not met.
+- **Ledger** is a local file of hypotheses, their states, references and notes. It refuses text that looks like an identifier (email, IP address, URL, phone number or numeric ID, record ID, token or key), after folding fullwidth and other-script digits, Unicode spaces and invisible characters; this check is best effort, so do not paste identifiers. It never sets a state itself: you choose each state, and guards can only block "strong correlation" when its requirements are not met.
 - Nothing here proves a cause. A finding describes what was recorded and how often it appeared, and a correlation is a clue to check, not a root cause.
 
 ## AI investigations

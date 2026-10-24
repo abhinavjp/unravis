@@ -36,6 +36,7 @@
   import Glossary from './components/Glossary.svelte';
   import PatternsPanel from './components/PatternsPanel.svelte';
   import LedgerPanel from './components/LedgerPanel.svelte';
+  import ExportPanel from './components/ExportPanel.svelte';
   import { GLOSSARY_EVENT, glossaryTermFrom } from './lib/copy/hintState';
   import { plainTypicalVsSlowest } from './lib/copy/plainSummary';
   import { applyStaleFilters, scopeStaleDrill } from './lib/incomplete';
@@ -130,7 +131,7 @@
   let connectionsOpen = $state(false);
   let glossaryOpen = $state(false);
   // P2-lite drawers: incident patterns and the hypothesis ledger.
-  let sidePanel = $state<'patterns' | 'ledger' | null>(null);
+  let sidePanel = $state<'patterns' | 'ledger' | 'export' | null>(null);
   let sidePanelReturnFocus: HTMLElement | null = null;
   let glossaryTerm = $state<string | null>(null);
   let glossaryReturnFocus: HTMLElement | null = null;
@@ -706,7 +707,7 @@
     sidePanelReturnFocus?.focus();
     sidePanelReturnFocus = null;
   }
-  function openSidePanel(which: 'patterns' | 'ledger') {
+  function openSidePanel(which: 'patterns' | 'ledger' | 'export') {
     sidePanelReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     sidePanel = which;
   }
@@ -961,6 +962,7 @@
       {/if}
       <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={sidePanel === 'patterns'} onclick={() => openSidePanel('patterns')}>Patterns</button>
       <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={sidePanel === 'ledger'} onclick={() => openSidePanel('ledger')}>Ledger</button>
+      <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={sidePanel === 'export'} onclick={() => openSidePanel('export')}>Export</button>
       <button type="button" class="header-button" aria-label="Help and glossary" aria-haspopup="dialog" aria-expanded={glossaryOpen} onclick={() => openGlossary()}>Help</button>
       <button type="button" class="header-button theme-toggle" onclick={() => theme.cycle()} aria-label={'Theme: ' + theme.choice + '. Change theme'} title={'Theme: ' + theme.choice}>
         {#if theme.choice === 'light'}
@@ -1104,6 +1106,7 @@
     {#if glossaryOpen}<Glossary onClose={closeGlossary} focusTerm={glossaryTerm} />{/if}
     {#if sidePanel === 'patterns'}<PatternsPanel {query} {zone} {sourceLabels} onClose={closeSidePanel} />{/if}
     {#if sidePanel === 'ledger'}<LedgerPanel onClose={closeSidePanel} />{/if}
+    {#if sidePanel === 'export'}<ExportPanel {query} {zone} {sourceLabels} onClose={closeSidePanel} />{/if}
 
     <main class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={connectionsOpen || glossaryOpen || sidePanel != null}>
       <div class="stage-inner">

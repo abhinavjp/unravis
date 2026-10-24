@@ -1,7 +1,48 @@
-import type { Analysis, Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, Hypothesis, HypothesisInput } from './types';
+import type { Analysis, Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile } from './types';
 
-const token = document.querySelector<HTMLMetaElement>('meta[name="audit-session"]')?.content ?? '';
 const base = '/api';
+
+/** Shown whenever this tab has no session token, or the dashboard refused it. */
+export const NO_SESSION_MESSAGE = 'Open Unravis from the link it printed when it started, or restart it.';
+const SESSION_KEY = 'unravis.session';
+
+function storage(): Storage | null {
+  try { return typeof sessionStorage === 'undefined' ? null : sessionStorage; } catch { return null; }
+}
+
+/**
+ * The dashboard never writes its session token into the page. The launch link
+ * carries it in the fragment (#t=...), which the browser does not send to the
+ * server. It is read once, kept for this tab (sessionStorage survives a reload,
+ * not a new tab), and removed from the address bar and history entry.
+ */
+export function readSessionToken(): string {
+  let fromLink = '';
+  try {
+    if (typeof location !== 'undefined' && location.hash.length > 1) {
+      const params = new URLSearchParams(location.hash.slice(1));
+      fromLink = params.get('t') ?? '';
+      if (params.has('t') && typeof history !== 'undefined') history.replaceState(history.state, '', location.pathname + location.search);
+    }
+  } catch { /* an unreadable fragment is the same as none */ }
+  const store = storage();
+  if (fromLink) {
+    try { store?.setItem(SESSION_KEY, fromLink); } catch { /* the token still works for this page */ }
+    return fromLink;
+  }
+  try { return store?.getItem(SESSION_KEY) ?? ''; } catch { return ''; }
+}
+
+let token = readSessionToken();
+
+function forgetSession() {
+  token = '';
+  try { storage()?.removeItem(SESSION_KEY); } catch { /* nothing stored */ }
+}
+
+function noSession(): ApiError {
+  return new ApiError(NO_SESSION_MESSAGE, 'no_session', undefined, 401);
+}
 
 export class ApiError extends Error {
   readonly code?: string;
@@ -20,10 +61,15 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<T> {
+  if (!token) throw noSession();
   const headers = new Headers(init.headers);
   headers.set('X-Audit-Token', token);
   if (init.body) headers.set('Content-Type', 'application/json');
   const response = await fetch(base + path, { ...init, headers, credentials: 'same-origin', signal });
+  if (response.status === 401) {
+    forgetSession();
+    throw noSession();
+  }
   if (!response.ok) {
     let message = 'Request failed (' + response.status + ')';
     let code: string | undefined;
@@ -71,6 +117,8 @@ export const api = {
   ledgerUpdate: (id: string, input: HypothesisInput) => request<Hypothesis>('/ledger/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(input) }),
   ledgerReuse: (id: string) => request<Hypothesis>('/ledger/' + encodeURIComponent(id) + '/reuse', { method: 'POST' }),
   ledgerDelete: (id: string) => request<void>('/ledger/' + encodeURIComponent(id), { method: 'DELETE' }),
+  exportPreview: (input: ExportPreviewInput) => request<ExportPreview>('/export/preview', json(input)),
+  exportConfirm: (previewId: string) => request<ExportFile>('/export/confirm', json({ previewId })),
   analyze: (query: Query, signal?: AbortSignal) => request<Analysis>('/analyze', json(query), signal),
   breakdown: (query: Query, dim: BreakdownDim, top = 20, signal?: AbortSignal) =>
     request<Breakdown>('/breakdown', json({ query, dim, top }), signal),
@@ -84,11 +132,16 @@ export const api = {
     request<RecordDetail>('/record', json({ sourceId, id }), signal),
   activity: (input: import('./types').ActivityInput, signal?: AbortSignal) => request<Page>('/activity', json(input), signal),
   export: async (query: Query, apiKey: string, signal?: AbortSignal, state = '', order = '') => {
+    if (!token) throw noSession();
     const response = await fetch(base + '/export', {
       method: 'POST', credentials: 'same-origin', signal,
       headers: { 'X-Audit-Token': token, 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, apiKey, cursor: '', limit: 100, state, ...(order ? { order } : {}) })
     });
+    if (response.status === 401) {
+      forgetSession();
+      throw noSession();
+    }
     if (!response.ok) {
       let message = 'Export failed (' + response.status + ')';
       try { message = ((await response.json()) as { error?: string }).error ?? message; } catch { /* status is enough */ }
