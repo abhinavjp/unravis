@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -81,6 +82,8 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 	cohort := [5]string{"", q.Controller, q.Action, q.Kind, q.Outcome}
 	var legacyRecords, legacyBytes atomic.Int64
 	merged := audit.NewBreakdownBuilder(input.Dim, input.Top)
+	loc, _ := audit.LoadZone(input.TimeZone) // validated above
+	merged.SetLocation(loc)
 	// Sources are read in parallel, as Analyze reads them: every read goes through
 	// admit, so each source still runs one operation at a time and the store four.
 	// Each worker writes only its own source and its own slot of limitErrs; results
@@ -237,12 +240,23 @@ func (b *breakdownSource) provenance(q audit.Query) audit.Provenance {
 // breakdownDimExpr is the value of dim on a raw document, capped like the
 // request rows. Status and polling type are trimmed. The user id is a 32-bit
 // integer or null, never text.
-func breakdownDimExpr(dim string) bson.D {
+func breakdownDimExpr(dim, zone string) bson.D {
 	trimmed := func(input string) bson.D {
 		field := input[1:]
 		return bson.D{{Key: "$trim", Value: bson.D{{Key: "input", Value: cappedStringExpr(input, field)}}}}
 	}
 	switch dim {
+	case audit.BreakdownHourOfDay:
+		if zone == "" {
+			zone = "UTC"
+		}
+		// A row with no usable start time has no hour: the empty key, as in Go.
+		return bson.D{{Key: "$ifNull", Value: bson.A{
+			bson.D{{Key: "$dateToString", Value: bson.D{{Key: "date", Value: "$_auditAt"}, {Key: "format", Value: "%H:00"}, {Key: "timezone", Value: zone}}}},
+			"",
+		}}}
+	case audit.BreakdownRequestSizeBucket:
+		return requestSizeBucketExpr()
 	case audit.BreakdownStatusCode:
 		return trimmed("$StatusCode")
 	case audit.BreakdownPollingType:
@@ -255,6 +269,32 @@ func breakdownDimExpr(dim string) bson.D {
 		return cappedStringExpr("$UserAgent", "UserAgent")
 	}
 	return cappedStringExpr("$UserIp", "UserIp")
+}
+
+// requestSizeBucketExpr buckets the stored request size with the same edges as
+// audit.SizeBucket. A missing, non-numeric, negative or infinite size is unknown.
+// BSON orders NaN below every number, so the negative test catches it too.
+func requestSizeBucketExpr() bson.D {
+	v := "$$kb"
+	lt := func(n float64) bson.D { return bson.D{{Key: "$lt", Value: bson.A{v, n}}} }
+	pick := func(condition bson.D, label string) bson.D {
+		return bson.D{{Key: "case", Value: condition}, {Key: "then", Value: label}}
+	}
+	return bson.D{{Key: "$let", Value: bson.D{
+		{Key: "vars", Value: bson.D{{Key: "kb", Value: numberExpr("$RequestLengthInKiloBytes")}}},
+		{Key: "in", Value: bson.D{{Key: "$switch", Value: bson.D{
+			{Key: "branches", Value: bson.A{
+				pick(bson.D{{Key: "$eq", Value: bson.A{bson.D{{Key: "$type", Value: v}}, "null"}}}, audit.SizeBucketUnknown),
+				pick(lt(0), audit.SizeBucketUnknown),
+				pick(bson.D{{Key: "$gte", Value: bson.A{v, math.Inf(1)}}}, audit.SizeBucketUnknown),
+				pick(lt(1), audit.SizeBucketUnder1),
+				pick(lt(10), audit.SizeBucket1to10),
+				pick(lt(100), audit.SizeBucket10to100),
+				pick(lt(1000), audit.SizeBucket100to1000),
+			}},
+			{Key: "default", Value: audit.SizeBucket1000Plus},
+		}}}},
+	}}}
 }
 
 // breakdownLiteral is keys as a literal list for $in. A "$"-prefixed value is
@@ -388,7 +428,7 @@ func rawBreakdownKey(v bson.RawValue) string {
 func readBreakdownCounts(ctx context.Context, p *profile, prefix mongo.Pipeline, input audit.BreakdownInput) (*audit.BreakdownBuilder, int64, error) {
 	pipeline := withStages(prefix,
 		bson.D{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: bson.D{{Key: "v", Value: breakdownDimExpr(input.Dim)}}},
+			{Key: "_id", Value: bson.D{{Key: "v", Value: breakdownDimExpr(input.Dim, input.TimeZone)}}},
 			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
 			{Key: "incomplete", Value: sumWhen(bson.D{{Key: "$eq", Value: bson.A{"$_auditState", "incomplete"}}})},
 			{Key: "pending", Value: sumWhen("$_auditPending")},
@@ -430,7 +470,7 @@ func readBreakdownCounts(ctx context.Context, p *profile, prefix mongo.Pipeline,
 // per listed value and for everything else together. Bounding it to the listed
 // values keeps the result near (top+1) x 194 documents however many values exist.
 func readBreakdownBins(ctx context.Context, p *profile, prefix mongo.Pipeline, input audit.BreakdownInput, keys []string, builder *audit.BreakdownBuilder) error {
-	dim := breakdownDimExpr(input.Dim)
+	dim := breakdownDimExpr(input.Dim, input.TimeZone)
 	listed := bson.D{{Key: "$in", Value: bson.A{dim, breakdownLiteral(input.Dim, keys)}}}
 	pipeline := withStages(prefix,
 		bson.D{{Key: "$match", Value: bson.D{{Key: "_auditState", Value: "valid"}}}},
@@ -487,6 +527,8 @@ func readLegacyBreakdown(ctx context.Context, p *profile, q audit.Query, cohort 
 	}
 	defer closeMongoCursor(cur)
 	builder := audit.NewBreakdownBuilder(input.Dim, input.Top)
+	loc, _ := audit.LoadZone(input.TimeZone) // ValidateBreakdown accepted it
+	builder.SetLocation(loc)
 	var matched int64
 	for cur.Next(ctx) {
 		if records.Add(1) > maxLegacyMetadataRecords {
@@ -515,6 +557,7 @@ func readLegacyBreakdown(ctx context.Context, p *profile, q audit.Query, cohort 
 		row := audit.RequestRecord{
 			Status: record.Status, UserID: record.UserID, UserIP: record.UserIP, UserAgent: record.UserAgent,
 			UIVersion: record.UIVersion, PollingTypeRaw: record.PollingTypeRaw,
+			InitiatedAt: record.At, RequestKB: record.RequestKB, RequestKBMissing: record.RequestKBValue == nil,
 		}
 		builder.AddRecord(row, record.State, record.PendingAsync, record.StatusClass, record.Duration)
 		matched++

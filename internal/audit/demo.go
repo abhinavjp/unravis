@@ -541,6 +541,8 @@ func (d *demoRepository) Breakdown(ctx context.Context, input BreakdownInput) (B
 	matched := map[string]int64{}
 	builder := NewBreakdownBuilder(input.Dim, input.Top)
 	builder.SetPooled(PooledKind(q.Kind))
+	loc, _ := LoadZone(input.TimeZone) // ValidateBreakdown accepted it
+	builder.SetLocation(loc)
 	for _, r := range scope.windowRecords(d.records, q.Start, q.End) {
 		if !sources[r.SourceID] || r.InitiatedAt == nil || r.InitiatedAt.Before(q.Start) || !r.InitiatedAt.Before(q.End) {
 			continue

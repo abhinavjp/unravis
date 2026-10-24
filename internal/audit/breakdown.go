@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -19,6 +20,11 @@ const (
 	BreakdownUserAgent   = "userAgent"
 	BreakdownUserIP      = "userIp"
 	BreakdownPollingType = "pollingType"
+	// BreakdownHourOfDay groups by the hour a request started, in the display time
+	// zone (BreakdownInput.TimeZone). BreakdownRequestSizeBucket groups by the
+	// size of the request body in fixed buckets.
+	BreakdownHourOfDay         = "hourOfDay"
+	BreakdownRequestSizeBucket = "requestSizeBucket"
 )
 
 const (
@@ -42,14 +48,17 @@ var ErrBreakdownGroupLimit = errors.New("breakdown group limit exceeded")
 var breakdownDims = map[string]bool{
 	BreakdownStatusCode: true, BreakdownUserID: true, BreakdownUIVersion: true,
 	BreakdownUserAgent: true, BreakdownUserIP: true, BreakdownPollingType: true,
+	BreakdownHourOfDay: true, BreakdownRequestSizeBucket: true,
 }
 
 // BreakdownInput selects a dimension within the rows a query matches. Top is the
 // number of values to list before Other; zero means DefaultBreakdownTop.
+// TimeZone is an IANA zone name; only hourOfDay reads it, and empty means UTC.
 type BreakdownInput struct {
-	Query Query  `json:"query"`
-	Dim   string `json:"dim"`
-	Top   int    `json:"top"`
+	Query    Query  `json:"query"`
+	Dim      string `json:"dim"`
+	Top      int    `json:"top"`
+	TimeZone string `json:"tz,omitempty"`
 }
 
 // TopN returns the effective number of listed values.
@@ -125,7 +134,10 @@ func ValidateBreakdown(in BreakdownInput) error {
 		return err
 	}
 	if !breakdownDims[in.Dim] {
-		return invalidInputf("dim must be one of statusCode, userId, uiVersion, userAgent, userIp, pollingType")
+		return invalidInputf("dim must be one of statusCode, userId, uiVersion, userAgent, userIp, pollingType, hourOfDay, requestSizeBucket")
+	}
+	if _, err := LoadZone(in.TimeZone); err != nil {
+		return err
 	}
 	if in.Top < 0 || in.Top > MaxBreakdownTop {
 		return invalidInputf("top must be between 0 and %d", MaxBreakdownTop)
@@ -133,11 +145,64 @@ func ValidateBreakdown(in BreakdownInput) error {
 	return nil
 }
 
-// BreakdownKey is the value of dim on one row, as text. An empty key means the
-// field is missing or blank. Status and polling type are trimmed, as the record
-// filters compare them; a user id is its decimal digits.
+// Request size buckets, in kilobytes. A bucket includes its lower edge and
+// excludes its upper edge: 1 KB is in "1-10 KB" and 10 KB in "10-100 KB" (with an
+// en dash). A row with no usable size (missing, not a number, negative) is
+// SizeBucketUnknown.
+const (
+	SizeBucketUnder1    = "<1 KB"
+	SizeBucket1to10     = "1–10 KB"
+	SizeBucket10to100   = "10–100 KB"
+	SizeBucket100to1000 = "100–1000 KB"
+	SizeBucket1000Plus  = "≥1000 KB"
+	SizeBucketUnknown   = "unknown"
+)
+
+// SizeBucketOrder lists the buckets from smallest to largest, unknown last.
+var SizeBucketOrder = []string{SizeBucketUnder1, SizeBucket1to10, SizeBucket10to100, SizeBucket100to1000, SizeBucket1000Plus, SizeBucketUnknown}
+
+// SizeBucket names the bucket of a request size in kilobytes.
+func SizeBucket(kb float64) string {
+	switch {
+	case math.IsNaN(kb) || math.IsInf(kb, 0) || kb < 0:
+		return SizeBucketUnknown
+	case kb < 1:
+		return SizeBucketUnder1
+	case kb < 10:
+		return SizeBucket1to10
+	case kb < 100:
+		return SizeBucket10to100
+	case kb < 1000:
+		return SizeBucket100to1000
+	}
+	return SizeBucket1000Plus
+}
+
+// HourKey is the hour of day of t in loc as "HH:00", the value of hourOfDay.
+func HourKey(t time.Time, loc *time.Location) string {
+	return t.In(loc).Format("15") + ":00"
+}
+
+// BreakdownKey is the value of dim on one row, as text, with hours in UTC. An
+// empty key means the field is missing or blank. Status and polling type are
+// trimmed, as the record filters compare them; a user id is its decimal digits.
 func BreakdownKey(dim string, r RequestRecord) string {
+	return BreakdownKeyIn(dim, r, time.UTC)
+}
+
+// BreakdownKeyIn is BreakdownKey with the zone hourOfDay reads.
+func BreakdownKeyIn(dim string, r RequestRecord, loc *time.Location) string {
 	switch dim {
+	case BreakdownHourOfDay:
+		if r.InitiatedAt == nil {
+			return ""
+		}
+		return HourKey(*r.InitiatedAt, loc)
+	case BreakdownRequestSizeBucket:
+		if r.RequestKBMissing {
+			return SizeBucketUnknown
+		}
+		return SizeBucket(r.RequestKB)
 	case BreakdownStatusCode:
 		return strings.TrimSpace(r.Status)
 	case BreakdownPollingType:
@@ -261,6 +326,14 @@ type BreakdownBuilder struct {
 	pinned    map[string]bool
 	capRunes  int
 	pooled    bool
+	loc       *time.Location
+}
+
+// SetLocation sets the zone hourOfDay keys use (default UTC).
+func (b *BreakdownBuilder) SetLocation(loc *time.Location) {
+	if loc != nil {
+		b.loc = loc
+	}
 }
 
 // SetPooled says the query's kind pools request types (see PooledKind): Build
@@ -324,7 +397,11 @@ func (b *BreakdownBuilder) AddOtherBin(bin int, count int64, sum, min, max float
 // AddRecord counts one request row. state is "valid", "invalid" or "incomplete";
 // durationMs feeds the histogram only for a valid row.
 func (b *BreakdownBuilder) AddRecord(r RequestRecord, state string, pending bool, class string, durationMs *float64) {
-	g := b.group(BreakdownKey(b.dim, r))
+	loc := b.loc
+	if loc == nil {
+		loc = time.UTC
+	}
+	g := b.group(BreakdownKeyIn(b.dim, r, loc))
 	g.counts.Count++
 	if state == "incomplete" {
 		g.counts.Incomplete++

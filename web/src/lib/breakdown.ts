@@ -16,7 +16,9 @@ const dimensionKeys: Record<BreakdownDim, (keyof RecordFilters)[]> = {
   uiVersion: ['uiVersions'],
   userAgent: ['userAgentContains'],
   userIp: ['userIps'],
-  pollingType: []
+  pollingType: [],
+  hourOfDay: [],
+  requestSizeBucket: []
 };
 
 export const breakdownDims: { dim: BreakdownDim; label: string }[] = [
@@ -25,8 +27,13 @@ export const breakdownDims: { dim: BreakdownDim; label: string }[] = [
   { dim: 'uiVersion', label: 'UI version' },
   { dim: 'userAgent', label: 'User agent' },
   { dim: 'pollingType', label: 'Polling type' },
-  { dim: 'userIp', label: 'User IP' }
+  { dim: 'userIp', label: 'User IP' },
+  { dim: 'hourOfDay', label: 'Hour of day' },
+  { dim: 'requestSizeBucket', label: 'Request size' }
 ];
+
+/** Hour of day is the only breakdown that reads the display zone; the others send no zone, so a zone change does not reload them. */
+export const breakdownZone = (dim: BreakdownDim, zone: string): string | undefined => dim === 'hourOfDay' ? zone : undefined;
 
 function dropKeys<T extends object>(query: T, keys: readonly (keyof RecordFilters)[]): T {
   const next = { ...query } as Record<string, unknown>;
@@ -103,6 +110,13 @@ export function matchingNote(dim: BreakdownDim): string | null {
   return null;
 }
 
+/** Hour of day and request size have no record filter, so their rows only count; the note says which zone or which size the rows use. */
+export function bucketNote(dim: BreakdownDim, zone?: string): string | null {
+  if (dim === 'hourOfDay') return 'Hours are the hour each request started, in ' + (zone && zone !== 'UTC' ? zone + ' time' : 'UTC') + '. These rows only count requests; they cannot be listed from here.';
+  if (dim === 'requestSizeBucket') return 'Sizes are the stored request size, in kilobytes. These rows only count requests; they cannot be listed from here.';
+  return null;
+}
+
 /** The notes the panel shows for one breakdown, in order. */
 export function breakdownNotes(dim: BreakdownDim, pooledKinds: boolean | undefined): string[] {
   return [pooledKinds ? pooledKindsNote : null, matchingNote(dim), nonAtomicNote].filter((note): note is string => note !== null);
@@ -114,6 +128,8 @@ export function breakdownPickTitle(dim: BreakdownDim, row: BreakdownRow | null):
   if (breakdownRowFilter(row)) return dim === 'userAgent' ? 'Show requests whose user agent contains this text (not case sensitive)' : 'Show matching requests';
   if (row.missing) return 'No filter selects a missing value, so these requests cannot be listed from here.';
   if (dim === 'pollingType') return 'Polling type is not a request filter, so these requests cannot be listed from here.';
+  if (dim === 'hourOfDay') return 'Hour of day is not a request filter, so these requests cannot be listed from here.';
+  if (dim === 'requestSizeBucket') return 'Request size is not a request filter, so these requests cannot be listed from here.';
   const value = row.value;
   const why = ', so these requests cannot be listed from here.';
   // The checks run from the most general to the most specific, in the order the server applies them: a blank value, then the length, then the characters, then the user id range.

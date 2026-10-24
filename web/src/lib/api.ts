@@ -1,4 +1,5 @@
 import type { Analysis, Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile } from './types';
+import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
 
 const base = '/api';
 
@@ -123,9 +124,12 @@ export const api = {
   ledgerDelete: (id: string) => request<void>('/ledger/' + encodeURIComponent(id), { method: 'DELETE' }),
   exportPreview: (input: ExportPreviewInput) => request<ExportPreview>('/export/preview', json(input)),
   exportConfirm: (previewId: string) => request<ExportFile>('/export/confirm', json({ previewId })),
+  /** The daily table and the hour grid: one read of the sources each, cached for a minute by the server. */
+  daily: (params: RollupParams, signal?: AbortSignal) => request<DailyResponse>(rollupPath('daily', params), {}, signal),
+  hourGrid: (params: RollupParams, signal?: AbortSignal) => request<HourGridResponse>(rollupPath('hourgrid', params), {}, signal),
   analyze: (query: Query, signal?: AbortSignal) => request<Analysis>('/analyze', json(query), signal),
-  breakdown: (query: Query, dim: BreakdownDim, top = 20, signal?: AbortSignal) =>
-    request<Breakdown>('/breakdown', json({ query, dim, top }), signal),
+  breakdown: (query: Query, dim: BreakdownDim, top = 20, signal?: AbortSignal, tz?: string) =>
+    request<Breakdown>('/breakdown', json({ query, dim, top, ...(tz ? { tz } : {}) }), signal),
   slowest: (query:Query,signal?:AbortSignal,options:{cursor?:string;minMs?:number|null}={})=>request<Page>('/slowest',json({query,limit:50,apiKey:'',cursor:options.cursor??'',...(options.minMs==null?{}:{minMs:options.minMs})}),signal),
   /** state narrows the page to one quality state (complete, incomplete, invalid, pending, unclassified); an empty apiKey pages the whole query. */
   requests: (query: Query, apiKey: string, cursor = '', signal?: AbortSignal, state = '', order = '') =>

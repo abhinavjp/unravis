@@ -11,6 +11,7 @@
   import ExportPanel from './components/ExportPanel.svelte';
   import ImportPanel from './lib/components/ImportPanel.svelte';
   import Pulse from './components/Pulse.svelte';
+  import RollupView from './components/RollupView.svelte';
   import WhereView from './components/WhereView.svelte';
   import EvidenceView from './components/EvidenceView.svelte';
   import RecordDetailPanel from './components/RecordDetail.svelte';
@@ -80,6 +81,7 @@
               <div class="view" class:off={depth > 0}>
                 <Pulse {analysis} {zone} onOpen={openWhere} />
                 <div class="pulse-actions"><button type="button" class="primary-button" onclick={() => openWhere(navigation.lens)}>Where is it?</button><button type="button" class="secondary-button" onclick={openComparison}>All operations</button><p>Tap a figure, or open the ranked list of operations.</p></div>
+                <RollupView />
               </div>
 
               <!-- D1 Where -->
