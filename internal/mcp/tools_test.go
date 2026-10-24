@@ -124,9 +124,19 @@ func fptr(v float64) *float64 { return &v }
 // was sent.
 func auditServer(t *testing.T, route string, response any, got *json.RawMessage) *httptest.Server {
 	t.Helper()
+	return auditServerDemo(t, route, response, got, false)
+}
+
+// auditServerDemo is auditServer with a chosen /api/info demo value.
+func auditServerDemo(t *testing.T, route string, response any, got *json.RawMessage, demo bool) *httptest.Server {
+	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			w.Write([]byte(`<meta name="audit-session" content="test-token">`))
+			return
+		}
+		if r.URL.Path == "/api/info" {
+			json.NewEncoder(w).Encode(map[string]any{"demo": demo})
 			return
 		}
 		if r.URL.Path != route {
@@ -145,8 +155,8 @@ func auditServer(t *testing.T, route string, response any, got *json.RawMessage)
 	return server
 }
 
-func cachedBridge(server *httptest.Server) *Bridge {
-	b := newBridge(server.URL, server.Client())
+func cachedBridge(server *httptest.Server, opts ...Option) *Bridge {
+	b := newBridge(server.URL, server.Client(), opts...)
 	b.resultID = "current"
 	b.created = time.Now()
 	b.result = &audit.Analysis{Query: audit.Query{SourceIDs: []string{"s1"}}, APIs: []audit.Comparison{{Key: "k", SourceID: "s1", Controller: "Payroll", Action: "Run", Kind: "synchronous"}}}
@@ -188,7 +198,7 @@ func TestMCPBreakdownHidesIPUnlessRequested(t *testing.T) {
 	var sent json.RawMessage
 	response := audit.Breakdown{Dim: "userIp", Total: 3, Rows: []audit.BreakdownRow{{Value: privateIP, Count: 2, Filter: &audit.BreakdownFilter{UserIPs: []string{privateIP}}}}, Other: &audit.BreakdownRow{Value: "Other", Count: 1}}
 	server := auditServer(t, "/api/breakdown", response, &sent)
-	b := cachedBridge(server)
+	b := cachedBridge(server, WithIdentifiers(true))
 
 	_, err := b.call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"current","dim":"userIp"}`))
 	if err == nil {
@@ -219,7 +229,7 @@ func TestMCPBreakdownHidesIPUnlessRequested(t *testing.T) {
 	// Any other dimension never carries an address, even if the upstream does.
 	other := audit.Breakdown{Dim: "statusCode", Total: 3, Rows: []audit.BreakdownRow{{Value: "OK", Count: 2, Filter: &audit.BreakdownFilter{StatusCodes: []string{"OK"}, UserIPs: []string{privateIP}}}}, Other: &audit.BreakdownRow{Value: "Other", Count: 1, Filter: &audit.BreakdownFilter{UserIPs: []string{privateIP}}}}
 	server = auditServer(t, "/api/breakdown", other, nil)
-	b = cachedBridge(server)
+	b = cachedBridge(server, WithIdentifiers(true))
 	result, err = b.call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"current","dim":"statusCode"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -293,5 +303,213 @@ func TestMCPGuideCoversNewRules(t *testing.T) {
 	}
 	if !strings.Contains(investigationGuide, "No payloads or raw URLs are exposed") {
 		t.Error("guide must keep the payload and URL rule")
+	}
+}
+
+func breakdownResponse(dim string, rows ...audit.BreakdownRow) audit.Breakdown {
+	return audit.Breakdown{Dim: dim, Total: 10, Rows: rows, Other: &audit.BreakdownRow{Value: "Other", Count: 3, Values: 4}}
+}
+
+func TestBreakdownHidesUserIDValuesByDefault(t *testing.T) {
+	response := breakdownResponse("userId",
+		audit.BreakdownRow{Value: "1001", Count: 4, Filter: &audit.BreakdownFilter{UserIDs: []int{1001}}},
+		audit.BreakdownRow{Value: "1002", Count: 3, Filter: &audit.BreakdownFilter{UserIDs: []int{1002}}})
+	response.Other.Filter = &audit.BreakdownFilter{UserIDs: []int{1003}}
+	b := cachedBridge(auditServer(t, "/api/breakdown", response, nil))
+	result, err := b.call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"current","dim":"userId"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(result)
+	text := string(data)
+	for _, leak := range []string{"1001", "1002", "1003", `"filter"`, "userIds"} {
+		if strings.Contains(text, leak) {
+			t.Errorf("hidden output leaked %s: %s", leak, text)
+		}
+	}
+	for _, want := range []string{`"identifiers":"hidden"`, `"value":"hidden-1"`, `"value":"hidden-2"`, `"count":4`, `"count":3`, `"other"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("hidden output lost %s: %s", want, text)
+		}
+	}
+	if result.(map[string]any)["identifiersNote"] != hiddenNote {
+		t.Errorf("identifiersNote = %v", result.(map[string]any)["identifiersNote"])
+	}
+	if hiddenNote != "User ids, user agents and IP addresses are hidden: the operator has not turned on --mcp-allow-identifiers. includeIp was ignored." {
+		t.Error("mcp.hidden wording changed")
+	}
+}
+
+func TestBreakdownHidesUserAgentByDefault(t *testing.T) {
+	response := breakdownResponse("userAgent",
+		audit.BreakdownRow{Value: "private-agent/1.0", Count: 6, Filter: &audit.BreakdownFilter{UserAgentContains: "private-agent/1.0"}},
+		audit.BreakdownRow{Value: audit.BreakdownMissingLabel, Missing: true, Count: 1})
+	b := cachedBridge(auditServer(t, "/api/breakdown", response, nil))
+	result, err := b.call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"current","dim":"userAgent"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(result)
+	text := string(data)
+	for _, leak := range []string{"private-agent", `"filter"`, "userAgentContains"} {
+		if strings.Contains(text, leak) {
+			t.Errorf("hidden output leaked %s: %s", leak, text)
+		}
+	}
+	if !strings.Contains(text, `"value":"hidden-1"`) || !strings.Contains(text, `"value":"hidden-2"`) || !strings.Contains(text, `"identifiers":"hidden"`) {
+		t.Errorf("unexpected output %s", text)
+	}
+}
+
+func TestBreakdownIncludeIpIgnoredWhenSwitchOff(t *testing.T) {
+	var sent json.RawMessage
+	response := audit.Breakdown{Dim: "userIp", Total: 3, Rows: []audit.BreakdownRow{{Value: privateIP, Count: 2, Filter: &audit.BreakdownFilter{UserIPs: []string{privateIP}}}}}
+	b := cachedBridge(auditServer(t, "/api/breakdown", response, &sent))
+	_, err := b.call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"current","dim":"userIp","includeIp":true}`))
+	if err == nil {
+		t.Fatal("userIp allowed with the switch off")
+	}
+	if !strings.Contains(err.Error(), "--mcp-allow-identifiers") || strings.Contains(err.Error(), privateIP) {
+		t.Fatalf("error must name the flag and carry no address: %v", err)
+	}
+	if sent != nil {
+		t.Fatal("refused dimension still queried production")
+	}
+}
+
+func TestBreakdownShowsIdentifiersWithSwitch(t *testing.T) {
+	response := breakdownResponse("userId", audit.BreakdownRow{Value: "1001", Count: 4, Filter: &audit.BreakdownFilter{UserIDs: []int{1001}}})
+	b := cachedBridge(auditServer(t, "/api/breakdown", response, nil), WithIdentifiers(true))
+	result, err := b.call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"current","dim":"userId"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(result)
+	text := string(data)
+	for _, want := range []string{`"value":"1001"`, `"userIds":[1001]`, `"identifiers":"shown"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("lost %s: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "identifiersNote") {
+		t.Errorf("shown output carries the hidden note: %s", text)
+	}
+	// The address filter is still dropped on every other dimension.
+	other := breakdownResponse("statusCode", audit.BreakdownRow{Value: "OK", Count: 2, Filter: &audit.BreakdownFilter{StatusCodes: []string{"OK"}, UserIPs: []string{privateIP}}})
+	b = cachedBridge(auditServer(t, "/api/breakdown", other, nil), WithIdentifiers(true))
+	result, err = b.call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"current","dim":"statusCode"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := json.Marshal(result); strings.Contains(string(data), privateIP) {
+		t.Fatalf("dropIPs not applied: %s", data)
+	}
+}
+
+func TestBreakdownDemoUnaffected(t *testing.T) {
+	response := breakdownResponse("userId", audit.BreakdownRow{Value: "1001", Count: 4, Filter: &audit.BreakdownFilter{UserIDs: []int{1001}}})
+	b := cachedBridge(auditServerDemo(t, "/api/breakdown", response, nil, true))
+	result, err := b.call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"current","dim":"userId"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(result)
+	if !strings.Contains(string(data), `"value":"1001"`) || !strings.Contains(string(data), `"identifiers":"shown"`) || strings.Contains(string(data), "hidden-") {
+		t.Fatalf("demo values were hidden: %s", data)
+	}
+}
+
+func TestIdentifiersAllowedIsReadPerCallAndFailsClosed(t *testing.T) {
+	demo := false
+	status := http.StatusOK
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.Write([]byte(`<meta name="audit-session" content="test-token">`))
+			return
+		}
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"demo": demo})
+	}))
+	defer server.Close()
+	b := newBridge(server.URL, server.Client())
+	if ok, err := b.identifiersAllowed(context.Background()); ok || err != nil {
+		t.Fatalf("demo false: %v %v", ok, err)
+	}
+	demo = true
+	if ok, err := b.identifiersAllowed(context.Background()); !ok || err != nil {
+		t.Fatalf("dashboard restarted into demo, not seen: %v %v", ok, err)
+	}
+	status = http.StatusInternalServerError
+	if ok, err := b.identifiersAllowed(context.Background()); ok || err == nil {
+		t.Fatalf("info failure must fail closed: %v %v", ok, err)
+	}
+	if ok, err := newBridge("http://127.0.0.1:1", &http.Client{}, WithIdentifiers(true)).identifiersAllowed(context.Background()); !ok || err != nil {
+		t.Fatalf("operator switch needs no dashboard call: %v %v", ok, err)
+	}
+}
+
+func TestToolCountStaysTen(t *testing.T) {
+	if n := len(tools()); n != 10 {
+		t.Fatalf("tool count = %d, want 10", n)
+	}
+}
+
+func TestToolDescriptionsMentionOperatorSwitch(t *testing.T) {
+	if d := toolByName(t, "audit_get_breakdown")["description"].(string); !strings.Contains(d, "--mcp-allow-identifiers") {
+		t.Error("breakdown description lacks the operator switch")
+	}
+	if !strings.Contains(investigationGuide, "--mcp-allow-identifiers") {
+		t.Error("guide lacks the operator switch")
+	}
+}
+
+func TestProvenanceForwarded(t *testing.T) {
+	prov := []audit.Provenance{{SourceID: "s1", Window: "current", QueryMode: audit.QueryModeExact, ScanClass: audit.ScanNarrow, Completeness: audit.RanToEnd, DocsReturned: 7}}
+	has := func(t *testing.T, label string, result any) {
+		t.Helper()
+		data, _ := json.Marshal(result)
+		if !strings.Contains(string(data), `"provenance":[{"sourceId":"s1","window":"current"`) || !strings.Contains(string(data), `"completeness":"ran_to_end"`) {
+			t.Errorf("%s dropped provenance: %s", label, data)
+		}
+	}
+	q := audit.Query{SourceIDs: []string{"s1"}, Start: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), End: time.Date(2026, 10, 22, 13, 0, 0, 0, time.UTC), BaselineStart: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC), BaselineEnd: time.Date(2026, 10, 21, 13, 0, 0, 0, time.UTC), Kind: "all", Outcome: "all", Metric: "total", BucketSeconds: 60}
+	compare := auditServer(t, "/api/analyze", audit.Analysis{Query: q, Provenance: prov, APIs: []audit.Comparison{{Key: "k", State: "compared"}}}, nil)
+	raw, _ := json.Marshal(map[string]any{"query": q})
+	result, err := newBridge(compare.URL, compare.Client()).call(context.Background(), "audit_compare", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	has(t, "compare", result)
+
+	page := audit.Page{Rows: []audit.RequestRecord{{ID: "65a1b2c3d4e5f60718293a4b"}}, Provenance: prov}
+	for _, tool := range []struct{ name, route, args string }{
+		{"audit_get_requests", "/api/requests", `{"resultId":"current","apiKey":"k"}`},
+		{"audit_get_slowest", "/api/slowest", `{"resultId":"current"}`},
+	} {
+		result, err := cachedBridge(auditServer(t, tool.route, page, nil)).call(context.Background(), tool.name, json.RawMessage(tool.args))
+		if err != nil {
+			t.Fatal(err)
+		}
+		has(t, tool.name, result)
+	}
+
+	bd := breakdownResponse("statusCode", audit.BreakdownRow{Value: "OK", Count: 2})
+	bd.Provenance = prov
+	result, err = cachedBridge(auditServer(t, "/api/breakdown", bd, nil)).call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"current","dim":"statusCode"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	has(t, "breakdown", result)
+
+	// Absent upstream provenance (an older dashboard) adds nothing.
+	result, err = cachedBridge(auditServer(t, "/api/slowest", audit.Page{}, nil)).call(context.Background(), "audit_get_slowest", json.RawMessage(`{"resultId":"current"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := json.Marshal(result); strings.Contains(string(data), "provenance") {
+		t.Errorf("empty provenance emitted: %s", data)
 	}
 }
