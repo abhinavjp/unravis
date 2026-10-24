@@ -37,6 +37,12 @@ func (l *fix2Log) logf(format string, args ...any) {
 	l.lines = append(l.lines, strings.TrimSpace(format))
 }
 
+func (l *fix2Log) reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lines = nil
+}
+
 func (l *fix2Log) text() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -151,6 +157,7 @@ func TestFix2PreviewOfRefusedFileStoresNothing(t *testing.T) {
 	log := &fix2Log{}
 	for name, store := range map[string]casestore.Store{"memory": casestore.NewMemory(), "sqlite": fix2SQLite(t, log)} {
 		t.Run(name, func(t *testing.T) {
+			log.reset() // the map visits memory and sqlite in either order
 			e := fix2Env(t, store, nil, nil)
 			id := e.newCase("Preview refused")
 			for label, c := range map[string]struct {
