@@ -1,0 +1,110 @@
+[
+  {
+    "id": "app-log",
+    "title": "Application log",
+    "why": "It records the warnings and errors the app wrote, with times.",
+    "how": "Copy the log4net, Serilog, ASP.NET Core or ANCM stdout log files for the same days. Import them as text, XML or JSON files."
+  },
+  {
+    "id": "event-logs",
+    "title": "Windows event logs",
+    "why": "They record app pool starts, stops and recycles, and service events, with times.",
+    "how": "Save the System and Application logs with Get-WinEvent and Export-Csv. Import the CSV file."
+  },
+  {
+    "id": "host-counters",
+    "title": "Windows performance counters",
+    "why": "They show CPU, memory, disk and network use on this host, minute by minute.",
+    "how": "Log the counters with Performance Monitor, then run relog to save a CSV file. Import that CSV file."
+  },
+  {
+    "id": "httperr-log",
+    "title": "HTTP.sys error log",
+    "why": "It records connections and requests that failed before they reached the app.",
+    "how": "Copy the files from the HTTPERR log folder for the same days. Import the .log files."
+  },
+  {
+    "id": "iis-log",
+    "title": "IIS request log",
+    "why": "It lists each request with its time, status and duration.",
+    "how": "Make sure the time-taken field is on. Then copy the W3C log files for the same days and import the .log files."
+  },
+  {
+    "id": "mongo-profile",
+    "title": "MongoDB profiler collection",
+    "why": "It lists the slow operations the database recorded, with times and durations. The tool drops filters and names.",
+    "how": "Run mongoexport on the system.profile collection. Import the JSON file."
+  },
+  {
+    "id": "mongo-serverstatus",
+    "title": "MongoDB serverStatus",
+    "why": "It shows connections, queues, cache use and operation counts at each sample.",
+    "how": "Run db.serverStatus() on a timer and save one JSON line per sample. Import the JSON file."
+  },
+  {
+    "id": "mongod-log",
+    "title": "MongoDB server log",
+    "why": "It records slow operations and server events, with times.",
+    "how": "Copy the mongod.log file. It must be in the JSON format of MongoDB 4.4 or later. Import the log file."
+  },
+  {
+    "id": "mongostat",
+    "title": "mongostat output",
+    "why": "It shows each second: the operations, the queues and the connections.",
+    "how": "Run mongostat with the --json option and save the output. Import the JSON file."
+  },
+  {
+    "id": "process-snapshot",
+    "title": "Process snapshots",
+    "why": "They list which processes use CPU and memory at each sample time, so you can see what else runs on the host.",
+    "how": "Run Get-Process on a timer and save it with Export-Csv. Add a SampleUtc column, then import the CSV file."
+  },
+  {
+    "id": "redis-info",
+    "title": "Redis INFO output",
+    "why": "It shows memory, clients, evictions and command counts at each sample.",
+    "how": "Run redis-cli INFO every minute and note the time of each sample. Import the saved text file."
+  },
+  {
+    "id": "redis-latency",
+    "title": "Redis latency history",
+    "why": "It lists the delays Redis noted for each event, with times.",
+    "how": "Run redis-cli LATENCY HISTORY for each event and save the output. Import the text or JSON file."
+  },
+  {
+    "id": "redis-log",
+    "title": "Redis server log",
+    "why": "It records restarts, saves to disk and warnings, with times.",
+    "how": "Copy the Redis log file for the same days. Import the text file."
+  },
+  {
+    "id": "redis-slowlog",
+    "title": "Redis slow log",
+    "why": "It lists the slowest commands Redis ran, with times and durations. The tool drops keys and values.",
+    "how": "Run redis-cli SLOWLOG GET and save the output. Import the text or JSON file."
+  },
+  {
+    "id": "runtime-counters",
+    "title": ".NET runtime counters",
+    "why": "They show garbage collection, thread pool and exception counts inside the app process, over time.",
+    "how": "Run dotnet-counters collect on the app process and save a CSV or JSON file. Import that file."
+  },
+  {
+    "id": "sql-counters",
+    "title": "SQL Server performance counters",
+    "why": "They show batch rate, waits, memory and buffer use inside SQL Server, minute by minute.",
+    "how": "Log the SQL Server counters with Performance Monitor, then run relog to save a CSV file. Import that CSV file."
+  },
+  {
+    "id": "sql-errorlog",
+    "title": "SQL Server error log",
+    "why": "It lists server messages, such as errors and restarts, with times.",
+    "how": "Copy the ERRORLOG files from the SQL Server log folder for the same days. Import the text files."
+  },
+  {
+    "id": "sql-health-events",
+    "title": "SQL Server health events",
+    "why": "The system_health session records waits, blocking reports and deadlocks, with times.",
+    "how": "Export the system_health events to a CSV file. Leave out the columns that hold query text, then import the file."
+  }
+]

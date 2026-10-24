@@ -1,6 +1,7 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
 import { parseTimelineView, type TimelineView } from './timeline';
 import { parseResource, parseSeries, type ResourceView, type SeriesView } from './resource';
+import { parseCollect, type CollectItem } from './collect';
 import type { EvidenceExport, ExportFile, Query } from './types';
 
 /**
@@ -592,6 +593,14 @@ export async function fetchResource(id: string, request: ResourceRequest, signal
   const view = parseResource(await json<unknown>(response));
   if (!view) throw unreadable(response.status);
   return view;
+}
+
+/** GET /api/cases/{id}/collect: the logs still worth collecting, ranked. An answer that is not the documented shape is "unreadable". */
+export async function fetchCollect(id: string, signal?: AbortSignal): Promise<CollectItem[]> {
+  const response = await send(casePath(id, '/collect'), {}, signal);
+  const items = parseCollect(await json<unknown>(response));
+  if (!items) throw unreadable(response.status);
+  return items;
 }
 
 export async function fetchSeries(id: string, request: SeriesRequest, signal?: AbortSignal): Promise<SeriesView> {

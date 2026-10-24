@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { CaseApiError, canSaveCaseExport, isCaseGone, caseExportSummary, confirmCaseExport, fetchTimeline, previewCaseExport, type CaseExportPreview } from '../cases';
+  import { CaseApiError, canSaveCaseExport, isCaseGone, caseExportSummary, confirmCaseExport, fetchCollect, fetchTimeline, previewCaseExport, type CaseExportPreview } from '../cases';
+  import { collectRows, type CollectRow } from '../collect';
   import { IMPORT_TEXT, caseExportSavedText, errorText } from '../copy/importCopy';
   import { contentMatches, describeCount, downloadName } from '../export';
   import type { TimelineView } from '../timeline';
@@ -28,7 +29,32 @@
   const preview = $derived(phase.kind === 'preview' || phase.kind === 'saving' || phase.kind === 'saved' ? phase.preview : null);
   const summary = $derived(preview ? caseExportSummary(preview.export) : null);
 
-  $effect(() => () => controller?.abort());
+  // "What to collect next" is read when the group is first opened, and again on a retry. The parent gives this component a new copy
+  // whenever the case's imports change, so the list is never older than the files in the case.
+  type CollectPhase = { kind: 'idle' } | { kind: 'loading' } | { kind: 'ready'; rows: CollectRow[] } | { kind: 'error'; message: string };
+  let collectPhase = $state.raw<CollectPhase>({ kind: 'idle' });
+  let collectController: AbortController | null = null;
+
+  $effect(() => () => { controller?.abort(); collectController?.abort(); });
+
+  async function loadCollect() {
+    if (collectPhase.kind === 'loading' || collectPhase.kind === 'ready') return;
+    const mine = new AbortController();
+    collectController?.abort();
+    collectController = mine;
+    collectPhase = { kind: 'loading' };
+    try {
+      const items = await fetchCollect(caseId, mine.signal);
+      if (!mine.signal.aborted) collectPhase = { kind: 'ready', rows: collectRows(items) };
+    } catch (error) {
+      if (mine.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return;
+      collectPhase = { kind: 'error', message: failure(error) };
+    }
+  }
+
+  function onCollectToggle(event: Event) {
+    if ((event.currentTarget as HTMLDetailsElement).open) void loadCollect();
+  }
 
   function failure(error: unknown): string {
     if (isCaseGone(error)) onGone?.();
@@ -122,6 +148,41 @@
 
 <ResourcePanel {caseId} {query} {zone} {apiWindows} {onGone} />
 
+<section class="tools" aria-labelledby="collect-heading">
+  <details class="collect" ontoggle={onCollectToggle}>
+    <summary id="collect-heading">{IMPORT_TEXT.collectHeading}</summary>
+    <p class="note">{IMPORT_TEXT.collectNote}</p>
+    <div aria-live="polite">
+      {#if collectPhase.kind === 'loading'}<p class="note" role="status">{IMPORT_TEXT.collectLoading}</p>{/if}
+      {#if collectPhase.kind === 'error'}
+        <div class="inline-error" role="alert">{collectPhase.message}</div>
+      {/if}
+    </div>
+    {#if collectPhase.kind === 'error'}
+      <div><button type="button" class="secondary-button" onclick={() => { collectPhase = { kind: 'idle' }; void loadCollect(); }}>{IMPORT_TEXT.collectRetry}</button></div>
+    {/if}
+    {#if collectPhase.kind === 'ready'}
+      {#if collectPhase.rows.length === 0}
+        <p class="empty">{IMPORT_TEXT.collectEmpty}</p>
+      {:else}
+        <ol class="collect-list">
+          {#each collectPhase.rows as row (row.key)}
+            <li>
+              <h4>{row.title}</h4>
+              {#if row.host}<p class="host">{IMPORT_TEXT.collectOnHost}: <span>{row.host}</span></p>{/if}
+              <dl>
+                <dt>{IMPORT_TEXT.collectWhy}</dt><dd>{row.why}</dd>
+                <dt>{IMPORT_TEXT.collectHow}</dt><dd>{row.how}</dd>
+                <dt>{IMPORT_TEXT.collectFileType}</dt><dd>{row.fileTypes.join(', ')}</dd>
+              </dl>
+            </li>
+          {/each}
+        </ol>
+      {/if}
+    {/if}
+  </details>
+</section>
+
 <section class="tools" aria-labelledby="case-export-heading">
   <h3 id="case-export-heading">{IMPORT_TEXT.exportHeading}</h3>
   <p class="note">{IMPORT_TEXT.exportNote}</p>
@@ -186,6 +247,16 @@
   .hash { margin: 0; font-size: var(--fs-2); color: var(--text-2); overflow-wrap: anywhere; }
   .hash code { font-family: var(--mono); user-select: all; }
   details summary { width: fit-content; color: var(--text-2); font-size: var(--fs-2); }
+  details.collect { display: grid; gap: var(--space-2); min-width: 0; }
+  details.collect > summary { color: var(--text); font-size: var(--fs-4); font-weight: 600; cursor: pointer; }
+  details.collect > summary:focus-visible { outline: 2px solid var(--focus, currentColor); outline-offset: 2px; border-radius: var(--radius); }
+  .collect-list { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+  .collect-list li { display: grid; gap: 4px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--surface-2); }
+  .collect-list h4 { margin: 0; color: var(--text); font-size: var(--fs-3); font-weight: 650; overflow-wrap: anywhere; }
+  .collect-list .host { margin: 0; color: var(--text-2); font-size: var(--fs-2); overflow-wrap: anywhere; }
+  .collect-list dl { display: grid; gap: 2px; margin: 0; min-width: 0; }
+  .collect-list dt { margin-top: 4px; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
+  .collect-list dd { margin: 0; font-size: var(--fs-3); line-height: 1.5; overflow-wrap: anywhere; }
   pre { max-height: 320px; margin: 6px 0 0; padding: 8px 10px; overflow: auto; font-family: var(--mono); font-size: 11px; line-height: 1.45; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); white-space: pre-wrap; overflow-wrap: anywhere; }
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: var(--fs-2); }
