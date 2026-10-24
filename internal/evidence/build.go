@@ -217,13 +217,17 @@ func Canonical(e Export) ([]byte, error) {
 }
 
 // Verify checks a file's bytes: exactly one JSON value with nothing after it,
-// no unknown fields, a schema version from MinSchemaVersion to SchemaVersion,
-// a hash that matches the manifest and body, and the canonical encoding (so
+// no unknown fields, a schema version from MinSchemaVersion to
+// MaxSchemaVersion, a hash that matches the manifest and body, and the canonical encoding (so
 // key spelling, order and spacing are the ones Build wrote and nothing can
 // ride along unhashed).
 //
-// A version 1 file must not hold the version 2 fields (manifest imports, body
-// imports or events), and every record's version must equal the file's.
+// A file older than the case export (version 3) must not hold the case fields
+// (manifest imports, body imports or events): that would be a downgrade that
+// slips a case export past the case policy. A version 3 file is re-checked
+// against the whole case export policy (verifyCase), so a recomputed hash does
+// not make a planted address, causal kind or free text valid. Every record's
+// version must equal the file's.
 func Verify(raw []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -235,11 +239,11 @@ func Verify(raw []byte) error {
 		return fmt.Errorf("%w: trailing data after the export", ErrInvalid)
 	}
 	v := e.Manifest.SchemaVersion
-	if v < MinSchemaVersion || v > SchemaVersion {
-		return fmt.Errorf("%w: schema version %d, want %d to %d", ErrInvalid, v, MinSchemaVersion, SchemaVersion)
+	if v < MinSchemaVersion || v > MaxSchemaVersion {
+		return fmt.Errorf("%w: schema version %d, want %d to %d", ErrInvalid, v, MinSchemaVersion, MaxSchemaVersion)
 	}
-	if v < 2 && (e.Manifest.Imports != nil || e.Body.Imports != nil || e.Body.Events != nil) {
-		return fmt.Errorf("%w: a version %d file holds version 2 fields", ErrInvalid, v)
+	if v < CaseSchemaVersion && (e.Manifest.Imports != nil || e.Body.Imports != nil || e.Body.Events != nil) {
+		return fmt.Errorf("%w: a version %d file holds case export fields", ErrInvalid, v)
 	}
 	for _, r := range e.Body.Records {
 		if r.Version != v {
@@ -259,6 +263,9 @@ func Verify(raw []byte) error {
 	}
 	if !bytes.Equal(canon, raw) {
 		return fmt.Errorf("%w: the file is not in canonical form", ErrInvalid)
+	}
+	if v == CaseSchemaVersion {
+		return verifyCase(e, raw)
 	}
 	return nil
 }

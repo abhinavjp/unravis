@@ -23,8 +23,8 @@ const cellLookahead = 64
 //
 // It also escapes a value whose first visible character only becomes one of
 // those after normalisation: a full-width or small form ("＝", "﹢"), or a
-// trigger behind leading spaces or invisible characters (a zero-width space,
-// a bidi mark). Such a value is escaped as a whole, unchanged otherwise.
+// trigger behind leading spaces, control characters or invisible characters (a
+// zero-width space, a bidi mark). Such a value is escaped as a whole, unchanged otherwise.
 //
 // A value that already starts with an apostrophe is left alone, so Cell is
 // idempotent: Cell(Cell(s)) == Cell(s).
@@ -55,8 +55,8 @@ func hiddenTrigger(s string) bool {
 		switch {
 		case r < utf8.RuneSelf && strings.IndexByte(formulaTriggers, byte(r)) >= 0:
 			return true // checked before white space: tab and CR are triggers
-		case isIgnorable(r) || unicode.IsSpace(r):
-			continue
+		case isIgnorable(r) || unicode.IsSpace(r) || unicode.IsControl(r):
+			continue // other control characters (NUL, ESC, ...) do not show either
 		}
 		return false
 	}

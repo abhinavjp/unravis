@@ -24,8 +24,11 @@ type CaseImport struct {
 	Importer string // importer name, e.g. "iis-w3c"
 	// FileName is accepted so a caller can copy a store record as is. It is
 	// never read and never written to an export.
-	FileName  string
-	SHA256    string // 64 lower-case hex characters
+	FileName string
+	// SHA256 must have the shape of a file hash (64 lower-case hex characters)
+	// but is never written to an export: a hash of the client's file would let
+	// anyone holding that file prove it is the one behind the export.
+	SHA256    string
 	HostLabel string // hosts.json label; exported only as a keyed pseudonym
 	TZRule    string // exported only when it is a clock.Rule* value
 	// Status is the store's import status. Only "ok" (or "", treated as ok)
@@ -34,7 +37,9 @@ type CaseImport struct {
 	Rows, Rejected int64
 	Quality        SourceQuality
 	KnownGaps      []string
-	AckText        string // the gating banner text the analyst acknowledged
+	// AckText is the gating banner text the analyst acknowledged. It is client
+	// form text and is never written; only bannerID(AckText) is.
+	AckText string
 }
 
 // CaseInput is everything BuildCase needs.
@@ -48,44 +53,66 @@ type CaseInput struct {
 	// (casestore.MaxEventQuery), so the file states its counts are lower
 	// bounds.
 	EventsTruncated bool
-	ToolVersion     string
-	Now             time.Time
-	// Key is a fresh per-export key (NewKey), at least 16 bytes. It is never
-	// written to the file; the caller should zero it after the call.
+	// ToolVersion is written only when it looks like a version number.
+	ToolVersion string
+	Now         time.Time
+	// Key is a fresh per-export key (NewKey), at least 16 bytes. It is used for
+	// the labels of this export and nothing else, and is never written to the
+	// file; the caller should zero it after the call.
 	Key []byte
 }
 
 // Fixed text that replaces cleaned free text which still looks risky.
 const (
-	ackWithheld   = "[acknowledgement text withheld]"
 	gapWithheld   = "[gap withheld]"
 	otherImporter = "other"
 	otherKind     = "other"
-	maxFreeText   = 1024 // longest acknowledgement or gap exported, in bytes
-	maxTokenBytes = 64
-	maxQualityLen = 256
+	maxFreeText   = 1024 // longest gap exported, in bytes
+	// labelHex is the number of hex characters in a keyed label; eventLabelHex
+	// is the same for an event id, of which a file holds many.
+	labelHex      = 12
+	eventLabelHex = 16
+	maxStatements = 32
+	maxStatement  = 2048
 )
 
 // attrRule says how one event attribute is exported.
 type attrRule int
 
 const (
-	ruleNumber attrRule = iota + 1 // a plain decimal number, else removed
-	ruleToken                      // a short plain token, else removed
-	ruleHex                        // up to 16 hex characters (a plan hash), else removed
-	ruleName                       // a confidential name: keyed pseudonym
-	rulePerson                     // a person: keyed pseudonym, all or nothing by the thin-cell rule
+	ruleNumber   attrRule = iota + 1 // a plain decimal number (or an extra literal), else removed
+	ruleEnum                         // one of a fixed list, exported in the listed spelling, else removed
+	ruleEnumList                     // a comma-separated list of a fixed list
+	ruleWait                         // an SQL Server wait type from the fixed list or family
+	ruleObject                       // a performance counter object from the fixed list
+	ruleName                         // a confidential name: keyed pseudonym
+	rulePerson                       // a person: keyed pseudonym, all or nothing by the thin-cell rule
 )
 
 type attrPolicy struct {
 	rule   attrRule
-	prefix string   // pseudonym prefix for ruleName and rulePerson
-	asIs   []string // ruleName values shown unchanged (e.g. "_Total")
+	prefix string            // pseudonym prefix for ruleName and rulePerson
+	asIs   []string          // ruleName values shown unchanged (e.g. "_Total")
+	enum   map[string]string // ruleEnum, ruleEnumList: lower-case -> exported spelling
+	canon  map[string]bool   // exported spellings of enum
+	extra  map[string]bool   // ruleNumber: literals allowed besides a number
+}
+
+var polNum = attrPolicy{rule: ruleNumber}
+
+func polNumOr(extra ...string) attrPolicy { return attrPolicy{rule: ruleNumber, extra: set(extra...)} }
+
+func polEnum(m map[string]string) attrPolicy {
+	return attrPolicy{rule: ruleEnum, enum: m, canon: canonicalValues(m)}
+}
+
+func polList(m map[string]string) attrPolicy {
+	return attrPolicy{rule: ruleEnumList, enum: m, canon: canonicalValues(m)}
 }
 
 var (
-	polNum = attrPolicy{rule: ruleNumber}
-	polTok = attrPolicy{rule: ruleToken}
+	polWait   = attrPolicy{rule: ruleWait}
+	polObject = attrPolicy{rule: ruleObject}
 )
 
 func polName(prefix string, asIs ...string) attrPolicy {
@@ -95,92 +122,86 @@ func polName(prefix string, asIs ...string) attrPolicy {
 func polPerson(prefix string) attrPolicy { return attrPolicy{rule: rulePerson, prefix: prefix} }
 
 var (
-	counterPolicy = map[string]attrPolicy{"object": polTok, "counter": polTok, "instance": polName("instance", "_Total")}
-	schedPolicy   = map[string]attrPolicy{"job": polName("job"), "queue": polName("queue"), "tz": polTok, "basis": polTok,
-		"reason": polTok, "dst": polTok, "freq": polTok}
+	counterPolicy = map[string]attrPolicy{"object": polObject, "counter": polEnum(counterNames),
+		"instance": polName("instance", "_Total")}
+	schedPolicy = map[string]attrPolicy{"job": polName("job"), "queue": polName("queue"), "tz": polEnum(schedTZ),
+		"basis": polEnum(schedBasis), "reason": polEnum(schedReasons), "dst": polEnum(schedDST), "freq": polEnum(schedFreqs)}
 )
 
 // exportPolicy is the per-source attribute allowlist of the case export. It
 // is narrower than the importers' own allowlists: an attribute or a source
-// that is not listed here is left out of the file.
+// that is not listed here is left out of the file. Every kept value is a
+// number, a member of a fixed list, or a keyed pseudonym; a value that is none
+// of these is shown as "[removed]". No free-form token survives.
 //
-// Left out on purpose: the IIS URL stem ("stem"), the Application Insights
-// operation name ("name", a URL path) and operation id ("operation_Id", a
-// join key into the client's telemetry). Site, application pool, queue, job,
-// namespace and counter instance names are client names and become keyed
-// pseudonyms; "pool" is shared by HTTPERR queues and event-log app pools so
-// the same pool reads the same within one export.
+// Left out on purpose (exportDropped): the IIS URL stem ("stem"), the
+// Application Insights operation name ("name", a URL path) and operation id
+// ("operation_Id", a join key into the client's telemetry). Site, application
+// pool, queue, job, namespace, query hash and counter instance names are
+// client names and become keyed pseudonyms; "pool" is shared by HTTPERR queues
+// and event-log app pools so the same pool reads the same within one export.
 var exportPolicy = map[string]map[string]attrPolicy{
-	"iis-w3c": {"method": polTok, "status": polNum, "substatus": polNum, "win32": polNum, "port": polNum,
+	"iis-w3c": {"method": polEnum(httpMethods), "status": polNum, "substatus": polNum, "win32": polNum, "port": polNum,
 		"site": polName("site"), "user": polPerson("user")},
-	"iis-httperr":  {"reason": polTok, "status": polNum, "method": polTok, "queue": polName("pool"), "siteid": polNum},
+	"iis-httperr":  {"reason": polEnum(httpErrReasons), "status": polNum, "method": polEnum(httpMethods), "queue": polName("pool"), "siteid": polNum},
 	"win-counters": counterPolicy,
 	"sql-pdh":      counterPolicy,
-	"win-events":   {"log": polTok, "provider": polTok, "id": polNum, "app-pool": polName("pool"), "reason": polTok},
-	"mongod-json": {"type": polTok, "ns": polName("ns"), "command": polTok, "planSummary": polTok, "keysExamined": polNum,
-		"docsExamined": polNum, "nreturned": polNum, "numYields": polNum, "queryHash": {rule: ruleHex}, "workingMs": polNum},
+	"win-events": {"log": polEnum(winEventLogs), "provider": polEnum(winEventProviders), "id": polNum,
+		"app-pool": polName("pool"), "reason": polEnum(winEventReasons)},
+	"mongod-json": {"type": polEnum(mongoTypes), "ns": polName("ns"), "command": polEnum(mongoCommands),
+		"planSummary": polList(mongoStages), "keysExamined": polNum, "docsExamined": polNum, "nreturned": polNum,
+		"numYields": polNum, "queryHash": polName("qh"), "workingMs": polNum},
 	"schedule-hangfire": schedPolicy,
 	"schedule-agent":    schedPolicy,
-	"appinsights":       {"dependencyType": polTok, "resultCode": polTok, "success": polTok},
-	"sql-xe": {"event": polTok, "wait_type": polTok, "wait_class": polTok, "component": polTok, "state": polTok,
-		"error_number": polNum, "sql_severity": polNum},
+	"appinsights": {"dependencyType": polEnum(dependencyTypes), "resultCode": polNumOr("other"),
+		"success": polEnum(successValues)},
+	"sql-xe": {"event": polEnum(xeEvents), "wait_type": polWait, "wait_class": polEnum(xeWaitClasses),
+		"component": polEnum(xeComponents), "state": polEnum(xeStates), "error_number": polNum, "sql_severity": polNum},
 	"sql-errorlog": {"error_number": polNum, "sql_severity": polNum},
 }
 
 var (
 	importerName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 	fileHashHex  = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	kindToken    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 	numberValue  = regexp.MustCompile(`^-?[0-9]{1,15}(?:\.[0-9]{1,6})?$`)
-	hexValue     = regexp.MustCompile(`^[0-9A-Fa-f]{1,16}$`)
-	// plainToken starts with a letter, a digit, "%" or "#" (counter names such
-	// as "% Processor Time"), so no token can open a spreadsheet formula, and
-	// holds no quote, bracket, "@", "=" or "$".
-	plainToken = regexp.MustCompile(`^[A-Za-z0-9%#][A-Za-z0-9 ._:/%()#,+\-]*$`)
-	// strongCorrelation is the label importer and event text may never carry,
-	// in any spelling ("strong correlation", "Strong_Correlation").
-	strongCorrelation = regexp.MustCompile(`(?i)strong[\s_\-]*correlat`)
-	unitToken         = regexp.MustCompile(`^[a-z][a-z-]{0,31}$`)
-	dottedName        = regexp.MustCompile(`[A-Za-z0-9-]\.[A-Za-z]`)
+	importRef    = regexp.MustCompile(`^import-[0-9]{1,6}$`)
 )
 
-// containsStrong reports "strong correlation" in any spelling, after
-// normalisation.
-func containsStrong(text string) bool {
-	return strongCorrelation.MatchString(normalizeText(text))
-}
-
 // claimFree reports text that names no cause, no "proven" and no "strong
-// correlation" (R8-B7).
+// correlation" (R8-B7), after the fold of claimNorm.
 func claimFree(text string) bool {
 	return LintCausal(text) == nil && !containsProven(text) && !containsStrong(text)
 }
 
-// keyedLabel is prefix + "-" + the first 8 hex characters of
+// keyedLabel is prefix + "-" + the first labelHex hex characters of
 // HMAC-SHA256(key, prefix NUL value). The prefix is in the MAC, so the same
 // value under two prefixes gives unrelated labels, and a new key gives an
 // unrelated label for every value.
 func keyedLabel(key []byte, prefix, value string) string {
+	return keyedLabelN(key, prefix, value, labelHex)
+}
+
+func keyedLabelN(key []byte, prefix, value string, n int) string {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(prefix))
 	mac.Write([]byte{0})
 	mac.Write([]byte(value))
-	return prefix + "-" + hex.EncodeToString(mac.Sum(nil))[:8]
+	return prefix + "-" + hex.EncodeToString(mac.Sum(nil))[:n]
 }
 
-// cleanToken returns v when it is a short plain token that scrubbing leaves
-// unchanged and that carries no dotted name, no keyed number, no long digit
-// run and no claim; otherwise "[removed]".
-//
-// DECISION: a dotted name ("web-a.example.test", "w3wp.exe") is removed
-// whatever its top-level domain, since scrubText only knows common ones; a
-// few harmless tokens are lost so that no host name rides along.
-func cleanToken(v string) string {
-	if len(v) > maxTokenBytes || !plainToken.MatchString(v) || dottedName.MatchString(v) ||
-		scrubText(v) != v || removeUserIDs(v, nil) != v || residualRisk(v) || !claimFree(v) {
-		return removedText
+// labelOK reports whether v is a keyed label of the given prefix with n hex
+// characters.
+func labelOK(prefix, v string, n int) bool {
+	rest, ok := strings.CutPrefix(v, prefix+"-")
+	if !ok || len(rest) != n {
+		return false
 	}
-	return v
+	for i := 0; i < len(rest); i++ {
+		if c := rest[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // exportAttr applies one rule. Person values are returned as is here and
@@ -191,12 +212,32 @@ func exportAttr(key []byte, p attrPolicy, v string) string {
 		if numberValue.MatchString(v) {
 			return v
 		}
-	case ruleHex:
-		if hexValue.MatchString(v) {
+		if lo := strings.ToLower(v); p.extra[lo] {
+			return lo
+		}
+	case ruleEnum:
+		if c, ok := p.enum[strings.ToLower(v)]; ok {
+			return c
+		}
+	case ruleEnumList:
+		parts := strings.Split(v, ",")
+		out := make([]string, 0, len(parts))
+		for _, part := range parts {
+			c, ok := p.enum[strings.ToLower(strings.TrimSpace(part))]
+			if !ok {
+				return removedText
+			}
+			out = append(out, c)
+		}
+		return strings.Join(out, ",")
+	case ruleWait:
+		if waitTypeOK(v) {
 			return v
 		}
-	case ruleToken:
-		return cleanToken(v)
+	case ruleObject:
+		if c, ok := canonCounterObject(v); ok {
+			return c
+		}
 	case ruleName:
 		for _, s := range p.asIs {
 			if v == s {
@@ -210,6 +251,41 @@ func exportAttr(key []byte, p attrPolicy, v string) string {
 	return removedText
 }
 
+// attrValueOK is the check Verify applies to an exported attribute value: it
+// accepts exactly what exportAttr (and applyPersonRule) can produce.
+func attrValueOK(p attrPolicy, v string) bool {
+	switch p.rule {
+	case ruleNumber:
+		return v == removedText || numberValue.MatchString(v) || p.extra[v]
+	case ruleEnum:
+		return v == removedText || p.canon[v]
+	case ruleEnumList:
+		if v == removedText {
+			return true
+		}
+		for _, part := range strings.Split(v, ",") {
+			if !p.canon[part] {
+				return false
+			}
+		}
+		return true
+	case ruleWait:
+		return v == removedText || waitTypeOK(v)
+	case ruleObject:
+		return v == removedText || counterObjectCanon[v]
+	case ruleName:
+		for _, s := range p.asIs {
+			if v == s {
+				return true
+			}
+		}
+		return labelOK(p.prefix, v, labelHex)
+	case rulePerson:
+		return labelOK(p.prefix, v, labelHex)
+	}
+	return false
+}
+
 // caseWithholding records what BuildCase hid, for the masking statements.
 type caseWithholding struct {
 	rows        bool // an import row count is "withheld"
@@ -219,27 +295,39 @@ type caseWithholding struct {
 	truncated   bool
 }
 
-// BuildCase assembles a redacted case export (schema version 2): one
+// BuildCase assembles a redacted case export (schema version 3): one
 // ExportImport and one ManifestImport per ok import, and one ExportEvent per
 // event whose source has an export policy. Records is empty. The result is
 // shown in full as a preview and written with Canonical; Verify accepts it.
 //
 // Rules:
-//   - no file name, raw host name, raw user value, stored case pseudonym,
-//     IP, URL, path or message reaches the file;
-//   - hosts and named attributes are keyed pseudonyms under in.Key, so an
-//     export under another key shares no pseudonym with this one;
-//   - attributes follow exportPolicy; unlisted ones are left out, and values
-//     that fail their rule are "[removed]";
+//   - no file name, file hash, source line number, raw host name, raw user
+//     value, stored case pseudonym, stored evidence id, IP, URL, path, message
+//     or client form text reaches the file;
+//   - event ids, hosts and named attributes are keyed pseudonyms under in.Key,
+//     and the key is used for nothing else, so an export under another key
+//     shares no label with this one;
+//   - attributes follow exportPolicy: unlisted ones are left out, and values
+//     that are not a number, a fixed term or a pseudonym are "[removed]";
+//   - event kinds and units come from fixed lists; version strings are kept
+//     only when they look like a version number;
 //   - user pseudonyms are all or nothing (applyPersonRule);
 //   - import counts below ThinCell print as "<20", and a row count is
 //     withheld when its rejected count is masked (complementary suppression);
+//   - the acknowledgement is reduced to a banner id;
 //   - the file never says "proven", "strong correlation" or names a cause.
+//
+// Event times stay exact, so a holder of the original logs can match events
+// to log lines; the export is for a trusted counterparty (see the masking
+// statements).
+//
+// Before it returns, the result passes the same policy checks Verify applies,
+// so what BuildCase writes and what Verify accepts cannot drift apart.
 //
 // It returns an error wrapping ErrInvalid for input it cannot export safely:
 // a short key, no creation time, an importer name or file hash of the wrong
-// shape, a negative count, or an event that fails Event.Validate or whose
-// evidence id does not name its source.
+// shape, a negative count, a repeated evidence id, or an event that fails
+// Event.Validate or whose evidence id does not name its source.
 func BuildCase(in CaseInput) (Export, error) {
 	if in.Now.IsZero() {
 		return Export{}, fmt.Errorf("%w: no creation time", ErrInvalid)
@@ -260,8 +348,8 @@ func BuildCase(in CaseInput) (Export, error) {
 
 	e := Export{
 		Manifest: Manifest{
-			SchemaVersion: SchemaVersion,
-			ToolVersion:   in.ToolVersion,
+			SchemaVersion: CaseSchemaVersion,
+			ToolVersion:   exportVersion(in.ToolVersion),
 			CreatedAt:     in.Now.UTC(),
 			Masking:       Masking{Statements: caseStatements(w)},
 			Imports:       manifestImports,
@@ -271,14 +359,15 @@ func BuildCase(in CaseInput) (Export, error) {
 	if e.Manifest.BodySHA256, err = exportHash(e); err != nil {
 		return Export{}, err
 	}
-	// Last line of defence (R8-B7): nothing in the file may name a cause, say
-	// "proven" or "strong correlation", however it is spelt.
+	// Last line of defence: the file must pass every check Verify makes on a
+	// case export (shapes, allowlists, no cause, no "proven", no "strong
+	// correlation", however they are spelt).
 	raw, err := Canonical(e)
 	if err != nil {
 		return Export{}, err
 	}
-	if !claimFree(string(raw)) {
-		return Export{}, fmt.Errorf("%w: case export text carries a causal or proven claim", ErrInvalid)
+	if err := verifyCase(e, raw); err != nil {
+		return Export{}, err
 	}
 	return e, nil
 }
@@ -326,8 +415,7 @@ func exportImports(key []byte, imports []CaseImport, w *caseWithholding) ([]Mani
 		for _, g := range im.KnownGaps {
 			gaps = append(gaps, cleanCaseText(g, gapWithheld))
 		}
-		man = append(man, ManifestImport{Ref: ref, Importer: importer, SHA256: im.SHA256,
-			Acknowledgement: cleanCaseText(im.AckText, ackWithheld), KnownGaps: gaps})
+		man = append(man, ManifestImport{Ref: ref, Importer: importer, BannerID: bannerID(im.AckText), KnownGaps: gaps})
 	}
 	return man, body, nil
 }
@@ -358,17 +446,12 @@ func cleanCaseText(text, withheld string) string {
 	return out
 }
 
-// cleanQuality keeps a quality string only when scrubbing leaves it unchanged
-// and it carries no claim; times are copied.
+// cleanQuality keeps only what cannot carry client text: a version-like
+// source version, a clock rule and the coverage times. The importers' free
+// strings (threshold and sampling descriptions) are left out; the importer's
+// known gaps say the same in fixed sentences.
 func cleanQuality(q SourceQuality) SourceQuality {
-	keep := func(s string) string {
-		if len(s) > maxQualityLen || scrubText(s) != s || residualRisk(s) || !claimFree(s) {
-			return ""
-		}
-		return s
-	}
-	out := SourceQuality{SourceVersion: keep(q.SourceVersion), Threshold: keep(q.Threshold),
-		Sampling: keep(q.Sampling), TimezoneRule: keep(q.TimezoneRule)}
+	out := SourceQuality{SourceVersion: exportVersion(q.SourceVersion), TimezoneRule: exportTZRule(q.TimezoneRule)}
 	if q.CoverageFirst != nil {
 		t := q.CoverageFirst.UTC()
 		out.CoverageFirst = &t
@@ -384,6 +467,7 @@ func cleanQuality(q SourceQuality) SourceQuality {
 // person rule.
 func exportEvents(key []byte, events []Event, w *caseWithholding) ([]ExportEvent, error) {
 	out := make([]ExportEvent, 0, len(events))
+	seen := make(map[string]bool, len(events))
 	for i, ev := range events {
 		pol := exportPolicy[ev.Source]
 		if pol == nil {
@@ -400,12 +484,17 @@ func exportEvents(key []byte, events []Event, w *caseWithholding) ([]ExportEvent
 		if err := checkCaseEventID(ev.EvidenceID, ev.Source); err != nil {
 			return nil, fmt.Errorf("%w: event %d: %v", ErrInvalid, i, err)
 		}
-		x := ExportEvent{EvidenceID: ev.EvidenceID, Source: ev.Source, Kind: otherKind,
-			Start: ev.Start, End: ev.End, Severity: ev.Severity, Line: ev.Line, TZRule: ev.TZRule}
-		if kindToken.MatchString(ev.Kind) && claimFree(ev.Kind) {
+		id := keyedLabelN(key, "ev", ev.EvidenceID, eventLabelHex)
+		if seen[id] {
+			return nil, fmt.Errorf("%w: event %d: evidence id repeated", ErrInvalid, i)
+		}
+		seen[id] = true
+		x := ExportEvent{EvidenceID: id, Source: ev.Source, Kind: otherKind,
+			Start: ev.Start, End: ev.End, Severity: ev.Severity, TZRule: ev.TZRule}
+		if exportKinds[ev.Source][ev.Kind] {
 			x.Kind = ev.Kind
 		}
-		if unitToken.MatchString(ev.Unit) {
+		if exportUnits[ev.Unit] {
 			x.Unit = ev.Unit
 		}
 		if ev.Host != "" {
@@ -550,13 +639,13 @@ func applyPersonRule(key []byte, events []ExportEvent, w *caseWithholding) {
 
 func caseStatements(w caseWithholding) []string {
 	s := []string{
-		"This file holds the imported events and import summaries of one case. File names, raw host names, IP addresses, URLs and paths, query and SQL text, user agents, cookies, referers, messages and raw user names are not in it. Each imported file is named by its importer and the SHA-256 of its bytes only.",
-		fmt.Sprintf("An event attribute is kept only when its source's export policy lists it; every other attribute, and every event from a source without a policy, is left out. A kept text value that is not a short plain token (at most %d bytes, no dotted name, no long digit run, no identifier) is shown as \"%s\".", maxTokenBytes, removedText),
-		"Hosts, sites, application pools, queues, jobs, namespaces and counter instances are shown as keyed pseudonyms (a prefix such as host- followed by 8 hex characters). The key is made for this export only, so the same name gets a different label in any other export.",
+		"This file holds the imported events and import summaries of one case. File names, file hashes, raw host names, IP addresses, URLs and paths, query and SQL text, user agents, cookies, referers, messages, raw user names and source line numbers are not in it. Each imported file is named by its importer only.",
+		fmt.Sprintf("An event attribute is kept only when its source's export policy lists it and its value is a number, a term from a fixed list (an HTTP method, a status, a counter or wait name and the like) or a keyed pseudonym; any other value is shown as \"%s\". Every other attribute, and every event from a source without a policy, is left out. An event kind comes from a fixed list per source; any other kind is shown as \"%s\".", removedText, otherKind),
+		fmt.Sprintf("Event ids, hosts, sites, application pools, queues, jobs, namespaces, query hashes and counter instances are shown as keyed pseudonyms (a prefix such as host- followed by %d hex characters, %d for event ids). The key is made for this export only and is used for nothing else, so the same name gets a different label in any other export. A label hides the name, not the fact that two events share it.", labelHex, eventLabelHex),
 	}
 	shown, held := sortedKeys(w.personShown), sortedKeys(w.personHeld)
 	for _, p := range shown {
-		s = append(s, fmt.Sprintf("Each %[1]s is shown as a keyed pseudonym (%[1]s- followed by 8 hex characters) made with this export's key. The pseudonyms stored with the case do not appear. Every %[1]s shown has %[2]d or more events.", p, ThinCell))
+		s = append(s, fmt.Sprintf("Each %[1]s is shown as a keyed pseudonym (%[1]s- followed by %[3]d hex characters) made with this export's key. The pseudonyms stored with the case do not appear. Every %[1]s shown has %[2]d or more events.", p, ThinCell, labelHex))
 	}
 	for _, p := range held {
 		s = append(s, fmt.Sprintf("The %[1]s attribute is left out of every event: fewer than %[2]d of them were present, one had fewer than %[2]d events, or 1 to %[3]d events had none. Showing it would let a reader count a group below %[2]d.", p, ThinCell, ThinCell-1))
@@ -566,7 +655,7 @@ func caseStatements(w caseWithholding) []string {
 	}
 	s = append(s, fmt.Sprintf("Every import row count and rejected-row count below %d is shown as \"<%d\", including counts inside known gaps.", ThinCell, ThinCell))
 	if w.rows {
-		s = append(s, fmt.Sprintf("A row count shown as \"%s\" is %d or more. It is hidden so that subtracting the events of that import cannot reveal a rejected-row count below %d.", withheldText, ThinCell, ThinCell))
+		s = append(s, fmt.Sprintf("A row count shown as \"%s\" is %d or more. It is hidden since the events of an import can be counted in this file, and a row count minus that number could come close to a rejected-row count below %d. This lowers the risk; it does not remove it, since rows that made no event also change the difference.", withheldText, ThinCell, ThinCell))
 	}
 	if w.unlisted {
 		s = append(s, "Some events came from a source without an export policy and are left out.")
@@ -575,8 +664,9 @@ func caseStatements(w caseWithholding) []string {
 		s = append(s, "Not every event of the case is in this file: the event list stops at the read limit, so counts taken from it are lower bounds.")
 	}
 	return append(s,
-		fmt.Sprintf("Acknowledgements and known gaps are cleaned like hypothesis text: identifiers, email addresses, IP addresses, host names, paths and links become \"%s\", and text that still looks like it holds an identifier is replaced by \"%s\" or \"%s\".", removedText, ackWithheld, gapWithheld),
-		"Evidence ids, times and source line numbers are as stored, so the same event can be matched across two exports of one case even though its pseudonyms differ.",
+		"Event times and durations are exact, and the number of events is the number in this file. Anyone who holds the original logs can match events to log lines by time and value. This export is for a trusted counterparty, not for publication.",
+		fmt.Sprintf("The acknowledgement the analyst ticked is not copied: each import carries a banner id (the SHA-256 of a standard banner text, or \"%s\" for any other text). A version string is kept only when it looks like a version number. Free-text recording thresholds and sampling notes are not copied.", customBannerID),
+		fmt.Sprintf("Known gaps are cleaned like hypothesis text: identifiers, email addresses, IP addresses, host names, paths and links become \"%s\", and a gap that still looks like it holds an identifier is replaced by \"%s\".", removedText, gapWithheld),
 		keyStatement,
 		hashStatement,
 	)
@@ -591,20 +681,30 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
+// csvCell is Cell, except that a number is left as it is: a cell that is wholly
+// a number ("-5", "12.5") cannot start a formula, and escaping it would turn a
+// negative value into text.
+func csvCell(s string) string {
+	if numberValue.MatchString(s) {
+		return s
+	}
+	return Cell(s)
+}
+
 // EventsCSV writes the events of a case export as CSV: a header row, then one
 // row per event with attributes as "key=value" pairs joined by "; " in key
-// order. Every cell goes through Cell, so no cell can start a formula.
+// order. Every cell goes through csvCell, so no cell can start a formula.
 func EventsCSV(e Export) ([]byte, error) {
 	var buf bytes.Buffer
 	cw := csv.NewWriter(&buf)
 	row := func(cells ...string) error {
 		for i, c := range cells {
-			cells[i] = Cell(c)
+			cells[i] = csvCell(c)
 		}
 		return cw.Write(cells)
 	}
 	if err := row("evidenceId", "source", "kind", "host", "start", "end", "durationMs", "value",
-		"unit", "severity", "line", "tzRule", "attrs"); err != nil {
+		"unit", "severity", "tzRule", "attrs"); err != nil {
 		return nil, err
 	}
 	for _, ev := range e.Body.Events {
@@ -619,7 +719,7 @@ func EventsCSV(e Export) ([]byte, error) {
 		}
 		if err := row(ev.EvidenceID, ev.Source, ev.Kind, ev.Host, ev.Start.Format(time.RFC3339Nano),
 			ev.End.Format(time.RFC3339Nano), fmtFloat(ev.DurationMs), fmtFloat(ev.Value), ev.Unit,
-			ev.Severity, strconv.FormatInt(ev.Line, 10), ev.TZRule, strings.Join(pairs, "; ")); err != nil {
+			ev.Severity, ev.TZRule, strings.Join(pairs, "; ")); err != nil {
 			return nil, err
 		}
 	}
