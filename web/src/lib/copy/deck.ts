@@ -72,8 +72,8 @@ export const deck: Deck = {
     {
       id: 'episode',
       term: 'Episode',
-      hint: 'One stretch of time when a slow pattern showed up in the records.',
-      definition: 'An episode is one continuous period of the same slowdown. A burst of many requests in a short time still counts as one episode.',
+      hint: 'A run of stalls with no quiet gap of 10 minutes or more between them.',
+      definition: 'An episode is one run of stalls. A quiet gap of at least 10 minutes with no stall in it starts a new episode.',
       notMeaning: 'One episode is not yet a pattern, and it does not tell you why it happened.',
       aliases: ['Independent episode']
     },
@@ -325,6 +325,50 @@ export const deck: Deck = {
       definition: 'The census reads every record in a period of up to 31 days. It counts how many have each field filled in.',
       notMeaning: 'It does not check that the values are right, and it does not run unless you ask for it.',
       aliases: ['Census']
+    },
+    {
+      id: 'stall',
+      term: 'Stall',
+      hint: 'A request that ran for 45 seconds or longer.',
+      definition: 'A stall is a request whose recorded time is 45 seconds or more. The 45-second line is a fixed rule, not a rating of how bad the request was.',
+      notMeaning: 'A stall does not show what the system was doing during those seconds.',
+      aliases: ['Stalled request']
+    },
+    {
+      id: 'volley',
+      term: 'Volley',
+      hint: 'Two or more stalls from one user that start within 1 second of each other.',
+      definition: 'A volley is two or more stalls from the same user that start within 1 second of each other. The stalls in a volley can finish at different times.',
+      notMeaning: 'A volley does not show what the stalls had in common or what the system was doing.'
+    },
+    {
+      id: 'audit-insert-stall',
+      term: 'Audit-insert stall',
+      hint: 'A stall where saving the audit record took a large share of the time.',
+      definition: 'An audit-insert stall is a stall where the audit save took at least 5 seconds and at least 30% of the time. The save time is measured from the application side.',
+      notMeaning: 'It does not point at the database, since the save also includes network and driver time.',
+      aliases: ['Audit create stall']
+    },
+    {
+      id: 'presence-rate',
+      term: 'Presence rate',
+      hint: 'Counts the episodes that showed a pattern, written as k of n episodes.',
+      definition: 'A presence rate is written as k of n episodes. It means k of the n episodes showed the pattern being checked.',
+      notMeaning: 'A high presence rate does not prove a link between the things counted, and a low one does not rule one out.'
+    },
+    {
+      id: 'hypothesis-ledger',
+      term: 'Hypothesis ledger',
+      hint: 'A list of ideas to check, each with its evidence and references, kept in a local file.',
+      definition: 'The hypothesis ledger keeps ideas to check and links to their evidence. It is saved in a local file, and the app never sets an entry\'s state by itself.',
+      notMeaning: 'An entry is an idea to test, not a finding, and writing it down does not prove the idea is true.'
+    },
+    {
+      id: 'single-episode',
+      term: 'Single episode',
+      hint: 'The check found only one episode, so no recurring pattern is shown.',
+      definition: 'A single episode means the check found one episode in the period. The app then reports the number of requests in that episode, not a count of stalls.',
+      notMeaning: 'One episode is not a pattern, and it does not show that the episode will come back.'
     }
   ]
 };

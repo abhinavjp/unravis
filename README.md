@@ -103,6 +103,16 @@ To skip web dependency installation and rebuild only the Go executable using the
 
 
 
+## Incident patterns and the ledger
+
+The **Patterns** and **Ledger** buttons in the header open two side panels.
+
+- **Patterns** reads the audit requests the app already reads for the selected sources and window, under the same time, concurrency and 7-day limits. It adds no new MongoDB query, and it never runs by itself: a run starts only when you press its button.
+- Patterns counts stalls (requests of 45 seconds or longer), episodes (stalls separated by a quiet gap of at least 10 minutes), volleys (two or more stalls from one user starting within 1 second) and audit-insert stalls. A presence rate reads as k of n episodes.
+- Each finding shows one evidence label: Symptom, Correlation or Strong correlation. It also shows n, a low-sample flag, the incomplete, pending and invalid counts, and coverage. A pattern is called recurring only over 3 or more independent episodes; one episode is shown as a single episode.
+- **Ledger** is a local file of hypotheses, their states, references and notes. It holds no row data or identifiers. It never sets a state itself: you choose each state, and guards can only block "strong correlation" when its requirements are not met.
+- Nothing here proves a cause. A finding describes what was recorded and how often it appeared, and a correlation is a clue to check, not a root cause.
+
 ## AI investigations
 
 Local Codex/Claude investigations are available through the executable's --mcp mode. See [MCP.md](MCP.md) for tools, workflow, configuration and evidence limits. MCP reuses the running dashboard's connected sources and does not expose credentials, raw URLs, payloads, connection changes or database writes.
