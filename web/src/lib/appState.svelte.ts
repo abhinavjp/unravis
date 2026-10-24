@@ -3,7 +3,8 @@
 // write it through the exported accessor objects at the end of this file (app, scope, results, evidence, navigation, panels, conn).
 // startApp() must be called once from App.svelte's script: it registers the effects and the mount work, which need a component.
 import { onMount, tick, untrack } from 'svelte';
-import { api } from './api';
+import { api, ApiError } from './api';
+import { bumpEpoch } from './evidenceMemo';
 import { defaultQuery } from './time';
 import { initialComparison, kindLabel, queryFingerprint, resultNotes, rankComparisons, stateLabel } from './presentation';
 import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, serializeRecordFilters, shouldSelectAddedSource, writeInvestigationSnapshot } from './investigation';
@@ -347,7 +348,8 @@ export async function initialize() {
 }
 function setLocalInputs() {
 }
-function message(cause: unknown) { return cause instanceof Error ? cause.message : 'The request could not be completed.'; }
+// A 401 means the session was forgotten: the evidence memo must not serve anything shown under it.
+function message(cause: unknown) { if (cause instanceof ApiError && cause.status === 401) bumpEpoch(); return cause instanceof Error ? cause.message : 'The request could not be completed.'; }
 function friendlyConnectionStage(cause: unknown) {
   const stage = cause && typeof cause === 'object' && 'stage' in cause ? String((cause as { stage?: unknown }).stage ?? '') : '';
   return ({ validation: 'Settings', connection: 'Network', tls: 'TLS', authentication: 'Sign-in', discovery: 'Database list' } as Record<string, string>)[stage] ?? '';
@@ -662,7 +664,7 @@ export async function deleteSource(source: Source) {
     query.sourceIds = query.sourceIds.filter(id => id !== source.id);
     analysis = analysis ? { ...analysis, sources: analysis.sources.filter(result => result.sourceId !== source.id), apis: analysis.apis.filter(row => row.sourceId !== source.id) } : null;
     selectedKey = ''; operation = null; contextAnchor = null;
-    invalidateDetails();
+    invalidateDetails(); bumpEpoch();
   } catch (cause) { sourceError = message(cause); }
   finally { busyDelete = ''; }
 }
@@ -679,10 +681,11 @@ export async function runAnalysis(auto = false) {
   const run = ++analysisSequence;
   inflightSignature = queryFingerprint(query);
   // The previous analysis stays on screen (dimmed) while the new one loads, and nothing is auto-selected afterwards: the pulse is the landing view.
-  loading = true; invalidateDetails(); selectedKey = ''; operation = null; contextAnchor = null;
+  loading = true; invalidateDetails(); bumpEpoch(); selectedKey = ''; operation = null; contextAnchor = null;
   try {
     const result = await api.analyze(cloneQuery(), analysisController.signal);
     if (run !== analysisSequence) return;
+    bumpEpoch(); // the old analysis stays on screen while this runs, so anything read meanwhile belongs to it, not to this result
     analysis = result;
     timelineKeys = rankComparisons(result.apis).filter(row => row.state === 'compared').slice(0, 1).map(row => row.key); // only the top group starts checked: three overlapping lines were unreadable
   } catch (cause) {
