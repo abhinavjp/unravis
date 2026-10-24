@@ -36,7 +36,10 @@ func TestAgentGoodFixture(t *testing.T) {
 		t.Fatalf("rows=%d rejected=%d errors=%+v", rep.Rows, rep.Rejected, rep.Errors)
 	}
 	b, u, r := ofKind(ev, KindBoundary), ofKind(ev, KindUnknown), ofKind(ev, KindJobRun)
-	if len(b) != 44 || len(u) != 2 || len(r) != 2 || rep.Emitted != 48 {
+	// 45 enabled boundaries (job-beta has both readings of the missing hour)
+	// plus 4 for the disabled job-zeta, which are kept as possible boundaries
+	// (basis disabled-at-export).
+	if len(b) != 49 || len(u) != 2 || len(r) != 2 || rep.Emitted != 53 {
 		t.Fatalf("boundaries=%d unknown=%d runs=%d emitted=%d", len(b), len(u), len(r), rep.Emitted)
 	}
 	// job-alpha appears twice with one schedule: boundaries are not doubled.
@@ -108,7 +111,8 @@ func TestAgentDSTGapBoundaryFlagged(t *testing.T) {
 			t.Errorf("dst = %q", e.Attrs["dst"])
 		}
 	}
-	if flagged != 1 || plain != 2 {
+	// Both readings of the missing hour are emitted, each flagged.
+	if flagged != 2 || plain != 2 {
 		t.Fatalf("flagged=%d plain=%d", flagged, plain)
 	}
 }

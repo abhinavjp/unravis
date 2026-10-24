@@ -12,6 +12,15 @@ func bev(kind, ts string, attr map[string]string) evidence.Event {
 	return evidence.Event{Kind: kind, Start: t, End: t, Attrs: attr}
 }
 
+// dayCov covers 2001-03-24 in full.
+var dayCov = Coverage{From: utc("2001-03-24T00:00:00Z"), To: utc("2001-03-25T00:00:00Z")}
+
+// uev is a schedule-unknown marker that applies to the span [from, to].
+func uev(job, reason, from, to string) evidence.Event {
+	return evidence.Event{Kind: KindUnknown, Start: utc(from), End: utc(to),
+		Attrs: map[string]string{"job": job, "reason": reason}}
+}
+
 func TestB3CountsNearBoundaries(t *testing.T) {
 	b := []evidence.Event{
 		bev(KindBoundary, "2001-03-24T03:00:00Z", nil),
@@ -24,16 +33,16 @@ func TestB3CountsNearBoundaries(t *testing.T) {
 		utc("2001-03-24T05:00:00Z"), // only a job run: a real miss
 		utc("2001-03-24T03:30:00Z"), // between boundaries: a real miss
 	}
-	k, n, unk := B3(stalls, b, time.Minute)
+	k, n, unk := B3Covered(stalls, b, time.Minute, dayCov)
 	if k != 2 || n != 4 || unk != 0 {
 		t.Fatalf("k=%d n=%d unknown=%d", k, n, unk)
 	}
 	// The tolerance is inclusive.
-	k, _, _ = B3([]time.Time{utc("2001-03-24T03:01:00Z")}, b, time.Minute)
+	k, _, _ = B3Covered([]time.Time{utc("2001-03-24T03:01:00Z")}, b, time.Minute, dayCov)
 	if k != 1 {
 		t.Errorf("edge of tolerance: k=%d", k)
 	}
-	k, _, _ = B3([]time.Time{utc("2001-03-24T03:01:01Z")}, b, time.Minute)
+	k, _, _ = B3Covered([]time.Time{utc("2001-03-24T03:01:01Z")}, b, time.Minute, dayCov)
 	if k != 0 {
 		t.Errorf("past tolerance: k=%d", k)
 	}
@@ -42,10 +51,10 @@ func TestB3CountsNearBoundaries(t *testing.T) {
 func TestB3UnknownNeverMiss(t *testing.T) {
 	b := []evidence.Event{
 		bev(KindBoundary, "2001-03-24T03:00:00Z", nil),
-		bev(KindUnknown, "2001-03-24T00:00:00Z", map[string]string{"job": "job-gamma", "reason": reasonCron}),
+		uev("job-gamma", reasonCron, "2001-03-24T00:00:00Z", "2001-03-25T00:00:00Z"),
 	}
 	stalls := []time.Time{utc("2001-03-24T03:00:00Z"), utc("2001-03-24T09:00:00Z"), {}}
-	k, n, unk := B3(stalls, b, time.Minute)
+	k, n, unk := B3Covered(stalls, b, time.Minute, dayCov)
 	// One known hit; the miss is unknown because a schedule was unexpandable; a
 	// zero time is not a real time and is unknown too.
 	if k != 1 || n != 3 || unk != 2 {
@@ -60,7 +69,7 @@ func TestB3DSTFlaggedBoundaryIsUnknown(t *testing.T) {
 	b := []evidence.Event{
 		bev(KindBoundary, "2001-03-25T01:30:00Z", map[string]string{"dst": "nonexistent"}),
 	}
-	k, n, unk := B3([]time.Time{utc("2001-03-25T01:30:10Z"), utc("2001-03-25T06:00:00Z")}, b, time.Minute)
+	k, n, unk := B3Covered([]time.Time{utc("2001-03-25T01:30:10Z"), utc("2001-03-25T06:00:00Z")}, b, time.Minute, Coverage{From: utc("2001-03-25T00:00:00Z"), To: utc("2001-03-26T00:00:00Z")})
 	if k != 0 || n != 2 || unk != 1 {
 		t.Fatalf("k=%d n=%d unknown=%d", k, n, unk)
 	}
@@ -77,12 +86,12 @@ func TestB3EmptyAndNegativeTolerance(t *testing.T) {
 }
 
 func TestB3WithImportedFixture(t *testing.T) {
-	ev, _ := mustParse(t, NewHangfire(), fixture(t, "hangfire_good.csv"), hangfireOpts())
+	ev, rep := mustParse(t, NewHangfire(), fixture(t, "hangfire_good.csv"), hangfireOpts())
 	stalls := []time.Time{
 		utc("2001-03-24T05:15:05Z"), // job-alpha every 15 minutes: near
 		utc("2001-03-24T05:07:30Z"), // between alpha boundaries, but gamma and delta are unknown
 	}
-	k, n, unk := B3(stalls, ev, 30*time.Second)
+	k, n, unk := B3Covered(stalls, ev, 30*time.Second, CoverageOf(rep))
 	if k != 1 || n != 2 || unk != 1 {
 		t.Fatalf("k=%d n=%d unknown=%d", k, n, unk)
 	}
