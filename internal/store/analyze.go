@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"api-audit-explorer/internal/audit"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -194,51 +196,54 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 	return analysis, nil
 }
 
-// estimateBucketJSON is a cheap upper bound on len(json.Marshal(bucket)): no
-// allocation and no reflection, so the early byte bail-out in readBuckets costs
-// a few additions per bucket instead of an encode. It never under-counts, so the
-// bail-out cannot let through more than json.Marshal would have; the exact check
-// on the whole Analysis (in Analyze) is what decides the final size. ok is false
-// for a bucket json.Marshal would refuse (NaN or infinite float, a time outside
-// years 0 to 9999), which readBuckets reports as the same byte-limit error.
+// estimateBucketJSON is an upper bound on len(json.Marshal(bucket)) that is
+// exact for everything except string escaping: no allocation and no reflection,
+// so the early byte bail-out in readBuckets costs a few number formats per
+// bucket instead of an encode. It never under-counts, so the bail-out cannot let
+// through more than json.Marshal would have; the exact check on the whole
+// Analysis (in Analyze) is what decides the final size. ok is false for a bucket
+// json.Marshal would refuse (NaN or infinite float, a time outside years 0 to
+// 9999), which readBuckets reports as the same byte-limit error.
 //
-// Keys are counted with their quotes, colon and a comma. Omitempty fields cost
-// nothing at zero. A float is bounded at 24 bytes (-1.7976931348623157e+308), a
-// string at one byte per safe ASCII byte and six (\u00XX) for any other byte.
+// Keys are counted with their quotes and colon, and the commas between fields.
+// Omitempty fields cost nothing at zero. Floats and the time are measured with
+// the formatting encoding/json uses, so they are exact; a float is at most 25
+// bytes (sign, 0., five zeros and 17 digits for a negative value in [1e-6, 1e-5)). A string
+// is counted per byte as one for a safe ASCII byte, two for a quote or
+// backslash and six (\u00XX or \ufffd) for any other byte that is escaped, so
+// it is exact unless the string holds control characters, which have a shorter
+// escape for \b \f \n \r \t.
 func estimateBucketJSON(b audit.Bucket) (size int64, ok bool) {
-	const (
-		braces     = 2
-		timeBound  = 32 // "2006-01-02T15:04:05.999999999Z"
-		floatBound = 24
-	)
 	if year := b.At.Year(); year < 0 || year > 9999 {
 		return 0, false
 	}
-	size = braces +
+	var timeBuf [48]byte
+	timeLen := int64(len(b.At.AppendFormat(timeBuf[:0], time.RFC3339Nano))) + 2 // quotes
+	// Twelve fields always present, so eleven commas between them; each omitted
+	// field present adds its own comma below.
+	size = 2 + 11 +
 		int64(len(`"sourceId":`)+len(`"controller":`)+len(`"action":`)+len(`"kind":`)+len(`"outcome":`)+len(`"state":`)+
-			len(`"at":`)+len(`"bin":`)+len(`"count":`)+len(`"sumMs":`)+len(`"minMs":`)+len(`"maxMs":`)+12) +
+			len(`"at":`)+len(`"bin":`)+len(`"count":`)+len(`"sumMs":`)+len(`"minMs":`)+len(`"maxMs":`)) +
 		jsonStringBound(b.SourceID) + jsonStringBound(b.Controller) + jsonStringBound(b.Action) +
 		jsonStringBound(b.Kind) + jsonStringBound(b.Outcome) + jsonStringBound(b.State) +
-		timeBound + decimalLen(int64(b.Bin)) + decimalLen(b.Count)
+		timeLen + decimalLen(int64(b.Bin)) + decimalLen(b.Count)
 	for _, v := range [...]float64{b.SumMs, b.MinMs, b.MaxMs} {
-		if math.IsNaN(v) || math.IsInf(v, 0) {
+		n, finite := jsonFloatLen(v)
+		if !finite {
 			return 0, false
 		}
-		if v == 0 {
-			size += 2 // "0" or "-0"
-		} else {
-			size += floatBound
-		}
+		size += n
 	}
 	for _, f := range [...]struct {
 		key string
 		v   float64
 	}{{`"sumAuditMs":`, b.SumAuditMs}, {`"sumApiMs":`, b.SumApiMs}, {`"sumPayloadMs":`, b.SumPayloadMs}} {
-		if math.IsNaN(f.v) || math.IsInf(f.v, 0) {
+		n, finite := jsonFloatLen(f.v)
+		if !finite {
 			return 0, false
 		}
 		if f.v != 0 {
-			size += int64(len(f.key)) + 1 + floatBound
+			size += int64(len(f.key)) + 1 + n
 		}
 	}
 	for _, c := range [...]struct {
@@ -256,16 +261,51 @@ func estimateBucketJSON(b audit.Bucket) (size int64, ok bool) {
 	return size, true
 }
 
+// jsonFloatLen is the length encoding/json gives a float64, using its format
+// choice: exponent form below 1e-6 and from 1e21, plain decimal otherwise, and
+// e-09 trimmed to e-9. finite is false for NaN and infinities, which it refuses.
+func jsonFloatLen(v float64) (n int64, finite bool) {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	var buf [32]byte
+	format := byte('f')
+	if abs := math.Abs(v); abs != 0 && (abs < 1e-6 || abs >= 1e21) {
+		format = 'e'
+	}
+	b := strconv.AppendFloat(buf[:0], v, format, -1, 64)
+	n = int64(len(b))
+	if format == 'e' {
+		if l := len(b); l >= 4 && b[l-4] == 'e' && b[l-3] == '-' && b[l-2] == '0' {
+			n--
+		}
+	}
+	return n, true
+}
+
 // jsonStringBound bounds the encoded length of s, quotes included.
 func jsonStringBound(s string) int64 {
 	n := int64(2)
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; {
-		case c >= 0x80 || c < 0x20 || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&':
+	for i := 0; i < len(s); {
+		c := s[i]
+		switch {
+		case c >= utf8.RuneSelf:
+			r, width := utf8.DecodeRuneInString(s[i:])
+			if r == utf8.RuneError || r == '\u2028' || r == '\u2029' {
+				n += 6 // \ufffd for an invalid byte, \u2028 and \u2029 for the separators
+			} else {
+				n += int64(width)
+			}
+			i += width
+			continue
+		case c == '"' || c == '\\':
+			n += 2
+		case c < 0x20 || c == '<' || c == '>' || c == '&':
 			n += 6
 		default:
 			n++
 		}
+		i++
 	}
 	return n
 }

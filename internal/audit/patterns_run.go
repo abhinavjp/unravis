@@ -239,8 +239,15 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 	return report, nil
 }
 
-// MaxPatternWorkers bounds how many sources RunPatterns reads at once.
-const MaxPatternWorkers = 4
+// MaxPatternWorkers bounds how many sources RunPatterns reads at once. It is
+// below the server's global query slots, so one patterns or export call cannot
+// take every slot and starve other requests.
+const MaxPatternWorkers = 2
+
+// ErrPatternReadPanic is returned when a source read panicked. The panic is
+// recovered so a fault in a repository read fails the one call instead of the
+// process; the panic value and stack are deliberately not carried in the error.
+var ErrPatternReadPanic = errors.New("an incident pattern read failed unexpectedly")
 
 // patternWorkers is the worker cap in use. Tests lower it to 1 to get the
 // serial reference output.
@@ -294,7 +301,7 @@ func readPatternSources(ctx context.Context, reader SlowestReader, repo Reposito
 		}
 	}
 
-	started := runBounded(ctx, n, patternWorkers, func(i int) {
+	started, panicErr := runBounded(ctx, n, patternWorkers, func(i int) {
 		src := in.SourceIDs[i]
 		read := &reads[i]
 		if int64(i) > firstStallFail.Load() {
@@ -325,6 +332,9 @@ func readPatternSources(ctx context.Context, reader SlowestReader, repo Reposito
 		read.coverage, read.coverageErr = prober.Coverage(ctx, CoverageInput{SourceID: src, Start: in.Start, End: in.End})
 	})
 
+	if panicErr != nil {
+		return nil, panicErr
+	}
 	if !started {
 		return nil, ctx.Err()
 	}
@@ -343,8 +353,11 @@ func readPatternSources(ctx context.Context, reader SlowestReader, repo Reposito
 
 // runBounded calls fn(0..n-1), at most workers at a time, starting them in
 // index order, and returns when every started call has returned. It stops
-// starting calls once ctx is done and then reports false.
-func runBounded(ctx context.Context, n, workers int, fn func(i int)) bool {
+// starting calls once ctx is done and then reports false. A call that panics is
+// recovered in its own goroutine, which would otherwise end the process: no
+// later call is started, and the panic of the lowest index is returned as an
+// error wrapping ErrPatternReadPanic.
+func runBounded(ctx context.Context, n, workers int, fn func(i int)) (started bool, panicErr error) {
 	if workers < 1 {
 		workers = 1
 	}
@@ -353,21 +366,40 @@ func runBounded(ctx context.Context, n, workers int, fn func(i int)) bool {
 	}
 	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	panicIndex := n
+	var crashed atomic.Bool
 	for i := 0; i < n; i++ {
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
 			wg.Wait()
-			return false
+			return false, panicErr
+		}
+		if crashed.Load() {
+			<-sem
+			break
 		}
 		wg.Add(1)
 		go func(i int) {
 			defer func() { <-sem; wg.Done() }()
+			defer func() {
+				if recover() == nil {
+					return
+				}
+				crashed.Store(true)
+				mu.Lock()
+				defer mu.Unlock()
+				if i < panicIndex {
+					panicIndex = i
+					panicErr = fmt.Errorf("%w (source %d)", ErrPatternReadPanic, i+1)
+				}
+			}()
 			fn(i)
 		}(i)
 	}
 	wg.Wait()
-	return true
+	return true, panicErr
 }
 
 // readPatternStalls pages the slowest ranking for one source down to stallMs,
