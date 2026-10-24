@@ -198,6 +198,26 @@ func TestRejectingTriggersDoesNotFalseFail(t *testing.T) {
 	importertest.Run(t, toy{rejectTrigger: true}, fx)
 }
 
+// keptCellFixtures has the sentinel in a note cell the toy keeps verbatim and
+// in a host cell it reports as an observed raw name. With KeepsCellValues,
+// FuzzParse's seed corpus (which includes this Bad file) must pass: neither is
+// a leak. Seeds run under plain "go test".
+func keptCellFixtures() importertest.Fixtures {
+	fx := fixtures()
+	fx.Bad = []byte("time,host,note,ms\n" +
+		"2001-01-01T00:00:00Z,web-a," + importertest.Sentinel + ",1\n" +
+		"2001-01-01T00:00:01Z," + importertest.Sentinel + ",kept,2\n")
+	fx.Options.Hosts = func(string) (importer.HostHint, bool) {
+		return importer.HostHint{Label: "host-1", Role: "iis"}, true
+	}
+	fx.KeepsCellValues = true
+	return fx
+}
+
+func FuzzToyKeepsCells(f *testing.F) {
+	importertest.FuzzParse(f, toy{}, keptCellFixtures())
+}
+
 func FuzzToyParse(f *testing.F) {
 	importertest.FuzzParse(f, toy{}, fixtures())
 }

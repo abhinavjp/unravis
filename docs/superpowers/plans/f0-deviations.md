@@ -93,6 +93,12 @@ Stricter behaviour that existing code may trip over (the breaks to check when th
 - **L9** all four: `no-network` (failing `http.DefaultTransport`, `DefaultClient.Transport` and `net.DefaultResolver` dial; must see zero calls; broken importer `calls-network`), `line-endings-identical` (LF and CRLF copies, attribute values compared after normalising CRLF), `Emitted` against events received (in `event-ids`), and `concurrent-parse` (eight goroutines, same result as one). The last runs without the race detector (CGO off), so it catches shared-state corruption and map panics, not data races.
 - `TestHarnessCatchesBrokenImporters` now also names the subtest that must fail for each of the sixteen broken importers (`wantFail`), so a fault cannot be "caught" by an unrelated early failure.
 
+### FuzzParse false positives (importer authors P4, P6, P9)
+
+- `Report.ObservedHosts` holds raw host names by contract, so the sentinel check (`leaks`, used by `Run`'s sentinel subtest and by `FuzzParse`) no longer looks at it. The report is printed field by field, without `ObservedHosts` or its unexported index. The rule that labels, not raw names, reach events stays in `hosts-are-labels`.
+- New `importertest.Fixtures.KeepsCellValues bool` (additive; `FuzzParse(f, imp, fixtures)` calls compile unchanged). An importer that keeps whole cell values in event attributes by design (counter paths, `LogName`, `ProviderName`, `AppPool`, a free-text `name`) sets `KeepsCellValues: true` in its fixtures. `FuzzParse` then skips the sentinel check on event attribute keys and values only; it still fails on the sentinel in an error chain, `KnownGaps`, `FieldRules`, report text, or any event field other than `Attrs` (host label, kind, unit, ID). The default is false: the strict check. It is separate from `NoFreeText` (which says no attribute holds file text) and does not change `Run`'s sentinel subtest, whose Bad fixture must put the sentinel in a cell that is not kept.
+- Test: `FuzzToyKeepsCells` (seed corpus, run by `go test`) has the sentinel in a kept note cell and in an observed raw host cell; it passes with `KeepsCellValues` and fails without it.
+
 ### Declined
 
 - **L6** (registry ignores a duplicate name): turning it into a panic or an error changes `Register` for the six parked importers; left for the coordinator.
