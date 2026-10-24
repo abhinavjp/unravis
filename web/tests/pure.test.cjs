@@ -1620,3 +1620,13 @@ test('the run hint is a persistent status region tied to the run button, the bac
   assert.match(slowness, /const narrowed=\$derived\(mode!=='ms'&&cohort\?cohort:null\)/);
   assert.match(slowness, /\{headingScope\} · /);
 });
+
+test('the CSV export reads the same drill query as the on-screen request list', () => {
+  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  const list = app.match(/api\.requests\(drillQuery\(([^)]*)\)/);
+  const exported = app.match(/api\.export\(drillQuery\(([^)]*)\)/);
+  assert.ok(list && exported, 'both calls build their query with drillQuery');
+  assert.match(list[1], /^breakdownQuery \?\? analysis/);
+  assert.match(exported[1], /^breakdownQuery \?\? analysis/);
+  assert.doesNotMatch(app, /api\.export\(drillQuery\(analysis/);
+});

@@ -496,6 +496,9 @@ func (d *demoRepository) Breakdown(ctx context.Context, input BreakdownInput) (B
 		return Breakdown{}, err
 	}
 	q := input.Query.Normalized()
+	if q.HasAgeRange() {
+		q.Now = d.now
+	}
 	sources := make(map[string]bool, len(q.SourceIDs))
 	for _, id := range q.SourceIDs {
 		if !d.hasSource(id) {
