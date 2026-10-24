@@ -16,6 +16,13 @@ export const deck: Deck = {
       aliases: ['Median', 'Typical time (median)']
     },
     {
+      id: 'p90',
+      term: 'P90',
+      hint: 'The time within which about 90 of every 100 requests finished.',
+      definition: 'P90 shows how long the slower end of a group of requests took. The slowest 10 in every 100 took longer than this.',
+      notMeaning: 'It does not mean every request was this slow, and it is an estimate read from a histogram.'
+    },
+    {
       id: 'p95',
       term: 'P95',
       hint: 'The time within which about 95 of every 100 requests finished.',
@@ -80,8 +87,8 @@ export const deck: Deck = {
     {
       id: 'strong-correlation',
       term: 'Strong correlation',
-      hint: 'Two things showed up together in more than one episode.',
-      definition: 'A strong correlation is a correlation seen in more than one episode, with cases that do not fit listed too. It is the top evidence label the app uses.',
+      hint: 'Two things showed up together in at least 3 separate episodes, with the exceptions listed.',
+      definition: 'A strong correlation is a correlation seen in at least 3 separate episodes. The entry says how often the two came together, lists the cases that did not fit and names other ways to explain it.',
       notMeaning: 'It does not show that one made the other happen, however often they appear together.'
     },
     {

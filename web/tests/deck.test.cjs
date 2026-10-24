@@ -86,3 +86,18 @@ test('deck copy has no causal or certainty wording', () => {
     }
   }
 });
+
+test('strong correlation states the 3-episode standard and stays consistent with its neighbours (roadmap 8.6)', () => {
+  const strong = terms.find((term) => term.id === 'strong-correlation');
+  assert.match(strong.hint, /at least 3 (separate |independent )?episodes/);
+  assert.match(strong.definition, /at least 3 (separate |independent )?episodes/);
+  assert.match(strong.definition, /how often/);
+  assert.match(strong.definition, /did not fit/);
+  assert.match(strong.definition, /other ways to explain|alternative/);
+  assert.doesNotMatch(strong.definition + strong.hint, /more than one episode/);
+  assert.ok(strong.notMeaning.trim().length > 0);
+  // The neighbouring entries do not contradict it: one episode is not a pattern, and the three labels are unchanged.
+  assert.match(terms.find((term) => term.id === 'episode').notMeaning, /One episode is not yet a pattern/);
+  assert.match(terms.find((term) => term.id === 'evidence-label').definition, /Symptom, Correlation or Strong correlation/);
+  assert.ok(terms.some((term) => term.id === 'p90'), 'P90 is shown on screen and needs a term');
+});
