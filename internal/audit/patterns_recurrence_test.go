@@ -178,8 +178,15 @@ func TestRunPatternsOnsetAddsNoReads(t *testing.T) {
 	in := patternInput()
 	in.Start = in.Start.Add(-4 * 24 * time.Hour)
 	r := runFake(t, repo, in)
-	if len(repo.auditCalls) != 1 || len(repo.slowCalls) != 1 {
-		t.Fatalf("reads: slow %d audit %d", len(repo.slowCalls), len(repo.auditCalls))
+	// The repeat reads (B12r) are the ones filtered to users; B3a adds none.
+	plain := 0
+	for _, c := range repo.auditCalls {
+		if len(c.Query.UserIDs) == 0 {
+			plain++
+		}
+	}
+	if plain != 1 || len(repo.slowCalls) != 1 {
+		t.Fatalf("reads: slow %d audit %d", len(repo.slowCalls), plain)
 	}
 	if len(r.OnsetMinutes) == 0 {
 		t.Fatalf("no onset rows: %+v", r.Stalls)

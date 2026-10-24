@@ -77,6 +77,15 @@ func demoPatternRecords(now time.Time) []RequestRecord {
 		{"e3-a", "Payroll", "Run", 1 * time.Hour, 60000, 160, 1003},
 		{"e3-b", "Payroll", "Run", 1*time.Hour - 300*time.Millisecond, 64100, 170, 1003},
 		{"e3-c", "Payroll", "Run", 1*time.Hour - 700*time.Millisecond, 68000, 190, 1003},
+		// Quick requests for B12r, none of them a stall. User 1001 starts Payroll.Run
+		// again three times, 10 s apart, while the 52 s stall e1-a is still running.
+		{"r1-a", "Payroll", "Run", 3*time.Hour + 30*time.Minute - 10*time.Second, 2000, 100, 1001},
+		{"r1-b", "Payroll", "Run", 3*time.Hour + 30*time.Minute - 20*time.Second, 2000, 100, 1001},
+		{"r1-c", "Payroll", "Run", 3*time.Hour + 30*time.Minute - 30*time.Second, 2000, 100, 1001},
+		// Not repeats: user 1002 starts another operation during e1-b, and user 1005
+		// starts Reports.Generate after the 48 s stall e2-a was already done.
+		{"r2-a", "Employees", "List", 3*time.Hour + 29*time.Minute + 5*time.Second, 2000, 100, 1002},
+		{"r2-b", "Reports", "Generate", 2*time.Hour + 14*time.Minute, 2000, 100, 1005},
 	}
 	return demoScenarioRecords(now, rows, "pattern")
 }

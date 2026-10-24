@@ -253,6 +253,16 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 	report.Concentration = conc
 	report.Findings = append(report.Findings, concFindings...)
 	report.Warnings = append(report.Warnings, concWarnings...)
+
+	// B12r reads one list per episode and source, one after another.
+	repeats, repeatFinds, repeatProv, repeatWarnings, err := buildRepeats(ctx, repo, in, params, report)
+	if err != nil {
+		return PatternReport{}, err
+	}
+	report.Repeats = repeats
+	report.Provenance = append(report.Provenance, repeatProv...)
+	report.Findings = append(report.Findings, repeatFinds...)
+	report.Warnings = append(report.Warnings, repeatWarnings...)
 	return report, nil
 }
 

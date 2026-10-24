@@ -53,8 +53,14 @@ func TestPatternsDemoScenario(t *testing.T) {
 	for _, f := range r.Findings {
 		rules += f.Rule + " "
 	}
-	if rules != "B1 B2 B6 B12 " {
+	if rules != "B1 B2 B6 B12 B12r " {
 		t.Fatalf("findings %+v", r.Findings)
+	}
+	if want := []Repeat{{Episode: 1, UserID: 1001, Operation: "Payroll.Run", Repeats: 3, SameSize: true, LongestChain: 4}}; !reflect.DeepEqual(r.Repeats, want) {
+		t.Fatalf("repeats %+v", r.Repeats)
+	}
+	if b := findingByRule(r, "B12r"); b.Label != EvidenceCorrelation || b.N != 3 || !b.LowN || b.Headline != "The same user started Payroll.Run again 3 times while an earlier one was still running, during this stall (episode 1)." {
+		t.Fatalf("B12r %+v", b)
 	}
 	if b6 := findingByRule(r, "B6"); b6.Headline != "Audit create took 6.2 s as measured from the client side. That is the longest of 2 requests at or above 5 s and 30% of observed time." {
 		t.Fatalf("B6 headline %q", b6.Headline)
