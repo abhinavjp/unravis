@@ -93,18 +93,80 @@ func TestIPv6LoopbackAndTokenedCLIWithoutOriginAreAllowed(t *testing.T) {
 	}
 }
 
-func TestRootInjectsEscapedSessionTokenAndSecurityHeaders(t *testing.T) {
-	token := "a&<b>0123456789abcdef0123456789abcdef"
-	h := New(audit.NewDemo(time.Now()), testAssets(), token, true)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Host = "127.0.0.1:8765"
-	res := httptest.NewRecorder()
-	h.ServeHTTP(res, req)
-	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), "a&amp;&lt;b&gt;") {
-		t.Fatalf("root token injection failed: status=%d body=%s", res.Code, res.Body.String())
+// The unauthenticated page must never carry the session token: any local user
+// or process can read GET / on loopback.
+func TestRootNeverContainsSessionTokenAndSetsSecurityHeaders(t *testing.T) {
+	for name, assets := range map[string]fs.FS{"fixture": testAssets(), "embedded": explorer.Assets()} {
+		t.Run(name, func(t *testing.T) {
+			h := New(audit.NewDemo(time.Now()), assets, testToken, true)
+			for _, path := range []string{"/", "/index.html"} {
+				res := request(h, http.MethodGet, path, "", false)
+				if path == "/" && res.Code != http.StatusOK {
+					t.Fatalf("root status=%d", res.Code)
+				}
+				if strings.Contains(res.Body.String(), testToken) {
+					t.Fatalf("%s served the session token without authentication", path)
+				}
+			}
+			res := request(h, http.MethodGet, "/", "", false)
+			if res.Header().Get("Content-Security-Policy") == "" || res.Header().Get("X-Content-Type-Options") != "nosniff" || res.Header().Get("Referrer-Policy") != "no-referrer" {
+				t.Fatalf("security headers missing: %#v", res.Header())
+			}
+		})
 	}
-	if res.Header().Get("Content-Security-Policy") == "" || res.Header().Get("X-Content-Type-Options") != "nosniff" || res.Header().Get("Referrer-Policy") != "no-referrer" {
-		t.Fatalf("security headers missing: %#v", res.Header())
+}
+
+func TestAPIStillRequiresTheHeaderAfterThePageLoads(t *testing.T) {
+	h := New(audit.NewDemo(time.Now()), testAssets(), testToken, true)
+	if res := request(h, http.MethodGet, "/", "", false); res.Code != http.StatusOK {
+		t.Fatalf("root status=%d", res.Code)
+	}
+	if res := request(h, http.MethodGet, "/api/info", "", false); res.Code != http.StatusUnauthorized {
+		t.Fatalf("api without header status=%d", res.Code)
+	}
+	if res := request(h, http.MethodGet, "/api/info", "", true); res.Code != http.StatusOK {
+		t.Fatalf("api with header status=%d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestAssetsServeExactFilesOnlyWithoutDirectoryListings(t *testing.T) {
+	h := New(audit.NewDemo(time.Now()), testAssets(), testToken, true)
+	if res := request(h, http.MethodGet, "/assets/app.js", "", false); res.Code != http.StatusOK || res.Body.String() != "ok" {
+		t.Fatalf("asset status=%d body=%q", res.Code, res.Body.String())
+	}
+	for _, path := range []string{"/assets", "/assets/", "/assets/missing.js", "/assets/../index.html", "/assets//app.js", "/assets/./app.js"} {
+		res := request(h, http.MethodGet, path, "", false)
+		if res.Code != http.StatusNotFound {
+			t.Errorf("%s status=%d body=%q", path, res.Code, res.Body.String())
+		}
+		if strings.Contains(res.Body.String(), "app.js") {
+			t.Errorf("%s listed directory contents: %q", path, res.Body.String())
+		}
+	}
+	embedded := New(audit.NewDemo(time.Now()), explorer.Assets(), testToken, true)
+	if res := request(embedded, http.MethodGet, "/assets/", "", false); res.Code != http.StatusNotFound || strings.Contains(res.Body.String(), ".js") {
+		t.Fatalf("embedded /assets/ status=%d body=%q", res.Code, res.Body.String())
+	}
+}
+
+func TestConnectionTestsAreRateLimited(t *testing.T) {
+	repo := &connectionTestRepository{fakeRepository: &fakeRepository{}, result: audit.ConnectionResult{Databases: []string{"a"}}}
+	h := New(repo, nil, testToken, false).(*handler)
+	clock := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	h.tests.now = func() time.Time { return clock }
+	body := `{"uri":"mongodb://127.0.0.1:27017"}`
+	for i := 0; i < connectionTestsPerWindow; i++ {
+		if res := request(h, http.MethodPost, "/api/connections/test", body, true); res.Code == http.StatusTooManyRequests {
+			t.Fatalf("test %d refused early", i+1)
+		}
+	}
+	res := request(h, http.MethodPost, "/api/connections/test", body, true)
+	if res.Code != http.StatusTooManyRequests || !strings.Contains(res.Body.String(), "Wait a minute") {
+		t.Fatalf("over-limit status=%d body=%s", res.Code, res.Body.String())
+	}
+	clock = clock.Add(connectionTestWindow)
+	if res := request(h, http.MethodPost, "/api/connections/test", body, true); res.Code == http.StatusTooManyRequests {
+		t.Fatalf("limit did not reset after the window: %s", res.Body.String())
 	}
 }
 
@@ -715,7 +777,7 @@ func TestAddSourceResolvesSavedPasswordAndClearsVaultIdentifier(t *testing.T) {
 }
 
 func testAssets() fs.FS {
-	return fstest.MapFS{"index.html": {Data: []byte(`<!doctype html><html><head><meta name="audit-session" content=""></head><body>ok</body></html>`)}, "assets/app.js": {Data: []byte("ok")}}
+	return fstest.MapFS{"index.html": {Data: []byte(`<!doctype html><html><head></head><body>ok</body></html>`)}, "assets/app.js": {Data: []byte("ok")}}
 }
 
 func TestRequestPageLimitIsEnforcedAtHTTPBoundary(t *testing.T) {
@@ -864,8 +926,8 @@ func TestEmbeddedDemoHTTPWorkflow(t *testing.T) {
 	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	h := New(audit.NewDemo(now), explorer.Assets(), testToken, true)
 	root := request(h, http.MethodGet, "/", "", false)
-	if root.Code != http.StatusOK || !strings.Contains(root.Body.String(), `name="audit-session" content="`+testToken+`"`) {
-		t.Fatalf("embedded dashboard did not load with its session meta: status=%d", root.Code)
+	if root.Code != http.StatusOK || strings.Contains(root.Body.String(), testToken) {
+		t.Fatalf("embedded dashboard did not load, or served the session token: status=%d", root.Code)
 	}
 	assetMatch := regexp.MustCompile(`src="([^"]+\.js)"`).FindStringSubmatch(root.Body.String())
 	if len(assetMatch) != 2 {
