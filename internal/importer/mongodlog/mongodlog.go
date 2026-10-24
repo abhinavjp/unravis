@@ -78,8 +78,6 @@ const (
 
 	maxDurationMs = 400 * 24 * 3600 * 1000.0 // longer than any plausible operation: bad-number
 	maxSlowms     = 3_600_000
-	maxErrors     = 100
-	maxObserved   = 16
 )
 
 // Source-quality sentences. These are fixed text: they never hold row content and they
@@ -205,7 +203,9 @@ func effectiveLimits(in importer.Limits) importer.Limits {
 	if in.MaxFields > 0 && in.MaxFields < d.MaxFields {
 		out.MaxFields = in.MaxFields
 	}
-	if in.MaxRejectFraction > 0 && in.MaxRejectFraction < d.MaxRejectFraction {
+	// The reject fraction is a policy knob, not one of the section 4 caps: the caller's
+	// value (for example a preview that tolerates every reject) is honoured.
+	if in.MaxRejectFraction > 0 {
 		out.MaxRejectFraction = in.MaxRejectFraction
 	}
 	return out
@@ -214,18 +214,17 @@ func effectiveLimits(in importer.Limits) importer.Limits {
 // Parse reads the log and emits one slow-op event per "Slow query" line.
 func (imp Importer) Parse(ctx context.Context, r io.Reader, opts importer.Options, emit func(evidence.Event) error) (importer.Report, error) {
 	lim := effectiveLimits(opts.Limits)
-	rep := importer.Report{
-		Importer:   Name,
-		FieldRules: map[string]string{"t.$date": clock.RuleOffsetInField},
-	}
+	rep := importer.Report{Importer: Name}
+	rep.Rule("t.$date", clock.RuleOffsetInField)
 	if err := ctx.Err(); err != nil {
 		return rep, err
 	}
 
+	// Collect/Prepare already capped the bytes and sniffed the head; this is repeated so
+	// a direct caller still gets the section 4 caps (a caller limit can only lower them).
 	br := bufio.NewReaderSize(importer.LimitReader(r, lim.MaxBytes), 64*1024)
 	head, perr := br.Peek(16)
-	var le *importer.LimitError
-	if errors.As(perr, &le) {
+	if perr != nil && !errors.Is(perr, io.EOF) && !errors.Is(perr, bufio.ErrBufferFull) {
 		return rep, perr
 	}
 	if err := importer.Sniff(head); err != nil {
@@ -240,7 +239,6 @@ func (imp Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 	if opts.Host != nil {
 		st.hostLabel = opts.Host.Label
 	}
-	var first, last time.Time
 
 	for n := 0; ; n++ {
 		if n&255 == 0 {
@@ -252,7 +250,19 @@ func (imp Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 		if errors.Is(err, io.EOF) {
 			break
 		}
+		var re importer.RowError
+		if errors.As(err, &re) {
+			// A line that is not strict UTF-8: one rejected row, the stream goes on.
+			rep.Rows++
+			if err := lim.CheckRows(rep.Rows); err != nil {
+				return rep, err
+			}
+			rep.Reject(no, re.Reason)
+			continue
+		}
 		if err != nil {
+			// A read error or a limit breach (bytes, line-bytes) ends the file; it is
+			// never taken for the end of input.
 			return rep, err
 		}
 		line = bytes.TrimSpace(line)
@@ -260,8 +270,8 @@ func (imp Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 			continue
 		}
 		rep.Rows++
-		if rep.Rows > lim.MaxRows {
-			return rep, &importer.LimitError{Limit: "rows", Max: lim.MaxRows, At: rep.Rows}
+		if err := lim.CheckRows(rep.Rows); err != nil {
+			return rep, err
 		}
 		if rep.Rows == 1 && line[0] != '{' {
 			// Pre-4.4 text format (or not a mongod log at all).
@@ -273,18 +283,10 @@ func (imp Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 			return rep, werr
 		}
 		if reason != "" {
-			rep.Rejected++
-			if len(rep.Errors) < maxErrors {
-				rep.Errors = append(rep.Errors, importer.RowError{Line: no, Reason: reason})
-			}
+			rep.Reject(no, reason)
 			continue
 		}
-		if first.IsZero() || t.Before(first) {
-			first = t
-		}
-		if t.After(last) {
-			last = t
-		}
+		rep.Cover(t)
 		if ev == nil || !inWindow(*ev, opts.Window) {
 			continue
 		}
@@ -297,10 +299,9 @@ func (imp Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 	if rep.Rows == 0 {
 		return rep, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat}
 	}
-	if float64(rep.Rejected)/float64(rep.Rows) > lim.MaxRejectFraction {
-		return rep, &importer.QuarantineError{Reason: importer.ReasonRejectFraction}
+	if err := lim.CheckRejects(rep.Rows, rep.Rejected); err != nil {
+		return rep, err
 	}
-	rep.First, rep.Last = first, last
 	finish(&rep, st, opts)
 	return rep, nil
 }
@@ -398,15 +399,8 @@ func observeHost(name string, st *state, opts importer.Options, rep *importer.Re
 	if opts.Host != nil || name == "" || len(name) > 253 || !utf8.ValidString(name) || strings.ContainsAny(name, "\x00\r\n\t") {
 		return nil
 	}
-	seen := false
-	for _, h := range rep.ObservedHosts {
-		if h == name {
-			seen = true
-			break
-		}
-	}
-	if !seen && len(rep.ObservedHosts) < maxObserved {
-		rep.ObservedHosts = append(rep.ObservedHosts, name)
+	if err := rep.Observe(name); err != nil {
+		return err
 	}
 	if opts.Hosts == nil {
 		return nil
@@ -679,10 +673,9 @@ func finish(rep *importer.Report, st *state, opts importer.Options) {
 		q.TimezoneRule = clock.RuleOffsetInField
 	}
 
-	var gaps []string
-	gaps = append(gaps, "mongod.log lists only operations slower than slowms; faster operations are not in this file")
+	rep.Gap("mongod.log lists only operations slower than slowms; faster operations are not in this file")
 	if st.version == "" {
-		gaps = append(gaps, "mongod version unknown: no Build Info line in the file")
+		rep.Gap("mongod version unknown: no Build Info line in the file")
 	}
 
 	slowms := st.slowms
@@ -691,14 +684,14 @@ func finish(rep *importer.Report, st *state, opts importer.Options) {
 			if slowms == nil {
 				slowms = &v
 			} else if *slowms != v {
-				gaps = append(gaps, "owner-supplied slowms differs from the startup options in the file; the file value is used")
+				rep.Gap("owner-supplied slowms differs from the startup options in the file; the file value is used")
 			}
 		}
 	}
 	if slowms != nil {
 		q.Threshold = fmt.Sprintf("operations slower than %d ms", *slowms)
 	} else {
-		gaps = append(gaps, "slowms unknown: not in the startup options and not supplied by the owner")
+		rep.Gap("slowms unknown: not in the startup options and not supplied by the owner")
 	}
 
 	var marks []string
@@ -715,8 +708,8 @@ func finish(rep *importer.Report, st *state, opts importer.Options) {
 		marks = append(marks, samplingChanged)
 	}
 	q.Sampling = strings.Join(marks, "; ")
-	gaps = append(gaps, marks...)
-
+	for _, m := range marks {
+		rep.Gap(m)
+	}
 	rep.Quality = q
-	rep.KnownGaps = gaps
 }

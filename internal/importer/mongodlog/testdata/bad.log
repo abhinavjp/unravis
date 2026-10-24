@@ -1,0 +1,7 @@
+{"t":{"$date":"2001-09-09T01:40:00.000+00:00"},"s":"I","c":"CONTROL","id":4615611,"ctx":"initandlisten","msg":"MongoDB starting","attr":{"pid":4242,"port":27017,"dbPath":"/data/db","architecture":"64-bit","host":"mongo-a.example.test"}}
+{"t":{"$date":"2001-09-09T01:40:00.020+00:00"},"s":"I","c":"CONTROL","id":21951,"ctx":"initandlisten","msg":"Options set by command line","attr":{"options":{"operationProfiling":{"slowOpThresholdMs":100}}}}
+{"t":{"$date":"2001-09-09T01:46:40.123+00:00"},"s":"I","c":"COMMAND","id":51803,"ctx":"conn12","msg":"Slow query","attr":{"type":"command","ns":"app.orders","appName":"SENTINEL-7f3a","command":{"find":"orders","filter":{"customer":"SENTINEL-7f3a"}},"remote":"192.0.2.10:51234","durationMillis":250}}
+{"t":{"$date":"SENTINEL-7f3a"},"s":"I","c":"COMMAND","id":51803,"ctx":"conn12","msg":"Slow query","attr":{"type":"command","ns":"app.orders","durationMillis":250}}
+{"t":{"$date":"2001-09-09T01:46:41.000+00:00"},"s":"I","c":"COMMAND","id":51803,"ctx":"conn12","msg":"Slow query","attr":{"type":"command","ns":"app.orders","durationMillis":"SENTINEL-7f3a"}}
+{"t":{"$date":"2001-09-09T01:46:42.000+00:00"},"s":"I","c":"COMMAND","id":51803,"ctx":"conn12","msg":"Slow query","attr":{"type":"command","ns":"app.orders","note":"SENTINEL-7f3a
+SENTINEL-7f3a not json at all

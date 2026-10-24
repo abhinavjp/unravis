@@ -6,14 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
-
-	"golang.org/x/text/encoding/unicode"
 
 	"api-audit-explorer/internal/clock"
 	"api-audit-explorer/internal/evidence"
@@ -21,7 +18,9 @@ import (
 	jn "api-audit-explorer/internal/join"
 )
 
-const sentinel = "SENTINEL-7f3a"
+// sentinel marks the dropped fields of testdata/good.log (command bodies, filter values,
+// appName). Good fixtures must not hold importertest.Sentinel, so this is a second marker.
+const sentinel = "DROPPED-4d2e"
 
 // ---- helpers -------------------------------------------------------------------------
 
@@ -205,7 +204,7 @@ func TestStageTokens(t *testing.T) {
 		"Collscan":            "",
 		"":                    "",
 		"IXSCAN { a: \"" + sentinel + "\" }, COLLSCAN": "IXSCAN,COLLSCAN",
-		"SENTINEL-7f3a": "",
+		sentinel: "",
 	}
 	for in, want := range cases {
 		if got := stageTokens(in); got != want {
@@ -319,7 +318,7 @@ func TestTextFormatUnsupported(t *testing.T) {
 	}
 }
 
-// ---- conformance (mirrors wave plan 1.6; swap for importertest.Run once F0 lands) ------------
+// ---- detection (the rest of the conformance list is importertest.Run, see conformance_test.go) ----
 
 func TestDetect(t *testing.T) {
 	good := readFixture(t, "good.log")
@@ -344,186 +343,6 @@ func TestDetect(t *testing.T) {
 	long := logLineOf("2001-09-09T01:00:00.000+00:00", idSlowQuery, "Slow query", `{"durationMillis":1,"x":"`+strings.Repeat("a", 100000)+`"}`)
 	if got := New().Detect([]byte(long)[:65536], "mongod.log"); got < 80 {
 		t.Fatalf("cut head: %d", got)
-	}
-}
-
-func TestEncodingsYieldIdenticalEvents(t *testing.T) {
-	good := readFixture(t, "good.log")
-	want, wrep, err := parse(t, good, hostsOpts())
-	if err != nil {
-		t.Fatal(err)
-	}
-	u16, err := unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewEncoder().Bytes(good)
-	if err != nil {
-		t.Fatal(err)
-	}
-	variants := map[string][]byte{
-		"bom":      append([]byte{0xEF, 0xBB, 0xBF}, good...),
-		"utf16le":  u16,
-		"crlf":     bytes.ReplaceAll(good, []byte("\n"), []byte("\r\n")),
-		"no-final": bytes.TrimRight(good, "\n"),
-	}
-	for name, data := range variants {
-		if name == "utf16le" && (data[0] != 0xFF || data[1] != 0xFE) {
-			t.Fatalf("encoder did not write a BOM")
-		}
-		if got := New().Detect(data, "mongod.log"); got == 0 {
-			t.Errorf("%s: detect 0", name)
-		}
-		evs, rep, err := parse(t, data, hostsOpts())
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if !reflect.DeepEqual(evs, want) || rep.Rows != wrep.Rows || !reflect.DeepEqual(rep.Quality, wrep.Quality) {
-			t.Fatalf("%s differs from utf-8", name)
-		}
-	}
-}
-
-func TestArchivesRefused(t *testing.T) {
-	good := readFixture(t, "good.log")
-	for name, head := range map[string][]byte{
-		"zip":  []byte("PK\x03\x04"),
-		"gzip": {0x1f, 0x8b, 8, 0},
-		"7z":   {'7', 'z', 0xBC, 0xAF, 0x27, 0x1C},
-		"bz2":  []byte("BZh9"),
-	} {
-		evs, _, err := parse(t, append(head, good...), opts())
-		var qe *importer.QuarantineError
-		if !errors.As(err, &qe) || qe.Reason != importer.ReasonArchive || !strings.Contains(err.Error(), "extract first") || len(evs) != 0 {
-			t.Errorf("%s: %v", name, err)
-		}
-	}
-}
-
-func TestLimits(t *testing.T) {
-	data := logData(manyGood(10)...)
-
-	o := opts()
-	o.Limits = importer.Limits{MaxRows: 3}
-	evs, _, err := parse(t, data, o)
-	var le *importer.LimitError
-	if !errors.As(err, &le) || le.Limit != "rows" || !errors.Is(err, importer.ErrLimit) {
-		t.Fatalf("rows: %v", err)
-	}
-	if len(evs) > 3 {
-		t.Fatalf("emitted %d past the row limit", len(evs))
-	}
-
-	o = opts()
-	o.Limits = importer.Limits{MaxBytes: 500}
-	if _, _, err = parse(t, data, o); !errors.Is(err, importer.ErrLimit) {
-		t.Fatalf("bytes: %v", err)
-	}
-
-	// A line over 256 KiB refuses the file; nothing is emitted after it.
-	huge := logLineOf("2001-09-09T01:00:05.000+00:00", idSlowQuery, "Slow query",
-		`{"durationMillis":1,"x":"`+strings.Repeat("a", 300<<10)+`"}`)
-	lines := manyGood(2)
-	lines = append(lines, huge)
-	lines = append(lines, manyGood(5)...)
-	evs, _, err = parse(t, logData(lines...), opts())
-	if !errors.As(err, &le) || le.Limit != "line" || !errors.Is(err, importer.ErrLimit) {
-		t.Fatalf("line: %v", err)
-	}
-	if len(evs) != 2 {
-		t.Fatalf("emitted %d events, want only the 2 before the long line", len(evs))
-	}
-	// Exactly at the limit still parses.
-	pad := maxLineLen - len(logLineOf("2001-09-09T01:00:05.000+00:00", idSlowQuery, "Slow query", `{"durationMillis":1,"x":""}`))
-	ok := logLineOf("2001-09-09T01:00:05.000+00:00", idSlowQuery, "Slow query", `{"durationMillis":1,"x":"`+strings.Repeat("a", pad)+`"}`)
-	if len(ok) != maxLineLen {
-		t.Fatalf("test line is %d bytes", len(ok))
-	}
-	if evs, _, err = parse(t, logData(ok), opts()); err != nil || len(evs) != 1 {
-		t.Fatalf("at limit: %v", err)
-	}
-	// Caller limits above the card caps do not raise them.
-	o = opts()
-	o.Limits = importer.Limits{MaxBytes: 1 << 50, MaxRows: 1 << 50, MaxLineBytes: 1 << 30}
-	if eff := effectiveLimits(o.Limits); eff.MaxBytes != 2<<30 || eff.MaxRows != 10_000_000 || eff.MaxLineBytes != 256<<10 {
-		t.Fatalf("caps raised: %+v", eff)
-	}
-}
-
-func TestDegenerateInputsNeverPanic(t *testing.T) {
-	good := readFixture(t, "good.log")
-	inputs := [][]byte{nil, {}, []byte("x"), []byte("{"), []byte("\n\n\n"), []byte("\xef\xbb\xbf"), []byte("\xff\xfe"), []byte("\xff\xfe{"), {0}, []byte("}{")}
-	for _, n := range []int{1, 2, 17, 60, 200, 333, 701, len(good) - 1} {
-		inputs = append(inputs, good[:n])
-	}
-	for i, in := range inputs {
-		evs, _, err := parse(t, in, hostsOpts())
-		if err != nil {
-			if !errors.Is(err, importer.ErrQuarantine) && !errors.Is(err, importer.ErrLimit) && !errors.Is(err, importer.ErrUnknownHost) {
-				t.Errorf("input %d: unexpected error type %v", i, err)
-			}
-			continue
-		}
-		for _, e := range evs {
-			if e.Validate(New().AllowedAttrs()) != nil {
-				t.Errorf("input %d: invalid event", i)
-			}
-		}
-	}
-	// Empty and 1-byte give a clean quarantine.
-	for _, in := range [][]byte{nil, []byte("x"), []byte("{")} {
-		if _, _, err := parse(t, in, opts()); !errors.Is(err, importer.ErrQuarantine) {
-			t.Errorf("%q: %v", in, err)
-		}
-	}
-}
-
-// infiniteLog yields valid lines forever; the first Read cancels the context.
-type infiniteLog struct {
-	cancel  context.CancelFunc
-	buf     []byte
-	started bool
-}
-
-func (r *infiniteLog) Read(p []byte) (int, error) {
-	if !r.started {
-		r.started = true
-		r.cancel()
-	}
-	if len(r.buf) == 0 {
-		r.buf = []byte(slowLine("2001-09-09T01:00:00.000+00:00", "a.b", "find", 9) + "\n")
-	}
-	n := copy(p, r.buf)
-	r.buf = r.buf[n:]
-	return n, nil
-}
-
-func TestContextCancelStopsParse(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	start := time.Now()
-	_, _, err := importer.Collect(ctx, New(), &infiniteLog{cancel: cancel}, opts())
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("got %v", err)
-	}
-	if time.Since(start) > time.Second {
-		t.Fatalf("took %v", time.Since(start))
-	}
-	cancelled, c2 := context.WithCancel(context.Background())
-	c2()
-	if _, _, err := importer.Collect(cancelled, New(), bytes.NewReader(logData(manyGood(3)...)), opts()); !errors.Is(err, context.Canceled) {
-		t.Fatalf("pre-cancelled: %v", err)
-	}
-}
-
-type failingTransport struct{ t *testing.T }
-
-func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
-	f.t.Error("importer made a network call")
-	return nil, errors.New("network disabled")
-}
-
-func TestNoNetwork(t *testing.T) {
-	old := http.DefaultTransport
-	http.DefaultTransport = failingTransport{t}
-	defer func() { http.DefaultTransport = old }()
-	if _, _, err := parse(t, readFixture(t, "good.log"), hostsOpts()); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -806,40 +625,6 @@ func TestAbsenceRequiresEveryQualityField(t *testing.T) {
 			t.Errorf("outside coverage: %q", got)
 		}
 	}
-}
-
-// ---- fuzz ----------------------------------------------------------------------------------------
-
-func FuzzParse(f *testing.F) {
-	good, err := os.ReadFile("testdata/good.log")
-	if err != nil {
-		f.Fatal(err)
-	}
-	f.Add(good)
-	f.Add(good[:300])
-	f.Add([]byte(slowLine("2001-09-09T01:00:08.000+00:00", "app.audit", "insert", 2500)))
-	f.Add([]byte("2001-09-09T01:40:00.000+0000 I  CONTROL  [initandlisten] text"))
-	f.Add([]byte(`{"t":{"$date":"2001-09-09T01:00:00.000"},"id":51803,"attr":{"durationMillis":-1}}`))
-	f.Add([]byte("\xff\xfe{\x00\"\x00"))
-	valid := New().AllowedAttrs()
-	f.Fuzz(func(t *testing.T, data []byte) {
-		o := opts()
-		o.Limits = importer.Limits{MaxBytes: 1 << 20, MaxRows: 1000, MaxLineBytes: 8 << 10}
-		ids := map[string]bool{}
-		_, err := New().Parse(context.Background(), bytes.NewReader(data), o, func(e evidence.Event) error {
-			if err := e.Validate(valid); err != nil {
-				t.Fatalf("invalid event: %v", err)
-			}
-			if ids[e.EvidenceID] {
-				t.Fatalf("duplicate id")
-			}
-			ids[e.EvidenceID] = true
-			return nil
-		})
-		if err != nil && strings.Contains(err.Error(), "{") {
-			t.Fatalf("error carries content: %v", err)
-		}
-	})
 }
 
 type joinInterval = jn.Interval
