@@ -23,6 +23,7 @@ export function chartTime(value: number | string | Date, zone: string, options: 
   if (!Number.isFinite(ms)) return 'Unknown time';
   const { date = true, seconds = true, zone: withZone = true, time = true } = options;
   const part = Object.fromEntries(partsFormatter(zone, seconds).formatToParts(new Date(ms)).map(item => [item.type, item.value]));
+  if (part.month === 'Sept') part.month = 'Sep'; // en-GB spells September "Sept"; the rest of the app uses "Sep"
   const clock = part.hour + ':' + part.minute + (seconds ? ':' + part.second : '');
   const label = withZone ? ' ' + zoneAbbreviation(zone, ms) : '';
   if (!time) return part.day + ' ' + part.month + label;
@@ -89,7 +90,7 @@ export function axisLabels(slotStarts: number[], zone: string, maxLabels = 7): s
   let firstLabel = true;
   for (const tick of roundTicks(first, end, step, zone)) {
     const index = Math.min(slotStarts.length - 1, Math.max(0, Math.floor((tick - first) / width)));
-    if (labels[index] !== '') continue;
+    if (tick >= end || labels[index] !== '') continue;
     const day = dayKey(tick, zone);
     const withDate = step >= DAY || firstLabel || day !== previousDay;
     labels[index] = step >= DAY ? chartTime(tick, zone, { time: false, zone: false }) : chartTime(tick, zone, { date: withDate, seconds: step < MINUTE, zone: false });

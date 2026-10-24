@@ -83,7 +83,7 @@
   }
   async function cite(evidenceId: string, label: string) {
     const result = await citeInLedger(evidenceId, label);
-    citeNote = result === 'added' ? PATTERNS_TEXT.citeAdded : result === 'copied' ? PATTERNS_TEXT.citeCopied : PATTERNS_TEXT.citeFailed;
+    citeNote = result === 'added' ? PATTERNS_TEXT.citeAdded : result === 'already' ? PATTERNS_TEXT.citeAlready : result === 'copied' ? PATTERNS_TEXT.citeCopied : PATTERNS_TEXT.citeFailed;
   }
 </script>
 

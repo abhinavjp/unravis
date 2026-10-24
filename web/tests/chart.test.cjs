@@ -79,6 +79,14 @@ test('axisLabels is empty except on round times, with the date on the first labe
   assert.equal(labels.length, slots.length);
 });
 
+test('axisLabels never puts a label on a tick at the exclusive window end', () => {
+  // ten one-minute slots from 15:00 to 15:09: the 15:10 tick is the end of the window, not a bar inside it
+  const start = Date.UTC(2026, 9, 24, 15, 0, 0);
+  const labels = axisLabels(Array.from({ length: 10 }, (_, i) => start + i * MIN), 'UTC');
+  assert.ok(!labels.includes('15:10'), 'no 15:10 label: ' + JSON.stringify(labels));
+  assert.equal(labels[labels.length - 1], '', 'the last bar (15:09) is not labelled 15:10');
+});
+
 test('axisLabels handles empty, single and day-long spans', () => {
   assert.deepEqual(axisLabels([], 'UTC'), []);
   assert.deepEqual(axisLabels([T], 'UTC'), ['15:19'].map(() => chartTime(T, 'UTC', { seconds: false, zone: false })));
