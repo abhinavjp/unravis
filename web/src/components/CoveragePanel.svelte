@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '../lib/api';
   import { COVERAGE_TERM, COVERAGE_TEXT, coverageRange, coverageRefusalText, coverageRowsForDisplay, tenantLine } from '../lib/provenance';
+  import { TENANT_TEXT, tenantPlain } from '../lib/copy/screenCopy';
   import type { CoverageReport } from '../lib/types';
   import Hint from './Hint.svelte';
   import ProvenanceNote from './ProvenanceNote.svelte';
@@ -45,8 +46,8 @@
     {#if state.kind === 'refused'}<div class="notice coverage-refused" role="status">{state.text}</div>{/if}
     {#if state.kind === 'error'}<div class="inline-error" role="alert">{state.text}</div>{/if}
     {#if state.kind === 'done'}
-      <p class="coverage-tenant">{tenantLine(state.report)}</p>
-      <p class="coverage-tenant">{COVERAGE_TEXT.accountNote}</p>
+      <p class="coverage-tenant" title={tenantLine(state.report)}>{tenantPlain(state.report.tenantAttribution)}</p>
+      <p class="coverage-tenant">{TENANT_TEXT.account}</p>
       {#if state.report.rows.length === 0 && state.report.total.docs === 0}
         <p class="coverage-intro">{COVERAGE_TEXT.empty}</p>
       {:else}

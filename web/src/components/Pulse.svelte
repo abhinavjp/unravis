@@ -7,6 +7,7 @@
   import { heroHasData, pulseFigures, singleKind, type Lens } from '../lib/pulse';
   import { metricLabels } from '../lib/presentation';
   import { plainIncomplete } from '../lib/copy/plainSummary';
+  import { p95Sentence, periodLengthMs } from '../lib/copy/screenCopy';
   import Hint from './Hint.svelte';
   import PlainLine from './PlainLine.svelte';
 
@@ -23,6 +24,8 @@
     const sum = (pick: (row: (typeof rollups)[number]) => number | undefined) => rollups.reduce((total, row) => total + (pick(row) ?? 0), 0);
     return plainIncomplete({ completed: sum(row => row.completed), incomplete: sum(row => row.incomplete), pending: sum(row => row.pending), invalid: sum(row => row.invalid), window: { start: analysis.query.start, end: analysis.query.end } });
   });
+  // When the P95 is clearly higher than in the earlier period, one sentence says so and points to the ranked view. It never names a reason.
+  const headline = $derived(p95Sentence(figures.find(figure => figure.id === 'p95')?.change ?? null, periodLengthMs(analysis.query.baselineStart, analysis.query.baselineEnd)));
   const toneOf = (id: Lens, value: string) => value === '0' || value === '—' ? (value === '—' ? 'muted' : '') : id === 'client' ? 'warn' : id === 'server' ? 'bad' : '';
   let node = $state<HTMLDivElement>();
   let chart = $state<ReturnType<typeof echarts.init>>();
@@ -41,16 +44,18 @@
       <button type="button" class="figure" data-tone={toneOf(figure.id, figure.value)} title={figure.tip} onclick={() => onOpen(figure.id)}>
         <span class="figure-label">{figure.label}</span>
         <span class="figure-value">{figure.value}</span>
+        {#if figure.change}<span class="figure-delta" class:severe={figure.change.severe}>{figure.change.text}</span>{/if}
         <span class="figure-hint">{figure.hint}</span>
         <span class="figure-go" aria-hidden="true">Where is it? ›</span>
       </button>
     {/each}
   </div>
+  {#if headline}<p class="pulse-headline" role="status">{headline}</p>{/if}
   {#if plain}<PlainLine result={plain} hints={['incomplete-request']} />{/if}
   <section class="hero" aria-label="Requests over time">
     <div class="hero-head">
       <h2>Requests over time</h2>
-      <div class="hero-legend"><span><i class="swatch-count"></i>Requests per interval</span>{#if withLatency}<span><i class="swatch-p95"></i>P95 ({metricLabels[analysis.query.metric]})<Hint termId="p95" /></span>{/if}</div>
+      <div class="hero-legend"><span><i class="swatch-count"></i>Requests per interval</span>{#if withLatency}<span><i class="swatch-p95"></i>P95 · {metricLabels[analysis.query.metric]}<Hint termId="p95" /></span>{/if}</div>
     </div>
     <div class="hero-stage">
       <div class="hero-chart" class:chart-hidden={!hasData} bind:this={node} role="img" aria-hidden={!hasData} aria-label={'Requests per interval' + (withLatency ? ' with the 95th percentile' : '') + ', in ' + zone}></div>
@@ -59,3 +64,9 @@
     {#if !withLatency}<p class="figure-hint">Latency is shown for one request type at a time. Choose Sync, Async, Hangfire or HTTP to add the P95 line.</p>{/if}
   </section>
 </section>
+
+<style>
+  .figure-delta { font-size: 12px; font-weight: 600; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .figure-delta.severe { color: var(--bad); }
+  .pulse-headline { margin: 0; font-size: 14px; color: var(--text); }
+</style>

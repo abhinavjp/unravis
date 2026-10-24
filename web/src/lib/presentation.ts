@@ -46,13 +46,15 @@ export const resultNotes = (rows: Comparison[]) => {
   ];
 };
 
+const eventsText = (count: number) => count.toLocaleString() + (count === 1 ? ' event' : ' events');
+
 export const outcomeRateText = (rows: Comparison[], row: Comparison, outcomeFilter: string) => {
-  if (row.outcome === 'unknown') return 'unknown · ' + row.currentEvents.toLocaleString() + ' events';
+  if (row.outcome === 'unknown') return 'unknown · ' + eventsText(row.currentEvents) + ' · final status never recorded';
   const denominator = rows
     .filter(item => item.sourceId === row.sourceId && item.controller === row.controller && item.action === row.action && item.kind === row.kind && (item.outcome === 'success' || item.outcome === 'failure'))
     .reduce((sum, item) => sum + item.currentEvents, 0);
   if (outcomeFilter !== 'all' || denominator <= 0 || (row.outcome !== 'success' && row.outcome !== 'failure')) {
-    return row.outcome + ' · ' + row.currentEvents.toLocaleString() + ' events';
+    return row.outcome + ' · ' + eventsText(row.currentEvents);
   }
   const percentage = (row.currentEvents / denominator * 100).toFixed(1);
   return row.outcome + ' · ' + row.currentEvents.toLocaleString() + ' / ' + denominator.toLocaleString() + ' known events (' + percentage + '%)';

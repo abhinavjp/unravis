@@ -112,7 +112,7 @@ export const deck: Deck = {
       hint: 'How the app matches a record from one source to a record from another.',
       definition: 'A join links two records that share an identifier or overlap in time. Some joins match one record and some match several.',
       notMeaning: 'A match is a link between records, not a statement that one made the other happen.',
-      aliases: ['Joined', 'Match']
+      aliases: ['Joined', 'Match', 'Join class']
     },
     {
       id: 'not-observed',
@@ -135,7 +135,7 @@ export const deck: Deck = {
       hint: 'There are too few requests here to trust the numbers much.',
       definition: 'A low sample means only a small number of requests went into a figure. A few unusual requests can then move the figure a lot.',
       notMeaning: 'It does not mean the figure is wrong, only that it can change easily.',
-      aliases: ['Small sample', 'Sample size']
+      aliases: ['Small sample', 'Sample size', 'Low n', 'Few samples']
     },
     {
       id: 'reference-period',
@@ -383,6 +383,21 @@ export const deck: Deck = {
       hint: 'A group with fewer than 20 requests, so its exact count is hidden as "<20".',
       definition: 'A thin cell is a count based on too few requests to share safely. The export shows it as "<20" instead of the exact number.',
       notMeaning: 'It does not mean the group had no requests, and it does not mean the finding is wrong.'
+    },
+    {
+      id: 'confounder',
+      term: 'Confounder',
+      hint: 'Something else that happened at the same time and could also explain a slowdown.',
+      definition: 'A confounder is another event that overlaps the slow requests in time. It makes it harder to say whether the thing you are studying is linked to the slowdown.',
+      notMeaning: 'A confounder does not mean your idea is wrong, only that it is not the only way to explain what you see.'
+    },
+    {
+      id: 'tenant',
+      term: 'Tenant',
+      hint: 'The customer account a request belongs to, when the source records it.',
+      definition: 'Some sources record which customer account made each request. When that field is empty, Unravis cannot group requests by customer.',
+      notMeaning: 'A tenant value is shown as recorded. Unravis has not checked who it really belongs to.',
+      aliases: ['Customer', 'Account', 'Tenant attribution']
     }
   ]
 };

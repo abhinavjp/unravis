@@ -197,7 +197,7 @@
                             <tbody>
                               {#each stalls as stall (stall.sourceId + stall.id)}
                                 <tr>
-                                  <td class="ops"><button type="button" class="record-link" title={PATTERNS_TEXT.openRecord} aria-label={PATTERNS_TEXT.openRecord + ': ' + operationText(stall) + ', started ' + at(stall.initiatedAt)} onclick={() => openRecord(stall.sourceId, stall.id)}>{operationText(stall)}</button>{#if query.sourceIds.length > 1} <span class="source-tag">{labelOf(stall.sourceId)}</span>{/if}</td>
+                                  <td class="ops"><button type="button" class="record-link" title={PATTERNS_TEXT.openRecord} aria-label={PATTERNS_TEXT.openRecord + ': ' + operationText(stall) + ', started ' + at(stall.initiatedAt)} onclick={() => openRecord(stall.sourceId, stall.id)}>{operationText(stall)}</button>{#if query.sourceIds.length > 1}{' · '}<span class="source-tag">{labelOf(stall.sourceId)}</span>{/if}</td>
                                   <td>{at(stall.initiatedAt)}</td>
                                   <td class="num">{secondsLabel(stall.observedMs)}</td>
                                 </tr>
@@ -221,7 +221,7 @@
           <ul class="audit-list">
             {#each report.auditStalls as stall (stall.sourceId + stall.id)}
               <li>
-                <span class="ops"><button type="button" class="record-link" title={PATTERNS_TEXT.openRecord} aria-label={PATTERNS_TEXT.openRecord + ': ' + operationText(stall) + ', started ' + at(stall.initiatedAt)} onclick={() => openRecord(stall.sourceId, stall.id)}>{operationText(stall)}</button>{#if query.sourceIds.length > 1} <span class="source-tag">{labelOf(stall.sourceId)}</span>{/if}</span>
+                <span class="ops"><button type="button" class="record-link" title={PATTERNS_TEXT.openRecord} aria-label={PATTERNS_TEXT.openRecord + ': ' + operationText(stall) + ', started ' + at(stall.initiatedAt)} onclick={() => openRecord(stall.sourceId, stall.id)}>{operationText(stall)}</button>{#if query.sourceIds.length > 1}{' · '}<span class="source-tag">{labelOf(stall.sourceId)}</span>{/if}</span>
                 <span class="audit-when">{at(stall.initiatedAt)}</span>
                 <span class="audit-line">{auditStallLine(stall)}</span>
               </li>
