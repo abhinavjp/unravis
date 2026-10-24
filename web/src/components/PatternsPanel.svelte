@@ -10,6 +10,7 @@
   import type { PatternReport, Query } from '../lib/types';
   import Hint from './Hint.svelte';
   import ProvenanceNote from './ProvenanceNote.svelte';
+  import Drawer from './Drawer.svelte';
 
   // The Patterns drawer. It never runs by itself: the button starts one search over the window already on screen.
   // Summary first (verdict, findings, counts), then the episode table, which opens one episode at a time.
@@ -20,7 +21,6 @@
   let gapRaw = $state('');
   let thresholdError = $state('');
   let openEpisodes = $state<number[]>([]);
-  let drawer = $state<HTMLElement>();
   let runButton = $state<HTMLButtonElement>();
   let controller: AbortController | null = null;
 
@@ -54,23 +54,9 @@
   function toggle(index: number) {
     openEpisodes = openEpisodes.includes(index) ? openEpisodes.filter((i) => i !== index) : [...openEpisodes, index];
   }
-  function onKey(event: KeyboardEvent) {
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return; }
-    if (event.key !== 'Tab' || !drawer) return;
-    const focusable = [...drawer.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), summary, [href], [tabindex]:not([tabindex="-1"])')];
-    if (!focusable.length) return;
-    const first = focusable[0], last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-  }
 </script>
 
-<button type="button" class="drawer-scrim" aria-label="Close patterns" onclick={onClose}></button>
-<div class="connections-drawer glossary-drawer patterns-drawer" bind:this={drawer} onkeydown={onKey} role="dialog" aria-modal="true" aria-labelledby="patterns-title" tabindex="-1">
-  <div class="drawer-header">
-    <div><h2 id="patterns-title">{PATTERNS_TEXT.title}</h2></div>
-    <button type="button" class="icon-button drawer-close" aria-label="Close patterns" onclick={onClose}>×</button>
-  </div>
+<Drawer class="glossary-drawer patterns-drawer" title={PATTERNS_TEXT.title} titleId="patterns-title" closeLabel="Close patterns" focusable={'button:not(:disabled), input:not(:disabled), summary, [href], [tabindex]:not([tabindex="-1"])'} {onClose}>
 
   <section class="patterns-window" aria-label="Window">
     <dl>
@@ -199,10 +185,10 @@
       {/if}
     {/if}
   </div>
-</div>
+</Drawer>
 
 <style>
-  .patterns-drawer { overflow-x: hidden; gap: 14px; }
+  :global(.connections-drawer.patterns-drawer) { overflow-x: hidden; gap: 14px; }
   .patterns-window { display: grid; gap: 10px; margin-top: 13px; min-width: 0; }
   .patterns-window dl { display: grid; gap: 4px; margin: 0; font-size: 13px; }
   .patterns-window dl div { display: flex; gap: 10px; min-width: 0; }

@@ -8,6 +8,7 @@
   } from '../lib/export';
   import type { Query } from '../lib/types';
   import Hint from './Hint.svelte';
+  import Drawer from './Drawer.svelte';
 
   // The Export evidence drawer. Three steps: choose options, preview the whole file, then save it.
   // Nothing is saved until the analyst presses "Save file", and only what the preview showed can be saved.
@@ -16,7 +17,6 @@
   let includePseudonyms = $state(false);
   let includeLedger = $state(false);
   let problem = $state('');
-  let drawer = $state<HTMLElement>();
   let firstOption = $state<HTMLInputElement>();
   let controller: AbortController | null = null;
 
@@ -83,23 +83,9 @@
       phase = { kind: 'preview', preview: shown };
     }
   }
-  function onKey(event: KeyboardEvent) {
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return; }
-    if (event.key !== 'Tab' || !drawer) return;
-    const focusable = [...drawer.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), summary, [href], [tabindex]:not([tabindex="-1"])')];
-    if (!focusable.length) return;
-    const first = focusable[0], last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-  }
 </script>
 
-<button type="button" class="drawer-scrim" aria-label="Close export" onclick={onClose}></button>
-<div class="connections-drawer glossary-drawer export-drawer" bind:this={drawer} onkeydown={onKey} role="dialog" aria-modal="true" aria-labelledby="export-title" tabindex="-1">
-  <div class="drawer-header">
-    <div><h2 id="export-title">{EXPORT_TEXT.title}</h2><p>{EXPORT_TEXT.intro}</p></div>
-    <button type="button" class="icon-button drawer-close" aria-label="Close export" onclick={onClose}>×</button>
-  </div>
+<Drawer class="glossary-drawer export-drawer" title={EXPORT_TEXT.title} titleId="export-title" intro={EXPORT_TEXT.intro} closeLabel="Close export" focusable={'button:not(:disabled), input:not(:disabled), summary, [href], [tabindex]:not([tabindex="-1"])'} {onClose}>
 
   <section class="export-window" aria-label="Window">
     <dl>
@@ -257,10 +243,10 @@
       </div>
     {/if}
   </div>
-</div>
+</Drawer>
 
 <style>
-  .export-drawer { overflow-x: hidden; gap: 14px; }
+  :global(.connections-drawer.export-drawer) { overflow-x: hidden; gap: 14px; }
   .export-window { margin-top: 13px; min-width: 0; }
   .export-window dl { display: grid; gap: 4px; margin: 0; font-size: 13px; }
   .export-window dl div { display: flex; gap: 10px; min-width: 0; }

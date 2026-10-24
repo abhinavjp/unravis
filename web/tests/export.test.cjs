@@ -117,7 +117,7 @@ test('contentMatches accepts only content whose SHA-256 equals the returned hash
 
 test('the panel checks the hash before saving and keys pseudonym rows by index', () => {
   const panel = fs.readFileSync(path.join(root, 'src/components/ExportPanel.svelte'), 'utf8');
-  const save = panel.slice(panel.indexOf('async function save()'), panel.indexOf('function onKey'));
+  const save = panel.slice(panel.indexOf('async function save()'), panel.indexOf('</script>'));
   assert.ok(save.indexOf('contentMatches(file.content, file.sha256)') > 0, 'save checks the hash');
   assert.ok(save.indexOf('contentMatches(') < save.indexOf('new Blob('), 'the hash is checked before the file is made');
   assert.match(panel, /exp\.body\.pseudonyms as row, i \(i\)/);
