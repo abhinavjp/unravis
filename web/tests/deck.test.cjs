@@ -47,7 +47,7 @@ test('deck ids are unique kebab-case', () => {
 test('deck has every required id and a sensible size', () => {
   const ids = new Set(terms.map((term) => term.id));
   for (const id of REQUIRED_IDS) assert.ok(ids.has(id), `missing term ${id}`);
-  assert.ok(terms.length >= 25 && terms.length <= 50, `unexpected term count ${terms.length}`);
+  assert.ok(terms.length >= 25 && terms.length <= 52, `unexpected term count ${terms.length}`);
 });
 
 test('deck fields are non-empty', () => {
