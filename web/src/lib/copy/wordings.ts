@@ -3,6 +3,44 @@
  * builder must call these; paraphrasing them fails the copy lint.
  */
 
+/** Vowel letters that start a consonant sound ("a unique wait"). Twin of consonantSoundPrefixes in wording.go. */
+const CONSONANT_SOUND_PREFIXES = ['uni', 'use', 'usu', 'uti', 'eu', 'one', 'ubiq'];
+
+/**
+ * "an" when the first word of the phrase starts with a vowel sound, else "a". It reads the spelling only: two to four
+ * capitals start an acronym spoken letter by letter ("an ASP.NET", "an IIS", "a USB", "a SQL" as in "sequel"); a first
+ * character that is not a letter is read aloud as a consonant (".NET" is "dot net"). Twin of article in wording.go.
+ */
+export function article(phrase: string): 'a' | 'an' {
+  const word = phrase.trim().split(/\s+/)[0];
+  if (!word) return 'a';
+  const c = word[0];
+  if (/[0-9]/.test(c)) return c === '8' ? 'an' : 'a';
+  if (!/[A-Za-z]/.test(c)) return 'a';
+  const letters = word.match(/^[A-Za-z]+/)![0];
+  if (letters.length >= 2 && letters.length <= 4 && letters === letters.toUpperCase()) {
+    if (letters === 'SQL') return 'a';
+    return 'AEIOFHLMNRSX'.includes(letters[0]) ? 'an' : 'a';
+  }
+  const lower = word.toLowerCase();
+  if (!'aeiou'.includes(lower[0])) return 'a';
+  return CONSONANT_SOUND_PREFIXES.some((p) => lower.startsWith(p)) ? 'a' : 'an';
+}
+
+/** The phrase with the right indefinite article; a capital gives "A"/"An" for a sentence start. Twin of indefinite in wording.go. */
+export function indefinite(phrase: string, capital = false): string {
+  const a = article(phrase);
+  return `${capital ? a[0].toUpperCase() + a.slice(1) : a} ${phrase}`;
+}
+
+/**
+ * The subject of the sample sentence: one sample takes an article ("A MongoDB serverStatus sample"), several take
+ * their count ("3 MongoDB serverStatus samples"). The source is a name without a noun. Twin of sampleSubject in wording.go.
+ */
+export function sampleSubject(source: string, samples: number): string {
+  return samples === 1 ? indefinite(`${source} sample`, true) : `${samples} ${source} samples`;
+}
+
 /** A source with a recording threshold shows no event. */
 export function notObservedThreshold(source: string, threshold: string): string {
   return `Not observed in ${source}. This source only records ${threshold}; shorter waits would not appear.`;
@@ -13,9 +51,9 @@ export function notObservedGap(detail: string): string {
   return `Not observed (gap or sampling: ${detail}).`;
 }
 
-/** A qualifying event overlaps a stalled audit interval and the join class is unique. */
+/** A qualifying event overlaps a stalled audit interval and the join class is unique. The source and the event are names without an article. */
 export function overlapUnique(source: string, event: string, seconds: number): string {
-  return `A ${source} session had a ${event} of ${seconds} s overlapping this interval (Correlation).`;
+  return `${indefinite(source, true)} session had ${indefinite(event)} of ${seconds} s overlapping this interval (Correlation).`;
 }
 
 /** A qualifying event overlaps and the join class is ambiguous. */
@@ -33,9 +71,9 @@ export function metricRose(subject: string, metric: string, delta: string, span:
   return `${subject}: ${metric} rose by ${delta} over ${span} (from ${from} to ${to}).`;
 }
 
-/** Correlation: a metric sample falls inside a stalled audit interval. */
-export function metricSampleOverlap(source: string, metric: string, value: string): string {
-  return `A ${source} sample showed ${metric} at ${value} during this interval (Correlation).`;
+/** Correlation: metric samples fall inside a stalled audit interval. The source is a name without the word "sample". */
+export function metricSampleOverlap(source: string, samples: number, metric: string, value: string): string {
+  return `${sampleSubject(source, samples)} showed ${metric} at ${value} during this interval (Correlation).`;
 }
 
 /** Correlation: a marker event (a restart, a recycle, a crash) comes shortly before a stalled audit interval. */

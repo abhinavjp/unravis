@@ -113,22 +113,29 @@ function toPattern(sample: string): string {
   return escapeRegExp(sample).split(TEXT).join('([^\\n]+?)').split(NUM).join('\\d+(?:\\.\\d+)?');
 }
 
+/** An article before an argument is "a" with the sentinel, and "an" for a vowel sound: the pattern accepts both. */
+function withArticles(source: string): string {
+  return source.replace(/^A (?=\()/, 'An? ').replace(/ a (?=\()/g, ' an? ');
+}
+
 const asNumber = (s: string) => s as unknown as number;
 
 /** Every sentence the app may show for absence, linkage and plain measurement (as regex sources). */
 const WORDING_SOURCES: string[] = [
   notObservedThreshold(TEXT, TEXT),
   notObservedGap(TEXT),
-  overlapUnique(TEXT, TEXT, asNumber(NUM)),
   overlapAmbiguous(asNumber(NUM)),
   auditCreate(asNumber(NUM)),
   plainAuditCreate(asNumber(NUM)),
   metricRose(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT),
-  metricSampleOverlap(TEXT, TEXT, TEXT),
   markerBefore(TEXT, TEXT, TEXT),
   episodeShare(TEXT, asNumber(NUM), asNumber(NUM), asNumber(NUM), asNumber(NUM)),
   topInWindow(TEXT, TEXT)
-].map(toPattern);
+].map(toPattern).concat([
+  overlapUnique(TEXT, TEXT, asNumber(NUM)),
+  metricSampleOverlap(TEXT, 1, TEXT, TEXT),
+  metricSampleOverlap(TEXT, asNumber(NUM), TEXT, TEXT)
+].map((sample) => withArticles(toPattern(sample))));
 
 /** Sticky patterns: each matches one whole permitted sentence (or sentences) at an exact position. */
 const WORDING_PATTERNS: RegExp[] = WORDING_SOURCES.map((source) => new RegExp(source + '(?=\\s|$)', 'y'));

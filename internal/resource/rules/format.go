@@ -46,6 +46,28 @@ func displayName(source string) string {
 	return source
 }
 
+// sampleSources name a sampling source in the sample wording, which supplies
+// the noun and the article itself ("A Redis INFO sample", "3 Redis INFO
+// samples"): the display name without its plural noun.
+var sampleSources = map[string]string{
+	"win-counters":       "Windows performance counter",
+	"dotnet-counters":    ".NET runtime counter",
+	"win-procsnap":       "process snapshot",
+	"redis-info":         "Redis INFO",
+	"mongo-serverstatus": "MongoDB serverStatus",
+	"mongostat-json":     "mongostat",
+	"linux-sadf":         "Linux sar",
+	"linux-pidstat":      "Linux pidstat",
+	"sql-pdh":            "SQL Server performance counter",
+}
+
+func sampleSource(source string) string {
+	if n, ok := sampleSources[source]; ok {
+		return n
+	}
+	return displayName(source)
+}
+
 // eventPhrases name event kinds in the overlap wording.
 var eventPhrases = map[string]string{
 	"slow-op":        "slow operation",

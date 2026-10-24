@@ -110,7 +110,7 @@ var displayNames = map[string]string{
 }
 
 // eventPhrases are the plain event names whose kind does not read well with
-// its hyphens replaced. Each starts with a consonant sound, for "had a ...".
+// its hyphens replaced. OverlapUnique adds the article.
 var eventPhrases = map[string]string{
 	"slow-op":        "slow operation",
 	"slow-command":   "slow command",
