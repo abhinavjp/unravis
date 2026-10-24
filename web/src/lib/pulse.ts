@@ -1,4 +1,5 @@
 import { changeText, msChangeText, pointsText, rateText } from './overview';
+import { p95Change, type P95Change } from './copy/screenCopy';
 import type { Analysis, Comparison, Kind, Metric, OverviewRow, Quantile, Rollup } from './types';
 
 /** The measure a headline figure opens in the ranked "where is it" view. */
@@ -13,6 +14,8 @@ export interface Figure {
   hint: string;
   /** Tooltip with the exact meaning. */
   tip: string;
+  /** How the figure compares with the earlier period, when that can be stated (the P95 only). */
+  change?: P95Change;
 }
 
 const dash = '—';
@@ -43,11 +46,12 @@ export function pulseFigures(overview: OverviewRow[], queryKind: Kind, metric: M
   const single = singleKind(queryKind);
   const row = single ? overview.find(item => item.kind === overviewKind(queryKind)) : undefined;
   const p95 = row ? quantileMs(row.p95) : null;
+  const change = single ? p95Change(p95, quantileMs(row?.reference?.p95)) : null;
   const p95Hint = !single ? 'Choose one request type' : p95 == null ? 'No timed requests' : metricLabel;
   return [
     { id: 'requests', label: 'Requests', value: events.toLocaleString(), hint: events ? 'in the selected period' : 'none in this period', tip: 'Every event of the request types in scope that matches the filters, including incomplete and pending ones.' },
     { id: 'completion', label: 'Completion', value: share(completed, events), hint: events ? completed.toLocaleString() + ' completed' : 'nothing to measure', tip: 'Completed ÷ all events. Incomplete, pending and unusable events are in the denominator and never counted as fast or successful.' },
-    { id: 'p95', label: metric === 'api' ? 'API P95' : 'Observed P95', value: single ? durationText(p95) : dash, hint: p95Hint, tip: single ? 'A histogram estimate over the valid timings of this request type. ' + metricLabel + '.' : 'Latency is not pooled across request types. Pick Sync, Async, Hangfire or HTTP (polling type unknown) to see a P95.' },
+    { id: 'p95', change: change ?? undefined, label: metric === 'api' ? 'API P95' : 'Observed P95', value: single ? durationText(p95) : dash, hint: p95Hint, tip: single ? 'A histogram estimate over the valid timings of this request type. ' + metricLabel + '.' : 'Latency is not pooled across request types. Pick Sync, Async, Hangfire or HTTP (polling type unknown) to see a P95.' },
     { id: 'client', label: '4xx', value: client.toLocaleString(), hint: events ? share(client, events) + ' of requests' : '—', tip: 'Client-error responses.' },
     { id: 'server', label: '5xx', value: server.toLocaleString(), hint: events ? share(server, events) + ' of requests' : '—', tip: 'Server-error responses, including failed Hangfire jobs.' }
   ];

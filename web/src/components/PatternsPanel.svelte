@@ -151,7 +151,7 @@
                             <tbody>
                               {#each stalls as stall (stall.sourceId + stall.id)}
                                 <tr>
-                                  <td class="ops">{operationText(stall)}{#if query.sourceIds.length > 1} <span class="source-tag">{labelOf(stall.sourceId)}</span>{/if}</td>
+                                  <td class="ops">{operationText(stall)}{#if query.sourceIds.length > 1}{' · '}<span class="source-tag">{labelOf(stall.sourceId)}</span>{/if}</td>
                                   <td>{at(stall.initiatedAt)}</td>
                                   <td class="num">{secondsLabel(stall.observedMs)}</td>
                                 </tr>
@@ -175,7 +175,7 @@
           <ul class="audit-list">
             {#each report.auditStalls as stall (stall.sourceId + stall.id)}
               <li>
-                <span class="ops">{operationText(stall)}{#if query.sourceIds.length > 1} <span class="source-tag">{labelOf(stall.sourceId)}</span>{/if}</span>
+                <span class="ops">{operationText(stall)}{#if query.sourceIds.length > 1}{' · '}<span class="source-tag">{labelOf(stall.sourceId)}</span>{/if}</span>
                 <span class="audit-when">{at(stall.initiatedAt)}</span>
                 <span class="audit-line">{auditStallLine(stall)}</span>
               </li>

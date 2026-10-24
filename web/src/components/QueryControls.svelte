@@ -5,7 +5,9 @@
   import { metricLabels } from '../lib/presentation';
   import { activeRangeId } from '../lib/depth';
   import { RANGE_FIELDS, buildRange, isValidOperation, isValidUserId, rangeConflict, splitList, syncListDraft, syncOperationDraft, syncRangeDraft } from '../lib/investigation';
+  import { KIND_TITLES } from '../lib/copy/screenCopy';
   import DateTimeField from './DateTimeField.svelte';
+  import Hint from './Hint.svelte';
   // part "bar" is the always-visible scope (quick range chips and the request-type control); part "panel" is
   // everything else, kept behind the More filters disclosure; "all" renders both.
   let { query = $bindable(), zone = $bindable(), targetMs = $bindable(), dateInputsValid = $bindable(), groupNames = [], now = '', part = 'all', onScopeChange }: { query: Query; zone: string; targetMs: number | null; dateInputsValid: boolean; groupNames?: string[]; now?: string; part?: 'all' | 'bar' | 'panel'; onScopeChange?: () => void } = $props();
@@ -15,11 +17,11 @@
   // A quick range chosen in the bar marks the dates valid again; the panel then drops its stale invalid state.
   $effect(() => { if (part !== 'bar' && dateInputsValid) untrack(() => { if (invalidWindows.length) { invalidWindows = []; timeInputError = ''; } }); });
   const kindSegments: { value: Query['kind']; label: string; title: string }[] = [
-    { value: 'all', label: 'All', title: 'Every request type' },
-    { value: 'synchronous', label: 'Sync', title: 'Synchronous requests' },
-    { value: 'asynchronous', label: 'Async', title: 'Asynchronous requests' },
-    { value: 'hangfire', label: 'Hangfire', title: 'Hangfire background jobs' },
-    { value: 'http', label: 'HTTP', title: 'HTTP: synchronous, asynchronous and polling type unknown' }
+    { value: 'all', label: 'All', title: KIND_TITLES.all },
+    { value: 'synchronous', label: 'Sync', title: KIND_TITLES.synchronous },
+    { value: 'asynchronous', label: 'Async', title: KIND_TITLES.asynchronous },
+    { value: 'hangfire', label: 'Hangfire', title: KIND_TITLES.hangfire },
+    { value: 'http', label: 'HTTP', title: KIND_TITLES.http }
   ];
   const setKind = (value: Query['kind']) => {
     if (query.kind === value) return;
@@ -138,7 +140,7 @@
     query.urlContains = undefined; query.auditId = undefined; query.statusCodes = undefined; query.completion = undefined; query.operation = undefined;
     for (const field of RANGE_FIELDS) clearRange(field.key);
   };
-  const completionLabels: Record<Completion, string> = { all: 'Any', complete: 'Complete', incomplete: 'Incomplete', pending: 'Pending (accepted, not finished)', invalid: 'Invalid timing' };
+  const completionLabels: Record<Completion, string> = { all: 'Any', complete: 'Complete', incomplete: 'Incomplete', pending: 'Pending (accepted, not finished)', invalid: 'Unusable timing' };
   const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time';
   const localValue = (value: string) => {
     const date = new Date(value);
@@ -177,11 +179,11 @@
   {#if part !== 'panel'}
   <div class="scope-row">
     <div class="quick-ranges" role="group" aria-label="Quick ranges">
-      <span>Range</span>
+      <span>Range<Hint termId="time-window" /></span>
       {#each quickRanges as preset (preset.id)}<button type="button" class="chip" class:on={activeRange === preset.id} aria-pressed={activeRange === preset.id} title={'Investigate the ' + preset.label.toLowerCase() + ' and compare with the period right before it.'} onclick={() => applyQuickRange(preset.id)}>{preset.label}</button>{/each}
     </div>
     <div class="kind-control" role="group" aria-label="Request type">
-      <span>Type</span>
+      <span>Type<Hint termId="synchronous" /></span>
       <div class="segmented">{#each kindSegments as segment (segment.value)}<button type="button" class:on={query.kind === segment.value} aria-pressed={query.kind === segment.value} title={segment.title} onclick={() => setKind(segment.value)}>{segment.label}</button>{/each}</div>
     </div>
   </div>
@@ -194,7 +196,7 @@
       <DateTimeField id="current-end" label="To" value={localValue(query.end)} onChange={(date, time) => setWindow('end', date, time)} />
     </section>
     <section class="range-group reference-range" aria-labelledby="reference-range-label">
-      <div class="range-title"><h2 id="reference-range-label">Reference</h2><p>An earlier period to compare with.</p></div>
+      <div class="range-title"><h2 id="reference-range-label">Reference<Hint termId="reference-period" /></h2><p>An earlier period to compare with.</p></div>
       <DateTimeField id="reference-start" label="From" value={localValue(query.baselineStart)} onChange={(date, time) => setWindow('baselineStart', date, time)} />
       <DateTimeField id="reference-end" label="To" value={localValue(query.baselineEnd)} onChange={(date, time) => setWindow('baselineEnd', date, time)} />
     </section>
@@ -208,11 +210,11 @@
       <div class="advanced-content">
         <div class="field-grid">
           <div class="control-group"><label for="kind">Request type</label><select id="kind" bind:value={query.kind}><option value="synchronous">Synchronous</option><option value="asynchronous">Asynchronous</option><option value="hangfire">Hangfire</option><option value="http">HTTP (synchronous, asynchronous and polling type unknown)</option><option value="http_unknown">HTTP (polling type unknown)</option><option value="all">All types</option></select></div>
-          <div class="control-group"><label for="outcome">Status</label><select id="outcome" bind:value={query.outcome}><option value="all">All statuses</option><option value="success">Success</option><option value="failure">Failure</option><option value="client_error">Client errors (4xx)</option><option value="server_error">Server errors (5xx, incl. failed Hangfire jobs)</option></select></div>
-          <div class="control-group"><label for="metric">Time measured</label><select id="metric" bind:value={query.metric}><option value="total">{metricLabels.total}</option><option value="api">{metricLabels.api}</option></select></div>
-          <div class="control-group"><label for="bucket">Chart interval (seconds)</label><input id="bucket" type="number" min="10" max="86400" step="1" bind:value={query.bucketSeconds} /><p class="field-note">10–86,400 seconds; no more than 120 points.</p></div>
+          <div class="control-group"><span class="label-line"><label for="outcome">Status</label><Hint termId="status-class" /></span><select id="outcome" bind:value={query.outcome}><option value="all">All statuses</option><option value="success">Success</option><option value="failure">Failure</option><option value="client_error">Client errors (4xx)</option><option value="server_error">Server errors (5xx, incl. failed Hangfire jobs)</option></select></div>
+          <div class="control-group"><span class="label-line"><label for="metric">Time measured</label><Hint termId="response-time" /></span><select id="metric" bind:value={query.metric}><option value="total">{metricLabels.total}</option><option value="api">{metricLabels.api}</option></select></div>
+          <div class="control-group"><span class="label-line"><label for="bucket">Chart interval (seconds)</label><Hint termId="time-slice" /></span><input id="bucket" type="number" min="10" max="86400" step="1" bind:value={query.bucketSeconds} /><p class="field-note">10–86,400 seconds; no more than 120 points.</p></div>
         </div>
-        <div class="control-group"><label for="latency-target">Optional response-time target (ms)</label><input id="latency-target" type="number" min="0.01" step="any" bind:value={targetMs} placeholder="No target" /><p class="field-note">Adds a chart line and compares it with P95: the estimated time within which about 95 of 100 requests with usable timings finish.</p></div>
+        <div class="control-group"><span class="label-line"><label for="latency-target">Optional response-time target (ms)</label><Hint termId="p95" /></span><input id="latency-target" type="number" min="0.01" step="any" bind:value={targetMs} placeholder="No target" /><p class="field-note">Adds a chart line and compares it with P95: the estimated time within which about 95 of 100 requests with usable timings finish.</p></div>
         <div class="field-grid"><div class="control-group"><label for="controller">Controller name</label><input id="controller" bind:value={query.controller} placeholder="Any controller" /></div><div class="control-group"><label for="action">Action name</label><input id="action" bind:value={query.action} placeholder="Any action" /></div></div>
         <div class="control-group"><label for="display-zone">Chart labels time zone</label><select id="display-zone" bind:value={zone}>{#each zones as item}<option value={item}>{item}</option>{/each}</select><p class="field-note">Changes chart labels only; it does not change either selected period.</p></div>
       </div>
@@ -237,7 +239,7 @@
           <div class="control-group"><label for="rf-agent">Browser (user agent) contains</label><input id="rf-agent" maxlength="200" autocomplete="off" value={query.userAgentContains ?? ''} oninput={(event) => setText('userAgentContains', event.currentTarget.value)} placeholder="e.g. Firefox" /><p class="field-note">Not case sensitive.</p></div>
           <div class="control-group"><label for="rf-url">Request URL contains</label><input id="rf-url" maxlength="200" autocomplete="off" value={query.urlContains ?? ''} oninput={(event) => setText('urlContains', event.currentTarget.value)} placeholder="e.g. /api/payslips" /><p class="field-note">Not case sensitive.</p></div>
           <div class="control-group"><label for="rf-audit-id">Audit ID</label><input id="rf-audit-id" maxlength="24" autocomplete="off" spellcheck="false" aria-invalid={auditIdInvalid} value={query.auditId ?? ''} oninput={(event) => setText('auditId', event.currentTarget.value)} placeholder="24 hexadecimal characters" />{#if auditIdInvalid}<p class="inline-error" role="alert">An audit ID is exactly 24 hexadecimal characters.</p>{/if}</div>
-          <div class="control-group"><label for="rf-completion">Completion</label><select id="rf-completion" value={query.completion ?? ''} onchange={(event) => setCompletion(event.currentTarget.value)}><option value="">Any</option>{#each ['complete', 'incomplete', 'pending', 'invalid'] as value}<option value={value}>{completionLabels[value as Completion]}</option>{/each}</select></div>
+          <div class="control-group"><span class="label-line"><label for="rf-completion">Completion</label><Hint termId="incomplete-request" /></span><select id="rf-completion" value={query.completion ?? ''} onchange={(event) => setCompletion(event.currentTarget.value)}><option value="">Any</option>{#each ['complete', 'incomplete', 'pending', 'invalid'] as value}<option value={value}>{completionLabels[value as Completion]}</option>{/each}</select></div>
         </div>
         <div class="control-group"><label for="rf-operation">Operation</label><input id="rf-operation" list="rf-operation-options" maxlength="200" autocomplete="off" aria-invalid={operationInvalid} value={operationText} oninput={(event) => setOperation(event.currentTarget.value)} placeholder="Controller.Action" />{#if operationInvalid}<p class="inline-error" role="alert">Not applied. Write the operation as Controller.Action, with a name on both sides of the dot.</p>{/if}<datalist id="rf-operation-options">{#each operationSuggestions as name (name)}<option value={name}></option>{/each}</datalist><p class="field-note">Suggestions come from the API groups of the loaded results. It is the controller before the first dot and the action after it.</p></div>
         <div class="range-filters" role="group" aria-labelledby="rf-ranges-title">
@@ -265,6 +267,8 @@
 </section>
 
 <style>
+  .label-line { display: flex; align-items: center; gap: 0; }
+  .label-line label { margin: 0; }
   .record-count { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 11px; line-height: 18px; text-align: center; }
   .record-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; padding: 0; list-style: none; }
   .record-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 1px 3px 1px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--text); font-size: 12px; }

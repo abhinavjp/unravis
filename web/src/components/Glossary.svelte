@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { findTerm } from '../lib/copy/lookup';
   import { searchTerms } from '../lib/copy/lookup';
+  import { HELP_STEPS, HELP_TEXT, glossaryCount } from '../lib/copy/screenCopy';
   import Drawer from './Drawer.svelte';
 
   // The glossary drawer: every term in the copy deck, alphabetical, with a plain text filter. It opens from the Help button in the header.
@@ -12,7 +13,7 @@
   let drawer = $state<HTMLElement>();
   let search = $state<HTMLInputElement>();
   const results = $derived(searchTerms(query));
-  const summary = $derived(results.length === 0 ? 'No terms match' : results.length + (results.length === 1 ? ' term' : ' terms'));
+  const summary = $derived(glossaryCount(results.length, query));
   onMount(() => { if (!focusTerm || !findTerm(focusTerm)) search?.focus(); });
   $effect(() => {
     const id = focusTerm;
@@ -27,7 +28,15 @@
   });
 </script>
 
-<Drawer class="glossary-drawer" title="Glossary" titleId="glossary-title" closeLabel="Close glossary" focusable={'button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'} bind:element={drawer} {onClose}>
+<Drawer class="glossary-drawer" title={HELP_TEXT.title} titleId="glossary-title" closeLabel="Close help and glossary" focusable={'button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'} bind:element={drawer} {onClose}>
+  <section class="help-start" aria-labelledby="help-start-title">
+    <h3 id="help-start-title">{HELP_TEXT.startHeading}</h3>
+    <p>{HELP_TEXT.startIntro}</p>
+    <ol>
+      {#each HELP_STEPS as step (step)}<li>{step}</li>{/each}
+    </ol>
+  </section>
+  <h3 class="glossary-heading">{HELP_TEXT.termsHeading}</h3>
   <div class="glossary-search">
     <label for="glossary-filter">Search terms</label>
     <input id="glossary-filter" type="search" bind:this={search} bind:value={query} autocomplete="off" spellcheck="false" aria-describedby="glossary-count" />
@@ -55,7 +64,12 @@
   .glossary-list { margin: 0; }
   .glossary-entry { padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
   .glossary-entry:focus { outline: none; }
-  .glossary-focused { margin: 0 -10px; padding: 12px 10px; background: var(--surface-2); border-left: 3px solid var(--accent); }
+  .glossary-focused { margin: 0 -10px; padding: 12px 10px; background: var(--surface-2); border-radius: var(--radius); box-shadow: inset 0 0 0 1px var(--accent); }
+  .help-start { margin: 13px 0 0; padding-bottom: 12px; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+  .help-start h3, .glossary-heading { margin: 0 0 6px; font-size: 15px; font-weight: 650; }
+  .glossary-heading { margin-top: 14px; }
+  .help-start p { margin: 0 0 6px; color: var(--text-2); }
+  .help-start ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
   .glossary-entry dt { font-size: 15px; font-weight: 650; }
   .glossary-entry dd { margin: 5px 0 0; font-size: 13px; overflow-wrap: anywhere; }
   .glossary-hint { font-weight: 600; }

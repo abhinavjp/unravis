@@ -107,8 +107,8 @@
 
 <style>
   .hint-wrap { display: inline-flex; vertical-align: middle; margin-left: 4px; font-weight: 400; text-transform: none; letter-spacing: 0; }
-  .hint-button { position: relative; display: inline-grid; place-items: center; width: 18px; height: 18px; padding: 0; color: var(--text-2); background: transparent; border: 1px solid var(--control-line); border-radius: 50%; font-size: 11px; font-weight: 650; line-height: 1; }
-  /* The visible circle stays small; the tap target reaches 26px. */
+  .hint-button { position: relative; display: inline-grid; place-items: center; width: 16px; height: 16px; padding: 0; color: var(--text-2); background: transparent; border: 1px solid var(--control-line); border-radius: 50%; font-size: 10px; font-weight: 650; line-height: 1; }
+  /* The visible circle stays small; the tap target reaches 24px. */
   .hint-button::after { content: ""; position: absolute; inset: -4px; }
   .hint-button:hover, .hint-button[aria-expanded="true"] { color: var(--text); border-color: var(--accent); background: var(--surface-2); }
   .hint-popover { position: fixed; z-index: 60; width: min(340px, calc(100vw - 24px)); max-height: calc(100vh - 16px); overflow: auto; padding: 12px 14px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 12px 32px color-mix(in srgb, var(--bg) 70%, transparent); font-size: 13px; font-weight: 400; line-height: 1.45; text-align: left; text-transform: none; letter-spacing: 0; white-space: normal; animation: reveal var(--dur) var(--ease); }

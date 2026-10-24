@@ -83,7 +83,7 @@
     <BreakdownPanel query={scopedQuery} {sourceLabels} onDrill={drillInto} />
   {/if}
   <section class="data-section request-section" id="request-history">
-    <div class="section-heading"><div><h3>Request history</h3><p>{queryWide ? (drillOverview ? drillHeading(drillOverview) : stateLabel(requestState)) + ' · ' + (operation ? 'every group of this operation' : 'every API group in this comparison') : selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome : drillActive ? 'Requests matching ' + drillChips.map(chip => chip.text).join(' · ') + '.' : 'Choose an operation to list its requests.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
+    <div class="section-heading"><div><h3>Request history</h3><p>{queryWide ? (drillOverview ? drillHeading(drillOverview) : stateLabel(requestState)) + ' · ' + (operation ? 'every group of this operation' : 'every API group in this comparison') + '.' : selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome + '.' : drillActive ? 'Requests matching ' + drillChips.map(chip => chip.text).join(' · ') + '.' : 'Choose an operation to list its requests.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
       {#if selected || queryWide}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
       {#if drillActive}<button class="quiet-button" onclick={clearDrill}>{operation ? 'Back to all of this operation' : 'Clear breakdown filter'}</button>{/if}
     </div>

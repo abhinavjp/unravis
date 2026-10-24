@@ -59,9 +59,9 @@
   };
   // Impact is the extra time versus the reference mean across all current requests; z comes from the whole histogram.
   const impactTip = (row: Comparison) => row.impactMs == null
-    ? 'Total impact needs a comparable group with enough samples in both periods.'
-    : 'Extra time versus the reference average, summed over the current requests (volume × mean change).'
-      + (row.shiftZ == null ? '' : ` Distribution shift z = ${row.shiftZ.toFixed(1)}; ${row.significant ? 'a clear, larger-than-bin shift.' : 'not a clear shift beyond histogram resolution.'}`);
+    ? 'Extra waiting needs a comparable group with enough samples in both periods.'
+    : 'About how much extra waiting all requests in this period added, compared with the average request in the earlier period (number of requests × average change).'
+      + (row.shiftZ == null ? '' : row.significant ? ' Clear shift: the whole spread of response times moved.' : ' Not a clear shift: the spread of response times looks about the same.');
   // Per API, not per group: an unfinished request has no known result, so a group's own share would read 100% or 0% by its outcome alone.
   const completionText = (row: Comparison) => { const rollup = rollupFor(rollups, row); return rollup ? rateText(rollupCompletionRate(rollup)) : '—'; };
   const completionTip = 'Whole API and request type: completed / (completed + incomplete + pending). Unusable rows are not in the share. A dash means no data to measure.';
@@ -93,7 +93,7 @@
       <th title="Request type and outcome remain separate parts of each group.">Kind and outcome</th>
       <th aria-sort={sort === 'count' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button class="sort-button" title="Current-period requests with a valid response-time sample." onclick={() => sortBy('count')}>Current requests{sort === 'count' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button></th>
       <th title="Reference-period requests with a valid response-time sample.">Reference requests<Hint termId="reference-period" /></th>
-      <th aria-sort={sort === 'impact' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button class="sort-button" title="Extra time versus the reference average, summed over all current requests. A marker means the whole latency distribution clearly shifted." onclick={() => sortBy('impact')}>Total impact{sort === 'impact' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button></th>
+      <th aria-sort={sort === 'impact' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button class="sort-button" title="About how much extra waiting all requests in this period added, compared with the average request in the earlier period. Clear shift means the whole spread of response times moved, not only a few requests." onclick={() => sortBy('impact')}>Extra waiting (total){sort === 'impact' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button></th>
       <th aria-sort={sort === 'ratio' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button class="sort-button" title="P95 is the time within which about 95 of 100 requests finish. 2× means twice as long; 0.5× means half as long." onclick={() => sortBy('ratio')}>P95 vs reference{sort === 'ratio' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button><Hint termId="p95" /></th>
       <th><button class="sort-button" title="Difference between current and earlier reference P95 estimates, in milliseconds. P95 is the estimated time within which about 95 of 100 requests with usable timings finish." onclick={() => sortBy('delta')}>P95 difference (ms)</button></th>
       <th title="Share of current-period requests with a known result that were client errors (4xx), for the whole API. Needs the outcome filter set to All.">4xx %</th>
@@ -111,7 +111,7 @@
           <td class="timeline-choice"><label><input type="checkbox" checked={timelineKeys.includes(row.key)} disabled={timelineKeys.length >= 8 && !timelineKeys.includes(row.key)} aria-label={'Compare timeline for ' + row.controller + '.' + row.action + ' in ' + (sources.get(row.sourceId) ?? row.sourceId) + ' · ' + row.kind + ' · ' + row.outcome} onchange={() => onToggleTimeline(row.key)} /><span>Compare</span></label></td>
           <td><button class="api-select" aria-pressed={row.key === selectedKey} onclick={() => onSelect(row.key)}>{row.controller}.{row.action}</button><small title={sources.get(row.sourceId) ?? row.sourceId}>{sources.get(row.sourceId) ?? row.sourceId}</small><PhaseBar phases={row.current.phases} delta={row.phaseDeltaMs} /></td>
           <td class="group-kind" data-label="Kind and outcome" title={row.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(row.kind)}<small>{outcomeRateText(rows, row, outcomeFilter)}</small></td><td data-label="Current requests" title={observedPartialTip(row.current.observedPartial)}>{row.current.count.toLocaleString()}</td><td data-label="Reference requests" title={observedPartialTip(row.reference.observedPartial)}>{row.reference.count.toLocaleString()}</td>
-          <td class="numeric" data-label="Total impact" title={impactTip(row)}>{impactText(row.impactMs)}{#if row.significant}<small>significant shift</small>{/if}</td>
+          <td class="numeric" data-label="Extra waiting (total)" title={impactTip(row)}>{impactText(row.impactMs)}{#if row.significant}<small>clear shift</small>{/if}</td>
           <td class="numeric" data-label="P95 vs reference" title={p99Tip(row)}>{ratio(row.p95Ratio)}</td><td class="numeric" data-label="P95 difference (ms)">{row.p95DeltaMs == null ? 'N/A' : '≈ ' + row.p95DeltaMs.toFixed(1)}</td>
           <td class="numeric" data-label="4xx %" title={rates.tip}>{rates.client}</td>
           <td class="numeric" data-label="5xx %" title={rates.tip}>{rates.server}</td>
