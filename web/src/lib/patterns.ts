@@ -1,5 +1,5 @@
 import { auditCreate } from './copy/wordings';
-import type { PatternAuditStall, PatternCoverage, PatternEpisode, PatternInput, PatternReport, PatternStall, PatternVolley, Query } from './types';
+import type { EvidenceLabel, PatternAuditStall, PatternCoverage, PatternEpisode, PatternInput, PatternReport, PatternStall, PatternVolley, Query } from './types';
 
 /**
  * Pure text and shape logic for the Patterns drawer (P2-lite). Every sentence the drawer builds lives here so the copy lint can read it.
@@ -9,6 +9,8 @@ import type { PatternAuditStall, PatternCoverage, PatternEpisode, PatternInput, 
 /** The server defaults, shown beside the optional overrides. */
 export const DEFAULT_STALL_MS = 45_000;
 export const DEFAULT_EPISODE_GAP_SECONDS = 600;
+/** The boxes in the drawer hold seconds, the unit people read. The server still takes milliseconds for the slow request limit. */
+export const DEFAULT_STALL_SECONDS = DEFAULT_STALL_MS / 1000;
 
 export const PATTERNS_TEXT = {
   title: 'Patterns',
@@ -16,9 +18,23 @@ export const PATTERNS_TEXT = {
   running: 'Looking…',
   runNote: 'This reads the slowest requests in the window. It only runs when you press the button.',
   thresholds: 'Thresholds',
-  stallLabel: 'Slow request threshold (ms)',
-  gapLabel: 'Gap between episodes (seconds)',
-  thresholdNote: 'Leave a box empty to use the default.',
+  intro: 'Patterns looks at the slowest requests in this window and groups the ones that happened close together. Each group is an episode. Several separate episodes may mean the same thing keeps happening.',
+  rangeLabel: 'Range',
+  rangeNote: 'This is the same range as the page behind this panel.',
+  stallLabel: 'Slow request (s)',
+  gapLabel: 'Gap that splits episodes (s)',
+  thresholdNote: 'A request at or above the first limit counts as slow. Slow requests stay in one episode until the quiet gap between them is longer than the second limit.',
+  thresholdsChanged: 'changed',
+  reset: 'Reset to defaults',
+  stale: 'The range or limits changed after this search. Press the button to look again.',
+  stallBad: 'Slow request must be a number of seconds above zero, such as 45.',
+  gapBad: 'The gap must be a whole number of seconds above zero, such as 600.',
+  openRecord: 'Open record',
+  cite: 'Cite in ledger',
+  citeAdded: 'Added to the ledger.',
+  citeCopied: 'The ledger could not take this directly. The reference is copied, so paste it into the ledger.',
+  citeFailed: 'This could not be added to the ledger.',
+  emptyTitle: 'No slow requests in this window',
   lowN: 'low n',
   truncated: 'Showing the slowest rows only; episode counts are partial.',
   auditsTruncated: 'Showing the newest audit save rows only; the slow audit save count is partial.',
@@ -114,3 +130,95 @@ export function endGapsText(volley: Pick<PatternVolley, 'endGapsMs' | 'incomplet
 }
 
 export const operationText = (row: { controller: string; action: string }) => row.action ? `${row.controller} / ${row.action}` : row.controller;
+
+// ---- Range chips (the drawer mirrors the page's range) ----
+
+/** The ranges the drawer offers, in order. They are ids of the page's own quick ranges, so one click here is one click there. */
+export const PATTERN_RANGES = [
+  { id: '15m', label: '15 min' },
+  { id: '1h', label: '1 h' },
+  { id: '4h', label: '4 h' },
+  { id: '24h', label: '24 h' }
+] as const;
+
+// ---- Thresholds in seconds ----
+
+const wholeSeconds = /^\d+$/;
+const stallSeconds = /^\d+(?:\.\d{1,3})?$/;
+
+/** True when either box differs from its default. A blank box counts as the default. */
+export function thresholdsChanged(stallSec: string, gapSec: string): boolean {
+  const stall = stallSec.trim(), gap = gapSec.trim();
+  const stallMs = stall && stallSeconds.test(stall) ? Math.round(Number(stall) * 1000) : null;
+  return (stall !== '' && stallMs !== DEFAULT_STALL_MS) || (gap !== '' && gap !== String(DEFAULT_EPISODE_GAP_SECONDS));
+}
+
+/**
+ * The window plus the two limits, typed in seconds. A value equal to the default is not sent, so a default run is the same request as before.
+ * An empty box means the default.
+ */
+export function windowInputSeconds(query: Pick<Query, 'sourceIds' | 'start' | 'end'>, stallSec = '', gapSec = ''): { input: PatternInput } | { error: string } {
+  const stall = stallSec.trim(), gap = gapSec.trim();
+  let stallRaw = '', gapRaw = '';
+  if (stall) {
+    const ms = stallSeconds.test(stall) ? Math.round(Number(stall) * 1000) : 0;
+    if (!Number.isSafeInteger(ms) || ms <= 0) return { error: PATTERNS_TEXT.stallBad };
+    if (ms !== DEFAULT_STALL_MS) stallRaw = String(ms);
+  }
+  if (gap) {
+    if (!wholeSeconds.test(gap) || !Number.isSafeInteger(Number(gap)) || Number(gap) <= 0) return { error: PATTERNS_TEXT.gapBad };
+    if (Number(gap) !== DEFAULT_EPISODE_GAP_SECONDS) gapRaw = String(Number(gap));
+  }
+  return windowInput(query, stallRaw, gapRaw);
+}
+
+/** The empty state: what was looked for, and the two things that would change the answer. */
+export const emptyEpisodesText = (stallMs: number): string =>
+  `No requests took ${secondsNumber(stallMs)} s or longer in this window. Try a wider range above, or lower the slow request limit under Thresholds.`;
+
+// ---- Findings, merged ----
+
+export interface FindingRow { key: string; label: EvidenceLabel; n: number; lowN: boolean; headline: string; evidenceId: string }
+type FindingSource = Pick<PatternReport, 'findings' | 'episodes' | 'recurrence' | 'params' | 'truncated' | 'stallsTruncated'>;
+
+/**
+ * The findings as rows. The server sends "N requests took X s or longer" and, separately, "Recurring: E separate episodes, N requests in all".
+ * That is one fact, so the two become one sentence. The merged row cites the episode finding's reference, since that is the one that counts episodes.
+ */
+export function findingRows(report: FindingSource): FindingRow[] {
+  const toRow = (f: FindingSource['findings'][number]): FindingRow => ({ key: f.rule + f.evidenceId, label: f.label, n: f.n, lowN: f.lowN, headline: f.headline, evidenceId: f.evidenceId });
+  const b1 = report.findings.find((f) => f.rule === 'B1');
+  const b2 = report.findings.find((f) => f.rule === 'B2');
+  const merge = !!b1 && !!b2 && report.episodes.length > 0;
+  const rows: FindingRow[] = [];
+  for (const finding of report.findings) {
+    if (!merge || (finding.rule !== 'B1' && finding.rule !== 'B2')) { rows.push(toRow(finding)); continue; }
+    if (finding.rule === 'B2' || !b1 || !b2) continue;
+    const partial = report.stallsTruncated !== undefined ? !!report.stallsTruncated : report.truncated;
+    const requests = `${b1.n} ${b1.n === 1 ? 'request' : 'requests'}`;
+    const episodes = report.episodes.length === 1 ? 'in a single episode' : `in ${report.episodes.length} separate episodes`;
+    const lead = partial ? `At least ${requests} took` : `${requests.charAt(0).toUpperCase()}${requests.slice(1)} took`;
+    const tail = report.recurrence === 'two_episodes' ? ' That is not enough to call it recurring.' : '';
+    rows.push({ key: 'B1B2' + b2.evidenceId, label: 'Symptom', n: b1.n, lowN: b1.lowN || b2.lowN, headline: `${lead} ${secondsNumber(report.params.stallMs)} s or longer, ${episodes}.${tail}`, evidenceId: b2.evidenceId });
+  }
+  return rows;
+}
+
+// ---- References for the ledger ----
+
+/** The ledger accepts references that match this (lowercase letters and digits first, then letters, digits and : _ . -). */
+export const EVIDENCE_ID_PATTERN = /^[a-z0-9][a-z0-9:_.\-]{0,119}$/;
+export const isEvidenceId = (id: string): boolean => EVIDENCE_ID_PATTERN.test(id);
+
+/** A stable reference to one episode, built from its start time. Empty when the start cannot make a valid reference. */
+export function episodeEvidenceId(start: string): string {
+  const id = 'episode:' + start.trim().toLowerCase().replace(/[^a-z0-9:_.\-]/g, '-');
+  return isEvidenceId(id) ? id : '';
+}
+
+/** The short name shown in the ledger beside a reference, never longer than 60 characters. */
+export function citeLabel(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length <= 60 ? flat : flat.slice(0, 59).trimEnd() + '…';
+}
+export const episodeCiteLabel = (timeText: string): string => citeLabel('Episode at ' + timeText);
