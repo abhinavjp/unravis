@@ -46,6 +46,7 @@ type handler struct {
 	adds    connectionTestLimiter
 	proofs  connectionTestLimiter
 	repeats analyzeRepeats
+	rollups rollupCache
 
 	casesState
 
@@ -463,6 +464,7 @@ func (h *handler) addSource(w http.ResponseWriter, r *http.Request) {
 		writeRepoError(w, err)
 		return
 	}
+	h.rollups.clear()
 	writeJSON(w, http.StatusCreated, item, maxResponseBytes)
 }
 
@@ -478,6 +480,7 @@ func (h *handler) deleteSource(w http.ResponseWriter, r *http.Request, id string
 		writeRepoError(w, err)
 		return
 	}
+	h.rollups.clear()
 	w.WriteHeader(http.StatusNoContent)
 }
 

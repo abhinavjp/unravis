@@ -79,6 +79,10 @@ func post(fn func(*handler, http.ResponseWriter, *http.Request)) map[string]rout
 	return map[string]routeFunc{http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { fn(h, w, r) }}
 }
 
+func get(fn func(*handler, http.ResponseWriter, *http.Request)) map[string]routeFunc {
+	return map[string]routeFunc{http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { fn(h, w, r) }}
+}
+
 // routes is the whole HTTP surface, checked in order; the first route whose
 // matcher accepts the path owns it. A path that matches a route but not the
 // request method answers 405 with an Allow header; a path that matches nothing
@@ -120,6 +124,8 @@ var routes = []route{
 	{pattern: "/api/activity", match: exactPath("/api/activity"), methods: post((*handler).activity)},
 	{pattern: "/api/slowest", match: exactPath("/api/slowest"), methods: post((*handler).slowest)},
 	{pattern: "/api/breakdown", match: exactPath("/api/breakdown"), methods: post((*handler).breakdown)},
+	{pattern: "/api/daily", match: exactPath("/api/daily"), methods: get((*handler).daily)},
+	{pattern: "/api/hourgrid", match: exactPath("/api/hourgrid"), methods: get((*handler).hourGrid)},
 	{pattern: "/api/patterns", match: exactPath("/api/patterns"), methods: post((*handler).patterns)},
 	{pattern: "/api/export/preview", match: exactPath("/api/export/preview"), methods: post((*handler).exportPreview)},
 	{pattern: "/api/export/confirm", match: exactPath("/api/export/confirm"), methods: post((*handler).exportConfirm)},

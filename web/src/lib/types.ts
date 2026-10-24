@@ -159,7 +159,7 @@ export interface RecordDetail extends RequestRecord { state: string; pendingAsyn
 export interface ActivityInput { sourceIds: string[]; start: string; end: string; cursor: string; limit: number }
 export interface VolumeBucket { controller: string; action: string; at: string; count: number }
 export interface LoadWindow { at:string; count:number; timing:Stats }
-export type BreakdownDim = 'statusCode' | 'userId' | 'uiVersion' | 'userAgent' | 'userIp' | 'pollingType';
+export type BreakdownDim = 'statusCode' | 'userId' | 'uiVersion' | 'userAgent' | 'userIp' | 'pollingType' | 'hourOfDay' | 'requestSizeBucket';
 /** The Query fragment of a breakdown row: a few of the record filters, merged into the query to list the row's requests. The polling type, a missing value, a value that may have been cut and the Other row have none. */
 export type BreakdownFilter = Pick<RecordFilters, 'userIds' | 'uiVersions' | 'userAgentContains' | 'userIps' | 'statusCodes'>;
 /** One value of a breakdown dimension. filter selects this value (a user agent filter is a case-insensitive substring, so it can list more rows than the count); stats percentiles come from valid completed records only. */
@@ -169,7 +169,7 @@ export interface BreakdownRow {
 }
 /** pooledKinds is set when the query kind (All, HTTP) pools request types: counts stay, but no row carries a percentile. */
 export interface Breakdown { dim: BreakdownDim; rows: BreakdownRow[]; other: BreakdownRow | null; total: number; distinct: number; pooledKinds?: boolean; sources: SourceResult[]; /** Additive: absent from older servers. */ provenance?: Provenance[] }
-export interface BreakdownInput { query: Query; dim: BreakdownDim; top: number }
+export interface BreakdownInput { query: Query; dim: BreakdownDim; top: number; /** Only hourOfDay reads it: the zone the hours are cut in. */ tz?: string }
 /** Coverage census (GET /api/sources/{id}/coverage). Pct runs 0 to 100 with one decimal. */
 export interface FieldCoverage { nonNull: number; pct: number }
 export interface CoverageRow {

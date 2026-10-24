@@ -36,6 +36,8 @@ var routeCases = []routeCase{
 	{"/api/activity", "/api/activity", "POST"},
 	{"/api/slowest", "/api/slowest", "POST"},
 	{"/api/breakdown", "/api/breakdown", "POST"},
+	{"/api/daily", "/api/daily", "GET"},
+	{"/api/hourgrid", "/api/hourgrid", "GET"},
 	{"/api/patterns", "/api/patterns", "POST"},
 	{"/api/export/preview", "/api/export/preview", "POST"},
 	{"/api/export/confirm", "/api/export/confirm", "POST"},

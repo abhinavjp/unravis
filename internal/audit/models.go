@@ -373,14 +373,17 @@ type RequestRecord struct {
 	AuditCreateTimeMs   *float64   `json:"auditCreateTimeMs"`
 	PayloadRecordTimeMs *float64   `json:"payloadRecordTimeMs"`
 	RequestKB           float64    `json:"requestKB"`
-	ResponseKB          float64    `json:"responseKB"`
-	UserID              *int       `json:"userId,omitempty"`
-	UserIP              string     `json:"userIp,omitempty"`
-	UserAgent           string     `json:"userAgent,omitempty"`
-	UIVersion           string     `json:"uiVersion,omitempty"`
-	CreatedOn           *time.Time `json:"createdOn,omitempty"`
-	UpdatedOn           *time.Time `json:"updatedOn,omitempty"`
-	PollingTypeRaw      string     `json:"pollingTypeRaw,omitempty"`
+	// RequestKBMissing is set by a reader when the stored size was absent or not a
+	// number (RequestKB is then 0). It only feeds the size-bucket breakdown.
+	RequestKBMissing bool       `json:"-"`
+	ResponseKB       float64    `json:"responseKB"`
+	UserID           *int       `json:"userId,omitempty"`
+	UserIP           string     `json:"userIp,omitempty"`
+	UserAgent        string     `json:"userAgent,omitempty"`
+	UIVersion        string     `json:"uiVersion,omitempty"`
+	CreatedOn        *time.Time `json:"createdOn,omitempty"`
+	UpdatedOn        *time.Time `json:"updatedOn,omitempty"`
+	PollingTypeRaw   string     `json:"pollingTypeRaw,omitempty"`
 }
 
 // RequestRecord's last seven fields are additive audit evidence for the table,

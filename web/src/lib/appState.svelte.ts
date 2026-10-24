@@ -22,6 +22,7 @@ import { allOperationsDrill, operationDrill, type OverviewDrill } from './overvi
 import { phaseSegments } from './phases';
 import { rollupFor } from './traffic';
 import { createViewHistory, describeView, parseViewHash, type View } from './wayfinding';
+import { hourWindowQuery, type RollupWindow } from './rollup';
 
 let info = $state<Info | null>(null);
 let sources = $state<Source[]>([]);
@@ -927,6 +928,8 @@ export function onWindowKey(event: KeyboardEvent) {
 }
 // A scope change (range chip, request type, source, filter) re-runs the analysis after a short quiet period; a burst becomes one run and the last change wins.
 export function onScopeChange() { error = ''; scopeRun.schedule(); }
+/** A chosen hour of the hour grid becomes the primary window, with the hour before it as the reference. */
+export function setWindowFromHour(window: RollupWindow) { Object.assign(query, hourWindowQuery(window)); controlsResetKey++; onScopeChange(); }
 export function removeChip(chip: FilterChip) { applyChipPatch(query, chip); controlsResetKey++; onScopeChange(); }
 export function clearChips() { for (const chip of filterChipList) applyChipPatch(query, chip); controlsResetKey++; onScopeChange(); }
 export async function openFromTable(key: string) {

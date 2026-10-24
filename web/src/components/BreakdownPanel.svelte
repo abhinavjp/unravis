@@ -3,7 +3,7 @@
   import { api } from '../lib/api';
   import { asOfText, evidenceFetch } from '../lib/evidenceMemo';
   import { timeZone } from '../lib/timeZone.svelte';
-  import { breakdownDims, breakdownNotes, breakdownPickTitle, breakdownRowFilter, completeTitle, percentileText, pooledKindsNote, withoutDimension } from '../lib/breakdown';
+  import { breakdownDims, breakdownNotes, breakdownZone, bucketNote, breakdownPickTitle, breakdownRowFilter, completeTitle, percentileText, pooledKindsNote, withoutDimension } from '../lib/breakdown';
   import type { Breakdown, BreakdownDim, BreakdownFilter, BreakdownRow, Query } from '../lib/types';
   // lockedDim fixes the dimension and hides the tabs (the failure panel's status table); panelId keeps a second panel's id unique.
   let { query, sourceLabels, onDrill, lockedDim, panelId = 'breakdown', heading = 'Break these requests down' }: {
@@ -20,11 +20,12 @@
   let controller: AbortController | undefined;
   let sequence = 0;
   const visible = $derived(dim !== 'userIp' || ipOpen);
-  const requestKey = $derived(JSON.stringify([withoutDimension(query, dim), dim, visible]));
+  const requestKey = $derived(JSON.stringify([withoutDimension(query, dim), dim, visible, breakdownZone(dim, timeZone.zone) ?? '']));
   const label = $derived(breakdownDims.find(item => item.dim === dim)?.label ?? '');
   const failing = $derived((result?.sources ?? []).filter(source => !source.ok));
   const pooled = $derived(result?.pooledKinds === true);
   const notes = $derived(breakdownNotes(dim, pooled));
+  const bucket = $derived(bucketNote(dim, timeZone.zone));
   const timings = (row: BreakdownRow) => pooled ? 'Percentiles are not shown for pooled request types' : row.stats.count + ' valid timings';
   const whole = (value: number) => value.toLocaleString();
 
@@ -34,9 +35,10 @@
     const run = ++sequence;
     loading = true; error = '';
     try {
-      const body = JSON.parse(key) as [Query, BreakdownDim];
+      const body = JSON.parse(key) as [Query, BreakdownDim, boolean, string];
+      const tz = body[3] || undefined;
       // The same request body as api.breakdown sends is the memo key, so a revisit under the same analysis reads nothing from the server.
-      const out = await evidenceFetch('breakdown', { query: body[0], dim: body[1], top: 20 }, signal => api.breakdown(body[0], body[1], 20, signal), controller.signal);
+      const out = await evidenceFetch('breakdown', { query: body[0], dim: body[1], top: 20, ...(tz ? { tz } : {}) }, signal => api.breakdown(body[0], body[1], 20, signal, tz), controller.signal);
       if (run !== sequence) return;
       result = out.value; memoAt = out.fromMemo ? out.fetchedAt : null;
     } catch (cause) {
@@ -59,7 +61,7 @@
 </script>
 
 <section class="data-section breakdown-panel" id={panelId} aria-label="Request breakdown">
-  <div class="section-heading"><div><h3>{heading}</h3><p>See which {label.toLowerCase()} values the requests in the current period share. Choose a row to list matching requests. Counts follow the request type and result filters above; the current period only.</p></div></div>
+  <div class="section-heading"><div><h3>{heading}</h3><p>See which {label.toLowerCase()} values the requests in the current period share.{#if bucket} Rows count requests only.{:else} Choose a row to list matching requests.{/if} Counts follow the request type and result filters above; the current period only.</p></div></div>
   {#if !lockedDim}<div class="breakdown-tabs" role="tablist" aria-label="Breakdown by">
     {#each breakdownDims as item (item.dim)}
       <button role="tab" aria-selected={dim === item.dim} class:active={dim === item.dim} onclick={() => picked = item.dim}>{item.label}</button>
@@ -70,7 +72,7 @@
   {:else}
     {#if error}<div class="inline-error" role="alert">{error}</div>{/if}
     {#if failing.length}<div class="source-failure compact-failure" role="alert">{#each failing as failed}<span>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}: {failed.error || 'Source unavailable'}</span>{/each}<span>Counts exclude sources that failed.</span></div>{/if}
-    <ul class="breakdown-notes" aria-label="About these numbers">{#each notes as note (note)}<li class:breakdown-note-pooled={note === pooledKindsNote}>{note}</li>{/each}</ul>
+    <ul class="breakdown-notes" aria-label="About these numbers">{#if bucket}<li>{bucket}</li>{/if}{#each notes as note (note)}<li class:breakdown-note-pooled={note === pooledKindsNote}>{note}</li>{/each}</ul>
     <div class="table-scroll breakdown-scroll" aria-busy={loading}>
       <table class="breakdown-table">
         <thead><tr><th>{label}</th><th title="Requests in this group">Requests</th><th title="Median total time, from valid completed requests only">P50</th><th title="About 95 in 100 of these requests finished within this time">P95</th><th title="Responses with a 4xx status">4xx</th><th title="Responses with a 5xx status, and failed jobs">5xx</th><th title={completeTitle}>Complete</th><th title="Requests with no complete duration recorded">Missing timing</th><th title="Asynchronous requests that only answered 202 Accepted">Pending</th></tr></thead>
