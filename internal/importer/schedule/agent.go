@@ -136,7 +136,7 @@ func (a *Agent) Parse(ctx context.Context, rd io.Reader, opts importer.Options, 
 
 // row validates the whole record first, so a rejected row emits nothing.
 func (a *Agent) row(r *run, tb *table, rec []string, line int64, jobCol string, hasSched bool, loc *time.Location, seen map[string]bool) error {
-	job := tb.get(rec, jobCol)
+	job := tb.getRaw(rec, jobCol)
 	if job == "" {
 		r.reject(line, importer.ReasonFieldCount)
 		return nil

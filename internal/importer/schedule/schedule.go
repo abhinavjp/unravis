@@ -281,6 +281,16 @@ func (t *table) get(rec []string, name string) string {
 	return strings.TrimSpace(rec[i])
 }
 
+// getRaw returns a cell exactly as the file holds it, for the free-text id
+// that becomes an attribute. A blank cell reads as "".
+func (t *table) getRaw(rec []string, name string) string {
+	i, ok := t.idx[name]
+	if !ok || i >= len(rec) || strings.TrimSpace(rec[i]) == "" {
+		return ""
+	}
+	return rec[i]
+}
+
 // refuseColumns quarantines the file on an unscrubbed column. Only our own
 // canonical name is reported, never the header text.
 func (t *table) refuseColumns(list []string) error {
@@ -309,7 +319,7 @@ func openCSV(r io.Reader, lim importer.Limits) (*textio.CSVReader, *table, error
 	if err := importer.Sniff(head); err != nil {
 		return nil, nil, err
 	}
-	cr, _, err := textio.NewCSV(br, textio.CSVOptions{Comma: ',', MaxFields: lim.MaxFields})
+	cr, _, err := textio.NewCSV(br, textio.CSVOptions{Comma: ',', MaxFields: lim.MaxFields, MaxLine: lim.MaxLineBytes})
 	if err != nil {
 		var le *importer.LimitError
 		if errors.As(err, &le) || errors.Is(err, importer.ErrQuarantine) {
@@ -347,6 +357,11 @@ func nextRow(cr *textio.CSVReader, wantCols int) (rec []string, line int64, reas
 	}
 	// A malformed record: reject it and carry on with the next line. A reader
 	// that cannot make progress surfaces a non-parse error, which refuses the file.
+	// F0's reader reports a bad row as an importer.RowError value.
+	var re importer.RowError
+	if errors.As(err, &re) {
+		return nil, line, re.Reason, nil
+	}
 	var pe *csv.ParseError
 	if errors.As(err, &pe) || errors.Is(err, csv.ErrFieldCount) {
 		return nil, line, importer.ReasonFieldCount, nil

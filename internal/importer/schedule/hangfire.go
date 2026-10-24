@@ -95,7 +95,7 @@ func (h *Hangfire) Parse(ctx context.Context, rd io.Reader, opts importer.Option
 // row validates and then emits one record. It returns the zone rule used when
 // the row expanded a non-UTC schedule, so the file-level rule can say so.
 func (h *Hangfire) row(r *run, tb *table, rec []string, line int64, zones map[string]*time.Location) (string, error) {
-	job := tb.get(rec, "jobid")
+	job := tb.getRaw(rec, "jobid")
 	if job == "" {
 		r.reject(line, importer.ReasonFieldCount)
 		return "", nil
