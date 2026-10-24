@@ -65,6 +65,16 @@ type Fixtures struct {
 	// harness-generated cells entirely; a non-nil Formula fixture is still
 	// checked.
 	NoFreeText bool
+	// KeepsCellValues declares that the importer keeps whole cell values in
+	// event attributes by design (counter paths, log or provider names, pool
+	// names, a free-text name). FuzzParse then does not fail on the sentinel
+	// appearing in an attribute key or value, since a sentinel in such a cell
+	// parses into a legitimate attribute. It still fails on the sentinel in an
+	// error, a known gap, a field rule, an event field other than Attrs
+	// (host label, kind, unit) or any other report text. Run's sentinel check
+	// is unaffected: its Bad fixture must put the sentinel in a cell that is
+	// not kept. The default (false) keeps the strict check.
+	KeepsCellValues bool
 	// Large is an optional valid file of more than 2*importer.HeadSize bytes.
 	// The byte-limit and read-error checks need a file that is bigger than the
 	// head Prepare peeks, so the breach or failure happens inside Parse. When
@@ -693,22 +703,42 @@ func encodings(t *testing.T, imp importer.Importer, fx Fixtures) {
 }
 
 // exposed gathers every string a run exposes: the error chain, the report and
-// the events.
-func exposed(rep importer.Report, evs []evidence.Event, err error) []string {
+// the events. Report.ObservedHosts is left out: it holds raw host names by
+// contract (the service maps or refuses them), and the rule that labels, not
+// raw names, reach events is checked by hosts-are-labels. With keepCells the
+// event attribute values and keys are left out too, for an importer that
+// declares Fixtures.KeepsCellValues; everything else is still checked.
+func exposed(rep importer.Report, evs []evidence.Event, err error, keepCells bool) []string {
 	var out []string
 	for e := err; e != nil; e = errors.Unwrap(e) {
 		out = append(out, e.Error(), fmt.Sprintf("%#v", e))
 	}
-	out = append(out, fmt.Sprintf("%#v", rep), fmt.Sprintf("%+v", rep))
+	// The report is printed field by field: printing it whole would include
+	// ObservedHosts and the unexported index over it.
+	view := struct {
+		Importer                string
+		Rows, Emitted, Rejected int64
+		Errors                  []importer.RowError
+		First, Last             time.Time
+		Quality                 evidence.SourceQuality
+		FieldRules              map[string]string
+		KnownGaps               []string
+	}{rep.Importer, rep.Rows, rep.Emitted, rep.Rejected, rep.Errors, rep.First, rep.Last, rep.Quality, rep.FieldRules, rep.KnownGaps}
+	out = append(out, fmt.Sprintf("%#v", view), fmt.Sprintf("%+v", view))
 	out = append(out, rep.KnownGaps...)
-	out = append(out, rep.ObservedHosts...)
 	for _, v := range rep.FieldRules {
 		out = append(out, v)
 	}
 	for _, ev := range evs {
+		attrs := ev.Attrs
+		if keepCells {
+			ev.Attrs = nil
+		}
 		out = append(out, fmt.Sprintf("%#v", ev))
-		for k, v := range ev.Attrs {
-			out = append(out, k, v)
+		if !keepCells {
+			for k, v := range attrs {
+				out = append(out, k, v)
+			}
 		}
 	}
 	return out
@@ -716,7 +746,12 @@ func exposed(rep importer.Report, evs []evidence.Event, err error) []string {
 
 func leaks(t testing.TB, what string, rep importer.Report, evs []evidence.Event, err error) {
 	t.Helper()
-	for _, s := range exposed(rep, evs, err) {
+	leaksWith(t, what, rep, evs, err, false)
+}
+
+func leaksWith(t testing.TB, what string, rep importer.Report, evs []evidence.Event, err error, keepCells bool) {
+	t.Helper()
+	for _, s := range exposed(rep, evs, err, keepCells) {
 		if strings.Contains(s, Sentinel) {
 			t.Errorf("%s: the sentinel appears in an error, report, gap or event", what)
 			return
@@ -1230,7 +1265,7 @@ func FuzzParse(f *testing.F, imp importer.Importer, fx Fixtures) {
 		}
 		checkReport(t, rep)
 		if bytes.Contains(data, []byte(Sentinel)) {
-			leaks(t, "fuzz input", rep, evs, err)
+			leaksWith(t, "fuzz input", rep, evs, err, fx.KeepsCellValues)
 		}
 	})
 }
