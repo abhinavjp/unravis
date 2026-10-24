@@ -129,6 +129,16 @@ export const IMPORT_TEXT = {
   timelineBuilding: 'Building the timeline…',
   timelineNoSource: 'Choose at least one source first, so the audit window is set.',
 
+  collectHeading: 'What to collect next',
+  collectNote: 'Logs that this case does not hold yet, best first. Each one is a file you can ask the server owner for.',
+  collectLoading: 'Reading the list…',
+  collectRetry: 'Try again',
+  collectEmpty: 'Nothing more to suggest from these files.',
+  collectWhy: 'What it shows',
+  collectHow: 'How to get it',
+  collectFileType: 'File type',
+  collectOnHost: 'Host',
+
   exportHeading: 'Export this case',
   exportNote: 'Builds a file of what this case holds, with private values hidden. You see all of it before anything is saved.',
   exportPreview: 'Preview export',
