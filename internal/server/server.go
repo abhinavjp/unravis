@@ -679,6 +679,10 @@ func writeRepoError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusRequestEntityTooLarge, "The comparison results exceed the 16 MiB display budget. Your settings are kept. Increase the time interval in chart settings, or add a controller or action filter.")
 	case errors.Is(err, audit.ErrBreakdownGroupLimit):
 		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("This breakdown has more than %d distinct values in one source. Your settings are kept. Narrow the time range or add a filter.", audit.MaxBreakdownGroups))
+	case errors.Is(err, audit.ErrDocsExaminedBudget):
+		writeError(w, http.StatusRequestEntityTooLarge, "The collection holds more documents than the docs-examined budget allows, so the coverage check did not run. Raise --docs-examined-budget or run it on a restored copy.")
+	case errors.Is(err, audit.ErrCollectionSizeCheck):
+		writeError(w, http.StatusBadGateway, "The coverage check could not read the collection size, so it did not run. Check that the source is reachable and that this account can read collection statistics.")
 	case errors.Is(err, audit.ErrLimit):
 		writeError(w, http.StatusRequestEntityTooLarge, "Request exceeds a configured limit.")
 	case errors.Is(err, audit.ErrBusy):

@@ -507,7 +507,8 @@ func TestAnalyzeHintFallsBackToExactWithNote(t *testing.T) {
 		if pv.QueryMode != audit.QueryModeExact || pv.Margin != nil || pv.Completeness != audit.RanToEnd {
 			t.Fatalf("pv = %+v", pv)
 		}
-		if !strings.HasPrefix(pv.Note, "hint unavailable: ") || !strings.Contains(pv.Note, "too few rows") {
+		// The note is the reason alone; the page wraps it in the fallback sentence.
+		if pv.Note != "calibration needs at least 1000 rows" || pv.Note != audit.HintReason(audit.ErrTooFewCalibrationRows) {
 			t.Fatalf("note = %q", pv.Note)
 		}
 	}
@@ -528,7 +529,7 @@ func TestAnalyzeHintOnLegacyRunsExactWithNote(t *testing.T) {
 	if with, _ := f.idMatches(); with != 0 {
 		t.Fatal("legacy must not use a hint stage")
 	}
-	if len(a.Provenance) == 0 || a.Provenance[0].QueryMode != audit.QueryModeExact || !strings.Contains(a.Provenance[0].Note, "not available on MongoDB 3.4") {
+	if len(a.Provenance) == 0 || a.Provenance[0].QueryMode != audit.QueryModeExact || a.Provenance[0].Note != "not available on MongoDB 3.4" {
 		t.Fatalf("provenance = %+v", a.Provenance)
 	}
 }

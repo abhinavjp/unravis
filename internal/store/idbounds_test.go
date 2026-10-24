@@ -214,3 +214,24 @@ func TestResolveHintOnlyInHintMode(t *testing.T) {
 	}
 }
 
+func TestHintReasonsAreShortReasonsOnly(t *testing.T) {
+	ctx := context.Background()
+	cases := map[string]error{
+		"not available on MongoDB 3.4":         errHintLegacy,
+		"calibration needs at least 1000 rows": audit.ErrTooFewCalibrationRows,
+		"calibration timed out":                context.DeadlineExceeded,
+		"calibration was cancelled":            context.Canceled,
+		"calibration failed":                   errors.New("mongodb://reader:secret@host: boom"),
+	}
+	for want, err := range cases {
+		got := hintReason(ctx, err)
+		if got != want || strings.Contains(got, "secret") || strings.HasPrefix(got, "hint unavailable") {
+			t.Errorf("hintReason(%v) = %q, want %q", err, got, want)
+		}
+	}
+	// resolveHint passes a known reason through untouched.
+	s := New()
+	if m, note := s.resolveHint(ctx, nil, audit.QueryModeHint, "activity includes requests that began before the window"); m != nil || note != "activity includes requests that began before the window" {
+		t.Fatalf("note = %q", note)
+	}
+}

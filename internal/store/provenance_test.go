@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -70,5 +71,53 @@ func TestFinishProvenanceMapsCodes(t *testing.T) {
 	finishProvenance(&hint, 1, 1, time.Second, "query_timeout")
 	if hint.Completeness != audit.HintBounded || hint.PartialReason != "timeout" {
 		t.Fatalf("hint = %+v", hint)
+	}
+}
+
+// A source refused at admission never ran, so its entry stays exact. When hint
+// mode was asked for, the note (a reason alone) says it was not attempted.
+func TestRefusedSourceEntryNotesThatHintWasNotAttempted(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	for _, mode := range []string{audit.QueryModeHint, audit.QueryModeExact, ""} {
+		wantNote := ""
+		if mode == audit.QueryModeHint {
+			wantNote = "hint not attempted"
+		}
+		f := newHintFixture(t, false, calibrationDocs(t, now.Add(-2*time.Hour), 1000))
+		for range cap(f.store.global) {
+			f.store.global <- struct{}{}
+		}
+		expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+		q := bdQuery(now, f.source.ID)
+		q.QueryMode = mode
+		analysis, err := f.store.Analyze(expired, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, err := f.store.Requests(expired, audit.PageInput{Query: q, Limit: 5})
+		if err != nil {
+			t.Fatal(err)
+		}
+		breakdown, err := f.store.Breakdown(expired, audit.BreakdownInput{Query: q, Dim: audit.BreakdownUserAgent, Top: 3})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cancel()
+		for _, got := range map[string][]audit.Provenance{"analyze": analysis.Provenance, "requests": page.Provenance, "breakdown": breakdown.Provenance} {
+			if len(got) == 0 {
+				t.Fatalf("mode %q: no provenance", mode)
+			}
+			for _, pv := range got {
+				if pv.QueryMode != audit.QueryModeExact || pv.Margin != nil || pv.Completeness != audit.Partial || pv.Note != wantNote {
+					t.Fatalf("mode %q: entry = %+v, want exact, partial, note %q", mode, pv, wantNote)
+				}
+			}
+		}
+		if f.calibrations() != 0 {
+			t.Fatalf("mode %q: a refused source must not calibrate", mode)
+		}
+		for range cap(f.store.global) {
+			<-f.store.global
+		}
 	}
 }

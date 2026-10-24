@@ -370,3 +370,67 @@ func TestCoverageSemaphoreReleased(t *testing.T) {
 		t.Fatalf("admission slots leaked: global=%d per=%d", len(s.global), len(s.perSource[src.ID]))
 	}
 }
+
+func TestCoverageCollStatsRunsOnlyWhileHoldingBothSlots(t *testing.T) {
+	s, src, handle := coverageStore(t, false, WithBroadScans(true), WithDocsExaminedBudget(10))
+	sawStats := false
+	handle.aggregateFn = func(_ context.Context, _, _ string, p mongo.Pipeline) (mongoCursor, error) {
+		if isCollStats(p) {
+			sawStats = true
+			if len(s.global) != 1 || len(s.perSource[src.ID]) != 1 {
+				t.Fatalf("$collStats ran outside admission: global=%d per=%d", len(s.global), len(s.perSource[src.ID]))
+			}
+			return &coverageCursor{docs: []bson.D{{{Key: "count", Value: int64(1)}}}}, nil
+		}
+		return &coverageCursor{}, nil
+	}
+	if _, err := s.Coverage(context.Background(), coverageInput(src.ID)); err != nil || !sawStats {
+		t.Fatalf("err = %v sawStats = %v", err, sawStats)
+	}
+	// With the source busy the size check must wait for admission, not run first.
+	s.perSource[src.ID] <- struct{}{}
+	sawStats = false
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := s.Coverage(ctx, coverageInput(src.ID)); err == nil {
+		t.Fatal("a busy source must not be queried")
+	}
+	if sawStats {
+		t.Fatal("$collStats ran before the per-source slot was held")
+	}
+	<-s.perSource[src.ID]
+	if len(s.global) != 0 {
+		t.Fatalf("global slot leaked: %d", len(s.global))
+	}
+}
+
+func TestCoverageBudgetRefusalIsSpecificAndReleasesSlots(t *testing.T) {
+	s, src, handle := coverageStore(t, false, WithBroadScans(true), WithDocsExaminedBudget(10))
+	handle.aggregateFn = func(_ context.Context, _, _ string, p mongo.Pipeline) (mongoCursor, error) {
+		return &coverageCursor{docs: []bson.D{{{Key: "count", Value: int64(11)}}}}, nil
+	}
+	_, err := s.Coverage(context.Background(), coverageInput(src.ID))
+	if !errors.Is(err, audit.ErrDocsExaminedBudget) || !errors.Is(err, audit.ErrLimit) {
+		t.Fatalf("err = %v, want ErrDocsExaminedBudget wrapped in ErrLimit", err)
+	}
+	if len(s.global) != 0 || len(s.perSource[src.ID]) != 0 {
+		t.Fatalf("admission slots leaked: global=%d per=%d", len(s.global), len(s.perSource[src.ID]))
+	}
+}
+
+func TestCollectionSizeFailureIsSpecificAndHasNoConnectionText(t *testing.T) {
+	s, src, handle := coverageStore(t, false, WithBroadScans(true), WithDocsExaminedBudget(10))
+	handle.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
+		return nil, errors.New("mongodb://reader:secret@host:27017/db: boom")
+	}
+	_, err := s.Coverage(context.Background(), coverageInput(src.ID))
+	if !errors.Is(err, audit.ErrCollectionSizeCheck) {
+		t.Fatalf("err = %v, want ErrCollectionSizeCheck", err)
+	}
+	if strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "mongodb://") {
+		t.Fatalf("error carries connection text: %v", err)
+	}
+	if len(s.global) != 0 || len(s.perSource[src.ID]) != 0 {
+		t.Fatalf("admission slots leaked: global=%d per=%d", len(s.global), len(s.perSource[src.ID]))
+	}
+}

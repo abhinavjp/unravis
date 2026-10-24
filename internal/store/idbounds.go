@@ -104,29 +104,49 @@ func withIDHint(p mongo.Pipeline, stage bson.D) mongo.Pipeline {
 
 // resolveHint decides whether a source's query runs in hint mode. For any mode
 // but hint it returns nothing. In hint mode it returns the margin, or, when hint
-// cannot run, no margin and a note giving the reason: the query then runs exact,
-// never silently. unsupported, when set, is a reason the caller already knows.
+// cannot run, no margin and a note giving the reason alone, with no sentence
+// around it (the page words "Hint mode was not available ({why})"): the query
+// then runs exact, never silently. unsupported, when set, is a reason the caller
+// already knows.
 func (s *Store) resolveHint(ctx context.Context, p *profile, mode, unsupported string) (*audit.IDMargin, string) {
 	if mode != audit.QueryModeHint {
 		return nil, ""
 	}
 	if unsupported != "" {
-		return nil, "hint unavailable: " + unsupported
+		return nil, unsupported
 	}
 	m, err := s.idMargin(ctx, p)
 	if err != nil {
-		return nil, "hint unavailable: " + hintReason(ctx, err)
+		return nil, hintReason(ctx, err)
 	}
 	return &m, ""
 }
 
-// hintReason words a calibration failure without driver detail.
+// hintReason words a calibration failure as a short reason, without driver
+// detail. The too-few-rows reason is shared with the demo.
 func hintReason(ctx context.Context, err error) string {
-	if errors.Is(err, errHintLegacy) || errors.Is(err, audit.ErrTooFewCalibrationRows) {
-		return err.Error()
+	switch {
+	case errors.Is(err, errHintLegacy):
+		return errHintLegacy.Error()
+	case errors.Is(err, audit.ErrTooFewCalibrationRows):
+		return audit.HintReason(err)
 	}
-	_, message := sourceQueryError(ctx, err)
-	return message
+	code, _ := sourceQueryError(ctx, err)
+	switch code {
+	case "query_timeout":
+		return "calibration timed out"
+	case "query_cancelled":
+		return "calibration was cancelled"
+	case "permission_denied":
+		return "calibration was denied by MongoDB"
+	case "authentication_failed":
+		return "calibration could not authenticate"
+	case "query_memory_limit":
+		return "calibration ran out of query memory"
+	case "connection_failed":
+		return "the connection was interrupted during calibration"
+	}
+	return audit.HintReason(err)
 }
 
 // hinted applies a resolved margin to a pipeline over [start, end).

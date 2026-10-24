@@ -3,6 +3,7 @@ package audit
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -156,5 +157,17 @@ func TestHintLabelWording(t *testing.T) {
 	want := "bounded by margin 61 s, calibrated on 10000 indexed rows; rows outside 61 s would be missed"
 	if got != want {
 		t.Errorf("HintLabel = %q, want %q", got, want)
+	}
+}
+
+func TestHintReasonIsShortAndShared(t *testing.T) {
+	if got := HintReason(ErrTooFewCalibrationRows); got != "calibration needs at least 1000 rows" {
+		t.Fatalf("HintReason = %q", got)
+	}
+	if got := HintReason(fmt.Errorf("wrapped: %w", ErrTooFewCalibrationRows)); got != "calibration needs at least 1000 rows" {
+		t.Fatalf("wrapped HintReason = %q", got)
+	}
+	if got := HintReason(errors.New("anything else")); got != "calibration failed" {
+		t.Fatalf("other HintReason = %q", got)
 	}
 }

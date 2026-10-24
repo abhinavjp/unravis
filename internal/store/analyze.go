@@ -99,7 +99,7 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 		go func(i int, p *profile) {
 			defer workers.Done()
 			notRun := func(code string) []audit.Provenance {
-				return []audit.Provenance{failedProvenance(p, "current", q.Start, q.End, audit.QueryModeExact, nil, "", code, 0)}
+				return []audit.Provenance{failedProvenance(p, "current", q.Start, q.End, audit.QueryModeExact, nil, notRunNote(q.QueryMode), code, 0)}
 			}
 			if err := acquire(workCtx, s.global); err != nil {
 				code, message := sourceAdmissionError(err)

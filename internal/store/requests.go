@@ -202,7 +202,7 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 	}
 	var reads []pageRead
 	notRun := func(p *profile, code string) {
-		page.Provenance = append(page.Provenance, failedProvenance(p, "page", input.Query.Start, input.Query.End, audit.QueryModeExact, nil, "", code, 0))
+		page.Provenance = append(page.Provenance, failedProvenance(p, "page", input.Query.Start, input.Query.End, audit.QueryModeExact, nil, notRunNote(input.Query.QueryMode), code, 0))
 	}
 	for _, p := range profiles {
 		if err := acquire(ctx, s.global); err != nil {

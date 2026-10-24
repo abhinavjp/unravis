@@ -641,7 +641,7 @@ func TestRequestsHintFallsBackWithNoteWhenCalibrationFails(t *testing.T) {
 		t.Fatal("a failed calibration must run exact")
 	}
 	pv := page.Provenance[0]
-	if pv.QueryMode != audit.QueryModeExact || pv.Margin != nil || !strings.HasPrefix(pv.Note, "hint unavailable: ") {
+	if pv.QueryMode != audit.QueryModeExact || pv.Margin != nil || pv.Note != "calibration needs at least 1000 rows" {
 		t.Fatalf("pv = %+v", pv)
 	}
 }
@@ -676,7 +676,7 @@ func TestActivityRunsExactEvenWhenHintIsAsked(t *testing.T) {
 	if with, without := f.idMatches(); with != 0 || without != 1 || f.calibrations() != 0 {
 		t.Fatalf("overlap must run exact (with=%d without=%d cal=%d)", with, without, f.calibrations())
 	}
-	if pv := page.Provenance[0]; pv.QueryMode != audit.QueryModeExact || !strings.HasPrefix(pv.Note, "hint unavailable: ") {
+	if pv := page.Provenance[0]; pv.QueryMode != audit.QueryModeExact || pv.Note != "activity includes requests that began before the window" {
 		t.Fatalf("pv = %+v", pv)
 	}
 }
@@ -693,7 +693,7 @@ func TestRequestsHintOnLegacyRunsExactWithNote(t *testing.T) {
 	if with, _ := f.idMatches(); with != 0 || f.calibrations() != 0 {
 		t.Fatal("legacy must not use hint")
 	}
-	if len(page.Provenance) != 1 || !strings.Contains(page.Provenance[0].Note, "not available on MongoDB 3.4") {
+	if len(page.Provenance) != 1 || page.Provenance[0].Note != "not available on MongoDB 3.4" {
 		t.Fatalf("provenance = %+v", page.Provenance)
 	}
 }
