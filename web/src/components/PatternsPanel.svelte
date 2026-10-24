@@ -8,7 +8,7 @@
   import { formatElapsed } from '../lib/provenance';
   import {
     DEFAULT_EPISODE_GAP_SECONDS, DEFAULT_STALL_SECONDS, PATTERNS_TEXT, PATTERN_RANGES, auditStallLine, citeLabel, concentrationSection, coverageLine, emptyEpisodesText, endGapsText,
-    episodeCiteLabel, episodeEvidenceId, findingRows, isEvidenceId, nBadge, onsetSection, onsetZoneNote, operationText, qualityLine, secondsLabel, stallsOf, thresholdsChanged,
+    episodeCiteLabel, episodeEvidenceId, findingRows, isEvidenceId, nBadge, onsetSection, onsetZoneNote, operationText, qualityLine, repeatsOf, repeatsSummary, secondsLabel, stallsOf, thresholdsChanged,
     truncationNotices, verdictText, volleysOf, windowInputSeconds, zoneMinuteShift
   } from '../lib/patterns';
   import type { PatternReport, Query, RequestRecord } from '../lib/types';
@@ -124,6 +124,7 @@
       {@const report = phase.report}
       {@const coverage = coverageLine(report.coverage)}
       {@const rows = findingRows(report)}
+      {@const repeatsLine = repeatsSummary(report)}
       {#if phase.key !== askKey}<div class="notice" role="status">{PATTERNS_TEXT.stale}</div>{/if}
       <section class="patterns-summary" aria-label="Summary">
         <p class="patterns-verdict">{verdictText(report)}<Hint termId="episode" /></p>
@@ -147,6 +148,7 @@
             {/each}
           </ul>
         {/if}
+        {#if repeatsLine}<p class="patterns-quality">{repeatsLine}</p>{/if}
         <p class="patterns-quality">{qualityLine(report.quality)}<Hint termId="incomplete-request" /></p>
         {#if coverage}<p class="patterns-quality">{coverage}<Hint termId="coverage" /></p>{/if}
         {#each truncationNotices(report) as notice (notice)}<div class="notice" role="status">{notice}</div>{/each}
@@ -205,6 +207,24 @@
                               {/each}
                             </tbody>
                           </table>
+                        {/if}
+                        {#if report.repeats}
+                          {@const repeats = repeatsOf(report, episode)}
+                          <h4>{PATTERNS_TEXT.repeatsTitle}</h4>
+                          <p class="patterns-note">{PATTERNS_TEXT.repeatsIntro}</p>
+                          {#if repeats.length === 0}<p class="patterns-note">{PATTERNS_TEXT.none}</p>{:else}
+                            <ul class="finding-list">
+                              {#each repeats as repeat (repeat.key)}
+                                <li class="finding">
+                                  <div class="finding-meta">
+                                    <span class="evidence-badge">{PATTERNS_TEXT.repeatsLabel}</span>
+                                    <span class="finding-n">{repeat.kindText}</span>
+                                  </div>
+                                  <p>{repeat.line}</p>
+                                </li>
+                              {/each}
+                            </ul>
+                          {/if}
                         {/if}
                         <StallMinutesPanel episode={{ start: episode.start, end: episode.end }} sourceIds={query.sourceIds} stallMs={report.params.stallMs} {zone} />
                       </td>

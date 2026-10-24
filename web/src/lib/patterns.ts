@@ -2,7 +2,7 @@ import { auditCreate, notObservedGap } from './copy/wordings';
 import { MIN_SAMPLE } from './thresholds';
 import type {
   EvidenceLabel, PatternAuditStall, PatternConcentration, PatternCoverage, PatternEpisode, PatternInput, PatternOnsetMinute,
-  PatternReport, PatternStall, PatternVolley, Query
+  PatternRepeat, PatternReport, PatternStall, PatternVolley, Query
 } from './types';
 
 /**
@@ -72,7 +72,7 @@ export const PATTERNS_TEXT = {
   repeatsNone: 'No user started the same operation again while it was running.',
   repeatsSameRequest: 'Same request',
   repeatsDifferentRequest: 'Same operation, different request',
-  repeatsLabel: 'Correlation',
+  repeatsMixedRequest: 'Some with the same request, some different',  repeatsLabel: 'Correlation',
   // B6g: audit create after quiet gaps
   idleTitle: 'Audit create after quiet gaps',
   idleIntro: 'This sorts requests by how long the source was quiet before each one started. It then compares audit create times across those groups.',
@@ -395,6 +395,53 @@ export function concentrationSection(report: Pick<PatternReport, 'concentration'
   if (stallsCapped(report)) return { kind: 'note', text: notObservedGap('stall rows were capped, so the comparison was not made') };
   const rows = report.concentration.map(concentrationRow).sort((a, b) => READING_ORDER[a.reading] - READING_ORDER[b.reading] || b.stallN - a.stallN || a.key.localeCompare(b.key));
   return rows.length ? { kind: 'rows', rows } : { kind: 'note', text: PATTERNS_TEXT.concNone };
+}
+
+// ---- B12r: the same operation started again while the first was running ----
+
+export type RepeatKind = 'same' | 'different' | 'mixed';
+export interface RepeatRow { key: string; episode: number; kind: RepeatKind; kindText: string; repeats: number; longestChain: number; line: string }
+
+/**
+ * Whether the repeats carried the same request size. A true or a count equal to the repeats is the same request.
+ * A count of zero, or false, is a different request. A count in between is a mix, and says so.
+ */
+export function repeatKind(sameSize: boolean | number, repeats: number): RepeatKind {
+  if (typeof sameSize === 'boolean') return sameSize ? 'same' : 'different';
+  if (!Number.isFinite(sameSize) || sameSize <= 0) return 'different';
+  return sameSize >= repeats ? 'same' : 'mixed';
+}
+
+const repeatKindText = (kind: RepeatKind): string => kind === 'same' ? PATTERNS_TEXT.repeatsSameRequest : kind === 'different' ? PATTERNS_TEXT.repeatsDifferentRequest : PATTERNS_TEXT.repeatsMixedRequest;
+
+export function repeatRow(row: PatternRepeat, index = 0): RepeatRow {
+  const repeats = Math.max(0, Math.floor(row.repeats) || 0);
+  const longestChain = Math.max(0, Math.floor(row.longestChain) || 0);
+  const kind = repeatKind(row.sameSize, repeats);
+  const times = `${repeats} ${repeats === 1 ? 'time' : 'times'}`;
+  const chain = longestChain > 1 ? ` The longest run of starts was ${longestChain}.` : '';
+  return {
+    key: `repeat-${row.episode}-${row.userId}-${row.operation}-${index}`, episode: row.episode, kind, kindText: repeatKindText(kind), repeats, longestChain,
+    line: `User ${row.userId} started ${row.operation} again ${times} while an earlier one was still running.${chain}`
+  };
+}
+
+/** The repeats that belong to one episode, most repeated first. */
+export function repeatsOf(report: Pick<PatternReport, 'repeats'>, episode: Pick<PatternEpisode, 'index'>): RepeatRow[] {
+  return (report.repeats ?? []).map((row, i) => ({ row, i })).filter(({ row }) => row.episode === episode.index)
+    .map(({ row, i }) => repeatRow(row, i)).sort((a, b) => b.repeats - a.repeats || a.key.localeCompare(b.key));
+}
+
+/**
+ * One line for the summary: how many cases there were and in how many episodes, or the standard absence line.
+ * Null when the server did not send the check at all.
+ */
+export function repeatsSummary(report: Pick<PatternReport, 'repeats'>): string | null {
+  if (!report.repeats) return null;
+  if (report.repeats.length === 0) return PATTERNS_TEXT.repeatsNone;
+  const cases = report.repeats.length;
+  const episodes = new Set(report.repeats.map((row) => row.episode)).size;
+  return `${cases} ${cases === 1 ? 'case' : 'cases'} of an operation started again while it was running, in ${episodes} ${episodes === 1 ? 'episode' : 'episodes'}.`;
 }
 
 // ---- References for the ledger ----

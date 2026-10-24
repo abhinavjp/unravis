@@ -188,3 +188,51 @@ test('B3a and A3 copy passes the lint and names no cause', () => {
   // The hint copy is exactly the plan sentence.
   assert.equal(T.onsetHint, 'A scheduled task could line up with this; the job list import is needed to check.');
 });
+
+// ------------------------------------------------------------------ B12r
+
+const rep = (o = {}) => ({ episode: 0, userId: 12, operation: 'Orders / Save', repeats: 3, sameSize: true, longestChain: 3, ...o });
+
+test('repeatKind reads a flag or a count of same-size repeats', () => {
+  assert.equal(patterns.repeatKind(true, 3), 'same');
+  assert.equal(patterns.repeatKind(false, 3), 'different');
+  assert.equal(patterns.repeatKind(3, 3), 'same');
+  assert.equal(patterns.repeatKind(0, 3), 'different');
+  assert.equal(patterns.repeatKind(1, 3), 'mixed');
+});
+
+test('repeatRow says started again, names the user and operation, and never says retry', () => {
+  const same = patterns.repeatRow(rep());
+  assert.equal(same.line, 'User 12 started Orders / Save again 3 times while an earlier one was still running. The longest run of starts was 3.');
+  assert.equal(same.kindText, 'Same request');
+  const diff = patterns.repeatRow(rep({ sameSize: false, repeats: 1, longestChain: 1 }));
+  assert.equal(diff.kindText, 'Same operation, different request');
+  assert.equal(diff.line, 'User 12 started Orders / Save again 1 time while an earlier one was still running.');
+  assert.doesNotMatch(same.line + diff.line, /retry/i);
+});
+
+test('repeatsOf keeps one episode, most repeated first', () => {
+  const report = { repeats: [rep({ episode: 1, repeats: 2 }), rep({ episode: 0, repeats: 2, userId: 3 }), rep({ episode: 0, repeats: 5 })] };
+  const rows = patterns.repeatsOf(report, { index: 0 });
+  assert.deepEqual(rows.map((r) => r.repeats), [5, 2]);
+  assert.deepEqual(patterns.repeatsOf({}, { index: 0 }), []);
+});
+
+test('repeatsSummary is null when not sent, an absence line when empty, and counts otherwise', () => {
+  assert.equal(patterns.repeatsSummary({}), null);
+  assert.equal(patterns.repeatsSummary({ repeats: [] }), patterns.PATTERNS_TEXT.repeatsNone);
+  assert.equal(patterns.repeatsSummary({ repeats: [rep(), rep({ userId: 4 }), rep({ episode: 2 })] }), '3 cases of an operation started again while it was running, in 2 episodes.');
+  assert.equal(patterns.repeatsSummary({ repeats: [rep()] }), '1 case of an operation started again while it was running, in 1 episode.');
+});
+
+test('a B12r finding is a Correlation row and its copy passes the lint', () => {
+  const finding = { rule: 'B12r', label: 'Correlation', n: 3, lowN: false, headline: 'Users started the same operation again while it was running.', evidenceId: 'b12r:x' };
+  const rows = patterns.findingRows({ findings: [finding], episodes: [], recurrence: 'none', params: { stallMs: 45000 }, truncated: false });
+  assert.equal(rows[0].label, 'Correlation');
+  const T = patterns.PATTERNS_TEXT;
+  lintOk([
+    T.repeatsTitle, T.repeatsIntro, T.repeatsNone, T.repeatsSameRequest, T.repeatsDifferentRequest, T.repeatsMixedRequest,
+    patterns.repeatRow(rep()).line, patterns.repeatRow(rep({ sameSize: false, repeats: 1, longestChain: 1 })).line,
+    patterns.repeatsSummary({ repeats: [rep()] })
+  ]);
+});
