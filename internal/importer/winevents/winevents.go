@@ -59,7 +59,8 @@ func (m *imp) Name() string { return Name }
 
 // AllowedAttrs: log, provider, id and app-pool come from columns; reason from classifiers.
 func (m *imp) AllowedAttrs() map[string]bool {
-	return map[string]bool{"log": true, "provider": true, "id": true, "app-pool": true, "reason": true}
+	return map[string]bool{"log": true, "provider": true, "id": true, "app-pool": true, "reason": true,
+		"faulting-app": true}
 }
 
 func (m *imp) DefaultLimits() importer.Limits {
@@ -141,6 +142,14 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 	cApp, haveApp := idx["apppool"]
 	if haveApp {
 		if cApp, err = need("AppPool"); err != nil {
+			return acc.Fail(err)
+		}
+	}
+	// FaultingApp is optional: the recipe puts Properties[0] there for ids 1000
+	// and 1002 (the faulting image name). It is reduced by FaultingAppLabel.
+	cFault, haveFault := idx["faultingapp"]
+	if haveFault {
+		if cFault, err = need("FaultingApp"); err != nil {
 			return acc.Fail(err)
 		}
 	}
@@ -290,6 +299,9 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 		}
 		if haveApp && rec[cApp] != "" {
 			attrs["app-pool"] = wincsv.ClipAttr(rec[cApp])
+		}
+		if haveFault && strings.TrimSpace(rec[cFault]) != "" {
+			attrs["faulting-app"] = FaultingAppLabel(rec[cFault])
 		}
 		kind := "win-event"
 		for _, c := range m.cls {

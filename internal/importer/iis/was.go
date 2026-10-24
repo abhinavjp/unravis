@@ -34,7 +34,31 @@ func ClassifyWAS(provider string, id int) (string, map[string]string, bool) {
 	if id == 5186 {
 		return "apppool-idle-shutdown", nil, true
 	}
+	if kind, ok := wasKinds[id]; ok {
+		return kind, nil, true
+	}
 	return "", nil, false
+}
+
+// wasKinds holds the W2-g WAS ids. The wording of each is on the public page
+// "WAS events" (Windows Server 2008 / IIS 7 event reference,
+// https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2008-r2-and-2008/cc735129(v=ws.10)):
+//   - 5009: a process serving an application pool terminated unexpectedly
+//   - 5010: a process serving an application pool failed to respond to a ping
+//   - 5011: a process serving an application pool had a fatal communication
+//     error with the Windows Process Activation Service
+//   - 5013: a process serving an application pool exceeded time limits during shut down
+//   - 5002: an application pool is automatically disabled after a series of
+//     failures of the processes serving it (rapid-fail protection)
+//
+// No attribute is added: the id attribute already carries the number, and the
+// message text (pool name, process id, exit code) is never read.
+var wasKinds = map[int]string{
+	5009: "worker-process-failure",
+	5010: "worker-process-failure",
+	5011: "worker-process-failure",
+	5013: "worker-process-failure",
+	5002: "apppool-disabled",
 }
 
 // recycleGapText applies from IIS 8.5, where the logEventOnRecycle default
