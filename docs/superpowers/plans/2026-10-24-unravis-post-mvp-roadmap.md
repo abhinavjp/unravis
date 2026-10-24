@@ -24,6 +24,29 @@
 | §5.3, §11 | Slice cards embed their own rule definitions; no wholesale spec extraction up front | R8-M7 |
 | §3.4 (new), §1.3 | Disposition of every second-review finding, with three challenges (X7–X9) | all |
 
+### Rev 10 log (implementation rulings, 2026-10-25; these override rev 9 where they differ)
+
+Built since rev 9 (on `master`, tested on synthetic fixtures only): F0 foundations, P0 hosts, the case store (memory and encrypted SQLite), importers for SQL Server (XE, ERRORLOG, PDH), Mongo log, schedule, Windows CSV, counters and events, IIS and App Insights, the P8 timeline, P13 case export (schema v3), the import UI, and the performance work (evidence memo, drawer cache, parallel per-source reads). Nothing is measured on real client data.
+
+| Ruling | Decision |
+|---|---|
+| Importers | Offline file importers, tested only on synthetic fixtures. Runs on real exports (R2, R8, R11, R12, R13, R16) stay held for the people who own the data. |
+| Performance | Funded as T-F: results carry an "as of" label with Run again; parallel reads at 1 per source and 4 overall. |
+| F0 | Built on Sonnet with an Opus review. |
+| Pseudonymize | Fail-closed. |
+| Clocks | HTTPERR timestamps are UTC. Local `TimeCreated` uses the picked host's time zone. An unmapped MachineName is refused when hosts.json is set. The schedule importer emits both DST readings, flagged. |
+| Counters | Instances are an allowlist. `Limits.MaxEvents` added. |
+| Absence | B3 never reports a miss without coverage. |
+| P13 export | Schema v2 then v3: 20-cell thin rule; per-export HMAC key; AckText replaced by a banner id or "custom-not-exported"; version strings allowlisted by pattern; no line numbers or per-file hashes; free-form attributes dropped unless allowlisted; causal-wording guard folds text (NFKC, confusables) and has more synonyms; kinds allowlisted; `Verify` re-applies policy; labels at least 12 hex. A drift test fails if an importer adds an attribute the policy does not list. |
+| Declined after review | ACL re-apply on an existing root (later done in the second fix round); disk-full versus case cap; mirroring `Closed` into meta; the `s.mu` redesign; a pool of 1 (deadlocks, pool stays 4); trimming coverage on error is fail-closed by design. |
+| Delegation | The Runner Hub (local, free mid-tier lanes) may take small non-sensitive tasks on committed code; every patch is reviewed and never auto-merged. |
+| Model use | Opus only for design-heavy planning, security and privacy review and the final review; Sonnet builds; Haiku for small mechanical work. |
+| Review cadence | After each phase is merged and running, one "clumsiest user" review with tests. |
+| Time drill-down | New slice D-Z: click-to-zoom from the query window to day, hour and minute, every chart following the view window (the hand-built investigation report's Explorer is the reference). Adopted. |
+| Gap check | The hand-built investigation report was compared with the app; the gap list and its priorities are in `docs/superpowers/plans/2026-10-25-report-gap-list.md`. |
+
+Still held (needs a third party): W3, W4a, W4b, W5; the theory engine (design committed, pending ruling R-TE); P14b five-tester usability test; D2 (Mongo owner runs T0.7); D3 (enforcing the over-24 h live-scan refusal beyond Coverage and Patterns); all T0 Ops, DBA and Mongo-owner items.
+
 ## How to read this document
 
 1. §1 is the answer: what changed, what you must decide, what needs someone else's approval.
