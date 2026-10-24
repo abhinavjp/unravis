@@ -33,6 +33,7 @@
   import Hint from './components/Hint.svelte';
   import PlainLine from './components/PlainLine.svelte';
   import Glossary from './components/Glossary.svelte';
+  import { GLOSSARY_EVENT, glossaryTermFrom } from './lib/copy/hintState';
   import { plainTypicalVsSlowest } from './lib/copy/plainSummary';
   import { applyStaleFilters, scopeStaleDrill } from './lib/incomplete';
   import { allOperationsDrill, drillHeading, operationDrill, type OverviewDrill } from './lib/overview';
@@ -125,6 +126,7 @@
   let querySnapshot = '';
   let connectionsOpen = $state(false);
   let glossaryOpen = $state(false);
+  let glossaryTerm = $state<string | null>(null);
   let glossaryReturnFocus: HTMLElement | null = null;
   let connectionTab = $state<'saved' | 'new'>('saved');
   let drawerElement = $state<HTMLElement | undefined>(undefined);
@@ -252,7 +254,11 @@
     connectionObservedSignature = signature;
   });
 
-  onMount(() => { theme.start(); void initialize(); });
+  onMount(() => {
+    theme.start(); void initialize();
+    window.addEventListener(GLOSSARY_EVENT, onGlossaryRequest);
+    return () => window.removeEventListener(GLOSSARY_EVENT, onGlossaryRequest);
+  });
   async function initialize() {
     try {
       info = await api.info();
@@ -683,13 +689,20 @@
   }
   async function closeGlossary() {
     glossaryOpen = false;
+    glossaryTerm = null;
     await tick();
     glossaryReturnFocus?.focus();
     glossaryReturnFocus = null;
   }
-  function openGlossary() {
+  function openGlossary(termId: string | null = null) {
     glossaryReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    glossaryTerm = termId;
     glossaryOpen = true;
+  }
+  // A hint's "Learn more in the glossary" button sends this window event.
+  function onGlossaryRequest(event: Event) {
+    const termId = glossaryTermFrom((event as CustomEvent).detail);
+    if (termId && !glossaryOpen) openGlossary(termId);
   }
   async function openConnections(tab: 'saved' | 'new' = 'saved') {
     if (sourceBusy || connectionTesting || historyMutationBusy) return;
@@ -930,7 +943,7 @@
           onToggle={(id, checked) => { query.sourceIds = checked ? [...query.sourceIds.filter(item => item !== id), id] : query.sourceIds.filter(item => item !== id); onScopeChange(); }}
           onDelete={deleteSource} onManage={() => openConnections('saved')} onAdd={startNewConnection} />
       {/if}
-      <button type="button" class="header-button" aria-label="Help and glossary" aria-haspopup="dialog" aria-expanded={glossaryOpen} onclick={openGlossary}>Help</button>
+      <button type="button" class="header-button" aria-label="Help and glossary" aria-haspopup="dialog" aria-expanded={glossaryOpen} onclick={() => openGlossary()}>Help</button>
       <button type="button" class="header-button theme-toggle" onclick={() => theme.cycle()} aria-label={'Theme: ' + theme.choice + '. Change theme'} title={'Theme: ' + theme.choice}>
         {#if theme.choice === 'light'}
           <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="3.4"></circle><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"></path></svg>
@@ -1070,7 +1083,7 @@
         </div>
     {/if}
 
-    {#if glossaryOpen}<Glossary onClose={closeGlossary} />{/if}
+    {#if glossaryOpen}<Glossary onClose={closeGlossary} focusTerm={glossaryTerm} />{/if}
 
     <main class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={connectionsOpen || glossaryOpen}>
       <div class="stage-inner">

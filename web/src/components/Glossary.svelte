@@ -1,16 +1,29 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import { findTerm } from '../lib/copy/lookup';
   import { searchTerms } from '../lib/copy/lookup';
 
   // The glossary drawer: every term in the copy deck, alphabetical, with a plain text filter. It opens from the Help button in the header.
   // Esc closes it and the page gives focus back to the button. Tab stays inside the panel while it is open, like the Connections drawer.
-  let { onClose }: { onClose: () => void } = $props();
+  // A hint's "Learn more in the glossary" button opens it on one term: that entry scrolls into view and takes focus, and is marked.
+  let { onClose, focusTerm = null }: { onClose: () => void; focusTerm?: string | null } = $props();
   let query = $state('');
   let drawer = $state<HTMLElement>();
   let search = $state<HTMLInputElement>();
   const results = $derived(searchTerms(query));
   const summary = $derived(results.length === 0 ? 'No terms match' : results.length + (results.length === 1 ? ' term' : ' terms'));
-  onMount(() => search?.focus());
+  onMount(() => { if (!focusTerm || !findTerm(focusTerm)) search?.focus(); });
+  $effect(() => {
+    const id = focusTerm;
+    if (!id || !findTerm(id)) return;
+    query = '';
+    void tick().then(() => {
+      const entry = drawer?.querySelector<HTMLElement>('#glossary-' + CSS.escape(id));
+      if (!entry) return;
+      entry.scrollIntoView({ block: 'start' });
+      entry.focus({ preventScroll: true });
+    });
+  });
   function onKey(event: KeyboardEvent) {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return; }
     if (event.key !== 'Tab' || !drawer) return;
@@ -32,7 +45,7 @@
   </div>
   <dl class="glossary-list">
     {#each results as term (term.id)}
-      <div class="glossary-entry" id={'glossary-' + term.id}>
+      <div class="glossary-entry" class:glossary-focused={term.id === focusTerm} id={'glossary-' + term.id} tabindex="-1">
         <dt>{term.term}</dt>
         <dd class="glossary-hint">{term.hint}</dd>
         <dd>{term.definition}</dd>
@@ -51,6 +64,8 @@
   .glossary-count { color: var(--text-2); font-size: 12px; }
   .glossary-list { margin: 0; }
   .glossary-entry { padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
+  .glossary-entry:focus { outline: none; }
+  .glossary-focused { margin: 0 -10px; padding: 12px 10px; background: var(--surface-2); border-left: 3px solid var(--accent); }
   .glossary-entry dt { font-size: 15px; font-weight: 650; }
   .glossary-entry dd { margin: 5px 0 0; font-size: 13px; overflow-wrap: anywhere; }
   .glossary-hint { font-weight: 600; }

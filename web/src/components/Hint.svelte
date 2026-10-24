@@ -1,19 +1,21 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { findTerm } from '../lib/copy/lookup';
+  import { GLOSSARY_EVENT, hintBus } from '../lib/copy/hintState';
 
-  // A small "?" button beside a technical word. It opens a short explanation taken from the copy deck: the hint, the definition and what the term does not mean.
-  // The text is built in the copy deck, never here. Nothing is stored and nothing leaves the browser. Focus is never trapped.
+  // A small "?" button beside a technical word. It is a disclosure: the button has aria-expanded and aria-controls, and the explanation is a labelled, non-modal dialog.
+  // The popover lives on <body> so a scrolling table or a clipped panel cannot cut it off. Because it is not next to the button in the page order, focus moves into it when it opens
+  // (so a screen reader reads it at once), and Esc or Tab-away closes it and gives focus back to the button. Only one hint is open at a time. Nothing is stored and nothing leaves the browser.
   let { termId }: { termId: string } = $props();
   const term = $derived(findTerm(termId));
   const uid = $props.id();
   const popId = 'hint-' + uid;
+  const titleId = 'hint-title-' + uid;
   let open = $state(false);
   let trigger = $state<HTMLButtonElement>();
   let pop = $state<HTMLElement>();
   let pos = $state({ left: 12, top: 0 });
 
-  // The popover lives on <body> so a scrolling table or a clipped panel cannot cut it off.
   function portal(node: HTMLElement) {
     document.body.appendChild(node);
     return { destroy() { node.remove(); } };
@@ -27,13 +29,39 @@
     const top = below + height > window.innerHeight - 8 && anchor.top - 6 - height >= 8 ? anchor.top - 6 - height : below;
     pos = { left, top: Math.max(8, top) };
   }
+  // The shared bus keeps one hint open: opening another one flips this one to closed.
+  $effect(() => {
+    const stop = hintBus.subscribe(id => { open = id === uid; });
+    return () => { stop(); hintBus.close(uid); };
+  });
   async function toggle() {
-    open = !open;
-    if (open) { await tick(); place(); }
+    if (open) { close(true); return; }
+    hintBus.open(uid);
+    await tick();
+    place();
+    pop?.focus({ preventScroll: true });
   }
   function close(returnFocus: boolean) {
-    open = false;
+    hintBus.close(uid);
     if (returnFocus) trigger?.focus();
+  }
+  // Close first and give focus back to the button, so the glossary drawer returns focus to a control that still exists.
+  function glossary() {
+    close(true);
+    window.dispatchEvent(new CustomEvent(GLOSSARY_EVENT, { detail: { termId } }));
+  }
+  // Focus left both the button and the popover (Tab, or a click on another control): close without stealing focus.
+  function leave(event: FocusEvent) {
+    const next = event.relatedTarget as Node | null;
+    if (!next || trigger?.contains(next) || pop?.contains(next)) return;
+    close(false);
+  }
+  // Tab past either end of the popover: put focus back on the button first, so the browser carries on from the button's place in the page.
+  function popKey(event: KeyboardEvent) {
+    if (event.key !== 'Tab' || !pop) return;
+    const stops = [pop, ...pop.querySelectorAll<HTMLElement>('button:not(:disabled), [href]')];
+    const index = stops.indexOf(document.activeElement as HTMLElement);
+    if (event.shiftKey ? index <= 0 : index === stops.length - 1) close(true);
   }
   $effect(() => {
     if (!open) return;
@@ -64,14 +92,15 @@
 
 {#if term}
   <span class="hint-wrap">
-    <button type="button" class="hint-button" bind:this={trigger} aria-label={'What does ' + term.term + ' mean?'} aria-expanded={open} aria-describedby={open ? popId : undefined} onclick={toggle}><span aria-hidden="true">?</span></button>
+    <button type="button" class="hint-button" bind:this={trigger} aria-label={'What does ' + term.term + ' mean?'} aria-expanded={open} aria-controls={open ? popId : undefined} onclick={toggle} onfocusout={leave}><span aria-hidden="true">?</span></button>
   </span>
   {#if open}
-    <div class="hint-popover" id={popId} role="tooltip" bind:this={pop} use:portal style:left={pos.left + 'px'} style:top={pos.top + 'px'}>
-      <strong class="hint-term">{term.term}</strong>
+    <div class="hint-popover" id={popId} role="dialog" aria-labelledby={titleId} tabindex="-1" bind:this={pop} use:portal onfocusout={leave} onkeydown={popKey} style:left={pos.left + 'px'} style:top={pos.top + 'px'}>
+      <strong class="hint-term" id={titleId}>{term.term}</strong>
       <p class="hint-line">{term.hint}</p>
       <p>{term.definition}</p>
       <p class="hint-not"><span class="hint-not-label">What it does not mean</span>{term.notMeaning}</p>
+      <button type="button" class="hint-more" onclick={glossary}>Learn more in the glossary</button>
     </div>
   {/if}
 {/if}
@@ -88,4 +117,6 @@
   .hint-line { font-weight: 600; }
   .hint-not { padding-top: 8px; border-top: 1px solid var(--line); color: var(--text-2); }
   .hint-not-label { display: block; margin-bottom: 2px; color: var(--text); font-size: 11px; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; }
+  .hint-more { min-height: 26px; margin: 8px 0 0; padding: 4px 0; color: var(--accent); background: transparent; border: 0; font-size: 12px; font-weight: 600; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
+  .hint-more:hover { color: var(--text); }
 </style>
