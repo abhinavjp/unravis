@@ -193,10 +193,22 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 	var legacyRecords atomic.Int64
 	var legacyBytes atomic.Int64
 	page := audit.Page{Sources: make([]audit.SourceResult, 0, len(profiles))}
+	// One provenance entry per source, window "page". Entries for sources that
+	// read successfully are finished once the page knows whether it was cut.
+	type pageRead struct {
+		index    int
+		returned int64
+		elapsed  time.Duration
+	}
+	var reads []pageRead
+	notRun := func(p *profile, code string) {
+		page.Provenance = append(page.Provenance, failedProvenance(p, "page", input.Query.Start, input.Query.End, audit.QueryModeExact, nil, notRunNote(input.Query.QueryMode), code, 0))
+	}
 	for _, p := range profiles {
 		if err := acquire(ctx, s.global); err != nil {
 			code, message := sourceAdmissionError(err)
 			page.Sources = append(page.Sources, audit.SourceResult{SourceID: p.source.ID, ErrorCode: code, Error: message})
+			notRun(p, code)
 			continue
 		}
 		s.mu.RLock()
@@ -205,14 +217,31 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		if per == nil {
 			<-s.global
 			page.Sources = append(page.Sources, audit.SourceResult{SourceID: p.source.ID, ErrorCode: "source_unavailable", Error: audit.SourceQueryErrorMessage("source_unavailable")})
+			notRun(p, "source_unavailable")
 			continue
 		}
 		if err := acquire(ctx, per); err != nil {
 			<-s.global
 			code, message := sourceAdmissionError(err)
 			page.Sources = append(page.Sources, audit.SourceResult{SourceID: p.source.ID, ErrorCode: code, Error: message})
+			notRun(p, code)
 			continue
 		}
+		// Hint mode: calibrate after admission. The legacy reader and the activity
+		// overlap query never use it; they run exact and say why.
+		unsupported := ""
+		switch {
+		case usesLegacyMongo(p.shared.client):
+			unsupported = errHintLegacy.Error()
+		case overlap:
+			unsupported = "activity includes requests that began before the window"
+		}
+		margin, hintNote := s.resolveHint(ctx, p, input.Query.QueryMode, unsupported)
+		ranMode := audit.QueryModeExact
+		if margin != nil {
+			ranMode = audit.QueryModeHint
+		}
+		began := time.Now()
 		var sourceRows []pageRow
 		pipeline := requestPipelineOrdered(input.Query, cohort, state, true, oldest, p.source.ID, after, input.Limit+1)
 		if overlap {
@@ -221,6 +250,7 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		if slowest {
 			pipeline = slowestPipeline(input.Query, p.source.ID, after, input.MinMs, input.Limit+1)
 		}
+		pipeline = hinted(pipeline, margin, input.Query.Start, input.Query.End)
 		var err error
 		if usesLegacyMongo(p.shared.client) {
 			sourceRows, err = readLegacyRequestRowsOrdered(ctx, p, input.Query, cohort, state, after, legacyRowMetadataPipeline(pipeline), input.Limit+1, &legacyRecords, &legacyBytes, overlap, slow, oldest)
@@ -262,14 +292,21 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		}
 		<-per
 		<-s.global
+		elapsed := time.Since(began)
+		pv := newProvenance(p, "page", input.Query.Start, input.Query.End, ranMode, margin)
+		pv.Note = hintNote
 		if err != nil {
 			if errors.Is(err, audit.ErrLimit) {
 				return audit.Page{}, err
 			}
 			code, message := sourceQueryError(ctx, err)
 			page.Sources = append(page.Sources, audit.SourceResult{SourceID: p.source.ID, ErrorCode: code, Error: message})
+			finishProvenance(&pv, 0, 0, elapsed, code)
+			page.Provenance = append(page.Provenance, pv)
 			continue
 		}
+		reads = append(reads, pageRead{index: len(page.Provenance), returned: int64(len(sourceRows)), elapsed: elapsed})
+		page.Provenance = append(page.Provenance, pv)
 		warning := p.indexWarning
 		if warning != "" {
 			warning += " "
@@ -300,6 +337,15 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		}
 		raw, _ := json.Marshal(cursor)
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
+	}
+	// A slowest list cut at its row cap is partial: slower rows may exist past it.
+	// Ordinary paging has a cursor and is not a cut.
+	rowcap := ""
+	if page.Truncated {
+		rowcap = partialRowCap
+	}
+	for _, r := range reads {
+		finishProvenance(&page.Provenance[r.index], r.returned, r.returned, r.elapsed, rowcap)
 	}
 	return page, nil
 }

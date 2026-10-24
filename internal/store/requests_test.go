@@ -576,3 +576,166 @@ func TestOldestFirstMergesSourcesAscendingAndBindsCursorToOrder(t *testing.T) {
 		t.Fatalf("a newest cursor must continue a default-order listing: %v", err)
 	}
 }
+
+func TestRequestsCarryPageProvenanceInExactMode(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	f := newHintFixture(t, false, nil)
+	q := queryForTest(now)
+	q.SourceIDs, q.Kind, q.Outcome = []string{f.source.ID}, "all", "all"
+	page, err := f.store.Requests(context.Background(), audit.PageInput{Query: q, Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if with, without := f.idMatches(); with != 0 || without != 1 || f.calibrations() != 0 {
+		t.Fatalf("exact must add no _id stage (with=%d without=%d cal=%d)", with, without, f.calibrations())
+	}
+	if len(page.Provenance) != 1 {
+		t.Fatalf("provenance = %+v", page.Provenance)
+	}
+	pv := page.Provenance[0]
+	if pv.SourceID != f.source.ID || pv.Window != "page" || pv.QueryMode != audit.QueryModeExact || pv.Completeness != audit.RanToEnd || pv.DocsExamined != nil || pv.PartialReason != "" {
+		t.Fatalf("pv = %+v", pv)
+	}
+	if !pv.Start.Equal(q.Start) || !pv.End.Equal(q.End) {
+		t.Fatalf("window = %v..%v", pv.Start, pv.End)
+	}
+}
+
+func TestRequestsHintPrependsIDStageAndLabels(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	f := newHintFixture(t, false, calibrationDocs(t, now.Add(-2*time.Hour), 1000))
+	q := queryForTest(now)
+	q.SourceIDs, q.Kind, q.Outcome, q.QueryMode = []string{f.source.ID}, "all", "all", audit.QueryModeHint
+	for name, call := range map[string]func() (audit.Page, error){
+		"requests": func() (audit.Page, error) {
+			return f.store.Requests(context.Background(), audit.PageInput{Query: q, Limit: 5})
+		},
+		"slowest": func() (audit.Page, error) {
+			return f.store.Slowest(context.Background(), audit.PageInput{Query: q, Limit: 5})
+		},
+	} {
+		f.pipelines = nil
+		page, err := call()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if with, without := f.idMatches(); with != 1 || without != 0 {
+			t.Fatalf("%s: hint must prepend one _id stage (with=%d without=%d)", name, with, without)
+		}
+		if len(page.Provenance) != 1 || page.Provenance[0].Completeness != audit.HintBounded || page.Provenance[0].Margin == nil || page.Provenance[0].Window != "page" {
+			t.Fatalf("%s: provenance = %+v", name, page.Provenance)
+		}
+	}
+}
+
+func TestRequestsHintFallsBackWithNoteWhenCalibrationFails(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	f := newHintFixture(t, false, nil)
+	q := queryForTest(now)
+	q.SourceIDs, q.Kind, q.Outcome, q.QueryMode = []string{f.source.ID}, "all", "all", audit.QueryModeHint
+	page, err := f.store.Requests(context.Background(), audit.PageInput{Query: q, Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if with, _ := f.idMatches(); with != 0 {
+		t.Fatal("a failed calibration must run exact")
+	}
+	pv := page.Provenance[0]
+	if pv.QueryMode != audit.QueryModeExact || pv.Margin != nil || pv.Note != "calibration needs at least 1000 rows" {
+		t.Fatalf("pv = %+v", pv)
+	}
+}
+
+func TestActivityRunsExactEvenWhenHintIsAsked(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	f := newHintFixture(t, false, calibrationDocs(t, now.Add(-2*time.Hour), 1000))
+	// Activity carries no query mode, so it is exact.
+	page, err := f.store.Activity(context.Background(), audit.ActivityInput{SourceIDs: []string{f.source.ID}, Start: now.Add(-time.Hour), End: now, Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if with, without := f.idMatches(); with != 0 || without != 1 || f.calibrations() != 0 {
+		t.Fatalf("activity must run exact (with=%d without=%d cal=%d)", with, without, f.calibrations())
+	}
+	if pv := page.Provenance[0]; pv.QueryMode != audit.QueryModeExact || pv.Note != "" {
+		t.Fatalf("pv = %+v", pv)
+	}
+	// Activity includes requests that began before the window, which an _id bound
+	// over the window would drop. Even if a hint query reaches the overlap reader,
+	// it runs exact and says so.
+	f.pipelines = nil
+	q, err := audit.ActivityQuery(audit.ActivityInput{SourceIDs: []string{f.source.ID}, Start: now.Add(-time.Hour), End: now, Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.QueryMode = audit.QueryModeHint
+	page, err = f.store.requests(context.Background(), audit.PageInput{Query: q, Limit: 5}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if with, without := f.idMatches(); with != 0 || without != 1 || f.calibrations() != 0 {
+		t.Fatalf("overlap must run exact (with=%d without=%d cal=%d)", with, without, f.calibrations())
+	}
+	if pv := page.Provenance[0]; pv.QueryMode != audit.QueryModeExact || pv.Note != "activity includes requests that began before the window" {
+		t.Fatalf("pv = %+v", pv)
+	}
+}
+
+func TestRequestsHintOnLegacyRunsExactWithNote(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	f := newHintFixture(t, true, nil)
+	q := queryForTest(now)
+	q.SourceIDs, q.Kind, q.Outcome, q.QueryMode = []string{f.source.ID}, "all", "all", audit.QueryModeHint
+	page, err := f.store.Requests(context.Background(), audit.PageInput{Query: q, Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if with, _ := f.idMatches(); with != 0 || f.calibrations() != 0 {
+		t.Fatal("legacy must not use hint")
+	}
+	if len(page.Provenance) != 1 || page.Provenance[0].Note != "not available on MongoDB 3.4" {
+		t.Fatalf("provenance = %+v", page.Provenance)
+	}
+}
+
+func TestRequestsTruncatedProvenanceRowcap(t *testing.T) {
+	var h *fakeClient
+	s := newStore(func(context.Context, string, *tls.Config) (clientHandle, error) { h = &fakeClient{}; return h, nil })
+	a := addFakeSource(t, s, "one")
+	b := addFakeSource(t, s, "two")
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	h.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
+		duration := 100.
+		return &fakeCursor{docs: []any{requestDocument{ID: bson.NewObjectID(), InitiatedAt: &at, DurationMs: &duration}}}, nil
+	}
+	q, _ := audit.ActivityQuery(audit.ActivityInput{SourceIDs: []string{a.ID, b.ID}, Start: at, End: at.Add(time.Minute), Limit: 1})
+	page, err := s.Slowest(context.Background(), audit.PageInput{Query: q, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !page.Truncated || len(page.Provenance) != 2 {
+		t.Fatalf("page = %+v", page)
+	}
+	for _, pv := range page.Provenance {
+		if pv.Completeness != audit.Partial || pv.PartialReason != "rowcap" || pv.DocsReturned != 1 {
+			t.Fatalf("pv = %+v", pv)
+		}
+	}
+}
+
+func TestRequestsTimeoutProvenancePartial(t *testing.T) {
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	s, source, handle := recordStore(t, false)
+	handle.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
+		return nil, context.DeadlineExceeded
+	}
+	q := queryForTest(now)
+	q.SourceIDs, q.Kind, q.Outcome = []string{source.ID}, "all", "all"
+	page, err := s.Requests(context.Background(), audit.PageInput{Query: q, Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Provenance) != 1 || page.Provenance[0].PartialReason != "timeout" || page.Provenance[0].Completeness != audit.Partial {
+		t.Fatalf("provenance = %+v", page.Provenance)
+	}
+}

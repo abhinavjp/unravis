@@ -32,6 +32,7 @@
   import IncompletePanel from './components/IncompletePanel.svelte';
   import Hint from './components/Hint.svelte';
   import PlainLine from './components/PlainLine.svelte';
+  import ProvenanceNote from './components/ProvenanceNote.svelte';
   import Glossary from './components/Glossary.svelte';
   import { GLOSSARY_EVENT, glossaryTermFrom } from './lib/copy/hintState';
   import { plainTypicalVsSlowest } from './lib/copy/plainSummary';
@@ -939,7 +940,7 @@
       {#if info}<span class:demo-badge={info.demo} class="mode-badge">{info.demo ? 'Demo data' : 'Live mode'}</span>{/if}
       {#if info?.demo}<span class="updated-label">Data reference time <time>{new Date(info.now).toLocaleString()}</time></span>{/if}
       {#if info && !firstRun}
-        <SourcePopover groups={connectionGroups} selectedIds={query.sourceIds} total={sources.length} demo={info.demo} {busyDelete} {sourceError} {sourceSuccess} savedCount={recentConnections.length}
+        <SourcePopover groups={connectionGroups} selectedIds={query.sourceIds} total={sources.length} demo={info.demo} {busyDelete} {sourceError} {sourceSuccess} savedCount={recentConnections.length} coverageWindow={{ start: query.start, end: query.end }}
           onToggle={(id, checked) => { query.sourceIds = checked ? [...query.sourceIds.filter(item => item !== id), id] : query.sourceIds.filter(item => item !== id); onScopeChange(); }}
           onDelete={deleteSource} onManage={() => openConnections('saved')} onAdd={startNewConnection} />
       {/if}
@@ -1127,6 +1128,7 @@
                   {#each lensChoices as item (item.id)}<button type="button" class="chip" aria-pressed={lens === item.id} title={item.id === 'p95' ? metricLabels[analysis.query.metric] : undefined} onclick={() => lens = item.id}>{item.label}</button>{/each}<Hint termId="p95" />
                 </div>
                 <WhereList {analysis} {lens} {compare} {openKey} onOpen={(row) => openOperation(row)} />
+                <ProvenanceNote provenance={analysis.provenance} {sourceLabels} />
                 {#if splitDim && breakdownQuery}<BreakdownPanel query={breakdownQuery} {sourceLabels} lockedDim={splitDim} panelId="split-breakdown" onDrill={drillInto} />{/if}
                 <div class="disclosures">
                   <details class="disclosure">

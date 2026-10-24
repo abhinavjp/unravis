@@ -62,6 +62,8 @@ type Query struct {
 	Completion string `json:"completion,omitempty"`
 	// Operation is "Controller.Action", split on the first dot.
 	Operation string `json:"operation,omitempty"`
+	// QueryMode is exact or hint; "" means exact and is omitted from JSON.
+	QueryMode string `json:"queryMode,omitempty"`
 
 	// Range filters bound a numeric field inclusively (see ranges.go). ObservedMs,
 	// ApiTimeMs and AuditCreateTimeMs are latency ranges and imply complete
@@ -331,6 +333,8 @@ type Analysis struct {
 	// Overview is one row per request kind in scope (at most four), each with its
 	// reference window and the deltas against it.
 	Overview []OverviewRow `json:"overview,omitempty"`
+	// Provenance records how each figure was produced. Additive and absent when empty.
+	Provenance []Provenance `json:"provenance,omitempty"`
 }
 
 // SourceTiming is the database read time for one source and one window.
@@ -420,6 +424,7 @@ type Page struct {
 	NextCursor string          `json:"nextCursor"`
 	Sources    []SourceResult  `json:"sources"`
 	Truncated  bool            `json:"truncated"`
+	Provenance []Provenance    `json:"provenance,omitempty"`
 }
 
 type PayloadInput struct {

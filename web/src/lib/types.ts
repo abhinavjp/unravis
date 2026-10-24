@@ -33,7 +33,11 @@ export interface RecordFilters {
   observedMs?: NumberRange; apiTimeMs?: NumberRange; auditCreateTimeMs?: NumberRange;
   requestKb?: NumberRange; responseKb?: NumberRange; incompleteAgeMs?: NumberRange;
 }
+/** How the server reads records. Absent or "exact" reads every match; "hint" reads a narrow _id range (API only, no UI control). */
+export type QueryMode = 'exact' | 'hint';
 export interface Query extends RecordFilters {
+  /** Additive: absent means exact. */
+  queryMode?: QueryMode | '';
   sourceIds: string[]; start: string; end: string; baselineStart: string; baselineEnd: string;
   kind: Kind; outcome: Outcome; metric: Metric; bucketSeconds: number; controller: string; action: string;
 }
@@ -106,7 +110,26 @@ export interface OverviewDelta {
 export interface OverviewRow extends OverviewWindow {
   kind: string; state: string; reference: OverviewWindow; delta: OverviewDelta;
 }
+/** The measured gap between an ObjectId time and RequestInitiatedAt, used to bound a hint-mode read. */
+export interface IDMargin {
+  marginMs: number; observedMs: number; padMs: number; percentile: number; sampleSize: number;
+  sampleFrom: string; sampleTo: string; calibratedAt: string; label: string;
+}
+export type ProvenanceWindow = 'current' | 'reference' | 'page' | 'breakdown' | 'coverage';
+export type ScanClass = 'narrow' | 'broad';
+export type Completeness = 'complete' | 'ran_to_end' | 'partial' | 'hint';
+export type PartialReason = 'timeout' | 'rowcap' | 'error';
+/** How one read of one source and window ran. docsExamined is null when it was not measured (always on a live source). */
+export interface Provenance {
+  sourceId: string; window: ProvenanceWindow | string; start: string; end: string;
+  queryMode: QueryMode | string; scanClass: ScanClass | string; completeness: Completeness | string;
+  partialReason?: PartialReason | string;
+  docsReturned: number; docsExamined: number | null; sampleSize: number; elapsedMs: number; maxTimeMs: number;
+  margin?: IDMargin; note?: string;
+}
 export interface Analysis {
+  /** Additive: absent from older servers. */
+  provenance?: Provenance[];
   overview?: OverviewRow[];
   loadWindows?: LoadWindow[];
   requestVolume?: VolumeBucket[];
@@ -129,7 +152,7 @@ export interface RequestRecord {
   userId?: number; userIp?: string; userAgent?: string; uiVersion?: string;
   createdOn?: string; updatedOn?: string; pollingTypeRaw?: string;
 }
-export interface Page { rows: RequestRecord[]; nextCursor: string; sources: SourceResult[]; truncated: boolean }
+export interface Page { rows: RequestRecord[]; nextCursor: string; sources: SourceResult[]; truncated: boolean; /** Additive: absent from older servers. */ provenance?: Provenance[] }
 export interface Payload { request: string; response: string; truncated: boolean }
 /** One record with every schema field, its derived kind/state/outcome, and capped payloads. */
 export interface RecordDetail extends RequestRecord { state: string; pendingAsync?: boolean; payload: Payload }
@@ -145,5 +168,18 @@ export interface BreakdownRow {
   count4xx: number; count5xx: number; stats: Stats; filter?: BreakdownFilter; values?: number;
 }
 /** pooledKinds is set when the query kind (All, HTTP) pools request types: counts stay, but no row carries a percentile. */
-export interface Breakdown { dim: BreakdownDim; rows: BreakdownRow[]; other: BreakdownRow | null; total: number; distinct: number; pooledKinds?: boolean; sources: SourceResult[] }
+export interface Breakdown { dim: BreakdownDim; rows: BreakdownRow[]; other: BreakdownRow | null; total: number; distinct: number; pooledKinds?: boolean; sources: SourceResult[]; /** Additive: absent from older servers. */ provenance?: Provenance[] }
 export interface BreakdownInput { query: Query; dim: BreakdownDim; top: number }
+/** Coverage census (GET /api/sources/{id}/coverage). Pct runs 0 to 100 with one decimal. */
+export interface FieldCoverage { nonNull: number; pct: number }
+export interface CoverageRow {
+  /** synchronous, asynchronous, hangfire or unknown; the total row has kind "all" and an empty day. */
+  kind: string; day: string; docs: number;
+  requestInitiatedAt: FieldCoverage; createdOn: FieldCoverage; apiTime: FieldCoverage; accountId: FieldCoverage;
+}
+export interface CoverageReport {
+  sourceId: string; rows: CoverageRow[]; total: CoverageRow;
+  /** "available", or the unavailable sentence with the populated share. */
+  tenantAttribution: string; provenance: Provenance[];
+}
+export interface CoverageRefused { refused: string }

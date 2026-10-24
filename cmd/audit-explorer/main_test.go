@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"api-audit-explorer/internal/store"
 )
 
 func TestDefaultPort(t *testing.T) {
@@ -61,4 +63,56 @@ func TestHTTPEnvelopeIncludesReadAndFiveMinuteOperation(t *testing.T) {
 	if httpWriteTimeout < httpReadTimeout+5*time.Minute+10*time.Second {
 		t.Fatal("HTTP response deadline clips the operation after a slow request body")
 	}
+}
+
+func TestMCPAllowIdentifiersRequiresMCP(t *testing.T) {
+	if _, err := parseFlags([]string{"--mcp-allow-identifiers"}); err == nil || !strings.Contains(err.Error(), "--mcp") {
+		t.Fatalf("--mcp-allow-identifiers without --mcp: %v", err)
+	}
+	if _, err := parseFlags([]string{"--demo", "--mcp-allow-identifiers"}); err == nil {
+		t.Fatal("--mcp-allow-identifiers with --demo accepted")
+	}
+	f, err := parseFlags([]string{"--mcp", "--mcp-allow-identifiers"})
+	if err != nil || !f.mcpAllowIdentifiers {
+		t.Fatalf("--mcp --mcp-allow-identifiers: %+v, %v", f, err)
+	}
+	f, err = parseFlags([]string{"--mcp"})
+	if err != nil || f.mcpAllowIdentifiers {
+		t.Fatalf("identifiers must default off: %+v, %v", f, err)
+	}
+}
+
+func TestBroadScanFlagsRejectedWithMCP(t *testing.T) {
+	for _, args := range [][]string{
+		{"--mcp", "--allow-broad-scans"},
+		{"--mcp", "--docs-examined-budget", "5"},
+	} {
+		if _, err := parseFlags(args); err == nil {
+			t.Errorf("%v accepted", args)
+		}
+	}
+	if _, err := parseFlags([]string{"--allow-broad-scans", "--docs-examined-budget", "5"}); err != nil {
+		t.Fatalf("dashboard flags rejected: %v", err)
+	}
+}
+
+func TestNegativeDocsExaminedBudgetRejected(t *testing.T) {
+	if _, err := parseFlags([]string{"--docs-examined-budget", "-1"}); err == nil {
+		t.Fatal("negative budget accepted")
+	}
+}
+
+func TestDefaultFlagsLeaveBroadScansOff(t *testing.T) {
+	f, err := parseFlags(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.allowBroadScans || f.docsExaminedBudget != 0 || f.mcpAllowIdentifiers {
+		t.Fatalf("defaults not off: %+v", f)
+	}
+	if got := storeOptions(f); len(got) != 2 {
+		t.Fatalf("storeOptions returned %d options, want 2 (broad scans, budget)", len(got))
+	}
+	// New accepts exactly what storeOptions builds.
+	_ = store.New(storeOptions(f)...)
 }

@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"strings"
@@ -248,6 +249,29 @@ func TestValidateQueryBoundsRecordFilters(t *testing.T) {
 	ok.Operation, ok.Controller, ok.Action = "Payroll.Run.Now", "Payroll", "Run.Now"
 	if err := ValidateQuery(ok); err != nil {
 		t.Fatalf("filters at their limits are valid: %v", err)
+	}
+}
+
+func TestQueryModeValidation(t *testing.T) {
+	for _, mode := range []string{"", QueryModeExact, QueryModeHint} {
+		q := validQuery()
+		q.QueryMode = mode
+		if err := ValidateQuery(q); err != nil {
+			t.Errorf("queryMode %q rejected: %v", mode, err)
+		}
+	}
+	q := validQuery()
+	q.QueryMode = "fast"
+	if err := ValidateQuery(q); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("queryMode fast: err = %v, want ErrInvalidInput", err)
+	}
+
+	raw, err := json.Marshal(validQuery().Normalized())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"queryMode"`) {
+		t.Fatalf("a query without a mode must omit queryMode: %s", raw)
 	}
 }
 

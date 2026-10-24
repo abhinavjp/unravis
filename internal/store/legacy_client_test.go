@@ -141,8 +141,8 @@ func TestWithoutMongoCredentialsRetainsTransportOptions(t *testing.T) {
 }
 
 func TestRemainingLegacyMaxTimeUsesDeadlineAndRejectsExpiredContext(t *testing.T) {
-	if got, err := remainingLegacyMaxTime(context.Background()); err != nil || got != queryTimeout {
-		t.Fatalf("unbounded context maxTime=%v err=%v; want default query timeout", got, err)
+	if got, err := remainingLegacyMaxTime(context.Background()); err != nil || got != audit.InteractiveQueryBudget {
+		t.Fatalf("unbounded context maxTime=%v err=%v; want default interactive budget", got, err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -271,8 +271,8 @@ func TestMongo34AggregateSendsServerMaxTimeMS(t *testing.T) {
 		t.Fatal("legacy cursor iteration failed")
 	}
 	_ = cursor.Close(ctx)
-	if got := observed.Load(); got < 1 || got > 8000 {
-		t.Fatalf("MongoDB 3.4 aggregate maxTimeMS=%d; want 1..8000", got)
+	if got := observed.Load(); got < 1 || got > 10000 {
+		t.Fatalf("MongoDB 3.4 aggregate maxTimeMS=%d; want 1..10000", got)
 	}
 }
 
@@ -283,4 +283,94 @@ func containsDatabaseName(names []string, expected string) bool {
 		}
 	}
 	return false
+}
+
+func TestRemainingLegacyMaxTimeCapsAtBudget(t *testing.T) {
+	if got, err := remainingLegacyMaxTime(context.Background()); err != nil || got != 10*time.Second {
+		t.Fatalf("no deadline maxTime=%v err=%v; want 10s", got, err)
+	}
+	census := withQueryBudget(context.Background(), audit.CensusQueryBudget)
+	if got, err := remainingLegacyMaxTime(census); err != nil || got != 60*time.Second {
+		t.Fatalf("census budget maxTime=%v err=%v; want 60s", got, err)
+	}
+	short, cancel := context.WithTimeout(census, 2*time.Second)
+	defer cancel()
+	if got, err := remainingLegacyMaxTime(short); err != nil || got > 2*time.Second || got <= 0 {
+		t.Fatalf("earlier deadline maxTime=%v err=%v; want <= 2s", got, err)
+	}
+}
+
+func TestLegacyClientOptionsSetsAppNameAndTimeouts(t *testing.T) {
+	opts := legacyClientOptions("mongodb://db.example/?appName=other", nil)
+	if opts.AppName == nil || !strings.HasPrefix(*opts.AppName, "Unravis/") {
+		t.Fatalf("AppName = %v, want Unravis/ prefix", opts.AppName)
+	}
+	if opts.ServerSelectionTimeout == nil || *opts.ServerSelectionTimeout != 30*time.Second {
+		t.Fatalf("ServerSelectionTimeout = %v, want 30s", opts.ServerSelectionTimeout)
+	}
+	if opts.ConnectTimeout == nil || *opts.ConnectTimeout != 10*time.Second {
+		t.Fatalf("ConnectTimeout = %v, want 10s", opts.ConnectTimeout)
+	}
+	if opts.MaxPoolSize == nil || *opts.MaxPoolSize != 4 {
+		t.Fatal("existing pool settings were not kept")
+	}
+	withTLS := legacyClientOptions("mongodb://db.example/", &tls.Config{MinVersion: tls.VersionTLS12})
+	if withTLS.TLSConfig == nil || withTLS.TLSConfig.MinVersion != tls.VersionTLS12 {
+		t.Fatal("TLS configuration was not applied")
+	}
+}
+
+func TestLegacyCommandBudgetMatchesMaxTimeAndBoundsGetMore(t *testing.T) {
+	ctx := withQueryBudget(context.Background(), 50*time.Millisecond)
+	started := time.Now()
+	cmdCtx, maxTime, cancel, err := beginLegacyCommand(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maxTime != 50*time.Millisecond {
+		t.Fatalf("maxTime = %v, want the query budget", maxTime)
+	}
+	deadline, ok := cmdCtx.Deadline()
+	if !ok || deadline.Before(started.Add(maxTime)) || deadline.After(time.Now().Add(maxTime)) {
+		t.Fatalf("command deadline %v is not now+maxTime", deadline)
+	}
+	var cancelled atomic.Bool
+	inner := &blockingCursor{}
+	cursor := wrapLegacyCursor(inner, cmdCtx, func() { cancelled.Store(true); cancel() })
+	done := make(chan bool, 1)
+	go func() { done <- cursor.Next(context.Background()) }()
+	select {
+	case got := <-done:
+		if got {
+			t.Fatal("Next returned true from a blocked getMore")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("a legacy getMore was not bounded by the query budget")
+	}
+	if err := cursor.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !cancelled.Load() || !inner.closed.Load() {
+		t.Fatal("Close must cancel the command context and close the inner cursor")
+	}
+}
+
+func TestLegacyCommandBudgetHonoursEarlierParentDeadline(t *testing.T) {
+	parent, stop := context.WithTimeout(withQueryBudget(context.Background(), audit.CensusQueryBudget), time.Second)
+	defer stop()
+	cmdCtx, maxTime, cancel, err := beginLegacyCommand(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	deadline, _ := cmdCtx.Deadline()
+	parentDeadline, _ := parent.Deadline()
+	if maxTime > time.Second || deadline.After(parentDeadline) {
+		t.Fatalf("maxTime=%v deadline=%v parent=%v; the earlier parent deadline must win", maxTime, deadline, parentDeadline)
+	}
+	expired, done := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer done()
+	if _, _, _, err := beginLegacyCommand(expired); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired parent: %v", err)
+	}
 }

@@ -49,7 +49,10 @@ type sourceAnalysis struct {
 	current   []audit.Bucket
 	reference []audit.Bucket
 	timings   []audit.SourceTiming
-	err       error
+	// provenance holds one entry per window the source was read for; a source that
+	// did not run (admission failed) carries one failed "current" entry.
+	provenance []audit.Provenance
+	err        error
 }
 
 // Analyze runs current and fixed reference aggregations for each selected source.
@@ -95,9 +98,12 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 		workers.Add(1)
 		go func(i int, p *profile) {
 			defer workers.Done()
+			notRun := func(code string) []audit.Provenance {
+				return []audit.Provenance{failedProvenance(p, "current", q.Start, q.End, audit.QueryModeExact, nil, notRunNote(q.QueryMode), code, 0)}
+			}
 			if err := acquire(workCtx, s.global); err != nil {
 				code, message := sourceAdmissionError(err)
-				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}}
+				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}, provenance: notRun(code)}
 				return
 			}
 			defer func() { <-s.global }()
@@ -106,19 +112,41 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 			s.mu.RUnlock()
 			if per == nil {
 				results[i] = failedSource(p, "Source was removed before the query started.")
+				results[i].provenance = notRun("source_unavailable")
 				return
 			}
 			if err := acquire(workCtx, per); err != nil {
 				code, message := sourceAdmissionError(err)
-				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}}
+				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}, provenance: notRun(code)}
 				return
 			}
 			defer func() { <-per }()
+			// Hint mode: calibrate once per source, after admission. When it cannot
+			// run the source is read exact and each entry says why.
+			margin, note := s.resolveHint(workCtx, p, q.QueryMode, "")
+			ranMode := audit.QueryModeExact
+			if margin != nil {
+				ranMode = audit.QueryModeHint
+			}
 			var timings []audit.SourceTiming
+			var provenance []audit.Provenance
 			timed := func(window string, start, end time.Time) ([]audit.Bucket, error) {
 				began := time.Now()
-				buckets, err := s.readBuckets(workCtx, p, q, start, end, &rows, &rowBytes, &legacyRecords, &legacyBytes)
-				timings = append(timings, audit.SourceTiming{SourceID: p.source.ID, Window: window, ReadMs: time.Since(began).Milliseconds(), Rows: int64(len(buckets))})
+				buckets, err := s.readBuckets(workCtx, p, q, start, end, margin, &rows, &rowBytes, &legacyRecords, &legacyBytes)
+				elapsed := time.Since(began)
+				timings = append(timings, audit.SourceTiming{SourceID: p.source.ID, Window: window, ReadMs: elapsed.Milliseconds(), Rows: int64(len(buckets))})
+				pv := newProvenance(p, window, start, end, ranMode, margin)
+				pv.Note = note
+				code := ""
+				if err != nil {
+					code, _ = sourceQueryError(queryCtx, err)
+				}
+				var sample int64
+				for _, b := range buckets {
+					sample += b.Count
+				}
+				finishProvenance(&pv, int64(len(buckets)), sample, elapsed, code)
+				provenance = append(provenance, pv)
 				return buckets, err
 			}
 			current, err := timed("current", q.Start, q.End)
@@ -127,7 +155,7 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 				reference, err = timed("reference", q.BaselineStart, q.BaselineEnd)
 			}
 			if err == nil {
-				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: true, Version: p.version, IndexWarning: p.indexWarning}, current: current, reference: reference, timings: timings}
+				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: true, Version: p.version, IndexWarning: p.indexWarning}, current: current, reference: reference, timings: timings, provenance: provenance}
 				return
 			}
 			if errors.Is(err, audit.ErrLimit) {
@@ -136,7 +164,7 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 				return
 			}
 			code, message := sourceQueryError(queryCtx, err)
-			results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}, timings: timings, err: err}
+			results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}, timings: timings, provenance: provenance, err: err}
 		}(i, p)
 	}
 	workers.Wait()
@@ -150,9 +178,11 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 	reference := make([]audit.Bucket, 0)
 	sourceResults := make([]audit.SourceResult, 0, len(results))
 	var timings []audit.SourceTiming
+	var provenance []audit.Provenance
 	for _, result := range results {
 		sourceResults = append(sourceResults, result.result)
 		timings = append(timings, result.timings...)
+		provenance = append(provenance, result.provenance...)
 		if result.result.OK {
 			current = append(current, result.current...)
 			reference = append(reference, result.reference...)
@@ -163,6 +193,7 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 		return audit.Analysis{}, err
 	}
 	analysis.Timings = timings
+	analysis.Provenance = provenance
 	analysis.Warnings = append(analysis.Warnings, "Legacy records without RequestInitiatedAt use CreatedOn when it contains a BSON date.")
 	serialized, err := json.Marshal(analysis)
 	if err != nil || len(serialized) > maxAnalysisBytes {
@@ -191,9 +222,12 @@ func failedSource(p *profile, message string) sourceAnalysis {
 	return sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, ErrorCode: "source_unavailable", Error: message}}
 }
 
-func (s *Store) readBuckets(ctx context.Context, p *profile, q audit.Query, start, end time.Time, total, totalBytes, legacyRecords, legacyBytes *atomic.Int64) ([]audit.Bucket, error) {
+func (s *Store) readBuckets(ctx context.Context, p *profile, q audit.Query, start, end time.Time, hint *audit.IDMargin, total, totalBytes, legacyRecords, legacyBytes *atomic.Int64) ([]audit.Bucket, error) {
 	q = q.Normalized()
 	pipeline := buildSummaryPipeline(q, start, end, !start.Equal(q.BaselineStart) || !end.Equal(q.BaselineEnd))
+	// The hint stage is only ever resolved for a modern source, so the legacy
+	// branch below never sees one.
+	pipeline = hinted(pipeline, hint, start, end)
 	if usesLegacyMongo(p.shared.client) {
 		pipeline = legacyMetadataPipeline(pipeline)
 		return readLegacyBuckets(ctx, p, q, start, pipeline, total, totalBytes, legacyRecords, legacyBytes)
