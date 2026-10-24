@@ -85,7 +85,9 @@ func (h *handler) caseTimeline(w http.ResponseWriter, r *http.Request, raw strin
 			ivs = append(ivs, iv)
 		}
 	}
-	view, err := timeline.Build(c, importer.Window{From: q.Start.UTC(), To: q.End.UTC()}, ivs)
+	buildCtx, stop := context.WithTimeout(r.Context(), requestTimeout)
+	defer stop()
+	view, err := timeline.Build(buildCtx, c, importer.Window{From: q.Start.UTC(), To: q.End.UTC()}, ivs)
 	if err != nil {
 		writeCaseFailure(w, http.StatusInternalServerError, "timeline-failed", "The timeline could not be built.")
 		return
@@ -116,19 +118,24 @@ func auditInterval(r audit.RequestRecord) (join.Interval, bool) {
 // stored, so a re-export shares no pseudonym with this one. The file holds no
 // file names (BuildCase never reads them).
 func (h *handler) caseExportPreview(w http.ResponseWriter, r *http.Request, raw string) {
-	id, c, ok := h.openCase(w, r, raw)
-	if !ok {
+	id, ok := caseIDOf(w, raw)
+	if !ok || !h.casesAvailable(w) {
 		return
 	}
-	defer c.Close()
 	// Held so an erase cannot finish between the read and the stored preview,
-	// which would leave an export of an erased case behind.
+	// which would leave an export of an erased case behind. The case is opened
+	// after the gate is taken, so an erase that ran first answers 404.
 	release, err := h.gates.acquire(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
 	defer release()
+	_, c, ok := h.openCaseForWrite(w, r, raw)
+	if !ok {
+		return
+	}
+	defer c.Close()
 	imports, err := c.Imports(r.Context())
 	if err != nil {
 		writeStoreError(w, err)

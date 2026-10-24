@@ -157,8 +157,7 @@ type View struct {
 // an ambiguous one lists every candidate with OverlapAmbiguous, and a source
 // with no candidate gets a not-observed wording. Audit intervals that do not
 // touch the window are skipped.
-func Build(c casestore.Case, w importer.Window, ivs []join.Interval) (View, error) {
-	ctx := context.Background()
+func Build(ctx context.Context, c casestore.Case, w importer.Window, ivs []join.Interval) (View, error) {
 	imports, err := c.Imports(ctx)
 	if err != nil {
 		return View{}, fmt.Errorf("timeline: imports: %w", err)
@@ -178,6 +177,9 @@ func Build(c casestore.Case, w importer.Window, ivs []join.Interval) (View, erro
 		return View{}, fmt.Errorf("timeline: events: %w", err)
 	}
 	v.Truncated = truncated
+	if err := ctx.Err(); err != nil {
+		return View{}, fmt.Errorf("timeline: %w", err)
+	}
 
 	bySource := map[string][]evidence.Event{}
 	for _, e := range events {
@@ -193,6 +195,9 @@ func Build(c casestore.Case, w importer.Window, ivs []join.Interval) (View, erro
 		v.Rows = append(v.Rows, row)
 	}
 	for _, src := range v.Sources {
+		if err := ctx.Err(); err != nil {
+			return View{}, fmt.Errorf("timeline: %w", err)
+		}
 		evs := bySource[src.Name]
 		byID := make(map[string]evidence.Event, len(evs))
 		for _, e := range evs {

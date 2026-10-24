@@ -75,6 +75,62 @@ func TestSecureDirProtectedDACLWithUserAndSystemOnly(t *testing.T) {
 	check(child, false)
 }
 
+// SecureFile gives a file in an ordinary, inheriting folder a protected DACL
+// with the current user and SYSTEM only, and the DACL survives a rename.
+func TestSecureFileProtectedDACLSurvivesRename(t *testing.T) {
+	dir := t.TempDir()
+	temp := filepath.Join(dir, ".session-1.tmp")
+	if err := os.WriteFile(temp, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := casestore.SecureFile(temp); err != nil {
+		t.Fatal(err)
+	}
+	final := filepath.Join(dir, "session.json")
+	if err := os.Rename(temp, final); err != nil {
+		t.Fatal(err)
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	system, _ := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	sd, err := windows.GetNamedSecurityInfo(final, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctrl, _, err := sd.Control()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctrl&windows.SE_DACL_PROTECTED == 0 {
+		t.Error("the file DACL still inherits from its folder")
+	}
+	acl, _, err := sd.DACL()
+	if err != nil || acl == nil {
+		t.Fatalf("no DACL: %v", err)
+	}
+	seenUser, seenSystem := false, false
+	for i := uint32(0); i < uint32(acl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(acl, i, &ace); err != nil {
+			t.Fatal(err)
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		switch {
+		case sid.Equals(user.User.Sid):
+			seenUser = true
+		case sid.Equals(system):
+			seenSystem = true
+		default:
+			t.Errorf("unexpected ACE for %s", sid.String())
+		}
+	}
+	if !seenUser || !seenSystem {
+		t.Errorf("user=%v system=%v, want both", seenUser, seenSystem)
+	}
+}
+
 // makeJunction creates link -> target with mklink /J, which needs no privilege.
 func makeJunction(t *testing.T, link, target string) {
 	t.Helper()

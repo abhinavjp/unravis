@@ -35,7 +35,7 @@ function memoryStorage(initial = {}) {
 
 // browser installs stand-ins for the browser globals api.ts reads at load time,
 // loads a fresh copy of the module, runs fn, and restores the real globals.
-async function browser({ hash = '', search = '', storage = memoryStorage(), responses = [] }, fn) {
+async function browser({ hash = '', search = '', storage = memoryStorage(), responses = [], file = 'src/lib/api.ts' }, fn) {
   const names = ['location', 'history', 'sessionStorage', 'fetch'];
   const saved = Object.fromEntries(names.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
   const replaced = [];
@@ -61,7 +61,7 @@ async function browser({ hash = '', search = '', storage = memoryStorage(), resp
     }
   }
   try {
-    return await fn({ module: loadTypeScript('src/lib/api.ts'), calls, replaced });
+    return await fn({ module: loadTypeScript(file), calls, replaced });
   } finally {
     for (const name of names) {
       if (saved[name]) Object.defineProperty(globalThis, name, saved[name]);
@@ -131,6 +131,25 @@ test('a refused export token is forgotten too', async () => {
   const storage = memoryStorage({ 'unravis.session': TOKEN });
   await browser({ storage, responses: [{ status: 401, body: {} }] }, async ({ module }) => {
     await assert.rejects(module.api.export({ kind: 'all' }, ''), (error) => error.message === module.NO_SESSION_MESSAGE);
+    assert.equal(storage.getItem('unravis.session'), null);
+  });
+});
+
+test('a refused token on a case call is forgotten and the usual message is shown', async () => {
+  const storage = memoryStorage({ 'unravis.session': TOKEN });
+  const responses = [{ status: 401, body: { error: 'server wording that must not reach the screen' } }];
+  await browser({ storage, responses, file: 'src/lib/cases.ts' }, async ({ module, calls }) => {
+    await assert.rejects(module.listCases(), (error) => error.status === 401 && error.reason === 'no_session' && error.message === 'Open Unravis from the link it printed when it started, or restart it.');
+    assert.equal(storage.getItem('unravis.session'), null);
+    await assert.rejects(module.listCases(), (error) => error.reason === 'no_session');
+    assert.equal(calls.length, 1, 'the refused token is not sent again');
+  });
+});
+
+test('a refused token on a case erase is forgotten too', async () => {
+  const storage = memoryStorage({ 'unravis.session': TOKEN });
+  await browser({ storage, responses: [{ status: 401, body: {} }], file: 'src/lib/cases.ts' }, async ({ module }) => {
+    await assert.rejects(module.eraseCase('abcd2345abcd2345abcd234567'), (error) => error.reason === 'no_session');
     assert.equal(storage.getItem('unravis.session'), null);
   });
 });

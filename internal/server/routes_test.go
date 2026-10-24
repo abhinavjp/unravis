@@ -21,6 +21,7 @@ type routeCase struct {
 
 var routeCases = []routeCase{
 	{"/", "/", "GET, HEAD"},
+	{launchPath, launchPath, "GET"},
 	{sessionproof.Path, sessionproof.Path, "GET"},
 	{"/api/connections/recent", "/api/connections/recent", "GET"},
 	{"/api/connections/recent/{id}", "/api/connections/recent/c1", "DELETE"},
@@ -92,7 +93,7 @@ func TestRouteTableCoversEveryRoute(t *testing.T) {
 func TestRoutesAnswerExpectedStatusPerMethod(t *testing.T) {
 	h := New(&fakeRepository{}, testAssets(), testToken, false)
 	for _, c := range routeCases {
-		public := c.path == "/" || c.path == sessionproof.Path
+		public := c.path == "/" || c.path == sessionproof.Path || c.path == launchPath
 		for _, method := range routeTestMethods {
 			res := request(h, method, c.path, "", !public)
 			if hasMethod(c.allow, method) {
@@ -117,7 +118,7 @@ func TestRoutesAnswerExpectedStatusPerMethod(t *testing.T) {
 func TestRoutesRequireTokenBeforeMethodCheck(t *testing.T) {
 	h := New(&fakeRepository{}, testAssets(), testToken, false)
 	for _, c := range routeCases {
-		if c.path == "/" || c.path == sessionproof.Path {
+		if c.path == "/" || c.path == sessionproof.Path || c.path == launchPath {
 			continue
 		}
 		for _, method := range routeTestMethods {

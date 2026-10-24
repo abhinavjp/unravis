@@ -88,6 +88,9 @@ var routes = []route{
 		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.serveIndex(w, r) },
 		http.MethodHead: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.serveIndex(w, r) },
 	}},
+	{pattern: launchPath, match: exactPath(launchPath), public: true, methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.serveLaunch(w, r) },
+	}},
 	{pattern: sessionproof.Path, match: exactPath(sessionproof.Path), public: true, methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.sessionProof(w, r) },
 	}},

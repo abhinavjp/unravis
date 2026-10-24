@@ -204,6 +204,8 @@ func run(ctx context.Context, r io.Reader, opts importer.Options,
 		width    int
 		sawHdr   bool
 		sinceChk int
+		// directives counts "#" lines toward the row limit (see below).
+		directives int64
 	)
 	reject := rep.Reject
 
@@ -236,6 +238,12 @@ func run(ctx context.Context, r io.Reader, opts importer.Options,
 			continue
 		}
 		if line[0] == '#' {
+			// Directive lines are not rows, but they count toward the row limit
+			// so a file made of them cannot run to MaxBytes.
+			directives++
+			if err := lim.CheckRows(rep.Rows + directives); err != nil {
+				return fin(err)
+			}
 			if !utf8.Valid(line) {
 				continue
 			}

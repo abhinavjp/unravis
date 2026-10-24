@@ -1,4 +1,4 @@
-import { NO_SESSION_MESSAGE, readSessionToken } from './api';
+import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
 import { parseTimelineView, type TimelineView } from './timeline';
 import type { EvidenceExport, ExportFile, Query } from './types';
 
@@ -127,6 +127,11 @@ async function send(path: string, init: RequestInit = {}, signal?: AbortSignal):
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new CaseApiError('The server could not be reached.', 0, 'unreachable');
+  }
+  if (response.status === 401) {
+    // The dashboard refused the token: forget it so nothing keeps sending it, and show the usual message.
+    forgetSession();
+    throw new CaseApiError(NO_SESSION_MESSAGE, 401, 'no_session');
   }
   if (!response.ok) throw await refusal(response);
   return response;

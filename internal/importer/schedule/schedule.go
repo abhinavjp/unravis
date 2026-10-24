@@ -54,6 +54,11 @@ const (
 	// one-second job leaves room for the other jobs in the file.
 	maxPerSchedule = maxBoundaries / 4
 	maxAttrBytes   = 200
+	// maxWork caps the wall-clock times one file may test while expanding cron
+	// and recurrence rules, in or out of the window. A second-by-second cron on
+	// many rows would otherwise cost minutes of CPU; the file is refused with a
+	// LimitError ("work") and no cell text.
+	maxWork = 20_000_000
 )
 
 // Fixed attribute values for the "reason" attribute of a schedule-unknown event.
@@ -141,6 +146,7 @@ type run struct {
 	from    time.Time
 	to      time.Time
 	nCapped int       // boundary and unknown events emitted in the file (maxBoundaries)
+	work    int64     // wall-clock times tested in the file (maxWork)
 	jobN    int       // boundaries emitted for the schedule being expanded
 	lastB   time.Time // latest boundary emitted for the schedule being expanded
 	minT    time.Time

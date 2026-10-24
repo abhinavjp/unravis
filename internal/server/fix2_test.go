@@ -335,7 +335,7 @@ func TestFix2AckTextLimit(t *testing.T) {
 			e := fix2Env(t, store, nil, nil)
 			id := e.newCase("Ack case")
 			fields := func(n int) []formField {
-				return []formField{{"ackGating", "true"}, {"ackText", strings.Repeat("a", n)}}
+				return []formField{{"ackGating", "true"}, {"ackCustom", "true"}, {"ackText", strings.Repeat("a", n)}}
 			}
 			res := e.upload(commitPath(id), fields(casestore.MaxAckText), &upload{"a.csv", toyCSV(toyRow(1, "web-a", "alpha", 5))})
 			if res.Code != http.StatusCreated {

@@ -242,7 +242,7 @@ func (e *caseEnv) uploadRequest(path string, fields []formField, file *upload) *
 	return req
 }
 
-var ackFields = []formField{{"ackGating", "true"}, {"ackText", "Gating acknowledged: the file is treated as read-only evidence."}}
+var ackFields = []formField{{"ackGating", "true"}, {"ackText", evidence.GatingBanner()}}
 
 func (e *caseEnv) upload(path string, fields []formField, file *upload) *httptest.ResponseRecorder {
 	return e.serve(e.uploadRequest(path, fields, file))

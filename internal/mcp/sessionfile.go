@@ -83,7 +83,20 @@ func WriteSessionFile(path string, port int, token string) error {
 	return writeSessionRecord(path, sessionRecord{Port: port, Token: token, Pid: os.Getpid()})
 }
 
+// WriteSessionFileSecured is WriteSessionFile with an extra step: secure is
+// called on the temporary file before the token is written to it, so the file
+// never holds the token under the folder's inherited ACL. The rename keeps the
+// file's own security. When secure fails nothing is written. The caller passes
+// the platform's owner-only helper (the mcp package does not import it).
+func WriteSessionFileSecured(path string, port int, token string, secure func(file string) error) error {
+	return writeSessionRecordWith(path, sessionRecord{Port: port, Token: token, Pid: os.Getpid()}, secure)
+}
+
 func writeSessionRecord(path string, record sessionRecord) error {
+	return writeSessionRecordWith(path, record, nil)
+}
+
+func writeSessionRecordWith(path string, record sessionRecord, secure func(file string) error) error {
 	if record.Port < 1 || record.Port > 65535 || !ValidToken(record.Token) || record.Pid < 0 {
 		return errors.New("invalid session")
 	}
@@ -103,6 +116,12 @@ func writeSessionRecord(path string, record sessionRecord) error {
 	}
 	name := temp.Name()
 	defer os.Remove(name) // no-op after a successful rename
+	if secure != nil {
+		if err := secure(name); err != nil {
+			temp.Close()
+			return errors.New("session file could not be restricted to this user")
+		}
+	}
 	if _, err := temp.Write(data); err != nil {
 		temp.Close()
 		return err
