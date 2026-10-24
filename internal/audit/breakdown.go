@@ -101,6 +101,7 @@ type Breakdown struct {
 	Distinct    int            `json:"distinct"`
 	Sources     []SourceResult `json:"sources"`
 	PooledKinds bool           `json:"pooledKinds,omitempty"`
+	Provenance  []Provenance   `json:"provenance,omitempty"`
 }
 
 // PooledKind reports whether a query kind mixes request types, so that a latency

@@ -33,6 +33,13 @@ type Store struct {
 	// now is the server clock an incomplete-age range is measured against. It is a
 	// field so tests can inject one; nil means the wall clock.
 	now func() time.Time
+	// allowBroadScans permits census scans against live sources (dashboard only).
+	allowBroadScans bool
+	// docsExaminedBudget caps docsExamined on a query; 0 means unset.
+	docsExaminedBudget int64
+	// margins caches calibrated _id margins per source, guarded by marginMu.
+	marginMu sync.Mutex
+	margins  map[string]audit.IDMargin
 }
 
 // clock returns the current time in UTC at millisecond precision, the precision
@@ -45,9 +52,14 @@ func (s *Store) clock() time.Time {
 	return now().UTC().Truncate(time.Millisecond)
 }
 
-// New creates a store with bounded MongoDB connection settings.
-func New() *Store {
-	return newStore(defaultClientFactory)
+// New creates a store with bounded MongoDB connection settings. Options are
+// applied in order; with none the store is unchanged.
+func New(opts ...Option) *Store {
+	s := newStore(defaultClientFactory)
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func newStore(factory clientFactory) *Store {
@@ -57,6 +69,7 @@ func newStore(factory clientFactory) *Store {
 		newClient: factory,
 		global:    make(chan struct{}, 4),
 		perSource: make(map[string]chan struct{}),
+		margins:   make(map[string]audit.IDMargin),
 	}
 }
 

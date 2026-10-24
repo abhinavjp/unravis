@@ -54,6 +54,11 @@ func ValidateQuery(q Query) error {
 	default:
 		return invalidInputf("metric must be total or api")
 	}
+	switch q.QueryMode {
+	case "", QueryModeExact, QueryModeHint:
+	default:
+		return invalidInputf("queryMode must be exact or hint")
+	}
 	if utf8.RuneCountInString(q.Controller) > MaxFilterLength {
 		return invalidInputf("controller must be at most %d characters", MaxFilterLength)
 	}
