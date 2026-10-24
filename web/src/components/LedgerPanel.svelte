@@ -3,65 +3,78 @@
   import { api, ApiError } from '../lib/api';
   import type { Hypothesis } from '../lib/types';
   import {
-    ALT_STATUS_LABEL, ALT_STATUS_ORDER, STATE_LABEL, STATE_ORDER, buildInput, editorFromHypothesis, historyLine,
-    joinProblem, ledgerCopy as copy, presenceText, rateProblem, stateLabel, type EditorState
+    ALT_STATUS_LABEL, ALT_STATUS_ORDER, STATE_LABEL, STATE_ORDER, appendEvidence, buildInput, editorFromHypothesis, historyLine,
+    identifierWarning, isDirty, joinProblem, ledgerCopy as copy, numberProblem, presenceText, rateProblem, stateLabel, strongProgress,
+    strongReasons
   } from '../lib/ledger';
+  import { ledger, refreshLedger } from '../lib/ledgerStore.svelte';
   import Drawer from './Drawer.svelte';
 
   // The Ledger drawer: what we believe, what supports it, what contradicts it, what is not yet known.
   // The analyst sets every state. Guards can only block "strong correlation"; the app never suggests or computes a state.
   // Esc closes the drawer and Tab stays inside it, like the Glossary drawer.
+  // The entries, the drafts, the open entry and the new-hypothesis text live in the shared ledger store, so closing the drawer keeps them.
   let { onClose }: { onClose: () => void } = $props();
-  let items = $state<Hypothesis[]>([]);
-  let loading = $state(true);
+  let loading = $state(!ledger.loaded);
   let loadError = $state('');
-  let newText = $state('');
   let adding = $state(false);
-  let openId = $state<string | null>(null);
-  let editors = $state<Record<string, EditorState>>({});
+  let addNote = $state('');
+  let attached = $state<string | null>(null);
   let busy = $state<Record<string, 'save' | 'reuse' | 'delete' | undefined>>({});
   let problem = $state<Record<string, string>>({});
   let blocked = $state<Record<string, string[]>>({});
   let confirming = $state<string | null>(null);
   let addField = $state<HTMLInputElement>();
 
+  const newWarning = $derived(identifierWarning(ledger.newText));
   const messageOf = (error: unknown) => (error instanceof Error ? error.message : 'Something went wrong.');
 
   function adopt(h: Hypothesis) {
-    editors[h.id] = editorFromHypothesis(h);
+    ledger.editors[h.id] = editorFromHypothesis(h);
     delete blocked[h.id];
     delete problem[h.id];
   }
   function replace(h: Hypothesis) {
-    const at = items.findIndex((x) => x.id === h.id);
-    if (at >= 0) items[at] = h; else items.unshift(h);
+    const at = ledger.items.findIndex((x) => x.id === h.id);
+    if (at >= 0) ledger.items[at] = h; else ledger.items.unshift(h);
     adopt(h);
   }
   async function load() {
-    loading = true; loadError = '';
-    try {
-      items = (await api.ledgerList()) ?? [];
-      for (const h of items) if (!editors[h.id]) adopt(h);
-    } catch (error) { loadError = messageOf(error); }
+    loading = !ledger.loaded; loadError = '';
+    try { await refreshLedger(); }
+    catch (error) { loadError = messageOf(error); }
     finally { loading = false; }
   }
   onMount(() => { void load(); addField?.focus(); });
 
   async function add(event: Event) {
     event.preventDefault();
-    const text = newText.trim();
-    if (!text || adding) return;
+    const text = ledger.newText.trim();
+    if (!text) { addNote = copy.addEmpty; return; }
+    if (adding) return;
     adding = true; loadError = '';
     try {
       const created = await api.ledgerCreate(text);
       replace(created);
-      newText = '';
-      openId = created.id;
+      ledger.newText = '';
+      ledger.openId = created.id;
     } catch (error) { loadError = messageOf(error); }
     finally { adding = false; }
   }
+  // The Add button is off while the box is empty, so Enter is the place to say why nothing happened.
+  function addKey(event: KeyboardEvent) {
+    if (event.key === 'Enter' && ledger.newText.trim() === '') { event.preventDefault(); addNote = copy.addEmpty; }
+  }
+  function discard(h: Hypothesis) { adopt(h); }
+  function attachCited(id: string) {
+    const editor = ledger.editors[id];
+    if (!editor || !ledger.cited.length) return;
+    editor.evidenceText = appendEvidence(editor.evidenceText, ledger.cited.map((c) => c.id));
+    ledger.cited = [];
+    attached = id;
+  }
   async function save(h: Hypothesis) {
-    const editor = editors[h.id];
+    const editor = ledger.editors[h.id];
     if (!editor || busy[h.id]) return;
     busy[h.id] = 'save'; delete problem[h.id]; delete blocked[h.id];
     try {
@@ -79,7 +92,7 @@
     try {
       const fresh = await api.ledgerReuse(h.id);
       replace(fresh);
-      openId = fresh.id;
+      ledger.openId = fresh.id;
     } catch (error) { problem[h.id] = messageOf(error); }
     finally { busy[h.id] = undefined; }
   }
@@ -88,14 +101,14 @@
     busy[h.id] = 'delete'; delete problem[h.id];
     try {
       await api.ledgerDelete(h.id);
-      items = items.filter((x) => x.id !== h.id);
-      delete editors[h.id];
-      if (openId === h.id) openId = null;
+      ledger.items = ledger.items.filter((x) => x.id !== h.id);
+      delete ledger.editors[h.id];
+      if (ledger.openId === h.id) ledger.openId = null;
       confirming = null;
     } catch (error) { problem[h.id] = messageOf(error); }
     finally { busy[h.id] = undefined; }
   }
-  function toggle(id: string) { openId = openId === id ? null : id; confirming = null; }
+  function toggle(id: string) { ledger.openId = ledger.openId === id ? null : id; confirming = null; attached = null; }
 
 </script>
 
@@ -106,14 +119,30 @@
 
   {#if loading}
     <p class="field-note" role="status">{copy.loading}</p>
-  {:else if items.length === 0}
+  {:else if ledger.items.length === 0}
     <p class="ledger-empty">{copy.empty}</p>
   {/if}
 
+  {#if ledger.cited.length}
+    <section class="ledger-cited" aria-labelledby="ledger-cited-title">
+      <h3 id="ledger-cited-title">{copy.citedLead}</h3>
+      <p class="field-note">{copy.citedHint}</p>
+      <ul>
+        {#each ledger.cited as c (c.id)}
+          <li>
+            <span>{c.label}</span>
+            <button type="button" class="quiet-button" aria-label={copy.citedRemove + ': ' + c.label} onclick={() => (ledger.cited = ledger.cited.filter((x) => x.id !== c.id))}>{copy.removeAlternative}</button>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
+
   <ul class="ledger-list">
-    {#each items as h (h.id)}
-      {@const editor = editors[h.id]}
-      {@const open = openId === h.id}
+    {#each ledger.items as h (h.id)}
+      {@const editor = ledger.editors[h.id]}
+      {@const open = ledger.openId === h.id}
+      {@const dirty = !!editor && isDirty(h, editor)}
       {@const rate = presenceText(h.facts.presentK, h.facts.totalN)}
       <li class="ledger-item">
         <button type="button" class="ledger-summary" aria-expanded={open} aria-controls={'ledger-body-' + h.id} onclick={() => toggle(h.id)}>
@@ -121,14 +150,24 @@
           <span class="ledger-meta">
             <span class="saved-badge ledger-badge" class:ledger-strong={h.state === 'supported_by_strong_correlation'}>{stateLabel(h.state)}</span>
             {#if rate}<span class="ledger-rate">{rate}</span>{/if}
+            {#if dirty}<span class="ledger-unsaved">{copy.unsaved}</span>{/if}
           </span>
         </button>
         {#if open && editor}
           {@const rateError = rateProblem(editor)}
           {@const joinError = joinProblem(editor)}
+          {@const totalError = numberProblem(editor.totalN)}
+          {@const presentError = numberProblem(editor.presentK)}
+          {@const strong = editor.state === 'supported_by_strong_correlation'}
+          {@const reasons = strong ? strongReasons(editor) : []}
+          {@const strongBlocked = reasons.length > 0}
+          {@const textWarning = identifierWarning(editor.text)}
+          {@const counterWarning = identifierWarning(editor.counterText)}
+          {@const notesWarning = identifierWarning(editor.notes)}
           <div class="ledger-body source-form" id={'ledger-body-' + h.id}>
             <label for={'l-text-' + h.id}>{copy.textLabel}</label>
-            <textarea id={'l-text-' + h.id} rows="2" bind:value={editor.text}></textarea>
+            <textarea id={'l-text-' + h.id} rows="2" bind:value={editor.text} aria-describedby={textWarning ? 'l-text-warn-' + h.id : undefined}></textarea>
+            {#if textWarning}<p class="warning-text" id={'l-text-warn-' + h.id} role="status">{textWarning}</p>{/if}
 
             <label for={'l-state-' + h.id}>{copy.stateLabel}</label>
             <select id={'l-state-' + h.id} bind:value={editor.state} aria-describedby={'l-state-note-' + h.id} onchange={() => delete blocked[h.id]}>
@@ -141,33 +180,46 @@
                 <ul class="ledger-reasons">{#each blocked[h.id] as reason (reason)}<li>{reason}</li>{/each}</ul>
                 <p class="ledger-blocked-note">{copy.blockedNote}</p>
               </div>
-            {:else if h.guards?.length}
-              <div class="connection-status warning">
+            {:else if strongBlocked}
+              <div class="connection-status warning" id={'l-strong-' + h.id}>
                 <strong>{copy.guardLead}</strong>
-                <ul class="ledger-reasons">{#each h.guards as reason (reason)}<li>{reason}</li>{/each}</ul>
+                <ul class="ledger-reasons">{#each reasons as reason (reason)}<li>{reason}</li>{/each}</ul>
               </div>
+            {:else if !strong}
+              <p class="field-note">{strongProgress(editor)} {copy.strongHint}</p>
             {/if}
 
             <label for={'l-evidence-' + h.id}>{copy.evidenceLabel}</label>
             <textarea id={'l-evidence-' + h.id} rows="2" spellcheck="false" bind:value={editor.evidenceText} aria-describedby={'l-evidence-hint-' + h.id}></textarea>
             <p class="field-note" id={'l-evidence-hint-' + h.id}>{copy.evidenceHint}</p>
+            {#if ledger.cited.length}
+              <button type="button" class="quiet-button" onclick={() => attachCited(h.id)}>{copy.citedAdd} ({ledger.cited.length})</button>
+            {/if}
+            {#if attached === h.id}<p class="field-note" role="status">{copy.citedAdded}</p>{/if}
 
             <div class="field-grid">
               <div>
                 <label for={'l-total-' + h.id}>{copy.examinedLabel}</label>
-                <input id={'l-total-' + h.id} type="text" inputmode="numeric" autocomplete="off" bind:value={editor.totalN} />
+                <input id={'l-total-' + h.id} type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" bind:value={editor.totalN} aria-invalid={totalError ? 'true' : undefined} aria-describedby={totalError ? 'l-numbers-error-' + h.id : undefined} />
               </div>
               <div>
                 <label for={'l-present-' + h.id}>{copy.presentLabel}</label>
-                <input id={'l-present-' + h.id} type="text" inputmode="numeric" autocomplete="off" bind:value={editor.presentK} aria-invalid={rateError ? 'true' : undefined} />
+                <input id={'l-present-' + h.id} type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" bind:value={editor.presentK} aria-invalid={presentError || rateError ? 'true' : undefined} aria-describedby={presentError ? 'l-numbers-error-' + h.id : undefined} />
               </div>
             </div>
             <p class="field-note" role="status">{presenceText(Number(editor.presentK), Number(editor.totalN)) || copy.noRate}</p>
+            {#if totalError || presentError}
+              <div class="warning-text" id={'l-numbers-error-' + h.id} role="alert">
+                {#if totalError}<p>{copy.examinedLabel}: {totalError}</p>{/if}
+                {#if presentError}<p>{copy.presentLabel}: {presentError}</p>{/if}
+              </div>
+            {/if}
             {#if rateError}<p class="warning-text" role="alert">{rateError}</p>{/if}
 
             <label for={'l-counter-' + h.id}>{copy.counterLabel}</label>
             <textarea id={'l-counter-' + h.id} rows="2" bind:value={editor.counterText} aria-describedby={'l-counter-hint-' + h.id}></textarea>
             <p class="field-note" id={'l-counter-hint-' + h.id}>{copy.counterHint}</p>
+            {#if counterWarning}<p class="warning-text" role="status">{counterWarning}</p>{/if}
 
             <span class="field-label" id={'l-alt-label-' + h.id}>{copy.alternativesLabel}</span>
             <div class="ledger-alts" role="group" aria-labelledby={'l-alt-label-' + h.id}>
@@ -197,6 +249,7 @@
 
             <label for={'l-notes-' + h.id}>{copy.notesLabel}</label>
             <textarea id={'l-notes-' + h.id} rows="3" bind:value={editor.notes}></textarea>
+            {#if notesWarning}<p class="warning-text" role="status">{notesWarning}</p>{/if}
 
             {#if h.history?.length}
               <div class="ledger-history">
@@ -208,8 +261,11 @@
 
             {#if problem[h.id]}<p class="inline-error" role="alert">{problem[h.id]}</p>{/if}
 
+            {#if dirty}<p class="field-note" role="status">{copy.draftNote}</p>{/if}
+
             <div class="ledger-actions">
-              <button type="button" class="primary-button" disabled={!!busy[h.id] || !!rateError || !!joinError || editor.text.trim() === ''} onclick={() => save(h)}>{busy[h.id] === 'save' ? copy.saving : copy.save}</button>
+              <button type="button" class="primary-button" disabled={!!busy[h.id] || !!rateError || !!joinError || !!totalError || !!presentError || strongBlocked || editor.text.trim() === ''} aria-describedby={strongBlocked ? 'l-strong-' + h.id + ' l-save-note-' + h.id : undefined} onclick={() => save(h)}>{busy[h.id] === 'save' ? copy.saving : copy.save}</button>
+              {#if dirty}<button type="button" class="secondary-button" disabled={!!busy[h.id]} onclick={() => discard(h)}>{copy.discard}</button>{/if}
               <button type="button" class="secondary-button" disabled={!!busy[h.id]} onclick={() => reuse(h)}>{copy.reuse}</button>
               {#if confirming === h.id}
                 <span class="ledger-confirm" role="group" aria-label={copy.removeConfirm}>
@@ -221,6 +277,7 @@
                 <button type="button" class="quiet-button" disabled={!!busy[h.id]} onclick={() => (confirming = h.id)}>{copy.remove}</button>
               {/if}
             </div>
+            {#if strongBlocked}<p class="field-note" id={'l-save-note-' + h.id}>{copy.saveBlocked}</p>{/if}
             <p class="field-note">{copy.reuseNote}</p>
           </div>
         {/if}
@@ -231,9 +288,11 @@
   <form class="ledger-add" onsubmit={add}>
     <label for="ledger-new">{copy.addLabel}</label>
     <div class="ledger-add-row">
-      <input id="ledger-new" type="text" bind:this={addField} bind:value={newText} placeholder={copy.addPlaceholder} autocomplete="off" maxlength="2000" />
-      <button type="submit" class="primary-button" disabled={adding || newText.trim() === ''}>{copy.addButton}</button>
+      <input id="ledger-new" type="text" bind:this={addField} bind:value={ledger.newText} placeholder={copy.addPlaceholder} autocomplete="off" maxlength="2000" oninput={() => (addNote = '')} onkeydown={addKey} aria-describedby={addNote ? 'ledger-new-note' : newWarning ? 'ledger-new-warn' : undefined} />
+      <button type="submit" class="primary-button" disabled={adding || ledger.newText.trim() === ''}>{copy.addButton}</button>
     </div>
+    {#if addNote}<p class="field-note" id="ledger-new-note" role="status">{addNote}</p>{/if}
+    {#if newWarning}<p class="warning-text" id="ledger-new-warn" role="status">{newWarning}</p>{/if}
   </form>
 </Drawer>
 
@@ -249,6 +308,11 @@
   .ledger-badge { margin: 0; font-weight: 650; color: var(--text); }
   .ledger-strong { border-color: var(--accent); }
   .ledger-rate { color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .ledger-unsaved { color: var(--text-2); font-size: var(--fs-2); }
+  .ledger-cited { margin-top: var(--space-3); padding-top: var(--space-3); border-top: var(--hairline-width) solid var(--hairline); }
+  .ledger-cited h3 { margin: 0; font-size: var(--fs-3); }
+  .ledger-cited ul { display: grid; gap: var(--space-1); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
+  .ledger-cited li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
   .ledger-body { padding: 4px 2px 16px; }
   .ledger-body textarea { width: 100%; min-width: 0; padding: 7px 9px; color: var(--text); background: var(--surface); border: 1px solid var(--control-line); border-radius: var(--radius); font: inherit; font-size: 14px; line-height: 1.45; resize: vertical; }
   .ledger-body .field-grid > div { display: grid; gap: 4px; min-width: 0; }
