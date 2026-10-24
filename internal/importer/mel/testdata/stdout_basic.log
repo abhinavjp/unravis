@@ -1,0 +1,12 @@
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://web-a.example.test:5000
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+warn: Microsoft.AspNetCore.Server.Kestrel[22]
+      As of "03/04/2001 05:06:30 +00:00", the heartbeat has been running for "00:00:01.5000000" which is longer than "00:00:01". This could be caused by thread pool starvation.
+fail: MyApp.Orders.OrderService[0]
+      Order step failed
+System.InvalidOperationException: step failed
+   at MyApp.Orders.OrderService.Run() in /src/OrderService.cs:line 12
+Unhandled exception. System.NullReferenceException: Object reference not set to an instance of an object.
+   at MyApp.Program.Main(String[] args) in /src/Program.cs:line 9

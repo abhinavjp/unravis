@@ -1,0 +1,14 @@
+2001-03-04 05:06:07 info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://web-a.example.test:5000
+2001-03-04 05:06:07 info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+2001-03-04 05:06:09 info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+      Request finished HTTP/1.1 GET http://web-a.example.test/api/items - 200 512 application/json 1834.2000ms
+2001-03-04 05:06:10 warn: Microsoft.AspNetCore.Server.Kestrel[22]
+      As of "03/04/2001 05:06:10 +00:00", the heartbeat has been running for "00:00:01.5000000" which is longer than "00:00:01". This could be caused by thread pool starvation.
+2001-03-04 05:06:11 fail: MyApp.Orders.OrderService[0]
+      Order step failed
+System.InvalidOperationException: step failed
+         at MyApp.Orders.OrderService.Run() in /src/OrderService.cs:line 12
+2001-03-04 05:06:12 info: MyApp.Worker[0]
+      Tick 7
