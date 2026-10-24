@@ -8,7 +8,13 @@ package evidence
 import "time"
 
 const (
-	SchemaVersion = 1
+	// SchemaVersion is the version Build and BuildCase write. Version 2 adds
+	// Manifest.Imports, Body.Imports and Body.Events (the case export); all
+	// three are omitted when empty, so a version 1 file still decodes and
+	// re-encodes to the same bytes.
+	SchemaVersion = 2
+	// MinSchemaVersion is the oldest version Verify accepts.
+	MinSchemaVersion = 1
 	// ThinCell is the masking threshold: any count below it prints as "<20".
 	ThinCell = 20
 )
@@ -90,15 +96,64 @@ type Manifest struct {
 	CreatedAt     time.Time `json:"createdAt"`
 	BodySHA256    string    `json:"bodySha256"`
 	Masking       Masking   `json:"masking"`
+	// Imports lists the imported files of a case export (version 2). A file is
+	// named by its importer and SHA-256 only, never by its file name.
+	Imports []ManifestImport `json:"imports,omitempty"`
+}
+
+// ManifestImport is one imported file as the manifest states it: which
+// importer read it, the hash of its bytes, the acknowledgement the analyst
+// ticked before importing it, and the importer's known gaps. There is no file
+// name field.
+type ManifestImport struct {
+	Ref             string   `json:"ref"` // "import-1", ...; the same ref as in Body.Imports
+	Importer        string   `json:"importer"`
+	SHA256          string   `json:"sha256"`
+	Acknowledgement string   `json:"acknowledgement"`
+	KnownGaps       []string `json:"knownGaps"`
+}
+
+// ExportImport is the body's summary of one imported file. Host is a keyed
+// pseudonym for this export; counts are masked.
+type ExportImport struct {
+	Ref      string        `json:"ref"`
+	Importer string        `json:"importer"`
+	Host     string        `json:"host,omitempty"`
+	TZRule   string        `json:"tzRule,omitempty"`
+	Rows     Count         `json:"rows"`
+	Rejected Count         `json:"rejected"`
+	Quality  SourceQuality `json:"sourceQuality"`
+}
+
+// ExportEvent is one imported event after the per-source attribute policy:
+// host and named attributes are keyed pseudonyms for this export, and only
+// allowlisted attributes remain. Attrs marshals with sorted keys, so the
+// encoding is canonical.
+type ExportEvent struct {
+	EvidenceID string            `json:"evidenceId"`
+	Source     string            `json:"source"`
+	Kind       string            `json:"kind"`
+	Host       string            `json:"host,omitempty"`
+	Start      time.Time         `json:"start"`
+	End        time.Time         `json:"end"`
+	DurationMs *float64          `json:"durationMs,omitempty"`
+	Value      *float64          `json:"value,omitempty"`
+	Unit       string            `json:"unit,omitempty"`
+	Severity   string            `json:"severity,omitempty"`
+	Line       int64             `json:"line"`
+	TZRule     string            `json:"tzRule"`
+	Attrs      map[string]string `json:"attrs,omitempty"`
 }
 
 // Body is what the file contains between the manifest and the signature of the
 // hash. Nothing in it carries a payload, raw URL, query text, IP, user agent or
 // raw user ID.
 type Body struct {
-	Records    []Record      `json:"records"`
-	Pseudonyms []Pseudonym   `json:"pseudonyms,omitempty"`
-	Ledger     []LedgerEntry `json:"ledger,omitempty"`
+	Records    []Record       `json:"records"`
+	Pseudonyms []Pseudonym    `json:"pseudonyms,omitempty"`
+	Ledger     []LedgerEntry  `json:"ledger,omitempty"`
+	Imports    []ExportImport `json:"imports,omitempty"` // version 2 (case export)
+	Events     []ExportEvent  `json:"events,omitempty"`  // version 2 (case export)
 }
 
 // Export is the whole file: manifest plus body.
