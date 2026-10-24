@@ -21,6 +21,7 @@ import (
 
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/history"
+	"api-audit-explorer/internal/ledger"
 )
 
 const (
@@ -37,6 +38,7 @@ type handler struct {
 	token   string
 	demo    bool
 	history savedHistory
+	ledger  ledger.Store
 }
 
 type savedHistory interface {
@@ -227,6 +229,18 @@ func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if route == "/api/breakdown" && r.Method == http.MethodPost {
 		h.breakdown(w, r)
+		return
+	}
+	if route == "/api/patterns" {
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w)
+			return
+		}
+		h.patterns(w, r)
+		return
+	}
+	if route == "/api/ledger" || strings.HasPrefix(route, "/api/ledger/") {
+		h.serveLedger(w, r)
 		return
 	}
 	if route == "/api/payload" && r.Method == http.MethodPost {
