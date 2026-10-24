@@ -15,7 +15,7 @@ import (
 func TestProtocolLifecycleAndReadOnlyDiscovery(t *testing.T) {
 	input, clientInput := io.Pipe()
 	clientOutput, output := io.Pipe()
-	b, _ := New(18765)
+	b, _ := New(18765, WithToken(testSessionToken))
 	done := make(chan error, 1)
 	go func() { done <- b.Serve(context.Background(), input, output); output.Close() }()
 	scanner := bufio.NewScanner(clientOutput)
@@ -71,7 +71,7 @@ func TestProtocolLifecycleAndReadOnlyDiscovery(t *testing.T) {
 func TestServerInfoNameIsUnravis(t *testing.T) {
 	input, clientInput := io.Pipe()
 	clientOutput, output := io.Pipe()
-	b, _ := New(18765)
+	b, _ := New(18765, WithToken(testSessionToken))
 	done := make(chan error, 1)
 	go func() { done <- b.Serve(context.Background(), input, output); output.Close() }()
 	scanner := bufio.NewScanner(clientOutput)
@@ -103,7 +103,7 @@ func TestServerInfoNameIsUnravis(t *testing.T) {
 }
 
 func TestCacheExpiresAndPagingDoesNotMutateResults(t *testing.T) {
-	b := newBridge("http://127.0.0.1:1", nil)
+	b := newBridge(fixed("http://127.0.0.1:1"), nil)
 	now := time.Now()
 	b.now = func() time.Time { return now }
 	b.resultID = "old"
@@ -130,7 +130,7 @@ func strictArgsForTest(raw string) (any, error) {
 }
 
 func TestProtocolErrorNeverEchoesMalformedInput(t *testing.T) {
-	b, _ := New(18765)
+	b, _ := New(18765, WithToken(testSessionToken))
 	var output strings.Builder
 	if err := b.Serve(context.Background(), strings.NewReader("private-password-not-json\n"), &output); err != nil {
 		t.Fatal(err)
@@ -144,16 +144,12 @@ func TestCancelledToolStopsUpstreamQuery(t *testing.T) {
 	started := make(chan struct{})
 	stopped := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			w.Write([]byte(`<meta name="audit-session" content="test-token">`))
-			return
-		}
 		close(started)
 		<-r.Context().Done()
 		close(stopped)
 	}))
 	defer upstream.Close()
-	b := newBridge(upstream.URL, upstream.Client())
+	b := newBridge(fixed(upstream.URL), upstream.Client())
 	input, clientInput := io.Pipe()
 	clientOutput, output := io.Pipe()
 	done := make(chan error, 1)
@@ -190,7 +186,7 @@ func TestParentCancellationStopsIdleProtocol(t *testing.T) {
 	input, writer := io.Pipe()
 	defer writer.Close()
 	ctx, cancel := context.WithCancel(context.Background())
-	b, _ := New(18765)
+	b, _ := New(18765, WithToken(testSessionToken))
 	done := make(chan error, 1)
 	go func() { done <- b.Serve(ctx, input, io.Discard) }()
 	cancel()

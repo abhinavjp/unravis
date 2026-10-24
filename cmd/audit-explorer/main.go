@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -31,8 +32,11 @@ import (
 )
 
 const (
-	memorySoftLimit  = 256 << 20
-	defaultPort      = 18765
+	memorySoftLimit = 256 << 20
+	// defaultPort 0 lets the OS choose a free loopback port, so no other local
+	// process can claim a well-known port before the dashboard starts. The real
+	// address is printed and written to the session file for --mcp.
+	defaultPort      = 0
 	httpReadTimeout  = 35 * time.Second
 	httpWriteTimeout = httpReadTimeout + audit.OperationTimeout + 10*time.Second
 )
@@ -61,10 +65,10 @@ func parseFlags(args []string) (runFlags, error) {
 	flags := flag.NewFlagSet("unravis", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	flags.BoolVar(&f.demo, "demo", false, "run with deterministic illustrative data")
-	flags.IntVar(&f.port, "port", defaultPort, "loopback HTTP port (0 chooses an available port)")
+	flags.IntVar(&f.port, "port", defaultPort, "loopback HTTP port; 0 (the default) chooses an available port. With --mcp, the running dashboard's port (by default read from its session file)")
 	flags.BoolVar(&f.noBrowser, "no-browser", false, "do not open the local dashboard")
-	flags.BoolVar(&f.mcp, "mcp", false, "serve read-only MCP over stdio, using an already running dashboard at --port")
-	flags.BoolVar(&f.mcpAllowIdentifiers, "mcp-allow-identifiers", false, "with --mcp: let MCP return user ids, user agents and IP addresses (off by default)")
+	flags.BoolVar(&f.mcp, "mcp", false, "serve read-only MCP over stdio, using the dashboard already running for this user (found through its session file)")
+	flags.BoolVar(&f.mcpAllowIdentifiers, "mcp-allow-identifiers", false, "with --mcp: let MCP return user ids, user agents and IP addresses, and filter on them, URLs and audit ids (off by default, demo included)")
 	flags.BoolVar(&f.allowBroadScans, "allow-broad-scans", false, "dashboard only: allow checks that read every record in a window on a live source (off by default)")
 	flags.Int64Var(&f.docsExaminedBudget, "docs-examined-budget", 0, "dashboard only: cap on records examined per query; 0 leaves it unset")
 	if err := flags.Parse(args); err != nil {
@@ -105,7 +109,11 @@ func run(args []string, getenv func(string) string) error {
 	}
 	demo, port, noBrowser, mcpMode := &f.demo, &f.port, &f.noBrowser, &f.mcp
 	if *mcpMode {
-		bridge, err := mcp.New(*port, mcp.WithIdentifiers(f.mcpAllowIdentifiers))
+		options := []mcp.Option{mcp.WithIdentifiers(f.mcpAllowIdentifiers), mcp.WithToken(getenv("AUDIT_SESSION_TOKEN"))}
+		if path, pathErr := mcp.SessionFilePath(getenv); pathErr == nil {
+			options = append(options, mcp.WithSessionFile(path))
+		}
+		bridge, err := mcp.New(*port, options...)
 		if err != nil {
 			return err
 		}
@@ -147,7 +155,14 @@ func run(args []string, getenv func(string) string) error {
 	if err != nil {
 		return fmt.Errorf("could not listen on loopback address: %w", err)
 	}
+	// Listen for Ctrl+C before the session file exists, so an early interrupt
+	// still takes the clean path that removes it.
+	signalContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	localURL := "http://" + listener.Addr().String()
+	// The token travels only in the fragment, which the browser never sends to
+	// the server; the page reads it and removes it from the address bar.
+	launchURL := localURL + "/#t=" + url.QueryEscape(token)
 	httpServer := &http.Server{
 		Handler:           server.New(repo, explorer.Assets(), token, *demo, serverOptions...),
 		ReadHeaderTimeout: 5 * time.Second,
@@ -159,13 +174,22 @@ func run(args []string, getenv func(string) string) error {
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- httpServer.Serve(listener) }()
 
+	sessionPath, sessionErr := mcp.SessionFilePath(getenv)
+	if sessionErr == nil {
+		sessionErr = mcp.WriteSessionFile(sessionPath, listener.Addr().(*net.TCPAddr).Port, token)
+	}
+	if sessionErr != nil {
+		log.Printf("Session file not written; --mcp needs --port and AUDIT_SESSION_TOKEN to reach this dashboard")
+	} else {
+		defer func() { _ = mcp.RemoveSessionFile(sessionPath, token) }()
+	}
+
 	if !*noBrowser && runtime.GOOS == "windows" {
-		_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", localURL).Start()
+		_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", launchURL).Start()
 	}
 	log.Printf("Unravis listening at %s (demo=%t)", localURL, *demo)
+	log.Printf("Open Unravis at %s", launchURL)
 
-	signalContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	select {
 	case err := <-serveDone:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -192,17 +216,10 @@ func openLedger(demo bool, getenv func(string) string) (ledger.Store, error) {
 	if demo {
 		return ledger.Open("")
 	}
-	base := ""
-	if getenv != nil {
-		base = getenv("AUDIT_CONFIG_DIR")
-	}
-	if base == "" {
-		dir, err := os.UserConfigDir()
-		if err != nil {
-			return nil, err
-		}
-		// Same folder name as saved connections; see history.NewDefault.
-		base = filepath.Join(dir, "APIAuditExplorer")
+	// Same folder as saved connections and the session file; see history.NewDefault.
+	base, err := mcp.SessionDir(getenv)
+	if err != nil {
+		return nil, err
 	}
 	return ledger.Open(filepath.Join(base, "ledger.json"))
 }

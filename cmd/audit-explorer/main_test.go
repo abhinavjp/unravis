@@ -9,8 +9,10 @@ import (
 )
 
 func TestDefaultPort(t *testing.T) {
-	if defaultPort != 18765 {
-		t.Fatalf("defaultPort=%d, want 18765", defaultPort)
+	// 0 lets the OS choose a free port, so no local process can squat a
+	// well-known one; the real port reaches --mcp through the session file.
+	if defaultPort != 0 {
+		t.Fatalf("defaultPort=%d, want 0", defaultPort)
 	}
 }
 
