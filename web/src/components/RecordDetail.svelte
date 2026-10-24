@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { RecordDetail } from '../lib/types';
   import PayloadViewer from './PayloadViewer.svelte';
+  import PlainLine from './PlainLine.svelte';
+  import { plainAuditCreateSummary } from '../lib/copy/plainSummary';
   let { detail, sourceLabel, onClose }: { detail: RecordDetail | null; sourceLabel: string; onClose: () => void } = $props();
   let panel: HTMLElement | undefined = $state();
   // Move focus to the panel when a record opens so keyboard and screen-reader users land on it.
@@ -21,6 +23,8 @@
     ['RequestCompletedAt', stamp(detail.completedAt)], ['UpdatedOn', stamp(detail.updatedOn)],
     ['AuditCreateTime', ms(detail.auditCreateTimeMs)], ['ApiTime', ms(detail.apiTimeMs)], ['PayloadRecordTime', ms(detail.payloadRecordTimeMs)],
   ] : []);
+  // The saving time in plain words. It states what was measured and names no cause. AuditCreateTime is CreatedOn minus RequestInitiatedAt, so that is the window; with either end missing no window is stated.
+  let plain = $derived(detail ? plainAuditCreateSummary({ auditCreateTimeMs: detail.auditCreateTimeMs, window: detail.initiatedAt && detail.createdOn ? { start: detail.initiatedAt, end: detail.createdOn } : null }) : null);
   let evidence = $derived(detail ? [
     ['Kind', text(detail.kind)], ['State', text(detail.state) + (detail.pendingAsync ? ' (accepted, still pending)' : '')],
     ['Status class', text(detail.outcome)], ['Observed time', ms(detail.durationMs)],
@@ -33,6 +37,7 @@
       <div><h3>Record {detail.id}</h3><p class="record-note">Every field stored for this audit record. Payloads are limited by the server.</p></div>
       <button class="quiet-button" onclick={onClose} aria-label="Close record details">Close</button>
     </div>
+    {#if plain}<PlainLine result={plain} hints={['audit-create-time']} />{/if}
     <div class="record-tables">
       <table class="record-table" aria-label="Stored fields">
         <caption>Stored fields</caption>

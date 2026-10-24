@@ -4,6 +4,7 @@
   import { loadBadge, loadTip, rollupFor } from '../lib/traffic';
   import { kindLabel, observedPartialTip, outcomeRateText, rankComparisons, statusRates, unknownKindTip, type RankField } from '../lib/presentation';
   import PhaseBar from './PhaseBar.svelte';
+  import Hint from './Hint.svelte';
   import OperationTable from './OperationTable.svelte';
   import { p99NeedsSamples, quantileText } from '../lib/slowness';
   import { rollupCompletionRate } from '../lib/incomplete';
@@ -91,16 +92,16 @@
       <th title="Each group stays distinct by source, controller, and action.">API group</th>
       <th title="Request type and outcome remain separate parts of each group.">Kind and outcome</th>
       <th aria-sort={sort === 'count' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button class="sort-button" title="Current-period requests with a valid response-time sample." onclick={() => sortBy('count')}>Current requests{sort === 'count' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button></th>
-      <th title="Reference-period requests with a valid response-time sample.">Reference requests</th>
+      <th title="Reference-period requests with a valid response-time sample.">Reference requests<Hint termId="reference-period" /></th>
       <th aria-sort={sort === 'impact' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button class="sort-button" title="Extra time versus the reference average, summed over all current requests. A marker means the whole latency distribution clearly shifted." onclick={() => sortBy('impact')}>Total impact{sort === 'impact' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button></th>
-      <th aria-sort={sort === 'ratio' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button class="sort-button" title="P95 is the time within which about 95 of 100 requests finish. 2× means twice as long; 0.5× means half as long." onclick={() => sortBy('ratio')}>P95 vs reference{sort === 'ratio' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button></th>
+      <th aria-sort={sort === 'ratio' ? direction < 0 ? 'descending' : 'ascending' : 'none'}><button class="sort-button" title="P95 is the time within which about 95 of 100 requests finish. 2× means twice as long; 0.5× means half as long." onclick={() => sortBy('ratio')}>P95 vs reference{sort === 'ratio' ? direction < 0 ? ' ↓' : ' ↑' : ''}</button><Hint termId="p95" /></th>
       <th><button class="sort-button" title="Difference between current and earlier reference P95 estimates, in milliseconds. P95 is the estimated time within which about 95 of 100 requests with usable timings finish." onclick={() => sortBy('delta')}>P95 difference (ms)</button></th>
       <th title="Share of current-period requests with a known result that were client errors (4xx), for the whole API. Needs the outcome filter set to All.">4xx %</th>
       <th title="Share of current-period requests with a known result that were server errors (5xx, including failed Hangfire jobs), for the whole API. Needs the outcome filter set to All.">5xx %</th>
-      <th title="Completed requests as a share of completed, incomplete and pending ones, for the whole API. Unusable rows are counted apart and never in the share. A dash means there was nothing to measure, not 0%.">Completion %</th>
-      <th title="Median: half of the current-period requests finished sooner. A histogram estimate.">P50</th>
+      <th title="Completed requests as a share of completed, incomplete and pending ones, for the whole API. Unusable rows are counted apart and never in the share. A dash means there was nothing to measure, not 0%.">Completion %<Hint termId="completion-percent" /></th>
+      <th title="Median: half of the current-period requests finished sooner. A histogram estimate.">P50<Hint termId="p50" /></th>
       <th title="About 90 of 100 current-period requests finished within this time. A histogram estimate.">P90</th>
-      <th title="About 99 of 100 current-period requests finished within this time. A histogram estimate; shown only with at least 100 samples.">P99</th>
+      <th title="About 99 of 100 current-period requests finished within this time. A histogram estimate; shown only with at least 100 samples.">P99<Hint termId="p99" /></th>
       <th title="Shows whether the available samples support a comparison.">Comparison</th>
     </tr></thead>
     <tbody>
@@ -118,7 +119,7 @@
           <td class="numeric" data-label="P50" title="Histogram estimate; carries about ±5% bin-width error.">{quantileText(row.current.p50)}</td>
           <td class="numeric" data-label="P90" title="Histogram estimate; carries about ±5% bin-width error.">{quantileText(row.current.p90)}</td>
           <td class="numeric" data-label="P99" title={p99Tip(row)}>{quantileText(row.current.p99, p99NeedsSamples)}</td>
-          <td class="group-status" data-label="Comparison"><span class="state-pill" title={stateDetails[row.state] ?? 'Comparison status'}>{stateLabels[row.state] ?? row.state.replaceAll('_', ' ')}</span>{#if loadBadge(loadByKey.get(row.key))}<span class="state-pill" title={loadTip(loadByKey.get(row.key) ?? 0)}>{loadBadge(loadByKey.get(row.key))}</span>{/if}</td>
+          <td class="group-status" data-label="Comparison"><span class="state-pill" title={stateDetails[row.state] ?? 'Comparison status'}>{stateLabels[row.state] ?? row.state.replaceAll('_', ' ')}</span>{#if row.state === 'insufficient_data'}<Hint termId="low-sample" />{/if}{#if loadBadge(loadByKey.get(row.key))}<span class="state-pill" title={loadTip(loadByKey.get(row.key) ?? 0)}>{loadBadge(loadByKey.get(row.key))}</span>{/if}</td>
         </tr>
       {:else}<tr><td colspan="15" class="table-empty">{rows.length ? 'No API groups match this search and view. Clear the search or choose All API groups.' : 'No API comparisons are available for this query.'}</td></tr>{/each}
     </tbody>

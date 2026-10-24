@@ -6,6 +6,9 @@
   import { trafficData } from '../lib/traffic';
   import { heroHasData, pulseFigures, singleKind, type Lens } from '../lib/pulse';
   import { metricLabels } from '../lib/presentation';
+  import { plainIncomplete } from '../lib/copy/plainSummary';
+  import Hint from './Hint.svelte';
+  import PlainLine from './PlainLine.svelte';
 
   // D0: five headline figures and one timeline. Every figure opens the ranked view with that lens.
   let { analysis, zone, onOpen }: { analysis: Analysis; zone: string; onOpen: (lens: Lens) => void } = $props();
@@ -13,6 +16,13 @@
   const windows = $derived(trafficData(analysis.query, analysis.loadWindows ?? [], Number.POSITIVE_INFINITY, 'p95').windows);
   const hasData = $derived(heroHasData(windows));
   const withLatency = $derived(singleKind(analysis.query.kind));
+  // The headline in plain words: how many requests had a final result. Built only from the per-operation totals the page already holds.
+  const plain = $derived.by(() => {
+    const rollups = analysis.rollups ?? [];
+    if (!rollups.length || rollups.some(row => row.completed == null)) return null;
+    const sum = (pick: (row: (typeof rollups)[number]) => number | undefined) => rollups.reduce((total, row) => total + (pick(row) ?? 0), 0);
+    return plainIncomplete({ completed: sum(row => row.completed), incomplete: sum(row => row.incomplete), pending: sum(row => row.pending), invalid: sum(row => row.invalid), window: { start: analysis.query.start, end: analysis.query.end } });
+  });
   const toneOf = (id: Lens, value: string) => value === '0' || value === '—' ? (value === '—' ? 'muted' : '') : id === 'client' ? 'warn' : id === 'server' ? 'bad' : '';
   let node = $state<HTMLDivElement>();
   let chart = $state<ReturnType<typeof echarts.init>>();
@@ -36,10 +46,11 @@
       </button>
     {/each}
   </div>
+  {#if plain}<PlainLine result={plain} hints={['incomplete-request']} />{/if}
   <section class="hero" aria-label="Requests over time">
     <div class="hero-head">
       <h2>Requests over time</h2>
-      <div class="hero-legend"><span><i class="swatch-count"></i>Requests per interval</span>{#if withLatency}<span><i class="swatch-p95"></i>P95 ({metricLabels[analysis.query.metric]})</span>{/if}</div>
+      <div class="hero-legend"><span><i class="swatch-count"></i>Requests per interval</span>{#if withLatency}<span><i class="swatch-p95"></i>P95 ({metricLabels[analysis.query.metric]})<Hint termId="p95" /></span>{/if}</div>
     </div>
     <div class="hero-stage">
       <div class="hero-chart" class:chart-hidden={!hasData} bind:this={node} role="img" aria-hidden={!hasData} aria-label={'Requests per interval' + (withLatency ? ' with the 95th percentile' : '') + ', in ' + zone}></div>

@@ -30,6 +30,11 @@
   import RecordDetailPanel from './components/RecordDetail.svelte';
   import OverviewStrip from './components/OverviewStrip.svelte';
   import IncompletePanel from './components/IncompletePanel.svelte';
+  import Hint from './components/Hint.svelte';
+  import PlainLine from './components/PlainLine.svelte';
+  import Glossary from './components/Glossary.svelte';
+  import { GLOSSARY_EVENT, glossaryTermFrom } from './lib/copy/hintState';
+  import { plainTypicalVsSlowest } from './lib/copy/plainSummary';
   import { applyStaleFilters, scopeStaleDrill } from './lib/incomplete';
   import { allOperationsDrill, drillHeading, operationDrill, type OverviewDrill } from './lib/overview';
   import { phaseSegments } from './lib/phases';
@@ -120,6 +125,9 @@
   let recordSequence = 0;
   let querySnapshot = '';
   let connectionsOpen = $state(false);
+  let glossaryOpen = $state(false);
+  let glossaryTerm = $state<string | null>(null);
+  let glossaryReturnFocus: HTMLElement | null = null;
   let connectionTab = $state<'saved' | 'new'>('saved');
   let drawerElement = $state<HTMLElement | undefined>(undefined);
   let drawerReturnFocus: HTMLElement | null = null;
@@ -189,6 +197,11 @@
   const moreCount = $derived(moreFiltersCount(query));
   const scopedQuery = $derived<Query | null>(breakdownQuery && operation ? operationQuery(breakdownQuery, operation) : breakdownQuery);
   const selectedStats = $derived(selected?.current);
+  // The typical and slowest times of the open group in plain words, with the earlier period as the comparison.
+  const selectedPlain = $derived(selected && analysis ? plainTypicalVsSlowest({
+    comparison: selected, metric: analysis.query.metric,
+    window: { start: analysis.query.start, end: analysis.query.end }, referenceWindow: { start: analysis.query.baselineStart, end: analysis.query.baselineEnd }
+  }) : null);
   const inspectorTabs = $derived(evidenceTabs({
     operation: operation != null, group: selected != null, scoped: scopedQuery != null,
     phases: !!(selected && (phaseSegments(selectedStats?.phases) || (selectedStats?.phases?.payloadMs != null && Number.isFinite(selectedStats.phases.payloadMs)))),
@@ -241,7 +254,11 @@
     connectionObservedSignature = signature;
   });
 
-  onMount(() => { theme.start(); void initialize(); });
+  onMount(() => {
+    theme.start(); void initialize();
+    window.addEventListener(GLOSSARY_EVENT, onGlossaryRequest);
+    return () => window.removeEventListener(GLOSSARY_EVENT, onGlossaryRequest);
+  });
   async function initialize() {
     try {
       info = await api.info();
@@ -670,6 +687,23 @@
     drawerReturnFocus?.focus();
     drawerReturnFocus = null;
   }
+  async function closeGlossary() {
+    glossaryOpen = false;
+    glossaryTerm = null;
+    await tick();
+    glossaryReturnFocus?.focus();
+    glossaryReturnFocus = null;
+  }
+  function openGlossary(termId: string | null = null) {
+    glossaryReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    glossaryTerm = termId;
+    glossaryOpen = true;
+  }
+  // A hint's "Learn more in the glossary" button sends this window event.
+  function onGlossaryRequest(event: Event) {
+    const termId = glossaryTermFrom((event as CustomEvent).detail);
+    if (termId && !glossaryOpen) openGlossary(termId);
+  }
   async function openConnections(tab: 'saved' | 'new' = 'saved') {
     if (sourceBusy || connectionTesting || historyMutationBusy) return;
     drawerReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -765,7 +799,7 @@
     for (let guard = 0; guard < 4 && depth > target; guard++) stepUpOnce();
   }
   function onWindowKey(event: KeyboardEvent) {
-    if (event.key !== 'Escape' || event.defaultPrevented || connectionsOpen) return;
+    if (event.key !== 'Escape' || event.defaultPrevented || connectionsOpen || glossaryOpen) return;
     const target = event.target;
     if (target instanceof HTMLElement && (target.tagName === 'SELECT' || target.closest('.popover'))) return;
     // An open menu or the filters panel closes first; only then does Esc step one level up.
@@ -909,6 +943,7 @@
           onToggle={(id, checked) => { query.sourceIds = checked ? [...query.sourceIds.filter(item => item !== id), id] : query.sourceIds.filter(item => item !== id); onScopeChange(); }}
           onDelete={deleteSource} onManage={() => openConnections('saved')} onAdd={startNewConnection} />
       {/if}
+      <button type="button" class="header-button" aria-label="Help and glossary" aria-haspopup="dialog" aria-expanded={glossaryOpen} onclick={() => openGlossary()}>Help</button>
       <button type="button" class="header-button theme-toggle" onclick={() => theme.cycle()} aria-label={'Theme: ' + theme.choice + '. Change theme'} title={'Theme: ' + theme.choice}>
         {#if theme.choice === 'light'}
           <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="3.4"></circle><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"></path></svg>
@@ -924,7 +959,7 @@
   {#if initError}<div class="banner error-banner" role="alert"><strong>Explorer unavailable</strong><span>{initError}</span><button class="quiet-button" onclick={() => { initError = ''; void initialize(); }}>Retry</button></div>{/if}
 
   {#if info && !firstRun}
-    <section class="scope" aria-label="Scope" inert={connectionsOpen}>
+    <section class="scope" aria-label="Scope" inert={connectionsOpen || glossaryOpen}>
       <div class="scope-main">
         {#key controlsResetKey}<QueryControls bind:query bind:zone bind:targetMs bind:dateInputsValid part="bar" groupNames={(analysis?.apis ?? []).map(row => row.controller + '.' + row.action)} now={info?.now ?? ''} {onScopeChange} />{/key}
         <details class="more-filters">
@@ -1048,7 +1083,9 @@
         </div>
     {/if}
 
-    <main class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={connectionsOpen}>
+    {#if glossaryOpen}<Glossary onClose={closeGlossary} focusTerm={glossaryTerm} />{/if}
+
+    <main class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={connectionsOpen || glossaryOpen}>
       <div class="stage-inner">
         {#if !info && !initError}
           <div class="loading-state"><div class="loading-pulse"></div><strong>Starting Unravis</strong><p>Loading sources and settings.</p></div>
@@ -1076,7 +1113,7 @@
                   <div><h2 id="where-title" tabindex="-1">Where is it?</h2><p>Operations ranked by the figure you chose. Open one to see the evidence behind it.</p></div>
                   <div class="view-tools">
                     <button type="button" class="chip" onclick={openComparison}>All operations</button>
-                    <button type="button" class="chip" aria-pressed={compare} onclick={() => compare = !compare}>Compare to earlier</button>
+                    <button type="button" class="chip" aria-pressed={compare} onclick={() => compare = !compare}>Compare to earlier</button><Hint termId="reference-period" />
                     <details class="menu">
                       <summary>{splitDim ? 'Split by ' + (breakdownDims.find(item => item.dim === splitDim)?.label ?? '') : 'Split by…'}</summary>
                       <div class="menu-list">
@@ -1087,7 +1124,7 @@
                   </div>
                 </div>
                 <div class="lens-chips" role="group" aria-label="Rank by">
-                  {#each lensChoices as item (item.id)}<button type="button" class="chip" aria-pressed={lens === item.id} title={item.id === 'p95' ? metricLabels[analysis.query.metric] : undefined} onclick={() => lens = item.id}>{item.label}</button>{/each}
+                  {#each lensChoices as item (item.id)}<button type="button" class="chip" aria-pressed={lens === item.id} title={item.id === 'p95' ? metricLabels[analysis.query.metric] : undefined} onclick={() => lens = item.id}>{item.label}</button>{/each}<Hint termId="p95" />
                 </div>
                 <WhereList {analysis} {lens} {compare} {openKey} onOpen={(row) => openOperation(row)} />
                 {#if splitDim && breakdownQuery}<BreakdownPanel query={breakdownQuery} {sourceLabels} lockedDim={splitDim} panelId="split-breakdown" onDrill={drillInto} />{/if}
@@ -1099,10 +1136,10 @@
                         {#snippet quality()}{#if analysis}
                       <div class="quality-strip">
                         <div><strong>{analysis.apis.length.toLocaleString()}</strong><span>API groups</span></div>
-                        <div><button type="button" class="quality-count" disabled={!analysis.quality.incomplete} title="List the requests behind this count" onclick={() => drillQuality('incomplete')}><strong>{analysis.quality.incomplete.toLocaleString()}</strong><span>Missing timing</span></button></div>
-                        <div><button type="button" class="quality-count" disabled={!analysis.quality.invalid} title="List the requests behind this count" onclick={() => drillQuality('invalid')}><strong>{analysis.quality.invalid.toLocaleString()}</strong><span>Unusable timing</span></button></div>
+                        <div><button type="button" class="quality-count" disabled={!analysis.quality.incomplete} title="List the requests behind this count" onclick={() => drillQuality('incomplete')}><strong>{analysis.quality.incomplete.toLocaleString()}</strong><span>Missing timing</span></button><Hint termId="missing-timing" /></div>
+                        <div><button type="button" class="quality-count" disabled={!analysis.quality.invalid} title="List the requests behind this count" onclick={() => drillQuality('invalid')}><strong>{analysis.quality.invalid.toLocaleString()}</strong><span>Unusable timing</span></button><Hint termId="unusable-timing" /></div>
                         <div><button type="button" class="quality-count" disabled={!analysis.quality.unknownOutcome} title="List the requests behind this count" onclick={() => drillQuality('unclassified')}><strong>{analysis.quality.unknownOutcome.toLocaleString()}</strong><span>Unclassified result</span></button></div>
-                        {#if analysis.quality.pendingAsync}<div><button type="button" class="quality-count" title="List the requests behind this count" onclick={() => drillQuality('pending')}><strong>{analysis.quality.pendingAsync.toLocaleString()}</strong><span>pending async</span></button></div>{/if}
+                        {#if analysis.quality.pendingAsync}<div><button type="button" class="quality-count" title="List the requests behind this count" onclick={() => drillQuality('pending')}><strong>{analysis.quality.pendingAsync.toLocaleString()}</strong><span>pending async</span></button><Hint termId="pending-async" /></div>{/if}
                         {#if qualityByKindText(analysis.quality)}<div class="quality-filter-note" title={unknownKindTip}><span>{qualityByKindText(analysis.quality)}</span></div>{/if}
                         {#if analysis.query.outcome === 'client_error' || analysis.query.outcome === 'server_error'}<div class="quality-filter-note"><span>Counts above cover only the selected status class.</span></div>{/if}
                       <p>Response times are estimates. A comparison shows change, not a health verdict.</p>
@@ -1145,6 +1182,7 @@
             <!-- D2 Evidence -->
             <Inspector off={depth !== 2} title={evidenceName} subtitle={operation ? kindLabel(operation.kind ?? 'unknown') + ' · ' + operation.requests.toLocaleString() + ' requests' : ''} tabs={inspectorTabs} active={activeTab} onTab={(id) => inspectorTab = id} onClose={closeInspector}>
               {#if comparisonWide}<p class="sample-note comparison-wide-note">Comparison-wide view: Failures, Slowest and Breakdown cover every operation in this comparison. The request list below follows what you opened.</p>{/if}
+              {#if selectedPlain}<PlainLine result={selectedPlain} hints={['p50', 'p95']} />{/if}
               {#if activeTab === 'timeline' && selected}
                 {#if operationGroups.length > 1}
                   <div class="group-pick"><label for="group-select">Group</label>
@@ -1162,7 +1200,7 @@
                   <p>{sourceLabels.get(selected.sourceId) ?? 'Source unavailable'} · <span title={selected.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(selected.kind)}</span> · {selected.outcome}</p>
                   <PhaseBar phases={selected.current.phases ?? null} delta={selected.phaseDeltaMs ?? null} />
                   <div class="selected-api-stats"><span><strong>{selected.current.count.toLocaleString()}</strong> current timings</span><span><strong>{selected.reference.count.toLocaleString()}</strong> reference timings</span><span><strong>{selected.p95Ratio == null ? 'Unavailable' : '≈ ' + selected.p95Ratio.toFixed(2) + '×'}</strong> P95 vs reference</span>{#if targetMs != null}<span>Target {targetMs} ms: {targetAssessment}</span>{/if}</div>
-                  {#if selected.current.count < 20 || selected.reference.count < 20}<p class="sample-note">{selected.current.count === 0 ? 'No usable timings in the current period.' : selected.reference.count === 0 ? 'No usable timings in the reference period.' : 'Fewer than 20 usable timings in at least one period.'} A slowdown comparison needs at least 20 usable timings in each period.</p>{/if}
+                  {#if selected.current.count < 20 || selected.reference.count < 20}<p class="sample-note">{selected.current.count === 0 ? 'No usable timings in the current period.' : selected.reference.count === 0 ? 'No usable timings in the reference period.' : 'Fewer than 20 usable timings in at least one period.'} A slowdown comparison needs at least 20 usable timings in each period.<Hint termId="low-sample" /></p>{/if}
                 </section>
               {:else if activeTab === 'failures' && scopedQuery}
                 <FailurePanel {analysis} query={scopedQuery} {sourceLabels} {zone} onDrill={drillInto} cohortKeys={failureCohort} />

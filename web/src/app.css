@@ -528,6 +528,7 @@ th.numeric { text-align: right; }
 .quality-strip > div > .quality-count span { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
 .quality-strip > div > .quality-count:disabled { cursor: default; opacity: 1; }
 .quality-strip > div > .quality-count:disabled span { cursor: default; text-decoration: none; }
+.quality-strip > div > .hint-wrap { justify-self: start; margin: 4px 0 0; }
 .quality-definitions { flex-basis: 100%; width: 100%; margin-top: 3px; border-top: 1px solid var(--line-soft); }
 .quality-definitions summary { width: fit-content; padding: 6px 0 2px; color: var(--text-2); font-size: 12px; }
 .quality-definitions p { max-width: none; margin: 5px 0 0; color: var(--text-2); text-align: left; font-size: 12px; line-height: 1.5; }
