@@ -2,6 +2,7 @@
   import { theme } from '../lib/theme.svelte';
   import { app, conn, deleteSource, goTo, navigation, onScopeChange, openConnections, openGlossary, openSidePanel, panels, scope, startNewConnection } from '../lib/appState.svelte';
   import Breadcrumb from './Breadcrumb.svelte';
+  import LedgerCount from './LedgerCount.svelte';
   import SourcePopover from './SourcePopover.svelte';
 
   // The top bar: brand, the depth breadcrumb, the mode badge, the Sources popover, the drawer buttons and the theme toggle.
@@ -21,7 +22,7 @@
         onDelete={deleteSource} onManage={() => openConnections('saved')} onAdd={startNewConnection} />
     {/if}
     <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={panels.sidePanel === 'patterns'} onclick={() => openSidePanel('patterns')}>Patterns</button>
-    <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={panels.sidePanel === 'ledger'} onclick={() => openSidePanel('ledger')}>Ledger</button>
+    <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={panels.sidePanel === 'ledger'} onclick={() => openSidePanel('ledger')}>Ledger<LedgerCount /></button>
     <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={panels.sidePanel === 'export'} onclick={() => openSidePanel('export')}>Export</button>
     <button type="button" class="header-button" aria-label="Help and glossary" aria-haspopup="dialog" aria-expanded={panels.glossaryOpen} onclick={() => openGlossary()}>Help</button>
     <button type="button" class="header-button theme-toggle" onclick={() => theme.cycle()} aria-label={'Theme: ' + theme.choice + '. Change theme'} title={'Theme: ' + theme.choice}>

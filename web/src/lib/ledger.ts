@@ -22,7 +22,7 @@ export const ALT_STATUS_LABEL: Record<HypothesisAlternative['status'], string> =
 export const ledgerCopy = {
   title: 'Ledger',
   intro: 'What we believe, what supports it, what contradicts it, and what is not yet known.',
-  notice: 'The ledger keeps hypotheses and references only: no request rows, ids, users or IPs.',
+  notice: 'The ledger keeps hypotheses and references only. Do not paste request rows, ids, users or IPs.',
   empty: 'No hypotheses yet. Add the first one below.',
   addLabel: 'New hypothesis',
   addPlaceholder: 'What do you think happened?',
@@ -31,7 +31,7 @@ export const ledgerCopy = {
   stateLabel: 'State',
   stateNote: 'You set the state. The app never suggests one.',
   evidenceLabel: 'Evidence references',
-  evidenceHint: 'These are references to the evidence list, not request ids. Separate them with commas or new lines.',
+  evidenceHint: 'Use Cite in ledger on Patterns to collect references, or paste them here. They are not request ids. Separate them with commas or new lines.',
   notesLabel: 'Notes',
   examinedLabel: 'Episodes examined',
   presentLabel: 'Episodes where it was present',
@@ -64,7 +64,20 @@ export const ledgerCopy = {
   historyLabel: 'History',
   historyNote: 'Earlier states are history, never support.',
   loading: 'Loading',
-  noRate: 'Episodes not stated'
+  noRate: 'Episodes not stated',
+  addEmpty: 'Write a hypothesis first.',
+  numberProblem: 'Enter a whole number.',
+  unsaved: 'Unsaved changes',
+  draftNote: 'Unsaved changes are kept until this tab closes.',
+  discard: 'Discard changes',
+  strongHint: 'Choose Supported by strong correlation above to see what is missing.',
+  saveBlocked: 'Save is off until the points above are covered, or you pick another state.',
+  citedLead: 'References you cited',
+  citedHint: 'Open an entry and choose Add to evidence to attach them.',
+  citedRemove: 'Remove this reference',
+  citedAdd: 'Add to evidence',
+  citedAdded: 'Added to the evidence box. Save to keep them.',
+  idWarningTail: 'The ledger should not hold identifiers.'
 } as const;
 
 export function stateLabel(state: HypothesisState | string): string {
@@ -180,4 +193,94 @@ export function buildInput(e: EditorState): HypothesisInput {
 export function historyLine(entry: { state: HypothesisState; at: string; note: string }): string {
   const date = /^\d{4}-\d{2}-\d{2}/.test(entry.at) ? entry.at.slice(0, 10) : '';
   return [stateLabel(entry.state), date, entry.note].filter(Boolean).join(', ');
+}
+
+/** Whole-number text for the two episode boxes. Empty is fine (not stated); anything else must be digits only. */
+export function numberProblem(text: string): string {
+  const t = text.trim();
+  return t === '' || /^\d+$/.test(t) ? '' : ledgerCopy.numberProblem;
+}
+
+/** True when the editor holds changes that are not saved yet. Compares what Save would send. */
+export function isDirty(h: Hypothesis, e: EditorState): boolean {
+  return JSON.stringify(buildInput(editorFromHypothesis(h))) !== JSON.stringify(buildInput(e));
+}
+
+/** The server blocks "strong correlation" with these checks (internal/ledger/guards.go). They are mirrored here so Save can stay off instead of sending a save that is known to fail. The server still has the last word. */
+export interface StrongCheck { id: string; ok: boolean; reason: string }
+
+const MIN_EPISODES = 3;
+const MAX_JOIN_AMBIGUOUS = 10;
+
+function episodeCount(n: number): string {
+  return n === 1 ? '1 independent episode' : n + ' independent episodes';
+}
+
+export function strongChecks(e: EditorState): StrongCheck[] {
+  const input = buildInput(e);
+  const f = input.facts;
+  const n = f.totalN, k = f.presentK;
+  const countsValid = k <= n;
+  const listed = f.counterexamples.length;
+  const missing = n - k;
+  const join = f.joinAmbiguousPct;
+  let presence = '';
+  if (n === 0 && k === 0) presence = 'The presence rate is not stated (k of n episodes with the linked event present).';
+  else if (!countsValid) presence = 'The presence rate ' + k + ' of ' + n + ' is not valid.';
+  else if (k * 5 < n * 4) presence = 'The presence rate is ' + k + ' of ' + n + ', below the minimum (3 of 3, 4 of 4, or 80% of 5 or more).';
+  let joinReason = '';
+  if (join === undefined) joinReason = 'The join class is not stated (share of rows with an ambiguous join).';
+  else if (join > MAX_JOIN_AMBIGUOUS) joinReason = 'The join is ambiguous for ' + join + '% of rows, above the 10% limit.';
+  const checks: StrongCheck[] = [
+    { id: 'coverage', ok: !f.coverageGap, reason: 'The evidence window has a coverage gap.' },
+    { id: 'episodes', ok: n >= MIN_EPISODES, reason: episodeCount(n) + '; strong correlation needs at least ' + MIN_EPISODES + ' (a volley counts as one episode).' },
+    { id: 'presence', ok: presence === '', reason: presence },
+    { id: 'counterexamples', ok: countsValid && listed >= missing, reason: countsValid && listed < missing ? listed + ' counterexample(s) listed, but ' + episodeCount(missing) + ' lacked the linked event; list each one.' : '' },
+    { id: 'alternatives', ok: f.alternatives.length > 0, reason: 'No alternative explanation is named; name every plausible alternative with its status.' },
+    { id: 'join', ok: joinReason === '', reason: joinReason },
+    { id: 'timezone', ok: f.timezoneRecorded, reason: "The source's timezone mapping is not recorded." },
+    { id: 'confounder', ok: !f.confounderOverlap, reason: 'A known confounder (a scheduled job or a recycle event) overlaps the episodes.' },
+    { id: 'overlap', ok: !f.overlapOnly, reason: 'The support is temporal overlap alone; temporal overlap alone never reaches strong correlation.' },
+    { id: 'evidence', ok: input.evidenceIds.length > 0, reason: 'No evidence references are linked.' }
+  ];
+  return checks;
+}
+
+/** The reasons strong correlation is blocked for this editor right now. Empty when no check blocks it. */
+export function strongReasons(e: EditorState): string[] {
+  return strongChecks(e).filter((c) => !c.ok && c.reason !== '').map((c) => c.reason);
+}
+
+/** "4 of 10 checks met for strong correlation". */
+export function strongProgress(e: EditorState): string {
+  const checks = strongChecks(e);
+  return checks.filter((c) => c.ok).length + ' of ' + checks.length + ' checks met for strong correlation.';
+}
+
+/**
+ * An inline warning when the text looks like it holds an identifier (IP address, email, UUID, or a user, account, tenant
+ * or request id). This only warns; it never blocks, because it can be wrong. Empty when nothing looks like one.
+ */
+export function identifierWarning(text: string): string {
+  let what = '';
+  if (/\b(?:\d{1,3}\.){3}\d{1,3}\b/.test(text) || /\b(?:[0-9a-f]{1,4}:){4,}[0-9a-f]{0,4}\b/i.test(text)) what = 'an IP address';
+  else if (/\b[\w.+-]+@[\w-]+\.[\w.-]+/.test(text)) what = 'an email address';
+  else if (/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(text)) what = 'an id';
+  else if (/\b(?:user|users|userid|uid|account|accountid|tenant|request|requestid|session|ip)[\s_-]*(?:id)?\s*[:=#]?\s*[\w-]*\d[\w-]{2,}\b/i.test(text)) what = /\b(?:user|users|userid|uid)\b/i.test(text) ? 'a user id' : 'an id';
+  return what ? 'This looks like ' + what + '. ' + ledgerCopy.idWarningTail : '';
+}
+
+/** One reference collected from Patterns, waiting to be attached to an entry. */
+export interface CitedRef { id: string; label: string }
+
+/** Adds a reference unless that id is already there. Blank ids are ignored. Returns the same list when nothing changes. */
+export function addCitation(list: CitedRef[], id: string, label: string): CitedRef[] {
+  const key = id.trim();
+  if (!key || list.some((c) => c.id === key)) return list;
+  return [...list, { id: key, label: label.trim() || key }];
+}
+
+/** Appends references to an evidence box, keeping what is there and skipping duplicates. */
+export function appendEvidence(evidenceText: string, ids: string[]): string {
+  return parseList(evidenceText + '\n' + ids.join('\n')).join('\n');
 }
