@@ -44,6 +44,7 @@ type handler struct {
 	tests   connectionTestLimiter
 	adds    connectionTestLimiter
 	proofs  connectionTestLimiter
+	repeats analyzeRepeats
 
 	exportOnce  sync.Once
 	exportStore *exportStore
@@ -228,6 +229,12 @@ func (h *handler) serveAsset(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		http.NotFound(w, r)
 		return
+	}
+	// The build names every file under assets/ by its content hash, so a name
+	// never changes content and the browser may keep it for a year. Index, other
+	// root files and every 404 keep their headers.
+	if strings.HasPrefix(name, "assets/") {
+		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	}
 	http.ServeContent(w, r, info.Name(), info.ModTime(), content)
 }
@@ -483,6 +490,7 @@ func (h *handler) analyze(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
+	h.repeats.observe(q)
 	analysis, err := h.repo.Analyze(ctx, q)
 	if err != nil {
 		writeRepoError(w, err)
