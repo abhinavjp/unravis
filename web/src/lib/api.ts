@@ -46,6 +46,11 @@ function noSession(): ApiError {
   return new ApiError(NO_SESSION_MESSAGE, 'no_session', undefined, 401);
 }
 
+/** The server's bare 400 for a filter or window it could not use. It names nothing, so the screen says what to check. */
+export const VALIDATION_MESSAGE = 'The server could not use these filters or this time window. Check them and try again.';
+const BARE_VALIDATION = 'Request validation failed.';
+export const plainApiMessage = (status: number, message: string): string => (status === 400 && message.trim() === BARE_VALIDATION ? VALIDATION_MESSAGE : message);
+
 export class ApiError extends Error {
   readonly code?: string;
   readonly stage?: string;
@@ -84,7 +89,7 @@ async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSi
       if (body.stage) stage = body.stage;
       if (Array.isArray(body.reasons)) reasons = body.reasons;
     } catch { /* keep status message */ }
-    throw new ApiError(message, code, stage, response.status, reasons);
+    throw new ApiError(plainApiMessage(response.status, message), code, stage, response.status, reasons);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -153,7 +158,7 @@ export const api = {
     if (!response.ok) {
       let message = 'Export failed (' + response.status + ')';
       try { message = ((await response.json()) as { error?: string }).error ?? message; } catch { /* status is enough */ }
-      throw new Error(message);
+      throw new Error(plainApiMessage(response.status, message));
     }
     return { blob: await response.blob(), limited: response.headers.get('X-Export-Truncated') === 'true' };
   }
