@@ -10,9 +10,11 @@
  *  - Absence and linkage sentences are built by calling `./wordings`, never paraphrased.
  *
  * Which existing field feeds each builder (nothing here fetches data; callers pass these values in):
- *  - plainAuditCreateSummary   <- RequestRecord.auditCreateTimeMs (lib/types.ts), the request's initiatedAt / completedAt as the window.
+ *  - plainAuditCreateSummary   <- RequestRecord.auditCreateTimeMs (lib/types.ts).
  *                                 AuditCreateTime = CreatedOn - RequestInitiatedAt (docs/api-audit-log-schema.md): it includes driver,
  *                                 connection pool and network time, not only the database.
+ *                                 The `window` is the audit-create interval itself: initiatedAt -> createdOn, NOT initiatedAt -> completedAt
+ *                                 (the action runs after createdOn). The caller must pass those two timestamps.
  *  - plainTypicalVsSlowest     <- Comparison (lib/types.ts): current.p50, current.p95, current.count, reference.p50, reference.p95,
  *                                 reference.count, state, optional p95Ratio; windows from Query.start/end and Query.baselineStart/baselineEnd;
  *                                 metric from Query.metric.
@@ -21,6 +23,9 @@
  *                                 percentileFloors in lib/volume.ts (20 for P95, 100 for P99).
  *  - plainIncomplete           <- Rollup.completed / incomplete / pending / invalid / events (or Stats.count / incomplete / pending /
  *                                 invalid / events) and the Query window.
+ *
+ * Readability: every summary and detail is written to pass the copy lint's reading-level limit (Flesch-Kincaid grade 8.5), with short
+ * sentences and everyday words. The exact §6.6 wordings are the only sentences exempt. The copy lint sweep in the tests checks this.
  *
  * This file imports only ./wordings (and erased types) so it stays loadable on its own in the pure tests.
  */
@@ -92,11 +97,14 @@ export type AuditLinkage =
 export interface AuditCreateInput {
   /** RequestRecord.auditCreateTimeMs; null or absent for rows without RequestInitiatedAt. */
   auditCreateTimeMs: number | null | undefined;
-  /** The request's own interval (initiatedAt to completedAt, or createdOn). */
+  /** The audit-create interval: RequestInitiatedAt (start) to CreatedOn (end). Not the whole request. */
   window?: TimeWindow | null;
   /** Optional: what a linked source showed for this interval. Absent means no source was checked. */
   linkage?: AuditLinkage | null;
 }
+
+/** Below this the audit create time is reported as "under 5 milliseconds". */
+const TINY_MS = 5;
 
 const linkageSentence = (linkage: AuditLinkage): string => {
   switch (linkage.kind) {
@@ -107,7 +115,11 @@ const linkageSentence = (linkage: AuditLinkage): string => {
   }
 };
 
-/** The time the audit row took to insert before the action ran, as measured from the application side. */
+/**
+ * The time the audit row took to insert before the action ran, as measured from the application side.
+ * The window to pass is the audit-create interval, initiatedAt -> createdOn (not initiatedAt -> completedAt).
+ * Under 5 milliseconds it says "under 5 milliseconds" (via durationWords) instead of rounding to "0 seconds".
+ */
 export function plainAuditCreateSummary(input: AuditCreateInput): PlainSummary {
   const ms = input.auditCreateTimeMs;
   const when = windowText(input.window);
@@ -120,14 +132,19 @@ export function plainAuditCreateSummary(input: AuditCreateInput): PlainSummary {
       )
     };
   }
-  const seconds = rounded(ms / 1000);
-  const base = plainAuditCreate(seconds).replace(/\.$/, '');
+  const tiny = ms < TINY_MS;
+  // Under 5 ms the fixed seconds wording would round to "0 seconds"; say it in milliseconds instead.
+  const seconds = tiny ? Number((ms / 1000).toFixed(3)) : rounded(ms / 1000);
+  const lead = tiny
+    ? 'Saving the record took under ' + durationWords(TINY_MS) + ' before the action ran. This was measured from the application side.'
+    : plainAuditCreate(seconds);
   return {
-    summary: base + (when ? ', ' + when : '') + '.',
+    summary: join(lead, when && 'That was ' + when + '.'),
     detail: join(
       auditCreate(seconds),
       'That time covers the application driver, the connection pool and the network, as well as the database server.',
-      'The delay a person sees is roughly this time plus the time the API spends on the action.',
+      'It starts when the request begins and ends when the audit record is saved.',
+      'Time in the browser, and on the way to the application, is not included.',
       input.linkage ? linkageSentence(input.linkage) : '',
       evidence(measurementLabel),
       notMeaning('it does not show where the time went. The database may or may not have played a part, and this number alone cannot say.')
@@ -170,11 +187,10 @@ export function plainTypicalVsSlowest(input: TypicalVsSlowestInput): PlainSummar
     };
   }
 
-  const parts = [
-    nowP50 != null && 'the typical request took about ' + durationWords(nowP50),
-    nowP95 != null && (nowP50 != null ? 'and ' : '') + 'the slowest 1 in 20 took about ' + durationWords(nowP95) + ' or longer'
-  ].filter(Boolean).join(', ');
-  const lead = name + ': ' + parts + ', ' + now + '.';
+  const lead = join(
+    name + ', ' + now + ':' + (nowP50 != null ? ' the typical request took about ' + durationWords(nowP50) + '.' : ''),
+    nowP95 != null && (nowP50 != null ? 'The slowest 1 in 20 took' : 'the slowest 1 in 20 took') + ' about ' + durationWords(nowP95) + ' or longer.'
+  );
 
   // The change is only stated when the comparison has enough timings in both periods (state 'compared').
   const refP50Raw = comparison.reference.p50?.valueMs, refP95Raw = comparison.reference.p95?.valueMs;
@@ -185,8 +201,8 @@ export function plainTypicalVsSlowest(input: TypicalVsSlowestInput): PlainSummar
   if (comparison.state === 'compared' && nowP95 != null && refP95 != null) {
     const delta = nowP95 - refP95;
     const ratio = finite(comparison.p95Ratio) ? comparison.p95Ratio : nowP95 / refP95;
-    if (Math.abs(delta) / refP95 < 0.05) change = 'The slowest 1 in 20 was about the same as in the earlier period' + then + '.';
-    else change = 'The slowest 1 in 20 was about ' + durationWords(Math.abs(delta)) + (delta > 0 ? ' longer' : ' shorter') + ' than in the earlier period' + then + '.';
+    if (Math.abs(delta) / refP95 < 0.05) change = 'That slowest time was about the same as in the earlier period' + then + '.';
+    else change = 'That slowest time was about ' + durationWords(Math.abs(delta)) + (delta > 0 ? ' longer' : ' shorter') + ' than in the earlier period' + then + '.';
     ratioLine = 'The slowest 1 in 20 (P95) is about ' + ratioWords(ratio) + ' the earlier P95.';
   } else if (comparison.state === 'insufficient_data') change = 'There were too few timed requests in one period to state a change.';
   else if (comparison.state === 'missing_reference') change = 'No timed requests were found in the earlier period, so no change is stated.';
@@ -201,7 +217,8 @@ export function plainTypicalVsSlowest(input: TypicalVsSlowestInput): PlainSummar
       'P95 (95 of every 100 requests were quicker): ' + (nowP95 != null ? 'about ' + durationWords(nowP95) : 'not available, it needs at least 20 timed requests') +
         (refP95 != null ? ', earlier about ' + durationWords(refP95) : '') + '.',
       ratioLine,
-      'Based on ' + requests(n) + ' ' + now + (finite(refCount) && refCount > 0 ? ' and ' + requests(refCount) + (before ? ' ' + before : ' in the earlier period') : '') + '.',
+      'Based on ' + requests(n) + ' ' + now + '.',
+      finite(refCount) && refCount > 0 && 'The earlier period had ' + requests(refCount) + (before ? ' ' + before : '') + '.',
       'Values are histogram estimates, so the real figures can differ a little.',
       timeKind,
       evidence(measurementLabel),
@@ -234,7 +251,7 @@ export function plainLowSample(input: LowSampleInput): PlainSummary {
   const level = input.level ?? 'p95';
   const floor = sampleFloors[level];
   const when = where(input.window);
-  const floors = 'The app shows the slowest times only with at least ' + sampleFloors.p95 + ' timed requests, and the slowest 1 in 100 with at least ' + sampleFloors.p99 + '.';
+  const floors = 'The app shows the slowest 1 in 20 only with at least ' + sampleFloors.p95 + ' timed requests. It shows the slowest 1 in 100 only with at least ' + sampleFloors.p99 + '.';
   const partial = events != null && events > timed;
   const coverage = partial ? 'Only ' + count(timed) + ' of ' + requests(events) + ' had a usable timing' : '';
 
@@ -242,27 +259,29 @@ export function plainLowSample(input: LowSampleInput): PlainSummary {
     return {
       summary: 'No requests with a usable timing were found ' + when + (events ? ', out of ' + requests(events) : '') + '.',
       detail: join(
-        'There is nothing to take a typical or slowest time from. ' + floors,
+        'There is nothing to take a typical or slowest time from.',
+        floors,
         notMeaning('having no timings does not mean the system is fine or broken. It means there is nothing to measure.')
       )
     };
   }
   if (timed < floor) {
     return {
-      summary: (partial ? coverage + ' ' + when + ', so do not read much into these numbers.' : 'Only ' + requests(timed) + ' had a usable timing ' + when + ', so do not read much into these numbers.'),
+      summary: (partial ? coverage + ' ' + when + '.' : 'Only ' + requests(timed) + ' had a usable timing ' + when + '.') + ' Do not read much into these numbers.',
       detail: join(
-        'With ' + requests(timed) + ' timed, one or two slow requests can move the numbers a lot. ' + floors,
+        'With ' + requests(timed) + ' timed, one or two slow requests can move the numbers a lot.',
+        floors,
         partial ? 'Requests with no usable timing are left out of the times.' : '',
         notMeaning('a small count does not mean things are fine, and it does not mean they are broken. It means there is too little to say.')
       )
     };
   }
   return {
-    summary: (partial ? coverage + ' ' + when + '.' : requests(timed) + ' had a usable timing ' + when + '.') + ' That is enough to give a ' + (level === 'p99' ? 'slowest 1 in 100' : 'typical and slowest') + ' time, as an estimate.',
+    summary: (partial ? coverage + ' ' + when + '.' : requests(timed) + ' had a usable timing ' + when + '.') + ' That is enough to give ' + (level === 'p99' ? 'the slowest 1 in 100' : 'a typical and a slowest') + ' time, as an estimate.',
     detail: join(
       floors,
       partial ? 'Requests with no usable timing are left out of the times.' : '',
-      notMeaning('enough requests make the numbers steadier. They do not explain a slow time, and they do not show that a change will last.')
+      notMeaning('enough requests make the numbers steadier. They do not explain a slow time. They do not show that a change will last.')
     )
   };
 }
@@ -281,6 +300,19 @@ export interface IncompleteInput {
   window?: TimeWindow | null;
 }
 
+/**
+ * A share of requests as text. A share below 100% is never rounded up to "100%" (499 of 500 is "over 99%"),
+ * and a share above zero is never shown as "0%" ("under 1%").
+ */
+export function shareText(part: number, total: number): string {
+  if (!(total > 0) || !(part > 0)) return '0%';
+  const pct = part / total * 100;
+  if (pct >= 100) return '100%';
+  if (pct < 1) return 'under 1%';
+  if (pct >= 99) return 'over 99%';
+  return rounded(pct) + '%';
+}
+
 const whole = (value: number | null | undefined) => finite(value) && value > 0 ? Math.floor(value) : 0;
 
 /** Requests that had no final result when the period was read, split into unfinished and accepted-but-pending. */
@@ -289,7 +321,9 @@ export function plainIncomplete(input: IncompleteInput): PlainSummary {
   const unfinished = incomplete + pending;
   const base = completed + unfinished;
   const when = where(input.window);
-  const unusable = invalid ? ' ' + requests(invalid) + ' more had a timing that could not be used, and are not counted here.' : '';
+  const unusable = invalid
+    ? ' ' + (invalid === 1 ? '1 more request had a timing that could not be used. It is' : count(invalid) + ' more requests had a timing that could not be used. They are') + ' not counted here.'
+    : '';
 
   if (base === 0 && invalid === 0) {
     return {
@@ -306,18 +340,17 @@ export function plainIncomplete(input: IncompleteInput): PlainSummary {
       )
     };
   }
-  const share = rounded(unfinished / base * 100);
   const pieces = [
     incomplete > 0 && count(incomplete) + ' had no recorded finish',
-    pending > 0 && count(pending) + ' ' + (pending === 1 ? 'was a background job' : 'were background jobs') + ' accepted but not yet finished'
+    pending > 0 && count(pending) + ' ' + (pending === 1 ? 'was accepted but has' : 'were accepted but have') + ' no finished record yet'
   ].filter(Boolean).join(' and ');
   return {
-    summary: count(unfinished) + ' of ' + requests(base) + ' (' + share + '%) had no final result ' + when + ': ' + pieces + '.' + unusable,
+    summary: count(unfinished) + ' of ' + requests(base) + ' (' + shareText(unfinished, base) + ') had no final result ' + when + '. Of these, ' + pieces + '.' + unusable,
     detail: join(
       'Completed: ' + count(completed) + '. Incomplete (no recorded finish): ' + count(incomplete) + '. Pending (async, accepted, no final result yet): ' + count(pending) + '.',
-      'The share is unfinished divided by completed plus unfinished; unusable requests are not in it.',
-      'Unfinished requests are left out of the typical and slowest times, and are never counted as fast or successful.',
-      'Background jobs show as pending while their work is still running.',
+      'The share is unfinished requests divided by completed plus unfinished. Unusable requests are not in it.',
+      'Unfinished requests are left out of the typical and slowest times. They are never counted as fast or successful.',
+      pending > 0 && 'A pending request was accepted, and its work may still be running.',
       evidence(measurementLabel),
       notMeaning('an unfinished request is not a failed request. It may still be running, or its finish may not have been saved. It does not show an outage.')
     )
