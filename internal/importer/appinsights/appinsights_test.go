@@ -55,8 +55,18 @@ func goodRows(n int) string {
 	return sb.String()
 }
 
+// fixtures are the synthetic files shared by the conformance run and the fuzz
+// target. The name column carries free text into the "name" attribute.
+func fixtures(t testing.TB) importertest.Fixtures {
+	return importertest.Fixtures{
+		Good:    read(t, "good.csv"),
+		Bad:     read(t, "bad.csv"),
+		Options: importer.Options{Hosts: opts().Hosts},
+	}
+}
+
 func TestConformance(t *testing.T) {
-	importertest.Run(t, New(), importertest.Fixtures{Good: read(t, "good.csv"), Bad: read(t, "bad.csv")})
+	importertest.Run(t, New(), fixtures(t))
 }
 
 func TestGoodFixture(t *testing.T) {
@@ -407,12 +417,12 @@ func TestLineGuard(t *testing.T) {
 	long := strings.Repeat("a", 500)
 	_, _, err := parse(hdr+"2001-02-03T04:05:06Z,request,"+long+",10,200,True,1,op,WEB-A,,x\n", o)
 	var le *importer.LimitError
-	if !errors.As(err, &le) || le.Limit != "line" {
+	if !errors.As(err, &le) || le.Limit != "line-bytes" {
 		t.Fatalf("long line: %v", err)
 	}
 	// A quoted field that spans lines is still one bounded record.
-	_, _, err = parse(hdr+"2001-02-03T04:05:06Z,request,\""+strings.Repeat("a\n", 300)+"\",10,200,True,1,op,WEB-A,,x\n", o)
-	if !errors.As(err, &le) || le.Limit != "line" {
+	_, _, err = parse(hdr+"2001-02-03T04:05:06Z,request,\""+strings.Repeat("a\n", 8000)+"\",10,200,True,1,op,WEB-A,,x\n", o)
+	if !errors.As(err, &le) || le.Limit != "record-bytes" {
 		t.Fatalf("multi-line record: %v", err)
 	}
 	// A stray quote mid-field must not turn into an unbounded record.
@@ -425,7 +435,7 @@ func TestLineGuard(t *testing.T) {
 func TestTooManyHosts(t *testing.T) {
 	var sb strings.Builder
 	sb.WriteString(hdr)
-	for i := 0; i <= maxObservedHosts; i++ {
+	for i := 0; i <= importer.MaxObservedHosts; i++ {
 		fmt.Fprintf(&sb, "2001-02-03T04:05:06Z,request,GET /a,1,200,True,1,op,host-%d,,x\n", i)
 	}
 	o := opts()
@@ -465,24 +475,8 @@ func TestEmitErrorStops(t *testing.T) {
 }
 
 func FuzzParse(f *testing.F) {
-	f.Add(read(f, "good.csv"))
-	f.Add(read(f, "bad.csv"))
 	f.Add([]byte(hdr))
 	f.Add([]byte("\xef\xbb\xbf" + hdr + goodRows(3)))
 	f.Add([]byte("timestamp [UTC],\"a\nb\"\n\"x"))
-	f.Fuzz(func(t *testing.T, data []byte) {
-		o := opts()
-		o.Limits = importer.Limits{MaxBytes: 1 << 20, MaxRows: 10_000, MaxLineBytes: 4096}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		ev, _, err := importer.Collect(ctx, New(), bytes.NewReader(data), o)
-		for _, e := range ev {
-			if verr := e.Validate(New().AllowedAttrs()); verr != nil {
-				t.Fatalf("invalid event: %v", verr)
-			}
-		}
-		if err != nil && bytes.Contains(data, []byte("QQ-secret-QQ")) && strings.Contains(err.Error(), "QQ-secret-QQ") {
-			t.Fatal("error text carries content")
-		}
-	})
+	importertest.FuzzParse(f, New(), fixtures(f))
 }

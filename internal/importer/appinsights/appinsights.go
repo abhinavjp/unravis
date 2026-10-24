@@ -20,7 +20,6 @@
 package appinsights
 
 import (
-	"bufio"
 	"context"
 	"encoding/csv"
 	"errors"
@@ -32,7 +31,6 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding/unicode"
-	"golang.org/x/text/transform"
 
 	"api-audit-explorer/internal/clock"
 	"api-audit-explorer/internal/evidence"
@@ -66,11 +64,9 @@ const (
 const timestampIsStart = true
 
 const (
-	maxObservedHosts = 1000
-	maxItemCount     = 1_000_000_000
-	maxDurationMs    = 365 * 24 * 3600 * 1000.0
-	maxNameBytes     = 256
-	maxErrors        = 100
+	maxItemCount  = 1_000_000_000
+	maxDurationMs = 365 * 24 * 3600 * 1000.0
+	maxNameBytes  = 256
 )
 
 var attrAllow = map[string]bool{
@@ -199,49 +195,30 @@ func quarantine(reason importer.Reason, column string) error {
 	return &queryError{&importer.QuarantineError{Reason: reason, Column: column}}
 }
 
-// Parse reads the CSV and emits one Event per valid row.
+// Parse reads the CSV and emits one Event per valid row. r is what
+// importer.Prepare returned: byte-capped and already sniffed for archives.
 func (im *Importer) Parse(ctx context.Context, r io.Reader, opts importer.Options, emit func(evidence.Event) error) (importer.Report, error) {
 	rep := importer.Report{Importer: Name}
 	lim := fillLimits(opts.Limits, im.DefaultLimits())
 
-	br := bufio.NewReaderSize(importer.LimitReader(r, lim.MaxBytes), 64<<10)
-	head, perr := br.Peek(64 << 10)
-	if perr != nil && !errors.Is(perr, io.EOF) && !errors.Is(perr, bufio.ErrBufferFull) {
-		return rep, perr
-	}
-	if err := importer.Sniff(head); err != nil {
-		return rep, err
-	}
-	if len(head) == 0 {
-		return rep, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat}
-	}
-
-	// Decode UTF-16 here so the line guard sees real quotes and newlines;
-	// UTF-8 (with or without BOM) is left to textio.
-	var src io.Reader = br
-	if len(head) >= 2 && head[0] == 0xFF && head[1] == 0xFE {
-		src = transform.NewReader(br, unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder())
-	} else if len(head) >= 2 && head[0] == 0xFE && head[1] == 0xFF {
-		src = transform.NewReader(br, unicode.UTF16(unicode.BigEndian, unicode.UseBOM).NewDecoder())
-	}
-	g := &lineGuard{r: src, max: lim.MaxLineBytes}
-
-	cr, _, err := textio.NewCSV(g, textio.CSVOptions{Comma: ',', MaxFields: lim.MaxFields})
+	cr, _, err := textio.NewCSV(r, textio.CSVOptions{Comma: ',', MaxFields: lim.MaxFields, MaxLine: lim.MaxLineBytes})
 	if err != nil {
-		return rep, headerErr(err)
+		return rep, err
 	}
 	cols, err := analyseHeader(cr.Header())
 	if err != nil {
 		return rep, err
 	}
 
-	rep.FieldRules = map[string]string{TimestampHeader: clock.RuleUTCField}
-	rep.KnownGaps = []string{GapSampled, GapTimestampStart, GapDuration, GapMissingRecord}
+	rep.Rule(TimestampHeader, clock.RuleUTCField)
+	for _, g := range []string{GapSampled, GapTimestampStart, GapDuration, GapMissingRecord} {
+		rep.Gap(g)
+	}
 	if cols.itemCount < 0 {
-		rep.KnownGaps = append(rep.KnownGaps, GapNoItemCount)
+		rep.Gap(GapNoItemCount)
 	}
 	if cols.host < 0 {
-		rep.KnownGaps = append(rep.KnownGaps, GapNoHost)
+		rep.Gap(GapNoHost)
 	}
 
 	pickedHost := ""
@@ -252,12 +229,9 @@ func (im *Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 	var timeRejects int64
 
 	reject := func(line int64, reason importer.Reason) {
-		rep.Rejected++
+		rep.Reject(line, reason)
 		if reason == importer.ReasonBadTime {
 			timeRejects++
-		}
-		if len(rep.Errors) < maxErrors {
-			rep.Errors = append(rep.Errors, importer.RowError{Line: line, Reason: reason})
 		}
 	}
 
@@ -270,24 +244,20 @@ func (im *Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			var pe *csv.ParseError
-			if errors.As(err, &pe) {
+			var re importer.RowError
+			if errors.As(err, &re) {
 				rep.Rows++
-				if rep.Rows > lim.MaxRows {
-					return rep, &importer.LimitError{Limit: "rows", Max: lim.MaxRows, At: rep.Rows}
+				if cerr := lim.CheckRows(rep.Rows); cerr != nil {
+					return rep, cerr
 				}
-				reject(int64(pe.StartLine), importer.ReasonFieldCount)
+				reject(re.Line, re.Reason)
 				continue
 			}
-			return rep, headerErr(err)
+			return rep, err // limit, read and context errors pass through unchanged
 		}
 		rep.Rows++
-		if rep.Rows > lim.MaxRows {
-			return rep, &importer.LimitError{Limit: "rows", Max: lim.MaxRows, At: rep.Rows}
-		}
-		if len(rec) != len(cr.Header()) {
-			reject(line, importer.ReasonFieldCount)
-			continue
+		if cerr := lim.CheckRows(rep.Rows); cerr != nil {
+			return rep, cerr
 		}
 
 		ts, ok := parseUTC(rec[cols.ts])
@@ -319,10 +289,9 @@ func (im *Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 			if raw := strings.TrimSpace(rec[cols.host]); raw != "" {
 				label, seen := hostCache[raw]
 				if !seen {
-					if len(hostCache) >= maxObservedHosts {
-						return rep, &importer.LimitError{Limit: "hosts", Max: maxObservedHosts, At: int64(len(hostCache)) + 1}
+					if oerr := rep.Observe(raw); oerr != nil {
+						return rep, oerr
 					}
-					rep.ObservedHosts = append(rep.ObservedHosts, raw)
 					label = pickedHost
 					if opts.Hosts != nil {
 						h, found := opts.Hosts(raw)
@@ -392,27 +361,21 @@ func (im *Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 			Start: start.UTC(), End: end.UTC(), DurationMs: dur,
 			Value: &v, Unit: "count", Line: line, TZRule: clock.RuleUTCField, Attrs: attrs,
 		}
-		if rep.First.IsZero() || ev.Start.Before(rep.First) {
-			rep.First = ev.Start
-		}
-		if ev.Start.After(rep.Last) {
-			rep.Last = ev.Start
-		}
 		if err := emit(ev); err != nil {
 			return rep, err
 		}
 		rep.Emitted++
+		rep.Cover(ev.Start)
 	}
 
 	if rep.Rows == 0 {
-		rep.KnownGaps = append(rep.KnownGaps, evidence.NotObservedGap(GapEmpty))
+		rep.Gap(evidence.NotObservedGap(GapEmpty))
 	}
-	if rep.Rows > 0 && float64(rep.Rejected)/float64(rep.Rows) > lim.MaxRejectFraction {
-		q := &importer.QuarantineError{Reason: importer.ReasonRejectFraction}
+	if cerr := lim.CheckRejects(rep.Rows, rep.Rejected); cerr != nil {
 		if timeRejects*2 > rep.Rejected {
-			return rep, &queryError{q}
+			return rep, &queryError{&importer.QuarantineError{Reason: importer.ReasonRejectFraction}}
 		}
-		return rep, q
+		return rep, cerr
 	}
 
 	if !rep.First.IsZero() {
@@ -421,24 +384,7 @@ func (im *Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 	}
 	rep.Quality.Sampling = GapSampled
 	rep.Quality.TimezoneRule = clock.RuleUTCField
-	rep.ObservedHosts = append([]string(nil), rep.ObservedHosts...)
 	return rep, nil
-}
-
-// headerErr maps a reader or header failure to an error carrying no content.
-func headerErr(err error) error {
-	var le *importer.LimitError
-	if errors.As(err, &le) {
-		return le
-	}
-	var qe *importer.QuarantineError
-	if errors.As(err, &qe) {
-		return qe
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
-	}
-	return &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat}
 }
 
 type columns struct {
@@ -513,7 +459,7 @@ func fillLimits(l, d importer.Limits) importer.Limits {
 	if l.MaxRejectFraction <= 0 {
 		l.MaxRejectFraction = d.MaxRejectFraction
 	}
-	return l
+	return l.WithDefaults()
 }
 
 // parseUTC accepts ISO 8601 with a Z or +00:00 zone and nothing else: the
@@ -669,60 +615,4 @@ func Absence(rowsInWindow int64) string {
 		return evidence.NotObservedGap(GapEmpty)
 	}
 	return evidence.NotObservedGap(GapSampled + "; a missing record is not counter-evidence")
-}
-
-// lineGuard fails with a line LimitError when one CSV record (a physical line,
-// or a quoted field spanning lines) exceeds max bytes. It tracks quoting the
-// way encoding/csv does so a stray quote cannot hide an endless record.
-type lineGuard struct {
-	r     io.Reader
-	max   int
-	run   int
-	state uint8 // 0 field start, 1 unquoted, 2 quoted, 3 quote seen inside quoted
-}
-
-func (g *lineGuard) Read(p []byte) (int, error) {
-	n, err := g.r.Read(p)
-	for i := 0; i < n; i++ {
-		b := p[i]
-		switch g.state {
-		case 0:
-			switch b {
-			case '"':
-				g.state = 2
-			case ',':
-			case '\n':
-				g.run = -1
-			default:
-				g.state = 1
-			}
-		case 1:
-			switch b {
-			case ',':
-				g.state = 0
-			case '\n':
-				g.state, g.run = 0, -1
-			}
-		case 2:
-			if b == '"' {
-				g.state = 3
-			}
-		case 3:
-			switch b {
-			case '"':
-				g.state = 2
-			case ',':
-				g.state = 0
-			case '\n':
-				g.state, g.run = 0, -1
-			default:
-				g.state = 1
-			}
-		}
-		g.run++
-		if g.run > g.max {
-			return 0, &importer.LimitError{Limit: "line", Max: int64(g.max), At: int64(g.run)}
-		}
-	}
-	return n, err
 }
