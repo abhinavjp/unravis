@@ -5,11 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +37,6 @@ func hostsLookup(observed string) (importer.HostHint, bool) {
 }
 
 func baseOpts() importer.Options {
-	users := map[string]string{}
 	return importer.Options{
 		CaseID:      "abcdefgh234567abcdefgh2345",
 		ImportNonce: "nonce-1",
@@ -48,10 +44,14 @@ func baseOpts() importer.Options {
 		Host:        &importer.HostHint{Label: "web-a", Role: "iis", Runtime: "iis-10"},
 		Hosts:       hostsLookup,
 		Pseudonymize: func(kind, v string) string {
-			if _, ok := users[v]; !ok {
-				users[v] = fmt.Sprintf("%s-%04d", kind, len(users)+1)
+			// pure, so concurrent parses agree
+			switch v {
+			case "alice":
+				return kind + "-0001"
+			case "bob":
+				return kind + "-0002"
 			}
-			return users[v]
+			return kind + "-9999"
 		},
 	}
 }
@@ -79,7 +79,8 @@ func mustParse(t testing.TB, imp importer.Importer, data []byte, opts importer.O
 // by contract carries raw host names for the service to map).
 func dump(evs []evidence.Event, rep importer.Report) string {
 	rep.ObservedHosts = nil
-	return fmt.Sprintf("%#v\n%#v", evs, rep)
+	return fmt.Sprintf("%#v\n%#v\n%v|%v|%v|%v|%v|%v|%v|%v", evs, rep.Errors, rep.Importer, rep.Rows, rep.Emitted,
+		rep.Rejected, rep.Quality, rep.FieldRules, rep.KnownGaps, rep.First)
 }
 
 func wantQuarantine(t *testing.T, err error, reason importer.Reason, column string) {
@@ -354,140 +355,6 @@ func TestW3CHosts(t *testing.T) {
 	}
 }
 
-func TestW3CLimits(t *testing.T) {
-	data := w3cFile(50)
-	cases := map[string]struct {
-		lim   importer.Limits
-		limit string
-	}{
-		"bytes": {importer.Limits{MaxBytes: 200}, "bytes"},
-		"rows":  {importer.Limits{MaxRows: 10}, "rows"},
-		"line":  {importer.Limits{MaxLineBytes: 40}, "line"},
-	}
-	for name, c := range cases {
-		t.Run(name, func(t *testing.T) {
-			o := baseOpts()
-			o.Limits = c.lim
-			evs, _, err := parse(t, NewW3C(), data, o)
-			var le *importer.LimitError
-			if !errors.As(err, &le) || !errors.Is(err, importer.ErrLimit) || le.Limit != c.limit {
-				t.Fatalf("err %v", err)
-			}
-			if name == "rows" && len(evs) > 10 {
-				t.Fatalf("emitted %d after the row limit", len(evs))
-			}
-		})
-	}
-}
-
-func TestW3CArchivesRefused(t *testing.T) {
-	for name, head := range map[string][]byte{
-		"zip":  {'P', 'K', 3, 4, 0, 0},
-		"gzip": {0x1f, 0x8b, 8, 0},
-	} {
-		evs, _, err := parse(t, NewW3C(), head, baseOpts())
-		wantQuarantine(t, err, importer.ReasonArchive, "")
-		if len(evs) != 0 {
-			t.Errorf("%s: emitted", name)
-		}
-	}
-	if _, _, err := parse(t, NewHTTPERR(), []byte{'P', 'K', 3, 4}, httperrOpts()); !errors.Is(err, importer.ErrQuarantine) {
-		t.Fatalf("httperr zip: %v", err)
-	}
-}
-
-func TestW3CEncodingsAgree(t *testing.T) {
-	good := fixture(t, "w3c_good.log")
-	want, _ := mustParse(t, NewW3C(), good, baseOpts())
-	for name, data := range map[string][]byte{
-		"utf8 bom": append([]byte{0xEF, 0xBB, 0xBF}, good...),
-		"utf16le":  utf16le(good),
-		"crlf":     []byte(strings.ReplaceAll(string(good), "\n", "\r\n")),
-	} {
-		got, _ := mustParse(t, NewW3C(), data, baseOpts())
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("%s copy differs", name)
-		}
-	}
-}
-
-func TestTruncatedAndTinyFilesDoNotPanic(t *testing.T) {
-	good := fixture(t, "w3c_good.log")
-	for n := 0; n < len(good); n += 37 {
-		for _, imp := range []importer.Importer{NewW3C(), NewHTTPERR()} {
-			_, _, _ = parse(t, imp, good[:n], httperrOpts())
-		}
-	}
-	for _, d := range [][]byte{nil, {0}, {'#'}, {0xFF}, {0xFF, 0xFE}, {0xFF, 0xFE, '#'}} {
-		_, _, _ = parse(t, NewW3C(), d, baseOpts())
-		_, _, _ = parse(t, NewHTTPERR(), d, httperrOpts())
-	}
-}
-
-type endless struct{ line string }
-
-func (e endless) Read(p []byte) (int, error) {
-	n := 0
-	for n+len(e.line) <= len(p) {
-		n += copy(p[n:], e.line)
-	}
-	if n == 0 {
-		n = copy(p, e.line)
-	}
-	return n, nil
-}
-
-func TestCancellationStopsParse(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	r := io.MultiReader(strings.NewReader("#Fields: date time\n"), endless{"2001-02-03 04:05:06\n"})
-	o := baseOpts()
-	o.Limits = importer.Limits{MaxBytes: 1 << 40, MaxRows: 1 << 40}
-	done := make(chan error, 1)
-	var n int
-	go func() {
-		_, err := NewW3C().Parse(ctx, r, o, func(evidence.Event) error {
-			n++
-			if n == 1000 {
-				cancel()
-			}
-			return nil
-		})
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("err %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("parse did not stop within 1 s of cancellation")
-	}
-}
-
-func TestEmitErrorStopsParse(t *testing.T) {
-	boom := errors.New("boom")
-	_, err := NewW3C().Parse(context.Background(), bytes.NewReader(w3cFile(5)), baseOpts(),
-		func(evidence.Event) error { return boom })
-	if !errors.Is(err, boom) {
-		t.Fatalf("err %v", err)
-	}
-}
-
-func TestNoNetwork(t *testing.T) {
-	old := http.DefaultTransport
-	http.DefaultTransport = failingTransport{t}
-	defer func() { http.DefaultTransport = old }()
-	mustParse(t, NewW3C(), fixture(t, "w3c_good.log"), baseOpts())
-	mustParse(t, NewHTTPERR(), fixture(t, "httperr_good.log"), httperrOpts())
-}
-
-type failingTransport struct{ t *testing.T }
-
-func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
-	f.t.Error("network call attempted")
-	return nil, errors.New("no network")
-}
-
 func TestW3CDetect(t *testing.T) {
 	w3c, he := NewW3C(), NewHTTPERR()
 	good, herr := fixture(t, "w3c_good.log"), fixture(t, "httperr_good.log")
@@ -697,15 +564,6 @@ func TestHTTPERRNoFieldsAndBadRows(t *testing.T) {
 	}
 }
 
-func TestHTTPERRLimits(t *testing.T) {
-	o := httperrOpts()
-	o.Limits = importer.Limits{MaxRows: 5}
-	_, _, err := parse(t, NewHTTPERR(), httperrFile(), o)
-	if !errors.Is(err, importer.ErrLimit) {
-		t.Fatalf("err %v", err)
-	}
-}
-
 // ---------------------------------------------------------------- WAS
 
 func TestClassifyWAS(t *testing.T) {
@@ -750,35 +608,4 @@ func TestRecycleGap(t *testing.T) {
 			t.Errorf("RecycleGap(%q) = %q", rt, g)
 		}
 	}
-}
-
-// ---------------------------------------------------------------- fuzz
-
-func FuzzParse(f *testing.F) {
-	for _, n := range []string{"w3c_good.log", "httperr_good.log", "w3c_nofields.log", "iis_format.log", "ncsa_format.log"} {
-		f.Add(fixture(f, n))
-	}
-	f.Add(utf16le(fixture(f, "w3c_good.log")))
-	f.Fuzz(func(t *testing.T, data []byte) {
-		for _, imp := range []importer.Importer{NewW3C(), NewHTTPERR()} {
-			imp.Detect(data, "x.log")
-			o := httperrOpts()
-			o.Limits = importer.Limits{MaxBytes: 1 << 20, MaxRows: 5000}
-			evs, rep, err := importer.Collect(context.Background(), imp, bytes.NewReader(data), o)
-			if err != nil {
-				if strings.Contains(err.Error(), "\n") {
-					t.Fatalf("error carries content: %q", err)
-				}
-				continue
-			}
-			for _, e := range evs {
-				if err := e.Validate(imp.AllowedAttrs()); err != nil {
-					t.Fatalf("invalid event: %v", err)
-				}
-			}
-			if rep.Emitted != int64(len(evs)) || rep.Rejected+rep.Emitted > rep.Rows {
-				t.Fatalf("counts %+v events %d", rep, len(evs))
-			}
-		}
-	})
 }

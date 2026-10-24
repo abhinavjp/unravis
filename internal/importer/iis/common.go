@@ -25,8 +25,6 @@ import (
 
 const (
 	maxStemBytes     = 256
-	maxObservedHosts = 256
-	maxReportErrors  = 100
 	ctxCheckEvery    = 256
 	maxHostNameBytes = 256
 )
@@ -44,8 +42,8 @@ type spec struct {
 }
 
 type runState struct {
+	rep         *importer.Report
 	hostCache   map[string]string
-	observed    []string
 	software    string
 	first, last time.Time
 	declared    map[string]bool // kept columns seen in any #Fields
@@ -81,8 +79,8 @@ func (c *rowCtx) resolveHost(observed string) (string, error) {
 		if label, ok := c.st.hostCache[observed]; ok {
 			return label, nil
 		}
-		if len(c.st.observed) < maxObservedHosts {
-			c.st.observed = append(c.st.observed, observed)
+		if err := c.st.rep.Observe(observed); err != nil {
+			return "", err
 		}
 		if c.opts.Hosts != nil {
 			h, ok := c.opts.Hosts(observed)
@@ -129,10 +127,9 @@ func run(ctx context.Context, r io.Reader, opts importer.Options,
 
 	lim := mergeLimits(opts.Limits, sp.limits)
 	rep := importer.Report{Importer: sp.name, FieldRules: map[string]string{"date+time": sp.zoneRule}}
-	st := &runState{hostCache: map[string]string{}, declared: map[string]bool{}}
+	st := &runState{rep: &rep, hostCache: map[string]string{}, declared: map[string]bool{}}
 
 	fin := func(err error) (importer.Report, error) {
-		rep.ObservedHosts = st.observed
 		rep.First, rep.Last = st.first, st.last
 		if !st.first.IsZero() {
 			f, l := st.first, st.last
@@ -171,12 +168,7 @@ func run(ctx context.Context, r io.Reader, opts importer.Options,
 		sawHdr   bool
 		sinceChk int
 	)
-	reject := func(line int64, reason importer.Reason) {
-		rep.Rejected++
-		if len(rep.Errors) < maxReportErrors {
-			rep.Errors = append(rep.Errors, importer.RowError{Line: line, Reason: reason})
-		}
-	}
+	reject := rep.Reject
 
 	for {
 		sinceChk++
@@ -190,6 +182,16 @@ func run(ctx context.Context, r io.Reader, opts importer.Options,
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
+			}
+			var re importer.RowError
+			if errors.As(err, &re) {
+				// the reader refused one line (bad UTF-8, NUL); it is a row
+				rep.Rows++
+				if err := lim.CheckRows(rep.Rows); err != nil {
+					return fin(err)
+				}
+				reject(no, re.Reason)
+				continue
 			}
 			return fin(err)
 		}
