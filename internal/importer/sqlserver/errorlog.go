@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
@@ -38,8 +39,10 @@ var (
 
 	// Allowlist. Only the kind and the captured numbers are kept; the message
 	// text (file paths, database, user and client names) is never stored.
-	reIOStall     = regexp.MustCompile(`^SQL Server has encountered (\d{1,9}) occurrence\(s\) of I/O requests taking longer than \d{1,4} seconds to complete`) // message 833
-	reNonYielding = regexp.MustCompile(`appears to be non-yielding on Scheduler \d+`)                                                                          // message 17883
+	reIOStall = regexp.MustCompile(`^SQL Server has encountered (\d{1,9}) occurrence\(s\) of I/O requests taking longer than \d{1,4} seconds to complete`) // message 833
+	// Message 17883, anchored at the start of the message so that text inside another
+	// message (a login name, for example) cannot forge a scheduler event.
+	reNonYielding = regexp.MustCompile(`^Process \d+:\d+:\d+ \(0x[0-9A-Fa-f]+\) Worker 0x[0-9A-Fa-f]+ appears to be non-yielding on Scheduler \d+`)
 	reErrorSev    = regexp.MustCompile(`^Error: (\d{1,9}), Severity: (\d{1,2}), State: \d{1,3}\.?\s*$`)
 	reStart       = regexp.MustCompile(`^SQL Server is starting at `)
 	reStop        = regexp.MustCompile(`^(SQL Server is terminating|SQL Server shutdown )`)
@@ -49,13 +52,16 @@ var (
 	reErrlogFile  = regexp.MustCompile(`(?i)^errorlog(\.\d{1,3})?$`)
 )
 
+// errLoginFailed is SQL Server error 18456, "Login failed for user".
+const errLoginFailed = 18456
+
 var errlogAttrs = map[string]bool{"error_number": true, "sql_severity": true}
 
 const (
 	gapErrlogLocal        = "ERRORLOG times are server-local and were converted with the picked host's time zone"
 	gapErrlog833          = "message 833 reports I/O stalls since its previous report; when each stall happened inside that span is not known"
 	gapErrlogUnclassified = "unclassified ERRORLOG lines were counted, not imported; message text is never stored"
-	gapErrlogLogin        = "failed logins are counted only; user and client are not kept"
+	gapErrlogLogin        = "failed logins are counted once each, as a count only; user and client are not kept"
 	gapErrlogNoAdjust     = "no UTC adjustment line was found, so the host time zone was not cross-checked"
 )
 
@@ -138,6 +144,8 @@ func (x errorlogImporter) Parse(ctx context.Context, r io.Reader, opts importer.
 	}
 
 	var unclassified, logins, ioStalls, adjusted, dated bool
+	var have18456 bool
+	var last18456 time.Time
 	phys := 0
 	for {
 		raw, line, err := lr.Next()
@@ -214,8 +222,19 @@ func (x errorlogImporter) Parse(ctx context.Context, r io.Reader, opts importer.
 			continue
 		}
 
+		// A failed login writes "Error: 18456" and then "Login failed for user" in the
+		// same second; the pair is one failed login, counted once.
+		pairedLogin := have18456 && last18456.Equal(ts)
+		have18456 = false
+
 		e := evidence.Event{Host: host, Start: ts, End: ts, TZRule: clock.RuleHostLocal}
 		switch {
+		case reLoginFailed.MatchString(msg):
+			logins = true
+			if pairedLogin {
+				continue
+			}
+			e.Kind, e.Severity, e.Value, e.Unit = KindLoginFailed, "warning", ptr(1), "count"
 		case reIOStall.MatchString(msg):
 			n, _ := strconv.Atoi(reIOStall.FindStringSubmatch(msg)[1])
 			e.Kind, e.Severity, e.Value, e.Unit = KindIOStall, "warning", ptr(float64(n)), "count"
@@ -230,15 +249,19 @@ func (x errorlogImporter) Parse(ctx context.Context, r io.Reader, opts importer.
 				continue
 			}
 			num, _ := strconv.Atoi(g[1])
+			if num == errLoginFailed {
+				// Error 18456 is a failed login: a count, like the "Login failed" line.
+				logins = true
+				have18456, last18456 = true, ts
+				e.Kind, e.Severity, e.Value, e.Unit = KindLoginFailed, "warning", ptr(1), "count"
+				break
+			}
 			e.Kind, e.Severity = KindError, sqlSeverity(sev)
 			e.Attrs = map[string]string{"error_number": strconv.Itoa(num), "sql_severity": strconv.Itoa(sev)}
 		case reStart.MatchString(msg):
 			e.Kind, e.Severity = KindStart, "info"
 		case reStop.MatchString(msg):
 			e.Kind, e.Severity = KindStop, "info"
-		case reLoginFailed.MatchString(msg):
-			e.Kind, e.Severity, e.Value, e.Unit = KindLoginFailed, "warning", ptr(1), "count"
-			logins = true
 		default:
 			unclassified = true
 			continue

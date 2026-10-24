@@ -408,7 +408,8 @@ func TestMarkersAreGaps(t *testing.T) {
 		extra string
 		gap   string
 	}{
-		"rotation id":   {logLineOf("2001-09-09T01:10:00.000+00:00", idRotated, msgRotated, `{}`), samplingRotated},
+		"restart id":    {logLineOf("2001-09-09T01:10:00.000+00:00", idRestarted, msgRestarted, `{}`), samplingRestart},
+		"restart text":  {logLineOf("2001-09-09T01:10:00.000+00:00", 1, msgRestarted, `{}`), samplingRestart},
 		"rotation text": {logLineOf("2001-09-09T01:10:00.000+00:00", 1, msgRotated, `{}`), samplingRotated},
 		"restart":       {logLineOf("2001-09-09T01:10:00.000+00:00", idStarting, "MongoDB starting", `{"host":"x"}`), samplingRestart},
 		"profiler":      {logLineOf("2001-09-09T01:10:00.000+00:00", 2, msgProfilerChanged, `{}`), samplingChanged},

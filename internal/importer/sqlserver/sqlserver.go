@@ -21,6 +21,8 @@ import (
 	"io"
 	"strings"
 	"time"
+	gounicode "unicode"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
@@ -213,4 +215,20 @@ func sqlSeverity(sev int) string {
 		return "warning"
 	}
 	return "info"
+}
+
+// validHostCell reports a host-name cell that may go to Report.ObservedHosts: at most
+// 253 bytes of valid UTF-8, no control characters and no leading character a
+// spreadsheet reads as a formula. The raw name is never stored; this keeps an odd
+// cell out of the report the service shows and the host picker.
+func validHostCell(s string) bool {
+	if s == "" || len(s) > 253 || !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if gounicode.IsControl(r) {
+			return false
+		}
+	}
+	return !strings.ContainsRune("=+-@", rune(s[0]))
 }

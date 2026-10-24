@@ -162,3 +162,17 @@ test('Timeline.svelte compiles without warnings and keeps its text out of the ma
   const literal = markup.replace(/\{[^}]*\}/g, '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   assert.equal(literal, '', 'static text in markup: ' + literal);
 });
+
+test('each row carries the zone offset of its own instant, so a repeated clock hour reads two ways', () => {
+  // Europe/London clocks go back at 01:00 UTC on 28 Oct 2001: 01:30 happens twice.
+  const first = tl.rowClockWithOffset(row({ time: '2001-10-28T00:30:00Z' }), 'Europe/London');
+  const second = tl.rowClockWithOffset(row({ time: '2001-10-28T01:30:00Z' }), 'Europe/London');
+  assert.equal(first, '28 Oct 01:30:00 GMT+1');
+  assert.match(second, /^28 Oct 01:30:00 GMT(\+0)?$/); // ICU versions differ on "GMT" and "GMT+0"
+  assert.notEqual(first, second);
+  // The offset is the one in force at that row's time, not the one in force now.
+  assert.match(tl.rowClockWithOffset(row({ time: '2001-01-15T12:00:00Z' }), 'Europe/London'), /^15 Jan 12:00:00 GMT(\+0)?$/);
+  assert.equal(tl.rowClockWithOffset(row({ time: '2001-07-15T12:00:00Z' }), 'Europe/London'), '15 Jul 13:00:00 GMT+1');
+  // UTC rows stay plain; the heading names the zone.
+  assert.equal(tl.rowClockWithOffset(row({ time: '2001-02-03T04:01:45Z' }), 'UTC'), '3 Feb 04:01:45');
+});

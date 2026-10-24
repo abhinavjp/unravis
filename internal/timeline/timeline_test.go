@@ -169,7 +169,7 @@ func TestHostLocalWithoutTZDisabled(t *testing.T) {
 			if v.Enabled || v.ReasonCode != ReasonTZRule || len(v.Rows) != 0 {
 				t.Fatalf("%+v", v)
 			}
-			if !strings.Contains(v.Reason, "sql-xe") || strings.Contains(v.Reason, "iis-w3c") {
+			if !strings.Contains(v.Reason, "system_health") || strings.Contains(v.Reason, "IIS log") || strings.Contains(v.Reason, "sql-xe") {
 				t.Fatalf("reason should name only the unchecked source: %q", v.Reason)
 			}
 		})
@@ -201,7 +201,7 @@ func TestUniqueOverlapRows(t *testing.T) {
 	if len(over) != 1 {
 		t.Fatalf("overlap rows %+v", over)
 	}
-	want := evidence.OverlapUnique("sql-xe", "lock wait", 35)
+	want := evidence.OverlapUnique("system_health", "lock wait", 35)
 	if over[0].Wording != want || over[0].Label != "Correlation" || over[0].Join != evidence.JoinUnique || over[0].Candidates != 0 {
 		t.Fatalf("overlap row %+v want %q", over[0], want)
 	}
@@ -239,7 +239,7 @@ func TestAmbiguousJoinListsEveryCandidate(t *testing.T) {
 				t.Fatalf("ambiguous rows %d (distinct %d), want exactly %d", len(amb), len(ids), k)
 			}
 			for _, r := range amb {
-				if r.Candidates != k || r.Wording != evidence.OverlapAmbiguous(k) || r.Label != "Correlation" || r.Source != "sql-xe" {
+				if r.Candidates != k || r.Wording != evidence.OverlapAmbiguous(k) || r.Label != "Symptom" || r.Source != "sql-xe" {
 					t.Fatalf("row %+v", r)
 				}
 			}
@@ -262,7 +262,7 @@ func TestAbsenceWordings(t *testing.T) {
 			sqlAbs = &r
 		}
 	}
-	want := evidence.NotObservedThreshold("sql-xe", "lock waits over 30 s and latch waits over 15 s")
+	want := evidence.NotObservedThreshold("system_health", "lock waits over 30 s and latch waits over 15 s")
 	if sqlAbs == nil || sqlAbs.Wording != want || sqlAbs.Label != "Symptom" {
 		t.Fatalf("absence %+v want %q", sqlAbs, want)
 	}
@@ -357,7 +357,7 @@ func TestEventSharedByTwoIntervalsIsAmbiguousNotCounted(t *testing.T) {
 	v := mustBuild(t, c, importer.Window{}, iv)
 	n := 0
 	for _, r := range rowsOf(v, KindOverlap) {
-		if r.Join != evidence.JoinAmbiguous || r.Candidates != 1 {
+		if r.Join != evidence.JoinAmbiguous || r.Candidates != 0 || r.Label != "Symptom" || r.Wording != evidence.OverlapShared(2) {
 			t.Fatalf("%+v", r)
 		}
 		n++

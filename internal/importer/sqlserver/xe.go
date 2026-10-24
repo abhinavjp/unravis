@@ -26,9 +26,9 @@ const (
 	// XESource is the source name used in §6.6 wordings.
 	XESource = "system_health"
 	// XEThreshold is SourceQuality.Threshold for every XE import (card P3).
-	XEThreshold = "lock waits over 30 s, latch waits over 15 s"
+	XEThreshold = "lock waits over 30 s, latch waits over 15 s and preemptive waits over 5 s"
 	// XEAbsenceThreshold is the threshold phrase of the R8-B2 absence wording.
-	XEAbsenceThreshold = "lock waits over 30 s and latch waits over 15 s"
+	XEAbsenceThreshold = XEThreshold
 )
 
 // Event kinds emitted by the XE importer.
@@ -98,6 +98,8 @@ const (
 	gapXEWaitStart = "wait start is the event time minus its duration (wait_info fires when the wait ends)"
 	gapXERetention = "system_health keeps a small rolling file target; an interval outside the export's coverage was not recorded"
 	gapXEOther     = "system_health events of other types were counted, not imported"
+	// gapXENoSeverity: error_reported rows with no severity value carry severity "unknown".
+	gapXENoSeverity = "some error_reported rows have no severity value; their severity is unknown"
 )
 
 type xeImporter struct{}
@@ -294,7 +296,7 @@ func (x xeImporter) Parse(ctx context.Context, r io.Reader, opts importer.Option
 		return strings.TrimSpace(rec[i])
 	}
 
-	var other, waits bool
+	var other, waits, noSeverity bool
 	badRun := 0
 	for {
 		rec, line, err := csvr.Next()
@@ -332,6 +334,10 @@ func (x xeImporter) Parse(ctx context.Context, r io.Reader, opts importer.Option
 		host := picked
 		if hostCol {
 			raw := cell(rec, "host")
+			if raw != "" && !validHostCell(raw) {
+				s.reject(line, importer.ReasonUnsupportedFormat)
+				continue
+			}
 			label, known := observed[raw]
 			if !known {
 				// The raw name goes to Report.ObservedHosts only; the error
@@ -431,13 +437,18 @@ func (x xeImporter) Parse(ctx context.Context, r io.Reader, opts importer.Option
 				}
 				e.Attrs["sql_severity"] = strconv.Itoa(n)
 				e.Severity = sqlSeverity(n)
+			} else {
+				// No severity value: say so, never leave it looking like a low one.
+				e.Attrs["sql_severity"] = "unknown"
+				noSeverity = true
 			}
 		case KindNonYielding:
 			e.Severity = "error"
 		case KindDeadlock:
 			e.Severity = "warning"
 		}
-		s.seen(e.Start)
+		// Coverage grows with the row time only. The start of a wait is derived from a
+		// duration the importer cannot check, so it never widens coverage.
 		s.seen(ts)
 		if err := s.put(e, line, 0); err != nil {
 			return s.rep, err
@@ -449,6 +460,9 @@ func (x xeImporter) Parse(ctx context.Context, r io.Reader, opts importer.Option
 	}
 	if other {
 		s.rep.KnownGaps = append(s.rep.KnownGaps, gapXEOther)
+	}
+	if noSeverity {
+		s.rep.KnownGaps = append(s.rep.KnownGaps, gapXENoSeverity)
 	}
 	return s.finish()
 }
@@ -497,9 +511,11 @@ func XEStatement(iv join.Interval, events []evidence.Event, q evidence.SourceQua
 	case evidence.JoinAmbiguous:
 		st.Text = evidence.OverlapAmbiguous(len(m.Candidates))
 	default:
-		if q.CoverageFirst != nil && q.CoverageLast != nil &&
-			(iv.End.Before(q.CoverageFirst.Add(-tol.Total())) || iv.Start.After(q.CoverageLast.Add(tol.Total()))) {
-			st.Text = evidence.NotObservedGap("the " + XESource + " export does not cover this interval")
+		// The threshold wording needs the whole interval inside the export's coverage.
+		slack := tol.Total()
+		if q.CoverageFirst == nil || q.CoverageLast == nil ||
+			iv.Start.Before(q.CoverageFirst.Add(-slack)) || iv.End.After(q.CoverageLast.Add(slack)) {
+			st.Text = evidence.NotObservedGap("the " + XESource + " export does not cover the whole interval")
 		} else {
 			st.Text = evidence.NotObservedThreshold(XESource, XEAbsenceThreshold)
 		}

@@ -1,13 +1,12 @@
 <script lang="ts">
-  import { TIMELINE_TEXT as TEXT, rowClock, rowSubject, ruleWords, timelineGroups, unlistedLine, type TimelineView } from '../timeline';
-  import { zoneAbbreviation } from '../time';
+  import { TIMELINE_TEXT as TEXT, rowClockWithOffset, rowSubject, ruleWords, timelineGroups, unlistedLine, type TimelineView } from '../timeline';
 
   // The thin timeline: audit intervals with the events that overlap them, on one clock. The server writes each row's
   // sentence from the permitted wordings; this component only shows them. It never adds a cause.
   let { view, zone = 'UTC' }: { view: TimelineView; zone?: string } = $props();
 
   const groups = $derived(timelineGroups(view));
-  const timeHeading = $derived(`${TEXT.time} (${zoneAbbreviation(zone)})`);
+  const timeHeading = $derived(`${TEXT.time} (${zone})`);
   const unlisted = $derived(unlistedLine(view.unlisted));
 </script>
 
@@ -51,13 +50,13 @@
           </thead>
           <tbody>
             <tr class="interval">
-              <th scope="row" class="clock">{rowClock(group.interval, zone)}</th>
+              <th scope="row" class="clock">{rowClockWithOffset(group.interval, zone)}</th>
               <td><span class="label symptom">{group.interval.label}</span></td>
               <td>{group.interval.wording}</td>
             </tr>
             {#each group.rows as row (row.kind + row.source + row.evidenceId)}
               <tr class={row.kind}>
-                <th scope="row" class="clock">{rowClock(row, zone)}</th>
+                <th scope="row" class="clock">{rowClockWithOffset(row, zone)}</th>
                 <td><span class="label" class:symptom={row.label === 'Symptom'}>{row.label}</span></td>
                 <td>
                   <span class="subject">{rowSubject(row)}</span>

@@ -1,6 +1,8 @@
 package mongodlog
 
 import (
+	"strconv"
+	"strings"
 	"time"
 
 	"api-audit-explorer/internal/clock"
@@ -31,18 +33,48 @@ func qualifiesM1(e evidence.Event) bool {
 // wording with a fixed sentence naming the first thing missing. A missing slow
 // operation is never evidence that no operation ran.
 func Absence(q evidence.SourceQuality, iv join.Interval) string {
+	if gap := AbsenceGap(q, iv); gap != "" {
+		return evidence.NotObservedGap(gap)
+	}
+	return evidence.NotObservedThreshold(SourceLabel, AbsenceThreshold(q))
+}
+
+// AbsenceGap returns the fixed sentence naming the first thing that stops a file from
+// supporting the threshold wording for iv, or "" when it supports it.
+func AbsenceGap(q evidence.SourceQuality, iv join.Interval) string {
 	switch {
 	case q.SourceVersion == "":
-		return evidence.NotObservedGap("mongod version unknown: no Build Info line in the file")
+		return "mongod version unknown: no Build Info line in the file"
 	case q.Threshold == "":
-		return evidence.NotObservedGap("slowms unknown")
+		return "slowms unknown"
 	case q.TimezoneRule != clock.RuleOffsetInField:
-		return evidence.NotObservedGap("timestamp offset rule not established")
+		return "timestamp offset rule not established"
 	case q.Sampling != "":
-		return evidence.NotObservedGap(q.Sampling)
+		return q.Sampling
 	case q.CoverageFirst == nil || q.CoverageLast == nil ||
 		iv.Start.Before(*q.CoverageFirst) || iv.End.After(*q.CoverageLast):
-		return evidence.NotObservedGap("the interval is not fully inside the log coverage")
+		return "the interval is not fully inside the log coverage"
 	}
-	return evidence.NotObservedThreshold(SourceLabel, q.Threshold)
+	return ""
+}
+
+// AbsenceThreshold is the threshold phrase for the absence wording. From MongoDB 8.0 a
+// slow operation is logged when workingMillis, not the total duration, passes slowms, so
+// the phrase says which time is compared. Earlier versions compare the total duration.
+func AbsenceThreshold(q evidence.SourceQuality) string {
+	const prefix = "operations slower than "
+	if major(q.SourceVersion) >= 8 && strings.HasPrefix(q.Threshold, prefix) {
+		return "operations whose working time (workingMillis) is over " + strings.TrimPrefix(q.Threshold, prefix)
+	}
+	return q.Threshold
+}
+
+// major returns the leading number of a version such as "8.0.1"; 0 when it has none.
+func major(version string) int {
+	n, _, _ := strings.Cut(version, ".")
+	v, err := strconv.Atoi(n)
+	if err != nil || v < 0 {
+		return 0
+	}
+	return v
 }

@@ -23,6 +23,7 @@ import (
 	"api-audit-explorer/internal/clock"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/importer/mongodlog"
 	"api-audit-explorer/internal/join"
 )
 
@@ -50,15 +51,61 @@ const (
 
 // Detail sentences for the gap wording of an absence row.
 const (
-	gapOutsideRange   = "this interval is outside the time range of the file"
+	gapOutsideRange   = "this interval is not fully inside the time range of the file"
 	gapNoThreshold    = "this source states no recording threshold"
 	gapNoRange        = "the time range of this file is not known"
 	gapThresholdsDiff = "the files from this source state different thresholds"
+	gapTruncated      = "too many events were found, so only part of them were read"
 )
 
 // edgeMargin widens the event query beyond the window so that an event that
 // starts just before it, and still overlaps an interval inside it, is seen.
 const edgeMargin = 10 * time.Minute
+
+// lookback is how far before the window a second query reaches for events that
+// started long before it and still overlap an interval inside it. The importers
+// cap a stated duration at 7 days (SQL Server waits) or 400 days (mongod); an event
+// that began earlier than the lookback is not read, which is a stated limit of the
+// timeline, not a claim about the source.
+const lookback = 7 * 24 * time.Hour
+
+// displayNames are the plain names of the sources used in wording, so that an
+// importer name never reaches a sentence. An unknown source falls back to the
+// importer name.
+var displayNames = map[string]string{
+	"sql-xe":       "system_health",
+	"sql-errorlog": "SQL Server error log",
+	"sql-pdh":      "SQL Server performance counters",
+	"mongod-json":  mongodlog.SourceLabel,
+	"iis-w3c":      "IIS log",
+	"iis-httperr":  "HTTP.sys error log",
+	"win-counters": "Windows performance counters",
+	"win-events":   "Windows event log",
+	"appinsights":  "Application Insights",
+	"schedule":     "schedule export",
+}
+
+func displayName(source string) string {
+	if n, ok := displayNames[source]; ok {
+		return n
+	}
+	return source
+}
+
+// eventPhrase is the plain name of an event for OverlapUnique.
+func eventPhrase(e evidence.Event) string {
+	switch e.Kind {
+	case "slow-op":
+		return "slow operation"
+	case "wait":
+		switch e.Attrs["wait_class"] {
+		case "lock", "latch", "preemptive":
+			return e.Attrs["wait_class"] + " wait"
+		}
+		return "wait"
+	}
+	return strings.ReplaceAll(e.Kind, "-", " ")
+}
 
 // tolerance is the join tolerance: one second of timestamp resolution, the same
 // as rule M1. Skew between sources is not guessed.
@@ -125,11 +172,11 @@ func Build(c casestore.Case, w importer.Window, ivs []join.Interval) (View, erro
 	}
 	v.Enabled = true
 
-	events, err := c.Events(ctx, casestore.EventQuery{Window: widen(w), Limit: casestore.MaxEventQuery})
+	events, truncated, err := loadEvents(ctx, c, w)
 	if err != nil {
 		return View{}, fmt.Errorf("timeline: events: %w", err)
 	}
-	v.Truncated = len(events) >= casestore.MaxEventQuery
+	v.Truncated = truncated
 
 	intervals := inWindow(ivs, w)
 	bySource := map[string][]evidence.Event{}
@@ -152,16 +199,24 @@ func Build(c casestore.Case, w importer.Window, ivs []join.Interval) (View, erro
 			byID[e.EvidenceID] = e
 		}
 		matches := join.Overlap(intervals, evs, tolerance, qualifies)
+		// shared[id] is the number of intervals for which the event is the only
+		// candidate; join.Overlap marks those matches ambiguous.
+		shared := map[string]int{}
+		for _, m := range matches {
+			if m.Class == evidence.JoinAmbiguous && len(m.Candidates) == 1 {
+				shared[m.Candidates[0]]++
+			}
+		}
 		for i, m := range matches {
 			iv := intervals[i]
 			switch m.Class {
 			case evidence.JoinNone:
-				v.Rows = append(v.Rows, absenceRow(src.Name, iv, sourceFiles(files, src.Name)))
+				v.Rows = append(v.Rows, absenceRow(src.Name, iv, sourceFiles(files, src.Name), v.Truncated))
 			default:
 				for _, id := range m.Candidates {
 					e := byID[id]
 					listed[id] = struct{}{}
-					v.Rows = append(v.Rows, overlapRow(iv, e, m))
+					v.Rows = append(v.Rows, overlapRow(iv, e, m, shared[id]))
 				}
 			}
 		}
@@ -264,7 +319,7 @@ func disabled(sources []SourceStatus) (code, text string) {
 	var bad []string
 	for _, s := range sources {
 		if !s.Validated {
-			bad = append(bad, s.Name)
+			bad = append(bad, displayName(s.Name))
 		}
 	}
 	if len(bad) > 0 {
@@ -315,59 +370,127 @@ func qualifies(e evidence.Event) bool { return span(e) > 0 }
 
 func seconds(d time.Duration) float64 { return math.Round(d.Seconds()*1000) / 1000 }
 
-func overlapRow(iv join.Interval, e evidence.Event, m join.Match) Row {
+// overlapRow words an event that overlaps an interval. Only a unique match is a
+// Correlation. An event that is the sole candidate of several intervals is worded
+// as shared (sharedWith intervals), and several candidates as ambiguous; both are
+// a Symptom.
+func overlapRow(iv join.Interval, e evidence.Event, m join.Match, sharedWith int) Row {
 	r := Row{
 		Kind: KindOverlap, Time: e.Start.UTC(), End: e.End.UTC(), IntervalID: iv.ID,
 		Source: e.Source, Host: e.Host, EventKind: e.Kind, EvidenceID: e.EvidenceID,
-		DurationMs: e.DurationMs, Join: m.Class, Label: audit.EvidenceCorrelation,
+		DurationMs: e.DurationMs, Join: m.Class, Label: audit.EvidenceSymptom,
 	}
-	if m.Class == evidence.JoinUnique {
-		r.Wording = evidence.OverlapUnique(e.Source, strings.ReplaceAll(e.Kind, "-", " "), seconds(span(e)))
-		return r
+	switch {
+	case m.Class == evidence.JoinUnique:
+		r.Label = audit.EvidenceCorrelation
+		r.Wording = evidence.OverlapUnique(displayName(e.Source), eventPhrase(e), seconds(span(e)))
+	case len(m.Candidates) == 1:
+		r.Wording = evidence.OverlapShared(max(sharedWith, 2))
+	default:
+		r.Candidates = len(m.Candidates)
+		r.Wording = evidence.OverlapAmbiguous(len(m.Candidates))
 	}
-	r.Candidates = len(m.Candidates)
-	r.Wording = evidence.OverlapAmbiguous(len(m.Candidates))
 	return r
+}
+
+// loadEvents reads the events for the window, widened by edgeMargin, plus the
+// events that started up to lookback before it and still reach it. It reports
+// whether either read hit the event cap, in which case events may be missing.
+func loadEvents(ctx context.Context, c casestore.Case, w importer.Window) ([]evidence.Event, bool, error) {
+	wide := widen(w)
+	events, err := c.Events(ctx, casestore.EventQuery{Window: wide, Limit: casestore.MaxEventQuery})
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := len(events) >= casestore.MaxEventQuery
+	if w.From.IsZero() {
+		return events, truncated, nil
+	}
+	before, err := c.Events(ctx, casestore.EventQuery{
+		Window: importer.Window{From: wide.From.Add(-lookback), To: wide.From},
+		Limit:  casestore.MaxEventQuery,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if len(before) >= casestore.MaxEventQuery {
+		truncated = true
+	}
+	seen := make(map[string]struct{}, len(events))
+	for _, e := range events {
+		seen[e.EvidenceID] = struct{}{}
+	}
+	reach := w.From.Add(-tolerance.Total())
+	for _, e := range before {
+		if _, dup := seen[e.EvidenceID]; dup || e.End.Before(reach) {
+			continue
+		}
+		events = append(events, e)
+	}
+	sort.SliceStable(events, func(i, j int) bool { return events[i].Start.Before(events[j].Start) })
+	return events, truncated, nil
 }
 
 // absenceRow words a source that shows no qualifying event for an interval. A
 // threshold wording is used only when every file of the source covers the
 // interval and states one threshold. Anything less is the gap wording.
-func absenceRow(source string, iv join.Interval, files []casestore.ImportRecord) Row {
+func absenceRow(source string, iv join.Interval, files []casestore.ImportRecord, truncated bool) Row {
 	r := Row{
 		Kind: KindAbsence, Time: iv.Start.UTC(), End: iv.End.UTC(), IntervalID: iv.ID,
 		Source: source, Join: evidence.JoinNone, Label: audit.EvidenceSymptom,
 	}
-	threshold, ok := "", true
-	covered, known := false, true
+	// Events may be missing from the read, so nothing can be said about absence.
+	if truncated {
+		r.Wording = evidence.NotObservedGap(gapTruncated)
+		return r
+	}
+	threshold := ""
 	for _, f := range files {
-		q := f.Quality
-		if q.CoverageFirst == nil || q.CoverageLast == nil {
-			known = false
-		} else if !iv.End.Before(*q.CoverageFirst) && !iv.Start.After(*q.CoverageLast) {
-			covered = true
+		gap, th := fileAbsence(source, f.Quality, iv)
+		if gap != "" {
+			r.Wording = evidence.NotObservedGap(gap)
+			return r
 		}
 		switch {
-		case q.Threshold == "":
-			ok = false
 		case threshold == "":
-			threshold = q.Threshold
-		case threshold != q.Threshold:
+			threshold = th
+		case threshold != th:
+			// Files that state different thresholds give no single threshold to name.
 			r.Wording = evidence.NotObservedGap(gapThresholdsDiff)
 			return r
 		}
 	}
-	switch {
-	case !known:
-		r.Wording = evidence.NotObservedGap(gapNoRange)
-	case !covered:
-		r.Wording = evidence.NotObservedGap(gapOutsideRange)
-	case !ok || threshold == "":
+	if threshold == "" {
 		r.Wording = evidence.NotObservedGap(gapNoThreshold)
-	default:
-		r.Wording = evidence.NotObservedThreshold(source, threshold)
+		return r
 	}
+	r.Wording = evidence.NotObservedThreshold(displayName(source), threshold)
 	return r
+}
+
+// fileAbsence says whether one file supports the threshold wording for iv. It
+// returns the fixed gap sentence naming what is missing, or "" and the threshold
+// phrase of the file. The whole interval must lie inside the file's coverage.
+// Sampling and restart marks, and for mongod the version rules, count as gaps.
+func fileAbsence(source string, q evidence.SourceQuality, iv join.Interval) (gap, threshold string) {
+	if source == mongodlog.Name {
+		if g := mongodlog.AbsenceGap(q, iv); g != "" {
+			return g, ""
+		}
+		return "", mongodlog.AbsenceThreshold(q)
+	}
+	slack := tolerance.Total()
+	switch {
+	case q.CoverageFirst == nil || q.CoverageLast == nil:
+		return gapNoRange, ""
+	case q.Sampling != "":
+		return q.Sampling, ""
+	case iv.Start.Before(q.CoverageFirst.Add(-slack)) || iv.End.After(q.CoverageLast.Add(slack)):
+		return gapOutsideRange, ""
+	case q.Threshold == "":
+		return gapNoThreshold, ""
+	}
+	return "", q.Threshold
 }
 
 var rank = map[string]int{KindAudit: 0, KindOverlap: 1, KindAbsence: 2}
