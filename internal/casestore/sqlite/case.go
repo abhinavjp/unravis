@@ -127,12 +127,32 @@ func (c *Case) shutdown() error {
 
 // Pseudonymize is HMAC-SHA256 under the case pseudonym key, shown as
 // "<kind>-<8 hex>". The key lives in case.key and dies with it.
+//
+// After Close, Erase or Sweep the keys are gone. The method then fails closed:
+// it returns the fixed, non-identifying "<kind>-unavailable" and never a value
+// derived from a zeroed key. (The casestore.Case signature has no error to
+// return; see the hand-back note.)
 func (c *Case) Pseudonymize(kind, value string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.db == nil || len(c.keys.Pseudo) != 32 || allZero(c.keys.Pseudo) {
+		return kind + "-" + pseudonymUnavailable
+	}
 	m := hmac.New(sha256.New, c.keys.Pseudo)
 	m.Write([]byte(kind + "\x00" + value))
 	return kind + "-" + hex.EncodeToString(m.Sum(nil))[:8]
+}
+
+// pseudonymUnavailable is what Pseudonymize returns once the case keys are gone.
+const pseudonymUnavailable = "unavailable"
+
+func allZero(b []byte) bool {
+	for _, x := range b {
+		if x != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // verify is the open-time check: quick_check, schema version, and the manifest
@@ -156,6 +176,13 @@ func (c *Case) verify(ctx context.Context) error {
 	err = rows.Err()
 	_ = rows.Close()
 	if err != nil || !ok {
+		return ErrDamaged
+	}
+	// The database must belong to this folder's case. The key blob and manifest
+	// were already matched in readCaseFiles; this catches a database swapped in
+	// under a key that was copied along with it.
+	var dbCase string
+	if err := c.db.QueryRowContext(ctx, "SELECT v FROM meta WHERE k='case_id'").Scan(&dbCase); err != nil || dbCase != string(c.id) {
 		return ErrDamaged
 	}
 	var version string
@@ -183,9 +210,24 @@ func (c *Case) verify(ctx context.Context) error {
 	}
 	if len(dbImports) > len(c.man.Imports) {
 		c.man.Imports = dbImports
-		_ = writeManifest(c.dir, c.s.opt.Protector, c.man) // best effort; the next open or import retries
+		c.rebuildManifest()
 	}
 	return nil
+}
+
+// rebuildManifest writes c.man under the folder lock, taking the on-disk
+// manifest's Closed stamp so a CloseCase in another process is not undone. It is
+// best effort; the next open or import retries.
+func (c *Case) rebuildManifest() {
+	release, err := sealedfile.Lock(c.dir)
+	if err != nil {
+		return
+	}
+	defer release()
+	if disk, err := readManifest(c.dir, c.s.opt.Protector); err == nil && disk.CaseID == string(c.id) {
+		c.man.Closed = disk.Closed
+	}
+	_ = writeManifest(c.dir, c.s.opt.Protector, c.man)
 }
 
 // dbManifestImports reads the imports table with per-import event counts, in the
@@ -407,6 +449,9 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 		return casestore.ImportResult{}, err
 	}
 	defer func() { _, _ = conn.ExecContext(context.Background(), "PRAGMA synchronous=NORMAL") }()
+	// On every exit, a failed or quarantined import included, give the WAL space
+	// back so spilled frames never count against the case size cap.
+	defer func() { _, _ = conn.ExecContext(context.Background(), "PRAGMA wal_checkpoint(TRUNCATE)") }()
 	tx, err := conn.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return casestore.ImportResult{}, err

@@ -67,16 +67,19 @@ type Options struct {
 	// MinFreeBytes is the free-disk floor checked before an import (default 2
 	// GiB). A negative value disables the check.
 	MinFreeBytes int64
-	// OnErase runs at the end of Erase, after the case files are gone. The API
-	// layer wires ledger evidence stripping ("case erased") and the deletion of
-	// that case's exports here. It must be idempotent: Erase is retryable and
-	// calls it on every attempt. An error is reported by Erase.
+	// OnErase runs in Erase after the case key and files are gone, and before the
+	// folder is removed. The API layer wires ledger evidence stripping ("case
+	// erased") and the deletion of that case's exports here. It must be
+	// idempotent: it runs on every Erase attempt, and Sweep retries it for any
+	// folder whose Erase did not finish. An error is reported by Erase, and the
+	// folder stays (holding only a pending-erase marker) until a retry succeeds.
 	OnErase func(ctx context.Context, id casestore.CaseID) error
 	// Logf receives one line per import and per erase: case ID, file name, hash,
 	// counts and reasons only. Default: no logging.
 	Logf func(format string, args ...any)
 
 	afterCommit func() error // test hook, runs between commit and manifest mirror
+	duringErase func()       // test hook, runs in Erase after the handle is released, before any file is touched
 }
 
 // DefaultRoot is %LOCALAPPDATA%\APIAuditExplorer\cases, so multi-GiB case files
@@ -94,8 +97,9 @@ type Store struct {
 	opt  Options
 	root string
 
-	mu   sync.Mutex // guards open and serialises Open, Erase
-	open map[casestore.CaseID]*Case
+	mu      sync.Mutex // guards open and erasing, and serialises Open with the start of Erase
+	open    map[casestore.CaseID]*Case
+	erasing map[casestore.CaseID]bool // IDs with an Erase in flight; Open refuses them
 }
 
 var _ casestore.Store = (*Store)(nil)
@@ -145,10 +149,11 @@ func New(opt Options) (*Store, error) {
 			return nil, err
 		}
 	}
-	if err := casestore.RejectReparse(root, root); err != nil {
+	// Root and every ancestor up to the volume must be plain folders.
+	if err := casestore.RejectReparse(filepath.VolumeName(root)+string(filepath.Separator), root); err != nil {
 		return nil, err
 	}
-	return &Store{opt: opt, root: root, open: map[casestore.CaseID]*Case{}}, nil
+	return &Store{opt: opt, root: root, open: map[casestore.CaseID]*Case{}, erasing: map[casestore.CaseID]bool{}}, nil
 }
 
 // Root is the absolute cases folder.
@@ -221,6 +226,7 @@ func (s *Store) Create(ctx context.Context, title string) (casestore.CaseInfo, e
 		return casestore.CaseInfo{}, err
 	}
 	defer keys.Zero()
+	keys.CaseID = string(id)
 	if err := casestore.WriteKeyFile(filepath.Join(dir, keyName), s.opt.Protector, keys); err != nil {
 		return casestore.CaseInfo{}, err
 	}
@@ -337,6 +343,7 @@ func initConn(c *sqlite3.Conn, hexKey string, maxPages int64) error {
 		"PRAGMA cell_size_check=ON",
 		fmt.Sprintf("PRAGMA max_page_count=%d", maxPages),
 		"PRAGMA journal_mode=WAL",
+		"PRAGMA journal_size_limit=67108864",
 		"PRAGMA synchronous=NORMAL",
 	} {
 		if err := c.Exec(stmt); err != nil {
@@ -383,6 +390,11 @@ func (s *Store) List(ctx context.Context) ([]casestore.CaseInfo, error) {
 			continue
 		}
 		info := casestore.CaseInfo{ID: id, Title: "(unreadable case)", Bytes: dirBytes(dir)}
+		if erasePending(dir) {
+			info.Title = "(erase pending)"
+			out = append(out, info)
+			continue
+		}
 		if m, err := readManifest(dir, s.opt.Protector); err == nil && m.CaseID == string(id) {
 			info.Title, info.Created, info.Closed, info.Imports = m.Title, m.Created, m.Closed, len(m.Imports)
 		}
@@ -405,6 +417,9 @@ func (s *Store) Open(ctx context.Context, id casestore.CaseID) (casestore.Case, 
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.erasing[id] {
+		return nil, casestore.ErrNotFound // an Erase is in flight: never revive the case
+	}
 	if c := s.open[id]; c != nil {
 		c.mu.Lock()
 		c.refs++
@@ -428,24 +443,9 @@ func (s *Store) load(ctx context.Context, id casestore.CaseID) (*Case, error) {
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return nil, casestore.ErrNotFound
 	}
-	keys, err := casestore.ReadKeyFile(filepath.Join(dir, keyName), s.opt.Protector)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, casestore.ErrNotFound // the key is gone: the case is erased
-	}
+	keys, man, err := s.readCaseFiles(dir, id)
 	if err != nil {
 		return nil, err
-	}
-	man, err := readManifest(dir, s.opt.Protector)
-	if err != nil {
-		keys.Zero()
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, ErrDamaged
-		}
-		return nil, err
-	}
-	if man.CaseID != string(id) {
-		keys.Zero()
-		return nil, ErrDamaged
 	}
 	db, err := s.openDB(ctx, dir, keys, false)
 	if err != nil {
@@ -459,6 +459,63 @@ func (s *Store) load(ctx context.Context, id casestore.CaseID) (*Case, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+// readCaseFiles reads the key and manifest under the folder lock, so an Erase in
+// another process (which holds the lock while it destroys the key) is either
+// finished or not yet started. A pending-erase marker means the case is gone.
+// Both the key blob and the manifest must name this case.
+func (s *Store) readCaseFiles(dir string, id casestore.CaseID) (casestore.Keys, manifest, error) {
+	release, err := sealedfile.Lock(dir)
+	if err != nil {
+		return casestore.Keys{}, manifest{}, err
+	}
+	defer release()
+	if erasePending(dir) {
+		return casestore.Keys{}, manifest{}, casestore.ErrNotFound
+	}
+	if err := requirePlainFiles(dir); err != nil {
+		return casestore.Keys{}, manifest{}, err
+	}
+	keys, err := casestore.ReadKeyFile(filepath.Join(dir, keyName), s.opt.Protector)
+	if errors.Is(err, os.ErrNotExist) {
+		return casestore.Keys{}, manifest{}, casestore.ErrNotFound // the key is gone: the case is erased
+	}
+	if err != nil {
+		return casestore.Keys{}, manifest{}, err
+	}
+	man, err := readManifest(dir, s.opt.Protector)
+	if err != nil {
+		keys.Zero()
+		if errors.Is(err, os.ErrNotExist) {
+			return casestore.Keys{}, manifest{}, ErrDamaged
+		}
+		return casestore.Keys{}, manifest{}, err
+	}
+	if man.CaseID != string(id) || keys.CaseID != string(id) {
+		keys.Zero()
+		return casestore.Keys{}, manifest{}, ErrDamaged
+	}
+	return keys, man, nil
+}
+
+// requirePlainFiles refuses a case whose key, database, WAL, SHM or manifest is
+// a link or other non-regular file (section 4 rule 7). A missing file is left
+// for the readers to report.
+func requirePlainFiles(dir string) error {
+	for _, name := range []string{keyName, dbName, dbName + "-wal", dbName + "-shm", manifestName} {
+		fi, err := os.Lstat(filepath.Join(dir, name))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !fi.Mode().IsRegular() {
+			return casestore.ErrReparsePoint
+		}
+	}
+	return nil
 }
 
 // CloseCase starts the 30-day retention clock. It is idempotent.
@@ -475,6 +532,9 @@ func (s *Store) CloseCase(ctx context.Context, id casestore.CaseID) error {
 		return err
 	}
 	defer release()
+	if erasePending(dir) {
+		return casestore.ErrNotFound
+	}
 	s.mu.Lock()
 	h := s.open[id]
 	s.mu.Unlock()
@@ -506,9 +566,22 @@ func (s *Store) CloseCase(ctx context.Context, id casestore.CaseID) error {
 	return nil
 }
 
-// Erase destroys a case: close the handle, overwrite and delete case.key
-// (crypto-erase), delete the remaining files, then run OnErase. It is
-// idempotent, and a partial failure is returned and can be retried.
+// eraseMarker is the durable "an erase has started" record. It is written before
+// the key is destroyed and removed, with the folder, only after OnErase has
+// succeeded. A folder that holds it is retried by Erase and Sweep, so a crash or
+// a failing hook can never lose the OnErase step.
+const eraseMarker = "erase.pending"
+
+func erasePending(dir string) bool {
+	_, err := os.Lstat(filepath.Join(dir, eraseMarker))
+	return err == nil
+}
+
+// Erase destroys a case: write the pending-erase marker, close the handle,
+// overwrite and delete case.key (crypto-erase), delete the remaining files, run
+// OnErase, then remove the marker and the folder. It is idempotent. A failure is
+// returned and leaves the marker, so a later Erase or Sweep finishes the job.
+// While an Erase is in flight Open refuses the case.
 func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 	dir, err := s.caseDir(id)
 	if err != nil {
@@ -518,11 +591,24 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 		return err
 	}
 	s.mu.Lock()
+	if s.erasing[id] {
+		s.mu.Unlock()
+		return fmt.Errorf("case %s: erase already in progress", id)
+	}
+	s.erasing[id] = true
 	h := s.open[id]
 	delete(s.open, id)
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.erasing, id)
+		s.mu.Unlock()
+	}()
 	if h != nil {
-		h.shutdown()
+		_ = h.shutdown()
+	}
+	if s.opt.duringErase != nil {
+		s.opt.duringErase()
 	}
 	var errs []error
 	if _, statErr := os.Lstat(dir); statErr == nil {
@@ -530,8 +616,17 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 		if lockErr != nil {
 			return lockErr
 		}
-		errs = append(errs, eraseFiles(dir))
+		markErr := markErase(dir)
+		if markErr == nil {
+			errs = append(errs, eraseFiles(dir))
+		} else {
+			errs = append(errs, markErr) // nothing destroyed yet: the case is intact
+		}
 		release()
+		if markErr != nil {
+			s.logf("case %s erase not started", id)
+			return errors.Join(errs...)
+		}
 	}
 	if s.opt.OnErase != nil {
 		errs = append(errs, s.opt.OnErase(ctx, id))
@@ -540,12 +635,41 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 		s.logf("case %s erase incomplete", id)
 		return err
 	}
+	if err := removeMarkerAndDir(dir); err != nil {
+		s.logf("case %s erase incomplete", id)
+		return err
+	}
 	s.logf("case %s erased", id)
 	return nil
 }
 
+// markErase writes and flushes the pending-erase marker.
+func markErase(dir string) error {
+	f, err := os.OpenFile(filepath.Join(dir, eraseMarker), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("recording the pending erase: %w", err)
+	}
+	if _, err := f.WriteString("erase pending\n"); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("recording the pending erase: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("recording the pending erase: %w", err)
+	}
+	return f.Close()
+}
+
+func removeMarkerAndDir(dir string) error {
+	if err := os.Remove(filepath.Join(dir, eraseMarker)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.RemoveAll(dir)
+}
+
 // eraseFiles is steps 2 and 3 of the erase order. The key goes first, so even a
-// failure later leaves only ciphertext behind.
+// failure later leaves only ciphertext behind. Everything in the folder goes
+// except the pending-erase marker, which the caller removes last.
 func eraseFiles(dir string) error {
 	var errs []error
 	if err := casestore.EraseKeyFile(filepath.Join(dir, keyName)); err != nil {
@@ -556,14 +680,24 @@ func eraseFiles(dir string) error {
 			errs = append(errs, err)
 		}
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	if entries, err := os.ReadDir(dir); err != nil {
 		errs = append(errs, err)
+	} else {
+		for _, e := range entries {
+			if e.Name() == eraseMarker {
+				continue
+			}
+			if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+				errs = append(errs, err)
+			}
+		}
 	}
 	return errors.Join(errs...)
 }
 
-// Sweep erases every case closed more than 30 days before now and returns their
-// IDs. One failure does not stop the others.
+// Sweep erases every case closed more than 30 days before now, and finishes any
+// erase that was started but not completed, and returns their IDs. One failure
+// does not stop the others.
 func (s *Store) Sweep(ctx context.Context, now time.Time) ([]casestore.CaseID, error) {
 	infos, err := s.List(ctx)
 	if err != nil {
@@ -572,7 +706,8 @@ func (s *Store) Sweep(ctx context.Context, now time.Time) ([]casestore.CaseID, e
 	var erased []casestore.CaseID
 	var errs []error
 	for _, info := range infos {
-		if info.Closed == nil || now.Sub(*info.Closed) <= retention {
+		pending := erasePending(filepath.Join(s.root, string(info.ID)))
+		if !pending && (info.Closed == nil || now.Sub(*info.Closed) <= retention) {
 			continue
 		}
 		if err := s.Erase(ctx, info.ID); err != nil {

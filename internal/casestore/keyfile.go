@@ -27,6 +27,9 @@ var ErrKeyFile = errors.New("case key file is unreadable")
 type Keys struct {
 	DB     []byte // 32 bytes, the adiantum key for case.db
 	Pseudo []byte // 32 bytes, the HMAC key behind Case.Pseudonymize
+	// CaseID binds the blob to its case. A key and database copied from another
+	// case into this folder then fail the ID check on open.
+	CaseID string
 }
 
 // NewKeys draws both keys from crypto/rand.
@@ -52,6 +55,7 @@ type keyFileDoc struct {
 	V      int    `json:"v"`
 	DB     string `json:"dbKey"`
 	Pseudo string `json:"pseudoKey"`
+	CaseID string `json:"caseId,omitempty"`
 }
 
 // WriteKeyFile seals the keys with p and writes them atomically to path.
@@ -59,7 +63,7 @@ func WriteKeyFile(path string, p sealedfile.Protector, k Keys) error {
 	if len(k.DB) != 32 || len(k.Pseudo) != 32 {
 		return ErrKeyFile
 	}
-	doc := keyFileDoc{V: keyFileVersion, DB: hex.EncodeToString(k.DB), Pseudo: hex.EncodeToString(k.Pseudo)}
+	doc := keyFileDoc{V: keyFileVersion, DB: hex.EncodeToString(k.DB), Pseudo: hex.EncodeToString(k.Pseudo), CaseID: k.CaseID}
 	plain, err := json.Marshal(doc)
 	if err != nil {
 		return ErrKeyFile
@@ -100,12 +104,23 @@ func ReadKeyFile(path string, p sealedfile.Protector) (Keys, error) {
 	if err1 != nil || err2 != nil || len(db) != 32 || len(pseudo) != 32 {
 		return Keys{}, ErrKeyFile
 	}
-	return Keys{DB: db, Pseudo: pseudo}, nil
+	return Keys{DB: db, Pseudo: pseudo, CaseID: doc.CaseID}, nil
 }
 
 // OverwriteKeyFile replaces the content of path with random bytes of the same
 // length and flushes them, without deleting it. A missing file is not an error.
 func OverwriteKeyFile(path string) error {
+	// Never write through a link: only a plain file is overwritten.
+	li, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !li.Mode().IsRegular() {
+		return ErrKeyFile
+	}
 	f, err := os.OpenFile(path, os.O_WRONLY, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

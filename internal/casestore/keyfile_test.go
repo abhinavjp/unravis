@@ -21,6 +21,7 @@ func TestKeyFileRoundTrip(t *testing.T) {
 	if bytes.Equal(keys.DB, keys.Pseudo) {
 		t.Fatal("the two keys are identical")
 	}
+	keys.CaseID = "aaaaaaaaaaaaaaaaaaaaaaaaaa"
 	if err := casestore.WriteKeyFile(path, p, keys); err != nil {
 		t.Fatal(err)
 	}
@@ -31,6 +32,9 @@ func TestKeyFileRoundTrip(t *testing.T) {
 	got, err := casestore.ReadKeyFile(path, p)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got.CaseID != keys.CaseID {
+		t.Fatalf("case ID %q did not round trip", got.CaseID)
 	}
 	if !bytes.Equal(got.DB, keys.DB) || !bytes.Equal(got.Pseudo, keys.Pseudo) {
 		t.Fatal("keys changed in the round trip")

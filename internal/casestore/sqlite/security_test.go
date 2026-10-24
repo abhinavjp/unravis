@@ -36,6 +36,7 @@ func TestWrongKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	other.CaseID = string(info.ID) // well-formed for this case, so only the key bytes are wrong
 	keyPath := filepath.Join(s.root, string(info.ID), keyName)
 	if err := casestore.WriteKeyFile(keyPath, s.opt.Protector, other); err != nil {
 		t.Fatal(err)
@@ -452,9 +453,15 @@ func TestEraseWhileOpenAndRetryAfterHookFailure(t *testing.T) {
 	if err := s.Erase(ctx, info.ID); err == nil {
 		t.Fatal("hook failure was swallowed")
 	}
-	// The files and key are already gone; only the hook work is outstanding.
-	if entries, _ := os.ReadDir(root); len(entries) != 0 {
-		t.Fatalf("files left after a failed hook: %d", len(entries))
+	// The files and key are already gone; only the hook work is outstanding, and
+	// the folder keeps just the pending-erase marker so a retry can find it.
+	dir := filepath.Join(root, string(info.ID))
+	left, _ := os.ReadDir(dir)
+	if len(left) != 1 || left[0].Name() != eraseMarker {
+		t.Fatalf("after a failed hook the folder holds %d entries, want only the marker", len(left))
+	}
+	if _, err := s.Open(ctx, info.ID); !errors.Is(err, casestore.ErrNotFound) {
+		t.Fatalf("Open of a half-erased case = %v, want ErrNotFound", err)
 	}
 	if _, err := c.Events(ctx, casestore.EventQuery{}); !errors.Is(err, ErrClosed) {
 		t.Fatalf("handle after erase = %v, want ErrClosed", err)
@@ -465,6 +472,9 @@ func TestEraseWhileOpenAndRetryAfterHookFailure(t *testing.T) {
 	fail = false
 	if err := s.Erase(ctx, info.ID); err != nil {
 		t.Fatalf("retry: %v", err)
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+		t.Fatalf("folder left after a successful retry: %d entries", len(entries))
 	}
 }
 
