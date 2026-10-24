@@ -45,7 +45,8 @@ func (W3C) DefaultLimits() importer.Limits {
 
 func (W3C) AllowedAttrs() map[string]bool {
 	return map[string]bool{"method": true, "stem": true, "status": true, "substatus": true,
-		"win32": true, "port": true, "site": true, "user": true}
+		"win32": true, "port": true, "site": true, "user": true,
+		"bytes-out": true, "bytes-in": true}
 }
 
 // Detect scores W3C extended logs. IIS-format (comma separated) and NCSA
@@ -73,7 +74,7 @@ var w3cSpec = &spec{
 	limits:   W3C{}.DefaultLimits(),
 	zoneRule: clock.RuleUTCField,
 	keep: []string{"date", "time", "cs-method", "cs-uri-stem", "sc-status", "sc-substatus",
-		"sc-win32-status", "time-taken", "s-port", "s-sitename", "s-computername", "cs-username"},
+		"sc-win32-status", "time-taken", "s-port", "s-sitename", "s-computername", "cs-username", "sc-bytes", "cs-bytes"},
 	required: []string{"date", "time"},
 	row:      w3cRow,
 	gaps: func(st *runState, rep *importer.Report) []string {
@@ -140,6 +141,20 @@ func w3cRow(c *rowCtx) (evidence.Event, importer.Reason, error) {
 			return ev, importer.ReasonBadNumber, nil
 		}
 		attrs["win32"] = v
+	}
+	// sc-bytes is bytes sent to the client, cs-bytes bytes received (IIS W3C
+	// field reference); both are plain counts, so they read against time-taken.
+	if v, ok := c.get("sc-bytes"); ok {
+		if _, ok := parseUint(v, 9_999_999_999); !ok {
+			return ev, importer.ReasonBadNumber, nil
+		}
+		attrs["bytes-out"] = v
+	}
+	if v, ok := c.get("cs-bytes"); ok {
+		if _, ok := parseUint(v, 9_999_999_999); !ok {
+			return ev, importer.ReasonBadNumber, nil
+		}
+		attrs["bytes-in"] = v
 	}
 	if v, ok := c.get("s-port"); ok {
 		n, ok := parseUint(v, 65535)
