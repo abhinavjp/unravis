@@ -300,18 +300,8 @@ function representativeSummaries() {
   return out;
 }
 
-test('copy lint sweep: every generated summary and detail passes the causal, reading-level and undefined-term rules', () => {
+test('copy lint sweep: every generated summary and detail passes every copy lint rule', () => {
   const entries = representativeSummaries();
   assert.ok(entries.length > 200);
-  // Causal and undefined-term rules run on the full text. The reading-level rule runs on the text with the exact §6.6 wordings set aside,
-  // because the lint only exempts a text that is entirely one wording. The `wording` rule is filtered out for the same reason: the lint
-  // rejects an exact wording embedded in a longer text, which is a lint limitation being fixed separately. The exact sentences themselves
-  // are asserted in the audit-create tests above (built from ./wordings, unchanged).
-  const full = lintCopy(entries, deck.terms).filter((f) => f.rule === 'causal' || f.rule === 'undefined-term');
-  const stripped = lintCopy(entries.map((e) => ({ id: e.id, text: withoutFixedWordings(e.text) })), deck.terms).filter((f) => f.rule === 'reading-level');
-  assert.deepEqual([...full, ...stripped], []);
-  for (const e of entries) {
-    const text = withoutFixedWordings(e.text);
-    if (text.split(/\s+/).length >= 8) assert.ok(fleschKincaidGrade(text) <= MAX_GRADE, e.id + ': ' + text);
-  }
+  assert.deepEqual(lintCopy(entries, deck.terms), []);
 });
