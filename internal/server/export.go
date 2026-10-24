@@ -37,6 +37,9 @@ type exportPreviewRequest struct {
 	End               time.Time `json:"end"`
 	IncludePseudonyms bool      `json:"includePseudonyms"`
 	IncludeLedger     bool      `json:"includeLedger"`
+	// CaseID, when set, previews the redacted export of that case instead of
+	// the pattern findings; the other fields are then ignored.
+	CaseID string `json:"caseId,omitempty"`
 }
 
 type exportConfirmRequest struct {
@@ -52,12 +55,31 @@ type exportConfirmResponse struct {
 	Filename string `json:"filename"`
 	Content  string `json:"content"`
 	SHA256   string `json:"sha256"`
+	// The events of a case export as a spreadsheet-safe CSV. Empty for a
+	// findings export.
+	EventsCSVFilename string `json:"eventsCsvFilename,omitempty"`
+	EventsCSV         string `json:"eventsCsv,omitempty"`
+	EventsCSVSHA256   string `json:"eventsCsvSha256,omitempty"`
 }
 
 type storedExport struct {
 	canonical []byte
 	sha256    string
+	csv       []byte // case export only
+	caseID    string // case export only: the case the preview was built from
 	createdAt time.Time
+}
+
+// dropCase forgets every preview built from the case, so erasing a case also
+// removes the exports made of it that were never confirmed.
+func (s *exportStore) dropCase(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, it := range s.items {
+		if it.caseID == id {
+			delete(s.items, key)
+		}
+	}
 }
 
 // exportStore holds previews in memory until they are confirmed or expire. The
@@ -123,6 +145,10 @@ func (s *exportStore) take(id string) (storedExport, bool) {
 func (h *handler) exportPreview(w http.ResponseWriter, r *http.Request) {
 	var body exportPreviewRequest
 	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.CaseID != "" {
+		h.caseExportPreview(w, r, body.CaseID)
 		return
 	}
 	input := audit.PatternInput{SourceIDs: body.SourceIDs, Start: body.Start, End: body.End}
@@ -276,9 +302,17 @@ func (h *handler) exportConfirm(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, exportGoneMessage)
 		return
 	}
-	writeJSON(w, http.StatusOK, exportConfirmResponse{
-		Filename: "unravis-evidence-" + time.Now().UTC().Format("20060102-150405") + ".json",
+	stamp := time.Now().UTC().Format("20060102-150405")
+	resp := exportConfirmResponse{
+		Filename: "unravis-evidence-" + stamp + ".json",
 		Content:  string(it.canonical),
 		SHA256:   it.sha256,
-	}, maxResponseBytes)
+	}
+	if len(it.csv) > 0 {
+		sum := sha256.Sum256(it.csv)
+		resp.EventsCSVFilename = "unravis-events-" + stamp + ".csv"
+		resp.EventsCSV = string(it.csv)
+		resp.EventsCSVSHA256 = hex.EncodeToString(sum[:])
+	}
+	writeJSON(w, http.StatusOK, resp, maxResponseBytes)
 }

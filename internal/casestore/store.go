@@ -121,6 +121,7 @@ type ImportRecord struct {
 	Importer, FileName, SHA256 string
 	Bytes, Rows, Rejected      int64
 	HostLabel, TZRule          string
+	AckText                    string // the banner text acknowledged for this import; empty on a quarantine
 	Quality                    evidence.SourceQuality
 	KnownGaps                  []string
 	Imported                   time.Time
