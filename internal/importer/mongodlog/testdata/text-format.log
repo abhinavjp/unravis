@@ -1,0 +1,2 @@
+2001-09-09T01:40:00.000+0000 I  CONTROL  [initandlisten] MongoDB starting : pid=4242 port=27017 dbpath=/data/db 64-bit host=mongo-a.example.test
+2001-09-09T01:46:40.123+0000 I  COMMAND  [conn12] command app.orders command: find { find: "orders" } planSummary: COLLSCAN 250ms
