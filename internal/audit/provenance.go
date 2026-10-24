@@ -2,6 +2,7 @@ package audit
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -118,4 +119,10 @@ func ceilToSecond(d time.Duration) time.Duration {
 		return d - rem + time.Second
 	}
 	return d
+}
+
+// HintLabel is the §6.4(2) sentence that accompanies every hint-mode result.
+func HintLabel(m IDMargin) string {
+	return fmt.Sprintf("bounded by margin %d s, calibrated on %d indexed rows; rows outside %d s would be missed",
+		m.MarginMs/1000, m.SampleSize, m.MarginMs/1000)
 }

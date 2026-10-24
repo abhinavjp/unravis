@@ -150,3 +150,11 @@ func TestProvenanceJSONFieldNames(t *testing.T) {
 		"sourceId", "rows", "total", "tenantAttribution", "provenance",
 	}, nil)
 }
+
+func TestHintLabelWording(t *testing.T) {
+	got := HintLabel(IDMargin{MarginMs: 61000, SampleSize: 10000})
+	want := "bounded by margin 61 s, calibrated on 10000 indexed rows; rows outside 61 s would be missed"
+	if got != want {
+		t.Errorf("HintLabel = %q, want %q", got, want)
+	}
+}
