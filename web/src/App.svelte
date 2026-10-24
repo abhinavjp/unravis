@@ -14,6 +14,9 @@
   import WhereView from './components/WhereView.svelte';
   import EvidenceView from './components/EvidenceView.svelte';
   import RecordDetailPanel from './components/RecordDetail.svelte';
+  import ZoomStrip from './components/ZoomStrip.svelte';
+  import ProvenanceNote from './components/ProvenanceNote.svelte';
+  import { zoomView } from './lib/zoomView.svelte';
 
   // The page shell. The state and the logic live in lib/appState.svelte.ts; each region of the page is its own component.
   // startApp registers the effects and the mount work (theme, first load, the glossary event) for this component.
@@ -27,6 +30,10 @@
   const sourceLabels = $derived(app.sourceLabels);
   const failingSources = $derived(results.failingSources);
   const record = $derived(evidence.record);
+  // The time charts follow a view window inside the queried one. A new analysis on screen is a new top of the zoom steps.
+  $effect(() => { zoomView.follow(analysis ?? null); });
+  const zoomModel = $derived(zoomView.model);
+  const zoomRead = $derived(zoomView.viewAnalysis);
 </script>
 
 <svelte:head><title>Unravis</title></svelte:head>
@@ -63,6 +70,10 @@
               <div class="banner source-failure" role="alert"><strong>{failingSources.length === analysis.sources.length ? 'No sources returned data' : 'Some sources failed'}</strong>
                 {#each failingSources as failed}<span><b>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}:</b> {failed.error || failed.indexWarning || 'Source unavailable'}</span>{/each}
               </div>
+            {/if}
+            {#if zoomModel && depth !== 3}
+              <ZoomStrip model={zoomModel} bind:open={zoomView.open} announcement={zoomView.announcement} onBack={() => zoomView.back()} onEarlier={() => zoomView.earlier()} onLater={() => zoomView.later()} onZoomIn={() => zoomView.zoomIn()} onZoomOut={() => zoomView.zoomOut()} onReset={() => zoomView.reset()} onJump={index => zoomView.jumpTo(index)} />
+              {#if zoomRead}<ProvenanceNote provenance={zoomRead.provenance} {sourceLabels} />{/if}
             {/if}
             <div class="stage-views" inert={loading}>
               <!-- D0 Pulse -->
