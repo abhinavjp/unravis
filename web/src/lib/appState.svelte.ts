@@ -19,6 +19,7 @@ import { applyStaleFilters, scopeStaleDrill } from './incomplete';
 import { allOperationsDrill, operationDrill, type OverviewDrill } from './overview';
 import { phaseSegments } from './phases';
 import { rollupFor } from './traffic';
+import { createViewHistory, parseViewHash, type View } from './wayfinding';
 
 let info = $state<Info | null>(null);
 let sources = $state<Source[]>([]);
@@ -114,6 +115,9 @@ let glossaryReturnFocus: HTMLElement | null = null;
 let connectionTab = $state<'saved' | 'new'>('saved');
 let drawerElement = $state<HTMLElement | undefined>(undefined);
 let drawerReturnFocus: HTMLElement | null = null;
+// One source's data coverage, in its own drawer (opened from the Source menu).
+let coverageSource = $state<{ id: string; label: string } | null>(null);
+let coverageReturnFocus: HTMLElement | null = null;
 // Progressive depth. D0 pulse; D1 ranked "where is it"; D2 evidence for an operation or a list; D3 one record.
 let whereOpen = $state(false);
 let lens = $state<Lens>('requests');
@@ -125,7 +129,16 @@ let autoRan = false;
 // The scope fingerprint of the run in flight; '' when none. Scope changes coalesce into one automatic run through scopeRun.
 let inflightSignature = '';
 const scopeRun = createCoalescer(() => flushScope());
-let evidenceReturnFocus: HTMLElement | null = null;
+// Where the reader was one level up (scroll positions and the control used), so stepping back lands in the same place.
+interface Place { stage: number; page: number; body: number; opener: HTMLElement | null }
+let evidencePlace: Place | null = null;
+let recordPlace: Place | null = null;
+// The address bar follows the screen (see lib/wayfinding.ts). viewReady turns on once a link's view has been rebuilt or ruled out.
+let viewReady = $state(false);
+let applyingView = false;
+let viewRun = 0;
+let initialView: View | null = null;
+let viewHistory: ReturnType<typeof createViewHistory> | null = null;
 
 const connectionSignature = $derived(JSON.stringify([addUri, addUsername, addPassword, addAuthSource, addTLSMode, addCACertificate, savedConnectionId]));
 const maxSources = $derived(info?.limits.maxSources ?? 8);
@@ -194,9 +207,24 @@ const inspectorTabs = $derived(evidenceTabs({
 const activeTab = $derived(inspectorTabs.find(tab => tab.id === inspectorTab)?.id ?? inspectorTabs[0]?.id ?? '');
 const openKey = $derived(operation ? operation.controller + '\u0000' + operation.action + '\u0000' + (operation.kind ?? '') : '');
 const failureCohort = $derived<string[] | null>(operation ? operationGroups.map(group => group.key) : selected ? [selected.key] : null);
+// What the address bar says about the screen. null is the first screen; undefined is a place an address cannot describe (an overview or
+// quality list, a breakdown filter on its own), which leaves the address as it was.
+const currentView = $derived.by((): View | null | undefined => {
+  if (depth === 0) return null;
+  if (depth === 1) return { type: 'where', lens, ...(compare ? { compare: true } : {}) };
+  const above = whereOpen ? { lens } : {};
+  let view: View;
+  if (operation) view = { type: 'op', ...above, controller: operation.controller, action: operation.action, ...(operation.kind ? { opKind: operation.kind } : {}) };
+  else if (queryWide && !drillActive && drillOverview?.label === 'All operations') view = { type: 'all', ...above };
+  else return undefined;
+  if (activeTab) view.tab = activeTab;
+  if (depth === 3 && record) return { ...view, type: 'record', sourceId: record.sourceId, recordId: record.id };
+  return view;
+});
 
 // Registers the effects and the mount work in the order App.svelte declared them. Call once, from App.svelte's script.
 export function startApp() {
+  initialView = typeof location === 'undefined' ? null : parseViewHash(location.hash);
   $effect(() => {
     const signature = connectionSignature;
     if (connectionObservedSignature && connectionObservedSignature !== signature) {
@@ -235,7 +263,10 @@ export function startApp() {
   onMount(() => {
     theme.start(); void initialize();
     window.addEventListener(GLOSSARY_EVENT, onGlossaryRequest);
-    return () => window.removeEventListener(GLOSSARY_EVENT, onGlossaryRequest);
+    viewHistory = createViewHistory(location, history);
+    const onPop = () => { const target = viewHistory?.pop(); if (target !== undefined) void applyView(target); };
+    window.addEventListener('popstate', onPop);
+    return () => { window.removeEventListener(GLOSSARY_EVENT, onGlossaryRequest); window.removeEventListener('popstate', onPop); viewHistory = null; };
   });
 
   $effect(() => {
@@ -269,6 +300,22 @@ export function startApp() {
     investigationNotice = remembered
       ? 'Remembered in this tab. Changes stay until this tab closes.'
       : 'Could not remember these edits in this tab. The explorer remains usable.';
+  });
+
+  // A link that carries a view (a reload or a shared address): rebuild it once the comparison is on screen, or give up when it cannot come.
+  $effect(() => {
+    const ready = viewReady, shown = analysis, failed = error || initError || firstRun;
+    if (ready) return;
+    if (!initialView) { viewReady = true; return; }
+    if (shown) { const wanted = initialView; initialView = null; untrack(() => { void applyView(wanted).then(() => { viewReady = true; }); }); }
+    else if (failed) { initialView = null; viewReady = true; }
+  });
+
+  // The address bar follows the screen: going deeper adds a history step, so the browser's Back (and Esc) climb back up one level at a time.
+  $effect(() => {
+    const view = currentView, ready = viewReady;
+    if (!ready || applyingView || view === undefined) return;
+    untrack(() => { viewHistory?.sync(view); });
   });
 }
 
@@ -673,6 +720,16 @@ export async function closeGlossary() {
   glossaryReturnFocus?.focus();
   glossaryReturnFocus = null;
 }
+export async function closeCoverage() {
+  coverageSource = null;
+  await tick();
+  coverageReturnFocus?.focus();
+  coverageReturnFocus = null;
+}
+export function openCoverage(source: { id: string; label: string }) {
+  coverageReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  coverageSource = source;
+}
 export async function closeSidePanel() {
   sidePanel = null;
   await tick();
@@ -739,7 +796,25 @@ function focusSoon(id: string) { void tick().then(() => document.getElementById(
 function rememberOpener() {
   const active = document.activeElement;
   if (!(active instanceof HTMLElement) || active.closest('.inspector')) return;
-  evidenceReturnFocus = active;
+  evidencePlace = placeNow();
+}
+function placeNow(): Place {
+  const active = document.activeElement;
+  return {
+    stage: document.querySelector('.stage')?.scrollTop ?? 0, page: window.scrollY, body: document.querySelector('.inspector-body')?.scrollTop ?? 0,
+    opener: active instanceof HTMLElement && active !== document.body ? active : null
+  };
+}
+// Puts the scroll positions back and focuses the control that was used, or the heading named when it is gone. Hidden views reset their scroll, so this waits for the redraw.
+async function restorePlace(place: Place | null, fallbackId: string) {
+  await tick();
+  const target = place?.opener?.isConnected ? place.opener : document.getElementById(fallbackId);
+  target?.focus({ preventScroll: true });
+  if (!place) return;
+  const stage = document.querySelector('.stage'), body = document.querySelector('.inspector-body');
+  if (stage) stage.scrollTop = place.stage;
+  if (body) body.scrollTop = place.body;
+  window.scrollTo({ top: place.page });
 }
 export async function openOperation(row: Rollup, key = '') {
   if (!analysis) return;
@@ -752,18 +827,23 @@ export async function openOperation(row: Rollup, key = '') {
   focusSoon('inspector-title');
 }
 // Stops a record that is still loading, so a late response cannot reopen the request view after the user stepped away.
-export function dropRecord() {
+// Going back to the evidence returns to the row that was opened, at the scroll position it was left.
+function releaseRecord(restore: boolean) {
   recordSequence++; recordController?.abort(); recordController = null;
+  const place = recordPlace; recordPlace = null;
+  const wasOpen = record != null || recordLoadingId !== '';
   record = null; recordError = ''; recordLoadingId = '';
+  if (restore && wasOpen) void restorePlace(place, 'inspector-title');
 }
+export function dropRecord() { releaseRecord(true); }
 export function closeInspector() {
   requestController?.abort(); requestSequence++;
-  dropRecord();
+  releaseRecord(false);
   selectedKey = ''; queryWide = false; requestState = ''; drillOverview = null; drill = {}; operation = null; contextAnchor = null;
   requestPage = null; requestRows = []; requestPageNumber = 1; requestError = ''; requestLoading = false;
   record = null; recordError = '';
-  const back = evidenceReturnFocus; evidenceReturnFocus = null;
-  void tick().then(() => { if (back?.isConnected) back.focus(); });
+  const place = evidencePlace; evidencePlace = null;
+  void restorePlace(place, 'where-title');
 }
 export function openWhere(next: Lens) {
   lens = next; whereOpen = true;
@@ -778,8 +858,53 @@ function stepUpOnce() {
 export function goTo(target: number) {
   for (let guard = 0; guard < 4 && depth > target; guard++) stepUpOnce();
 }
+// ---- The address bar (see lib/wayfinding.ts) ----
+async function applyView(view: View | null) {
+  const run = ++viewRun;
+  applyingView = true;
+  try { await settleView(view, run); await tick(); }
+  finally {
+    if (run === viewRun) {
+      applyingView = false;
+      const shown = untrack(() => currentView);
+      if (shown !== undefined) viewHistory?.sync(shown, true);
+    }
+  }
+}
+// Rebuilds a view from an address: the ranked list, then the operation or all-operations list, its tab and one record. What cannot be found is left out.
+async function settleView(view: View | null, run: number) {
+  if (!view) { goTo(0); return; }
+  const found = analysis;
+  if (!found) return;
+  if (view.type === 'where') {
+    goTo(1);
+    if (whereOpen) lens = view.lens ?? lens; else openWhere(view.lens ?? lens);
+    compare = !!view.compare;
+    return;
+  }
+  const wantsOperation = view.controller !== undefined;
+  const rollup = wantsOperation ? (found.rollups ?? []).find(item => item.controller === view.controller && item.action === view.action && (!view.opKind || item.kind === view.opKind)) : undefined;
+  if (wantsOperation && !rollup) { await settleView(view.lens ? { type: 'where', lens: view.lens } : null, run); return; }
+  const inPlace = rollup
+    ? operation != null && operation.controller === rollup.controller && operation.action === rollup.action && operation.kind === rollup.kind
+    : operation == null && queryWide && !drillActive && drillOverview?.label === 'All operations';
+  if (inPlace) goTo(2);
+  else {
+    whereOpen = view.lens !== undefined;
+    if (view.lens) lens = view.lens;
+    if (rollup) await openOperation(rollup); else await openComparison();
+    if (run !== viewRun) return;
+  }
+  if (view.tab && inspectorTabs.some(tab => tab.id === view.tab)) inspectorTab = view.tab;
+  if (view.type === 'record' && view.sourceId && view.recordId) await loadRecord(view.sourceId, view.recordId);
+}
 export function onWindowKey(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || event.defaultPrevented || connectionsOpen || glossaryOpen || sidePanel) return;
+  if (event.key !== 'Escape' || event.defaultPrevented) return;
+  // A drawer closes on Esc even when focus is on the page itself (after a click on the page behind it); one with focus inside handles its own Esc.
+  if (glossaryOpen) { void closeGlossary(); return; }
+  if (coverageSource) { void closeCoverage(); return; }
+  if (sidePanel) { void closeSidePanel(); return; }
+  if (connectionsOpen) { void closeConnections(); return; }
   const target = event.target;
   if (target instanceof HTMLElement && (target.tagName === 'SELECT' || target.closest('.popover'))) return;
   // An open menu or the filters panel closes first; only then does Esc step one level up.
@@ -884,11 +1009,15 @@ export async function loadRequests(cursor: string, pageNumber: number) {
   } finally { if (run === requestSequence) requestLoading = false; }
 }
 export async function showRecord(row: RequestRecord) {
+  if (record == null) recordPlace = placeNow();
+  await loadRecord(row.sourceId, row.id);
+}
+async function loadRecord(sourceId: string, id: string) {
   recordController?.abort(); recordController = new AbortController();
   const run = ++recordSequence;
-  recordError = ''; record = null; recordLoadingId = row.id;
+  recordError = ''; record = null; recordLoadingId = id;
   try {
-    const result = await api.record(row.sourceId, row.id, recordController.signal);
+    const result = await api.record(sourceId, id, recordController.signal);
     if (run === recordSequence) record = result;
   }
   catch (cause) { if (run === recordSequence && !(cause instanceof DOMException && cause.name === 'AbortError')) recordError = message(cause); }
@@ -997,7 +1126,8 @@ export const panels = {
   get glossaryTerm() { return glossaryTerm; }, set glossaryTerm(value) { glossaryTerm = value; },
   get connectionTab() { return connectionTab; }, set connectionTab(value) { connectionTab = value; },
   get drawerElement() { return drawerElement; }, set drawerElement(value) { drawerElement = value; },
-  get modalOpen() { return connectionsOpen || glossaryOpen || sidePanel != null; }
+  get coverage() { return coverageSource; },
+  get modalOpen() { return connectionsOpen || glossaryOpen || sidePanel != null || coverageSource != null; }
 };
 
 // The Connections drawer form, recent connections and source profile changes.
