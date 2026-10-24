@@ -197,6 +197,14 @@ func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 		h.schema(w, r, strings.TrimSuffix(strings.TrimPrefix(route, "/api/sources/"), "/schema"))
 		return
 	}
+	if strings.HasPrefix(route, "/api/sources/") && strings.HasSuffix(route, "/coverage") {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		h.coverage(w, r, strings.TrimSuffix(strings.TrimPrefix(route, "/api/sources/"), "/coverage"))
+		return
+	}
 	if strings.HasPrefix(route, "/api/sources/") && r.Method == http.MethodDelete {
 		h.deleteSource(w, r, strings.TrimPrefix(route, "/api/sources/"))
 		return
