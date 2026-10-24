@@ -10,7 +10,7 @@ export default defineConfig(({ command }) => {
     transformIndexHtml(html: string) {
       if (!token) return html;
       const safeToken = token.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;');
-      return html.replace('<meta name="audit-session" content="">', '<meta name="audit-session" content="' + safeToken + '">');
+      return html.replace(/<meta name="audit-session" content=""\s*\/?>/, '<meta name="audit-session" content="' + safeToken + '" />');
     }
   };
   return {
