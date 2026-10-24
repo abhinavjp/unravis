@@ -17,7 +17,7 @@
     <tbody>
       {#each rows as row (row.sourceId + row.id)}
         <tr>
-          <td>{time(row.initiatedAt)}</td><td>{sourceLabels.get(row.sourceId) ?? row.sourceId}</td><td><strong>{row.controller}.{row.action}</strong><small>{row.url}</small></td>
+          <td>{time(row.initiatedAt)}<small class="drawer-only">{sourceLabels.get(row.sourceId) ?? row.sourceId}</small></td><td>{sourceLabels.get(row.sourceId) ?? row.sourceId}</td><td><strong>{row.controller}.{row.action}</strong><small>{row.url}</small></td>
           <td>{row.status || 'N/A'}<small>{row.outcome}{#if row.state} · <span class={'state-badge state-' + row.state}>{stateLabel(row.state)}</span>{/if}</small></td><td><code class="record-id" title={row.id}>{row.id}</code></td><td>{number(row.durationMs)}</td><td>{number(row.apiTimeMs)}</td>
           <td>{number(row.auditCreateTimeMs)}</td><td>{row.userId ?? 'N/A'}</td><td>{row.uiVersion || 'N/A'}</td>
           <td><button class="secondary-button" disabled={!row.initiatedAt} onclick={() => onContext(row)}>Nearby activity</button> <button class="quiet-button payload-button" aria-label={'Inspect record ' + row.id} disabled={recordId === row.id} onclick={() => onInspect(row)}>{recordId === row.id ? 'Loading…' : 'Inspect'}</button></td>
