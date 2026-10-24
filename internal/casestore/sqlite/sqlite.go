@@ -486,7 +486,7 @@ func (s *Store) load(ctx context.Context, id casestore.CaseID) (*caseState, erro
 		keys.Zero()
 		return nil, err
 	}
-	st := &caseState{s: s, id: id, dir: dir, db: db, keys: keys, man: man, refs: 1}
+	st := &caseState{s: s, id: id, dir: dir, db: db, keys: keys, man: man, refs: 1, stop: make(chan struct{})}
 	if err := (&Case{caseState: st}).verify(ctx); err != nil {
 		_ = db.Close()
 		keys.Zero()

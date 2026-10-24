@@ -111,6 +111,11 @@ type ImportMeta struct {
 	// the allowlist holds even when run does not go through importer.Collect.
 	// When nil only the generic bounds are checked (count, key and value size).
 	AllowedAttrs map[string]bool
+	// Supplied holds the owner-supplied settings for this import, already checked
+	// against the importer's declared keys (importer.ValidateSupplied). The store
+	// keeps them with the import record and the manifest, bounds their shape
+	// (CleanSupplied) and never logs them.
+	Supplied map[string]string
 }
 
 // Import outcomes for ImportRecord.Status.
@@ -131,6 +136,9 @@ type ImportRecord struct {
 	Imported                   time.Time
 	Status                     string          // StatusOK, StatusQuarantined or StatusDuplicate
 	Reason                     importer.Reason // set when Status is not ok
+	// Supplied is what the owner supplied for this import (nil when nothing).
+	// Imports made before the setting existed read back as nil.
+	Supplied map[string]string
 }
 
 type ImportResult struct {
@@ -162,10 +170,67 @@ type Quarantiner interface {
 // EventQuery selects events. Empty Kinds, Sources or Hosts match everything.
 // Window is applied to Event.Start, inclusive. Results are ordered by Start,
 // then EvidenceID. Limit is clamped to 1..MaxEventQuery; 0 means MaxEventQuery.
+//
+// Case.Each ignores Limit and reads MaxScan and MaxScanTime instead.
 type EventQuery struct {
 	Window                importer.Window
 	Kinds, Sources, Hosts []string
 	Limit                 int // Limit <= 50 000
+
+	// MaxScan and MaxScanTime lower the scan budget of one Each call. Zero, or a
+	// value above the default, means MaxScanEvents / MaxScanTime.
+	MaxScan     int64
+	MaxScanTime time.Duration
+}
+
+// Scan budget of one Case.Each call (plan section 4.1): 20 million events or
+// 10 seconds, whichever comes first. Past it Each stops with ErrScanBudget and
+// the events already delivered are a valid partial result.
+const (
+	MaxScanEvents          = 20_000_000
+	MaxScanTime            = 10 * time.Second
+	scanTimeCheckInterval  = 256
+	handleCheckEventsEvery = 256
+)
+
+// ScanBudget counts the events of one Each call against the budget.
+type ScanBudget struct {
+	max     int64
+	limit   time.Duration
+	started time.Time
+	n       int64
+}
+
+// NewScanBudget starts the budget for one Each call, applying q's lower limits.
+func (q EventQuery) NewScanBudget() *ScanBudget {
+	b := &ScanBudget{max: MaxScanEvents, limit: MaxScanTime, started: time.Now()}
+	if q.MaxScan > 0 && q.MaxScan < b.max {
+		b.max = q.MaxScan
+	}
+	if q.MaxScanTime > 0 && q.MaxScanTime < b.limit {
+		b.limit = q.MaxScanTime
+	}
+	return b
+}
+
+// Duration is the time allowed in total.
+func (b *ScanBudget) Duration() time.Duration { return b.limit }
+
+// Scanned is how many events were admitted so far.
+func (b *ScanBudget) Scanned() int64 { return b.n }
+
+// Admit is called before each event is delivered. It returns ErrScanBudget when
+// delivering this event would pass the event or time budget: exactly max events
+// complete normally and the next one is refused.
+func (b *ScanBudget) Admit() error {
+	if b.n >= b.max {
+		return ErrScanBudget
+	}
+	if b.n%scanTimeCheckInterval == 0 && time.Since(b.started) > b.limit {
+		return ErrScanBudget
+	}
+	b.n++
+	return nil
 }
 
 // RunFunc is the importer side of an Import: it reads r, calls emit for every
@@ -209,6 +274,20 @@ type Case interface {
 	Import(ctx context.Context, meta ImportMeta, body io.Reader, run RunFunc) (ImportResult, error)
 	Imports(ctx context.Context) ([]ImportRecord, error)
 	Events(ctx context.Context, q EventQuery) ([]evidence.Event, error)
+	// Each streams the events q selects to fn, one at a time, without the
+	// MaxEventQuery cap (q.Limit is ignored). Order is by kind, then Start, so a
+	// caller must not rely on a global time order. The window is inclusive.
+	// fn gets its own copy of the event. The scan is bounded by the scan budget
+	// (MaxScanEvents / MaxScanTime, lowered by q.MaxScan / q.MaxScanTime).
+	// Return values:
+	//   - nil: every matching event was delivered;
+	//   - ErrScanBudget: the budget stopped the scan; the events delivered so far
+	//     are valid and the result is partial;
+	//   - fn's error, unchanged, which stops the scan;
+	//   - ctx's error;
+	//   - ErrHandleClosed or ErrNotFound, also when the case is erased while the
+	//     scan runs (noticed within handleCheckEventsEvery events).
+	Each(ctx context.Context, q EventQuery, fn func(evidence.Event) error) error
 	Pseudonymize(kind, value string) string // HMAC with the case pseudonym key -> "user-xxxx"
 	Close() error
 }
@@ -229,7 +308,47 @@ var (
 	// ErrDuplicateEvent is returned when an import emits an evidence ID the
 	// case already holds, or one twice.
 	ErrDuplicateEvent = errors.New("duplicate evidence id")
+	// ErrScanBudget is what Each returns when the scan budget stopped it.
+	ErrScanBudget = errors.New("scan budget reached")
+	// ErrBadSupplied is returned by Import when ImportMeta.Supplied is malformed
+	// (too many keys, a bad key, or a value that is too long or not plain text).
+	// It never carries the key or the value.
+	ErrBadSupplied = errors.New("invalid supplied settings")
 )
+
+// CleanSupplied checks the shape of a supplied-settings map and returns a copy:
+// at most importer.MaxSuppliedKeys keys, each a valid key, each value plain
+// text of 1..importer.MaxSuppliedValue bytes. Whether a key or value is
+// accepted by an importer is importer.ValidateSupplied's job; this is the
+// store's own bound. An empty map gives nil.
+func CleanSupplied(m map[string]string) (map[string]string, error) {
+	if len(m) == 0 {
+		return nil, nil
+	}
+	if len(m) > importer.MaxSuppliedKeys {
+		return nil, ErrBadSupplied
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		if !importer.ValidSuppliedKey(k) || !importer.ValidSuppliedText(v) {
+			return nil, ErrBadSupplied
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
+// copySupplied returns an independent copy of m (nil stays nil).
+func copySupplied(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
 
 // DuplicateError carries the import that already holds the same bytes.
 type DuplicateError struct{ Existing ImportRecord }
