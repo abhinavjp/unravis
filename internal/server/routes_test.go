@@ -45,6 +45,12 @@ var routeCases = []routeCase{
 	{"/api/payload", "/api/payload", "POST"},
 	{"/api/record", "/api/record", "POST"},
 	{"/api/export", "/api/export", "POST"},
+	{"/api/cases", "/api/cases", "GET, POST"},
+	{"/api/cases/{id}/close", "/api/cases/c1/close", "POST"},
+	{"/api/cases/{id}/imports", "/api/cases/c1/imports", "GET, POST"},
+	{"/api/cases/{id}/events", "/api/cases/c1/events", "GET"},
+	{"/api/cases/{id}", "/api/cases/c1", "DELETE"},
+	{"/api/hosts", "/api/hosts", "GET, PUT"},
 }
 
 var routeTestMethods = []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete}
@@ -134,6 +140,11 @@ func TestUnknownRoutesAre404NotMethodErrors(t *testing.T) {
 		"/api/ledger/h1/other",
 		"/api/ledger/h1/reuse/more",
 		"/api/session-proof/x",
+		"/api/cases/",
+		"/api/cases/c1/other",
+		"/api/cases/c1/imports/more",
+		"/api/cases/c1/close/more",
+		"/api/hosts/x",
 	} {
 		for _, method := range routeTestMethods {
 			res := request(h, method, path, "", true)

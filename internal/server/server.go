@@ -46,6 +46,8 @@ type handler struct {
 	proofs  connectionTestLimiter
 	repeats analyzeRepeats
 
+	casesState
+
 	exportOnce  sync.Once
 	exportStore *exportStore
 }

@@ -1,0 +1,974 @@
+package server
+
+import (
+	"bufio"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"hash"
+	"io"
+	"mime"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/evidence"
+	"api-audit-explorer/internal/hosts"
+	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/ledger"
+)
+
+// Limits of the case routes.
+const (
+	// uploadSlack is added to the byte cap of a file for the multipart framing
+	// (boundaries, headers and the small form fields).
+	uploadSlack = 1 << 20
+	// maxAckText bounds the acknowledged banner text.
+	maxAckText = 8 << 10
+	// maxFileNameBytes bounds the display name kept for an upload.
+	maxFileNameBytes = 128
+	// maxEventFilters bounds the values of one event filter.
+	maxEventFilters = 50
+	// erasedReference replaces a reference to an erased case in the ledger. It
+	// has the shape of an evidence ID so the entry stays editable.
+	erasedReference = "erased-case-evidence"
+)
+
+// errPreviewDone ends a preview import after a full, successful parse. The store
+// stores nothing when the run function returns an error, so this is the
+// roll-back.
+var errPreviewDone = errors.New("preview complete")
+
+// casesState is the part of the handler that the case routes use. It is a
+// separate struct so server.go needs one line for it.
+type casesState struct {
+	cases     casestore.Store
+	registry  *importer.Registry
+	hostsSave func(*hosts.Map) error
+	gates     caseGates
+	maxUpload int64 // test hook: replaces the computed upload cap when > 0
+
+	hostsMu sync.RWMutex
+	hostMap *hosts.Map
+}
+
+// WithCases attaches the case store, the host map and the importer registry.
+// Without it the case and host routes answer 503. hostMap may be nil (no hosts
+// yet); PUT /api/hosts replaces it when WithHostsSaver is also given.
+func WithCases(store casestore.Store, hostMap *hosts.Map, registry *importer.Registry) Option {
+	return func(h *handler) {
+		h.cases, h.hostMap, h.registry = store, hostMap, registry
+	}
+}
+
+// WithHostsSaver sets how PUT /api/hosts persists a new host map (the sealed
+// hosts file). Without it PUT answers 503 hosts-readonly.
+func WithHostsSaver(save func(*hosts.Map) error) Option {
+	return func(h *handler) { h.hostsSave = save }
+}
+
+// caseSubpath matches /api/cases/{id}<suffix> where {id} is one non-empty path
+// segment (no slash, even after decoding) and returns it. The id is not
+// validated here; the handler does that before anything else.
+func caseSubpath(suffix string) func(string) (string, bool) {
+	return func(path string) (string, bool) {
+		rest, ok := strings.CutPrefix(path, "/api/cases/")
+		if !ok {
+			return "", false
+		}
+		id, ok := strings.CutSuffix(rest, suffix)
+		if !ok || id == "" || strings.Contains(id, "/") {
+			return "", false
+		}
+		return id, true
+	}
+}
+
+// caseGates serialises imports (and erase) per case.
+type caseGates struct {
+	mu sync.Mutex
+	m  map[casestore.CaseID]*caseGate
+}
+
+type caseGate struct {
+	ch   chan struct{}
+	refs int
+}
+
+func (g *caseGates) acquire(ctx context.Context, id casestore.CaseID) (func(), error) {
+	g.mu.Lock()
+	if g.m == nil {
+		g.m = map[casestore.CaseID]*caseGate{}
+	}
+	gate := g.m[id]
+	if gate == nil {
+		gate = &caseGate{ch: make(chan struct{}, 1)}
+		g.m[id] = gate
+	}
+	gate.refs++
+	g.mu.Unlock()
+	leave := func() {
+		g.mu.Lock()
+		gate.refs--
+		if gate.refs == 0 {
+			delete(g.m, id)
+		}
+		g.mu.Unlock()
+	}
+	select {
+	case gate.ch <- struct{}{}:
+	case <-ctx.Done():
+		leave()
+		return nil, ctx.Err()
+	}
+	return func() {
+		<-gate.ch
+		leave()
+	}, nil
+}
+
+// caseFailure is the JSON body of a refused case request. Reason is a fixed
+// word (an importer Reason or an API reason); no field ever holds file content.
+type caseFailure struct {
+	Error    string `json:"error"`
+	Reason   string `json:"reason,omitempty"`
+	Column   string `json:"column,omitempty"`
+	ImportID int64  `json:"importId,omitempty"`
+}
+
+func writeCaseFailure(w http.ResponseWriter, status int, reason, message string) {
+	writeJSON(w, status, caseFailure{Error: message, Reason: reason}, 4096)
+}
+
+func (h *handler) casesAvailable(w http.ResponseWriter) bool {
+	if h.cases == nil {
+		writeCaseFailure(w, http.StatusServiceUnavailable, "cases-unavailable", "Cases are unavailable.")
+		return false
+	}
+	return true
+}
+
+// caseIDOf validates the id from the path before anything else uses it.
+func caseIDOf(w http.ResponseWriter, raw string) (casestore.CaseID, bool) {
+	id, err := casestore.ParseID(raw)
+	if err != nil {
+		writeCaseFailure(w, http.StatusBadRequest, "bad-case-id", "That is not a case id.")
+		return "", false
+	}
+	return id, true
+}
+
+// writeStoreError maps a store failure outside an import.
+func writeStoreError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, casestore.ErrNotFound):
+		writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
+	case errors.Is(err, casestore.ErrBadID):
+		writeCaseFailure(w, http.StatusBadRequest, "bad-case-id", "That is not a case id.")
+	case errors.Is(err, context.Canceled):
+		writeCaseFailure(w, http.StatusBadRequest, "canceled", "The request was canceled.")
+	case errors.Is(err, context.DeadlineExceeded):
+		writeCaseFailure(w, http.StatusGatewayTimeout, "timeout", "The request timed out.")
+	default:
+		writeCaseFailure(w, http.StatusInternalServerError, "store-error", "The case store could not complete the request.")
+	}
+}
+
+/* ---------------------------------------------------------------- DTOs */
+
+type caseDTO struct {
+	ID      string     `json:"id"`
+	Title   string     `json:"title"`
+	Created time.Time  `json:"created"`
+	Closed  *time.Time `json:"closed"`
+	Bytes   int64      `json:"bytes"`
+	Imports int        `json:"imports"`
+}
+
+func toCaseDTO(c casestore.CaseInfo) caseDTO {
+	d := caseDTO{ID: string(c.ID), Title: c.Title, Created: c.Created.UTC(), Bytes: c.Bytes, Imports: c.Imports}
+	if c.Closed != nil {
+		t := c.Closed.UTC()
+		d.Closed = &t
+	}
+	return d
+}
+
+type importRecordDTO struct {
+	ID        int64                  `json:"id"`
+	Importer  string                 `json:"importer"`
+	FileName  string                 `json:"fileName"`
+	SHA256    string                 `json:"sha256"`
+	Bytes     int64                  `json:"bytes"`
+	Rows      int64                  `json:"rows"`
+	Rejected  int64                  `json:"rejected"`
+	HostLabel string                 `json:"hostLabel"`
+	TZRule    string                 `json:"tzRule"`
+	Quality   evidence.SourceQuality `json:"quality"`
+	KnownGaps []string               `json:"knownGaps"`
+	Imported  time.Time              `json:"imported"`
+	Status    string                 `json:"status"`
+	Reason    string                 `json:"reason,omitempty"`
+}
+
+func toRecordDTO(r casestore.ImportRecord) importRecordDTO {
+	gaps := r.KnownGaps
+	if gaps == nil {
+		gaps = []string{}
+	}
+	status := r.Status
+	if status == "" {
+		status = casestore.StatusOK
+	}
+	return importRecordDTO{
+		ID: r.ID, Importer: r.Importer, FileName: r.FileName, SHA256: r.SHA256, Bytes: r.Bytes, Rows: r.Rows,
+		Rejected: r.Rejected, HostLabel: r.HostLabel, TZRule: r.TZRule, Quality: r.Quality, KnownGaps: gaps,
+		Imported: r.Imported.UTC(), Status: status, Reason: string(r.Reason),
+	}
+}
+
+type rowErrorDTO struct {
+	Line   int64  `json:"line"`
+	Reason string `json:"reason"`
+}
+
+type reportDTO struct {
+	Importer      string                 `json:"importer"`
+	Rows          int64                  `json:"rows"`
+	Emitted       int64                  `json:"emitted"`
+	Rejected      int64                  `json:"rejected"`
+	Errors        []rowErrorDTO          `json:"errors"`
+	ObservedHosts []string               `json:"observedHosts"`
+	First         *time.Time             `json:"first"`
+	Last          *time.Time             `json:"last"`
+	Quality       evidence.SourceQuality `json:"quality"`
+	FieldRules    map[string]string      `json:"fieldRules"`
+	KnownGaps     []string               `json:"knownGaps"`
+}
+
+func toReportDTO(r importer.Report) *reportDTO {
+	d := &reportDTO{
+		Importer: r.Importer, Rows: r.Rows, Emitted: r.Emitted, Rejected: r.Rejected,
+		Errors: []rowErrorDTO{}, ObservedHosts: []string{}, Quality: r.Quality,
+		FieldRules: map[string]string{}, KnownGaps: []string{},
+	}
+	for i, e := range r.Errors {
+		if i >= importer.MaxReportErrors {
+			break
+		}
+		d.Errors = append(d.Errors, rowErrorDTO{Line: e.Line, Reason: string(e.Reason)})
+	}
+	d.ObservedHosts = append(d.ObservedHosts, r.ObservedHosts...)
+	for k, v := range r.FieldRules {
+		d.FieldRules[k] = v
+	}
+	d.KnownGaps = append(d.KnownGaps, r.KnownGaps...)
+	if !r.First.IsZero() {
+		t := r.First.UTC()
+		d.First = &t
+	}
+	if !r.Last.IsZero() {
+		t := r.Last.UTC()
+		d.Last = &t
+	}
+	return d
+}
+
+// importAnswer is what a preview or a commit answers.
+type importAnswer struct {
+	Importer string           `json:"importer"`
+	Score    int              `json:"score"`
+	Tied     []string         `json:"tied"`
+	Report   *reportDTO       `json:"report"`
+	Record   *importRecordDTO `json:"record"`
+}
+
+type eventDTO struct {
+	EvidenceID string            `json:"evidenceId"`
+	Source     string            `json:"source"`
+	Kind       string            `json:"kind"`
+	Host       string            `json:"host"`
+	Start      time.Time         `json:"start"`
+	End        time.Time         `json:"end"`
+	DurationMs *float64          `json:"durationMs"`
+	Value      *float64          `json:"value"`
+	Unit       string            `json:"unit"`
+	Severity   string            `json:"severity"`
+	Line       int64             `json:"line"`
+	TZRule     string            `json:"tzRule"`
+	Attrs      map[string]string `json:"attrs"`
+}
+
+func toEventDTO(e evidence.Event) eventDTO {
+	attrs := make(map[string]string, len(e.Attrs))
+	for k, v := range e.Attrs {
+		attrs[k] = v
+	}
+	return eventDTO{
+		EvidenceID: e.EvidenceID, Source: e.Source, Kind: e.Kind, Host: e.Host, Start: e.Start.UTC(), End: e.End.UTC(),
+		DurationMs: e.DurationMs, Value: e.Value, Unit: e.Unit, Severity: e.Severity, Line: e.Line, TZRule: e.TZRule, Attrs: attrs,
+	}
+}
+
+/* ---------------------------------------------------------------- cases */
+
+func (h *handler) listCases(w http.ResponseWriter, r *http.Request) {
+	if !h.casesAvailable(w) {
+		return
+	}
+	items, err := h.cases.List(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	out := make([]caseDTO, 0, len(items))
+	for _, c := range items {
+		out = append(out, toCaseDTO(c))
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Cases []caseDTO `json:"cases"`
+	}{out}, maxResponseBytes)
+}
+
+func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
+	if !h.casesAvailable(w) {
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	if !casestore.ValidTitle(title) {
+		writeCaseFailure(w, http.StatusBadRequest, "bad-title", "The title is empty, too long or holds control characters.")
+		return
+	}
+	info, err := h.cases.Create(r.Context(), title)
+	if err != nil {
+		if errors.Is(err, casestore.ErrBadTitle) {
+			writeCaseFailure(w, http.StatusBadRequest, "bad-title", "The title is empty, too long or holds control characters.")
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, toCaseDTO(info), maxResponseBytes)
+}
+
+// openCase opens the case for one request. The caller closes the handle.
+func (h *handler) openCase(w http.ResponseWriter, r *http.Request, raw string) (casestore.CaseID, casestore.Case, bool) {
+	id, ok := caseIDOf(w, raw)
+	if !ok {
+		return "", nil, false
+	}
+	if !h.casesAvailable(w) {
+		return "", nil, false
+	}
+	c, err := h.cases.Open(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return "", nil, false
+	}
+	return id, c, true
+}
+
+func (h *handler) closeCase(w http.ResponseWriter, r *http.Request, raw string) {
+	id, ok := caseIDOf(w, raw)
+	if !ok || !h.casesAvailable(w) {
+		return
+	}
+	if err := h.cases.CloseCase(r.Context(), id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	c, err := h.cases.Open(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	defer c.Close()
+	writeJSON(w, http.StatusOK, toCaseDTO(c.Info()), maxResponseBytes)
+}
+
+func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) {
+	id, ok := caseIDOf(w, raw)
+	if !ok || !h.casesAvailable(w) {
+		return
+	}
+	var body struct {
+		Confirm string `json:"confirm"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Confirm != string(id) {
+		writeCaseFailure(w, http.StatusBadRequest, "confirm-mismatch", "The confirmation does not match the case id.")
+		return
+	}
+	// An import in flight finishes before the case is erased.
+	release, err := h.gates.acquire(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	defer release()
+	if err := h.cases.Erase(r.Context(), id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	// Erase is idempotent, so a retry after a ledger failure completes the job.
+	if stripper, ok := h.ledger.(ledger.Stripper); ok && h.ledger != nil {
+		if _, err := stripper.StripEvidence(evidence.CasePrefixes(string(id)), erasedReference); err != nil {
+			writeCaseFailure(w, http.StatusInternalServerError, "ledger-not-stripped", "The case was erased but the ledger could not be updated. Erase it again to retry.")
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+/* ---------------------------------------------------------------- imports */
+
+func (h *handler) listImports(w http.ResponseWriter, r *http.Request, raw string) {
+	_, c, ok := h.openCase(w, r, raw)
+	if !ok {
+		return
+	}
+	defer c.Close()
+	records, err := c.Imports(r.Context())
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	out := make([]importRecordDTO, 0, len(records))
+	for _, rec := range records {
+		out = append(out, toRecordDTO(rec))
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Imports []importRecordDTO `json:"imports"`
+	}{out}, maxResponseBytes)
+}
+
+// baseName reduces an upload name to a display-only base name: the part after
+// the last separator, with control and formatting characters, "..", and the
+// characters Windows forbids removed. It is never used in a path.
+func baseName(name string) string {
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
+		name = name[i+1:]
+	}
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r == utf8.RuneError, unicode.IsControl(r), unicode.Is(unicode.Cf, r), unicode.Is(unicode.Zl, r), unicode.Is(unicode.Zp, r):
+			continue
+		case strings.ContainsRune(`:*?"<>|`, r):
+			continue
+		}
+		b.WriteRune(r)
+	}
+	out := b.String()
+	for strings.Contains(out, "..") {
+		out = strings.ReplaceAll(out, "..", "")
+	}
+	out = strings.Trim(out, " .")
+	if len(out) > maxFileNameBytes {
+		cut := maxFileNameBytes
+		for cut > 0 && !utf8.RuneStart(out[cut]) {
+			cut--
+		}
+		out = out[:cut]
+	}
+	if out == "" {
+		return "upload"
+	}
+	return out
+}
+
+// uploadCap is the most bytes one import request may carry: the byte cap of the
+// file plus the multipart framing. Before the importer is known it is the
+// largest cap of any importer.
+func (h *handler) uploadCap(imp importer.Importer) int64 {
+	if h.maxUpload > 0 {
+		return h.maxUpload
+	}
+	file := casestore.DefaultCaps.MaxFileBytes
+	if imp != nil {
+		if m := imp.DefaultLimits().MaxBytes; m > 0 && m < file {
+			file = m
+		}
+	} else if h.registry != nil {
+		var largest int64
+		for _, name := range h.registry.Names() {
+			if i, ok := h.registry.ByName(name); ok {
+				if m := i.DefaultLimits().MaxBytes; m > largest {
+					largest = m
+				}
+			}
+		}
+		if largest > 0 && largest < file {
+			file = largest
+		}
+	}
+	return file + uploadSlack
+}
+
+// hostsNow is the host map as of this request.
+func (h *handler) hostsNow() *hosts.Map {
+	h.hostsMu.RLock()
+	defer h.hostsMu.RUnlock()
+	return h.hostMap
+}
+
+// trackedReader remembers the first read error so the handler can tell a body
+// that was too large from a failure inside the importer.
+type trackedReader struct {
+	r   io.Reader
+	err error
+}
+
+func (t *trackedReader) Read(p []byte) (int, error) {
+	n, err := t.r.Read(p)
+	if err != nil && err != io.EOF && t.err == nil {
+		t.err = err
+	}
+	return n, err
+}
+
+func randomNonce() (string, error) {
+	var b [16]byte
+	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// importRun builds the importer side of one import. preview parses the whole
+// file, hashes it, and ends with errPreviewDone so the store keeps nothing.
+func importRun(ctx context.Context, imp importer.Importer, opts importer.Options, preview bool, sum *string) casestore.RunFunc {
+	return func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
+		var hasher hash.Hash
+		if preview {
+			hasher = sha256.New()
+			r = io.TeeReader(r, hasher)
+		}
+		body, opts, err := importer.Prepare(imp, r, opts)
+		if err != nil {
+			return importer.Report{Importer: imp.Name()}, err
+		}
+		// A run that swallows an emit error must still fail.
+		var emitErr error
+		wrapped := func(ev evidence.Event) error {
+			if err := emit(ev); err != nil {
+				if emitErr == nil {
+					emitErr = err
+				}
+				return err
+			}
+			return nil
+		}
+		rep, err := imp.Parse(ctx, body, opts, wrapped)
+		if rep.Importer == "" {
+			rep.Importer = imp.Name()
+		}
+		if err == nil {
+			err = emitErr
+		}
+		if err == nil {
+			err = importer.Finish(rep, opts.Limits)
+		}
+		if err != nil {
+			return rep, err
+		}
+		if preview {
+			if _, err := io.Copy(io.Discard, r); err != nil {
+				return rep, err
+			}
+			*sum = hex.EncodeToString(hasher.Sum(nil))
+			return rep, errPreviewDone
+		}
+		return rep, nil
+	}
+}
+
+func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string) {
+	id, c, ok := h.openCase(w, r, raw)
+	if !ok {
+		return
+	}
+	defer c.Close()
+	if h.registry == nil {
+		writeCaseFailure(w, http.StatusServiceUnavailable, "cases-unavailable", "Cases are unavailable.")
+		return
+	}
+	if c.Info().Closed != nil {
+		writeCaseFailure(w, http.StatusConflict, "case-closed", "The case is closed. Nothing can be imported into it.")
+		return
+	}
+	query := r.URL.Query()
+	preview := query.Get("preview") == "1"
+	var imp importer.Importer
+	if name := query.Get("importer"); name != "" {
+		found, ok := h.registry.ByName(name)
+		if !ok {
+			writeCaseFailure(w, http.StatusBadRequest, "unknown-importer", "That importer is not available.")
+			return
+		}
+		imp = found
+	} else if !preview {
+		writeCaseFailure(w, http.StatusBadRequest, "importer-required", "Choose an importer before importing.")
+		return
+	}
+	var hint *importer.HostHint
+	if label := query.Get("host"); label != "" {
+		found, ok := h.hostsNow().Lookup(label)
+		if !ok {
+			writeCaseFailure(w, http.StatusUnprocessableEntity, string(importer.ReasonUnknownHost), importer.ReasonUnknownHost.Text())
+			return
+		}
+		hint = &found
+	}
+	limit := h.uploadCap(imp)
+	if r.ContentLength > limit {
+		writeCaseFailure(w, http.StatusRequestEntityTooLarge, "request-too-large", "The upload is larger than the cap.")
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "multipart/form-data" {
+		writeCaseFailure(w, http.StatusUnsupportedMediaType, "not-multipart", "Content-Type must be multipart/form-data.")
+		return
+	}
+	release, err := h.gates.acquire(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	defer release()
+
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	form, err := r.MultipartReader()
+	if err != nil {
+		writeCaseFailure(w, http.StatusBadRequest, "bad-form", "The upload is not a valid multipart form.")
+		return
+	}
+	var ackGating bool
+	var ackText string
+	for {
+		part, err := form.NextPart()
+		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				writeCaseFailure(w, http.StatusRequestEntityTooLarge, "request-too-large", "The upload is larger than the cap.")
+				return
+			}
+			if err == io.EOF {
+				writeCaseFailure(w, http.StatusBadRequest, "file-missing", "The upload has no file.")
+				return
+			}
+			writeCaseFailure(w, http.StatusBadRequest, "bad-form", "The upload is not a valid multipart form.")
+			return
+		}
+		switch part.FormName() {
+		case "ackGating", "ackText":
+			value, err := io.ReadAll(io.LimitReader(part, maxAckText+1))
+			if err != nil || len(value) > maxAckText {
+				writeCaseFailure(w, http.StatusBadRequest, "bad-form", "A form field is invalid.")
+				return
+			}
+			if part.FormName() == "ackGating" {
+				ackGating = string(value) == "true"
+			} else {
+				ackText = string(value)
+			}
+		case "file":
+			h.importFile(w, r, id, c, imp, hint, part, preview, ackGating, ackText, baseName(part.FileName()))
+			return
+		default:
+			writeCaseFailure(w, http.StatusBadRequest, "bad-form", "The upload has a field the server does not know.")
+			return
+		}
+	}
+}
+
+// importFile runs one uploaded file. The acknowledgement must already have
+// arrived: it travels in the fields before the file, so a refusal needs no read
+// of the file, and the body is streamed, never spilled to disk.
+func (h *handler) importFile(w http.ResponseWriter, r *http.Request, id casestore.CaseID, c casestore.Case, imp importer.Importer, hint *importer.HostHint, part io.Reader, preview, ackGating bool, ackText, fileName string) {
+	if !preview && (!ackGating || ackText == "") {
+		writeCaseFailure(w, http.StatusBadRequest, "ack-required", "Send ackGating and ackText before the file.")
+		return
+	}
+	tracked := &trackedReader{r: part}
+	var body io.Reader = tracked
+	answer := importAnswer{Tied: []string{}}
+	if imp == nil {
+		// Preview without an importer: detect it from the first 64 KiB.
+		br := bufio.NewReaderSize(tracked, importer.HeadSize)
+		head, err := br.Peek(importer.HeadSize)
+		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, bufio.ErrBufferFull) {
+			h.writeImportError(w, err, tracked, casestore.ImportResult{})
+			return
+		}
+		if err := importer.Sniff(head); err != nil {
+			h.writeImportError(w, err, tracked, casestore.ImportResult{})
+			return
+		}
+		best, score, tied := h.registry.Detect(head, fileName)
+		if best == nil {
+			writeCaseFailure(w, http.StatusUnprocessableEntity, string(importer.ReasonUnsupportedFormat), importer.ReasonUnsupportedFormat.Text())
+			return
+		}
+		answer.Score = score
+		if tied != nil {
+			answer.Tied = tied
+			writeJSON(w, http.StatusOK, answer, maxResponseBytes)
+			return
+		}
+		imp, body = best, br
+	}
+	answer.Importer = imp.Name()
+
+	nonce, err := randomNonce()
+	if err != nil {
+		writeCaseFailure(w, http.StatusInternalServerError, "import-failed", "The import could not start.")
+		return
+	}
+	opts := importer.Options{
+		CaseID: string(id), ImportNonce: nonce, FileName: fileName, Host: hint,
+		Hosts: h.hostsNow().Lookup, Pseudonymize: c.Pseudonymize,
+	}
+	meta := casestore.ImportMeta{
+		Importer: imp.Name(), FileName: fileName, AckGating: ackGating, AckText: ackText, AllowedAttrs: imp.AllowedAttrs(),
+	}
+	if hint != nil {
+		meta.HostLabel = hint.Label
+	}
+	if preview {
+		// The store insists on an acknowledgement; a preview keeps nothing.
+		meta.AckGating, meta.AckText = true, "preview"
+	}
+	var sum string
+	res, err := c.Import(r.Context(), meta, body, importRun(r.Context(), imp, opts, preview, &sum))
+	if preview && errors.Is(err, errPreviewDone) {
+		if existing, found := h.sameBytes(r.Context(), c, sum); found {
+			writeJSON(w, http.StatusConflict, caseFailure{Error: "These bytes are already imported into this case.", Reason: "duplicate", ImportID: existing}, 4096)
+			return
+		}
+		answer.Report = toReportDTO(res.Report)
+		writeJSON(w, http.StatusOK, answer, maxResponseBytes)
+		return
+	}
+	if err != nil {
+		h.writeImportError(w, err, tracked, res)
+		return
+	}
+	record := toRecordDTO(res.Record)
+	answer.Report = toReportDTO(res.Report)
+	answer.Record = &record
+	writeJSON(w, http.StatusCreated, answer, maxResponseBytes)
+}
+
+// sameBytes reports the id of an import that already holds the same bytes.
+func (h *handler) sameBytes(ctx context.Context, c casestore.Case, sum string) (int64, bool) {
+	if sum == "" {
+		return 0, false
+	}
+	records, err := c.Imports(ctx)
+	if err != nil {
+		return 0, false
+	}
+	for _, rec := range records {
+		if rec.SHA256 == sum {
+			return rec.ID, true
+		}
+	}
+	return 0, false
+}
+
+// writeImportError turns an import failure into a Reason. Nothing from the
+// file, and no error text from the importer, reaches the response.
+func (h *handler) writeImportError(w http.ResponseWriter, err error, body *trackedReader, res casestore.ImportResult) {
+	var (
+		tooLarge   *http.MaxBytesError
+		duplicate  *casestore.DuplicateError
+		limit      *importer.LimitError
+		quarantine *importer.QuarantineError
+	)
+	switch {
+	case body != nil && errors.As(body.err, &tooLarge), errors.As(err, &tooLarge):
+		writeCaseFailure(w, http.StatusRequestEntityTooLarge, "request-too-large", "The upload is larger than the cap.")
+	case errors.Is(err, casestore.ErrAckRequired):
+		writeCaseFailure(w, http.StatusBadRequest, "ack-required", "Send ackGating and ackText before the file.")
+	case errors.As(err, &duplicate):
+		writeJSON(w, http.StatusConflict, caseFailure{Error: "These bytes are already imported into this case.", Reason: "duplicate", ImportID: duplicate.Existing.ID}, 4096)
+	case errors.Is(err, casestore.ErrCapExceeded):
+		writeCaseFailure(w, http.StatusRequestEntityTooLarge, "cap-exceeded", "The file or the case is over its size or row cap.")
+	case errors.As(err, &limit):
+		writeCaseFailure(w, http.StatusRequestEntityTooLarge, "limit-"+limit.Limit, "The file is over the "+limit.Limit+" limit of its importer.")
+	case errors.As(err, &quarantine):
+		reason := quarantine.Reason
+		if !reason.Valid() {
+			reason = importer.ReasonUnsupportedFormat
+		}
+		writeJSON(w, http.StatusUnprocessableEntity, caseFailure{Error: "The file was refused: " + reason.Text() + ".", Reason: string(reason), Column: quarantine.Column}, 4096)
+	case errors.Is(err, importer.ErrUnknownHost):
+		writeCaseFailure(w, http.StatusUnprocessableEntity, string(importer.ReasonUnknownHost), importer.ReasonUnknownHost.Text())
+	case errors.Is(err, importer.ErrTimezoneUnlabelled):
+		writeCaseFailure(w, http.StatusUnprocessableEntity, string(importer.ReasonTZUnlabelled), importer.ReasonTZUnlabelled.Text())
+	case errors.Is(err, casestore.ErrDuplicateEvent):
+		writeCaseFailure(w, http.StatusConflict, "duplicate-event", "The file repeats an event the case already holds.")
+	case errors.Is(err, evidence.ErrEventInvalid):
+		writeCaseFailure(w, http.StatusUnprocessableEntity, "invalid-event", "The importer produced an event that failed its checks.")
+	case errors.Is(err, casestore.ErrNotFound):
+		writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
+	case errors.Is(err, context.Canceled):
+		writeCaseFailure(w, http.StatusBadRequest, "canceled", "The request was canceled.")
+	case errors.Is(err, context.DeadlineExceeded):
+		writeCaseFailure(w, http.StatusGatewayTimeout, "timeout", "The request timed out.")
+	default:
+		writeCaseFailure(w, http.StatusInternalServerError, "import-failed", "The import could not be completed. Nothing was stored.")
+	}
+}
+
+/* ---------------------------------------------------------------- events */
+
+func eventFilter(values []string) ([]string, bool) {
+	var out []string
+	for _, v := range values {
+		for _, item := range strings.Split(v, ",") {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			if len(item) > 64 || !utf8.ValidString(item) {
+				return nil, false
+			}
+			out = append(out, item)
+		}
+	}
+	return out, len(out) <= maxEventFilters
+}
+
+func (h *handler) caseEvents(w http.ResponseWriter, r *http.Request, raw string) {
+	_, c, ok := h.openCase(w, r, raw)
+	if !ok {
+		return
+	}
+	defer c.Close()
+	query := r.URL.Query()
+	var q casestore.EventQuery
+	for _, f := range []struct {
+		name string
+		into *time.Time
+	}{{"from", &q.Window.From}, {"to", &q.Window.To}} {
+		if v := query.Get(f.name); v != "" {
+			t, err := time.Parse(time.RFC3339, v)
+			if err != nil {
+				writeCaseFailure(w, http.StatusBadRequest, "bad-time", "from and to must be RFC 3339 times with a zone.")
+				return
+			}
+			*f.into = t.UTC()
+		}
+	}
+	if !q.Window.From.IsZero() && !q.Window.To.IsZero() && q.Window.From.After(q.Window.To) {
+		writeCaseFailure(w, http.StatusBadRequest, "bad-time", "from is after to.")
+		return
+	}
+	var good [3]bool
+	q.Kinds, good[0] = eventFilter(query["kind"])
+	q.Sources, good[1] = eventFilter(query["source"])
+	q.Hosts, good[2] = eventFilter(query["host"])
+	if !good[0] || !good[1] || !good[2] {
+		writeCaseFailure(w, http.StatusBadRequest, "bad-filter", "A filter has too many values or a value that is too long.")
+		return
+	}
+	q.Limit = casestore.MaxEventQuery
+	if v := query.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > casestore.MaxEventQuery {
+			writeCaseFailure(w, http.StatusBadRequest, "bad-limit", "limit must be 1 to 50000.")
+			return
+		}
+		q.Limit = n
+	}
+	events, err := c.Events(r.Context(), q)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	out := make([]eventDTO, 0, len(events))
+	for _, e := range events {
+		out = append(out, toEventDTO(e))
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Events    []eventDTO `json:"events"`
+		Limit     int        `json:"limit"`
+		Truncated bool       `json:"truncated"`
+	}{out, q.Limit, len(out) >= q.Limit}, maxResponseBytes)
+}
+
+/* ---------------------------------------------------------------- hosts */
+
+func (h *handler) getHosts(w http.ResponseWriter, _ *http.Request) {
+	if !h.casesAvailable(w) {
+		return
+	}
+	doc, err := h.hostsNow().Marshal()
+	if err != nil {
+		writeCaseFailure(w, http.StatusInternalServerError, "hosts-error", "The host map could not be read.")
+		return
+	}
+	writeJSON(w, http.StatusOK, json.RawMessage(doc), maxResponseBytes)
+}
+
+func (h *handler) putHosts(w http.ResponseWriter, r *http.Request) {
+	if !h.casesAvailable(w) {
+		return
+	}
+	if h.hostsSave == nil {
+		writeCaseFailure(w, http.StatusServiceUnavailable, "hosts-readonly", "The host map cannot be saved in this session.")
+		return
+	}
+	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || media != "application/json" {
+		writeCaseFailure(w, http.StatusUnsupportedMediaType, "bad-form", "Content-Type must be application/json.")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, hosts.MaxFileBytes+1)
+	next, err := hosts.Load(r.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeCaseFailure(w, http.StatusRequestEntityTooLarge, "request-too-large", "The host map is larger than its cap.")
+			return
+		}
+		if errors.Is(err, hosts.ErrInvalid) {
+			// hosts messages name the field and the rule, never the value.
+			writeCaseFailure(w, http.StatusBadRequest, "invalid-hosts", err.Error())
+			return
+		}
+		writeCaseFailure(w, http.StatusBadRequest, "invalid-hosts", "The host map could not be read.")
+		return
+	}
+	h.hostsMu.Lock()
+	defer h.hostsMu.Unlock()
+	if err := h.hostsSave(next); err != nil {
+		writeCaseFailure(w, http.StatusInternalServerError, "hosts-not-saved", "The host map could not be saved. The previous map is unchanged.")
+		return
+	}
+	h.hostMap = next
+	doc, err := next.Marshal()
+	if err != nil {
+		writeCaseFailure(w, http.StatusInternalServerError, "hosts-error", "The host map was saved but could not be read back.")
+		return
+	}
+	writeJSON(w, http.StatusOK, json.RawMessage(doc), maxResponseBytes)
+}

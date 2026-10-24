@@ -135,6 +135,29 @@ var routes = []route{
 	{pattern: "/api/payload", match: exactPath("/api/payload"), methods: post((*handler).payload)},
 	{pattern: "/api/record", match: exactPath("/api/record"), methods: post((*handler).record)},
 	{pattern: "/api/export", match: exactPath("/api/export"), methods: post((*handler).export)},
+	// Cases and hosts (importer wave). The case id is a single path segment;
+	// each handler validates it before it is used for anything.
+	{pattern: "/api/cases", match: exactPath("/api/cases"), methods: map[string]routeFunc{
+		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.listCases(w, r) },
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.createCase(w, r) },
+	}},
+	{pattern: "/api/cases/{id}/close", match: caseSubpath("/close"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.closeCase(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/imports", match: caseSubpath("/imports"), methods: map[string]routeFunc{
+		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.listImports(w, r, id) },
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.postImport(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/events", match: caseSubpath("/events"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseEvents(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}", match: caseSubpath(""), methods: map[string]routeFunc{
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.eraseCase(w, r, id) },
+	}},
+	{pattern: "/api/hosts", match: exactPath("/api/hosts"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.getHosts(w, r) },
+		http.MethodPut: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.putHosts(w, r) },
+	}},
 }
 
 // lookup returns the first route that owns path.
