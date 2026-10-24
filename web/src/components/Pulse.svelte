@@ -3,6 +3,9 @@
   import type { Analysis } from '../lib/types';
   import { echarts, heroOption } from '../lib/charts';
   import { theme } from '../lib/theme.svelte';
+  import { zoomView } from '../lib/zoomView.svelte';
+  import { zoomable } from '../lib/chartZoom';
+  import { zoomCopy } from '../lib/copy/zoomCopy';
   import { timeZone } from '../lib/timeZone.svelte';
   import { trafficData } from '../lib/traffic';
   import { heroHasData, pulseFigures, singleKind, type Lens } from '../lib/pulse';
@@ -17,7 +20,9 @@
   // D0: five headline figures and one timeline. Every figure opens the ranked view with that lens.
   let { analysis, zone, onOpen }: { analysis: Analysis; zone: string; onOpen: (lens: Lens) => void } = $props();
   const figures = $derived(pulseFigures(analysis.overview ?? [], analysis.query.kind, analysis.query.metric, metricLabels[analysis.query.metric]));
-  const windows = $derived(trafficData(analysis.query, analysis.loadWindows ?? [], Number.POSITIVE_INFINITY, 'p95').windows);
+  // The figures stay on the whole run; the timeline follows the zoom window.
+  const view = $derived(zoomView.analysisFor(analysis));
+  const windows = $derived(trafficData(view.query, view.loadWindows ?? [], Number.POSITIVE_INFINITY, 'p95').windows);
   const hasData = $derived(heroHasData(windows));
   const withLatency = $derived(singleKind(analysis.query.kind));
   // Intervals whose slowest request is far above the usual P95: said in words under the chart as well as marked on it.
@@ -71,8 +76,8 @@
       </div>
     </div>
     <div class="hero-stage">
-      <div class="hero-chart" class:chart-hidden={!hasData} bind:this={node} role="img" aria-hidden={!hasData} aria-label={'Requests per interval' + (withLatency ? ' with the 95th percentile and the slowest request of each interval' : '') + ', in ' + zone}></div>
-      {#if !hasData}<div class="hero-empty"><strong>No requests in this period</strong><p>Widen the range, or check that the selected sources have audit rows for it.</p></div>{/if}
+      <div class="hero-chart" class:chart-hidden={!hasData} bind:this={node} use:zoomable={{ chart: () => chart }} role="img" aria-hidden={!hasData} aria-label={'Requests per interval' + (withLatency ? ' with the 95th percentile and the slowest request of each interval' : '') + ', in ' + zone}></div>
+      {#if !hasData}<div class="hero-empty">{#if zoomView.zoomed && !zoomView.loading}<strong>{zoomCopy.noData}</strong>{:else}<strong>No requests in this period</strong><p>Widen the range, or check that the selected sources have audit rows for it.</p>{/if}</div>{/if}
     </div>
     {#if withLatency && outliers.flagged.length}<p class="figure-hint hero-note">{outliers.flagged.length === 1 ? 'One interval holds' : outliers.flagged.length + ' intervals hold'} a request far slower than usual, up to {axisDuration(slowestSeen)}. They are marked with a red diamond. This shows when slow requests happened; it does not show why.</p>{/if}
     {#if !withLatency}<p class="figure-hint">Latency is shown for one request type at a time. Choose Sync, Async, Hangfire or HTTP to add the P95 line.</p>{/if}
