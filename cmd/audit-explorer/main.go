@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -23,6 +24,7 @@ import (
 	explorer "api-audit-explorer"
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/history"
+	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/server"
 	"api-audit-explorer/internal/store"
@@ -122,12 +124,17 @@ func run(args []string, getenv func(string) string) error {
 	var serverOptions []server.Option
 	if *demo {
 		// The shipped demo carries a little unfinished work so the incomplete panel has something to show.
-		repo = audit.NewDemoWithStaleWork(time.Now())
+		repo = audit.NewDemoWithPatterns(time.Now())
 	} else {
 		repo = store.New(storeOptions(f)...)
 		if savedHistory, historyErr := history.NewDefault(getenv); historyErr == nil {
 			serverOptions = append(serverOptions, server.WithHistory(savedHistory))
 		}
+	}
+	if hypotheses, ledgerErr := openLedger(*demo, getenv); ledgerErr != nil {
+		log.Printf("Hypothesis ledger unavailable: %v", ledgerErr)
+	} else {
+		serverOptions = append(serverOptions, server.WithLedger(hypotheses))
 	}
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -177,6 +184,27 @@ func run(args []string, getenv func(string) string) error {
 		}
 		return nil
 	}
+}
+
+// openLedger opens the hypothesis ledger. Demo mode keeps it in memory; live
+// mode stores it beside the saved connections (same application folder).
+func openLedger(demo bool, getenv func(string) string) (ledger.Store, error) {
+	if demo {
+		return ledger.Open("")
+	}
+	base := ""
+	if getenv != nil {
+		base = getenv("AUDIT_CONFIG_DIR")
+	}
+	if base == "" {
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			return nil, err
+		}
+		// Same folder name as saved connections; see history.NewDefault.
+		base = filepath.Join(dir, "APIAuditExplorer")
+	}
+	return ledger.Open(filepath.Join(base, "ledger.json"))
 }
 
 func sessionToken(getenv func(string) string) (string, error) {
