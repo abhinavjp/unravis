@@ -263,14 +263,14 @@ func (m *textImp) Parse(ctx context.Context, r io.Reader, opts importer.Options,
 		} else {
 			sm = h.re.FindStringSubmatch(text)
 		}
+		if e := acc.Row(no); e != nil { // every line after the first header is a row, so MaxRows and the reject fraction see it
+			return acc.Fail(e)
+		}
 		if sm == nil { // continuation line
 			if pd.on {
 				pd.addExc(text, acc)
 			}
 			continue
-		}
-		if e := acc.Row(no); e != nil {
-			return acc.Fail(e)
 		}
 		if e := flush(); e != nil {
 			return acc.Fail(e)

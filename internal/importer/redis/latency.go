@@ -85,6 +85,7 @@ type latState struct {
 	seen   map[latKey]struct{}
 	other  bool
 	labels int
+	ordinal int
 }
 
 type latKey struct {
@@ -156,8 +157,9 @@ func (st *latState) sample(n *node) error {
 		return nil
 	}
 	v := float64(ms)
+	st.ordinal++
 	ev := evidence.Event{
-		EvidenceID: evidence.EventID(st.opts.CaseID, NameLatency, st.opts.ImportNonce, n.line, 0),
+		EvidenceID: evidence.EventID(st.opts.CaseID, NameLatency, st.opts.ImportNonce, n.line, st.ordinal),
 		Source:     NameLatency,
 		Kind:       KindLatencySpike,
 		Host:       st.host,

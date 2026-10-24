@@ -203,9 +203,9 @@ func TestSuppliedKeysDeclared(t *testing.T) {
 		"log4net-xml":     {"app-request-min-ms"},
 		"serilog-clef":    {"app-request-min-ms"},
 		"serilog-text":    {"app-request-min-ms"},
-		"mel-console":     {"app-request-min-ms"},
-		"mel-json":        {"app-request-min-ms"},
-		"ancm-stdout":     {"app-request-min-ms"},
+		"mel-console":     {"app-request-min-ms", "date-order"},
+		"mel-json":        {"app-request-min-ms", "date-order"},
+		"ancm-stdout":     {"app-request-min-ms", "date-order"},
 	}
 	got := map[string][]string{}
 	for _, imp := range all.Importers() {

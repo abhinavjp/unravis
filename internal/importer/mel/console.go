@@ -117,8 +117,12 @@ var localLayouts = []string{
 // offset (or a "Z") carries its own zone; one without is host-local and needs
 // loc. The reason is "" when t is good. A value that is not a date and time is
 // ReasonBadTime; local time with no zone is ReasonTZUnlabelled.
-func parseStamp(p string, loc *time.Location) (t time.Time, rule string, reason importer.Reason) {
+func parseStamp(p string, loc *time.Location, dates *applog.DateOrder) (t time.Time, rule string, reason importer.Reason) {
 	if len(p) < 8 || len(p) > 48 {
+		return time.Time{}, "", importer.ReasonBadTime
+	}
+	p, ok := applog.NormalizeSlashDate(p, dates)
+	if !ok {
 		return time.Time{}, "", importer.ReasonBadTime
 	}
 	for _, l := range zonedLayouts {
@@ -233,6 +237,7 @@ type scan struct {
 	beats    int64 // untimed heartbeat lines placed from their own time
 	rule     string
 	hostTime bool
+	dates    *applog.DateOrder // the order of day and month in slash dates
 
 	crashSeen, crashOpen bool
 	crashKeep            bool
@@ -241,7 +246,8 @@ type scan struct {
 }
 
 func newScan(ctx context.Context, opts importer.Options, acc *wincsv.Acc, sink *applog.Sink, stdout bool) *scan {
-	return &scan{ctx: ctx, opts: opts, acc: acc, sink: sink, loc: opts.Host.TZ, stdout: stdout}
+	return &scan{ctx: ctx, opts: opts, acc: acc, sink: sink, loc: opts.Host.TZ, stdout: stdout,
+		dates: applog.NewDateOrder(opts.Supplied[applog.SuppliedDateOrder])}
 }
 
 // run reads every line of lr.
@@ -303,7 +309,7 @@ func (s *scan) header(h header, no int64) error {
 		rec: applog.Record{Level: h.level, Category: h.category, EventID: h.id}}
 	if prefixKind(h.prefix) == prefixDate {
 		s.dated++
-		t, rule, why := parseStamp(h.prefix, s.loc)
+		t, rule, why := parseStamp(h.prefix, s.loc, s.dates)
 		switch why {
 		case "":
 			s.cur.timed, s.cur.rec.Time, s.cur.rec.Rule = true, t, rule
@@ -447,6 +453,7 @@ func (s *scan) finish() error {
 	if s.hostTime {
 		s.acc.Gap(GapHostLocal)
 	}
+	s.dates.Gaps(s.acc.Gap)
 	return nil
 }
 
@@ -497,7 +504,7 @@ func readHead(head []byte) headInfo {
 		}
 		switch prefixKind(h.prefix) {
 		case prefixDate:
-			if _, _, why := parseStamp(h.prefix, time.UTC); why == "" {
+			if _, _, why := parseStamp(h.prefix, time.UTC, nil); why == "" {
 				hi.dated = true
 			}
 		case prefixNone:

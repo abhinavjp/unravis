@@ -91,6 +91,7 @@ type slowState struct {
 	ids        map[int64]struct{}
 	exportedAt time.Time
 	any        bool
+	ordinal    int
 }
 
 // Parse reads the reply and emits one slow-command event per entry. Command arguments,
@@ -170,8 +171,9 @@ func (st *slowState) entry(n *node) error {
 			attrs[attrClient] = p
 		}
 	}
+	st.ordinal++
 	ev := evidence.Event{
-		EvidenceID: evidence.EventID(st.opts.CaseID, NameSlowlog, st.opts.ImportNonce, n.line, 0),
+		EvidenceID: evidence.EventID(st.opts.CaseID, NameSlowlog, st.opts.ImportNonce, n.line, st.ordinal),
 		Source:     NameSlowlog,
 		Kind:       KindSlowCommand,
 		Host:       st.host,

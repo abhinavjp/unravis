@@ -90,7 +90,7 @@ func (*jsonImp) Detect(head []byte, _ string) int {
 		}
 		shaped = true
 		if jl.Timestamp != nil {
-			if _, _, why := parseStamp(strings.TrimSpace(*jl.Timestamp), nil); why == "" || why == importer.ReasonTZUnlabelled {
+			if _, _, why := parseStamp(strings.TrimSpace(*jl.Timestamp), nil, nil); why == "" || why == importer.ReasonTZUnlabelled {
 				return 90
 			}
 		}
@@ -190,7 +190,7 @@ func (s *scan) jsonEntry(line []byte, no int64) error {
 	}
 	if jl.Timestamp != nil {
 		s.dated++
-		t, rule, why := parseStamp(strings.TrimSpace(*jl.Timestamp), s.loc)
+		t, rule, why := parseStamp(strings.TrimSpace(*jl.Timestamp), s.loc, s.dates)
 		switch why {
 		case "":
 			s.cur.timed, s.cur.rec.Time, s.cur.rec.Rule = true, t, rule
@@ -218,7 +218,7 @@ func (s *scan) flushRec() error {
 	}
 	if strings.HasPrefix(e.rec.Category, kestrelPrefix) {
 		msg := strings.TrimSpace(e.rec.Message)
-		if t, ok := applog.HeartbeatAsOf(msg); ok {
+		if t, ok := applog.HeartbeatAsOfOrder(msg, s.dates); ok {
 			e.rec.Time, e.rec.Rule = t, clock.RuleOffsetInField
 			s.beats++
 			s.acc.Gap(GapHeartbeat)
