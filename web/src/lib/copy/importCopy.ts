@@ -352,7 +352,8 @@ export const SUPPLIED_LABELS: Record<string, string> = {
   'latency-monitor-threshold': 'Latency monitor limit (ms)',
   year: 'Year the log was written',
   date: 'Day the samples were taken',
-  pid: 'Process id'
+  pid: 'Process id',
+  'date-order': 'Order of day and month in dates'
 };
 
 /** One short line per supplied key saying where the owner finds the value. */
@@ -367,12 +368,14 @@ export const SUPPLIED_HINTS: Record<string, string> = {
   'latency-monitor-threshold': 'The latency-monitor-threshold value from CONFIG GET.',
   year: 'Redis log lines have no year. Type the year they were written.',
   date: 'mongostat rows hold a time of day only. Type the day, for example 2001-02-03.',
-  pid: 'The process id that dotnet-counters was watching.'
+  pid: 'The process id that dotnet-counters was watching.',
+  'date-order': 'Dates like 05/03/2001 are ambiguous. Choose which comes first. Blank reads them from the file.'
 };
 
 /** Words shown for the fixed values of a key. A value with no entry is shown as sent. */
 export const SUPPLIED_VALUE_LABELS: Record<string, Record<string, string>> = {
-  'log-time': { utc: 'UTC' }
+  'log-time': { utc: 'UTC' },
+  'date-order': { mdy: 'Month first (05/03 is May 3)', dmy: 'Day first (05/03 is 5 March)' }
 };
 
 const has = (table: object, key: string): boolean => Object.prototype.hasOwnProperty.call(table, key);
