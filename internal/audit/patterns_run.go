@@ -195,6 +195,7 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 		return a.ID < b.ID
 	})
 
+	report.StallsTruncated, report.AuditsTruncated = stallsCut, auditCut
 	report.Truncated = stallsCut || auditCut
 	if stallsCut {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("Only the %d longest requests per source were read. The episode count is partial.", MaxPatternRows))
@@ -203,7 +204,7 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 		report.Warnings = append(report.Warnings, fmt.Sprintf("Only the %d newest audit-create rows per source were read. That count is partial.", MaxPatternRows))
 	}
 	if missingStall > 0 {
-		report.Warnings = append(report.Warnings, fmt.Sprintf("%d long request rows had no start time or no duration. They are counted here and left out of the stall list.", missingStall))
+		report.Warnings = append(report.Warnings, fmt.Sprintf("%d long request %s had no start time or no duration. They are counted here and left out of the stall list.", missingStall, plural(missingStall, "row", "rows")))
 	}
 	if missingAudit > 0 {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("%d audit-create rows had no start time, duration or audit time. They are counted here and left out.", missingAudit))
@@ -225,6 +226,7 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 			incomplete = 0
 		}
 		report.Quality = PatternQuality{Incomplete: incomplete, Pending: q.PendingAsync, Invalid: q.Invalid}
+		report.Warnings = append(report.Warnings, missingQualityWarnings(ctx, repo, analysis.Sources)...)
 	}
 
 	coverage, err := patternCoverage(ctx, repo, in)
@@ -517,6 +519,38 @@ func patternCoverage(ctx context.Context, repo Repository, in PatternInput) (*Pa
 	return &PatternCoverage{Run: true, RequestInitiatedAtPct: &riaPct, AccountIDPct: &accountPct, Note: fmt.Sprintf("Coverage over the same window: %d rows.", docs)}, nil
 }
 
+// missingQualityWarnings names each source whose quality counts did not come
+// back, so a zero is never read as a count. It uses the source label when the
+// repository lists one, else the source id.
+func missingQualityWarnings(ctx context.Context, repo Repository, results []SourceResult) []string {
+	var failed []string
+	for _, s := range results {
+		if !s.OK {
+			failed = append(failed, s.SourceID)
+		}
+	}
+	if len(failed) == 0 {
+		return nil
+	}
+	labels := map[string]string{}
+	if sources, err := repo.Sources(ctx); err == nil {
+		for _, s := range sources {
+			if strings.TrimSpace(s.Label) != "" {
+				labels[s.ID] = s.Label
+			}
+		}
+	}
+	out := make([]string, 0, len(failed))
+	for _, id := range failed {
+		name := id
+		if label, ok := labels[id]; ok {
+			name = label
+		}
+		out = append(out, "Quality counts are missing for source "+name+".")
+	}
+	return out
+}
+
 // plainReason names an error class without driver or connection text.
 func plainReason(err error) string {
 	switch {
@@ -548,7 +582,8 @@ func patternEvidenceID(rule string, in PatternInput, p PatternParams) string {
 		in.Start.UTC().Format(time.RFC3339Nano), in.End.UTC().Format(time.RFC3339Nano), strings.Join(sources, ","),
 		p.StallMs, p.EpisodeGapSeconds, p.AuditStallMs, p.AuditStallShare, p.VolleyWindowMs)
 	sum := sha256.Sum256([]byte(key))
-	return "p2:" + rule + ":" + hex.EncodeToString(sum[:8])
+	// Lowercase so the ledger accepts it as an evidence reference as is.
+	return "p2:" + strings.ToLower(rule) + ":" + hex.EncodeToString(sum[:8])
 }
 
 // fmtSeconds prints milliseconds as seconds with at most one decimal.
@@ -563,6 +598,15 @@ func plural(n int, one, many string) string {
 	return many
 }
 
+// partialNote is the suffix a headline carries when its own read hit the row
+// cap, so the figure reads as a lower bound.
+func partialNote(truncated bool) string {
+	if !truncated {
+		return ""
+	}
+	return fmt.Sprintf(" (at least; capped at %d rows per source)", MaxPatternRows)
+}
+
 // buildFindings prints one finding per rule that matched. Headlines describe
 // what was measured, with the §6.6 wording for audit create, and never a cause.
 // A window with no stall prints no B1/B2 finding; Recurrence says "none".
@@ -572,7 +616,7 @@ func buildFindings(in PatternInput, p PatternParams, r PatternReport) []Finding 
 	if n := len(r.Stalls); n > 0 {
 		findings = append(findings, Finding{
 			Rule: "B1", Label: EvidenceSymptom, N: n, LowN: n < LowNRows, EvidenceID: patternEvidenceID("B1", in, p),
-			Headline: fmt.Sprintf("%d %s took %s s or longer.", n, plural(n, "request", "requests"), stallSec),
+			Headline: fmt.Sprintf("%d %s took %s s or longer%s.", n, plural(n, "request", "requests"), stallSec, partialNote(r.StallsTruncated)),
 		})
 	}
 	if e := len(r.Episodes); e > 0 {
@@ -586,7 +630,7 @@ func buildFindings(in PatternInput, p PatternParams, r PatternReport) []Finding 
 		default:
 			headline = fmt.Sprintf("Recurring: %d separate episodes, %d requests in all.", e, n)
 		}
-		if r.Truncated {
+		if r.StallsTruncated {
 			headline += " The row limit was reached, so the episode count is partial."
 		}
 		findings = append(findings, Finding{
@@ -603,6 +647,9 @@ func buildFindings(in PatternInput, p PatternParams, r PatternReport) []Finding 
 		if n > 1 {
 			share := strconv.FormatFloat(math.Round(p.AuditStallShare*1000)/10, 'f', -1, 64)
 			headline += fmt.Sprintf(" That is the longest of %d requests at or above %s s and %s%% of observed time.", n, fmtSeconds(p.AuditStallMs), share)
+		}
+		if r.AuditsTruncated {
+			headline += " Partial count" + partialNote(true) + "."
 		}
 		findings = append(findings, Finding{
 			Rule: "B6", Label: EvidenceSymptom, N: n, LowN: n < LowNRows,

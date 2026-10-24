@@ -44,12 +44,14 @@ export const ledgerCopy = {
   removeAlternative: 'Remove',
   joinLabel: 'Join ambiguity (%)',
   joinHint: 'Optional. The share of rows where the join was ambiguous.',
+  joinProblem: 'Enter a number from 0 to 100, or leave the box empty.',
   timezone: 'Timezone mapping recorded',
   confounder: 'Confounder overlaps',
   coverageGap: 'Coverage gap',
   overlapOnly: 'Support is temporal overlap only',
   guardLead: 'Strong correlation is blocked now:',
   blockedLead: 'Not saved. Strong correlation is blocked:',
+  blockedNote: 'Your other edits are not saved yet.',
   rateProblem: 'Present cannot be higher than examined.',
   save: 'Save',
   saving: 'Saving',
@@ -137,12 +139,20 @@ function wholeNumber(text: string): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/** Empty or invalid is "not stated"; otherwise a percentage clamped to 0..100. */
+/**
+ * A percentage from 0 to 100, or undefined. A value outside 0..100 is never clamped into range:
+ * it is undefined, and joinProblem reports it so Save stays disabled.
+ */
 export function parsePercent(text: string): number | undefined {
   if (text.trim() === '') return undefined;
   const n = Number(text);
-  if (!Number.isFinite(n)) return undefined;
-  return Math.min(100, Math.max(0, n));
+  if (!Number.isFinite(n) || n < 0 || n > 100) return undefined;
+  return n;
+}
+
+/** A problem with the join ambiguity box, or an empty string. Empty is fine (not stated). */
+export function joinProblem(e: Pick<EditorState, 'joinPct'>): string {
+  return e.joinPct.trim() !== '' && parsePercent(e.joinPct) === undefined ? ledgerCopy.joinProblem : '';
 }
 
 /** A problem with the stated rate, or an empty string. Save is disabled while there is one. */

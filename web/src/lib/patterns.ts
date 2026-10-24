@@ -21,6 +21,9 @@ export const PATTERNS_TEXT = {
   thresholdNote: 'Leave a box empty to use the default.',
   lowN: 'low n',
   truncated: 'Showing the slowest rows only; episode counts are partial.',
+  auditsTruncated: 'Showing the newest audit save rows only; the slow audit save count is partial.',
+  reference: 'Reference',
+  referenceNote: 'Copy this into the ledger as evidence.',
   failed: 'The search did not finish. Try again.',
   badThreshold: 'Enter a whole number above zero, or leave the box empty.',
   episodes: 'Episodes',
@@ -72,6 +75,17 @@ export function coverageLine(coverage: PatternCoverage | undefined): string | nu
   if (!coverage) return null;
   if (!coverage.run) return coverage.note;
   return `Request start time is filled in on ${pct(coverage.requestInitiatedAtPct)} of rows, and account id on ${pct(coverage.accountIdPct)}.`;
+}
+
+/**
+ * The row-cap notices, one per side that was cut. An older server sends only `truncated`;
+ * then the stall notice is shown, as before.
+ */
+export function truncationNotices(report: Pick<PatternReport, 'truncated' | 'stallsTruncated' | 'auditsTruncated'>): string[] {
+  const split = report.stallsTruncated !== undefined || report.auditsTruncated !== undefined;
+  const stalls = split ? !!report.stallsTruncated : report.truncated;
+  const audits = split && !!report.auditsTruncated;
+  return [...(stalls ? [PATTERNS_TEXT.truncated] : []), ...(audits ? [PATTERNS_TEXT.auditsTruncated] : [])];
 }
 
 /** The exact permitted wording for an audit-create measurement (roadmap 6.6). */

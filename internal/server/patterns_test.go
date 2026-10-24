@@ -2,6 +2,7 @@ package server
 
 import (
 	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/ledger"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -74,6 +75,58 @@ func TestPatternsOnRepositoryWithoutSlowestReaderDoesNotPanic(t *testing.T) {
 		if msg, _ := body["error"].(string); msg == "" {
 			t.Fatalf("error status %d without an error message: %s", r.Code, r.Body.String())
 		}
+	}
+}
+
+func TestPatternsUnavailableIs503(t *testing.T) {
+	h := New(&fakeRepository{}, nil, testToken, false)
+	r := request(h, http.MethodPost, "/api/patterns", patternBody(validPatternInput()), true)
+	if r.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d %s", r.Code, r.Body.String())
+	}
+	var body struct{ Error string }
+	if err := json.Unmarshal(r.Body.Bytes(), &body); err != nil || body.Error != "Patterns are not available for this source. It cannot list the slowest requests." {
+		t.Fatalf("body %s (%v)", r.Body.String(), err)
+	}
+}
+
+// The evidence IDs a pattern run prints must be accepted by the real ledger
+// as references, so an analyst can paste them in unchanged.
+func TestPatternEvidenceIDsAreAcceptedByLedger(t *testing.T) {
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	store, err := ledger.Open("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(audit.NewDemoWithPatterns(now), nil, testToken, true, WithLedger(store))
+	in := audit.PatternInput{SourceIDs: []string{"demo-west", "demo-east"}, Start: now.Add(-4 * time.Hour), End: now}
+	r := request(h, http.MethodPost, "/api/patterns", patternBody(in), true)
+	if r.Code != http.StatusOK {
+		t.Fatalf("patterns = %d %s", r.Code, r.Body.String())
+	}
+	var report audit.PatternReport
+	if err := json.Unmarshal(r.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Findings) == 0 {
+		t.Fatal("demo scenario printed no findings")
+	}
+	ids := make([]string, 0, len(report.Findings))
+	for _, f := range report.Findings {
+		ids = append(ids, f.EvidenceID)
+	}
+	created, err := store.Create("Slow requests repeat in this window")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(ledger.Input{Text: created.Text, State: ledger.StateOpen, EvidenceIDs: ids})
+	r = request(h, http.MethodPut, "/api/ledger/"+created.ID, string(body), true)
+	if r.Code != http.StatusOK {
+		t.Fatalf("ledger update with %v = %d %s", ids, r.Code, r.Body.String())
+	}
+	var saved ledger.Hypothesis
+	if err := json.Unmarshal(r.Body.Bytes(), &saved); err != nil || len(saved.EvidenceIDs) != len(ids) {
+		t.Fatalf("saved %+v (%v)", saved, err)
 	}
 }
 

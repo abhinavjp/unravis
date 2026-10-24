@@ -85,9 +85,24 @@ test('episode helpers and volley text', () => {
   assert.equal(patterns.operationText({ controller: 'Orders', action: '' }), 'Orders');
 });
 
+test('each truncated side gets its own notice; an older server falls back to the stall notice', () => {
+  const T = patterns.PATTERNS_TEXT;
+  assert.deepEqual(patterns.truncationNotices({ truncated: false, stallsTruncated: false, auditsTruncated: false }), []);
+  assert.deepEqual(patterns.truncationNotices({ truncated: true, stallsTruncated: false, auditsTruncated: true }), [T.auditsTruncated]);
+  assert.deepEqual(patterns.truncationNotices({ truncated: true, stallsTruncated: true, auditsTruncated: false }), [T.truncated]);
+  assert.deepEqual(patterns.truncationNotices({ truncated: true, stallsTruncated: true, auditsTruncated: true }), [T.truncated, T.auditsTruncated]);
+  assert.deepEqual(patterns.truncationNotices({ truncated: true }), [T.truncated]);
+  assert.deepEqual(patterns.truncationNotices({ truncated: false }), []);
+});
+
 test('every string the helpers produce passes the copy lint and has no causal or "complete" wording', () => {
   const strings = [
     ...Object.values(patterns.PATTERNS_TEXT),
+    // Server headlines with the row-cap suffix (internal/audit/patterns_run.go partialNote).
+    '500 requests took 45 s or longer (at least; capped at 500 rows per source).',
+    'Audit create took 7 s as measured from the client side. That is the longest of 500 requests at or above 5 s and 30% of observed time. Partial count (at least; capped at 500 rows per source).',
+    'Audit create took 7 s as measured from the client side. Partial count (at least; capped at 500 rows per source).',
+    'Patterns are not available for this source. It cannot list the slowest requests.',
     verdict('recurring', [episode(0, 2), episode(1, 3), episode(2, 1)]),
     verdict('two_episodes', [episode(0, 2), episode(1, 3)]),
     verdict('single_episode', [episode(0, 7)]),

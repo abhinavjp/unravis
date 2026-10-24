@@ -111,13 +111,22 @@ test('buildInput parses lists, trims, drops blanks and builds the committed inpu
   });
 });
 
-test('join ambiguity is optional and clamped; numbers are whole and never negative', () => {
+test('join ambiguity is optional and never clamped into range; numbers are whole and never negative', () => {
   const editor = ledger.editorFromHypothesis(hypothesis());
   assert.equal('joinAmbiguousPct' in ledger.buildInput(editor).facts, false);
-  editor.joinPct = '150'; assert.equal(ledger.buildInput(editor).facts.joinAmbiguousPct, 100);
-  editor.joinPct = '-3'; assert.equal(ledger.buildInput(editor).facts.joinAmbiguousPct, 0);
-  editor.joinPct = '0'; assert.equal(ledger.buildInput(editor).facts.joinAmbiguousPct, 0);
-  editor.joinPct = 'abc'; assert.equal('joinAmbiguousPct' in ledger.buildInput(editor).facts, false);
+  assert.equal(ledger.joinProblem(editor), '');
+  for (const bad of ['150', '100.5', '-3', '-0.1', 'abc', 'Infinity']) {
+    editor.joinPct = bad;
+    assert.equal(ledger.parsePercent(bad), undefined, bad);
+    assert.equal('joinAmbiguousPct' in ledger.buildInput(editor).facts, false, bad);
+    assert.equal(ledger.joinProblem(editor), ledger.ledgerCopy.joinProblem, bad);
+  }
+  for (const [ok, value] of [['0', 0], ['100', 100], [' 12.5 ', 12.5]]) {
+    editor.joinPct = ok;
+    assert.equal(ledger.buildInput(editor).facts.joinAmbiguousPct, value, ok);
+    assert.equal(ledger.joinProblem(editor), '', ok);
+  }
+  editor.joinPct = '  '; assert.equal(ledger.joinProblem(editor), '');
   Object.assign(editor, { presentK: '2.9', totalN: '-4' });
   assert.deepEqual([ledger.buildInput(editor).facts.presentK, ledger.buildInput(editor).facts.totalN], [2, 0]);
   Object.assign(editor, { presentK: 'x', totalN: '' });

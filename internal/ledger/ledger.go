@@ -28,7 +28,33 @@ var (
 	objectIDPattern   = regexp.MustCompile(`[0-9a-fA-F]{24}`)
 	emailPattern      = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}`)
 	ipv4Pattern       = regexp.MustCompile(`\b(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}\b`)
+	// ipv6Pattern finds tokens of three or more colon-separated groups of up to
+	// four hex digits ("::" allowed). looksLikeIPv6 then lets clock times through.
+	ipv6Pattern = regexp.MustCompile(`(?i)(?:^|[^0-9a-z:])((?:[0-9a-f]{1,4})?(?::(?:[0-9a-f]{1,4})?){2,})(?:$|[^0-9a-z:])`)
+	decimalTime = regexp.MustCompile(`^[0-9]{1,4}(?::[0-9]{1,4})+$`)
 )
+
+// looksLikeIPv6 reports whether s holds an IPv6-looking token. A token of
+// decimal digits only and no "::" (a clock time such as 09:14:05) does not count.
+func looksLikeIPv6(s string) bool {
+	for _, m := range ipv6Pattern.FindAllStringSubmatch(s, -1) {
+		token := m[1]
+		if strings.Count(token, ":") < 2 || strings.Trim(token, ":") == "" {
+			continue
+		}
+		if !strings.Contains(token, "::") && decimalTime.MatchString(token) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// hasURL reports whether s contains an http or https URL.
+func hasURL(s string) bool {
+	lower := strings.ToLower(s)
+	return strings.Contains(lower, "http://") || strings.Contains(lower, "https://")
+}
 
 type fileData struct {
 	Version    int          `json:"version"`
@@ -400,8 +426,10 @@ func checkText(what, s string) error {
 		return invalid(what + " contains what looks like a record ID (24 hex characters); the ledger holds no identifiers, so refer to evidence by its provenance ID instead")
 	case emailPattern.MatchString(s):
 		return invalid(what + " contains an email address; the ledger holds no identifiers")
-	case ipv4Pattern.MatchString(s):
+	case ipv4Pattern.MatchString(s), looksLikeIPv6(s):
 		return invalid(what + " contains an IP address; the ledger holds no identifiers")
+	case hasURL(s):
+		return invalid(what + " contains a URL; the ledger holds no identifiers, so refer to evidence by its provenance ID instead")
 	}
 	return nil
 }

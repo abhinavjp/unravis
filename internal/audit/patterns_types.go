@@ -146,7 +146,12 @@ type PatternReport struct {
 	Findings    []Finding        `json:"findings"`
 	Quality     PatternQuality   `json:"quality"`
 	Coverage    *PatternCoverage `json:"coverage,omitempty"`
-	Truncated   bool             `json:"truncated"`
-	Provenance  []Provenance     `json:"provenance,omitempty"`
-	Warnings    []string         `json:"warnings"`
+	// Truncated is StallsTruncated || AuditsTruncated, kept for older clients.
+	Truncated bool `json:"truncated"`
+	// StallsTruncated is true when the stall read (B1, B2, B12) hit the row cap.
+	StallsTruncated bool `json:"stallsTruncated"`
+	// AuditsTruncated is true when the audit-create read (B6) hit the row cap.
+	AuditsTruncated bool         `json:"auditsTruncated"`
+	Provenance      []Provenance `json:"provenance,omitempty"`
+	Warnings        []string     `json:"warnings"`
 }

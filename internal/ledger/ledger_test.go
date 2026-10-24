@@ -3,6 +3,7 @@ package ledger
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -275,6 +276,10 @@ func TestIdentifierRejection(t *testing.T) {
 		"request 507f1f77bcf86cd799439011 stalled",
 		"reported by ops.team@example.com",
 		"from host 10.20.30.40 only",
+		"from host 2001:db8::1 only",
+		"from fe80:0:0:0:200:f8ff:fe21:67cf",
+		"see http://intranet/req/1",
+		"see HTTPS://example.com/x",
 	}
 	for _, b := range bad {
 		if _, err := s.Create(b); !errors.Is(err, ErrInvalid) {
@@ -298,7 +303,7 @@ func TestIdentifierRejection(t *testing.T) {
 		}
 	}
 	// Plain text with versions, times and short hex is fine.
-	okText := "Mongo 7.0.16 stall at 09:14 on 2026-10-21, build abc123"
+	okText := "Mongo 7.0.16 stall at 09:14:05 on 2026-10-21, build abc123, ref p2:b1:0a1b2c3d4e5f6071"
 	if _, err := s.Update(h.ID, Input{Text: okText, State: StateOpen, EvidenceIDs: []string{strings.Repeat("z", 120)}}); err != nil {
 		t.Errorf("ok text: %v", err)
 	}
@@ -327,8 +332,15 @@ func TestLengthLimits(t *testing.T) {
 	if _, err := s.Update(h.ID, Input{Text: demoText, State: StateOpen, Facts: Facts{TotalN: -1}}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("negative count: %v", err)
 	}
-	if _, err := s.Update(h.ID, Input{Text: demoText, State: StateOpen, Facts: Facts{JoinAmbiguousPct: pct(101)}}); !errors.Is(err, ErrInvalid) {
-		t.Errorf("join pct: %v", err)
+	for _, bad := range []float64{101, 100.01, -0.5, -1, math.NaN(), math.Inf(1)} {
+		if _, err := s.Update(h.ID, Input{Text: demoText, State: StateOpen, Facts: Facts{JoinAmbiguousPct: pct(bad)}}); !errors.Is(err, ErrInvalid) {
+			t.Errorf("join pct %v: %v", bad, err)
+		}
+	}
+	for _, ok := range []float64{0, 100} {
+		if _, err := s.Update(h.ID, Input{Text: demoText, State: StateOpen, Facts: Facts{JoinAmbiguousPct: pct(ok)}}); err != nil {
+			t.Errorf("join pct %v: %v", ok, err)
+		}
 	}
 }
 

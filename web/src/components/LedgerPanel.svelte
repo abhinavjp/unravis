@@ -4,7 +4,7 @@
   import type { Hypothesis } from '../lib/types';
   import {
     ALT_STATUS_LABEL, ALT_STATUS_ORDER, STATE_LABEL, STATE_ORDER, buildInput, editorFromHypothesis, historyLine,
-    ledgerCopy as copy, presenceText, rateProblem, stateLabel, type EditorState
+    joinProblem, ledgerCopy as copy, presenceText, rateProblem, stateLabel, type EditorState
   } from '../lib/ledger';
 
   // The Ledger drawer: what we believe, what supports it, what contradicts it, what is not yet known.
@@ -136,6 +136,7 @@
         </button>
         {#if open && editor}
           {@const rateError = rateProblem(editor)}
+          {@const joinError = joinProblem(editor)}
           <div class="ledger-body source-form" id={'ledger-body-' + h.id}>
             <label for={'l-text-' + h.id}>{copy.textLabel}</label>
             <textarea id={'l-text-' + h.id} rows="2" bind:value={editor.text}></textarea>
@@ -149,6 +150,7 @@
               <div class="inline-error" role="alert">
                 <strong>{copy.blockedLead}</strong>
                 <ul class="ledger-reasons">{#each blocked[h.id] as reason (reason)}<li>{reason}</li>{/each}</ul>
+                <p class="ledger-blocked-note">{copy.blockedNote}</p>
               </div>
             {:else if h.guards?.length}
               <div class="connection-status warning">
@@ -193,8 +195,9 @@
             </div>
 
             <label for={'l-join-' + h.id}>{copy.joinLabel}</label>
-            <input id={'l-join-' + h.id} type="text" inputmode="decimal" autocomplete="off" bind:value={editor.joinPct} aria-describedby={'l-join-hint-' + h.id} />
+            <input id={'l-join-' + h.id} type="text" inputmode="decimal" autocomplete="off" bind:value={editor.joinPct} aria-describedby={'l-join-hint-' + h.id} aria-invalid={joinError ? 'true' : undefined} />
             <p class="field-note" id={'l-join-hint-' + h.id}>{copy.joinHint}</p>
+            {#if joinError}<p class="warning-text" role="alert">{joinError}</p>{/if}
 
             <div class="ledger-checks">
               <label><input type="checkbox" bind:checked={editor.timezoneRecorded} /><span>{copy.timezone}</span></label>
@@ -217,7 +220,7 @@
             {#if problem[h.id]}<p class="inline-error" role="alert">{problem[h.id]}</p>{/if}
 
             <div class="ledger-actions">
-              <button type="button" class="primary-button" disabled={!!busy[h.id] || !!rateError || editor.text.trim() === ''} onclick={() => save(h)}>{busy[h.id] === 'save' ? copy.saving : copy.save}</button>
+              <button type="button" class="primary-button" disabled={!!busy[h.id] || !!rateError || !!joinError || editor.text.trim() === ''} onclick={() => save(h)}>{busy[h.id] === 'save' ? copy.saving : copy.save}</button>
               <button type="button" class="secondary-button" disabled={!!busy[h.id]} onclick={() => reuse(h)}>{copy.reuse}</button>
               {#if confirming === h.id}
                 <span class="ledger-confirm" role="group" aria-label={copy.removeConfirm}>
@@ -261,6 +264,7 @@
   .ledger-body textarea { width: 100%; min-width: 0; padding: 7px 9px; color: var(--text); background: var(--surface); border: 1px solid var(--control-line); border-radius: var(--radius); font: inherit; font-size: 14px; line-height: 1.45; resize: vertical; }
   .ledger-body .field-grid > div { display: grid; gap: 4px; min-width: 0; }
   .ledger-reasons { margin: 4px 0 0; padding-left: 18px; font-size: 12px; }
+  .ledger-blocked-note { margin: 6px 0 0; font-size: 12px; }
   .ledger-alts { display: grid; gap: 6px; }
   .ledger-alt { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
   .ledger-alt select { width: auto !important; }

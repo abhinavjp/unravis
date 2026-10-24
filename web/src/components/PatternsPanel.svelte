@@ -5,7 +5,7 @@
   import { formatElapsed } from '../lib/provenance';
   import {
     DEFAULT_EPISODE_GAP_SECONDS, DEFAULT_STALL_MS, PATTERNS_TEXT, auditStallLine, coverageLine, endGapsText, nBadge, operationText,
-    qualityLine, secondsLabel, stallsOf, verdictText, volleysOf, windowInput
+    qualityLine, secondsLabel, stallsOf, truncationNotices, verdictText, volleysOf, windowInput
   } from '../lib/patterns';
   import type { PatternReport, Query } from '../lib/types';
   import Hint from './Hint.svelte';
@@ -109,13 +109,16 @@
                   {#if finding.lowN}<span class="low-n">{PATTERNS_TEXT.lowN}</span>{/if}
                 </div>
                 <p>{finding.headline}</p>
+                {#if finding.evidenceId}
+                  <p class="finding-ref" title={PATTERNS_TEXT.referenceNote}><span class="finding-ref-label">{PATTERNS_TEXT.reference}</span> <code>{finding.evidenceId}</code></p>
+                {/if}
               </li>
             {/each}
           </ul>
         {/if}
         <p class="patterns-quality">{qualityLine(report.quality)}<Hint termId="incomplete-request" /></p>
         {#if coverage}<p class="patterns-quality">{coverage}<Hint termId="coverage" /></p>{/if}
-        {#if report.truncated}<div class="notice" role="status">{PATTERNS_TEXT.truncated}</div>{/if}
+        {#each truncationNotices(report) as notice (notice)}<div class="notice" role="status">{notice}</div>{/each}
         {#each report.warnings as warning (warning)}<div class="notice" role="status">{warning}</div>{/each}
         <ProvenanceNote provenance={report.provenance} {sourceLabels} />
       </section>
@@ -220,6 +223,8 @@
   .evidence-badge { padding: 2px 8px; color: var(--text); border: 1px solid var(--line); border-radius: 4px; font-weight: 650; }
   .evidence-badge.strong { border-color: var(--accent); }
   .finding-n { color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .finding p.finding-ref { margin-top: 4px; color: var(--text-2); font-size: 11px; }
+  .finding-ref code { font-family: var(--mono); user-select: all; overflow-wrap: anywhere; }
   .low-n { padding: 1px 6px; color: var(--warn); border: 1px solid var(--warn); border-radius: 4px; }
   .patterns-quality { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.5; }
   .patterns-detail { margin-top: 16px; min-width: 0; }

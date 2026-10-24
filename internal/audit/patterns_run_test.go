@@ -19,6 +19,9 @@ type patternFakeRepo struct {
 	// analyzeErr makes Analyze fail; quality is what it returns otherwise.
 	analyzeErr error
 	quality    Quality
+	// results is Analysis.Sources; listed is what Sources returns.
+	results []SourceResult
+	listed  []Source
 
 	slowCalls  []PageInput
 	auditCalls []PageInput
@@ -34,7 +37,7 @@ type patternFakeCoverage struct {
 	total       CoverageRow
 }
 
-func (f *patternFakeRepo) Sources(context.Context) ([]Source, error) { return nil, nil }
+func (f *patternFakeRepo) Sources(context.Context) ([]Source, error) { return f.listed, nil }
 func (f *patternFakeRepo) AddSource(context.Context, SourceInput) (Source, error) {
 	return Source{}, nil
 }
@@ -46,7 +49,7 @@ func (f *patternFakeRepo) Analyze(_ context.Context, q Query) (Analysis, error) 
 	if f.analyzeErr != nil {
 		return Analysis{}, f.analyzeErr
 	}
-	return Analysis{Quality: f.quality}, nil
+	return Analysis{Quality: f.quality, Sources: f.results}, nil
 }
 func (f *patternFakeRepo) Payload(context.Context, PayloadInput) (Payload, error) {
 	return Payload{}, nil
@@ -439,8 +442,12 @@ func TestRunPatternsTruncation(t *testing.T) {
 			}
 			repo := &patternFakeRepo{slow: rows}
 			r := runFake(t, repo, patternInput())
-			if r.Truncated != tc.truncated || len(r.Stalls) != MaxPatternRows {
-				t.Fatalf("truncated %v stalls %d", r.Truncated, len(r.Stalls))
+			if r.Truncated != tc.truncated || r.StallsTruncated != tc.truncated || r.AuditsTruncated || len(r.Stalls) != MaxPatternRows {
+				t.Fatalf("truncated %v stalls truncated %v audits truncated %v stalls %d", r.Truncated, r.StallsTruncated, r.AuditsTruncated, len(r.Stalls))
+			}
+			b1 := findingByRule(r, "B1")
+			if strings.Contains(b1.Headline, "(at least; capped at 500 rows per source)") != tc.truncated {
+				t.Fatalf("B1 headline %q", b1.Headline)
 			}
 			for _, c := range repo.slowCalls {
 				if c.Limit != MaxSlowestPageSize || c.Query.Metric != "total" || c.MinMs == nil || *c.MinMs != DefaultStallMs {
@@ -456,6 +463,60 @@ func TestRunPatternsTruncation(t *testing.T) {
 				t.Fatalf("partial warning %v headline %q", r.Warnings, b2.Headline)
 			}
 		})
+	}
+}
+
+// An audit-side cut must not mark the stall-based episode count as partial,
+// and it must mark the B6 figure as a lower bound.
+func TestRunPatternsAuditTruncationIsSeparate(t *testing.T) {
+	var audits []RequestRecord
+	for i := 0; i < MaxPatternRows+5; i++ {
+		audits = append(audits, auditRow(fmt.Sprintf("a%04d", i), time.Duration(i)*time.Second, 10000, 7000))
+	}
+	repo := &patternFakeRepo{slow: []RequestRecord{stallRow("s", 0, 50000, 1)}, audit: audits}
+	r := runFake(t, repo, patternInput())
+	if !r.Truncated || !r.AuditsTruncated || r.StallsTruncated {
+		t.Fatalf("truncated %v audits %v stalls %v", r.Truncated, r.AuditsTruncated, r.StallsTruncated)
+	}
+	if b2 := findingByRule(r, "B2"); b2 == nil || strings.Contains(b2.Headline, "partial") {
+		t.Fatalf("B2 headline %+v", b2)
+	}
+	if b1 := findingByRule(r, "B1"); b1 == nil || strings.Contains(b1.Headline, "at least") {
+		t.Fatalf("B1 headline %+v", b1)
+	}
+	warnings := strings.Join(r.Warnings, "\n")
+	if strings.Contains(warnings, "episode count is partial") || !strings.Contains(warnings, "audit-create rows per source were read") {
+		t.Fatalf("warnings %v", r.Warnings)
+	}
+	b6 := findingByRule(r, "B6")
+	if b6 == nil || !strings.HasPrefix(b6.Headline, "Audit create took 7 s as measured from the client side.") ||
+		!strings.HasSuffix(b6.Headline, " Partial count (at least; capped at 500 rows per source).") {
+		t.Fatalf("B6 headline %+v", b6)
+	}
+}
+
+func TestRunPatternsWarnsForSourceWithoutQuality(t *testing.T) {
+	repo := &patternFakeRepo{
+		results: []SourceResult{{SourceID: "s1", OK: true}, {SourceID: "s2", OK: false}, {SourceID: "s3", OK: false}},
+		listed:  []Source{{ID: "s2", Label: "West payroll"}},
+	}
+	in := patternInput()
+	in.SourceIDs = []string{"s1", "s2", "s3"}
+	r := runFake(t, repo, in)
+	warnings := strings.Join(r.Warnings, "\n")
+	if !strings.Contains(warnings, "Quality counts are missing for source West payroll.") ||
+		!strings.Contains(warnings, "Quality counts are missing for source s3.") ||
+		strings.Contains(warnings, "source s1.") {
+		t.Fatalf("warnings %v", r.Warnings)
+	}
+}
+
+func TestRunPatternsMissingRowGrammar(t *testing.T) {
+	noStart := stallRow("no-start", 0, 50000, 1)
+	noStart.InitiatedAt = nil
+	r := runFake(t, &patternFakeRepo{slow: []RequestRecord{noStart}}, patternInput())
+	if warnings := strings.Join(r.Warnings, "\n"); !strings.Contains(warnings, "1 long request row had no start time") {
+		t.Fatalf("warnings %v", r.Warnings)
 	}
 }
 
@@ -511,7 +572,7 @@ func TestRunPatternsEvidenceID(t *testing.T) {
 	repo := &patternFakeRepo{slow: []RequestRecord{stallRow("row-id-1", 0, 50000, 1)}}
 	first, second := runFake(t, repo, patternInput()), runFake(t, repo, patternInput())
 	for i, f := range first.Findings {
-		if f.EvidenceID != second.Findings[i].EvidenceID || !strings.HasPrefix(f.EvidenceID, "p2:"+f.Rule+":") || strings.Contains(f.EvidenceID, "row-id-1") {
+		if f.EvidenceID != second.Findings[i].EvidenceID || !strings.HasPrefix(f.EvidenceID, "p2:"+strings.ToLower(f.Rule)+":") || strings.Contains(f.EvidenceID, "row-id-1") {
 			t.Fatalf("evidence id %q / %q", f.EvidenceID, second.Findings[i].EvidenceID)
 		}
 	}

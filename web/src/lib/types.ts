@@ -199,6 +199,10 @@ export interface PatternReport {
   recurrence: 'none' | 'single_episode' | 'two_episodes' | 'recurring';
   findings: PatternFinding[]; quality: { incomplete: number; pending: number; invalid: number };
   coverage?: PatternCoverage; truncated: boolean; provenance?: Provenance[]; warnings: string[];
+  /** The stall read (B1, B2, B12) hit the row cap. Additive: absent from older servers, which send only `truncated`. */
+  stallsTruncated?: boolean;
+  /** The audit-create read (B6) hit the row cap. `truncated` is the OR of the two. */
+  auditsTruncated?: boolean;
 }
 
 /** The hypothesis ledger (/api/ledger). Mirrors internal/ledger/types.go. It holds no row data and no identifiers. */
