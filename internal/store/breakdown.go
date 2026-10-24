@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync/atomic"
+	"time"
 
 	"api-audit-explorer/internal/audit"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -21,10 +22,21 @@ type breakdownSource struct {
 	ok      bool
 	builder *audit.BreakdownBuilder
 	result  audit.SourceResult
+	// code is the error code of a failure (empty when the source read to its end).
+	code string
+	// Hint mode state, resolved after admission. prefix is the pipeline the reads
+	// share, with the _id stage in front when hint ran.
+	prefix  mongo.Pipeline
+	margin  *audit.IDMargin
+	note    string
+	ran     bool
+	matched int64
+	elapsed time.Duration
 }
 
 func (b *breakdownSource) fail(code, message string) {
 	b.ok = false
+	b.code = code
 	b.result = audit.SourceResult{SourceID: b.p.source.ID, ErrorCode: code, Error: message}
 }
 
@@ -77,11 +89,22 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 			src.fail(code, message)
 			continue
 		}
+		// Hint mode: calibrate after admission. The legacy reader streams metadata
+		// and never uses it; it runs exact and says why.
+		unsupported := ""
 		if src.legacy {
-			src.builder, err = readLegacyBreakdown(ctx, p, q, cohort, input, &legacyRecords, &legacyBytes)
-		} else {
-			src.builder, err = readBreakdownCounts(ctx, p, prefix, input)
+			unsupported = errHintLegacy.Error()
 		}
+		src.margin, src.note = s.resolveHint(ctx, p, q.QueryMode, unsupported)
+		src.prefix = hinted(prefix, src.margin, q.Start, q.End)
+		src.ran = true
+		began := time.Now()
+		if src.legacy {
+			src.builder, src.matched, err = readLegacyBreakdown(ctx, p, q, cohort, input, &legacyRecords, &legacyBytes)
+		} else {
+			src.builder, src.matched, err = readBreakdownCounts(ctx, p, src.prefix, input)
+		}
+		src.elapsed = time.Since(began)
 		release()
 		if err != nil {
 			if errors.Is(err, audit.ErrLimit) {
@@ -105,7 +128,9 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 			src.fail(code, message)
 			continue
 		}
-		err = readBreakdownBins(ctx, src.p, prefix, input, keys, src.builder)
+		began := time.Now()
+		err = readBreakdownBins(ctx, src.p, src.prefix, input, keys, src.builder)
+		src.elapsed += time.Since(began)
 		release()
 		if err != nil {
 			if errors.Is(err, audit.ErrLimit) {
@@ -119,7 +144,9 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 	final.SetValueCap(breakdownValueCap(input.Dim))
 	final.SetPooled(pooled)
 	results := make([]audit.SourceResult, 0, len(sources))
+	provenance := make([]audit.Provenance, 0, len(sources))
 	for _, src := range sources {
+		provenance = append(provenance, src.provenance(q))
 		if src.ok {
 			final.Merge(src.builder)
 			src.result = audit.SourceResult{SourceID: src.p.source.ID, OK: true, Version: src.p.version, IndexWarning: src.p.indexWarning}
@@ -132,7 +159,25 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 		return audit.Breakdown{}, err
 	}
 	out.Sources = results
+	out.Provenance = provenance
 	return out, nil
+}
+
+// provenance is the source's entry for the whole breakdown window. A source that
+// did not run is a failed exact entry; one that failed after running keeps the
+// mode it ran in.
+func (b *breakdownSource) provenance(q audit.Query) audit.Provenance {
+	if !b.ran {
+		return failedProvenance(b.p, "current", q.Start, q.End, audit.QueryModeExact, nil, "", b.code, 0)
+	}
+	mode := audit.QueryModeExact
+	if b.margin != nil {
+		mode = audit.QueryModeHint
+	}
+	pv := newProvenance(b.p, "current", q.Start, q.End, mode, b.margin)
+	pv.Note = b.note
+	finishProvenance(&pv, b.matched, b.matched, b.elapsed, b.code)
+	return pv
 }
 
 // admit takes the global and per-source query slots. On failure the release
@@ -311,7 +356,7 @@ func rawBreakdownKey(v bson.RawValue) string {
 
 // readBreakdownCounts runs the first aggregation: one document per distinct
 // value with its counters. More than MaxBreakdownGroups values fails closed.
-func readBreakdownCounts(ctx context.Context, p *profile, prefix mongo.Pipeline, input audit.BreakdownInput) (*audit.BreakdownBuilder, error) {
+func readBreakdownCounts(ctx context.Context, p *profile, prefix mongo.Pipeline, input audit.BreakdownInput) (*audit.BreakdownBuilder, int64, error) {
 	pipeline := withStages(prefix,
 		bson.D{{Key: "$group", Value: bson.D{
 			{Key: "_id", Value: bson.D{{Key: "v", Value: breakdownDimExpr(input.Dim)}}},
@@ -325,29 +370,31 @@ func readBreakdownCounts(ctx context.Context, p *profile, prefix mongo.Pipeline,
 	)
 	cur, err := p.shared.client.Aggregate(ctx, p.source.Database, p.source.Collection, pipeline)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer closeMongoCursor(cur)
 	builder := audit.NewBreakdownBuilder(input.Dim, input.Top)
+	var matched int64
 	groups := 0
 	for cur.Next(ctx) {
 		groups++
 		if groups > audit.MaxBreakdownGroups {
-			return nil, fmt.Errorf("%w: %w: more than %d distinct values; narrow the time range or add a filter", audit.ErrLimit, audit.ErrBreakdownGroupLimit, audit.MaxBreakdownGroups)
+			return nil, 0, fmt.Errorf("%w: %w: more than %d distinct values; narrow the time range or add a filter", audit.ErrLimit, audit.ErrBreakdownGroupLimit, audit.MaxBreakdownGroups)
 		}
 		var raw bson.Raw
 		if err := cur.Decode(&raw); err != nil {
-			return nil, errors.New("decode failure")
+			return nil, 0, errors.New("decode failure")
 		}
+		matched += rawCount(raw, "count")
 		builder.AddCounts(rawBreakdownKey(raw.Lookup("_id", "v")), audit.BreakdownCounts{
 			Count: rawCount(raw, "count"), Incomplete: rawCount(raw, "incomplete"), Pending: rawCount(raw, "pending"),
 			Count4xx: rawCount(raw, "c4xx"), Count5xx: rawCount(raw, "c5xx"),
 		})
 	}
 	if err := cur.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return builder, nil
+	return builder, matched, nil
 }
 
 // readBreakdownBins runs the second aggregation: histogram bins of valid rows,
@@ -403,27 +450,28 @@ func readBreakdownBins(ctx context.Context, p *profile, prefix mongo.Pipeline, i
 // legacyRecordFilterMatches (audit.RecordFilterMatches and audit.StateMatches),
 // and the summary's kind and outcome filters through audit.RowInSummary. The
 // record carries the query metric's duration and state.
-func readLegacyBreakdown(ctx context.Context, p *profile, q audit.Query, cohort [5]string, input audit.BreakdownInput, records, bytes *atomic.Int64) (*audit.BreakdownBuilder, error) {
+func readLegacyBreakdown(ctx context.Context, p *profile, q audit.Query, cohort [5]string, input audit.BreakdownInput, records, bytes *atomic.Int64) (*audit.BreakdownBuilder, int64, error) {
 	pipeline := legacyRowMetadataPipeline(requestPipelineState(q, cohort, "", p.source.ID, nil, 1))
 	cur, err := p.shared.client.Aggregate(ctx, p.source.Database, p.source.Collection, pipeline)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer closeMongoCursor(cur)
 	builder := audit.NewBreakdownBuilder(input.Dim, input.Top)
+	var matched int64
 	for cur.Next(ctx) {
 		if records.Add(1) > maxLegacyMetadataRecords {
-			return nil, legacyScanLimit("record")
+			return nil, 0, legacyScanLimit("record")
 		}
 		var raw bson.Raw
 		if err := cur.Decode(&raw); err != nil {
-			return nil, errors.New("could not decode legacy request metadata")
+			return nil, 0, errors.New("could not decode legacy request metadata")
 		}
 		if bytes.Add(int64(len(raw))) > maxLegacyMetadataBytes {
-			return nil, legacyScanLimit("byte")
+			return nil, 0, legacyScanLimit("byte")
 		}
 		if raw.Lookup("_auditMetadataOversized").Boolean() {
-			return nil, legacyScanLimit("metadata field")
+			return nil, 0, legacyScanLimit("metadata field")
 		}
 		record, _ := normalizeLegacyRecord(raw, q.Metric)
 		if record.ID.IsZero() || record.At == nil || record.At.Before(q.Start) || !record.At.Before(q.End) {
@@ -440,9 +488,10 @@ func readLegacyBreakdown(ctx context.Context, p *profile, q audit.Query, cohort 
 			UIVersion: record.UIVersion, PollingTypeRaw: record.PollingTypeRaw,
 		}
 		builder.AddRecord(row, record.State, record.PendingAsync, record.StatusClass, record.Duration)
+		matched++
 	}
 	if err := cur.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return builder, nil
+	return builder, matched, nil
 }
