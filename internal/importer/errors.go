@@ -2,6 +2,7 @@ package importer
 
 import (
 	"errors"
+	"regexp"
 	"strconv"
 )
 
@@ -28,8 +29,25 @@ func (e *LimitError) Error() string {
 // Unwrap makes errors.Is(err, ErrLimit) true.
 func (e *LimitError) Unwrap() error { return ErrLimit }
 
+// columnPattern is the shape of a canonical column name: letters, digits and
+// "_", "." or "-", starting with a letter, at most 64 bytes. Spaces, brackets and
+// anything else mean the text did not come from an importer's fixed list.
+var columnPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,63}$`)
+
+// SafeColumn returns column when it has the shape of a canonical column name,
+// else "". It is the backstop between an importer and every place a quarantine
+// Column is stored, logged or sent: raw file header text must never get through
+// (section 4 rule 9), whatever an importer put in the field.
+func SafeColumn(column string) string {
+	if columnPattern.MatchString(column) {
+		return column
+	}
+	return ""
+}
+
 // QuarantineError refuses the whole file. Column is a header name only, and
-// only a name from the importer's own fixed lists.
+// only a canonical name from the importer's own fixed lists, never the header
+// text of the file. Consumers pass it through SafeColumn.
 type QuarantineError struct {
 	Reason Reason
 	Column string
@@ -37,8 +55,8 @@ type QuarantineError struct {
 
 func (e *QuarantineError) Error() string {
 	s := "file quarantined: " + e.Reason.Text()
-	if e.Column != "" {
-		s += " (column " + strconv.Quote(e.Column) + ")"
+	if col := SafeColumn(e.Column); col != "" {
+		s += " (column " + strconv.Quote(col) + ")"
 	}
 	return s
 }

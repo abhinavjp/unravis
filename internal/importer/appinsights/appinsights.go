@@ -198,6 +198,9 @@ func (e *queryError) Error() string { return e.q.Error() + ": " + UseDocumentedQ
 func (e *queryError) Unwrap() error { return e.q }
 
 func quarantine(reason importer.Reason, column string) error {
+	if column == TimestampHeader {
+		column = "timestamp_utc" // the display spelling has a space and brackets; a Column is a plain name
+	}
 	return &queryError{&importer.QuarantineError{Reason: reason, Column: column}}
 }
 

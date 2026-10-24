@@ -36,7 +36,7 @@ const (
 	defaultMaxFileBytes  = 2 << 30
 	defaultMaxFileRows   = 10_000_000
 	defaultMaxCaseBytes  = 4 << 30
-	defaultMaxDBBytes    = 8 << 30
+	defaultMaxDBBytes    = 4 << 30
 	defaultMaxTotalBytes = 20 << 30
 	defaultMinFreeBytes  = 2 << 30
 
@@ -62,8 +62,8 @@ type Options struct {
 	// as casestore.Caps.MaxCaseBytes defines it. It is checked before an import
 	// when the body reports its size, and again once the file has been read.
 	MaxCaseBytes int64
-	// MaxDBBytes caps one case database file (default 8 GiB, twice the default
-	// MaxCaseBytes). It is enforced inside SQLite with max_page_count and before
+	// MaxDBBytes caps one case database file (default 4 GiB, the same as the
+	// default MaxCaseBytes). It is enforced inside SQLite with max_page_count and before
 	// each import, and bounds the disk one case can take whatever the ratio of
 	// database to source bytes.
 	MaxDBBytes int64
@@ -147,18 +147,19 @@ func New(opt Options) (*Store, error) {
 	if opt.MinFreeBytes == 0 {
 		opt.MinFreeBytes = defaultMinFreeBytes
 	}
-	_, statErr := os.Lstat(root)
-	fresh := errors.Is(statErr, os.ErrNotExist)
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, err
 	}
-	if fresh {
-		if err := casestore.SecureDir(root); err != nil {
-			return nil, err
-		}
-	}
-	// Root and every ancestor up to the volume must be plain folders.
+	// Root and every ancestor up to the volume must be plain folders. This is
+	// checked before the ACL is applied, so the ACL never lands through a link.
 	if err := casestore.RejectReparse(filepath.VolumeName(root)+string(filepath.Separator), root); err != nil {
+		return nil, err
+	}
+	// The protected DACL goes on every time, not only on a folder New made: a
+	// root left by an older build or made by hand would otherwise keep its
+	// inherited ACL. SecureDir sets the same two entries each time, so a second
+	// call changes nothing.
+	if err := casestore.SecureDir(root); err != nil {
 		return nil, err
 	}
 	return &Store{opt: opt, root: root, open: map[casestore.CaseID]*caseState{}, erasing: map[casestore.CaseID]bool{}}, nil
@@ -321,7 +322,12 @@ func (s *Store) openDB(ctx context.Context, dir string, keys casestore.Keys, cre
 	if err != nil {
 		return nil, errors.New("opening case database failed")
 	}
-	db.SetMaxOpenConns(4) // one import transaction plus readers (WAL: readers see the last commit)
+	// Four connections, not one: an import keeps one dedicated connection (and
+	// its transaction) for its whole run, and with a single connection every
+	// read of the case (Events, Imports) would wait until the import finished.
+	// Readers see the last commit (WAL). The key is held per connection, an
+	// accepted cost. TestReadsDoNotWaitForImport pins this.
+	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxLifetime(0)
 	if err := db.PingContext(ctx); err != nil {

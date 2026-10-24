@@ -436,9 +436,11 @@ func TestCaseLifecycle(t *testing.T) {
 	if res = e.get("/api/cases/" + id + "/imports"); res.Code != http.StatusNotFound || failureOf(t, res).Reason != "case-not-found" {
 		t.Errorf("erased case imports = %d %s", res.Code, res.Body)
 	}
-	// Erase is idempotent, so a retry after a half-finished erase completes it.
-	if res = e.json(http.MethodDelete, "/api/cases/"+id, `{"confirm":"`+id+`"}`); res.Code != http.StatusNoContent {
-		t.Errorf("second erase = %d", res.Code)
+	// A second erase finds no case. The store's Erase is idempotent, but the route
+	// answers 404 for an id that names nothing (batch-2 L7); a retry after a ledger
+	// failure still completes, see fix2_test.go.
+	if res = e.json(http.MethodDelete, "/api/cases/"+id, `{"confirm":"`+id+`"}`); res.Code != http.StatusNotFound || failureOf(t, res).Reason != "case-not-found" {
+		t.Errorf("second erase = %d %s", res.Code, res.Body)
 	}
 }
 

@@ -181,6 +181,10 @@ func Run(t *testing.T, f Factory) {
 	t.Run("reads-during-import", func(t *testing.T) { readsDuringImport(t, f, caps) })
 	t.Run("handles", func(t *testing.T) { handles(t, f, caps) })
 	t.Run("cancelled-context", func(t *testing.T) { cancelled(t, f, caps) })
+	t.Run("failed-import-keeps-report", func(t *testing.T) { failedKeepsReport(t, f, caps) })
+	t.Run("closed-case-refuses-import", func(t *testing.T) { closedRefusesImport(t, f, caps) })
+	t.Run("ack-text-limit", func(t *testing.T) { ackLimit(t, f, caps) })
+	t.Run("quarantine-column-is-canonical", func(t *testing.T) { quarantineColumn(t, f, caps) })
 }
 
 func ids(t *testing.T, f Factory, caps casestore.Caps) {
@@ -1139,5 +1143,129 @@ func cancelled(t *testing.T, f Factory, caps casestore.Caps) {
 	}
 	if imps, _ := c.Imports(e.ctx); len(imps) != 0 {
 		t.Errorf("import kept after cancellation: %+v", imps)
+	}
+}
+
+// failedKeepsReport: whatever way an import fails after the importer ran, the
+// ImportResult still carries the importer's Report (row and reject counts), so
+// the caller can say what was read. Batch-2 M1.
+func failedKeepsReport(t *testing.T, f Factory, caps casestore.Caps) {
+	e := newEnv(t, f, casestore.Caps{MaxFileBytes: caps.MaxFileBytes, MaxFileRows: 3, MaxCaseBytes: caps.MaxCaseBytes})
+	c := e.newCase("failed report")
+	boom := errors.New("importer failed")
+	cases := []struct {
+		name string
+		run  casestore.RunFunc
+		want error
+	}{
+		{"importer error", func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
+			_, _ = io.Copy(io.Discard, r)
+			return importer.Report{Importer: "contract", Rows: 7, Rejected: 2}, boom
+		}, boom},
+		{"rows over the file cap", func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
+			_, _ = io.Copy(io.Discard, r)
+			return importer.Report{Importer: "contract", Rows: 7, Rejected: 2}, nil
+		}, casestore.ErrCapExceeded},
+		{"duplicate event", func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
+			_, _ = io.Copy(io.Discard, r)
+			ev1 := ev(c, "same", "k", "h", 0)
+			_ = emit(ev1)
+			err := emit(ev1)
+			return importer.Report{Importer: "contract", Rows: 7, Rejected: 2}, err
+		}, casestore.ErrDuplicateEvent},
+	}
+	for i, tc := range cases {
+		res, err := c.Import(e.ctx, meta(), strings.NewReader(fmt.Sprintf("body %d", i)), tc.run)
+		if !errors.Is(err, tc.want) {
+			t.Errorf("%s: %v, want %v", tc.name, err, tc.want)
+			continue
+		}
+		if res.Report.Rows != 7 || res.Report.Rejected != 2 {
+			t.Errorf("%s: report %+v lost on a failed import", tc.name, res.Report)
+		}
+	}
+	if info := c.Info(); info.Imports != 0 || info.Bytes != 0 {
+		t.Errorf("failed imports changed the case: %+v", info)
+	}
+}
+
+// closedRefusesImport: a closed case takes no more files, through a handle
+// opened before the close and one opened after it. Batch-2 L1.
+func closedRefusesImport(t *testing.T, f Factory, caps casestore.Caps) {
+	e := newEnv(t, f, caps)
+	c := e.newCase("closed")
+	if _, err := c.Import(e.ctx, meta(), strings.NewReader("before"), emitAll(ev(c, "b", "k", "h", 0))); err != nil {
+		t.Fatalf("import before close: %v", err)
+	}
+	if err := e.store.CloseCase(e.ctx, c.Info().ID); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := e.store.Open(e.ctx, c.Info().ID)
+	if err != nil {
+		t.Fatalf("Open of a closed case: %v", err)
+	}
+	defer c2.Close()
+	for name, h := range map[string]casestore.Case{"handle opened before": c, "handle opened after": c2} {
+		_, err := h.Import(e.ctx, meta(), strings.NewReader("after "+name), emitAll(ev(h, "a", "k", "h", time.Second)))
+		if !errors.Is(err, casestore.ErrCaseClosed) {
+			t.Errorf("%s: Import on a closed case = %v, want ErrCaseClosed", name, err)
+		}
+	}
+	if imps, _ := c2.Imports(e.ctx); len(imps) != 1 {
+		t.Errorf("%d imports after refused ones, want 1", len(imps))
+	}
+	if evs, _ := c2.Events(e.ctx, casestore.EventQuery{}); len(evs) != 1 {
+		t.Errorf("%d events after refused imports, want 1", len(evs))
+	}
+}
+
+// ackLimit: AckText is bounded by casestore.MaxAckText in every store, and the
+// refusal is the one error casestore.ErrAckTooLong. Batch-2 L2.
+func ackLimit(t *testing.T, f Factory, caps casestore.Caps) {
+	e := newEnv(t, f, caps)
+	c := e.newCase("ack limit")
+	m := meta()
+	m.AckText = strings.Repeat("x", casestore.MaxAckText)
+	if _, err := c.Import(e.ctx, m, strings.NewReader("at the limit"), emitAll(ev(c, "ok", "k", "h", 0))); err != nil {
+		t.Errorf("AckText of exactly MaxAckText bytes: %v", err)
+	}
+	m.AckText = strings.Repeat("x", casestore.MaxAckText+1)
+	if _, err := c.Import(e.ctx, m, noRead{t}, emitAll(ev(c, "over", "k", "h", 0))); !errors.Is(err, casestore.ErrAckTooLong) {
+		t.Errorf("AckText over MaxAckText: %v, want ErrAckTooLong", err)
+	}
+}
+
+// quarantineColumn: a stored quarantine Column is a canonical column name or
+// empty, never raw header text, whatever the importer put in the error. The
+// store is the last backstop (section 4 rule 9). Batch-2 M3.
+func quarantineColumn(t *testing.T, f Factory, caps casestore.Caps) {
+	e := newEnv(t, f, caps)
+	c := e.newCase("column")
+	q := c.(casestore.Quarantiner)
+	for i, tc := range []struct{ in, want string }{
+		{"Wait_Type", "Wait_Type"},
+		{"timestamp_utc", "timestamp_utc"},
+		{"sql-a.example.test hostname", ""},
+		{"duration ms\u2063", ""},
+		{"caf\u00e9", ""},
+		{"a,b", ""},
+		{strings.Repeat("a", 65), ""},
+	} {
+		column := tc.in
+		body := fmt.Sprintf("refused %d", i)
+		run := func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
+			_, _ = io.Copy(io.Discard, r)
+			return importer.Report{Importer: "contract", Rows: 1}, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat, Column: column}
+		}
+		if _, err := c.Import(e.ctx, meta(), strings.NewReader(body), run); !errors.Is(err, importer.ErrQuarantine) {
+			t.Fatalf("%q: %v", tc.in, err)
+		}
+		qs, err := q.Quarantines(e.ctx)
+		if err != nil || len(qs) != i+1 {
+			t.Fatalf("%q: Quarantines %+v %v", tc.in, qs, err)
+		}
+		if got := qs[i].Column; got != tc.want {
+			t.Errorf("column %q stored as %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

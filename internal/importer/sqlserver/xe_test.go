@@ -233,11 +233,50 @@ func TestXEScrubListQuarantines(t *testing.T) {
 			var emitted int
 			_, err := NewXE().Parse(context.Background(), strings.NewReader(csv), testOpts(t), func(evidence.Event) error { emitted++; return nil })
 			var q *importer.QuarantineError
-			if !errors.As(err, &q) || q.Reason != importer.ReasonUnscrubbedColumn || q.Column != h {
-				t.Fatalf("header %q: got %v, want unscrubbed-column naming the header", h, err)
+			// The Column is the scrub-list fragment that matched, never the header text.
+			if !errors.As(err, &q) || q.Reason != importer.ReasonUnscrubbedColumn || !isScrubFragment(q.Column) {
+				t.Fatalf("header %q: got %v, want unscrubbed-column naming a scrub-list fragment", h, err)
 			}
 			if emitted != 0 || strings.Contains(err.Error(), importertest.Sentinel) {
 				t.Errorf("header %q: emitted %d, err %v", h, emitted, err)
+			}
+		})
+	}
+}
+
+func isScrubFragment(c string) bool {
+	for _, f := range xeScrubFragments {
+		if c == f {
+			return true
+		}
+	}
+	return false
+}
+
+// TestXEQuarantineColumnNeverRawHeader: a header that holds a host name or
+// non-ASCII text must not ride along in the quarantine Column (batch-2 M3).
+func TestXEQuarantineColumnNeverRawHeader(t *testing.T) {
+	cases := []struct{ name, header, wantReason string }{
+		{"host in scrub header", "timestamp_utc,name,sql-a.example.test hostname", "unscrubbed-column"},
+		{"unicode scrub header", "timestamp_utc,name,sql-a\u00e9\u4e2d text", "unscrubbed-column"},
+		{"duplicate role header", "timestamp_utc,name,Wait_Type,wait type", "unsupported-format"},
+		{"duplicate role unicode", "timestamp_utc,name,duration,duration\u00a0ms\u2063", "unsupported-format"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			csv := tc.header + "\n2001-06-15 02:00:35,wait_info,x,y\n"
+			_, err := NewXE().Parse(context.Background(), strings.NewReader(csv), testOpts(t), func(evidence.Event) error { return nil })
+			var q *importer.QuarantineError
+			if !errors.As(err, &q) || string(q.Reason) != tc.wantReason {
+				t.Fatalf("got %v, want %s", err, tc.wantReason)
+			}
+			if q.Column == "" || q.Column != importer.SafeColumn(q.Column) {
+				t.Errorf("Column %q is not a canonical name", q.Column)
+			}
+			for _, raw := range []string{"sql-a", "\u00e9", "\u4e2d", "\u00a0", "\u2063"} {
+				if strings.Contains(q.Column, raw) || strings.Contains(err.Error(), raw) {
+					t.Errorf("Column %q or error %q carries header text %q", q.Column, err, raw)
+				}
 			}
 		})
 	}
