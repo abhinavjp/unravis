@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf16"
@@ -38,14 +39,20 @@ const (
 	KindJobRun   = "job-run"
 )
 
-// Caps from plan section 4: a file over any cap is refused whole.
+// Caps from plan section 4: a file over the byte, row or line cap is refused
+// whole. The boundary caps are different: a chatty schedule is cut and the
+// rest of its window is marked unknown, so one job cannot cost the whole file.
 const (
 	maxBytes     = 16 << 20
 	maxRows      = 100_000
 	maxLineBytes = 64 << 10
-	// maxBoundaries caps schedule-boundary plus schedule-unknown events per file.
+	// maxBoundaries caps schedule-boundary events per file. Unknown markers are
+	// not counted: they are bounded by the row cap, at most two per row.
 	maxBoundaries = 100_000
-	maxAttrBytes  = 200
+	// maxPerSchedule caps the boundaries one schedule may emit, so a single
+	// one-second job leaves room for the other jobs in the file.
+	maxPerSchedule = maxBoundaries / 4
+	maxAttrBytes   = 200
 )
 
 // Fixed attribute values for the "reason" attribute of a schedule-unknown event.
@@ -55,12 +62,18 @@ const (
 	reasonFreq     = "freq-not-time-based"
 	reasonDisabled = "disabled-at-export"
 	reasonMonthDay = "month-day-missing"
+	reasonWrap     = "window-wraps"
+	reasonTooMany  = "too-many-boundaries"
 )
 
 // Fixed gap sentences. Row content is never interpolated.
 const (
 	gapNoWindow        = "No time window was selected; schedule boundaries were not expanded."
-	gapUnknown         = "Some schedules could not be expanded (unsupported cron syntax, unknown time zone, disabled or not time-based); they count as unknown, never as a miss."
+	gapUnknown         = "Some schedules could not be fully expanded (unsupported cron syntax, unknown time zone, not time-based, disabled, a daily window across midnight, a missing month day or too many boundaries); the affected times count as unknown, never as a miss."
+	gapTruncated       = "A schedule had more boundaries than the limit allows; it was cut and the rest of the window counts as unknown."
+	gapAgentStepRows   = "SQL Agent history rows for job steps (step_id above 0) are skipped; only job outcome rows become job-run events."
+	gapAgentNoStep     = "The SQL Agent history has no step_id column, so a step row may be counted as a job run."
+	gapAgentJobEnabled = "Whether the job itself is enabled is only known when the export has both a job and a schedule enabled column; a disabled job can appear as live."
 	gapDST             = "Boundaries inside a daylight-saving gap or fold are flagged; their run time is uncertain."
 	gapCronBoth        = "Cron day-of-month and day-of-week are both restricted: a match on either is treated as a boundary."
 	gapHangfireSnap    = "Boundaries are expanded from the cron expressions in the export; schedule edits made before the export are not visible."
@@ -125,8 +138,9 @@ type run struct {
 	win    bool // a usable window was supplied
 	from   time.Time
 	to     time.Time
-	nBound int
-	hasUnk bool
+	nBound int       // boundaries emitted in the file
+	jobN   int       // boundaries emitted for the schedule being expanded
+	lastB  time.Time // latest boundary emitted for the schedule being expanded
 	minT   time.Time
 	maxT   time.Time
 	host   string
@@ -199,27 +213,59 @@ func (r *run) send(line int64, ordinal int, kind string, start, end time.Time, d
 	return nil
 }
 
+// errBoundaryCap says a schedule reached the per-schedule or per-file boundary
+// cap. It never leaves the package: the caller cuts the schedule and marks the
+// rest of the window unknown.
+var errBoundaryCap = errors.New("schedule: boundary cap reached")
+
+// beginSchedule starts the per-schedule boundary count.
+func (r *run) beginSchedule() {
+	r.jobN = 0
+	r.lastB = time.Time{}
+}
+
+// countBoundary reserves room for one more boundary, or reports the cap.
 func (r *run) countBoundary() error {
-	r.nBound++
-	if r.nBound > maxBoundaries {
-		return &importer.LimitError{Limit: "boundaries", Max: maxBoundaries, At: int64(r.nBound)}
+	if r.nBound >= maxBoundaries || r.jobN >= maxPerSchedule {
+		return errBoundaryCap
 	}
+	r.nBound++
+	r.jobN++
 	return nil
 }
 
-// sendUnknown emits one schedule-unknown marker for a job. It sits at the
-// window start; its only meaning is "this job's schedule is not fully known".
+// sendUnknown emits one schedule-unknown marker for a job that covers the whole
+// window: nothing is known about when the job fires.
 func (r *run) sendUnknown(line int64, ordinal int, job, reason, rule string) error {
+	return r.sendUnknownSpan(line, ordinal, job, reason, rule, r.from, r.to)
+}
+
+// sendUnknownSpan emits a schedule-unknown marker for the times between start
+// and end (inclusive). B3 treats a stall start inside the span, or within its
+// tolerance of it, as unknown; a stall elsewhere is judged on the boundaries.
+func (r *run) sendUnknownSpan(line int64, ordinal int, job, reason, rule string, start, end time.Time) error {
 	if !r.win {
 		return nil
 	}
-	if err := r.countBoundary(); err != nil {
+	r.gap(gapUnknown)
+	return r.send(line, ordinal, KindUnknown, start, end, nil, "", rule,
+		map[string]string{"job": job, "reason": reason})
+}
+
+// cutSchedule turns a boundary-cap hit into a partial result: the boundaries
+// already emitted stay, and the window after the last one is unknown.
+func (r *run) cutSchedule(err error, line int64, ord *int, job, rule string) error {
+	if !errors.Is(err, errBoundaryCap) {
 		return err
 	}
-	r.hasUnk = true
-	r.gap(gapUnknown)
-	return r.send(line, ordinal, KindUnknown, r.from, r.from, nil, "", rule,
-		map[string]string{"job": job, "reason": reason})
+	start := r.from
+	if r.lastB.After(start) {
+		start = r.lastB
+	}
+	r.gap(gapTruncated)
+	e := r.sendUnknownSpan(line, *ord, job, reasonTooMany, rule, start, r.to)
+	*ord++
+	return e
 }
 
 // finish builds the report; quarantine applies the reject-fraction rule.
@@ -236,7 +282,7 @@ func (r *run) finish(rule string, base []string) (importer.Report, error) {
 	}
 	gaps := append([]string(nil), base...)
 	// Deterministic order for the optional sentences.
-	for _, g := range []string{gapNoWindow, gapUnknown, gapDST, gapCronBoth, gapWeeklyFactor, gapMonthDayMissing} {
+	for _, g := range []string{gapNoWindow, gapUnknown, gapTruncated, gapDST, gapCronBoth, gapWeeklyFactor, gapMonthDayMissing} {
 		if r.gaps[g] {
 			gaps = append(gaps, g)
 		}
@@ -252,33 +298,53 @@ func (r *run) finish(rule string, base []string) (importer.Report, error) {
 
 // table maps lowercase header names to column indexes.
 type table struct {
-	idx map[string]int
-	n   int
+	idx   map[string]int
+	multi map[string][]int // every position of a header that may repeat
+	n     int
 }
 
-func newTable(header []string) (*table, error) {
-	t := &table{idx: map[string]int{}, n: len(header)}
+// newTable indexes the header. A repeated name quarantines the file, except for
+// the names in dupOK (a join of two tables can carry two columns of one name).
+func newTable(header []string, dupOK ...string) (*table, error) {
+	t := &table{idx: map[string]int{}, multi: map[string][]int{}, n: len(header)}
 	for i, h := range header {
 		k := strings.ToLower(strings.TrimSpace(h))
 		if k == "" {
 			continue
 		}
 		if _, dup := t.idx[k]; dup {
-			return nil, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat}
+			allowed := false
+			for _, d := range dupOK {
+				allowed = allowed || d == k
+			}
+			if !allowed {
+				return nil, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat}
+			}
+			t.multi[k] = append(t.multi[k], i)
+			continue
 		}
 		t.idx[k] = i
+		t.multi[k] = []int{i}
 	}
 	return t, nil
 }
 
 func (t *table) has(name string) bool { _, ok := t.idx[name]; return ok }
 
-func (t *table) get(rec []string, name string) string {
-	i, ok := t.idx[name]
-	if !ok || i >= len(rec) {
+// at returns the trimmed cell at a column position, or "" when out of range.
+func (t *table) at(rec []string, i int) string {
+	if i < 0 || i >= len(rec) {
 		return ""
 	}
 	return strings.TrimSpace(rec[i])
+}
+
+func (t *table) get(rec []string, name string) string {
+	i, ok := t.idx[name]
+	if !ok {
+		return ""
+	}
+	return t.at(rec, i)
 }
 
 // getRaw returns a cell exactly as the file holds it, for the free-text id
@@ -313,7 +379,7 @@ func (t *table) require(names ...string) error {
 }
 
 // openCSV runs the archive sniff, the byte limit and the strict CSV reader.
-func openCSV(r io.Reader, lim importer.Limits) (*textio.CSVReader, *table, error) {
+func openCSV(r io.Reader, lim importer.Limits, dupOK ...string) (*textio.CSVReader, *table, error) {
 	br := bufio.NewReaderSize(importer.LimitReader(r, lim.MaxBytes), 4096)
 	head, _ := br.Peek(512)
 	if err := importer.Sniff(head); err != nil {
@@ -328,7 +394,7 @@ func openCSV(r io.Reader, lim importer.Limits) (*textio.CSVReader, *table, error
 		// Empty file, a lone byte or a header the CSV reader cannot parse.
 		return nil, nil, errEmpty
 	}
-	tb, err := newTable(cr.Header())
+	tb, err := newTable(cr.Header(), dupOK...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -436,6 +502,53 @@ func resolveWall(w civilWall, loc *time.Location) (time.Time, string) {
 		return res.UTC.UTC(), "ambiguous"
 	}
 	return res.UTC.UTC(), ""
+}
+
+// wallReading is one UTC instant a wall-clock time can mean, with its DST flag.
+type wallReading struct {
+	utc  time.Time
+	flag string // "", "ambiguous" or "nonexistent"
+}
+
+// resolveWallAll lists every UTC instant a local wall time can mean. A normal
+// time has one. A time in a fold happens twice, so both occurrences are listed
+// and flagged ambiguous. A time in a gap never happens; it is read with the
+// offset before and the offset after the change, and both readings are flagged
+// nonexistent. Nothing is guessed: the caller emits every reading.
+func resolveWallAll(w civilWall, loc *time.Location) []wallReading {
+	naive := w.naiveUTC()
+	_, offBefore := naive.Add(-24 * time.Hour).In(loc).Zone()
+	_, offAfter := naive.Add(24 * time.Hour).In(loc).Zone()
+	offs := []int{offBefore}
+	if offAfter != offBefore {
+		offs = append(offs, offAfter)
+	}
+	var hits []time.Time
+	for _, o := range offs {
+		c := naive.Add(-time.Duration(o) * time.Second)
+		l := c.In(loc)
+		if l.Year() == w.y && l.Month() == w.m && l.Day() == w.d &&
+			l.Hour() == w.hh && l.Minute() == w.mm && l.Second() == w.ss {
+			hits = append(hits, c)
+		}
+	}
+	flag := ""
+	switch len(hits) {
+	case 0:
+		flag = "nonexistent"
+		for _, o := range offs {
+			hits = append(hits, naive.Add(-time.Duration(o)*time.Second))
+		}
+	case 1:
+	default:
+		flag = "ambiguous"
+	}
+	sort.Slice(hits, func(i, j int) bool { return hits[i].Before(hits[j]) })
+	out := make([]wallReading, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, wallReading{utc: h.UTC(), flag: flag})
+	}
+	return out
 }
 
 // parseInstant parses an ISO 8601 instant with Z or an offset, or epoch seconds

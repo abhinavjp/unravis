@@ -28,14 +28,15 @@ func TestHangfireGoodFixture(t *testing.T) {
 		t.Fatalf("rows=%d rejected=%d", rep.Rows, rep.Rejected)
 	}
 	b, u, r := ofKind(ev, KindBoundary), ofKind(ev, KindUnknown), ofKind(ev, KindJobRun)
-	if len(b) != 296 || len(u) != 2 || len(r) != 4 || rep.Emitted != 302 || len(ev) != 302 {
+	// job-beta's 02:30 on 2001-03-25 does not exist in Berlin, so it has both readings.
+	if len(b) != 297 || len(u) != 2 || len(r) != 4 || rep.Emitted != 303 || len(ev) != 303 {
 		t.Fatalf("boundaries=%d unknown=%d runs=%d emitted=%d", len(b), len(u), len(r), rep.Emitted)
 	}
 	if n := len(forJob(ev, KindBoundary, "job-alpha")); n != 289 {
 		t.Errorf("alpha boundaries = %d, want 289", n)
 	}
-	if n := len(forJob(ev, KindBoundary, "job-beta")); n != 3 {
-		t.Errorf("beta boundaries = %d, want 3", n)
+	if n := len(forJob(ev, KindBoundary, "job-beta")); n != 4 {
+		t.Errorf("beta boundaries = %d, want 4", n)
 	}
 	if n := len(forJob(ev, KindBoundary, "job-epsilon")); n != 3 {
 		t.Errorf("epsilon boundaries = %d, want 3", n)
@@ -78,7 +79,8 @@ func TestHangfireDSTBoundaryFlagged(t *testing.T) {
 			t.Errorf("dst = %q", e.Attrs["dst"])
 		}
 	}
-	if flagged != 1 || plain != 2 {
+	// Both readings of the missing hour are emitted, each flagged.
+	if flagged != 2 || plain != 2 {
 		t.Fatalf("flagged=%d plain=%d", flagged, plain)
 	}
 }
@@ -95,8 +97,9 @@ func TestHangfireDSTFoldFlagged(t *testing.T) {
 			amb++
 		}
 	}
-	if amb != 1 {
-		t.Fatalf("ambiguous = %d, want 1 (events=%d)", amb, len(ev))
+	// Both occurrences of 02:30 are emitted, each flagged.
+	if amb != 2 {
+		t.Fatalf("ambiguous = %d, want 2 (events=%d)", amb, len(ev))
 	}
 	found := false
 	for _, g := range rep.KnownGaps {
@@ -141,7 +144,7 @@ func TestHangfireBadCellsRejected(t *testing.T) {
 		t.Fatalf("rows=%d rejected=%d errors=%+v", rep.Rows, rep.Rejected, rep.Errors)
 	}
 	for line, want := range map[int64]importer.Reason{
-		2: importer.ReasonBadNumber, 3: importer.ReasonBadTime, 4: importer.ReasonFieldCount,
+		2: importer.ReasonBadTime, 3: importer.ReasonBadTime, 4: importer.ReasonFieldCount,
 		5: importer.ReasonBadNumber, 6: importer.ReasonFieldCount,
 	} {
 		if !hasReason(rep, line, want) {
@@ -227,14 +230,17 @@ func TestHangfireRowAndLineLimits(t *testing.T) {
 }
 
 func TestHangfireBoundaryCap(t *testing.T) {
-	// A one-second schedule over two days is far past the 100k boundary cap.
+	// A one-second schedule over two days is far past the per-schedule cap: the
+	// file is kept, the job is cut and the rest of the window is unknown.
 	csv := hfHead + "job-alpha,default,* * * * * *,UTC,,,\n"
 	o := hangfireOpts()
 	o.Window = importer.Window{From: utc("2001-03-24T00:00:00Z"), To: utc("2001-03-26T00:00:00Z")}
 	ev, _, err := parse(NewHangfire(), []byte(csv), o)
-	wantLimit(t, err, "boundaries")
-	if len(ev) > maxBoundaries {
-		t.Errorf("emitted %d past the cap", len(ev))
+	if err != nil {
+		t.Fatalf("a chatty job must not refuse the file: %v", err)
+	}
+	if n := len(ofKind(ev, KindBoundary)); n != maxPerSchedule || n > maxBoundaries {
+		t.Errorf("boundaries = %d, want %d", n, maxPerSchedule)
 	}
 }
 

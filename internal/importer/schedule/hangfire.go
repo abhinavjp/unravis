@@ -102,7 +102,9 @@ func (h *Hangfire) row(r *run, tb *table, rec []string, line int64, zones map[st
 	}
 	spec, cronUnknown, cerr := parseCron(tb.get(rec, "cron"))
 	if cerr != nil {
-		r.reject(line, importer.ReasonBadNumber)
+		// A cron that does not parse is not a number problem: it is a schedule
+		// cell that cannot be read as a time rule.
+		r.reject(line, importer.ReasonBadTime)
 		return "", nil
 	}
 	var last time.Time

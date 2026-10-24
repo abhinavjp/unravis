@@ -19,9 +19,19 @@ import (
 // freq_subday_type, freq_subday_interval, freq_relative_interval,
 // freq_recurrence_factor, active_start_date, active_end_date,
 // active_start_time, active_end_time; optional history run_date, run_time,
-// run_duration (HHMMSS). All times are server-local, so the file is refused
-// without a host time zone. The export is SQL-sourced: ruling R12 (DBA dry run)
-// gates real files, and the import screen says so.
+// run_duration (HHMMSS) and step_id. All times are server-local, so the file is
+// refused without a host time zone. The export is SQL-sourced: ruling R12 (DBA
+// dry run) gates real files, and the import screen says so.
+//
+// Enabled flags: a join of sysjobs and sysschedules has two enabled columns,
+// the job's first and the schedule's second. They may also be named job_enabled
+// and schedule_enabled. With one enabled column it is read as the schedule's
+// flag and the report says a disabled job can look live.
+//
+// History: a row with step_id above 0 is a job step, not a job outcome, and is
+// skipped. Without a step_id column the rows cannot be told apart, so a run
+// repeated with the same job, start and duration is counted once and the
+// report says step rows may be counted.
 type Agent struct{}
 
 // NewAgent returns the SQL Agent schedule importer.
@@ -35,14 +45,55 @@ var agentUnscrubbed = []string{
 
 // schedCols is the complete group needed to expand a schedule.
 var schedCols = []string{
-	"enabled", "freq_type", "freq_interval", "freq_subday_type", "freq_subday_interval",
+	"freq_type", "freq_interval", "freq_subday_type", "freq_subday_interval",
 	"active_start_date", "active_start_time",
 }
 
 var allSchedCols = []string{
-	"enabled", "freq_type", "freq_interval", "freq_subday_type", "freq_subday_interval",
+	"freq_type", "freq_interval", "freq_subday_type", "freq_subday_interval",
 	"freq_relative_interval", "freq_recurrence_factor",
 	"active_start_date", "active_end_date", "active_start_time", "active_end_time",
+}
+
+// enabledCols holds the column positions of the job and schedule enabled flags
+// (-1 when the export has no such column).
+type enabledCols struct{ job, sched int }
+
+// findEnabled assigns the enabled columns. Two plain "enabled" columns are the
+// job's then the schedule's; job_enabled and schedule_enabled name them.
+func findEnabled(tb *table) (enabledCols, bool) {
+	e := enabledCols{job: -1, sched: -1}
+	if i, ok := tb.idx["job_enabled"]; ok {
+		e.job = i
+	}
+	if i, ok := tb.idx["schedule_enabled"]; ok {
+		e.sched = i
+	}
+	plain := tb.multi["enabled"]
+	switch {
+	case len(plain) == 0:
+	case len(plain) == 2 && e.job < 0 && e.sched < 0:
+		e.job, e.sched = plain[0], plain[1]
+	case len(plain) == 1 && e.sched < 0:
+		e.sched = plain[0]
+	case len(plain) == 1 && e.job < 0:
+		e.job = plain[0]
+	default:
+		return e, false // more enabled columns than roles
+	}
+	return e, true
+}
+
+// agentState is the per-file de-duplication state: a schedule or a history run
+// repeated by a join is emitted once.
+type agentState struct {
+	loc    *time.Location
+	jobCol string
+	en     enabledCols
+	// hasSched and hasStep say which column groups the export carries.
+	hasSched, hasStep bool
+	scheds            map[string]bool
+	runs              map[string]bool
 }
 
 func (*Agent) Name() string                   { return NameAgent }
@@ -64,7 +115,7 @@ func (*Agent) Detect(head []byte, fileName string) int {
 // Parse implements importer.Importer.
 func (a *Agent) Parse(ctx context.Context, rd io.Reader, opts importer.Options, emit func(evidence.Event) error) (importer.Report, error) {
 	r := newRun(ctx, NameAgent, opts, emit)
-	cr, tb, err := openCSV(rd, r.lim)
+	cr, tb, err := openCSV(rd, r.lim, "enabled")
 	if err != nil {
 		return r.rep, err
 	}
@@ -83,7 +134,13 @@ func (a *Agent) Parse(ctx context.Context, rd io.Reader, opts importer.Options, 
 	if !hasSched && !hasHist {
 		return r.rep, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat, Column: "freq_type"}
 	}
+	en, enOK := findEnabled(tb)
 	if hasSched {
+		// The schedule's enabled flag is required, and so is a clear reading of
+		// which enabled column is which.
+		if !enOK || en.sched < 0 {
+			return r.rep, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat, Column: "enabled"}
+		}
 		if err := tb.require(schedCols...); err != nil {
 			return r.rep, err
 		}
@@ -103,7 +160,10 @@ func (a *Agent) Parse(ctx context.Context, rd io.Reader, opts importer.Options, 
 			r.rep.FieldRules[f] = clock.RuleHostLocal
 		}
 	}
-	seen := map[string]bool{}
+	st := &agentState{
+		loc: loc, jobCol: jobCol, en: en, hasSched: hasSched, hasStep: tb.has("step_id"),
+		scheds: map[string]bool{}, runs: map[string]bool{},
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return r.rep, err
@@ -123,33 +183,54 @@ func (a *Agent) Parse(ctx context.Context, rd io.Reader, opts importer.Options, 
 			r.reject(line, reason)
 			continue
 		}
-		if err := a.row(r, tb, rec, line, jobCol, hasSched, loc, seen); err != nil {
+		if err := a.row(r, tb, rec, line, st); err != nil {
 			return r.rep, err
 		}
 	}
 	gaps := []string{gapAgentSnap, gapAgentHostLocal}
 	if hasHist {
 		gaps = append(gaps, gapAgentHistory)
+		if st.hasStep {
+			gaps = append(gaps, gapAgentStepRows)
+		} else {
+			gaps = append(gaps, gapAgentNoStep)
+		}
+	}
+	if hasSched && en.job < 0 {
+		gaps = append(gaps, gapAgentJobEnabled)
 	}
 	return r.finish(clock.RuleHostLocal, gaps)
 }
 
 // row validates the whole record first, so a rejected row emits nothing.
-func (a *Agent) row(r *run, tb *table, rec []string, line int64, jobCol string, hasSched bool, loc *time.Location, seen map[string]bool) error {
-	job := tb.getRaw(rec, jobCol)
+func (a *Agent) row(r *run, tb *table, rec []string, line int64, st *agentState) error {
+	loc := st.loc
+	job := tb.getRaw(rec, st.jobCol)
 	if job == "" {
 		r.reject(line, importer.ReasonFieldCount)
 		return nil
 	}
 	job = cleanAttr(job)
 
-	// History half.
+	// History half. A row for a job step (step_id above 0) is not a job outcome.
 	var runStart, runEnd time.Time
 	var runDur *float64
 	hist := false
+	runKey := ""
 	if tb.has("run_date") {
+		step := 0
+		if st.hasStep {
+			if cell := nullable(tb.get(rec, "step_id")); cell != "" {
+				n, good := smallInt(cell)
+				if !good || n < 0 {
+					r.reject(line, importer.ReasonBadNumber)
+					return nil
+				}
+				step = n
+			}
+		}
 		rd, rt := nullable(tb.get(rec, "run_date")), nullable(tb.get(rec, "run_time"))
-		if (rd != "" && rd != "0") || (rt != "" && rt != "0") {
+		if step == 0 && ((rd != "" && rd != "0") || (rt != "" && rt != "0")) {
 			durCell := nullable(tb.get(rec, "run_duration"))
 			start, dur, reason := parseHistory(rd, rt, durCell, loc)
 			if reason != "" {
@@ -160,6 +241,7 @@ func (a *Agent) row(r *run, tb *table, rec []string, line int64, jobCol string, 
 			if durCell != "" { // an absent duration stays unknown, never zero
 				runDur = msOf(dur)
 			}
+			runKey = job + "\x00" + start.Format(time.RFC3339) + "\x00" + durCell
 		}
 	}
 
@@ -167,9 +249,8 @@ func (a *Agent) row(r *run, tb *table, rec []string, line int64, jobCol string, 
 	var sc *agentSched
 	var dedupe string
 	unknownReason := ""
-	disabled := false
-	if hasSched && nullable(tb.get(rec, "freq_type")) != "" {
-		parsed, reason, unk := parseAgentSched(tb, rec)
+	if st.hasSched && nullable(tb.get(rec, "freq_type")) != "" {
+		parsed, reason, unk := parseAgentSched(tb, rec, st.en)
 		if reason != "" {
 			r.reject(line, reason)
 			return nil
@@ -178,32 +259,45 @@ func (a *Agent) row(r *run, tb *table, rec []string, line int64, jobCol string, 
 		sc = parsed
 		var key strings.Builder
 		key.WriteString(job)
+		for _, i := range []int{st.en.job, st.en.sched} {
+			key.WriteByte(0)
+			key.WriteString(tb.at(rec, i))
+		}
 		for _, c := range allSchedCols {
 			key.WriteByte(0)
 			key.WriteString(tb.get(rec, c))
 		}
 		dedupe = key.String()
-		disabled = parsed.disabled
 	}
 
-	if hist && r.inWindow(runStart) {
+	// A history run repeated by a join is one run.
+	if hist && !st.runs[runKey] && r.inWindow(runStart) {
+		st.runs[runKey] = true
 		if err := r.send(line, 0, KindJobRun, runStart, runEnd, runDur, "info", clock.RuleHostLocal,
 			map[string]string{"job": job, "basis": "history"}); err != nil {
 			return err
 		}
 	}
-	if sc == nil || seen[dedupe] {
+	if sc == nil || st.scheds[dedupe] {
 		return nil
 	}
-	seen[dedupe] = true
+	st.scheds[dedupe] = true
 	ord := 1
-	switch {
-	case disabled:
-		return r.sendUnknown(line, ord, job, reasonDisabled, clock.RuleHostLocal)
-	case unknownReason != "":
+	if unknownReason != "" {
 		return r.sendUnknown(line, ord, job, unknownReason, clock.RuleHostLocal)
 	}
-	return a.expand(r, sc, loc, line, &ord, job)
+	basis := ""
+	if sc.disabled {
+		// A disabled schedule is still expanded: its boundaries are the times it
+		// would have fired, kept apart from live ones. A stall near one is unknown,
+		// never a hit and never a miss.
+		basis = reasonDisabled
+		if err := r.sendUnknownSpan(line, ord, job, reasonDisabled, clock.RuleHostLocal, r.from, r.from); err != nil {
+			return err
+		}
+		ord++
+	}
+	return a.expand(r, sc, loc, line, &ord, job, basis)
 }
 
 func nullable(s string) string {
@@ -245,7 +339,7 @@ type agentSched struct {
 
 // parseAgentSched validates the schedule columns. It returns a reject reason,
 // or an unknown reason for freq_type 64 and 128 (not clock based).
-func parseAgentSched(tb *table, rec []string) (*agentSched, importer.Reason, string) {
+func parseAgentSched(tb *table, rec []string, en enabledCols) (*agentSched, importer.Reason, string) {
 	var s agentSched
 	ok := true
 	num := func(col string, def int) int {
@@ -259,12 +353,18 @@ func parseAgentSched(tb *table, rec []string) (*agentSched, importer.Reason, str
 		}
 		return n
 	}
-	switch strings.ToLower(nullable(tb.get(rec, "enabled"))) {
-	case "1", "true":
-	case "0", "false":
-		s.disabled = true
-	default:
-		return nil, importer.ReasonBadNumber, ""
+	// Every enabled column present must hold a flag; either one off disables.
+	for _, i := range []int{en.sched, en.job} {
+		if i < 0 {
+			continue
+		}
+		switch strings.ToLower(nullable(tb.at(rec, i))) {
+		case "1", "true":
+		case "0", "false":
+			s.disabled = true
+		default:
+			return nil, importer.ReasonBadNumber, ""
+		}
 	}
 	s.freq = num("freq_type", -1)
 	s.interval = num("freq_interval", 0)
@@ -335,6 +435,11 @@ func parseAgentSched(tb *table, rec []string) (*agentSched, importer.Reason, str
 	}
 	if s.endSec, reason = parseHMS(endT); reason != "" {
 		return nil, reason, ""
+	}
+	// A sub-day window that ends before it starts runs across midnight into the
+	// next day. Its boundaries are not expanded: they are marked unknown.
+	if s.subType != 1 && s.endSec < s.startSec {
+		return &s, "", reasonWrap
 	}
 	return &s, "", ""
 }
@@ -500,14 +605,18 @@ func (s *agentSched) relativeDay(y int, m time.Month) int {
 }
 
 // expand emits the boundaries of one schedule inside the window.
-func (a *Agent) expand(r *run, s *agentSched, loc *time.Location, line int64, ord *int, job string) error {
+func (a *Agent) expand(r *run, s *agentSched, loc *time.Location, line int64, ord *int, job, basis string) error {
 	if !r.win {
 		return nil
 	}
 	if s.freq == freqWeekly && s.recur > 1 {
 		r.gap(gapWeeklyFactor)
 	}
+	r.beginSchedule()
 	base := map[string]string{"job": job, "freq": freqNames[s.freq], "tz": loc.String()}
+	if basis != "" {
+		base["basis"] = basis
+	}
 	times := s.times()
 	lo, hi := r.civilRange(loc)
 	if lo.Before(s.startDate) {
@@ -516,14 +625,14 @@ func (a *Agent) expand(r *run, s *agentSched, loc *time.Location, line int64, or
 	if hi.After(s.endDate) {
 		hi = s.endDate
 	}
-	missingDay := false
+	var missingDays []time.Time
 	for d := lo; !d.After(hi); d = d.AddDate(0, 0, 1) {
 		if err := r.ctx.Err(); err != nil {
 			return err
 		}
 		match, missing := s.dayMatch(d)
 		if missing {
-			missingDay = true
+			missingDays = append(missingDays, d)
 		}
 		if !match {
 			continue
@@ -531,13 +640,45 @@ func (a *Agent) expand(r *run, s *agentSched, loc *time.Location, line int64, or
 		for _, t := range times {
 			w := civilWall{d.Year(), d.Month(), d.Day(), t / 3600, t % 3600 / 60, t % 60}
 			if err := r.boundaryAt(line, ord, w, loc, clock.RuleHostLocal, base); err != nil {
-				return err
+				return r.cutSchedule(err, line, ord, job, clock.RuleHostLocal)
 			}
 		}
 	}
-	if missingDay {
+	return r.markMissingDays(line, ord, job, loc, missingDays)
+}
+
+// maxMonthMarks bounds the month-day unknown markers one schedule emits; the
+// last one then covers every remaining missing day.
+const maxMonthMarks = 64
+
+// markMissingDays emits a schedule-unknown marker for each local day a monthly
+// schedule names beyond the month length. Only that day is unknown, so a stall
+// on any other day is still judged on the boundaries. Days are clamped to the
+// window.
+func (r *run) markMissingDays(line int64, ord *int, job string, loc *time.Location, days []time.Time) error {
+	for i := 0; i < len(days); i++ {
+		d := days[i]
+		start := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc).UTC()
+		last := d
+		if i == maxMonthMarks-1 {
+			last = days[len(days)-1]
+			i = len(days)
+		}
+		end := time.Date(last.Year(), last.Month(), last.Day()+1, 0, 0, 0, 0, loc).UTC()
+		if end.Before(r.from) || start.After(r.to) {
+			continue
+		}
+		if start.Before(r.from) {
+			start = r.from
+		}
+		if end.After(r.to) {
+			end = r.to
+		}
 		r.gap(gapMonthDayMissing)
-		return r.sendUnknown(line, *ord, job, reasonMonthDay, clock.RuleHostLocal)
+		if err := r.sendUnknownSpan(line, *ord, job, reasonMonthDay, clock.RuleHostLocal, start, end); err != nil {
+			return err
+		}
+		*ord++
 	}
 	return nil
 }

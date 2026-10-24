@@ -14,37 +14,47 @@ func (r *run) civilRange(loc *time.Location) (lo, hi time.Time) {
 }
 
 // boundaryAt resolves one scheduled wall time and emits a schedule-boundary
-// event when it falls inside the window. A time in a DST gap or fold is
-// emitted with a dst flag and a warning severity; it is never guessed.
+// event for every instant it can mean that falls inside the window. A time in a
+// DST fold happens twice and a time in a gap never happens: each reading is
+// emitted with a dst flag and a warning severity, and none is guessed.
 func (r *run) boundaryAt(line int64, ord *int, w civilWall, loc *time.Location, rule string, base map[string]string) error {
 	naive := w.naiveUTC()
 	// Offsets never exceed 27 hours from UTC for any zone, so skip cheaply.
 	if naive.Before(r.from.Add(-27*time.Hour)) || naive.After(r.to.Add(27*time.Hour)) {
 		return nil
 	}
-	utc, flag := resolveWall(w, loc)
-	if !r.inWindow(utc) {
-		return nil
+	for _, rd := range resolveWallAll(w, loc) {
+		if !r.inWindow(rd.utc) {
+			continue
+		}
+		if err := r.countBoundary(); err != nil {
+			return err
+		}
+		a := make(map[string]string, len(base)+2)
+		for k, v := range base {
+			a[k] = v
+		}
+		sev := "info"
+		if rd.flag != "" {
+			a["dst"] = rd.flag
+			sev = "warning"
+			r.gap(gapDST)
+		}
+		if rd.utc.After(r.lastB) {
+			r.lastB = rd.utc
+		}
+		err := r.send(line, *ord, KindBoundary, rd.utc, rd.utc, nil, sev, rule, a)
+		*ord++
+		if err != nil {
+			return err
+		}
 	}
-	if err := r.countBoundary(); err != nil {
-		return err
-	}
-	a := make(map[string]string, len(base)+1)
-	for k, v := range base {
-		a[k] = v
-	}
-	sev := "info"
-	if flag != "" {
-		a["dst"] = flag
-		sev = "warning"
-		r.gap(gapDST)
-	}
-	err := r.send(line, *ord, KindBoundary, utc, utc, nil, sev, rule, a)
-	*ord++
-	return err
+	return nil
 }
 
-// expandCron emits every boundary of a cron expression inside the window.
+// expandCron emits every boundary of a cron expression inside the window. A
+// schedule that reaches the boundary cap is cut and the rest of the window is
+// marked unknown; the file is still imported.
 func (r *run) expandCron(line int64, ord *int, c *cronSpec, loc *time.Location, rule string, base map[string]string) error {
 	if !r.win {
 		return nil
@@ -52,6 +62,7 @@ func (r *run) expandCron(line int64, ord *int, c *cronSpec, loc *time.Location, 
 	if c.both() {
 		r.gap(gapCronBoth)
 	}
+	r.beginSchedule()
 	lo, hi := r.civilRange(loc)
 	for d := lo; !d.After(hi); d = d.AddDate(0, 0, 1) {
 		if err := r.ctx.Err(); err != nil {
@@ -65,7 +76,7 @@ func (r *run) expandCron(line int64, ord *int, c *cronSpec, loc *time.Location, 
 				for _, s := range c.secs {
 					w := civilWall{d.Year(), d.Month(), d.Day(), h, m, s}
 					if err := r.boundaryAt(line, ord, w, loc, rule, base); err != nil {
-						return err
+						return r.cutSchedule(err, line, ord, base["job"], rule)
 					}
 				}
 			}
