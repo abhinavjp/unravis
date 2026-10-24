@@ -25,10 +25,16 @@ const (
 	AltNotTestable = "not_testable"
 )
 
+// The per-field limits bound one entry: at most MaxTextLen characters in each of
+// about 2*MaxListLen+3 text fields, which JSON escaping can grow to about 1.3 MB.
+// MaxTotalBytes caps all entries together, measured as GET /api/ledger serialises
+// them. It is half the server's 16 MiB response cap, so the list always fits, and
+// it leaves room for several maximum-size entries.
 const (
 	MaxHypotheses = 200
 	MaxTextLen    = 2000
 	MaxListLen    = 50
+	MaxTotalBytes = 8 << 20
 )
 
 var (

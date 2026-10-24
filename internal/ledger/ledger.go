@@ -32,7 +32,76 @@ var (
 	// four hex digits ("::" allowed). looksLikeIPv6 then lets clock times through.
 	ipv6Pattern = regexp.MustCompile(`(?i)(?:^|[^0-9a-z:])((?:[0-9a-f]{1,4})?(?::(?:[0-9a-f]{1,4})?){2,})(?:$|[^0-9a-z:])`)
 	decimalTime = regexp.MustCompile(`^[0-9]{1,4}(?::[0-9]{1,4})+$`)
+
+	// isoDatePattern finds calendar dates (2026-10-24, also as the start of
+	// 2026-10-24T14:45:00Z) so their digits are not read as a phone number.
+	isoDatePattern = regexp.MustCompile(`\b[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[Tt]|\b)`)
+	// phoneCandidate is a digit run that may be split by spaces, dashes, dots and
+	// parentheses, with an optional leading plus. looksLikePhone applies the count.
+	phoneCandidate = regexp.MustCompile(`\+?[0-9(][0-9 ()\-.]*[0-9]`)
+	jwtPattern     = regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*`)
+	longHexPattern = regexp.MustCompile(`[0-9a-fA-F]{32,}`)
+	base64Pattern  = regexp.MustCompile(`[A-Za-z0-9+/_=\-]{40,}`)
+	digitGroup     = regexp.MustCompile(`[0-9]+`)
 )
+
+// looksLikePhone reports whether s holds a phone-number-like digit run: seven or
+// more digits, contiguous or split by spaces, dashes, dots or parentheses, with
+// an optional leading plus. Dates (2026-10-24) and clock times (14:45) pass, as
+// do lists of one- and two-digit numbers ("12 14 15 16") and decimals (3.14159265).
+func looksLikePhone(s string) bool {
+	s = isoDatePattern.ReplaceAllString(s, " ")
+	for _, c := range phoneCandidate.FindAllString(s, -1) {
+		groups := digitGroup.FindAllString(c, -1)
+		digits, longest := 0, 0
+		for _, g := range groups {
+			digits += len(g)
+			if len(g) > longest {
+				longest = len(g)
+			}
+		}
+		if digits < 7 {
+			continue
+		}
+		if len(groups) == 1 {
+			return true
+		}
+		if longest <= 2 && !strings.HasPrefix(c, "+") && !strings.ContainsAny(c, "()") {
+			continue // a list of small numbers, not a phone number
+		}
+		if !strings.ContainsAny(c, " -()+") && len(groups) < 3 {
+			continue // a plain decimal such as 3.14159265
+		}
+		return true
+	}
+	return false
+}
+
+// looksLikeSecret reports whether s holds a JWT, a long hex string or a long
+// base64-looking string. The base64 test wants upper case, lower case and a
+// digit together, so long hyphenated words and plain identifiers pass.
+func looksLikeSecret(s string) bool {
+	if jwtPattern.MatchString(s) || longHexPattern.MatchString(s) {
+		return true
+	}
+	for _, m := range base64Pattern.FindAllString(s, -1) {
+		var upper, lower, digit bool
+		for _, r := range m {
+			switch {
+			case r >= 'A' && r <= 'Z':
+				upper = true
+			case r >= 'a' && r <= 'z':
+				lower = true
+			case r >= '0' && r <= '9':
+				digit = true
+			}
+		}
+		if upper && lower && digit {
+			return true
+		}
+	}
+	return false
+}
 
 // looksLikeIPv6 reports whether s holds an IPv6-looking token. A token of
 // decimal digits only and no "::" (a clock time such as 09:14:05) does not count.
@@ -151,7 +220,11 @@ func (s *store) Create(text string) (Hypothesis, error) {
 		return Hypothesis{}, fullErr()
 	}
 	h := s.newEntry(text)
-	if err := s.commit(append(s.snapshot(), h)); err != nil {
+	next := append(s.snapshot(), h)
+	if err := s.checkBudget(next); err != nil {
+		return Hypothesis{}, err
+	}
+	if err := s.commit(next); err != nil {
 		return Hypothesis{}, err
 	}
 	return present(h), nil
@@ -182,6 +255,9 @@ func (s *store) Update(id string, in Input) (Hypothesis, error) {
 	h.UpdatedAt = time.Now().UTC()
 	next := s.snapshot()
 	next[i] = h
+	if err := s.checkBudget(next); err != nil {
+		return Hypothesis{}, err
+	}
 	if err := s.commit(next); err != nil {
 		return Hypothesis{}, err
 	}
@@ -201,7 +277,11 @@ func (s *store) Reuse(id string) (Hypothesis, error) {
 	old := s.items[i]
 	h := s.newEntry(old.Text)
 	h.History = []HistoryEntry{{State: old.State, At: h.CreatedAt, Note: reuseNote}}
-	if err := s.commit(append(s.snapshot(), h)); err != nil {
+	next := append(s.snapshot(), h)
+	if err := s.checkBudget(next); err != nil {
+		return Hypothesis{}, err
+	}
+	if err := s.commit(next); err != nil {
 		return Hypothesis{}, err
 	}
 	return present(h), nil
@@ -302,6 +382,42 @@ func saveErr(err error) error { return fmt.Errorf("the ledger could not be saved
 
 func fullErr() error {
 	return invalid(fmt.Sprintf("the ledger already holds %d hypotheses; delete one first", MaxHypotheses))
+}
+
+func budgetErr() error {
+	return invalid("The ledger is full. Delete or shorten entries before adding more.")
+}
+
+// totalBytes is the size of the entries as GET /api/ledger serialises them
+// (with current guards), including the array brackets and commas. It stops
+// counting once the total passes MaxTotalBytes.
+func totalBytes(items []Hypothesis) int {
+	total := 2
+	for i, h := range items {
+		b, err := json.Marshal(present(h))
+		if err != nil {
+			return MaxTotalBytes + 1
+		}
+		total += len(b)
+		if i > 0 {
+			total++
+		}
+		if total > MaxTotalBytes {
+			return total
+		}
+	}
+	return total
+}
+
+// checkBudget refuses next when it is over MaxTotalBytes, unless it is no larger
+// than the current ledger, so an oversized ledger (from an older file) can still
+// be edited down. Callers hold s.mu.
+func (s *store) checkBudget(next []Hypothesis) error {
+	n := totalBytes(next)
+	if n <= MaxTotalBytes || n <= totalBytes(s.items) {
+		return nil
+	}
+	return budgetErr()
 }
 
 // present returns a copy safe to hand out, with the current guard reasons.
@@ -430,6 +546,10 @@ func checkText(what, s string) error {
 		return invalid(what + " contains an IP address; the ledger holds no identifiers")
 	case hasURL(s):
 		return invalid(what + " contains a URL; the ledger holds no identifiers, so refer to evidence by its provenance ID instead")
+	case looksLikePhone(s):
+		return invalid(what + " contains what looks like a phone number or numeric ID; the ledger holds no identifiers")
+	case looksLikeSecret(s):
+		return invalid(what + " contains what looks like a token or secret; the ledger holds no identifiers")
 	}
 	return nil
 }
