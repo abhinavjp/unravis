@@ -138,7 +138,7 @@ export const formatTime = (value: string | number | Date | null | undefined, opt
 /** The zone's short name at a moment ("UTC", "GMT+4"), for a table heading that names the zone once. */
 export const zoneAbbreviation = (zone = 'UTC', at: string | number | Date = Date.now()): string => timeParts(at, zone, 'minute')?.zone ?? 'UTC';
 /**
- * A window in the same pattern, with the zone printed once: "24 Oct 15:04:37–15:19:37 UTC" on one day,
+ * A window in the same pattern, with the zone printed once (twice when a daylight-saving change makes the two ends differ): "24 Oct 15:04:37–15:19:37 UTC" on one day,
  * "24 Oct 23:50:00 – 25 Oct 00:05:00 UTC" across days. When the two ends are the same instant it prints that instant once.
  */
 export const formatTimeRange = (start: string | number | Date | null | undefined, end: string | number | Date | null | undefined, options: FormatTimeOptions = {}): string => {
@@ -148,6 +148,11 @@ export const formatTimeRange = (start: string | number | Date | null | undefined
   if (!from || !to) return fallback;
   const tail = suffix ? ' ' + from.zone : '';
   const label = (parts: TimeParts) => parts.day + (year ? ' ' + parts.year : '');
+  // A range across a daylight-saving change has a different abbreviation at each end: name both, and never fold two identical clocks into one.
+  if (suffix && from.zone !== to.zone) {
+    const sameDay = from.day === to.day && from.year === to.year;
+    return label(from) + ' ' + from.clock + ' ' + from.zone + (sameDay ? ' – ' : ' – ' + label(to) + ' ') + to.clock + ' ' + to.zone;
+  }
   if (from.clock === to.clock && from.day === to.day && from.year === to.year) return label(from) + ' ' + from.clock + tail;
   if (from.day === to.day && from.year === to.year) return label(from) + ' ' + from.clock + '–' + to.clock + tail;
   return label(from) + ' ' + from.clock + ' – ' + label(to) + ' ' + to.clock + tail;

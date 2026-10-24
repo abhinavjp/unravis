@@ -30,7 +30,8 @@ export function nextMenuIndex(key: string, index: number, count: number): number
 
 /* ---- View state in the address bar ---- */
 
-export type ViewType = 'where' | 'op' | 'all' | 'record';
+/** 'list' is a comparison-wide list a link cannot rebuild (an overview tile or quality drill, a breakdown filter on its own); it still takes a history step so Back climbs one level at a time. */
+export type ViewType = 'where' | 'op' | 'all' | 'list' | 'record';
 
 /** The part of the screen that can be rebuilt from the address: depth, the operation, the tab and (at the deepest level) one record. Filters and ranges are not in it. */
 export interface View {
@@ -44,6 +45,8 @@ export interface View {
   tab?: string;
   sourceId?: string;
   recordId?: string;
+  /** A record opened with no operation or all-operations list behind it (from the Patterns drawer, or from a list a link cannot rebuild). */
+  solo?: boolean;
 }
 
 const lenses: readonly Lens[] = ['requests', 'completion', 'p95', 'client', 'server'];
@@ -62,15 +65,21 @@ function splitHash(hash: string): { path: string; params: URLSearchParams } {
 export function parseViewHash(hash: string): View | null {
   const { path, params } = splitHash(hash);
   const type = path.slice(1);
-  if (type !== 'where' && type !== 'op' && type !== 'all' && type !== 'record') return null;
+  if (type !== 'where' && type !== 'op' && type !== 'all' && type !== 'list' && type !== 'record') return null;
   const field = (name: string) => { const value = params.get(name); return value && value.length <= maxField ? value : undefined; };
   const lensValue = params.get('lens');
   const lens = lenses.find(item => item === lensValue);
   const tabValue = params.get('tab') ?? '';
   const tab = tabPattern.test(tabValue) ? tabValue : undefined;
   if (type === 'where') return { type, lens: lens ?? 'requests', ...(params.get('compare') === '1' ? { compare: true } : {}) };
+  if (type === 'list') return { type, ...(lens ? { lens } : {}) };
   const view: View = { type, ...(lens ? { lens } : {}), ...(tab ? { tab } : {}) };
   if (type === 'all') return view;
+  if (type === 'record' && params.get('solo') === '1') {
+    const sourceId = field('s'), recordId = field('id');
+    if (!sourceId || !recordId) return null;
+    return { type, ...(lens ? { lens } : {}), solo: true, sourceId, recordId };
+  }
   const controller = field('c'), action = field('a');
   // An operation needs both names. A record with neither sits in the all-operations list.
   if (type === 'op' ? !controller || !action : !controller !== !action) return null;
@@ -104,7 +113,7 @@ export function formatViewHash(view: View | null, currentHash = ''): string {
     if (view.controller !== undefined) params.set('c', view.controller);
     if (view.action !== undefined) params.set('a', view.action);
     if (view.opKind) params.set('k', view.opKind);
-    if (view.type === 'record') { params.set('s', view.sourceId ?? ''); params.set('id', view.recordId ?? ''); }
+    if (view.type === 'record') { params.set('s', view.sourceId ?? ''); params.set('id', view.recordId ?? ''); if (view.solo) params.set('solo', '1'); }
     if (view.tab) params.set('tab', view.tab);
   }
   if (token) params.set('t', token);
@@ -112,11 +121,43 @@ export function formatViewHash(view: View | null, currentHash = ''): string {
   return '#/' + view.type + (query ? '?' + query : '');
 }
 
-/** Two views are the same place when only the tab, the ranking figure or the compare switch differ; those replace the address rather than add a step. */
+const listLike = (type: ViewType) => type === 'all' || type === 'list';
+
+/** Two views are the same place when only the tab, the ranking figure or the compare switch differ; those replace the address rather than add a step. All operations and a list drill are one level. */
 export function sameLevel(a: View | null, b: View | null): boolean {
   if (!a || !b) return a === b;
-  return a.type === b.type && (a.lens !== undefined) === (b.lens !== undefined)
+  return (a.type === b.type || (listLike(a.type) && listLike(b.type))) && (a.lens !== undefined) === (b.lens !== undefined) && !a.solo === !b.solo
     && a.controller === b.controller && a.action === b.action && a.opKind === b.opKind && a.sourceId === b.sourceId && a.recordId === b.recordId;
+}
+
+/** What the screen shows, in the terms the address uses. */
+export interface ViewScreen {
+  /** 0 pulse, 1 ranked list, 2 evidence, 3 one record. */
+  depth: 0 | 1 | 2 | 3;
+  whereOpen: boolean;
+  lens: Lens;
+  compare: boolean;
+  operation: { controller: string; action: string; kind?: string } | null;
+  /** The list is the all-operations frame (a breakdown filter inside it is the same place). */
+  allOperations: boolean;
+  tab: string;
+  record: { sourceId: string; id: string } | null;
+}
+
+/** The address for the screen. Every level has one, so each takes its own history step and Back climbs one level at a time. */
+export function describeView(screen: ViewScreen): View | null {
+  const { depth } = screen;
+  if (depth === 0) return null;
+  if (depth === 1) return { type: 'where', lens: screen.lens, ...(screen.compare ? { compare: true } : {}) };
+  const above = screen.whereOpen ? { lens: screen.lens } : {};
+  const tab = screen.tab ? { tab: screen.tab } : {};
+  let view: View;
+  if (screen.operation) view = { type: 'op', ...above, controller: screen.operation.controller, action: screen.operation.action, ...(screen.operation.kind ? { opKind: screen.operation.kind } : {}), ...tab };
+  else if (screen.allOperations) view = { type: 'all', ...above, ...tab };
+  else if (depth === 3 && screen.record) return { type: 'record', ...above, solo: true, sourceId: screen.record.sourceId, recordId: screen.record.id };
+  else return { type: 'list', ...above };
+  if (depth === 3 && screen.record) return { ...view, type: 'record', sourceId: screen.record.sourceId, recordId: screen.record.id };
+  return view;
 }
 
 /* ---- The browser history for those views ---- */

@@ -38,7 +38,10 @@ export function chartRange(start: number | string | Date, end: number | string |
   if (!Number.isFinite(a) || !Number.isFinite(b)) return 'Unknown time range';
   if (a === b) return 'at ' + chartTime(a, zone, options);
   const sameDay = dayKey(a, zone) === dayKey(b, zone);
-  return chartTime(a, zone, { ...options, zone: false }) + ' to ' + chartTime(b, zone, { ...options, date: !sameDay, zone: false }) + ' ' + zoneAbbreviation(zone, a);
+  const from = zoneAbbreviation(zone, a), to = zoneAbbreviation(zone, b);
+  // A range across a daylight-saving change names the zone at each end.
+  if (from !== to) return chartTime(a, zone, { ...options, zone: false }) + ' ' + from + ' to ' + chartTime(b, zone, { ...options, date: !sameDay, zone: false }) + ' ' + to;
+  return chartTime(a, zone, { ...options, zone: false }) + ' to ' + chartTime(b, zone, { ...options, date: !sameDay, zone: false }) + ' ' + from;
 }
 
 const SECOND = 1000, MINUTE = 60 * SECOND, HOUR = 60 * MINUTE, DAY = 24 * HOUR;
