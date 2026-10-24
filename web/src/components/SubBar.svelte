@@ -2,6 +2,7 @@
   import { app, cancelAnalysis, clearChips, onScopeChange, panels, removeChip, results, runAnalysis, scope } from '../lib/appState.svelte';
   import FilterChips from './FilterChips.svelte';
   import QueryControls from './QueryControls.svelte';
+  import { intervalNote } from '../lib/intervalNote.svelte';
 
   // The scope row under the top bar: period and request type, More filters, the run hint and button, and the active filter chips.
   const runHint = $derived(scope.runHint);
@@ -21,5 +22,6 @@
     </details>
     <div class="run-actions"><span class="run-hint" id="run-hint" role="status">{runHint}</span>{#if loading}<button class="quiet-button" onclick={cancelAnalysis}>Cancel run</button>{/if}<button class="primary-button" aria-describedby="run-hint" disabled={loading || !scope.query.sourceIds.length || !scope.dateInputsValid} onclick={() => runAnalysis()}>{loading ? 'Comparing…' : 'Run analysis'}</button></div>
   </div>
+  {#if intervalNote.text}<p class="interval-note" role="status">{intervalNote.text}</p>{/if}
   <FilterChips chips={scope.filterChipList} onRemove={removeChip} onClear={clearChips} />
 </section>

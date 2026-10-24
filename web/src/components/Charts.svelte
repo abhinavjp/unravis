@@ -6,7 +6,7 @@
   import { theme } from '../lib/theme.svelte';
   import { zoomView } from '../lib/zoomView.svelte';
   import { zoomable } from '../lib/chartZoom';
-  import { zoomCopy } from '../lib/copy/zoomCopy';
+  import { focusEmpty } from '../lib/focusEmpty';
   let { analysis: whole, selected: chosen, zone, targetMs: wholeTargetMs }: {
     analysis: Analysis; selected: Comparison | null; zone: string; targetMs: number | null
   } = $props();
@@ -42,7 +42,7 @@
   <div class="plot-panel timeline-panel">
     <div class="plot-heading"><div><h3>Response time over time</h3><p>P95: about 95 of 100 requests finish within this time. Median: half finish sooner and half take longer. Dashed lines show the reference period.</p></div></div>
     <div class="chart-stage"><div class="chart" class:chart-hidden={!hasCurrent} bind:this={timeline} use:zoomable={{ chart: () => charts[0] }} role="img" aria-label="Selected API response times over time" aria-hidden={!hasCurrent}></div>
-    {#if !hasCurrent}<div class="chart-empty">{#if zoomedView && !zoomView.loading}<strong>{zoomCopy.noData}</strong>{:else}<strong>No usable timings in this investigation period</strong><p>This API may have reference data only. Choose another API above or change the investigation dates.</p>{/if}</div>{/if}</div>
+    {#if !hasCurrent}<div class="chart-empty" use:focusEmpty>{#if zoomView.emptyMessage}<strong>{zoomView.emptyMessage}</strong>{:else}<strong>No usable timings in this investigation period</strong><p>This API may have reference data only. Choose another API above or change the investigation dates.</p>{/if}</div>{/if}</div>
   </div>
   <div class="plot-panel ratio-panel">
     <div class="plot-heading"><div><h3>Change versus reference</h3><p>2× means twice as long. 0.5× means half as long. 1× means no change in the P95 estimate.</p></div></div>

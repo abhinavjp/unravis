@@ -5,7 +5,7 @@
 export const zoomCopy = {
   heading: 'Zoom',
   expand: 'Zoom into one part of this period',
-  levelNames: { window: 'Whole period', day: 'Day', hour: 'Hour', minute: 'Minute' } as const,
+  levelNames: { window: 'Whole period', day: 'Day', hour: 'Hour', minute: 'Minute', custom: 'Zoomed window' } as const,
   back: 'Back',
   earlier: 'Earlier',
   later: 'Later',
