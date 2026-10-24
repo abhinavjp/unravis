@@ -120,7 +120,7 @@ func rowsOf(v View, kind string) []Row {
 
 func mustBuild(t *testing.T, c casestore.Case, w importer.Window, iv []join.Interval) View {
 	t.Helper()
-	v, err := Build(c, w, iv)
+	v, err := Build(context.Background(), c, w, iv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestEventKindWithCausalWordIsRefused(t *testing.T) {
 	c := newCase(t)
 	load(t, c, web(ev{kind: "request", start: 5000, dur: 1}))
 	load(t, c, sql(ev{kind: "caused-by-x", start: 105, dur: 35}))
-	if _, err := Build(c, importer.Window{}, oneInterval); err == nil {
+	if _, err := Build(context.Background(), c, importer.Window{}, oneInterval); err == nil {
 		t.Fatal("expected a lint error")
 	}
 }

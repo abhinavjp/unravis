@@ -91,7 +91,7 @@ func (m *imp) AllowedAttrs() map[string]bool {
 }
 func (m *imp) DefaultLimits() importer.Limits {
 	return importer.Limits{
-		MaxBytes: 512 << 20, MaxRows: 5_000_000, MaxEvents: 10_000_000,
+		MaxBytes: 512 << 20, MaxRows: 5_000_000, MaxEvents: 2_000_000,
 		MaxLineBytes: wincsv.DefaultMaxLineBytes, MaxFields: wincsv.DefaultMaxFields,
 		MaxRejectFraction: wincsv.DefaultRejectFrac,
 	}

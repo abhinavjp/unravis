@@ -20,6 +20,16 @@ var ErrReparsePoint = errors.New("case path contains a reparse point")
 // Inheritance from the parent is cut, and both entries inherit downwards, so the
 // key, database, WAL and manifest created inside are covered too.
 func SecureDir(dir string) error {
+	return secureWithDACL(dir, windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT)
+}
+
+// SecureFile gives one file a protected DACL for the current user and SYSTEM
+// only, with no inheritance from its folder. A later rename keeps the DACL.
+func SecureFile(path string) error {
+	return secureWithDACL(path, windows.NO_INHERITANCE)
+}
+
+func secureWithDACL(path string, inheritance uint32) error {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		return fmt.Errorf("reading current user: %w", err)
@@ -32,7 +42,7 @@ func SecureDir(dir string) error {
 		{
 			AccessPermissions: windows.GENERIC_ALL,
 			AccessMode:        windows.SET_ACCESS,
-			Inheritance:       windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+			Inheritance:       inheritance,
 			Trustee: windows.TRUSTEE{
 				TrusteeForm:  windows.TRUSTEE_IS_SID,
 				TrusteeType:  windows.TRUSTEE_IS_USER,
@@ -42,7 +52,7 @@ func SecureDir(dir string) error {
 		{
 			AccessPermissions: windows.GENERIC_ALL,
 			AccessMode:        windows.SET_ACCESS,
-			Inheritance:       windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+			Inheritance:       inheritance,
 			Trustee: windows.TRUSTEE{
 				TrusteeForm:  windows.TRUSTEE_IS_SID,
 				TrusteeType:  windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
@@ -54,7 +64,7 @@ func SecureDir(dir string) error {
 	if err != nil {
 		return fmt.Errorf("building case ACL: %w", err)
 	}
-	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 		nil, nil, acl, nil)
 }

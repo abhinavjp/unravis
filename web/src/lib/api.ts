@@ -35,7 +35,8 @@ export function readSessionToken(): string {
 
 let token = readSessionToken();
 
-function forgetSession() {
+/** Drops the token this tab holds, in memory and in sessionStorage, once the dashboard has refused it. */
+export function forgetSession() {
   token = '';
   try { storage()?.removeItem(SESSION_KEY); } catch { /* nothing stored */ }
 }

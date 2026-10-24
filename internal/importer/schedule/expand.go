@@ -2,6 +2,8 @@ package schedule
 
 import (
 	"time"
+
+	"api-audit-explorer/internal/importer"
 )
 
 // civilRange returns the civil dates (as UTC midnights) that can hold a wall
@@ -13,11 +15,30 @@ func (r *run) civilRange(loc *time.Location) (lo, hi time.Time) {
 	return lo, hi
 }
 
+// spend charges n tested wall-clock times to the file's work budget. Past
+// maxWork the file is refused with a fixed LimitError that holds no cell text.
+func (r *run) spend(n int64) error {
+	r.work += n
+	if r.work > maxWork {
+		return &importer.LimitError{Limit: "work", Max: maxWork, At: r.work}
+	}
+	return nil
+}
+
+// outsideWindow reports that no wall time in [start, start+span) can fall in
+// the window: offsets never exceed 27 hours, so such a span is skipped whole.
+func (r *run) outsideWindow(start time.Time, span time.Duration) bool {
+	return start.Add(span).Before(r.from.Add(-27*time.Hour)) || start.After(r.to.Add(27*time.Hour))
+}
+
 // boundaryAt resolves one scheduled wall time and emits a schedule-boundary
 // event for every instant it can mean that falls inside the window. A time in a
 // DST fold happens twice and a time in a gap never happens: each reading is
 // emitted with a dst flag and a warning severity, and none is guessed.
 func (r *run) boundaryAt(line int64, ord *int, w civilWall, loc *time.Location, rule string, base map[string]string) error {
+	if err := r.spend(1); err != nil {
+		return err
+	}
 	naive := w.naiveUTC()
 	// Offsets never exceed 27 hours from UTC for any zone, so skip cheaply.
 	if naive.Before(r.from.Add(-27*time.Hour)) || naive.After(r.to.Add(27*time.Hour)) {
@@ -63,6 +84,11 @@ func (r *run) expandCron(line int64, ord *int, c *cronSpec, loc *time.Location, 
 		r.gap(gapCronBoth)
 	}
 	r.beginSchedule()
+	if r.nCapped >= maxBoundaries-1 {
+		// The file already holds its share of boundaries: cut this schedule
+		// without testing any wall time.
+		return r.cutSchedule(errBoundaryCap, line, ord, base["job"], rule)
+	}
 	lo, hi := r.civilRange(loc)
 	for d := lo; !d.After(hi); d = d.AddDate(0, 0, 1) {
 		if err := r.ctx.Err(); err != nil {
@@ -72,7 +98,13 @@ func (r *run) expandCron(line int64, ord *int, c *cronSpec, loc *time.Location, 
 			continue
 		}
 		for _, h := range c.hours {
+			if r.outsideWindow(d.Add(time.Duration(h)*time.Hour), time.Hour) {
+				continue
+			}
 			for _, m := range c.mins {
+				if r.outsideWindow(d.Add(time.Duration(h)*time.Hour+time.Duration(m)*time.Minute), time.Minute) {
+					continue
+				}
 				for _, s := range c.secs {
 					w := civilWall{d.Year(), d.Month(), d.Day(), h, m, s}
 					if err := r.boundaryAt(line, ord, w, loc, rule, base); err != nil {

@@ -88,6 +88,22 @@ var knownBanners = []string{
 
 func collapseSpace(s string) string { return strings.Join(strings.Fields(s), " ") }
 
+// GatingBanner returns the standard gating banner text the page shows. The
+// import route compares an acknowledgement with it.
+func GatingBanner() string { return knownBanners[0] }
+
+// KnownBanner returns the standard banner text that text acknowledges (equal
+// after trimming and collapsing white space), and whether there is one.
+func KnownBanner(text string) (string, bool) {
+	want := collapseSpace(text)
+	for _, b := range knownBanners {
+		if collapseSpace(b) == want {
+			return b, true
+		}
+	}
+	return "", false
+}
+
 func bannerHash(text string) string {
 	sum := sha256.Sum256([]byte(collapseSpace(text)))
 	return "banner-" + hex.EncodeToString(sum[:])[:16]

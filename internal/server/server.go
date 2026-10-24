@@ -46,6 +46,7 @@ type handler struct {
 	adds    connectionTestLimiter
 	proofs  connectionTestLimiter
 	repeats analyzeRepeats
+	launch  launchState
 
 	casesState
 
@@ -138,6 +139,12 @@ func (l *connectionTestLimiter) allow() bool {
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
+	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == launchPath {
+		// No API reply is cached, whatever its status: a 204 or 404 carries no
+		// case data, but a shared proxy or the back button never needs one.
+		// Handlers that set their own Cache-Control later keep theirs.
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	if !allowedHost(r.Host) || !allowedOrigin(r.Header.Get("Origin"), r.Host) {
 		writeError(w, http.StatusForbidden, "Local request origin is not allowed.")
 		return
@@ -146,11 +153,17 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func setSecurityHeaders(w http.ResponseWriter) {
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+	// style-src keeps 'unsafe-inline': the dashboard sets computed style
+	// attributes (bar widths and offsets in ActivityContext and other
+	// components), which style-src without it would block. Scripts stay
+	// 'self' only, which is the part that matters for the session token.
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 }
 
 func (h *handler) authorized(r *http.Request) bool {

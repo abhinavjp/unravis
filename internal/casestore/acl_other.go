@@ -17,6 +17,9 @@ var ErrReparsePoint = errors.New("case path contains a reparse point")
 // Windows; mode 0700 is the closest equivalent.
 func SecureDir(dir string) error { return os.Chmod(dir, 0700) }
 
+// SecureFile restricts one file to the current user (mode 0600).
+func SecureFile(path string) error { return os.Chmod(path, 0600) }
+
 // RejectReparse refuses root and every folder from root down to path if any of
 // them is a symlink. A component that does not exist yet is skipped.
 func RejectReparse(root, path string) error {

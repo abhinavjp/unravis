@@ -34,6 +34,9 @@ const (
 	// ackTooLongText is the answer to an acknowledgement over casestore.MaxAckText,
 	// the same cap the store enforces.
 	ackTooLongText = "The acknowledgement text is longer than 4 KiB."
+	// ackMismatchText is the answer to an acknowledgement that is neither the
+	// banner text shown nor marked custom. It never repeats the text sent.
+	ackMismatchText = "The acknowledgement does not match the notice shown. Reload the page and try again."
 	// maxFileNameBytes bounds the display name kept for an upload.
 	maxFileNameBytes = 128
 	// maxEventFilters bounds the values of one event filter.
@@ -103,19 +106,25 @@ func caseSubpath(suffix string) func(string) (string, bool) {
 	}
 }
 
-// caseGates serialises imports (and erase) per case.
+// caseGates serialises imports (and erase) per case, and lets reads share a
+// case with each other but never with an erase: an erase waits for the reads in
+// flight to finish, and a read that starts while an erase is pending is told the
+// case is gone.
 type caseGates struct {
 	mu sync.Mutex
 	m  map[casestore.CaseID]*caseGate
 }
 
 type caseGate struct {
-	ch   chan struct{}
-	refs int
+	ch      chan struct{} // the exclusive slot: one import, close or erase at a time
+	refs    int           // holders and waiters of any kind; the gate is dropped at zero
+	readers int           // reads in flight
+	erasing bool          // an erase holds the slot and is draining readers
+	idle    chan struct{} // closed when the last reader leaves while erasing
 }
 
-func (g *caseGates) acquire(ctx context.Context, id casestore.CaseID) (func(), error) {
-	g.mu.Lock()
+// ref returns the case's gate with one more reference. The caller holds g.mu.
+func (g *caseGates) ref(id casestore.CaseID) *caseGate {
 	if g.m == nil {
 		g.m = map[casestore.CaseID]*caseGate{}
 	}
@@ -125,25 +134,113 @@ func (g *caseGates) acquire(ctx context.Context, id casestore.CaseID) (func(), e
 		g.m[id] = gate
 	}
 	gate.refs++
+	return gate
+}
+
+// unref drops one reference. The caller holds g.mu.
+func (g *caseGates) unref(id casestore.CaseID, gate *caseGate) {
+	gate.refs--
+	if gate.refs == 0 {
+		delete(g.m, id)
+	}
+}
+
+func (g *caseGates) acquire(ctx context.Context, id casestore.CaseID) (func(), error) {
+	release, _, err := g.acquireGate(ctx, id)
+	return release, err
+}
+
+func (g *caseGates) acquireGate(ctx context.Context, id casestore.CaseID) (func(), *caseGate, error) {
+	g.mu.Lock()
+	gate := g.ref(id)
 	g.mu.Unlock()
 	leave := func() {
 		g.mu.Lock()
-		gate.refs--
-		if gate.refs == 0 {
-			delete(g.m, id)
-		}
+		g.unref(id, gate)
 		g.mu.Unlock()
 	}
 	select {
 	case gate.ch <- struct{}{}:
 	case <-ctx.Done():
 		leave()
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
 	return func() {
 		<-gate.ch
 		leave()
-	}, nil
+	}, gate, nil
+}
+
+// acquireRead takes a read share of the case. It does not wait for an import,
+// and it fails (false) while an erase is pending or running, so an erase cannot
+// be overtaken by a read that opened the case first. The caller releases the
+// share exactly once.
+func (g *caseGates) acquireRead(id casestore.CaseID) (func(), bool) {
+	g.mu.Lock()
+	gate := g.ref(id)
+	if gate.erasing {
+		g.unref(id, gate)
+		g.mu.Unlock()
+		return nil, false
+	}
+	gate.readers++
+	g.mu.Unlock()
+	return func() {
+		g.mu.Lock()
+		gate.readers--
+		if gate.readers == 0 && gate.idle != nil {
+			close(gate.idle)
+			gate.idle = nil
+		}
+		g.unref(id, gate)
+		g.mu.Unlock()
+	}, true
+}
+
+// acquireErase takes the exclusive slot, then blocks new reads and waits for
+// the reads in flight to finish before it returns.
+func (g *caseGates) acquireErase(ctx context.Context, id casestore.CaseID) (func(), error) {
+	release, gate, err := g.acquireGate(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	g.mu.Lock()
+	gate.erasing = true
+	var wait chan struct{}
+	if gate.readers > 0 {
+		gate.idle = make(chan struct{})
+		wait = gate.idle
+	}
+	g.mu.Unlock()
+	done := func() {
+		g.mu.Lock()
+		gate.erasing = false
+		g.mu.Unlock()
+		release()
+	}
+	if wait != nil {
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			done()
+			return nil, ctx.Err()
+		}
+	}
+	return done, nil
+}
+
+// sharedCase releases the case's read share when the handle is closed, so a
+// handler keeps its single defer c.Close().
+type sharedCase struct {
+	casestore.Case
+	once    sync.Once
+	release func()
+}
+
+func (s *sharedCase) Close() error {
+	err := s.Case.Close()
+	s.once.Do(s.release)
+	return err
 }
 
 // defaultMaxImports is how many imports may parse at once across all cases. Each
@@ -443,8 +540,36 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toCaseDTO(info), maxResponseBytes)
 }
 
-// openCase opens the case for one request. The caller closes the handle.
+// openCase opens the case for one read request, holding a read share of the
+// case's gate until the handle is closed: an erase waits for it, and a case
+// being erased answers 404. The caller closes the handle.
 func (h *handler) openCase(w http.ResponseWriter, r *http.Request, raw string) (casestore.CaseID, casestore.Case, bool) {
+	id, ok := caseIDOf(w, raw)
+	if !ok {
+		return "", nil, false
+	}
+	if !h.casesAvailable(w) {
+		return "", nil, false
+	}
+	release, ok := h.gates.acquireRead(id)
+	if !ok {
+		writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
+		return "", nil, false
+	}
+	c, err := h.cases.Open(r.Context(), id)
+	if err != nil {
+		release()
+		writeStoreError(w, err)
+		return "", nil, false
+	}
+	return id, &sharedCase{Case: c, release: release}, true
+}
+
+// openCaseForWrite opens the case for a handler that takes the exclusive gate
+// itself (import, export preview). It holds no read share: an erase holds the
+// exclusive slot while it waits for readers, so a share held across that wait
+// would deadlock. The exclusive slot already keeps an erase out.
+func (h *handler) openCaseForWrite(w http.ResponseWriter, r *http.Request, raw string) (casestore.CaseID, casestore.Case, bool) {
 	id, ok := caseIDOf(w, raw)
 	if !ok {
 		return "", nil, false
@@ -501,8 +626,9 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 		writeCaseFailure(w, http.StatusBadRequest, "confirm-mismatch", "The confirmation does not match the case id.")
 		return
 	}
-	// An import in flight finishes before the case is erased.
-	release, err := h.gates.acquire(r.Context(), id)
+	// An import in flight finishes before the case is erased, and so does every
+	// read that already opened the case; reads that start now answer 404.
+	release, err := h.gates.acquireErase(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -572,6 +698,26 @@ func (h *handler) listImports(w http.ResponseWriter, r *http.Request, raw string
 	writeJSON(w, http.StatusOK, struct {
 		Imports []importRecordDTO `json:"imports"`
 	}{out}, maxResponseBytes)
+}
+
+// boundAck decides whether an acknowledgement may be stored. The standard
+// banner text (any white space spacing) is stored as the canonical text, so the
+// record always matches what the page showed. Anything else is stored only when
+// the caller marked it custom and it is plain text within the cap: valid UTF-8,
+// not blank, no control characters.
+func boundAck(text string, custom bool) (string, bool) {
+	if banner, ok := evidence.KnownBanner(text); ok {
+		return banner, true
+	}
+	if !custom || len(text) > casestore.MaxAckText || !utf8.ValidString(text) || strings.TrimSpace(text) == "" {
+		return "", false
+	}
+	for _, r := range text {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' {
+			return "", false
+		}
+	}
+	return text, true
 }
 
 // baseName reduces an upload name to a display-only base name: the part after
@@ -765,7 +911,7 @@ func importRun(ctx context.Context, imp importer.Importer, opts importer.Options
 }
 
 func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string) {
-	id, c, ok := h.openCase(w, r, raw)
+	id, c, ok := h.openCaseForWrite(w, r, raw)
 	if !ok {
 		return
 	}
@@ -834,7 +980,7 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 		writeCaseFailure(w, http.StatusBadRequest, "bad-form", "The upload is not a valid multipart form.")
 		return
 	}
-	var ackGating bool
+	var ackGating, ackCustom bool
 	var ackText string
 	for {
 		part, err := form.NextPart()
@@ -852,7 +998,7 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 			return
 		}
 		switch part.FormName() {
-		case "ackGating", "ackText":
+		case "ackGating", "ackText", "ackCustom":
 			value, err := io.ReadAll(io.LimitReader(part, casestore.MaxAckText+1))
 			if err != nil {
 				writeCaseFailure(w, http.StatusBadRequest, "bad-form", "A form field is invalid.")
@@ -866,12 +1012,26 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 				}
 				return
 			}
-			if part.FormName() == "ackGating" {
+			switch part.FormName() {
+			case "ackGating":
 				ackGating = string(value) == "true"
-			} else {
+			case "ackCustom":
+				ackCustom = string(value) == "true"
+			default:
 				ackText = string(value)
 			}
 		case "file":
+			if !preview && ackGating && ackText != "" {
+				// The acknowledgement is bound to the notice the page shows: the
+				// standard banner text (stored in its canonical form), or text the
+				// caller marks as custom, within the caps.
+				bound, ok := boundAck(ackText, ackCustom)
+				if !ok {
+					writeCaseFailure(w, http.StatusBadRequest, "ack-mismatch", ackMismatchText)
+					return
+				}
+				ackText = bound
+			}
 			h.importFile(w, r, id, c, imp, hint, part, preview, ackGating, ackText, baseName(part.FileName()))
 			return
 		default:

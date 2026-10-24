@@ -10,7 +10,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -24,6 +23,7 @@ import (
 
 	explorer "api-audit-explorer"
 	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/history"
 	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/mcp"
@@ -174,9 +174,20 @@ func run(args []string, getenv func(string) string) error {
 	signalContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	localURL := "http://" + listener.Addr().String()
-	// The token travels only in the fragment, which the browser never sends to
-	// the server; the page reads it and removes it from the address bar.
-	launchURL := localURL + "/#t=" + url.QueryEscape(token)
+	// The session token never goes on a command line or into a log line. The
+	// browser is opened on a single-use /launch link; the server answers it with
+	// a redirect that carries the token in the fragment, which the browser never
+	// sends back. The page reads the fragment and removes it from the address bar.
+	openBrowser := !*noBrowser && runtime.GOOS == "windows"
+	codeLife := launchCodeLifeManual
+	if openBrowser {
+		codeLife = launchCodeLifeBrowser
+	}
+	code, err := newLaunchCode()
+	if err != nil {
+		return err
+	}
+	serverOptions = append(serverOptions, server.WithLaunchCode(code, time.Now().Add(codeLife)))
 	served := server.New(repo, explorer.Assets(), token, *demo, serverOptions...)
 	defer server.LogAnalyzeRepeats(served)
 	httpServer := &http.Server{
@@ -192,7 +203,8 @@ func run(args []string, getenv func(string) string) error {
 
 	sessionPath, sessionErr := mcp.SessionFilePath(getenv)
 	if sessionErr == nil {
-		sessionErr = mcp.WriteSessionFile(sessionPath, listener.Addr().(*net.TCPAddr).Port, token)
+		// The file is restricted to this user before the token is written to it.
+		sessionErr = mcp.WriteSessionFileSecured(sessionPath, listener.Addr().(*net.TCPAddr).Port, token, casestore.SecureFile)
 	}
 	removeSession := func() {}
 	if sessionErr != nil {
@@ -202,11 +214,13 @@ func run(args []string, getenv func(string) string) error {
 		defer removeSession()
 	}
 
-	if !*noBrowser && runtime.GOOS == "windows" {
-		_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", launchURL).Start()
+	opened := false
+	if openBrowser {
+		opened = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", launchLink(localURL, code)).Start() == nil
 	}
-	log.Printf("Unravis listening at %s (demo=%t)", localURL, *demo)
-	log.Printf("Open Unravis at %s", launchURL)
+	for _, line := range startupLines(localURL, code, codeLife, *demo, opened) {
+		log.Print(line)
+	}
 
 	select {
 	case err := <-serveDone:
@@ -223,6 +237,39 @@ func run(args []string, getenv func(string) string) error {
 		}
 		return nil
 	}
+}
+
+const (
+	// The code in a link we open ourselves only has to outlive the browser start.
+	launchCodeLifeBrowser = 2 * time.Minute
+	// A link printed for the user to open by hand gets longer.
+	launchCodeLifeManual = 10 * time.Minute
+)
+
+// newLaunchCode returns a random single-use code for the /launch link. It is
+// not the session token and cannot be used to call the API.
+func newLaunchCode() (string, error) {
+	var raw [24]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("could not generate a local launch code")
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+func launchLink(localURL, code string) string {
+	return localURL + "/launch?c=" + code
+}
+
+// startupLines is what the dashboard logs when it starts. It never contains the
+// session token. When the browser was opened for the user, it contains no link
+// at all. Otherwise it contains the one-time launch link, which works once and
+// then expires.
+func startupLines(localURL, code string, life time.Duration, demo, opened bool) []string {
+	lines := []string{fmt.Sprintf("Unravis listening at %s (demo=%t)", localURL, demo)}
+	if opened {
+		return append(lines, "Unravis was opened in your browser. To open it again, restart it, or start it with --no-browser to get a link.")
+	}
+	return append(lines, fmt.Sprintf("Open Unravis with this one-time link (works once, expires in %d minutes): %s", int(life/time.Minute), launchLink(localURL, code)))
 }
 
 // shutdownTimeout stays under the five seconds Windows gives a console process
