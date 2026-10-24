@@ -1,0 +1,6 @@
+"TimeCreatedUtc","MachineName","LogName","ProviderName","Id","Level","Message"
+"2001-10-24T02:00:00.0000000Z","web-a","Microsoft-Windows-TaskScheduler/Operational","Microsoft-Windows-TaskScheduler","100","4","SYNTHETIC task started"
+"2001-10-24T02:00:07.0000000Z","web-a","Microsoft-Windows-TaskScheduler/Operational","Microsoft-Windows-TaskScheduler","102","4","SYNTHETIC task completed"
+"2001-10-24T03:00:00.0000000Z","web-a","Microsoft-Windows-TaskScheduler/Operational","Microsoft-Windows-TaskScheduler","322","3","SYNTHETIC launch request ignored"
+"2001-10-24T04:00:00.0000000Z","web-a","Microsoft-Windows-TaskScheduler/Operational","Microsoft-Windows-TaskScheduler","999","4","SYNTHETIC unclassified id"
+"2001-10-24T04:30:00.0000000Z","web-a","System","Microsoft-Windows-WAS","5002","2","SYNTHETIC other provider"

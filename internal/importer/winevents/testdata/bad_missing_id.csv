@@ -1,0 +1,2 @@
+"TimeCreatedUtc","MachineName","LogName","ProviderName","Level","Message"
+"2001-10-24T13:00:00.0000000Z","WEB-A","System","SyntheticProvider","4","SYNTHETIC row with no Id column in the header"

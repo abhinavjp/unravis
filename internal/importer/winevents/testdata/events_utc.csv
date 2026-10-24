@@ -1,0 +1,8 @@
+#TYPE Selected.System.Diagnostics.Eventing.Reader.EventLogRecord
+"TimeCreatedUtc","MachineName","LogName","ProviderName","Id","Level","AppPool","Message"
+"2001-10-24T13:00:00.0000000Z","WEB-A.example.test","System","Microsoft-Windows-WAS","5002","2","DefaultAppPool","SYNTHETIC: pool failed health check, with a comma"
+"2001-10-24T13:00:05.1230000Z","WEB-A.example.test","System","Microsoft-Windows-WAS","5011","3","DefaultAppPool","SYNTHETIC: first line
+second line of a quoted message"
+"2001-10-24T13:01:00Z","WEB-A.example.test","Application","SyntheticApp","1000","Error","","SYNTHETIC: say ""hello"""
+"2001-10-24T13:02:00.0000000Z","WEB-A.example.test","Application","SyntheticApp","1001","4","","SYNTHETIC: informational"
+"2001-10-24T13:03:00.0000000Z","WEB-A.example.test","System","Service Control Manager","7036","Information","","SYNTHETIC: service entered running state"
