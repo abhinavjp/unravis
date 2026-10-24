@@ -99,7 +99,30 @@ test('errorText shows a server message as written and gives a bare 503 or 404 a 
   assert.equal(exp.errorText(err('Request failed (404)', 404), 'preview'), T.notFound);
   assert.equal(exp.errorText(err('', 500), 'save'), T.failedSave);
   assert.equal(exp.errorText('boom', 'preview'), T.failedPreview);
-  assert.equal(exp.savedLine('abc123'), 'Saved. SHA-256: abc123');
+  assert.equal(exp.savedLine('abc123'), 'Saved. SHA-256 of the saved file: abc123');
+});
+
+test('contentMatches accepts only content whose SHA-256 equals the returned hash', async () => {
+  const content = '{\n  "n": "<20",\n  "label": "Ünïcode"\n}\n';
+  const good = require('node:crypto').createHash('sha256').update(content, 'utf8').digest('hex');
+  assert.equal(await exp.sha256Hex(content), good);
+  assert.equal(await exp.contentMatches(content, good), true);
+  assert.equal(await exp.contentMatches(content, good.toUpperCase()), true);
+  assert.equal(await exp.contentMatches(content + ' ', good), false);
+  assert.equal(await exp.contentMatches(content, good.replace(/^./, (c) => (c === '0' ? '1' : '0'))), false);
+  assert.equal(await exp.contentMatches(content, ''), false);
+  assert.equal(await exp.contentMatches(content, 'fakehash123'), false);
+  assert.equal(await exp.contentMatches(content, undefined), false);
+});
+
+test('the panel checks the hash before saving and keys pseudonym rows by index', () => {
+  const panel = fs.readFileSync(path.join(root, 'src/components/ExportPanel.svelte'), 'utf8');
+  const save = panel.slice(panel.indexOf('async function save()'), panel.indexOf('function onKey'));
+  assert.ok(save.indexOf('contentMatches(file.content, file.sha256)') > 0, 'save checks the hash');
+  assert.ok(save.indexOf('contentMatches(') < save.indexOf('new Blob('), 'the hash is checked before the file is made');
+  assert.match(panel, /exp\.body\.pseudonyms as row, i \(i\)/);
+  assert.doesNotMatch(panel, /exact (bytes|file)/i);
+  assert.doesNotMatch(JSON.stringify(exp.EXPORT_TEXT), /exact (bytes|file)/i);
 });
 
 test('every fixed string passes the copy lint and avoids causal or certainty wording', () => {

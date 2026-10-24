@@ -93,6 +93,7 @@ func buildRecord(f audit.Finding, r audit.PatternReport, source string, start, e
 		return Record{}, err
 	}
 	first, last := start, end
+	n := MaskCount(f.N)
 	rec := Record{
 		Version:     SchemaVersion,
 		EvidenceID:  f.EvidenceID,
@@ -105,9 +106,11 @@ func buildRecord(f audit.Finding, r audit.PatternReport, source string, start, e
 		Label:       f.Label,
 		Rule:        f.Rule,
 		Headline:    headline,
-		N:           MaskCount(f.N),
-		LowN:        f.LowN,
-		KnownGaps:   knownGaps(f.Rule, r),
+		N:           n,
+		// A masked count is low-n by definition. Copying the engine's flag
+		// (n < 10) would split every "<20" cell into 1-9 and 10-19.
+		LowN:      f.LowN || n.Masked,
+		KnownGaps: knownGaps(f.Rule, r),
 		Quality: SourceQuality{
 			Threshold:     threshold(f.Rule, r.Params),
 			CoverageFirst: &first,
@@ -121,6 +124,47 @@ func buildRecord(f audit.Finding, r audit.PatternReport, source string, start, e
 	}
 	rec.Provenance.Hash = h
 	return rec, nil
+}
+
+// withheldText marks a count of ThinCell or more that is hidden so it cannot be
+// subtracted from a printed total to recover a count below ThinCell.
+const withheldText = "withheld"
+
+// partOf names, for each rule whose n is a part of another rule's n, that
+// total. B12 counts the requests inside volleys, a subset of the stalls B1
+// counts (B2 prints the same total as B1).
+var partOf = map[string]string{"B12": "B1"}
+
+// suppressComplements applies complementary suppression across records: when a
+// part and its total are both printed and they differ by 1 to ThinCell-1, the
+// difference is a small cell anyone could compute, so the part is withheld. A
+// masked part needs nothing: total minus "<20" gives only a range. It reports
+// whether any count was withheld.
+func suppressComplements(records []Record) (bool, error) {
+	totals := map[string]int{}
+	for _, r := range records {
+		if r.N.Value != nil && !r.N.Masked {
+			totals[r.Rule] = *r.N.Value
+		}
+	}
+	withheld := false
+	for i := range records {
+		r := &records[i]
+		total, ok := totals[partOf[r.Rule]]
+		if !ok || r.N.Value == nil {
+			continue
+		}
+		if d := total - *r.N.Value; d > 0 && d < ThinCell {
+			r.N = Count{Masked: true, Text: withheldText}
+			h, err := recordHash(*r)
+			if err != nil {
+				return false, err
+			}
+			r.Provenance.Hash = h
+			withheld = true
+		}
+	}
+	return withheld, nil
 }
 
 // recordHash is the SHA-256 hex of the record's compact JSON with
@@ -165,7 +209,7 @@ func knownGaps(rule string, r audit.PatternReport) []string {
 	if r.Coverage == nil || !r.Coverage.Run {
 		s := "Field coverage was not measured for this window."
 		if r.Coverage != nil {
-			if note := strings.TrimSpace(cleanFreeText(r.Coverage.Note, reportUserIDs(r))); note != "" {
+			if note := strings.TrimSpace(cleanFreeText(r.Coverage.Note, reportUserIDs(r), noteWithheld)); note != "" {
 				s += " " + note
 			}
 		}

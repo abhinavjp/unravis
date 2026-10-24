@@ -3,7 +3,7 @@
   import { api } from '../lib/api';
   import { formatLocal } from '../lib/time';
   import {
-    EXPORT_TEXT, RECORD_FIELDS, canSave, describeCount, downloadName, errorText, exportInput, exportSummary, qualityRows, savedLine, stateLabel,
+    EXPORT_TEXT, RECORD_FIELDS, canSave, contentMatches, describeCount, downloadName, errorText, exportInput, exportSummary, qualityRows, savedLine, stateLabel,
     type ExportPhase
   } from '../lib/export';
   import type { Query } from '../lib/types';
@@ -62,6 +62,12 @@
     phase = { kind: 'saving', preview: shown };
     try {
       const file = await api.exportConfirm(shown.previewId);
+      // The confirm call used up the preview, so on a mismatch nothing is saved and a new preview is needed.
+      if (!(await contentMatches(file.content, file.sha256))) {
+        problem = EXPORT_TEXT.hashMismatch;
+        phase = { kind: 'idle' };
+        return;
+      }
       const filename = downloadName(file);
       const url = URL.createObjectURL(new Blob([file.content], { type: 'application/json' }));
       const link = document.createElement('a');
@@ -141,7 +147,7 @@
       <section class="export-block" aria-label={EXPORT_TEXT.masking}>
         <h3>{EXPORT_TEXT.masking}<Hint termId="thin-cell" /></h3>
         <ul class="export-statements">
-          {#each summary.statements as statement (statement)}<li>{statement}</li>{/each}
+          {#each summary.statements as statement, i (i)}<li>{statement}</li>{/each}
         </ul>
       </section>
 
@@ -196,7 +202,7 @@
               <table class="export-table">
                 <thead><tr><th scope="col">Label</th><th scope="col" class="num">Requests</th></tr></thead>
                 <tbody>
-                  {#each exp.body.pseudonyms as row (row.label)}
+                  {#each exp.body.pseudonyms as row, i (i)}
                     <tr><th scope="row">{row.label}</th><td class="num">{describeCount(row.requests)}</td></tr>
                   {/each}
                 </tbody>
