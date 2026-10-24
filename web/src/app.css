@@ -693,6 +693,8 @@ th.numeric { text-align: right; }
 .empty-state p { margin: 0; max-width: 60ch; font-size: 13px; }
 .source-count { margin: 0 6px 6px; color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .run-hint { margin: 0; color: var(--text-2); font-size: 12px; }
+/* The status region stays in the page (never display:none) so a hint that appears is announced; empty, it takes no room. */
+.run-hint:empty { margin-right: -8px; }
 
 /* ---------- Wide and narrow ---------- */
 @media (min-width: 1100px) {

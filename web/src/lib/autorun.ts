@@ -27,9 +27,17 @@ export function scopeProblem(query: ScopeShape, datesValid: boolean): string | n
 }
 
 /** The short hint shown beside the run button while the scope is incomplete: the cause, not an error banner. */
-export function scopeHint(query: Pick<Query, 'sourceIds'>, datesValid: boolean): string {
+export function scopeHint(query: ScopeShape, datesValid: boolean): string {
   if (!query.sourceIds.length) return 'Choose a source to run the analysis.';
   if (!datesValid) return 'Complete the dates to run the analysis.';
+  // Same checks and order as scopeProblem, one short plain sentence each, so a scope that cannot run is never silently left un-run.
+  const start = new Date(query.start).getTime(), end = new Date(query.end).getTime();
+  const baselineStart = new Date(query.baselineStart).getTime(), baselineEnd = new Date(query.baselineEnd).getTime();
+  if (!(start < end) || !(baselineStart < baselineEnd)) return 'Each window must start before it ends.';
+  if (end - start > 7 * DAY_MS || baselineEnd - baselineStart > 7 * DAY_MS) return 'Each window can be at most 7 days.';
+  if (baselineEnd > start) return 'The reference window must end before the current window starts.';
+  if (!(Number.isInteger(query.bucketSeconds) && query.bucketSeconds >= 10 && query.bucketSeconds <= 86400)) return 'Bucket size must be 10 to 86,400 seconds.';
+  if (countEpochBuckets(start, end, query.bucketSeconds) > 120 || countEpochBuckets(baselineStart, baselineEnd, query.bucketSeconds) > 120) return 'That bucket size makes over 120 time points; use a larger bucket or a shorter window.';
   return '';
 }
 

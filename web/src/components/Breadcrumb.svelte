@@ -10,7 +10,7 @@
       {#each crumbs as crumb (crumb.id)}
         <li>
           {#if crumb.current}<span aria-current="page" title={crumb.label}>{crumb.label}</span>
-          {:else}<button type="button" title={crumb.label} onclick={() => onNavigate(crumb)}>{crumb.label}</button>{/if}
+          {:else}<button type="button" title={crumb.label} aria-label={'Back to ' + crumb.label} onclick={() => onNavigate(crumb)}>{crumb.label}</button>{/if}
         </li>
       {/each}
     </ol>

@@ -30,7 +30,7 @@
   import RecordDetailPanel from './components/RecordDetail.svelte';
   import OverviewStrip from './components/OverviewStrip.svelte';
   import IncompletePanel from './components/IncompletePanel.svelte';
-  import { applyStaleFilters } from './lib/incomplete';
+  import { applyStaleFilters, scopeStaleDrill } from './lib/incomplete';
   import { allOperationsDrill, drillHeading, operationDrill, type OverviewDrill } from './lib/overview';
   import { phaseSegments } from './lib/phases';
   import { rollupFor } from './lib/traffic';
@@ -522,7 +522,7 @@
       analysisController?.abort();
       analysisController = null;
       inflightSignature = '';
-      loading = false;
+      loading = false; error = '';
       invalidateDetails();
       operation = null; selectedKey = ''; contextAnchor = null;
     }
@@ -655,6 +655,8 @@
   }
   // Runs once the scope has been quiet for the debounce period: only a valid scope that is not already shown or in flight.
   function flushScope() {
+    // A skipped scope (invalid or unchanged) never leaves an old "Comparison not run" banner behind; the hint explains what is missing.
+    error = '';
     const decision = autoRunDecision({
       problem: scopeProblem(query, dateInputsValid), signature: queryFingerprint(query),
       shown: analysis ? queryFingerprint(analysis.query) : null, inflight: inflightSignature || null
@@ -774,7 +776,7 @@
     stepUpOnce();
   }
   // A scope change (range chip, request type, source, filter) re-runs the analysis after a short quiet period; a burst becomes one run and the last change wins.
-  function onScopeChange() { scopeRun.schedule(); }
+  function onScopeChange() { error = ''; scopeRun.schedule(); }
   function removeChip(chip: FilterChip) { applyChipPatch(query, chip); controlsResetKey++; onScopeChange(); }
   function clearChips() { for (const chip of filterChipList) applyChipPatch(query, chip); controlsResetKey++; onScopeChange(); }
   async function openFromTable(key: string) {
@@ -814,9 +816,11 @@
     document.getElementById('request-history')?.scrollIntoView({ block: 'start' });
   }
   // The Incomplete tab's own drill keeps the operation and its group (the list narrows, the frame does not change) and keeps the opener's focus target.
-  async function drillFromIncomplete(next: OverviewDrill) {
+  async function drillFromIncomplete(raw: OverviewDrill) {
     const keep = operation ? { operation, selectedKey } : null;
-    if (!keep) { await drillFromOverview(next); return; }
+    if (!keep) { await drillFromOverview(raw); return; }
+    // The panel's totals buttons are every-API drills; inside an operation the list, heading and export stay that operation's.
+    const next = scopeStaleDrill(raw, keep.operation);
     contextAnchor = null; invalidateDetails();
     operation = keep.operation; selectedKey = keep.selectedKey;
     queryWide = true; requestState = next.state; drillOverview = next;
@@ -929,7 +933,7 @@
             {#key controlsResetKey}<QueryControls bind:query bind:zone bind:targetMs bind:dateInputsValid part="panel" groupNames={(analysis?.apis ?? []).map(row => row.controller + '.' + row.action)} now={info?.now ?? ''} {onScopeChange} />{/key}
           </div>
         </details>
-        <div class="run-actions">{#if runHint}<span class="run-hint" role="status">{runHint}</span>{/if}{#if loading}<button class="quiet-button" onclick={cancelAnalysis}>Cancel run</button>{/if}<button class="primary-button" disabled={loading || !query.sourceIds.length || !dateInputsValid} onclick={() => runAnalysis()}>{loading ? 'Comparing…' : 'Run analysis'}</button></div>
+        <div class="run-actions"><span class="run-hint" id="run-hint" role="status">{runHint}</span>{#if loading}<button class="quiet-button" onclick={cancelAnalysis}>Cancel run</button>{/if}<button class="primary-button" aria-describedby="run-hint" disabled={loading || !query.sourceIds.length || !dateInputsValid} onclick={() => runAnalysis()}>{loading ? 'Comparing…' : 'Run analysis'}</button></div>
       </div>
       <FilterChips chips={filterChipList} onRemove={removeChip} onClear={clearChips} />
     </section>
