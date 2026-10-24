@@ -659,6 +659,47 @@ func (t *trackedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// importIdleTimeout is how long an import body may stay silent. The server's
+// read timeout is a hard limit on the whole request, which is right for small
+// requests but would cut off any import that takes longer than that to stream.
+const importIdleTimeout = 35 * time.Second
+
+// importWriteWindow is the time the server may take to answer once the body
+// has been read: parsing and the commit run after the last byte arrives.
+const importWriteWindow = requestTimeout + 10*time.Second
+
+// rollingBody moves the connection deadlines forward on each read, so a slow
+// but active import is not cut off by the server-wide read and write timeouts.
+type rollingBody struct {
+	rc   *http.ResponseController
+	r    io.ReadCloser
+	last time.Time
+}
+
+func newRollingBody(w http.ResponseWriter, body io.ReadCloser) *rollingBody {
+	rb := &rollingBody{rc: http.NewResponseController(w), r: body}
+	rb.extend()
+	return rb
+}
+
+// extend sets fresh deadlines. A writer without deadline support (a test
+// recorder) is ignored: there is no timeout to extend there.
+func (b *rollingBody) extend() {
+	now := time.Now()
+	_ = b.rc.SetReadDeadline(now.Add(importIdleTimeout))
+	_ = b.rc.SetWriteDeadline(now.Add(importWriteWindow))
+	b.last = now
+}
+
+func (b *rollingBody) Read(p []byte) (int, error) {
+	if time.Since(b.last) > time.Second {
+		b.extend()
+	}
+	return b.r.Read(p)
+}
+
+func (b *rollingBody) Close() error { return b.r.Close() }
+
 func randomNonce() (string, error) {
 	var b [16]byte
 	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
@@ -785,7 +826,9 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 	}
 	defer slot()
 
-	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	// The wait for the gate may have used up the server's read deadline, so the
+	// body gets its own rolling deadline from here on.
+	r.Body = http.MaxBytesReader(w, newRollingBody(w, r.Body), limit)
 	form, err := r.MultipartReader()
 	if err != nil {
 		writeCaseFailure(w, http.StatusBadRequest, "bad-form", "The upload is not a valid multipart form.")

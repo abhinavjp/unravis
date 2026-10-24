@@ -604,7 +604,10 @@ export function resetInvestigation() {
 }
 
 export async function addSource(event: SubmitEvent) {
-  event.preventDefault(); sourceError = ''; sourceSuccess = '';
+  event.preventDefault();
+  // A second submit while one add is running (a double click, Enter held down) must not add every database twice.
+  if (sourceBusy) return;
+  sourceError = ''; sourceSuccess = '';
   if (historyMutationBusy) { sourceError = 'Wait for the recent connection update to finish before adding a profile.'; return; }
   const databaseNames = manualDatabase ? [manualDatabaseName.trim()].filter(Boolean) : selectedDatabases.slice();
   if (!addLabel.trim() || !addUri.trim() || !databaseNames.length || !addCollection.trim()) {
