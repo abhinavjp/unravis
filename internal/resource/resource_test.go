@@ -267,7 +267,7 @@ func TestMetricsListEveryPlanIDAndThePendingSources(t *testing.T) {
 		t.Fatalf("ids\n got %v\nwant %v", got, want)
 	}
 	for id, p := range map[string]string{
-		"redis.mem": "redis-info", "redis.ops": "redis-info", "host.cpu": "linux-sadf",
+		"redis.mem": "", "redis.ops": "", "host.cpu": "linux-sadf",
 		"proc.cpu": "linux-pidstat", "proc.ws": "linux-pidstat", "mongo.queue": "", "clr.gen2": "",
 	} {
 		if pending[id] != p {
