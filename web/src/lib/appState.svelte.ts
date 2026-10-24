@@ -621,6 +621,7 @@ export async function addSource(event: SubmitEvent) {
   const collection = addCollection.trim();
   const failures: Array<{ database: string; error: string }> = [];
   let addedCount = 0;
+  let allAdded = false;
   try {
     for (const database of databaseNames) {
       try {
@@ -643,10 +644,13 @@ export async function addSource(event: SubmitEvent) {
       sourceError = `Added ${addedCount} of ${databaseNames.length} selected database${databaseNames.length === 1 ? '' : 's'}. Failed databases remain selected so you can retry: ${details}`;
     } else {
       labelDatabasesIndividually = false;
-      sourceSuccess = `Added ${addedCount} source profile${addedCount === 1 ? '' : 's'}. Connection details are kept so you can add more databases from this host.`;
+      sourceSuccess = `Added ${addedCount} source profile${addedCount === 1 ? '' : 's'}. Reopen New connection to add more databases from this host.`;
+      allAdded = true;
     }
   }
   finally { sourceBusy = false; }
+  // A fully successful add is done: close the drawer and show the result in the source list. A partial failure stays open so the failed databases can be retried.
+  if (allAdded) await closeConnections();
 }
 export async function deleteSource(source: Source) {
   sourceError = ''; busyDelete = source.id;

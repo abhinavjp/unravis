@@ -50,3 +50,13 @@ test('every existing caller still passes the original required props', () => {
     for (const prop of ['title=', 'titleId=', 'closeLabel=']) assert.ok(tag[0].includes(prop), file + ' passes ' + prop);
   }
 });
+
+// After a fully successful add the connections drawer closes; a partial failure keeps it open for retry.
+test('addSource closes the connections drawer only when every database was added', () => {
+  const state = read('src/lib/appState.svelte.ts');
+  const body = state.slice(state.indexOf('export async function addSource'), state.indexOf('export async function deleteSource'));
+  assert.match(body, /allAdded = true;/);
+  assert.match(body, /if \(allAdded\) await closeConnections\(\);/);
+  assert.ok(body.indexOf('allAdded = true;') > body.indexOf('if (failures.length)'), 'only the no-failure branch sets allAdded');
+  assert.match(body, /sourceError = `Added \$\{addedCount\} of/);
+});
