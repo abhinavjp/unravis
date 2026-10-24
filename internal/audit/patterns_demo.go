@@ -22,6 +22,8 @@ func NewDemoWithPatterns(now time.Time) Repository {
 	repo := NewDemoWithStaleWork(now).(*demoRepository)
 	repo.records = append(repo.records, demoPatternRecords(repo.now)...)
 	repo.records = append(repo.records, demoOnsetRecords(repo.now)...)
+	repo.records = append(repo.records, demoIdleRecords(repo.now, demoIdlePositiveSource, true)...)
+	repo.records = append(repo.records, demoIdleRecords(repo.now, demoIdleNegativeSource, false)...)
 	return repo
 }
 
@@ -38,7 +40,7 @@ type demoScenarioRow struct {
 	userID             int
 }
 
-func demoScenarioRecords(now time.Time, rows []demoScenarioRow, prefix string) []RequestRecord {
+func demoScenarioRecords(now time.Time, source string, rows []demoScenarioRow, prefix string) []RequestRecord {
 	records := make([]RequestRecord, 0, len(rows))
 	for i, r := range rows {
 		initiated := now.Add(-r.offset)
@@ -50,7 +52,7 @@ func demoScenarioRecords(now time.Time, rows []demoScenarioRow, prefix string) [
 		updated := completed.Add(time.Duration(payload * float64(time.Millisecond)))
 		userID := r.userID
 		records = append(records, RequestRecord{
-			ID: fmt.Sprintf("%s-%s-%s", demoPatternSource, prefix, r.label), SourceID: demoPatternSource,
+			ID: fmt.Sprintf("%s-%s-%s", source, prefix, r.label), SourceID: source,
 			Controller: r.controller, Action: r.action, Kind: "synchronous", Outcome: "success", Status: "200 OK",
 			URL:         "/" + strings.ToLower(r.controller) + "/" + strings.ToLower(r.action),
 			InitiatedAt: &initiated, CompletedAt: &completed, DurationMs: &duration, ApiTimeMs: &api,
@@ -87,7 +89,66 @@ func demoPatternRecords(now time.Time) []RequestRecord {
 		{"r2-a", "Employees", "List", 3*time.Hour + 29*time.Minute + 5*time.Second, 2000, 100, 1002},
 		{"r2-b", "Reports", "Generate", 2*time.Hour + 14*time.Minute, 2000, 100, 1005},
 	}
-	return demoScenarioRecords(now, rows, "pattern")
+	return demoScenarioRecords(now, demoPatternSource, rows, "pattern")
+}
+
+// The quiet-gap (B6g) demo: one source where audit create is slow after quiet
+// gaps and one where it is not. Both are Timesheets.Save, a synchronous request
+// that takes 21 s with audit create at 0.1 s (quick) or 6.2 s (slow). That is
+// under 30% of observed time and under 45 s, so none of these rows is a B1 stall
+// or a B6 audit-create stall, and no earlier rule or count changes. Each burst is
+// a leader followed by two requests 5 s and 10 s later, and bursts start 11
+// minutes apart, so a leader follows a gap of 650 s and a follower one of 5 s.
+// Every row starts between 17 h and 6 h 55 min before now, so no 4-hour window
+// and no window of 30 minutes sees them.
+const (
+	demoIdlePositiveSource = "demo-west"
+	demoIdleNegativeSource = "demo-east"
+
+	// demoIdlePositiveBursts and demoIdleNegativeBursts are 24 and 56 bursts. The
+	// negative source has 55 leaders after a quiet gap, enough (50) to print "not
+	// observed".
+	demoIdlePositiveBursts = 24
+	demoIdleNegativeBursts = 56
+)
+
+// demoIdleRecords builds the bursts of one source. In the positive source every
+// odd leader (12 of the 23 with a known gap) has slow audit create, and one
+// follower does, so audit create is slow after quiet gaps and not after short
+// ones. In the negative source slow audit create is spread evenly: 2 of the 55
+// leaders and 4 of the 112 followers.
+func demoIdleRecords(now time.Time, source string, positive bool) []RequestRecord {
+	bursts := demoIdleNegativeBursts
+	if positive {
+		bursts = demoIdlePositiveBursts
+	}
+	const quick, slow = 120.0, 6200.0
+	var rows []demoScenarioRow
+	for i := 0; i < bursts; i++ {
+		leader := 17*time.Hour - time.Duration(i)*11*time.Minute
+		leaderAudit := quick
+		if (positive && i%2 == 1) || (!positive && i > 0 && i%20 == 0) {
+			leaderAudit = slow
+		}
+		rows = append(rows, demoScenarioRow{
+			label: fmt.Sprintf("%02d-lead", i), controller: "Timesheets", action: "Save",
+			offset: leader, durationMs: 21000, auditMs: leaderAudit, userID: 3001 + i%7,
+		})
+		for j := 0; j < 2; j++ {
+			followerAudit := quick
+			switch {
+			case positive && i == 5 && j == 0:
+				followerAudit = 5500
+			case !positive && (2*i+j)%28 == 0:
+				followerAudit = slow
+			}
+			rows = append(rows, demoScenarioRow{
+				label: fmt.Sprintf("%02d-follow-%d", i, j+1), controller: "Timesheets", action: "Save",
+				offset: leader - time.Duration(j+1)*5*time.Second, durationMs: 21000, auditMs: followerAudit, userID: 3001 + (i+j+1)%7,
+			})
+		}
+	}
+	return demoScenarioRecords(now, source, rows, "idle")
 }
 
 // demoOnsetDays is how many earlier days carry a Documents.Export episode.
@@ -122,5 +183,5 @@ func demoOnsetRecords(now time.Time) []RequestRecord {
 			})
 		}
 	}
-	return demoScenarioRecords(now, rows, "onset")
+	return demoScenarioRecords(now, demoPatternSource, rows, "onset")
 }

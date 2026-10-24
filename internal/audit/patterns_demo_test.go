@@ -92,8 +92,11 @@ func TestPatternsDemoScenarioLeavesBaseWindowsAlone(t *testing.T) {
 	if !reflect.DeepEqual(base.APIs, withPatterns.APIs) || !reflect.DeepEqual(base.Quality, withPatterns.Quality) {
 		t.Fatal("the pattern scenario changed the standard demo window")
 	}
-	for _, r := range append(demoPatternRecords(now), demoOnsetRecords(now)...) {
-		if !r.InitiatedAt.Before(now.Add(-30*time.Minute)) || r.SourceID != demoPatternSource {
+	scenario := append(demoPatternRecords(now), demoOnsetRecords(now)...)
+	scenario = append(scenario, demoIdleRecords(now, demoIdlePositiveSource, true)...)
+	scenario = append(scenario, demoIdleRecords(now, demoIdleNegativeSource, false)...)
+	for _, r := range scenario {
+		if !r.InitiatedAt.Before(now.Add(-30*time.Minute)) || (r.SourceID != "demo-west" && r.SourceID != "demo-east") {
 			t.Fatalf("scenario row %s inside the base window", r.ID)
 		}
 	}
@@ -153,5 +156,80 @@ func TestPatternsDemoOlderRowsStayOutOfFourHours(t *testing.T) {
 	}
 	if findingByRule(rep, "B3a") != nil || findingByRule(rep, "A3") != nil || len(rep.OnsetMinutes) != 3 || len(rep.Concentration) != 0 {
 		t.Fatalf("%+v %+v", rep.Findings, rep.Concentration)
+	}
+}
+
+func demoIdleInput(source string, from, to time.Duration) PatternInput {
+	return PatternInput{SourceIDs: []string{source}, Start: patternDemoNow.Add(-from), End: patternDemoNow.Add(-to), IdleGaps: true}
+}
+
+// Quiet gaps (B6g): the west scenario has slow audit create after quiet gaps.
+func TestPatternsDemoIdleGapsRaised(t *testing.T) {
+	r, err := RunPatterns(context.Background(), NewDemoWithPatterns(patternDemoNow), demoIdleInput("demo-west", 18*time.Hour, 12*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Stalls) != 0 || len(r.AuditStalls) != 0 {
+		t.Fatalf("idle rows must not be stalls: %+v %+v", r.Stalls, r.AuditStalls)
+	}
+	g := r.IdleGaps
+	if g == nil || g.Partial || g.ExcludedHangfire != 0 || len(g.Bands) != 5 || len(g.Lift) != 3 {
+		t.Fatalf("idle gaps %+v", g)
+	}
+	if b := g.Bands[0]; b.N != 48 || b.MedianMs == nil || *b.MedianMs != 120 || b.SlowRate == nil {
+		t.Fatalf("reference band %+v", b)
+	}
+	if b := g.Bands[4]; b.FromS != 600 || b.ToS != nil || b.N != 23 || b.MedianMs == nil || *b.MedianMs != 6200 {
+		t.Fatalf("last band %+v", b)
+	}
+	if b := g.Bands[1]; b.N != 0 || b.MedianMs != nil || b.P95Ms != nil || b.SlowRate != nil {
+		t.Fatalf("empty band must be null %+v", b)
+	}
+	for _, l := range g.Lift {
+		if l.Withheld || l.Value == nil || *l.Value < 20 {
+			t.Fatalf("lift %+v", l)
+		}
+	}
+	f := findingByRule(r, "B6g")
+	if f == nil || f.Label != EvidenceSymptom || f.N != 23 || f.LowN {
+		t.Fatalf("B6g %+v", f)
+	}
+	if want := "Raised after quiet gaps. After quiet gaps of at least 10 min, audit create took 6.2 s at the median (n = 23). After gaps under 30 s it took 0.1 s (n = 48). Audit create is measured from the client side and covers setup work and the database write, not just the write."; f.Headline != want {
+		t.Fatalf("headline %q", f.Headline)
+	}
+}
+
+// The east scenario has the same traffic with slow audit create spread evenly, so
+// the rule says "not observed".
+func TestPatternsDemoIdleGapsNotObserved(t *testing.T) {
+	r, err := RunPatterns(context.Background(), NewDemoWithPatterns(patternDemoNow), demoIdleInput("demo-east", 18*time.Hour, 6*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := r.IdleGaps
+	if g == nil || g.Partial || g.Bands[0].N != 112 || g.Bands[4].N != 55 {
+		t.Fatalf("idle gaps %+v", g)
+	}
+	for _, l := range g.Lift {
+		if l.Withheld || l.Value == nil || *l.Value > 1.5 || *l.Value < 0.5 {
+			t.Fatalf("lift %+v", l)
+		}
+	}
+	f := findingByRule(r, "B6g")
+	if f == nil || f.Label != EvidenceSymptom || f.Headline != "Not observed: audit create was not slower after quiet gaps of at least 10 min in this window." {
+		t.Fatalf("B6g %+v", f)
+	}
+}
+
+// Without the opt-in the demo reads nothing extra and prints no table.
+func TestPatternsDemoIdleGapsOptIn(t *testing.T) {
+	in := demoIdleInput("demo-west", 18*time.Hour, 12*time.Hour)
+	in.IdleGaps = false
+	r, err := RunPatterns(context.Background(), NewDemoWithPatterns(patternDemoNow), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.IdleGaps != nil || findingByRule(r, "B6g") != nil {
+		t.Fatalf("%+v", r.IdleGaps)
 	}
 }
