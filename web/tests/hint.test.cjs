@@ -76,3 +76,50 @@ test('sortTerms does not change the array it is given', () => {
   assert.deepEqual(sortTerms(input).map(item => item.id), ['a', 'b', 'c']);
   assert.deepEqual(input.map(item => item.id), copy);
 });
+
+const { createHintBus, glossaryTermFrom, GLOSSARY_EVENT } = loadTypeScript('src/lib/copy/hintState.ts');
+
+test('hint bus keeps one hint open at a time', () => {
+  const bus = createHintBus();
+  const seen = [];
+  const stop = bus.subscribe(id => seen.push(id));
+  assert.equal(bus.current(), null);
+  bus.open('a');
+  bus.open('b');
+  assert.equal(bus.current(), 'b');
+  assert.deepEqual(seen, ['a', 'b']);
+  bus.open('b');
+  assert.deepEqual(seen, ['a', 'b']);
+  stop();
+  bus.open('c');
+  assert.deepEqual(seen, ['a', 'b']);
+});
+
+test('hint bus close only affects the hint that is open', () => {
+  const bus = createHintBus();
+  bus.open('a');
+  bus.open('b');
+  bus.close('a');
+  assert.equal(bus.current(), 'b');
+  bus.close('b');
+  assert.equal(bus.current(), null);
+  bus.close('b');
+  assert.equal(bus.current(), null);
+});
+
+test('hint bus listeners can unsubscribe while being notified', () => {
+  const bus = createHintBus();
+  let calls = 0;
+  const stop = bus.subscribe(() => { calls++; stop(); });
+  bus.subscribe(() => { calls++; });
+  bus.open('a');
+  assert.equal(calls, 2);
+  bus.open('b');
+  assert.equal(calls, 3);
+});
+
+test('glossaryTermFrom accepts only a non-empty string id', () => {
+  assert.equal(GLOSSARY_EVENT, 'unravis:open-glossary');
+  assert.equal(glossaryTermFrom({ termId: 'p95' }), 'p95');
+  for (const bad of [undefined, null, {}, { termId: '' }, { termId: 5 }, 'p95']) assert.equal(glossaryTermFrom(bad), null);
+});
