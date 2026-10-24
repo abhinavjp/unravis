@@ -268,7 +268,6 @@ func TestLegacyMetadataCarriesTheFilterFields(t *testing.T) {
 // $match: equality, $in (with regex entries), $regex/$options, $exists, null and
 // range conditions, combined with $or and $and.
 func evalFirstMatch(t *testing.T, match bson.D, doc map[string]any) bool {
-	t.Helper()
 	equal := func(have, want any) bool {
 		if a, aok := pipelineNum(have); aok {
 			b, bok := pipelineNum(want)

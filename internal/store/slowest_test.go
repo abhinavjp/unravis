@@ -144,7 +144,6 @@ func slowCompare(a, b any) (int, bool) {
 // its $project. A comparison against a missing, null or other-typed field is
 // false, like MongoDB's type bracketing.
 func evalSlowMatch(t *testing.T, match bson.D, doc map[string]any) bool {
-	t.Helper()
 	for _, e := range match {
 		switch e.Key {
 		case "$or", "$and":
