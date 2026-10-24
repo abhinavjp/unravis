@@ -75,6 +75,10 @@ func ValidTitle(title string) bool {
 // Retention is how long a closed case is kept before Sweep erases it (R16).
 const Retention = 30 * 24 * time.Hour
 
+// MaxAckText bounds ImportMeta.AckText in bytes. The API and every store use
+// this one limit.
+const MaxAckText = 4 << 10
+
 // MaxEventQuery is the most events one Events call returns.
 const MaxEventQuery = 50000
 
@@ -216,6 +220,11 @@ var (
 	ErrBadID        = errors.New("invalid case id")
 	ErrBadTitle     = errors.New("invalid case title")
 	ErrHandleClosed = errors.New("case handle closed")
+	// ErrCaseClosed is returned by Import for a case that CloseCase has closed.
+	// A closed case takes no more files, however its handle was opened.
+	ErrCaseClosed = errors.New("case is closed")
+	// ErrAckTooLong is returned by Import when AckText is over MaxAckText.
+	ErrAckTooLong = errors.New("acknowledgement text too long")
 	// ErrDuplicateEvent is returned when an import emits an evidence ID the
 	// case already holds, or one twice.
 	ErrDuplicateEvent = errors.New("duplicate evidence id")

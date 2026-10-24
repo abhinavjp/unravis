@@ -372,6 +372,9 @@ func (c *memCase) Import(ctx context.Context, meta ImportMeta, body io.Reader, r
 	if !meta.AckGating || meta.AckText == "" {
 		return res, ErrAckRequired
 	}
+	if len(meta.AckText) > MaxAckText {
+		return res, ErrAckTooLong
+	}
 	if run == nil || body == nil {
 		return res, errors.New("casestore: import needs a body and a run function")
 	}
@@ -381,7 +384,11 @@ func (c *memCase) Import(ctx context.Context, meta ImportMeta, body io.Reader, r
 
 	c.d.mu.RLock()
 	used := c.d.info.Bytes
+	closedAlready := c.d.info.Closed != nil
 	c.d.mu.RUnlock()
+	if closedAlready {
+		return res, ErrCaseClosed
+	}
 	max := c.s.caps.MaxFileBytes
 	if room := c.s.caps.MaxCaseBytes - used; room < max {
 		max = room
@@ -448,6 +455,9 @@ func (c *memCase) Import(ctx context.Context, meta ImportMeta, body io.Reader, r
 	defer c.d.mu.Unlock()
 	if c.d.erased {
 		return res, ErrNotFound
+	}
+	if c.d.info.Closed != nil {
+		return res, ErrCaseClosed // closed while the import ran
 	}
 	for _, r := range c.d.imports {
 		if r.SHA256 == sum {
@@ -535,7 +545,7 @@ func (c *memCase) quarantine(ctx context.Context, meta ImportMeta, qe *importer.
 	c.d.nextQID++
 	c.d.quarantines = append(c.d.quarantines, QuarantineRecord{
 		ID: c.d.nextQID, Importer: res.Record.Importer, FileName: meta.FileName, SHA256: sum,
-		Reason: qe.Reason, Column: qe.Column, Rows: res.Report.Rows, At: c.s.now().UTC(),
+		Reason: qe.Reason, Column: importer.SafeColumn(qe.Column), Rows: res.Report.Rows, At: c.s.now().UTC(),
 	})
 	return res, cause
 }

@@ -33,7 +33,6 @@ const (
 	// maxFilter bounds each Kinds, Sources and Hosts list.
 	maxFilter = 200
 
-	maxAckText   = 4096
 	maxLabelRune = 128
 	maxNameBytes = 255
 )
@@ -372,8 +371,8 @@ func cleanMeta(m casestore.ImportMeta) (casestore.ImportMeta, error) {
 	if m.Importer != "" && !importerName.MatchString(m.Importer) {
 		return m, fmt.Errorf("%w: importer name", ErrInvalid)
 	}
-	if len(m.AckText) > maxAckText {
-		return m, fmt.Errorf("%w: acknowledgement text too long", ErrInvalid)
+	if len(m.AckText) > casestore.MaxAckText {
+		return m, casestore.ErrAckTooLong
 	}
 	m.FileName = cleanName(m.FileName)
 	m.HostLabel = cleanText(m.HostLabel, maxLabelRune)
@@ -472,6 +471,11 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 	defer release()
 	if err := c.syncManifest(ctx, db); err != nil {
 		return casestore.ImportResult{}, err
+	}
+	// A closed case takes no more files. The folder lock is held, and CloseCase
+	// writes the stamp under the same lock, so this read cannot race a close.
+	if c.isClosed() {
+		return casestore.ImportResult{}, casestore.ErrCaseClosed
 	}
 	if err := c.precheck(body); err != nil {
 		return casestore.ImportResult{}, err
@@ -603,16 +607,16 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 				return res, err
 			}
 		}
-		return casestore.ImportResult{}, c.mapDBErr(runErr)
+		return casestore.ImportResult{Report: rep}, c.mapDBErr(runErr)
 	}
 	if rep.Rows > c.s.opt.MaxFileRows {
-		return casestore.ImportResult{}, capErr("file rows")
+		return casestore.ImportResult{Report: rep}, capErr("file rows")
 	}
 
 	sum := hex.EncodeToString(hash.Sum(nil))
 	qualityJSON, err := json.Marshal(rep.Quality)
 	if err != nil {
-		return casestore.ImportResult{}, err
+		return casestore.ImportResult{Report: rep}, err
 	}
 	gaps := rep.KnownGaps
 	if gaps == nil {
@@ -620,7 +624,7 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 	}
 	gapsJSON, err := json.Marshal(gaps)
 	if err != nil {
-		return casestore.ImportResult{}, err
+		return casestore.ImportResult{Report: rep}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE imports SET sha256=?, bytes=?, rows=?, rejected=?, quality_json=?, gaps_json=?
 		WHERE id=?`, sum, cr.n, rep.Rows, rep.Rejected, string(qualityJSON), string(gapsJSON), importID); err != nil {
@@ -629,14 +633,14 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 			done = true
 			return c.duplicate(ctx, conn, sum)
 		}
-		return casestore.ImportResult{}, c.mapDBErr(err)
+		return casestore.ImportResult{Report: rep}, c.mapDBErr(err)
 	}
 	if _, err := tx.ExecContext(ctx, indexSQL); err != nil {
-		return casestore.ImportResult{}, c.mapDBErr(err)
+		return casestore.ImportResult{Report: rep}, c.mapDBErr(err)
 	}
 	if err := tx.Commit(); err != nil {
 		done = true
-		return casestore.ImportResult{}, c.mapDBErr(err)
+		return casestore.ImportResult{Report: rep}, c.mapDBErr(err)
 	}
 	done = true
 
@@ -653,6 +657,13 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 	})
 	c.s.logf("case %s import %s file=%q sha256=%s rows=%d rejected=%d events=%d", c.id, meta.Importer, meta.FileName, sum, rep.Rows, rep.Rejected, emitted)
 	return casestore.ImportResult{Record: rec, Report: rep}, nil
+}
+
+// isClosed reports whether the manifest carries a Closed stamp.
+func (c *Case) isClosed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.man.Closed != nil
 }
 
 // mirror appends a committed import to the sealed manifest. A failure is not an
@@ -728,7 +739,9 @@ func (c *Case) quarantine(ctx context.Context, db *sql.Conn, meta casestore.Impo
 	var qe *importer.QuarantineError
 	reason, column := importer.Reason(""), ""
 	if errors.As(cause, &qe) {
-		reason, column = qe.Reason, cleanText(qe.Column, maxLabelRune)
+		// SafeColumn is the backstop: only a canonical column name is kept, never
+		// raw header text, whatever the importer put in the field.
+		reason, column = qe.Reason, importer.SafeColumn(qe.Column)
 	}
 	sum := hex.EncodeToString(hash.Sum(nil))
 	now := c.s.now()

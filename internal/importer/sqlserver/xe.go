@@ -149,14 +149,16 @@ func scrubKey(h string) string {
 	return b.String()
 }
 
-func unscrubbed(header string) bool {
+// unscrubbed returns the first scrub fragment the header contains, or "". The
+// fragment is one of our own fixed names, so it is safe to report as the column.
+func unscrubbed(header string) string {
 	k := scrubKey(header)
 	for _, f := range xeScrubFragments {
 		if strings.Contains(k, f) {
-			return true
+			return f
 		}
 	}
-	return false
+	return ""
 }
 
 func splitHeader(line string) []string {
@@ -256,8 +258,8 @@ func (x xeImporter) Parse(ctx context.Context, r io.Reader, opts importer.Option
 	}
 	header := csvr.Header()
 	for _, h := range header {
-		if unscrubbed(h) {
-			return s.rep, &importer.QuarantineError{Reason: importer.ReasonUnscrubbedColumn, Column: h}
+		if f := unscrubbed(h); f != "" {
+			return s.rep, &importer.QuarantineError{Reason: importer.ReasonUnscrubbedColumn, Column: f}
 		}
 	}
 	col := map[string]int{}
@@ -267,7 +269,8 @@ func (x xeImporter) Parse(ctx context.Context, r io.Reader, opts importer.Option
 			continue
 		}
 		if _, dup := col[role]; dup {
-			return s.rep, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat, Column: h}
+			// normHeader of a header in xeRoles is one of our own names.
+			return s.rep, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat, Column: normHeader(h)}
 		}
 		col[role] = i
 	}

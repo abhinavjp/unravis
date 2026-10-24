@@ -31,8 +31,9 @@ const (
 	// uploadSlack is added to the byte cap of a file for the multipart framing
 	// (boundaries, headers and the small form fields).
 	uploadSlack = 1 << 20
-	// maxAckText bounds the acknowledged banner text.
-	maxAckText = 8 << 10
+	// ackTooLongText is the answer to an acknowledgement over casestore.MaxAckText,
+	// the same cap the store enforces.
+	ackTooLongText = "The acknowledgement text is longer than 4 KiB."
 	// maxFileNameBytes bounds the display name kept for an upload.
 	maxFileNameBytes = 128
 	// maxEventFilters bounds the values of one event filter.
@@ -47,6 +48,14 @@ const (
 // roll-back.
 var errPreviewDone = errors.New("preview complete")
 
+// previewFailure carries the error of a failed preview run through the store.
+// It has no Unwrap on purpose: the store then sees an opaque failure and keeps
+// no quarantine record and writes no log line for a file that was only previewed.
+// importFile reads the cause back out.
+type previewFailure struct{ cause error }
+
+func (p *previewFailure) Error() string { return "preview failed" }
+
 // casesState is the part of the handler that the case routes use. It is a
 // separate struct so server.go needs one line for it.
 type casesState struct {
@@ -54,6 +63,8 @@ type casesState struct {
 	registry  *importer.Registry
 	hostsSave func(*hosts.Map) error
 	gates     caseGates
+	imports   importLimiter
+	pending   pendingStrips
 	maxUpload int64 // test hook: replaces the computed upload cap when > 0
 
 	hostsMu sync.RWMutex
@@ -135,6 +146,69 @@ func (g *caseGates) acquire(ctx context.Context, id casestore.CaseID) (func(), e
 	}, nil
 }
 
+// defaultMaxImports is how many imports may parse at once across all cases. Each
+// one holds a case database open and parses a whole file; a few more would only
+// slow every other import down.
+const defaultMaxImports = 2
+
+// importLimiter bounds the imports that run at once. The zero value allows
+// defaultMaxImports; max > 0 overrides it (a test hook).
+type importLimiter struct {
+	mu      sync.Mutex
+	max     int
+	running int
+}
+
+// tryAcquire takes a slot without waiting. A caller that gets no slot answers
+// "busy" and the client retries.
+func (l *importLimiter) tryAcquire() (func(), bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	limit := l.max
+	if limit <= 0 {
+		limit = defaultMaxImports
+	}
+	if l.running >= limit {
+		return nil, false
+	}
+	l.running++
+	return func() {
+		l.mu.Lock()
+		l.running--
+		l.mu.Unlock()
+	}, true
+}
+
+// pendingStrips holds the ids of cases whose erase has started and whose ledger
+// strip has not finished. A repeat erase of such an id still runs, so a retry
+// after a ledger failure completes the job; any other missing id is a 404.
+type pendingStrips struct {
+	mu  sync.Mutex
+	ids map[casestore.CaseID]struct{}
+}
+
+func (p *pendingStrips) has(id casestore.CaseID) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, ok := p.ids[id]
+	return ok
+}
+
+func (p *pendingStrips) add(id casestore.CaseID) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.ids == nil {
+		p.ids = map[casestore.CaseID]struct{}{}
+	}
+	p.ids[id] = struct{}{}
+}
+
+func (p *pendingStrips) remove(id casestore.CaseID) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.ids, id)
+}
+
 // caseFailure is the JSON body of a refused case request. Reason is a fixed
 // word (an importer Reason or an API reason); no field ever holds file content.
 type caseFailure struct {
@@ -173,6 +247,10 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
 	case errors.Is(err, casestore.ErrBadID):
 		writeCaseFailure(w, http.StatusBadRequest, "bad-case-id", "That is not a case id.")
+	case errors.Is(err, casestore.ErrCaseClosed):
+		writeCaseFailure(w, http.StatusConflict, "case-closed", "The case is closed. Nothing can be imported into it.")
+	case errors.Is(err, casestore.ErrAckTooLong):
+		writeCaseFailure(w, http.StatusBadRequest, "ack-too-long", ackTooLongText)
 	case errors.Is(err, context.Canceled):
 		writeCaseFailure(w, http.StatusBadRequest, "canceled", "The request was canceled.")
 	case errors.Is(err, context.DeadlineExceeded):
@@ -387,6 +465,14 @@ func (h *handler) closeCase(w http.ResponseWriter, r *http.Request, raw string) 
 	if !ok || !h.casesAvailable(w) {
 		return
 	}
+	// Close takes the case's gate, like import and erase: an import in flight
+	// finishes first, and no import starts between the close and its answer.
+	release, err := h.gates.acquire(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	defer release()
 	if err := h.cases.CloseCase(r.Context(), id); err != nil {
 		writeStoreError(w, err)
 		return
@@ -422,6 +508,19 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 		return
 	}
 	defer release()
+	// An id that names no case is a 404 and touches nothing, the ledger included.
+	// The exception is a case whose erase started and did not finish (the ledger
+	// could not be stripped): erasing it again completes the job.
+	exists, err := h.caseExists(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if !exists && !h.pending.has(id) {
+		writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
+		return
+	}
+	h.pending.add(id)
 	if err := h.cases.Erase(r.Context(), id); err != nil {
 		writeStoreError(w, err)
 		return
@@ -433,7 +532,22 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 			return
 		}
 	}
+	h.pending.remove(id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// caseExists reports whether the store lists the case.
+func (h *handler) caseExists(ctx context.Context, id casestore.CaseID) (bool, error) {
+	items, err := h.cases.List(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, c := range items {
+		if c.ID == id {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 /* ---------------------------------------------------------------- imports */
@@ -560,9 +674,17 @@ func importRun(ctx context.Context, imp importer.Importer, opts importer.Options
 			hasher = sha256.New()
 			r = io.TeeReader(r, hasher)
 		}
+		// A preview keeps nothing, so its failures must not look like a refusal
+		// to the store, which would record a quarantine entry and log it.
+		fail := func(rep importer.Report, err error) (importer.Report, error) {
+			if preview {
+				err = &previewFailure{cause: err}
+			}
+			return rep, err
+		}
 		body, opts, err := importer.Prepare(imp, r, opts)
 		if err != nil {
-			return importer.Report{Importer: imp.Name()}, err
+			return fail(importer.Report{Importer: imp.Name()}, err)
 		}
 		// A run that swallows an emit error must still fail.
 		var emitErr error
@@ -586,11 +708,11 @@ func importRun(ctx context.Context, imp importer.Importer, opts importer.Options
 			err = importer.Finish(rep, opts.Limits)
 		}
 		if err != nil {
-			return rep, err
+			return fail(rep, err)
 		}
 		if preview {
 			if _, err := io.Copy(io.Discard, r); err != nil {
-				return rep, err
+				return fail(rep, err)
 			}
 			*sum = hex.EncodeToString(hasher.Sum(nil))
 			return rep, errPreviewDone
@@ -652,6 +774,14 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 		return
 	}
 	defer release()
+	// The gate is taken first, so imports queued behind one case hold no slot.
+	slot, ok := h.imports.tryAcquire()
+	if !ok {
+		w.Header().Set("Retry-After", "2")
+		writeCaseFailure(w, http.StatusTooManyRequests, "import-busy", "Other imports are running. Try again in a moment.")
+		return
+	}
+	defer slot()
 
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	form, err := r.MultipartReader()
@@ -678,9 +808,17 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 		}
 		switch part.FormName() {
 		case "ackGating", "ackText":
-			value, err := io.ReadAll(io.LimitReader(part, maxAckText+1))
-			if err != nil || len(value) > maxAckText {
+			value, err := io.ReadAll(io.LimitReader(part, casestore.MaxAckText+1))
+			if err != nil {
 				writeCaseFailure(w, http.StatusBadRequest, "bad-form", "A form field is invalid.")
+				return
+			}
+			if len(value) > casestore.MaxAckText {
+				if part.FormName() == "ackText" {
+					writeCaseFailure(w, http.StatusBadRequest, "ack-too-long", ackTooLongText)
+				} else {
+					writeCaseFailure(w, http.StatusBadRequest, "bad-form", "A form field is invalid.")
+				}
 				return
 			}
 			if part.FormName() == "ackGating" {
@@ -767,6 +905,10 @@ func (h *handler) importFile(w http.ResponseWriter, r *http.Request, id casestor
 		return
 	}
 	if err != nil {
+		var failed *previewFailure
+		if errors.As(err, &failed) {
+			err = failed.cause
+		}
 		h.writeImportError(w, err, tracked, res)
 		return
 	}
@@ -807,6 +949,10 @@ func (h *handler) writeImportError(w http.ResponseWriter, err error, body *track
 		writeCaseFailure(w, http.StatusRequestEntityTooLarge, "request-too-large", "The upload is larger than the cap.")
 	case errors.Is(err, casestore.ErrAckRequired):
 		writeCaseFailure(w, http.StatusBadRequest, "ack-required", "Send ackGating and ackText before the file.")
+	case errors.Is(err, casestore.ErrAckTooLong):
+		writeCaseFailure(w, http.StatusBadRequest, "ack-too-long", ackTooLongText)
+	case errors.Is(err, casestore.ErrCaseClosed):
+		writeCaseFailure(w, http.StatusConflict, "case-closed", "The case is closed. Nothing can be imported into it.")
 	case errors.As(err, &duplicate):
 		writeJSON(w, http.StatusConflict, caseFailure{Error: "These bytes are already imported into this case.", Reason: "duplicate", ImportID: duplicate.Existing.ID}, 4096)
 	case errors.Is(err, casestore.ErrCapExceeded):
@@ -818,7 +964,7 @@ func (h *handler) writeImportError(w http.ResponseWriter, err error, body *track
 		if !reason.Valid() {
 			reason = importer.ReasonUnsupportedFormat
 		}
-		writeJSON(w, http.StatusUnprocessableEntity, caseFailure{Error: "The file was refused: " + reason.Text() + ".", Reason: string(reason), Column: quarantine.Column}, 4096)
+		writeJSON(w, http.StatusUnprocessableEntity, caseFailure{Error: "The file was refused: " + reason.Text() + ".", Reason: string(reason), Column: importer.SafeColumn(quarantine.Column)}, 4096)
 	case errors.Is(err, importer.ErrUnknownHost):
 		writeCaseFailure(w, http.StatusUnprocessableEntity, string(importer.ReasonUnknownHost), importer.ReasonUnknownHost.Text())
 	case errors.Is(err, importer.ErrTimezoneUnlabelled):
