@@ -1,8 +1,9 @@
 import { auditCreate, notObservedGap } from './copy/wordings';
 import { MIN_SAMPLE } from './thresholds';
+import { bucketForWindows } from './time';
 import type {
-  EvidenceLabel, PatternAuditStall, PatternConcentration, PatternCoverage, PatternEpisode, PatternInput, PatternOnsetMinute,
-  PatternIdleBand, PatternIdleGaps, PatternRepeat, PatternReport, PatternStall, PatternVolley, Query
+  AuditSeriesDay, EndpointDailyDay, EvidenceLabel, PatternAuditStall, PatternConcentration, PatternCoverage, PatternEpisode, PatternInput, PatternOnsetMinute,
+  PatternIdleBand, PatternIdleGaps, PatternRepeat, PatternReport, PatternStall, PatternVolley, Query, StallBand, StepChange, SuggestedSplit
 } from './types';
 
 /**
@@ -193,7 +194,7 @@ export function thresholdsChanged(stallSec: string, gapSec: string): boolean {
  * The window plus the two limits, typed in seconds. A value equal to the default is not sent, so a default run is the same request as before.
  * An empty box means the default.
  */
-export function windowInputSeconds(query: Pick<Query, 'sourceIds' | 'start' | 'end'>, stallSec = '', gapSec = '', idleGaps = false): { input: PatternInput } | { error: string } {
+export function windowInputSeconds(query: Pick<Query, 'sourceIds' | 'start' | 'end'>, stallSec = '', gapSec = '', idleGaps = false, extras: PatternExtras = {}): { input: PatternInput } | { error: string } {
   const stall = stallSec.trim(), gap = gapSec.trim();
   let stallRaw = '', gapRaw = '';
   if (stall) {
@@ -208,6 +209,10 @@ export function windowInputSeconds(query: Pick<Query, 'sourceIds' | 'start' | 'e
   const built = windowInput(query, stallRaw, gapRaw);
   // The quiet-gap check reads every request in the window, so it is sent only when asked for.
   if ('input' in built && idleGaps) built.input.idleGaps = true;
+  if ('input' in built) {
+    const failed = applyExtras(built.input, query, extras);
+    if (failed) return failed;
+  }
   return built;
 }
 
@@ -541,6 +546,244 @@ export function idleSection(report: Pick<PatternReport, 'idleGaps'>, asked: bool
     raised: lifts.some((l) => l.reading === 'raised')
   };
 }
+
+// ---- B9 (dating a step), the audit-create series and the fixed-duration check ----
+
+/** The longest span B9 reads, in whole local days. It is its own window, apart from the range chips. */
+export const MAX_STEP_DAYS = 120;
+export const DEFAULT_STEP_DAYS = 90;
+export const STEP_DAY_CHOICES = [30, 60, 90, 120] as const;
+/** The fewest timed requests a day needs. Mirrors the server. */
+export const DAY_MIN_REQUESTS = 20;
+
+export const STEP_TEXT = {
+  stepOptIn: 'Also look for a step in daily response times',
+  stepOptInNote: 'This reads the log one day at a time, so it takes longer. It does not run on a live source.',
+  stepDaysLabel: 'Days to read',
+  seriesOptIn: 'Also show audit create by day and look for a fixed delay',
+  seriesOptInNote: 'This reads every request in the window, so it takes longer.',
+  stepTitle: 'Step in daily response times',
+  stepIntro: 'This reads the 10 busiest operations one whole day at a time. For each one it looks for a single date after which the slowest 1 in 20 response times were at least 2 times as long, or as short. A date is reported only when 3 or more operations share it, give or take a day.',
+  stepNotRun: 'this check did not run, see the notes in the summary',
+  stepCaveat: 'This dates a change in the numbers. It does not explain the change. Each daily figure is accurate to about 5%.',
+  stepColOperation: 'Operation',
+  stepColDays: 'Days',
+  stepColBefore: 'Before',
+  stepColAfter: 'After',
+  stepColChange: 'Change',
+  stepColResult: 'Result',
+  stepShared: 'Shares the date',
+  stepOwn: 'Step on its own date',
+  stepNone: 'No step',
+  splitTitle: 'Compare before and after this date',
+  splitOffer: 'Suggested split',
+  splitAsk: 'Compare the days before and after this date on the page',
+  splitConfirm: 'The page will compare these two ranges. Your current range will change.',
+  splitUse: 'Use this split',
+  splitCancel: 'Keep my range',
+  splitDone: 'The page is now set to compare these two ranges.',
+  splitBad: 'These two ranges cannot be used by the page.',
+  splitBefore: 'Before',
+  splitAfter: 'After',
+  splitNote: 'The date is a suggestion. You decide whether the split makes sense.',
+  seriesTitle: 'Audit create by day',
+  seriesIntro: 'For each whole day, this shows how long audit create took, and what share of the total request time it was.',
+  seriesNote: 'Audit create is measured from the client side and covers setup work and the database write, not just the write.',
+  seriesShareNote: 'Share of request time is the audit create time added up, divided by the total request time added up, for that day.',
+  seriesPartial: 'Partial read. These counts are lower bounds.',
+  seriesNone: 'no days with audit create times were read',
+  seriesColDay: 'Day',
+  seriesColRequests: 'Requests',
+  seriesColMedian: 'Median',
+  seriesColSlowest: 'Slowest 1 in 20',
+  seriesColShare: 'Share of request time',
+  seriesPartDay: 'part day',
+  bandTitle: 'Delays of about the same length',
+  bandNone: 'No band of equal delays stood out.',
+  dailyTitle: 'Daily response times',
+  dailyIntro: 'One row for each whole day. Days with fewer than 20 timed requests show a dash instead of a time.',
+  dailyOpen: 'Daily view',
+  dailyClose: 'Close daily view',
+  dailyLoading: 'Reading the log one day at a time…',
+  dailyFailed: 'The daily view did not finish. Try again.',
+  dailyEmpty: 'No days in this range.',
+  dailyDays: 'Days',
+  dailyFew: 'few requests',
+  dailyPart: 'part day',
+  dailyColDay: 'Day',
+  dailyColRequests: 'Requests',
+  dailyColMedian: 'Median',
+  dailyColSlowest: 'Slowest 1 in 20',
+  dailyChart: 'Slowest 1 in 20 by day'
+} as const;
+
+/** The days the daily view offers. A live source is limited to 14 by the server and says so. */
+export const DAILY_DAY_CHOICES = [14, 30, 60, 120] as const;
+export const DEFAULT_DAILY_DAYS = 14;
+
+/** The window B9 reads: the last `days` days up to the end of the page's range. */
+export function stepWindow(query: Pick<Query, 'end'>, days: number): { start: string; end: string } | null {
+  const end = Date.parse(query.end);
+  if (!Number.isFinite(end) || !Number.isInteger(days) || days < 1 || days > MAX_STEP_DAYS) return null;
+  return { start: new Date(end - days * MS_PER_DAY).toISOString(), end: new Date(end).toISOString() };
+}
+
+export interface PatternExtras { stepDays?: number; auditSeries?: boolean; zone?: string }
+
+/** The opt-in fields B9 and the audit-create series add to a request. Nothing is added unless one is asked for. */
+export function applyExtras(input: PatternInput, query: Pick<Query, 'end'>, extras: PatternExtras): { error: string } | null {
+  const days = extras.stepDays ?? 0;
+  if (days > 0) {
+    const window = stepWindow(query, days);
+    if (!window) return { error: `Days to read must be a whole number from 1 to ${MAX_STEP_DAYS}.` };
+    input.stepChange = window;
+  }
+  if (extras.auditSeries) input.auditSeries = true;
+  if ((days > 0 || extras.auditSeries) && extras.zone) input.timeZone = extras.zone;
+  return null;
+}
+
+const dashText = '–';
+const secondsCell = (ms: number | null | undefined): string => ms === null || ms === undefined || !Number.isFinite(ms) ? dashText : secondsLabel(ms);
+
+/** A p95 or median in the unit a person reads: "0.3 s", or a dash for a day with no figure. */
+export const dayTimeCell = secondsCell;
+
+export interface StepRow {
+  key: string; operation: string; volume: number; days: number; found: boolean; shares: boolean; date: string;
+  before: string; after: string; change: string; result: string; reason: string;
+}
+
+const ratioText = (ratio: number | undefined, before: number | undefined, after: number | undefined): string => {
+  if (ratio === undefined || !Number.isFinite(ratio) || ratio <= 0) return dashText;
+  const word = timesText(ratio);
+  return before !== undefined && after !== undefined && after < before ? `${word} shorter` : `${word} longer`;
+};
+
+/** One row for each operation. Operations with a step come first, busiest first. */
+export function stepRows(step: Pick<StepChange, 'operations' | 'sharing'>): StepRow[] {
+  const sharing = new Set(step.sharing ?? []);
+  return [...step.operations].map((op) => {
+    const shares = op.found && sharing.has(op.operation);
+    return {
+      key: 'step-' + op.operation, operation: op.operation, volume: op.volume, days: op.daysUsed, found: op.found, shares, date: op.found ? (op.date ?? '') : '',
+      before: op.found ? secondsCell(op.beforeMs) : dashText, after: op.found ? secondsCell(op.afterMs) : dashText,
+      change: op.found ? ratioText(op.ratio, op.beforeMs, op.afterMs) : dashText,
+      result: shares ? STEP_TEXT.stepShared : op.found ? STEP_TEXT.stepOwn : STEP_TEXT.stepNone,
+      reason: op.found ? '' : (op.reason ?? '').trim()
+    };
+  }).sort((a, b) => Number(b.found) - Number(a.found) || b.volume - a.volume || a.operation.localeCompare(b.operation));
+}
+
+/**
+ * The query fields for a suggested split, or null when the two ranges cannot be used by the page.
+ * The page's own rules apply: the earlier range ends where the later one starts or before, and neither is over 7 days.
+ */
+export type SplitPatch = Pick<Query, 'start' | 'end' | 'baselineStart' | 'baselineEnd' | 'bucketSeconds'>;
+export function splitScope(split: Pick<SuggestedSplit, 'baselineStart' | 'baselineEnd' | 'start' | 'end'> | undefined | null): SplitPatch | null {
+  if (!split) return null;
+  const baselineStart = Date.parse(split.baselineStart), baselineEnd = Date.parse(split.baselineEnd), start = Date.parse(split.start), end = Date.parse(split.end);
+  if (![baselineStart, baselineEnd, start, end].every(Number.isFinite)) return null;
+  if (!(baselineStart < baselineEnd && baselineEnd <= start && start < end)) return null;
+  if (end - start > 7 * MS_PER_DAY || baselineEnd - baselineStart > 7 * MS_PER_DAY) return null;
+  return {
+    start: new Date(start).toISOString(), end: new Date(end).toISOString(), baselineStart: new Date(baselineStart).toISOString(), baselineEnd: new Date(baselineEnd).toISOString(),
+    bucketSeconds: bucketForWindows(new Date(start).toISOString(), new Date(end).toISOString(), new Date(baselineStart).toISOString(), new Date(baselineEnd).toISOString())
+  };
+}
+
+/** One sentence on days B9 could not use. Empty when none. */
+export const stepDaysLine = (step: Pick<StepChange, 'daysRead' | 'daysLeftOut'>): string => {
+  const read = `${step.daysRead} whole ${step.daysRead === 1 ? 'day was' : 'days were'} read.`;
+  return step.daysLeftOut > 0 ? `${read} ${step.daysLeftOut} read only in part and left out.` : read;
+};
+
+export type StepSection =
+  | { kind: 'hidden' }
+  | { kind: 'note'; text: string }
+  | { kind: 'rows'; rows: StepRow[]; date: string; daysLine: string; split: SuggestedSplit | null; scope: ReturnType<typeof splitScope> };
+
+/**
+ * What the step section shows. Hidden unless it was asked for. Asked for and not run gives the standard absence line.
+ * The split is offered only when a date was shared and the page can use both ranges.
+ */
+export function stepSection(report: Pick<PatternReport, 'stepChange'>, asked: boolean): StepSection {
+  const step = report.stepChange;
+  if (!step) return asked ? { kind: 'note', text: notObservedGap(STEP_TEXT.stepNotRun) } : { kind: 'hidden' };
+  const scope = step.date ? splitScope(step.split) : null;
+  return { kind: 'rows', rows: stepRows(step), date: step.date ?? '', daysLine: stepDaysLine(step), split: scope ? step.split ?? null : null, scope };
+}
+
+export interface AuditDayRow { key: string; date: string; n: number; median: string; slowest: string; share: string; partDay: boolean }
+
+/** One row for each day. A day with too few rows, or a part day, shows its count and dashes. */
+export function auditDayRows(days: ReadonlyArray<AuditSeriesDay> | undefined): AuditDayRow[] {
+  return (days ?? []).map((day) => ({
+    key: 'day-' + day.date, date: day.date, n: day.n, median: secondsCell(day.p50Ms), slowest: secondsCell(day.p95Ms),
+    share: day.insertShare === null || day.insertShare === undefined || !Number.isFinite(day.insertShare) ? dashText : shareText(day.insertShare), partDay: !!day.partDay
+  }));
+}
+
+/** The band of equal delays as one line: "5 delays between 26.2 s and 28.9 s, on 2 days (2026-10-18, 2026-10-19)." */
+export function bandText(band: StallBand): string {
+  const days = band.days.length;
+  return `${band.count} ${band.count === 1 ? 'delay' : 'delays'} between ${secondsNumber(band.fromMs)} s and ${secondsNumber(band.toMs)} s, on ${days} ${days === 1 ? 'day' : 'days'} (${band.days.join(', ')}).`;
+}
+
+/** One sentence on rows with no audit create time. Empty when none. */
+export const withoutAuditLine = (count: number): string =>
+  count > 0 ? `${count} ${count === 1 ? 'request has' : 'requests have'} no audit create time and ${count === 1 ? 'was' : 'were'} left out.` : '';
+
+export type AuditSeriesSection =
+  | { kind: 'hidden' }
+  | { kind: 'note'; text: string }
+  | { kind: 'rows'; days: AuditDayRow[]; band: string; excluded: string; without: string; partial: string };
+
+/** What the audit-create series shows. Hidden unless asked for. Asked for and not run gives the standard absence line. */
+export function auditSeriesSection(report: Pick<PatternReport, 'auditSeries'>, asked: boolean): AuditSeriesSection {
+  const series = report.auditSeries;
+  if (!series) return asked ? { kind: 'note', text: notObservedGap(STEP_TEXT.stepNotRun) } : { kind: 'hidden' };
+  const days = auditDayRows(series.days);
+  if (days.length === 0) return { kind: 'note', text: notObservedGap(STEP_TEXT.seriesNone) };
+  const reason = (series.partialReason ?? '').trim();
+  return {
+    kind: 'rows', days, band: series.band ? bandText(series.band) : STEP_TEXT.bandNone, excluded: excludedLine(series.excludedHangfire), without: withoutAuditLine(series.withoutAudit),
+    partial: series.partial ? (reason ? `${STEP_TEXT.seriesPartial} ${reason}.` : STEP_TEXT.seriesPartial) : ''
+  };
+}
+
+export interface DailyRow { key: string; date: string; count: number; median: string; slowest: string; note: string; slowestMs: number | null }
+
+/** One row for each day of the daily view. A day with few requests or a part day has no time, and says why. */
+export function dailyRows(days: ReadonlyArray<EndpointDailyDay> | undefined): DailyRow[] {
+  return (days ?? []).map((day) => ({
+    key: 'daily-' + day.date, date: day.date, count: day.count, median: secondsCell(day.p50Ms), slowest: secondsCell(day.p95Ms),
+    note: day.partial ? STEP_TEXT.dailyPart : day.low ? STEP_TEXT.dailyFew : '', slowestMs: day.p95Ms ?? null
+  }));
+}
+
+/**
+ * Points for the small chart: one x per day, y from 0 (top is the slowest day). A day with no figure leaves a gap, so the line is split into runs.
+ * `width` and `height` are the drawing size. Returns the runs of "x,y" pairs.
+ */
+export function dailyChartRuns(rows: ReadonlyArray<Pick<DailyRow, 'slowestMs'>>, width = 300, height = 56): string[][] {
+  const values = rows.map((row) => row.slowestMs).filter((v): v is number => v !== null && Number.isFinite(v));
+  if (values.length === 0) return [];
+  const top = Math.max(...values) || 1;
+  const step = rows.length > 1 ? width / (rows.length - 1) : 0;
+  const runs: string[][] = [];
+  let run: string[] = [];
+  rows.forEach((row, i) => {
+    if (row.slowestMs === null || !Number.isFinite(row.slowestMs)) { if (run.length) runs.push(run); run = []; return; }
+    const x = rows.length > 1 ? i * step : width / 2;
+    run.push(`${Number(x.toFixed(1))},${Number((height - (row.slowestMs / top) * height).toFixed(1))}`);
+  });
+  if (run.length) runs.push(run);
+  return runs;
+}
+
+/** The window of the daily view: the last `days` days up to the end of the page's range. */
+export function dailyWindow(query: Pick<Query, 'end'>, days: number): { start: string; end: string } | null { return stepWindow(query, days); }
 
 // ---- References for the ledger ----
 

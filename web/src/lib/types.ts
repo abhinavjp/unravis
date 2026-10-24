@@ -185,14 +185,22 @@ export interface CoverageReport {
 export interface CoverageRefused { refused: string }
 
 /** P2-lite incident patterns (POST /api/patterns). Mirrors internal/audit/patterns_types.go. */
-export interface PatternInput { sourceIds: string[]; start: string; end: string; stallMs?: number; episodeGapSeconds?: number; /** Opt in to B6g, which reads every row in the window. */ idleGaps?: boolean }
+export interface PatternInput {
+  sourceIds: string[]; start: string; end: string; stallMs?: number; episodeGapSeconds?: number; /** Opt in to B6g, which reads every row in the window. */ idleGaps?: boolean;
+  /** The display zone (an IANA name) for B9 and the audit-create series. Empty or absent means UTC. */
+  timeZone?: string;
+  /** Opt in to B9: the window it dates a step in, up to 120 days. It is separate from the main window. */
+  stepChange?: { start: string; end: string };
+  /** Opt in to the audit-create series and the fixed-duration check. */
+  auditSeries?: boolean;
+}
 export interface PatternParams { stallMs: number; episodeGapSeconds: number; auditStallMs: number; auditStallShare: number; volleyWindowMs: number }
 export interface PatternStall { sourceId: string; id: string; controller: string; action: string; initiatedAt: string; completedAt?: string; observedMs: number; apiTimeMs?: number; userId?: number; episode: number }
 export interface PatternEpisode { index: number; start: string; end: string; requests: number; users: number; maxMs: number; operations: string[] }
 export interface PatternVolley { episode: number; userId: number; requests: number; firstStart: string; startSpreadMs: number; endStaggerMs: number; endGapsMs: number[]; incompleteEnds: number }
 export interface PatternAuditStall { sourceId: string; id: string; controller: string; action: string; initiatedAt: string; observedMs: number; auditCreateTimeMs: number; share: number }
 export type EvidenceLabel = 'Symptom' | 'Correlation' | 'Strong correlation';
-export interface PatternFinding { rule: 'B1' | 'B2' | 'B6' | 'B12' | 'B3a' | 'A3' | 'B12r' | 'B6g'; label: EvidenceLabel; headline: string; n: number; lowN: boolean; evidenceId: string }
+export interface PatternFinding { rule: 'B1' | 'B2' | 'B6' | 'B12' | 'B3a' | 'A3' | 'B12r' | 'B6g' | 'B9' | 'B6f'; label: EvidenceLabel; headline: string; n: number; lowN: boolean; evidenceId: string }
 /** B3a: a minute of the hour at which stall episodes started on several days. `minute` is 0 to 59; `episodes` are the episode indexes, or their count. */
 export interface PatternOnsetMinute { minute: number; days: number; onsets: number; episodes: number | Array<number | string> }
 /** A3: one operation or user whose share of stall requests is compared with its share of all requests. Shares are fractions from 0 to 1. `episodes` is a count, or the episode indexes. */
@@ -206,6 +214,26 @@ export interface PatternRepeat { episode: number; userId: number; operation: str
 export interface PatternIdleBand { fromS: number; toS: number | null; n: number; medianMs: number | null; p95Ms: number | null; slowRate: number | null }
 export interface PatternIdleLift { gS: number; value: number | null; withheld: boolean | string }
 export interface PatternIdleGaps { bands: PatternIdleBand[]; lift: PatternIdleLift[]; excludedHangfire: number; partial: boolean | string; /** Why the gap read stopped early. Absent when it ran to the end. */ partialReason?: string }
+/** B9: one operation's own two-part fit. `date` is a local calendar day (YYYY-MM-DD). Quantities are absent when no fit was made. */
+export interface StepOperation {
+  operation: string; volume: number; daysUsed: number; found: boolean; date?: string;
+  beforeMs?: number; afterMs?: number; ratio?: number; trafficRatio?: number; reason?: string;
+}
+/** A suggested before and after split. It is only a suggestion: the page applies it when the analyst confirms. */
+export interface SuggestedSplit { date: string; zone: string; baselineStart: string; baselineEnd: string; start: string; end: string }
+export interface StepChange {
+  zone: string; start: string; end: string; daysRead: number; daysLeftOut: number; operations: StepOperation[];
+  date?: string; sharing?: string[]; split?: SuggestedSplit; partial: boolean;
+}
+/** One local day of the audit-create series. Quantities are null for a day with too few rows or a part day. */
+export interface AuditSeriesDay { date: string; n: number; p50Ms: number | null; p95Ms: number | null; insertShare: number | null; partDay?: boolean }
+export interface StallBand { fromMs: number; toMs: number; count: number; days: string[]; ofLong: number }
+export interface AuditSeries {
+  zone: string; days: AuditSeriesDay[]; band: StallBand | null; excludedHangfire: number; withoutAudit: number; partial: boolean; partialReason?: string;
+}
+/** GET /api/endpoint-daily. One entry for each whole local day. `low` is a day with fewer than 20 timed requests, `partial` a day cut by the window or the row cap. */
+export interface EndpointDailyDay { date: string; start: string; end: string; count: number; p50Ms: number | null; p95Ms: number | null; low?: boolean; partial?: boolean }
+export interface EndpointDaily { operation: string; zone: string; days: EndpointDailyDay[]; provenance?: Provenance[]; warnings: string[] }
 export interface PatternCoverage { run: boolean; requestInitiatedAtPct?: number; accountIdPct?: number; note: string }
 export interface PatternReport {
   params: PatternParams; stalls: PatternStall[]; episodes: PatternEpisode[]; volleys: PatternVolley[]; auditStalls: PatternAuditStall[];
@@ -218,6 +246,8 @@ export interface PatternReport {
   auditsTruncated?: boolean;
   /** Additive rules from the incident-gap addendum. Each is absent from older servers and when the rule did not run. */
   onsetMinutes?: PatternOnsetMinute[]; concentration?: PatternConcentration[]; repeats?: PatternRepeat[]; idleGaps?: PatternIdleGaps;
+  /** B9 and the audit-create series. Each is absent when it was not asked for or did not run. */
+  stepChange?: StepChange; auditSeries?: AuditSeries;
 }
 
 /** The hypothesis ledger (/api/ledger). Mirrors internal/ledger/types.go. It holds no row data and no identifiers. */

@@ -121,6 +121,9 @@ var routes = []route{
 	{pattern: "/api/slowest", match: exactPath("/api/slowest"), methods: post((*handler).slowest)},
 	{pattern: "/api/breakdown", match: exactPath("/api/breakdown"), methods: post((*handler).breakdown)},
 	{pattern: "/api/patterns", match: exactPath("/api/patterns"), methods: post((*handler).patterns)},
+	{pattern: "/api/endpoint-daily", match: exactPath("/api/endpoint-daily"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.endpointDaily(w, r) },
+	}},
 	{pattern: "/api/export/preview", match: exactPath("/api/export/preview"), methods: post((*handler).exportPreview)},
 	{pattern: "/api/export/confirm", match: exactPath("/api/export/confirm"), methods: post((*handler).exportConfirm)},
 	{pattern: "/api/ledger", match: ledgerPath("collection"), methods: map[string]routeFunc{

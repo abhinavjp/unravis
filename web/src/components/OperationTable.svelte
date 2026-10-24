@@ -2,9 +2,10 @@
   import { MIN_SAMPLE } from '../lib/thresholds';
   import { formatCount, countNoun } from '../lib/format';
   import type { Rollup } from '../lib/types';
+  import { STEP_TEXT } from '../lib/patterns';
   import { kindLabel, unknownKindTip } from '../lib/presentation';
   import { changeText, msChangeText, operationDrill, pointsText, sortOperations, type OperationSort, type OverviewDrill } from '../lib/overview';
-  let { rollups, onDrill, kindFilter = 'all' }: { rollups: Rollup[]; onDrill?: (drill: OverviewDrill) => void; kindFilter?: string } = $props();
+  let { rollups, onDrill, kindFilter = 'all', onDaily }: { rollups: Rollup[]; onDrill?: (drill: OverviewDrill) => void; kindFilter?: string; onDaily?: (operation: string, trigger: HTMLElement) => void } = $props();
   let sort = $state<OperationSort>('events');
   let direction = $state(-1);
   let page = $state(0);
@@ -45,7 +46,7 @@
     <tbody>
       {#each visible as row (row.controller + '|' + row.action + '|' + (row.kind ?? ''))}
         <tr>
-          <td data-label="Operation">{#if onDrill}<button type="button" class="api-select" title={'List the events of this operation and request type that match the filters. ' + (operationDrill(row, kindFilter).note ? 'The list ' + operationDrill(row, kindFilter).note + '.' : '')} onclick={() => onDrill?.(operationDrill(row, kindFilter))}>{row.controller}.{row.action}</button>{:else}{row.controller}.{row.action}{/if}</td>
+          <td data-label="Operation">{#if onDrill}<button type="button" class="api-select" title={'List the events of this operation and request type that match the filters. ' + (operationDrill(row, kindFilter).note ? 'The list ' + operationDrill(row, kindFilter).note + '.' : '')} onclick={() => onDrill?.(operationDrill(row, kindFilter))}>{row.controller}.{row.action}</button>{:else}{row.controller}.{row.action}{/if}{#if onDaily && row.controller && row.action}<button type="button" class="daily-open" title={STEP_TEXT.dailyIntro} aria-label={STEP_TEXT.dailyOpen + ': ' + row.controller + '.' + row.action} onclick={(event) => onDaily?.(row.controller + '.' + row.action, event.currentTarget)}>{STEP_TEXT.dailyOpen}</button>{/if}</td>
           <td data-label="Request type" title={row.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(row.kind) || '—'}</td>
           <td class="numeric" data-label="Events" title={'Reference period: ' + countNoun(row.referenceEvents ?? 0, 'event') + '.'}>{formatCount(row.events ?? 0)}</td>
           <td class="numeric" data-label="Δ traffic" title={referenceNote}>{changeText(row.trafficDelta)}</td>

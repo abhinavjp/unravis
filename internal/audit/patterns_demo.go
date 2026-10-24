@@ -24,6 +24,8 @@ func NewDemoWithPatterns(now time.Time) Repository {
 	repo.records = append(repo.records, demoOnsetRecords(repo.now)...)
 	repo.records = append(repo.records, demoIdleRecords(repo.now, demoIdlePositiveSource, true)...)
 	repo.records = append(repo.records, demoIdleRecords(repo.now, demoIdleNegativeSource, false)...)
+	repo.records = append(repo.records, demoStepRecords(repo.now)...)
+	repo.records = append(repo.records, demoStallBandRecords(repo.now)...)
 	return repo
 }
 

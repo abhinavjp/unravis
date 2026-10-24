@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { ApiError, api, readSessionToken } from '../lib/api';
   import { DRAWER_RESULTS_TEXT, clearDrawerResults, foundAtText, patternsWindowKey, readPatterns, savePatterns } from '../lib/drawerResults.svelte';
   import { formatTime, quickRange, quickRanges, type QuickRangeId } from '../lib/time';
@@ -8,9 +8,9 @@
   import { citeInLedger } from '../lib/citeInLedger';
   import { formatElapsed } from '../lib/provenance';
   import {
-    DEFAULT_EPISODE_GAP_SECONDS, DEFAULT_STALL_SECONDS, PATTERNS_TEXT, PATTERN_RANGES, auditStallLine, citeLabel, concentrationSection, coverageLine, emptyEpisodesText, endGapsText,
-    episodeCiteLabel, episodeEvidenceId, findingRows, idleSection, isEvidenceId, nBadge, onsetSection, onsetZoneNote, operationText, qualityLine, repeatsOf, repeatsSummary, secondsLabel, stallsOf, thresholdsChanged,
-    truncationNotices, verdictText, volleysOf, windowInputSeconds, zoneMinuteShift
+    DEFAULT_EPISODE_GAP_SECONDS, DEFAULT_STALL_SECONDS, DEFAULT_STEP_DAYS, PATTERNS_TEXT, PATTERN_RANGES, STEP_DAY_CHOICES, STEP_TEXT, auditSeriesSection, auditStallLine, citeLabel, type SplitPatch, concentrationSection, coverageLine,
+    emptyEpisodesText, endGapsText, episodeCiteLabel, episodeEvidenceId, findingRows, idleSection, isEvidenceId, nBadge, onsetSection, onsetZoneNote, operationText, qualityLine, repeatsOf, repeatsSummary, secondsLabel,
+    stallsOf, stepSection, thresholdsChanged, truncationNotices, verdictText, volleysOf, windowInputSeconds, zoneMinuteShift
   } from '../lib/patterns';
   import type { PatternReport, Query, RequestRecord } from '../lib/types';
   import Hint from './Hint.svelte';
@@ -22,12 +22,27 @@
   // Summary first (verdict, findings, counts), then the episode table, which opens one episode at a time.
   // The range chips change the page's own range. A slow request or a slow audit save opens its record (and closes this drawer).
   let { query, zone, sourceLabels, onClose }: { query: Query; zone: string; sourceLabels: Map<string, string>; onClose: () => void } = $props();
-  type State = { kind: 'idle' } | { kind: 'running' } | { kind: 'done'; report: PatternReport; key: string; idleAsked: boolean } | { kind: 'error'; text: string };
+  type State = { kind: 'idle' } | { kind: 'running' } | { kind: 'done'; report: PatternReport; key: string; idleAsked: boolean; stepAsked: boolean; auditAsked: boolean } | { kind: 'error'; text: string };
   let phase = $state<State>({ kind: 'idle' });
   let stallSec = $state(String(DEFAULT_STALL_SECONDS));
   let gapSec = $state(String(DEFAULT_EPISODE_GAP_SECONDS));
   // The quiet-gap check reads every request in the window, so it runs only when this box is ticked.
   let idleGaps = $state(false);
+  // Step dating and the audit-create series read one day at a time or every request, so each runs only when its box is ticked.
+  let stepOn = $state(false);
+  let stepDays = $state(String(DEFAULT_STEP_DAYS));
+  let auditSeries = $state(false);
+  // The suggested split is applied only after a second, explicit press.
+  let splitAsking = $state(false);
+  let splitBox = $state<HTMLElement | null>(null);
+  // The buttons swap in place, so focus follows them. Otherwise a keyboard user lands on the page top.
+  async function moveSplit(asking: boolean) {
+    splitAsking = asking;
+    if (asking) splitNote = '';
+    await tick();
+    splitBox?.querySelector<HTMLElement>(asking ? '.primary-button' : '.secondary-button')?.focus();
+  }
+  let splitNote = $state('');
   let thresholdError = $state('');
   let openEpisodes = $state<number[]>([]);
   let citeNote = $state('');
@@ -46,7 +61,7 @@
   const activeRange = $derived(activeRangeId(query, quickRanges));
   const changed = $derived(thresholdsChanged(stallSec, gapSec));
   // What the search depends on. When it moves after a run, the numbers on screen describe an older question.
-  const askKey = $derived([query.sourceIds.join(','), query.start, query.end, stallSec.trim(), gapSec.trim(), idleGaps ? 'idle' : ''].join('|'));
+  const askKey = $derived([query.sourceIds.join(','), query.start, query.end, stallSec.trim(), gapSec.trim(), idleGaps ? 'idle' : '', stepOn ? 'step' + stepDays : '', auditSeries ? 'audit' : ''].join('|'));
 
   onMount(() => {
     runButton?.focus();
@@ -57,7 +72,10 @@
     stallSec = saved.stallSec;
     gapSec = saved.gapSec;
     idleGaps = saved.idleAsked;
-    phase = { kind: 'done', report: saved.report, key: saved.key, idleAsked: saved.idleAsked };
+    stepOn = (saved.stepDays ?? 0) > 0;
+    if (stepOn) stepDays = String(saved.stepDays);
+    auditSeries = !!saved.auditAsked;
+    phase = { kind: 'done', report: saved.report, key: saved.key, idleAsked: saved.idleAsked, stepAsked: stepOn, auditAsked: auditSeries };
     savedAt = saved.savedAt;
     now = Date.now();
   });
@@ -80,7 +98,8 @@
 
   async function run() {
     if (phase.kind === 'running') return;
-    const built = windowInputSeconds(query, stallSec, gapSec, idleGaps);
+    const stepAsked = stepOn, auditAsked = auditSeries;
+    const built = windowInputSeconds(query, stallSec, gapSec, idleGaps, { stepDays: stepAsked ? Number(stepDays) : 0, auditSeries: auditAsked, zone });
     const idleAsked = idleGaps;
     if ('error' in built) { thresholdError = built.error; return; }
     thresholdError = '';
@@ -88,21 +107,31 @@
     controller = new AbortController();
     const mine = controller;
     const key = askKey;
-    const saveAs = { key, windowKey: patternsWindowKey(query.sourceIds, query.start, query.end), sourceIds: [...query.sourceIds], stallSec: stallSec.trim(), gapSec: gapSec.trim(), idleAsked };
+    const saveAs = { key, windowKey: patternsWindowKey(query.sourceIds, query.start, query.end), sourceIds: [...query.sourceIds], stallSec: stallSec.trim(), gapSec: gapSec.trim(), idleAsked, stepDays: stepAsked ? Number(stepDays) : 0, auditAsked };
     savedAt = null;
     phase = { kind: 'running' };
     openEpisodes = [];
     citeNote = '';
+    splitAsking = false;
+    splitNote = '';
     try {
       const report = await api.patterns(built.input, mine.signal);
       if (mine.signal.aborted) return;
       savePatterns({ ...saveAs, report });
-      phase = { kind: 'done', report, key, idleAsked };
+      phase = { kind: 'done', report, key, idleAsked, stepAsked, auditAsked };
     } catch (cause) {
       if (mine.signal.aborted) return;
       if (cause instanceof ApiError && cause.status === 401) clearDrawerResults();
       phase = { kind: 'error', text: cause instanceof Error && cause.message ? cause.message : PATTERNS_TEXT.failed };
     }
+  }
+  // The page takes the suggested ranges only after the second press. The patch is checked again against the page's own rules.
+  function applySplit(patch: SplitPatch) {
+    Object.assign(scope.query, patch);
+    scope.dateInputsValid = true;
+    splitNote = STEP_TEXT.splitDone;
+    void moveSplit(false);
+    onScopeChange();
   }
   function toggle(index: number) {
     openEpisodes = openEpisodes.includes(index) ? openEpisodes.filter((i) => i !== index) : [...openEpisodes, index];
@@ -145,6 +174,17 @@
     </details>
     <label class="idle-option"><input type="checkbox" bind:checked={idleGaps} /> {PATTERNS_TEXT.idleOptIn}</label>
     <p class="patterns-note">{PATTERNS_TEXT.idleOptInNote}</p>
+    <label class="idle-option"><input type="checkbox" bind:checked={auditSeries} /> {STEP_TEXT.seriesOptIn}</label>
+    <p class="patterns-note">{STEP_TEXT.seriesOptInNote}</p>
+    <label class="idle-option"><input type="checkbox" bind:checked={stepOn} /> {STEP_TEXT.stepOptIn}</label>
+    {#if stepOn}
+      <label class="step-days">{STEP_TEXT.stepDaysLabel}
+        <select bind:value={stepDays}>
+          {#each STEP_DAY_CHOICES as choice (choice)}<option value={String(choice)}>{choice}</option>{/each}
+        </select>
+      </label>
+    {/if}
+    <p class="patterns-note">{STEP_TEXT.stepOptInNote}</p>
     {#if thresholdError}<div class="inline-error" role="alert">{thresholdError}</div>{/if}
     <button type="button" class="primary-button patterns-run" bind:this={runButton} disabled={phase.kind === 'running' || query.sourceIds.length === 0} onclick={run}>{phase.kind === 'running' ? PATTERNS_TEXT.running : PATTERNS_TEXT.run}</button>
     <p class="patterns-note">{PATTERNS_TEXT.runNote}</p>
@@ -359,6 +399,85 @@
         </section>
       {/if}
 
+      {@const step = stepSection(report, phase.stepAsked)}
+      {#if step.kind !== 'hidden'}
+        <section class="patterns-detail" aria-label={STEP_TEXT.stepTitle}>
+          <h3>{STEP_TEXT.stepTitle}</h3>
+          <p class="patterns-note">{STEP_TEXT.stepIntro}</p>
+          {#if step.kind === 'note'}
+            <p class="patterns-note">{step.text}</p>
+          {:else}
+            <div class="table-scroll">
+              <table class="patterns-table">
+                <caption class="sr-only">{STEP_TEXT.stepTitle}</caption>
+                <thead><tr><th scope="col">{STEP_TEXT.stepColOperation}</th><th scope="col" class="num">{STEP_TEXT.stepColDays}</th><th scope="col" class="num">{STEP_TEXT.stepColBefore}</th><th scope="col" class="num">{STEP_TEXT.stepColAfter}</th><th scope="col" class="num">{STEP_TEXT.stepColChange}</th><th scope="col">{STEP_TEXT.stepColResult}</th></tr></thead>
+                <tbody>
+                  {#each step.rows as row (row.key)}
+                    <tr>
+                      <th scope="row" class="ops">{row.operation}</th>
+                      <td class="num">{row.days}</td>
+                      <td class="num">{row.before}</td>
+                      <td class="num">{row.after}</td>
+                      <td class="num">{row.change}</td>
+                      <td>{row.result}{#if row.date}{' · '}{row.date}{/if}{#if row.reason}<span class="step-reason">{row.reason}</span>{/if}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+            <p class="patterns-note">{step.daysLine}</p>
+            {#if step.split && step.scope}
+              {@const patch = step.scope}
+              <div class="split-offer" bind:this={splitBox}>
+                <h4>{STEP_TEXT.splitTitle}</h4>
+                <p class="patterns-note">{STEP_TEXT.splitOffer}: {STEP_TEXT.splitBefore} {at(step.split.baselineStart)} to {at(step.split.baselineEnd)}. {STEP_TEXT.splitAfter} {at(step.split.start)} to {at(step.split.end)}. {STEP_TEXT.splitNote}</p>
+                {#if splitAsking}
+                  <p class="patterns-note" role="status">{STEP_TEXT.splitConfirm}</p>
+                  <div class="split-actions">
+                    <button type="button" class="primary-button" onclick={() => applySplit(patch)}>{STEP_TEXT.splitUse}</button>
+                    <button type="button" class="secondary-button" onclick={() => moveSplit(false)}>{STEP_TEXT.splitCancel}</button>
+                  </div>
+                {:else}
+                  <button type="button" class="secondary-button" onclick={() => moveSplit(true)}>{STEP_TEXT.splitAsk}</button>
+                {/if}
+                {#if splitNote}<p class="patterns-note" role="status">{splitNote}</p>{/if}
+              </div>
+            {/if}
+            <p class="patterns-note">{STEP_TEXT.stepCaveat}</p>
+          {/if}
+        </section>
+      {/if}
+
+      {@const series = auditSeriesSection(report, phase.auditAsked)}
+      {#if series.kind !== 'hidden'}
+        <section class="patterns-detail" aria-label={STEP_TEXT.seriesTitle}>
+          <h3>{STEP_TEXT.seriesTitle}</h3>
+          <p class="patterns-note">{STEP_TEXT.seriesIntro}</p>
+          {#if series.kind === 'note'}
+            <p class="patterns-note">{series.text}</p>
+          {:else}
+            <div class="table-scroll">
+              <table class="patterns-table">
+                <caption class="sr-only">{STEP_TEXT.seriesTitle}</caption>
+                <thead><tr><th scope="col">{STEP_TEXT.seriesColDay}</th><th scope="col" class="num">{STEP_TEXT.seriesColRequests}</th><th scope="col" class="num">{STEP_TEXT.seriesColMedian}</th><th scope="col" class="num">{STEP_TEXT.seriesColSlowest}</th><th scope="col" class="num">{STEP_TEXT.seriesColShare}</th></tr></thead>
+                <tbody>
+                  {#each series.days as day (day.key)}
+                    <tr><th scope="row">{day.date}{#if day.partDay}{' '}({STEP_TEXT.seriesPartDay}){/if}</th><td class="num">{day.n}</td><td class="num">{day.median}</td><td class="num">{day.slowest}</td><td class="num">{day.share}</td></tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+            <h4>{STEP_TEXT.bandTitle}</h4>
+            <p class="patterns-note">{series.band}</p>
+            {#if series.partial}<div class="notice" role="status">{series.partial}</div>{/if}
+            {#if series.excluded}<p class="patterns-note">{series.excluded}</p>{/if}
+            {#if series.without}<p class="patterns-note">{series.without}</p>{/if}
+            <p class="patterns-note">{STEP_TEXT.seriesShareNote}</p>
+            <p class="patterns-note">{STEP_TEXT.seriesNote}</p>
+          {/if}
+        </section>
+      {/if}
+
       {#if report.auditStalls.length}
         <section class="patterns-detail" aria-label={PATTERNS_TEXT.auditStalls}>
           <h3>{PATTERNS_TEXT.auditStalls}</h3>
@@ -400,6 +519,12 @@
   .idle-option { display: flex; align-items: center; gap: 8px; color: var(--text-2); font-size: var(--fs-3); cursor: pointer; }
   .idle-option input { width: 16px; height: 16px; }
   .idle-meta { margin-bottom: 8px; }
+  .step-days { display: flex; align-items: center; gap: 8px; margin-left: 24px; color: var(--text-2); font-size: var(--fs-3); }
+  .step-days select { min-height: 32px; padding: 4px 8px; color: var(--text); background: var(--bg); border: 1px solid var(--control-line); border-radius: var(--radius); font-size: var(--fs-3); }
+  .step-reason { display: block; color: var(--text-2); font-size: var(--fs-1); }
+  .split-offer { display: grid; gap: 6px; margin: 10px 0; padding: 9px 12px; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); justify-items: start; }
+  .split-offer h4 { margin: 0; }
+  .split-actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .idle-lifts { display: grid; gap: 4px; margin: 8px 0; padding-left: 18px; font-size: var(--fs-3); }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .patterns-note { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }

@@ -51,6 +51,15 @@ type PatternInput struct {
 	// IdleGaps opts in to rule B6g, which reads every row in the window (not only
 	// the stalls). It is off unless a caller asks for it.
 	IdleGaps bool `json:"idleGaps,omitempty"`
+	// TimeZone is the display zone (an IANA name, "" for UTC) that B9 and the
+	// audit-create series use to cut days.
+	TimeZone string `json:"timeZone,omitempty"`
+	// StepChange opts in to rule B9. Its window is its own, up to 120 days, and
+	// is not limited by the 7-day window of the other rules.
+	StepChange *StepChangeInput `json:"stepChange,omitempty"`
+	// AuditSeries opts in to the audit-create series (B6s) and the
+	// fixed-duration check (B6f). Like B6g it reads every request in the window.
+	AuditSeries bool `json:"auditSeries,omitempty"`
 }
 
 // PatternParams echoes the thresholds actually used, so a finding can be reread.
@@ -189,7 +198,7 @@ type IdleGaps struct {
 // Finding is one printed result. Label is an Evidence* constant. Headline uses
 // only the permitted §6.6 wordings. Every finding carries n and the low-n flag.
 type Finding struct {
-	Rule       string `json:"rule"` // B1, B2, B6, B12, B3a, A3, B12r, B6g
+	Rule       string `json:"rule"` // B1, B2, B6, B12, B3a, A3, B12r, B6g, B9, B6f
 	Label      string `json:"label"`
 	Headline   string `json:"headline"`
 	N          int    `json:"n"`
@@ -239,4 +248,7 @@ type PatternReport struct {
 	Concentration []Concentration `json:"concentration,omitempty"`
 	Repeats       []Repeat        `json:"repeats,omitempty"`
 	IdleGaps      *IdleGaps       `json:"idleGaps,omitempty"`
+	// StepChange is B9 and AuditSeries is B6s with B6f; each only runs when asked for.
+	StepChange  *StepChange  `json:"stepChange,omitempty"`
+	AuditSeries *AuditSeries `json:"auditSeries,omitempty"`
 }
