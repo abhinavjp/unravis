@@ -186,7 +186,12 @@ export const REASON_TEXT: Record<string, string> = {
   'bad-supplied': 'A setting you typed is not one this file type accepts, or its value is not valid.',
   'ack-mismatch': 'The notice you confirmed is not the one this version shows. Reload the page and try again.',
   'ack-too-long': 'The confirmation text is too long.',
-  'import-busy': 'Other imports are running. Try again in a moment.'
+  'import-busy': 'Other imports are running. Try again in a moment.',
+  'bad-bucket': 'The step size for the lines was not usable. Zoom out and try again.',
+  'bad-selector': 'A line could not be asked for. Reload the page and try again.',
+  'too-many-series': 'Too many lines were asked for at once. Reload the page and try again.',
+  'too-many-buckets': 'This window is too long to draw in small steps. Zoom out and try again.',
+  'bad-episode': 'A stall period could not be read. Reload the page and try again.'
 };
 
 const GENERIC_ERROR = 'The server refused this request. Try again.';
