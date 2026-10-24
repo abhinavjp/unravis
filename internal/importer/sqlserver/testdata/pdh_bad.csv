@@ -1,0 +1,6 @@
+"(PDH-CSV 4.0) (New Zealand Standard Time)(-720)","\\SQL-A\SQLServer:General Statistics\Processes blocked","\\SQL-A\Processor(_Total)\% Processor Time"
+"06/15/2001 13:59:30.000","0","12.5"
+"06/15/2001 13:59:45.000","SENTINEL-7f3a","13.0"
+"SENTINEL-7f3a","0","14.0"
+"06/15/2001 14:00:15.000","1","30.0","SENTINEL-7f3a"
+"06/15/2001 14:00:30.000","2","35.5"

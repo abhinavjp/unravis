@@ -1,7 +1,7 @@
 // Package sqlserver holds the offline SQL Server importers of card P3
 // (importer wave plan §2): the system_health Extended Events CSV (xe.go) and
-// the ERRORLOG (errorlog.go). PDH counters reuse the P6 wincounters importer
-// (pdh.go, after P6 merges).
+// the ERRORLOG (errorlog.go). PDH counters reuse the P6 wincounters parser
+// under the name "sql-pdh" (pdh.go).
 //
 // Privacy (§4): only allowlisted fields leave the parser. SQL text, input
 // buffers, XML reports, host, user and database names never do: a CSV column

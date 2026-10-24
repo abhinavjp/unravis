@@ -18,7 +18,8 @@ import (
 // Pacific/Auckland, NZST = UTC+12 in June 2001) appears as:
 //   - an XE wait_info row with timestamp_utc 2001-06-15 02:00:35 (UTC),
 //   - an ERRORLOG line at 2001-06-15 14:00:35.00 (server-local),
-//   - a PDH sample at 06/15/2001 14:00:35.000 with header bias -720,
+//   - a PDH sample (Processes blocked = 1) at 06/15/2001 14:00:35.000 with
+//     header bias -720, parsed by sql-pdh,
 //   - an audit interval [01:59:58Z, 02:00:40Z].
 // All must align. Each mutation shifts one source by the host offset (12 h),
 // the classic local-as-UTC or UTC-as-local mistake, and must fail.
@@ -28,15 +29,31 @@ const (
 	goldenXEStampLocal  = "2001-06-15 14:00:35.0000000" // the local wall time written as UTC
 	goldenLogStamp      = "2001-06-15 14:00:35.00"
 	goldenLogStampAsUTC = "2001-06-15 02:00:35.00" // the UTC wall time written as local
+	goldenPDHStamp      = `"06/15/2001 14:00:35.000"`
+	goldenPDHStampAsUTC = `"06/15/2001 02:00:35.000"` // the UTC wall time written as local
 	goldenHostOffset    = 12 * time.Hour
 )
 
 type goldenSet struct {
-	xe, errorlog, audit []byte
+	xe, errorlog, pdh, audit []byte
 }
 
 func loadGolden(t *testing.T) goldenSet {
-	return goldenSet{xe: readFixture(t, "golden/xe.csv"), errorlog: readFixture(t, "golden/ERRORLOG"), audit: readFixture(t, "golden/audit.json")}
+	return goldenSet{
+		xe: readFixture(t, "golden/xe.csv"), errorlog: readFixture(t, "golden/ERRORLOG"),
+		pdh: readFixture(t, "golden/pdh.csv"), audit: readFixture(t, "golden/audit.json"),
+	}
+}
+
+// blockedSamples are the PDH marker events: Processes blocked above zero.
+func blockedSamples(evs []evidence.Event) []evidence.Event {
+	var out []evidence.Event
+	for _, e := range evs {
+		if e.Attrs["counter"] == "Processes blocked" && e.Value != nil && *e.Value > 0 {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func auditInterval(t *testing.T, b []byte) join.Interval {
@@ -76,9 +93,14 @@ func alignGolden(t *testing.T, g goldenSet) error {
 	if err != nil {
 		return fmt.Errorf("errorlog parse: %w", err)
 	}
+	pdh, _, err := collect(t, NewPDH(), g.pdh, testOpts(t))
+	if err != nil {
+		return fmt.Errorf("pdh parse: %w", err)
+	}
 	sources := map[string][]evidence.Event{
 		"xe":       ofKind(xe, KindWait),
 		"errorlog": ofKind(el, KindIOStall),
+		"pdh":      blockedSamples(pdh),
 	}
 	marks := map[string]time.Time{}
 	for name, evs := range sources {
@@ -92,8 +114,10 @@ func alignGolden(t *testing.T, g goldenSet) error {
 			}
 		}
 	}
-	if d := marks["xe"].Sub(marks["errorlog"]); d > goldenTol.Total() || d < -goldenTol.Total() {
-		return fmt.Errorf("xe and errorlog marks differ by %v", d)
+	for _, other := range []string{"errorlog", "pdh"} {
+		if d := marks["xe"].Sub(marks[other]); d > goldenTol.Total() || d < -goldenTol.Total() {
+			return fmt.Errorf("xe and %s marks differ by %v", other, d)
+		}
 	}
 	return nil
 }
@@ -120,6 +144,10 @@ func TestGoldenAlignment(t *testing.T) {
 	if io := ofKind(el, KindIOStall); len(io) != 1 || !io[0].Start.Equal(want) {
 		t.Errorf("errorlog io-stall = %+v, want one at %v", io, want)
 	}
+	pdh, _, _ := collect(t, NewPDH(), g.pdh, testOpts(t))
+	if b := blockedSamples(pdh); len(b) != 1 || !b[0].Start.Equal(want) {
+		t.Errorf("pdh blocked samples = %+v, want one at %v", b, want)
+	}
 
 	st := XEStatement(auditInterval(t, g.audit), xe, evidence.SourceQuality{}, goldenTol)
 	if st.Text != evidence.OverlapUnique("system_health", "lock wait", 35) || st.Label != audit.EvidenceCorrelation {
@@ -144,7 +172,7 @@ func TestGoldenMutationsFail(t *testing.T) {
 			g.errorlog = replace(t, g.errorlog, goldenLogStamp, goldenLogStampAsUTC)
 		},
 		"pdh shifted by the host offset": func(t *testing.T, g *goldenSet) {
-			t.Skip("pdh.go waits for P6 (wincounters.NewImporter); testdata/golden/pdh.csv is ready for it")
+			g.pdh = replace(t, g.pdh, goldenPDHStamp, goldenPDHStampAsUTC)
 		},
 		"audit shifted by the host offset": func(t *testing.T, g *goldenSet) {
 			iv := auditInterval(t, g.audit)
