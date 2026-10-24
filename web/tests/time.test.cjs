@@ -55,6 +55,17 @@ test('formatTimeRange prints the zone once and a single instant once', () => {
   assert.equal(time.formatTimeRange('2026-10-24T20:04:37Z', '2026-10-24T20:19:37Z', { zone: 'Asia/Dubai' }), '25 Oct 00:04:37–00:19:37 GMT+4');
 });
 
+test('formatTimeRange names both zones when a daylight-saving change falls inside the range', () => {
+  const zone = 'America/New_York';
+  const before = time.zoneAbbreviation(zone, '2026-11-01T04:30:00Z'), after = time.zoneAbbreviation(zone, '2026-11-01T07:30:00Z');
+  assert.notEqual(before, after);
+  assert.equal(time.formatTimeRange('2026-11-01T04:30:00Z', '2026-11-01T07:30:00Z', { zone }), `1 Nov 00:30:00 ${before} – 02:30:00 ${after}`);
+  // The repeated hour: both ends read 01:30, so the zones are what tell them apart.
+  assert.equal(time.formatTimeRange('2026-11-01T05:30:00Z', '2026-11-01T06:30:00Z', { zone }), `1 Nov 01:30:00 ${before} – 01:30:00 ${after}`);
+  // Inside one offset the zone is still printed once.
+  assert.equal(time.formatTimeRange('2026-11-01T07:30:00Z', '2026-11-01T08:30:00Z', { zone }), `1 Nov 02:30:00–03:30:00 ${after}`);
+});
+
 test('zoneAbbreviation names the zone once for a table heading', () => {
   assert.equal(time.zoneAbbreviation('UTC'), 'UTC');
   assert.equal(time.zoneAbbreviation('Asia/Dubai', at), 'GMT+4');

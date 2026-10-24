@@ -1612,7 +1612,8 @@ test('the redesign keeps its contrast, status and navigation fixes in the source
   assert.match(css, /::placeholder\s*\{[^}]*opacity:\s*1/);
   assert.doesNotMatch(phaseBar, /--pending/);
   assert.doesNotMatch(css, /max-width:\s*14ch/);
-  assert.match(css, /\.crumbs li:last-child\s*\{[^}]*flex:\s*1 1 auto/);
+  assert.match(fs.readFileSync(path.join(root, 'src/components/Breadcrumb.svelte'), 'utf8'), /li\.last\s*\{[^}]*flex:\s*1 1 auto/);
+  assert.doesNotMatch(css, /\.crumbs|\.topbar-meta/, 'the old trail rules are gone');
   assert.doesNotMatch(app, /onclick=\{runAnalysis\}/);
   assert.match(app, /scopeRun\.schedule\(\)/);
 });
@@ -1637,4 +1638,14 @@ test('the CSV export reads the same drill query as the on-screen request list', 
   assert.match(list[1], /^breakdownQuery \?\? analysis/);
   assert.match(exported[1], /^breakdownQuery \?\? analysis/);
   assert.doesNotMatch(app, /api\.export\(drillQuery\(analysis/);
+});
+
+test('the header keeps the Ledger count visible when the drawers fold into More, and More closes on outside click and Escape', () => {
+  const header = fs.readFileSync(path.join(root, 'src/components/AppHeader.svelte'), 'utf8');
+  const button = header.match(/<button[^>]*more-button[\s\S]*?<\/button>/)?.[0] ?? '';
+  assert.match(button, /<LedgerCount \/>/, 'the count sits on the More button itself');
+  assert.match(button, /aria-label=\{moreLabel\}/);
+  assert.match(header, /addEventListener\('pointerdown', away\)/);
+  assert.match(header, /addEventListener\('keydown', escape, true\)/);
+  assert.match(header, /closeMenu\(true\)/, 'Escape returns focus to the More button');
 });

@@ -15,7 +15,7 @@ function load(relativePath) {
   return module.exports;
 }
 
-const { collapseCrumbs, nextMenuIndex, parseViewHash, formatViewHash, sameLevel, createViewHistory } = load('src/lib/wayfinding.ts');
+const { collapseCrumbs, nextMenuIndex, parseViewHash, formatViewHash, sameLevel, createViewHistory, describeView } = load('src/lib/wayfinding.ts');
 
 const crumb = (id) => ({ id, label: id });
 const TOKEN = 'link-session-token-0123456789abcdef+/=';
@@ -182,4 +182,50 @@ test('nextMenuIndex moves with arrows, wraps and ignores other keys', () => {
   assert.equal(nextMenuIndex('End', 0, 3), 2);
   assert.equal(nextMenuIndex('a', 0, 3), null);
   assert.equal(nextMenuIndex('ArrowDown', 0, 0), null);
+});
+
+const screen = (patch) => ({ depth: 2, whereOpen: false, lens: 'requests', compare: false, operation: null, allOperations: false, tab: '', record: null, ...patch });
+
+test('describeView gives every level an address, including lists a link cannot rebuild', () => {
+  assert.equal(describeView(screen({ depth: 0 })), null);
+  assert.deepEqual(describeView(screen({ depth: 1, whereOpen: true, compare: true })), { type: 'where', lens: 'requests', compare: true });
+  assert.deepEqual(describeView(screen({ operation: { controller: 'C', action: 'A', kind: 'route' }, whereOpen: true, tab: 'slowest' })),
+    { type: 'op', lens: 'requests', controller: 'C', action: 'A', opKind: 'route', tab: 'slowest' });
+  assert.deepEqual(describeView(screen({ allOperations: true, tab: 'failures' })), { type: 'all', tab: 'failures' });
+  // An overview tile or quality drill, or a breakdown filter on its own.
+  assert.deepEqual(describeView(screen({ whereOpen: true })), { type: 'list', lens: 'requests' });
+  assert.deepEqual(describeView(screen({ tab: 'slowest' })), { type: 'list' });
+  // A record opened from the Patterns drawer: no list behind it.
+  assert.deepEqual(describeView(screen({ depth: 3, record: { sourceId: 's', id: 'r' } })), { type: 'record', solo: true, sourceId: 's', recordId: 'r' });
+  assert.deepEqual(describeView(screen({ depth: 3, whereOpen: true, record: { sourceId: 's', id: 'r' } })), { type: 'record', lens: 'requests', solo: true, sourceId: 's', recordId: 'r' });
+  assert.deepEqual(describeView(screen({ depth: 3, operation: { controller: 'C', action: 'A' }, record: { sourceId: 's', id: 'r' } })), { type: 'record', controller: 'C', action: 'A', sourceId: 's', recordId: 'r' });
+});
+
+test('list and solo-record views round trip, and a list or all-operations drill is one level', () => {
+  for (const view of [{ type: 'list' }, { type: 'list', lens: 'p95' }, { type: 'record', lens: 'p95', solo: true, sourceId: 's', recordId: 'r' }, { type: 'record', solo: true, sourceId: 'a b', recordId: 'x/y' }]) {
+    assert.deepEqual(parseViewHash(formatViewHash(view)), view, JSON.stringify(view));
+  }
+  assert.equal(parseViewHash('#/record?solo=1&s=only'), null);
+  assert.ok(sameLevel({ type: 'all', lens: 'p95' }, { type: 'list', lens: 'p95' }));
+  assert.ok(!sameLevel({ type: 'list' }, { type: 'list', lens: 'p95' }));
+  assert.ok(!sameLevel({ type: 'record', sourceId: 's', recordId: 'r' }, { type: 'record', solo: true, sourceId: 's', recordId: 'r' }));
+});
+
+test('Back climbs a drill list and a Patterns record one level at a time', () => {
+  const b = fakeBrowser();
+  const h = createViewHistory(b.loc, b.hist);
+  const list = describeView(screen({ whereOpen: true }));
+  const lone = describeView(screen({ depth: 3, whereOpen: true, record: { sourceId: 's', id: 'r' } }));
+  h.sync(describeView(screen({ depth: 1, whereOpen: true })));
+  assert.equal(h.sync(list), 'push');
+  assert.equal(h.sync(lone), 'push');
+  assert.equal(h.sync(list), 'back');
+  b.pop(2);
+  assert.equal(h.pop(), undefined);
+  assert.equal(h.sync(describeView(screen({ depth: 1, whereOpen: true }))), 'back');
+  // Patterns opened over the first screen: the record is its own step above it.
+  const c = fakeBrowser();
+  const g = createViewHistory(c.loc, c.hist);
+  assert.equal(g.sync(describeView(screen({ depth: 3, record: { sourceId: 's', id: 'r' } }))), 'push');
+  assert.equal(g.sync(null), 'back');
 });

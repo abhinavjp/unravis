@@ -26,7 +26,5 @@ export const timeZone = {
     choice = next;
     try { localStorage.setItem(KEY, next); } catch { /* storage unavailable: the choice lasts until the page reloads */ }
   },
-  /** Accepts a zone name: UTC selects UTC, any other zone selects the browser's zone. */
-  setZone(zoneName: string) { timeZone.set(zoneName === 'UTC' ? 'utc' : 'local'); },
   toggle() { timeZone.set(choice === 'utc' ? 'local' : 'utc'); }
 };

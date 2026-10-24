@@ -5,6 +5,7 @@
   import { nextMenuIndex } from '../lib/wayfinding';
   import Breadcrumb from './Breadcrumb.svelte';
   import LedgerCount from './LedgerCount.svelte';
+  import { ledger } from '../lib/ledgerStore.svelte';
   import TimeZoneToggle from './TimeZoneToggle.svelte';
   import { timeZone } from '../lib/timeZone.svelte';
   import { formatTime } from '../lib/time';
@@ -29,6 +30,9 @@
   ];
   const isOpen = (id: string) => id === 'glossary' ? panels.glossaryOpen : panels.sidePanel === id;
   const anyOpen = $derived(drawers.some(item => isOpen(item.id)));
+  const ledgerTotal = $derived(ledger.items.length);
+  // The folded Ledger count stays on the More button, so it is never hidden inside a closed menu.
+  const moreLabel = $derived('More' + (anyOpen ? ': a panel is open' : '') + (ledgerTotal ? ', ' + ledgerTotal + (ledgerTotal === 1 ? ' hypothesis' : ' hypotheses') + ' in the Ledger' : ''));
 
   onMount(() => {
     const query = window.matchMedia('(max-width: 899px)');
@@ -75,9 +79,9 @@
     {/if}
     {#if compact}
       <div class="more" bind:this={menuWrap}>
-        <button type="button" class="header-button more-button" bind:this={moreButton} aria-haspopup="menu" aria-expanded={menuOpen} aria-label={anyOpen ? 'More: a panel is open' : 'More'} onclick={toggleMenu}>
+        <button type="button" class="header-button more-button" bind:this={moreButton} aria-haspopup="menu" aria-expanded={menuOpen} aria-label={moreLabel} onclick={toggleMenu}>
           <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="4" cy="10" r="1.7"></circle><circle cx="10" cy="10" r="1.7"></circle><circle cx="16" cy="10" r="1.7"></circle></svg>
-          <span class="more-label">More</span>
+          <span class="more-label">More</span><LedgerCount />
         </button>
         {#if menuOpen}
           <ul class="more-menu" role="menu" aria-label="More" tabindex="-1" onkeydown={onMenuKey}>

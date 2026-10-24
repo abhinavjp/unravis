@@ -20,7 +20,7 @@ import { applyStaleFilters, scopeStaleDrill } from './incomplete';
 import { allOperationsDrill, operationDrill, type OverviewDrill } from './overview';
 import { phaseSegments } from './phases';
 import { rollupFor } from './traffic';
-import { createViewHistory, parseViewHash, type View } from './wayfinding';
+import { createViewHistory, describeView, parseViewHash, type View } from './wayfinding';
 
 let info = $state<Info | null>(null);
 let sources = $state<Source[]>([]);
@@ -208,20 +208,13 @@ const inspectorTabs = $derived(evidenceTabs({
 const activeTab = $derived(inspectorTabs.find(tab => tab.id === inspectorTab)?.id ?? inspectorTabs[0]?.id ?? '');
 const openKey = $derived(operation ? operation.controller + '\u0000' + operation.action + '\u0000' + (operation.kind ?? '') : '');
 const failureCohort = $derived<string[] | null>(operation ? operationGroups.map(group => group.key) : selected ? [selected.key] : null);
-// What the address bar says about the screen. null is the first screen; undefined is a place an address cannot describe (an overview or
-// quality list, a breakdown filter on its own), which leaves the address as it was.
-const currentView = $derived.by((): View | null | undefined => {
-  if (depth === 0) return null;
-  if (depth === 1) return { type: 'where', lens, ...(compare ? { compare: true } : {}) };
-  const above = whereOpen ? { lens } : {};
-  let view: View;
-  if (operation) view = { type: 'op', ...above, controller: operation.controller, action: operation.action, ...(operation.kind ? { opKind: operation.kind } : {}) };
-  else if (queryWide && !drillActive && drillOverview?.label === 'All operations') view = { type: 'all', ...above };
-  else return undefined;
-  if (activeTab) view.tab = activeTab;
-  if (depth === 3 && record) return { ...view, type: 'record', sourceId: record.sourceId, recordId: record.id };
-  return view;
-});
+// What the address bar says about the screen (see describeView in lib/wayfinding.ts). null is the first screen. Every level has an address, so Back climbs one level at a time.
+const currentView = $derived(describeView({
+  depth, whereOpen, lens, compare, tab: activeTab,
+  operation: operation ? { controller: operation.controller, action: operation.action, kind: operation.kind } : null,
+  allOperations: operation == null && queryWide && drillOverview?.label === 'All operations',
+  record: record ? { sourceId: record.sourceId, id: record.id } : null
+}));
 
 // Registers the effects and the mount work in the order App.svelte declared them. Call once, from App.svelte's script.
 export function startApp() {
@@ -315,7 +308,7 @@ export function startApp() {
   // The address bar follows the screen: going deeper adds a history step, so the browser's Back (and Esc) climb back up one level at a time.
   $effect(() => {
     const view = currentView, ready = viewReady;
-    if (!ready || applyingView || view === undefined) return;
+    if (!ready || applyingView) return;
     untrack(() => { viewHistory?.sync(view); });
   });
 }
@@ -806,10 +799,11 @@ function placeNow(): Place {
     opener: active instanceof HTMLElement && active !== document.body ? active : null
   };
 }
-// Puts the scroll positions back and focuses the control that was used, or the heading named when it is gone. Hidden views reset their scroll, so this waits for the redraw.
-async function restorePlace(place: Place | null, fallbackId: string) {
+// Puts the scroll positions back and focuses the control that was used, or the first visible heading named when it is gone or hidden. Hidden views reset their scroll, so this waits for the redraw.
+async function restorePlace(place: Place | null, fallbackIds: string[]) {
   await tick();
-  const target = place?.opener?.isConnected ? place.opener : document.getElementById(fallbackId);
+  const shown = (element: HTMLElement | null | undefined): element is HTMLElement => !!element && element.isConnected && element.getClientRects().length > 0;
+  const target = [place?.opener, ...fallbackIds.map(id => document.getElementById(id)), document.querySelector<HTMLElement>('.pulse-actions .primary-button')].find(shown);
   target?.focus({ preventScroll: true });
   if (!place) return;
   const stage = document.querySelector('.stage'), body = document.querySelector('.inspector-body');
@@ -834,7 +828,7 @@ function releaseRecord(restore: boolean) {
   const place = recordPlace; recordPlace = null;
   const wasOpen = record != null || recordLoadingId !== '';
   record = null; recordError = ''; recordLoadingId = '';
-  if (restore && wasOpen) void restorePlace(place, 'inspector-title');
+  if (restore && wasOpen) void restorePlace(place, ['inspector-title', 'where-title']);
 }
 export function dropRecord() { releaseRecord(true); }
 export function closeInspector() {
@@ -844,7 +838,7 @@ export function closeInspector() {
   requestPage = null; requestRows = []; requestPageNumber = 1; requestError = ''; requestLoading = false;
   record = null; recordError = '';
   const place = evidencePlace; evidencePlace = null;
-  void restorePlace(place, 'where-title');
+  void restorePlace(place, ['where-title']);
 }
 export function openWhere(next: Lens) {
   lens = next; whereOpen = true;
@@ -867,8 +861,7 @@ async function applyView(view: View | null) {
   finally {
     if (run === viewRun) {
       applyingView = false;
-      const shown = untrack(() => currentView);
-      if (shown !== undefined) viewHistory?.sync(shown, true);
+      viewHistory?.sync(untrack(() => currentView), true);
     }
   }
 }
@@ -881,6 +874,16 @@ async function settleView(view: View | null, run: number) {
     goTo(1);
     if (whereOpen) lens = view.lens ?? lens; else openWhere(view.lens ?? lens);
     compare = !!view.compare;
+    return;
+  }
+  if (view.type === 'list' || (view.type === 'record' && view.solo)) {
+    // A list or a lone record a link cannot rebuild: an open list stays, otherwise the level above it is shown (and the record opens on it).
+    if (hasContext) goTo(2);
+    else {
+      goTo(view.lens ? 1 : 0);
+      if (view.lens) { if (whereOpen) lens = view.lens; else openWhere(view.lens); }
+    }
+    if (view.type === 'record' && view.sourceId && view.recordId) await loadRecord(view.sourceId, view.recordId);
     return;
   }
   const wantsOperation = view.controller !== undefined;
@@ -1051,7 +1054,7 @@ export const app = {
 // The investigation scope: the query, time zone, target and the per-tab investigation notice.
 export const scope = {
   get query() { return query; }, set query(value) { query = value; },
-  get zone() { return timeZone.zone; }, set zone(value) { zone = value; timeZone.setZone(value); },
+  get zone() { return timeZone.zone; },
   get targetMs() { return targetMs; }, set targetMs(value) { targetMs = value; },
   get dateInputsValid() { return dateInputsValid; }, set dateInputsValid(value) { dateInputsValid = value; },
   get controlsResetKey() { return controlsResetKey; }, set controlsResetKey(value) { controlsResetKey = value; },

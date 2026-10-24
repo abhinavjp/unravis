@@ -45,6 +45,10 @@ test('chartRange names the zone once, repeats the date only across midnight, and
   assert.equal(chartRange(T, T, 'UTC'), 'at 24 Oct 15:19:37 UTC');
   assert.equal(chartRange(T, T + MIN, 'UTC', { seconds: false }), '24 Oct 15:19 to 15:20 UTC');
   assert.equal(chartRange(T, 'x', 'UTC'), 'Unknown time range');
+  const fall = Date.UTC(2026, 10, 1, 4, 30), ny = 'America/New_York';
+  const [early, late] = [new Date(fall).toLocaleString('en-GB', { timeZone: ny, timeZoneName: 'short' }), new Date(fall + 3 * HOUR).toLocaleString('en-GB', { timeZone: ny, timeZoneName: 'short' })].map(text => text.split(' ').pop());
+  assert.notEqual(early, late);
+  assert.equal(chartRange(fall, fall + 3 * HOUR, ny), `1 Nov 00:30:00 ${early} to 02:30:00 ${late}`);
 });
 
 test('pickTickStep chooses the smallest round step that fits the label budget', () => {

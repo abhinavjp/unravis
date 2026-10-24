@@ -10,7 +10,7 @@
   import Hint from './Hint.svelte';
   // part "bar" is the always-visible scope (quick range chips and the request-type control); part "panel" is
   // everything else, kept behind the More filters disclosure; "all" renders both.
-  let { query = $bindable(), zone = $bindable(), targetMs = $bindable(), dateInputsValid = $bindable(), groupNames = [], now = '', part = 'all', onScopeChange }: { query: Query; zone: string; targetMs: number | null; dateInputsValid: boolean; groupNames?: string[]; now?: string; part?: 'all' | 'bar' | 'panel'; onScopeChange?: () => void } = $props();
+  let { query = $bindable(), targetMs = $bindable(), dateInputsValid = $bindable(), groupNames = [], now = '', part = 'all', onScopeChange }: { query: Query; targetMs: number | null; dateInputsValid: boolean; groupNames?: string[]; now?: string; part?: 'all' | 'bar' | 'panel'; onScopeChange?: () => void } = $props();
   let timeInputError = $state('');
   let invalidWindows = $state<string[]>([]);
   $effect(() => { if (part !== 'bar') dateInputsValid = invalidWindows.length === 0; });

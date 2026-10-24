@@ -166,18 +166,9 @@ summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; bo
 .brand-mark span:nth-child(1) { height: 7px; opacity: .55; }
 .brand-mark span:nth-child(2) { height: 14px; }
 .brand-mark span:nth-child(3) { height: 10px; opacity: .8; }
-.topbar-meta { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .mode-badge { color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); padding: 4px 8px; border-radius: var(--radius); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .mode-badge.demo-badge { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
 .updated-label { color: var(--text-2); font-size: 12px; white-space: nowrap; }
-.crumbs { min-width: 0; flex: 1 1 auto; }
-.crumbs ol { display: flex; align-items: center; flex-wrap: nowrap; gap: 2px; margin: 0; padding: 0; list-style: none; overflow: hidden; }
-.crumbs li { display: flex; align-items: center; min-width: 0; }
-.crumbs li + li::before { content: "›"; padding: 0 6px; color: var(--text-2); }
-.crumbs button, .crumbs [aria-current] { max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 6px; border: 0; border-radius: var(--radius); background: transparent; font-size: 13px; }
-.crumbs button { color: var(--text-2); }
-.crumbs button:hover { color: var(--text); background: var(--surface-2); }
-.crumbs [aria-current] { color: var(--text); font-weight: 650; }
 .header-button { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 6px 10px; color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: var(--radius); font-size: 13px; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease); }
 .header-button:hover { border-color: var(--text-2); background: var(--surface-2); }
 .header-button[aria-expanded="true"] { border-color: var(--accent); }
@@ -249,7 +240,6 @@ summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; bo
 .stage { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 22px 24px 48px; }
 .stage-inner { max-width: 1320px; margin: 0 auto; display: grid; gap: 14px; min-width: 0; }
 .stage-views { display: contents; }
-.crumbs-spacer { flex: 1 1 auto; }
 .view { min-width: 0; display: grid; gap: 14px; align-content: start; animation: reveal 200ms var(--ease) both; }
 .view.off { display: none; }
 @keyframes reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
@@ -742,18 +732,6 @@ th.numeric { text-align: right; }
   .app-shell { height: auto; min-height: 100vh; min-height: 100dvh; overflow: visible; }
   .topbar { position: sticky; top: 0; padding: 0 14px; gap: 0 8px; flex: 0 0 auto; flex-wrap: wrap; align-content: center; }
   .brand-lockup h1 { font-size: 15px; }
-  /* The trail takes its own row so the current level can show in full; earlier levels collapse to one back link. */
-  .crumbs { order: 3; flex: 1 1 100%; padding-bottom: 6px; }
-  .crumbs:empty { display: none; }
-  .crumbs ol { overflow: visible; }
-  .crumbs li:not(:nth-last-child(-n+2)) { display: none; }
-  .crumbs li:last-child::before, .crumbs li:nth-last-child(2)::before { content: none; }
-  .crumbs li:last-child { flex: 1 1 auto; }
-  .crumbs li:nth-last-child(2):not(:last-child) { flex: 0 1 auto; }
-  .crumbs li:nth-last-child(2):not(:last-child) button::before { content: "\2039\00a0"; }
-  .crumbs button { max-width: 16ch; }
-  .crumbs [aria-current] { max-width: none; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
-  .topbar-meta .mode-badge, .topbar-meta .updated-label { display: none; }
   .header-button .label { max-width: 11ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .scope { padding: 10px 14px; }
   .scope-main { gap: 8px 12px; }
