@@ -236,3 +236,91 @@ test('a B12r finding is a Correlation row and its copy passes the lint', () => {
     patterns.repeatsSummary({ repeats: [rep()] })
   ]);
 });
+
+// ------------------------------------------------------------------ B6g
+
+const bands = (counts = [200, 150, 120, 40, 60]) => [
+  { fromS: 0, toS: 30, n: counts[0], medianMs: 900, p95Ms: 3000, slowRate: 0.01 },
+  { fromS: 30, toS: 60, n: counts[1], medianMs: 950, p95Ms: 3200, slowRate: 0.012 },
+  { fromS: 60, toS: 240, n: counts[2], medianMs: 1000, p95Ms: 4000, slowRate: 0.02 },
+  { fromS: 240, toS: 600, n: counts[3], medianMs: 2500, p95Ms: 9000, slowRate: 0.1 },
+  { fromS: 600, toS: null, n: counts[4], medianMs: 3000, p95Ms: 12000, slowRate: 0.2 }
+];
+const idle = (o = {}) => ({ bands: bands(), lift: [{ gS: 60, value: 1.2, withheld: false }, { gS: 240, value: 6, withheld: false }, { gS: 600, value: 9, withheld: false }], excludedHangfire: 12, partial: false, ...o });
+
+test('bandLabel names every band from its limits', () => {
+  assert.deepEqual(bands().map(patterns.bandLabel), ['Under 30 s', '30 s to 1 min', '1 to 4 min', '4 to 10 min', '10 min or more']);
+  assert.equal(patterns.bandLabel({ fromS: 600, toS: 0 }), '10 min or more');
+});
+
+test('idleBandRows shows no statistics for a band under 20 requests', () => {
+  const rows = patterns.idleBandRows(bands([200, 19, 120, 40, 60]));
+  assert.equal(rows[1].thin, true);
+  assert.deepEqual([rows[1].median, rows[1].slowest, rows[1].slowRate], ['–', '–', '–']);
+  assert.equal(rows[0].median, '0.9 s');
+  assert.equal(rows[3].slowRate, '10%');
+});
+
+test('idleLiftRows marks a lift of 5 or more with enough requests as raised', () => {
+  const rows = patterns.idleLiftRows(idle());
+  assert.deepEqual(rows.map((r) => r.reading), ['flat', 'raised', 'raised']);
+  assert.equal(rows[1].line, 'After a quiet gap of 4 min or more, slow audit creates were 6 times as common as after a shorter gap.');
+  assert.equal(rows[1].before, 470);
+  assert.equal(rows[1].after, 100);
+});
+
+test('idleLiftRows calls a lift of 1.5 or less flat only with 50 requests in both groups', () => {
+  const flat = patterns.idleLiftRows(idle({ lift: [{ gS: 240, value: 1.1, withheld: false }] }));
+  assert.equal(flat[0].reading, 'flat');
+  assert.match(flat[0].line, /about the same/);
+  const thin = patterns.idleLiftRows(idle({ bands: bands([200, 150, 120, 25, 20]), lift: [{ gS: 240, value: 1.1, withheld: false }] }));
+  assert.equal(thin[0].reading, 'between');
+});
+
+test('idleLiftRows withholds on a partial read, a thin group, a server reason or no value', () => {
+  assert.equal(patterns.idleLiftRows(idle({ partial: true }))[1].reading, 'withheld');
+  assert.match(patterns.idleLiftRows(idle({ partial: true }))[1].line, /Partial read/);
+  const thin = patterns.idleLiftRows(idle({ bands: bands([200, 150, 120, 10, 9]) }));
+  assert.equal(thin[1].reading, 'withheld');
+  assert.equal(thin[1].line, '4 min: too few requests to compare (fewer than 20).');
+  assert.equal(patterns.idleLiftRows(idle({ lift: [{ gS: 60, value: 5, withheld: 'slow rate not read' }] }))[0].line, '1 min: not compared (slow rate not read).');
+  assert.equal(patterns.idleLiftRows(idle({ lift: [{ gS: 60, value: null, withheld: false }] }))[0].reading, 'withheld');
+});
+
+test('idleSection hides unless asked, notes a missing check, and carries the Hangfire count and partial note', () => {
+  assert.deepEqual(patterns.idleSection({}, false), { kind: 'hidden' });
+  assert.deepEqual(patterns.idleSection({}, true), { kind: 'note', text: 'Not observed (gap or sampling: the server did not send this check).' });
+  const section = patterns.idleSection({ idleGaps: idle() }, true);
+  assert.equal(section.kind, 'rows');
+  assert.equal(section.excluded, '12 Hangfire requests were left out of this check.');
+  assert.equal(section.raised, true);
+  assert.equal(section.partial, '');
+  assert.equal(patterns.idleSection({ idleGaps: idle({ excludedHangfire: 1, partial: true }) }, false).excluded, '1 Hangfire request was left out of this check.');
+  assert.equal(patterns.idleSection({ idleGaps: idle({ partial: true }) }, false).partial, patterns.PATTERNS_TEXT.idlePartial);
+  assert.equal(patterns.idleSection({ idleGaps: idle({ excludedHangfire: 0 }) }, false).excluded, '');
+  assert.equal(patterns.idleSection({ idleGaps: { bands: [], lift: [], excludedHangfire: 0, partial: false } }, false).kind, 'note');
+});
+
+test('windowInputSeconds sends idleGaps only when asked', () => {
+  const q = { sourceIds: ['s1'], start: '2026-10-23T00:00:00Z', end: '2026-10-24T00:00:00Z' };
+  assert.equal('idleGaps' in patterns.windowInputSeconds(q, '', '').input, false);
+  assert.equal(patterns.windowInputSeconds(q, '', '', true).input.idleGaps, true);
+  assert.equal(patterns.windowInputSeconds(q, 'x', '', true).error, patterns.PATTERNS_TEXT.stallBad);
+});
+
+test('B6g copy passes the lint and stays a Symptom', () => {
+  const T = patterns.PATTERNS_TEXT;
+  const lifts = patterns.idleLiftRows(idle()).map((r) => r.line);
+  const flat = patterns.idleLiftRows(idle({ lift: [{ gS: 240, value: 1.1, withheld: false }] })).map((r) => r.line);
+  const withheld = [
+    ...patterns.idleLiftRows(idle({ partial: true })).map((r) => r.line),
+    ...patterns.idleLiftRows(idle({ bands: bands([200, 150, 120, 10, 9]) })).map((r) => r.line),
+    ...patterns.idleLiftRows(idle({ lift: [{ gS: 60, value: 5, withheld: 'slow rate not read' }] })).map((r) => r.line)
+  ];
+  lintOk([
+    T.idleTitle, T.idleIntro, T.idleCaveat, T.idleSources, T.idleOptIn, T.idleOptInNote, T.idlePartial, T.idleRaised,
+    ...lifts, ...flat, ...withheld, patterns.excludedLine(12), patterns.excludedLine(1), patterns.idleSection({}, true).text,
+    patterns.idleSection({ idleGaps: { bands: [], lift: [], excludedHangfire: 0, partial: false } }, false).text
+  ]);
+  assert.equal(T.idleLabel, 'Symptom');
+});

@@ -2,7 +2,7 @@ import { auditCreate, notObservedGap } from './copy/wordings';
 import { MIN_SAMPLE } from './thresholds';
 import type {
   EvidenceLabel, PatternAuditStall, PatternConcentration, PatternCoverage, PatternEpisode, PatternInput, PatternOnsetMinute,
-  PatternRepeat, PatternReport, PatternStall, PatternVolley, Query
+  PatternIdleBand, PatternIdleGaps, PatternRepeat, PatternReport, PatternStall, PatternVolley, Query
 } from './types';
 
 /**
@@ -193,7 +193,7 @@ export function thresholdsChanged(stallSec: string, gapSec: string): boolean {
  * The window plus the two limits, typed in seconds. A value equal to the default is not sent, so a default run is the same request as before.
  * An empty box means the default.
  */
-export function windowInputSeconds(query: Pick<Query, 'sourceIds' | 'start' | 'end'>, stallSec = '', gapSec = ''): { input: PatternInput } | { error: string } {
+export function windowInputSeconds(query: Pick<Query, 'sourceIds' | 'start' | 'end'>, stallSec = '', gapSec = '', idleGaps = false): { input: PatternInput } | { error: string } {
   const stall = stallSec.trim(), gap = gapSec.trim();
   let stallRaw = '', gapRaw = '';
   if (stall) {
@@ -205,7 +205,10 @@ export function windowInputSeconds(query: Pick<Query, 'sourceIds' | 'start' | 'e
     if (!wholeSeconds.test(gap) || !Number.isSafeInteger(Number(gap)) || Number(gap) <= 0) return { error: PATTERNS_TEXT.gapBad };
     if (Number(gap) !== DEFAULT_EPISODE_GAP_SECONDS) gapRaw = String(Number(gap));
   }
-  return windowInput(query, stallRaw, gapRaw);
+  const built = windowInput(query, stallRaw, gapRaw);
+  // The quiet-gap check reads every request in the window, so it is sent only when asked for.
+  if ('input' in built && idleGaps) built.input.idleGaps = true;
+  return built;
 }
 
 /** The empty state: what was looked for, and the two things that would change the answer. */
@@ -442,6 +445,101 @@ export function repeatsSummary(report: Pick<PatternReport, 'repeats'>): string |
   const cases = report.repeats.length;
   const episodes = new Set(report.repeats.map((row) => row.episode)).size;
   return `${cases} ${cases === 1 ? 'case' : 'cases'} of an operation started again while it was running, in ${episodes} ${episodes === 1 ? 'episode' : 'episodes'}.`;
+}
+
+// ---- B6g: audit create after quiet gaps ----
+
+/** The lift is read only when both groups have at least this many requests (the same floor as everywhere else). */
+export const IDLE_MIN_ROWS = MIN_SAMPLE;
+/** Raised: a lift of at least 5. Flat: a lift of at most 1.5 with at least 50 requests in both groups. */
+export const IDLE_RAISED_LIFT = 5;
+export const IDLE_FLAT_LIFT = 1.5;
+export const IDLE_FLAT_MIN_ROWS = 50;
+
+const gapWords = (seconds: number): string => seconds < 60 ? `${seconds} s` : `${Number((seconds / 60).toFixed(1))} min`;
+
+/** The name of a band from its limits: "Under 30 s", "1 to 4 min", "10 min or more". An open end is a null or zero `toS`. */
+export function bandLabel(band: Pick<PatternIdleBand, 'fromS' | 'toS'>): string {
+  const open = band.toS === null || band.toS === undefined || band.toS <= 0;
+  if (open) return `${gapWords(band.fromS)} or more`;
+  if (!(band.fromS > 0)) return `Under ${gapWords(band.toS as number)}`;
+  const to = band.toS as number;
+  // Two minute values share one unit: "1 to 4 min", not "1 min to 4 min".
+  if (band.fromS >= 60 && to >= 60) return `${Number((band.fromS / 60).toFixed(1))} to ${gapWords(to)}`;
+  return `${gapWords(band.fromS)} to ${gapWords(to)}`;
+}
+
+export interface IdleBandRow { key: string; label: string; n: number; thin: boolean; median: string; slowest: string; slowRate: string }
+
+const dash = '–';
+const msCell = (ms: number | null | undefined, thin: boolean): string => thin || ms === null || ms === undefined || !Number.isFinite(ms) ? dash : secondsLabel(ms);
+const rateCell = (rate: number | null | undefined, thin: boolean): string => thin || rate === null || rate === undefined || !Number.isFinite(rate) ? dash : shareText(rate);
+
+/** One row for each band. A band under 20 requests shows its count and no statistics. */
+export function idleBandRows(bands: ReadonlyArray<PatternIdleBand> | undefined): IdleBandRow[] {
+  return (bands ?? []).map((band) => {
+    const thin = !(band.n >= MIN_SAMPLE);
+    return { key: `band-${band.fromS}`, label: bandLabel(band), n: band.n, thin, median: msCell(band.medianMs, thin), slowest: msCell(band.p95Ms, thin), slowRate: rateCell(band.slowRate, thin) };
+  });
+}
+
+export type IdleReading = 'raised' | 'flat' | 'between' | 'withheld';
+export interface IdleLiftRow { key: string; gS: number; reading: IdleReading; before: number; after: number; line: string }
+
+const isPartial = (partial: boolean | string | undefined): boolean => !!partial;
+
+/** Requests with a gap under `gS` and at or above it, summed from the bands. A band that straddles `gS` cannot be split, so it counts on neither side. */
+export function idleGroups(bands: ReadonlyArray<PatternIdleBand>, gS: number): { below: number; atOrAbove: number } {
+  let below = 0, atOrAbove = 0;
+  for (const band of bands) {
+    const open = band.toS === null || band.toS === undefined || band.toS <= 0;
+    if (band.fromS >= gS) atOrAbove += band.n;
+    else if (!open && (band.toS as number) <= gS) below += band.n;
+  }
+  return { below, atOrAbove };
+}
+
+/** One line for each gap limit. Withheld when the read was partial, the server withheld it, or either group is under 20 requests. */
+export function idleLiftRows(idle: Pick<PatternIdleGaps, 'bands' | 'lift' | 'partial'>): IdleLiftRow[] {
+  return (idle.lift ?? []).map((lift) => {
+    const where = gapWords(lift.gS);
+    const { below, atOrAbove } = idleGroups(idle.bands ?? [], lift.gS);
+    const row = (reading: IdleReading, line: string): IdleLiftRow => ({ key: `lift-${lift.gS}`, gS: lift.gS, reading, before: below, after: atOrAbove, line });
+    if (isPartial(idle.partial)) return row('withheld', `${where}: ${PATTERNS_TEXT.idlePartial}`);
+    const reason = typeof lift.withheld === 'string' ? lift.withheld.trim() : '';
+    if (lift.withheld || lift.value === null || lift.value === undefined || !Number.isFinite(lift.value)) return row('withheld', reason ? `${where}: not compared (${reason}).` : `${where}: not compared.`);
+    if (below < IDLE_MIN_ROWS || atOrAbove < IDLE_MIN_ROWS) return row('withheld', `${where}: too few requests to compare (fewer than ${IDLE_MIN_ROWS}).`);
+    const times = timesText(lift.value);
+    const line = `After a quiet gap of ${where} or more, slow audit creates were ${times} as common as after a shorter gap.`;
+    if (lift.value >= IDLE_RAISED_LIFT) return row('raised', line);
+    if (lift.value <= IDLE_FLAT_LIFT && below >= IDLE_FLAT_MIN_ROWS && atOrAbove >= IDLE_FLAT_MIN_ROWS) return row('flat', `${line} That is about the same, so quiet gaps do not stand out.`);
+    return row('between', line);
+  });
+}
+
+export type IdleSection =
+  | { kind: 'hidden' }
+  | { kind: 'note'; text: string }
+  | { kind: 'rows'; bands: IdleBandRow[]; lifts: IdleLiftRow[]; excluded: string; partial: string; raised: boolean };
+
+/** One sentence on requests left out of the check. Empty when none were. */
+export const excludedLine = (count: number): string =>
+  count > 0 ? `${count} Hangfire ${count === 1 ? 'request was' : 'requests were'} left out of this check.` : '';
+
+/**
+ * What the quiet-gap section shows. Hidden unless it was asked for or the server sent it. Asked for and not sent gives the standard absence line.
+ * A capped read of every request withholds the lifts. The bands still show, with the partial note.
+ */
+export function idleSection(report: Pick<PatternReport, 'idleGaps'>, asked: boolean): IdleSection {
+  const idle = report.idleGaps;
+  if (!idle) return asked ? { kind: 'note', text: notObservedGap('the server did not send this check') } : { kind: 'hidden' };
+  const bands = idleBandRows(idle.bands);
+  if (bands.length === 0) return { kind: 'note', text: notObservedGap('no audit create requests were read for this check') };
+  const lifts = idleLiftRows(idle);
+  return {
+    kind: 'rows', bands, lifts, excluded: excludedLine(idle.excludedHangfire), partial: isPartial(idle.partial) ? (typeof idle.partial === 'string' && idle.partial.trim() ? `${PATTERNS_TEXT.idlePartial} ${idle.partial.trim()}` : PATTERNS_TEXT.idlePartial) : '',
+    raised: lifts.some((l) => l.reading === 'raised')
+  };
 }
 
 // ---- References for the ledger ----

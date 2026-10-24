@@ -8,7 +8,7 @@
   import { formatElapsed } from '../lib/provenance';
   import {
     DEFAULT_EPISODE_GAP_SECONDS, DEFAULT_STALL_SECONDS, PATTERNS_TEXT, PATTERN_RANGES, auditStallLine, citeLabel, concentrationSection, coverageLine, emptyEpisodesText, endGapsText,
-    episodeCiteLabel, episodeEvidenceId, findingRows, isEvidenceId, nBadge, onsetSection, onsetZoneNote, operationText, qualityLine, repeatsOf, repeatsSummary, secondsLabel, stallsOf, thresholdsChanged,
+    episodeCiteLabel, episodeEvidenceId, findingRows, idleSection, isEvidenceId, nBadge, onsetSection, onsetZoneNote, operationText, qualityLine, repeatsOf, repeatsSummary, secondsLabel, stallsOf, thresholdsChanged,
     truncationNotices, verdictText, volleysOf, windowInputSeconds, zoneMinuteShift
   } from '../lib/patterns';
   import type { PatternReport, Query, RequestRecord } from '../lib/types';
@@ -21,10 +21,12 @@
   // Summary first (verdict, findings, counts), then the episode table, which opens one episode at a time.
   // The range chips change the page's own range. A slow request or a slow audit save opens its record (and closes this drawer).
   let { query, zone, sourceLabels, onClose }: { query: Query; zone: string; sourceLabels: Map<string, string>; onClose: () => void } = $props();
-  type State = { kind: 'idle' } | { kind: 'running' } | { kind: 'done'; report: PatternReport; key: string } | { kind: 'error'; text: string };
+  type State = { kind: 'idle' } | { kind: 'running' } | { kind: 'done'; report: PatternReport; key: string; idleAsked: boolean } | { kind: 'error'; text: string };
   let phase = $state<State>({ kind: 'idle' });
   let stallSec = $state(String(DEFAULT_STALL_SECONDS));
   let gapSec = $state(String(DEFAULT_EPISODE_GAP_SECONDS));
+  // The quiet-gap check reads every request in the window, so it runs only when this box is ticked.
+  let idleGaps = $state(false);
   let thresholdError = $state('');
   let openEpisodes = $state<number[]>([]);
   let citeNote = $state('');
@@ -39,7 +41,7 @@
   const activeRange = $derived(activeRangeId(query, quickRanges));
   const changed = $derived(thresholdsChanged(stallSec, gapSec));
   // What the search depends on. When it moves after a run, the numbers on screen describe an older question.
-  const askKey = $derived([query.sourceIds.join(','), query.start, query.end, stallSec.trim(), gapSec.trim()].join('|'));
+  const askKey = $derived([query.sourceIds.join(','), query.start, query.end, stallSec.trim(), gapSec.trim(), idleGaps ? 'idle' : ''].join('|'));
 
   onMount(() => runButton?.focus());
   $effect(() => () => controller?.abort());
@@ -55,7 +57,8 @@
 
   async function run() {
     if (phase.kind === 'running') return;
-    const built = windowInputSeconds(query, stallSec, gapSec);
+    const built = windowInputSeconds(query, stallSec, gapSec, idleGaps);
+    const idleAsked = idleGaps;
     if ('error' in built) { thresholdError = built.error; return; }
     thresholdError = '';
     controller?.abort();
@@ -68,7 +71,7 @@
     try {
       const report = await api.patterns(built.input, mine.signal);
       if (mine.signal.aborted) return;
-      phase = { kind: 'done', report, key };
+      phase = { kind: 'done', report, key, idleAsked };
     } catch (cause) {
       if (mine.signal.aborted) return;
       phase = { kind: 'error', text: cause instanceof Error && cause.message ? cause.message : PATTERNS_TEXT.failed };
@@ -113,6 +116,8 @@
       <p class="patterns-note">{PATTERNS_TEXT.thresholdNote}</p>
       {#if changed}<button type="button" class="reset-link" onclick={reset}>{PATTERNS_TEXT.reset}</button>{/if}
     </details>
+    <label class="idle-option"><input type="checkbox" bind:checked={idleGaps} /> {PATTERNS_TEXT.idleOptIn}</label>
+    <p class="patterns-note">{PATTERNS_TEXT.idleOptInNote}</p>
     {#if thresholdError}<div class="inline-error" role="alert">{thresholdError}</div>{/if}
     <button type="button" class="primary-button patterns-run" bind:this={runButton} disabled={phase.kind === 'running' || query.sourceIds.length === 0} onclick={run}>{phase.kind === 'running' ? PATTERNS_TEXT.running : PATTERNS_TEXT.run}</button>
     <p class="patterns-note">{PATTERNS_TEXT.runNote}</p>
@@ -287,6 +292,40 @@
         </section>
       {/if}
 
+      {@const idle = idleSection(report, phase.idleAsked)}
+      {#if idle.kind !== 'hidden'}
+        <section class="patterns-detail" aria-label={PATTERNS_TEXT.idleTitle}>
+          <h3>{PATTERNS_TEXT.idleTitle}</h3>
+          <p class="patterns-note">{PATTERNS_TEXT.idleIntro}</p>
+          {#if idle.kind === 'note'}
+            <p class="patterns-note">{idle.text}</p>
+          {:else}
+            <div class="finding-meta idle-meta">
+              <span class="evidence-badge">{PATTERNS_TEXT.idleLabel}</span>
+              {#if idle.raised}<span class="finding-n">{PATTERNS_TEXT.idleRaised}</span>{/if}
+            </div>
+            <div class="table-scroll">
+              <table class="patterns-table">
+                <caption class="sr-only">{PATTERNS_TEXT.idleTitle}</caption>
+                <thead><tr><th scope="col">Quiet gap before</th><th scope="col" class="num">Requests</th><th scope="col" class="num">Median</th><th scope="col" class="num">Slowest 1 in 20</th><th scope="col" class="num">Slow</th></tr></thead>
+                <tbody>
+                  {#each idle.bands as band (band.key)}
+                    <tr><th scope="row">{band.label}</th><td class="num">{band.n}</td><td class="num">{band.median}</td><td class="num">{band.slowest}</td><td class="num">{band.slowRate}</td></tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+            <ul class="idle-lifts">
+              {#each idle.lifts as lift (lift.key)}<li>{lift.line}</li>{/each}
+            </ul>
+            {#if idle.partial}<div class="notice" role="status">{idle.partial}</div>{/if}
+            {#if idle.excluded}<p class="patterns-note">{idle.excluded}</p>{/if}
+            <p class="patterns-note">{PATTERNS_TEXT.idleCaveat}</p>
+            <p class="patterns-note">{PATTERNS_TEXT.idleSources}</p>
+          {/if}
+        </section>
+      {/if}
+
       {#if report.auditStalls.length}
         <section class="patterns-detail" aria-label={PATTERNS_TEXT.auditStalls}>
           <h3>{PATTERNS_TEXT.auditStalls}</h3>
@@ -323,6 +362,11 @@
   .reset-link:hover { color: var(--text); }
   .reset-link:focus-visible, .cite-button:focus-visible, .record-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius); }
   .patterns-run { justify-self: start; }
+  .idle-option { display: flex; align-items: center; gap: 8px; color: var(--text-2); font-size: var(--fs-3); cursor: pointer; }
+  .idle-option input { width: 16px; height: 16px; }
+  .idle-meta { margin-bottom: 8px; }
+  .idle-lifts { display: grid; gap: 4px; margin: 8px 0; padding-left: 18px; font-size: var(--fs-3); }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .patterns-note { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
   .patterns-summary { display: grid; gap: 10px; min-width: 0; }
   .patterns-verdict { margin: 0; font-size: var(--fs-5); font-weight: 600; }
