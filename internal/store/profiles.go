@@ -160,7 +160,7 @@ func (s *Store) AddSource(ctx context.Context, in audit.SourceInput) (audit.Sour
 	shared.refs++
 	s.sources[id] = p
 	if _, exists := s.perSource[id]; !exists {
-		s.perSource[id] = make(chan struct{}, 2)
+		s.perSource[id] = make(chan struct{}, audit.PerSourceConcurrency)
 	}
 	s.mu.Unlock()
 	return p.source, nil

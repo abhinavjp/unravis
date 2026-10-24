@@ -519,3 +519,17 @@ func TestEquivalentDeploymentSpellingsCannotCreateAmbiguousSavedSelections(t *te
 		t.Fatal("equivalent deployment must not create duplicate stable selection keys")
 	}
 }
+
+func TestPerSourceCapacityIsOne(t *testing.T) {
+	s := newStore(func(context.Context, string, *tls.Config) (clientHandle, error) { return &fakeClient{}, nil })
+	source, err := s.AddSource(context.Background(), authenticatedInput("HOST", "user", "secret", "Payroll", "Audit"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	got := cap(s.perSource[source.ID])
+	s.mu.Unlock()
+	if got != 1 {
+		t.Fatalf("cap(perSource) = %d, want %d", got, audit.PerSourceConcurrency)
+	}
+}

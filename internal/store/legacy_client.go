@@ -196,13 +196,7 @@ func probeMongoWireVersion(ctx context.Context, uri string, tlsConfig *tls.Confi
 	if err != nil {
 		return 0, err
 	}
-	clientOptions := optionsv1.Client().ApplyURI(probeURI).
-		SetMaxPoolSize(1).
-		SetConnectTimeout(audit.OperationTimeout).
-		SetServerSelectionTimeout(audit.OperationTimeout)
-	if tlsConfig != nil {
-		clientOptions.SetTLSConfig(tlsConfig.Clone())
-	}
+	clientOptions := legacyClientOptions(probeURI, tlsConfig).SetMaxPoolSize(1).SetMaxConnIdleTime(0)
 	client, err := mongov1.Connect(ctx, clientOptions)
 	if err != nil {
 		return 0, err
@@ -249,23 +243,31 @@ func newLegacyMongoHandle(ctx context.Context, uri string, tlsConfig *tls.Config
 }
 
 func newLegacyMongoHandleWithMonitor(ctx context.Context, uri string, tlsConfig *tls.Config, monitor *event.CommandMonitor) (*legacyMongoHandle, error) {
-	clientOptions := optionsv1.Client().ApplyURI(uri).
-		SetMaxPoolSize(4).
-		SetMinPoolSize(0).
-		SetConnectTimeout(audit.OperationTimeout).
-		SetServerSelectionTimeout(audit.OperationTimeout).
-		SetMaxConnIdleTime(2 * time.Minute)
+	clientOptions := legacyClientOptions(uri, tlsConfig)
 	if monitor != nil {
 		clientOptions.SetMonitor(monitor)
-	}
-	if tlsConfig != nil {
-		clientOptions.SetTLSConfig(tlsConfig.Clone())
 	}
 	client, err := mongov1.Connect(ctx, clientOptions)
 	if err != nil {
 		return nil, err
 	}
 	return &legacyMongoHandle{client: client}, nil
+}
+
+// legacyClientOptions mirrors mongoClientOptions for the v1 driver: the URI is
+// applied first and the app name and timeouts always win.
+func legacyClientOptions(uri string, tlsConfig *tls.Config) *optionsv1.ClientOptions {
+	clientOptions := optionsv1.Client().ApplyURI(uri).
+		SetAppName(appName()).
+		SetConnectTimeout(audit.ConnectTimeout).
+		SetServerSelectionTimeout(audit.ServerSelectionTimeout).
+		SetMaxPoolSize(4).
+		SetMinPoolSize(0).
+		SetMaxConnIdleTime(2 * time.Minute)
+	if tlsConfig != nil {
+		clientOptions.SetTLSConfig(tlsConfig.Clone())
+	}
+	return clientOptions
 }
 
 func (m *legacyMongoHandle) isLegacy() bool { return true }
@@ -369,7 +371,7 @@ func remainingLegacyMaxTime(ctx context.Context) (time.Duration, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	remaining := queryTimeout
+	remaining := queryBudget(ctx)
 	if deadline, ok := ctx.Deadline(); ok {
 		until := time.Until(deadline)
 		if until <= 0 {
