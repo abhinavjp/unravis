@@ -51,6 +51,12 @@ func TestWordingTwinsMatchTypeScript(t *testing.T) {
 		{"overlapAmbiguous", []string{"4"}, OverlapAmbiguous(4)},
 		{"auditCreate", []string{"7"}, AuditCreate(7)},
 		{"auditCreate", []string{"0.25"}, AuditCreate(0.25)},
+		{"metricRose", []string{"SUBJ", "MET", "DELTA", "SPAN", "FROM", "TO"},
+			MetricRose("SUBJ", "MET", "DELTA", "SPAN", "FROM", "TO")},
+		{"metricSampleOverlap", []string{"SRC", "MET", "VAL"}, MetricSampleOverlap("SRC", "MET", "VAL")},
+		{"markerBefore", []string{"OFF", "MARK", "HOST"}, MarkerBefore("OFF", "MARK", "HOST")},
+		{"episodeShare", []string{"COND", "3", "5", "1", "40"}, EpisodeShare("COND", 3, 5, 1, 40)},
+		{"topInWindow", []string{"MET", "LIST"}, TopInWindow("MET", "LIST")},
 	}
 	for _, c := range cases {
 		params, tmpl := tsTemplate(t, src, c.ts)
@@ -67,9 +73,33 @@ func TestWordingsPassCausalLint(t *testing.T) {
 	for _, s := range []string{
 		NotObservedThreshold("sql-a", "waits over 100 ms"), NotObservedGap("sampling"),
 		OverlapUnique("sql-a", "lock wait", 3), OverlapAmbiguous(2), AuditCreate(5),
+		MetricRose("web-a", "working set", "1.2 GB", "40 min", "0.8 GB", "2.0 GB"),
+		MetricSampleOverlap("Redis INFO", "blocked clients", "3"),
+		MarkerBefore("12 s", "Redis restart", "redis-a"),
+		EpisodeShare("Thread pool queue above 100", 4, 5, 2, 60),
+		TopInWindow("CPU", "w3wp 82 %, sqlservr 9 %"),
 	} {
 		if err := LintCausal(s); err != nil {
 			t.Errorf("%q: %v", s, err)
+		}
+	}
+}
+
+// Wave-2 plan §4.0: these words never appear in any wording template.
+func TestWordingsAvoidBannedWords(t *testing.T) {
+	raw, err := os.ReadFile(wordingsTS)
+	if err != nil {
+		t.Fatalf("read wordings.ts: %v", err)
+	}
+	all := strings.ToLower(string(raw)) + strings.ToLower(strings.Join([]string{
+		MetricRose("S", "M", "D", "P", "F", "T"), MetricSampleOverlap("S", "M", "V"), MarkerBefore("O", "M", "H"),
+		EpisodeShare("C", 1, 2, 3, 4), TopInWindow("M", "L"),
+		NotObservedThreshold("S", "T"), NotObservedGap("D"), OverlapUnique("S", "E", 1), OverlapAmbiguous(2),
+		OverlapShared(2), AuditCreate(1),
+	}, " "))
+	for _, w := range []string{"leak", "starv", "saturat", "caused", "because"} {
+		if strings.Contains(all, w) {
+			t.Errorf("a wording contains %q", w)
 		}
 	}
 }

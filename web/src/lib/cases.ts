@@ -361,7 +361,28 @@ export const IMPORT_CAPS: Record<string, number> = {
   appinsights: 512 * MiB,
   'sql-xe': 512 * MiB,
   'sql-errorlog': 256 * MiB,
-  'sql-pdh': 512 * MiB
+  'sql-pdh': 512 * MiB,
+  // Wave 2 (wave-2 plan section 2.4), listed before the importers ship.
+  'log4net-text': 2 * GiB,
+  'log4net-xml': 2 * GiB,
+  'serilog-clef': 2 * GiB,
+  'serilog-text': 2 * GiB,
+  'mel-console': 2 * GiB,
+  'mel-json': 2 * GiB,
+  'ancm-stdout': 256 * MiB,
+  'node-jsonl': 2 * GiB,
+  'dotnet-counters': 512 * MiB,
+  'win-procsnap': 256 * MiB,
+  'redis-slowlog': 16 * MiB,
+  'redis-latency': 4 * MiB,
+  'redis-info': 64 * MiB,
+  'redis-log': 512 * MiB,
+  'mongo-profile': 1 * GiB,
+  'mongo-currentop': 256 * MiB,
+  'mongo-serverstatus': 512 * MiB,
+  'mongostat-json': 256 * MiB,
+  'linux-sadf': 256 * MiB,
+  'linux-pidstat': 256 * MiB
 };
 /** No importer takes more than this, so a larger file is refused before it is sent. */
 export const LARGEST_CAP = 2 * GiB;

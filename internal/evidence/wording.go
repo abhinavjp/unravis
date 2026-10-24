@@ -45,3 +45,35 @@ func OverlapShared(intervals int) string {
 func AuditCreate(seconds float64) string {
 	return "Audit create took " + num(seconds) + " s as measured from the client side."
 }
+
+// Wave-2 wordings (wave-2 plan §4.0). The caller formats every value,
+// including its unit, so the sentence carries no number rule of its own.
+
+// MetricRose (Symptom): a sampled metric went up over a span.
+func MetricRose(subject, metric, delta, span, from, to string) string {
+	return subject + ": " + metric + " rose by " + delta + " over " + span + " (from " + from + " to " + to + ")."
+}
+
+// MetricSampleOverlap (Correlation): a metric sample falls inside a stalled
+// audit interval.
+func MetricSampleOverlap(source, metric, value string) string {
+	return "A " + source + " sample showed " + metric + " at " + value + " during this interval (Correlation)."
+}
+
+// MarkerBefore (Correlation): a marker event (a restart, a recycle, a crash)
+// comes shortly before a stalled audit interval.
+func MarkerBefore(offset, marker, host string) string {
+	return "This interval starts " + offset + " after a " + marker + " on " + host + " (Correlation)."
+}
+
+// EpisodeShare (Symptom): how often a condition holds inside stall episodes
+// and inside the comparison windows outside them.
+func EpisodeShare(condition string, k, n, m, total int) string {
+	return condition + " in " + strconv.Itoa(k) + " of " + strconv.Itoa(n) + " stall episodes, and in " +
+		strconv.Itoa(m) + " of " + strconv.Itoa(total) + " comparison windows outside stalls."
+}
+
+// TopInWindow (Symptom): the highest values of a metric in one window.
+func TopInWindow(metric, list string) string {
+	return "Highest " + metric + " in this window: " + list + "."
+}

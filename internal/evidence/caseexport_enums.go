@@ -23,26 +23,63 @@ var exportDropped = map[string]map[string]bool{
 	"appinsights": {"name": true, "operation_Id": true},
 }
 
+// appLogKinds are the kinds every app-log importer emits (wave-2 plan §2.3).
+var appLogKinds = []string{"log-entry", "log-rate", "app-request", "heartbeat-late", "app-start", "app-stop"}
+
+func appLogKindsPlus(extra ...string) map[string]bool {
+	return set(append(append([]string{}, appLogKinds...), extra...)...)
+}
+
 // exportKinds is the per-source list of event kinds. A kind that is not on
-// the list of its source is exported as "other".
+// the list of its source is exported as "other". The wave-2 sources are
+// listed before their importers are registered (wave-2 plan, card W2-F).
 var exportKinds = map[string]map[string]bool{
 	"iis-w3c":      set("request"),
 	"iis-httperr":  set("httperr"),
 	"win-counters": set("counter"),
 	"sql-pdh":      set("counter"),
 	"win-events": set("win-event", "apppool-recycle", "apppool-idle-shutdown", "task-start", "task-complete",
-		"task-fail", "task-skipped", "task-stop"),
-	"mongod-json":       set("slow-op"),
+		"task-fail", "task-skipped", "task-stop",
+		// W2-g
+		"worker-process-failure", "apppool-disabled", "app-crash", "app-hang", "service-crash",
+		"host-unexpected-shutdown", "low-memory", "aspnet-unhandled", "ancm-start-failure"),
+	"mongod-json":       set("slow-op", "mongod-start", "mongod-stop"),
 	"schedule-hangfire": set("schedule-boundary", "schedule-unknown", "job-run"),
 	"schedule-agent":    set("schedule-boundary", "schedule-unknown", "job-run"),
 	"appinsights": set("record", "request", "dependency", "exception", "trace", "pageview", "availability",
 		"custom-event"),
 	"sql-xe":       set("wait", "diagnostics", "error", "non-yielding", "deadlock"),
 	"sql-errorlog": set("io-stall", "start", "stop", "login-failed", "non-yielding"),
+	// Wave 2 (W2-b, W2-c, W2-d, W2-j): app logs.
+	"log4net-text": appLogKindsPlus(),
+	"log4net-xml":  appLogKindsPlus(),
+	"serilog-clef": appLogKindsPlus(),
+	"serilog-text": appLogKindsPlus(),
+	"mel-console":  appLogKindsPlus(),
+	"mel-json":     appLogKindsPlus(),
+	"ancm-stdout":  appLogKindsPlus("app-session"),
+	"node-jsonl":   appLogKindsPlus("proxy-command", "client-event"),
+	// W2-e, W2-f
+	"dotnet-counters": set("metric"),
+	"win-procsnap":    set("metric", "process-start", "process-gone"),
+	// W2-h, W2-i
+	"redis-slowlog": set("slow-command"),
+	"redis-latency": set("latency-spike"),
+	"redis-info":    set("metric", "redis-start"),
+	"redis-log": set("redis-start", "redis-stop", "bgsave-start", "bgsave-done", "bgsave-fail", "aof-rewrite-start",
+		"aof-rewrite-done", "aof-fsync-slow", "client-buffer-closed", "replication-event", "config-warning"),
+	// W2-k
+	"mongo-profile":      set("slow-op"),
+	"mongo-currentop":    set("inflight-op"),
+	"mongo-serverstatus": set("metric", "mongod-start"),
+	"mongostat-json":     set("metric"),
+	// W2-m
+	"linux-sadf":    set("metric"),
+	"linux-pidstat": set("metric"),
 }
 
 // exportUnits is the list of event units.
-var exportUnits = set("ms", "count", "percent-host", "percent-one-core")
+var exportUnits = set("ms", "count", "percent-host", "percent-one-core", "bytes", "percent", "per-sec", "ratio")
 
 // exportSeverities is the list of event severities.
 var exportSeverities = set("", "info", "warning", "error", "critical")
@@ -162,7 +199,13 @@ var (
 	winEventLogs      = fold("Application", "System", "Setup", "Security", "Microsoft-Windows-TaskScheduler/Operational")
 	winEventProviders = fold("Microsoft-Windows-WAS", "Microsoft-Windows-TaskScheduler", "W3SVC", "Application Error",
 		"Application Hang", ".NET Runtime", "Service Control Manager", "Microsoft-Windows-IIS-W3SVC-WP", "ASP.NET 4.0.30319.0",
-		"Microsoft-Windows-WinRM", "MSSQLSERVER", "Windows Error Reporting")
+		"Microsoft-Windows-WinRM", "MSSQLSERVER", "Windows Error Reporting",
+		// W2-g
+		"EventLog", "Microsoft-Windows-Kernel-Power", "Microsoft-Windows-Resource-Exhaustion-Detector",
+		"IIS AspNetCore Module V2", "IIS AspNetCore Module")
+	// faultingApps is the W2-g faulting-app list; the importer writes "other" for any other image.
+	faultingApps = fold("w3wp.exe", "dotnet.exe", "node.exe", "redis-server.exe", "memurai.exe", "mongod.exe",
+		"sqlservr.exe", "other")
 	mongoCommands = fold("find", "aggregate", "count", "distinct", "getMore", "insert", "update", "delete", "findAndModify",
 		"mapReduce", "createIndexes", "dropIndexes", "drop", "create", "collStats", "dbStats", "listCollections",
 		"listIndexes", "killCursors", "bulkWrite", "commitTransaction", "abortTransaction", "explain", "validate", "compact",
@@ -251,7 +294,9 @@ var (
 		"Log File(s) Used Size (KB)", "Percent Log Used", "Data File(s) Size (KB)", "Transactions/sec",
 		"Write Transactions/sec", "Active Temp Tables", "Log Growths", "Log Shrinks", "Repl. Pending Xacts", "Repl. Trans. Rate",
 		"Bytes Sent to Replica/sec", "Bytes Received from Replica/sec", "Log Send Queue Size", "Redo Queue Size",
-		"Transaction Delay", "Mirrored Write Transactions/sec", "Log Bytes Received/sec", "Recovery Queue", "Redone Bytes/sec")
+		"Transaction Delay", "Mirrored Write Transactions/sec", "Log Bytes Received/sec", "Recovery Queue", "Redone Bytes/sec",
+		// W2-f: W3SVC_W3WP and APP_POOL_WAS counters A1 reads.
+		"Process ID", "Active Requests", "Active Threads Count", "Requests Rejected", "Requests / Sec")
 )
 
 var counterObjectCanon = canonicalValues(counterObjects)
@@ -271,3 +316,155 @@ func canonCounterObject(v string) (string, bool) {
 	c, ok := counterObjects[lo]
 	return c, ok
 }
+
+// Wave-2 vocabularies (wave-2 plan §2.2, §2.3 and the cards W2-b to W2-m).
+// They are listed before the importers exist so that no card edits this file.
+var (
+	// appLogLevels holds the level spellings of log4net, winston, Serilog
+	// (short and CLEF), MEL (short and JSON) and pino. Spellings that differ
+	// only in letter case share one exported form, the last listed: "info",
+	// "warn", "Error", "Debug", "Verbose", "Fatal", "Trace".
+	appLogLevels = fold("DEBUG", "INFO", "WARN", "ERROR", "FATAL", "TRACE",
+		"error", "warn", "info", "http", "verbose", "debug", "silly",
+		"VRB", "DBG", "INF", "WRN", "ERR", "FTL",
+		"trce", "dbug", "info", "warn", "fail", "crit",
+		"Verbose", "Debug", "Information", "Warning", "Error", "Fatal", "Trace", "Critical", "None",
+		"10", "20", "30", "40", "50", "60")
+	appLogFamilyNames = []string{"redis-timeout", "redis-connection", "sql-pool-timeout", "sql-exec-timeout",
+		"mongo-selection-timeout", "mongo-pool-wait", "http-client-timeout", "heartbeat-late", "request-finished",
+		"app-start", "app-stop", "out-of-memory", "thread-abort", "task-canceled", "other"}
+	appLogFamilies = fold(appLogFamilyNames...)
+	// nodeFamilies adds the Redis client events of node-jsonl: a client-event
+	// carries its event name in "family" as client-<event>.
+	nodeFamilies = fold(append(append([]string{}, appLogFamilyNames...),
+		"client-connect", "client-ready", "client-reconnecting", "client-error", "client-end")...)
+	// exceptionTypes is the export list of framework exception types; the
+	// importer writes "app-exception" for every type outside the §2.2 rule, and
+	// the export shows a framework type that is not listed here as "[removed]".
+	exceptionTypes = fold("app-exception",
+		"System.Exception", "System.SystemException", "System.TimeoutException", "System.OutOfMemoryException",
+		"System.InsufficientMemoryException", "System.StackOverflowException", "System.InsufficientExecutionStackException",
+		"System.Threading.ThreadAbortException", "System.Threading.ThreadInterruptedException",
+		"System.Threading.SynchronizationLockException", "System.Threading.Tasks.TaskCanceledException",
+		"System.OperationCanceledException", "System.AggregateException", "System.InvalidOperationException",
+		"System.ArgumentException", "System.ArgumentNullException", "System.ArgumentOutOfRangeException",
+		"System.NullReferenceException", "System.ObjectDisposedException", "System.FormatException",
+		"System.InvalidCastException", "System.IndexOutOfRangeException", "System.NotSupportedException",
+		"System.NotImplementedException", "System.UnauthorizedAccessException", "System.DivideByZeroException",
+		"System.OverflowException", "System.Collections.Generic.KeyNotFoundException", "System.IO.IOException",
+		"System.IO.FileNotFoundException", "System.IO.DirectoryNotFoundException", "System.IO.EndOfStreamException",
+		"System.Net.Sockets.SocketException", "System.Net.WebException", "System.Net.Http.HttpRequestException",
+		"System.Net.HttpListenerException", "System.ComponentModel.Win32Exception",
+		"System.Data.SqlClient.SqlException", "System.Data.DataException", "System.Data.DBConcurrencyException",
+		"System.Transactions.TransactionAbortedException", "System.Text.Json.JsonException",
+		"System.Web.HttpException", "System.Web.HttpUnhandledException", "System.Web.HttpRequestValidationException",
+		"System.ServiceModel.CommunicationException", "System.ServiceModel.EndpointNotFoundException",
+		"System.Security.Authentication.AuthenticationException", "System.Security.SecurityException",
+		"Microsoft.Data.SqlClient.SqlException", "Microsoft.EntityFrameworkCore.DbUpdateException",
+		"Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException",
+		"Microsoft.AspNetCore.Connections.ConnectionResetException",
+		"Microsoft.AspNetCore.Connections.ConnectionAbortedException",
+		"Microsoft.AspNetCore.Server.Kestrel.Core.BadHttpRequestException",
+		"Microsoft.AspNetCore.Http.BadHttpRequestException",
+		"StackExchange.Redis.RedisTimeoutException", "StackExchange.Redis.RedisConnectionException",
+		"StackExchange.Redis.RedisServerException", "StackExchange.Redis.RedisCommandException",
+		"StackExchange.Redis.RedisException",
+		"MongoDB.Driver.MongoException", "MongoDB.Driver.MongoConnectionException",
+		"MongoDB.Driver.MongoConnectionPoolPausedException", "MongoDB.Driver.MongoWaitQueueFullException",
+		"MongoDB.Driver.MongoExecutionTimeoutException", "MongoDB.Driver.MongoCommandException",
+		"MongoDB.Driver.MongoWriteException", "MongoDB.Driver.MongoNotPrimaryException",
+		"MongoDB.Driver.MongoNodeIsRecoveringException", "MongoDB.Driver.MongoAuthenticationException",
+		"Newtonsoft.Json.JsonReaderException", "Newtonsoft.Json.JsonSerializationException",
+		"Npgsql.NpgsqlException", "Npgsql.PostgresException", "NHibernate.ADOException",
+		"NHibernate.StaleObjectStateException", "Hangfire.Storage.DistributedLockTimeoutException",
+		"Polly.Timeout.TimeoutRejectedException", "Polly.CircuitBreaker.BrokenCircuitException",
+		"Polly.Bulkhead.BulkheadRejectedException", "Grpc.Core.RpcException", "Azure.RequestFailedException",
+		"log4net.Core.LogException")
+	errnoCodes = fold("ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EPIPE", "ENOTFOUND", "EAI_AGAIN", "other")
+	// redisCommands is the export list of Redis command names. W2-h owns the
+	// importer's table (internal/importer/redis/commands.go); a name the
+	// importer keeps that is missing here is shown as "[removed]".
+	redisCommands = fold("other",
+		"GET", "SET", "MGET", "MSET", "MSETNX", "SETEX", "SETNX", "PSETEX", "GETSET", "GETDEL", "GETEX", "APPEND",
+		"STRLEN", "SETRANGE", "GETRANGE", "INCR", "INCRBY", "INCRBYFLOAT", "DECR", "DECRBY", "SETBIT", "GETBIT",
+		"BITCOUNT", "BITOP", "BITPOS", "BITFIELD", "DEL", "UNLINK", "EXISTS", "EXPIRE", "PEXPIRE", "EXPIREAT",
+		"PEXPIREAT", "EXPIRETIME", "TTL", "PTTL", "PERSIST", "TYPE", "KEYS", "SCAN", "RENAME", "RENAMENX", "DUMP",
+		"RESTORE", "OBJECT", "TOUCH", "RANDOMKEY", "COPY", "MOVE", "MIGRATE", "SORT", "SORT_RO",
+		"HGET", "HSET", "HMGET", "HMSET", "HGETALL", "HDEL", "HEXISTS", "HINCRBY", "HINCRBYFLOAT", "HKEYS", "HVALS",
+		"HLEN", "HSCAN", "HSETNX", "HSTRLEN", "HRANDFIELD",
+		"LPUSH", "RPUSH", "LPUSHX", "RPUSHX", "LPOP", "RPOP", "LRANGE", "LLEN", "LINDEX", "LSET", "LREM", "LTRIM",
+		"LINSERT", "LPOS", "LMOVE", "BLMOVE", "BLPOP", "BRPOP", "BRPOPLPUSH", "RPOPLPUSH", "LMPOP", "BLMPOP",
+		"SADD", "SREM", "SMEMBERS", "SISMEMBER", "SMISMEMBER", "SCARD", "SPOP", "SRANDMEMBER", "SINTER", "SINTERCARD",
+		"SUNION", "SDIFF", "SINTERSTORE", "SUNIONSTORE", "SDIFFSTORE", "SSCAN", "SMOVE",
+		"ZADD", "ZREM", "ZRANGE", "ZREVRANGE", "ZRANGEBYSCORE", "ZREVRANGEBYSCORE", "ZRANGEBYLEX", "ZREVRANGEBYLEX",
+		"ZRANGESTORE", "ZRANK", "ZREVRANK", "ZSCORE", "ZMSCORE", "ZCARD", "ZCOUNT", "ZLEXCOUNT", "ZINCRBY",
+		"ZREMRANGEBYSCORE", "ZREMRANGEBYRANK", "ZREMRANGEBYLEX", "ZUNIONSTORE", "ZINTERSTORE", "ZDIFFSTORE", "ZUNION",
+		"ZINTER", "ZDIFF", "ZSCAN", "ZPOPMIN", "ZPOPMAX", "BZPOPMIN", "BZPOPMAX", "ZMPOP", "BZMPOP", "ZRANDMEMBER",
+		"XADD", "XREAD", "XREADGROUP", "XRANGE", "XREVRANGE", "XLEN", "XACK", "XDEL", "XTRIM", "XGROUP", "XINFO",
+		"XPENDING", "XCLAIM", "XAUTOCLAIM", "XSETID",
+		"GEOADD", "GEODIST", "GEOHASH", "GEOPOS", "GEORADIUS", "GEORADIUSBYMEMBER", "GEOSEARCH", "GEOSEARCHSTORE",
+		"PFADD", "PFCOUNT", "PFMERGE",
+		"PUBLISH", "SUBSCRIBE", "UNSUBSCRIBE", "PSUBSCRIBE", "PUNSUBSCRIBE", "PUBSUB", "SPUBLISH", "SSUBSCRIBE",
+		"SUNSUBSCRIBE", "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH",
+		"EVAL", "EVALSHA", "EVAL_RO", "EVALSHA_RO", "SCRIPT", "FCALL", "FCALL_RO", "FUNCTION",
+		"PING", "ECHO", "AUTH", "HELLO", "SELECT", "QUIT", "RESET", "CLIENT", "INFO", "CONFIG", "DBSIZE", "FLUSHDB",
+		"FLUSHALL", "SAVE", "BGSAVE", "BGREWRITEAOF", "LASTSAVE", "SHUTDOWN", "SLOWLOG", "LATENCY", "MEMORY",
+		"MONITOR", "DEBUG", "COMMAND", "CLUSTER", "READONLY", "READWRITE", "REPLICAOF", "SLAVEOF", "ROLE", "SYNC",
+		"PSYNC", "REPLCONF", "WAIT", "WAITAOF", "TIME", "LOLWUT", "MODULE", "ACL", "SWAPDB", "FAILOVER")
+	dotnetProviders = fold("System.Runtime", "Microsoft.AspNetCore.Hosting", "Microsoft-AspNetCore-Server-Kestrel",
+		"Microsoft.AspNetCore.Server.Kestrel", "System.Net.Http", "System.Net.NameResolution", "System.Net.Sockets")
+	// dotnetCounters are the W2-e counter display names without their unit
+	// suffix, and the meter instrument names.
+	dotnetCounters = fold("CPU Usage", "Working Set", "GC Heap Size", "Gen 0 GC Count", "Gen 1 GC Count",
+		"Gen 2 GC Count", "% Time in GC", "% Time in GC since last GC", "Allocation Rate", "ThreadPool Thread Count",
+		"ThreadPool Queue Length", "ThreadPool Completed Work Item Count", "Monitor Lock Contention Count",
+		"Exception Count", "Time paused by GC", "LOH Size", "GC Fragmentation", "Connection Queue Length",
+		"Request Queue Length", "Current Connections", "Request Rate", "Current Requests", "Failed Requests",
+		"Total Requests",
+		"dotnet.process.cpu.time", "dotnet.process.memory.working_set", "dotnet.gc.collections", "dotnet.gc.pause.time",
+		"dotnet.gc.last_collection.heap.size", "dotnet.thread_pool.thread.count", "dotnet.thread_pool.queue.length",
+		"dotnet.thread_pool.work_item.count", "dotnet.monitor.lock_contentions", "dotnet.exceptions",
+		"http.server.request.duration", "http.server.active_requests", "kestrel.active_connections",
+		"kestrel.queued_connections", "kestrel.queued_requests", "http.client.request.duration",
+		"http.client.open_connections", "http.client.request.time_in_queue")
+	gcGenerations = fold("gen0", "gen1", "gen2", "loh", "poh")
+	procMetrics   = fold("cpu", "working-set", "private-bytes", "handles", "threads")
+	// redisLatencyEvents is the documented LATENCY event list plus "other".
+	redisLatencyEvents = fold("command", "fast-command", "fork", "aof-fsync-always", "aof-write",
+		"aof-write-pending-fsync", "aof-write-active-child", "aof-write-alone", "aof-fstat", "aof-rename",
+		"aof-rewrite-diff-write", "expire-cycle", "eviction-cycle", "eviction-del", "eviction-lazyfree",
+		"active-defrag-cycle", "rdb-unlink-temp-file", "other")
+	redisInfoMetrics = fold("uptime_in_seconds", "used_memory", "used_memory_rss", "used_memory_peak", "maxmemory",
+		"mem_fragmentation_ratio", "connected_clients", "blocked_clients", "instantaneous_ops_per_sec",
+		"rejected_connections", "evicted_keys", "expired_keys", "latest_fork_usec", "total_connections_received",
+		"keyspace_hits", "keyspace_misses", "used_cpu_sys", "used_cpu_user", "rdb_bgsave_in_progress",
+		"aof_rewrite_in_progress")
+	// redisRoles: redis.log M/S/C/X, and INFO role ("slave" is written as "replica").
+	redisRoles = fold("master", "replica", "child", "sentinel")
+	// redisLogFamilies refines a redis.log kind; W2-i writes "other" for a line
+	// of a known kind that has no finer family.
+	redisLogFamilies = fold("rdb", "aof", "fork", "output-buffer-limit", "master-link-down", "master-link-up",
+		"full-sync", "partial-sync", "replica-connected", "replica-lost", "overcommit-memory",
+		"transparent-huge-pages", "tcp-backlog", "maxclients", "no-config-file", "other")
+	mongoOps   = fold("none", "update", "insert", "query", "getmore", "remove", "killcursors", "command")
+	boolValues = fold("true", "false")
+	// serverStatusMetrics are the dotted serverStatus paths the W2-k recipe projects.
+	serverStatusMetrics = fold("uptime", "connections.current", "connections.available",
+		"globalLock.currentQueue.total", "globalLock.currentQueue.readers", "globalLock.currentQueue.writers",
+		"globalLock.activeClients.readers", "globalLock.activeClients.writers", "opcounters.query",
+		"opcounters.insert", "opcounters.update", "opcounters.delete", "opcounters.getmore", "opcounters.command",
+		"mem.resident", "mem.virtual", "wiredTiger.cache.bytes currently in the cache",
+		"wiredTiger.cache.tracked dirty bytes in the cache", "wiredTiger.cache.maximum bytes configured",
+		"wiredTiger.concurrentTransactions.read.out", "wiredTiger.concurrentTransactions.read.available",
+		"wiredTiger.concurrentTransactions.write.out", "wiredTiger.concurrentTransactions.write.available")
+	// mongostatMetrics are the mongostat columns; "qrw" and "arw" are split
+	// into their read and write halves.
+	mongostatMetrics = fold("insert", "query", "update", "delete", "getmore", "command", "dirty", "used", "flushes",
+		"vsize", "res", "qr", "qw", "ar", "aw", "netIn", "netOut", "conn")
+	// linuxMetrics are the sadf -d CPU and memory columns and the pidstat -u -r
+	// columns, as metric names. Sizes are written in bytes (unit "bytes").
+	linuxMetrics = fold("cpu-user", "cpu-nice", "cpu-system", "cpu-iowait", "cpu-steal", "cpu-idle",
+		"mem-free", "mem-avail", "mem-used", "mem-used-percent", "mem-commit-percent",
+		"cpu-usr", "cpu-guest", "cpu-wait", "cpu", "minflt-per-sec", "majflt-per-sec", "vsz", "rss",
+		"mem-percent")
+)

@@ -82,7 +82,43 @@ var displayNames = map[string]string{
 	"win-counters": "Windows performance counters",
 	"win-events":   "Windows event log",
 	"appinsights":  "Application Insights",
-	"schedule":     "schedule export",
+	// The importers are named schedule-hangfire and schedule-agent; the old
+	// "schedule" key matched no source.
+	"schedule-hangfire": "Hangfire schedule export",
+	"schedule-agent":    "SQL Server Agent schedule export",
+	// Wave 2 (pre-landed by W2-F).
+	"log4net-text":       "log4net log",
+	"log4net-xml":        "log4net XML log",
+	"serilog-clef":       "Serilog JSON log",
+	"serilog-text":       "Serilog log",
+	"mel-console":        "ASP.NET Core console log",
+	"mel-json":           "ASP.NET Core JSON log",
+	"ancm-stdout":        "ASP.NET Core stdout log",
+	"node-jsonl":         "Node proxy log",
+	"dotnet-counters":    ".NET runtime counters",
+	"win-procsnap":       "process snapshots",
+	"redis-slowlog":      "Redis SLOWLOG",
+	"redis-latency":      "Redis latency monitor",
+	"redis-info":         "Redis INFO samples",
+	"redis-log":          "Redis log",
+	"mongo-profile":      "MongoDB profiler",
+	"mongo-currentop":    "MongoDB current operations",
+	"mongo-serverstatus": "MongoDB serverStatus samples",
+	"mongostat-json":     "mongostat samples",
+	"linux-sadf":         "Linux sar samples",
+	"linux-pidstat":      "Linux pidstat samples",
+}
+
+// eventPhrases are the plain event names whose kind does not read well with
+// its hyphens replaced. Each starts with a consonant sound, for "had a ...".
+var eventPhrases = map[string]string{
+	"slow-op":        "slow operation",
+	"slow-command":   "slow command",
+	"inflight-op":    "running operation",
+	"app-request":    "slow request",
+	"heartbeat-late": "late heartbeat",
+	"proxy-command":  "slow proxy command",
+	"process-gone":   "process exit window",
 }
 
 func displayName(source string) string {
@@ -94,9 +130,10 @@ func displayName(source string) string {
 
 // eventPhrase is the plain name of an event for OverlapUnique.
 func eventPhrase(e evidence.Event) string {
+	if p, ok := eventPhrases[e.Kind]; ok {
+		return p
+	}
 	switch e.Kind {
-	case "slow-op":
-		return "slow operation"
 	case "wait":
 		switch e.Attrs["wait_class"] {
 		case "lock", "latch", "preemptive":
