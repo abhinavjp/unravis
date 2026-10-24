@@ -85,8 +85,8 @@ func TestTextGoodFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.Rows != 4 || rep.Rejected != 0 {
-		t.Fatalf("rows %d rejected %d, want 4 and 0", rep.Rows, rep.Rejected)
+	if rep.Rows != 6 || rep.Rejected != 0 { // 4 headers and 2 continuation lines
+		t.Fatalf("rows %d rejected %d, want 6 and 0", rep.Rows, rep.Rejected)
 	}
 	if rep.Quality.TimezoneRule != clock.RuleHostLocal || rep.FieldRules["timestamp"] != clock.RuleHostLocal {
 		t.Errorf("timezone rule %q", rep.Quality.TimezoneRule)
@@ -262,7 +262,7 @@ func TestTextStatedPattern(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.Rows != 2 || len(evs) == 0 {
+	if rep.Rows != 3 || len(evs) == 0 { // 2 headers and 1 continuation line
 		t.Fatalf("rows %d events %d", rep.Rows, len(evs))
 	}
 }
@@ -276,7 +276,7 @@ func TestTextPreambleGap(t *testing.T) {
 	if !hasGap(rep, GapPreamble) {
 		t.Errorf("gaps %v lack the preamble sentence", rep.KnownGaps)
 	}
-	if rep.Rows != 4 {
+	if rep.Rows != 6 { // the preamble line is not a row
 		t.Errorf("rows %d", rep.Rows)
 	}
 }
@@ -359,8 +359,45 @@ func TestTextContinuationNeverRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.Rows != 1 || rep.Rejected != 0 || len(evs) == 0 {
+	if rep.Rows != 4 || rep.Rejected != 0 || len(evs) == 0 {
 		t.Fatalf("rows %d rejected %d events %d", rep.Rows, rep.Rejected, len(evs))
+	}
+}
+
+// Continuation lines are rows: a file of one header and a flood of continuation lines
+// stops at MaxRows like any other.
+func TestTextContinuationLinesCountAgainstMaxRows(t *testing.T) {
+	var b bytes.Buffer
+	b.WriteString("2001-10-25 14:02:30,950 [1] ERROR Synthetic.Api.A - boom\n")
+	for i := 0; i < 200; i++ {
+		b.WriteString("   at Synthetic.Api.A.Frame()\n")
+	}
+	o := baseOpts(t)
+	o.Limits.MaxRows = 50
+	_, _, err := parse(t, NewText(), b.Bytes(), o)
+	var le *importer.LimitError
+	if !errors.As(err, &le) || le.Limit != "rows" {
+		t.Fatalf("err %v, want rows limit", err)
+	}
+}
+
+// Continuation lines are in the denominator of the reject fraction: 1 rejected header in
+// 40 lines is under the 5% cap; 1 in 10 is over it.
+func TestTextContinuationLinesCountInRejectFraction(t *testing.T) {
+	build := func(frames int) []byte {
+		var b bytes.Buffer
+		b.WriteString("2001-10-25 14:02:30,950 [1] ERROR Synthetic.Api.A - boom\n")
+		for i := 0; i < frames; i++ {
+			b.WriteString("   at Synthetic.Api.A.Frame()\n")
+		}
+		b.WriteString("2001-13-45 14:02:30,950 [1] ERROR Synthetic.Api.A - bad time\n")
+		return b.Bytes()
+	}
+	if _, rep, err := parse(t, NewText(), build(38), baseOpts(t)); err != nil || rep.Rejected != 1 {
+		t.Fatalf("err %v rejected %d, want one rejected row and no refusal", err, rep.Rejected)
+	}
+	if _, _, err := parse(t, NewText(), build(8), baseOpts(t)); err == nil {
+		t.Fatal("1 rejected row in 10 should be refused")
 	}
 }
 
