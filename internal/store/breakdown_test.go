@@ -573,6 +573,7 @@ func TestLegacyBreakdownMatchesModern(t *testing.T) {
 						modern := bdBreakdown(t, bdStore(t, false, docs), q, dim, 3)
 						old := bdBreakdown(t, bdStore(t, true, docs), q, dim, 3)
 						modern.Sources, old.Sources = nil, nil
+						modern.Provenance, old.Provenance = nil, nil // each store has its own source id and timings
 						if !reflect.DeepEqual(modern, old) {
 							t.Fatalf("legacy differs from modern\nmodern: %#v\nlegacy: %#v", modern, old)
 						}
@@ -742,6 +743,7 @@ func TestBreakdownHonorsRecordFiltersAndStates(t *testing.T) {
 					t.Fatalf("total modern %d, legacy %d, want %d", modern.Total, old.Total, want)
 				}
 				modern.Sources, old.Sources = nil, nil
+				modern.Provenance, old.Provenance = nil, nil // carries each store's own source id and timings
 				if !reflect.DeepEqual(modern, old) {
 					t.Fatalf("legacy differs from modern\nmodern: %#v\nlegacy: %#v", modern, old)
 				}
@@ -1042,5 +1044,77 @@ func TestBreakdownPooledKindsOmitPercentiles(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestBreakdownCarriesProvenance(t *testing.T) {
+	now := bdNow()
+	cases := bdCases(now)
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprint("legacy=", legacy), func(t *testing.T) {
+			h := bdStore(t, legacy, bdDocs(cases), "second")
+			q := bdQuery(now)
+			got := bdBreakdown(t, h, q, audit.BreakdownUserAgent, 3)
+			if len(got.Provenance) != 2 {
+				t.Fatalf("provenance = %+v", got.Provenance)
+			}
+			for i, pv := range got.Provenance {
+				if pv.SourceID != h.sources[i].ID || pv.Window != "current" || pv.QueryMode != audit.QueryModeExact {
+					t.Fatalf("pv %d = %+v", i, pv)
+				}
+				if pv.Completeness != audit.RanToEnd || pv.DocsExamined != nil || pv.PartialReason != "" || pv.Margin != nil || pv.Note != "" {
+					t.Fatalf("pv %d = %+v", i, pv)
+				}
+				if !pv.Start.Equal(q.Start) || !pv.End.Equal(q.End) {
+					t.Fatalf("window = %v..%v", pv.Start, pv.End)
+				}
+				if pv.SampleSize != got.Total/2 || pv.DocsReturned != pv.SampleSize || pv.MaxTimeMs != audit.InteractiveQueryBudget.Milliseconds() {
+					t.Fatalf("pv %d = %+v (total %d)", i, pv, got.Total)
+				}
+			}
+		})
+	}
+}
+
+func TestBreakdownFailedSourceProvenanceIsPartial(t *testing.T) {
+	now := bdNow()
+	h := bdStore(t, false, bdDocs(bdCases(now)))
+	h.handle.aggregateFn = func(context.Context, string, string, mongo.Pipeline) (mongoCursor, error) {
+		return nil, context.DeadlineExceeded
+	}
+	got := bdBreakdown(t, h, bdQuery(now), audit.BreakdownUserAgent, 3)
+	if len(got.Provenance) != 1 || got.Provenance[0].Completeness != audit.Partial || got.Provenance[0].PartialReason != "timeout" {
+		t.Fatalf("provenance = %+v", got.Provenance)
+	}
+}
+
+func TestBreakdownHintPrependsIDStageAndFallsBackOnLegacy(t *testing.T) {
+	now := bdNow()
+	f := newHintFixture(t, false, calibrationDocs(t, now.Add(-2*time.Hour), 1000))
+	q := bdQuery(now, f.source.ID)
+	q.QueryMode = audit.QueryModeHint
+	got, err := f.store.Breakdown(context.Background(), audit.BreakdownInput{Query: q, Dim: audit.BreakdownUserAgent, Top: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if with, without := f.idMatches(); with != 1 || without != 0 || f.calibrations() != 1 {
+		t.Fatalf("hint must prepend the _id stage (with=%d without=%d cal=%d)", with, without, f.calibrations())
+	}
+	if pv := got.Provenance[0]; pv.QueryMode != audit.QueryModeHint || pv.Completeness != audit.HintBounded || pv.Margin == nil {
+		t.Fatalf("pv = %+v", pv)
+	}
+
+	l := newHintFixture(t, true, nil)
+	q = bdQuery(now, l.source.ID)
+	q.QueryMode = audit.QueryModeHint
+	got, err = l.store.Breakdown(context.Background(), audit.BreakdownInput{Query: q, Dim: audit.BreakdownUserAgent, Top: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if with, _ := l.idMatches(); with != 0 || l.calibrations() != 0 {
+		t.Fatal("legacy must not use hint")
+	}
+	if pv := got.Provenance[0]; pv.QueryMode != audit.QueryModeExact || !strings.Contains(pv.Note, "not available on MongoDB 3.4") {
+		t.Fatalf("pv = %+v", pv)
 	}
 }
