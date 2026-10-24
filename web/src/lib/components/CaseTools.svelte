@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CaseApiError, canSaveCaseExport, caseExportSummary, confirmCaseExport, fetchTimeline, previewCaseExport, type CaseExportPreview } from '../cases';
+  import { CaseApiError, canSaveCaseExport, isCaseGone, caseExportSummary, confirmCaseExport, fetchTimeline, previewCaseExport, type CaseExportPreview } from '../cases';
   import { IMPORT_TEXT, caseExportSavedText, errorText } from '../copy/importCopy';
   import { contentMatches, describeCount, downloadName } from '../export';
   import type { TimelineView } from '../timeline';
@@ -9,7 +9,7 @@
   // What a case offers once files are in it: a timeline against the audit window on screen, and a redacted export.
   // Both are read-only. The export is previewed whole first and only what the preview showed is saved.
   // The parent gives each case its own copy of this component ({#key}), so nothing here carries over to another case.
-  let { caseId, query, zone }: { caseId: string; query: Query; zone: string } = $props();
+  let { caseId, query, zone, onGone }: { caseId: string; query: Query; zone: string; onGone?: () => void } = $props();
 
   let timeline = $state.raw<TimelineView | null>(null);
   let timelineBusy = $state(false);
@@ -27,6 +27,7 @@
   $effect(() => () => controller?.abort());
 
   function failure(error: unknown): string {
+    if (isCaseGone(error)) onGone?.();
     return error instanceof CaseApiError ? errorText(error) : errorText({ status: 0, reason: 'unreachable', message: '' });
   }
 

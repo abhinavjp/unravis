@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import {
-    CaseApiError, caseCode, commitBlock, commitImport, fileSizeProblem, listHosts, listImports, previewImport, previewKey, reasonCounts,
+    CaseApiError, caseCode, commitBlock, isCaseGone, commitImport, fileSizeProblem, listHosts, listImports, previewImport, previewKey, reasonCounts,
     type CaseInfo, type ImportRecord, type ImportReport
   } from '../cases';
   import {
@@ -50,7 +50,11 @@
   const details = $derived(report ? qualityDetails(report.quality) : []);
   const showTimeZone = $derived(report?.quality.timezoneRule ?? '');
 
+  let drawer = $state<HTMLElement>();
+
   onMount(() => {
+    // Focus starts inside the dialog. Left on the button that opened it, Tab would walk the page behind the panel and the Tab trap would never start.
+    drawer?.focus();
     listHosts().then((labels) => { hosts = labels; }).catch(() => { hosts = []; });
     return () => controller?.abort();
   });
@@ -72,6 +76,8 @@
 
   function fail(error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') return;
+    // An erased case drops out of the list, which also clears this form, so the case list says what happened.
+    if (isCaseGone(error)) { void casePanel?.noteGone(); return; }
     problem = error instanceof CaseApiError ? errorText(error) : errorText({ status: 0, reason: 'unreachable', message: '' });
   }
 
@@ -176,7 +182,7 @@
   const at = (value: string) => formatTime(value, { zone: 'UTC', year: true });
 </script>
 
-<Drawer class="import-drawer" title={IMPORT_TEXT.title} titleId="import-title" intro={IMPORT_TEXT.intro} closeLabel={IMPORT_TEXT.closeLabel} {onClose}>
+<Drawer class="import-drawer" title={IMPORT_TEXT.title} titleId="import-title" intro={IMPORT_TEXT.intro} closeLabel={IMPORT_TEXT.closeLabel} bind:element={drawer} {onClose}>
   <p class="gate" role="note" aria-label={IMPORT_TEXT.noticeLabel}>{GATING_BANNER}</p>
 
   <CasePanel bind:this={casePanel} bind:cases bind:selectedId />
@@ -282,7 +288,7 @@
 
   {#if selected}
     <!-- A new import changes what the case holds, so a timeline or export preview built before it starts over. -->
-    {#key selected.id + ':' + imports.length}<CaseTools caseId={selected.id} {query} {zone} />{/key}
+    {#key selected.id + ':' + imports.length}<CaseTools caseId={selected.id} {query} {zone} onGone={() => casePanel?.noteGone()} />{/key}
   {/if}
 
   {#if selected}

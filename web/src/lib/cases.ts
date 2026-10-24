@@ -112,6 +112,9 @@ export class CaseApiError extends Error {
   }
 }
 
+/** True when the server says the case is gone (erased in another tab or window), so the case list on screen is out of date. */
+export const isCaseGone = (error: unknown): boolean => error instanceof CaseApiError && error.reason === 'case-not-found';
+
 /* ------------------------------------------------------------------ requests */
 
 async function send(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<Response> {

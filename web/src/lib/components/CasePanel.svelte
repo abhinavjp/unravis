@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { CaseApiError, caseCode, closeCase, createCase, eraseCase, eraseConfirmed, listCases, type CaseInfo } from '../cases';
+  import { CaseApiError, caseCode, closeCase, createCase, eraseCase, eraseConfirmed, isCaseGone, listCases, type CaseInfo } from '../cases';
   import { ERASE_DONE, IMPORT_TEXT, caseStats, errorText, erasePrompt } from '../copy/importCopy';
 
   // The case list: pick a case, create one, close one, or erase one. Erase asks for the case code to be typed, then shows the one storage sentence.
@@ -8,6 +8,7 @@
   let { cases = $bindable<CaseInfo[]>([]), selectedId = $bindable(''), onChanged }: { cases?: CaseInfo[]; selectedId?: string; onChanged?: () => void } = $props();
 
   let loading = $state(true);
+  let loadFailed = $state(false);
   let busy = $state(false);
   let title = $state('');
   let problem = $state('');
@@ -21,14 +22,23 @@
 
   function fail(error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') return;
+    if (isCaseGone(error)) { void noteGone(); return; }
     problem = error instanceof CaseApiError ? errorText(error) : errorText({ status: 0, reason: 'unreachable', message: '' });
+  }
+
+  /** The case was erased elsewhere: reload the list so it stops offering that case, and say why it vanished. */
+  export async function noteGone() {
+    await refresh();
+    erased = false; eraseId = ''; typed = '';
+    problem = errorText({ status: 404, reason: 'case-not-found', message: '' });
   }
 
   export async function refresh() {
     try {
       cases = await listCases(controller?.signal);
       if (selectedId && !cases.some((c) => c.id === selectedId)) selectedId = '';
-    } catch (error) { fail(error); }
+      loadFailed = false;
+    } catch (error) { loadFailed = true; fail(error); }
   }
 
   onMount(() => {
@@ -82,7 +92,8 @@
   {#if loading}
     <p class="note" role="status">{IMPORT_TEXT.loadingCases}</p>
   {:else if cases.length === 0}
-    <p class="note">{IMPORT_TEXT.noCases}</p>
+    <!-- A list that failed to load is not an empty list; the error below says why. -->
+    {#if !loadFailed}<p class="note">{IMPORT_TEXT.noCases}</p>{/if}
   {:else}
     <ul class="case-list">
       {#each cases as c (c.id)}
