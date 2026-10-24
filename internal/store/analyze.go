@@ -101,26 +101,17 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 			notRun := func(code string) []audit.Provenance {
 				return []audit.Provenance{failedProvenance(p, "current", q.Start, q.End, audit.QueryModeExact, nil, notRunNote(q.QueryMode), code, 0)}
 			}
-			if err := acquire(workCtx, s.global); err != nil {
-				code, message := sourceAdmissionError(err)
-				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}, provenance: notRun(code)}
+			release, denied := s.admit(workCtx, p)
+			if denied != nil {
+				if denied.Stage == admitRemoved {
+					results[i] = failedSource(p, denied.Message)
+				} else {
+					results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: denied.Code, Error: denied.Message}}
+				}
+				results[i].provenance = notRun(denied.Code)
 				return
 			}
-			defer func() { <-s.global }()
-			s.mu.RLock()
-			per := s.perSource[p.source.ID]
-			s.mu.RUnlock()
-			if per == nil {
-				results[i] = failedSource(p, "Source was removed before the query started.")
-				results[i].provenance = notRun("source_unavailable")
-				return
-			}
-			if err := acquire(workCtx, per); err != nil {
-				code, message := sourceAdmissionError(err)
-				results[i] = sourceAnalysis{result: audit.SourceResult{SourceID: p.source.ID, OK: false, Version: p.version, ErrorCode: code, Error: message}, provenance: notRun(code)}
-				return
-			}
-			defer func() { <-per }()
+			defer release()
 			// Hint mode: calibrate once per source, after admission. When it cannot
 			// run the source is read exact and each entry says why.
 			margin, note := s.resolveHint(workCtx, p, q.QueryMode, "")
