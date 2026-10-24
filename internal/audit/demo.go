@@ -16,6 +16,8 @@ type demoRepository struct {
 	now     time.Time
 	sources []Source
 	records []RequestRecord
+	// lateWrites marks the late-written rows of newDemoWithLateWrite by ID.
+	lateWrites map[string]bool
 }
 
 type demoCursor struct {
@@ -145,6 +147,7 @@ func (d *demoRepository) DeleteSource(ctx context.Context, id string) error {
 }
 
 func (d *demoRepository) Analyze(ctx context.Context, q Query) (Analysis, error) {
+	started := time.Now()
 	if err := ctx.Err(); err != nil {
 		return Analysis{}, err
 	}
@@ -159,7 +162,9 @@ func (d *demoRepository) Analyze(ctx context.Context, q Query) (Analysis, error)
 		}
 		selected[id] = true
 	}
-	current, reference := aggregateDemo(d.records, q, selected, true), aggregateDemo(d.records, q, selected, false)
+	scope := d.scopeFor(q.QueryMode)
+	current := aggregateDemo(scope.windowRecords(d.records, q.Start, q.End), q, selected, true)
+	reference := aggregateDemo(scope.windowRecords(d.records, q.BaselineStart, q.BaselineEnd), q, selected, false)
 	if err := ctx.Err(); err != nil {
 		return Analysis{}, err
 	}
@@ -167,7 +172,19 @@ func (d *demoRepository) Analyze(ctx context.Context, q Query) (Analysis, error)
 	for _, id := range q.SourceIDs {
 		sourceResults = append(sourceResults, SourceResult{SourceID: id, OK: true, Version: "demo"})
 	}
-	return BuildAnalysis(q, current, reference, sourceResults)
+	analysis, err := BuildAnalysis(q, current, reference, sourceResults)
+	if err != nil {
+		return Analysis{}, err
+	}
+	elapsed := time.Since(started)
+	currentCounts, referenceCounts := bucketCountsBySource(current), bucketCountsBySource(reference)
+	for _, id := range q.SourceIDs {
+		analysis.Provenance = append(analysis.Provenance,
+			d.demoProvenance(id, "current", q.Start, q.End, scope, currentCounts[id], currentCounts[id], elapsed),
+			d.demoProvenance(id, "reference", q.BaselineStart, q.BaselineEnd, scope, referenceCounts[id], referenceCounts[id], elapsed),
+		)
+	}
+	return analysis, nil
 }
 
 func aggregateDemo(records []RequestRecord, q Query, selected map[string]bool, current bool) []Bucket {
@@ -362,6 +379,7 @@ func addDemoPhase(sum *float64, n *int64, value *float64) {
 }
 
 func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, error) {
+	started := time.Now()
 	if err := ctx.Err(); err != nil {
 		return Page{}, err
 	}
@@ -434,8 +452,9 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 		offset = cursor.Offset
 	}
 	start, end := input.Query.Start, input.Query.End
+	scope := d.scopeFor(input.Query.QueryMode)
 	rows := make([]RequestRecord, 0)
-	for _, r := range d.records {
+	for _, r := range scope.windowRecords(d.records, start, end) {
 		if !sources[r.SourceID] || r.InitiatedAt == nil || r.InitiatedAt.Before(start) || !r.InitiatedAt.Before(end) {
 			continue
 		}
@@ -482,6 +501,17 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 		raw, _ := json.Marshal(demoCursor{Offset: endIndex, Fingerprint: fingerprint})
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
+	matched, returned := map[string]int64{}, map[string]int64{}
+	for _, r := range rows {
+		matched[r.SourceID]++
+	}
+	for _, r := range page.Rows {
+		returned[r.SourceID]++
+	}
+	elapsed := time.Since(started)
+	for _, s := range page.Sources {
+		page.Provenance = append(page.Provenance, d.demoProvenance(s.SourceID, "page", start, end, scope, matched[s.SourceID], returned[s.SourceID], elapsed))
+	}
 	return page, nil
 }
 
@@ -489,6 +519,7 @@ func (d *demoRepository) Requests(ctx context.Context, input PageInput) (Page, e
 // dimension. It applies the same row rules as Requests, so a row's count equals
 // the number of requests its filter lists.
 func (d *demoRepository) Breakdown(ctx context.Context, input BreakdownInput) (Breakdown, error) {
+	started := time.Now()
 	if err := ctx.Err(); err != nil {
 		return Breakdown{}, err
 	}
@@ -506,9 +537,11 @@ func (d *demoRepository) Breakdown(ctx context.Context, input BreakdownInput) (B
 		}
 		sources[id] = true
 	}
+	scope := d.scopeFor(q.QueryMode)
+	matched := map[string]int64{}
 	builder := NewBreakdownBuilder(input.Dim, input.Top)
 	builder.SetPooled(PooledKind(q.Kind))
-	for _, r := range d.records {
+	for _, r := range scope.windowRecords(d.records, q.Start, q.End) {
 		if !sources[r.SourceID] || r.InitiatedAt == nil || r.InitiatedAt.Before(q.Start) || !r.InitiatedAt.Before(q.End) {
 			continue
 		}
@@ -520,13 +553,16 @@ func (d *demoRepository) Breakdown(ctx context.Context, input BreakdownInput) (B
 			continue
 		}
 		builder.AddRecord(r, state, class == StatusPending, class, value)
+		matched[r.SourceID]++
 	}
 	out, err := builder.Build()
 	if err != nil {
 		return Breakdown{}, err
 	}
+	elapsed := time.Since(started)
 	for _, id := range q.SourceIDs {
 		out.Sources = append(out.Sources, SourceResult{SourceID: id, OK: true, Version: "demo"})
+		out.Provenance = append(out.Provenance, d.demoProvenance(id, "breakdown", q.Start, q.End, scope, matched[id], matched[id], elapsed))
 	}
 	return out, ctx.Err()
 }

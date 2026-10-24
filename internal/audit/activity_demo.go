@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 )
 
 func (d *demoRepository) Activity(ctx context.Context, input ActivityInput) (Page, error) {
+	started := time.Now()
 	if err := ctx.Err(); err != nil {
 		return Page{}, err
 	}
@@ -62,6 +64,18 @@ func (d *demoRepository) Activity(ctx context.Context, input ActivityInput) (Pag
 	if end < len(rows) {
 		raw, _ := json.Marshal(demoCursor{Offset: end, Fingerprint: fingerprint})
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
+	}
+	matched, returned := map[string]int64{}, map[string]int64{}
+	for _, r := range rows {
+		matched[r.SourceID]++
+	}
+	for _, r := range page.Rows {
+		returned[r.SourceID]++
+	}
+	scope := demoScope{mode: QueryModeExact}
+	elapsed := time.Since(started)
+	for _, s := range sources {
+		page.Provenance = append(page.Provenance, d.demoProvenance(s.SourceID, "page", input.Start, input.End, scope, matched[s.SourceID], returned[s.SourceID], elapsed))
 	}
 	return page, nil
 }
