@@ -491,7 +491,7 @@ test('both case export files are checked against their hash before either is sav
 
 test('the import panel carries the host editor and the per-case tools, and a new import starts them over', () => {
   assert.match(importPanel, /<HostsEditor onSaved=/);
-  assert.match(importPanel, /\{#key selected\.id \+ ':' \+ imports\.length\}<CaseTools caseId=\{selected\.id\} \{query\} \{zone\} onGone=\{\(\) => casePanel\?\.noteGone\(\)\} \/>\{\/key\}/);
+  assert.match(importPanel, /\{#key selected\.id \+ ':' \+ imports\.length\}<CaseTools caseId=\{selected\.id\} \{query\} \{zone\} \{span\} onGone=\{\(\) => casePanel\?\.noteGone\(\)\} \/>\{\/key\}/);
 });
 
 test('the new components talk to the server only through cases.ts and render text, never markup', () => {

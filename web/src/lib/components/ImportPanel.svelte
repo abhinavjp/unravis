@@ -9,6 +9,7 @@
     qualityDetails, reasonText, sizeProblemText, statusLabel, suppliedPairs
   } from '../copy/importCopy';
   import { formatTime } from '../time';
+  import { caseSpan } from '../resourceSpan';
   import Drawer from '../../components/Drawer.svelte';
   import type { Query } from '../types';
   import CasePanel from './CasePanel.svelte';
@@ -58,6 +59,8 @@
   const pickerNames = $derived(tied.length > 1 ? tied : undetected ? pickable : []);
   const currentKey = $derived(previewKey(file, importer, host, supplied));
   const block = $derived(commitBlock({ caseOpen, previewedKey, currentKey, importer, report, unknownHost, acknowledged, busy: phase !== 'idle', settingsProblem }));
+  // What time the case's kept files cover, for the resource panel's notice when the window on screen holds nothing.
+  const span = $derived(caseSpan(imports));
   const reasons = $derived(report ? reasonCounts(report.errors) : []);
   const details = $derived(report ? qualityDetails(report.quality) : []);
   const showTimeZone = $derived(report?.quality.timezoneRule ?? '');
@@ -323,7 +326,7 @@
 
   {#if selected}
     <!-- A new import changes what the case holds, so a timeline or export preview built before it starts over. -->
-    {#key selected.id + ':' + imports.length}<CaseTools caseId={selected.id} {query} {zone} onGone={() => casePanel?.noteGone()} />{/key}
+    {#key selected.id + ':' + imports.length}<CaseTools caseId={selected.id} {query} {zone} {span} onGone={() => casePanel?.noteGone()} />{/key}
   {/if}
 
   {#if selected}

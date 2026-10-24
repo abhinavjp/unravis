@@ -9,6 +9,7 @@
     type Chip, type EpisodeSpan, type ResourceView, type RuleRow, type ViewWindow
   } from '../lib/resource';
   import { zoomView } from '../lib/zoomView.svelte';
+  import { spanCopy, spanNotice, type Span } from '../lib/resourceSpan';
   import CoverageDots from './resource/CoverageDots.svelte';
   import HostLines from './resource/HostLines.svelte';
   import RuleChips from './resource/RuleChips.svelte';
@@ -19,8 +20,12 @@
   // keeps its own. Nothing here says why something happened: it shows what was measured, where, and which rules the server fired.
   // The stall periods come from the Patterns report for the same sources and window, when one has been run (lib/drawerResults). The server cannot
   // know them, so they go with each read as ep values; with no report, or no stalls in it, none are sent and the stall rules stay quiet.
-  let { caseId, query, zone, apiWindows = [], onGone }: {
-    caseId: string; query: { start: string; end: string; sourceIds?: string[] }; zone: string; apiWindows?: ReadonlyArray<{ at: string; p95Ms: number | null }>; onGone?: () => void;
+  // span is the time the case's files cover, when they said. When the window on screen holds no data, the panel offers to show that period.
+  // That choice is the panel's own: it does not move the audit window, which other screens read. While it is on, the panel's whole period is
+  // the files' period, so the zoom buttons and Whole period work inside it. The stall periods still come from the Patterns report.
+  let { caseId, query, zone, span = null, apiWindows = [], onGone }: {
+    caseId: string; query: { start: string; end: string; sourceIds?: string[] }; zone: string; span?: Span | null;
+    apiWindows?: ReadonlyArray<{ at: string; p95Ms: number | null }>; onGone?: () => void;
   } = $props();
 
   let resource = $state.raw<ResourceView | null>(null);
@@ -32,9 +37,12 @@
   let drawer = $state.raw<{ title: string; rows: RuleRow[] } | null>(null);
   let pickNote = $state('');
 
-  const usesStore = $derived(zoomView.slots.length > 0);
-  const whole = $derived(viewWindow({ local: null, zoomed: false, slots: [], query }));
-  const view = $derived(viewWindow({ local: usesStore ? null : local, zoomed: zoomView.zoomed, slots: zoomView.slots, query }));
+  let period = $state.raw<ViewWindow | null>(null);
+  // The window the panel counts as whole: the one on screen, or the files' period once the person asked for it.
+  const base = $derived(period ? { start: new Date(period.fromMs).toISOString(), end: new Date(period.toMs).toISOString() } : query);
+  const usesStore = $derived(zoomView.slots.length > 0 && period == null);
+  const whole = $derived(viewWindow({ local: null, zoomed: false, slots: [], query: base }));
+  const view = $derived(viewWindow({ local: usesStore ? null : local, zoomed: zoomView.zoomed, slots: zoomView.slots, query: base }));
   const zoomedNow = $derived(usesStore ? zoomView.zoomed : local != null);
   // The newest Patterns report for this window. It is read again whenever a report is saved or cleared.
   let reportTick = $state(0);
@@ -80,9 +88,19 @@
   const markers = $derived(resource?.markers ?? []);
   const gaps = $derived(resource?.gaps ?? []);
   const chips = $derived(chipsFor(rules, null));
-  // The panel is hidden when the case has no hosts. While the first read is going, or after it failed, it says so instead.
-  const shown = $derived(hosts.length > 0 || (resource == null && (busy || problem !== '')));
+  // The notice shows only for an empty answer that was read for the window on screen; a window with data never shows it.
+  const notice = $derived(spanNotice({ resource, settled: !busy && problem === '', span, view, zone }));
+  // The panel is hidden when the case has no hosts. While the first read is going, or after it failed, it says so instead. An empty answer holds
+  // no hosts when the files did not name one, so the span notice (and the way back from the period it opened) keeps the panel on screen.
+  const shown = $derived(hosts.length > 0 || notice != null || period != null || (resource == null && (busy || problem !== '')));
   const open = $derived(hosts.find(item => item.host === openHost) ?? null);
+  function showPeriod() {
+    if (!notice) return;
+    pickNote = '';
+    local = null;
+    period = notice.window;
+  }
+  function backToScreen() { pickNote = ''; local = null; period = null; }
 
   function brush(fromMs: number, toMs: number) {
     pickNote = '';
@@ -125,6 +143,18 @@
         <div class="inline-error" role="alert">{problem} <button type="button" class="secondary-button" onclick={() => { attempt += 1; }}>{resourceCopy.retry}</button></div>
       {/if}
       {#if resource?.partial}<p class="note" role="status">{resourceCopy.partial}</p>{/if}
+      {#if notice}
+        <p class="span-note" role="status">
+          <span>{notice.text}</span>
+          <button type="button" class="secondary-button" aria-label={spanCopy.buttonLabel} onclick={showPeriod}>{spanCopy.button}</button>
+        </p>
+      {/if}
+      {#if period}
+        <p class="span-note" role="status">
+          <span>{spanCopy.shown}</span>
+          <button type="button" class="secondary-button" onclick={backToScreen}>{spanCopy.back}</button>
+        </p>
+      {/if}
     </div>
 
     {#if hosts.length > 0}
@@ -205,6 +235,7 @@
   h4 { margin: var(--space-2) 0 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
   .note { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
   .status { display: grid; gap: var(--space-1); }
+  .span-note { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
   .chips-block { display: grid; gap: var(--space-1); }
   .hosts { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
   .host { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }

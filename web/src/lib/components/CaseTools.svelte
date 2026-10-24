@@ -7,12 +7,13 @@
   import type { Query } from '../types';
   import Timeline from './Timeline.svelte';
   import ResourcePanel from '../../components/ResourcePanel.svelte';
+  import type { Span } from '../resourceSpan';
   import { results } from '../appState.svelte';
 
   // What a case offers once files are in it: a timeline against the audit window on screen, and a redacted export.
   // Both are read-only. The export is previewed whole first and only what the preview showed is saved.
   // The parent gives each case its own copy of this component ({#key}), so nothing here carries over to another case.
-  let { caseId, query, zone, onGone }: { caseId: string; query: Query; zone: string; onGone?: () => void } = $props();
+  let { caseId, query, zone, span = null, onGone }: { caseId: string; query: Query; zone: string; span?: Span | null; onGone?: () => void } = $props();
 
   let timeline = $state.raw<TimelineView | null>(null);
   let timelineBusy = $state(false);
@@ -146,7 +147,7 @@
   {#if timeline}<Timeline view={timeline} {zone} />{/if}
 </section>
 
-<ResourcePanel {caseId} {query} {zone} {apiWindows} {onGone} />
+<ResourcePanel {caseId} {query} {zone} {span} {apiWindows} {onGone} />
 
 <section class="tools" aria-labelledby="collect-heading">
   <details class="collect" ontoggle={onCollectToggle}>
