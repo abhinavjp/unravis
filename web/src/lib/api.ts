@@ -1,4 +1,4 @@
-import type { Analysis, Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput } from './types';
+import type { Analysis, Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, Hypothesis, HypothesisInput } from './types';
 
 const token = document.querySelector<HTMLMetaElement>('meta[name="audit-session"]')?.content ?? '';
 const base = '/api';
@@ -7,12 +7,15 @@ export class ApiError extends Error {
   readonly code?: string;
   readonly stage?: string;
   readonly status?: number;
-  constructor(message: string, code?: string, stage?: string, status?: number) {
+  /** Plain-language reasons a guard blocked a ledger change (422, code guard_blocked). */
+  readonly reasons?: string[];
+  constructor(message: string, code?: string, stage?: string, status?: number, reasons?: string[]) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.stage = stage;
     this.status = status;
+    this.reasons = reasons;
   }
 }
 
@@ -25,13 +28,15 @@ async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSi
     let message = 'Request failed (' + response.status + ')';
     let code: string | undefined;
     let stage: string | undefined;
+    let reasons: string[] | undefined;
     try {
-      const body = await response.json() as { error?: string; code?: string; stage?: string };
+      const body = await response.json() as { error?: string; code?: string; stage?: string; reasons?: string[] };
       if (body.error) message = body.error;
       if (body.code) code = body.code;
       if (body.stage) stage = body.stage;
+      if (Array.isArray(body.reasons)) reasons = body.reasons;
     } catch { /* keep status message */ }
-    throw new ApiError(message, code, stage, response.status);
+    throw new ApiError(message, code, stage, response.status, reasons);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -58,6 +63,14 @@ export const api = {
       throw cause;
     }
   },
+  /** P2-lite incident patterns for one window (rules B1, B2, B6, B12). */
+  patterns: (input: PatternInput, signal?: AbortSignal) => request<PatternReport>('/patterns', json(input), signal),
+  ledgerList: () => request<Hypothesis[]>('/ledger'),
+  ledgerCreate: (text: string) => request<Hypothesis>('/ledger', json({ text })),
+  /** A 422 ApiError with code guard_blocked carries .reasons. */
+  ledgerUpdate: (id: string, input: HypothesisInput) => request<Hypothesis>('/ledger/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(input) }),
+  ledgerReuse: (id: string) => request<Hypothesis>('/ledger/' + encodeURIComponent(id) + '/reuse', { method: 'POST' }),
+  ledgerDelete: (id: string) => request<void>('/ledger/' + encodeURIComponent(id), { method: 'DELETE' }),
   analyze: (query: Query, signal?: AbortSignal) => request<Analysis>('/analyze', json(query), signal),
   breakdown: (query: Query, dim: BreakdownDim, top = 20, signal?: AbortSignal) =>
     request<Breakdown>('/breakdown', json({ query, dim, top }), signal),

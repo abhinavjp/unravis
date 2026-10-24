@@ -183,3 +183,34 @@ export interface CoverageReport {
   tenantAttribution: string; provenance: Provenance[];
 }
 export interface CoverageRefused { refused: string }
+
+/** P2-lite incident patterns (POST /api/patterns). Mirrors internal/audit/patterns_types.go. */
+export interface PatternInput { sourceIds: string[]; start: string; end: string; stallMs?: number; episodeGapSeconds?: number }
+export interface PatternParams { stallMs: number; episodeGapSeconds: number; auditStallMs: number; auditStallShare: number; volleyWindowMs: number }
+export interface PatternStall { sourceId: string; id: string; controller: string; action: string; initiatedAt: string; completedAt?: string; observedMs: number; apiTimeMs?: number; userId?: number; episode: number }
+export interface PatternEpisode { index: number; start: string; end: string; requests: number; users: number; maxMs: number; operations: string[] }
+export interface PatternVolley { episode: number; userId: number; requests: number; firstStart: string; startSpreadMs: number; endStaggerMs: number; endGapsMs: number[]; incompleteEnds: number }
+export interface PatternAuditStall { sourceId: string; id: string; controller: string; action: string; initiatedAt: string; observedMs: number; auditCreateTimeMs: number; share: number }
+export type EvidenceLabel = 'Symptom' | 'Correlation' | 'Strong correlation';
+export interface PatternFinding { rule: 'B1' | 'B2' | 'B6' | 'B12'; label: EvidenceLabel; headline: string; n: number; lowN: boolean; evidenceId: string }
+export interface PatternCoverage { run: boolean; requestInitiatedAtPct?: number; accountIdPct?: number; note: string }
+export interface PatternReport {
+  params: PatternParams; stalls: PatternStall[]; episodes: PatternEpisode[]; volleys: PatternVolley[]; auditStalls: PatternAuditStall[];
+  recurrence: 'none' | 'single_episode' | 'two_episodes' | 'recurring';
+  findings: PatternFinding[]; quality: { incomplete: number; pending: number; invalid: number };
+  coverage?: PatternCoverage; truncated: boolean; provenance?: Provenance[]; warnings: string[];
+}
+
+/** The hypothesis ledger (/api/ledger). Mirrors internal/ledger/types.go. It holds no row data and no identifiers. */
+export type HypothesisState = 'open' | 'supported_by_correlation' | 'supported_by_strong_correlation' | 'contradicted' | 'not_testable';
+export interface HypothesisAlternative { text: string; status: 'open' | 'ruled_out' | 'not_testable' }
+export interface HypothesisFacts {
+  presentK: number; totalN: number; counterexamples: string[]; alternatives: HypothesisAlternative[];
+  joinAmbiguousPct?: number; timezoneRecorded: boolean; confounderOverlap: boolean; coverageGap: boolean; overlapOnly: boolean;
+}
+export interface HypothesisInput { text: string; state: HypothesisState; evidenceIds: string[]; notes: string; facts: HypothesisFacts }
+export interface Hypothesis {
+  id: string; text: string; state: HypothesisState; evidenceIds: string[]; notes: string; facts: HypothesisFacts;
+  /** Reasons "strong correlation" is blocked right now; empty when it would be allowed. */
+  guards: string[]; createdAt: string; updatedAt: string; history: { state: HypothesisState; at: string; note: string }[];
+}

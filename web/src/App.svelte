@@ -34,6 +34,8 @@
   import PlainLine from './components/PlainLine.svelte';
   import ProvenanceNote from './components/ProvenanceNote.svelte';
   import Glossary from './components/Glossary.svelte';
+  import PatternsPanel from './components/PatternsPanel.svelte';
+  import LedgerPanel from './components/LedgerPanel.svelte';
   import { GLOSSARY_EVENT, glossaryTermFrom } from './lib/copy/hintState';
   import { plainTypicalVsSlowest } from './lib/copy/plainSummary';
   import { applyStaleFilters, scopeStaleDrill } from './lib/incomplete';
@@ -127,6 +129,9 @@
   let querySnapshot = '';
   let connectionsOpen = $state(false);
   let glossaryOpen = $state(false);
+  // P2-lite drawers: incident patterns and the hypothesis ledger.
+  let sidePanel = $state<'patterns' | 'ledger' | null>(null);
+  let sidePanelReturnFocus: HTMLElement | null = null;
   let glossaryTerm = $state<string | null>(null);
   let glossaryReturnFocus: HTMLElement | null = null;
   let connectionTab = $state<'saved' | 'new'>('saved');
@@ -695,6 +700,16 @@
     glossaryReturnFocus?.focus();
     glossaryReturnFocus = null;
   }
+  async function closeSidePanel() {
+    sidePanel = null;
+    await tick();
+    sidePanelReturnFocus?.focus();
+    sidePanelReturnFocus = null;
+  }
+  function openSidePanel(which: 'patterns' | 'ledger') {
+    sidePanelReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    sidePanel = which;
+  }
   function openGlossary(termId: string | null = null) {
     glossaryReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     glossaryTerm = termId;
@@ -800,7 +815,7 @@
     for (let guard = 0; guard < 4 && depth > target; guard++) stepUpOnce();
   }
   function onWindowKey(event: KeyboardEvent) {
-    if (event.key !== 'Escape' || event.defaultPrevented || connectionsOpen || glossaryOpen) return;
+    if (event.key !== 'Escape' || event.defaultPrevented || connectionsOpen || glossaryOpen || sidePanel) return;
     const target = event.target;
     if (target instanceof HTMLElement && (target.tagName === 'SELECT' || target.closest('.popover'))) return;
     // An open menu or the filters panel closes first; only then does Esc step one level up.
@@ -944,6 +959,8 @@
           onToggle={(id, checked) => { query.sourceIds = checked ? [...query.sourceIds.filter(item => item !== id), id] : query.sourceIds.filter(item => item !== id); onScopeChange(); }}
           onDelete={deleteSource} onManage={() => openConnections('saved')} onAdd={startNewConnection} />
       {/if}
+      <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={sidePanel === 'patterns'} onclick={() => openSidePanel('patterns')}>Patterns</button>
+      <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={sidePanel === 'ledger'} onclick={() => openSidePanel('ledger')}>Ledger</button>
       <button type="button" class="header-button" aria-label="Help and glossary" aria-haspopup="dialog" aria-expanded={glossaryOpen} onclick={() => openGlossary()}>Help</button>
       <button type="button" class="header-button theme-toggle" onclick={() => theme.cycle()} aria-label={'Theme: ' + theme.choice + '. Change theme'} title={'Theme: ' + theme.choice}>
         {#if theme.choice === 'light'}
@@ -960,7 +977,7 @@
   {#if initError}<div class="banner error-banner" role="alert"><strong>Explorer unavailable</strong><span>{initError}</span><button class="quiet-button" onclick={() => { initError = ''; void initialize(); }}>Retry</button></div>{/if}
 
   {#if info && !firstRun}
-    <section class="scope" aria-label="Scope" inert={connectionsOpen || glossaryOpen}>
+    <section class="scope" aria-label="Scope" inert={connectionsOpen || glossaryOpen || sidePanel != null}>
       <div class="scope-main">
         {#key controlsResetKey}<QueryControls bind:query bind:zone bind:targetMs bind:dateInputsValid part="bar" groupNames={(analysis?.apis ?? []).map(row => row.controller + '.' + row.action)} now={info?.now ?? ''} {onScopeChange} />{/key}
         <details class="more-filters">
@@ -1085,8 +1102,10 @@
     {/if}
 
     {#if glossaryOpen}<Glossary onClose={closeGlossary} focusTerm={glossaryTerm} />{/if}
+    {#if sidePanel === 'patterns'}<PatternsPanel {query} {zone} {sourceLabels} onClose={closeSidePanel} />{/if}
+    {#if sidePanel === 'ledger'}<LedgerPanel onClose={closeSidePanel} />{/if}
 
-    <main class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={connectionsOpen || glossaryOpen}>
+    <main class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={connectionsOpen || glossaryOpen || sidePanel != null}>
       <div class="stage-inner">
         {#if !info && !initError}
           <div class="loading-state"><div class="loading-pulse"></div><strong>Starting Unravis</strong><p>Loading sources and settings.</p></div>
