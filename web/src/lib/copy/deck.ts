@@ -33,7 +33,7 @@ export const deck: Deck = {
     {
       id: 'response-time',
       term: 'Response time',
-      hint: 'How long the application recorded for answering a request.',
+      hint: 'How long the app recorded for one request.',
       definition: 'Response time is the length of time the application recorded for a request. The app shows it in milliseconds or seconds.',
       notMeaning: 'It does not include time spent on the user side, such as the browser or the network.',
       aliases: ['Duration', 'Latency']
@@ -80,8 +80,8 @@ export const deck: Deck = {
     {
       id: 'strong-correlation',
       term: 'Strong correlation',
-      hint: 'The same two things appeared together again and again, across several separate episodes.',
-      definition: 'A strong correlation is a correlation seen in more than one episode, with the counterexamples listed. It is the highest evidence label the app uses.',
+      hint: 'Two things showed up together in more than one episode.',
+      definition: 'A strong correlation is a correlation seen in more than one episode, with cases that do not fit listed too. It is the top evidence label the app uses.',
       notMeaning: 'It does not show that one made the other happen, however often they appear together.'
     },
     {
@@ -95,7 +95,7 @@ export const deck: Deck = {
       id: 'evidence-label',
       term: 'Evidence label',
       hint: 'A tag that says how much support the records give to a statement.',
-      definition: 'Every finding carries one of three labels: Symptom, Correlation or Strong correlation. The label tells you how much the records support the statement next to it.',
+      definition: 'Each finding has one of three labels: Symptom, Correlation or Strong correlation. The label shows how well the records back the statement.',
       notMeaning: 'It does not rate how serious a finding is, and none of the labels mean certain.',
       aliases: ['Evidence']
     },
@@ -111,8 +111,9 @@ export const deck: Deck = {
       id: 'not-observed',
       term: 'Not observed',
       hint: 'The source shows no event here, but it may not be able to record one.',
-      definition: 'Not observed means the source has no record for this moment. The source may skip short events, have gaps or keep records only for a limited time.',
-      notMeaning: 'It does not mean nothing happened, and it does not rule anything out.'
+      definition: 'This label means the source has no record for this moment. The source may skip short events, have gaps or keep records for a short time.',
+      notMeaning: 'It does not mean nothing happened, and it does not rule anything out.',
+      aliases: ['Sampling', 'Gap or sampling']
     },
     {
       id: 'time-outside-the-pipeline',
@@ -252,7 +253,7 @@ export const deck: Deck = {
       id: 'completion-percent',
       term: 'Completion %',
       hint: 'The share of requests that finished, out of those that finished or are still open.',
-      definition: 'Completion % is finished requests divided by finished, incomplete and pending requests together. Unusable rows are not part of this share.',
+      definition: 'Completion % is finished requests out of all finished, incomplete and pending ones. Rows that cannot be used are left out.',
       notMeaning: 'A dash means there was nothing to measure, not 0%.',
       aliases: ['Completion']
     },
