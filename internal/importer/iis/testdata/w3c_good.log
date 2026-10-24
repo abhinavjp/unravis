@@ -1,0 +1,11 @@
+#Software: Microsoft Internet Information Services 10.0
+#Version: 1.0
+#Date: 2001-02-03 04:05:00
+#Fields: date time s-sitename s-computername s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) cs(Cookie) cs(Referer) sc-status sc-substatus sc-win32-status time-taken
+2001-02-03 04:05:06 W3SVC1 WEB-A 192.0.2.10 GET /api/v1/orders/12345 q=SENTINEL-7f3a 443 alice 192.0.2.77 Mozilla/5.0+SENTINEL-7f3a session=SENTINEL-7f3a http://ref.example.test/SENTINEL-7f3a 200 0 0 125
+2001-02-03 04:05:07 W3SVC1 WEB-A 192.0.2.10 POST /api/v1/items/123e4567-e89b-12d3-a456-426614174000/lines q=SENTINEL-7f3a 443 bob 192.0.2.78 Mozilla/5.0 - - 404 13 2 3000
+2001-02-03 04:05:08 W3SVC1 WEB-A 192.0.2.10 GET /health - 80 - 192.0.2.79 curl/8.0 - - 500 0 64 -
+2001-02-03 04:05:09 W3SVC1 WEB-A 192.0.2.10 GET /static/app.js - 443 - 192.0.2.80 Mozilla/5.0 - - 200 0 0 7
+#Fields: date time cs-method cs-uri-stem x-custom sc-status time-taken
+2001-02-03 04:06:00 GET /api/v1/orders/67890 SENTINEL-7f3a 201 40
+2001-02-03 04:06:01 PUT /api/v1/orders/67890/status SENTINEL-7f3a 200 15

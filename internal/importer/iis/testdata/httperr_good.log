@@ -1,0 +1,8 @@
+#Software: Microsoft HTTP API 2.0
+#Version: 1.0
+#Date: 2001-03-17 00:00:00
+#Fields: date time c-ip c-port s-ip s-port cs-version cs-method cs-uri sc-status s-siteid s-reason s-queuename
+2001-03-17 10:00:01 192.0.2.50 51000 192.0.2.10 443 HTTP/1.1 GET /api/v1/orders/42?q=SENTINEL-7f3a 503 1 QueueFull DefaultAppPool
+2001-03-17 10:00:02 192.0.2.51 51001 192.0.2.10 443 HTTP/1.1 - - - - Connection_Dropped -
+2001-03-17 10:00:03 192.0.2.52 51002 192.0.2.10 443 HTTP/1.1 POST /api/v1/items/123e4567-e89b-12d3-a456-426614174000 400 2 Made_Up_Reason pool-alpha
+2001-03-17 10:00:04 192.0.2.53 51003 192.0.2.10 443 HTTP/1.1 GET /x 408 1 timer_connectionidle pool-alpha
