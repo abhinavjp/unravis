@@ -229,6 +229,12 @@ func (h *handler) serveAsset(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// The build names every file under assets/ by its content hash, so a name
+	// never changes content and the browser may keep it for a year. Index, other
+	// root files and every 404 keep their headers.
+	if strings.HasPrefix(name, "assets/") {
+		w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	}
 	http.ServeContent(w, r, info.Name(), info.ModTime(), content)
 }
 
