@@ -20,8 +20,9 @@
 //
 // Instances: only instances of objects known to hold no database, share, path or
 // application name are kept (see instanceKept); the rest are dropped, or numbered
-// when dropping would put columns under one key. Events are capped by
-// Limits.MaxEvents, rows times columns.
+// when dropping would put columns under one key. A W3SVC_W3WP instance keeps its
+// process id only, as "pid-<pid>", and never the pool name (see keptInstance).
+// Events are capped by Limits.MaxEvents, rows times columns.
 package wincounters
 
 import (
@@ -340,8 +341,8 @@ func (m *imp) resolveColumns(hdr []string, opts importer.Options, acc *wincsv.Ac
 				acc.Gap(GapNoCores)
 			}
 		}
-		if p.instance != "" && instanceKept(p.object, p.instance) {
-			c.instance = p.instance
+		if inst, keep := keptInstance(p.object, p.instance); p.instance != "" && keep {
+			c.instance = inst
 		} else {
 			c.instance = ""
 			if p.instance != "" {
@@ -448,6 +449,27 @@ func instanceKept(object, instance string) bool {
 		return sqlFixedInstance[lo[i+1:]]
 	}
 	return false
+}
+
+// w3wpInstance matches an IIS worker process instance, "<pid>_<pool name>".
+var w3wpInstance = regexp.MustCompile(`^([0-9]{1,7})_`)
+
+// keptInstance returns the instance to keep for a column and whether one is kept.
+// It applies instanceKept, with one rewrite: a W3SVC_W3WP instance is "<pid>_<pool
+// name>" and keeps the pid only, as "pid-<pid>"; the pool name is a site or
+// application name and is never kept. A W3SVC_W3WP instance that does not start
+// with a pid is dropped.
+func keptInstance(object, instance string) (string, bool) {
+	if strings.EqualFold(object, "W3SVC_W3WP") {
+		if strings.EqualFold(instance, "_Total") {
+			return instance, true
+		}
+		if m := w3wpInstance.FindStringSubmatch(instance); m != nil {
+			return "pid-" + m[1], true
+		}
+		return "", false
+	}
+	return instance, instanceKept(object, instance)
 }
 
 func processCPU(counter string) bool {
