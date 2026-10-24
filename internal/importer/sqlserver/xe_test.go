@@ -1,11 +1,9 @@
 package sqlserver
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -17,20 +15,54 @@ import (
 	"api-audit-explorer/internal/join"
 )
 
-func xeBad(t testing.TB) [][]byte {
-	return [][]byte{
-		readFixture(t, "xe_bad_unscrubbed.csv"),
-		readFixture(t, "xe_bad_cells.csv"),
-		readFixture(t, "xe_bad_no_timestamp.csv"),
+// xeFixtures: every XE attribute is typed (allowlisted event name, vocabulary
+// token, fixed word, number), so there is no free-text cell; a cell that is
+// none of these, a formula included, rejects its row (NoFreeText, M2).
+func xeFixtures(t testing.TB) importertest.Fixtures {
+	return importertest.Fixtures{
+		Good:       readFixture(t, "xe_good.csv"),
+		Bad:        readFixture(t, "xe_bad_cells.csv"),
+		NoFreeText: true,
+		Options:    importer.Options{Host: sqlA(t), FileName: "system_health.csv"},
 	}
 }
 
-func TestXEConformance(t *testing.T) {
-	importertest.Run(t, NewXE(), importertest.Fixtures{
-		Good:    readFixture(t, "xe_good.csv"),
-		Bad:     xeBad(t),
-		Options: importer.Options{Host: sqlA(t), FileName: "system_health.csv"},
-	})
+func TestXEConformance(t *testing.T) { importertest.Run(t, NewXE(), xeFixtures(t)) }
+
+// TestXEBadFiles covers the bad files the harness does not take: each is
+// refused whole, without naming the sentinel.
+func TestXEBadFiles(t *testing.T) {
+	for _, name := range []string{"xe_bad_unscrubbed.csv", "xe_bad_no_timestamp.csv"} {
+		evs, _, err := collect(t, NewXE(), readFixture(t, name), testOpts(t))
+		if !errors.Is(err, importer.ErrQuarantine) || len(evs) != 0 {
+			t.Errorf("%s: err %v, %d events", name, err, len(evs))
+		}
+		if err != nil && strings.Contains(err.Error(), importertest.Sentinel) {
+			t.Errorf("%s: error leaks the sentinel", name)
+		}
+	}
+}
+
+// TestXETypedCellsRejected: a formula or free text in a typed cell rejects the
+// row with a fixed reason; it is neither stored nor silently dropped.
+func TestXETypedCellsRejected(t *testing.T) {
+	hdr := "timestamp_utc,name,wait_type,duration,component,state\n"
+	rows := map[string]string{
+		"formula wait_type": "2001-06-15 02:00:41,wait_info,\"=HYPERLINK(\"\"x\"\")\",32000,,\n",
+		"text wait_type":    "2001-06-15 02:00:41,wait_info,LCK M X,32000,,\n",
+		"formula component": "2001-06-15 02:00:41,sp_server_diagnostics_component_result,,,+SYSTEM,CLEAN\n",
+		"formula state":     "2001-06-15 02:00:41,sp_server_diagnostics_component_result,,,SYSTEM,@clean\n",
+		"formula event":     "2001-06-15 02:00:41,-wait_info,LCK_M_X,32000,,\n",
+	}
+	for name, row := range rows {
+		o := testOpts(t)
+		o.Limits = NewXE().DefaultLimits()
+		o.Limits.MaxRejectFraction = 1
+		evs, rep, err := collect(t, NewXE(), []byte(hdr+row), o)
+		if err != nil || len(evs) != 0 || rep.Rejected != 1 || rep.Errors[0] != (importer.RowError{Line: 2, Reason: importer.ReasonUnsupportedFormat}) {
+			t.Errorf("%s: err %v, events %d, report %+v", name, err, len(evs), rep.Errors)
+		}
+	}
 }
 
 func TestXEGoodEvents(t *testing.T) {
@@ -313,50 +345,9 @@ func TestXEDetect(t *testing.T) {
 	}
 }
 
-type noNetwork struct{ calls int }
-
-func (n *noNetwork) RoundTrip(*http.Request) (*http.Response, error) {
-	n.calls++
-	return nil, errors.New("network disabled in tests")
-}
-
-func TestNoNetwork(t *testing.T) {
-	nn := &noNetwork{}
-	saved := http.DefaultTransport
-	http.DefaultTransport = nn
-	defer func() { http.DefaultTransport = saved }()
-	for _, f := range []struct {
-		imp importer.Importer
-		b   []byte
-	}{
-		{NewXE(), readFixture(t, "xe_good.csv")},
-		{NewErrorlog(), readFixture(t, "errorlog_good.log")},
-	} {
-		if _, _, err := collect(t, f.imp, f.b, testOpts(t)); err != nil {
-			t.Errorf("%s: %v", f.imp.Name(), err)
-		}
-	}
-	if nn.calls != 0 {
-		t.Errorf("importers made %d network calls", nn.calls)
-	}
-}
-
-func fuzzCheck(t *testing.T, imp importer.Importer, data []byte) {
-	o := testOpts(t)
-	o.Limits = importer.Limits{MaxBytes: 1 << 20, MaxRows: 10_000, MaxLineBytes: 4 << 10, MaxFields: 256, MaxRejectFraction: 1}
-	allowed := imp.AllowedAttrs()
-	_, _ = imp.Parse(context.Background(), bytes.NewReader(data), o, func(e evidence.Event) error {
-		if err := e.Validate(allowed); err != nil {
-			t.Fatalf("invalid event %+v: %v", e, err)
-		}
-		return nil
-	})
-}
-
 func FuzzParseXE(f *testing.F) {
-	f.Add(readFixture(f, "xe_good.csv"))
-	for _, b := range xeBad(f) {
-		f.Add(b)
-	}
-	f.Fuzz(func(t *testing.T, data []byte) { fuzzCheck(t, NewXE(), data) })
+	fx := xeFixtures(f)
+	f.Add(readFixture(f, "xe_bad_unscrubbed.csv"))
+	f.Add(readFixture(f, "xe_bad_no_timestamp.csv"))
+	importertest.FuzzParse(f, NewXE(), fx)
 }

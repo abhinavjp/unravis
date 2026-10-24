@@ -247,12 +247,12 @@ func (x xeImporter) Parse(ctx context.Context, r io.Reader, opts importer.Option
 	if err != nil {
 		return s.rep, err
 	}
-	csvr, _, err := textio.NewCSV(&lineCap{r: br, max: lim.MaxLineBytes}, textio.CSVOptions{MaxFields: lim.MaxFields})
+	// textio bounds every decoded line (LimitError "line-bytes") and record
+	// before encoding/csv buffers it. An empty file is textio.ErrEmpty, passed
+	// through as is (a shared value, never modified).
+	csvr, _, err := textio.NewCSV(br, textio.CSVOptions{MaxFields: lim.MaxFields, MaxLine: lim.MaxLineBytes})
 	if err != nil {
-		if errors.Is(err, importer.ErrLimit) || errors.Is(err, importer.ErrQuarantine) {
-			return s.rep, err
-		}
-		return s.rep, &importer.QuarantineError{Reason: importer.ReasonEncoding}
+		return s.rep, err
 	}
 	header := csvr.Header()
 	for _, h := range header {
@@ -302,17 +302,19 @@ func (x xeImporter) Parse(ctx context.Context, r io.Reader, opts importer.Option
 			break
 		}
 		if err != nil {
-			if errors.Is(err, importer.ErrLimit) {
+			// A RowError (field count, broken quoting, bad text) rejects the
+			// row; anything else (a limit, a read error) ends the import.
+			var re importer.RowError
+			if !errors.As(err, &re) {
 				return s.rep, err
 			}
 			if rerr := s.row(); rerr != nil {
 				return s.rep, rerr
 			}
-			if errors.Is(err, textio.ErrEncoding) {
-				s.reject(line, importer.ReasonEncoding)
-			} else {
-				s.reject(line, importer.ReasonFieldCount)
+			if re.Line < 1 {
+				re.Line = line
 			}
+			s.reject(re.Line, re.Reason)
 			if badRun++; badRun > 1000 {
 				return s.rep, &importer.QuarantineError{Reason: importer.ReasonRejectFraction}
 			}
@@ -332,8 +334,10 @@ func (x xeImporter) Parse(ctx context.Context, r io.Reader, opts importer.Option
 			raw := cell(rec, "host")
 			label, known := observed[raw]
 			if !known {
-				if len(s.rep.ObservedHosts) < maxReportedErrors {
-					s.rep.ObservedHosts = append(s.rep.ObservedHosts, raw)
+				// The raw name goes to Report.ObservedHosts only; the error
+				// never names it.
+				if err := s.rep.Observe(raw); err != nil {
+					return s.rep, err
 				}
 				if opts.Hosts == nil {
 					return s.rep, importer.ErrUnknownHost
@@ -347,7 +351,15 @@ func (x xeImporter) Parse(ctx context.Context, r io.Reader, opts importer.Option
 			}
 			host = label
 		}
+		// Every XE attribute is typed: an allowlisted event name, a vocabulary
+		// token, a fixed word or a number. A cell that is none of these (a
+		// formula such as =HYPERLINK(...), free text) rejects the row; it is
+		// never stored, and never silently dropped (f0-deviations M2).
 		name := strings.ToLower(cell(rec, "event"))
+		if !isToken(name, 80) {
+			s.reject(line, importer.ReasonUnsupportedFormat)
+			continue
+		}
 		kind, known := xeKinds[name]
 		if !known {
 			s.seen(ts)
@@ -358,11 +370,16 @@ func (x xeImporter) Parse(ctx context.Context, r io.Reader, opts importer.Option
 		switch kind {
 		case KindWait:
 			e.Severity = "warning"
-			if wt := cell(rec, "wait_type"); isToken(wt, 60) {
+			wt := cell(rec, "wait_type")
+			switch {
+			case isToken(wt, 60):
 				e.Attrs["wait_type"] = strings.ToUpper(wt)
 				e.Attrs["wait_class"] = waitClass(wt)
-			} else {
+			case wt == "":
 				e.Attrs["wait_class"] = "other"
+			default:
+				s.reject(line, importer.ReasonUnsupportedFormat)
+				continue
 			}
 			if d := cell(rec, "duration"); d != "" {
 				ms, err := strconv.ParseFloat(d, 64)
@@ -377,10 +394,15 @@ func (x xeImporter) Parse(ctx context.Context, r io.Reader, opts importer.Option
 			}
 			waits = true
 		case KindDiagnostics:
-			if c := cell(rec, "component"); isToken(c, 40) {
+			c := cell(rec, "component")
+			st := strings.ToLower(cell(rec, "state"))
+			if (c != "" && !isToken(c, 40)) || (st != "" && !isToken(st, 40)) {
+				s.reject(line, importer.ReasonUnsupportedFormat)
+				continue
+			}
+			if c != "" {
 				e.Attrs["component"] = strings.ToLower(c)
 			}
-			st := strings.ToLower(cell(rec, "state"))
 			switch st {
 			case "clean":
 				e.Severity = "info"

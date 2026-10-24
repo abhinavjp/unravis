@@ -29,8 +29,6 @@ import (
 	"api-audit-explorer/internal/importer"
 )
 
-const maxReportedErrors = 100
-
 // effectiveLimits fills zero fields of the caller's limits from the importer
 // defaults, and never lets a caller raise a cap above the default.
 func effectiveLimits(given, def importer.Limits) importer.Limits {
@@ -82,12 +80,7 @@ func (s *sink) row() error {
 	return nil
 }
 
-func (s *sink) reject(line int64, r importer.Reason) {
-	s.rep.Rejected++
-	if len(s.rep.Errors) < maxReportedErrors {
-		s.rep.Errors = append(s.rep.Errors, importer.RowError{Line: line, Reason: r})
-	}
-}
+func (s *sink) reject(line int64, r importer.Reason) { s.rep.Reject(line, r) }
 
 // seen widens source coverage with a valid row time (classified or not).
 func (s *sink) seen(t time.Time) {
@@ -119,36 +112,6 @@ func (s *sink) finish() (importer.Report, error) {
 		return s.rep, &importer.QuarantineError{Reason: importer.ReasonRejectFraction}
 	}
 	return s.rep, nil
-}
-
-// lineCap refuses any raw line longer than max bytes before a decoder or the
-// CSV reader buffers it, so one huge line cannot exhaust memory.
-type lineCap struct {
-	r      io.Reader
-	max    int
-	run    int
-	lineNo int64
-	err    error // sticky: a reader above may drop one error (bufio.Peek does)
-}
-
-func (c *lineCap) Read(p []byte) (int, error) {
-	if c.err != nil {
-		return 0, c.err
-	}
-	n, err := c.r.Read(p)
-	for _, b := range p[:n] {
-		if b == '\n' {
-			c.run = 0
-			c.lineNo++
-			continue
-		}
-		c.run++
-		if c.run > c.max {
-			c.err = &importer.LimitError{Limit: "line", Max: int64(c.max), At: c.lineNo + 1}
-			return 0, c.err
-		}
-	}
-	return n, err
 }
 
 // sniffed peeks the head, refuses archives, and returns a reader that still

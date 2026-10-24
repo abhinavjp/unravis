@@ -1,7 +1,6 @@
 package sqlserver
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -85,14 +84,16 @@ func (errorlogImporter) Detect(head []byte, fileName string) int {
 	if reErrlogFile.MatchString(fileName) {
 		score += 50
 	}
+	// The first line is time-prefixed; the next ones are too, or are indented
+	// continuations of a message (the startup banner spans several lines).
 	lines := firstLines(headText(head), 3)
 	matched := 0
-	for _, l := range lines {
-		if reErrlogLine.MatchString(l) {
+	for i, l := range lines {
+		if reErrlogLine.MatchString(l) || (i > 0 && (l[0] == '\t' || l[0] == ' ')) {
 			matched++
 		}
 	}
-	if len(lines) > 0 && matched == len(lines) {
+	if len(lines) > 0 && reErrlogLine.MatchString(lines[0]) && matched == len(lines) {
 		score += 40
 		if strings.Contains(strings.Join(lines, "\n"), "Microsoft SQL Server") {
 			score += 10
@@ -124,24 +125,19 @@ func (x errorlogImporter) Parse(ctx context.Context, r io.Reader, opts importer.
 	}
 	loc, host := opts.Host.TZ, opts.Host.Label
 
-	var src io.Reader
-	switch {
-	case looksUTF16LE(head):
-		src = transform.NewReader(&lineCap{r: br, max: 2*lim.MaxLineBytes + 2}, unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM).NewDecoder())
-	case bytes.HasPrefix(head, []byte{0xff, 0xfe}) || bytes.HasPrefix(head, []byte{0xfe, 0xff}):
-		src = &lineCap{r: br, max: 2*lim.MaxLineBytes + 2}
-	default:
-		src = &lineCap{r: br, max: lim.MaxLineBytes + 1}
+	// textio decodes a BOM (UTF-8, UTF-16LE/BE) and bounds every decoded line
+	// (LimitError "line-bytes"); a BOM-less UTF-16LE copy is transcoded here
+	// first, through the same bounded reader.
+	var src io.Reader = br
+	if looksUTF16LE(head) {
+		src = transform.NewReader(br, unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM).NewDecoder())
 	}
 	lr, _, err := textio.NewLineReader(src, lim.MaxLineBytes)
 	if err != nil {
-		if errors.Is(err, importer.ErrLimit) {
-			return s.rep, err
-		}
-		return s.rep, &importer.QuarantineError{Reason: importer.ReasonEncoding}
+		return s.rep, err
 	}
 
-	var unclassified, logins, ioStalls, adjusted bool
+	var unclassified, logins, ioStalls, adjusted, dated bool
 	phys := 0
 	for {
 		raw, line, err := lr.Next()
@@ -149,13 +145,16 @@ func (x errorlogImporter) Parse(ctx context.Context, r io.Reader, opts importer.
 			break
 		}
 		if err != nil {
-			if errors.Is(err, importer.ErrLimit) {
+			// A RowError (bad text) rejects the line; anything else (a
+			// limit, a read error) ends the import.
+			var re importer.RowError
+			if !errors.As(err, &re) {
 				return s.rep, err
 			}
 			if rerr := s.row(); rerr != nil {
 				return s.rep, rerr
 			}
-			s.reject(line, importer.ReasonEncoding)
+			s.reject(line, re.Reason)
 			continue
 		}
 		if phys++; phys&127 == 0 {
@@ -193,6 +192,7 @@ func (x errorlogImporter) Parse(ctx context.Context, r io.Reader, opts importer.
 		}
 		ts := lt.UTC
 		s.seen(ts)
+		dated = true
 		msg := m[3]
 
 		if a := reUTCAdjust.FindStringSubmatch(msg); a != nil {
@@ -246,6 +246,12 @@ func (x errorlogImporter) Parse(ctx context.Context, r io.Reader, opts importer.
 		if err := s.put(e, line, 0); err != nil {
 			return s.rep, err
 		}
+	}
+	// A file without one valid time-prefixed line (empty, cut to a few bytes,
+	// another format) is not an ERRORLOG; an "ok" import of nothing would hide
+	// that.
+	if !dated {
+		return s.rep, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat}
 	}
 	s.rep.KnownGaps = append(s.rep.KnownGaps, gapErrlogLocal)
 	if !adjusted {

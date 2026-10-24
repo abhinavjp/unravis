@@ -15,8 +15,16 @@ import (
 	"api-audit-explorer/internal/importer/importertest"
 )
 
-func errorlogBad(t testing.TB) [][]byte {
-	return [][]byte{readFixture(t, "errorlog_bad.log"), readFixture(t, "errorlog_bad_tz.log")}
+// errorlogFixtures: the only attributes are error_number and sql_severity,
+// numbers captured by the allowlist regexps; message text is never stored, so
+// there is no free-text attribute (NoFreeText).
+func errorlogFixtures(t testing.TB) importertest.Fixtures {
+	return importertest.Fixtures{
+		Good:       readFixture(t, "errorlog_good.log"),
+		Bad:        readFixture(t, "errorlog_bad.log"),
+		NoFreeText: true,
+		Options:    importer.Options{Host: sqlA(t), FileName: "ERRORLOG"},
+	}
 }
 
 func toUTF16LE(b []byte, bom bool) []byte {
@@ -30,12 +38,22 @@ func toUTF16LE(b []byte, bom bool) []byte {
 	return out
 }
 
-func TestErrorlogConformance(t *testing.T) {
-	importertest.Run(t, NewErrorlog(), importertest.Fixtures{
-		Good:    readFixture(t, "errorlog_good.log"),
-		Bad:     errorlogBad(t),
-		Options: importer.Options{Host: sqlA(t), FileName: "ERRORLOG"},
-	})
+func TestErrorlogConformance(t *testing.T) { importertest.Run(t, NewErrorlog(), errorlogFixtures(t)) }
+
+// TestErrorlogNotAnErrorlog: a file with no valid time-prefixed line is
+// refused, not imported as an empty success.
+func TestErrorlogNotAnErrorlog(t *testing.T) {
+	for name, b := range map[string][]byte{
+		"empty":        nil,
+		"blank lines":  []byte("\n\n\r\n"),
+		"one byte":     []byte("2"),
+		"continuation": []byte("\tSynthetic build line for tests\n"),
+	} {
+		evs, _, err := collect(t, NewErrorlog(), b, testOpts(t))
+		if !errors.Is(err, importer.ErrQuarantine) || len(evs) != 0 {
+			t.Errorf("%s: err %v, %d events", name, err, len(evs))
+		}
+	}
 }
 
 func TestErrorlogGoodEvents(t *testing.T) {
@@ -224,7 +242,9 @@ func TestErrorlogDetect(t *testing.T) {
 		head       []byte
 		want       int
 	}{
-		{"errorlog", "ERRORLOG", good, 50}, // continuation lines 2-3 are not time-prefixed
+		{"errorlog", "ERRORLOG", good, 100}, // lines 2-3 are indented continuations of the banner
+		{"errorlog, other name", "fixture.txt", good, 50},
+		{"unindented text", "x.log", []byte("2001-06-15 08:00:01.23 Server      x\nplain text\n"), 0},
 		{"errorlog.3 utf16", "ERRORLOG.3", toUTF16LE(readFixture(t, "golden/ERRORLOG"), true), 100},
 		{"renamed", "server.log", readFixture(t, "golden/ERRORLOG"), 50},
 		{"xe csv", "system_health.csv", readFixture(t, "xe_good.csv"), 0},
@@ -238,10 +258,7 @@ func TestErrorlogDetect(t *testing.T) {
 }
 
 func FuzzParseErrorlog(f *testing.F) {
-	f.Add(readFixture(f, "errorlog_good.log"))
 	f.Add(toUTF16LE(readFixture(f, "errorlog_good.log"), false))
-	for _, b := range errorlogBad(f) {
-		f.Add(b)
-	}
-	f.Fuzz(func(t *testing.T, data []byte) { fuzzCheck(t, NewErrorlog(), data) })
+	f.Add(readFixture(f, "errorlog_bad_tz.log"))
+	importertest.FuzzParse(f, NewErrorlog(), errorlogFixtures(f))
 }
