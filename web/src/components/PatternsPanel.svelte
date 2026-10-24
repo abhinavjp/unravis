@@ -7,12 +7,13 @@
   import { citeInLedger } from '../lib/citeInLedger';
   import { formatElapsed } from '../lib/provenance';
   import {
-    DEFAULT_EPISODE_GAP_SECONDS, DEFAULT_STALL_SECONDS, PATTERNS_TEXT, PATTERN_RANGES, auditStallLine, citeLabel, coverageLine, emptyEpisodesText, endGapsText,
-    episodeCiteLabel, episodeEvidenceId, findingRows, isEvidenceId, nBadge, operationText, qualityLine, secondsLabel, stallsOf, thresholdsChanged,
-    truncationNotices, verdictText, volleysOf, windowInputSeconds
+    DEFAULT_EPISODE_GAP_SECONDS, DEFAULT_STALL_SECONDS, PATTERNS_TEXT, PATTERN_RANGES, auditStallLine, citeLabel, concentrationSection, coverageLine, emptyEpisodesText, endGapsText,
+    episodeCiteLabel, episodeEvidenceId, findingRows, idleSection, isEvidenceId, nBadge, onsetSection, onsetZoneNote, operationText, qualityLine, repeatsOf, repeatsSummary, secondsLabel, stallsOf, thresholdsChanged,
+    truncationNotices, verdictText, volleysOf, windowInputSeconds, zoneMinuteShift
   } from '../lib/patterns';
   import type { PatternReport, Query, RequestRecord } from '../lib/types';
   import Hint from './Hint.svelte';
+  import StallMinutesPanel from './StallMinutesPanel.svelte';
   import ProvenanceNote from './ProvenanceNote.svelte';
   import Drawer from './Drawer.svelte';
 
@@ -20,10 +21,12 @@
   // Summary first (verdict, findings, counts), then the episode table, which opens one episode at a time.
   // The range chips change the page's own range. A slow request or a slow audit save opens its record (and closes this drawer).
   let { query, zone, sourceLabels, onClose }: { query: Query; zone: string; sourceLabels: Map<string, string>; onClose: () => void } = $props();
-  type State = { kind: 'idle' } | { kind: 'running' } | { kind: 'done'; report: PatternReport; key: string } | { kind: 'error'; text: string };
+  type State = { kind: 'idle' } | { kind: 'running' } | { kind: 'done'; report: PatternReport; key: string; idleAsked: boolean } | { kind: 'error'; text: string };
   let phase = $state<State>({ kind: 'idle' });
   let stallSec = $state(String(DEFAULT_STALL_SECONDS));
   let gapSec = $state(String(DEFAULT_EPISODE_GAP_SECONDS));
+  // The quiet-gap check reads every request in the window, so it runs only when this box is ticked.
+  let idleGaps = $state(false);
   let thresholdError = $state('');
   let openEpisodes = $state<number[]>([]);
   let citeNote = $state('');
@@ -38,7 +41,7 @@
   const activeRange = $derived(activeRangeId(query, quickRanges));
   const changed = $derived(thresholdsChanged(stallSec, gapSec));
   // What the search depends on. When it moves after a run, the numbers on screen describe an older question.
-  const askKey = $derived([query.sourceIds.join(','), query.start, query.end, stallSec.trim(), gapSec.trim()].join('|'));
+  const askKey = $derived([query.sourceIds.join(','), query.start, query.end, stallSec.trim(), gapSec.trim(), idleGaps ? 'idle' : ''].join('|'));
 
   onMount(() => runButton?.focus());
   $effect(() => () => controller?.abort());
@@ -54,7 +57,8 @@
 
   async function run() {
     if (phase.kind === 'running') return;
-    const built = windowInputSeconds(query, stallSec, gapSec);
+    const built = windowInputSeconds(query, stallSec, gapSec, idleGaps);
+    const idleAsked = idleGaps;
     if ('error' in built) { thresholdError = built.error; return; }
     thresholdError = '';
     controller?.abort();
@@ -67,7 +71,7 @@
     try {
       const report = await api.patterns(built.input, mine.signal);
       if (mine.signal.aborted) return;
-      phase = { kind: 'done', report, key };
+      phase = { kind: 'done', report, key, idleAsked };
     } catch (cause) {
       if (mine.signal.aborted) return;
       phase = { kind: 'error', text: cause instanceof Error && cause.message ? cause.message : PATTERNS_TEXT.failed };
@@ -112,6 +116,8 @@
       <p class="patterns-note">{PATTERNS_TEXT.thresholdNote}</p>
       {#if changed}<button type="button" class="reset-link" onclick={reset}>{PATTERNS_TEXT.reset}</button>{/if}
     </details>
+    <label class="idle-option"><input type="checkbox" bind:checked={idleGaps} /> {PATTERNS_TEXT.idleOptIn}</label>
+    <p class="patterns-note">{PATTERNS_TEXT.idleOptInNote}</p>
     {#if thresholdError}<div class="inline-error" role="alert">{thresholdError}</div>{/if}
     <button type="button" class="primary-button patterns-run" bind:this={runButton} disabled={phase.kind === 'running' || query.sourceIds.length === 0} onclick={run}>{phase.kind === 'running' ? PATTERNS_TEXT.running : PATTERNS_TEXT.run}</button>
     <p class="patterns-note">{PATTERNS_TEXT.runNote}</p>
@@ -123,6 +129,7 @@
       {@const report = phase.report}
       {@const coverage = coverageLine(report.coverage)}
       {@const rows = findingRows(report)}
+      {@const repeatsLine = repeatsSummary(report)}
       {#if phase.key !== askKey}<div class="notice" role="status">{PATTERNS_TEXT.stale}</div>{/if}
       <section class="patterns-summary" aria-label="Summary">
         <p class="patterns-verdict">{verdictText(report)}<Hint termId="episode" /></p>
@@ -146,6 +153,7 @@
             {/each}
           </ul>
         {/if}
+        {#if repeatsLine}<p class="patterns-quality">{repeatsLine}</p>{/if}
         <p class="patterns-quality">{qualityLine(report.quality)}<Hint termId="incomplete-request" /></p>
         {#if coverage}<p class="patterns-quality">{coverage}<Hint termId="coverage" /></p>{/if}
         {#each truncationNotices(report) as notice (notice)}<div class="notice" role="status">{notice}</div>{/each}
@@ -205,6 +213,25 @@
                             </tbody>
                           </table>
                         {/if}
+                        {#if report.repeats}
+                          {@const repeats = repeatsOf(report, episode)}
+                          <h4>{PATTERNS_TEXT.repeatsTitle}</h4>
+                          <p class="patterns-note">{PATTERNS_TEXT.repeatsIntro}</p>
+                          {#if repeats.length === 0}<p class="patterns-note">{PATTERNS_TEXT.none}</p>{:else}
+                            <ul class="finding-list">
+                              {#each repeats as repeat (repeat.key)}
+                                <li class="finding">
+                                  <div class="finding-meta">
+                                    <span class="evidence-badge">{PATTERNS_TEXT.repeatsLabel}</span>
+                                    <span class="finding-n">{repeat.kindText}</span>
+                                  </div>
+                                  <p>{repeat.line}</p>
+                                </li>
+                              {/each}
+                            </ul>
+                          {/if}
+                        {/if}
+                        <StallMinutesPanel episode={{ start: episode.start, end: episode.end }} sourceIds={query.sourceIds} stallMs={report.params.stallMs} {zone} />
                       </td>
                     </tr>
                   {/if}
@@ -214,6 +241,90 @@
           </div>
         {/if}
       </section>
+
+      {@const onset = onsetSection(report, query, zoneMinuteShift(zone, Date.parse(query.start)))}
+      {#if onset.kind !== 'hidden'}
+        <section class="patterns-detail" aria-label={PATTERNS_TEXT.onsetTitle}>
+          <h3>{PATTERNS_TEXT.onsetTitle}</h3>
+          <p class="patterns-note">{PATTERNS_TEXT.onsetIntro}</p>
+          {#if onset.kind === 'note'}
+            <p class="patterns-note">{onset.text}</p>
+          {:else}
+            <ul class="finding-list">
+              {#each onset.rows as row (row.key)}
+                <li class="finding">
+                  <div class="finding-meta">
+                    <span class="evidence-badge">{PATTERNS_TEXT.onsetLabel}</span>
+                    <span class="finding-n">{nBadge(row.onsets)}</span>
+                  </div>
+                  <p>{row.line}</p>
+                </li>
+              {/each}
+            </ul>
+            <p class="patterns-note">{PATTERNS_TEXT.onsetHint} {onsetZoneNote(zone)}</p>
+          {/if}
+        </section>
+      {/if}
+
+      {@const concentration = concentrationSection(report)}
+      {#if concentration.kind !== 'hidden'}
+        <section class="patterns-detail" aria-label={PATTERNS_TEXT.concTitle}>
+          <h3>{PATTERNS_TEXT.concTitle}<Hint termId="concentration" /></h3>
+          <p class="patterns-note">{PATTERNS_TEXT.concIntro}</p>
+          {#if concentration.kind === 'note'}
+            <p class="patterns-note">{concentration.text}</p>
+          {:else}
+            <ul class="finding-list">
+              {#each concentration.rows as row (row.key)}
+                <li class="finding">
+                  {#if row.label}
+                    <div class="finding-meta">
+                      <span class="evidence-badge">{row.label}</span>
+                      <span class="finding-n">{nBadge(row.stallN)}</span>
+                      <span class="finding-n">{row.episodesText}</span>
+                    </div>
+                  {/if}
+                  <p>{row.line}</p>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
+      {/if}
+
+      {@const idle = idleSection(report, phase.idleAsked)}
+      {#if idle.kind !== 'hidden'}
+        <section class="patterns-detail" aria-label={PATTERNS_TEXT.idleTitle}>
+          <h3>{PATTERNS_TEXT.idleTitle}</h3>
+          <p class="patterns-note">{PATTERNS_TEXT.idleIntro}</p>
+          {#if idle.kind === 'note'}
+            <p class="patterns-note">{idle.text}</p>
+          {:else}
+            <div class="finding-meta idle-meta">
+              <span class="evidence-badge">{PATTERNS_TEXT.idleLabel}</span>
+              {#if idle.raised}<span class="finding-n">{PATTERNS_TEXT.idleRaised}</span>{/if}
+            </div>
+            <div class="table-scroll">
+              <table class="patterns-table">
+                <caption class="sr-only">{PATTERNS_TEXT.idleTitle}</caption>
+                <thead><tr><th scope="col">Quiet gap before</th><th scope="col" class="num">Requests</th><th scope="col" class="num">Median</th><th scope="col" class="num">Slowest 1 in 20</th><th scope="col" class="num">Slow</th></tr></thead>
+                <tbody>
+                  {#each idle.bands as band (band.key)}
+                    <tr><th scope="row">{band.label}</th><td class="num">{band.n}</td><td class="num">{band.median}</td><td class="num">{band.slowest}</td><td class="num">{band.slowRate}</td></tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+            <ul class="idle-lifts">
+              {#each idle.lifts as lift (lift.key)}<li>{lift.line}</li>{/each}
+            </ul>
+            {#if idle.partial}<div class="notice" role="status">{idle.partial}</div>{/if}
+            {#if idle.excluded}<p class="patterns-note">{idle.excluded}</p>{/if}
+            <p class="patterns-note">{PATTERNS_TEXT.idleCaveat}</p>
+            <p class="patterns-note">{PATTERNS_TEXT.idleSources}</p>
+          {/if}
+        </section>
+      {/if}
 
       {#if report.auditStalls.length}
         <section class="patterns-detail" aria-label={PATTERNS_TEXT.auditStalls}>
@@ -251,6 +362,11 @@
   .reset-link:hover { color: var(--text); }
   .reset-link:focus-visible, .cite-button:focus-visible, .record-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius); }
   .patterns-run { justify-self: start; }
+  .idle-option { display: flex; align-items: center; gap: 8px; color: var(--text-2); font-size: var(--fs-3); cursor: pointer; }
+  .idle-option input { width: 16px; height: 16px; }
+  .idle-meta { margin-bottom: 8px; }
+  .idle-lifts { display: grid; gap: 4px; margin: 8px 0; padding-left: 18px; font-size: var(--fs-3); }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .patterns-note { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
   .patterns-summary { display: grid; gap: 10px; min-width: 0; }
   .patterns-verdict { margin: 0; font-size: var(--fs-5); font-weight: 600; }

@@ -398,6 +398,14 @@ export const deck: Deck = {
       definition: 'Some sources record which customer account made each request. When that field is empty, Unravis cannot group requests by customer.',
       notMeaning: 'A tenant value is shown as recorded. Unravis has not checked who it really belongs to.',
       aliases: ['Customer', 'Account', 'Tenant attribution']
+    },
+    {
+      id: 'concentration',
+      term: 'Concentration',
+      hint: 'How much larger an operation or user share of slow requests is than its share of all requests.',
+      definition: 'Concentration compares an operation or user share of the slow requests with its share of all requests. The ratio is called lift, and a lift of 2 or more counts as concentrated.',
+      notMeaning: 'A high lift does not show why the requests were slow. It only shows where the slow requests gathered.',
+      aliases: ['Lift', 'Concentrated', 'Concentration ratio']
     }
   ]
 };

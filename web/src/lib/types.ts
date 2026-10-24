@@ -185,14 +185,27 @@ export interface CoverageReport {
 export interface CoverageRefused { refused: string }
 
 /** P2-lite incident patterns (POST /api/patterns). Mirrors internal/audit/patterns_types.go. */
-export interface PatternInput { sourceIds: string[]; start: string; end: string; stallMs?: number; episodeGapSeconds?: number }
+export interface PatternInput { sourceIds: string[]; start: string; end: string; stallMs?: number; episodeGapSeconds?: number; /** Opt in to B6g, which reads every row in the window. */ idleGaps?: boolean }
 export interface PatternParams { stallMs: number; episodeGapSeconds: number; auditStallMs: number; auditStallShare: number; volleyWindowMs: number }
 export interface PatternStall { sourceId: string; id: string; controller: string; action: string; initiatedAt: string; completedAt?: string; observedMs: number; apiTimeMs?: number; userId?: number; episode: number }
 export interface PatternEpisode { index: number; start: string; end: string; requests: number; users: number; maxMs: number; operations: string[] }
 export interface PatternVolley { episode: number; userId: number; requests: number; firstStart: string; startSpreadMs: number; endStaggerMs: number; endGapsMs: number[]; incompleteEnds: number }
 export interface PatternAuditStall { sourceId: string; id: string; controller: string; action: string; initiatedAt: string; observedMs: number; auditCreateTimeMs: number; share: number }
 export type EvidenceLabel = 'Symptom' | 'Correlation' | 'Strong correlation';
-export interface PatternFinding { rule: 'B1' | 'B2' | 'B6' | 'B12'; label: EvidenceLabel; headline: string; n: number; lowN: boolean; evidenceId: string }
+export interface PatternFinding { rule: 'B1' | 'B2' | 'B6' | 'B12' | 'B3a' | 'A3' | 'B12r' | 'B6g'; label: EvidenceLabel; headline: string; n: number; lowN: boolean; evidenceId: string }
+/** B3a: a minute of the hour at which stall episodes started on several days. `minute` is 0 to 59; `episodes` are the episode indexes, or their count. */
+export interface PatternOnsetMinute { minute: number; days: number; onsets: number; episodes: number | Array<number | string> }
+/** A3: one operation or user whose share of stall requests is compared with its share of all requests. Shares are fractions from 0 to 1. `episodes` is a count, or the episode indexes. */
+export interface PatternConcentration {
+  dimension: 'operation' | 'user'; key: string; stallShare: number; trafficShare: number; lift: number; stallN: number; allN: number;
+  episodes: number | Array<number | string>; withheld: boolean | string;
+}
+/** B12r: one user who started the same operation again while an earlier one was still running. `sameSize` is false when the requests differed in size. */
+export interface PatternRepeat { episode: number; userId: number; operation: string; repeats: number; sameSize: boolean | number; longestChain: number }
+/** B6g: audit create time by the quiet gap before each request. `toS` is null or 0 for the open-ended band. Rates are fractions from 0 to 1. */
+export interface PatternIdleBand { fromS: number; toS: number | null; n: number; medianMs: number | null; p95Ms: number | null; slowRate: number | null }
+export interface PatternIdleLift { gS: number; value: number | null; withheld: boolean | string }
+export interface PatternIdleGaps { bands: PatternIdleBand[]; lift: PatternIdleLift[]; excludedHangfire: number; partial: boolean | string }
 export interface PatternCoverage { run: boolean; requestInitiatedAtPct?: number; accountIdPct?: number; note: string }
 export interface PatternReport {
   params: PatternParams; stalls: PatternStall[]; episodes: PatternEpisode[]; volleys: PatternVolley[]; auditStalls: PatternAuditStall[];
@@ -203,6 +216,8 @@ export interface PatternReport {
   stallsTruncated?: boolean;
   /** The audit-create read (B6) hit the row cap. `truncated` is the OR of the two. */
   auditsTruncated?: boolean;
+  /** Additive rules from the incident-gap addendum. Each is absent from older servers and when the rule did not run. */
+  onsetMinutes?: PatternOnsetMinute[]; concentration?: PatternConcentration[]; repeats?: PatternRepeat[]; idleGaps?: PatternIdleGaps;
 }
 
 /** The hypothesis ledger (/api/ledger). Mirrors internal/ledger/types.go. It holds no row data and no identifiers. */
