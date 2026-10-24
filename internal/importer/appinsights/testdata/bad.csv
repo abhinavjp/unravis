@@ -1,0 +1,6 @@
+timestamp [UTC],itemType,name,duration,resultCode,success,itemCount,operation_Id,cloud_RoleInstance,type,data
+SENTINEL-7f3a,request,GET /a,10,200,True,1,op-1,WEB-A,,SENTINEL-7f3a
+2001-02-03T04:05:06Z,request,GET /b,SENTINEL-7f3a,200,True,1,op-2,WEB-A,,SENTINEL-7f3a
+2001-02-03T04:05:07Z,request,GET /c,10,200,True,SENTINEL-7f3a,op-3,WEB-A,,SENTINEL-7f3a
+2001-02-03T04:05:08Z,request,GET /d,10,200,True,1,op-4,WEB-A,,SENTINEL-7f3a,SENTINEL-7f3a,extra
+2001-02-03T04:05:09Z,request,GET /e,10,SENTINEL-7f3a,SENTINEL-7f3a,1,op-5,WEB-A,,SENTINEL-7f3a
