@@ -141,8 +141,8 @@ func TestWithoutMongoCredentialsRetainsTransportOptions(t *testing.T) {
 }
 
 func TestRemainingLegacyMaxTimeUsesDeadlineAndRejectsExpiredContext(t *testing.T) {
-	if got, err := remainingLegacyMaxTime(context.Background()); err != nil || got != queryTimeout {
-		t.Fatalf("unbounded context maxTime=%v err=%v; want default query timeout", got, err)
+	if got, err := remainingLegacyMaxTime(context.Background()); err != nil || got != audit.InteractiveQueryBudget {
+		t.Fatalf("unbounded context maxTime=%v err=%v; want default interactive budget", got, err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -271,8 +271,8 @@ func TestMongo34AggregateSendsServerMaxTimeMS(t *testing.T) {
 		t.Fatal("legacy cursor iteration failed")
 	}
 	_ = cursor.Close(ctx)
-	if got := observed.Load(); got < 1 || got > 8000 {
-		t.Fatalf("MongoDB 3.4 aggregate maxTimeMS=%d; want 1..8000", got)
+	if got := observed.Load(); got < 1 || got > 10000 {
+		t.Fatalf("MongoDB 3.4 aggregate maxTimeMS=%d; want 1..10000", got)
 	}
 }
 
@@ -283,4 +283,39 @@ func containsDatabaseName(names []string, expected string) bool {
 		}
 	}
 	return false
+}
+
+func TestRemainingLegacyMaxTimeCapsAtBudget(t *testing.T) {
+	if got, err := remainingLegacyMaxTime(context.Background()); err != nil || got != 10*time.Second {
+		t.Fatalf("no deadline maxTime=%v err=%v; want 10s", got, err)
+	}
+	census := withQueryBudget(context.Background(), audit.CensusQueryBudget)
+	if got, err := remainingLegacyMaxTime(census); err != nil || got != 60*time.Second {
+		t.Fatalf("census budget maxTime=%v err=%v; want 60s", got, err)
+	}
+	short, cancel := context.WithTimeout(census, 2*time.Second)
+	defer cancel()
+	if got, err := remainingLegacyMaxTime(short); err != nil || got > 2*time.Second || got <= 0 {
+		t.Fatalf("earlier deadline maxTime=%v err=%v; want <= 2s", got, err)
+	}
+}
+
+func TestLegacyClientOptionsSetsAppNameAndTimeouts(t *testing.T) {
+	opts := legacyClientOptions("mongodb://db.example/?appName=other", nil)
+	if opts.AppName == nil || !strings.HasPrefix(*opts.AppName, "Unravis/") {
+		t.Fatalf("AppName = %v, want Unravis/ prefix", opts.AppName)
+	}
+	if opts.ServerSelectionTimeout == nil || *opts.ServerSelectionTimeout != 30*time.Second {
+		t.Fatalf("ServerSelectionTimeout = %v, want 30s", opts.ServerSelectionTimeout)
+	}
+	if opts.ConnectTimeout == nil || *opts.ConnectTimeout != 10*time.Second {
+		t.Fatalf("ConnectTimeout = %v, want 10s", opts.ConnectTimeout)
+	}
+	if opts.MaxPoolSize == nil || *opts.MaxPoolSize != 4 {
+		t.Fatal("existing pool settings were not kept")
+	}
+	withTLS := legacyClientOptions("mongodb://db.example/", &tls.Config{MinVersion: tls.VersionTLS12})
+	if withTLS.TLSConfig == nil || withTLS.TLSConfig.MinVersion != tls.VersionTLS12 {
+		t.Fatal("TLS configuration was not applied")
+	}
 }
