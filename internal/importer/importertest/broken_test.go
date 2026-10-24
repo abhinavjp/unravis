@@ -208,7 +208,7 @@ func TestHarnessCatchesBrokenImporters(t *testing.T) {
 			if !ok {
 				t.Fatalf("broken importer %q has no entry in wantFail", name)
 			}
-			if !bytes.Contains(out, []byte("--- FAIL: TestBrokenChild/"+sub)) {
+			if !bytes.Contains(out, []byte("--- FAIL: TestBrokenChild/"+sub+" (")) {
 				t.Fatalf("fault %q was not caught by %q\n%s", name, sub, out)
 			}
 		})

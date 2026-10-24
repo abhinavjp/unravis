@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,7 +19,14 @@ import (
 
 // toy is a minimal, correct importer over "time,host,note,ms" CSV. It shows
 // the shape every real importer takes and proves the harness accepts one.
-type toy struct{}
+//
+// The two flags make strictly typed variants: numericNote rejects a row whose
+// note is not an integer, and rejectTrigger rejects a note that starts with a
+// formula trigger (the strictness a TSV or typed-column importer shows).
+type toy struct {
+	numericNote   bool
+	rejectTrigger bool
+}
 
 func (toy) Name() string { return "toy-csv" }
 
@@ -77,6 +85,17 @@ func (t toy) Parse(ctx context.Context, r io.Reader, opts importer.Options, emit
 			rep.Reject(line, importer.ReasonBadNumber)
 			continue
 		}
+		note := rec[cr.Index("note")]
+		if t.numericNote {
+			if _, err := strconv.Atoi(note); err != nil {
+				rep.Reject(line, importer.ReasonBadNumber)
+				continue
+			}
+		}
+		if t.rejectTrigger && note != "" && strings.ContainsRune("=+-@\t\r", rune(note[0])) {
+			rep.Reject(line, importer.ReasonBadNumber)
+			continue
+		}
 		ts = ts.UTC()
 		// The raw host name is reported, never stored: Event.Host is the
 		// label the owner picked or mapped.
@@ -106,7 +125,7 @@ func (t toy) Parse(ctx context.Context, r io.Reader, opts importer.Options, emit
 			Unit:       "ms",
 			Line:       line,
 			TZRule:     clock.RuleUTCField,
-			Attrs:      map[string]string{"note": rec[cr.Index("note")]},
+			Attrs:      map[string]string{"note": note},
 		}
 		if err := emit(ev); err != nil {
 			return rep, err
@@ -155,6 +174,28 @@ func fixtures() importertest.Fixtures {
 
 func TestToyPassesConformance(t *testing.T) {
 	importertest.Run(t, toy{}, fixtures())
+}
+
+// A typed-attribute importer (numeric codes) rejects =404 and +500 rows. That
+// is correct, and NoFreeText lets it say so.
+func TestNumericAttrsWithNoFreeText(t *testing.T) {
+	fx := fixtures()
+	fx.Good = []byte("time,host,note,ms\n" +
+		"2001-01-01T00:00:00Z,web-a,404,12.5\n" +
+		"2001-01-01T00:00:01Z,web-a,500,30\n" +
+		"2001-01-01T00:00:02Z,web-b,200,7\n")
+	fx.Formula = nil
+	fx.NoFreeText = true
+	importertest.Run(t, toy{numericNote: true}, fx)
+}
+
+// Without NoFreeText, an importer that rejects trigger-prefixed cells is
+// still fine: the harness sees rejected rows and does not call that a dropped
+// leading character.
+func TestRejectingTriggersDoesNotFalseFail(t *testing.T) {
+	fx := fixtures()
+	fx.Formula = nil
+	importertest.Run(t, toy{rejectTrigger: true}, fx)
 }
 
 func FuzzToyParse(f *testing.F) {

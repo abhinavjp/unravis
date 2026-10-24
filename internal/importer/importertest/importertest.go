@@ -56,13 +56,14 @@ type Fixtures struct {
 	// only because the harness also derives such cells itself: it takes the
 	// attribute values of Good, finds each in the bytes, prefixes it with each
 	// trigger and parses again. Nil Formula therefore does not skip the check;
-	// it fails unless Good yields locatable attribute values or NoFreeText is
-	// set.
+	// it fails unless Good yields attribute values that are whole cells of the
+	// file, or NoFreeText is set.
 	Formula []byte
-	// NoFreeText declares that no event attribute carries text from the file
-	// (every attribute is a number, a fixed word or a derived label). It only
-	// waives the requirement to find free-text cells; if the harness can
-	// locate attribute values in Good the formula check still runs on them.
+	// NoFreeText declares that no event attribute carries free text from the
+	// file (every attribute is a number, a fixed word or a derived label), so
+	// rejecting a typed cell that starts with = + - @ is correct. It skips the
+	// harness-generated cells entirely; a non-nil Formula fixture is still
+	// checked.
 	NoFreeText bool
 	// Large is an optional valid file of more than 2*importer.HeadSize bytes.
 	// The byte-limit and read-error checks need a file that is bigger than the
@@ -822,48 +823,58 @@ func formula(t *testing.T, imp importer.Importer, fx Fixtures) {
 		}
 	}
 
-	// Generated cells: prefix each free-text attribute value of Good, where it
-	// appears in the file, with each trigger.
+	// Generated cells: prefix each attribute value of Good that is a whole cell
+	// of the file with each trigger. An importer whose attributes are all typed
+	// (numbers, fixed words, derived labels) declares NoFreeText: it has no
+	// free-text cell to carry a formula, and rejecting a typed cell that starts
+	// with a trigger is correct, so the generated check does not apply to it.
+	if fx.NoFreeText {
+		return
+	}
 	base, _, err := collect(imp, fx.Good, o)
 	if err != nil {
 		t.Fatalf("Good fixture refused: %v", err)
 	}
 	type cand struct {
-		v   string
-		idx int
+		v    string
+		idx  int
+		text bool
 	}
 	var cands []cand
 	for _, v := range attrValues(base) {
-		if len(v) < 3 || startsWithTrigger(v) || !strings.ContainsAny(v[:1], "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") {
+		if v == "" || startsWithTrigger(v) {
 			continue
 		}
-		if i := bytes.Index(fx.Good, []byte(v)); i >= 0 {
-			cands = append(cands, cand{v, i})
+		if i := cellIndex(fx.Good, v); i >= 0 {
+			cands = append(cands, cand{v, i, strings.ContainsAny(v, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")})
 		}
 	}
-	if len(cands) > 6 {
-		cands = cands[:6]
+	// Free-text (letter-containing) values first: they are the ones a parser
+	// most plausibly keeps as text, and digit-led values must not crowd them out.
+	sort.SliceStable(cands, func(i, j int) bool { return cands[i].text && !cands[j].text })
+	if len(cands) > 40 {
+		cands = cands[:40]
 	}
 	if len(cands) == 0 {
-		if !fx.NoFreeText {
-			t.Fatal("no attribute value of the Good fixture appears verbatim in its bytes, so the formula check has nothing to prefix: " +
-				"supply Fixtures.Formula, make Good carry a free-text cell into an attribute, or set Fixtures.NoFreeText if no attribute holds file text")
-		}
-		return
+		t.Fatal("no attribute value of the Good fixture appears verbatim as a whole cell of its bytes, so the formula check has nothing to prefix: " +
+			"supply Fixtures.Formula, make Good carry a free-text cell into an attribute, or set Fixtures.NoFreeText if no attribute holds file text")
 	}
 	for _, tr := range triggers {
 		parsed, verbatim := 0, 0
+		var rejected int64
 		for _, c := range cands {
 			data := append(append(append([]byte(nil), fx.Good[:c.idx]...), tr...), fx.Good[c.idx:]...)
 			var evs []evidence.Event
+			var rep importer.Report
 			var err error
-			if !safely(t, fmt.Sprintf("Good with %q before %q", tr, c.v), func() { evs, _, err = collect(imp, data, o) }) {
+			if !safely(t, fmt.Sprintf("Good with %q before %q", tr, c.v), func() { evs, rep, err = collect(imp, data, o) }) {
 				continue
 			}
 			if err != nil {
-				continue // a refused row or file is a legitimate answer to a changed cell
+				continue // a refused file is a legitimate answer to a changed cell
 			}
 			parsed++
+			rejected += rep.Rejected
 			for _, v := range attrValues(evs) {
 				if v == tr+c.v {
 					verbatim++
@@ -873,14 +884,41 @@ func formula(t *testing.T, imp importer.Importer, fx Fixtures) {
 				t.Errorf("attribute %q was escaped; escaping belongs to export, not import", k)
 			}
 		}
-		// = + - @ are ordinary text to any parser, so some prefixed cell must
-		// arrive. Tab and CR may legitimately make a file unparseable (they are
-		// field or line separators in some formats); when a parse succeeds the
-		// value must still arrive untrimmed.
-		if (tr != "\t" && tr != "\r" && verbatim == 0) || (parsed > 0 && verbatim == 0) {
-			t.Errorf("%d cells starting with %q parsed but none reached an attribute as %q+value: the leading character was dropped, trimmed or altered", parsed, tr, tr)
+		// A prefixed cell may be refused, quarantined or (tab, CR) read as a
+		// field or line separator: those are answers to a changed cell. What is
+		// not acceptable is a parse that accepted every row yet kept none of the
+		// prefixed values: the leading character was dropped or altered.
+		if parsed > 0 && verbatim == 0 && rejected == 0 {
+			t.Errorf("%d files with a cell starting with %q parsed without rejecting a row, but no attribute arrived as %q+value: the leading character was dropped, trimmed or altered", parsed, tr, tr)
 		}
 	}
+}
+
+// cellIndex returns the offset in data of the first occurrence of v that is a
+// whole cell: it is bounded on both sides by a separator, a quote, a line end
+// or the edge of the file. Matching whole cells keeps a value such as "2001"
+// from being found inside a timestamp.
+func cellIndex(data []byte, v string) int {
+	sep := func(b byte) bool {
+		switch b {
+		case ',', '\t', ';', '|', '\r', '\n', '"':
+			return true
+		}
+		return false
+	}
+	for off := 0; off < len(data); {
+		i := bytes.Index(data[off:], []byte(v))
+		if i < 0 {
+			return -1
+		}
+		i += off
+		end := i + len(v)
+		if (i == 0 || sep(data[i-1])) && (end == len(data) || sep(data[end])) {
+			return i
+		}
+		off = i + 1
+	}
+	return -1
 }
 
 // lineEndings checks that LF and CRLF copies of the Good file are the same
