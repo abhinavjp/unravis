@@ -1,0 +1,2 @@
+2001-10-25T14:02:31.123+13:00 [17] WARN  Synthetic.Api.CacheClient - slow cache call
+2001-10-25T14:02:32.500+13:00 [17] INFO  Synthetic.Api.CacheClient - cache call finished

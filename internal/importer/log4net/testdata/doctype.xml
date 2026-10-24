@@ -1,0 +1,2 @@
+<!DOCTYPE log [<!ENTITY ext SYSTEM "file:///etc/example.test">]>
+<log4j:event logger="Synthetic.Api.OrdersController" timestamp="1003971751400" level="INFO" thread="17"><log4j:message>&ext;</log4j:message></log4j:event>
