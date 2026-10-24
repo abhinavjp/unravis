@@ -369,6 +369,20 @@ export const deck: Deck = {
       hint: 'The check found only one episode, so no recurring pattern is shown.',
       definition: 'A single episode means the check found one episode in the period. The app then reports the number of requests in that episode, not a count of stalls.',
       notMeaning: 'One episode is not a pattern, and it does not show that the episode will come back.'
+    },
+    {
+      id: 'pseudonym',
+      term: 'Pseudonym',
+      hint: 'A stable label such as user-3fa91c2e that stands in for a real user id in the export.',
+      definition: 'A pseudonym is a made-up label that replaces a user id, and the same user keeps the same label across the file. The key that makes the labels is never saved.',
+      notMeaning: 'It does not make a person anonymous. Someone who knows a user id may still spot them.'
+    },
+    {
+      id: 'thin-cell',
+      term: 'Thin cell',
+      hint: 'A group with fewer than 20 requests, so its exact count is hidden as "<20".',
+      definition: 'A thin cell is a count based on too few requests to share safely. The export shows it as "<20" instead of the exact number.',
+      notMeaning: 'It does not mean the group had no requests, and it does not mean the finding is wrong.'
     }
   ]
 };
