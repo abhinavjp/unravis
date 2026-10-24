@@ -115,6 +115,15 @@ export function rowClock(row: TimelineRow, zone: string): string {
   return formatTime(row.time, { zone, precision: 'second', suffix: false });
 }
 
+/**
+ * A row's time in a zone with the zone's offset at that instant ("3 Feb 17:01:45 GMT+13"). The offset is taken per row, so a
+ * table that crosses a daylight saving change, or one clock hour that happens twice, still reads without ambiguity. UTC
+ * rows carry no suffix: the heading already says UTC.
+ */
+export function rowClockWithOffset(row: TimelineRow, zone: string): string {
+  return formatTime(row.time, { zone, precision: 'second', suffix: zone !== 'UTC' });
+}
+
 const RULE_WORDS: Record<string, string> = {
   'utc-field': 'UTC in the file',
   'offset-in-field': 'offset in each time',

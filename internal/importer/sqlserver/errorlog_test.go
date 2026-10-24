@@ -68,7 +68,7 @@ func TestErrorlogGoodEvents(t *testing.T) {
 			t.Errorf("provenance: %+v", e)
 		}
 	}
-	want := []string{KindStart, KindError, KindLoginFailed, KindError, KindIOStall, KindNonYielding, KindStop}
+	want := []string{KindStart, KindLoginFailed, KindError, KindIOStall, KindNonYielding, KindStop}
 	if fmt.Sprint(kinds) != fmt.Sprint(want) {
 		t.Errorf("kinds = %v, want %v", kinds, want)
 	}
@@ -76,18 +76,15 @@ func TestErrorlogGoodEvents(t *testing.T) {
 		t.Errorf("report: rejected %d, quality %+v", rep.Rejected, rep.Quality)
 	}
 	// 14:00:35 NZST (UTC+12, June) is 02:00:35Z.
-	io := evs[4]
+	io := evs[3]
 	if !io.Start.Equal(time.Date(2001, 6, 15, 2, 0, 35, 0, time.UTC)) || *io.Value != 3 || io.Unit != "count" {
 		t.Errorf("io-stall = %+v", io)
 	}
-	if e := evs[1]; e.Attrs["error_number"] != "18456" || e.Attrs["sql_severity"] != "14" || e.Severity != "warning" {
-		t.Errorf("error 18456 = %+v", e)
+	if e := evs[1]; e.Kind != KindLoginFailed || len(e.Attrs) != 0 || *e.Value != 1 || e.Severity != "warning" {
+		t.Errorf("error 18456 and its Login failed line are one login-failed event: %+v", e)
 	}
-	if e := evs[3]; e.Attrs["error_number"] != "9002" || e.Severity != "error" {
+	if e := evs[2]; e.Attrs["error_number"] != "9002" || e.Severity != "error" {
 		t.Errorf("error 9002 = %+v", e)
-	}
-	if l := evs[2]; len(l.Attrs) != 0 || *l.Value != 1 {
-		t.Errorf("login-failed keeps attributes: %+v", l)
 	}
 	for _, g := range []string{gapErrlogLocal, gapErrlog833, gapErrlogLogin, gapErrlogUnclassified} {
 		if !contains(rep.KnownGaps, g) {

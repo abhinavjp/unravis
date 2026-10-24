@@ -32,6 +32,14 @@ func OverlapAmbiguous(candidates int) string {
 	return "Possible overlap (ambiguous: " + strconv.Itoa(candidates) + " candidates)."
 }
 
+// OverlapShared: one qualifying event overlaps several audit intervals as the
+// only candidate of each, so it cannot be pinned to any one of them. It is listed
+// once per interval and never counted. There is no TypeScript twin: the screen
+// shows the sentence the server wrote.
+func OverlapShared(intervals int) string {
+	return "Possible overlap (one event overlaps " + strconv.Itoa(intervals) + " audit intervals; it is not matched to any one of them)."
+}
+
 // AuditCreate: an audit duration is large. It states what was measured,
 // never a cause.
 func AuditCreate(seconds float64) string {

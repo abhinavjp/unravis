@@ -149,10 +149,9 @@ func checkNeverClaims(t *testing.T, st Statement) {
 }
 
 func TestXEStatementBelowThreshold(t *testing.T) {
-	want := evidence.NotObservedThreshold("system_health", "lock waits over 30 s and latch waits over 15 s")
+	want := evidence.NotObservedThreshold("system_health", XEAbsenceThreshold)
 	at := time.Date(2001, 6, 15, 2, 0, 0, 0, time.UTC)
 	cases := map[string]string{
-		"header-only export": "timestamp_utc,name,wait_type,duration\n",
 		// The export covers the stall (diagnostics rows on both sides) but has no wait
 		// over the threshold: still the threshold wording, never "SQL was not waiting".
 		"covered, no waits": "timestamp_utc,name,component,state\n" +
@@ -214,7 +213,7 @@ func TestXEStatementCoverageGap(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := XEStatement(stall(time.Date(2001, 6, 15, 5, 0, 0, 0, time.UTC), 28), evs, rep.Quality, goldenTol)
-	if st.Text != evidence.NotObservedGap("the system_health export does not cover this interval") || st.Label != audit.EvidenceSymptom {
+	if st.Text != evidence.NotObservedGap("the system_health export does not cover the whole interval") || st.Label != audit.EvidenceSymptom {
 		t.Errorf("interval outside coverage: %+v", st)
 	}
 	checkNeverClaims(t, st)

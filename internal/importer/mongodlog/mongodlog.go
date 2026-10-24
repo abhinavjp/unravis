@@ -57,13 +57,16 @@ const (
 	idOptions = 21951
 	// idStarting: CONTROL, msg "MongoDB starting"; attr.host is the server host name.
 	idStarting = 4615611
-	// idRotated: CONTROL, msg "***** SERVER RESTARTED *****"; written when the log file is
-	// rotated (logRotate). Also matched by message text so a wrong id cannot hide it.
-	idRotated = 20698
+	// idRestarted: CONTROL, msg "***** SERVER RESTARTED *****"; written when mongod starts and
+	// appends to an existing log file, so it marks a restart, not a log rotation. Also matched
+	// by message text so a wrong id cannot hide it.
+	idRestarted = 20698
 )
 
 const (
-	msgRotated = "***** SERVER RESTARTED *****"
+	msgRestarted = "***** SERVER RESTARTED *****"
+	// msgRotated is the message written when the log is rotated; matched by text only.
+	msgRotated = "Log rotation initiated"
 	// No id is cited for the runtime profiler change: it is detected by message text only.
 	msgProfilerChanged = "Profiler settings changed"
 )
@@ -387,7 +390,9 @@ func handleLine(line []byte, no int64, st *state, opts importer.Options, rep *im
 				return t, "", nil, err
 			}
 		}
-	case ll.ID == idRotated || ll.Msg == msgRotated:
+	case ll.ID == idRestarted || ll.Msg == msgRestarted:
+		st.restarted = true
+	case ll.Msg == msgRotated:
 		st.rotated = true
 	}
 	return t, "", nil, nil
@@ -395,8 +400,20 @@ func handleLine(line []byte, no int64, st *state, opts importer.Options, rep *im
 
 // observeHost records the server's own host name. A raw name is reported only when the
 // user did not pick the host; the service maps or refuses it and the name is never stored.
+// When the user picked a host, a name in the file that the host map knows under another
+// label refuses the file (the same rule as the SQL Server XE importer); a name the map does
+// not know leaves the pick in force. A file whose start-up line is missing (a rotated
+// piece) names no host: without a pick it is refused as an unknown host.
 func observeHost(name string, st *state, opts importer.Options, rep *importer.Report) error {
-	if opts.Host != nil || name == "" || len(name) > 253 || !utf8.ValidString(name) || strings.ContainsAny(name, "\x00\r\n\t") {
+	if name == "" || len(name) > 253 || !utf8.ValidString(name) || strings.ContainsAny(name, "\x00\r\n\t") {
+		return nil
+	}
+	if opts.Host != nil {
+		if opts.Hosts != nil {
+			if hh, ok := opts.Hosts(name); ok && hh.Label != "" && hh.Label != opts.Host.Label {
+				return importer.ErrUnknownHost
+			}
+		}
 		return nil
 	}
 	if err := rep.Observe(name); err != nil {
