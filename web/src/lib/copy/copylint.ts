@@ -4,7 +4,10 @@
  * `lintScreenStrings` is the entry point for component text; `lintTerms` lints the glossary entries.
  */
 import type { Term } from './types';
-import { auditCreate, notObservedGap, notObservedThreshold, overlapAmbiguous, overlapUnique, plainAuditCreate } from './wordings';
+import {
+  auditCreate, episodeShare, markerBefore, metricRose, metricSampleOverlap, notObservedGap, notObservedThreshold, overlapAmbiguous,
+  overlapUnique, plainAuditCreate, topInWindow
+} from './wordings';
 
 export interface LintEntry { id: string; text: string }
 export interface LintFinding { id: string; rule: 'causal' | 'wording' | 'reading-level' | 'undefined-term'; message: string }
@@ -33,6 +36,9 @@ const CAUSAL_PATTERNS: RegExp[] = [
   /\bresult(?:ed|s|ing)\s+(?:from|in)\b/gi,
   /\bresponsible for\b/gi
 ];
+
+/** Diagnosis words (wave-2 plan 4.0). Copy describes what was measured, so these never appear, negated or not. */
+const DIAGNOSIS_WORDS = /\b(?:leak|starv|saturat)\w*/gi;
 
 /** A negation word, including the contractions don't, doesn't, isn't, can't and "cannot". */
 const NEGATION = String.raw`(?:\b(?:not|never|cannot)\b|\b\w+n['’]t\b)`;
@@ -80,6 +86,9 @@ function lintCausal(entry: LintEntry): LintFinding[] {
       });
     }
   }
+  for (const m of text.matchAll(DIAGNOSIS_WORDS)) {
+    findings.push({ id: entry.id, rule: 'causal', message: `"${m[0]}" is a diagnosis. Copy describes what was measured.` });
+  }
   for (const m of text.matchAll(/\b(?:proven|proves|proved)\b/gi)) {
     findings.push({ id: entry.id, rule: 'causal', message: `"${m[0]}" overstates the evidence. "Proven" never appears.` });
   }
@@ -113,14 +122,22 @@ const WORDING_SOURCES: string[] = [
   overlapUnique(TEXT, TEXT, asNumber(NUM)),
   overlapAmbiguous(asNumber(NUM)),
   auditCreate(asNumber(NUM)),
-  plainAuditCreate(asNumber(NUM))
+  plainAuditCreate(asNumber(NUM)),
+  metricRose(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT),
+  metricSampleOverlap(TEXT, TEXT, TEXT),
+  markerBefore(TEXT, TEXT, TEXT),
+  episodeShare(TEXT, asNumber(NUM), asNumber(NUM), asNumber(NUM), asNumber(NUM)),
+  topInWindow(TEXT, TEXT)
 ].map(toPattern);
 
 /** Sticky patterns: each matches one whole permitted sentence (or sentences) at an exact position. */
 const WORDING_PATTERNS: RegExp[] = WORDING_SOURCES.map((source) => new RegExp(source + '(?=\\s|$)', 'y'));
 
 /** Phrases that must only ever appear as the exact permitted wordings. */
-const WORDING_TRIGGERS = ['Not observed', 'Possible overlap', 'Audit create took', 'overlapping this interval'];
+const WORDING_TRIGGERS = [
+  'Not observed', 'Possible overlap', 'Audit create took', 'overlapping this interval', 'during this interval (Correlation)',
+  'This interval starts', 'comparison windows outside stalls', 'in this window:'
+];
 
 /** Length of the permitted wording that starts exactly at `pos`, or 0. */
 function wordingAt(text: string, pos: number): number {

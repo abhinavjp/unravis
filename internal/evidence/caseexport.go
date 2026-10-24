@@ -93,6 +93,7 @@ type attrPolicy struct {
 	rule   attrRule
 	prefix string            // pseudonym prefix for ruleName and rulePerson
 	asIs   []string          // ruleName values shown unchanged (e.g. "_Total")
+	keep   *regexp.Regexp    // ruleName: values matching it are shown unchanged
 	enum   map[string]string // ruleEnum, ruleEnumList: lower-case -> exported spelling
 	canon  map[string]bool   // exported spellings of enum
 	extra  map[string]bool   // ruleNumber: literals allowed besides a number
@@ -119,6 +120,21 @@ func polName(prefix string, asIs ...string) attrPolicy {
 	return attrPolicy{rule: ruleName, prefix: prefix, asIs: asIs}
 }
 
+// keptAsIs reports a ruleName value that is shown unchanged.
+func (p attrPolicy) keptAsIs(v string) bool {
+	for _, s := range p.asIs {
+		if v == s {
+			return true
+		}
+	}
+	return p.keep != nil && p.keep.MatchString(v)
+}
+
+// polNameKeep is polName where every value matching keep is shown unchanged.
+func polNameKeep(prefix string, keep *regexp.Regexp) attrPolicy {
+	return attrPolicy{rule: ruleName, prefix: prefix, keep: keep}
+}
+
 func polPerson(prefix string) attrPolicy { return attrPolicy{rule: rulePerson, prefix: prefix} }
 
 var (
@@ -142,15 +158,13 @@ var (
 // and event-log app pools so the same pool reads the same within one export.
 var exportPolicy = map[string]map[string]attrPolicy{
 	"iis-w3c": {"method": polEnum(httpMethods), "status": polNum, "substatus": polNum, "win32": polNum, "port": polNum,
-		"site": polName("site"), "user": polPerson("user")},
+		"site": polName("site"), "user": polPerson("user"), "bytes-out": polNum, "bytes-in": polNum},
 	"iis-httperr":  {"reason": polEnum(httpErrReasons), "status": polNum, "method": polEnum(httpMethods), "queue": polName("pool"), "siteid": polNum},
 	"win-counters": counterPolicy,
 	"sql-pdh":      counterPolicy,
 	"win-events": {"log": polEnum(winEventLogs), "provider": polEnum(winEventProviders), "id": polNum,
-		"app-pool": polName("pool"), "reason": polEnum(winEventReasons)},
-	"mongod-json": {"type": polEnum(mongoTypes), "ns": polName("ns"), "command": polEnum(mongoCommands),
-		"planSummary": polList(mongoStages), "keysExamined": polNum, "docsExamined": polNum, "nreturned": polNum,
-		"numYields": polNum, "queryHash": polName("qh"), "workingMs": polNum},
+		"app-pool": polName("pool"), "reason": polEnum(winEventReasons), "faulting-app": polEnum(faultingApps)},
+	"mongod-json":       mongoOpPolicy,
 	"schedule-hangfire": schedPolicy,
 	"schedule-agent":    schedPolicy,
 	"appinsights": {"dependencyType": polEnum(dependencyTypes), "resultCode": polNumOr("other"),
@@ -158,6 +172,83 @@ var exportPolicy = map[string]map[string]attrPolicy{
 	"sql-xe": {"event": polEnum(xeEvents), "wait_type": polWait, "wait_class": polEnum(xeWaitClasses),
 		"component": polEnum(xeComponents), "state": polEnum(xeStates), "error_number": polNum, "sql_severity": polNum},
 	"sql-errorlog": {"error_number": polNum, "sql_severity": polNum},
+
+	// Wave 2 (plan §2.2, §2.3, cards W2-b to W2-m), pre-landed by W2-F.
+	"log4net-text": appLogPolicy,
+	"log4net-xml":  appLogPolicy,
+	"serilog-clef": appLogPolicy,
+	"serilog-text": appLogPolicy,
+	"mel-console":  appLogPolicy,
+	"mel-json":     appLogPolicy,
+	"ancm-stdout":  appLogPolicy,
+	"node-jsonl":   withPolicy(appLogPolicy, map[string]attrPolicy{"family": polEnum(nodeFamilies)}),
+	"dotnet-counters": {"provider": polEnum(dotnetProviders), "counter": polEnum(dotnetCounters), "percentile": polNum,
+		"generation": polEnum(gcGenerations), "method": polEnum(httpMethods), "status": polNum,
+		"error-type": polEnum(exceptionTypes), "pid": polNum},
+	"win-procsnap":  {"metric": polEnum(procMetrics), "process": procName, "pid": polNum},
+	"redis-slowlog": {"command": polEnum(redisCommands), "argc": polNum, "client": polName("client"), "id": polNum},
+	"redis-latency": {"event": polEnum(redisLatencyEvents)},
+	"redis-info":    {"metric": polEnum(redisInfoMetrics), "role": polEnum(redisRoles)},
+	"redis-log":     {"role": polEnum(redisRoles), "family": polEnum(redisLogFamilies)},
+	"mongo-profile": withPolicy(mongoOpPolicy, map[string]attrPolicy{"responseLength": polNum}),
+	"mongo-currentop": {"op": polEnum(mongoOps), "ns": polName("ns"), "waitingForLock": polEnum(boolValues),
+		"numYields": polNum, "planSummary": polList(mongoStages)},
+	"mongo-serverstatus": {"metric": polEnum(serverStatusMetrics)},
+	"mongostat-json":     {"metric": polEnum(mongostatMetrics)},
+	"linux-sadf":         linuxPolicy,
+	"linux-pidstat":      linuxPolicy,
+}
+
+var (
+	// mongoOpPolicy is shared by mongod.log slow queries and the profiler export.
+	mongoOpPolicy = map[string]attrPolicy{"type": polEnum(mongoTypes), "ns": polName("ns"),
+		"command": polEnum(mongoCommands), "planSummary": polList(mongoStages), "keysExamined": polNum,
+		"docsExamined": polNum, "nreturned": polNum, "numYields": polNum, "queryHash": polName("qh"),
+		"workingMs": polNum}
+	// frameworkLogger is the §2.2 logger rule: a framework prefix, cut to at
+	// most three dot-separated parts. The importer keeps such a logger as it is
+	// and pseudonymises every other one; the export keeps the same set and keys
+	// everything else, including the importer's stored pseudonyms.
+	frameworkLogger = regexp.MustCompile(`^(?:(?:System|Microsoft|MongoDB|Serilog|log4net|Hangfire|Polly|Grpc|Azure|` +
+		`Newtonsoft|NHibernate)(?:\.[A-Za-z0-9_]{1,64}){0,2}|StackExchange\.Redis(?:\.[A-Za-z0-9_]{1,64})?|ioredis|redis)$`)
+	// appLogPolicy is the §2.2 attribute set of every application-log source.
+	appLogPolicy = map[string]attrPolicy{"level": polEnum(appLogLevels), "logger": polNameKeep("logger", frameworkLogger),
+		"exception": polList(exceptionTypes), "family": polEnum(appLogFamilies), "timeout-ms": polNum, "qs": polNum,
+		"qu": polNum, "in": polNum, "worker-busy": polNum, "worker-min": polNum, "iocp-busy": polNum,
+		"iocp-min": polNum, "status": polNum, "method": polEnum(httpMethods), "command": polEnum(redisCommands),
+		"error-code": polEnum(errnoCodes)}
+	// procName keeps the well-known server images readable; any other process
+	// name shares the counter-instance pseudonym prefix.
+	procName    = polName("instance", "w3wp", "dotnet", "node", "redis-server", "memurai", "mongod", "sqlservr", "other")
+	linuxPolicy = map[string]attrPolicy{"metric": polEnum(linuxMetrics), "process": procName, "pid": polNum,
+		"cpu": polNumOr("all")}
+)
+
+// withPolicy returns a copy of base with the entries of over set.
+func withPolicy(base, over map[string]attrPolicy) map[string]attrPolicy {
+	out := make(map[string]attrPolicy, len(base)+len(over))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range over {
+		out[k] = v
+	}
+	return out
+}
+
+// ExportAttrNames returns the attribute names the case export keeps for one
+// source, or nil for a source the export leaves out. Importer tests compare
+// it with their own allowlist.
+func ExportAttrNames(source string) map[string]bool {
+	p, ok := exportPolicy[source]
+	if !ok {
+		return nil
+	}
+	out := make(map[string]bool, len(p))
+	for k := range p {
+		out[k] = true
+	}
+	return out
 }
 
 var (
@@ -239,10 +330,8 @@ func exportAttr(key []byte, p attrPolicy, v string) string {
 			return c
 		}
 	case ruleName:
-		for _, s := range p.asIs {
-			if v == s {
-				return v
-			}
+		if p.keptAsIs(v) {
+			return v
 		}
 		return keyedLabel(key, p.prefix, v)
 	case rulePerson:
@@ -274,12 +363,7 @@ func attrValueOK(p attrPolicy, v string) bool {
 	case ruleObject:
 		return v == removedText || counterObjectCanon[v]
 	case ruleName:
-		for _, s := range p.asIs {
-			if v == s {
-				return true
-			}
-		}
-		return labelOK(p.prefix, v, labelHex)
+		return p.keptAsIs(v) || labelOK(p.prefix, v, labelHex)
 	case rulePerson:
 		return labelOK(p.prefix, v, labelHex)
 	}
@@ -641,7 +725,7 @@ func caseStatements(w caseWithholding) []string {
 	s := []string{
 		"This file holds the imported events and import summaries of one case. File names, file hashes, raw host names, IP addresses, URLs and paths, query and SQL text, user agents, cookies, referers, messages, raw user names and source line numbers are not in it. Each imported file is named by its importer only.",
 		fmt.Sprintf("An event attribute is kept only when its source's export policy lists it and its value is a number, a term from a fixed list (an HTTP method, a status, a counter or wait name and the like) or a keyed pseudonym; any other value is shown as \"%s\". Every other attribute, and every event from a source without a policy, is left out. An event kind comes from a fixed list per source; any other kind is shown as \"%s\".", removedText, otherKind),
-		fmt.Sprintf("Event ids, hosts, sites, application pools, queues, jobs, namespaces, query hashes and counter instances are shown as keyed pseudonyms (a prefix such as host- followed by %d hex characters, %d for event ids). The key is made for this export only and is used for nothing else, so the same name gets a different label in any other export. A label hides the name, not the fact that two events share it.", labelHex, eventLabelHex),
+		fmt.Sprintf("Event ids, hosts, sites, application pools, queues, jobs, namespaces, query hashes, counter instances, process names, application loggers and Redis client names are shown as keyed pseudonyms (a prefix such as host- followed by %d hex characters, %d for event ids). The key is made for this export only and is used for nothing else, so the same name gets a different label in any other export. A label hides the name, not the fact that two events share it.", labelHex, eventLabelHex),
 	}
 	shown, held := sortedKeys(w.personShown), sortedKeys(w.personHeld)
 	for _, p := range shown {

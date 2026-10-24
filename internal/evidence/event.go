@@ -54,7 +54,7 @@ type Event struct {
 	Start, End time.Time // UTC; End == Start for point events
 	DurationMs *float64  // nil when the source has none ("-")
 	Value      *float64
-	Unit       string            // "ms", "percent-host", "percent-one-core", "count"
+	Unit       string            // "ms", "percent-host", "percent-one-core", "count", "bytes", "percent", "per-sec", "ratio"
 	Severity   string            // "info", "warning", "error", "critical", ""
 	Line       int64             // 1-based source line (provenance anchor)
 	TZRule     string            // clock.Rule* that produced Start

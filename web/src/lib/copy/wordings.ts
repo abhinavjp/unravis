@@ -28,6 +28,31 @@ export function auditCreate(seconds: number): string {
   return `Audit create took ${seconds} s as measured from the client side.`;
 }
 
+/** Symptom: a sampled metric went up over a span. The caller formats every value with its unit. */
+export function metricRose(subject: string, metric: string, delta: string, span: string, from: string, to: string): string {
+  return `${subject}: ${metric} rose by ${delta} over ${span} (from ${from} to ${to}).`;
+}
+
+/** Correlation: a metric sample falls inside a stalled audit interval. */
+export function metricSampleOverlap(source: string, metric: string, value: string): string {
+  return `A ${source} sample showed ${metric} at ${value} during this interval (Correlation).`;
+}
+
+/** Correlation: a marker event (a restart, a recycle, a crash) comes shortly before a stalled audit interval. */
+export function markerBefore(offset: string, marker: string, host: string): string {
+  return `This interval starts ${offset} after a ${marker} on ${host} (Correlation).`;
+}
+
+/** Symptom: how often a condition holds inside stall episodes and inside the comparison windows outside them. */
+export function episodeShare(condition: string, k: number, n: number, m: number, total: number): string {
+  return `${condition} in ${k} of ${n} stall episodes, and in ${m} of ${total} comparison windows outside stalls.`;
+}
+
+/** Symptom: the highest values of a metric in one window. */
+export function topInWindow(metric: string, list: string): string {
+  return `Highest ${metric} in this window: ${list}.`;
+}
+
 /** Plain-language form of an audit-create measurement (roadmap §8.14 part 5). Never names a cause. */
 export function plainAuditCreate(approxSeconds: number): string {
   return `Saving the record took about ${approxSeconds} seconds before the action ran, as measured from the application side.`;

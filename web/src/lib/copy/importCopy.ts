@@ -220,8 +220,65 @@ export const IMPORTER_LABELS: Record<string, string> = {
   appinsights: 'App Insights query',
   'sql-xe': 'SQL Server extended events',
   'sql-errorlog': 'SQL Server error log',
-  'sql-pdh': 'SQL Server performance counters'
+  'sql-pdh': 'SQL Server performance counters',
+  'log4net-text': 'log4net text log',
+  'log4net-xml': 'log4net XML log',
+  'serilog-clef': 'Serilog JSON log',
+  'serilog-text': 'Serilog text log',
+  'mel-console': 'ASP.NET Core console log',
+  'mel-json': 'ASP.NET Core JSON log',
+  'ancm-stdout': 'ASP.NET Core stdout log',
+  'node-jsonl': 'Node Redis proxy log',
+  'dotnet-counters': '.NET runtime counters',
+  'win-procsnap': 'Process snapshots',
+  'redis-slowlog': 'Redis slow command log',
+  'redis-latency': 'Redis latency history',
+  'redis-info': 'Redis INFO samples',
+  'redis-log': 'Redis server log',
+  'mongo-profile': 'MongoDB profiler export',
+  'mongo-currentop': 'MongoDB current operations',
+  'mongo-serverstatus': 'MongoDB serverStatus samples',
+  'mongostat-json': 'mongostat samples',
+  'linux-sadf': 'Linux sar samples',
+  'linux-pidstat': 'Linux pidstat samples'
 };
+
+/** One short line per importer saying what file it reads. A name the screen does not know has no help line. */
+export const IMPORTER_HELP: Record<string, string> = {
+  'iis-w3c': 'The W3C log file that IIS writes for each site.',
+  'iis-httperr': 'The error log that HTTP.sys writes for requests IIS never saw.',
+  'mongod-json': 'The JSON log file that the MongoDB server writes.',
+  'win-counters': 'A CSV file of Windows counters saved by typeperf or relog.',
+  'win-events': 'A CSV export of Windows event log entries.',
+  'schedule-hangfire': 'A JSON export of the Hangfire recurring jobs.',
+  'schedule-agent': 'A CSV export of the SQL Server Agent jobs and their schedules.',
+  appinsights: 'A CSV or JSON result of an App Insights query.',
+  'sql-xe': 'An XML or CSV export of the system_health session.',
+  'sql-errorlog': 'The SQL Server error log file.',
+  'sql-pdh': 'A CSV file of SQL Server counters saved by typeperf or relog.',
+  'log4net-text': 'A text log written by log4net, with its layout pattern.',
+  'log4net-xml': 'An XML log written by log4net.',
+  'serilog-clef': 'A JSON log written by Serilog, one event per line.',
+  'serilog-text': 'A text log file written by Serilog.',
+  'mel-console': 'Console output of an ASP.NET Core app, with time stamps.',
+  'mel-json': 'JSON console output of an ASP.NET Core app, with time stamps.',
+  'ancm-stdout': 'The stdout log file that IIS keeps for an ASP.NET Core app.',
+  'node-jsonl': 'A JSON log written by the Node Redis proxy, one entry per line.',
+  'dotnet-counters': 'A CSV or JSON file saved by dotnet-counters.',
+  'win-procsnap': 'A CSV of process snapshots saved by the Get-Process steps.',
+  'redis-slowlog': 'The output of SLOWLOG GET saved from redis-cli.',
+  'redis-latency': 'The Redis latency log you saved with redis-cli.',
+  'redis-info': 'INFO samples saved from redis-cli by the sample loop.',
+  'redis-log': 'The log file that the Redis server writes.',
+  'mongo-profile': 'The profiler collection saved by mongoexport.',
+  'mongo-currentop': 'Current operation samples saved by the mongosh loop.',
+  'mongo-serverstatus': 'serverStatus samples saved by the mongosh loop.',
+  'mongostat-json': 'The JSON output of mongostat.',
+  'linux-sadf': 'CPU and memory samples saved by sadf.',
+  'linux-pidstat': 'Process CPU and memory samples saved by pidstat.'
+};
+
+export const importerHelp = (name: string): string => (Object.prototype.hasOwnProperty.call(IMPORTER_HELP, name) ? IMPORTER_HELP[name] : '');
 
 export const importerLabel = (name: string): string => (Object.prototype.hasOwnProperty.call(IMPORTER_LABELS, name) ? IMPORTER_LABELS[name] : name);
 
@@ -303,5 +360,6 @@ export function importCopyEntries(): LintEntry[] {
   walk('import.text', IMPORT_TEXT);
   walk('import.reason', REASON_TEXT);
   walk('import.importer', IMPORTER_LABELS);
+  walk('import.help', IMPORTER_HELP);
   return entries;
 }
