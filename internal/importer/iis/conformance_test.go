@@ -21,6 +21,9 @@ func w3cFixtures(t testing.TB) importertest.Fixtures {
 		// every attribute is a typed token, number, allowlisted word, normalised
 		// route or pseudonym; none is free text from the file
 		NoFreeText: true,
+		// s-sitename is kept as a token by design, so a fuzzed row can move the
+		// sentinel into a kept column
+		KeepsCellValues: true,
 	}
 }
 
@@ -32,6 +35,8 @@ func httperrFixtures(t testing.TB) importertest.Fixtures {
 		Options: httperrOpts(),
 		// as for W3C: typed or allowlisted values only
 		NoFreeText: true,
+		// s-queuename (the application pool name) is kept as a token by design
+		KeepsCellValues: true,
 	}
 }
 

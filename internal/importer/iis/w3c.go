@@ -13,9 +13,11 @@ import (
 
 // w3cTimeIsEnd records an UNVERIFIED reading of the W3C `time` field: true
 // means `time` is when the request finished, so Start = time - time-taken.
-// IIS documents the field as the time the request was completed, but no
-// sample from the target servers has confirmed it; the IIS owner must confirm
-// before this is flipped or the gap below is dropped (wave plan section 5).
+// The IIS reference describes the field only as the time (UTC) at which the
+// activity occurred. IIS writes an entry when a request completes, which is
+// why the end reading is used, but no sample from the target servers has
+// confirmed it; the IIS owner must confirm before this is flipped or the gap
+// below is dropped (wave plan section 5).
 const w3cTimeIsEnd = true
 
 const (
@@ -23,6 +25,9 @@ const (
 	gapW3CTimeStart = "W3C time semantics unverified; the time field is assumed to be the request start."
 	gapTimeTaken    = "time-taken includes response delivery to the client; the residual against pipeline time is time outside the pipeline."
 	gapNoTimeTaken  = "time-taken is not logged; request durations are unavailable."
+	// gapW3CResolution holds for W3C `time` and HTTPERR `time`, which are
+	// both written to the whole second.
+	gapW3CResolution = "log time has one-second resolution; the order of events within a second is not recorded."
 )
 
 // W3C imports IIS W3C extended request logs.
@@ -76,6 +81,7 @@ var w3cSpec = &spec{
 		if !w3cTimeIsEnd {
 			gaps = []string{gapW3CTimeStart}
 		}
+		gaps = append(gaps, gapW3CResolution)
 		if st.declared["time-taken"] {
 			return append(gaps, gapTimeTaken)
 		}
@@ -94,15 +100,15 @@ func w3cRow(c *rowCtx) (evidence.Event, importer.Reason, error) {
 	d, _ := c.get("date")
 	t, _ := c.get("time")
 	ts, err := time.Parse("2006-01-02 15:04:05", d+" "+t)
-	if err != nil {
+	if err != nil || !saneLogTime(ts) {
 		return ev, importer.ReasonBadTime, nil
 	}
 	ts = ts.UTC()
 
 	observed, _ := c.get("s-computername")
-	host, err := c.resolveHost(observed)
-	if err != nil {
-		return ev, "", err
+	host, reason, err := c.resolveHost(observed)
+	if err != nil || reason != "" {
+		return ev, reason, err
 	}
 
 	attrs := make(map[string]string, 8)
