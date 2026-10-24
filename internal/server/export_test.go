@@ -155,6 +155,41 @@ func TestExportLedgerOnlyRelatedHypotheses(t *testing.T) {
 	}
 }
 
+// The evidence export has no record type for the rules added later, so a
+// window that prints them still exports; they are left out of the file and of
+// ledger matching.
+func TestExportLeavesOutRulesWithoutARecordType(t *testing.T) {
+	fb := installExportFakes(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	h := New(audit.NewDemoWithPatterns(now), nil, testToken, true, WithLedger(&fakeLedger{}))
+	raw, _ := json.Marshal(map[string]any{"sourceIds": []string{"demo-west", "demo-east"}, "start": now.Add(-5 * 24 * time.Hour), "end": now})
+	if r := request(h, http.MethodPost, "/api/export/preview", string(raw), true); r.Code != http.StatusOK {
+		t.Fatalf("preview = %d %s", r.Code, r.Body.String())
+	}
+	rep := fb.inputs[0].Report
+	if len(rep.Findings) == 0 || len(rep.OnsetMinutes) != 0 || len(rep.Concentration) != 0 || len(rep.Repeats) != 0 || rep.IdleGaps != nil {
+		t.Fatalf("report passed to build = %+v", rep)
+	}
+	for _, f := range rep.Findings {
+		switch f.Rule {
+		case "B3a", "A3", "B12r", "B6g":
+			t.Fatalf("finding %s passed to the export", f.Rule)
+		}
+	}
+}
+
+func TestExportableReportKeepsOtherFindings(t *testing.T) {
+	in := audit.PatternReport{Findings: []audit.Finding{{Rule: "B1"}, {Rule: "B3a"}, {Rule: "B12"}, {Rule: "A3"}, {Rule: "B12r"}, {Rule: "B6g"}, {Rule: "B6"}}}
+	out := exportableReport(in)
+	got := ""
+	for _, f := range out.Findings {
+		got += f.Rule + " "
+	}
+	if got != "B1 B12 B6 " || len(in.Findings) != 7 {
+		t.Fatalf("kept %q, input now %d findings", got, len(in.Findings))
+	}
+}
+
 func TestExportConfirmUnknownPreview(t *testing.T) {
 	installExportFakes(t)
 	h := demoExportHandler()

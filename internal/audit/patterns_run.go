@@ -214,12 +214,15 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 	}
 
 	// Quality counts over the same window.
+	// The same analysis gives rule A3 its traffic by operation, so it adds no read.
+	var held *Analysis
 	if analysis, err := repo.Analyze(ctx, patternQuery(in, in.SourceIDs)); err != nil {
 		if ctx.Err() != nil {
 			return PatternReport{}, ctx.Err()
 		}
 		report.Warnings = append(report.Warnings, "Incomplete, pending and invalid rows could not be counted for this window ("+plainReason(err)+").")
 	} else {
+		held = &analysis
 		q := analysis.Quality
 		incomplete := q.Incomplete - q.PendingAsync // Quality.Incomplete includes pending work
 		if incomplete < 0 {
@@ -236,6 +239,42 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 	report.Coverage = coverage
 
 	report.Findings = buildFindings(in, params, report)
+
+	// B3a and A3 look only at what was already read.
+	onsets, onsetFindings, onsetWarnings := buildRecurrence(in, params, report)
+	report.OnsetMinutes = onsets
+	report.Findings = append(report.Findings, onsetFindings...)
+	report.Warnings = append(report.Warnings, onsetWarnings...)
+
+	conc, concFindings, concWarnings, err := buildConcentration(ctx, repo, in, params, report, held)
+	if err != nil {
+		return PatternReport{}, err
+	}
+	report.Concentration = conc
+	report.Findings = append(report.Findings, concFindings...)
+	report.Warnings = append(report.Warnings, concWarnings...)
+
+	// B12r reads one list per episode and source, one after another.
+	repeats, repeatFinds, repeatProv, repeatWarnings, err := buildRepeats(ctx, repo, in, params, report)
+	if err != nil {
+		return PatternReport{}, err
+	}
+	report.Repeats = repeats
+	report.Provenance = append(report.Provenance, repeatProv...)
+	report.Findings = append(report.Findings, repeatFinds...)
+	report.Warnings = append(report.Warnings, repeatWarnings...)
+
+	// B6g is opt-in: it reads every request in the window.
+	if in.IdleGaps {
+		idle, idleFinds, idleProv, idleWarnings, err := buildIdleGaps(ctx, repo, in, params, report)
+		if err != nil {
+			return PatternReport{}, err
+		}
+		report.IdleGaps = idle
+		report.Provenance = append(report.Provenance, idleProv...)
+		report.Findings = append(report.Findings, idleFinds...)
+		report.Warnings = append(report.Warnings, idleWarnings...)
+	}
 	return report, nil
 }
 
@@ -420,6 +459,11 @@ func readPatternAuditRows(ctx context.Context, repo Repository, q Query) ([]Requ
 // readPatternPages follows NextCursor until the list ends or MaxPatternRows
 // rows are read. cut is true when the cap left rows unread.
 func readPatternPages(ctx context.Context, input PageInput, read func(context.Context, PageInput) (Page, error)) (rows []RequestRecord, cut bool, prov []Provenance, err error) {
+	return readCappedPages(ctx, input, read, MaxPatternRows)
+}
+
+// readCappedPages is readPatternPages with the row cap given.
+func readCappedPages(ctx context.Context, input PageInput, read func(context.Context, PageInput) (Page, error), limit int) (rows []RequestRecord, cut bool, prov []Provenance, err error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, false, nil, err
@@ -430,9 +474,9 @@ func readPatternPages(ctx context.Context, input PageInput, read func(context.Co
 		}
 		prov = append(prov, page.Provenance...)
 		rows = append(rows, page.Rows...)
-		if len(rows) >= MaxPatternRows {
-			cut = len(rows) > MaxPatternRows || page.NextCursor != ""
-			return rows[:MaxPatternRows], cut, prov, nil
+		if len(rows) >= limit {
+			cut = len(rows) > limit || page.NextCursor != ""
+			return rows[:limit], cut, prov, nil
 		}
 		if page.NextCursor == "" || len(page.Rows) == 0 {
 			return rows, false, prov, nil

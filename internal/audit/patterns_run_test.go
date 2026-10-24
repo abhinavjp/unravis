@@ -575,22 +575,28 @@ func TestRunPatternsPerSourceAndProvenance(t *testing.T) {
 	in := patternInput()
 	in.SourceIDs = []string{"s1", "s2"}
 	r := runFake(t, repo, in)
-	if len(r.Stalls) != 2 || len(repo.slowCalls) != 2 || len(repo.auditCalls) != 2 {
+	// Two stall reads, two audit-create reads (B6) and, after those, one repeat
+	// read (B12r) per episode and source: two episodes of one source each.
+	if len(r.Stalls) != 2 || len(repo.slowCalls) != 2 || len(repo.auditCalls) != 4 {
 		t.Fatalf("stalls %d slow calls %d audit calls %d", len(r.Stalls), len(repo.slowCalls), len(repo.auditCalls))
 	}
 	// Sources run in parallel, so call order is not fixed; each call still reads
 	// exactly one source, and each source is read once per rule.
 	perSource := map[string]int{}
+	repeatReads := 0
 	for i, c := range append(repo.slowCalls, repo.auditCalls...) {
 		if len(c.Query.SourceIDs) != 1 {
 			t.Fatalf("call %d reads %v, want one source at a time", i, c.Query.SourceIDs)
 		}
 		perSource[c.Query.SourceIDs[0]]++
+		if len(c.Query.UserIDs) > 0 {
+			repeatReads++
+		}
 	}
-	if perSource["s1"] != 2 || perSource["s2"] != 2 {
-		t.Fatalf("calls per source %v", perSource)
+	if perSource["s1"] != 3 || perSource["s2"] != 3 || repeatReads != 2 {
+		t.Fatalf("calls per source %v, repeat reads %d", perSource, repeatReads)
 	}
-	if len(r.Provenance) != 4 {
+	if len(r.Provenance) != 6 {
 		t.Fatalf("provenance %+v", r.Provenance)
 	}
 }
