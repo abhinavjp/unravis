@@ -172,13 +172,13 @@ func Build(c casestore.Case, w importer.Window, ivs []join.Interval) (View, erro
 	}
 	v.Enabled = true
 
-	events, truncated, err := loadEvents(ctx, c, w)
+	intervals := inWindow(ivs, w)
+	events, truncated, err := loadEvents(ctx, c, w, latestEnd(intervals))
 	if err != nil {
 		return View{}, fmt.Errorf("timeline: events: %w", err)
 	}
 	v.Truncated = truncated
 
-	intervals := inWindow(ivs, w)
 	bySource := map[string][]evidence.Event{}
 	for _, e := range events {
 		bySource[e.Source] = append(bySource[e.Source], e)
@@ -328,14 +328,31 @@ func disabled(sources []SourceStatus) (code, text string) {
 	return "", ""
 }
 
-func widen(w importer.Window) importer.Window {
+// widen pads the read window by edgeMargin. An audit interval can end long after
+// w.To, so the upper bound reaches the later of w.To and reachTo, the latest
+// interval end. Only the read widens; the window the user sees does not.
+func widen(w importer.Window, reachTo time.Time) importer.Window {
 	if !w.From.IsZero() {
 		w.From = w.From.Add(-edgeMargin)
 	}
 	if !w.To.IsZero() {
+		if reachTo.After(w.To) {
+			w.To = reachTo
+		}
 		w.To = w.To.Add(edgeMargin)
 	}
 	return w
+}
+
+// latestEnd is the latest end among the intervals, or the zero time for none.
+func latestEnd(ivs []join.Interval) time.Time {
+	var last time.Time
+	for _, iv := range ivs {
+		if iv.End.After(last) {
+			last = iv.End
+		}
+	}
+	return last
 }
 
 // inWindow keeps the intervals that touch the window, in input order.
@@ -393,11 +410,12 @@ func overlapRow(iv join.Interval, e evidence.Event, m join.Match, sharedWith int
 	return r
 }
 
-// loadEvents reads the events for the window, widened by edgeMargin, plus the
+// loadEvents reads the events for the window, widened by edgeMargin (at the
+// upper end out to the latest interval end, reachTo), plus the
 // events that started up to lookback before it and still reach it. It reports
 // whether either read hit the event cap, in which case events may be missing.
-func loadEvents(ctx context.Context, c casestore.Case, w importer.Window) ([]evidence.Event, bool, error) {
-	wide := widen(w)
+func loadEvents(ctx context.Context, c casestore.Case, w importer.Window, reachTo time.Time) ([]evidence.Event, bool, error) {
+	wide := widen(w, reachTo)
 	events, err := c.Events(ctx, casestore.EventQuery{Window: wide, Limit: casestore.MaxEventQuery})
 	if err != nil {
 		return nil, false, err
