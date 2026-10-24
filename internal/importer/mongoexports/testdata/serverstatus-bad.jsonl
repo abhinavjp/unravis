@@ -1,0 +1,5 @@
+{"host":"SENTINEL-7f3a","version":"SENTINEL-7f3a","localTime":{"$date":"2001-09-09T01:00:00.000Z"},"uptime":86400,"connections":{"current":41,"available":819},"cmdline":{"parsed":{"setParameter":"SENTINEL-7f3a"}}}
+{"host":"mongo-a.example.test","localTime":{"$date":"2001-09-09T01:05:00.000Z"},"uptime":86700,"connections":{"current":"SENTINEL-7f3a","available":816}}
+{"host":"mongo-a.example.test","localTime":"SENTINEL-7f3a","uptime":86800,"connections":{"current":40,"available":816}}
+{"host":"mongo-a.example.test","localTime":{"$date":"2001-09-09T01:07:00.000Z"},"uptime":86820,"notes":"SENTINEL-7f3a"}
+{"host":"mongo-a.example.test","localTime":{"$date":"2001-09-09T01:08:00.000Z"},"uptime":86880,"connections":{"current":40,"available":816}}

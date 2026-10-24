@@ -1,0 +1,5 @@
+{"mongo-a.example.test:27017":{"insert":"*0","query":"12","update":"3","conn":"41","time":"01:00:01","extra":"SENTINEL-7f3a"}}
+{"mongo-a.example.test:27017":{"insert":"*0","query":"12","update":"3","conn":"41","time":"SENTINEL-7f3a"}}
+{"mongo-a.example.test:27017":{"insert":"SENTINEL-7f3a","query":"SENTINEL-7f3a","conn":"SENTINEL-7f3a","time":"01:00:03"}}
+{"mongo-a.example.test:27017":"SENTINEL-7f3a"}
+{"mongo-a.example.test:27017":{"insert":"*0","query":"10","update":"1","conn":"41","time":"01:00:05"}}

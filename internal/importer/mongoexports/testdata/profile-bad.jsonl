@@ -1,0 +1,5 @@
+{"op":"query","ns":"app.orders","command":{"find":"orders","filter":{"customer":"SENTINEL-7f3a"},"$db":"app"},"keysExamined":10,"docsExamined":10,"nreturned":10,"planSummary":"IXSCAN { customer: 1 }","ts":{"$date":"2001-09-09T01:00:05.250Z"},"appName":"SENTINEL-7f3a","user":"SENTINEL-7f3a","millis":120}
+{"op":"query","ns":"SENTINEL-7f3a.orders","command":{"find":"orders","$db":"app"},"nreturned":1,"ts":{"$date":"2001-09-09T01:00:06.250Z"},"millis":"SENTINEL-7f3a"}
+{"op":"query","ns":"app.orders","command":{"find":"orders"},"nreturned":1,"ts":"SENTINEL-7f3a","millis":10}
+{"op":"query","ns":"app.orders","command":{"find":"orders"},"nreturned":"SENTINEL-7f3a","ts":{"$date":"2001-09-09T01:00:07.250Z"},"millis":10}
+{"op":"command","ns":"app.orders","command":{"count":"orders"},"nreturned":1,"ts":{"$date":"2001-09-09T01:00:08.250Z"},"millis":15}
