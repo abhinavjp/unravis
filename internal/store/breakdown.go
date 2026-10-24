@@ -37,6 +37,11 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 	}
 	input.Query = input.Query.Normalized()
 	q := input.Query
+	if q.HasAgeRange() {
+		// One clock for every source, rendered as a literal, as Analyze does.
+		q.Now = s.clock()
+		input.Query.Now = q.Now
+	}
 	prefix, err := breakdownPrefix(q)
 	if err != nil {
 		return audit.Breakdown{}, err

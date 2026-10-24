@@ -326,6 +326,9 @@ func TestExportIncludesAuditEvidenceColumns(t *testing.T) {
 	if err != nil || res.Code != http.StatusOK || len(records) != 2 {
 		t.Fatalf("status=%d err=%v records=%d body=%s", res.Code, err, len(records), res.Body.String())
 	}
+	if disposition := res.Header().Get("Content-Disposition"); disposition != "attachment; filename=unravis-requests.csv" {
+		t.Errorf("Content-Disposition = %q, want the unravis-requests.csv attachment", disposition)
+	}
 	got := map[string]string{}
 	for i, name := range records[0] {
 		got[name] = records[1][i]

@@ -791,7 +791,7 @@ func (h *handler) export(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", "attachment; filename=api-audit-requests.csv")
+	w.Header().Set("Content-Disposition", "attachment; filename=unravis-requests.csv")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Export-Limit", strconv.Itoa(maxExportRows))
 	if truncated {

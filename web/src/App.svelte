@@ -884,7 +884,7 @@
     if (!selected && !queryWide) return;
     requestError = '';
     try {
-      const result = await api.export(drillQuery(analysis?.query ?? query), queryWide ? '' : (selected?.key ?? ''), undefined, requestState, drillOverview?.order ?? '');
+      const result = await api.export(drillQuery(breakdownQuery ?? analysis?.query ?? query), queryWide ? '' : (selected?.key ?? ''), undefined, requestState, drillOverview?.order ?? '');
       const url = URL.createObjectURL(result.blob);
       const link = document.createElement('a'); link.href = url; link.download = 'unravis-requests.csv';
       document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
