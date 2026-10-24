@@ -1,5 +1,6 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
 import { parseTimelineView, type TimelineView } from './timeline';
+import { parseResource, parseSeries, type ResourceView, type SeriesView } from './resource';
 import type { EvidenceExport, ExportFile, Query } from './types';
 
 /**
@@ -441,4 +442,38 @@ export function reasonCounts(errors: RowError[]): { reason: string; count: numbe
   const counts = new Map<string, number>();
   for (const e of errors) counts.set(e.reason, (counts.get(e.reason) ?? 0) + 1);
   return [...counts.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+}
+
+// ---- Resource counters (card U1): the resource answer and the series the panel draws ----
+//   GET /api/cases/{id}/resource?from=&to=&ep=<start>/<end>...  -> ResourceView (lib/resource.ts)
+//   GET /api/cases/{id}/series?from=&to=&bucket=<ms>&sel=...    -> SeriesView   (lib/resource.ts)
+// The shape checks live in resource.ts; an answer that fails one is "unreadable", like every other route here.
+
+export interface ResourceRequest { fromMs: number; toMs: number; episodes?: Array<{ start: number; end: number }> }
+export interface SeriesRequest { fromMs: number; toMs: number; bucketMs: number; sels: string[] }
+
+const rfc3339 = (ms: number): string => new Date(ms).toISOString();
+const unreadable = (status = 200) => new CaseApiError('The server sent an answer that could not be read.', status, 'unreadable');
+
+export async function fetchResource(id: string, request: ResourceRequest, signal?: AbortSignal): Promise<ResourceView> {
+  const params = new URLSearchParams();
+  params.set('from', rfc3339(request.fromMs));
+  params.set('to', rfc3339(request.toMs));
+  for (const span of request.episodes ?? []) params.append('ep', rfc3339(span.start) + '/' + rfc3339(span.end));
+  const response = await send(casePath(id, '/resource') + '?' + params.toString(), {}, signal);
+  const view = parseResource(await json<unknown>(response));
+  if (!view) throw unreadable(response.status);
+  return view;
+}
+
+export async function fetchSeries(id: string, request: SeriesRequest, signal?: AbortSignal): Promise<SeriesView> {
+  const params = new URLSearchParams();
+  params.set('from', rfc3339(request.fromMs));
+  params.set('to', rfc3339(request.toMs));
+  params.set('bucket', String(Math.max(1, Math.floor(request.bucketMs))));
+  for (const sel of request.sels) params.append('sel', sel);
+  const response = await send(casePath(id, '/series') + '?' + params.toString(), {}, signal);
+  const view = parseSeries(await json<unknown>(response));
+  if (!view) throw unreadable(response.status);
+  return view;
 }

@@ -182,7 +182,12 @@ export const REASON_TEXT: Record<string, string> = {
   'hosts-readonly': 'The host list cannot be saved in this session.',
   'hosts-error': 'The host list could not be read. Try again.',
   'hosts-not-saved': 'The host list could not be saved. The earlier list is unchanged.',
-  'invalid-hosts': 'The host list was refused. Check for a repeated label or name, an unknown time zone, or a bad number.'
+  'invalid-hosts': 'The host list was refused. Check for a repeated label or name, an unknown time zone, or a bad number.',
+  'bad-bucket': 'The step size for the lines was not usable. Zoom out and try again.',
+  'bad-selector': 'A line could not be asked for. Reload the page and try again.',
+  'too-many-series': 'Too many lines were asked for at once. Reload the page and try again.',
+  'too-many-buckets': 'This window is too long to draw in small steps. Zoom out and try again.',
+  'bad-episode': 'A stall period could not be read. Reload the page and try again.'
 };
 
 const GENERIC_ERROR = 'The server refused this request. Try again.';

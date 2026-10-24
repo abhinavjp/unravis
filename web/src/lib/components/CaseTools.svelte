@@ -5,6 +5,8 @@
   import type { TimelineView } from '../timeline';
   import type { Query } from '../types';
   import Timeline from './Timeline.svelte';
+  import ResourcePanel from '../../components/ResourcePanel.svelte';
+  import { results } from '../appState.svelte';
 
   // What a case offers once files are in it: a timeline against the audit window on screen, and a redacted export.
   // Both are read-only. The export is previewed whole first and only what the preview showed is saved.
@@ -21,6 +23,8 @@
   let controller: AbortController | null = null;
 
   const hasSource = $derived(query.sourceIds.length > 0);
+  // The API P95 line on the resource panel is read from the analysis already on screen; nothing more is asked for it.
+  const apiWindows = $derived((results.analysis?.loadWindows ?? []).map(item => ({ at: item.at, p95Ms: item.timing.p95?.valueMs ?? null })));
   const preview = $derived(phase.kind === 'preview' || phase.kind === 'saving' || phase.kind === 'saved' ? phase.preview : null);
   const summary = $derived(preview ? caseExportSummary(preview.export) : null);
 
@@ -115,6 +119,8 @@
   <div aria-live="polite">{#if timelineProblem}<div class="inline-error" role="alert">{timelineProblem}</div>{/if}</div>
   {#if timeline}<Timeline view={timeline} {zone} />{/if}
 </section>
+
+<ResourcePanel {caseId} {query} {zone} {apiWindows} {onGone} />
 
 <section class="tools" aria-labelledby="case-export-heading">
   <h3 id="case-export-heading">{IMPORT_TEXT.exportHeading}</h3>
