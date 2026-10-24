@@ -72,8 +72,8 @@ export const deck: Deck = {
     {
       id: 'episode',
       term: 'Episode',
-      hint: 'A run of stalls with no quiet gap of 10 minutes or more between them.',
-      definition: 'An episode is one run of stalls. A quiet gap of at least 10 minutes with no stall in it starts a new episode.',
+      hint: 'A run of stalls with no quiet gap of more than 10 minutes between them.',
+      definition: 'An episode is one run of stalls. A quiet gap of more than 10 minutes with no stall in it starts a new episode.',
       notMeaning: 'One episode is not yet a pattern, and it does not tell you why it happened.',
       aliases: ['Independent episode']
     },

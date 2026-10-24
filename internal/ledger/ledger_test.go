@@ -299,7 +299,7 @@ func TestIdentifierRejection(t *testing.T) {
 	}
 	// Plain text with versions, times and short hex is fine.
 	okText := "Mongo 7.0.16 stall at 09:14 on 2026-10-21, build abc123"
-	if _, err := s.Update(h.ID, Input{Text: okText, State: StateOpen, EvidenceIDs: []string{strings.Repeat("a", 120)}}); err != nil {
+	if _, err := s.Update(h.ID, Input{Text: okText, State: StateOpen, EvidenceIDs: []string{strings.Repeat("z", 120)}}); err != nil {
 		t.Errorf("ok text: %v", err)
 	}
 }
@@ -577,5 +577,20 @@ func TestConcurrentAccess(t *testing.T) {
 			t.Fatalf("duplicate id %s", h.ID)
 		}
 		ids[h.ID] = true
+	}
+}
+
+func TestEvidenceIDRejectsObjectID(t *testing.T) {
+	s, err := Open("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := s.Create("a hypothesis")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.Update(h.ID, Input{Text: "a hypothesis", State: StateOpen, EvidenceIDs: []string{"req:507f1f77bcf86cd799439011"}})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("want ErrInvalid, got %v", err)
 	}
 }

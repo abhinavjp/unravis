@@ -347,6 +347,9 @@ func validateInput(in Input) (Input, error) {
 		if !evidenceIDPattern.MatchString(id) {
 			return Input{}, invalid("an evidence reference must be a provenance ID: lowercase letters, digits and : _ . - only, up to 120 characters")
 		}
+		if objectIDPattern.MatchString(id) {
+			return Input{}, invalid("an evidence reference cannot contain a record ID (24 hex characters); use the provenance ID instead")
+		}
 	}
 	in.EvidenceIDs = append([]string{}, in.EvidenceIDs...)
 

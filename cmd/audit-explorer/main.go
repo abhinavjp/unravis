@@ -124,7 +124,7 @@ func run(args []string, getenv func(string) string) error {
 	var serverOptions []server.Option
 	if *demo {
 		// The shipped demo carries a little unfinished work so the incomplete panel has something to show.
-		repo = audit.NewDemoWithStaleWork(time.Now())
+		repo = audit.NewDemoWithPatterns(time.Now())
 	} else {
 		repo = store.New(storeOptions(f)...)
 		if savedHistory, historyErr := history.NewDefault(getenv); historyErr == nil {
