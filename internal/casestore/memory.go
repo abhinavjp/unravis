@@ -247,6 +247,7 @@ func (c *memCase) Close() error {
 
 func copyRecord(r ImportRecord) ImportRecord {
 	r.KnownGaps = append([]string(nil), r.KnownGaps...)
+	r.Supplied = copySupplied(r.Supplied)
 	return r
 }
 
@@ -318,6 +319,43 @@ func (c *memCase) Events(ctx context.Context, q EventQuery) ([]evidence.Event, e
 	return out, nil
 }
 
+// Each streams the matching events, grouped by kind and ordered by Start within
+// a kind (the order the SQLite store reads them in). See Case.Each.
+func (c *memCase) Each(ctx context.Context, q EventQuery, fn func(evidence.Event) error) error {
+	if err := c.check(ctx); err != nil {
+		return err
+	}
+	budget := q.NewScanBudget()
+	c.d.mu.RLock()
+	var sel []evidence.Event
+	for _, ev := range c.d.events {
+		if q.Window.Contains(ev.Start) && contains(q.Kinds, ev.Kind) && contains(q.Sources, ev.Source) && contains(q.Hosts, ev.Host) {
+			sel = append(sel, ev)
+		}
+	}
+	c.d.mu.RUnlock()
+	sort.SliceStable(sel, func(i, j int) bool {
+		if sel[i].Kind != sel[j].Kind {
+			return sel[i].Kind < sel[j].Kind
+		}
+		return sel[i].Start.Before(sel[j].Start)
+	})
+	for i := range sel {
+		if i%handleCheckEventsEvery == 0 {
+			if err := c.check(ctx); err != nil {
+				return err
+			}
+		}
+		if err := budget.Admit(); err != nil {
+			return err
+		}
+		if err := fn(sel[i].Clone()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Pseudonymize maps a value to a stable label for this case only:
 // kind + "-" + 8 hex characters of HMAC-SHA256 under the case key. An empty
 // value maps to "" (there is nothing to hide). The key never leaves the case.
@@ -378,6 +416,11 @@ func (c *memCase) Import(ctx context.Context, meta ImportMeta, body io.Reader, r
 	if run == nil || body == nil {
 		return res, errors.New("casestore: import needs a body and a run function")
 	}
+	supplied, err := CleanSupplied(meta.Supplied)
+	if err != nil {
+		return res, err
+	}
+	meta.Supplied = supplied
 	// One import at a time per case.
 	c.d.importMu.Lock()
 	defer c.d.importMu.Unlock()
@@ -559,5 +602,6 @@ func (c *memCase) record(meta ImportMeta, rep importer.Report, bytes int64, sha 
 		Importer: name, FileName: meta.FileName, SHA256: sha, Bytes: bytes,
 		Rows: rep.Rows, Rejected: rep.Rejected, HostLabel: meta.HostLabel, TZRule: meta.DerivedTZRule(rep), AckText: meta.AckText,
 		Quality: rep.Quality, KnownGaps: append([]string(nil), rep.KnownGaps...),
+		Supplied: copySupplied(meta.Supplied),
 	}
 }

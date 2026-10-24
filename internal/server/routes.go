@@ -163,6 +163,9 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/events", match: caseSubpath("/events"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseEvents(w, r, id) },
 	}},
+	{pattern: "/api/cases/{id}/series", match: caseSubpath("/series"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseSeries(w, r, id) },
+	}},
 	{pattern: "/api/cases/{id}/timeline", match: caseSubpath("/timeline"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseTimeline(w, r, id) },
 	}},

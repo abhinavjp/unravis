@@ -45,6 +45,10 @@ type manifestImport struct {
 	Status    string    `json:"status"`
 	AckGating bool      `json:"ackGating"`
 	AckText   string    `json:"ackText"`
+	// Supplied is the owner-supplied settings as canonical JSON (sorted keys), or
+	// empty. A string keeps the struct comparable for sameImport. Older manifests
+	// have none.
+	Supplied string `json:"supplied,omitempty"`
 }
 
 func readManifest(dir string, p sealedfile.Protector) (manifest, error) {

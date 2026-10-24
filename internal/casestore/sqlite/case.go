@@ -56,6 +56,11 @@ type caseState struct {
 	keys   casestore.Keys
 	man    manifest
 	erased bool // Erase destroyed the case: handles answer ErrNotFound, not ErrHandleClosed
+
+	// stop is closed by shutdown, after the database is detached, so a running
+	// Each stops at once instead of holding the files open through an Erase.
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // Case is one handle from Store.Open. Handles of the same case share a
@@ -141,6 +146,9 @@ func (c *caseState) shutdown() error {
 	c.mu.Unlock()
 	if db == nil {
 		return nil
+	}
+	if c.stop != nil {
+		c.stopOnce.Do(func() { close(c.stop) })
 	}
 	_, _ = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	err := db.Close()
@@ -299,7 +307,18 @@ func (c *Case) dbManifestImports(ctx context.Context) ([]manifestImport, error) 
 		m.Events = counts[m.ID]
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	_ = rows.Close()
+	supplied, err := loadSupplied(ctx, c.db)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Supplied = supplied[out[i].ID]
+	}
+	return out, nil
 }
 
 // IntegrityCheck runs the full PRAGMA integrity_check (the maintenance menu
@@ -377,7 +396,73 @@ func cleanMeta(m casestore.ImportMeta) (casestore.ImportMeta, error) {
 	m.FileName = cleanName(m.FileName)
 	m.HostLabel = cleanText(m.HostLabel, maxLabelRune)
 	m.TZRule = cleanText(m.TZRule, maxLabelRune)
+	supplied, err := casestore.CleanSupplied(m.Supplied)
+	if err != nil {
+		return m, err
+	}
+	m.Supplied = supplied
 	return m, nil
+}
+
+// Supplied settings live in the meta table, one row per import
+// ("import.<id>.supplied", canonical JSON), written in the import's own
+// transaction. That adds no table and needs no schema change: a case from an
+// earlier build has no such rows and reads back with nothing supplied.
+const (
+	suppliedPrefix = "import."
+	suppliedSuffix = ".supplied"
+)
+
+func suppliedMetaKey(importID int64) string {
+	return suppliedPrefix + strconv.FormatInt(importID, 10) + suppliedSuffix
+}
+
+// suppliedJSON is the canonical stored form of a supplied map (keys sorted).
+func suppliedJSON(m map[string]string) (string, error) {
+	if len(m) == 0 {
+		return "", nil
+	}
+	b, err := json.Marshal(m)
+	return string(b), err
+}
+
+// loadSupplied reads every import's supplied JSON, keyed by import id.
+func loadSupplied(ctx context.Context, db queryer) (map[int64]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT k, v FROM meta WHERE k LIKE 'import.%.supplied'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		id, err := strconv.ParseInt(strings.TrimSuffix(strings.TrimPrefix(k, suppliedPrefix), suppliedSuffix), 10, 64)
+		if err != nil {
+			continue // not one of ours
+		}
+		out[id] = v
+	}
+	return out, rows.Err()
+}
+
+// parseSupplied decodes the stored JSON and re-checks its shape. A value that
+// does not decode, or breaks the bounds, is damage.
+func parseSupplied(s string) (map[string]string, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return nil, ErrDamaged
+	}
+	clean, err := casestore.CleanSupplied(m)
+	if err != nil {
+		return nil, ErrDamaged
+	}
+	return clean, nil
 }
 
 // capReader counts bytes and fails once more than max have been read.
@@ -519,6 +604,15 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 	if err != nil {
 		return casestore.ImportResult{}, err
 	}
+	suppliedStr, err := suppliedJSON(meta.Supplied)
+	if err != nil {
+		return casestore.ImportResult{}, err
+	}
+	if suppliedStr != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meta(k, v) VALUES(?, ?)`, suppliedMetaKey(importID), suppliedStr); err != nil {
+			return casestore.ImportResult{}, c.mapDBErr(err)
+		}
+	}
 	stmt, err := tx.PrepareContext(ctx, insertEvent)
 	if err != nil {
 		return casestore.ImportResult{}, c.mapDBErr(err)
@@ -649,12 +743,13 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 		ID: importID, Importer: meta.Importer, FileName: meta.FileName, SHA256: sum,
 		Bytes: cr.n, Rows: rep.Rows, Rejected: rep.Rejected, HostLabel: meta.HostLabel, TZRule: meta.TZRule, AckText: meta.AckText,
 		Quality: rep.Quality, KnownGaps: rep.KnownGaps, Imported: time.UnixMilli(started.UnixMilli()).UTC(), Status: "ok",
+		Supplied: meta.Supplied,
 	}
 	_, _ = conn.ExecContext(context.Background(), "PRAGMA wal_checkpoint(TRUNCATE)")
 	c.mirror(manifestImport{
 		ID: importID, Importer: meta.Importer, FileName: meta.FileName, SHA256: sum, Bytes: cr.n, Rows: rep.Rows,
 		Rejected: rep.Rejected, Events: emitted, HostLabel: meta.HostLabel, TZRule: meta.TZRule,
-		Imported: rec.Imported, Status: "ok", AckGating: true, AckText: meta.AckText,
+		Imported: rec.Imported, Status: "ok", AckGating: true, AckText: meta.AckText, Supplied: suppliedStr,
 	})
 	c.s.logf("case %s import %s file=%q sha256=%s rows=%d rejected=%d events=%d", c.id, meta.Importer, meta.FileName, sum, rep.Rows, rep.Rejected, emitted)
 	return casestore.ImportResult{Record: rec, Report: rep}, nil
@@ -708,6 +803,11 @@ func (c *Case) syncManifest(ctx context.Context, db *sql.DB) error {
 func sameImport(a, b manifestImport) bool {
 	at, bt := a.Imported, b.Imported
 	a.Imported, b.Imported = time.Time{}, time.Time{}
+	if a.Supplied == "" || b.Supplied == "" {
+		// A manifest or database from before supplied settings existed has none:
+		// absent on either side means unknown, not different.
+		a.Supplied, b.Supplied = "", ""
+	}
 	return a == b && at.Equal(bt)
 }
 
@@ -866,7 +966,22 @@ func (c *Case) records(ctx context.Context, db queryer, where string, args ...an
 		}
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	_ = rows.Close()
+	supplied, err := loadSupplied(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if s, ok := supplied[out[i].ID]; ok {
+			if out[i].Supplied, err = parseSupplied(s); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return out, nil
 }
 
 // Events returns events whose Start lies in the window (inclusive), filtered,
@@ -877,6 +992,38 @@ func (c *Case) Events(ctx context.Context, q casestore.EventQuery) ([]evidence.E
 	if err != nil {
 		return nil, err
 	}
+	where, args, err := eventFilter(q)
+	if err != nil {
+		return nil, err
+	}
+	limit := q.Limit
+	if limit <= 0 || limit > maxEvents {
+		limit = maxEvents
+	}
+	query := selectEvents + where + " ORDER BY ts_ms, evidence_id LIMIT ?"
+	args = append(args, limit)
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []evidence.Event
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+const selectEvents = `SELECT evidence_id, source, kind, host, ts_ms, te_ms, duration_ms, value, unit, severity, line, tz_rule,
+	attrs_json FROM events`
+
+// eventFilter builds the WHERE clause (with its leading space, or empty) and the
+// arguments for q's window and Kinds, Sources and Hosts filters.
+func eventFilter(q casestore.EventQuery) (string, []any, error) {
 	var where []string
 	var args []any
 	if !q.Window.From.IsZero() {
@@ -895,56 +1042,125 @@ func (c *Case) Events(ctx context.Context, q casestore.EventQuery) ([]evidence.E
 			continue
 		}
 		if len(f.vals) > maxFilter {
-			return nil, fmt.Errorf("%w: too many %s filters", ErrInvalid, f.col)
+			return "", nil, fmt.Errorf("%w: too many %s filters", ErrInvalid, f.col)
 		}
 		where = append(where, f.col+" IN ("+strings.TrimSuffix(strings.Repeat("?,", len(f.vals)), ",")+")")
 		for _, v := range f.vals {
 			args = append(args, v)
 		}
 	}
-	limit := q.Limit
-	if limit <= 0 || limit > maxEvents {
-		limit = maxEvents
+	if len(where) == 0 {
+		return "", args, nil
 	}
-	query := `SELECT evidence_id, source, kind, host, ts_ms, te_ms, duration_ms, value, unit, severity, line, tz_rule,
-		attrs_json FROM events`
-	if len(where) > 0 {
-		query += " WHERE " + strings.Join(where, " AND ")
+	return " WHERE " + strings.Join(where, " AND "), args, nil
+}
+
+// scanEvent reads one row of selectEvents.
+func scanEvent(rows *sql.Rows) (evidence.Event, error) {
+	var e evidence.Event
+	var source, kind, host, unit, severity, tz, attrs sql.NullString
+	var ts, te int64
+	var dur, val sql.NullFloat64
+	var line sql.NullInt64
+	if err := rows.Scan(&e.EvidenceID, &source, &kind, &host, &ts, &te, &dur, &val, &unit, &severity, &line, &tz, &attrs); err != nil {
+		return e, err
 	}
-	query += " ORDER BY ts_ms, evidence_id LIMIT ?"
-	args = append(args, limit)
-	rows, err := db.QueryContext(ctx, query, args...)
+	e.Source, e.Kind, e.Host, e.Unit, e.Severity, e.TZRule = source.String, kind.String, host.String, unit.String, severity.String, tz.String
+	e.Start, e.End = time.UnixMilli(ts).UTC(), time.UnixMilli(te).UTC()
+	if dur.Valid {
+		v := dur.Float64
+		e.DurationMs = &v
+	}
+	if val.Valid {
+		v := val.Float64
+		e.Value = &v
+	}
+	e.Line = line.Int64
+	if attrs.Valid && attrs.String != "" {
+		if err := json.Unmarshal([]byte(attrs.String), &e.Attrs); err != nil {
+			return e, ErrDamaged
+		}
+	}
+	return e, nil
+}
+
+// Each streams the matching events to fn (casestore.Case.Each). It reads them in
+// index order, kind then start time, one row at a time, so memory stays flat
+// however many events match. The scan budget bounds it; an Erase or a closed
+// handle stops it (the store's stop channel cancels the query at once, and the
+// handle is also checked every few hundred rows).
+func (c *Case) Each(ctx context.Context, q casestore.EventQuery, fn func(evidence.Event) error) error {
+	db, err := c.handle()
 	if err != nil {
-		return nil, err
+		return err
+	}
+	if fn == nil {
+		return fmt.Errorf("%w: missing callback", ErrInvalid)
+	}
+	where, args, err := eventFilter(q)
+	if err != nil {
+		return err
+	}
+	budget := q.NewScanBudget()
+
+	qctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var timedOut atomic.Bool
+	timer := time.AfterFunc(budget.Duration(), func() {
+		timedOut.Store(true)
+		cancel()
+	})
+	defer timer.Stop()
+	if c.stop != nil {
+		go func() {
+			select {
+			case <-c.stop:
+				cancel()
+			case <-qctx.Done():
+			}
+		}()
+	}
+	// why maps a failure of the query itself to what the caller should see.
+	why := func(err error) error {
+		switch {
+		case ctx.Err() != nil:
+			return ctx.Err()
+		case timedOut.Load():
+			return casestore.ErrScanBudget
+		}
+		if _, herr := c.handle(); herr != nil {
+			return herr
+		}
+		return err
+	}
+
+	rows, err := db.QueryContext(qctx, selectEvents+where+" ORDER BY kind, ts_ms", args...)
+	if err != nil {
+		return why(err)
 	}
 	defer rows.Close()
-	var out []evidence.Event
-	for rows.Next() {
-		var e evidence.Event
-		var source, kind, host, unit, severity, tz, attrs sql.NullString
-		var ts, te int64
-		var dur, val sql.NullFloat64
-		var line sql.NullInt64
-		if err := rows.Scan(&e.EvidenceID, &source, &kind, &host, &ts, &te, &dur, &val, &unit, &severity, &line, &tz, &attrs); err != nil {
-			return nil, err
-		}
-		e.Source, e.Kind, e.Host, e.Unit, e.Severity, e.TZRule = source.String, kind.String, host.String, unit.String, severity.String, tz.String
-		e.Start, e.End = time.UnixMilli(ts).UTC(), time.UnixMilli(te).UTC()
-		if dur.Valid {
-			v := dur.Float64
-			e.DurationMs = &v
-		}
-		if val.Valid {
-			v := val.Float64
-			e.Value = &v
-		}
-		e.Line = line.Int64
-		if attrs.Valid && attrs.String != "" {
-			if err := json.Unmarshal([]byte(attrs.String), &e.Attrs); err != nil {
-				return nil, ErrDamaged
+	for n := 0; rows.Next(); n++ {
+		if n%casestoreHandleCheck == 0 {
+			if _, herr := c.handle(); herr != nil {
+				return herr
 			}
 		}
-		out = append(out, e)
+		e, err := scanEvent(rows)
+		if err != nil {
+			return why(err)
+		}
+		if err := budget.Admit(); err != nil {
+			return err
+		}
+		if err := fn(e); err != nil {
+			return err
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return why(err)
+	}
+	return nil
 }
+
+// casestoreHandleCheck is how often Each looks at its handle between rows.
+const casestoreHandleCheck = 256

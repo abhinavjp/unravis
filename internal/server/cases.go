@@ -392,6 +392,9 @@ type importRecordDTO struct {
 	Imported  time.Time              `json:"imported"`
 	Status    string                 `json:"status"`
 	Reason    string                 `json:"reason,omitempty"`
+	// Supplied is what the owner supplied for this import, as an object (empty
+	// when nothing was).
+	Supplied map[string]string `json:"supplied"`
 }
 
 func toRecordDTO(r casestore.ImportRecord) importRecordDTO {
@@ -403,10 +406,14 @@ func toRecordDTO(r casestore.ImportRecord) importRecordDTO {
 	if status == "" {
 		status = casestore.StatusOK
 	}
+	supplied := make(map[string]string, len(r.Supplied))
+	for k, v := range r.Supplied {
+		supplied[k] = v
+	}
 	return importRecordDTO{
 		ID: r.ID, Importer: r.Importer, FileName: r.FileName, SHA256: r.SHA256, Bytes: r.Bytes, Rows: r.Rows,
 		Rejected: r.Rejected, HostLabel: r.HostLabel, TZRule: r.TZRule, Quality: r.Quality, KnownGaps: gaps,
-		Imported: r.Imported.UTC(), Status: status, Reason: string(r.Reason),
+		Imported: r.Imported.UTC(), Status: status, Reason: string(r.Reason), Supplied: supplied,
 	}
 }
 
@@ -938,6 +945,14 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 		writeCaseFailure(w, http.StatusBadRequest, "importer-required", "Choose an importer before importing.")
 		return
 	}
+	// Owner-supplied settings (s.<key>=<value> in the query) are checked against
+	// the chosen importer's declared keys before the gate is taken and before any
+	// byte of the body is read. A refusal never repeats a key or a value.
+	supplied, err := suppliedFromQuery(query, imp)
+	if err != nil {
+		writeCaseFailure(w, http.StatusBadRequest, "bad-supplied", badSuppliedText)
+		return
+	}
 	var hint *importer.HostHint
 	if label := query.Get("host"); label != "" {
 		found, ok := h.hostsNow().Lookup(label)
@@ -1032,7 +1047,7 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 				}
 				ackText = bound
 			}
-			h.importFile(w, r, id, c, imp, hint, part, preview, ackGating, ackText, baseName(part.FileName()))
+			h.importFile(w, r, id, c, imp, hint, supplied, part, preview, ackGating, ackText, baseName(part.FileName()))
 			return
 		default:
 			writeCaseFailure(w, http.StatusBadRequest, "bad-form", "The upload has a field the server does not know.")
@@ -1044,7 +1059,7 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 // importFile runs one uploaded file. The acknowledgement must already have
 // arrived: it travels in the fields before the file, so a refusal needs no read
 // of the file, and the body is streamed, never spilled to disk.
-func (h *handler) importFile(w http.ResponseWriter, r *http.Request, id casestore.CaseID, c casestore.Case, imp importer.Importer, hint *importer.HostHint, part io.Reader, preview, ackGating bool, ackText, fileName string) {
+func (h *handler) importFile(w http.ResponseWriter, r *http.Request, id casestore.CaseID, c casestore.Case, imp importer.Importer, hint *importer.HostHint, supplied map[string]string, part io.Reader, preview, ackGating bool, ackText, fileName string) {
 	if !preview && (!ackGating || ackText == "") {
 		writeCaseFailure(w, http.StatusBadRequest, "ack-required", "Send ackGating and ackText before the file.")
 		return
@@ -1087,9 +1102,11 @@ func (h *handler) importFile(w http.ResponseWriter, r *http.Request, id casestor
 	opts := importer.Options{
 		CaseID: string(id), ImportNonce: nonce, FileName: fileName, Host: hint,
 		Hosts: h.hostsNow().Lookup, Pseudonymize: c.Pseudonymize,
+		Supplied: supplied,
 	}
 	meta := casestore.ImportMeta{
 		Importer: imp.Name(), FileName: fileName, AckGating: ackGating, AckText: ackText, AllowedAttrs: imp.AllowedAttrs(),
+		Supplied: supplied,
 	}
 	if hint != nil {
 		meta.HostLabel = hint.Label
@@ -1154,6 +1171,8 @@ func (h *handler) writeImportError(w http.ResponseWriter, err error, body *track
 		writeCaseFailure(w, http.StatusRequestEntityTooLarge, "request-too-large", "The upload is larger than the cap.")
 	case errors.Is(err, casestore.ErrAckRequired):
 		writeCaseFailure(w, http.StatusBadRequest, "ack-required", "Send ackGating and ackText before the file.")
+	case errors.Is(err, casestore.ErrBadSupplied), errors.Is(err, importer.ErrBadSupplied):
+		writeCaseFailure(w, http.StatusBadRequest, "bad-supplied", badSuppliedText)
 	case errors.Is(err, casestore.ErrAckTooLong):
 		writeCaseFailure(w, http.StatusBadRequest, "ack-too-long", ackTooLongText)
 	case errors.Is(err, casestore.ErrCaseClosed):
@@ -1187,6 +1206,86 @@ func (h *handler) writeImportError(w http.ResponseWriter, err error, body *track
 	default:
 		writeCaseFailure(w, http.StatusInternalServerError, "import-failed", "The import could not be completed. Nothing was stored.")
 	}
+}
+
+/* -------------------------------------------------------------- supplied */
+
+const badSuppliedText = "A supplied setting is not one this importer accepts, or its value is not valid."
+
+// suppliedFromQuery collects the s.<key>=<value> query parameters and checks
+// them against the keys imp declares. A query with none gives nil, nil. A key
+// given twice, an s.* key with no importer, an importer that declares no keys,
+// or a bad key or value gives importer.ErrBadSupplied. The error never carries
+// a key or a value.
+func suppliedFromQuery(query map[string][]string, imp importer.Importer) (map[string]string, error) {
+	var raw map[string]string
+	for name, values := range query {
+		key, ok := strings.CutPrefix(name, "s.")
+		if !ok {
+			continue
+		}
+		if len(values) != 1 || (raw != nil && len(raw) >= importer.MaxSuppliedKeys) {
+			return nil, importer.ErrBadSupplied
+		}
+		if raw == nil {
+			raw = make(map[string]string)
+		}
+		raw[key] = values[0]
+	}
+	if raw == nil {
+		return nil, nil
+	}
+	if imp == nil {
+		return nil, importer.ErrBadSupplied
+	}
+	return importer.ValidateSupplied(imp, raw)
+}
+
+/* ---------------------------------------------------------------- series */
+
+// caseSeries answers GET /api/cases/{id}/series: per-bucket min, mean, max and
+// count for each sel, over the events of one case. The scan streams through
+// Case.Each under the scan budget; a stopped scan is answered with
+// partial=true. The case is read under the read share, so an erase waits for
+// the scan, and a scan that meets an erase answers 404.
+func (h *handler) caseSeries(w http.ResponseWriter, r *http.Request, raw string) {
+	_, c, ok := h.openCase(w, r, raw)
+	if !ok {
+		return
+	}
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+	query := r.URL.Query()
+	q := casestore.SeriesQuery{Sel: query["sel"]}
+	for _, f := range []struct {
+		name string
+		into *time.Time
+	}{{"from", &q.From}, {"to", &q.To}} {
+		t, err := time.Parse(time.RFC3339, query.Get(f.name))
+		if err != nil {
+			writeCaseFailure(w, http.StatusBadRequest, casestore.SeriesBadTime, "from and to must be RFC 3339 times with a zone.")
+			return
+		}
+		*f.into = t.UTC()
+	}
+	bucket, err := strconv.ParseInt(query.Get("bucket"), 10, 64)
+	if err != nil {
+		writeCaseFailure(w, http.StatusBadRequest, casestore.SeriesBadBucket, "bucket must be a whole number of milliseconds.")
+		return
+	}
+	q.BucketMs = bucket
+	res, err := casestore.Series(ctx, c, q)
+	if err != nil {
+		var se *casestore.SeriesError
+		if errors.As(err, &se) {
+			writeCaseFailure(w, http.StatusBadRequest, se.Reason, se.Message)
+			return
+		}
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res, maxResponseBytes)
 }
 
 /* ---------------------------------------------------------------- events */
