@@ -252,3 +252,47 @@ func TestMongostatRejects(t *testing.T) {
 		}
 	}
 }
+
+// "Mon DD" rows carry no year; with an owner-supplied date the year comes from it and must move
+// on when the month falls back from December to January.
+func TestMongostatMonthDayYearRollover(t *testing.T) {
+	data := statLine("Dec 31 23:59:58") + statLine("Dec 31 23:59:59") + statLine("Jan  1 00:00:00") + statLine("Jan  1 00:00:01")
+	o := nyOpts("2001-12-31")
+	o.Host = hostA(time.UTC)
+	evs, rep := mustParse(t, NewMongostat(), []byte(data), o)
+	want := map[int64]time.Time{
+		1: time.Date(2001, 12, 31, 23, 59, 58, 0, time.UTC), 2: time.Date(2001, 12, 31, 23, 59, 59, 0, time.UTC),
+		3: time.Date(2002, 1, 1, 0, 0, 0, 0, time.UTC), 4: time.Date(2002, 1, 1, 0, 0, 1, 0, time.UTC),
+	}
+	for line, w := range want {
+		if e := statMetric(evs, line, "conn"); e == nil || !e.End.Equal(w) {
+			t.Errorf("line %d: %+v, want %v", line, e, w)
+		}
+	}
+	if !hasGap(rep, "month wrapped from December to January") {
+		t.Errorf("no year rollover gap: %v", rep.KnownGaps)
+	}
+	for _, g := range rep.KnownGaps {
+		if err := evidence.LintCausal(g); err != nil {
+			t.Errorf("%q: %v", g, err)
+		}
+	}
+}
+
+// A small step back inside the same year (a duplicate or reordered row) keeps the year.
+func TestMongostatMonthDaySmallStepBackKeepsYear(t *testing.T) {
+	data := statLine("Dec 31 10:00:05") + statLine("Dec 30 10:00:03") + statLine("Nov 30 10:00:03")
+	o := nyOpts("2001-12-31")
+	o.Host = hostA(time.UTC)
+	evs, rep := mustParse(t, NewMongostat(), []byte(data), o)
+	for line, w := range map[int64]time.Time{
+		2: time.Date(2001, 12, 30, 10, 0, 3, 0, time.UTC), 3: time.Date(2001, 11, 30, 10, 0, 3, 0, time.UTC),
+	} {
+		if e := statMetric(evs, line, "conn"); e == nil || !e.End.Equal(w) {
+			t.Errorf("line %d: %+v, want %v", line, e, w)
+		}
+	}
+	if hasGap(rep, "December to January") {
+		t.Errorf("year gap on a small step back: %v", rep.KnownGaps)
+	}
+}

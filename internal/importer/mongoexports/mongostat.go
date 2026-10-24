@@ -112,6 +112,10 @@ type mongostatLiner struct {
 	rolled  bool
 	usedDay bool // a supplied date filled in a time of day
 	usedMk  bool // a sample marker filled in the date
+
+	prevMon    time.Month // month of the last "Mon DD" row read under a supplied date
+	yearAdd    int        // years added to the supplied date's year
+	yearRolled bool
 }
 
 func (m *mongostatLiner) begin(lim importer.Limits, opts importer.Options, rep *importer.Report) error {
@@ -220,9 +224,22 @@ func (m *mongostatLiner) stampTime(text string, sample time.Time, loc *time.Loca
 			return time.Time{}, "", importer.ReasonBadTime
 		}
 		day, _ := strconv.Atoi(mm[2])
+		add, rolled := m.yearAdd, false
+		if m.haveDay {
+			// A month that falls back by more than half a year (December to January) is a new year; a
+			// small step back is a duplicate or a reordered row.
+			if m.prevMon != 0 && m.prevMon-mon > 6 {
+				add, rolled = add+1, true
+			}
+			year += add
+		}
 		d := time.Date(year, mon, day, 0, 0, 0, 0, time.UTC)
 		if d.Day() != day || d.Month() != mon {
 			return time.Time{}, "", importer.ReasonBadTime
+		}
+		if m.haveDay {
+			m.prevMon, m.yearAdd = mon, add
+			m.yearRolled = m.yearRolled || rolled
 		}
 		return m.local2(d.Format("2006-01-02"), mm[3], loc)
 	}
@@ -417,6 +434,9 @@ func (m *mongostatLiner) end(rep *importer.Report, opts importer.Options) {
 	}
 	if m.rolled {
 		rep.Gap("the date moved on by one day each time the time of day wrapped past midnight")
+	}
+	if m.yearRolled {
+		rep.Gap("the file has month and day only: the year is the one supplied by the owner, moved on by one each time the month wrapped from December to January")
 	}
 	rep.Quality = quality(rep, "", rule)
 }
