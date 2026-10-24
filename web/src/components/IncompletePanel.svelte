@@ -2,6 +2,7 @@
   import type { Rollup } from '../lib/types';
   import { rateText, type OverviewDrill } from '../lib/overview';
   import { kindLabel } from '../lib/presentation';
+  import Hint from './Hint.svelte';
   import { DEFAULT_STALE_MINUTES, MAX_STALE_MINUTES, parseStaleMinutes, rankByCompletion, staleButtonText, staleDrill } from '../lib/incomplete';
   let { rollups, kindFilter = 'all', onDrill }: { rollups: Rollup[]; kindFilter?: string; onDrill: (drill: OverviewDrill) => void } = $props();
   // The threshold is text while it is being typed; an unusable value disables the stale lists instead of guessing one.
@@ -20,7 +21,7 @@
 
 {#if rollups.length}
 <section class="data-section incomplete-panel" id="incomplete-work" aria-label="Incomplete requests">
-  <div class="section-heading"><div><h3>Incomplete requests</h3><p>Completion % is completed / (completed + incomplete + pending). Unusable rows are counted apart and never in that share. A dash means there was nothing to measure, not 0%.</p></div></div>
+  <div class="section-heading"><div><h3>Incomplete requests<Hint termId="incomplete-request" /></h3><p>Completion % is completed / (completed + incomplete + pending). Unusable rows are counted apart and never in that share. A dash means there was nothing to measure, not 0%.</p></div></div>
   <div class="group-toolbar">
     <label>Stale after (minutes)<input type="text" inputmode="decimal" bind:value={minutesText} aria-invalid={minutes == null} aria-describedby="stale-threshold-note" /></label>
     <button type="button" class="secondary-button" disabled={minutes == null || !(totals.incomplete + totals.pending)} title={incompleteButton.tip} onclick={() => open(null, 'incomplete')}>{incompleteButton.text}</button>
@@ -31,10 +32,10 @@
     <table class="comparison-table incomplete-table">
       <thead><tr>
         <th>Operation</th><th>Request type</th>
-        <th title="Completed / (completed + incomplete + pending). Lowest first.">Completion %</th>
+        <th title="Completed / (completed + incomplete + pending). Lowest first.">Completion %<Hint termId="completion-percent" /></th>
         <th title="Started but never completed, not counting accepted asynchronous jobs.">Incomplete</th>
-        <th title="Asynchronous requests that were accepted (202) and have no final result yet.">Pending async</th>
-        <th title="A duration was present but could not be used. Not part of the completion share.">Unusable</th>
+        <th title="Asynchronous requests that were accepted (202) and have no final result yet.">Pending async<Hint termId="pending-async" /></th>
+        <th title="A duration was present but could not be used. Not part of the completion share.">Unusable<Hint termId="unusable-timing" /></th>
       </tr></thead>
       <tbody>
         {#each worst as item (item.rollup.controller + '|' + item.rollup.action + '|' + (item.rollup.kind ?? ''))}
