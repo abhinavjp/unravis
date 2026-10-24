@@ -87,3 +87,25 @@ test('the import panel moves focus into itself when it opens, so Tab stays insid
   const mount = importPanel.slice(importPanel.indexOf('onMount(() => {'));
   assert.ok(mount.slice(0, mount.indexOf('listHosts()')).includes('drawer?.focus();'), 'it focuses the dialog before anything else');
 });
+
+test('a wrong host pick is explained as a mismatch, not as a missing list entry', () => {
+  const text = errorText({ status: 422, reason: 'unknown-host', message: '' });
+  assert.match(text, /host you picked/i, 'the host the user chose is named as a cause to check');
+  assert.match(IMPORT_TEXT.blocked['unknown-host'], /host you picked/i);
+});
+
+test('a pasted list longer than the server allows is cut to its first values and says so', () => {
+  const inv = loadTypeScript('src/lib/investigation.ts');
+  assert.equal(inv.MAX_FILTER_VALUES, 20);
+  assert.equal(inv.MAX_USER_IDS, 50);
+  const text = Array.from({ length: 5000 }, (_, i) => `192.0.2.${i}`).join(', ');
+  assert.equal(inv.itemsOverLimit(text, 20), 4980);
+  assert.equal(inv.itemsOverLimit('a, b, a', 20), 0, 'duplicates do not count twice');
+  assert.equal(inv.itemsOverLimit(Array.from({ length: 20 }, (_, i) => 'v' + i).join(','), 20), 0, 'exactly the limit is fine');
+  const first20 = inv.splitList(text).slice(0, 20);
+  assert.equal(inv.syncListDraft(text, first20, () => true, 20), text, 'the typed text is kept while the applied list is its first 20');
+  const controls = read('src/components/QueryControls.svelte');
+  assert.match(controls, /splitList\(text\)\.slice\(0, MAX_FILTER_VALUES\)/, 'setList applies at most 20 values');
+  assert.match(controls, /\.slice\(0, MAX_USER_IDS\)/, 'user ids stop at 50');
+  for (const id of ['over-user-ids', 'over-ui-versions', 'over-user-ips', 'over-status-codes']) assert.match(controls, new RegExp(`data-testid="${id}"`), `${id} notice exists`);
+});

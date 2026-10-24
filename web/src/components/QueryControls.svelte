@@ -7,7 +7,7 @@
   import { intervalNote } from '../lib/intervalNote.svelte';
   import { isManualBucket } from '../lib/zoom';
   import { activeRangeId } from '../lib/depth';
-  import { RANGE_FIELDS, buildRange, isValidOperation, isValidUserId, rangeConflict, splitList, syncListDraft, syncOperationDraft, syncRangeDraft } from '../lib/investigation';
+  import { MAX_FILTER_VALUES, MAX_USER_IDS, RANGE_FIELDS, buildRange, isValidOperation, itemsOverLimit, isValidUserId, rangeConflict, splitList, syncListDraft, syncOperationDraft, syncRangeDraft } from '../lib/investigation';
   import { KIND_TITLES } from '../lib/copy/screenCopy';
   import DateTimeField from './DateTimeField.svelte';
   import Hint from './Hint.svelte';
@@ -83,10 +83,10 @@
     const applied = { userIds: query.userIds, uiVersions: query.uiVersions, userIps: query.userIps, statusCodes: query.statusCodes, operation: query.operation };
     const ranges = RANGE_FIELDS.map(field => ({ key: field.key, limit: field.limit, min: query[field.key]?.min, max: query[field.key]?.max }));
     untrack(() => {
-      userIdsText = syncListDraft(userIdsText, applied.userIds, userIdOk);
-      uiVersionsText = syncListDraft(uiVersionsText, applied.uiVersions);
-      userIpsText = syncListDraft(userIpsText, applied.userIps);
-      statusCodesText = syncListDraft(statusCodesText, applied.statusCodes);
+      userIdsText = syncListDraft(userIdsText, applied.userIds, userIdOk, MAX_USER_IDS);
+      uiVersionsText = syncListDraft(uiVersionsText, applied.uiVersions, undefined, MAX_FILTER_VALUES);
+      userIpsText = syncListDraft(userIpsText, applied.userIps, undefined, MAX_FILTER_VALUES);
+      statusCodesText = syncListDraft(statusCodesText, applied.statusCodes, undefined, MAX_FILTER_VALUES);
       operationText = syncOperationDraft(operationText, applied.operation);
       for (const { key, limit, min, max } of ranges) {
         const next = syncRangeDraft(rangeText[key], min != null || max != null ? { ...(min != null ? { min } : {}), ...(max != null ? { max } : {}) } : undefined, limit);
@@ -100,9 +100,15 @@
   const operationSuggestions = $derived([...new Set(groupNames)].slice(0, MAX_OPERATION_SUGGESTIONS));
   const setUserIds = (text: string) => {
     userIdsText = text;
-    const ids = splitList(text).filter(userIdOk).map(Number);
-    query.userIds = ids.length ? [...new Set(ids)] : undefined;
+    const ids = [...new Set(splitList(text).filter(userIdOk).map(Number))].slice(0, MAX_USER_IDS);
+    query.userIds = ids.length ? ids : undefined;
   };
+  // The server refuses a longer list, so only the first values are applied and the box says so.
+  const overIds = $derived(itemsOverLimit(userIdsText, MAX_USER_IDS));
+  const overVersions = $derived(itemsOverLimit(uiVersionsText, MAX_FILTER_VALUES));
+  const overIps = $derived(itemsOverLimit(userIpsText, MAX_FILTER_VALUES));
+  const overStatus = $derived(itemsOverLimit(statusCodesText, MAX_FILTER_VALUES));
+  const overText = (over: number, max: number) => `Only the first ${max} values are used. ${over} more ${over === 1 ? 'was' : 'were'} left out.`;
   // An operation without a dot, or with nothing on one side of it, is shown as a
   // hint and not applied, so the query never carries a value the server rejects.
   const setOperation = (value: string) => {
@@ -111,7 +117,7 @@
   };
   const setList = (key: 'uiVersions' | 'userIps' | 'statusCodes', text: string) => {
     if (key === 'uiVersions') uiVersionsText = text; else if (key === 'userIps') userIpsText = text; else statusCodesText = text;
-    const items = splitList(text);
+    const items = splitList(text).slice(0, MAX_FILTER_VALUES);
     query[key] = items.length ? items : undefined;
   };
   const setText = (key: 'userAgentContains' | 'urlContains' | 'auditId', value: string) => {
@@ -238,10 +244,10 @@
           <button type="button" class="record-clear" onclick={clearRecordFilters}>Clear all record filters</button>
         {/if}
         <div class="field-grid">
-          <div class="control-group"><label for="rf-user-ids">User IDs</label><input id="rf-user-ids" inputmode="numeric" autocomplete="off" aria-invalid={rejectedUserIds.length > 0} value={userIdsText} oninput={(event) => setUserIds(event.currentTarget.value)} placeholder="e.g. 1042, 1043" />{#if rejectedUserIds.length}<p class="inline-error" role="alert">Ignored, not whole numbers from 1 to 2147483647: {rejectedUserIds.join(', ')}.</p>{/if}</div>
-          <div class="control-group"><label for="rf-ui-versions">UI versions</label><input id="rf-ui-versions" autocomplete="off" value={uiVersionsText} oninput={(event) => setList('uiVersions', event.currentTarget.value)} placeholder="e.g. 2.14.0" /><p class="field-note">Exact match.</p></div>
-          <div class="control-group"><label for="rf-user-ips">User IPs</label><input id="rf-user-ips" autocomplete="off" value={userIpsText} oninput={(event) => setList('userIps', event.currentTarget.value)} placeholder="e.g. 203.0.113.7" /><p class="field-note">Exact match.</p></div>
-          <div class="control-group"><label for="rf-status-codes">Status codes</label><input id="rf-status-codes" autocomplete="off" value={statusCodesText} oninput={(event) => setList('statusCodes', event.currentTarget.value)} placeholder="e.g. 404, 500" /></div>
+          <div class="control-group"><label for="rf-user-ids">User IDs</label><input id="rf-user-ids" inputmode="numeric" autocomplete="off" aria-invalid={rejectedUserIds.length > 0} value={userIdsText} oninput={(event) => setUserIds(event.currentTarget.value)} placeholder="e.g. 1042, 1043" />{#if rejectedUserIds.length}<p class="inline-error" role="alert">Ignored, not whole numbers from 1 to 2147483647: {rejectedUserIds.join(', ')}.</p>{/if}{#if overIds}<p class="inline-error" role="alert" data-testid="over-user-ids">{overText(overIds, MAX_USER_IDS)}</p>{/if}</div>
+          <div class="control-group"><label for="rf-ui-versions">UI versions</label><input id="rf-ui-versions" autocomplete="off" value={uiVersionsText} oninput={(event) => setList('uiVersions', event.currentTarget.value)} placeholder="e.g. 2.14.0" /><p class="field-note">Exact match.</p>{#if overVersions}<p class="inline-error" role="alert" data-testid="over-ui-versions">{overText(overVersions, MAX_FILTER_VALUES)}</p>{/if}</div>
+          <div class="control-group"><label for="rf-user-ips">User IPs</label><input id="rf-user-ips" autocomplete="off" value={userIpsText} oninput={(event) => setList('userIps', event.currentTarget.value)} placeholder="e.g. 203.0.113.7" /><p class="field-note">Exact match.</p>{#if overIps}<p class="inline-error" role="alert" data-testid="over-user-ips">{overText(overIps, MAX_FILTER_VALUES)}</p>{/if}</div>
+          <div class="control-group"><label for="rf-status-codes">Status codes</label><input id="rf-status-codes" autocomplete="off" value={statusCodesText} oninput={(event) => setList('statusCodes', event.currentTarget.value)} placeholder="e.g. 404, 500" />{#if overStatus}<p class="inline-error" role="alert" data-testid="over-status-codes">{overText(overStatus, MAX_FILTER_VALUES)}</p>{/if}</div>
           <div class="control-group"><label for="rf-agent">Browser (user agent) contains</label><input id="rf-agent" maxlength="200" autocomplete="off" value={query.userAgentContains ?? ''} oninput={(event) => setText('userAgentContains', event.currentTarget.value)} placeholder="e.g. Firefox" /><p class="field-note">Not case sensitive.</p></div>
           <div class="control-group"><label for="rf-url">Request URL contains</label><input id="rf-url" maxlength="200" autocomplete="off" value={query.urlContains ?? ''} oninput={(event) => setText('urlContains', event.currentTarget.value)} placeholder="e.g. /api/payslips" /><p class="field-note">Not case sensitive.</p></div>
           <div class="control-group"><label for="rf-audit-id">Audit ID</label><input id="rf-audit-id" maxlength="24" autocomplete="off" spellcheck="false" aria-invalid={auditIdInvalid} value={query.auditId ?? ''} oninput={(event) => setText('auditId', event.currentTarget.value)} placeholder="24 hexadecimal characters" />{#if auditIdInvalid}<p class="inline-error" role="alert">An audit ID is exactly 24 hexadecimal characters.</p>{/if}</div>
