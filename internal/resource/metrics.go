@@ -204,10 +204,10 @@ var rules = []rule{
 		"Request Queue Length", "Connection Queue Length", "kestrel.queued_requests", "kestrel.queued_connections")}},
 
 	// Redis INFO (W2-h, not merged).
-	{id: RedisMem, sources: redisInfo, kind: "metric", unit: "bytes", pending: true, when: []cond{metricIs("used_memory")}},
-	{id: RedisClients, sources: redisInfo, kind: "metric", unit: "count", pending: true, when: []cond{metricIs("connected_clients")}},
-	{id: RedisBlocked, sources: redisInfo, kind: "metric", unit: "count", pending: true, when: []cond{metricIs("blocked_clients")}},
-	{id: RedisOps, sources: redisInfo, kind: "metric", unit: "per-sec", pending: true, when: []cond{metricIs("instantaneous_ops_per_sec")}},
+	{id: RedisMem, sources: redisInfo, kind: "metric", unit: "bytes", when: []cond{metricIs("used_memory")}},
+	{id: RedisClients, sources: redisInfo, kind: "metric", unit: "count", when: []cond{metricIs("connected_clients")}},
+	{id: RedisBlocked, sources: redisInfo, kind: "metric", unit: "count", when: []cond{metricIs("blocked_clients")}},
+	{id: RedisOps, sources: redisInfo, kind: "metric", unit: "per-sec", when: []cond{metricIs("instantaneous_ops_per_sec")}},
 
 	// Mongo serverStatus and mongostat.
 	{id: MongoQueue, sources: mongoSS, kind: "metric", unit: "count", when: []cond{metricIs("globalLock.currentQueue.total")}},
