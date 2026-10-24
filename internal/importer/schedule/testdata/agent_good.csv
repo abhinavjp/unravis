@@ -1,0 +1,10 @@
+job_name,enabled,freq_type,freq_interval,freq_subday_type,freq_subday_interval,freq_relative_interval,freq_recurrence_factor,active_start_date,active_end_date,active_start_time,active_end_time,run_date,run_time,run_duration
+job-alpha,1,4,1,1,0,0,0,20010101,99991231,30000,235959,20010324,30000,125
+job-alpha,1,4,1,1,0,0,0,20010101,99991231,30000,235959,20010325,30000,130
+job-beta,1,4,1,1,0,0,0,20010101,99991231,23000,235959,,,
+job-gamma,1,8,10,4,15,0,1,20010101,99991231,80000,170000,,,
+job-delta,1,16,15,1,0,0,1,20010101,99991231,120000,235959,,,
+job-epsilon,1,32,2,1,0,1,1,20010101,99991231,60000,235959,,,
+job-zeta,0,4,1,1,0,0,0,20010101,99991231,10000,235959,,,
+job-eta,1,64,0,1,0,0,0,20010101,99991231,0,235959,,,
+job-theta,1,1,0,1,0,0,0,20010326,99991231,40000,235959,,,
