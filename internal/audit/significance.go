@@ -7,7 +7,7 @@ import (
 
 const (
 	// minShiftSamples matches the minimum sample count for a compared cohort.
-	minShiftSamples = 20
+	minShiftSamples = MinSampleCount
 	// significantZ is the |z| at which a histogram shift counts as significant.
 	significantZ = 3.0
 )

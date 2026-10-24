@@ -159,9 +159,9 @@ func BuildAnalysis(q Query, current, reference []Bucket, sources []SourceResult)
 			comparison.State = "missing_current"
 		case referenceStats.Count == 0:
 			comparison.State = "missing_reference"
-		case currentStats.Count < 20 || referenceStats.Count < 20:
+		case currentStats.Count < MinSampleCount || referenceStats.Count < MinSampleCount:
 			comparison.State = "insufficient_data"
-			analysis.Warnings = append(analysis.Warnings, fmt.Sprintf("%s has fewer than 20 valid samples in current or reference", key))
+			analysis.Warnings = append(analysis.Warnings, fmt.Sprintf("%s has fewer than %d valid samples in current or reference", key, MinSampleCount))
 		case referenceStats.P50 == nil || referenceStats.P95 == nil || referenceStats.P50.LowerMs <= 0 || referenceStats.P95.LowerMs <= 0:
 			comparison.State = "undefined_baseline"
 			analysis.Warnings = append(analysis.Warnings, fmt.Sprintf("%s has a near-zero reference quantile; ratios are undefined", key))
