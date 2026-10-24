@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '../lib/api';
+  import { ApiError, api, readSessionToken } from '../lib/api';
+  import { DRAWER_RESULTS_TEXT, clearDrawerResults, foundAtText, patternsWindowKey, readPatterns, savePatterns } from '../lib/drawerResults.svelte';
   import { formatTime, quickRange, quickRanges, type QuickRangeId } from '../lib/time';
   import { activeRangeId } from '../lib/depth';
   import { app, closeSidePanel, onScopeChange, scope, showRecord } from '../lib/appState.svelte';
@@ -31,6 +32,10 @@
   let openEpisodes = $state<number[]>([]);
   let citeNote = $state('');
   let runButton = $state<HTMLButtonElement>();
+  // The last three reports are kept in memory (lib/drawerResults.svelte.ts). Reopening shows the newest one for this window with its age and a Run again button.
+  // savedAt is set only while the report on screen came from memory. A fresh run clears it.
+  let savedAt = $state<number | null>(null);
+  let now = $state(Date.now());
   let controller: AbortController | null = null;
 
   const sources = $derived(query.sourceIds.map((id) => sourceLabels.get(id) ?? id).join(', '));
@@ -43,8 +48,26 @@
   // What the search depends on. When it moves after a run, the numbers on screen describe an older question.
   const askKey = $derived([query.sourceIds.join(','), query.start, query.end, stallSec.trim(), gapSec.trim(), idleGaps ? 'idle' : ''].join('|'));
 
-  onMount(() => runButton?.focus());
+  onMount(() => {
+    runButton?.focus();
+    // A forgotten session means nothing from before may be shown.
+    if (!readSessionToken()) { clearDrawerResults(); return; }
+    const saved = readPatterns(patternsWindowKey(query.sourceIds, query.start, query.end), app.sources.map((source) => source.id));
+    if (!saved) return;
+    stallSec = saved.stallSec;
+    gapSec = saved.gapSec;
+    idleGaps = saved.idleAsked;
+    phase = { kind: 'done', report: saved.report, key: saved.key, idleAsked: saved.idleAsked };
+    savedAt = saved.savedAt;
+    now = Date.now();
+  });
   $effect(() => () => controller?.abort());
+  // Keeps "N min ago" honest while a saved report stays on screen.
+  $effect(() => {
+    if (savedAt === null) return;
+    const timer = setInterval(() => { now = Date.now(); }, 30_000);
+    return () => clearInterval(timer);
+  });
 
   function pickRange(id: QuickRangeId) {
     if (activeRange === id) return;
@@ -65,15 +88,19 @@
     controller = new AbortController();
     const mine = controller;
     const key = askKey;
+    const saveAs = { key, windowKey: patternsWindowKey(query.sourceIds, query.start, query.end), sourceIds: [...query.sourceIds], stallSec: stallSec.trim(), gapSec: gapSec.trim(), idleAsked };
+    savedAt = null;
     phase = { kind: 'running' };
     openEpisodes = [];
     citeNote = '';
     try {
       const report = await api.patterns(built.input, mine.signal);
       if (mine.signal.aborted) return;
+      savePatterns({ ...saveAs, report });
       phase = { kind: 'done', report, key, idleAsked };
     } catch (cause) {
       if (mine.signal.aborted) return;
+      if (cause instanceof ApiError && cause.status === 401) clearDrawerResults();
       phase = { kind: 'error', text: cause instanceof Error && cause.message ? cause.message : PATTERNS_TEXT.failed };
     }
   }
@@ -130,6 +157,12 @@
       {@const coverage = coverageLine(report.coverage)}
       {@const rows = findingRows(report)}
       {@const repeatsLine = repeatsSummary(report)}
+      {#if savedAt !== null}
+        <div class="notice saved-result" role="status">
+          <span>{foundAtText(savedAt, now, zone)}. {DRAWER_RESULTS_TEXT.savedNote}</span>
+          <button type="button" class="secondary-button" disabled={query.sourceIds.length === 0} onclick={run}>{DRAWER_RESULTS_TEXT.runAgain}</button>
+        </div>
+      {/if}
       {#if phase.key !== askKey}<div class="notice" role="status">{PATTERNS_TEXT.stale}</div>{/if}
       <section class="patterns-summary" aria-label="Summary">
         <p class="patterns-verdict">{verdictText(report)}<Hint termId="episode" /></p>
@@ -362,6 +395,8 @@
   .reset-link:hover { color: var(--text); }
   .reset-link:focus-visible, .cite-button:focus-visible, .record-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius); }
   .patterns-run { justify-self: start; }
+  .saved-result { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .saved-result button { margin-left: 0; }
   .idle-option { display: flex; align-items: center; gap: 8px; color: var(--text-2); font-size: var(--fs-3); cursor: pointer; }
   .idle-option input { width: 16px; height: 16px; }
   .idle-meta { margin-bottom: 8px; }
