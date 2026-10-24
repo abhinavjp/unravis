@@ -174,11 +174,14 @@ func maskingStatements(o Options, w withholding) []string {
 	} else {
 		s = append(s, "The hypothesis ledger is not included.")
 	}
-	return append(s,
-		"The key that makes pseudonyms is not in this file.",
-		"bodySha256 is the SHA-256 of this file's bytes with the bodySha256 value set to an empty string, so it covers the manifest and the body.",
-	)
+	return append(s, keyStatement, hashStatement)
 }
+
+// Closing statements shared by Build and BuildCase.
+const (
+	keyStatement  = "The key that makes pseudonyms is not in this file."
+	hashStatement = "bodySha256 is the SHA-256 of this file's bytes with the bodySha256 value set to an empty string, so it covers the manifest and the body."
+)
 
 // exportHash is the hex SHA-256 of Canonical(e) with Manifest.BodySHA256 set to
 // "". It therefore covers everything in the file except the hash itself:
@@ -214,9 +217,13 @@ func Canonical(e Export) ([]byte, error) {
 }
 
 // Verify checks a file's bytes: exactly one JSON value with nothing after it,
-// no unknown fields, the current schema version, a hash that matches the
-// manifest and body, and the canonical encoding (so key spelling, order and
-// spacing are the ones Build wrote and nothing can ride along unhashed).
+// no unknown fields, a schema version from MinSchemaVersion to SchemaVersion,
+// a hash that matches the manifest and body, and the canonical encoding (so
+// key spelling, order and spacing are the ones Build wrote and nothing can
+// ride along unhashed).
+//
+// A version 1 file must not hold the version 2 fields (manifest imports, body
+// imports or events), and every record's version must equal the file's.
 func Verify(raw []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -227,8 +234,17 @@ func Verify(raw []byte) error {
 	if err := dec.Decode(&json.RawMessage{}); err != io.EOF {
 		return fmt.Errorf("%w: trailing data after the export", ErrInvalid)
 	}
-	if e.Manifest.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("%w: schema version %d, want %d", ErrInvalid, e.Manifest.SchemaVersion, SchemaVersion)
+	v := e.Manifest.SchemaVersion
+	if v < MinSchemaVersion || v > SchemaVersion {
+		return fmt.Errorf("%w: schema version %d, want %d to %d", ErrInvalid, v, MinSchemaVersion, SchemaVersion)
+	}
+	if v < 2 && (e.Manifest.Imports != nil || e.Body.Imports != nil || e.Body.Events != nil) {
+		return fmt.Errorf("%w: a version %d file holds version 2 fields", ErrInvalid, v)
+	}
+	for _, r := range e.Body.Records {
+		if r.Version != v {
+			return fmt.Errorf("%w: record version %d in a version %d file", ErrInvalid, r.Version, v)
+		}
 	}
 	sum, err := exportHash(e)
 	if err != nil {

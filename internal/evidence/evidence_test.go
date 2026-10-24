@@ -276,9 +276,14 @@ func TestVerify(t *testing.T) {
 	if err := Verify(extra); err == nil {
 		t.Errorf("Verify accepted an unknown body field")
 	}
-	wrongVersion := bytes.Replace(raw, []byte(`"schemaVersion": 1`), []byte(`"schemaVersion": 2`), 1)
-	if err := Verify(wrongVersion); !errors.Is(err, ErrInvalid) {
-		t.Errorf("Verify(schema 2) = %v, want ErrInvalid", err)
+	for _, v := range []string{"0", "1", "3"} {
+		wrongVersion := bytes.Replace(raw, []byte(`"schemaVersion": 2`), []byte(`"schemaVersion": `+v), 1)
+		if bytes.Equal(wrongVersion, raw) {
+			t.Fatal("version edit had no effect")
+		}
+		if err := Verify(wrongVersion); !errors.Is(err, ErrInvalid) {
+			t.Errorf("Verify(schema %s edited in) = %v, want ErrInvalid", v, err)
+		}
 	}
 	if err := Verify([]byte("not json")); err == nil {
 		t.Errorf("Verify accepted garbage")
