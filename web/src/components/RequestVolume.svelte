@@ -1,7 +1,8 @@
 <script lang="ts">
  import { onMount } from 'svelte';
  import type { Analysis } from '../lib/types';
- import { echarts, timelineColors } from '../lib/charts';
+ import { echarts, palette } from '../lib/charts';
+ import { theme } from '../lib/theme.svelte';
  import { volumeData } from '../lib/volume';
  let { analysis, zone }: { analysis:Analysis; zone:string }=$props();
  let first=$state(0),last=$state(119),focus=$state(''),search=$state(''),page=$state(0);
@@ -12,7 +13,7 @@
  const stamp=(at:number)=>new Intl.DateTimeFormat(undefined,{timeZone:zone,month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(new Date(at));
  $effect(()=>{analysis;first=0;last=119;focus='';page=0;search='';});
  onMount(()=>{if(!node)return;chart=echarts.init(node);const observer=new ResizeObserver(()=>chart?.resize());observer.observe(node);chart.on('click',(event)=>{if(typeof event.dataIndex==='number'){const selected=data.first+event.dataIndex;first=selected;last=selected;page=0;}});return()=>{observer.disconnect();chart?.dispose();};});
- $effect(()=>{if(!chart)return;chart.setOption({animation:false,color:[...timelineColors,'#8391a2'],tooltip:{trigger:'axis',renderMode:'richText',confine:true},legend:{type:'scroll',top:0,textStyle:{fontSize:11},formatter:(name:string)=>name.length>42?name.slice(0,39)+'…':name},grid:{left:65,right:20,top:65,bottom:65},xAxis:{type:'category',name:'Request start time',nameLocation:'middle',nameGap:42,data:data.slots.map(slot=>stamp(slot.start)),axisLabel:{hideOverlap:true,fontSize:11}},yAxis:{type:'value',name:'Requests',minInterval:1},series:data.series.map(series=>({name:series.name,type:'bar',stack:'requests',emphasis:{focus:'series'},data:series.counts}))},true);});
+ $effect(()=>{if(!chart)return;void theme.epoch;const p=palette(),axis={axisLine:{lineStyle:{color:p.axisLine}},axisLabel:{color:p.text2},nameTextStyle:{color:p.text2}};chart.setOption({animation:false,color:[...p.series,p.pending],textStyle:{color:p.text2},tooltip:{trigger:'axis',renderMode:'richText',confine:true},legend:{type:'scroll',top:0,textStyle:{fontSize:11,color:p.text2},pageTextStyle:{color:p.text2},formatter:(name:string)=>name.length>42?name.slice(0,39)+'…':name},grid:{left:65,right:20,top:65,bottom:65},xAxis:{type:'category',name:'Request start time',nameLocation:'middle',nameGap:42,data:data.slots.map(slot=>stamp(slot.start)),...axis,axisLabel:{color:p.text2,hideOverlap:true,fontSize:11}},yAxis:{type:'value',name:'Requests',minInterval:1,...axis,splitLine:{lineStyle:{color:p.grid}}},series:data.series.map(series=>({name:series.name,type:'bar',stack:'requests',emphasis:{focus:'series'},data:series.counts}))},true);});
 </script>
 <section class="data-section request-volume" aria-label="Request counts by API">
  <div class="section-heading"><div><h3>How many requests happened, and which APIs were they?</h3><p>Each bar is a time slice. Its height is the number of requests that started; its colors identify individual APIs.</p></div></div>

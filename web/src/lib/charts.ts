@@ -7,10 +7,32 @@ import type { Analysis, Comparison, Point } from './types';
 echarts.use([LineChart, BarChart, HeatmapChart, ScatterChart, GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
 export { echarts };
 
-const cobalt = '#315bd4';
-const amber = '#c17a22';
-const teal = '#238277';
-const axis = '#78869a';
+/**
+ * Chart colours come from the CSS tokens so the charts follow the theme. ECharts draws on a canvas and cannot read CSS variables itself,
+ * so this resolves them to concrete colours when an option is built. Without a document (tests, server) the light fallback is used.
+ */
+export interface Palette {
+  text: string; accent: string; accentSoft: string; warn: string; bad: string; pending: string; text2: string; axisLine: string; grid: string;
+  empty: string; heat: string[]; series: string[]; surface: string;
+}
+const fallbackPalette: Palette = {
+  text: '#151b24', accent: '#2457c5', accentSoft: '#9db6ea', warn: '#96600a', bad: '#b02a3d', pending: '#5b6878', text2: '#4d5a6b', axisLine: '#d5dbe3', grid: '#e6eaf0',
+  empty: '#edf0f4', heat: ['#dce9f6', '#83bdb5', '#e4ae5b', '#b85a42'], surface: '#ffffff',
+  series: ['#146b58', '#2457c5', '#ad6511', '#9956a1', '#b02a3d', '#157d94', '#6e6f24', '#76563f']
+};
+export const palette = (): Palette => {
+  if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return fallbackPalette;
+  const style = getComputedStyle(document.documentElement);
+  const read = (name: string, fallback: string) => style.getPropertyValue(name).trim() || fallback;
+  return {
+    text: read('--text', fallbackPalette.text), accent: read('--accent', fallbackPalette.accent), accentSoft: withAlpha(read('--accent', fallbackPalette.accent), .42), warn: read('--warn', fallbackPalette.warn),
+    bad: read('--bad', fallbackPalette.bad), pending: read('--pending', fallbackPalette.pending), text2: read('--text-2', fallbackPalette.text2),
+    axisLine: read('--line', fallbackPalette.axisLine), grid: read('--line-soft', fallbackPalette.grid), surface: read('--surface', fallbackPalette.surface),
+    empty: read('--chart-empty', fallbackPalette.empty),
+    heat: fallbackPalette.heat.map((fallback, index) => read('--heat-' + (index + 1), fallback)),
+    series: fallbackPalette.series.map((fallback, index) => read('--series-' + (index + 1), fallback))
+  };
+};
 const finite = (value: number | null | undefined) => value != null && Number.isFinite(value) ? value : null;
 const escapeHTML = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char);
 const axisDateFormatter = (zone: string) => new Intl.DateTimeFormat(undefined, { timeZone: zone, year: 'numeric', month: 'short', day: '2-digit' });
@@ -70,19 +92,33 @@ export const failureSeries = (analysis: Analysis, cohortKey: string | null, fiel
   }, null));
 };
 
-const red = '#b74545';
-export const failureTrendOption = (analysis: Analysis, zone: string) => {
+/** Failure counts per slot for a set of cohorts: every cohort when keys is null, otherwise just those summed. A slot none of them has a point for stays null. */
+export const failureSeriesFor = (analysis: Analysis, keys: string[] | null, field: FailureField): Array<number | null> => {
+  if (keys == null) return failureSeries(analysis, null, field);
+  if (keys.length === 1) return failureSeries(analysis, keys[0], field);
+  const perCohort = keys.map(key => alignedPoints(analysis, key));
+  return alignedPoints(analysis, null).map((_, index) => perCohort.reduce<number | null>((total, points) => {
+    const value = failureField(points[index], field);
+    return value == null ? total : (total ?? 0) + value;
+  }, null));
+};
+
+const tipStyle = (p: Palette) => ({ backgroundColor: p.surface, borderColor: p.axisLine, textStyle: { color: p.text, fontSize: 12 } });
+const withAlpha =(color: string, alpha: number) => /^#[0-9a-f]{6}$/i.test(color) ? color + Math.round(alpha * 255).toString(16).padStart(2, '0') : color;
+
+export const failureTrendOption = (analysis: Analysis, zone: string, cohortKeys: string[] | null = null) => {
+  const p = palette(), axis = p.text2;
   const points = alignedPoints(analysis, null);
   const labels = axisTimeLabels(points, zone);
-  const client = failureSeries(analysis, null, 'count4xx');
-  const server = failureSeries(analysis, null, 'count5xx');
-  const incomplete = failureSeries(analysis, null, 'incomplete');
+  const client = failureSeriesFor(analysis, cohortKeys, 'count4xx');
+  const server = failureSeriesFor(analysis, cohortKeys, 'count5xx');
+  const incomplete = failureSeriesFor(analysis, cohortKeys, 'incomplete');
   const text = (value: number | null) => value == null ? 'No observations' : value.toLocaleString();
   return {
     animation: false,
     grid: { left: 76, right: 18, top: 40, bottom: 58 },
     tooltip: {
-      trigger: 'axis',
+      ...tipStyle(p), trigger: 'axis',
       formatter: (items: Array<{ dataIndex: number }>) => {
         const index = items[0]?.dataIndex ?? 0;
         return (points[index] ? tooltipTimestamp(points[index].at, zone) + '<br/>' : '') +
@@ -90,18 +126,52 @@ export const failureTrendOption = (analysis: Analysis, zone: string) => {
           ((incomplete[index] ?? 0) > 0 ? '<br/>Missing timing (not a failure): ' + (incomplete[index] ?? 0).toLocaleString() : '');
       }
     },
-    legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 76, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: '#526176', fontSize: 11 } },
-    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, hideOverlap: true }, axisLine: { lineStyle: { color: '#dbe2eb' } } },
-    yAxis: { type: 'value', name: 'Responses per interval', nameLocation: 'middle', nameGap: 44, min: 0, minInterval: 1, axisLabel: { color: axis }, splitLine: { lineStyle: { color: '#edf0f5' } } },
-    dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, { type: 'slider', height: 16, bottom: 8, borderColor: 'transparent', fillerColor: '#315bd422' }],
+    legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 76, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: p.text2, fontSize: 11 } },
+    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } } },
+    yAxis: { type: 'value', name: 'Responses per interval', nameLocation: 'middle', nameGap: 44, min: 0, minInterval: 1, axisLabel: { color: axis }, splitLine: { lineStyle: { color: p.grid } } },
+    dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, { type: 'slider', height: 16, bottom: 8, borderColor: 'transparent', fillerColor: withAlpha(p.accent, .18) }],
     series: [
-      { name: '4xx client errors', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: client, lineStyle: { color: amber, width: 2.5 }, itemStyle: { color: amber } },
-      { name: '5xx server errors and failed jobs', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: server, lineStyle: { color: red, width: 2.5 }, itemStyle: { color: red } }
+      { name: '4xx client errors', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: client, lineStyle: { color: p.warn, width: 2.5 }, itemStyle: { color: p.warn } },
+      { name: '5xx server errors and failed jobs', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: server, lineStyle: { color: p.bad, width: 2.5 }, itemStyle: { color: p.bad } }
     ]
   };
 };
 
-export const histogramBinBounds = (bin: number): { lower: number; upper: number | null } => {
+const heroDuration = (ms: number) => ms >= 1000 ? (ms / 1000).toFixed(ms >= 10_000 ? 1 : 2) + ' s' : (ms < 10 ? ms.toFixed(1) : String(Math.round(ms))) + ' ms';
+/**
+ * The pulse's one timeline: requests per interval as bars, and (only when one request type is in scope, never pooled) the P95 as a line on a
+ * second axis. An interval with no requests is an empty slot, not a zero latency.
+ */
+export const heroOption = (windows: Array<{ at: number; count: number; latency: number | null }>, zone: string, withLatency: boolean) => {
+  const p = palette(), axis = p.text2;
+  const points = windows.map(window => ({ at: new Date(window.at).toISOString() })) as Point[];
+  const labels = axisTimeLabels(points, zone);
+  return {
+    animation: false,
+    grid: { left: 48, right: withLatency ? 58 : 14, top: 14, bottom: 30 },
+    tooltip: {
+      ...tipStyle(p), trigger: 'axis',
+      formatter: (items: Array<{ dataIndex: number }>) => {
+        const index = items[0]?.dataIndex ?? 0;
+        const window = windows[index];
+        if (!window) return '';
+        return tooltipTimestamp(points[index].at, zone) + '<br/>Requests: ' + window.count.toLocaleString() +
+          (withLatency ? '<br/>P95: ' + (window.latency == null ? 'no timed requests' : '≈ ' + heroDuration(window.latency)) : '');
+      }
+    },
+    xAxis: { type: 'category', data: labels, axisTick: { show: false }, axisLabel: { color: axis, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } } },
+    yAxis: [
+      { type: 'value', min: 0, minInterval: 1, axisLabel: { color: axis }, splitLine: { lineStyle: { color: p.grid } } },
+      ...(withLatency ? [{ type: 'value', min: 0, position: 'right', axisLabel: { color: p.accent, formatter: (value: number) => heroDuration(value) }, splitLine: { show: false } }] : [])
+    ],
+    series: [
+      { name: 'Requests', type: 'bar', yAxisIndex: 0, data: windows.map(window => window.count), itemStyle: { color: p.accentSoft }, barCategoryGap: '24%' },
+      ...(withLatency ? [{ name: 'P95', type: 'line', yAxisIndex: 1, connectNulls: false, showSymbol: true, symbolSize: 5, data: windows.map(window => finite(window.latency)), lineStyle: { color: p.accent, width: 2 }, itemStyle: { color: p.accent } }] : [])
+    ]
+  };
+};
+
+export const histogramBinBounds =(bin: number): { lower: number; upper: number | null } => {
   if (bin === 0) return { lower: 0, upper: 1 };
   if (bin >= 1 && bin <= 192) return { lower: Math.pow(1.1, bin - 1), upper: Math.pow(1.1, bin) };
   if (bin === 193) return { lower: Math.pow(1.1, 192), upper: null };
@@ -126,6 +196,7 @@ const quantileIntervalText = (label: string, q: Point['p50']) => {
 };
 
 export const timelineOption = (analysis: Analysis, selected: Comparison | null, zone: string, targetMs: number | null) => {
+  const p = palette(), axis = p.text2;
   const points = alignedPoints(analysis, selected?.key ?? null);
   const labels = axisTimeLabels(points, zone);
   const chosen = selected;
@@ -133,7 +204,7 @@ export const timelineOption = (analysis: Analysis, selected: Comparison | null, 
     animation: false,
     grid: { left: 76, right: 18, top: 62, bottom: 58 },
     tooltip: {
-      trigger: 'axis',
+      ...tipStyle(p), trigger: 'axis',
       formatter: (items: Array<{ seriesName: string; data: number | null; dataIndex: number }>) => {
         const index = items[0]?.dataIndex ?? 0;
         const point = points[index];
@@ -142,40 +213,42 @@ export const timelineOption = (analysis: Analysis, selected: Comparison | null, 
           (point ? '<br/>' + quantileIntervalText('Median', point.p50) + '<br/>95th percentile: ' + quantileText(point.p95) : '');
       }
     },
-    legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 76, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: '#526176', fontSize: 10 } },
-    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, hideOverlap: true }, axisLine: { lineStyle: { color: '#dbe2eb' } } },
-    yAxis: { type: 'value', name: 'Response time (ms)', nameLocation: 'middle', nameGap: 44, min: 0, axisLabel: { color: axis }, splitLine: { lineStyle: { color: '#edf0f5' } } },
-    dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, { type: 'slider', height: 16, bottom: 8, borderColor: 'transparent', fillerColor: '#315bd422' }],
+    legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 76, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: p.text2, fontSize: 10 } },
+    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } } },
+    yAxis: { type: 'value', name: 'Response time (ms)', nameLocation: 'middle', nameGap: 44, min: 0, axisLabel: { color: axis }, splitLine: { lineStyle: { color: p.grid } } },
+    dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, { type: 'slider', height: 16, bottom: 8, borderColor: 'transparent', fillerColor: withAlpha(p.accent, .18) }],
     series: [
-      { name: 'Current median', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: points.map(point => finite(point.p50?.valueMs)), lineStyle: { color: cobalt, width: 2.5 }, itemStyle: { color: cobalt } },
-      { name: 'Current p95', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: points.map(point => finite(point.p95?.valueMs)), lineStyle: { color: amber, width: 2.5 }, itemStyle: { color: amber } },
-      { name: 'Reference median', type: 'line', showSymbol: false, data: labels.map(() => finite(chosen?.reference.p50?.valueMs)), lineStyle: { color: cobalt, type: 'dashed', opacity: .55 }, itemStyle: { color: cobalt } },
-      { name: 'Reference p95', type: 'line', showSymbol: false, data: labels.map(() => finite(chosen?.reference.p95?.valueMs)), lineStyle: { color: amber, type: 'dashed', opacity: .55 }, itemStyle: { color: amber } },
-      ...(targetMs == null ? [] : [{ name: 'Response-time target', type: 'line', showSymbol: false, data: labels.map(() => targetMs), lineStyle: { color: teal, type: 'dotted', width: 2 }, itemStyle: { color: teal } }])
+      { name: 'Current median', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: points.map(point => finite(point.p50?.valueMs)), lineStyle: { color: p.text2, width: 2.5 }, itemStyle: { color: p.text2 } },
+      { name: 'Current p95', type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, data: points.map(point => finite(point.p95?.valueMs)), lineStyle: { color: p.accent, width: 2.5 }, itemStyle: { color: p.accent } },
+      { name: 'Reference median', type: 'line', showSymbol: false, data: labels.map(() => finite(chosen?.reference.p50?.valueMs)), lineStyle: { color: p.text2, type: 'dashed', opacity: .55 }, itemStyle: { color: p.text2 } },
+      { name: 'Reference p95', type: 'line', showSymbol: false, data: labels.map(() => finite(chosen?.reference.p95?.valueMs)), lineStyle: { color: p.accent, type: 'dashed', opacity: .55 }, itemStyle: { color: p.accent } },
+      ...(targetMs == null ? [] : [{ name: 'Response-time target', type: 'line', showSymbol: false, data: labels.map(() => targetMs), lineStyle: { color: p.series[0], type: 'dotted', width: 2 }, itemStyle: { color: p.series[0] } }])
     ]
   };
 };
 
 export const ratioOption = (analysis: Analysis, selected: Comparison | null, zone: string) => {
+  const p = palette(), axis = p.text2;
   const points = alignedPoints(analysis, selected?.key ?? null);
   const labels = axisTimeLabels(points, zone);
   return {
     animation: false,
     grid: { left: 76, right: 18, top: 22, bottom: 58 },
-    tooltip: { trigger: 'axis', formatter: (items: Array<{ data: number | null; dataIndex: number }>) => {
+    tooltip: { ...tipStyle(p), trigger: 'axis', formatter: (items: Array<{ data: number | null; dataIndex: number }>) => {
       const item = items[0]; const point = points[item.dataIndex];
       return (point ? tooltipTimestamp(point.at, zone) + '<br/>' : '') +
         '95th-percentile response time vs reference: ' + (item.data == null ? 'N/A' : '≈ ' + item.data.toFixed(2) + '×') +
         '<br/>Observed requests: ' + (point?.count ?? 'N/A');
     } },
     xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, hideOverlap: true } },
-    yAxis: { type: 'value', name: 'Response time vs reference', nameLocation: 'middle', nameGap: 48, min: 0, axisLabel: { color: axis }, splitLine: { lineStyle: { color: '#edf0f5' } } },
-    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 8, borderColor: 'transparent', fillerColor: '#315bd422' }],
-    series: [{ type: 'line', name: 'Response time vs reference', showSymbol: false, connectNulls: false, data: points.map(point => finite(point.p95Ratio)), lineStyle: { color: teal, width: 2.5 }, markLine: { symbol: 'none', lineStyle: { type: 'dashed', color: '#9ba7b5' }, data: [{ yAxis: 1 }] } }]
+    yAxis: { type: 'value', name: 'Response time vs reference', nameLocation: 'middle', nameGap: 48, min: 0, axisLabel: { color: axis }, splitLine: { lineStyle: { color: p.grid } } },
+    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 8, borderColor: 'transparent', fillerColor: withAlpha(p.accent, .18) }],
+    series: [{ type: 'line', name: 'Response time vs reference', showSymbol: false, connectNulls: false, data: points.map(point => finite(point.p95Ratio)), lineStyle: { color: p.accent, width: 2.5 }, markLine: { symbol: 'none', lineStyle: { type: 'dashed', color: p.pending }, data: [{ yAxis: 1 }] } }]
   };
 };
 
 export const histogramOption = (comparison: Comparison | null) => {
+  const p = palette(), axis = p.text2;
   const bins = new Map<number, { current: number; reference: number }>();
   for (const item of comparison?.current.histogram ?? []) bins.set(item.bin, { current: item.count, reference: 0 });
   for (const item of comparison?.reference.histogram ?? []) {
@@ -187,18 +260,18 @@ export const histogramOption = (comparison: Comparison | null) => {
   return {
     animation: false,
     grid: { left: 70, right: 18, top: 62, bottom: 64 },
-    tooltip: { trigger: 'axis', formatter: (items: Array<{ data: number; seriesName: string; dataIndex: number }>) =>
+    tooltip: { ...tipStyle(p), trigger: 'axis', formatter: (items: Array<{ data: number; seriesName: string; dataIndex: number }>) =>
       (labels[items[0]?.dataIndex ?? -1] ?? '') + '<br/>' + items.map(item => item.seriesName + ': ' + item.data).join('<br/>') },
-    legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 70, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: '#526176', fontSize: 10 } },
+    legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 70, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: p.text2, fontSize: 10 } },
     xAxis: { type: 'category', name: 'Response-time range (ms)', nameLocation: 'middle', nameGap: 44, data: labels, axisLabel: { color: axis, rotate: 25, interval: Math.max(0, Math.ceil(indices.length / 6) - 1), hideOverlap: true, formatter: (_label: string, index: number) => {
       const bounds = histogramBinBounds(indices[index]);
       const short = (value: number) => value >= 1000 ? Number((value / 1000).toPrecision(3)) + 'k' : String(Number(value.toPrecision(3)));
       return bounds.upper == null ? '≥ ' + short(bounds.lower) : short(bounds.lower) + '–' + short(bounds.upper);
     } } },
-    yAxis: { type: 'value', name: 'Requests', minInterval: 1, nameLocation: 'middle', nameGap: 38, axisLabel: { color: axis }, splitLine: { lineStyle: { color: '#edf0f5' } } },
+    yAxis: { type: 'value', name: 'Requests', minInterval: 1, nameLocation: 'middle', nameGap: 38, axisLabel: { color: axis }, splitLine: { lineStyle: { color: p.grid } } },
     series: [
-      { name: 'Current', type: 'bar', data: indices.map(index => bins.get(index)?.current ?? 0), itemStyle: { color: cobalt }, barMaxWidth: 22 },
-      { name: 'Reference', type: 'bar', data: indices.map(index => bins.get(index)?.reference ?? 0), itemStyle: { color: '#a6b7e7' }, barMaxWidth: 22 }
+      { name: 'Current', type: 'bar', data: indices.map(index => bins.get(index)?.current ?? 0), itemStyle: { color: p.accent }, barMaxWidth: 22 },
+      { name: 'Reference', type: 'bar', data: indices.map(index => bins.get(index)?.reference ?? 0), itemStyle: { color: p.accentSoft }, barMaxWidth: 22 }
     ]
   };
 };
@@ -208,6 +281,7 @@ export const orderedHeatmapCohorts = (analysis: Analysis) => analysis.apis.slice
 export const heatmapCohortKeyAt = (analysis: Analysis, rowIndex: number) => orderedHeatmapCohorts(analysis)[rowIndex]?.key ?? null;
 
 export const heatmapOption = (analysis: Analysis, sources: Map<string, string>, zone: string) => {
+  const p = palette(), axis = p.text2;
   const rows = orderedHeatmapCohorts(analysis);
   const timePoints = alignedPoints(analysis, null);
   const timeLabels = axisTimeLabels(timePoints, zone);
@@ -216,12 +290,12 @@ export const heatmapOption = (analysis: Analysis, sources: Map<string, string>, 
   const data = rows.flatMap((row, rowIndex) => (pointsByCohort.get(row.key) ?? []).map((point, timeIndex) => ({
     name: row.key,
     value: [timeIndex, rowIndex, finite(point.p95Ratio)],
-    itemStyle: point.p95Ratio == null ? { color: '#edf0f4' } : undefined
+    itemStyle: point.p95Ratio == null ? { color: p.empty } : undefined
   })));
   return {
     animation: false,
     grid: { left: 205, right: 32, top: 12, bottom: 70 },
-    tooltip: { position: 'top', formatter: (item: { value: [number, number, number | null] }) => {
+    tooltip: { ...tipStyle(p), position: 'top', formatter: (item: { value: [number, number, number | null] }) => {
       const [timeIndex, rowIndex, ratio] = item.value;
       const row = rows[rowIndex];
       const point = pointsByCohort.get(row?.key ?? '')?.[timeIndex];
@@ -232,10 +306,10 @@ export const heatmapOption = (analysis: Analysis, sources: Map<string, string>, 
         '<br/>Estimated interval: ' + quantileText(point?.p95 ?? null) +
         '<br/>Comparison: ' + escapeHTML(comparisonStateLabel(row.state)) + '<br/>Current events: ' + row.currentEvents.toLocaleString() : '';
     } },
-    xAxis: { type: 'category', data: timeLabels, axisLabel: { color: axis, rotate: 35, interval: Math.max(0, Math.ceil(timeLabels.length / 8) - 1), hideOverlap: true }, axisLine: { lineStyle: { color: '#dbe2eb' } } },
-    yAxis: { type: 'category', data: rows.map(row => (sources.get(row.sourceId) ?? row.sourceId) + ' / ' + row.controller + '.' + row.action + ' / ' + row.kind + ' / ' + row.outcome), axisLabel: { color: '#526176', width: 195, overflow: 'truncate' } },
-    visualMap: { min: 0, max, calculable: true, orient: 'horizontal', left: 'center', bottom: 0, inRange: { color: ['#dce9f6', '#83bdb5', '#e4ae5b', '#b85a42'] }, outOfRange: { color: '#edf0f4' }, textStyle: { color: axis } },
-    series: [{ type: 'heatmap', data, label: { show: false }, emphasis: { itemStyle: { shadowBlur: 8, shadowColor: '#315bd466' } } }]
+    xAxis: { type: 'category', data: timeLabels, axisLabel: { color: axis, rotate: 35, interval: Math.max(0, Math.ceil(timeLabels.length / 8) - 1), hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } } },
+    yAxis: { type: 'category', data: rows.map(row => (sources.get(row.sourceId) ?? row.sourceId) + ' / ' + row.controller + '.' + row.action + ' / ' + row.kind + ' / ' + row.outcome), axisLabel: { color: p.text2, width: 195, overflow: 'truncate' } },
+    visualMap: { min: 0, max, calculable: true, orient: 'horizontal', left: 'center', bottom: 0, inRange: { color: p.heat }, outOfRange: { color: p.empty }, textStyle: { color: axis } },
+    series: [{ type: 'heatmap', data, label: { show: false }, emphasis: { itemStyle: { shadowBlur: 8, shadowColor: withAlpha(p.accent, .4) } } }]
   };
 };
 
@@ -255,8 +329,10 @@ export const baselineChange = (row: Comparison, point: Point | undefined, mode: 
   if (reference <= 0 || (row.reference[series]?.lowerMs ?? 0) <= 0) return null;
   return (current / reference - 1) * 100;
 };
-export const timelineColors = ['#146b58', '#315bd4', '#ad6511', '#9956a1', '#b74545', '#157d94', '#6e6f24', '#76563f'];
+/** The categorical series colours of the current theme; read again whenever the theme changes. */
+export const seriesColors = () => palette().series;
 export const multiTimelineOption = (analysis: Analysis, keys: string[], sources: Map<string, string>, zone: string, mode: 'percent' | 'milliseconds', series: TimelineSeries = 'p95') => {
+  const p = palette(), axis = p.text2;
   const failure = isFailureSeries(series);
   const seriesLabel = timelineSeriesOptions.find(item => item.value === series)?.label ?? series;
   // A percentile is a change from its own reference; a failure count is absolute, and null where the slot has no point.
@@ -269,8 +345,8 @@ export const multiTimelineOption = (analysis: Analysis, keys: string[], sources:
   return {
     animation: false,
     grid: { left: 82, right: 24, top: 68, bottom: 64 },
-    legend: { type: 'scroll', top: 2, left: 16, right: 16, textStyle: { fontSize: 12 }, formatter: (name: string) => name.length > 65 ? name.slice(0, 62) + '…' : name },
-    tooltip: { trigger: 'axis', confine: true, formatter: (items: Array<{ dataIndex: number }>) => {
+    legend: { type: 'scroll', top: 2, left: 16, right: 16, textStyle: { fontSize: 12, color: p.text2 }, formatter: (name: string) => name.length > 65 ? name.slice(0, 62) + '…' : name },
+    tooltip: { ...tipStyle(p), trigger: 'axis', confine: true, formatter: (items: Array<{ dataIndex: number }>) => {
       const index = items[0]?.dataIndex ?? 0;
       return (displaySlots[index] ? tooltipTimestamp(displaySlots[index].at, zone) + '<br/>' : '') + rows.map((row, i) => {
         const point = aligned[i][index];
@@ -281,11 +357,11 @@ export const multiTimelineOption = (analysis: Analysis, keys: string[], sources:
       }).join('<br/><br/>');
     } },
     xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, hideOverlap: true } },
-    yAxis: { type: 'value', name: failure ? 'Responses per interval' : mode === 'percent' ? 'Change from own reference (%)' : 'Change from own reference (ms)', nameLocation: 'middle', nameGap: 58, ...(failure ? { min: 0, minInterval: 1 } : {}), axisLabel: { color: axis }, splitLine: { lineStyle: { color: '#edf0f5' } } },
-    dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, { type: 'slider', height: 16, bottom: 8, borderColor: 'transparent', fillerColor: '#146b5822' }],
-    series: rows.map((row, i) => ({ name: `${i + 1}. ${row.controller}.${row.action}`, type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, lineStyle: { color: timelineColors[i], width: 2 }, itemStyle: { color: timelineColors[i] },
+    yAxis: { type: 'value', name: failure ? 'Responses per interval' : mode === 'percent' ? 'Change from own reference (%)' : 'Change from own reference (ms)', nameLocation: 'middle', nameGap: 58, ...(failure ? { min: 0, minInterval: 1 } : {}), axisLabel: { color: axis }, splitLine: { lineStyle: { color: p.grid } } },
+    dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, { type: 'slider', height: 16, bottom: 8, borderColor: 'transparent', fillerColor: withAlpha(p.accent, .18) }],
+    series: rows.map((row, i) => ({ name: `${i + 1}. ${row.controller}.${row.action}`, type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, lineStyle: { color: p.series[i], width: 2 }, itemStyle: { color: p.series[i] },
       data: aligned[i].map(point => ({ value: valueAt(row, point), symbol: !failure && ((point.count ?? 0) < 20 || row.state !== 'compared') ? 'emptyCircle' : 'circle', itemStyle: { opacity: !failure && ((point.count ?? 0) < 20 || row.state !== 'compared') ? .45 : 1 } })),
-      ...(i === 0 && !failure ? { markLine: { symbol: 'none', label: { formatter: 'Reference', position: 'insideEndTop' }, lineStyle: { type: 'dashed', color: '#7b8c84' }, data: [{ yAxis: 0 }] } } : {})
+      ...(i === 0 && !failure ? { markLine: { symbol: 'none', label: { formatter: 'Reference', position: 'insideEndTop' }, lineStyle: { type: 'dashed', color: p.pending }, data: [{ yAxis: 0 }] } } : {})
     }))
   };
 };

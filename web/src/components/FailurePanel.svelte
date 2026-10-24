@@ -1,16 +1,18 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Query } from '../lib/types';
-  import { echarts, failureSeries, failureTrendOption } from '../lib/charts';
+  import { echarts, failureSeriesFor, failureTrendOption } from '../lib/charts';
+  import { theme } from '../lib/theme.svelte';
   import BreakdownPanel from './BreakdownPanel.svelte';
-  let { analysis, query, sourceLabels, zone, onDrill }: {
+  // cohortKeys narrows the trend to those comparison groups (an operation's); null keeps every cohort.
+  let { analysis, query, sourceLabels, zone, onDrill, cohortKeys = null }: {
     analysis: Analysis; query: Query; sourceLabels: Map<string, string>; zone: string;
-    onDrill: (filter: BreakdownFilter, row: BreakdownRow, dim: BreakdownDim) => void;
+    onDrill: (filter: BreakdownFilter, row: BreakdownRow, dim: BreakdownDim) => void; cohortKeys?: string[] | null;
   } = $props();
   let node = $state<HTMLDivElement>();
   let chart = $state<ReturnType<typeof echarts.init>>();
-  const client = $derived(failureSeries(analysis, null, 'count4xx'));
-  const server = $derived(failureSeries(analysis, null, 'count5xx'));
+  const client = $derived(failureSeriesFor(analysis, cohortKeys, 'count4xx'));
+  const server = $derived(failureSeriesFor(analysis, cohortKeys, 'count5xx'));
   // A slot is observed when any cohort has a point there; observed slots with no failure are real zeros.
   const observed = $derived(client.some(value => value != null));
   const total = (series: Array<number | null>) => series.reduce<number>((sum, value) => sum + (value ?? 0), 0);
@@ -22,7 +24,7 @@
     const observer = new ResizeObserver(() => chart?.resize()); observer.observe(node);
     return () => { observer.disconnect(); chart?.dispose(); };
   });
-  $effect(() => { if (chart) chart.setOption(failureTrendOption(analysis, zone), true); });
+  $effect(() => { void theme.epoch; if (chart) chart.setOption(failureTrendOption(analysis, zone, cohortKeys), true); });
 </script>
 
 <section class="failure-panel" id="failure-investigation" aria-label="Failure investigation">

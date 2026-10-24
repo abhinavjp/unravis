@@ -3,12 +3,29 @@
   import type { Completion, NumberRange, Query, RangeKey } from '../lib/types';
   import { bucketForWindows, fromLocalParts, quickRange, quickRanges, toLocalDatePart, toLocalTimePart, zones, type QuickRangeId } from '../lib/time';
   import { metricLabels } from '../lib/presentation';
+  import { activeRangeId } from '../lib/depth';
   import { RANGE_FIELDS, buildRange, isValidOperation, isValidUserId, rangeConflict, splitList, syncListDraft, syncOperationDraft, syncRangeDraft } from '../lib/investigation';
   import DateTimeField from './DateTimeField.svelte';
-  let { query = $bindable(), zone = $bindable(), targetMs = $bindable(), dateInputsValid = $bindable(), groupNames = [], now = '' }: { query: Query; zone: string; targetMs: number | null; dateInputsValid: boolean; groupNames?: string[]; now?: string } = $props();
+  // part "bar" is the always-visible scope (quick range chips and the request-type control); part "panel" is
+  // everything else, kept behind the More filters disclosure; "all" renders both.
+  let { query = $bindable(), zone = $bindable(), targetMs = $bindable(), dateInputsValid = $bindable(), groupNames = [], now = '', part = 'all', onScopeChange }: { query: Query; zone: string; targetMs: number | null; dateInputsValid: boolean; groupNames?: string[]; now?: string; part?: 'all' | 'bar' | 'panel'; onScopeChange?: () => void } = $props();
   let timeInputError = $state('');
   let invalidWindows = $state<string[]>([]);
-  $effect(() => { dateInputsValid = invalidWindows.length === 0; });
+  $effect(() => { if (part !== 'bar') dateInputsValid = invalidWindows.length === 0; });
+  // A quick range chosen in the bar marks the dates valid again; the panel then drops its stale invalid state.
+  $effect(() => { if (part !== 'bar' && dateInputsValid) untrack(() => { if (invalidWindows.length) { invalidWindows = []; timeInputError = ''; } }); });
+  const kindSegments: { value: Query['kind']; label: string; title: string }[] = [
+    { value: 'all', label: 'All', title: 'Every request type' },
+    { value: 'synchronous', label: 'Sync', title: 'Synchronous requests' },
+    { value: 'asynchronous', label: 'Async', title: 'Asynchronous requests' },
+    { value: 'hangfire', label: 'Hangfire', title: 'Hangfire background jobs' },
+    { value: 'http', label: 'HTTP', title: 'HTTP: synchronous, asynchronous and polling type unknown' }
+  ];
+  const setKind = (value: Query['kind']) => {
+    if (query.kind === value) return;
+    query.kind = value;
+    onScopeChange?.();
+  };
   // Record filters. The query only ever holds a filter that is in use (an
   // emptied field becomes undefined), and the comma-separated text boxes keep
   // their own draft so that typing "1, " is not rewritten under the cursor.
@@ -148,14 +165,26 @@
     const base = new Date(now);
     Object.assign(query, quickRange(id, Number.isFinite(base.getTime()) ? base : new Date()));
     invalidWindows = []; timeInputError = '';
+    if (part === 'bar') dateInputsValid = true;
+    onScopeChange?.();
   };
+  const activeRange = $derived(activeRangeId(query, quickRanges));
 </script>
 
-<section class="query-controls" aria-label="Comparison settings">
-  <div class="quick-ranges" role="group" aria-label="Quick ranges">
-    <span>Quick range</span>
-    {#each quickRanges as preset (preset.id)}<button type="button" class="secondary-button" title={'Investigate the ' + preset.label.toLowerCase() + ' and compare with the period right before it.'} onclick={() => applyQuickRange(preset.id)}>{preset.label}</button>{/each}
+<section class="query-controls part-{part}" aria-label="Comparison settings">
+  {#if part !== 'panel'}
+  <div class="scope-row">
+    <div class="quick-ranges" role="group" aria-label="Quick ranges">
+      <span>Range</span>
+      {#each quickRanges as preset (preset.id)}<button type="button" class="chip" class:on={activeRange === preset.id} aria-pressed={activeRange === preset.id} title={'Investigate the ' + preset.label.toLowerCase() + ' and compare with the period right before it.'} onclick={() => applyQuickRange(preset.id)}>{preset.label}</button>{/each}
+    </div>
+    <div class="kind-control" role="group" aria-label="Request type">
+      <span>Type</span>
+      <div class="segmented">{#each kindSegments as segment (segment.value)}<button type="button" class:on={query.kind === segment.value} aria-pressed={query.kind === segment.value} title={segment.title} onclick={() => setKind(segment.value)}>{segment.label}</button>{/each}</div>
+    </div>
   </div>
+  {/if}
+  {#if part !== 'bar'}
   <div class="query-ranges">
     <section class="range-group" aria-labelledby="current-range-label">
       <div class="range-title"><h2 id="current-range-label">Investigate</h2><p>Requests in the period you want to inspect.</p></div>
@@ -230,20 +259,21 @@
       </div>
     </details>
   </div>
+  {/if}
 </section>
 
 <style>
-  .record-count { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--cobalt); color: var(--paper); font-size: 11px; line-height: 18px; text-align: center; }
+  .record-count { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 11px; line-height: 18px; text-align: center; }
   .record-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; padding: 0; list-style: none; }
-  .record-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 1px 3px 1px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--soft-line); color: var(--ink); font-size: 12px; }
+  .record-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 1px 3px 1px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--text); font-size: 12px; }
   .record-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .record-chip button { flex: none; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: 999px; }
-  .record-chip button:hover, .record-chip button:focus-visible { color: var(--danger); }
-  .record-clear { justify-self: start; margin-top: 4px; border: 0; background: transparent; color: var(--cobalt); cursor: pointer; font-size: 12px; font-weight: 600; padding: 2px 0; }
+  .record-chip button { flex: none; border: 0; background: transparent; color: var(--text-2); cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: 999px; }
+  .record-chip button:hover, .record-chip button:focus-visible { color: var(--bad); }
+  .record-clear { justify-self: start; margin-top: 4px; border: 0; background: transparent; color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 600; padding: 2px 0; }
   .record-clear:hover { text-decoration: underline; }
-  input[aria-invalid='true'] { border-color: var(--danger); }
+  input[aria-invalid='true'] { border-color: var(--bad); }
   .range-filters { display: grid; gap: 6px; }
-  .range-heading { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
-  .range-label { font-size: 13px; font-weight: 600; color: var(--ink); }
+  .range-heading { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+  .range-label { font-size: 13px; font-weight: 600; color: var(--text); }
   .range-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 </style>

@@ -1,12 +1,22 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { api } from './lib/api';
   import { defaultQuery } from './lib/time';
   import { countEpochBuckets } from './lib/time';
-  import { initialComparison, kindLabel, queryFingerprint, qualityByKindText, resultNotes, rankComparisons, stateLabel, unknownKindTip } from './lib/presentation';
+  import { initialComparison, kindLabel, metricLabels, queryFingerprint, qualityByKindText, resultNotes, rankComparisons, stateLabel, unknownKindTip } from './lib/presentation';
   import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, serializeRecordFilters, shouldSelectAddedSource, writeInvestigationSnapshot } from './lib/investigation';
-import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Source, SourceInput, TLSMode } from './lib/types';
-  import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './lib/breakdown';
+  import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './lib/types';
+  import { applyDrill, breakdownDims, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './lib/breakdown';
+  import { theme } from './lib/theme.svelte';
+  import { applyChipPatch, breadcrumb, depthOf, filterChips, moreFiltersCount, type FilterChip } from './lib/depth';
+  import type { Lens } from './lib/pulse';
+  import Pulse from './components/Pulse.svelte';
+  import WhereList from './components/WhereList.svelte';
+  import Inspector from './components/Inspector.svelte';
+  import Breadcrumb from './components/Breadcrumb.svelte';
+  import FilterChips from './components/FilterChips.svelte';
+  import SourcePopover from './components/SourcePopover.svelte';
+  import PhaseBar from './components/PhaseBar.svelte';
   import BreakdownPanel from './components/BreakdownPanel.svelte';
   import FailurePanel from './components/FailurePanel.svelte';
   import QueryControls from './components/QueryControls.svelte';
@@ -21,7 +31,9 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
   import OverviewStrip from './components/OverviewStrip.svelte';
   import IncompletePanel from './components/IncompletePanel.svelte';
   import { applyStaleFilters } from './lib/incomplete';
-  import { drillHeading, type OverviewDrill } from './lib/overview';
+  import { drillHeading, operationDrill, type OverviewDrill } from './lib/overview';
+  import { phaseSegments } from './lib/phases';
+  import { rollupFor } from './lib/traffic';
 
   let info = $state<Info | null>(null);
   let sources = $state<Source[]>([]);
@@ -110,6 +122,15 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
   let connectionTab = $state<'saved' | 'new'>('saved');
   let drawerElement = $state<HTMLElement | undefined>(undefined);
   let drawerReturnFocus: HTMLElement | null = null;
+  // Progressive depth. D0 pulse; D1 ranked "where is it"; D2 evidence for an operation or a list; D3 one record.
+  let whereOpen = $state(false);
+  let lens = $state<Lens>('requests');
+  let compare = $state(false);
+  let operation = $state<Rollup | null>(null);
+  let inspectorTab = $state('timeline');
+  let splitDim = $state<BreakdownDim | ''>('');
+  let autoRan = false;
+  let evidenceReturnFocus: HTMLElement | null = null;
 
   const connectionSignature = $derived(JSON.stringify([addUri, addUsername, addPassword, addAuthSource, addTLSMode, addCACertificate, savedConnectionId]));
   const maxSources = $derived(info?.limits.maxSources ?? 8);
@@ -143,6 +164,42 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
     if (p95.lowerMs > targetMs) return 'The current P95 estimate is above your target.';
     return 'The estimated P95 range spans your target, so we cannot tell which side it falls on.';
   });
+
+  // ---- Progressive depth (see lib/depth.ts) ----
+  const firstRun = $derived(info != null && !sources.length && !info.demo);
+  const hasContext = $derived(operation != null || queryWide || drillActive || !!selectedKey);
+  const nav = $derived({ whereOpen, hasContext, recordOpen: record != null });
+  const depth = $derived(depthOf(nav));
+  const operationGroups = $derived(operation ? operationRows(operation) : []);
+  const evidenceName = $derived(operation ? operation.controller + '.' + operation.action : selected ? selected.controller + '.' + selected.action : drillOverview ? drillOverview.label : queryWide ? stateLabel(requestState) : drillActive ? 'Filtered requests' : 'Operation');
+  const crumbs = $derived(breadcrumb(nav, { evidence: evidenceName }));
+  const filterChipList = $derived(filterChips(query));
+  const moreCount = $derived(moreFiltersCount(query));
+  const scopedQuery = $derived<Query | null>(breakdownQuery && operation ? operationQuery(breakdownQuery, operation) : breakdownQuery);
+  const selectedStats = $derived(selected?.current);
+  const inspectorTabs = $derived.by(() => {
+    const tabs: Array<{ id: string; label: string }> = [];
+    if (!operation && !selected) return tabs;
+    if (selected) tabs.push({ id: 'timeline', label: 'Timeline' });
+    if (selected && (phaseSegments(selectedStats?.phases) || (selectedStats?.phases?.payloadMs != null && Number.isFinite(selectedStats.phases.payloadMs)))) tabs.push({ id: 'phases', label: 'Phases' });
+    const failed = (operation?.failures ?? 0) + (selectedStats?.clientErrors ?? 0) + (selectedStats?.serverErrors ?? 0);
+    if (failed > 0 && scopedQuery) tabs.push({ id: 'failures', label: 'Failures' });
+    const unfinished = (operation?.incomplete ?? 0) + (operation?.pending ?? 0) + (operation?.invalid ?? 0) + (selectedStats?.incomplete ?? 0) + (selectedStats?.pending ?? 0) + (selectedStats?.invalid ?? 0);
+    if (unfinished > 0 && operation) tabs.push({ id: 'incomplete', label: 'Incomplete' });
+    if (selected) tabs.push({ id: 'slowest', label: 'Slowest' });
+    if (scopedQuery) tabs.push({ id: 'breakdown', label: 'Breakdown' });
+    return tabs;
+  });
+  const activeTab = $derived(inspectorTabs.find(tab => tab.id === inspectorTab)?.id ?? inspectorTabs[0]?.id ?? '');
+  const openKey = $derived(operation ? operation.controller + '\u0000' + operation.action + '\u0000' + (operation.kind ?? '') : '');
+  const failureCohort = $derived<string[] | null>(operation ? operationGroups.map(group => group.key) : selected ? [selected.key] : null);
+  const lensChoices: Array<{ id: Lens; label: string }> = [{ id: 'requests', label: 'Requests' }, { id: 'completion', label: 'Completion' }, { id: 'p95', label: 'P95' }, { id: 'client', label: '4xx' }, { id: 'server', label: '5xx' }];
+  const groupLabel = (row: Comparison) => (sourceLabels.get(row.sourceId) ?? 'Source unavailable') + ' · ' + row.outcome;
+  function pickSplit(dim: BreakdownDim | '', event: MouseEvent) {
+    splitDim = splitDim === dim ? '' : dim;
+    const menu = (event.currentTarget as HTMLElement).closest('details');
+    if (menu) { menu.open = false; menu.querySelector('summary')?.focus(); }
+  }
 
   $effect(() => {
     const signature = connectionSignature;
@@ -179,7 +236,7 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
     connectionObservedSignature = signature;
   });
 
-  onMount(() => { void initialize(); });
+  onMount(() => { theme.start(); void initialize(); });
   async function initialize() {
     try {
       info = await api.info();
@@ -461,8 +518,16 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
       analysisController = null;
       loading = false;
       invalidateDetails();
+      operation = null; selectedKey = ''; contextAnchor = null;
     }
     querySnapshot = current;
+  });
+
+  // The landing run: sources are chosen and the dates are valid, so the pulse is ready without a button press. Later scope changes run through onScopeChange.
+  $effect(() => {
+    if (autoRan || !info || !sources.length || !query.sourceIds.length || !dateInputsValid || !investigationReady) return;
+    autoRan = true;
+    untrack(() => { void runAnalysis(); });
   });
 
   $effect(() => {
@@ -479,7 +544,7 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
     analysisSequence++;
     analysisController?.abort(); analysisController = null; loading = false;
     invalidateDetails();
-    analysis = null; selectedKey = ''; error = '';
+    analysis = null; selectedKey = ''; error = ''; operation = null; whereOpen = false; contextAnchor = null;
     query = defaultQuery(new Date(), sources.map(source => source.id));
     investigationIntent = null;
     zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -546,7 +611,7 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
       if (!hasUnresolvedKnownSources(investigationIntent, sources)) investigationIntent = null;
       query.sourceIds = query.sourceIds.filter(id => id !== source.id);
       analysis = analysis ? { ...analysis, sources: analysis.sources.filter(result => result.sourceId !== source.id), apis: analysis.apis.filter(row => row.sourceId !== source.id) } : null;
-      selectedKey = '';
+      selectedKey = ''; operation = null; contextAnchor = null;
       invalidateDetails();
     } catch (cause) { sourceError = message(cause); }
     finally { busyDelete = ''; }
@@ -571,14 +636,13 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
     }
     analysisController?.abort(); analysisController = new AbortController();
     const run = ++analysisSequence;
-    loading = true; invalidateDetails(); selectedKey = ''; analysis = null;
+    // The previous analysis stays on screen (dimmed) while the new one loads, and nothing is auto-selected afterwards: the pulse is the landing view.
+    loading = true; invalidateDetails(); selectedKey = ''; operation = null; contextAnchor = null;
     try {
       const result = await api.analyze(cloneQuery(), analysisController.signal);
       if (run !== analysisSequence) return;
       analysis = result;
       timelineKeys = rankComparisons(result.apis).filter(row => row.state === 'compared').slice(0, 3).map(row => row.key);
-      const firstHealthy = initialComparison(result.apis);
-      if (firstHealthy) void selectAPI(firstHealthy.key);
     } catch (cause) {
       if (run === analysisSequence && !(cause instanceof DOMException && cause.name === 'AbortError')) {
         const detail = message(cause);
@@ -615,7 +679,7 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
     drawerElement?.querySelector<HTMLElement>('input, select, button')?.focus();
   }
   function trapDrawerFocus(event: KeyboardEvent) {
-    if (event.key === 'Escape') { closeConnections(); return; }
+    if (event.key === 'Escape') { event.preventDefault(); closeConnections(); return; }
     if (event.key !== 'Tab' || !drawerElement) return;
     const focusable = [...drawerElement.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')];
     if (!focusable.length) return;
@@ -630,16 +694,88 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
     selectedKey = key; invalidateDetails();
     await loadRequests('', 1);
   }
+  // An operation (controller + action + request type) is the unit D1 ranks. Its comparison groups are the source and outcome splits of it.
+  function operationRows(op: Pick<Rollup, 'controller' | 'action' | 'kind'>): Comparison[] {
+    return (analysis?.apis ?? []).filter(row => row.controller === op.controller && row.action === op.action && (op.kind == null || row.kind === op.kind));
+  }
+  // The comparison's query scoped to one operation. Separate from drillQuery, which keeps its own overview-tile behaviour.
+  function operationQuery(source: Query, op: Pick<Rollup, 'controller' | 'action' | 'kind'>): Query {
+    const copy = JSON.parse(JSON.stringify(source)) as Query;
+    const scope = operationDrill(op, source.kind);
+    copy.kind = scope.kind;
+    if (scope.controller !== undefined) copy.controller = scope.controller;
+    if (scope.action !== undefined) copy.action = scope.action;
+    return copy;
+  }
+  function focusSoon(id: string) { void tick().then(() => document.getElementById(id)?.focus({ preventScroll: false })); }
+  // D2 for a ranked operation: its whole request list (every event of that controller, action and type), with the first comparison group driving the charts.
+  async function openOperation(row: Rollup, key = '') {
+    if (!analysis) return;
+    evidenceReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    contextAnchor = null; invalidateDetails(); selectedKey = '';
+    operation = row; inspectorTab = 'timeline';
+    queryWide = true; requestState = 'all'; drillOverview = operationDrill(row, analysis.query.kind);
+    selectedKey = key || initialComparison(operationRows(row))?.key || '';
+    await loadRequests('', 1);
+    focusSoon('inspector-title');
+  }
+  function closeInspector() {
+    requestController?.abort();
+    selectedKey = ''; queryWide = false; requestState = ''; drillOverview = null; drill = {}; operation = null; contextAnchor = null;
+    requestPage = null; requestRows = []; requestPageNumber = 1; requestError = ''; requestLoading = false;
+    record = null; recordError = '';
+    const back = evidenceReturnFocus; evidenceReturnFocus = null;
+    void tick().then(() => { if (back?.isConnected) back.focus(); });
+  }
+  function openWhere(next: Lens) {
+    lens = next; whereOpen = true;
+    focusSoon('where-title');
+  }
+  // One step toward Pulse: the record, then the operation or list, then the ranked view.
+  function stepUpOnce() {
+    if (record != null) { record = null; recordError = ''; return; }
+    if (hasContext) { closeInspector(); return; }
+    if (whereOpen) { whereOpen = false; compare = false; splitDim = ''; }
+  }
+  function goTo(target: number) {
+    for (let guard = 0; guard < 4 && depth > target; guard++) stepUpOnce();
+  }
+  function onWindowKey(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || event.defaultPrevented || connectionsOpen) return;
+    const target = event.target;
+    if (target instanceof HTMLElement && (target.tagName === 'SELECT' || target.closest('.popover'))) return;
+    // An open menu or the filters panel closes first; only then does Esc step one level up.
+    const open = document.querySelector<HTMLDetailsElement>('details.menu[open], details.more-filters[open]');
+    const inside = open != null && target instanceof HTMLElement && open.contains(target);
+    const loose = !(target instanceof HTMLElement) || target === document.body;
+    if (open && (inside || loose)) { open.open = false; open.querySelector<HTMLElement>('summary')?.focus(); return; }
+    stepUpOnce();
+  }
+  async function onScopeChange() { await tick(); void runAnalysis(); }
+  async function removeChip(chip: FilterChip) { applyChipPatch(query, chip); controlsResetKey++; await onScopeChange(); }
+  async function clearChips() { for (const chip of filterChipList) applyChipPatch(query, chip); controlsResetKey++; await onScopeChange(); }
+  async function openFromTable(key: string) {
+    const row = analysis?.apis.find(item => item.key === key);
+    const rollup = row ? rollupFor(analysis?.rollups, row) : undefined;
+    if (rollup) await openOperation(rollup, key); else await selectAPI(key);
+  }
+  function chooseGroup(key: string) {
+    if (queryWide) { selectedKey = key; contextAnchor = null; } else void selectAPI(key);
+  }
   async function drillInto(filter: BreakdownFilter, _row: BreakdownRow) {
     if (!breakdownQuery) return;
     const merged = serializeRecordFilters(mergeRecordFilter(breakdownQuery, filter));
-    contextAnchor = null; selectedKey = ''; invalidateDetails();
+    // Inside an operation the breakdown narrows that operation's list; the operation, its group and its scope are kept.
+    const keep = operation ? { operation, selectedKey, queryWide, requestState, drillOverview } : null;
+    contextAnchor = null; if (!keep) selectedKey = ''; invalidateDetails();
+    if (keep) { operation = keep.operation; selectedKey = keep.selectedKey; queryWide = keep.queryWide; requestState = keep.requestState; drillOverview = keep.drillOverview; }
     drill = merged;
     await loadRequests('', 1);
     await tick();
     document.getElementById('request-history')?.scrollIntoView({ block: 'start' });
   }
   async function drillQuality(state: string) {
+    evidenceReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null; operation = null;
     contextAnchor = null; invalidateDetails(); selectedKey = '';
     queryWide = true; requestState = state;
     await loadRequests('', 1);
@@ -647,6 +783,7 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
     document.getElementById('request-history')?.scrollIntoView({ block: 'start' });
   }
   async function drillFromOverview(drill: OverviewDrill) {
+    evidenceReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null; operation = null;
     contextAnchor = null; invalidateDetails(); selectedKey = '';
     queryWide = true; requestState = drill.state; drillOverview = drill;
     await loadRequests('', 1);
@@ -666,7 +803,12 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
     }
     return copy;
   }
-  function clearDrill() { drill = {}; requestController?.abort(); requestPage = null; requestRows = []; requestError = ''; requestLoading = false; }
+  // Inside an operation this lifts the breakdown filter and shows the whole operation again; elsewhere the filter was the whole context.
+  function clearDrill() {
+    drill = {};
+    if (operation) { void loadRequests('', 1); return; }
+    closeInspector();
+  }
   async function loadRequests(cursor: string, pageNumber: number) {
     if ((!selectedKey && !queryWide && !drillActive) || !analysis) return;
     requestController?.abort(); requestController = new AbortController();
@@ -704,40 +846,49 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
 </script>
 
 <svelte:head><title>Unravis</title></svelte:head>
+<svelte:window onkeydown={onWindowKey} />
 
 <div class="app-shell">
   <header class="topbar">
-    <div class="brand-lockup"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><div><h1>Unravis</h1><p>API audit investigation</p></div></div>
+    <div class="brand-lockup"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><h1>Unravis</h1></div>
+    {#if crumbs.length}<Breadcrumb {crumbs} onNavigate={(crumb) => goTo(crumb.depth)} />{:else}<div class="crumbs-spacer"></div>{/if}
     <div class="topbar-meta">
       {#if info}<span class:demo-badge={info.demo} class="mode-badge">{info.demo ? 'Demo data' : 'Live mode'}</span>{/if}
       {#if info?.demo}<span class="updated-label">Data reference time <time>{new Date(info.now).toLocaleString()}</time></span>{/if}
+      {#if info && !firstRun}
+        <SourcePopover groups={connectionGroups} selectedIds={query.sourceIds} total={sources.length} demo={info.demo} {busyDelete} {sourceError} {sourceSuccess} savedCount={recentConnections.length}
+          onToggle={(id, checked) => { query.sourceIds = checked ? [...query.sourceIds.filter(item => item !== id), id] : query.sourceIds.filter(item => item !== id); onScopeChange(); }}
+          onDelete={deleteSource} onManage={() => openConnections('saved')} onAdd={startNewConnection} />
+      {/if}
+      <button type="button" class="header-button theme-toggle" onclick={() => theme.cycle()} aria-label={'Theme: ' + theme.choice + '. Change theme'} title={'Theme: ' + theme.choice}>
+        {#if theme.choice === 'light'}
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="3.4"></circle><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"></path></svg>
+        {:else if theme.choice === 'dark'}
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 11.6A6.6 6.6 0 0 1 8.4 3.5a6.6 6.6 0 1 0 8.1 8.1Z"></path></svg>
+        {:else}
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="6.6"></circle><path d="M10 3.4a6.6 6.6 0 0 1 0 13.2Z" fill="currentColor" stroke="none"></path></svg>
+        {/if}
+      </button>
     </div>
   </header>
 
   {#if initError}<div class="banner error-banner" role="alert"><strong>Explorer unavailable</strong><span>{initError}</span><button class="quiet-button" onclick={() => { initError = ''; void initialize(); }}>Retry</button></div>{/if}
-  <div class="workspace">
-    <section class="source-sidebar" aria-label="Audit sources" inert={connectionsOpen}>
-      <div class="sidebar-title"><div><h2>Sources</h2><p>{query.sourceIds.length} selected · {sources.length} available</p></div></div>
-      {#if !info?.demo}<button class="secondary-button connection-launch" onclick={() => openConnections('saved')}>Connections <span>{recentConnections.length} saved</span></button>{:else}<p class="demo-note">Demo sources are provided by the sample repository.</p>{/if}
-      {#if sourceError}<div class="inline-error" role="alert">{sourceError}</div>{/if}
-      {#if sourceSuccess}<div class="connection-status" role="status">{sourceSuccess}</div>{/if}
-      <div class="source-list">
-        {#each connectionGroups as group (group.id)}
-          <section class="source-group" aria-label={group.label}>
-            <div class="source-group-heading"><strong>{group.label}</strong><small>{group.sources.length} audit source{group.sources.length === 1 ? '' : 's'}</small></div>
-            {#each group.sources as source (source.id)}
-              <div class="source-item">
-                <label class="source-choice"><input type="checkbox" checked={query.sourceIds.includes(source.id)} onchange={(event) => { const checked = event.currentTarget.checked; query.sourceIds = checked ? [...query.sourceIds, source.id] : query.sourceIds.filter(id => id !== source.id); }} /><span><strong>{source.database}</strong><small>{source.collection}</small></span></label>
-                <button class="icon-button" aria-label={'Remove ' + source.label} title="Remove source" disabled={busyDelete === source.id} onclick={() => deleteSource(source)}>×</button>
-              </div>
-            {/each}
-          </section>
-        {:else}
-          <div class="source-empty"><span class="empty-rings" aria-hidden="true"></span><strong>{info?.demo ? 'No sample sources' : 'No connections yet'}</strong><p>{info?.demo ? 'This demo has no audit sources configured.' : 'Add a connection or load saved settings, then choose audit databases.'}</p>{#if !info?.demo}<button class="primary-button" onclick={startNewConnection}>Add a connection</button><button class="quiet-button" onclick={() => openConnections('saved')}>View saved connections</button>{/if}</div>
-        {/each}
+
+  {#if info && !firstRun}
+    <section class="scope" aria-label="Scope" inert={connectionsOpen}>
+      <div class="scope-main">
+        {#key controlsResetKey}<QueryControls bind:query bind:zone bind:targetMs bind:dateInputsValid part="bar" groupNames={(analysis?.apis ?? []).map(row => row.controller + '.' + row.action)} now={info?.now ?? ''} {onScopeChange} />{/key}
+        <details class="more-filters">
+          <summary>More filters{#if moreCount > 0}<span class="count-badge" aria-label={moreCount + ' active'}>{moreCount}</span>{/if}</summary>
+          <div class="more-body">
+            {#key controlsResetKey}<QueryControls bind:query bind:zone bind:targetMs bind:dateInputsValid part="panel" groupNames={(analysis?.apis ?? []).map(row => row.controller + '.' + row.action)} now={info?.now ?? ''} {onScopeChange} />{/key}
+          </div>
+        </details>
+        <div class="run-actions">{#if loading}<button class="quiet-button" onclick={cancelAnalysis}>Cancel run</button>{/if}<button class="primary-button" disabled={loading || !query.sourceIds.length || !dateInputsValid} onclick={runAnalysis}>{loading ? 'Comparing…' : 'Run comparison'}</button></div>
       </div>
-      {#if sources.length && !info?.demo}<button class="quiet-button manage-connections" onclick={() => openConnections('saved')}>Manage connections</button>{/if}
+      <FilterChips chips={filterChipList} onRemove={removeChip} onClear={clearChips} />
     </section>
+  {/if}
 
     {#if connectionsOpen}
       <button class="drawer-scrim" aria-label="Close connections" onclick={closeConnections}></button>
@@ -848,87 +999,159 @@ import type { Analysis, BreakdownFilter, BreakdownRow, ConnectionInput, Connecti
         </div>
     {/if}
 
-    <main class="analysis-workspace" inert={connectionsOpen}>
-      <div class="frozen-run-note" role="status">{restoredInTab ? 'Restored this tab’s investigation filters. ' : ''}{investigationNotice} <button class="quiet-button" onclick={resetInvestigation}>Reset investigation</button></div>
-      {#key controlsResetKey}<QueryControls bind:query bind:zone bind:targetMs bind:dateInputsValid groupNames={(analysis?.apis ?? []).map(row => row.controller + '.' + row.action)} now={info?.now ?? ''} />{/key}
-      <section class="analysis-main">
-        <div class="analysis-heading">
-          <div><h2>Compare API speed</h2><p>See how the selected period compares with earlier requests.</p></div>
-          <div class="run-actions">{#if loading}<button class="quiet-button" onclick={cancelAnalysis}>Cancel run</button>{/if}<button class="primary-button" disabled={loading || !query.sourceIds.length || !dateInputsValid} onclick={runAnalysis}>{loading ? 'Comparing…' : 'Run comparison'}</button></div>
-        </div>
-        {#if error}<div class="banner error-banner" role="alert"><strong>Comparison not run</strong><span>{error}</span></div>{/if}
-        {#if analysis}
-          {#if displayedRunIsStale}<div class="frozen-run-note">The charts and reference window below remain from the last run. Click <strong>Run comparison</strong> to apply your edited windows and filters.</div>{/if}
-          {#if failingSources.length}
-            <div class="banner source-failure" role="alert"><strong>{failingSources.length === analysis.sources.length ? 'No sources returned data' : 'Some sources failed'}</strong>
-              {#each failingSources as failed}<span><b>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}:</b> {failed.error || failed.indexWarning || 'Source unavailable'}</span>{/each}
-            </div>
-          {/if}
-          <details class="result-notes"><summary>About these results and sample sizes</summary><div class="calculation-notes">{#each calculationNotes as note}<p>{note}</p>{/each}</div></details>
-          <OverviewStrip overview={analysis.overview ?? []} outcomeFilter={analysis.query.outcome} kindFilter={analysis.query.kind} onDrill={drillFromOverview}>
-            {#snippet quality()}{#if analysis}
-          <div class="quality-strip">
-            <div><strong>{analysis.apis.length.toLocaleString()}</strong><span>API groups</span></div>
-            <div><button type="button" class="quality-count" disabled={!analysis.quality.incomplete} title="List the requests behind this count" onclick={() => drillQuality('incomplete')}><strong>{analysis.quality.incomplete.toLocaleString()}</strong><span>Missing timing</span></button></div>
-            <div><button type="button" class="quality-count" disabled={!analysis.quality.invalid} title="List the requests behind this count" onclick={() => drillQuality('invalid')}><strong>{analysis.quality.invalid.toLocaleString()}</strong><span>Unusable timing</span></button></div>
-            <div><button type="button" class="quality-count" disabled={!analysis.quality.unknownOutcome} title="List the requests behind this count" onclick={() => drillQuality('unclassified')}><strong>{analysis.quality.unknownOutcome.toLocaleString()}</strong><span>Unclassified result</span></button></div>
-            {#if analysis.quality.pendingAsync}<div><button type="button" class="quality-count" title="List the requests behind this count" onclick={() => drillQuality('pending')}><strong>{analysis.quality.pendingAsync.toLocaleString()}</strong><span>pending async</span></button></div>{/if}
-            {#if qualityByKindText(analysis.quality)}<div class="quality-filter-note" title={unknownKindTip}><span>{qualityByKindText(analysis.quality)}</span></div>{/if}
-            {#if analysis.query.outcome === 'client_error' || analysis.query.outcome === 'server_error'}<div class="quality-filter-note"><span>Counts above cover only the selected status class.</span></div>{/if}
-          <p>Response times are estimates. A comparison shows change, not a health verdict.</p>
-          <details class="quality-definitions"><summary>What these counts mean</summary><p><strong>Missing timing:</strong> no complete duration was recorded. <strong>Unusable timing:</strong> a duration was present but could not be used. <strong>Unclassified result:</strong> the request could not be identified as a success or failure. <strong>Pending async:</strong> an asynchronous request that only answered 202 Accepted; its work is not finished, so it is counted as missing timing and never as a response-time sample.</p></details>
-          </div>
-            {/if}{/snippet}
-          </OverviewStrip>
-          <IncompletePanel rollups={analysis.rollups ?? []} kindFilter={analysis.query.kind} onDrill={drillFromOverview} />
-          <RequestVolume {analysis} {zone} />
-          <TrafficSlowness {analysis} {zone} {sourceLabels} cohort={selected} onContext={async(row)=>{contextAnchor=row;await tick();document.getElementById('nearby-activity')?.scrollIntoView({block:'start'});}} />
-          {#if breakdownQuery}<FailurePanel {analysis} query={breakdownQuery} {sourceLabels} {zone} onDrill={drillInto} />{/if}
-          {#if breakdownQuery}<BreakdownPanel query={breakdownQuery} {sourceLabels} onDrill={drillInto} />{/if}
-          <section class="data-section" id="api-group-results">
-            <div class="section-heading"><div><h3>Explore {analysis.apis.length.toLocaleString()} API groups</h3><p>Largest slowdowns first. Each group keeps one source, API action, request type, and outcome together. P95 is the time within which about 95 of 100 requests finish.</p></div></div>
-            <ComparisonTable rows={analysis.apis} rollups={analysis.rollups ?? []} timeline={analysis.timeline} kindFilter={analysis.query.kind} {selectedKey} {timelineKeys} onToggleTimeline={(key) => timelineKeys = timelineKeys.includes(key) ? timelineKeys.filter(item => item !== key) : timelineKeys.length < 8 ? [...timelineKeys, key] : timelineKeys} sources={sourceLabels} outcomeFilter={analysis.query.outcome} onDrill={drillFromOverview} onSelect={async (key) => { void selectAPI(key); await tick(); const details = document.getElementById('selected-api-details'); details?.scrollIntoView({ block: 'start' }); details?.focus({ preventScroll: true }); }} />
-          </section>
-          <MultiTimeline {analysis} keys={timelineKeys} sources={sourceLabels} {zone} onRemove={(key) => timelineKeys = timelineKeys.filter(item => item !== key)} />
-          {#if selected}
-            <section class="selected-api-heading" id="selected-api-details" aria-label="Selected API" aria-live="polite" tabindex="-1">
-              <a class="back-to-groups" href="#api-group-results">Back to API groups</a>
-              <h3>{selected.controller}.{selected.action}</h3>
-              <p>{sourceLabels.get(selected.sourceId) ?? 'Source unavailable'} · <span title={selected.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(selected.kind)}</span> · {selected.outcome}</p>
-              <div class="selected-api-stats"><span><strong>{selected.current.count.toLocaleString()}</strong> current timings</span><span><strong>{selected.reference.count.toLocaleString()}</strong> reference timings</span><span><strong>{selected.p95Ratio == null ? 'Unavailable' : '≈ ' + selected.p95Ratio.toFixed(2) + '×'}</strong> P95 vs reference</span>{#if targetMs != null}<span>Target {targetMs} ms: {targetAssessment}</span>{/if}</div>
-              {#if selected.current.count < 20 || selected.reference.count < 20}<p class="sample-note">{selected.current.count === 0 ? 'No usable timings in the current period.' : selected.reference.count === 0 ? 'No usable timings in the reference period.' : 'Fewer than 20 usable timings in at least one period.'} A slowdown comparison needs at least 20 usable timings in each period.</p>{/if}
-            </section>
-            <Charts {analysis} {selected} {zone} {targetMs} />
-          {/if}
-          <section class="data-section request-section" id="request-history">
-            <div class="section-heading"><div><h3>Request history</h3><p>{queryWide ? (drillOverview ? drillHeading(drillOverview) : stateLabel(requestState)) + ' · every API group in this comparison' : selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome : drillActive ? 'Requests matching ' + drillChips.map(chip => chip.text).join(' · ') + '.' : 'Choose an API group above.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
-              {#if selected || queryWide}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
-              {#if drillActive}<button class="quiet-button" onclick={clearDrill}>Clear breakdown filter</button>{/if}
-            </div>
-            {#if requestError}<div class="inline-error" role="alert">{requestError}</div>{/if}
-            {#if requestPage?.sources.some(source => !source.ok)}<div class="source-failure compact-failure" role="alert">{#each requestPage.sources.filter(source => !source.ok) as failed}<span>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}: {failed.error}</span>{/each}</div>{/if}
-            <RequestTable rows={requestRows} {sourceLabels} loading={requestLoading} pageNumber={requestPageNumber} nextCursor={requestPage?.nextCursor ?? ''} truncated={requestPage?.truncated ?? false} recordId={recordLoadingId} onFirst={() => loadRequests('', 1)} onNext={() => loadRequests(requestPage?.nextCursor ?? '', requestPageNumber + 1)} onInspect={showRecord} onContext={async (row) => {contextAnchor=row;await tick();document.getElementById('nearby-activity')?.scrollIntoView({block:'start'});}} />
-            {#if recordError}<div class="inline-error" role="alert">{recordError}</div>{/if}
-            <RecordDetailPanel detail={record} sourceLabel={record ? (sourceLabels.get(record.sourceId) ?? record.sourceId) : ''} onClose={() => record = null} />
-          </section>
-          {#if contextAnchor}<ActivityContext anchor={contextAnchor} sourceIds={analysis.query.sourceIds} {sourceLabels} {zone} />{/if}
-        {:else if loading}
-          <div class="loading-state"><div class="loading-pulse"></div><strong>Reading selected audit sources</strong><p>Current and reference windows are aggregated separately.</p></div>
-        {:else if !sources.length && !info?.demo}
+    <main class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={connectionsOpen}>
+      <div class="stage-inner">
+        {#if !info && !initError}
+          <div class="loading-state"><div class="loading-pulse"></div><strong>Starting Unravis</strong><p>Loading sources and settings.</p></div>
+        {:else if firstRun}
           <div class="welcome-state no-connections-state"><h3>Connect an audit source</h3><p>Load saved settings or create a MongoDB connection, then choose databases that contain API audit logs.</p><div class="empty-actions"><button class="primary-button" onclick={startNewConnection}>New connection</button><button class="secondary-button" onclick={() => openConnections('saved')}>Saved connections</button></div></div>
-        {:else}
-          <div class="welcome-state">
-          <h3>Start an API comparison</h3>
-            {#if info?.demo}
-              <p>Sample audit sources are ready. Choose the periods and filters above, then run a comparison.</p>
-            {:else}
-              <p>Your sources are ready. Choose the periods and filters above, then run a comparison.</p>
+        {:else if info}
+          {#if error}<div class="banner error-banner" role="alert"><strong>Comparison not run</strong><span>{error}</span></div>{/if}
+          {#if analysis}
+            {#if displayedRunIsStale && !loading}<div class="notice frozen-run-note" role="status">The figures below are from the last run. Press <strong>Run comparison</strong> to apply your changes.</div>{/if}
+            {#if failingSources.length}
+              <div class="banner source-failure" role="alert"><strong>{failingSources.length === analysis.sources.length ? 'No sources returned data' : 'Some sources failed'}</strong>
+                {#each failingSources as failed}<span><b>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}:</b> {failed.error || failed.indexWarning || 'Source unavailable'}</span>{/each}
+              </div>
             {/if}
-            {#if sources.length && !query.sourceIds.length}<p>Select at least one database source in the left panel to run a comparison.</p>{/if}
-            <button class="primary-button" disabled={!query.sourceIds.length || !dateInputsValid} onclick={runAnalysis}>Run comparison</button>
-          </div>
+            <div class="stage-views" inert={loading}>
+              <!-- D0 Pulse -->
+              <div class="view" class:off={depth > 0}>
+                <Pulse {analysis} {zone} onOpen={openWhere} />
+                <div class="pulse-actions"><button type="button" class="primary-button" onclick={() => openWhere(lens)}>Where is it?</button><p>Tap a figure, or open the ranked list of operations.</p></div>
+              </div>
+
+              <!-- D1 Where -->
+              <div class="view" class:off={depth === 0 || depth === 3} class:under={depth === 2}>
+                <div class="view-head">
+                  <div><h2 id="where-title" tabindex="-1">Where is it?</h2><p>Operations ranked by the figure you chose. Open one to see the evidence behind it.</p></div>
+                  <div class="view-tools">
+                    <button type="button" class="chip" aria-pressed={compare} onclick={() => compare = !compare}>Compare to earlier</button>
+                    <details class="menu">
+                      <summary>{splitDim ? 'Split by ' + (breakdownDims.find(item => item.dim === splitDim)?.label ?? '') : 'Split by…'}</summary>
+                      <div class="menu-list">
+                        {#each breakdownDims as item (item.dim)}<button type="button" aria-pressed={splitDim === item.dim} onclick={(event) => pickSplit(item.dim, event)}>{item.label}</button>{/each}
+                        {#if splitDim}<button type="button" onclick={(event) => pickSplit('', event)}>No split</button>{/if}
+                      </div>
+                    </details>
+                  </div>
+                </div>
+                <div class="lens-chips" role="group" aria-label="Rank by">
+                  {#each lensChoices as item (item.id)}<button type="button" class="chip" aria-pressed={lens === item.id} title={item.id === 'p95' ? metricLabels[analysis.query.metric] : undefined} onclick={() => lens = item.id}>{item.label}</button>{/each}
+                </div>
+                <WhereList {analysis} {lens} {compare} {openKey} onOpen={(row) => openOperation(row)} />
+                {#if splitDim && breakdownQuery}<BreakdownPanel query={breakdownQuery} {sourceLabels} lockedDim={splitDim} panelId="split-breakdown" onDrill={drillInto} />{/if}
+                <div class="disclosures">
+                  <details class="disclosure">
+                    <summary>Quality of the data<small>timing, results and pending work</small></summary>
+                    <div class="disclosure-body">
+                      <OverviewStrip overview={analysis.overview ?? []} outcomeFilter={analysis.query.outcome} kindFilter={analysis.query.kind} onDrill={drillFromOverview}>
+                        {#snippet quality()}{#if analysis}
+                      <div class="quality-strip">
+                        <div><strong>{analysis.apis.length.toLocaleString()}</strong><span>API groups</span></div>
+                        <div><button type="button" class="quality-count" disabled={!analysis.quality.incomplete} title="List the requests behind this count" onclick={() => drillQuality('incomplete')}><strong>{analysis.quality.incomplete.toLocaleString()}</strong><span>Missing timing</span></button></div>
+                        <div><button type="button" class="quality-count" disabled={!analysis.quality.invalid} title="List the requests behind this count" onclick={() => drillQuality('invalid')}><strong>{analysis.quality.invalid.toLocaleString()}</strong><span>Unusable timing</span></button></div>
+                        <div><button type="button" class="quality-count" disabled={!analysis.quality.unknownOutcome} title="List the requests behind this count" onclick={() => drillQuality('unclassified')}><strong>{analysis.quality.unknownOutcome.toLocaleString()}</strong><span>Unclassified result</span></button></div>
+                        {#if analysis.quality.pendingAsync}<div><button type="button" class="quality-count" title="List the requests behind this count" onclick={() => drillQuality('pending')}><strong>{analysis.quality.pendingAsync.toLocaleString()}</strong><span>pending async</span></button></div>{/if}
+                        {#if qualityByKindText(analysis.quality)}<div class="quality-filter-note" title={unknownKindTip}><span>{qualityByKindText(analysis.quality)}</span></div>{/if}
+                        {#if analysis.query.outcome === 'client_error' || analysis.query.outcome === 'server_error'}<div class="quality-filter-note"><span>Counts above cover only the selected status class.</span></div>{/if}
+                      <p>Response times are estimates. A comparison shows change, not a health verdict.</p>
+                      <details class="quality-definitions"><summary>What these counts mean</summary><p><strong>Missing timing:</strong> no complete duration was recorded. <strong>Unusable timing:</strong> a duration was present but could not be used. <strong>Unclassified result:</strong> the request could not be identified as a success or failure. <strong>Pending async:</strong> an asynchronous request that only answered 202 Accepted; its work is not finished, so it is counted as missing timing and never as a response-time sample.</p></details>
+                      </div>
+                        {/if}{/snippet}
+                      </OverviewStrip>
+                      <IncompletePanel rollups={analysis.rollups ?? []} kindFilter={analysis.query.kind} onDrill={drillFromOverview} />
+                    </div>
+                  </details>
+                  <details class="disclosure">
+                    <summary>Request volume<small>every interval in the period</small></summary>
+                    <div class="disclosure-body"><RequestVolume {analysis} {zone} /></div>
+                  </details>
+                  <details class="disclosure">
+                    <summary>All {analysis.apis.length.toLocaleString()} API groups<small>one source, action, type and outcome each</small></summary>
+                    <div class="disclosure-body">
+                      <section class="data-section" id="api-group-results">
+                        <div class="section-heading"><div><h3>Explore {analysis.apis.length.toLocaleString()} API groups</h3><p>Largest slowdowns first. Each group keeps one source, API action, request type, and outcome together. P95 is the time within which about 95 of 100 requests finish.</p></div></div>
+                        <ComparisonTable rows={analysis.apis} rollups={analysis.rollups ?? []} timeline={analysis.timeline} kindFilter={analysis.query.kind} {selectedKey} {timelineKeys} onToggleTimeline={(key) => timelineKeys = timelineKeys.includes(key) ? timelineKeys.filter(item => item !== key) : timelineKeys.length < 8 ? [...timelineKeys, key] : timelineKeys} sources={sourceLabels} outcomeFilter={analysis.query.outcome} onDrill={drillFromOverview} onSelect={openFromTable} />
+                      </section>
+                      <MultiTimeline {analysis} keys={timelineKeys} sources={sourceLabels} {zone} onRemove={(key) => timelineKeys = timelineKeys.filter(item => item !== key)} />
+                    </div>
+                  </details>
+                  <details class="disclosure">
+                    <summary>About these results<small>calculation notes and sample sizes</small></summary>
+                    <div class="disclosure-body"><div class="calculation-notes">{#each calculationNotes as note}<p>{note}</p>{/each}</div></div>
+                  </details>
+                </div>
+              </div>
+
+              <!-- D3 Record -->
+              <div class="view record-view" class:off={depth !== 3}>
+                <button type="button" class="back-to-groups" onclick={() => { record = null; recordError = ''; }}>Back to the evidence</button>
+                {#if recordError}<div class="inline-error" role="alert">{recordError}</div>{/if}
+                {#if record}<RecordDetailPanel detail={record} sourceLabel={sourceLabels.get(record.sourceId) ?? record.sourceId} onClose={() => record = null} />{/if}
+              </div>
+            </div>
+
+            <!-- D2 Evidence -->
+            <Inspector off={depth !== 2} title={evidenceName} subtitle={operation ? kindLabel(operation.kind ?? 'unknown') + ' · ' + operation.requests.toLocaleString() + ' requests' : ''} tabs={inspectorTabs} active={activeTab} onTab={(id) => inspectorTab = id} onClose={closeInspector}>
+              {#if activeTab === 'timeline' && selected}
+                {#if operationGroups.length > 1}
+                  <div class="group-pick"><label for="group-select">Group</label>
+                    <select id="group-select" value={selectedKey} onchange={(event) => chooseGroup(event.currentTarget.value)}>{#each operationGroups as group (group.key)}<option value={group.key}>{groupLabel(group)}</option>{/each}</select>
+                  </div>
+                {/if}
+                <Charts {analysis} {selected} {zone} {targetMs} />
+              {:else if activeTab === 'phases' && selected}
+                {#if operationGroups.length > 1}
+                  <div class="group-pick"><label for="group-select-phases">Group</label>
+                    <select id="group-select-phases" value={selectedKey} onchange={(event) => chooseGroup(event.currentTarget.value)}>{#each operationGroups as group (group.key)}<option value={group.key}>{groupLabel(group)}</option>{/each}</select>
+                  </div>
+                {/if}
+                <section class="phase-group" aria-label="Where the time goes">
+                  <p>{sourceLabels.get(selected.sourceId) ?? 'Source unavailable'} · <span title={selected.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(selected.kind)}</span> · {selected.outcome}</p>
+                  <PhaseBar phases={selected.current.phases ?? null} delta={selected.phaseDeltaMs ?? null} />
+                  <div class="selected-api-stats"><span><strong>{selected.current.count.toLocaleString()}</strong> current timings</span><span><strong>{selected.reference.count.toLocaleString()}</strong> reference timings</span><span><strong>{selected.p95Ratio == null ? 'Unavailable' : '≈ ' + selected.p95Ratio.toFixed(2) + '×'}</strong> P95 vs reference</span>{#if targetMs != null}<span>Target {targetMs} ms: {targetAssessment}</span>{/if}</div>
+                  {#if selected.current.count < 20 || selected.reference.count < 20}<p class="sample-note">{selected.current.count === 0 ? 'No usable timings in the current period.' : selected.reference.count === 0 ? 'No usable timings in the reference period.' : 'Fewer than 20 usable timings in at least one period.'} A slowdown comparison needs at least 20 usable timings in each period.</p>{/if}
+                </section>
+              {:else if activeTab === 'failures' && scopedQuery}
+                <FailurePanel {analysis} query={scopedQuery} {sourceLabels} {zone} onDrill={drillInto} cohortKeys={failureCohort} />
+              {:else if activeTab === 'incomplete' && operation}
+                <IncompletePanel rollups={[operation]} kindFilter={analysis.query.kind} onDrill={drillFromOverview} />
+              {:else if activeTab === 'slowest' && selected}
+                <TrafficSlowness {analysis} {zone} {sourceLabels} cohort={selected} onContext={async (row) => { contextAnchor = row; await tick(); document.getElementById('nearby-activity')?.scrollIntoView({ block: 'start' }); }} />
+              {:else if activeTab === 'breakdown' && scopedQuery}
+                <BreakdownPanel query={scopedQuery} {sourceLabels} onDrill={drillInto} />
+              {/if}
+              <section class="data-section request-section" id="request-history">
+                <div class="section-heading"><div><h3>Request history</h3><p>{queryWide ? (drillOverview ? drillHeading(drillOverview) : stateLabel(requestState)) + ' · ' + (operation ? 'every group of this operation' : 'every API group in this comparison') : selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome : drillActive ? 'Requests matching ' + drillChips.map(chip => chip.text).join(' · ') + '.' : 'Choose an operation to list its requests.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
+                  {#if selected || queryWide}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
+                  {#if drillActive}<button class="quiet-button" onclick={clearDrill}>{operation ? 'Back to all of this operation' : 'Clear breakdown filter'}</button>{/if}
+                </div>
+                {#if requestError}<div class="inline-error" role="alert">{requestError}</div>{/if}
+                {#if requestPage?.sources.some(source => !source.ok)}<div class="source-failure compact-failure" role="alert">{#each requestPage.sources.filter(source => !source.ok) as failed}<span>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}: {failed.error}</span>{/each}</div>{/if}
+                <RequestTable rows={requestRows} {sourceLabels} loading={requestLoading} pageNumber={requestPageNumber} nextCursor={requestPage?.nextCursor ?? ''} truncated={requestPage?.truncated ?? false} recordId={recordLoadingId} onFirst={() => loadRequests('', 1)} onNext={() => loadRequests(requestPage?.nextCursor ?? '', requestPageNumber + 1)} onInspect={showRecord} onContext={async (row) => { contextAnchor = row; await tick(); document.getElementById('nearby-activity')?.scrollIntoView({ block: 'start' }); }} />
+              </section>
+              {#if contextAnchor}<ActivityContext anchor={contextAnchor} sourceIds={analysis.query.sourceIds} {sourceLabels} {zone} />{/if}
+            </Inspector>
+          {:else if loading}
+            <div class="skeleton" role="status" aria-label="Reading selected audit sources">
+              <div class="skeleton-figures"><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div></div>
+              <div class="skeleton-block skeleton-hero"></div>
+            </div>
+          {:else}
+            <div class="welcome-state">
+              <h3>Start an API comparison</h3>
+              {#if info.demo}
+                <p>Sample audit sources are ready. Choose the period and filters above, then run a comparison.</p>
+              {:else}
+                <p>Your sources are ready. Choose the period and filters above, then run a comparison.</p>
+              {/if}
+              {#if sources.length && !query.sourceIds.length}<p>Choose at least one database source from the Sources button above to run a comparison.</p>{/if}
+              <button class="primary-button" disabled={!query.sourceIds.length || !dateInputsValid} onclick={runAnalysis}>Run comparison</button>
+            </div>
+          {/if}
+          <div class="notice frozen-run-note" role="status">{restoredInTab ? 'Restored this tab’s investigation filters. ' : ''}{investigationNotice} <button class="quiet-button" onclick={resetInvestigation}>Reset investigation</button></div>
         {/if}
-      </section>
+      </div>
     </main>
-  </div>
 </div>
