@@ -31,7 +31,7 @@ const rules = (text) => lintCopy([{ id: 'x', text }], TERMS).map((f) => f.rule);
 
 const SAMPLES = [
   w.metricRose('web-a', 'working set', '1.2 GB', '40 min', '0.8 GB', '2.0 GB'),
-  w.metricSampleOverlap('Redis INFO', 'blocked clients', '3'),
+  w.metricSampleOverlap('Redis INFO', 1, 'blocked clients', '3'),
   w.markerBefore('12 s', 'Redis restart', 'redis-a'),
   w.episodeShare('Thread pool queue above 100', 4, 5, 2, 60),
   w.topInWindow('CPU', 'w3wp 82 %, sqlservr 9 %')

@@ -124,7 +124,7 @@ func (e *eval) runCondition(c condition) {
 					}
 				}
 				e.add(Row{ID: c.rule, Host: host, Title: c.title + " sample in a stall", Label: audit.EvidenceCorrelation,
-					Wording:    evidence.MetricSampleOverlap(displayName(s.Source), seriesMetric(s), value(bv, s.Metric.Unit)),
+					Wording:    evidence.MetricSampleOverlap(sampleSource(s.Source), 1, seriesMetric(s), value(bv, s.Metric.Unit)),
 					Thresholds: thr, Evidence: []string{best.EvidenceID}, Episode: e.episode(i)})
 				if ok {
 					epHit[i] = true

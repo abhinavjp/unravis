@@ -40,7 +40,7 @@ test('wordings output passes the copy lint', () => {
   const entries = [
     wordings.notObservedThreshold('SQL lock events', '30 seconds'),
     wordings.notObservedGap('the source was not captured in this window'),
-    wordings.overlapUnique('IIS log', 'a restart', 28),
+    wordings.overlapUnique('IIS log', 'restart', 28),
     wordings.auditCreate(28),
     wordings.plainAuditCreate(28)
   ].map((text, i) => ({ id: `w${i}`, text }));

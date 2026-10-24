@@ -300,16 +300,16 @@ func TestStallPositive(t *testing.T) {
 	corr := audit.EvidenceCorrelation
 	sym := audit.EvidenceSymptom
 	for _, c := range []struct{ id, wording, label string }{
-		{"RC3", "A Windows performance counters sample showed host CPU at 97.8 % during this interval (Correlation).", corr},
-		{"RC3", "A Windows performance counters sample showed available memory at 420 MiB during this interval (Correlation).", corr},
+		{"RC3", "A Windows performance counter sample showed host CPU at 97.8 % during this interval (Correlation).", corr},
+		{"RC3", "A Windows performance counter sample showed available memory at 420 MiB during this interval (Correlation).", corr},
 		{"RC3", "Host CPU at or above 90 % on web-a in 1 of 1 stall episodes, and in 1 of 3 comparison windows outside stalls.", sym},
 		{"RC3", "Available memory below 500 MiB on web-a in 1 of 1 stall episodes, and in 0 of 3 comparison windows outside stalls.", sym},
-		{"RC4", "A .NET runtime counters sample showed time in GC for w3wp:1240 at 34 % during this interval (Correlation).", corr},
+		{"RC4", "A .NET runtime counter sample showed time in GC for w3wp:1240 at 34 % during this interval (Correlation).", corr},
 		{"RC4", "Time in GC at or above 10 % in a process on web-a in 1 of 1 stall episodes, and in 0 of 3 comparison windows outside stalls.", sym},
-		{"RC5", "A .NET runtime counters sample showed thread-pool queue length for w3wp:1240 at 57 during this interval (Correlation).", corr},
+		{"RC5", "A .NET runtime counter sample showed thread-pool queue length for w3wp:1240 at 57 during this interval (Correlation).", corr},
 		{"RC5", "Thread-pool queue length above 0 in 2 or more samples in a process on web-a in 1 of 1 stall episodes, and in 0 of 3 comparison windows outside stalls.", sym},
 		{"RC5", "Redis timeout entries with WORKER busy above min on web-a in 1 of 1 stall episodes, and in 0 of 3 comparison windows outside stalls.", sym},
-		{"RC5", "A ASP.NET Core console log session had a late heartbeat of 1.5 s overlapping this interval (Correlation).", corr},
+		{"RC5", "An ASP.NET Core console log session had a late heartbeat of 1.5 s overlapping this interval (Correlation).", corr},
 		{"RC6", "A Redis SLOWLOG session had a slow command of 1.012 s overlapping this interval (Correlation).", corr},
 		{"RC8", "This interval starts 2 min 31 s after a recycle event of the application pool (reason: Time) on web-a (Correlation).", corr},
 	} {
@@ -577,7 +577,7 @@ func TestMongoAbsenceAndQueue(t *testing.T) {
 		Threshold: "operations slower than 100 ms", TimezoneRule: clock.RuleOffsetInField,
 		CoverageFirst: tp(hms(0, 30, 0)), CoverageLast: tp(hms(1, 30, 0))}}
 	res := h.eval(hms(0, 40, 0), hms(1, 20, 0), stall)
-	row(t, res, "RC9", "A MongoDB serverStatus samples sample showed MongoDB queue length at 9 during this interval (Correlation).")
+	row(t, res, "RC9", "A MongoDB serverStatus sample showed MongoDB queue length at 9 during this interval (Correlation).")
 	row(t, res, "RC9", "Not observed in mongod.log. This source only records operations slower than 100 ms; shorter waits would not appear.")
 }
 

@@ -1,6 +1,9 @@
 package evidence
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // The only permitted wordings for absence and linkage (roadmap §6.6). These
 // are exact twins of web/src/lib/copy/wordings.ts; wording_test.go reads that
@@ -10,6 +13,78 @@ import "strconv"
 // num renders a number the way a JavaScript template literal does for the
 // ranges used here: shortest form, no exponent, no trailing zeros.
 func num(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+
+// consonantSoundPrefixes start with a vowel letter but a consonant sound
+// ("a unique wait", "a use"). Twin of CONSONANT_SOUND_PREFIXES in wordings.ts.
+var consonantSoundPrefixes = []string{"uni", "use", "usu", "uti", "eu", "one", "ubiq"}
+
+// article returns "an" when the first word of phrase starts with a vowel
+// sound, else "a". It reads the spelling only: two to four capitals start an
+// acronym that is spoken letter by letter ("an ASP.NET", "an IIS", "a USB",
+// "a SQL" as in "sequel"); a first character that is not a letter is read
+// aloud as a consonant (".NET" is "dot net"). Twin of article in wordings.ts.
+func article(phrase string) string {
+	f := strings.Fields(phrase)
+	if len(f) == 0 {
+		return "a"
+	}
+	w := f[0]
+	c := w[0]
+	if c >= '0' && c <= '9' {
+		if c == '8' {
+			return "an"
+		}
+		return "a"
+	}
+	if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+		return "a"
+	}
+	n := 0
+	for n < len(w) && (w[n] >= 'a' && w[n] <= 'z' || w[n] >= 'A' && w[n] <= 'Z') {
+		n++
+	}
+	if s := w[:n]; n >= 2 && n <= 4 && s == strings.ToUpper(s) {
+		if s == "SQL" {
+			return "a"
+		}
+		if strings.IndexByte("AEIOFHLMNRSX", s[0]) >= 0 {
+			return "an"
+		}
+		return "a"
+	}
+	lw := strings.ToLower(w)
+	if strings.IndexByte("aeiou", lw[0]) < 0 {
+		return "a"
+	}
+	for _, p := range consonantSoundPrefixes {
+		if strings.HasPrefix(lw, p) {
+			return "a"
+		}
+	}
+	return "an"
+}
+
+// indefinite puts the right indefinite article before phrase: "a MongoDB
+// serverStatus", "an ASP.NET Core log". A capital gives "A" or "An", for the
+// start of a sentence. Twin of indefinite in wordings.ts.
+func indefinite(phrase string, capital bool) string {
+	a := article(phrase)
+	if capital {
+		a = strings.ToUpper(a[:1]) + a[1:]
+	}
+	return a + " " + phrase
+}
+
+// sampleSubject is the subject of the sample sentence: one sample takes an
+// article ("A MongoDB serverStatus sample"), several take their count
+// ("3 MongoDB serverStatus samples"). The source is a name without a noun, so
+// the noun is never repeated. Twin of sampleSubject in wordings.ts.
+func sampleSubject(source string, samples int) string {
+	if samples == 1 {
+		return indefinite(source+" sample", true)
+	}
+	return strconv.Itoa(samples) + " " + source + " samples"
+}
 
 // NotObservedThreshold: a source with a recording threshold shows no event.
 func NotObservedThreshold(source, threshold string) string {
@@ -22,9 +97,10 @@ func NotObservedGap(detail string) string {
 }
 
 // OverlapUnique: a qualifying event overlaps a stalled audit interval and the
-// join class is unique.
+// join class is unique. The source and the event are plain names without an
+// article; the sentence picks "A"/"An" and "a"/"an" itself.
 func OverlapUnique(source, event string, seconds float64) string {
-	return "A " + source + " session had a " + event + " of " + num(seconds) + " s overlapping this interval (Correlation)."
+	return indefinite(source, true) + " session had " + indefinite(event, false) + " of " + num(seconds) + " s overlapping this interval (Correlation)."
 }
 
 // OverlapAmbiguous: a qualifying event overlaps and the join class is ambiguous.
@@ -54,10 +130,11 @@ func MetricRose(subject, metric, delta, span, from, to string) string {
 	return subject + ": " + metric + " rose by " + delta + " over " + span + " (from " + from + " to " + to + ")."
 }
 
-// MetricSampleOverlap (Correlation): a metric sample falls inside a stalled
-// audit interval.
-func MetricSampleOverlap(source, metric, value string) string {
-	return "A " + source + " sample showed " + metric + " at " + value + " during this interval (Correlation)."
+// MetricSampleOverlap (Correlation): metric samples fall inside a stalled
+// audit interval. The source is a name without the word "sample"; samples is
+// how many samples the sentence speaks of (see sampleSubject).
+func MetricSampleOverlap(source string, samples int, metric, value string) string {
+	return sampleSubject(source, samples) + " showed " + metric + " at " + value + " during this interval (Correlation)."
 }
 
 // MarkerBefore (Correlation): a marker event (a restart, a recycle, a crash)
