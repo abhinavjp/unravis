@@ -1,0 +1,7 @@
+JobId,Queue,Cron,TimeZoneId,LastExecution,NextExecution,CreatedAt
+job-alpha,default,*/15 * * * *,UTC,2001-03-24T05:00:00Z,2001-03-24T05:15:00Z,2001-01-01T00:00:00Z
+job-beta,critical,30 2 * * *,Europe/Berlin,2001-03-24T01:30:00+01:00,2001-03-25T02:30:00+01:00,2001-01-02T00:00:00Z
+job-gamma,default,0 0 L * *,UTC,,,2001-01-03T00:00:00Z
+job-delta,default,0 */6 * * *,Synthetic Standard Time,985400000,985421600,2001-01-04T00:00:00Z
+job-epsilon,low,10 0 12 * * *,W. Europe Standard Time,985420000000,,2001-01-05T00:00:00Z
+job-zeta,default,0 3 * * 1-5,Pacific Standard Time,,,2001-01-06T00:00:00Z
