@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { Completion, NumberRange, Query, RangeKey } from '../lib/types';
-  import { bucketForWindows, fromLocalParts, quickRange, quickRanges, toLocalDatePart, toLocalTimePart, zones, type QuickRangeId } from '../lib/time';
+  import { bucketForWindows, fromLocalParts, quickRange, quickRanges, toLocalDatePart, toLocalTimePart, type QuickRangeId } from '../lib/time';
   import { metricLabels } from '../lib/presentation';
   import { activeRangeId } from '../lib/depth';
   import { RANGE_FIELDS, buildRange, isValidOperation, isValidUserId, rangeConflict, splitList, syncListDraft, syncOperationDraft, syncRangeDraft } from '../lib/investigation';
@@ -215,9 +215,7 @@
           <div class="control-group"><span class="label-line"><label for="bucket">Chart interval (seconds)</label><Hint termId="time-slice" /></span><input id="bucket" type="number" min="10" max="86400" step="1" bind:value={query.bucketSeconds} /><p class="field-note">10–86,400 seconds; no more than 120 points.</p></div>
         </div>
         <div class="control-group"><span class="label-line"><label for="latency-target">Optional response-time target (ms)</label><Hint termId="p95" /></span><input id="latency-target" type="number" min="0.01" step="any" bind:value={targetMs} placeholder="No target" /><p class="field-note">Adds a chart line and compares it with P95: the estimated time within which about 95 of 100 requests with usable timings finish.</p></div>
-        <div class="field-grid"><div class="control-group"><label for="controller">Controller name</label><input id="controller" bind:value={query.controller} placeholder="Any controller" /></div><div class="control-group"><label for="action">Action name</label><input id="action" bind:value={query.action} placeholder="Any action" /></div></div>
-        <div class="control-group"><label for="display-zone">Chart labels time zone</label><select id="display-zone" bind:value={zone}>{#each zones as item}<option value={item}>{item}</option>{/each}</select><p class="field-note">Changes chart labels only; it does not change either selected period.</p></div>
-      </div>
+        <div class="field-grid"><div class="control-group"><label for="controller">Controller name</label><input id="controller" bind:value={query.controller} placeholder="Any controller" /></div><div class="control-group"><label for="action">Action name</label><input id="action" bind:value={query.action} placeholder="Any action" /></div></div>      </div>
     </details>
     <details class="advanced-filters record-filters">
       <summary>Record filters{#if chips.length} <span class="record-count" aria-label="{chips.length} record filters in use">{chips.length}</span>{/if}</summary>
