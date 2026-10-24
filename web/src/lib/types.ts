@@ -218,3 +218,22 @@ export interface Hypothesis {
   /** Reasons "strong correlation" is blocked right now; empty when it would be allowed. */
   guards: string[]; createdAt: string; updatedAt: string; history: { state: HypothesisState; at: string; note: string }[];
 }
+
+// P13 evidence export. Counts below 20 arrive masked as "<20".
+export interface EvidenceCount { value?: number; masked: boolean; text: string }
+export interface EvidenceRecord {
+  version: number; evidenceId: string; source: string; windowStart: string; windowEnd: string; joinClass: string; tolerance: string;
+  provenance: { kind: string; ref: string; hash: string }; label: string; rule: string; headline: string; n: EvidenceCount; lowN: boolean;
+  knownGaps: string[];
+  sourceQuality: { sourceVersion?: string; threshold?: string; coverageFirst?: string; coverageLast?: string; sampling?: string; timezoneRule?: string };
+}
+export interface EvidenceExport {
+  manifest: { schemaVersion: number; toolVersion: string; createdAt: string; bodySha256: string; masking: { statements: string[] } };
+  body: {
+    records: EvidenceRecord[]; pseudonyms?: { label: string; requests: EvidenceCount }[];
+    ledger?: { text: string; state: HypothesisState; evidenceIds: string[] }[];
+  };
+}
+export interface ExportPreviewInput { sourceIds: string[]; start: string; end: string; includePseudonyms: boolean; includeLedger: boolean }
+export interface ExportPreview { previewId: string; export: EvidenceExport }
+export interface ExportFile { filename: string; content: string; sha256: string }

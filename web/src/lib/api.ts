@@ -1,4 +1,4 @@
-import type { Analysis, Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, Hypothesis, HypothesisInput } from './types';
+import type { Analysis, Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile } from './types';
 
 const token = document.querySelector<HTMLMetaElement>('meta[name="audit-session"]')?.content ?? '';
 const base = '/api';
@@ -71,6 +71,8 @@ export const api = {
   ledgerUpdate: (id: string, input: HypothesisInput) => request<Hypothesis>('/ledger/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(input) }),
   ledgerReuse: (id: string) => request<Hypothesis>('/ledger/' + encodeURIComponent(id) + '/reuse', { method: 'POST' }),
   ledgerDelete: (id: string) => request<void>('/ledger/' + encodeURIComponent(id), { method: 'DELETE' }),
+  exportPreview: (input: ExportPreviewInput) => request<ExportPreview>('/export/preview', json(input)),
+  exportConfirm: (previewId: string) => request<ExportFile>('/export/confirm', json({ previewId })),
   analyze: (query: Query, signal?: AbortSignal) => request<Analysis>('/analyze', json(query), signal),
   breakdown: (query: Query, dim: BreakdownDim, top = 20, signal?: AbortSignal) =>
     request<Breakdown>('/breakdown', json({ query, dim, top }), signal),

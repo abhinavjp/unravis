@@ -239,6 +239,14 @@ func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 		h.patterns(w, r)
 		return
 	}
+	if route == "/api/export/preview" && r.Method == http.MethodPost {
+		h.exportPreview(w, r)
+		return
+	}
+	if route == "/api/export/confirm" && r.Method == http.MethodPost {
+		h.exportConfirm(w, r)
+		return
+	}
 	if route == "/api/ledger" || strings.HasPrefix(route, "/api/ledger/") {
 		h.serveLedger(w, r)
 		return
