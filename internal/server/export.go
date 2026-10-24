@@ -71,15 +71,9 @@ func newExportStore() *exportStore {
 	return &exportStore{items: map[string]storedExport{}, now: time.Now}
 }
 
-// exportStores gives each handler its own store without a field on handler.
-var exportStores sync.Map // *handler -> *exportStore
-
 func (h *handler) exports() *exportStore {
-	if s, ok := exportStores.Load(h); ok {
-		return s.(*exportStore)
-	}
-	s, _ := exportStores.LoadOrStore(h, newExportStore())
-	return s.(*exportStore)
+	h.exportOnce.Do(func() { h.exportStore = newExportStore() })
+	return h.exportStore
 }
 
 // evictLocked drops expired previews, then the oldest until there is room for one more.

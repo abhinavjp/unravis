@@ -40,6 +40,9 @@ type handler struct {
 	history savedHistory
 	ledger  ledger.Store
 	tests   connectionTestLimiter
+
+	exportOnce  sync.Once
+	exportStore *exportStore
 }
 
 type savedHistory interface {
