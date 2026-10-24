@@ -1,0 +1,10 @@
+timestamp_utc,name,wait_type,duration,component,state,error_number,severity,opcode
+SENTINEL-7f3a,wait_info,LCK_M_X,35000,,,,,End
+2001-06-15 02:00:35.0000000,wait_info,LCK_M_X,SENTINEL-7f3a,,,,,End
+2001-06-15 02:00:36.0000000,wait_info,SENTINEL-7f3a,31000,,,,,End
+2001-06-15 02:00:37.0000000,error_reported,,,,,SENTINEL-7f3a,20,End
+2001-06-15 02:00:38.0000000,SENTINEL-7f3a,,,,,,,End
+2001-06-15 02:00:39.0000000,sp_server_diagnostics_component_result,,,SENTINEL-7f3a,SENTINEL-7f3a,,,End
+2001-06-15 02:00:40.0000000,wait_info,LCK_M_S,32000,,,,,SENTINEL-7f3a
+2001-06-15 02:00:41.0000000,wait_info,=HYPERLINK("x"),32000,,,,,End
+2001-06-15 02:00:42.0000000,wait_info,LCK_M_S,"32000,SENTINEL-7f3a
