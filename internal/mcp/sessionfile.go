@@ -28,9 +28,13 @@ const (
 	minTokenRunes = 32
 )
 
+// Pid is the dashboard's process id. The bridge uses it to tell a stale file
+// (the process is gone) from a live one, and on Windows to check that this
+// process still owns the port. Files written before it existed omit it.
 type sessionRecord struct {
 	Port  int    `json:"port"`
 	Token string `json:"token"`
+	Pid   int    `json:"pid,omitempty"`
 }
 
 // SessionDir is the per-user application folder: AUDIT_CONFIG_DIR when set,
@@ -71,14 +75,19 @@ func ValidToken(token string) bool {
 	return true
 }
 
-// WriteSessionFile records port and token at path. The folder is created
-// owner-only and the file is written owner-only (0600) to a temporary name,
-// flushed and renamed into place, so a reader never sees a partial file.
+// WriteSessionFile records port, token and this process's id at path. The
+// folder is created owner-only and the file is written owner-only (0600) to a
+// temporary name, flushed and renamed into place, so a reader never sees a
+// partial file.
 func WriteSessionFile(path string, port int, token string) error {
-	if port < 1 || port > 65535 || !ValidToken(token) {
+	return writeSessionRecord(path, sessionRecord{Port: port, Token: token, Pid: os.Getpid()})
+}
+
+func writeSessionRecord(path string, record sessionRecord) error {
+	if record.Port < 1 || record.Port > 65535 || !ValidToken(record.Token) || record.Pid < 0 {
 		return errors.New("invalid session")
 	}
-	data, err := json.Marshal(sessionRecord{Port: port, Token: token})
+	data, err := json.Marshal(record)
 	if err != nil {
 		return err
 	}
@@ -110,28 +119,33 @@ func WriteSessionFile(path string, port int, token string) error {
 
 // ReadSessionFile returns the port and token recorded at path.
 func ReadSessionFile(path string) (int, string, error) {
+	record, err := readSessionRecord(path)
+	return record.Port, record.Token, err
+}
+
+func readSessionRecord(path string) (sessionRecord, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return 0, "", err
+		return sessionRecord{}, err
 	}
 	defer file.Close()
 	data, err := io.ReadAll(io.LimitReader(file, maxSessionFileBytes+1))
 	if err != nil {
-		return 0, "", err
+		return sessionRecord{}, err
 	}
 	if len(data) > maxSessionFileBytes {
-		return 0, "", errors.New("session file too large")
+		return sessionRecord{}, errors.New("session file too large")
 	}
 	var record sessionRecord
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&record); err != nil {
-		return 0, "", errors.New("session file is not valid")
+		return sessionRecord{}, errors.New("session file is not valid")
 	}
-	if record.Port < 1 || record.Port > 65535 || !ValidToken(record.Token) {
-		return 0, "", errors.New("session file is not valid")
+	if record.Port < 1 || record.Port > 65535 || !ValidToken(record.Token) || record.Pid < 0 {
+		return sessionRecord{}, errors.New("session file is not valid")
 	}
-	return record.Port, record.Token, nil
+	return record, nil
 }
 
 // RemoveSessionFile deletes the session file at path only while it still holds

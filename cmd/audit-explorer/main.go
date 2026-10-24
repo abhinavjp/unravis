@@ -178,10 +178,12 @@ func run(args []string, getenv func(string) string) error {
 	if sessionErr == nil {
 		sessionErr = mcp.WriteSessionFile(sessionPath, listener.Addr().(*net.TCPAddr).Port, token)
 	}
+	removeSession := func() {}
 	if sessionErr != nil {
 		log.Printf("Session file not written; --mcp needs --port and AUDIT_SESSION_TOKEN to reach this dashboard")
 	} else {
-		defer func() { _ = mcp.RemoveSessionFile(sessionPath, token) }()
+		removeSession = func() { _ = mcp.RemoveSessionFile(sessionPath, token) }
+		defer removeSession()
 	}
 
 	if !*noBrowser && runtime.GOOS == "windows" {
@@ -197,17 +199,37 @@ func run(args []string, getenv func(string) string) error {
 		}
 		return err
 	case <-signalContext.Done():
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := httpServer.Shutdown(ctx); err != nil {
-			_ = httpServer.Close()
-			return fmt.Errorf("server shutdown did not finish cleanly")
+		if err := shutdownOnSignal(removeSession, httpServer); err != nil {
+			return err
 		}
 		if err := <-serveDone; err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
 		return nil
 	}
+}
+
+// shutdownTimeout stays under the five seconds Windows gives a console process
+// after its window is closed (CTRL_CLOSE_EVENT, delivered as SIGTERM).
+const shutdownTimeout = 4 * time.Second
+
+type shutdowner interface {
+	Shutdown(context.Context) error
+	Close() error
+}
+
+// shutdownOnSignal removes the session file first, so a dashboard killed while
+// it drains requests never leaves a file pointing at a port it no longer
+// holds, then shuts the server down within shutdownTimeout.
+func shutdownOnSignal(removeSession func(), server shutdowner) error {
+	removeSession()
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		_ = server.Close()
+		return fmt.Errorf("server shutdown did not finish cleanly")
+	}
+	return nil
 }
 
 // openLedger opens the hypothesis ledger. Demo mode keeps it in memory; live
