@@ -111,3 +111,36 @@ export function applyChipPatch(query: Query, chip: Pick<FilterChip, 'patch'>): v
 
 /** The count shown on the More filters button. */
 export const moreFiltersCount = (query: Query): number => filterChips(query).length;
+
+export interface EvidenceTab { id: 'timeline' | 'phases' | 'failures' | 'incomplete' | 'slowest' | 'breakdown'; label: string }
+export interface EvidenceContext {
+  /** An operation (controller, action and request type) is open. */
+  operation: boolean;
+  /** One API group (source, action, type, outcome) drives the charts. */
+  group: boolean;
+  /** The query that scopes Failures and Breakdown exists. */
+  scoped: boolean;
+  /** The group has a phase split or a payload time to show. */
+  phases: boolean;
+  /** Failed events in the operation or group; 0 when none are known. */
+  failed: number;
+  /** Incomplete, pending and unusable events of the operation or group. */
+  unfinished: number;
+}
+
+/**
+ * The tabs the evidence frame offers. An operation or one of its groups shows only what exists for it (Slowest is limited to that
+ * operation). A comparison-wide context (all operations, an overview or quality drill, a breakdown filter) has no single group, but its
+ * comparison-wide Failures, Breakdown and Slowest stay reachable, as they always were.
+ */
+export function evidenceTabs(context: EvidenceContext): EvidenceTab[] {
+  const tabs: EvidenceTab[] = [];
+  const focused = context.operation || context.group;
+  if (context.group) tabs.push({ id: 'timeline', label: 'Timeline' });
+  if (context.group && context.phases) tabs.push({ id: 'phases', label: 'Phases' });
+  if (context.scoped && (!focused || context.failed > 0)) tabs.push({ id: 'failures', label: 'Failures' });
+  if (context.operation && context.unfinished > 0) tabs.push({ id: 'incomplete', label: 'Incomplete' });
+  tabs.push({ id: 'slowest', label: 'Slowest' });
+  if (context.scoped) tabs.push({ id: 'breakdown', label: 'Breakdown' });
+  return tabs;
+}

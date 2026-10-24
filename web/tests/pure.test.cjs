@@ -1472,3 +1472,101 @@ test('a sparkline comes from the busiest comparison group of the operation and i
   assert.deepEqual(pulse.sparkSeries(analysisLike, { controller: 'Z', action: 'none', kind: 'synchronous' }, 'p95'), []);
   assert.deepEqual(pulse.sparkSeries(analysisLike, { controller: 'A', action: 'one', kind: 'asynchronous' }, 'p95'), []);
 });
+
+const autorun = loadTypeScript('src/lib/autorun.ts');
+const scopeAt = (extra = {}) => ({ ...time.defaultQuery(new Date('2026-10-22T12:00:00Z'), ['source-1']), ...extra });
+
+test('an automatic run is blocked by the same problems, in the same order, as a manual run', () => {
+  assert.equal(autorun.scopeProblem(scopeAt(), true), null);
+  assert.match(autorun.scopeProblem(scopeAt(), false), /valid local value/);
+  assert.match(autorun.scopeProblem(scopeAt({ sourceIds: [] }), true), /Select at least one source/);
+  assert.match(autorun.scopeProblem(scopeAt({ start: scopeAt().end, end: scopeAt().start }), true), /earlier than its end/);
+  assert.match(autorun.scopeProblem(scopeAt({ baselineEnd: scopeAt().end }), true), /reference window must end/);
+  assert.match(autorun.scopeProblem(scopeAt({ bucketSeconds: 5 }), true), /Bucket size/);
+  assert.match(autorun.scopeProblem(scopeAt({ bucketSeconds: 10, start: '2026-10-22T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-10-21T12:00:00Z', baselineEnd: '2026-10-22T00:00:00Z' }), true), /more than 120 time points/);
+  assert.match(autorun.scopeProblem(scopeAt({ start: '2026-10-01T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-09-01T00:00:00Z', baselineEnd: '2026-10-01T00:00:00Z' }), true), /at most 7 days/);
+});
+
+test('the run hint names what is missing instead of raising an error', () => {
+  assert.equal(autorun.scopeHint(scopeAt(), true), '');
+  assert.equal(autorun.scopeHint(scopeAt({ sourceIds: [] }), true), 'Choose a source to run the analysis.');
+  assert.equal(autorun.scopeHint(scopeAt(), false), 'Complete the dates to run the analysis.');
+});
+
+test('only a landing window of at most 24 hours runs by itself', () => {
+  const hours = (count) => ({ start: '2026-10-22T00:00:00Z', end: new Date(Date.parse('2026-10-22T00:00:00Z') + count * 3_600_000).toISOString() });
+  assert.equal(autorun.landingMayAutoRun(hours(1)), true);
+  assert.equal(autorun.landingMayAutoRun(hours(24)), true);
+  assert.equal(autorun.landingMayAutoRun(hours(25)), false);
+  assert.equal(autorun.landingMayAutoRun(hours(168)), false);
+  assert.equal(autorun.landingMayAutoRun({ start: 'nonsense', end: hours(1).end }), false);
+  assert.equal(autorun.landingMayAutoRun(hours(0)), false);
+});
+
+test('a scope change runs only when the scope is valid and is not what is shown or already in flight', () => {
+  const decide = (state) => autorun.autoRunDecision({ problem: null, signature: 'B', shown: 'A', inflight: null, ...state });
+  assert.equal(decide({}), 'run');
+  assert.equal(decide({ shown: 'B' }), 'skip');
+  assert.equal(decide({ shown: null }), 'run');
+  assert.equal(decide({ problem: 'Choose a source' }), 'skip');
+  assert.equal(decide({ inflight: 'B' }), 'skip');
+  assert.equal(decide({ inflight: 'C' }), 'run');
+  assert.equal(decide({ inflight: 'C', shown: 'B' }), 'run');
+});
+
+test('a burst of scope changes becomes one run after the quiet period and the last change wins', () => {
+  let now = 0; let nextId = 1; const timers = new Map();
+  const fake = { set: (fn, ms) => { const id = nextId++; timers.set(id, { fn, at: now + ms }); return id; }, clear: (id) => { timers.delete(id); } };
+  const advance = (ms) => { now += ms; for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.fn(); } };
+  let runs = 0;
+  const coalescer = autorun.createCoalescer(() => { runs++; }, autorun.AUTO_RUN_DELAY_MS, fake);
+  assert.equal(autorun.AUTO_RUN_DELAY_MS, 300);
+  coalescer.schedule(); advance(200);
+  coalescer.schedule(); advance(200);
+  coalescer.schedule(); advance(299);
+  assert.equal(runs, 0);
+  assert.equal(coalescer.pending, true);
+  advance(1);
+  assert.equal(runs, 1);
+  assert.equal(coalescer.pending, false);
+  advance(1000);
+  assert.equal(runs, 1);
+  coalescer.schedule(); coalescer.cancel(); advance(1000);
+  assert.equal(runs, 1);
+  assert.equal(coalescer.pending, false);
+});
+
+test('the evidence frame always keeps Slowest, and comparison-wide contexts keep Failures and Breakdown', () => {
+  const ids = (context) => depth.evidenceTabs({ operation: false, group: false, scoped: true, phases: false, failed: 0, unfinished: 0, ...context }).map(tab => tab.id);
+  assert.deepEqual(ids({}), ['failures', 'slowest', 'breakdown']);
+  assert.deepEqual(ids({ scoped: false }), ['slowest']);
+  assert.deepEqual(ids({ operation: true, group: true, phases: true, failed: 3, unfinished: 2 }), ['timeline', 'phases', 'failures', 'incomplete', 'slowest', 'breakdown']);
+  assert.deepEqual(ids({ operation: true, group: true }), ['timeline', 'slowest', 'breakdown']);
+  assert.deepEqual(ids({ group: true, failed: 1 }), ['timeline', 'failures', 'slowest', 'breakdown']);
+  assert.ok(ids({ operation: true }).includes('slowest'));
+});
+
+test('the all-operations drill is comparison-wide: no controller or action, every state, and the comparison request type', () => {
+  const { allOperationsDrill } = loadTypeScript('src/lib/overview.ts');
+  const all = allOperationsDrill();
+  assert.equal(all.kind, 'all');
+  assert.equal(all.state, 'all');
+  assert.equal(all.controller, undefined);
+  assert.equal(all.action, undefined);
+  assert.equal(all.label, 'All operations');
+  assert.equal(allOperationsDrill('asynchronous').kind, 'asynchronous');
+});
+
+test('the redesign keeps its contrast, status and navigation fixes in the sources', () => {
+  const css = fs.readFileSync(path.join(root, 'src/app.css'), 'utf8');
+  const phaseBar = fs.readFileSync(path.join(root, 'src/components/PhaseBar.svelte'), 'utf8');
+  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  assert.equal((css.match(/--control-line:\s*#[0-9a-f]{6}/gi) ?? []).length, 3, 'one control boundary per theme block');
+  assert.match(css, /input, select[^{]*\{[^}]*border[^;]*var\(--control-line\)/);
+  assert.match(css, /::placeholder\s*\{[^}]*opacity:\s*1/);
+  assert.doesNotMatch(phaseBar, /--pending/);
+  assert.doesNotMatch(css, /max-width:\s*14ch/);
+  assert.match(css, /\.crumbs li:last-child\s*\{[^}]*flex:\s*1 1 auto/);
+  assert.doesNotMatch(app, /onclick=\{runAnalysis\}/);
+  assert.match(app, /scopeRun\.schedule\(\)/);
+});

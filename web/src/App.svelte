@@ -2,13 +2,13 @@
   import { onMount, tick, untrack } from 'svelte';
   import { api } from './lib/api';
   import { defaultQuery } from './lib/time';
-  import { countEpochBuckets } from './lib/time';
   import { initialComparison, kindLabel, metricLabels, queryFingerprint, qualityByKindText, resultNotes, rankComparisons, stateLabel, unknownKindTip } from './lib/presentation';
   import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, serializeRecordFilters, shouldSelectAddedSource, writeInvestigationSnapshot } from './lib/investigation';
   import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './lib/types';
   import { applyDrill, breakdownDims, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './lib/breakdown';
   import { theme } from './lib/theme.svelte';
-  import { applyChipPatch, breadcrumb, depthOf, filterChips, moreFiltersCount, type FilterChip } from './lib/depth';
+  import { applyChipPatch, breadcrumb, depthOf, evidenceTabs, filterChips, moreFiltersCount, type FilterChip } from './lib/depth';
+  import { autoRunDecision, createCoalescer, landingMayAutoRun, scopeHint, scopeProblem } from './lib/autorun';
   import type { Lens } from './lib/pulse';
   import Pulse from './components/Pulse.svelte';
   import WhereList from './components/WhereList.svelte';
@@ -31,7 +31,7 @@
   import OverviewStrip from './components/OverviewStrip.svelte';
   import IncompletePanel from './components/IncompletePanel.svelte';
   import { applyStaleFilters } from './lib/incomplete';
-  import { drillHeading, operationDrill, type OverviewDrill } from './lib/overview';
+  import { allOperationsDrill, drillHeading, operationDrill, type OverviewDrill } from './lib/overview';
   import { phaseSegments } from './lib/phases';
   import { rollupFor } from './lib/traffic';
 
@@ -117,6 +117,7 @@
   let recordController: AbortController | null = null;
   let analysisSequence = 0;
   let requestSequence = 0;
+  let recordSequence = 0;
   let querySnapshot = '';
   let connectionsOpen = $state(false);
   let connectionTab = $state<'saved' | 'new'>('saved');
@@ -130,6 +131,9 @@
   let inspectorTab = $state('timeline');
   let splitDim = $state<BreakdownDim | ''>('');
   let autoRan = false;
+  // The scope fingerprint of the run in flight; '' when none. Scope changes coalesce into one automatic run through scopeRun.
+  let inflightSignature = '';
+  const scopeRun = createCoalescer(() => flushScope());
   let evidenceReturnFocus: HTMLElement | null = null;
 
   const connectionSignature = $derived(JSON.stringify([addUri, addUsername, addPassword, addAuthSource, addTLSMode, addCACertificate, savedConnectionId]));
@@ -172,24 +176,25 @@
   const depth = $derived(depthOf(nav));
   const operationGroups = $derived(operation ? operationRows(operation) : []);
   const evidenceName = $derived(operation ? operation.controller + '.' + operation.action : selected ? selected.controller + '.' + selected.action : drillOverview ? drillOverview.label : queryWide ? stateLabel(requestState) : drillActive ? 'Filtered requests' : 'Operation');
+  // No operation and no group: the evidence is comparison-wide (all operations, an overview or quality drill, a breakdown filter).
+  const drillOperation = $derived(drillOverview?.controller !== undefined && drillOverview.action !== undefined ? drillOverview : null);
+  const comparisonWide = $derived(hasContext && !operation && !selected && !drillOperation);
+  const runHint = $derived(scopeHint(query, dateInputsValid));
+  // Slowest follows the operation that is open, or the one a drill (a table row's counts, the stale list) narrowed to; otherwise it is comparison-wide.
+  const slowScope = $derived(operation && analysis
+    ? { ...operationDrill(operation, analysis.query.kind), label: operation.controller + '.' + operation.action + ' · ' + kindLabel(operation.kind ?? 'unknown') }
+    : drillOperation ? { kind: drillOperation.kind, controller: drillOperation.controller, action: drillOperation.action, label: drillOperation.controller + '.' + drillOperation.action + (drillOperation.kind === 'all' ? '' : ' · ' + kindLabel(drillOperation.kind === 'http_unknown' ? 'unknown' : drillOperation.kind)) } : null);
   const crumbs = $derived(breadcrumb(nav, { evidence: evidenceName }));
   const filterChipList = $derived(filterChips(query));
   const moreCount = $derived(moreFiltersCount(query));
   const scopedQuery = $derived<Query | null>(breakdownQuery && operation ? operationQuery(breakdownQuery, operation) : breakdownQuery);
   const selectedStats = $derived(selected?.current);
-  const inspectorTabs = $derived.by(() => {
-    const tabs: Array<{ id: string; label: string }> = [];
-    if (!operation && !selected) return tabs;
-    if (selected) tabs.push({ id: 'timeline', label: 'Timeline' });
-    if (selected && (phaseSegments(selectedStats?.phases) || (selectedStats?.phases?.payloadMs != null && Number.isFinite(selectedStats.phases.payloadMs)))) tabs.push({ id: 'phases', label: 'Phases' });
-    const failed = (operation?.failures ?? 0) + (selectedStats?.clientErrors ?? 0) + (selectedStats?.serverErrors ?? 0);
-    if (failed > 0 && scopedQuery) tabs.push({ id: 'failures', label: 'Failures' });
-    const unfinished = (operation?.incomplete ?? 0) + (operation?.pending ?? 0) + (operation?.invalid ?? 0) + (selectedStats?.incomplete ?? 0) + (selectedStats?.pending ?? 0) + (selectedStats?.invalid ?? 0);
-    if (unfinished > 0 && operation) tabs.push({ id: 'incomplete', label: 'Incomplete' });
-    if (selected) tabs.push({ id: 'slowest', label: 'Slowest' });
-    if (scopedQuery) tabs.push({ id: 'breakdown', label: 'Breakdown' });
-    return tabs;
-  });
+  const inspectorTabs = $derived(evidenceTabs({
+    operation: operation != null, group: selected != null, scoped: scopedQuery != null,
+    phases: !!(selected && (phaseSegments(selectedStats?.phases) || (selectedStats?.phases?.payloadMs != null && Number.isFinite(selectedStats.phases.payloadMs)))),
+    failed: (operation?.failures ?? 0) + (selectedStats?.clientErrors ?? 0) + (selectedStats?.serverErrors ?? 0),
+    unfinished: (operation?.incomplete ?? 0) + (operation?.pending ?? 0) + (operation?.invalid ?? 0) + (selectedStats?.incomplete ?? 0) + (selectedStats?.pending ?? 0) + (selectedStats?.invalid ?? 0)
+  }));
   const activeTab = $derived(inspectorTabs.find(tab => tab.id === inspectorTab)?.id ?? inspectorTabs[0]?.id ?? '');
   const openKey = $derived(operation ? operation.controller + '\u0000' + operation.action + '\u0000' + (operation.kind ?? '') : '');
   const failureCohort = $derived<string[] | null>(operation ? operationGroups.map(group => group.key) : selected ? [selected.key] : null);
@@ -472,7 +477,7 @@
     }
   }
   function invalidateDetails() {
-    requestController?.abort(); recordController?.abort();
+    requestController?.abort(); recordController?.abort(); recordSequence++;
     requestController = null; recordController = null;
     requestPage = null; requestRows = []; record = null; drill = {};
     requestPageNumber = 1; requestState = ''; queryWide = false; drillOverview = null;
@@ -516,6 +521,7 @@
       analysisSequence++;
       analysisController?.abort();
       analysisController = null;
+      inflightSignature = '';
       loading = false;
       invalidateDetails();
       operation = null; selectedKey = ''; contextAnchor = null;
@@ -523,11 +529,13 @@
     querySnapshot = current;
   });
 
-  // The landing run: sources are chosen and the dates are valid, so the pulse is ready without a button press. Later scope changes run through onScopeChange.
+  // The landing run: sources are chosen and the dates are valid, so the pulse is ready without a button press. Only a primary window of at most
+  // 24 hours starts by itself; a wider one (a restored 7-day snapshot) waits for the Run analysis button. Later scope changes run through onScopeChange.
   $effect(() => {
     if (autoRan || !info || !sources.length || !query.sourceIds.length || !dateInputsValid || !investigationReady) return;
     autoRan = true;
-    untrack(() => { void runAnalysis(); });
+    if (!landingMayAutoRun(query)) return;
+    untrack(() => { void runAnalysis(true); });
   });
 
   $effect(() => {
@@ -541,8 +549,9 @@
   });
 
   function resetInvestigation() {
+    scopeRun.cancel();
     analysisSequence++;
-    analysisController?.abort(); analysisController = null; loading = false;
+    analysisController?.abort(); analysisController = null; inflightSignature = ''; loading = false;
     invalidateDetails();
     analysis = null; selectedKey = ''; error = ''; operation = null; whereOpen = false; contextAnchor = null;
     query = defaultQuery(new Date(), sources.map(source => source.id));
@@ -616,26 +625,18 @@
     } catch (cause) { sourceError = message(cause); }
     finally { busyDelete = ''; }
   }
-  async function runAnalysis() {
-    if (loading) return;
-    error = '';
-    if (!dateInputsValid) { error = 'Complete every date and time with a valid local value before running a comparison.'; return; }
-    if (!query.sourceIds.length) { error = 'Select at least one source before running a comparison.'; return; }
-    const startMs = new Date(query.start).getTime();
-    const endMs = new Date(query.end).getTime();
-    const baselineStartMs = new Date(query.baselineStart).getTime();
-    const baselineEndMs = new Date(query.baselineEnd).getTime();
-    if (!(startMs < endMs) || !(baselineStartMs < baselineEndMs)) {
-      error = 'Each window needs a start time earlier than its end time.'; return;
-    }
-    if (endMs - startMs > 7 * 86400_000 || baselineEndMs - baselineStartMs > 7 * 86400_000) { error = 'Each window can be at most 7 days.'; return; }
-    if (baselineEndMs > startMs) { error = 'The reference window must end at or before the current window starts.'; return; }
-    if (!(Number.isInteger(query.bucketSeconds) && query.bucketSeconds >= 10 && query.bucketSeconds <= 86400)) { error = 'Bucket size must be a whole number between 10 and 86,400 seconds.'; return; }
-    if (countEpochBuckets(startMs, endMs, query.bucketSeconds) > 120 || countEpochBuckets(baselineStartMs, baselineEndMs, query.bucketSeconds) > 120) {
-      error = 'This bucket size creates more than 120 time points. Increase the bucket size or shorten a window.'; return;
-    }
+  // A manual run (the button) reports a problem in the error banner and ignores clicks while loading. An automatic run (a scope change)
+  // never gets here with a problem, replaces an in-flight run, and leaves the banner alone.
+  async function runAnalysis(auto = false) {
+    if (loading && !auto) return;
+    if (!auto) error = '';
+    const problem = scopeProblem(query, dateInputsValid);
+    if (problem) { if (!auto) error = problem; return; }
+    if (auto) error = '';
+    scopeRun.cancel();
     analysisController?.abort(); analysisController = new AbortController();
     const run = ++analysisSequence;
+    inflightSignature = queryFingerprint(query);
     // The previous analysis stays on screen (dimmed) while the new one loads, and nothing is auto-selected afterwards: the pulse is the landing view.
     loading = true; invalidateDetails(); selectedKey = ''; operation = null; contextAnchor = null;
     try {
@@ -650,9 +651,17 @@
           ? 'This comparison reached a processing safety limit. Your settings are kept. Try shorter periods, fewer sources, or a controller or action filter.'
           : detail;
       }
-    } finally { if (run === analysisSequence) loading = false; }
+    } finally { if (run === analysisSequence) { loading = false; inflightSignature = ''; } }
   }
-  function cancelAnalysis() { analysisSequence++; analysisController?.abort(); loading = false; }
+  // Runs once the scope has been quiet for the debounce period: only a valid scope that is not already shown or in flight.
+  function flushScope() {
+    const decision = autoRunDecision({
+      problem: scopeProblem(query, dateInputsValid), signature: queryFingerprint(query),
+      shown: analysis ? queryFingerprint(analysis.query) : null, inflight: inflightSignature || null
+    });
+    if (decision === 'run') void runAnalysis(true);
+  }
+  function cancelAnalysis() { scopeRun.cancel(); analysisSequence++; analysisController?.abort(); inflightSignature = ''; loading = false; }
   async function closeConnections() {
     connectionsOpen = false;
     await tick();
@@ -709,9 +718,16 @@
   }
   function focusSoon(id: string) { void tick().then(() => document.getElementById(id)?.focus({ preventScroll: false })); }
   // D2 for a ranked operation: its whole request list (every event of that controller, action and type), with the first comparison group driving the charts.
+  // The control that opened the evidence frame, kept so Esc or Back returns focus to it. A drill made from inside the open frame (a tab's own
+  // button) never replaces it: that button unmounts with the frame, so the opener is the only place focus can sensibly return to.
+  function rememberOpener() {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement) || active.closest('.inspector')) return;
+    evidenceReturnFocus = active;
+  }
   async function openOperation(row: Rollup, key = '') {
     if (!analysis) return;
-    evidenceReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    rememberOpener();
     contextAnchor = null; invalidateDetails(); selectedKey = '';
     operation = row; inspectorTab = 'timeline';
     queryWide = true; requestState = 'all'; drillOverview = operationDrill(row, analysis.query.kind);
@@ -719,8 +735,14 @@
     await loadRequests('', 1);
     focusSoon('inspector-title');
   }
+  // Stops a record that is still loading, so a late response cannot reopen the request view after the user stepped away.
+  function dropRecord() {
+    recordSequence++; recordController?.abort(); recordController = null;
+    record = null; recordError = ''; recordLoadingId = '';
+  }
   function closeInspector() {
-    requestController?.abort();
+    requestController?.abort(); requestSequence++;
+    dropRecord();
     selectedKey = ''; queryWide = false; requestState = ''; drillOverview = null; drill = {}; operation = null; contextAnchor = null;
     requestPage = null; requestRows = []; requestPageNumber = 1; requestError = ''; requestLoading = false;
     record = null; recordError = '';
@@ -733,7 +755,7 @@
   }
   // One step toward Pulse: the record, then the operation or list, then the ranked view.
   function stepUpOnce() {
-    if (record != null) { record = null; recordError = ''; return; }
+    if (record != null || recordLoadingId) { dropRecord(); return; }
     if (hasContext) { closeInspector(); return; }
     if (whereOpen) { whereOpen = false; compare = false; splitDim = ''; }
   }
@@ -751,9 +773,10 @@
     if (open && (inside || loose)) { open.open = false; open.querySelector<HTMLElement>('summary')?.focus(); return; }
     stepUpOnce();
   }
-  async function onScopeChange() { await tick(); void runAnalysis(); }
-  async function removeChip(chip: FilterChip) { applyChipPatch(query, chip); controlsResetKey++; await onScopeChange(); }
-  async function clearChips() { for (const chip of filterChipList) applyChipPatch(query, chip); controlsResetKey++; await onScopeChange(); }
+  // A scope change (range chip, request type, source, filter) re-runs the analysis after a short quiet period; a burst becomes one run and the last change wins.
+  function onScopeChange() { scopeRun.schedule(); }
+  function removeChip(chip: FilterChip) { applyChipPatch(query, chip); controlsResetKey++; onScopeChange(); }
+  function clearChips() { for (const chip of filterChipList) applyChipPatch(query, chip); controlsResetKey++; onScopeChange(); }
   async function openFromTable(key: string) {
     const row = analysis?.apis.find(item => item.key === key);
     const rollup = row ? rollupFor(analysis?.rollups, row) : undefined;
@@ -775,7 +798,7 @@
     document.getElementById('request-history')?.scrollIntoView({ block: 'start' });
   }
   async function drillQuality(state: string) {
-    evidenceReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null; operation = null;
+    rememberOpener(); operation = null;
     contextAnchor = null; invalidateDetails(); selectedKey = '';
     queryWide = true; requestState = state;
     await loadRequests('', 1);
@@ -783,12 +806,30 @@
     document.getElementById('request-history')?.scrollIntoView({ block: 'start' });
   }
   async function drillFromOverview(drill: OverviewDrill) {
-    evidenceReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null; operation = null;
+    rememberOpener(); operation = null;
     contextAnchor = null; invalidateDetails(); selectedKey = '';
     queryWide = true; requestState = drill.state; drillOverview = drill;
     await loadRequests('', 1);
     await tick();
     document.getElementById('request-history')?.scrollIntoView({ block: 'start' });
+  }
+  // The Incomplete tab's own drill keeps the operation and its group (the list narrows, the frame does not change) and keeps the opener's focus target.
+  async function drillFromIncomplete(next: OverviewDrill) {
+    const keep = operation ? { operation, selectedKey } : null;
+    if (!keep) { await drillFromOverview(next); return; }
+    contextAnchor = null; invalidateDetails();
+    operation = keep.operation; selectedKey = keep.selectedKey;
+    queryWide = true; requestState = next.state; drillOverview = next;
+    await loadRequests('', 1);
+    await tick();
+    document.getElementById('request-history')?.scrollIntoView({ block: 'start' });
+  }
+  // All operations as one evidence frame: every event of the comparison, with its comparison-wide Failures, Breakdown and Slowest.
+  async function openComparison() {
+    if (!analysis) return;
+    rememberOpener();
+    await drillFromOverview(allOperationsDrill(analysis.query.kind));
+    focusSoon('inspector-title');
   }
   // The comparison's query with the overview drill-down's kind and status class applied; unchanged without one.
   function drillQuery(source: Query): Query {
@@ -826,10 +867,14 @@
   }
   async function showRecord(row: RequestRecord) {
     recordController?.abort(); recordController = new AbortController();
+    const run = ++recordSequence;
     recordError = ''; record = null; recordLoadingId = row.id;
-    try { record = await api.record(row.sourceId, row.id, recordController.signal); }
-    catch (cause) { if (!(cause instanceof DOMException && cause.name === 'AbortError')) recordError = message(cause); }
-    finally { if (recordLoadingId === row.id) recordLoadingId = ''; }
+    try {
+      const result = await api.record(row.sourceId, row.id, recordController.signal);
+      if (run === recordSequence) record = result;
+    }
+    catch (cause) { if (run === recordSequence && !(cause instanceof DOMException && cause.name === 'AbortError')) recordError = message(cause); }
+    finally { if (run === recordSequence) recordLoadingId = ''; }
   }
   async function exportCSV() {
     if (!selected && !queryWide) return;
@@ -884,7 +929,7 @@
             {#key controlsResetKey}<QueryControls bind:query bind:zone bind:targetMs bind:dateInputsValid part="panel" groupNames={(analysis?.apis ?? []).map(row => row.controller + '.' + row.action)} now={info?.now ?? ''} {onScopeChange} />{/key}
           </div>
         </details>
-        <div class="run-actions">{#if loading}<button class="quiet-button" onclick={cancelAnalysis}>Cancel run</button>{/if}<button class="primary-button" disabled={loading || !query.sourceIds.length || !dateInputsValid} onclick={runAnalysis}>{loading ? 'Comparing…' : 'Run comparison'}</button></div>
+        <div class="run-actions">{#if runHint}<span class="run-hint" role="status">{runHint}</span>{/if}{#if loading}<button class="quiet-button" onclick={cancelAnalysis}>Cancel run</button>{/if}<button class="primary-button" disabled={loading || !query.sourceIds.length || !dateInputsValid} onclick={() => runAnalysis()}>{loading ? 'Comparing…' : 'Run analysis'}</button></div>
       </div>
       <FilterChips chips={filterChipList} onRemove={removeChip} onClear={clearChips} />
     </section>
@@ -1008,7 +1053,7 @@
         {:else if info}
           {#if error}<div class="banner error-banner" role="alert"><strong>Comparison not run</strong><span>{error}</span></div>{/if}
           {#if analysis}
-            {#if displayedRunIsStale && !loading}<div class="notice frozen-run-note" role="status">The figures below are from the last run. Press <strong>Run comparison</strong> to apply your changes.</div>{/if}
+            {#if displayedRunIsStale && !loading}<div class="notice frozen-run-note" role="status">The figures below are from the last run. Press <strong>Run analysis</strong> to apply your changes.</div>{/if}
             {#if failingSources.length}
               <div class="banner source-failure" role="alert"><strong>{failingSources.length === analysis.sources.length ? 'No sources returned data' : 'Some sources failed'}</strong>
                 {#each failingSources as failed}<span><b>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}:</b> {failed.error || failed.indexWarning || 'Source unavailable'}</span>{/each}
@@ -1018,7 +1063,7 @@
               <!-- D0 Pulse -->
               <div class="view" class:off={depth > 0}>
                 <Pulse {analysis} {zone} onOpen={openWhere} />
-                <div class="pulse-actions"><button type="button" class="primary-button" onclick={() => openWhere(lens)}>Where is it?</button><p>Tap a figure, or open the ranked list of operations.</p></div>
+                <div class="pulse-actions"><button type="button" class="primary-button" onclick={() => openWhere(lens)}>Where is it?</button><button type="button" class="secondary-button" onclick={openComparison}>All operations</button><p>Tap a figure, or open the ranked list of operations.</p></div>
               </div>
 
               <!-- D1 Where -->
@@ -1026,6 +1071,7 @@
                 <div class="view-head">
                   <div><h2 id="where-title" tabindex="-1">Where is it?</h2><p>Operations ranked by the figure you chose. Open one to see the evidence behind it.</p></div>
                   <div class="view-tools">
+                    <button type="button" class="chip" onclick={openComparison}>All operations</button>
                     <button type="button" class="chip" aria-pressed={compare} onclick={() => compare = !compare}>Compare to earlier</button>
                     <details class="menu">
                       <summary>{splitDim ? 'Split by ' + (breakdownDims.find(item => item.dim === splitDim)?.label ?? '') : 'Split by…'}</summary>
@@ -1086,14 +1132,15 @@
 
               <!-- D3 Record -->
               <div class="view record-view" class:off={depth !== 3}>
-                <button type="button" class="back-to-groups" onclick={() => { record = null; recordError = ''; }}>Back to the evidence</button>
+                <button type="button" class="back-to-groups" onclick={dropRecord}>Back to the evidence</button>
                 {#if recordError}<div class="inline-error" role="alert">{recordError}</div>{/if}
-                {#if record}<RecordDetailPanel detail={record} sourceLabel={sourceLabels.get(record.sourceId) ?? record.sourceId} onClose={() => record = null} />{/if}
+                {#if record}<RecordDetailPanel detail={record} sourceLabel={sourceLabels.get(record.sourceId) ?? record.sourceId} onClose={dropRecord} />{/if}
               </div>
             </div>
 
             <!-- D2 Evidence -->
             <Inspector off={depth !== 2} title={evidenceName} subtitle={operation ? kindLabel(operation.kind ?? 'unknown') + ' · ' + operation.requests.toLocaleString() + ' requests' : ''} tabs={inspectorTabs} active={activeTab} onTab={(id) => inspectorTab = id} onClose={closeInspector}>
+              {#if comparisonWide}<p class="sample-note comparison-wide-note">Comparison-wide view: Failures, Slowest and Breakdown cover every operation in this comparison. The request list below follows what you opened.</p>{/if}
               {#if activeTab === 'timeline' && selected}
                 {#if operationGroups.length > 1}
                   <div class="group-pick"><label for="group-select">Group</label>
@@ -1116,9 +1163,9 @@
               {:else if activeTab === 'failures' && scopedQuery}
                 <FailurePanel {analysis} query={scopedQuery} {sourceLabels} {zone} onDrill={drillInto} cohortKeys={failureCohort} />
               {:else if activeTab === 'incomplete' && operation}
-                <IncompletePanel rollups={[operation]} kindFilter={analysis.query.kind} onDrill={drillFromOverview} />
-              {:else if activeTab === 'slowest' && selected}
-                <TrafficSlowness {analysis} {zone} {sourceLabels} cohort={selected} onContext={async (row) => { contextAnchor = row; await tick(); document.getElementById('nearby-activity')?.scrollIntoView({ block: 'start' }); }} />
+                <IncompletePanel rollups={[operation]} kindFilter={analysis.query.kind} onDrill={drillFromIncomplete} />
+              {:else if activeTab === 'slowest'}
+                <TrafficSlowness {analysis} {zone} {sourceLabels} cohort={selected} scope={slowScope} onContext={async (row) => { contextAnchor = row; await tick(); document.getElementById('nearby-activity')?.scrollIntoView({ block: 'start' }); }} />
               {:else if activeTab === 'breakdown' && scopedQuery}
                 <BreakdownPanel query={scopedQuery} {sourceLabels} onDrill={drillInto} />
               {/if}
@@ -1142,12 +1189,13 @@
             <div class="welcome-state">
               <h3>Start an API comparison</h3>
               {#if info.demo}
-                <p>Sample audit sources are ready. Choose the period and filters above, then run a comparison.</p>
+                <p>Sample audit sources are ready. Choose the period and filters above, then run the analysis.</p>
               {:else}
-                <p>Your sources are ready. Choose the period and filters above, then run a comparison.</p>
+                <p>Your sources are ready. Choose the period and filters above, then run the analysis.</p>
               {/if}
-              {#if sources.length && !query.sourceIds.length}<p>Choose at least one database source from the Sources button above to run a comparison.</p>{/if}
-              <button class="primary-button" disabled={!query.sourceIds.length || !dateInputsValid} onclick={runAnalysis}>Run comparison</button>
+              {#if !landingMayAutoRun(query)}<p>This period is longer than 24 hours, so it does not run by itself. Press Run analysis to read it, or pick a shorter range above.</p>{/if}
+              {#if sources.length && !query.sourceIds.length}<p>Choose at least one database source from the Sources button above to run the analysis.</p>{/if}
+              <button class="primary-button" disabled={!query.sourceIds.length || !dateInputsValid} onclick={() => runAnalysis()}>Run analysis</button>
             </div>
           {/if}
           <div class="notice frozen-run-note" role="status">{restoredInTab ? 'Restored this tab’s investigation filters. ' : ''}{investigationNotice} <button class="quiet-button" onclick={resetInvestigation}>Reset investigation</button></div>

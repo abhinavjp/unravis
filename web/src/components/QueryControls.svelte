@@ -162,6 +162,8 @@
   };
   // A quick range ends now (the server's clock) and compares with the equal-length period right before it.
   const applyQuickRange = (id: QuickRangeId) => {
+    // Choosing the range that is already active changes nothing: the windows would only shift to a later "now" and force a pointless run.
+    if (activeRange === id && !invalidWindows.length) return;
     const base = new Date(now);
     Object.assign(query, quickRange(id, Number.isFinite(base.getTime()) ? base : new Date()));
     invalidWindows = []; timeInputError = '';

@@ -10,6 +10,7 @@
   --surface-2: #1c222b;
   --line: #2a323d;
   --line-soft: #202731;
+  --control-line: #738091;
   --text: #e8ecf1;
   --text-2: #9aa6b5;
   --accent: #6ea8ff;
@@ -41,6 +42,7 @@
     --surface-2: #eef1f5;
     --line: #d5dbe3;
     --line-soft: #e6eaf0;
+    --control-line: #74808f;
     --text: #151b24;
     --text-2: #4d5a6b;
     --accent: #2457c5;
@@ -72,6 +74,7 @@
   --surface-2: #eef1f5;
   --line: #d5dbe3;
   --line-soft: #e6eaf0;
+  --control-line: #74808f;
   --text: #151b24;
   --text-2: #4d5a6b;
   --accent: #2457c5;
@@ -302,7 +305,15 @@ summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; bo
 .disclosure > summary small { margin-left: auto; color: var(--text-2); font-weight: 400; font-size: 12px; }
 .disclosure-body { display: grid; gap: 12px; padding: 0 14px 14px; min-width: 0; }
 .disclosure-body > .data-section, .disclosure-body > .overview-strip { margin: 0; }
-.disclosure .data-section { border-color: var(--line-soft); }
+/* One surfaced level only: inside a disclosure the sections, tiles and strips lose their own frame and are separated by hairlines and space. */
+.disclosure .data-section, .disclosure .plot-panel, .disclosure .overview-kind, .disclosure .quality-strip { background: transparent; border: 0; border-radius: 0; }
+.disclosure .plot-panel { padding: 0; }
+.disclosure .overview-kind { padding: 12px 0 0; border-top: 1px solid var(--line-soft); }
+.disclosure .overview-kind:first-child { padding-top: 0; border-top: 0; }
+.overview-kind .overview-tile { background: transparent; border: 0; border-radius: 0; padding: 4px 12px 4px 0; }
+.overview-kind .overview-tiles { gap: 6px 16px; }
+.overview-kind .overview-drill:hover:not(:disabled) strong { color: var(--accent); }
+.disclosure .quality-strip { padding: 0; }
 
 /* ---------- D2 inspector ---------- */
 .inspector { min-width: 0; position: fixed; z-index: 11; top: var(--header-h); right: 0; bottom: 0; width: var(--drawer-w); display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--line); box-shadow: -12px 0 32px color-mix(in srgb, var(--bg) 60%, transparent); animation: slide-in 200ms var(--ease) both; }
@@ -387,8 +398,8 @@ summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; bo
 .control-group { display: grid; gap: 6px; margin-top: 12px; }
 .control-group > label, .field-label, .source-form label { display: block; margin-top: 4px; color: var(--text-2); font-size: 12px; font-weight: 650; }
 .control-group select { appearance: auto; }
-input, select { min-width: 0; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 7px 9px; font-size: 13px; }
-input::placeholder { color: var(--text-2); opacity: .7; }
+input, select { min-width: 0; color: var(--text); background: var(--surface); border: 1px solid var(--control-line); border-radius: var(--radius); padding: 7px 9px; font-size: 13px; }
+input::placeholder { color: var(--text-2); opacity: 1; }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); padding: 0; }
 .control-group input, .control-group select, .source-form input, .source-form select { width: 100%; }
 .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
@@ -703,10 +714,19 @@ th.numeric { text-align: right; }
 }
 @media (max-width: 720px) {
   .app-shell { height: auto; min-height: 100vh; min-height: 100dvh; overflow: visible; }
-  .topbar { position: sticky; top: 0; padding: 0 14px; gap: 8px; }
+  .topbar { position: sticky; top: 0; padding: 0 14px; gap: 0 8px; flex: 0 0 auto; flex-wrap: wrap; align-content: center; }
   .brand-lockup h1 { font-size: 15px; }
-  .crumbs { flex: 1 1 0; }
-  .crumbs button, .crumbs [aria-current] { max-width: 14ch; }
+  /* The trail takes its own row so the current level can show in full; earlier levels collapse to one back link. */
+  .crumbs { order: 3; flex: 1 1 100%; padding-bottom: 6px; }
+  .crumbs:empty { display: none; }
+  .crumbs ol { overflow: visible; }
+  .crumbs li:not(:nth-last-child(-n+2)) { display: none; }
+  .crumbs li:last-child::before, .crumbs li:nth-last-child(2)::before { content: none; }
+  .crumbs li:last-child { flex: 1 1 auto; }
+  .crumbs li:nth-last-child(2):not(:last-child) { flex: 0 1 auto; }
+  .crumbs li:nth-last-child(2):not(:last-child) button::before { content: "\2039\00a0"; }
+  .crumbs button { max-width: 16ch; }
+  .crumbs [aria-current] { max-width: none; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }
   .topbar-meta .mode-badge, .topbar-meta .updated-label { display: none; }
   .header-button .label { max-width: 11ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .scope { padding: 10px 14px; }
