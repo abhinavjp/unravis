@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "hosts": [
+    {
+      "label": "web-a",
+      "aliases": ["WEB-A", "web-a.example.test"],
+      "role": "iis",
+      "tz": "Pacific/Auckland",
+      "logicalCores": 8,
+      "runtime": "iis-10"
+    },
+    {
+      "label": "sql-a",
+      "aliases": ["SQL-A", "sql-a.example.test"],
+      "role": "sql",
+      "tz": "New Zealand Standard Time",
+      "logicalCores": 16,
+      "runtime": "sql-2019"
+    },
+    {
+      "label": "mongo-a",
+      "aliases": ["mongo-a.example.test"],
+      "role": "mongo",
+      "runtime": "mongod-7.0"
+    }
+  ]
+}
