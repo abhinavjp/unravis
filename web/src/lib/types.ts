@@ -242,13 +242,23 @@ export interface EvidenceRecord {
   knownGaps: string[];
   sourceQuality: { sourceVersion?: string; threshold?: string; coverageFirst?: string; coverageLast?: string; sampling?: string; timezoneRule?: string };
 }
+/** One imported file in a case export (version 2). The file name is never in it; the ref ties it to the manifest. */
+export interface ExportImport {
+  ref: string; importer: string; host?: string; tzRule?: string; rows: EvidenceCount; rejected: EvidenceCount; sourceQuality: EvidenceRecord['sourceQuality'];
+}
+export interface ExportEvent {
+  evidenceId: string; source: string; kind: string; host?: string; start: string; end: string; durationMs?: number; value?: number; unit?: string; severity?: string; line: number; tzRule: string; attrs?: Record<string, string>;
+}
+export interface ManifestImport { ref: string; importer: string; sha256: string; acknowledgement: string; knownGaps: string[] }
 export interface EvidenceExport {
-  manifest: { schemaVersion: number; toolVersion: string; createdAt: string; bodySha256: string; masking: { statements: string[] } };
+  manifest: { schemaVersion: number; toolVersion: string; createdAt: string; bodySha256: string; masking: { statements: string[] }; /** Case export only. */ imports?: ManifestImport[] };
   body: {
     records: EvidenceRecord[]; pseudonyms?: { label: string; requests: EvidenceCount }[];
     ledger?: { text: string; state: HypothesisState; evidenceIds: string[] }[];
+    /** Case export only (version 2). */
+    imports?: ExportImport[]; events?: ExportEvent[];
   };
 }
 export interface ExportPreviewInput { sourceIds: string[]; start: string; end: string; includePseudonyms: boolean; includeLedger: boolean }
 export interface ExportPreview { previewId: string; export: EvidenceExport }
-export interface ExportFile { filename: string; content: string; sha256: string }
+export interface ExportFile { filename: string; content: string; sha256: string; /** Case export only: the events as a spreadsheet-safe CSV, with its own hash. */ eventsCsvFilename?: string; eventsCsv?: string; eventsCsvSha256?: string }

@@ -95,7 +95,46 @@ export const IMPORT_TEXT = {
   statusLabels: { ok: 'Imported', quarantined: 'Refused', duplicate: 'Duplicate' } as Record<string, string>,
 
   fileEmpty: 'This file is empty.',
-  fileCancelled: 'The file was not read. Choose it again.'
+  fileCancelled: 'The file was not read. Choose it again.',
+
+  hostsHeading: 'Host list',
+  hostsIntro: 'Name each server once. A file that names a host that is not on this list is refused.',
+  hostsOpen: 'Edit host list',
+  hostsClose: 'Hide host list',
+  hostsLoading: 'Loading the host list…',
+  hostsNone: 'No hosts yet.',
+  hostAdd: 'Add host',
+  hostRemove: 'Remove',
+  hostSave: 'Save host list',
+  hostSaving: 'Saving…',
+  hostSaved: 'The host list was saved.',
+  hostFields: { label: 'Label', aliases: 'Other names, separated by commas', role: 'Role', tz: 'Time zone', cores: 'Logical cores', runtime: 'Runtime' },
+  hostRoleNone: 'Not set',
+  hostRoles: { iis: 'IIS web server', sql: 'SQL Server', mongo: 'MongoDB', app: 'Application server' } as Record<string, string>,
+  hostTzNote: 'A zone name such as Europe/London. Files with no zone of their own use it.',
+  hostCoresBad: 'Logical cores must be a whole number from 1 to 1024.',
+  hostLabelMissing: 'Every host needs a label.',
+
+  timelineHeading: 'Timeline',
+  timelineNote: 'Lines up the audit window on screen with the events imported into this case. Each line is a clue to look at, not an answer.',
+  timelineBuild: 'Build timeline',
+  timelineBuilding: 'Building the timeline…',
+  timelineNoSource: 'Choose at least one source first, so the audit window is set.',
+
+  exportHeading: 'Export this case',
+  exportNote: 'Builds a file of what this case holds, with private values hidden. You see all of it before anything is saved.',
+  exportPreview: 'Preview export',
+  exportPreviewing: 'Building the preview…',
+  exportCancel: 'Cancel',
+  exportEmpty: 'This case holds no events, so there is nothing to export.',
+  exportMasking: 'What is hidden',
+  exportHash: 'SHA-256 of the JSON file',
+  exportSave: 'Save files',
+  exportSaving: 'Saving…',
+  exportSaveNote: 'Saving downloads two files: the case as JSON, and its events as a spreadsheet file.',
+  exportMismatch: 'A file did not match the SHA-256 the server sent, so nothing was saved. Preview it again.',
+  exportShowFile: 'Show the JSON file content',
+  exportEventsHeading: 'Events in the file'
 } as const;
 
 /** What each refusal reason means, in plain words. Reasons come from the importer enum and the case routes. */
@@ -119,13 +158,39 @@ export const REASON_TEXT: Record<string, string> = {
   'ack-required': 'Tick the box to confirm the notice before importing.',
   'not-found': 'That case was not found.',
   'bad-case-id': 'That is not a valid case id.',
-  unreachable: 'The server could not be reached. Try again.'
+  unreachable: 'The server could not be reached. Try again.',
+  unreadable: 'The server sent an answer that could not be read.',
+  'cases-unavailable': 'Imported cases are not available in this session.',
+  'case-not-found': 'That case was not found. It may have been erased.',
+  'case-closed': 'This case is closed, so nothing can be imported into it.',
+  'bad-title': 'The title is empty, too long, or holds a control character.',
+  'confirm-mismatch': 'The code typed does not match this case.',
+  'ledger-not-stripped': 'The case was erased, but your ledger still points at it. Erase it again to finish.',
+  'unknown-importer': 'That file type is not available.',
+  'importer-required': 'Choose a file type before importing.',
+  'request-too-large': 'The upload is larger than the limit.',
+  'not-multipart': 'The upload was not sent as a file.',
+  'bad-form': 'The upload could not be read.',
+  'file-missing': 'No file was sent.',
+  'import-failed': 'The import could not be completed. Nothing was kept.',
+  'duplicate-event': 'The file repeats an event this case already holds.',
+  'invalid-event': 'A row of the file made an event that failed its checks, so the file was refused.',
+  'store-error': 'The case could not be read or written. Try again.',
+  timeout: 'The request took too long. Try again.',
+  canceled: 'The request was cancelled.',
+  'timeline-failed': 'The timeline could not be built. Try again.',
+  'hosts-readonly': 'The host list cannot be saved in this session.',
+  'hosts-error': 'The host list could not be read. Try again.',
+  'hosts-not-saved': 'The host list could not be saved. The earlier list is unchanged.',
+  'invalid-hosts': 'The host list was refused. Check for a repeated label or name, an unknown time zone, or a bad number.'
 };
 
 const GENERIC_ERROR = 'The server refused this request. Try again.';
 
 /** Plain words for a reason, or null when the reason is not one this screen knows. */
 export function reasonText(reason: string): string | null {
+  // The server names the limit that was hit ("limit-bytes", "limit-rows", ...); every one reads the same here.
+  if (reason.startsWith('limit-')) return REASON_TEXT.limit;
   return Object.prototype.hasOwnProperty.call(REASON_TEXT, reason) ? REASON_TEXT[reason] : null;
 }
 
@@ -148,9 +213,10 @@ export const IMPORTER_LABELS: Record<string, string> = {
   'iis-w3c': 'IIS web log',
   'iis-httperr': 'HTTP.sys error log',
   'mongod-json': 'MongoDB server log',
-  wincounters: 'Windows performance counters',
-  winevents: 'Windows event log',
-  schedule: 'Job schedule',
+  'win-counters': 'Windows performance counters',
+  'win-events': 'Windows event log',
+  'schedule-hangfire': 'Hangfire job schedule',
+  'schedule-agent': 'SQL Server Agent job schedule',
   appinsights: 'App Insights query',
   'sql-xe': 'SQL Server extended events',
   'sql-errorlog': 'SQL Server error log',
@@ -205,6 +271,12 @@ export function importedText(record: Pick<ImportRecord, 'id' | 'rows' | 'rejecte
 
 export const statusLabel = (status: string): string => IMPORT_TEXT.statusLabels[status] ?? status;
 
+/** The line shown after both case export files were saved. */
+export const caseExportSavedText = (jsonSha256: string): string => 'Saved two files. SHA-256 of the JSON file: ' + jsonSha256;
+
+/** The word for a host role, or the role as sent when it is not one the screen knows. */
+export const hostRoleLabel = (role: string): string => (Object.prototype.hasOwnProperty.call(IMPORT_TEXT.hostRoles, role) ? IMPORT_TEXT.hostRoles[role] : role);
+
 /**
  * Every fixed sentence, plus one sample of each built sentence, for the copy lint. A new string added above must reach this list
  * (the test checks that every string in IMPORT_TEXT and REASON_TEXT is linted).
@@ -220,7 +292,9 @@ export function importCopyEntries(): LintEntry[] {
     { id: 'import.sample.imported', text: importedText({ id: 3, rows: 120, rejected: 2, fileName: 'web-a.log' }) },
     { id: 'import.sample.duplicate', text: errorText({ status: 409, reason: 'duplicate', importId: 3, message: '' }) },
     { id: 'import.sample.column', text: errorText({ status: 422, reason: 'unscrubbed-column', column: 'sql_text', message: '' }) },
-    { id: 'import.sample.generic', text: errorText({ status: 500, reason: '', message: '' }) }
+    { id: 'import.sample.generic', text: errorText({ status: 500, reason: '', message: '' }) },
+    { id: 'import.sample.limit', text: errorText({ status: 413, reason: 'limit-bytes', message: '' }) },
+    { id: 'import.sample.caseExportSaved', text: caseExportSavedText('0'.repeat(64)) }
   ];
   const walk = (prefix: string, value: unknown) => {
     if (typeof value === 'string') entries.push({ id: prefix, text: value });

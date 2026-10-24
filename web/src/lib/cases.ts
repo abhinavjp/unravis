@@ -1,4 +1,6 @@
 import { NO_SESSION_MESSAGE, readSessionToken } from './api';
+import { parseTimelineView, type TimelineView } from './timeline';
+import type { EvidenceExport, ExportFile, Query } from './types';
 
 /**
  * Client for the case and import routes (importer wave plan, card API), and the pure rules the import screen follows.
@@ -11,9 +13,12 @@ import { NO_SESSION_MESSAGE, readSessionToken } from './api';
  *   DELETE /api/cases/{id}       {confirm:id}  -> 204, or {} (any 2xx)
  *   GET    /api/cases/{id}/imports             -> { imports: ImportRecord[] }
  *   POST   /api/cases/{id}/imports?importer=&host=&preview=1
- *          multipart: file (and, on a commit only, ackGating=true and ackText)
+ *          multipart, in this order: ackGating=true, ackText (a commit only), then file
  *                                              -> { importer, score, tied, report?, record? }
- *   GET    /api/hosts                          -> { version: 1, hosts: [{ label, ... }] }
+ *   GET    /api/hosts                          -> { version: 1, hosts: [{ label, aliases?, role?, tz?, logicalCores?, runtime? }] }
+ *   PUT    /api/hosts   {version: 1, hosts}    -> the saved map
+ *   POST   /api/cases/{id}/timeline {query}    -> the timeline view (lib/timeline.ts)
+ *   POST   /api/export/preview {caseId}        -> { previewId, export }   (then /api/export/confirm {previewId})
  * Errors are JSON { error, reason?, column?, importId? } with the importer Reason enum, never content from the file.
  * Without `importer`, a preview asks the server to detect it; a tie returns `tied` (two or more names) and no report.
  */
@@ -209,6 +214,53 @@ export async function listHosts(signal?: AbortSignal): Promise<string[]> {
   return (body.hosts ?? []).map((h) => asString(h?.label)).filter(Boolean).sort((a, b) => a.localeCompare(b));
 }
 
+/** One host as the owner wrote it (hosts.json). Only labels reach the import screen's picker; the editor holds the whole entry. */
+export interface HostEntry {
+  label: string;
+  aliases: string[];
+  role: string;
+  tz: string;
+  /** Null when the owner left it blank. */
+  logicalCores: number | null;
+  runtime: string;
+}
+
+export const HOST_ROLES = ['iis', 'sql', 'mongo', 'app'] as const;
+
+function toHostEntry(raw: Partial<Record<keyof HostEntry, unknown>> | null | undefined): HostEntry {
+  const cores = typeof raw?.logicalCores === 'number' && Number.isInteger(raw.logicalCores) ? raw.logicalCores : null;
+  return { label: asString(raw?.label), aliases: asStrings(raw?.aliases), role: asString(raw?.role), tz: asString(raw?.tz), logicalCores: cores, runtime: asString(raw?.runtime) };
+}
+
+/** The whole host map, for the editor. */
+export async function getHostEntries(signal?: AbortSignal): Promise<HostEntry[]> {
+  const body = await json<{ hosts?: Partial<Record<keyof HostEntry, unknown>>[] }>(await send('/hosts', {}, signal));
+  return (body.hosts ?? []).map(toHostEntry);
+}
+
+/** The JSON the server reads: empty optional fields are left out so they are never saved as blanks. */
+export function hostsBody(entries: HostEntry[]): { version: 1; hosts: Record<string, unknown>[] } {
+  return {
+    version: 1,
+    hosts: entries.map((e) => {
+      const out: Record<string, unknown> = { label: e.label.trim() };
+      const aliases = e.aliases.map((a) => a.trim()).filter(Boolean);
+      if (aliases.length) out.aliases = aliases;
+      if (e.role) out.role = e.role;
+      if (e.tz.trim()) out.tz = e.tz.trim();
+      if (e.logicalCores !== null) out.logicalCores = e.logicalCores;
+      if (e.runtime.trim()) out.runtime = e.runtime.trim();
+      return out;
+    })
+  };
+}
+
+/** Replaces the whole host map. The server checks it and answers with what it kept. */
+export async function putHostEntries(entries: HostEntry[], signal?: AbortSignal): Promise<HostEntry[]> {
+  const body = await json<{ hosts?: Partial<Record<keyof HostEntry, unknown>>[] }>(await send('/hosts', { method: 'PUT', body: JSON.stringify(hostsBody(entries)) }, signal));
+  return (body.hosts ?? []).map(toHostEntry);
+}
+
 export interface ImportRequest {
   caseId: string;
   file: File;
@@ -242,12 +294,55 @@ export async function previewImport(request: ImportRequest, signal?: AbortSignal
 /** Keeps the file. The importer is required, and the acknowledgement travels with the file: ackGating=true and the exact ackText. */
 export async function commitImport(request: ImportRequest & { importer: string; ackText: string }, signal?: AbortSignal): Promise<ImportAnswer> {
   const form = new FormData();
-  form.append('file', request.file, request.file.name);
+  // The server reads the form as a stream and wants the acknowledgement before the file, so the file goes last.
   form.append('ackGating', 'true');
   form.append('ackText', request.ackText);
+  form.append('file', request.file, request.file.name);
   const response = await send(casePath(request.caseId, '/imports') + importQuery(request, false), { method: 'POST', body: form }, signal);
   return importAnswer(await json(response));
 }
+
+/**
+ * Builds the timeline of one case against the audit window on screen. The server reads the case's events and the audit
+ * intervals itself; the answer is checked against the shape before it is used, and a bad shape is refused, not shown.
+ */
+export async function fetchTimeline(id: string, query: Query, signal?: AbortSignal): Promise<TimelineView> {
+  const response = await send(casePath(id, '/timeline'), { method: 'POST', body: JSON.stringify({ query }) }, signal);
+  const view = parseTimelineView(await json<unknown>(response));
+  if (!view) throw new CaseApiError('The server sent an answer that could not be read.', response.status, 'unreadable');
+  return view;
+}
+
+/** What a case export preview holds: the redacted file, shown whole, before anything is saved. */
+export interface CaseExportPreview { previewId: string; export: EvidenceExport }
+
+export async function previewCaseExport(id: string, signal?: AbortSignal): Promise<CaseExportPreview> {
+  if (!isCaseId(id)) throw new CaseApiError('That is not a case id.', 400, 'bad-case-id');
+  const body = await json<Partial<CaseExportPreview>>(await send('/export/preview', { method: 'POST', body: JSON.stringify({ caseId: id }) }, signal));
+  const exp = body.export;
+  if (typeof body.previewId !== 'string' || !body.previewId || !exp || typeof exp !== 'object' || !exp.manifest || !exp.body) throw new CaseApiError('The server sent an answer that could not be read.', 200, 'unreadable');
+  return { previewId: body.previewId, export: exp };
+}
+
+/** Using the preview up: the server answers once, with the JSON file and the events CSV, each with its SHA-256. */
+export async function confirmCaseExport(previewId: string, signal?: AbortSignal): Promise<ExportFile> {
+  const file = await json<Partial<ExportFile>>(await send('/export/confirm', { method: 'POST', body: JSON.stringify({ previewId }) }, signal));
+  return { filename: asString(file.filename), content: asString(file.content), sha256: asString(file.sha256), eventsCsvFilename: asString(file.eventsCsvFilename), eventsCsv: asString(file.eventsCsv), eventsCsvSha256: asString(file.eventsCsvSha256) };
+}
+
+export interface CaseExportSummary { imports: number; events: number; hash: string; empty: boolean; statements: string[]; line: string }
+
+const plural = (n: number, one: string, many: string): string => n + ' ' + (n === 1 ? one : many);
+
+/** Counts for the line above a case export preview. A case with no imported events has nothing to export. */
+export function caseExportSummary(exp: EvidenceExport): CaseExportSummary {
+  const imports = exp.body.imports?.length ?? 0;
+  const events = exp.body.events?.length ?? 0;
+  return { imports, events, hash: exp.manifest.bodySha256, empty: imports === 0 && events === 0, statements: exp.manifest.masking?.statements ?? [], line: plural(imports, 'import', 'imports') + ', ' + plural(events, 'event', 'events') };
+}
+
+/** Save is allowed only for a preview that holds something. */
+export const canSaveCaseExport = (exp: EvidenceExport | null): boolean => exp !== null && !caseExportSummary(exp).empty;
 
 /* ------------------------------------------------------------------ rules the screen follows */
 
@@ -256,12 +351,13 @@ const GiB = 1024 * MiB;
 
 /** Byte caps per importer (plan section 4). A file over its cap is refused whole. */
 export const IMPORT_CAPS: Record<string, number> = {
-  wincounters: 512 * MiB,
-  winevents: 256 * MiB,
+  'win-counters': 512 * MiB,
+  'win-events': 256 * MiB,
   'iis-w3c': 2 * GiB,
   'iis-httperr': 64 * MiB,
   'mongod-json': 2 * GiB,
-  schedule: 16 * MiB,
+  'schedule-hangfire': 16 * MiB,
+  'schedule-agent': 16 * MiB,
   appinsights: 512 * MiB,
   'sql-xe': 512 * MiB,
   'sql-errorlog': 256 * MiB,

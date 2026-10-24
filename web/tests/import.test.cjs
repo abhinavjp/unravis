@@ -187,10 +187,10 @@ test('preview: multipart file, preview=1, importer and host in the query, no ack
 test('preview with an importer picked sends it; a tie comes back as names and no report', async () => {
   const calls = mockServer((call) => (call.url.includes('importer=')
     ? { body: { importer: 'sql-pdh', score: 80, tied: [], report: reportJson({ importer: 'sql-pdh' }) } }
-    : { body: { importer: '', score: 70, tied: ['wincounters', 'sql-pdh'] } }));
+    : { body: { importer: '', score: 70, tied: ['win-counters', 'sql-pdh'] } }));
   const tie = await cases.previewImport({ caseId: CASE_ID, file: synthetic() });
   assert.equal(calls[0].url, '/api/cases/' + CASE_ID + '/imports?preview=1');
-  assert.deepEqual(tie.tied, ['wincounters', 'sql-pdh']);
+  assert.deepEqual(tie.tied, ['win-counters', 'sql-pdh']);
   assert.equal(tie.report, null);
   const picked = await cases.previewImport({ caseId: CASE_ID, file: synthetic(), importer: 'sql-pdh' });
   assert.equal(calls[1].url, '/api/cases/' + CASE_ID + '/imports?importer=sql-pdh&preview=1');
@@ -259,7 +259,7 @@ test('size is checked against the importer cap, or the largest cap before the ty
   const MiB = 1024 * 1024;
   assert.equal(cases.fileSizeProblem(1000, 'iis-w3c'), null);
   assert.deepEqual(cases.fileSizeProblem(0), { kind: 'empty' });
-  assert.deepEqual(cases.fileSizeProblem(17 * MiB, 'schedule'), { kind: 'too-big', cap: 16 * MiB });
+  assert.deepEqual(cases.fileSizeProblem(17 * MiB, 'schedule-hangfire'), { kind: 'too-big', cap: 16 * MiB });
   assert.equal(cases.fileSizeProblem(17 * MiB), null, 'no importer yet: only the largest cap applies');
   assert.deepEqual(cases.fileSizeProblem(2 * 1024 * MiB + 1), { kind: 'too-big', cap: 2 * 1024 * MiB });
   assert.equal(cases.capFor('hosts-json-not-an-importer'), 2 * 1024 * MiB);
@@ -345,14 +345,151 @@ test('the components only talk to the server through cases.ts, and never name a 
   }
 });
 
-test('local only: none of the four files names an outside address', () => {
-  for (const file of ['src/lib/cases.ts', 'src/lib/copy/importCopy.ts', 'src/lib/components/ImportPanel.svelte', 'src/lib/components/CasePanel.svelte']) {
+test('local only: none of the six files names an outside address', () => {
+  for (const file of ['src/lib/cases.ts', 'src/lib/copy/importCopy.ts', 'src/lib/components/ImportPanel.svelte', 'src/lib/components/CasePanel.svelte', 'src/lib/components/CaseTools.svelte', 'src/lib/components/HostsEditor.svelte']) {
     assert.doesNotMatch(read(file), /https?:\/\//, file);
   }
   assert.match(read('src/lib/cases.ts'), /const base = '\/api';/);
 });
 
-test('the screen touches none of the files that belong to the integrator', () => {
-  const sources = [read('src/lib/cases.ts'), read('src/lib/copy/importCopy.ts'), importPanel, casePanel].join('\n');
-  assert.doesNotMatch(sources, /from '\.\.?\/(?:types|deck|wordings)'/, 'no import of types.ts, deck.ts or wordings.ts values');
+test('the screen reaches the shell through one side panel and one header button', () => {
+  assert.match(read('src/App.svelte'), /panels\.sidePanel === 'import'\}<ImportPanel query=\{scope\.query\} \{zone\} onClose=\{closeSidePanel\}/);
+  assert.match(read('src/components/AppHeader.svelte'), /id: 'import', label: 'Import', open: \(\) => openSidePanel\('import'\)/);
+  assert.match(read('src/lib/appState.svelte.ts'), /export function openSidePanel\(which: 'patterns' \| 'ledger' \| 'export' \| 'import'\)/);
+});
+
+/* ------------------------------------------------------------------ integration: names, order, hosts, timeline, case export */
+
+test('the importer names and caps are the ones the server registers', () => {
+  const MiB = 1024 * 1024;
+  const expected = { 'iis-w3c': 2048, 'iis-httperr': 64, 'win-counters': 512, 'win-events': 256, 'schedule-hangfire': 16, 'schedule-agent': 16, appinsights: 512, 'mongod-json': 2048, 'sql-xe': 512, 'sql-errorlog': 256, 'sql-pdh': 512 };
+  assert.deepEqual(Object.keys(cases.IMPORT_CAPS).sort(), Object.keys(expected).sort());
+  for (const [name, mib] of Object.entries(expected)) {
+    assert.equal(cases.IMPORT_CAPS[name], mib * MiB, name);
+    assert.notEqual(importCopy.importerLabel(name), name, name + ' has a label');
+  }
+});
+
+test('commit sends the acknowledgement fields before the file', async () => {
+  const calls = mockServer(() => ({ status: 201, body: { importer: 'iis-w3c', record: { id: 1, status: 'ok' }, report: reportJson() } }));
+  await cases.commitImport({ caseId: CASE_ID, file: synthetic(), importer: 'iis-w3c', ackText: importCopy.ackTextFor() });
+  assert.deepEqual([...calls[0].body.keys()], ['ackGating', 'ackText', 'file']);
+});
+
+test('every limit-* refusal reads the same, and the new server reasons have words', () => {
+  for (const reason of ['limit-bytes', 'limit-rows', 'limit-line']) assert.equal(importCopy.reasonText(reason), importCopy.REASON_TEXT.limit);
+  assert.equal(importCopy.reasonText('limit-'), importCopy.REASON_TEXT.limit);
+  for (const reason of ['cases-unavailable', 'case-not-found', 'case-closed', 'unknown-importer', 'importer-required', 'request-too-large', 'not-multipart', 'file-missing', 'import-failed', 'store-error', 'timeline-failed', 'hosts-readonly', 'hosts-not-saved', 'invalid-hosts', 'confirm-mismatch', 'ledger-not-stripped']) {
+    assert.ok(importCopy.reasonText(reason), reason + ' has text');
+  }
+  assert.match(importCopy.errorText({ status: 503, reason: 'cases-unavailable', message: 'SENTINEL-9' }), /case/i);
+});
+
+const host = (extra = {}) => ({ label: 'web-a', aliases: [], role: '', tz: '', logicalCores: null, runtime: '', ...extra });
+
+test('the host body leaves blank optional fields out and trims what stays', () => {
+  const body = cases.hostsBody([host({ label: ' web-a ', aliases: [' WEB-A ', ''], role: 'iis', tz: ' UTC ', logicalCores: 8, runtime: ' iis-10 ' }), host({ label: 'sql-a' })]);
+  assert.deepEqual(body, { version: 1, hosts: [{ label: 'web-a', aliases: ['WEB-A'], role: 'iis', tz: 'UTC', logicalCores: 8, runtime: 'iis-10' }, { label: 'sql-a' }] });
+  assert.deepEqual(cases.hostsBody([]), { version: 1, hosts: [] });
+});
+
+test('hosts: read the whole entry, save with PUT, and the picker gets the saved labels', async () => {
+  const calls = mockServer((call) => ({ body: { version: 1, hosts: call.method === 'PUT' ? JSON.parse(call.body).hosts : [{ label: 'web-a', aliases: ['WEB-A'], role: 'iis', tz: 'UTC', logicalCores: 4.5, extra: 'x' }] } }));
+  const read1 = await cases.getHostEntries();
+  assert.deepEqual(read1, [host({ aliases: ['WEB-A'], role: 'iis', tz: 'UTC' })], 'a core count that is not whole is dropped, unknown fields are ignored');
+  const kept = await cases.putHostEntries([host({ label: 'web-b', logicalCores: 2 })]);
+  assert.equal(calls[1].method, 'PUT');
+  assert.equal(calls[1].url, '/api/hosts');
+  assert.equal(calls[1].headers.get('X-Audit-Token'), TOKEN);
+  assert.deepEqual(JSON.parse(calls[1].body), { version: 1, hosts: [{ label: 'web-b', logicalCores: 2 }] });
+  assert.equal(kept[0].logicalCores, 2);
+});
+
+test('a refused host list carries its reason', async () => {
+  mockServer(() => ({ status: 422, body: { error: 'bad', reason: 'invalid-hosts' } }));
+  await assert.rejects(cases.putHostEntries([host({ label: '' })]), (e) => e.status === 422 && e.reason === 'invalid-hosts' && !!importCopy.errorText(e));
+});
+
+test('timeline: the audit window goes in the body, and an unreadable answer is refused', async () => {
+  const query = { start: '2001-02-03T04:00:00Z', end: '2001-02-03T05:00:00Z', sourceIds: ['src-a'] };
+  const calls = mockServer((call) => (call.body.includes('"bad"') ? { body: { nonsense: true } } : { body: { enabled: false, reasonCode: 'no-tz', reason: 'The case has no time zone rule.', sources: [], rows: [], unlisted: 0, truncated: false } }));
+  const view = await cases.fetchTimeline(CASE_ID, query);
+  assert.equal(calls[0].url, '/api/cases/' + CASE_ID + '/timeline');
+  assert.equal(calls[0].method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0].body), { query });
+  assert.equal(view.enabled, false);
+  assert.equal(view.reasonCode, 'no-tz');
+  await assert.rejects(cases.fetchTimeline(CASE_ID, { ...query, sourceIds: ['bad'] }), (e) => e.reason === 'unreadable');
+  await assert.rejects(cases.fetchTimeline('../x', query), (e) => e.reason === 'bad-case-id');
+});
+
+const exportBody = (imports, events) => ({ manifest: { bodySha256: 'a'.repeat(64), masking: { statements: ['Counts under 20 are shown as "<20".'] } }, body: { imports: new Array(imports).fill({}), events: new Array(events).fill({}) } });
+
+test('case export summary: counts, hash, masking statements, and empty means nothing to save', () => {
+  const one = cases.caseExportSummary(exportBody(1, 1));
+  assert.equal(one.line, '1 import, 1 event');
+  assert.equal(one.hash, 'a'.repeat(64));
+  assert.deepEqual(one.statements, ['Counts under 20 are shown as "<20".']);
+  assert.equal(cases.caseExportSummary(exportBody(3, 40)).line, '3 imports, 40 events');
+  assert.equal(cases.caseExportSummary({ manifest: { bodySha256: 'b' }, body: {} }).empty, true, 'a server that sent no case sections has nothing to save');
+  assert.equal(cases.canSaveCaseExport(exportBody(2, 5)), true);
+  assert.equal(cases.canSaveCaseExport(exportBody(0, 0)), false);
+  assert.equal(cases.canSaveCaseExport(null), false);
+});
+
+test('case export: preview posts the case id, confirm posts the preview id, and the answers are checked', async () => {
+  const calls = mockServer((call) => {
+    if (call.url === '/api/export/preview') return { body: { previewId: JSON.parse(call.body).caseId === CASE_ID ? 'p-1' : '', export: exportBody(1, 2) } };
+    if (call.url === '/api/export/confirm') return { body: { filename: 'case.json', content: '{}', sha256: 'c'.repeat(64), eventsCsvFilename: 'case-events.csv', eventsCsv: 'a,b\n', eventsCsvSha256: 'd'.repeat(64), junk: 1 } };
+    return { status: 404, body: { reason: 'not-found' } };
+  });
+  const preview = await cases.previewCaseExport(CASE_ID);
+  assert.equal(preview.previewId, 'p-1');
+  assert.deepEqual(JSON.parse(calls[0].body), { caseId: CASE_ID });
+  const file = await cases.confirmCaseExport('p-1');
+  assert.deepEqual(JSON.parse(calls[1].body), { previewId: 'p-1' });
+  assert.deepEqual(Object.keys(file).sort(), ['content', 'eventsCsv', 'eventsCsvFilename', 'eventsCsvSha256', 'filename', 'sha256']);
+  assert.equal(importCopy.caseExportSavedText(file.sha256), 'Saved two files. SHA-256 of the JSON file: ' + 'c'.repeat(64));
+  await assert.rejects(cases.previewCaseExport('../x'), (e) => e.reason === 'bad-case-id');
+  mockServer(() => ({ body: { export: exportBody(1, 1) } }));
+  await assert.rejects(cases.previewCaseExport(CASE_ID), (e) => e.reason === 'unreadable', 'a preview with no id cannot be confirmed');
+});
+
+test('host roles have words, and an unknown role is shown as sent', () => {
+  for (const role of cases.HOST_ROLES) assert.ok(importCopy.hostRoleLabel(role) && importCopy.hostRoleLabel(role) !== role, role);
+  assert.equal(importCopy.hostRoleLabel('toString'), 'toString');
+});
+
+/* ------------------------------------------------------------------ the new components, read as source */
+
+const caseTools = read('src/lib/components/CaseTools.svelte');
+const hostsEditor = read('src/lib/components/HostsEditor.svelte');
+
+test('the timeline needs a source on screen, and the export saves only a preview that holds something', () => {
+  assert.match(caseTools, /disabled=\{timelineBusy \|\| !hasSource\}/);
+  assert.match(caseTools, /query\.sourceIds\.length > 0/);
+  assert.match(caseTools, /canSaveCaseExport\(phase\.preview\.export\)\) return;/, 'save re-checks');
+  assert.match(caseTools, /disabled=\{phase\.kind !== 'preview' \|\| !canSaveCaseExport\(preview\.export\)\}/);
+});
+
+test('both case export files are checked against their hash before either is saved', () => {
+  const save = caseTools.slice(caseTools.indexOf('async function save'));
+  const hashes = save.indexOf('contentMatches(file.eventsCsv');
+  assert.ok(save.indexOf('contentMatches(file.content, file.sha256)') > 0 && hashes > 0, 'both files are verified');
+  assert.ok(hashes < save.indexOf('download(file.content'), 'verification comes before the first download');
+  assert.match(save, /exportMismatch/);
+});
+
+test('the import panel carries the host editor and the per-case tools, and a new import starts them over', () => {
+  assert.match(importPanel, /<HostsEditor onSaved=/);
+  assert.match(importPanel, /\{#key selected\.id \+ ':' \+ imports\.length\}<CaseTools caseId=\{selected\.id\} \{query\} \{zone\} \/>\{\/key\}/);
+});
+
+test('the new components talk to the server only through cases.ts and render text, never markup', () => {
+  for (const [name, source] of [['CaseTools', caseTools], ['HostsEditor', hostsEditor]]) {
+    assert.doesNotMatch(source, /\bfetch\(/, name);
+    assert.doesNotMatch(source, /\{@html/, name);
+    assert.doesNotMatch(source, /https?:\/\//, name);
+    assert.doesNotMatch(source, /\b(?:let|const|var)\s+state\b/, name);
+  }
 });

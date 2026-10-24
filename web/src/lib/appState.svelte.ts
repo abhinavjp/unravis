@@ -110,7 +110,7 @@ let querySnapshot = '';
 let connectionsOpen = $state(false);
 let glossaryOpen = $state(false);
 // P2-lite drawers: incident patterns and the hypothesis ledger.
-let sidePanel = $state<'patterns' | 'ledger' | 'export' | null>(null);
+let sidePanel = $state<'patterns' | 'ledger' | 'export' | 'import' | null>(null);
 let sidePanelReturnFocus: HTMLElement | null = null;
 let glossaryTerm = $state<string | null>(null);
 let glossaryReturnFocus: HTMLElement | null = null;
@@ -737,7 +737,7 @@ export async function closeSidePanel() {
   sidePanelReturnFocus?.focus();
   sidePanelReturnFocus = null;
 }
-export function openSidePanel(which: 'patterns' | 'ledger' | 'export') {
+export function openSidePanel(which: 'patterns' | 'ledger' | 'export' | 'import') {
   sidePanelReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   sidePanel = which;
 }

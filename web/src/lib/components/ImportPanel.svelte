@@ -10,12 +10,16 @@
   } from '../copy/importCopy';
   import { formatTime } from '../time';
   import Drawer from '../../components/Drawer.svelte';
+  import type { Query } from '../types';
   import CasePanel from './CasePanel.svelte';
+  import CaseTools from './CaseTools.svelte';
+  import HostsEditor from './HostsEditor.svelte';
 
   // The import screen. Create or pick a case, choose a file, read the preview, tick the notice, then import.
   // The notice is always on screen. Nothing is kept until Import file, and an unknown host or a changed file blocks it.
   // The server does the reading: this screen sends the file to the local server only and shows the counts that come back.
-  let { onClose, onImported }: { onClose: () => void; onImported?: (record: ImportRecord) => void } = $props();
+  // The query and zone are the audit window on screen: the timeline uses them to pick its sources and show its times.
+  let { onClose, onImported, query, zone = 'UTC' }: { onClose: () => void; onImported?: (record: ImportRecord) => void; query: Query; zone?: string } = $props();
 
   let cases = $state<CaseInfo[]>([]);
   let selectedId = $state('');
@@ -272,6 +276,13 @@
       </div>
       {#if block && block !== 'busy'}<p class="note">{IMPORT_TEXT.blocked[block]}</p>{/if}
     </section>
+  {/if}
+
+  <HostsEditor onSaved={(labels) => { hosts = labels; }} />
+
+  {#if selected}
+    <!-- A new import changes what the case holds, so a timeline or export preview built before it starts over. -->
+    {#key selected.id + ':' + imports.length}<CaseTools caseId={selected.id} {query} {zone} />{/key}
   {/if}
 
   {#if selected}

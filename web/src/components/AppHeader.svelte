@@ -26,6 +26,7 @@
     { id: 'patterns', label: 'Patterns', open: () => openSidePanel('patterns') },
     { id: 'ledger', label: 'Ledger', open: () => openSidePanel('ledger') },
     { id: 'export', label: 'Export', open: () => openSidePanel('export') },
+    { id: 'import', label: 'Import', open: () => openSidePanel('import') },
     { id: 'glossary', label: 'Glossary', open: () => openGlossary() }
   ];
   const isOpen = (id: string) => id === 'glossary' ? panels.glossaryOpen : panels.sidePanel === id;
