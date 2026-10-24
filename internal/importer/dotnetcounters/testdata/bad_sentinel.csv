@@ -1,0 +1,6 @@
+Timestamp,Provider,Counter Name,Counter Type,Mean/Increment
+10/25/2001 2:00:00 PM,System.Runtime,CPU Usage (%),Metric,12.5
+10/25/2001 2:00:00 PM,System.Runtime,Working Set (MB),Metric,SENTINEL-7f3a
+10/25/2001 2:00:00 PM,Microsoft.AspNetCore.Hosting,http.server.request.duration (s)[http.route=/SENTINEL-7f3a;http.request.method=GET],Histogram,0.045
+SENTINEL-7f3a,System.Runtime,CPU Usage (%),Metric,12.5
+10/25/2001 2:00:10 PM,System.Runtime,CPU Usage (%),Metric,SENTINEL-7f3a
