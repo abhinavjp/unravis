@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -18,6 +17,8 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
+
+	"api-audit-explorer/internal/sealedfile"
 )
 
 const fileVersion = 1
@@ -172,12 +173,15 @@ type fileData struct {
 }
 
 type store struct {
-	mu    sync.Mutex
-	path  string
+	mu   sync.Mutex
+	path string
+	// seal is nil when the file at path is plain JSON (Open) and set when it is sealed (OpenSealed).
+	seal  sealedfile.Protector
 	items []Hypothesis // stored entries are never mutated in place; edits replace them
 }
 
-// Open returns a Store backed by the JSON file at path ("" = in memory). A
+// Open returns a Store backed by the plain JSON file at path ("" = in memory).
+// The application uses OpenSealed, which keeps the ledger encrypted at rest. A
 // missing file starts an empty ledger. A file that cannot be read as a ledger is
 // left untouched and Open returns an error: the ledger never overwrites it.
 func Open(path string) (Store, error) {
@@ -392,28 +396,14 @@ func (s *store) save(items []Hypothesis) error {
 	if s.path == "" {
 		return nil
 	}
+	if s.seal != nil {
+		return s.saveSealed(items)
+	}
 	data, err := json.MarshalIndent(fileData{Version: fileVersion, Hypotheses: items}, "", "  ")
 	if err != nil {
 		return saveErr(err)
 	}
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return saveErr(err)
-	}
-	tmp, err := os.CreateTemp(dir, ".ledger-*.tmp")
-	if err != nil {
-		return saveErr(err)
-	}
-	tmpName := tmp.Name()
-	_, werr := tmp.Write(append(data, '\n'))
-	serr := tmp.Sync()
-	cerr := tmp.Close()
-	if err := errors.Join(werr, serr, cerr); err != nil {
-		os.Remove(tmpName)
-		return saveErr(err)
-	}
-	if err := os.Rename(tmpName, s.path); err != nil {
-		os.Remove(tmpName)
+	if err := sealedfile.WriteAtomic(s.path, ".ledger-*.tmp", append(data, '\n')); err != nil {
 		return saveErr(err)
 	}
 	return nil
