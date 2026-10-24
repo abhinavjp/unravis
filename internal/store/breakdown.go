@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -80,14 +81,39 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 	cohort := [5]string{"", q.Controller, q.Action, q.Kind, q.Outcome}
 	var legacyRecords, legacyBytes atomic.Int64
 	merged := audit.NewBreakdownBuilder(input.Dim, input.Top)
+	// Sources are read in parallel, as Analyze reads them: every read goes through
+	// admit, so each source still runs one operation at a time and the store four.
+	// Each worker writes only its own source and its own slot of limitErrs; results
+	// merge afterwards in the order the query listed the sources, so the output does
+	// not depend on which source answered first.
+	workCtx, cancelWork := context.WithCancel(ctx)
+	defer cancelWork()
 	sources := make([]*breakdownSource, len(profiles))
+	limitErrs := make([]error, len(profiles))
 	for i, p := range profiles {
-		src := &breakdownSource{p: p, legacy: usesLegacyMongo(p.shared.client)}
-		sources[i] = src
-		release, denied := s.admit(ctx, p)
+		sources[i] = &breakdownSource{p: p, legacy: usesLegacyMongo(p.shared.client)}
+	}
+	// failLimit records a row-limit failure and stops the sibling reads: the whole
+	// breakdown fails closed, as the serial read did at the first such source.
+	failLimit := func(i int, err error) {
+		limitErrs[i] = err
+		cancelWork()
+	}
+	firstLimit := func() error {
+		for _, err := range limitErrs {
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	fanOut(len(sources), func(i int) {
+		src := sources[i]
+		p := src.p
+		release, denied := s.admit(workCtx, p)
 		if denied != nil {
 			src.fail(denied.Code, denied.Message)
-			continue
+			return
 		}
 		// Hint mode: calibrate after admission. The legacy reader streams metadata
 		// and never uses it; it runs exact and says why.
@@ -95,50 +121,64 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 		if src.legacy {
 			unsupported = errHintLegacy.Error()
 		}
-		src.margin, src.note = s.resolveHint(ctx, p, q.QueryMode, unsupported)
+		src.margin, src.note = s.resolveHint(workCtx, p, q.QueryMode, unsupported)
 		src.prefix = hinted(prefix, src.margin, q.Start, q.End)
 		src.ran = true
 		began := time.Now()
+		var err error
 		if src.legacy {
-			src.builder, src.matched, err = readLegacyBreakdown(ctx, p, q, cohort, input, &legacyRecords, &legacyBytes)
+			src.builder, src.matched, err = readLegacyBreakdown(workCtx, p, q, cohort, input, &legacyRecords, &legacyBytes)
 		} else {
-			src.builder, src.matched, err = readBreakdownCounts(ctx, p, src.prefix, input)
+			src.builder, src.matched, err = readBreakdownCounts(workCtx, p, src.prefix, input)
 		}
 		src.elapsed = time.Since(began)
 		release()
 		if err != nil {
 			if errors.Is(err, audit.ErrLimit) {
-				return audit.Breakdown{}, err
+				failLimit(i, err)
+				return
 			}
 			code, message := sourceQueryError(ctx, err)
 			src.fail(code, message)
-			continue
+			return
 		}
 		src.ok = true
-		merged.Merge(src.builder)
+	})
+	if err := firstLimit(); err != nil {
+		return audit.Breakdown{}, err
+	}
+	for _, src := range sources {
+		if src.ok {
+			merged.Merge(src.builder)
+		}
 	}
 	pooled := audit.PooledKind(q.Kind)
 	keys := merged.TopKeys()
-	for _, src := range sources {
+	fanOut(len(sources), func(i int) {
+		src := sources[i]
 		if !src.ok || src.legacy || len(keys) == 0 || pooled {
-			continue
+			return
 		}
-		release, denied := s.admit(ctx, src.p)
+		release, denied := s.admit(workCtx, src.p)
 		if denied != nil {
 			src.fail(denied.Code, denied.Message)
-			continue
+			return
 		}
 		began := time.Now()
-		err = readBreakdownBins(ctx, src.p, src.prefix, input, keys, src.builder)
+		err := readBreakdownBins(workCtx, src.p, src.prefix, input, keys, src.builder)
 		src.elapsed += time.Since(began)
 		release()
 		if err != nil {
 			if errors.Is(err, audit.ErrLimit) {
-				return audit.Breakdown{}, err
+				failLimit(i, err)
+				return
 			}
 			code, message := sourceQueryError(ctx, err)
 			src.fail(code, message)
 		}
+	})
+	if err := firstLimit(); err != nil {
+		return audit.Breakdown{}, err
 	}
 	final := audit.NewBreakdownBuilder(input.Dim, input.Top)
 	final.SetValueCap(breakdownValueCap(input.Dim))
@@ -161,6 +201,20 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 	out.Sources = results
 	out.Provenance = provenance
 	return out, nil
+}
+
+// fanOut runs fn(0..n-1), one goroutine each, and returns when all have finished.
+// Callers keep results in per-index slots so the merge order stays fixed.
+func fanOut(n int, fn func(i int)) {
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			fn(i)
+		}(i)
+	}
+	wg.Wait()
 }
 
 // provenance is the source's entry for the whole breakdown window. A source that
