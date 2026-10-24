@@ -140,10 +140,23 @@ func run(args []string, getenv func(string) string) error {
 			serverOptions = append(serverOptions, server.WithHistory(savedHistory))
 		}
 	}
-	if hypotheses, ledgerErr := openLedger(*demo, getenv); ledgerErr != nil {
+	hypotheses, ledgerErr := openLedger(*demo, getenv)
+	if ledgerErr != nil {
 		log.Printf("Hypothesis ledger unavailable: %v", ledgerErr)
+		hypotheses = nil
 	} else {
 		serverOptions = append(serverOptions, server.WithLedger(hypotheses))
+	}
+	// Imported cases (the importer wave) are live-mode only: demo mode runs on
+	// illustrative data and writes nothing to disk, so its case and host routes
+	// answer 503 "not available" rather than keep a case store nobody asked for.
+	if !*demo {
+		if wiring, casesErr := openCases(getenv, hypotheses); casesErr != nil {
+			log.Printf("Imported cases unavailable: %v", casesErr)
+		} else {
+			serverOptions = append(serverOptions, wiring.options...)
+			defer wiring.close()
+		}
 	}
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

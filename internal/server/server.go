@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/history"
 	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/sessionproof"
@@ -870,8 +871,5 @@ func requestCSVRow(row audit.RequestRecord) []string {
 }
 
 func spreadsheetSafe(value string) string {
-	if value != "" && strings.ContainsRune("=+-@\t\r", rune(value[0])) {
-		return "'" + value
-	}
-	return value
+	return evidence.Cell(value)
 }

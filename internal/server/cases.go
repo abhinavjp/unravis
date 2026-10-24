@@ -525,6 +525,8 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 		writeStoreError(w, err)
 		return
 	}
+	// Previews built from the case are exports of it too: drop them.
+	h.exports().dropCase(string(id))
 	// Erase is idempotent, so a retry after a ledger failure completes the job.
 	if stripper, ok := h.ledger.(ledger.Stripper); ok && h.ledger != nil {
 		if _, err := stripper.StripEvidence(evidence.CasePrefixes(string(id)), erasedReference); err != nil {

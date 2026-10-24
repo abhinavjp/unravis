@@ -626,8 +626,9 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 	if err != nil {
 		return casestore.ImportResult{Report: rep}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE imports SET sha256=?, bytes=?, rows=?, rejected=?, quality_json=?, gaps_json=?
-		WHERE id=?`, sum, cr.n, rep.Rows, rep.Rejected, string(qualityJSON), string(gapsJSON), importID); err != nil {
+	meta.TZRule = cleanText(meta.DerivedTZRule(rep), maxLabelRune)
+	if _, err := tx.ExecContext(ctx, `UPDATE imports SET sha256=?, bytes=?, rows=?, rejected=?, quality_json=?, gaps_json=?, tz_rule=?
+		WHERE id=?`, sum, cr.n, rep.Rows, rep.Rejected, string(qualityJSON), string(gapsJSON), meta.TZRule, importID); err != nil {
 		if errors.Is(err, sqlite3.CONSTRAINT_UNIQUE) {
 			_ = tx.Rollback()
 			done = true
@@ -646,7 +647,7 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 
 	rec := casestore.ImportRecord{
 		ID: importID, Importer: meta.Importer, FileName: meta.FileName, SHA256: sum,
-		Bytes: cr.n, Rows: rep.Rows, Rejected: rep.Rejected, HostLabel: meta.HostLabel, TZRule: meta.TZRule,
+		Bytes: cr.n, Rows: rep.Rows, Rejected: rep.Rejected, HostLabel: meta.HostLabel, TZRule: meta.TZRule, AckText: meta.AckText,
 		Quality: rep.Quality, KnownGaps: rep.KnownGaps, Imported: time.UnixMilli(started.UnixMilli()).UTC(), Status: "ok",
 	}
 	_, _ = conn.ExecContext(context.Background(), "PRAGMA wal_checkpoint(TRUNCATE)")
@@ -832,7 +833,7 @@ type queryer interface {
 
 func (c *Case) records(ctx context.Context, db queryer, where string, args ...any) ([]casestore.ImportRecord, error) {
 	rows, err := db.QueryContext(ctx, `SELECT id, importer, file_name, sha256, bytes, rows, rejected, host_label, tz_rule,
-		quality_json, gaps_json, imported_utc, status FROM imports `+where+` ORDER BY id`, args...)
+		quality_json, gaps_json, imported_utc, status, ack_text FROM imports `+where+` ORDER BY id`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -841,14 +842,14 @@ func (c *Case) records(ctx context.Context, db queryer, where string, args ...an
 	for rows.Next() {
 		var r casestore.ImportRecord
 		var bytes, nrows, rejected sql.NullInt64
-		var host, tz, quality, gaps sql.NullString
+		var host, tz, quality, gaps, ack sql.NullString
 		var ms int64
 		if err := rows.Scan(&r.ID, &r.Importer, &r.FileName, &r.SHA256, &bytes, &nrows, &rejected, &host, &tz,
-			&quality, &gaps, &ms, &r.Status); err != nil {
+			&quality, &gaps, &ms, &r.Status, &ack); err != nil {
 			return nil, err
 		}
 		r.Bytes, r.Rows, r.Rejected = bytes.Int64, nrows.Int64, rejected.Int64
-		r.HostLabel, r.TZRule = host.String, tz.String
+		r.HostLabel, r.TZRule, r.AckText = host.String, tz.String, ack.String
 		r.Imported = time.UnixMilli(ms).UTC()
 		if quality.Valid && quality.String != "" {
 			if err := json.Unmarshal([]byte(quality.String), &r.Quality); err != nil {
