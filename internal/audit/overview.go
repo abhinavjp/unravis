@@ -9,7 +9,7 @@ import (
 // minReferenceSamples is the fewest valid (timed) samples a reference window
 // needs before its rates, quantiles and the deltas against them are reported.
 // It matches the rule Comparison uses for its own states.
-const minReferenceSamples = 20
+const minReferenceSamples = MinSampleCount
 
 // overviewKinds is the fixed order and the full set of row kinds: the three
 // derived kinds plus unknown, which only gets a row when something has it. The
@@ -160,7 +160,7 @@ func (w *kindWindow) finish(minSamples int64, minutes float64, allOutcomes bool)
 	}
 	if w.hist != nil && w.hist.count > 0 {
 		out.P50, out.P90, out.P95 = w.hist.quantile(.50), w.hist.quantile(.90), w.hist.quantile(.95)
-		if w.hist.count >= 100 {
+		if w.hist.count >= P99MinSampleCount {
 			out.P99 = w.hist.quantile(.99)
 		}
 	}

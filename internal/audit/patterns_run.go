@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -109,8 +111,9 @@ func patternQuery(in PatternInput, sourceIDs []string) Query {
 }
 
 // RunPatterns runs rules B1, B2, B6 and B12 over the window. It reads through
-// SlowestReader (stalls) and Repository.Requests (audit-create stalls), one
-// source at a time, at most MaxPatternRows rows per source and rule.
+// SlowestReader (stalls) and Repository.Requests (audit-create stalls), at most
+// MaxPatternRows rows per source and rule. Reads for one source run one after
+// another; different sources are read in parallel, at most MaxPatternWorkers.
 func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (PatternReport, error) {
 	if err := ValidatePattern(in); err != nil {
 		return PatternReport{}, err
@@ -133,17 +136,21 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 		Warnings:    []string{},
 	}
 
-	// B1: stalls, read source by source (concurrency 1).
+	// B1, B6 and the coverage census read source by source, sources in parallel;
+	// see readPatternSources. The results are folded below in source order, so
+	// the report does not depend on which read finished first.
+	reads, err := readPatternSources(ctx, reader, repo, in, params)
+	if err != nil {
+		return PatternReport{}, err
+	}
+
+	// B1: stalls.
 	var stallRows []RequestRecord
 	stallsCut, missingStall := false, 0
-	for _, src := range in.SourceIDs {
-		rows, cut, prov, err := readPatternStalls(ctx, reader, patternQuery(in, []string{src}), params.StallMs)
-		if err != nil {
-			return PatternReport{}, err
-		}
-		report.Provenance = append(report.Provenance, prov...)
-		stallsCut = stallsCut || cut
-		for _, r := range rows {
+	for _, read := range reads {
+		report.Provenance = append(report.Provenance, read.stallProv...)
+		stallsCut = stallsCut || read.stallCut
+		for _, r := range read.stallRows {
 			if r.InitiatedAt == nil || !usableMs(r.DurationMs) {
 				missingStall++
 				continue
@@ -161,19 +168,12 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 	report.Volleys = buildVolleys(report.Stalls, time.Duration(params.VolleyWindowMs)*time.Millisecond)
 	report.Recurrence = recurrenceOf(len(report.Episodes))
 
-	// B6: audit-create stalls, source by source.
+	// B6: audit-create stalls.
 	auditCut, missingAudit := false, 0
-	for _, src := range in.SourceIDs {
-		q := patternQuery(in, []string{src})
-		min := params.AuditStallMs
-		q.AuditCreateTimeMs = &Range{Min: &min}
-		rows, cut, prov, err := readPatternAuditRows(ctx, repo, q)
-		if err != nil {
-			return PatternReport{}, err
-		}
-		report.Provenance = append(report.Provenance, prov...)
-		auditCut = auditCut || cut
-		for _, r := range rows {
+	for _, read := range reads {
+		report.Provenance = append(report.Provenance, read.auditProv...)
+		auditCut = auditCut || read.auditCut
+		for _, r := range read.auditRows {
 			a, ok, missing := auditStallOf(r, params)
 			if missing {
 				missingAudit++
@@ -229,7 +229,7 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 		report.Warnings = append(report.Warnings, missingQualityWarnings(ctx, repo, analysis.Sources)...)
 	}
 
-	coverage, err := patternCoverage(ctx, repo, in)
+	coverage, err := foldPatternCoverage(ctx, repo, reads)
 	if err != nil {
 		return PatternReport{}, err
 	}
@@ -237,6 +237,137 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 
 	report.Findings = buildFindings(in, params, report)
 	return report, nil
+}
+
+// MaxPatternWorkers bounds how many sources RunPatterns reads at once.
+const MaxPatternWorkers = 4
+
+// patternWorkers is the worker cap in use. Tests lower it to 1 to get the
+// serial reference output.
+var patternWorkers = MaxPatternWorkers
+
+// patternSourceRead is everything RunPatterns reads for one source.
+type patternSourceRead struct {
+	stallRows []RequestRecord
+	stallCut  bool
+	stallProv []Provenance
+
+	auditRows []RequestRecord
+	auditCut  bool
+	auditProv []Provenance
+
+	// coverage is set when the repository offers the census and it succeeded;
+	// coverageErr is set when it did not. Both are zero when it was not asked.
+	coverage    CoverageReport
+	coverageErr error
+}
+
+// readPatternSources reads the slowest ranking (B1), the audit-create list (B6)
+// and, when offered, the coverage census for every source. Each source is one
+// task that runs its reads one after another, so a source never has more than
+// one read in flight (PerSourceConcurrency); only different sources overlap, at
+// most patternWorkers at a time. Tasks start in source order.
+//
+// Errors match a serial pass over the phases: the first stall error in source
+// order wins, then the first audit error, and a canceled context is returned as
+// ctx.Err(). A source after the first failing one is not started, so a failure
+// does not fan out more reads; a coverage error is kept per source and judged by
+// foldPatternCoverage because it is not fatal.
+func readPatternSources(ctx context.Context, reader SlowestReader, repo Repository, in PatternInput, params PatternParams) ([]patternSourceRead, error) {
+	n := len(in.SourceIDs)
+	reads := make([]patternSourceRead, n)
+	stallErrs := make([]error, n)
+	auditErrs := make([]error, n)
+	prober, canProbe := repo.(CoverageProber)
+
+	// firstStallFail and firstAuditFail are the lowest source index that failed
+	// so far (n when none), which tells later sources their reads cannot matter.
+	var firstStallFail, firstAuditFail atomic.Int64
+	firstStallFail.Store(int64(n))
+	firstAuditFail.Store(int64(n))
+	lower := func(a *atomic.Int64, i int) {
+		for {
+			cur := a.Load()
+			if int64(i) >= cur || a.CompareAndSwap(cur, int64(i)) {
+				return
+			}
+		}
+	}
+
+	started := runBounded(ctx, n, patternWorkers, func(i int) {
+		src := in.SourceIDs[i]
+		read := &reads[i]
+		if int64(i) > firstStallFail.Load() {
+			return
+		}
+		var err error
+		read.stallRows, read.stallCut, read.stallProv, err = readPatternStalls(ctx, reader, patternQuery(in, []string{src}), params.StallMs)
+		if err != nil {
+			stallErrs[i] = err
+			lower(&firstStallFail, i)
+			return
+		}
+		if int64(i) > firstAuditFail.Load() {
+			return
+		}
+		q := patternQuery(in, []string{src})
+		min := params.AuditStallMs
+		q.AuditCreateTimeMs = &Range{Min: &min}
+		read.auditRows, read.auditCut, read.auditProv, err = readPatternAuditRows(ctx, repo, q)
+		if err != nil {
+			auditErrs[i] = err
+			lower(&firstAuditFail, i)
+			return
+		}
+		if !canProbe || firstStallFail.Load() < int64(n) || firstAuditFail.Load() < int64(n) {
+			return // the report is already an error; the census would be wasted
+		}
+		read.coverage, read.coverageErr = prober.Coverage(ctx, CoverageInput{SourceID: src, Start: in.Start, End: in.End})
+	})
+
+	if !started {
+		return nil, ctx.Err()
+	}
+	for _, err := range stallErrs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	for _, err := range auditErrs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return reads, nil
+}
+
+// runBounded calls fn(0..n-1), at most workers at a time, starting them in
+// index order, and returns when every started call has returned. It stops
+// starting calls once ctx is done and then reports false.
+func runBounded(ctx context.Context, n, workers int, fn func(i int)) bool {
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > n {
+		workers = n
+	}
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
+			return false
+		}
+		wg.Add(1)
+		go func(i int) {
+			defer func() { <-sem; wg.Done() }()
+			fn(i)
+		}(i)
+	}
+	wg.Wait()
+	return true
 }
 
 // readPatternStalls pages the slowest ranking for one source down to stallMs,
@@ -492,17 +623,17 @@ func recurrenceOf(episodes int) string {
 	}
 }
 
-// patternCoverage runs the P1a census per source when the repository offers
-// it. Any refusal or error leaves Run false with a plain reason.
-func patternCoverage(ctx context.Context, repo Repository, in PatternInput) (*PatternCoverage, error) {
-	prober, ok := repo.(CoverageProber)
-	if !ok {
+// foldPatternCoverage combines the per-source P1a census results in source
+// order. It stops at the first source that did not report, exactly as a read
+// loop would: any refusal or error leaves Run false with a plain reason, and a
+// canceled context is returned as is.
+func foldPatternCoverage(ctx context.Context, repo Repository, reads []patternSourceRead) (*PatternCoverage, error) {
+	if _, ok := repo.(CoverageProber); !ok {
 		return &PatternCoverage{Run: false, Note: "Coverage is not available for this source, so the share of rows with a start time is unknown."}, nil
 	}
 	var docs, ria, account int64
-	for _, src := range in.SourceIDs {
-		rep, err := prober.Coverage(ctx, CoverageInput{SourceID: src, Start: in.Start, End: in.End})
-		if err != nil {
+	for _, read := range reads {
+		if err := read.coverageErr; err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
@@ -511,9 +642,9 @@ func patternCoverage(ctx context.Context, repo Repository, in PatternInput) (*Pa
 			}
 			return &PatternCoverage{Run: false, Note: "Coverage did not run (" + plainReason(err) + "). Run Coverage first."}, nil
 		}
-		docs += rep.Total.Docs
-		ria += rep.Total.RequestInitiatedAt.NonNull
-		account += rep.Total.AccountID.NonNull
+		docs += read.coverage.Total.Docs
+		ria += read.coverage.Total.RequestInitiatedAt.NonNull
+		account += read.coverage.Total.AccountID.NonNull
 	}
 	riaPct, accountPct := CoveragePct(ria, docs), CoveragePct(account, docs)
 	return &PatternCoverage{Run: true, RequestInitiatedAtPct: &riaPct, AccountIDPct: &accountPct, Note: fmt.Sprintf("Coverage over the same window: %d rows.", docs)}, nil
