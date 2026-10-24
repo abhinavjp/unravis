@@ -64,6 +64,15 @@ func ValidatePattern(in PatternInput) error {
 	if g := in.EpisodeGapSeconds; g < 0 || g > maxEpisodeGapSeconds {
 		return invalidInputf("episodeGapSeconds must be from 0 to %d", maxEpisodeGapSeconds)
 	}
+	loc, err := LoadZone(in.TimeZone)
+	if err != nil {
+		return err
+	}
+	if in.StepChange != nil {
+		if err := validateStepChange(in.StepChange, loc); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -274,6 +283,31 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 		report.Provenance = append(report.Provenance, idleProv...)
 		report.Findings = append(report.Findings, idleFinds...)
 		report.Warnings = append(report.Warnings, idleWarnings...)
+	}
+
+	// B9 is opt-in and has its own window of up to 120 days.
+	if in.StepChange != nil {
+		step, stepFinds, stepProv, stepWarnings, err := buildStepChange(ctx, repo, in, report)
+		if err != nil {
+			return PatternReport{}, err
+		}
+		report.StepChange = step
+		report.Provenance = append(report.Provenance, stepProv...)
+		report.Findings = append(report.Findings, stepFinds...)
+		report.Warnings = append(report.Warnings, stepWarnings...)
+	}
+
+	// The audit-create series and the fixed-duration check are opt-in: they read
+	// every request in the window, as B6g does.
+	if in.AuditSeries {
+		series, seriesFinds, seriesProv, seriesWarnings, err := buildAuditSeries(ctx, repo, in, params, report)
+		if err != nil {
+			return PatternReport{}, err
+		}
+		report.AuditSeries = series
+		report.Provenance = append(report.Provenance, seriesProv...)
+		report.Findings = append(report.Findings, seriesFinds...)
+		report.Warnings = append(report.Warnings, seriesWarnings...)
 	}
 	return report, nil
 }

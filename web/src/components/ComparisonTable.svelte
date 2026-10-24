@@ -7,6 +7,9 @@
   import PhaseBar from './PhaseBar.svelte';
   import Hint from './Hint.svelte';
   import OperationTable from './OperationTable.svelte';
+  import EndpointDaily from './EndpointDaily.svelte';
+  import { scope as pageScope } from '../lib/appState.svelte';
+  import { STEP_TEXT } from '../lib/patterns';
   import { p99NeedsSamples, quantileText } from '../lib/slowness';
   import { rollupCompletionRate } from '../lib/incomplete';
   import { rateText } from '../lib/overview';
@@ -24,6 +27,13 @@
   // 'groups' is the per-source group table; 'operation' is one row per API action with deltas against the reference.
   let view = $state<'groups' | 'operation'>('groups');
   const pageSize = 10;
+  // The daily view of one operation opens above the tables. Closing it puts the focus back on the button that opened it.
+  let dailyOp = $state('');
+  let dailySources = $state<string[]>([]);
+  let dailyTrigger: HTMLElement | null = null;
+  // A group row reads its own source. The Operation view merges sources, so it reads every source in the query.
+  const openDaily = (operation: string, trigger: HTMLElement, only?: string) => { dailyTrigger = trigger; dailySources = only ? [only] : [...pageScope.query.sourceIds]; dailyOp = operation; };
+  const closeDaily = () => { dailyOp = ''; const trigger = dailyTrigger; dailyTrigger = null; queueMicrotask(() => { if (trigger?.isConnected) trigger.focus(); }); };
   const stateLabels: Record<string, string> = {
     compared: 'Compared',
     missing_current: 'No current samples',
@@ -78,8 +88,11 @@
   <button type="button" class="secondary-button" aria-pressed={view === 'groups'} onclick={() => view = 'groups'}>API groups</button>
   <button type="button" class="secondary-button" aria-pressed={view === 'operation'} title="One row per API action and request type, with changes against the reference period." onclick={() => view = 'operation'}>Operation</button>
 </div>
+{#if dailyOp}
+  <EndpointDaily operation={dailyOp} sourceIds={dailySources} end={pageScope.query.end} zone={pageScope.zone} onClose={closeDaily} />
+{/if}
 {#if view === 'operation'}
-  <OperationTable {rollups} {onDrill} {kindFilter} />
+  <OperationTable {rollups} {onDrill} {kindFilter} onDaily={openDaily} />
 {:else}
 <div class="group-toolbar">
   <label>Find an API<input type="search" placeholder="Search API name or source" bind:value={search} oninput={() => page = 0} /></label>
@@ -111,7 +124,7 @@
         {@const rates = statusRates(rollupFor(rollups, row), outcomeFilter, kindFilter)}
         <tr class:chosen={row.key === selectedKey}>
           <td class="timeline-choice"><label><input type="checkbox" checked={timelineKeys.includes(row.key)} disabled={timelineKeys.length >= 8 && !timelineKeys.includes(row.key)} aria-label={'Compare timeline for ' + row.controller + '.' + row.action + ' in ' + (sources.get(row.sourceId) ?? row.sourceId) + ' · ' + row.kind + ' · ' + row.outcome} onchange={() => onToggleTimeline(row.key)} /><span>Compare</span></label></td>
-          <td><button class="api-select" aria-pressed={row.key === selectedKey} onclick={() => onSelect(row.key)}>{row.controller}.{row.action}</button><small title={sources.get(row.sourceId) ?? row.sourceId}>{sources.get(row.sourceId) ?? row.sourceId}</small><PhaseBar phases={row.current.phases} delta={row.phaseDeltaMs} /></td>
+          <td><button class="api-select" aria-pressed={row.key === selectedKey} onclick={() => onSelect(row.key)}>{row.controller}.{row.action}</button><small title={sources.get(row.sourceId) ?? row.sourceId}>{sources.get(row.sourceId) ?? row.sourceId}</small>{#if row.controller && row.action}<button type="button" class="daily-open" aria-label={STEP_TEXT.dailyOpen + ': ' + row.controller + '.' + row.action} onclick={(event) => openDaily(row.controller + '.' + row.action, event.currentTarget, row.sourceId)}>{STEP_TEXT.dailyOpen}</button>{/if}<PhaseBar phases={row.current.phases} delta={row.phaseDeltaMs} /></td>
           <td class="group-kind" data-label="Kind and outcome" title={row.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(row.kind)}<small>{outcomeRateText(rows, row, outcomeFilter)}</small></td><td data-label="Current requests" title={observedPartialTip(row.current.observedPartial)}>{formatCount(row.current.count)}</td><td data-label="Reference requests" title={observedPartialTip(row.reference.observedPartial)}>{formatCount(row.reference.count)}</td>
           <td class="numeric" data-label="Extra waiting (total)" title={impactTip(row)}>{impactText(row.impactMs)}{#if row.significant}<small>clear shift</small>{/if}</td>
           <td class="numeric" data-label="P95 vs reference" title={p99Tip(row)}>{ratio(row.p95Ratio)}</td><td class="numeric" data-label="P95 difference (ms)">{row.p95DeltaMs == null ? 'N/A' : '≈ ' + row.p95DeltaMs.toFixed(1)}</td>

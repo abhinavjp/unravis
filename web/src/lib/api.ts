@@ -1,4 +1,4 @@
-import type { Analysis, Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile } from './types';
+import type { Analysis, Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile } from './types';
 
 const base = '/api';
 
@@ -112,6 +112,9 @@ export const api = {
   },
   /** P2-lite incident patterns for one window (rules B1, B2, B6, B12). */
   patterns: (input: PatternInput, signal?: AbortSignal) => request<PatternReport>('/patterns', json(input), signal),
+  /** The daily p95 and count of one operation, one entry for each whole local day. A live source is refused beyond 14 days (409, code broad_scan_refused). */
+  endpointDaily: (operation: string, sourceIds: string[], start: string, end: string, tz: string, signal?: AbortSignal) =>
+    request<EndpointDaily>('/endpoint-daily?' + new URLSearchParams({ op: operation, sources: sourceIds.join(','), start, end, ...(tz ? { tz } : {}) }).toString(), {}, signal),
   ledgerList: () => request<Hypothesis[]>('/ledger'),
   ledgerCreate: (text: string) => request<Hypothesis>('/ledger', json({ text })),
   /** A 422 ApiError with code guard_blocked carries .reasons. */

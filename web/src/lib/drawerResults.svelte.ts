@@ -27,6 +27,9 @@ export interface StoredPatterns {
   stallSec: string;
   gapSec: string;
   idleAsked: boolean;
+  /** Days B9 was asked to read (0 or missing: not asked), and whether the audit-create series was asked for. */
+  stepDays?: number;
+  auditAsked?: boolean;
   report: PatternReport;
   savedAt: number;
 }
