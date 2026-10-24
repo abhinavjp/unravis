@@ -53,7 +53,7 @@ func (s *Store) admit(ctx context.Context, p *profile) (func(), *admitFailure) {
 	s.mu.RUnlock()
 	if per == nil {
 		<-s.global
-		return nil, &admitFailure{Stage: admitRemoved, Code: "source_unavailable", Message: audit.SourceQueryErrorMessage("source_unavailable"), }
+		return nil, &admitFailure{Stage: admitRemoved, Code: "source_unavailable", Message: audit.SourceQueryErrorMessage("source_unavailable")}
 	}
 	if err := acquire(ctx, per); err != nil {
 		<-s.global

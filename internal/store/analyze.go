@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -193,6 +194,97 @@ func (s *Store) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, err
 	return analysis, nil
 }
 
+// estimateBucketJSON is a cheap upper bound on len(json.Marshal(bucket)): no
+// allocation and no reflection, so the early byte bail-out in readBuckets costs
+// a few additions per bucket instead of an encode. It never under-counts, so the
+// bail-out cannot let through more than json.Marshal would have; the exact check
+// on the whole Analysis (in Analyze) is what decides the final size. ok is false
+// for a bucket json.Marshal would refuse (NaN or infinite float, a time outside
+// years 0 to 9999), which readBuckets reports as the same byte-limit error.
+//
+// Keys are counted with their quotes, colon and a comma. Omitempty fields cost
+// nothing at zero. A float is bounded at 24 bytes (-1.7976931348623157e+308), a
+// string at one byte per safe ASCII byte and six (\u00XX) for any other byte.
+func estimateBucketJSON(b audit.Bucket) (size int64, ok bool) {
+	const (
+		braces     = 2
+		timeBound  = 32 // "2006-01-02T15:04:05.999999999Z"
+		floatBound = 24
+	)
+	if year := b.At.Year(); year < 0 || year > 9999 {
+		return 0, false
+	}
+	size = braces +
+		int64(len(`"sourceId":`)+len(`"controller":`)+len(`"action":`)+len(`"kind":`)+len(`"outcome":`)+len(`"state":`)+
+			len(`"at":`)+len(`"bin":`)+len(`"count":`)+len(`"sumMs":`)+len(`"minMs":`)+len(`"maxMs":`)+12) +
+		jsonStringBound(b.SourceID) + jsonStringBound(b.Controller) + jsonStringBound(b.Action) +
+		jsonStringBound(b.Kind) + jsonStringBound(b.Outcome) + jsonStringBound(b.State) +
+		timeBound + decimalLen(int64(b.Bin)) + decimalLen(b.Count)
+	for _, v := range [...]float64{b.SumMs, b.MinMs, b.MaxMs} {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return 0, false
+		}
+		if v == 0 {
+			size += 2 // "0" or "-0"
+		} else {
+			size += floatBound
+		}
+	}
+	for _, f := range [...]struct {
+		key string
+		v   float64
+	}{{`"sumAuditMs":`, b.SumAuditMs}, {`"sumApiMs":`, b.SumApiMs}, {`"sumPayloadMs":`, b.SumPayloadMs}} {
+		if math.IsNaN(f.v) || math.IsInf(f.v, 0) {
+			return 0, false
+		}
+		if f.v != 0 {
+			size += int64(len(f.key)) + 1 + floatBound
+		}
+	}
+	for _, c := range [...]struct {
+		key string
+		v   int64
+	}{
+		{`"nAudit":`, b.NAudit}, {`"nApi":`, b.NApi}, {`"nPayload":`, b.NPayload},
+		{`"pendingAsync":`, b.PendingAsync}, {`"observedPartial":`, b.ObservedPartial},
+		{`"count4xx":`, b.Count4xx}, {`"count5xx":`, b.Count5xx}, {`"countHangfireFailed":`, b.CountHangfireFailed},
+	} {
+		if c.v != 0 {
+			size += int64(len(c.key)) + 1 + decimalLen(c.v)
+		}
+	}
+	return size, true
+}
+
+// jsonStringBound bounds the encoded length of s, quotes included.
+func jsonStringBound(s string) int64 {
+	n := int64(2)
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c >= 0x80 || c < 0x20 || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&':
+			n += 6
+		default:
+			n++
+		}
+	}
+	return n
+}
+
+// decimalLen is the length of v in base ten, sign included.
+func decimalLen(v int64) int64 {
+	n := int64(1)
+	u := uint64(v)
+	if v < 0 {
+		n++
+		u = -u
+	}
+	for u >= 10 {
+		u /= 10
+		n++
+	}
+	return n
+}
+
 func acquire(ctx context.Context, sem chan struct{}) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -250,8 +342,8 @@ func (s *Store) readBuckets(ctx context.Context, p *profile, q audit.Query, star
 			PendingAsync: doc.PendingAsync, ObservedPartial: doc.ObservedPartial,
 			Count4xx: doc.C4xx, Count5xx: doc.C5xx, CountHangfireFailed: doc.CHangfireFailed,
 		}
-		encoded, err := json.Marshal(bucket)
-		if err != nil || totalBytes.Add(int64(len(encoded)+1)) > maxAnalysisBytes {
+		size, ok := estimateBucketJSON(bucket)
+		if !ok || totalBytes.Add(size+1) > maxAnalysisBytes {
 			return nil, fmt.Errorf("%w: %w", audit.ErrLimit, audit.ErrSummaryBytesLimit)
 		}
 		result = append(result, bucket)
