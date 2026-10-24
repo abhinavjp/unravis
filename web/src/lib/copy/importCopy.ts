@@ -84,7 +84,7 @@ export const IMPORT_TEXT = {
     busy: 'Working…',
     'no-preview': 'Choose a file and let the preview finish first.',
     stale: 'The file or its settings changed. A new preview is loading.',
-    'unknown-host': 'This file names an unknown host, so it cannot be imported.',
+    'unknown-host': 'The host in this file does not match the host list or the host you picked, so it cannot be imported.',
     nothing: 'The preview kept no rows, so there is nothing to import.',
     settings: 'A setting you typed is not valid. Fix it first.',
     ack: 'Tick the box to confirm the notice first.'
@@ -155,7 +155,7 @@ export const REASON_TEXT: Record<string, string> = {
   'bad-number': 'A number could not be read.',
   'line-too-long': 'A line was longer than the limit.',
   encoding: 'The text encoding could not be read.',
-  'unknown-host': 'This file names an unknown host. Add it to the host list, then try again.',
+  'unknown-host': 'The host in this file does not match the host list or the host you picked. Check the host you picked, or add the host in the file to the list, then try again.',
   'unscrubbed-column': 'The file has a column that may hold private text, so it was refused. Export it again without that column.',
   'unsupported-format': 'This file format is not supported.',
   'archive-extract-first': 'This is a compressed file. Extract it first, then choose the extracted file.',

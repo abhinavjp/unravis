@@ -102,7 +102,7 @@ test('errorText names a duplicate import, a refused column header, and shows a m
   assert.equal(importCopy.errorText({ status: 401, reason: 'no_session', message: 'Open Unravis from the link it printed when it started, or restart it.' }), 'Open Unravis from the link it printed when it started, or restart it.');
   assert.match(importCopy.errorText({ status: 500, reason: '', message: 'SENTINEL-7f3a leaked' }), /^The server refused this request/, 'the server message is never echoed');
   assert.doesNotMatch(importCopy.errorText({ status: 500, reason: '', message: 'SENTINEL-7f3a leaked' }), /SENTINEL/);
-  assert.match(importCopy.errorText({ status: 422, reason: 'unknown-host', message: '' }), /unknown host/);
+  assert.match(importCopy.errorText({ status: 422, reason: 'unknown-host', message: '' }), /host list or the host you picked/);
 });
 
 test('small text helpers', () => {

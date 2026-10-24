@@ -313,3 +313,54 @@ func TestSpreadsheetSafeIsTheEvidenceCell(t *testing.T) {
 		}
 	}
 }
+
+// A clumsy user confirms the same preview twice, confirms after erasing the
+// case, or exports a case that holds nothing. None of these may panic or leak.
+func TestCaseExportClumsyUse(t *testing.T) {
+	e := newIntEnv(t, intRepo())
+	confirm := func(previewID string) int {
+		return e.json(http.MethodPost, "/api/export/confirm", `{"previewId":"`+previewID+`"}`).Code
+	}
+	preview := func(id string) string {
+		res := e.json(http.MethodPost, "/api/export/preview", `{"caseId":"`+id+`"}`)
+		if res.Code != http.StatusOK {
+			t.Fatalf("preview of %s = %d %s", id, res.Code, res.Body)
+		}
+		var out struct {
+			PreviewID string `json:"previewId"`
+		}
+		decodeBody(t, res, &out)
+		return out.PreviewID
+	}
+
+	empty := e.newCase("Nothing imported")
+	pid := preview(empty)
+	if got := confirm(pid); got != http.StatusOK {
+		t.Errorf("confirm of an empty case export = %d", got)
+	}
+	if got := confirm(pid); got != http.StatusNotFound {
+		t.Errorf("second confirm of the same preview = %d, want 404", got)
+	}
+
+	for _, bad := range []string{"", "x", strings.Repeat("z", 5000)} {
+		if got := confirm(bad); got != http.StatusNotFound {
+			t.Errorf("confirm of %d-byte token = %d, want 404", len(bad), got)
+		}
+	}
+
+	gone := e.newCase("Erased before confirm")
+	e.commit(gone, "iis-httperr", "web-a", intHTTPERR)
+	pid = preview(gone)
+	if res := e.json(http.MethodDelete, "/api/cases/"+gone, `{"confirm":"`+gone+`"}`); res.Code != http.StatusNoContent {
+		t.Fatalf("erase = %d %s", res.Code, res.Body)
+	}
+	if got := confirm(pid); got != http.StatusNotFound {
+		t.Errorf("confirm after the case was erased = %d, want 404", got)
+	}
+	if res := e.json(http.MethodPost, "/api/export/preview", `{"caseId":"`+gone+`"}`); res.Code != http.StatusNotFound {
+		t.Errorf("preview of an erased case = %d, want 404", res.Code)
+	}
+	if res := e.json(http.MethodDelete, "/api/cases/"+gone, `{"confirm":"`+gone+`"}`); res.Code != http.StatusNotFound {
+		t.Errorf("second erase = %d, want 404", res.Code)
+	}
+}
