@@ -6,6 +6,7 @@
     ALT_STATUS_LABEL, ALT_STATUS_ORDER, STATE_LABEL, STATE_ORDER, buildInput, editorFromHypothesis, historyLine,
     joinProblem, ledgerCopy as copy, presenceText, rateProblem, stateLabel, type EditorState
   } from '../lib/ledger';
+  import Drawer from './Drawer.svelte';
 
   // The Ledger drawer: what we believe, what supports it, what contradicts it, what is not yet known.
   // The analyst sets every state. Guards can only block "strong correlation"; the app never suggests or computes a state.
@@ -22,7 +23,6 @@
   let problem = $state<Record<string, string>>({});
   let blocked = $state<Record<string, string[]>>({});
   let confirming = $state<string | null>(null);
-  let drawer = $state<HTMLElement>();
   let addField = $state<HTMLInputElement>();
 
   const messageOf = (error: unknown) => (error instanceof Error ? error.message : 'Something went wrong.');
@@ -97,20 +97,9 @@
   }
   function toggle(id: string) { openId = openId === id ? null : id; confirming = null; }
 
-  function onKey(event: KeyboardEvent) {
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return; }
-    if (event.key !== 'Tab' || !drawer) return;
-    const focusable = [...drawer.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')];
-    if (!focusable.length) return;
-    const first = focusable[0], last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-  }
 </script>
 
-<button type="button" class="drawer-scrim" aria-label="Close ledger" onclick={onClose}></button>
-<div class="connections-drawer ledger-drawer" bind:this={drawer} onkeydown={onKey} role="dialog" aria-modal="true" aria-labelledby="ledger-title" tabindex="-1">
-  <div class="drawer-header"><div><h2 id="ledger-title">{copy.title}</h2><p>{copy.intro}</p></div><button type="button" class="icon-button drawer-close" aria-label="Close ledger" onclick={onClose}>×</button></div>
+<Drawer class="ledger-drawer" title={copy.title} titleId="ledger-title" intro={copy.intro} closeLabel="Close ledger" focusable={'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'} {onClose}>
   <p class="demo-note">{copy.notice}</p>
 
   {#if loadError}<p class="inline-error" role="alert">{loadError}</p>{/if}
@@ -246,10 +235,10 @@
       <button type="submit" class="primary-button" disabled={adding || newText.trim() === ''}>{copy.addButton}</button>
     </div>
   </form>
-</div>
+</Drawer>
 
 <style>
-  .ledger-drawer { overflow-x: hidden; }
+  :global(.connections-drawer.ledger-drawer) { overflow-x: hidden; }
   .ledger-empty { margin: 14px 0 0; color: var(--text-2); font-size: 13px; }
   .ledger-list { display: grid; margin: 12px 0 0; padding: 0; list-style: none; }
   .ledger-item { border-bottom: 1px solid var(--line-soft); }

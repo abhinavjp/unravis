@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { findTerm } from '../lib/copy/lookup';
   import { searchTerms } from '../lib/copy/lookup';
+  import Drawer from './Drawer.svelte';
 
   // The glossary drawer: every term in the copy deck, alphabetical, with a plain text filter. It opens from the Help button in the header.
   // Esc closes it and the page gives focus back to the button. Tab stays inside the panel while it is open, like the Connections drawer.
@@ -24,20 +25,9 @@
       entry.focus({ preventScroll: true });
     });
   });
-  function onKey(event: KeyboardEvent) {
-    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return; }
-    if (event.key !== 'Tab' || !drawer) return;
-    const focusable = [...drawer.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])')];
-    if (!focusable.length) return;
-    const first = focusable[0], last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-  }
 </script>
 
-<button type="button" class="drawer-scrim" aria-label="Close glossary" onclick={onClose}></button>
-<div class="connections-drawer glossary-drawer" bind:this={drawer} onkeydown={onKey} role="dialog" aria-modal="true" aria-labelledby="glossary-title" tabindex="-1">
-  <div class="drawer-header"><div><h2 id="glossary-title">Glossary</h2></div><button type="button" class="icon-button drawer-close" aria-label="Close glossary" onclick={onClose}>×</button></div>
+<Drawer class="glossary-drawer" title="Glossary" titleId="glossary-title" closeLabel="Close glossary" focusable={'button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'} bind:element={drawer} {onClose}>
   <div class="glossary-search">
     <label for="glossary-filter">Search terms</label>
     <input id="glossary-filter" type="search" bind:this={search} bind:value={query} autocomplete="off" spellcheck="false" aria-describedby="glossary-count" />
@@ -54,10 +44,10 @@
       </div>
     {/each}
   </dl>
-</div>
+</Drawer>
 
 <style>
-  .glossary-drawer { overflow-x: hidden; }
+  :global(.connections-drawer.glossary-drawer) { overflow-x: hidden; }
   .glossary-search { display: grid; gap: 4px; margin: 13px 0 6px; }
   .glossary-search label { color: var(--text-2); font-size: 12px; }
   .glossary-search input { width: 100%; min-width: 0; min-height: 38px; padding: 6px 10px; color: var(--text); background: var(--bg); border: 1px solid var(--control-line); border-radius: var(--radius); font-size: 14px; }
