@@ -21,8 +21,8 @@
 
 <style>
   .phase-bar { display: grid; gap: 2px; margin-top: 4px; max-width: 340px; }
-  .phase-track { display: flex; height: 6px; overflow: hidden; border-radius: 3px; background: var(--soft-line); }
-  .phase-audit { background: var(--amber); }
-  .phase-api { background: var(--cobalt); }
-  small { color: var(--muted); font-size: 12px; white-space: normal; }
+  .phase-track { display: flex; height: 6px; overflow: hidden; border-radius: 3px; background: var(--line-soft); }
+  .phase-audit { background: var(--text-2); }
+  .phase-api { background: var(--accent); }
+  small { color: var(--text-2); font-size: 12px; white-space: normal; }
 </style>

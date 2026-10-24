@@ -91,6 +91,17 @@ export const staleDrill = (
   return drill;
 };
 
+/**
+ * A stale drill opened inside an operation's frame must stay that operation's: the panel's totals buttons build an every-API drill, so the
+ * operation's controller, action and request type (and its name in the heading) are merged in. A drill that already names an operation, or
+ * no operation, is returned unchanged.
+ */
+export const scopeStaleDrill = <T extends OverviewDrill>(drill: T, operation: Pick<Rollup, 'controller' | 'action' | 'kind'> | null | undefined): T => {
+  if (!operation || drill.controller !== undefined) return drill;
+  const kind = operation.kind ? (operation.kind === 'unknown' ? 'http_unknown' : operation.kind) : 'all';
+  return { ...drill, kind: kind as OverviewDrill['kind'], controller: operation.controller, action: operation.action, label: drill.label.replace(/^Every API/, operation.controller + '.' + operation.action) };
+};
+
 /** Every latency range the server counts as one; none of them can be combined with an age range. */
 const LATENCY_RANGE_KEYS = ['observedMs', 'apiTimeMs', 'auditCreateTimeMs'] as const;
 

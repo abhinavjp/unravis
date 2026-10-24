@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import type { Analysis, Comparison } from '../lib/types';
   import { echarts, histogramOption, ratioOption, timelineOption } from '../lib/charts';
+  import { theme } from '../lib/theme.svelte';
   let { analysis, selected, zone, targetMs }: {
     analysis: Analysis; selected: Comparison | null; zone: string; targetMs: number | null
   } = $props();
@@ -21,6 +22,7 @@
   });
   $effect(() => {
     if (!charts.length) return;
+    void theme.epoch;
     charts[0].setOption(hasCurrent ? timelineOption(analysis, selected, zone, targetMs) : { series: [] }, true);
     charts[1].setOption(hasRatio ? ratioOption(analysis, selected, zone) : { series: [] }, true);
     charts[2].setOption(hasDistribution ? histogramOption(selected) : { series: [] }, true);

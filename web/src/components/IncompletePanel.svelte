@@ -56,6 +56,6 @@
 
 <style>
   .incomplete-panel { margin-bottom: 14px; }
-  .stale-error { color: var(--danger); }
-  .incomplete-note { margin: 0; padding: 8px 12px; color: var(--muted); font-size: 12px; }
+  .stale-error { color: var(--bad); }
+  .incomplete-note { margin: 0; padding: 8px 12px; color: var(--text-2); font-size: 12px; }
 </style>

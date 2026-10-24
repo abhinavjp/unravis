@@ -104,6 +104,11 @@ export const operationDrill = (rollup: Pick<Rollup, 'controller' | 'action' | 'k
   };
 };
 
+/** Every event of the comparison, no operation chosen: the evidence frame's all-operations scope. The request type follows the comparison's own filter. */
+export const allOperationsDrill = (queryKind: Kind = 'all'): OverviewDrill => ({
+  kind: queryKind, state: 'all', outcome: '', label: 'All operations', note: ''
+});
+
 /** The request-list heading for a drill: its label, then the note in brackets when the list can differ from the count that was clicked. */
 export const drillHeading = (drill: Pick<OverviewDrill, 'label' | 'note'>) => drill.note ? drill.label + ' (' + drill.note + ')' : drill.label;
 

@@ -1294,3 +1294,329 @@ test('an export from the stale list carries the same oldest-first order, and a p
   const source = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
   assert.match(source, /api\.export\([^\n]*requestState, drillOverview\?\.order \?\? ''\)/);
 });
+
+const depth = loadTypeScript('src/lib/depth.ts');
+const navAt = (whereOpen, hasContext, recordOpen) => ({ whereOpen, hasContext, recordOpen });
+
+test('depth follows the deepest open level: pulse, where, evidence, record', () => {
+  assert.equal(depth.depthOf(navAt(false, false, false)), 0);
+  assert.equal(depth.depthOf(navAt(true, false, false)), 1);
+  assert.equal(depth.depthOf(navAt(true, true, false)), 2);
+  assert.equal(depth.depthOf(navAt(false, true, false)), 2);
+  assert.equal(depth.depthOf(navAt(true, true, true)), 3);
+});
+
+test('breadcrumb is empty at the pulse and names every level reached beyond it', () => {
+  assert.deepEqual(depth.breadcrumb(navAt(false, false, false)), []);
+  assert.deepEqual(depth.breadcrumb(navAt(true, false, false)).map(c => c.id), ['pulse', 'where']);
+  const deep = depth.breadcrumb(navAt(true, true, true), { evidence: 'Orders.Get', record: 'abc123' });
+  assert.deepEqual(deep.map(c => c.label), ['Pulse', 'Where is it?', 'Orders.Get', 'abc123']);
+  assert.deepEqual(deep.map(c => c.current), [false, false, false, true]);
+  assert.deepEqual(depth.breadcrumb(navAt(false, true, false)).map(c => c.label), ['Pulse', 'Operation']);
+  assert.deepEqual(depth.breadcrumb(navAt(false, true, true)).map(c => c.id), ['pulse', 'evidence', 'record']);
+});
+
+test('Esc steps up exactly one level and keeps the levels above open', () => {
+  const full = navAt(true, true, true);
+  assert.equal(depth.stepUpTarget(full), 'record');
+  const afterRecord = depth.stepUp(full);
+  assert.deepEqual(afterRecord, navAt(true, true, false));
+  assert.equal(depth.stepUpTarget(afterRecord), 'evidence');
+  const afterOperation = depth.stepUp(afterRecord);
+  assert.deepEqual(afterOperation, navAt(true, false, false));
+  assert.equal(depth.stepUpTarget(afterOperation), 'where');
+  assert.deepEqual(depth.stepUp(afterOperation), navAt(false, false, false));
+  assert.equal(depth.stepUpTarget(navAt(false, false, false)), null);
+  assert.deepEqual(depth.stepUp(navAt(false, false, false)), navAt(false, false, false));
+  assert.deepEqual(depth.stepUpTo(full, 1), navAt(true, false, false));
+  assert.deepEqual(depth.stepUpTo(full, 0), navAt(false, false, false));
+});
+
+test('the active quick range is the one whose window and equal reference window match the query', () => {
+  const ranges = time.quickRanges;
+  const q = time.quickRange('1h', new Date('2026-10-22T12:00:00Z'));
+  assert.equal(depth.activeRangeId(q, ranges), '1h');
+  assert.equal(depth.activeRangeId({ ...q, baselineEnd: '2026-10-22T10:00:00Z' }, ranges), null);
+  assert.equal(depth.activeRangeId({ ...q, start: 'nonsense' }, ranges), null);
+  assert.equal(depth.activeRangeId({ ...q, end: '2026-10-22T11:30:00Z' }, ranges), null);
+});
+
+test('filter chips list exactly the active More filters and each patch removes only its own', () => {
+  const query = time.defaultQuery(new Date('2026-10-22T12:00:00Z'), ['source-1']);
+  assert.deepEqual(depth.filterChips(query), []);
+  assert.equal(depth.moreFiltersCount(query), 0);
+  Object.assign(query, {
+    kind: 'http_unknown', outcome: 'server_error', metric: 'api', controller: 'Orders', action: ' Get ',
+    completion: 'pending', userIds: [7, 9], statusCodes: ['500'], urlContains: '/api/x', observedMs: { min: 100 }, requestKb: { min: 1, max: 5 }
+  });
+  const chips = depth.filterChips(query);
+  assert.deepEqual(chips.map(c => c.id), ['kind', 'outcome', 'metric', 'controller', 'action', 'completion', 'userIds', 'statusCodes', 'urlContains', 'observedMs', 'requestKb']);
+  assert.equal(depth.moreFiltersCount(query), chips.length);
+  assert.equal(chips.find(c => c.id === 'action').value, 'Get');
+  assert.equal(chips.find(c => c.id === 'kind').value, 'HTTP (polling type unknown)');
+  assert.equal(chips.find(c => c.id === 'userIds').value, '7, 9');
+  assert.equal(chips.find(c => c.id === 'observedMs').value, 'at least 100 ms');
+  assert.equal(chips.find(c => c.id === 'requestKb').value, '1–5 KB');
+  for (const chip of chips) {
+    const before = depth.filterChips(query).map(c => c.id);
+    depth.applyChipPatch(query, chip);
+    const after = depth.filterChips(query).map(c => c.id);
+    assert.deepEqual(after, before.filter(id => id !== chip.id), 'removing ' + chip.id);
+  }
+  assert.equal(query.kind, 'all');
+  assert.equal(query.outcome, 'all');
+  assert.equal(query.metric, 'total');
+  assert.equal(query.controller, '');
+  assert.equal(query.completion, undefined);
+});
+
+test('the sync/async/hangfire/http kind and the quick ranges are not chips, they have their own controls', () => {
+  const query = time.defaultQuery(new Date('2026-10-22T12:00:00Z'), ['source-1']);
+  for (const kind of ['all', 'synchronous', 'asynchronous', 'hangfire', 'http']) {
+    query.kind = kind;
+    assert.deepEqual(depth.filterChips(query), [], kind);
+  }
+});
+
+const pulse = loadTypeScript('src/lib/pulse.ts');
+const overviewRow = (kind, events, completed, clientErrors, serverErrors, p95Ms) => ({ kind, events, completed, clientErrors, serverErrors, p95: p95Ms == null ? null : { valueMs: p95Ms } });
+const rollupRow = (controller, action, extra = {}) => ({ controller, action, kind: 'synchronous', requests: 10, failures: 0, perMinute: 1, ...extra });
+
+test('the pulse figures sum the request types in scope and say so when latency cannot be stated', () => {
+  const rows = [overviewRow('synchronous', 80, 60, 4, 1, 250), overviewRow('asynchronous', 20, 20, 0, 3, 900)];
+  const all = pulse.pulseFigures(rows, 'all', 'total', 'Observed API time (AuditCreateTime + ApiTime)');
+  assert.deepEqual(all.map(f => f.id), ['requests', 'completion', 'p95', 'client', 'server']);
+  assert.equal(all[0].value, (100).toLocaleString());
+  assert.equal(all[1].value, '80.0%');
+  assert.equal(all[2].value, '—');
+  assert.match(all[2].hint, /one request type/);
+  assert.match(all[2].tip, /not pooled/);
+  assert.equal(all[3].value, '4');
+  assert.equal(all[4].value, '4');
+  const sync = pulse.pulseFigures(rows, 'synchronous', 'total', 'Observed API time (AuditCreateTime + ApiTime)');
+  assert.equal(sync[2].label, 'Observed P95');
+  assert.equal(sync[2].value, '250 ms');
+  assert.equal(pulse.pulseFigures(rows, 'synchronous', 'api', 'API processing')[2].label, 'API P95');
+  assert.match(sync[1].tip, /Completed . all events/);
+});
+
+test('an empty period gives honest figures, never a fake zero percent or a made-up P95', () => {
+  const figures = pulse.pulseFigures([], 'synchronous', 'total', 'x');
+  assert.equal(figures[0].value, '0');
+  assert.equal(figures[1].value, '—');
+  assert.equal(figures[2].value, '—');
+  assert.equal(figures[2].hint, 'No timed requests');
+  assert.equal(pulse.heroHasData([]), false);
+  assert.equal(pulse.heroHasData([{ count: 0 }, { count: 0 }]), false);
+  assert.equal(pulse.heroHasData([{ count: 0 }, { count: 2 }]), true);
+});
+
+test('only the four request types with their own histogram count as a single kind', () => {
+  for (const kind of ['synchronous', 'asynchronous', 'hangfire', 'http_unknown']) assert.equal(pulse.singleKind(kind), true, kind);
+  for (const kind of ['all', 'unknown']) assert.equal(pulse.singleKind(kind), false, kind);
+  assert.equal(pulse.durationText(null), '—');
+  assert.equal(pulse.durationText(Number.NaN), '—');
+  assert.equal(pulse.durationText(4.26), '4.3 ms');
+  assert.equal(pulse.durationText(250.4), '250 ms');
+  assert.equal(pulse.durationText(1500), '1.50 s');
+  assert.equal(pulse.durationText(12_400), '12.4 s');
+});
+
+test('operations rank worst first: lowest completion, otherwise highest value, and rows without a value go last', () => {
+  const rows = [
+    rollupRow('A', 'one', { requests: 5, events: 5, completionRate: 0.9, p95Ms: 100, serverErrorRate: 0.01 }),
+    rollupRow('B', 'two', { requests: 50, events: 50, completionRate: 0.4, p95Ms: 900, serverErrorRate: 0.2 }),
+    rollupRow('C', 'three', { requests: 20, events: 20 }),
+    rollupRow('D', 'four', { requests: 20, events: 20, completionRate: 0.7, p95Ms: 300, serverErrorRate: 0 })
+  ];
+  const names = (lens) => pulse.rankOperations(rows, lens).map(row => row.controller).join('');
+  assert.equal(names('completion'), 'BDAC');
+  assert.equal(names('p95'), 'BDAC');
+  assert.equal(names('server'), 'BADC');
+  assert.equal(names('requests'), 'BCDA');
+  assert.deepEqual(rows.map(row => row.controller), ['A', 'B', 'C', 'D']);
+});
+
+test('the lens read states the one number that matters with its honest label and delta', () => {
+  const row = rollupRow('A', 'one', { requests: 5, events: 8, completionRate: 0.5, p95Ms: 1200, p95DeltaMs: 200, clientErrorRate: 0.25, serverErrorRate: null });
+  assert.equal(pulse.lensRead(row, 'requests').label, 'requests');
+  assert.equal(pulse.lensRead(row, 'requests').sort, 8);
+  assert.equal(pulse.lensRead(row, 'completion').label, 'completed');
+  assert.equal(pulse.lensRead(row, 'p95').value, '1.20 s');
+  assert.equal(pulse.lensRead(row, 'p95').label, 'P95');
+  assert.equal(pulse.lensRead(row, 'client').label, '4xx');
+  assert.equal(pulse.lensRead(row, 'server').sort, null);
+  assert.equal(pulse.lensRead(row, 'server').value, '—');
+  assert.equal(pulse.lensRead(row, 'completion').delta, '—');
+});
+
+test('a sparkline comes from the busiest comparison group of the operation and is empty without a series', () => {
+  const point = (count, extra = {}) => ({ count, ...extra });
+  const analysisLike = {
+    apis: [
+      { key: 'small', controller: 'A', action: 'one', kind: 'synchronous', current: { count: 3 } },
+      { key: 'big', controller: 'A', action: 'one', kind: 'synchronous', current: { count: 30 } },
+      { key: 'other-kind', controller: 'A', action: 'one', kind: 'asynchronous', current: { count: 99 } }
+    ],
+    timeline: [
+      { key: 'small', points: [point(1)] },
+      { key: 'big', points: [point(4, { incomplete: 1, count4xx: 2, count5xx: 3, p95: { valueMs: 120 } }), point(null)] }
+    ]
+  };
+  const target = { controller: 'A', action: 'one', kind: 'synchronous' };
+  assert.deepEqual(pulse.sparkSeries(analysisLike, target, 'requests'), [5, null]);
+  assert.deepEqual(pulse.sparkSeries(analysisLike, target, 'completion'), [1, null]);
+  assert.deepEqual(pulse.sparkSeries(analysisLike, target, 'client'), [2, null]);
+  assert.deepEqual(pulse.sparkSeries(analysisLike, target, 'server'), [3, null]);
+  assert.deepEqual(pulse.sparkSeries(analysisLike, target, 'p95'), [120, null]);
+  assert.deepEqual(pulse.sparkSeries(analysisLike, { controller: 'Z', action: 'none', kind: 'synchronous' }, 'p95'), []);
+  assert.deepEqual(pulse.sparkSeries(analysisLike, { controller: 'A', action: 'one', kind: 'asynchronous' }, 'p95'), []);
+});
+
+const autorun = loadTypeScript('src/lib/autorun.ts');
+const scopeAt = (extra = {}) => ({ ...time.defaultQuery(new Date('2026-10-22T12:00:00Z'), ['source-1']), ...extra });
+
+test('an automatic run is blocked by the same problems, in the same order, as a manual run', () => {
+  assert.equal(autorun.scopeProblem(scopeAt(), true), null);
+  assert.match(autorun.scopeProblem(scopeAt(), false), /valid local value/);
+  assert.match(autorun.scopeProblem(scopeAt({ sourceIds: [] }), true), /Select at least one source/);
+  assert.match(autorun.scopeProblem(scopeAt({ start: scopeAt().end, end: scopeAt().start }), true), /earlier than its end/);
+  assert.match(autorun.scopeProblem(scopeAt({ baselineEnd: scopeAt().end }), true), /reference window must end/);
+  assert.match(autorun.scopeProblem(scopeAt({ bucketSeconds: 5 }), true), /Bucket size/);
+  assert.match(autorun.scopeProblem(scopeAt({ bucketSeconds: 10, start: '2026-10-22T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-10-21T12:00:00Z', baselineEnd: '2026-10-22T00:00:00Z' }), true), /more than 120 time points/);
+  assert.match(autorun.scopeProblem(scopeAt({ start: '2026-10-01T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-09-01T00:00:00Z', baselineEnd: '2026-10-01T00:00:00Z' }), true), /at most 7 days/);
+});
+
+test('the run hint names what is missing instead of raising an error', () => {
+  assert.equal(autorun.scopeHint(scopeAt(), true), '');
+  assert.equal(autorun.scopeHint(scopeAt({ sourceIds: [] }), true), 'Choose a source to run the analysis.');
+  assert.equal(autorun.scopeHint(scopeAt(), false), 'Complete the dates to run the analysis.');
+});
+
+test('the run hint also explains a window, reference, bucket or point-count problem in one short sentence', () => {
+  const base = scopeAt();
+  const hint = (extra) => autorun.scopeHint(scopeAt(extra), true);
+  assert.equal(hint({ start: base.end, end: base.start }), 'Each window must start before it ends.');
+  assert.equal(hint({ baselineEnd: base.end }), 'The reference window must end before the current window starts.');
+  assert.equal(hint({ bucketSeconds: 5 }), 'Bucket size must be 10 to 86,400 seconds.');
+  assert.match(hint({ bucketSeconds: 10, start: '2026-10-22T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-10-21T12:00:00Z', baselineEnd: '2026-10-22T00:00:00Z' }), /over 120 time points/);
+  assert.equal(hint({ start: '2026-10-01T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-09-01T00:00:00Z', baselineEnd: '2026-10-01T00:00:00Z' }), 'Each window can be at most 7 days.');
+  // Whenever scopeProblem blocks a run with a valid source and dates, the hint says why; when it does not, the hint is empty.
+  for (const extra of [{}, { start: base.end, end: base.start }, { baselineEnd: base.end }, { bucketSeconds: 5 }, { bucketSeconds: 10, start: '2026-10-22T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-10-21T12:00:00Z', baselineEnd: '2026-10-22T00:00:00Z' }]) {
+    assert.equal(Boolean(autorun.scopeProblem(scopeAt(extra), true)), Boolean(hint(extra)));
+  }
+  for (const text of [hint({ start: base.end, end: base.start }), hint({ bucketSeconds: 5 })]) assert.ok(text.length < 90 && !text.includes('\n'));
+});
+
+test('a stale drill opened inside an operation keeps that operation, its request type and its name', () => {
+  const everyApi = incomplete.staleDrill(null, 'incomplete', 10, 'all');
+  assert.equal(everyApi.controller, undefined);
+  const scoped = incomplete.scopeStaleDrill(everyApi, { controller: 'Payroll', action: 'Run', kind: 'synchronous' });
+  assert.equal(scoped.controller, 'Payroll');
+  assert.equal(scoped.action, 'Run');
+  assert.equal(scoped.kind, 'synchronous');
+  assert.match(scoped.label, /^Payroll\.Run · incomplete/);
+  assert.equal(scoped.completion, 'incomplete');
+  assert.equal(scoped.order, 'oldest');
+  assert.deepEqual(scoped.incompleteAgeMs, everyApi.incompleteAgeMs);
+  assert.equal(incomplete.scopeStaleDrill(everyApi, { controller: 'Payroll', action: 'Run', kind: 'unknown' }).kind, 'http_unknown');
+  assert.equal(incomplete.scopeStaleDrill(everyApi, { controller: 'Payroll', action: 'Run' }).kind, 'all');
+  assert.equal(everyApi.controller, undefined, 'the original drill is not changed');
+  // The same query the list and the export read: every API under the operation's frame is narrowed to the operation.
+  const query = incomplete.applyStaleFilters({ sourceIds: ['s'], start: 'a', end: 'b' }, scoped);
+  assert.equal(query.completion, 'incomplete');
+  const own = incomplete.staleDrill({ controller: 'Other', action: 'Thing', kind: 'asynchronous' }, 'pending', 5);
+  assert.equal(incomplete.scopeStaleDrill(own, { controller: 'Payroll', action: 'Run', kind: 'synchronous' }), own);
+  assert.equal(incomplete.scopeStaleDrill(everyApi, null), everyApi);
+  assert.equal(incomplete.scopeStaleDrill(everyApi, undefined), everyApi);
+});
+
+test('only a landing window of at most 24 hours runs by itself', () => {
+  const hours = (count) => ({ start: '2026-10-22T00:00:00Z', end: new Date(Date.parse('2026-10-22T00:00:00Z') + count * 3_600_000).toISOString() });
+  assert.equal(autorun.landingMayAutoRun(hours(1)), true);
+  assert.equal(autorun.landingMayAutoRun(hours(24)), true);
+  assert.equal(autorun.landingMayAutoRun(hours(25)), false);
+  assert.equal(autorun.landingMayAutoRun(hours(168)), false);
+  assert.equal(autorun.landingMayAutoRun({ start: 'nonsense', end: hours(1).end }), false);
+  assert.equal(autorun.landingMayAutoRun(hours(0)), false);
+});
+
+test('a scope change runs only when the scope is valid and is not what is shown or already in flight', () => {
+  const decide = (state) => autorun.autoRunDecision({ problem: null, signature: 'B', shown: 'A', inflight: null, ...state });
+  assert.equal(decide({}), 'run');
+  assert.equal(decide({ shown: 'B' }), 'skip');
+  assert.equal(decide({ shown: null }), 'run');
+  assert.equal(decide({ problem: 'Choose a source' }), 'skip');
+  assert.equal(decide({ inflight: 'B' }), 'skip');
+  assert.equal(decide({ inflight: 'C' }), 'run');
+  assert.equal(decide({ inflight: 'C', shown: 'B' }), 'run');
+});
+
+test('a burst of scope changes becomes one run after the quiet period and the last change wins', () => {
+  let now = 0; let nextId = 1; const timers = new Map();
+  const fake = { set: (fn, ms) => { const id = nextId++; timers.set(id, { fn, at: now + ms }); return id; }, clear: (id) => { timers.delete(id); } };
+  const advance = (ms) => { now += ms; for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.fn(); } };
+  let runs = 0;
+  const coalescer = autorun.createCoalescer(() => { runs++; }, autorun.AUTO_RUN_DELAY_MS, fake);
+  assert.equal(autorun.AUTO_RUN_DELAY_MS, 300);
+  coalescer.schedule(); advance(200);
+  coalescer.schedule(); advance(200);
+  coalescer.schedule(); advance(299);
+  assert.equal(runs, 0);
+  assert.equal(coalescer.pending, true);
+  advance(1);
+  assert.equal(runs, 1);
+  assert.equal(coalescer.pending, false);
+  advance(1000);
+  assert.equal(runs, 1);
+  coalescer.schedule(); coalescer.cancel(); advance(1000);
+  assert.equal(runs, 1);
+  assert.equal(coalescer.pending, false);
+});
+
+test('the evidence frame always keeps Slowest, and comparison-wide contexts keep Failures and Breakdown', () => {
+  const ids = (context) => depth.evidenceTabs({ operation: false, group: false, scoped: true, phases: false, failed: 0, unfinished: 0, ...context }).map(tab => tab.id);
+  assert.deepEqual(ids({}), ['failures', 'slowest', 'breakdown']);
+  assert.deepEqual(ids({ scoped: false }), ['slowest']);
+  assert.deepEqual(ids({ operation: true, group: true, phases: true, failed: 3, unfinished: 2 }), ['timeline', 'phases', 'failures', 'incomplete', 'slowest', 'breakdown']);
+  assert.deepEqual(ids({ operation: true, group: true }), ['timeline', 'slowest', 'breakdown']);
+  assert.deepEqual(ids({ group: true, failed: 1 }), ['timeline', 'failures', 'slowest', 'breakdown']);
+  assert.ok(ids({ operation: true }).includes('slowest'));
+});
+
+test('the all-operations drill is comparison-wide: no controller or action, every state, and the comparison request type', () => {
+  const { allOperationsDrill } = loadTypeScript('src/lib/overview.ts');
+  const all = allOperationsDrill();
+  assert.equal(all.kind, 'all');
+  assert.equal(all.state, 'all');
+  assert.equal(all.controller, undefined);
+  assert.equal(all.action, undefined);
+  assert.equal(all.label, 'All operations');
+  assert.equal(allOperationsDrill('asynchronous').kind, 'asynchronous');
+});
+
+test('the redesign keeps its contrast, status and navigation fixes in the sources', () => {
+  const css = fs.readFileSync(path.join(root, 'src/app.css'), 'utf8');
+  const phaseBar = fs.readFileSync(path.join(root, 'src/components/PhaseBar.svelte'), 'utf8');
+  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  assert.equal((css.match(/--control-line:\s*#[0-9a-f]{6}/gi) ?? []).length, 3, 'one control boundary per theme block');
+  assert.match(css, /input, select[^{]*\{[^}]*border[^;]*var\(--control-line\)/);
+  assert.match(css, /::placeholder\s*\{[^}]*opacity:\s*1/);
+  assert.doesNotMatch(phaseBar, /--pending/);
+  assert.doesNotMatch(css, /max-width:\s*14ch/);
+  assert.match(css, /\.crumbs li:last-child\s*\{[^}]*flex:\s*1 1 auto/);
+  assert.doesNotMatch(app, /onclick=\{runAnalysis\}/);
+  assert.match(app, /scopeRun\.schedule\(\)/);
+});
+
+test('the run hint is a persistent status region tied to the run button, the back link has a full label, and no screen says "Run comparison"', () => {
+  const app = fs.readFileSync(path.join(root, 'src/App.svelte'), 'utf8');
+  assert.match(app, /<span class="run-hint" id="run-hint" role="status">\{runHint\}<\/span>/);
+  assert.doesNotMatch(app, /\{#if runHint\}/);
+  assert.match(app, /class="primary-button" aria-describedby="run-hint"/);
+  assert.match(fs.readFileSync(path.join(root, 'src/components/Breadcrumb.svelte'), 'utf8'), /aria-label=\{'Back to ' \+ crumb\.label\}/);
+  for (const name of ['RequestVolume', 'TrafficSlowness']) assert.doesNotMatch(fs.readFileSync(path.join(root, 'src/components/' + name + '.svelte'), 'utf8'), /Run comparison/);
+  const slowness = fs.readFileSync(path.join(root, 'src/components/TrafficSlowness.svelte'), 'utf8');
+  assert.match(slowness, /const narrowed=\$derived\(mode!=='ms'&&cohort\?cohort:null\)/);
+  assert.match(slowness, /\{headingScope\} · /);
+});
