@@ -64,7 +64,7 @@ P50 (the middle response time) estimates a duration that about half of measured 
 
 ## Limits
 
-The utility limits profiles to 8, active operations to 4 overall and 2 per source, request pages to 100 rows, API groups to 10,000, and aggregation output to 40,000 bucket rows and 16 MiB. Summaries that exceed their limits fail instead of presenting partial statistics as complete. Request payload text is capped at 256 KiB. CSV exports contain at most 10,000 metadata rows and report truncation with `X-Export-Truncated` when the cap or response byte limit is reached. API request bodies are limited to 1 MiB, and connection tests and data operations have a five-minute deadline.
+The utility limits profiles to 8, active operations to 4 overall and 1 per source, request pages to 100 rows, API groups to 10,000, and aggregation output to 40,000 bucket rows and 16 MiB. Summaries that exceed their limits fail instead of presenting partial statistics as complete. Request payload text is capped at 256 KiB. CSV exports contain at most 10,000 metadata rows and report truncation with `X-Export-Truncated` when the cap or response byte limit is reached. API request bodies are limited to 1 MiB, and connection tests and data operations have a five-minute deadline.
 
 The Go runtime uses a 256 MiB soft memory target. This is a runtime target, not an RSS guarantee or a machine benchmark. No unbounded result cache is used.
 
