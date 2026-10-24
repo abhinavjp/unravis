@@ -217,18 +217,23 @@ func TestBoundaryCapFileLevelIsPartialToo(t *testing.T) {
 	}
 	o := hangfireOpts()
 	o.Window = importer.Window{From: utc("2001-03-24T00:00:00Z"), To: utc("2001-03-25T00:00:00Z")}
-	ev, _, err := parse(NewHangfire(), []byte(sb.String()), o)
+	ev, rep, err := parse(NewHangfire(), []byte(sb.String()), o)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if n := len(ofKind(ev, KindBoundary)); n != maxBoundaries {
-		t.Errorf("boundaries = %d, want exactly the file cap %d", n, maxBoundaries)
+	// Boundaries and unknown markers share the file cap. The last slot goes to
+	// job-d's truncation marker, so job-e gets neither a boundary nor a marker.
+	if n, u := len(ofKind(ev, KindBoundary)), len(ofKind(ev, KindUnknown)); n+u != maxBoundaries {
+		t.Errorf("boundaries+unknown = %d, want exactly the file cap %d", n+u, maxBoundaries)
 	}
 	if n := len(forJob(ev, KindBoundary, "job-e")); n != 0 {
 		t.Errorf("job-e boundaries = %d, want 0 once the file cap is spent", n)
 	}
-	if u := forJob(ev, KindUnknown, "job-e"); len(u) != 1 || u[0].Attrs["reason"] != reasonTooMany {
-		t.Errorf("job-e unknown = %+v", u)
+	if u := forJob(ev, KindUnknown, "job-e"); len(u) != 0 {
+		t.Errorf("job-e unknown = %+v, want none once the file cap is spent", u)
+	}
+	if !hasGap(rep, gapEventCap) {
+		t.Errorf("gaps = %v, want the event cap sentence", rep.KnownGaps)
 	}
 }
 
