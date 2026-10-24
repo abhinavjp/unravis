@@ -2,16 +2,23 @@ package mcp
 
 import (
 	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/server"
+	"api-audit-explorer/internal/sessionproof"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -193,9 +200,23 @@ func sessionFileFor(t *testing.T, server *httptest.Server) (string, int) {
 	return path, port
 }
 
+// proving wraps a fake dashboard so it answers the session proof for whatever
+// token *token holds, as the real dashboard does for its own token.
+func proving(token *string, next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == sessionproof.Path {
+			local := r.Context().Value(http.LocalAddrContextKey).(net.Addr).String()
+			json.NewEncoder(w).Encode(map[string]string{"proof": sessionproof.Compute(*token, local, r.URL.Query().Get("n"))})
+			return
+		}
+		next(w, r)
+	})
+}
+
 func TestBridgeReadsPortAndTokenFromSessionFile(t *testing.T) {
 	var seen []string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	current := testSessionToken
+	upstream := httptest.NewServer(proving(&current, func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.Header.Get("X-Audit-Token"))
 		json.NewEncoder(w).Encode([]audit.Source{})
 	}))
@@ -216,6 +237,7 @@ func TestBridgeReadsPortAndTokenFromSessionFile(t *testing.T) {
 	}
 	// A restarted dashboard rewrites the file; the bridge follows without a restart.
 	restarted := "restarted-token-0123456789abcdef0123"
+	current = restarted
 	if err := WriteSessionFile(path, port, restarted); err != nil {
 		t.Fatal(err)
 	}
@@ -241,6 +263,7 @@ func TestBridgeReadsPortAndTokenFromSessionFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	// AUDIT_SESSION_TOKEN overrides the file's token.
+	current = testSessionToken
 	override, err := New(0, WithSessionFile(path), WithToken(testSessionToken))
 	if err != nil {
 		t.Fatal(err)
@@ -401,5 +424,127 @@ func TestActivityToolPreservesSourceIdentityWithoutURLOrID(t *testing.T) {
 	encoded, _ := json.Marshal(data)
 	if strings.Contains(string(encoded), "private-") || !strings.Contains(string(encoded), "source2") || !strings.Contains(string(encoded), "hangfire") {
 		t.Fatal("activity projection lost identity or exposed private fields")
+	}
+}
+
+// impostor is a process on the dashboard's port that does not hold the token.
+// With relay set it forwards the proof request to the real dashboard and
+// returns its answer. It records every X-Audit-Token it is sent.
+func impostor(t *testing.T, relay string) (*httptest.Server, *[]string) {
+	t.Helper()
+	var got []string
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if token := r.Header.Get("X-Audit-Token"); token != "" {
+			got = append(got, token)
+		}
+		mu.Unlock()
+		if r.URL.Path == sessionproof.Path && relay != "" {
+			res, err := http.Get(relay + r.URL.RequestURI())
+			if err == nil {
+				defer res.Body.Close()
+				io.Copy(w, res.Body)
+			}
+			return
+		}
+		if r.URL.Path == sessionproof.Path {
+			json.NewEncoder(w).Encode(map[string]string{"proof": strings.Repeat("0", 64)})
+			return
+		}
+		json.NewEncoder(w).Encode([]audit.Source{})
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &got
+}
+
+// TestBridgeNeverSendsTokenToUnprovenPeer is the M-A regression: a process on a
+// stale port, with an env token or a session file, and even one relaying the
+// proof to the real dashboard, never receives X-Audit-Token.
+func TestBridgeNeverSendsTokenToUnprovenPeer(t *testing.T) {
+	real := httptest.NewServer(server.New(audit.NewDemo(time.Now()), nil, testSessionToken, true))
+	defer real.Close()
+	for _, tc := range []struct{ name, relay string }{{"forged proof", ""}, {"relayed proof", real.URL}} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, got := impostor(t, tc.relay)
+			path, port := sessionFileFor(t, fake)
+			if err := writeSessionRecord(path, sessionRecord{Port: port, Token: testSessionToken}); err != nil {
+				t.Fatal(err)
+			}
+			viaFile, _ := New(0, WithSessionFile(path))
+			viaEnv, _ := New(port, WithToken(testSessionToken))
+			for name, b := range map[string]*Bridge{"session file": viaFile, "env token": viaEnv} {
+				if _, err := b.call(context.Background(), "audit_list_sources", json.RawMessage(`{}`)); err == nil || err.Error() != unproven {
+					t.Errorf("%s: err=%v", name, err)
+				}
+			}
+			if len(*got) != 0 {
+				t.Fatalf("impostor received tokens: %q", *got)
+			}
+		})
+	}
+	// The real dashboard passes the same check.
+	u, _ := url.Parse(real.URL)
+	port, _ := strconv.Atoi(u.Port())
+	b, _ := New(port, WithToken(testSessionToken))
+	if _, err := b.call(context.Background(), "audit_list_sources", json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("real dashboard refused: %v", err)
+	}
+}
+
+// TestStaleSessionFileOfDeadProcessIsRemoved: a session file whose process has
+// exited is reported as not running and deleted, without dialing its port.
+func TestStaleSessionFileOfDeadProcessIsRemoved(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	fake, got := impostor(t, "")
+	path, port := sessionFileFor(t, fake)
+	if err := writeSessionRecord(path, sessionRecord{Port: port, Token: testSessionToken, Pid: cmd.Process.Pid}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := New(0, WithSessionFile(path))
+	if _, err := b.call(context.Background(), "audit_list_sources", json.RawMessage(`{}`)); err == nil || err.Error() != notRunning {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale session file kept: %v", err)
+	}
+	if len(*got) != 0 {
+		t.Fatalf("tokens sent: %q", *got)
+	}
+}
+
+// TestSessionFileRefusedWhenAnotherProcessOwnsThePort: a live pid that does not
+// own the listening port is refused (Windows reads the TCP owner table).
+func TestSessionFileRefusedWhenAnotherProcessOwnsThePort(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("port owner check is Windows-only")
+	}
+	current := testSessionToken
+	upstream := httptest.NewServer(proving(&current, func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]audit.Source{})
+	}))
+	defer upstream.Close()
+	path, port := sessionFileFor(t, upstream)
+	if owners, ok := listenerOwners(port); !ok || len(owners) != 1 || owners[0] != os.Getpid() {
+		t.Fatalf("listener owners = %v, %v; want [%d]", owners, ok, os.Getpid())
+	}
+	if !processAlive(os.Getppid()) {
+		t.Skip("parent process not visible")
+	}
+	if err := writeSessionRecord(path, sessionRecord{Port: port, Token: testSessionToken, Pid: os.Getppid()}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := New(0, WithSessionFile(path))
+	if _, err := b.call(context.Background(), "audit_list_sources", json.RawMessage(`{}`)); err == nil || err.Error() != notOwner {
+		t.Fatalf("err=%v", err)
+	}
+	if err := WriteSessionFile(path, port, testSessionToken); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.call(context.Background(), "audit_list_sources", json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("own pid refused: %v", err)
 	}
 }

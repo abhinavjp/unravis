@@ -3,12 +3,15 @@ package mcp
 
 import (
 	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/sessionproof"
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -39,6 +42,9 @@ type Bridge struct {
 	allowIdentifiers bool
 	sessionFile      string
 	envToken         string
+	// proven is set by New: the client's transport runs the session proof on
+	// each connection, with the token passed through the request context.
+	proven bool
 }
 
 // Option configures a Bridge.
@@ -62,21 +68,103 @@ func WithToken(token string) Option {
 	return func(b *Bridge) { b.envToken = token }
 }
 
+// unproven is the message when the peer on the dashboard's port could not prove
+// it holds the session token. The token was not sent.
+const unproven = "Unravis did not prove it is the dashboard started for this user, so the session token was not sent. Restart the dashboard, then retry"
+
+// notOwner is the message when a live process other than the dashboard that
+// wrote the session file listens on its port.
+const notOwner = "Another program is listening on the dashboard's port. Restart the dashboard, then retry"
+
+// errUnproven marks a connection whose peer failed the session proof.
+var errUnproven = errors.New("session proof failed")
+
+// proofTimeout bounds one session proof exchange.
+const proofTimeout = 5 * time.Second
+
+// maxProofBody bounds the proof response body.
+const maxProofBody = 4096
+
+type proofTokenKey struct{}
+
+// provenDial dials addr and, before handing the connection to the HTTP client,
+// runs the session proof on it with the token carried in ctx (set by request).
+// A connection is used for X-Audit-Token only after its peer has shown it holds
+// that token, so a process squatting a stale port never receives it.
+func provenDial(dialer *net.Dialer) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		token, _ := ctx.Value(proofTokenKey{}).(string)
+		if token == "" {
+			return nil, errUnproven
+		}
+		conn, err := dialer.DialContext(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		if err := proveConn(ctx, conn, addr, token); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		return conn, nil
+	}
+}
+
+// proveConn sends GET /api/session-proof with a fresh nonce on conn and checks,
+// in constant time, that the answer is HMAC(token, the peer's address, nonce).
+func proveConn(ctx context.Context, conn net.Conn, host, token string) error {
+	nonce, err := sessionproof.NewNonce()
+	if err != nil {
+		return errUnproven
+	}
+	deadline := time.Now().Add(proofTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+		deadline = d
+	}
+	_ = conn.SetDeadline(deadline)
+	defer conn.SetDeadline(time.Time{})
+	request := "GET " + sessionproof.Path + "?n=" + nonce + " HTTP/1.1\r\nHost: " + host + "\r\nAccept: application/json\r\nUser-Agent: unravis-mcp\r\n\r\n"
+	if _, err := io.WriteString(conn, request); err != nil {
+		return errUnproven
+	}
+	reader := bufio.NewReader(conn)
+	res, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		return errUnproven
+	}
+	body, err := boundedBody(res.Body, maxProofBody)
+	res.Body.Close()
+	// Bytes past the response would be read as the next response: refuse them.
+	if err != nil || res.StatusCode != http.StatusOK || res.Close || reader.Buffered() != 0 {
+		return errUnproven
+	}
+	var answer struct {
+		Proof string `json:"proof"`
+	}
+	if json.Unmarshal(body, &answer) != nil || !sessionproof.Verify(token, conn.RemoteAddr().String(), nonce, answer.Proof) {
+		return errUnproven
+	}
+	return nil
+}
+
 // notRunning is the plain message for a missing, unreadable or invalid session
 // file. It never names the path or echoes the file's content.
 const notRunning = "Unravis is not running for this Windows user. Start the dashboard, then retry"
 
 // New builds a bridge to the dashboard on loopback. With port 0 the port comes
 // from the session file; an explicit port must match it. The token comes from
-// WithToken when given, otherwise from the session file.
+// WithToken when given, otherwise from the session file. Either way, every
+// connection must pass the session proof before the token is sent on it.
 func New(port int, opts ...Option) (*Bridge, error) {
 	if port < 0 || port > 65535 {
 		return nil, errors.New("MCP port must be between 1 and 65535, or omitted to use the running dashboard's session file")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	transport.DialContext = provenDial(&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second})
+	transport.ForceAttemptHTTP2 = false
 	client := &http.Client{Transport: transport, Timeout: audit.OperationTimeout + 5*time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
 	b := newBridge(nil, client, opts...)
+	b.proven = true
 	if b.envToken != "" && !ValidToken(b.envToken) {
 		return nil, errors.New("AUDIT_SESSION_TOKEN must be 32 to 4096 visible ASCII characters")
 	}
@@ -90,9 +178,13 @@ func New(port int, opts ...Option) (*Bridge, error) {
 	}
 	path, explicit, envToken := b.sessionFile, port, b.envToken
 	b.locate = func() (string, string, error) {
-		filePort, fileToken, err := ReadSessionFile(path)
+		record, err := readSessionRecord(path)
 		if err != nil {
 			return "", "", errors.New(notRunning)
+		}
+		filePort, fileToken := record.Port, record.Token
+		if err := checkSessionProcess(path, record); err != nil {
+			return "", "", err
 		}
 		if explicit != 0 && explicit != filePort {
 			return "", "", errors.New("the running dashboard is not on the --port given to --mcp; omit --port so MCP follows the dashboard")
@@ -104,6 +196,30 @@ func New(port int, opts ...Option) (*Bridge, error) {
 	}
 	return b, nil
 }
+
+// checkSessionProcess refuses a session file whose dashboard process is gone
+// (and removes the stale file) or, on Windows, whose port is held by another
+// process. Files without a pid skip the check; the session proof still applies.
+func checkSessionProcess(path string, record sessionRecord) error {
+	if record.Pid == 0 {
+		return nil
+	}
+	if !processAlive(record.Pid) {
+		_ = RemoveSessionFile(path, record.Token)
+		return errors.New(notRunning)
+	}
+	owners, ok := listenerOwners(record.Port)
+	if !ok {
+		return nil
+	}
+	for _, owner := range owners {
+		if owner != record.Pid {
+			return errors.New(notOwner)
+		}
+	}
+	return nil
+}
+
 func newBridge(locate locator, client *http.Client, opts ...Option) *Bridge {
 	b := &Bridge{locate: locate, client: client, now: time.Now}
 	for _, opt := range opts {
@@ -176,12 +292,17 @@ func (b *Bridge) session() (string, string, error) {
 		return "", "", errors.New(notRunning)
 	}
 	b.mu.Lock()
-	if b.token != token {
+	changed := b.token != token
+	if changed {
 		b.token = token
 		b.result = nil
 		b.resultID = ""
 	}
 	b.mu.Unlock()
+	if changed && b.client != nil {
+		// Idle connections were proven for the previous token.
+		b.client.CloseIdleConnections()
+	}
 	return base, token, nil
 }
 
@@ -208,7 +329,11 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 		if input != nil {
 			method = http.MethodPost
 		}
-		req, _ := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(payload))
+		reqCtx := ctx
+		if b.proven {
+			reqCtx = context.WithValue(ctx, proofTokenKey{}, token)
+		}
+		req, _ := http.NewRequestWithContext(reqCtx, method, base+path, bytes.NewReader(payload))
 		req.Header.Set("X-Audit-Token", token)
 		if input != nil {
 			req.Header.Set("Content-Type", "application/json")
@@ -217,6 +342,9 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 		if err != nil {
 			if ctx.Err() != nil {
 				return errors.New("audit operation cancelled or its five-minute deadline expired")
+			}
+			if errors.Is(err, errUnproven) {
+				return errors.New(unproven)
 			}
 			return errors.New("Unravis did not answer. Start the dashboard, then retry")
 		}

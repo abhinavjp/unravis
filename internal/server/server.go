@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -22,6 +23,7 @@ import (
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/history"
 	"api-audit-explorer/internal/ledger"
+	"api-audit-explorer/internal/sessionproof"
 )
 
 const (
@@ -40,6 +42,8 @@ type handler struct {
 	history savedHistory
 	ledger  ledger.Store
 	tests   connectionTestLimiter
+	adds    connectionTestLimiter
+	proofs  connectionTestLimiter
 
 	exportOnce  sync.Once
 	exportStore *exportStore
@@ -58,6 +62,9 @@ func WithHistory(value savedHistory) Option { return func(h *handler) { h.histor
 
 func New(repo audit.Repository, assets fs.FS, token string, demo bool, options ...Option) http.Handler {
 	h := &handler{repo: repo, assets: assets, token: token, demo: demo}
+	h.tests.limit = connectionTestsPerWindow
+	h.adds.limit = sourceAddsPerWindow
+	h.proofs.limit = sessionProofsPerWindow
 	for _, option := range options {
 		if option != nil {
 			option(h)
@@ -79,14 +86,26 @@ func New(repo audit.Repository, assets fs.FS, token string, demo bool, options .
 // test reports distinct network outcomes (refused, timeout, DNS, handshake), so
 // an unlimited test endpoint would map hosts and ports reachable from this
 // machine. A person testing connections by hand stays well under the cap.
+//
+// Adding a source dials the server the same way, and its response time still
+// tells refused from filtered ports, so it has its own cap; eight sources (the
+// most one investigation holds) fit in one window with room for retries.
+//
+// The session proof is unauthenticated. It only returns an HMAC of a caller's
+// nonce, which reveals nothing about the token, but each answer costs a hash,
+// so it is capped too, far above what one MCP bridge needs.
 const (
 	connectionTestsPerWindow = 10
+	sourceAddsPerWindow      = 20
+	sessionProofsPerWindow   = 600
 	connectionTestWindow     = time.Minute
 )
 
-// connectionTestLimiter is a sliding-window count of recent connection tests.
+// connectionTestLimiter is a sliding-window count of recent calls, at most
+// limit per connectionTestWindow.
 type connectionTestLimiter struct {
 	mu    sync.Mutex
+	limit int
 	times []time.Time
 	now   func() time.Time
 }
@@ -106,7 +125,7 @@ func (l *connectionTestLimiter) allow() bool {
 		}
 	}
 	l.times = kept
-	if len(l.times) >= connectionTestsPerWindow {
+	if len(l.times) >= l.limit {
 		return false
 	}
 	l.times = append(l.times, now)
@@ -125,6 +144,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.serveIndex(w, r)
+		return
+	}
+	if r.URL.Path == sessionproof.Path {
+		h.sessionProof(w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -152,6 +175,32 @@ func (h *handler) authorized(r *http.Request) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(got), []byte(h.token)) == 1
+}
+
+// sessionProof answers GET /api/session-proof?n=<nonce> without a token. The
+// MCP bridge calls it on every new connection and sends X-Audit-Token only when
+// the answer proves this process holds the token. The proof is bound to the
+// address this server accepted the connection on, so a process squatting a
+// stale port cannot relay the nonce to the real dashboard on another port.
+func (h *handler) sessionProof(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed.")
+		return
+	}
+	nonce := r.URL.Query().Get("n")
+	local, _ := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if h.token == "" || local == nil || !sessionproof.ValidNonce(nonce) {
+		writeError(w, http.StatusBadRequest, "Invalid session proof request.")
+		return
+	}
+	if !h.proofs.allow() {
+		writeError(w, http.StatusTooManyRequests, "Too many session proof requests.")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, struct {
+		Proof string `json:"proof"`
+	}{sessionproof.Compute(h.token, local.String(), nonce)}, 4096)
 }
 
 func (h *handler) serveIndex(w http.ResponseWriter, r *http.Request) {
@@ -530,6 +579,10 @@ func (h *handler) sources(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) addSource(w http.ResponseWriter, r *http.Request) {
+	if !h.adds.allow() {
+		writeError(w, http.StatusTooManyRequests, "Too many sources added in the last minute. Wait a minute, then add again.")
+		return
+	}
 	var input audit.SourceInput
 	if !decodeJSON(w, r, &input) {
 		return

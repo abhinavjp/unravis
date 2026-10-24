@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -20,6 +22,7 @@ import (
 	explorer "api-audit-explorer"
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/history"
+	"api-audit-explorer/internal/sessionproof"
 	"api-audit-explorer/internal/store"
 )
 
@@ -1113,5 +1116,101 @@ func TestRequestsStateFilterOverHTTP(t *testing.T) {
 	body, _ := json.Marshal(audit.PageInput{Query: query, State: "bogus", Limit: 5})
 	if res = request(h, http.MethodPost, "/api/export", string(body), true); res.Code != http.StatusBadRequest {
 		t.Fatalf("export unknown state status=%d", res.Code)
+	}
+}
+
+func proofRequest(h http.Handler, nonce string, local net.Addr) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, sessionproof.Path+"?n="+nonce, nil)
+	req.Host = "127.0.0.1:8765"
+	if local != nil {
+		req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey, local))
+	}
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	return res
+}
+
+// TestSessionProofIsBoundToTokenAndListeningAddressWithoutRevealingIt is the
+// M-A regression: the proof needs no token, never returns it, and only verifies
+// for this server's own listening address.
+func TestSessionProofIsBoundToTokenAndListeningAddressWithoutRevealingIt(t *testing.T) {
+	srv := httptest.NewServer(New(audit.NewDemo(time.Now()), nil, testToken, true))
+	defer srv.Close()
+	nonce, _ := sessionproof.NewNonce()
+	res, err := http.Get(srv.URL + sessionproof.Path + "?n=" + nonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	var body struct{ Proof string }
+	if res.StatusCode != http.StatusOK || json.Unmarshal(data, &body) != nil || res.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("status=%d body=%s", res.StatusCode, data)
+	}
+	if strings.Contains(string(data), testToken) {
+		t.Fatalf("proof response leaked the token: %s", data)
+	}
+	addr := srv.Listener.Addr().String()
+	if !sessionproof.Verify(testToken, addr, nonce, body.Proof) {
+		t.Fatal("proof does not verify for the listening address")
+	}
+	host, port, _ := net.SplitHostPort(addr)
+	other := net.JoinHostPort(host, port+"1")
+	if sessionproof.Verify(testToken, other, nonce, body.Proof) || sessionproof.Verify(testToken+"x", addr, nonce, body.Proof) {
+		t.Fatal("proof verified for another address or token")
+	}
+}
+
+func TestSessionProofRejectsBadNoncesMethodsAndIsRateLimited(t *testing.T) {
+	h := New(audit.NewDemo(time.Now()), nil, testToken, true).(*handler)
+	local := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8765}
+	for _, nonce := range []string{"", "abc", strings.Repeat("A", 64), strings.Repeat("g", 64), strings.Repeat("a", 65)} {
+		if res := proofRequest(h, nonce, local); res.Code != http.StatusBadRequest {
+			t.Errorf("nonce %q status=%d", nonce, res.Code)
+		}
+	}
+	nonce, _ := sessionproof.NewNonce()
+	if res := proofRequest(h, nonce, nil); res.Code != http.StatusBadRequest {
+		t.Errorf("missing local address status=%d", res.Code)
+	}
+	if res := request(h, http.MethodPost, sessionproof.Path+"?n="+nonce, "", false); res.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST status=%d", res.Code)
+	}
+	clock := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	h.proofs.now = func() time.Time { return clock }
+	for i := 0; i < sessionProofsPerWindow; i++ {
+		if res := proofRequest(h, nonce, local); res.Code != http.StatusOK {
+			t.Fatalf("proof %d status=%d", i+1, res.Code)
+		}
+	}
+	if res := proofRequest(h, nonce, local); res.Code != http.StatusTooManyRequests {
+		t.Fatalf("over-limit status=%d", res.Code)
+	}
+	clock = clock.Add(connectionTestWindow)
+	if res := proofRequest(h, nonce, local); res.Code != http.StatusOK {
+		t.Fatalf("limit did not reset: %d", res.Code)
+	}
+}
+
+// TestSourceAddsAreRateLimited is the L-C regression: adding a source dials the
+// server, so it is capped like connection tests.
+func TestSourceAddsAreRateLimited(t *testing.T) {
+	repo := &sourceCaptureRepository{fakeRepository: &fakeRepository{}}
+	h := New(repo, nil, testToken, false).(*handler)
+	clock := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	h.adds.now = func() time.Time { return clock }
+	body, _ := json.Marshal(audit.SourceInput{Label: "a", URI: "mongodb://127.0.0.1:27017", Database: "events", Collection: "audit"})
+	for i := 0; i < sourceAddsPerWindow; i++ {
+		if res := request(h, http.MethodPost, "/api/sources", string(body), true); res.Code == http.StatusTooManyRequests {
+			t.Fatalf("add %d refused early", i+1)
+		}
+	}
+	res := request(h, http.MethodPost, "/api/sources", string(body), true)
+	if res.Code != http.StatusTooManyRequests || !strings.Contains(res.Body.String(), "Wait a minute") {
+		t.Fatalf("over-limit status=%d body=%s", res.Code, res.Body.String())
+	}
+	clock = clock.Add(connectionTestWindow)
+	if res := request(h, http.MethodPost, "/api/sources", string(body), true); res.Code == http.StatusTooManyRequests {
+		t.Fatalf("limit did not reset: %s", res.Body.String())
 	}
 }

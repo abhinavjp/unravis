@@ -97,7 +97,7 @@ Ops: T0 preservation and DCS. DBA: SQL exports, optional narrow grants, any inde
 
 | Area | Fact | Where |
 |---|---|---|
-| Runtime | Go backend bound to `127.0.0.1`, Svelte 5 dashboard embedded; session token in memory; `--demo` and live modes | `README.md` |
+| Runtime | Go backend bound to `127.0.0.1`, Svelte 5 dashboard embedded; session token kept per tab in sessionStorage (survives reload, same tab only); `--demo` and live modes | `README.md` |
 | Source | MongoDB `ApiAuditLog` only. Server 7.0 uses the modern driver; 3.4 is handled by a legacy driver with record and byte limits | `README.md`, `internal/store/legacy_*` |
 | Access posture | Read-only queries; documented advice is a `read`-only user on the audit database and collection; the tool never creates indexes | `README.md` |
 | Time filter | Matches `RequestInitiatedAt` (or `CreatedOn` when it is absent). **No `_id` pruning.** Only the `_id` index exists on the sandbox, so each query scans | `internal/store/pipeline.go:99`, `requests.go:334` |

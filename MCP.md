@@ -74,9 +74,11 @@ tool_timeout_sec = 310
 
 ### How MCP finds the dashboard
 
-The dashboard picks a free loopback port each time it starts (unless you pass `--port`) and creates a random session token. It writes both to `session.json` in the per-user application folder: `%APPDATA%\APIAuditExplorer\session.json`, or `%AUDIT_CONFIG_DIR%\session.json` when that variable is set. The file is written owner-only and removed when the dashboard shuts down cleanly. `--mcp` reads it on every request, so it follows a dashboard restart without reconfiguration. If several dashboards run, the most recently started one owns the file.
+The dashboard picks a free loopback port each time it starts (unless you pass `--port`) and creates a random session token. It writes both to `session.json` in the per-user application folder: `%APPDATA%\APIAuditExplorer\session.json`, or `%AUDIT_CONFIG_DIR%\session.json` when that variable is set. The file is written owner-only, records the dashboard's process id, and is removed when the dashboard shuts down cleanly or receives Ctrl+C, a stop signal or a console-window close. `--mcp` reads it on every request, so it follows a dashboard restart without reconfiguration. If several dashboards run, the most recently started one owns the file.
 
-- If the file is missing, the tools answer that Unravis is not running for this Windows user.
+- If the file is missing, or the process it names has exited, the tools answer that Unravis is not running for this Windows user; a stale file is deleted.
+- On Windows, if another process holds the file's port, MCP refuses to connect.
+- MCP never sends the session token to an unproven peer. On every new connection it first calls `GET /api/session-proof?n=<random nonce>`, which needs no token, and checks that the answer is an HMAC of the nonce keyed by the token and bound to the port it dialed. Only then does it send `X-Audit-Token`. A program squatting a freed port, or relaying the challenge to the real dashboard, cannot answer, and the tools report that Unravis did not prove it is the dashboard. This applies to a token from `AUDIT_SESSION_TOKEN` too. The proof endpoint is rate-limited and reveals nothing about the token.
 - `--mcp --port N` still works; it is refused if the session file names a different port, so MCP never talks to a stale address.
 - To reach a dashboard without a session file, give both `--port N` and the dashboard's `AUDIT_SESSION_TOKEN` (at least 32 visible characters) in the MCP process's environment.
 - Set `AUDIT_CONFIG_DIR` the same way for the dashboard and the MCP process, or neither.
