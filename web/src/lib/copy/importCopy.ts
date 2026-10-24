@@ -182,7 +182,11 @@ export const REASON_TEXT: Record<string, string> = {
   'hosts-readonly': 'The host list cannot be saved in this session.',
   'hosts-error': 'The host list could not be read. Try again.',
   'hosts-not-saved': 'The host list could not be saved. The earlier list is unchanged.',
-  'invalid-hosts': 'The host list was refused. Check for a repeated label or name, an unknown time zone, or a bad number.'
+  'invalid-hosts': 'The host list was refused. Check for a repeated label or name, an unknown time zone, or a bad number.',
+  'bad-supplied': 'A setting you typed is not one this file type accepts, or its value is not valid.',
+  'ack-mismatch': 'The notice you confirmed is not the one this version shows. Reload the page and try again.',
+  'ack-too-long': 'The confirmation text is too long.',
+  'import-busy': 'Other imports are running. Try again in a moment.'
 };
 
 const GENERIC_ERROR = 'The server refused this request. Try again.';

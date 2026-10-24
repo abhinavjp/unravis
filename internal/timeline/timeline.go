@@ -119,6 +119,7 @@ var eventPhrases = map[string]string{
 	"heartbeat-late": "late heartbeat",
 	"proxy-command":  "slow proxy command",
 	"process-gone":   "process exit window",
+	"app-session":    "session marker",
 }
 
 func displayName(source string) string {
