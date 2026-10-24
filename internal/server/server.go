@@ -44,6 +44,7 @@ type handler struct {
 	tests   connectionTestLimiter
 	adds    connectionTestLimiter
 	proofs  connectionTestLimiter
+	repeats analyzeRepeats
 
 	exportOnce  sync.Once
 	exportStore *exportStore
@@ -489,6 +490,7 @@ func (h *handler) analyze(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
+	h.repeats.observe(q)
 	analysis, err := h.repo.Analyze(ctx, q)
 	if err != nil {
 		writeRepoError(w, err)
