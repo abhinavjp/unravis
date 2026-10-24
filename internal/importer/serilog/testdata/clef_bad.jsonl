@@ -1,0 +1,2 @@
+{"@t":"2001-10-25T01:02:30.9500000Z","@mt":"Cache call slow for {UserId}","@l":"Warning","UserId":"alice","SourceContext":"Synthetic.Api.CacheClient"}
+{"@mt":"SENTINEL-7f3a no time here","@l":"Warning","SourceContext":"Synthetic.Api.CacheClient"}
