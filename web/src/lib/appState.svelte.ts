@@ -197,7 +197,7 @@ const selectedStats = $derived(selected?.current);
 // The typical and slowest times of the open group in plain words, with the earlier period as the comparison.
 const selectedPlain = $derived(selected && analysis ? plainTypicalVsSlowest({
   comparison: selected, metric: analysis.query.metric,
-  window: { start: analysis.query.start, end: analysis.query.end }, referenceWindow: { start: analysis.query.baselineStart, end: analysis.query.baselineEnd }
+  window: { start: analysis.query.start, end: analysis.query.end, zone: timeZone.zone }, referenceWindow: { start: analysis.query.baselineStart, end: analysis.query.baselineEnd, zone: timeZone.zone }
 }) : null);
 const inspectorTabs = $derived(evidenceTabs({
   operation: operation != null, group: selected != null, scoped: scopedQuery != null,

@@ -55,6 +55,8 @@ test('windowText states UTC day and clock, and handles odd input', () => {
   assert.equal(plain.windowText({ start: '2026-10-24T14:45:00Z' }), 'on 24 Oct, 14:45 UTC');
   assert.equal(plain.windowText(null), '');
   assert.equal(plain.windowText({ start: 'nonsense', end: 'x' }), '');
+  assert.equal(plain.windowText({ start: '2026-10-24T14:45:00Z', end: '2026-10-24T14:50:00Z', zone: 'Asia/Dubai' }), 'on 24 Oct, 18:45–18:50 GMT+4');
+  assert.equal(plain.windowText({ start: '2026-10-24T22:00:00Z', end: '2026-10-24T23:00:00Z', zone: 'Asia/Dubai' }), 'on 25 Oct, 02:00–03:00 GMT+4');
 });
 
 test('durationWords picks a unit', () => {

@@ -3,6 +3,7 @@
   import type { Analysis } from '../lib/types';
   import { echarts, heroOption } from '../lib/charts';
   import { theme } from '../lib/theme.svelte';
+  import { timeZone } from '../lib/timeZone.svelte';
   import { trafficData } from '../lib/traffic';
   import { heroHasData, pulseFigures, singleKind, type Lens } from '../lib/pulse';
   import { heroOutliers } from '../lib/chartHero';
@@ -27,7 +28,7 @@
     const rollups = analysis.rollups ?? [];
     if (!rollups.length || rollups.some(row => row.completed == null)) return null;
     const sum = (pick: (row: (typeof rollups)[number]) => number | undefined) => rollups.reduce((total, row) => total + (pick(row) ?? 0), 0);
-    return plainIncomplete({ completed: sum(row => row.completed), incomplete: sum(row => row.incomplete), pending: sum(row => row.pending), invalid: sum(row => row.invalid), window: { start: analysis.query.start, end: analysis.query.end } });
+    return plainIncomplete({ completed: sum(row => row.completed), incomplete: sum(row => row.incomplete), pending: sum(row => row.pending), invalid: sum(row => row.invalid), window: { start: analysis.query.start, end: analysis.query.end, zone: timeZone.zone } });
   });
   // When the P95 is clearly higher than in the earlier period, one sentence says so and points to the ranked view. It never names a reason.
   const headline = $derived(p95Sentence(figures.find(figure => figure.id === 'p95')?.change ?? null, periodLengthMs(analysis.query.baselineStart, analysis.query.baselineEnd)));

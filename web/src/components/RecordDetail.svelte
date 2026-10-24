@@ -29,7 +29,7 @@
     ['AuditCreateTime', ms(detail.auditCreateTimeMs)], ['ApiTime', ms(detail.apiTimeMs)], ['PayloadRecordTime', ms(detail.payloadRecordTimeMs)],
   ] : []);
   // The saving time in plain words. It states what was measured and names no cause. AuditCreateTime is CreatedOn minus RequestInitiatedAt, so that is the window; with either end missing no window is stated.
-  let plain = $derived(detail ? plainAuditCreateSummary({ auditCreateTimeMs: detail.auditCreateTimeMs, window: detail.initiatedAt && detail.createdOn ? { start: detail.initiatedAt, end: detail.createdOn } : null }) : null);
+  let plain = $derived(detail ? plainAuditCreateSummary({ auditCreateTimeMs: detail.auditCreateTimeMs, window: detail.initiatedAt && detail.createdOn ? { start: detail.initiatedAt, end: detail.createdOn, zone: timeZone.zone } : null }) : null);
   let evidence = $derived<Row[]>(detail ? [
     ['Kind', text(detail.kind)], ['State', text(detail.state) + (detail.pendingAsync ? ' (accepted, still pending)' : '')],
     ['Status class', text(detail.outcome)], ['Observed time', ms(detail.durationMs)],

@@ -27,12 +27,13 @@
  * Readability: every summary and detail is written to pass the copy lint's reading-level limit (Flesch-Kincaid grade 8.5), with short
  * sentences and everyday words. The exact §6.6 wordings are the only sentences exempt. The copy lint sweep in the tests checks this.
  *
- * This file imports only ./wordings (and erased types) so it stays loadable on its own in the pure tests.
+ * This file imports only ./wordings, ../thresholds and ../time (and erased types) so it stays loadable on its own in the pure tests.
  */
 import { auditCreate, notObservedGap, notObservedThreshold, overlapAmbiguous, overlapUnique, plainAuditCreate } from './wordings';
 import type { EvidenceLabel } from './types';
 import type { Comparison, Metric } from '../types';
 import { MIN_SAMPLE, P99_MIN_SAMPLE } from '../thresholds';
+import { timeParts } from '../time';
 
 export interface PlainSummary {
   /** One line in everyday words: what was measured, with unit and window. */
@@ -41,15 +42,13 @@ export interface PlainSummary {
   detail: string;
 }
 
-/** A period as ISO timestamps (Query.start/end or Query.baselineStart/baselineEnd, or one request's start and end). */
-export interface TimeWindow { start?: string | null; end?: string | null }
+/** A period as ISO timestamps (Query.start/end or Query.baselineStart/baselineEnd, or one request's start and end). `zone` is the IANA display zone; it defaults to UTC. */
+export interface TimeWindow { start?: string | null; end?: string | null; zone?: string }
 
 /** The evidence label for a bare measurement: it shows that something happened, not why. */
 const measurementLabel: EvidenceLabel = 'Symptom';
 
 const finite = (value: number | null | undefined): value is number => value != null && Number.isFinite(value);
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const two = (value: number) => String(value).padStart(2, '0');
 const count = (value: number) => value.toLocaleString('en-US');
 const requests = (value: number) => value === 1 ? '1 request' : count(value) + ' requests';
 
@@ -65,13 +64,15 @@ export function windowText(window: TimeWindow | null | undefined): string {
   const start = window?.start ? new Date(window.start) : null;
   const end = window?.end ? new Date(window.end) : null;
   if (!start || !Number.isFinite(start.getTime())) return '';
-  const day = (date: Date) => date.getUTCDate() + ' ' + MONTHS[date.getUTCMonth()];
+  const zone = window?.zone || 'UTC';
   const withSeconds = (date: Date | null) => !!date && Number.isFinite(date.getTime()) && (date.getUTCSeconds() !== 0 || date.getUTCMilliseconds() !== 0);
-  const seconds = withSeconds(start) || withSeconds(end);
-  const clock = (date: Date) => two(date.getUTCHours()) + ':' + two(date.getUTCMinutes()) + (seconds ? ':' + two(date.getUTCSeconds()) : '');
-  if (!end || !Number.isFinite(end.getTime()) || end.getTime() <= start.getTime()) return 'on ' + day(start) + ', ' + clock(start) + ' UTC';
-  if (day(start) === day(end) && start.getUTCFullYear() === end.getUTCFullYear()) return 'on ' + day(start) + ', ' + clock(start) + '–' + clock(end) + ' UTC';
-  return 'from ' + day(start) + ', ' + clock(start) + ' to ' + day(end) + ', ' + clock(end) + ' UTC';
+  const precision = withSeconds(start) || withSeconds(end) ? 'second' : 'minute';
+  const from = timeParts(start, zone, precision);
+  if (!from) return '';
+  const to = end && Number.isFinite(end.getTime()) && end.getTime() > start.getTime() ? timeParts(end, zone, precision) : null;
+  if (!to) return 'on ' + from.day + ', ' + from.clock + ' ' + from.zone;
+  if (from.day === to.day && from.year === to.year) return 'on ' + from.day + ', ' + from.clock + '–' + to.clock + ' ' + from.zone;
+  return 'from ' + from.day + ', ' + from.clock + ' to ' + to.day + ', ' + to.clock + ' ' + from.zone;
 }
 
 /** A duration in words with its unit: "120 milliseconds", "2.4 seconds", "3.5 minutes". */
