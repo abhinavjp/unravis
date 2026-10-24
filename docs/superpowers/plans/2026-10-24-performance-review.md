@@ -113,6 +113,30 @@ Rank orders live impact by how often the action happens, with implementation ris
 - **Risk of building now:** moving timelines out of the response changes the API and the MCP bridge contract (`internal/mcp/tools.go:145`).
 - **Recommendation:** add a benchmark only (task T-E): bytes and encode time against cohort count at 120 slots. Decision rule: build "timelines on demand from a server-held last result" (the MCP bridge already does this with `resultTTL`, `internal/mcp/bridge.go:23`, `tools.go:80-87`) only if realistic cohort counts reach 25 % of the cap or the encode takes over 100 ms. Folding the double encode into one pass rides along with that change. On its own it saves milliseconds and is not worth a separate task.
 
+Insert the block below into docs/superpowers/plans/2026-10-24-performance-review.md directly after the F6 "Recommendation" paragraph (the line ending "...is not worth a separate task.") and before "### F7". Nothing else in the doc changes.
+
+---
+
+**T-E result (2026-10-24, synthetic data only, no product code changed).** `internal/store/analyze_size_bench_test.go`, `TestAnalysisPayloadSizeByCohorts` (run with `-v`). The payload is one `audit.Analysis` per cohort count at 120 slots of 10 s: `timeline`, `apis` (one comparison per cohort, with 30-bin histograms per stats block) and `requestVolume` (one row per cohort and slot). Encode time is the median of 5 `json.Marshal` runs.
+
+| Cohorts | JSON bytes | Share of 16 MiB | Encode median |
+|---|---|---|---|
+| 10 | 472,017 | 2.8 % | 2.0 ms |
+| 100 | 4,742,818 | 28.3 % | 22.6 ms |
+| 300 | 14,243,652 | 84.9 % | 68.7 ms |
+| 600 | 28,489,898 | 169.8 % | 84.7 ms |
+
+- **Cap reached at 354 cohorts** (16,758,429 B at 353; 16,803,215 B at 354). Encode at 354 cohorts: 46 ms.
+- Per cohort: about 47.5 KB, or about 396 B per cohort-slot point for all three parts. The timeline alone is 283 B per point.
+- Single runs. Encode medians moved by up to about 25 % between runs (600 cohorts: 85 ms and 105 ms).
+- This does not match the "about 600 cohorts" arithmetic above. That used 232 B per point, and the figure does not match this section's own live numbers either: 85,353 B over 6 × 90 = 540 points is 158 B per point. The synthetic payload is heavier than the live timeline because it also carries `apis` and `requestVolume`, which the arithmetic left out.
+- Not measured: the benchmark builds the `Analysis` directly, not through `BuildAnalysis`. The real path also enforces `MaxSummaryRows` (40,000 bucket rows), which may stop a large analysis before the byte cap. Check this on live data.
+
+**Decision under the F6 rule: no build now.**
+- Encode time: the 100 ms trigger is not reached inside the cap (46 ms at 354 cohorts).
+- Cohort trigger: 25 % of the cap is 4 MiB, which this payload reaches at about 88 cohorts. The live cohort count at 120 slots is unknown. The demo has 8 API groups over 2 sources, well below that, but it is not a live measurement.
+- Next step: count live API groups in one window (a cohort is a source, controller, action, kind and outcome) and rerun this test with that count. Build timelines on demand only if the live count is above about 88.
+
 ### F7. Identical analyses are recomputed (manual re-run, A→B→A, MCP repeats, Patterns' own Analyze). Rank 7 (design ready, do not build yet)
 
 - **Evidence:**
