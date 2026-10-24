@@ -51,6 +51,7 @@ func maskNumbers(text string) string {
 	if text == "" {
 		return text
 	}
+	text = numberWord.ReplaceAllString(text, "<"+strconv.Itoa(ThinCell)+" $2")
 	var b strings.Builder
 	b.Grow(len(text))
 	i := 0
@@ -79,37 +80,150 @@ func maskNumbers(text string) string {
 	return b.String()
 }
 
-// isBareInteger reports whether text[i:j], a run of digits, stands alone.
+// numberWord matches a spelled-out small count in front of a counted noun
+// ("three rows", "One request"), which maskNumbers masks like the digits.
+var numberWord = regexp.MustCompile(`(?i)\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)\s+(rows?|requests?|events?|users?|records?|errors?|calls?|queries|lines?|entries|items?|files?|hits?|failures?|sessions?|rejected|imports?|lookups?)\b`)
+
+// isBareInteger reports whether text[i:j], a run of digits, stands alone. A run
+// glued to a short plain word ("3rows", "5xx"), part of a list ("3,4") or of a
+// ratio ("3/40") is bare too: those read as counts. A run inside a decimal, a
+// grouped number ("1,200"), a time, a date, an id or a percentage is not.
 func isBareInteger(text string, i, j int) bool {
 	if i > 0 {
 		p := text[i-1]
 		if isWordByte(p) {
 			return false
 		}
-		if isNumericJoiner(p) && i > 1 && isDigit(text[i-2]) {
-			return false
+		if i > 1 && isDigit(text[i-2]) {
+			switch p {
+			case ',':
+				if groupedComma(text, i-1) {
+					return false
+				}
+			case '/':
+				if !isRatio(text, i-1) {
+					return false
+				}
+			case '-':
+				if !isRange(text, i-1) {
+					return false
+				}
+			case '.', ':':
+				return false
+			}
 		}
 	}
 	if j < len(text) {
 		n := text[j]
-		if isWordByte(n) || n == '%' {
+		switch {
+		case n == '%':
 			return false
+		case isWordByte(n):
+			return gluedWord(text, j)
+		case j+1 < len(text) && isDigit(text[j+1]):
+			switch n {
+			case ',':
+				if groupedComma(text, j) {
+					return false
+				}
+			case '/':
+				if !isRatio(text, j) {
+					return false
+				}
+			case '-':
+				if !isRange(text, j) {
+					return false
+				}
+			case '.', ':':
+				return false
+			}
 		}
-		if isNumericJoiner(n) && j+1 < len(text) && isDigit(text[j+1]) {
+	}
+	return true
+}
+
+// isRange reports a hyphen at text[k] between two short integers that stand
+// alone ("5-7 rows"): a range of counts, which reads like the numbers it joins.
+// A date ("2026-10-24"), a longer run, or a hyphen chain of three or more
+// numbers is not a range.
+func isRange(text string, k int) bool {
+	a, e := k, k+1
+	for a > 0 && isDigit(text[a-1]) {
+		a--
+	}
+	for e < len(text) && isDigit(text[e]) {
+		e++
+	}
+	if k-a < 1 || k-a > 3 || e-(k+1) < 1 || e-(k+1) > 3 {
+		return false
+	}
+	if a > 0 && isWordByte(text[a-1]) {
+		return false
+	}
+	if a > 1 && strings.IndexByte("-.:/", text[a-1]) >= 0 && isDigit(text[a-2]) {
+		return false
+	}
+	if e < len(text) {
+		n := text[e]
+		switch {
+		case n == '%', isWordByte(n) && !gluedWord(text, e):
+			return false
+		case strings.IndexByte("-.:/", n) >= 0 && e+1 < len(text) && isDigit(text[e+1]):
 			return false
 		}
 	}
 	return true
 }
 
+// groupedComma reports a thousands separator at text[k]: a digit before it and
+// exactly three digits after it.
+func groupedComma(text string, k int) bool {
+	if k == 0 || k+1 >= len(text) || !isDigit(text[k-1]) {
+		return false
+	}
+	n := 0
+	for m := k + 1; m < len(text) && isDigit(text[m]); m++ {
+		n++
+	}
+	return n == 3
+}
+
+// isRatio reports a slash at text[k] between two numbers that cannot be a month
+// and a day ("3/40"); "10/24" and "10/24/2026" are dates and are left alone.
+func isRatio(text string, k int) bool {
+	a, e := k, k+1
+	for a > 0 && isDigit(text[a-1]) {
+		a--
+	}
+	for e < len(text) && isDigit(text[e]) {
+		e++
+	}
+	left, errL := strconv.Atoi(text[a:k])
+	right, errR := strconv.Atoi(text[k+1 : e])
+	if errL != nil || errR != nil || (e < len(text) && text[e] == '/') || (a > 0 && text[a-1] == '/') {
+		return false
+	}
+	return right > 31 || left > 12
+}
+
+// gluedWord reports that the letters starting at text[j] form a short plain
+// word ending at a non-word byte: a unit or noun glued to a number ("3rows").
+// A letter-and-digit tail ("3fa9c1d2", a pseudonym) is not one.
+func gluedWord(text string, j int) bool {
+	k := j
+	for k < len(text) && ((text[k] >= 'a' && text[k] <= 'z') || (text[k] >= 'A' && text[k] <= 'Z')) {
+		k++
+	}
+	if k == j || k-j > 12 {
+		return false
+	}
+	return k == len(text) || !isWordByte(text[k])
+}
+
 func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 
 func isWordByte(c byte) bool {
 	return isDigit(c) || c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 0x80
-}
-
-func isNumericJoiner(c byte) bool {
-	return c == '.' || c == ',' || c == ':' || c == '-' || c == '/'
 }
 
 // removedText is what scrubText puts in place of an identifier-like token.
@@ -138,6 +252,11 @@ var confusables = strings.NewReplacer(
 	"ν", "v", "ο", "o", "ρ", "p", "τ", "t", "υ", "u", "χ", "x", "ϲ", "c", "ϳ", "j",
 	// Latin look-alikes NFKC leaves alone
 	"ı", "i", "ȷ", "j", "ɑ", "a", "ɡ", "g", "ꞁ", "l",
+	// Latin small capitals, which NFKC leaves alone
+	"ᴀ", "a", "ʙ", "b", "ᴄ", "c", "ᴅ", "d", "ᴇ", "e", "ꜰ", "f", "ɢ", "g",
+	"ʜ", "h", "ɪ", "i", "ᴊ", "j", "ᴋ", "k", "ʟ", "l", "ᴍ", "m", "ɴ", "n",
+	"ᴏ", "o", "ᴘ", "p", "ʀ", "r", "ꜱ", "s", "ᴛ", "t", "ᴜ", "u", "ᴠ", "v",
+	"ᴡ", "w", "ʏ", "y", "ᴢ", "z",
 )
 
 // isIgnorable reports runes that render as nothing: format characters (zero
@@ -230,11 +349,40 @@ var provenWord = regexp.MustCompile(`(?i)(?:un)?proven[a-z]*(?:[\s_-]+cause)?`)
 
 func isProvenance(m string) bool { return strings.HasPrefix(strings.ToLower(m), "provenanc") }
 
+// claimNorm is the text every claim check (cause words, "proven", "strong
+// correlation") looks at: normalizeText, then accents and other combining
+// marks removed, lower case, and every run of anything but a letter or a digit
+// (spaces, "-", "_", ".", ":", punctuation) turned into one space. So
+// "Blocked_By", "due-to" and "próven" read as plain words.
+func claimNorm(text string) string {
+	t := norm.NFD.String(normalizeText(text))
+	t = strings.Map(func(r rune) rune {
+		switch {
+		case unicode.Is(unicode.Mn, r):
+			return -1
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			return unicode.ToLower(r)
+		}
+		return ' '
+	}, t)
+	return strings.Join(strings.Fields(norm.NFKC.String(t)), " ")
+}
+
+// strongCorrelation matches "strong" and "correlat..." close together in
+// either order, on claimNorm text with its spaces removed ("strongly
+// correlated", "correlation, a strong one", "Strong_Correlation").
+var strongCorrelation = regexp.MustCompile(`strong.{0,60}correlat|correlat.{0,60}strong`)
+
+// containsStrong reports "strong correlation" in any spelling, after claimNorm.
+func containsStrong(text string) bool {
+	return strongCorrelation.MatchString(strings.ReplaceAll(claimNorm(text), " ", ""))
+}
+
 // containsProven reports whether text carries the word "proven" in any form,
-// after normalisation, so look-alike letters and invisible characters do not
-// hide it.
+// after claimNorm, so look-alike letters, accents and invisible characters do
+// not hide it.
 func containsProven(text string) bool {
-	for _, m := range provenWord.FindAllString(normalizeText(text), -1) {
+	for _, m := range provenWord.FindAllString(claimNorm(text), -1) {
 		if !isProvenance(m) {
 			return true
 		}

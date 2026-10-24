@@ -63,9 +63,9 @@ func caseImports() []CaseImport {
 	return []CaseImport{
 		{Importer: "iis-w3c", FileName: "u_ex010304-" + caseSentinel + ".log", SHA256: sha256Hex("file-a"),
 			HostLabel: "web-a-" + caseSentinel, TZRule: clock.RuleUTCField, Status: "ok", Rows: 5000, Rejected: 40,
-			Quality:   SourceQuality{SourceVersion: "W3C 1.0", Sampling: "none", TimezoneRule: "utc-field", CoverageFirst: &first, CoverageLast: &last},
+			Quality:   SourceQuality{SourceVersion: "1.0", Sampling: "none", TimezoneRule: "utc-field", CoverageFirst: &first, CoverageLast: &last},
 			KnownGaps: []string{"Only finished requests are logged; 3 rows had no time."},
-			AckText:   "I confirm this file holds no passwords."},
+			AckText:   knownBanners[0]},
 		{Importer: "schedule-hangfire", FileName: "jobs-" + caseSentinel + ".csv", SHA256: sha256Hex("file-b"),
 			HostLabel: "app-a", TZRule: clock.RuleHostLocal, Rows: 30, Rejected: 2},
 		{Importer: "custom-thing", FileName: caseSentinel + ".txt", SHA256: sha256Hex("file-c"), Rows: 100, Rejected: 0},
@@ -120,10 +120,14 @@ func mustCSV(t *testing.T, e Export) []byte {
 	return raw
 }
 
-func eventByID(t *testing.T, e Export, id string) ExportEvent {
+// eventByID finds the exported event of a stored evidence id: the export
+// holds only the id keyed under the export's key (b is the byte caseKey was
+// given).
+func eventByID(t *testing.T, e Export, b byte, id string) ExportEvent {
 	t.Helper()
+	want := keyedLabelN(caseKey(b), "ev", id, eventLabelHex)
 	for _, ev := range e.Body.Events {
-		if ev.EvidenceID == id {
+		if ev.EvidenceID == want {
 			return ev
 		}
 	}
@@ -140,15 +144,17 @@ func hasStatementPart(e Export, part string) bool {
 	return false
 }
 
-var pseudonymPattern = regexp.MustCompile(`\b(?:host|user|site|pool|ns|job|queue|instance)-[0-9a-f]{8}\b`)
+var pseudonymPattern = regexp.MustCompile(`\b(?:host|user|site|pool|ns|job|queue|instance|qh)-[0-9a-f]{12}\b`)
+
+var eventLabelPattern = regexp.MustCompile(`\bev-[0-9a-f]{16}\b`)
 
 func TestBuildCaseShape(t *testing.T) {
 	e, raw := mustBuildCase(t, caseInput(caseKey(1)))
 	if err := Verify(raw); err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	if e.Manifest.SchemaVersion != 2 || e.Body.Records == nil || len(e.Body.Records) != 0 {
-		t.Fatalf("want version 2 with an empty records list, got %d / %v", e.Manifest.SchemaVersion, e.Body.Records)
+	if e.Manifest.SchemaVersion != CaseSchemaVersion || e.Body.Records == nil || len(e.Body.Records) != 0 {
+		t.Fatalf("want the case version with an empty records list, got %d / %v", e.Manifest.SchemaVersion, e.Body.Records)
 	}
 	// The failed import is skipped; the unknown importer is "other".
 	if len(e.Manifest.Imports) != 3 || len(e.Body.Imports) != 3 {
@@ -160,9 +166,10 @@ func TestBuildCaseShape(t *testing.T) {
 		}
 	}
 	m := e.Manifest.Imports[0]
-	if m.SHA256 != sha256Hex("file-a") || m.Acknowledgement != "I confirm this file holds no passwords." {
-		t.Errorf("manifest import: %+v", m)
+	if m.BannerID != bannerHash(knownBanners[0]) || e.Manifest.Imports[2].BannerID != customBannerID {
+		t.Errorf("banner ids: %+v / %+v", m, e.Manifest.Imports[2])
 	}
+	assertAbsent(t, raw, sha256Hex("file-a"), sha256Hex("file-b"), "holds no passwords")
 	if len(m.KnownGaps) != 1 || !strings.Contains(m.KnownGaps[0], "<20 rows") {
 		t.Errorf("gap counts must be masked: %q", m.KnownGaps)
 	}
@@ -173,7 +180,7 @@ func TestBuildCaseShape(t *testing.T) {
 	if b.Rows.Text != "5000" || b.Rejected.Text != "40" || b.TZRule != clock.RuleUTCField || !strings.HasPrefix(b.Host, "host-") {
 		t.Errorf("body import: %+v", b)
 	}
-	if b.Quality.SourceVersion != "W3C 1.0" || b.Quality.CoverageFirst == nil {
+	if b.Quality.SourceVersion != "1.0" || b.Quality.Sampling != "" || b.Quality.CoverageFirst == nil {
 		t.Errorf("quality: %+v", b.Quality)
 	}
 	// 20 IIS users of 20 events each, plus 7 listed events; the unknown source
@@ -200,42 +207,44 @@ func TestBuildCaseShape(t *testing.T) {
 
 func TestBuildCaseAttributePolicy(t *testing.T) {
 	e, _ := mustBuildCase(t, caseInput(caseKey(1)))
-	iis := eventByID(t, e, caseEvID("iis-w3c", 2))
+	ev := func(source string, n int) ExportEvent { return eventByID(t, e, 1, caseEvID(source, n)) }
+	iis := ev("iis-w3c", 2)
 	if _, ok := iis.Attrs["stem"]; ok {
 		t.Error("the URL stem must be left out")
 	}
 	if iis.Attrs["method"] != "GET" || iis.Attrs["status"] != "200" {
 		t.Errorf("kept attributes: %v", iis.Attrs)
 	}
-	if _, ok := eventByID(t, e, caseEvID("iis-w3c", 4)).Attrs["cookie"]; ok {
+	if _, ok := ev("iis-w3c", 4).Attrs["cookie"]; ok {
 		t.Error("an unlisted attribute must be left out")
 	}
-	if s := eventByID(t, e, caseEvID("iis-w3c", 3)).Attrs["site"]; !strings.HasPrefix(s, "site-") {
+	if s := ev("iis-w3c", 3).Attrs["site"]; !labelOK("site", s, labelHex) {
 		t.Errorf("site must be a pseudonym, got %q", s)
 	}
-	httperr := eventByID(t, e, caseEvID("iis-httperr", 1000))
-	recycle := eventByID(t, e, caseEvID("win-events", 1001))
-	if httperr.Attrs["queue"] != recycle.Attrs["app-pool"] || !strings.HasPrefix(httperr.Attrs["queue"], "pool-") {
+	httperr := ev("iis-httperr", 1000)
+	recycle := ev("win-events", 1001)
+	if httperr.Attrs["queue"] != recycle.Attrs["app-pool"] || !labelOK("pool", httperr.Attrs["queue"], labelHex) {
 		t.Errorf("one pool must read the same in HTTPERR and the event log: %q / %q", httperr.Attrs["queue"], recycle.Attrs["app-pool"])
 	}
-	if got := eventByID(t, e, caseEvID("win-counters", 1002)).Attrs["instance"]; got != "_Total" {
+	if got := ev("win-counters", 1002).Attrs["instance"]; got != "_Total" {
 		t.Errorf("_Total is kept as is, got %q", got)
 	}
-	if got := eventByID(t, e, caseEvID("win-counters", 1003)).Attrs["instance"]; !strings.HasPrefix(got, "instance-") {
+	if got := ev("win-counters", 1003).Attrs["instance"]; !labelOK("instance", got, labelHex) {
 		t.Errorf("a counter instance is a pseudonym, got %q", got)
 	}
-	mongo := eventByID(t, e, caseEvID("mongod-json", 1004))
-	if !strings.HasPrefix(mongo.Attrs["ns"], "ns-") || mongo.Attrs["planSummary"] != "COLLSCAN" || mongo.Attrs["docsExamined"] != "12000" || mongo.Attrs["queryHash"] != "A1B2C3D4" {
+	mongo := ev("mongod-json", 1004)
+	if !labelOK("ns", mongo.Attrs["ns"], labelHex) || mongo.Attrs["planSummary"] != "COLLSCAN" || mongo.Attrs["docsExamined"] != "12000" ||
+		!labelOK("qh", mongo.Attrs["queryHash"], labelHex) {
 		t.Errorf("mongod attributes: %v", mongo.Attrs)
 	}
-	ai := eventByID(t, e, caseEvID("appinsights", 1005))
+	ai := ev("appinsights", 1005)
 	if _, ok := ai.Attrs["name"]; ok {
 		t.Error("the operation name must be left out")
 	}
 	if _, ok := ai.Attrs["operation_Id"]; ok {
 		t.Error("the operation id must be left out")
 	}
-	if got := eventByID(t, e, caseEvID("schedule-hangfire", 1006)).Attrs["job"]; !strings.HasPrefix(got, "job-") || strings.Contains(got, "alpha") {
+	if got := ev("schedule-hangfire", 1006).Attrs["job"]; !labelOK("job", got, labelHex) {
 		t.Errorf("job must be a pseudonym, got %q", got)
 	}
 }
@@ -253,7 +262,7 @@ func TestBuildCaseReidentification(t *testing.T) {
 		a[p] = true
 		prefixes[p[:strings.IndexByte(p, '-')]] = true
 	}
-	for _, want := range []string{"host", "user", "site", "pool", "ns", "job", "queue", "instance"} {
+	for _, want := range []string{"host", "user", "site", "pool", "ns", "job", "queue", "instance", "qh"} {
 		if !prefixes[want] {
 			t.Errorf("fixture should produce %s pseudonyms", want)
 		}
@@ -263,8 +272,20 @@ func TestBuildCaseReidentification(t *testing.T) {
 			t.Errorf("pseudonym %s appears under both keys", p)
 		}
 	}
+	evA := map[string]bool{}
+	for _, p := range eventLabelPattern.FindAllString(string(rawA), -1) {
+		evA[p] = true
+	}
+	if len(evA) != 407 {
+		t.Errorf("want 407 distinct event labels, got %d", len(evA))
+	}
+	for _, p := range eventLabelPattern.FindAllString(string(rawB), -1) {
+		if evA[p] {
+			t.Errorf("event label %s appears under both keys", p)
+		}
+	}
 	for _, out := range [][]byte{rawA, rawB, csvA, csvB, []byte(normalizeText(string(rawA))), []byte(normalizeText(string(csvA)))} {
-		assertAbsent(t, out, caseSentinel, "web-a", "app-a", "u_ex010304", "job-alpha", "orders.", "/api/")
+		assertAbsent(t, out, caseSentinel, "web-a", "app-a", "u_ex010304", "job-alpha", "orders.", "/api/", "case0001", "ev:")
 		for u := 0; u < 20; u++ {
 			assertAbsent(t, out, storedUser(u))
 		}
@@ -315,20 +336,27 @@ func TestBuildCaseNoIPsOrUserIDs(t *testing.T) {
 		}
 		assertAbsent(t, out, "2001:db8", "user 4242", "98765", "example.test", "12345678")
 	}
-	want := map[string]map[string]string{
-		caseEvID("iis-w3c", 0):     {"method": removedText, "status": removedText, "port": "443"},
-		caseEvID("iis-httperr", 1): {"reason": removedText, "status": "400"},
-		caseEvID("appinsights", 2): {"resultCode": removedText, "dependencyType": removedText},
-		caseEvID("win-events", 3):  {"reason": removedText, "provider": removedText, "id": removedText},
-		caseEvID("sql-xe", 4):      {"wait_type": "LCK_M_X", "state": removedText},
+	type probe struct {
+		source string
+		n      int
+		attrs  map[string]string
 	}
-	for id, attrs := range want {
-		got := eventByID(t, e, id).Attrs
-		for k, v := range attrs {
+	for _, pr := range []probe{
+		{"iis-w3c", 0, map[string]string{"method": removedText, "status": removedText, "port": "443"}},
+		{"iis-httperr", 1, map[string]string{"reason": removedText, "status": "400"}},
+		{"appinsights", 2, map[string]string{"resultCode": removedText, "dependencyType": removedText}},
+		{"win-events", 3, map[string]string{"reason": removedText, "provider": removedText, "id": removedText}},
+		{"sql-xe", 4, map[string]string{"wait_type": "LCK_M_X", "state": removedText}},
+	} {
+		got := eventByID(t, e, 4, caseEvID(pr.source, pr.n)).Attrs
+		for k, v := range pr.attrs {
 			if got[k] != v {
-				t.Errorf("%s %s = %q, want %q", id, k, got[k], v)
+				t.Errorf("%s %d %s = %q, want %q", pr.source, pr.n, k, got[k], v)
 			}
 		}
+	}
+	if m := e.Manifest.Imports[0]; m.BannerID != customBannerID {
+		t.Errorf("banner id %q, want the custom marker", m.BannerID)
 	}
 }
 
@@ -347,7 +375,7 @@ func TestBuildCaseNoClaims(t *testing.T) {
 	imports := []CaseImport{{Importer: "iis-httperr", SHA256: sha256Hex("f"), Rows: 50, Rejected: 30,
 		AckText:   "This import is proven safe.",
 		KnownGaps: []string{"A strong correlation with load is shown.", "Rows drop because of rotation.", "Gaps are unprоven."},
-		Quality:   SourceQuality{Sampling: "caused by load", Threshold: "proven", SourceVersion: "HTTPERR 1.0"}}}
+		Quality:   SourceQuality{Sampling: "caused by load", Threshold: "proven", SourceVersion: "proven 1.0"}}}
 	e, raw := mustBuildCase(t, CaseInput{Imports: imports, Events: ev, Now: testNow, Key: caseKey(5)})
 	for _, out := range [][]byte{raw, mustCSV(t, e)} {
 		if containsProven(string(out)) || containsStrong(string(out)) || LintCausal(string(out)) != nil {
@@ -365,15 +393,15 @@ func TestBuildCaseNoClaims(t *testing.T) {
 		}
 	}
 	m := e.Manifest.Imports[0]
-	if m.Acknowledgement != ackWithheld {
-		t.Errorf("acknowledgement %q, want withheld", m.Acknowledgement)
+	if m.BannerID != customBannerID {
+		t.Errorf("banner id %q, want the custom marker", m.BannerID)
 	}
 	for _, g := range m.KnownGaps {
 		if g != gapWithheld {
 			t.Errorf("gap %q, want withheld", g)
 		}
 	}
-	if q := e.Body.Imports[0].Quality; q.Sampling != "" || q.Threshold != "" || q.SourceVersion != "HTTPERR 1.0" {
+	if q := e.Body.Imports[0].Quality; q.Sampling != "" || q.Threshold != "" || q.SourceVersion != "" {
 		t.Errorf("quality: %+v", q)
 	}
 }
@@ -453,7 +481,7 @@ func TestBuildCaseImportCounts(t *testing.T) {
 			if (b.Rows.Value == nil) != b.Rows.Masked {
 				t.Error("a masked count must carry no value")
 			}
-			if hasStatementPart(e, "is hidden so that subtracting") != tc.wantWithheldStatement {
+			if hasStatementPart(e, "is hidden since the events of an import") != tc.wantWithheldStatement {
 				t.Errorf("withheld statement present = %v, want %v", !tc.wantWithheldStatement, tc.wantWithheldStatement)
 			}
 			if err := Verify(raw); err != nil {
@@ -469,8 +497,7 @@ func TestBuildCaseLongAndOddCells(t *testing.T) {
 		Imports: []CaseImport{{Importer: "iis-httperr", SHA256: sha256Hex("f"), Rows: 50, Rejected: 30, AckText: long,
 			KnownGaps: []string{long, ""}, Quality: SourceQuality{SourceVersion: strings.Repeat("v", 300)}}},
 		Events: []Event{
-			caseEvent("iis-httperr", "httperr", 0, map[string]string{"reason": strings.Repeat("Z", maxTokenBytes)}),
-			caseEvent("iis-httperr", "httperr", 1, map[string]string{"reason": strings.Repeat("Z", maxTokenBytes+1)}),
+			caseEvent("iis-httperr", "httperr", 0, map[string]string{"reason": strings.Repeat("Z", 200)}),
 			caseEvent("iis-httperr", "httperr", 2, map[string]string{"method": "ＧＥＴ"}), // full-width
 			caseEvent("iis-httperr", "httperr", 3, map[string]string{"method": "=HYPERLINK(1)", "status": "+1", "reason": "-x"}),
 			caseEvent("iis-httperr", "Request Kind", 4, nil),
@@ -482,26 +509,23 @@ func TestBuildCaseLongAndOddCells(t *testing.T) {
 		t.Fatalf("Verify: %v", err)
 	}
 	m := e.Manifest.Imports[0]
-	if m.Acknowledgement != ackWithheld || m.KnownGaps[0] != gapWithheld || m.KnownGaps[1] != "" {
-		t.Errorf("long free text: ack %d bytes, gaps %q", len(m.Acknowledgement), m.KnownGaps)
+	if m.BannerID != customBannerID || m.KnownGaps[0] != gapWithheld || m.KnownGaps[1] != "" {
+		t.Errorf("long free text: banner %q, gaps %q", m.BannerID, m.KnownGaps)
 	}
 	if e.Body.Imports[0].Quality.SourceVersion != "" {
 		t.Error("an over-long quality string must be dropped")
 	}
-	if got := eventByID(t, e, caseEvID("iis-httperr", 0)).Attrs["reason"]; got != strings.Repeat("Z", maxTokenBytes) {
-		t.Errorf("a %d-byte token is kept, got %q", maxTokenBytes, got)
-	}
-	for id, k := range map[int]string{1: "reason", 2: "method"} {
-		if got := eventByID(t, e, caseEvID("iis-httperr", id)).Attrs[k]; got != removedText {
+	for id, k := range map[int]string{0: "reason", 2: "method"} {
+		if got := eventByID(t, e, 8, caseEvID("iis-httperr", id)).Attrs[k]; got != removedText {
 			t.Errorf("event %d %s = %q, want removed", id, k, got)
 		}
 	}
-	for k, v := range eventByID(t, e, caseEvID("iis-httperr", 3)).Attrs {
+	for k, v := range eventByID(t, e, 8, caseEvID("iis-httperr", 3)).Attrs {
 		if v != removedText {
 			t.Errorf("formula-like %s = %q, want removed", k, v)
 		}
 	}
-	if got := eventByID(t, e, caseEvID("iis-httperr", 4)).Kind; got != otherKind {
+	if got := eventByID(t, e, 8, caseEvID("iis-httperr", 4)).Kind; got != otherKind {
 		t.Errorf("kind %q, want %q", got, otherKind)
 	}
 
@@ -542,6 +566,7 @@ func TestBuildCaseRefusesBadInput(t *testing.T) {
 		"not an event id":   func(in *CaseInput) { in.Events[0].EvidenceID = "p2:b1:0011223344556677" },
 		"too many attrs":    func(in *CaseInput) { in.Events[0].Attrs = manyAttrs(MaxEventAttrs + 1) },
 		"bad severity":      func(in *CaseInput) { in.Events[0].Severity = "fatal" },
+		"repeated id":       func(in *CaseInput) { in.Events = append(in.Events, in.Events[0]) },
 	} {
 		in := good()
 		mutate(&in)
@@ -587,7 +612,7 @@ func TestVerifyVersions(t *testing.T) {
 	}
 	_, v2 := mustBuildCase(t, caseInput(caseKey(1)))
 	if err := Verify(v2); err != nil {
-		t.Fatalf("version 2 case export: %v", err)
+		t.Fatalf("version 3 case export: %v", err)
 	}
 	_, v2b := mustBuild(t, baseInput())
 	if err := Verify(v2b); err != nil {
@@ -619,8 +644,16 @@ func TestVerifyVersions(t *testing.T) {
 		"v1 with events":           func(e *Export) { e.Body.Events = []ExportEvent{{EvidenceID: "x"}} },
 		"v1 with body imports":     func(e *Export) { e.Body.Imports = []ExportImport{{Ref: "import-1"}} },
 		"v1 with manifest imports": func(e *Export) { e.Manifest.Imports = []ManifestImport{{Ref: "import-1"}} },
-		"v2 with v1 records":       func(e *Export) { e.Manifest.SchemaVersion = 2 },
-		"v1 with v2 records":       func(e *Export) { e.Body.Records[0].Version = 2 },
+		"v2 with events (downgrade)": func(e *Export) {
+			e.Manifest.SchemaVersion = 2
+			for i := range e.Body.Records {
+				e.Body.Records[i].Version = 2
+			}
+			e.Body.Events = []ExportEvent{{EvidenceID: "x"}}
+		},
+		"v4 file":            func(e *Export) { e.Manifest.SchemaVersion = MaxSchemaVersion + 1 },
+		"v2 with v1 records": func(e *Export) { e.Manifest.SchemaVersion = 2 },
+		"v1 with v2 records": func(e *Export) { e.Body.Records[0].Version = 2 },
 	} {
 		e := decodeV1()
 		mutate(&e)
@@ -640,8 +673,8 @@ func TestVerifyVersions(t *testing.T) {
 
 	// Tampering with an event breaks the hash; an unknown field is refused.
 	for name, edit := range map[string][2]string{
-		"event line":    {`"line": 3,`, `"line": 4,`},
-		"unknown field": {`"tzRule": "utc-field",`, `"tzRule": "utc-field", "note": "x",`},
+		"event severity": {`"severity": "info",`, `"severity": "error",`},
+		"unknown field":  {`"tzRule": "utc-field",`, `"tzRule": "utc-field", "note": "x",`},
 	} {
 		bad := bytes.Replace(v2, []byte(edit[0]), []byte(edit[1]), 1)
 		if bytes.Equal(bad, v2) {
@@ -664,24 +697,24 @@ func TestEventsCSV(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the CSV back: %v", err)
 	}
-	if len(rows) != 3 || strings.Join(rows[0], ",") != "evidenceId,source,kind,host,start,end,durationMs,value,unit,severity,line,tzRule,attrs" {
+	if len(rows) != 3 || strings.Join(rows[0], ",") != "evidenceId,source,kind,host,start,end,durationMs,value,unit,severity,tzRule,attrs" {
 		t.Fatalf("rows: %q", rows)
 	}
 	for _, r := range rows {
 		for _, c := range r {
-			if Cell(c) != c {
+			if csvCell(c) != c {
 				t.Errorf("cell %q is not spreadsheet-safe", c)
 			}
 		}
 	}
 	first := rows[1]
-	if first[7] != "'-5" || first[6] != "12.5" || first[10] != "2" || !strings.HasPrefix(first[3], "host-") {
+	if first[7] != "-5" || first[6] != "12.5" || !strings.HasPrefix(first[3], "host-") {
 		t.Errorf("first row: %q", first)
 	}
-	if first[12] != "counter=% Processor Time; instance=_Total; object=Process" {
-		t.Errorf("attrs cell: %q", first[12])
+	if first[11] != "counter=% Processor Time; instance=_Total; object=Process" {
+		t.Errorf("attrs cell: %q", first[11])
 	}
-	if rows[2][12] != "method=GET; status=-1" {
-		t.Errorf("attrs cell: %q", rows[2][12])
+	if rows[2][11] != "method=GET; status=-1" {
+		t.Errorf("attrs cell: %q", rows[2][11])
 	}
 }

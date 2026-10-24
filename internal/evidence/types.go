@@ -8,11 +8,19 @@ package evidence
 import "time"
 
 const (
-	// SchemaVersion is the version Build and BuildCase write. Version 2 adds
-	// Manifest.Imports, Body.Imports and Body.Events (the case export); all
-	// three are omitted when empty, so a version 1 file still decodes and
-	// re-encodes to the same bytes.
+	// SchemaVersion is the version Build (the finding export) writes. The case
+	// export fields are omitted when empty, so a version 1 or 2 file decodes
+	// and re-encodes to the same bytes.
 	SchemaVersion = 2
+	// CaseSchemaVersion is the version BuildCase writes. Version 3 is the first
+	// version that may hold Manifest.Imports, Body.Imports and Body.Events (the
+	// case export); a file of an older version that holds any of them is
+	// refused, so a case export cannot be passed off as an older file to skip
+	// the case export checks. It carries no source line numbers, no
+	// per-file hash and no acknowledgement text.
+	CaseSchemaVersion = 3
+	// MaxSchemaVersion is the newest version Verify accepts.
+	MaxSchemaVersion = CaseSchemaVersion
 	// MinSchemaVersion is the oldest version Verify accepts.
 	MinSchemaVersion = 1
 	// ThinCell is the masking threshold: any count below it prints as "<20".
@@ -96,21 +104,22 @@ type Manifest struct {
 	CreatedAt     time.Time `json:"createdAt"`
 	BodySHA256    string    `json:"bodySha256"`
 	Masking       Masking   `json:"masking"`
-	// Imports lists the imported files of a case export (version 2). A file is
-	// named by its importer and SHA-256 only, never by its file name.
+	// Imports lists the imported files of a case export (version 3). A file is
+	// named by its importer only, never by its file name or hash.
 	Imports []ManifestImport `json:"imports,omitempty"`
 }
 
 // ManifestImport is one imported file as the manifest states it: which
-// importer read it, the hash of its bytes, the acknowledgement the analyst
-// ticked before importing it, and the importer's known gaps. There is no file
-// name field.
+// importer read it, an identifier of the gating banner the analyst
+// acknowledged, and the importer's known gaps. There is no file name field,
+// no file hash and no free text from the client form.
 type ManifestImport struct {
-	Ref             string   `json:"ref"` // "import-1", ...; the same ref as in Body.Imports
-	Importer        string   `json:"importer"`
-	SHA256          string   `json:"sha256"`
-	Acknowledgement string   `json:"acknowledgement"`
-	KnownGaps       []string `json:"knownGaps"`
+	Ref      string `json:"ref"` // "import-1", ...; the same ref as in Body.Imports
+	Importer string `json:"importer"`
+	// BannerID is "banner-" and 16 hex characters of the SHA-256 of a known
+	// banner text, or "custom-not-exported" for any other acknowledgement.
+	BannerID  string   `json:"bannerId"`
+	KnownGaps []string `json:"knownGaps"`
 }
 
 // ExportImport is the body's summary of one imported file. Host is a keyed
@@ -126,8 +135,9 @@ type ExportImport struct {
 }
 
 // ExportEvent is one imported event after the per-source attribute policy:
-// host and named attributes are keyed pseudonyms for this export, and only
-// allowlisted attributes remain. Attrs marshals with sorted keys, so the
+// the event id, host and named attributes are keyed pseudonyms for this
+// export, and only allowlisted attributes of fixed or numeric value remain.
+// There is no source line number. Attrs marshals with sorted keys, so the
 // encoding is canonical.
 type ExportEvent struct {
 	EvidenceID string            `json:"evidenceId"`
@@ -140,7 +150,6 @@ type ExportEvent struct {
 	Value      *float64          `json:"value,omitempty"`
 	Unit       string            `json:"unit,omitempty"`
 	Severity   string            `json:"severity,omitempty"`
-	Line       int64             `json:"line"`
 	TZRule     string            `json:"tzRule"`
 	Attrs      map[string]string `json:"attrs,omitempty"`
 }
@@ -152,8 +161,8 @@ type Body struct {
 	Records    []Record       `json:"records"`
 	Pseudonyms []Pseudonym    `json:"pseudonyms,omitempty"`
 	Ledger     []LedgerEntry  `json:"ledger,omitempty"`
-	Imports    []ExportImport `json:"imports,omitempty"` // version 2 (case export)
-	Events     []ExportEvent  `json:"events,omitempty"`  // version 2 (case export)
+	Imports    []ExportImport `json:"imports,omitempty"` // version 3 (case export)
+	Events     []ExportEvent  `json:"events,omitempty"`  // version 3 (case export)
 }
 
 // Export is the whole file: manifest plus body.
