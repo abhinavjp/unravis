@@ -1,6 +1,7 @@
 <script lang="ts">
  import { onMount, untrack } from 'svelte';
  import { api } from '../lib/api';
+ import { asOfText, evidenceFetch } from '../lib/evidenceMemo';
  import type { Page, RequestRecord, SourceResult } from '../lib/types';
  import { formatTime, zoneAbbreviation } from '../lib/time';
  import { formatDuration, countNoun } from '../lib/format';
@@ -9,7 +10,7 @@
  let rows = $state<RequestRecord[]>([]), page = $state<Page | null>(null), loading = $state(false), error = $state('');
  let appliedStart = $state(0), appliedEnd = $state(0), appliedSignature = $state('');
  let controller: AbortController | undefined, sequence = 0;
- let coverageErrors = $state<SourceResult[]>([]), everTruncated = $state(false);
+ let coverageErrors = $state<SourceResult[]>([]), everTruncated = $state(false), memoAt = $state<number | null>(null);
  const draftSignature = $derived(`${before}|${after}|${unit}`);
  const ordered = $derived(rows.filter(row => row.sourceId !== anchor.sourceId || row.id !== anchor.id).sort((a,b) => Date.parse(a.initiatedAt ?? '') - Date.parse(b.initiatedAt ?? '')));
  const stamp = (value: number) => formatTime(value,{zone,precision:'ms'});
@@ -32,10 +33,13 @@
    if (!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>86400000) {error='Choose a window longer than zero and no more than 24 hours, including the selected request.';return;}
   }
   controller?.abort();controller=new AbortController();const run=++sequence;loading=true;error='';
-  if (!cursor) {rows=[];page=null;coverageErrors=[];everTruncated=false;appliedStart=start;appliedEnd=end;appliedSignature=draftSignature;}
+  if (!cursor) {rows=[];page=null;coverageErrors=[];everTruncated=false;memoAt=null;appliedStart=start;appliedEnd=end;appliedSignature=draftSignature;}
   try {
-   const result=await api.activity({sourceIds,start:new Date(start).toISOString(),end:new Date(end).toISOString(),limit:100,cursor},controller.signal);
+   const input={sourceIds,start:new Date(start).toISOString(),end:new Date(end).toISOString(),limit:100,cursor};
+   const out=await evidenceFetch('activity',input,signal=>api.activity(input,signal),controller.signal);
+   const result=out.value;
    if (run!==sequence)return;
+   if (out.fromMemo) memoAt=memoAt==null||!cursor?out.fetchedAt:Math.min(memoAt,out.fetchedAt);
    rows=cursor?[...rows,...result.rows].filter((row,i,list)=>list.findIndex(item=>item.id===row.id&&item.sourceId===row.sourceId)===i).slice(0,500):result.rows;
    page=result;
    coverageErrors=[...coverageErrors,...result.sources.filter(item=>!item.ok)].filter((item,index,list)=>list.findIndex(other=>other.sourceId===item.sourceId)===index);
@@ -43,7 +47,7 @@
   } catch(cause) {if(run===sequence&&!(cause instanceof DOMException&&cause.name==='AbortError'))error=cause instanceof Error?cause.message:'Could not read nearby activity.';}
   finally {if(run===sequence)loading=false;}
  }
- $effect(()=>{ const current=anchor; untrack(()=>{sequence++;controller?.abort();rows=[];page=null;coverageErrors=[];everTruncated=false;appliedStart=0;appliedEnd=0;appliedSignature='';loading=false;if(current.initiatedAt)void load();}); });
+ $effect(()=>{ const current=anchor; untrack(()=>{sequence++;controller?.abort();rows=[];page=null;coverageErrors=[];everTruncated=false;appliedStart=0;appliedEnd=0;appliedSignature='';memoAt=null;loading=false;if(current.initiatedAt)void load();}); });
  onMount(()=>()=>{sequence++;controller?.abort();});
 </script>
 
@@ -57,6 +61,7 @@
  {#each [anchor,...ordered] as row,index (row.sourceId+':'+row.id)}<div class="activity-row" class:activity-anchor={index===0}><div class="activity-row-label" title={description(row)}><strong>{index===0?'Selected · ':''}{row.controller}.{row.action}</strong><small>{sourceLabels.get(row.sourceId) ?? row.sourceId} · {row.kind} · {row.outcome}</small></div><div class="activity-track"><div class="activity-anchor-line" style:left={Math.max(0,Math.min(100,(Date.parse(anchor.initiatedAt!)-appliedStart)/(appliedEnd-appliedStart)*100))+'%'}></div><button class="activity-bar" class:activity-unknown={validEnd(row)==null} style={bar(row)} aria-label={description(row)} title={description(row)}></button></div></div>{/each}
  </div></div>{/if}
  <div class="pagination-row"><span>{rows.length} activity records loaded. Selected request is pinned separately. {page?.nextCursor||everTruncated||coverageErrors.length?'This is not a complete view of activity yet.':page ? 'No more matching records reported by successful sources.' : loading ? 'Reading activity…' : 'No activity page available yet.'}</span>{#if page?.nextCursor&&rows.length<500}<button class="secondary-button" disabled={loading} onclick={()=>load(page?.nextCursor ?? '')}>Load more activity</button>{/if}</div>
+ {#if memoAt!==null}<p class="activity-explanation memo-asof" role="status">{asOfText(memoAt,zone)}</p>{/if}
  {#if rows.length>=500}<p class="activity-explanation">Display limit reached (500 records). Narrow the time window to inspect this busy period.</p>{/if}
 </section>
 

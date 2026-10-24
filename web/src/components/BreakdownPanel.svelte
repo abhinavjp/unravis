@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { api } from '../lib/api';
+  import { asOfText, evidenceFetch } from '../lib/evidenceMemo';
+  import { timeZone } from '../lib/timeZone.svelte';
   import { breakdownDims, breakdownNotes, breakdownPickTitle, breakdownRowFilter, completeTitle, percentileText, pooledKindsNote, withoutDimension } from '../lib/breakdown';
   import type { Breakdown, BreakdownDim, BreakdownFilter, BreakdownRow, Query } from '../lib/types';
   // lockedDim fixes the dimension and hides the tabs (the failure panel's status table); panelId keeps a second panel's id unique.
@@ -14,6 +16,7 @@
   let result = $state<Breakdown | null>(null);
   let loading = $state(false);
   let error = $state('');
+  let memoAt = $state<number | null>(null); // set when the table was served from the evidence memo
   let controller: AbortController | undefined;
   let sequence = 0;
   const visible = $derived(dim !== 'userIp' || ipOpen);
@@ -32,13 +35,14 @@
     loading = true; error = '';
     try {
       const body = JSON.parse(key) as [Query, BreakdownDim];
-      const out = await api.breakdown(body[0], body[1], 20, controller.signal);
+      // The same request body as api.breakdown sends is the memo key, so a revisit under the same analysis reads nothing from the server.
+      const out = await evidenceFetch('breakdown', { query: body[0], dim: body[1], top: 20 }, signal => api.breakdown(body[0], body[1], 20, signal), controller.signal);
       if (run !== sequence) return;
-      result = out;
+      result = out.value; memoAt = out.fromMemo ? out.fetchedAt : null;
     } catch (cause) {
       if (run === sequence && !(cause instanceof DOMException && cause.name === 'AbortError')) {
         error = cause instanceof Error ? cause.message : 'The breakdown could not be read.';
-        result = null;
+        result = null; memoAt = null;
       }
     } finally { if (run === sequence) loading = false; }
   }
@@ -47,7 +51,7 @@
     const show = visible;
     untrack(() => {
       if (!show) { sequence++; controller?.abort(); loading = false; return; }
-      result = null;
+      result = null; memoAt = null;
       void load(key);
     });
   });
@@ -91,6 +95,6 @@
         </tbody>
       </table>
     </div>
-    <div class="pagination-row"><span>{#if result}{whole(result.total)} request{result.total === 1 ? '' : 's'} · {whole(result.distinct)} distinct value{result.distinct === 1 ? '' : 's'}{loading ? ' · updating…' : ''}{:else}{loading ? 'Reading…' : ''}{/if}</span><span>“(not yet written)” means the audit record has no value for this field yet.</span></div>
+    <div class="pagination-row"><span>{#if result}{whole(result.total)} request{result.total === 1 ? '' : 's'} · {whole(result.distinct)} distinct value{result.distinct === 1 ? '' : 's'}{loading ? ' · updating…' : ''}{:else}{loading ? 'Reading…' : ''}{/if}</span><span>“(not yet written)” means the audit record has no value for this field yet.</span>{#if memoAt !== null}<span class="memo-asof">{asOfText(memoAt, timeZone.zone)}</span>{/if}</div>
   {/if}
 </section>
