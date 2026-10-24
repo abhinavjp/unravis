@@ -44,6 +44,14 @@ export interface StoredCoverage {
 let patternsStore: StoredPatterns[] = [];
 let coverageStore: StoredCoverage[] = [];
 
+// Plain listeners, so a panel that reads the stored report (the resource panel reads its stall periods) can look again when it is replaced or cleared.
+const patternsListeners = new Set<() => void>();
+export function onPatternsChange(listener: () => void): () => void {
+  patternsListeners.add(listener);
+  return () => { patternsListeners.delete(listener); };
+}
+const patternsChanged = () => { for (const listener of [...patternsListeners]) listener(); };
+
 export const patternsWindowKey = (sourceIds: string[], start: string, end: string): string => [sourceIds.join(','), start, end].join('|');
 export const coverageKey = (sourceId: string, start: string, end: string): string => [sourceId, start, end].join('|');
 
@@ -53,6 +61,7 @@ const known = (ids: string[], knownSourceIds: string[]): boolean => ids.every((i
 export function savePatterns(entry: Omit<StoredPatterns, 'savedAt' | 'sourceIds'> & { sourceIds: string[]; savedAt?: number }): StoredPatterns {
   const stored: StoredPatterns = { ...entry, sourceIds: [...entry.sourceIds], savedAt: entry.savedAt ?? Date.now() };
   patternsStore = [...patternsStore.filter((item) => item.key !== stored.key), stored].slice(-PATTERNS_MAX);
+  patternsChanged();
   return stored;
 }
 
@@ -83,6 +92,7 @@ export function readCoverage(key: string, knownSourceIds: string[]): StoredCover
 export function clearDrawerResults(): void {
   patternsStore = [];
   coverageStore = [];
+  patternsChanged();
 }
 
 export const drawerResultCounts = () => ({ patterns: patternsStore.length, coverage: coverageStore.length });

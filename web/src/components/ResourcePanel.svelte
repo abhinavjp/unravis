@@ -1,8 +1,11 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { CaseApiError, fetchResource, isCaseGone } from '../lib/cases';
   import { errorText } from '../lib/copy/importCopy';
+  import { app } from '../lib/appState.svelte';
+  import { onPatternsChange, patternsWindowKey, readPatterns } from '../lib/drawerResults.svelte';
   import {
-    chipsFor, rangeText, resourceCopy, rulesAt, rulesOfEpisode, slotRange, stepWindow, viewWindow, bucketFor,
+    chipsFor, episodesForRequest, rangeText, resourceCopy, rulesAt, rulesOfEpisode, slotRange, spansKey, stallSpans, stepWindow, viewWindow, bucketFor,
     type Chip, type EpisodeSpan, type ResourceView, type RuleRow, type ViewWindow
   } from '../lib/resource';
   import { zoomView } from '../lib/zoomView.svelte';
@@ -14,8 +17,10 @@
   // What each host measured around the stalls, in three steps: a line per host with dots for how much data it has (closed), the lines on one
   // time axis (open), and the rule rows behind a click (drawer). The window follows the zoom on screen when there is one; otherwise the panel
   // keeps its own. Nothing here says why something happened: it shows what was measured, where, and which rules the server fired.
+  // The stall periods come from the Patterns report for the same sources and window, when one has been run (lib/drawerResults). The server cannot
+  // know them, so they go with each read as ep values; with no report, or no stalls in it, none are sent and the stall rules stay quiet.
   let { caseId, query, zone, apiWindows = [], onGone }: {
-    caseId: string; query: { start: string; end: string }; zone: string; apiWindows?: ReadonlyArray<{ at: string; p95Ms: number | null }>; onGone?: () => void;
+    caseId: string; query: { start: string; end: string; sourceIds?: string[] }; zone: string; apiWindows?: ReadonlyArray<{ at: string; p95Ms: number | null }>; onGone?: () => void;
   } = $props();
 
   let resource = $state.raw<ResourceView | null>(null);
@@ -31,6 +36,17 @@
   const whole = $derived(viewWindow({ local: null, zoomed: false, slots: [], query }));
   const view = $derived(viewWindow({ local: usesStore ? null : local, zoomed: zoomView.zoomed, slots: zoomView.slots, query }));
   const zoomedNow = $derived(usesStore ? zoomView.zoomed : local != null);
+  // The newest Patterns report for this window. It is read again whenever a report is saved or cleared.
+  let reportTick = $state(0);
+  $effect(() => onPatternsChange(() => { reportTick += 1; }));
+  const stalls = $derived.by(() => {
+    void reportTick;
+    const saved = readPatterns(patternsWindowKey(query.sourceIds ?? [], query.start, query.end), app.sources.map(source => source.id));
+    return stallSpans(saved?.report.episodes);
+  });
+  // What goes with the read: the stall periods that touch the view, capped at the server limit. The key changes only when the list does.
+  const sent = $derived(episodesForRequest(stalls, view));
+  const sentKey = $derived(spansKey(sent));
   const aborted = (error: unknown) => error instanceof DOMException && error.name === 'AbortError';
 
   function failure(error: unknown): string {
@@ -42,12 +58,13 @@
   $effect(() => {
     const from = view?.fromMs, to = view?.toMs;
     void attempt;
+    void sentKey;
     if (from == null || to == null) return;
     const mine = new AbortController();
     const timer = setTimeout(async () => {
       busy = true; problem = '';
       try {
-        const next = await fetchResource(caseId, { fromMs: from, toMs: to }, mine.signal);
+        const next = await fetchResource(caseId, { fromMs: from, toMs: to, episodes: untrack(() => sent) }, mine.signal);
         if (!mine.signal.aborted) resource = next;
       } catch (error) {
         if (mine.signal.aborted || aborted(error)) return;

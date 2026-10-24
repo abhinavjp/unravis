@@ -280,6 +280,42 @@ export function viewWindow(input: {
   return Number.isFinite(fromMs) && Number.isFinite(toMs) && toMs > fromMs ? { fromMs, toMs } : null;
 }
 
+/** The most stall periods one /resource request may carry (the server refuses more with bad-episode). */
+export const MAX_EPISODES = 200;
+
+/**
+ * The stall periods the Patterns report found (start and end as RFC 3339 text), as sorted spans in milliseconds. A period with no readable
+ * start or end, or an end before its start, is dropped; two periods with the same start and end are one.
+ */
+export function stallSpans(list: ReadonlyArray<{ start: string; end: string }> | null | undefined): EpisodeSpan[] {
+  const seen = new Set<string>();
+  const out: EpisodeSpan[] = [];
+  for (const item of list ?? []) {
+    const start = Date.parse(item?.start), end = Date.parse(item?.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) continue;
+    const key = start + '/' + end;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ start, end });
+  }
+  return out.sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
+/**
+ * The stall periods to send with a /resource read for this view: the ones that touch the view, at most `cap`. Over the cap the longest are kept
+ * (the earlier one wins a tie), and the result is sorted by start again. Nothing in, nothing sent.
+ */
+export function episodesForRequest(spans: ReadonlyArray<EpisodeSpan>, view: ViewWindow | null, cap = MAX_EPISODES): EpisodeSpan[] {
+  const inView = view ? spans.filter(span => span.end >= view.fromMs && span.start <= view.toMs) : [...spans];
+  const kept = inView.length > cap
+    ? [...inView].sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start || a.end - b.end).slice(0, Math.max(0, cap))
+    : inView;
+  return [...kept].sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
+/** A short text that is the same exactly when two stall lists are the same, so a refetch happens only when the list changes. */
+export const spansKey = (spans: ReadonlyArray<EpisodeSpan>): string => spans.map(span => span.start + '-' + span.end).join(',');
+
 /** The slot indexes that cover a dragged span, for the zoom store's index-range setter. Null when no slot is touched. */
 export function slotRange(slots: ReadonlyArray<{ start: number; end: number }>, fromMs: number, toMs: number): [number, number] | null {
   const low = Math.min(fromMs, toMs), high = Math.max(fromMs, toMs);

@@ -27,6 +27,7 @@ const cases = loadTypeScript('src/lib/cases.ts');
 const importCopy = loadTypeScript('src/lib/copy/importCopy.ts');
 const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
+const drawerResults = loadTypeScript('src/lib/drawerResults.svelte.ts');
 
 // Synthetic values only: 2001 dates, web-a.example.test hosts, invented rule text.
 const T0 = Date.parse('2001-02-03T04:00:00Z');
@@ -427,4 +428,103 @@ test('no panel copy uses a causal word', () => {
   const all = [...Object.values(r.resourceCopy), ...Object.values(r.RULE_HINTS), r.FALLBACK_HINT, ...Object.values(r.METRIC_NAMES), ...r.STRIP_DEFS.map((d) => d.title)];
   for (const text of all) assert.doesNotMatch(text, causal, text);
   for (const reason of ['bad-bucket', 'bad-selector', 'too-many-series', 'too-many-buckets', 'bad-episode']) assert.doesNotMatch(importCopy.reasonText(reason), causal, reason);
+});
+
+/* ------------------------------------------------------------------ stall periods sent with the read (U4) */
+
+const period = (startMin, endMin) => ({ start: iso(T0 + startMin * MIN), end: iso(T0 + endMin * MIN) });
+const WHOLE = { fromMs: T0, toMs: T0 + 600 * MIN };
+
+test('stallSpans reads the report periods: sorted, deduped, bad ones dropped', () => {
+  const spans = r.stallSpans([period(30, 35), period(10, 12), period(30, 35), { start: 'nope', end: iso(T0) }, { start: iso(T0 + 5 * MIN), end: iso(T0) }, period(10, 11)]);
+  assert.deepEqual(spans, [{ start: T0 + 10 * MIN, end: T0 + 11 * MIN }, { start: T0 + 10 * MIN, end: T0 + 12 * MIN }, { start: T0 + 30 * MIN, end: T0 + 35 * MIN }]);
+  assert.deepEqual(r.stallSpans(undefined), []);
+  assert.deepEqual(r.stallSpans(null), []);
+  assert.deepEqual(r.stallSpans([]), []);
+});
+
+test('episodesForRequest keeps the periods that touch the view, sorted, and sends nothing when there are none', () => {
+  const spans = r.stallSpans([period(100, 110), period(20, 25), period(-30, -20), period(700, 710), period(-5, 3)]);
+  assert.deepEqual(r.episodesForRequest(spans, WHOLE).map((s) => [(s.start - T0) / MIN, (s.end - T0) / MIN]), [[-5, 3], [20, 25], [100, 110]]);
+  assert.deepEqual(r.episodesForRequest(spans, { fromMs: T0 + 21 * MIN, toMs: T0 + 22 * MIN }).map((s) => s.start), [T0 + 20 * MIN]);
+  assert.deepEqual(r.episodesForRequest([], WHOLE), []);
+  assert.deepEqual(r.episodesForRequest(spans, { fromMs: T0 + 400 * MIN, toMs: T0 + 410 * MIN }), []);
+  assert.equal(r.spansKey([]), '');
+});
+
+test('over the cap the longest periods are kept (earlier wins a tie) and the result is sorted again', () => {
+  assert.equal(r.MAX_EPISODES, 200);
+  const many = [];
+  for (let i = 0; i < 250; i++) many.push({ start: T0 + i * 2 * MIN, end: T0 + i * 2 * MIN + (i % 2 === 0 ? 30000 : 90000) });
+  // One very long period that starts late: it must survive the cut.
+  many.push({ start: T0 + 400 * MIN, end: T0 + 440 * MIN });
+  const sent = r.episodesForRequest(many, WHOLE);
+  assert.equal(sent.length, 200);
+  assert.ok(sent.some((s) => s.end - s.start === 40 * MIN), 'the longest is kept');
+  assert.ok(sent.every((s, i) => i === 0 || sent[i - 1].start <= s.start), 'sorted by start');
+  // 125 odd (90 s) periods and the long one are longer than the 30 s ones; the rest of the 200 are the earliest 30 s ones.
+  assert.equal(sent.filter((s) => s.end - s.start === 90000).length, 125);
+  const short = sent.filter((s) => s.end - s.start === 30000);
+  assert.equal(short.length, 74);
+  assert.equal(short[0].start, T0);
+  assert.equal(short[short.length - 1].start, T0 + 73 * 2 * 2 * MIN);
+  assert.equal(r.episodesForRequest(many, WHOLE, 3).length, 3);
+  assert.equal(r.episodesForRequest(many, WHOLE, 0).length, 0);
+  const small = Array.from({ length: 200 }, (_, i) => ({ start: T0 + i * MIN, end: T0 + i * MIN + 1000 }));
+  assert.equal(r.episodesForRequest(small, WHOLE).length, 200, 'exactly 200 is sent whole');
+});
+
+test('the stall periods go out as ep values with / and : encoded, and none are sent when there are none', async () => {
+  const calls = mockServer(() => ({ body: resourceJson() }));
+  const sent = r.episodesForRequest(r.stallSpans([period(30, 35), period(10, 12)]), WHOLE);
+  await cases.fetchResource(CASE_ID, { fromMs: T0, toMs: T0 + 60 * MIN, episodes: sent });
+  const raw = calls[0].url;
+  assert.match(raw, /[?&]ep=2001-02-03T04%3A10%3A00\.000Z%2F2001-02-03T04%3A12%3A00\.000Z(?:&|$)/, 'the slash and the colons are encoded');
+  assert.doesNotMatch(raw.split('?')[1], /ep=[^&]*[/:]/, 'no raw slash or colon inside an ep value');
+  const url = new URL(raw, 'http://x');
+  assert.deepEqual(url.searchParams.getAll('ep'), ['2001-02-03T04:10:00.000Z/2001-02-03T04:12:00.000Z', '2001-02-03T04:30:00.000Z/2001-02-03T04:35:00.000Z']);
+
+  await cases.fetchResource(CASE_ID, { fromMs: T0, toMs: T0 + 60 * MIN, episodes: r.episodesForRequest([], WHOLE) });
+  await cases.fetchResource(CASE_ID, { fromMs: T0, toMs: T0 + 60 * MIN });
+  assert.doesNotMatch(calls[1].url, /ep=/);
+  assert.doesNotMatch(calls[2].url, /ep=/);
+
+  const many = Array.from({ length: 300 }, (_, i) => ({ start: T0 + i * 2 * MIN, end: T0 + i * 2 * MIN + 1000 + i }));
+  await cases.fetchResource(CASE_ID, { fromMs: T0, toMs: T0 + 600 * MIN, episodes: r.episodesForRequest(many, WHOLE) });
+  assert.equal(new URL(calls[3].url, 'http://x').searchParams.getAll('ep').length, 200, 'never over the server limit');
+});
+
+test('the Patterns report stored for a window feeds the panel, and a new or cleared report is announced', () => {
+  drawerResults.clearDrawerResults();
+  let seen = 0;
+  const off = drawerResults.onPatternsChange(() => { seen += 1; });
+  const key = drawerResults.patternsWindowKey(['a'], iso(T0), iso(T0 + 600 * MIN));
+  const entry = (episodes) => ({ key: key + '|x', windowKey: key, sourceIds: ['a'], stallSec: '45', gapSec: '600', idleAsked: false, report: { episodes } });
+  assert.equal(drawerResults.readPatterns(key, ['a']), null, 'no report, no periods');
+  drawerResults.savePatterns(entry([period(30, 35), period(10, 12)]));
+  assert.equal(seen, 1);
+  const saved = drawerResults.readPatterns(key, ['a']);
+  assert.deepEqual(r.stallSpans(saved.report.episodes).map((s) => (s.start - T0) / MIN), [10, 30]);
+  assert.equal(drawerResults.readPatterns(key, ['b']), null, 'a source the page no longer has drops the report');
+  drawerResults.savePatterns({ ...entry([]), key: key + '|y' });
+  assert.equal(seen, 2);
+  assert.deepEqual(r.stallSpans(drawerResults.readPatterns(key, ['a']).report.episodes), [], 'a report with no stalls sends none');
+  drawerResults.clearDrawerResults();
+  assert.equal(seen, 3);
+  off();
+  drawerResults.clearDrawerResults();
+  assert.equal(seen, 3, 'a removed listener hears nothing');
+});
+
+test('the panel reads the stored report for its own window, sends its periods and reads again only when they or the view change', () => {
+  const panel = read('src/components/ResourcePanel.svelte').replace(/\r\n/g, '\n');
+  assert.match(panel, /readPatterns\(patternsWindowKey\(query\.sourceIds \?\? \[\], query\.start, query\.end\)/);
+  assert.match(panel, /onPatternsChange\(/);
+  assert.match(panel, /episodesForRequest\(stalls, view\)/);
+  assert.match(panel, /fetchResource\(caseId, \{ fromMs: from, toMs: to, episodes: untrack\(\(\) => sent\) \}/);
+  const effect = panel.slice(panel.indexOf('$effect(() => {\n    const from'), panel.indexOf('const hosts = $derived'));
+  assert.match(effect, /void sentKey;/, 'the read depends on the stall key, a string that changes only when the list does');
+  assert.match(effect, /view\?\.fromMs/);
+  assert.match(read('src/lib/components/CaseTools.svelte'), /<ResourcePanel \{caseId\} \{query\}/, 'the full query, with its sources, reaches the panel');
+  assert.doesNotMatch(read('src/lib/drawerResults.svelte.ts'), /\$state|\$derived|\$effect/, 'the store stays plain');
 });
