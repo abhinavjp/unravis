@@ -205,7 +205,7 @@ export interface PatternRepeat { episode: number; userId: number; operation: str
 /** B6g: audit create time by the quiet gap before each request. `toS` is null or 0 for the open-ended band. Rates are fractions from 0 to 1. */
 export interface PatternIdleBand { fromS: number; toS: number | null; n: number; medianMs: number | null; p95Ms: number | null; slowRate: number | null }
 export interface PatternIdleLift { gS: number; value: number | null; withheld: boolean | string }
-export interface PatternIdleGaps { bands: PatternIdleBand[]; lift: PatternIdleLift[]; excludedHangfire: number; partial: boolean | string }
+export interface PatternIdleGaps { bands: PatternIdleBand[]; lift: PatternIdleLift[]; excludedHangfire: number; partial: boolean | string; /** Why the gap read stopped early. Absent when it ran to the end. */ partialReason?: string }
 export interface PatternCoverage { run: boolean; requestInitiatedAtPct?: number; accountIdPct?: number; note: string }
 export interface PatternReport {
   params: PatternParams; stalls: PatternStall[]; episodes: PatternEpisode[]; volleys: PatternVolley[]; auditStalls: PatternAuditStall[];
