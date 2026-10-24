@@ -2,18 +2,16 @@
   import { tick } from 'svelte';
   import { COVERAGE_TEXT } from '../lib/provenance';
   import type { Source } from '../lib/types';
-  import CoveragePanel from './CoveragePanel.svelte';
 
   // The source selector. It lives behind a header button so the audit sources are one tap away without a permanent sidebar.
   type Group = { id: string; label: string; sources: Source[] };
-  let { groups, selectedIds, total, demo, busyDelete, sourceError, sourceSuccess, savedCount, coverageWindow = null, onToggle, onDelete, onManage, onAdd }: {
+  let { groups, selectedIds, total, demo, busyDelete, sourceError, sourceSuccess, savedCount, onToggle, onDelete, onManage, onAdd, onCoverage }: {
     groups: Group[]; selectedIds: string[]; total: number; demo: boolean; busyDelete: string; sourceError: string; sourceSuccess: string; savedCount: number;
-    /** The period the coverage check reads. The check still starts only from its own button. */
-    coverageWindow?: { start: string; end: string } | null;
     onToggle: (id: string, checked: boolean) => void; onDelete: (source: Source) => void; onManage: () => void; onAdd: () => void;
+    /** Opens the coverage drawer for one source. The check itself still starts only from the drawer's own button. */
+    onCoverage: (source: { id: string; label: string }) => void;
   } = $props();
   let open = $state(false);
-  let coverageFor = $state('');
   let wrap = $state<HTMLDivElement>();
   let trigger = $state<HTMLButtonElement>();
   const summary = $derived(total === 0 ? 'No sources' : selectedIds.length === 0 ? 'Choose sources' : selectedIds.length === 1 ? (groups.flatMap(group => group.sources).find(source => source.id === selectedIds[0])?.database ?? '1 source') : selectedIds.length + ' sources');
@@ -26,16 +24,21 @@
   function onKey(event: KeyboardEvent) {
     if (event.key === 'Escape' && open) { event.preventDefault(); event.stopPropagation(); close(true); }
   }
+  // Opens the coverage drawer from the menu: focus goes back to the trigger first, so the drawer hands it back there when it closes.
+  function showCoverage(source: Source) { close(true); onCoverage({ id: source.id, label: source.connectionLabel ? source.connectionLabel + ' / ' + source.database : source.database }); }
   $effect(() => {
     if (!open) return;
     const away = (event: PointerEvent) => { if (wrap && !wrap.contains(event.target as Node)) close(false); };
+    // Esc closes the menu wherever focus is (it can be on the page after a click on an inert area), and does not also step the page up a level.
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); close(true); } };
     window.addEventListener('pointerdown', away);
-    return () => window.removeEventListener('pointerdown', away);
+    window.addEventListener('keydown', escape, true);
+    return () => { window.removeEventListener('pointerdown', away); window.removeEventListener('keydown', escape, true); };
   });
 </script>
 
 <div class="popover-wrap" bind:this={wrap} onkeydown={onKey} role="presentation">
-  <button type="button" class="header-button" bind:this={trigger} aria-haspopup="dialog" aria-expanded={open} aria-label={'Audit sources: ' + summary} onclick={toggle}>
+  <button type="button" class="header-button" bind:this={trigger} aria-haspopup="dialog" aria-expanded={open} aria-label={'Audit sources: ' + summary} title={summary} onclick={toggle}>
     <span class="dot" class:none={!selectedIds.length} aria-hidden="true"></span><span class="label">{summary}</span>
   </button>
   {#if open}
@@ -51,10 +54,9 @@
             {#each group.sources as source (source.id)}
               <div class="source-item">
                 <label class="source-choice"><input type="checkbox" checked={selectedIds.includes(source.id)} onchange={(event) => onToggle(source.id, event.currentTarget.checked)} /><span><strong>{source.database}</strong><small>{source.collection}</small></span></label>
-                <button type="button" class="quiet-button coverage-toggle" aria-expanded={coverageFor === source.id} aria-controls={'coverage-' + source.id} aria-label={COVERAGE_TEXT.heading + ': ' + source.label} onclick={() => coverageFor = coverageFor === source.id ? '' : source.id}>{COVERAGE_TEXT.heading}</button>
+                <button type="button" class="quiet-button coverage-toggle" aria-haspopup="dialog" aria-label={COVERAGE_TEXT.heading + ': ' + source.label} onclick={() => showCoverage(source)}>{COVERAGE_TEXT.heading} ›</button>
                 {#if !demo}<button type="button" class="icon-button" aria-label={'Remove ' + source.label} title="Remove source" disabled={busyDelete === source.id} onclick={() => onDelete(source)}>×</button>{/if}
               </div>
-              {#if coverageFor === source.id}<div id={'coverage-' + source.id}>{#key source.id}<CoveragePanel sourceId={source.id} sourceLabel={source.database} start={coverageWindow?.start ?? ''} end={coverageWindow?.end ?? ''} />{/key}</div>{/if}
             {/each}
           </section>
         {:else}
@@ -74,4 +76,7 @@
 
 <style>
   .coverage-toggle { flex: 0 0 auto; white-space: nowrap; }
+  /* A long source summary is cut with an ellipsis (the full text is in the aria-label) so the header row never overflows. */
+  .header-button .label { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media (max-width: 720px) { .header-button .label { max-width: 11ch; } }
 </style>

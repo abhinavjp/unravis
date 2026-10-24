@@ -48,6 +48,8 @@
   const requestPageNumber = $derived(evidence.requestPageNumber);
   const recordLoadingId = $derived(evidence.recordLoadingId);
   const contextAnchor = $derived(evidence.contextAnchor);
+  // The request history belongs to the tabs that list requests (B18); Breakdown shows it only once a breakdown filter is applied.
+  const showHistory = $derived(activeTab === 'failures' || activeTab === 'incomplete' || activeTab === 'slowest' || (activeTab === 'breakdown' && drillActive));
   const groupLabel = (row: Comparison) => (sourceLabels.get(row.sourceId) ?? 'Source unavailable') + ' · ' + row.outcome;
 </script>
 
@@ -82,6 +84,7 @@
   {:else if activeTab === 'breakdown' && scopedQuery}
     <BreakdownPanel query={scopedQuery} {sourceLabels} onDrill={drillInto} />
   {/if}
+  {#if showHistory}
   <section class="data-section request-section" id="request-history">
     <div class="section-heading"><div><h3>Request history</h3><p>{queryWide ? (drillOverview ? drillHeading(drillOverview) : stateLabel(requestState)) + ' · ' + (operation ? 'every group of this operation' : 'every API group in this comparison') + '.' : selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome + '.' : drillActive ? 'Requests matching ' + drillChips.map(chip => chip.text).join(' · ') + '.' : 'Choose an operation to list its requests.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
       {#if selected || queryWide}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
@@ -91,6 +94,7 @@
     {#if requestPage?.sources.some(source => !source.ok)}<div class="source-failure compact-failure" role="alert">{#each requestPage.sources.filter(source => !source.ok) as failed}<span>{sourceLabels.get(failed.sourceId) ?? failed.sourceId}: {failed.error}</span>{/each}</div>{/if}
     <RequestTable rows={requestRows} {sourceLabels} loading={requestLoading} pageNumber={requestPageNumber} nextCursor={requestPage?.nextCursor ?? ''} truncated={requestPage?.truncated ?? false} recordId={recordLoadingId} onFirst={() => loadRequests('', 1)} onNext={() => loadRequests(requestPage?.nextCursor ?? '', requestPageNumber + 1)} onInspect={showRecord} onContext={async (row) => { evidence.contextAnchor = row; await tick(); document.getElementById('nearby-activity')?.scrollIntoView({ block: 'start' }); }} />
   </section>
+  {/if}
   {#if contextAnchor}<ActivityContext anchor={contextAnchor} sourceIds={analysis.query.sourceIds} {sourceLabels} {zone} />{/if}
 </Inspector>
 

@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { app, dropRecord, evidence, initialize, navigation, openComparison, openWhere, closeGlossary, closeSidePanel, onWindowKey, panels, resetInvestigation, results, scope, startApp } from './lib/appState.svelte';
+  import { app, closeCoverage, dropRecord, evidence, initialize, navigation, openComparison, openWhere, closeGlossary, closeSidePanel, onWindowKey, panels, resetInvestigation, results, scope, startApp } from './lib/appState.svelte';
   import AppHeader from './components/AppHeader.svelte';
   import SubBar from './components/SubBar.svelte';
   import Landing from './components/Landing.svelte';
   import ConnectionsDrawer from './components/ConnectionsDrawer.svelte';
+  import CoverageDrawer from './components/CoverageDrawer.svelte';
   import Glossary from './components/Glossary.svelte';
   import PatternsPanel from './components/PatternsPanel.svelte';
   import LedgerPanel from './components/LedgerPanel.svelte';
@@ -39,6 +40,8 @@
 
     {#if panels.connectionsOpen}<ConnectionsDrawer />{/if}
 
+    {#if panels.coverage}<CoverageDrawer sourceId={panels.coverage.id} sourceLabel={panels.coverage.label} start={scope.query.start} end={scope.query.end} onClose={closeCoverage} />{/if}
+
     {#if panels.glossaryOpen}<Glossary onClose={closeGlossary} focusTerm={panels.glossaryTerm} />{/if}
     {#if panels.sidePanel === 'patterns'}<PatternsPanel query={scope.query} {zone} {sourceLabels} onClose={closeSidePanel} />{/if}
     {#if panels.sidePanel === 'ledger'}<LedgerPanel onClose={closeSidePanel} />{/if}
@@ -71,9 +74,9 @@
 
               <!-- D3 Record -->
               <div class="view record-view" class:off={depth !== 3}>
-                <button type="button" class="back-to-groups" onclick={dropRecord}>Back to the evidence</button>
+                <button type="button" class="secondary-button back-button" onclick={() => dropRecord()}>&larr; Back to the evidence</button>
                 {#if evidence.recordError}<div class="inline-error" role="alert">{evidence.recordError}</div>{/if}
-                {#if record}<RecordDetailPanel detail={record} sourceLabel={sourceLabels.get(record.sourceId) ?? record.sourceId} onClose={dropRecord} />{/if}
+                {#if record}<RecordDetailPanel detail={record} sourceLabel={sourceLabels.get(record.sourceId) ?? record.sourceId} onClose={() => dropRecord()} />{/if}
               </div>
             </div>
 
@@ -89,3 +92,8 @@
       </div>
     </main>
 </div>
+
+<style>
+  /* Back is a real button (B8): it sits at the left of the record rather than stretching across it. */
+  .record-view > .back-button { justify-self: start; align-self: flex-start; }
+</style>
