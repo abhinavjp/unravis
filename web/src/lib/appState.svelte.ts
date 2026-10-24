@@ -10,6 +10,7 @@ import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestig
 import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './types';
 import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './breakdown';
 import { theme } from './theme.svelte';
+import { timeZone } from './timeZone.svelte';
 import { applyChipPatch, breadcrumb, depthOf, evidenceTabs, filterChips, moreFiltersCount, type FilterChip } from './depth';
 import { autoRunDecision, createCoalescer, landingMayAutoRun, scopeHint, scopeProblem } from './autorun';
 import type { Lens } from './pulse';
@@ -921,7 +922,7 @@ export const app = {
 // The investigation scope: the query, time zone, target and the per-tab investigation notice.
 export const scope = {
   get query() { return query; }, set query(value) { query = value; },
-  get zone() { return zone; }, set zone(value) { zone = value; },
+  get zone() { return timeZone.zone; }, set zone(value) { zone = value; timeZone.setZone(value); },
   get targetMs() { return targetMs; }, set targetMs(value) { targetMs = value; },
   get dateInputsValid() { return dateInputsValid; }, set dateInputsValid(value) { dateInputsValid = value; },
   get controlsResetKey() { return controlsResetKey; }, set controlsResetKey(value) { controlsResetKey = value; },

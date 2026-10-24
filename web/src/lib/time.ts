@@ -69,3 +69,98 @@ export const quickRange = (id: QuickRangeId, now: Date): Pick<Query, 'start' | '
   const range = { start: start.toISOString(), end: end.toISOString(), baselineStart: baselineStart.toISOString(), baselineEnd: start.toISOString() };
   return { ...range, bucketSeconds: bucketForWindows(range.start, range.end, range.baselineStart, range.baselineEnd) };
 };
+
+// ---------------------------------------------------------------------------------------------------------------------
+// One way to show a timestamp. Every screen formats through formatTime so the pattern is always "24 Oct 15:19:37 UTC",
+// and the UTC / Local choice (see timeZone.svelte.ts) flips every timestamp together.
+// ---------------------------------------------------------------------------------------------------------------------
+export type TimePrecision = 'minute' | 'second' | 'ms';
+export interface FormatTimeOptions {
+  /** IANA zone name. Defaults to UTC. An unknown zone falls back to UTC. */
+  zone?: string;
+  /** Smallest unit shown. Defaults to second. */
+  precision?: TimePrecision;
+  /** Show the day and month. Defaults to true. */
+  date?: boolean;
+  /** Show the year too (use it when a range may cross years). Defaults to false. */
+  year?: boolean;
+  /** Print the zone suffix ("UTC", "GMT+4"). Defaults to true; a table can drop it and name the zone once in its heading. */
+  suffix?: boolean;
+  /** Text for a missing or unreadable value. Defaults to "N/A". */
+  fallback?: string;
+}
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const clockFormatters = new Map<string, Intl.DateTimeFormat>();
+const clockFormatter = (zone: string, precision: TimePrecision): Intl.DateTimeFormat => {
+  const key = zone + '|' + precision;
+  let formatter = clockFormatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: zone, year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'shortOffset',
+      ...(precision === 'minute' ? {} : { second: '2-digit' as const }),
+      ...(precision === 'ms' ? { fractionalSecondDigits: 3 as const } : {})
+    });
+    clockFormatters.set(key, formatter);
+  }
+  return formatter;
+};
+const toMillis = (value: string | number | Date | null | undefined): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const millis = value instanceof Date ? value.getTime() : typeof value === 'number' ? value : Date.parse(value);
+  return Number.isFinite(millis) ? millis : null;
+};
+export interface TimeParts { day: string; year: string; clock: string; zone: string }
+/** The pieces of a timestamp in a zone: "24 Oct", "2026", "15:19:37", "UTC". Null when the value is not a time. */
+export const timeParts = (value: string | number | Date | null | undefined, zone = 'UTC', precision: TimePrecision = 'second'): TimeParts | null => {
+  const millis = toMillis(value);
+  if (millis === null) return null;
+  let parts: Intl.DateTimeFormatPart[];
+  let usedZone = zone || 'UTC';
+  try { parts = clockFormatter(usedZone, precision).formatToParts(new Date(millis)); }
+  catch { usedZone = 'UTC'; parts = clockFormatter('UTC', precision).formatToParts(new Date(millis)); }
+  const get = (type: string) => parts.find(part => part.type === type)?.value ?? '';
+  const monthIndex = Number(get('month')) - 1;
+  const fraction = get('fractionalSecond');
+  return {
+    day: Number(get('day')) + ' ' + (MONTH_NAMES[monthIndex] ?? ''),
+    year: get('year'),
+    clock: get('hour') + ':' + get('minute') + (precision === 'minute' ? '' : ':' + get('second')) + (precision === 'ms' ? '.' + fraction : ''),
+    zone: usedZone === 'UTC' ? 'UTC' : get('timeZoneName')
+  };
+};
+/** One timestamp in the app-wide pattern, for example "24 Oct 15:19:37 UTC". */
+export const formatTime = (value: string | number | Date | null | undefined, options: FormatTimeOptions = {}): string => {
+  const { zone = 'UTC', precision = 'second', date = true, year = false, suffix = true, fallback = 'N/A' } = options;
+  const parts = timeParts(value, zone, precision);
+  if (!parts) return fallback;
+  return [date ? parts.day + (year ? ' ' + parts.year : '') : '', parts.clock, suffix ? parts.zone : ''].filter(Boolean).join(' ');
+};
+/** The zone's short name at a moment ("UTC", "GMT+4"), for a table heading that names the zone once. */
+export const zoneAbbreviation = (zone = 'UTC', at: string | number | Date = Date.now()): string => timeParts(at, zone, 'minute')?.zone ?? 'UTC';
+/**
+ * A window in the same pattern, with the zone printed once: "24 Oct 15:04:37–15:19:37 UTC" on one day,
+ * "24 Oct 23:50:00 – 25 Oct 00:05:00 UTC" across days. When the two ends are the same instant it prints that instant once.
+ */
+export const formatTimeRange = (start: string | number | Date | null | undefined, end: string | number | Date | null | undefined, options: FormatTimeOptions = {}): string => {
+  const { zone = 'UTC', precision = 'second', year = false, suffix = true, fallback = 'N/A' } = options;
+  const from = timeParts(start, zone, precision);
+  const to = timeParts(end, zone, precision);
+  if (!from || !to) return fallback;
+  const tail = suffix ? ' ' + from.zone : '';
+  const label = (parts: TimeParts) => parts.day + (year ? ' ' + parts.year : '');
+  if (from.clock === to.clock && from.day === to.day && from.year === to.year) return label(from) + ' ' + from.clock + tail;
+  if (from.day === to.day && from.year === to.year) return label(from) + ' ' + from.clock + '–' + to.clock + tail;
+  return label(from) + ' ' + from.clock + ' – ' + label(to) + ' ' + to.clock + tail;
+};
+/** "ms" when two of these moments fall in the same second (so whole seconds would show identical times), otherwise "second". */
+export const precisionFor = (values: Array<string | number | Date | null | undefined>): TimePrecision => {
+  const seen = new Set<number>();
+  for (const value of values) {
+    const millis = toMillis(value);
+    if (millis === null) continue;
+    const second = Math.floor(millis / 1000);
+    if (seen.has(second)) return 'ms';
+    seen.add(second);
+  }
+  return 'second';
+};

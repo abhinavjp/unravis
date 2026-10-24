@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '../lib/api';
-  import { formatLocal } from '../lib/time';
+  import { formatTime } from '../lib/time';
   import { formatElapsed } from '../lib/provenance';
   import {
     DEFAULT_EPISODE_GAP_SECONDS, DEFAULT_STALL_MS, PATTERNS_TEXT, auditStallLine, coverageLine, endGapsText, nBadge, operationText,
@@ -25,8 +25,8 @@
   let controller: AbortController | null = null;
 
   const sources = $derived(query.sourceIds.map((id) => sourceLabels.get(id) ?? id).join(', '));
-  const timeOptions: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-  const at = (value: string) => formatLocal(value, zone, timeOptions);
+  // Stalls and episodes can sit a few milliseconds apart, so every time here shows milliseconds.
+  const at = (value: string) => formatTime(value, { zone, precision: 'ms' });
   const labelOf = (id: string) => sourceLabels.get(id) ?? id;
 
   onMount(() => runButton?.focus());
