@@ -53,6 +53,33 @@ func TestOverlapClasses(t *testing.T) {
 	}
 }
 
+func TestOverlapOneEventTwoIntervals(t *testing.T) {
+	// One long event is the only candidate of two intervals: it cannot explain
+	// both, so neither is counted.
+	iv := []Interval{{"a", at(100), at(110)}, {"b", at(200), at(210)}, {"c", at(500), at(510)}}
+	events := []evidence.Event{ev("long", 105, 205), ev("solo", 505, 506)}
+	m := Overlap(iv, events, Tolerance{}, nil)
+	want := []Match{
+		{"a", evidence.JoinAmbiguous, []string{"long"}},
+		{"b", evidence.JoinAmbiguous, []string{"long"}},
+		{"c", evidence.JoinUnique, []string{"solo"}},
+	}
+	if !reflect.DeepEqual(m, want) {
+		t.Fatalf("got %+v\nwant %+v", m, want)
+	}
+	if n := CountUnique(m); n != 1 {
+		t.Fatalf("CountUnique = %d, want 1", n)
+	}
+	// A shared event that is one of several candidates elsewhere does not
+	// demote the interval where it is the only candidate.
+	iv = []Interval{{"a", at(100), at(110)}, {"b", at(200), at(210)}}
+	events = []evidence.Event{ev("long", 105, 205), ev("other", 206, 207)}
+	m = Overlap(iv, events, Tolerance{}, nil)
+	if m[0].Class != evidence.JoinUnique || m[1].Class != evidence.JoinAmbiguous || CountUnique(m) != 1 {
+		t.Fatalf("shared but not exclusive: %+v", m)
+	}
+}
+
 func TestOverlapBoundariesAndTolerance(t *testing.T) {
 	iv := []Interval{{"a", at(100), at(110)}}
 	cases := []struct {

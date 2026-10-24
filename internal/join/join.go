@@ -35,7 +35,10 @@ func (t Tolerance) Total() time.Duration {
 
 // Match is the result for one interval. Candidates are the evidence IDs of
 // the qualifying events that overlap it, sorted. Class is unique for exactly
-// one candidate, ambiguous for more than one, none for no candidate.
+// one candidate that no other interval also has as its only candidate,
+// ambiguous for more than one candidate or for a single candidate shared as the
+// only candidate of several intervals (an event explains at most one interval),
+// none for no candidate.
 type Match struct {
 	IntervalID string
 	Class      evidence.JoinClass
@@ -102,6 +105,21 @@ func Overlap(iv []Interval, ev []evidence.Event, tol Tolerance, qualifies func(e
 		}
 		m.Candidates = ids
 		out = append(out, m)
+	}
+	// One event cannot explain two intervals. When the single candidate of
+	// several intervals is the same event, each of those matches is ambiguous
+	// (still listed, never counted); otherwise CountUnique would count one
+	// event once per interval.
+	claims := map[string]int{}
+	for _, m := range out {
+		if m.Class == evidence.JoinUnique {
+			claims[m.Candidates[0]]++
+		}
+	}
+	for i := range out {
+		if out[i].Class == evidence.JoinUnique && claims[out[i].Candidates[0]] > 1 {
+			out[i].Class = evidence.JoinAmbiguous
+		}
 	}
 	return out
 }

@@ -45,6 +45,10 @@ func LimitReader(r io.Reader, max int64) io.Reader {
 	return &limitReader{r: r, max: max}
 }
 
+// maxEmptyReads is how many (0, nil) reads the probe tolerates before giving up
+// with io.ErrNoProgress, so a broken reader cannot hang an import.
+const maxEmptyReads = 100
+
 type limitReader struct {
 	r    io.Reader
 	max  int64
@@ -62,7 +66,7 @@ func (l *limitReader) Read(p []byte) (int, error) {
 	if l.n >= l.max {
 		// Probe for one more byte to tell "exactly max" from "over".
 		var one [1]byte
-		for {
+		for empty := 0; empty < maxEmptyReads; empty++ {
 			n, err := l.r.Read(one[:])
 			if n > 0 {
 				l.over = true
@@ -72,6 +76,7 @@ func (l *limitReader) Read(p []byte) (int, error) {
 				return 0, err
 			}
 		}
+		return 0, io.ErrNoProgress
 	}
 	if rest := l.max - l.n; int64(len(p)) > rest {
 		p = p[:rest]

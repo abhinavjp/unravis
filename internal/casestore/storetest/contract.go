@@ -4,6 +4,10 @@
 //	func TestContract(t *testing.T) {
 //		storetest.Run(t, func(t testing.TB, caps casestore.Caps, now func() time.Time) casestore.Store { ... })
 //	}
+//
+// Events in the contract carry real evidence IDs (evidence.EventID for the
+// case under test and the importer name "contract"), because a store refuses
+// any other shape.
 package storetest
 
 import (
@@ -14,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -73,20 +78,33 @@ func (e *env) newCase(title string) casestore.Case {
 	return c
 }
 
-func ev(id, kind, host string, at time.Duration) evidence.Event {
+func cid(c casestore.Case) string { return string(c.Info().ID) }
+
+// idOf is the evidence ID the contract gives the event named label in case c.
+func idOf(c casestore.Case, label string) string {
+	return evidence.EventID(cid(c), "contract", label, 2, 0)
+}
+
+// ev builds a valid event for case c. The same label in the same case gives the
+// same ID, which is how the tests provoke duplicates.
+func ev(c casestore.Case, label, kind, host string, at time.Duration) evidence.Event {
 	d := 5.0
 	return evidence.Event{
-		EvidenceID: id, Source: "contract", Kind: kind, Host: host,
+		EvidenceID: idOf(c, label), Source: "contract", Kind: kind, Host: host,
 		Start: t0.Add(at), End: t0.Add(at + time.Millisecond), DurationMs: &d, Unit: "ms",
 		Line: 2, TZRule: "utc-field", Attrs: map[string]string{"a": "b"},
 	}
 }
 
 func meta() casestore.ImportMeta {
-	return casestore.ImportMeta{Importer: "contract", FileName: "f.txt", HostLabel: "web-a", TZRule: "utc-field", AckGating: true, AckText: Ack}
+	return casestore.ImportMeta{
+		Importer: "contract", FileName: "f.txt", HostLabel: "web-a", TZRule: "utc-field",
+		AckGating: true, AckText: Ack, AllowedAttrs: map[string]bool{"a": true},
+	}
 }
 
-// emitAll is a RunFunc that reads the whole body and emits events.
+// emitAll is a RunFunc that reads the whole body and emits events, stopping at
+// the first emit error and returning it, as a correct importer does.
 func emitAll(events ...evidence.Event) casestore.RunFunc {
 	return func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
 		rep := importer.Report{Importer: "contract"}
@@ -106,6 +124,22 @@ func emitAll(events ...evidence.Event) casestore.RunFunc {
 	}
 }
 
+// swallowAll is the broken counterpart of emitAll: it ignores every error from
+// emit and reports success. A store must still refuse the import.
+func swallowAll(events ...evidence.Event) casestore.RunFunc {
+	return func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
+		rep := importer.Report{Importer: "contract"}
+		_, _ = io.Copy(io.Discard, r)
+		for _, e := range events {
+			rep.Rows++
+			if emit(e) == nil {
+				rep.Emitted++
+			}
+		}
+		return rep, nil
+	}
+}
+
 func sum(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
 
 type noRead struct{ t *testing.T }
@@ -113,6 +147,15 @@ type noRead struct{ t *testing.T }
 func (n noRead) Read([]byte) (int, error) {
 	n.t.Error("body read although the import was refused")
 	return 0, io.EOF
+}
+
+func waitFor(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
 }
 
 // Run executes the contract as subtests of t.
@@ -123,13 +166,19 @@ func Run(t *testing.T, f Factory) {
 	t.Run("ack-required", func(t *testing.T) { ack(t, f, caps) })
 	t.Run("import-ok", func(t *testing.T) { importOK(t, f, caps) })
 	t.Run("import-is-atomic", func(t *testing.T) { atomic1(t, f, caps) })
+	t.Run("quarantine", func(t *testing.T) { quarantine(t, f, caps) })
 	t.Run("duplicate-sha", func(t *testing.T) { duplicate(t, f, caps) })
 	t.Run("duplicate-evidence-id", func(t *testing.T) { dupEvent(t, f, caps) })
+	t.Run("ignored-emit-error", func(t *testing.T) { ignoredEmitError(t, f, caps) })
+	t.Run("event-provenance", func(t *testing.T) { provenance(t, f, caps) })
 	t.Run("events-query", func(t *testing.T) { events(t, f, caps) })
 	t.Run("pseudonymize", func(t *testing.T) { pseudo(t, f, caps) })
 	t.Run("close-sweep-erase", func(t *testing.T) { lifecycle(t, f, caps) })
 	t.Run("caps", func(t *testing.T) { capsTest(t, f) })
 	t.Run("imports-serialised", func(t *testing.T) { serial(t, f, caps) })
+	t.Run("same-bytes-race", func(t *testing.T) { sameBytesRace(t, f, caps) })
+	t.Run("erase-during-import", func(t *testing.T) { eraseDuringImport(t, f, caps) })
+	t.Run("reads-during-import", func(t *testing.T) { readsDuringImport(t, f, caps) })
 	t.Run("handles", func(t *testing.T) { handles(t, f, caps) })
 	t.Run("cancelled-context", func(t *testing.T) { cancelled(t, f, caps) })
 }
@@ -155,7 +204,9 @@ func ids(t *testing.T, f Factory, caps casestore.Caps) {
 			t.Errorf("CloseCase(%q): %v, want ErrBadID", bad, err)
 		}
 	}
-	for _, title := range []string{"", "   ", strings.Repeat("x", casestore.MaxTitleBytes+1), "a\nb", "bad\xffutf8"} {
+	// Titles are shown back to the user: no control or invisible formatting
+	// characters (newline, NUL, C1, bidi override, zero-width, line separator).
+	for _, title := range []string{"", "   ", strings.Repeat("x", casestore.MaxTitleBytes+1), "a\nb", "bad\xffutf8", "a\x00b", "a\u0085b", "a‮b", "a​b", "a b"} {
 		if _, err := e.store.Create(e.ctx, title); !errors.Is(err, casestore.ErrBadTitle) {
 			t.Errorf("Create(%q): %v, want ErrBadTitle", title, err)
 		}
@@ -193,7 +244,7 @@ func ack(t *testing.T, f Factory, caps casestore.Caps) {
 		"not ticked": func() casestore.ImportMeta { m := meta(); m.AckGating = false; return m }(),
 		"no text":    func() casestore.ImportMeta { m := meta(); m.AckText = ""; return m }(),
 	} {
-		_, err := c.Import(e.ctx, m, noRead{t}, emitAll(ev("ev:x:1", "k", "h", 0)))
+		_, err := c.Import(e.ctx, m, noRead{t}, emitAll(ev(c, "x", "k", "h", 0)))
 		if !errors.Is(err, casestore.ErrAckRequired) {
 			t.Errorf("%s: %v, want ErrAckRequired", name, err)
 		}
@@ -208,7 +259,7 @@ func importOK(t *testing.T, f Factory, caps casestore.Caps) {
 	c := e.newCase("ok")
 	e.clock.add(time.Minute)
 	body := "hello world\n"
-	events := []evidence.Event{ev("ev:one", "request", "web-a", 2*time.Second), ev("ev:two", "request", "web-a", time.Second)}
+	events := []evidence.Event{ev(c, "one", "request", "web-a", 2*time.Second), ev(c, "two", "request", "web-a", time.Second)}
 	res, err := c.Import(e.ctx, meta(), strings.NewReader(body), emitAll(events...))
 	if err != nil {
 		t.Fatalf("Import: %v", err)
@@ -231,7 +282,7 @@ func importOK(t *testing.T, f Factory, caps casestore.Caps) {
 		t.Errorf("Imports: %+v %v", imps, err)
 	}
 	got, err := c.Events(e.ctx, casestore.EventQuery{})
-	if err != nil || len(got) != 2 || got[0].EvidenceID != "ev:two" || got[1].EvidenceID != "ev:one" {
+	if err != nil || len(got) != 2 || got[0].EvidenceID != idOf(c, "two") || got[1].EvidenceID != idOf(c, "one") {
 		t.Fatalf("Events: %v %v", got, err)
 	}
 	if got[0].Attrs["a"] != "b" || got[0].DurationMs == nil || *got[0].DurationMs != 5 || !got[0].Start.Equal(t0.Add(time.Second)) || got[0].Start.Location() != time.UTC {
@@ -242,8 +293,10 @@ func importOK(t *testing.T, f Factory, caps casestore.Caps) {
 	if evs, _ := other.Events(e.ctx, casestore.EventQuery{}); len(evs) != 0 {
 		t.Errorf("events leaked across cases")
 	}
-	// The same bytes in another case are not a duplicate.
-	if _, err := other.Import(e.ctx, meta(), strings.NewReader(body), emitAll(events...)); err != nil {
+	// The same bytes in another case are not a duplicate (the events carry the
+	// other case's IDs).
+	otherEvents := []evidence.Event{ev(other, "one", "request", "web-a", 2*time.Second), ev(other, "two", "request", "web-a", time.Second)}
+	if _, err := other.Import(e.ctx, meta(), strings.NewReader(body), emitAll(otherEvents...)); err != nil {
 		t.Errorf("same file, other case: %v", err)
 	}
 }
@@ -255,7 +308,7 @@ func atomic1(t *testing.T, f Factory, caps casestore.Caps) {
 	failing := func(err error) casestore.RunFunc {
 		return func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
 			_, _ = io.Copy(io.Discard, r)
-			if err := emit(ev("ev:partial", "k", "h", 0)); err != nil {
+			if err := emit(ev(c, "partial", "k", "h", 0)); err != nil {
 				return importer.Report{}, err
 			}
 			return importer.Report{Rows: 1}, err
@@ -274,7 +327,7 @@ func atomic1(t *testing.T, f Factory, caps casestore.Caps) {
 		t.Errorf("limit: %v", err)
 	}
 	// A read error from the body aborts the import.
-	_, err = c.Import(e.ctx, meta(), io.MultiReader(strings.NewReader("x"), errReader{boom}), emitAll(ev("ev:a", "k", "h", 0)))
+	_, err = c.Import(e.ctx, meta(), io.MultiReader(strings.NewReader("x"), errReader{boom}), emitAll(ev(c, "a", "k", "h", 0)))
 	if !errors.Is(err, boom) {
 		t.Errorf("body error: %v", err)
 	}
@@ -288,7 +341,7 @@ func atomic1(t *testing.T, f Factory, caps casestore.Caps) {
 		t.Errorf("info changed by failed imports: %+v", info)
 	}
 	// After the failures the same bytes import cleanly.
-	if _, err := c.Import(e.ctx, meta(), strings.NewReader("one"), emitAll(ev("ev:partial", "k", "h", 0))); err != nil {
+	if _, err := c.Import(e.ctx, meta(), strings.NewReader("one"), emitAll(ev(c, "partial", "k", "h", 0))); err != nil {
 		t.Errorf("retry after failure: %v", err)
 	}
 }
@@ -297,10 +350,84 @@ type errReader struct{ err error }
 
 func (e errReader) Read([]byte) (int, error) { return 0, e.err }
 
+// quarantine pins the plan's quarantine design (§1.5): a refused file leaves a
+// QuarantineRecord (reason, file name, hash, rows seen), not an import, no
+// events and no bytes against the case; the same bytes can be imported later.
+func quarantine(t *testing.T, f Factory, caps casestore.Caps) {
+	e := newEnv(t, f, caps)
+	c := e.newCase("quarantine")
+	q, ok := c.(casestore.Quarantiner)
+	if !ok {
+		t.Fatal("the Case does not implement casestore.Quarantiner")
+	}
+	body := "refused bytes, read only in part"
+	runFor := func(c casestore.Case) casestore.RunFunc {
+		return func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
+			_, _ = io.ReadFull(r, make([]byte, 3)) // stops early: the store hashes the rest
+			if err := emit(ev(c, "q1", "k", "h", 0)); err != nil {
+				return importer.Report{}, err
+			}
+			return importer.Report{Importer: "contract", Rows: 4},
+				&importer.QuarantineError{Reason: importer.ReasonUnknownHost, Column: "host"}
+		}
+	}
+	e.clock.add(time.Minute)
+	res, err := c.Import(e.ctx, meta(), strings.NewReader(body), runFor(c))
+	var qe *importer.QuarantineError
+	if !errors.Is(err, importer.ErrQuarantine) || !errors.As(err, &qe) || qe.Reason != importer.ReasonUnknownHost {
+		t.Fatalf("Import: %v", err)
+	}
+	r := res.Record
+	if r.Status != casestore.StatusQuarantined || r.Reason != importer.ReasonUnknownHost || r.SHA256 != sum(body) || r.Bytes != int64(len(body)) || r.ID != 0 {
+		t.Errorf("record %+v", r)
+	}
+	qs, err := q.Quarantines(e.ctx)
+	if err != nil || len(qs) != 1 {
+		t.Fatalf("Quarantines: %+v %v", qs, err)
+	}
+	g := qs[0]
+	if g.ID < 1 || g.Importer != "contract" || g.FileName != "f.txt" || g.SHA256 != sum(body) || g.Reason != importer.ReasonUnknownHost ||
+		g.Column != "host" || g.Rows != 4 || !g.At.Equal(t0.Add(time.Minute)) {
+		t.Errorf("quarantine record %+v", g)
+	}
+	if imps, _ := c.Imports(e.ctx); len(imps) != 0 {
+		t.Errorf("a quarantined file is listed as an import: %+v", imps)
+	}
+	if evs, _ := c.Events(e.ctx, casestore.EventQuery{}); len(evs) != 0 {
+		t.Errorf("%d events kept from a quarantined file", len(evs))
+	}
+	if info := c.Info(); info.Bytes != 0 || info.Imports != 0 {
+		t.Errorf("a quarantined file changed the case: %+v", info)
+	}
+	// The same bytes import once the user fixes the cause.
+	if _, err := c.Import(e.ctx, meta(), strings.NewReader(body), emitAll(ev(c, "q1", "k", "h", 0))); err != nil {
+		t.Errorf("import of the same bytes after a quarantine: %v", err)
+	}
+	if qs, _ := q.Quarantines(e.ctx); len(qs) != 1 {
+		t.Errorf("quarantine record lost or duplicated: %+v", qs)
+	}
+	// A file over the byte cap is refused as too big; it leaves no record.
+	small := newEnv(t, f, casestore.Caps{MaxFileBytes: 10, MaxFileRows: 3, MaxCaseBytes: 100})
+	sc := small.newCase("quarantine caps")
+	if _, err := sc.Import(small.ctx, meta(), strings.NewReader(strings.Repeat("z", 11)), runFor(sc)); !errors.Is(err, casestore.ErrCapExceeded) {
+		t.Errorf("quarantine of an oversized file: %v, want ErrCapExceeded", err)
+	}
+	if qs, _ := sc.(casestore.Quarantiner).Quarantines(small.ctx); len(qs) != 0 {
+		t.Errorf("record kept for a file over the cap: %+v", qs)
+	}
+	// Erase removes the records with the case.
+	if err := e.store.Erase(e.ctx, c.Info().ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Quarantines(e.ctx); !errors.Is(err, casestore.ErrNotFound) {
+		t.Errorf("Quarantines after erase: %v", err)
+	}
+}
+
 func duplicate(t *testing.T, f Factory, caps casestore.Caps) {
 	e := newEnv(t, f, caps)
 	c := e.newCase("dup")
-	first, err := c.Import(e.ctx, meta(), strings.NewReader("same bytes"), emitAll(ev("ev:1", "k", "h", 0)))
+	first, err := c.Import(e.ctx, meta(), strings.NewReader("same bytes"), emitAll(ev(c, "1", "k", "h", 0)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +449,7 @@ func duplicate(t *testing.T, f Factory, caps casestore.Caps) {
 	if imps, _ := c.Imports(e.ctx); len(imps) != 1 || c.Info().Imports != 1 || c.Info().Bytes != int64(len("same bytes")) {
 		t.Errorf("duplicate changed the case: %+v %+v", imps, c.Info())
 	}
-	if _, err := c.Import(e.ctx, meta(), strings.NewReader("other bytes"), emitAll(ev("ev:2", "k", "h", 0))); err != nil {
+	if _, err := c.Import(e.ctx, meta(), strings.NewReader("other bytes"), emitAll(ev(c, "2", "k", "h", 0))); err != nil {
 		t.Errorf("different bytes: %v", err)
 	}
 }
@@ -330,14 +457,14 @@ func duplicate(t *testing.T, f Factory, caps casestore.Caps) {
 func dupEvent(t *testing.T, f Factory, caps casestore.Caps) {
 	e := newEnv(t, f, caps)
 	c := e.newCase("dupev")
-	_, err := c.Import(e.ctx, meta(), strings.NewReader("a"), emitAll(ev("ev:1", "k", "h", 0), ev("ev:1", "k", "h", 1)))
+	_, err := c.Import(e.ctx, meta(), strings.NewReader("a"), emitAll(ev(c, "1", "k", "h", 0), ev(c, "1", "k", "h", 1)))
 	if !errors.Is(err, casestore.ErrDuplicateEvent) {
 		t.Errorf("same id twice in a file: %v", err)
 	}
-	if _, err := c.Import(e.ctx, meta(), strings.NewReader("b"), emitAll(ev("ev:1", "k", "h", 0))); err != nil {
+	if _, err := c.Import(e.ctx, meta(), strings.NewReader("b"), emitAll(ev(c, "1", "k", "h", 0))); err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.Import(e.ctx, meta(), strings.NewReader("c"), emitAll(ev("ev:9", "k", "h", 0), ev("ev:1", "k", "h", 1)))
+	_, err = c.Import(e.ctx, meta(), strings.NewReader("c"), emitAll(ev(c, "9", "k", "h", 0), ev(c, "1", "k", "h", 1)))
 	if !errors.Is(err, casestore.ErrDuplicateEvent) {
 		t.Errorf("id already in the case: %v", err)
 	}
@@ -346,58 +473,200 @@ func dupEvent(t *testing.T, f Factory, caps casestore.Caps) {
 	}
 }
 
+// ignoredEmitError: a run that drops the error from emit and returns success
+// must not produce an "ok" import. The store fails the import with the emit
+// error and keeps nothing.
+func ignoredEmitError(t *testing.T, f Factory, caps casestore.Caps) {
+	e := newEnv(t, f, caps)
+	c := e.newCase("ignored")
+	empty := func(what string) {
+		t.Helper()
+		if imps, _ := c.Imports(e.ctx); len(imps) != 0 {
+			t.Errorf("%s: import recorded: %+v", what, imps)
+		}
+		if info := c.Info(); info.Bytes != 0 || info.Imports != 0 {
+			t.Errorf("%s: case changed: %+v", what, info)
+		}
+	}
+	_, err := c.Import(e.ctx, meta(), strings.NewReader("a"), swallowAll(ev(c, "1", "k", "h", 0), ev(c, "1", "k", "h", 1)))
+	if !errors.Is(err, casestore.ErrDuplicateEvent) {
+		t.Errorf("duplicate in the file, error ignored: %v", err)
+	}
+	if evs, _ := c.Events(e.ctx, casestore.EventQuery{}); len(evs) != 0 {
+		t.Errorf("%d events kept from an import that ignored a refusal", len(evs))
+	}
+	empty("duplicate in the file")
+	if _, err := c.Import(e.ctx, meta(), strings.NewReader("b"), emitAll(ev(c, "1", "k", "h", 0))); err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Import(e.ctx, meta(), strings.NewReader("c"), swallowAll(ev(c, "9", "k", "h", 0), ev(c, "1", "k", "h", 1)))
+	if !errors.Is(err, casestore.ErrDuplicateEvent) {
+		t.Errorf("duplicate of the case, error ignored: %v", err)
+	}
+	if evs, _ := c.Events(e.ctx, casestore.EventQuery{}); len(evs) != 1 {
+		t.Errorf("%d events after the ignored refusal, want 1", len(evs))
+	}
+	if info := c.Info(); info.Imports != 1 {
+		t.Errorf("case changed: %+v", info)
+	}
+	// A refused event first, a good one after: the file still fails.
+	bad := ev(c, "bad", "k", "h", 0)
+	bad.Line = 0
+	_, err = c.Import(e.ctx, meta(), strings.NewReader("d"), swallowAll(bad, ev(c, "fine", "k", "h", 1)))
+	if err == nil {
+		t.Error("an invalid event followed by a good one, error ignored: import succeeded")
+	}
+	if evs, _ := c.Events(e.ctx, casestore.EventQuery{}); len(evs) != 1 {
+		t.Errorf("%d events after the ignored refusal, want 1", len(evs))
+	}
+	// Row cap.
+	small := newEnv(t, f, casestore.Caps{MaxFileBytes: 100, MaxFileRows: 3, MaxCaseBytes: 1000})
+	sc := small.newCase("ignored caps")
+	many := []evidence.Event{ev(sc, "1", "k", "h", 0), ev(sc, "2", "k", "h", 1), ev(sc, "3", "k", "h", 2), ev(sc, "4", "k", "h", 3)}
+	if _, err := sc.Import(small.ctx, meta(), strings.NewReader("rows"), swallowAll(many...)); !errors.Is(err, casestore.ErrCapExceeded) {
+		t.Errorf("row cap, error ignored: %v", err)
+	}
+	if imps, _ := sc.Imports(small.ctx); len(imps) != 0 {
+		t.Errorf("import recorded after an ignored cap refusal: %+v", imps)
+	}
+	if evs, _ := sc.Events(small.ctx, casestore.EventQuery{}); len(evs) != 0 {
+		t.Errorf("%d events kept after an ignored cap refusal", len(evs))
+	}
+}
+
+// provenance: the store accepts only events whose ID is ev:<case8>:<importer>:<16hex>
+// for this case and the importing importer, with Source equal to the importer,
+// Line >= 1, a time-zone rule, and attributes on the allowlist. Each refusal
+// holds whether the importer returns emit's error or drops it.
+func provenance(t *testing.T, f Factory, caps casestore.Caps) {
+	e := newEnv(t, f, caps)
+	c := e.newCase("prov")
+	other := e.newCase("prov other")
+	prefix := evidence.CasePrefixes(cid(c))[0] + "contract:"
+	bad := map[string]func(x *evidence.Event){
+		"another case's id":           func(x *evidence.Event) { x.EvidenceID = evidence.EventID(cid(other), "contract", "n", 2, 0) },
+		"another importer's id":       func(x *evidence.Event) { x.EvidenceID = evidence.EventID(cid(c), "iis", "n", 2, 0) },
+		"free-form id":                func(x *evidence.Event) { x.EvidenceID = "ev:x:1" },
+		"short hash":                  func(x *evidence.Event) { x.EvidenceID = prefix + "abc" },
+		"long hash":                   func(x *evidence.Event) { x.EvidenceID = prefix + "0123456789abcdef0" },
+		"upper-case hash":             func(x *evidence.Event) { x.EvidenceID = prefix + "ABCDEF0123456789" },
+		"join id in an event":         func(x *evidence.Event) { x.EvidenceID = strings.Replace(x.EvidenceID, "ev:", "jn:", 1) },
+		"source is another importer":  func(x *evidence.Event) { x.Source = "iis" },
+		"line 0":                      func(x *evidence.Event) { x.Line = 0 },
+		"no time-zone rule":           func(x *evidence.Event) { x.TZRule = "" },
+		"unknown time-zone rule":      func(x *evidence.Event) { x.TZRule = "whatever" },
+		"attribute off the allowlist": func(x *evidence.Event) { x.Attrs = map[string]string{"zzz": "v"} },
+	}
+	names := make([]string, 0, len(bad))
+	for n := range bad {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		for _, swallow := range []bool{false, true} {
+			x := ev(c, "p", "k", "h", 0)
+			bad[name](&x)
+			run := emitAll(x)
+			if swallow {
+				run = swallowAll(x)
+			}
+			if _, err := c.Import(e.ctx, meta(), strings.NewReader("body "+name), run); err == nil {
+				t.Errorf("%s (error ignored: %v): import succeeded", name, swallow)
+			}
+		}
+	}
+	if imps, _ := c.Imports(e.ctx); len(imps) != 0 {
+		t.Errorf("imports after refused events: %+v", imps)
+	}
+	if evs, _ := c.Events(e.ctx, casestore.EventQuery{}); len(evs) != 0 {
+		t.Errorf("%d refused events were stored", len(evs))
+	}
+	// With no allowlist given the store applies only the generic bounds.
+	m := meta()
+	m.AllowedAttrs = nil
+	x := ev(c, "free", "k", "h", 0)
+	x.Attrs = map[string]string{"zzz": "v"}
+	if _, err := c.Import(e.ctx, m, strings.NewReader("no allowlist"), emitAll(x)); err != nil {
+		t.Errorf("nil AllowedAttrs: %v", err)
+	}
+}
+
 func events(t *testing.T, f Factory, caps casestore.Caps) {
 	e := newEnv(t, f, caps)
 	c := e.newCase("events")
-	mk := func(id, kind, source, host string, at time.Duration) evidence.Event {
-		x := ev(id, kind, host, at)
+	mk := func(label, kind, source, host string, at time.Duration) evidence.Event {
+		x := ev(c, label, kind, host, at)
 		x.Source = source
 		return x
 	}
+	// Other importers' names are in the Source here, so the import uses no
+	// importer name and the store checks each event against its own Source.
 	all := []evidence.Event{
-		mk("ev:5", "request", "iis", "web-a", 5*time.Second),
-		mk("ev:1", "request", "iis", "web-b", time.Second),
-		mk("ev:3", "slow-op", "mongo", "db-a", 3*time.Second),
-		mk("ev:2b", "request", "iis", "web-a", 2*time.Second),
-		mk("ev:2a", "counter", "pdh", "web-a", 2*time.Second),
+		mk("5", "request", "iis", "web-a", 5*time.Second),
+		mk("1", "request", "iis", "web-b", time.Second),
+		mk("3", "slow-op", "mongo", "db-a", 3*time.Second),
+		mk("2b", "request", "iis", "web-a", 2*time.Second),
+		mk("2a", "counter", "pdh", "web-a", 2*time.Second),
 	}
-	if _, err := c.Import(e.ctx, meta(), strings.NewReader("x"), emitAll(all...)); err != nil {
+	// Re-ID each event for its own source so every ID is valid for the store.
+	label := map[string]string{}
+	for i, name := range []string{"5", "1", "3", "2b", "2a"} {
+		all[i].EvidenceID = evidence.EventID(cid(c), all[i].Source, name, 2, 0)
+		label[all[i].EvidenceID] = name
+	}
+	m := meta()
+	m.Importer = ""
+	if _, err := c.Import(e.ctx, m, strings.NewReader("x"), emitAll(all...)); err != nil {
 		t.Fatal(err)
 	}
-	ids := func(q casestore.EventQuery) string {
+	names := func(q casestore.EventQuery) string {
 		got, err := c.Events(e.ctx, q)
 		if err != nil {
 			t.Fatalf("Events(%+v): %v", q, err)
 		}
 		var s []string
 		for _, x := range got {
-			s = append(s, x.EvidenceID)
+			s = append(s, label[x.EvidenceID])
 		}
 		return strings.Join(s, ",")
 	}
-	if got := ids(casestore.EventQuery{}); got != "ev:1,ev:2a,ev:2b,ev:3,ev:5" {
+	// 2a and 2b share a Start; they sort by EvidenceID.
+	var a2, b2 string
+	for _, x := range all {
+		if label[x.EvidenceID] == "2a" {
+			a2 = x.EvidenceID
+		}
+		if label[x.EvidenceID] == "2b" {
+			b2 = x.EvidenceID
+		}
+	}
+	tie := "2a,2b"
+	if b2 < a2 {
+		tie = "2b,2a"
+	}
+	if got := names(casestore.EventQuery{}); got != "1,"+tie+",3,5" {
 		t.Errorf("order: %s", got)
 	}
 	w := importer.Window{From: t0.Add(2 * time.Second), To: t0.Add(3 * time.Second)}
-	if got := ids(casestore.EventQuery{Window: w}); got != "ev:2a,ev:2b,ev:3" {
+	if got := names(casestore.EventQuery{Window: w}); got != tie+",3" {
 		t.Errorf("window inclusive: %s", got)
 	}
-	if got := ids(casestore.EventQuery{Window: importer.Window{From: t0.Add(4 * time.Second)}}); got != "ev:5" {
+	if got := names(casestore.EventQuery{Window: importer.Window{From: t0.Add(4 * time.Second)}}); got != "5" {
 		t.Errorf("open-ended window: %s", got)
 	}
-	if got := ids(casestore.EventQuery{Kinds: []string{"counter", "slow-op"}}); got != "ev:2a,ev:3" {
+	if got := names(casestore.EventQuery{Kinds: []string{"counter", "slow-op"}}); got != "2a,3" {
 		t.Errorf("kinds: %s", got)
 	}
-	if got := ids(casestore.EventQuery{Sources: []string{"iis"}, Hosts: []string{"web-a"}}); got != "ev:2b,ev:5" {
+	if got := names(casestore.EventQuery{Sources: []string{"iis"}, Hosts: []string{"web-a"}}); got != "2b,5" {
 		t.Errorf("sources and hosts: %s", got)
 	}
-	if got := ids(casestore.EventQuery{Hosts: []string{"nobody"}}); got != "" {
+	if got := names(casestore.EventQuery{Hosts: []string{"nobody"}}); got != "" {
 		t.Errorf("no match: %s", got)
 	}
-	if got := ids(casestore.EventQuery{Limit: 2}); got != "ev:1,ev:2a" {
+	if got := names(casestore.EventQuery{Limit: 2}); got != "1,"+tie[:2] {
 		t.Errorf("limit: %s", got)
 	}
-	if got := ids(casestore.EventQuery{Limit: casestore.MaxEventQuery + 10}); got != "ev:1,ev:2a,ev:2b,ev:3,ev:5" {
+	if got := names(casestore.EventQuery{Limit: casestore.MaxEventQuery + 10}); got != "1,"+tie+",3,5" {
 		t.Errorf("limit over the maximum is clamped: %s", got)
 	}
 	// Returned events are copies.
@@ -409,7 +678,7 @@ func events(t *testing.T, f Factory, caps casestore.Caps) {
 		t.Error("Events returns the store's own memory")
 	}
 	// And so are the events the importer handed over.
-	src := ev("ev:copy", "k", "h", 0)
+	src := ev(c, "copy", "k", "h", 0)
 	if _, err := c.Import(e.ctx, meta(), strings.NewReader("y"), emitAll(src)); err != nil {
 		t.Fatal(err)
 	}
@@ -450,7 +719,8 @@ func lifecycle(t *testing.T, f Factory, caps casestore.Caps) {
 	keep := e.newCase("keep")
 	closed := e.newCase("closed")
 	old := closed.Info().ID
-	if _, err := closed.Import(e.ctx, meta(), strings.NewReader("data"), emitAll(ev("ev:1", "k", "h", 0))); err != nil {
+	later := ev(closed, "2", "k", "h", 0) // built before the case is erased
+	if _, err := closed.Import(e.ctx, meta(), strings.NewReader("data"), emitAll(ev(closed, "1", "k", "h", 0))); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.store.CloseCase(e.ctx, old); err != nil {
@@ -492,7 +762,7 @@ func lifecycle(t *testing.T, f Factory, caps casestore.Caps) {
 	if _, err := closed.Events(e.ctx, casestore.EventQuery{}); !errors.Is(err, casestore.ErrNotFound) {
 		t.Errorf("open handle after erase: %v", err)
 	}
-	if _, err := closed.Import(e.ctx, meta(), strings.NewReader("more"), emitAll(ev("ev:2", "k", "h", 0))); !errors.Is(err, casestore.ErrNotFound) {
+	if _, err := closed.Import(e.ctx, meta(), strings.NewReader("more"), emitAll(later)); !errors.Is(err, casestore.ErrNotFound) {
 		t.Errorf("import into erased case: %v", err)
 	}
 	if l, _ := e.store.List(e.ctx); len(l) != 1 || l[0].ID != keep.Info().ID {
@@ -525,7 +795,7 @@ func capsTest(t *testing.T, f Factory) {
 			t.Errorf("%s: case changed: %+v", what, info)
 		}
 	}
-	one := ev("ev:1", "k", "h", 0)
+	one := ev(c, "1", "k", "h", 0)
 	// File bytes: exactly the cap is fine, one over is refused.
 	_, err := c.Import(e.ctx, meta(), strings.NewReader(strings.Repeat("a", 11)), emitAll(one))
 	if !errors.Is(err, casestore.ErrCapExceeded) {
@@ -545,7 +815,7 @@ func capsTest(t *testing.T, f Factory) {
 	}
 	unchanged("early stop", 0, 0)
 	// Rows and events.
-	many := []evidence.Event{ev("ev:1", "k", "h", 0), ev("ev:2", "k", "h", 1), ev("ev:3", "k", "h", 2), ev("ev:4", "k", "h", 3)}
+	many := []evidence.Event{ev(c, "1", "k", "h", 0), ev(c, "2", "k", "h", 1), ev(c, "3", "k", "h", 2), ev(c, "4", "k", "h", 3)}
 	if _, err := c.Import(e.ctx, meta(), strings.NewReader("rows"), emitAll(many...)); !errors.Is(err, casestore.ErrCapExceeded) {
 		t.Errorf("rows: %v", err)
 	}
@@ -564,19 +834,22 @@ func capsTest(t *testing.T, f Factory) {
 	}
 	unchanged("at caps", 10, 1)
 	// Case bytes: 10 used, 15 allowed.
-	if _, err := c.Import(e.ctx, meta(), strings.NewReader(strings.Repeat("d", 6)), emitAll(ev("ev:9", "k", "h", 0))); !errors.Is(err, casestore.ErrCapExceeded) {
+	if _, err := c.Import(e.ctx, meta(), strings.NewReader(strings.Repeat("d", 6)), emitAll(ev(c, "9", "k", "h", 0))); !errors.Is(err, casestore.ErrCapExceeded) {
 		t.Errorf("case bytes: %v", err)
 	}
 	unchanged("case bytes", 10, 1)
-	if _, err := c.Import(e.ctx, meta(), strings.NewReader(strings.Repeat("e", 5)), emitAll(ev("ev:9", "k", "h", 0))); err != nil {
+	if _, err := c.Import(e.ctx, meta(), strings.NewReader(strings.Repeat("e", 5)), emitAll(ev(c, "9", "k", "h", 0))); err != nil {
 		t.Errorf("exactly at the case cap: %v", err)
 	}
 	unchanged("at case cap", 15, 2)
 }
 
+// serial: imports into one case run one at a time, also when every caller has
+// its own handle (a fresh Open per goroutine, as the web layer does).
 func serial(t *testing.T, f Factory, caps casestore.Caps) {
 	e := newEnv(t, f, caps)
 	c := e.newCase("serial")
+	id := c.Info().ID
 	var running, peak int32
 	const n = 8
 	var wg sync.WaitGroup
@@ -585,6 +858,12 @@ func serial(t *testing.T, f Factory, caps casestore.Caps) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			h, err := e.store.Open(e.ctx, id)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer h.Close()
 			run := func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
 				cur := atomic.AddInt32(&running, 1)
 				for {
@@ -595,11 +874,11 @@ func serial(t *testing.T, f Factory, caps casestore.Caps) {
 				}
 				time.Sleep(5 * time.Millisecond)
 				_, _ = io.Copy(io.Discard, r)
-				err := emit(ev(fmt.Sprintf("ev:%d", i), "k", "h", time.Duration(i)*time.Second))
+				err := emit(ev(h, fmt.Sprintf("g%d", i), "k", "h", time.Duration(i)*time.Second))
 				atomic.AddInt32(&running, -1)
 				return importer.Report{Rows: 1}, err
 			}
-			_, errs[i] = c.Import(e.ctx, meta(), bytes.NewReader([]byte(fmt.Sprintf("body %d", i))), run)
+			_, errs[i] = h.Import(e.ctx, meta(), bytes.NewReader([]byte(fmt.Sprintf("body %d", i))), run)
 		}(i)
 	}
 	wg.Wait()
@@ -621,6 +900,181 @@ func serial(t *testing.T, f Factory, caps casestore.Caps) {
 	}
 }
 
+// sameBytesRace: the same file imported by several handles at once is stored
+// exactly once; the others get ErrDuplicate and leave no events.
+func sameBytesRace(t *testing.T, f Factory, caps casestore.Caps) {
+	e := newEnv(t, f, caps)
+	c := e.newCase("race")
+	id := c.Info().ID
+	const n = 6
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			h, err := e.store.Open(e.ctx, id)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer h.Close()
+			_, errs[i] = h.Import(e.ctx, meta(), strings.NewReader("the very same bytes"), emitAll(ev(h, fmt.Sprintf("g%d", i), "k", "h", 0)))
+		}(i)
+	}
+	wg.Wait()
+	ok, dup := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, casestore.ErrDuplicate):
+			dup++
+		default:
+			t.Errorf("unexpected error: %v", err)
+		}
+	}
+	if ok != 1 || dup != n-1 {
+		t.Errorf("%d imports stored and %d duplicates, want 1 and %d", ok, dup, n-1)
+	}
+	if imps, _ := c.Imports(e.ctx); len(imps) != 1 {
+		t.Errorf("%d imports, want 1", len(imps))
+	}
+	if evs, _ := c.Events(e.ctx, casestore.EventQuery{}); len(evs) != 1 {
+		t.Errorf("%d events, want only the winner's 1", len(evs))
+	}
+	if info := c.Info(); info.Imports != 1 || info.Bytes != int64(len("the very same bytes")) {
+		t.Errorf("info %+v", info)
+	}
+}
+
+// blocked returns a run that emits one event, signals started, and waits for
+// release before it finishes.
+func blocked(c casestore.Case, label string, started chan<- struct{}, release <-chan struct{}) casestore.RunFunc {
+	return func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
+		_, _ = io.Copy(io.Discard, r)
+		if err := emit(ev(c, label, "k", "h", 0)); err != nil {
+			return importer.Report{}, err
+		}
+		close(started)
+		<-release
+		return importer.Report{Rows: 1}, nil
+	}
+}
+
+// eraseDuringImport: Erase while an import is running must leave nothing
+// behind. A store may make Erase wait for the import, or erase at once and fail
+// the import with ErrNotFound; it may not keep the case's rows.
+func eraseDuringImport(t *testing.T, f Factory, caps casestore.Caps) {
+	e := newEnv(t, f, caps)
+	c := e.newCase("erase during")
+	id := c.Info().ID
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	rel := func() { once.Do(func() { close(release) }) }
+	defer rel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Import(e.ctx, meta(), strings.NewReader("body"), blocked(c, "a", started, release))
+		done <- err
+	}()
+	waitFor(t, started, "the import to start")
+	erased := make(chan error, 1)
+	go func() { erased <- e.store.Erase(e.ctx, id) }()
+	eraseFirst := false
+	select {
+	case err := <-erased:
+		if err != nil {
+			t.Errorf("Erase: %v", err)
+		}
+		eraseFirst = true
+	case <-time.After(200 * time.Millisecond): // the store made Erase wait; fine
+	}
+	rel()
+	var impErr error
+	select {
+	case impErr = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Import did not return after the erase")
+	}
+	if !eraseFirst {
+		select {
+		case err := <-erased:
+			if err != nil {
+				t.Errorf("Erase: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("Erase did not return")
+		}
+	}
+	if eraseFirst && !errors.Is(impErr, casestore.ErrNotFound) {
+		t.Errorf("import after the case was erased: %v, want ErrNotFound", impErr)
+	}
+	if impErr != nil && !errors.Is(impErr, casestore.ErrNotFound) {
+		t.Errorf("import: %v", impErr)
+	}
+	if _, err := e.store.Open(e.ctx, id); !errors.Is(err, casestore.ErrNotFound) {
+		t.Errorf("Open after erase: %v", err)
+	}
+	if _, err := c.Events(e.ctx, casestore.EventQuery{}); !errors.Is(err, casestore.ErrNotFound) {
+		t.Errorf("Events after erase: %v", err)
+	}
+	if _, err := c.Imports(e.ctx); !errors.Is(err, casestore.ErrNotFound) {
+		t.Errorf("Imports after erase: %v", err)
+	}
+	if l, _ := e.store.List(e.ctx); len(l) != 0 {
+		t.Errorf("List after erase: %+v", l)
+	}
+}
+
+// readsDuringImport: while an import runs, readers (also through another
+// handle) see none of its rows, and its bytes are not yet counted.
+func readsDuringImport(t *testing.T, f Factory, caps casestore.Caps) {
+	e := newEnv(t, f, caps)
+	c := e.newCase("reads during")
+	c2, err := e.store.Open(e.ctx, c.Info().ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	rel := func() { once.Do(func() { close(release) }) }
+	defer rel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Import(e.ctx, meta(), strings.NewReader("body"), blocked(c, "a", started, release))
+		done <- err
+	}()
+	waitFor(t, started, "the import to start")
+	for name, h := range map[string]casestore.Case{"same handle": c, "other handle": c2} {
+		if evs, err := h.Events(e.ctx, casestore.EventQuery{}); err != nil || len(evs) != 0 {
+			t.Errorf("%s: Events during an import: %d, %v", name, len(evs), err)
+		}
+		if imps, err := h.Imports(e.ctx); err != nil || len(imps) != 0 {
+			t.Errorf("%s: Imports during an import: %d, %v", name, len(imps), err)
+		}
+		if info := h.Info(); info.Imports != 0 || info.Bytes != 0 {
+			t.Errorf("%s: Info during an import: %+v", name, info)
+		}
+	}
+	rel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Import: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Import did not finish")
+	}
+	if evs, _ := c2.Events(e.ctx, casestore.EventQuery{}); len(evs) != 1 {
+		t.Errorf("%d events after the import, want 1", len(evs))
+	}
+	if info := c2.Info(); info.Imports != 1 || info.Bytes != int64(len("body")) {
+		t.Errorf("Info after the import: %+v", info)
+	}
+}
+
 func handles(t *testing.T, f Factory, caps casestore.Caps) {
 	e := newEnv(t, f, caps)
 	info, _ := e.store.Create(e.ctx, "handle")
@@ -629,7 +1083,7 @@ func handles(t *testing.T, f Factory, caps casestore.Caps) {
 		t.Fatal(err)
 	}
 	c2, _ := e.store.Open(e.ctx, info.ID)
-	if _, err := c.Import(e.ctx, meta(), strings.NewReader("x"), emitAll(ev("ev:1", "k", "h", 0))); err != nil {
+	if _, err := c.Import(e.ctx, meta(), strings.NewReader("x"), emitAll(ev(c, "1", "k", "h", 0))); err != nil {
 		t.Fatal(err)
 	}
 	if got := c2.Info(); got.Imports != 1 {
@@ -664,7 +1118,7 @@ func cancelled(t *testing.T, f Factory, caps casestore.Caps) {
 	if _, err := e.store.List(ctx); !errors.Is(err, context.Canceled) {
 		t.Errorf("List: %v", err)
 	}
-	if _, err := c.Import(ctx, meta(), strings.NewReader("x"), emitAll(ev("ev:1", "k", "h", 0))); !errors.Is(err, context.Canceled) {
+	if _, err := c.Import(ctx, meta(), strings.NewReader("x"), emitAll(ev(c, "1", "k", "h", 0))); !errors.Is(err, context.Canceled) {
 		t.Errorf("Import: %v", err)
 	}
 	if _, err := c.Events(ctx, casestore.EventQuery{}); !errors.Is(err, context.Canceled) {
@@ -674,7 +1128,7 @@ func cancelled(t *testing.T, f Factory, caps casestore.Caps) {
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	run := func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
 		_, _ = io.Copy(io.Discard, r)
-		if err := emit(ev("ev:1", "k", "h", 0)); err != nil {
+		if err := emit(ev(c, "1", "k", "h", 0)); err != nil {
 			return importer.Report{}, err
 		}
 		cancel2()

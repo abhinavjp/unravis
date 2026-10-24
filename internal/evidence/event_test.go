@@ -51,7 +51,9 @@ func TestEventValidate(t *testing.T) {
 		"negative dur":    func(e *Event) { e.DurationMs = &neg },
 		"bad severity":    func(e *Event) { e.Severity = "fatal" },
 		"negative line":   func(e *Event) { e.Line = -1 },
+		"zero line":       func(e *Event) { e.Line = 0 },
 		"bad tz rule":     func(e *Event) { e.TZRule = "guess" },
+		"empty tz rule":   func(e *Event) { e.TZRule = "" },
 		"unlisted attr":   func(e *Event) { e.Attrs["other"] = "x" },
 		"long attr value": func(e *Event) { e.Attrs["status"] = strings.Repeat("a", 257) },
 		"bad utf8 attr":   func(e *Event) { e.Attrs["status"] = "\xff" },
@@ -89,6 +91,40 @@ func TestEventValidate(t *testing.T) {
 	e.Attrs["status"] = strings.Repeat("SENTINEL-7f3a", 30)
 	if err := e.Validate(allow); err == nil || strings.Contains(err.Error(), "SENTINEL") {
 		t.Errorf("error leaks value or missing: %v", err)
+	}
+}
+
+func TestEventValidateFor(t *testing.T) {
+	const c = "abcdefghijklmnopqrstuvwxyz"
+	allow := map[string]bool{"status": true}
+	if err := goodEvent().ValidateFor(c, "toy", allow); err != nil {
+		t.Fatalf("good event rejected: %v", err)
+	}
+	cases := map[string]func(e *Event){
+		"other importer in id": func(e *Event) { e.EvidenceID = EventID(c, "other", "n", 3, 0) },
+		"other case in id":     func(e *Event) { e.EvidenceID = EventID("zyxwvutsrqponmlkjihgfedcba", "toy", "n", 3, 0) },
+		"source mismatch":      func(e *Event) { e.Source = "other" },
+		"no hex":               func(e *Event) { e.EvidenceID = "ev:abcdefgh:toy:" },
+		"short hex":            func(e *Event) { e.EvidenceID = "ev:abcdefgh:toy:0123456789abcde" },
+		"long hex":             func(e *Event) { e.EvidenceID = "ev:abcdefgh:toy:0123456789abcdef0" },
+		"upper hex":            func(e *Event) { e.EvidenceID = "ev:abcdefgh:toy:0123456789ABCDEF" },
+		"non hex":              func(e *Event) { e.EvidenceID = "ev:abcdefgh:toy:0123456789abcdeg" },
+		"join prefix":          func(e *Event) { e.EvidenceID = "jn:abcdefgh:toy:0123456789abcdef" },
+		"ev:1":                 func(e *Event) { e.EvidenceID = "ev:1" },
+		"plain Validate rule":  func(e *Event) { e.Line = 0 },
+	}
+	for name, mut := range cases {
+		e := goodEvent()
+		mut(&e)
+		if err := e.ValidateFor(c, "toy", allow); !errors.Is(err, ErrEventInvalid) {
+			t.Errorf("%s: want ErrEventInvalid, got %v", name, err)
+		}
+	}
+	// A short case id is used whole.
+	e := goodEvent()
+	e.EvidenceID = EventID("abc", "toy", "n", 1, 0)
+	if err := e.ValidateFor("abc", "toy", allow); err != nil {
+		t.Errorf("short case id: %v", err)
 	}
 }
 

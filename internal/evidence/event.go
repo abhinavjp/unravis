@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -84,7 +85,8 @@ func finite(p *float64) bool {
 // attribute allowlist: UTC times, End >= Start, bounded strings, finite
 // numbers, a known severity and time-zone rule, and attributes that are
 // allowlisted, at most 16, each value at most 256 bytes of valid UTF-8.
-// A nil allowlist permits no attributes.
+// A nil allowlist permits no attributes. Line is 1-based (provenance anchor)
+// and TZRule is required: every event says how its time became UTC.
 func (e Event) Validate(allowedAttrs map[string]bool) error {
 	if e.EvidenceID == "" || len(e.EvidenceID) > maxEventEvidenceID {
 		return invalidEvent("evidence id missing or too long")
@@ -120,11 +122,11 @@ func (e Event) Validate(allowedAttrs map[string]bool) error {
 	default:
 		return invalidEvent("severity not in the fixed set")
 	}
-	if e.Line < 0 {
-		return invalidEvent("negative line")
+	if e.Line < 1 {
+		return invalidEvent("line must be 1 or more")
 	}
 	switch e.TZRule {
-	case "", clock.RuleUTCField, clock.RuleOffsetInField, clock.RuleHeaderBias, clock.RuleHostLocal:
+	case clock.RuleUTCField, clock.RuleOffsetInField, clock.RuleHeaderBias, clock.RuleHostLocal:
 	default:
 		return invalidEvent("time-zone rule not in the fixed set")
 	}
@@ -140,6 +142,39 @@ func (e Event) Validate(allowedAttrs map[string]bool) error {
 		}
 	}
 	return nil
+}
+
+// CheckEventID reports whether id has the shape EventID produces for this case
+// and importer: ev:<case8>:<importer>:<16 lowercase hex>. Messages never carry
+// the id.
+func CheckEventID(id, caseID, importer string) error {
+	prefix := CasePrefixes(caseID)[0] + importer + ":"
+	rest, ok := strings.CutPrefix(id, prefix)
+	if !ok || len(rest) != 16 {
+		return invalidEvent("evidence id is not ev:<case>:<importer>:<16 hex> for this case and importer")
+	}
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return invalidEvent("evidence id is not ev:<case>:<importer>:<16 hex> for this case and importer")
+		}
+	}
+	return nil
+}
+
+// ValidateFor is Validate plus the provenance rules a store and Collect
+// enforce: Source is the importer's own name and EvidenceID has the shape
+// EventID builds for this case and importer, so an event cannot claim another
+// case's prefix (erase strips ledger references by prefix) or another
+// importer's name.
+func (e Event) ValidateFor(caseID, importer string, allowedAttrs map[string]bool) error {
+	if err := e.Validate(allowedAttrs); err != nil {
+		return err
+	}
+	if e.Source != importer {
+		return invalidEvent("source is not the importing importer")
+	}
+	return CheckEventID(e.EvidenceID, caseID, importer)
 }
 
 // Clone returns a deep copy so a store never aliases an importer's buffers.

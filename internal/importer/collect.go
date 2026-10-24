@@ -61,7 +61,8 @@ func Finish(rep Report, lim Limits) error {
 // the test and preview path: Prepare (limits, head sniff), Parse with each
 // event validated against the importer's allowlist and copied, then Finish.
 // On any error it returns no events, which is the in-memory form of rolling
-// back. The Report is returned even on error, for counts and reasons.
+// back. An error returned by emit (a refused event) fails the run even when
+// Parse swallows it and returns nil. The Report is returned even on error, for counts and reasons.
 func Collect(ctx context.Context, imp Importer, r io.Reader, opts Options) ([]evidence.Event, Report, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, Report{Importer: imp.Name()}, err
@@ -72,12 +73,22 @@ func Collect(ctx context.Context, imp Importer, r io.Reader, opts Options) ([]ev
 	}
 	allowed := imp.AllowedAttrs()
 	var events []evidence.Event
+	// first is the first error emit returned. An importer that drops an emit
+	// error and finishes "ok" must not produce a partial import that looks
+	// complete, so a recorded emit error fails the whole run, and emit keeps
+	// refusing after it.
+	var first error
 	emit := func(ev evidence.Event) error {
+		if first != nil {
+			return first
+		}
 		if err := ctx.Err(); err != nil {
+			first = err
 			return err
 		}
-		if err := ev.Validate(allowed); err != nil {
-			return fmt.Errorf("importer %s emitted an invalid event: %w", imp.Name(), err)
+		if err := ev.ValidateFor(opts.CaseID, imp.Name(), allowed); err != nil {
+			first = fmt.Errorf("importer %s emitted an invalid event: %w", imp.Name(), err)
+			return first
 		}
 		events = append(events, ev.Clone())
 		return nil
@@ -85,6 +96,9 @@ func Collect(ctx context.Context, imp Importer, r io.Reader, opts Options) ([]ev
 	rep, err := imp.Parse(ctx, body, opts, emit)
 	if rep.Importer == "" {
 		rep.Importer = imp.Name()
+	}
+	if err == nil && first != nil {
+		err = first
 	}
 	if err == nil {
 		err = Finish(rep, opts.Limits)

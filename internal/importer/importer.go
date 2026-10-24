@@ -85,6 +85,8 @@ type Report struct {
 	Quality                 evidence.SourceQuality
 	FieldRules              map[string]string // field -> clock.Rule*
 	KnownGaps               []string          // fixed sentences only
+
+	observed map[string]struct{} // index over ObservedHosts for Observe
 }
 
 // Reject counts a rejected row and keeps the first MaxReportErrors of them.
@@ -98,14 +100,20 @@ func (r *Report) Reject(line int64, reason Reason) {
 // Observe records a raw host name once. It returns *LimitError past
 // MaxObservedHosts distinct names.
 func (r *Report) Observe(host string) error {
-	for _, h := range r.ObservedHosts {
-		if h == host {
-			return nil
+	if r.observed == nil || len(r.observed) != len(r.ObservedHosts) {
+		// Rebuilt from the slice so a Report copied or filled by hand still works.
+		r.observed = make(map[string]struct{}, len(r.ObservedHosts))
+		for _, h := range r.ObservedHosts {
+			r.observed[h] = struct{}{}
 		}
+	}
+	if _, ok := r.observed[host]; ok {
+		return nil
 	}
 	if len(r.ObservedHosts) >= MaxObservedHosts {
 		return &LimitError{Limit: "hosts", Max: MaxObservedHosts, At: MaxObservedHosts + 1}
 	}
+	r.observed[host] = struct{}{}
 	r.ObservedHosts = append(r.ObservedHosts, host)
 	return nil
 }

@@ -49,6 +49,9 @@ type memData struct {
 	ids     map[string]struct{}
 	erased  bool
 	nextID  int64
+
+	quarantines []QuarantineRecord
+	nextQID     int64
 }
 
 func (s *memStore) Create(ctx context.Context, title string) (CaseInfo, error) {
@@ -176,7 +179,7 @@ func (d *memData) erase() {
 	for i := range d.key {
 		d.key[i] = 0
 	}
-	d.key, d.imports, d.events, d.ids = nil, nil, nil, nil
+	d.key, d.imports, d.events, d.ids, d.quarantines = nil, nil, nil, nil, nil
 	d.erased = true
 }
 
@@ -259,6 +262,18 @@ func (c *memCase) Imports(ctx context.Context) ([]ImportRecord, error) {
 	}
 	return out, nil
 }
+
+// Quarantines lists refused files, oldest first (see Quarantiner).
+func (c *memCase) Quarantines(ctx context.Context) ([]QuarantineRecord, error) {
+	if err := c.check(ctx); err != nil {
+		return nil, err
+	}
+	c.d.mu.RLock()
+	defer c.d.mu.RUnlock()
+	return append([]QuarantineRecord(nil), c.d.quarantines...), nil
+}
+
+var _ Quarantiner = (*memCase)(nil)
 
 func contains(set []string, v string) bool {
 	if len(set) == 0 {
@@ -379,21 +394,18 @@ func (c *memCase) Import(ctx context.Context, meta ImportMeta, body io.Reader, r
 
 	var staged []evidence.Event
 	seen := map[string]struct{}{}
+	caseID := string(c.d.info.ID) // immutable after Create
+	// first is the first error emit returned. A run that ignores an emit error
+	// and returns nil must not commit a smaller import that looks complete: the
+	// import fails with this error, and emit keeps refusing after it.
+	var first error
 	emit := func(ev evidence.Event) error {
-		if err := ctx.Err(); err != nil {
+		if first != nil {
+			return first
+		}
+		if err := c.admit(ctx, ev, caseID, meta, int64(len(staged)), seen); err != nil {
+			first = err
 			return err
-		}
-		if int64(len(staged)) >= c.s.caps.MaxFileRows {
-			return ErrCapExceeded
-		}
-		if _, dup := seen[ev.EvidenceID]; dup {
-			return ErrDuplicateEvent
-		}
-		c.d.mu.RLock()
-		_, dup := c.d.ids[ev.EvidenceID]
-		c.d.mu.RUnlock()
-		if dup {
-			return ErrDuplicateEvent
 		}
 		seen[ev.EvidenceID] = struct{}{}
 		staged = append(staged, ev.Clone())
@@ -406,10 +418,13 @@ func (c *memCase) Import(ctx context.Context, meta ImportMeta, body io.Reader, r
 	if cr.over {
 		return res, ErrCapExceeded
 	}
+	if err == nil && first != nil {
+		err = first
+	}
 	if err != nil {
 		var qe *importer.QuarantineError
 		if errors.As(err, &qe) {
-			res.Record.Status, res.Record.Reason = StatusQuarantined, qe.Reason
+			return c.quarantine(ctx, meta, qe, cr, h, res, err)
 		}
 		return res, err
 	}
@@ -457,6 +472,72 @@ func (c *memCase) Import(ctx context.Context, meta ImportMeta, body io.Reader, r
 	c.d.info.Bytes += cr.n
 	c.d.info.Imports = len(c.d.imports)
 	return res, nil
+}
+
+// admit checks one emitted event: context, row cap, event shape and
+// provenance (ID prefix, Source, attribute allowlist) and ID uniqueness within
+// the file and the case.
+func (c *memCase) admit(ctx context.Context, ev evidence.Event, caseID string, meta ImportMeta, staged int64, seen map[string]struct{}) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if staged >= c.s.caps.MaxFileRows {
+		return ErrCapExceeded
+	}
+	imp := meta.Importer
+	if imp == "" {
+		imp = ev.Source
+	}
+	allowed := meta.AllowedAttrs
+	if allowed == nil {
+		// No allowlist supplied: keep the generic bounds, skip the key check.
+		allowed = make(map[string]bool, len(ev.Attrs))
+		for k := range ev.Attrs {
+			allowed[k] = true
+		}
+	}
+	if err := ev.ValidateFor(caseID, imp, allowed); err != nil {
+		return err
+	}
+	if _, dup := seen[ev.EvidenceID]; dup {
+		return ErrDuplicateEvent
+	}
+	c.d.mu.RLock()
+	_, dup := c.d.ids[ev.EvidenceID]
+	c.d.mu.RUnlock()
+	if dup {
+		return ErrDuplicateEvent
+	}
+	return nil
+}
+
+// quarantine reads the rest of the body so the hash covers the whole file,
+// then records the refusal. It stores no events and no import. A cap breach
+// while reading on wins (the file is too big to even refuse by hash).
+func (c *memCase) quarantine(ctx context.Context, meta ImportMeta, qe *importer.QuarantineError, cr *countingReader, h interface{ Sum([]byte) []byte }, res ImportResult, cause error) (ImportResult, error) {
+	if _, err := io.Copy(io.Discard, cr); err != nil {
+		if cr.over {
+			return res, ErrCapExceeded
+		}
+		return res, err
+	}
+	if err := ctx.Err(); err != nil {
+		return res, err
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	res.Record.SHA256, res.Record.Bytes = sum, cr.n
+	res.Record.Status, res.Record.Reason = StatusQuarantined, qe.Reason
+	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	if c.d.erased {
+		return res, ErrNotFound
+	}
+	c.d.nextQID++
+	c.d.quarantines = append(c.d.quarantines, QuarantineRecord{
+		ID: c.d.nextQID, Importer: res.Record.Importer, FileName: meta.FileName, SHA256: sum,
+		Reason: qe.Reason, Column: qe.Column, Rows: res.Report.Rows, At: c.s.now().UTC(),
+	})
+	return res, cause
 }
 
 func (c *memCase) record(meta ImportMeta, rep importer.Report, bytes int64, sha string) ImportRecord {

@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"api-audit-explorer/internal/evidence"
@@ -56,13 +57,15 @@ func NewID() (CaseID, error) {
 const MaxTitleBytes = 200
 
 // ValidTitle reports whether a title is non-empty, bounded and valid UTF-8
-// without control characters.
+// without control or format characters: C0/C1 controls, and invisible
+// formatting such as bidi overrides, zero-width joiners and line separators,
+// which could make a title display as something it is not.
 func ValidTitle(title string) bool {
 	if strings.TrimSpace(title) == "" || len(title) > MaxTitleBytes || !utf8.ValidString(title) {
 		return false
 	}
 	for _, r := range title {
-		if r < 0x20 || r == 0x7f {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
 			return false
 		}
 	}
@@ -99,6 +102,11 @@ type ImportMeta struct {
 	Importer, FileName, HostLabel, TZRule string
 	AckGating                             bool   // gating acknowledgement ticked; refused when false
 	AckText                               string // exact banner text acknowledged; stored in the manifest
+	// AllowedAttrs is the importer's attribute allowlist (Importer.AllowedAttrs).
+	// When non-nil the store refuses an event with an attribute outside it, so
+	// the allowlist holds even when run does not go through importer.Collect.
+	// When nil only the generic bounds are checked (count, key and value size).
+	AllowedAttrs map[string]bool
 }
 
 // Import outcomes for ImportRecord.Status.
@@ -123,6 +131,27 @@ type ImportRecord struct {
 type ImportResult struct {
 	Record ImportRecord
 	Report importer.Report
+}
+
+// QuarantineRecord is the trace of a refused file; it mirrors the plan's
+// quarantine table (§1.5). Quarantines live apart from Imports: they hold no
+// events, count for no bytes against the case, and do not
+// stop the same bytes from being imported later (for example after the user
+// picks the right host or format). Erase removes them with the case.
+type QuarantineRecord struct {
+	ID                         int64
+	Importer, FileName, SHA256 string
+	Reason                     importer.Reason
+	Column                     string // the missing or duplicated column, when the refusal names one
+	Rows                       int64  // rows seen before the refusal
+	At                         time.Time
+}
+
+// Quarantiner is implemented by a Case that keeps QuarantineRecords. It is a
+// separate interface so adding it breaks no existing Case implementation; the
+// storetest contract requires every store to implement it.
+type Quarantiner interface {
+	Quarantines(ctx context.Context) ([]QuarantineRecord, error)
 }
 
 // EventQuery selects events. Empty Kinds, Sources or Hosts match everything.
@@ -151,15 +180,27 @@ type Store interface {
 
 type Case interface {
 	Info() CaseInfo
-	// Import runs one file as one transaction: on any error nothing is stored.
-	// Outcomes other than success come with a non-nil error and a populated
-	// ImportResult:
+	// Import runs one file as one transaction: on any error nothing is stored,
+	// no events and no import record. Outcomes other than success come with a
+	// non-nil error and a populated ImportResult:
 	//   - ErrAckRequired when meta.AckGating is false or AckText is empty (body unread);
 	//   - ErrCapExceeded when a byte, row or case cap is passed;
+	//   - ErrDuplicateEvent, or whatever else emit refused with, even when run
+	//     ignored the error from emit and returned nil: a refused event fails
+	//     the import, it never yields a smaller "ok" one;
 	//   - *DuplicateError (wraps ErrDuplicate) when the SHA-256 is already in
 	//     the case; Record is the existing import with Status "duplicate";
-	//   - *importer.QuarantineError: Record.Status is "quarantined" and Reason set;
+	//   - *importer.QuarantineError: the file is refused and no events are kept.
+	//     The store reads the rest of the body to hash it, then records a
+	//     QuarantineRecord (see Quarantiner) and not an import: Imports() never
+	//     lists it, Info does not count it, and the same bytes can be imported
+	//     later. Record has Status "quarantined", Reason, SHA256 and Bytes, and
+	//     ID 0;
 	//   - anything else run returned, unchanged.
+	//
+	// Every event must pass Event.ValidateFor with this case's ID and
+	// meta.Importer (the event's own Source when meta.Importer is empty), and
+	// meta.AllowedAttrs when set.
 	Import(ctx context.Context, meta ImportMeta, body io.Reader, run RunFunc) (ImportResult, error)
 	Imports(ctx context.Context) ([]ImportRecord, error)
 	Events(ctx context.Context, q EventQuery) ([]evidence.Event, error)

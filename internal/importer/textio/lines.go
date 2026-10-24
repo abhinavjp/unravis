@@ -29,7 +29,10 @@ const (
 // DefaultMaxLine is used when a caller passes a limit of zero or less.
 const DefaultMaxLine = importer.DefaultMaxLineBytes
 
-// ErrEmpty is returned when the input has no content at all.
+// ErrEmpty is what NewCSV returns for an input with no header row (empty, or
+// only blank and comment lines). It is a QuarantineError, so errors.Is against
+// importer.ErrQuarantine holds. LineReader treats empty input as a plain io.EOF
+// on the first Next.
 var ErrEmpty = &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat}
 
 // decode sniffs the BOM and returns a reader of UTF-8 bytes. A UTF-8 BOM is

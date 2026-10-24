@@ -78,11 +78,28 @@ func (t toy) Parse(ctx context.Context, r io.Reader, opts importer.Options, emit
 			continue
 		}
 		ts = ts.UTC()
+		// The raw host name is reported, never stored: Event.Host is the
+		// label the owner picked or mapped.
+		raw := rec[cr.Index("host")]
+		if err := rep.Observe(raw); err != nil {
+			return rep, err
+		}
+		var label string
+		switch {
+		case opts.Host != nil:
+			label = opts.Host.Label
+		case opts.Hosts != nil:
+			h, ok := opts.Hosts(raw)
+			if !ok {
+				return rep, &importer.QuarantineError{Reason: importer.ReasonUnknownHost}
+			}
+			label = h.Label
+		}
 		ev := evidence.Event{
 			EvidenceID: evidence.EventID(opts.CaseID, t.Name(), opts.ImportNonce, line, 0),
 			Source:     t.Name(),
 			Kind:       "toy",
-			Host:       rec[cr.Index("host")],
+			Host:       label,
 			Start:      ts,
 			End:        ts.Add(time.Duration(ms * float64(time.Millisecond))),
 			DurationMs: &ms,
@@ -120,7 +137,20 @@ const formula = "time,host,note,ms\n" +
 	"2001-01-01T00:00:05Z,web-a,\"\rCR\",1\n"
 
 func fixtures() importertest.Fixtures {
-	return importertest.Fixtures{Good: []byte(good), Bad: []byte(bad), Formula: []byte(formula)}
+	return importertest.Fixtures{
+		Good:    []byte(good),
+		Bad:     []byte(bad),
+		Formula: []byte(formula),
+		Options: importer.Options{Hosts: func(raw string) (importer.HostHint, bool) {
+			switch raw {
+			case "web-a":
+				return importer.HostHint{Label: "host-1", Role: "iis"}, true
+			case "web-b":
+				return importer.HostHint{Label: "host-2", Role: "iis"}, true
+			}
+			return importer.HostHint{}, false
+		}},
+	}
 }
 
 func TestToyPassesConformance(t *testing.T) {

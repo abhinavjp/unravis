@@ -16,10 +16,20 @@ type CSVOptions struct {
 	MaxFields      int      // default importer.DefaultMaxFields; more fields: *importer.LimitError
 	RequireHeader  []string // each must be a header name, else QuarantineError (Column = the missing name)
 	MaxLine        int      // longest physical line in bytes; default DefaultMaxLine; longer: *importer.LimitError
+	// MaxRecord is the most bytes one logical record may span: a quoted field
+	// can run over many lines, and an unterminated quote would otherwise run to
+	// the end of the file. Default 16 * MaxLine; more: *importer.LimitError
+	// with Limit "record-bytes".
+	MaxRecord int
 }
 
-// boundReader limits the length of every physical line passing through and
-// remembers the first error it saw, so csv's own error wrapping cannot hide it.
+// recordSlack covers what encoding/csv has read ahead of the record it is
+// still assembling (its bufio buffer is 4096 bytes).
+const recordSlack = 2 * 4096
+
+// boundReader limits the length of every physical line and of every logical
+// record passing through, and remembers the first error it saw, so csv's own
+// error wrapping cannot hide it.
 type boundReader struct {
 	r      io.Reader
 	max    int
@@ -28,6 +38,10 @@ type boundReader struct {
 	lines  int64
 	err    error
 	failed bool
+
+	maxRec   int64
+	total    int64 // bytes delivered so far
+	recStart int64 // csv.Reader.InputOffset after the last record that csv finished
 }
 
 // breach records the line-length error. start is the index in p where the
@@ -49,6 +63,15 @@ func (b *boundReader) Read(p []byte) (int, error) {
 		return 0, b.err
 	}
 	n, err := b.r.Read(p)
+	b.total += int64(n)
+	// csv only asks for more bytes while it is inside a record (or reading
+	// ahead), so what has been delivered beyond the end of the last finished
+	// record is the record being assembled plus a bounded read-ahead.
+	if pending := b.total - b.recStart; pending > b.maxRec+recordSlack {
+		b.err = &importer.LimitError{Limit: "record-bytes", Max: b.maxRec, At: pending}
+		b.failed = true
+		return 0, b.err
+	}
 	for i := 0; i < n; i++ {
 		if p[i] == '\n' {
 			eff := b.cur
@@ -110,7 +133,10 @@ func NewCSV(r io.Reader, o CSVOptions) (*CSVReader, Encoding, error) {
 	if o.MaxFields <= 0 {
 		o.MaxFields = importer.DefaultMaxFields
 	}
-	src := &boundReader{r: dec, max: o.MaxLine}
+	if o.MaxRecord <= 0 {
+		o.MaxRecord = 16 * o.MaxLine
+	}
+	src := &boundReader{r: dec, max: o.MaxLine, maxRec: int64(o.MaxRecord)}
 	cr := csv.NewReader(src)
 	if o.Comma != 0 {
 		cr.Comma = o.Comma
@@ -124,7 +150,7 @@ func NewCSV(r io.Reader, o CSVOptions) (*CSVReader, Encoding, error) {
 	rec, _, err := c.readRecord()
 	switch {
 	case errors.Is(err, io.EOF):
-		return nil, enc, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat}
+		return nil, enc, ErrEmpty
 	case err != nil:
 		var re importer.RowError
 		if errors.As(err, &re) {
@@ -137,6 +163,17 @@ func NewCSV(r io.Reader, o CSVOptions) (*CSVReader, Encoding, error) {
 		if c.Index(want) < 0 {
 			return nil, enc, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat, Column: want}
 		}
+		// Index binds to the first match; a second column of the same name
+		// could hold different (even unmasked) data, so the file is refused.
+		n := 0
+		for _, h := range c.header {
+			if h == want {
+				n++
+			}
+		}
+		if n > 1 {
+			return nil, enc, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat, Column: want}
+		}
 	}
 	return c, enc, nil
 }
@@ -147,6 +184,9 @@ func (c *CSVReader) readRecord() ([]string, int64, error) {
 		return nil, 0, c.err
 	}
 	rec, err := c.r.Read()
+	// InputOffset moves line by line, so it is only a record boundary here,
+	// after Read has returned.
+	c.src.recStart = c.r.InputOffset()
 	if c.src.failed {
 		c.err = c.src.err
 		return nil, 0, c.err

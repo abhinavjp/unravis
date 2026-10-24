@@ -62,6 +62,30 @@ func TestParseLocalZoneInLayout(t *testing.T) {
 	}
 }
 
+func TestParseLocalAbbreviation(t *testing.T) {
+	ny := mustLoc(t, "America/New_York")
+	const l = "2006-01-02 15:04:05 MST"
+	// UTC and GMT are exact, whatever the host zone.
+	for _, v := range []string{"2001-06-01 12:00:00 UTC", "2001-06-01 12:00:00 GMT"} {
+		got, err := ParseLocal(l, v, ny)
+		if err != nil || got.Ambiguous || got.Nonexistent || got.UTC.Format(time.RFC3339) != "2001-06-01T12:00:00Z" {
+			t.Errorf("%s: %+v %v", v, got, err)
+		}
+	}
+	// Any other abbreviation is ambiguous; time.Parse would read an unknown one
+	// as offset 0, which would be a silent wrong answer.
+	for _, v := range []string{"2001-06-01 12:00:00 MST", "2001-06-01 12:00:00 IST", "2001-06-01 12:00:00 XYZ", "2001-06-01 12:00:00 EST"} {
+		if _, err := ParseLocal(l, v, ny); !errors.Is(err, ErrBadTime) {
+			t.Errorf("%s: want ErrBadTime, got %v", v, err)
+		}
+	}
+	// A numeric offset still wins when the layout has both.
+	got, err := ParseLocal("2006-01-02 15:04:05 -0700 MST", "2001-06-01 12:00:00 -0400 EDT", ny)
+	if err != nil || got.UTC.Format(time.RFC3339) != "2001-06-01T16:00:00Z" {
+		t.Errorf("offset and name: %+v %v", got, err)
+	}
+}
+
 func TestParseLocalErrors(t *testing.T) {
 	_, err := ParseLocal(layout, "SENTINEL-7f3a", time.UTC)
 	if !errors.Is(err, ErrBadTime) || strings.Contains(err.Error(), "SENTINEL") {
@@ -96,6 +120,41 @@ func TestWindowsZoneTableLoads(t *testing.T) {
 		}
 		if _, ok := WindowsZone(id); !ok {
 			t.Errorf("WindowsZone(%q) not found", id)
+		}
+	}
+}
+
+func TestWindowsZonePinned(t *testing.T) {
+	for id, want := range map[string]string{
+		"Pacific Standard Time":          "America/Los_Angeles",
+		"Eastern Standard Time":          "America/New_York",
+		"GMT Standard Time":              "Europe/London",
+		"W. Europe Standard Time":        "Europe/Berlin",
+		"India Standard Time":            "Asia/Kolkata",
+		"China Standard Time":            "Asia/Shanghai",
+		"Tokyo Standard Time":            "Asia/Tokyo",
+		"AUS Eastern Standard Time":      "Australia/Sydney",
+		"New Zealand Standard Time":      "Pacific/Auckland",
+		"UTC":                            "Etc/UTC",
+		"Libya Standard Time":            "Africa/Tripoli",
+		"Namibia Standard Time":          "Africa/Windhoek",
+		"Sudan Standard Time":            "Africa/Khartoum",
+		"South Sudan Standard Time":      "Africa/Juba",
+		"Volgograd Standard Time":        "Europe/Volgograd",
+		"Astrakhan Standard Time":        "Europe/Astrakhan",
+		"Ulyanovsk Standard Time":        "Europe/Ulyanovsk",
+		"Central Standard Time":          "America/Chicago",
+		"E. South America Standard Time": "America/Sao_Paulo",
+	} {
+		loc, ok := WindowsZone(id)
+		if !ok || loc.String() != want {
+			t.Errorf("WindowsZone(%q) = %v %v, want %s", id, loc, ok, want)
+		}
+	}
+	// Obsolete and unknown IDs are refused, never guessed.
+	for _, id := range []string{"Mid-Atlantic Standard Time", "Pacific Time", "PST"} {
+		if _, ok := WindowsZone(id); ok {
+			t.Errorf("WindowsZone(%q) resolved", id)
 		}
 	}
 }

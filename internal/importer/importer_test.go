@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"api-audit-explorer/internal/clock"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/importer"
 )
@@ -21,6 +22,9 @@ type fake struct {
 	score int
 	lim   importer.Limits
 	emits func(ev evidence.Event) error
+	// swallow makes the importer ignore errors from emit, as a buggy importer
+	// would; Collect must still fail the run.
+	swallow bool
 }
 
 func (f *fake) Name() string                     { return f.name }
@@ -47,13 +51,32 @@ func (f *fake) Parse(ctx context.Context, r io.Reader, opts importer.Options, em
 			return rep, errors.New("boom")
 		case strings.HasPrefix(line, "invalid"):
 			ev := evidence.Event{EvidenceID: "x", Source: f.name, Kind: "k", Start: base.In(time.FixedZone("x", 3600)), End: base}
-			if err := emit(ev); err != nil {
+			if err := emit(ev); err != nil && !f.swallow {
 				return rep, err
 			}
 			continue
 		case strings.HasPrefix(line, "attr"):
 			ev := evidence.Event{EvidenceID: "x", Source: f.name, Kind: "k", Start: base, End: base, Attrs: map[string]string{"nope": "v"}}
-			if err := emit(ev); err != nil {
+			if err := emit(ev); err != nil && !f.swallow {
+				return rep, err
+			}
+			continue
+		case strings.HasPrefix(line, "foreign"):
+			// Valid in every way except that the ID belongs to another case.
+			ev := evidence.Event{
+				EvidenceID: evidence.EventID("zzzzzzzzzzzz", f.name, opts.ImportNonce, int64(i+1), 0),
+				Source:     f.name, Kind: "k", Start: base, End: base, Line: int64(i + 1), TZRule: clock.RuleUTCField,
+			}
+			if err := emit(ev); err != nil && !f.swallow {
+				return rep, err
+			}
+			continue
+		case strings.HasPrefix(line, "othersrc"):
+			ev := evidence.Event{
+				EvidenceID: evidence.EventID(opts.CaseID, f.name, opts.ImportNonce, int64(i+1), 0),
+				Source:     "someone-else", Kind: "k", Start: base, End: base, Line: int64(i + 1), TZRule: clock.RuleUTCField,
+			}
+			if err := emit(ev); err != nil && !f.swallow {
 				return rep, err
 			}
 			continue
@@ -61,14 +84,33 @@ func (f *fake) Parse(ctx context.Context, r io.Reader, opts importer.Options, em
 		ev := evidence.Event{
 			EvidenceID: evidence.EventID(opts.CaseID, f.name, opts.ImportNonce, int64(i+1), 0),
 			Source:     f.name, Kind: "k", Start: base, End: base, Line: int64(i + 1),
-			Attrs: map[string]string{"k": line},
+			TZRule: clock.RuleUTCField,
+			Attrs:  map[string]string{"k": line},
 		}
-		if err := emit(ev); err != nil {
+		if err := emit(ev); err != nil && !f.swallow {
 			return rep, err
 		}
 		rep.Emitted++
 	}
 	return rep, nil
+}
+
+// cancelOnFirst cancels the run's context just before the first emit, so emit
+// reports context.Canceled to an importer that may ignore it.
+type cancelOnFirst struct {
+	*fake
+	cancel func()
+}
+
+func (c *cancelOnFirst) Parse(ctx context.Context, r io.Reader, opts importer.Options, emit func(evidence.Event) error) (importer.Report, error) {
+	first := true
+	return c.fake.Parse(ctx, r, opts, func(ev evidence.Event) error {
+		if first {
+			first = false
+			c.cancel()
+		}
+		return emit(ev)
+	})
 }
 
 func TestSniffRefusesArchives(t *testing.T) {
@@ -114,6 +156,25 @@ func (o oneByte) Read(p []byte) (int, error) {
 		return 0, nil
 	}
 	return o.r.Read(p[:1])
+}
+
+// stuck returns n bytes then (0, nil) forever.
+type stuck struct{ left int }
+
+func (s *stuck) Read(p []byte) (int, error) {
+	if s.left > 0 {
+		n := min(s.left, len(p))
+		s.left -= n
+		return n, nil
+	}
+	return 0, nil
+}
+
+func TestLimitReaderNoProgress(t *testing.T) {
+	_, err := io.ReadAll(importer.LimitReader(&stuck{left: 4}, 4))
+	if !errors.Is(err, io.ErrNoProgress) {
+		t.Errorf("want io.ErrNoProgress at the byte limit, got %v", err)
+	}
 }
 
 func TestLimitReader(t *testing.T) {
@@ -435,11 +496,25 @@ func TestCollectRefusals(t *testing.T) {
 	if err == nil || evs != nil || rep.Importer != "f" {
 		t.Errorf("importer error: %v %v %+v", err, evs, rep)
 	}
-	// Events that fail Validate are refused.
-	for _, body := range []string{"invalid\n", "attr\n"} {
-		evs, _, err = collect(t, &fake{name: "f"}, body, opts)
-		if !errors.Is(err, evidence.ErrEventInvalid) || evs != nil {
-			t.Errorf("%q: %v %v", body, err, evs)
+	// Events that fail Validate, carry another case's ID or another
+	// importer's name are refused, whether or not the importer passes the
+	// emit error on: an ignored refusal must not become an "ok" partial import.
+	for _, swallow := range []bool{false, true} {
+		for _, body := range []string{"invalid\n", "attr\n", "foreign\n", "othersrc\n", "one\nforeign\ntwo\n"} {
+			evs, _, err = collect(t, &fake{name: "f", swallow: swallow}, body, opts)
+			if !errors.Is(err, evidence.ErrEventInvalid) || evs != nil {
+				t.Errorf("swallow=%v %q: %v %v", swallow, body, err, evs)
+			}
+		}
+	}
+	// A swallowed context cancellation is also an error, not an ok import.
+	{
+		ctx, cancel := context.WithCancel(context.Background())
+		f := &fake{name: "f", swallow: true}
+		cancelling := &cancelOnFirst{fake: f, cancel: cancel}
+		evs, _, err = importer.Collect(ctx, cancelling, strings.NewReader("one\ntwo\nthree\n"), opts)
+		if !errors.Is(err, context.Canceled) || evs != nil {
+			t.Errorf("swallowed cancel: %v %v", err, evs)
 		}
 	}
 	// A cancelled context stops before any work.

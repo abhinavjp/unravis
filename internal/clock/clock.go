@@ -34,15 +34,19 @@ type LocalResult struct {
 	Ambiguous, Nonexistent bool
 }
 
-// zoneInLayout reports whether a layout carries its own zone or offset.
-func zoneInLayout(layout string) bool {
-	return strings.Contains(layout, "Z07") || strings.Contains(layout, "-07") || strings.Contains(layout, "MST")
+// offsetInLayout reports whether a layout carries a numeric offset ("Z07:00",
+// "-0700", "-07"); time.Parse then honours it.
+func offsetInLayout(layout string) bool {
+	return strings.Contains(layout, "Z07") || strings.Contains(layout, "-07")
 }
 
 // ParseLocal parses value with layout as a wall-clock time in loc. A DST fold
-// and a DST gap are flagged, never guessed. If the layout carries its own
-// offset or zone, the value is converted with that offset and neither flag is
-// set. The error never includes the value.
+// and a DST gap are flagged, never guessed. If the layout carries a numeric
+// offset, the value is converted with that offset and neither flag is set.
+// A layout with only a zone abbreviation ("MST") is accepted only when the
+// value says UTC or GMT: other abbreviations are ambiguous (IST, CST) and
+// time.Parse would silently read an unknown one as offset 0, so they are
+// ErrBadTime. The error never includes the value.
 func ParseLocal(layout, value string, loc *time.Location) (LocalResult, error) {
 	if loc == nil {
 		return LocalResult{}, ErrNoLocation
@@ -51,8 +55,14 @@ func ParseLocal(layout, value string, loc *time.Location) (LocalResult, error) {
 	if err != nil {
 		return LocalResult{}, ErrBadTime
 	}
-	if zoneInLayout(layout) {
+	if offsetInLayout(layout) {
 		return LocalResult{UTC: t.UTC()}, nil
+	}
+	if strings.Contains(layout, "MST") {
+		if name, _ := t.Zone(); name == "UTC" || name == "GMT" {
+			return LocalResult{UTC: t.UTC()}, nil
+		}
+		return LocalResult{}, ErrBadTime
 	}
 	// t holds the wall fields as if they were UTC. A real instant in loc has
 	// wall = instant + offset, so candidate instants are wall - offset for the

@@ -341,6 +341,79 @@ func TestCSVLimits(t *testing.T) {
 	}
 }
 
+func TestCSVRecordLimit(t *testing.T) {
+	var le *importer.LimitError
+	// A quoted field spanning many short lines, within the record limit, parses.
+	field := strings.Repeat("xxxxxxx\n", 100) // 800 bytes over 100 lines
+	c, err := csvOf(t, "a,b\n1,\""+field+"\"\n2,ok\n", CSVOptions{MaxLine: 64, MaxRecord: 2000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec, _, err := c.Next(); err != nil || rec[1] != field {
+		t.Fatalf("multi-line record under limit: %v", err)
+	}
+	if rec, n, err := c.Next(); err != nil || rec[0] != "2" || n != 103 {
+		t.Fatalf("record after multi-line: %v %d %v", rec, n, err)
+	}
+	// Over the limit: refused as record-bytes, terminally, before the whole
+	// quoted field is read.
+	c, _ = csvOf(t, "a,b\n1,\""+strings.Repeat(field, 100)+"\"\n", CSVOptions{MaxLine: 64, MaxRecord: 2000})
+	if _, _, err := c.Next(); !errors.As(err, &le) || le.Limit != "record-bytes" {
+		t.Fatalf("over record limit: %v", err)
+	}
+	if _, _, err := c.Next(); !errors.As(err, &le) {
+		t.Errorf("record limit not terminal: %v", err)
+	}
+	// A stray quote opening a field must not run to MaxBytes: with a one-GiB
+	// byte budget, the reader gives up after about MaxRecord bytes.
+	counted := &countingReader{r: strings.NewReader("a,b\n\"" + strings.Repeat("xxxxxxx\n", 1<<20))}
+	c, _, err = NewCSV(counted, CSVOptions{MaxLine: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = c.Next()
+	if !errors.As(err, &le) || le.Limit != "record-bytes" {
+		t.Fatalf("unterminated quote: %v", err)
+	}
+	if want := int64(16*64 + recordSlack + 4096 + 8192); counted.n > want {
+		t.Errorf("read %d bytes before refusing, want <= %d", counted.n, want)
+	}
+	// The default record limit scales with MaxLine.
+	c, _ = csvOf(t, "a,b\n\""+strings.Repeat("xxxxxxx\n", 4000), CSVOptions{MaxLine: 64})
+	if _, _, err := c.Next(); !errors.As(err, &le) || le.Limit != "record-bytes" {
+		t.Errorf("default record limit: %v", err)
+	}
+}
+
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+func TestCSVDuplicateRequiredHeader(t *testing.T) {
+	var qe *importer.QuarantineError
+	_, err := csvOf(t, "time,host,host\n1,a,b\n", CSVOptions{RequireHeader: []string{"time", "host"}})
+	if !errors.As(err, &qe) || qe.Column != "host" {
+		t.Errorf("duplicate required header: %v", err)
+	}
+	// A duplicate that nobody requires is not this layer's business.
+	if _, err := csvOf(t, "time,x,x\n1,a,b\n", CSVOptions{RequireHeader: []string{"time"}}); err != nil {
+		t.Errorf("duplicate unrequired header: %v", err)
+	}
+}
+
+func TestErrEmptyReturned(t *testing.T) {
+	if _, err := csvOf(t, "", CSVOptions{}); !errors.Is(err, ErrEmpty) {
+		t.Errorf("csv empty: %v", err)
+	}
+}
+
 func TestErrorsNeverCarryContent(t *testing.T) {
 	const s = "SENTINEL-7f3a"
 	in := "a,b\n" + s + "\n" + s + ",\"x\n"

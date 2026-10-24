@@ -145,6 +145,13 @@ var windowsZones = map[string]string{
 	"Tonga Standard Time":             "Pacific/Tongatapu",
 	"Samoa Standard Time":             "Pacific/Apia",
 	"Line Islands Standard Time":      "Pacific/Kiritimati",
+	"Libya Standard Time":             "Africa/Tripoli",
+	"Namibia Standard Time":           "Africa/Windhoek",
+	"Sudan Standard Time":             "Africa/Khartoum",
+	"South Sudan Standard Time":       "Africa/Juba",
+	"Volgograd Standard Time":         "Europe/Volgograd",
+	"Astrakhan Standard Time":         "Europe/Astrakhan",
+	"Ulyanovsk Standard Time":         "Europe/Ulyanovsk",
 }
 
 var (
