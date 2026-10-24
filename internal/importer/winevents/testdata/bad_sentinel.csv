@@ -1,0 +1,6 @@
+"TimeCreatedUtc","MachineName","LogName","ProviderName","Id","Level","Message"
+"2001-10-24T13:00:00.0000000Z","WEB-A","System","SyntheticProvider","SENTINEL-7f3a","4","SENTINEL-7f3a in a message"
+"SENTINEL-7f3a","WEB-A","System","SyntheticProvider","11","4","SENTINEL-7f3a in a message"
+"2001-10-24T13:02:00.0000000Z","WEB-A","System","SyntheticProvider","12","SENTINEL-7f3a","SENTINEL-7f3a in a message"
+"2001-10-24T13:03:00.0000000Z","WEB-A","System","SyntheticProvider","13","4","only","three","extra","fields","SENTINEL-7f3a"
+"2001-10-24T13:04:00.0000000Z","WEB-A","System","SyntheticProvider","14","4","SENTINEL-7f3a in a message"

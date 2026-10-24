@@ -1,0 +1,7 @@
+"TimeCreated","MachineName","LogName","ProviderName","Id","Level","Message"
+"2001-04-01T01:30:00","web-a","System","SyntheticProvider","10","4","SYNTHETIC before the spring gap"
+"2001-04-01T02:30:00","web-a","System","SyntheticProvider","11","4","SYNTHETIC inside the spring gap: no such local time"
+"2001-04-01T03:30:00","web-a","System","SyntheticProvider","12","4","SYNTHETIC after the spring gap"
+"2001-10-28 00:30:00","web-a","System","SyntheticProvider","13","4","SYNTHETIC before the autumn fold"
+"2001-10-28T01:30:00","web-a","System","SyntheticProvider","14","4","SYNTHETIC inside the autumn fold: happens twice"
+"2001-10-28T02:30:00","web-a","System","SyntheticProvider","15","4","SYNTHETIC after the autumn fold"
