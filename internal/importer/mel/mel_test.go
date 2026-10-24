@@ -533,11 +533,11 @@ func TestDetect(t *testing.T) {
 }
 
 func TestParseStamp(t *testing.T) {
-	if _, _, why := parseStamp("2001-03-04 05:06:07", nil); why != importer.ReasonTZUnlabelled {
+	if _, _, why := parseStamp("2001-03-04 05:06:07", nil, nil); why != importer.ReasonTZUnlabelled {
 		t.Errorf("local with no zone: %q", why)
 	}
 	for _, p := range []string{"", "x", "SENTINEL-7f3a", "1850-01-01T00:00:00Z", "2001-02-30T00:00:00Z", strings.Repeat("1", 60)} {
-		if _, _, why := parseStamp(p, time.UTC); why != importer.ReasonBadTime {
+		if _, _, why := parseStamp(p, time.UTC, nil); why != importer.ReasonBadTime {
 			t.Errorf("%q: %q", p, why)
 		}
 	}

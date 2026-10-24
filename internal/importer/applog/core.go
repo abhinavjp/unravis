@@ -112,13 +112,21 @@ const heartbeatAsOfLayout = "01/02/2006 15:04:05 -07:00"
 // HeartbeatAsOf returns the time the Kestrel heartbeat sentence states, for
 // console logs whose lines carry no time (plan §2.3, W2-d). It reads only the
 // quoted time after `As of "` at the start of msg.
-func HeartbeatAsOf(msg string) (time.Time, bool) {
+func HeartbeatAsOf(msg string) (time.Time, bool) { return HeartbeatAsOfOrder(msg, nil) }
+
+// HeartbeatAsOfOrder is HeartbeatAsOf with the date order tracked in d, shared
+// with the slash dates of the same file. A nil d reads the date on its own.
+func HeartbeatAsOfOrder(msg string, d *DateOrder) (time.Time, bool) {
 	rest, ok := strings.CutPrefix(strings.TrimSpace(msg), `As of "`)
 	if !ok {
 		return time.Time{}, false
 	}
 	v, _, ok := strings.Cut(rest, `"`)
 	if !ok || len(v) > 40 {
+		return time.Time{}, false
+	}
+	v, ok = NormalizeSlashDate(v, d)
+	if !ok {
 		return time.Time{}, false
 	}
 	t, err := time.Parse(heartbeatAsOfLayout, v)
