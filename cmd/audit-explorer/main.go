@@ -41,27 +41,69 @@ func main() {
 	}
 }
 
-func run(args []string, getenv func(string) string) error {
+// runFlags is the parsed and validated command line.
+type runFlags struct {
+	demo                bool
+	port                int
+	noBrowser           bool
+	mcp                 bool
+	mcpAllowIdentifiers bool
+	allowBroadScans     bool
+	docsExaminedBudget  int64
+}
+
+// parseFlags parses and validates the command line. Every privacy and
+// live-source switch defaults to off.
+func parseFlags(args []string) (runFlags, error) {
+	var f runFlags
 	flags := flag.NewFlagSet("unravis", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	demo := flags.Bool("demo", false, "run with deterministic illustrative data")
-	port := flags.Int("port", defaultPort, "loopback HTTP port (0 chooses an available port)")
-	noBrowser := flags.Bool("no-browser", false, "do not open the local dashboard")
-	mcpMode := flags.Bool("mcp", false, "serve read-only MCP over stdio, using an already running dashboard at --port")
+	flags.BoolVar(&f.demo, "demo", false, "run with deterministic illustrative data")
+	flags.IntVar(&f.port, "port", defaultPort, "loopback HTTP port (0 chooses an available port)")
+	flags.BoolVar(&f.noBrowser, "no-browser", false, "do not open the local dashboard")
+	flags.BoolVar(&f.mcp, "mcp", false, "serve read-only MCP over stdio, using an already running dashboard at --port")
+	flags.BoolVar(&f.mcpAllowIdentifiers, "mcp-allow-identifiers", false, "with --mcp: let MCP return user ids, user agents and IP addresses (off by default)")
+	flags.BoolVar(&f.allowBroadScans, "allow-broad-scans", false, "dashboard only: allow checks that read every record in a window on a live source (off by default)")
+	flags.Int64Var(&f.docsExaminedBudget, "docs-examined-budget", 0, "dashboard only: cap on records examined per query; 0 leaves it unset")
 	if err := flags.Parse(args); err != nil {
-		return err
+		return runFlags{}, err
 	}
 	if flags.NArg() != 0 {
-		return fmt.Errorf("unexpected positional arguments")
+		return runFlags{}, fmt.Errorf("unexpected positional arguments")
 	}
-	if *port < 0 || *port > 65535 {
-		return fmt.Errorf("port must be between 0 and 65535")
+	if f.port < 0 || f.port > 65535 {
+		return runFlags{}, fmt.Errorf("port must be between 0 and 65535")
 	}
-	if *mcpMode {
-		if *demo {
-			return fmt.Errorf("--mcp connects to an existing dashboard; do not combine it with --demo")
+	if f.mcpAllowIdentifiers && !f.mcp {
+		return runFlags{}, fmt.Errorf("--mcp-allow-identifiers is only valid with --mcp")
+	}
+	if f.docsExaminedBudget < 0 {
+		return runFlags{}, fmt.Errorf("--docs-examined-budget must not be negative")
+	}
+	if f.mcp {
+		if f.demo {
+			return runFlags{}, fmt.Errorf("--mcp connects to an existing dashboard; do not combine it with --demo")
 		}
-		bridge, err := mcp.New(*port)
+		if f.allowBroadScans || f.docsExaminedBudget != 0 {
+			return runFlags{}, fmt.Errorf("--allow-broad-scans and --docs-examined-budget configure the dashboard; do not combine them with --mcp")
+		}
+	}
+	return f, nil
+}
+
+// storeOptions turns the dashboard flags into store options.
+func storeOptions(f runFlags) []store.Option {
+	return []store.Option{store.WithBroadScans(f.allowBroadScans), store.WithDocsExaminedBudget(f.docsExaminedBudget)}
+}
+
+func run(args []string, getenv func(string) string) error {
+	f, err := parseFlags(args)
+	if err != nil {
+		return err
+	}
+	demo, port, noBrowser, mcpMode := &f.demo, &f.port, &f.noBrowser, &f.mcp
+	if *mcpMode {
+		bridge, err := mcp.New(*port, mcp.WithIdentifiers(f.mcpAllowIdentifiers))
 		if err != nil {
 			return err
 		}
@@ -82,7 +124,7 @@ func run(args []string, getenv func(string) string) error {
 		// The shipped demo carries a little unfinished work so the incomplete panel has something to show.
 		repo = audit.NewDemoWithStaleWork(time.Now())
 	} else {
-		repo = store.New()
+		repo = store.New(storeOptions(f)...)
 		if savedHistory, historyErr := history.NewDefault(getenv); historyErr == nil {
 			serverOptions = append(serverOptions, server.WithHistory(savedHistory))
 		}

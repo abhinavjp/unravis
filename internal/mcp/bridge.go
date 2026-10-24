@@ -32,18 +32,49 @@ type Bridge struct {
 	created   time.Time
 	comparing bool
 	now       func() time.Time
+	// allowIdentifiers is the operator switch (--mcp-allow-identifiers). Off by default.
+	allowIdentifiers bool
 }
 
-func New(port int) (*Bridge, error) {
+// Option configures a Bridge.
+type Option func(*Bridge)
+
+// WithIdentifiers lets MCP return user ids, user agents and IP addresses.
+func WithIdentifiers(allowed bool) Option {
+	return func(b *Bridge) { b.allowIdentifiers = allowed }
+}
+
+func New(port int, opts ...Option) (*Bridge, error) {
 	if port < 1 || port > 65535 {
 		return nil, errors.New("MCP requires the running dashboard port, between 1 and 65535")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	return newBridge("http://127.0.0.1:"+strconv.Itoa(port), &http.Client{Transport: transport, Timeout: audit.OperationTimeout + 5*time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}), nil
+	return newBridge("http://127.0.0.1:"+strconv.Itoa(port), &http.Client{Transport: transport, Timeout: audit.OperationTimeout + 5*time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}, opts...), nil
 }
-func newBridge(base string, client *http.Client) *Bridge {
-	return &Bridge{base: base, client: client, now: time.Now}
+func newBridge(base string, client *http.Client, opts ...Option) *Bridge {
+	b := &Bridge{base: base, client: client, now: time.Now}
+	for _, opt := range opts {
+		opt(b)
+	}
+	return b
+}
+
+// identifiersAllowed reports whether user ids, user agents and IP addresses may
+// be returned: the operator switch, or a demo dashboard. It is read per call and
+// never cached, because the dashboard can restart. It fails closed: an error
+// reads as not allowed.
+func (b *Bridge) identifiersAllowed(ctx context.Context) (bool, error) {
+	if b.allowIdentifiers {
+		return true, nil
+	}
+	var info struct {
+		Demo bool `json:"demo"`
+	}
+	if err := b.request(ctx, "/api/info", nil, &info); err != nil {
+		return false, err
+	}
+	return info.Demo, nil
 }
 
 func boundedBody(r io.Reader, limit int) ([]byte, error) {
