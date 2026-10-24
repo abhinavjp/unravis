@@ -287,6 +287,44 @@ export const deck: Deck = {
       definition: 'Certificate verification checks the identity of the server when the app connects. If it is off, the traffic is still encrypted but the server is not checked.',
       notMeaning: 'Turning it off does not make the connection faster, and it does not make it safe.',
       aliases: ['SSL / TLS', 'Encryption and server trust']
+    },
+    {
+      id: 'query-mode',
+      term: 'Query mode',
+      hint: 'How the app reads records: exact mode reads every match, hint mode reads a narrow range.',
+      definition: 'Exact mode reads every record that matches the query in the period. Hint mode reads only a narrow range of the index, so it is faster.',
+      notMeaning: 'It does not mean hint mode finds the same records, since it would miss any outside its range.',
+      aliases: ['Exact mode', 'Hint mode']
+    },
+    {
+      id: 'complete',
+      term: 'Complete',
+      hint: 'Every matching record in the period was read.',
+      definition: 'Complete means the query read every matching record in the period. On a live source the app cannot count the records it read, so it says Finished instead.',
+      notMeaning: 'It does not mean the records are free of gaps, and it does not rate the figures as good.',
+      aliases: ['Finished']
+    },
+    {
+      id: 'partial',
+      term: 'Partial',
+      hint: 'The query stopped early, so some matching records may be missing.',
+      definition: 'A partial result means the query reached a time limit, a row limit or a read error. The figures cover only the records read before it stopped.',
+      notMeaning: 'It does not mean the figures are wrong, only that they may be too low.'
+    },
+    {
+      id: 'margin',
+      term: 'Margin',
+      hint: 'The time gap that hint mode allows between a record id and its request time.',
+      definition: 'Hint mode finds records by a range of record ids. The margin widens that range by the largest gap seen in a sample of recent records.',
+      notMeaning: 'It does not mean every record fits inside it, and a record outside it would be missed.'
+    },
+    {
+      id: 'coverage-census',
+      term: 'Coverage census',
+      hint: 'A check of how many records have each field the app needs, by request type and day.',
+      definition: 'The census reads every record in a period of up to 31 days. It counts how many have each field filled in.',
+      notMeaning: 'It does not check that the values are right, and it does not run unless you ask for it.',
+      aliases: ['Census']
     }
   ]
 };

@@ -1,4 +1,4 @@
-import type { Analysis, Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput } from './types';
+import type { Analysis, Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput } from './types';
 
 const token = document.querySelector<HTMLMetaElement>('meta[name="audit-session"]')?.content ?? '';
 const base = '/api';
@@ -6,11 +6,13 @@ const base = '/api';
 export class ApiError extends Error {
   readonly code?: string;
   readonly stage?: string;
-  constructor(message: string, code?: string, stage?: string) {
+  readonly status?: number;
+  constructor(message: string, code?: string, stage?: string, status?: number) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.stage = stage;
+    this.status = status;
   }
 }
 
@@ -29,7 +31,7 @@ async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSi
       if (body.code) code = body.code;
       if (body.stage) stage = body.stage;
     } catch { /* keep status message */ }
-    throw new ApiError(message, code, stage);
+    throw new ApiError(message, code, stage, response.status);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -47,6 +49,15 @@ export const api = {
   }, signal),
   addSource: (input: SourceInput) => request<Source>('/sources', json(input)),
   deleteSource: (id: string) => request<void>('/sources/' + encodeURIComponent(id), { method: 'DELETE' }),
+  /** The coverage census. It is never run by itself. A 409 means the server refused a broad scan on a live source, and that comes back as { refused }. */
+  coverage: async (sourceId: string, start: string, end: string, signal?: AbortSignal): Promise<CoverageReport | CoverageRefused> => {
+    try {
+      return await request<CoverageReport>('/sources/' + encodeURIComponent(sourceId) + '/coverage?' + new URLSearchParams({ start, end }).toString(), {}, signal);
+    } catch (cause) {
+      if (cause instanceof ApiError && (cause.status === 409 || cause.code === 'broad_scan_refused')) return { refused: cause.message };
+      throw cause;
+    }
+  },
   analyze: (query: Query, signal?: AbortSignal) => request<Analysis>('/analyze', json(query), signal),
   breakdown: (query: Query, dim: BreakdownDim, top = 20, signal?: AbortSignal) =>
     request<Breakdown>('/breakdown', json({ query, dim, top }), signal),
