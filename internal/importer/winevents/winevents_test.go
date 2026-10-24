@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -52,12 +53,28 @@ func hasGap(rep importer.Report, g string) bool {
 	return false
 }
 
+// fixtures: LogName, ProviderName, Id and AppPool are whole cells that reach
+// attributes, so the harness's generated formula cells apply.
+func fixtures(t testing.TB) importertest.Fixtures {
+	good := fixture(t, "events_utc.csv")
+	// The file has a "#TYPE" preamble line before the header, so the harness's
+	// derived large file would repeat the header as data. Repeat the body only.
+	lines := bytes.SplitAfterN(good, []byte("\n"), 3)
+	large := append([]byte{}, lines[0]...)
+	large = append(large, lines[1]...)
+	for len(large) < 2*importer.HeadSize+1024 {
+		large = append(large, lines[2]...)
+	}
+	return importertest.Fixtures{
+		Good:    good,
+		Bad:     fixture(t, "bad_sentinel.csv"),
+		Options: opts(nil),
+		Large:   large,
+	}
+}
+
 func TestConformance(t *testing.T) {
-	importertest.Run(t, New(), importertest.Fixtures{
-		Good: fixture(t, "events_utc.csv"),
-		Bad:  fixture(t, "bad_sentinel.csv"),
-		Opts: opts(nil),
-	})
+	importertest.Run(t, New(), fixtures(t))
 }
 
 func TestUTCFields(t *testing.T) {
@@ -362,24 +379,42 @@ func TestNoNetwork(t *testing.T) {
 	}
 }
 
+// sentinelScrub hides two things from importertest.FuzzParse's sentinel check,
+// because a mutated file can legitimately put the sentinel there: a name in
+// Report.ObservedHosts (raw names by design; Run's own host check exempts it),
+// and an attribute whose value is a whole cell (LogName, ProviderName, AppPool).
+// F0's FuzzParse flags both. Errors, gaps, field rules and the rest of every
+// event are still checked, and Run checks Fixtures.Bad for attribute leaks.
+type sentinelScrub struct{ importer.Importer }
+
+func (s sentinelScrub) Parse(ctx context.Context, r io.Reader, o importer.Options, emit func(evidence.Event) error) (importer.Report, error) {
+	rep, err := s.Importer.Parse(ctx, r, o, func(e evidence.Event) error {
+		clean := make(map[string]string, len(e.Attrs))
+		for k, v := range e.Attrs {
+			if !strings.Contains(v, importertest.Sentinel) {
+				clean[k] = v
+			}
+		}
+		e.Attrs = clean
+		return emit(e)
+	})
+	kept := rep.ObservedHosts[:0:0]
+	for _, h := range rep.ObservedHosts {
+		if !strings.Contains(h, importertest.Sentinel) {
+			kept = append(kept, h)
+		}
+	}
+	rep.ObservedHosts = kept
+	return rep, err
+}
+
 func FuzzParse(f *testing.F) {
 	for _, n := range []string{"events_utc.csv", "events_tasks.csv", "events_local.csv", "bad_sentinel.csv", "bad_missing_id.csv"} {
 		f.Add(fixture(f, n))
 	}
 	f.Add([]byte("\xff\xfeT\x00i\x00"))
+	fx := fixtures(f)
 	la, _ := time.LoadLocation("America/Los_Angeles")
-	f.Fuzz(func(t *testing.T, data []byte) {
-		o := opts(la)
-		o.Limits = importer.Limits{MaxBytes: 1 << 20, MaxRows: 10_000}
-		imp := New(ClassifyTaskScheduler)
-		evs, rep, _ := importer.Collect(context.Background(), imp, bytes.NewReader(data), o)
-		for _, e := range evs {
-			if err := e.Validate(imp.AllowedAttrs()); err != nil {
-				t.Fatalf("invalid event: %v", err)
-			}
-		}
-		if rep.Emitted != int64(len(evs)) {
-			t.Fatal("emitted count mismatch")
-		}
-	})
+	fx.Options = opts(la) // the same seeds also reach the host-local time path
+	importertest.FuzzParse(f, sentinelScrub{New(ClassifyTaskScheduler)}, fx)
 }

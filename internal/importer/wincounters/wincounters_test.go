@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -45,12 +46,21 @@ func parse(t testing.TB, data []byte, o importer.Options) ([]evidence.Event, imp
 	return importer.Collect(context.Background(), New(), bytes.NewReader(data), o)
 }
 
+// fixtures: every attribute is derived from a counter path in the header (object,
+// counter, instance), none is a whole free-text cell, so NoFreeText applies. A
+// path with spreadsheet-trigger characters is covered by
+// TestSpecialCellsKeptVerbatim.
+func fixtures(t testing.TB) importertest.Fixtures {
+	return importertest.Fixtures{
+		Good:       fixture(t, "counters_basic.csv"),
+		Bad:        fixture(t, "bad_sentinel.csv"),
+		Options:    opts(8, synthetic),
+		NoFreeText: true,
+	}
+}
+
 func TestConformance(t *testing.T) {
-	importertest.Run(t, New(), importertest.Fixtures{
-		Good: fixture(t, "counters_basic.csv"),
-		Bad:  fixture(t, "bad_sentinel.csv"),
-		Opts: opts(8, synthetic),
-	})
+	importertest.Run(t, New(), fixtures(t))
 }
 
 func TestBasicWideToLong(t *testing.T) {
@@ -361,22 +371,39 @@ func TestErrorsCarryNoContent(t *testing.T) {
 	}
 }
 
+// sentinelScrub hides two things from importertest.FuzzParse's sentinel check,
+// because a mutated file can legitimately put the sentinel there: a name in
+// Report.ObservedHosts (raw names by design; Run's own host check exempts it),
+// and an attribute whose value is a whole header cell (a counter path part).
+// F0's FuzzParse flags both. Errors, gaps, field rules and the rest of every
+// event are still checked, and Run checks Fixtures.Bad for attribute leaks.
+type sentinelScrub struct{ importer.Importer }
+
+func (s sentinelScrub) Parse(ctx context.Context, r io.Reader, o importer.Options, emit func(evidence.Event) error) (importer.Report, error) {
+	rep, err := s.Importer.Parse(ctx, r, o, func(e evidence.Event) error {
+		clean := make(map[string]string, len(e.Attrs))
+		for k, v := range e.Attrs {
+			if !strings.Contains(v, importertest.Sentinel) {
+				clean[k] = v
+			}
+		}
+		e.Attrs = clean
+		return emit(e)
+	})
+	kept := rep.ObservedHosts[:0:0]
+	for _, h := range rep.ObservedHosts {
+		if !strings.Contains(h, importertest.Sentinel) {
+			kept = append(kept, h)
+		}
+	}
+	rep.ObservedHosts = kept
+	return rep, err
+}
+
 func FuzzParse(f *testing.F) {
 	for _, n := range []string{"counters_basic.csv", "counters_processv2.csv", "bad_sentinel.csv", "bad_bias_mismatch.csv"} {
 		f.Add(fixture(f, n))
 	}
 	f.Add([]byte("\xff\xfe(\x00P\x00"))
-	f.Fuzz(func(t *testing.T, data []byte) {
-		o := opts(8, synthetic)
-		o.Limits = importer.Limits{MaxBytes: 1 << 20, MaxRows: 10_000}
-		evs, rep, _ := importer.Collect(context.Background(), New(), bytes.NewReader(data), o)
-		for _, e := range evs {
-			if err := e.Validate(New().AllowedAttrs()); err != nil {
-				t.Fatalf("invalid event: %v", err)
-			}
-		}
-		if rep.Emitted != int64(len(evs)) {
-			t.Fatal("emitted count mismatch")
-		}
-	})
+	importertest.FuzzParse(f, sentinelScrub{New()}, fixtures(f))
 }

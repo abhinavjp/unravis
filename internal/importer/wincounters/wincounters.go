@@ -250,7 +250,9 @@ func (m *imp) resolveColumns(hdr []string, opts importer.Options, acc *wincsv.Ac
 			continue
 		}
 		p := ps[i]
-		acc.Observe(p.host)
+		if err := acc.Observe(p.host); err != nil {
+			return nil, nil, err
+		}
 		h, seen := hintFor[p.host]
 		if !seen {
 			var ok bool

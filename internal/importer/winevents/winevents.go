@@ -87,16 +87,20 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 	}
 	hdr := cr.Header()
 	idx := map[string]int{}
+	dups := map[string]bool{}
 	for i, h := range hdr {
 		k := strings.ToLower(strings.TrimSpace(h))
 		if _, dup := idx[k]; dup {
-			return acc.Fail(wincsv.MissingColumn("duplicate column"))
+			dups[k] = true // a repeated column we read is refused below, by its fixed name
+			continue
 		}
 		idx[k] = i
 	}
+	// A column we read must appear exactly once: a second copy could hold other data.
 	need := func(name string) (int, error) {
-		i, ok := idx[strings.ToLower(name)]
-		if !ok {
+		k := strings.ToLower(name)
+		i, ok := idx[k]
+		if !ok || dups[k] {
 			return 0, wincsv.MissingColumn(name)
 		}
 		return i, nil
@@ -110,18 +114,22 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 			return acc.Fail(err)
 		}
 	}
-	cUTC, haveUTC := idx["timecreatedutc"]
-	cLocal, haveLocal := idx["timecreated"]
-	rule, timeCol, timeName := clock.RuleUTCField, cUTC, "TimeCreatedUtc"
-	switch {
-	case haveUTC:
-	case haveLocal:
-		rule, timeCol, timeName = clock.RuleHostLocal, cLocal, "TimeCreated"
-	default:
-		return acc.Fail(wincsv.MissingColumn("TimeCreatedUtc"))
+	rule, timeCol, timeName := clock.RuleUTCField, 0, "TimeCreatedUtc"
+	if _, ok := idx["timecreatedutc"]; !ok {
+		if _, ok := idx["timecreated"]; ok {
+			rule, timeName = clock.RuleHostLocal, "TimeCreated"
+		}
+	}
+	if timeCol, err = need(timeName); err != nil {
+		return acc.Fail(err)
 	}
 	cApp, haveApp := idx["apppool"]
-	acc.Rep.FieldRules[timeName] = rule
+	if haveApp {
+		if cApp, err = need("AppPool"); err != nil {
+			return acc.Fail(err)
+		}
+	}
+	acc.Rep.Rule(timeName, rule)
 	acc.Rep.Quality.TimezoneRule = rule
 
 	allowed := m.AllowedAttrs()
@@ -159,7 +167,9 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 		machine := rec[cMach]
 		hint, seen := hosts[machine]
 		if !seen {
-			acc.Observe(machine)
+			if e := acc.Observe(machine); e != nil {
+				return acc.Fail(e)
+			}
 			ok := false
 			if machine != "" && opts.Hosts != nil {
 				hint, ok = opts.Hosts(machine)
