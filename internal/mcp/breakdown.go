@@ -73,11 +73,8 @@ func (b *Bridge) breakdown(ctx context.Context, raw json.RawMessage) (any, error
 	default:
 		return nil, errors.New("dim must be one of statusCode, userId, uiVersion, userAgent, pollingType, userIp")
 	}
-	shown, err := b.identifiersAllowed(ctx)
-	if err != nil {
-		// Fail closed: when the dashboard cannot say whether it is a demo, nothing is shown.
-		return nil, err
-	}
+	// The local operator switch alone decides; a demo dashboard is not exempt.
+	shown := b.identifiersAllowed()
 	if args.Dim == audit.BreakdownUserIP {
 		if !shown {
 			// includeIp is ignored while the operator switch is off.

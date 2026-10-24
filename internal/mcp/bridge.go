@@ -8,10 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,10 +19,13 @@ import (
 const maxBody = 16 << 20
 const resultTTL = 10 * time.Minute
 
-var tokenPattern = regexp.MustCompile(`name="audit-session"\s+content="([^"]+)"`)
+// locator returns the dashboard's base URL and session token. It runs before
+// every request, so a dashboard restarted on a new port or with a new token is
+// picked up without restarting the bridge.
+type locator func() (base, token string, err error)
 
 type Bridge struct {
-	base      string
+	locate    locator
 	client    *http.Client
 	mu        sync.Mutex
 	token     string
@@ -33,28 +34,78 @@ type Bridge struct {
 	created   time.Time
 	comparing bool
 	now       func() time.Time
-	// allowIdentifiers is the operator switch (--mcp-allow-identifiers). Off by default.
+	// allowIdentifiers is the operator switch (--mcp-allow-identifiers). Off by
+	// default. It is the only thing that decides whether identifiers are shown.
 	allowIdentifiers bool
+	sessionFile      string
+	envToken         string
 }
 
 // Option configures a Bridge.
 type Option func(*Bridge)
 
-// WithIdentifiers lets MCP return user ids, user agents and IP addresses.
+// WithIdentifiers lets MCP return user ids, user agents and IP addresses, and
+// accept filters on them and on URLs and audit record ids.
 func WithIdentifiers(allowed bool) Option {
 	return func(b *Bridge) { b.allowIdentifiers = allowed }
 }
 
+// WithSessionFile names the session file the dashboard writes (see
+// SessionFilePath). The bridge reads the port and token from it per request.
+func WithSessionFile(path string) Option {
+	return func(b *Bridge) { b.sessionFile = path }
+}
+
+// WithToken supplies the session token directly (AUDIT_SESSION_TOKEN), for a
+// dashboard started with that same variable. It overrides the file's token.
+func WithToken(token string) Option {
+	return func(b *Bridge) { b.envToken = token }
+}
+
+// notRunning is the plain message for a missing, unreadable or invalid session
+// file. It never names the path or echoes the file's content.
+const notRunning = "Unravis is not running for this Windows user. Start the dashboard, then retry"
+
+// New builds a bridge to the dashboard on loopback. With port 0 the port comes
+// from the session file; an explicit port must match it. The token comes from
+// WithToken when given, otherwise from the session file.
 func New(port int, opts ...Option) (*Bridge, error) {
-	if port < 1 || port > 65535 {
-		return nil, errors.New("MCP requires the running dashboard port, between 1 and 65535")
+	if port < 0 || port > 65535 {
+		return nil, errors.New("MCP port must be between 1 and 65535, or omitted to use the running dashboard's session file")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	return newBridge("http://127.0.0.1:"+strconv.Itoa(port), &http.Client{Transport: transport, Timeout: audit.OperationTimeout + 5*time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}, opts...), nil
+	client := &http.Client{Transport: transport, Timeout: audit.OperationTimeout + 5*time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
+	b := newBridge(nil, client, opts...)
+	if b.envToken != "" && !ValidToken(b.envToken) {
+		return nil, errors.New("AUDIT_SESSION_TOKEN must be 32 to 4096 visible ASCII characters")
+	}
+	if b.envToken != "" && port != 0 {
+		base, token := "http://127.0.0.1:"+strconv.Itoa(port), b.envToken
+		b.locate = func() (string, string, error) { return base, token, nil }
+		return b, nil
+	}
+	if b.sessionFile == "" {
+		return nil, errors.New("MCP could not find the per-user application folder for the dashboard's session file; set AUDIT_CONFIG_DIR")
+	}
+	path, explicit, envToken := b.sessionFile, port, b.envToken
+	b.locate = func() (string, string, error) {
+		filePort, fileToken, err := ReadSessionFile(path)
+		if err != nil {
+			return "", "", errors.New(notRunning)
+		}
+		if explicit != 0 && explicit != filePort {
+			return "", "", errors.New("the running dashboard is not on the --port given to --mcp; omit --port so MCP follows the dashboard")
+		}
+		if envToken != "" {
+			fileToken = envToken
+		}
+		return "http://127.0.0.1:" + strconv.Itoa(filePort), fileToken, nil
+	}
+	return b, nil
 }
-func newBridge(base string, client *http.Client, opts ...Option) *Bridge {
-	b := &Bridge{base: base, client: client, now: time.Now}
+func newBridge(locate locator, client *http.Client, opts ...Option) *Bridge {
+	b := &Bridge{locate: locate, client: client, now: time.Now}
 	for _, opt := range opts {
 		opt(b)
 	}
@@ -62,24 +113,16 @@ func newBridge(base string, client *http.Client, opts ...Option) *Bridge {
 }
 
 // identifiersAllowed reports whether user ids, user agents and IP addresses may
-// be returned: the operator switch, or a demo dashboard. It is read per call and
-// never cached, because the dashboard can restart. It fails closed: an error
-// reads as not allowed.
-func (b *Bridge) identifiersAllowed(ctx context.Context) (bool, error) {
-	if b.allowIdentifiers {
-		return true, nil
-	}
-	var info struct {
-		Demo bool `json:"demo"`
-	}
-	if err := b.request(ctx, "/api/info", nil, &info); err != nil {
-		return false, err
-	}
-	return info.Demo, nil
+// be returned, and identifier filters accepted. It is the local operator switch
+// and nothing else: no dashboard response, demo flag included, can relax it.
+func (b *Bridge) identifiersAllowed() bool {
+	return b.allowIdentifiers
 }
 
 // identifierFilterNames lists the record filters of q that match on a user id,
-// a user agent or an IP address.
+// a user agent, an IP address, a URL or an audit record id. URLs can carry
+// personal data in paths and query strings, and an audit id pins one person's
+// request, so each is treated as an identifier.
 func identifierFilterNames(q audit.Query) []string {
 	var names []string
 	if len(q.UserIDs) > 0 {
@@ -91,27 +134,24 @@ func identifierFilterNames(q audit.Query) []string {
 	if len(q.UserIPs) > 0 {
 		names = append(names, "userIps")
 	}
+	if q.URLContains != "" {
+		names = append(names, "urlContains")
+	}
+	if q.AuditID != "" {
+		names = append(names, "auditId")
+	}
 	return names
 }
 
 // checkIdentifierFilters refuses identifier filters while identifiers are hidden.
-// Otherwise a model could bisect a hidden user id, agent or address through
-// repeated filtered counts. It names the filters but never echoes their values,
-// and it fails closed: when the dashboard cannot say whether it is a demo, the
-// filters are refused.
-func (b *Bridge) checkIdentifierFilters(ctx context.Context, q audit.Query) error {
+// Otherwise a model could bisect a hidden user id, agent, address or URL through
+// repeated filtered counts. It names the filters but never echoes their values.
+func (b *Bridge) checkIdentifierFilters(q audit.Query) error {
 	names := identifierFilterNames(q)
-	if len(names) == 0 {
+	if len(names) == 0 || b.identifiersAllowed() {
 		return nil
 	}
-	allowed, err := b.identifiersAllowed(ctx)
-	if err != nil {
-		return errors.New("The " + strings.Join(names, ", ") + " filters were not applied: the dashboard could not confirm that --mcp-allow-identifiers is on or that this is a demo")
-	}
-	if !allowed {
-		return errors.New("The " + strings.Join(names, ", ") + " filters are not available: the operator has not turned on --mcp-allow-identifiers. User ids, user agents and IP addresses are hidden, and filtering on them would reveal them")
-	}
-	return nil
+	return errors.New("The " + strings.Join(names, ", ") + " filters are not available: the operator has not turned on --mcp-allow-identifiers. User ids, user agents, IP addresses, URLs and audit record ids are hidden, and filtering on them would reveal them")
 }
 
 func boundedBody(r io.Reader, limit int) ([]byte, error) {
@@ -121,33 +161,30 @@ func boundedBody(r io.Reader, limit int) ([]byte, error) {
 	}
 	return data, nil
 }
-func (b *Bridge) session(ctx context.Context) (string, error) {
-	b.mu.Lock()
-	token := b.token
-	b.mu.Unlock()
-	if token != "" {
-		return token, nil
+
+// session locates the dashboard. When its token changed since the last call,
+// the cached comparison belongs to another dashboard session and is dropped.
+func (b *Bridge) session() (string, string, error) {
+	if b.locate == nil {
+		return "", "", errors.New(notRunning)
 	}
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, b.base+"/", nil)
-	response, err := b.client.Do(req)
+	base, token, err := b.locate()
 	if err != nil {
-		return "", errors.New("Unravis is unavailable. Start the dashboard and check the configured port")
+		return "", "", err
 	}
-	defer response.Body.Close()
-	data, err := boundedBody(response.Body, 1<<20)
-	if err != nil || response.StatusCode != 200 {
-		return "", errors.New("could not authenticate with the local audit dashboard")
+	if token == "" || len(token) > maxTokenBytes {
+		return "", "", errors.New(notRunning)
 	}
-	match := tokenPattern.FindSubmatch(data)
-	if len(match) != 2 || len(match[1]) > 4096 {
-		return "", errors.New("the local dashboard did not supply an audit session")
-	}
-	token = html.UnescapeString(string(match[1]))
 	b.mu.Lock()
-	b.token = token
+	if b.token != token {
+		b.token = token
+		b.result = nil
+		b.resultID = ""
+	}
 	b.mu.Unlock()
-	return token, nil
+	return base, token, nil
 }
+
 func (b *Bridge) request(ctx context.Context, path string, input, output any) error {
 	switch path {
 	case "/api/info", "/api/sources", "/api/analyze", "/api/requests", "/api/activity", "/api/slowest", "/api/breakdown":
@@ -163,7 +200,7 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 		}
 	}
 	for attempt := 0; attempt < 2; attempt++ {
-		token, err := b.session(ctx)
+		base, token, err := b.session()
 		if err != nil {
 			return err
 		}
@@ -171,7 +208,7 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 		if input != nil {
 			method = http.MethodPost
 		}
-		req, _ := http.NewRequestWithContext(ctx, method, b.base+path, bytes.NewReader(payload))
+		req, _ := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(payload))
 		req.Header.Set("X-Audit-Token", token)
 		if input != nil {
 			req.Header.Set("Content-Type", "application/json")
@@ -181,7 +218,7 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 			if ctx.Err() != nil {
 				return errors.New("audit operation cancelled or its five-minute deadline expired")
 			}
-			return errors.New("local audit request failed; check the dashboard and retry explicitly")
+			return errors.New("Unravis did not answer. Start the dashboard, then retry")
 		}
 		data, readErr := boundedBody(res.Body, maxBody)
 		res.Body.Close()
@@ -189,6 +226,8 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 			return readErr
 		}
 		if res.StatusCode == http.StatusUnauthorized && attempt == 0 {
+			// The dashboard may have restarted between reading the session file
+			// and this request: drop the cached result and locate it again.
 			b.mu.Lock()
 			b.token = ""
 			b.result = nil
@@ -199,6 +238,8 @@ func (b *Bridge) request(ctx context.Context, path string, input, output any) er
 		if res.StatusCode != http.StatusOK {
 			// Never reflect arbitrary upstream text, URLs, credentials or driver errors.
 			switch res.StatusCode {
+			case 401:
+				return errors.New("Unravis refused the session. Restart the dashboard, then retry")
 			case 413:
 				return errors.New("audit processing limit reached; increase bucketSeconds, narrow controller/action or sources, and retry explicitly in the dashboard for its detailed limit message")
 			case 400:

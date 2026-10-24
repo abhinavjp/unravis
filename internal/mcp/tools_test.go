@@ -131,10 +131,6 @@ func auditServer(t *testing.T, route string, response any, got *json.RawMessage)
 func auditServerDemo(t *testing.T, route string, response any, got *json.RawMessage, demo bool) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			w.Write([]byte(`<meta name="audit-session" content="test-token">`))
-			return
-		}
 		if r.URL.Path == "/api/info" {
 			json.NewEncoder(w).Encode(map[string]any{"demo": demo})
 			return
@@ -156,7 +152,8 @@ func auditServerDemo(t *testing.T, route string, response any, got *json.RawMess
 }
 
 func cachedBridge(server *httptest.Server, opts ...Option) *Bridge {
-	b := newBridge(server.URL, server.Client(), opts...)
+	b := newBridge(fixed(server.URL), server.Client(), opts...)
+	b.token = "test-token" // the session the cached result came from
 	b.resultID = "current"
 	b.created = time.Now()
 	b.result = &audit.Analysis{Query: audit.Query{SourceIDs: []string{"s1"}}, APIs: []audit.Comparison{{Key: "k", SourceID: "s1", Controller: "Payroll", Action: "Run", Kind: "synchronous"}}}
@@ -406,7 +403,9 @@ func TestBreakdownShowsIdentifiersWithSwitch(t *testing.T) {
 	}
 }
 
-func TestBreakdownDemoUnaffected(t *testing.T) {
+// A demo dashboard is not exempt: privacy follows the local switch only, never
+// a demo:true in a dashboard response.
+func TestBreakdownDemoDashboardStillHides(t *testing.T) {
 	response := breakdownResponse("userId", audit.BreakdownRow{Value: "1001", Count: 4, Filter: &audit.BreakdownFilter{UserIDs: []int{1001}}})
 	b := cachedBridge(auditServerDemo(t, "/api/breakdown", response, nil, true))
 	result, err := b.call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"current","dim":"userId"}`))
@@ -414,40 +413,26 @@ func TestBreakdownDemoUnaffected(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := json.Marshal(result)
-	if !strings.Contains(string(data), `"value":"1001"`) || !strings.Contains(string(data), `"identifiers":"shown"`) || strings.Contains(string(data), "hidden-") {
-		t.Fatalf("demo values were hidden: %s", data)
+	if strings.Contains(string(data), "1001") || !strings.Contains(string(data), `"identifiers":"hidden"`) || !strings.Contains(string(data), "hidden-1") {
+		t.Fatalf("demo dashboard relaxed identifier hiding: %s", data)
+	}
+	ip := cachedBridge(auditServerDemo(t, "/api/breakdown", breakdownResponse("userIp"), nil, true))
+	if _, err := ip.call(context.Background(), "audit_get_breakdown", json.RawMessage(`{"resultId":"current","dim":"userIp","includeIp":true}`)); err == nil {
+		t.Fatal("demo dashboard allowed the userIp dimension without the switch")
 	}
 }
 
-func TestIdentifiersAllowedIsReadPerCallAndFailsClosed(t *testing.T) {
-	demo := false
-	status := http.StatusOK
+func TestIdentifiersAllowedFollowsTheLocalSwitchOnly(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			w.Write([]byte(`<meta name="audit-session" content="test-token">`))
-			return
-		}
-		if status != http.StatusOK {
-			w.WriteHeader(status)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]any{"demo": demo})
+		t.Errorf("identifier decision contacted the dashboard: %s", r.URL.Path)
+		json.NewEncoder(w).Encode(map[string]any{"demo": true})
 	}))
 	defer server.Close()
-	b := newBridge(server.URL, server.Client())
-	if ok, err := b.identifiersAllowed(context.Background()); ok || err != nil {
-		t.Fatalf("demo false: %v %v", ok, err)
+	if newBridge(fixed(server.URL), server.Client()).identifiersAllowed() {
+		t.Fatal("identifiers allowed without the switch")
 	}
-	demo = true
-	if ok, err := b.identifiersAllowed(context.Background()); !ok || err != nil {
-		t.Fatalf("dashboard restarted into demo, not seen: %v %v", ok, err)
-	}
-	status = http.StatusInternalServerError
-	if ok, err := b.identifiersAllowed(context.Background()); ok || err == nil {
-		t.Fatalf("info failure must fail closed: %v %v", ok, err)
-	}
-	if ok, err := newBridge("http://127.0.0.1:1", &http.Client{}, WithIdentifiers(true)).identifiersAllowed(context.Background()); !ok || err != nil {
-		t.Fatalf("operator switch needs no dashboard call: %v %v", ok, err)
+	if !newBridge(fixed(server.URL), server.Client(), WithIdentifiers(true)).identifiersAllowed() {
+		t.Fatal("switch on not honoured")
 	}
 }
 
@@ -478,7 +463,7 @@ func TestProvenanceForwarded(t *testing.T) {
 	q := audit.Query{SourceIDs: []string{"s1"}, Start: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), End: time.Date(2026, 10, 22, 13, 0, 0, 0, time.UTC), BaselineStart: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC), BaselineEnd: time.Date(2026, 10, 21, 13, 0, 0, 0, time.UTC), Kind: "all", Outcome: "all", Metric: "total", BucketSeconds: 60}
 	compare := auditServer(t, "/api/analyze", audit.Analysis{Query: q, Provenance: prov, APIs: []audit.Comparison{{Key: "k", State: "compared"}}}, nil)
 	raw, _ := json.Marshal(map[string]any{"query": q})
-	result, err := newBridge(compare.URL, compare.Client()).call(context.Background(), "audit_compare", raw)
+	result, err := newBridge(fixed(compare.URL), compare.Client()).call(context.Background(), "audit_compare", raw)
 	if err != nil {
 		t.Fatal(err)
 	}

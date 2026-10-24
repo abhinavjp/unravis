@@ -4,8 +4,6 @@ import (
 	"api-audit-explorer/internal/audit"
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -16,11 +14,14 @@ func filterQuery() audit.Query {
 }
 
 // identifierFilters are the record filters that match on an identifier value. A
-// model that may set them can bisect a hidden id, so they follow the same switch.
+// model that may set them can bisect a hidden id, URL or record, so they follow
+// the same switch.
 var identifierFilters = map[string]func(*audit.Query){
 	"userIds":           func(q *audit.Query) { q.UserIDs = []int{1001} },
 	"userAgentContains": func(q *audit.Query) { q.UserAgentContains = "secret-agent" },
 	"userIps":           func(q *audit.Query) { q.UserIPs = []string{"203.0.113.77"} },
+	"urlContains":       func(q *audit.Query) { q.URLContains = "/private/path" },
+	"auditId":           func(q *audit.Query) { q.AuditID = "65a1b2c3d4e5f60718293a4b" },
 }
 
 func compareCall(t *testing.T, b *Bridge, q audit.Query) error {
@@ -37,11 +38,11 @@ func TestCompareRejectsIdentifierFiltersWhenSwitchOff(t *testing.T) {
 			server := auditServer(t, "/api/analyze", audit.Analysis{}, &sent)
 			q := filterQuery()
 			set(&q)
-			err := compareCall(t, newBridge(server.URL, server.Client()), q)
+			err := compareCall(t, newBridge(fixed(server.URL), server.Client()), q)
 			if err == nil || !strings.Contains(err.Error(), "--mcp-allow-identifiers") || !strings.Contains(err.Error(), name) {
 				t.Fatalf("filter %s accepted or unclear error: %v", name, err)
 			}
-			for _, value := range []string{"1001", "secret-agent", "203.0.113.77"} {
+			for _, value := range []string{"1001", "secret-agent", "203.0.113.77", "/private/path", "65a1b2c3d4e5f60718293a4b"} {
 				if strings.Contains(err.Error(), value) {
 					t.Errorf("error echoes the filter value %q", value)
 				}
@@ -53,48 +54,40 @@ func TestCompareRejectsIdentifierFiltersWhenSwitchOff(t *testing.T) {
 	}
 }
 
-func TestCompareIdentifierFiltersFailClosedWhenInfoFails(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			w.Write([]byte(`<meta name="audit-session" content="test-token">`))
-			return
-		}
-		if r.URL.Path == "/api/analyze" {
-			t.Error("analyze reached while info failed")
-		}
-		w.WriteHeader(500)
-	}))
-	defer server.Close()
-	q := filterQuery()
-	q.UserIDs = []int{1001}
-	if err := compareCall(t, newBridge(server.URL, server.Client()), q); err == nil {
-		t.Fatal("info failure must reject the filter")
+// A demo dashboard is not exempt: whatever /api/info says, the filters follow
+// the local switch only.
+func TestCompareRejectsIdentifierFiltersOnDemoDashboard(t *testing.T) {
+	for name, set := range identifierFilters {
+		t.Run(name, func(t *testing.T) {
+			var sent json.RawMessage
+			server := auditServerDemo(t, "/api/analyze", audit.Analysis{}, &sent, true)
+			q := filterQuery()
+			set(&q)
+			if err := compareCall(t, newBridge(fixed(server.URL), server.Client()), q); err == nil || !strings.Contains(err.Error(), "--mcp-allow-identifiers") {
+				t.Fatalf("demo dashboard relaxed the %s filter: %v", name, err)
+			}
+			if len(sent) != 0 {
+				t.Errorf("a rejected query reached the dashboard: %s", sent)
+			}
+		})
 	}
 }
 
-func TestCompareAcceptsIdentifierFiltersWithSwitchOrDemo(t *testing.T) {
+func TestCompareAcceptsIdentifierFiltersWithSwitch(t *testing.T) {
 	for name, set := range identifierFilters {
-		for _, mode := range []string{"switch", "demo"} {
-			t.Run(name+"/"+mode, func(t *testing.T) {
-				var sent json.RawMessage
-				q := filterQuery()
-				set(&q)
-				var b *Bridge
-				if mode == "switch" {
-					server := auditServer(t, "/api/analyze", audit.Analysis{Query: q}, &sent)
-					b = newBridge(server.URL, server.Client(), WithIdentifiers(true))
-				} else {
-					server := auditServerDemo(t, "/api/analyze", audit.Analysis{Query: q}, &sent, true)
-					b = newBridge(server.URL, server.Client())
-				}
-				if err := compareCall(t, b, q); err != nil {
-					t.Fatal(err)
-				}
-				if !strings.Contains(string(sent), name) {
-					t.Errorf("filter not forwarded: %s", sent)
-				}
-			})
-		}
+		t.Run(name, func(t *testing.T) {
+			var sent json.RawMessage
+			q := filterQuery()
+			set(&q)
+			server := auditServer(t, "/api/analyze", audit.Analysis{Query: q}, &sent)
+			b := newBridge(fixed(server.URL), server.Client(), WithIdentifiers(true))
+			if err := compareCall(t, b, q); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(sent), name) {
+				t.Errorf("filter not forwarded: %s", sent)
+			}
+		})
 	}
 }
 

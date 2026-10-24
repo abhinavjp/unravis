@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"io/fs"
 	"mime"
@@ -17,6 +16,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"api-audit-explorer/internal/audit"
@@ -39,6 +39,7 @@ type handler struct {
 	demo    bool
 	history savedHistory
 	ledger  ledger.Store
+	tests   connectionTestLimiter
 }
 
 type savedHistory interface {
@@ -60,11 +61,53 @@ func New(repo audit.Repository, assets fs.FS, token string, demo bool, options .
 		}
 	}
 	if assets != nil {
+		// The page is served as built. The session token is never written into it:
+		// GET / is unauthenticated and loopback is shared by every local user, so
+		// the browser receives the token only in the launch URL's fragment (#t=),
+		// which browsers never send to a server.
 		if data, err := fs.ReadFile(assets, "index.html"); err == nil {
-			h.index = []byte(strings.Replace(string(data), `name="audit-session" content=""`, `name="audit-session" content="`+html.EscapeString(token)+`"`, 1))
+			h.index = data
 		}
 	}
 	return h
+}
+
+// connectionTestsPerWindow caps connection tests per connectionTestWindow. A
+// test reports distinct network outcomes (refused, timeout, DNS, handshake), so
+// an unlimited test endpoint would map hosts and ports reachable from this
+// machine. A person testing connections by hand stays well under the cap.
+const (
+	connectionTestsPerWindow = 10
+	connectionTestWindow     = time.Minute
+)
+
+// connectionTestLimiter is a sliding-window count of recent connection tests.
+type connectionTestLimiter struct {
+	mu    sync.Mutex
+	times []time.Time
+	now   func() time.Time
+}
+
+// allow records one test and reports whether it fits in the window.
+func (l *connectionTestLimiter) allow() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	if l.now != nil {
+		now = l.now()
+	}
+	kept := l.times[:0]
+	for _, at := range l.times {
+		if now.Sub(at) < connectionTestWindow {
+			kept = append(kept, at)
+		}
+	}
+	l.times = kept
+	if len(l.times) >= connectionTestsPerWindow {
+		return false
+	}
+	l.times = append(l.times, now)
+	return true
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -131,11 +174,29 @@ func (h *handler) serveAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clean := path.Clean("/" + r.URL.Path)
-	if clean == "/" || !fs.ValidPath(strings.TrimPrefix(clean, "/")) {
+	name := strings.TrimPrefix(clean, "/")
+	if clean == "/" || clean != r.URL.Path || !fs.ValidPath(name) {
 		http.NotFound(w, r)
 		return
 	}
-	http.FileServer(http.FS(h.assets)).ServeHTTP(w, r)
+	// Only exact files are served: a directory path is a 404, never a listing.
+	file, err := h.assets.Open(name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	content, ok := file.(io.ReadSeeker)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeContent(w, r, info.Name(), info.ModTime(), content)
 }
 
 func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
@@ -267,6 +328,10 @@ func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) testConnection(w http.ResponseWriter, r *http.Request) {
+	if !h.tests.allow() {
+		writeError(w, http.StatusTooManyRequests, "Too many connection tests in the last minute. Wait a minute, then test again.")
+		return
+	}
 	var input audit.ConnectionInput
 	if !decodeJSON(w, r, &input) {
 		return

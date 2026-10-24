@@ -18,7 +18,7 @@ Try the deterministic sample data first:
 .\run.ps1 -Demo
 ```
 
-For live data, start without `-Demo` and add MongoDB sources in the dashboard. Connections are made when you test or add a source. The browser opens the local dashboard by default; use `-NoBrowser` to suppress that. `-Port` changes the local port (the default is `18765`). The session token is kept in backend memory, injected into the dashboard HTML, and never printed or stored.
+For live data, start without `-Demo` and add MongoDB sources in the dashboard. Connections are made when you test or add a source. The browser opens the local dashboard by default; use `-NoBrowser` to suppress that. By default the dashboard picks a free loopback port each time; `-Port` fixes one. At start it prints the link to open, `http://127.0.0.1:<port>/#t=<token>`, and opens that link in the browser. The session token travels only in the part after `#`, which the browser never sends to the server; the page reads it, keeps it for that browser tab, and removes it from the address bar. The token is never written into the dashboard page. If a tab shows "Open Unravis from the link it printed when it started, or restart it.", use the printed link again. The port and token are also written owner-only to `%APPDATA%\APIAuditExplorer\session.json` (or `%AUDIT_CONFIG_DIR%\session.json`) so `--mcp` can find the dashboard; the file is removed when the dashboard shuts down cleanly.
 
 ## Live sources and privacy
 
@@ -70,7 +70,7 @@ The Go runtime uses a 256 MiB soft memory target. This is a runtime target, not 
 
 ## Frontend development
 
-Run the backend and Vite in separate PowerShell terminals. Set the same explicit token in each terminal; it must contain at least 32 characters. The dev server injects that token only in serve mode. `AUDIT_API_TARGET` optionally overrides Vite's loopback proxy target (default `http://127.0.0.1:18765`).
+Run the backend and Vite in separate PowerShell terminals. Set the same explicit token in each terminal; it must contain at least 32 characters. The backend needs an explicit `--port` here so Vite knows where to proxy. In serve mode Vite prints a link of the form `http://127.0.0.1:<vite port>/#t=<token>`; open that link. `AUDIT_API_TARGET` optionally overrides Vite's loopback proxy target (default `http://127.0.0.1:18765`).
 
 Backend terminal:
 

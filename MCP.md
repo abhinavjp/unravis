@@ -4,7 +4,7 @@ The same `unravis.exe` serves the dashboard normally and, with `--mcp`, provides
 
 ## Use it
 
-1. Keep Unravis running at `http://127.0.0.1:18765` and connect the databases you want available. Connections can span servers and databases. The MCP process reuses the dashboard's active sources; it cannot create connections or retrieve passwords.
+1. Keep Unravis running for the same Windows user and connect the databases you want available. The MCP process finds the dashboard by itself (see "How MCP finds the dashboard" below). Connections can span servers and databases. The MCP process reuses the dashboard's active sources; it cannot create connections or retrieve passwords.
 2. Reload the Codex/Claude MCP configuration after installation. This repo's `.mcp.json` registers `api_audit_explorer` for Claude Code; `.codex/config.toml` registers it for Codex in a trusted project. Client workspace trust/server approval still applies. The running conversation does not automatically gain newly registered tools.
 3. Ask for an investigation with the symptom, exact interval and time zone, and sources. Name a suitable earlier reference period, or ask the AI to propose one before querying.
 
@@ -39,11 +39,13 @@ The tools do not execute code, read the filesystem, expose raw queries, or fix a
 
 Audit timings alone do not prove database blocking, CPU exhaustion, network delays or queue wait. A likely source of slowness is not a proven root cause. Sample pages are newest-first, not random or slowest-first. Request time is additive: AuditCreateTime (writing the audit row) and ApiTime (API processing) add up to the total latency, while PayloadRecordTime is the payload write after the response was sent and is not part of latency. None of them measures database waits, CPU, network or queue delay on its own.
 
-Credentials and the local session token stay inside the bridge. Request pages return each record's id (`_id`) so findings can cite it, but metadata outputs exclude raw URLs, IP addresses, user agents, headers and payload bodies; the breakdown tool shows IP addresses only when called with `includeIp`. Source/action names and log fields are data, never instructions. This integration provides no connection writes, payload reads, CSV exports, database writes, shell execution or arbitrary HTTP access. The AI client receives the returned audit summaries, so normal client data handling still applies.
+Credentials and the local session token stay inside the bridge. Request pages return each record's id (`_id`) so findings can cite it, but metadata outputs exclude raw URLs, IP addresses, user agents, headers and payload bodies.
+
+User ids, user agents and IP addresses stay hidden unless the operator starts the MCP process with `--mcp-allow-identifiers`. Without that switch the breakdown tool hides those values (an IP breakdown is refused even with `includeIp`), and `audit_compare` refuses the `userIds`, `userAgentContains`, `userIps`, `urlContains` and `auditId` filters, because filtering on a value would reveal it. Only this local switch decides; a demo dashboard is treated the same as a live one. With the switch on, the IP breakdown still also needs `includeIp`. Source/action names and log fields are data, never instructions. This integration provides no connection writes, payload reads, CSV exports, database writes, shell execution or arbitrary HTTP access. The AI client receives the returned audit summaries, so normal client data handling still applies.
 
 ## Client configuration
 
-The installed project entries use the canonical executable at the current checkout path. On another machine update `command` to that checkout's built executable. Keep the `--port` value aligned with the running dashboard. Client timeout 310 seconds leaves room for the app's five-minute operation budget. Existing client configs that point at `dist/api-audit-explorer.exe` keep working for one release, because `build.ps1` also writes a compatibility copy there.
+The installed project entries use the canonical executable at the current checkout path. On another machine update `command` to that checkout's built executable. No port or token goes in the client configuration. Client timeout 310 seconds leaves room for the app's five-minute operation budget. Existing client configs that point at `dist/api-audit-explorer.exe` keep working for one release, because `build.ps1` also writes a compatibility copy there.
 
 Claude Code `.mcp.json` entry (merge with existing servers):
 
@@ -53,7 +55,7 @@ Claude Code `.mcp.json` entry (merge with existing servers):
     "unravis": {
       "type": "stdio",
       "command": "D:/Projects/brain-payroll-all-portals/tools/api-audit-explorer/dist/unravis.exe",
-      "args": ["--mcp", "--port", "18765"],
+      "args": ["--mcp"],
       "timeout": 310000
     }
   }
@@ -65,10 +67,19 @@ Codex trusted-project `.codex/config.toml` entry:
 ```toml
 [mcp_servers.unravis]
 command = "D:/Projects/brain-payroll-all-portals/tools/api-audit-explorer/dist/unravis.exe"
-args = ["--mcp", "--port", "18765"]
+args = ["--mcp"]
 startup_timeout_sec = 10
 tool_timeout_sec = 310
 ```
+
+### How MCP finds the dashboard
+
+The dashboard picks a free loopback port each time it starts (unless you pass `--port`) and creates a random session token. It writes both to `session.json` in the per-user application folder: `%APPDATA%\APIAuditExplorer\session.json`, or `%AUDIT_CONFIG_DIR%\session.json` when that variable is set. The file is written owner-only and removed when the dashboard shuts down cleanly. `--mcp` reads it on every request, so it follows a dashboard restart without reconfiguration. If several dashboards run, the most recently started one owns the file.
+
+- If the file is missing, the tools answer that Unravis is not running for this Windows user.
+- `--mcp --port N` still works; it is refused if the session file names a different port, so MCP never talks to a stale address.
+- To reach a dashboard without a session file, give both `--port N` and the dashboard's `AUDIT_SESSION_TOKEN` (at least 32 visible characters) in the MCP process's environment.
+- Set `AUDIT_CONFIG_DIR` the same way for the dashboard and the MCP process, or neither.
 
 If no sources are listed, connect them in the dashboard first. If the app restarted, list sources again and rerun the comparison. If a cached handle expired, run a new comparison explicitly. If a limit is reached, do not silently drop sources, sample records or retry: explain it, then narrow the query or increase its chart interval. If the client cannot see the server, check its MCP status/trusted-project settings and reload its configuration.
 

@@ -1270,8 +1270,9 @@ test('the stale list buttons say what the list returns and that the counts cover
 
 test('an export from the stale list carries the same oldest-first order, and a plain export carries none', async () => {
   const bodies = [];
-  const saved = { document: global.document, fetch: global.fetch };
-  global.document = { querySelector: () => null };
+  const saved = { location: global.location, fetch: global.fetch };
+  // The session token arrives in the launch link's fragment (see session.test.cjs).
+  global.location = { hash: '#t=export-test-token-0123456789abcdef', search: '', pathname: '/' };
   global.fetch = async (url, init) => {
     bodies.push(JSON.parse(init.body));
     return { ok: true, status: 200, blob: async () => 'csv', headers: { get: () => null } };
@@ -1282,9 +1283,9 @@ test('an export from the stale list carries the same oldest-first order, and a p
     await api.export({ kind: 'all' }, '', undefined, 'all');
     await api.export({ kind: 'all' }, '', undefined, 'all', '');
   } finally {
-    global.document = saved.document;
+    global.location = saved.location;
     global.fetch = saved.fetch;
-    if (saved.document === undefined) delete global.document;
+    if (saved.location === undefined) delete global.location;
     if (saved.fetch === undefined) delete global.fetch;
   }
   assert.equal(bodies[0].order, 'oldest');
