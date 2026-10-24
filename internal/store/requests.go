@@ -201,15 +201,29 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		elapsed  time.Duration
 	}
 	var reads []pageRead
-	notRun := func(p *profile, code string) {
-		page.Provenance = append(page.Provenance, failedProvenance(p, "page", input.Query.Start, input.Query.End, audit.QueryModeExact, nil, notRunNote(input.Query.QueryMode), code, 0))
+	// Sources are read in parallel, as Analyze reads them: every read goes through
+	// admit, so each source still runs one operation at a time and the store four.
+	// A worker writes only its own slot; the slots merge below in the order the
+	// query listed the sources, so the page does not depend on which answered first.
+	type sourceRead struct {
+		rows       []pageRow
+		result     audit.SourceResult
+		provenance audit.Provenance
+		ok         bool
+		elapsed    time.Duration
+		limitErr   error
 	}
-	for _, p := range profiles {
-		release, denied := s.admit(ctx, p)
+	slots := make([]sourceRead, len(profiles))
+	workCtx, cancelWork := context.WithCancel(ctx)
+	defer cancelWork()
+	fanOut(len(profiles), func(i int) {
+		p := profiles[i]
+		slot := &slots[i]
+		release, denied := s.admit(workCtx, p)
 		if denied != nil {
-			page.Sources = append(page.Sources, audit.SourceResult{SourceID: p.source.ID, ErrorCode: denied.Code, Error: denied.Message})
-			notRun(p, denied.Code)
-			continue
+			slot.result = audit.SourceResult{SourceID: p.source.ID, ErrorCode: denied.Code, Error: denied.Message}
+			slot.provenance = failedProvenance(p, "page", input.Query.Start, input.Query.End, audit.QueryModeExact, nil, notRunNote(input.Query.QueryMode), denied.Code, 0)
+			return
 		}
 		// Hint mode: calibrate after admission. The legacy reader and the activity
 		// overlap query never use it; they run exact and say why.
@@ -220,7 +234,7 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		case overlap:
 			unsupported = "activity includes requests that began before the window"
 		}
-		margin, hintNote := s.resolveHint(ctx, p, input.Query.QueryMode, unsupported)
+		margin, hintNote := s.resolveHint(workCtx, p, input.Query.QueryMode, unsupported)
 		ranMode := audit.QueryModeExact
 		if margin != nil {
 			ranMode = audit.QueryModeHint
@@ -237,16 +251,13 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 		pipeline = hinted(pipeline, margin, input.Query.Start, input.Query.End)
 		var err error
 		if usesLegacyMongo(p.shared.client) {
-			sourceRows, err = readLegacyRequestRowsOrdered(ctx, p, input.Query, cohort, state, after, legacyRowMetadataPipeline(pipeline), input.Limit+1, &legacyRecords, &legacyBytes, overlap, slow, oldest)
-			if err == nil {
-				rows = append(rows, sourceRows...)
-			}
+			sourceRows, err = readLegacyRequestRowsOrdered(workCtx, p, input.Query, cohort, state, after, legacyRowMetadataPipeline(pipeline), input.Limit+1, &legacyRecords, &legacyBytes, overlap, slow, oldest)
 		} else {
-			cur, aggregateErr := p.shared.client.Aggregate(ctx, p.source.Database, p.source.Collection, pipeline)
+			cur, aggregateErr := p.shared.client.Aggregate(workCtx, p.source.Database, p.source.Collection, pipeline)
 			err = aggregateErr
 			if err == nil {
 				sourceRows = make([]pageRow, 0, input.Limit+1)
-				for cur.Next(ctx) {
+				for cur.Next(workCtx) {
 					var doc requestDocument
 					if decodeErr := cur.Decode(&doc); decodeErr != nil {
 						err = errors.New("decode failure")
@@ -269,33 +280,47 @@ func (s *Store) requestsMode(ctx context.Context, input audit.PageInput, overlap
 					err = cur.Err()
 				}
 				closeMongoCursor(cur)
-				if err == nil {
-					rows = append(rows, sourceRows...)
-				}
 			}
 		}
 		release()
-		elapsed := time.Since(began)
+		slot.elapsed = time.Since(began)
 		pv := newProvenance(p, "page", input.Query.Start, input.Query.End, ranMode, margin)
 		pv.Note = hintNote
 		if err != nil {
 			if errors.Is(err, audit.ErrLimit) {
-				return audit.Page{}, err
+				slot.limitErr = err
+				cancelWork()
+				return
 			}
 			code, message := sourceQueryError(ctx, err)
-			page.Sources = append(page.Sources, audit.SourceResult{SourceID: p.source.ID, ErrorCode: code, Error: message})
-			finishProvenance(&pv, 0, 0, elapsed, code)
-			page.Provenance = append(page.Provenance, pv)
-			continue
+			slot.result = audit.SourceResult{SourceID: p.source.ID, ErrorCode: code, Error: message}
+			finishProvenance(&pv, 0, 0, slot.elapsed, code)
+			slot.provenance = pv
+			return
 		}
-		reads = append(reads, pageRead{index: len(page.Provenance), returned: int64(len(sourceRows)), elapsed: elapsed})
-		page.Provenance = append(page.Provenance, pv)
+		slot.rows = sourceRows
+		slot.ok = true
+		slot.provenance = pv
 		warning := p.indexWarning
 		if warning != "" {
 			warning += " "
 		}
 		warning += "Rows without valid effective timestamps are omitted from sorted request results; legacy rows may use CreatedOn when RequestInitiatedAt is absent."
-		page.Sources = append(page.Sources, audit.SourceResult{SourceID: p.source.ID, OK: true, Version: p.version, IndexWarning: warning})
+		slot.result = audit.SourceResult{SourceID: p.source.ID, OK: true, Version: p.version, IndexWarning: warning}
+	})
+	for i := range slots {
+		if slots[i].limitErr != nil {
+			return audit.Page{}, slots[i].limitErr
+		}
+	}
+	for i := range slots {
+		slot := &slots[i]
+		if slot.ok {
+			rows = append(rows, slot.rows...)
+			reads = append(reads, pageRead{index: len(page.Provenance), returned: int64(len(slot.rows)), elapsed: slot.elapsed})
+		}
+		page.Sources = append(page.Sources, slot.result)
+		page.Provenance = append(page.Provenance, slot.provenance)
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if slowest {
