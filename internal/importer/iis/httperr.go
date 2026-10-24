@@ -4,17 +4,18 @@ import (
 	"context"
 	"io"
 	"strings"
+	"time"
 
 	"api-audit-explorer/internal/clock"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/importer"
 )
 
-// gapHTTPERRTime states the unverified time zone reading. HTTP.sys error logs
-// are understood to stamp host-local time (unlike IIS W3C logs, which are
-// UTC), but no sample has confirmed it, so a host zone is required and the
-// file is refused without one.
-const gapHTTPERRTime = "HTTPERR time zone unverified; timestamps are treated as host-local time."
+// Time zone. The HTTP.sys error log Date and Time fields are UTC. Microsoft
+// documents this in "Error logging in HTTP APIs" (Date is W3C format and UTC,
+// Time is UTC; 5:30 PM UTC is written 17:30:00) and in "Format of the HTTP
+// Server API Error Logs". The host zone therefore plays no part: no zone is
+// required, and a row cannot fall in a clock change.
 
 // httperrReasons is the allowlist for s-reason, authored from the public
 // HTTP.sys error log documentation. It is not exhaustive: anything else is
@@ -67,22 +68,20 @@ func (HTTPERR) Detect(head []byte, fileName string) int {
 var httperrSpec = &spec{
 	name:     "iis-httperr",
 	limits:   HTTPERR{}.DefaultLimits(),
-	zoneRule: clock.RuleHostLocal,
+	zoneRule: clock.RuleUTCField,
 	keep: []string{"date", "time", "cs-method", "cs-uri", "sc-status", "s-siteid",
 		"s-reason", "s-queuename"},
 	required: []string{"date", "time"},
+	// HTTPERR rows carry no machine name, so the picked host labels them.
 	preflight: func(opts importer.Options) error {
 		if opts.Host == nil || opts.Host.Label == "" {
 			return importer.ErrUnknownHost
-		}
-		if opts.Host.TZ == nil {
-			return importer.ErrTimezoneUnlabelled
 		}
 		return nil
 	},
 	row: httperrRow,
 	gaps: func(st *runState, rep *importer.Report) []string {
-		return []string{gapHTTPERRTime}
+		return []string{gapW3CResolution}
 	},
 }
 
@@ -95,30 +94,25 @@ func httperrRow(c *rowCtx) (evidence.Event, importer.Reason, error) {
 	var ev evidence.Event
 	d, _ := c.get("date")
 	t, _ := c.get("time")
-	res, err := clock.ParseLocal("2006-01-02 15:04:05", d+" "+t, c.opts.Host.TZ)
-	switch {
-	case err != nil:
+	ts, err := time.Parse("2006-01-02 15:04:05", d+" "+t) // UTC: see the note at the top of this file
+	if err != nil || !saneLogTime(ts) {
 		return ev, importer.ReasonBadTime, nil
-	case res.Ambiguous:
-		return ev, importer.ReasonDSTAmbiguous, nil
-	case res.Nonexistent:
-		return ev, importer.ReasonDSTNonexistent, nil
 	}
-	ts := res.UTC.UTC()
+	ts = ts.UTC()
 
-	host, err := c.resolveHost("")
-	if err != nil {
-		return ev, "", err
+	host, reason, err := c.resolveHost("")
+	if err != nil || reason != "" {
+		return ev, reason, err
 	}
 
 	attrs := make(map[string]string, 6)
-	reason := "other"
+	sreason := "other"
 	if v, ok := c.get("s-reason"); ok {
 		if canon, ok := httperrReasons[strings.ToLower(v)]; ok {
-			reason = canon
+			sreason = canon
 		}
 	}
-	attrs["reason"] = reason
+	attrs["reason"] = sreason
 	if v, ok := c.get("cs-method"); ok {
 		if m, ok := cleanToken(v, 20); ok {
 			attrs["method"] = m

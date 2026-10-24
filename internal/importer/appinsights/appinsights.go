@@ -15,11 +15,17 @@
 // and never reaches an event, a report or an error: data (command text), url
 // and its query, customDimensions, client_IP, user_Id and any unknown column.
 //
+// Names. The name attribute is kept only as "METHOD /route" (identifiers in the
+// route become {id}) or a single route word; SQL, server and free-text names
+// are dropped. See sanitizeName. Without a host map, a file with more than one
+// cloud_RoleInstance is refused (ErrUnknownHost) rather than merged.
+//
 // Labels. Rows are Symptom evidence only. Counts are sum(itemCount) and are
 // estimates because of sampling. A missing record is never counter-evidence.
 package appinsights
 
 import (
+	"bufio"
 	"context"
 	"encoding/csv"
 	"errors"
@@ -201,7 +207,15 @@ func (im *Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 	rep := importer.Report{Importer: Name}
 	lim := fillLimits(opts.Limits, im.DefaultLimits())
 
-	cr, _, err := textio.NewCSV(r, textio.CSVOptions{Comma: ',', MaxFields: lim.MaxFields, MaxLine: lim.MaxLineBytes})
+	// Cap and sniff here too, so a direct call does not depend on
+	// importer.Prepare having run first.
+	br := bufio.NewReaderSize(importer.LimitReader(r, lim.MaxBytes), importer.HeadSize)
+	head, _ := br.Peek(16)
+	if err := importer.Sniff(head); err != nil {
+		return rep, err
+	}
+
+	cr, _, err := textio.NewCSV(br, textio.CSVOptions{Comma: ',', MaxFields: lim.MaxFields, MaxLine: lim.MaxLineBytes})
 	if err != nil {
 		return rep, err
 	}
@@ -226,6 +240,10 @@ func (im *Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 		pickedHost = opts.Host.Label
 	}
 	hostCache := map[string]string{}
+	// firstInstance is the one instance name seen when there is no host map.
+	// Without a map the picked host labels the file, so a second distinct
+	// machine would be merged into it: that is refused instead.
+	firstInstance := ""
 	var timeRejects int64
 
 	reject := func(line int64, reason importer.Reason) {
@@ -299,6 +317,13 @@ func (im *Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 							return rep, importer.ErrUnknownHost
 						}
 						label = h.Label
+					} else {
+						key := strings.ToLower(raw)
+						if firstInstance == "" {
+							firstInstance = key
+						} else if key != firstInstance {
+							return rep, importer.ErrUnknownHost
+						}
 					}
 					hostCache[raw] = label
 				}
@@ -318,7 +343,7 @@ func (im *Importer) Parse(ctx context.Context, r io.Reader, opts importer.Option
 
 		attrs := map[string]string{}
 		if keepName[kind] {
-			if n := sanitizeName(cell(rec, cols.name)); n != "" {
+			if n := sanitizeName(kind, cell(rec, cols.depType), cell(rec, cols.name)); n != "" {
 				attrs["name"] = n
 			}
 		}
@@ -537,30 +562,172 @@ func validToken(s string, max int) bool {
 	return true
 }
 
-// sanitizeName drops any query string, turns GUID and numeric path segments
-// into {id}, and caps the result at 256 bytes. Other characters are kept
-// verbatim; CSV escaping is the exporter's job.
-func sanitizeName(s string) string {
-	if i := strings.IndexByte(s, '?'); i >= 0 {
+// httpMethods are the leading tokens of a request or HTTP dependency name.
+var httpMethods = map[string]bool{
+	"GET": true, "POST": true, "PUT": true, "DELETE": true, "PATCH": true,
+	"HEAD": true, "OPTIONS": true, "TRACE": true, "CONNECT": true,
+}
+
+// sanitizeName returns the part of an operation name that is safe to keep, or
+// "" when nothing is. kind is the event kind and depType the dependency type
+// column. A name is kept only in one of these shapes:
+//
+//   - "METHOD /path": the path is cut at ? and #, matrix parameters (;x=y) are
+//     dropped and every segment goes through routeSegment, so numbers, GUIDs,
+//     ObjectIds, tokens and e-mail addresses become {id};
+//   - "/path": the same, without a method;
+//   - a single route word such as "ProcessQueue" (not for dependencies).
+//
+// Anything else (SQL text, "server | database", free text, a formula) is
+// dropped. A dependency name is kept only in the "METHOD /path" shape and only
+// when its type is empty or an HTTP type: SQL and other dependency names carry
+// server, database and statement text. The result is at most 256 bytes.
+//
+// This duplicates the shape rules of the iis package; the two packages are
+// kept apart on purpose.
+func sanitizeName(kind, depType, s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, "?#"); i >= 0 {
 		s = s[:i]
 	}
 	if s == "" {
 		return ""
 	}
-	segs := strings.Split(s, "/")
+	method, path := "", s
+	if i := strings.IndexByte(s, ' '); i > 0 && httpMethods[strings.ToUpper(s[:i])] {
+		method, path = strings.ToUpper(s[:i]), strings.TrimLeft(s[i+1:], " ")
+		if path == "" || path[0] != '/' {
+			return ""
+		}
+	}
+	if kind == "dependency" {
+		if method == "" {
+			return ""
+		}
+		if t := strings.ToLower(depType); t != "" && !strings.Contains(t, "http") {
+			return ""
+		}
+	}
+	var out string
+	switch {
+	case path[0] == '/':
+		out = routePath(path)
+	case method == "" && !strings.ContainsAny(path, " /") && routeSegment(path) == path:
+		out = path
+	default:
+		return ""
+	}
+	if method != "" {
+		out = method + " " + out
+	}
+	if len(out) > maxNameBytes {
+		out = out[:maxNameBytes]
+		for !utf8.ValidString(out) {
+			out = out[:len(out)-1]
+		}
+	}
+	return out
+}
+
+// routePath maps each segment of a "/a/b" path through routeSegment, dropping
+// matrix parameters.
+func routePath(p string) string {
+	segs := strings.Split(p, "/")
 	for i, seg := range segs {
-		if isNumeric(seg) || isGUID(seg) {
-			segs[i] = "{id}"
+		if j := strings.IndexByte(seg, ';'); j >= 0 {
+			seg = seg[:j]
+		}
+		segs[i] = routeSegment(seg)
+	}
+	return strings.Join(segs, "/")
+}
+
+// staticExt lists the file extensions a route word may carry. Document and
+// archive extensions are left out: those names are free text.
+var staticExt = map[string]bool{
+	"html": true, "htm": true, "aspx": true, "asmx": true, "ashx": true, "svc": true, "axd": true,
+	"js": true, "css": true, "json": true, "xml": true, "txt": true, "map": true,
+	"png": true, "jpg": true, "jpeg": true, "gif": true, "svg": true, "ico": true, "webp": true,
+	"woff": true, "woff2": true, "ttf": true, "eot": true,
+}
+
+// routeSegment returns seg when it is a route word and "{id}" otherwise. A
+// route word is [A-Za-z0-9_-] up to 40 bytes, optionally followed by one
+// allowlisted extension, or a version such as v1 or v1.0. It is not an
+// identifier: not all digits, not a GUID, not a hex run of 16 or more, not 32
+// bytes or longer, not 20 or more bytes with a digit in them, and without a
+// run of 5 digits. A plain word in an id position (a user name) cannot be told
+// from a route word by shape and is kept.
+func routeSegment(seg string) string {
+	if seg == "" {
+		return ""
+	}
+	if isNumeric(seg) || isGUID(seg) {
+		return "{id}"
+	}
+	if isVersion(seg) {
+		return seg
+	}
+	base := seg
+	if i := strings.LastIndexByte(seg, '.'); i >= 0 {
+		if !staticExt[strings.ToLower(seg[i+1:])] {
+			return "{id}"
+		}
+		base = seg[:i]
+	}
+	if base == "" || len(base) > 40 || looksLikeIdentifier(base) {
+		return "{id}"
+	}
+	for i := 0; i < len(base); i++ {
+		b := base[i]
+		ok := b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_' || b == '-'
+		if !ok {
+			return "{id}"
 		}
 	}
-	s = strings.Join(segs, "/")
-	if len(s) > maxNameBytes {
-		s = s[:maxNameBytes]
-		for !utf8.ValidString(s) {
-			s = s[:len(s)-1]
+	return seg
+}
+
+// looksLikeIdentifier reports shapes that carry a record or session id: long
+// hex (an ObjectId is 24 hex digits), long tokens, tokens that mix letters and
+// digits at 20 bytes or more, and long digit runs.
+func looksLikeIdentifier(s string) bool {
+	if len(s) >= 32 {
+		return true
+	}
+	digit, run, maxRun := false, 0, 0
+	for i := 0; i < len(s); i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			digit = true
+			run++
+			if run > maxRun {
+				maxRun = run
+			}
+		} else {
+			run = 0
 		}
 	}
-	return s
+	return isHex(s) && len(s) >= 16 || digit && len(s) >= 20 || maxRun >= 5
+}
+
+// isVersion matches v1, V2.1 and v1.2.3.
+func isVersion(s string) bool {
+	if len(s) < 2 || (s[0] != 'v' && s[0] != 'V') {
+		return false
+	}
+	dots, prevDot := 0, true
+	for i := 1; i < len(s); i++ {
+		switch {
+		case s[i] >= '0' && s[i] <= '9':
+			prevDot = false
+		case s[i] == '.' && !prevDot && dots < 2:
+			dots++
+			prevDot = true
+		default:
+			return false
+		}
+	}
+	return !prevDot && len(s) <= 12
 }
 
 func isNumeric(s string) bool {

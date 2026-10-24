@@ -56,12 +56,16 @@ func goodRows(n int) string {
 }
 
 // fixtures are the synthetic files shared by the conformance run and the fuzz
-// target. The name column carries free text into the "name" attribute.
+// target. Since the M3 fix no attribute carries a whole free-text cell: a name
+// is kept only as "METHOD /route" or a single route word, with identifiers
+// replaced, and a name in any other shape is dropped. A formula cell therefore
+// has nowhere to arrive verbatim, which is NoFreeText.
 func fixtures(t testing.TB) importertest.Fixtures {
 	return importertest.Fixtures{
-		Good:    read(t, "good.csv"),
-		Bad:     read(t, "bad.csv"),
-		Options: importer.Options{Hosts: opts().Hosts},
+		Good:       read(t, "good.csv"),
+		Bad:        read(t, "bad.csv"),
+		Options:    importer.Options{Hosts: opts().Hosts},
+		NoFreeText: true,
 	}
 }
 
@@ -94,7 +98,7 @@ func TestGoodFixture(t *testing.T) {
 	if ev[2].Attrs["name"] != "GET /api/items/{id}" || *ev[2].Value != 5 {
 		t.Fatalf("sampled request: %+v", ev[2])
 	}
-	if ev[3].DurationMs != nil || ev[3].Attrs["name"] != "HTTP GET /v1/ping" {
+	if ev[3].DurationMs != nil || ev[3].Attrs["name"] != "GET /v1/ping" {
 		t.Fatalf("no duration / query cut: %+v", ev[3])
 	}
 	if ev[4].Kind != "exception" {
@@ -106,8 +110,11 @@ func TestGoodFixture(t *testing.T) {
 	if _, has := ev[4].Attrs["dependencyType"]; has {
 		t.Fatal("dependencyType only for dependencies")
 	}
-	if ev[5].Attrs["name"] != "=SUM(1+1)" {
-		t.Fatalf("formula cell must stay verbatim: %q", ev[5].Attrs["name"])
+	if _, has := ev[5].Attrs["name"]; has {
+		t.Fatalf("formula-like name must be dropped: %q", ev[5].Attrs["name"])
+	}
+	if _, has := ev[1].Attrs["name"]; has {
+		t.Fatalf("SQL dependency name must be dropped: %q", ev[1].Attrs["name"])
 	}
 	m := ev[6]
 	if m.Kind != "other" || m.Attrs["resultCode"] != "other" || m.Attrs["success"] != "unknown" {
@@ -356,16 +363,21 @@ func TestSanitizeName(t *testing.T) {
 		"POST /x/3fa85f6457174562b3fc2c963f66afa6":     "POST /x/{id}",
 		"GET /search?q=jo@example.test":                "GET /search",
 		"GET /v1":                                      "GET /v1",
-		"=cmd|' /C calc'!A0":                           "=cmd|' /C calc'!A0",
+		"=cmd|' /C calc'!A0":                           "",
 		"?only":                                        "",
+		"get /lower/case":                              "GET /lower/case",
+		"GET":                                          "GET",
+		"GET /":                                        "GET /",
+		"DELETE x":                                     "",
 	} {
-		if got := sanitizeName(in); got != want {
+		if got := sanitizeName("request", "", in); got != want {
 			t.Errorf("%q: got %q want %q", in, got, want)
 		}
 	}
+	// a long non-route segment collapses instead of being cut mid-character
 	long := "GET /" + strings.Repeat("é", 300)
-	if got := sanitizeName(long); len(got) > 256 || !strings.HasPrefix(got, "GET /é") {
-		t.Errorf("long name: %d bytes", len(got))
+	if got := sanitizeName("request", "", long); got != "GET /{id}" {
+		t.Errorf("long name: %q", got)
 	}
 }
 

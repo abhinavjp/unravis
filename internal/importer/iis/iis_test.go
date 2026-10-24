@@ -174,7 +174,8 @@ func TestW3CGood(t *testing.T) {
 	if rep.FieldRules["date+time"] != clock.RuleUTCField {
 		t.Errorf("field rules %v", rep.FieldRules)
 	}
-	if rep.Quality.CoverageFirst == nil || !rep.First.Equal(ts) || !rep.Last.Equal(time.Date(2001, 2, 3, 4, 6, 1, 0, time.UTC)) {
+	// coverage starts at the earliest request start: row 2 ends 04:05:07 after 3000 ms
+	if rep.Quality.CoverageFirst == nil || !rep.First.Equal(time.Date(2001, 2, 3, 4, 5, 4, 0, time.UTC)) || !rep.Last.Equal(time.Date(2001, 2, 3, 4, 6, 1, 0, time.UTC)) {
 		t.Errorf("coverage %v %v", rep.First, rep.Last)
 	}
 	if len(rep.ObservedHosts) != 1 || rep.ObservedHosts[0] != "WEB-A" {
@@ -414,13 +415,19 @@ func TestNormaliseStem(t *testing.T) {
 			t.Errorf("normaliseStem(%q) = %q,%v want %q,%v", c.in, got, ok, c.want, c.ok)
 		}
 	}
+	// a long junk segment is not a route word: it collapses to {id}
 	got, ok := normaliseStem(long)
-	if !ok || len(got) != 256 {
-		t.Errorf("long stem len %d", len(got))
+	if !ok || got != "/{id}" {
+		t.Errorf("long stem %q", got)
 	}
 	got, _ = normaliseStem("/" + strings.Repeat("é", 200))
-	if len(got) > 256 || !strings.HasPrefix(got, "/é") {
-		t.Errorf("multibyte truncation len %d", len(got))
+	if got != "/{id}" {
+		t.Errorf("multibyte stem %q", got)
+	}
+	// many route segments stay within the length cap
+	got, _ = normaliseStem(strings.Repeat("/abc", 200))
+	if len(got) > 256 {
+		t.Errorf("stem length %d", len(got))
 	}
 }
 
@@ -460,9 +467,9 @@ func TestHTTPERRGood(t *testing.T) {
 		t.Fatalf("events %d rejected %d", len(evs), rep.Rejected)
 	}
 	e := evs[0]
-	// 2001-03-17 10:00:01 in Pacific/Auckland (NZDT, +13) is 2001-03-16 21:00:01 UTC
-	if e.Kind != "httperr" || e.Source != "iis-httperr" || e.TZRule != clock.RuleHostLocal || e.Host != "web-a" ||
-		!e.Start.Equal(time.Date(2001, 3, 16, 21, 0, 1, 0, time.UTC)) || !e.End.Equal(e.Start) || e.DurationMs != nil {
+	// HTTPERR time is UTC whatever the host zone: 10:00:01 stays 10:00:01Z
+	if e.Kind != "httperr" || e.Source != "iis-httperr" || e.TZRule != clock.RuleUTCField || e.Host != "web-a" ||
+		!e.Start.Equal(time.Date(2001, 3, 17, 10, 0, 1, 0, time.UTC)) || !e.End.Equal(e.Start) || e.DurationMs != nil {
 		t.Fatalf("event 0: %+v", e)
 	}
 	want := map[string]string{"reason": "QueueFull", "method": "GET", "stem": "/api/v1/orders/{id}",
@@ -487,10 +494,10 @@ func TestHTTPERRGood(t *testing.T) {
 			t.Errorf("output contains %q", banned)
 		}
 	}
-	if !strings.Contains(strings.Join(rep.KnownGaps, "\n"), "HTTPERR time zone unverified") {
+	if strings.Contains(strings.Join(rep.KnownGaps, "\n"), "time zone") {
 		t.Errorf("gaps %v", rep.KnownGaps)
 	}
-	if rep.FieldRules["date+time"] != clock.RuleHostLocal || rep.Quality.TimezoneRule != clock.RuleHostLocal {
+	if rep.FieldRules["date+time"] != clock.RuleUTCField || rep.Quality.TimezoneRule != clock.RuleUTCField {
 		t.Errorf("rules %v %+v", rep.FieldRules, rep.Quality)
 	}
 }
@@ -507,16 +514,14 @@ func httperrFile(rows ...string) []byte {
 	return []byte(b.String())
 }
 
-func TestHTTPERRDSTRows(t *testing.T) {
-	// Pacific/Auckland 2001: clocks went back at 03:00 on 18 March (02:30 is
-	// ambiguous) and forward at 02:00 on 7 October (02:30 does not exist).
+func TestHTTPERRBadTimeRows(t *testing.T) {
+	// Times are UTC, so only an unparseable time is rejected (the DST cases
+	// are covered by TestHTTPERRNoDSTRejects).
 	cases := map[string]struct {
 		row    string
 		reason importer.Reason
 	}{
-		"fold": {"2001-03-18 02:30:00 192.0.2.50 GET /a 503 QueueFull pool-alpha", importer.ReasonDSTAmbiguous},
-		"gap":  {"2001-10-07 02:30:00 192.0.2.50 GET /a 503 QueueFull pool-alpha", importer.ReasonDSTNonexistent},
-		"bad":  {"2001-03-32 02:30:00 192.0.2.50 GET /a 503 QueueFull pool-alpha", importer.ReasonBadTime},
+		"bad": {"2001-03-32 02:30:00 192.0.2.50 GET /a 503 QueueFull pool-alpha", importer.ReasonBadTime},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -531,16 +536,10 @@ func TestHTTPERRDSTRows(t *testing.T) {
 	}
 }
 
-func TestHTTPERRNeedsHostAndZone(t *testing.T) {
+func TestHTTPERRNeedsHost(t *testing.T) {
 	o := httperrOpts()
-	o.Host.TZ = nil
-	_, _, err := parse(t, NewHTTPERR(), fixture(t, "httperr_good.log"), o)
-	if !errors.Is(err, importer.ErrTimezoneUnlabelled) {
-		t.Fatalf("no tz: %v", err)
-	}
-	o = httperrOpts()
 	o.Host = nil
-	_, _, err = parse(t, NewHTTPERR(), fixture(t, "httperr_good.log"), o)
+	_, _, err := parse(t, NewHTTPERR(), fixture(t, "httperr_good.log"), o)
 	if !errors.Is(err, importer.ErrUnknownHost) {
 		t.Fatalf("no host: %v", err)
 	}
@@ -568,7 +567,7 @@ func TestHTTPERRNoFieldsAndBadRows(t *testing.T) {
 
 func TestClassifyWAS(t *testing.T) {
 	recycle := map[int]string{5074: "time-interval", 5075: "request-limit", 5076: "scheduled-time",
-		5077: "virtual-memory", 5079: "admin-requested", 5080: "config-change", 5117: "private-memory"}
+		5077: "virtual-memory", 5078: "isapi-unhealthy", 5079: "admin-requested", 5080: "config-change", 5117: "private-memory"}
 	for id, reason := range recycle {
 		kind, attrs, ok := ClassifyWAS("Microsoft-Windows-WAS", id)
 		if !ok || kind != "apppool-recycle" || attrs["reason"] != reason || len(attrs) != 1 {
@@ -588,7 +587,7 @@ func TestClassifyWAS(t *testing.T) {
 	for _, c := range []struct {
 		p  string
 		id int
-	}{{"Microsoft-Windows-WAS", 5078}, {"Microsoft-Windows-WAS", 0}, {"Microsoft-Windows-WAS", -1},
+	}{{"Microsoft-Windows-WAS", 5073}, {"Microsoft-Windows-WAS", 0}, {"Microsoft-Windows-WAS", -1},
 		{"Some-Other-Provider", 5074}, {"", 5186}} {
 		if k, a, ok := ClassifyWAS(c.p, c.id); ok || k != "" || a != nil {
 			t.Errorf("%v classified: %q %v", c, k, a)
@@ -597,14 +596,17 @@ func TestClassifyWAS(t *testing.T) {
 }
 
 func TestRecycleGap(t *testing.T) {
-	for _, rt := range []string{"iis-10", "iis-10.0", "IIS-11", " iis-10 "} {
-		if g := RecycleGap(rt); g != "" {
+	// 8.5 and later: the weak wording; earlier or unknown: the legacy wording.
+	// No runtime returns "": a missing recycle event is never evidence of none.
+	for _, rt := range []string{"iis-10", "iis-10.0", "IIS-11", " iis-10 ", "iis-8.5", "iis-9"} {
+		g := RecycleGap(rt)
+		if g != recycleGapText || !strings.Contains(g, "logEventOnRecycle") {
 			t.Errorf("RecycleGap(%q) = %q", rt, g)
 		}
 	}
-	for _, rt := range []string{"iis-8.5", "iis-7.5", "iis-9", "", "unknown", "sql-2019", "iis-", "iis-x"} {
+	for _, rt := range []string{"iis-8", "iis-7.5", "iis-8.0", "", "unknown", "sql-2019", "iis-", "iis-x", "iis-8.x"} {
 		g := RecycleGap(rt)
-		if g == "" || !strings.Contains(g, "Time, Memory and PrivateMemory") {
+		if g != recycleGapTextLegacy || !strings.Contains(g, "Time, Memory and PrivateMemory") {
 			t.Errorf("RecycleGap(%q) = %q", rt, g)
 		}
 	}

@@ -2,7 +2,7 @@ timestamp [UTC],itemType,name,duration,resultCode,success,itemCount,operation_Id
 2001-02-03T04:05:06.1234567Z,request,GET /api/orders/12345,250.5,200,True,1,op-0001,WEB-A,,DROPPED-data-alpha,"{""k"":""DROPPED-dim-alpha""}",192.0.2.10,DROPPED-user-alpha,https://web-a.example.test/api/orders/12345?token=DROPPED-query-alpha
 2001-02-03T04:05:06.5Z,dependency,SQL: sql-a.example.test | db-alpha,120,0,False,1,op-0001,WEB-A,SQL,select DROPPED-sql-alpha from t,,192.0.2.11,DROPPED-user-beta,
 2001-02-03T04:05:30Z,request,GET /api/items/3fa85f64-5717-4562-b3fc-2c963f66afa6?x=DROPPED-query-beta,3000,500,False,5,op-0002,WEB-A,,,,192.0.2.12,,
-2001-02-03T04:06:00+00:00,dependency,HTTP GET /v1/ping?key=DROPPED-query-gamma,,200,True,2,op-0003,WEB-A,Http,,,,,
+2001-02-03T04:06:00+00:00,dependency,GET /v1/ping?key=DROPPED-query-gamma,,200,True,2,op-0003,WEB-A,Http,,,,,
 2001-02-03T04:06:10Z,exception,DROPPED-message-alpha,,,,1,op-0003,WEB-A,DROPPED-exception-type,,,,,
 2001-02-03T04:07:00Z,request,=SUM(1+1),10,200,true,1,op-0004,WEB-A,,,,,,
 2001-02-03T04:07:01Z,mystery,+cmd,5,abc def,maybe,1,bad id!,WEB-A,,,,,,
