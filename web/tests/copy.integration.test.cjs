@@ -52,3 +52,8 @@ test('exports used by the UI exist', () => {
     assert.equal(typeof plain[name], 'function', name);
   }
 });
+
+test('the real deck passes lintTerms, which also lints each term name', () => {
+  const { lintTerms } = loadTypeScript('src/lib/copy/copylint.ts');
+  assert.deepEqual(lintTerms(deck.terms), []);
+});

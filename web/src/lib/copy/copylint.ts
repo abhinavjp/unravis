@@ -1,6 +1,7 @@
 /**
  * Copy lint (roadmap §6.6 "Copy lint" and §8.14 writing rules). Pure TypeScript, no DOM.
  * `lintCopy` returns the findings for a set of on-screen texts; an empty array means pass.
+ * `lintScreenStrings` is the entry point for component text; `lintTerms` lints the glossary entries.
  */
 import type { Term } from './types';
 import { auditCreate, notObservedGap, notObservedThreshold, overlapAmbiguous, overlapUnique, plainAuditCreate } from './wordings';
@@ -18,28 +19,49 @@ export const JARGON: string[] = [
   'P50', 'P95', 'P99', 'percentile', 'coverage', 'episode', 'correlation', 'join', 'baseline', 'sampling', 'low sample'
 ];
 
-/** Causal verbs and phrases. None may name a cause for a measurement. */
+/** Causal verbs and phrases. None may name a cause for a measurement (unless negated, see below). */
 const CAUSAL_PATTERNS: RegExp[] = [
-  /\bcaus(?:ed|es|ing)\b/gi,
+  /\bcaus(?:e|es|ed|ing)\b/gi, // the verb or the noun, including "root cause" and "the cause of"
   /\bbecause\b/gi,
   /\bwaiting on\b/gi,
+  /\bwait(?:s|ed|ing)? for\b/gi,
   /\bblocked by\b/gi,
   /\bdue to\b/gi,
   /\bthe database was waiting\b/gi,
-  /\bthe API waited for\b/gi
+  /\b(?:is|was|were|are)\s+the\s+reason\b/gi,
+  /\b(?:led|leads|leading)\s+to\b/gi,
+  /\bresult(?:ed|s|ing)\s+(?:from|in)\b/gi,
+  /\bresponsible for\b/gi
 ];
 
-/** A negation ("does not prove", "cannot show") before the phrase in the same sentence makes it a disclaimer. */
-const NEGATED_BEFORE = /\b(?:not|never|cannot|can't|n't)\s+(?:\w+\s+){0,2}?(?:prove|show|mean|say|imply|tell|explain|establish|confirm|demonstrate|state)\b[^.;!?]*$/i;
-const NEGATED_PROOF_BEFORE = /\b(?:not|never|cannot|can't|n't|no)\s+(?:\w+\s+){0,1}$/i;
+/** A negation word, including the contractions don't, doesn't, isn't, can't and "cannot". */
+const NEGATION = String.raw`(?:\b(?:not|never|cannot)\b|\b\w+n['’]t\b)`;
+/** Claim verbs and nouns a negation can disclaim ("does not prove", "is not proof of"). */
+const CLAIM_WORD = String.raw`(?:prove|proof|show|mean|say|imply|tell|explain|establish|confirm|demonstrate|state|evidence)`;
+
+/**
+ * Text that shows the causal word sits inside a negated clause. Two shapes:
+ *  - a negation, up to two words, then a claim word ("does not prove that X caused Y", "is not proof of a cause");
+ *  - the negation directly before the causal word ("is not because of", "is not the cause of").
+ * The clause head passed in starts after the last comma, semicolon, colon, dash or sentence end,
+ * so "does not prove a link, but it is because of" is never exempt.
+ */
+const NEGATED_CLAUSE = new RegExp(String.raw`${NEGATION}\s+(?:\w+\s+){0,2}?${CLAIM_WORD}\b`, 'i');
+const NEGATED_DIRECTLY = new RegExp(String.raw`${NEGATION}\s+(?:(?:the|a|an|any|one)\s+)?$`, 'i');
+const NEGATED_PROOF_BEFORE = new RegExp(String.raw`(?:${NEGATION}|\bno\b)\s+(?:\w+\s+)?$`, 'i');
 
 const WEAK_LABEL = /\bsymptom\b|(?<!strong\s)\bcorrelation\b/i;
 
-/** Text before `index` within its own sentence. */
-function sentenceBefore(text: string, index: number): string {
+/** Text before `index` within its own clause (after the last comma, semicolon, colon, dash, bracket or sentence end). */
+function clauseBefore(text: string, index: number): string {
   const head = text.slice(0, index);
-  const cut = Math.max(head.lastIndexOf('.'), head.lastIndexOf('!'), head.lastIndexOf('?'), head.lastIndexOf(';'));
+  const cut = Math.max(...[...'.!?;:,—–()\n'].map((c) => head.lastIndexOf(c)));
   return head.slice(cut + 1);
+}
+
+function isNegatedClaim(text: string, index: number): boolean {
+  const head = clauseBefore(text, index);
+  return NEGATED_CLAUSE.test(head) || NEGATED_DIRECTLY.test(head);
 }
 
 function lintCausal(entry: LintEntry): LintFinding[] {
@@ -48,7 +70,7 @@ function lintCausal(entry: LintEntry): LintFinding[] {
   const hasWeak = WEAK_LABEL.test(text);
   for (const pattern of CAUSAL_PATTERNS) {
     for (const m of text.matchAll(pattern)) {
-      if (NEGATED_BEFORE.test(sentenceBefore(text, m.index ?? 0))) continue;
+      if (isNegatedClaim(text, m.index ?? 0)) continue;
       findings.push({
         id: entry.id,
         rule: 'causal',
@@ -62,7 +84,7 @@ function lintCausal(entry: LintEntry): LintFinding[] {
     findings.push({ id: entry.id, rule: 'causal', message: `"${m[0]}" overstates the evidence. "Proven" never appears.` });
   }
   for (const m of text.matchAll(/\b(?:prove|proof)\b/gi)) {
-    if (NEGATED_PROOF_BEFORE.test(sentenceBefore(text, m.index ?? 0))) continue;
+    if (NEGATED_PROOF_BEFORE.test(clauseBefore(text, m.index ?? 0))) continue;
     findings.push({ id: entry.id, rule: 'causal', message: `"${m[0]}" overstates the evidence. Only "does not prove" or "not proof" is allowed.` });
   }
   return findings;
@@ -84,34 +106,70 @@ function toPattern(sample: string): string {
 
 const asNumber = (s: string) => s as unknown as number;
 
-/** Every sentence the app may show for absence, linkage and plain measurement. */
-const WORDING_PATTERNS: RegExp[] = [
+/** Every sentence the app may show for absence, linkage and plain measurement (as regex sources). */
+const WORDING_SOURCES: string[] = [
   notObservedThreshold(TEXT, TEXT),
   notObservedGap(TEXT),
   overlapUnique(TEXT, TEXT, asNumber(NUM)),
   overlapAmbiguous(asNumber(NUM)),
   auditCreate(asNumber(NUM)),
   plainAuditCreate(asNumber(NUM))
-].map((sample) => new RegExp('^' + toPattern(sample)));
+].map(toPattern);
+
+/** Sticky patterns: each matches one whole permitted sentence (or sentences) at an exact position. */
+const WORDING_PATTERNS: RegExp[] = WORDING_SOURCES.map((source) => new RegExp(source + '(?=\\s|$)', 'y'));
 
 /** Phrases that must only ever appear as the exact permitted wordings. */
 const WORDING_TRIGGERS = ['Not observed', 'Possible overlap', 'Audit create took', 'overlapping this interval'];
 
-/** True when the whole text is one or more permitted wordings and nothing else. */
-function isFixedWording(text: string): boolean {
-  let rest = text.trim();
-  if (!rest) return false;
-  while (rest) {
-    const hit = WORDING_PATTERNS.map((p) => p.exec(rest)).find((m) => m !== null);
-    if (!hit) return false;
-    rest = rest.slice(hit[0].length).trim();
+/** Length of the permitted wording that starts exactly at `pos`, or 0. */
+function wordingAt(text: string, pos: number): number {
+  for (const pattern of WORDING_PATTERNS) {
+    pattern.lastIndex = pos;
+    const m = pattern.exec(text);
+    if (m) return m[0].length;
   }
-  return true;
+  return 0;
 }
 
-function lintWording(entry: LintEntry): LintFinding[] {
-  const trigger = WORDING_TRIGGERS.find((t) => entry.text.includes(t));
-  if (!trigger || isFixedWording(entry.text)) return [];
+/**
+ * Removes every exact permitted wording that stands as its own sentence (starting at the start of the text
+ * or of a sentence or line) and returns what is left, so it can be linted as ordinary prose.
+ */
+function withoutWordings(text: string): string {
+  const kept: string[] = [];
+  let keepFrom = 0;
+  let pos = 0;
+  while (pos < text.length) {
+    const length = wordingAt(text, pos);
+    if (length > 0) {
+      kept.push(text.slice(keepFrom, pos));
+      pos += length;
+      while (pos < text.length && /\s/.test(text[pos])) pos++;
+      keepFrom = pos;
+      continue;
+    }
+    const boundary = /[.!?]["')\]]*\s+|\n\s*/g;
+    boundary.lastIndex = pos;
+    const m = boundary.exec(text);
+    if (!m) break;
+    pos = m.index + m[0].length;
+  }
+  kept.push(text.slice(keepFrom));
+  return kept.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+interface LintOptions {
+  /** The text is a bare term label such as "Not observed", which may be one of the wording phrases on its own. */
+  bareLabel?: boolean;
+}
+
+function lintWording(entry: LintEntry, options: LintOptions = {}): LintFinding[] {
+  const text = entry.text.trim();
+  if (options.bareLabel && WORDING_TRIGGERS.some((t) => t.toLowerCase() === text.toLowerCase())) return [];
+  const rest = withoutWordings(entry.text);
+  const trigger = WORDING_TRIGGERS.find((t) => rest.includes(t));
+  if (!trigger) return [];
   return [{
     id: entry.id,
     rule: 'wording',
@@ -148,9 +206,10 @@ export function fleschKincaidGrade(text: string): number {
 }
 
 function lintReadingLevel(entry: LintEntry): LintFinding[] {
-  if (wordsOf(entry.text).length < MIN_WORDS_FOR_GRADE) return [];
-  if (isFixedWording(entry.text)) return []; // fixed sentences are reviewed once, in wordings.ts
-  const grade = fleschKincaidGrade(entry.text);
+  // Exact permitted sentences are reviewed once, in wordings.ts, so only the rest is scored.
+  const rest = withoutWordings(entry.text);
+  if (wordsOf(rest).length < MIN_WORDS_FOR_GRADE) return [];
+  const grade = fleschKincaidGrade(rest);
   if (grade <= MAX_GRADE) return [];
   return [{
     id: entry.id,
@@ -189,12 +248,37 @@ function lintUndefinedTerms(entry: LintEntry, terms: Term[]): LintFinding[] {
   return findings;
 }
 
-/** Lints all on-screen text. An empty array means every entry passes. */
-export function lintCopy(entries: LintEntry[], terms: Term[]): LintFinding[] {
-  return entries.flatMap((entry) => [
+function lintEntry(entry: LintEntry, terms: Term[], options: LintOptions = {}): LintFinding[] {
+  return [
     ...lintCausal(entry),
-    ...lintWording(entry),
+    ...lintWording(entry, options),
     ...lintReadingLevel(entry),
     ...lintUndefinedTerms(entry, terms)
+  ];
+}
+
+/** Lints all on-screen text. An empty array means every entry passes. */
+export function lintCopy(entries: LintEntry[], terms: Term[]): LintFinding[] {
+  return entries.flatMap((entry) => lintEntry(entry, terms));
+}
+
+/**
+ * The entry point for fixed UI strings: component text, labels, buttons, tour steps. Same checks as `lintCopy`;
+ * use this name wherever strings that are not glossary entries are checked.
+ */
+export function lintScreenStrings(entries: LintEntry[], terms: Term[]): LintFinding[] {
+  return lintCopy(entries, terms);
+}
+
+/**
+ * Lints every term's hint, definition, notMeaning and name. The name is linted too, except that a bare label
+ * that is itself a wording phrase ("Not observed") is exempt from the wording rule only: it is a label, not a sentence.
+ */
+export function lintTerms(terms: Term[]): LintFinding[] {
+  return terms.flatMap((t) => [
+    ...lintEntry({ id: `${t.id}.name`, text: t.term }, terms, { bareLabel: true }),
+    ...lintEntry({ id: `${t.id}.hint`, text: t.hint }, terms),
+    ...lintEntry({ id: `${t.id}.definition`, text: t.definition }, terms),
+    ...lintEntry({ id: `${t.id}.notMeaning`, text: t.notMeaning }, terms)
   ]);
 }
