@@ -1,0 +1,8 @@
+"SampleUtc","Image Name","PID","Session Name","Session#","Mem Usage"
+"2001-10-25T13:00:00Z","w3wp.exe","1240","Services","0","1,887,436 K"
+"2001-10-25T13:00:00Z","sqlservr.exe","4242","Services","0","8,388,608 K"
+"2001-10-25T13:00:00Z","payrollsvc.exe","3100","Console","1","102,400 K"
+"2001-10-25T13:00:15Z","w3wp.exe","1240","Services","0","1,887,500 K"
+"2001-10-25T13:00:15Z","sqlservr.exe","4242","Services","0","8,388,608 K"
+"2001-10-25T13:00:30Z","w3wp.exe","1240","Services","0","N/A"
+"2001-10-25T13:00:30Z","sqlservr.exe","4242","Services","0","8,388,700 K"

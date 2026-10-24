@@ -1,0 +1,4 @@
+"(PDH-CSV 4.0) (Synthetic Daylight Time)(-780)","\\web-a\Processor(_Total)\% Processor Time","\\web-a\Memory\Available MBytes","\\web-a\Process(w3wp)\Private Bytes","\\web-a\Process(w3wp)\ID Process","\\web-a\.NET CLR Memory(w3wp)\% Time in GC","\\web-a\.NET CLR Memory(w3wp)\# Gen 2 Collections","\\web-a\ASP.NET\Requests Queued","\\web-a\W3SVC_W3WP(1240_PoolSENTINEL-7f3a)\Active Requests"
+"10/25/2001 14:02:15.000","42.5","2048","1932735283","1240","3.1","880","0","12"
+"10/25/2001 14:02:30.000","97.8","812","2147483648","1240","38.0","884","214","230"
+"10/25/2001 14:02:45.000"," ","790","2150000000","1240","41.2","885","230","241"
