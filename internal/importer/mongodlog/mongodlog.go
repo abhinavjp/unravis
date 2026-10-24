@@ -41,6 +41,10 @@ const (
 	SourceLabel = "mongod.log"
 	// KindSlowOp is the Event.Kind of a slow operation.
 	KindSlowOp = "slow-op"
+	// KindMongodStart is the Event.Kind of a server start marker (a point in time).
+	KindMongodStart = "mongod-start"
+	// KindMongodStop is the Event.Kind of a server shutdown marker (a point in time).
+	KindMongodStop = "mongod-stop"
 )
 
 // Log ids, from the MongoDB docs "Log Messages" page (structured log examples).
@@ -61,10 +65,20 @@ const (
 	// appends to an existing log file, so it marks a restart, not a log rotation. Also matched
 	// by message text so a wrong id cannot hide it.
 	idRestarted = 20698
+	// idWaitingForConnections: NETWORK, msg "Waiting for connections"; the listener is open,
+	// so this is the start marker. The id is not on the public Log Messages page (checked
+	// 2026-10-25) and is unconfirmed; the message text is the primary match.
+	idWaitingForConnections = 23016
+	// idShutdownStart: CONTROL, msg "Shutting down"; the shutdown start marker. Same caveat:
+	// the id is unconfirmed, the message text is the primary match.
+	idShutdownStart = 23138
 )
 
 const (
 	msgRestarted = "***** SERVER RESTARTED *****"
+	// msgWaitingForConnections and msgShutdownStart are matched by text (see the ids above).
+	msgWaitingForConnections = "Waiting for connections"
+	msgShutdownStart         = "Shutting down"
 	// msgRotated is the message written when the log is rotated; matched by text only.
 	msgRotated = "Log rotation initiated"
 	// No id is cited for the runtime profiler change: it is detected by message text only.
@@ -189,6 +203,9 @@ type state struct {
 	slowSeen       bool
 	hostLabel      string
 	timeSeen       bool
+	// markerAt is the time of the last marker emitted per kind; a repeated line with the same
+	// time (one "Waiting for connections" per listening socket) is emitted once.
+	markerAt map[string]time.Time
 }
 
 func effectiveLimits(in importer.Limits) importer.Limits {
@@ -392,6 +409,10 @@ func handleLine(line []byte, no int64, st *state, opts importer.Options, rep *im
 		}
 	case ll.ID == idRestarted || ll.Msg == msgRestarted:
 		st.restarted = true
+	case ll.ID == idWaitingForConnections || ll.Msg == msgWaitingForConnections:
+		return marker(KindMongodStart, ll, t, no, st, opts)
+	case ll.ID == idShutdownStart || ll.Msg == msgShutdownStart:
+		return marker(KindMongodStop, ll, t, no, st, opts)
 	case ll.Msg == msgRotated:
 		st.rotated = true
 	}
@@ -483,6 +504,38 @@ func slowQuery(ll logLine, t time.Time, no int64, st *state, opts importer.Optio
 		Line:       no,
 		TZRule:     clock.RuleOffsetInField,
 		Attrs:      attrs,
+	}
+	if err := ev.Validate(allowedAttrs); err != nil {
+		return time.Time{}, importer.ReasonFieldCount, nil, nil
+	}
+	return t, "", &ev, nil
+}
+
+// marker returns a point event for a server start or stop line. It needs the host label
+// the file established (a picked host, or the start-up line); without one it emits nothing,
+// and the slow-operation rule still refuses a file with no host. The event has no attributes.
+func marker(kind string, ll logLine, t time.Time, no int64, st *state, opts importer.Options) (time.Time, importer.Reason, *evidence.Event, error) {
+	if st.hostLabel == "" {
+		return t, "", nil, nil
+	}
+	if st.markerAt == nil {
+		st.markerAt = map[string]time.Time{}
+	}
+	if last, ok := st.markerAt[kind]; ok && last.Equal(t) {
+		return t, "", nil, nil
+	}
+	st.markerAt[kind] = t
+	at := t.UTC()
+	ev := evidence.Event{
+		EvidenceID: evidence.EventID(opts.CaseID, Name, opts.ImportNonce, no, 0),
+		Source:     Name,
+		Kind:       kind,
+		Host:       st.hostLabel,
+		Start:      at,
+		End:        at,
+		Severity:   severity(ll.S),
+		Line:       no,
+		TZRule:     clock.RuleOffsetInField,
 	}
 	if err := ev.Validate(allowedAttrs); err != nil {
 		return time.Time{}, importer.ReasonFieldCount, nil, nil
