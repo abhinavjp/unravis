@@ -46,8 +46,9 @@ const (
 	maxBytes     = 16 << 20
 	maxRows      = 100_000
 	maxLineBytes = 64 << 10
-	// maxBoundaries caps schedule-boundary events per file. Unknown markers are
-	// not counted: they are bounded by the row cap, at most two per row.
+	// maxBoundaries caps schedule-boundary and schedule-unknown events together,
+	// per file: the file never emits more than this many. The last slot is kept
+	// for the truncation marker of a cut schedule (see reserve).
 	maxBoundaries = 100_000
 	// maxPerSchedule caps the boundaries one schedule may emit, so a single
 	// one-second job leaves room for the other jobs in the file.
@@ -83,6 +84,7 @@ const (
 	gapAgentHistory    = "SQL Agent history keeps a limited number of rows per job; missing history is not evidence that a job did not run."
 	gapWeeklyFactor    = "A weekly recurrence factor above 1 assumes weeks start on Sunday."
 	gapMonthDayMissing = "A monthly day beyond the month length produces no boundary for that month."
+	gapEventCap        = "The file reached its event limit, so some schedule-unknown markers were not written; the times they would mark are not flagged."
 )
 
 // attrs is the per-importer attribute allowlist (<= 16 keys).
@@ -128,22 +130,22 @@ func All() []importer.Importer { return []importer.Importer{NewHangfire(), NewAg
 
 // run is the per-Parse state shared by both importers.
 type run struct {
-	ctx    context.Context
-	name   string
-	opts   importer.Options
-	lim    importer.Limits
-	emit   func(evidence.Event) error
-	rep    importer.Report
-	gaps   map[string]bool
-	win    bool // a usable window was supplied
-	from   time.Time
-	to     time.Time
-	nBound int       // boundaries emitted in the file
-	jobN   int       // boundaries emitted for the schedule being expanded
-	lastB  time.Time // latest boundary emitted for the schedule being expanded
-	minT   time.Time
-	maxT   time.Time
-	host   string
+	ctx     context.Context
+	name    string
+	opts    importer.Options
+	lim     importer.Limits
+	emit    func(evidence.Event) error
+	rep     importer.Report
+	gaps    map[string]bool
+	win     bool // a usable window was supplied
+	from    time.Time
+	to      time.Time
+	nCapped int       // boundary and unknown events emitted in the file (maxBoundaries)
+	jobN    int       // boundaries emitted for the schedule being expanded
+	lastB   time.Time // latest boundary emitted for the schedule being expanded
+	minT    time.Time
+	maxT    time.Time
+	host    string
 }
 
 func newRun(ctx context.Context, name string, opts importer.Options, emit func(evidence.Event) error) *run {
@@ -200,6 +202,11 @@ func (r *run) send(line int64, ordinal int, kind string, start, end time.Time, d
 	if err := ev.Validate(attrs); err != nil {
 		return fmt.Errorf("schedule: invalid event: %w", err)
 	}
+	// MaxEvents is checked before the event leaves, as winevents does: the
+	// file is refused with a LimitError once it would emit one event too many.
+	if err := r.lim.CheckEvents(r.rep.Emitted + 1); err != nil {
+		return err
+	}
 	if err := r.emit(ev); err != nil {
 		return err
 	}
@@ -224,12 +231,29 @@ func (r *run) beginSchedule() {
 	r.lastB = time.Time{}
 }
 
-// countBoundary reserves room for one more boundary, or reports the cap.
-func (r *run) countBoundary() error {
-	if r.nBound >= maxBoundaries || r.jobN >= maxPerSchedule {
+// reserve counts one more event against the file cap maxBoundaries, or returns
+// errBoundaryCap. Boundaries and ordinary unknown markers stop one slot short,
+// so the last slot always remains for the truncation marker of a cut schedule.
+func (r *run) reserve(truncation bool) error {
+	limit := maxBoundaries - 1
+	if truncation {
+		limit = maxBoundaries
+	}
+	if r.nCapped >= limit {
 		return errBoundaryCap
 	}
-	r.nBound++
+	r.nCapped++
+	return nil
+}
+
+// countBoundary reserves room for one more boundary, or reports the cap.
+func (r *run) countBoundary() error {
+	if r.jobN >= maxPerSchedule {
+		return errBoundaryCap
+	}
+	if err := r.reserve(false); err != nil {
+		return err
+	}
 	r.jobN++
 	return nil
 }
@@ -244,10 +268,21 @@ func (r *run) sendUnknown(line int64, ordinal int, job, reason, rule string) err
 // and end (inclusive). B3 treats a stall start inside the span, or within its
 // tolerance of it, as unknown; a stall elsewhere is judged on the boundaries.
 func (r *run) sendUnknownSpan(line int64, ordinal int, job, reason, rule string, start, end time.Time) error {
+	return r.sendMarker(false, line, ordinal, job, reason, rule, start, end)
+}
+
+// sendMarker emits one schedule-unknown marker within the file cap. When the cap
+// is spent the marker is not written and the file says so (gapEventCap): the
+// cap is never exceeded, and a full file is not an error.
+func (r *run) sendMarker(truncation bool, line int64, ordinal int, job, reason, rule string, start, end time.Time) error {
 	if !r.win {
 		return nil
 	}
 	r.gap(gapUnknown)
+	if err := r.reserve(truncation); err != nil {
+		r.gap(gapEventCap)
+		return nil
+	}
 	return r.send(line, ordinal, KindUnknown, start, end, nil, "", rule,
 		map[string]string{"job": job, "reason": reason})
 }
@@ -263,7 +298,7 @@ func (r *run) cutSchedule(err error, line int64, ord *int, job, rule string) err
 		start = r.lastB
 	}
 	r.gap(gapTruncated)
-	e := r.sendUnknownSpan(line, *ord, job, reasonTooMany, rule, start, r.to)
+	e := r.sendMarker(true, line, *ord, job, reasonTooMany, rule, start, r.to)
 	*ord++
 	return e
 }
@@ -282,7 +317,7 @@ func (r *run) finish(rule string, base []string) (importer.Report, error) {
 	}
 	gaps := append([]string(nil), base...)
 	// Deterministic order for the optional sentences.
-	for _, g := range []string{gapNoWindow, gapUnknown, gapTruncated, gapDST, gapCronBoth, gapWeeklyFactor, gapMonthDayMissing} {
+	for _, g := range []string{gapNoWindow, gapUnknown, gapTruncated, gapEventCap, gapDST, gapCronBoth, gapWeeklyFactor, gapMonthDayMissing} {
 		if r.gaps[g] {
 			gaps = append(gaps, g)
 		}
