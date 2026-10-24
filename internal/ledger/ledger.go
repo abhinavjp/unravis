@@ -14,7 +14,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 const fileVersion = 1
@@ -36,14 +39,50 @@ var (
 	// isoDatePattern finds calendar dates (2026-10-24, also as the start of
 	// 2026-10-24T14:45:00Z) so their digits are not read as a phone number.
 	isoDatePattern = regexp.MustCompile(`\b[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[Tt]|\b)`)
-	// phoneCandidate is a digit run that may be split by spaces, dashes, dots and
-	// parentheses, with an optional leading plus. looksLikePhone applies the count.
-	phoneCandidate = regexp.MustCompile(`\+?[0-9(][0-9 ()\-.]*[0-9]`)
-	jwtPattern     = regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]*`)
+	// slashDatePattern finds 2026/10/24, 24/10/2026 and 24.10.2026 for the same reason.
+	slashDatePattern = regexp.MustCompile(`\b(?:[0-9]{4}/[0-9]{1,2}/[0-9]{1,2}|[0-9]{1,2}[/.][0-9]{1,2}[/.][0-9]{4})\b`)
+	// phoneCandidate is a digit run that may be split by spaces, dashes, dots,
+	// slashes, underscores and parentheses, with an optional leading plus.
+	// looksLikePhone applies the count.
+	phoneCandidate = regexp.MustCompile(`\+?[0-9(][0-9 ()\-./_]*[0-9]`)
+	// jwtPattern allows spaces around the dots, which a pasted token can gain.
+	jwtPattern     = regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]+ *\. *[A-Za-z0-9_\-]+ *\. *[A-Za-z0-9_\-]*`)
 	longHexPattern = regexp.MustCompile(`[0-9a-fA-F]{32,}`)
 	base64Pattern  = regexp.MustCompile(`[A-Za-z0-9+/_=\-]{40,}`)
-	digitGroup     = regexp.MustCompile(`[0-9]+`)
+	// shortSecretPattern catches 32 to 39 character keys (an AWS secret is 40,
+	// an access key pair pasted together 39) that have no slash, so paths pass.
+	shortSecretPattern = regexp.MustCompile(`[A-Za-z0-9+_=\-]{32,}`)
+	urlPattern         = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.\-]*://|\bwww\.[a-z0-9]`)
+	digitGroup         = regexp.MustCompile(`[0-9]+`)
 )
+
+// scanForm is the text the identifier checks read. It applies NFKC (fullwidth
+// digits, letters and "@" become ASCII), deletes format characters (zero-width
+// spaces and joiners, soft hyphens), turns every Unicode space (NBSP included)
+// into an ASCII space and every other decimal digit (Arabic-Indic and the like)
+// into its ASCII digit. The checks are still best effort.
+func scanForm(s string) string {
+	s = norm.NFKC.String(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case unicode.Is(unicode.Cf, r):
+		case r > unicode.MaxASCII && unicode.Is(unicode.Z, r):
+			b.WriteByte(' ')
+		case r > unicode.MaxASCII && unicode.IsDigit(r):
+			// Decimal digits come in runs of ten from zero to nine.
+			zero := r
+			for unicode.IsDigit(zero - 1) {
+				zero--
+			}
+			b.WriteByte(byte('0' + (r-zero)%10))
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
 
 // looksLikePhone reports whether s holds a phone-number-like digit run: seven or
 // more digits, contiguous or split by spaces, dashes, dots or parentheses, with
@@ -51,6 +90,7 @@ var (
 // do lists of one- and two-digit numbers ("12 14 15 16") and decimals (3.14159265).
 func looksLikePhone(s string) bool {
 	s = isoDatePattern.ReplaceAllString(s, " ")
+	s = slashDatePattern.ReplaceAllString(s, " ")
 	for _, c := range phoneCandidate.FindAllString(s, -1) {
 		groups := digitGroup.FindAllString(c, -1)
 		digits, longest := 0, 0
@@ -84,7 +124,8 @@ func looksLikeSecret(s string) bool {
 	if jwtPattern.MatchString(s) || longHexPattern.MatchString(s) {
 		return true
 	}
-	for _, m := range base64Pattern.FindAllString(s, -1) {
+	matches := append(base64Pattern.FindAllString(s, -1), shortSecretPattern.FindAllString(s, -1)...)
+	for _, m := range matches {
 		var upper, lower, digit bool
 		for _, r := range m {
 			switch {
@@ -119,10 +160,10 @@ func looksLikeIPv6(s string) bool {
 	return false
 }
 
-// hasURL reports whether s contains an http or https URL.
+// hasURL reports whether s contains a URL: a scheme followed by "://", or a
+// bare www. host.
 func hasURL(s string) bool {
-	lower := strings.ToLower(s)
-	return strings.Contains(lower, "http://") || strings.Contains(lower, "https://")
+	return urlPattern.MatchString(s)
 }
 
 type fileData struct {
@@ -388,22 +429,20 @@ func budgetErr() error {
 	return invalid("The ledger is full. Delete or shorten entries before adding more.")
 }
 
-// totalBytes is the size of the entries as GET /api/ledger serialises them
-// (with current guards), including the array brackets and commas. It stops
-// counting once the total passes MaxTotalBytes.
+// totalBytes is the exact size of the entries as GET /api/ledger serialises
+// them (with current guards), including the array brackets and commas. It never
+// stops early: checkBudget compares two totals, and a truncated one would let
+// an oversized ledger grow and refuse edits that shrink it.
 func totalBytes(items []Hypothesis) int {
 	total := 2
 	for i, h := range items {
 		b, err := json.Marshal(present(h))
 		if err != nil {
-			return MaxTotalBytes + 1
+			return math.MaxInt
 		}
 		total += len(b)
 		if i > 0 {
 			total++
-		}
-		if total > MaxTotalBytes {
-			return total
 		}
 	}
 	return total
@@ -411,7 +450,7 @@ func totalBytes(items []Hypothesis) int {
 
 // checkBudget refuses next when it is over MaxTotalBytes, unless it is no larger
 // than the current ledger, so an oversized ledger (from an older file) can still
-// be edited down. Callers hold s.mu.
+// be edited down but never grows. Callers hold s.mu.
 func (s *store) checkBudget(next []Hypothesis) error {
 	n := totalBytes(next)
 	if n <= MaxTotalBytes || n <= totalBytes(s.items) {
@@ -537,6 +576,7 @@ func checkText(what, s string) error {
 	if utf8.RuneCountInString(s) > MaxTextLen {
 		return invalid(fmt.Sprintf("%s is longer than %d characters", what, MaxTextLen))
 	}
+	s = scanForm(s)
 	switch {
 	case objectIDPattern.MatchString(s):
 		return invalid(what + " contains what looks like a record ID (24 hex characters); the ledger holds no identifiers, so refer to evidence by its provenance ID instead")
