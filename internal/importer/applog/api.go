@@ -78,9 +78,10 @@ func AllowedAttrs() map[string]bool {
 	return out
 }
 
-// Record is one parsed log entry handed to a Sink. Message and Exception are
-// zeroed after Add; nothing in a Record reaches an event except through the
-// family captures.
+// Record is one parsed log entry handed to a Sink. The Sink keeps no reference
+// to Message, Exception or the raw Category after Add returns (only the logger
+// label cache, keyed by category, outlives the call); nothing in a Record
+// reaches an event except through the family captures.
 type Record struct {
 	Time               time.Time
 	Rule               string
@@ -90,30 +91,32 @@ type Record struct {
 	Num                map[string]float64
 }
 
-// Sink turns Records into events for one source.
-type Sink struct{}
+// Sink turns Records into events for one source (core.go).
+type Sink struct{ sink }
 
-// NewSink returns a Sink for source src. W2-a fills in the body.
+// NewSink returns a Sink for source src. emit receives every event; a non-nil
+// error from it stops the import.
 func NewSink(src string, opts importer.Options, emit func(evidence.Event) error) *Sink {
-	return &Sink{}
+	return newSink(src, opts, emit)
 }
 
-// Add classifies and emits one Record read at line. W2-a fills in the body.
-func (s *Sink) Add(r Record, line int64) error { return nil }
+// Add classifies and emits one Record read at line.
+func (s *Sink) Add(r Record, line int64) error { return s.add(r, line) }
 
-// Finish flushes log-rate and adds the gaps to rep. W2-a fills in the body.
-func (s *Sink) Finish(rep *importer.Report) error { return nil }
+// Finish flushes log-rate and adds the counts, coverage and gaps to rep.
+func (s *Sink) Finish(rep *importer.Report) error { return s.finish(rep) }
 
 // Classify returns the family of an entry and the numbers it captures.
-// W2-a fills in the body.
 func Classify(category string, eventID int, msg, exc string) (family string, num map[string]float64) {
-	return "", nil
+	return classify(category, eventID, msg, exc)
 }
 
 // ExceptionTypes returns the exception types named in exc, with every type
-// outside the framework rule written as "app-exception". W2-a fills in the body.
-func ExceptionTypes(exc string) []string { return nil }
+// outside the framework rule written as "app-exception".
+func ExceptionTypes(exc string) []string { return exceptionTypes(exc) }
 
 // LoggerLabel returns the logger name to store: a framework name as it is,
-// anything else keyed through ps. W2-a fills in the body.
-func LoggerLabel(cat string, ps func(kind, v string) string) (string, error) { return "", nil }
+// anything else keyed through ps.
+func LoggerLabel(cat string, ps func(kind, v string) string) (string, error) {
+	return loggerLabel(cat, ps)
+}
