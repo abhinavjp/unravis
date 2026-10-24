@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -273,5 +274,65 @@ func TestRunPatternsCanceledBeforeStartingEverySource(t *testing.T) {
 	}
 	if _, err := RunPatterns(ctx, patternFakeSlow{repo}, in); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err %v, want context.Canceled", err)
+	}
+}
+
+func TestRunPatternsRecoversFromReadPanic(t *testing.T) {
+	const secret = "secret internal detail"
+	for _, phase := range []string{"stall", "audit"} {
+		for _, workers := range []int{1, MaxPatternWorkers} {
+			t.Run(fmt.Sprintf("%s/%d workers", phase, workers), func(t *testing.T) {
+				withPatternWorkers(t, workers, func() {
+					repo, in := manySourceRepo()
+					boom := func(_ context.Context, p PageInput) error {
+						if p.Query.SourceIDs[0] == "s2" {
+							panic(secret)
+						}
+						return nil
+					}
+					if phase == "stall" {
+						repo.slowHook = boom
+					} else {
+						repo.auditHook = boom
+					}
+					_, err := RunPatterns(context.Background(), patternFakeSlow{repo}, in)
+					if !errors.Is(err, ErrPatternReadPanic) {
+						t.Fatalf("err %v, want ErrPatternReadPanic", err)
+					}
+					if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "goroutine") {
+						t.Fatalf("error leaks panic details: %q", err)
+					}
+				})
+			})
+		}
+	}
+}
+
+func TestRunBoundedRecoversPanicsAndStopsStarting(t *testing.T) {
+	var ran atomic.Int64
+	started, err := runBounded(context.Background(), 50, 1, func(i int) {
+		ran.Add(1)
+		if i == 3 {
+			panic(errors.New("boom"))
+		}
+	})
+	if !errors.Is(err, ErrPatternReadPanic) || !started {
+		t.Fatalf("started %v, err %v", started, err)
+	}
+	if n := ran.Load(); n != 4 {
+		t.Fatalf("%d calls ran after a panic at index 3 with one worker, want 4", n)
+	}
+
+	// Several panics at once: the lowest index is reported, and every call returns.
+	var done atomic.Int64
+	_, err = runBounded(context.Background(), 4, 4, func(i int) {
+		defer done.Add(1)
+		panic(i)
+	})
+	if !errors.Is(err, ErrPatternReadPanic) || !strings.Contains(err.Error(), "source 1") {
+		t.Fatalf("err %v, want the first source's panic", err)
+	}
+	if done.Load() != 4 {
+		t.Fatalf("%d calls finished, want 4", done.Load())
 	}
 }
