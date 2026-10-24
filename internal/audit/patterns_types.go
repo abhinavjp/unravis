@@ -48,6 +48,9 @@ type PatternInput struct {
 	End               time.Time `json:"end"`
 	StallMs           float64   `json:"stallMs,omitempty"`
 	EpisodeGapSeconds int       `json:"episodeGapSeconds,omitempty"`
+	// IdleGaps opts in to rule B6g, which reads every row in the window (not only
+	// the stalls). It is off unless a caller asks for it.
+	IdleGaps bool `json:"idleGaps,omitempty"`
 }
 
 // PatternParams echoes the thresholds actually used, so a finding can be reread.
@@ -108,10 +111,85 @@ type AuditStall struct {
 	Share             float64   `json:"share"`
 }
 
+// OnsetMinute is one B3a row: the onsets of B2 episodes (the first stall start of
+// each) that fall within two minutes of Minute, a minute of the hour in UTC.
+// Days counts distinct UTC days among them. Episodes lists their 1-based indexes.
+type OnsetMinute struct {
+	Minute   int   `json:"minute"`
+	Days     int   `json:"days"`
+	Onsets   int   `json:"onsets"`
+	Episodes []int `json:"episodes"`
+}
+
+// Concentration dimensions.
+const (
+	ConcentrationOperation = "operation"
+	ConcentrationUser      = "user"
+)
+
+// Concentration is one A3 row. StallShare, TrafficShare and Lift are null when
+// Withheld is true (fewer than MinSampleCount rows overall for the key); the
+// counts stay exact. Key is "Controller.Action" or a decimal user id.
+type Concentration struct {
+	Dimension    string   `json:"dimension"`
+	Key          string   `json:"key"`
+	StallShare   *float64 `json:"stallShare"`
+	TrafficShare *float64 `json:"trafficShare"`
+	Lift         *float64 `json:"lift"`
+	StallN       int      `json:"stallN"`
+	AllN         int64    `json:"allN"`
+	Episodes     int      `json:"episodes"`
+	Withheld     bool     `json:"withheld"`
+}
+
+// Repeat is one B12r row: one user started Operation again Repeats times while
+// an earlier request of the same operation was still running, during Episode.
+// SameSize is true when the repeats had the same RequestKB as the earlier one;
+// a different size is reported as its own row. LongestChain is the most starts
+// one earlier request had in flight over it, counting itself.
+type Repeat struct {
+	Episode      int    `json:"episode"`
+	UserID       int    `json:"userId"`
+	Operation    string `json:"operation"`
+	Repeats      int    `json:"repeats"`
+	SameSize     bool   `json:"sameSize"`
+	LongestChain int    `json:"longestChain"`
+}
+
+// IdleBand is one B6g gap band: gaps from FromS (inclusive) to ToS (exclusive;
+// null for the last band). MedianMs, P95Ms and SlowRate are null when N is below
+// MinSampleCount.
+type IdleBand struct {
+	FromS    int      `json:"fromS"`
+	ToS      *int     `json:"toS"`
+	N        int      `json:"n"`
+	MedianMs *float64 `json:"medianMs"`
+	P95Ms    *float64 `json:"p95Ms"`
+	SlowRate *float64 `json:"slowRate"`
+}
+
+// IdleLift is the B6g lift for gaps of at least GS seconds. Value is null when
+// Withheld is true.
+type IdleLift struct {
+	GS       int      `json:"gS"`
+	Value    *float64 `json:"value"`
+	Withheld bool     `json:"withheld"`
+}
+
+// IdleGaps is B6g: audit create time by the quiet gap before the request.
+// PartialReason is additive and says why Partial is true.
+type IdleGaps struct {
+	Bands            []IdleBand `json:"bands"`
+	Lift             []IdleLift `json:"lift"`
+	ExcludedHangfire int        `json:"excludedHangfire"`
+	Partial          bool       `json:"partial"`
+	PartialReason    string     `json:"partialReason,omitempty"`
+}
+
 // Finding is one printed result. Label is an Evidence* constant. Headline uses
 // only the permitted §6.6 wordings. Every finding carries n and the low-n flag.
 type Finding struct {
-	Rule       string `json:"rule"` // B1, B2, B6, B12
+	Rule       string `json:"rule"` // B1, B2, B6, B12, B3a, A3, B12r, B6g
 	Label      string `json:"label"`
 	Headline   string `json:"headline"`
 	N          int    `json:"n"`
@@ -154,4 +232,11 @@ type PatternReport struct {
 	AuditsTruncated bool         `json:"auditsTruncated"`
 	Provenance      []Provenance `json:"provenance,omitempty"`
 	Warnings        []string     `json:"warnings"`
+
+	// Additive fields (all optional). OnsetMinutes is B3a, Concentration is A3,
+	// Repeats is B12r and IdleGaps is B6g, which only runs when asked for.
+	OnsetMinutes  []OnsetMinute   `json:"onsetMinutes,omitempty"`
+	Concentration []Concentration `json:"concentration,omitempty"`
+	Repeats       []Repeat        `json:"repeats,omitempty"`
+	IdleGaps      *IdleGaps       `json:"idleGaps,omitempty"`
 }

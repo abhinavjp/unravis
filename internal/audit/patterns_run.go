@@ -214,12 +214,15 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 	}
 
 	// Quality counts over the same window.
+	// The same analysis gives rule A3 its traffic by operation, so it adds no read.
+	var held *Analysis
 	if analysis, err := repo.Analyze(ctx, patternQuery(in, in.SourceIDs)); err != nil {
 		if ctx.Err() != nil {
 			return PatternReport{}, ctx.Err()
 		}
 		report.Warnings = append(report.Warnings, "Incomplete, pending and invalid rows could not be counted for this window ("+plainReason(err)+").")
 	} else {
+		held = &analysis
 		q := analysis.Quality
 		incomplete := q.Incomplete - q.PendingAsync // Quality.Incomplete includes pending work
 		if incomplete < 0 {
@@ -236,6 +239,20 @@ func RunPatterns(ctx context.Context, repo Repository, in PatternInput) (Pattern
 	report.Coverage = coverage
 
 	report.Findings = buildFindings(in, params, report)
+
+	// B3a and A3 look only at what was already read.
+	onsets, onsetFindings, onsetWarnings := buildRecurrence(in, params, report)
+	report.OnsetMinutes = onsets
+	report.Findings = append(report.Findings, onsetFindings...)
+	report.Warnings = append(report.Warnings, onsetWarnings...)
+
+	conc, concFindings, concWarnings, err := buildConcentration(ctx, repo, in, params, report, held)
+	if err != nil {
+		return PatternReport{}, err
+	}
+	report.Concentration = conc
+	report.Findings = append(report.Findings, concFindings...)
+	report.Warnings = append(report.Warnings, concWarnings...)
 	return report, nil
 }
 

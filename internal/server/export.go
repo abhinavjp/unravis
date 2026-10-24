@@ -142,6 +142,7 @@ func (h *handler) exportPreview(w http.ResponseWriter, r *http.Request) {
 		writeRepoError(w, err)
 		return
 	}
+	report = exportableReport(report)
 
 	var hypotheses []ledger.Hypothesis
 	if body.IncludeLedger && h.ledger != nil {
@@ -193,6 +194,25 @@ func (h *handler) exportPreview(w http.ResponseWriter, r *http.Request) {
 	sum := sha256.Sum256(canonical)
 	h.exports().put(id, storedExport{canonical: canonical, sha256: hex.EncodeToString(sum[:])})
 	writeJSON(w, http.StatusOK, exportPreviewResponse{PreviewID: id, Export: export}, maxResponseBytes)
+}
+
+// exportableReport removes what the evidence export has no record type for: the
+// findings of the rules added after the export schema (B3a, A3, B12r, B6g) and
+// the tables behind them. The export engine refuses a rule it does not know, so
+// they are left out of the file and out of ledger matching, and the other
+// findings export as before.
+func exportableReport(report audit.PatternReport) audit.PatternReport {
+	kept := make([]audit.Finding, 0, len(report.Findings))
+	for _, f := range report.Findings {
+		switch f.Rule {
+		case "B3a", "A3", "B12r", "B6g":
+			continue
+		}
+		kept = append(kept, f)
+	}
+	report.Findings = kept
+	report.OnsetMinutes, report.Concentration, report.Repeats, report.IdleGaps = nil, nil, nil, nil
+	return report
 }
 
 // relatedHypotheses keeps only hypotheses that reference at least one finding

@@ -130,6 +130,73 @@ func TestPatternEvidenceIDsAreAcceptedByLedger(t *testing.T) {
 	}
 }
 
+// A window of days shows the recurrence tables and findings (B3a, A3) with the
+// field names the page reads, and the ledger takes their evidence ids.
+func TestPatternsMultiDayContractAndLedger(t *testing.T) {
+	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	store, err := ledger.Open("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(audit.NewDemoWithPatterns(now), nil, testToken, true, WithLedger(store))
+	in := audit.PatternInput{SourceIDs: []string{"demo-west", "demo-east"}, Start: now.Add(-5 * 24 * time.Hour), End: now}
+	r := request(h, http.MethodPost, "/api/patterns", patternBody(in), true)
+	if r.Code != http.StatusOK {
+		t.Fatalf("patterns = %d %s", r.Code, r.Body.String())
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(r.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"onsetMinutes", "concentration"} {
+		if len(raw[key]) < 3 {
+			t.Fatalf("%s missing in %s", key, r.Body.String())
+		}
+	}
+	if _, ok := raw["idleGaps"]; ok {
+		t.Fatalf("idleGaps present without opt-in")
+	}
+	var onset []map[string]any
+	if err := json.Unmarshal(raw["onsetMinutes"], &onset); err != nil || len(onset) == 0 {
+		t.Fatalf("onsetMinutes %s (%v)", raw["onsetMinutes"], err)
+	}
+	for _, k := range []string{"minute", "days", "onsets", "episodes"} {
+		if _, ok := onset[0][k]; !ok {
+			t.Fatalf("onsetMinutes row lacks %q: %v", k, onset[0])
+		}
+	}
+	var conc []map[string]any
+	if err := json.Unmarshal(raw["concentration"], &conc); err != nil || len(conc) == 0 {
+		t.Fatalf("concentration %s (%v)", raw["concentration"], err)
+	}
+	for _, k := range []string{"dimension", "key", "stallShare", "trafficShare", "lift", "stallN", "allN", "episodes", "withheld"} {
+		if _, ok := conc[0][k]; !ok {
+			t.Fatalf("concentration row lacks %q: %v", k, conc[0])
+		}
+	}
+	var report audit.PatternReport
+	if err := json.Unmarshal(r.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, f := range report.Findings {
+		if f.Rule == "B3a" || f.Rule == "A3" {
+			ids = append(ids, f.EvidenceID)
+		}
+	}
+	if len(ids) != 2 {
+		t.Fatalf("findings %+v", report.Findings)
+	}
+	created, err := store.Create("Stalls start at one minute")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(ledger.Input{Text: created.Text, State: ledger.StateOpen, EvidenceIDs: ids})
+	if r := request(h, http.MethodPut, "/api/ledger/"+created.ID, string(body), true); r.Code != http.StatusOK {
+		t.Fatalf("ledger update with %v = %d %s", ids, r.Code, r.Body.String())
+	}
+}
+
 func TestPatternsHappyPathOnDemoRepository(t *testing.T) {
 	if !patternEngineReady() {
 		t.Skip("pattern engine not merged yet (ValidatePattern is a stub)")

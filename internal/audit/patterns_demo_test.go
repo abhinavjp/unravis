@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -85,9 +86,66 @@ func TestPatternsDemoScenarioLeavesBaseWindowsAlone(t *testing.T) {
 	if !reflect.DeepEqual(base.APIs, withPatterns.APIs) || !reflect.DeepEqual(base.Quality, withPatterns.Quality) {
 		t.Fatal("the pattern scenario changed the standard demo window")
 	}
-	for _, r := range demoPatternRecords(now) {
+	for _, r := range append(demoPatternRecords(now), demoOnsetRecords(now)...) {
 		if !r.InitiatedAt.Before(now.Add(-30*time.Minute)) || r.SourceID != demoPatternSource {
 			t.Fatalf("scenario row %s inside the base window", r.ID)
 		}
+	}
+}
+
+func demoMultiDayInput(now time.Time) PatternInput {
+	return PatternInput{SourceIDs: []string{"demo-west", "demo-east"}, Start: now.Add(-5 * 24 * time.Hour), End: now}
+}
+
+// Over five days the demo shows one recurring onset minute (B3a) and one
+// operation that is a small share of traffic but most of the long stalls (A3).
+func TestPatternsDemoOnsetAndConcentration(t *testing.T) {
+	r, err := RunPatterns(context.Background(), NewDemoWithPatterns(patternDemoNow), demoMultiDayInput(patternDemoNow))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Episodes) != 6 || len(r.Stalls) != 6+demoOnsetDays*4 {
+		t.Fatalf("episodes %d stalls %d", len(r.Episodes), len(r.Stalls))
+	}
+	var recurring *OnsetMinute
+	for i := range r.OnsetMinutes {
+		if r.OnsetMinutes[i].Minute == demoOnsetMinute {
+			recurring = &r.OnsetMinutes[i]
+		}
+	}
+	if recurring == nil || recurring.Days != demoOnsetDays || recurring.Onsets != demoOnsetDays || len(recurring.Episodes) != demoOnsetDays {
+		t.Fatalf("onset minutes %+v", r.OnsetMinutes)
+	}
+	b3a := findingByRule(r, "B3a")
+	if b3a == nil || b3a.Label != EvidenceSymptom || b3a.Headline != "Stalls started near minute :17 of the hour on 3 different days in this window." || b3a.N != 3 || !b3a.LowN {
+		t.Fatalf("B3a %+v", b3a)
+	}
+	a3 := findingByRule(r, "A3")
+	if a3 == nil || a3.Label != EvidenceCorrelation || a3.N != 12 || a3.LowN || !strings.HasPrefix(a3.Headline, "Documents.Export had 66.7% of stall requests but ") {
+		t.Fatalf("A3 %+v", a3)
+	}
+	if len(r.Concentration) != 1 {
+		t.Fatalf("concentration %+v", r.Concentration)
+	}
+	c := r.Concentration[0]
+	if c.Dimension != ConcentrationOperation || c.Key != "Documents.Export" || c.StallN != 12 || c.AllN != 24 || c.Episodes != 3 || c.Withheld || c.Lift == nil || *c.Lift < 2 {
+		t.Fatalf("row %+v", c)
+	}
+}
+
+// The 4-hour window sees none of the older rows, so it has no B3a or A3.
+func TestPatternsDemoOlderRowsStayOutOfFourHours(t *testing.T) {
+	now := patternDemoNow
+	for _, r := range demoOnsetRecords(now) {
+		if r.InitiatedAt.After(now.Add(-19*time.Hour)) || r.SourceID != demoPatternSource {
+			t.Fatalf("onset row %s starts too late", r.ID)
+		}
+	}
+	rep, err := RunPatterns(context.Background(), NewDemoWithPatterns(now), demoPatternInput(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findingByRule(rep, "B3a") != nil || findingByRule(rep, "A3") != nil || len(rep.OnsetMinutes) != 3 || len(rep.Concentration) != 0 {
+		t.Fatalf("%+v %+v", rep.Findings, rep.Concentration)
 	}
 }
