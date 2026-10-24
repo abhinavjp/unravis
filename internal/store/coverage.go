@@ -124,17 +124,6 @@ func (s *Store) Coverage(ctx context.Context, in audit.CoverageInput) (audit.Cov
 	opCtx, cancelOp := context.WithTimeout(ctx, queryTimeout)
 	defer cancelOp()
 
-	if s.docsExaminedBudget > 0 {
-		count, err := s.collectionCount(opCtx, p)
-		if err != nil {
-			_, message := sourceQueryError(opCtx, err)
-			return audit.CoverageReport{}, fmt.Errorf("coverage census could not check the collection size: %s", message)
-		}
-		if count > s.docsExaminedBudget {
-			return audit.CoverageReport{}, fmt.Errorf("%w: the collection holds %d documents, above the docs-examined budget of %d", audit.ErrLimit, count, s.docsExaminedBudget)
-		}
-	}
-
 	if err := acquire(opCtx, s.global); err != nil {
 		return audit.CoverageReport{}, err
 	}
@@ -149,6 +138,19 @@ func (s *Store) Coverage(ctx context.Context, in audit.CoverageInput) (audit.Cov
 		return audit.CoverageReport{}, err
 	}
 	defer func() { <-per }()
+
+	// The size check is a source query too, so it runs only while both
+	// admission slots are held. The deferred releases cover every return.
+	if s.docsExaminedBudget > 0 {
+		count, err := s.collectionCount(opCtx, p)
+		if err != nil {
+			_, message := sourceQueryError(opCtx, err)
+			return audit.CoverageReport{}, fmt.Errorf("%w: %s", audit.ErrCollectionSizeCheck, message)
+		}
+		if count > s.docsExaminedBudget {
+			return audit.CoverageReport{}, fmt.Errorf("%w: %w", audit.ErrLimit, audit.ErrDocsExaminedBudget)
+		}
+	}
 
 	censusCtx := withQueryBudget(opCtx, audit.CensusQueryBudget)
 	began := time.Now()

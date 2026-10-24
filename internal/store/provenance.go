@@ -45,6 +45,17 @@ func finishProvenance(pv *audit.Provenance, returned, sample int64, elapsed time
 	pv.Completeness = audit.CompletenessOf(*pv)
 }
 
+// notRunNote is the note on the entry of a source that never ran, because it was
+// refused at admission. The entry stays exact, since that is the mode actually
+// run (none), and the note records that hint mode was asked for but never tried.
+// It is a reason alone, like every hint note. Nothing is noted for an exact query.
+func notRunNote(requestedMode string) string {
+	if requestedMode == audit.QueryModeHint {
+		return "hint not attempted"
+	}
+	return ""
+}
+
 // failedProvenance is the entry for a source whose read did not finish.
 func failedProvenance(p *profile, window string, start, end time.Time, mode string, margin *audit.IDMargin, note, code string, elapsed time.Duration) audit.Provenance {
 	pv := newProvenance(p, window, start, end, mode, margin)

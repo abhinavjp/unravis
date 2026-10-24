@@ -1114,7 +1114,7 @@ func TestBreakdownHintPrependsIDStageAndFallsBackOnLegacy(t *testing.T) {
 	if with, _ := l.idMatches(); with != 0 || l.calibrations() != 0 {
 		t.Fatal("legacy must not use hint")
 	}
-	if pv := got.Provenance[0]; pv.QueryMode != audit.QueryModeExact || !strings.Contains(pv.Note, "not available on MongoDB 3.4") {
+	if pv := got.Provenance[0]; pv.QueryMode != audit.QueryModeExact || pv.Note != "not available on MongoDB 3.4" {
 		t.Fatalf("pv = %+v", pv)
 	}
 }

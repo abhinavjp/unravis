@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -75,6 +76,42 @@ func (b *Bridge) identifiersAllowed(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return info.Demo, nil
+}
+
+// identifierFilterNames lists the record filters of q that match on a user id,
+// a user agent or an IP address.
+func identifierFilterNames(q audit.Query) []string {
+	var names []string
+	if len(q.UserIDs) > 0 {
+		names = append(names, "userIds")
+	}
+	if q.UserAgentContains != "" {
+		names = append(names, "userAgentContains")
+	}
+	if len(q.UserIPs) > 0 {
+		names = append(names, "userIps")
+	}
+	return names
+}
+
+// checkIdentifierFilters refuses identifier filters while identifiers are hidden.
+// Otherwise a model could bisect a hidden user id, agent or address through
+// repeated filtered counts. It names the filters but never echoes their values,
+// and it fails closed: when the dashboard cannot say whether it is a demo, the
+// filters are refused.
+func (b *Bridge) checkIdentifierFilters(ctx context.Context, q audit.Query) error {
+	names := identifierFilterNames(q)
+	if len(names) == 0 {
+		return nil
+	}
+	allowed, err := b.identifiersAllowed(ctx)
+	if err != nil {
+		return errors.New("The " + strings.Join(names, ", ") + " filters were not applied: the dashboard could not confirm that --mcp-allow-identifiers is on or that this is a demo")
+	}
+	if !allowed {
+		return errors.New("The " + strings.Join(names, ", ") + " filters are not available: the operator has not turned on --mcp-allow-identifiers. User ids, user agents and IP addresses are hidden, and filtering on them would reveal them")
+	}
+	return nil
 }
 
 func boundedBody(r io.Reader, limit int) ([]byte, error) {

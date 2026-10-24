@@ -16,6 +16,14 @@ const (
 
 var ErrBroadScanRefused = errors.New("broad scan refused on a live source")
 
+// ErrDocsExaminedBudget is returned (wrapped in ErrLimit) when the collection
+// holds more documents than --docs-examined-budget allows a census to read.
+var ErrDocsExaminedBudget = errors.New("collection is above the docs-examined budget")
+
+// ErrCollectionSizeCheck is returned when the $collStats count that guards a
+// census could not be read. It never carries driver or connection text.
+var ErrCollectionSizeCheck = errors.New("could not check the collection size")
+
 type CoverageInput struct {
 	SourceID string    `json:"sourceId"`
 	Start    time.Time `json:"start"`

@@ -340,31 +340,55 @@ func (m *legacyMongoHandle) ListDatabases(ctx context.Context) ([]string, error)
 }
 
 func (m *legacyMongoHandle) Aggregate(ctx context.Context, database, collection string, pipeline mongo.Pipeline) (mongoCursor, error) {
-	maxTime, err := remainingLegacyMaxTime(ctx)
+	cmdCtx, maxTime, cancel, err := beginLegacyCommand(ctx)
 	if err != nil {
 		return nil, err
 	}
 	rewritten, err := rewriteLegacyPipeline(pipeline)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 	legacyPipeline := make(mongov1.Pipeline, 0, len(rewritten))
 	for _, stage := range rewritten {
 		encoded, err := bsonv2.Marshal(stage)
 		if err != nil {
+			cancel()
 			return nil, errors.New("invalid legacy aggregation stage")
 		}
 		var legacyStage bson.D
 		if err := bson.Unmarshal(encoded, &legacyStage); err != nil {
+			cancel()
 			return nil, errors.New("invalid legacy aggregation stage")
 		}
 		legacyPipeline = append(legacyPipeline, legacyStage)
 	}
-	cursor, err := m.client.Database(database).Collection(collection).Aggregate(ctx, legacyPipeline, optionsv1.Aggregate().SetAllowDiskUse(false).SetBatchSize(100).SetMaxTime(maxTime))
+	cursor, err := m.client.Database(database).Collection(collection).Aggregate(cmdCtx, legacyPipeline, optionsv1.Aggregate().SetAllowDiskUse(false).SetBatchSize(100).SetMaxTime(maxTime))
 	if err != nil {
+		cancel()
 		return nil, err
 	}
-	return &legacyMongoCursor{cursor: cursor}, nil
+	return wrapLegacyCursor(&legacyMongoCursor{cursor: cursor}, cmdCtx, cancel), nil
+}
+
+// beginLegacyCommand fixes the budget of one legacy aggregate: the maxTimeMS it
+// is sent with, and a context that ends at now+maxTime. MongoDB 3.4 has no
+// per-getMore maxTimeMS the driver can derive from a deadline, so the deadline
+// is also enforced on the client for every later batch (see wrapLegacyCursor).
+func beginLegacyCommand(ctx context.Context) (context.Context, time.Duration, context.CancelFunc, error) {
+	maxTime, err := remainingLegacyMaxTime(ctx)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	cmdCtx, cancel := context.WithTimeout(ctx, maxTime)
+	return cmdCtx, maxTime, cancel, nil
+}
+
+// wrapLegacyCursor keeps every getMore inside the command deadline and releases
+// the command context when the cursor is closed, as the modern driver path does.
+func wrapLegacyCursor(inner mongoCursor, cmdCtx context.Context, cancel context.CancelFunc) mongoCursor {
+	deadline, _ := cmdCtx.Deadline()
+	return &budgetCursor{inner: inner, deadline: deadline, cancel: cancel}
 }
 
 func remainingLegacyMaxTime(ctx context.Context) (time.Duration, error) {

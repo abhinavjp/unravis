@@ -319,3 +319,58 @@ func TestLegacyClientOptionsSetsAppNameAndTimeouts(t *testing.T) {
 		t.Fatal("TLS configuration was not applied")
 	}
 }
+
+func TestLegacyCommandBudgetMatchesMaxTimeAndBoundsGetMore(t *testing.T) {
+	ctx := withQueryBudget(context.Background(), 50*time.Millisecond)
+	started := time.Now()
+	cmdCtx, maxTime, cancel, err := beginLegacyCommand(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maxTime != 50*time.Millisecond {
+		t.Fatalf("maxTime = %v, want the query budget", maxTime)
+	}
+	deadline, ok := cmdCtx.Deadline()
+	if !ok || deadline.Before(started.Add(maxTime)) || deadline.After(time.Now().Add(maxTime)) {
+		t.Fatalf("command deadline %v is not now+maxTime", deadline)
+	}
+	var cancelled atomic.Bool
+	inner := &blockingCursor{}
+	cursor := wrapLegacyCursor(inner, cmdCtx, func() { cancelled.Store(true); cancel() })
+	done := make(chan bool, 1)
+	go func() { done <- cursor.Next(context.Background()) }()
+	select {
+	case got := <-done:
+		if got {
+			t.Fatal("Next returned true from a blocked getMore")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("a legacy getMore was not bounded by the query budget")
+	}
+	if err := cursor.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !cancelled.Load() || !inner.closed.Load() {
+		t.Fatal("Close must cancel the command context and close the inner cursor")
+	}
+}
+
+func TestLegacyCommandBudgetHonoursEarlierParentDeadline(t *testing.T) {
+	parent, stop := context.WithTimeout(withQueryBudget(context.Background(), audit.CensusQueryBudget), time.Second)
+	defer stop()
+	cmdCtx, maxTime, cancel, err := beginLegacyCommand(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	deadline, _ := cmdCtx.Deadline()
+	parentDeadline, _ := parent.Deadline()
+	if maxTime > time.Second || deadline.After(parentDeadline) {
+		t.Fatalf("maxTime=%v deadline=%v parent=%v; the earlier parent deadline must win", maxTime, deadline, parentDeadline)
+	}
+	expired, done := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer done()
+	if _, _, _, err := beginLegacyCommand(expired); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired parent: %v", err)
+	}
+}

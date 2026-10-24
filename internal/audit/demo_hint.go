@@ -1,7 +1,6 @@
 package audit
 
 import (
-	"fmt"
 	"time"
 )
 
@@ -26,7 +25,7 @@ func (d *demoRepository) scopeFor(requested string) demoScope {
 	}
 	m, err := d.calibrate()
 	if err != nil {
-		return demoScope{mode: QueryModeExact, note: fmt.Sprintf("Hint mode was not available (%v); this result used exact mode.", err)}
+		return demoScope{mode: QueryModeExact, note: HintReason(err)}
 	}
 	return demoScope{mode: QueryModeHint, margin: &m}
 }
@@ -84,9 +83,13 @@ func (s demoScope) idAdmits(r RequestRecord, start, end time.Time) bool {
 	if at == nil {
 		return false
 	}
+	// The same bounds as the live _id stage: [floor(start-M), floor(end+M)+1s),
+	// where the _id time itself is whole seconds.
 	id := at.Truncate(time.Second)
 	pad := time.Duration(s.margin.MarginMs) * time.Millisecond
-	return !id.Before(start.Add(-pad)) && !id.After(end.Add(pad))
+	lower := start.Add(-pad).UTC().Truncate(time.Second)
+	upper := end.Add(pad).UTC().Truncate(time.Second).Add(time.Second)
+	return !id.Before(lower) && id.Before(upper)
 }
 
 // windowRecords returns the records a scan of [start, end) reads under the

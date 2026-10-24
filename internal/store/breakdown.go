@@ -164,11 +164,11 @@ func (s *Store) Breakdown(ctx context.Context, input audit.BreakdownInput) (audi
 }
 
 // provenance is the source's entry for the whole breakdown window. A source that
-// did not run is a failed exact entry; one that failed after running keeps the
-// mode it ran in.
+// did not run is a failed exact entry, noting a hint request it never tried; one
+// that failed after running keeps the mode it ran in.
 func (b *breakdownSource) provenance(q audit.Query) audit.Provenance {
 	if !b.ran {
-		return failedProvenance(b.p, "current", q.Start, q.End, audit.QueryModeExact, nil, "", b.code, 0)
+		return failedProvenance(b.p, "current", q.Start, q.End, audit.QueryModeExact, nil, notRunNote(q.QueryMode), b.code, 0)
 	}
 	mode := audit.QueryModeExact
 	if b.margin != nil {

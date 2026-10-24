@@ -150,8 +150,37 @@ func TestDemoHintFallsBackToExactWithNote(t *testing.T) {
 	if p.QueryMode != QueryModeExact || p.Margin != nil {
 		t.Fatalf("fallback should run exact without a margin: mode %q margin %v", p.QueryMode, p.Margin)
 	}
-	if !strings.Contains(p.Note, "Hint mode was not available") || !strings.Contains(p.Note, "used exact mode") {
+	// The note is the reason alone, the same one the live store gives for the same
+	// cause; the page wraps it in the fallback sentence.
+	if p.Note != "calibration needs at least 1000 rows" || p.Note != HintReason(ErrTooFewCalibrationRows) {
 		t.Fatalf("fallback note = %q", p.Note)
+	}
+}
+
+// TestDemoHintLowerBoundIsFlooredLikeTheStore: ObjectId time has whole-second
+// resolution, so the live bound is floor(start-M). An _id second equal to that
+// floor is inside the bound and the demo must admit it too.
+func TestDemoHintLowerBoundIsFlooredLikeTheStore(t *testing.T) {
+	start := time.Date(2026, 10, 22, 12, 0, 0, 500*int(time.Millisecond), time.UTC)
+	end := start.Add(time.Hour)
+	scope := demoScope{mode: QueryModeHint, margin: &IDMargin{MarginMs: 60000}}
+	created := time.Date(2026, 10, 22, 11, 59, 0, 300*int(time.Millisecond), time.UTC) // _id second 11:59:00
+	edge := RequestRecord{CreatedOn: &created}
+	if !scope.idAdmits(edge, start, end) {
+		t.Fatal("a record whose _id second equals floor(start-M) is inside the live bound")
+	}
+	before := created.Add(-time.Second)
+	if scope.idAdmits(RequestRecord{CreatedOn: &before}, start, end) {
+		t.Fatal("a record below floor(start-M) is outside the bound")
+	}
+	// The upper edge: _id must be below floor(end+M)+1s, so the floor second is in.
+	upper := time.Date(2026, 10, 22, 13, 1, 0, 700*int(time.Millisecond), time.UTC) // _id second 13:01:00 == floor(end+M)
+	if !scope.idAdmits(RequestRecord{CreatedOn: &upper}, start, end) {
+		t.Fatal("a record at floor(end+M) is inside the bound")
+	}
+	after := upper.Add(time.Second)
+	if scope.idAdmits(RequestRecord{CreatedOn: &after}, start, end) {
+		t.Fatal("a record above floor(end+M) is outside the bound")
 	}
 }
 

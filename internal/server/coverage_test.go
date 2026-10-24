@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -130,6 +131,31 @@ func TestCoverageRouteOtherErrorsUseRepoMapping(t *testing.T) {
 		h := New(&coverageTestRepo{err: err}, nil, testToken, false)
 		if r := request(h, http.MethodGet, coveragePath("s", end.Add(-time.Hour), end), "", true); r.Code != want {
 			t.Fatalf("%v status = %d, want %d", err, r.Code, want)
+		}
+	}
+}
+
+func TestCoverageRouteSpecificErrorsUseFixedMessages(t *testing.T) {
+	end := time.Date(2026, 10, 24, 0, 0, 0, 0, time.UTC)
+	cases := map[string]struct {
+		err    error
+		status int
+		want   string
+	}{
+		"budget": {fmt.Errorf("%w: %w: 11 documents", audit.ErrLimit, audit.ErrDocsExaminedBudget), 413, "The collection holds more documents than the docs-examined budget allows, so the coverage check did not run. Raise --docs-examined-budget or run it on a restored copy."},
+		"size":   {fmt.Errorf("%w: mongodb://reader:secret@host: boom", audit.ErrCollectionSizeCheck), 502, "The coverage check could not read the collection size, so it did not run. Check that the source is reachable and that this account can read collection statistics."},
+	}
+	for name, tc := range cases {
+		h := New(&coverageTestRepo{err: tc.err}, nil, testToken, false)
+		r := request(h, http.MethodGet, coveragePath("s", end.Add(-time.Hour), end), "", true)
+		var body struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(r.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if r.Code != tc.status || body.Error != tc.want || strings.Contains(r.Body.String(), "secret") {
+			t.Fatalf("%s: status %d body %s", name, r.Code, r.Body.String())
 		}
 	}
 }

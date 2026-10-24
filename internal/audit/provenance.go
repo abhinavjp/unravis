@@ -68,6 +68,17 @@ type Provenance struct {
 
 var ErrTooFewCalibrationRows = errors.New("too few rows to calibrate the _id margin")
 
+// HintReason is the short reason a calibration failure gives for hint mode not
+// running. A provenance Note carries this reason alone; the page wraps it in the
+// prov.hintFallback sentence. The live store and the demo share it, so the same
+// cause reads the same on both.
+func HintReason(err error) string {
+	if errors.Is(err, ErrTooFewCalibrationRows) {
+		return fmt.Sprintf("calibration needs at least %d rows", IDMinCalibrationRows)
+	}
+	return "calibration failed"
+}
+
 // CompletenessOf labels a result. A live result is never "complete" while
 // docsExamined is unmeasured (§6.4(4)).
 func CompletenessOf(p Provenance) string {
