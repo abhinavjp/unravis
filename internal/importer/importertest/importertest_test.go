@@ -1,0 +1,132 @@
+package importertest_test
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"strconv"
+	"testing"
+	"time"
+
+	"api-audit-explorer/internal/clock"
+	"api-audit-explorer/internal/evidence"
+	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/importer/importertest"
+	"api-audit-explorer/internal/importer/textio"
+)
+
+// toy is a minimal, correct importer over "time,host,note,ms" CSV. It shows
+// the shape every real importer takes and proves the harness accepts one.
+type toy struct{}
+
+func (toy) Name() string { return "toy-csv" }
+
+func (toy) Detect(head []byte, _ string) int {
+	if bytes.HasPrefix(bytes.TrimPrefix(head, []byte{0xEF, 0xBB, 0xBF}), []byte("time,host,note,ms")) {
+		return 90
+	}
+	return 0
+}
+
+func (toy) AllowedAttrs() map[string]bool { return map[string]bool{"note": true} }
+func (toy) DefaultLimits() importer.Limits {
+	return importer.NewLimits(1<<20, 10000)
+}
+
+func (t toy) Parse(ctx context.Context, r io.Reader, opts importer.Options, emit func(evidence.Event) error) (importer.Report, error) {
+	rep := importer.Report{Importer: t.Name()}
+	rep.Rule("time", clock.RuleUTCField)
+	cr, _, err := textio.NewCSV(r, textio.CSVOptions{
+		RequireHeader: []string{"time", "host", "note", "ms"},
+		MaxLine:       opts.Limits.MaxLineBytes,
+		MaxFields:     opts.Limits.MaxFields,
+	})
+	if err != nil {
+		return rep, err
+	}
+	for {
+		if rep.Rows%64 == 0 {
+			if err := ctx.Err(); err != nil {
+				return rep, err
+			}
+		}
+		rec, line, err := cr.Next()
+		var re importer.RowError
+		switch {
+		case errors.Is(err, io.EOF):
+			return rep, nil
+		case errors.As(err, &re):
+			rep.Rows++
+			rep.Reject(re.Line, re.Reason)
+			continue
+		case err != nil:
+			return rep, err
+		}
+		rep.Rows++
+		if err := opts.Limits.CheckRows(rep.Rows); err != nil {
+			return rep, err
+		}
+		ts, terr := time.Parse(time.RFC3339, rec[cr.Index("time")])
+		ms, merr := strconv.ParseFloat(rec[cr.Index("ms")], 64)
+		switch {
+		case terr != nil:
+			rep.Reject(line, importer.ReasonBadTime)
+			continue
+		case merr != nil:
+			rep.Reject(line, importer.ReasonBadNumber)
+			continue
+		}
+		ts = ts.UTC()
+		ev := evidence.Event{
+			EvidenceID: evidence.EventID(opts.CaseID, t.Name(), opts.ImportNonce, line, 0),
+			Source:     t.Name(),
+			Kind:       "toy",
+			Host:       rec[cr.Index("host")],
+			Start:      ts,
+			End:        ts.Add(time.Duration(ms * float64(time.Millisecond))),
+			DurationMs: &ms,
+			Unit:       "ms",
+			Line:       line,
+			TZRule:     clock.RuleUTCField,
+			Attrs:      map[string]string{"note": rec[cr.Index("note")]},
+		}
+		if err := emit(ev); err != nil {
+			return rep, err
+		}
+		rep.Emitted++
+		rep.Cover(ev.Start)
+		rep.Cover(ev.End)
+	}
+}
+
+const good = "time,host,note,ms\r\n" +
+	"2001-01-01T00:00:00Z,web-a,first row,12.5\r\n" +
+	"2001-01-01T00:00:01Z,web-a,\"second, quoted\",30\r\n" +
+	"2001-01-01T00:00:02Z,web-b,third row,7\r\n"
+
+const bad = "time,host,note,ms\n" +
+	"2001-01-01T00:00:00Z,web-a,fine,1\n" +
+	"SENTINEL-7f3a,web-a,SENTINEL-7f3a,SENTINEL-7f3a\n" +
+	"2001-01-01T00:00:02Z,web-a,fine,SENTINEL-7f3a\n" +
+	"2001-01-01T00:00:03Z,SENTINEL-7f3a\n"
+
+const formula = "time,host,note,ms\n" +
+	"2001-01-01T00:00:00Z,web-a,=1+1,1\n" +
+	"2001-01-01T00:00:01Z,web-a,+cmd,1\n" +
+	"2001-01-01T00:00:02Z,web-a,-2,1\n" +
+	"2001-01-01T00:00:03Z,web-a,@SUM(A1),1\n" +
+	"2001-01-01T00:00:04Z,web-a,\"\tTAB\",1\n" +
+	"2001-01-01T00:00:05Z,web-a,\"\rCR\",1\n"
+
+func fixtures() importertest.Fixtures {
+	return importertest.Fixtures{Good: []byte(good), Bad: []byte(bad), Formula: []byte(formula)}
+}
+
+func TestToyPassesConformance(t *testing.T) {
+	importertest.Run(t, toy{}, fixtures())
+}
+
+func FuzzToyParse(f *testing.F) {
+	importertest.FuzzParse(f, toy{}, fixtures())
+}
