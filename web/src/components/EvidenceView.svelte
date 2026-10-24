@@ -52,7 +52,7 @@
 </script>
 
 <Inspector off={depth !== 2} title={evidenceName} subtitle={operation ? kindLabel(operation.kind ?? 'unknown') + ' · ' + operation.requests.toLocaleString() + ' requests' : ''} tabs={inspectorTabs} active={activeTab} onTab={(id) => evidence.inspectorTab = id} onClose={closeInspector}>
-  {#if comparisonWide}<p class="sample-note comparison-wide-note">Comparison-wide view: Failures, Slowest and Breakdown cover every operation in this comparison. The request list below follows what you opened.</p>{/if}
+  {#if comparisonWide}<p class="comparison-wide-note">Comparison-wide view: Failures, Slowest and Breakdown cover every operation in this comparison. The request list below follows what you opened.</p>{/if}
   {#if selectedPlain}<PlainLine result={selectedPlain} hints={['p50', 'p95']} />{/if}
   {#if activeTab === 'timeline' && selected}
     {#if operationGroups.length > 1}
@@ -83,7 +83,7 @@
     <BreakdownPanel query={scopedQuery} {sourceLabels} onDrill={drillInto} />
   {/if}
   <section class="data-section request-section" id="request-history">
-    <div class="section-heading"><div><h3>Request history</h3><p>{queryWide ? (drillOverview ? drillHeading(drillOverview) : stateLabel(requestState)) + ' · ' + (operation ? 'every group of this operation' : 'every API group in this comparison') : selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome : drillActive ? 'Requests matching ' + drillChips.map(chip => chip.text).join(' · ') + '.' : 'Choose an operation to list its requests.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
+    <div class="section-heading"><div><h3>Request history</h3><p>{queryWide ? (drillOverview ? drillHeading(drillOverview) : stateLabel(requestState)) + ' · ' + (operation ? 'every group of this operation' : 'every API group in this comparison') + '.' : selected ? selected.controller + '.' + selected.action + ' · ' + kindLabel(selected.kind) + ' · ' + selected.outcome + '.' : drillActive ? 'Requests matching ' + drillChips.map(chip => chip.text).join(' · ') + '.' : 'Choose an operation to list its requests.'} Total ms is full request time; API ms is API processing time. Inspect opens every stored field and the captured request and response text.</p></div>
       {#if selected || queryWide}<button class="secondary-button" onclick={exportCSV}>Export CSV</button>{/if}
       {#if drillActive}<button class="quiet-button" onclick={clearDrill}>{operation ? 'Back to all of this operation' : 'Clear breakdown filter'}</button>{/if}
     </div>
@@ -93,3 +93,9 @@
   </section>
   {#if contextAnchor}<ActivityContext anchor={contextAnchor} sourceIds={analysis.query.sourceIds} {sourceLabels} {zone} />{/if}
 </Inspector>
+
+<style>
+  /* A note in the evidence frame is a hatch dot and text between two hairlines: no box and no side stripe. */
+  .comparison-wide-note { position: relative; margin: 0; padding: var(--space-2) 0 var(--space-2) var(--space-5); color: var(--text); font-size: var(--fs-3); line-height: 1.5; border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); }
+  .comparison-wide-note::before { content: ""; position: absolute; left: 0; top: calc(var(--space-2) + 0.45em); width: 9px; height: 9px; border-radius: 50%; background: var(--hatch); box-shadow: 0 0 0 1px var(--pending); }
+</style>

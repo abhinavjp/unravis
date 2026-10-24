@@ -21,7 +21,8 @@
 {/if}
 
 <style>
-  .provenance-note { list-style: none; margin: 0; padding: 8px 12px; display: grid; gap: 6px; background: var(--surface); border: 1px solid var(--line-soft); border-left: 3px solid var(--line); border-radius: var(--radius); min-width: 0; }
+  .provenance-note { list-style: none; margin: 0; position: relative; padding: 8px 0 8px 20px; display: grid; gap: 6px; background: transparent; border: 0; border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); border-radius: 0; min-width: 0; }
+  .provenance-note::before { content: ""; position: absolute; left: 0; top: 12px; width: 9px; height: 9px; border-radius: 50%; background: var(--hatch); box-shadow: 0 0 0 1px var(--pending); }
   .provenance-note li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; font-size: 12px; line-height: 1.5; color: var(--text-2); min-width: 0; }
   .provenance-note li.warn { color: var(--text); }
   .provenance-note li.warn .prov-label { color: var(--warn); }

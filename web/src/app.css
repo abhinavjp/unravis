@@ -106,7 +106,7 @@
   --ease: cubic-bezier(.2, .7, .2, 1);
   --dur: 180ms;
   --header-h: 56px;
-  --drawer-w: min(680px, 48vw);
+  --drawer-w: min(720px, 56vw);
   --hatch: repeating-linear-gradient(135deg, var(--pending) 0 2px, transparent 2px 6px);
   /* Layout scale for new and refreshed components. Existing rules keep their literal values until each one is restyled.
      Type: six sizes, caption to heading. Spacing: 4px steps. Radii: small (tags, bars) and the standard control radius.
@@ -339,11 +339,6 @@ summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; bo
 /* ---------- D2 inspector ---------- */
 .inspector { min-width: 0; position: fixed; z-index: 11; top: var(--header-h); right: 0; bottom: 0; width: var(--drawer-w); display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--line); box-shadow: -12px 0 32px color-mix(in srgb, var(--bg) 60%, transparent); animation: slide-in 200ms var(--ease) both; }
 .inspector.off { display: none; }
-.inspector-head { flex: 0 0 auto; display: flex; align-items: start; justify-content: space-between; gap: 12px; padding: 16px 20px 0; }
-.inspector-head h2 { margin: 0; font-size: 17px; font-weight: 600; overflow-wrap: anywhere; }
-.inspector-head p { margin: 3px 0 0; color: var(--text-2); font-size: 12px; overflow-wrap: anywhere; }
-.inspector-close { flex: 0 0 auto; width: 32px; height: 32px; padding: 0; color: var(--text-2); background: transparent; border: 1px solid var(--line); border-radius: var(--radius); font-size: 18px; line-height: 1; }
-.inspector-close:hover { color: var(--text); border-color: var(--text-2); }
 .tabs { flex: 0 0 auto; display: flex; gap: 2px; margin: 14px 20px 0; overflow-x: auto; border-bottom: 1px solid var(--line); scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
 .tab { flex: 0 0 auto; padding: 9px 12px; color: var(--text-2); background: transparent; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; font-size: 13px; font-weight: 550; white-space: nowrap; transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease); }
@@ -724,17 +719,19 @@ th.numeric { text-align: right; }
 .run-hint:empty { margin-right: -8px; }
 
 /* ---------- Wide and narrow ---------- */
-@media (min-width: 1100px) {
+@media (min-width: 900px) {
   .stage { transition: padding-right var(--dur) var(--ease); }
   .stage.with-drawer { padding-right: calc(var(--drawer-w) + 24px); }
   .scope { transition: padding-right var(--dur) var(--ease); }
   .app-shell:has(.stage.with-drawer) .scope { padding-right: calc(var(--drawer-w) + 24px); }
 }
-@media (max-width: 1099px) {
+@media (max-width: 899px) {
   .inspector { position: static; width: auto; box-shadow: none; border-left: 0; background: transparent; animation: reveal 200ms var(--ease) both; }
-  .inspector-head, .tabs, .inspector-body { padding-left: 0; padding-right: 0; margin-left: 0; margin-right: 0; }
+  .tabs, .inspector-body { padding-left: 0; padding-right: 0; margin-left: 0; margin-right: 0; }
   .inspector-body { overflow: visible; padding-bottom: 8px; }
   .view.under { display: none; }
+}
+@media (max-width: 1099px) {
   .figures, .skeleton-figures { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 920px) {
@@ -819,7 +816,6 @@ th.numeric { text-align: right; }
   .connections-drawer { width: min(520px, 100vw); padding: 17px 15px 24px; }
   .empty-actions { flex-direction: column; }
   .welcome-state, .loading-state { min-height: 200px; padding: 18px 16px; }
-  .inspector-head h2 { font-size: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
