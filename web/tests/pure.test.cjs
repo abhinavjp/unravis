@@ -1625,7 +1625,7 @@ test('the run hint is a persistent status region tied to the run button, the bac
   assert.match(fs.readFileSync(path.join(root, 'src/components/Breadcrumb.svelte'), 'utf8'), /aria-label=\{'Back to ' \+ crumb\.label\}/);
   for (const name of ['RequestVolume', 'TrafficSlowness']) assert.doesNotMatch(fs.readFileSync(path.join(root, 'src/components/' + name + '.svelte'), 'utf8'), /Run comparison/);
   const slowness = fs.readFileSync(path.join(root, 'src/components/TrafficSlowness.svelte'), 'utf8');
-  assert.match(slowness, /const narrowed=\$derived\(mode!=='ms'&&cohort\?cohort:null\)/);
+  assert.match(slowness, /const narrowed=\$derived\(percentile&&cohort\?cohort:null\)/);
   assert.match(slowness, /\{headingScope\} · /);
 });
 

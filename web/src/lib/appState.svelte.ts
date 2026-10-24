@@ -640,7 +640,7 @@ export async function runAnalysis(auto = false) {
     const result = await api.analyze(cloneQuery(), analysisController.signal);
     if (run !== analysisSequence) return;
     analysis = result;
-    timelineKeys = rankComparisons(result.apis).filter(row => row.state === 'compared').slice(0, 3).map(row => row.key);
+    timelineKeys = rankComparisons(result.apis).filter(row => row.state === 'compared').slice(0, 1).map(row => row.key); // only the top group starts checked: three overlapping lines were unreadable
   } catch (cause) {
     if (run === analysisSequence && !(cause instanceof DOMException && cause.name === 'AbortError')) {
       const detail = message(cause);

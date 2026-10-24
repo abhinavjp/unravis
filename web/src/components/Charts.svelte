@@ -41,7 +41,7 @@
     {#if !hasRatio}<div class="chart-empty"><strong>A slowdown ratio is unavailable</strong><p>{!hasCurrent ? 'This API has no usable timings in the investigation period.' : (selected?.reference.count ?? 0) === 0 ? 'This API has no usable timings in the reference period.' : selected?.state === 'insufficient_data' ? 'At least one period has fewer than 20 usable timings. More samples are needed for a meaningful comparison.' : 'The available timings do not support a meaningful comparison with the reference.'}</p></div>{/if}</div>
   </div>
   <div class="plot-panel histogram-panel">
-    <div class="plot-heading"><div><h3>How requests are distributed</h3><p>Number of requests in each response-time range. Current and reference periods may contain different numbers of requests.</p></div></div>
+    <div class="plot-heading"><div><h3>How requests are distributed</h3><p>Number of requests in each response-time range. Range edges are rounded to whole numbers so they are easy to read; each request is counted once, in the range it fell into. Current and reference periods may contain different numbers of requests.</p></div></div>
     <div class="chart-stage compact-stage"><div class="chart compact-chart" class:chart-hidden={!hasDistribution} bind:this={histogram} role="img" aria-label="Selected API request counts by response time" aria-hidden={!hasDistribution}></div>
     {#if !hasDistribution}<div class="chart-empty"><strong>No usable response times</strong><p>Neither period contains timings to plot for this API.</p></div>{/if}</div>
   </div>
