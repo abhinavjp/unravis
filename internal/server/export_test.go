@@ -4,6 +4,7 @@ import (
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/ledger"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -81,7 +82,8 @@ func TestExportPreviewThenConfirmOnce(t *testing.T) {
 		t.Fatalf("export = %+v", p.Export)
 	}
 	in := fb.inputs[0]
-	if len(in.Ledger) != 1 || !in.Options.IncludeLedger || in.Options.IncludePseudonyms || in.ToolVersion == "" || in.Now.IsZero() {
+	// h1 references no finding of this report, so it is not passed on.
+	if len(in.Ledger) != 0 || !in.Options.IncludeLedger || in.Options.IncludePseudonyms || in.ToolVersion == "" || in.Now.IsZero() {
 		t.Fatalf("build input = %+v", in)
 	}
 	if in.SourceLabels["demo-west"] != "Demo West" {
@@ -98,8 +100,9 @@ func TestExportPreviewThenConfirmOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	want, _ := canonicalExport(p.Export)
-	if c.Content != string(want) || c.SHA256 != "fakehash123" {
-		t.Fatalf("confirm = %+v", c)
+	sum := sha256.Sum256([]byte(c.Content))
+	if c.Content != string(want) || c.SHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("confirm = %+v; sha256 must be over the content string", c)
 	}
 	if !strings.HasPrefix(c.Filename, "unravis-evidence-") || !strings.HasSuffix(c.Filename, ".json") || len(c.Filename) != len("unravis-evidence-20060102-150405.json") {
 		t.Fatalf("filename = %q", c.Filename)
@@ -119,6 +122,36 @@ func TestExportLedgerOnlyWhenRequested(t *testing.T) {
 	}
 	if len(fb.inputs[0].Ledger) != 0 || fb.inputs[0].Options.IncludeLedger {
 		t.Fatalf("ledger passed without opt-in: %+v", fb.inputs[0])
+	}
+}
+
+// "Include my ledger" passes on only hypotheses whose evidence ids intersect
+// this report's findings.
+func TestExportLedgerOnlyRelatedHypotheses(t *testing.T) {
+	fb := installExportFakes(t)
+	store := &fakeLedger{}
+	h := demoExportHandler(WithLedger(store))
+	body := exportBody("demo-west") // one fixed window for both previews
+	preview := func() evidence.Input {
+		t.Helper()
+		if r := request(h, http.MethodPost, "/api/export/preview", body, true); r.Code != http.StatusOK {
+			t.Fatalf("preview = %d %s", r.Code, r.Body.String())
+		}
+		return fb.inputs[len(fb.inputs)-1]
+	}
+	probe := preview()
+	if len(probe.Report.Findings) == 0 {
+		t.Fatal("demo report has no findings")
+	}
+	related := probe.Report.Findings[0].EvidenceID
+	store.items = []ledger.Hypothesis{
+		{ID: "related", Text: "this case", State: ledger.StateOpen, EvidenceIDs: []string{"p2:b1:ffffffffffffffff", related}},
+		{ID: "other", Text: "an earlier case", State: ledger.StateOpen, EvidenceIDs: []string{"p2:b1:ffffffffffffffff"}},
+		{ID: "none", Text: "no references", State: ledger.StateOpen},
+	}
+	in := preview()
+	if len(in.Ledger) != 1 || in.Ledger[0].ID != "related" {
+		t.Fatalf("ledger passed to build = %+v", in.Ledger)
 	}
 }
 

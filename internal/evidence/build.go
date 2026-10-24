@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -64,10 +65,16 @@ func Build(in Input) (Export, error) {
 		}
 		records = append(records, rec)
 	}
+	var w withholding
+	if w.counts, err = suppressComplements(records); err != nil {
+		return Export{}, err
+	}
 
 	body := Body{Records: records}
 	if in.Options.IncludePseudonyms {
-		body.Pseudonyms = buildPseudonyms(in.Key, in.Report.Stalls)
+		var shown bool
+		body.Pseudonyms, shown = buildPseudonyms(in.Key, in.Report.Stalls)
+		w.pseudonyms = !shown
 	}
 	if in.Options.IncludeLedger {
 		entries, err := buildLedger(in.Ledger, records, reportUserIDs(in.Report))
@@ -77,21 +84,20 @@ func Build(in Input) (Export, error) {
 		body.Ledger = entries
 	}
 
-	sum, err := bodyHash(body)
-	if err != nil {
-		return Export{}, err
-	}
 	e := Export{
 		Manifest: Manifest{
 			SchemaVersion: SchemaVersion,
 			ToolVersion:   in.ToolVersion,
 			CreatedAt:     in.Now.UTC(),
-			BodySHA256:    sum,
-			Masking:       Masking{Statements: maskingStatements(in.Options)},
+			Masking:       Masking{Statements: maskingStatements(in.Options, w)},
 		},
 		Body: body,
 	}
-	// Last line of defence: no form of "proven" may reach a file.
+	if e.Manifest.BodySHA256, err = exportHash(e); err != nil {
+		return Export{}, err
+	}
+	// Last line of defence: no form of "proven" may reach a file, however it is
+	// spelt (containsProven normalises before it looks).
 	raw, err := Canonical(e)
 	if err != nil {
 		return Export{}, err
@@ -102,11 +108,19 @@ func Build(in Input) (Export, error) {
 	return e, nil
 }
 
+// withholding records what Build hid as a whole, so the masking statements can
+// say so.
+type withholding struct {
+	pseudonyms bool // the pseudonym table was asked for and withheld
+	counts     bool // at least one record count is "withheld"
+}
+
 // buildLedger exports text, state and evidence references only. Notes, facts,
-// guards and history are dropped. Text is scrubbed of identifiers and raw user
-// ids the report holds, then masked.
-// References to records outside this export collapse into one
-// "not in this export" entry.
+// guards and history are dropped. Only hypotheses that reference at least one
+// record in this export are kept, so unrelated cases never ride along. Text is
+// scrubbed of identifiers and raw user ids the report holds, then masked, or
+// withheld when it still looks risky. Other references to records outside
+// this export collapse into one "not in this export" entry.
 func buildLedger(hs []ledger.Hypothesis, records []Record, userIDs map[int]bool) ([]LedgerEntry, error) {
 	exported := map[string]bool{}
 	for _, r := range records {
@@ -120,42 +134,60 @@ func buildLedger(hs []ledger.Hypothesis, records []Record, userIDs map[int]bool)
 			return nil, fmt.Errorf("%w: ledger state %q", ErrInvalid, h.State)
 		}
 		ids := make([]string, 0, len(h.EvidenceIDs))
-		missing := false
+		missing, related := false, false
 		for _, id := range h.EvidenceIDs {
 			switch {
 			case exported[id]:
+				related = true
 				ids = append(ids, id)
 			case !missing:
 				missing = true
 				ids = append(ids, notInExport)
 			}
 		}
-		out = append(out, LedgerEntry{Text: cleanFreeText(h.Text, userIDs), State: h.State, EvidenceIDs: ids})
+		if !related {
+			continue
+		}
+		out = append(out, LedgerEntry{Text: cleanFreeText(h.Text, userIDs, ledgerWithheld), State: h.State, EvidenceIDs: ids})
 	}
 	return out, nil
 }
 
-func maskingStatements(o Options) []string {
+func maskingStatements(o Options, w withholding) []string {
 	s := []string{
 		"Left out by default: request and response payloads, raw URLs, query text, IP addresses, user agents, raw user IDs and source ids. Sources are named by a human label only.",
-		fmt.Sprintf("Every count below %d is shown as \"<%d\", including counts inside headlines and known gaps.", ThinCell, ThinCell),
+		fmt.Sprintf("Every count below %d is shown as \"<%d\", including counts inside headlines and known gaps. A finding with a count below %d is marked low n.", ThinCell, ThinCell, ThinCell),
 	}
-	if o.IncludePseudonyms {
-		s = append(s, "Users are shown as keyed pseudonyms (user- followed by 8 hex characters). They are stable within this case and cannot be linked to other cases.")
-	} else {
+	if w.counts {
+		s = append(s, fmt.Sprintf("A count shown as \"%s\" is %d or more. It is hidden so that subtracting it from another count shown cannot reveal a count below %d.", withheldText, ThinCell, ThinCell))
+	}
+	switch {
+	case !o.IncludePseudonyms:
 		s = append(s, "No user pseudonyms are included.")
+	case w.pseudonyms:
+		s = append(s, fmt.Sprintf("Pseudonym table withheld: a cell was below %d.", ThinCell))
+	default:
+		s = append(s, "Users are shown as keyed pseudonyms (user- followed by 8 hex characters). They are stable within this export only: each preview uses a new key, so the same user gets a different label in any other export.")
 	}
 	if o.IncludeLedger {
-		s = append(s, fmt.Sprintf("Hypothesis text, state and evidence references are included; notes and guard facts are not. In hypothesis text, identifiers, email addresses, IP addresses and links are replaced by \"[removed]\" and every number below %d is shown as \"<%d\".", ThinCell, ThinCell))
+		s = append(s, fmt.Sprintf("Only hypotheses that reference a finding in this export are included, with their text, state and evidence references; notes and guard facts are not. In hypothesis text, identifiers, email addresses, IP addresses, host names, paths and links are replaced by \"[removed]\", every number below %d is shown as \"<%d\", and text that still looks like it holds an identifier is replaced by \"%s\".", ThinCell, ThinCell, ledgerWithheld))
 	} else {
 		s = append(s, "The hypothesis ledger is not included.")
 	}
-	return append(s, "The key that makes pseudonyms is not in this file.")
+	return append(s,
+		"The key that makes pseudonyms is not in this file.",
+		"bodySha256 is the SHA-256 of this file's bytes with the bodySha256 value set to an empty string, so it covers the manifest and the body.",
+	)
 }
 
-// bodyHash is the hex SHA-256 of json.Marshal(Body): compact, struct field order.
-func bodyHash(b Body) (string, error) {
-	raw, err := json.Marshal(b)
+// exportHash is the hex SHA-256 of Canonical(e) with Manifest.BodySHA256 set to
+// "". It therefore covers everything in the file except the hash itself:
+// schemaVersion, toolVersion, createdAt, the masking statements and the body.
+// To check a file by hand, replace the bodySha256 value with "" (keeping every
+// other byte) and hash the result.
+func exportHash(e Export) (string, error) {
+	e.Manifest.BodySHA256 = ""
+	raw, err := Canonical(e)
 	if err != nil {
 		return "", err
 	}
@@ -163,11 +195,17 @@ func bodyHash(b Body) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// Canonical returns the exact bytes of the export file (indented JSON, stable key order).
+// Canonical returns the exact bytes of the export file, which are also the
+// bytes the manifest hash is computed over (with the hash value empty):
+//   - UTF-8 JSON from encoding/json with struct field order as declared in
+//     types.go, so key order is fixed;
+//   - two-space indent, no prefix, "\n" line ends and one trailing "\n";
+//   - HTML escaping off, so "<20" is written as is, never as "\u003c20";
+//   - times in RFC 3339 UTC, as time.Time marshals them.
 func Canonical(e Export) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false) // keep "<20" readable instead of "<20"
+	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(e); err != nil { // Encode appends the trailing newline
 		return nil, err
@@ -175,9 +213,10 @@ func Canonical(e Export) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Verify re-parses a file's bytes and recomputes the body hash against the
-// manifest. Unknown fields are refused, so nothing can ride along unhashed
-// inside the body.
+// Verify checks a file's bytes: exactly one JSON value with nothing after it,
+// no unknown fields, the current schema version, a hash that matches the
+// manifest and body, and the canonical encoding (so key spelling, order and
+// spacing are the ones Build wrote and nothing can ride along unhashed).
 func Verify(raw []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -185,18 +224,25 @@ func Verify(raw []byte) error {
 	if err := dec.Decode(&e); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	if dec.More() {
+	if err := dec.Decode(&json.RawMessage{}); err != io.EOF {
 		return fmt.Errorf("%w: trailing data after the export", ErrInvalid)
 	}
 	if e.Manifest.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("%w: schema version %d, want %d", ErrInvalid, e.Manifest.SchemaVersion, SchemaVersion)
 	}
-	sum, err := bodyHash(e.Body)
+	sum, err := exportHash(e)
 	if err != nil {
 		return err
 	}
 	if sum != e.Manifest.BodySHA256 {
-		return fmt.Errorf("%w: body hash does not match the manifest", ErrInvalid)
+		return fmt.Errorf("%w: hash does not match the manifest and body", ErrInvalid)
+	}
+	canon, err := Canonical(e)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(canon, raw) {
+		return fmt.Errorf("%w: the file is not in canonical form", ErrInvalid)
 	}
 	return nil
 }

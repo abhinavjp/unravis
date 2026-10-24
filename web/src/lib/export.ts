@@ -11,7 +11,7 @@ export const EXPORT_TEXT = {
   intro: 'Build a file of the findings in this window. You see everything in it before anything is saved.',
   options: 'Options',
   pseudonymsLabel: 'Include user pseudonyms',
-  pseudonymsNote: 'Adds stable labels such as user-3fa91c2e in place of user ids. The key that makes them is never saved.',
+  pseudonymsNote: 'Adds labels such as user-3fa91c2e in place of user ids. A label holds only within this file: each preview uses a new key, and the key is never saved.',
   ledgerLabel: 'Include my ledger',
   ledgerNote: 'Adds your hypothesis text, state and evidence references. Nothing else from the ledger is added.',
   preview: 'Preview export',
@@ -32,14 +32,15 @@ export const EXPORT_TEXT = {
   ledgerNone: 'No ledger entries in this file.',
   noEvidenceIds: 'No evidence references',
   manifest: 'Manifest',
-  hashLabel: 'Body SHA-256',
-  showFile: 'Show the exact file',
-  showFileNote: 'The file content as the server built it, before it is saved.',
+  hashLabel: 'Manifest and body SHA-256',
+  showFile: 'Show the file content',
+  showFileNote: 'What the saved file will hold, as the server built it. Spacing in the saved file can differ from this view.',
   save: 'Save file',
   saving: 'Saving…',
   saveNote: 'Saving downloads the file to your computer.',
   failedPreview: 'The preview did not finish. Try again.',
   failedSave: 'The file was not saved. Try again.',
+  hashMismatch: 'The file did not match the SHA-256 the server sent, so it was not saved. Preview it again.',
   unavailable: 'Export is not available right now. Try again later.',
   goneSave: 'This preview is no longer available. Preview it again.',
   notFound: 'Export was not found on this server.',
@@ -135,7 +136,26 @@ export function canSave(phase: ExportPhase): boolean {
   return phase.kind === 'preview' && phase.preview.export.body.records.length > 0;
 }
 
-export const savedLine = (sha256: string) => `Saved. SHA-256: ${sha256}`;
+export const savedLine = (sha256: string) => `Saved. SHA-256 of the saved file: ${sha256}`;
+
+/** Lower-case hex SHA-256 of the UTF-8 bytes of text, which are the bytes the saved file holds. */
+export async function sha256Hex(text: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * True only when the content the server returned hashes to the sha256 it returned alongside.
+ * Anything else (no hash, no Web Crypto, a mismatch) is false, so the file is not saved.
+ */
+export async function contentMatches(content: string, sha256: string): Promise<boolean> {
+  if (typeof content !== 'string' || !/^[0-9a-f]{64}$/i.test(sha256 ?? '')) return false;
+  try {
+    return (await sha256Hex(content)) === sha256.toLowerCase();
+  } catch {
+    return false;
+  }
+}
 
 /** The message to show for a failed call. A message the server wrote is shown as it is; a bare status gets a plain sentence. */
 export function errorText(cause: unknown, stage: 'preview' | 'save'): string {

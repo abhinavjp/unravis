@@ -6,6 +6,7 @@ import (
 	"api-audit-explorer/internal/ledger"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"net/http"
@@ -144,10 +145,12 @@ func (h *handler) exportPreview(w http.ResponseWriter, r *http.Request) {
 
 	var hypotheses []ledger.Hypothesis
 	if body.IncludeLedger && h.ledger != nil {
-		if hypotheses, err = h.ledger.List(); err != nil {
+		all, err := h.ledger.List()
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "The hypothesis ledger could not be read.")
 			return
 		}
+		hypotheses = relatedHypotheses(all, report)
 	}
 
 	key, err := newExportKey()
@@ -183,8 +186,34 @@ func (h *handler) exportPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := hex.EncodeToString(raw)
-	h.exports().put(id, storedExport{canonical: canonical, sha256: export.Manifest.BodySHA256})
+	// The confirm response's sha256 is over the exact content string it returns,
+	// so the browser can check what it is about to save. The manifest's
+	// bodySha256 inside the file is a different hash (manifest and body with
+	// that value blanked) and is left as the engine wrote it.
+	sum := sha256.Sum256(canonical)
+	h.exports().put(id, storedExport{canonical: canonical, sha256: hex.EncodeToString(sum[:])})
 	writeJSON(w, http.StatusOK, exportPreviewResponse{PreviewID: id, Export: export}, maxResponseBytes)
+}
+
+// relatedHypotheses keeps only hypotheses that reference at least one finding
+// in this report, so "include my ledger" never carries unrelated cases.
+func relatedHypotheses(all []ledger.Hypothesis, report audit.PatternReport) []ledger.Hypothesis {
+	ids := make(map[string]bool, len(report.Findings))
+	for _, f := range report.Findings {
+		if f.EvidenceID != "" {
+			ids[f.EvidenceID] = true
+		}
+	}
+	var out []ledger.Hypothesis
+	for _, hyp := range all {
+		for _, id := range hyp.EvidenceIDs {
+			if ids[id] {
+				out = append(out, hyp)
+				break
+			}
+		}
+	}
+	return out
 }
 
 func writeExportBuildError(w http.ResponseWriter, err error) {

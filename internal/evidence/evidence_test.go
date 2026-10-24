@@ -143,8 +143,9 @@ func TestAllowlistWithPseudonymsAndLedger(t *testing.T) {
 	keyJSON, _ := json.Marshal(in.Key) // base64 form
 	assertAbsent(t, raw, strings.Trim(string(keyJSON), `"`))
 
-	if len(e.Body.Pseudonyms) != 2 {
-		t.Fatalf("pseudonyms = %+v", e.Body.Pseudonyms)
+	// Two users with small counts: the table is withheld, not printed with "<20" cells.
+	if e.Body.Pseudonyms != nil || !hasStatement(e, "Pseudonym table withheld: a cell was below 20.") {
+		t.Fatalf("pseudonyms = %+v, statements = %q", e.Body.Pseudonyms, e.Manifest.Masking.Statements)
 	}
 	if len(e.Body.Ledger) != 1 {
 		t.Fatalf("ledger = %+v", e.Body.Ledger)
@@ -217,9 +218,18 @@ func TestRecordFields(t *testing.T) {
 	if e.Manifest.ToolVersion != "0.13.0-test" || !e.Manifest.CreatedAt.Equal(testNow) {
 		t.Errorf("manifest = %+v", e.Manifest)
 	}
-	if last := e.Manifest.Masking.Statements[len(e.Manifest.Masking.Statements)-1]; last != "The key that makes pseudonyms is not in this file." {
-		t.Errorf("last statement = %q", last)
+	if !hasStatement(e, "The key that makes pseudonyms is not in this file.") {
+		t.Errorf("statements = %q", e.Manifest.Masking.Statements)
 	}
+}
+
+func hasStatement(e Export, want string) bool {
+	for _, s := range e.Manifest.Masking.Statements {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestWindowError(t *testing.T) {
@@ -380,10 +390,8 @@ func TestReidentification(t *testing.T) {
 	for _, r := range e.Body.Records {
 		counts = append(counts, r.N)
 	}
-	for _, p := range e.Body.Pseudonyms {
-		counts = append(counts, p.Requests)
-	}
-	if len(counts) != len(e.Body.Records)+2 {
+	// Every per-user cell is small, so the whole table is withheld.
+	if e.Body.Pseudonyms != nil {
 		t.Fatalf("pseudonyms = %+v", e.Body.Pseudonyms)
 	}
 	for _, c := range counts {
@@ -416,8 +424,8 @@ func TestReidentification(t *testing.T) {
 				t.Errorf("user %d: label %s is derivable without the key", id, a)
 			}
 		}
-		if !strings.Contains(string(raw), a) {
-			t.Errorf("label %s missing from export", a)
+		if strings.Contains(string(raw), a) {
+			t.Errorf("label %s printed although the table is withheld", a)
 		}
 	}
 	if pseudonymLabel(in.Key, 7) == pseudonymLabel(in.Key, 9) {
