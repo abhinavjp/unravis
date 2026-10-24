@@ -1,0 +1,5 @@
+2001-10-25 14:02:30.950 +13:00 [INF] HTTP GET /orders/SENTINEL-7f3a responded 200 in 1834.2000 ms
+2001-10-25 14:02:31.123 +13:00 [WRN] Cache call slow for "alice"
+2001-10-25 14:02:31.400 +13:00 [ERR] Unhandled exception
+System.TimeoutException: The operation has timed out.
+   at Synthetic.Api.CacheClient.GetAsync(String key)

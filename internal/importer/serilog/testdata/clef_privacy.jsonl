@@ -1,0 +1,4 @@
+{"@t":"2001-10-25T01:02:30.9500000Z","@mt":"HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0000} ms","RequestMethod":"GET","RequestPath":"/orders/SENTINEL-7f3a","StatusCode":200,"Elapsed":1834.2,"SourceContext":"Serilog.AspNetCore.RequestLoggingMiddleware"}
+{"@t":"2001-10-25T01:02:31.1230000Z","@mt":"Cache call slow for {UserId}","@l":"Warning","UserId":"alice","SourceContext":"Synthetic.Api.CacheClient"}
+{"@t":"2001-10-25T01:02:31.4000000Z","@mt":"Unhandled exception","@l":"Error","@x":"System.TimeoutException: The operation has timed out.\r\n   at Synthetic.Api.CacheClient.GetAsync(String key)","SourceContext":"Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddleware"}
+{"@t":"2001-10-25T01:05:00.0000000+13:00","@m":"Application started. Press Ctrl+C to shut down.","SourceContext":"Microsoft.Hosting.Lifetime"}
