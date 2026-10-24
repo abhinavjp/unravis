@@ -14,7 +14,7 @@ var (
 )
 
 // LimitError says which limit was passed. Limit is a fixed word ("bytes",
-// "rows", "line-bytes", "fields", "hosts"); At is the first value over Max
+// "rows", "events", "line-bytes", "fields", "hosts"); At is the first value over Max
 // (a byte count, row count, line number or field count).
 type LimitError struct {
 	Limit   string

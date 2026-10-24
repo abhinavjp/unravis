@@ -15,6 +15,21 @@ type Limits struct {
 	MaxLineBytes      int     // default 64 KiB
 	MaxFields         int     // default 4096
 	MaxRejectFraction float64 // default 0.05; above it: quarantine
+	// MaxEvents caps the events one file may emit (0: the importer's own
+	// default, none if it has none; negative: no limit). Importers that emit
+	// many events per row (wide counter files) enforce it before emitting, so a
+	// file under MaxBytes and MaxRows cannot still produce an unbounded run.
+	MaxEvents int64
+}
+
+// CheckEvents returns *LimitError (Limit "events") when n, the number of events
+// emitted so far plus the ones about to be, passes MaxEvents. MaxEvents <= 0
+// means no limit.
+func (l Limits) CheckEvents(n int64) error {
+	if l.MaxEvents > 0 && n > l.MaxEvents {
+		return &LimitError{Limit: "events", Max: l.MaxEvents, At: n}
+	}
+	return nil
 }
 
 // NewLimits builds Limits with the three defaults filled in.

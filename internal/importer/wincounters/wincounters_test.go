@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -371,39 +370,12 @@ func TestErrorsCarryNoContent(t *testing.T) {
 	}
 }
 
-// sentinelScrub hides two things from importertest.FuzzParse's sentinel check,
-// because a mutated file can legitimately put the sentinel there: a name in
-// Report.ObservedHosts (raw names by design; Run's own host check exempts it),
-// and an attribute whose value is a whole header cell (a counter path part).
-// F0's FuzzParse flags both. Errors, gaps, field rules and the rest of every
-// event are still checked, and Run checks Fixtures.Bad for attribute leaks.
-type sentinelScrub struct{ importer.Importer }
-
-func (s sentinelScrub) Parse(ctx context.Context, r io.Reader, o importer.Options, emit func(evidence.Event) error) (importer.Report, error) {
-	rep, err := s.Importer.Parse(ctx, r, o, func(e evidence.Event) error {
-		clean := make(map[string]string, len(e.Attrs))
-		for k, v := range e.Attrs {
-			if !strings.Contains(v, importertest.Sentinel) {
-				clean[k] = v
-			}
-		}
-		e.Attrs = clean
-		return emit(e)
-	})
-	kept := rep.ObservedHosts[:0:0]
-	for _, h := range rep.ObservedHosts {
-		if !strings.Contains(h, importertest.Sentinel) {
-			kept = append(kept, h)
-		}
-	}
-	rep.ObservedHosts = kept
-	return rep, err
-}
-
 func FuzzParse(f *testing.F) {
 	for _, n := range []string{"counters_basic.csv", "counters_processv2.csv", "bad_sentinel.csv", "bad_bias_mismatch.csv"} {
 		f.Add(fixture(f, n))
 	}
 	f.Add([]byte("\xff\xfe(\x00P\x00"))
-	importertest.FuzzParse(f, sentinelScrub{New()}, fixtures(f))
+	fx := fixtures(f)
+	fx.KeepsCellValues = true // instances and counter names are whole header-cell parts kept as attributes
+	importertest.FuzzParse(f, New(), fx)
 }

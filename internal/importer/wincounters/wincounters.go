@@ -11,6 +11,17 @@
 // about SQL Server. Process V2(name:pid) is preferred over legacy Process(name);
 // per-process percentages are divided by the host's logical cores, or get unit
 // percent-one-core and a gap when the core count is unknown.
+//
+// Hosts: a machine name in a path maps through hosts.json when it is supplied, and
+// an unknown name refuses the file. Without hosts.json the picked host stands for
+// one machine name; a second name refuses the file. A path with no machine name
+// is the picked host. No two columns may share one series key; such a file is
+// refused.
+//
+// Instances: only instances of objects known to hold no database, share, path or
+// application name are kept (see instanceKept); the rest are dropped, or numbered
+// when dropping would put columns under one key. Events are capped by
+// Limits.MaxEvents, rows times columns.
 package wincounters
 
 import (
@@ -33,20 +44,19 @@ const Name = "win-counters"
 
 // Fixed gap and label sentences.
 const (
-	GapFixedBias   = "fixed bias from header; DST changes inside the file are not corrected"
-	GapHostCPU     = "overall host CPU; SQL attribution unknown"
-	GapNoCores     = "per-process CPU is percent of one core; logical core count unknown"
-	GapLegacyProc  = "legacy Process counters ignored because Process V2 is present"
-	GapBadColumns  = "some counter columns could not be parsed and were ignored"
-	pdhTimeLayout  = "01/02/2006 15:04:05" // fractional seconds are accepted after the seconds field
-	headerCellForm = `^\(PDH-CSV ([0-9.]+)\)\s*\((.*)\)\(\s*(-?[0-9]+)\s*\)$`
+	GapFixedBias         = "fixed bias from header; DST changes inside the file are not corrected"
+	GapHostCPU           = "overall host CPU; SQL attribution unknown"
+	GapNoCores           = "per-process CPU is percent of one core; logical core count unknown"
+	GapLegacyProc        = "legacy Process counters ignored; Process V2 is present"
+	GapBadColumns        = "some counter columns could not be parsed and were ignored"
+	GapDateOrder         = "sample dates are read as month/day/year; a file written day/month/year would have days 1 to 12 read with day and month swapped"
+	GapInstancesDropped  = "counter instances other than known safe ones (processors, disks, network adapters, processes, fixed SQL categories) are dropped"
+	GapInstancesNumbered = "dropped counter instances that would share one series are numbered in header order"
+	pdhTimeLayout        = "01/02/2006 15:04:05" // fractional seconds are accepted after the seconds field
+	headerCellForm       = `^\(PDH-CSV ([0-9.]+)\)\s*\((.*)\)\(\s*(-?[0-9]+)\s*\)$`
 )
 
 var headerCell = regexp.MustCompile(headerCellForm)
-
-// instances of these objects are database names, which are scrubbed (section 4 rule 8,
-// the XE list names database_name): keep the counter, drop the instance.
-var databaseObject = regexp.MustCompile(`(?i):(databases|database replica|availability replica|catalog metadata)$`)
 
 // NewImporter returns the PDH CSV parser under name, detected by detect (nil means
 // DetectPDH). P3 uses it for the SQL Server counters.
@@ -81,7 +91,7 @@ func (m *imp) AllowedAttrs() map[string]bool {
 }
 func (m *imp) DefaultLimits() importer.Limits {
 	return importer.Limits{
-		MaxBytes: 512 << 20, MaxRows: 5_000_000,
+		MaxBytes: 512 << 20, MaxRows: 5_000_000, MaxEvents: 10_000_000,
 		MaxLineBytes: wincsv.DefaultMaxLineBytes, MaxFields: wincsv.DefaultMaxFields,
 		MaxRejectFraction: wincsv.DefaultRejectFrac,
 	}
@@ -92,7 +102,8 @@ type column struct {
 	skip            bool
 	host            string // label
 	object, counter string
-	instance        string
+	instance        string // kept instance, or "" (see instanceKept)
+	scrubbed        bool   // the file's instance was dropped as a name or path
 	unit            string
 	divideCores     int // > 0: divide the value by this
 	attrs           map[string]string
@@ -126,6 +137,7 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 	acc.Rep.Quality.TimezoneRule = clock.RuleHeaderBias
 	acc.Rep.FieldRules["timestamp"] = clock.RuleHeaderBias
 	acc.Gap(GapFixedBias)
+	acc.Gap(GapDateOrder)
 
 	cols, hosts, err := m.resolveColumns(hdr, opts, acc)
 	if err != nil {
@@ -166,6 +178,10 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 			continue
 		}
 		utc := wall.Add(time.Duration(bias) * time.Minute).UTC()
+		if !wincsv.SaneTime(utc) { // a zero or far-off date rejects its row only
+			acc.Reject(line, importer.ReasonBadTime)
+			continue
+		}
 		if !checked {
 			checked = true
 			for _, h := range hosts {
@@ -199,12 +215,16 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 			vv := v
 			e := wincsv.NewEvent(opts, m.name, line, i)
 			e.Kind, e.Host, e.Start, e.End = "counter", c.host, utc, utc
-			e.Value, e.Unit, e.TZRule, e.Attrs = &vv, c.unit, clock.RuleHeaderBias, c.attrs
+			e.Value, e.Unit, e.TZRule, e.Attrs = &vv, c.unit, clock.RuleHeaderBias, copyAttrs(c.attrs)
 			row = append(row, e)
 		}
 		if bad {
 			acc.Reject(line, importer.ReasonBadNumber)
 			continue
+		}
+		// MaxEvents bounds the whole run: rows x columns, not rows alone.
+		if e := acc.CheckEmit(len(row)); e != nil {
+			return acc.Fail(e)
 		}
 		for _, e := range row {
 			if err := emit(e); err != nil {
@@ -214,6 +234,16 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 		}
 	}
 	return acc.Finish()
+}
+
+// copyAttrs gives each event its own attribute map, so a caller that changes one
+// event's attributes cannot change the next event of the column.
+func copyAttrs(m map[string]string) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 func parseNumber(s string) (float64, bool) {
@@ -243,6 +273,7 @@ func (m *imp) resolveColumns(hdr []string, opts importer.Options, acc *wincsv.Ac
 	hintFor := map[string]importer.HostHint{}
 	var hints []importer.HostHint
 	cols := make([]column, len(hdr))
+	onlyName, haveOnly := "", false // the one machine name allowed without hosts.json
 	for i := 1; i < len(hdr); i++ {
 		if !okp[i] {
 			cols[i].skip = true
@@ -255,13 +286,29 @@ func (m *imp) resolveColumns(hdr []string, opts importer.Options, acc *wincsv.Ac
 		}
 		h, seen := hintFor[p.host]
 		if !seen {
-			var ok bool
+			ok := false
 			switch {
-			case p.host != "" && opts.Hosts != nil:
+			case p.host == "":
+				// A path with no machine name is the local machine of the
+				// collector: the host the user picked.
+				if opts.Host != nil {
+					h, ok = *opts.Host, true
+				}
+			case opts.Hosts != nil:
+				// hosts.json is the only mapping. An unknown name is never
+				// filed under the picked host.
 				h, ok = opts.Hosts(p.host)
-			}
-			if !ok && opts.Host != nil {
-				h, ok = *opts.Host, true
+			case opts.Host != nil:
+				// No hosts.json: the picked host stands for exactly one machine
+				// name (any letter case); a second name would put two machines'
+				// counters under one host label.
+				key := strings.ToLower(p.host)
+				if !haveOnly {
+					onlyName, haveOnly = key, true
+				}
+				if key == onlyName {
+					h, ok = *opts.Host, true
+				}
 			}
 			if !ok {
 				return nil, nil, importer.ErrUnknownHost
@@ -293,12 +340,114 @@ func (m *imp) resolveColumns(hdr []string, opts importer.Options, acc *wincsv.Ac
 				acc.Gap(GapNoCores)
 			}
 		}
-		c.attrs = map[string]string{"object": wincsv.ClipAttr(p.object), "counter": wincsv.ClipAttr(p.counter)}
-		if p.instance != "" && !databaseObject.MatchString(p.object) {
-			c.attrs["instance"] = wincsv.ClipAttr(p.instance)
+		if p.instance != "" && instanceKept(p.object, p.instance) {
+			c.instance = p.instance
+		} else {
+			c.instance = ""
+			if p.instance != "" {
+				c.scrubbed = true
+				acc.Gap(GapInstancesDropped)
+			}
+		}
+	}
+	if err := uniqueSeries(cols, acc); err != nil {
+		return nil, nil, err
+	}
+	for i := 1; i < len(cols); i++ {
+		c := &cols[i]
+		if c.skip {
+			continue
+		}
+		c.attrs = map[string]string{"object": wincsv.ClipAttr(c.object), "counter": wincsv.ClipAttr(c.counter)}
+		if c.instance != "" {
+			c.attrs["instance"] = wincsv.ClipAttr(c.instance)
 		}
 	}
 	return cols, hints, nil
+}
+
+// seriesKey is the identity of a series: no two columns may share one.
+func seriesKey(c *column) string {
+	return strings.ToLower(c.host + "\x00" + c.object + "\x00" + c.counter + "\x00" + c.instance)
+}
+
+// uniqueSeries makes every series key unique, or refuses the file. Columns whose
+// instance was dropped as a name or path (see instanceKept) can collide: those are
+// told apart by a number in header order, with a gap. Any other two columns with
+// the same host, object, counter and instance cannot be told apart, so the file is
+// refused rather than merged into one series.
+func uniqueSeries(cols []column, acc *wincsv.Acc) error {
+	groups := map[string]int{}
+	for i := 1; i < len(cols); i++ {
+		if !cols[i].skip {
+			groups[seriesKey(&cols[i])]++
+		}
+	}
+	next := map[string]int{}
+	for i := 1; i < len(cols); i++ {
+		c := &cols[i]
+		if c.skip || !c.scrubbed {
+			continue
+		}
+		k := seriesKey(c)
+		if groups[k] < 2 {
+			continue
+		}
+		next[k]++
+		c.instance = "instance-" + strconv.Itoa(next[k])
+		acc.Gap(GapInstancesNumbered)
+	}
+	seen := map[string]bool{}
+	for i := 1; i < len(cols); i++ {
+		if cols[i].skip {
+			continue
+		}
+		k := seriesKey(&cols[i])
+		if seen[k] {
+			return &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat}
+		}
+		seen[k] = true
+	}
+	return nil
+}
+
+var (
+	logicalDiskInst  = regexp.MustCompile(`^(?i:[a-z]:|HarddiskVolume[0-9]+)$`)
+	physicalDiskInst = regexp.MustCompile(`^[0-9]+( (?i:[a-z]):)*$`)
+)
+
+// sqlFixedInstance lists the SQL Server counter objects whose instances are fixed
+// category names (wait types, lock types, cache types), not database, pool or
+// file names.
+var sqlFixedInstance = map[string]bool{
+	"wait statistics": true, "locks": true, "plan cache": true, "sql errors": true,
+	"exec statistics": true, "cursor manager by type": true, "buffer node": true,
+	"memory node": true,
+}
+
+// instanceKept reports whether an instance of object is known to hold no database
+// name, server or share name, file path, pool or application name. It is an
+// allowlist: every object not listed here has its instance dropped, because the
+// instance of an object nobody checked can be anything the host's owner named.
+// "_Total" is kept for every object.
+func instanceKept(object, instance string) bool {
+	if strings.EqualFold(instance, "_Total") || strings.EqualFold(instance, "__Total__") {
+		return true
+	}
+	lo := strings.ToLower(object)
+	switch {
+	case lo == "processor", lo == "processor information", lo == "process", lo == "process v2",
+		lo == "network interface", strings.HasPrefix(lo, ".net clr"):
+		return true
+	case lo == "logicaldisk":
+		return logicalDiskInst.MatchString(instance)
+	case lo == "physicaldisk":
+		return physicalDiskInst.MatchString(instance)
+	}
+	if i := strings.LastIndexByte(lo, ':'); i >= 0 {
+		return sqlFixedInstance[lo[i+1:]]
+	}
+	return false
 }
 
 func processCPU(counter string) bool {

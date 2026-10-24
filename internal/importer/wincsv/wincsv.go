@@ -7,9 +7,10 @@
 //
 // Exported API (kept stable; P3 and later cards may rely on it):
 //
-//	MergeLimits, Prepare, OpenCSV, RowReason, TZUnlabelled, MissingColumn,
-//	HeadText, ClipAttr, Acc (NewAcc, Row, Reject, Observe, Gap, Emitted, Finish,
-//	Fail), NewEvent, and the Default* constants.
+//	MergeLimits, Prepare, OpenCSV, OpenCSVSkipTypeLine, RowReason, TZUnlabelled,
+//	MissingColumn, HeadText, ClipAttr, SaneTime, LooksLikeCultureTime, Acc
+//	(NewAcc, Row, Reject, Observe, Gap, CheckEmit, Emitted, Finish, Fail),
+//	NewEvent, and the Default* constants.
 package wincsv
 
 import (
@@ -17,6 +18,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"regexp"
 	"sort"
 	"time"
 	"unicode/utf16"
@@ -42,8 +44,11 @@ const (
 var evtxMagic = []byte("ElfFile\x00")
 
 // MergeLimits fills zero fields of l from def, then from the section 4 defaults.
-// A negative MaxBytes or MaxRows is kept: it means no limit.
+// A negative MaxBytes, MaxRows or MaxEvents is kept: it means no limit.
 func MergeLimits(l, def importer.Limits) importer.Limits {
+	if l.MaxEvents == 0 {
+		l.MaxEvents = def.MaxEvents
+	}
 	if l.MaxBytes == 0 {
 		l.MaxBytes = def.MaxBytes
 	}
@@ -67,6 +72,14 @@ func MergeLimits(l, def importer.Limits) importer.Limits {
 // UTF-16 BOM) as unsupported-format. The returned reader still yields every byte.
 // lim must already be merged. Read errors come back unchanged.
 func Prepare(r io.Reader, lim importer.Limits) (io.Reader, error) {
+	br, err := prepare(r, lim)
+	if err != nil {
+		return nil, err
+	}
+	return br, nil
+}
+
+func prepare(r io.Reader, lim importer.Limits) (*bufio.Reader, error) {
 	if lim.MaxBytes > 0 {
 		r = importer.LimitReader(r, lim.MaxBytes)
 	}
@@ -101,6 +114,92 @@ func OpenCSV(r io.Reader, lim importer.Limits, comment rune) (*textio.CSVReader,
 	}
 	return cr, nil
 }
+
+// OpenCSVSkipTypeLine is OpenCSV for a PowerShell Export-Csv file, which may start
+// with a "#TYPE ..." line before the header. That one leading line is blanked
+// (the reader skips it and still counts it, so line numbers match the file);
+// no comment rune is set, so a data row whose first cell starts with '#' is a
+// row like any other and is counted, never skipped.
+func OpenCSVSkipTypeLine(r io.Reader, lim importer.Limits) (*textio.CSVReader, error) {
+	br, err := prepare(r, lim)
+	if err != nil {
+		return nil, err
+	}
+	cr, _, err := textio.NewCSV(blankTypeLine(br), textio.CSVOptions{
+		Comma: ',', MaxFields: lim.MaxFields, MaxLine: lim.MaxLineBytes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cr, nil
+}
+
+// blankTypeLine returns br's bytes with the content of a leading "#TYPE" line
+// removed (its line break and the BOM stay). UTF-8 with or without a BOM and
+// UTF-16 with a BOM are handled; a first line that is not found within the
+// buffered head leaves the stream unchanged.
+func blankTypeLine(br *bufio.Reader) io.Reader {
+	head, _ := br.Peek(importer.HeadSize)
+	bom, unit, be := 0, 1, false
+	switch {
+	case bytes.HasPrefix(head, []byte{0xEF, 0xBB, 0xBF}):
+		bom = 3
+	case bytes.HasPrefix(head, []byte{0xFF, 0xFE}):
+		bom, unit = 2, 2
+	case bytes.HasPrefix(head, []byte{0xFE, 0xFF}):
+		bom, unit, be = 2, 2, true
+	}
+	body := head[bom:]
+	const tag = "#TYPE"
+	if len(body) < unit*len(tag) {
+		return br
+	}
+	for i := 0; i < len(tag); i++ {
+		want := []byte{tag[i]}
+		if unit == 2 && be {
+			want = []byte{0, tag[i]}
+		} else if unit == 2 {
+			want = []byte{tag[i], 0}
+		}
+		if !bytes.Equal(body[i*unit:(i+1)*unit], want) {
+			return br
+		}
+	}
+	nl := -1
+	for i := 0; i+unit <= len(body); i += unit {
+		unitIsNL := body[i] == '\n'
+		if unit == 2 && be {
+			unitIsNL = body[i] == 0 && body[i+1] == '\n'
+		} else if unit == 2 {
+			unitIsNL = body[i] == '\n' && body[i+1] == 0
+		}
+		if unitIsNL {
+			nl = i
+			break
+		}
+	}
+	if nl < 0 {
+		return br
+	}
+	prefix := append([]byte(nil), head[:bom]...)
+	_, _ = br.Discard(bom + nl)
+	return io.MultiReader(bytes.NewReader(prefix), br)
+}
+
+// SaneTime reports whether t lies in 1990-2100. A zero or far-off time is a data
+// error of one row, not a reason to lose a whole file.
+func SaneTime(t time.Time) bool {
+	y := t.UTC().Year()
+	return y >= 1990 && y <= 2100
+}
+
+var cultureTimeRe = regexp.MustCompile(`^\s*\d{1,4}[/.\-]\d{1,2}[/.\-]\d{1,4},?\s+\d{1,2}[:.]\d{2}`)
+
+// LooksLikeCultureTime reports whether cell has the shape of a time that Export-Csv
+// wrote in the exporting machine's culture (for example "3/1/2001 10:00:00 AM")
+// instead of ISO 8601. Callers use it on a cell that did not parse, to refuse the
+// file with a hint rather than reject every row.
+func LooksLikeCultureTime(cell string) bool { return cultureTimeRe.MatchString(cell) }
 
 // RowReason classifies a textio Next error that rejects one row rather than the file.
 func RowReason(err error) (importer.Reason, bool) {
@@ -192,6 +291,10 @@ func (a *Acc) Observe(host string) error {
 
 // Gap adds a fixed known-gap sentence once.
 func (a *Acc) Gap(s string) { a.Rep.Gap(s) }
+
+// CheckEmit enforces MaxEvents before n more events are emitted: it returns a
+// *LimitError (Limit "events") when the events emitted so far plus n pass the cap.
+func (a *Acc) CheckEmit(n int) error { return a.Lim.CheckEvents(a.Rep.Emitted + int64(n)) }
 
 // Emitted counts one emitted event and widens the coverage.
 func (a *Acc) Emitted(t time.Time) {

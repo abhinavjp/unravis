@@ -2,11 +2,20 @@
 // recipe: Get-WinEvent | Select-Object ... | Export-Csv.
 //
 // Required columns: a time column (TimeCreatedUtc, ISO 8601 with Z; or a local
-// TimeCreated in sortable "s" form, accepted only with a host time zone), plus
-// MachineName, LogName, ProviderName, Id and Level. AppPool is kept when present.
-// Message, Properties and every other column are dropped at parse: message text
-// is never stored. Local times go through clock.ParseLocal; a time inside a DST
-// fold or gap rejects that row (dst-ambiguous, dst-nonexistent) and is never guessed.
+// TimeCreated in sortable "s" form, accepted only with the picked host's time
+// zone), plus MachineName, LogName, ProviderName, Id and Level. AppPool is kept
+// when present. Message, Properties and every other column are dropped at parse:
+// message text is never stored. Local times go through clock.ParseLocal; a time
+// inside a DST fold or gap rejects that row (dst-ambiguous, dst-nonexistent) and
+// is never guessed. A local TimeCreated is in the zone of the machine that ran
+// the export, not of MachineName, so only the zone of the host picked for the
+// file is used; with none, the file is refused. A first time cell in the
+// exporting machine's culture format refuses the file with a hint.
+//
+// Hosts: with hosts.json every MachineName must map through it. Without it the
+// picked host stands for one machine name; a second name refuses the file. A
+// name is never filed under the picked host just because it is unmapped. A
+// leading "#TYPE" line is skipped; no other line is treated as a comment.
 package winevents
 
 import (
@@ -27,6 +36,12 @@ const Name = "win-events"
 
 // GapNoTaskEvents is added when the file has no TaskScheduler/Operational rows.
 const GapNoTaskEvents = "TaskScheduler/Operational is disabled by default; no task events is not evidence that no task ran"
+
+// GapLocalExporterZone is added when the time column is a local TimeCreated.
+const GapLocalExporterZone = "TimeCreated is in the time zone of the machine that ran the export, which may differ from the zone of MachineName; the zone picked for the file is applied to every row"
+
+// GapTimeFormat is added when the file is refused for a time column that is not in ISO 8601 form.
+const GapTimeFormat = "The time column is not in ISO 8601 form; export TimeCreatedUtc with TimeCreated.ToUniversalTime().ToString('o') instead of the default culture format"
 
 const taskLog = "Microsoft-Windows-TaskScheduler/Operational"
 
@@ -49,7 +64,7 @@ func (m *imp) AllowedAttrs() map[string]bool {
 
 func (m *imp) DefaultLimits() importer.Limits {
 	return importer.Limits{
-		MaxBytes: 256 << 20, MaxRows: 2_000_000,
+		MaxBytes: 256 << 20, MaxRows: 2_000_000, MaxEvents: 2_000_000,
 		MaxLineBytes: wincsv.DefaultMaxLineBytes, MaxFields: wincsv.DefaultMaxFields,
 		MaxRejectFraction: wincsv.DefaultRejectFrac,
 	}
@@ -81,7 +96,7 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 	if err := ctx.Err(); err != nil {
 		return acc.Fail(err)
 	}
-	cr, err := wincsv.OpenCSV(r, lim, '#')
+	cr, err := wincsv.OpenCSVSkipTypeLine(r, lim)
 	if err != nil {
 		return acc.Fail(err)
 	}
@@ -132,8 +147,24 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 	acc.Rep.Rule(timeName, rule)
 	acc.Rep.Quality.TimezoneRule = rule
 
+	// A local TimeCreated is written in the zone of the machine that ran the
+	// export, which is not necessarily the zone of MachineName. The only zone
+	// accepted is the one the user picked for the file; a zone that hosts.json
+	// holds for some MachineName is never used for it. With no picked zone the
+	// file is refused before any row is read.
+	var exportTZ *time.Location
+	if rule == clock.RuleHostLocal {
+		if opts.Host == nil || opts.Host.TZ == nil {
+			return acc.Fail(wincsv.TZUnlabelled())
+		}
+		exportTZ = opts.Host.TZ
+		acc.Gap(GapLocalExporterZone)
+	}
+
 	allowed := m.AllowedAttrs()
 	hosts := map[string]importer.HostHint{}
+	onlyMachine, haveOnly := "", false // the one machine name allowed without hosts.json
+	anyTime := false                   // a time cell has parsed
 	sawTask := false
 	for {
 		if err := ctx.Err(); err != nil {
@@ -162,8 +193,11 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 			continue
 		}
 
-		// Host: a name inside the file maps through hosts.json, else the host the
-		// user picked for the file, else the whole file is refused.
+		// Host: with hosts.json every MachineName must map through it, so an
+		// unknown name refuses the file. Without hosts.json the picked host
+		// stands for exactly one machine name (any letter case); a second
+		// distinct name refuses the file. A name is never filed under the
+		// picked host just because it is unmapped.
 		machine := rec[cMach]
 		hint, seen := hosts[machine]
 		if !seen {
@@ -171,11 +205,18 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 				return acc.Fail(e)
 			}
 			ok := false
-			if machine != "" && opts.Hosts != nil {
-				hint, ok = opts.Hosts(machine)
-			}
-			if !ok && opts.Host != nil {
-				hint, ok = *opts.Host, true
+			if opts.Hosts != nil {
+				if machine != "" {
+					hint, ok = opts.Hosts(machine)
+				}
+			} else if opts.Host != nil {
+				key := strings.ToLower(machine)
+				if !haveOnly {
+					onlyMachine, haveOnly = key, true
+				}
+				if key == onlyMachine {
+					hint, ok = *opts.Host, true
+				}
 			}
 			if !ok {
 				return acc.Fail(importer.ErrUnknownHost)
@@ -190,23 +231,26 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 		if rule == clock.RuleUTCField {
 			t, perr := time.Parse(time.RFC3339Nano, cell)
 			if perr != nil || !(strings.HasSuffix(cell, "Z") || strings.HasSuffix(cell, "z")) {
+				if !anyTime && perr != nil && wincsv.LooksLikeCultureTime(cell) {
+					return failTimeFormat(acc, timeName)
+				}
 				acc.Reject(line, importer.ReasonBadTime)
 				continue
 			}
 			utc = t.UTC()
 		} else {
-			if hint.TZ == nil {
-				return acc.Fail(wincsv.TZUnlabelled())
-			}
 			var res clock.LocalResult
 			var perr error
 			for _, layout := range localLayouts {
-				if res, perr = clock.ParseLocal(layout, cell, hint.TZ); perr == nil {
+				if res, perr = clock.ParseLocal(layout, cell, exportTZ); perr == nil {
 					break
 				}
 			}
 			switch {
 			case perr != nil:
+				if !anyTime && wincsv.LooksLikeCultureTime(cell) {
+					return failTimeFormat(acc, timeName)
+				}
 				acc.Reject(line, importer.ReasonBadTime)
 				continue
 			case res.Ambiguous:
@@ -218,6 +262,11 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 			}
 			utc = res.UTC
 		}
+		if !wincsv.SaneTime(utc) { // a zero or far-off date rejects its row only
+			acc.Reject(line, importer.ReasonBadTime)
+			continue
+		}
+		anyTime = true
 
 		id, perr := strconv.ParseUint(strings.TrimSpace(rec[cID]), 10, 32)
 		if perr != nil {
@@ -255,6 +304,9 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 			}
 		}
 
+		if e := acc.CheckEmit(1); e != nil {
+			return acc.Fail(e)
+		}
 		e := wincsv.NewEvent(opts, Name, line, 0)
 		e.Kind, e.Host, e.Start, e.End = kind, hint.Label, utc, utc
 		e.Severity, e.TZRule, e.Attrs = sev, rule, attrs
@@ -267,6 +319,14 @@ func (m *imp) Parse(ctx context.Context, r io.Reader, opts importer.Options, emi
 		acc.Gap(GapNoTaskEvents)
 	}
 	return acc.Finish()
+}
+
+// failTimeFormat refuses a file whose first time cell is in the exporting
+// machine's culture format. Nothing from the cell is kept: only the column name,
+// which is one of this importer's two fixed names.
+func failTimeFormat(acc *wincsv.Acc, column string) (importer.Report, error) {
+	acc.Gap(GapTimeFormat)
+	return acc.Fail(&importer.QuarantineError{Reason: importer.ReasonBadTime, Column: column})
 }
 
 // severity maps Get-WinEvent Level (number, or LevelDisplayName text) to an Event severity.
@@ -291,7 +351,8 @@ func severity(s string) (string, bool) {
 // The ids follow the Task Scheduler operational log documentation and have not been
 // checked against a real export; a sanitised sample is needed to call this validated.
 // Kinds: task-start (100), task-complete (102), task-fail (101, 103, 203),
-// task-skipped (322), task-stop (111, 329).
+// task-skipped (322), task-stop (111 with no reason, 329 reason "timeout",
+// 330 reason "user-request").
 func ClassifyTaskScheduler(provider string, id int) (string, map[string]string, bool) {
 	if !strings.EqualFold(provider, "Microsoft-Windows-TaskScheduler") {
 		return "", nil, false
@@ -306,9 +367,11 @@ func ClassifyTaskScheduler(provider string, id int) (string, map[string]string, 
 	case 322:
 		return "task-skipped", map[string]string{"reason": "instance-already-running"}, true
 	case 111:
-		return "task-stop", map[string]string{"reason": "user-request"}, true
+		return "task-stop", nil, true // terminated; the log gives no reason
 	case 329:
 		return "task-stop", map[string]string{"reason": "timeout"}, true
+	case 330:
+		return "task-stop", map[string]string{"reason": "user-request"}, true
 	}
 	return "", nil, false
 }

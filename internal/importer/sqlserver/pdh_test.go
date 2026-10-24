@@ -1,9 +1,7 @@
 package sqlserver
 
 import (
-	"context"
 	"errors"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -128,36 +126,10 @@ func TestPDHWrongHostZoneRefused(t *testing.T) {
 	}
 }
 
-// pdhSentinelScrub hides from importertest.FuzzParse's sentinel check what a
-// mutated header can legitimately carry, as win-counters' own fuzz does: a raw
-// name in Report.ObservedHosts (raw by design) and an attribute that is a part
-// of a counter path. Everything else every event and report carries is still
-// checked, and Run checks Fixtures.Bad for attribute leaks.
-type pdhSentinelScrub struct{ importer.Importer }
-
-func (s pdhSentinelScrub) Parse(ctx context.Context, r io.Reader, o importer.Options, emit func(evidence.Event) error) (importer.Report, error) {
-	rep, err := s.Importer.Parse(ctx, r, o, func(e evidence.Event) error {
-		clean := make(map[string]string, len(e.Attrs))
-		for k, v := range e.Attrs {
-			if !strings.Contains(v, importertest.Sentinel) {
-				clean[k] = v
-			}
-		}
-		e.Attrs = clean
-		return emit(e)
-	})
-	kept := rep.ObservedHosts[:0:0]
-	for _, h := range rep.ObservedHosts {
-		if !strings.Contains(h, importertest.Sentinel) {
-			kept = append(kept, h)
-		}
-	}
-	rep.ObservedHosts = kept
-	return rep, err
-}
-
 func FuzzParsePDH(f *testing.F) {
 	f.Add(readFixture(f, "golden/pdh.csv"))
 	f.Add(utf16le(string(readFixture(f, "pdh_good.csv"))))
-	importertest.FuzzParse(f, pdhSentinelScrub{NewPDH()}, pdhFixtures(f))
+	fx := pdhFixtures(f)
+	fx.KeepsCellValues = true // instances and counter names are parts of header cells kept as attributes
+	importertest.FuzzParse(f, NewPDH(), fx)
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -130,6 +129,7 @@ func TestLocalTimeDSTFoldAndGap(t *testing.T) {
 		t.Skip("no tzdata")
 	}
 	o := opts(la)
+	o.Host = &importer.HostHint{Label: "export-box", TZ: la} // the exporter's zone: the picked host's
 	o.Limits = importer.Limits{MaxRejectFraction: 1}
 	evs, rep, err := parse(t, New(), fixture(t, "events_local.csv"), o)
 	if err != nil {
@@ -173,7 +173,8 @@ func TestLocalTimeDSTFoldAndGap(t *testing.T) {
 		t.Errorf("rule not reported %+v %+v", rep.Quality, rep.FieldRules)
 	}
 	// With the default reject fraction the two rejects quarantine this tiny file.
-	_, _, err = parse(t, New(), fixture(t, "events_local.csv"), opts(la))
+	o.Limits = importer.Limits{}
+	_, _, err = parse(t, New(), fixture(t, "events_local.csv"), o)
 	var qe *importer.QuarantineError
 	if !errors.As(err, &qe) || qe.Reason != importer.ReasonRejectFraction {
 		t.Errorf("default fraction: %v", err)
@@ -215,7 +216,14 @@ func TestUnknownHostAndPickedHost(t *testing.T) {
 	if len(rep.ObservedHosts) != 1 {
 		t.Errorf("observed %v", rep.ObservedHosts)
 	}
+	// hosts.json is supplied and does not know the name: still refused (H2), the
+	// picked host is not a fallback.
 	o.Host = &importer.HostHint{Label: "picked"}
+	if _, _, err := parse(t, New(), fixture(t, "events_utc.csv"), o); !errors.Is(err, importer.ErrUnknownHost) {
+		t.Fatalf("picked host used as a fallback: %v", err)
+	}
+	// With no hosts.json, a file of one machine takes the picked host.
+	o.Hosts = nil
 	evs, _, err := parse(t, New(), fixture(t, "events_utc.csv"), o)
 	if err != nil || len(evs) != 5 || evs[0].Host != "picked" {
 		t.Fatalf("picked host: %d events, %v", len(evs), err)
@@ -260,7 +268,9 @@ func TestRejectsAreReasonsOnly(t *testing.T) {
 }
 
 func TestUTCRequiresZ(t *testing.T) {
-	for _, cell := range []string{"2001-10-24T13:00:00+02:00", "2001-10-24T13:00:00", "10/24/2001 13:00:00"} {
+	// A culture-shaped cell on the first row is a whole-file refusal with a hint
+	// (TestCultureFormatTimeRefusedWithHint), not a row reject.
+	for _, cell := range []string{"2001-10-24T13:00:00+02:00", "2001-10-24T13:00:00", "not a time"} {
 		data := "\"TimeCreatedUtc\",\"MachineName\",\"LogName\",\"ProviderName\",\"Id\",\"Level\"\n" +
 			"\"" + cell + "\",\"web-a\",\"System\",\"P\",\"1\",\"4\"\n"
 		o := opts(nil)
@@ -379,35 +389,6 @@ func TestNoNetwork(t *testing.T) {
 	}
 }
 
-// sentinelScrub hides two things from importertest.FuzzParse's sentinel check,
-// because a mutated file can legitimately put the sentinel there: a name in
-// Report.ObservedHosts (raw names by design; Run's own host check exempts it),
-// and an attribute whose value is a whole cell (LogName, ProviderName, AppPool).
-// F0's FuzzParse flags both. Errors, gaps, field rules and the rest of every
-// event are still checked, and Run checks Fixtures.Bad for attribute leaks.
-type sentinelScrub struct{ importer.Importer }
-
-func (s sentinelScrub) Parse(ctx context.Context, r io.Reader, o importer.Options, emit func(evidence.Event) error) (importer.Report, error) {
-	rep, err := s.Importer.Parse(ctx, r, o, func(e evidence.Event) error {
-		clean := make(map[string]string, len(e.Attrs))
-		for k, v := range e.Attrs {
-			if !strings.Contains(v, importertest.Sentinel) {
-				clean[k] = v
-			}
-		}
-		e.Attrs = clean
-		return emit(e)
-	})
-	kept := rep.ObservedHosts[:0:0]
-	for _, h := range rep.ObservedHosts {
-		if !strings.Contains(h, importertest.Sentinel) {
-			kept = append(kept, h)
-		}
-	}
-	rep.ObservedHosts = kept
-	return rep, err
-}
-
 func FuzzParse(f *testing.F) {
 	for _, n := range []string{"events_utc.csv", "events_tasks.csv", "events_local.csv", "bad_sentinel.csv", "bad_missing_id.csv"} {
 		f.Add(fixture(f, n))
@@ -416,5 +397,7 @@ func FuzzParse(f *testing.F) {
 	fx := fixtures(f)
 	la, _ := time.LoadLocation("America/Los_Angeles")
 	fx.Options = opts(la) // the same seeds also reach the host-local time path
-	importertest.FuzzParse(f, sentinelScrub{New(ClassifyTaskScheduler)}, fx)
+	fx.Options.Host = &importer.HostHint{Label: "export-box", TZ: la}
+	fx.KeepsCellValues = true // LogName, ProviderName and AppPool are kept whole as attributes
+	importertest.FuzzParse(f, New(ClassifyTaskScheduler), fx)
 }
