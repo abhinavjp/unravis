@@ -1202,10 +1202,16 @@ func seedLedger(t *testing.T, led ledger.Store, text string, ids []string, notes
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := led.Update(h.ID, ledger.Input{
+	in := ledger.Input{
 		Text: text, State: ledger.StateOpen, EvidenceIDs: ids, Notes: notes,
 		Facts: ledger.Facts{Counterexamples: []string{}, Alternatives: []ledger.Alternative{{Text: "Scheduled index rebuild", Status: ledger.AltOpen}}},
-	})
+	}
+	out, err := led.Update(h.ID, in)
+	if err != nil && notes != "" {
+		// The notes check refuses long digit runs, and a random id can hold one. Seed without notes then.
+		in.Notes = ""
+		out, err = led.Update(h.ID, in)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
