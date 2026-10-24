@@ -7,12 +7,13 @@
   import { citeInLedger } from '../lib/citeInLedger';
   import { formatElapsed } from '../lib/provenance';
   import {
-    DEFAULT_EPISODE_GAP_SECONDS, DEFAULT_STALL_SECONDS, PATTERNS_TEXT, PATTERN_RANGES, auditStallLine, citeLabel, coverageLine, emptyEpisodesText, endGapsText,
-    episodeCiteLabel, episodeEvidenceId, findingRows, isEvidenceId, nBadge, operationText, qualityLine, secondsLabel, stallsOf, thresholdsChanged,
-    truncationNotices, verdictText, volleysOf, windowInputSeconds
+    DEFAULT_EPISODE_GAP_SECONDS, DEFAULT_STALL_SECONDS, PATTERNS_TEXT, PATTERN_RANGES, auditStallLine, citeLabel, concentrationSection, coverageLine, emptyEpisodesText, endGapsText,
+    episodeCiteLabel, episodeEvidenceId, findingRows, isEvidenceId, nBadge, onsetSection, onsetZoneNote, operationText, qualityLine, secondsLabel, stallsOf, thresholdsChanged,
+    truncationNotices, verdictText, volleysOf, windowInputSeconds, zoneMinuteShift
   } from '../lib/patterns';
   import type { PatternReport, Query, RequestRecord } from '../lib/types';
   import Hint from './Hint.svelte';
+  import StallMinutesPanel from './StallMinutesPanel.svelte';
   import ProvenanceNote from './ProvenanceNote.svelte';
   import Drawer from './Drawer.svelte';
 
@@ -205,6 +206,7 @@
                             </tbody>
                           </table>
                         {/if}
+                        <StallMinutesPanel episode={{ start: episode.start, end: episode.end }} sourceIds={query.sourceIds} stallMs={report.params.stallMs} {zone} />
                       </td>
                     </tr>
                   {/if}
@@ -214,6 +216,56 @@
           </div>
         {/if}
       </section>
+
+      {@const onset = onsetSection(report, query, zoneMinuteShift(zone, Date.parse(query.start)))}
+      {#if onset.kind !== 'hidden'}
+        <section class="patterns-detail" aria-label={PATTERNS_TEXT.onsetTitle}>
+          <h3>{PATTERNS_TEXT.onsetTitle}</h3>
+          <p class="patterns-note">{PATTERNS_TEXT.onsetIntro}</p>
+          {#if onset.kind === 'note'}
+            <p class="patterns-note">{onset.text}</p>
+          {:else}
+            <ul class="finding-list">
+              {#each onset.rows as row (row.key)}
+                <li class="finding">
+                  <div class="finding-meta">
+                    <span class="evidence-badge">{PATTERNS_TEXT.onsetLabel}</span>
+                    <span class="finding-n">{nBadge(row.onsets)}</span>
+                  </div>
+                  <p>{row.line}</p>
+                </li>
+              {/each}
+            </ul>
+            <p class="patterns-note">{PATTERNS_TEXT.onsetHint} {onsetZoneNote(zone)}</p>
+          {/if}
+        </section>
+      {/if}
+
+      {@const concentration = concentrationSection(report)}
+      {#if concentration.kind !== 'hidden'}
+        <section class="patterns-detail" aria-label={PATTERNS_TEXT.concTitle}>
+          <h3>{PATTERNS_TEXT.concTitle}<Hint termId="concentration" /></h3>
+          <p class="patterns-note">{PATTERNS_TEXT.concIntro}</p>
+          {#if concentration.kind === 'note'}
+            <p class="patterns-note">{concentration.text}</p>
+          {:else}
+            <ul class="finding-list">
+              {#each concentration.rows as row (row.key)}
+                <li class="finding">
+                  {#if row.label}
+                    <div class="finding-meta">
+                      <span class="evidence-badge">{row.label}</span>
+                      <span class="finding-n">{nBadge(row.stallN)}</span>
+                      <span class="finding-n">{row.episodesText}</span>
+                    </div>
+                  {/if}
+                  <p>{row.line}</p>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
+      {/if}
 
       {#if report.auditStalls.length}
         <section class="patterns-detail" aria-label={PATTERNS_TEXT.auditStalls}>
