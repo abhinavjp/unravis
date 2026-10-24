@@ -188,7 +188,11 @@ const replaceTop = (stack: ZoomStack, win: ZoomWindow): ZoomStack => {
   const inside = intersect(win, stack.root);
   if (!inside) return stack;
   if (sameWindow(inside, stack.root)) return reset(stack);
-  return sameWindow(inside, currentOf(stack)) ? stack : { root: stack.root, frames: [...stack.frames.slice(0, -1), inside] };
+  if (sameWindow(inside, currentOf(stack))) return stack;
+  const above = stack.frames.slice(0, -1);
+  // A window the trail already holds one step up is that step: step back to it instead of repeating it ("7 days > A > A").
+  if (above.length && sameWindow(inside, above[above.length - 1])) return { root: stack.root, frames: above };
+  return { root: stack.root, frames: [...above, inside] };
 };
 
 /** The window one level down for a clicked slot: its day, hour or minute in the display zone, cut to the view. Null when there is no deeper level. */
@@ -312,13 +316,20 @@ export function durationLabel(ms: number): string {
   if (ms < 48 * HOUR) return plural(round(ms / HOUR), 'hour');
   return plural(round(ms / DAY), 'day');
 }
-/** An interval in its own whole unit: "10 seconds", "1 minute", "15 minutes", "1 hour", "1 day". */
-function intervalLabel(seconds: number): string {
+/**
+ * An interval as a human duration: its own whole unit when it has one ("10 seconds", "1 minute", "15 minutes", "1 hour", "1 day"),
+ * otherwise rounded to the nearest sensible unit ("about 84 minutes" for 5066 seconds).
+ */
+export function intervalLabel(seconds: number): string {
   const plural = (value: number, unit: string) => value + ' ' + unit + (value === 1 ? '' : 's');
+  if (!Number.isFinite(seconds) || seconds <= 0) return durationLabel(seconds * SECOND);
   if (seconds >= 86_400 && seconds % 86_400 === 0) return plural(seconds / 86_400, 'day');
   if (seconds >= 3600 && seconds % 3600 === 0) return plural(seconds / 3600, 'hour');
   if (seconds >= 60 && seconds % 60 === 0) return plural(seconds / 60, 'minute');
-  return plural(seconds, 'second');
+  if (seconds < 90) return plural(seconds, 'second');
+  if (seconds < 90 * 60) return 'about ' + plural(Math.round(seconds / 60), 'minute');
+  if (seconds < 48 * 3600) return 'about ' + plural(Math.round(seconds / 3600), 'hour');
+  return 'about ' + plural(Math.round(seconds / 86_400), 'day');
 }
 /** One window as a short label: a day by its date, an hour or minute by its clock, anything else as a range. */
 export function windowLabel(win: ZoomWindow, zone: string): string {
@@ -334,10 +345,38 @@ export function slotDescription(slot: ZoomSlot, index: number, count: number, zo
   return zoomText.slot(index + 1, count, chartRange(slot.start, slot.end, zone, { seconds: slot.end - slot.start < MINUTE }));
 }
 
+/**
+ * The name of the level on screen. "Whole period" is only the queried window itself. A zoomed window is a "Day", "Hour" or "Minute"
+ * only when it is exactly that unit in the display zone (cut to the queried window); any other one is a "Zoomed window".
+ */
+export function levelNameOf(stack: ZoomStack, zone: string): string {
+  if (isRoot(stack)) return zoomCopy.levelNames.window;
+  const view = currentOf(stack), level = levelOf(stack);
+  const whole = level === 'window' ? null : windowOfLevel(level, view.start, zone);
+  const inside = whole ? intersect(whole, stack.root) : null;
+  return inside && sameWindow(inside, view) ? zoomCopy.levelNames[level] : zoomCopy.levelNames.custom;
+}
+/**
+ * What the charts say in place of a zoomed window with nothing to draw. "No requests were found" only when the window really has none;
+ * a window that has requests but nothing to compare (no reference period, no usable timings) is left to each chart's own wording (empty here).
+ */
+export function emptyWindowMessage(input: { isRoot: boolean; answered: boolean; loading: boolean; error: string; hasRequests: boolean }): string {
+  if (input.isRoot || !input.answered || input.loading) return '';
+  if (input.error) return zoomCopy.cannotRead;
+  return input.hasRequests ? '' : zoomCopy.noData;
+}
+/** What to tell the user when a click on a slot (or Enter, or +) cannot zoom in. Empty when the slot can be zoomed into. */
+export function zoomBlockedNotice(stack: ZoomStack, slot: Pick<ZoomSlot, 'start' | 'end'> | null, zone: string): string {
+  if (slot && zoomIntoSlot(stack, slot, zone) !== stack) return '';
+  if (!canScale(stack, 'in')) return zoomCopy.minuteFloor;
+  return slot ? zoomCopy.tooShort : '';
+}
+
 export interface Crumb { index: number; label: string; current: boolean }
 export interface OverviewModel { bars: number[]; left: number; width: number; hasData: boolean; alt: string }
 export interface StripModel {
   level: ZoomLevel; levelName: string; summary: string; rangeLine: string; intervalLine: string; asOfLine: string; scopeLine: string; referenceLine: string; message: string; messageTone: 'info' | 'warn' | 'error' | '';
+  /** A short answer to a click or key that could not zoom ("This is the smallest window."), or empty. */ notice: string;
   crumbs: Crumb[]; isRoot: boolean; loading: boolean;
   canBack: boolean; canEarlier: boolean; canLater: boolean; canIn: boolean; canOut: boolean; canReset: boolean;
   overview: OverviewModel;
@@ -346,6 +385,7 @@ export interface StripInput {
   stack: ZoomStack; zone: string; bucket: BucketChoice | null; loading: boolean; error: string; hasData: boolean | null;
   /** When the zoomed read finished (ms), or null. */ asOf: number | null;
   /** Requests in each slot of the whole period, oldest first; empty when not known. */ overviewCounts: number[];
+  /** Why the last click or key could not zoom, or empty. */ notice?: string;
 }
 /** Everything the strip shows, as plain values. The component only draws this. */
 export function stripModel(input: StripInput): StripModel {
@@ -365,9 +405,9 @@ export function stripModel(input: StripInput): StripModel {
   const rootWidth = widthOf(stack.root);
   const left = (view.start - stack.root.start) / rootWidth, width = widthOf(view) / rootWidth;
   return {
-    level, levelName: zoomCopy.levelNames[level], summary: zoomText.collapsed(crumbs[crumbs.length - 1].label), rangeLine, intervalLine,
+    level, levelName: levelNameOf(stack, zone), summary: zoomText.collapsed(crumbs[crumbs.length - 1].label), rangeLine, intervalLine,
     asOfLine: !top && input.asOf != null && !loading && !error ? zoomText.asOf(chartTime(input.asOf, zone, { date: false, zone: true })) : '',
-    scopeLine: top ? '' : zoomText.scope(rootRange), referenceLine: top ? '' : zoomCopy.referenceNote, message, messageTone,
+    scopeLine: top ? '' : zoomText.scope(rootRange), referenceLine: top ? '' : zoomCopy.referenceNote, message, messageTone, notice: input.notice ?? '',
     crumbs, isRoot: top, loading,
     canBack: canBack(stack), canEarlier: canShift(stack, -1, zone), canLater: canShift(stack, 1, zone), canIn: canScale(stack, 'in'), canOut: canScale(stack, 'out'), canReset: !top,
     overview: { bars: peak > 0 ? bars.map(count => count / peak) : bars.map(() => 0), left, width, hasData: peak > 0, alt: zoomText.overviewAlt(chartRange(view.start, view.end, zone, { seconds: false }), durationLabel(rootWidth)) }

@@ -1,4 +1,4 @@
-import { countEpochBuckets } from './time';
+import { bucketForWindows, countEpochBuckets } from './time';
 import type { Query } from './types';
 
 /**
@@ -45,6 +45,23 @@ export function scopeHint(query: ScopeShape, datesValid: boolean): string {
 export function landingMayAutoRun(query: Pick<Query, 'start' | 'end'>): boolean {
   const span = new Date(query.end).getTime() - new Date(query.start).getTime();
   return Number.isFinite(span) && span > 0 && span <= LANDING_MAX_WINDOW_MS;
+}
+
+type WindowShape = Pick<Query, 'start' | 'end' | 'baselineStart' | 'baselineEnd'>;
+/** Whether an interval gives 120 time points or fewer in both windows. */
+export function intervalFits(query: WindowShape, seconds: number): boolean {
+  return Number.isFinite(seconds) && seconds > 0 && countEpochBuckets(query.start, query.end, seconds) <= 120 && countEpochBuckets(query.baselineStart, query.baselineEnd, seconds) <= 120;
+}
+/** The note under the interval field when the number typed gives more than 120 points. Empty when it fits or is not a number we can judge. */
+export function intervalFitNote(query: WindowShape & Pick<Query, 'bucketSeconds'>): string {
+  const typed = query.bucketSeconds;
+  if (!Number.isInteger(typed) || typed < 10 || typed > 86_400 || intervalFits(query, typed)) return '';
+  return typed + ' seconds gives more than 120 points for these periods. Use ' + bucketForWindows(query.start, query.end, query.baselineStart, query.baselineEnd) + ' seconds or more.';
+}
+/** The note shown when choosing a new period replaced an interval the user had typed because the typed one no longer fits it. Empty otherwise. */
+export function intervalReplacedNote(previous: number, query: WindowShape & Pick<Query, 'bucketSeconds'>): string {
+  if (!Number.isFinite(previous) || previous === query.bucketSeconds || intervalFits(query, previous)) return '';
+  return 'Chart interval changed from ' + previous + ' to ' + query.bucketSeconds + ' seconds so this period stays within 120 points.';
 }
 
 export interface AutoRunState {

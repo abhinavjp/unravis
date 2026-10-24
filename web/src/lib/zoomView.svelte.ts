@@ -12,7 +12,7 @@ import { api } from './api';
 import { currentEpoch, isStorable } from './evidenceMemo';
 import { timeZone } from './timeZone.svelte';
 import {
-  applyChartKey, bucketForView, createStack, currentOf, isManualBucket, isRoot, jumpTo, back, reset, scale, shift, slotDescription, slotsOf, stripModel, zoomIntoSlot, zoomQuery, zoomToRange,
+  applyChartKey, bucketForView, emptyWindowMessage, createStack, currentOf, isManualBucket, isRoot, jumpTo, back, reset, scale, shift, slotDescription, slotsOf, stripModel, zoomBlockedNotice, zoomIntoSlot, zoomQuery, zoomToRange,
   type BucketChoice, type ChartKeyAction, type StripModel, type ZoomSlot, type ZoomStack
 } from './zoom';
 import { zoomCopy } from './copy/zoomCopy';
@@ -28,6 +28,9 @@ let error = $state('');
 let asOf = $state<number | null>(null);
 let open = $state(false);
 let announcement = $state('');
+let notice = $state('');
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+const NOTICE_MS = 6000;
 
 let controller: AbortController | null = null;
 let run = 0;
@@ -63,9 +66,21 @@ const model = $derived.by((): StripModel | null => {
   return stripModel({
     stack, zone: timeZone.zone, bucket, loading, error, asOf,
     hasData: answer && !isRoot(stack) ? hasRequests(answer) : null,
-    overviewCounts
+    overviewCounts, notice
   });
 });
+
+function say(text: string) {
+  clearTimeout(noticeTimer);
+  notice = text;
+  if (text) noticeTimer = setTimeout(() => { notice = ''; }, NOTICE_MS);
+}
+/** A click, Enter or + that could not zoom in: say why, in the strip, instead of doing nothing. Returns whether there was something to say. */
+function explainBlocked(slot: ZoomSlot | null): boolean {
+  const text = stack ? zoomBlockedNotice(stack, slot, timeZone.zone) : '';
+  say(text);
+  return text !== '';
+}
 
 function cacheGet(key: string): CacheEntry | undefined {
   const hit = cache.get(key);
@@ -112,6 +127,7 @@ function apply(next: ZoomStack | null): boolean {
   if (!next || next === stack) return false;
   stack = next;
   announcement = '';
+  say('');
   refresh();
   return true;
 }
@@ -121,7 +137,7 @@ export const zoomView = {
   follow(analysis: Analysis | null) {
     untrack(() => {
       if (analysis === base) return;
-      base = analysis; cache.clear(); open = open && analysis != null; announcement = '';
+      base = analysis; cache.clear(); open = open && analysis != null; announcement = ''; say('');
       stack = analysis ? createStack(asWindow(analysis.query)) : null;
       refresh();
     });
@@ -133,6 +149,10 @@ export const zoomView = {
   get zoomed() { return stack != null && !isRoot(stack); },
   /** Nothing in the view window was found: the charts say so. */
   get empty() { return model?.isRoot === false && answer != null && !loading && !error && !hasRequests(answer); },
+  /** What the charts say in place of an empty window: nothing found in it, or it could not be read. Empty when there is data to draw or the read is not done. */
+  get emptyMessage(): string {
+    return stack ? emptyWindowMessage({ isRoot: isRoot(stack), answered: answer != null, loading, error, hasRequests: answer != null && hasRequests(answer) }) : '';
+  },
   get model() { return model; },
   get slots() { return slots; },
   get bucketSeconds() { return bucket?.seconds ?? 0; },
@@ -150,10 +170,13 @@ export const zoomView = {
   later() { return apply(stack ? shift(stack, 1, timeZone.zone) : null); },
   zoomIn() { return apply(stack ? scale(stack, 'in') : null); },
   zoomOut() { return apply(stack ? scale(stack, 'out') : null); },
-  /** A click or tap on the slot at `index` of the chart. */
+  /** A click or tap on the slot at `index` of the chart. One that cannot zoom in says why in the strip. */
   zoomSlot(index: number): boolean {
     const slot = slots[index];
-    return stack && slot ? apply(zoomIntoSlot(stack, slot, timeZone.zone)) : false;
+    if (!stack || !slot) return false;
+    if (apply(zoomIntoSlot(stack, slot, timeZone.zone))) return true;
+    explainBlocked(slot);
+    return false;
   },
   /** A drag from one slot to another (either order). */
   zoomIndexRange(from: number, to: number): boolean {
@@ -163,7 +186,11 @@ export const zoomView = {
   },
   /** A key on a focused chart. Moving the cursor is the chart's own business; this returns true when the key changed the zoom. */
   key(action: ChartKeyAction, cursor: number): boolean {
-    return stack ? apply(applyChartKey(stack, action, { slots, cursor, zone: timeZone.zone })) : false;
+    if (!stack) return false;
+    if (apply(applyChartKey(stack, action, { slots, cursor, zone: timeZone.zone }))) return true;
+    if (action.type === 'zoom') explainBlocked(slots[cursor] ?? null);
+    else if (action.type === 'zoom-in') explainBlocked(null);
+    return false;
   },
   /** Say which slot the keyboard is on, for screen readers. */
   describe(index: number) { const slot = slots[index]; announcement = slot ? slotDescription(slot, index, slots.length, timeZone.zone) : ''; return announcement; },

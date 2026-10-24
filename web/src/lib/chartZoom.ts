@@ -92,7 +92,11 @@ export function zoomable(node: HTMLElement, initial: ZoomableOptions) {
     }
     if (zoomView.key(action, cursor)) { event.preventDefault(); event.stopPropagation(); cursor = -1; }
   }
-  function onBlur() { cursor = -1; zoomView.clearAnnouncement(); try { options.chart()?.dispatchAction({ type: 'hideTip' }); } catch { /* nothing to hide */ } }
+  function onBlur() {
+    cursor = -1;
+    // A focused chart that is hidden or removed blurs in the middle of Svelte's own update, where changing state is not allowed. Wait for the update to finish.
+    queueMicrotask(() => zoomView.clearAnnouncement());
+    try { options.chart()?.dispatchAction({ type: 'hideTip' }); } catch { /* nothing to hide */ } }
 
   node.addEventListener('pointerdown', onDown);
   node.addEventListener('keydown', onKey);

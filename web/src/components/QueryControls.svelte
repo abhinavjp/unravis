@@ -3,6 +3,9 @@
   import type { Completion, NumberRange, Query, RangeKey } from '../lib/types';
   import { bucketForWindows, fromLocalParts, quickRange, quickRanges, toLocalDatePart, toLocalTimePart, type QuickRangeId } from '../lib/time';
   import { metricLabels } from '../lib/presentation';
+  import { intervalFitNote, intervalReplacedNote } from '../lib/autorun';
+  import { intervalNote } from '../lib/intervalNote.svelte';
+  import { isManualBucket } from '../lib/zoom';
   import { activeRangeId } from '../lib/depth';
   import { RANGE_FIELDS, buildRange, isValidOperation, isValidUserId, rangeConflict, splitList, syncListDraft, syncOperationDraft, syncRangeDraft } from '../lib/investigation';
   import { KIND_TITLES } from '../lib/copy/screenCopy';
@@ -13,6 +16,7 @@
   let { query = $bindable(), targetMs = $bindable(), dateInputsValid = $bindable(), groupNames = [], now = '', part = 'all', onScopeChange }: { query: Query; targetMs: number | null; dateInputsValid: boolean; groupNames?: string[]; now?: string; part?: 'all' | 'bar' | 'panel'; onScopeChange?: () => void } = $props();
   let timeInputError = $state('');
   let invalidWindows = $state<string[]>([]);
+  const intervalFitText = $derived(intervalFitNote(query));
   $effect(() => { if (part !== 'bar') dateInputsValid = invalidWindows.length === 0; });
   // A quick range chosen in the bar marks the dates valid again; the panel then drops its stale invalid state.
   $effect(() => { if (part !== 'bar' && dateInputsValid) untrack(() => { if (invalidWindows.length) { invalidWindows = []; timeInputError = ''; } }); });
@@ -153,8 +157,10 @@
       return;
     }
     try {
+      const previous = query.bucketSeconds, typed = isManualBucket(query);
       query[field] = fromLocalParts(datePart, timePart);
       query.bucketSeconds = bucketForWindows(query.start, query.end, query.baselineStart, query.baselineEnd);
+      intervalNote.set(typed ? intervalReplacedNote(previous, query) : '');
       invalidWindows = invalidWindows.filter(item => item !== field);
       timeInputError = invalidWindows.length ? 'Complete every date and time with a valid local value before running the comparison.' : '';
     } catch (error) {
@@ -167,7 +173,9 @@
     // Choosing the range that is already active changes nothing: the windows would only shift to a later "now" and force a pointless run.
     if (activeRange === id && !invalidWindows.length) return;
     const base = new Date(now);
+    const previous = query.bucketSeconds, typed = isManualBucket(query);
     Object.assign(query, quickRange(id, Number.isFinite(base.getTime()) ? base : new Date()));
+    intervalNote.set(typed ? intervalReplacedNote(previous, query) : '');
     invalidWindows = []; timeInputError = '';
     if (part === 'bar') dateInputsValid = true;
     onScopeChange?.();
@@ -212,7 +220,7 @@
           <div class="control-group"><label for="kind">Request type</label><select id="kind" bind:value={query.kind}><option value="synchronous">Synchronous</option><option value="asynchronous">Asynchronous</option><option value="hangfire">Hangfire</option><option value="http">HTTP (synchronous, asynchronous and polling type unknown)</option><option value="http_unknown">HTTP (polling type unknown)</option><option value="all">All types</option></select></div>
           <div class="control-group"><span class="label-line"><label for="outcome">Status</label><Hint termId="status-class" /></span><select id="outcome" bind:value={query.outcome}><option value="all">All statuses</option><option value="success">Success</option><option value="failure">Failure</option><option value="client_error">Client errors (4xx)</option><option value="server_error">Server errors (5xx, incl. failed Hangfire jobs)</option></select></div>
           <div class="control-group"><span class="label-line"><label for="metric">Time measured</label><Hint termId="response-time" /></span><select id="metric" bind:value={query.metric}><option value="total">{metricLabels.total}</option><option value="api">{metricLabels.api}</option></select></div>
-          <div class="control-group"><span class="label-line"><label for="bucket">Chart interval (seconds)</label><Hint termId="time-slice" /></span><input id="bucket" type="number" min="10" max="86400" step="1" bind:value={query.bucketSeconds} /><p class="field-note">10–86,400 seconds; no more than 120 points.</p></div>
+          <div class="control-group"><span class="label-line"><label for="bucket">Chart interval (seconds)</label><Hint termId="time-slice" /></span><input id="bucket" type="number" min="10" max="86400" step="1" bind:value={query.bucketSeconds} oninput={() => intervalNote.clear()} /><p class="field-note">10–86,400 seconds; no more than 120 points.</p>{#if intervalFitText}<p class="field-note interval-note" role="status">{intervalFitText}</p>{/if}</div>
         </div>
         <div class="control-group"><span class="label-line"><label for="latency-target">Optional response-time target (ms)</label><Hint termId="p95" /></span><input id="latency-target" type="number" min="0.01" step="any" bind:value={targetMs} placeholder="No target" /><p class="field-note">Adds a chart line and compares it with P95: the estimated time within which about 95 of 100 requests with usable timings finish.</p></div>
         <div class="field-grid"><div class="control-group"><label for="controller">Controller name</label><input id="controller" bind:value={query.controller} placeholder="Any controller" /></div><div class="control-group"><label for="action">Action name</label><input id="action" bind:value={query.action} placeholder="Any action" /></div></div>      </div>

@@ -14,7 +14,7 @@
 
 <section class="zoom-strip" aria-label={zoomCopy.heading}>
   <details bind:open>
-    <summary title={zoomCopy.expand}><span class="summary-text">{model.summary}</span></summary>
+    <summary title={zoomCopy.expand}><span class="summary-text">{model.summary}</span>{#if model.notice}<span class="summary-notice">{model.notice}</span>{/if}</summary>
     <div class="zoom-body">
       <div class="zoom-row">
         <nav aria-label={zoomCopy.breadcrumbLabel}>
@@ -43,13 +43,14 @@
       {/if}
       <p class="zoom-line"><strong class="level">{model.levelName}</strong> {model.rangeLine} {model.intervalLine}</p>
       {#if model.message}<p class="zoom-message" data-tone={model.messageTone}>{model.message}</p>{/if}
+      {#if model.notice}<p class="zoom-message" data-tone="info">{model.notice}</p>{/if}
       {#if model.asOfLine}<p class="zoom-note">{model.asOfLine}</p>{/if}
       {#if model.scopeLine}<p class="zoom-note">{model.scopeLine}</p>{/if}
       {#if model.referenceLine}<p class="zoom-note">{model.referenceLine}</p>{/if}
       <p class="zoom-note">{zoomCopy.howTo}</p>
     </div>
   </details>
-  <p class="sr-only" role="status" aria-live="polite">{model.rangeLine} {model.message} {announcement}</p>
+  <p class="sr-only" role="status" aria-live="polite">{model.rangeLine} {model.message} {model.notice} {announcement}</p>
 </section>
 
 <style>
@@ -57,6 +58,8 @@
   summary { display: flex; align-items: center; gap: 6px; padding: 6px 0; cursor: pointer; color: var(--text-2); list-style: none; font-weight: 600; }
   summary::-webkit-details-marker { display: none; }
   summary:hover { color: var(--text); }
+  .summary-notice { font-weight: 400; color: var(--text); }
+  .summary-notice::before { content: '·'; margin-right: 6px; color: var(--text-2); }
   /* The arrow is decoration: it only shows that the line opens. */
   summary::after { content: '▸'; display: inline-block; transition: transform var(--dur, 120ms) var(--ease, ease); }
   details[open] summary::after { transform: rotate(90deg); }

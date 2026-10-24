@@ -69,7 +69,7 @@ test('ZoomStrip.svelte compiles without warnings and keeps its text out of the m
 
 test('the strip starts as the one line "Zoom: 7 days"', () => {
   const markup = html(topModel);
-  assert.match(markup, /<summary[^>]*>\s*<span class="summary-text">Zoom: 7 days<\/span>\s*<\/summary>/);
+  assert.match(markup, /<summary[^>]*>\s*<span class="summary-text">Zoom: 7 days<\/span>(?:<!--[^>]*-->)*\s*<\/summary>/);
   assert.doesNotMatch(markup, /<details[^>]*\bopen\b/, 'closed until used');
   assert.match(markup, /aria-label="Zoom"/);
 });

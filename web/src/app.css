@@ -200,6 +200,7 @@ summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; bo
 .scope { flex: 0 0 auto; z-index: 9; padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .scope-main { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; max-width: 1320px; margin: 0 auto; }
 .scope-main .run-actions { margin-left: auto; }
+.scope .interval-note { max-width: 1320px; margin: 6px auto 0; color: var(--text-2); font-size: 12px; }
 .query-controls.part-bar { display: contents; }
 .scope-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; min-width: 0; }
 .quick-ranges, .kind-control { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
