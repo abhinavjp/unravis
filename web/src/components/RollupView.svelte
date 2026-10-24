@@ -5,6 +5,8 @@
   import { rollupCopy, rollupParams, rollupRanges, zoneNote, type DailyResponse, type HourGridResponse } from '../lib/rollup';
   import DailyTable from './DailyTable.svelte';
   import HourHeatmap from './HourHeatmap.svelte';
+  import DayOverlay from './DayOverlay.svelte';
+  import { overlayCopy } from '../lib/rollupOverlay';
 
   // Closed until asked: opening it is what reads the sources, so a closed view never scans anything.
   let open = $state(false);
@@ -83,6 +85,8 @@
             <DailyTable days={daily.days} {zone} />
             <h4>Each hour</h4>
             <HourHeatmap {grid} {zone} onChoose={setWindowFromHour} />
+            <h4>{overlayCopy.heading}</h4>
+            <DayOverlay {grid} {zone} />
           </div>
         {/if}
       {/if}
