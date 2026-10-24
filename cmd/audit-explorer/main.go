@@ -27,6 +27,7 @@ import (
 	"api-audit-explorer/internal/history"
 	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/mcp"
+	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/server"
 	"api-audit-explorer/internal/store"
 )
@@ -233,7 +234,10 @@ func shutdownOnSignal(removeSession func(), server shutdowner) error {
 }
 
 // openLedger opens the hypothesis ledger. Demo mode keeps it in memory; live
-// mode stores it beside the saved connections (same application folder).
+// mode keeps it sealed for the current user (ledger.dat) beside the saved
+// connections (same application folder). An older plain ledger.json is migrated
+// on first start. Without a sealing backend the ledger is unavailable rather
+// than written in plaintext.
 func openLedger(demo bool, getenv func(string) string) (ledger.Store, error) {
 	if demo {
 		return ledger.Open("")
@@ -243,7 +247,11 @@ func openLedger(demo bool, getenv func(string) string) (ledger.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ledger.Open(filepath.Join(base, "ledger.json"))
+	protector, err := sealedfile.CurrentUser()
+	if err != nil {
+		return nil, fmt.Errorf("encrypted storage is unavailable on this platform")
+	}
+	return ledger.OpenSealed(filepath.Join(base, "ledger.dat"), filepath.Join(base, "ledger.json"), protector)
 }
 
 func sessionToken(getenv func(string) string) (string, error) {
