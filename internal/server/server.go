@@ -138,27 +138,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "Local request origin is not allowed.")
 		return
 	}
-	if r.URL.Path == "/" {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			writeError(w, http.StatusMethodNotAllowed, "Method not allowed.")
-			return
-		}
-		h.serveIndex(w, r)
-		return
-	}
-	if r.URL.Path == sessionproof.Path {
-		h.sessionProof(w, r)
-		return
-	}
-	if strings.HasPrefix(r.URL.Path, "/api/") {
-		if !h.authorized(r) {
-			writeError(w, http.StatusUnauthorized, "Invalid or missing session token.")
-			return
-		}
-		h.serveAPI(w, r)
-		return
-	}
-	h.serveAsset(w, r)
+	h.dispatch(w, r)
 }
 
 func setSecurityHeaders(w http.ResponseWriter) {
@@ -218,6 +198,7 @@ func (h *handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) serveAsset(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
 		writeError(w, http.StatusMethodNotAllowed, "Method not allowed.")
 		return
 	}
@@ -249,134 +230,6 @@ func (h *handler) serveAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeContent(w, r, info.Name(), info.ModTime(), content)
-}
-
-func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
-	route := r.URL.Path
-	if route == "/api/connections/recent" {
-		if r.Method != http.MethodGet {
-			methodNotAllowed(w)
-			return
-		}
-		h.listRecent(w)
-		return
-	}
-	if strings.HasPrefix(route, "/api/connections/recent/") {
-		if r.Method != http.MethodDelete {
-			methodNotAllowed(w)
-			return
-		}
-		h.deleteRecent(w, r, strings.TrimPrefix(route, "/api/connections/recent/"))
-		return
-	}
-	if route == "/api/connections/remember" {
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w)
-			return
-		}
-		h.rememberConnection(w, r)
-		return
-	}
-	if route == "/api/connections/test" {
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w)
-			return
-		}
-		h.testConnection(w, r)
-		return
-	}
-	if route == "/api/info" {
-		if r.Method != http.MethodGet {
-			methodNotAllowed(w)
-			return
-		}
-		h.info(w)
-		return
-	}
-	if route == "/api/sources" {
-		switch r.Method {
-		case http.MethodGet:
-			h.sources(w, r)
-		case http.MethodPost:
-			h.addSource(w, r)
-		default:
-			methodNotAllowed(w)
-		}
-		return
-	}
-	if strings.HasPrefix(route, "/api/sources/") && strings.HasSuffix(route, "/schema") {
-		if r.Method != http.MethodGet {
-			methodNotAllowed(w)
-			return
-		}
-		h.schema(w, r, strings.TrimSuffix(strings.TrimPrefix(route, "/api/sources/"), "/schema"))
-		return
-	}
-	if strings.HasPrefix(route, "/api/sources/") && strings.HasSuffix(route, "/coverage") {
-		if r.Method != http.MethodGet {
-			methodNotAllowed(w)
-			return
-		}
-		h.coverage(w, r, strings.TrimSuffix(strings.TrimPrefix(route, "/api/sources/"), "/coverage"))
-		return
-	}
-	if strings.HasPrefix(route, "/api/sources/") && r.Method == http.MethodDelete {
-		h.deleteSource(w, r, strings.TrimPrefix(route, "/api/sources/"))
-		return
-	}
-	if route == "/api/analyze" && r.Method == http.MethodPost {
-		h.analyze(w, r)
-		return
-	}
-	if route == "/api/requests" && r.Method == http.MethodPost {
-		h.requests(w, r)
-		return
-	}
-	if route == "/api/activity" && r.Method == http.MethodPost {
-		h.activity(w, r)
-		return
-	}
-	if route == "/api/slowest" && r.Method == http.MethodPost {
-		h.slowest(w, r)
-		return
-	}
-	if route == "/api/breakdown" && r.Method == http.MethodPost {
-		h.breakdown(w, r)
-		return
-	}
-	if route == "/api/patterns" {
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w)
-			return
-		}
-		h.patterns(w, r)
-		return
-	}
-	if route == "/api/export/preview" && r.Method == http.MethodPost {
-		h.exportPreview(w, r)
-		return
-	}
-	if route == "/api/export/confirm" && r.Method == http.MethodPost {
-		h.exportConfirm(w, r)
-		return
-	}
-	if route == "/api/ledger" || strings.HasPrefix(route, "/api/ledger/") {
-		h.serveLedger(w, r)
-		return
-	}
-	if route == "/api/payload" && r.Method == http.MethodPost {
-		h.payload(w, r)
-		return
-	}
-	if route == "/api/record" && r.Method == http.MethodPost {
-		h.record(w, r)
-		return
-	}
-	if route == "/api/export" && r.Method == http.MethodPost {
-		h.export(w, r)
-		return
-	}
-	writeError(w, http.StatusNotFound, "API route was not found.")
 }
 
 func (h *handler) testConnection(w http.ResponseWriter, r *http.Request) {
