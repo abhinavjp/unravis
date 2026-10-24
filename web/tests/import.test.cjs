@@ -282,7 +282,7 @@ test('commit stays blocked until a current preview, no unknown host, rows to kee
   // An unknown host blocks commit even when everything else is ready, and even with no report.
   assert.equal(cases.commitBlock({ ...ready, unknownHost: true }), 'unknown-host');
   assert.equal(cases.commitBlock({ ...ready, unknownHost: true, report: null }), 'unknown-host');
-  for (const code of ['closed', 'busy', 'no-preview', 'stale', 'unknown-host', 'nothing', 'ack']) assert.ok(importCopy.IMPORT_TEXT.blocked[code], code + ' has text');
+  for (const code of ['closed', 'busy', 'no-preview', 'stale', 'unknown-host', 'settings', 'nothing', 'ack']) assert.ok(importCopy.IMPORT_TEXT.blocked[code], code + ' has text');
 });
 
 test('a preview holds only for the same file, importer and host', () => {

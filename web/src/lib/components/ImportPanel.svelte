@@ -1,12 +1,12 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import {
-    CaseApiError, caseCode, commitBlock, isCaseGone, commitImport, fileSizeProblem, listHosts, listImports, previewImport, previewKey, reasonCounts,
-    type CaseInfo, type ImportRecord, type ImportReport
+    CaseApiError, caseCode, checkAllSupplied, commitBlock, isCaseGone, commitImport, fileSizeProblem, listHosts, listImporters, listImports, previewImport, previewKey,
+    reasonCounts, type CaseInfo, type ImporterInfo, type ImportRecord, type ImportReport
   } from '../cases';
   import {
     ACK_LABEL, GATING_BANNER, IMPORT_TEXT, ackTextFor, coverageText, detectedText, errorText, formatBytes, importedText, importerLabel, isUnknownHost,
-    qualityDetails, reasonText, sizeProblemText, statusLabel
+    qualityDetails, reasonText, sizeProblemText, statusLabel, suppliedPairs
   } from '../copy/importCopy';
   import { formatTime } from '../time';
   import Drawer from '../../components/Drawer.svelte';
@@ -14,6 +14,7 @@
   import CasePanel from './CasePanel.svelte';
   import CaseTools from './CaseTools.svelte';
   import HostsEditor from './HostsEditor.svelte';
+  import SuppliedSettings from './SuppliedSettings.svelte';
 
   // The import screen. Create or pick a case, choose a file, read the preview, tick the notice, then import.
   // The notice is always on screen. Nothing is kept until Import file, and an unknown host or a changed file blocks it.
@@ -32,6 +33,11 @@
   let importer = $state('');
   let tied = $state<string[]>([]);
   let host = $state('');
+  // Settings the owner told you: what the importers declare, and what is typed for the chosen one. Typed values are not logged.
+  let importerInfos = $state.raw<ImporterInfo[]>([]);
+  let drafts = $state<Record<string, string>>({});
+  // A refused file that no importer claimed: the person may name the type, which opens its settings.
+  let undetected = $state(false);
   let report = $state.raw<ImportReport | null>(null);
   let previewedKey = $state('');
   let unknownHost = $state(false);
@@ -44,8 +50,14 @@
 
   const selected = $derived(cases.find((c) => c.id === selectedId) ?? null);
   const caseOpen = $derived(selected !== null && !selected.closed);
-  const currentKey = $derived(previewKey(file, importer, host));
-  const block = $derived(commitBlock({ caseOpen, previewedKey, currentKey, importer, report, unknownHost, acknowledged, busy: phase !== 'idle' }));
+  const specs = $derived(importerInfos.find((info) => info.name === importer)?.supplied ?? []);
+  const checkedSettings = $derived(checkAllSupplied(specs, drafts));
+  const supplied = $derived(checkedSettings.values);
+  const settingsProblem = $derived(Object.keys(checkedSettings.problems).length > 0);
+  const pickable = $derived(importerInfos.filter((info) => info.supplied.length > 0).map((info) => info.name));
+  const pickerNames = $derived(tied.length > 1 ? tied : undetected ? pickable : []);
+  const currentKey = $derived(previewKey(file, importer, host, supplied));
+  const block = $derived(commitBlock({ caseOpen, previewedKey, currentKey, importer, report, unknownHost, acknowledged, busy: phase !== 'idle', settingsProblem }));
   const reasons = $derived(report ? reasonCounts(report.errors) : []);
   const details = $derived(report ? qualityDetails(report.quality) : []);
   const showTimeZone = $derived(report?.quality.timezoneRule ?? '');
@@ -56,6 +68,8 @@
     // Focus starts inside the dialog. Left on the button that opened it, Tab would walk the page behind the panel and the Tab trap would never start.
     drawer?.focus();
     listHosts().then((labels) => { hosts = labels; }).catch(() => { hosts = []; });
+    // A server without the list, or one that cannot be reached, simply offers no settings.
+    listImporters().then((list) => { importerInfos = list; }).catch(() => { importerInfos = []; });
     return () => controller?.abort();
   });
 
@@ -89,6 +103,8 @@
     importer = '';
     tied = [];
     host = '';
+    drafts = {};
+    undetected = false;
     report = null;
     previewedKey = '';
     unknownHost = false;
@@ -101,14 +117,23 @@
     const chosen = (event.currentTarget as HTMLInputElement).files?.[0] ?? null;
     generation++;
     controller?.abort();
-    importer = ''; tied = []; report = null; previewedKey = ''; unknownHost = false; acknowledged = false; result = ''; problem = ''; phase = 'idle';
+    importer = ''; tied = []; drafts = {}; undetected = false; report = null; previewedKey = ''; unknownHost = false; acknowledged = false; result = ''; problem = ''; phase = 'idle';
     file = chosen;
     if (chosen) runPreview();
   }
 
   function pickImporter(name: string) {
+    // Another type reads other settings, so what was typed for the last one is dropped.
+    if (name !== importer) drafts = {};
     importer = name;
     if (name) runPreview();
+  }
+
+  // A setting was picked or a box was left. Only values that fit their key are sent; a bad one holds the import back until it is fixed.
+  function applySettings() {
+    acknowledged = false;
+    if (settingsProblem || !file || !importer) return;
+    runPreview();
   }
 
   function pickHost(label: string) {
@@ -129,20 +154,24 @@
     controller = new AbortController();
     phase = 'previewing';
     const sent = file;
+    const sentSupplied = $state.snapshot(supplied);
     try {
-      const answer = await previewImport({ caseId: selectedId, file: sent, importer, host }, controller.signal);
+      const answer = await previewImport({ caseId: selectedId, file: sent, importer, host, supplied: sentSupplied }, controller.signal);
       if (mine !== generation) return;
       if (!importer && answer.tied.length > 1) {
         tied = answer.tied;
       } else {
         tied = [];
+        undetected = false;
         importer = answer.importer || importer;
         report = answer.report;
-        previewedKey = previewKey(sent, importer, host);
+        previewedKey = previewKey(sent, importer, host, sentSupplied);
       }
     } catch (error) {
       if (mine !== generation) return;
       if (error instanceof CaseApiError && isUnknownHost(error)) unknownHost = true;
+      // Refused with no type named: the owner may know the type, and some types need a setting to be read at all.
+      else if (!importer && error instanceof CaseApiError && error.status === 422) undetected = true;
       fail(error);
     } finally {
       if (mine === generation) phase = 'idle';
@@ -158,7 +187,7 @@
     problem = '';
     const sent = file;
     try {
-      const answer = await commitImport({ caseId: selectedId, file: sent, importer, host, ackText: ackTextFor() }, controller.signal);
+      const answer = await commitImport({ caseId: selectedId, file: sent, importer, host, supplied: $state.snapshot(supplied), ackText: ackTextFor() }, controller.signal);
       if (mine !== generation) return;
       const record = answer.record;
       if (record && record.status === 'ok') {
@@ -210,17 +239,23 @@
           </div>
         {/if}
 
-        {#if tied.length > 1}
+        {#if pickerNames.length > 0}
           <div class="field">
             <label for="import-type">{IMPORT_TEXT.pickerLabel}</label>
             <select id="import-type" value={importer} disabled={phase !== 'idle'} onchange={(event) => pickImporter(event.currentTarget.value)}>
               <option value="" disabled>{IMPORT_TEXT.pickerPlaceholder}</option>
-              {#each tied as name (name)}<option value={name}>{importerLabel(name)}</option>{/each}
+              {#each pickerNames as name (name)}<option value={name}>{importerLabel(name)}</option>{/each}
             </select>
-            <p class="note">{IMPORT_TEXT.pickerTie}</p>
+            <p class="note">{tied.length > 1 ? IMPORT_TEXT.pickerTie : IMPORT_TEXT.pickerRefused}</p>
           </div>
         {:else if importer && file}
           <p class="detected">{detectedText(importer)} <code>{importer}</code></p>
+        {/if}
+
+        {#if importer && file && specs.length > 0}
+          {#key importer}
+            <SuppliedSettings {specs} bind:drafts disabled={phase === 'importing'} onApply={applySettings} />
+          {/key}
         {/if}
       {/if}
     </section>
@@ -312,7 +347,14 @@
             <tbody>
               {#each imports as r (r.id)}
                 <tr>
-                  <td title={r.imported ? at(r.imported) : undefined}>{r.fileName} <span class="meta">({formatBytes(r.bytes)})</span></td>
+                  <td title={r.imported ? at(r.imported) : undefined}>
+                    {r.fileName} <span class="meta">({formatBytes(r.bytes)})</span>
+                    {#if suppliedPairs(r.supplied).length > 0}
+                      <ul class="supplied-list" aria-label={IMPORT_TEXT.suppliedHistory}>
+                        {#each suppliedPairs(r.supplied) as pair (pair.key)}<li>{pair.label}: <code>{pair.value}</code></li>{/each}
+                      </ul>
+                    {/if}
+                  </td>
                   <td>{importerLabel(r.importer)}</td>
                   <td>{r.hostLabel || IMPORT_TEXT.noHost}</td>
                   <td class="num">{r.rows}</td>
@@ -359,4 +401,6 @@
   th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--line-soft); vertical-align: top; overflow-wrap: anywhere; }
   th { color: var(--text-2); font-weight: 650; }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .supplied-list { display: grid; gap: 2px; margin: 4px 0 0; padding: 0; list-style: none; color: var(--text-2); }
+  .supplied-list code { font-family: var(--mono); overflow-wrap: anywhere; }
 </style>

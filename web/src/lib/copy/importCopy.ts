@@ -1,4 +1,4 @@
-import type { CaseApiError, CaseInfo, ImportRecord, ImportReport } from '../cases';
+import type { CaseApiError, CaseInfo, ImportRecord, ImportReport, SuppliedProblem, SuppliedSpec } from '../cases';
 import { formatTimeRange } from '../time';
 import type { LintEntry } from './copylint';
 
@@ -52,6 +52,7 @@ export const IMPORT_TEXT = {
   pickerLabel: 'File type',
   pickerTie: 'More than one file type fits this file. Choose the right one.',
   pickerPlaceholder: 'Choose a file type',
+  pickerRefused: 'The file type was not found. If you know it, choose it to add the settings the owner gave you.',
   hostLabel: 'Host',
   hostNone: 'The file names its own hosts',
   hostNote: 'Pick the host this file came from. A host that is not in the host list is refused.',
@@ -85,6 +86,7 @@ export const IMPORT_TEXT = {
     stale: 'The file or its settings changed. A new preview is loading.',
     'unknown-host': 'This file names an unknown host, so it cannot be imported.',
     nothing: 'The preview kept no rows, so there is nothing to import.',
+    settings: 'A setting you typed is not valid. Fix it first.',
     ack: 'Tick the box to confirm the notice first.'
   },
 
@@ -92,6 +94,12 @@ export const IMPORT_TEXT = {
   noImports: 'Nothing imported yet.',
   historyColumns: { file: 'File', type: 'Type', host: 'Host', rows: 'Rows', rejected: 'Rejected', status: 'Status' },
   noHost: 'Not set',
+
+  suppliedHeading: 'Settings the owner told you',
+  suppliedIntro: 'Fill in only what the server owner told you. A blank box is not sent. The file is read again when you leave a box.',
+  suppliedNotSet: 'Not set',
+  suppliedNeedsFix: 'needs fixing',
+  suppliedHistory: 'Settings',
   statusLabels: { ok: 'Imported', quarantined: 'Refused', duplicate: 'Duplicate' } as Record<string, string>,
 
   fileEmpty: 'This file is empty.',
@@ -330,6 +338,80 @@ export function qualityDetails(quality: ImportReport['quality'] | undefined): { 
   return keys.flatMap((key) => (quality[key] ? [{ label: IMPORT_TEXT.detailLabels[key], value: String(quality[key]) }] : []));
 }
 
+/* ------------------------------------------------------------------ settings the owner told you (card U3) */
+
+/** Plain names for the supplied keys. A key the screen does not know is shown as the server sent it. */
+export const SUPPLIED_LABELS: Record<string, string> = {
+  slowms: 'Slow operation limit (ms)',
+  'app-request-min-ms': 'Shortest request to count (ms)',
+  pattern: 'log4net layout pattern',
+  'log-time': 'Log times are in',
+  'slowlog-log-slower-than': 'Slow command limit (microseconds)',
+  'slowlog-max-len': 'Slow log length (entries)',
+  'exported-at': 'Time the slow log was read',
+  'latency-monitor-threshold': 'Latency monitor limit (ms)',
+  year: 'Year the log was written',
+  date: 'Day the samples were taken',
+  pid: 'Process id'
+};
+
+/** One short line per supplied key saying where the owner finds the value. */
+export const SUPPLIED_HINTS: Record<string, string> = {
+  slowms: 'The slowms value from the MongoDB profiler settings. Slower operations were logged.',
+  'app-request-min-ms': 'The shortest request time, in milliseconds, that counts as an app request. Blank uses 1000.',
+  pattern: 'The pattern line from the log4net config file.',
+  'log-time': 'Choose UTC if the app wrote its times in UTC and the file does not say so.',
+  'slowlog-log-slower-than': 'The slowlog-log-slower-than value from CONFIG GET.',
+  'slowlog-max-len': 'The slowlog-max-len value from CONFIG GET.',
+  'exported-at': 'When you ran SLOWLOG GET, for example 2001-02-03T04:05:06Z.',
+  'latency-monitor-threshold': 'The latency-monitor-threshold value from CONFIG GET.',
+  year: 'Redis log lines have no year. Type the year they were written.',
+  date: 'mongostat rows hold a time of day only. Type the day, for example 2001-02-03.',
+  pid: 'The process id that dotnet-counters was watching.'
+};
+
+/** Words shown for the fixed values of a key. A value with no entry is shown as sent. */
+export const SUPPLIED_VALUE_LABELS: Record<string, Record<string, string>> = {
+  'log-time': { utc: 'UTC' }
+};
+
+const has = (table: object, key: string): boolean => Object.prototype.hasOwnProperty.call(table, key);
+
+export const suppliedLabel = (key: string): string => (has(SUPPLIED_LABELS, key) ? SUPPLIED_LABELS[key] : key);
+export const suppliedHint = (key: string): string => (has(SUPPLIED_HINTS, key) ? SUPPLIED_HINTS[key] : '');
+export const suppliedValueLabel = (key: string, value: string): string => (has(SUPPLIED_VALUE_LABELS, key) && has(SUPPLIED_VALUE_LABELS[key], value) ? SUPPLIED_VALUE_LABELS[key][value] : value);
+
+const plainNumber = (n: number): string => String(n);
+
+/** What a number or text key accepts, as one short line under the box. Words for a fixed set are the options themselves. */
+export function suppliedRangeText(spec: SuppliedSpec): string {
+  if (spec.kind === 'number') return (spec.integer ? 'A whole number' : 'A number') + ' from ' + plainNumber(spec.min) + ' to ' + plainNumber(spec.max) + '.';
+  if (spec.kind === 'text') return 'Up to ' + spec.maxLen + ' bytes of plain text.';
+  return '';
+}
+
+/** The sentence under a box whose value the screen will not send. */
+export function suppliedProblemText(problem: SuppliedProblem, spec: SuppliedSpec): string {
+  switch (problem) {
+    case 'not-a-number': return 'Type a plain number, such as 250.';
+    case 'not-whole': return 'Use a whole number, with no decimal point.';
+    case 'too-low': return 'The smallest value is ' + (spec.kind === 'number' ? plainNumber(spec.min) : '0') + '.';
+    case 'too-high': return 'The largest value is ' + (spec.kind === 'number' ? plainNumber(spec.max) : '0') + '.';
+    case 'not-in-set': return 'Choose one of the listed values.';
+    case 'too-long': return 'This is too long. The limit is ' + (spec.kind === 'text' ? spec.maxLen : 0) + ' bytes.';
+    default: return 'Remove line breaks and other hidden characters.';
+  }
+}
+
+/** The end of the group's summary line: how many settings are set, or that one needs fixing. */
+export const suppliedSummaryNote = (set: number, problems: number): string =>
+  problems > 0 ? ' (' + IMPORT_TEXT.suppliedNeedsFix + ')' : set > 0 ? ' (' + set + ' set)' : '';
+
+/** The settings kept with an import, as label and value pairs in key order, for the imported-file list. */
+export function suppliedPairs(supplied: Record<string, string> | undefined): { key: string; label: string; value: string }[] {
+  return Object.keys(supplied ?? {}).sort().map((key) => ({ key, label: suppliedLabel(key), value: suppliedValueLabel(key, (supplied ?? {})[key]) }));
+}
+
 /** The line shown after a successful import. */
 export function importedText(record: Pick<ImportRecord, 'id' | 'rows' | 'rejected' | 'fileName'>): string {
   return 'Imported ' + record.rows + ' rows from ' + record.fileName + '. ' + record.rejected + ' rejected. This is import #' + record.id + '.';
@@ -370,5 +452,14 @@ export function importCopyEntries(): LintEntry[] {
   walk('import.reason', REASON_TEXT);
   walk('import.importer', IMPORTER_LABELS);
   walk('import.help', IMPORTER_HELP);
+  walk('import.supplied.label', SUPPLIED_LABELS);
+  walk('import.supplied.hint', SUPPLIED_HINTS);
+  walk('import.supplied.value', SUPPLIED_VALUE_LABELS);
+  const number: SuppliedSpec = { key: 'x', kind: 'number', min: 0, max: 600000, integer: true };
+  const text: SuppliedSpec = { key: 'y', kind: 'text', maxLen: 64 };
+  entries.push({ id: 'import.sample.supplied.range', text: suppliedRangeText(number) }, { id: 'import.sample.supplied.text', text: suppliedRangeText(text) });
+  for (const problem of ['not-a-number', 'not-whole', 'too-low', 'too-high', 'not-in-set', 'too-long', 'bad-characters'] as const) {
+    entries.push({ id: 'import.sample.supplied.' + problem, text: suppliedProblemText(problem, problem === 'too-long' ? text : number) });
+  }
   return entries;
 }

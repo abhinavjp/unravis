@@ -86,6 +86,8 @@ export interface ImportRecord {
   imported: string;
   status: string;
   reason?: string;
+  /** What the owner supplied for this import (key to value). Empty when nothing was. Shown on screen only, never logged. */
+  supplied: Record<string, string>;
 }
 
 /** What a preview or a commit answers. `tied` holds two or more names when the server could not choose one importer. */
@@ -170,6 +172,14 @@ const asNumber = (value: unknown): number => (typeof value === 'number' && Numbe
 const asString = (value: unknown): string => (typeof value === 'string' ? value : '');
 const asStrings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
 
+/** A supplied-settings object from the server: only string values under keys of the right shape are kept. */
+function asSupplied(value: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+  for (const [key, v] of Object.entries(value)) if (SUPPLIED_KEY_PATTERN.test(key) && typeof v === 'string') out[key] = v;
+  return out;
+}
+
 function toCase(raw: Partial<CaseInfo>): CaseInfo {
   return { id: asString(raw.id), title: asString(raw.title), created: asString(raw.created), closed: raw.closed ? String(raw.closed) : null, bytes: asNumber(raw.bytes), imports: asNumber(raw.imports) };
 }
@@ -190,7 +200,8 @@ function toRecord(raw: Partial<ImportRecord> | null | undefined): ImportRecord |
   return {
     id: asNumber(raw.id), importer: asString(raw.importer), fileName: asString(raw.fileName), sha256: asString(raw.sha256), bytes: asNumber(raw.bytes), rows: asNumber(raw.rows),
     rejected: asNumber(raw.rejected), hostLabel: asString(raw.hostLabel), tzRule: asString(raw.tzRule), quality: raw.quality && typeof raw.quality === 'object' ? raw.quality : {},
-    knownGaps: asStrings(raw.knownGaps), imported: asString(raw.imported), status: asString(raw.status) || 'ok', reason: raw.reason ? String(raw.reason) : undefined
+    knownGaps: asStrings(raw.knownGaps), imported: asString(raw.imported), status: asString(raw.status) || 'ok', reason: raw.reason ? String(raw.reason) : undefined,
+    supplied: asSupplied(raw.supplied)
   };
 }
 
@@ -277,6 +288,8 @@ export interface ImportRequest {
   importer?: string;
   /** A host label from the host list; empty when the file names its own hosts. */
   host?: string;
+  /** Settings the owner told you, key to value. Only sent with an importer, as s.<key> query parameters. Blank values are never in it. */
+  supplied?: Record<string, string>;
 }
 
 function importAnswer(body: Partial<{ importer: unknown; score: unknown; tied: unknown; report: Partial<ImportReport>; record: Partial<ImportRecord> }>): ImportAnswer {
@@ -287,6 +300,13 @@ function importQuery(request: ImportRequest, preview: boolean): string {
   const query = new URLSearchParams();
   if (request.importer) query.set('importer', request.importer);
   if (request.host) query.set('host', request.host);
+  if (request.importer) {
+    // The contract (S2): s.<key>=<value>, URL-encoded here, never in the path. The server checks each against the importer's declared keys.
+    for (const key of Object.keys(request.supplied ?? {}).sort().slice(0, MAX_SUPPLIED_KEYS)) {
+      const value = request.supplied?.[key] ?? '';
+      if (SUPPLIED_KEY_PATTERN.test(key) && value !== '') query.set('s.' + key, value);
+    }
+  }
   if (preview) query.set('preview', '1');
   const text = query.toString();
   return text ? '?' + text : '';
@@ -353,6 +373,107 @@ export function caseExportSummary(exp: EvidenceExport): CaseExportSummary {
 /** Save is allowed only for a preview that holds something. */
 export const canSaveCaseExport = (exp: EvidenceExport | null): boolean => exp !== null && !caseExportSummary(exp).empty;
 
+/* ------------------------------------------------------------------ settings the owner told you (card U3) */
+// GET /api/importers -> { importers: [{ name, supplied: [{ key, kind: 'enum'|'number'|'text', values?, min?, max?, integer?, maxLen? }] }] }
+// An importer lists only the keys it reads. The screen offers exactly those, checks each value the way the server does, and sends
+// the ones that are filled in as s.<key>=<value> query parameters. The server checks them again and refuses with "bad-supplied".
+
+/** The shape of a supplied key (the server's: a lowercase letter or digit, then lowercase letters, digits and hyphens, 40 at most). */
+export const SUPPLIED_KEY_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
+/** The most settings one import may carry. */
+export const MAX_SUPPLIED_KEYS = 16;
+
+export type SuppliedSpec =
+  | { key: string; kind: 'enum'; values: string[] }
+  | { key: string; kind: 'number'; min: number; max: number; integer: boolean }
+  | { key: string; kind: 'text'; maxLen: number };
+
+export interface ImporterInfo { name: string; supplied: SuppliedSpec[] }
+
+export type SuppliedProblem = 'not-a-number' | 'not-whole' | 'too-low' | 'too-high' | 'not-in-set' | 'too-long' | 'bad-characters';
+
+const MAX_SUPPLIED_VALUE = 512;
+
+function toSpec(raw: unknown): SuppliedSpec | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const key = asString(r.key);
+  if (!SUPPLIED_KEY_PATTERN.test(key)) return null;
+  if (r.kind === 'enum') {
+    const values = asStrings(r.values);
+    return values.length ? { key, kind: 'enum', values } : null;
+  }
+  if (r.kind === 'number') {
+    if (typeof r.min !== 'number' || typeof r.max !== 'number' || !Number.isFinite(r.min) || !Number.isFinite(r.max) || r.min > r.max) return null;
+    return { key, kind: 'number', min: r.min, max: r.max, integer: r.integer === true };
+  }
+  if (r.kind === 'text') {
+    const maxLen = typeof r.maxLen === 'number' && r.maxLen > 0 ? Math.min(Math.floor(r.maxLen), MAX_SUPPLIED_VALUE) : MAX_SUPPLIED_VALUE;
+    return { key, kind: 'text', maxLen };
+  }
+  return null;
+}
+
+/** The importers an answer lists, each with only the keys that have a usable spec. Anything else in the answer is dropped. */
+export function parseImporters(body: unknown): ImporterInfo[] {
+  const list = body && typeof body === 'object' ? (body as { importers?: unknown }).importers : null;
+  if (!Array.isArray(list)) return [];
+  const out: ImporterInfo[] = [];
+  for (const item of list) {
+    const name = asString((item as { name?: unknown } | null)?.name);
+    if (!name) continue;
+    const rawSupplied = (item as { supplied?: unknown }).supplied;
+    const supplied = (Array.isArray(rawSupplied) ? rawSupplied : []).map(toSpec).filter((s): s is SuppliedSpec => s !== null).slice(0, MAX_SUPPLIED_KEYS);
+    out.push({ name, supplied });
+  }
+  return out;
+}
+
+export async function listImporters(signal?: AbortSignal): Promise<ImporterInfo[]> {
+  return parseImporters(await json<unknown>(await send('/importers', {}, signal)));
+}
+
+const PLAIN_NUMBER = /^-?[0-9]{1,15}(\.[0-9]{1,9})?$/;
+/** Control, line-break and zero-width characters: the server refuses them in any supplied value. */
+const HIDDEN_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/;
+
+/**
+ * Checks what was typed for one key. Blank (after trimming) is not a problem: it means the setting is not sent, and `value` is null.
+ * Otherwise `value` is what would be sent. A problem means nothing will be sent for the key.
+ */
+export function checkSupplied(spec: SuppliedSpec, typed: string): { value: string | null; problem: SuppliedProblem | null } {
+  const text = typed.trim();
+  if (text === '') return { value: null, problem: null };
+  const bad = (problem: SuppliedProblem) => ({ value: null, problem });
+  if (HIDDEN_CHARACTERS.test(text)) return bad('bad-characters');
+  switch (spec.kind) {
+    case 'enum':
+      return spec.values.includes(text) ? { value: text, problem: null } : bad('not-in-set');
+    case 'number': {
+      if (!PLAIN_NUMBER.test(text)) return bad('not-a-number');
+      const n = Number(text);
+      if (spec.integer && !Number.isInteger(n)) return bad('not-whole');
+      if (n < spec.min) return bad('too-low');
+      if (n > spec.max) return bad('too-high');
+      return { value: text, problem: null };
+    }
+    default:
+      return new TextEncoder().encode(text).length > spec.maxLen ? bad('too-long') : { value: text, problem: null };
+  }
+}
+
+/** Checks every typed value against the keys the importer declares. Only declared keys are looked at; the rest of `typed` is ignored. */
+export function checkAllSupplied(specs: SuppliedSpec[], typed: Record<string, string>): { values: Record<string, string>; problems: Record<string, SuppliedProblem> } {
+  const values: Record<string, string> = {};
+  const problems: Record<string, SuppliedProblem> = {};
+  for (const spec of specs) {
+    const result = checkSupplied(spec, typed[spec.key] ?? '');
+    if (result.problem) problems[spec.key] = result.problem;
+    else if (result.value !== null) values[spec.key] = result.value;
+  }
+  return { values, problems };
+}
+
 /* ------------------------------------------------------------------ rules the screen follows */
 
 const MiB = 1024 * 1024;
@@ -407,8 +528,12 @@ export function fileSizeProblem(bytes: number, importer?: string): { kind: 'empt
 }
 
 /** What a preview was asked about. A preview holds only for this exact file, importer and host. */
-export function previewKey(file: Pick<File, 'name' | 'size' | 'lastModified'> | null, importer: string, host: string): string {
-  return file ? [file.name, file.size, file.lastModified, importer, host].join('|') : '';
+export function previewKey(file: Pick<File, 'name' | 'size' | 'lastModified'> | null, importer: string, host: string, supplied: Record<string, string> = {}): string {
+  if (!file) return '';
+  const base = [file.name, file.size, file.lastModified, importer, host].join('|');
+  const keys = Object.keys(supplied).sort();
+  // The settings are part of what was asked, but a key with none leaves the key as it was before settings existed.
+  return keys.length ? base + '|' + keys.map((k) => k + '=' + supplied[k]).join(';') : base;
 }
 
 export interface CommitGate {
@@ -422,14 +547,17 @@ export interface CommitGate {
   unknownHost: boolean;
   acknowledged: boolean;
   busy: boolean;
+  /** A setting the owner typed does not fit its key. The preview on screen did not use it, so the file must not be kept yet. */
+  settingsProblem?: boolean;
 }
 
 /** Why the Import button is off, as a short code the screen turns into words; null means it may be pressed. */
-export function commitBlock(gate: CommitGate): 'closed' | 'busy' | 'no-preview' | 'stale' | 'unknown-host' | 'nothing' | 'ack' | null {
+export function commitBlock(gate: CommitGate): 'closed' | 'busy' | 'no-preview' | 'stale' | 'unknown-host' | 'settings' | 'nothing' | 'ack' | null {
   if (!gate.caseOpen) return 'closed';
   if (gate.busy) return 'busy';
   // An unknown host blocks commit before anything else: the preview was refused, so there is no report to point at.
   if (gate.unknownHost) return 'unknown-host';
+  if (gate.settingsProblem) return 'settings';
   if (!gate.report || !gate.importer) return 'no-preview';
   if (gate.previewedKey !== gate.currentKey) return 'stale';
   if (gate.report.emitted <= 0) return 'nothing';
