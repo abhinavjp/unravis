@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { MIN_SAMPLE, P99_MIN_SAMPLE } from '../lib/thresholds';
   import type { Comparison, Rollup, Series } from '../lib/types';
   import type { OverviewDrill } from '../lib/overview';
   import { loadBadge, loadTip, rollupFor } from '../lib/traffic';
@@ -34,7 +35,7 @@
     compared: 'Both periods have enough usable response-time samples for a comparison. This is not a service-health verdict.',
     missing_current: 'No usable response-time samples were found in the current period.',
     missing_reference: 'No usable response-time samples were found in the reference period.',
-    insufficient_data: 'At least one period has fewer than 20 usable response-time samples.',
+    insufficient_data: 'At least one period has fewer than ' + MIN_SAMPLE + ' usable response-time samples.',
     undefined_baseline: 'The reference response time is too close to zero to calculate a meaningful ratio.'
   };
   let filtered = $derived(rows.filter(row => {
@@ -67,9 +68,9 @@
   const completionText = (row: Comparison) => { const rollup = rollupFor(rollups, row); return rollup ? rateText(rollupCompletionRate(rollup)) : '—'; };
   const completionTip = 'Whole API and request type: completed / (completed + incomplete + pending). Unusable rows are not in the share. A dash means no data to measure.';
   let loadByKey = $derived(new Map(timeline.map(series => [series.key, series.loadCorrelation])));
-  // P99 needs at least 100 samples per period; the bin-width caveat applies to every histogram quantile.
+  // P99 needs at least P99_MIN_SAMPLE samples per period; the bin-width caveat applies to every histogram quantile.
   const p99Tip = (row: Comparison) => row.current.p99 == null || row.reference.p99 == null
-    ? 'P99 needs at least 100 usable samples in each period.'
+    ? 'P99 needs at least ' + P99_MIN_SAMPLE + ' usable samples in each period.'
     : `P99 current ${ms(row.current.p99)}, reference ${ms(row.reference.p99)}` + (row.p99Ratio == null ? '' : ` (${ratio(row.p99Ratio)})`) + '. Estimates carry about ±5% error from the histogram bin width.';
 </script>
 
@@ -102,7 +103,7 @@
       <th title="Completed requests as a share of completed, incomplete and pending ones, for the whole API. Unusable rows are counted apart and never in the share. A dash means there was nothing to measure, not 0%.">Completion %<Hint termId="completion-percent" /></th>
       <th title="Median: half of the current-period requests finished sooner. A histogram estimate.">P50<Hint termId="p50" /></th>
       <th title="About 90 of 100 current-period requests finished within this time. A histogram estimate.">P90</th>
-      <th title="About 99 of 100 current-period requests finished within this time. A histogram estimate; shown only with at least 100 samples.">P99<Hint termId="p99" /></th>
+      <th title="About 99 of 100 current-period requests finished within this time. A histogram estimate; shown only with at least {P99_MIN_SAMPLE} samples.">P99<Hint termId="p99" /></th>
       <th title="Shows whether the available samples support a comparison.">Comparison</th>
     </tr></thead>
     <tbody>

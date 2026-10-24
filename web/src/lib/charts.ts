@@ -6,6 +6,7 @@ import type { Analysis, Comparison, Point } from './types';
 import { axisLabels, chartTime } from './chartTime';
 import { axisDuration, niceHistogram } from './chartScale';
 import { gapBridge, heroOutliers, type HeroSlot } from './chartHero';
+import { MIN_SAMPLE } from './thresholds';
 
 echarts.use([LineChart, BarChart, HeatmapChart, ScatterChart, GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
 export { echarts };
@@ -367,7 +368,7 @@ export const multiTimelineOption = (analysis: Analysis, keys: string[], sources:
       return (displaySlots[index] ? tooltipTimestamp(displaySlots[index].at, zone) + '<br/>' : '') + rows.map((row, i) => {
         const point = aligned[i][index];
         const change = baselineChange(row, point, mode, failure ? 'p95' : series as PercentileSeries);
-        const reliable = (point?.count ?? 0) >= 20 && row.state === 'compared';
+        const reliable = (point?.count ?? 0) >= MIN_SAMPLE && row.state === 'compared';
         if (failure) return `<b>${i + 1}. ${escapeHTML(row.controller)}.${escapeHTML(row.action)}</b><br/>${escapeHTML(sources.get(row.sourceId) ?? row.sourceId)} · ${escapeHTML(row.kind)} · ${escapeHTML(row.outcome)}<br/>${seriesLabel}: ${point?.count == null ? 'No observations' : String(failureField(point, series as FailureSeries))}${(point?.incomplete ?? 0) > 0 ? ' · ' + point?.incomplete + ' missing timing (not counted as failures)' : ''}`;
         return `<b>${i + 1}. ${escapeHTML(row.controller)}.${escapeHTML(row.action)}</b><br/>${escapeHTML(sources.get(row.sourceId) ?? row.sourceId)} · ${escapeHTML(row.kind)} · ${escapeHTML(row.outcome)}<br/>Change: ${change == null ? 'Unavailable' : (change > 0 ? '+' : '') + change.toFixed(1) + (mode === 'percent' ? '%' : ' ms')} · Usable timings: ${point?.count ?? 0}<br/>Current ${series.toUpperCase()}: ${finite(point?.[series as PercentileSeries]?.valueMs)?.toFixed(1) ?? 'N/A'} ms · Reference ${series.toUpperCase()}: ${finite(row.reference[series as PercentileSeries]?.valueMs)?.toFixed(1) ?? 'N/A'} ms${reliable ? '' : '<br/>Few or missing samples — treat this point cautiously.'}`;
       }).join('<br/><br/>');
@@ -376,7 +377,7 @@ export const multiTimelineOption = (analysis: Analysis, keys: string[], sources:
     yAxis: { type: 'value', name: failure ? 'Responses per interval' : mode === 'percent' ? 'Change from own reference (%)' : 'Change from own reference', nameLocation: 'middle', nameGap: 62, ...(failure ? { min: 0, minInterval: 1 } : mode === 'milliseconds' ? { minInterval: 1 } : {}), axisLabel: { color: axis, ...(!failure && mode === 'milliseconds' ? { formatter: (value: number) => (value > 0 ? '+' : '') + axisDuration(value) } : {}) }, splitLine: { lineStyle: { color: p.grid } } },
     dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, zoomSlider(p)],
     series: rows.map((row, i) => ({ name: `${i + 1}. ${row.controller}.${row.action}`, type: 'line', connectNulls: false, showSymbol: true, symbolSize: 6, z: 3 + i, lineStyle: { color: p.series[i], ...timelineLineStyle(i) }, itemStyle: { color: p.series[i] },
-      data: aligned[i].map(point => ({ value: valueAt(row, point), symbol: !failure && ((point.count ?? 0) < 20 || row.state !== 'compared') ? 'emptyCircle' : 'circle', itemStyle: { opacity: !failure && ((point.count ?? 0) < 20 || row.state !== 'compared') ? .45 : 1 } })),
+      data: aligned[i].map(point => ({ value: valueAt(row, point), symbol: !failure && ((point.count ?? 0) < MIN_SAMPLE || row.state !== 'compared') ? 'emptyCircle' : 'circle', itemStyle: { opacity: !failure && ((point.count ?? 0) < MIN_SAMPLE || row.state !== 'compared') ? .45 : 1 } })),
       ...(i === 0 && !failure ? { markLine: { symbol: 'none', label: { formatter: 'Reference', position: 'end', color: p.text2, fontSize: 11 }, lineStyle: { type: 'dashed', color: p.pending }, data: [{ yAxis: 0 }] } } : {})
     }))
   };

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { MIN_SAMPLE } from '../lib/thresholds';
   import { tick } from 'svelte';
   import { drillHeading } from '../lib/overview';
   import { kindLabel, stateLabel, unknownKindTip } from '../lib/presentation';
@@ -71,7 +72,7 @@
       <p>{sourceLabels.get(selected.sourceId) ?? 'Source unavailable'} · <span title={selected.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(selected.kind)}</span> · {selected.outcome}</p>
       <PhaseBar phases={selected.current.phases ?? null} delta={selected.phaseDeltaMs ?? null} />
       <div class="selected-api-stats"><span><strong>{selected.current.count.toLocaleString()}</strong> current timings</span><span><strong>{selected.reference.count.toLocaleString()}</strong> reference timings</span><span><strong>{selected.p95Ratio == null ? 'Unavailable' : '≈ ' + selected.p95Ratio.toFixed(2) + '×'}</strong> P95 vs reference</span>{#if targetMs != null}<span>Target {targetMs} ms: {targetAssessment}</span>{/if}</div>
-      {#if selected.current.count < 20 || selected.reference.count < 20}<p class="sample-note">{selected.current.count === 0 ? 'No usable timings in the current period.' : selected.reference.count === 0 ? 'No usable timings in the reference period.' : 'Fewer than 20 usable timings in at least one period.'} A slowdown comparison needs at least 20 usable timings in each period.<Hint termId="low-sample" /></p>{/if}
+      {#if selected.current.count < MIN_SAMPLE || selected.reference.count < MIN_SAMPLE}<p class="sample-note">{selected.current.count === 0 ? 'No usable timings in the current period.' : selected.reference.count === 0 ? 'No usable timings in the reference period.' : 'Fewer than ' + MIN_SAMPLE + ' usable timings in at least one period.'} A slowdown comparison needs at least {MIN_SAMPLE} usable timings in each period.<Hint termId="low-sample" /></p>{/if}
     </section>
   {:else if activeTab === 'failures' && scopedQuery}
     <FailurePanel {analysis} query={scopedQuery} {sourceLabels} {zone} onDrill={drillInto} cohortKeys={failureCohort} />

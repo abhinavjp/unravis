@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { MIN_SAMPLE } from '../lib/thresholds';
   import { formatCount, countNoun } from '../lib/format';
   import type { Rollup } from '../lib/types';
   import { kindLabel, unknownKindTip } from '../lib/presentation';
@@ -19,7 +20,7 @@
   };
   const arrow = (field: OperationSort) => sort === field ? direction < 0 ? ' ↓' : ' ↑' : '';
   const ariaSort = (field: OperationSort) => sort === field ? direction < 0 ? 'descending' : 'ascending' : 'none';
-  const referenceNote = 'Changes are hidden (shown as —) unless the reference period has at least 20 usable timings for this API; the P95 change also needs 20 in the current period.';
+  const referenceNote = 'Changes are hidden (shown as —) unless the reference period has at least ' + MIN_SAMPLE + ' usable timings for this API; the P95 change also needs ' + MIN_SAMPLE + ' in the current period.';
 </script>
 
 <div class="group-toolbar">

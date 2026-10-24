@@ -12,7 +12,7 @@ function loadTypeScript(relativePath) {
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
   const module = { exports: {} };
   const nodeRequire = createRequire(filename);
-  const load = (request) => request.startsWith('./') && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
+  const load = (request) => /^\.\.?\//.test(request) && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
     ? loadTypeScript(path.relative(root, path.join(path.dirname(filename), request + '.ts')))
     : nodeRequire(request);
   new Function('require', 'module', 'exports', output)(load, module, module.exports);

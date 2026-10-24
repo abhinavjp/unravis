@@ -1,5 +1,6 @@
 import type { Comparison, Metric, NumberRange, Quality, Query, Rollup } from './types';
 import { countNoun } from './format';
+import { MIN_SAMPLE } from './thresholds';
 
 export type RankField = 'impact' | 'ratio' | 'delta' | 'count';
 
@@ -40,7 +41,7 @@ export const resultNotes = (rows: Comparison[]) => {
   const nearZero = rows.filter(row => row.state === 'undefined_baseline').length;
   return [
     'Response times are estimates. P95 means about 95 out of 100 requests with usable timings finish within that time. A change does not by itself tell you whether an API is healthy.',
-    ...(lowSamples ? [`${lowSamples} API groups have fewer than 20 usable timings in at least one period. Their slowdown ratios are unavailable because the sample is too small.`] : []),
+    ...(lowSamples ? [`${lowSamples} API groups have fewer than ${MIN_SAMPLE} usable timings in at least one period. Their slowdown ratios are unavailable because the sample is too small.`] : []),
     ...(noCurrent ? [`${noCurrent} API groups have no usable timings in the investigation period.`] : []),
     ...(noReference ? [`${noReference} API groups have no usable timings in the reference period.`] : []),
     ...(nearZero ? [`${nearZero} API groups have a reference time too close to zero to calculate a meaningful slowdown ratio.`] : [])
