@@ -14,6 +14,8 @@ import (
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
+
+	"api-audit-explorer/internal/discover/evtx"
 )
 
 // NewSystemEnv returns the real Env for this computer. Importers is left nil;
@@ -435,14 +437,36 @@ func readHKLMString(key, value string) (string, error) {
 
 // --- Event channels ---
 
-// winChannels is a stub until the event-channel task lands: it lists nothing,
-// so no detector reports a channel it cannot read.
+// winChannels lists channels and tests read access through wevtapi (see the
+// evtx package). Access denied wraps fs.ErrPermission, so a detector turns it
+// into a needs-elevation gap. No event is read here and no channel name appears
+// in an error.
 type winChannels struct{}
 
-func (winChannels) List() ([]string, error) { return []string{}, nil }
+func (winChannels) List() ([]string, error) {
+	names, err := evtx.ListChannels()
+	if err != nil {
+		return nil, mapChannelErr(err)
+	}
+	return names, nil
+}
 
-func (winChannels) CanRead(string) error {
-	return &fs.PathError{Op: "channel", Path: "(channel)", Err: fs.ErrNotExist}
+func (winChannels) CanRead(name string) error {
+	return mapChannelErr(evtx.CanRead(name))
+}
+
+// mapChannelErr keeps the contract errors (access denied, not found) and hides
+// everything else behind a path-free error.
+func mapChannelErr(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, fs.ErrPermission):
+		return &fs.PathError{Op: "channel", Path: "(channel)", Err: ErrAccessDenied}
+	case errors.Is(err, fs.ErrNotExist):
+		return &fs.PathError{Op: "channel", Path: "(channel)", Err: fs.ErrNotExist}
+	}
+	return &fs.PathError{Op: "channel", Path: "(channel)", Err: err}
 }
 
 // --- Machine ---
