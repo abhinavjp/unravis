@@ -1,0 +1,114 @@
+[
+  {
+    "key": "discover.ancm.shows",
+    "text": "It holds what the app wrote to its console, with times."
+  },
+  {
+    "key": "discover.apache.shows",
+    "text": "It lists each request that Apache served, with its time, status and size."
+  },
+  {
+    "key": "discover.appinsights.how",
+    "text": "Run a query in the Logs view of Application Insights for the same days. Export the result as a CSV file and import it."
+  },
+  {
+    "key": "discover.appinsights.shows",
+    "text": "It holds the requests and errors the app sent to Application Insights."
+  },
+  {
+    "key": "discover.dotnetcounters.how",
+    "text": "Run dotnet-counters collect on the app process and save a CSV or JSON file. Import that file."
+  },
+  {
+    "key": "discover.dotnetcounters.shows",
+    "text": "They show garbage collection, thread pool and exception counts inside the app process, over time."
+  },
+  {
+    "key": "discover.events.shows",
+    "text": "They record app pool starts, stops and recycles, and service events, with times."
+  },
+  {
+    "key": "discover.freb.shows",
+    "text": "It holds a step-by-step record of each request that IIS was set to trace."
+  },
+  {
+    "key": "discover.hangfire.how",
+    "text": "Export the job history from the Hangfire dashboard or its storage as a CSV file. Then import the file."
+  },
+  {
+    "key": "discover.hangfire.shows",
+    "text": "It lists background jobs with their start and end times."
+  },
+  {
+    "key": "discover.httperr.shows",
+    "text": "It records connections and requests that failed before they reached the app."
+  },
+  {
+    "key": "discover.iis.shows",
+    "text": "It lists each request with its time, status and duration."
+  },
+  {
+    "key": "discover.live.shows",
+    "text": "It records CPU and memory use by process while Unravis runs."
+  },
+  {
+    "key": "discover.log4net.shows",
+    "text": "It records the warnings and errors the app wrote, with times."
+  },
+  {
+    "key": "discover.mel.shows",
+    "text": "It records the warnings and errors the app wrote, with times."
+  },
+  {
+    "key": "discover.mongo.shows",
+    "text": "It lists MongoDB server messages, such as slow queries and connections, with times."
+  },
+  {
+    "key": "discover.nginx.shows",
+    "text": "It lists each request that nginx served, with its time, status and size."
+  },
+  {
+    "key": "discover.nlog.shows",
+    "text": "It records the warnings and errors the app wrote, with times."
+  },
+  {
+    "key": "discover.perfmon.how",
+    "text": "Run relog on the .blg file to save a CSV file. Then import the CSV file."
+  },
+  {
+    "key": "discover.perfmon.shows",
+    "text": "They show CPU, memory, disk and network use on this host, minute by minute."
+  },
+  {
+    "key": "discover.redis.shows",
+    "text": "It lists Redis server messages, such as restarts and saves, with times."
+  },
+  {
+    "key": "discover.serilog.shows",
+    "text": "It records the warnings and errors the app wrote, with times."
+  },
+  {
+    "key": "discover.sql.shows",
+    "text": "It lists server messages, such as errors and restarts, with times."
+  },
+  {
+    "key": "discover.sqlagent.how",
+    "text": "Run the job history query in SQL Server Management Studio. Save the result as a CSV file and import it."
+  },
+  {
+    "key": "discover.sqlagent.shows",
+    "text": "It lists SQL Server Agent jobs with their start and end times."
+  },
+  {
+    "key": "discover.sqlxe.how",
+    "text": "Export the system_health events to a CSV file in SQL Server Management Studio. Leave out the columns that hold query text. Then import the file."
+  },
+  {
+    "key": "discover.sqlxe.shows",
+    "text": "It records waits, blocking reports and deadlocks, with times."
+  },
+  {
+    "key": "discover.taskscheduler.shows",
+    "text": "It lists when scheduled tasks started and finished."
+  }
+]
