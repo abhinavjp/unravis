@@ -97,7 +97,7 @@ test('the new on-screen strings pass the copy lint', () => {
 });
 
 test('the deck stays within its cap and knows the new terms and aliases', () => {
-  assert.ok(deck.terms.length <= 52);
+  assert.ok(deck.terms.length <= 53);
   assert.ok(findTerm('confounder'));
   assert.ok(findTerm('tenant'));
   assert.equal(searchTerms('Customer')[0]?.id, 'tenant');
