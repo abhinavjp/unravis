@@ -68,6 +68,7 @@ type casesState struct {
 	gates     caseGates
 	imports   importLimiter
 	pending   pendingStrips
+	jobs      importJobs
 	maxUpload int64 // test hook: replaces the computed upload cap when > 0
 
 	hostsMu sync.RWMutex
@@ -634,8 +635,12 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 		return
 	}
 	// An import in flight finishes before the case is erased, and so does every
-	// read that already opened the case; reads that start now answer 404.
+	// read that already opened the case; reads that start now answer 404. A
+	// background import job is cancelled first, so the erase waits only for it to
+	// stop, not for it to finish.
+	stopCancelling := h.jobs.cancelCaseUntilStopped(id)
 	release, err := h.gates.acquireErase(r.Context(), id)
+	stopCancelling()
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -977,15 +982,34 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 		writeStoreError(w, err)
 		return
 	}
-	defer release()
 	// The gate is taken first, so imports queued behind one case hold no slot.
 	slot, ok := h.imports.tryAcquire()
 	if !ok {
+		release()
 		w.Header().Set("Retry-After", "2")
 		writeCaseFailure(w, http.StatusTooManyRequests, "import-busy", "Other imports are running. Try again in a moment.")
 		return
 	}
-	defer slot()
+	// An async import hands the gate and the slot to its job, which holds them
+	// until the job ends; every other exit gives them back here.
+	var job *importJob
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			if job != nil {
+				h.jobs.discard(job)
+			}
+			slot()
+			release()
+		}
+	}()
+	if query.Get("async") == "1" {
+		if job = h.jobs.create(id); job == nil {
+			w.Header().Set("Retry-After", "2")
+			writeCaseFailure(w, http.StatusTooManyRequests, "import-busy", "Other imports are running. Try again in a moment.")
+			return
+		}
+	}
 
 	// The wait for the gate may have used up the server's read deadline, so the
 	// body gets its own rolling deadline from here on.
@@ -1047,7 +1071,13 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 				}
 				ackText = bound
 			}
-			h.importFile(w, r, id, c, imp, hint, supplied, part, preview, ackGating, ackText, baseName(part.FileName()))
+			if job != nil {
+				h.importAsync(w, id, job, imp, hint, supplied, part, preview, ackGating, ackText, baseName(part.FileName()), func() {
+					handedOff = true
+				}, slot, release)
+				return
+			}
+			h.importFile(r.Context(), w, id, c, imp, hint, supplied, part, preview, ackGating, ackText, baseName(part.FileName()))
 			return
 		default:
 			writeCaseFailure(w, http.StatusBadRequest, "bad-form", "The upload has a field the server does not know.")
@@ -1058,8 +1088,10 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 
 // importFile runs one uploaded file. The acknowledgement must already have
 // arrived: it travels in the fields before the file, so a refusal needs no read
-// of the file, and the body is streamed, never spilled to disk.
-func (h *handler) importFile(w http.ResponseWriter, r *http.Request, id casestore.CaseID, c casestore.Case, imp importer.Importer, hint *importer.HostHint, supplied map[string]string, part io.Reader, preview, ackGating bool, ackText, fileName string) {
+// of the file, and the body is streamed, never spilled to disk. (An async
+// import, import_jobs.go, keeps the upload in an encrypted spool for the job
+// and runs this same function over it.)
+func (h *handler) importFile(ctx context.Context, w http.ResponseWriter, id casestore.CaseID, c casestore.Case, imp importer.Importer, hint *importer.HostHint, supplied map[string]string, part io.Reader, preview, ackGating bool, ackText, fileName string) {
 	if !preview && (!ackGating || ackText == "") {
 		writeCaseFailure(w, http.StatusBadRequest, "ack-required", "Send ackGating and ackText before the file.")
 		return
@@ -1116,9 +1148,9 @@ func (h *handler) importFile(w http.ResponseWriter, r *http.Request, id casestor
 		meta.AckGating, meta.AckText = true, "preview"
 	}
 	var sum string
-	res, err := c.Import(r.Context(), meta, body, importRun(r.Context(), imp, opts, preview, &sum))
+	res, err := c.Import(ctx, meta, body, importRun(ctx, imp, opts, preview, &sum))
 	if preview && errors.Is(err, errPreviewDone) {
-		if existing, found := h.sameBytes(r.Context(), c, sum); found {
+		if existing, found := h.sameBytes(ctx, c, sum); found {
 			writeJSON(w, http.StatusConflict, caseFailure{Error: "These bytes are already imported into this case.", Reason: "duplicate", ImportID: existing}, 4096)
 			return
 		}

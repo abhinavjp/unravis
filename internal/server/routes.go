@@ -160,6 +160,10 @@ var routes = []route{
 		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.listImports(w, r, id) },
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.postImport(w, r, id) },
 	}},
+	{pattern: "/api/cases/{id}/imports/jobs/{job}", match: caseJobPath, methods: map[string]routeFunc{
+		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.getImportJob(w, r, arg) },
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.deleteImportJob(w, r, arg) },
+	}},
 	{pattern: "/api/cases/{id}/events", match: caseSubpath("/events"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseEvents(w, r, id) },
 	}},

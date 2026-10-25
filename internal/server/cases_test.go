@@ -39,6 +39,8 @@ type toyImporter struct {
 	name    string
 	score   int
 	onParse func()
+	// hold, when set, runs at the start of Parse; an error from it ends the parse.
+	hold func(ctx context.Context) error
 }
 
 func (t toyImporter) Name() string { return t.name }
@@ -63,6 +65,11 @@ func (t toyImporter) Parse(ctx context.Context, r io.Reader, opts importer.Optio
 		t.onParse()
 	}
 	rep := importer.Report{Importer: t.name}
+	if t.hold != nil {
+		if err := t.hold(ctx); err != nil {
+			return rep, err
+		}
+	}
 	sc := bufio.NewScanner(r)
 	var line int64
 	for sc.Scan() {
