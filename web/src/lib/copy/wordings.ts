@@ -78,7 +78,12 @@ export function metricSampleOverlap(source: string, samples: number, metric: str
 
 /** Correlation: a marker event (a restart, a recycle, a crash) comes shortly before a stalled audit interval. */
 export function markerBefore(offset: string, marker: string, host: string): string {
-  return `This interval starts ${offset} after a ${marker} on ${host} (Correlation).`;
+  return `This interval starts ${offset} after ${indefinite(marker)} on ${host} (Correlation).`;
+}
+
+/** Correlation: the twin of markerBefore for a marker event that comes shortly after a stalled audit interval ends. */
+export function markerAfter(offset: string, marker: string, host: string): string {
+  return `This interval ends ${offset} before ${indefinite(marker)} on ${host} (Correlation).`;
 }
 
 /** Symptom: how often a condition holds inside stall episodes and inside the comparison windows outside them. */
@@ -89,6 +94,126 @@ export function episodeShare(condition: string, k: number, n: number, m: number,
 /** Symptom: the highest values of a metric in one window. */
 export function topInWindow(metric: string, list: string): string {
   return `Highest ${metric} in this window: ${list}.`;
+}
+
+/*
+ * A2 rule wordings (wave-2 plan 4.3). Each states what was measured or what is missing, never a cause. The caller
+ * formats every value with its unit. A gap function returns the whole notObservedGap sentence.
+ */
+
+/** Symptom: the lowest value of a metric in one window. */
+export function lowestInWindow(metric: string, value: string): string {
+  return `Lowest ${metric} in this window: ${value}.`;
+}
+
+/** Symptom: how many things of one kind were counted in the window. */
+export function countInWindow(what: string, n: number): string {
+  return `${what} in this window: ${n}.`;
+}
+
+/** Correlation: the twin of overlapUnique for a source that is a fixed-length buffer of entries (Redis SLOWLOG). */
+export function overlapBuffered(source: string, event: string, seconds: number): string {
+  return `The ${source} buffer held ${indefinite(event)} of ${seconds} s overlapping this interval (Correlation).`;
+}
+
+/** The host as a sentence shows it: an unnamed host has no label. Twin of HostName in wording.go. */
+export function hostName(host: string): string {
+  return host === '' ? 'an unnamed host' : host;
+}
+
+/** A phrase followed by a host ("host CPU at or above 90 % on web-a"). */
+export function onHost(phrase: string, host: string): string {
+  return `${phrase} on ${host}`;
+}
+
+/** One item of a topInWindow list: a name and its value. */
+export function listEntry(name: string, value: string): string {
+  return `${name} (${value})`;
+}
+
+/** The last item of a process list when host CPU is known: the part of the host not listed. */
+export function otherProcesses(value: string): string {
+  return `all other processes (${value})`;
+}
+
+/** The last item of a process list when host CPU is not known. */
+export function listedProcessesOnly(): string {
+  return `(sum of listed processes only)`;
+}
+
+/** A series has too few samples in the window to test. */
+export function coverageGap(percent: number, metric: string, host: string): string {
+  return notObservedGap(`${percent} % of samples present for ${metric} on ${host}`);
+}
+
+/** A host has host counters but no per-process counters. */
+export function noProcessCountersGap(host: string): string {
+  return notObservedGap(`no per-process counters for ${host}`);
+}
+
+/** A .NET Core host has app logs but no runtime counters. */
+export function noRuntimeCountersGap(host: string): string {
+  return notObservedGap(`no runtime counters for this process on ${host}`);
+}
+
+/** A .NET Framework host has no thread-pool counter. */
+export function noThreadPoolCounterGap(host: string): string {
+  return notObservedGap(`no thread-pool counter exists on ${host}; ASP.NET Requests Queued shown instead`);
+}
+
+/** A host has counters but no application log. */
+export function noAppLogGap(host: string): string {
+  return notObservedGap(`no app log for ${host}`);
+}
+
+/** More events matched than the rules keep. */
+export function eventCapGap(kept: number): string {
+  return notObservedGap(`the rules read only the first ${kept} matching events, so overlap and log results are partial`);
+}
+
+/** A memory series, cut at start markers, has a segment too short to test for a rise. */
+export function shortSegmentGap(subject: string, metric: string, from: string, to: string, samples: number, span: string, minSamples: number, minSpan: string, minCoverage: string): string {
+  return notObservedGap(`${subject} ${metric}: the segment from ${from} to ${to} has ${samples} samples over ${span}; a rise is tested on ${minSamples} or more samples over ${minSpan} or more, with ${minCoverage} % of the samples expected`);
+}
+
+/** A host has other Redis imports but no SLOWLOG import. */
+export function noSlowlogImportGap(host: string): string {
+  return notObservedGap(`no Redis SLOWLOG import for ${host}`);
+}
+
+/** The SLOWLOG threshold is not stated, so the threshold wording is not available. */
+export function slowlogThresholdGap(host: string): string {
+  return notObservedGap(`slowlog-log-slower-than not stated for ${host}`);
+}
+
+/** The time the SLOWLOG buffer covers is not known. */
+export function slowlogWindowUnknownGap(host: string): string {
+  return notObservedGap(`the Redis slow-log window on ${host} is unknown`);
+}
+
+/** The SLOWLOG window starts after the interval starts. */
+export function slowlogWindowStartsGap(host: string, from: string): string {
+  return notObservedGap(`the Redis slow-log window on ${host} starts at ${from}, after this interval starts`);
+}
+
+/** The SLOWLOG window ends before the interval ends. */
+export function slowlogWindowEndsGap(host: string, to: string): string {
+  return notObservedGap(`the Redis slow-log window on ${host} ends at ${to}, before this interval ends`);
+}
+
+/** The SLOWLOG entry ids skip a number, so entries may be missing. */
+export function slowlogIdGap(host: string): string {
+  return notObservedGap(`the Redis slow-log buffer on ${host} has a gap in its entry ids, so entries may be missing`);
+}
+
+/** IIS 8.5 and later log a recycle only for the triggers the pool enables. Twin of RecycleGapEnabledTriggers in wording.go. */
+export function recycleGapEnabledTriggers(): string {
+  return `Application pool recycle events are logged only for the triggers enabled in logEventOnRecycle; other recycle triggers may have left no event.`;
+}
+
+/** Before IIS 8.5, and for an unknown runtime, only three triggers are logged by default. */
+export function recycleGapLegacyDefaults(): string {
+  return `Application pool recycle events are logged by default only for the Time, Memory and PrivateMemory triggers before IIS 8.5, and logEventOnRecycle may have been changed; other recycle triggers may have left no event.`;
 }
 
 /** Plain-language form of an audit-create measurement (roadmap §8.14 part 5). Never names a cause. */

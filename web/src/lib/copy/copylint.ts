@@ -5,8 +5,9 @@
  */
 import type { Term } from './types';
 import {
-  auditCreate, episodeShare, markerBefore, metricRose, metricSampleOverlap, notObservedGap, notObservedThreshold, overlapAmbiguous,
-  overlapUnique, plainAuditCreate, topInWindow
+  auditCreate, countInWindow, episodeShare, lowestInWindow, markerAfter, markerBefore, metricRose, metricSampleOverlap, notObservedGap,
+  notObservedThreshold, overlapAmbiguous, overlapBuffered, overlapUnique, plainAuditCreate, recycleGapEnabledTriggers,
+  recycleGapLegacyDefaults, topInWindow
 } from './wordings';
 
 export interface LintEntry { id: string; text: string }
@@ -128,11 +129,17 @@ const WORDING_SOURCES: string[] = [
   auditCreate(asNumber(NUM)),
   plainAuditCreate(asNumber(NUM)),
   metricRose(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT),
-  markerBefore(TEXT, TEXT, TEXT),
   episodeShare(TEXT, asNumber(NUM), asNumber(NUM), asNumber(NUM), asNumber(NUM)),
-  topInWindow(TEXT, TEXT)
+  topInWindow(TEXT, TEXT),
+  lowestInWindow(TEXT, TEXT),
+  countInWindow(TEXT, asNumber(NUM)),
+  recycleGapEnabledTriggers(),
+  recycleGapLegacyDefaults()
 ].map(toPattern).concat([
   overlapUnique(TEXT, TEXT, asNumber(NUM)),
+  overlapBuffered(TEXT, TEXT, asNumber(NUM)),
+  markerBefore(TEXT, TEXT, TEXT),
+  markerAfter(TEXT, TEXT, TEXT),
   metricSampleOverlap(TEXT, 1, TEXT, TEXT),
   metricSampleOverlap(TEXT, asNumber(NUM), TEXT, TEXT)
 ].map((sample) => withArticles(toPattern(sample))));
@@ -143,7 +150,8 @@ const WORDING_PATTERNS: RegExp[] = WORDING_SOURCES.map((source) => new RegExp(so
 /** Phrases that must only ever appear as the exact permitted wordings. */
 const WORDING_TRIGGERS = [
   'Not observed', 'Possible overlap', 'Audit create took', 'overlapping this interval', 'during this interval (Correlation)',
-  'This interval starts', 'comparison windows outside stalls', 'in this window:'
+  'This interval starts', 'This interval ends', 'comparison windows outside stalls', 'in this window:',
+  'Application pool recycle events are logged'
 ];
 
 /** Length of the permitted wording that starts exactly at `pos`, or 0. */

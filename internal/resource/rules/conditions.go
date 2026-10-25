@@ -1,9 +1,7 @@
 package rules
 
 import (
-	"fmt"
 	"sort"
-	"strings"
 
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/evidence"
@@ -40,7 +38,7 @@ func (e *eval) coverageFirst() {
 			e.coverage[s.Host] = append(e.coverage[s.Host], Coverage{Metric: label, Fraction: roundTo(cov, 3)})
 			e.hosts[s.Host] = true
 			if cov < e.th.MinCoverage {
-				e.gap(evidence.NotObservedGap(fmt.Sprintf("%d %% of samples present for %s on %s", int(cov*100), label, s.Host)))
+				e.gap(evidence.CoverageGap(int(cov*100), label, s.Host))
 			}
 		}
 	}
@@ -64,7 +62,7 @@ type condition struct {
 	rule       string
 	metric     string
 	title      string
-	share      string // EpisodeShare condition, "%s" is the host
+	share      string // EpisodeShare condition, without the host
 	thresholds string
 	minSamples int                                   // qualifying samples per series, per episode or slot
 	test       func(resource.Sample) (float64, bool) // the value shown, and whether it qualifies
@@ -143,7 +141,7 @@ func (e *eval) runCondition(c condition) {
 			continue
 		}
 		e.add(Row{ID: c.rule, Host: host, Title: c.title + " in stalls and outside", Label: audit.EvidenceSymptom,
-			Wording:    evidence.EpisodeShare(strings.ReplaceAll(c.share, "%s", host), len(epHit), len(e.eps), len(hostSlots), e.slots.total),
+			Wording:    evidence.EpisodeShare(evidence.OnHost(c.share, host), len(epHit), len(e.eps), len(hostSlots), e.slots.total),
 			Thresholds: thr, Evidence: shareIDs})
 	}
 }
@@ -178,7 +176,7 @@ func (e *eval) pointShare(rule, title, share, thresholds string, evs []evidence.
 			}
 		}
 		e.add(Row{ID: rule, Host: host, Title: title, Label: audit.EvidenceSymptom,
-			Wording:    evidence.EpisodeShare(strings.ReplaceAll(share, "%s", host), len(epHit), len(e.eps), slots.count(1), e.slots.total),
+			Wording:    evidence.EpisodeShare(evidence.OnHost(share, host), len(epHit), len(e.eps), slots.count(1), e.slots.total),
 			Thresholds: thresholds + "; " + e.commonThresholds(), Evidence: ids})
 	}
 }

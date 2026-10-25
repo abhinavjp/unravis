@@ -1,6 +1,10 @@
 package iis
 
-import "strings"
+import (
+	"strings"
+
+	"api-audit-explorer/internal/evidence"
+)
 
 // wasProvider is the System log provider for WAS events.
 const wasProvider = "Microsoft-Windows-WAS"
@@ -64,10 +68,11 @@ var wasKinds = map[int]string{
 // recycleGapText applies from IIS 8.5, where the logEventOnRecycle default
 // covers more triggers. It is deliberately weak: whether a given recycle
 // trigger left an event depends on the pool's logEventOnRecycle setting.
-const recycleGapText = "Application pool recycle events are logged only for the triggers enabled in logEventOnRecycle; other recycle triggers may have left no event."
+// The sentence lives in internal/evidence with its TypeScript twin.
+var recycleGapText = evidence.RecycleGapEnabledTriggers()
 
 // recycleGapTextLegacy applies before IIS 8.5 and for an unknown runtime.
-const recycleGapTextLegacy = "Application pool recycle events are logged by default only for the Time, Memory and PrivateMemory triggers before IIS 8.5, and logEventOnRecycle may have been changed; other recycle triggers may have left no event."
+var recycleGapTextLegacy = evidence.RecycleGapLegacyDefaults()
 
 // RecycleGap returns the logEventOnRecycle coverage gap for a runtime such as
 // "iis-10" or "iis-8.5". It never returns "": absence of a recycle event is

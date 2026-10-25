@@ -90,7 +90,12 @@ func (e *eval) overlap(rule string, kinds []string, thresholds string) map[strin
 				ev := byID[m.Candidates[0]]
 				r.Title = displayName(g.source) + " " + eventPhrase(g.kind) + " in a stall"
 				r.Label = audit.EvidenceCorrelation
-				r.Wording = evidence.OverlapUnique(displayName(g.source), eventPhrase(g.kind), math.Round(spanMs(ev))/1000)
+				seconds := math.Round(spanMs(ev)) / 1000
+				if bufferedSources[g.source] {
+					r.Wording = evidence.OverlapBuffered(displayName(g.source), eventPhrase(g.kind), seconds)
+				} else {
+					r.Wording = evidence.OverlapUnique(displayName(g.source), eventPhrase(g.kind), seconds)
+				}
 			case len(m.Candidates) == 1:
 				r.Title = displayName(g.source) + " " + eventPhrase(g.kind) + " shared by stalls"
 				r.Label = audit.EvidenceSymptom
@@ -113,17 +118,21 @@ var slowlogThresholdRe = regexp.MustCompile(`^commands slower than (\d+) microse
 // redisSources are the Redis importers.
 var redisSources = []string{"redis-slowlog", "redis-latency", "redis-info", "redis-log"}
 
+// bufferedSources keep a fixed-length buffer of entries rather than a session,
+// so an overlap with them reads "The ... buffer held" (OverlapBuffered).
+var bufferedSources = map[string]bool{"redis-slowlog": true, "redis-latency": true}
+
 // rc6 joins Redis slow commands and latency events with the stalls, tests
 // Redis blocked clients, and words the absence of a slow command per episode.
 func (e *eval) rc6() {
 	hit := e.overlap("RC6", []string{"slow-command", "latency-spike"}, "Redis SLOWLOG and latency monitor events overlapping a stall")
 	e.runCondition(condition{rule: "RC6", metric: resource.RedisBlocked, title: "Redis blocked clients",
-		share: "Redis blocked clients above 0 on %s", thresholds: "Redis blocked clients above 0", test: above(0)})
+		share: "Redis blocked clients above 0", thresholds: "Redis blocked clients above 0", test: above(0)})
 
 	slowlog := e.importsOf("redis-slowlog")
 	for host, recs := range e.importsOf(redisSources...) {
 		if host != "" && len(slowlog[host]) == 0 && len(recs) > 0 {
-			e.gap(evidence.NotObservedGap("no Redis SLOWLOG import for " + host))
+			e.gap(evidence.NoSlowlogImportGap(host))
 		}
 	}
 	hosts := make([]string, 0, len(slowlog))
@@ -172,15 +181,15 @@ func slowlogAbsence(host string, recs []casestore.ImportRecord, ep Episode, idGa
 		m := slowlogThresholdRe.FindStringSubmatch(q.Threshold)
 		switch {
 		case m == nil:
-			reason = "slowlog-log-slower-than not stated for " + host
+			reason = evidence.SlowlogThresholdGap(host)
 		case q.CoverageFirst == nil || q.CoverageLast == nil:
-			reason = "the Redis SLOWLOG coverage on " + host + " is unknown"
+			reason = evidence.SlowlogWindowUnknownGap(host)
 		case q.CoverageFirst.After(ep.Start):
-			reason = "the Redis SLOWLOG coverage on " + host + " starts at " + stamp(*q.CoverageFirst) + ", after this interval starts"
+			reason = evidence.SlowlogWindowStartsGap(host, stamp(*q.CoverageFirst))
 		case q.CoverageLast.Before(ep.End):
-			reason = "the Redis SLOWLOG coverage on " + host + " ends at " + stamp(*q.CoverageLast) + ", before this interval ends"
+			reason = evidence.SlowlogWindowEndsGap(host, stamp(*q.CoverageLast))
 		case idGap:
-			reason = "the Redis SLOWLOG ids on " + host + " have a gap, so entries may be missing"
+			reason = evidence.SlowlogIDGap(host)
 		}
 		if reason == "" {
 			return evidence.NotObservedThreshold(displayName("redis-slowlog"), "commands slower than "+m[1]+" µs (execution time only)")
@@ -189,7 +198,7 @@ func slowlogAbsence(host string, recs []casestore.ImportRecord, ep Episode, idGa
 			first = reason
 		}
 	}
-	return evidence.NotObservedGap(first)
+	return first
 }
 
 // slowlogIDGap reports whether the SLOWLOG ids seen on host skip a number.
@@ -225,7 +234,7 @@ func (e *eval) rc7() {
 	others := e.importsOf("win-counters", "win-procsnap", "dotnet-counters")
 	for host := range others {
 		if host != "" && len(logs[host]) == 0 {
-			e.gap(evidence.NotObservedGap("no app log for " + host))
+			e.gap(evidence.NoAppLogGap(host))
 		}
 	}
 	perHost := map[string]map[int64]float64{}
@@ -277,10 +286,10 @@ func (e *eval) rc7() {
 		}
 		var parts []string
 		for _, f := range list {
-			parts = append(parts, f.name+" ("+num(f.n)+")")
+			parts = append(parts, evidence.ListEntry(f.name, num(f.n)))
 		}
 		e.add(Row{ID: "RC7", Host: h, Title: "Busiest log families", Label: audit.EvidenceSymptom,
-			Wording:    evidence.TopInWindow("log entries by family on "+h, strings.Join(parts, ", ")),
+			Wording:    evidence.TopInWindow(evidence.OnHost("log entries by family", h), strings.Join(parts, ", ")),
 			Thresholds: fmt.Sprintf("top %d families by entries in the window", e.th.TopN)})
 	}
 
@@ -361,7 +370,7 @@ func (e *eval) rc7() {
 			}
 		}
 		e.add(Row{ID: "RC7", Host: h, Title: "ERROR entries per minute in stalls and outside", Label: audit.EvidenceSymptom,
-			Wording: evidence.EpisodeShare(fmt.Sprintf("ERROR entries above %s/min on %s", num(p95), h),
+			Wording: evidence.EpisodeShare(evidence.OnHost("ERROR entries above "+num(p95)+"/min", h),
 				len(epHit), len(e.eps), slots.count(1), e.slots.total),
 			Thresholds: "above the 95th percentile (nearest rank, empty minutes counted) of ERROR and CRITICAL entries per minute outside stall episodes; " + e.commonThresholds(),
 			Evidence:   evIDs})
@@ -372,7 +381,7 @@ func (e *eval) rc7() {
 
 var reasonRe = regexp.MustCompile(`\(reason: ([^)]*)\)`)
 
-// markerPhrase names a marker for MarkerBefore ("... after a <phrase> on host").
+// markerPhrase names a marker for MarkerBefore and MarkerAfter ("<phrase>" is a noun phrase without an article).
 func markerPhrase(m resource.Marker) string {
 	key := m.Proc.Key()
 	switch m.Kind {
@@ -421,8 +430,9 @@ func withKey(p, key string) string {
 	return p + " for " + key
 }
 
-// rc8 lists the markers that end at most MarkerLead before an episode starts
-// (MarkerBefore, Correlation). The recycle-event coverage gap is always shown.
+// rc8 lists the markers that end at most MarkerLead before an episode starts,
+// or start at most MarkerLead after it ends (MarkerBefore, MarkerAfter,
+// Correlation). The recycle-event coverage gap is always shown.
 func (e *eval) rc8() {
 	recycleGap := ""
 	for _, r := range e.imports {
@@ -436,19 +446,20 @@ func (e *eval) rc8() {
 	if recycleGap == "" {
 		e.gap(iis.RecycleGap(""))
 	}
-	thr := "marker ending " + duration(e.th.MarkerLead) + " or less before the episode starts"
+	thr := "marker ending " + duration(e.th.MarkerLead) + " or less before the episode starts, or starting " + duration(e.th.MarkerLead) + " or less after it ends"
 	for _, m := range e.idx.Markers() {
+		host := evidence.HostName(m.Host)
 		for i, ep := range e.eps {
-			if m.End.After(ep.Start) || ep.Start.Sub(m.End) > e.th.MarkerLead {
-				continue
+			switch {
+			case !m.End.After(ep.Start) && ep.Start.Sub(m.End) <= e.th.MarkerLead:
+				e.add(Row{ID: "RC8", Host: m.Host, Title: "Marker before an episode", Label: audit.EvidenceCorrelation,
+					Wording:    evidence.MarkerBefore(duration(ep.Start.Sub(m.End)), markerPhrase(m), host),
+					Thresholds: thr, Evidence: m.EvidenceIDs, Episode: e.episode(i)})
+			case !m.Start.Before(ep.End) && m.Start.Sub(ep.End) <= e.th.MarkerLead:
+				e.add(Row{ID: "RC8", Host: m.Host, Title: "Marker after an episode", Label: audit.EvidenceCorrelation,
+					Wording:    evidence.MarkerAfter(duration(m.Start.Sub(ep.End)), markerPhrase(m), host),
+					Thresholds: thr, Evidence: m.EvidenceIDs, Episode: e.episode(i)})
 			}
-			host := m.Host
-			if host == "" {
-				host = "an unnamed host"
-			}
-			e.add(Row{ID: "RC8", Host: m.Host, Title: "Marker before an episode", Label: audit.EvidenceCorrelation,
-				Wording:    evidence.MarkerBefore(duration(ep.Start.Sub(m.End)), markerPhrase(m), host),
-				Thresholds: thr, Evidence: m.EvidenceIDs, Episode: e.episode(i)})
 		}
 	}
 }
@@ -461,7 +472,7 @@ func (e *eval) rc8() {
 func (e *eval) rc9() {
 	hit := e.overlap("RC9", []string{"slow-op", "inflight-op"}, "MongoDB slow and running operations overlapping a stall")
 	e.runCondition(condition{rule: "RC9", metric: resource.MongoQueue, title: "MongoDB queue",
-		share: "MongoDB queue length above 0 on %s", thresholds: "MongoDB queue length above 0", test: above(0)})
+		share: "MongoDB queue length above 0", thresholds: "MongoDB queue length above 0", test: above(0)})
 
 	logs := e.importsOf(mongodlog.Name)
 	hosts := make([]string, 0, len(logs))

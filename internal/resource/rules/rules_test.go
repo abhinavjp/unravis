@@ -310,7 +310,7 @@ func TestStallPositive(t *testing.T) {
 		{"RC5", "Thread-pool queue length above 0 in 2 or more samples in a process on web-a in 1 of 1 stall episodes, and in 0 of 3 comparison windows outside stalls.", sym},
 		{"RC5", "Redis timeout entries with WORKER busy above min on web-a in 1 of 1 stall episodes, and in 0 of 3 comparison windows outside stalls.", sym},
 		{"RC5", "An ASP.NET Core console log session had a late heartbeat of 1.5 s overlapping this interval (Correlation).", corr},
-		{"RC6", "A Redis SLOWLOG session had a slow command of 1.012 s overlapping this interval (Correlation).", corr},
+		{"RC6", "The Redis SLOWLOG buffer held a slow command of 1.012 s overlapping this interval (Correlation).", corr},
 		{"RC8", "This interval starts 2 min 31 s after a recycle event of the application pool (reason: Time) on web-a (Correlation).", corr},
 	} {
 		r := row(t, res, c.id, c.wording)
@@ -322,7 +322,7 @@ func TestStallPositive(t *testing.T) {
 		}
 	}
 	// The slow command row names the KEYS entry, not the earlier GET.
-	slow := row(t, res, "RC6", "A Redis SLOWLOG session had a slow command of 1.012 s overlapping this interval (Correlation).")
+	slow := row(t, res, "RC6", "The Redis SLOWLOG buffer held a slow command of 1.012 s overlapping this interval (Correlation).")
 	if len(slow.Evidence) != 1 {
 		t.Errorf("slow command evidence = %v", slow.Evidence)
 	}
@@ -347,7 +347,7 @@ func TestStallPositive(t *testing.T) {
 	if web == nil {
 		t.Fatalf("no web-a summary: %+v", res.Hosts)
 	}
-	want := map[string]bool{"host CPU peak 97.8 %": false, "lowest available memory 420 MiB": false, "1 Redis timeout entries": false}
+	want := map[string]bool{"Highest host CPU in this window: 97.8 %.": false, "Lowest available memory in this window: 420 MiB.": false, "Redis timeout entries in this window: 1.": false}
 	for _, s := range web.Summary {
 		if _, ok := want[s]; ok {
 			want[s] = true
@@ -405,7 +405,7 @@ func TestSlowlogCoverageStartsAfterStall(t *testing.T) {
 		span("redis-slowlog", "slow-command", "redis-a", hms(1, 2, 59), 1000, "id", "20"),
 		span("redis-slowlog", "slow-command", "redis-a", hms(1, 4, 59).Add(500*time.Millisecond), 500, "id", "21"))
 	got := absenceRow(t, res).Wording
-	want := "Not observed (gap or sampling: the Redis SLOWLOG coverage on redis-a starts at 2001-10-25T01:02:59Z, after this interval starts)."
+	want := "Not observed (gap or sampling: the Redis slow-log window on redis-a starts at 2001-10-25T01:02:59Z, after this interval starts)."
 	if got != want {
 		t.Errorf("absence = %q\nwant      %q", got, want)
 	}
@@ -442,7 +442,7 @@ func TestSlowlogUnknownThresholdAndIDGap(t *testing.T) {
 	res = slowlogCase(t, q,
 		span("redis-slowlog", "slow-command", "redis-a", hms(0, 30, 0), 20, "id", "1"),
 		span("redis-slowlog", "slow-command", "redis-a", hms(1, 4, 0), 20, "id", "5"))
-	if got, want := absenceRow(t, res).Wording, "Not observed (gap or sampling: the Redis SLOWLOG ids on redis-a have a gap, so entries may be missing)."; got != want {
+	if got, want := absenceRow(t, res).Wording, "Not observed (gap or sampling: the Redis slow-log buffer on redis-a has a gap in its entry ids, so entries may be missing)."; got != want {
 		t.Errorf("absence = %q, want %q", got, want)
 	}
 }
@@ -471,8 +471,8 @@ func TestMemoryRiseSplitByRecycle(t *testing.T) {
 		t.Errorf("RC2 rows across a recycle: %q", w)
 	}
 	for _, g := range []string{
-		"web-a w3wp:1240 private bytes: the segment from 2001-10-25T00:00:00Z to 2001-10-25T00:30:00Z has 7 samples over 30 min; a rise is tested on 12 or more samples over 30 min or more",
-		"web-a w3wp:1240 private bytes: the segment from 2001-10-25T00:35:00Z to 2001-10-25T01:00:00Z has 6 samples over 25 min; a rise is tested on 12 or more samples over 30 min or more",
+		"Not observed (gap or sampling: web-a w3wp:1240 private bytes: the segment from 2001-10-25T00:00:00Z to 2001-10-25T00:30:00Z has 7 samples over 30 min; a rise is tested on 12 or more samples over 30 min or more, with 80 % of the samples expected).",
+		"Not observed (gap or sampling: web-a w3wp:1240 private bytes: the segment from 2001-10-25T00:35:00Z to 2001-10-25T01:00:00Z has 6 samples over 25 min; a rise is tested on 12 or more samples over 30 min or more, with 80 % of the samples expected).",
 	} {
 		if !hasGap(res, g) {
 			t.Errorf("gap %q missing: %q", g, res.Gaps)
