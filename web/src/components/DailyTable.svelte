@@ -75,7 +75,7 @@
   .daily-note { margin: 0; flex: 1 1 260px; color: var(--text-2); font-size: 12px; max-width: 70ch; }
   .daily-table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .daily-table th, .daily-table td { padding: 6px 10px; border-bottom: 1px solid var(--line-soft); text-align: left; white-space: nowrap; }
-  .daily-table thead th { color: var(--text-2); font-weight: 600; font-size: 12px; }
+  .daily-table thead th { color: var(--text-2); font-weight: 500; font-size: 12px; }
   .daily-table th.numeric, .daily-table td.numeric { text-align: right; }
   .daily-table tbody th { font-weight: 600; }
   .day-name { margin-right: 6px; }

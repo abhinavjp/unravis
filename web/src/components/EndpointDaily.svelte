@@ -89,12 +89,12 @@
 </section>
 
 <style>
-  .endpoint-daily { display: grid; gap: 8px; margin: 12px 0; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); min-width: 0; }
+  .endpoint-daily { display: grid; gap: 8px; margin: 12px 0; padding: 10px 0 0; background: transparent; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; min-width: 0; }
   .daily-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
   .daily-head h3 { flex: 1 1 200px; margin: 0; font-size: var(--fs-4); font-weight: 600; overflow-wrap: anywhere; }
   .daily-head h3:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius); }
   .daily-days { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: var(--fs-3); }
-  .daily-days select { min-height: 32px; padding: 4px 8px; color: var(--text); background: var(--bg); border: 1px solid var(--control-line); border-radius: var(--radius); font-size: var(--fs-3); }
+  .daily-days select { min-height: 32px; padding: 4px 8px; color: var(--text); background: var(--bg); border: 1px solid var(--control-line); border-radius: var(--radius-sm); font-size: var(--fs-3); }
   .daily-note { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
   .daily-chart { width: 100%; max-width: 480px; height: 64px; }
   .daily-chart polyline { stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
