@@ -17,6 +17,11 @@ import type { EvidenceExport, ExportFile, Query } from './types';
  *   POST   /api/cases/{id}/imports?importer=&host=&preview=1
  *          multipart, in this order: ackGating=true, ackText (a commit only), then file
  *                                              -> { importer, score, tied, report?, record? }
+ *   POST   /api/cases/{id}/imports?async=1&...  the same form; the file is checked, then read in the background
+ *                                              -> 202 { id, state, bytesRead, bytesTotal }
+ *   GET    /api/cases/{id}/imports/jobs/{job}  -> { id, state: queued|running|done|failed, bytesRead, bytesTotal,
+ *                                                   status?, result? (the answer above, when done), failure? ({ error, reason?, column?, importId? }, when failed) }
+ *   DELETE /api/cases/{id}/imports/jobs/{job}  -> 204 (cancels a running job, forgets a finished one)
  *   GET    /api/hosts                          -> { version: 1, hosts: [{ label, aliases?, role?, tz?, logicalCores?, runtime? }] }
  *   PUT    /api/hosts   {version: 1, hosts}    -> the saved map
  *   POST   /api/cases/{id}/timeline {query}    -> the timeline view (lib/timeline.ts)
@@ -297,7 +302,7 @@ function importAnswer(body: Partial<{ importer: unknown; score: unknown; tied: u
   return { importer: asString(body.importer), score: asNumber(body.score), tied: asStrings(body.tied), report: toReport(body.report), record: toRecord(body.record) };
 }
 
-function importQuery(request: ImportRequest, preview: boolean): string {
+function importQuery(request: ImportRequest, preview: boolean, background = false): string {
   const query = new URLSearchParams();
   if (request.importer) query.set('importer', request.importer);
   if (request.host) query.set('host', request.host);
@@ -309,6 +314,7 @@ function importQuery(request: ImportRequest, preview: boolean): string {
     }
   }
   if (preview) query.set('preview', '1');
+  if (background) query.set('async', '1');
   const text = query.toString();
   return text ? '?' + text : '';
 }
@@ -330,6 +336,143 @@ export async function commitImport(request: ImportRequest & { importer: string; 
   form.append('file', request.file, request.file.name);
   const response = await send(casePath(request.caseId, '/imports') + importQuery(request, false), { method: 'POST', body: form }, signal);
   return importAnswer(await json(response));
+}
+
+/* ------------------------------------------------------------------ background import jobs */
+// A big file is read in the background. The POST answers at once with a job; the screen asks about it once a second until it is done.
+
+export type ImportJobState = 'queued' | 'running' | 'done' | 'failed';
+
+/** What the server says about one background import. `answer` is set when it is done, `failure` when it failed. */
+export interface ImportJob {
+  id: string;
+  state: ImportJobState;
+  bytesRead: number;
+  bytesTotal: number;
+  answer: ImportAnswer | null;
+  failure: CaseApiError | null;
+}
+
+/** An import the person started that is still running. The screen keeps it outside the import drawer, so the drawer can show it again. */
+export interface RunningImport { caseId: string; jobId: string }
+
+/** The job id shape (the server's): 32 lowercase hex characters. It is checked before an id is put into a URL. */
+export const JOB_ID_PATTERN = /^[0-9a-f]{32}$/;
+export const isJobId = (id: string): boolean => JOB_ID_PATTERN.test(id);
+
+const JOB_STATES: readonly string[] = ['queued', 'running', 'done', 'failed'];
+const isJobState = (value: unknown): value is ImportJobState => typeof value === 'string' && JOB_STATES.includes(value);
+const asObject = (value: unknown): Record<string, unknown> | null => (value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null);
+
+/** A job answer checked against its shape. Anything that does not fit is refused (null), never shown. */
+export function parseImportJob(body: unknown): ImportJob | null {
+  const raw = asObject(body);
+  if (!raw || typeof raw.id !== 'string' || !isJobId(raw.id) || !isJobState(raw.state)) return null;
+  const job: ImportJob = { id: raw.id, state: raw.state, bytesRead: Math.max(0, asNumber(raw.bytesRead)), bytesTotal: Math.max(0, asNumber(raw.bytesTotal)), answer: null, failure: null };
+  if (job.state === 'done') {
+    const result = asObject(raw.result);
+    if (!result) return null;
+    job.answer = importAnswer(result as Parameters<typeof importAnswer>[0]);
+  } else if (job.state === 'failed') {
+    const failure = asObject(raw.failure);
+    const status = asNumber(raw.status);
+    job.failure = new CaseApiError(
+      typeof failure?.error === 'string' && failure.error ? failure.error : 'Request failed (' + (status || 500) + ')',
+      status || 500, asString(failure?.reason), typeof failure?.column === 'string' ? failure.column : undefined, typeof failure?.importId === 'number' ? failure.importId : undefined
+    );
+  }
+  return job;
+}
+
+/**
+ * How far along the file is, 0 to 100, or null while the size is not known yet. Reading the last byte gives 100 while the
+ * server is still saving, and only a finished job reports it as done.
+ */
+export function importProgressPercent(job: Pick<ImportJob, 'bytesRead' | 'bytesTotal'>): number | null {
+  if (!(job.bytesTotal > 0)) return null;
+  return Math.max(0, Math.min(100, Math.floor((job.bytesRead / job.bytesTotal) * 100)));
+}
+
+function jobPath(caseId: string, jobId: string): string {
+  if (!isJobId(jobId)) throw new CaseApiError('That is not an import id.', 400, 'bad-job-id');
+  return casePath(caseId, '/imports/jobs/' + jobId);
+}
+
+async function readJob(response: Response): Promise<ImportJob> {
+  const job = parseImportJob(await json<unknown>(response));
+  if (!job) throw new CaseApiError('The server sent an answer that could not be read.', response.status, 'unreadable');
+  return job;
+}
+
+/** Sends the file for a preview that is read in the background. Nothing is kept, so no acknowledgement is sent. */
+export async function startPreviewJob(request: ImportRequest, signal?: AbortSignal): Promise<ImportJob> {
+  const form = new FormData();
+  form.append('file', request.file, request.file.name);
+  return readJob(await send(casePath(request.caseId, '/imports') + importQuery(request, true, true), { method: 'POST', body: form }, signal));
+}
+
+/** Sends the file for a commit that is read in the background. The acknowledgement goes first, then the file, as for commitImport. */
+export async function startCommitJob(request: ImportRequest & { importer: string; ackText: string }, signal?: AbortSignal): Promise<ImportJob> {
+  const form = new FormData();
+  form.append('ackGating', 'true');
+  form.append('ackText', request.ackText);
+  form.append('file', request.file, request.file.name);
+  return readJob(await send(casePath(request.caseId, '/imports') + importQuery(request, false, true), { method: 'POST', body: form }, signal));
+}
+
+export async function fetchImportJob(caseId: string, jobId: string, signal?: AbortSignal): Promise<ImportJob> {
+  return readJob(await send(jobPath(caseId, jobId), {}, signal));
+}
+
+/** Stops a running job, or lets the server forget a finished one. */
+export async function cancelImportJob(caseId: string, jobId: string, signal?: AbortSignal): Promise<void> {
+  await send(jobPath(caseId, jobId), { method: 'DELETE' }, signal);
+}
+
+export const JOB_POLL_MS = 1000;
+/** A few lost answers in a row are tolerated (the server may be busy); more than this and the wait gives up. */
+export const JOB_MAX_UNREACHABLE = 5;
+
+function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
+    const onAbort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+export interface WaitOptions {
+  signal?: AbortSignal;
+  /** Called with the job as first given and after every answer. */
+  onUpdate?: (job: ImportJob) => void;
+  intervalMs?: number;
+  /** For tests. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+}
+
+/**
+ * Asks about the job until it is done or failed. Resolves with the same answer a synchronous call would give, and throws the
+ * same CaseApiError a refused one would. Aborting the signal stops the asking at once and leaves the job running on the server.
+ */
+export async function waitForImportJob(caseId: string, first: ImportJob, options: WaitOptions = {}): Promise<ImportAnswer> {
+  const sleep = options.sleep ?? sleepFor;
+  let job = first;
+  let lost = 0;
+  options.onUpdate?.(job);
+  for (;;) {
+    if (job.state === 'done' && job.answer) return job.answer;
+    if (job.state === 'failed') throw job.failure ?? new CaseApiError('Request failed (500)', 500);
+    await sleep(options.intervalMs ?? JOB_POLL_MS, options.signal);
+    try {
+      job = await fetchImportJob(caseId, first.id, options.signal);
+      lost = 0;
+    } catch (error) {
+      if (error instanceof CaseApiError && error.reason === 'unreachable' && ++lost < JOB_MAX_UNREACHABLE) continue;
+      throw error;
+    }
+    options.onUpdate?.(job);
+  }
 }
 
 /**

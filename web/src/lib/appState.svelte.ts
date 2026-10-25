@@ -10,6 +10,7 @@ import { initialComparison, kindLabel, queryFingerprint, resultNotes, rankCompar
 import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, serializeRecordFilters, shouldSelectAddedSource, writeInvestigationSnapshot } from './investigation';
 import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './types';
 import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './breakdown';
+import type { RunningImport } from './cases';
 import { theme } from './theme.svelte';
 import { timeZone } from './timeZone.svelte';
 import { applyChipPatch, breadcrumb, depthOf, evidenceTabs, filterChips, moreFiltersCount, type FilterChip } from './depth';
@@ -113,6 +114,8 @@ let glossaryOpen = $state(false);
 // P2-lite drawers: incident patterns and the hypothesis ledger.
 let sidePanel = $state<'patterns' | 'ledger' | 'export' | 'import' | null>(null);
 let sidePanelReturnFocus: HTMLElement | null = null;
+// The file import the person started that is still running on the server. It lives here, not in the import drawer, so closing and reopening the drawer finds it again.
+let runningImport = $state.raw<RunningImport | null>(null);
 let glossaryTerm = $state<string | null>(null);
 let glossaryReturnFocus: HTMLElement | null = null;
 let connectionTab = $state<'saved' | 'new'>('saved');
@@ -1133,6 +1136,11 @@ export const navigation = {
   get splitDim() { return splitDim; }, set splitDim(value) { splitDim = value; },
   get depth() { return depth; },
   get crumbs() { return crumbs; }
+};
+
+// The background file import, if one is running. The import drawer reads and writes it; nothing else does.
+export const importWork = {
+  get running() { return runningImport; }, set running(value) { runningImport = value; }
 };
 
 // The modal drawers: connections, glossary and the side panels (patterns, ledger, export).
