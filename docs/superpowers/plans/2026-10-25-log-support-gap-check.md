@@ -61,3 +61,15 @@ See `2026-10-25-held-items.md`. Real-export runs, the Mongo field check, owner i
 ## Verified end to end on the real binary and UI (this PC, test instance)
 
 Scan (5 findings, 1 gap), host confirmation with machine-name aliases, httperr import, Application (418 rows) and System (608 rows) channel imports, "Nothing new to add" for empty ranges, live sampler start and stop (samples kept, resource API returns them). Local only; no real client export was opened.
+
+## Measured limits on synthetic data (full detail in `2026-10-25-performance-notes.md`)
+
+Run with `UNRAVIS_BENCH=1`; synthetic input only, one PC. Production code was not changed by the benchmarks. Decision: documented as known risks, not fixed in this round, because D1 and D2 change the per-case schema or the resource evaluators and need their own design, tests and a migration path for existing case files.
+
+- **D1 (high)**: series and resource queries on 200 counters x 24 h x 15 s (1.14M events) hit the 10 s budget and return a partial answer covering about the first half of the window. Cause: `Case.Each` filters by kind and time only, and the selector match runs in Go. Fix direction: a series-key column plus index, or counter rollups at import.
+- **D2 (high)**: resource evaluation memory grows about 1.15 KB per scanned event; about 0.8 GB at the time budget, projected about 2.3 GB at the 2M-event counters cap. Fix direction: aggregate per series and bucket while streaming.
+- **D3 (medium)**: import runs at 9 to 11.5k rows/s for IIS and 12 to 16k events/s for counters; a 5M-line IIS import took 550 s and a 10M-row import would take about 18 min. Needs free disk of about 2x the final case.
+- **D4 (medium)**: case.db is 2.4x the input for IIS and Windows events, 36x for perfmon counters (about 366 bytes per event).
+- **D5 (low)**: log4net import working set grows with input (59 MiB at 1M, 108 MiB at 3M entries) while the Go heap stays flat. Cause not confirmed.
+- **Fine**: localread memory is flat on a 2 GiB W3C file; a 5000-file discover scan takes under 40 ms of detector time; the win-live sampler costs 0.31% of one core and 15 to 16 MiB.
+- **Practical advice until D1 and D2 land**: keep counter windows to a few hours or fewer counters per case; imports of counters above about 1M events will show a partial result.
