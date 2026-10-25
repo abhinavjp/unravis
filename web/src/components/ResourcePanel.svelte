@@ -5,7 +5,7 @@
   import { app } from '../lib/appState.svelte';
   import { onPatternsChange, patternsWindowKey, readPatterns } from '../lib/drawerResults.svelte';
   import {
-    chipsFor, episodesForRequest, rangeText, resourceCopy, rulesAt, rulesOfEpisode, slotRange, spansKey, stallSpans, stepWindow, viewWindow, bucketFor,
+    chipsFor, episodesForRequest, gapsShowAll, rangeText, resourceCopy, rulesAt, rulesOfEpisode, slotRange, spansKey, stallSpans, stepWindow, viewWindow, bucketFor,
     type Chip, type EpisodeSpan, type ResourceView, type RuleRow, type ViewWindow
   } from '../lib/resource';
   import { zoomView } from '../lib/zoomView.svelte';
@@ -36,6 +36,7 @@
   let local = $state.raw<ViewWindow | null>(null);
   let drawer = $state.raw<{ title: string; rows: RuleRow[] } | null>(null);
   let pickNote = $state('');
+  let allGaps = $state(false);
 
   let period = $state.raw<ViewWindow | null>(null);
   // The window the panel counts as whole: the one on screen, or the files' period once the person asked for it.
@@ -87,6 +88,9 @@
   const episodes = $derived(resource?.episodes ?? []);
   const markers = $derived(resource?.markers ?? []);
   const gaps = $derived(resource?.gaps ?? []);
+  // A long window can flag every line as not observed; show the first few and let the reader open the rest.
+  const GAPS_SHOWN = 6;
+  const shownGaps = $derived(allGaps ? gaps : gaps.slice(0, GAPS_SHOWN));
   const chips = $derived(chipsFor(rules, null));
   // The notice shows only for an empty answer that was read for the window on screen; a window with data never shows it.
   const notice = $derived(spanNotice({ resource, settled: !busy && problem === '', span, view, zone }));
@@ -220,7 +224,8 @@
       {#if gaps.length > 0}
         <div class="lists">
           <h4>{resourceCopy.gapsHeading}</h4>
-          <ul class="plain">{#each gaps as gap, i (i)}<li>{gap}</li>{/each}</ul>
+          <ul class="plain">{#each shownGaps as gap, i (i)}<li>{gap}</li>{/each}</ul>
+          {#if gaps.length > GAPS_SHOWN}<button type="button" class="link" onclick={() => (allGaps = !allGaps)}>{allGaps ? resourceCopy.gapsShowFewer : gapsShowAll(gaps.length)}</button>{/if}
         </div>
       {/if}
     {/if}

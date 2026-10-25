@@ -588,6 +588,11 @@ func checkText(what, s string) error {
 	if utf8.RuneCountInString(s) > MaxTextLen {
 		return invalid(fmt.Sprintf("%s is longer than %d characters", what, MaxTextLen))
 	}
+	for _, r := range s {
+		if (unicode.IsControl(r) && r != '\n' && r != '\r' && r != '\t') || isBidiControl(r) {
+			return invalid(what + " contains a control character")
+		}
+	}
 	s = scanForm(s)
 	switch {
 	case objectIDPattern.MatchString(s):
@@ -607,3 +612,10 @@ func checkText(what, s string) error {
 }
 
 func invalid(msg string) error { return fmt.Errorf("%w: %s", ErrInvalid, msg) }
+
+// isBidiControl reports the bidirectional embedding, override and isolate
+// characters: invisible, and they let text read in a different order than it is
+// stored, so an exported ledger line could mislead.
+func isBidiControl(r rune) bool {
+	return (r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069)
+}

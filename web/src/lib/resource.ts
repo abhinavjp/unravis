@@ -10,6 +10,9 @@ import { chartTime } from './chartTime';
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Fixed words. Every string the panel shows that is not data lives here, so the copy lint can check all of it.
 
+/** The label of the button that reveals every gap line when the list was trimmed. */
+export const gapsShowAll = (n: number): string => `Show all ${n} gaps`;
+
 export const resourceCopy = {
   heading: 'Resource counters',
   intro: 'What each host measured around the stalls: CPU, memory, queues and logs. Open a host to see the lines.',
@@ -32,6 +35,7 @@ export const resourceCopy = {
   apiStrip: 'API P95',
   partial: 'Some data was not read in time, so the lines may be incomplete.',
   gapsHeading: 'Gaps',
+  gapsShowFewer: 'Show fewer',
   markersHeading: 'Start and stop markers',
   noMarkers: 'No start or stop markers.',
   episodesHeading: 'Stall periods',

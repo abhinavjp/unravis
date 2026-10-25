@@ -528,3 +528,13 @@ test('the panel reads the stored report for its own window, sends its periods an
   assert.match(read('src/lib/components/CaseTools.svelte'), /<ResourcePanel \{caseId\} \{query\}/, 'the full query, with its sources, reaches the panel');
   assert.doesNotMatch(read('src/lib/drawerResults.svelte.ts'), /\$state|\$derived|\$effect/, 'the store stays plain');
 });
+
+test('a long gap list shows the first few lines and a toggle reveals the rest', () => {
+  const panel = read('src/components/ResourcePanel.svelte').replace(/\r\n/g, '\n');
+  assert.match(panel, /const GAPS_SHOWN = 6;/);
+  assert.match(panel, /shownGaps = \$derived\(allGaps \? gaps : gaps\.slice\(0, GAPS_SHOWN\)\)/);
+  assert.match(panel, /\{#each shownGaps /, 'the list renders the trimmed set');
+  assert.match(panel, /gaps\.length > GAPS_SHOWN/, 'the toggle shows only when lines were hidden');
+  assert.equal(r.gapsShowAll(25), 'Show all 25 gaps');
+  assert.equal(r.resourceCopy.gapsShowFewer, 'Show fewer');
+});
