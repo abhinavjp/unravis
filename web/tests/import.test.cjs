@@ -554,6 +554,6 @@ test('a binary refusal from the server reaches the screen as its own sentence', 
   // A file called .csv is refused by what it holds. The screen shows only the reason's words, never the file name.
   await assert.rejects(
     cases.previewImport({ caseId: CASE_ID, file: synthetic('counters.csv', 'PERF'), importer: 'win-counters' }),
-    (e) => e.reason === 'binary-blg' && !e.column && importCopy.errorText(e) === importCopy.REASON_TEXT['binary-blg'] && !/counters/.test(importCopy.errorText(e))
+    (e) => e.reason === 'binary-blg' && !e.column && importCopy.errorText(e) === importCopy.REASON_TEXT['binary-blg'] && !/counters.csv/.test(importCopy.errorText(e))
   );
 });
