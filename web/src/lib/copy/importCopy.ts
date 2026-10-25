@@ -260,6 +260,7 @@ export const isUnknownHost = (error: Pick<CaseApiError, 'reason'>): boolean => e
 export const IMPORTER_LABELS: Record<string, string> = {
   'iis-w3c': 'IIS web log',
   'iis-httperr': 'HTTP.sys error log',
+  'iis-freb': 'IIS failed request trace',
   'mongod-json': 'MongoDB server log',
   'win-counters': 'Windows performance counters',
   'win-events': 'Windows event log',
@@ -296,6 +297,7 @@ export const IMPORTER_LABELS: Record<string, string> = {
 export const IMPORTER_HELP: Record<string, string> = {
   'iis-w3c': 'The W3C log file that IIS writes for each site.',
   'iis-httperr': 'The error log that HTTP.sys writes for requests IIS never saw.',
+  'iis-freb': 'The XML trace files (fr000001.xml and similar) that IIS writes for requests that matched a failed request tracing rule.',
   'mongod-json': 'The JSON log file that the MongoDB server writes.',
   'win-counters': 'A CSV file of Windows counters saved by typeperf or relog.',
   'win-events': 'A CSV export of Windows event log entries.',

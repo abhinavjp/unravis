@@ -79,6 +79,7 @@ var displayNames = map[string]string{
 	"mongod-json":  mongodlog.SourceLabel,
 	"iis-w3c":      "IIS log",
 	"iis-httperr":  "HTTP.sys error log",
+	"iis-freb":     "IIS failed request trace",
 	"win-counters": "Windows performance counters",
 	"win-events":   "Windows event log",
 	"appinsights":  "Application Insights",

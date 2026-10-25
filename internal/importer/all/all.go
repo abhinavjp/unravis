@@ -27,6 +27,7 @@ func Importers() []importer.Importer {
 	return []importer.Importer{
 		iis.NewW3C(),
 		iis.NewHTTPERR(),
+		iis.NewFREB(),
 		wincounters.New(),
 		winevents.New(iis.ClassifyWAS, winevents.ClassifyApp, winevents.ClassifyTaskScheduler),
 		schedule.NewHangfire(),

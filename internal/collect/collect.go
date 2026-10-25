@@ -49,6 +49,7 @@ type Item struct {
 const (
 	iisW3C      = "iis-w3c"
 	iisHTTPERR  = "iis-httperr"
+	iisFREB     = "iis-freb"
 	winEvents   = "win-events"
 	winCounters = "win-counters"
 	winProcsnap = "win-procsnap"
@@ -78,7 +79,7 @@ var appLogImporters = []string{"log4net-text", "log4net-xml", "serilog-clef", "s
 // Which importers say what kind of server a host is. A host can be several
 // kinds at once; a file whose importer is in no list says nothing about it.
 var (
-	webSignals   = append([]string{iisW3C, iisHTTPERR, dotnetCnt, hangfire, appInsights}, appLogImporters...)
+	webSignals   = append([]string{iisW3C, iisHTTPERR, iisFREB, dotnetCnt, hangfire, appInsights}, appLogImporters...)
 	sqlSignals   = []string{sqlErrorlog, sqlPDH, sqlXE, sqlAgent}
 	redisSignals = []string{redisInfo, redisLat, redisLog, redisSlow}
 	mongoSignals = []string{mongodJSON, mongoStatus, mongoProf, mongoCurOp, mongostat}

@@ -160,6 +160,8 @@ var exportPolicy = map[string]map[string]attrPolicy{
 	"iis-w3c": {"method": polEnum(httpMethods), "status": polNum, "substatus": polNum, "win32": polNum, "port": polNum,
 		"site": polName("site"), "user": polPerson("user"), "bytes-out": polNum, "bytes-in": polNum},
 	"iis-httperr":  {"reason": polEnum(httpErrReasons), "status": polNum, "method": polEnum(httpMethods), "queue": polName("pool"), "siteid": polNum},
+	"iis-freb": {"status": polNum, "substatus": polNum, "win32": polNum, "trigger": polNum, "reason": polEnum(frebReasons),
+		"method": polEnum(httpMethods), "module": polNameKeep("module", frebModule), "notification": polEnum(frebNotifications)},
 	"win-counters": counterPolicy,
 	"sql-pdh":      counterPolicy,
 	"win-events": {"log": polEnum(winEventLogs), "provider": polEnum(winEventProviders), "id": polNum,
