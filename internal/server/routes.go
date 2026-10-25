@@ -179,6 +179,24 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/timeline", match: caseSubpath("/timeline"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseTimeline(w, r, id) },
 	}},
+	{pattern: "/api/discover/capabilities", match: exactPath("/api/discover/capabilities"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.discoverCapabilities(w, r) },
+	}},
+	{pattern: "/api/discover/scans", match: exactPath("/api/discover/scans"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.postDiscoverScan(w, r) },
+	}},
+	{pattern: "/api/discover/scans/{scan}", match: scanPath, methods: map[string]routeFunc{
+		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getDiscoverScan(w, r, id) },
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.deleteDiscoverScan(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/discover/imports", match: caseSubpath("/discover/imports"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.postDiscoverImports(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/sampler", match: caseSubpath("/sampler"), methods: map[string]routeFunc{
+		http.MethodPost:   func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.postSampler(w, r, id) },
+		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getSampler(w, r, id) },
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.deleteSampler(w, r, id) },
+	}},
 	{pattern: "/api/cases/{id}", match: caseSubpath(""), methods: map[string]routeFunc{
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.eraseCase(w, r, id) },
 	}},

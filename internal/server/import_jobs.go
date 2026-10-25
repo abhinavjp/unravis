@@ -280,6 +280,8 @@ func (j *importJobs) shutdown(wait time.Duration) {
 // the case store closes.
 func CancelImports(served http.Handler) {
 	if h, ok := served.(*handler); ok && h != nil {
+		h.disc.shutdown(3 * time.Second)
+		h.stopSamplerAll()
 		h.jobs.shutdown(3 * time.Second)
 	}
 }

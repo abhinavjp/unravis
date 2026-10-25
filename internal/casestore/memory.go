@@ -52,6 +52,8 @@ type memData struct {
 
 	quarantines []QuarantineRecord
 	nextQID     int64
+
+	disc *memDiscover // discovery tables, created on first use
 }
 
 func (s *memStore) Create(ctx context.Context, title string) (CaseInfo, error) {
@@ -179,7 +181,7 @@ func (d *memData) erase() {
 	for i := range d.key {
 		d.key[i] = 0
 	}
-	d.key, d.imports, d.events, d.ids, d.quarantines = nil, nil, nil, nil, nil
+	d.key, d.imports, d.events, d.ids, d.quarantines, d.disc = nil, nil, nil, nil, nil, nil
 	d.erased = true
 }
 

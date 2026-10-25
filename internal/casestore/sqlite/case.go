@@ -232,6 +232,9 @@ func (c *Case) verify(ctx context.Context) error {
 	if v < 1 {
 		return ErrDamaged
 	}
+	if err := c.migrate(ctx, v); err != nil {
+		return mapOpenErr(err)
+	}
 	dbImports, err := c.dbManifestImports(ctx)
 	if err != nil {
 		return ErrDamaged

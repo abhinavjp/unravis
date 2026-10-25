@@ -1,7 +1,9 @@
 package sqlite
 
 // schemaVersion is stored in meta. A case written by a newer build is refused.
-const schemaVersion = 1
+// Version 2 added the host discovery tables (discoverSQL); a version 1 case is
+// migrated on open, adding the tables and nothing else.
+const schemaVersion = 2
 
 // schemaSQL is the case schema (importer wave plan section 1.5). The three
 // indexes are not part of it: they are created after each bulk load, inside the
