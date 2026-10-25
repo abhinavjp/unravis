@@ -14,7 +14,7 @@
 
 <style>
   .zone-toggle { display: inline-flex; flex-shrink: 0; border: var(--hairline-width) solid var(--hairline); border-radius: var(--radius-sm); overflow: hidden; }
-  .zone-toggle button { min-height: 30px; padding: var(--space-1) var(--space-3); border: 0; border-radius: 0; background: transparent; color: var(--text-2); font: inherit; font-size: var(--fs-2); font-weight: 550; white-space: nowrap; cursor: pointer; }
+  .zone-toggle button { min-height: 28px; padding: var(--space-1) var(--space-3); border: 0; border-radius: 0; background: transparent; color: var(--text-2); font: inherit; font-size: var(--fs-2); font-weight: 500; white-space: nowrap; cursor: pointer; }
   .zone-toggle button + button { border-inline-start: var(--hairline-width) solid var(--hairline); }
   .zone-toggle button:hover { color: var(--text); background: var(--surface-2); }
   .zone-toggle button[aria-pressed='true'] { color: var(--text); background: var(--surface-2); box-shadow: inset 0 -2px 0 var(--accent); }

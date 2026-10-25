@@ -281,17 +281,17 @@
 <style>
   .label-line { display: flex; align-items: center; gap: 0; }
   .label-line label { margin: 0; }
-  .record-count { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 11px; line-height: 18px; text-align: center; }
+  .record-count { display: inline-block; min-width: 18px; padding: 0 5px; border: 1px solid var(--control-line); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); font-size: 12px; line-height: 16px; text-align: center; }
   .record-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; padding: 0; list-style: none; }
-  .record-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 1px 3px 1px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--text); font-size: 12px; }
+  .record-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 1px 3px 1px 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); font-size: 12px; }
   .record-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .record-chip button { flex: none; border: 0; background: transparent; color: var(--text-2); cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: 999px; }
+  .record-chip button { flex: none; border: 0; background: transparent; color: var(--text-2); cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 6px; border-radius: var(--radius-sm); }
   .record-chip button:hover, .record-chip button:focus-visible { color: var(--bad); }
   .record-clear { justify-self: start; margin-top: 4px; border: 0; background: transparent; color: var(--accent); cursor: pointer; font-size: 12px; font-weight: 600; padding: 2px 0; }
   .record-clear:hover { text-decoration: underline; }
   input[aria-invalid='true'] { border-color: var(--bad); }
   .range-filters { display: grid; gap: 6px; }
   .range-heading { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
-  .range-label { font-size: 13px; font-weight: 600; color: var(--text); }
+  .range-label { font-size: 12px; font-weight: 500; color: var(--text-2); }
   .range-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 </style>
