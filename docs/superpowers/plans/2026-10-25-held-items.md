@@ -11,6 +11,19 @@ Status as of 2026-10-25, master after the w4 merges. Everything the build can do
 | Five-tester usability test (P14b) | Five people outside the build. | Five sessions on the shipped UI with the task script. | Fix what two or more testers trip on. |
 | Theory engine (R-TE) | A governance ruling. The spec says nothing is built before R-TE is granted, and the fallback is the list without a result column. That fallback is what ships today: the Ledger holds theories, a settling observation per theory, and the "Compare theories" matrix, with no automatic verdicts. | The product owner grants or refuses R-TE. **Ruling (builder, 2026-10-25): keep the shipped fallback.** The spec forbids building before the grant, and an automatic verdict on a root cause is the one feature that cannot be checked on synthetic data. | Granted: build in the order of the spec's rollout table, step 1 first. Refused: close the spec as design only. The ruling is the builder's and the product owner can overturn it. |
 
+## Real-server verification of on-host discovery (spec 9.3)
+
+Needs a person with admin on a non-production Windows server. None of this can be shown on the build machine.
+
+- ACLs: the service account can read IIS log folders, the applicationHost.config and the event channels it lists. A denied item shows as a gap with a reason, not a crash.
+- Share-all open: reading a log that IIS or an app logger holds open for write. Confirm no sharing violation, no lock on the writer, and the file watermark moves on a second pull.
+- Sampler budget: run `win-live` at 5 s for one hour. Record the sampler's own CPU and memory, and that the host stays responsive.
+- Event channels: a large Application channel pull stays under the 2M row cap and the time budget; a cleared log (record IDs reset) is a known gap.
+- Elevation: scan once without admin and once with it. Compare the gap lists.
+- Config parsing: one real applicationHost.config and one app config per logger. Confirm no connection string or secret appears anywhere in the UI, API or audit table.
+
+Result to report: counts, gap reasons and timings only, no row content or paths.
+
 ## Risks that stay until real data exists
 
 - Nothing is measured on a real data set. Timings, memory and the 10 s `maxTimeMS` limit are from synthetic runs.
