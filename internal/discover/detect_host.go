@@ -34,11 +34,6 @@ const (
 	liveName        = "Unravis live sampler"
 )
 
-// SiteDirs lists the site folders the .NET counter and nettrace checks read.
-// Each entry is an absolute local path. The detector does not walk down from
-// them. A nil SiteDirs means no site folders are read.
-type SiteDirs func(ctx context.Context) []string
-
 // HostOptions configures the host detector. The zero value reads the system
 // drive as C: and reads no site folders.
 type HostOptions struct {

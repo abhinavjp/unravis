@@ -14,13 +14,6 @@ import (
 	"io"
 )
 
-const (
-	// MaxBytes is the most input an extractor reads (spec 1.4).
-	MaxBytes = 4 << 20
-	// MaxDepth is the deepest element nesting an extractor accepts.
-	MaxDepth = 64
-)
-
 // Overlong stands in for a kept attribute whose value was longer than the
 // extractor will hold. It carries a control character, so a path check refuses
 // it.
@@ -28,14 +21,6 @@ const Overlong = "\x00overlong"
 
 // maxValue is the longest kept attribute value in bytes.
 const maxValue = 1024
-
-// Errors an extractor returns. None carries text from the input.
-var (
-	ErrDTD      = errors.New("configparse: DOCTYPE or other directive refused")
-	ErrDepth    = errors.New("configparse: elements nested too deeply")
-	ErrTooLarge = errors.New("configparse: input larger than 4 MiB")
-	ErrSyntax   = errors.New("configparse: not well-formed XML")
-)
 
 // capReader fails with ErrTooLarge once more than MaxBytes have been read.
 type capReader struct {

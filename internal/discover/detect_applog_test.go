@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	sentinel = "SENTINEL-7f3a"
 	site     = `C:\inetpub\shop`
 )
 
@@ -46,16 +45,6 @@ func detect(t *testing.T, e *fake.Env, dirs ...string) ([]discover.Finding, []di
 	f, g := discover.NewAppLog(nil, dirs...).Detect(context.Background(), e.Env(reg))
 	fake.AssertFindingsValid(t, f, reg)
 	return f, g
-}
-
-func byImporter(fs []discover.Finding, imp string) []discover.Finding {
-	var out []discover.Finding
-	for _, f := range fs {
-		if f.Importer == imp {
-			out = append(out, f)
-		}
-	}
-	return out
 }
 
 func gapWith(gs []discover.Gap, r discover.Reason) *discover.Gap {
