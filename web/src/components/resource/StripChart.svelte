@@ -21,9 +21,17 @@
 
   onMount(() => {
     if (!node) return;
-    chart = echarts.init(node);
-    const observer = new ResizeObserver(() => chart?.resize());
-    observer.observe(node);
+    // A sliding drawer or a hidden section can give the node no width yet, and ECharts warns when it starts on a zero-size node.
+    // So the chart starts on the first size the node reports, and resizes after that.
+    const target = node;
+    const observer = new ResizeObserver(() => {
+      if (!chart) {
+        if (target.clientWidth > 0 && target.clientHeight > 0) chart = echarts.init(target);
+        return;
+      }
+      chart.resize();
+    });
+    observer.observe(target);
     return () => { observer.disconnect(); chart?.dispose(); chart = undefined; };
   });
 

@@ -46,6 +46,7 @@ export const DISCOVER_TEXT = {
   exportFirst: 'This data is stored in a format Unravis does not read. Export it first:',
   liveRow: 'Use the recording switch below for this.',
   genericShows: 'A source Unravis can read.',
+  exportShows: 'Data that needs an export before Unravis can read it.',
   genericHow: 'Export it as a text or CSV file, then import the file by hand.',
   showsLabel: 'Shows',
 
@@ -65,6 +66,14 @@ export const DISCOVER_TEXT = {
   customFrom: 'From (UTC)',
   customTo: 'To (UTC)',
   customHelp: 'Use the form 2001-09-11 08:00.',
+  fieldProblems: {
+    empty: 'Enter the {field} time.',
+    zone: 'Leave off the Z or offset. Times are in UTC.',
+    seconds: 'Leave off the seconds. Use the form 2001-09-11 08:00.',
+    date: 'That date or time does not exist. Check the day, month and hour.',
+    format: 'Use the form 2001-09-11 08:00.'
+  } as Record<string, string>,
+  fieldNames: { from: 'start', to: 'end' } as Record<string, string>,
   windowProblems: {
     missing: 'Choose a time range.',
     order: 'The end must come after the start.',
@@ -74,6 +83,8 @@ export const DISCOVER_TEXT = {
 
   noticeHeading: 'Before you import',
   noticeLabel: 'Notice',
+  noticePointer: 'Read the notice at the top of this window first.',
+  ack: 'I confirm what I import or record meets the conditions in the notice at the top of this window.',
 
   importButton: 'Import',
   importing: 'Importing…',
@@ -93,6 +104,9 @@ export const DISCOVER_TEXT = {
   resultsHeading: 'Results',
   chooseAgain: 'Back to the list',
   statusQueued: 'Waiting to start',
+  rowFailedGeneric: 'The server could not finish this import. Try again.',
+  serverProblem: 'The server ran into a problem. Try again.',
+  tones: { good: 'Done', neutral: 'Skipped', bad: 'Failed' } as Record<string, string>,
 
   liveHeading: 'Live recording',
   liveHelp: 'Records process names and numbers only. Stops after 72 hours.',
@@ -154,11 +168,14 @@ export function wordingName(key: string): string {
 
 const has = (table: Record<string, string>, key: string): boolean => Object.prototype.hasOwnProperty.call(table, key);
 
-/** What a source shows, in words. Falls back to the importer's help line, then to a generic line. */
-export function showsText(key: string, importer: string): string {
+/**
+ * What a source shows, in words. Falls back to the importer's help line, then to a generic line.
+ * A source that needs an export never gets the line "A source Unravis can read", because its own steps say the opposite.
+ */
+export function showsText(key: string, importer: string, needsExport = false): string {
   const name = wordingName(key);
   if (name && has(SHOWS, name)) return SHOWS[name];
-  return importerHelp(importer) || DISCOVER_TEXT.genericShows;
+  return importerHelp(importer) || (needsExport ? DISCOVER_TEXT.exportShows : DISCOVER_TEXT.genericShows);
 }
 
 /** The exact step that makes a file Unravis can read. */
@@ -203,7 +220,19 @@ export function updatedText(minutes: number | null): string {
   if (minutes < 1) return 'updated just now';
   if (minutes < 60) return 'updated ' + minutes + ' min ago';
   if (minutes < 1440) return 'updated ' + Math.floor(minutes / 60) + ' h ago';
-  return 'updated ' + Math.floor(minutes / 1440) + ' days ago';
+  const days = Math.floor(minutes / 1440);
+  return 'updated ' + days + (days === 1 ? ' day ago' : ' days ago');
+}
+
+/**
+ * The size line of one row: "14 files, 50 MB, updated 3 min ago. Strong match." A live series is not a set of files, so it has no
+ * count, size or match line. A source that holds nothing to measure (an export step) shows only its match line.
+ */
+export function rowMetaText(row: { kind: string; files: number; sizeBytes: number; confidence: number }, minutes: number | null): string {
+  if (row.kind === 'live-series') return '';
+  const match = confidenceText(row.confidence) + '.';
+  if (row.files === 0 && row.sizeBytes === 0) return match;
+  return fileCountText(row.files) + ', ' + formatBytes(row.sizeBytes) + (minutes !== null ? ', ' + updatedText(minutes) : '') + '. ' + match;
 }
 
 export function confidenceText(confidence: number): string {
@@ -219,6 +248,12 @@ export const hostNameText = (label: string): string => 'Host name: ' + label;
 export const windowChoiceLabel = (choice: string): string => (has(DISCOVER_TEXT.windowChoices, choice) ? DISCOVER_TEXT.windowChoices[choice] : choice);
 
 export const windowProblemText = (problem: string): string => (has(DISCOVER_TEXT.windowProblems, problem) ? DISCOVER_TEXT.windowProblems[problem] : '');
+
+/** The message under one custom time field: "Enter the start time.", "Leave off the seconds." */
+export function timeFieldText(field: string, problem: string): string {
+  if (!has(DISCOVER_TEXT.fieldProblems, problem)) return '';
+  return DISCOVER_TEXT.fieldProblems[problem].replace('{field}', has(DISCOVER_TEXT.fieldNames, field) ? DISCOVER_TEXT.fieldNames[field] : field);
+}
 
 /** "About 1.2 GB will be read." */
 export const estimateText = (bytes: number): string => (bytes <= 0 ? DISCOVER_TEXT.estimateNone : 'About ' + formatBytes(bytes) + ' will be read.');
@@ -237,9 +272,24 @@ export function rowOutcomeText(outcome: { kind: string; rows?: number; reason?: 
     case 'needs-admin': return 'Needs administrator';
     case 'cancelled': return 'Cancelled';
     case 'refused': return 'Refused. ' + (reasonText(outcome.reason ?? '') ?? 'The file was not accepted.');
-    default: return errorText({ status: 0, reason: outcome.reason ?? '', message: '' });
+    // A reason this screen does not know (a 500 with no name, for example) says the server could not finish, not that it refused.
+    default: return reasonText(outcome.reason ?? '') ?? DISCOVER_TEXT.rowFailedGeneric;
   }
 }
+
+/** How a finished row reads at a glance: good (rows were added), neutral (nothing was added and nothing went wrong) or bad. */
+export function rowOutcomeTone(outcome: { kind: string } | null): 'good' | 'neutral' | 'bad' | 'pending' {
+  if (!outcome) return 'pending';
+  switch (outcome.kind) {
+    case 'added': return 'good';
+    case 'duplicate':
+    case 'cancelled': return 'neutral';
+    default: return 'bad';
+  }
+}
+
+/** The word that goes with a row's mark, so the result is never told by colour alone. */
+export const toneLabel = (tone: string): string => (has(DISCOVER_TEXT.tones, tone) ? DISCOVER_TEXT.tones[tone] : '');
 
 /** The line for a source still being read. Reuses the import screen's wording, so both screens say the same thing. */
 export const rowProgressText = (state: string, percent: number | null): string => jobProgressText(state, percent);
@@ -271,7 +321,10 @@ export function problemText(problem: string, error?: { status: number; reason: s
     case 'expired': return DISCOVER_TEXT.scanExpired;
     case 'unreachable': return errorText({ status: 0, reason: 'unreachable', message: '' });
     case 'session': return error?.message || DISCOVER_TEXT.sessionLost;
-    default: return errorText(error ?? { status: 0, reason: '', message: '' });
+    default:
+      // A 5xx with no reason this screen knows is the server failing, not refusing the request.
+      if (error && error.status >= 500 && reasonText(error.reason) === null) return DISCOVER_TEXT.serverProblem;
+      return errorText(error ?? { status: 0, reason: '', message: '' });
   }
 }
 
@@ -294,6 +347,17 @@ export function discoverCopyEntries(): LintEntry[] {
     { id: 'discover.sample.updated.min', text: updatedText(3) },
     { id: 'discover.sample.updated.hour', text: updatedText(180) },
     { id: 'discover.sample.updated.day', text: updatedText(3000) },
+    { id: 'discover.sample.updated.one-day', text: updatedText(1440) },
+    { id: 'discover.sample.meta.files', text: rowMetaText({ kind: 'log-set', files: 14, sizeBytes: 52428800, confidence: 90 }, 5) },
+    { id: 'discover.sample.meta.export', text: rowMetaText({ kind: 'export-needed', files: 0, sizeBytes: 0, confidence: 60 }, null) },
+    { id: 'discover.sample.shows.export', text: showsText('', '', true) },
+    { id: 'discover.sample.field.empty', text: timeFieldText('from', 'empty') },
+    { id: 'discover.sample.field.empty.to', text: timeFieldText('to', 'empty') },
+    { id: 'discover.sample.problem.server', text: problemText('other', { status: 500, reason: '', message: '' }) },
+    { id: 'discover.sample.row.failed.generic', text: rowOutcomeText({ kind: 'failed', reason: 'server' }) },
+    { id: 'discover.sample.tone.good', text: toneLabel('good') },
+    { id: 'discover.sample.tone.neutral', text: toneLabel('neutral') },
+    { id: 'discover.sample.tone.bad', text: toneLabel('bad') },
     { id: 'discover.sample.confidence.strong', text: confidenceText(90) },
     { id: 'discover.sample.confidence.possible', text: confidenceText(60) },
     { id: 'discover.sample.confidence.weak', text: confidenceText(10) },
