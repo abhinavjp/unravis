@@ -298,10 +298,13 @@ func (c *memCase) Events(ctx context.Context, q EventQuery) ([]evidence.Event, e
 	if limit <= 0 || limit > MaxEventQuery {
 		limit = MaxEventQuery
 	}
+	if err := q.CheckAttrs(); err != nil {
+		return nil, err
+	}
 	c.d.mu.RLock()
 	var out []evidence.Event
 	for _, ev := range c.d.events {
-		if q.Window.Contains(ev.Start) && contains(q.Kinds, ev.Kind) && contains(q.Sources, ev.Source) && contains(q.Hosts, ev.Host) {
+		if q.Window.Contains(ev.Start) && contains(q.Kinds, ev.Kind) && contains(q.Sources, ev.Source) && contains(q.Hosts, ev.Host) && q.MatchAttrs(ev.Attrs) {
 			out = append(out, ev)
 		}
 	}
@@ -327,11 +330,14 @@ func (c *memCase) Each(ctx context.Context, q EventQuery, fn func(evidence.Event
 	if err := c.check(ctx); err != nil {
 		return err
 	}
+	if err := q.CheckAttrs(); err != nil {
+		return err
+	}
 	budget := q.NewScanBudget()
 	c.d.mu.RLock()
 	var sel []evidence.Event
 	for _, ev := range c.d.events {
-		if q.Window.Contains(ev.Start) && contains(q.Kinds, ev.Kind) && contains(q.Sources, ev.Source) && contains(q.Hosts, ev.Host) {
+		if q.Window.Contains(ev.Start) && contains(q.Kinds, ev.Kind) && contains(q.Sources, ev.Source) && contains(q.Hosts, ev.Host) && q.MatchAttrs(ev.Attrs) {
 			sel = append(sel, ev)
 		}
 	}

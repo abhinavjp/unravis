@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -152,7 +153,11 @@ func Catalogue(c casestore.Case, w importer.Window) (Index, error) {
 	return CatalogueContext(context.Background(), c, w)
 }
 
-// obs is one event read for a series, before identity resolution.
+// obs is one event read for a series, before identity resolution. It is a
+// transient value: sample builds it, and builder.add splits it into the part
+// every event of a series shares (obsKey, kept once) and a compact row (cobs,
+// kept per event). Holding the full struct per event cost about 1.1 KB of heap
+// per scanned event once the grouping copies were counted.
 type obs struct {
 	m       Metric
 	uptime  bool // an uptime-like value: used for markers, not listed as a series
@@ -167,16 +172,76 @@ type obs struct {
 	v       float64
 	id      string
 	ownSpan bool // the event has its own interval (End after Start)
+	metric  bool // the event kind is "metric", not "counter"
+}
+
+// obsKey is what the events of one series share before identity resolution.
+type obsKey struct {
+	m      Metric
+	uptime bool
+	host   string
+	source string
+	label  string
+	proc   Proc
+	class  pidClass
+	legacy bool
+}
+
+// cobs is the part of an obs that differs per event. The scan is read in storage
+// order, so the old scan order (kind, then start time, then evidence id) is
+// rebuilt from the row itself by before, which stands in for the order of the
+// single slice the catalogue used to keep.
+type cobs struct {
+	key     int32
+	ownSpan bool
+	metric  bool
+	t       time.Time
+	start   time.Time
+	v       float64
+	id      string
 }
 
 // builder collects one scan.
 type builder struct {
 	w       importer.Window
-	obs     []obs
+	keys    []obsKey
+	keyIdx  map[obsKey]int32
+	rows    [][]cobs                 // per key, in the order the scan delivered them
 	pidAt   map[string]map[int64]int // host|source|class|instance -> sample time -> pid
 	starts  map[string][]time.Time   // host|name|pid -> process-start times
 	evMarks []Marker
 	partial bool
+	tap     func(obs) // test hook: sees every obs as it is kept
+}
+
+// add keeps one event read for a series.
+func (b *builder) add(o obs) {
+	if b.tap != nil {
+		b.tap(o)
+	}
+	k := obsKey{m: o.m, uptime: o.uptime, host: o.host, source: o.source, label: o.label, proc: o.proc, class: o.class, legacy: o.legacy}
+	i, ok := b.keyIdx[k]
+	if !ok {
+		i = int32(len(b.keys))
+		b.keyIdx[k] = i
+		b.keys = append(b.keys, k)
+		b.rows = append(b.rows, nil)
+	}
+	b.rows[i] = append(b.rows[i], cobs{key: i, ownSpan: o.ownSpan, metric: o.metric, t: o.t, start: o.start, v: o.v, id: o.id})
+}
+
+// before reports whether a came before c in the order the scan used to deliver
+// events: by kind, then by start time to the millisecond (the stored precision),
+// then by evidence id. The scan is now read in whatever order is cheapest, so
+// the order is taken from the rows and not from their arrival.
+func before(a, c cobs) bool {
+	if a.metric != c.metric {
+		return !a.metric // "counter" sorts before "metric"
+	}
+	if am, cm := a.start.UnixMilli(), c.start.UnixMilli(); am != cm {
+		return am < cm
+	}
+	return a.id < c.id
 }
 
 func pidKey(host, source string, class pidClass, inst string) string {
@@ -192,7 +257,7 @@ func CatalogueContext(ctx context.Context, c casestore.Case, w importer.Window) 
 	if c == nil {
 		return Index{}, errors.New("resource: no case")
 	}
-	b := &builder{w: w, pidAt: map[string]map[int64]int{}, starts: map[string][]time.Time{}}
+	b := &builder{w: w, keyIdx: map[obsKey]int32{}, pidAt: map[string]map[int64]int{}, starts: map[string][]time.Time{}}
 	scan := func(q casestore.EventQuery, fn func(evidence.Event) error) error {
 		err := c.Each(ctx, q, fn)
 		if errors.Is(err, casestore.ErrScanBudget) {
@@ -201,7 +266,9 @@ func CatalogueContext(ctx context.Context, c casestore.Case, w importer.Window) 
 		}
 		return err
 	}
-	if err := scan(casestore.EventQuery{Window: w, Kinds: sampleKinds}, b.sample); err != nil {
+	// The samples are read in storage order: build rebuilds the scan order from the
+	// rows (see before), and the pid map and series do not depend on arrival order.
+	if err := scan(casestore.EventQuery{Window: w, Kinds: sampleKinds, Unordered: true}, b.sample); err != nil {
 		return Index{}, err
 	}
 	// Process starts before the window still name the process of a sample in it.
@@ -237,7 +304,7 @@ func (b *builder) sample(ev evidence.Event) error {
 	}
 	if procScoped, ok := uptimeCounter(ev); ok {
 		o := obs{uptime: true, m: Metric{ID: "uptime", Unit: ev.Unit, Scale: 1}, host: ev.Host, source: ev.Source,
-			label: labelOf(ev, procScoped), t: ev.End, start: ev.Start, v: v, id: ev.EvidenceID}
+			label: labelOf(ev, procScoped), t: ev.End, start: ev.Start, v: v, id: ev.EvidenceID, metric: ev.Kind == "metric"}
 		if procScoped {
 			p, class, legacy, skip := pdhIdentity(ev.Attrs["object"], ev.Attrs["instance"])
 			if skip {
@@ -245,7 +312,7 @@ func (b *builder) sample(ev evidence.Event) error {
 			}
 			o.proc, o.class, o.legacy = p, class, legacy
 		}
-		b.obs = append(b.obs, o)
+		b.add(o)
 		return nil
 	}
 	r, ok := match(ev)
@@ -257,7 +324,7 @@ func (b *builder) sample(ev evidence.Event) error {
 		v = 100 - v
 	}
 	o := obs{m: m, host: ev.Host, source: ev.Source, label: labelOf(ev, r.scope == scopeProc),
-		t: ev.End, start: ev.Start, v: v * m.Scale, id: ev.EvidenceID, ownSpan: ev.End.After(ev.Start)}
+		t: ev.End, start: ev.Start, v: v * m.Scale, id: ev.EvidenceID, ownSpan: ev.End.After(ev.Start), metric: ev.Kind == "metric"}
 	if r.scope == scopeProc {
 		if isPDH {
 			p, class, legacy, skip := pdhIdentity(ev.Attrs["object"], ev.Attrs["instance"])
@@ -273,7 +340,7 @@ func (b *builder) sample(ev evidence.Event) error {
 			o.proc = attrIdentity(ev)
 		}
 	}
-	b.obs = append(b.obs, o)
+	b.add(o)
 	return nil
 }
 
@@ -333,53 +400,159 @@ func (b *builder) marker(ev evidence.Event) error {
 	return nil
 }
 
-// build resolves identities and assembles the index.
+// legacyProc is the identity of a sample after a legacy instance is re-keyed
+// through its pid counter (pm: sample time -> pid for the key's instance).
+func legacyProc(key *obsKey, pm map[int64]int, t time.Time) Proc {
+	if key.legacy {
+		if pid, ok := pm[t.UnixNano()]; ok {
+			return Proc{Name: key.proc.Name, PID: pid}
+		}
+	}
+	return key.proc
+}
+
+// pidNames lists, for each host and pid, the names a sample gave that pid
+// (lower case). A pid with exactly one name names every sample of it that lacks one.
+func (b *builder) pidNames() map[string]map[string]bool {
+	names := map[string]map[string]bool{} // host|pid -> names
+	add := func(host string, p Proc) {
+		if p.PID > 0 && p.Name != "" {
+			k := host + "\x00" + strconv.Itoa(p.PID)
+			if names[k] == nil {
+				names[k] = map[string]bool{}
+			}
+			names[k][strings.ToLower(p.Name)] = true
+		}
+	}
+	for ki := range b.keys {
+		key, rows := &b.keys[ki], b.rows[ki]
+		if len(rows) == 0 {
+			continue
+		}
+		if !key.legacy {
+			add(key.host, key.proc)
+			continue
+		}
+		pm := b.pidAt[pidKey(key.host, key.source, key.class, key.proc.Instance)]
+		for _, c := range rows {
+			add(key.host, legacyProc(key, pm, c.t))
+		}
+	}
+	return names
+}
+
+// group is the samples of one series while the index is assembled.
+type group struct {
+	s      Series
+	obs    []cobs
+	first  cobs // the first event of the group in scan order
+	uptime bool
+}
+
+// build resolves identities and assembles the index. It walks the events one
+// series key at a time and frees each key's rows once they sit in their group,
+// so the compact rows are held about once, not twice.
 func (b *builder) build() Index {
 	x := Index{window: b.w, partial: b.partial}
 	if b.partial {
 		x.gaps = append(x.gaps, GapPartial)
 	}
-	b.resolve()
+	names := b.pidNames()
+	for k := range b.starts {
+		ts := b.starts[k]
+		sort.Slice(ts, func(i, j int) bool { return ts[i].Before(ts[j]) })
+	}
 
-	// Group into series.
-	type group struct {
-		s   Series
-		obs []obs
-	}
+	// Resolve each event's identity and group it into a series.
 	groups := map[string]*group{}
-	var order []string
-	var uptimes []*group
-	for _, o := range b.obs {
-		startNano := int64(0)
-		if !o.proc.Start.IsZero() {
-			startNano = o.proc.Start.UnixNano()
+	for ki := range b.keys {
+		key, rows := &b.keys[ki], b.rows[ki]
+		var pm map[int64]int
+		if key.legacy {
+			pm = b.pidAt[pidKey(key.host, key.source, key.class, key.proc.Instance)]
 		}
-		k := strings.Join([]string{o.m.ID, o.m.Unit, strconv.FormatBool(o.m.Cumulative), strconv.FormatFloat(o.m.Scale, 'g', -1, 64),
-			o.host, o.source, o.label, o.proc.Key(), strconv.FormatInt(startNano, 10), strconv.FormatBool(o.uptime)}, "\x00")
-		g, ok := groups[k]
-		if !ok {
-			g = &group{s: Series{Metric: o.m, Host: o.host, Source: o.source, Label: o.label, Proc: o.proc}}
-			if o.proc.PID == 0 && o.proc.Instance != "" && o.legacy {
-				g.s.Gap = GapLegacyInstance
+		snap := key.source == sourceProcSnap || key.source == sourceWinLive || key.source == sourcePidstat
+		var (
+			have      bool
+			in, named Proc
+			ts        []time.Time
+			lastFinal Proc
+			last      *group
+		)
+		for _, c := range rows {
+			p := legacyProc(key, pm, c.t)
+			if !have || p != in {
+				in, named, ts, have = p, p, nil, true
+				if named.PID > 0 && named.Name == "" {
+					if set := names[key.host+"\x00"+strconv.Itoa(named.PID)]; len(set) == 1 {
+						for n := range set {
+							named.Name = n
+						}
+					}
+				}
+				if named.PID > 0 && snap {
+					ts = b.starts[startKey(key.host, named.Name, named.PID)] // latest start at or before the sample
+				}
 			}
-			groups[k] = g
-			order = append(order, k)
-			if o.uptime {
-				uptimes = append(uptimes, g)
+			final := named
+			if len(ts) > 0 {
+				if j := sort.Search(len(ts), func(j int) bool { return ts[j].After(c.t) }); j > 0 {
+					final.Start = ts[j-1]
+				}
 			}
+			g := last
+			if g == nil || final != lastFinal {
+				startNano := int64(0)
+				if !final.Start.IsZero() {
+					startNano = final.Start.UnixNano()
+				}
+				gk := strings.Join([]string{key.m.ID, key.m.Unit, strconv.FormatBool(key.m.Cumulative), strconv.FormatFloat(key.m.Scale, 'g', -1, 64),
+					key.host, key.source, key.label, final.Key(), strconv.FormatInt(startNano, 10), strconv.FormatBool(key.uptime)}, "\x00")
+				g = groups[gk]
+				if g == nil {
+					g = &group{first: c, uptime: key.uptime,
+						s: Series{Metric: key.m, Host: key.host, Source: key.source, Label: key.label, Proc: final}}
+					if final.PID == 0 && final.Instance != "" && key.legacy {
+						g.s.Gap = GapLegacyInstance
+					}
+					groups[gk] = g
+				}
+				last, lastFinal = g, final
+			}
+			if before(c, g.first) { // the series is described by its first event
+				g.first = c
+				g.s.Proc, g.s.Gap = final, ""
+				if final.PID == 0 && final.Instance != "" && key.legacy {
+					g.s.Gap = GapLegacyInstance
+				}
+			}
+			g.obs = append(g.obs, c)
 		}
-		g.obs = append(g.obs, o)
+		b.rows[ki] = nil
 	}
+	order := make([]*group, 0, len(groups))
+	for _, g := range groups {
+		order = append(order, g)
+	}
+	sort.Slice(order, func(i, j int) bool { return before(order[i].first, order[j].first) })
 
 	// Samples, sorted and de-duplicated by time, and the cadence of each series.
 	cadence := map[string][]time.Duration{} // source|host -> series intervals
-	for _, k := range order {
-		g := groups[k]
-		sort.SliceStable(g.obs, func(i, j int) bool {
-			if !g.obs[i].t.Equal(g.obs[j].t) {
-				return g.obs[i].t.Before(g.obs[j].t)
+	for _, g := range order {
+		slices.SortFunc(g.obs, func(a, c cobs) int {
+			if d := a.t.Compare(c.t); d != 0 {
+				return d
 			}
-			return g.obs[i].id < g.obs[j].id
+			if d := strings.Compare(a.id, c.id); d != 0 {
+				return d
+			}
+			if before(a, c) != before(c, a) {
+				if before(a, c) {
+					return -1
+				}
+				return 1
+			}
+			return 0
 		})
 		uniq := g.obs[:0]
 		for i, o := range g.obs {
@@ -394,10 +567,11 @@ func (b *builder) build() Index {
 			ck := g.s.Source + "\x00" + g.s.Host
 			cadence[ck] = append(cadence[ck], g.s.Interval)
 			cadence[g.s.Source] = append(cadence[g.s.Source], g.s.Interval)
+			g.s.Samples = samplesOf(&g.s, g.obs)
+			g.obs = nil
 		}
 	}
-	for _, k := range order {
-		g := groups[k]
+	for _, g := range order {
 		if g.s.Interval == 0 {
 			if d := median(cadence[g.s.Source+"\x00"+g.s.Host]); d > 0 {
 				g.s.Interval = d
@@ -406,29 +580,15 @@ func (b *builder) build() Index {
 			} else if g.s.Gap == "" {
 				g.s.Gap = GapNoCadence
 			}
-		}
-		g.s.Samples = make([]Sample, 0, len(g.obs))
-		for i, o := range g.obs {
-			sm := Sample{Start: o.t.Add(-g.s.Interval), End: o.t, Value: o.v, EvidenceID: o.id}
-			if o.ownSpan {
-				sm.Start = o.start
-			}
-			if g.s.Metric.Cumulative && i > 0 {
-				prev := g.obs[i-1].v
-				if o.v < prev {
-					sm.Reset = true
-				} else {
-					sm.Delta, sm.HasDelta = o.v-prev, true
-				}
-			}
-			g.s.Samples = append(g.s.Samples, sm)
+			g.s.Samples = samplesOf(&g.s, g.obs)
+			g.obs = nil
 		}
 	}
 
 	// Coverage window: open bounds take the extent of the samples.
 	var first, last time.Time
-	for _, k := range order {
-		for _, sm := range groups[k].s.Samples {
+	for _, g := range order {
+		for _, sm := range g.s.Samples {
 			if first.IsZero() || sm.End.Before(first) {
 				first = sm.End
 			}
@@ -446,8 +606,7 @@ func (b *builder) build() Index {
 	}
 
 	legacyGap := false
-	for _, k := range order {
-		g := groups[k]
+	for _, g := range order {
 		if g.s.Metric.ID == "uptime" {
 			continue
 		}
@@ -480,59 +639,39 @@ func (b *builder) build() Index {
 	})
 
 	var up []Series
-	for _, g := range uptimes {
-		up = append(up, g.s)
+	for _, g := range order {
+		if g.uptime {
+			up = append(up, g.s)
+		}
 	}
 	x.markers = b.markers(x.series, up)
 	return x
 }
 
-// resolve re-keys legacy instances through their pid counter, fills the name
-// of a pid-only identity, and splits win-procsnap and linux-pidstat identities
-// at process starts.
-func (b *builder) resolve() {
-	names := map[string]map[string]bool{} // host|pid -> names
-	for i := range b.obs {
-		o := &b.obs[i]
-		if o.legacy {
-			if pid, ok := b.pidAt[pidKey(o.host, o.source, o.class, o.proc.Instance)][o.t.UnixNano()]; ok {
-				o.proc = Proc{Name: o.proc.Name, PID: pid}
+// samplesOf makes the samples of series s from its sorted, de-duplicated
+// events, once s.Interval is known.
+func samplesOf(s *Series, os []cobs) []Sample {
+	out := make([]Sample, 0, len(os))
+	for i, o := range os {
+		sm := Sample{Start: o.t.Add(-s.Interval), End: o.t, Value: o.v, EvidenceID: o.id}
+		if o.ownSpan {
+			sm.Start = o.start
+		}
+		if s.Metric.Cumulative && i > 0 {
+			prev := os[i-1].v
+			if o.v < prev {
+				sm.Reset = true
+			} else {
+				sm.Delta, sm.HasDelta = o.v-prev, true
 			}
 		}
-		if o.proc.PID > 0 && o.proc.Name != "" {
-			k := o.host + "\x00" + strconv.Itoa(o.proc.PID)
-			if names[k] == nil {
-				names[k] = map[string]bool{}
-			}
-			names[k][strings.ToLower(o.proc.Name)] = true
-		}
+		out = append(out, sm)
 	}
-	for k := range b.starts {
-		ts := b.starts[k]
-		sort.Slice(ts, func(i, j int) bool { return ts[i].Before(ts[j]) })
-	}
-	for i := range b.obs {
-		o := &b.obs[i]
-		if o.proc.PID > 0 && o.proc.Name == "" {
-			if set := names[o.host+"\x00"+strconv.Itoa(o.proc.PID)]; len(set) == 1 {
-				for n := range set {
-					o.proc.Name = n
-				}
-			}
-		}
-		if o.proc.PID > 0 && (o.source == sourceProcSnap || o.source == sourceWinLive || o.source == sourcePidstat) {
-			ts := b.starts[startKey(o.host, o.proc.Name, o.proc.PID)]
-			// latest start at or before the sample
-			j := sort.Search(len(ts), func(j int) bool { return ts[j].After(o.t) })
-			if j > 0 {
-				o.proc.Start = ts[j-1]
-			}
-		}
-	}
+	return out
 }
 
 // medianGap is the median step between consecutive sample times, or 0.
-func medianGap(os []obs) time.Duration {
+func medianGap(os []cobs) time.Duration {
 	if len(os) < 2 {
 		return 0
 	}

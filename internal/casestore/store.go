@@ -172,15 +172,68 @@ type Quarantiner interface {
 // then EvidenceID. Limit is clamped to 1..MaxEventQuery; 0 means MaxEventQuery.
 //
 // Case.Each ignores Limit and reads MaxScan and MaxScanTime instead.
+//
+// Attrs keeps only the events whose attribute <name> holds exactly that value
+// (every pair must hold; an event without the attribute does not match). A
+// store may answer it from an index, so it is the cheap way to read one series
+// out of a case that holds thousands. At most MaxAttrFilters pairs; a name must
+// pass AttrNameOK and a value must be non-empty, else the query is refused.
 type EventQuery struct {
 	Window                importer.Window
 	Kinds, Sources, Hosts []string
+	Attrs                 map[string]string
 	Limit                 int // Limit <= 50 000
+
+	// Unordered, for Each only, says the caller does not depend on the order of
+	// delivery, so the store may read the events in whatever order is cheapest
+	// (the SQLite store reads the table in storage order when the query matches
+	// a large share of the case, instead of following the kind and time index,
+	// which costs a random page read per event). Without it Each delivers by
+	// kind, then start time, and Events by start time.
+	Unordered bool
 
 	// MaxScan and MaxScanTime lower the scan budget of one Each call. Zero, or a
 	// value above the default, means MaxScanEvents / MaxScanTime.
 	MaxScan     int64
 	MaxScanTime time.Duration
+}
+
+// MaxAttrFilters bounds EventQuery.Attrs.
+const MaxAttrFilters = 4
+
+// IndexedAttrs are the attribute names the SQLite store keeps an index for:
+// the series key of a counter ("counter") or a metric ("metric") event. An
+// Attrs filter on one of them reads only the matching events; on any other name
+// it still filters, but the store reads every event of the kind first.
+var IndexedAttrs = []string{"counter", "metric"}
+
+// AttrNameOK reports whether name may be used in EventQuery.Attrs.
+func AttrNameOK(name string) bool { return selectorAttrName.MatchString(name) }
+
+// ErrBadAttrFilter is the refusal of an EventQuery.Attrs that breaks its limits.
+var ErrBadAttrFilter = errors.New("casestore: invalid attribute filter")
+
+// CheckAttrs returns ErrBadAttrFilter when q.Attrs breaks its limits.
+func (q EventQuery) CheckAttrs() error {
+	if len(q.Attrs) > MaxAttrFilters {
+		return ErrBadAttrFilter
+	}
+	for k, v := range q.Attrs {
+		if !AttrNameOK(k) || !selectorValueOK(v) {
+			return ErrBadAttrFilter
+		}
+	}
+	return nil
+}
+
+// MatchAttrs reports whether an event's attributes satisfy q.Attrs.
+func (q EventQuery) MatchAttrs(attrs map[string]string) bool {
+	for k, v := range q.Attrs {
+		if got, ok := attrs[k]; !ok || got != v {
+			return false
+		}
+	}
+	return true
 }
 
 // Scan budget of one Case.Each call (plan section 4.1): 20 million events or

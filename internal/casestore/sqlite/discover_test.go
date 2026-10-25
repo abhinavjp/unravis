@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -34,8 +35,8 @@ func TestVersionOneCaseGainsDiscoverTables(t *testing.T) {
 	info := mustCreate(t, s, "Old")
 	c := mustOpen(t, s, info.ID)
 	mustImport(t, c, "keep", 3)
-	if !tableExists(t, c, "discover_watermarks") || !tableExists(t, c, "discover_reads") || schemaOf(t, c) != "2" {
-		t.Fatal("a new case lacks the discovery tables or is not at schema 2")
+	if !tableExists(t, c, "discover_watermarks") || !tableExists(t, c, "discover_reads") || schemaOf(t, c) != strconv.Itoa(schemaVersion) {
+		t.Fatal("a new case lacks the discovery tables or is not at the current schema")
 	}
 	for _, stmt := range []string{
 		"DROP TABLE discover_watermarks", "DROP TABLE discover_reads",
@@ -53,7 +54,7 @@ func TestVersionOneCaseGainsDiscoverTables(t *testing.T) {
 	if !tableExists(t, c, "discover_watermarks") || !tableExists(t, c, "discover_reads") {
 		t.Fatal("the migration did not add the tables")
 	}
-	if v := schemaOf(t, c); v != "2" {
+	if v := schemaOf(t, c); v != strconv.Itoa(schemaVersion) {
 		t.Fatalf("schema version after migration = %s", v)
 	}
 	if recs, err := c.Imports(ctx); err != nil || len(recs) != 1 {

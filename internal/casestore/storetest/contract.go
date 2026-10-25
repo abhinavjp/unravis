@@ -186,6 +186,7 @@ func Run(t *testing.T, f Factory) {
 	t.Run("ack-text-limit", func(t *testing.T) { ackLimit(t, f, caps) })
 	t.Run("quarantine-column-is-canonical", func(t *testing.T) { quarantineColumn(t, f, caps) })
 	t.Run("each-streams-matching-events", func(t *testing.T) { eachStreams(t, f, caps) })
+	t.Run("each-attribute-filter", func(t *testing.T) { eachAttrs(t, f, caps) })
 	t.Run("each-scan-budget", func(t *testing.T) { eachBudget(t, f, caps) })
 	t.Run("each-stops-and-fails-cleanly", func(t *testing.T) { eachStops(t, f, caps) })
 	t.Run("each-erase-race", func(t *testing.T) { eachEraseRace(t, f, caps) })

@@ -127,6 +127,118 @@ func eachStreams(t *testing.T, f Factory, caps casestore.Caps) {
 	}
 }
 
+// eachAttrs is the attribute filter of EventQuery: a store returns exactly the
+// events whose attributes carry every pair, with or without an index behind it,
+// in either order of delivery, and refuses a filter that breaks its limits.
+func eachAttrs(t *testing.T, f Factory, caps casestore.Caps) {
+	e := newEnv(t, f, caps)
+	c := e.newCase("attrs")
+	var all []evidence.Event
+	want := map[string]map[string]bool{} // "counter/instance" -> ids
+	for i := 0; i < 60; i++ {
+		kind := "counter"
+		attrs := map[string]string{"object": "Memory", "counter": fmt.Sprintf("c%d", i%3), "instance": fmt.Sprintf("i%d", i%2), "a": "b"}
+		if i%5 == 4 {
+			kind, attrs = "metric", map[string]string{"metric": fmt.Sprintf("m%d", i%2), "process": "w3wp", "pid": "10", "a": "b"}
+		}
+		x := ev(c, fmt.Sprintf("a%d", i), kind, "web-a", time.Duration(i)*time.Second)
+		x.Attrs = attrs
+		all = append(all, x)
+		key := kind + "/" + attrs["counter"] + attrs["metric"] + "/" + attrs["instance"]
+		if want[key] == nil {
+			want[key] = map[string]bool{}
+		}
+		want[key][x.EvidenceID] = true
+	}
+	m := meta()
+	m.AllowedAttrs = map[string]bool{"a": true, "object": true, "counter": true, "instance": true, "metric": true, "process": true, "pid": true}
+	if _, err := c.Import(e.ctx, m, strings.NewReader("attrs"), emitAll(all...)); err != nil {
+		t.Fatal(err)
+	}
+	set := func(evs []evidence.Event) map[string]bool {
+		out := map[string]bool{}
+		for _, x := range evs {
+			out[x.EvidenceID] = true
+		}
+		return out
+	}
+	same := func(a, b map[string]bool) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for k := range a {
+			if !b[k] {
+				return false
+			}
+		}
+		return true
+	}
+	for name, tc := range map[string]struct {
+		q    casestore.EventQuery
+		want map[string]bool
+	}{
+		"counter series": {casestore.EventQuery{Kinds: []string{"counter"}, Attrs: map[string]string{"counter": "c1", "object": "Memory", "instance": "i1"}}, want["counter/c1/i1"]},
+		"counter only":   {casestore.EventQuery{Kinds: []string{"counter"}, Attrs: map[string]string{"counter": "c2"}}, union(want["counter/c2/i0"], want["counter/c2/i1"])},
+		"metric series":  {casestore.EventQuery{Kinds: []string{"metric"}, Attrs: map[string]string{"metric": "m1", "process": "w3wp", "pid": "10"}}, want["metric/m1/"]},
+		"unindexed name": {casestore.EventQuery{Kinds: []string{"counter"}, Attrs: map[string]string{"instance": "i0", "a": "b"}}, nil},
+		"no match":       {casestore.EventQuery{Kinds: []string{"counter"}, Attrs: map[string]string{"counter": "zzz"}}, map[string]bool{}},
+		"wrong kind":     {casestore.EventQuery{Kinds: []string{"metric"}, Attrs: map[string]string{"counter": "c1"}}, map[string]bool{}},
+		"window": {casestore.EventQuery{Kinds: []string{"counter"}, Attrs: map[string]string{"counter": "c0"},
+			Window: importer.Window{From: t0.Add(10 * time.Second), To: t0.Add(30 * time.Second)}}, nil},
+	} {
+		if tc.want == nil { // derive the expectation from a plain read and the filter in Go
+			evs, err := collectEach(t, c, casestore.EventQuery{Kinds: tc.q.Kinds, Window: tc.q.Window})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.want = map[string]bool{}
+			for _, x := range evs {
+				if tc.q.MatchAttrs(x.Attrs) {
+					tc.want[x.EvidenceID] = true
+				}
+			}
+		}
+		if len(tc.want) == 0 && name != "no match" && name != "wrong kind" {
+			t.Fatalf("%s: the fixture matches nothing", name)
+		}
+		for _, unordered := range []bool{false, true} {
+			q := tc.q
+			q.Unordered = unordered
+			got, err := collectEach(t, c, q)
+			if err != nil {
+				t.Errorf("%s (unordered=%v): %v", name, unordered, err)
+				continue
+			}
+			if !same(set(got), tc.want) || len(got) != len(tc.want) {
+				t.Errorf("%s (unordered=%v): %d events, want %d", name, unordered, len(got), len(tc.want))
+			}
+		}
+	}
+	// Refused: a bad name, an empty value, too many pairs. Nothing is delivered.
+	for name, attrs := range map[string]map[string]string{
+		"name with a quote": {"a'b": "x"},
+		"empty name":        {"": "x"},
+		"empty value":       {"counter": ""},
+		"too many":          {"a": "1", "b": "2", "c": "3", "d": "4", "e": "5"},
+	} {
+		got, err := collectEach(t, c, casestore.EventQuery{Kinds: []string{"counter"}, Attrs: attrs})
+		if err == nil || len(got) != 0 {
+			t.Errorf("%s: %d events, err %v; want a refusal", name, len(got), err)
+		}
+	}
+}
+
+func union(a, b map[string]bool) map[string]bool {
+	out := map[string]bool{}
+	for k := range a {
+		out[k] = true
+	}
+	for k := range b {
+		out[k] = true
+	}
+	return out
+}
+
 func eachBudget(t *testing.T, f Factory, caps casestore.Caps) {
 	e := newEnv(t, f, caps)
 	c := e.newCase("budget")
