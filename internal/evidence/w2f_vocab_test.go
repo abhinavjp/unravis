@@ -49,8 +49,9 @@ func TestW2FExportVocabulary(t *testing.T) {
 		{"mongo-currentop", "ns numYields op planSummary waitingForLock", "inflight-op"},
 		{"mongo-serverstatus", "metric", "metric mongod-start"},
 		{"mongostat-json", "metric", "metric"},
-		{"linux-sadf", "cpu metric pid process", "metric"},
-		{"linux-pidstat", "cpu metric pid process", "metric"},
+		{"linux-sadf", "cpu metric", "metric"},
+		{"linux-pidstat", "metric pid process", "metric"},
+		{"linux-vmstat", "metric", "metric"},
 	}
 	for _, c := range cases {
 		pol, ok := exportPolicy[c.source]
@@ -162,7 +163,7 @@ func TestW2FExportValueRules(t *testing.T) {
 	if got := exportAttr(key, appLogPolicy["command"], "keys"); got != "KEYS" {
 		t.Errorf("command keys = %q", got)
 	}
-	if got := exportAttr(key, linuxPolicy["cpu"], "all"); got != "all" {
+	if got := exportAttr(key, linuxSadfPolicy["cpu"], "all"); got != "all" {
 		t.Errorf("cpu all = %q", got)
 	}
 }

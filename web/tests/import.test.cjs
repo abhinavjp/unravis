@@ -367,7 +367,7 @@ test('the importer names and caps are the ones the server registers', () => {
     'log4net-text': 2048, 'log4net-xml': 2048, 'serilog-clef': 2048, 'serilog-text': 2048, 'nlog-text': 2048, 'nginx-access': 2048, 'apache-combined': 2048,'mel-console': 2048, 'mel-json': 2048,
     'ancm-stdout': 256, 'node-jsonl': 2048, 'dotnet-counters': 512, 'win-procsnap': 256, 'redis-slowlog': 16, 'redis-latency': 4,
     'redis-info': 64, 'redis-log': 512, 'mongo-profile': 1024, 'mongo-currentop': 256, 'mongo-serverstatus': 512, 'mongostat-json': 256,
-    'linux-sadf': 256, 'linux-pidstat': 256 };
+    'linux-sadf': 256, 'linux-pidstat': 256, 'linux-vmstat': 256 };
   assert.deepEqual(Object.keys(cases.IMPORT_CAPS).sort(), Object.keys(expected).sort());
   for (const [name, mib] of Object.entries(expected)) {
     assert.equal(cases.IMPORT_CAPS[name], mib * MiB, name);

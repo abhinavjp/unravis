@@ -267,8 +267,8 @@ func TestMetricsListEveryPlanIDAndThePendingSources(t *testing.T) {
 		t.Fatalf("ids\n got %v\nwant %v", got, want)
 	}
 	for id, p := range map[string]string{
-		"redis.mem": "", "redis.ops": "", "host.cpu": "linux-sadf",
-		"proc.cpu": "linux-pidstat", "proc.ws": "linux-pidstat", "mongo.queue": "", "clr.gen2": "",
+		"redis.mem": "", "redis.ops": "", "host.cpu": "",
+		"proc.cpu": "", "proc.ws": "", "host.mem.available": "", "mongo.queue": "", "clr.gen2": "",
 	} {
 		if pending[id] != p {
 			t.Errorf("%s pending %q, want %q", id, pending[id], p)
@@ -639,10 +639,12 @@ func TestOneSampleWithNoCadenceIsAPoint(t *testing.T) {
 	}
 }
 
-func TestPendingSadfIdleBecomesHostCPU(t *testing.T) {
+func TestSadfIdleBecomesHostCPU(t *testing.T) {
 	h := newHarness(t)
-	h.add(metric("linux-sadf", "mongo-a", t0, 40, "percent", "metric", "%idle"))
-	h.add(metric("linux-sadf", "mongo-a", at(10*time.Minute), 25, "percent", "metric", "%idle"))
+	h.add(metric("linux-sadf", "mongo-a", t0, 40, "percent-host", "metric", "cpu-idle", "cpu", "all"))
+	h.add(metric("linux-sadf", "mongo-a", at(10*time.Minute), 25, "percent-host", "metric", "cpu-idle", "cpu", "all"))
+	// a per-core row is not the host.
+	h.add(metric("linux-sadf", "mongo-a", t0, 90, "percent-one-core", "metric", "cpu-idle", "cpu", "3"))
 	x := h.catalogue(importer.Window{})
 	ss := x.Series(resource.HostCPU, resource.Filter{Host: "mongo-a"})
 	if len(ss) != 1 || !eqF(values(ss[0]), []float64{60, 75}) || ss[0].Metric.Unit != "percent-host" {

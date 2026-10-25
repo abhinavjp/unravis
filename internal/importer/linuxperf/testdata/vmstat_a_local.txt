@@ -1,0 +1,4 @@
+procs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----  -----timestamp-----
+ r  b   swpd   free  inact active   si   so    bi    bo   in   cs us sy id wa st gu                 EDT
+ 1  0      0 1048576 262144 524288    0    0    10    20  300  500  5  2 92  1  0  0 2001-10-25 09:00:01
+ 0  0      0 1040000 262144 524288    0    0     0     8  310  520 10  3 85  2  0  0 2001-10-25 09:00:02

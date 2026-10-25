@@ -1,0 +1,17 @@
+Linux 5.15.0-91-generic (lnx-a) 	10/25/2001 	_x86_64_	(4 CPU)
+
+# Time        UID       PID    %usr %system  %guest    %wait    %CPU   CPU  Command
+1004014860     0         1    0.00    0.00    0.00     0.00    0.00     2  systemd
+1004014860    33      2210   80.00   20.00    0.00     0.00  100.00     1  /usr/bin/dotnet /srv/app/Api.dll --urls http://*:5000
+1004014860   110      3300    8.00    4.00    0.00     0.00   12.00     0  nginx: worker process
+1004014860   999      4400    2.00    1.00    0.00     0.00    3.00     3  /usr/bin/redis-server *:6379
+1004014860     0        55    0.00    0.00    0.00     0.00    0.00     1  kworker/0:1
+1004014920     0         1    0.00    1.00    0.00     0.00    1.00     2  systemd
+1004014920    33      2210   60.00   10.00    0.00     0.00   70.00     1  /usr/bin/dotnet /srv/app/Api.dll --urls http://*:5000
+1004014920   110      3300    8.00    2.00    0.00     0.00   10.00     0  nginx: worker process
+
+# Time        UID       PID  minflt/s  majflt/s     VSZ     RSS   %MEM  Command
+1004014860     0         1      0.10      0.00  169000   11000   0.10  systemd
+1004014860    33      2210    120.50      0.02 9000000 2500000  30.00  /usr/bin/dotnet /srv/app/Api.dll --urls http://*:5000
+1004014860   110      3300      5.00      0.00  120000   20000   0.25  nginx: worker process
+1004014920    33      2210    100.00      0.00 9000000 2600000  31.00  /usr/bin/dotnet /srv/app/Api.dll --urls http://*:5000

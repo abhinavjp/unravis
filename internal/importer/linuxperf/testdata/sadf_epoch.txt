@@ -1,0 +1,3 @@
+# hostname;interval;timestamp;CPU;%user;%nice;%system;%iowait;%steal;%idle
+lnx-a;60;1004014860;-1;12.50;0.00;3.25;0.40;0.00;83.85
+lnx-a;60;1004014920;-1;45.00;0.00;10.00;1.00;0.00;44.00

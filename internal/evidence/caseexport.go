@@ -202,8 +202,9 @@ var exportPolicy = map[string]map[string]attrPolicy{
 		"numYields": polNum, "planSummary": polList(mongoStages)},
 	"mongo-serverstatus": {"metric": polEnum(serverStatusMetrics)},
 	"mongostat-json":     {"metric": polEnum(mongostatMetrics)},
-	"linux-sadf":         linuxPolicy,
-	"linux-pidstat":      linuxPolicy,
+	"linux-sadf":         linuxSadfPolicy,
+	"linux-pidstat":      linuxPidstatPolicy,
+	"linux-vmstat":       linuxVmstatPolicy,
 }
 
 var (
@@ -227,8 +228,12 @@ var (
 	// procName keeps the well-known server images readable; any other process
 	// name shares the counter-instance pseudonym prefix.
 	procName    = polName("instance", "w3wp", "dotnet", "node", "redis-server", "memurai", "mongod", "sqlservr", "other")
-	linuxPolicy = map[string]attrPolicy{"metric": polEnum(linuxMetrics), "process": procName, "pid": polNum,
-		"cpu": polNumOr("all")}
+	// The three Linux importers each write a subset of the same vocabulary:
+	// sadf the host CPU (all or a core number), pidstat the process and pid,
+	// vmstat the metric alone.
+	linuxSadfPolicy    = map[string]attrPolicy{"metric": polEnum(linuxMetrics), "cpu": polNumOr("all")}
+	linuxPidstatPolicy = map[string]attrPolicy{"metric": polEnum(linuxMetrics), "process": procName, "pid": polNum}
+	linuxVmstatPolicy  = map[string]attrPolicy{"metric": polEnum(linuxMetrics)}
 )
 
 // withPolicy returns a copy of base with the entries of over set.

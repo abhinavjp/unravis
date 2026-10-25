@@ -91,6 +91,10 @@ var (
 	// web host: they are in no signal list above, so they never make or
 	// remove a Windows-only suggestion.
 	accessLogSignals = []string{"nginx-access", "apache-combined"}
+	// linuxSignals are the Linux host CPU, memory and process samples. They
+	// are known to the package but make no suggestion: the rules above ask for
+	// Windows logs, and a Linux host has no list of its own yet.
+	linuxSignals = []string{"linux-sadf", "linux-pidstat", "linux-vmstat"}
 )
 
 // profile is what the case already holds for one host.
@@ -113,7 +117,7 @@ func (p profile) none(names ...string) bool { return !p.any(names...) }
 // is ignored: it neither makes a suggestion nor removes one.
 var known = func() map[string]bool {
 	m := map[string]bool{}
-	for _, list := range [][]string{webSignals, sqlSignals, redisSignals, mongoSignals, machineSignals, accessLogSignals} {
+	for _, list := range [][]string{webSignals, sqlSignals, redisSignals, mongoSignals, machineSignals, accessLogSignals, linuxSignals} {
 		for _, n := range list {
 			m[n] = true
 		}

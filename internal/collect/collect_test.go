@@ -98,7 +98,7 @@ func TestSuggestTable(t *testing.T) {
 
 func TestFullSetGivesNothing(t *testing.T) {
 	names := allImporterNames()
-	if len(names) < 28 {
+	if len(names) < 31 {
 		t.Fatalf("only %d importers registered; the full-set check needs every one", len(names))
 	}
 	one := cover(webA, names...)
@@ -113,6 +113,24 @@ func TestFullSetGivesNothing(t *testing.T) {
 	wide := cover("", names...)
 	if got := Suggest(wide, []string{webA, webB}); len(got) != 0 {
 		t.Errorf("host-less files for two hosts: %v", ids(got))
+	}
+}
+
+// A host with only Linux samples gets no suggestion: the rules ask for Windows
+// logs, and the Linux files neither add one nor take one away.
+func TestLinuxSamplesAreKnownButSuggestNothing(t *testing.T) {
+	for _, n := range linuxSignals {
+		if !known[n] {
+			t.Errorf("%s is not known", n)
+		}
+		if got := Suggest(cover(webA, n), []string{webA}); len(got) != 0 {
+			t.Errorf("%s alone suggests %v", n, ids(got))
+		}
+	}
+	with := Suggest(cover(webA, iisW3C, "linux-sadf"), nil)
+	without := Suggest(cover(webA, iisW3C), nil)
+	if !reflect.DeepEqual(ids(with), ids(without)) {
+		t.Errorf("a Linux file changes the list: %v vs %v", ids(with), ids(without))
 	}
 }
 

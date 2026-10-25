@@ -93,7 +93,10 @@ var samples = map[string]sample{
 	"nlog-text":         {file: "nlog/testdata/good.log"},
 	"nginx-access":      {file: "accesslog/testdata/nginx_good.log"},
 	"apache-combined":   {file: "accesslog/testdata/apache_good.log"},
-	"redis-slowlog":    {inline: redisSlowSample},
+	"linux-sadf":        {file: "linuxperf/testdata/sadf_cpu_mem.txt"},
+	"linux-pidstat":     {file: "linuxperf/testdata/pidstat_ur.txt"},
+	"linux-vmstat":      {file: "linuxperf/testdata/vmstat_t.txt"},
+	"redis-slowlog":     {inline: redisSlowSample},
 	"redis-latency":     {inline: redisLatencySample},
 	"redis-info":        {inline: redisInfoSample},
 	"redis-log":         {inline: redisLogSample},
@@ -221,6 +224,29 @@ func TestAccessLogDetectMargins(t *testing.T) {
 		}
 		if a, n := apache.Detect(head, ""), nginx.Detect(head, ""); a != n {
 			t.Errorf("%s: apache %d nginx %d", f, a, n)
+		}
+	}
+}
+
+// The other Linux sample files (local time, epoch, vmstat -a, the files with
+// bad cells) go to the same importer, with no other importer within the tie
+// window, whatever the upload is called.
+func TestLinuxVariantsAreClaimedByTheirImporter(t *testing.T) {
+	reg := all.Registry()
+	for file, want := range map[string]string{
+		"sadf_cpu_mem.txt": "linux-sadf", "sadf_local.txt": "linux-sadf", "sadf_epoch.txt": "linux-sadf", "bad_sadf.txt": "linux-sadf",
+		"pidstat_ur.txt": "linux-pidstat", "bad_pidstat.txt": "linux-pidstat",
+		"vmstat_t.txt": "linux-vmstat", "vmstat_a_local.txt": "linux-vmstat", "bad_vmstat.txt": "linux-vmstat",
+	} {
+		b, err := os.ReadFile(filepath.Join("..", "linuxperf", "testdata", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{file, "sar.csv", "export.log", "data.txt"} {
+			best, score, tied := reg.Detect(b, name)
+			if best == nil || best.Name() != want || tied != nil {
+				t.Errorf("%s as %s: claimed by %v (score %d, tied %v), want %s alone", file, name, best, score, tied, want)
+			}
 		}
 	}
 }

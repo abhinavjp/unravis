@@ -51,6 +51,7 @@ const (
 	sourceRedisInfo   = "redis-info"
 	sourceSadf        = "linux-sadf"
 	sourcePidstat     = "linux-pidstat"
+	sourceVmstat      = "linux-vmstat"
 	sourceMongoSS     = "mongo-serverstatus"
 	sourceMongostat   = "mongostat-json"
 )
@@ -131,6 +132,7 @@ var (
 	redisInfo  = []string{sourceRedisInfo}
 	sadf       = []string{sourceSadf}
 	pidstat    = []string{sourcePidstat}
+	vmstat     = []string{sourceVmstat}
 	mongoSS    = []string{sourceMongoSS}
 	mongostat  = []string{sourceMongostat}
 	objProcess = attrIs("object", "Process", "Process V2")
@@ -145,19 +147,24 @@ func metricIs(names ...string) cond { return attrIs("metric", names...) }
 // of two rules never hold for the same event. Units are the event unit words
 // (evidence.Event.Unit). Sources are importer names as merged at the time of
 // writing; rules marked pending follow the wave plan text for importers that
-// were not merged (redis INFO W2-h, Linux sadf and pidstat W2-m).
+// were not merged.
 var rules = []rule{
 	// Host CPU: Processor(_Total) % Processor Time is already percent-host.
 	{id: HostCPU, sources: pdh, kind: "counter", unit: unitKeep, when: []cond{
 		attrIs("object", "Processor", "Processor Information"), attrIs("instance", "_Total"), counter("% Processor Time")}},
-	{id: HostCPU, sources: sadf, kind: "metric", unit: "percent-host", complement: true, pending: true, when: []cond{
-		metricIs("%idle", "idle")}},
+	// Linux: the importers store the idle share (metric cpu-idle); sadf also
+	// has one row per core, so only the whole-host row (cpu "all") counts.
+	{id: HostCPU, sources: sadf, kind: "metric", unit: "percent-host", complement: true, when: []cond{
+		metricIs("cpu-idle"), attrIs("cpu", "all")}},
+	{id: HostCPU, sources: vmstat, kind: "metric", unit: "percent-host", complement: true, when: []cond{
+		metricIs("cpu-idle")}},
 
 	// Host memory and paging. Available MBytes is MiB.
 	{id: HostMemAvailable, sources: pdh, kind: "counter", unit: "bytes", scale: 1 << 20, when: []cond{objMemory, counter("Available MBytes")}},
 	{id: HostMemAvailable, sources: pdh, kind: "counter", unit: "bytes", scale: 1 << 10, when: []cond{objMemory, counter("Available KBytes")}},
 	{id: HostMemAvailable, sources: pdh, kind: "counter", unit: "bytes", when: []cond{objMemory, counter("Available Bytes")}},
-	{id: HostMemAvailable, sources: sadf, kind: "metric", unit: "bytes", scale: 1 << 10, pending: true, when: []cond{metricIs("kbavail")}},
+	// The Linux importers already convert KiB to bytes.
+	{id: HostMemAvailable, sources: sadf, kind: "metric", unit: "bytes", when: []cond{metricIs("mem-avail")}},
 	{id: HostMemCommitted, sources: pdh, kind: "counter", unit: "bytes", when: []cond{objMemory, counter("Committed Bytes")}},
 	{id: HostPages, sources: pdh, kind: "counter", unit: "per-sec", when: []cond{objMemory, counter("Pages/sec")}},
 
@@ -170,11 +177,11 @@ var rules = []rule{
 	{id: ProcCPU, sources: pdh, kind: "counter", unit: unitKeep, scope: scopeProc, when: []cond{objProcess, counter("% Processor Time")}},
 	{id: ProcCPU, sources: procsnap, kind: "metric", unit: unitKeep, scope: scopeProc, when: []cond{metricIs("cpu")}},
 	{id: ProcCPU, sources: dotnet, kind: "metric", unit: unitKeep, scope: scopeProc, when: []cond{counter("CPU Usage")}},
-	{id: ProcCPU, sources: pidstat, kind: "metric", unit: unitKeep, scope: scopeProc, pending: true, when: []cond{metricIs("%cpu")}},
+	{id: ProcCPU, sources: pidstat, kind: "metric", unit: unitKeep, scope: scopeProc, when: []cond{metricIs("cpu")}},
 	{id: ProcWS, sources: pdh, kind: "counter", unit: "bytes", scope: scopeProc, when: []cond{objProcess, counter("Working Set")}},
 	{id: ProcWS, sources: procsnap, kind: "metric", unit: "bytes", scope: scopeProc, when: []cond{metricIs("working-set")}},
 	{id: ProcWS, sources: dotnet, kind: "metric", unit: "bytes", scope: scopeProc, when: []cond{counter("Working Set", "dotnet.process.memory.working_set")}},
-	{id: ProcWS, sources: pidstat, kind: "metric", unit: "bytes", scale: 1 << 10, scope: scopeProc, pending: true, when: []cond{metricIs("rss")}},
+	{id: ProcWS, sources: pidstat, kind: "metric", unit: "bytes", scope: scopeProc, when: []cond{metricIs("rss")}},
 	{id: ProcPrivate, sources: pdh, kind: "counter", unit: "bytes", scope: scopeProc, when: []cond{objProcess, counter("Private Bytes")}},
 	{id: ProcPrivate, sources: procsnap, kind: "metric", unit: "bytes", scope: scopeProc, when: []cond{metricIs("private-bytes")}},
 	{id: ProcHandles, sources: pdh, kind: "counter", unit: "count", scope: scopeProc, when: []cond{objProcess, counter("Handle Count")}},

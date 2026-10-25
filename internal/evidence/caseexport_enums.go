@@ -85,6 +85,7 @@ var exportKinds = map[string]map[string]bool{
 	// W2-m
 	"linux-sadf":    set("metric"),
 	"linux-pidstat": set("metric"),
+	"linux-vmstat":  set("metric"),
 }
 
 // exportUnits is the list of event units.
