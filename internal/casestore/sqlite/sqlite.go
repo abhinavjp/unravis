@@ -64,6 +64,16 @@ type Options struct {
 	// other than casestore.KindMasterKey, means DPAPI (the v1 files an older build
 	// can read).
 	NewCaseKind func() string
+	// LegacyCheck decides whether a case folder sealed only by DPAPI may be used.
+	// It is called with the case id for every such folder and returns nil to allow
+	// it, casestore.ErrUntrustedLegacy to refuse it (a master key exists and the id
+	// is not on the legacy list, see masterkey.LegacySet), or casestore.ErrLocked
+	// when that cannot be decided now (the master key is locked). Nil means no
+	// master key is in play: every DPAPI case is allowed, as before.
+	LegacyCheck func(id casestore.CaseID) error
+	// LegacyDone, when set, is called after a case has been re-wrapped to the
+	// master key, so its id can leave the legacy list. It must not fail the re-wrap.
+	LegacyDone func(id casestore.CaseID)
 	// Now is the clock. Default: time.Now.
 	Now func() time.Time
 	// MaxFileBytes and MaxFileRows cap one imported file (default 2 GiB and 10M
@@ -228,6 +238,39 @@ func caseKind(dir string) string {
 		}
 	}
 	return casestore.KindDPAPI
+}
+
+// legacyGate applies Options.LegacyCheck to the case folder dir when its key file
+// is sealed only by DPAPI. Folders sealed under the master key never need the
+// legacy list, and a file the header cannot classify is left for the readers to
+// report. A case left half re-wrapped by a cut re-wrap is allowed when its
+// manifest opens under the master key and names this case: only the owner could
+// have written that, so it needs no list entry.
+func (s *Store) legacyGate(id casestore.CaseID, dir string) error {
+	if s.opt.LegacyCheck == nil {
+		return nil
+	}
+	if k, err := casestore.FileKind(filepath.Join(dir, keyName)); err != nil || k != casestore.KindDPAPI {
+		return nil
+	}
+	return s.legacyCheck(id, dir)
+}
+
+// legacyCheck is legacyGate for a folder already known to hold a DPAPI key file.
+func (s *Store) legacyCheck(id casestore.CaseID, dir string) error {
+	if s.opt.LegacyCheck == nil {
+		return nil
+	}
+	err := s.opt.LegacyCheck(id)
+	if err == nil || !errors.Is(err, casestore.ErrUntrustedLegacy) {
+		return err
+	}
+	if halfRewrapped(dir) {
+		if m, mErr := readManifest(dir, s.sealer(dir, casestore.KindMasterKey)); mErr == nil && m.CaseID == string(id) {
+			return nil
+		}
+	}
+	return err
 }
 
 // fileSealer is the sealedfile.Protector readManifest and writeManifest take. It
@@ -530,6 +573,12 @@ func (s *Store) List(ctx context.Context) ([]casestore.CaseInfo, error) {
 			out = append(out, info)
 			continue
 		}
+		if err := s.legacyGate(id, dir); errors.Is(err, casestore.ErrUntrustedLegacy) {
+			// Listed, so the person can see and erase it, but nothing of it is read.
+			info.Title, info.Untrusted = "(untrusted case)", true
+			out = append(out, info)
+			continue
+		}
 		if m, err := readManifest(dir, s.sealer(dir, "")); err == nil && m.CaseID == string(id) {
 			info.Title, info.Created, info.Closed, info.Imports = m.Title, m.Created, m.Closed, len(m.Imports)
 			info.Bytes = manifestBytes(m)
@@ -597,6 +646,9 @@ func (s *Store) load(ctx context.Context, id casestore.CaseID) (*caseState, erro
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return nil, casestore.ErrNotFound
 	}
+	if err := s.legacyGate(id, dir); err != nil {
+		return nil, err
+	}
 	s.healHalfRewrap(id, dir)
 	keys, man, err := s.readCaseFiles(dir, id)
 	if err != nil {
@@ -644,6 +696,14 @@ func (s *Store) readCaseFiles(dir string, id casestore.CaseID) (casestore.Keys, 
 	}
 	if err != nil {
 		return casestore.Keys{}, manifest{}, err
+	}
+	// Judge again by the kind that was actually opened, under the folder lock, so a
+	// key file swapped in after the check in load cannot slip past it.
+	if kind == casestore.KindDPAPI {
+		if err := s.legacyCheck(id, dir); err != nil {
+			keys.Zero()
+			return casestore.Keys{}, manifest{}, err
+		}
 	}
 	// The manifest must be sealed the same way as the key. A mix is a damaged case
 	// (a re-wrap that was cut short), never silently repaired here.
@@ -714,6 +774,9 @@ func (s *Store) CloseCase(ctx context.Context, id casestore.CaseID) error {
 	if k := caseKind(dir); k == casestore.KindMasterKey && s.isLocked(k) {
 		return ErrLocked
 	}
+	if err := s.legacyGate(id, dir); err != nil {
+		return err
+	}
 	m, err := readManifest(dir, s.sealer(dir, ""))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -781,6 +844,10 @@ func (s *Store) Rewrap(ctx context.Context, id casestore.CaseID) error {
 	to, err := s.lookup(casestore.KindMasterKey)
 	if err != nil || to == nil {
 		return ErrLocked
+	}
+	// A planted DPAPI folder must not be laundered into a master-key case.
+	if err := s.legacyGate(id, dir); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	if s.erasing[id] {
@@ -852,6 +919,9 @@ func (s *Store) rewrapDir(id casestore.CaseID, dir string, to sealedfile.Protect
 	if err != nil {
 		s.logf("case %s re-wrap failed", id)
 		return err
+	}
+	if s.opt.LegacyDone != nil {
+		s.opt.LegacyDone(id)
 	}
 	s.logf("case %s re-wrapped", id)
 	return nil

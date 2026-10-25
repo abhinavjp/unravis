@@ -49,6 +49,8 @@ export interface CaseInfo {
   title: string;
   created: string;
   closed?: string | null;
+  /** True for a folder the server refuses (sealed by Windows only, not known when the master key was set up). Its title is a fixed placeholder. */
+  untrusted?: boolean;
   bytes: number;
   imports: number;
 }

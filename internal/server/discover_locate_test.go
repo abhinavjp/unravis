@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -408,4 +409,174 @@ func TestLocateGivesUpOnAStuckFileSystem(t *testing.T) {
 		t.Error("the call was not bounded")
 	}
 	f.wantUnchanged(before)
+}
+
+// gateFS holds Final until the gate opens and counts the calls that follow it, to
+// show what a worker does after its deadline.
+type gateFS struct {
+	discover.FS
+	mu       sync.Mutex
+	gated    bool
+	gate     chan struct{}
+	entered  chan struct{}
+	lstats   int
+	readDirs int
+}
+
+func newGateFS() *gateFS {
+	return &gateFS{gate: make(chan struct{}), entered: make(chan struct{}, 16)}
+}
+
+func (g *gateFS) setGated(v bool) {
+	g.mu.Lock()
+	g.gated = v
+	g.mu.Unlock()
+}
+
+func (g *gateFS) open() {
+	defer func() { _ = recover() }() // already open
+	close(g.gate)
+}
+
+func (g *gateFS) Final(p string) (string, bool, error) {
+	g.mu.Lock()
+	gated := g.gated
+	g.mu.Unlock()
+	if gated {
+		g.entered <- struct{}{}
+		<-g.gate
+	}
+	return g.FS.Final(p)
+}
+
+func (g *gateFS) Lstat(p string) (discover.FileInfo, error) {
+	g.mu.Lock()
+	g.lstats++
+	g.mu.Unlock()
+	return g.FS.Lstat(p)
+}
+
+func (g *gateFS) ReadDir(p string) ([]discover.FileInfo, error) {
+	g.mu.Lock()
+	g.readDirs++
+	g.mu.Unlock()
+	return g.FS.ReadDir(p)
+}
+
+func (g *gateFS) calls() (lstats, readDirs int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.lstats, g.readDirs
+}
+
+func waitUntil(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestLocateWorkerCeilingHoldsAndFreesWhenWorkersFinish(t *testing.T) {
+	oldBudget, oldSlots := locateBudget, locateSlots
+	locateBudget = 50 * time.Millisecond
+	locateSlots = make(chan struct{}, 2)
+	t.Cleanup(func() { locateBudget, locateSlots = oldBudget, oldSlots })
+
+	gfs := newGateFS()
+	t.Cleanup(gfs.open)
+	f := newLocFix(t, func(c *DiscoverConfig) {
+		gfs.FS = c.Env.FS
+		c.Env.FS = gfs
+	})
+	gfs.setGated(true)
+
+	// Two stuck workers fill the slots. Each request still gives up on time.
+	for i := 0; i < 2; i++ {
+		res := f.locate(locAppDir)
+		var out locateResponse
+		decodeBody(t, res, &out)
+		if res.Code != http.StatusOK || out.Reason != locateTimedOut {
+			t.Fatalf("call %d = %d %s", i+1, res.Code, res.Body)
+		}
+	}
+	if len(locateSlots) != 2 {
+		t.Fatalf("slots in use after the requests returned = %d, want 2 (workers still stuck)", len(locateSlots))
+	}
+
+	// The next call does not start a worker: 429 with the fixed error shape.
+	res := f.locate(locAppDir)
+	if res.Code != http.StatusTooManyRequests {
+		t.Fatalf("third call = %d %s, want 429", res.Code, res.Body)
+	}
+	var body map[string]string
+	decodeBody(t, res, &body)
+	if body["error"] == "" || len(body) != 1 {
+		t.Errorf("429 body = %s, want only a fixed error text", res.Body)
+	}
+	if strings.Contains(res.Body.String(), `D:\`) || strings.Contains(res.Body.String(), "Apps") {
+		t.Errorf("429 body echoes the path: %s", res.Body)
+	}
+	if len(locateSlots) != 2 {
+		t.Errorf("a refused call changed the slots: %d", len(locateSlots))
+	}
+
+	// Slots free when the workers finish, not before.
+	gfs.setGated(false)
+	gfs.open()
+	waitUntil(t, "workers to release their slots", func() bool { return len(locateSlots) == 0 })
+	res = f.locate(locAppDir)
+	if res.Code != http.StatusOK {
+		t.Errorf("after the workers finished = %d %s", res.Code, res.Body)
+	}
+	if len(locateSlots) != 0 {
+		t.Errorf("slot leaked after a normal call: %d", len(locateSlots))
+	}
+}
+
+func TestLocateDeadlineStopsTheWalkerBetweenSteps(t *testing.T) {
+	old := locateBudget
+	locateBudget = 50 * time.Millisecond
+	t.Cleanup(func() { locateBudget = old })
+
+	gfs := newGateFS()
+	t.Cleanup(gfs.open)
+	f := newLocFix(t, func(c *DiscoverConfig) {
+		gfs.FS = c.Env.FS
+		c.Env.FS = gfs
+	})
+	before := f.finding()
+	gfs.setGated(true)
+	gfs.mu.Lock()
+	gfs.lstats, gfs.readDirs = 0, 0 // the scan in the fixture used them already
+	gfs.mu.Unlock()
+
+	res := f.locate(locAppDir)
+	var out locateResponse
+	decodeBody(t, res, &out)
+	if res.Code != http.StatusOK || out.Reason != locateTimedOut {
+		t.Fatalf("locate = %d %s", res.Code, res.Body)
+	}
+	<-gfs.entered
+
+	// The stuck call now returns, after the deadline. The worker must stop there.
+	gfs.setGated(false)
+	gfs.open()
+	waitUntil(t, "the worker to end", func() bool { return len(locateSlots) == 0 })
+	if lstats, readDirs := gfs.calls(); lstats != 0 || readDirs != 0 {
+		t.Errorf("the worker kept walking after its deadline: Lstat %d, ReadDir %d", lstats, readDirs)
+	}
+	f.wantUnchanged(before)
+}
+
+func TestRunWithinReleasesTheSlotWhenTheWorkerEndsEvenOnPanic(t *testing.T) {
+	slots := make(chan struct{}, 1)
+	_, err := runWithin(context.Background(), slots, 30*time.Millisecond, func(context.Context) int { panic("boom") })
+	if err == nil {
+		t.Error("a panicking worker gave an answer")
+	}
+	waitUntil(t, "slot release after panic", func() bool { return len(slots) == 0 })
 }

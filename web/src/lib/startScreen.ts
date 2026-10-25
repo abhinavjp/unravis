@@ -20,7 +20,7 @@ export const CASE_PAGE_SIZE = 50;
 export const TITLE_MAX = 60;
 
 /** A case as the list knows it. `sources` is shown only when the server sent it; the case list does not carry it today. */
-export type StartCase = Pick<CaseInfo, 'id' | 'title' | 'created' | 'closed' | 'imports'> & { sources?: number };
+export type StartCase = Pick<CaseInfo, 'id' | 'title' | 'created' | 'closed' | 'imports' | 'untrusted'> & { sources?: number };
 
 export interface CaseRow {
   id: string;
@@ -34,6 +34,9 @@ export interface CaseRow {
   counts: string;
   closed: boolean;
   closedLabel: string;
+  /** True when the server refuses this folder: show a plain note and no Open button. */
+  untrusted: boolean;
+  untrustedLabel: string;
 }
 
 /** Cuts a title to `max` characters (as a person counts them) and adds an ellipsis. A blank title becomes "Untitled case". */
@@ -58,7 +61,9 @@ export function caseRow(c: StartCase): CaseRow {
     created: formatTime(c.created, { year: true, precision: 'minute', fallback: '' }),
     counts: caseCounts(c),
     closed: Boolean(c.closed),
-    closedLabel: START_TEXT.closedLabel
+    closedLabel: START_TEXT.closedLabel,
+    untrusted: c.untrusted === true,
+    untrustedLabel: START_TEXT.untrustedLabel
   };
 }
 

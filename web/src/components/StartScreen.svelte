@@ -100,7 +100,11 @@
                   <span class="case-meta">{row.created}{row.created ? ' · ' : ''}{row.counts}</span>
                   {#if row.closed}<span class="case-closed">{row.closedLabel}</span>{/if}
                 </div>
-                <button type="button" class="secondary-button" aria-label={openLabel(row.fullTitle)} onclick={() => onOpen(row.id)}>{START_TEXT.open}</button>
+                {#if row.untrusted}
+                  <span class="case-closed" role="note">{row.untrustedLabel}</span>
+                {:else}
+                  <button type="button" class="secondary-button" aria-label={openLabel(row.fullTitle)} onclick={() => onOpen(row.id)}>{START_TEXT.open}</button>
+                {/if}
               </li>
             {/each}
           </ul>

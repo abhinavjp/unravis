@@ -93,6 +93,7 @@ func openCases(getenv func(string) string, hypotheses ledger.Store) (*casesWirin
 	store, err := sqlite.New(sqlite.Options{
 		Root: root, Protector: protector, OnErase: onErase,
 		Protectors: session.Lookup, NewCaseKind: session.NewCaseKind,
+		LegacyCheck: session.LegacyCheck, LegacyDone: session.LegacyDone,
 	})
 	if err != nil {
 		return nil, err

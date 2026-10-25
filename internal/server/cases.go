@@ -317,6 +317,10 @@ type caseFailure struct {
 	ImportID int64  `json:"importId,omitempty"`
 }
 
+// untrustedCaseText is the message for a Windows sealed case folder that was not on
+// this PC when the master key was set up.
+const untrustedCaseText = "This case folder is not protected by the master key and was not on this PC when the master key was set up, so it is not opened. You can erase it."
+
 func writeCaseFailure(w http.ResponseWriter, status int, reason, message string) {
 	writeJSON(w, status, caseFailure{Error: message, Reason: reason}, 4096)
 }
@@ -348,6 +352,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeCaseFailure(w, http.StatusBadRequest, "bad-case-id", "That is not a case id.")
 	case errors.Is(err, casestore.ErrLocked):
 		writeLocked(w)
+	case errors.Is(err, casestore.ErrUntrustedLegacy):
+		writeCaseFailure(w, http.StatusConflict, "untrusted-case", untrustedCaseText)
 	case errors.Is(err, casestore.ErrNeedsRewrap):
 		// Listed before the generic store-error: this one is repairable.
 		writeCaseFailure(w, http.StatusConflict, "needs-rewrap", needsRewrapText)
@@ -373,10 +379,13 @@ type caseDTO struct {
 	Closed  *time.Time `json:"closed"`
 	Bytes   int64      `json:"bytes"`
 	Imports int        `json:"imports"`
+	// Untrusted is true for a folder the store refuses (see
+	// casestore.ErrUntrustedLegacy). Its title is a fixed placeholder.
+	Untrusted bool `json:"untrusted,omitempty"`
 }
 
 func toCaseDTO(c casestore.CaseInfo) caseDTO {
-	d := caseDTO{ID: string(c.ID), Title: c.Title, Created: c.Created.UTC(), Bytes: c.Bytes, Imports: c.Imports}
+	d := caseDTO{ID: string(c.ID), Title: c.Title, Created: c.Created.UTC(), Bytes: c.Bytes, Imports: c.Imports, Untrusted: c.Untrusted}
 	if c.Closed != nil {
 		t := c.Closed.UTC()
 		d.Closed = &t

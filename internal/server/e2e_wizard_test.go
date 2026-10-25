@@ -95,6 +95,7 @@ func newE2E(t *testing.T) *e2eFix {
 	store, err := sqlite.New(sqlite.Options{
 		Root: x.root, Protector: storetest.RandomProtector(), MinFreeBytes: -1,
 		Protectors: x.sess.Lookup, NewCaseKind: x.sess.NewCaseKind,
+		LegacyCheck: x.sess.LegacyCheck, LegacyDone: x.sess.LegacyDone,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -68,6 +68,13 @@ type MasterKeySession struct {
 	op       sync.Mutex
 	unlockTh throttle
 	setupTh  throttle
+
+	// lgMu guards lgIDs: the legacy set (see masterkey.LegacySetFileName) as it
+	// was loaded at the last setup or unlock. nil means not loaded or failed to
+	// load, which refuses every Windows-sealed case; a non-nil map (possibly
+	// empty) is the set. It is cleared on lock. The ids are not secret.
+	lgMu  sync.Mutex
+	lgIDs map[string]struct{}
 }
 
 // NewMasterKeySession returns a session whose key file lives in dir. It starts
@@ -128,6 +135,92 @@ func (s *MasterKeySession) NewCaseKind() string {
 	return casestore.KindMasterKey
 }
 
+// LegacyCheck is sqlite.Options.LegacyCheck. With no master key every Windows
+// sealed case is allowed (the behaviour before a master key). With one, a case
+// is allowed only if its id is on the legacy set loaded at unlock; anything else
+// is casestore.ErrUntrustedLegacy, also when the set is missing or damaged.
+// While the key is locked the set cannot be consulted: casestore.ErrLocked.
+func (s *MasterKeySession) LegacyCheck(id casestore.CaseID) error {
+	switch s.State() {
+	case MasterKeyNone:
+		return nil
+	case MasterKeyUnlocked:
+	default:
+		return casestore.ErrLocked
+	}
+	s.lgMu.Lock()
+	defer s.lgMu.Unlock()
+	if _, ok := s.lgIDs[string(id)]; ok {
+		return nil
+	}
+	return casestore.ErrUntrustedLegacy
+}
+
+// LegacyDone is sqlite.Options.LegacyDone: id has been re-wrapped, so it leaves
+// the legacy set (memory first, then the file). A failed write is harmless: the
+// stale entry names a case that is now sealed by the master key.
+func (s *MasterKeySession) LegacyDone(id casestore.CaseID) {
+	s.lgMu.Lock()
+	defer s.lgMu.Unlock()
+	if _, ok := s.lgIDs[string(id)]; !ok {
+		return
+	}
+	delete(s.lgIDs, string(id))
+	ring, err := s.Keyring()
+	if err != nil {
+		return
+	}
+	ids := make([]string, 0, len(s.lgIDs))
+	for k := range s.lgIDs {
+		ids = append(ids, k)
+	}
+	_ = masterkey.WriteLegacySet(s.dir, ring, ids)
+}
+
+// loadLegacy sets lgIDs from legacyset.dat (opened with ring), before the Keyring
+// is installed. fresh is true right after setup: the file is then written anew
+// from enumerate(), the DPAPI case ids that exist now. A missing file with an
+// existing master key (made before the file existed) is treated the same way, once.
+// A damaged file, an unreadable one, or a failed write leaves lgIDs nil, so every
+// Windows sealed case is refused; no case folder is touched. Callers hold op.
+func (s *MasterKeySession) loadLegacy(ring *masterkey.Keyring, fresh bool, enumerate func() []string) {
+	if !fresh {
+		got, st, err := masterkey.ReadLegacySet(s.dir, ring)
+		switch {
+		case err != nil || st == masterkey.LegacyDamaged:
+			s.clearLegacy()
+			return
+		case st == masterkey.LegacyOK:
+			s.setLegacy(got)
+			return
+		}
+	}
+	ids := enumerate()
+	if err := masterkey.WriteLegacySet(s.dir, ring, ids); err != nil {
+		s.clearLegacy()
+		return
+	}
+	s.setLegacy(ids)
+}
+
+// setLegacy installs ids as the set (an empty set is a set).
+func (s *MasterKeySession) setLegacy(ids []string) {
+	m := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		m[id] = struct{}{}
+	}
+	s.lgMu.Lock()
+	s.lgIDs = m
+	s.lgMu.Unlock()
+}
+
+// clearLegacy drops the set: every Windows sealed case is then refused.
+func (s *MasterKeySession) clearLegacy() {
+	s.lgMu.Lock()
+	s.lgIDs = nil
+	s.lgMu.Unlock()
+}
+
 // install replaces the Keyring. Callers hold op.
 func (s *MasterKeySession) install(r *masterkey.Keyring) {
 	s.mu.Lock()
@@ -150,6 +243,7 @@ func (s *MasterKeySession) lock(closeHandles func()) {
 	r := s.ring
 	s.ring = nil
 	s.mu.Unlock()
+	s.clearLegacy()
 	if closeHandles != nil {
 		closeHandles()
 	}
@@ -310,6 +404,11 @@ type masterKeyStatus struct {
 	// "Protect older cases" action (POST /api/master-key/rewrap, {"all":true}),
 	// which finishes it. Always 0 while locked.
 	NeedsRewrap int `json:"needsRewrap"`
+	// UntrustedCases counts case folders sealed by Windows only that were not on
+	// this PC when the master key was set up (or whose list could not be loaded).
+	// They are refused (409 reason "untrusted-case"), cannot be re-wrapped, and are
+	// not in DPAPICases; they can still be erased. Omitted when 0 (always while locked).
+	UntrustedCases int `json:"untrustedCases,omitempty"`
 }
 
 const needsRewrapText = "This case was only partly protected with the master key. Protect older cases to finish it."
@@ -550,20 +649,28 @@ type rewrapStore interface {
 // dpapiCaseCount counts the cases that could still be re-wrapped, and how many
 // of those a cut re-wrap left half done. Both are 0 while locked and when the
 // store cannot report kinds.
-func (h *handler) dpapiCaseCount(ctx context.Context) (dpapi, half int) {
+//
+// A folder the store refuses as untrusted (casestore.CaseInfo.Untrusted: sealed by
+// Windows only, not on the legacy set) is counted apart in untrusted and never as
+// something "Protect older cases" could finish.
+func (h *handler) dpapiCaseCount(ctx context.Context) (dpapi, half, untrusted int) {
 	if st := h.masterKeyState(); st == MasterKeyLocked || st == MasterKeyDamaged || h.cases == nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	rs, ok := h.cases.(rewrapStore)
 	if !ok {
-		return 0, 0
+		return 0, 0, 0
 	}
 	list, err := h.cases.List(ctx)
 	if err != nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	partial, _ := h.cases.(interface{ NeedsRewrap(casestore.CaseID) bool })
 	for _, info := range list {
+		if info.Untrusted {
+			untrusted++
+			continue
+		}
 		if kind, err := rs.CaseKind(info.ID); err == nil && kind == casestore.KindDPAPI {
 			dpapi++
 			if partial != nil && partial.NeedsRewrap(info.ID) {
@@ -571,13 +678,36 @@ func (h *handler) dpapiCaseCount(ctx context.Context) (dpapi, half int) {
 			}
 		}
 	}
-	return dpapi, half
+	return dpapi, half, untrusted
+}
+
+// legacyCandidates lists the ids of the cases whose key file is sealed by Windows
+// right now: what the legacy set records. It never returns nil.
+func (h *handler) legacyCandidates(ctx context.Context) []string {
+	ids := []string{}
+	if h.cases == nil {
+		return ids
+	}
+	rs, ok := h.cases.(rewrapStore)
+	if !ok {
+		return ids
+	}
+	list, err := h.cases.List(ctx)
+	if err != nil {
+		return ids
+	}
+	for _, info := range list {
+		if kind, err := rs.CaseKind(info.ID); err == nil && kind == casestore.KindDPAPI {
+			ids = append(ids, string(info.ID))
+		}
+	}
+	return ids
 }
 
 func (h *handler) masterKeyReply(w http.ResponseWriter, r *http.Request) {
 	st := h.masterKeyState()
-	n, half := h.dpapiCaseCount(r.Context())
-	writeJSON(w, http.StatusOK, masterKeyStatus{State: st, DPAPICases: n, NeedsRewrap: half}, 4096)
+	n, half, bad := h.dpapiCaseCount(r.Context())
+	writeJSON(w, http.StatusOK, masterKeyStatus{State: st, DPAPICases: n, NeedsRewrap: half, UntrustedCases: bad}, 4096)
 }
 
 func (h *handler) masterKeySetup(w http.ResponseWriter, r *http.Request) {
@@ -666,6 +796,9 @@ func (h *handler) masterKeySetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setupTh.reset()
+	// Record which Windows sealed cases exist right now; only these may ever be
+	// used without the master key (L4). Before the Keyring is installed.
+	s.loadLegacy(ring, true, func() []string { return h.legacyCandidates(r.Context()) })
 	s.install(ring)
 	h.masterKeyReply(w, r)
 }
@@ -713,6 +846,7 @@ func (h *handler) masterKeyUnlock(w http.ResponseWriter, r *http.Request) {
 		h.masterKeyFail(w, http.StatusInternalServerError, "unlock-failed", "The master key could not be unlocked.")
 		return
 	}
+	s.loadLegacy(ring, false, func() []string { return h.legacyCandidates(r.Context()) })
 	s.install(ring)
 	h.masterKeyReply(w, r)
 }
@@ -828,6 +962,8 @@ func rewrapOne(ctx context.Context, rs rewrapStore, id casestore.CaseID) rewrapR
 		res.Reason = "case-not-found"
 	case errors.Is(err, casestore.ErrLocked):
 		res.Reason = "locked"
+	case errors.Is(err, casestore.ErrUntrustedLegacy):
+		res.Reason = "untrusted-case"
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		res.Reason = "canceled"
 	default:
@@ -904,6 +1040,6 @@ func (h *handler) masterKeyResetDamaged(w http.ResponseWriter, r *http.Request) 
 		h.masterKeyFail(w, http.StatusInternalServerError, "reset-failed", "The damaged master key file could not be moved aside.")
 		return
 	}
-	n, _ := h.dpapiCaseCount(r.Context())
+	n, _, _ := h.dpapiCaseCount(r.Context())
 	writeJSON(w, http.StatusOK, resetDamagedReply{State: s.State(), DPAPICases: n, KeptAs: keptAs}, 4096)
 }

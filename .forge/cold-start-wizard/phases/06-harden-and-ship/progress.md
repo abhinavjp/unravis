@@ -5,7 +5,7 @@
 - TSK-21 e2e: `internal/server/e2e_wizard_test.go` (7 tests, 17 route subtests). No defect.
 - TSK-21 security review: 0 Critical/High/Medium, 6 Low, 7 Info (TSK-21-security.md).
 - TSK-21 clumsy review: 0 High, 1 Medium, 4 Low, 4 Info (TSK-21-clumsy.md).
-- Fixed: security L1, L2, L3, L5; clumsy M1, L1, L2, L3, L4 (TSK-21-go-fixes.md, TSK-21-web-fixes.md).
+- Fixed: security L1, L2, L3, L4, L5, L6; clumsy M1, L1, L2, L3, L4 (TSK-21-go-fixes.md, TSK-21-web-fixes.md).
 
 ## Evidence (this machine, 2026-10-26)
 - `go vet ./...` clean. `go test ./... -count=1` green. `internal/sampler` failed once (`TestStartValidatesTheConfig`, known load flake) and passed on rerun.
@@ -13,8 +13,8 @@
 - Browser (built-in pane, isolated scratch instance, narrow width): start screen renders, master-key set-up shows the edge-space note and the mismatch line, no console errors.
 
 ## Not fixed (decision needed)
-- Security L4: a header-less DPAPI case is still accepted after a master key exists (provenance only).
-- Security L6: locate leaves a worker running after its timeout; needs a concurrency cap.
+- Security L4 residual: a deleted `legacyset.dat` is not fail-closed (closing it needs a marker in `masterkey.dat`, a format change). Fixed otherwise: DPAPI cases not on the sealed legacy set are refused (409 `untrusted-case`) and shown as not opened.
+- Security L6 residual: a worker stuck inside one filesystem call holds its slot; the existence oracle is accepted. Fixed otherwise: cap of 4 workers (429 when full) and cancellation at the 10 s deadline.
 - Info items in TSK-21-security.md and TSK-21-clumsy.md.
 - The web client has no special handling of a 409 `needs-rewrap` on case open; the Home re-wrap notice is the recovery path.
 

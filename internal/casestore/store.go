@@ -105,6 +105,12 @@ type CaseInfo struct {
 	// manifest and leaves them zero.
 	Envs    int
 	Sources int
+	// Untrusted marks a folder that is sealed only by Windows (no master key)
+	// although a master key exists and the case was not on the list recorded when
+	// the master key was set up (ErrUntrustedLegacy). Store.List shows it with a
+	// fixed title and no other detail, and every other operation except Erase
+	// refuses it.
+	Untrusted bool
 }
 
 type ImportMeta struct {
@@ -361,6 +367,11 @@ var (
 	// ErrCaseClosed is returned by Import for a case that CloseCase has closed.
 	// A closed case takes no more files, however its handle was opened.
 	ErrCaseClosed = errors.New("case is closed")
+	// ErrUntrustedLegacy is returned for a case folder sealed only by Windows
+	// (DPAPI) while a master key exists and the case is not on the legacy list
+	// (see masterkey.LegacySet): it may have been planted, so it is never opened,
+	// re-wrapped or closed. It can still be erased. It reveals nothing about the case.
+	ErrUntrustedLegacy = errors.New("case is not protected by the master key and is not a known older case")
 	// ErrAckTooLong is returned by Import when AckText is over MaxAckText.
 	ErrAckTooLong = errors.New("acknowledgement text too long")
 	// ErrDuplicateEvent is returned when an import emits an evidence ID the

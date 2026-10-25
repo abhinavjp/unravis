@@ -66,6 +66,7 @@ func newCFSPC(t *testing.T, pass string, unlock bool) *cfsPC {
 	store, err := sqlite.New(sqlite.Options{
 		Root: p.root, Protector: p.prot, MinFreeBytes: -1,
 		Protectors: p.sess.Lookup, NewCaseKind: p.sess.NewCaseKind,
+		LegacyCheck: p.sess.LegacyCheck, LegacyDone: p.sess.LegacyDone,
 	})
 	if err != nil {
 		t.Fatal(err)

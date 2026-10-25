@@ -156,3 +156,9 @@ test('the start screen is a new Landing mode and leaves loading, connect and run
 test('start screen copy passes the copy lint', () => {
   assert.deepEqual(lintScreenStrings(startLintEntries(), deck.terms).map((f) => f.id + ': ' + f.message), []);
 });
+
+test('a case the server refuses as untrusted is marked, a normal one is not', () => {
+  assert.equal(caseRow(makeCase(1, { untrusted: true })).untrusted, true);
+  assert.equal(caseRow(makeCase(2, {})).untrusted, false);
+  assert.equal(caseRow(makeCase(3, { untrusted: 'yes' })).untrusted, false);
+});

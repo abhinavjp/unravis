@@ -51,6 +51,7 @@ func newMKEnv(t *testing.T) *mkEnv {
 	store, err := sqlite.New(sqlite.Options{
 		Root: root, Protector: storetest.RandomProtector(), MinFreeBytes: -1,
 		Protectors: sess.Lookup, NewCaseKind: sess.NewCaseKind,
+		LegacyCheck: sess.LegacyCheck, LegacyDone: sess.LegacyDone,
 	})
 	if err != nil {
 		t.Fatal(err)

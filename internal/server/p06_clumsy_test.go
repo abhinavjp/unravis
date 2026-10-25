@@ -94,6 +94,7 @@ func p06Restart(pc *cfsPC) *cfsPC {
 	store, err := sqlite.New(sqlite.Options{
 		Root: pc.root, Protector: pc.prot, MinFreeBytes: -1,
 		Protectors: np.sess.Lookup, NewCaseKind: np.sess.NewCaseKind,
+		LegacyCheck: np.sess.LegacyCheck, LegacyDone: np.sess.LegacyDone,
 	})
 	if err != nil {
 		t.Fatal(err)

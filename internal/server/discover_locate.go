@@ -41,6 +41,24 @@ const (
 // shorten it.
 var locateBudget = 10 * time.Second
 
+// maxLocateWorkers caps the locate workers alive at once. A worker stuck inside a
+// slow file system call (a dead network drive) cannot be interrupted, so it stays
+// alive after its request has given up; the cap keeps repeated calls from piling
+// such workers up. A slot is held until the worker itself returns, not until the
+// request does.
+const maxLocateWorkers = 4
+
+// locateSlots holds one token per live locate worker. A variable so a test can
+// shrink it.
+var locateSlots = make(chan struct{}, maxLocateWorkers)
+
+// errLocateBusy means every worker slot is taken. errLocateAbandoned means the
+// wait ended (deadline or caller) before the worker answered.
+var (
+	errLocateBusy      = errors.New("locate busy")
+	errLocateAbandoned = errors.New("locate abandoned")
+)
+
 // Reasons of a path that was understood but did not verify. The answer is 200
 // with verified false. The set is closed: the browser maps each to plain words.
 const (
@@ -180,11 +198,16 @@ func (h *handler) locateFinding(w http.ResponseWriter, r *http.Request, arg stri
 
 	env := cfg.Env
 	env.Importers = h.registry
-	out, ok := runWithin(r.Context(), locateBudget, func() locateOutcome { return locateWork(env, cfg.Opener, clean, snap.Importer) })
+	out, err := runWithin(r.Context(), locateSlots, locateBudget, func(ctx context.Context) locateOutcome {
+		return locateWork(ctx, env, cfg.Opener, clean, snap.Importer)
+	})
 	switch {
-	case !ok && r.Context().Err() != nil:
+	case errors.Is(err, errLocateBusy):
+		writeError(w, http.StatusTooManyRequests, "Other folder checks are still running. Wait a minute, then check again.")
+		return
+	case err != nil && r.Context().Err() != nil:
 		return // the caller left
-	case !ok:
+	case err != nil:
 		out = locateOutcome{reason: locateTimedOut}
 	}
 	if out.refusal != "" {
@@ -266,8 +289,8 @@ type locateFile struct {
 
 // locateWork resolves the typed path, picks the log files and finds the importer
 // that reads them. It touches the system only through env.FS and opener.
-func locateWork(env discover.Env, opener localread.Opener, clean, current string) locateOutcome {
-	files, out := locateFiles(env.FS, clean)
+func locateWork(ctx context.Context, env discover.Env, opener localread.Opener, clean, current string) locateOutcome {
+	files, out := locateFiles(ctx, env.FS, clean)
 	if out != nil {
 		return *out
 	}
@@ -278,6 +301,9 @@ func locateWork(env discover.Env, opener localread.Opener, clean, current string
 	var reason string
 	imp := ""
 	for _, name := range locateCandidates(current) {
+		if ctx.Err() != nil {
+			return locateOutcome{reason: locateTimedOut, files: len(files)}
+		}
 		ok, key := discover.VerifyPaths(env, name, paths)
 		if ok {
 			imp = name
@@ -288,6 +314,9 @@ func locateWork(env discover.Env, opener localread.Opener, clean, current string
 		}
 	}
 	if imp == "" {
+		if ctx.Err() != nil {
+			reason = locateTimedOut
+		}
 		if reason == "" {
 			reason = locateWrongFormat
 		}
@@ -308,6 +337,9 @@ func locateWork(env discover.Env, opener localread.Opener, clean, current string
 	res.lastName = discover.WinBase(files[len(files)-1].path)
 	identified := 0
 	for _, f := range files {
+		if ctx.Err() != nil {
+			return locateOutcome{reason: locateTimedOut, files: len(files)}
+		}
 		sfile := scanFile{path: f.path, mod: f.info.ModTime}
 		if opener != nil && identified < maxIdentified {
 			identified++
@@ -340,7 +372,7 @@ func locateReasonOf(key string) string {
 // folder is read one level deep and only files with log names are kept. It
 // returns an outcome (a refusal or a reason) instead of files when the path
 // cannot be used.
-func locateFiles(fsys discover.FS, clean string) ([]locateFile, *locateOutcome) {
+func locateFiles(ctx context.Context, fsys discover.FS, clean string) ([]locateFile, *locateOutcome) {
 	if fsys == nil {
 		return nil, &locateOutcome{reason: locateCannotOpen}
 	}
@@ -356,7 +388,21 @@ func locateFiles(fsys discover.FS, clean string) ([]locateFile, *locateOutcome) 
 			return &locateOutcome{reason: locateCannotOpen}
 		}
 	}
+	// A worker whose deadline has passed stops at the next step; its answer is
+	// dropped anyway.
+	timedOut := func() *locateOutcome {
+		if ctx.Err() != nil {
+			return &locateOutcome{reason: locateTimedOut}
+		}
+		return nil
+	}
+	if out := timedOut(); out != nil {
+		return nil, out
+	}
 	canon, reparse, err := fsys.Final(clean)
+	if out := timedOut(); out != nil {
+		return nil, out
+	}
 	if err != nil {
 		return nil, fail(err)
 	}
@@ -366,6 +412,9 @@ func locateFiles(fsys discover.FS, clean string) ([]locateFile, *locateOutcome) 
 		return nil, &locateOutcome{refusal: locateUnsafe}
 	}
 	info, err := fsys.Lstat(clean)
+	if out := timedOut(); out != nil {
+		return nil, out
+	}
 	if err != nil {
 		return nil, fail(err)
 	}
@@ -376,10 +425,18 @@ func locateFiles(fsys discover.FS, clean string) ([]locateFile, *locateOutcome) 
 	var files []locateFile
 	if info.IsDir {
 		entries, err := fsys.ReadDir(clean)
+		if out := timedOut(); out != nil {
+			return nil, out
+		}
 		if err != nil && !errors.Is(err, discover.ErrTooManyEntries) {
 			return nil, fail(err)
 		}
-		for _, e := range entries {
+		for i, e := range entries {
+			if i%256 == 0 {
+				if out := timedOut(); out != nil {
+					return nil, out
+				}
+			}
 			if e.IsDir || e.Reparse || !discover.LogFileOK(e.Name) {
 				continue
 			}
@@ -424,21 +481,35 @@ func applyLocated(f *discover.Finding, out locateOutcome) {
 	f.Suggest = discover.SuggestNames(out.paths)
 }
 
-// runWithin runs fn and waits at most d for it. When the wait ends first the
-// work is abandoned (its late answer is dropped) and ok is false.
-func runWithin[T any](ctx context.Context, d time.Duration, fn func() T) (out T, ok bool) {
+// runWithin runs fn on a worker and waits at most d for it. The worker gets a
+// context that ends at the deadline (or when ctx ends), so it can stop between
+// steps; a worker stuck inside one step cannot, and keeps its slot until it
+// returns. With no free slot it does not start and returns errLocateBusy. When
+// the wait ends before the worker answers, the late answer is dropped and the
+// error is errLocateAbandoned.
+func runWithin[T any](ctx context.Context, slots chan struct{}, d time.Duration, fn func(context.Context) T) (out T, err error) {
+	select {
+	case slots <- struct{}{}:
+	default:
+		return out, errLocateBusy
+	}
+	wctx, cancel := context.WithTimeout(ctx, d)
+	defer cancel()
 	done := make(chan T, 1)
 	go func() {
+		defer func() { <-slots }()       // freed when the worker ends, not when the request does
 		defer func() { _ = recover() }() // a panic leaves done empty and the wait times out
-		done <- fn()
+		done <- fn(wctx)
 	}()
-	timer := time.NewTimer(d)
-	defer timer.Stop()
 	select {
 	case out = <-done:
-		return out, true
-	case <-timer.C:
-	case <-ctx.Done():
+		return out, nil
+	case <-wctx.Done():
 	}
-	return out, false
+	select {
+	case out = <-done: // finished as the deadline passed
+		return out, nil
+	default:
+	}
+	return out, errLocateAbandoned
 }
