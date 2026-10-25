@@ -4,7 +4,8 @@
  * no state, no clock and no network: appState.svelte.ts holds the trail and does the rerun.
  */
 import { bucketForWindows } from './time';
-import { intervalFits } from './autorun';
+import { intervalFits, scopeProblem } from './autorun';
+import type { Query } from './types';
 import { durationLabel, isManualBucket, isWindow, MIN_VIEW_MS, type ZoomWindow } from './zoom';
 import { zoomCopy, zoomText } from './copy/zoomCopy';
 
@@ -85,7 +86,22 @@ export function backTarget(trail: TrailEntry[], current: { start: string; end: s
   const last = trail[trail.length - 1];
   return last && last.to.start === current.start && last.to.end === current.end ? last : null;
 }
-/** "Back to 7 days": the length of the window the entry returns to. */
+/**
+ * What a click on "Back to ..." needs, or why it does nothing, decided before anything is written (the checks Investigate makes).
+ * `unapplied` is a panel edit not yet run, and `datesValid` false is a date draft that is not a time yet: either would be run along
+ * with the restored window or dropped by the remount, so Back refuses. A restored scope that could not run (no source checked, say)
+ * is refused too: the window, the trail and the pending lens would otherwise change with no run to show for it.
+ * An empty `reason` means there is nothing to undo, and nothing to say.
+ */
+export function planBack(input: { trail: TrailEntry[]; current: { start: string; end: string }; scope: Pick<Query, 'sourceIds' | 'start' | 'end' | 'baselineStart' | 'baselineEnd' | 'bucketSeconds'>; unapplied: boolean; datesValid: boolean }): { ok: true; entry: TrailEntry; trail: TrailEntry[] } | { ok: false; reason: string } {
+  if (!backTarget(input.trail, input.current)) return { ok: false, reason: '' };
+  if (input.unapplied || !input.datesValid) return { ok: false, reason: zoomCopy.backStale };
+  const popped = popTrail(input.trail);
+  if (!popped.entry) return { ok: false, reason: '' };
+  if (scopeProblem({ ...input.scope, ...popped.entry.from }, true)) return { ok: false, reason: zoomCopy.backProblem };
+  return { ok: true, entry: popped.entry, trail: popped.trail };
+}
+/** "Back to 7 days":the length of the window the entry returns to. */
 export function backLabel(entry: TrailEntry): string {
   const { start, end } = rootOf(entry.from);
   return zoomText.backTo(durationLabel(end - start));

@@ -243,8 +243,49 @@ test('appState: resetInvestigation clears the trail and Back reopens the lens', 
   assert.match(body('resetInvestigation'), /windowTrail = \[\]/);
   const back = body('backToPreviousWindow');
   assert.match(back, /zoomView\.expect\(/);
-  assert.match(back, /popTrail\(/);
+  assert.match(back, /planBack\(/);
   assert.ok(back.indexOf('Object.assign(query') < back.indexOf('controlsResetKey++'));
   assert.doesNotMatch(back, /onScopeChange\(/);
   assert.match(source, /get windowBack\(\) \{ return backTarget\(windowTrail, query\)/);
+});
+
+// Back: the same checks Investigate makes, before anything changes.
+const lensed = p.planInvestigation({ current, view: hour14, runLoading: false, stale: false, trail: [] });
+const afterPromote = { start: lensed.patch.start, end: lensed.patch.end };
+const backInput = (over = {}) => ({ trail: lensed.trail, current: afterPromote, scope: { ...lensed.patch, sourceIds: ['a'] }, unapplied: false, datesValid: true, ...over });
+
+test('planBack restores the entry when nothing is unapplied and the scope is usable', () => {
+  const plan = p.planBack(backInput());
+  assert.equal(plan.ok, true);
+  assert.equal(plan.entry, lensed.trail[0]);
+  assert.deepEqual(plan.trail, []);
+});
+
+test('planBack refuses with the Investigate wording while the panel has unapplied edits or an unfinished date', () => {
+  assert.deepEqual(p.planBack(backInput({ unapplied: true })), { ok: false, reason: zoomCopy.backStale });
+  assert.deepEqual(p.planBack(backInput({ datesValid: false })), { ok: false, reason: zoomCopy.backStale });
+  assert.equal(zoomCopy.backStale, zoomCopy.investigateStale);
+});
+
+test('planBack refuses, and says why, when the restored scope could not run (no source checked)', () => {
+  const plan = p.planBack(backInput({ scope: { ...lensed.patch, sourceIds: [] } }));
+  assert.deepEqual(plan, { ok: false, reason: zoomCopy.backProblem });
+  assert.ok(allZoomStrings().includes(zoomCopy.backProblem));
+  assert.ok(allZoomStrings().includes(zoomCopy.backStale));
+  for (const word of ['cause', 'because', 'due to', 'waiting on', 'wait for', 'blocked by', 'led to', 'result in', 'result from', 'responsible for', 'proven', 'proof']) {
+    assert.ok(!zoomCopy.backProblem.toLowerCase().includes(word), word);
+  }
+});
+
+test('planBack does nothing, silently, when the window is no longer the one the promotion made', () => {
+  assert.deepEqual(p.planBack(backInput({ current: { start: afterPromote.start, end: iso(at(afterPromote.end) + MIN) } })), { ok: false, reason: '' });
+  assert.deepEqual(p.planBack(backInput({ trail: [] })), { ok: false, reason: '' });
+});
+
+test('appState: Back plans first, says why it refused, and drops a lens that has no run to wait for', () => {
+  const back = body('backToPreviousWindow');
+  assert.ok(back.indexOf('planBack(') >= 0 && back.indexOf('planBack(') < back.indexOf('Object.assign(query'));
+  assert.ok(back.indexOf('planBack(') < back.indexOf('zoomView.expect('), 'nothing is armed before the plan is accepted');
+  assert.match(back, /zoomView\.notify\(/);
+  assert.match(back, /cancelExpect\(/);
 });

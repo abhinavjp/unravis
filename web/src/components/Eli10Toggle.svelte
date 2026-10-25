@@ -5,9 +5,10 @@
   let { menu = false }: { menu?: boolean } = $props();
 </script>
 
-<label class="eli10-toggle">
+<label class="eli10-toggle" class:in-bar={!menu}>
   <input type="checkbox" checked={eli10.on} role={menu ? 'menuitemcheckbox' : undefined} onchange={(event) => eli10.set(event.currentTarget.checked)} />
-  <span>Explain simply</span>
+  <!-- In the bar below 1320px the words shrink to "Simple"; the full name stays for screen readers. -->
+  <span class="full">Explain simply</span>{#if !menu}<span class="short" aria-hidden="true">Simple</span>{/if}
 </label>
 
 <style>
@@ -15,4 +16,9 @@
   .eli10-toggle:hover { color: var(--text); }
   .eli10-toggle input { margin: 0; accent-color: var(--accent); cursor: pointer; }
   .eli10-toggle:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+  .short { display: none; }
+  @media (max-width: 1319px) {
+    .in-bar .full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .in-bar .short { display: inline; }
+  }
 </style>

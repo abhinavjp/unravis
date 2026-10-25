@@ -241,3 +241,21 @@ test('the header folds Explain simply into the More menu as a menu item checkbox
   assert.match(header, /\[role="menuitemcheckbox"\]/, 'arrow keys reach it');
   assert.match(read('src/components/Eli10Toggle.svelte'), /role=\{menu \? 'menuitemcheckbox' : undefined\}/);
 });
+
+test('Enter toggles the Explain simply menu item, and arrow keys still move', () => {
+  const header = read('src/components/AppHeader.svelte');
+  const handler = header.slice(header.indexOf('function onMenuKey'), header.indexOf('$effect'));
+  assert.match(handler, /event\.key === 'Enter'[^\n]*type === 'checkbox'[^\n]*click\(\)/, 'Enter clicks the focused checkbox');
+  assert.ok(handler.indexOf("'Enter'") < handler.indexOf('nextMenuIndex('), 'Enter is handled before the arrow keys');
+  assert.match(handler, /nextMenuIndex\(/);
+});
+
+test('the header keeps the reference time from 1200px and shortens the switch label below 1320px', () => {
+  const header = read('src/components/AppHeader.svelte');
+  assert.match(header, /@media \(min-width: 1200px\) \{ \.reference \{ display: inline; \}/);
+  const toggle = read('src/components/Eli10Toggle.svelte');
+  assert.match(toggle, /max-width: 1319px/);
+  assert.match(toggle, /<span class="short" aria-hidden="true">/);
+  assert.match(toggle, /<span class="full">Explain simply<\/span>/, 'the full name stays in the accessible name');
+  assert.doesNotMatch(toggle.slice(toggle.indexOf('<style>')), /display: none[^}]*\.full|\.full[^}]*display: none/, 'the full label is clipped, not removed');
+});
