@@ -144,3 +144,30 @@ export function evidenceTabs(context: EvidenceContext): EvidenceTab[] {
   if (context.scoped) tabs.push({ id: 'breakdown', label: 'Breakdown' });
   return tabs;
 }
+
+/** The four More filters groups that carry a count. The When group has no chips: the time windows are not filters in use. */
+export type PanelGroup = 'what' | 'details' | 'ranges' | 'chart';
+
+const panelGroupOf: Record<string, PanelGroup> = {
+  kind: 'what', outcome: 'what', controller: 'what', action: 'what', operation: 'what', completion: 'what',
+  userIds: 'details', uiVersions: 'details', userIps: 'details', statusCodes: 'details', userAgentContains: 'details', urlContains: 'details', auditId: 'details',
+  metric: 'chart',
+  ...Object.fromEntries(Object.keys(rangeLabels).map(key => [key, 'ranges' as PanelGroup]))
+};
+
+/** How many active chips each panel group holds. A chip with an id this table does not know throws, so a new chip cannot silently drop out of the counts. */
+export function panelGroupCounts(chips: readonly FilterChip[]): Record<PanelGroup, number> {
+  const counts: Record<PanelGroup, number> = { what: 0, details: 0, ranges: 0, chart: 0 };
+  for (const chip of chips) {
+    const group = Object.hasOwn(panelGroupOf, chip.id) ? panelGroupOf[chip.id] : undefined;
+    if (!group) throw new Error(`No More filters group for chip "${chip.id}"`);
+    counts[group]++;
+  }
+  return counts;
+}
+
+/** The count line at the top of the panel. */
+export const filtersInUseText = (count: number): string => count === 0 ? 'No filters in use' : count === 1 ? '1 filter in use' : `${count} filters in use`;
+
+/** The kind the "polling type is unknown" checkbox sets. Unchecking returns to plain HTTP, so the bar's HTTP segment lights up again. */
+export const unknownKindToggle = (checked: boolean): Query['kind'] => checked ? 'http_unknown' : 'http';
