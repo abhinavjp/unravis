@@ -27,3 +27,11 @@ func (W3C) ProbeTime(line []byte, _ importer.Options) (time.Time, bool) {
 }
 
 var _ importer.TimeProber = W3C{}
+
+// ProbeTime implements importer.TimeProber. An HTTP.sys error log row starts
+// with the same "yyyy-mm-dd hh:mm:ss" stamp (UTC) as a W3C row.
+func (HTTPERR) ProbeTime(line []byte, opts importer.Options) (time.Time, bool) {
+	return W3C{}.ProbeTime(line, opts)
+}
+
+var _ importer.TimeProber = HTTPERR{}

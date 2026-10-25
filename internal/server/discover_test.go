@@ -1242,3 +1242,112 @@ func TestDiscoverRoutesNeedTheTokenAndALocalOrigin(t *testing.T) {
 		t.Error("a refused request had an effect")
 	}
 }
+
+/* ------------------------------------------------------- window on any source */
+
+const discHTTPERRHead = "#Software: Microsoft HTTP API 2.0\n#Version: 1.0\n#Date: 2001-09-11 00:00:00\n" +
+	"#Fields: date time c-ip c-port s-ip s-port cs-version cs-method cs-uri sc-status s-siteid s-reason s-queuename\n"
+
+func discHTTPERRRow(stamp string) string {
+	return stamp + " 192.0.2.50 51000 192.0.2.10 443 HTTP/1.1 GET /api/orders 503 1 QueueFull pool-a\n"
+}
+
+// addHTTPERR puts a synthetic HTTP.sys error log in its default folder, so the
+// scan finds it as an iis-httperr finding.
+func (f *discFix) addHTTPERR(content string) {
+	f.t.Helper()
+	path := `C:\Windows\System32\LogFiles\HTTPERR\httperr1.log`
+	f.fe.FS.AddFile(path, int64(len(content)), discDay, []byte(content))
+	f.op.put(path, content, discDay)
+}
+
+func (f *discFix) httperrFinding(sc scanDTO) discover.Finding {
+	return findingWhere(f.t, sc, "iis-httperr", func(fd discover.Finding) bool { return fd.Importer == "iis-httperr" })
+}
+
+// A window that holds none of the log's rows adds nothing and stores nothing.
+func TestDiscoverWindowOutsideTheLogAddsNothing(t *testing.T) {
+	f := newDiscFix(t, nil)
+	f.addHTTPERR(discHTTPERRHead + discHTTPERRRow("2001-09-11 08:00:01") + discHTTPERRRow("2001-09-11 10:00:02") + discHTTPERRRow("2001-09-11 12:00:03"))
+	cid := f.e.newCase("c")
+	sid, sc := f.scan()
+	id := f.httperrFinding(sc).ID
+
+	after := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	f.wantFailed(f.importJobs(cid, sid, []string{id}, after, after.Add(48*time.Hour))[0], http.StatusConflict, "duplicate")
+	before := time.Date(2001, 8, 1, 0, 0, 0, 0, time.UTC)
+	f.wantFailed(f.importJobs(cid, sid, []string{id}, before, before.Add(48*time.Hour))[0], http.StatusConflict, "duplicate")
+	if evs, _ := f.e.eventsOf(cid, ""); len(evs) != 0 {
+		t.Fatalf("events = %d, want none", len(evs))
+	}
+	if n := len(f.e.importsOf(cid)); n != 0 {
+		t.Fatalf("imports = %d, want none", n)
+	}
+	// The refusal stored nothing, so the same bytes still import in a window that holds them.
+	res := f.wantDone(f.importJobs(cid, sid, []string{id}, discFrom, discTo)[0])
+	if res.Record == nil || res.Record.Rows != 3 {
+		t.Fatalf("record = %+v, want all three rows", res.Record)
+	}
+}
+
+func TestDiscoverWindowKeepsOnlyTheRowsInside(t *testing.T) {
+	f := newDiscFix(t, nil)
+	f.addHTTPERR(discHTTPERRHead + discHTTPERRRow("2001-09-11 08:00:01") + discHTTPERRRow("2001-09-11 10:00:02") +
+		discHTTPERRRow("2001-09-11 10:00:04") + discHTTPERRRow("2001-09-11 12:00:03"))
+	cid := f.e.newCase("c")
+	sid, sc := f.scan()
+	from, to := time.Date(2001, 9, 11, 9, 0, 0, 0, time.UTC), time.Date(2001, 9, 11, 11, 0, 0, 0, time.UTC)
+	res := f.wantDone(f.importJobs(cid, sid, []string{f.httperrFinding(sc).ID}, from, to)[0])
+	if res.Record == nil || res.Record.Rows != 2 {
+		t.Fatalf("record = %+v, want the two rows inside the window", res.Record)
+	}
+	evs, _ := f.e.eventsOf(cid, "")
+	if len(evs) != 2 {
+		t.Fatalf("events = %d, want 2", len(evs))
+	}
+	for _, e := range evs {
+		if e.Start.Before(from) || !e.Start.Before(to) {
+			t.Errorf("event at %v is outside the window", e.Start)
+		}
+	}
+}
+
+// A source with no line-time probe cannot be cut by time before it is read, so
+// the import itself drops what is outside the window, counts it and says so.
+func TestImportRunWindowFiltersAnImporterWithoutAProbe(t *testing.T) {
+	toy := toyImporter{name: "toy", score: 90}
+	if _, ok := importer.ProbeFunc(toy, importer.Options{}); ok {
+		t.Fatal("the stand-in importer has a prober")
+	}
+	data := toyCSV(toyRow(5, "web-a", "a", 1), toyRow(10, "web-a", "b", 1), toyRow(20, "web-a", "c", 1), toyRow(50, "web-a", "d", 1))
+	at := func(sec int) time.Time { return time.Date(2001, 1, 1, 0, 0, sec, 0, time.UTC) }
+	run := func(win importer.Window) ([]evidence.Event, importer.Report, error) {
+		opts := importer.Options{Host: &importer.HostHint{Label: "web-a"}, Window: win}
+		var got []evidence.Event
+		rep, err := importRun(context.Background(), toy, opts, false, new(string))(strings.NewReader(data), func(e evidence.Event) error {
+			got = append(got, e)
+			return nil
+		})
+		return got, rep, err
+	}
+
+	evs, rep, err := run(importer.Window{From: at(8), To: at(30)})
+	if err != nil || len(evs) != 2 || rep.Emitted != 2 || rep.Rows != 2 {
+		t.Fatalf("window inside: events %d emitted %d rows %d err %v", len(evs), rep.Emitted, rep.Rows, err)
+	}
+	if !rep.First.Equal(at(10)) || !rep.Last.Equal(at(20)) {
+		t.Errorf("coverage = %v..%v, want the kept rows", rep.First, rep.Last)
+	}
+	if len(rep.KnownGaps) != 1 || rep.KnownGaps[0] != importer.GapOutsideWindow {
+		t.Errorf("known gaps = %v, want the outside-window gap", rep.KnownGaps)
+	}
+
+	if _, _, err := run(importer.Window{From: at(55), To: at(59)}); !errors.Is(err, importer.ErrOutOfWindow) {
+		t.Fatalf("window outside: err = %v, want ErrOutOfWindow", err)
+	}
+
+	evs, rep, err = run(importer.Window{})
+	if err != nil || len(evs) != 4 || len(rep.KnownGaps) != 0 {
+		t.Fatalf("open window: events %d gaps %v err %v", len(evs), rep.KnownGaps, err)
+	}
+}
