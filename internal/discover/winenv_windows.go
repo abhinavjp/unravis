@@ -368,6 +368,39 @@ func (winServices) List() ([]Service, error) {
 	}
 }
 
+// CommandLine returns the stored command line of one service. It can hold keys
+// and passwords, so callers pass it straight to an extractor, keep only the
+// value that comes back, and never store or log the line.
+func (winServices) CommandLine(service string) (string, error) {
+	m, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+	if err != nil {
+		return "", mapErr("services", err)
+	}
+	defer windows.CloseServiceHandle(m)
+	name, err := windows.UTF16PtrFromString(service)
+	if err != nil {
+		return "", fs.ErrNotExist
+	}
+	h, err := windows.OpenService(m, name, windows.SERVICE_QUERY_CONFIG)
+	if err != nil {
+		return "", mapErr("services", err)
+	}
+	defer windows.CloseServiceHandle(h)
+	var needed uint32
+	err = windows.QueryServiceConfig(h, nil, 0, &needed)
+	if !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) || needed == 0 {
+		return "", mapErr("services", err)
+	}
+	buf := make([]byte, needed)
+	cfg := (*windows.QUERY_SERVICE_CONFIG)(unsafe.Pointer(&buf[0]))
+	if err := windows.QueryServiceConfig(h, cfg, needed, &needed); err != nil {
+		return "", mapErr("services", err)
+	}
+	path := windows.UTF16PtrToString(cfg.BinaryPathName)
+	runtime.KeepAlive(buf)
+	return path, nil
+}
+
 func serviceState(s uint32) string {
 	switch s {
 	case windows.SERVICE_RUNNING:
