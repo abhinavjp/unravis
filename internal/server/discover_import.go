@@ -496,6 +496,19 @@ func (p *discoverPull) importPiece(body io.Reader, name string) (importAnswer, i
 	return importAnswer{}, status, f, false
 }
 
+// isNothingNew says a piece failed only because it holds nothing to add: its
+// bytes are already in the case, or every event lies outside the window. Both
+// count as "nothing new", not as errors.
+func isNothingNew(status int, f caseFailure) bool {
+	return status == http.StatusConflict && (f.Reason == "duplicate" || isOutOfWindow(status, f))
+}
+
+// isOutOfWindow says a piece failed because no event of it lies in the window.
+// Unlike a duplicate its bytes are not in the case, so its mark must not move.
+func isOutOfWindow(status int, f caseFailure) bool {
+	return status == http.StatusConflict && f.Reason == "out-of-window"
+}
+
 // forward ends the job with a failure the shared import wrote.
 func (p *discoverPull) forward(status int, f caseFailure) {
 	p.w.buf.Reset()
@@ -601,8 +614,16 @@ func (p *discoverPull) files() {
 		}
 		hr := &hashingReader{r: &countingReader{ctx: p.ctx, r: rr, n: &p.it.job.read}, h: sha256.New()}
 		ans, status, fl, ok := p.importPiece(hr, meta.File.Base)
-		dup := !ok && status == http.StatusConflict && fl.Reason == "duplicate"
+		dup := !ok && isNothingNew(status, fl)
 		row.BytesSHA256 = hr.sum()
+		if !ok && isOutOfWindow(status, fl) {
+			// No row of the piece lies inside the window and none was stored: the
+			// mark stays put, so a later pull with a wider window still reads them.
+			_ = rr.Close()
+			row.Result = truncateField(fl.Reason)
+			p.audit(row)
+			continue
+		}
 		if !ok && !dup {
 			_ = rr.Close()
 			row.Result = truncateField(fl.Reason)
@@ -619,7 +640,7 @@ func (p *discoverPull) files() {
 		_ = rr.Close()
 		switch {
 		case dup:
-			row.Result = "duplicate"
+			row.Result = truncateField(fl.Reason)
 		case cerr != nil:
 			row.Result = "mark-failed"
 		default:
@@ -647,7 +668,7 @@ func (p *discoverPull) wholeFile(f scanFile, key localread.FileKey) bool {
 	defer rc.Close()
 	hr := &hashingReader{r: &countingReader{ctx: p.ctx, r: &pacedReader{ctx: p.ctx, r: rc, lim: p.limiter()}, n: &p.it.job.read}, h: sha256.New()}
 	ans, status, fl, ok := p.importPiece(hr, info.Base)
-	dup := !ok && status == http.StatusConflict && fl.Reason == "duplicate"
+	dup := !ok && isNothingNew(status, fl)
 	row := casestore.DiscoverRead{
 		PathHMAC: hex.EncodeToString(key.PathHMAC[:]), RangeEnd: info.Size, FileSize: info.Size, FileModified: info.ModTime,
 		BytesSHA256: hr.sum(),
@@ -656,7 +677,7 @@ func (p *discoverPull) wholeFile(f scanFile, key localread.FileKey) bool {
 	case ok:
 		row.Result = "ok"
 	case dup:
-		row.Result = "duplicate"
+		row.Result = truncateField(fl.Reason)
 	default:
 		row.Result = truncateField(fl.Reason)
 	}
@@ -769,19 +790,23 @@ func (p *discoverPull) channel() {
 	}
 	hr := &hashingReader{r: &countingReader{ctx: p.ctx, r: io.LimitReader(body, cw.n), n: &p.it.job.read}, h: sha256.New()}
 	ans, status, fl, ok := p.importPiece(hr, channelFileName(name))
-	dup := !ok && status == http.StatusConflict && fl.Reason == "duplicate"
+	dup := !ok && isNothingNew(status, fl)
 	row.BytesSHA256 = hr.sum()
 	switch {
 	case ok:
 		row.Result = "ok"
 	case dup:
-		row.Result = "duplicate"
+		row.Result = truncateField(fl.Reason)
 	default:
 		row.Result = truncateField(fl.Reason)
 	}
 	p.audit(row)
 	if !ok && !dup {
 		p.forward(status, fl)
+		return
+	}
+	if !ok && isOutOfWindow(status, fl) {
+		p.done() // nothing stored: the record mark stays, a wider window can read them
 		return
 	}
 	var lastLine time.Time

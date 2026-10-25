@@ -871,6 +871,21 @@ func randomNonce() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
+// trimToWindow makes a report describe what was stored after the window dropped
+// events: the row and event counts, the coverage, and a known gap saying so.
+func trimToWindow(rep *importer.Report, kept, dropped int64, first, last time.Time) {
+	rep.Emitted = kept
+	if rep.Rows -= dropped; rep.Rows < kept {
+		rep.Rows = kept
+	}
+	rep.First, rep.Last = first.UTC(), last.UTC()
+	if rep.Quality.CoverageFirst != nil || rep.Quality.CoverageLast != nil {
+		f, l := rep.First, rep.Last
+		rep.Quality.CoverageFirst, rep.Quality.CoverageLast = &f, &l
+	}
+	rep.Gap(importer.GapOutsideWindow)
+}
+
 // importRun builds the importer side of one import. preview parses the whole
 // file, hashes it, and ends with errPreviewDone so the store keeps nothing.
 func importRun(ctx context.Context, imp importer.Importer, opts importer.Options, preview bool, sum *string) casestore.RunFunc {
@@ -894,7 +909,25 @@ func importRun(ctx context.Context, imp importer.Importer, opts importer.Options
 		}
 		// A run that swallows an emit error must still fail.
 		var emitErr error
+		// The window applies to every importer, whether or not it filters itself and
+		// whether or not the file could be sliced by time first: an event outside it
+		// is dropped here and counted, never stored.
+		win := opts.Window
+		windowed := !win.From.IsZero() || !win.To.IsZero()
+		var kept, dropped int64
+		var first, last time.Time
 		wrapped := func(ev evidence.Event) error {
+			if windowed && !win.Overlaps(ev.Start, ev.End) {
+				dropped++
+				return nil
+			}
+			kept++
+			if first.IsZero() || ev.Start.Before(first) {
+				first = ev.Start
+			}
+			if ev.End.After(last) {
+				last = ev.End
+			}
 			if err := emit(ev); err != nil {
 				if emitErr == nil {
 					emitErr = err
@@ -912,6 +945,13 @@ func importRun(ctx context.Context, imp importer.Importer, opts importer.Options
 		}
 		if err == nil {
 			err = importer.Finish(rep, opts.Limits)
+		}
+		if err == nil && windowed && dropped > 0 {
+			if kept == 0 {
+				err = importer.ErrOutOfWindow
+			} else {
+				trimToWindow(&rep, kept, dropped, first, last)
+			}
 		}
 		if err != nil {
 			return fail(rep, err)
@@ -1241,6 +1281,8 @@ func (h *handler) writeImportError(w http.ResponseWriter, err error, body *track
 			reason = importer.ReasonUnsupportedFormat
 		}
 		writeJSON(w, http.StatusUnprocessableEntity, caseFailure{Error: "The file was refused: " + reason.Text() + ".", Reason: string(reason), Column: importer.SafeColumn(quarantine.Column)}, 4096)
+	case errors.Is(err, importer.ErrOutOfWindow):
+		writeCaseFailure(w, http.StatusConflict, "out-of-window", "Nothing in the file falls inside the chosen time window.")
 	case errors.Is(err, importer.ErrUnknownHost):
 		writeCaseFailure(w, http.StatusUnprocessableEntity, string(importer.ReasonUnknownHost), importer.ReasonUnknownHost.Text())
 	case errors.Is(err, importer.ErrTimezoneUnlabelled):

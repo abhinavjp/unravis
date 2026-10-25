@@ -12,6 +12,10 @@ var (
 	ErrQuarantine         = errors.New("file quarantined")
 	ErrTimezoneUnlabelled = errors.New("time zone not stated")
 	ErrUnknownHost        = errors.New("unknown host")
+	// ErrOutOfWindow ends an import whose events all lie outside the requested
+	// time window. Nothing is stored, so a later pull with a wider window can
+	// still read the same bytes.
+	ErrOutOfWindow = errors.New("no events inside the time window")
 )
 
 // LimitError says which limit was passed. Limit is a fixed word ("bytes",

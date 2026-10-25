@@ -30,7 +30,7 @@ func TestProberSet(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	want := []string{"iis-w3c", "log4net-text", "mel-json", "mongod-json", "nlog-text", "serilog-clef", "serilog-text"}
+	want := []string{"iis-httperr", "iis-w3c","log4net-text", "mel-json", "mongod-json", "nlog-text", "serilog-clef", "serilog-text"}
 	if len(got) != len(want) {
 		t.Fatalf("probers %v, want %v", got, want)
 	}
@@ -72,6 +72,9 @@ func TestProbeTime(t *testing.T) {
 		{"iis not a date", "iis-w3c", "2001-13-45 08:30:15 GET /x 200", none, ""},
 		{"iis glued", "iis-w3c", "2001-09-11 08:30:15GET /x", none, ""},
 		{"iis empty", "iis-w3c", "", none, ""},
+		{"httperr row", "iis-httperr", "2001-09-11 08:30:15 192.0.2.50 51000 192.0.2.10 443 HTTP/1.1 GET /x 503 1 QueueFull pool-a", none, "2001-09-11T08:30:15Z"},
+		{"httperr directive", "iis-httperr", "#Fields: date time c-ip", none, ""},
+		{"httperr empty", "iis-httperr", "", none, ""},
 
 		{"serilog text", "serilog-text", "2001-10-25 14:02:30.950 +13:00 [INF] SENTINEL-7f3a", none, "2001-10-25T01:02:30.95Z"},
 		{"serilog text continuation", "serilog-text", "   at Synthetic.Api.A()", none, ""},

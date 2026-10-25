@@ -47,6 +47,17 @@ func (w Window) Contains(t time.Time) bool {
 	return (w.From.IsZero() || !t.Before(w.From)) && (w.To.IsZero() || !t.After(w.To))
 }
 
+// GapOutsideWindow is the known gap of an import that dropped events outside
+// its Window.
+const GapOutsideWindow = "events outside the chosen time window were not imported"
+
+// Overlaps reports whether an event spanning [start, end] touches the window
+// (inclusive); an unset bound is open. It is the rule importers use to honour
+// Options.Window.
+func (w Window) Overlaps(start, end time.Time) bool {
+	return (w.From.IsZero() || !end.Before(w.From)) && (w.To.IsZero() || !start.After(w.To))
+}
+
 // Options carry everything an importer may know besides the file bytes.
 type Options struct {
 	CaseID, ImportNonce, FileName string                                 // FileName: sanitised base name, display only
