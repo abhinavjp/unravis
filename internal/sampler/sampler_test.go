@@ -714,3 +714,138 @@ func TestOSSourceOffWindows(t *testing.T) {
 		t.Errorf("OSSource = %v", err)
 	}
 }
+
+// --- Stop is bounded (security review F2) ---------------------------------
+
+func shortStop(t *testing.T) {
+	t.Helper()
+	old := stopTimeout
+	stopTimeout = 150 * time.Millisecond
+	t.Cleanup(func() { stopTimeout = old })
+}
+
+func waitDone(t *testing.T, s *Sampler) {
+	t.Helper()
+	select {
+	case <-s.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the sampler never finished once the blocker was released")
+	}
+}
+
+func waitGoroutines(t *testing.T, before int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := runtime.NumGoroutine(); n > before {
+		t.Errorf("%d goroutines, %d before: the sampler leaked", n, before)
+	}
+}
+
+func TestStopDoesNotHangOnABlockedImport(t *testing.T) {
+	shortStop(t)
+	before := runtime.NumGoroutine()
+	release := make(chan struct{})
+	var mu sync.Mutex
+	imports := 0
+	clk := newFakeClock()
+	s := startFake(t, newFake(smallServer), clk, &importLog{}, func(c *Config) {
+		c.FlushEvery = time.Second // every tick cuts a batch
+		c.Import = func(name string, body []byte) error {
+			mu.Lock()
+			imports++
+			mu.Unlock()
+			<-release
+			return nil
+		}
+	})
+	for i := 1; i <= 3; i++ {
+		clk.send(t, s, at(15*i), i)
+	}
+	start := time.Now()
+	s.Stop()
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("Stop took %v with the import blocked", d)
+	}
+	if st := s.Status(); st.Running || st.Stop != StopUser {
+		t.Errorf("status after a bounded stop: %+v", st)
+	}
+	select {
+	case <-s.Done():
+		t.Fatal("Done closed while the import is still blocked")
+	default:
+	}
+	close(release)
+	waitDone(t, s)
+	mu.Lock()
+	n := imports
+	mu.Unlock()
+	if n < 2 {
+		t.Errorf("%d imports after release, want the queued batches and the last one", n)
+	}
+	if st := s.Status(); st.Running || st.Stop != StopUser {
+		t.Errorf("status after release: %+v", st)
+	}
+	waitGoroutines(t, before)
+}
+
+// gatedSource blocks Host calls while gate is set.
+type gatedSource struct {
+	*fakeSource
+	mu      sync.Mutex
+	block   bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *gatedSource) Host() (HostSample, error) {
+	g.mu.Lock()
+	b := g.block
+	g.mu.Unlock()
+	if b {
+		select {
+		case g.entered <- struct{}{}:
+		default:
+		}
+		<-g.release
+	}
+	return g.fakeSource.Host()
+}
+
+func TestStopDoesNotHangOnABlockedSourceRead(t *testing.T) {
+	shortStop(t)
+	before := runtime.NumGoroutine()
+	g := &gatedSource{fakeSource: newFake(smallServer), entered: make(chan struct{}, 1), release: make(chan struct{})}
+	clk, log := newFakeClock(), &importLog{}
+	s := startFake(t, g.fakeSource, clk, log, func(c *Config) { c.Source = g })
+	clk.send(t, s, at(15), 1)
+	g.mu.Lock()
+	g.block = true
+	g.mu.Unlock()
+	select {
+	case clk.c <- at(30): // the tick that blocks in Host
+	case <-time.After(5 * time.Second):
+		t.Fatal("the sampler does not take a tick")
+	}
+	select {
+	case <-g.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Host was not reached")
+	}
+	start := time.Now()
+	s.Stop()
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("Stop took %v with the source blocked", d)
+	}
+	if st := s.Status(); st.Running || st.Stop != StopUser {
+		t.Errorf("status after a bounded stop: %+v", st)
+	}
+	close(g.release)
+	waitDone(t, s)
+	if log.count() != 1 {
+		t.Errorf("%d batches, want the one written at the stop", log.count())
+	}
+	waitGoroutines(t, before)
+}

@@ -34,6 +34,10 @@ const (
 	queueLen = 8
 )
 
+// stopTimeout bounds how long Stop waits for the last batch. A variable so
+// tests can shorten it.
+var stopTimeout = 5 * time.Second
+
 // StopReason says why the sampler stopped.
 type StopReason string
 
@@ -176,9 +180,23 @@ func start(cfg Config, newTicker func(time.Duration) (<-chan time.Time, func()),
 
 // Stop asks the sampler to stop, waits for the last batch to be imported, and
 // returns. It may be called more than once.
+//
+// The wait is bounded (five seconds): a blocked Import callback or a blocked
+// Source read cannot hold the caller. When the bound passes, Stop returns with
+// the stop reason kept and Status.Running false; the last batch is then sent
+// by a goroutine that ends, and closes Done, once the callback or the read
+// returns. Nothing is lost or leaked once the blocker is released.
 func (s *Sampler) Stop() {
 	s.stop(StopUser, nil)
-	<-s.done
+	t := time.NewTimer(stopTimeout)
+	defer t.Stop()
+	select {
+	case <-s.done:
+	case <-t.C:
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
+	}
 }
 
 // Done is closed when the sampler has stopped and its last batch is imported.
@@ -211,18 +229,8 @@ func (s *Sampler) run() {
 		endBackground()
 		runtime.UnlockOSThread()
 	}()
-	defer close(s.done)
-	defer func() {
-		s.mu.Lock()
-		s.running = false
-		s.mu.Unlock()
-	}()
 	defer s.cfg.Source.Close()
-	defer func() { // the last batch, then wait for the import goroutine
-		s.flush(true)
-		close(s.batches)
-		<-s.upDone
-	}()
+	defer s.finish() // the last batch goes out on its own goroutine
 
 	tick, stopTicker := s.newTicker(time.Duration(s.cfg.IntervalSeconds) * time.Second)
 	defer stopTicker()
@@ -259,7 +267,7 @@ func (s *Sampler) run() {
 				return
 			}
 			if now.Sub(lastFlush) >= s.cfg.FlushEvery || s.eng.batchRows >= maxBatchRows {
-				if !s.flush(false) {
+				if !s.flush() {
 					return
 				}
 				lastFlush = now
@@ -268,19 +276,37 @@ func (s *Sampler) run() {
 	}
 }
 
+// finish ends the run. It cuts the last batch on the sampling goroutine, which
+// owns the engine, then hands the send to a goroutine of its own: the send waits
+// when the queue is full, and a blocked Import callback must not hold the
+// sampling goroutine or its locked thread. That goroutine closes the queue,
+// waits for the import goroutine, then marks the run over and closes done.
+func (s *Sampler) finish() {
+	name, body, ok := s.eng.cut()
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			s.running = false
+			s.mu.Unlock()
+			close(s.done)
+		}()
+		if ok {
+			s.batches <- batch{name, body}
+		}
+		close(s.batches)
+		<-s.upDone
+	}()
+}
+
 // flush cuts the batch and queues it for the import goroutine. A full queue
-// stops the sampler (the callback is not keeping up); at the end the send waits,
-// since nothing more is sampled. It reports whether sampling can go on.
-func (s *Sampler) flush(final bool) bool {
+// stops the sampler (the callback is not keeping up). It reports whether
+// sampling can go on.
+func (s *Sampler) flush() bool {
 	name, body, ok := s.eng.cut()
 	if !ok {
 		return true
 	}
 	b := batch{name, body}
-	if final {
-		s.batches <- b
-		return false
-	}
 	select {
 	case s.batches <- b:
 		return true

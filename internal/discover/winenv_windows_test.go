@@ -3,10 +3,14 @@
 package discover
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 // tempRoot returns a temp folder whose path passes the shape check. A user
@@ -111,5 +115,105 @@ func TestSystemEnvMachineAndRegistry(t *testing.T) {
 	}
 	if _, err := env.Procs.List(); err != nil {
 		t.Fatalf("process list: %v", err)
+	}
+}
+
+// The handle check after the open refuses a file that is not the one approved
+// (security review F5): a different file at the expected path, or a path that
+// differs from the handle's own.
+func TestVerifyOpenedRefusesASwappedFile(t *testing.T) {
+	root := tempRoot(t)
+	a := filepath.Join(root, "a.log")
+	b := filepath.Join(root, "b.log")
+	for _, p := range []string{a, b} {
+		if err := os.WriteFile(p, []byte("2001-10-25 SENTINEL-7f3a-not-read\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fsys := winFS{}
+	want, err := fsys.Stat(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := func(p string) (windows.Handle, *windows.ByHandleFileInformation) {
+		t.Helper()
+		u, _ := windows.UTF16PtrFromString(p)
+		h, err := windows.CreateFile(u, windows.GENERIC_READ, shareAll, nil, windows.OPEN_EXISTING,
+			windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { windows.CloseHandle(h) })
+		var info windows.ByHandleFileInformation
+		if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+			t.Fatal(err)
+		}
+		return h, &info
+	}
+
+	ha, ia := open(a)
+	if err := verifyOpened(ha, ia, a, want); err != nil {
+		t.Fatalf("the approved file was refused: %v", err)
+	}
+	hb, ib := open(b)
+	if err := verifyOpened(hb, ib, a, want); ReasonFromError(err) != ReasonUnsafePath {
+		t.Fatalf("another file under the approved path: %v", err)
+	}
+	// Same final path but another identity (the file was replaced).
+	other := want
+	other.FileID++
+	if err := verifyOpened(ha, ia, a, other); ReasonFromError(err) != ReasonUnsafePath {
+		t.Fatalf("a changed file identity: %v", err)
+	}
+	// Head still reads an ordinary file.
+	if got, err := fsys.Head(a, 4); err != nil || string(got) != "2001" {
+		t.Fatalf("Head %q %v", got, err)
+	}
+}
+
+// ReadDir checks the leaf only (see its comment), so a folder below a junction
+// lists. What keeps a scan out is the check callers run first: Final reports the
+// junction, and the applog detector, which does that check, refuses the folder.
+func TestJunctionParentIsRefusedWhereReadDirCallersRelyOnIt(t *testing.T) {
+	env, err := NewSystemEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := tempRoot(t)
+	target := filepath.Join(root, "real")
+	sub := filepath.Join(target, "sub")
+	link := filepath.Join(root, "link")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `<configuration><log4net><appender type="FileAppender"><file value="logs\app.log"/></appender></log4net></configuration>`
+	if err := os.WriteFile(filepath.Join(sub, "web.config"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
+		t.Skipf("cannot create a junction here: %v %s", err, out)
+	}
+	through := filepath.Join(link, "sub")
+
+	canon, reparse, err := env.FS.Final(through)
+	if err != nil || !reparse || strings.EqualFold(canon, through) {
+		t.Fatalf("Final of a folder below a junction: %q reparse=%v err=%v", canon, reparse, err)
+	}
+	fs, gaps := NewAppLog(nil, through).Detect(context.Background(), env)
+	if len(fs) != 0 {
+		t.Fatalf("a scan went through the junction: %v", fs)
+	}
+	var refused bool
+	for _, g := range gaps {
+		if g.Reason == ReasonUnsafePath {
+			refused = true
+		}
+	}
+	if !refused {
+		t.Fatalf("want an unsafe-path gap, got %v", gaps)
+	}
+	// The same folder by its real path is listed normally.
+	if _, err := env.FS.ReadDir(sub); err != nil {
+		t.Fatalf("ReadDir of the real folder: %v", err)
 	}
 }

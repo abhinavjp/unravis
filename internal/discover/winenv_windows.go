@@ -142,6 +142,13 @@ func (f winFS) Stat(path string) (FileInfo, error) {
 	}, nil
 }
 
+// ReadDir lists a directory. Contract: it checks the leaf only. The leaf must
+// be a plain directory (not a reparse point), but a junction or symlink among
+// the ancestors is followed, as are Lstat and Stat. A caller that must not
+// cross a reparse point confirms the folder first, with Final (reparse false
+// and canonical equal to the path, ignoring case) or a checkDir-style helper,
+// and lists subfolders only after skipping entries whose Reparse is true. Every
+// detector does this before it lists. Head, by contrast, runs that check itself.
 func (f winFS) ReadDir(path string) ([]FileInfo, error) {
 	clean, _, err := f.check("readdir", path)
 	if err != nil {
@@ -213,22 +220,51 @@ func (f winFS) Final(path string) (string, bool, error) {
 		return "", false, mapErr("final", err)
 	}
 	defer windows.CloseHandle(h)
-	buf := make([]uint16, 1024)
-	n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), 0)
+	name, err := handleFinalPath(h)
 	if err != nil {
 		return "", false, mapErr("final", err)
 	}
+	return name, reparse, nil
+}
+
+// handleFinalPath is the name the system gives an open handle, without the
+// `\\?\` prefix. A UNC result and an over-long one are refused.
+func handleFinalPath(h windows.Handle) (string, error) {
+	buf := make([]uint16, 1024)
+	n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), 0)
+	if err != nil {
+		return "", err
+	}
 	if int(n) > len(buf) {
-		return "", false, unsafePathError("length")
+		return "", unsafePathError("length")
 	}
 	name := windows.UTF16ToString(buf[:n])
 	switch {
 	case strings.HasPrefix(name, `\\?\UNC\`):
-		return "", false, unsafePathError("unc")
+		return "", unsafePathError("unc")
 	case strings.HasPrefix(name, `\\?\`):
 		name = name[4:]
 	}
-	return name, reparse, nil
+	return name, nil
+}
+
+// verifyOpened checks, after a file is open, that the handle is the file the
+// path check approved: its final path is still the canonical one and its
+// volume and file ID match the identity read before the open. This closes the
+// window between the path checks and CreateFile (security review F5).
+func verifyOpened(h windows.Handle, info *windows.ByHandleFileInformation, clean string, want FileInfo) error {
+	final, err := handleFinalPath(h)
+	if err != nil {
+		return mapErr("head", err)
+	}
+	if !strings.EqualFold(final, clean) {
+		return unsafePathError("swapped")
+	}
+	id := uint64(info.FileIndexHigh)<<32 | uint64(info.FileIndexLow)
+	if info.VolumeSerialNumber != want.VolumeSerial || id != want.FileID {
+		return unsafePathError("swapped")
+	}
+	return nil
 }
 
 func (f winFS) Head(path string, n int) ([]byte, error) {
@@ -252,6 +288,10 @@ func (f winFS) Head(path string, n int) ([]byte, error) {
 	if !strings.EqualFold(canonical, clean) {
 		return nil, unsafePathError("alias")
 	}
+	before, err := f.Stat(clean) // identity to hold the open to
+	if err != nil {
+		return nil, err
+	}
 	// Read-only, share-all, no BACKUP_SEMANTICS: an elevated account gets no
 	// extra rights from this open.
 	h, err := windows.CreateFile(p, windows.GENERIC_READ, shareAll, nil, windows.OPEN_EXISTING,
@@ -269,6 +309,9 @@ func (f winFS) Head(path string, n int) ([]byte, error) {
 	}
 	if info.FileAttributes&(windows.FILE_ATTRIBUTE_DIRECTORY|windows.FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
 		return nil, unsafePathError("not-file")
+	}
+	if err := verifyOpened(h, &info, clean, before); err != nil {
+		return nil, err
 	}
 	buf := make([]byte, n)
 	got := 0
