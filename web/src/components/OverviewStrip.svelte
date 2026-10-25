@@ -58,7 +58,7 @@
 </section>
 
 <style>
-  /* Tiles are columns separated by hairlines, not boxes: label, then a large thin figure, then the change. No fills, no side stripes. */
+  /* Tiles are columns separated by hairlines, not boxes: label, then a medium-weight figure, then the change. No fills, no side stripes. */
   .overview-strip .overview-kind { gap: var(--space-3); padding: var(--space-3) 0 0; background: transparent; border: 0; border-top: var(--hairline-width) solid var(--hairline); border-radius: 0; }
   .overview-strip .overview-kind:first-child { padding-top: 0; border-top: 0; }
   .overview-strip .overview-kind .overview-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; }
@@ -66,8 +66,8 @@
   .overview-strip .overview-kind .overview-tile:nth-child(2n + 1) { padding-inline-start: 0; }
   .overview-strip .overview-kind .overview-tile:nth-child(2n) { border-inline-start: var(--hairline-width) solid var(--hairline); }
   .overview-strip .overview-kind .overview-tile:nth-child(n + 3) { border-top: var(--hairline-width) solid var(--hairline); }
-  .overview-strip .overview-kind .overview-tile span { color: var(--text-2); font-size: var(--fs-1); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
-  .overview-strip .overview-kind .overview-tile strong { font-size: var(--fs-6); font-weight: 300; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  .overview-strip .overview-kind .overview-tile span { color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
+  .overview-strip .overview-kind .overview-tile strong { font-size: var(--fs-6); font-weight: 500; line-height: 1.2; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
   .overview-strip .overview-kind .overview-tile small { color: var(--text-2); font-size: var(--fs-2); font-variant-numeric: tabular-nums; }
   @media (min-width: 560px) {
     .overview-strip .overview-kind .overview-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -78,5 +78,6 @@
     .overview-strip .overview-kind .overview-tile:not(:nth-child(4n + 1)) { border-inline-start: var(--hairline-width) solid var(--hairline); }
     .overview-strip .overview-kind .overview-tile:nth-child(n + 5) { border-top: var(--hairline-width) solid var(--hairline); }
   }
+  .overview-strip .overview-kind button.overview-tile:hover:not(:disabled) { background: var(--surface-2); }
   .overview-strip .overview-kind button.overview-tile:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 </style>
