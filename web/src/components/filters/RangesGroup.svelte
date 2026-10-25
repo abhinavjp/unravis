@@ -3,7 +3,8 @@
   import type { Query, RangeKey, NumberRange } from '../../lib/types';
   import { RANGE_FIELDS, buildRange, syncRangeDraft, rangeConflict } from '../../lib/investigation';
 
-  let { query = $bindable(), count = 0 }: { query: Query; count: number } = $props();
+  // hasError lets the panel rail show a problem dot while this group is on a hidden pane.
+  let { query = $bindable(), count = 0, hasError = $bindable(false) }: { query: Query; count: number; hasError?: boolean } = $props();
 
   const rangeMeta: Record<RangeKey, { label: string; describe: string; effect: string }> = {
     observedMs: {
@@ -58,6 +59,7 @@
   );
 
   const rangeNote = $derived(rangeConflict(query));
+  $effect(() => { hasError = !!rangeNote || RANGE_FIELDS.some(field => rangeProblems[field.key].length > 0); });
 
   const setRange = (key: RangeKey, side: 'min' | 'max', text: string, limit: number) => {
     const draft = { ...rangeText[key], [side]: text };
