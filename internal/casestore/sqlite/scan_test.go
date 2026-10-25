@@ -108,8 +108,8 @@ func planOf(t *testing.T, c *Case, where string, args []any) string {
 }
 
 // A case written before the series-key indexes (schema 2) opens, is marked as
-// the current schema, builds the indexes the first time a query asks for a series
-// key, and answers exactly as before.
+// the current schema, builds the indexes in the background (or when a query asks for a series key
+// first), and answers exactly as before.
 func TestVersionTwoCaseBuildsSeriesIndexesLazily(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestStore(t)
@@ -142,21 +142,20 @@ func TestVersionTwoCaseBuildsSeriesIndexesLazily(t *testing.T) {
 	if v := schemaOf(t, c); v != strconv.Itoa(schemaVersion) {
 		t.Fatalf("schema version after migration = %s", v)
 	}
-	if n := indexCount(t, c); n != 0 {
-		t.Fatalf("the migration built %d indexes on open; they are built on first use", n)
-	}
-	// A query without a series key leaves them alone.
-	if got := eachIDs(t, c, casestore.EventQuery{Kinds: []string{"counter"}}); len(got) != 60 {
-		t.Fatalf("plain query returned %d events", len(got))
-	}
-	if n := indexCount(t, c); n != 0 {
-		t.Fatalf("a query without a series key built %d indexes", n)
-	}
+	// The open starts the build in the background; a series query that arrives
+	// meanwhile waits for it, and either way the indexes end up built.
 	if got := eachIDs(t, c, counterQ); !sameSet(got, wantCounter) {
 		t.Fatalf("counter series after migration: %d events, want %d", len(got), len(wantCounter))
 	}
+	deadline := time.Now().Add(10 * time.Second)
+	for indexCount(t, c) != 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
 	if n := indexCount(t, c); n != 2 {
-		t.Fatalf("the first series query left %d indexes, want 2", n)
+		t.Fatalf("after open and a series query there are %d indexes, want 2", n)
+	}
+	if got := eachIDs(t, c, casestore.EventQuery{Kinds: []string{"counter"}}); len(got) != 60 {
+		t.Fatalf("plain query returned %d events", len(got))
 	}
 	if got := eachIDs(t, c, metricQ); !sameSet(got, wantMetric) {
 		t.Fatalf("metric series after migration: %d events, want %d", len(got), len(wantMetric))

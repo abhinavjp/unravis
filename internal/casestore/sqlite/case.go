@@ -73,6 +73,9 @@ type caseState struct {
 	// building them failed (2); attrIdxMu serialises the check and the build.
 	attrIdx   atomic.Int32
 	attrIdxMu sync.Mutex
+	// idxPending is set when open migrated a case from before schema 3: the
+	// load then builds the indexes in the background (see Store.load).
+	idxPending bool
 
 	// stats caches the event counts preferScan reads; statsMu guards it.
 	stats   *evStats
@@ -1144,8 +1147,9 @@ func (c *Case) attrIndexHint(q casestore.EventQuery) string {
 }
 
 // ensureAttrIndexes makes sure the series-key indexes exist. A case imported
-// by this build has them already; a case written before schema 3 gets them here,
-// the first time a query filters on a series key, and the build runs once per
+// by this build has them already; a case written before schema 3 gets them in the
+// background when it is opened, or here at the first query that filters on a
+// series key if that comes first. The build runs once per
 // opened case (it reads every event of the case, so on a very large old case it
 // takes seconds to tens of seconds; the scan budget does not count it). It holds
 // the import lock, so an import or a shutdown waits, and shutdown cancels it.

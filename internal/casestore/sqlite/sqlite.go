@@ -497,6 +497,12 @@ func (s *Store) load(ctx context.Context, id casestore.CaseID) (*caseState, erro
 		keys.Zero()
 		return nil, err
 	}
+	if st.idxPending {
+		// A case from before schema 3 has no series-key indexes. Build them now, in
+		// the background, so the first series query does not stall on a large case;
+		// a query that arrives meanwhile waits for the same build.
+		go (&Case{caseState: st}).ensureAttrIndexes()
+	}
 	return st, nil
 }
 

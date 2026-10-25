@@ -34,6 +34,7 @@ func (c *Case) migrate(ctx context.Context, from int) error {
 	if from >= schemaVersion {
 		return nil
 	}
+	c.idxPending = from < 3
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
