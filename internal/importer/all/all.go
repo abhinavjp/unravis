@@ -10,6 +10,7 @@ import (
 	"api-audit-explorer/internal/importer/mel"
 	"api-audit-explorer/internal/importer/mongodlog"
 	"api-audit-explorer/internal/importer/mongoexports"
+	"api-audit-explorer/internal/importer/nlog"
 	"api-audit-explorer/internal/importer/procsnap"
 	"api-audit-explorer/internal/importer/redis"
 	"api-audit-explorer/internal/importer/schedule"
@@ -49,6 +50,7 @@ func Importers() []importer.Importer {
 		mongoexports.NewMongostat(),
 		log4net.NewText(),
 		log4net.NewXML(),
+		nlog.NewText(),
 		mel.NewConsole(),
 		mel.NewJSON(),
 		mel.NewStdout(),

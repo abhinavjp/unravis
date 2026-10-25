@@ -178,6 +178,7 @@ var exportPolicy = map[string]map[string]attrPolicy{
 	"log4net-xml":  appLogPolicy,
 	"serilog-clef": appLogPolicy,
 	"serilog-text": appLogPolicy,
+	"nlog-text":    appLogPolicy,
 	"mel-console":  appLogPolicy,
 	"mel-json":     appLogPolicy,
 	"ancm-stdout":  appLogPolicy,

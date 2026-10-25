@@ -1,0 +1,6 @@
+2001-10-25 14:02:30.9500|INFO|Synthetic.Api.OrdersController|Request handled
+2001-13-40 14:02:31.0000|INFO|Synthetic.Api.OrdersController|Bad date SENTINEL-7f3a
+2001-10-25 14:02:32.0000|INFO
+2001-10-25 14:02:33.0000|NOTICE|Synthetic.Api.OrdersController|Level outside the NLog set SENTINEL-7f3a
+2001-10-25 14:02:34.0000 INFO Synthetic.Api.OrdersController space-delimited line SENTINEL-7f3a
+2001-10-25 14:02:35.0000|INFO|Synthetic.Api.OrdersController|Request handled again

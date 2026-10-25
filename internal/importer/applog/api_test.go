@@ -12,7 +12,7 @@ func TestAllowedAttrsMatchExportPolicy(t *testing.T) {
 	if len(got) != len(allowedAttrs) || len(got) > evidence.MaxEventAttrs {
 		t.Fatalf("AllowedAttrs has %d names", len(got))
 	}
-	for _, src := range []string{"log4net-text", "log4net-xml", "serilog-clef", "serilog-text",
+	for _, src := range []string{"log4net-text", "log4net-xml", "serilog-clef", "serilog-text", "nlog-text",
 		"mel-console", "mel-json", "ancm-stdout", "node-jsonl"} {
 		pol := evidence.ExportAttrNames(src)
 		if len(pol) != len(got) {
