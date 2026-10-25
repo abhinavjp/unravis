@@ -847,3 +847,149 @@ test('a count of one reads as singular, and Import names no count when nothing i
   const panel = read('src/components/DiscoverPanel.svelte');
   assert.match(panel, /disabled=\{block !== null \|\| chosen\.length === 0\} onclick=\{runImports\}>\{importButtonText\(chosen\.length\)\}/);
 });
+
+/* ------------------------------------------------------------------ verified findings, locate and probe (TSK-05) */
+
+const SCAN = FAKE_SCAN_ID;
+const FINDING_ID = 'k3m7q2x5v8b4n6c9d2f5g7h3j4';
+
+test('an unverified log-file finding is not selectable, ticked or imported', () => {
+  const unverified = f('unverified-1', { kind: 'log-file', importer: 'log4net-text', verified: false, unreadable: 'discover.cannotopen.shows' });
+  const verified = f('verified-1', { kind: 'log-file', importer: 'log4net-text', verified: true });
+  assert.equal(discover.isSelectable(unverified), false);
+  assert.equal(discover.isSelectable(verified), true);
+  assert.equal(discover.isSelectable({ kind: 'log-file', importer: 'iis-w3c' }), false, 'a finding with no verified flag is not trusted');
+  assert.deepEqual([...discover.defaultSelection([unverified, verified], true)], ['verified-1']);
+  assert.deepEqual([...discover.selectAllSmall([unverified, verified], new Set())], ['verified-1']);
+  assert.deepEqual(discover.pickedFindings([unverified, verified], new Set(['unverified-1', 'verified-1'])).map((x) => x.id), ['verified-1']);
+});
+
+test('demo and fake findings are verified, so they stay selectable', () => {
+  const finding = fakeFinding();
+  assert.equal(finding.verified, true);
+  assert.equal(finding.unreadable, '');
+  assert.equal(finding.suggest, null);
+  assert.equal(discover.isSelectable(finding), true);
+});
+
+test('a finding is read with its verified, unreadable and suggest fields', () => {
+  const body = { id: 'valid-id-1', kind: 'log-file', importer: 'log4net-text', verified: true, unreadable: '', suggest: { portal: 'Orders', api: 'orders-api' } };
+  const parsed = discover.parseFinding(body);
+  assert.equal(parsed.verified, true);
+  assert.deepEqual(parsed.suggest, { portal: 'Orders', api: 'orders-api' });
+  for (const truthy of ['true', 1, 'yes', null, undefined]) assert.equal(discover.parseFinding({ ...body, verified: truthy }).verified, false, 'only a literal true verifies: ' + String(truthy));
+  const bare = discover.parseFinding({ id: 'valid-id-1', kind: 'log-file', importer: 'log4net-text' });
+  assert.equal(bare.verified, false);
+  assert.equal(bare.suggest, null);
+  assert.equal(discover.parseFinding({ ...body, suggest: { portal: '', api: '' } }).suggest, null);
+});
+
+test('readinessLabel gives the plain reason for a file that is not ready, and nothing otherwise', () => {
+  const blocked = f('blocked-1', { kind: 'log-file', importer: 'log4net-text', verified: false, unreadable: 'discover.emptyfile.shows' });
+  assert.equal(discover.readinessLabel(blocked), copy.unreadableText('discover.emptyfile.shows'));
+  assert.notEqual(discover.readinessLabel(blocked), '');
+  assert.equal(discover.readinessLabel(f('ok-1')), '', 'a ready file needs no reason');
+  const noReason = f('blocked-2', { kind: 'log-set', importer: '', verified: false, unreadable: '' });
+  assert.notEqual(discover.readinessLabel(noReason), '', 'an unverified file with no key still gets a general line');
+  assert.ok(!discover.readinessLabel(noReason).includes('discover.'));
+  assert.equal(discover.readinessLabel(f('x-1', { kind: 'export-needed', importer: '', verified: false })), '', 'rows that are not files have no file reason');
+});
+
+test('every reason the server can send has plain, linted copy', () => {
+  const unreadable = ['cannotopen', 'emptyfile', 'wrongformat', 'verifytimeout'];
+  for (const name of unreadable) {
+    const text = copy.unreadableText('discover.' + name + '.shows');
+    assert.ok(text.length > 10 && !text.includes('discover.'), name);
+    assert.notEqual(text, copy.unreadableText(''), name + ' has its own line');
+  }
+  for (const reason of [...discover.LOCATE_FAILURES, ...discover.LOCATE_REFUSALS, 'unknown']) {
+    const text = copy.locateReasonText(reason);
+    assert.ok(text.length > 10, reason);
+    if (reason !== 'unknown') assert.notEqual(text, copy.locateReasonText('unknown'), reason + ' has its own line');
+  }
+  for (const reason of [...discover.PROBE_REASONS, 'unknown']) {
+    const text = copy.probeReasonText(reason);
+    assert.ok(text.length > 10, reason);
+    if (reason !== 'unknown') assert.notEqual(text, copy.probeReasonText('unknown'), reason + ' has its own line');
+  }
+  assert.equal(copy.locateReasonText('constructor'), copy.locateReasonText('unknown'));
+  assert.equal(copy.probeReasonText('__proto__'), copy.probeReasonText('unknown'));
+  const ids = new Set(copy.discoverCopyEntries().map((e) => e.id));
+  for (const reason of [...discover.LOCATE_FAILURES, ...discover.LOCATE_REFUSALS]) assert.ok(ids.has('discover.locate.' + reason), reason + ' is linted');
+  for (const reason of discover.PROBE_REASONS) assert.ok(ids.has('discover.probe.' + reason), reason + ' is linted');
+  for (const name of unreadable) assert.ok(ids.has('discover.unreadable.' + name), name + ' is linted');
+});
+
+test('locateFinding sends the token and puts the path only in the body', async () => {
+  const typed = 'D:\\Apps\\Orders\\Logs';
+  const calls = mockServer(() => ({ body: { verified: true, files: 3, reason: '', finding: { id: FINDING_ID, kind: 'log-set', detector: 'applog', importer: 'log4net-text', verified: true, files: 3 } } }));
+  const result = await discover.locateFinding(SCAN, FINDING_ID, '  ' + typed + '  ');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'POST');
+  assert.match(calls[0].url, new RegExp('/api/discover/scans/' + SCAN + '/findings/' + FINDING_ID + '/locate$'));
+  assert.equal(new Headers(calls[0].headers).get('X-Audit-Token'), TOKEN);
+  assert.deepEqual(JSON.parse(calls[0].body), { path: typed });
+  assert.ok(!calls[0].url.includes('Orders') && !decodeURIComponent(calls[0].url).includes('Apps'), 'the path is never in the URL');
+  assert.equal(result.ok, true);
+  assert.equal(result.files, 3);
+  assert.equal(result.finding.verified, true);
+  assert.equal(result.finding.importer, 'log4net-text');
+});
+
+test('locateFinding turns a failed check or a refused path into a result, and throws on real faults', async () => {
+  mockServer(() => ({ body: { verified: false, files: 0, reason: 'not-found' } }));
+  assert.deepEqual(await discover.locateFinding(SCAN, FINDING_ID, 'D:\\x'), { ok: false, files: 0, reason: 'not-found' });
+  mockServer(() => ({ body: { verified: false, files: 2, reason: 'a-reason-nobody-named' } }));
+  assert.deepEqual(await discover.locateFinding(SCAN, FINDING_ID, 'D:\\x'), { ok: false, files: 2, reason: 'unknown' });
+  mockServer(() => ({ status: 400, body: { error: 'Enter the full path.', reason: 'path-not-absolute' } }));
+  assert.deepEqual(await discover.locateFinding(SCAN, FINDING_ID, 'x'), { ok: false, files: 0, reason: 'path-not-absolute' });
+  mockServer(() => ({ status: 404, body: { error: 'Gone.', reason: 'scan-expired' } }));
+  await assert.rejects(() => discover.locateFinding(SCAN, FINDING_ID, 'D:\\x'), (e) => e instanceof CaseApiError && e.reason === 'scan-expired' && discover.classifyError(e) === 'expired');
+  mockServer(() => ({ status: 429, body: { error: 'Slow down.', reason: 'rate-limited' } }));
+  await assert.rejects(() => discover.locateFinding(SCAN, FINDING_ID, 'D:\\x'), (e) => e instanceof CaseApiError && e.status === 429);
+  // A "verified" answer that does not carry the right finding is not trusted.
+  mockServer(() => ({ body: { verified: true, files: 1, finding: { id: 'some-other-id', kind: 'log-file', verified: true } } }));
+  await assert.rejects(() => discover.locateFinding(SCAN, FINDING_ID, 'D:\\x'));
+  mockServer(() => ({ body: { verified: true, files: 1, finding: { id: FINDING_ID, kind: 'log-file', verified: false } } }));
+  await assert.rejects(() => discover.locateFinding(SCAN, FINDING_ID, 'D:\\x'));
+  mockServer(() => ({ body: { nothing: true } }));
+  await assert.rejects(() => discover.locateFinding(SCAN, FINDING_ID, 'D:\\x'));
+});
+
+test('locateFinding refuses an empty path, a huge path and a bad id without any call', async () => {
+  const calls = mockServer(() => ({ body: {} }));
+  assert.deepEqual(await discover.locateFinding(SCAN, FINDING_ID, '   '), { ok: false, files: 0, reason: 'path-not-absolute' });
+  assert.deepEqual(await discover.locateFinding(SCAN, FINDING_ID, 'D:\\' + 'a'.repeat(discover.MAX_LOCATE_PATH)), { ok: false, files: 0, reason: 'path-unsafe' });
+  await assert.rejects(() => discover.locateFinding(SCAN, '../../etc', 'D:\\x'), (e) => e instanceof CaseApiError && e.reason === 'bad-finding-id');
+  await assert.rejects(() => discover.locateFinding('not a scan id', FINDING_ID, 'D:\\x'));
+  assert.equal(calls.length, 0);
+});
+
+test('probeReachable sends the token and the host and port in the body', async () => {
+  const calls = mockServer(() => ({ body: { reachable: true, reason: '' } }));
+  assert.deepEqual(await discover.probeReachable(' db.internal ', 1433), { reachable: true, reason: '' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'POST');
+  assert.match(calls[0].url, /\/api\/probe\/reachable$/);
+  assert.equal(new Headers(calls[0].headers).get('X-Audit-Token'), TOKEN);
+  assert.deepEqual(JSON.parse(calls[0].body), { host: 'db.internal', port: 1433 });
+  assert.ok(!calls[0].url.includes('db.internal'));
+});
+
+test('probeReachable maps each reason, and refuses a bad host or port without a call', async () => {
+  for (const reason of discover.PROBE_REASONS) {
+    mockServer(() => ({ body: { reachable: false, reason } }));
+    assert.deepEqual(await discover.probeReachable('db', 1433), { reachable: false, reason });
+  }
+  mockServer(() => ({ body: { reachable: false, reason: 'weird' } }));
+  assert.deepEqual(await discover.probeReachable('db', 1433), { reachable: false, reason: 'unknown' });
+  mockServer(() => ({ body: { reachable: 'maybe' } }));
+  await assert.rejects(() => discover.probeReachable('db', 1433));
+  const calls = mockServer(() => ({ body: { reachable: true } }));
+  for (const [host, port, reason] of [['', 1433, 'bad-host'], ['a b', 1433, 'bad-host'], ['x'.repeat(300), 1433, 'bad-host'], ['db', 0, 'bad-port'], ['db', 70000, 'bad-port'], ['db', 1.5, 'bad-port'], ['db', NaN, 'bad-port']]) {
+    await assert.rejects(() => discover.probeReachable(host, port), (e) => e instanceof CaseApiError && e.reason === reason, host + ':' + port);
+  }
+  assert.equal(calls.length, 0);
+  mockServer(() => ({ status: 429, body: { error: 'Slow down.', reason: 'rate-limited' } }));
+  await assert.rejects(() => discover.probeReachable('db', 1433), (e) => e instanceof CaseApiError && e.status === 429);
+});

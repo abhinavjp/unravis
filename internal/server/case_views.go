@@ -21,6 +21,28 @@ import (
 // Views over one case that need the audit repository or the evidence engine:
 // the cross-source timeline and the redacted case export.
 
+/* ------------------------------------------------------------ case view */
+
+// getCase answers GET /api/cases/{id}: the case as the list shows it plus the
+// number of environments and source tags. The counts come from the opened case
+// (the list reads the manifest only and cannot know them). A malformed id
+// answers the same 404 as a missing case.
+func (h *handler) getCase(w http.ResponseWriter, r *http.Request, raw string) {
+	if _, err := casestore.ParseID(raw); err != nil {
+		if h.casesAvailable(w) {
+			writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
+		}
+		return
+	}
+	_, c, ok := h.openCase(w, r, raw)
+	if !ok {
+		return
+	}
+	defer c.Close()
+	info := c.Info()
+	writeJSON(w, http.StatusOK, caseViewDTO{caseDTO: toCaseDTO(info), Envs: info.Envs, Sources: info.Sources}, maxResponseBytes)
+}
+
 /* ------------------------------------------------------------- timeline */
 
 // timelineRequest picks the audit window and the sources whose slow audit

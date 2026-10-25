@@ -48,6 +48,11 @@ type handler struct {
 	repeats analyzeRepeats
 	launch  launchState
 	rollups rollupCache
+	// mongoTests holds the database names of recent connection tests (names
+	// only) so a classification can be checked against them.
+	mongoTests mongoTests
+	// mk is the master-key session (nil when the feature is not wired).
+	mk *MasterKeySession
 
 	casesState
 
@@ -292,6 +297,7 @@ func (h *handler) testConnection(w http.ResponseWriter, r *http.Request) {
 	if result.Databases == nil {
 		result.Databases = []string{}
 	}
+	h.mongoTests.record(result.Databases)
 	writeJSON(w, http.StatusOK, result, maxResponseBytes)
 }
 

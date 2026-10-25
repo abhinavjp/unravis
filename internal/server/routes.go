@@ -106,6 +106,12 @@ var routes = []route{
 	}},
 	{pattern: "/api/connections/remember", match: exactPath("/api/connections/remember"), methods: post((*handler).rememberConnection)},
 	{pattern: "/api/connections/test", match: exactPath("/api/connections/test"), methods: post((*handler).testConnection)},
+	{pattern: "/api/probe/reachable", match: exactPath("/api/probe/reachable"), methods: post((*handler).probeReachable)},
+	{pattern: "/api/master-key/status", match: exactPath("/api/master-key/status"), methods: get((*handler).masterKeyReply)},
+	{pattern: "/api/master-key/setup", match: exactPath("/api/master-key/setup"), methods: post((*handler).masterKeySetup)},
+	{pattern: "/api/master-key/unlock", match: exactPath("/api/master-key/unlock"), methods: post((*handler).masterKeyUnlock)},
+	{pattern: "/api/master-key/lock", match: exactPath("/api/master-key/lock"), methods: post((*handler).masterKeyLock)},
+	{pattern: "/api/master-key/rewrap", match: exactPath("/api/master-key/rewrap"), methods: post((*handler).masterKeyRewrap)},
 	{pattern: "/api/info", match: exactPath("/api/info"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, _ *http.Request, _ string) { h.info(w) },
 	}},
@@ -189,6 +195,9 @@ var routes = []route{
 		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getDiscoverScan(w, r, id) },
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.deleteDiscoverScan(w, r, id) },
 	}},
+	{pattern: "/api/discover/scans/{scan}/findings/{finding}/locate", match: locatePath, methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.locateFinding(w, r, arg) },
+	}},
 	{pattern: "/api/cases/{id}/discover/imports", match: caseSubpath("/discover/imports"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.postDiscoverImports(w, r, id) },
 	}},
@@ -197,7 +206,22 @@ var routes = []route{
 		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getSampler(w, r, id) },
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.deleteSampler(w, r, id) },
 	}},
+	{pattern: "/api/cases/{id}/environments", match: caseSubpath("/environments"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getEnvironments(w, r, id) },
+		http.MethodPut: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.putEnvironments(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/sources", match: caseSubpath("/sources"), methods: map[string]routeFunc{
+		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getSources(w, r, id) },
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.postSource(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/sources/{sourceId}", match: caseSourcePath, methods: map[string]routeFunc{
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.deleteSourceTag(w, r, arg) },
+	}},
+	{pattern: "/api/cases/{id}/mongo-sources", match: caseSubpath("/mongo-sources"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getMongoSources(w, r, id) },
+	}},
 	{pattern: "/api/cases/{id}", match: caseSubpath(""), methods: map[string]routeFunc{
+		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getCase(w, r, id) },
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.eraseCase(w, r, id) },
 	}},
 	{pattern: "/api/hosts", match: exactPath("/api/hosts"), methods: map[string]routeFunc{
@@ -247,6 +271,13 @@ func (h *handler) dispatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if !found {
 		writeError(w, http.StatusNotFound, "API route was not found.")
+		return
+	}
+	// While a master key exists and is locked, every case route answers 423
+	// before any handler (or the store) runs. The gate keys on the route's
+	// pattern, so a new /api/cases route cannot forget it.
+	if h.lockedGate(rt) {
+		writeLocked(w)
 		return
 	}
 	h.serveRoute(w, r, rt, arg)

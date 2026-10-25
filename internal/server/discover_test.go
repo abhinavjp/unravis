@@ -29,12 +29,14 @@ import (
 	"api-audit-explorer/internal/sampler"
 )
 
-// Everything here is synthetic. discSentinel marks the machine name, the log
-// folder and the configuration secrets that must never reach a response.
+// Everything here is synthetic. discSentinel marks the machine name and the
+// configuration secrets that must never reach a response. The log folder name is
+// deliberately not the sentinel: the scan offers folder names as portal and API
+// suggestions (see internal/discover/suggest.go), so that name may appear.
 
 const (
 	discSentinel = "Sentinel-7f3a"
-	discLogDir   = `D:\Logs\` + discSentinel + `\IIS`
+	discLogDir   = `D:\Logs\portal-a\IIS`
 	discAppHost  = `C:\Windows\System32\inetsrv\config\applicationHost.config`
 )
 

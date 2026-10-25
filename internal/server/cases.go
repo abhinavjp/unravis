@@ -346,6 +346,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
 	case errors.Is(err, casestore.ErrBadID):
 		writeCaseFailure(w, http.StatusBadRequest, "bad-case-id", "That is not a case id.")
+	case errors.Is(err, casestore.ErrLocked):
+		writeLocked(w)
 	case errors.Is(err, casestore.ErrCaseClosed):
 		writeCaseFailure(w, http.StatusConflict, "case-closed", "The case is closed. Nothing can be imported into it.")
 	case errors.Is(err, casestore.ErrAckTooLong):

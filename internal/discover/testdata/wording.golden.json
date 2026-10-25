@@ -16,12 +16,20 @@
     "text": "It holds the requests and errors the app sent to Application Insights."
   },
   {
+    "key": "discover.cannotopen.shows",
+    "text": "Unravis could not open this source, so it is not offered for import."
+  },
+  {
     "key": "discover.dotnetcounters.how",
     "text": "Run dotnet-counters collect on the app process and save a CSV or JSON file. Import that file."
   },
   {
     "key": "discover.dotnetcounters.shows",
     "text": "They show garbage collection, thread pool and exception counts inside the app process, over time."
+  },
+  {
+    "key": "discover.emptyfile.shows",
+    "text": "The file is empty, so there is nothing to read yet."
   },
   {
     "key": "discover.events.shows",
@@ -130,5 +138,13 @@
   {
     "key": "discover.taskscheduler.shows",
     "text": "It lists when scheduled tasks started and finished."
+  },
+  {
+    "key": "discover.verifytimeout.shows",
+    "text": "Unravis ran out of time before it could check this source. Scan again to check it."
+  },
+  {
+    "key": "discover.wrongformat.shows",
+    "text": "The file does not look like the kind of log it was named as, so Unravis cannot read it."
   }
 ]

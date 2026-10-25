@@ -193,6 +193,7 @@ func Run(t *testing.T, f Factory) {
 	t.Run("supplied-round-trip", func(t *testing.T) { suppliedRoundTrip(t, f, caps) })
 	t.Run("supplied-refused", func(t *testing.T) { suppliedRefused(t, f, caps) })
 	t.Run("discover-tables", func(t *testing.T) { discoverTables(t, f, caps) })
+	t.Run("tags-and-environments", func(t *testing.T) { tagsContract(t, f, caps) })
 }
 
 func ids(t *testing.T, f Factory, caps casestore.Caps) {

@@ -51,8 +51,19 @@ type Options struct {
 	// Root is the folder that holds one sub-folder per case. Required. Use
 	// DefaultRoot for the per-user location.
 	Root string
-	// Protector seals case.key and manifest.dat. Default: DPAPI for the current user.
+	// Protector seals case.key and manifest.dat of a case sealed with DPAPI. Default:
+	// DPAPI for the current user.
 	Protector sealedfile.Protector
+	// Protectors resolves the protector for a kind other than DPAPI, today only
+	// casestore.KindMasterKey. It is called on every use, so it can answer "locked"
+	// (return casestore.ErrLocked or any error) before the master key is unlocked
+	// and the unlocked *masterkey.Keyring after. Nil means no master key: a case
+	// sealed under it opens as casestore.ErrLocked.
+	Protectors casestore.ProtectorLookup
+	// NewCaseKind names the kind Create seals a new case with. Nil, or a result
+	// other than casestore.KindMasterKey, means DPAPI (the v1 files an older build
+	// can read).
+	NewCaseKind func() string
 	// Now is the clock. Default: time.Now.
 	Now func() time.Time
 	// MaxFileBytes and MaxFileRows cap one imported file (default 2 GiB and 10M
@@ -83,8 +94,9 @@ type Options struct {
 	// counts and reasons only. Default: no logging.
 	Logf func(format string, args ...any)
 
-	afterCommit func() error // test hook, runs between commit and manifest mirror
-	duringErase func()       // test hook, runs in Erase after the handle is released, before any file is touched
+	afterCommit func() error             // test hook, runs between commit and manifest mirror
+	rewrapStep  func(stage string) error // test hook, see casestore.RewrapOptions.Step
+	duringErase func()                   // test hook, runs in Erase after the handle is released, before any file is touched
 }
 
 // DefaultRoot is %LOCALAPPDATA%\APIAuditExplorer\cases, so multi-GiB case files
@@ -165,6 +177,102 @@ func New(opt Options) (*Store, error) {
 	return &Store{opt: opt, root: root, open: map[casestore.CaseID]*caseState{}, erasing: map[casestore.CaseID]bool{}}, nil
 }
 
+// ErrLocked is casestore.ErrLocked: the case is sealed under the master key and the
+// master key is locked or not set up.
+var ErrLocked = casestore.ErrLocked
+
+// lookup is the casestore.ProtectorLookup over this Store's options.
+func (s *Store) lookup(kind string) (sealedfile.Protector, error) {
+	switch kind {
+	case casestore.KindDPAPI:
+		return s.opt.Protector, nil
+	case casestore.KindMasterKey:
+		if s.opt.Protectors != nil {
+			return s.opt.Protectors(kind)
+		}
+	}
+	return nil, ErrLocked
+}
+
+// protector returns the protector of kind bound to label, or ErrLocked.
+func (s *Store) protector(kind, label string) (sealedfile.Protector, error) {
+	return casestore.Resolve(s.lookup, kind, label)
+}
+
+// isLocked reports whether files sealed with kind cannot be opened now.
+func (s *Store) isLocked(kind string) bool {
+	p, err := s.lookup(kind)
+	if err != nil || p == nil {
+		return true
+	}
+	if l, ok := p.(interface{ Locked() bool }); ok {
+		return l.Locked()
+	}
+	return false
+}
+
+// newKind is the kind Create seals with.
+func (s *Store) newKind() string {
+	if s.opt.NewCaseKind != nil && s.opt.NewCaseKind() == casestore.KindMasterKey {
+		return casestore.KindMasterKey
+	}
+	return casestore.KindDPAPI
+}
+
+// caseKind is the protector kind a case folder is sealed with now: the manifest's,
+// else the key file's, else DPAPI.
+func caseKind(dir string) string {
+	for _, name := range []string{manifestName, keyName} {
+		if k, err := casestore.FileKind(filepath.Join(dir, name)); err == nil {
+			return k
+		}
+	}
+	return casestore.KindDPAPI
+}
+
+// fileSealer is the sealedfile.Protector readManifest and writeManifest take. It
+// picks the protector from the kind recorded in the file, so one Store reads cases
+// of both kinds, and writes a manifest in the kind the case is already sealed with.
+type fileSealer struct {
+	s    *Store
+	dir  string
+	kind string // required on read and used on write; "" = any on read, the case's current kind on write
+}
+
+// sealer is the manifest protector for the case folder dir. kind may be "".
+func (s *Store) sealer(dir, kind string) fileSealer { return fileSealer{s: s, dir: dir, kind: kind} }
+
+func (f fileSealer) Protect(plain []byte) ([]byte, error) {
+	kind := f.kind
+	if kind == "" {
+		kind = caseKind(f.dir)
+	}
+	p, err := f.s.protector(kind, casestore.LabelManifest)
+	if err != nil {
+		return nil, err
+	}
+	blob, err := p.Protect(plain)
+	if err != nil {
+		return nil, err
+	}
+	return casestore.WrapSealed(kind, blob), nil
+}
+
+func (f fileSealer) Unprotect(raw []byte) ([]byte, error) {
+	kind, blob, err := casestore.UnwrapSealed(raw)
+	if err != nil {
+		return nil, err
+	}
+	if f.kind != "" && kind != f.kind {
+		return nil, casestore.ErrKeyFile
+	}
+	p, err := f.s.protector(kind, casestore.LabelManifest)
+	if err != nil {
+		return nil, err
+	}
+	return p.Unprotect(blob)
+}
+
 // Root is the absolute cases folder.
 func (s *Store) Root() string { return s.root }
 
@@ -235,7 +343,12 @@ func (s *Store) Create(ctx context.Context, title string) (casestore.CaseInfo, e
 	}
 	defer keys.Zero()
 	keys.CaseID = string(id)
-	if err := casestore.WriteKeyFile(filepath.Join(dir, keyName), s.opt.Protector, keys); err != nil {
+	kind := s.newKind()
+	base, err := s.lookup(kind)
+	if err != nil || base == nil {
+		return casestore.CaseInfo{}, ErrLocked
+	}
+	if err := casestore.WriteKeyFileKind(filepath.Join(dir, keyName), kind, base, keys); err != nil {
 		return casestore.CaseInfo{}, err
 	}
 	now := s.now()
@@ -243,7 +356,7 @@ func (s *Store) Create(ctx context.Context, title string) (casestore.CaseInfo, e
 		return casestore.CaseInfo{}, err
 	}
 	man := manifest{CaseID: string(id), Title: title, Created: now, Imports: []manifestImport{}}
-	if err := writeManifest(dir, s.opt.Protector, man); err != nil {
+	if err := writeManifest(dir, s.sealer(dir, kind), man); err != nil {
 		return casestore.CaseInfo{}, err
 	}
 	ok = true
@@ -417,9 +530,11 @@ func (s *Store) List(ctx context.Context) ([]casestore.CaseInfo, error) {
 			out = append(out, info)
 			continue
 		}
-		if m, err := readManifest(dir, s.opt.Protector); err == nil && m.CaseID == string(id) {
+		if m, err := readManifest(dir, s.sealer(dir, "")); err == nil && m.CaseID == string(id) {
 			info.Title, info.Created, info.Closed, info.Imports = m.Title, m.Created, m.Closed, len(m.Imports)
 			info.Bytes = manifestBytes(m)
+		} else if err != nil && caseKind(dir) == casestore.KindMasterKey && s.isLocked(casestore.KindMasterKey) {
+			info.Title = "(locked)" // nothing else about a locked case is shown
 		}
 		out = append(out, info)
 	}
@@ -522,14 +637,20 @@ func (s *Store) readCaseFiles(dir string, id casestore.CaseID) (casestore.Keys, 
 	if err := requirePlainFiles(dir); err != nil {
 		return casestore.Keys{}, manifest{}, err
 	}
-	keys, err := casestore.ReadKeyFile(filepath.Join(dir, keyName), s.opt.Protector)
+	keys, kind, err := casestore.ReadKeyFileAny(filepath.Join(dir, keyName), s.lookup)
 	if errors.Is(err, os.ErrNotExist) {
 		return casestore.Keys{}, manifest{}, casestore.ErrNotFound // the key is gone: the case is erased
 	}
 	if err != nil {
 		return casestore.Keys{}, manifest{}, err
 	}
-	man, err := readManifest(dir, s.opt.Protector)
+	// The manifest must be sealed the same way as the key. A mix is a damaged case
+	// (a re-wrap that was cut short), never silently repaired here.
+	if mk, mkErr := casestore.FileKind(filepath.Join(dir, manifestName)); mkErr == nil && mk != kind {
+		keys.Zero()
+		return casestore.Keys{}, manifest{}, casestore.ErrKeyFile
+	}
+	man, err := readManifest(dir, s.sealer(dir, kind))
 	if err != nil {
 		keys.Zero()
 		if errors.Is(err, os.ErrNotExist) {
@@ -585,7 +706,10 @@ func (s *Store) CloseCase(ctx context.Context, id casestore.CaseID) error {
 	s.mu.Unlock()
 	// The on-disk manifest is the starting point even when this Store holds the
 	// case open: another Store on the folder may have mirrored imports since.
-	m, err := readManifest(dir, s.opt.Protector)
+	if k := caseKind(dir); k == casestore.KindMasterKey && s.isLocked(k) {
+		return ErrLocked
+	}
+	m, err := readManifest(dir, s.sealer(dir, ""))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrDamaged
@@ -601,13 +725,85 @@ func (s *Store) CloseCase(ctx context.Context, id casestore.CaseID) error {
 	}
 	now := s.now()
 	m.Closed = &now
-	if err := writeManifest(dir, s.opt.Protector, m); err != nil {
+	if err := writeManifest(dir, s.sealer(dir, ""), m); err != nil {
 		return err
 	}
 	if h != nil {
 		h.man = m
 	}
 	s.logf("case %s closed", id)
+	return nil
+}
+
+// CaseKind reports which protector seals the case's key file: casestore.KindDPAPI
+// or casestore.KindMasterKey. It reads the file header only, so it works while the
+// master key is locked and reveals nothing else.
+func (s *Store) CaseKind(id casestore.CaseID) (string, error) {
+	dir, err := s.caseDir(id)
+	if err != nil {
+		return "", err
+	}
+	if erasePending(dir) {
+		return "", casestore.ErrNotFound
+	}
+	k, err := casestore.FileKind(filepath.Join(dir, keyName))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", casestore.ErrNotFound
+	}
+	return k, err
+}
+
+// Rewrap moves one case from DPAPI sealing to the master key: case.key and
+// manifest.dat are re-sealed (atomically, see casestore.Rewrap), case.db is never
+// touched. It needs the master key unlocked (ErrLocked otherwise, nothing
+// written), is a no-op success for a case already on the master key, and works
+// while the case is open in this Store. A failed Rewrap leaves the old files
+// readable.
+func (s *Store) Rewrap(ctx context.Context, id casestore.CaseID) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	dir, err := s.caseDir(id)
+	if err != nil {
+		return err
+	}
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return casestore.ErrNotFound
+	}
+	if s.isLocked(casestore.KindMasterKey) {
+		return ErrLocked
+	}
+	to, err := s.lookup(casestore.KindMasterKey)
+	if err != nil || to == nil {
+		return ErrLocked
+	}
+	s.mu.Lock()
+	if s.erasing[id] {
+		s.mu.Unlock()
+		return casestore.ErrNotFound
+	}
+	h := s.open[id]
+	s.mu.Unlock()
+	// Lock order everywhere is folder lock, then the case's mu (as CloseCase does).
+	// Holding the case mu keeps this Store's own manifest writers out meanwhile.
+	opt := casestore.RewrapOptions{Step: s.opt.rewrapStep, Enter: func() (func(), error) {
+		if erasePending(dir) {
+			return nil, casestore.ErrNotFound
+		}
+		if h == nil {
+			return func() {}, nil
+		}
+		h.mu.Lock()
+		return h.mu.Unlock, nil
+	}}
+	err = casestore.Rewrap(dir,
+		casestore.Sealing{Kind: casestore.KindDPAPI, P: s.opt.Protector},
+		casestore.Sealing{Kind: casestore.KindMasterKey, P: to}, opt)
+	if err != nil {
+		s.logf("case %s re-wrap failed", id)
+		return err
+	}
+	s.logf("case %s re-wrapped", id)
 	return nil
 }
 

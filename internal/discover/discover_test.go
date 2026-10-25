@@ -45,13 +45,22 @@ func fixed(name string, fs ...discover.Finding) toy {
 func envWith(e *fake.Env) discover.Env { return e.Env(all.Registry()) }
 
 func TestRunOrdersByWeight(t *testing.T) {
-	env := envWith(fake.New())
+	// The scan only keeps a finding ready when its importer can read a sample,
+	// so each file holds a line its importer recognises.
+	e := fake.New()
+	mod := time.Date(2001, 9, 11, 0, 0, 0, 0, time.UTC)
+	e.FS.AddFile(`D:\Redis\redis.log`, 60, mod, []byte("1300:M 25 Oct 2001 14:05:03.100 * Ready to accept connections tcp\n"))
+	e.FS.AddFile(`D:\SQL\Log\ERRORLOG`, 80, mod, []byte("2001-06-15 08:00:01.23 Server      Microsoft SQL Server 2019 (RTM) - 15.0.2000.5 (X64)\n"))
+	e.FS.AddFile(`D:\Logs\web-a\u_ex010911.log`, 300, mod, []byte("#Software: Microsoft Internet Information Services 10.0\n#Version: 1.0\n#Fields: date time s-ip cs-method cs-uri-stem cs-uri-query s-port cs-username c-ip cs(User-Agent) sc-status sc-substatus sc-win32-status time-taken\n2001-09-11 00:00:01 192.0.2.10 GET /api/orders - 443 - 192.0.2.99 Mozilla/5.0 200 0 0 12\n"))
+	e.FS.AddFile(`D:\Apps\web-a\app.log`, 90, mod, []byte("2001-10-25 14:02:30,950 [12] INFO  Synthetic.Api.OrdersController - Request handled\n"))
+	e.Channels.Names = []string{"Application"}
+	env := envWith(e)
 	ch := discover.Finding{Detector: "events", Kind: discover.KindEventChannel, Importer: "win-events", Display: "Application", Confidence: 80, Shows: "discover.events.shows"}
 	got := discover.Run(context.Background(), env, []discover.Detector{
 		fixed("redis", finding("redis", "redis-log", "redis.log", `D:\Redis\redis.log`)),
 		fixed("sql", finding("sql", "sql-errorlog", "ERRORLOG", `D:\SQL\Log\ERRORLOG`)),
 		fixed("events", ch),
-		fixed("iis", finding("iis", "iis-w3c", "W3SVC1", `D:\Logs\web-a`)),
+		fixed("iis", finding("iis", "iis-w3c", "W3SVC1", `D:\Logs\web-a\u_ex010911.log`)),
 		fixed("applog", finding("applog", "log4net-text", "app.log", `D:\Apps\web-a\app.log`)),
 	})
 	var order []string

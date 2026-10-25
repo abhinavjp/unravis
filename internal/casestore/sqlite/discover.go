@@ -28,26 +28,34 @@ CREATE TABLE IF NOT EXISTS discover_reads(
 var _ casestore.Discoverer = (*Case)(nil)
 
 // migrate brings an older case up to schemaVersion. It only ever adds tables
-// and writes the version; the schema-3 indexes are built lazily
-// (ensureAttrIndexes), so opening a large old case stays fast.
+// and writes the version, all in one transaction; the schema-3 indexes are built
+// lazily (ensureAttrIndexes), so opening a large old case stays fast. Every
+// statement is IF NOT EXISTS, so running it again changes nothing. Whatever the
+// starting version, it ends by loading the tag counts Info reports.
 func (c *Case) migrate(ctx context.Context, from int) error {
-	if from >= schemaVersion {
-		return nil
+	if from < schemaVersion {
+		c.idxPending = from < 3
+		tx, err := c.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, discoverSQL); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, tagsSQL); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE meta SET v=? WHERE k='schema_version'", strconv.Itoa(schemaVersion)); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
 	}
-	c.idxPending = from < 3
-	tx, err := c.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, discoverSQL); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE meta SET v=? WHERE k='schema_version'", strconv.Itoa(schemaVersion)); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	return tx.Commit()
+	return c.loadTagCounts(ctx)
 }
 
 // DiscoverKey is the path HMAC key for this case: derived from the pseudonym

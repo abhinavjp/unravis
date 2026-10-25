@@ -6,8 +6,17 @@ package sqlite
 // series-key indexes (attrIndexSQL): a version 2 case is migrated on open by
 // writing the version only, and the indexes are built the first time a query
 // asks for an attribute they serve (Case.ensureAttrIndexes), or by the next
-// import. A case written without them stays correct, only slower.
-const schemaVersion = 3
+// import. A case written without them stays correct, only slower. Version 4
+// added the environment and source-tag tables (tagsSQL): a case below 4 is
+// migrated on open by adding those two small tables and writing the version, in
+// one transaction. No existing table or column changes.
+const schemaVersion = 4
+
+// refusesSchema reports whether a build that knows schema version known must
+// refuse a case stored at version v: one written by a newer build. A schema-4
+// case therefore never opens in a build that knows only 3, so a rolled-back
+// binary cannot write into tables it does not understand.
+func refusesSchema(v, known int) bool { return v > known }
 
 // schemaSQL is the case schema (importer wave plan section 1.5). The three
 // indexes are not part of it: they are created after each bulk load, inside the
@@ -22,6 +31,16 @@ CREATE TABLE events(evidence_id TEXT PRIMARY KEY, import_id INTEGER NOT NULL REF
   unit TEXT, severity TEXT, line INTEGER, tz_rule TEXT, attrs_json TEXT) WITHOUT ROWID;
 CREATE TABLE quarantine(id INTEGER PRIMARY KEY, importer TEXT, file_name TEXT, sha256 TEXT, reason TEXT,
   column_name TEXT, rows_seen INTEGER, at_utc INTEGER);
+` + tagsSQL
+
+// tagsSQL is the schema-4 addition: the environment names and the source tags
+// (casestore.Tagger). It is written with IF NOT EXISTS so a new case, an old case
+// being migrated and a repeat of the migration all run the same text. A source
+// row holds only short words the user chose: no path, connection string or secret.
+const tagsSQL = `
+CREATE TABLE IF NOT EXISTS case_sources(id INTEGER PRIMARY KEY, import_id INTEGER, kind TEXT NOT NULL, label TEXT, env TEXT,
+  portal TEXT, api TEXT, classification TEXT, created_ms INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS case_envs(name TEXT PRIMARY KEY, ord INTEGER);
 `
 
 const indexSQL = `

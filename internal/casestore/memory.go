@@ -54,6 +54,10 @@ type memData struct {
 	nextQID     int64
 
 	disc *memDiscover // discovery tables, created on first use
+
+	envs    []string    // environment names in order (see Tagger)
+	sources []SourceTag // source tags, oldest first
+	nextSrc int64
 }
 
 func (s *memStore) Create(ctx context.Context, title string) (CaseInfo, error) {
@@ -182,6 +186,7 @@ func (d *memData) erase() {
 		d.key[i] = 0
 	}
 	d.key, d.imports, d.events, d.ids, d.quarantines, d.disc = nil, nil, nil, nil, nil, nil
+	d.envs, d.sources = nil, nil
 	d.erased = true
 }
 
@@ -237,7 +242,9 @@ func (c *memCase) check(ctx context.Context) error {
 func (c *memCase) Info() CaseInfo {
 	c.d.mu.RLock()
 	defer c.d.mu.RUnlock()
-	return copyInfo(c.d.info)
+	i := copyInfo(c.d.info)
+	i.Envs, i.Sources = len(c.d.envs), len(c.d.sources)
+	return i
 }
 
 func (c *memCase) Close() error {
@@ -612,4 +619,100 @@ func (c *memCase) record(meta ImportMeta, rep importer.Report, bytes int64, sha 
 		Quality: rep.Quality, KnownGaps: append([]string(nil), rep.KnownGaps...),
 		Supplied: copySupplied(meta.Supplied),
 	}
+}
+
+var _ Tagger = (*memCase)(nil)
+
+// tagWrite is the handle check for the Tagger writes; the closed-case refusal
+// follows under c.d.mu.
+func (c *memCase) tagWrite(ctx context.Context) error {
+	if err := c.check(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *memCase) SetEnvs(ctx context.Context, names []string) error {
+	clean, err := CleanEnvs(names)
+	if err != nil {
+		return err
+	}
+	if err := c.tagWrite(ctx); err != nil {
+		return err
+	}
+	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	if c.d.erased {
+		return ErrNotFound
+	}
+	if c.d.info.Closed != nil {
+		return ErrCaseClosed
+	}
+	c.d.envs = clean
+	return nil
+}
+
+func (c *memCase) Envs(ctx context.Context) ([]string, error) {
+	if err := c.check(ctx); err != nil {
+		return nil, err
+	}
+	c.d.mu.RLock()
+	defer c.d.mu.RUnlock()
+	return append([]string{}, c.d.envs...), nil
+}
+
+func (c *memCase) AddSource(ctx context.Context, s SourceTag) (SourceTag, error) {
+	clean, err := CleanSource(s)
+	if err != nil {
+		return SourceTag{}, err
+	}
+	if err := c.tagWrite(ctx); err != nil {
+		return SourceTag{}, err
+	}
+	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	if c.d.erased {
+		return SourceTag{}, ErrNotFound
+	}
+	if c.d.info.Closed != nil {
+		return SourceTag{}, ErrCaseClosed
+	}
+	if len(c.d.sources) >= MaxSources {
+		return SourceTag{}, ErrCapExceeded
+	}
+	c.d.nextSrc++
+	clean.ID = c.d.nextSrc
+	clean.Created = c.s.now().UTC().Truncate(time.Millisecond)
+	c.d.sources = append(c.d.sources, clean)
+	return clean, nil
+}
+
+func (c *memCase) Sources(ctx context.Context) ([]SourceTag, error) {
+	if err := c.check(ctx); err != nil {
+		return nil, err
+	}
+	c.d.mu.RLock()
+	defer c.d.mu.RUnlock()
+	return append([]SourceTag{}, c.d.sources...), nil
+}
+
+func (c *memCase) RemoveSource(ctx context.Context, id int64) error {
+	if err := c.tagWrite(ctx); err != nil {
+		return err
+	}
+	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	if c.d.erased {
+		return ErrNotFound
+	}
+	if c.d.info.Closed != nil {
+		return ErrCaseClosed
+	}
+	for i, s := range c.d.sources {
+		if s.ID == id {
+			c.d.sources = append(c.d.sources[:i:i], c.d.sources[i+1:]...)
+			break
+		}
+	}
+	return nil
 }

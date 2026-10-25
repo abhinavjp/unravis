@@ -86,7 +86,14 @@ func openCases(getenv func(string) string, hypotheses ledger.Store) (*casesWirin
 	if hypotheses != nil {
 		onErase = eraseHook(hypotheses)
 	}
-	store, err := sqlite.New(sqlite.Options{Root: root, Protector: protector, OnErase: onErase})
+	// The master-key session starts locked when masterkey.dat exists in base and
+	// "none" otherwise. The store and the server share it, so unlock, lock and
+	// the 423 gate act on the one Keyring the store opens cases with.
+	session := server.NewMasterKeySession(base)
+	store, err := sqlite.New(sqlite.Options{
+		Root: root, Protector: protector, OnErase: onErase,
+		Protectors: session.Lookup, NewCaseKind: session.NewCaseKind,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +112,7 @@ func openCases(getenv func(string) string, hypotheses ledger.Store) (*casesWirin
 			server.WithCases(store, sealedHosts.Map(), all.Registry()),
 			server.WithHostsSaver(sealedHosts.Save),
 			server.WithSystemDiscover(),
+			server.WithMasterKey(session),
 		},
 	}, nil
 }

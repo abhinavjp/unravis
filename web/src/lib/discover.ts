@@ -1,4 +1,5 @@
 import { CaseApiError, casePath, fetchImportJob, cancelImportJob, getHostEntries, isJobId, json, putHostEntries, send, type ImportJob } from './cases';
+import { unreadableText } from './copy/discoverCopy';
 
 /**
  * Client for the "This computer" routes (host-discovery spec, section 7), and the pure rules the discover panel follows.
@@ -15,9 +16,11 @@ import { CaseApiError, casePath, fetchImportJob, cancelImportJob, getHostEntries
  *   POST   /api/cases/{id}/sampler {intervalSec, ackGating, ackText} -> 202 { state }         (409 sampler-busy)
  *   GET    /api/cases/{id}/sampler                 -> { state, since, samples, stopReason }
  *   DELETE /api/cases/{id}/sampler                 -> 204
+ *   POST   /api/discover/scans/{scan}/findings/{finding}/locate {path} -> { verified, files, reason, finding? }   (locateFinding)
+ *   POST   /api/probe/reachable {host, port}       -> { reachable, reason }                                       (probeReachable)
  *
- * The client never sends a path. A finding is named by the opaque id the server gave it, and the Finding type here has no path field, so
- * a path the server sent by mistake is dropped when the answer is read.
+ * The only path the client sends is one the person typed, in the body of locateFinding. A finding is otherwise named by the opaque id the
+ * server gave it, and the Finding type here has no path field, so a path the server sent by mistake is dropped when the answer is read.
  */
 
 export const SCAN_ID_PATTERN = /^[0-9a-f]{32}$/;
@@ -87,7 +90,16 @@ export interface Finding {
   newest: string;
   needsAdmin: boolean;
   cost: Cost;
+  /** True only when the scan opened a sample of the source and its importer recognised it. Nothing unverified can be ticked. */
+  verified: boolean;
+  /** For a source found but not readable: a wording key (such as "discover.wrongformat.shows") for why. '' when there is no problem. */
+  unreadable: string;
+  /** Words only, taken from folder names: a guess at the Portal and API name for this source. Null when nothing usable was found. */
+  suggest: Suggestion | null;
 }
+
+/** The Portal and API names the scan guessed from a source's folders. Either may be ''. */
+export interface Suggestion { portal: string; api: string }
 
 export type GapReason = 'needs-elevation' | 'not-found' | 'not-supported-os' | 'unreadable' | 'too-large' | 'unsafe-path' | 'config-unparsed';
 export const GAP_REASONS: readonly string[] = ['needs-elevation', 'not-found', 'not-supported-os', 'unreadable', 'too-large', 'unsafe-path', 'config-unparsed'];
@@ -127,8 +139,19 @@ export function parseFinding(body: unknown): Finding | null {
     oldest: asTime(raw.oldest),
     newest: asTime(raw.newest),
     needsAdmin: asBool(raw.needsAdmin),
-    cost: declared
+    cost: declared,
+    // Only a literal true counts: a missing or odd value reads as "not verified".
+    verified: raw.verified === true,
+    unreadable: asString(raw.unreadable, 80),
+    suggest: parseSuggestion(raw.suggest)
   };
+}
+
+function parseSuggestion(body: unknown): Suggestion | null {
+  const raw = asObject(body);
+  if (!raw) return null;
+  const portal = asString(raw.portal, 40), api = asString(raw.api, 40);
+  return portal === '' && api === '' ? null : { portal, api };
 }
 
 export function parseGap(body: unknown): Gap | null {
@@ -205,9 +228,23 @@ export function groupOf(item: { detector: string; importer?: string; kind: strin
   return 'app';
 }
 
-/** Only a source with an importer that is a file, a set of files or an event channel can be ticked. The rest show their steps. */
-export const isSelectable = (finding: Pick<Finding, 'kind' | 'importer'>): boolean =>
-  (finding.kind === 'log-file' || finding.kind === 'log-set' || finding.kind === 'event-channel') && finding.importer !== '';
+const isFileKind = (kind: string): boolean => kind === 'log-file' || kind === 'log-set' || kind === 'event-channel';
+
+/**
+ * Only a source with an importer that is a file, a set of files or an event channel can be ticked, and only when the scan checked it
+ * (`verified`). The rest show their steps or the reason they cannot be read. A finding with no `verified` field is not verified.
+ */
+export const isSelectable = (finding: Pick<Finding, 'kind' | 'importer'> & { verified?: boolean }): boolean =>
+  isFileKind(finding.kind) && finding.importer !== '' && finding.verified === true;
+
+/**
+ * The plain-language reason a file or event source cannot be ticked, or '' when it can be (or when it never was a readable kind, such as a
+ * source with steps to follow). A source with no reason from the server but not verified gets a general line, never an empty one.
+ */
+export function readinessLabel(finding: Pick<Finding, 'kind' | 'importer' | 'unreadable'> & { verified?: boolean }): string {
+  if (isSelectable(finding) || !isFileKind(finding.kind)) return '';
+  return unreadableText(finding.unreadable);
+}
 
 /**
  * What is ticked when the list first shows: every small or medium source that can be read as this user. A large source is never ticked
@@ -468,6 +505,75 @@ export const discoverClient: DiscoverClient = {
     await send(casePath(caseId, '/sampler'), { method: 'DELETE' }, signal);
   }
 };
+
+/* ------------------------------------------------------------------ locate a folder, and check a network address */
+
+/** Why a typed folder did not verify (the server answered 200 with verified false). */
+export const LOCATE_FAILURES = ['not-found', 'cannot-open', 'empty-file', 'wrong-format', 'no-log-files', 'timed-out'] as const;
+/** Why a typed path was refused before anything was read (the server answered 400). */
+export const LOCATE_REFUSALS = ['path-not-absolute', 'path-not-local', 'path-unsafe'] as const;
+export type LocateReason = typeof LOCATE_FAILURES[number] | typeof LOCATE_REFUSALS[number] | 'unknown';
+
+/** The longest path the server takes. A longer one is refused here without a call. */
+export const MAX_LOCATE_PATH = 1024;
+
+/** The answer to "is this folder the one?". A refusal is a result, not an exception; a lost connection or an old scan still throws. */
+export type LocateResult =
+  | { ok: true; files: number; finding: Finding }
+  | { ok: false; files: number; reason: LocateReason };
+
+const isLocateReason = (value: unknown): value is LocateReason =>
+  typeof value === 'string' && ((LOCATE_FAILURES as readonly string[]).includes(value) || (LOCATE_REFUSALS as readonly string[]).includes(value));
+
+/**
+ * POST /api/discover/scans/{scan}/findings/{finding}/locate {path}. The one place a path leaves the browser, and it goes in the body only:
+ * the URL holds the two opaque ids. On success `finding` is the finding as the scan now holds it (verified, with an importer), to
+ * replace the one in the list. Repeating the call gives the same answer.
+ */
+export async function locateFinding(scanId: string, findingId: string, path: string, signal?: AbortSignal): Promise<LocateResult> {
+  if (!isFindingId(findingId)) throw new CaseApiError('That is not a source id.', 400, 'bad-finding-id');
+  const url = scanPath(scanId) + '/findings/' + findingId + '/locate';
+  const typed = path.trim();
+  if (typed === '') return { ok: false, files: 0, reason: 'path-not-absolute' };
+  if (typed.length > MAX_LOCATE_PATH) return { ok: false, files: 0, reason: 'path-unsafe' };
+  let response: Response;
+  try {
+    response = await send(url, { method: 'POST', body: JSON.stringify({ path: typed }) }, signal);
+  } catch (error) {
+    if (error instanceof CaseApiError && error.status === 400 && isLocateReason(error.reason)) return { ok: false, files: 0, reason: error.reason };
+    throw error;
+  }
+  const raw = asObject(await json<unknown>(response));
+  if (!raw || typeof raw.verified !== 'boolean') throw unreadable(response.status);
+  const files = Math.max(0, Math.floor(asNumber(raw.files)));
+  if (!raw.verified) return { ok: false, files, reason: isLocateReason(raw.reason) ? raw.reason : 'unknown' };
+  const finding = parseFinding(raw.finding);
+  if (!finding || finding.id !== findingId || !finding.verified) throw unreadable(response.status);
+  return { ok: true, files, finding };
+}
+
+/** Why a network address could not be reached ('' when it could). */
+export const PROBE_REASONS = ['refused', 'timed-out', 'no-such-host', 'blocked'] as const;
+export type ProbeReason = typeof PROBE_REASONS[number] | '' | 'unknown';
+export interface ProbeResult { reachable: boolean; reason: ProbeReason }
+
+const HOST_NAME_MAX = 253;
+
+/**
+ * POST /api/probe/reachable {host, port}. Asks the server whether it can open a connection to that address. It sends nothing and reads
+ * nothing; the answer is "reachable" or one reason. A bad host or port throws before any call; a 400, 429 or lost connection throws a CaseApiError.
+ */
+export async function probeReachable(host: string, port: number, signal?: AbortSignal): Promise<ProbeResult> {
+  const name = host.trim();
+  if (name === '' || name.length > HOST_NAME_MAX || /\s/.test(name)) throw new CaseApiError('Enter a host name or an address.', 400, 'bad-host');
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new CaseApiError('The port must be a number from 1 to 65535.', 400, 'bad-port');
+  const response = await send('/probe/reachable', { method: 'POST', body: JSON.stringify({ host: name, port }) }, signal);
+  const raw = asObject(await json<unknown>(response));
+  if (!raw || typeof raw.reachable !== 'boolean') throw unreadable(response.status);
+  if (raw.reachable) return { reachable: true, reason: '' };
+  const reason = PROBE_REASONS.find((r) => r === raw.reason);
+  return { reachable: false, reason: reason ?? 'unknown' };
+}
 
 /* ------------------------------------------------------------------ errors and capability state */
 

@@ -83,6 +83,16 @@ type Finding struct {
 	NeedsAdmin bool      `json:"needsAdmin"`
 	Cost       Cost      `json:"cost"`
 	How        string    `json:"how,omitempty"` // wording key, for export-needed and remote-only
+	// Verified is true when the scan opened a few of the finding's files and the
+	// importer it names recognised them. A finding that fails keeps its row, with
+	// Importer cleared and Unreadable set (see verify.go).
+	Verified bool `json:"verified"`
+	// Unreadable is the wording key that says why a finding was found but is not
+	// offered for import. Empty on a finding that passed or was never checked.
+	Unreadable string `json:"unreadable,omitempty"`
+	// Suggest holds Portal and API names derived from the folder names, as hints
+	// only. Nothing applies them for the user (see suggest.go).
+	Suggest *Suggestion `json:"suggest,omitempty"`
 
 	paths  []string
 	detail string // what Display shows after the site IDs, kept so a merge can rebuild Display
@@ -194,6 +204,14 @@ func RunWith(ctx context.Context, env Env, detectors []Detector, lim Limits) Sca
 	found, extra := validate(found, env)
 	s.Gaps = append(s.Gaps, extra...)
 	s.Findings = finalise(found)
+	for i := range s.Findings {
+		s.Findings[i].Suggest = suggestNames(s.Findings[i].paths)
+	}
+	// Nothing is offered as ready until its importer has read a sample. The pass
+	// runs under the scan's own time budget; a cut-off leaves the scan incomplete.
+	if verifyAll(gctx, env, s.Findings) {
+		s.Complete = false
+	}
 	s.Finished = time.Now()
 	return s
 }

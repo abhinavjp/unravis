@@ -1,0 +1,258 @@
+// Package masterkey is the passphrase protector behind the optional master key
+// (decision D-1): one passphrase the user chooses for this PC is stretched with
+// Argon2id into a 32-byte wrapping key. The key lives only in a Keyring, in
+// memory, for the running session. Only a salt, the Argon2id parameters and a
+// verifier (a constant sealed under the key) are written to disk, so a wrong
+// passphrase is detected without touching any case. Invariant I5: the passphrase
+// and the key are never written, logged, returned or put in an error.
+package masterkey
+
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"unicode/utf8"
+
+	"golang.org/x/crypto/argon2"
+	"golang.org/x/text/unicode/norm"
+
+	"api-audit-explorer/internal/sealedfile"
+)
+
+// FileName is the master key file, kept next to connections.dat.
+const FileName = "masterkey.dat"
+
+// MinPassphraseLen is the shortest accepted passphrase, in characters (runes,
+// counted after NFC normalisation).
+const MinPassphraseLen = 12
+
+// KeyLen is the length of the wrapping key and of every key this package derives.
+const KeyLen = 32
+
+const (
+	fileVersion = 1
+	// fileMax bounds what Unlock will read. A real file is under 400 bytes.
+	fileMax = 4 << 10
+	saltLen = 16
+
+	// Sane bounds for stored Argon2id parameters. A damaged file must not make
+	// the process allocate gigabytes or spin for minutes.
+	minTime, maxTime           = 1, 10
+	minMemoryKiB, maxMemoryKiB = 16 << 10, 256 << 10 // 16 MiB .. 256 MiB
+	minThreads, maxThreads     = 1, 16
+
+	blobVersion byte = 1
+	nonceLen         = 12
+
+	// keyringLabel is the AAD label Keyring.Protect/Unprotect use.
+	keyringLabel  = "unravis/masterkey/protect/v1"
+	verifierLabel = "unravis/masterkey/verifier/v1"
+	verifierConst = "unravis master key verifier v1"
+)
+
+var (
+	// ErrWrongKey is the only failure Unlock reports for a bad passphrase or a
+	// damaged or out-of-bounds masterkey.dat, so callers cannot tell them apart.
+	ErrWrongKey = errors.New("master key is wrong")
+	// ErrNotSet means no master key has been set up in this folder.
+	ErrNotSet = errors.New("master key is not set")
+	// ErrAlreadySet means Setup was asked to overwrite an existing master key.
+	ErrAlreadySet = errors.New("master key is already set")
+	// ErrTooShort means the passphrase has fewer than MinPassphraseLen characters.
+	ErrTooShort = errors.New("passphrase is too short")
+	// ErrLocked means the Keyring has been locked (its key zeroed).
+	ErrLocked = errors.New("master key is locked")
+	// ErrCiphertext is the single failure for any ciphertext that does not open:
+	// tampered, truncated, wrong key, wrong label or unknown version.
+	ErrCiphertext = errors.New("sealed data cannot be opened")
+)
+
+// Params are the Argon2id cost parameters. They are stored in masterkey.dat so
+// they can be raised later. Memory is in KiB.
+type Params struct {
+	Time    uint32 `json:"t"`
+	Memory  uint32 `json:"m"`
+	Threads uint8  `json:"p"`
+}
+
+// DefaultParams are the parameters Setup uses: time 3, 64 MiB, parallelism 4.
+func DefaultParams() Params { return Params{Time: 3, Memory: 64 << 10, Threads: 4} }
+
+// Validate reports whether p is inside the accepted bounds.
+func (p Params) Validate() bool {
+	return p.Time >= minTime && p.Time <= maxTime &&
+		p.Memory >= minMemoryKiB && p.Memory <= maxMemoryKiB &&
+		p.Threads >= minThreads && p.Threads <= maxThreads
+}
+
+type fileDoc struct {
+	V        int    `json:"v"`
+	KDF      string `json:"kdf"`
+	Params          // t, m, p
+	Salt     string `json:"salt"`
+	Verifier string `json:"verifier"`
+}
+
+// Path is the location of the master key file inside dir.
+func Path(dir string) string { return filepath.Join(dir, FileName) }
+
+// Exists reports whether a master key file is present in dir.
+func Exists(dir string) bool {
+	fi, err := os.Stat(Path(dir))
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// Normalize returns pass in Unicode NFC form as a new slice. The caller owns it
+// and should clear it after use.
+func Normalize(pass []byte) []byte {
+	cp := append([]byte(nil), pass...)
+	out := norm.NFC.Bytes(cp)
+	if len(out) > 0 && len(cp) > 0 && &out[0] != &cp[0] {
+		clear(cp)
+	}
+	return out
+}
+
+// DeriveKey stretches pass (NFC-normalised first) with Argon2id into a 32-byte
+// key. It does not modify or zero pass. The caller must clear the result.
+// Parameters outside the accepted bounds are refused before any allocation.
+func DeriveKey(pass, salt []byte, p Params) ([]byte, error) {
+	if !p.Validate() || len(salt) < 8 || len(salt) > 64 {
+		return nil, ErrWrongKey
+	}
+	n := Normalize(pass)
+	defer clear(n)
+	return argon2.IDKey(n, salt, p.Time, p.Memory, p.Threads, KeyLen), nil
+}
+
+// SealWith encrypts plain under key with AES-256-GCM: version byte, random
+// 12-byte nonce, ciphertext and tag. The version byte and label are bound as AAD
+// so a blob made for one purpose does not open for another.
+func SealWith(key []byte, label string, plain []byte) ([]byte, error) {
+	aead, err := newAEAD(key)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 1+nonceLen, 1+nonceLen+len(plain)+aead.Overhead())
+	out[0] = blobVersion
+	if _, err := rand.Read(out[1 : 1+nonceLen]); err != nil {
+		return nil, err
+	}
+	return aead.Seal(out, out[1:1+nonceLen], plain, aad(label)), nil
+}
+
+// OpenWith reverses SealWith. Every failure returns ErrCiphertext.
+func OpenWith(key []byte, label string, blob []byte) ([]byte, error) {
+	aead, err := newAEAD(key)
+	if err != nil {
+		return nil, ErrCiphertext
+	}
+	if len(blob) < 1+nonceLen+aead.Overhead() || blob[0] != blobVersion {
+		return nil, ErrCiphertext
+	}
+	plain, err := aead.Open(nil, blob[1:1+nonceLen], blob[1+nonceLen:], aad(label))
+	if err != nil {
+		return nil, ErrCiphertext
+	}
+	return plain, nil
+}
+
+func aad(label string) []byte { return append([]byte{blobVersion}, label...) }
+
+func newAEAD(key []byte) (cipher.AEAD, error) {
+	if len(key) != KeyLen {
+		return nil, ErrLocked
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+// Setup creates masterkey.dat in dir. It refuses a passphrase under 12
+// characters and refuses to overwrite an existing master key (that would orphan
+// every case it protects). pass is zeroed before Setup returns.
+func Setup(dir string, pass []byte) error {
+	defer clear(pass)
+	n := Normalize(pass)
+	defer clear(n)
+	if utf8.RuneCount(n) < MinPassphraseLen {
+		return ErrTooShort
+	}
+	if _, err := os.Lstat(Path(dir)); err == nil {
+		return ErrAlreadySet
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	salt := make([]byte, saltLen)
+	if _, err := rand.Read(salt); err != nil {
+		return err
+	}
+	p := DefaultParams()
+	key, err := DeriveKey(n, salt, p)
+	if err != nil {
+		return err
+	}
+	defer clear(key)
+	ver, err := SealWith(key, verifierLabel, []byte(verifierConst))
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(fileDoc{
+		V: fileVersion, KDF: "argon2id", Params: p,
+		Salt: hex.EncodeToString(salt), Verifier: hex.EncodeToString(ver),
+	})
+	if err != nil {
+		return err
+	}
+	return sealedfile.WriteAtomic(Path(dir), "masterkey.*.tmp", data)
+}
+
+// Unlock derives the key from pass and checks it against the verifier. A wrong
+// passphrase and a damaged or out-of-bounds file both give ErrWrongKey; a
+// missing file gives ErrNotSet. pass is zeroed before Unlock returns.
+func Unlock(dir string, pass []byte) (*Keyring, error) {
+	defer clear(pass)
+	fi, err := os.Stat(Path(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotSet
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() == 0 || fi.Size() > fileMax {
+		return nil, ErrWrongKey
+	}
+	raw, err := os.ReadFile(Path(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNotSet
+	}
+	if err != nil {
+		return nil, err
+	}
+	var doc fileDoc
+	if json.Unmarshal(raw, &doc) != nil || doc.V != fileVersion || doc.KDF != "argon2id" {
+		return nil, ErrWrongKey
+	}
+	salt, err1 := hex.DecodeString(doc.Salt)
+	ver, err2 := hex.DecodeString(doc.Verifier)
+	if err1 != nil || err2 != nil || !doc.Params.Validate() {
+		return nil, ErrWrongKey
+	}
+	key, err := DeriveKey(pass, salt, doc.Params)
+	if err != nil {
+		return nil, ErrWrongKey
+	}
+	plain, err := OpenWith(key, verifierLabel, ver)
+	if err != nil || string(plain) != verifierConst {
+		clear(key)
+		return nil, ErrWrongKey
+	}
+	return &Keyring{key: key}, nil
+}

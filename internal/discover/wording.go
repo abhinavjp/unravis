@@ -36,6 +36,13 @@ var shows = map[string]string{
 	"discover.live.shows":           "It records CPU and memory use by process while Unravis runs.",
 	"discover.perfmon.shows":        "They show CPU, memory, disk and network use on this host, minute by minute.",
 	"discover.dotnetcounters.shows": "They show garbage collection, thread pool and exception counts inside the app process, over time.",
+
+	// Why a finding is shown but cannot be imported (see verify.go). They sit in
+	// this table so the lint and the golden file cover them.
+	"discover.cannotopen.shows":    "Unravis could not open this source, so it is not offered for import.",
+	"discover.emptyfile.shows":     "The file is empty, so there is nothing to read yet.",
+	"discover.wrongformat.shows":   "The file does not look like the kind of log it was named as, so Unravis cannot read it.",
+	"discover.verifytimeout.shows": "Unravis ran out of time before it could check this source. Scan again to check it.",
 }
 
 // how give the exact step for a source Unravis does not read directly. Keys are

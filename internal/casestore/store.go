@@ -100,6 +100,11 @@ type CaseInfo struct {
 	Closed  *time.Time
 	Bytes   int64
 	Imports int
+	// Envs and Sources count the environment names and source tags the case
+	// holds (see Tagger). They are filled by Case.Info; Store.List reads only the
+	// manifest and leaves them zero.
+	Envs    int
+	Sources int
 }
 
 type ImportMeta struct {
@@ -410,3 +415,141 @@ func (e *DuplicateError) Error() string { return ErrDuplicate.Error() }
 
 // Unwrap makes errors.Is(err, ErrDuplicate) true.
 func (e *DuplicateError) Unwrap() error { return ErrDuplicate }
+
+// Bounds of the environment and source tags a case holds (Tagger).
+const (
+	MaxEnvNameChars = 60  // characters of one environment name
+	MaxTagTextChars = 80  // characters of a source's label, portal, api and kind
+	MaxEnvs         = 32  // environments per case
+	MaxSources      = 200 // source tags per case
+	maxEnvInput     = 1000
+)
+
+// Classification of a source (a Mongo database, for one): what the user says it
+// holds. The empty string means "not classified yet".
+const (
+	ClassAudit  = "audit"  // API audit logs
+	ClassOther  = "other"  // other data
+	ClassUnused = "unused" // not used
+)
+
+// ErrBadTag is returned by Tagger for an environment name, a source field or a
+// classification that breaks the bounds above. It never carries the input.
+var ErrBadTag = errors.New("invalid environment or source tag")
+
+// SourceTag says where one kind of data came from, in the words the user chose:
+// Environment, Portal and API, plus what a database holds (Classification).
+//
+// A SourceTag stores no file path, connection string, host name or address, and
+// no credential or secret of any kind, only short plain text the user typed or
+// picked (R14). The store bounds and cleans it; callers must not put anything
+// else in it. Blank Env, Portal or API means "not named".
+type SourceTag struct {
+	ID int64 // assigned by AddSource; ignored on input
+	// ImportID links the tag to an import of the case (0 for none). It is not
+	// checked against Imports: a tag may be added before its file is imported.
+	ImportID       int64
+	Kind           string // required: the sort of source, for example "iis" or "mongo-db"
+	Label          string
+	Env            string // free text; need not match a name from SetEnvs
+	Portal         string
+	API            string
+	Classification string    // "", ClassAudit, ClassOther or ClassUnused
+	Created        time.Time // assigned by AddSource (UTC); ignored on input
+}
+
+// Tagger is implemented by a Case that keeps environments and source tags. It is
+// a separate interface, like Quarantiner and Discoverer, so it breaks no Case;
+// both stores in this repository implement it.
+//
+// Writes are refused with ErrCaseClosed once the case is closed (CloseCase);
+// reads still work. Every method fails like the other Case methods on a closed
+// handle (ErrHandleClosed) or an erased case (ErrNotFound).
+type Tagger interface {
+	// SetEnvs replaces the case's environment list. Names are trimmed, blank
+	// names dropped, and a name that repeats an earlier one in any letter case
+	// collapses into the first spelling. Order is kept. nil or empty clears the
+	// list. ErrBadTag for a bad name, ErrCapExceeded past MaxEnvs.
+	SetEnvs(ctx context.Context, names []string) error
+	// Envs lists the environment names in the order SetEnvs gave them.
+	Envs(ctx context.Context) ([]string, error)
+	// AddSource stores a tag and returns it with ID and Created set. ErrBadTag
+	// for a bad field, ErrCapExceeded past MaxSources.
+	AddSource(ctx context.Context, s SourceTag) (SourceTag, error)
+	// Sources lists the tags, oldest first.
+	Sources(ctx context.Context) ([]SourceTag, error)
+	// RemoveSource deletes one tag. Removing an ID that is not there is not an error.
+	RemoveSource(ctx context.Context, id int64) error
+}
+
+// cleanTagText trims s and reports whether it is plain, bounded text: valid
+// UTF-8, no control or invisible formatting characters (the ValidTitle rule),
+// at most max characters. Empty is allowed here; callers decide if it may be.
+func cleanTagText(s string, max int) (string, bool) {
+	s = strings.TrimSpace(s)
+	if !utf8.ValidString(s) || utf8.RuneCountInString(s) > max {
+		return "", false
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
+			return "", false
+		}
+	}
+	return s, true
+}
+
+// CleanEnvs applies the SetEnvs rules and returns the list to store.
+func CleanEnvs(names []string) ([]string, error) {
+	if len(names) > maxEnvInput {
+		return nil, ErrBadTag
+	}
+	out := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		n, ok := cleanTagText(n, MaxEnvNameChars)
+		if !ok {
+			return nil, ErrBadTag
+		}
+		if n == "" {
+			continue
+		}
+		k := strings.ToLower(n)
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, n)
+	}
+	if len(out) > MaxEnvs {
+		return nil, ErrCapExceeded
+	}
+	return out, nil
+}
+
+// CleanSource applies the AddSource rules: every text field trimmed and
+// bounded, Kind non-empty, Classification one of the allowed words, ImportID not
+// negative. ID and Created are cleared; the store assigns them.
+func CleanSource(s SourceTag) (SourceTag, error) {
+	var ok bool
+	if s.Kind, ok = cleanTagText(s.Kind, MaxTagTextChars); !ok || s.Kind == "" {
+		return SourceTag{}, ErrBadTag
+	}
+	if s.Env, ok = cleanTagText(s.Env, MaxEnvNameChars); !ok {
+		return SourceTag{}, ErrBadTag
+	}
+	for _, f := range []*string{&s.Label, &s.Portal, &s.API} {
+		if *f, ok = cleanTagText(*f, MaxTagTextChars); !ok {
+			return SourceTag{}, ErrBadTag
+		}
+	}
+	switch s.Classification {
+	case "", ClassAudit, ClassOther, ClassUnused:
+	default:
+		return SourceTag{}, ErrBadTag
+	}
+	if s.ImportID < 0 {
+		return SourceTag{}, ErrBadTag
+	}
+	s.ID, s.Created = 0, time.Time{}
+	return s, nil
+}

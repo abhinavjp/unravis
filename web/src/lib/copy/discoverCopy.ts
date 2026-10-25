@@ -330,6 +330,51 @@ export function problemText(problem: string, error?: { status: number; reason: s
   }
 }
 
+/* ------------------------------------------------------------------ checking a file, and the reachability probe */
+
+// Why a log file is not ready to import. The server sends a wording key such as "discover.cannotopen.shows"; its middle part names the reason.
+const UNREADABLE: Record<string, string> = {
+  cannotopen: 'Unravis could not open this file. Check that this account may read it.',
+  emptyfile: 'This file has nothing in it yet.',
+  wrongformat: 'Unravis could not read this file. It may be a different kind of log.',
+  verifytimeout: 'Opening this file took too long. Try again, or point to a copy on this computer.'
+};
+const UNREADABLE_GENERIC = 'Unravis has not checked this file yet. Point to the log file or folder to check it.';
+
+/** Why a log file cannot be imported yet, in words. An empty or unknown reason gives a general line, never a raw key. */
+export function unreadableText(key: string): string {
+  const name = wordingName(key);
+  return name && has(UNREADABLE, name) ? UNREADABLE[name] : UNREADABLE_GENERIC;
+}
+
+/** Reasons the locate request can give back. A refusal means the path was not even tried. */
+const LOCATE_REASONS: Record<string, string> = {
+  'not-found': 'Unravis found nothing at that place. Check the spelling and try again.',
+  'cannot-open': 'Unravis could not open that place. Check that this account may read it.',
+  'empty-file': 'That file has nothing in it yet.',
+  'wrong-format': 'Unravis could not read that file. It may be a different kind of log.',
+  'no-log-files': 'Unravis found no log files in that folder.',
+  'timed-out': 'Opening that place took too long. Try again.',
+  'path-not-absolute': 'Enter the full path, starting with a drive letter.',
+  'path-not-local': 'Unravis can only read places on this computer. Use a path on a local drive.',
+  'path-unsafe': 'Unravis cannot use that path. Enter a plain path to a log file or folder.',
+  unknown: 'Unravis could not check that place. Try again.'
+};
+
+/** What a locate answer means, in words. A code nobody named gives the general line. */
+export const locateReasonText = (reason: string): string => (has(LOCATE_REASONS, reason) ? LOCATE_REASONS[reason] : LOCATE_REASONS.unknown);
+
+const PROBE_REASONS_TEXT: Record<string, string> = {
+  refused: 'The computer answered but is not accepting connections on that port.',
+  'timed-out': 'There was no answer in time. The address may be wrong, or a firewall may be in the way.',
+  'no-such-host': 'That name does not match any computer. Check the spelling.',
+  blocked: 'Unravis is not allowed to check that address.',
+  unknown: 'Unravis could not reach that address.'
+};
+
+/** What a failed reachability check means, in words. */
+export const probeReasonText = (reason: string): string => (has(PROBE_REASONS_TEXT, reason) ? PROBE_REASONS_TEXT[reason] : PROBE_REASONS_TEXT.unknown);
+
 /* ------------------------------------------------------------------ lint */
 
 /** Every string and every function's sample output, for the copy lint test. */
@@ -395,6 +440,10 @@ export function discoverCopyEntries(): LintEntry[] {
   for (const problem of ['unavailable', 'busy', 'import-busy', 'sampler-busy', 'expired', 'unreachable', 'session', 'other']) entries.push({ id: 'discover.problem.' + problem, text: problemText(problem) });
   for (const name of Object.keys(SHOWS)) entries.push({ id: 'discover.shows.' + name, text: showsText('discover.' + name + '.shows', '') });
   for (const name of Object.keys(HOW)) entries.push({ id: 'discover.how.' + name, text: howText('discover.' + name + '.how') });
+  for (const name of Object.keys(UNREADABLE)) entries.push({ id: 'discover.unreadable.' + name, text: unreadableText('discover.' + name + '.shows') });
+  entries.push({ id: 'discover.unreadable.generic', text: unreadableText('') });
+  for (const reason of Object.keys(LOCATE_REASONS)) entries.push({ id: 'discover.locate.' + reason, text: locateReasonText(reason) });
+  for (const reason of Object.keys(PROBE_REASONS_TEXT)) entries.push({ id: 'discover.probe.' + reason, text: probeReasonText(reason) });
   for (const reason of Object.keys(DISCOVER_TEXT.gapReasons)) entries.push({ id: 'discover.gap.' + reason, text: gapReasonText(reason) });
   for (const id of Object.keys(DETECTOR_NAMES)) entries.push({ id: 'discover.detector.' + id, text: detectorLine(id, 'running') });
   const walk = (prefix: string, value: unknown) => {

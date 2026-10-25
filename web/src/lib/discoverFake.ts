@@ -42,7 +42,7 @@ export function fakeFinding(extra: Partial<Finding> = {}): Finding {
   return {
     id: 'k3m7q2x5v8b4n6c9d2f5g7h3j4', detector: 'iis', kind: 'log-set', importer: 'iis-w3c', host: 'local', display: 'W3SVC2 (u_ex010911.log and 13 more)',
     confidence: 90, shows: 'discover.iis.shows', how: '', sizeBytes: 50 * 1024 * 1024, files: 14, oldest: '2001-09-10T00:00:00Z', newest: '2001-09-11T08:41:00Z',
-    needsAdmin: false, cost: 'small', ...extra
+    needsAdmin: false, cost: 'small', verified: true, unreadable: '', suggest: null, ...extra
   };
 }
 
