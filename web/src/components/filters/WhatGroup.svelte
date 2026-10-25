@@ -5,6 +5,8 @@
   import { isValidOperation, syncOperationDraft } from '../../lib/investigation';
   import FilterGroup from './FilterGroup.svelte';
   import Hint from '../Hint.svelte';
+  import HelpNote from '../HelpNote.svelte';
+  import FieldHelp from '../FieldHelp.svelte';
   // The What group of the More filters panel: which requests, by outcome, completion and name. It edits the shared query only; the panel
   // never starts a run on its own.
   // hasError lets the panel rail show a problem dot while this group is on a hidden pane.
@@ -32,27 +34,27 @@
 </script>
 
 <FilterGroup id="what" title="What" {count}>
+  {#snippet help()}<HelpNote id="what" />{/snippet}
   <div class="field-grid">
-    <div class="control-group"><span class="label-line"><label for="outcome">Status</label><Hint termId="status-class" /></span><select id="outcome" bind:value={query.outcome}><option value="all">All statuses</option><option value="success">Success</option><option value="failure">Failure</option><option value="client_error">Client errors (4xx)</option><option value="server_error">Server errors (5xx, incl. failed Hangfire jobs)</option></select></div>
-    <div class="control-group"><span class="label-line"><label for="rf-completion">Completion</label><Hint termId="incomplete-request" /></span><select id="rf-completion" value={query.completion ?? ''} onchange={(event) => setCompletion(event.currentTarget.value)}><option value="">Any</option>{#each ['complete', 'incomplete', 'pending', 'invalid'] as value}<option value={value}>{completionLabels[value as Completion]}</option>{/each}</select></div>
-    <div class="control-group"><label for="controller">Controller name</label><input id="controller" bind:value={query.controller} placeholder="Any controller" /></div>
-    <div class="control-group"><label for="action">Action name</label><input id="action" bind:value={query.action} placeholder="Any action" /></div>
+    <div class="control-group"><span class="label-line"><label for="outcome">Status</label><Hint termId="status-class" /><FieldHelp id="outcome" /></span><select id="outcome" bind:value={query.outcome}><option value="all">All statuses</option><option value="success">Success</option><option value="failure">Failure</option><option value="client_error">Client errors (4xx)</option><option value="server_error">Server errors (5xx, incl. failed Hangfire jobs)</option></select></div>
+    <div class="control-group"><span class="label-line"><label for="rf-completion">Completion</label><Hint termId="incomplete-request" /><FieldHelp id="rf-completion" /></span><select id="rf-completion" value={query.completion ?? ''} onchange={(event) => setCompletion(event.currentTarget.value)}><option value="">Any</option>{#each ['complete', 'incomplete', 'pending', 'invalid'] as value}<option value={value}>{completionLabels[value as Completion]}</option>{/each}</select></div>
+    <div class="control-group"><span class="label-line"><label for="controller">Controller name</label><FieldHelp id="controller" /></span><input id="controller" bind:value={query.controller} placeholder="Any controller" /></div>
+    <div class="control-group"><span class="label-line"><label for="action">Action name</label><FieldHelp id="action" /></span><input id="action" bind:value={query.action} placeholder="Any action" /></div>
     <div class="control-group wide">
-      <label for="rf-operation">Operation</label>
+      <span class="label-line"><label for="rf-operation">Operation</label><FieldHelp id="rf-operation" /></span>
       <input id="rf-operation" list="rf-operation-options" maxlength="200" autocomplete="off" aria-invalid={operationInvalid} aria-describedby={operationInvalid ? 'rf-operation-error' : undefined} value={operationText} oninput={(event) => setOperation(event.currentTarget.value)} placeholder="Controller.Action" />
       {#if operationInvalid}<p class="inline-error" id="rf-operation-error" role="alert">Not applied. Write the operation as Controller.Action, with a name on both sides of the dot.</p>{/if}
       <datalist id="rf-operation-options">{#each operationSuggestions as name (name)}<option value={name}></option>{/each}</datalist>
       <p class="field-note">Suggestions come from the loaded results.</p>
     </div>
   </div>
-  <label class="check-row"><input type="checkbox" id="kind-unknown" checked={query.kind === 'http_unknown'} onchange={e => query.kind = unknownKindToggle(e.currentTarget.checked)} /> Only HTTP requests whose polling type is unknown</label>
+  <div class="check-line"><label class="check-row"><input type="checkbox" id="kind-unknown" checked={query.kind === 'http_unknown'} onchange={e => query.kind = unknownKindToggle(e.currentTarget.checked)} /> Only HTTP requests whose polling type is unknown</label><FieldHelp id="kind-unknown" /></div>
 </FilterGroup>
 
 <style>
-  .label-line { display: flex; align-items: center; gap: 0; }
-  .label-line label { margin: 0; }
   input[aria-invalid='true'] { border-color: var(--bad); }
   .field-grid > .wide { grid-column: 1 / -1; }
-  .check-row { display: flex; gap: 8px; align-items: center; min-height: 30px; margin-top: 8px; color: var(--text); font-size: 13px; }
+  .check-line { display: flex; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .check-row { display: flex; gap: 8px; align-items: center; min-height: 30px; color: var(--text); font-size: 13px; }
   .check-row input { accent-color: var(--accent); }
 </style>

@@ -7,6 +7,8 @@
   import { isManualBucket } from '../../lib/zoom';
   import DateTimeField from '../DateTimeField.svelte';
   import Hint from '../Hint.svelte';
+  import HelpNote from '../HelpNote.svelte';
+  import FieldHelp from '../FieldHelp.svelte';
   import FilterGroup from './FilterGroup.svelte';
   // The two date windows of the More filters panel. Only the panel renders this component, so it always owns the validity state:
   // dateInputsValid follows invalidWindows, and a valid value set from outside (a quick range in the bar) clears the stale errors.
@@ -42,22 +44,23 @@
 
 <FilterGroup id="when" title="When">
   {#snippet lede()}Times use your browser time zone: <strong>{browserZone}</strong>.{/snippet}
+  {#snippet help()}<HelpNote id="when" />{/snippet}
   <div class="when-windows">
     <section class="when-window" aria-labelledby="current-range-label">
-      <h3 id="current-range-label">Investigate</h3>
+      <div class="label-line"><h3 id="current-range-label">Investigate</h3><FieldHelp id="current-range" /></div>
       <p class="when-sub">Requests in the period you want to inspect.</p>
       <div class="window-bounds">
-        <DateTimeField id="current-start" label="From" value={localValue(query.start)} onChange={(date, time) => setWindow('start', date, time)} />
-        <DateTimeField id="current-end" label="To" value={localValue(query.end)} onChange={(date, time) => setWindow('end', date, time)} />
+        <DateTimeField id="current-start" label="From" help="current-start" value={localValue(query.start)} onChange={(date, time) => setWindow('start', date, time)} />
+        <DateTimeField id="current-end" label="To" help="current-end" value={localValue(query.end)} onChange={(date, time) => setWindow('end', date, time)} />
       </div>
       {#if !invalidWindows.some(field => field === 'start' || field === 'end')}<p class="utc-echo">UTC <time datetime={query.start}>{query.start}</time> – <time datetime={query.end}>{query.end}</time></p>{/if}
     </section>
     <section class="when-window" aria-labelledby="reference-range-label">
-      <h3 id="reference-range-label">Reference<Hint termId="reference-period" /></h3>
+      <div class="label-line"><h3 id="reference-range-label">Reference<Hint termId="reference-period" /></h3><FieldHelp id="reference-range" /></div>
       <p class="when-sub">An earlier period to compare with.</p>
       <div class="window-bounds">
-        <DateTimeField id="reference-start" label="From" value={localValue(query.baselineStart)} onChange={(date, time) => setWindow('baselineStart', date, time)} />
-        <DateTimeField id="reference-end" label="To" value={localValue(query.baselineEnd)} onChange={(date, time) => setWindow('baselineEnd', date, time)} />
+        <DateTimeField id="reference-start" label="From" help="reference-start" value={localValue(query.baselineStart)} onChange={(date, time) => setWindow('baselineStart', date, time)} />
+        <DateTimeField id="reference-end" label="To" help="reference-end" value={localValue(query.baselineEnd)} onChange={(date, time) => setWindow('baselineEnd', date, time)} />
       </div>
       {#if !invalidWindows.some(field => field === 'baselineStart' || field === 'baselineEnd')}<p class="utc-echo">UTC <time datetime={query.baselineStart}>{query.baselineStart}</time> – <time datetime={query.baselineEnd}>{query.baselineEnd}</time></p>{/if}
     </section>

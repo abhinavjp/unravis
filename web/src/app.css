@@ -844,6 +844,11 @@ th.numeric { text-align: right; }
 .fg-title { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
 .fg-count { color: var(--text-2); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .fg-lede { margin: -4px 0 8px; color: var(--text-2); font-size: 12px; line-height: 1.45; }
+.label-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0; }
+.control-group .label-line { margin-top: 4px; }
+.control-group .label-line > label { display: block; margin: 0; color: var(--text-2); font-size: 12px; font-weight: 500; }
+.fg-help { margin: 0 0 8px; }
+.date-time-help { margin-top: 4px; }
 .label-aside { margin-left: 6px; color: var(--text-2); font-weight: 400; }
 .panel-head { display: grid; gap: 6px; padding-bottom: 10px; }
 .panel-count { margin: 0; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }

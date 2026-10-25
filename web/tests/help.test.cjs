@@ -259,3 +259,92 @@ test('the header keeps the reference time from 1200px and shortens the switch la
   assert.match(toggle, /<span class="full">Explain simply<\/span>/, 'the full name stays in the accessible name');
   assert.doesNotMatch(toggle.slice(toggle.indexOf('<style>')), /display: none[^}]*\.full|\.full[^}]*display: none/, 'the full label is clipped, not removed');
 });
+
+// ---- Wiring: every key in the help table is reached by a screen ----
+// Keys kept on purpose with no component, each with a reason. None today.
+const INTENTIONALLY_UNUSED = {};
+const usedHelpIds = () => {
+  const used = new Set();
+  const block = read('src/lib/investigation.ts').match(/export const RANGE_FIELDS[\s\S]*?const NUMBER_TEXT/)[0];
+  const rangeKeys = [...block.matchAll(/key: '(\w+)'/g)].map((m) => m[1]);
+  for (const file of sveltePaths()) {
+    const src = fs.readFileSync(file, 'utf8');
+    for (const m of src.matchAll(/<(?:HelpNote|FieldHelp)\s+id="([^"]+)"/g)) used.add(m[1]);
+    // A range row passes its id as 'rf-' + field.key inside the RANGE_FIELDS loop, so every range key is used there.
+    if (/<FieldHelp\s+id=\{'rf-' \+ field\.key\}/.test(src)) for (const key of rangeKeys) used.add('rf-' + key);
+    // A date field takes its help key as the help prop.
+    for (const m of src.matchAll(/<DateTimeField\b[^>]*\shelp="([^"]+)"/g)) used.add(m[1]);
+  }
+  return used;
+};
+
+test('every key in the help table is used by a HelpNote or a FieldHelp, or is listed as intentionally unused', () => {
+  const used = usedHelpIds();
+  for (const key of Object.keys(help)) {
+    if (Object.hasOwn(INTENTIONALLY_UNUSED, key)) { assert.ok(INTENTIONALLY_UNUSED[key].length > 10, key + ' needs a reason'); continue; }
+    assert.ok(used.has(key), 'help key ' + key + ' is not used by any component');
+  }
+  for (const key of Object.keys(INTENTIONALLY_UNUSED)) assert.ok(!used.has(key), key + ' is used, so remove it from the allow-list');
+  for (const id of used) assert.ok(Object.hasOwn(help, id), 'unknown help id ' + id);
+});
+
+test('each filter group renders its own HelpNote once, through the help snippet of FilterGroup', () => {
+  for (const [file, key] of [['WhenGroup', 'when'], ['WhatGroup', 'what'], ['DetailsGroup', 'details'], ['RangesGroup', 'ranges'], ['ChartGroup', 'chart']]) {
+    const src = read('src/components/filters/' + file + '.svelte');
+    assert.equal(src.split('<HelpNote id="' + key + '" />').length - 1, 1, file);
+    assert.match(src, /\{#snippet help\(\)\}<HelpNote id="\w+" \/>\{\/snippet\}/, file);
+    assert.match(src, /import HelpNote from '\.\.\/HelpNote\.svelte'/, file);
+  }
+  const group = read('src/components/filters/FilterGroup.svelte');
+  assert.match(group, /help\?: Snippet/);
+  assert.match(group, /\{#if help\}<div class="fg-help">\{@render help\(\)\}<\/div>\{\/if\}/);
+});
+
+test('the field keys are wired to the controls they describe', () => {
+  const when = read('src/components/filters/WhenGroup.svelte');
+  for (const id of ['current-range', 'reference-range']) assert.match(when, new RegExp('<FieldHelp id="' + id + '" />'));
+  for (const id of ['current-start', 'current-end', 'reference-start', 'reference-end']) assert.match(when, new RegExp('<DateTimeField id="' + id + '" label="(?:From|To)" help="' + id + '"'));
+  const what = read('src/components/filters/WhatGroup.svelte');
+  for (const id of ['outcome', 'rf-completion', 'controller', 'action', 'rf-operation', 'kind-unknown']) assert.match(what, new RegExp('<FieldHelp id="' + id + '" />'));
+  const details = read('src/components/filters/DetailsGroup.svelte');
+  for (const id of DETAIL_FIELDS) assert.match(details, new RegExp('<label for="' + id + '">[^\\n]*</label><FieldHelp id="' + id + '" />'));
+  const chart = read('src/components/filters/ChartGroup.svelte');
+  for (const id of CHART_FIELDS) assert.match(chart, new RegExp('<FieldHelp id="' + id + '" />'));
+  const ranges = read('src/components/filters/RangesGroup.svelte');
+  assert.match(ranges, /part="toggle" bind:open=\{helpOpen\[field\.key\]\}/);
+  assert.match(ranges, /part="block" open=\{helpOpen\[field\.key\]\}/);
+});
+
+test('the drill-down controls carry their notes: investigate with the chip, back with the Back button', () => {
+  const src = read('src/components/ZoomStrip.svelte');
+  assert.match(src, /\{#if !model\.isRoot\}<div class="zoom-help"><HelpNote id="drill-investigate" \/><\/div>\{\/if\}/, 'shown only while the chip is shown');
+  assert.match(src, /\{#if model\.canBack\}<div class="zoom-help"><HelpNote id="drill-back" \/><\/div>\{\/if\}/);
+  assert.match(src, /<HelpNote id="drill-navigator" \/>/);
+  // The chip keeps its own disabled logic.
+  assert.match(src, /aria-disabled=\{!investigate\.enabled\} aria-describedby=\{investigate\.enabled \? undefined : reasonId\}/);
+});
+
+test('FieldHelp is a labelled disclosure that adds no tab stop beyond its button and uses tokens only', () => {
+  const src = read('src/components/FieldHelp.svelte');
+  assert.match(src, /let \{ id, part = 'both', open = \$bindable\(false\) \}/);
+  assert.match(src, /import \{ help \} from '\.\.\/lib\/copy\/helpCopy'/);
+  assert.match(src, /<button type="button"[^>]*aria-expanded=\{shown\}[^>]*aria-controls=\{blockId\}/);
+  assert.match(src, /disabled=\{eli10\.on\}/);
+  assert.match(src, /id=\{blockId\}[^>]*hidden=\{!shown\}/, 'the block stays mounted and hidden');
+  assert.doesNotMatch(src, /tabindex|\{@html|innerHTML/);
+  const style = src.slice(src.indexOf('<style>'));
+  assert.doesNotMatch(style, /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(|animation|transition/);
+  assert.match(style, /:focus-visible/);
+});
+
+test('the group rail keeps one roving tab stop: help sits inside the panes, never on the tab buttons', () => {
+  const src = read('src/components/QueryControls.svelte');
+  const tabs = src.slice(src.indexOf('role="tablist"'), src.indexOf('role="tabpanel"'));
+  assert.ok(tabs.length > 20, 'the tab list was found');
+  assert.doesNotMatch(tabs, /HelpNote|FieldHelp/);
+  assert.match(src, /role="tabpanel" id="rail-pane-when"[^>]*hidden=\{current !== 'when'\}/, 'a hidden pane is hidden, so its notes take no focus');
+});
+
+test('FieldHelp keeps CRLF line endings', () => {
+  assert.ok(!/(?<!\r)\n/.test(read('src/components/FieldHelp.svelte')));
+});

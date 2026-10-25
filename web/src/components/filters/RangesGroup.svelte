@@ -1,5 +1,7 @@
 <script lang="ts">
   import FilterGroup from './FilterGroup.svelte';
+  import HelpNote from '../HelpNote.svelte';
+  import FieldHelp from '../FieldHelp.svelte';
   import type { Query, RangeKey, NumberRange } from '../../lib/types';
   import { RANGE_FIELDS, buildRange, formatNumber, syncRangeDraft, rangeConflict } from '../../lib/investigation';
 
@@ -38,6 +40,9 @@
       effect: 'Incomplete and pending requests only, so it sets Completion to Incomplete. It cannot be combined with a time range.'
     }
   };
+
+  // Each row's help flag: the button sits beside the measure name and the block spans the row, so the row holds the flag for both.
+  let helpOpen = $state<Record<string, boolean>>({});
 
   type RangeDraft = { min: string; max: string };
   const draftOf = (range: NumberRange | undefined): RangeDraft => ({
@@ -80,6 +85,7 @@
   {#snippet lede()}
     <span>Both ends are optional and included. A request that does not record the value never matches a range.</span>
   {/snippet}
+  {#snippet help()}<HelpNote id="ranges" />{/snippet}
 
   {#if rangeNote}<p class="inline-error" role="alert">{rangeNote}</p>{/if}
 
@@ -92,7 +98,7 @@
     </div>
     {#each RANGE_FIELDS as field (field.key)}
       <div class="range-row" role="group" aria-labelledby="rf-{field.key}-label" title={rangeMeta[field.key].describe}>
-        <span class="range-name" id="rf-{field.key}-label">{rangeMeta[field.key].label} ({field.unit})</span>
+        <span class="range-head"><span class="range-name" id="rf-{field.key}-label">{rangeMeta[field.key].label} ({field.unit})</span><FieldHelp id={'rf-' + field.key} part="toggle" bind:open={helpOpen[field.key]} /></span>
         <span class="visually-hidden" id="rf-{field.key}-desc">{rangeMeta[field.key].describe}</span>
         <input
           id="rf-{field.key}-min"
@@ -122,6 +128,7 @@
         {#if rangeProblems[field.key].length > 0}
           <p class="inline-error range-error" id="rf-{field.key}-error" role="alert">Not applied. {rangeProblems[field.key][0]}.</p>
         {/if}
+        <FieldHelp id={'rf-' + field.key} part="block" open={helpOpen[field.key]} />
       </div>
     {/each}
   </div>
@@ -148,6 +155,14 @@
     grid-column: 1 / -1;
     margin: 0;
   }
+  .range-head {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+  .range-row > :global(.field-help-block) {
+    grid-column: 1 / -1;
+  }
   .range-note {
     font-size: 12px;
     color: var(--text-2);
@@ -165,9 +180,10 @@
         "name name"
         "min max"
         "note note"
-        "err err";
+        "err err"
+        "help help";
     }
-    .range-name {
+    .range-head {
       grid-area: name;
     }
     .range-row input[id$="-min"] {
@@ -181,6 +197,9 @@
     }
     .range-error {
       grid-area: err;
+    }
+    .range-row > :global(.field-help-block) {
+      grid-area: help;
     }
   }
 </style>

@@ -136,6 +136,7 @@
       <button type="button" class="quiet-button" disabled={!model.canReset} onclick={onReset}>{zoomCopy.reset}</button>
     </div>
   </div>
+  {#if model.canBack}<div class="zoom-help"><HelpNote id="drill-back" /></div>{/if}
 
   <div class="zoom-stage">
     <p class="zoom-line"><strong class="level">{model.levelName}</strong> {#if preview}<span class="readout">{previewText}</span>{:else}{model.rangeLine} {model.intervalLine}{/if}</p>
@@ -146,6 +147,7 @@
       </div>
     {/if}
   </div>
+  {#if !model.isRoot}<div class="zoom-help"><HelpNote id="drill-investigate" /></div>{/if}
   {#if model.message}<p class="zoom-message" data-tone={model.messageTone}>{model.message}</p>{/if}
   {#if model.notice}<p class="zoom-message" data-tone="info">{model.notice}</p>{/if}
 
