@@ -12,7 +12,7 @@ import (
 // escapes to six bytes, so it is the worst case for serialised size.
 func maxInput() Input {
 	long := strings.Repeat("<", MaxTextLen)
-	in := Input{Text: long, State: StateOpen, Notes: long}
+	in := Input{Text: long, State: StateOpen, Notes: long, SettlingObservation: strings.Repeat("<", MaxSettlingLen)}
 	for i := 0; i < MaxListLen; i++ {
 		in.EvidenceIDs = append(in.EvidenceIDs, strings.Repeat("z", 120))
 		in.Facts.Counterexamples = append(in.Facts.Counterexamples, long)

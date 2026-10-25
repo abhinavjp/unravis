@@ -82,7 +82,7 @@ test('facts default to nothing stated and nothing ticked', () => {
 
 function hypothesis(overrides = {}) {
   return {
-    id: 'h1', text: 'The save slowed down at the same time as a job', state: 'open', evidenceIds: [], notes: '',
+    id: 'h1', text: 'The save slowed down at the same time as a job', state: 'open', evidenceIds: [], notes: '', settlingObservation: '',
     facts: ledger.defaultFacts(), guards: [], createdAt: '2026-10-24T00:00:00Z', updatedAt: '2026-10-24T00:00:00Z', history: [], ...overrides
   };
 }
@@ -93,7 +93,7 @@ test('the editor round-trips a hypothesis into the same input', () => {
     joinAmbiguousPct: 4.5, timezoneRecorded: true, confounderOverlap: false, coverageGap: false, overlapOnly: false
   };
   const h = hypothesis({ state: 'supported_by_correlation', evidenceIds: ['prov-1', 'prov-2'], notes: 'n', facts });
-  assert.deepEqual(ledger.buildInput(ledger.editorFromHypothesis(h)), { text: h.text, state: h.state, evidenceIds: ['prov-1', 'prov-2'], notes: 'n', facts });
+  assert.deepEqual(ledger.buildInput(ledger.editorFromHypothesis(h)), { text: h.text, state: h.state, evidenceIds: ['prov-1', 'prov-2'], notes: 'n', settlingObservation: '', facts });
 });
 
 test('buildInput parses lists, trims, drops blanks and builds the committed input shape', () => {
@@ -105,7 +105,7 @@ test('buildInput parses lists, trims, drops blanks and builds the committed inpu
     joinPct: '12.5', timezoneRecorded: true, coverageGap: true
   });
   assert.deepEqual(ledger.buildInput(editor), {
-    text: 'A hypothesis', state: 'contradicted', evidenceIds: ['a', 'b', 'c'], notes: ' keep ',
+    text: 'A hypothesis', state: 'contradicted', evidenceIds: ['a', 'b', 'c'], notes: ' keep ', settlingObservation: '',
     facts: {
       presentK: 2, totalN: 5, counterexamples: ['one, with comma', 'two'], alternatives: [{ text: 'Cache', status: 'open' }],
       timezoneRecorded: true, confounderOverlap: false, coverageGap: true, overlapOnly: false, joinAmbiguousPct: 12.5

@@ -257,9 +257,11 @@ export interface HypothesisFacts {
   presentK: number; totalN: number; counterexamples: string[]; alternatives: HypothesisAlternative[];
   joinAmbiguousPct?: number; timezoneRecorded: boolean; confounderOverlap: boolean; coverageGap: boolean; overlapOnly: boolean;
 }
-export interface HypothesisInput { text: string; state: HypothesisState; evidenceIds: string[]; notes: string; facts: HypothesisFacts }
+export interface HypothesisInput { text: string; state: HypothesisState; evidenceIds: string[]; notes: string; settlingObservation: string; facts: HypothesisFacts }
 export interface Hypothesis {
-  id: string; text: string; state: HypothesisState; evidenceIds: string[]; notes: string; facts: HypothesisFacts;
+  id: string; text: string; state: HypothesisState; evidenceIds: string[]; notes: string;
+  /** One observation, written by the analyst, that would settle the theory either way. Up to 500 characters. */
+  settlingObservation: string; facts: HypothesisFacts;
   /** Reasons "strong correlation" is blocked right now; empty when it would be allowed. */
   guards: string[]; createdAt: string; updatedAt: string; history: { state: HypothesisState; at: string; note: string }[];
 }

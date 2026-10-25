@@ -4,9 +4,11 @@
   import type { Hypothesis } from '../lib/types';
   import {
     ALT_STATUS_LABEL, ALT_STATUS_ORDER, STATE_LABEL, STATE_ORDER, appendEvidence, buildInput, editorFromHypothesis, historyLine,
-    identifierWarning, isDirty, joinProblem, ledgerCopy as copy, numberProblem, presenceText, rateProblem, stateLabel, strongProgress,
-    strongReasons
+    SETTLING_MAX, identifierWarning, isDirty, joinProblem, ledgerCopy as copy, numberProblem, presenceText, rateProblem, stateLabel,
+    strongProgress, strongReasons
   } from '../lib/ledger';
+  import { theoriesCopy } from '../lib/copy/theoriesCopy';
+  import { theoryRows } from '../lib/theories';
   import { ledger, refreshLedger } from '../lib/ledgerStore.svelte';
   import Drawer from './Drawer.svelte';
 
@@ -27,6 +29,8 @@
   let addField = $state<HTMLInputElement>();
 
   const newWarning = $derived(identifierWarning(ledger.newText));
+  // The matrix reads the saved entries, not the drafts, so it never shows a half-typed edit as if it were kept.
+  const theories = $derived(theoryRows(ledger.items));
   const messageOf = (error: unknown) => (error instanceof Error ? error.message : 'Something went wrong.');
 
   function adopt(h: Hypothesis) {
@@ -138,6 +142,41 @@
     </section>
   {/if}
 
+  {#if !loading && ledger.items.length > 0}
+    <details class="ledger-compare">
+      <summary>{theoriesCopy.compareToggle}</summary>
+      <p class="field-note">{theoriesCopy.compareIntro}</p>
+      <table class="theory-matrix" aria-label={theoriesCopy.tableLabel}>
+        <thead>
+          <tr>
+            <th scope="col">{theoriesCopy.columnTheory}</th>
+            <th scope="col">{theoriesCopy.columnSupports}</th>
+            <th scope="col">{theoriesCopy.columnCannotExplain}</th>
+            <th scope="col">{theoriesCopy.columnSettle}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each theories as row (row.id)}
+            <tr>
+              <th scope="row" data-label={theoriesCopy.columnTheory}>
+                <span class="theory-text">{row.text}</span>
+                <span class="theory-state">{row.state}</span>
+              </th>
+              <td data-label={theoriesCopy.columnSupports}>{row.supports}</td>
+              <td data-label={theoriesCopy.columnCannotExplain}>
+                {row.cannotExplain}
+                {#if row.firstCounter}<span class="theory-first">{theoriesCopy.firstPrefix}{row.firstCounter}</span>{/if}
+              </td>
+              <td data-label={theoriesCopy.columnSettle}>
+                {#if row.settle}{row.settle}{:else}<span class="theory-muted">{theoriesCopy.notWritten}</span>{/if}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </details>
+  {/if}
+
   <ul class="ledger-list">
     {#each ledger.items as h (h.id)}
       {@const editor = ledger.editors[h.id]}
@@ -164,10 +203,16 @@
           {@const textWarning = identifierWarning(editor.text)}
           {@const counterWarning = identifierWarning(editor.counterText)}
           {@const notesWarning = identifierWarning(editor.notes)}
+          {@const settlingWarning = identifierWarning(editor.settling)}
           <div class="ledger-body source-form" id={'ledger-body-' + h.id}>
             <label for={'l-text-' + h.id}>{copy.textLabel}</label>
             <textarea id={'l-text-' + h.id} rows="2" bind:value={editor.text} aria-describedby={textWarning ? 'l-text-warn-' + h.id : undefined}></textarea>
             {#if textWarning}<p class="warning-text" id={'l-text-warn-' + h.id} role="status">{textWarning}</p>{/if}
+
+            <label for={'l-settling-' + h.id}>{theoriesCopy.settlingLabel}</label>
+            <textarea id={'l-settling-' + h.id} rows="2" maxlength={SETTLING_MAX} placeholder={theoriesCopy.settlingPlaceholder} bind:value={editor.settling} aria-describedby={'l-settling-hint-' + h.id}></textarea>
+            <p class="field-note" id={'l-settling-hint-' + h.id}>{theoriesCopy.settlingHint} {theoriesCopy.settlingCount(editor.settling.length, SETTLING_MAX)}</p>
+            {#if settlingWarning}<p class="warning-text" role="status">{settlingWarning}</p>{/if}
 
             <label for={'l-state-' + h.id}>{copy.stateLabel}</label>
             <select id={'l-state-' + h.id} bind:value={editor.state} aria-describedby={'l-state-note-' + h.id} onchange={() => delete blocked[h.id]}>
@@ -298,6 +343,22 @@
 
 <style>
   :global(.connections-drawer.ledger-drawer) { overflow-x: hidden; }
+  .ledger-compare { margin-top: var(--space-3); padding-top: var(--space-3); border-top: var(--hairline-width) solid var(--hairline); }
+  .ledger-compare > summary { color: var(--text); font-size: var(--fs-3); font-weight: 650; }
+  .theory-matrix { width: 100%; margin-top: var(--space-2); table-layout: fixed; font-size: 12px; white-space: normal; }
+  .theory-matrix :is(th, td) { padding: 6px 6px 6px 0; overflow-wrap: anywhere; text-align: left; vertical-align: top; }
+  .theory-matrix thead th { color: var(--text-2); font-weight: 650; border-bottom: 1px solid var(--line); }
+  .theory-matrix tbody :is(th, td) { border-bottom: 1px solid var(--line-soft); font-weight: 450; }
+  .theory-text { display: block; font-weight: 600; }
+  .theory-state, .theory-first { display: block; color: var(--text-2); font-size: 11px; }
+  .theory-muted { color: var(--text-2); font-style: italic; }
+  @media (max-width: 560px) {
+    .theory-matrix, .theory-matrix tbody, .theory-matrix tr, .theory-matrix tbody :is(th, td) { display: block; width: 100%; }
+    .theory-matrix thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    .theory-matrix tr { padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
+    .theory-matrix tbody :is(th, td) { padding: 2px 0; border-bottom: 0; }
+    .theory-matrix tbody td::before { content: attr(data-label) ': '; color: var(--text-2); font-weight: 650; }
+  }
   .ledger-empty { margin: 14px 0 0; color: var(--text-2); font-size: 13px; }
   .ledger-list { display: grid; margin: 12px 0 0; padding: 0; list-style: none; }
   .ledger-item { border-bottom: 1px solid var(--line-soft); }

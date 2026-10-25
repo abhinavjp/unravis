@@ -35,6 +35,8 @@ const (
 	MaxTextLen    = 2000
 	MaxListLen    = 50
 	MaxTotalBytes = 8 << 20
+	// MaxSettlingLen caps the one-observation "what would settle it" field.
+	MaxSettlingLen = 500
 )
 
 var (
@@ -84,24 +86,26 @@ type HistoryEntry struct {
 
 // Input is what the analyst edits. State is the analyst's choice.
 type Input struct {
-	Text        string   `json:"text"`
-	State       string   `json:"state"`
-	EvidenceIDs []string `json:"evidenceIds"` // provenance references only
-	Notes       string   `json:"notes"`
-	Facts       Facts    `json:"facts"`
+	Text                string   `json:"text"`
+	State               string   `json:"state"`
+	EvidenceIDs         []string `json:"evidenceIds"` // provenance references only
+	Notes               string   `json:"notes"`
+	SettlingObservation string   `json:"settlingObservation"` // one observation that would settle the theory either way; up to MaxSettlingLen characters
+	Facts               Facts    `json:"facts"`
 }
 
 type Hypothesis struct {
-	ID          string         `json:"id"`
-	Text        string         `json:"text"`
-	State       string         `json:"state"`
-	EvidenceIDs []string       `json:"evidenceIds"`
-	Notes       string         `json:"notes"`
-	Facts       Facts          `json:"facts"`
-	Guards      []string       `json:"guards"` // reasons "strong correlation" is blocked now; empty when it would be allowed
-	CreatedAt   time.Time      `json:"createdAt"`
-	UpdatedAt   time.Time      `json:"updatedAt"`
-	History     []HistoryEntry `json:"history"`
+	ID                  string         `json:"id"`
+	Text                string         `json:"text"`
+	State               string         `json:"state"`
+	EvidenceIDs         []string       `json:"evidenceIds"`
+	Notes               string         `json:"notes"`
+	SettlingObservation string         `json:"settlingObservation"` // see Input
+	Facts               Facts          `json:"facts"`
+	Guards              []string       `json:"guards"` // reasons "strong correlation" is blocked now; empty when it would be allowed
+	CreatedAt           time.Time      `json:"createdAt"`
+	UpdatedAt           time.Time      `json:"updatedAt"`
+	History             []HistoryEntry `json:"history"`
 }
 
 // Store is the ledger. Create always starts at StateOpen. Update returns a

@@ -66,6 +66,7 @@ func (s *store) StripEvidence(prefixes []string, replacement string) (int, error
 		}
 		h.Text = text(h.Text)
 		h.Notes = text(h.Notes)
+		h.SettlingObservation = text(h.SettlingObservation)
 		for j := range h.Facts.Counterexamples {
 			h.Facts.Counterexamples[j] = text(h.Facts.Counterexamples[j])
 		}

@@ -18,6 +18,9 @@ export const STATE_LABEL: Record<HypothesisState, string> = {
 export const ALT_STATUS_ORDER: HypothesisAlternative['status'][] = ['open', 'ruled_out', 'not_testable'];
 export const ALT_STATUS_LABEL: Record<HypothesisAlternative['status'], string> = { open: 'Open', ruled_out: 'Ruled out', not_testable: 'Not testable' };
 
+/** The most characters the settling observation may hold. The server enforces the same limit (internal/ledger MaxSettlingLen). */
+export const SETTLING_MAX = 500;
+
 /** Every fixed sentence and label the drawer shows. The component reads these, and the tests lint them. */
 export const ledgerCopy = {
   title: 'Ledger',
@@ -102,6 +105,7 @@ export interface EditorState {
   state: HypothesisState;
   evidenceText: string;
   notes: string;
+  settling: string;
   presentK: string;
   totalN: string;
   counterText: string;
@@ -120,6 +124,7 @@ export function editorFromHypothesis(h: Hypothesis): EditorState {
     state: h.state,
     evidenceText: (h.evidenceIds ?? []).join('\n'),
     notes: h.notes ?? '',
+    settling: h.settlingObservation ?? '',
     presentK: String(f.presentK ?? 0),
     totalN: String(f.totalN ?? 0),
     counterText: (f.counterexamples ?? []).join('\n'),
@@ -186,7 +191,7 @@ export function buildInput(e: EditorState): HypothesisInput {
     overlapOnly: e.overlapOnly,
     ...(joinAmbiguousPct === undefined ? {} : { joinAmbiguousPct })
   };
-  return { text: e.text.trim(), state: e.state, evidenceIds: parseList(e.evidenceText), notes: e.notes, facts };
+  return { text: e.text.trim(), state: e.state, evidenceIds: parseList(e.evidenceText), notes: e.notes, settlingObservation: e.settling.trim(), facts };
 }
 
 /** One history line: the earlier state, the date, and the note. Shown as history, never as support. */
