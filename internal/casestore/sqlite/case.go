@@ -1161,7 +1161,12 @@ func (c *Case) ensureAttrIndexes() {
 	if c.attrIdx.Load() != 0 {
 		return
 	}
-	c.importMu.Lock()
+	// A running import keeps the lock for as long as it takes and the caller's
+	// context cannot interrupt the wait: run this query without the indexes
+	// (attrIdx stays 0, so a later query builds them).
+	if !c.importMu.TryLock() {
+		return
+	}
 	defer c.importMu.Unlock()
 	db, err := c.handle()
 	if err != nil {
