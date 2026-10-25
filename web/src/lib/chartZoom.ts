@@ -24,6 +24,11 @@ export function zoomable(node: HTMLElement, initial: ZoomableOptions) {
   let cursor = -1;
   let start: { x: number; y: number } | null = null;
   let band: HTMLElement | null = null;
+  let readout: HTMLElement | null = null;
+  let startIndex: number | null = null;
+  // The last slot pair the readout was written for; the text is rebuilt only when it changes. Widths are read once, never while moving.
+  let lastFrom = -1, lastTo = -1, boxWidth = 0, readoutWidth = 0;
+  let crosshair = false;
 
   node.tabIndex = 0;
   node.setAttribute('aria-description', zoomCopy.howTo);
@@ -47,12 +52,49 @@ export function zoomable(node: HTMLElement, initial: ZoomableOptions) {
       band.style.cssText = 'position:absolute;top:0;bottom:0;pointer-events:none;background:var(--accent);opacity:.16;border-left:1px solid var(--accent);border-right:1px solid var(--accent);z-index:2';
       if (getComputedStyle(node).position === 'static') node.style.position = 'relative';
       node.appendChild(band);
+      // Not a child of the band: the band is see-through, and the text must not be.
+      readout = document.createElement('div');
+      readout.className = 'readout';
+      readout.setAttribute('aria-hidden', 'true');
+      readout.style.cssText = 'position:absolute;top:4px;left:0;pointer-events:none;white-space:nowrap;padding:2px 6px;background:var(--surface);border:1px solid var(--line);color:var(--text);font-size:12px;line-height:16px;font-variant-numeric:tabular-nums;z-index:3';
+      node.appendChild(readout);
+      boxWidth = node.offsetWidth;
     }
-    band.style.left = Math.min(from, to) + 'px'; band.style.width = Math.abs(to - from) + 'px';
+    const left = Math.min(from, to), width = Math.abs(to - from);
+    band.style.left = left + 'px'; band.style.width = width + 'px';
+    if (readout) readout.style.left = Math.max(0, Math.min(boxWidth - readoutWidth, left + width / 2 - readoutWidth / 2)) + 'px';
   };
-  const clearBand = () => { band?.remove(); band = null; };
+  // Writes the snapped range and its duration, only when the slot pair changed. A range under the floor is dimmer, and so is the band.
+  const showReadout = (from: number, to: number) => {
+    if (!readout || !band || (from === lastFrom && to === lastTo)) return;
+    lastFrom = from; lastTo = to;
+    const shown = zoomView.readout(from, to);
+    readout.textContent = shown.text;
+    readout.style.color = shown.ok ? 'var(--text)' : 'var(--text-2)';
+    band.style.opacity = shown.ok ? '.16' : '.08';
+    readoutWidth = readout.offsetWidth;
+  };
+  const clearBand = () => { band?.remove(); band = null; readout?.remove(); readout = null; lastFrom = -1; lastTo = -1; startIndex = null; };
 
-  const onMove = (event: PointerEvent) => { if (start && Math.abs(local(event).x - start.x) >= DRAG_PIXELS) drawBand(start.x, local(event).x); };
+  const onMove = (event: PointerEvent) => {
+    if (!start) return;
+    const at = local(event);
+    if (Math.abs(at.x - start.x) < DRAG_PIXELS) return;
+    drawBand(start.x, at.x);
+    const chart = options.chart();
+    const to = chart ? indexAt(chart, at.x, at.y) : null;
+    if (startIndex != null && to != null) showReadout(startIndex, to);
+  };
+  // Hovering the plot shows a crosshair, so the chart reads as something to drag across. The style is written only when it changes.
+  const onHover = (event: PointerEvent) => {
+    if (start) return;
+    const chart = options.chart();
+    if (!chart) return;
+    const point = local(event);
+    if (inPlot(chart, point.x, point.y)) { if (!crosshair) { node.style.cursor = 'crosshair'; crosshair = true; } }
+    else if (crosshair) { node.style.cursor = ''; crosshair = false; }
+  };
+  const onLeave = () => { if (crosshair) { node.style.cursor = ''; crosshair = false; } };
   const stopTracking = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onCancel); clearBand(); start = null; };
   function onCancel() { stopTracking(); }
   function onUp(event: PointerEvent) {
@@ -74,6 +116,7 @@ export function zoomable(node: HTMLElement, initial: ZoomableOptions) {
     const point = local(event);
     if (!inPlot(chart, point.x, point.y)) return;
     start = point;
+    startIndex = indexAt(chart, point.x, point.y);
     window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onCancel);
   }
 
@@ -99,10 +142,12 @@ export function zoomable(node: HTMLElement, initial: ZoomableOptions) {
     try { options.chart()?.dispatchAction({ type: 'hideTip' }); } catch { /* nothing to hide */ } }
 
   node.addEventListener('pointerdown', onDown);
+  node.addEventListener('pointermove', onHover);
+  node.addEventListener('pointerleave', onLeave);
   node.addEventListener('keydown', onKey);
   node.addEventListener('blur', onBlur);
   return {
     update(next: ZoomableOptions) { options = next; },
-    destroy() { stopTracking(); node.removeEventListener('pointerdown', onDown); node.removeEventListener('keydown', onKey); node.removeEventListener('blur', onBlur); }
+    destroy() { stopTracking(); onLeave(); node.removeEventListener('pointerdown', onDown); node.removeEventListener('pointermove', onHover); node.removeEventListener('pointerleave', onLeave); node.removeEventListener('keydown', onKey); node.removeEventListener('blur', onBlur); }
   };
 }
