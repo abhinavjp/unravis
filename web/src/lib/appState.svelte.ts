@@ -26,6 +26,8 @@ import { phaseSegments } from './phases';
 import { rollupFor } from './traffic';
 import { createViewHistory, describeView, parseViewHash, type View } from './wayfinding';
 import { hourWindowQuery, type RollupWindow } from './rollup';
+import { backTarget, planInvestigation, popTrail, rootOf, type TrailEntry } from './promote';
+import { zoomView } from './zoomView.svelte';
 
 let info = $state<Info | null>(null);
 let sources = $state<Source[]>([]);
@@ -35,6 +37,8 @@ let zone = $state(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
 let targetMs = $state<number | null>(null);
 let restoredInTab = $state(false);
 let controlsResetKey = $state(0);
+/** The windows "Investigate this window" replaced, newest last. In memory only; never more than 10 (see promote.ts). */
+let windowTrail = $state.raw<TrailEntry[]>([]);
 let investigationNotice = $state('Changes stay in this tab until it closes.');
 let investigationReady = false;
 let investigationFingerprint = '';
@@ -624,7 +628,7 @@ export function resetInvestigation() {
   query = defaultQuery(new Date(), sources.map(source => source.id));
   investigationIntent = null;
   zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  targetMs = null; dateInputsValid = true; restoredInTab = false;
+  targetMs = null; dateInputsValid = true; restoredInTab = false; windowTrail = [];
   controlsResetKey++;
   investigationNotice = 'Investigation reset. Defaults are ready.';
   clearInvestigationSnapshot(undefined, info?.demo ? 'demo' : 'live');
@@ -967,6 +971,36 @@ export function onWindowKey(event: KeyboardEvent) {
 export function onScopeChange() { error = ''; scopeRun.schedule(); }
 /** A chosen hour of the hour grid becomes the primary window, with the hour before it as the reference. */
 export function setWindowFromHour(window: RollupWindow) { Object.assign(query, hourWindowQuery(window)); controlsResetKey++; onScopeChange(); }
+/**
+ * Make the zoomed window the queried window and rerun the full analysis on it. The window fields come from the analysis on screen, so
+ * the lens edges and the root agree. A refusal (root, run in progress, unapplied changes, unusable window) is said in the strip and
+ * changes nothing. The plan is made before anything is written, so a double click gives one run and one trail entry.
+ */
+export function investigateWindow() {
+  if (!analysis) return;
+  const plan = planInvestigation({
+    current: { start: analysis.query.start, end: analysis.query.end, baselineStart: analysis.query.baselineStart, baselineEnd: analysis.query.baselineEnd, bucketSeconds: analysis.query.bucketSeconds },
+    view: zoomView.view, runLoading: loading, stale: displayedRunIsStale, trail: windowTrail
+  });
+  if ('refused' in plan) { zoomView.notify(plan.refused); return; }
+  windowTrail = plan.trail;
+  Object.assign(query, plan.patch);
+  dateInputsValid = true; // every window field was just written with a valid value
+  controlsResetKey++;
+  void runAnalysis();
+}
+/** Undo the last promotion: restore the earlier window and reopen the lens on the window that was investigated. Replaces a run still in flight. */
+export function backToPreviousWindow() {
+  if (!backTarget(windowTrail, query)) return;
+  const popped = popTrail(windowTrail);
+  if (!popped.entry) return;
+  windowTrail = popped.trail;
+  Object.assign(query, popped.entry.from);
+  dateInputsValid = true;
+  controlsResetKey++;
+  zoomView.expect(rootOf(popped.entry.from), popped.entry.lens);
+  void runAnalysis(true);
+}
 export function removeChip(chip: FilterChip) { applyChipPatch(query, chip); controlsResetKey++; onScopeChange(); }
 export function clearChips() { for (const chip of filterChipList) applyChipPatch(query, chip); controlsResetKey++; onScopeChange(); }
 export async function openFromTable(key: string) {
@@ -1121,6 +1155,8 @@ export const results = {
   get timelineKeys() { return timelineKeys; }, set timelineKeys(value) { timelineKeys = value; },
   get failingSources() { return failingSources; },
   get displayedRunIsStale() { return displayedRunIsStale; },
+  /** The promotion "Back to ..." would undo, or null when there is none or the query window was changed since. */
+  get windowBack() { return backTarget(windowTrail, query); },
   get calculationNotes() { return calculationNotes; },
   get breakdownQuery() { return breakdownQuery; }
 };

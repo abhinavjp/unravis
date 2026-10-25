@@ -187,6 +187,8 @@ export const zoomView = {
   },
   /** Make `win` the zoomed window (the brush): at the whole period it zooms in, otherwise it replaces the top step. One read. */
   setWindow(win: ZoomWindow): void { if (stack) apply(setTop(stack, win)); },
+  /** Say something in the strip (it clears itself): why an action did nothing. */
+  notify(text: string): void { say(text); },
   /** What a drag from slot `fromIndex` to `toIndex` would zoom to, for the band on the chart. */
   readout(fromIndex: number, toIndex: number): { text: string; ok: boolean } {
     return stack && bucket ? dragReadout(slots, fromIndex, toIndex, bucket.seconds, currentOf(stack), timeZone.zone) : { text: '', ok: false };

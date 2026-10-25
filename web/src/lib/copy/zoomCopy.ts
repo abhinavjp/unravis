@@ -32,6 +32,7 @@ export const zoomCopy = {
   investigateTop: 'Zoom in first, then investigate the narrower window.',
   investigateBusy: 'A run is in progress.',
   investigateStale: 'Run analysis to apply your changes first.',
+  investigateCannot: 'This window cannot be investigated. Pick at least a minute inside the period.',
   brushStart: 'Start of the zoomed window',
   brushEnd: 'End of the zoomed window',
   readoutWhole: 'This is the window on screen.'
