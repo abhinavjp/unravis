@@ -190,6 +190,9 @@ func run(args []string, getenv func(string) string) error {
 	serverOptions = append(serverOptions, server.WithLaunchCode(code, time.Now().Add(codeLife)))
 	served := server.New(repo, explorer.Assets(), token, *demo, serverOptions...)
 	defer server.LogAnalyzeRepeats(served)
+	// Registered after the case store's close, so it runs first: background
+	// imports stop and roll back before the store closes.
+	defer server.CancelImports(served)
 	httpServer := &http.Server{
 		Handler:           served,
 		ReadHeaderTimeout: 5 * time.Second,

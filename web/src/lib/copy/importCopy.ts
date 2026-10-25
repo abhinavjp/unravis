@@ -79,6 +79,14 @@ export const IMPORT_TEXT = {
 
   importButton: 'Import file',
   importing: 'Importing…',
+  jobQueued: 'Waiting to start…',
+  jobReading: 'Reading file…',
+  jobFinishing: 'Finishing up…',
+  jobCancel: 'Cancel',
+  jobCancelling: 'Cancelling…',
+  jobCancelNote: 'Cancelling stops the import. Nothing is kept.',
+  jobResumed: 'An import you started is still running.',
+  jobCloseNote: 'You can close this screen. The import keeps running while this page stays open.',
   blocked: {
     closed: 'This case is closed, so nothing can be imported into it.',
     busy: 'Working…',
@@ -205,6 +213,8 @@ export const REASON_TEXT: Record<string, string> = {
   'ack-mismatch': 'The notice you confirmed is not the one this version shows. Reload the page and try again.',
   'ack-too-long': 'The confirmation text is too long.',
   'import-busy': 'Other imports are running. Try again in a moment.',
+  'job-not-found': 'The server no longer has this import. Check the import history below to see if it was kept.',
+  'bad-job-id': 'That is not a valid import id.',
   'bad-bucket': 'The step size for the lines was not usable. Zoom out and try again.',
   'bad-selector': 'A line could not be asked for. Reload the page and try again.',
   'too-many-series': 'Too many lines were asked for at once. Reload the page and try again.',
@@ -230,6 +240,17 @@ export function errorText(error: Pick<CaseApiError, 'status' | 'reason' | 'colum
   if (error.reason === 'duplicate') return error.importId ? 'This file was already imported (import #' + error.importId + ').' : 'This file was already imported.';
   const base = reasonText(error.reason) ?? GENERIC_ERROR;
   return error.column ? base + ' Column: ' + error.column + '.' : base;
+}
+
+/**
+ * The line shown while a background import runs. `percent` is how much of the file has been read (null until the size is known).
+ * The last byte read shows "Finishing up", so a number is never shown as 100 before the job is done.
+ */
+export function jobProgressText(jobState: string, percent: number | null): string {
+  if (jobState === 'queued') return IMPORT_TEXT.jobQueued;
+  if (percent === null) return IMPORT_TEXT.jobReading;
+  if (percent >= 100) return IMPORT_TEXT.jobFinishing;
+  return IMPORT_TEXT.jobReading + ' ' + Math.max(0, Math.floor(percent)) + '%';
 }
 
 /** True when a refusal means the file names a host the host list does not hold. */
@@ -455,7 +476,11 @@ export function importCopyEntries(): LintEntry[] {
     { id: 'import.sample.column', text: errorText({ status: 422, reason: 'unscrubbed-column', column: 'sql_text', message: '' }) },
     { id: 'import.sample.generic', text: errorText({ status: 500, reason: '', message: '' }) },
     { id: 'import.sample.limit', text: errorText({ status: 413, reason: 'limit-bytes', message: '' }) },
-    { id: 'import.sample.caseExportSaved', text: caseExportSavedText('0'.repeat(64)) }
+    { id: 'import.sample.caseExportSaved', text: caseExportSavedText('0'.repeat(64)) },
+    { id: 'import.sample.progress.queued', text: jobProgressText('queued', null) },
+    { id: 'import.sample.progress.unknown', text: jobProgressText('running', null) },
+    { id: 'import.sample.progress.percent', text: jobProgressText('running', 40) },
+    { id: 'import.sample.progress.last', text: jobProgressText('running', 100) }
   ];
   const walk = (prefix: string, value: unknown) => {
     if (typeof value === 'string') entries.push({ id: prefix, text: value });

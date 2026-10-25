@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import {
-    CaseApiError, caseCode, checkAllSupplied, commitBlock, isCaseGone, commitImport, fileSizeProblem, listHosts, listImporters, listImports, previewImport, previewKey,
-    reasonCounts, type CaseInfo, type ImporterInfo, type ImportRecord, type ImportReport
+    CaseApiError, cancelImportJob, caseCode, checkAllSupplied, commitBlock, fetchImportJob, fileSizeProblem, importProgressPercent, isCaseGone, listHosts, listImporters, listImports,
+    previewKey, reasonCounts, startCommitJob, startPreviewJob, waitForImportJob, type CaseInfo, type ImportJob, type ImporterInfo, type ImportRecord, type ImportReport
   } from '../cases';
   import {
     ACK_LABEL, GATING_BANNER, IMPORT_TEXT, ackTextFor, coverageText, detectedText, errorText, formatBytes, importedText, importerLabel, isUnknownHost,
-    qualityDetails, reasonText, sizeProblemText, statusLabel, suppliedPairs
+    jobProgressText, qualityDetails, reasonText, sizeProblemText, statusLabel, suppliedPairs
   } from '../copy/importCopy';
+  import { importWork } from '../appState.svelte';
   import { formatTime } from '../time';
   import { caseSpan } from '../resourceSpan';
   import Drawer from '../../components/Drawer.svelte';
@@ -20,11 +21,13 @@
   // The import screen. Create or pick a case, choose a file, read the preview, tick the notice, then import.
   // The notice is always on screen. Nothing is kept until Import file, and an unknown host or a changed file blocks it.
   // The server does the reading: this screen sends the file to the local server only and shows the counts that come back.
+  // A file is read in the background: the server answers at once with a job, and this screen asks about it once a second.
+  // An import that is keeping a file is noted in importWork (outside this drawer), so closing and reopening the drawer finds it again.
   // The query and zone are the audit window on screen: the timeline uses them to pick its sources and show its times.
   let { onClose, onImported, query, zone = 'UTC' }: { onClose: () => void; onImported?: (record: ImportRecord) => void; query: Query; zone?: string } = $props();
 
   let cases = $state<CaseInfo[]>([]);
-  let selectedId = $state('');
+  let selectedId = $state(untrack(() => importWork.running?.caseId ?? ''));
   let casePanel = $state<CasePanel>();
   let hosts = $state<string[]>([]);
   let imports = $state<ImportRecord[]>([]);
@@ -48,6 +51,11 @@
   let result = $state('');
   let controller: AbortController | null = null;
   let generation = 0;
+  // The background job being followed, and what it is for. A running import found again after the drawer was reopened has no file here.
+  let job = $state.raw<ImportJob | null>(null);
+  let jobKind = $state<'preview' | 'commit'>('commit');
+  let resumed = $state(false);
+  let cancelling = $state(false);
 
   const selected = $derived(cases.find((c) => c.id === selectedId) ?? null);
   const caseOpen = $derived(selected !== null && !selected.closed);
@@ -63,6 +71,8 @@
   const span = $derived(caseSpan(imports));
   const reasons = $derived(report ? reasonCounts(report.errors) : []);
   const details = $derived(report ? qualityDetails(report.quality) : []);
+  const percent = $derived(job ? importProgressPercent(job) : null);
+  const progress = $derived(job ? jobProgressText(job.state, percent) : '');
   const showTimeZone = $derived(report?.quality.timezoneRule ?? '');
 
   let drawer = $state<HTMLElement>();
@@ -73,7 +83,8 @@
     listHosts().then((labels) => { hosts = labels; }).catch(() => { hosts = []; });
     // A server without the list, or one that cannot be reached, simply offers no settings.
     listImporters().then((list) => { importerInfos = list; }).catch(() => { importerInfos = []; });
-    return () => controller?.abort();
+    // Closing the drawer stops the asking. A preview is cancelled (nothing else can use it); an import that keeps a file runs on.
+    return () => leaveJob();
   });
 
   // Picking another case starts the form over and loads that case's imports.
@@ -81,7 +92,10 @@
     const id = selectedId;
     untrack(() => { resetForm(); result = ''; });
     imports = [];
-    if (id) loadImports(id);
+    if (id) {
+      loadImports(id);
+      untrack(() => { void resumeRunning(id); });
+    }
   });
 
   async function loadImports(id: string) {
@@ -98,9 +112,19 @@
     problem = error instanceof CaseApiError ? errorText(error) : errorText({ status: 0, reason: 'unreachable', message: '' });
   }
 
+  // Stops following the job. A preview that is still running is cancelled on the server, so it does not hold the case for nothing.
+  function leaveJob() {
+    controller?.abort();
+    const current = job;
+    if (current && jobKind === 'preview' && (current.state === 'queued' || current.state === 'running')) void cancelImportJob(selectedId, current.id).catch(() => {});
+    job = null;
+    cancelling = false;
+    resumed = false;
+  }
+
   function resetForm() {
     generation++;
-    controller?.abort();
+    leaveJob();
     file = null;
     if (fileInput) fileInput.value = '';
     importer = '';
@@ -119,7 +143,7 @@
   function onFile(event: Event) {
     const chosen = (event.currentTarget as HTMLInputElement).files?.[0] ?? null;
     generation++;
-    controller?.abort();
+    leaveJob();
     importer = ''; tied = []; drafts = {}; undetected = false; report = null; previewedKey = ''; unknownHost = false; acknowledged = false; result = ''; problem = ''; phase = 'idle';
     file = chosen;
     if (chosen) runPreview();
@@ -153,13 +177,19 @@
     if (tooBig) { problem = sizeProblemText(tooBig, file.size); return; }
     problem = '';
     const mine = ++generation;
-    controller?.abort();
+    leaveJob();
     controller = new AbortController();
+    const signal = controller.signal;
     phase = 'previewing';
+    jobKind = 'preview';
     const sent = file;
+    const caseId = selectedId;
     const sentSupplied = $state.snapshot(supplied);
     try {
-      const answer = await previewImport({ caseId: selectedId, file: sent, importer, host, supplied: sentSupplied }, controller.signal);
+      const first = await startPreviewJob({ caseId, file: sent, importer, host, supplied: sentSupplied }, signal);
+      // Replaced while the file was still going up: the job exists on the server, so stop it.
+      if (mine !== generation) { void cancelImportJob(caseId, first.id).catch(() => {}); return; }
+      const answer = await waitForImportJob(caseId, first, { signal, onUpdate: (next) => { if (mine === generation) job = next; } });
       if (mine !== generation) return;
       if (!importer && answer.tied.length > 1) {
         tied = answer.tied;
@@ -177,20 +207,44 @@
       else if (!importer && error instanceof CaseApiError && error.status === 422) undetected = true;
       fail(error);
     } finally {
-      if (mine === generation) phase = 'idle';
+      if (mine === generation) { phase = 'idle'; job = null; }
     }
   }
+
+  const isAbort = (error: unknown): boolean => error instanceof DOMException && error.name === 'AbortError';
+  const forgetRunning = (jobId: string) => { if (importWork.running?.jobId === jobId) importWork.running = null; };
 
   async function doImport() {
     if (block !== null || !file) return;
     const mine = ++generation;
-    controller?.abort();
+    leaveJob();
     controller = new AbortController();
+    const signal = controller.signal;
     phase = 'importing';
+    jobKind = 'commit';
     problem = '';
     const sent = file;
+    const caseId = selectedId;
+    let first: ImportJob;
     try {
-      const answer = await commitImport({ caseId: selectedId, file: sent, importer, host, supplied: $state.snapshot(supplied), ackText: ackTextFor() }, controller.signal);
+      first = await startCommitJob({ caseId, file: sent, importer, host, supplied: $state.snapshot(supplied), ackText: ackTextFor() }, signal);
+    } catch (error) {
+      if (mine !== generation) return;
+      acknowledged = false;
+      fail(error);
+      phase = 'idle';
+      return;
+    }
+    if (mine !== generation) return;
+    await watchCommit(mine, caseId, first, signal);
+  }
+
+  // Follows an import that keeps its file, from the first answer to the last. It is noted in importWork until it ends.
+  async function watchCommit(mine: number, caseId: string, first: ImportJob, signal: AbortSignal) {
+    importWork.running = { caseId, jobId: first.id };
+    try {
+      const answer = await waitForImportJob(caseId, first, { signal, onUpdate: (next) => { if (mine === generation) job = next; } });
+      forgetRunning(first.id);
       if (mine !== generation) return;
       const record = answer.record;
       if (record && record.status === 'ok') {
@@ -201,13 +255,59 @@
         problem = errorText({ status: 200, reason: record?.status === 'duplicate' ? 'duplicate' : record?.reason ?? '', importId: record?.id, message: '' });
         acknowledged = false;
       }
-      await Promise.all([loadImports(selectedId), casePanel?.refresh()]);
+      await Promise.all([loadImports(caseId), casePanel?.refresh()]);
     } catch (error) {
+      // Closing the drawer or picking another case only stops the asking; the import goes on and is found again.
+      if (isAbort(error)) return;
+      forgetRunning(first.id);
       if (mine !== generation) return;
       acknowledged = false;
       fail(error);
+      await Promise.all([loadImports(caseId), casePanel?.refresh()]);
     } finally {
-      if (mine === generation) phase = 'idle';
+      if (mine === generation) { phase = 'idle'; job = null; cancelling = false; resumed = false; }
+    }
+  }
+
+  // The drawer was opened while an import was still running: show it again, and follow it to the end.
+  async function resumeRunning(id: string) {
+    const running = importWork.running;
+    if (!running || running.caseId !== id) return;
+    const mine = ++generation;
+    controller = new AbortController();
+    const signal = controller.signal;
+    phase = 'importing';
+    jobKind = 'commit';
+    resumed = true;
+    problem = '';
+    let first: ImportJob;
+    try {
+      first = await fetchImportJob(running.caseId, running.jobId, signal);
+    } catch (error) {
+      if (isAbort(error)) return;
+      forgetRunning(running.jobId);
+      if (mine !== generation) return;
+      phase = 'idle';
+      resumed = false;
+      fail(error);
+      return;
+    }
+    if (mine !== generation) return;
+    await watchCommit(mine, running.caseId, first, signal);
+  }
+
+  // Cancel asks the server to stop the job. The next answer says it failed as cancelled, and the usual failure line shows.
+  async function cancelJob() {
+    const current = job;
+    if (!current || cancelling) return;
+    cancelling = true;
+    try {
+      // A job that just finished keeps its answer: only a job still running is cancelled.
+      const latest = await fetchImportJob(selectedId, current.id);
+      if (latest.state === 'queued' || latest.state === 'running') await cancelImportJob(selectedId, current.id);
+    } catch (error) {
+      cancelling = false;
+      fail(error);
     }
   }
 
@@ -264,8 +364,21 @@
     </section>
   {/if}
 
+  {#if phase !== 'idle'}
+    <section class="job" aria-label={progress || IMPORT_TEXT.importing}>
+      {#if resumed}<p class="note">{IMPORT_TEXT.jobResumed}</p>{/if}
+      <p class="progress-line">{job ? progress : phase === 'previewing' ? IMPORT_TEXT.previewing : IMPORT_TEXT.importing}</p>
+      {#if job}
+        <progress max="100" value={percent ?? undefined} aria-label={progress}></progress>
+        <div class="actions">
+          <button type="button" class="secondary-button" disabled={cancelling} onclick={cancelJob}>{cancelling ? IMPORT_TEXT.jobCancelling : IMPORT_TEXT.jobCancel}</button>
+        </div>
+        <p class="note">{IMPORT_TEXT.jobCancelNote}{jobKind === 'commit' ? ' ' + IMPORT_TEXT.jobCloseNote : ''}</p>
+      {/if}
+    </section>
+  {/if}
+
   <div class="messages" aria-live="polite">
-    {#if phase === 'previewing'}<p class="note" role="status">{IMPORT_TEXT.previewing}</p>{/if}
     {#if unknownHost}<p class="unknown"><span class="badge">{IMPORT_TEXT.unknownHostBadge}</span></p>{/if}
     {#if problem}<div class="inline-error" role="alert">{problem}</div>{/if}
     {#if result}<p class="done" role="status">{result}</p>{/if}
@@ -386,6 +499,10 @@
   .meta { color: var(--text-2); font-size: var(--fs-2); font-weight: 400; }
   .detected { margin: 0; font-size: var(--fs-3); }
   .detected code { font-family: var(--mono); color: var(--text-2); }
+  .job { display: grid; gap: var(--space-2); min-width: 0; }
+  .job p { margin: 0; }
+  .progress-line { font-size: var(--fs-3); font-variant-numeric: tabular-nums; }
+  .job progress { width: 100%; height: 8px; accent-color: var(--accent, currentColor); }
   .messages { display: grid; gap: var(--space-2); }
   .messages p { margin: 0; }
   .unknown .badge { padding: 2px 8px; color: var(--bad); border: 1px solid var(--bad); border-radius: var(--radius-sm); font-size: var(--fs-2); font-weight: 650; }
