@@ -104,7 +104,7 @@ test('a pasted list longer than the server allows is cut to its first values and
   assert.equal(inv.itemsOverLimit(Array.from({ length: 20 }, (_, i) => 'v' + i).join(','), 20), 0, 'exactly the limit is fine');
   const first20 = inv.splitList(text).slice(0, 20);
   assert.equal(inv.syncListDraft(text, first20, () => true, 20), text, 'the typed text is kept while the applied list is its first 20');
-  const controls = read('src/components/QueryControls.svelte');
+  const controls = ['src/components/QueryControls.svelte', ...fs.readdirSync(path.join(root, 'src/components/filters')).filter(name => name.endsWith('.svelte')).map(name => 'src/components/filters/' + name)].map(read).join('\n');
   assert.match(controls, /splitList\(text\)\.slice\(0, MAX_FILTER_VALUES\)/, 'setList applies at most 20 values');
   assert.match(controls, /\.slice\(0, MAX_USER_IDS\)/, 'user ids stop at 50');
   for (const id of ['over-user-ids', 'over-ui-versions', 'over-user-ips', 'over-status-codes']) assert.match(controls, new RegExp(`data-testid="${id}"`), `${id} notice exists`);

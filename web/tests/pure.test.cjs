@@ -29,6 +29,8 @@ const investigation = loadTypeScript('src/lib/investigation.ts');
 
 // App.svelte is a thin shell; its state and logic live in lib/appState.svelte.ts and its regions in these components.
 // Source checks on the app read them together.
+const FILTER_FILES = fs.readdirSync(path.join(root, 'src/components/filters')).filter(name => name.endsWith('.svelte')).map(name => 'src/components/filters/' + name);
+const panelSources = () => ['src/components/QueryControls.svelte', ...FILTER_FILES].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
 const APP_FILES = ['src/App.svelte', 'src/lib/appState.svelte.ts', 'src/components/AppHeader.svelte', 'src/components/SubBar.svelte', 'src/components/Landing.svelte', 'src/components/ConnectionsDrawer.svelte', 'src/components/WhereView.svelte', 'src/components/EvidenceView.svelte', 'src/components/Drawer.svelte'];
 function appSource() {
   return APP_FILES.map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
@@ -491,7 +493,7 @@ test('phase bar segments split audit and api shares, tolerate gaps, and describe
 test('the total metric is labelled as observed API time and never as a total request', () => {
   assert.equal(presentation.metricLabels.total, 'Observed API time (AuditCreateTime + ApiTime)');
   assert.equal(presentation.metricLabels.api, 'API processing');
-  for (const file of ['src/components/QueryControls.svelte', ...APP_FILES, 'src/components/ComparisonTable.svelte']) {
+  for (const file of ['src/components/QueryControls.svelte', ...FILTER_FILES, ...APP_FILES, 'src/components/ComparisonTable.svelte']) {
     assert.doesNotMatch(fs.readFileSync(path.join(root, file), 'utf8'), /Total request/);
   }
 });
@@ -773,8 +775,8 @@ test('filter drafts resync from a restored query without clobbering partial typi
   assert.equal(syncListDraft('7, 07', [7], ok), '7, 07');
 });
 
-test('QueryControls resyncs its drafts from the query', () => {
-  const source = fs.readFileSync(path.join(root, 'src/components/QueryControls.svelte'), 'utf8');
+test('the filter groups resync their drafts from the query', () => {
+  const source = panelSources();
   assert.match(source, /syncOperationDraft\(/);
   assert.equal((source.match(/syncListDraft\(/g) ?? []).length >= 4, true);
   assert.match(source, /\$effect\(/);
@@ -1079,16 +1081,18 @@ test('query fingerprint covers every range and treats an empty range as absent',
   assert.equal(seen.size, 1 + keys.length * 3);
 });
 
-test('QueryControls offers the ranges inside the record filters panel only', () => {
-  const source = fs.readFileSync(path.join(root, 'src/components/QueryControls.svelte'), 'utf8');
-  const panelStart = source.indexOf('record-filters"');
-  const panel = source.slice(panelStart, source.indexOf('</details>', panelStart));
-  assert.match(panel, /RANGE_FIELDS/);
-  assert.match(panel, /rangeNote/);
-  const earlier = source.slice(source.indexOf('advanced-filters">'), panelStart);
-  assert.equal(/RANGE_FIELDS|rf-observedMs/.test(earlier), false);
+test('the range filters live only in RangesGroup', () => {
+  const source = fs.readFileSync(path.join(root, 'src/components/filters/RangesGroup.svelte'), 'utf8');
+  const others = ['src/components/QueryControls.svelte', ...FILTER_FILES.filter(file => !file.endsWith('RangesGroup.svelte'))].map(file => fs.readFileSync(path.join(root, file), 'utf8'));
+  assert.match(source, /RANGE_FIELDS/);
+  assert.match(source, /rangeNote/);
   assert.match(source, /syncRangeDraft\(/);
-  assert.equal(/#[0-9a-fA-F]{3,8}\b/.test(source.slice(source.indexOf('<style>'))), false);
+  for (const other of others) assert.equal(/RANGE_FIELDS|rf-\$\{key\}|'rf-' \+ key/.test(other), false);
+  for (const file of ['src/components/QueryControls.svelte', ...FILTER_FILES]) {
+    const text = fs.readFileSync(path.join(root, file), 'utf8');
+    const style = text.indexOf('<style>');
+    if (style >= 0) assert.equal(/#[0-9a-fA-F]{3,8}\b/.test(text.slice(style)), false, file + ' uses a colour token, not a hex value');
+  }
 });
 
 test('breakdown drill-down keeps and clears range filters like any other record filter', () => {

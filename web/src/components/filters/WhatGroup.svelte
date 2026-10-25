@@ -7,7 +7,8 @@
   import Hint from '../Hint.svelte';
   // The What group of the More filters panel: which requests, by outcome, completion and name. It edits the shared query only; the panel
   // never starts a run on its own.
-  let { query = $bindable(), groupNames = [], count = 0 }: { query: Query; groupNames?: string[]; count?: number } = $props();
+  // hasError lets the panel rail show a problem dot while this group is on a hidden pane.
+  let { query = $bindable(), groupNames = [], count = 0, hasError = $bindable(false) }: { query: Query; groupNames?: string[]; count?: number; hasError?: boolean } = $props();
   const MAX_OPERATION_SUGGESTIONS = 500;
   const completionLabels: Record<Completion, string> = { all: 'Any', complete: 'Complete', incomplete: 'Incomplete', pending: 'Pending (accepted, not finished)', invalid: 'Unusable timing' };
   // The operation box keeps its own draft, so that a half-typed name is not rewritten under the cursor.
@@ -18,7 +19,8 @@
     untrack(() => { operationText = syncOperationDraft(operationText, applied); });
   });
   const operationInvalid = $derived(!!operationText.trim() && !isValidOperation(operationText));
-  const operationSuggestions = $derived([...new Set(groupNames)].slice(0, MAX_OPERATION_SUGGESTIONS));
+  $effect(() => { hasError = operationInvalid; });
+  const operationSuggestions =$derived([...new Set(groupNames)].slice(0, MAX_OPERATION_SUGGESTIONS));
   // An operation without a dot, or with nothing on one side of it, is shown as a hint and not applied, so the query never carries a value the server rejects.
   const setOperation = (value: string) => {
     operationText = value;

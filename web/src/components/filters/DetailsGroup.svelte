@@ -6,7 +6,8 @@
   // The Request details group of the More filters panel: the record fields (users, versions, addresses, status codes, browser, URL, audit ID).
   // The query only ever holds a filter that is in use (an emptied field becomes undefined), and the comma-separated text boxes keep their own
   // draft so that typing "1, " is not rewritten under the cursor. The panel never starts a run, so nothing here calls onScopeChange.
-  let { query = $bindable(), count = 0 }: { query: Query; count?: number } = $props();
+  // hasError lets the panel rail show a problem dot while this group is on a hidden pane.
+  let { query = $bindable(), count = 0, hasError = $bindable(false) }: { query: Query; count?: number; hasError?: boolean } = $props();
   const AUDIT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
   const joinList = (items: readonly (string | number)[] | undefined) => (items ?? []).join(', ');
   const initialText = untrack(() => ({ userIds: joinList(query.userIds), uiVersions: joinList(query.uiVersions), userIps: joinList(query.userIps), statusCodes: joinList(query.statusCodes) }));
@@ -39,7 +40,8 @@
   const overIps = $derived(itemsOverLimit(userIpsText, MAX_FILTER_VALUES));
   const overStatus = $derived(itemsOverLimit(statusCodesText, MAX_FILTER_VALUES));
   const overText = (over: number, max: number) => `Only the first ${max} values are used. ${over} more ${over === 1 ? 'was' : 'were'} left out.`;
-  const describedBy = (...ids: (string | false)[]) => ids.filter(Boolean).join(' ') || undefined;
+  $effect(() => { hasError = rejectedUserIds.length > 0 || auditIdInvalid || overIds > 0 || overVersions > 0 || overIps > 0 || overStatus > 0; });
+  const describedBy =(...ids: (string | false)[]) => ids.filter(Boolean).join(' ') || undefined;
   const setList = (key: 'uiVersions' | 'userIps' | 'statusCodes', text: string) => {
     if (key === 'uiVersions') uiVersionsText = text; else if (key === 'userIps') userIpsText = text; else statusCodesText = text;
     const items = splitList(text).slice(0, MAX_FILTER_VALUES);
