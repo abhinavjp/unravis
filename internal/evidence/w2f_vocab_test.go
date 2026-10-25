@@ -88,6 +88,22 @@ func TestW2FExportVocabulary(t *testing.T) {
 	}
 }
 
+// The web access-log importers export the IIS request attributes; the route
+// stem is dropped on purpose, as for iis-w3c.
+func TestAccessLogExportVocabulary(t *testing.T) {
+	for _, src := range []string{"nginx-access", "apache-combined"} {
+		if got := strings.Join(w2fKeys(exportPolicy[src]), " "); got != "bytes-out method status user" {
+			t.Errorf("%s attrs: %s", src, got)
+		}
+		if got := strings.Join(w2fKeys(exportKinds[src]), " "); got != "request" {
+			t.Errorf("%s kinds: %s", src, got)
+		}
+		if !exportDropped[src]["stem"] || len(exportDropped[src]) != 1 {
+			t.Errorf("%s exportDropped = %v, want only stem", src, exportDropped[src])
+		}
+	}
+}
+
 func TestW2FUnitsAndCounters(t *testing.T) {
 	for _, u := range []string{"ms", "count", "percent-host", "percent-one-core", "bytes", "percent", "per-sec", "ratio"} {
 		if !exportUnits[u] {

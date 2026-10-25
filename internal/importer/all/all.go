@@ -3,6 +3,7 @@ package all
 
 import (
 	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/importer/accesslog"
 	"api-audit-explorer/internal/importer/appinsights"
 	"api-audit-explorer/internal/importer/dotnetcounters"
 	"api-audit-explorer/internal/importer/iis"
@@ -51,6 +52,8 @@ func Importers() []importer.Importer {
 		log4net.NewText(),
 		log4net.NewXML(),
 		nlog.NewText(),
+		accesslog.NewNginx(),
+		accesslog.NewApache(),
 		mel.NewConsole(),
 		mel.NewJSON(),
 		mel.NewStdout(),

@@ -90,6 +90,8 @@ var displayNames = map[string]string{
 	"log4net-text":       "log4net log",
 	"log4net-xml":        "log4net XML log",
 	"nlog-text":          "NLog log",
+	"nginx-access":       "nginx access log",
+	"apache-combined":    "Apache access log",
 	"serilog-clef":       "Serilog JSON log",
 	"serilog-text":       "Serilog log",
 	"mel-console":        "ASP.NET Core console log",
