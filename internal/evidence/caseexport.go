@@ -159,7 +159,7 @@ var (
 var exportPolicy = map[string]map[string]attrPolicy{
 	"iis-w3c": {"method": polEnum(httpMethods), "status": polNum, "substatus": polNum, "win32": polNum, "port": polNum,
 		"site": polName("site"), "user": polPerson("user"), "bytes-out": polNum, "bytes-in": polNum},
-	"iis-httperr":  {"reason": polEnum(httpErrReasons), "status": polNum, "method": polEnum(httpMethods), "queue": polName("pool"), "siteid": polNum},
+	"iis-httperr": {"reason": polEnum(httpErrReasons), "status": polNum, "method": polEnum(httpMethods), "queue": polName("pool"), "siteid": polNum},
 	// nginx and Apache access logs: the same typed request attributes as IIS
 	// (the client address and referrer are never imported; the route stem is dropped)
 	"nginx-access":    {"method": polEnum(httpMethods), "status": polNum, "user": polPerson("user"), "bytes-out": polNum},
@@ -178,6 +178,11 @@ var exportPolicy = map[string]map[string]attrPolicy{
 	"sql-xe": {"event": polEnum(xeEvents), "wait_type": polWait, "wait_class": polEnum(xeWaitClasses),
 		"component": polEnum(xeComponents), "state": polEnum(xeStates), "error_number": polNum, "sql_severity": polNumOr("unknown")},
 	"sql-errorlog": {"error_number": polNum, "sql_severity": polNum},
+	// Query Store export: ids, counts and times are numbers; the wait category is
+	// a fixed list. The last execution time is left out (exportDropped).
+	"sql-querystore": {"query_id": polNum, "plan_id": polNum, "executions": polNum, "max_duration_ms": polNum,
+		"avg_cpu_ms": polNum, "avg_logical_reads": polNum, "avg_rows": polNum, "forced": polEnum(boolValues),
+		"execution_type": polEnum(qsExecTypes), "wait_class": polEnum(xeWaitClasses), "wait_category": polEnum(qsWaitCategoryNames)},
 
 	// Wave 2 (plan §2.2, §2.3, cards W2-b to W2-m), pre-landed by W2-F.
 	"log4net-text": appLogPolicy,
@@ -228,7 +233,7 @@ var (
 		"error-code": polEnum(errnoCodes)}
 	// procName keeps the well-known server images readable; any other process
 	// name shares the counter-instance pseudonym prefix.
-	procName    = polName("instance", "w3wp", "dotnet", "node", "redis-server", "memurai", "mongod", "sqlservr", "other")
+	procName = polName("instance", "w3wp", "dotnet", "node", "redis-server", "memurai", "mongod", "sqlservr", "other")
 	// The three Linux importers each write a subset of the same vocabulary:
 	// sadf the host CPU (all or a core number), pidstat the process and pid,
 	// vmstat the metric alone.

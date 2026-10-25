@@ -73,16 +73,17 @@ const lookback = 7 * 24 * time.Hour
 // importer name never reaches a sentence. An unknown source falls back to the
 // importer name.
 var displayNames = map[string]string{
-	"sql-xe":       "system_health",
-	"sql-errorlog": "SQL Server error log",
-	"sql-pdh":      "SQL Server performance counters",
-	"mongod-json":  mongodlog.SourceLabel,
-	"iis-w3c":      "IIS log",
-	"iis-httperr":  "HTTP.sys error log",
-	"iis-freb":     "IIS failed request trace",
-	"win-counters": "Windows performance counters",
-	"win-events":   "Windows event log",
-	"appinsights":  "Application Insights",
+	"sql-xe":         "system_health",
+	"sql-errorlog":   "SQL Server error log",
+	"sql-pdh":        "SQL Server performance counters",
+	"sql-querystore": "SQL Server Query Store export",
+	"mongod-json":    mongodlog.SourceLabel,
+	"iis-w3c":        "IIS log",
+	"iis-httperr":    "HTTP.sys error log",
+	"iis-freb":       "IIS failed request trace",
+	"win-counters":   "Windows performance counters",
+	"win-events":     "Windows event log",
+	"appinsights":    "Application Insights",
 	// The importers are named schedule-hangfire and schedule-agent; the old
 	// "schedule" key matched no source.
 	"schedule-hangfire": "Hangfire schedule export",

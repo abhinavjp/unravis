@@ -40,6 +40,7 @@ func Importers() []importer.Importer {
 		sqlserver.NewXE(),
 		sqlserver.NewErrorlog(),
 		sqlserver.NewPDH(),
+		sqlserver.NewQuerystore(),
 		procsnap.New(),
 		dotnetcounters.New(),
 		serilog.NewCLEF(),

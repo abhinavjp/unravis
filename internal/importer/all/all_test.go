@@ -86,6 +86,7 @@ var samples = map[string]sample{
 	"sql-xe":            {file: "sqlserver/testdata/xe_good.csv"},
 	"sql-errorlog":      {file: "sqlserver/testdata/errorlog_good.log"},
 	"sql-pdh":           {file: "sqlserver/testdata/pdh_good.csv"},
+	"sql-querystore":    {file: "sqlserver/testdata/querystore_good.csv"},
 	"win-procsnap":      {file: "procsnap/testdata/getprocess_basic.csv"},
 	"dotnet-counters":   {file: "dotnetcounters/testdata/counters_basic.csv"},
 	"serilog-clef":      {file: "serilog/testdata/clef_good.jsonl"},

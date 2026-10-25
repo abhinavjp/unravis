@@ -25,6 +25,9 @@ var exportDropped = map[string]map[string]bool{
 
 	"nginx-access":    {"stem": true},
 	"apache-combined": {"stem": true},
+	// The Query Store last execution time is a point in time, not a number or a
+	// fixed word.
+	"sql-querystore": {"last_execution": true},
 }
 
 // appLogKinds are the kinds every app-log importer emits (wave-2 plan §2.3).
@@ -38,14 +41,14 @@ func appLogKindsPlus(extra ...string) map[string]bool {
 // the list of its source is exported as "other". The wave-2 sources are
 // listed before their importers are registered (wave-2 plan, card W2-F).
 var exportKinds = map[string]map[string]bool{
-	"iis-w3c":      set("request"),
-	"iis-httperr":  set("httperr"),
+	"iis-w3c":     set("request"),
+	"iis-httperr": set("httperr"),
 
 	"nginx-access":    set("request"),
 	"apache-combined": set("request"),
-	"iis-freb":     set("failed-request", "slow-module"),
-	"win-counters": set("counter"),
-	"sql-pdh":      set("counter"),
+	"iis-freb":        set("failed-request", "slow-module"),
+	"win-counters":    set("counter"),
+	"sql-pdh":         set("counter"),
 	"win-events": set("win-event", "apppool-recycle", "apppool-idle-shutdown", "task-start", "task-complete",
 		"task-fail", "task-skipped", "task-stop",
 		// W2-g
@@ -56,8 +59,9 @@ var exportKinds = map[string]map[string]bool{
 	"schedule-agent":    set("schedule-boundary", "schedule-unknown", "job-run"),
 	"appinsights": set("record", "request", "dependency", "exception", "trace", "pageview", "availability",
 		"custom-event"),
-	"sql-xe":       set("wait", "diagnostics", "error", "non-yielding", "deadlock"),
-	"sql-errorlog": set("io-stall", "start", "stop", "login-failed", "non-yielding"),
+	"sql-xe":         set("wait", "diagnostics", "error", "non-yielding", "deadlock"),
+	"sql-errorlog":   set("io-stall", "start", "stop", "login-failed", "non-yielding"),
+	"sql-querystore": set("query-interval", "wait"),
 	// Wave 2 (W2-b, W2-c, W2-d, W2-j): app logs.
 	"log4net-text": appLogKindsPlus(),
 	"log4net-xml":  appLogKindsPlus(),
@@ -224,7 +228,7 @@ var (
 	// FREB: the failureReason words and the IIS pipeline notifications. A module is shown as is only
 	// when it is a module IIS ships; a custom module becomes a keyed label.
 	frebReasons = fold("STATUS_CODE", "TIME_TAKEN", "STATUS_CODE_TIME_TAKEN", "other")
-	frebModule = regexp.MustCompile(`^(?:(?:Anonymous|Basic|Windows|Digest|Forms|Certificate)AuthenticationModule|` +
+	frebModule  = regexp.MustCompile(`^(?:(?:Anonymous|Basic|Windows|Digest|Forms|Certificate)AuthenticationModule|` +
 		`(?:Url|File)AuthorizationModule|RequestFilteringModule|StaticFileModule|DefaultDocumentModule|DirectoryListingModule|` +
 		`ManagedPipelineHandler|ScriptModule(?:-[0-9]+\.[0-9]+)?|ServiceModel(?:-[0-9]+\.[0-9]+)?|UrlRewriteModule|` +
 		`ApplicationRequestRouting|AspNetCoreModule(?:V2)?|HttpRedirectionModule|ProtocolSupportModule|CustomErrorModule|` +
@@ -267,9 +271,16 @@ var (
 	xeWaitClasses = fold("lock", "latch", "preemptive", "other")
 	xeComponents  = fold("system", "resource", "query_processing", "io_subsystem", "events")
 	xeStates      = fold("clean", "warning", "error", "unknown")
-	schedTZ       = fold("UTC", "Etc/UTC")
-	schedBasis    = fold("last-execution", "history", "disabled-at-export")
-	schedReasons  = fold("cron-unsupported", "tz-unknown", "freq-not-time-based", "disabled-at-export", "month-day-missing",
+	// Query Store: execution_type_desc words (lower case) and the
+	// wait_category_desc values of sys.query_store_wait_stats.
+	qsExecTypes         = fold("regular", "aborted", "exception")
+	qsWaitCategoryNames = fold("Unknown", "CPU", "Worker Thread", "Lock", "Latch", "Buffer Latch", "Buffer IO", "Compilation",
+		"SQL CLR", "Mirroring", "Transaction", "Idle", "Preemptive", "Service Broker", "Tran Log IO", "Network IO",
+		"Parallelism", "Memory", "User Wait", "Tracing", "Full Text Search", "Other Disk IO", "Replication",
+		"Log Rate Governor")
+	schedTZ      = fold("UTC", "Etc/UTC")
+	schedBasis   = fold("last-execution", "history", "disabled-at-export")
+	schedReasons = fold("cron-unsupported", "tz-unknown", "freq-not-time-based", "disabled-at-export", "month-day-missing",
 		"window-wraps", "too-many-boundaries")
 	schedDST   = fold("ambiguous", "nonexistent")
 	schedFreqs = fold("once", "daily", "weekly", "monthly", "monthly-relative")

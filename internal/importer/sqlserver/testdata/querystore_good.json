@@ -1,0 +1,5 @@
+[
+  {"start_time":"2001-06-15T02:00:00+00:00","end_time":"2001-06-15T03:00:00+00:00","query_id":101,"plan_id":11,"count_executions":40,"avg_duration":1250000.0,"max_duration":9800000,"avg_cpu_time":900000.0,"avg_logical_io_reads":5400.5,"avg_rowcount":12.0,"last_execution_time":"2001-06-15T02:59:10.1234567+00:00","is_forced_plan":false,"query_sql_text":"SELECT a, b FROM dbo.t WHERE name = 'ZZ-TEXT-MARK'"},
+  {"start_time":"2001-06-15T02:00:00+00:00","end_time":"2001-06-15T03:00:00+00:00","query_id":202,"plan_id":21,"count_executions":7,"avg_duration":300000.0,"wait_category_desc":"Lock","avg_query_wait_time":4200.5},
+  {"start_time":"2001-06-15T03:00:00+00:00","end_time":"2001-06-15T04:00:00+00:00","query_id":101,"plan_id":12,"count_executions":5,"avg_duration":8200000.0,"is_forced_plan":true,"avg_rowcount":null}
+]

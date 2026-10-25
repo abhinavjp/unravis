@@ -60,6 +60,11 @@ func decode(r io.Reader) (io.Reader, Encoding, error) {
 	return br, UTF8, nil
 }
 
+// Decode sniffs the byte-order mark and returns a reader of UTF-8 bytes, as
+// NewLineReader and NewCSV do, for importers that parse a structured format
+// (JSON) themselves. A UTF-8 BOM is dropped; UTF-16 is transcoded.
+func Decode(r io.Reader) (io.Reader, Encoding, error) { return decode(r) }
+
 // validText reports whether b is strict UTF-8 without NUL or the replacement
 // character a lossy decoder leaves behind for bad UTF-16.
 func validText(b []byte, enc Encoding) bool {

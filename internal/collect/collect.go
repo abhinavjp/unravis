@@ -62,6 +62,7 @@ const (
 	sqlErrorlog = "sql-errorlog"
 	sqlPDH      = "sql-pdh"
 	sqlXE       = "sql-xe"
+	sqlQS       = "sql-querystore"
 	redisInfo   = "redis-info"
 	redisLat    = "redis-latency"
 	redisLog    = "redis-log"
@@ -81,7 +82,7 @@ var appLogImporters = []string{"log4net-text", "log4net-xml", "serilog-clef", "s
 // kinds at once; a file whose importer is in no list says nothing about it.
 var (
 	webSignals   = append([]string{iisW3C, iisHTTPERR, iisFREB, dotnetCnt, hangfire, appInsights}, appLogImporters...)
-	sqlSignals   = []string{sqlErrorlog, sqlPDH, sqlXE, sqlAgent}
+	sqlSignals   = []string{sqlErrorlog, sqlPDH, sqlXE, sqlQS, sqlAgent}
 	redisSignals = []string{redisInfo, redisLat, redisLog, redisSlow}
 	mongoSignals = []string{mongodJSON, mongoStatus, mongoProf, mongoCurOp, mongostat}
 	// machineSignals are files that say the host is a plain Windows machine

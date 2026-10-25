@@ -21,6 +21,11 @@ type CSVOptions struct {
 	// the end of the file. Default 16 * MaxLine; more: *importer.LimitError
 	// with Limit "record-bytes".
 	MaxRecord int
+	// Skip, when set, is called with every data record before the field-count
+	// check; a record it reports true for is dropped without being counted or
+	// rejected. It is for tool furniture that is not data (the dashes row and
+	// the "(N rows affected)" line sqlcmd writes). It must not keep rec.
+	Skip func(rec []string) bool
 }
 
 // recordSlack covers what encoding/csv has read ahead of the record it is
@@ -115,6 +120,7 @@ type CSVReader struct {
 	header    []string
 	enc       Encoding
 	maxFields int
+	skip      func(rec []string) bool
 	err       error // sticky terminal error
 }
 
@@ -145,7 +151,7 @@ func NewCSV(r io.Reader, o CSVOptions) (*CSVReader, Encoding, error) {
 	cr.LazyQuotes = false
 	cr.FieldsPerRecord = -1
 	cr.ReuseRecord = false
-	c := &CSVReader{r: cr, src: src, enc: enc, maxFields: o.MaxFields}
+	c := &CSVReader{r: cr, src: src, enc: enc, maxFields: o.MaxFields, skip: o.Skip}
 
 	rec, _, err := c.readRecord()
 	switch {
@@ -241,9 +247,15 @@ func (c *CSVReader) Index(name string) int {
 //   - *importer.LimitError for an overlong line, too many fields, or a byte
 //     limit from the underlying reader: the stream ends, refuse the file.
 func (c *CSVReader) Next() (rec []string, lineNo int64, err error) {
-	rec, lineNo, err = c.readRecord()
-	if err != nil {
-		return nil, lineNo, err
+	for {
+		rec, lineNo, err = c.readRecord()
+		if err != nil {
+			return nil, lineNo, err
+		}
+		if c.skip != nil && c.skip(rec) {
+			continue
+		}
+		break
 	}
 	if len(rec) != len(c.header) {
 		return nil, lineNo, importer.RowError{Line: lineNo, Reason: importer.ReasonFieldCount}
