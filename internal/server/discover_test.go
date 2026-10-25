@@ -775,6 +775,24 @@ func TestDiscoverUnmappedHostIsRefused(t *testing.T) {
 	wantReason(t, f.req(http.MethodPost, "/api/cases/"+cid+"/sampler", samplerBody(5)), http.StatusUnprocessableEntity, string(importer.ReasonUnknownHost))
 }
 
+func TestDiscoverProposalOffersTheMachineNamesAsAliases(t *testing.T) {
+	f := newDiscFix(t, nil)
+	f.fe.Machine.NameList = []string{" BOX-Z ", "box-z", "", "local", "box-z.example.test", "b", "c", "d"}
+	_, sc := f.scan()
+	if !sc.Host.Proposed {
+		t.Fatalf("host = %+v", sc.Host)
+	}
+	want := []string{"BOX-Z", "box-z.example.test", "b", "c"}
+	if len(sc.Host.Aliases) != len(want) {
+		t.Fatalf("aliases = %v, want %v", sc.Host.Aliases, want)
+	}
+	for i := range want {
+		if sc.Host.Aliases[i] != want[i] {
+			t.Fatalf("aliases = %v, want %v", sc.Host.Aliases, want)
+		}
+	}
+}
+
 func TestDiscoverChannelNeedsAQueryFunc(t *testing.T) {
 	f := newDiscFix(t, func(c *DiscoverConfig) { c.Query = nil })
 	cid := f.e.newCase("c")

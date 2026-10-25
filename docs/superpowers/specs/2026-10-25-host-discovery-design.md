@@ -249,7 +249,7 @@ Entry: a "This computer" button on `Landing.svelte` and in `CaseTools.svelte` ne
 | 3 | Checklist, grouped (Web server, Windows, App logs, Databases, Live) | Row: display name, what it shows (`Shows` wording), size, newest entry age ("updated 3 min ago"), file count, tags "Needs administrator", "Large", "Export needed". Large rows have no default tick. Gap rows grey with reason. |
 | 4 | Window | "Which time range?" Options: incident window (if set, default), last 1 h, 6 h, 24 h (default without incident), 7 days, custom. Line under it: "About 1.2 GB will be read." (sum of window slices). |
 | 5 | Notice | Existing gating banner and ack label, unchanged. |
-| 6 | Import | Per-row progress from import jobs; result per row: "Added 41,200 rows", "Already imported", "Refused: the file format did not match", "Needs administrator". |
+| 6 | Import | Per-row progress from import jobs; result per row: "Added 41,200 rows", "Nothing new to add" (the server answers 409 duplicate both when the range was imported before and when it holds no rows), "Refused: the file format did not match", "Needs administrator". |
 | 7 | Live sampling | Toggle "Record CPU and memory every 15 seconds". Help: "Records process names and numbers only. Stops after 72 hours." Status: "Recording since 08:00, 1,440 samples." |
 
 Empty and error states:
@@ -275,7 +275,7 @@ All routes: loopback listener, `X-Audit-Token`, existing Origin check, JSON erro
 |---|---|---|---|
 | `GET /api/discover/capabilities` | | `{supported, elevated, os}` | |
 | `POST /api/discover/scans` | `{}` | `202 {scanId}` | async; one running scan per process (`409 scan-busy`) |
-| `GET /api/discover/scans/{scan}` | | `{state, startedAt, findings:[Finding JSON], gaps:[Gap JSON], host:{label, proposed, tz, cores}}` | Finding JSON omits paths; `scan` is 32 hex |
+| `GET /api/discover/scans/{scan}` | | `{state, startedAt, findings:[Finding JSON], gaps:[Gap JSON], host:{label, proposed, tz, cores, aliases}}` | Finding JSON omits paths; `scan` is 32 hex |
 | `DELETE /api/discover/scans/{scan}` | | `204` | drops the in-memory scan |
 | `POST /api/cases/{id}/discover/imports` | `{scanId, findingIds[], window:{from,to}, ackGating, ackText}` | `202 {jobs:[{findingId, jobId}]}` | same case gate, import slot limiter (`429 import-busy`, Retry-After 2), job model, TTL and 64-job cap as `/imports?async=1`; reuses `importFile` with the local reader as `part` |
 | `GET /api/cases/{id}/imports/jobs/{job}` | | existing | unchanged |
@@ -378,7 +378,7 @@ Merge order: P1a, then P1b-P1e and P1g in parallel, then P1f, then a clumsy-user
 | Non-ASCII path (`D:\Журналы\web-a`) | Found and read; display name intact; HMAC stable. |
 | Two sites sharing one log dir | One finding, both site IDs shown, files imported once. |
 | App pool recycled mid-scan | New w3wp PID appears in the sampler as a new identity with start marker; scan unaffected. |
-| Scan run twice, import twice | Second import: whole files refused "Already imported"; active files import only the new range; counts do not double. |
+| Scan run twice, import twice | Second import: whole files refused "Nothing new to add"; active files import only the new range; counts do not double. |
 | Finding ID from a stale scan | `404 finding-unknown`. |
 | File swapped for a junction between scan and import | `unsafe-path`, audit row records the refusal. |
 | Case closed while sampler runs | Sampler flushes and stops; status "stopped: case closed". |

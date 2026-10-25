@@ -384,7 +384,7 @@ test('a refusal on one import becomes that row\'s own result', () => {
   assert.equal(discover.outcomeFromError(err(0, 'unreachable')).kind, 'failed');
   assert.equal(discover.outcomeFromError(new Error('x')).kind, 'failed');
   assert.equal(copy.rowOutcomeText({ kind: 'needs-admin' }), 'Needs administrator');
-  assert.equal(copy.rowOutcomeText({ kind: 'duplicate' }), 'Already imported');
+  assert.equal(copy.rowOutcomeText({ kind: 'duplicate' }), 'Nothing new to add');
 });
 
 /* ------------------------------------------------------------------ the fake client, scans and jobs */
@@ -765,4 +765,21 @@ test('the strip chart starts only once its box has a size', () => {
   const chart = read('src/components/resource/StripChart.svelte');
   assert.ok(!/chart = echarts\.init\(node\);/.test(chart));
   assert.match(chart, /target\.clientWidth > 0 && target\.clientHeight > 0\) chart = echarts\.init\(target\)/);
+});
+
+test('the real client lists a proposed host once and does not list it twice', async () => {
+  const host = { label: 'local', proposed: true, tz: 'Etc/UTC', cores: 4, aliases: ['WEB-A'] };
+  let listed = { version: 1, hosts: [] };
+  const calls = mockServer((call) => {
+    if (call.method === 'PUT') { listed = JSON.parse(call.body); return { status: 200, body: listed }; }
+    return { status: 200, body: listed };
+  });
+  await discover.discoverClient.confirmHost(host);
+  assert.equal(calls.filter((c) => c.method === 'PUT').length, 1);
+  assert.equal(listed.hosts[0].label, 'local');
+  assert.equal(listed.hosts[0].tz, 'Etc/UTC');
+  assert.equal(listed.hosts[0].logicalCores, 4);
+  assert.deepEqual(listed.hosts[0].aliases, ['WEB-A']);
+  await discover.discoverClient.confirmHost(host);
+  assert.equal(calls.filter((c) => c.method === 'PUT').length, 1, 'a listed label makes no second save');
 });

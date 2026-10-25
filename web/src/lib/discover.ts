@@ -1,4 +1,4 @@
-import { CaseApiError, casePath, fetchImportJob, cancelImportJob, isJobId, json, send, type ImportJob } from './cases';
+import { CaseApiError, casePath, fetchImportJob, cancelImportJob, getHostEntries, isJobId, json, putHostEntries, send, type ImportJob } from './cases';
 
 /**
  * Client for the "This computer" routes (host-discovery spec, section 7), and the pure rules the discover panel follows.
@@ -148,7 +148,7 @@ const DETECTOR_STATES: readonly string[] = ['waiting', 'running', 'done', 'skipp
 export interface DetectorProgress { detector: string; state: DetectorState }
 
 /** The computer the scan ran on, as the server proposes to name it. `proposed` is true when the label is new and has not been confirmed. */
-export interface ScanHost { label: string; proposed: boolean; tz: string; cores: number }
+export interface ScanHost { label: string; proposed: boolean; tz: string; cores: number; aliases: string[] }
 
 export interface Scan {
   state: ScanState;
@@ -174,7 +174,7 @@ export function parseScan(body: unknown): Scan | null {
     startedAt: asTime(raw.startedAt),
     findings: asArray(raw.findings).map(parseFinding).filter((f): f is Finding => f !== null),
     gaps: asArray(raw.gaps).map(parseGap).filter((g): g is Gap => g !== null),
-    host: host ? { label: asString(host.label, 80), proposed: asBool(host.proposed), tz: asString(host.tz, 80), cores: Math.max(0, Math.floor(asNumber(host.cores))) } : null,
+    host: host ? { label: asString(host.label, 80), proposed: asBool(host.proposed), tz: asString(host.tz, 80), cores: Math.max(0, Math.floor(asNumber(host.cores))), aliases: Array.isArray(host.aliases) ? host.aliases.filter((a): a is string => typeof a === 'string' && a.length > 0 && a.length <= 253).slice(0, 4) : [] } : null,
     progress
   };
 }
@@ -396,6 +396,8 @@ export interface DiscoverClient {
   startSampler(caseId: string, request: { intervalSec: number; ackText: string }, signal?: AbortSignal): Promise<SamplerStatus>;
   getSampler(caseId: string, signal?: AbortSignal): Promise<SamplerStatus>;
   stopSampler(caseId: string, signal?: AbortSignal): Promise<void>;
+  /** Saves a proposed host label in the host list. The server refuses an import or the sampler until the label is listed. A test fake may leave it out. */
+  confirmHost?(host: ScanHost, signal?: AbortSignal): Promise<void>;
 }
 
 const unreadable = (status = 200) => new CaseApiError('The server sent an answer that could not be read.', status, 'unreadable');
@@ -407,6 +409,11 @@ function scanPath(scanId: string): string {
 
 /** The client for the real server. It uses the session token and the global fetch, so a test can replace fetch. */
 export const discoverClient: DiscoverClient = {
+  async confirmHost(host, signal) {
+    const entries = await getHostEntries(signal);
+    if (entries.some((e) => e.label === host.label)) return;
+    await putHostEntries([...entries, { label: host.label, aliases: host.aliases, role: '', tz: host.tz, logicalCores: host.cores > 0 ? host.cores : null, runtime: '' }], signal);
+  },
   async capabilities(signal) {
     const response = await send('/discover/capabilities', {}, signal);
     const caps = parseCapabilities(await json<unknown>(response));

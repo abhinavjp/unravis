@@ -83,7 +83,7 @@ export function createFakeClient(options: FakeOptions = {}): FakeClient {
         startedAt: options.startedAt ?? new Date().toISOString(),
         findings: running ? [] : findings,
         gaps: running ? [] : gaps,
-        host: options.host ?? { label: 'local', proposed: true, tz: 'UTC', cores: 8 },
+        host: options.host ?? { label: 'local', proposed: true, tz: 'UTC', cores: 8, aliases: [] },
         progress: options.progress ?? []
       };
     },

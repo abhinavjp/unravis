@@ -203,6 +203,7 @@
     focusStep();
     let refs: JobRef[];
     try {
+      if (scan.host?.proposed) await client.confirmHost?.(scan.host, signal);
       refs = await client.startImports(forCase, { scanId, findingIds: sending.map((f) => f.id), window: range, ackGating: true, ackText: ackTextFor() }, signal);
     } catch (error) {
       if (isAbort(error) || mine !== generation) return;
@@ -269,6 +270,7 @@
     liveBusy = true;
     problem = '';
     try {
+      if (on && scan?.host?.proposed) await client.confirmHost?.(scan.host);
       if (on) sampler = await client.startSampler(caseId, { intervalSec: interval, ackText: ackTextFor() });
       else {
         await client.stopSampler(caseId);

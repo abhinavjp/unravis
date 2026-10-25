@@ -372,6 +372,9 @@ type hostInfo struct {
 	label    string
 	tz       string
 	cores    int
+	// aliases are this computer's names, offered only with a proposal so the saved
+	// host answers to the machine name event rows carry.
+	aliases []string
 }
 
 // localHost resolves the local host entry: a Machine name that matches a host
@@ -394,11 +397,31 @@ func (h *handler) localHost(env discover.Env) hostInfo {
 			info.tz = loc.String()
 		}
 		info.cores = env.Machine.LogicalCores()
+		info.aliases = proposalAliases(env.Machine.Names())
 	}
 	if info.cores < 0 {
 		info.cores = 0
 	}
 	return info
+}
+
+// proposalAliases keeps at most four distinct, non-empty machine names of a sane length.
+func proposalAliases(names []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		key := strings.ToLower(n)
+		if n == "" || len(n) > 253 || seen[key] || key == "local" {
+			continue
+		}
+		seen[key] = true
+		out = append(out, n)
+		if len(out) == 4 {
+			break
+		}
+	}
+	return out
 }
 
 func hostFromHint(hint importer.HostHint) hostInfo {
@@ -591,6 +614,8 @@ type hostDTO struct {
 	Proposed bool   `json:"proposed"`
 	TZ       string `json:"tz"`
 	Cores    int    `json:"cores"`
+	// Aliases is set only on a proposal.
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 type scanDTO struct {
@@ -609,7 +634,7 @@ func (r *scanRec) dto() scanDTO {
 	defer r.mu.Unlock()
 	out := scanDTO{
 		State: r.state, StartedAt: r.started, Findings: []discover.Finding{}, Gaps: []discover.Gap{},
-		Host:     hostDTO{Label: r.host.label, Proposed: r.host.proposed, TZ: r.host.tz, Cores: r.host.cores},
+		Host:     hostDTO{Label: r.host.label, Proposed: r.host.proposed, TZ: r.host.tz, Cores: r.host.cores, Aliases: r.host.aliases},
 		Elevated: r.scan.Elevated, Complete: r.scan.Complete,
 	}
 	if r.state == scanDone || r.state == scanCancelled {

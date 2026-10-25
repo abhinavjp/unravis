@@ -268,7 +268,7 @@ const number = (n: number): string => n.toLocaleString('en-US');
 export function rowOutcomeText(outcome: { kind: string; rows?: number; reason?: string }): string {
   switch (outcome.kind) {
     case 'added': return 'Added ' + number(outcome.rows ?? 0) + ' rows';
-    case 'duplicate': return 'Already imported';
+    case 'duplicate': return 'Nothing new to add';
     case 'needs-admin': return 'Needs administrator';
     case 'cancelled': return 'Cancelled';
     case 'refused': return 'Refused. ' + (reasonText(outcome.reason ?? '') ?? 'The file was not accepted.');
