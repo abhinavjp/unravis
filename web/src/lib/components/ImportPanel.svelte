@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
+  import { takeDiscoverIntent } from '../discoverIntent';
+  import DiscoverPanel from '../../components/DiscoverPanel.svelte';
   import {
     CaseApiError, cancelImportJob, caseCode, checkAllSupplied, commitBlock, fetchImportJob, fileSizeProblem, importProgressPercent, isCaseGone, listHosts, listImporters, listImports,
     previewKey, reasonCounts, startCommitJob, startPreviewJob, waitForImportJob, type CaseInfo, type ImportJob, type ImporterInfo, type ImportRecord, type ImportReport
@@ -76,10 +78,19 @@
   const showTimeZone = $derived(report?.quality.timezoneRule ?? '');
 
   let drawer = $state<HTMLElement>();
+  // The "This computer" panel. It shows from the start when the start screen asked for it, and when a button inside the drawer opens it.
+  let discoverOpen = $state(false);
+  let discoverFocus = $state(false);
+
+  function openDiscover() { discoverFocus = true; discoverOpen = true; }
+  function closeDiscover() { discoverOpen = false; discoverFocus = false; void tick().then(() => drawer?.focus()); }
+  // Files added from a scan change what the case holds, so the history and the case counts are read again.
+  function discovered() { void Promise.all([loadImports(selectedId), casePanel?.refresh()]); }
 
   onMount(() => {
     // Focus starts inside the dialog. Left on the button that opened it, Tab would walk the page behind the panel and the Tab trap would never start.
     drawer?.focus();
+    if (takeDiscoverIntent()) discoverOpen = true;
     listHosts().then((labels) => { hosts = labels; }).catch(() => { hosts = []; });
     // A server without the list, or one that cannot be reached, simply offers no settings.
     listImporters().then((list) => { importerInfos = list; }).catch(() => { importerInfos = []; });
@@ -319,6 +330,11 @@
 
   <CasePanel bind:this={casePanel} bind:cases bind:selectedId />
 
+  <!-- Outside the {#key} below, so a new import does not close the panel or reset its checklist. -->
+  {#if discoverOpen}
+    <DiscoverPanel caseId={selectedId} {caseOpen} {query} {zone} focusOnOpen={discoverFocus} onClose={closeDiscover} onImported={discovered} />
+  {/if}
+
   {#if selected}
     <section class="step" aria-labelledby="file-heading">
       <h3 id="file-heading">{IMPORT_TEXT.fileHeading}</h3>
@@ -439,7 +455,7 @@
 
   {#if selected}
     <!-- A new import changes what the case holds, so a timeline or export preview built before it starts over. -->
-    {#key selected.id + ':' + imports.length}<CaseTools caseId={selected.id} {query} {zone} {span} onGone={() => casePanel?.noteGone()} />{/key}
+    {#key selected.id + ':' + imports.length}<CaseTools caseId={selected.id} {query} {zone} {span} onGone={() => casePanel?.noteGone()} onDiscover={discoverOpen ? undefined : openDiscover} />{/key}
   {/if}
 
   {#if selected}

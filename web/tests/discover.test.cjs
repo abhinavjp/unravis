@@ -1,0 +1,626 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const test = require('node:test');
+const ts = require('typescript');
+
+const root = path.resolve(__dirname, '..');
+// Modules are cached by file, so cases.ts is one instance for the test, discover.ts and the fake (a CaseApiError is the same class everywhere).
+const loaded = new Map();
+function loadTypeScript(relativePath) {
+  const filename = path.join(root, relativePath);
+  if (loaded.has(filename)) return loaded.get(filename).exports;
+  const source = fs.readFileSync(filename, 'utf8');
+  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+  const module = { exports: {} };
+  loaded.set(filename, module);
+  const nodeRequire = createRequire(filename);
+  const load = (request) => /^\.\.?\//.test(request) && fs.existsSync(path.join(path.dirname(filename), request + '.ts'))
+    ? loadTypeScript(path.relative(root, path.join(path.dirname(filename), request + '.ts')))
+    : nodeRequire(request);
+  new Function('require', 'module', 'exports', output)(load, module, module.exports);
+  return module.exports;
+}
+const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
+
+const cases = loadTypeScript('src/lib/cases.ts');
+const discover = loadTypeScript('src/lib/discover.ts');
+const copy = loadTypeScript('src/lib/copy/discoverCopy.ts');
+const fake = loadTypeScript('src/lib/discoverFake.ts');
+const intent = loadTypeScript('src/lib/discoverIntent.ts');
+const { deck } = loadTypeScript('src/lib/copy/deck.ts');
+const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
+
+const { fakeFinding, createFakeClient, FAKE_SCAN_ID } = fake;
+const { CaseApiError } = cases;
+
+// Synthetic values only: made-up ids, a made-up machine, dates in 2001.
+const CASE_ID = 'abcd2345abcd2345abcd234567';
+const TOKEN = 'session-token-1';
+const noSleep = async () => {};
+const MB = 1024 * 1024;
+const GB = 1024 * MB;
+
+const realFetch = globalThis.fetch;
+function mockServer(handler) {
+  const calls = [];
+  globalThis.sessionStorage = { getItem: () => TOKEN, setItem() {}, removeItem() {} };
+  globalThis.fetch = async (url, init = {}) => {
+    const call = { url: String(url), method: init.method ?? 'GET', body: init.body, headers: init.headers };
+    calls.push(call);
+    const answer = await handler(call, calls);
+    if (answer instanceof Error) throw answer;
+    return new Response(answer.status === 204 ? null : JSON.stringify(answer.body ?? {}), { status: answer.status ?? 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  return calls;
+}
+test.afterEach(() => { globalThis.fetch = realFetch; delete globalThis.sessionStorage; discover.resetEntryCache(); });
+
+const f = (id, extra = {}) => fakeFinding({ id, ...extra });
+
+/* ------------------------------------------------------------------ copy */
+
+test('every string and sample of the discover copy passes the copy lint', () => {
+  const entries = copy.discoverCopyEntries();
+  assert.ok(entries.length > 100, 'the lint covers the strings and the sample outputs');
+  assert.deepEqual(lintScreenStrings(entries, deck.terms), []);
+});
+
+test('the copy holds the exact strings the spec names', () => {
+  assert.equal(copy.DISCOVER_TEXT.windowsOnly, 'Scanning is available on Windows only.');
+  assert.equal(copy.DISCOVER_TEXT.unavailable, 'Scanning is not available in this build.');
+  assert.deepEqual(Object.values(copy.DISCOVER_TEXT.groups), ['Web server', 'Windows', 'App logs', 'Databases', 'Live']);
+  assert.equal(copy.DISCOVER_TEXT.tagAdmin, 'Needs administrator');
+  assert.equal(copy.DISCOVER_TEXT.tagLarge, 'Large');
+  assert.equal(copy.DISCOVER_TEXT.tagExport, 'Export needed');
+  assert.equal(copy.estimateText(1288490188), 'About 1.2 GB will be read.');
+});
+
+test('a wording key the build does not know never shows as a raw key', () => {
+  const text = copy.showsText('discover.not-a-detector.shows', '');
+  assert.equal(text, copy.DISCOVER_TEXT.genericShows);
+  assert.ok(!/discover\./.test(text));
+  assert.equal(copy.howText('discover.not-a-detector.how'), copy.DISCOVER_TEXT.genericHow);
+  assert.equal(copy.howText('../../x'), copy.DISCOVER_TEXT.genericHow);
+  assert.equal(copy.wordingName('discover.iis.shows'), 'iis');
+  assert.equal(copy.wordingName('iis'), '');
+  assert.equal(copy.showsText('discover.__proto__.shows', ''), copy.DISCOVER_TEXT.genericShows);
+});
+
+test('a reason or a state nobody named still gets a plain line', () => {
+  assert.equal(copy.gapReasonText('something-new'), copy.DISCOVER_TEXT.gapUnknown);
+  assert.equal(copy.gapReasonText('constructor'), copy.DISCOVER_TEXT.gapUnknown);
+  assert.equal(copy.windowProblemText('nonsense'), '');
+  assert.equal(copy.blockedText('nonsense'), '');
+  assert.ok(copy.rowOutcomeText({ kind: 'failed', reason: 'zzz' }).length > 0);
+  assert.ok(copy.rowOutcomeText({ kind: 'refused', reason: 'zzz' }).startsWith('Refused.'));
+});
+
+test('counts read as plain English', () => {
+  assert.equal(copy.importButtonText(1), 'Import 1 source');
+  assert.equal(copy.importButtonText(3), 'Import 3 sources');
+  assert.equal(copy.foundText(1, 0), 'Found 1 source.');
+  assert.equal(copy.foundText(4, 2), 'Found 4 sources. 2 places could not be used.');
+  assert.equal(copy.updatedText(null), '');
+  assert.equal(copy.updatedText(0), 'updated just now');
+  assert.equal(copy.updatedText(3), 'updated 3 min ago');
+  assert.equal(copy.finishedText(3, 4), 'Done. Added 3 of 4 sources.');
+});
+
+/* ------------------------------------------------------------------ entry state */
+
+test('capabilities that say unsupported give the Windows-only state', async () => {
+  const client = createFakeClient({ capabilities: { supported: false, elevated: false, os: 'linux' } });
+  assert.deepEqual(await discover.loadEntryState(client), { kind: 'unsupported' });
+});
+
+test('capabilities that say supported give a ready state that carries the privilege', async () => {
+  assert.deepEqual(await discover.loadEntryState(createFakeClient({ capabilities: { supported: true, elevated: true, os: 'windows' } })), { kind: 'ready', elevated: true });
+  assert.deepEqual(await discover.loadEntryState(createFakeClient()), { kind: 'ready', elevated: false });
+});
+
+test('a 404 on the route means "not in this build"; any other failure hides the entry quietly', async () => {
+  const noRoute = createFakeClient({ capabilities: new CaseApiError('Not found.', 404, '') });
+  assert.deepEqual(await discover.loadEntryState(noRoute), { kind: 'unavailable' });
+  const named = createFakeClient({ capabilities: new CaseApiError('No such route.', 404, 'no-route') });
+  assert.deepEqual(await discover.loadEntryState(named), { kind: 'unavailable' });
+  for (const error of [new CaseApiError('Down.', 500, 'server'), new CaseApiError('Offline.', 0, 'unreachable'), new CaseApiError('Who?', 401, 'no_session'), new CaseApiError('Case is gone.', 404, 'case-not-found')]) {
+    assert.deepEqual(await discover.loadEntryState(createFakeClient({ capabilities: error })), { kind: 'hidden' }, error.reason);
+  }
+});
+
+test('the real client reads capabilities from the server and sends the session token', async () => {
+  const calls = mockServer(() => ({ body: { supported: true, elevated: false, os: 'windows' } }));
+  assert.deepEqual(await discover.loadEntryState(discover.discoverClient), { kind: 'ready', elevated: false });
+  assert.match(calls[0].url, /\/api\/discover\/capabilities$/);
+  assert.equal(new Headers(calls[0].headers).get('X-Audit-Token'), TOKEN);
+});
+
+test('the real client treats a missing route as "not in this build"', async () => {
+  mockServer(() => ({ status: 404, body: { error: 'Not found.' } }));
+  assert.deepEqual(await discover.loadEntryState(discover.discoverClient), { kind: 'unavailable' });
+});
+
+test('a capabilities answer that does not fit the shape is not trusted', async () => {
+  mockServer(() => ({ body: { supported: 'yes' } }));
+  assert.deepEqual(await discover.loadEntryState(discover.discoverClient), { kind: 'hidden' });
+  assert.equal(discover.parseCapabilities(null), null);
+  assert.equal(discover.parseCapabilities([]), null);
+});
+
+test('the entry state is asked once per client, and a quiet failure is asked again', async () => {
+  const client = createFakeClient();
+  const [a, b] = await Promise.all([discover.cachedEntryState(client), discover.cachedEntryState(client)]);
+  assert.deepEqual(a, b);
+  assert.equal(client.calls.filter((c) => c.name === 'capabilities').length, 1);
+
+  const flaky = createFakeClient({ capabilities: new CaseApiError('Down.', 500, 'server') });
+  assert.equal((await discover.cachedEntryState(flaky)).kind, 'hidden');
+  await Promise.resolve();
+  assert.equal((await discover.cachedEntryState(flaky)).kind, 'hidden');
+  assert.equal(flaky.calls.filter((c) => c.name === 'capabilities').length, 2, 'a hidden answer is not kept');
+
+  const other = createFakeClient({ capabilities: { supported: false, elevated: false, os: 'linux' } });
+  assert.equal((await discover.cachedEntryState(other)).kind, 'unsupported', 'another client is asked on its own');
+  assert.equal((await discover.cachedEntryState(other, true)).kind, 'unsupported');
+  assert.equal(other.calls.filter((c) => c.name === 'capabilities').length, 2, 'force asks again');
+});
+
+/* ------------------------------------------------------------------ the checklist */
+
+test('a large source is never ticked for you, whatever the server said about its cost', () => {
+  const findings = [
+    f('small-one', { cost: 'small', sizeBytes: 5 * MB }),
+    f('medium-one', { cost: 'medium', sizeBytes: 200 * MB }),
+    f('large-one', { cost: 'large', sizeBytes: 5 * GB }),
+    f('lying-small', { cost: 'small', sizeBytes: 2 * GB }),
+    f('exactly-1gb', { cost: 'small', sizeBytes: GB }),
+    f('lying-medium', { cost: 'medium', sizeBytes: 3 * GB })
+  ];
+  const picked = discover.defaultSelection(findings, true);
+  assert.deepEqual([...picked].sort(), ['medium-one', 'small-one']);
+  assert.equal(discover.effectiveCost(findings[3]), 'large');
+  assert.equal(discover.effectiveCost(findings[4]), 'large');
+  assert.equal(discover.effectiveCost(findings[0]), 'small');
+});
+
+test('"tick all except large" never adds a large source and keeps what was already ticked', () => {
+  const findings = [f('small-one', { sizeBytes: MB }), f('large-one', { cost: 'large', sizeBytes: 4 * GB }), f('other-small', { sizeBytes: MB })];
+  const next = discover.selectAllSmall(findings, new Set(['large-one']));
+  assert.ok(next.has('small-one') && next.has('other-small'));
+  assert.ok(next.has('large-one'), 'a large source ticked by hand stays ticked');
+  const fresh = discover.selectAllSmall(findings, new Set());
+  assert.ok(!fresh.has('large-one'));
+});
+
+test('a large source can be ticked one at a time', () => {
+  const picked = discover.toggled(new Set(), 'large-one', true);
+  assert.ok(picked.has('large-one'));
+  assert.ok(!discover.toggled(picked, 'large-one', false).has('large-one'));
+});
+
+test('a source that needs administrator rights is not ticked for a standard user', () => {
+  const findings = [f('open-one'), f('admin-one', { needsAdmin: true })];
+  assert.deepEqual([...discover.defaultSelection(findings, false)], ['open-one']);
+  assert.deepEqual([...discover.defaultSelection(findings, true)].sort(), ['admin-one', 'open-one']);
+});
+
+test('export-needed, remote-only and live rows can never be ticked or imported', () => {
+  const rows = [
+    f('export-row', { kind: 'export-needed', importer: '', how: 'discover.blg.how' }),
+    f('remote-row', { kind: 'remote-only', importer: '' }),
+    f('live-row', { kind: 'live-series', importer: 'live-sampler' }),
+    f('file-row')
+  ];
+  assert.deepEqual([...discover.defaultSelection(rows, true)], ['file-row']);
+  assert.deepEqual(discover.pickedFindings(rows, new Set(['export-row', 'remote-row', 'live-row', 'file-row'])).map((r) => r.id), ['file-row']);
+  assert.equal(discover.pickedFindings(rows, new Set(['ghost-id'])).length, 0, 'an id the list does not hold is dropped');
+});
+
+test('rows fall into the five groups the spec names', () => {
+  const group = (detector, importer = '', kind = 'log-file') => discover.groupOf({ detector, importer, kind });
+  assert.equal(group('iis', 'iis-w3c'), 'web');
+  assert.equal(group('nginx', 'nginx-access'), 'web');
+  assert.equal(group('events', 'windows-evtx'), 'windows');
+  assert.equal(group('perfmon', ''), 'windows');
+  assert.equal(group('log4net', 'log4net'), 'app');
+  assert.equal(group('something-new'), 'app');
+  assert.equal(group('mongo', 'mongo-log'), 'databases');
+  assert.equal(group('redis', ''), 'databases');
+  assert.equal(group('host', 'live-sampler', 'live-series'), 'live');
+});
+
+/* ------------------------------------------------------------------ the answer's shape */
+
+test('a path the server sends by mistake is dropped when a finding is read', () => {
+  const body = { id: 'k3m7q2x5v8b4n6c9', kind: 'log-file', detector: 'iis', importer: 'iis-w3c', display: 'W3SVC1', path: 'C:\\inetpub\\logs\\u_ex010911.log', fullPath: '/var/log/x.log', file: 'x.log', sizeBytes: 10 };
+  const parsed = discover.parseFinding(body);
+  assert.ok(parsed);
+  assert.ok(!JSON.stringify(parsed).includes('inetpub'));
+  assert.ok(!JSON.stringify(parsed).includes('/var/log'));
+  assert.deepEqual(Object.keys(parsed).filter((key) => /path|file$/i.test(key)), []);
+  const scan = discover.parseScan({ state: 'done', findings: [body], gaps: [{ detector: 'iis', kind: 'log-set', display: 'W3SVC9', reason: 'unreadable', path: 'D:\\secret' }] });
+  assert.ok(!JSON.stringify(scan).includes('secret'));
+  assert.ok(!JSON.stringify(scan).includes('inetpub'));
+});
+
+test('a finding with a bad id or kind is refused, and numbers are kept in range', () => {
+  assert.equal(discover.parseFinding({ id: 'a b', kind: 'log-file' }), null);
+  assert.equal(discover.parseFinding({ id: 'ab', kind: 'log-file' }), null);
+  assert.equal(discover.parseFinding({ id: '../../etc/passwd', kind: 'log-file' }), null);
+  assert.equal(discover.parseFinding({ id: 'valid-id-1', kind: 'registry-key' }), null);
+  assert.equal(discover.parseFinding('text'), null);
+  const odd = discover.parseFinding({ id: 'valid-id-1', kind: 'log-file', sizeBytes: -5, files: -2, confidence: 400, oldest: 'not a date', cost: 'huge' });
+  assert.equal(odd.sizeBytes, 0);
+  assert.equal(odd.files, 0);
+  assert.equal(odd.confidence, 100);
+  assert.equal(odd.oldest, '');
+  assert.equal(odd.cost, 'small', 'an unknown cost falls back to the size');
+  assert.equal(discover.parseFinding({ id: 'valid-id-1', kind: 'log-file', sizeBytes: 3 * GB }).cost, 'large');
+});
+
+test('a scan answer that does not fit the shape is refused; an unknown gap reason is kept as empty', () => {
+  for (const bad of [null, [], 'x', {}, { state: 'weird' }]) assert.equal(discover.parseScan(bad), null, JSON.stringify(bad));
+  const scan = discover.parseScan({ state: 'done', findings: [{ id: 'bad id', kind: 'log-file' }, { id: 'good-id-1', kind: 'log-file' }], gaps: [{ detector: 'sql', kind: 'x', display: 'd', reason: 'new-reason' }], progress: [{ detector: 'iis', state: 'done' }, { detector: 'x', state: 'nope' }] });
+  assert.equal(scan.findings.length, 1);
+  assert.equal(scan.gaps[0].reason, '');
+  assert.deepEqual(scan.progress, [{ detector: 'iis', state: 'done' }]);
+  assert.equal(scan.host, null);
+});
+
+test('the sampler answer is read, and an unknown state is treated as idle', () => {
+  assert.equal(discover.parseSampler({ state: 'recording', samples: 7 }).samples, 7);
+  assert.equal(discover.parseSampler({ state: 'odd' }).state, 'idle');
+  assert.equal(discover.parseSampler({ state: 'stopped', stopReason: 'cap' }).stopReason, 'cap');
+  assert.equal(discover.parseSampler({}), null);
+});
+
+/* ------------------------------------------------------------------ the time window */
+
+const WINDOW = { from: '2001-09-11T08:00:00Z', to: '2001-09-11T10:00:00Z' };
+
+test('the estimate sums each ticked source by the share of its own time span the window covers', () => {
+  const a = { sizeBytes: 100 * MB, oldest: '2001-09-11T00:00:00Z', newest: '2001-09-11T12:00:00Z' };
+  const b = { sizeBytes: 60 * MB, oldest: '2001-09-11T08:00:00Z', newest: '2001-09-11T10:00:00Z' };
+  // a: 2h of 12h = one sixth; b: all of it.
+  const expected = Math.round(100 * MB / 6 + 60 * MB);
+  assert.equal(discover.estimateBytes([a, b], WINDOW), expected);
+  assert.equal(discover.estimateBytes([a], WINDOW), Math.round(100 * MB / 6));
+  assert.equal(discover.estimateBytes([], WINDOW), 0);
+});
+
+test('a source outside the window adds nothing; a source with no span counts whole', () => {
+  const before = { sizeBytes: 50 * MB, oldest: '2001-09-10T00:00:00Z', newest: '2001-09-10T06:00:00Z' };
+  const noSpan = { sizeBytes: 7 * MB, oldest: '', newest: '' };
+  assert.equal(discover.estimateBytes([before], WINDOW), 0);
+  assert.equal(discover.estimateBytes([before, noSpan], WINDOW), 7 * MB);
+  assert.equal(discover.estimateBytes([noSpan], { from: WINDOW.to, to: WINDOW.from }), 0, 'a backwards window reads nothing');
+});
+
+test('a wider window never reads less', () => {
+  const src = { sizeBytes: 100 * MB, oldest: '2001-09-10T00:00:00Z', newest: '2001-09-12T00:00:00Z' };
+  const narrow = discover.estimateBytes([src], { from: '2001-09-11T00:00:00Z', to: '2001-09-11T06:00:00Z' });
+  const wide = discover.estimateBytes([src], { from: '2001-09-11T00:00:00Z', to: '2001-09-11T18:00:00Z' });
+  assert.ok(wide > narrow);
+  assert.ok(wide <= src.sizeBytes);
+});
+
+test('the fixed choices make a window ending now, and the incident choice needs a real period', () => {
+  const now = Date.parse('2001-09-11T12:00:00Z');
+  assert.deepEqual(discover.windowFor('1h', now, null, { from: '', to: '' }), { from: '2001-09-11T11:00:00Z', to: '2001-09-11T12:00:00Z' });
+  assert.deepEqual(discover.windowFor('7d', now, null, { from: '', to: '' }), { from: '2001-09-04T12:00:00Z', to: '2001-09-11T12:00:00Z' });
+  assert.equal(discover.windowFor('incident', now, null, { from: '', to: '' }), null);
+  const incident = discover.incidentWindow('2001-09-11T08:00:00.000Z', '2001-09-11T09:30:00.000Z');
+  assert.deepEqual(incident, { from: '2001-09-11T08:00:00Z', to: '2001-09-11T09:30:00Z' });
+  assert.deepEqual(discover.windowFor('incident', now, incident, { from: '', to: '' }), incident);
+  assert.equal(discover.incidentWindow('2001-09-11T09:00:00Z', '2001-09-11T08:00:00Z'), null);
+  assert.equal(discover.incidentWindow('nonsense', '2001-09-11T08:00:00Z'), null);
+  assert.equal(discover.defaultWindowChoice(incident), 'incident');
+  assert.equal(discover.defaultWindowChoice(null), '24h');
+});
+
+test('custom times are read as UTC and a date that does not exist is refused', () => {
+  assert.equal(discover.parseCustomTime('2001-09-11T08:00'), Date.UTC(2001, 8, 11, 8, 0));
+  assert.equal(discover.parseCustomTime('2001-09-11 08:30'), Date.UTC(2001, 8, 11, 8, 30));
+  assert.equal(discover.parseCustomTime('2001-02-31 08:00'), null);
+  assert.equal(discover.parseCustomTime('2001-09-11 25:00'), null);
+  assert.equal(discover.parseCustomTime('11/09/2001 08:00'), null);
+  assert.equal(discover.parseCustomTime(''), null);
+  const win = discover.windowFor('custom', 0, null, { from: '2001-09-11 08:00', to: '2001-09-11 10:00' });
+  assert.deepEqual(win, WINDOW);
+  assert.equal(discover.windowFor('custom', 0, null, { from: '2001-09-11 08:00', to: 'soon' }), null);
+});
+
+test('a window must exist, run forward, and be 31 days or less', () => {
+  assert.equal(discover.windowProblem(null), 'missing');
+  assert.equal(discover.windowProblem({ from: 'x', to: 'y' }), 'missing');
+  assert.equal(discover.windowProblem({ from: WINDOW.to, to: WINDOW.from }), 'order');
+  assert.equal(discover.windowProblem({ from: WINDOW.from, to: WINDOW.from }), 'order');
+  assert.equal(discover.windowProblem(WINDOW), null);
+  assert.equal(discover.windowProblem({ from: '2001-08-01T00:00:00Z', to: '2001-09-01T00:00:00Z' }), null, '31 days exactly is allowed');
+  assert.equal(discover.windowProblem({ from: '2001-08-01T00:00:00Z', to: '2001-09-01T00:00:01Z' }), 'too-long');
+  for (const problem of ['missing', 'order', 'too-long']) assert.ok(copy.windowProblemText(problem).length > 0);
+});
+
+test('age in minutes is never negative and a scan older than an hour is expired', () => {
+  const now = Date.parse('2001-09-11T12:00:00Z');
+  assert.equal(discover.ageMinutes('2001-09-11T11:57:00Z', now), 3);
+  assert.equal(discover.ageMinutes('2001-09-11T12:30:00Z', now), 0);
+  assert.equal(discover.ageMinutes('', now), null);
+  assert.equal(discover.scanExpired('2001-09-11T11:00:01Z', now), false);
+  assert.equal(discover.scanExpired('2001-09-11T11:00:00Z', now), true);
+  assert.equal(discover.scanExpired('', now), false);
+});
+
+/* ------------------------------------------------------------------ errors */
+
+test('errors are sorted into the cases the panel words differently', () => {
+  const err = (status, reason) => new CaseApiError('Message.', status, reason);
+  assert.equal(discover.classifyError(err(409, 'scan-busy')), 'busy');
+  assert.equal(discover.classifyError(err(429, 'import-busy')), 'import-busy');
+  assert.equal(discover.classifyError(err(429, '')), 'import-busy');
+  assert.equal(discover.classifyError(err(409, 'sampler-busy')), 'sampler-busy');
+  assert.equal(discover.classifyError(err(404, 'scan-expired')), 'expired');
+  assert.equal(discover.classifyError(err(404, 'scan-unknown')), 'expired');
+  assert.equal(discover.classifyError(err(404, '')), 'unavailable');
+  assert.equal(discover.classifyError(err(404, 'case-not-found')), 'other', 'a named 404 is a real answer, not a missing route');
+  assert.equal(discover.classifyError(err(401, '')), 'session');
+  assert.equal(discover.classifyError(err(0, 'unreachable')), 'unreachable');
+  assert.equal(discover.classifyError(new TypeError('boom')), 'unreachable');
+  assert.equal(discover.classifyError(err(500, 'server')), 'other');
+  for (const problem of ['unavailable', 'busy', 'import-busy', 'sampler-busy', 'expired', 'unreachable', 'session', 'other']) assert.ok(copy.problemText(problem).length > 0, problem);
+  assert.equal(copy.problemText('unavailable'), 'Scanning is not available in this build.');
+});
+
+test('a refusal on one import becomes that row\'s own result', () => {
+  const err = (status, reason) => new CaseApiError('Message.', status, reason);
+  assert.deepEqual(discover.outcomeFromError(err(409, 'duplicate')), { kind: 'duplicate' });
+  assert.deepEqual(discover.outcomeFromError(err(403, 'needs-elevation')), { kind: 'needs-admin' });
+  assert.deepEqual(discover.outcomeFromError(err(403, 'access-denied')), { kind: 'needs-admin' });
+  assert.deepEqual(discover.outcomeFromError(err(499, 'cancelled')), { kind: 'cancelled' });
+  assert.deepEqual(discover.outcomeFromError(err(422, 'unscrubbed-column')), { kind: 'refused', reason: 'unscrubbed-column' });
+  assert.equal(discover.outcomeFromError(err(500, 'server')).kind, 'failed');
+  assert.equal(discover.outcomeFromError(err(0, 'unreachable')).kind, 'failed');
+  assert.equal(discover.outcomeFromError(new Error('x')).kind, 'failed');
+  assert.equal(copy.rowOutcomeText({ kind: 'needs-admin' }), 'Needs administrator');
+  assert.equal(copy.rowOutcomeText({ kind: 'duplicate' }), 'Already imported');
+});
+
+/* ------------------------------------------------------------------ the fake client, scans and jobs */
+
+test('waiting on a scan returns when it stops running, with updates along the way', async () => {
+  const client = createFakeClient({ findings: [f('one-id-1'), f('two-id-2')], runningAnswers: 2, progress: [{ detector: 'iis', state: 'running' }] });
+  const id = await client.startScan();
+  assert.equal(id, FAKE_SCAN_ID);
+  const seen = [];
+  const scan = await discover.waitForScan(client, id, { sleep: noSleep, onUpdate: (s) => seen.push(s.state) });
+  assert.deepEqual(seen, ['running', 'running', 'done']);
+  assert.equal(scan.findings.length, 2);
+});
+
+test('a scan that ends cancelled or failed is returned as that, not thrown', async () => {
+  for (const finalState of ['cancelled', 'failed']) {
+    const client = createFakeClient({ finalState, runningAnswers: 0 });
+    const scan = await discover.waitForScan(client, await client.startScan(), { sleep: noSleep });
+    assert.equal(scan.state, finalState);
+  }
+});
+
+test('a few lost answers are tolerated; a refusal or too many lost answers end the wait', async () => {
+  let n = 0;
+  const lossy = createFakeClient();
+  const real = lossy.getScan;
+  lossy.getScan = async (...args) => { if (n++ < 3) throw new CaseApiError('Offline.', 0, 'unreachable'); return real(...args); };
+  const scan = await discover.waitForScan(lossy, FAKE_SCAN_ID, { sleep: noSleep });
+  assert.equal(scan.state, 'done');
+
+  const gone = createFakeClient({ failures: { getScan: new CaseApiError('Gone.', 404, 'scan-expired') } });
+  await assert.rejects(discover.waitForScan(gone, FAKE_SCAN_ID, { sleep: noSleep }), (e) => discover.classifyError(e) === 'expired');
+
+  const down = createFakeClient({ failures: { getScan: new CaseApiError('Offline.', 0, 'unreachable') } });
+  await assert.rejects(discover.waitForScan(down, FAKE_SCAN_ID, { sleep: noSleep }), (e) => e.reason === 'unreachable');
+  assert.equal(down.calls.filter((c) => c.name === 'getScan').length, discover.SCAN_MAX_UNREACHABLE);
+});
+
+test('aborting the wait stops it', async () => {
+  const client = createFakeClient({ runningAnswers: 1000 });
+  const controller = new AbortController();
+  const sleep = async () => { controller.abort(); throw new DOMException('Aborted', 'AbortError'); };
+  await assert.rejects(discover.waitForScan(client, FAKE_SCAN_ID, { sleep, signal: controller.signal }), (e) => e.name === 'AbortError');
+});
+
+test('watching an import follows queued, running and done, and reports rows added', async () => {
+  const client = createFakeClient({ outcomes: { 'one-id-1': { rows: 4200 } } });
+  const refs = await client.startImports(CASE_ID, { scanId: FAKE_SCAN_ID, findingIds: ['one-id-1'], window: WINDOW, ackGating: true, ackText: 'x' });
+  const states = [];
+  const outcome = await discover.watchJob(client, CASE_ID, refs[0], { sleep: noSleep, onUpdate: (w) => states.push(w.job.state) });
+  assert.deepEqual(states, ['queued', 'running', 'done']);
+  assert.deepEqual(outcome, { kind: 'added', rows: 4200 });
+});
+
+test('one source failing does not stop the others, and each failure is its own result', async () => {
+  const client = createFakeClient({
+    outcomes: {
+      'dup-id-1': { duplicate: true },
+      'admin-id-1': { error: new CaseApiError('Needs rights.', 403, 'needs-elevation') },
+      'bad-id-1': { error: new CaseApiError('Refused.', 422, 'unsupported-format') },
+      'down-id-1': { error: new CaseApiError('Broke.', 500, 'server') }
+    }
+  });
+  const ids = ['ok-id-1', 'dup-id-1', 'admin-id-1', 'bad-id-1', 'down-id-1'];
+  const refs = await client.startImports(CASE_ID, { scanId: FAKE_SCAN_ID, findingIds: ids, window: WINDOW, ackGating: true, ackText: 'x' });
+  const outcomes = await Promise.all(refs.map((ref) => discover.watchJob(client, CASE_ID, ref, { sleep: noSleep })));
+  assert.deepEqual(outcomes.map((o) => o.kind), ['added', 'duplicate', 'needs-admin', 'refused', 'failed']);
+});
+
+test('watching a job that cannot be reached ends as a failed row, and an abort is passed on', async () => {
+  const client = createFakeClient({ failures: { getJob: new CaseApiError('Offline.', 0, 'unreachable') } });
+  const outcome = await discover.watchJob(client, CASE_ID, { findingId: 'x-id-1', jobId: '0'.repeat(32) }, { sleep: noSleep });
+  assert.equal(outcome.kind, 'failed');
+  assert.equal(client.calls.filter((c) => c.name === 'getJob').length, 5);
+
+  const abortClient = createFakeClient({ failures: { getJob: new CaseApiError('x', 500, 'server') } });
+  abortClient.getJob = async () => { throw new DOMException('Aborted', 'AbortError'); };
+  await assert.rejects(discover.watchJob(abortClient, CASE_ID, { findingId: 'x-id-1', jobId: '0'.repeat(32) }, { sleep: noSleep }), (e) => e.name === 'AbortError');
+});
+
+/* ------------------------------------------------------------------ the real client's requests */
+
+test('the real client starts a scan and rejects an id that is not a scan id', async () => {
+  const calls = mockServer((call) => (call.method === 'POST' ? { status: 202, body: { scanId: FAKE_SCAN_ID } } : { status: 204 }));
+  assert.equal(await discover.discoverClient.startScan(), FAKE_SCAN_ID);
+  assert.equal(calls[0].method, 'POST');
+  assert.match(calls[0].url, /\/api\/discover\/scans$/);
+  await discover.discoverClient.cancelScan(FAKE_SCAN_ID);
+  assert.equal(calls[1].method, 'DELETE');
+  assert.match(calls[1].url, new RegExp('/api/discover/scans/' + FAKE_SCAN_ID + '$'));
+  await assert.rejects(discover.discoverClient.getScan('../../etc'), (e) => e.reason === 'bad-scan-id');
+  assert.equal(calls.length, 2, 'a bad id makes no request');
+});
+
+test('a scan that is busy comes back as busy', async () => {
+  mockServer(() => ({ status: 409, body: { error: 'A scan is running.', reason: 'scan-busy' } }));
+  await assert.rejects(discover.discoverClient.startScan(), (e) => discover.classifyError(e) === 'busy');
+});
+
+test('an import request holds ids, a window and the notice text, and never a path', async () => {
+  const calls = mockServer(() => ({ status: 202, body: { jobs: [{ findingId: 'one-id-1', jobId: '0'.repeat(24) + '00000001' }] } }));
+  const refs = await discover.discoverClient.startImports(CASE_ID, { scanId: FAKE_SCAN_ID, findingIds: ['one-id-1'], window: WINDOW, ackGating: true, ackText: 'Notice text.', path: 'C:\\x.log', paths: ['D:\\y'] });
+  assert.equal(refs.length, 1);
+  assert.match(calls[0].url, new RegExp('/api/cases/' + CASE_ID + '/discover/imports$'));
+  const body = JSON.parse(calls[0].body);
+  assert.deepEqual(Object.keys(body).sort(), ['ackGating', 'ackText', 'findingIds', 'scanId', 'window']);
+  assert.equal(body.ackGating, true);
+  assert.deepEqual(body.window, WINDOW);
+  assert.ok(!/[A-Za-z]:\\/.test(calls[0].body), 'no drive path in the body');
+});
+
+test('an import request with no sources, too many, or an unsafe id is refused before it is sent', async () => {
+  const calls = mockServer(() => ({ status: 202, body: { jobs: [] } }));
+  const base = { scanId: FAKE_SCAN_ID, window: WINDOW, ackGating: true, ackText: 'x' };
+  await assert.rejects(discover.discoverClient.startImports(CASE_ID, { ...base, findingIds: [] }), (e) => e.reason === 'bad-findings');
+  await assert.rejects(discover.discoverClient.startImports(CASE_ID, { ...base, findingIds: Array.from({ length: 65 }, (_, i) => 'id-' + String(i).padStart(4, '0')) }), (e) => e.reason === 'bad-findings');
+  await assert.rejects(discover.discoverClient.startImports(CASE_ID, { ...base, findingIds: ['C:\\logs\\x.log'] }), (e) => e.reason === 'bad-findings');
+  await assert.rejects(discover.discoverClient.startImports(CASE_ID, { ...base, scanId: 'nope', findingIds: ['one-id-1'] }), (e) => e.reason === 'bad-scan-id');
+  assert.equal(calls.length, 0);
+  assert.equal(discover.MAX_FINDINGS_PER_CALL, 64);
+});
+
+test('a busy import and an answer with no jobs are told apart', async () => {
+  mockServer(() => ({ status: 429, body: { error: 'Busy.', reason: 'import-busy' } }));
+  await assert.rejects(discover.discoverClient.startImports(CASE_ID, { scanId: FAKE_SCAN_ID, findingIds: ['one-id-1'], window: WINDOW, ackGating: true, ackText: 'x' }), (e) => discover.classifyError(e) === 'import-busy');
+  mockServer(() => ({ status: 202, body: { jobs: [{ findingId: 'one-id-1', jobId: 'short' }] } }));
+  await assert.rejects(discover.discoverClient.startImports(CASE_ID, { scanId: FAKE_SCAN_ID, findingIds: ['one-id-1'], window: WINDOW, ackGating: true, ackText: 'x' }), (e) => e.reason === 'unreadable');
+});
+
+test('the sampler request carries the interval and the notice text, and the status is read back', async () => {
+  const calls = mockServer((call) => (call.method === 'DELETE' ? { status: 204 } : { body: { state: 'recording', since: '2001-09-11T08:00:00Z', samples: 3, stopReason: '' } }));
+  const started = await discover.discoverClient.startSampler(CASE_ID, { intervalSec: 15, ackText: 'Notice text.' });
+  assert.equal(started.state, 'recording');
+  assert.deepEqual(JSON.parse(calls[0].body), { intervalSec: 15, ackGating: true, ackText: 'Notice text.' });
+  assert.equal((await discover.discoverClient.getSampler(CASE_ID)).samples, 3);
+  await discover.discoverClient.stopSampler(CASE_ID);
+  assert.equal(calls[2].method, 'DELETE');
+  assert.match(calls[2].url, new RegExp('/api/cases/' + CASE_ID + '/sampler$'));
+});
+
+test('another case is already recording', async () => {
+  mockServer(() => ({ status: 409, body: { error: 'Recording elsewhere.', reason: 'sampler-busy' } }));
+  await assert.rejects(discover.discoverClient.startSampler(CASE_ID, { intervalSec: 5, ackText: 'x' }), (e) => discover.classifyError(e) === 'sampler-busy');
+});
+
+/* ------------------------------------------------------------------ the sampler through the fake */
+
+test('the fake sampler records, counts and stops', async () => {
+  const client = createFakeClient();
+  assert.equal((await client.getSampler(CASE_ID)).state, 'idle');
+  assert.equal((await client.startSampler(CASE_ID, { intervalSec: 15, ackText: 'x' })).state, 'recording');
+  assert.ok((await client.getSampler(CASE_ID)).samples > 0);
+  await client.stopSampler(CASE_ID);
+  assert.equal((await client.getSampler(CASE_ID)).state, 'stopped');
+  assert.deepEqual([...discover.SAMPLER_INTERVALS], [5, 15, 30, 60]);
+});
+
+/* ------------------------------------------------------------------ the intent flag */
+
+test('the discover request is taken once', () => {
+  assert.equal(intent.takeDiscoverIntent(), false);
+  intent.requestDiscover();
+  assert.equal(intent.takeDiscoverIntent(), true);
+  assert.equal(intent.takeDiscoverIntent(), false);
+});
+
+/* ------------------------------------------------------------------ the screens (structure) */
+
+test('the panel shows the notice and its confirmation box, and sends the notice text with every import and recording', () => {
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.match(panel, /\{GATING_BANNER\}/);
+  assert.match(panel, /\{ACK_LABEL\}/);
+  assert.match(panel, /<label class="ack">\s*<input type="checkbox" bind:checked=\{acknowledged\} \/>\s*<span>\{ACK_LABEL\}<\/span>/, 'the confirmation is a labelled checkbox');
+  assert.equal((panel.match(/ackText: ackTextFor\(\)/g) ?? []).length, 2, 'imports and recording both carry the notice text');
+  assert.match(panel, /ackGating: true/);
+});
+
+test('the panel never sends or shows a path, and names sources by the id the server gave', () => {
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.ok(!/\.path\b|filePath|fullPath/.test(panel));
+  assert.match(panel, /findingIds: sending\.map\(\(f\) => f\.id\)/);
+});
+
+test('progress and results are announced, controls are labelled, and the step headings take focus', () => {
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.ok((panel.match(/aria-live="polite"/g) ?? []).length >= 3);
+  assert.match(panel, /role="alert"/);
+  assert.match(panel, /<fieldset class="group"/);
+  assert.match(panel, /<legend/);
+  assert.match(panel, /tabindex="-1"/);
+  assert.match(panel, /aria-describedby/);
+  assert.match(panel, /role="radiogroup"|<fieldset[^>]*window/i);
+  assert.match(panel, /<progress/);
+});
+
+test('a large source has no default tick path in the panel and "tick all" uses the small-only function', () => {
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.match(panel, /defaultSelection\(/);
+  assert.match(panel, /selectAllSmall\(/);
+  assert.ok(!/picked = new Set\(findings\.map/.test(panel), 'there is no select-everything shortcut');
+  assert.match(panel, /DISCOVER_TEXT\.tagLarge/);
+  assert.match(panel, /DISCOVER_TEXT\.tagAdmin/);
+  assert.match(panel, /DISCOVER_TEXT\.tagExport/);
+});
+
+test('gap rows are disabled and give their reason', () => {
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.match(panel, /gapReasonText\(/);
+  assert.match(panel, /disabled/);
+});
+
+test('the entry shows a button only when scanning works, and one plain line otherwise', () => {
+  const entry = read('src/components/DiscoverEntry.svelte');
+  assert.match(entry, /entry\.kind === 'ready'/);
+  assert.match(entry, /DISCOVER_TEXT\.windowsOnly/);
+  assert.match(entry, /DISCOVER_TEXT\.unavailable/);
+  assert.match(entry, /cachedEntryState/);
+});
+
+test('the start screen and the case tools both offer the entry', () => {
+  assert.match(read('src/components/Landing.svelte'), /<DiscoverEntry onOpen=\{openDiscover\} \/>/);
+  assert.match(read('src/components/Landing.svelte'), /requestDiscover\(\)/);
+  const tools = read('src/lib/components/CaseTools.svelte');
+  assert.match(tools, /onDiscover/);
+  assert.match(tools, /<DiscoverEntry/);
+});
+
+test('the import drawer hosts the panel, passes the case, and opens it when the start screen asked', () => {
+  const drawer = read('src/lib/components/ImportPanel.svelte');
+  assert.match(drawer, /<DiscoverPanel/);
+  assert.match(drawer, /takeDiscoverIntent\(\)/);
+  assert.match(drawer, /onDiscover=\{discoverOpen \? undefined : openDiscover\}/);
+  assert.match(drawer, /caseId=\{selectedId\}/);
+});
+
+test('the copy has no wording that names a cause', () => {
+  const text = copy.discoverCopyEntries().map((e) => e.text).join('\n');
+  assert.ok(!/\b(because|due to|caused|leak|starv|saturat)/i.test(text));
+});

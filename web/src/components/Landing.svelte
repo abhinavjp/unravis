@@ -1,16 +1,21 @@
 <script lang="ts">
   import { landingMayAutoRun } from '../lib/autorun';
-  import { app, openConnections, runAnalysis, scope, startNewConnection } from '../lib/appState.svelte';
+  import { app, openConnections, openSidePanel, runAnalysis, scope, startNewConnection } from '../lib/appState.svelte';
+  import { requestDiscover } from '../lib/discoverIntent';
+  import DiscoverEntry from './DiscoverEntry.svelte';
 
   // The empty and start states of the stage. 'loading': the app is starting. 'connect': no audit source yet (first run).
   // 'running': the first analysis is loading and there is nothing on screen yet. 'start': sources are ready but nothing has run.
   let { mode }: { mode: 'loading' | 'connect' | 'running' | 'start' } = $props();
+
+  // "This computer" lives in the import drawer. This screen has no case, so it leaves a request and opens the drawer, which shows the panel.
+  function openDiscover() { requestDiscover(); openSidePanel('import'); }
 </script>
 
 {#if mode === 'loading'}
   <div class="loading-state"><div class="loading-pulse"></div><strong>Starting Unravis</strong><p>Loading sources and settings.</p></div>
 {:else if mode === 'connect'}
-  <div class="welcome-state no-connections-state"><h3>Connect an audit source</h3><p>Load saved settings or create a MongoDB connection, then choose databases that contain API audit logs.</p><div class="empty-actions"><button class="primary-button" onclick={startNewConnection}>New connection</button><button class="secondary-button" onclick={() => openConnections('saved')}>Saved connections</button></div></div>
+  <div class="welcome-state no-connections-state"><h3>Connect an audit source</h3><p>Load saved settings or create a MongoDB connection, then choose databases that contain API audit logs.</p><div class="empty-actions"><button class="primary-button" onclick={startNewConnection}>New connection</button><button class="secondary-button" onclick={() => openConnections('saved')}>Saved connections</button><DiscoverEntry onOpen={openDiscover} /></div></div>
 {:else if mode === 'running'}
   <div class="skeleton" role="status" aria-label="Reading selected audit sources">
     <div class="skeleton-figures"><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div></div>

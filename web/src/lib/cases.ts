@@ -126,7 +126,7 @@ export const isCaseGone = (error: unknown): boolean => error instanceof CaseApiE
 
 /* ------------------------------------------------------------------ requests */
 
-async function send(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<Response> {
+export async function send(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<Response> {
   const token = readSessionToken();
   if (!token) throw new CaseApiError(NO_SESSION_MESSAGE, 401, 'no_session');
   const headers = new Headers(init.headers);
@@ -165,11 +165,11 @@ async function refusal(response: Response): Promise<CaseApiError> {
   return new CaseApiError(message, response.status, reason, column, importId);
 }
 
-async function json<T>(response: Response): Promise<T> {
+export async function json<T>(response: Response): Promise<T> {
   try { return await response.json() as T; } catch { throw new CaseApiError('The server sent an answer that could not be read.', response.status, 'unreadable'); }
 }
 
-function casePath(id: string, tail = ''): string {
+export function casePath(id: string, tail = ''): string {
   if (!isCaseId(id)) throw new CaseApiError('That is not a case id.', 400, 'bad-case-id');
   return '/cases/' + id + tail;
 }
