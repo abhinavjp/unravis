@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dark theme wireframe, whole app (PROTOTYPE, throwaway)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Geist:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Geist+Mono:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* PROTOTYPE: throwaway. Synthetic data only. Question: what should the dark theme and font look like across the whole app?
+   Palette and type are taken from the Dribbble reference (near-black with a green tint, tight grotesk, mono micro-labels, teal accent).
+   Variants: A Faithful (glow banner, // labels, boxed panels), B Instrument (same palette, quiet, ruled), C Terminal (mono-forward, dense, square). */
+:root{
+  --bg:#050807; --surface:#0a0f0d; --surface-2:#101714; --line:#1a2621; --line-2:#26352e;
+  --text:#eef3f1; --text-2:#93a39b; --text-3:#5d6e66;
+  --accent:#3fd6b0; --accent-2:#1c8f74; --accent-ink:#03130e; --focus:#7ff0d0;
+  --warn:#e3b341; --bad:#ff7b72; --ok:#3fd6b0;
+  --f:"Inter Tight",system-ui,sans-serif; --m:"JetBrains Mono",ui-monospace,Consolas,monospace;
+  --r:8px; --pad:16px;
+}
+*{box-sizing:border-box}
+html{color-scheme:dark}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 var(--f);font-variant-numeric:tabular-nums;padding-bottom:132px;
+  background-image:radial-gradient(1200px 500px at 50% -10%,rgba(63,214,176,.07),transparent 70%)}
+::selection{background:rgba(63,214,176,.3)}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+h1,h2,h3,h4,p{margin:0}
+.mono{font-family:var(--m)}
+.wrap{max-width:1320px;margin:0 auto;padding:0 20px}
+
+/* header */
+header.top{border-bottom:1px solid var(--line);background:rgba(5,8,7,.85);position:sticky;top:0;z-index:5;backdrop-filter:none}
+.hrow{display:flex;align-items:center;gap:20px;min-height:52px;flex-wrap:wrap;padding:6px 0}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:15px;letter-spacing:-.01em}
+.brand svg{width:20px;height:20px}
+nav.main{display:flex;gap:2px}
+nav.main button,.util button{background:none;border:0;padding:8px 10px;color:var(--text-2);border-bottom:2px solid transparent;border-radius:0}
+nav.main button:hover,.util button:hover{color:var(--text)}
+nav.main button.on{color:var(--text);border-bottom-color:var(--accent)}
+.status{margin-left:auto;display:flex;gap:14px;align-items:center;color:var(--text-2);font-size:12px;flex-wrap:wrap}
+.status .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:6px}
+.badge{font-family:var(--m);font-size:11px;border:1px solid var(--line-2);padding:2px 7px;border-radius:99px;color:var(--text-2)}
+.util{display:flex;align-items:center;gap:2px}
+.util label{display:flex;gap:6px;align-items:center;color:var(--text-2);font-size:12px;padding:0 8px;cursor:pointer}
+.crumbs{padding:8px 0;color:var(--text-2);font-size:12px;border-bottom:1px solid var(--line)}
+.crumbs b{color:var(--text);font-weight:500}
+
+/* labels, the signature mono micro-label */
+.lab{color:var(--text-2);font-size:12px;font-weight:500}
+body[data-v=A] .lab,body[data-v=C] .lab{font-family:var(--m);font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);font-weight:400}
+body[data-v=A] .lab::before,body[data-v=C] .lab::before{content:"// ";color:var(--accent-2)}
+body[data-v=C] .lab{text-transform:lowercase;letter-spacing:.02em}
+
+/* banner (A only) */
+.banner{display:none;position:relative;height:250px;overflow:hidden;border-bottom:1px solid var(--line);text-align:center}
+body[data-v=A] .banner{display:block}
+.banner svg{position:absolute;inset:auto 0 0 0;width:100%;height:170px}
+.banner .t{position:relative;padding-top:38px}
+.banner h1{font-size:clamp(30px,5vw,54px);font-weight:500;letter-spacing:-.035em;line-height:1}
+.banner h1 em{font-style:normal;background:linear-gradient(90deg,#9fe7d4,#1c6f5b);-webkit-background-clip:text;background-clip:text;color:transparent}
+.banner p{margin:12px auto 0;max-width:520px;color:var(--text-2);font-size:13px}
+
+/* panels */
+main{padding:20px 0 40px;display:grid;gap:16px}
+.panel{border:1px solid var(--line);background:linear-gradient(180deg,var(--surface),var(--bg));border-radius:var(--r);padding:var(--pad)}
+body[data-v=A] .panel{box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+body[data-v=B]{--r:4px}
+body[data-v=B] .panel{border:0;border-top:1px solid var(--line-2);background:none;border-radius:0;padding:14px 0 6px}
+body[data-v=C]{--r:2px;--pad:12px;font-size:13px}
+body[data-v=C] .panel{background:var(--surface)}
+.ph{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.ph h2,.ph h3{font-size:15px;font-weight:600;letter-spacing:-.01em}
+body[data-v=A] .ph h2,body[data-v=A] .ph h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em}
+body[data-v=C] .ph h2,body[data-v=C] .ph h3{font-family:var(--m);font-size:12px;font-weight:500}
+.ph .more{margin-left:auto;background:none;border:0;color:var(--text-3);letter-spacing:2px}
+.d{color:var(--text-2);font-size:12.5px;margin:2px 0 8px}
+.e{display:none;color:var(--text);background:var(--surface-2);border:1px solid var(--line-2);border-radius:var(--r);padding:8px 10px;margin:4px 0 8px;font-size:12.5px}
+.e b{color:var(--accent);font-weight:600}
+.e.open,body.eli .e{display:block}
+.q{width:18px;height:18px;border-radius:50%;border:1px solid var(--line-2);background:none;color:var(--text-2);font-size:11px;line-height:1;padding:0;flex:none}
+.q[aria-expanded=true]{border-color:var(--accent);color:var(--accent)}
+.row{display:flex;gap:8px;align-items:center}
+
+/* buttons, chips, fields */
+.btn{background:var(--surface-2);border:1px solid var(--line-2);color:var(--text);border-radius:var(--r);padding:6px 12px;font-size:13px}
+.btn:hover{border-color:var(--text-3)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+body[data-v=A] .btn.primary{box-shadow:0 0 24px rgba(63,214,176,.28)}
+.btn.quiet{background:none}
+.chip{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line-2);border-radius:99px;padding:2px 9px;font-size:12px;color:var(--text-2)}
+body[data-v=C] .chip,body[data-v=B] .chip{border-radius:var(--r)}
+.chip.on{color:var(--text);border-color:var(--accent);background:rgba(63,214,176,.08)}
+.chip.warn{color:var(--warn);border-color:rgba(227,179,65,.4)}
+.chip.bad{color:var(--bad);border-color:rgba(255,123,114,.4)}
+.chip.ok{color:var(--ok);border-color:rgba(63,214,176,.4)}
+input[type=text],input[type=number],select{background:var(--bg);color:var(--text);border:1px solid var(--line-2);border-radius:var(--r);padding:7px 9px;font:inherit;width:100%}
+input::placeholder{color:var(--text-3)}
+input[type=checkbox]{accent-color:var(--accent)}
+.seg{display:inline-flex;gap:0;border:1px solid var(--line-2);border-radius:var(--r);overflow:hidden}
+.seg button{background:none;border:0;padding:5px 11px;color:var(--text-2);border-right:1px solid var(--line-2)}
+.seg button:last-child{border:0}
+.seg button.on{background:var(--surface-2);color:var(--text);box-shadow:inset 0 -2px 0 var(--accent)}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:10px;overflow-x:auto}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:7px 10px;color:var(--text-2);white-space:nowrap}
+.tabs button.on{color:var(--text);border-bottom-color:var(--accent)}
+
+/* pulse: ruled readout strip */
+.pulse{display:grid;grid-template-columns:repeat(5,1fr)}
+.fig{padding:4px 18px;border-left:1px solid var(--line);position:relative}
+.fig:first-child{border-left:0;padding-left:0}
+.fig .v{font-size:28px;font-weight:600;letter-spacing:-.02em;margin:4px 0 2px}
+body[data-v=C] .fig .v{font-family:var(--m);font-weight:500;font-size:24px}
+.fig .s{font-size:12px;color:var(--text-2)}
+.fig[data-t=warn]::before,.fig[data-t=bad]::before{content:"";position:absolute;left:-1px;top:6px;bottom:6px;width:2px;background:var(--warn)}
+.fig[data-t=bad]::before{background:var(--bad)}
+.fig:first-child::before{left:-12px}
+
+/* charts */
+svg text{fill:var(--text-3);font:10px var(--m)}
+.bar{fill:var(--accent)} .bar.hot{fill:var(--warn)}
+.ov .bar{fill:var(--text-3);opacity:.7}
+.grid line{stroke:var(--line);stroke-width:1}
+.brushrect{fill:rgba(63,214,176,.14);stroke:var(--accent);stroke-width:1;vector-effect:non-scaling-stroke}
+.handle{fill:var(--accent);cursor:ew-resize}
+.readout{font-family:var(--m);font-size:12px;color:var(--text)}
+.cwrap{position:relative}
+.invchip{position:absolute;right:8px;top:6px}
+.banner2{border:1px solid var(--accent-2);background:rgba(63,214,176,.06);border-radius:var(--r);padding:8px 12px;margin-bottom:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+/* tables and lists */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-weight:500;color:var(--text-2);text-align:left;font-size:12px;padding:6px 8px;border-bottom:1px solid var(--line-2)}
+td{padding:8px;border-bottom:1px solid var(--line)}
+td.n,th.n{text-align:right}
+body[data-v=C] td,body[data-v=C] th{font-family:var(--m);padding:5px 8px}
+.scroll{overflow-x:auto}
+.meter{display:inline-block;width:80px;height:6px;background:var(--surface-2);border-radius:3px;vertical-align:middle;overflow:hidden}
+.meter i{display:block;height:100%;background:var(--accent)}
+.meter.bad i{background:var(--bad)}.meter.warn i{background:var(--warn)}
+.kv{display:grid;grid-template-columns:150px 1fr;border-top:1px solid var(--line)}
+.kv>*{padding:7px 8px;border-bottom:1px solid var(--line)}
+.kv dt{color:var(--text-2);margin:0}.kv dd{margin:0;word-break:break-all}
+pre{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:var(--r);padding:10px;overflow:auto;font:12px/1.5 var(--m);color:var(--text-2)}
+pre b{color:var(--accent);font-weight:400}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.phase{display:flex;height:14px;border-radius:3px;overflow:hidden;margin:6px 0 4px}
+.phase i{display:block;height:100%}
+.legend{display:flex;gap:12px;flex-wrap:wrap;color:var(--text-2);font-size:12px}
+.legend span::before{content:"";display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;background:var(--c)}
+
+/* filters rail */
+.fl{display:grid;grid-template-columns:190px 1fr;gap:20px}
+.rail{display:grid;align-content:start;border-right:1px solid var(--line)}
+.rail button{background:none;border:0;text-align:left;padding:9px 12px;color:var(--text-2);display:flex;justify-content:space-between;border-left:2px solid transparent}
+.rail button.on{color:var(--text);background:var(--surface-2);border-left-color:var(--accent)}
+.rail .cnt{font-family:var(--m);font-size:11px;color:var(--text-3)}
+.rail button.on .cnt,.rail .cnt.has{color:var(--accent)}
+.field{display:grid;gap:4px;margin-bottom:12px}
+.fgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+
+/* drawer */
+.scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:20}
+.drawer{display:none;position:fixed;top:0;right:0;bottom:0;width:min(620px,100%);background:var(--surface);border-left:1px solid var(--line-2);z-index:21;overflow:auto;padding:16px 20px 140px;box-shadow:-24px 0 60px rgba(0,0,0,.5)}
+body.drawer-open .scrim,body.drawer-open .drawer{display:block}
+.drawer .dh{display:flex;align-items:center;gap:10px;margin-bottom:14px;position:sticky;top:-16px;background:var(--surface);padding:10px 0;z-index:2;border-bottom:1px solid var(--line)}
+.drawer .dh h2{font-size:17px;font-weight:600}
+.drawer .dh .x{margin-left:auto}
+.drop{border:1px dashed var(--line-2);border-radius:var(--r);padding:26px;text-align:center;color:var(--text-2)}
+.src{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.src .sub{color:var(--text-2);font-size:12px;grid-column:1}
+.src .act{grid-row:1/3;grid-column:2;align-self:center}
+.hyp{padding:10px 0;border-bottom:1px solid var(--line)}
+.hyp .sub{color:var(--text-2);font-size:12.5px;margin-top:3px}
+.term{padding:9px 0;border-bottom:1px solid var(--line)}
+.term b{font-weight:600}
+
+/* prototype bar */
+.pbar{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:50;background:#000c;border:1px solid var(--line-2);border-radius:12px;padding:8px 10px;display:grid;gap:6px;max-width:calc(100vw - 16px);backdrop-filter:blur(6px);font-size:12px}
+.pbar .r{display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:center}
+.pbar b{color:var(--text-3);font-family:var(--m);font-weight:400;font-size:10px;text-transform:uppercase;margin-right:2px}
+.pbar button{background:var(--surface-2);border:1px solid var(--line-2);border-radius:99px;padding:3px 10px;color:var(--text-2);font-size:12px}
+.pbar button.on{border-color:var(--accent);color:var(--text);background:rgba(63,214,176,.12)}
+.note{color:var(--text-2);font-size:12.5px;max-width:900px;margin:18px auto 0;padding:0 20px}
+
+@media (max-width:900px){
+  .pulse{grid-template-columns:repeat(2,1fr);gap:12px 0}
+  .fig:nth-child(odd){border-left:0;padding-left:0}
+  .g2,.g3{grid-template-columns:1fr}
+  .status{margin-left:0;width:100%}
+  .fl{grid-template-columns:1fr}
+  .rail{display:flex;border-right:0;border-bottom:1px solid var(--line);overflow-x:auto}
+  .rail button{border-left:0;border-bottom:2px solid transparent;white-space:nowrap}
+  .rail button.on{border-bottom-color:var(--accent)}
+  .fgrid{grid-template-columns:1fr}
+  .banner{height:200px}
+  .kv{grid-template-columns:110px 1fr}
+}
+</style>
+</head>
+<body data-v="A">
+<header class="top"><div class="wrap">
+  <div class="hrow">
+    <div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="#3fd6b0" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M5 14c3-6 5 4 8-2s4 1 6-2" /></svg>Unravis</div>
+    <nav class="main" id="nav"></nav>
+    <div class="status"><span><i class="dot"></i>Data to 15 Jan 2001 23:59 UTC</span><span>5 sources</span><span class="badge">Demo</span>
+      <span class="util"><label><input type="checkbox" id="eli"> Explain simply (ELI10)</label><button data-open="glossary">Glossary</button><button>UTC</button></span></div>
+  </div>
+</div></header>
+<div class="wrap"><div class="crumbs" id="crumbs"></div></div>
+<div class="banner"><svg id="wave" viewBox="0 0 1200 170" preserveAspectRatio="none"></svg>
+  <div class="t"><h1>Find the minute <em>it went wrong.</em></h1><p>Plain-English investigation over your IIS, SQL, Redis, Mongo and Linux logs, with CPU and memory beside them.</p></div></div>
+<div class="wrap"><main id="main"></main></div>
+<div class="note" id="note"></div>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Panel"></aside>
+
+<div class="pbar">
+  <div class="r"><b>variant</b><span id="vb"></span><b style="margin-left:8px">font</b><span id="fb"></span></div>
+  <div class="r"><b>screen</b><span id="sb"></span></div>
+</div>
+
+<script>
+/* ---------- state ---------- */
+const qs=new URLSearchParams(location.search);
+const VARIANTS={A:'Faithful',B:'Instrument',C:'Terminal'};
+const FONTS={'Inter Tight':['"Inter Tight",system-ui,sans-serif','"JetBrains Mono",ui-monospace,monospace'],'Geist':['"Geist",system-ui,sans-serif','"Geist Mono",ui-monospace,monospace'],'IBM Plex':['"IBM Plex Sans",system-ui,sans-serif','"IBM Plex Mono",ui-monospace,monospace'],'Segoe (system)':['"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif','Consolas,ui-monospace,monospace']};
+const MAIN=['overview','filters','where','inspector','resource'];
+const DRAW=['patterns','ledger','export','import','discover','glossary'];
+const SCREENS=[...MAIN,...DRAW];
+const S={v:qs.get('variant')||'B',font:qs.get('font')||'Inter Tight',screen:qs.get('screen')||'overview',main:'overview',rail:'what',lens:'Requests',trail:[],inv:null};
+const T0=Date.UTC(2001,0,8),DAY=864e5,H=36e5,MIN=6e4;
+S.win=[T0,T0+7*DAY];
+const SPIKE=T0+4*DAY+14*H+22*MIN;
+
+/* ---------- synthetic series ---------- */
+function hash(n){n=Math.sin(n*127.1)*43758.5453;return n-Math.floor(n)}
+function val(t){const h=((t-T0)%DAY)/H;let v=500+380*Math.sin((h-6)/24*2*Math.PI)+80*hash(Math.floor(t/MIN));
+  const d=(t-SPIKE)/MIN;v+=2600*Math.exp(-(d*d)/(2*5*5));return Math.max(40,v)}
+function bucketize(a,b,n){const st=(b-a)/n,out=[];for(let i=0;i<n;i++){let s=0;const k=6;for(let j=0;j<k;j++)s+=val(a+st*(i+(j+.5)/k));out.push(s/k)}return out}
+const fmtD=t=>{const d=new Date(t);return d.toUTCString().slice(0,3)+' '+d.getUTCDate()+' '+d.toUTCString().slice(8,11)+' '+String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0')};
+const fmtLen=ms=>ms>=DAY*2?Math.round(ms/DAY*10)/10+' days':ms>=H*2?Math.round(ms/H)+' hours':Math.round(ms/MIN)+' minutes';
+
+/* ---------- helpers ---------- */
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function item(label,plain,eli,inner=''){return `<div class="item"><div class="row"><span class="lab">${label}</span><button class="q" aria-expanded="false" aria-label="Explain ${esc(label)}">?</button></div><p class="d">${plain}</p><p class="e"><b>In simple words:</b> ${eli}</p>${inner}</div>`}
+function panel(title,body,note=''){return `<section class="panel"><div class="ph"><h2>${title}</h2>${note?`<span class="lab">${note}</span>`:''}<button class="more" aria-label="More">•••</button></div>${body}</section>`}
+function kv(rows){return `<dl class="kv">${rows.map(r=>`<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('')}</dl>`}
+function tbl(head,rows,num=[]){return `<div class="scroll"><table><thead><tr>${head.map((h,i)=>`<th class="${num.includes(i)?'n':''}">${h}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map((c,i)=>`<td class="${num.includes(i)?'n':''}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`}
+const meter=(p,t='')=>`<span class="meter ${t}"><i style="width:${p}%"></i></span>`;
+
+/* ---------- chart ---------- */
+function barsSVG(vals,w,h,cls,hot){const m=Math.max(...vals)*1.05,bw=w/vals.length;return vals.map((v,i)=>{const bh=v/m*h;return `<rect class="bar ${cls||''} ${hot&&hot(i)?'hot':''}" x="${(i*bw).toFixed(2)}" y="${(h-bh).toFixed(1)}" width="${Math.max(bw-.6,.4).toFixed(2)}" height="${bh.toFixed(1)}"/>`}).join('')}
+function overviewHTML(){
+  const [a,b]=S.win,full=[T0,T0+7*DAY];
+  const drilled=(b-a)<7*DAY-1;
+  const vals=bucketize(full[0],full[1],140);
+  const mainVals=bucketize(a,b,120);
+  const x0=(a-T0)/(7*DAY)*1000,x1=(b-T0)/(7*DAY)*1000;
+  const hot=i=>{const t=a+(b-a)*(i+.5)/120;return Math.abs(t-SPIKE)<6*MIN*Math.max(1,(b-a)/(3*H))};
+  const grid=[0,1,2,3].map(i=>`<line x1="0" x2="1000" y1="${10+i*52}" y2="${10+i*52}"/>`).join('');
+  const ticks=[0,.25,.5,.75,1].map(f=>`<text x="${f*1000}" y="236" text-anchor="${f==0?'start':f==1?'end':'middle'}">${fmtD(a+(b-a)*f)}</text>`).join('');
+  return `
+  ${S.inv?`<div class="banner2"><span class="chip ok">Investigating</span><span class="readout">${fmtD(S.inv[0])} – ${fmtD(S.inv[1])} UTC</span><span class="lab">compared with the equal period before</span><button class="btn quiet" data-act="back7" style="margin-left:auto">Back to 7 days</button></div>`:''}
+  <div class="row" style="flex-wrap:wrap;margin-bottom:6px"><span class="readout" id="ro">${fmtD(a)} – ${fmtD(b)} UTC · ${fmtLen(b-a)} · ${drilled?'viewing a slice of the 7 days':'whole 7 days'}</span></div>
+  <div class="cwrap"><svg viewBox="0 0 1000 244" width="100%" height="244" role="img" aria-label="Requests over time"><g class="grid">${grid}</g>${barsSVG(mainVals,1000,200,'',hot).replace(/y="([\d.]+)"/g,(m,y)=>`y="${(+y+10).toFixed(1)}"`)}${ticks}</svg>
+    ${drilled&&!S.inv?`<button class="btn primary invchip" data-act="invest">Investigate this window</button>`:''}</div>
+  <p class="d" style="margin-top:6px">The small strip is the whole 7 days. Drag on it to pick a window, drag the edges to resize, then press Investigate.</p>
+  <svg class="ov" id="ov" viewBox="0 0 1000 56" width="100%" height="56" style="touch-action:pan-y;cursor:crosshair;background:var(--surface-2);border-radius:var(--r)">${barsSVG(vals,1000,52,'ov')}
+    <rect class="brushrect" id="br" x="${x0}" y="0" width="${Math.max(x1-x0,3)}" height="56"/><rect class="handle" id="h0" x="${x0-3}" y="14" width="6" height="28" rx="3"/><rect class="handle" id="h1" x="${x1-3}" y="14" width="6" height="28" rx="3"/></svg>
+  <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn" data-act="back" ${S.trail.length?'':'disabled'}>Back</button><button class="btn" data-act="in" ${(b-a)<=10*MIN?'disabled':''}>Zoom in</button><button class="btn" data-act="out" ${drilled?'':'disabled'}>Zoom out</button><button class="btn quiet" data-act="reset" ${drilled?'':'disabled'}>Reset</button><span class="lab" style="margin-left:auto">Keys: ← → move · + − zoom · Esc reset</span></div>`;
+}
+function wireBrush(){
+  const ov=$('#ov');if(!ov)return;
+  const px=e=>{const r=ov.getBoundingClientRect();return Math.min(1,Math.max(0,(e.clientX-r.left)/r.width))};
+  let mode=null,a0,b0,p0;
+  ov.addEventListener('pointerdown',e=>{
+    const p=px(e),a=(S.win[0]-T0)/(7*DAY),b=(S.win[1]-T0)/(7*DAY),tol=10/ov.getBoundingClientRect().width;
+    p0=p;a0=a;b0=b;
+    if(Math.abs(p-a)<tol)mode='l';else if(Math.abs(p-b)<tol)mode='r';else if(p>a&&p<b&&b-a<.999)mode='m';else mode='n';
+    ov.setPointerCapture(e.pointerId);
+  });
+  ov.addEventListener('pointermove',e=>{
+    if(!mode)return;const p=px(e);let a=a0,b=b0;const min=10*MIN/(7*DAY);
+    if(mode==='n'){a=Math.min(p0,p);b=Math.max(p0,p)}
+    if(mode==='l')a=Math.min(p,b0-min);
+    if(mode==='r')b=Math.max(p,a0+min);
+    if(mode==='m'){const d=p-p0;a=a0+d;b=b0+d;if(a<0){b-=a;a=0}if(b>1){a-=b-1;b=1}}
+    if(b-a<min)b=Math.min(1,a+min);
+    S.win=[Math.round(T0+a*7*DAY),Math.round(T0+b*7*DAY)];S.inv=null;render('live');
+  });
+  ov.addEventListener('pointerup',()=>{mode=null});
+}
+function overviewKeys(e){if(S.screen!=='overview'||DRAW.includes(S.screen))return;const [a,b]=S.win,len=b-a;
+  if(e.key==='ArrowLeft')shift(-len/2);else if(e.key==='ArrowRight')shift(len/2);else if(e.key==='+'||e.key==='=')act('in');else if(e.key==='-')act('out');else if(e.key==='Escape'&&!document.body.classList.contains('drawer-open'))act('reset')}
+function shift(d){let [a,b]=S.win;const len=b-a;a=Math.min(Math.max(T0,a+d),T0+7*DAY-len);S.trail.push(S.win.slice());S.win=[a,a+len];render()}
+function act(k){
+  const [a,b]=S.win,len=b-a,mid=(a+b)/2,full=[T0,T0+7*DAY];
+  if(k==='in'){S.trail.push(S.win.slice());const n=Math.max(10*MIN,len/2);S.win=[Math.round(mid-n/2),Math.round(mid+n/2)]}
+  if(k==='out'){S.trail.push(S.win.slice());const n=Math.min(7*DAY,len*2);let na=Math.max(T0,mid-n/2);if(na+n>T0+7*DAY)na=T0+7*DAY-n;S.win=[Math.round(na),Math.round(na+n)]}
+  if(k==='reset'){S.trail.push(S.win.slice());S.win=full}
+  if(k==='back'&&S.trail.length)S.win=S.trail.pop();
+  if(k==='invest'){S.inv=S.win.slice()}
+  if(k==='back7'){S.inv=null;S.win=full;S.trail=[]}
+  render();
+}
+
+/* ---------- screens ---------- */
+function pulse(){const f=[['Requests','1.28M','+4% vs the week before',''],['Failed','0.9%','11.5k requests · up from 0.4%','warn'],['Slow (95th)','840 ms','typical request: 120 ms',''],['Never finished','312','still open after 5 min','bad'],['People','4,210','distinct user IDs','']];
+  return `<section class="panel"><div class="pulse">${f.map(x=>`<div class="fig" data-t="${x[3]}"><span class="lab">${x[0]}</span><div class="v">${x[1]}</div><div class="s">${x[2]}</div></div>`).join('')}</div>
+  <p class="e" style="margin-top:10px"><b>In simple words:</b> These five numbers are the health check. Red or yellow edge means look here first.</p></section>`}
+function overview(){
+  return pulse()+panel('Requests over time',overviewHTML(),S.inv?'investigating':'7 days')+
+  `<div class="g3">${panel('Quality of the data',tbl(['Check','State'],[['Rows with a time','<span class="chip ok">99.9%</span>'],['Clock gaps','<span class="chip warn">2 gaps</span>'],['Duplicates','<span class="chip ok">0</span>']]))}
+  ${panel('Request volume',`<div class="d">Per hour, whole week.</div><svg viewBox="0 0 300 70" width="100%" height="70">${barsSVG(bucketize(T0,T0+7*DAY,56),300,64)}</svg>`)}
+  ${panel('Traffic and slowness',tbl(['Hour','p95'],[['14:00','1.9 s'],['15:00','620 ms'],['03:00','180 ms']],[1])+'<p class="e"><b>In simple words:</b> p95 means 19 of 20 requests were faster than this.</p>')}</div>`;
+}
+function filters(){
+  const groups={when:['When',0],what:['What',1],details:['Request details',2],ranges:['Ranges',1],chart:['Chart',0]};
+  const f=(l,ph,d,e)=>`<div class="field">${item(l,d,e,`<input type="text" placeholder="${ph}" aria-label="${l}">`)}</div>`;
+  const panes={
+    when:`<div class="fgrid">${f('From','2001-01-08 00:00','First moment to look at.','The day and time you start looking, like opening a diary page.')}${f('To','2001-01-15 00:00','Last moment to look at.','Where you stop reading.')}</div>`,
+    what:`<div class="fgrid">${f('Controller','e.g. OrdersController','The part of the app that took the request.','The room in a house where the request was handled.')}${f('Operation','e.g. GET /orders/{id}','The method and path together.','What was asked, and where, like "get the pizza menu".')}<div class="field">${item('Completion','Finished, or still open.','Did the request come back with an answer, or is it still waiting?','<select><option>all</option><option>incomplete</option></select>')}</div><div class="field">${item('Status','Success or failure group.','A green tick or a red cross for each request.','<select><option>all</option><option>failed</option></select>')}</div></div>`,
+    details:`<div class="fgrid">${f('User IDs','U-1001, U-1002','Only these people.','Like looking at just two kids in a class.')}${f('Status codes','500, 503','Exact HTTP codes.','Numbers the server says: 200 is "ok", 500 is "oops".')}${f('Browser','contains…','Part of the browser name.','Which web browser the person used.')}${f('URL','contains /orders','Part of the address.','Which page they visited.')}</div>`,
+    ranges:`<div class="scroll"><table><thead><tr><th>Measure</th><th class="n">At least</th><th class="n">At most</th></tr></thead><tbody>${['API time (ms)','Request size (KB)','Response size (KB)','Incomplete age (ms)'].map((n,i)=>`<tr><td>${n}</td><td class="n"><input type="number" placeholder="min" style="width:90px" ${i==0?'value="2000"':''}></td><td class="n"><input type="number" placeholder="max" style="width:90px"></td></tr>`).join('')}</tbody></table></div><p class="d" style="margin-top:8px">Leave a box empty to ignore that limit.</p>`,
+    chart:`<div class="fgrid"><div class="field">${item('Interval','How wide each bar is.','Each bar adds up this much time. Smaller bars show more detail.','<select><option>Automatic</option><option>1 minute</option><option>1 hour</option></select>')}</div><div class="field">${item('Measure','What the bars count.','Pick what the height means: how many, how slow, how many failed.','<select><option>Requests</option><option>p95 time</option><option>Failures</option></select>')}</div></div>`};
+  return panel('More filters',`<div class="row" style="flex-wrap:wrap;margin-bottom:10px"><span class="lab">3 filters on</span><span class="chip on">User IDs: U-1001, U-1002 ×</span><span class="chip on">Status codes: 500, 503 ×</span><span class="chip on">API time: 2000+ ms ×</span><button class="btn quiet" style="margin-left:auto">Clear all</button></div>
+  <div class="fl"><div class="rail" role="tablist">${Object.entries(groups).map(([k,[n,c]])=>`<button role="tab" data-rail="${k}" class="${S.rail===k?'on':''}">${n}<span class="cnt ${c?'has':''}">${c}</span></button>`).join('')}</div>
+  <div><h3 style="font-size:15px;margin-bottom:4px">${groups[S.rail][0]}</h3>${panes[S.rail]}<div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn primary">Run analysis</button></div></div></div>`)+overview().split('<div class="g3">')[0].replace(/^[\s\S]*?(<section class="panel"><div class="ph"><h2>Requests over time)/,'$1');
+}
+function where(){
+  const rows=[['Orders','/api/orders',412300,'120 ms','1.1 s',0.6],['Catalog','/api/catalog',301100,'80 ms','410 ms',0.2],['Checkout','/api/checkout',88200,'340 ms','2.4 s',3.8],['Auth','/api/session',201400,'40 ms','190 ms',0.1],['Reports','/api/reports',18900,'1.2 s','9.8 s',2.2],['Search','/api/search',140100,'90 ms','620 ms',0.4]];
+  return panel('Where is it?',`<p class="d">Which part of the API changed. Rows are sorted by how much they moved against the period before.</p><div class="tabs">${['Requests','Completion','P95','Failures'].map(l=>`<button data-lens="${l}" class="${S.lens===l?'on':''}">${l}</button>`).join('')}</div>`+
+  tbl(['API group','Path','Requests','Typical','p95','Failed',''],rows.map(r=>[`<b style="font-weight:500">${r[0]}</b>`,`<span class="mono" style="font-size:12px;color:var(--text-2)">${r[1]}</span>`,r[2].toLocaleString(),r[3],r[4],r[5]+'%',meter(Math.min(100,r[5]*25+r[2]/6000),r[5]>2?'bad':r[5]>1?'warn':'')]),[2,3,4,5]))+
+  panel('Explore 128 API groups',`<p class="d">Search all groups by name. Pick one to open its day-by-day history.</p><input type="text" placeholder="Search API groups" aria-label="Search API groups">`);
+}
+function inspector(){
+  return `<div class="g2">${panel('Request 7c1e…a09',kv([['When','Thu 11 Jan 2001 14:22:41 UTC'],['Operation','POST /api/checkout'],['Controller','CheckoutController'],['Status','<span class="chip bad">503</span>'],['User','U-1001'],['Client IP','192.0.2.44'],['Browser','Browser-a 1.0'],['Audit ID','<span class="mono">SENTINEL-7f3a</span>']]),'evidence')}
+  ${panel('Where the time went',`<div class="phase"><i style="width:8%;background:#5d6e66"></i><i style="width:20%;background:#1c8f74"></i><i style="width:62%;background:#e3b341"></i><i style="width:10%;background:#3fd6b0"></i></div><div class="legend"><span style="--c:#5d6e66">Queue 90 ms</span><span style="--c:#1c8f74">App 230 ms</span><span style="--c:#e3b341">Database 710 ms</span><span style="--c:#3fd6b0">Send 110 ms</span></div>
+  <p class="e" style="margin-top:8px"><b>In simple words:</b> The request spent most of its time waiting on the database, like waiting at the checkout till.</p>`+`<div class="ph" style="margin-top:14px"><h3>Neighbours</h3></div>`+tbl(['Time','Operation','ms'],[['14:22:40','GET /api/cart','95'],['14:22:41','POST /api/checkout','1,140'],['14:22:43','GET /api/orders','880']],[2]))}</div>
+  ${panel('Payload',`<pre>{
+  <b>"orderRef"</b>: "SENTINEL-7f3a",
+  <b>"lines"</b>: 3,
+  <b>"error"</b>: "database timeout after 1000 ms"
+}</pre>`)}`;
+}
+function resource(){
+  const cpu=bucketize(T0+4*DAY+12*H,T0+4*DAY+17*H,120).map(v=>v/3100);const mem=cpu.map((v,i)=>.45+.25*Math.min(1,i/120)+.02*hash(i));
+  const line=(arr,c)=>`<polyline fill="none" stroke="${c}" stroke-width="1.6" points="${arr.map((v,i)=>`${(i/(arr.length-1)*1000).toFixed(1)},${(170-v*160).toFixed(1)}`).join(' ')}"/>`;
+  return panel('Server CPU and memory',`<div class="legend" style="margin-bottom:6px"><span style="--c:#3fd6b0">CPU 94% peak</span><span style="--c:#e3b341">Memory 71%</span></div><svg viewBox="0 0 1000 180" width="100%" height="180"><g class="grid">${[0,1,2,3].map(i=>`<line x1="0" x2="1000" y1="${10+i*50}" y2="${10+i*50}"/>`).join('')}</g>${line(cpu,'#3fd6b0')}${line(mem,'#e3b341')}<text x="0" y="178">Thu 11 Jan 12:00</text><text x="1000" y="178" text-anchor="end">17:00 UTC</text></svg>`,'web-a')+
+  panel('Per process',tbl(['Process','CPU','Memory','Threads'],[['w3wp.exe (web-a pool)',`94% ${meter(94,'bad')}`,'3.1 GB','212'],['sqlservr.exe',`41% ${meter(41)}`,'11.8 GB','318'],['redis-server.exe',`6% ${meter(6)}`,'1.4 GB','12'],['mongod.exe',`18% ${meter(18)}`,'5.2 GB','97']],[1,2,3]));
+}
+function patterns(){return `<div class="dh"><h2>Patterns</h2><button class="btn quiet x" data-close>Close</button></div>
+  <p class="d">Shapes that repeat in the data. Each one is a clue, not a verdict.</p>`+panel('Episodes',tbl(['When','Length','What'],[['Thu 14:19','11 min','Requests stall, then burst'],['Sat 03:02','4 min','Idle gap, no rows']]))+panel('Where it starts',`<p class="d">First minute that crossed the line.</p><div class="readout">Thu 11 Jan 14:22 UTC <span class="chip warn">onset</span></div>`)+panel('Busy at once',`<svg viewBox="0 0 300 50" width="100%" height="50">${barsSVG(bucketize(T0+4*DAY+13*H,T0+4*DAY+16*H,60),300,48,'',i=>i>25&&i<34)}</svg>`)+panel('Quiet stretches',`<p class="d">Times nothing was logged. Could be a real pause or a logging gap.</p>`)}
+function ledger(){return `<div class="dh"><h2>Ledger</h2><button class="btn quiet x" data-close>Close</button></div><p class="d">Your working notes: each idea, and the evidence for and against.</p>`+
+  [['Checkout slowed after the 14:22 database timeout','<span class="chip ok">supported</span>','3 findings cited'],['The Search spike caused the stall','<span class="chip bad">ruled out</span>','Search was flat at 14:22'],['Network between web-a and sql-a','<span class="chip warn">open</span>','needs the SQL wait data']].map(h=>`<div class="hyp"><div class="row"><b style="font-weight:500">${h[0]}</b><span style="margin-left:auto">${h[1]}</span></div><div class="sub">${h[2]}</div></div>`).join('')+`<div class="row" style="margin-top:12px"><button class="btn primary">Add hypothesis</button></div>`}
+function exportP(){return `<div class="dh"><h2>Export</h2><button class="btn quiet x" data-close>Close</button></div>`+panel('Masking',`<p class="d">Hide people before you share. Names become stable codes.</p><label class="row"><input type="checkbox" checked> Mask user IDs</label><label class="row"><input type="checkbox" checked> Mask IP addresses</label><label class="row"><input type="checkbox"> Mask URLs</label>`)+panel('Findings',`<p class="d">3 findings from the Ledger go in the file.</p>`)+panel('Manifest',kv([['Window','Thu 11 Jan 14:00 – 15:00'],['Sources','web-a, sql-a'],['Format','Markdown + CSV']]))+`<div class="row" style="margin-top:12px"><button class="btn primary">Export</button></div>`}
+function importP(){return `<div class="dh"><h2>Import</h2><button class="btn quiet x" data-close>Close</button></div>`+panel('File',`<div class="drop">Drop a log file here, or <button class="btn">Choose file</button><p class="d" style="margin-top:6px">IIS, log4net, Web API, Redis, Mongo, SQL exports and more. Nothing leaves this server.</p></div>`)+panel('Preview',tbl(['Field','Detected','Sample'],[['Time','datetime','2001-01-11 14:22:41'],['Operation','text','POST /api/checkout'],['Status','number','503']]))+panel('History',tbl(['File','Rows','When'],[['iis-web-a.log','1.2M','today'],['sql-qs-a.csv','84k','today']],[1]))}
+function discover(){return `<div class="dh"><h2>Discover sources</h2><button class="btn quiet x" data-close>Close</button></div><p class="d">Unravis looked at this server and found these. Nothing is read until you say so.</p>`+
+  [['IIS site web-a','Web logs · 14 days found','high'],['SQL Server sql-a','Query Store · waits and slow queries','high'],['Redis redis-a','Slowlog and latency','medium'],['MongoDB mongo-a','Profiler collection','medium'],['Linux host lnx-a','CPU, memory, per-process','high']].map(s=>`<div class="src"><b style="font-weight:500">${s[0]}</b><span class="sub">${s[1]}</span><span class="act"><span class="chip ${s[2]=='high'?'ok':'warn'}">${s[2]}</span> <button class="btn primary">Import</button></span></div>`).join('')}
+function glossary(){return `<div class="dh"><h2>Glossary</h2><button class="btn quiet x" data-close>Close</button></div><input type="text" placeholder="Search terms" aria-label="Search terms" style="margin-bottom:10px">`+
+  [['p95','19 of 20 requests were faster than this.','Line up 20 kids by running speed; p95 is the 19th kid.'],['Incomplete','A request with a start but no end in the log.','You asked a question and nobody answered yet.'],['Observed time','How long the log says it took, from the server.','A stopwatch held by the cashier.'],['Reference window','The equal period before, used to compare.','Looking at yesterday to see what is different today.']].map(t=>`<div class="term"><b>${t[0]}</b><p class="d" style="margin:2px 0 0">${t[1]}</p><p class="e"><b>In simple words:</b> ${t[2]}</p></div>`).join('')}
+
+const NAMES={overview:'Overview',filters:'More filters',where:'Where is it?',inspector:'Inspector',resource:'CPU and memory',patterns:'Patterns',ledger:'Ledger',export:'Export',import:'Import',discover:'Discover',glossary:'Glossary'};
+const NOTES={A:'<b>A, Faithful:</b> closest to the reference. Glow banner, <span class="mono">// mono labels</span>, uppercase panel titles, boxed panels, glow on the one primary button. Most atmosphere; the banner and glow cost screen space and the uppercase tracked titles are the least scannable.',B:'<b>B, Instrument:</b> reference palette and font, no banner or glow. Sentence-case labels, ruled panels, solid accent only on the primary action. The calmest for hours of use.',C:'<b>C, Terminal:</b> mono-forward and dense. Labels and numbers in mono, square corners, smaller type. Fits an engineer tool best, but long reading (ELI10 text) is heavier.'};
+function render(why){
+  document.body.dataset.v=S.v;
+  const [ff,mf]=FONTS[S.font];document.documentElement.style.setProperty('--f',ff);document.documentElement.style.setProperty('--m',mf);
+  const isDraw=DRAW.includes(S.screen);
+  if(!isDraw)S.main=S.screen;
+  const base=S.main==='filters'?filters():S.main==='where'?where():S.main==='inspector'?inspector():S.main==='resource'?resource():overview();
+  const keepY=scrollY;
+  $('#main').innerHTML=base;
+  $('#drawer').innerHTML=isDraw?({patterns,ledger,export:exportP,import:importP,discover,glossary}[S.screen])():'';
+  document.body.classList.toggle('drawer-open',isDraw);
+  $('#nav').innerHTML=['patterns','ledger','export','import','discover'].map(k=>`<button data-open="${k}" class="${S.screen===k?'on':''}">${NAMES[k]}</button>`).join('');
+  $('#crumbs').innerHTML=`All sources › <b>web-a</b> › <b>${NAMES[S.main]}</b>`;
+  $('#vb').innerHTML=Object.entries(VARIANTS).map(([k,n])=>`<button data-v="${k}" class="${S.v===k?'on':''}">${k} ${n}</button>`).join('');
+  $('#fb').innerHTML=Object.keys(FONTS).map(k=>`<button data-font="${k}" class="${S.font===k?'on':''}">${k}</button>`).join('');
+  $('#sb').innerHTML=SCREENS.map(k=>`<button data-screen="${k}" class="${S.screen===k?'on':''}">${NAMES[k]}</button>`).join('');
+  $('#note').innerHTML=NOTES[S.v]+' <span style="color:var(--text-3)">Font: '+S.font+'. Draft copy, synthetic data. Fonts load from Google Fonts here; the real build must bundle them (the host may be offline).</span>';
+  wireBrush();window.scrollTo(0,keepY);
+  const u=new URL(location);u.searchParams.set('variant',S.v);u.searchParams.set('font',S.font);u.searchParams.set('screen',S.screen);history.replaceState(null,'',u);
+}
+document.addEventListener('click',e=>{
+  const t=e.target.closest('button,.scrim');if(!t)return;
+  if(t.classList.contains('q')){const it=t.closest('.item'),el=it&&it.querySelector('.e');if(el){const o=el.classList.toggle('open');t.setAttribute('aria-expanded',o)}return}
+  if(t.dataset.v){S.v=t.dataset.v;render()}else if(t.dataset.font){S.font=t.dataset.font;render()}else if(t.dataset.screen){S.screen=t.dataset.screen;render()}
+  else if(t.dataset.open){S.screen=t.dataset.open;render()}else if(t.dataset.rail){S.rail=t.dataset.rail;render()}else if(t.dataset.lens){S.lens=t.dataset.lens;render()}
+  else if(t.dataset.act){act(t.dataset.act)}else if('close' in t.dataset||t.classList.contains('scrim')){S.screen=S.main;render()}
+});
+$('#scrim').addEventListener('click',()=>{S.screen=S.main;render()});
+$('#eli').addEventListener('change',e=>document.body.classList.toggle('eli',e.target.checked));
+document.addEventListener('keydown',e=>{if(e.target.matches('input,select,textarea'))return;if(e.key==='Escape'&&document.body.classList.contains('drawer-open')){S.screen=S.main;render();return}overviewKeys(e)});
+
+/* wave for the banner: many thin teal lines with a phase offset */
+(function(){let s='';for(let k=0;k<46;k++){const p=k*.11;let d='';for(let x=0;x<=1200;x+=12){const y=85+Math.sin(x/190+p)*38*Math.sin(x/700+1)+Math.sin(x/70+p*2)*8*(k/46)+ (k-23)*0.9;d+=(x?'L':'M')+x+' '+y.toFixed(1)}
+  s+=`<path d="${d}" fill="none" stroke="rgba(63,214,176,${(.10+.5*(1-Math.abs(k-23)/23)).toFixed(2)})" stroke-width=".7"/>`}
+  $('#wave').innerHTML=s})();
+render();
+</script>
+</body>
+</html>

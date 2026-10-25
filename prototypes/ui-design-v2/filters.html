@@ -1,0 +1,259 @@
+<!doctype html>
+<!-- PROTOTYPE, throwaway. Question: how should the "More filters" panel be laid out?
+     Three structurally different variants, ?variant=A|B|C. Width buttons emulate 1440 / 768 / 390. Synthetic data only. -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>More filters wireframe (prototype)</title>
+<style>
+:root{--bg:#0d0f12;--surface:#14171b;--surface-2:#1b1f25;--line:#2a2f37;--line-soft:#1f242b;--control:#4a525d;--text:#e6e9ed;--text-2:#9aa3ae;--accent:#79b4e8;--accent-ink:#0a1119;--bad:#e5645a;--warn:#e0b04a}
+:root[data-theme=light]{--bg:#f5f5f3;--surface:#fff;--surface-2:#eeeeeb;--line:#d9d9d4;--line-soft:#e8e8e4;--control:#8a9099;--text:#16191d;--text-2:#4a525c;--accent:#1f5ea8;--accent-ink:#fff;--bad:#c0392b;--warn:#8a6100}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:13px/1.45 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;padding:12px 12px 84px}
+.tools{display:flex;gap:6px;align-items:center;margin:0 auto 10px;max-width:1440px;flex-wrap:wrap;color:var(--text-2);font-size:12px}
+button,select,input{font:inherit;color:var(--text)}
+button{background:none;border:1px solid var(--line);border-radius:4px;padding:3px 9px;cursor:pointer}
+button:hover{background:var(--surface-2)} button[aria-pressed=true]{background:var(--surface-2);box-shadow:inset 0 -2px 0 var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button.primary:hover{background:var(--accent);filter:brightness(1.08)}
+button.link{border:0;padding:0;color:var(--accent);text-decoration:underline;background:none}
+.frame{margin:0 auto;border:1px dashed var(--line);padding:12px;container-type:inline-size;background:var(--bg)}
+/* fake bar */
+.bar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding-bottom:10px}
+.seg{display:inline-flex;border:1px solid var(--control);border-radius:4px;overflow:hidden}
+.seg button{border:0;border-radius:0;border-right:1px solid var(--line)}.seg button:last-child{border-right:0}
+.qr{display:flex;gap:4px;flex-wrap:wrap}
+.moretoggle{display:inline-flex;gap:6px;align-items:center}
+.badge{background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:0 7px;font-size:11px;font-variant-numeric:tabular-nums}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chip{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:4px;padding:1px 4px 1px 8px;font-size:12px;background:var(--surface)}
+.chip button{border:0;padding:0 5px;color:var(--text-2)}
+.panel{border-top:1px solid var(--line);padding-top:12px}
+.stale{color:var(--warn);font-size:12px;margin:0 0 8px}
+.pt{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;color:var(--text-2);font-size:12px}
+/* groups */
+.group{border-top:1px solid var(--line);padding:10px 0 12px}
+.group>h3{margin:0 0 8px;font-size:13px;font-weight:600;letter-spacing:-.01em;display:flex;gap:8px;align-items:baseline}
+.group>h3 .n{color:var(--text-2);font-weight:400;font-size:12px}
+.grid{display:grid;gap:10px 14px;grid-template-columns:1fr}
+@container (min-width:560px){.grid{grid-template-columns:repeat(2,1fr)}}
+@container (min-width:1000px){.grid.g3{grid-template-columns:repeat(3,1fr)}}
+.f{display:grid;gap:3px;align-content:start}.f label{font-size:12px;color:var(--text-2);font-weight:500}
+.f input,.f select{background:var(--surface);border:1px solid var(--control);border-radius:4px;padding:4px 7px;min-width:0;width:100%}
+.f input:focus,.f select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.f small{color:var(--text-2);font-size:11px}
+.f.chk{display:flex;gap:7px;align-items:center}.f.chk label{color:var(--text)}.f.chk input{width:auto}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.win{border-left:0}
+.winpair{display:grid;gap:12px 22px;grid-template-columns:1fr}
+@container (min-width:560px){.winpair{grid-template-columns:1fr 1fr}}
+.winpair h4{margin:0 0 6px;font-size:12px;font-weight:600}
+.rng{width:100%;border-collapse:collapse}
+.rng th{font-size:12px;font-weight:500;color:var(--text-2);text-align:left;padding:2px 6px 4px 0;border-bottom:1px solid var(--line)}
+.rng td{padding:4px 6px 4px 0;border-bottom:1px solid var(--line-soft)}
+.rng td:first-child{min-width:120px;padding-right:12px}.rng td.u{color:var(--text-2);font-size:12px}
+.rng input{width:100%;min-width:60px;background:var(--surface);border:1px solid var(--control);border-radius:4px;padding:3px 6px;font-variant-numeric:tabular-nums}
+.act{display:flex;gap:10px;align-items:center;margin-top:6px}
+/* variant B rail */
+.rail{display:grid;grid-template-columns:200px 1fr;gap:0 22px;border-top:1px solid var(--line)}
+.rail nav{display:grid;align-content:start;padding-top:6px}
+.rail nav button{text-align:left;border:0;border-radius:0;border-bottom:1px solid var(--line-soft);padding:8px 6px;display:flex;justify-content:space-between}
+.rail nav button[aria-current=true]{background:var(--surface-2);box-shadow:inset 2px 0 0 var(--accent)}
+.rail .pane{padding:12px 0}
+@container (max-width:640px){.rail{grid-template-columns:1fr}.rail nav{display:flex;overflow-x:auto;border-bottom:1px solid var(--line)}.rail nav button{border:0;white-space:nowrap;gap:6px}.rail nav button[aria-current=true]{box-shadow:inset 0 -2px 0 var(--accent)}}
+/* variant C sentence */
+.sentence{font-size:14px;line-height:2.2;padding:6px 0 10px}
+.tok{display:inline-flex;gap:4px;align-items:center;background:var(--surface-2);border:1px solid var(--line);border-radius:4px;padding:0 8px;font-size:13px;line-height:1.7;cursor:pointer}
+.rows{border-top:1px solid var(--line)}
+.crow{display:grid;grid-template-columns:150px 1fr 28px;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line-soft)}
+.crow .l{color:var(--text-2);font-size:12px}
+.crow .v{display:grid;gap:6px;grid-template-columns:1fr 1fr}.crow .v.one{grid-template-columns:1fr}
+.crow input,.crow select{background:var(--surface);border:1px solid var(--control);border-radius:4px;padding:3px 7px;min-width:0;width:100%}
+.crow .x{border:0;color:var(--text-2)}
+@container (max-width:560px){.crow{grid-template-columns:1fr 28px}.crow .l{grid-column:1/-1}}
+.menu{display:grid;gap:0;border:1px solid var(--line);border-radius:6px;background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,.35);padding:6px 0;margin:6px 0;max-width:360px}
+.menu h5{margin:6px 10px 2px;font-size:11px;color:var(--text-2);font-weight:500}
+.menu button{border:0;border-radius:0;text-align:left;padding:4px 14px}
+.menu button[disabled]{opacity:.4}
+/* beginner help: plain line always shown, "?" opens the ELI10 line, the top toggle opens all of them */
+.lr{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.q{width:18px;height:18px;border-radius:50%;padding:0;font-size:11px;line-height:1;color:var(--text-2);flex:none;vertical-align:middle}
+.q[aria-expanded=true]{color:var(--accent);border-color:var(--accent)}
+.d{color:var(--text-2);font-size:12px;line-height:1.4}
+.e{display:none;background:var(--surface-2);border-radius:4px;padding:5px 8px;font-size:12px;color:var(--text);line-height:1.4;margin-top:2px}
+.e.open,body.eli .e{display:block}
+.e b{color:var(--accent);font-weight:600}
+.gd{margin:0 0 10px;max-width:72ch}.gd .e{margin-top:6px}
+.chkline{display:flex;gap:7px;align-items:center}.chkline input{width:auto}.chkline label{color:var(--text);font-size:13px}
+.elit{display:inline-flex;gap:6px;align-items:center;color:var(--text);margin-left:auto}
+.elit input{width:auto}
+.notes{margin:18px auto 0;max-width:1440px;border-top:1px solid var(--line);padding-top:10px;color:var(--text-2);font-size:12px}.notes b{color:var(--text)}
+.switcher{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);background:#111;color:#fff;border-radius:999px;padding:6px 10px;display:flex;gap:10px;align-items:center;box-shadow:0 4px 18px rgba(0,0,0,.5);font-size:13px;z-index:10}
+.switcher button{background:#333;color:#fff;border:0;border-radius:999px;width:28px;height:28px;padding:0}.switcher .th{width:auto;padding:0 10px}
+</style></head><body>
+<div class="tools"><span>Width</span>
+  <button data-w="1440" aria-pressed="true">1440</button><button data-w="768" aria-pressed="false">768</button><button data-w="390" aria-pressed="false">390</button>
+  <span id="wnote"></span>
+  <label class="elit" title="ELI10 means: explain it like I'm 10 years old"><input type="checkbox" id="eli"> Explain everything in simple words (ELI10)</label></div>
+<div class="frame" id="frame"><div id="stage"></div></div>
+<div class="notes" id="notes"></div>
+<div class="switcher"><button id="prev">←</button><span id="vlabel"></span><button id="next">→</button><button class="th" id="theme">Theme</button></div>
+
+<script>
+// ---- fields (synthetic). g = group
+const G=[['when','When'],['what','What'],['details','Request details'],['ranges','Ranges'],['chart','Chart']];
+const F=[
+ {id:'kindUnknown',g:'what',l:'Include requests of unknown type',t:'check'},
+ {id:'status',g:'what',l:'Status',t:'sel',o:['all','success','failed']},
+ {id:'controller',g:'what',l:'Controller name',t:'text',ph:'e.g. OrdersController'},
+ {id:'action',g:'what',l:'Action name',t:'text',ph:'e.g. Get'},
+ {id:'operation',g:'what',l:'Operation',t:'text',ph:'e.g. GET /orders/{id}'},
+ {id:'completion',g:'what',l:'Completion',t:'sel',o:['all','completed','incomplete']},
+ {id:'userIds',g:'details',l:'User IDs',t:'text',ph:'comma separated',hint:'Up to 50 values.'},
+ {id:'uiVersions',g:'details',l:'UI versions',t:'text',ph:'e.g. 1.4.2, 1.4.3'},
+ {id:'userIps',g:'details',l:'User IPs',t:'text',ph:'e.g. 192.0.2.10'},
+ {id:'statusCodes',g:'details',l:'Status codes',t:'text',ph:'e.g. 500, 503'},
+ {id:'browser',g:'details',l:'Browser contains',t:'text'},
+ {id:'url',g:'details',l:'Request URL contains',t:'text'},
+ {id:'auditId',g:'details',l:'Audit ID',t:'text'},
+ {id:'observedMs',g:'ranges',l:'Observed time',u:'ms',t:'range'},
+ {id:'apiTimeMs',g:'ranges',l:'API time',u:'ms',t:'range'},
+ {id:'auditCreateTimeMs',g:'ranges',l:'Audit create time',u:'ms',t:'range'},
+ {id:'requestKb',g:'ranges',l:'Request size',u:'KB',t:'range'},
+ {id:'responseKb',g:'ranges',l:'Response size',u:'KB',t:'range'},
+ {id:'incompleteAgeMs',g:'ranges',l:'Incomplete age',u:'ms',t:'range',hint:'Implies Completion: incomplete.'},
+ {id:'interval',g:'chart',l:'Chart interval (seconds)',t:'text',ph:'auto'},
+ {id:'target',g:'chart',l:'Response-time target (ms)',t:'text',ph:'none'},
+ {id:'measure',g:'chart',l:'Time measured',t:'sel',o:['observed','api']},
+];
+const DEF={status:'all',completion:'all',measure:'observed'};
+// ---- beginner help: [plain-English line, ELI10 line]. Real build should reuse the Glossary wording.
+const HELP={
+ bar:['The buttons set how far back to look and which kind of request to include. Nothing changes until you press Run analysis.','Pick how much history to look at and what to count, then press the blue button. Until then, the page keeps showing the old answer.'],
+ 'g-when':['Choose the stretch of time to study, and an earlier stretch to compare it with.','Like asking "what was different this week compared with last week?"'],
+ invest:['The period you want to understand.','The week where something odd happened.'],
+ ref:['The period to compare it with, usually just before.','A normal week to hold up next to the odd one.'],
+ 'g-what':['Which requests to look at: worked or failed, and which part of the app handled them.','Think of a shop. You can look at only the orders that went wrong, or only the ones from one counter.'],
+ kindUnknown:['Also keep requests that Unravis could not tell were web (http) or something else.','A few requests wear no name tag. Tick this to include those mystery ones too.'],
+ status:['Success means the server answered fine. Failed means it answered with an error.','Did the request work, or did it break?'],
+ controller:['The part of the code that received the request, such as OrdersController.','The name of the department that picked up the phone.'],
+ action:['The specific job inside that part of the code, such as Get.','The department\'s exact task, like "look up an order".'],
+ operation:['The method and path together, such as GET /orders/{id}.','The exact question asked of the app: what kind (GET means "give me") and about what.'],
+ completion:['Completed requests finished and were recorded. Incomplete ones started but never recorded an end.','Did the request finish its trip? Incomplete means it never came back.'],
+ 'g-details':['Narrow things down by who made the request, from where, and with which version of the app.','Like finding one student\'s homework: you know their name, their class and the day they handed it in.'],
+ userIds:['Only requests from these user IDs. Separate several with commas.','Show only the people you name.'],
+ uiVersions:['Only requests sent by these versions of the web app, such as 1.4.2.','Apps get updates, just like games on a phone. This picks which version number sent the request.'],
+ userIps:['Only requests that came from these network addresses (IP addresses).','An IP address is like a home address for a computer.'],
+ statusCodes:['The three-digit result the server sent back. 200 means OK, 404 means not found, 500 means the server broke.','Report-card marks: 2xx is good, 4xx means the question was wrong, 5xx means the server had a problem.'],
+ browser:['Only requests whose browser name contains this text, such as Chrome.','Which program was used to visit the page: Chrome, Edge, and so on.'],
+ url:['Only requests whose web address contains this text.','Like searching for a word inside a web address.'],
+ auditId:['The unique ID of one logged request. Use it to find a single record.','Like a ticket number. Only one request has it.'],
+ 'g-ranges':['Keep only requests whose time or size sits between a minimum and a maximum. Leave a box empty for no limit.','Like saying "show me only the slow ones". If a trip usually takes 1 minute, ask for trips over 5.'],
+ observedMs:['The total time Unravis saw the request take, as the user would feel it.','How long you stood in the queue, start to finish.'],
+ apiTimeMs:['Time spent inside the API code itself.','How long the cook actually spent cooking.'],
+ auditCreateTimeMs:['Time spent writing the audit record of the request.','How long it took to write the receipt.'],
+ requestKb:['How much data was sent to the server, in kilobytes.','How heavy the letter you posted was.'],
+ responseKb:['How much data the server sent back, in kilobytes.','How heavy the reply was.'],
+ incompleteAgeMs:['How long ago an unfinished request started. Only makes sense for incomplete requests.','How long a letter has been missing without any answer.'],
+ 'g-chart':['How the charts group time into bars, and the line that counts as fast enough.','Each bar is a bucket of time. Small buckets show more detail but more bars. Big buckets show the big picture.'],
+ interval:['The width of one chart bar, in seconds. Leave it empty and Unravis picks a size that fits.','If it says 60, every bar covers one minute.'],
+ target:['Draws a line at this response time, so you can see what is slower than you want.','Your "fast enough" line. Anything above it is too slow.'],
+ measure:['Which time the charts use: observed (what the user waited) or api (time inside the code).','Same as the two time ranges above: waiting time, or cooking time.']};
+const esc0=s=>String(s).replace(/"/g,'&quot;');
+const helpD=id=>HELP[id]?`<span class="d">${HELP[id][0]}</span>`:'';
+const helpE=id=>HELP[id]?`<span class="e" id="e-${id}"><b>In simple words:</b> ${HELP[id][1]}</span>`:'';
+const qBtn=(id,l)=>HELP[id]?`<button type="button" class="q" data-help="${id}" aria-expanded="false" aria-controls="e-${id}" aria-label="Explain ${esc0(l)} in simple words" title="Explain in simple words">?</button>`:'';
+const helpBlock=(id,l)=>`<div class="gd">${helpD(id)} ${qBtn(id,l)}${helpE(id)}</div>`;
+document.addEventListener('click',e=>{const b=e.target.closest('[data-help]');if(!b)return;const el=document.getElementById('e-'+b.dataset.help);if(!el)return;b.setAttribute('aria-expanded',el.classList.toggle('open'))});
+document.getElementById('eli').onchange=e=>document.body.classList.toggle('eli',e.target.checked);
+const S={vals:{},invest:['2001-01-08 00:00','2001-01-15 00:00'],ref:['2001-01-01 00:00','2001-01-08 00:00'],stale:false,range:'7 days',kind:'all',open:true,pane:'what',added:[],menu:false};
+const get=(id,k)=>(S.vals[id]||{})[k||'v']??'';
+const set=(id,v,k)=>{(S.vals[id]=S.vals[id]||{})[k||'v']=v;S.stale=true};
+function active(){const out=[];
+  for(const f of F){if(f.t==='check'){if(S.vals[f.id]&&S.vals[f.id].v)out.push({id:f.id,g:f.g,text:f.l})}
+   else if(f.t==='range'){const a=get(f.id,'min'),b=get(f.id,'max');if(a!==''||b!=='')out.push({id:f.id,g:f.g,text:`${f.l}: ${a||'…'}–${b||'…'} ${f.u}`})}
+   else{const v=get(f.id);if(v!==''&&v!==DEF[f.id])out.push({id:f.id,g:f.g,text:`${f.l}: ${v}`})}}
+  if(S.range!=='7 days')out.unshift({id:'_range',g:'when',text:'Window: '+S.range});
+  return out}
+function clearOne(id){if(id==='_range'){S.range='7 days';return}delete S.vals[id];S.stale=true}
+const cnt=g=>active().filter(a=>a.g===g).length;
+
+// ---- shared small renderers
+const esc=s=>String(s).replace(/"/g,'&quot;');
+function fieldHTML(f){const idA=`f-${f.id}`;
+  const lab=`<div class="lr"><label for="${idA}">${f.l}</label>${qBtn(f.id,f.l)}</div>${helpD(f.id)}${helpE(f.id)}`;
+  if(f.t==='check')return `<div class="f"><div class="lr"><span class="chkline"><input type="checkbox" id="${idA}" data-f="${f.id}" ${get(f.id)?'checked':''}><label for="${idA}">${f.l}</label></span>${qBtn(f.id,f.l)}</div>${helpD(f.id)}${helpE(f.id)}</div>`;
+  if(f.t==='sel')return `<div class="f">${lab}<select id="${idA}" data-f="${f.id}">${f.o.map(o=>`<option ${((get(f.id)||DEF[f.id])===o)?'selected':''}>${o}</option>`).join('')}</select></div>`;
+  return `<div class="f">${lab}<input id="${idA}" data-f="${f.id}" value="${esc(get(f.id))}" placeholder="${f.ph||''}">${f.hint?`<small>${f.hint}</small>`:''}</div>`}
+function rangeTable(){return `<table class="rng"><thead><tr><th>Measure</th><th>Min</th><th>Max</th><th>Unit</th></tr></thead><tbody>`+
+  F.filter(f=>f.g==='ranges').map(f=>`<tr><td><div class="lr"><span style="font-weight:500">${f.l}</span>${qBtn(f.id,f.l)}</div>${helpD(f.id)}${helpE(f.id)}</td><td><input data-r="${f.id}" data-k="min" aria-label="${f.l} min" value="${esc(get(f.id,'min'))}"></td><td><input data-r="${f.id}" data-k="max" aria-label="${f.l} max" value="${esc(get(f.id,'max'))}"></td><td class="u">${f.u}</td></tr>`).join('')+`</tbody></table>`}
+function windowsHTML(){return `<div class="winpair"><div><h4 class="lr">Investigate ${qBtn('invest','Investigate window')}</h4>${helpD('invest')}${helpE('invest')}<div class="pair" style="margin-top:6px"><div class="f"><label>From</label><input data-w2="invest0" value="${S.invest[0]}"></div><div class="f"><label>To</label><input data-w2="invest1" value="${S.invest[1]}"></div></div></div>
+  <div><h4 class="lr">Reference ${qBtn('ref','Reference window')}</h4>${helpD('ref')}${helpE('ref')}<div class="pair" style="margin-top:6px"><div class="f"><label>From</label><input data-w2="ref0" value="${S.ref[0]}"></div><div class="f"><label>To</label><input data-w2="ref1" value="${S.ref[1]}"></div></div></div></div>
+  <p class="pt" style="margin:8px 0 0"><span>Times are shown in your browser time.</span><label style="display:inline-flex;gap:5px;align-items:center"><input type="checkbox" id="utc"> Show exact UTC times</label></p>`}
+function groupBody(g){const gn=G.find(x=>x[0]===g)[1],gh=helpBlock('g-'+g,gn);if(g==='when')return gh+windowsHTML();if(g==='ranges')return gh+rangeTable()+`<p class="pt" style="margin-top:6px">Leave a box empty to ignore that limit. Incomplete age only works together with Completion: incomplete.</p>`;
+  return gh+`<div class="grid ${g==='details'?'g3':''}">`+F.filter(f=>f.g===g).map(fieldHTML).join('')+`</div>`}
+const chipsHTML=()=>{const a=active();return `<div class="chips">${a.map(c=>`<span class="chip">${c.text}<button data-x="${c.id}" aria-label="Remove ${esc(c.text)}">×</button></span>`).join('')}${a.length?`<button class="link" data-clear>Clear all</button>`:'<span style="color:var(--text-2);font-size:12px">No filters on.</span>'}</div>`}
+function barHTML(open){return `<div class="bar"><div class="qr">${['1 hour','1 day','7 days','30 days'].map(r=>`<button data-q="${r}" aria-pressed="${S.range===r}">${r}</button>`).join('')}</div>
+  <div class="seg">${['all','http','other'].map(k=>`<button data-k="${k}" aria-pressed="${S.kind===k}">${k}</button>`).join('')}</div>
+  <button data-open aria-expanded="${open}" class="moretoggle">More filters <span class="badge" data-badge>${active().length}</span> ${open?'▾':'▸'}</button>
+  <button class="primary" data-run>Run analysis</button>${open?'':`<span id="barchips">${chipsHTML()}</span>`}</div>`}
+const topOfPanel=()=>helpBlock('bar','the bar above')+`<div class="pt"><span class="d">Each tag below is a filter that is on. Press × to remove one.</span><span data-count>${active().length} filter${active().length===1?'':'s'} on</span><span class="stale" data-stale style="margin:0;${S.stale?'':'display:none'}">Changes here apply when you press Run analysis.</span></div><div data-chips>${chipsHTML()}</div>`;
+
+// ---- variants
+const V={
+A:{name:'Flat groups (as planned)',
+ notes:'<b>Question:</b> is one scrolling panel of five flat groups the right density? Everything visible at once, no nested disclosure; active chips and the stale hint sit on top. Columns collapse 3 → 2 → 1 with width. Cost: tall when nothing is filtered; relies on scrolling.',
+ body(){return topOfPanel()+G.map(([g,n])=>`<section class="group"><h3>${n} <span class="n" data-gc="${g}">${cnt(g)?cnt(g)+' on':''}</span></h3>${groupBody(g)}</section>`).join('')}},
+B:{name:'Group rail',
+ notes:'<b>Chosen (B), now with beginner help.</b> Every group and field has a plain-English line under its name. The round ? opens an "In simple words" (ELI10) line for that one item; the checkbox at the top opens all of them. Check: is the help clear to someone who has never seen the data, and is it too noisy when you know it already?',
+ body(){return topOfPanel()+`<div class="rail"><nav aria-label="Filter groups">${G.map(([g,n])=>`<button data-pane="${g}" aria-current="${S.pane===g}">${n}<span class="badge" data-gc="${g}">${cnt(g)}</span></button>`).join('')}</nav><div class="pane"><h3 style="margin:0 0 8px;font-size:13px">${G.find(x=>x[0]===S.pane)[1]}</h3>${groupBody(S.pane)}</div></div>`}},
+C:{name:'Sentence + add filter',
+ notes:'<b>Question:</b> should the panel only show filters you are actually using? The sentence carries the always-on choices; every other filter is added from a menu as one ruled row. Smallest panel by default, best at 390. Cost: filters are hidden until you know to add them; discoverability relies on the menu.',
+ body(){const used=new Set(S.added);F.forEach(f=>{if(f.t==='range'){if(get(f.id,'min')||get(f.id,'max'))used.add(f.id)}else if(get(f.id)&&get(f.id)!==DEF[f.id])used.add(f.id)});
+  const inRows=F.filter(f=>used.has(f.id)&&f.g!=='chart'&&f.g!=='when');
+  const row=f=>`<div class="crow"><span class="l">${f.l}${f.u?` (${f.u})`:''}</span><div class="v ${f.t==='range'?'':'one'}">${f.t==='range'?`<input data-r="${f.id}" data-k="min" placeholder="min" aria-label="${f.l} min" value="${esc(get(f.id,'min'))}"><input data-r="${f.id}" data-k="max" placeholder="max" aria-label="${f.l} max" value="${esc(get(f.id,'max'))}">`:(f.t==='sel'?`<select data-f="${f.id}">${f.o.map(o=>`<option ${((get(f.id)||DEF[f.id])===o)?'selected':''}>${o}</option>`).join('')}</select>`:f.t==='check'?`<label><input type="checkbox" data-f="${f.id}" ${get(f.id)?'checked':''}> on</label>`:`<input data-f="${f.id}" value="${esc(get(f.id))}" placeholder="${f.ph||''}">`)}</div><button class="x" data-rm="${f.id}" aria-label="Remove ${f.l}">×</button></div>`;
+  const avail=G.filter(([g])=>g!=='when'&&g!=='chart').map(([g,n])=>`<h5>${n}</h5>`+F.filter(f=>f.g===g).map(f=>`<button data-add="${f.id}" ${used.has(f.id)?'disabled':''}>${f.l}</button>`).join('')).join('');
+  return `<div class="pt"><span data-count>${active().length} filter${active().length===1?'':'s'} on</span><span class="stale" data-stale style="margin:0;${S.stale?'':'display:none'}">Changes here apply when you press Run analysis.</span></div>
+   <div class="sentence">Investigate <span class="tok">${S.invest[0]} → ${S.invest[1]}</span> against <span class="tok">${S.ref[0]} → ${S.ref[1]}</span>, for <span class="tok">${S.kind} requests</span> where ${inRows.length?`these ${inRows.length} filter${inRows.length>1?'s apply':' applies'}:`:'nothing else is filtered.'}</div>
+   <div class="rows">${inRows.map(row).join('')}</div>
+   <div class="act"><button data-menu aria-expanded="${S.menu}">+ Add filter</button><button class="link" data-clear>Clear all</button></div>
+   ${S.menu?`<div class="menu">${avail}</div>`:''}
+   <section class="group" style="margin-top:12px"><h3>Chart</h3>${groupBody('chart')}</section>`}}
+};
+
+// ---- wiring
+const keys=Object.keys(V);let cur=(new URLSearchParams(location.search).get('variant')||'B').toUpperCase();if(!V[cur])cur='A';
+function render(){const st=document.getElementById('stage');
+  st.innerHTML=barHTML(S.open)+(S.open?`<div class="panel">${V[cur].body()}</div>`:'');
+  document.getElementById('vlabel').textContent=cur+' ('+V[cur].name+')';document.getElementById('notes').innerHTML=V[cur].notes;wire()}
+function meta(){const n=active().length;document.querySelectorAll('[data-badge]').forEach(e=>e.textContent=n);
+  document.querySelectorAll('[data-count]').forEach(e=>e.textContent=n+' filter'+(n===1?'':'s')+' on');
+  document.querySelectorAll('[data-stale]').forEach(e=>e.style.display=S.stale?'':'none');
+  document.querySelectorAll('[data-gc]').forEach(e=>{const c=cnt(e.dataset.gc);e.textContent=cur==='B'?c:(c?c+' on':'')});
+  const ch=document.querySelector('[data-chips]');if(ch){ch.innerHTML=chipsHTML();wireChips(ch)}}
+function wireChips(root){root.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{clearOne(b.dataset.x);render()});root.querySelectorAll('[data-clear]').forEach(b=>b.onclick=()=>{S.vals={};S.range='7 days';S.added=[];S.stale=true;render()})}
+function wire(){const st=document.getElementById('stage');wireChips(st);
+  st.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{S.open=!S.open;render()});
+  st.querySelectorAll('[data-q]').forEach(b=>b.onclick=()=>{S.range=b.dataset.q;S.stale=true;render()});
+  st.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>{S.kind=b.dataset.k;S.stale=true;render()});
+  st.querySelectorAll('[data-run]').forEach(b=>b.onclick=()=>{S.stale=false;meta()});
+  st.querySelectorAll('[data-pane]').forEach(b=>b.onclick=()=>{S.pane=b.dataset.pane;render()});
+  st.querySelectorAll('[data-menu]').forEach(b=>b.onclick=()=>{S.menu=!S.menu;render()});
+  st.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>{S.added.push(b.dataset.add);S.menu=false;render()});
+  st.querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{S.added=S.added.filter(x=>x!==b.dataset.rm);delete S.vals[b.dataset.rm];S.stale=true;render()});
+  st.querySelectorAll('[data-f]').forEach(e=>{const h=()=>{set(e.dataset.f,e.type==='checkbox'?e.checked:e.value);meta()};e.oninput=h;e.onchange=h});
+  st.querySelectorAll('[data-r]').forEach(e=>e.oninput=()=>{set(e.dataset.r,e.value,e.dataset.k);meta()});
+  st.querySelectorAll('[data-w2]').forEach(e=>e.oninput=()=>{const k=e.dataset.w2;(k.startsWith('invest')?S.invest:S.ref)[+k.slice(-1)]=e.value;S.stale=true;meta()})}
+// width emulation
+let W=1440;
+function fit(){const f=document.getElementById('frame'),avail=document.documentElement.clientWidth-24;const z=Math.min(1,avail/(W+26));
+  f.style.width=W+'px';f.style.zoom=z;document.getElementById('wnote').textContent=z<1?`(scaled ${Math.round(z*100)}% to fit; layout is computed at ${W}px)`:''}
+document.querySelectorAll('[data-w]').forEach(b=>b.onclick=()=>{W=+b.dataset.w;document.querySelectorAll('[data-w]').forEach(x=>x.setAttribute('aria-pressed',x===b));fit()});
+addEventListener('resize',fit);
+function go(k){cur=k;const u=new URL(location);u.searchParams.set('variant',k);history.replaceState(null,'',u);render()}
+const idx=()=>keys.indexOf(cur);
+document.getElementById('prev').onclick=()=>go(keys[(idx()+keys.length-1)%keys.length]);
+document.getElementById('next').onclick=()=>go(keys[(idx()+1)%keys.length]);
+document.getElementById('theme').onclick=()=>{const r=document.documentElement;r.dataset.theme=r.dataset.theme==='light'?'dark':'light'};
+addEventListener('keydown',e=>{if(/INPUT|TEXTAREA|SELECT/.test(e.target.tagName))return;if(e.key==='ArrowLeft')document.getElementById('prev').click();else if(e.key==='ArrowRight')document.getElementById('next').click()});
+S.vals={userIds:{v:'U-1001, U-1002'},statusCodes:{v:'500, 503'},apiTimeMs:{min:'2000'}};
+fit();render();
+</script></body></html>

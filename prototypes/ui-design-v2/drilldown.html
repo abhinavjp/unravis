@@ -1,0 +1,219 @@
+<!doctype html>
+<!-- PROTOTYPE, throwaway. Question: how should the drill-down chart look and behave?
+     Three structurally different variants, ?variant=A|B|C (or arrow keys). Synthetic data only. -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drill-down wireframe (prototype)</title>
+<style>
+:root{--bg:#0d0f12;--surface:#14171b;--surface-2:#1b1f25;--line:#2a2f37;--line-soft:#1f242b;--text:#e6e9ed;--text-2:#9aa3ae;--accent:#79b4e8;--accent-ink:#0a1119;--bad:#e5645a;--bar:#5b7fa3}
+:root[data-theme=light]{--bg:#f5f5f3;--surface:#fff;--surface-2:#eeeeeb;--line:#d9d9d4;--line-soft:#e8e8e4;--text:#16191d;--text-2:#4a525c;--accent:#1f5ea8;--accent-ink:#fff;--bad:#c0392b;--bar:#7f9bbd}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:13px/1.45 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;padding:16px 16px 84px}
+h1{font-size:14px;margin:0 0 2px;letter-spacing:-.01em} .sub{color:var(--text-2);margin:0 0 14px;font-size:12px}
+.app{max-width:1100px;margin:0 auto}
+.fakehead{display:flex;gap:12px;align-items:center;border-bottom:1px solid var(--line);padding-bottom:8px;margin-bottom:12px;color:var(--text-2)}
+.fakehead b{color:var(--text)} .fakehead .sp{flex:1}
+.banner{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:6px 0;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.banner .tag{color:var(--text-2)}
+button{font:inherit;color:var(--text);background:none;border:1px solid var(--line);border-radius:4px;padding:3px 9px;cursor:pointer}
+button:hover:not(:disabled){background:var(--surface-2)} button:disabled{opacity:.4;cursor:not-allowed}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+button.primary:hover:not(:disabled){filter:brightness(1.08);background:var(--accent)}
+button.link{border:0;padding:0;color:var(--accent);text-decoration:underline}
+.crumbs{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+.crumbs span.sep{color:var(--text-2)} .crumbs .cur{font-weight:600}
+.strip{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:8px 0;display:grid;gap:8px;margin-bottom:10px}
+.row{display:flex;gap:8px 14px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.btns{display:flex;gap:4px;flex-wrap:wrap}
+.hint{color:var(--text-2);font-size:12px;margin:0}
+.note{color:var(--text-2);font-size:12px}
+.chart{position:relative;user-select:none;touch-action:pan-y;cursor:crosshair}
+.chart .plot{position:relative;height:var(--h,190px);background:var(--surface);border:1px solid var(--line-soft);border-radius:4px;overflow:hidden}
+.chart svg{display:block;width:100%;height:100%}
+.chart .ticks{display:flex;justify-content:space-between;color:var(--text-2);font-size:11px;margin-top:2px;font-variant-numeric:tabular-nums}
+.band{position:absolute;top:0;bottom:0;background:color-mix(in srgb,var(--accent) 22%,transparent);border-left:1px solid var(--accent);border-right:1px solid var(--accent);display:none;pointer-events:none}
+.readout{position:absolute;top:6px;background:var(--surface-2);border:1px solid var(--line);border-radius:4px;padding:2px 7px;font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;display:none;pointer-events:none;z-index:2}
+.bar{fill:var(--bar)} .err{fill:var(--bad)}
+.brush{position:relative;height:34px;background:var(--surface-2);border-radius:4px;touch-action:none;cursor:pointer;overflow:hidden}
+.brush svg{position:absolute;inset:0;width:100%;height:100%}
+.brush .sel{position:absolute;top:0;bottom:0;min-width:10px;background:color-mix(in srgb,var(--accent) 20%,transparent);border:1px solid var(--accent);cursor:grab}
+.brush .sel:active{cursor:grabbing}
+.brush .h{position:absolute;top:0;bottom:0;width:8px;cursor:ew-resize;background:var(--accent);opacity:.8}
+.brush .h.l{left:-1px}.brush .h.r{right:-1px}
+.brushlab{display:flex;justify-content:space-between;color:var(--text-2);font-size:11px;margin-top:2px;font-variant-numeric:tabular-nums}
+.floatchip{position:absolute;top:8px;right:8px;z-index:3}
+.ladder{display:grid;gap:6px}
+.lrow{display:grid;grid-template-columns:104px 1fr;gap:10px;align-items:start}
+.lrow .meta{font-size:12px;color:var(--text-2);padding-top:2px}.lrow .meta b{display:block;color:var(--text);font-size:13px}
+.lrow.last .meta b{color:var(--accent)}
+.lrow .ghost{position:absolute;top:0;bottom:0;background:color-mix(in srgb,var(--accent) 16%,transparent);border-left:1px solid var(--accent);border-right:1px solid var(--accent);pointer-events:none;min-width:2px}
+.keys{margin-top:14px;color:var(--text-2);font-size:12px}
+/* beginner help: plain line always shown, "?" opens the ELI10 line, the top toggle opens all of them */
+.q{width:18px;height:18px;border-radius:50%;padding:0;font-size:11px;line-height:1;color:var(--text-2);flex:none;vertical-align:middle;margin-left:4px}
+.q[aria-expanded=true]{color:var(--accent);border-color:var(--accent)}
+.d{color:var(--text-2);font-size:12px;line-height:1.4}
+.e{display:none;background:var(--surface-2);border-radius:4px;padding:5px 8px;font-size:12px;color:var(--text);line-height:1.4;margin-top:6px;max-width:72ch}
+.e.open,body.eli .e{display:block}
+.e b{color:var(--accent);font-weight:600}
+.gd{margin:4px 0 8px;max-width:78ch}
+.elit{display:inline-flex;gap:6px;align-items:center;color:var(--text)}
+.notes{margin-top:18px;border-top:1px solid var(--line);padding-top:10px;color:var(--text-2);font-size:12px;max-width:82ch}
+.notes b{color:var(--text)}
+.switcher{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);background:#111;color:#fff;border-radius:999px;padding:6px 10px;display:flex;gap:10px;align-items:center;box-shadow:0 4px 18px rgba(0,0,0,.5);font-size:13px;z-index:10}
+.switcher button{background:#333;color:#fff;border:0;border-radius:999px;width:28px;height:28px;padding:0}
+.switcher .th{width:auto;padding:0 10px}
+@media (max-width:640px){.lrow{grid-template-columns:1fr}}
+</style></head><body>
+<div class="app">
+  <h1>Drill-down chart</h1>
+  <p class="sub">Synthetic 7-day window, 8–15 Jan 2001 UTC. Drag on a chart to zoom. A hidden spike sits somewhere in the week; find it down to a few minutes.</p>
+  <div class="fakehead"><b>Unravis</b><span>web-a</span><span class="sp"></span><label class="elit" title="ELI10 means: explain it like I'm 10 years old"><input type="checkbox" id="eli"> Explain everything in simple words (ELI10)</label><span>Run analysis done · 7 days</span></div>
+  <div id="stage"></div>
+  <div class="notes" id="notes"></div>
+</div>
+<div class="switcher"><button id="prev" title="Previous">←</button><span id="vlabel"></span><button id="next" title="Next">→</button><button class="th" id="theme">Theme</button></div>
+
+<script>
+const H=3600e3, DAY=24*H, MIN=60e3;
+const T1=Date.UTC(2001,0,15), T0=T1-7*DAY, SPIKE=T0+4*DAY+14*H+22*MIN;
+const STEPS=[10,15,30,60,120,180,300,600,900,1800,3600,7200,10800,21600,43200,86400];
+const MON=['Jan','Feb','Mar'],DOW=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const p2=n=>String(n).padStart(2,'0');
+function bucketFor(v){const w=(v[1]-v[0])/1000;for(const s of STEPS)if(w/s<=120)return s;return 86400}
+function hash(n){let x=Math.sin(n*12.9898)*43758.5453;return x-Math.floor(x)}
+function rate(t){const h=((t%DAY)/H);return 40+30*Math.sin((h-6)/24*2*Math.PI)+10*hash(Math.floor(t/MIN))}
+function errRate(t){const d=(t-SPIKE)/MIN;return .012+.55*Math.exp(-((d/6)**2))+.05*Math.exp(-((d/50)**2))}
+function series(v){const s=bucketFor(v)*1000,a=Math.floor(v[0]/s)*s,out=[];
+  for(let t=a;t<v[1];t+=s){let tot=0,er=0;const n=Math.max(1,Math.min(12,Math.round(s/MIN)));
+    for(let i=0;i<n;i++){const tt=t+i*s/n,r=rate(tt)*s/MIN/n;tot+=r;er+=r*errRate(tt)}out.push({t,tot,er})}
+  return {s,out}}
+function fmt(t,span){const d=new Date(t);const hm=p2(d.getUTCHours())+':'+p2(d.getUTCMinutes());
+  if(span>36*H)return DOW[d.getUTCDay()]+' '+p2(d.getUTCDate())+' '+MON[d.getUTCMonth()];
+  if(span<=15*MIN)return hm+':'+p2(d.getUTCSeconds());return hm}
+function fmtFull(t){const d=new Date(t);return DOW[d.getUTCDay()]+' '+p2(d.getUTCDate())+' '+MON[d.getUTCMonth()]+' '+p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())}
+function dur(ms){const m=Math.round(ms/MIN);if(m>=2880)return Math.round(m/1440*10)/10+' days';if(m>=120)return Math.round(m/60*10)/10+' hours';return m+' min'}
+function range(v){return fmtFull(v[0])+' – '+fmtFull(v[1])+' UTC'}
+function sstep(s){return s>=3600?s/3600+' h':s>=60?s/60+' min':s+' s'}
+
+// ---- beginner help: [plain-English line, ELI10 line]. Real build should reuse the Glossary wording.
+const HELP={
+ intro:['Each bar is a slice of time. The taller the bar, the more requests came in. Drag across the chart to zoom into that stretch, and keep going until you can see the exact minute.','Imagine a week-long video. Drag over a part to zoom in, like pinching a photo. Keep zooming until you spot the moment things went wrong.'],
+ trail:['The trail shows where you zoomed from, for example 7 days › 2 days › 6 hours. Click an earlier step to jump back to it.','Like breadcrumbs in a forest: they show the path you took, so you can walk back.'],
+ legend:['Blue is all requests. Red is the failed ones. Each bar covers the amount of time shown as "bars" above the chart.','Blue is everyone who knocked on the door. Red is the ones who got an error. Each bar is one bucket of time.'],
+ nav:['The strip shows the whole period. The blue box is the part the big chart is showing. Drag the box to move it, or drag its edges to make it wider or narrower.','It is a map of the whole week. The box is your magnifying glass sitting on the map. Slide it around.'],
+ btns:['Back undoes the last zoom. Zoom in looks closer at the middle. Zoom out looks wider. Reset shows the whole period again. Zooming only changes what you see, not your results.','Back is undo. Zoom in is a magnifying glass. Zoom out is stepping back. Reset is "start again".'],
+ invest:['Zoom only changes the charts. Investigate this window re-runs the whole analysis for just this period, and compares it with a period of the same length right before it.','Zooming is looking closer with a magnifying glass. Investigate is asking the detective to go study only this part and tell you what changed.'],
+ cmp:['Unravis compares this window with a stretch of the same length just before it, to show what changed.','It holds up a "before" picture next to the "now" picture so you can spot the difference.']};
+const escH=s=>String(s).replace(/"/g,'&quot;');
+const helpD=id=>HELP[id]?`<span class="d">${HELP[id][0]}</span>`:'';
+const helpE=id=>HELP[id]?`<span class="e" id="e-${id}"><b>In simple words:</b> ${HELP[id][1]}</span>`:'';
+const qBtn=(id,l)=>HELP[id]?`<button type="button" class="q" data-help="${id}" aria-expanded="false" aria-controls="e-${id}" aria-label="Explain ${escH(l)} in simple words" title="Explain in simple words">?</button>`:'';
+const helpBlock=(id,l)=>`<div class="gd">${helpD(id)}${qBtn(id,l)}${helpE(id)}</div>`;
+document.addEventListener('click',e=>{const b=e.target.closest('[data-help]');if(!b)return;const el=document.getElementById('e-'+b.dataset.help);if(!el)return;b.setAttribute('aria-expanded',el.classList.toggle('open'))});
+document.getElementById('eli').onchange=e=>document.body.classList.toggle('eli',e.target.checked);
+
+// ---- state
+const S={root:[T0,T1],stack:[[T0,T1]],trail:[],invest:null};
+const view=()=>S.stack[S.stack.length-1];
+function clampW(w,within){let [a,b]=w;if(b-a<MIN){const c=(a+b)/2;a=c-MIN/2;b=c+MIN/2}
+  const L=within[0],R=within[1];if(b-a>R-L){a=L;b=R}if(a<L){b+=L-a;a=L}if(b>R){a-=b-R;b=R}return [a,b]}
+function pick(w){const v=view();w=clampW(w,v);if(w[1]-w[0]>=v[1]-v[0])return;S.stack.push(w);update()}
+function setTop(w){S.stack[S.stack.length-1]=clampW(w,S.root);update()}
+function zoomOut(){const v=view(),c=(v[0]+v[1])/2,h=(v[1]-v[0]);const w=clampW([c-h,c+h],S.root);if(S.stack.length>1)S.stack.pop();else return;update()}
+function zoomIn(){const v=view(),c=(v[0]+v[1])/2,h=(v[1]-v[0])/4;if(v[1]-v[0]<=2*MIN)return;pick([c-h,c+h])}
+function shift(dir){const v=view(),h=(v[1]-v[0])/2;setTop([v[0]+dir*h,v[1]+dir*h])}
+function back(){if(S.stack.length>1){S.stack.pop();update()}}
+function reset(){S.stack=[S.root.slice()];update()}
+function jump(i){S.stack=S.stack.slice(0,i+1);update()}
+function investigate(){S.trail.push(S.root.slice());S.root=view().slice();S.stack=[S.root.slice()];S.invest=S.root.slice();update()}
+function backToPrev(){if(!S.trail.length)return;S.root=S.trail.pop();S.stack=[S.root.slice()];S.invest=S.trail.length?S.root.slice():null;update()}
+const crumbLabel=(w,i)=>i===0&&!S.trail.length?'7 days':dur(w[1]-w[0]);
+
+// ---- pieces
+function bars(v,w,h){const {s,out}=series(v);const mx=Math.max(...out.map(o=>o.tot))*1.1,n=out.length,W=1000,sx=W/((v[1]-v[0])/1000/(s/1000));
+  const x0=v[0];let html='';const wpx=(s/(v[1]-v[0]))*W;
+  for(const o of out){const x=((o.t-x0)/(v[1]-v[0]))*W,bh=o.tot/mx*h,eh=o.er/mx*h;
+    html+=`<rect class="bar" x="${x+.5}" y="${h-bh}" width="${Math.max(wpx-1,.8)}" height="${bh}"/><rect class="err" x="${x+.5}" y="${h-eh}" width="${Math.max(wpx-1,.8)}" height="${eh}"/>`}
+  return {html:`<svg viewBox="0 0 ${W} ${h}" preserveAspectRatio="none">${html}</svg>`,s}}
+function ticks(v){const n=5,sp=v[1]-v[0];let h='';for(let i=0;i<n;i++)h+=`<span>${fmt(v[0]+sp*i/(n-1),sp)}</span>`;return h}
+function chartHTML(id,hpx){return `<div class="chart" id="${id}" style="--h:${hpx}px"><div class="plot"><div class="plotsvg" style="height:100%"></div><div class="band"></div><div class="readout"></div></div><div class="ticks"></div></div>`}
+function fillChart(host,v,hpx){const b=bars(v,null,hpx);host.querySelector('.plotsvg').innerHTML=b.html;host.querySelector('.ticks').innerHTML=ticks(v);return b.s}
+function dragify(host,getView,onPick,{click=true}={}){
+  const band=host.querySelector('.band'),ro=host.querySelector('.readout'),plot=host.querySelector('.plot');
+  host.onpointerdown=e=>{if(e.button)return;const r=plot.getBoundingClientRect(),v=getView(),st=bucketFor(v)*1000,x0=e.clientX;let moved=false,A,B;
+    const T=x=>v[0]+Math.min(Math.max((x-r.left)/r.width,0),1)*(v[1]-v[0]);
+    host.setPointerCapture(e.pointerId);
+    host.onpointermove=ev=>{if(Math.abs(ev.clientX-x0)>6)moved=true;if(!moved)return;
+      const a=T(Math.min(x0,ev.clientX)),b=T(Math.max(x0,ev.clientX));
+      A=Math.floor(a/st)*st;B=Math.max(Math.ceil(b/st)*st,A+st);
+      const l=(A-v[0])/(v[1]-v[0])*100,w=(B-A)/(v[1]-v[0])*100;band.style.cssText=`display:block;left:${l}%;width:${w}%`;
+      ro.style.display='block';ro.textContent=fmt(A,36*H+1)+(B-A>=DAY?'':'')+' → '+fmt(B,36*H+1)+' · '+dur(B-A)+(B-A<MIN?' (min 1 min)':'');
+      ro.textContent=fmtFull(A).slice(4)+' → '+fmtFull(B).slice(4)+' · '+dur(B-A)+(B-A<MIN?' (min 1 min)':'');
+      const rw=ro.offsetWidth,cx=(l+w/2)/100*r.width;ro.style.left=Math.min(Math.max(cx-rw/2,4),r.width-rw-4)+'px'};
+    host.onpointerup=ev=>{host.onpointermove=host.onpointerup=null;band.style.display='none';ro.style.display='none';
+      if(moved)onPick([A,B]);else if(click){const t=T(ev.clientX);onPick([Math.floor(t/st)*st,Math.floor(t/st)*st+st])}}}}
+function brushHTML(){return `<div class="brush" id="brush"><div class="bsvg"></div><div class="sel"><span class="h l"></span><span class="h r"></span></div></div><div class="brushlab"><span id="bl0"></span><span id="bl1"></span></div>`}
+function brushFill(){const b=document.getElementById('brush');b.querySelector('.bsvg').innerHTML=bars(S.root,null,34).html;
+  const v=view(),sp=S.root[1]-S.root[0],sel=b.querySelector('.sel');sel.style.left=((v[0]-S.root[0])/sp*100)+'%';sel.style.width=((v[1]-v[0])/sp*100)+'%';
+  document.getElementById('bl0').textContent=fmtFull(S.root[0]);document.getElementById('bl1').textContent=fmtFull(S.root[1])}
+function brushWire(){const b=document.getElementById('brush');
+  b.onpointerdown=e=>{const sel=b.querySelector('.sel'),r=b.getBoundingClientRect(),sp=S.root[1]-S.root[0],T=x=>S.root[0]+(x-r.left)/r.width*sp;
+    const v=view().slice(),tg=e.target.classList.contains('l')?'l':e.target.classList.contains('r')?'r':sel.contains(e.target)?'m':'c';
+    b.setPointerCapture(e.pointerId);const t0=T(e.clientX);
+    if(tg==='c'){const h=(v[1]-v[0])/2,c=T(e.clientX);setTop([c-h,c+h]);return}
+    b.onpointermove=ev=>{const d=T(ev.clientX)-t0;if(tg==='m')setTop([v[0]+d,v[1]+d]);if(tg==='l')setTop([Math.min(v[0]+d,v[1]-MIN),v[1]]);if(tg==='r')setTop([v[0],Math.max(v[1]+d,v[0]+MIN)])};
+    b.onpointerup=()=>{b.onpointermove=b.onpointerup=null}}}
+function crumbsHTML(){return `<nav class="crumbs">`+S.stack.map((w,i)=>(i?'<span class="sep">›</span>':'')+(i===S.stack.length-1?`<span class="cur">${crumbLabel(w,i)}</span>`:`<button class="link" data-jump="${i}">${crumbLabel(w,i)}</button>`)).join('')+`</nav>`}
+function wireButtons(root){root.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>({back,earlier:()=>shift(-1),later:()=>shift(1),zin:zoomIn,zout:zoomOut,reset,invest:investigate,prev:backToPrev})[b.dataset.a]());
+  root.querySelectorAll('[data-jump]').forEach(b=>b.onclick=()=>jump(+b.dataset.jump))}
+function dis(){const v=view(),whole=v[1]-v[0]>=S.root[1]-S.root[0]-1;return {back:S.stack.length<2,earlier:v[0]<=S.root[0],later:v[1]>=S.root[1],zin:v[1]-v[0]<=2*MIN,zout:S.stack.length<2,reset:S.stack.length<2,invest:whole}}
+function applyDis(root){const d=dis();root.querySelectorAll('[data-a]').forEach(b=>{if(b.dataset.a in d)b.disabled=d[b.dataset.a]})}
+function investBanner(){const v=view();return S.invest?`<div class="banner"><span class="tag">Investigating</span><b>${range(S.invest)}</b><span class="note">Compared with the ${dur(S.invest[1]-S.invest[0])} before it.${qBtn('cmp','the comparison')}</span><button class="link" data-a="prev" title="Return to the previous analysis window">Back to ${S.trail.length>1?dur(S.trail[S.trail.length-1][1]-S.trail[S.trail.length-1][0]):'7 days'}</button><div style="flex-basis:100%">${helpD('cmp')}${helpE('cmp')}</div></div>`:''}
+const btnRow=()=>`<div class="btns"><button data-a="back">Back</button><button data-a="earlier">Earlier</button><button data-a="later">Later</button><button data-a="zin">Zoom in</button><button data-a="zout">Zoom out</button><button data-a="reset">Reset</button></div>`
+const investBtn=(cls='')=>`<button class="${cls}" data-a="invest" title="Make this window the real query window">Investigate this window</button>`;
+function statusLine(s){const v=view();return `<p class="hint" id="stat">${range(v)} · ${dur(v[1]-v[0])} · ${sstep(s/1000)} bars</p>`}
+
+// ---- variants
+const V={
+A:{name:'Strip + brush (as planned)',
+ build(){return `<div id="ban"></div><section class="strip"><div class="row"><div id="cr"></div>${btnRow()}</div>${brushHTML()}<div class="row"><p class="hint" id="stat"></p>${investBtn('primary')}</div></section>${chartHTML('c1',210)}<p class="hint" style="margin-top:6px">Drag on the chart to zoom to that window. Drag the brush to move it, its edges to resize it. Arrow keys move, +/− zoom.</p>`},
+ update(){document.getElementById('ban').innerHTML=investBanner();document.getElementById('cr').innerHTML=crumbsHTML();brushFill();const s=fillChart(document.getElementById('c1'),view(),210);
+   document.getElementById('stat').outerHTML=statusLine(s).replace('<p','<p');wireButtons(document.getElementById('stage'));applyDis(document.getElementById('stage'))},
+ wire(){brushWire();dragify(document.getElementById('c1'),view,pick)},
+ notes:'<b>Question:</b> is one always-on strip enough? Trail and actions on top, brush overview under them, chart below. Closest to the plan. Investigate is the single solid-accent action. Cost: the chart sits ~110 px lower than today.'},
+B:{name:'Navigator under chart',
+ build(){return helpBlock('intro','how to read this chart')+`<div id="ban"></div><div class="row" style="margin-bottom:2px"><div id="cr"></div><p class="hint" id="stat"></p></div>${helpBlock('trail','the zoom trail')}<div style="position:relative">${chartHTML('c1',230)}<div class="floatchip" id="fc"></div></div>${helpBlock('legend','the chart colours')}<p class="d" style="margin:10px 0 4px"><b style="color:var(--text);font-weight:600">Overview of the whole period</b></p>${helpBlock('nav','the overview strip')}<div>${brushHTML()}</div><div class="row" style="margin-top:10px"><div class="btns"><button data-a="back" title="Undo the last zoom">Back</button><button data-a="zin" title="Zoom closer on the middle of this window">Zoom in</button><button data-a="zout" title="Show a wider window">Zoom out</button><button data-a="reset" title="Back to the whole period">Reset</button></div><span class="hint">Keys: ← → move · + − zoom · Backspace back</span></div>${helpBlock('btns','the buttons')}${helpBlock('invest','Investigate this window')}`},
+ update(){document.getElementById('ban').innerHTML=investBanner();document.getElementById('cr').innerHTML=crumbsHTML();brushFill();const s=fillChart(document.getElementById('c1'),view(),230);
+   document.getElementById('stat').outerHTML=statusLine(s);const d=dis();document.getElementById('fc').innerHTML=d.invest?'':investBtn('primary');
+   wireButtons(document.getElementById('stage'));applyDis(document.getElementById('stage'))},
+ wire(){brushWire();dragify(document.getElementById('c1'),view,pick)},
+ notes:'<b>Chosen (B), now with beginner help.</b> Each part has a plain-English line; the round ? opens an "In simple words" (ELI10) line for that part, and the checkbox at the top opens all of them. Check: is it clear to a first-time user, and is the page too wordy once you know it?'},
+C:{name:'Zoom ladder',
+ build(){return `<div id="ban"></div><div class="ladder" id="lad"></div><div class="row" style="margin-top:10px"><div class="btns"><button data-a="back">Back</button><button data-a="zout">Zoom out</button><button data-a="reset">Reset</button></div>${investBtn('primary')}</div><p class="hint" style="margin-top:6px">Every level stays on screen. Drag on any row to re-cut from that level; the shaded box shows where the next row came from.</p>`},
+ update(){document.getElementById('ban').innerHTML=investBanner();const lad=document.getElementById('lad');lad.innerHTML='';
+   S.stack.forEach((w,i)=>{const last=i===S.stack.length-1,row=document.createElement('div');row.className='lrow'+(last?' last':'');
+     row.innerHTML=`<div class="meta"><b>${crumbLabel(w,i)}</b>${fmtFull(w[0])}<br>→ ${fmtFull(w[1])}</div><div>${chartHTML('r'+i,last?150:54)}</div>`;lad.appendChild(row);
+     const host=row.querySelector('.chart'),st=fillChart(host,w,last?150:54);
+     if(!last){const nx=S.stack[i+1],g=document.createElement('div');g.className='ghost';g.style.left=((nx[0]-w[0])/(w[1]-w[0])*100)+'%';g.style.width=((nx[1]-nx[0])/(w[1]-w[0])*100)+'%';host.querySelector('.plot').appendChild(g)}
+     dragify(host,()=>w,nw=>{nw=clampW(nw,w);if(nw[1]-nw[0]>=w[1]-w[0])return;S.stack=S.stack.slice(0,i+1);S.stack.push(nw);update()})});
+   document.getElementById('stat')&&0;wireButtons(document.getElementById('stage'));applyDis(document.getElementById('stage'))},
+ wire(){},
+ notes:'<b>Question:</b> is it better to see every level at once? No brush needed because each row is its own overview. Answers "which window was it" literally, and makes Back obvious. Cost: vertical space grows by about 70 px per level, so it needs a cap (collapse older rows past 4).'}
+};
+
+// ---- shell
+const keys=Object.keys(V);let cur=(new URLSearchParams(location.search).get('variant')||'B').toUpperCase();if(!V[cur])cur='A';
+function update(){V[cur].update()}
+function mount(){const st=document.getElementById('stage');st.innerHTML=V[cur].build();V[cur].update();V[cur].wire();
+  document.getElementById('vlabel').textContent=cur+' ('+V[cur].name+')';document.getElementById('notes').innerHTML=V[cur].notes}
+function go(k){cur=k;const u=new URL(location);u.searchParams.set('variant',k);history.replaceState(null,'',u);mount()}
+const idx=()=>keys.indexOf(cur);
+document.getElementById('prev').onclick=()=>go(keys[(idx()+keys.length-1)%keys.length]);
+document.getElementById('next').onclick=()=>go(keys[(idx()+1)%keys.length]);
+document.getElementById('theme').onclick=()=>{const r=document.documentElement;r.dataset.theme=r.dataset.theme==='light'?'dark':'light'};
+addEventListener('keydown',e=>{if(/INPUT|TEXTAREA/.test(e.target.tagName))return;
+  if(e.key==='ArrowLeft'&&e.shiftKey)document.getElementById('prev').click();
+  else if(e.key==='ArrowRight'&&e.shiftKey)document.getElementById('next').click();
+  else if(e.key==='ArrowLeft')shift(-1);else if(e.key==='ArrowRight')shift(1);
+  else if(e.key==='+'||e.key==='=')zoomIn();else if(e.key==='-')zoomOut();else if(e.key==='Backspace'||e.key==='Escape')back()});
+mount();
+</script></body></html>
