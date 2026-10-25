@@ -315,7 +315,7 @@ export const IMPORTER_HELP: Record<string, string> = {
   'mongod-json': 'The JSON log file that the MongoDB server writes.',
   'win-counters': 'A CSV file of Windows counters saved by typeperf or relog.',
   'win-events': 'A CSV export of Windows event log entries.',
-  'schedule-hangfire': 'A JSON export of the Hangfire recurring jobs.',
+  'schedule-hangfire': 'A CSV export of the Hangfire recurring jobs.',
   'schedule-agent': 'A CSV export of the SQL Server Agent jobs and their schedules.',
   'schedule-quartz': 'A log4net text log of an app that runs Quartz.NET, with the scheduler lines in it.',
   'sql-querystore': 'A CSV or JSON export of the Query Store runtime statistics.',
