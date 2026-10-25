@@ -43,6 +43,11 @@ func mapErr(op string, err error) error {
 	if errors.As(err, &errno) && (errno == windows.ERROR_ACCESS_DENIED || errno == windows.ERROR_PRIVILEGE_NOT_HELD) {
 		return &fs.PathError{Op: op, Path: "(path)", Err: ErrAccessDenied}
 	}
+	// A service that is not installed is "not found". The system error for it
+	// is not one errors.Is maps to fs.ErrNotExist.
+	if errors.As(err, &errno) && errno == windows.ERROR_SERVICE_DOES_NOT_EXIST {
+		return &fs.PathError{Op: op, Path: "(path)", Err: fs.ErrNotExist}
+	}
 	return &fs.PathError{Op: op, Path: "(path)", Err: err}
 }
 
