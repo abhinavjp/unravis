@@ -633,6 +633,8 @@ export const IMPORT_CAPS: Record<string, number> = {
   'mongod-json': 2 * GiB,
   'schedule-hangfire': 16 * MiB,
   'schedule-agent': 16 * MiB,
+  'schedule-quartz': 2 * GiB,
+  'sql-querystore': 512 * MiB,
   appinsights: 512 * MiB,
   'sql-xe': 512 * MiB,
   'sql-errorlog': 256 * MiB,
