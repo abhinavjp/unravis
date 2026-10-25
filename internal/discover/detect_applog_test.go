@@ -119,7 +119,7 @@ func TestLog4netRollingFileAppender(t *testing.T) {
 	if f.Kind != discover.KindLogSet || f.Files != 3 || f.Confidence != 90 {
 		t.Fatalf("kind=%s files=%d conf=%d", f.Kind, f.Files, f.Confidence)
 	}
-	if f.Shows != "discover.log4net.shows" || f.Detector != "applog" || f.HostLabel != "WEB-A" {
+	if f.Shows != "discover.log4net.shows" || f.Detector != "applog" || f.HostLabel != "local" {
 		t.Fatalf("finding fields: %+v", f)
 	}
 	paths := f.Paths()

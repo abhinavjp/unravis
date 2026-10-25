@@ -57,11 +57,8 @@ func (a *AppLog) Detect(ctx context.Context, env Env) ([]Finding, []Gap) {
 		r.addGap(Gap{Detector: r.name, Display: "applog", Reason: ReasonUnreadable})
 		return nil, r.gaps
 	}
-	if env.Machine != nil {
-		if names := env.Machine.Names(); len(names) > 0 {
-			r.host = names[0]
-		}
-	}
+	// Findings carry the local label, never the machine name (spec section 7).
+	r.host = hostLabelLocal
 	var dirs []string
 	if a.sites != nil {
 		dirs = append(dirs, a.sites(ctx)...)
