@@ -58,6 +58,9 @@
   function onMenuKey(event: KeyboardEvent) {
     if (event.key === 'Tab') { closeMenu(false); return; }
     const list = menuItems();
+    const active = document.activeElement;
+    // The Explain simply item is a native checkbox, which only Space toggles; Enter toggles it like every other menu item acts.
+    if (event.key === 'Enter' && active instanceof HTMLInputElement && active.type === 'checkbox') { event.preventDefault(); active.click(); return; }
     const next = nextMenuIndex(event.key, list.indexOf(document.activeElement as HTMLElement), list.length);
     if (next != null) { event.preventDefault(); list[next].focus(); }
   }
@@ -84,7 +87,7 @@
   <div class="actions">
     <div class="status">
     {#if info}<span class:demo-badge={info.demo} class="mode-badge badge" title={info.demo ? 'Demo data. Reference time ' + referenceTime : 'Live mode'}>{info.demo ? 'Demo data' : 'Live mode'}</span>{/if}
-    {#if info?.demo}<span class="updated-label reference">Data reference time <time>{referenceTime}</time></span>{/if}
+    {#if info?.demo}<span class="updated-label reference"><span class="ref-full">Data reference time</span><span class="ref-short" aria-hidden="true">Ref.</span> <time>{referenceTime}</time></span>{/if}
     {#if info && !app.firstRun}
       <SourcePopover groups={app.connectionGroups} selectedIds={scope.query.sourceIds} total={app.sources.length} demo={info.demo} busyDelete={conn.busyDelete} sourceError={conn.sourceError} sourceSuccess={conn.sourceSuccess} savedCount={conn.recentConnections.length}
         onToggle={(id, checked) => { scope.query.sourceIds = checked ? [...scope.query.sourceIds.filter(item => item !== id), id] : scope.query.sourceIds.filter(item => item !== id); onScopeChange(); }}
@@ -144,6 +147,12 @@
   .utilities { gap: 4px; padding-left: 12px; border-left: 1px solid var(--line); }
   .utilities > :global(.zone-toggle) { margin: 0 4px; }
   .reference { display: none; }
+  .ref-short { display: none; }
+  /* Between 1200 and 1279px the label shortens to "Ref." so the bar still fits; the full words stay for screen readers. */
+  @media (max-width: 1279px) {
+    .ref-full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .ref-short { display: inline; }
+  }
   .badge { display: none; }
   .more { position: relative; }
   .more-menu { position: absolute; z-index: 30; right: 0; top: calc(100% + 6px); min-width: 170px; margin: 0; padding: 4px; list-style: none; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: 0 12px 32px color-mix(in srgb, var(--bg) 70%, transparent); }
@@ -156,8 +165,8 @@
   .crumb-reference { display: none; margin-left: auto; flex-shrink: 0; color: var(--text-2); font-size: 12px; white-space: nowrap; }
 
   @media (min-width: 720px) { .badge { display: inline-block; } .crumb-reference { display: inline; } }
-  /* The switch takes room, so the reference time stays on the breadcrumb bar until the bar can hold both. */
-  @media (min-width: 1320px) { .reference { display: inline; } .crumb-reference { display: none; } }
+  /* The reference time sits in the header from 1200px (the switch shortens to "Simple" below 1320px to make the room). */
+  @media (min-width: 1200px) { .reference { display: inline; } .crumb-reference { display: none; } }
   @media (min-width: 1100px) {
     /* The evidence drawer is fixed at the right; keep the trail clear of it. */
     :global(.app-shell:has(.stage.with-drawer)) .crumbbar { padding-right: calc(var(--drawer-w) + 24px); }

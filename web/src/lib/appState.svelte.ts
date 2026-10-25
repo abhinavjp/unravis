@@ -26,7 +26,7 @@ import { phaseSegments } from './phases';
 import { rollupFor } from './traffic';
 import { createViewHistory, describeView, parseViewHash, type View } from './wayfinding';
 import { hourWindowQuery, type RollupWindow } from './rollup';
-import { backTarget, planInvestigation, popTrail, rootOf, type TrailEntry } from './promote';
+import { backTarget, planBack, planInvestigation, rootOf, type TrailEntry } from './promote';
 import { zoomView } from './zoomView.svelte';
 
 let info = $state<Info | null>(null);
@@ -991,15 +991,17 @@ export function investigateWindow() {
 }
 /** Undo the last promotion: restore the earlier window and reopen the lens on the window that was investigated. Replaces a run still in flight. */
 export function backToPreviousWindow() {
-  if (!backTarget(windowTrail, query)) return;
-  const popped = popTrail(windowTrail);
-  if (!popped.entry) return;
-  windowTrail = popped.trail;
-  Object.assign(query, popped.entry.from);
+  // Panel edits not run yet: not the run in flight (Back replaces that one), nor the one on screen.
+  const covered = inflightSignature || (analysis ? queryFingerprint(analysis.query) : '');
+  const plan = planBack({ trail: windowTrail, current: query, scope: query, unapplied: querySignature !== covered, datesValid: dateInputsValid });
+  if (!plan.ok) { if (plan.reason) zoomView.notify(plan.reason); return; }
+  windowTrail = plan.trail;
+  Object.assign(query, plan.entry.from);
   dateInputsValid = true;
   controlsResetKey++;
-  zoomView.expect(rootOf(popped.entry.from), popped.entry.lens);
-  void runAnalysis(true);
+  zoomView.expect(rootOf(plan.entry.from), plan.entry.lens);
+  void runAnalysis(true).then(() => { if (!loading && error) zoomView.cancelExpect(); });
+  if (!loading) zoomView.cancelExpect(); // no run started: nothing may reopen the lens later
 }
 export function removeChip(chip: FilterChip) { applyChipPatch(query, chip); controlsResetKey++; onScopeChange(); }
 export function clearChips() { for (const chip of filterChipList) applyChipPatch(query, chip); controlsResetKey++; onScopeChange(); }

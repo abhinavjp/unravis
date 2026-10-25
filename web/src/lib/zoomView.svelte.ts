@@ -192,6 +192,8 @@ export const zoomView = {
   },
   /** The next `follow` whose queried window is `root` opens on `lens`. Any `follow` that brings a new analysis clears this. */
   expect(root: ZoomWindow, lens: ZoomWindow): void { pending = { root: { start: root.start, end: root.end }, lens: { start: lens.start, end: lens.end } }; },
+  /** Drop a lens `expect` armed, for a run that did not start or did not finish. */
+  cancelExpect(): void { pending = null; },
   /** A drag from one slot to another (either order). */
   zoomIndexRange(from: number, to: number): boolean {
     if (!stack || !bucket || !slots.length) return false;
