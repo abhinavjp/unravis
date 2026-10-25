@@ -9,11 +9,14 @@
   import ResourcePanel from '../../components/ResourcePanel.svelte';
   import type { Span } from '../resourceSpan';
   import { results } from '../appState.svelte';
+  import { DISCOVER_TEXT } from '../copy/discoverCopy';
+  import DiscoverEntry from '../../components/DiscoverEntry.svelte';
 
   // What a case offers once files are in it: a timeline against the audit window on screen, and a redacted export.
   // Both are read-only. The export is previewed whole first and only what the preview showed is saved.
   // The parent gives each case its own copy of this component ({#key}), so nothing here carries over to another case.
-  let { caseId, query, zone, span = null, onGone }: { caseId: string; query: Query; zone: string; span?: Span | null; onGone?: () => void } = $props();
+  // onDiscover opens the "This computer" panel. Without it the entry is not shown.
+  let { caseId, query, zone, span = null, onGone, onDiscover }: { caseId: string; query: Query; zone: string; span?: Span | null; onGone?: () => void; onDiscover?: () => void } = $props();
 
   let timeline = $state.raw<TimelineView | null>(null);
   let timelineBusy = $state(false);
@@ -137,6 +140,13 @@
     }
   }
 </script>
+
+{#if onDiscover}
+  <section class="tools" aria-labelledby="discover-tool-heading">
+    <h3 id="discover-tool-heading">{DISCOVER_TEXT.heading}</h3>
+    <div class="actions"><DiscoverEntry onOpen={onDiscover} help /></div>
+  </section>
+{/if}
 
 <section class="tools" aria-labelledby="timeline-tool-heading">
   <h3 id="timeline-tool-heading">{IMPORT_TEXT.timelineHeading}</h3>
