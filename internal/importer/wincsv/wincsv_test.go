@@ -33,7 +33,7 @@ func TestPrepareRefusals(t *testing.T) {
 		"zip":  {"PK\x03\x04abc", importer.ReasonArchive},
 		"gzip": {"\x1f\x8bxx", importer.ReasonArchive},
 		"nul":  {"a,b\x00c\n", importer.ReasonUnsupportedFormat},
-		"evtx": {"ElfFile\x00zz", importer.ReasonUnsupportedFormat},
+		"evtx": {"ElfFile\x00zz", importer.ReasonBinaryEVTX},
 	} {
 		_, err := open(t, in.data, importer.Limits{})
 		var qe *importer.QuarantineError

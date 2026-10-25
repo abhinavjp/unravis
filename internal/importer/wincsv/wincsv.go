@@ -39,10 +39,6 @@ const (
 	maxAttrBytes     = 256
 )
 
-// evtxMagic is the Windows event log (.evtx) file signature. A .blg performance
-// log has no text header; binary input of any kind is caught by the NUL check.
-var evtxMagic = []byte("ElfFile\x00")
-
 // MergeLimits fills zero fields of l from def, then from the section 4 defaults.
 // A negative MaxBytes, MaxRows or MaxEvents is kept: it means no limit.
 func MergeLimits(l, def importer.Limits) importer.Limits {
@@ -67,8 +63,9 @@ func MergeLimits(l, def importer.Limits) importer.Limits {
 	return l.WithDefaults()
 }
 
-// Prepare applies the byte cap and refuses archives (importer.Sniff), .evtx files
-// and other binary input (a NUL in the head of a file that does not start with a
+// Prepare applies the byte cap and refuses archives and known binary families
+// (importer.Sniff: .evtx, .blg and the others, each with its own reason), then
+// any other binary input (a NUL in the head of a file that does not start with a
 // UTF-16 BOM) as unsupported-format. The returned reader still yields every byte.
 // lim must already be merged. Read errors come back unchanged.
 func Prepare(r io.Reader, lim importer.Limits) (io.Reader, error) {
@@ -92,7 +89,7 @@ func prepare(r io.Reader, lim importer.Limits) (*bufio.Reader, error) {
 		return nil, e
 	}
 	utf16BOM := bytes.HasPrefix(head, []byte{0xFF, 0xFE}) || bytes.HasPrefix(head, []byte{0xFE, 0xFF})
-	if bytes.HasPrefix(head, evtxMagic) || (!utf16BOM && bytes.IndexByte(head, 0) >= 0) {
+	if !utf16BOM && bytes.IndexByte(head, 0) >= 0 {
 		return nil, &importer.QuarantineError{Reason: importer.ReasonUnsupportedFormat}
 	}
 	return br, nil

@@ -1097,20 +1097,23 @@ func (h *handler) importFile(ctx context.Context, w http.ResponseWriter, id case
 		return
 	}
 	tracked := &trackedReader{r: part}
-	var body io.Reader = tracked
 	answer := importAnswer{Tied: []string{}}
+	// Peek the first 64 KiB once. Archives and binary exports that cannot be read
+	// in pure Go are refused here with the exact reason, whether or not an importer
+	// was named (sniff.go: by content, and by extension only on binary bytes).
+	br := bufio.NewReaderSize(tracked, importer.HeadSize)
+	head, perr := br.Peek(importer.HeadSize)
+	if perr != nil && !errors.Is(perr, io.EOF) && !errors.Is(perr, bufio.ErrBufferFull) {
+		h.writeImportError(w, perr, tracked, casestore.ImportResult{})
+		return
+	}
+	if err := importer.SniffNamed(head, fileName); err != nil {
+		h.writeImportError(w, err, tracked, casestore.ImportResult{})
+		return
+	}
+	var body io.Reader = br
 	if imp == nil {
-		// Preview without an importer: detect it from the first 64 KiB.
-		br := bufio.NewReaderSize(tracked, importer.HeadSize)
-		head, err := br.Peek(importer.HeadSize)
-		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, bufio.ErrBufferFull) {
-			h.writeImportError(w, err, tracked, casestore.ImportResult{})
-			return
-		}
-		if err := importer.Sniff(head); err != nil {
-			h.writeImportError(w, err, tracked, casestore.ImportResult{})
-			return
-		}
+		// Preview without an importer: detect it from the head.
 		best, score, tied := h.registry.Detect(head, fileName)
 		if best == nil {
 			writeCaseFailure(w, http.StatusUnprocessableEntity, string(importer.ReasonUnsupportedFormat), importer.ReasonUnsupportedFormat.Text())
@@ -1122,7 +1125,7 @@ func (h *handler) importFile(ctx context.Context, w http.ResponseWriter, id case
 			writeJSON(w, http.StatusOK, answer, maxResponseBytes)
 			return
 		}
-		imp, body = best, br
+		imp = best
 	}
 	answer.Importer = imp.Name()
 

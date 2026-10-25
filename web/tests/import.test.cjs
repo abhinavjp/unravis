@@ -502,3 +502,58 @@ test('the new components talk to the server only through cases.ts and render tex
     assert.doesNotMatch(source, /\b(?:let|const|var)\s+state\b/, name);
   }
 });
+
+/* ------------------------------------------------------------------ binary exports that are never read */
+
+const BINARY_STEPS = {
+  'binary-blg': ['relog file.blg -f csv -o file.csv', /performance log/i],
+  'binary-etl': ['tracerpt file.etl -of CSV', /trace file/i],
+  'binary-nettrace': ['dotnet-counters', /dotnet-trace/i],
+  'binary-evtx': ['Get-WinEvent', /event log/i],
+  'binary-bson': ['mongoexport', /MongoDB/],
+  'binary-xel': ['sys.fn_xe_file_target_read_file', /extended events/i],
+  'binary-rdb': ['SLOWLOG GET', /Redis/]
+};
+
+test('each binary family has its own plain sentence with the exact conversion step', () => {
+  for (const [reason, [step, what]] of Object.entries(BINARY_STEPS)) {
+    const text = importCopy.reasonText(reason);
+    assert.ok(text, reason + ' has text');
+    assert.ok(text.includes(step), reason + ' names the step: ' + step);
+    assert.match(text, what, reason + ' says what the file is');
+    assert.notEqual(text, importCopy.REASON_TEXT['unsupported-format'], reason + ' is not the generic sentence');
+    assert.ok(text.split(/(?<=[.!?])\s+/).every((sentence) => sentence.split(/\s+/).length <= 20), reason + ' keeps sentences short');
+    // The sentence goes through the same path as every other refusal, with no column added and no server text.
+    assert.equal(importCopy.errorText({ status: 422, reason, message: 'SENTINEL-7f3a' }), text);
+  }
+  // Speedscope is not a way out, and a raw event log goes out as CSV.
+  assert.match(importCopy.REASON_TEXT['binary-nettrace'], /Speedscope/);
+  assert.match(importCopy.REASON_TEXT['binary-evtx'], /CSV/);
+});
+
+test('the binary sentences are linted: short words, no cause words, in the lint list', () => {
+  const entries = importCopy.importCopyEntries();
+  const ids = new Set(entries.map((e) => e.id));
+  for (const reason of Object.keys(BINARY_STEPS)) assert.ok(ids.has('import.reason.' + reason), reason + ' is linted');
+  const binary = entries.filter((e) => e.id.startsWith('import.reason.binary-'));
+  assert.equal(binary.length, Object.keys(BINARY_STEPS).length);
+  assert.deepEqual(lintCopy(binary, deck.terms), []);
+  assert.doesNotMatch(binary.map((e) => e.text).join('\n'), /\b(?:caused|cause|because|due to|proven|proof|leak|corrupt)\w*\b/i);
+});
+
+test('every binary reason the server can send has words here', () => {
+  // reasons.go is the list the server sends. A new binary-* value there must reach the screen copy.
+  const go = read('../internal/importer/reasons.go');
+  const sent = [...go.matchAll(/Reason\w*\s*(?:Reason\s*)?=\s*"(binary-[a-z]+)"/g)].map((m) => m[1]).sort();
+  assert.deepEqual(sent, Object.keys(BINARY_STEPS).sort());
+  for (const reason of sent) assert.ok(importCopy.reasonText(reason), reason + ' has text');
+});
+
+test('a binary refusal from the server reaches the screen as its own sentence', async () => {
+  mockServer(() => ({ status: 422, body: { error: 'refused', reason: 'binary-blg' } }));
+  // A file called .csv is refused by what it holds. The screen shows only the reason's words, never the file name.
+  await assert.rejects(
+    cases.previewImport({ caseId: CASE_ID, file: synthetic('counters.csv', 'PERF'), importer: 'win-counters' }),
+    (e) => e.reason === 'binary-blg' && !e.column && importCopy.errorText(e) === importCopy.REASON_TEXT['binary-blg'] && !/counters/.test(importCopy.errorText(e))
+  );
+});

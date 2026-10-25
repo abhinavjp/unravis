@@ -193,14 +193,14 @@ func TestProfileKeepsOnlyFixedWords(t *testing.T) {
 	}
 }
 
-// FTDC diagnostic.data is binary BSON: refused as an unsupported format by every importer.
+// FTDC diagnostic.data is binary BSON: refused by every importer (the BSON family, from the shared sniff).
 func TestFTDCRefused(t *testing.T) {
 	// int32 length, 0x09 (date element), "_id\0", int64 millis, then more bytes.
 	ftdc := []byte{0x40, 0x00, 0x00, 0x00, 0x09, '_', 'i', 'd', 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x03, 'd', 'o', 'c'}
 	for _, c := range configs {
 		evs, _, err := parse(t, c.mk(), ftdc, c.opts)
 		var q *importer.QuarantineError
-		if !errors.As(err, &q) || q.Reason != importer.ReasonUnsupportedFormat || len(evs) != 0 {
+		if !errors.As(err, &q) || q.Reason != importer.ReasonBinaryBSON || len(evs) != 0 {
 			t.Errorf("%s: FTDC head: %d events, %v", c.name, len(evs), err)
 		}
 		if got := c.mk().Detect(ftdc, "metrics.2001-09-09T01-00-00Z-00000"); got != 0 {

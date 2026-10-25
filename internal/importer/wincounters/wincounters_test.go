@@ -233,9 +233,10 @@ func TestHeaderProblems(t *testing.T) {
 			"blg":  append([]byte("PERF\x01\x00\x00\x00"), make([]byte, 64)...),
 			"evtx": append([]byte("ElfFile\x00"), make([]byte, 64)...),
 		} {
+			want := map[string]importer.Reason{"evtx": importer.ReasonBinaryEVTX, "blg": importer.ReasonBinaryBLG}[name]
 			_, _, err := parse(t, data, opts(8, synthetic))
 			var qe *importer.QuarantineError
-			if !errors.As(err, &qe) || qe.Reason != importer.ReasonUnsupportedFormat {
+			if !errors.As(err, &qe) || qe.Reason != want {
 				t.Errorf("%s: got %v", name, err)
 			}
 		}

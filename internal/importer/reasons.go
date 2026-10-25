@@ -19,12 +19,23 @@ const (
 	ReasonArchive           Reason = "archive-extract-first"
 	ReasonTZMismatch        Reason = "tz-mismatch"
 	ReasonRejectFraction    Reason = "reject-fraction"
+
+	// Binary families (sniff.go): exports that cannot be read in pure Go. Each is
+	// refused from the head alone, and the web copy holds the conversion step.
+	ReasonBinaryBLG      Reason = "binary-blg"
+	ReasonBinaryETL      Reason = "binary-etl"
+	ReasonBinaryNettrace Reason = "binary-nettrace"
+	ReasonBinaryEVTX     Reason = "binary-evtx"
+	ReasonBinaryBSON     Reason = "binary-bson"
+	ReasonBinaryXEL      Reason = "binary-xel"
+	ReasonBinaryRDB      Reason = "binary-rdb"
 )
 
 var allReasons = []Reason{
 	ReasonFieldCount, ReasonBadTime, ReasonTZUnlabelled, ReasonDSTAmbiguous, ReasonDSTNonexistent,
 	ReasonBadNumber, ReasonLineTooLong, ReasonEncoding, ReasonUnknownHost, ReasonUnscrubbedColumn,
 	ReasonUnsupportedFormat, ReasonArchive, ReasonTZMismatch, ReasonRejectFraction,
+	ReasonBinaryBLG, ReasonBinaryETL, ReasonBinaryNettrace, ReasonBinaryEVTX, ReasonBinaryBSON, ReasonBinaryXEL, ReasonBinaryRDB,
 }
 
 // AllReasons lists every Reason, in declaration order.
@@ -71,6 +82,20 @@ func (r Reason) Text() string {
 		return "time zone does not match the file"
 	case ReasonRejectFraction:
 		return "too many rows rejected"
+	case ReasonBinaryBLG:
+		return "binary performance log, convert to CSV first"
+	case ReasonBinaryETL:
+		return "binary trace log, convert to CSV or text first"
+	case ReasonBinaryNettrace:
+		return "binary dotnet-trace file, not read"
+	case ReasonBinaryEVTX:
+		return "raw event log, export to CSV first"
+	case ReasonBinaryBSON:
+		return "binary MongoDB dump, export to JSON first"
+	case ReasonBinaryXEL:
+		return "binary extended events file, export to CSV or XML first"
+	case ReasonBinaryRDB:
+		return "binary Redis snapshot, not read"
 	}
 	return "refused"
 }
