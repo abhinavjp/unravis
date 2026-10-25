@@ -139,12 +139,12 @@ test('a clicked day in a zone with a clock change is the 23 or 25 hour local day
   const child = z.childWindow(range, sunday, zone, range);
   assert.deepEqual(child, { start: at('2001-10-28T04:00:00Z'), end: at('2001-10-29T05:00:00Z') });
   assert.equal(child.end - child.start, 25 * HOUR);
-  // A 25 hour day is still the day level, and it shows hourly with every slot inside 120 points.
+  // A 25 hour day is still the day level, and it shows in 15 minute bars with every slot inside 120 points.
   const stack = z.zoomIntoSlot(z.createStack(range), sunday, zone);
   assert.equal(z.levelOf(stack), 'day');
   const bucket = z.bucketForView(child);
-  assert.equal(bucket.seconds, 3600);
-  assert.equal(z.slotsOf(child, bucket.seconds).length, 25);
+  assert.equal(bucket.seconds, 900);
+  assert.equal(z.slotsOf(child, 900).length, 100);
   // The first day of a window that starts mid-day is cut to the window.
   const midday = { start: at('2001-10-26T15:00:00Z'), end: at('2001-11-02T15:00:00Z') };
   const first = z.childWindow(midday, { start: at('2001-10-26T15:00:00Z'), end: at('2001-10-27T00:00:00Z') }, 'UTC', midday);
@@ -278,15 +278,31 @@ test('the interval keeps every view at 120 points or fewer, with the 10 and 86,4
       assert.equal(choice.raised, false);
     }
   }
-  // The level sets a round interval: hours for a day, minutes for an hour, 10 seconds for a minute.
+  // The automatic interval is the smallest step on the ladder, at least 10 seconds, that keeps the view and its reference at 120 points.
   const pick = (width) => z.bucketForView({ start: week.start, end: week.start + width }).seconds;
-  assert.equal(pick(DAY), 3600);
-  assert.equal(pick(HOUR), 60);
-  assert.equal(pick(MIN), 10);
+  const cases = [[MIN, 10], [5 * MIN, 10], [17 * MIN, 10], [HOUR, 30], [90 * MIN, 60], [3 * HOUR, 120], [5 * HOUR, 180],
+    [23 * HOUR, 900], [DAY, 900], [36 * HOUR, 1800], [2 * DAY, 1800], [3 * DAY, 3600], [7 * DAY, 7200]];
+  for (const [width, seconds] of cases) assert.equal(pick(width), seconds, width / MIN + ' min');
   assert.ok(pick(7 * DAY) >= 5040, 'a long window follows the app rule');
   assert.equal(z.slotsOf(week, 86_400).length, 7);
   const long = z.slotsOf({ start: 0, end: 400 * DAY }, 10);
   assert.equal(long.length, 120, 'slots are capped');
+});
+
+test('the automatic interval draws 60 to 120 bars for any view of 20 minutes or more', () => {
+  const base = at('2001-10-22T00:00:00Z');
+  const widths = [];
+  for (let width = 20 * MIN; width < 7 * DAY; width += 7 * MIN) widths.push(width);
+  widths.push(20 * MIN, 7 * DAY);
+  for (const width of widths) {
+    for (const offset of [0, 7 * MIN, 31 * MIN]) {
+      const view = { start: base + offset, end: base + offset + width };
+      const choice = z.bucketForView(view);
+      assert.ok(choice, 'a choice for ' + width / MIN + ' min at +' + offset / MIN + ' min');
+      const bars = z.slotsOf(view, choice.seconds).length;
+      assert.ok(bars >= 60 && bars <= 120, bars + ' bars for ' + width / MIN + ' min at +' + offset / MIN + ' min (' + choice.seconds + ' s)');
+    }
+  }
 });
 
 test('the interval the user set still wins, and is raised only when it would pass 120 points', () => {
@@ -393,7 +409,7 @@ test('the strip model shows the trail, the level, and which buttons are off', ()
   assert.equal(model.canEarlier, true);
   assert.equal(model.canLater, true);
   assert.match(model.rangeLine, /^Showing 24 Oct 14:00 to 15:00 UTC\.$/);
-  assert.equal(model.intervalLine, 'Interval: 1 minute (automatic).');
+  assert.equal(model.intervalLine, 'Interval: 30 seconds (automatic).');
   assert.match(model.asOfLine, /^As of 14:03:22 UTC\.$/);
   assert.match(model.scopeLine, /still cover the whole period: 22 Oct 00:00 to 29 Oct 00:00 UTC\./);
   assert.ok(model.referenceLine.length > 0);

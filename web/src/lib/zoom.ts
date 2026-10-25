@@ -116,8 +116,7 @@ export function referenceFor(view: ZoomWindow): ZoomWindow { const width = width
 
 export type BucketSource = 'automatic' | 'manual';
 export interface BucketChoice { seconds: number; source: BucketSource; /** The user's number would give more than 120 points, so a longer one was used. */ raised: boolean; asked: number | null }
-const LADDER = [10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10_800, 21_600, 43_200, 86_400];
-const PREFERRED: Record<ZoomLevel, number> = { window: 0, day: 3600, hour: 60, minute: 10 };
+const LADDER = [10, 15, 30, 60, 120, 180, 300, 600, 900, 1800, 3600, 7200, 10_800, 21_600, 43_200, 86_400];
 const iso = (ms: number) => new Date(ms).toISOString();
 const fits = (view: ZoomWindow, seconds: number) => countEpochBuckets(view.start, view.end, seconds) <= MAX_POINTS && countEpochBuckets(referenceFor(view).start, referenceFor(view).end, seconds) <= MAX_POINTS;
 /** The smallest width at or above `seconds` that keeps both the view and its reference at 120 points or fewer. Null when none does. */
@@ -130,22 +129,20 @@ function fitSeconds(view: ZoomWindow, seconds: number, onLadder: boolean): numbe
 }
 /**
  * The interval for a view. A number the user set still wins, unless it would give more than 120 points, in which case the next
- * length that fits is used and `raised` says so. Otherwise the level picks it: hours for a day, minutes for an hour, 10 seconds
- * for a minute, and the app's own rule (bucketForWindows) for a long window. Null for a window that cannot be drawn.
+ * length that fits is used and `raised` says so. Otherwise it is the smallest step on the ladder, at least 10 seconds, that keeps
+ * both the view and its reference at 120 points or fewer. Null for a window that cannot be drawn.
  */
 export function bucketForView(view: ZoomWindow, options: { manualSeconds?: number | null } = {}): BucketChoice | null {
   if (!isWindow(view)) return null;
   const level = levelForWidth(widthOf(view));
   if (!level) return null;
-  const ref = referenceFor(view);
   const manual = options.manualSeconds;
   if (typeof manual === 'number' && Number.isFinite(manual) && manual > 0) {
     const asked = Math.min(MAX_BUCKET_SECONDS, Math.max(MIN_BUCKET_SECONDS, Math.round(manual)));
     const used = fitSeconds(view, asked, false);
     return used == null ? null : { seconds: used, source: 'manual', raised: used !== asked, asked: Math.round(manual) };
   }
-  const floor = bucketForWindows(iso(view.start), iso(view.end), iso(ref.start), iso(ref.end));
-  const used = fitSeconds(view, Math.max(PREFERRED[level], floor), true);
+  const used = fitSeconds(view, MIN_BUCKET_SECONDS, true);
   return used == null ? null : { seconds: used, source: 'automatic', raised: false, asked: null };
 }
 /** The query for one zoomed read: the same filters, the view as the window, the equal-length window before it as the reference. */
