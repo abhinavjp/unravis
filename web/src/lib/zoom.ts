@@ -399,6 +399,10 @@ export function zoomBlockedNotice(stack: ZoomStack, slot: Pick<ZoomSlot, 'start'
 
 export interface Crumb { index: number; label: string; current: boolean }
 export interface OverviewModel { bars: number[]; left: number; width: number; hasData: boolean; alt: string }
+/** One edge of a window in words, to the second when the window is under ten minutes wide. The brush's spoken values use this. */
+export function brushEdgeText(ms: number, view: ZoomWindow, zone: string): string {
+  return chartTime(ms, zone, { seconds: widthOf(view) < 10 * MINUTE });
+}
 /** The overview brush: the queried window, the view inside it, the step an edge moves by, and the two edges in words (for screen readers). */
 export interface BrushModel { rootStart: number; rootEnd: number; viewStart: number; viewEnd: number; stepMs: number; startText: string; endText: string }
 export interface StripModel {
@@ -441,7 +445,7 @@ export function stripModel(input: StripInput): StripModel {
     canBack: canBack(stack), canEarlier: canShift(stack, -1, zone), canLater: canShift(stack, 1, zone), canIn: canScale(stack, 'in'), canOut: canScale(stack, 'out'), canReset: !top,
     brush: {
       rootStart: stack.root.start, rootEnd: stack.root.end, viewStart: view.start, viewEnd: view.end, stepMs: Math.max(MIN_BUCKET_SECONDS * SECOND, (bucket?.seconds ?? 0) * SECOND),
-      startText: chartTime(view.start, zone, { seconds: widthOf(view) < 10 * MINUTE }), endText: chartTime(view.end, zone, { seconds: widthOf(view) < 10 * MINUTE })
+      startText: brushEdgeText(view.start, view, zone), endText: brushEdgeText(view.end, view, zone)
     },
     hint: zoomCopy.hint,
     overview: { bars: peak > 0 ? bars.map(count => count / peak) : bars.map(() => 0), left, width, hasData: peak > 0, alt: zoomText.overviewAlt(chartRange(view.start, view.end, zone, { seconds: false }), durationLabel(rootWidth)) }

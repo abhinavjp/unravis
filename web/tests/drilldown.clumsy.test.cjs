@@ -99,33 +99,32 @@ test('a brush drag with a step that is zero, negative, NaN or infinite changes n
   assert.equal(b.brushKey('end', 'End', week, { start: 4, end: 4 }, 900_000), null);
 });
 
-test('dragging a new range backwards, or with no width, grows to the 1 minute floor inside the root', () => {
+test('dragging a new range backwards is ordered, and one with no width (both ends on one grid point) changes nothing', () => {
   const view = { start: week.start + DAY, end: week.start + 2 * DAY };
   const step = 10 * SEC;
   const mid = week.start + 3 * DAY;
   const backwards = b.brushDrag('new', week, view, mid + HOUR, mid, step);
   assert.deepEqual(backwards, { start: mid, end: mid + HOUR });
-  const flat = b.brushDrag('new', week, view, mid, mid, step);
-  assert.equal(flat.end - flat.start, MIN);
-  assert.equal(flat.start, mid);
-  // Zero width at the very end of the root grows backwards, not past it.
-  const atEnd = b.brushDrag('new', week, view, week.end, week.end, step);
-  assert.deepEqual(atEnd, { start: week.end - MIN, end: week.end });
+  // Changed: a zero-width drag used to grow to a one-minute window; it is now a no-op.
+  assert.deepEqual(b.brushDrag('new', week, view, mid, mid, step), view);
+  assert.deepEqual(b.brushDrag('new', week, view, week.end, week.end, step), view);
+  // A short drag on a coarse step (a 40 minute drag with a 2 hour step) is a no-op too, never a one-minute window.
+  assert.deepEqual(b.brushDrag('new', week, view, mid + 10 * MIN, mid + 50 * MIN, 2 * HOUR), view);
   // A drag that ends outside the track on either side is held at that side.
   assert.deepEqual(b.brushDrag('new', week, view, mid, week.end + 40 * DAY, step), { start: mid, end: week.end });
   assert.deepEqual(b.brushDrag('new', week, view, mid, week.start - 40 * DAY, step), { start: week.start, end: mid });
 });
 
-test('dragging an edge across the other edge swaps them instead of inverting the view, and an edge cannot pass the floor', () => {
+test('dragging an edge across the other edge stops one floor short of it instead of inverting or leaving the view', () => {
   const view = { start: week.start + DAY, end: week.start + 2 * DAY };
   const step = 15 * MIN;
   const crossed = b.brushDrag('start', week, view, view.start, view.end + 6 * HOUR, step);
-  assert.deepEqual(crossed, { start: view.end, end: view.end + 6 * HOUR });
+  assert.deepEqual(crossed, { start: view.end - step, end: view.end });
   const crossedEnd = b.brushDrag('end', week, view, view.end, view.start - 6 * HOUR, step);
-  assert.deepEqual(crossedEnd, { start: view.start - 6 * HOUR, end: view.start });
-  // Pressing the end edge and landing on the start edge leaves the floor, never zero.
+  assert.deepEqual(crossedEnd, { start: view.start, end: view.start + step });
+  // Pressing the end edge and landing on the start edge leaves one step (at least a minute), never zero.
   const squash = b.brushDrag('end', week, view, view.end, view.start, step);
-  assert.equal(squash.end - squash.start, MIN);
+  assert.equal(squash.end - squash.start, step);
   assert.ok(squash.start >= week.start && squash.end <= week.end);
 });
 
@@ -219,9 +218,10 @@ test('brushHit on a track that was pressed outside it, or on a collapsed selecti
   assert.equal(b.brushHit(9, { left: 0.3, right: 0.7 }, 0.01), 'new');
   // With nothing finite to compare, nothing is grabbed as an edge or the body.
   assert.equal(b.brushHit(NaN, { left: 0.3, right: 0.7 }, 0.01), 'new');
-  // A big handle on a thin selection prefers the nearer edge.
-  assert.equal(b.brushHit(0.31, { left: 0.3, right: 0.32 }, 0.05), 'start');
-  assert.equal(b.brushHit(0.319, { left: 0.3, right: 0.32 }, 0.05), 'end');
+  // A big handle on a thin selection prefers the nearer edge, and keeps the middle third as the body.
+  assert.equal(b.brushHit(0.302, { left: 0.3, right: 0.32 }, 0.05), 'start');
+  assert.equal(b.brushHit(0.318, { left: 0.3, right: 0.32 }, 0.05), 'end');
+  assert.equal(b.brushHit(0.31, { left: 0.3, right: 0.32 }, 0.05), 'move');
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -680,3 +680,26 @@ test('every new zoom string passes the copy lint', () => {
   assert.ok(entries.length >= 30);
   assert.deepEqual(lintScreenStrings(entries, deck.terms), []);
 });
+
+test('hostile brush drags on a 7 day root with a 2 hour step never make a sliver, never cross, and sit on the epoch grid inside the root', () => {
+  const rootWin = { start: Date.parse('2001-10-22T14:37:12.345Z'), end: Date.parse('2001-10-29T14:37:12.345Z') };
+  const step = 2 * HOUR;
+  const rnd = seeded(2026);
+  const onGrid = (ms) => Math.round(ms / step) * step;
+  const view = { start: onGrid(rootWin.start + 2 * DAY), end: onGrid(rootWin.start + 3 * DAY) };
+  for (let i = 0; i < 600; i += 1) {
+    const mode = ['start', 'end', 'move', 'new'][i % 4];
+    const from = rootWin.start + (rnd() * 1.2 - 0.1) * 7 * DAY;
+    const to = mode === 'new' && i % 8 < 4 ? from + (rnd() - 0.5) * 2 * HOUR : rootWin.start + (rnd() * 1.2 - 0.1) * 7 * DAY;
+    const out = b.brushDrag(mode, rootWin, view, from, to, step);
+    const label = mode + ' ' + from + '->' + to;
+    assertValidBrush(out, rootWin, label);
+    const unchanged = out.start === view.start && out.end === view.end;
+    if (mode !== 'move') assert.ok(unchanged || out.end - out.start >= step || out.start === rootWin.start || out.end === rootWin.end, label + ' no sliver: ' + JSON.stringify(out));
+    if (mode === 'start') assert.ok(out.end === view.end && out.start <= view.end - step, label + ' does not cross');
+    if (mode === 'end') assert.ok(out.start === view.start && out.end >= view.start + step, label + ' does not cross');
+    const held = mode === 'move' && (out.start === rootWin.start || out.end === rootWin.end);
+    if (!held) for (const edge of [out.start, out.end]) assert.ok(edge % step === 0 || edge === rootWin.start || edge === rootWin.end || edge === view.start || edge === view.end, label + ' edge on the grid: ' + edge);
+  }
+});
+
