@@ -90,7 +90,9 @@ var samples = map[string]sample{
 	"serilog-clef":      {file: "serilog/testdata/clef_good.jsonl"},
 	"serilog-text":      {file: "serilog/testdata/text_good.log"},
 	"nlog-text":         {file: "nlog/testdata/good.log"},
-	"redis-slowlog":     {inline: redisSlowSample},
+	"nginx-access":      {file: "accesslog/testdata/nginx_good.log"},
+	"apache-combined":   {file: "accesslog/testdata/apache_good.log"},
+	"redis-slowlog":    {inline: redisSlowSample},
 	"redis-latency":     {inline: redisLatencySample},
 	"redis-info":        {inline: redisInfoSample},
 	"redis-log":         {inline: redisLogSample},
@@ -148,8 +150,8 @@ var knownTies = map[string][]string{"sql-pdh": {"sql-pdh", "win-counters"}}
 func TestCrossDetectMatrix(t *testing.T) {
 	reg := all.Registry()
 	names := reg.Names()
-	if len(names) < 28 {
-		t.Fatalf("registry holds %d importers, want at least 28", len(names))
+	if len(names) < 31 {
+		t.Fatalf("registry holds %d importers, want at least 31", len(names))
 	}
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
@@ -173,6 +175,52 @@ func TestCrossDetectMatrix(t *testing.T) {
 				t.Errorf("another importer is within %d points: %v", importer.TieWindow, tied)
 			}
 		})
+	}
+}
+
+// The web access-log importers keep their margin against every other
+// importer. No other importer's sample scores above zero for nginx-access or
+// apache-combined, and neither of them claims another importer's sample. The
+// IIS NCSA file and a plain combined or common file are one format that nginx
+// and Apache both write: the two importers tie on it by design (the user
+// picks) and nothing else scores within the window of them.
+func TestAccessLogDetectMargins(t *testing.T) {
+	reg := all.Registry()
+	own := map[string]bool{"nginx-access": true, "apache-combined": true}
+	for _, name := range reg.Names() {
+		if own[name] {
+			continue
+		}
+		s, ok := sampleFor(t, name)
+		if !ok {
+			continue
+		}
+		head, base := s.bytes(t)
+		for n := range own {
+			imp, _ := reg.ByName(n)
+			if got := imp.Detect(head, base); got != 0 {
+				t.Errorf("%s scores the %s sample %d, want 0", n, name, got)
+			}
+		}
+	}
+	nginx, _ := reg.ByName("nginx-access")
+	apache, _ := reg.ByName("apache-combined")
+	for _, f := range []string{"iis/testdata/ncsa_format.log", "accesslog/testdata/common_good.log"} {
+		head, err := os.ReadFile(filepath.Join("..", filepath.FromSlash(f)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		best, score, tied := reg.Detect(head, filepath.Base(f))
+		if best == nil || score < 55 || strings.Join(tied, ",") != "apache-combined,nginx-access" && strings.Join(tied, ",") != "nginx-access,apache-combined" {
+			name := ""
+			if best != nil {
+				name = best.Name()
+			}
+			t.Errorf("%s: best %q score %d tied %v, want the nginx/apache tie only", f, name, score, tied)
+		}
+		if a, n := apache.Detect(head, ""), nginx.Detect(head, ""); a != n {
+			t.Errorf("%s: apache %d nginx %d", f, a, n)
+		}
 	}
 }
 
@@ -205,6 +253,7 @@ func TestSuppliedKeysDeclared(t *testing.T) {
 		"serilog-clef":    {"app-request-min-ms"},
 		"serilog-text":    {"app-request-min-ms"},
 		"nlog-text":       {"app-request-min-ms", "log-time"},
+		"apache-combined": {"duration-unit"},
 		"mel-console":     {"app-request-min-ms", "date-order"},
 		"mel-json":        {"app-request-min-ms", "date-order"},
 		"ancm-stdout":     {"app-request-min-ms", "date-order"},

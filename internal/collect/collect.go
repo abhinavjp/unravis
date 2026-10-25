@@ -85,6 +85,11 @@ var (
 	// machineSignals are files that say the host is a plain Windows machine
 	// the counters and process list can be taken from.
 	machineSignals = []string{winCounters, winProcsnap, winEvents}
+	// accessLogSignals are nginx and Apache access logs. They are read, so a
+	// host holding one is recognised, but they say nothing about a Windows
+	// web host: they are in no signal list above, so they never make or
+	// remove a Windows-only suggestion.
+	accessLogSignals = []string{"nginx-access", "apache-combined"}
 )
 
 // profile is what the case already holds for one host.
@@ -107,7 +112,7 @@ func (p profile) none(names ...string) bool { return !p.any(names...) }
 // is ignored: it neither makes a suggestion nor removes one.
 var known = func() map[string]bool {
 	m := map[string]bool{}
-	for _, list := range [][]string{webSignals, sqlSignals, redisSignals, mongoSignals, machineSignals} {
+	for _, list := range [][]string{webSignals, sqlSignals, redisSignals, mongoSignals, machineSignals, accessLogSignals} {
 		for _, n := range list {
 			m[n] = true
 		}

@@ -21,6 +21,9 @@ var exportDropped = map[string]map[string]bool{
 	"iis-w3c":     {"stem": true},
 	"iis-httperr": {"stem": true},
 	"appinsights": {"name": true, "operation_Id": true},
+
+	"nginx-access":    {"stem": true},
+	"apache-combined": {"stem": true},
 }
 
 // appLogKinds are the kinds every app-log importer emits (wave-2 plan §2.3).
@@ -36,6 +39,9 @@ func appLogKindsPlus(extra ...string) map[string]bool {
 var exportKinds = map[string]map[string]bool{
 	"iis-w3c":      set("request"),
 	"iis-httperr":  set("httperr"),
+
+	"nginx-access":    set("request"),
+	"apache-combined": set("request"),
 	"win-counters": set("counter"),
 	"sql-pdh":      set("counter"),
 	"win-events": set("win-event", "apppool-recycle", "apppool-idle-shutdown", "task-start", "task-complete",

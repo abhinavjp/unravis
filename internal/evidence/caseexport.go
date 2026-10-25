@@ -160,6 +160,10 @@ var exportPolicy = map[string]map[string]attrPolicy{
 	"iis-w3c": {"method": polEnum(httpMethods), "status": polNum, "substatus": polNum, "win32": polNum, "port": polNum,
 		"site": polName("site"), "user": polPerson("user"), "bytes-out": polNum, "bytes-in": polNum},
 	"iis-httperr":  {"reason": polEnum(httpErrReasons), "status": polNum, "method": polEnum(httpMethods), "queue": polName("pool"), "siteid": polNum},
+	// nginx and Apache access logs: the same typed request attributes as IIS
+	// (the client address and referrer are never imported; the route stem is dropped)
+	"nginx-access":    {"method": polEnum(httpMethods), "status": polNum, "user": polPerson("user"), "bytes-out": polNum},
+	"apache-combined": {"method": polEnum(httpMethods), "status": polNum, "user": polPerson("user"), "bytes-out": polNum},
 	"win-counters": counterPolicy,
 	"sql-pdh":      counterPolicy,
 	"win-events": {"log": polEnum(winEventLogs), "provider": polEnum(winEventProviders), "id": polNum,

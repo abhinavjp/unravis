@@ -274,6 +274,8 @@ export const IMPORTER_LABELS: Record<string, string> = {
   'serilog-clef': 'Serilog JSON log',
   'serilog-text': 'Serilog text log',
   'nlog-text': 'NLog text log',
+  'nginx-access': 'nginx access log',
+  'apache-combined': 'Apache access log',
   'mel-console': 'ASP.NET Core console log',
   'mel-json': 'ASP.NET Core JSON log',
   'ancm-stdout': 'ASP.NET Core stdout log',
@@ -310,6 +312,8 @@ export const IMPORTER_HELP: Record<string, string> = {
   'serilog-clef': 'A JSON log written by Serilog, one event per line.',
   'serilog-text': 'A text log file written by Serilog.',
   'nlog-text': 'A text log written by NLog in its default pipe-separated layout.',
+  'nginx-access': 'The nginx access log in its default combined format, with or without the request time at the end.',
+  'apache-combined': 'The Apache access log in its common or combined format, with or without a time at the end.',
   'mel-console': 'Console output of an ASP.NET Core app, with time stamps.',
   'mel-json': 'JSON console output of an ASP.NET Core app, with time stamps.',
   'ancm-stdout': 'The stdout log file that IIS keeps for an ASP.NET Core app.',
@@ -386,7 +390,8 @@ export const SUPPLIED_LABELS: Record<string, string> = {
   year: 'Year the log was written',
   date: 'Day the samples were taken',
   pid: 'Process id',
-  'date-order': 'Order of day and month in dates'
+  'date-order': 'Order of day and month in dates',
+  'duration-unit': 'Unit of the trailing time field'
 };
 
 /** One short line per supplied key saying where the owner finds the value. */
@@ -402,13 +407,15 @@ export const SUPPLIED_HINTS: Record<string, string> = {
   year: 'Redis log lines have no year. Type the year they were written.',
   date: 'mongostat rows hold a time of day only. Type the day, for example 2001-02-03.',
   pid: 'The process id that dotnet-counters was watching.',
-  'date-order': 'Dates like 05/03/2001 are ambiguous. Choose which comes first. Blank reads them from the file.'
+  'date-order': 'Dates like 05/03/2001 are ambiguous. Choose which comes first. Blank reads them from the file.',
+  'duration-unit': 'The number at the end of each line is a time. Say if the server wrote it in microseconds or in seconds. Blank skips it.'
 };
 
 /** Words shown for the fixed values of a key. A value with no entry is shown as sent. */
 export const SUPPLIED_VALUE_LABELS: Record<string, Record<string, string>> = {
   'log-time': { utc: 'UTC' },
-  'date-order': { mdy: 'Month first (05/03 is May 3)', dmy: 'Day first (05/03 is 5 March)' }
+  'date-order': { mdy: 'Month first (05/03 is May 3)', dmy: 'Day first (05/03 is 5 March)' },
+  'duration-unit': { microseconds: 'Microseconds', seconds: 'Seconds' }
 };
 
 const has = (table: object, key: string): boolean => Object.prototype.hasOwnProperty.call(table, key);
