@@ -8,7 +8,7 @@ Status as of 2026-10-25. Question: can Unravis take every log that helps find a 
 |---|---|---|---|
 | IIS | `iis-w3c` (W3C access logs, UTC, per-site), `iis-httperr` (HTTP.sys), win-events with WAS classifier | Supported | **FREB** (failed-request tracing XML): not built. Add only if an analyst can supply an export; it is per-request and the audit log already carries per-request timing. ANCM stdout is covered by `ancm-stdout`. |
 | log4net | `log4net-text`, `log4net-xml` | Supported | Custom pattern layouts beyond the common `%date [%thread] %level %logger - %message` are refused with a reason, not guessed. |
-| NLog | in progress (text layout importer on a worktree) | Pending merge | JSON layout is read by the Serilog CLEF or MEL JSON path when keys match. |
+| NLog | `nlog-text` (default pipe-delimited layout; time is host-local unless `log-time=utc` is stated) | Supported | Space-delimited and custom layouts are refused as unsupported. JSON layout is read by the Serilog CLEF or MEL JSON path when keys match. |
 | Serilog | `serilog-clef`, `serilog-text` | Supported | None. |
 | Microsoft.Extensions.Logging | `mel-console`, `mel-json`, `ancm-stdout` | Supported | None. |
 | .NET Framework Web API | log4net, event log (`win-events` with Application classifier), perfmon counters, App Insights export | Supported | ETW traces (`.etl`) are binary and not read. Export to text first. |
