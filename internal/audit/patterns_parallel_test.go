@@ -323,16 +323,19 @@ func TestRunBoundedRecoversPanicsAndStopsStarting(t *testing.T) {
 		t.Fatalf("%d calls ran after a panic at index 3 with one worker, want 4", n)
 	}
 
-	// Several panics at once: the lowest index is reported, and every call returns.
-	var done atomic.Int64
+	// Several panics at once: the lowest index is reported, and every call that
+	// started returns. A panic stops later calls from starting, so how many start
+	// depends on timing; the first always does.
+	var began, done atomic.Int64
 	_, err = runBounded(context.Background(), 4, 4, func(i int) {
+		began.Add(1)
 		defer done.Add(1)
 		panic(i)
 	})
 	if !errors.Is(err, ErrPatternReadPanic) || !strings.Contains(err.Error(), "source 1") {
 		t.Fatalf("err %v, want the first source's panic", err)
 	}
-	if done.Load() != 4 {
-		t.Fatalf("%d calls finished, want 4", done.Load())
+	if began.Load() < 1 || done.Load() != began.Load() {
+		t.Fatalf("%d calls started, %d finished, want every started call to finish", began.Load(), done.Load())
 	}
 }

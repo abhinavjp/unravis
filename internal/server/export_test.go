@@ -42,8 +42,13 @@ func installExportFakes(t *testing.T) *fakeBuild {
 	return fb
 }
 
+// exportNow is the instant the last demo handler was built at. The demo's rows are
+// placed relative to it, so a request window taken from a later clock reading can
+// slip a second past them and find nothing.
+var exportNow = time.Now().UTC().Truncate(time.Second)
+
 func exportBody(ids ...string) string {
-	now := time.Now().UTC().Truncate(time.Second)
+	now := exportNow
 	raw, _ := json.Marshal(map[string]any{"sourceIds": ids, "start": now.Add(-time.Hour), "end": now, "includePseudonyms": false, "includeLedger": true})
 	return string(raw)
 }
@@ -54,7 +59,8 @@ type previewReply struct {
 }
 
 func demoExportHandler(opts ...Option) http.Handler {
-	return New(audit.NewDemoWithPatterns(time.Now()), nil, testToken, true, opts...)
+	exportNow = time.Now().UTC().Truncate(time.Second)
+	return New(audit.NewDemoWithPatterns(exportNow), nil, testToken, true, opts...)
 }
 
 func doPreview(t *testing.T, h http.Handler) previewReply {

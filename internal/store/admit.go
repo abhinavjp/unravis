@@ -40,28 +40,30 @@ func (f *admitFailure) lookupError() error {
 	}
 }
 
-// admit takes the global and per-source query slots, in that order. On failure
-// the release function is nil and the failure says why the source was skipped;
-// nothing is held. This is the one place the two-slot protocol lives.
+// admit takes the per-source and then the global query slot. The source slot comes
+// first so a read that is queued behind another read of the same source holds no
+// global slot while it waits: otherwise two reads of one source could park two of
+// the four global slots and leave only two operations running. On failure the
+// release function is nil and the failure says why the source was skipped; nothing
+// is held. This is the one place the two-slot protocol lives.
 func (s *Store) admit(ctx context.Context, p *profile) (func(), *admitFailure) {
-	if err := acquire(ctx, s.global); err != nil {
-		code, message := sourceAdmissionError(err)
-		return nil, &admitFailure{Stage: admitGlobal, Code: code, Message: message, Err: err}
-	}
 	s.mu.RLock()
 	per := s.perSource[p.source.ID]
 	s.mu.RUnlock()
 	if per == nil {
-		<-s.global
 		return nil, &admitFailure{Stage: admitRemoved, Code: "source_unavailable", Message: audit.SourceQueryErrorMessage("source_unavailable")}
 	}
 	if err := acquire(ctx, per); err != nil {
-		<-s.global
 		code, message := sourceAdmissionError(err)
 		return nil, &admitFailure{Stage: admitSource, Code: code, Message: message, Err: err}
 	}
-	return func() {
+	if err := acquire(ctx, s.global); err != nil {
 		<-per
+		code, message := sourceAdmissionError(err)
+		return nil, &admitFailure{Stage: admitGlobal, Code: code, Message: message, Err: err}
+	}
+	return func() {
 		<-s.global
+		<-per
 	}, nil
 }
