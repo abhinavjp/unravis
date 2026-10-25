@@ -488,6 +488,17 @@ export function classifyError(error: unknown): DiscoverProblem {
   return 'other';
 }
 
+/**
+ * A scan the person cancelled is deleted on the server, so the next check of it says "not found". That is the cancel taking effect, not an old scan.
+ * Only a cancel the person asked for counts; any other refusal keeps its own message.
+ */
+export function cancelledByUser(error: unknown, cancelWanted: boolean): boolean {
+  return cancelWanted && error instanceof CaseApiError && (error.status === 404 || classifyError(error) === 'expired');
+}
+
+/** The recording status that may be shown: none once the case is closed, erased or not chosen, so the panel falls back to idle. */
+export const activeSampler = (sampler: SamplerStatus | null, caseReady: boolean): SamplerStatus | null => (caseReady ? sampler : null);
+
 export type EntryState = { kind: 'loading' } | { kind: 'ready'; elevated: boolean } | { kind: 'unsupported' } | { kind: 'unavailable' } | { kind: 'hidden' };
 
 /** What the entry button area shows. A server without the routes says "not in this build"; a failed call hides the area quietly. */

@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { CaseApiError, importProgressPercent } from '../lib/cases';
   import {
-    CANCEL_GUARD_MS, DEFAULT_SAMPLER_INTERVAL, GROUPS, MAX_FINDINGS_PER_CALL, SAMPLER_INTERVALS, WINDOW_CHOICES, ageMinutes, cachedEntryState, cancelAllowed, classifyError,
+    CANCEL_GUARD_MS, DEFAULT_SAMPLER_INTERVAL, activeSampler, cancelledByUser, GROUPS, MAX_FINDINGS_PER_CALL, SAMPLER_INTERVALS, WINDOW_CHOICES, ageMinutes, cachedEntryState, cancelAllowed, classifyError,
     customTimeProblem, defaultSelection, defaultWindowChoice, discoverClient, effectiveCost, estimateBytes, groupOf, incidentWindow, isSelectable, pickedFindings, scanExpired, selectAllSmall, toggled, waitForScan, watchJob, windowFor,
     windowProblem, type DetectorProgress, type DiscoverClient, type EntryState, type Finding, type JobRef, type RowOutcome, type SamplerStatus, type Scan, type WindowChoice
   } from '../lib/discover';
@@ -57,6 +57,9 @@
   let sampler = $state.raw<SamplerStatus | null>(null);
   let interval = $state<number>(DEFAULT_SAMPLER_INTERVAL);
   let liveBusy = $state(false);
+  // The interval of a recording started from this panel. A recording found already running has none: the server does not say.
+  let recordingInterval = $state<number | null>(null);
+  let lastCase = untrack(() => caseId);
 
   let stepHeading = $state<HTMLElement>();
   let panelHeading = $state<HTMLElement>();
@@ -90,7 +93,10 @@
     !caseReady ? 'case' : chosen.length === 0 ? 'none' : chosen.length > MAX_FINDINGS_PER_CALL ? 'tooMany' : rangeProblem ? 'window' : !acknowledged ? 'ack' : null
   );
   const added = $derived(rows.filter((r) => r.outcome?.kind === 'added').length);
-  const recording = $derived(sampler?.state === 'recording');
+  // Once the case is closed, erased or not chosen there is no recording to show, whatever the last answer said.
+  const liveSampler = $derived(activeSampler(sampler, caseReady));
+  const recording = $derived(liveSampler?.state === 'recording');
+  const labelInterval = $derived(recording && recordingInterval === null ? null : interval);
   const now = () => Date.now();
 
   const isAbort = (error: unknown): boolean => error instanceof DOMException && error.name === 'AbortError';
@@ -149,7 +155,9 @@
       }
     } catch (error) {
       if (isAbort(error) || mine !== generation) return;
-      problem = errorText(error);
+      // A cancelled scan is gone from the server, so the next check of it fails. That is the cancel working.
+      if (cancelledByUser(error, cancelWanted)) info = DISCOVER_TEXT.scanCancelled;
+      else problem = errorText(error);
       step = 'intro';
     }
     focusStep();
@@ -251,15 +259,48 @@
 
   /* ---------------------------------------------------------------- live recording */
 
-  async function refreshSampler() {
+  // `quiet` is for the first look when the panel opens: it shows what is running without reloading the case.
+  async function refreshSampler(quiet = false) {
     if (!caseReady) return;
+    const forCase = caseId;
     try {
       const before = sampler?.samples ?? 0;
-      sampler = await client.getSampler(caseId);
+      const next = await client.getSampler(forCase);
+      // The case was changed while the answer was on its way: it is not this case's answer any more.
+      if (forCase !== caseId) return;
+      sampler = next;
+      if (next.state !== 'recording') recordingInterval = null;
       // Recorded samples are imports too: the history and the period the files cover are read again when the count moved.
-      if (sampler.samples !== before) onImported?.();
+      if (!quiet && next.samples !== before) onImported?.();
     } catch { /* No answer means no recording to show. */ }
   }
+
+  // The case this panel works on can change under it: another case is chosen, or this one is erased. What was shown for the old case goes.
+  function clearForCaseChange() {
+    sampler = null;
+    recordingInterval = null;
+    if (step !== 'importing' && step !== 'results') return;
+    generation++;
+    controller?.abort();
+    controller = null;
+    rows = []; jobIds = {}; runCase = '';
+    cancellingImport = false;
+    acknowledged = false;
+    problem = '';
+    info = DISCOVER_TEXT.caseChanged;
+    step = scan ? 'list' : 'intro';
+    focusStep();
+  }
+
+  $effect(() => {
+    const id = caseId;
+    const ready = caseReady;
+    untrack(() => {
+      if (id !== lastCase) { lastCase = id; clearForCaseChange(); }
+      if (!ready) { sampler = null; recordingInterval = null; }
+      else if (sampler === null) void refreshSampler(true);
+    });
+  });
 
   // While a recording is on, its sample count is read again every few seconds. The check stops when the recording does.
   $effect(() => {
@@ -276,9 +317,10 @@
     problem = '';
     try {
       if (on && scan?.host?.proposed) await client.confirmHost?.(scan.host);
-      if (on) sampler = await client.startSampler(caseId, { intervalSec: interval, ackText: ackTextFor() });
+      if (on) { sampler = await client.startSampler(caseId, { intervalSec: interval, ackText: ackTextFor() }); recordingInterval = interval; }
       else {
         await client.stopSampler(caseId);
+        recordingInterval = null;
         sampler = await client.getSampler(caseId).catch(() => ({ state: 'stopped', since: sampler?.since ?? '', samples: sampler?.samples ?? 0, stopReason: '' }) as SamplerStatus);
         onImported?.();
       }
@@ -292,10 +334,36 @@
   }
 
   const liveLine = $derived(
-    sampler?.state === 'recording' ? liveStatusText(sampler.since ? at(sampler.since) : '', sampler.samples)
-      : sampler?.state === 'stopped' ? liveStopText(sampler.stopReason, sampler.samples) : ''
+    liveSampler?.state === 'recording' ? liveStatusText(liveSampler.since ? at(liveSampler.since) : '', liveSampler.samples)
+      : liveSampler?.state === 'stopped' ? liveStopText(liveSampler.stopReason, liveSampler.samples) : ''
   );
 </script>
+
+{#snippet liveSection()}
+  <section class="live" aria-labelledby="discover-live-heading">
+    <h4 id="discover-live-heading">{DISCOVER_TEXT.liveHeading}</h4>
+    <p class="note">{DISCOVER_TEXT.liveHelp}</p>
+    {#if !elevated}<p class="note">{DISCOVER_TEXT.liveAdminNote}</p>{/if}
+    {#if findings.length === 0 && !recording}
+      <p class="note">{DISCOVER_TEXT.noticePointer}</p>
+      <label class="ack">
+        <input type="checkbox" bind:checked={acknowledged} />
+        <span>{DISCOVER_TEXT.ack}</span>
+      </label>
+    {/if}
+    {#if !recording}
+      <label class="inline-field">{DISCOVER_TEXT.liveIntervalLabel}
+        <select bind:value={interval} disabled={liveBusy}>{#each SAMPLER_INTERVALS as seconds (seconds)}<option value={seconds}>{seconds}</option>{/each}</select>
+      </label>
+    {/if}
+    <label class="ack">
+      <input type="checkbox" checked={recording} disabled={liveBusy || (!recording && (!caseReady || !acknowledged))} onchange={toggleLive} />
+      <span>{liveBusy ? (recording ? DISCOVER_TEXT.liveStopping : DISCOVER_TEXT.liveStarting) : liveToggleLabel(labelInterval)}</span>
+    </label>
+    {#if !recording && !caseReady}<p class="note">{blockedText('case')}</p>{:else if !recording && !acknowledged}<p class="note">{blockedText('ack')}</p>{/if}
+    <p class="note" aria-live="polite">{liveLine}</p>
+  </section>
+{/snippet}
 
 <section class="discover" aria-labelledby="discover-heading">
   <div class="head">
@@ -321,6 +389,7 @@
     <p class="note">{DISCOVER_TEXT.intro}</p>
     <p class="badge-row"><span class="badge" class:on={elevated}>{privilegeBadge(elevated)}</span></p>
     <div class="actions"><button type="button" class="primary-button" onclick={startScan}>{scan ? DISCOVER_TEXT.scanAgain : DISCOVER_TEXT.scanButton}</button></div>
+    {#if recording}{@render liveSection()}{/if}
   {:else if step === 'scanning'}
     <div class="step" aria-live="polite">
       <h4 tabindex="-1" bind:this={stepHeading}>{DISCOVER_TEXT.scanning}</h4>
@@ -438,29 +507,7 @@
         </section>
       {/if}
 
-      <section class="live" aria-labelledby="discover-live-heading">
-        <h4 id="discover-live-heading">{DISCOVER_TEXT.liveHeading}</h4>
-        <p class="note">{DISCOVER_TEXT.liveHelp}</p>
-        {#if !elevated}<p class="note">{DISCOVER_TEXT.liveAdminNote}</p>{/if}
-        {#if findings.length === 0 && !recording}
-          <p class="note">{DISCOVER_TEXT.noticePointer}</p>
-          <label class="ack">
-            <input type="checkbox" bind:checked={acknowledged} />
-            <span>{DISCOVER_TEXT.ack}</span>
-          </label>
-        {/if}
-        {#if !recording}
-          <label class="inline-field">{DISCOVER_TEXT.liveIntervalLabel}
-            <select bind:value={interval} disabled={liveBusy}>{#each SAMPLER_INTERVALS as seconds (seconds)}<option value={seconds}>{seconds}</option>{/each}</select>
-          </label>
-        {/if}
-        <label class="ack">
-          <input type="checkbox" checked={recording} disabled={liveBusy || (!recording && (!caseReady || !acknowledged))} onchange={toggleLive} />
-          <span>{liveBusy ? (recording ? DISCOVER_TEXT.liveStopping : DISCOVER_TEXT.liveStarting) : liveToggleLabel(interval)}</span>
-        </label>
-        {#if !recording && !caseReady}<p class="note">{blockedText('case')}</p>{:else if !recording && !acknowledged}<p class="note">{blockedText('ack')}</p>{/if}
-        <p class="note" aria-live="polite">{liveLine}</p>
-      </section>
+      {@render liveSection()}
     </div>
   {:else if step === 'importing' || step === 'results'}
     <div class="step">

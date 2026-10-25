@@ -40,7 +40,7 @@ export const IMPORT_TEXT = {
   closeNote: 'A closed case is erased 30 days after it was closed.',
   closedCase: 'This case is closed. Choose or create another case to import files.',
   eraseCase: 'Erase case',
-  eraseWarning: 'Erasing deletes every import in this case and destroys its encryption key. This cannot be undone.',
+  eraseWarning: 'Erasing deletes every import in this case and destroys its encryption key. Any live recording for it stops. This cannot be undone.',
   eraseConfirmButton: 'Erase this case',
   erasing: 'Erasing…',
   eraseCancel: 'Keep this case',

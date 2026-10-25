@@ -22,6 +22,7 @@ function loadTypeScript(relativePath) {
   new Function('require', 'module', 'exports', output)(load, module, module.exports);
   return module.exports;
 }
+const copyOf = (name) => fs.readFileSync(path.join(root, 'src/lib/copy', name), 'utf8');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 const cases = loadTypeScript('src/lib/cases.ts');
@@ -782,4 +783,67 @@ test('the real client lists a proposed host once and does not list it twice', as
   assert.deepEqual(listed.hosts[0].aliases, ['WEB-A']);
   await discover.discoverClient.confirmHost(host);
   assert.equal(calls.filter((c) => c.method === 'PUT').length, 1, 'a listed label makes no second save');
+});
+
+/* ------------------------------------------------------------------ clumsy-user fixes */
+
+test('a 404 after the person cancelled a scan is the cancel working, not an old scan', () => {
+  const gone = new CaseApiError('Not found.', 404, 'scan-not-found');
+  assert.equal(discover.cancelledByUser(gone, true), true);
+  assert.equal(discover.cancelledByUser(new CaseApiError('Not found.', 404, ''), true), true);
+  // Without a cancel, the same answer still means the scan expired.
+  assert.equal(discover.cancelledByUser(gone, false), false);
+  assert.equal(discover.classifyError(gone), 'expired');
+  // A cancel does not hide other faults.
+  assert.equal(discover.cancelledByUser(new CaseApiError('Down.', 500, ''), true), false);
+  assert.equal(discover.cancelledByUser(new CaseApiError('No answer.', 0, 'unreachable'), true), false);
+  assert.equal(discover.cancelledByUser(new Error('x'), true), false);
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.match(panel, /if \(cancelledByUser\(error, cancelWanted\)\) info = DISCOVER_TEXT\.scanCancelled;/);
+});
+
+test('no recording is shown once the case is closed, erased or not chosen', () => {
+  const recording = { state: 'recording', since: '2001-09-11T08:00:00Z', samples: 7, stopReason: '' };
+  assert.equal(discover.activeSampler(recording, true), recording);
+  assert.equal(discover.activeSampler(recording, false), null);
+  assert.equal(discover.activeSampler(null, true), null);
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.match(panel, /const recording = \$derived\(liveSampler\?\.state === 'recording'\);/);
+  assert.match(panel, /if \(!ready\) \{ sampler = null; recordingInterval = null; \}/);
+  assert.match(copyOf('importCopy.ts'), /Any live recording for it stops\./);
+});
+
+test('another case or an erased case clears the import results', () => {
+  const panel = read('src/components/DiscoverPanel.svelte');
+  const body = panel.slice(panel.indexOf('function clearForCaseChange()'), panel.indexOf('$effect(() => {\n    const id = caseId;'));
+  assert.match(body, /generation\+\+;/);
+  assert.match(body, /rows = \[\];/);
+  assert.match(body, /info = DISCOVER_TEXT\.caseChanged;/);
+  assert.match(body, /step = scan \? 'list' : 'intro';/);
+  assert.match(panel, /if \(id !== lastCase\) \{ lastCase = id; clearForCaseChange\(\); \}/);
+  assert.ok(copy.DISCOVER_TEXT.caseChanged.length > 0);
+});
+
+test('a recording that is already running is read when the panel opens, and shows no interval it does not know', () => {
+  assert.equal(copy.liveToggleLabel(15), 'Record CPU and memory every 15 seconds');
+  assert.equal(copy.liveToggleLabel(null), 'Record CPU and memory');
+  assert.ok(!/\d/.test(copy.liveToggleLabel(null)));
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.match(panel, /else if \(sampler === null\) void refreshSampler\(true\);/);
+  assert.match(panel, /const labelInterval = \$derived\(recording && recordingInterval === null \? null : interval\);/);
+  assert.match(panel, /liveToggleLabel\(labelInterval\)/);
+  assert.match(panel, /recordingInterval = interval;/);
+  // The intro step shows the recording too, so it is not hidden until a scan.
+  assert.match(panel, /\{#if recording\}\{@render liveSection\(\)\}\{\/if\}/);
+});
+
+test('a count of one reads as singular, and Import names no count when nothing is ticked', () => {
+  assert.equal(copy.rowOutcomeText({ kind: 'added', rows: 1 }), 'Added 1 row');
+  assert.equal(copy.rowOutcomeText({ kind: 'added', rows: 2 }), 'Added 2 rows');
+  assert.equal(copy.rowOutcomeText({ kind: 'added', rows: 0 }), 'Added 0 rows');
+  assert.equal(copy.rowOutcomeText({ kind: 'added', rows: 41200 }), 'Added 41,200 rows');
+  assert.equal(copy.importButtonText(0), 'Import');
+  assert.equal(copy.importButtonText(1), 'Import 1 source');
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.match(panel, /disabled=\{block !== null \|\| chosen\.length === 0\} onclick=\{runImports\}>\{importButtonText\(chosen\.length\)\}/);
 });
