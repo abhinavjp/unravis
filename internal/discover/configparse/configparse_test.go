@@ -1,11 +1,13 @@
 package configparse_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"api-audit-explorer/internal/discover/configparse"
 )
@@ -253,4 +255,75 @@ func FuzzParseAppHost(f *testing.F) {
 			t.Fatal("stdout cap exceeded")
 		}
 	})
+}
+
+// utf16Of encodes s as UTF-16 with a byte order mark.
+func utf16Of(s string, le bool) []byte {
+	out := []byte{0xFF, 0xFE}
+	if !le {
+		out = []byte{0xFE, 0xFF}
+	}
+	for _, u := range utf16.Encode([]rune(s)) {
+		if le {
+			out = append(out, byte(u), byte(u>>8))
+		} else {
+			out = append(out, byte(u>>8), byte(u))
+		}
+	}
+	return out
+}
+
+const appHostSmall = `<?xml version="1.0" encoding="utf-16"?><configuration><system.applicationHost><sites>` +
+	`<site name="SENTINEL-7f3a" id="7"><logFile directory="D:\Logs\Café-日本" /></site></sites></system.applicationHost></configuration>`
+
+func TestParseAppHostUTF16(t *testing.T) {
+	for name, in := range map[string][]byte{
+		"utf-16le": utf16Of(appHostSmall, true),
+		"utf-16be": utf16Of(appHostSmall, false),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ah, err := configparse.ParseAppHost(bytes.NewReader(in))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(ah.Sites) != 1 || ah.Sites[0].ID != "7" || ah.Sites[0].LogDir != `D:\Logs\Café-日本` {
+				t.Errorf("sites = %+v", ah.Sites)
+			}
+		})
+	}
+	// web.config goes through the same reader.
+	wc := utf16Of(`<?xml version="1.0" encoding="utf-16"?><configuration><system.webServer><aspNetCore processPath="dotnet" stdoutLogEnabled="true" stdoutLogFile=".\logs\stdout"/></system.webServer></configuration>`, true)
+	if _, err := configparse.ParseWebConfig(bytes.NewReader(wc)); err != nil {
+		t.Errorf("UTF-16 web.config: %v", err)
+	}
+}
+
+func TestParseAppHostDeclaredLatin1(t *testing.T) {
+	in := "<?xml version=\"1.0\" encoding=\"iso-8859-1\"?><configuration><system.applicationHost><sites>" +
+		"<site id=\"3\"><logFile directory=\"D:\\Logs\\Caf\xe9\" /></site></sites></system.applicationHost></configuration>"
+	ah, err := configparse.ParseAppHost(strings.NewReader(in))
+	if err != nil || len(ah.Sites) != 1 || ah.Sites[0].LogDir != "D:\\Logs\\Café" {
+		t.Fatalf("%+v %v", ah, err)
+	}
+	if _, err := configparse.ParseAppHost(strings.NewReader(`<?xml version="1.0" encoding="x-unknown"?><configuration/>`)); !errors.Is(err, configparse.ErrSyntax) {
+		t.Errorf("unknown encoding: %v", err)
+	}
+}
+
+func TestParseAppHostUTF16KeepsTheLimits(t *testing.T) {
+	// A DOCTYPE is refused whatever the encoding.
+	dtd := utf16Of(`<!DOCTYPE configuration [<!ENTITY xxe "SENTINEL-7f3a">]><configuration>&xxe;</configuration>`, true)
+	if _, err := configparse.ParseAppHost(bytes.NewReader(dtd)); !errors.Is(err, configparse.ErrDTD) {
+		t.Errorf("UTF-16 DOCTYPE: %v", err)
+	}
+	// Depth.
+	deep := utf16Of(strings.Repeat("<a>", configparse.MaxDepth+2)+strings.Repeat("</a>", configparse.MaxDepth+2), true)
+	if _, err := configparse.ParseAppHost(bytes.NewReader(deep)); !errors.Is(err, configparse.ErrDepth) {
+		t.Errorf("UTF-16 depth: %v", err)
+	}
+	// Size, measured on the bytes as they come.
+	big := utf16Of("<configuration><!-- "+strings.Repeat("x", configparse.MaxBytes/2)+" --></configuration>", true)
+	if _, err := configparse.ParseAppHost(bytes.NewReader(big)); !errors.Is(err, configparse.ErrTooLarge) {
+		t.Errorf("UTF-16 size: %v", err)
+	}
 }

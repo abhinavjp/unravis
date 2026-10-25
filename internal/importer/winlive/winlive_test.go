@@ -491,3 +491,17 @@ func TestTrackedProcessCap(t *testing.T) {
 		t.Errorf("%d events with 2 tracked processes", len(evs))
 	}
 }
+
+func TestDerivedCPUIsCappedLikeDirectCPU(t *testing.T) {
+	s := "2001-10-25T08:00:00Z"
+	body := hdr +
+		"2001-10-25T13:00:00Z,carry,w3wp,5,\"" + s + "\",cpu-seconds,0\n" +
+		"2001-10-25T13:00:00.000000001Z,proc,w3wp,5,\"" + s + "\",cpu-seconds,1000000000000\n"
+	evs, _, err := parse(t, body)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("%v %d events", err, len(evs))
+	}
+	if v := *evs[0].Value; v > 1000 {
+		t.Errorf("derived cpu %v exceeds the 1000 cap", v)
+	}
+}

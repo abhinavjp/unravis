@@ -31,7 +31,7 @@ var (
 	alias83    = regexp.MustCompile(`(?i)^[^~.]{1,6}~[0-9]+(\.[^.]{0,3})?$`)
 	driveRoot  = regexp.MustCompile(`^[A-Za-z]:\\`)
 	spaceRun   = regexp.MustCompile(`\s{2,}`)
-	reservedRe = regexp.MustCompile(`(?i)^(con|prn|aux|nul|com[0-9]|lpt[0-9])$`)
+	reservedRe = regexp.MustCompile(`(?i)^(con|prn|aux|nul|conin\$|conout\$|clock\$|com[0-9\x{00B9}\x{00B2}\x{00B3}]|lpt[0-9\x{00B9}\x{00B2}\x{00B3}])$`)
 )
 
 // ValidateAbsPath checks the shape of an absolute local path and returns its

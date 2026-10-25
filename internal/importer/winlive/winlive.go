@@ -174,6 +174,9 @@ type ident struct {
 	label string
 }
 
+// maxCPUPercent caps a per-process cpu value, direct or derived.
+const maxCPUPercent = 1000
+
 // cpuMark is the last cumulative CPU reading of a process.
 type cpuMark struct {
 	sec float64
@@ -413,11 +416,13 @@ func (s *state) row(rec []string, line int64) (importer.Reason, error) {
 			case d < 0:
 				s.acc.Gap(GapCPUSkipped)
 			case dt > 0:
-				return "", s.metric(line, t, MetricCPU, d/dt*100/s.cores, "percent-host", attrs)
+				// Same cap as a direct cpu row, so a huge counter jump cannot
+				// produce an absurd percentage.
+				return "", s.metric(line, t, MetricCPU, math.Min(d/dt*100/s.cores, maxCPUPercent), "percent-host", attrs)
 			}
 			return "", nil
 		case MetricCPU:
-			v, ok := number(rec[6], 1000)
+			v, ok := number(rec[6], maxCPUPercent)
 			if !ok {
 				return importer.ReasonBadNumber, nil
 			}
