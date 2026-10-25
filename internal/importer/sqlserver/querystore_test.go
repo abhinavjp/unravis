@@ -292,7 +292,8 @@ func TestQuerystoreBOMAndCRLF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	crlf := bytes.ReplaceAll(plain, []byte("\n"), []byte("\r\n"))
+	// The checkout may already hold CRLF (autocrlf), so normalise before doubling.
+	crlf := bytes.ReplaceAll(bytes.ReplaceAll(plain, []byte("\r\n"), []byte("\n")), []byte("\n"), []byte("\r\n"))
 	variants := map[string][]byte{
 		"bom":      append([]byte{0xEF, 0xBB, 0xBF}, plain...),
 		"crlf":     crlf,
