@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- SENTINEL-7f3a in a comment -->
+<failedRequest url="http://web-a.example.test:80/api/v1/search?q=SENTINEL-7f3a&amp;token=SENTINEL-7f3a#SENTINEL-7f3a" siteId="1" appPoolId="SENTINEL-7f3a" processId="4120" verb="GET" authenticationType="SENTINEL-7f3a" userName="SENTINEL-7f3a" activityId="{00000000-0000-0000-0000-000000000009}" failureReason="STATUS_CODE" statusCode="500" triggerStatusCode="500" timeTaken="900" SENTINEL-7f3a="SENTINEL-7f3a">
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+    <System>
+      <Provider Name="SENTINEL-7f3a"/>
+      <TimeCreated SystemTime="2001-03-17T11:00:00.000Z"/>
+      <Computer>web-a.example.test</Computer>
+    </System>
+    <EventData>
+      <Data Name="Url">/api/v1/search?q=SENTINEL-7f3a</Data>
+      <Data Name="RequestHeaders">Cookie: session=SENTINEL-7f3a; Authorization: Bearer SENTINEL-7f3a</Data>
+      <Data Name="QueryString">q=SENTINEL-7f3a</Data>
+      <Data Name="ContextId">SENTINEL-7f3a</Data>
+    </EventData>
+    <RenderingInfo Culture="en-US">
+      <Opcode>GENERAL_REQUEST_START</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+    <System>
+      <TimeCreated SystemTime="2001-03-17T11:00:00.010Z"/>
+      <Computer>SENTINEL-7f3a</Computer>
+    </System>
+    <EventData>
+      <Data Name="ModuleName">ManagedPipelineHandler</Data>
+      <Data Name="Notification">EXECUTE_REQUEST_HANDLER</Data>
+      <Data Name="ModulePayload"><![CDATA[SENTINEL-7f3a body bytes]]></Data>
+    </EventData>
+    <RenderingInfo Culture="en-US">
+      <Opcode>NOTIFY_MODULE_START</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+    <System>
+      <TimeCreated SystemTime="2001-03-17T11:00:00.510Z"/>
+    </System>
+    <EventData>
+      <Data Name="ModuleName">Custom-SENTINEL-7f3a</Data>
+      <Data Name="Notification">SENTINEL-7f3a</Data>
+      <Data Name="ResponseHeaders">Set-Cookie: id=SENTINEL-7f3a</Data>
+    </EventData>
+    <RenderingInfo Culture="en-US">
+      <Opcode>NOTIFY_MODULE_START</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+    <System>
+      <TimeCreated SystemTime="2001-03-17T11:00:00.900Z"/>
+    </System>
+    <EventData>
+      <Data Name="ModuleName">ManagedPipelineHandler</Data>
+      <Data Name="Notification">EXECUTE_REQUEST_HANDLER</Data>
+      <Data Name="HttpStatus">500</Data>
+      <Data Name="HttpReason">SENTINEL-7f3a</Data>
+      <Data Name="HttpSubStatus">0</Data>
+      <Data Name="ErrorCode">SENTINEL-7f3a (0x80070005)</Data>
+      <Data Name="ResponseBody">SENTINEL-7f3a</Data>
+    </EventData>
+    <RenderingInfo Culture="en-US">
+      <Opcode>MODULE_SET_RESPONSE_ERROR_STATUS</Opcode>
+    </RenderingInfo>
+  </Event>
+</failedRequest>

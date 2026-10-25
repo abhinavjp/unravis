@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<?xml-stylesheet type='text/xsl' href='freb.xsl'?>
+<!-- saved from url=(0014)about:internet -->
+<failedRequest url="http://web-a.example.test:80/api/v1/orders/1042?page=2" siteId="1" appPoolId="pool-a" processId="4120" verb="GET" authenticationType="anonymous" activityId="{00000000-0000-0000-0000-000000000001}" failureReason="STATUS_CODE" statusCode="500" triggerStatusCode="500" timeTaken="1250" xmlns:freb="http://schemas.microsoft.com/win/2006/06/iis/freb">
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+    <System>
+      <Provider Name="WWW Server" Guid="{00000000-0000-0000-0000-0000000000a1}"/>
+      <EventID>0</EventID>
+      <Version>1</Version>
+      <Level>5</Level>
+      <Opcode>1</Opcode>
+      <Keywords>0x0</Keywords>
+      <TimeCreated SystemTime="2001-03-17T10:01:01.000Z"/>
+      <Correlation ActivityID="{00000000-0000-0000-0000-000000000001}"/>
+      <Execution ProcessID="4120" ThreadID="12"/>
+      <Computer>web-a.example.test</Computer>
+    </System>
+    <EventData>
+      <Data Name="ContextId">{00000000-0000-0000-0000-000000000001}</Data>
+      <Data Name="Url">/api/v1/orders/1042</Data>
+    </EventData>
+    <RenderingInfo Culture="en-US">
+      <Opcode>GENERAL_REQUEST_START</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+    <System>
+      <TimeCreated SystemTime="2001-03-17T10:01:01.001Z"/>
+      <Computer>web-a.example.test</Computer>
+    </System>
+    <EventData>
+      <Data Name="ModuleName">RequestFilteringModule</Data>
+      <Data Name="Notification">BEGIN_REQUEST</Data>
+    </EventData>
+    <RenderingInfo Culture="en-US">
+      <Opcode>NOTIFY_MODULE_START</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+    <System>
+      <TimeCreated SystemTime="2001-03-17T10:01:01.003Z"/>
+      <Computer>web-a.example.test</Computer>
+    </System>
+    <EventData>
+      <Data Name="ModuleName">RequestFilteringModule</Data>
+      <Data Name="Notification">BEGIN_REQUEST</Data>
+    </EventData>
+    <RenderingInfo Culture="en-US">
+      <Opcode>NOTIFY_MODULE_COMPLETION</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+    <System>
+      <TimeCreated SystemTime="2001-03-17T10:01:01.010Z"/>
+      <Computer>web-a.example.test</Computer>
+    </System>
+    <EventData>
+      <Data Name="ModuleName">ManagedPipelineHandler</Data>
+      <Data Name="Notification">EXECUTE_REQUEST_HANDLER</Data>
+    </EventData>
+    <RenderingInfo Culture="en-US">
+      <Opcode>NOTIFY_MODULE_START</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+    <System>
+      <TimeCreated SystemTime="2001-03-17T10:01:02.200Z"/>
+      <Computer>web-a.example.test</Computer>
+    </System>
+    <EventData>
+      <Data Name="ModuleName">ManagedPipelineHandler</Data>
+      <Data Name="Notification">EXECUTE_REQUEST_HANDLER</Data>
+      <Data Name="HttpStatus">500</Data>
+      <Data Name="HttpReason">Internal Server Error</Data>
+      <Data Name="HttpSubStatus">0</Data>
+      <Data Name="ErrorCode">Access is denied. (0x80070005)</Data>
+    </EventData>
+    <RenderingInfo Culture="en-US">
+      <Opcode>MODULE_SET_RESPONSE_ERROR_STATUS</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+    <System>
+      <TimeCreated SystemTime="2001-03-17T10:01:02.250Z"/>
+      <Computer>web-a.example.test</Computer>
+    </System>
+    <EventData>
+      <Data Name="BytesSent">512</Data>
+    </EventData>
+    <RenderingInfo Culture="en-US">
+      <Opcode>GENERAL_REQUEST_END</Opcode>
+    </RenderingInfo>
+  </Event>
+</failedRequest>
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<failedRequest url="http://web-a.example.test/api/v1/reports/summary" verb="POST" failureReason="TIME_TAKEN" statusCode="200" triggerStatusCode="200" timeTaken="3400">
+  <Event>
+    <System>
+      <TimeCreated SystemTime="2001-03-17T10:05:00.000Z"/>
+      <Computer>web-a.example.test</Computer>
+    </System>
+    <EventData>
+      <Data Name="ContextId">{00000000-0000-0000-0000-000000000002}</Data>
+    </EventData>
+    <RenderingInfo>
+      <Opcode>GENERAL_REQUEST_START</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event>
+    <System>
+      <TimeCreated SystemTime="2001-03-17T10:05:00.020Z"/>
+    </System>
+    <EventData>
+      <Data Name="ModuleName">UrlRewriteModule</Data>
+      <Data Name="Notification">BEGIN_REQUEST</Data>
+    </EventData>
+    <RenderingInfo>
+      <Opcode>NOTIFY_MODULE_START</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event>
+    <System>
+      <TimeCreated SystemTime="2001-03-17T10:05:00.120Z"/>
+    </System>
+    <EventData>
+      <Data Name="ModuleName">UrlRewriteModule</Data>
+      <Data Name="Notification">BEGIN_REQUEST</Data>
+    </EventData>
+    <RenderingInfo>
+      <Opcode>NOTIFY_MODULE_COMPLETION</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event>
+    <System>
+      <TimeCreated SystemTime="2001-03-17T10:05:00.130Z"/>
+    </System>
+    <EventData>
+      <Data Name="ModuleName">ManagedPipelineHandler</Data>
+      <Data Name="Notification">EXECUTE_REQUEST_HANDLER</Data>
+    </EventData>
+    <RenderingInfo>
+      <Opcode>NOTIFY_MODULE_START</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event>
+    <System>
+      <TimeCreated SystemTime="2001-03-17T10:05:03.400Z"/>
+    </System>
+    <EventData>
+      <Data Name="ModuleName">ManagedPipelineHandler</Data>
+      <Data Name="Notification">EXECUTE_REQUEST_HANDLER</Data>
+    </EventData>
+    <RenderingInfo>
+      <Opcode>NOTIFY_MODULE_COMPLETION</Opcode>
+    </RenderingInfo>
+  </Event>
+</failedRequest>
+<failedRequest url="http://web-a.example.test/login" verb="GET" failureReason="STATUS_CODE" statusCode="404" triggerStatusCode="404" timeTaken="12">
+  <Event>
+    <System>
+      <TimeCreated SystemTime="2001-03-17T10:09:30.500Z"/>
+      <Computer>web-a</Computer>
+    </System>
+    <EventData>
+      <Data Name="ContextId">{00000000-0000-0000-0000-000000000003}</Data>
+    </EventData>
+    <RenderingInfo>
+      <Opcode>GENERAL_REQUEST_START</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event>
+    <System>
+      <TimeCreated SystemTime="2001-03-17T10:09:30.505Z"/>
+    </System>
+    <EventData>
+      <Data Name="ModuleName">StaticFileModule</Data>
+      <Data Name="Notification">EXECUTE_REQUEST_HANDLER</Data>
+      <Data Name="HttpStatus">404</Data>
+      <Data Name="HttpSubStatus">0</Data>
+      <Data Name="ErrorCode">The system cannot find the file specified. (0x80070002)</Data>
+    </EventData>
+    <RenderingInfo>
+      <Opcode>MODULE_SET_RESPONSE_ERROR_STATUS</Opcode>
+    </RenderingInfo>
+  </Event>
+  <Event>
+    <System>
+      <TimeCreated SystemTime="2001-03-17T10:09:30.512Z"/>
+    </System>
+    <EventData/>
+    <RenderingInfo>
+      <Opcode>GENERAL_REQUEST_END</Opcode>
+    </RenderingInfo>
+  </Event>
+</failedRequest>

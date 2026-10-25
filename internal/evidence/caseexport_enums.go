@@ -20,6 +20,7 @@ import (
 var exportDropped = map[string]map[string]bool{
 	"iis-w3c":     {"stem": true},
 	"iis-httperr": {"stem": true},
+	"iis-freb":    {"stem": true},
 	"appinsights": {"name": true, "operation_Id": true},
 
 	"nginx-access":    {"stem": true},
@@ -42,6 +43,7 @@ var exportKinds = map[string]map[string]bool{
 
 	"nginx-access":    set("request"),
 	"apache-combined": set("request"),
+	"iis-freb":     set("failed-request", "slow-module"),
 	"win-counters": set("counter"),
 	"sql-pdh":      set("counter"),
 	"win-events": set("win-event", "apppool-recycle", "apppool-idle-shutdown", "task-start", "task-complete",
@@ -217,6 +219,21 @@ var (
 		"EntityTooLarge", "FieldLength", "Forbidden", "Header", "Hostname", "Internal", "N/A", "Number", "Precondition",
 		"QueueFull", "RequestLength", "Timer_AppPool", "Timer_ConnectionIdle", "Timer_EntityBody", "Timer_HeaderWait",
 		"Timer_MinBytesPerSecond", "URL", "UrlLength", "Verb", "Version_N/P", "other")
+	// FREB: the failureReason words and the IIS pipeline notifications. A module is shown as is only
+	// when it is a module IIS ships; a custom module becomes a keyed label.
+	frebReasons = fold("STATUS_CODE", "TIME_TAKEN", "STATUS_CODE_TIME_TAKEN", "other")
+	frebModule = regexp.MustCompile(`^(?:(?:Anonymous|Basic|Windows|Digest|Forms|Certificate)AuthenticationModule|` +
+		`(?:Url|File)AuthorizationModule|RequestFilteringModule|StaticFileModule|DefaultDocumentModule|DirectoryListingModule|` +
+		`ManagedPipelineHandler|ScriptModule(?:-[0-9]+\.[0-9]+)?|ServiceModel(?:-[0-9]+\.[0-9]+)?|UrlRewriteModule|` +
+		`ApplicationRequestRouting|AspNetCoreModule(?:V2)?|HttpRedirectionModule|ProtocolSupportModule|CustomErrorModule|` +
+		`HttpLoggingModule|FailedRequestsTracingModule|(?:Dynamic|Static)CompressionModule|IsapiModule|IsapiFilterModule|` +
+		`CgiModule|HttpCacheModule|TokenCacheModule|FileCacheModule|UriCacheModule|WebSocketModule|CustomLoggingModule|` +
+		`RequestMonitorModule|TracingModule|ApplicationInitializationModule|ServerSideIncludeModule|IpRestrictionModule|` +
+		`DynamicIpRestrictionModule|OutputCache|UrlRoutingModule-4\.0|SessionStateModule)$`)
+	frebNotifications = fold("BEGIN_REQUEST", "AUTHENTICATE_REQUEST", "AUTHORIZE_REQUEST", "RESOLVE_REQUEST_CACHE",
+		"MAP_REQUEST_HANDLER", "MAP_PATH", "REQUEST_ACQUIRE_STATE", "PRE_EXECUTE_REQUEST_HANDLER", "EXECUTE_REQUEST_HANDLER",
+		"RELEASE_REQUEST_STATE", "UPDATE_REQUEST_CACHE", "LOG_REQUEST", "END_REQUEST", "SEND_RESPONSE", "READ_ENTITY",
+		"PRE_BEGIN_REQUEST")
 	winEventReasons = fold("time-interval", "request-limit", "scheduled-time", "virtual-memory", "isapi-unhealthy",
 		"admin-requested", "config-change", "private-memory", "instance-already-running", "timeout", "user-request")
 	winEventLogs      = fold("Application", "System", "Setup", "Security", "Microsoft-Windows-TaskScheduler/Operational")

@@ -164,6 +164,8 @@ var exportPolicy = map[string]map[string]attrPolicy{
 	// (the client address and referrer are never imported; the route stem is dropped)
 	"nginx-access":    {"method": polEnum(httpMethods), "status": polNum, "user": polPerson("user"), "bytes-out": polNum},
 	"apache-combined": {"method": polEnum(httpMethods), "status": polNum, "user": polPerson("user"), "bytes-out": polNum},
+	"iis-freb": {"status": polNum, "substatus": polNum, "win32": polNum, "trigger": polNum, "reason": polEnum(frebReasons),
+		"method": polEnum(httpMethods), "module": polNameKeep("module", frebModule), "notification": polEnum(frebNotifications)},
 	"win-counters": counterPolicy,
 	"sql-pdh":      counterPolicy,
 	"win-events": {"log": polEnum(winEventLogs), "provider": polEnum(winEventProviders), "id": polNum,

@@ -629,6 +629,7 @@ export const IMPORT_CAPS: Record<string, number> = {
   'win-events': 256 * MiB,
   'iis-w3c': 2 * GiB,
   'iis-httperr': 64 * MiB,
+  'iis-freb': 256 * MiB,
   'mongod-json': 2 * GiB,
   'schedule-hangfire': 16 * MiB,
   'schedule-agent': 16 * MiB,
