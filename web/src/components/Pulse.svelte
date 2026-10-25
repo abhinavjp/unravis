@@ -85,17 +85,10 @@
 </section>
 
 <style>
-  .figure-delta { font-size: 12px; font-weight: 600; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .figure-delta { font-size: 12px; font-weight: 500; color: var(--text-2); font-variant-numeric: tabular-nums; }
   .figure-delta.severe { color: var(--bad); }
   .pulse-headline { margin: 0; font-size: 14px; color: var(--text); }
-  /* Figures: one row separated by hairlines, no boxes (the global .figure rules still supply the type; these take the fill, border and radius away). */
-  .figures { gap: 0; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: var(--hairline-width) solid var(--hairline); border-bottom: var(--hairline-width) solid var(--hairline); }
-  .figures .figure { padding: var(--space-4); gap: var(--space-1); background: transparent; border: 0; border-radius: 0; }
-  .figures .figure + .figure { border-left: var(--hairline-width) solid var(--hairline); }
-  .figures .figure:hover { background: var(--surface-2); }
-  .figure-label { font-size: var(--fs-1); letter-spacing: .08em; }
-  .figure-value { font-size: clamp(28px, 3.4vw, 40px); font-weight: 300; line-height: 1.1; }
-  .figure-hint { font-size: var(--fs-2); }
+  /* Figures: the ruled readout strip. Hairlines and the 2px status tick live in app.css; this holds the narrow layout. */
   @media (max-width: 899px) {
     .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .figures .figure:first-child { grid-column: 1 / -1; }
@@ -105,7 +98,6 @@
   }
   /* Hero: the chart is the centre of the page, so it sits on the page, not in a card. */
   .hero { padding: var(--space-4) 0 0; background: transparent; border: 0; border-radius: 0; }
-  .hero-head h2 { font-size: var(--fs-3); }
   .hero-zone { margin-left: var(--space-2); color: var(--text-2); font-size: var(--fs-2); font-weight: 400; }
   .hero-legend { align-items: center; }
   .hero-legend span { display: inline-flex; align-items: center; }

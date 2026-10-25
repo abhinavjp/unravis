@@ -100,7 +100,7 @@ export const failureSeriesFor = (analysis: Analysis, keys: string[] | null, fiel
 
 /** The one zoom slider: a thin hairline track in the line colour, no readout, no chunky handles. Inside (wheel/drag) zoom is added next to it. */
 const zoomSlider = (p: Palette) => ({ type: 'slider', height: 14, bottom: 8, showDetail: false, borderColor: p.axisLine, backgroundColor: 'transparent', fillerColor: withAlpha(p.accent, .18), handleSize: 14, handleStyle: { color: p.accent, borderColor: p.accent }, moveHandleStyle: { color: p.axisLine }, dataBackground: { lineStyle: { opacity: 0 }, areaStyle: { opacity: 0 } }, selectedDataBackground: { lineStyle: { opacity: 0 }, areaStyle: { opacity: 0 } }, textStyle: { color: p.text2 } });
-const tipStyle = (p: Palette) => ({ backgroundColor: p.surface, borderColor: p.axisLine, textStyle: { color: p.text, fontSize: 12 } });
+const tipStyle = (p: Palette) => ({ backgroundColor: p.surface, borderColor: p.axisLine, borderWidth: 1, padding: [6, 10], extraCssText: 'border-radius:4px;box-shadow:none;backdrop-filter:none;', textStyle: { color: p.text, fontSize: 12 } });
 const withAlpha =(color: string, alpha: number) => /^#[0-9a-f]{6}$/i.test(color) ? color + Math.round(alpha * 255).toString(16).padStart(2, '0') : color;
 
 export const failureTrendOption = (analysis: Analysis, zone: string, cohortKeys: string[] | null = null) => {
@@ -123,7 +123,7 @@ export const failureTrendOption = (analysis: Analysis, zone: string, cohortKeys:
           ((incomplete[index] ?? 0) > 0 ? '<br/>Missing timing (not a failure): ' + (incomplete[index] ?? 0).toLocaleString() : '');
       }
     },
-    legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 76, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: p.text2, fontSize: 11 } },
+    legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 76, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: p.text2, fontSize: 12 } },
     xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, interval: 0, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } } },
     yAxis: { type: 'value', name: 'Responses per interval', nameLocation: 'middle', nameGap: 44, min: 0, minInterval: 1, axisLabel: { color: axis }, splitLine: { lineStyle: { color: p.grid } } },
     dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, zoomSlider(p)],
@@ -226,7 +226,7 @@ export const timelineOption = (analysis: Analysis, selected: Comparison | null, 
           (point ? '<br/>' + quantileIntervalText('Median', point.p50) + '<br/>95th percentile: ' + quantileText(point.p95) : '');
       }
     },
-    legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 76, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: p.text2, fontSize: 10 } },
+    legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 76, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: p.text2, fontSize: 12 } },
     xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: axis, interval: 0, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } } },
     yAxis: { type: 'value', name: 'Response time', nameLocation: 'middle', nameGap: 52, min: 0, minInterval: 1, axisLabel: { color: axis, formatter: (value: number) => axisDuration(value) }, splitLine: { lineStyle: { color: p.grid } } },
     dataZoom: [{ type: 'inside', zoomOnMouseWheel: false }, zoomSlider(p)],
@@ -276,7 +276,7 @@ export const histogramOption = (comparison: Comparison | null) => {
     grid: { left: 70, right: 18, top: 62, bottom: 64 },
     tooltip: { ...tipStyle(p), trigger: 'axis', formatter: (items: Array<{ data: number; seriesName: string; dataIndex: number }>) =>
       escapeHTML(labels[items[0]?.dataIndex ?? -1] ?? '') + '<br/>' + items.map(item => item.seriesName + ': ' + item.data).join('<br/>') },
-    legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 70, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: p.text2, fontSize: 10 } },
+    legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 70, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: p.text2, fontSize: 12 } },
     xAxis: { type: 'category', name: 'Response-time range', nameLocation: 'middle', nameGap: 44, data: labels, axisLabel: { color: axis, rotate: labels.length > 7 ? 25 : 0, interval: 0, hideOverlap: true } },
     yAxis: { type: 'value', name: 'Requests', minInterval: 1, nameLocation: 'middle', nameGap: 38, axisLabel: { color: axis }, splitLine: { lineStyle: { color: p.grid } } },
     series: [

@@ -71,7 +71,7 @@
   .crumb-current { font-weight: 600; color: var(--text); }
   .zoom-buttons { display: flex; flex-wrap: wrap; gap: 4px; }
   .zoom-buttons button:disabled { opacity: .45; cursor: not-allowed; }
-  .overview { width: 100%; height: 28px; display: block; background: var(--surface-2); border-radius: 2px; }
+  .overview { width: 100%; height: 28px; display: block; background: var(--surface-2); border-radius: var(--radius-sm); }
   .overview .bar { fill: var(--text-2); opacity: .55; }
   .overview .mark { fill: var(--accent); opacity: .3; stroke: var(--accent); stroke-width: .4; vector-effect: non-scaling-stroke; }
   .zoom-line, .zoom-note, .zoom-message { margin: 0; }

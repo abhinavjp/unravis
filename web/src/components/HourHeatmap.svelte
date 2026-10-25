@@ -95,9 +95,9 @@
   .hm-row { display: grid; grid-template-columns: 5.5rem repeat(24, minmax(14px, 1fr)); gap: 2px; align-items: center; }
   .hm-day { font-size: 12px; color: var(--text-2); white-space: nowrap; }
   .hm-partial { font-style: italic; margin-left: 4px; }
-  .hm-mark { font-size: 10px; color: var(--text-2); text-align: left; line-height: 1; }
+  .hm-mark { font-size: 11px; color: var(--text-2); text-align: left; line-height: 1; }
   .hm-cell-wrap { display: block; min-width: 0; }
-  .hm-cell, .hm-gap { display: block; width: 100%; height: 20px; padding: 0; border-radius: 2px; }
+  .hm-cell, .hm-gap { display: block; width: 100%; height: 20px; padding: 0; border-radius: 1px; }
   .hm-cell { border: 1px solid var(--line-soft); background: var(--surface-2); cursor: pointer; }
   .hm-cell.empty { cursor: default; background: transparent; }
   .hm-gap { border: 1px solid transparent; }
@@ -107,9 +107,9 @@
   .level-4 { background: var(--heat-4); }
   .hm-cell.noise { border: 1px dashed var(--text-2); }
   .hm-cell:hover:not(.empty) { outline: 1px solid var(--text); outline-offset: 0; }
-  .hm-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; position: relative; z-index: 1; }
+  .hm-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; position: relative; z-index: 1; }
   .hm-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--text-2); font-size: 12px; }
-  .hm-swatch { display: inline-block; width: 16px; height: 12px; border: 1px solid var(--line-soft); border-radius: 2px; background: var(--surface-2); }
+  .hm-swatch { display: inline-block; width: 16px; height: 12px; border: 1px solid var(--line-soft); border-radius: 1px; background: var(--surface-2); }
   .hm-swatch.noise { background: var(--surface-2); border: 1px dashed var(--text-2); margin-left: 8px; }
   .hm-swatch.empty { background: transparent; margin-left: 8px; }
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
