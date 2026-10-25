@@ -142,6 +142,12 @@ var (
 		"instance": polName("instance", "_Total")}
 	schedPolicy = map[string]attrPolicy{"job": polName("job"), "queue": polName("queue"), "tz": polEnum(schedTZ),
 		"basis": polEnum(schedBasis), "reason": polEnum(schedReasons), "dst": polEnum(schedDST), "freq": polEnum(schedFreqs)}
+	// quartzPolicy: job, group, trigger and scheduler names are client names
+	// (keyed pseudonyms); a thread name is kept only in Quartz's own shape.
+	quartzPolicy = map[string]attrPolicy{"job": polName("job"), "group": polName("group"), "trigger": polName("trigger"),
+		"scheduler": polName("scheduler"), "thread": polNameKeep("thread", quartzThread),
+		"outcome": polEnum(quartzOutcomes), "level": polEnum(appLogLevels), "exception": polList(quartzExceptionTypes),
+		"count": polNum}
 )
 
 // exportPolicy is the per-source attribute allowlist of the case export. It
@@ -173,6 +179,7 @@ var exportPolicy = map[string]map[string]attrPolicy{
 	"mongod-json":       mongoOpPolicy,
 	"schedule-hangfire": schedPolicy,
 	"schedule-agent":    schedPolicy,
+	"schedule-quartz":   quartzPolicy,
 	"appinsights": {"dependencyType": polEnum(dependencyTypes), "resultCode": polNumOr("other"),
 		"success": polEnum(successValues)},
 	"sql-xe": {"event": polEnum(xeEvents), "wait_type": polWait, "wait_class": polEnum(xeWaitClasses),

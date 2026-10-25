@@ -1,0 +1,12 @@
+2001-03-24 05:06:00 info: Quartz.Core.QuartzScheduler[0]
+      Scheduler web-a-sched_$_NON_CLUSTERED started.
+2001-03-24 05:06:07 info: Quartz.Core.JobRunShell[0]
+      => SpanId:0000000000000001, TraceId:00000000000000000000000000000001
+      Job DEFAULT.nightly-sync execution complete in 1250 ms
+2001-03-24 05:06:08 fail: Quartz.Core.JobRunShell[0]
+      Job DEFAULT.report-build threw a JobExecutionException
+      Quartz.JobExecutionException: synthetic failure text
+         at Example.Test.ReportJob.Execute(IJobExecutionContext context)
+2001-03-24 05:06:09 warn: Quartz.Core.QuartzSchedulerThread[0] Trigger DEFAULT.nightly-trg misfired
+2001-03-24 05:06:10 info: MyApp.Jobs.SyncJob[0]
+      application line that is not Quartz

@@ -14,7 +14,7 @@ Status as of 2026-10-25. Question: can Unravis take every log that helps find a 
 | .NET Framework Web API | log4net, event log (`win-events` with Application classifier), perfmon counters, App Insights export | Supported | ETW traces (`.etl`) are binary and not read. Export to text first. |
 | .NET 10 Web API | MEL, Serilog, `dotnet-counters` CSV/JSON, App Insights export | Supported | `dotnet-trace` `.nettrace` is binary and not read. |
 | Windows events | `win-events` (EVTX export to XML/CSV) with WAS, Application and Task Scheduler classifiers | Supported | Security log is out of scope on purpose. |
-| Schedulers | `schedule-hangfire`, `schedule-agent` (SQL Agent) | Supported | Quartz is not covered. |
+| Schedulers | `schedule-hangfire`, `schedule-agent` (SQL Agent), `schedule-quartz` (Quartz.NET text logs) | Supported | Quartz is read from the log4net and MEL-with-timestamp text layouts; message wordings are matched from public sources, not a real export. |
 | Redis | `redis-slowlog`, `redis-latency`, `redis-info`, `redis-log` | Supported | Node-side Redis proxy logs: not built, no known format to target. |
 | MongoDB | `mongod-json` (structured JSON log), `mongo-profile`, `mongo-currentop`, `mongo-serverstatus`, `mongostat-json` | Supported | Verified on synthetic data only. `$collStats`, `getMore` and `maxTimeMS` behaviour and Mongo 3.4 text logs wait on the Mongo owner (held item T0). |
 | SQL Server | `sql-xe` (extended events), `sql-errorlog`, `sql-pdh` (perfmon CSV for the instance) | Supported | Query Store export is not read. |

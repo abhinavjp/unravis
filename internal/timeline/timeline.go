@@ -87,6 +87,7 @@ var displayNames = map[string]string{
 	// "schedule" key matched no source.
 	"schedule-hangfire": "Hangfire schedule export",
 	"schedule-agent":    "SQL Server Agent schedule export",
+	"schedule-quartz":   "Quartz.NET scheduler log",
 	// Wave 2 (pre-landed by W2-F).
 	"log4net-text":       "log4net log",
 	"log4net-xml":        "log4net XML log",

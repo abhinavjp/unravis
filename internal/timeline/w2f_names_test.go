@@ -10,7 +10,7 @@ import (
 // Every shipped and wave-2 source has a plain display name, and the wave-2
 // interval kinds read as plain phrases in OverlapUnique.
 func TestW2FDisplayNamesAndPhrases(t *testing.T) {
-	for _, s := range []string{"schedule-hangfire", "schedule-agent",
+	for _, s := range []string{"schedule-hangfire", "schedule-agent", "schedule-quartz",
 		"log4net-text", "log4net-xml", "serilog-clef", "serilog-text", "nlog-text", "nginx-access", "apache-combined", "mel-console", "mel-json", "ancm-stdout",
 		"node-jsonl", "dotnet-counters", "win-procsnap", "redis-slowlog", "redis-latency", "redis-info", "redis-log",
 		"mongo-profile", "mongo-currentop", "mongo-serverstatus", "mongostat-json", "linux-sadf", "linux-pidstat", "linux-vmstat", "win-live"} {

@@ -1,0 +1,18 @@
+log4net:ERROR Synthetic preamble line that is not an entry
+2001-03-24 05:06:00,010 [main] INFO  Quartz.Core.QuartzScheduler - Scheduler web-a-sched_$_NON_CLUSTERED started.
+2001-03-24 05:06:01,020 [main] DEBUG Quartz.Simpl.SimpleJobFactory - Producing instance of Job 'DEFAULT.nightly-sync'
+2001-03-24 05:06:07,123 [QuartzScheduler_Worker-1] INFO  Quartz.Core.QuartzSchedulerThread - Batch acquisition of 2 triggers
+2001-03-24 05:06:07,200 [QuartzScheduler_Worker-1] INFO  Quartz.Core.JobRunShell - Job DEFAULT.nightly-sync execution complete in 1250 ms
+2001-03-24 05:06:08,300 [QuartzScheduler_Worker-2] ERROR Quartz.Core.JobRunShell - Job DEFAULT.report-build threw a JobExecutionException
+Quartz.JobExecutionException: synthetic failure text SENTINEL-NOT-USED
+   at Example.Test.ReportJob.Execute(IJobExecutionContext context)
+   ---> System.InvalidOperationException: synthetic inner text
+   at Example.Test.ReportJob.Build()
+2001-03-24 05:06:09,400 [QuartzScheduler_Worker-2] INFO  MyApp.Jobs.SyncJob - application line that is not Quartz
+2001-03-24 05:06:10,500 [QuartzScheduler_Worker-3] WARN  Quartz.Core.QuartzSchedulerThread - Trigger DEFAULT.nightly-trg misfired
+2001-03-24 05:06:11,600 [MisfireHandler] INFO  Quartz.Simpl.RAMJobStore - Handling 1 trigger(s) that missed their scheduled fire-time.
+2001-03-24 05:06:12,700 [QuartzScheduler_Worker-1] ERROR Quartz.Core.QuartzSchedulerThread - Failed to acquire next trigger
+Quartz.JobPersistenceException: synthetic store failure
+ ---> System.Data.SqlClient.SqlException (0x80131904): synthetic inner failure
+2001-03-24 05:06:13,800 [QuartzScheduler_Worker-1] INFO  Quartz.Core.QuartzSchedulerThread - Batch acquisition of 0 triggers
+2001-03-24 05:06:14,900 [main] INFO  Quartz.Core.QuartzScheduler - Scheduler web-a-sched_$_NON_CLUSTERED shutdown complete.

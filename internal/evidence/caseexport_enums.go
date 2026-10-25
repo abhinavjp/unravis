@@ -54,6 +54,8 @@ var exportKinds = map[string]map[string]bool{
 	"mongod-json":       set("slow-op", "mongod-start", "mongod-stop"),
 	"schedule-hangfire": set("schedule-boundary", "schedule-unknown", "job-run"),
 	"schedule-agent":    set("schedule-boundary", "schedule-unknown", "job-run"),
+	"schedule-quartz": set("job-run", "trigger-batch", "trigger-misfire", "scheduler-start", "scheduler-stop",
+		"scheduler-fault"),
 	"appinsights": set("record", "request", "dependency", "exception", "trace", "pageview", "availability",
 		"custom-event"),
 	"sql-xe":       set("wait", "diagnostics", "error", "non-yielding", "deadlock"),
@@ -273,6 +275,21 @@ var (
 		"window-wraps", "too-many-boundaries")
 	schedDST   = fold("ambiguous", "nonexistent")
 	schedFreqs = fold("once", "daily", "weekly", "monthly", "monthly-relative")
+
+	// Quartz.NET: the outcome of a job run, the exception types Quartz itself
+	// throws (on top of the framework list), and the thread names Quartz gives
+	// its own scheduler and worker threads.
+	quartzOutcomes       = fold("complete", "failed")
+	quartzExceptionTypes = func() map[string]string {
+		m := fold("Quartz.JobExecutionException", "Quartz.SchedulerException", "Quartz.JobPersistenceException",
+			"Quartz.ObjectAlreadyExistsException", "Quartz.SchedulerConfigException", "Quartz.UnableToInterruptJobException",
+			"Quartz.Impl.AdoJobStore.LockException", "Quartz.Impl.AdoJobStore.NoRecordFoundException")
+		for k, v := range exceptionTypes {
+			m[k] = v
+		}
+		return m
+	}()
+	quartzThread = regexp.MustCompile(`^(?:Default)?QuartzScheduler_(?:Worker-[0-9]{1,4}|QuartzSchedulerThread)$`)
 )
 
 // Performance counter objects and counters: a curated list, matched without
