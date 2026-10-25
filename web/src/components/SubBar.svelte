@@ -15,7 +15,7 @@
   // While the panel is open its own header shows the chips, so the outer row hides (no chip ever appears twice).
   let moreOpen = $state(false);
   let summaryEl = $state<HTMLElement>();
-  // The selected group of the filter rail lives here, so it survives the panel remounting after a chip is removed.
+  // The selected group of the filter rail lives here, so it survives the panel remounting (Clear all, a reset view).
   // Opening the panel selects the first group that has an active filter, else When.
   let panelGroup = $state<RailGroup>('when');
   $effect(() => {

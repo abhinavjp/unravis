@@ -1087,7 +1087,13 @@ test('the range filters live only in RangesGroup', () => {
   assert.match(source, /RANGE_FIELDS/);
   assert.match(source, /rangeNote/);
   assert.match(source, /syncRangeDraft\(/);
-  for (const other of others) assert.equal(/RANGE_FIELDS|rf-\$\{key\}|'rf-' \+ key/.test(other), false);
+  // Svelte writes the ids as rf-{field.key}-min, so the guard must match that text (and the old template-literal spellings).
+  const RANGE_ONLY = /RANGE_FIELDS|rf-\{|rf-\$\{|'rf-' \+|field\.key\}-min/;
+  assert.match(source, RANGE_ONLY, 'the guard matches the text RangesGroup really contains');
+  assert.match(source, /rf-\{field\.key\}-min/);
+  assert.match(source, /field\.key\}-min/);
+  assert.match(source, /rf-\{/);
+  for (const other of others) assert.equal(RANGE_ONLY.test(other), false);
   for (const file of ['src/components/QueryControls.svelte', ...FILTER_FILES]) {
     const text = fs.readFileSync(path.join(root, file), 'utf8');
     const style = text.indexOf('<style>');

@@ -43,7 +43,7 @@
   const activeRange = $derived(activeRangeId(query, quickRanges));
   // The group rail. Every pane stays mounted (hidden, not removed) so the drafts and sync effects in each group keep working.
   const counts = $derived(panelGroupCounts(filterChips(query)));
-  // The other groups report a problem through a bound hasError; When already reports it through dateInputsValid.
+  // The other groups (What, Details, Ranges, Chart) report a problem through a bound hasError; When already reports it through dateInputsValid.
   const errors = $state<Record<RailGroup, boolean>>({ when: false, what: false, details: false, ranges: false, chart: false });
   const hasProblem = (id: RailGroup) => (id === 'when' ? !dateInputsValid : errors[id]);
   const problemGroups = $derived(RAIL_GROUPS.filter(group => hasProblem(group.id)));
@@ -106,7 +106,7 @@
         <div class="rail-pane" role="tabpanel" id="rail-pane-what" aria-labelledby="rail-tab-what" hidden={current !== 'what'}><WhatGroup bind:query {groupNames} count={counts.what} bind:hasError={errors.what} /></div>
         <div class="rail-pane" role="tabpanel" id="rail-pane-details" aria-labelledby="rail-tab-details" hidden={current !== 'details'}><DetailsGroup bind:query count={counts.details} bind:hasError={errors.details} /></div>
         <div class="rail-pane" role="tabpanel" id="rail-pane-ranges" aria-labelledby="rail-tab-ranges" hidden={current !== 'ranges'}><RangesGroup bind:query count={counts.ranges} bind:hasError={errors.ranges} /></div>
-        <div class="rail-pane" role="tabpanel" id="rail-pane-chart" aria-labelledby="rail-tab-chart" hidden={current !== 'chart'}><ChartGroup bind:query bind:targetMs count={counts.chart} /></div>
+        <div class="rail-pane" role="tabpanel" id="rail-pane-chart" aria-labelledby="rail-tab-chart" hidden={current !== 'chart'}><ChartGroup bind:query bind:targetMs count={counts.chart} bind:hasError={errors.chart} /></div>
       </div>
     </div>
   </div>

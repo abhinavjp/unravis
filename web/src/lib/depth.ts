@@ -1,4 +1,4 @@
-import { serializeRecordFilters } from './investigation';
+import { formatNumber, serializeRecordFilters } from './investigation';
 import type { NumberRange, Query, RangeKey } from './types';
 
 /**
@@ -73,7 +73,7 @@ const rangeLabels: Record<RangeKey, string> = {
   observedMs: 'Observed time', apiTimeMs: 'API time', auditCreateTimeMs: 'Audit create time', requestKb: 'Request size', responseKb: 'Response size', incompleteAgeMs: 'Open for'
 };
 const rangeUnits: Record<RangeKey, string> = { observedMs: 'ms', apiTimeMs: 'ms', auditCreateTimeMs: 'ms', requestKb: 'KB', responseKb: 'KB', incompleteAgeMs: 'ms' };
-const rangeText = (range: NumberRange, unit: string) => range.min != null && range.max != null ? `${range.min}–${range.max} ${unit}` : range.min != null ? `at least ${range.min} ${unit}` : `at most ${range.max} ${unit}`;
+const rangeText = (range: NumberRange, unit: string) => range.min != null && range.max != null ? `${formatNumber(range.min)}–${formatNumber(range.max)} ${unit}` : range.min != null ? `at least ${formatNumber(range.min)} ${unit}` : `at most ${formatNumber(range.max!)} ${unit}`;
 
 /**
  * The filters that sit inside More filters and are currently in use, as removable chips. The request type and the two time windows are not
@@ -155,12 +155,24 @@ const panelGroupOf: Record<string, PanelGroup> = {
   ...Object.fromEntries(Object.keys(rangeLabels).map(key => [key, 'ranges' as PanelGroup]))
 };
 
-/** How many active chips each panel group holds. A chip with an id this table does not know throws, so a new chip cannot silently drop out of the counts. */
+/** Chip ids already reported as unmapped, so a derived that re-runs does not flood the console. */
+const reportedUnmapped = new Set<string>();
+
+/**
+ * How many active chips each panel group holds. A chip with an id this table does not know is counted under details (so the counts still add
+ * up to the chips shown) and reported once with console.error. It must never throw: this runs inside a $derived, where a throw takes the scope bar down.
+ */
 export function panelGroupCounts(chips: readonly FilterChip[]): Record<PanelGroup, number> {
   const counts: Record<PanelGroup, number> = { what: 0, details: 0, ranges: 0, chart: 0 };
   for (const chip of chips) {
-    const group = Object.hasOwn(panelGroupOf, chip.id) ? panelGroupOf[chip.id] : undefined;
-    if (!group) throw new Error(`No More filters group for chip "${chip.id}"`);
+    let group = Object.hasOwn(panelGroupOf, chip.id) ? panelGroupOf[chip.id] : undefined;
+    if (!group) {
+      group = 'details';
+      if (!reportedUnmapped.has(chip.id)) {
+        reportedUnmapped.add(chip.id);
+        console.error(`No More filters group for chip "${chip.id}"; counted under Request details.`);
+      }
+    }
     counts[group]++;
   }
   return counts;

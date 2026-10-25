@@ -121,13 +121,19 @@ test('panelGroupCounts copes with a huge chip list and still adds up', () => {
   assert.equal(depth.filtersInUseText(chips.length), '100000 filters in use');
 });
 
-test('a chip with an id the table does not know throws, including ids that look like object keys', () => {
-  for (const id of ['mystery', '', 'constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf', 'KIND', ' kind', 'kind ']) {
-    assert.throws(() => depth.panelGroupCounts([{ id, group: 'record', label: '', value: '', patch: {} }]), /No More filters group/, JSON.stringify(id));
-  }
-  // One unknown chip anywhere in a long list is still caught.
-  const good = { id: 'kind', group: 'kind', label: '', value: '', patch: {} };
-  assert.throws(() => depth.panelGroupCounts([good, good, { ...good, id: 'nope' }, good]));
+test('a chip with an id the table does not know is counted under details, never thrown, including ids that look like object keys', () => {
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => logged.push(args.join(' '));
+  try {
+    for (const id of ['clumsy-mystery', '', 'constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf', 'KIND', ' kind', 'kind ']) {
+      assert.deepEqual(depth.panelGroupCounts([{ id, group: 'record', label: '', value: '', patch: {} }]), { what: 0, details: 1, ranges: 0, chart: 0 }, JSON.stringify(id));
+    }
+    // One unknown chip anywhere in a long list is still counted, and the known chips keep their groups.
+    const good = { id: 'kind', group: 'kind', label: '', value: '', patch: {} };
+    assert.deepEqual(depth.panelGroupCounts([good, good, { ...good, id: 'nope' }, good]), { what: 3, details: 1, ranges: 0, chart: 0 });
+    assert.ok(logged.length >= 1, 'the unknown ids were reported');
+  } finally { console.error = original; }
 });
 
 test('the count on the button and in the panel agree for every combination of filters, even with blank and padded text', () => {
@@ -244,14 +250,14 @@ test('syncRangeDraft keeps what the user is typing while it means the applied ra
   }
 });
 
-test('KNOWN BUG (pinned as it behaves today): a hand-edited saved range with a tiny bound is rewritten into the box as exponent text the box then rejects', () => {
-  // serializeRecordFilters accepts any finite number from 0 to the limit, but String(1e-7) is "1e-7" and the typed-text rules refuse an exponent.
-  // Only a hand-edited snapshot can carry such a number. When this is fixed, change the last two assertions to expect a plain decimal and a range.
+test('a hand-edited saved range with a tiny bound is written into the box as a plain decimal the box accepts (fixed; was exponent text)', () => {
+  // serializeRecordFilters accepts any finite number from 0 to the limit, and String(1e-7) is "1e-7", which the typed-text rules refuse.
+  // The box now gets a plain decimal, so the saved bound round-trips.
   const applied = inv.serializeRecordFilters({ observedMs: { min: 1e-7 } }).observedMs;
   assert.deepEqual(applied, { min: 1e-7 });
   const draft = inv.syncRangeDraft({ min: '', max: '' }, applied, inv.MAX_RANGE_MS);
-  assert.deepEqual(draft, { min: '1e-7', max: '' });
-  assert.equal(inv.buildRange(draft.min, draft.max, inv.MAX_RANGE_MS).range, undefined);
+  assert.deepEqual(draft, { min: '0.0000001', max: '' });
+  assert.deepEqual(inv.buildRange(draft.min, draft.max, inv.MAX_RANGE_MS).range, { min: 1e-7 });
 });
 
 test('range conflicts with the completion filter are explained, and an empty range is not a conflict', () => {

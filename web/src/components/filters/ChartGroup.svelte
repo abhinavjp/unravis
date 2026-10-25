@@ -2,13 +2,16 @@
   import type { Query } from '../../lib/types';
   import { metricLabels } from '../../lib/presentation';
   import { intervalFitNote } from '../../lib/autorun';
+  import { chartIntervalProblem } from '../../lib/filterRail';
   import { intervalNote } from '../../lib/intervalNote.svelte';
   import FilterGroup from './FilterGroup.svelte';
   import Hint from '../Hint.svelte';
   // The Chart group of the More filters panel: what the charts measure, how finely they slice time, and an optional response-time target.
   // The panel never starts a run, so nothing here calls onScopeChange.
-  let { query = $bindable(), targetMs = $bindable(), count = 0 }: { query: Query; targetMs: number | null; count?: number } = $props();
+  // hasError lets the panel rail show a problem dot while this group is on a hidden pane; it is true when the interval would stop the run.
+  let { query = $bindable(), targetMs = $bindable(), count = 0, hasError = $bindable(false) }: { query: Query; targetMs: number | null; count?: number; hasError?: boolean } = $props();
   const intervalFitText = $derived(intervalFitNote(query));
+  $effect(() => { hasError = chartIntervalProblem(query); });
 </script>
 
 <FilterGroup id="chart" title="Chart" {count}>

@@ -36,7 +36,8 @@ test('panelGroupCounts sorts every More filters chip into exactly one group', ()
   Object.assign(query, { operation: 'Orders.Get', auditId: 'a'.repeat(24), incompleteAgeMs: { min: 1000 }, observedMs: undefined });
   const more = depth.panelGroupCounts(depth.filterChips(query));
   assert.equal(more.what, 6); assert.equal(more.details, 4); assert.equal(more.ranges, 2);
-  assert.throws(() => depth.panelGroupCounts([{ id: 'mystery', group: 'record', label: '', value: '', patch: {} }]));
+  const quiet = console.error; console.error = () => {};
+  try { assert.equal(depth.panelGroupCounts([{ id: 'mystery', group: 'record', label: '', value: '', patch: {} }]).details, 1, 'an unknown id is counted, not thrown'); } finally { console.error = quiet; }
 });
 
 test('filtersInUseText counts in words', () => {
@@ -100,7 +101,7 @@ test('SubBar shows the count, stale hint and chips at the top of the open panel 
 test('Esc still closes the panel: the state handler targets it and no filter group swallows keys', () => {
   const state = read('src/lib/appState.svelte.ts');
   assert.match(state, /details\.menu\[open\], details\.more-filters\[open\]/);
-  assert.match(state, /removeChip\(chip: FilterChip\) \{ applyChipPatch\(query, chip\); controlsResetKey\+\+; onScopeChange\(\); \}/);
+  assert.match(state, /removeChip\(chip: FilterChip\) \{ applyChipPatch\(query, chip\); onScopeChange\(\); \}/);
   for (const file of FILTER_FILES) assert.doesNotMatch(read(file), /onkeydown/, file);
   assert.equal(filterRail.railTarget('Escape', 1, 5), null);
   assert.equal(filterRail.railTarget('Tab', 1, 5), null);

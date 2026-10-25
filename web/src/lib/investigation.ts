@@ -92,6 +92,24 @@ export const buildRange = (minText: string, maxText: string, limit: number): { r
   if (max != null) range.max = max;
   return { range: min != null || max != null ? range : undefined, problems };
 };
+/**
+ * formatNumber writes a number as plain decimal text with no exponent and no trailing zeros, so a bound such as 1e-7 reaches a range box
+ * as "0.0000001", which buildRange accepts and reads back as the same number. (String(1e-7) is "1e-7", which the box rules refuse.)
+ */
+export const formatNumber = (value: number): string => {
+  const text = String(value);
+  const match = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/i.exec(text);
+  if (!match) return text;
+  const [, sign, whole, fraction = '', exponent] = match;
+  const digits = whole + fraction;
+  const point = whole.length + Number(exponent);
+  let plain: string;
+  if (point <= 0) plain = '0.' + '0'.repeat(-point) + digits;
+  else if (point >= digits.length) plain = digits + '0'.repeat(point - digits.length);
+  else plain = digits.slice(0, point) + '.' + digits.slice(point);
+  if (plain.includes('.')) plain = plain.replace(/\.?0+$/, '');
+  return sign + plain;
+};
 const sameRange = (a: NumberRange | undefined, b: NumberRange | undefined) => (a?.min ?? null) === (b?.min ?? null) && (a?.max ?? null) === (b?.max ?? null);
 /**
  * syncRangeDraft is syncListDraft for a min/max pair: the typed text is kept while
@@ -100,7 +118,7 @@ const sameRange = (a: NumberRange | undefined, b: NumberRange | undefined) => (a
  * how a restored or cleared query reaches them.
  */
 export const syncRangeDraft = (draft: { min: string; max: string }, applied: NumberRange | undefined, limit: number): { min: string; max: string } =>
-  sameRange(buildRange(draft.min, draft.max, limit).range, applied) ? draft : { min: applied?.min != null ? String(applied.min) : '', max: applied?.max != null ? String(applied.max) : '' };
+  sameRange(buildRange(draft.min, draft.max, limit).range, applied) ? draft : { min: applied?.min != null ? formatNumber(applied.min) : '', max: applied?.max != null ? formatNumber(applied.max) : '' };
 const cleanRange = (value: unknown, limit: number): NumberRange | undefined => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const raw = value as Record<string, unknown>;

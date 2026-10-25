@@ -1,3 +1,5 @@
+import type { Query } from './types';
+import { intervalFitNote } from './autorun';
 import type { PanelGroup } from './depth';
 
 // The group rail of the More filters panel: five groups, one pane visible at a time. These helpers are pure so the keyboard
@@ -34,3 +36,10 @@ export function railTarget(key: string, index: number, total: number): number | 
   if (key === 'End') return total - 1;
   return null;
 }
+
+/**
+ * Whether the Chart interval would stop a run: not a whole number from 10 to 86,400, or a whole number that makes more than 120 time points.
+ * This is the interval part of scopeProblem, so the Chart rail entry shows a problem exactly when the run button would refuse.
+ */
+export const chartIntervalProblem = (query: Pick<Query, 'start' | 'end' | 'baselineStart' | 'baselineEnd' | 'bucketSeconds'>): boolean =>
+  !(Number.isInteger(query.bucketSeconds) && query.bucketSeconds >= 10 && query.bucketSeconds <= 86_400) || intervalFitNote(query) !== '';

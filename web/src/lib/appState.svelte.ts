@@ -1001,7 +1001,8 @@ export function backToPreviousWindow() {
   zoomView.expect(rootOf(popped.entry.from), popped.entry.lens);
   void runAnalysis(true);
 }
-export function removeChip(chip: FilterChip) { applyChipPatch(query, chip); controlsResetKey++; onScopeChange(); }
+// Removing one chip must not remount the controls: every group resyncs its boxes from the query, so a half-typed value elsewhere stays. Only Clear all is a reset.
+export function removeChip(chip: FilterChip) { applyChipPatch(query, chip); onScopeChange(); }
 export function clearChips() { for (const chip of filterChipList) applyChipPatch(query, chip); controlsResetKey++; onScopeChange(); }
 export async function openFromTable(key: string) {
   const row = analysis?.apis.find(item => item.key === key);

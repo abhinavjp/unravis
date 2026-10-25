@@ -1,7 +1,7 @@
 <script lang="ts">
   import FilterGroup from './FilterGroup.svelte';
   import type { Query, RangeKey, NumberRange } from '../../lib/types';
-  import { RANGE_FIELDS, buildRange, syncRangeDraft, rangeConflict } from '../../lib/investigation';
+  import { RANGE_FIELDS, buildRange, formatNumber, syncRangeDraft, rangeConflict } from '../../lib/investigation';
 
   // hasError lets the panel rail show a problem dot while this group is on a hidden pane.
   let { query = $bindable(), count = 0, hasError = $bindable(false) }: { query: Query; count: number; hasError?: boolean } = $props();
@@ -41,8 +41,8 @@
 
   type RangeDraft = { min: string; max: string };
   const draftOf = (range: NumberRange | undefined): RangeDraft => ({
-    min: range?.min != null ? String(range.min) : '',
-    max: range?.max != null ? String(range.max) : ''
+    min: range?.min != null ? formatNumber(range.min) : '',
+    max: range?.max != null ? formatNumber(range.max) : ''
   });
 
   let rangeText = $state<Record<RangeKey, RangeDraft>>(
