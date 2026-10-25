@@ -251,25 +251,25 @@
   .export-window dl div { display: flex; gap: 10px; min-width: 0; }
   .export-window dt { flex: 0 0 74px; color: var(--text-2); }
   .export-window dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-  .export-options { display: grid; gap: 6px; margin: 0; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--radius); min-width: 0; }
-  .export-options legend { padding: 0 6px; color: var(--text-2); font-size: 12px; font-weight: 650; }
-  .export-check { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; font-weight: 600; }
+  .export-options { display: grid; gap: 6px; margin: 0; padding: 10px 0 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; min-width: 0; }
+  .export-options legend { padding: 0 6px 0 0; color: var(--text-2); font-size: 12px; font-weight: 500; }
+  .export-check { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; font-weight: 500; }
   .export-check input { flex: 0 0 auto; width: 15px; height: 15px; margin: 3px 0 0; }
   .export-note { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.5; }
   .export-options .export-note { margin: 0 0 6px 23px; }
   .export-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .export-empty { margin: 0; padding: 10px 12px; font-size: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+  .export-empty { margin: 0; padding: 10px 0; font-size: 14px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
   .export-summary { margin: 0; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .export-block { min-width: 0; margin-top: 4px; }
-  .export-block h3 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+  .export-block h3 { margin: 0 0 8px; font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
   .export-statements { display: grid; gap: 6px; margin: 0; padding: 0 0 0 18px; font-size: 13px; line-height: 1.5; }
-  .export-records { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-  .export-record { min-width: 0; padding: 9px 12px; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); }
-  .export-record h4 { margin: 10px 0 4px; color: var(--text-2); font-size: 12px; font-weight: 650; }
+  .export-records { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+  .export-record { min-width: 0; padding: 10px 0; background: transparent; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; }
+  .export-record h4 { margin: 10px 0 4px; color: var(--text-2); font-size: 12px; font-weight: 500; }
   .record-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; }
-  .record-label { padding: 2px 8px; color: var(--text); border: 1px solid var(--line); border-radius: 4px; font-weight: 650; }
+  .record-label { padding: 2px 8px; color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm); font-weight: 500; }
   .record-rule, .record-n { color: var(--text-2); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-  .low-n { padding: 1px 6px; color: var(--warn); border: 1px solid var(--warn); border-radius: 4px; }
+  .low-n { padding: 1px 6px; color: var(--warn); border: 1px solid var(--warn); border-radius: var(--radius-sm); }
   .record-headline { margin: 6px 0 0; font-size: 13px; overflow-wrap: anywhere; }
   .record-facts { display: grid; gap: 3px; margin: 8px 0 0; font-size: 12px; }
   .record-facts div { display: flex; gap: 10px; min-width: 0; }
@@ -277,14 +277,14 @@
   .record-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
   .record-facts code, .export-block code { font-family: var(--mono); font-size: 11px; user-select: all; overflow-wrap: anywhere; }
   .record-list { margin: 0; padding-left: 18px; font-size: 12px; }
-  .table-scroll { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: var(--radius); }
+  .table-scroll { overflow-x: auto; }
   .export-table { width: 100%; border-collapse: collapse; font-size: 12px; }
   .export-table th, .export-table td { padding: 5px 8px; text-align: left; border-bottom: 1px solid var(--line-soft); font-weight: 400; }
-  .export-table thead th { background: var(--surface-2); color: var(--text-2); font-weight: 600; }
+  .export-table thead th { background: transparent; color: var(--text-2); font-weight: 500; border-bottom-color: var(--line); }
   .export-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .export-raw { margin-top: 10px; }
   .export-raw summary { width: fit-content; color: var(--text-2); font-size: 13px; }
-  .export-raw pre { max-height: 320px; margin: 6px 0 0; padding: 8px 10px; overflow: auto; font-family: var(--mono); font-size: 11px; line-height: 1.45; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .export-raw pre { max-height: 320px; margin: 6px 0 0; padding: 8px 10px; overflow: auto; font-family: var(--mono); font-size: 11px; line-height: 1.45; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
   .export-save { display: grid; justify-items: start; gap: 6px; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
   .export-saved { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 </style>

@@ -238,17 +238,17 @@
 
 <style>
   .tools { display: grid; gap: var(--space-2); min-width: 0; padding-top: var(--space-4); border-top: 1px solid var(--hairline); }
-  h3 { margin: 0; font-size: var(--fs-4); font-weight: 600; }
-  h4 { margin: var(--space-2) 0 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
+  h3 { margin: 0; font-size: var(--fs-4); font-weight: 600; letter-spacing: -.01em; }
+  h4 { margin: var(--space-2) 0 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
   .note { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
   .status { display: grid; gap: var(--space-1); }
   .span-note { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
   .chips-block { display: grid; gap: var(--space-1); }
-  .hosts { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
-  .host { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  .hosts { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+  .host { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3) 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
   .host-row { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
   .host-text { display: grid; gap: 4px; min-width: 0; }
-  .host-text h4 { margin: 0; color: var(--text); font-size: var(--fs-3); }
+  .host-text h4 { margin: 0; color: var(--text); font-size: var(--fs-3); font-weight: 600; }
   .line { margin: 0; font-size: var(--fs-3); line-height: 1.45; overflow-wrap: anywhere; }
   .toggle { flex: 0 0 auto; }
   .expanded { display: grid; gap: var(--space-2); min-width: 0; padding-top: var(--space-2); border-top: 1px solid var(--hairline); }
@@ -256,7 +256,7 @@
   .range { flex: 1 1 100%; color: var(--text-2); font-size: var(--fs-2); font-variant-numeric: tabular-nums; }
   .lists { display: grid; gap: 4px; }
   .plain { display: grid; gap: 4px; margin: 0; padding: 0 0 0 18px; font-size: var(--fs-2); line-height: 1.5; }
-  .link { padding: 0; color: var(--accent); font-size: var(--fs-2); text-decoration: underline; background: transparent; border: 0; }
+  .link { padding: 0; color: var(--accent); font-size: var(--fs-2); text-decoration: underline; text-underline-offset: 3px; background: transparent; border: 0; }
   @media (max-width: 480px) {
     .host-row { flex-direction: column; }
     .toggle { width: 100%; }

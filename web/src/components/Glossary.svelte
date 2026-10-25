@@ -58,21 +58,21 @@
 <style>
   :global(.connections-drawer.glossary-drawer) { overflow-x: hidden; }
   .glossary-search { display: grid; gap: 4px; margin: 13px 0 6px; }
-  .glossary-search label { color: var(--text-2); font-size: 12px; }
-  .glossary-search input { width: 100%; min-width: 0; min-height: 38px; padding: 6px 10px; color: var(--text); background: var(--bg); border: 1px solid var(--control-line); border-radius: var(--radius); font-size: 14px; }
+  .glossary-search label { color: var(--text-2); font-size: 12px; font-weight: 500; }
+  .glossary-search input { width: 100%; min-width: 0; min-height: 34px; padding: 6px 10px; color: var(--text); background: var(--bg); border: 1px solid var(--control-line); border-radius: var(--radius-sm); font-size: 13px; }
   .glossary-count { color: var(--text-2); font-size: 12px; }
   .glossary-list { margin: 0; }
   .glossary-entry { padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
   .glossary-entry:focus { outline: none; }
-  .glossary-focused { margin: 0 -10px; padding: 12px 10px; background: var(--surface-2); border-radius: var(--radius); box-shadow: inset 0 0 0 1px var(--accent); }
+  .glossary-focused { margin: 0 -10px; padding: 12px 10px; background: var(--surface-2); border-radius: 0; box-shadow: inset 0 0 0 1px var(--accent); }
   .help-start { margin: 13px 0 0; padding-bottom: 12px; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
-  .help-start h3, .glossary-heading { margin: 0 0 6px; font-size: 15px; font-weight: 650; }
+  .help-start h3, .glossary-heading { margin: 0 0 6px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
   .glossary-heading { margin-top: 14px; }
   .help-start p { margin: 0 0 6px; color: var(--text-2); }
   .help-start ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
-  .glossary-entry dt { font-size: 15px; font-weight: 650; }
+  .glossary-entry dt { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
   .glossary-entry dd { margin: 5px 0 0; font-size: 13px; overflow-wrap: anywhere; }
   .glossary-hint { font-weight: 600; }
   .glossary-not, .glossary-alias { color: var(--text-2); }
-  .glossary-not span, .glossary-alias span { display: block; color: var(--text); font-size: 11px; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; }
+  .glossary-not span, .glossary-alias span { display: block; color: var(--text); font-size: 12px; font-weight: 600; }
 </style>

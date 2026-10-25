@@ -121,15 +121,15 @@
 
 <style>
   .hosts { display: grid; gap: var(--space-2); min-width: 0; padding-top: var(--space-4); border-top: 1px solid var(--hairline); }
-  h3 { margin: 0; font-size: var(--fs-4); font-weight: 600; }
+  h3 { margin: 0; font-size: var(--fs-4); font-weight: 600; letter-spacing: -.01em; }
   .note { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
   form { display: grid; gap: var(--space-3); min-width: 0; }
-  .rows { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-  .rows li { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); }
+  .rows { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+  .rows li { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3) 0; background: transparent; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-2); }
-  .grid label { display: grid; gap: 3px; min-width: 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
+  .grid label { display: grid; gap: 3px; min-width: 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
   .grid input, .grid select { width: 100%; min-width: 0; }
   .remove { justify-self: start; min-height: 30px; padding: 4px 10px; }
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .done { margin: 0; padding: 8px 10px; font-size: var(--fs-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+  .done { margin: 0; padding: 8px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; font-size: var(--fs-3); }
 </style>

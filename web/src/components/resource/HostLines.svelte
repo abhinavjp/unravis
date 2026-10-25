@@ -119,11 +119,11 @@
 <style>
   .lines { display: grid; gap: var(--space-2); min-width: 0; }
   .note { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
-  .empty { margin: 0; padding: 8px 10px; font-size: var(--fs-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+  .empty { margin: 0; padding: 8px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; font-size: var(--fs-3); }
   .status { display: grid; gap: var(--space-1); }
   .measure { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-  .measure-label { margin-right: 4px; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
-  .pill { padding: 3px 10px; color: var(--text-2); font-size: var(--fs-2); background: transparent; border: 1px solid var(--line); border-radius: 999px; }
+  .measure-label { margin-right: 4px; color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
+  .pill { padding: 3px 10px; color: var(--text-2); font-size: var(--fs-2); background: transparent; border: 1px solid var(--line); border-radius: var(--radius-sm); }
   .pill:hover { border-color: var(--text-2); }
   .pill[aria-pressed='true'] { color: var(--text); background: var(--surface-2); border-color: var(--accent); }
 </style>

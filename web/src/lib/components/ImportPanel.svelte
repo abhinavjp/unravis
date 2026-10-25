@@ -504,12 +504,12 @@
 
 <style>
   :global(.connections-drawer.import-drawer) { overflow-x: hidden; gap: var(--space-4); width: min(640px, calc(100vw - 24px)); }
-  .gate { margin: var(--space-3) 0 0; padding: 10px 12px; font-size: var(--fs-3); line-height: 1.5; border: 1px solid var(--warn); border-radius: var(--radius); background: color-mix(in srgb, var(--warn) 9%, var(--surface)); overflow-wrap: anywhere; }
+  .gate { margin: var(--space-3) 0 0; padding: 10px 12px; font-size: var(--fs-3); line-height: 1.5; border: 1px solid var(--warn); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 9%, var(--surface)); overflow-wrap: anywhere; }
   .step { display: grid; gap: var(--space-2); min-width: 0; padding-top: var(--space-4); border-top: 1px solid var(--hairline); }
-  h3 { margin: 0; font-size: var(--fs-4); font-weight: 600; }
-  h4 { margin: var(--space-2) 0 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
+  h3 { margin: 0; font-size: var(--fs-4); font-weight: 600; letter-spacing: -.01em; }
+  h4 { margin: var(--space-2) 0 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
   .field { display: grid; gap: 4px; min-width: 0; }
-  .field label { color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
+  .field label { color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
   .field select, .field input[type='file'] { width: 100%; }
   .note { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
   .meta { color: var(--text-2); font-size: var(--fs-2); font-weight: 400; }
@@ -521,21 +521,21 @@
   .job progress { width: 100%; height: 8px; accent-color: var(--accent, currentColor); }
   .messages { display: grid; gap: var(--space-2); }
   .messages p { margin: 0; }
-  .unknown .badge { padding: 2px 8px; color: var(--bad); border: 1px solid var(--bad); border-radius: var(--radius-sm); font-size: var(--fs-2); font-weight: 650; }
-  .done { padding: 8px 10px; font-size: var(--fs-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+  .unknown .badge { padding: 2px 8px; color: var(--bad); border: 1px solid var(--bad); border-radius: var(--radius-sm); font-size: var(--fs-2); font-weight: 500; }
+  .done { padding: 8px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; font-size: var(--fs-3); }
   .facts { display: grid; gap: 4px; margin: 0; font-size: var(--fs-3); }
   .facts div { display: flex; gap: var(--space-3); min-width: 0; }
   .facts dt { flex: 0 0 110px; color: var(--text-2); }
   .facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
   .plain { display: grid; gap: 4px; margin: 0; padding: 0 0 0 18px; font-size: var(--fs-3); line-height: 1.5; }
   .commit { gap: var(--space-3); }
-  .ack { display: flex; align-items: flex-start; gap: var(--space-2); font-size: var(--fs-3); font-weight: 600; }
+  .ack { display: flex; align-items: flex-start; gap: var(--space-2); font-size: var(--fs-3); font-weight: 500; }
   .ack input { flex: 0 0 auto; width: 15px; height: 15px; margin: 3px 0 0; }
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: var(--fs-2); }
   th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--line-soft); vertical-align: top; overflow-wrap: anywhere; }
-  th { color: var(--text-2); font-weight: 650; }
+  th { color: var(--text-2); font-weight: 500; border-bottom-color: var(--line); }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .supplied-list { display: grid; gap: 2px; margin: 4px 0 0; padding: 0; list-style: none; color: var(--text-2); }
   .supplied-list code { font-family: var(--mono); overflow-wrap: anywhere; }
