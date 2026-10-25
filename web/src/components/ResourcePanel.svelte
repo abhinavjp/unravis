@@ -173,7 +173,9 @@
             <div class="host-row">
               <div class="host-text">
                 <h4>{item.host}</h4>
-                {#if item.summary.length === 0}
+                {#if item.summary.length === 0 && busy}
+                  <p class="line">{resourceCopy.loading}</p>
+                {:else if item.summary.length === 0}
                   <p class="line">{resourceCopy.noSummary}</p>
                 {:else}
                   {#each item.summary as sentence, i (i)}<p class="line">{sentence}</p>{/each}

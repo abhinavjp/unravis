@@ -35,6 +35,13 @@ export const SCAN_TTL_MS = 3600 * 1000;
 export const LARGE_BYTES = 1024 * 1024 * 1024;
 export const MEDIUM_BYTES = 64 * 1024 * 1024;
 
+/**
+ * A cancel button can sit where the start button was a moment ago, so the second click of a double-click lands on it. A click on a
+ * cancel control inside this many milliseconds of the step starting is ignored.
+ */
+export const CANCEL_GUARD_MS = 700;
+export const cancelAllowed = (shownAtMs: number, nowMs: number): boolean => nowMs - shownAtMs >= CANCEL_GUARD_MS;
+
 export const SAMPLER_INTERVALS = [5, 15, 30, 60] as const;
 export const DEFAULT_SAMPLER_INTERVAL = 15;
 
@@ -259,6 +266,24 @@ export function parseCustomTime(value: string): number | null {
   const check = new Date(ms);
   // Date.UTC rolls 31 February to March; a rolled date is refused.
   return check.getUTCFullYear() === y && check.getUTCMonth() === mo - 1 && check.getUTCDate() === d && check.getUTCHours() === h ? ms : null;
+}
+
+/** Why one custom time cannot be read. `empty` is a field left blank while the other has text. */
+export type TimeFieldProblem = 'empty' | 'zone' | 'seconds' | 'date' | 'format';
+
+/** The most specific reason a custom time is refused, or null when it reads as a real UTC time. */
+export function customTimeProblem(value: string): TimeFieldProblem | null {
+  const text = value.trim();
+  if (text === '') return 'empty';
+  if (parseCustomTime(text) !== null) return null;
+  const head = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.exec(text);
+  if (!head) return 'format';
+  const tail = text.slice(head[0].length).trim();
+  // The form is right, so a date or time that does not exist is the only thing left to refuse.
+  if (tail === '') return 'date';
+  if (/(?:z|[+-]\d{2}(?::?\d{2})?)$/i.test(tail)) return 'zone';
+  if (/^:\d{2}(?:\.\d+)?$/.test(tail)) return 'seconds';
+  return 'format';
 }
 
 export function windowFor(choice: WindowChoice, nowMs: number, incident: TimeWindow | null, custom: { from: string; to: string }): TimeWindow | null {

@@ -555,9 +555,9 @@ test('the discover request is taken once', () => {
 
 test('the panel shows the notice and its confirmation box, and sends the notice text with every import and recording', () => {
   const panel = read('src/components/DiscoverPanel.svelte');
-  assert.match(panel, /\{GATING_BANNER\}/);
-  assert.match(panel, /\{ACK_LABEL\}/);
-  assert.match(panel, /<label class="ack">\s*<input type="checkbox" bind:checked=\{acknowledged\} \/>\s*<span>\{ACK_LABEL\}<\/span>/, 'the confirmation is a labelled checkbox');
+  assert.ok(!/GATING_BANNER/.test(panel), 'the notice is shown once, at the top of the window, not repeated here');
+  assert.match(panel, /\{DISCOVER_TEXT\.noticePointer\}/);
+  assert.match(panel, /<label class="ack">\s*<input type="checkbox" bind:checked=\{acknowledged\} \/>\s*<span>\{DISCOVER_TEXT\.ack\}<\/span>/, 'the confirmation is a labelled checkbox');
   assert.equal((panel.match(/ackText: ackTextFor\(\)/g) ?? []).length, 2, 'imports and recording both carry the notice text');
   assert.match(panel, /ackGating: true/);
 });
@@ -623,4 +623,146 @@ test('the import drawer hosts the panel, passes the case, and opens it when the 
 test('the copy has no wording that names a cause', () => {
   const text = copy.discoverCopyEntries().map((e) => e.text).join('\n');
   assert.ok(!/\b(because|due to|caused|leak|starv|saturat)/i.test(text));
+});
+
+/* ------------------------------------------------------------------ UI defects found in the browser check */
+
+test('a cancel control ignores clicks for a short moment after it appears (a double-click must not cancel)', () => {
+  assert.ok(discover.CANCEL_GUARD_MS >= 500 && discover.CANCEL_GUARD_MS <= 1000);
+  assert.equal(discover.cancelAllowed(1000, 1000), false);
+  assert.equal(discover.cancelAllowed(1000, 1000 + discover.CANCEL_GUARD_MS - 1), false);
+  assert.equal(discover.cancelAllowed(1000, 1000 + discover.CANCEL_GUARD_MS), true);
+});
+
+test('the scan and import starts ignore a second click, and the cancel buttons wait for the guard', () => {
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.match(panel, /async function startScan\(\) \{[^}]*if \(step === 'scanning' \|\| step === 'importing'\) return;/s);
+  assert.match(panel, /if \(cancellingScan \|\| !cancelAllowed\(scanShownAt, now\(\)\)\) return;/);
+  assert.match(panel, /if \(cancellingImport \|\| !cancelAllowed\(importShownAt, now\(\)\)\) return;/);
+  assert.match(panel, /disabled=\{cancellingScan \|\| !scanCancelReady\}/);
+  assert.match(panel, /disabled=\{cancellingImport \|\| !importCancelReady\}/);
+});
+
+test('a scan the person cancelled is a plain note, not an error', () => {
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.match(panel, /info = DISCOVER_TEXT\.scanCancelled/);
+  assert.ok(!/problem = DISCOVER_TEXT\.scanCancelled/.test(panel));
+  assert.match(panel, /\{#if info\}<p class="note" role="status">\{info\}<\/p>\{\/if\}/);
+});
+
+test('a day count says "1 day ago" and "2 days ago"', () => {
+  assert.equal(copy.updatedText(1440), 'updated 1 day ago');
+  assert.equal(copy.updatedText(1440 * 2), 'updated 2 days ago');
+  assert.equal(copy.updatedText(90), 'updated 1 h ago');
+  assert.equal(copy.updatedText(null), '');
+});
+
+test('a source that needs an export is not called one Unravis can read', () => {
+  const generic = copy.showsText('', '', false);
+  const needs = copy.showsText('', '', true);
+  assert.notEqual(needs, generic);
+  assert.equal(needs, copy.DISCOVER_TEXT.exportShows);
+  assert.ok(!/can read\.$/.test(needs));
+  // A named wording keeps its own text either way.
+  assert.equal(copy.showsText('', 'no-such-importer', true), copy.DISCOVER_TEXT.exportShows);
+});
+
+test('the size line has no file count for a live series and no empty size for an export step', () => {
+  assert.equal(copy.rowMetaText({ kind: 'live-series', files: 0, sizeBytes: 0, confidence: 95 }, null), '');
+  assert.equal(copy.rowMetaText({ kind: 'export-needed', files: 0, sizeBytes: 0, confidence: 95 }, null), 'Strong match.');
+  assert.equal(copy.rowMetaText({ kind: 'files', files: 14, sizeBytes: 50 * MB, confidence: 60 }, 3), '14 files, 50 MB, updated 3 min ago. Possible match.');
+});
+
+test('the confirmation does not say "this file", and points to the one notice at the top', () => {
+  const ack = copy.DISCOVER_TEXT.ack;
+  assert.ok(!/this file/i.test(ack));
+  assert.match(ack, /import or record/);
+  assert.match(copy.DISCOVER_TEXT.noticePointer, /top of this window/);
+});
+
+test('the panel hides the notice, the ack and the import button when a scan found nothing, except the live ack', () => {
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.match(panel, /\{#if findings\.length > 0\}\s*<section class="notice"/);
+  assert.match(panel, /\{#if findings\.length === 0 && !recording\}\s*<p class="note">\{DISCOVER_TEXT\.noticePointer\}<\/p>\s*<label class="ack">/);
+});
+
+test('each result row has a mark and a word, so success and failure are not told by colour alone', () => {
+  assert.equal(copy.rowOutcomeTone({ kind: 'added' }), 'good');
+  assert.equal(copy.rowOutcomeTone({ kind: 'duplicate' }), 'neutral');
+  assert.equal(copy.rowOutcomeTone({ kind: 'cancelled' }), 'neutral');
+  assert.equal(copy.rowOutcomeTone({ kind: 'refused' }), 'bad');
+  assert.equal(copy.rowOutcomeTone({ kind: 'failed' }), 'bad');
+  assert.equal(copy.rowOutcomeTone(null), 'pending');
+  const words = ['good', 'neutral', 'bad'].map(copy.toneLabel);
+  assert.equal(new Set(words).size, 3);
+  assert.ok(words.every((word) => word.length > 0));
+  assert.equal(copy.toneLabel('pending'), '');
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.match(panel, /toneLabel\(tone\)/);
+  assert.match(panel, /<span aria-hidden="true">/);
+});
+
+test('a 500 with no known reason says the server had a problem, not that it refused the request', () => {
+  const text = copy.problemText('other', { status: 500, reason: '', message: '' });
+  assert.equal(text, copy.DISCOVER_TEXT.serverProblem);
+  assert.ok(!/refused/i.test(text));
+  assert.ok(!/refused/i.test(copy.rowOutcomeText({ kind: 'failed' })));
+});
+
+test('each custom time is named and checked on its own: zone, seconds and an impossible date', () => {
+  const problem = discover.customTimeProblem;
+  assert.equal(problem(''), 'empty');
+  assert.equal(problem('  '), 'empty');
+  assert.equal(problem('2001-09-11 08:00'), null);
+  assert.equal(problem('2001-09-11 08:00Z'), 'zone');
+  assert.equal(problem('2001-09-11 08:00+02:00'), 'zone');
+  assert.equal(problem('2001-09-11 08:00:30'), 'seconds');
+  assert.equal(problem('2001-02-30 08:00'), 'date');
+  assert.equal(problem('2001-09-11 25:00'), 'date');
+  assert.equal(problem('soon'), 'format');
+  const messages = ['empty', 'zone', 'seconds', 'date', 'format'].map((key) => copy.timeFieldText('from', key));
+  assert.equal(new Set(messages).size, 5, 'each fault has its own message');
+  assert.match(copy.timeFieldText('from', 'empty'), /start/);
+  assert.match(copy.timeFieldText('to', 'empty'), /end/);
+  assert.equal(copy.timeFieldText('from', 'nope'), '');
+});
+
+test('the custom time boxes carry aria-invalid and aria-describedby, and one fault shows one message', () => {
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.equal((panel.match(/aria-invalid=/g) ?? []).length, 2);
+  assert.equal((panel.match(/aria-describedby=\{'discover-custom-help'/g) ?? []).length, 2);
+  assert.match(panel, /id="discover-from-problem"/);
+  assert.match(panel, /id="discover-to-problem"/);
+  assert.match(panel, /id="discover-custom-help"/);
+  assert.match(panel, /const rangeShown = \$derived\(rangeProblem !== null && !fieldsBad/);
+  assert.match(panel, /block === 'window' && windowShown/, 'the blocked line does not repeat a window message');
+});
+
+test('the tick boxes and their labels are at least 24px, and a gap row keeps its text colour', () => {
+  const panel = read('src/components/DiscoverPanel.svelte');
+  assert.match(panel, /\.pick input, \.ack input, \.choice input \{[^}]*width: 24px; height: 24px/);
+  assert.match(panel, /\.pick, \.ack, \.choice \{[^}]*min-height: 24px/);
+  assert.ok(!/\.row\.gap\s*\{[^}]*opacity/.test(panel), 'no opacity on a gap row');
+});
+
+function channel(v) { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }
+function luminance(hex) { const n = parseInt(hex.slice(1), 16); return 0.2126 * channel(n >> 16) + 0.7152 * channel((n >> 8) & 255) + 0.0722 * channel(n & 255); }
+function ratio(a, b) { const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); }
+
+test('the secondary text colour used for a gap reason clears 4.5:1 on the surface in dark and light', () => {
+  const css = read('src/app.css');
+  const pairs = [...css.matchAll(/--surface:\s*(#[0-9a-f]{6});[\s\S]*?--text-2:\s*(#[0-9a-f]{6});/gi)];
+  assert.ok(pairs.length >= 2, 'dark and light token sets are found');
+  for (const [, surface, text] of pairs) assert.ok(ratio(text, surface) >= 4.5, text + ' on ' + surface + ' is ' + ratio(text, surface).toFixed(2));
+});
+
+test('the resource panel shows a loading line, not "No counters were read", while a read is going', () => {
+  const panel = read('src/components/ResourcePanel.svelte');
+  assert.match(panel, /\{#if item\.summary\.length === 0 && busy\}\s*<p class="line">\{resourceCopy\.loading\}<\/p>\s*\{:else if item\.summary\.length === 0\}/);
+});
+
+test('the strip chart starts only once its box has a size', () => {
+  const chart = read('src/components/resource/StripChart.svelte');
+  assert.ok(!/chart = echarts\.init\(node\);/.test(chart));
+  assert.match(chart, /target\.clientWidth > 0 && target\.clientHeight > 0\) chart = echarts\.init\(target\)/);
 });

@@ -2,15 +2,16 @@
   import { onMount, tick } from 'svelte';
   import { CaseApiError, importProgressPercent } from '../lib/cases';
   import {
-    DEFAULT_SAMPLER_INTERVAL, GROUPS, MAX_FINDINGS_PER_CALL, SAMPLER_INTERVALS, WINDOW_CHOICES, ageMinutes, cachedEntryState, classifyError, defaultSelection, defaultWindowChoice,
-    discoverClient, effectiveCost, estimateBytes, groupOf, incidentWindow, isSelectable, pickedFindings, scanExpired, selectAllSmall, toggled, waitForScan, watchJob, windowFor,
+    CANCEL_GUARD_MS, DEFAULT_SAMPLER_INTERVAL, GROUPS, MAX_FINDINGS_PER_CALL, SAMPLER_INTERVALS, WINDOW_CHOICES, ageMinutes, cachedEntryState, cancelAllowed, classifyError,
+    customTimeProblem, defaultSelection, defaultWindowChoice, discoverClient, effectiveCost, estimateBytes, groupOf, incidentWindow, isSelectable, pickedFindings, scanExpired, selectAllSmall, toggled, waitForScan, watchJob, windowFor,
     windowProblem, type DetectorProgress, type DiscoverClient, type EntryState, type Finding, type JobRef, type RowOutcome, type SamplerStatus, type Scan, type WindowChoice
   } from '../lib/discover';
   import {
-    DISCOVER_TEXT, blockedText, confidenceText, detectorLine, estimateText, fileCountText, finishedText, foundText, gapReasonText, hostNameText, howText, importButtonText, liveStatusText, liveStopText,
-    liveToggleLabel, privilegeBadge, problemText, rowOutcomeText, rowProgressText, showsText, updatedText, windowChoiceLabel, windowProblemText
+    DISCOVER_TEXT, blockedText, detectorLine, estimateText, finishedText, foundText, gapReasonText, hostNameText, howText, importButtonText, liveStatusText, liveStopText,
+    liveToggleLabel, privilegeBadge, problemText, rowMetaText, rowOutcomeText, rowOutcomeTone, rowProgressText, showsText, timeFieldText, toneLabel, windowChoiceLabel,
+    windowProblemText
   } from '../lib/copy/discoverCopy';
-  import { ACK_LABEL, GATING_BANNER, ackTextFor, formatBytes } from '../lib/copy/importCopy';
+  import { ackTextFor } from '../lib/copy/importCopy';
   import { formatTime } from '../lib/time';
   import type { Query } from '../lib/types';
 
@@ -28,12 +29,19 @@
   let entry = $state.raw<EntryState>({ kind: 'loading' });
   let step = $state<Step>('intro');
   let problem = $state('');
+  // A plain message that is not a fault, such as a scan the person cancelled.
+  let info = $state('');
 
   let scan = $state.raw<Scan | null>(null);
   let scanProgress = $state.raw<DetectorProgress[]>([]);
   let cancellingScan = $state(false);
   let scanId = '';
   let cancelWanted = false;
+  // A cancel control can appear where the start control was, so it waits a moment before it takes a click (a double-click must not cancel).
+  let scanShownAt = 0;
+  let scanCancelReady = $state(false);
+  let importShownAt = 0;
+  let importCancelReady = $state(false);
 
   let picked = $state.raw<Set<string>>(new Set());
   let choice = $state<WindowChoice>('24h');
@@ -65,6 +73,16 @@
   const range = $derived(windowFor(choice, Date.now(), incident, { from: customFrom, to: customTo }));
   const rangeProblem = $derived(windowProblem(range));
   const customTyped = $derived(customFrom.trim() !== '' || customTo.trim() !== '');
+  // Each custom time is checked on its own once anything is typed, so the message names the field and the fault.
+  const fromProblem = $derived(choice === 'custom' && customTyped ? customTimeProblem(customFrom) : null);
+  const toProblem = $derived(choice === 'custom' && customTyped ? customTimeProblem(customTo) : null);
+  const fromText = $derived(fromProblem ? timeFieldText('from', fromProblem) : '');
+  const toText = $derived(toProblem ? timeFieldText('to', toProblem) : '');
+  const fieldsBad = $derived(fromProblem !== null || toProblem !== null);
+  // The range message (order, too long, nothing chosen) shows only when no field has its own message, so one fault is told once.
+  const rangeShown = $derived(rangeProblem !== null && !fieldsBad && (choice !== 'custom' || customTyped));
+  const windowShown = $derived(fieldsBad || rangeShown);
+  const rangeInvalid = $derived(choice === 'custom' && rangeShown);
   const estimate = $derived(range && !rangeProblem ? estimateBytes(chosen, range) : null);
   const onlyDenied = $derived(!elevated && scan !== null && findings.length === 0 && gaps.length > 0 && gaps.every((g) => g.reason === 'needs-elevation'));
   const caseReady = $derived(caseId !== '' && caseOpen);
@@ -102,20 +120,25 @@
   /* ---------------------------------------------------------------- scanning */
 
   async function startScan() {
-    problem = '';
+    // A second click of a double-click, or a click while a scan runs, does nothing.
+    if (step === 'scanning' || step === 'importing') return;
+    problem = ''; info = '';
     scan = null; scanProgress = []; scanId = ''; cancelWanted = false; cancellingScan = false;
     const mine = ++generation;
     controller?.abort();
     controller = new AbortController();
     const signal = controller.signal;
     step = 'scanning';
+    scanShownAt = now();
+    scanCancelReady = false;
+    setTimeout(() => { if (mine === generation) scanCancelReady = true; }, CANCEL_GUARD_MS);
     focusStep();
     try {
       scanId = await client.startScan(signal);
       if (cancelWanted) await client.cancelScan(scanId, signal).catch(() => {});
       const done = await waitForScan(client, scanId, { signal, onUpdate: (next) => { if (mine === generation) scanProgress = next.progress; } });
       if (mine !== generation) return;
-      if (done.state === 'cancelled') { problem = DISCOVER_TEXT.scanCancelled; step = 'intro'; }
+      if (done.state === 'cancelled') { info = DISCOVER_TEXT.scanCancelled; step = 'intro'; }
       else if (done.state === 'failed') { problem = DISCOVER_TEXT.scanFailed; step = 'intro'; }
       else {
         scan = done;
@@ -134,7 +157,7 @@
   }
 
   async function cancelScan() {
-    if (cancellingScan) return;
+    if (cancellingScan || !cancelAllowed(scanShownAt, now())) return;
     cancellingScan = true;
     cancelWanted = true;
     if (!scanId) return;
@@ -169,8 +192,11 @@
     controller?.abort();
     controller = new AbortController();
     const signal = controller.signal;
-    problem = '';
+    problem = ''; info = '';
     cancellingImport = false;
+    importShownAt = now();
+    importCancelReady = false;
+    setTimeout(() => { if (mine === generation) importCancelReady = true; }, CANCEL_GUARD_MS);
     jobIds = {};
     rows = sending.map((f) => ({ id: f.id, display: f.display, state: 'queued', percent: null, outcome: null }));
     step = 'importing';
@@ -208,7 +234,7 @@
   }
 
   async function cancelImports() {
-    if (cancellingImport) return;
+    if (cancellingImport || !cancelAllowed(importShownAt, now())) return;
     cancellingImport = true;
     await Promise.all(rows.filter((r) => r.outcome === null && jobIds[r.id]).map((r) => client.cancelJob(runCase, jobIds[r.id]).catch(() => {})));
   }
@@ -271,6 +297,7 @@
 
   <div class="messages" aria-live="polite">
     {#if problem}<div class="inline-error" role="alert">{problem}</div>{/if}
+    {#if info}<p class="note" role="status">{info}</p>{/if}
   </div>
 
   {#if entry.kind === 'loading'}
@@ -296,7 +323,7 @@
         <p class="note">{DISCOVER_TEXT.scanningNow}</p>
       {/if}
     </div>
-    <div class="actions"><button type="button" class="secondary-button" disabled={cancellingScan} onclick={cancelScan}>{cancellingScan ? DISCOVER_TEXT.scanCancelling : DISCOVER_TEXT.scanCancel}</button></div>
+    <div class="actions"><button type="button" class="secondary-button" disabled={cancellingScan || !scanCancelReady} onclick={cancelScan}>{cancellingScan ? DISCOVER_TEXT.scanCancelling : DISCOVER_TEXT.scanCancel}</button></div>
   {:else if step === 'list' && scan}
     <div class="step">
       <h4 tabindex="-1" bind:this={stepHeading}>{DISCOVER_TEXT.listHeading}</h4>
@@ -304,6 +331,7 @@
       {#if scan.host?.label}<p class="note">{hostNameText(scan.host.label)}. {DISCOVER_TEXT.hostNote}</p>{/if}
       {#if findings.length === 0}
         <p class="empty">{onlyDenied ? DISCOVER_TEXT.allDenied : DISCOVER_TEXT.nothingFound}</p>
+        <div class="actions"><button type="button" class="secondary-button" onclick={startScan}>{DISCOVER_TEXT.scanAgain}</button></div>
       {:else}
         <p class="note">{DISCOVER_TEXT.listNote}</p>
         <div class="actions">
@@ -316,7 +344,7 @@
         <fieldset class="group">
           <legend>{DISCOVER_TEXT.groups[group.id]}</legend>
           {#each group.findings as f (f.id)}
-            {@const minutes = ageMinutes(f.newest, now())}
+            {@const meta = rowMetaText(f, ageMinutes(f.newest, now()))}
             <div class="row">
               {#if tickable(f)}
                 <label class="pick">
@@ -331,10 +359,8 @@
                 {#if isLarge(f)}<span class="tag">{DISCOVER_TEXT.tagLarge}</span>{/if}
                 {#if needsExport(f)}<span class="tag">{DISCOVER_TEXT.tagExport}</span>{/if}
               </div>
-              <p class="shows">{showsText(f.shows, f.importer)}</p>
-              <p class="meta">
-                {fileCountText(f.files)}, {formatBytes(f.sizeBytes)}{#if minutes !== null}, {updatedText(minutes)}{/if}. {confidenceText(f.confidence)}.
-              </p>
+              <p class="shows">{showsText(f.shows, f.importer, needsExport(f))}</p>
+              {#if meta}<p class="meta">{meta}</p>{/if}
               {#if needsExport(f)}
                 <p class="meta">{DISCOVER_TEXT.exportFirst}</p>
                 <p class="how">{howText(f.how)}</p>
@@ -365,39 +391,56 @@
           </div>
           {#if choice === 'custom'}
             <div class="custom">
-              <label>{DISCOVER_TEXT.customFrom}<input type="text" inputmode="numeric" placeholder="2001-09-11 08:00" autocomplete="off" bind:value={customFrom} /></label>
-              <label>{DISCOVER_TEXT.customTo}<input type="text" inputmode="numeric" placeholder="2001-09-11 09:00" autocomplete="off" bind:value={customTo} /></label>
+              <div class="custom-field">
+                <label>{DISCOVER_TEXT.customFrom}<input type="text" inputmode="numeric" placeholder="2001-09-11 08:00" autocomplete="off" bind:value={customFrom}
+                  aria-invalid={fromProblem || rangeInvalid ? 'true' : undefined} aria-describedby={'discover-custom-help' + (fromText ? ' discover-from-problem' : '') + (rangeInvalid ? ' discover-window-problem' : '')} /></label>
+                <div aria-live="polite">{#if fromText}<p class="note problem" id="discover-from-problem">{fromText}</p>{/if}</div>
+              </div>
+              <div class="custom-field">
+                <label>{DISCOVER_TEXT.customTo}<input type="text" inputmode="numeric" placeholder="2001-09-11 09:00" autocomplete="off" bind:value={customTo}
+                  aria-invalid={toProblem || rangeInvalid ? 'true' : undefined} aria-describedby={'discover-custom-help' + (toText ? ' discover-to-problem' : '') + (rangeInvalid ? ' discover-window-problem' : '')} /></label>
+                <div aria-live="polite">{#if toText}<p class="note problem" id="discover-to-problem">{toText}</p>{/if}</div>
+              </div>
             </div>
-            <p class="note">{DISCOVER_TEXT.customHelp}</p>
+            <p class="note" id="discover-custom-help">{DISCOVER_TEXT.customHelp}</p>
           {/if}
           <div aria-live="polite">
-            {#if rangeProblem && (choice !== 'custom' || customTyped)}
-              <p class="note problem">{windowProblemText(rangeProblem)}</p>
-            {:else if estimate !== null}
+            {#if rangeShown && rangeProblem}
+              <p class="note problem" id="discover-window-problem">{windowProblemText(rangeProblem)}</p>
+            {:else if !windowShown && estimate !== null}
               <p class="estimate">{estimateText(estimate)}</p>
             {/if}
           </div>
         </fieldset>
       {/if}
 
-      <section class="notice" aria-labelledby="discover-notice-heading">
-        <h4 id="discover-notice-heading">{DISCOVER_TEXT.noticeHeading}</h4>
-        <p class="gate" role="note" aria-label={DISCOVER_TEXT.noticeLabel}>{GATING_BANNER}</p>
-        <label class="ack">
-          <input type="checkbox" bind:checked={acknowledged} />
-          <span>{ACK_LABEL}</span>
-        </label>
-        <div class="actions">
-          <button type="button" class="primary-button" disabled={block !== null || chosen.length === 0} onclick={runImports}>{importButtonText(chosen.length)}</button>
-          <button type="button" class="secondary-button" onclick={startScan}>{DISCOVER_TEXT.scanAgain}</button>
-        </div>
-        {#if block}<p class="note">{blockedText(block)}</p>{/if}
-      </section>
+      {#if findings.length > 0}
+        <section class="notice" aria-labelledby="discover-notice-heading">
+          <h4 id="discover-notice-heading">{DISCOVER_TEXT.noticeHeading}</h4>
+          <p class="note">{DISCOVER_TEXT.noticePointer}</p>
+          <label class="ack">
+            <input type="checkbox" bind:checked={acknowledged} />
+            <span>{DISCOVER_TEXT.ack}</span>
+          </label>
+          <div class="actions">
+            <button type="button" class="primary-button" disabled={block !== null || chosen.length === 0} onclick={runImports}>{importButtonText(chosen.length)}</button>
+            <button type="button" class="secondary-button" onclick={startScan}>{DISCOVER_TEXT.scanAgain}</button>
+          </div>
+          {#if block && !(block === 'window' && windowShown)}<p class="note">{blockedText(block)}</p>{/if}
+        </section>
+      {/if}
 
       <section class="live" aria-labelledby="discover-live-heading">
         <h4 id="discover-live-heading">{DISCOVER_TEXT.liveHeading}</h4>
         <p class="note">{DISCOVER_TEXT.liveHelp}</p>
         {#if !elevated}<p class="note">{DISCOVER_TEXT.liveAdminNote}</p>{/if}
+        {#if findings.length === 0 && !recording}
+          <p class="note">{DISCOVER_TEXT.noticePointer}</p>
+          <label class="ack">
+            <input type="checkbox" bind:checked={acknowledged} />
+            <span>{DISCOVER_TEXT.ack}</span>
+          </label>
+        {/if}
         {#if !recording}
           <label class="inline-field">{DISCOVER_TEXT.liveIntervalLabel}
             <select bind:value={interval} disabled={liveBusy}>{#each SAMPLER_INTERVALS as seconds (seconds)}<option value={seconds}>{seconds}</option>{/each}</select>
@@ -417,9 +460,10 @@
       <p class="visually-hidden" role="status">{step === 'results' ? finishedText(added, rows.length) : DISCOVER_TEXT.importing}</p>
       <ul class="rows">
         {#each rows as row (row.id)}
-          <li class="result">
+          {@const tone = rowOutcomeTone(row.outcome)}
+          <li class="result {tone}">
             <span class="name">{row.display}</span>
-            <span class="status">{rowText(row)}</span>
+            <span class="status">{#if tone !== 'pending'}<span class="mark" data-tone={tone}><span aria-hidden="true">{tone === 'good' ? '✓' : tone === 'bad' ? '✕' : '–'}</span> {toneLabel(tone)}.</span> {/if}{rowText(row)}</span>
             {#if row.outcome === null}<progress max="100" value={row.percent ?? undefined} aria-label={row.display + ': ' + rowText(row)}></progress>{/if}
           </li>
         {/each}
@@ -428,7 +472,7 @@
     </div>
     <div class="actions">
       {#if step === 'importing'}
-        <button type="button" class="secondary-button" disabled={cancellingImport} onclick={cancelImports}>{cancellingImport ? DISCOVER_TEXT.importCancelling : DISCOVER_TEXT.importCancel}</button>
+        <button type="button" class="secondary-button" disabled={cancellingImport || !importCancelReady} onclick={cancelImports}>{cancellingImport ? DISCOVER_TEXT.importCancelling : DISCOVER_TEXT.importCancel}</button>
       {:else}
         <button type="button" class="primary-button" onclick={backToList}>{DISCOVER_TEXT.chooseAgain}</button>
         <button type="button" class="secondary-button" onclick={onClose}>{DISCOVER_TEXT.close}</button>
@@ -457,9 +501,13 @@
   .group { display: grid; gap: var(--space-2); min-width: 0; margin: 0; padding: var(--space-3) 0 0; border: 0; border-top: 1px solid var(--hairline); }
   .group legend { padding: 0 var(--space-2) 0 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
   .row { display: grid; gap: 2px; min-width: 0; padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
-  .row.gap { opacity: 0.6; }
-  .pick { display: flex; align-items: flex-start; gap: var(--space-2); font-size: var(--fs-3); font-weight: 600; }
-  .pick input, .ack input { flex: 0 0 auto; width: 15px; height: 15px; margin: 3px 0 0; }
+  /* A gap row is dimmed by its name alone. Its reason keeps the full secondary text colour, which clears 4.5:1 in both themes (an opacity on the row did not). */
+  .row.gap .name { color: var(--text-2); }
+  /* Every tick box and its label is a target at least 24px high and wide. */
+  .pick, .ack, .choice { display: flex; align-items: flex-start; gap: var(--space-2); min-height: 24px; font-size: var(--fs-3); font-weight: 600; }
+  .choice { align-items: center; font-weight: 400; }
+  .pick input, .ack input, .choice input { flex: 0 0 auto; width: 24px; height: 24px; margin: 0; }
+  .pick .name, .ack span, .choice span { align-self: center; padding-block: 2px; }
   .name { min-width: 0; overflow-wrap: anywhere; }
   .plain-name { margin: 0; font-size: var(--fs-3); font-weight: 600; }
   .tags { display: flex; flex-wrap: wrap; gap: 4px; }
@@ -471,15 +519,19 @@
   .meta { color: var(--text-2); font-variant-numeric: tabular-nums; }
   .how { padding: 4px 8px; font-family: var(--mono); background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); }
   .choices { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
-  .choice { display: flex; align-items: center; gap: 6px; font-size: var(--fs-3); }
   .custom { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+  .custom-field { display: grid; gap: 4px; align-content: start; min-width: 0; }
   .custom label, .inline-field { display: grid; gap: 4px; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
+  .custom input, .inline-field select { min-height: 28px; }
   .estimate { margin: 0; font-size: var(--fs-3); font-weight: 600; font-variant-numeric: tabular-nums; }
   .notice, .live { display: grid; gap: var(--space-2); min-width: 0; padding-top: var(--space-3); border-top: 1px solid var(--hairline); }
-  .gate { margin: 0; padding: 10px 12px; font-size: var(--fs-3); line-height: 1.5; border: 1px solid var(--warn); border-radius: var(--radius); background: color-mix(in srgb, var(--warn) 9%, var(--surface)); overflow-wrap: anywhere; }
-  .ack { display: flex; align-items: flex-start; gap: var(--space-2); font-size: var(--fs-3); font-weight: 600; }
   .rows { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
   .result { display: grid; gap: 4px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--surface-2); }
+  .result { border-left-width: 4px; }
+  .result.good { border-left-color: var(--accent); }
+  .result.bad { border-left-color: var(--bad); }
+  .result.neutral { border-left-color: var(--line); }
+  .mark { color: var(--text); font-weight: 650; }
   .status { color: var(--text-2); font-size: var(--fs-2); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 </style>
