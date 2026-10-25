@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
+  import HelpNote from './HelpNote.svelte';
   import { CaseApiError, importProgressPercent } from '../lib/cases';
   import {
     CANCEL_GUARD_MS, DEFAULT_SAMPLER_INTERVAL, activeSampler, cancelledByUser, GROUPS, MAX_FINDINGS_PER_CALL, SAMPLER_INTERVALS, WINDOW_CHOICES, ageMinutes, cachedEntryState, cancelAllowed, classifyError,
@@ -371,6 +372,7 @@
     <button type="button" class="secondary-button" onclick={onClose}>{DISCOVER_TEXT.close}</button>
   </div>
 
+  <HelpNote id="discover" />
   <div class="messages" aria-live="polite">
     {#if problem}<div class="inline-error" role="alert">{problem}</div>{/if}
     {#if info}<p class="note" role="status">{info}</p>{/if}

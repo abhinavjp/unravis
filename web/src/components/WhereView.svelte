@@ -7,6 +7,7 @@
   import BreakdownPanel from './BreakdownPanel.svelte';
   import ComparisonTable from './ComparisonTable.svelte';
   import Hint from './Hint.svelte';
+  import HelpNote from './HelpNote.svelte';
   import IncompletePanel from './IncompletePanel.svelte';
   import MultiTimeline from './MultiTimeline.svelte';
   import OverviewStrip from './OverviewStrip.svelte';
@@ -51,6 +52,7 @@
       </details>
     </div>
   </div>
+  <HelpNote id="where" />
   <div class="lens-chips" role="group" aria-label="Rank by">
     {#each lensChoices as item (item.id)}<button type="button" class="chip" aria-pressed={lens === item.id} title={item.id === 'p95' ? metricLabels[analysis.query.metric] : undefined} onclick={() => navigation.lens = item.id}>{item.label}</button>{/each}<Hint termId="p95" />
   </div>

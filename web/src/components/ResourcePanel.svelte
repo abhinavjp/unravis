@@ -14,6 +14,7 @@
   import HostLines from './resource/HostLines.svelte';
   import RuleChips from './resource/RuleChips.svelte';
   import RuleDrawer from './resource/RuleDrawer.svelte';
+  import HelpNote from './HelpNote.svelte';
 
   // What each host measured around the stalls, in three steps: a line per host with dots for how much data it has (closed), the lines on one
   // time axis (open), and the rule rows behind a click (drawer). The window follows the zoom on screen when there is one; otherwise the panel
@@ -140,6 +141,7 @@
   <section class="tools" aria-labelledby="resource-heading" aria-busy={busy}>
     <h3 id="resource-heading">{resourceCopy.heading}</h3>
     <p class="note">{resourceCopy.intro}</p>
+    <HelpNote id="resource" />
 
     <div aria-live="polite" class="status">
       {#if busy && hosts.length === 0 && !problem}<p class="note" role="status">{resourceCopy.loading}</p>{/if}

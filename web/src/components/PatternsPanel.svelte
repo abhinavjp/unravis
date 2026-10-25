@@ -17,6 +17,7 @@
   import StallMinutesPanel from './StallMinutesPanel.svelte';
   import ProvenanceNote from './ProvenanceNote.svelte';
   import Drawer from './Drawer.svelte';
+  import HelpNote from './HelpNote.svelte';
 
   // The Patterns drawer. It never runs by itself: the button starts one search over the window already on screen.
   // Summary first (verdict, findings, counts), then the episode table, which opens one episode at a time.
@@ -148,6 +149,7 @@
 </script>
 
 <Drawer class="glossary-drawer patterns-drawer" title={PATTERNS_TEXT.title} titleId="patterns-title" intro={PATTERNS_TEXT.intro} closeLabel="Close patterns" focusable={'button:not(:disabled), input:not(:disabled), summary, [href], [tabindex]:not([tabindex="-1"])'} {onClose}>
+<HelpNote id="patterns" />
 
   <section class="patterns-window" aria-label="Window">
     <div class="range-row" role="group" aria-label={PATTERNS_TEXT.rangeLabel}>

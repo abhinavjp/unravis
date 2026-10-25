@@ -10,9 +10,10 @@
   import { timeZone } from '../lib/timeZone.svelte';
   import { formatTime } from '../lib/time';
   import SourcePopover from './SourcePopover.svelte';
+  import Eli10Toggle from './Eli10Toggle.svelte';
 
   // The top bar: brand, the mode badge, the Sources popover, the drawer buttons and the theme toggle, always on one row.
-  // Below 900px Patterns, Ledger, Export and Glossary fold into a "More" menu. The depth breadcrumb sits on its own bar beneath.
+  // Below 1100px Patterns, Ledger, Export, Import and Glossary fold into a "More" menu, together with the Explain simply switch. The depth breadcrumb sits on its own bar beneath.
   const info = $derived(app.info);
   const crumbs = $derived(navigation.crumbs);
   const referenceTime = $derived(info?.demo ? formatTime(info.now, { zone: timeZone.zone }) : '');
@@ -39,14 +40,14 @@
   const moreLabel = $derived('More' + (anyOpen ? ': a panel is open' : '') + (ledgerTotal ? ', ' + ledgerTotal + (ledgerTotal === 1 ? ' hypothesis' : ' hypotheses') + ' in the Ledger' : ''));
 
   onMount(() => {
-    const query = window.matchMedia('(max-width: 899px)');
+    const query = window.matchMedia('(max-width: 1099px)');
     const sync = () => { compact = query.matches; if (!compact) menuOpen = false; };
     sync();
     query.addEventListener('change', sync);
     return () => query.removeEventListener('change', sync);
   });
 
-  const menuItems = () => [...(menuWrap?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+  const menuItems = () => [...(menuWrap?.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemcheckbox"]') ?? [])];
   async function toggleMenu() {
     menuOpen = !menuOpen;
     if (menuOpen) { await tick(); menuItems()[0]?.focus(); }
@@ -102,10 +103,12 @@
             {#each drawers as item (item.id)}
               <li role="none"><button type="button" role="menuitem" onclick={() => chooseDrawer(item)}>{item.label}{#if item.id === 'ledger'}<LedgerCount />{/if}</button></li>
             {/each}
+            <li role="none" class="menu-switch"><Eli10Toggle menu /></li>
           </ul>
         {/if}
       </div>
     {:else}
+      <Eli10Toggle />
       <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={isOpen(glossary.id)} onclick={glossary.open}>{glossary.label}</button>
     {/if}
     <TimeZoneToggle />
@@ -145,13 +148,16 @@
   .more { position: relative; }
   .more-menu { position: absolute; z-index: 30; right: 0; top: calc(100% + 6px); min-width: 170px; margin: 0; padding: 4px; list-style: none; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: 0 12px 32px color-mix(in srgb, var(--bg) 70%, transparent); }
   .more-menu button { display: flex; align-items: center; width: 100%; min-height: 40px; padding: 8px 12px; color: var(--text); background: transparent; border: 0; border-radius: var(--radius-sm); font-size: 14px; text-align: left; }
+  .menu-switch { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
+  .menu-switch > :global(.eli10-toggle) { width: 100%; min-height: 40px; padding: 8px 12px; box-sizing: border-box; color: var(--text); font-size: 14px; }
   .more-menu button:hover, .more-menu button:focus-visible { background: color-mix(in srgb, var(--text) 8%, transparent); }
 
   .crumbbar { position: relative; z-index: 11; flex: 0 0 auto; min-height: 36px; padding: 0 24px; display: flex; align-items: center; justify-content: flex-start; gap: 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
   .crumb-reference { display: none; margin-left: auto; flex-shrink: 0; color: var(--text-2); font-size: 12px; white-space: nowrap; }
 
   @media (min-width: 720px) { .badge { display: inline-block; } .crumb-reference { display: inline; } }
-  @media (min-width: 1200px) { .reference { display: inline; } .crumb-reference { display: none; } }
+  /* The switch takes room, so the reference time stays on the breadcrumb bar until the bar can hold both. */
+  @media (min-width: 1320px) { .reference { display: inline; } .crumb-reference { display: none; } }
   @media (min-width: 1100px) {
     /* The evidence drawer is fixed at the right; keep the trail clear of it. */
     :global(.app-shell:has(.stage.with-drawer)) .crumbbar { padding-right: calc(var(--drawer-w) + 24px); }

@@ -131,17 +131,18 @@ test('every HelpNote id used in a component exists in the table', () => {
     for (const m of src.matchAll(/<HelpNote\s+id="([^"]+)"/g)) { uses++; assert.ok(Object.hasOwn(help, m[1]), path.basename(file) + ' uses unknown help id ' + m[1]); }
     assert.doesNotMatch(src.replace(/<HelpNote\s+id="[^"]+"/g, ''), /<HelpNote\s+id=\{/, path.basename(file) + ' uses a dynamic help id the test cannot check');
   }
-  assert.ok(uses >= 0);
+  assert.ok(uses >= SCREEN_KEYS.length);
 });
 
-test('Eli10Toggle is a labelled checkbox bound to the shared flag and is not mounted in the header yet', () => {
+test('Eli10Toggle is a labelled checkbox bound to the shared flag and is mounted in the header', () => {
   const src = read('src/components/Eli10Toggle.svelte');
   assert.match(src, /<input type="checkbox"[^>]*checked=\{eli10\.on\}/);
   assert.match(src, /onchange=\{[^}]*eli10\.set\(/);
   assert.match(src, /Explain simply/);
   assert.match(src, /<label/);
   assert.doesNotMatch(src.slice(src.indexOf('<style>')), /#[0-9a-fA-F]{3,8}\b|rgba?\(|animation|transition/);
-  assert.doesNotMatch(read('src/components/AppHeader.svelte'), /Eli10Toggle/);
+  assert.match(read('src/components/AppHeader.svelte'), /import Eli10Toggle from '\.\/Eli10Toggle\.svelte'/);
+  assert.match(read('src/components/AppHeader.svelte'), /<Eli10Toggle\b/);
 });
 
 // A fake storage on globalThis, restored after each test.
@@ -205,4 +206,38 @@ test('new files keep CRLF line endings', () => {
     const text = read(file);
     assert.ok(!/(?<!\r)\n/.test(text), file + ' has a bare LF');
   }
+});
+
+// The nine screens and panels that carry a note, one component each, directly under the title.
+const SCREEN_KEYS = ['pulse', 'where', 'inspector', 'resource', 'patterns', 'ledger', 'export', 'import', 'discover'];
+const sveltePaths = () => {
+  const files = [];
+  (function walk(d) { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (p.endsWith('.svelte')) files.push(p); } })(path.join(root, 'src'));
+  return files;
+};
+
+test('each screen help key is used by exactly one component, and only once in it', () => {
+  const users = {};
+  for (const file of sveltePaths()) {
+    const src = fs.readFileSync(file, 'utf8');
+    for (const m of src.matchAll(/<HelpNote\s+id="([^"]+)"/g)) (users[m[1]] ??= []).push(path.basename(file));
+  }
+  const expected = { pulse: 'Pulse', where: 'WhereView', inspector: 'Inspector', resource: 'ResourcePanel', patterns: 'PatternsPanel', ledger: 'LedgerPanel', export: 'ExportPanel', discover: 'DiscoverPanel', import: 'ImportPanel' };
+  for (const key of SCREEN_KEYS) {
+    assert.deepEqual(users[key], [expected[key] + '.svelte'], key + ' is used once, in ' + expected[key]);
+  }
+});
+
+test('every component that mounts a HelpNote imports it', () => {
+  for (const file of sveltePaths()) {
+    const src = fs.readFileSync(file, 'utf8');
+    if (/<HelpNote\b/.test(src)) assert.match(src, /import HelpNote from '[./]+(?:components\/)?HelpNote\.svelte'/, path.basename(file) + ' imports HelpNote');
+  }
+});
+
+test('the header folds Explain simply into the More menu as a menu item checkbox', () => {
+  const header = read('src/components/AppHeader.svelte');
+  assert.match(header, /<Eli10Toggle menu \/>/, 'the folded menu holds the switch');
+  assert.match(header, /\[role="menuitemcheckbox"\]/, 'arrow keys reach it');
+  assert.match(read('src/components/Eli10Toggle.svelte'), /role=\{menu \? 'menuitemcheckbox' : undefined\}/);
 });

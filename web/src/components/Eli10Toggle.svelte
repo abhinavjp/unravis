@@ -1,10 +1,12 @@
 <script lang="ts">
   import { eli10 } from '../lib/eli10.svelte';
   // The header switch for the whole help layer. It opens every "In simple words" block. Mount it once, in the header.
+  // menu: inside the folded More menu it is a menu item, so arrow keys reach it and a screen reader announces it as one.
+  let { menu = false }: { menu?: boolean } = $props();
 </script>
 
 <label class="eli10-toggle">
-  <input type="checkbox" checked={eli10.on} onchange={(event) => eli10.set(event.currentTarget.checked)} />
+  <input type="checkbox" checked={eli10.on} role={menu ? 'menuitemcheckbox' : undefined} onchange={(event) => eli10.set(event.currentTarget.checked)} />
   <span>Explain simply</span>
 </label>
 

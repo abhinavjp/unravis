@@ -19,6 +19,7 @@
   import CaseTools from './CaseTools.svelte';
   import HostsEditor from './HostsEditor.svelte';
   import SuppliedSettings from './SuppliedSettings.svelte';
+  import HelpNote from '../../components/HelpNote.svelte';
 
   // The import screen. Create or pick a case, choose a file, read the preview, tick the notice, then import.
   // The notice is always on screen. Nothing is kept until Import file, and an unknown host or a changed file blocks it.
@@ -326,6 +327,7 @@
 </script>
 
 <Drawer class="import-drawer" title={IMPORT_TEXT.title} titleId="import-title" intro={IMPORT_TEXT.intro} closeLabel={IMPORT_TEXT.closeLabel} bind:element={drawer} {onClose}>
+<HelpNote id="import" />
   <p class="gate" role="note" aria-label={IMPORT_TEXT.noticeLabel}>{GATING_BANNER}</p>
 
   <CasePanel bind:this={casePanel} bind:cases bind:selectedId />

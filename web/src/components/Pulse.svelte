@@ -16,6 +16,7 @@
   import { p95Sentence, periodLengthMs } from '../lib/copy/screenCopy';
   import Hint from './Hint.svelte';
   import PlainLine from './PlainLine.svelte';
+  import HelpNote from './HelpNote.svelte';
 
   // D0: five headline figures and one timeline. Every figure opens the ranked view with that lens.
   let { analysis, zone, onOpen }: { analysis: Analysis; zone: string; onOpen: (lens: Lens) => void } = $props();
@@ -50,6 +51,7 @@
 </script>
 
 <section class="pulse" aria-label="Pulse">
+<HelpNote id="pulse" />
   <div class="figures">
     {#each figures as figure (figure.id)}
       <button type="button" class="figure" data-tone={toneOf(figure.id, figure.value)} title={figure.tip} onclick={() => onOpen(figure.id)}>

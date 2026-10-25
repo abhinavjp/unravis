@@ -11,6 +11,7 @@
   import { theoryRows } from '../lib/theories';
   import { ledger, refreshLedger } from '../lib/ledgerStore.svelte';
   import Drawer from './Drawer.svelte';
+  import HelpNote from './HelpNote.svelte';
 
   // The Ledger drawer: what we believe, what supports it, what contradicts it, what is not yet known.
   // The analyst sets every state. Guards can only block "strong correlation"; the app never suggests or computes a state.
@@ -117,6 +118,7 @@
 </script>
 
 <Drawer class="ledger-drawer" title={copy.title} titleId="ledger-title" intro={copy.intro} closeLabel="Close ledger" focusable={'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'} {onClose}>
+<HelpNote id="ledger" />
   <p class="demo-note">{copy.notice}</p>
 
   {#if loadError}<p class="inline-error" role="alert">{loadError}</p>{/if}

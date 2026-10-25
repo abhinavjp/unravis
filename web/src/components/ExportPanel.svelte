@@ -9,6 +9,7 @@
   import type { Query } from '../lib/types';
   import Hint from './Hint.svelte';
   import Drawer from './Drawer.svelte';
+  import HelpNote from './HelpNote.svelte';
 
   // The Export evidence drawer. Three steps: choose options, preview the whole file, then save it.
   // Nothing is saved until the analyst presses "Save file", and only what the preview showed can be saved.
@@ -85,6 +86,7 @@
 </script>
 
 <Drawer class="glossary-drawer export-drawer" title={EXPORT_TEXT.title} titleId="export-title" intro={EXPORT_TEXT.intro} closeLabel="Close export" focusable={'button:not(:disabled), input:not(:disabled), summary, [href], [tabindex]:not([tabindex="-1"])'} {onClose}>
+<HelpNote id="export" />
 
   <section class="export-window" aria-label="Window">
     <dl>

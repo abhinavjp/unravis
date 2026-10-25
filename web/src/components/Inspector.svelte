@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import Drawer from './Drawer.svelte';
+  import HelpNote from './HelpNote.svelte';
 
   // D2: the evidence frame, built on the shared Drawer as a side panel that leaves the page beside it usable. Wide screens show it as a right drawer with the
   // ranked list still visible on the left; below 900px it becomes a full view (the layout is in app.css). Tabs are only the ones that exist.
@@ -38,6 +39,7 @@
 
 <Drawer modal={false} class={off ? 'inspector off' : 'inspector'} {title} titleId={headingId} focusTitle intro={subtitle} closeLabel="Close and go back" closeTitle="Close (Esc)" {onClose} headerExtra={tabs.length ? tabRow : undefined}>
   <div class="inspector-body" role={tabs.length ? 'tabpanel' : undefined} id={tabs.length ? 'tabpanel-' + active : undefined} aria-labelledby={tabs.length ? 'tab-' + active : undefined}>
+    <HelpNote id="inspector" />
     {@render children()}
   </div>
 </Drawer>
