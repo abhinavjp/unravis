@@ -253,7 +253,12 @@
 
   async function refreshSampler() {
     if (!caseReady) return;
-    try { sampler = await client.getSampler(caseId); } catch { /* No answer means no recording to show. */ }
+    try {
+      const before = sampler?.samples ?? 0;
+      sampler = await client.getSampler(caseId);
+      // Recorded samples are imports too: the history and the period the files cover are read again when the count moved.
+      if (sampler.samples !== before) onImported?.();
+    } catch { /* No answer means no recording to show. */ }
   }
 
   // While a recording is on, its sample count is read again every few seconds. The check stops when the recording does.
@@ -275,6 +280,7 @@
       else {
         await client.stopSampler(caseId);
         sampler = await client.getSampler(caseId).catch(() => ({ state: 'stopped', since: sampler?.since ?? '', samples: sampler?.samples ?? 0, stopReason: '' }) as SamplerStatus);
+        onImported?.();
       }
     } catch (error) {
       problem = errorText(error);

@@ -56,7 +56,7 @@ See `2026-10-25-held-items.md`. Real-export runs, the Mongo field check, owner i
 - A crash can leave an unreadable spool file in the temp folder.
 - No `-race` run: the encrypted SQLite driver needs CGO off.
 - Views may hit the 10 s `maxTimeMS` limit on a real collection. Not measured.
-- The resource panel's "These files cover" period comes from imports only. Samples recorded by the live sampler are not part of it, so after recording stops the default view can say "No counters were read" until the window is moved over the sampling time. The data is stored and the API returns it (checked: host CPU and available memory, per-process CPU).
+- (Fixed) The resource panel's "These files cover" period comes from imports, and recorded samples are imports. The Discover panel now tells the case to re-read its history when the sample count moves and when recording stops, so the period follows the recording without a page reload.
 
 ## Verified end to end on the real binary and UI (this PC, test instance)
 
