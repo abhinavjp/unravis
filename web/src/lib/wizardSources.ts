@@ -352,7 +352,7 @@ export function parseDatabaseRef(ref: string): { connectionId: string; database:
   return match ? { connectionId: match[1], database: match[2] } : null;
 }
 
-export type DatabaseProblem = 'not-tested' | 'needs-classification' | 'full';
+export type DatabaseProblem = 'not-tested' | 'needs-classification' | 'full' | 'bad-name';
 
 /** A tested connection, as the list needs to know it: its id and the database names the test returned. No address, no password. */
 export interface TestedConnection { id: string; databases: readonly string[] }
@@ -370,7 +370,9 @@ export function classifyDatabase(
   if (classification === 'unused') return { ok: true, list: removeSource(list, key) };
   const existing = list.find((s) => sourceKey(s) === key);
   if (existing) return { ok: true, list: list.map((s) => (sourceKey(s) === key ? { ...s, classification } : { ...s })) };
-  const added = addSource(list, { ...makeSource('mongo-database', databaseRef(connection.id, database), database), classification });
+  // The server accepts a tag for a database only under the exact name the test listed, so the label is that name as it is (not cleaned).
+  if (looksLikeSecret(database) || [...database].length > LABEL_MAX) return { ok: false, reason: 'bad-name' };
+  const added = addSource(list, { ...makeSource('mongo-database', databaseRef(connection.id, database), database), label: database, classification });
   return added.ok ? { ok: true, list: added.list } : { ok: false, reason: 'full' };
 }
 
@@ -393,10 +395,12 @@ export const auditDatabaseCount = (list: readonly DraftSource[]): number => list
  */
 export function hostLabel(uri: string): string {
   const bare = String(uri ?? '').trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
-  // The authority ends at the first / ? or #, except that a password may hold those; the last @ before them is the user-info end.
-  const lastAt = bare.lastIndexOf('@');
-  const afterAt = lastAt >= 0 ? bare.slice(lastAt + 1) : bare;
-  const text = afterAt.split(/[/?#]/, 1)[0];
+  // Options and fragment come after the first ? or #, so an @ there (a password inside an option) is never the user-info end. A password
+  // may hold an unencoded /, so the last @ before the options still counts, and the host ends at the first / after it.
+  const head = bare.split(/[?#]/, 1)[0];
+  const lastAt = head.lastIndexOf('@');
+  const afterAt = lastAt >= 0 ? head.slice(lastAt + 1) : head;
+  const text = afterAt.split('/', 1)[0];
   const hosts = text.split(',').map((h) => h.trim()).filter((h) => h !== '');
   if (hosts.length === 0) return '';
   const first = [...hosts[0]].slice(0, 80).join('');

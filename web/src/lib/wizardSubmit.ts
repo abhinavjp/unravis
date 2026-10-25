@@ -1,3 +1,4 @@
+import { ApiError } from './api';
 import { CaseApiError } from './cases';
 import { MAX_FINDINGS_PER_CALL, outcomeFromError, windowProblem } from './discover';
 import type { DiscoverImportRequest, JobRef, RowOutcome, ScanHost, TimeWindow } from './discover';
@@ -68,6 +69,11 @@ export interface SubmitInput {
 /** The calls the run makes. The real ones are in wizardSubmitApi.ts. */
 export interface SubmitApi {
   createCase(title: string): Promise<{ id: string }>;
+  /**
+   * Finds a case with this title that was made at or after `sinceMs` (epoch milliseconds), or null. Used only before a retry of a failed
+   * "make the case": a reply may have been lost after the server made it, and a second click must not make a second case.
+   */
+  findRecentCase?(title: string, sinceMs: number): Promise<{ id: string } | null>;
   putEnvironments(caseId: string, envs: readonly string[]): Promise<unknown>;
   postSourceTag(caseId: string, tag: SourceTagInput): Promise<unknown>;
   /** Tests the held MongoDB connection again so the server accepts a classification of its databases. */
@@ -131,8 +137,18 @@ export function reviewCounts(envs: readonly string[], sources: readonly Pick<Dra
 
 /* ------------------------------------------------------------------ small helpers */
 
-const reasonOf = (error: unknown): string => (error instanceof CaseApiError ? error.reason || 'failed' : 'unreachable');
-const isLocked = (error: unknown): boolean => error instanceof CaseApiError && error.status === 423;
+/** A short code for a failed step, never the server's own text. A reply from the server is not "unreachable"; only a call that got no reply is. */
+function reasonOf(error: unknown): string {
+  if (error instanceof CaseApiError) return error.reason || 'failed';
+  if (error instanceof ApiError) {
+    if (error.status === 429) return 'rate-limited';
+    if (error.status === 423) return 'locked';
+    if (error.status === 400 || error.status === 422) return 'bad-request';
+    return typeof error.status === 'number' ? 'failed' : 'unreachable';
+  }
+  return 'unreachable';
+}
+const isLocked = (error: unknown): boolean => (error instanceof CaseApiError || error instanceof ApiError) && error.status === 423;
 const isAbort = (error: unknown): boolean => error instanceof DOMException && error.name === 'AbortError';
 
 class Locked extends Error {}
@@ -197,6 +213,10 @@ function failRows(rows: ImportRow[], error: unknown): void {
 }
 
 const inflight = new WeakMap<SubmitState, Promise<SubmitResult>>();
+/** When "make the case" was last tried without a known answer, per run. Kept beside the state, not in it. */
+const createTriedAt = new WeakMap<SubmitState, number>();
+/** The server stamps a case with its own clock; allow for the small difference when looking for the case a lost reply made. */
+const CLOCK_SLACK_MS = 5000;
 
 /**
  * Runs the whole submit. Never throws for a failed step: it records the failure and goes on. Resolves when every step has been tried,
@@ -220,7 +240,16 @@ async function execute(input: SubmitInput, api: SubmitApi, state: SubmitState): 
     if (!state.caseId) {
       state.createError = '';
       try {
-        const made = await guarded(() => api.createCase(input.title));
+        // After a failed try, the server may still have made the case (the reply was lost): look for it before making another.
+        const triedAt = createTriedAt.get(state);
+        let made: { id: string } | null = null;
+        if (triedAt !== undefined && api.findRecentCase) {
+          try { made = await guarded(() => api.findRecentCase!(input.title, triedAt - CLOCK_SLACK_MS)); }
+          catch (error) { if (error instanceof Locked) throw error; made = null; }
+        }
+        createTriedAt.set(state, Date.now());
+        if (!made) made = await guarded(() => api.createCase(input.title));
+        createTriedAt.delete(state);
         state.caseId = made.id;
         state.caseTitle = input.title;
       } catch (error) {
@@ -297,7 +326,9 @@ async function importAll(input: SubmitInput, api: SubmitApi, state: SubmitState,
   if (scan.length > 0) {
     const problem = windowProblem(input.window);
     if (problem || !input.window || !input.scanId) {
-      for (const source of scan) { const row = rowOf(source); row.status = 'failed'; row.reason = problem ?? 'no-window'; }
+      // A missing scan is told apart from a missing period, so the line names the real cause.
+      const reason = problem ?? (!input.window ? 'no-window' : 'no-scan');
+      for (const source of scan) { const row = rowOf(source); row.status = 'failed'; row.reason = reason; }
     } else {
       const window = input.window;
       tasks.push((async () => {

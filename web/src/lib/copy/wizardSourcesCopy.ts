@@ -169,6 +169,7 @@ export const unreachedText = (address: string, reason: string): string => 'Could
 const DATABASE_PROBLEMS: Record<DatabaseProblem, string> = {
   'not-tested': 'Test the connection first. That database was not in the list.',
   'needs-classification': 'Choose what the database is.',
+  'bad-name': 'This database name is too long, or looks like a password, so it cannot be named as a source. Leave it as not used.',
   full: SOURCES_TEXT.limitFull
 };
 

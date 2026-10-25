@@ -22,6 +22,7 @@
   const missing = $derived(filesMissing(draft.sources, Object.fromEntries(draft.sources.map((s) => [sourceKey(s), pickedFile(sourceKey(s))]))).length);
   const repeats = $derived(titleRepeats(draft.title));
   const pending = $derived(blockers());
+  const scanGone = $derived(pending.includes('scan-busy'));
   const caseProblem = $derived(createView.result && !createView.result.caseId && createView.result.failures.length > 0 ? createView.result.failures[0] : null);
 
   onMount(() => { void loadTitles(); });
@@ -89,6 +90,7 @@
     </fieldset>
   {/if}
 
+  {#if scanGone}<p class="problem" role="alert">{CREATE_TEXT.scanBusy}</p>{/if}
   {#if stale}<p class="problem" role="alert">{CREATE_TEXT.scanStale}</p>{/if}
   {#if plan.files > 0 && missing > 0}<p class="hint" role="status">{CREATE_TEXT.needFiles}</p>{/if}
 

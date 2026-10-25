@@ -470,7 +470,7 @@ export async function lockCases() {
   lockError = '';
   try {
     noteKeyStatus(await lockMasterKey());
-    if (!onUnlockScreen()) unlockOrigin = screen === 'running' ? 'running' : 'start';
+    if (!onUnlockScreen()) unlockOrigin = screen === 'running' || screen === 'create' ? screen : 'start';
     bumpEpoch();
     go('unlock');
   } catch {

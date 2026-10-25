@@ -69,11 +69,15 @@ export const titleRepeats = (title: string): boolean => createView.titles !== nu
 export const caseMade = (): boolean => createView.submit.caseId !== '';
 
 /** What stops "Create case" from being pressed, in the order the screen shows it. Empty when nothing does. */
-export type Blocker = 'scan-stale' | 'no-ack' | 'files';
+export type Blocker = 'scan-busy' | 'scan-stale' | 'no-ack' | 'files';
+
+/** True when scan sources are chosen but the scan they came from is gone (a new one is running, or it was stopped or failed). */
+export const scanMissing = (): boolean => importPlan(wizard.sources).scan > 0 && (sourcesView.phase !== 'done' || sourcesView.scanId === '');
 
 export function blockers(now: number = Date.now()): Blocker[] {
   const plan = importPlan(wizard.sources);
   const out: Blocker[] = [];
+  if (scanMissing()) out.push('scan-busy');
   if (plan.scan > 0 && scanIsStale(now)) out.push('scan-stale');
   if (plan.scan + plan.files > 0 && !createView.ack) out.push('no-ack');
   if (filesMissing(wizard.sources, pickedFiles).length > 0) out.push('files');
@@ -103,6 +107,8 @@ export async function createNow(api: SubmitApi = wizardSubmitApi): Promise<Submi
   try {
     const result = await submitWizard(buildInput(), api, createView.submit);
     createView.result = result;
+    // The case could not be made (the reply may have been lost after the server made it): read the names again so the repeat warning is true.
+    if (!result.caseId && !result.locked) { createView.titles = null; void loadTitles(); }
     return result;
   } finally {
     createView.running = false;
