@@ -101,6 +101,7 @@ var displayNames = map[string]string{
 	"node-jsonl":         "Node proxy log",
 	"dotnet-counters":    ".NET runtime counters",
 	"win-procsnap":       "process snapshots",
+	"win-live":           "live CPU and memory samples",
 	"redis-slowlog":      "Redis SLOWLOG",
 	"redis-latency":      "Redis latency monitor",
 	"redis-info":         "Redis INFO samples",

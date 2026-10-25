@@ -71,6 +71,7 @@ var exportKinds = map[string]map[string]bool{
 	// W2-e, W2-f
 	"dotnet-counters": set("metric"),
 	"win-procsnap":    set("metric", "process-start", "process-gone"),
+	"win-live":        set("metric", "process-start", "process-gone"),
 	// W2-h, W2-i
 	"redis-slowlog": set("slow-command"),
 	"redis-latency": set("latency-spike"),
@@ -470,6 +471,9 @@ var (
 		"http.client.open_connections", "http.client.request.time_in_queue")
 	gcGenerations = fold("gen0", "gen1", "gen2", "loh", "poh")
 	procMetrics   = fold("cpu", "working-set", "private-bytes", "handles", "threads")
+	// liveMetrics are the win-live sampler's process metrics plus its host ones.
+	liveMetrics = fold("cpu", "working-set", "private-bytes", "handles", "threads", "host-cpu",
+		"mem-available", "mem-committed")
 	// redisLatencyEvents is the documented LATENCY event list plus "other".
 	redisLatencyEvents = fold("command", "fast-command", "fork", "aof-fsync-always", "aof-write",
 		"aof-write-pending-fsync", "aof-write-active-child", "aof-write-alone", "aof-fstat", "aof-rename",

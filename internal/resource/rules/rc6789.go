@@ -231,7 +231,7 @@ func (e *eval) slowlogIDGap(host string) bool {
 // percentile of the minutes outside them, and lists the busiest log families.
 func (e *eval) rc7() {
 	logs := e.importsOf(appLogSources...)
-	others := e.importsOf("win-counters", "win-procsnap", "dotnet-counters")
+	others := e.importsOf("win-counters", "win-procsnap", "win-live", "dotnet-counters")
 	for host := range others {
 		if host != "" && len(logs[host]) == 0 {
 			e.gap(evidence.NoAppLogGap(host))

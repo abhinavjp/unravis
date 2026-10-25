@@ -88,7 +88,7 @@ var rules = []rule{
 		title:   "Process snapshots",
 		why:     "They list which processes use CPU and memory at each sample time, so you can see what else runs on the host.",
 		how:     "Run Get-Process on a timer and save it with Export-Csv. Add a SampleUtc column, then import the CSV file.",
-		applies: lacks(isWindows, winProcsnap),
+		applies: lacks(isWindows, winProcsnap, winLive),
 	},
 	{
 		id: "runtime-counters", weight: wRuntime, importer: dotnetCnt,

@@ -290,18 +290,10 @@ func (s *state) label(cell string) string {
 	if !ok {
 		return "other"
 	}
-	if serverImages[n] {
-		return n
-	}
 	if l, ok := s.names[n]; ok {
 		return l
 	}
-	l := "other"
-	if s.opts.Pseudonymize != nil {
-		if p := s.opts.Pseudonymize("instance", n); p != "" {
-			l = wincsv.ClipAttr(p)
-		}
-	}
+	l := ProcessLabel(n, s.opts.Pseudonymize)
 	if len(s.names) < 4096 {
 		s.names[n] = l
 	}

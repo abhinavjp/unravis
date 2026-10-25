@@ -193,6 +193,7 @@ var exportPolicy = map[string]map[string]attrPolicy{
 		"generation": polEnum(gcGenerations), "method": polEnum(httpMethods), "status": polNum,
 		"error-type": polEnum(exceptionTypes), "pid": polNum},
 	"win-procsnap":  {"metric": polEnum(procMetrics), "process": procName, "pid": polNum},
+	"win-live":      {"metric": polEnum(liveMetrics), "process": procName, "pid": polNum},
 	"redis-slowlog": {"command": polEnum(redisCommands), "argc": polNum, "client": polName("client"), "id": polNum},
 	"redis-latency": {"event": polEnum(redisLatencyEvents)},
 	"redis-info":    {"metric": polEnum(redisInfoMetrics), "role": polEnum(redisRoles)},

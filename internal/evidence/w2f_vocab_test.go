@@ -39,6 +39,7 @@ func TestW2FExportVocabulary(t *testing.T) {
 		{"node-jsonl", appAttrs, appKinds + " client-event proxy-command"},
 		{"dotnet-counters", "counter error-type generation method percentile pid provider status", "metric"},
 		{"win-procsnap", "metric pid process", "metric process-gone process-start"},
+		{"win-live", "metric pid process", "metric process-gone process-start"},
 		{"redis-slowlog", "argc client command id", "slow-command"},
 		{"redis-latency", "event", "latency-spike"},
 		{"redis-info", "metric role", "metric redis-start"},

@@ -47,6 +47,7 @@ const (
 	sourceWinCounters = "win-counters"
 	sourceSQLPDH      = "sql-pdh"
 	sourceProcSnap    = "win-procsnap"
+	sourceWinLive     = "win-live"
 	sourceDotnet      = "dotnet-counters"
 	sourceRedisInfo   = "redis-info"
 	sourceSadf        = "linux-sadf"
@@ -127,7 +128,8 @@ var objectCLRMemory = attrIs("object", ".NET CLR Memory")
 
 var (
 	pdh        = []string{sourceWinCounters, sourceSQLPDH}
-	procsnap   = []string{sourceProcSnap}
+	procsnap   = []string{sourceProcSnap, sourceWinLive} // the live sampler writes the same process metrics
+	winlive    = []string{sourceWinLive}
 	dotnet     = []string{sourceDotnet}
 	redisInfo  = []string{sourceRedisInfo}
 	sadf       = []string{sourceSadf}
@@ -223,6 +225,12 @@ var rules = []rule{
 	{id: MongoConns, sources: mongostat, kind: "metric", unit: "count", when: []cond{metricIs("conn")}},
 	{id: MongoWTDirty, sources: mongoSS, kind: "metric", unit: "bytes", when: []cond{metricIs("wiredTiger.cache.tracked dirty bytes in the cache")}},
 	{id: MongoWTDirty, sources: mongostat, kind: "metric", unit: unitKeep, when: []cond{metricIs("dirty")}},
+
+	// Live sampler (win-live) host metrics. Its process metrics are in the
+	// procsnap rules above.
+	{id: HostCPU, sources: winlive, kind: "metric", unit: unitKeep, when: []cond{metricIs("host-cpu")}},
+	{id: HostMemAvailable, sources: winlive, kind: "metric", unit: "bytes", when: []cond{metricIs("mem-available")}},
+	{id: HostMemCommitted, sources: winlive, kind: "metric", unit: "bytes", when: []cond{metricIs("mem-committed")}},
 }
 
 // ruleIndex holds the rules by source and kind.

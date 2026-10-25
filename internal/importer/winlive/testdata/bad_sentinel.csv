@@ -1,0 +1,6 @@
+# unravis-win-live v1 interval=15 cores=8
+time,scope,process,pid,start,metric,value
+2001-10-25T13:00:15Z,host,,,,host-cpu,31.5
+2001-10-25T13:00:15Z,host,,,,mem-available,SENTINEL-7f3a
+2001-10-25T13:00:30Z,host,,,,host-cpu,28
+2001-10-25T13:00:30Z,host,,,,mem-committed,12885000000
