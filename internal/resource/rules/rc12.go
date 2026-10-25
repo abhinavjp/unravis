@@ -33,7 +33,7 @@ func (e *eval) rc1() {
 	}
 	for h := range hostsWithHost {
 		if !hostsWithProc[h] {
-			e.gap(evidence.NotObservedGap("no per-process counters for " + h))
+			e.gap(evidence.NoProcessCountersGap(h))
 		}
 	}
 	thr := fmt.Sprintf("top %d series with %s %% of samples or more", e.th.TopN, num(e.th.MinCoverage*100))
@@ -68,25 +68,25 @@ func (e *eval) rc1() {
 		var parts []string
 		sum := 0.0
 		for _, x := range list {
-			parts = append(parts, x.key+" ("+value(x.v, unit)+")")
+			parts = append(parts, evidence.ListEntry(x.key, value(x.v, unit)))
 			sum += x.v
 		}
-		rest := "(sum of listed processes only)"
+		rest := evidence.ListedProcessesOnly()
 		if unit == "percent-host" {
 			for _, hs := range e.idx.Series(resource.HostCPU, resource.Filter{Host: host}) {
 				if hs.Metric.Unit != "percent-host" || !e.covered(hs) {
 					continue
 				}
 				if hm, ok := e.mean(hs); ok {
-					rest = "all other processes (" + value(math.Max(0, hm-sum), unit) + ")"
+					rest = evidence.OtherProcesses(value(math.Max(0, hm-sum), unit))
 					break
 				}
 			}
 		}
 		parts = append(parts, rest)
-		metric := "mean process CPU on " + host
+		metric := evidence.OnHost("mean process CPU", host)
 		if unit == "percent-one-core" {
-			metric = "mean process CPU (percent of one core) on " + host
+			metric = evidence.OnHost("mean process CPU (percent of one core)", host)
 		}
 		e.add(Row{ID: "RC1", Host: host, Title: "Top processes by mean CPU", Label: audit.EvidenceSymptom,
 			Wording: evidence.TopInWindow(metric, strings.Join(parts, ", ")), Thresholds: thr})
@@ -118,11 +118,11 @@ func (e *eval) rc1() {
 		}
 		var parts, ev []string
 		for _, x := range list {
-			parts = append(parts, x.key+" ("+bytesText(x.v)+")")
+			parts = append(parts, evidence.ListEntry(x.key, bytesText(x.v)))
 			ev = append(ev, ids[k[0]+"\x00"+x.key]...)
 		}
 		e.add(Row{ID: "RC1", Host: k[0], Title: "Top processes by peak private bytes", Label: audit.EvidenceSymptom,
-			Wording: evidence.TopInWindow("peak private bytes on "+k[0], strings.Join(parts, ", ")), Thresholds: thr, Evidence: ev})
+			Wording: evidence.TopInWindow(evidence.OnHost("peak private bytes", k[0]), strings.Join(parts, ", ")), Thresholds: thr, Evidence: ev})
 	}
 }
 
@@ -207,8 +207,8 @@ func (e *eval) rc2() {
 				first, last := seg[0], seg[len(seg)-1]
 				span := last.End.Sub(first.End)
 				if len(seg) < e.th.MinBuckets || span < e.th.RiseSpan || !e.segmentCovered(s, seg) {
-					e.gap(fmt.Sprintf("%s %s: the segment from %s to %s has %d samples over %s; a rise is tested on %d or more samples over %s or more",
-						subject, metricName(id), stamp(first.End), stamp(last.End), len(seg), duration(span), e.th.MinBuckets, duration(e.th.RiseSpan)))
+					e.gap(evidence.ShortSegmentGap(subject, metricName(id), stamp(first.End), stamp(last.End), len(seg), duration(span),
+						e.th.MinBuckets, duration(e.th.RiseSpan), num(e.th.MinCoverage*100)))
 					continue
 				}
 				delta := last.Value - first.Value

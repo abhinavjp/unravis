@@ -1,7 +1,6 @@
 package rules
 
 import (
-	"fmt"
 	"sort"
 	"strconv"
 
@@ -20,14 +19,14 @@ var appLogSources = []string{"log4net-text", "log4net-xml", "serilog-clef", "ser
 // rc3 tests host CPU, available memory and disk time per transfer.
 func (e *eval) rc3() {
 	e.runCondition(condition{rule: "RC3", metric: resource.HostCPU, title: "High host CPU",
-		share:      "Host CPU at or above " + num(e.th.CPUHigh) + " % on %s",
+		share:      "Host CPU at or above " + num(e.th.CPUHigh) + " %",
 		thresholds: "host CPU at or above " + num(e.th.CPUHigh) + " %", test: atLeast(e.th.CPUHigh)})
 	e.runCondition(condition{rule: "RC3", metric: resource.HostMemAvailable, title: "Low available memory",
-		share:      "Available memory below " + bytesText(e.th.MemLowBytes) + " on %s",
+		share:      "Available memory below " + bytesText(e.th.MemLowBytes),
 		thresholds: "available memory below " + bytesText(e.th.MemLowBytes), lower: true,
 		test: func(s resource.Sample) (float64, bool) { return s.Value, s.Value < e.th.MemLowBytes }})
 	e.runCondition(condition{rule: "RC3", metric: resource.HostDiskSecPerTx, title: "Slow disk transfers",
-		share:      "Disk time per transfer above " + num(e.th.DiskMs) + " ms on %s",
+		share:      "Disk time per transfer above " + num(e.th.DiskMs) + " ms",
 		thresholds: "disk time per transfer above " + num(e.th.DiskMs) + " ms", test: above(e.th.DiskMs)})
 	for _, id := range []string{resource.HostCPU, resource.HostMemAvailable} {
 		byHost := map[string][]resource.Series{}
@@ -54,9 +53,9 @@ func (e *eval) rc3() {
 				continue
 			}
 			if id == resource.HostCPU {
-				e.summary(host, "host CPU peak "+value(best.Value, unit))
+				e.summary(host, evidence.TopInWindow("host CPU", value(best.Value, unit)))
 			} else {
-				e.summary(host, "lowest available memory "+value(best.Value, unit))
+				e.summary(host, evidence.LowestInWindow("available memory", value(best.Value, unit)))
 			}
 		}
 	}
@@ -67,23 +66,23 @@ func (e *eval) rc3() {
 // rc4 tests time in GC, Gen 2 collections and time paused by GC.
 func (e *eval) rc4() {
 	e.runCondition(condition{rule: "RC4", metric: resource.CLRGCTime, title: "High time in GC",
-		share:      "Time in GC at or above " + num(e.th.GCTimePct) + " % in a process on %s",
+		share:      "Time in GC at or above " + num(e.th.GCTimePct) + " % in a process",
 		thresholds: "time in GC at or above " + num(e.th.GCTimePct) + " %", test: atLeast(e.th.GCTimePct)})
 	e.runCondition(condition{rule: "RC4", metric: resource.CLRGen2, title: "Gen 2 collections",
-		share:      "At least " + num(e.th.Gen2Delta) + " new Gen 2 collection in one sample in a process on %s",
+		share:      "At least " + num(e.th.Gen2Delta) + " new Gen 2 collection in one sample in a process",
 		thresholds: "at least " + num(e.th.Gen2Delta) + " new Gen 2 collection between two samples",
 		test: func(s resource.Sample) (float64, bool) {
 			return s.Delta, s.HasDelta && s.Delta >= e.th.Gen2Delta
 		}})
 	e.runCondition(condition{rule: "RC4", metric: resource.NetGCPause, title: "Time paused by GC",
-		share:      "Time paused by GC above " + num(e.th.GCPauseMin) + " in a process on %s",
+		share:      "Time paused by GC above " + num(e.th.GCPauseMin) + " in a process",
 		thresholds: "time paused by GC above " + num(e.th.GCPauseMin), test: above(e.th.GCPauseMin)})
 
 	dotnet := e.importsOf("dotnet-counters")
 	core := e.importsOf("mel-console", "mel-json", "ancm-stdout")
 	for host := range core {
 		if host != "" && len(dotnet[host]) == 0 {
-			e.gap(evidence.NotObservedGap("no runtime counters for this process on " + host))
+			e.gap(evidence.NoRuntimeCountersGap(host))
 		}
 	}
 }
@@ -94,13 +93,13 @@ func (e *eval) rc4() {
 // entries with more busy workers than the minimum, and late heartbeats.
 func (e *eval) rc5() {
 	e.runCondition(condition{rule: "RC5", metric: resource.NetTPQueue, title: "Thread-pool queue",
-		share:      "Thread-pool queue length above 0 in " + itoa(e.th.TPQueueSamples) + " or more samples in a process on %s",
+		share:      "Thread-pool queue length above 0 in " + itoa(e.th.TPQueueSamples) + " or more samples in a process",
 		thresholds: "thread-pool queue length above 0 in " + itoa(e.th.TPQueueSamples) + " or more samples",
 		minSamples: e.th.TPQueueSamples, test: above(0)})
 	e.runCondition(condition{rule: "RC5", metric: resource.ASPNetQueued, title: "ASP.NET requests queued",
-		share: "ASP.NET Requests Queued above 0 on %s", thresholds: "ASP.NET Requests Queued above 0", test: above(0)})
+		share: "ASP.NET Requests Queued above 0", thresholds: "ASP.NET Requests Queued above 0", test: above(0)})
 	e.runCondition(condition{rule: "RC5", metric: resource.KestrelQueued, title: "Kestrel queue",
-		share: "Kestrel queue length above 0 in a process on %s", thresholds: "Kestrel queue length above 0", test: above(0)})
+		share: "Kestrel queue length above 0 in a process", thresholds: "Kestrel queue length above 0", test: above(0)})
 
 	// .NET Framework hosts have no thread-pool counter.
 	tp := map[string]bool{}
@@ -109,7 +108,7 @@ func (e *eval) rc5() {
 	}
 	for _, s := range e.idx.Series(resource.ASPNetQueued, resource.Filter{}) {
 		if !tp[s.Host] {
-			e.gap(s.Host + ": no thread-pool counter exists; ASP.NET Requests Queued shown instead")
+			e.gap(evidence.NoThreadPoolCounterGap(s.Host))
 		}
 	}
 
@@ -124,7 +123,7 @@ func (e *eval) rc5() {
 			picked = append(picked, ev)
 		}
 	}
-	e.pointShare("RC5", "Redis timeout entries with busy workers", "Redis timeout entries with WORKER busy above min on %s",
+	e.pointShare("RC5", "Redis timeout entries with busy workers", "Redis timeout entries with WORKER busy above min",
 		"Redis timeout log entries whose WORKER busy count is above its min", picked)
 	hosts := make([]string, 0, len(counts))
 	for h := range counts {
@@ -132,7 +131,7 @@ func (e *eval) rc5() {
 	}
 	sort.Strings(hosts)
 	for _, h := range hosts {
-		e.summary(h, fmt.Sprintf("%d Redis timeout entries", counts[h]))
+		e.summary(h, evidence.CountInWindow("Redis timeout entries", counts[h]))
 	}
 
 	e.overlap("RC5", []string{"heartbeat-late"}, "late heartbeat overlapping a stall, joined per host and source")

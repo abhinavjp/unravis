@@ -8,7 +8,6 @@ package rules
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 	"time"
 
@@ -151,9 +150,6 @@ const (
 	stallTolerance  = time.Second
 )
 
-// gapEventCap is the gap when more events matched than the rules keep.
-var gapEventCap = fmt.Sprintf("the rules read only the first %d matching events: overlap and log results are partial", maxStoredEvents)
-
 // overlapKinds are the event kinds joined with the stalls.
 var overlapKinds = []string{"slow-command", "latency-spike", "slow-op", "inflight-op", "heartbeat-late"}
 
@@ -271,7 +267,7 @@ func (e *eval) readEvents(c casestore.Case) error {
 		}
 		if stored >= maxStoredEvents {
 			e.partial = true
-			e.gaps[gapEventCap] = true
+			e.gaps[evidence.EventCapGap(maxStoredEvents)] = true
 			return nil
 		}
 		stored++
