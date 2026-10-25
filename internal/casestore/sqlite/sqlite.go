@@ -272,6 +272,10 @@ func (s *Store) createDB(ctx context.Context, dir string, keys casestore.Keys, i
 		_ = tx.Rollback()
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, discoverSQL); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	for k, v := range map[string]string{
 		"schema_version": fmt.Sprint(schemaVersion),
 		"case_id":        string(id),
