@@ -301,7 +301,8 @@ export const IMPORTER_LABELS: Record<string, string> = {
   'mongostat-json': 'mongostat samples',
   'linux-sadf': 'Linux sar samples',
   'linux-pidstat': 'Linux pidstat samples',
-  'linux-vmstat': 'Linux vmstat samples'
+  'linux-vmstat': 'Linux vmstat samples',
+  'win-live': 'Live recording of this computer'
 };
 
 /** One short line per importer saying what file it reads. A name the screen does not know has no help line. */
