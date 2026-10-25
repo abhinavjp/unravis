@@ -81,6 +81,7 @@ var samples = map[string]sample{
 	"win-events":        {file: "winevents/testdata/events_utc.csv"},
 	"schedule-hangfire": {file: "schedule/testdata/hangfire_good.csv"},
 	"schedule-agent":    {file: "schedule/testdata/agent_good.csv"},
+	"schedule-quartz":   {file: "schedule/testdata/quartz_good.log"},
 	"appinsights":       {file: "appinsights/testdata/good.csv"},
 	"mongod-json":       {file: "mongodlog/testdata/good.log"},
 	"sql-xe":            {file: "sqlserver/testdata/xe_good.csv"},
@@ -156,8 +157,8 @@ var knownTies = map[string][]string{"sql-pdh": {"sql-pdh", "win-counters"}}
 func TestCrossDetectMatrix(t *testing.T) {
 	reg := all.Registry()
 	names := reg.Names()
-	if len(names) < 32 {
-		t.Fatalf("registry holds %d importers, want at least 32", len(names))
+	if len(names) < 33 {
+		t.Fatalf("registry holds %d importers, want at least 33", len(names))
 	}
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
@@ -290,6 +291,7 @@ func TestSuppliedKeysDeclared(t *testing.T) {
 		"serilog-clef":    {"app-request-min-ms"},
 		"serilog-text":    {"app-request-min-ms"},
 		"nlog-text":       {"app-request-min-ms", "log-time"},
+		"schedule-quartz": {"log-time"},
 		"apache-combined": {"duration-unit"},
 		"mel-console":     {"app-request-min-ms", "date-order"},
 		"mel-json":        {"app-request-min-ms", "date-order"},

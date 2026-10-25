@@ -99,6 +99,10 @@ var (
 	// are known to the package but make no suggestion: the rules above ask for
 	// Windows logs, and a Linux host has no list of its own yet.
 	linuxSignals = []string{"linux-sadf", "linux-pidstat", "linux-vmstat"}
+	// schedulerLogSignals are Quartz.NET scheduler logs. Like the access logs
+	// they are read and recognised but say nothing about the kind of host, so
+	// they make and remove no suggestion.
+	schedulerLogSignals = []string{"schedule-quartz"}
 )
 
 // profile is what the case already holds for one host.
@@ -121,7 +125,7 @@ func (p profile) none(names ...string) bool { return !p.any(names...) }
 // is ignored: it neither makes a suggestion nor removes one.
 var known = func() map[string]bool {
 	m := map[string]bool{}
-	for _, list := range [][]string{webSignals, sqlSignals, redisSignals, mongoSignals, machineSignals, accessLogSignals, linuxSignals} {
+	for _, list := range [][]string{webSignals, sqlSignals, redisSignals, mongoSignals, machineSignals, accessLogSignals, linuxSignals, schedulerLogSignals} {
 		for _, n := range list {
 			m[n] = true
 		}

@@ -34,7 +34,7 @@ func Importers() []importer.Importer {
 		wincounters.New(),
 		winevents.New(iis.ClassifyWAS, winevents.ClassifyApp, winevents.ClassifyTaskScheduler),
 		schedule.NewHangfire(),
-		schedule.NewAgent(),
+		schedule.NewAgent(), schedule.NewQuartz(),
 		appinsights.New(),
 		mongodlog.New(),
 		sqlserver.NewXE(),

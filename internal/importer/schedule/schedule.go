@@ -33,6 +33,7 @@ import (
 const (
 	NameHangfire = "schedule-hangfire"
 	NameAgent    = "schedule-agent"
+	NameQuartz   = "schedule-quartz"
 
 	KindBoundary = "schedule-boundary"
 	KindUnknown  = "schedule-unknown"
