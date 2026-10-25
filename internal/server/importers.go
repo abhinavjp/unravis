@@ -60,6 +60,9 @@ func (h *handler) listImporters(w http.ResponseWriter, _ *http.Request) {
 			if !ok {
 				continue
 			}
+			if imp.Name() == "win-live" {
+				continue // written only by the in-process sampler
+			}
 			specs := importer.SuppliedKeysOf(imp)
 			keys := make([]string, 0, len(specs))
 			for k := range specs {

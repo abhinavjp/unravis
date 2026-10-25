@@ -69,6 +69,7 @@ type casesState struct {
 	imports   importLimiter
 	pending   pendingStrips
 	jobs      importJobs
+	disc      discoverState
 	maxUpload int64 // test hook: replaces the computed upload cap when > 0
 
 	hostsMu sync.RWMutex
@@ -598,6 +599,9 @@ func (h *handler) closeCase(w http.ResponseWriter, r *http.Request, raw string) 
 	if !ok || !h.casesAvailable(w) {
 		return
 	}
+	// A sampler recording into this case is stopped first, so its last batch is
+	// saved before the case closes.
+	h.stopSamplerFor(id, false, stopCaseClosed)
 	// Close takes the case's gate, like import and erase: an import in flight
 	// finishes first, and no import starts between the close and its answer.
 	release, err := h.gates.acquire(r.Context(), id)
@@ -638,6 +642,7 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 	// read that already opened the case; reads that start now answer 404. A
 	// background import job is cancelled first, so the erase waits only for it to
 	// stop, not for it to finish.
+	h.stopSamplerFor(id, true, stopCaseClosed)
 	stopCancelling := h.jobs.cancelCaseUntilStopped(id)
 	release, err := h.gates.acquireErase(r.Context(), id)
 	stopCancelling()
@@ -1098,6 +1103,12 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 // import, import_jobs.go, keeps the upload in an encrypted spool for the job
 // and runs this same function over it.)
 func (h *handler) importFile(ctx context.Context, w http.ResponseWriter, id casestore.CaseID, c casestore.Case, imp importer.Importer, hint *importer.HostHint, supplied map[string]string, part io.Reader, preview, ackGating bool, ackText, fileName string) {
+	h.importFileWith(ctx, w, id, c, imp, hint, supplied, part, preview, ackGating, ackText, fileName, importer.Window{})
+}
+
+// importFileWith is importFile with a time window handed to the importer (the
+// zero window is open). Host discovery uses it for the files it reads locally.
+func (h *handler) importFileWith(ctx context.Context, w http.ResponseWriter, id casestore.CaseID, c casestore.Case, imp importer.Importer, hint *importer.HostHint, supplied map[string]string, part io.Reader, preview, ackGating bool, ackText, fileName string, win importer.Window) {
 	if !preview && (!ackGating || ackText == "") {
 		writeCaseFailure(w, http.StatusBadRequest, "ack-required", "Send ackGating and ackText before the file.")
 		return
@@ -1143,7 +1154,7 @@ func (h *handler) importFile(ctx context.Context, w http.ResponseWriter, id case
 	opts := importer.Options{
 		CaseID: string(id), ImportNonce: nonce, FileName: fileName, Host: hint,
 		Hosts: h.hostsNow().Lookup, Pseudonymize: c.Pseudonymize,
-		Supplied: supplied,
+		Supplied: supplied, Window: win,
 	}
 	meta := casestore.ImportMeta{
 		Importer: imp.Name(), FileName: fileName, AckGating: ackGating, AckText: ackText, AllowedAttrs: imp.AllowedAttrs(),

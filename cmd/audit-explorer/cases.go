@@ -104,6 +104,7 @@ func openCases(getenv func(string) string, hypotheses ledger.Store) (*casesWirin
 		options: []server.Option{
 			server.WithCases(store, sealedHosts.Map(), all.Registry()),
 			server.WithHostsSaver(sealedHosts.Save),
+			server.WithSystemDiscover(),
 		},
 	}, nil
 }
