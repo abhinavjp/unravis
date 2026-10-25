@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { comparisonLabel, STARTUP_TITLE } from './lib/copy/startupCopy';
+  import { scopeProblem } from './lib/autorun';
+  import { VALIDATION_MESSAGE } from './lib/api';
   import { app, closeCoverage, dropRecord, evidence, initialize, navigation, openComparison, openWhere, closeGlossary, closeSidePanel, onWindowKey, panels, resetInvestigation, results, scope, startApp } from './lib/appState.svelte';
   import AppHeader from './components/AppHeader.svelte';
   import SubBar from './components/SubBar.svelte';
@@ -43,7 +46,7 @@
 <div class="app-shell">
   <AppHeader />
 
-  {#if app.initError}<div class="banner error-banner" role="alert"><strong>Explorer unavailable</strong><span>{app.initError}</span><button class="quiet-button" onclick={() => { app.initError = ''; void initialize(); }}>Retry</button></div>{/if}
+  {#if app.initError}<div class="banner error-banner" role="alert"><strong>{STARTUP_TITLE}</strong><span>{app.initError}</span>{#if app.initCanRetry}<button class="quiet-button" onclick={() => { app.initError = ''; void initialize(); }}>Retry</button>{/if}</div>{/if}
 
   {#if info && !app.firstRun}<SubBar />{/if}
 
@@ -64,7 +67,7 @@
         {:else if app.firstRun}
           <Landing mode="connect" />
         {:else if info}
-          {#if results.error}<div class="banner error-banner" role="alert"><strong>Comparison not run</strong><span>{results.error}</span></div>{/if}
+          {#if results.error}<div class="banner error-banner" role="alert"><strong>{comparisonLabel(results.error, [VALIDATION_MESSAGE, scopeProblem(scope.query, scope.dateInputsValid)])}</strong><span>{results.error}</span></div>{/if}
           {#if analysis}
             {#if results.displayedRunIsStale && !loading}<div class="notice frozen-run-note" role="status">The figures below are from the last run. Press <strong>Run analysis</strong> to apply your changes.</div>{/if}
             {#if failingSources.length}

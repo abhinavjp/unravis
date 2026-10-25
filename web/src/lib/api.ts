@@ -36,6 +36,9 @@ export function readSessionToken(): string {
 
 let token = readSessionToken();
 
+/** Whether this tab holds a session token right now. A refused token is dropped, so read this before a call to know what the tab had. */
+export const hasSessionToken = (): boolean => token !== '';
+
 /** Drops the token this tab holds, in memory and in sessionStorage, once the dashboard has refused it. */
 export function forgetSession() {
   token = '';

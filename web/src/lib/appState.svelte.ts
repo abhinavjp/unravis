@@ -3,7 +3,9 @@
 // write it through the exported accessor objects at the end of this file (app, scope, results, evidence, navigation, panels, conn).
 // startApp() must be called once from App.svelte's script: it registers the effects and the mount work, which need a component.
 import { onMount, tick, untrack } from 'svelte';
-import { api, ApiError } from './api';
+import { api, ApiError, hasSessionToken } from './api';
+import { createDrawerHistory } from './drawerHistory';
+import { classifyStartupFailure } from './copy/startupCopy';
 import { bumpEpoch } from './evidenceMemo';
 import { defaultQuery } from './time';
 import { initialComparison, kindLabel, queryFingerprint, resultNotes, rankComparisons, stateLabel } from './presentation';
@@ -62,6 +64,7 @@ let sourceSuccess = $state('');
 let requestError = $state('');
 let recordError = $state('');
 let initError = $state('');
+let initCanRetry = $state(true);
 let addLabel = $state('');
 let addUri = $state('');
 let addUsername = $state('');
@@ -142,6 +145,8 @@ let applyingView = false;
 let viewRun = 0;
 let initialView: View | null = null;
 let viewHistory: ReturnType<typeof createViewHistory> | null = null;
+let drawerHistory: ReturnType<typeof createDrawerHistory> | null = null;
+let viewSyncQueued = false;
 
 const connectionSignature = $derived(JSON.stringify([addUri, addUsername, addPassword, addAuthSource, addTLSMode, addCACertificate, savedConnectionId]));
 const maxSources = $derived(info?.limits.maxSources ?? 8);
@@ -259,10 +264,12 @@ export function startApp() {
   onMount(() => {
     theme.start(); void initialize();
     window.addEventListener(GLOSSARY_EVENT, onGlossaryRequest);
+    drawerHistory = createDrawerHistory(history, closeDrawerById);
     viewHistory = createViewHistory(location, history);
-    const onPop = () => { const target = viewHistory?.pop(); if (target !== undefined) void applyView(target); };
+    // Browser Back closes an open drawer first; only an event no drawer used is a move between views.
+    const onPop = () => { if (drawerHistory?.pop()) return; const target = viewHistory?.pop(); if (target !== undefined) void applyView(target); };
     window.addEventListener('popstate', onPop);
-    return () => { window.removeEventListener(GLOSSARY_EVENT, onGlossaryRequest); window.removeEventListener('popstate', onPop); viewHistory = null; };
+    return () => { window.removeEventListener(GLOSSARY_EVENT, onGlossaryRequest); window.removeEventListener('popstate', onPop); viewHistory = null; drawerHistory = null; };
   });
 
   $effect(() => {
@@ -308,14 +315,28 @@ export function startApp() {
   });
 
   // The address bar follows the screen: going deeper adds a history step, so the browser's Back (and Esc) climb back up one level at a time.
+  // A view change waits until no drawer entry is on the history, so it never lands on top of one.
   $effect(() => {
     const view = currentView, ready = viewReady;
     if (!ready || applyingView) return;
-    untrack(() => { viewHistory?.sync(view); });
+    untrack(() => {
+      if (!drawerHistory || !viewHistory) { viewHistory?.sync(view); return; }
+      if (viewSyncQueued) return; // the queued call reads the view as it is when it runs
+      viewSyncQueued = true;
+      drawerHistory.whenClear(() => { viewSyncQueued = false; if (viewReady && !applyingView) viewHistory?.sync(currentView); });
+    });
+  });
+
+  // Each open drawer shares one history entry, so the browser's Back closes it. Closing from the page steps back over that entry.
+  $effect(() => {
+    const open = [connectionsOpen ? 'connections' : '', glossaryOpen ? 'glossary' : '', coverageSource ? 'coverage' : '', sidePanel ? 'side' : ''].filter(Boolean);
+    untrack(() => { drawerHistory?.sync(open); });
   });
 }
 
 export async function initialize() {
+  const hadToken = hasSessionToken();
+  initCanRetry = true;
   try {
     info = await api.info();
     pendingInvestigation = readInvestigationSnapshot(undefined, info.demo ? 'demo' : 'live');
@@ -344,7 +365,10 @@ export async function initialize() {
       }
     }
   } catch (cause) {
-    initError = message(cause);
+    const text = message(cause);
+    const failure = classifyStartupFailure({ hadToken, cause });
+    initError = failure.kind === 'other' ? text : failure.message;
+    initCanRetry = failure.canRetry;
   }
 }
 function setLocalInputs() {
@@ -913,6 +937,13 @@ async function settleView(view: View | null, run: number) {
   if (view.tab && inspectorTabs.some(tab => tab.id === view.tab)) inspectorTab = view.tab;
   if (view.type === 'record' && view.sourceId && view.recordId) await loadRecord(view.sourceId, view.recordId);
 }
+// The browser's Back asks for the drawer that opened last to close.
+function closeDrawerById(id: string) {
+  if (id === 'glossary') void closeGlossary();
+  else if (id === 'coverage') void closeCoverage();
+  else if (id === 'side') void closeSidePanel();
+  else if (id === 'connections') void closeConnections();
+}
 export function onWindowKey(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.defaultPrevented) return;
   // A drawer closes on Esc even when focus is on the page itself (after a click on the page behind it); one with focus inside handles its own Esc.
@@ -1057,6 +1088,7 @@ export const app = {
   get info() { return info; }, set info(value) { info = value; },
   get sources() { return sources; }, set sources(value) { sources = value; },
   get initError() { return initError; }, set initError(value) { initError = value; },
+  get initCanRetry() { return initCanRetry; },
   get firstRun() { return firstRun; },
   get maxSources() { return maxSources; },
   get remainingSourceSlots() { return remainingSourceSlots; },
