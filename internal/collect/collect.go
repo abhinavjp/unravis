@@ -58,7 +58,8 @@ const (
 	ancm        = "ancm-stdout"
 	appInsights = "appinsights"
 	hangfire    = "schedule-hangfire"
-	sqlAgent    = "schedule-agent"
+	quartz      = "schedule-quartz"
+	sqlAgent   = "schedule-agent"
 	sqlErrorlog = "sql-errorlog"
 	sqlPDH      = "sql-pdh"
 	sqlXE       = "sql-xe"
@@ -81,7 +82,7 @@ var appLogImporters = []string{"log4net-text", "log4net-xml", "serilog-clef", "s
 // Which importers say what kind of server a host is. A host can be several
 // kinds at once; a file whose importer is in no list says nothing about it.
 var (
-	webSignals   = append([]string{iisW3C, iisHTTPERR, iisFREB, dotnetCnt, hangfire, appInsights}, appLogImporters...)
+	webSignals   = append([]string{iisW3C, iisHTTPERR, iisFREB, dotnetCnt, hangfire, quartz, appInsights}, appLogImporters...)
 	sqlSignals   = []string{sqlErrorlog, sqlPDH, sqlXE, sqlQS, sqlAgent}
 	redisSignals = []string{redisInfo, redisLat, redisLog, redisSlow}
 	mongoSignals = []string{mongodJSON, mongoStatus, mongoProf, mongoCurOp, mongostat}
@@ -99,10 +100,6 @@ var (
 	// are known to the package but make no suggestion: the rules above ask for
 	// Windows logs, and a Linux host has no list of its own yet.
 	linuxSignals = []string{"linux-sadf", "linux-pidstat", "linux-vmstat"}
-	// schedulerLogSignals are Quartz.NET scheduler logs. Like the access logs
-	// they are read and recognised but say nothing about the kind of host, so
-	// they make and remove no suggestion.
-	schedulerLogSignals = []string{"schedule-quartz"}
 )
 
 // profile is what the case already holds for one host.
@@ -125,7 +122,7 @@ func (p profile) none(names ...string) bool { return !p.any(names...) }
 // is ignored: it neither makes a suggestion nor removes one.
 var known = func() map[string]bool {
 	m := map[string]bool{}
-	for _, list := range [][]string{webSignals, sqlSignals, redisSignals, mongoSignals, machineSignals, accessLogSignals, linuxSignals, schedulerLogSignals} {
+	for _, list := range [][]string{webSignals, sqlSignals, redisSignals, mongoSignals, machineSignals, accessLogSignals, linuxSignals} {
 		for _, n := range list {
 			m[n] = true
 		}

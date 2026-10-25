@@ -82,6 +82,16 @@ func TestWeightFallsBackToDetector(t *testing.T) {
 	}
 }
 
+// A Quartz.NET log ranks beside the other scheduler export, after the runtime
+// counters and before SQL.
+func TestQuartzWeightSitsWithTheSchedulers(t *testing.T) {
+	q := discover.Weight(discover.Finding{Detector: "x", Importer: "schedule-quartz"})
+	h := discover.Weight(discover.Finding{Detector: "x", Importer: "schedule-hangfire"})
+	if q < h || q >= discover.Weight(discover.Finding{Importer: "sql-errorlog"}) {
+		t.Errorf("quartz weight %d, hangfire %d", q, h)
+	}
+}
+
 func TestRunFillsDetectorNameAndElevated(t *testing.T) {
 	e := fake.New()
 	e.Machine.Admin = true
