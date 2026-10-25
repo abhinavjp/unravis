@@ -170,7 +170,7 @@ var exportPolicy = map[string]map[string]attrPolicy{
 	"appinsights": {"dependencyType": polEnum(dependencyTypes), "resultCode": polNumOr("other"),
 		"success": polEnum(successValues)},
 	"sql-xe": {"event": polEnum(xeEvents), "wait_type": polWait, "wait_class": polEnum(xeWaitClasses),
-		"component": polEnum(xeComponents), "state": polEnum(xeStates), "error_number": polNum, "sql_severity": polNum},
+		"component": polEnum(xeComponents), "state": polEnum(xeStates), "error_number": polNum, "sql_severity": polNumOr("unknown")},
 	"sql-errorlog": {"error_number": polNum, "sql_severity": polNum},
 
 	// Wave 2 (plan §2.2, §2.3, cards W2-b to W2-m), pre-landed by W2-F.
