@@ -111,11 +111,11 @@
   .coverage-run { justify-self: start; }
   .coverage-saved { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
   .coverage-saved button { margin-left: 0; }
-  .coverage-scroll { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: var(--radius); }
+  .coverage-scroll { overflow-x: auto; border: 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
   .coverage-table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
   .coverage-table th, .coverage-table td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--line-soft); font-weight: 400; }
-  .coverage-table thead th { background: var(--surface-2); color: var(--text-2); font-weight: 600; }
+  .coverage-table thead th { background: var(--surface-2); color: var(--text-2); font-weight: 500; }
   .coverage-table tbody th { font-weight: 600; }
   .coverage-table .num { text-align: right; font-variant-numeric: tabular-nums; }
-  .coverage-table tr.total td, .coverage-table tr.total th { font-weight: 700; background: var(--surface-2); }
+  .coverage-table tr.total td, .coverage-table tr.total th { font-weight: 600; background: var(--surface-2); }
 </style>

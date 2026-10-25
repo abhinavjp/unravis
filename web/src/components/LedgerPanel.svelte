@@ -347,7 +347,7 @@
   .ledger-compare > summary { color: var(--text); font-size: var(--fs-3); font-weight: 650; }
   .theory-matrix { width: 100%; margin-top: var(--space-2); table-layout: fixed; font-size: 12px; white-space: normal; }
   .theory-matrix :is(th, td) { padding: 6px 6px 6px 0; overflow-wrap: anywhere; text-align: left; vertical-align: top; }
-  .theory-matrix thead th { color: var(--text-2); font-weight: 650; border-bottom: 1px solid var(--line); }
+  .theory-matrix thead th { color: var(--text-2); font-weight: 500; border-bottom: 1px solid var(--line); box-shadow: none; background: transparent; }
   .theory-matrix tbody :is(th, td) { border-bottom: 1px solid var(--line-soft); font-weight: 450; }
   .theory-text { display: block; font-weight: 600; }
   .theory-state, .theory-first { display: block; color: var(--text-2); font-size: 11px; }
@@ -357,7 +357,7 @@
     .theory-matrix thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
     .theory-matrix tr { padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
     .theory-matrix tbody :is(th, td) { padding: 2px 0; border-bottom: 0; }
-    .theory-matrix tbody td::before { content: attr(data-label) ': '; color: var(--text-2); font-weight: 650; }
+    .theory-matrix tbody td::before { content: attr(data-label) ': '; color: var(--text-2); font-weight: 600; }
   }
   .ledger-empty { margin: 14px 0 0; color: var(--text-2); font-size: 13px; }
   .ledger-list { display: grid; margin: 12px 0 0; padding: 0; list-style: none; }
@@ -366,7 +366,7 @@
   .ledger-summary:hover { background: var(--surface-2); }
   .ledger-text { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
   .ledger-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  .ledger-badge { margin: 0; font-weight: 650; color: var(--text); }
+  .ledger-badge { margin: 0; font-weight: 600; color: var(--text); }
   .ledger-strong { border-color: var(--accent); }
   .ledger-rate { color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
   .ledger-unsaved { color: var(--text-2); font-size: var(--fs-2); }
@@ -375,7 +375,7 @@
   .ledger-cited ul { display: grid; gap: var(--space-1); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
   .ledger-cited li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
   .ledger-body { padding: 4px 2px 16px; }
-  .ledger-body textarea { width: 100%; min-width: 0; padding: 7px 9px; color: var(--text); background: var(--surface); border: 1px solid var(--control-line); border-radius: var(--radius); font: inherit; font-size: 14px; line-height: 1.45; resize: vertical; }
+  .ledger-body textarea { width: 100%; min-width: 0; padding: 7px 9px; color: var(--text); background: var(--surface); border: 1px solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: 14px; line-height: 1.45; resize: vertical; }
   .ledger-body .field-grid > div { display: grid; gap: 4px; min-width: 0; }
   .ledger-reasons { margin: 4px 0 0; padding-left: 18px; font-size: 12px; }
   .ledger-blocked-note { margin: 6px 0 0; font-size: 12px; }
@@ -389,7 +389,7 @@
   .ledger-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
   .ledger-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
   .ledger-add { display: grid; gap: 4px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
-  .ledger-add label { color: var(--text-2); font-size: 12px; font-weight: 650; }
+  .ledger-add label { color: var(--text-2); font-size: 12px; font-weight: 500; }
   .ledger-add-row { display: flex; gap: 8px; }
   .ledger-add-row input { flex: 1; min-height: 38px; font-size: 14px; }
 </style>

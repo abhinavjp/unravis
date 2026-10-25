@@ -508,7 +508,7 @@
   .patterns-thresholds summary { width: fit-content; color: var(--text-2); font-size: var(--fs-3); }
   .threshold-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-top: 8px; }
   .threshold-fields label { display: grid; gap: 4px; color: var(--text-2); font-size: var(--fs-2); }
-  .threshold-fields input { min-width: 0; min-height: 36px; padding: 6px 10px; color: var(--text); background: var(--bg); border: 1px solid var(--control-line); border-radius: var(--radius); font-size: var(--fs-4); font-variant-numeric: tabular-nums; }
+  .threshold-fields input { min-width: 0; min-height: 36px; padding: 6px 10px; color: var(--text); background: var(--bg); border: 1px solid var(--control-line); border-radius: var(--radius-sm); font-size: var(--fs-4); font-variant-numeric: tabular-nums; }
   .patterns-thresholds .patterns-note { margin-top: var(--space-2); }
   .reset-link { margin-top: var(--space-1); padding: 3px 0; color: var(--text-2); background: none; border: 0; font-size: var(--fs-2); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
   .reset-link:hover { color: var(--text); }
@@ -520,9 +520,9 @@
   .idle-option input { width: 16px; height: 16px; }
   .idle-meta { margin-bottom: 8px; }
   .step-days { display: flex; align-items: center; gap: 8px; margin-left: 24px; color: var(--text-2); font-size: var(--fs-3); }
-  .step-days select { min-height: 32px; padding: 4px 8px; color: var(--text); background: var(--bg); border: 1px solid var(--control-line); border-radius: var(--radius); font-size: var(--fs-3); }
+  .step-days select { min-height: 32px; padding: 4px 8px; color: var(--text); background: var(--bg); border: 1px solid var(--control-line); border-radius: var(--radius-sm); font-size: var(--fs-3); }
   .step-reason { display: block; color: var(--text-2); font-size: var(--fs-1); }
-  .split-offer { display: grid; gap: 6px; margin: 10px 0; padding: 9px 12px; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); justify-items: start; }
+  .split-offer { display: grid; gap: 6px; margin: 10px 0; padding: 9px 0; background: transparent; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; justify-items: start; }
   .split-offer h4 { margin: 0; }
   .split-actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .idle-lifts { display: grid; gap: 4px; margin: 8px 0; padding-left: 18px; font-size: var(--fs-3); }
@@ -532,10 +532,10 @@
   .patterns-verdict { margin: 0; font-size: var(--fs-5); font-weight: 600; }
   .cite-note { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
   .finding-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-  .finding { padding: 9px 12px; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); }
+  .finding { padding: 9px 0; background: transparent; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; }
   .finding p { margin: 6px 0 0; font-size: var(--fs-3); overflow-wrap: anywhere; }
   .finding-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: var(--fs-2); }
-  .evidence-badge { padding: 2px 8px; color: var(--text); border: 1px solid var(--line); border-radius: 4px; font-weight: 650; }
+  .evidence-badge { padding: 2px 8px; color: var(--text); border: 1px solid var(--line); border-radius: 4px; font-weight: 600; }
   .evidence-badge.strong { border-color: var(--accent); }
   .finding-n { color: var(--text-2); font-variant-numeric: tabular-nums; }
   .finding p.finding-ref { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; color: var(--text-2); font-size: var(--fs-1); }
@@ -547,12 +547,12 @@
   .patterns-quality { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
   .patterns-detail { margin-top: var(--space-4); min-width: 0; }
   .patterns-detail h3 { margin: 0 0 8px; font-size: var(--fs-4); font-weight: 600; }
-  .patterns-detail h4 { margin: 10px 0 6px; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
+  .patterns-detail h4 { margin: 10px 0 6px; color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
   .patterns-empty { padding: var(--space-4); }
-  .table-scroll { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: var(--radius); }
+  .table-scroll { overflow-x: auto; border: 0; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); border-radius: 0; }
   .patterns-table { width: 100%; border-collapse: collapse; font-size: var(--fs-2); }
   .patterns-table th, .patterns-table td { padding: 5px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line-soft); font-weight: 400; }
-  .patterns-table thead th { background: var(--surface-2); color: var(--text-2); font-weight: 600; white-space: nowrap; }
+  .patterns-table thead th { background: var(--surface-2); color: var(--text-2); font-weight: 500; white-space: nowrap; }
   .patterns-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .patterns-table .ops { overflow-wrap: anywhere; }
   .patterns-table.inner { margin-bottom: 4px; }
@@ -560,7 +560,7 @@
   .episode-toggle { padding: 0; color: var(--text); background: none; border: 0; font: inherit; font-weight: 600; text-align: left; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
   .episode-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius); }
   .audit-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-  .audit-list li { display: grid; justify-items: start; gap: 2px; padding: 8px 12px; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); font-size: var(--fs-3); }
+  .audit-list li { display: grid; justify-items: start; gap: 2px; padding: 8px 0; background: transparent; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; font-size: var(--fs-3); }
   .audit-when { color: var(--text-2); font-size: var(--fs-2); }
   .source-tag { color: var(--text-2); font-size: var(--fs-1); }
 </style>
