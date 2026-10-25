@@ -23,7 +23,17 @@ var hostModTime = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 
 const hostSite = `C:\inetpub\wwwroot\api`
 
-func hostTestEnv(e *fake.Env) discover.Env { return e.Env(all.Registry()) }
+// hostTestEnv uses every real importer except win-live, so a test sees only the
+// findings it plants.
+func hostTestEnv(e *fake.Env) discover.Env {
+	var imps []importer.Importer
+	for _, imp := range all.Importers() {
+		if imp.Name() != "win-live" {
+			imps = append(imps, imp)
+		}
+	}
+	return e.Env(importer.NewRegistry(imps...))
+}
 
 // hostStubImporter is a registry entry with no parsing. It lets a test show that
 // a finding is kept when its importer is registered.

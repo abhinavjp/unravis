@@ -13,7 +13,16 @@ var hostShows = map[string]string{
 // hostHow gives the exact step for a host source Unravis does not read directly.
 // Keys are "discover.<source>.how".
 var hostHow = map[string]string{
-	"discover.nettrace.how": "Run dotnet-trace convert on the .nettrace file to save a Speedscope file. Then import that file.",
+	"discover.nettrace.how": "Unravis cannot read this file. Run dotnet-counters collect with the csv format, then import the CSV file.",
+}
+
+func init() {
+	for k, v := range hostShows {
+		shows[k] = v
+	}
+	for k, v := range hostHow {
+		how[k] = v
+	}
 }
 
 // hostWordingText returns the sentence for a key in hostShows or hostHow.

@@ -68,6 +68,14 @@
     "text": "It lists MongoDB server messages, such as slow queries and connections, with times."
   },
   {
+    "key": "discover.nettrace.how",
+    "text": "Unravis cannot read this file. Run dotnet-counters collect with the csv format, then import the CSV file."
+  },
+  {
+    "key": "discover.nettrace.shows",
+    "text": "It holds a binary trace of .NET runtime and CPU events for the app process."
+  },
+  {
     "key": "discover.nginx.shows",
     "text": "It lists each request that nginx served, with its time, status and size."
   },
