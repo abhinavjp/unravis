@@ -147,7 +147,7 @@ func Next(ctx context.Context, op Opener, store WatermarkStore, key FileKey, can
 	if err != nil {
 		return nil, err
 	}
-	rr, err := next(ctx, src, info, store, key, header, opts)
+	rr, err := next(ctx, src, info, store, key, header, nil, opts)
 	if err != nil {
 		_ = src.Close()
 		return nil, err
@@ -155,18 +155,18 @@ func Next(ctx context.Context, op Opener, store WatermarkStore, key FileKey, can
 	return rr, nil
 }
 
-func next(ctx context.Context, src Source, info Info, store WatermarkStore, key FileKey, header HeaderKind, opts RangeOptions) (*RangeReader, error) {
+func next(ctx context.Context, src Source, info Info, store WatermarkStore, key FileKey, header HeaderKind, win *WindowSpec, opts RangeOptions) (*RangeReader, error) {
 	lim := opts.limiter()
 	start, reason, err := resume(ctx, lim, store, key, src, info.Size)
 	if err != nil {
 		return nil, err
 	}
-	rr, err := buildRange(ctx, src, info, RangeRequest{Offset: start, Header: header}, opts)
+	rr, err := buildRange(ctx, src, info, RangeRequest{Offset: start, Header: header, Window: win}, opts)
 	if err == ErrMisaligned && start > 0 {
 		// The stored offset is not a line start: the file changed under it.
 		_ = store.Delete(key)
 		start, reason = 0, RestartMisaligned
-		rr, err = buildRange(ctx, src, info, RangeRequest{Offset: 0, Header: header}, opts)
+		rr, err = buildRange(ctx, src, info, RangeRequest{Offset: 0, Header: header, Window: win}, opts)
 	}
 	if err != nil {
 		return nil, err

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"time"
 )
 
 // ErrBadRange means the requested offsets are inconsistent with the file.
@@ -41,6 +42,9 @@ const (
 type RangeRequest struct {
 	Offset, End int64
 	Header      HeaderKind
+	// Window, when set, narrows the range to the lines inside a time window
+	// found by binary search (see WindowSpec). Nil means no time filtering.
+	Window *WindowSpec
 }
 
 // RangeOptions tunes a range reader. The zero value is the production setting.
@@ -63,6 +67,14 @@ type RangeInfo struct {
 	HeaderAt int64  // file offset the replayed header came from, -1 if none
 	Empty    bool   // no full line in the range: nothing is served
 	Restart  string // why a watermark was ignored: "", "first-scan", "truncated", "first-block-changed", "misaligned"
+
+	// Set only for window requests.
+	Window     string    // outcome: WindowAll, WindowSlice, WindowBefore, WindowAfter, WindowTail
+	Gap        string    // GapPartialWindow when the file was cut to a tail, else ""
+	Probes     int       // file reads the time search made (at most MaxProbes)
+	ProbeBytes int64     // bytes those reads and the line snapping read
+	FirstTime  time.Time // first timed line at or after the range start, zero if not probed
+	LastTime   time.Time // last timed line of the file, zero if not probed or none
 }
 
 // RangeReader serves an optional replayed header followed by the file bytes
@@ -128,6 +140,14 @@ func (o RangeOptions) headerLimit() int64 {
 }
 
 func buildRange(ctx context.Context, src Source, info Info, req RangeRequest, opts RangeOptions) (*RangeReader, error) {
+	if req.Window != nil {
+		return buildWindow(ctx, src, info, req, opts)
+	}
+	return buildPlain(ctx, src, info, req, opts)
+}
+
+// buildPlain serves a byte range with no time window.
+func buildPlain(ctx context.Context, src Source, info Info, req RangeRequest, opts RangeOptions) (*RangeReader, error) {
 	lim := opts.limiter()
 	start, hardEnd := req.Offset, req.End
 	if hardEnd <= 0 || hardEnd > info.Size {
