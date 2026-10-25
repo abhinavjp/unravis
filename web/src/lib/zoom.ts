@@ -402,7 +402,7 @@ export interface OverviewModel { bars: number[]; left: number; width: number; ha
 /** The overview brush: the queried window, the view inside it, the step an edge moves by, and the two edges in words (for screen readers). */
 export interface BrushModel { rootStart: number; rootEnd: number; viewStart: number; viewEnd: number; stepMs: number; startText: string; endText: string }
 export interface StripModel {
-  level: ZoomLevel; levelName: string; summary: string; rangeLine: string; intervalLine: string; asOfLine: string; scopeLine: string; referenceLine: string; message: string; messageTone: 'info' | 'warn' | 'error' | '';
+  level: ZoomLevel; levelName: string; rangeLine: string; intervalLine: string; asOfLine: string; scopeLine: string; referenceLine: string; message: string; messageTone: 'info' | 'warn' | 'error' | '';
   /** A short answer to a click or key that could not zoom ("This is the smallest window."), or empty. */ notice: string;
   crumbs: Crumb[]; isRoot: boolean; loading: boolean;
   canBack: boolean; canEarlier: boolean; canLater: boolean; canIn: boolean; canOut: boolean; canReset: boolean;
@@ -434,7 +434,7 @@ export function stripModel(input: StripInput): StripModel {
   const rootWidth = widthOf(stack.root);
   const left = (view.start - stack.root.start) / rootWidth, width = widthOf(view) / rootWidth;
   return {
-    level, levelName: levelNameOf(stack, zone), summary: zoomText.collapsed(crumbs[crumbs.length - 1].label), rangeLine, intervalLine,
+    level, levelName: levelNameOf(stack, zone), rangeLine, intervalLine,
     asOfLine: !top && input.asOf != null && !loading && !error ? zoomText.asOf(chartTime(input.asOf, zone, { date: false, zone: true })) : '',
     scopeLine: top ? '' : zoomText.scope(rootRange), referenceLine: top ? '' : zoomCopy.referenceNote, message, messageTone, notice: input.notice ?? '',
     crumbs, isRoot: top, loading,

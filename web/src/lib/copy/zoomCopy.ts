@@ -4,7 +4,6 @@
  */
 export const zoomCopy = {
   heading: 'Zoom',
-  expand: 'Zoom into one part of this period',
   levelNames: { window: 'Whole period', day: 'Day', hour: 'Hour', minute: 'Minute', custom: 'Zoomed window' } as const,
   back: 'Back',
   earlier: 'Earlier',
@@ -39,7 +38,6 @@ export const zoomCopy = {
 } as const;
 
 export const zoomText = {
-  collapsed: (label: string) => 'Zoom: ' + label,
   showing: (range: string) => 'Showing ' + range + '.',
   interval: (text: string, source: 'automatic' | 'manual') => 'Interval: ' + text + ' (' + (source === 'manual' ? zoomCopy.manual : zoomCopy.automatic) + ').',
   intervalRaised: (text: string, asked: string) => 'Interval: ' + text + '. Your setting of ' + asked + ' would give more than 120 points here.',
@@ -57,7 +55,7 @@ export const zoomText = {
 export const allZoomStrings = (): string[] => [
   ...(Object.values(zoomCopy) as unknown[]).filter((value): value is string => typeof value === 'string'),
   ...Object.values(zoomCopy.levelNames),
-  zoomText.collapsed('7 days'), zoomText.showing('20 Oct 00:00 to 21 Oct 00:00 UTC'), zoomText.interval('1 hour', 'automatic'), zoomText.interval('5 minutes', 'manual'),
+  zoomText.showing('20 Oct 00:00 to 21 Oct 00:00 UTC'), zoomText.interval('1 hour', 'automatic'), zoomText.interval('5 minutes', 'manual'),
   zoomText.intervalRaised('1 hour', '10 seconds'), zoomText.asOf('14:03:22 UTC'), zoomText.scope('13 Oct 00:00 to 20 Oct 00:00 UTC'),
   zoomText.cannotRead('The server did not answer.'), zoomText.slot(3, 24, '02:00 to 03:00 UTC'), zoomText.overviewAlt('20 Oct', '7 days'),
   zoomText.readout('24 Oct 14:00 to 14:05 UTC', '5 minutes'), zoomText.backTo('7 days'), zoomText.investigated('24 Oct 14:00 to 14:05 UTC')

@@ -387,7 +387,7 @@ test('the strip model shows the trail, the level, and which buttons are off', ()
   const top = z.createStack(week);
   const base = { zone, bucket: z.bucketForView(week), loading: false, error: '', hasData: true, asOf: null, overviewCounts: [] };
   const atTop = z.stripModel({ ...base, stack: top });
-  assert.equal(atTop.summary, 'Zoom: 7 days');
+  assert.equal('summary' in atTop, false, 'the collapsed one-line summary is gone with the <details>');
   assert.equal(atTop.level, 'window');
   assert.equal(atTop.levelName, 'Whole period');
   assert.deepEqual(atTop.crumbs, [{ index: 0, label: '7 days', current: true }]);
@@ -401,7 +401,6 @@ test('the strip model shows the trail, the level, and which buttons are off', ()
   const model = z.stripModel({ ...base, stack: hourStack, bucket: z.bucketForView(z.currentOf(hourStack)), asOf: at('2001-10-24T14:03:22Z') });
   assert.deepEqual(model.crumbs.map((crumb) => crumb.label), ['7 days', '24 Oct', '24 Oct 14:00']);
   assert.deepEqual(model.crumbs.map((crumb) => crumb.current), [false, false, true]);
-  assert.equal(model.summary, 'Zoom: 24 Oct 14:00');
   assert.equal(model.level, 'hour');
   assert.equal(model.canBack, true);
   assert.equal(model.canReset, true);

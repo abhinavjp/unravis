@@ -26,7 +26,6 @@ let answer = $state.raw<Analysis | null>(null);
 let loading = $state(false);
 let error = $state('');
 let asOf = $state<number | null>(null);
-let open = $state(false);
 let announcement = $state('');
 let notice = $state('');
 /** A lens to open on the next analysis whose queried window is `root` (set by "Back to ..."). */
@@ -140,7 +139,7 @@ export const zoomView = {
     untrack(() => {
       if (analysis === base) return;
       const wanted = pending; pending = null;
-      base = analysis; cache.clear(); open = open && analysis != null; announcement = ''; say('');
+      base = analysis; cache.clear(); announcement = ''; say('');
       stack = analysis ? createStack(asWindow(analysis.query)) : null;
       // "Back to ..." asked for this root: reopen the lens on the window that was investigated.
       if (stack && wanted && sameWindow(wanted.root, stack.root)) stack = setTop(stack, wanted.lens);
@@ -164,8 +163,6 @@ export const zoomView = {
   get slots() { return slots; },
   get bucketSeconds() { return bucket?.seconds ?? 0; },
   get loading() { return loading; },
-  get open() { return open; },
-  set open(value: boolean) { open = value; },
   /** The answer on screen when it is not the whole period's, for the same notes (partial, capped, as of) the whole period shows. */
   get viewAnalysis(): Analysis | null { return stack && !isRoot(stack) && !loading && !error ? answer : null; },
   get announcement() { return announcement; },
