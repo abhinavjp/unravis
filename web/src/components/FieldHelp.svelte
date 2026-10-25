@@ -14,7 +14,7 @@
 
 {#if entry}
   {#if part !== 'block'}
-    <button type="button" class="field-help-toggle" aria-expanded={shown} aria-controls={blockId} aria-label="About this filter" disabled={eli10.on} onclick={() => (open = !open)}>i</button>
+    <button type="button" class="field-help-toggle" aria-expanded={shown} aria-controls={blockId} aria-label={eli10.on ? 'Open: Explain simply is on' : 'About this filter'} disabled={eli10.on} onclick={() => (open = !open)}>i</button>
   {/if}
   {#if part !== 'toggle'}
     <div class="field-help-block" id={blockId} role="group" aria-label="About this filter" hidden={!shown}>
@@ -25,10 +25,12 @@
 {/if}
 
 <style>
-  .field-help-toggle { position: relative; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-inline-start: var(--space-1); padding: 0; flex: none; vertical-align: middle; color: var(--text-2); background: transparent; border: var(--hairline-width) solid var(--control-line); border-radius: 50%; font: inherit; font-size: 10px; font-weight: 600; font-style: italic; line-height: 1; cursor: pointer; }
-  /* The visible circle stays small; the tap target reaches 24px. */
-  .field-help-toggle::after { content: ""; position: absolute; inset: -4px; }
-  .field-help-toggle:hover, .field-help-toggle[aria-expanded='true'] { color: var(--text); background: var(--surface-2); border-color: var(--accent); }
+  /* The button itself is the tap target (24px, 32px on touch or a narrow screen); the 16px circle is drawn inside it. Negative margins keep the row height. */
+  .field-help-toggle { position: relative; display: inline-grid; place-items: center; width: 24px; height: 24px; margin: -4px 0 -4px calc(var(--space-1) - 4px); padding: 0; flex: none; vertical-align: middle; color: var(--text-2); background: transparent; border: 0; border-radius: 50%; font: inherit; font-size: 10px; font-weight: 600; font-style: italic; line-height: 1; cursor: pointer; }
+  .field-help-toggle::before { content: ""; position: absolute; inset: 4px; border: var(--hairline-width) solid var(--control-line); border-radius: 50%; pointer-events: none; }
+  .field-help-toggle:hover, .field-help-toggle[aria-expanded='true'] { color: var(--text); }
+  .field-help-toggle:hover::before, .field-help-toggle[aria-expanded='true']::before { background: var(--surface-2); border-color: var(--accent); }
+  @media (pointer: coarse), (max-width: 720px) { .field-help-toggle { width: 32px; height: 32px; margin-block: -8px; margin-inline-start: calc(var(--space-1) - 8px); } .field-help-toggle::before { inset: 8px; } }
   .field-help-toggle:disabled { cursor: default; }
   .field-help-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .field-help-block { flex: 0 0 100%; min-width: 0; margin-top: var(--space-1); padding: var(--space-2) var(--space-3); background: var(--surface-2); border-inline-start: var(--hairline-width) solid var(--accent); font-weight: 400; }

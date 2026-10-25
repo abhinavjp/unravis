@@ -289,3 +289,33 @@ test('appState: Back plans first, says why it refused, and drops a lens that has
   assert.match(back, /zoomView\.notify\(/);
   assert.match(back, /cancelExpect\(/);
 });
+
+// The server echoes query times the way Go formats them: trailing zeros of the fraction dropped ("...:44.12Z", "...:44Z").
+const goTime = (ms) => new Date(ms).toISOString().replace(/(\.\d*?)0+Z$/, '$1Z').replace(/\.Z$/, 'Z');
+
+test('Back restores a window that the saved investigation accepts, even when the analysis echoed Go-formatted times', () => {
+  const { createInvestigationSnapshot, validateInvestigationSnapshot } = load('src/lib/investigation.ts');
+  const now = at('2026-10-25T10:19:37.120Z');
+  const range = { start: now - 7 * DAY, end: now, baselineStart: now - 14 * DAY, baselineEnd: now - 7 * DAY };
+  // What analysis.query holds after a round trip through the server.
+  const echoed = { start: goTime(range.start), end: goTime(range.end), baselineStart: goTime(range.baselineStart), baselineEnd: goTime(range.baselineEnd), bucketSeconds: bucketForWindows(iso(range.start), iso(range.end), iso(range.baselineStart), iso(range.baselineEnd)) };
+  assert.match(echoed.end, /\.12Z$/);
+  const snapshotOf = (fields) => createInvestigationSnapshot({ sourceIds: ['s1'], kind: 'all', outcome: 'all', metric: 'total', controller: '', action: '', ...fields }, [{ id: 's1' }], 'UTC', null);
+  assert.ok(validateInvestigationSnapshot(snapshotOf(echoed)) === false, 'the echoed form alone is what the snapshot rejects');
+  const lens = view(range.start + 2 * DAY, range.start + 2 * DAY + 6 * HOUR);
+  const plan = p.planInvestigation({ current: echoed, view: lens, runLoading: false, stale: false, trail: [] });
+  assert.ok(!('refused' in plan));
+  assert.ok(validateInvestigationSnapshot(snapshotOf(plan.patch)), 'the investigated window is valid');
+  const back = p.planBack({ trail: plan.trail, current: plan.patch, scope: { sourceIds: ['s1'], ...plan.patch }, unapplied: false, datesValid: true });
+  assert.ok(back.ok);
+  assert.ok(validateInvestigationSnapshot(snapshotOf(back.entry.from)), 'the restored window is valid');
+  for (const key of ['start', 'end', 'baselineStart', 'baselineEnd']) assert.equal(Date.parse(back.entry.from[key]), Date.parse(echoed[key]), key + ' keeps its instant');
+});
+
+test('appState: the scope effect never aborts a run already in flight for the exact same query', () => {
+  const source = fs.readFileSync(path.join(root, 'src/lib/appState.svelte.ts'), 'utf8');
+  const effect = source.slice(source.indexOf('const current = querySignature;'));
+  const guard = effect.slice(0, effect.indexOf('querySnapshot = current;'));
+  assert.match(guard, /querySnapshot && querySnapshot !== current && current !== inflightSignature/);
+  assert.ok(guard.indexOf('current !== inflightSignature') < guard.indexOf('analysisController?.abort()'));
+});

@@ -39,7 +39,7 @@
 
 <div class="view" class:off={depth === 0 || depth === 3} class:under={depth === 2}>
   <div class="view-head">
-    <div><h2 id="where-title" tabindex="-1">Where is it?</h2><p>Operations ranked by the figure you chose. Open one to see the evidence behind it.</p></div>
+    <div><h2 id="where-title" tabindex="-1">Where is it?</h2></div>
     <div class="view-tools">
       <button type="button" class="chip" onclick={openComparison}>All operations</button>
       <button type="button" class="chip" aria-pressed={compare} onclick={() => navigation.compare = !navigation.compare}>Compare to earlier</button><Hint termId="reference-period" />

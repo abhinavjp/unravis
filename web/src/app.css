@@ -384,6 +384,8 @@ input, textarea { caret-color: var(--accent); }
 .primary-button, .secondary-button, .quiet-button { border-radius: var(--radius-sm); padding: 6px 12px; font-size: 13px; font-weight: 600; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
 .primary-button { color: var(--accent-ink); background: var(--accent); border: 1px solid var(--accent); }
 .primary-button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
+/* A disabled primary button is shown as a neutral control instead of a faded accent fill: fading the white ink and the teal fill together left the label below 4.5:1. */
+.primary-button:disabled { opacity: 1; color: var(--text-2); background: var(--surface-2); border-color: var(--control-line); }
 .secondary-button { color: var(--text); background: transparent; border: 1px solid var(--line); }
 .secondary-button:hover:not(:disabled) { border-color: var(--text-2); background: var(--surface-2); }
 .quiet-button { color: var(--text-2); background: transparent; border: 1px solid transparent; padding: 5px 8px; font-size: 12px; }

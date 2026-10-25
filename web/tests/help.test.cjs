@@ -145,6 +145,24 @@ test('Eli10Toggle is a labelled checkbox bound to the shared flag and is mounted
   assert.match(read('src/components/AppHeader.svelte'), /<Eli10Toggle\b/);
 });
 
+test('the Explain simply menu item shows its state in words and a check mark, and keeps the checkbox role', () => {
+  const src = read('src/components/Eli10Toggle.svelte');
+  assert.match(src, /role=\{menu \? 'menuitemcheckbox' : undefined\}/);
+  assert.match(src, /<span class="state"[^>]*aria-hidden="true">\{eli10\.on \? '✓ On' : 'Off'\}<\/span>/);
+  assert.match(src.slice(0, src.indexOf('<style>')), /\{:else\}[\s\S]*class="state"/, 'the state text is the menu variant only');
+});
+
+test('help "?" and "i" buttons have a 24px hit area (32px on touch or narrow screens) and name the disabled state', () => {
+  for (const [file, cls] of [['HelpNote', 'help-toggle'], ['FieldHelp', 'field-help-toggle']]) {
+    const src = read('src/components/' + file + '.svelte');
+    const style = src.slice(src.indexOf('<style>'));
+    assert.match(style, new RegExp('\\.' + cls + ' \\{[^}]*width: 24px; height: 24px'), file + ' base size');
+    assert.match(style, new RegExp('@media \\(pointer: coarse\\), \\(max-width: 720px\\) \\{ \\.' + cls + ' \\{ width: 32px; height: 32px'), file + ' touch size');
+    assert.match(style, new RegExp('\\.' + cls + '::before \\{[^}]*inset: 4px'), file + ' circle stays 16px inside the target');
+    assert.match(src, /aria-label=\{eli10\.on \? 'Open: Explain simply is on' : /, file + ' disabled label');
+  }
+});
+
 // A fake storage on globalThis, restored after each test.
 function withStorage(storage, run) {
   const had = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');

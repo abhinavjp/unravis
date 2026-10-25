@@ -96,6 +96,15 @@ for (const [theme, set] of Object.entries(themes)) {
     const value = ratio(set['--accent-ink'], set['--accent']);
     assert.ok(value >= 4.5, 'accent-ink on accent is ' + value.toFixed(2));
   });
+  test(theme + ': primary button labels clear 4.5:1 at rest, on hover and when disabled', () => {
+    // Hover mixes 88% accent with the text colour; disabled is the neutral surface-2 fill with secondary text.
+    const mixHex = (a, b, share) => '#' + rgb(a).map((v, i) => Math.round(v * share + rgb(b)[i] * (1 - share)).toString(16).padStart(2, '0')).join('');
+    const hover = mixHex(set['--accent'], set['--text'], 0.88);
+    assert.ok(ratio(set['--accent-ink'], set['--accent']) >= 4.5, 'rest');
+    assert.ok(ratio(set['--accent-ink'], hover) >= 4.5, 'hover ' + ratio(set['--accent-ink'], hover).toFixed(2));
+    assert.ok(ratio(set['--text-2'], set['--surface-2']) >= 4.5, 'disabled');
+    assert.match(css, /\.primary-button:disabled \{[^}]*opacity: 1;[^}]*color: var\(--text-2\);[^}]*background: var\(--surface-2\)/);
+  });
   test(theme + ': the tone colours used as text clear 4.5:1 on the page and surface', () => {
     for (const ground of ['--bg', '--surface']) {
       for (const token of ['--warn', '--bad', '--pending']) {

@@ -20,8 +20,14 @@ const SECOND = 1000;
 const MAX_WINDOW_MS = 7 * 86_400_000;
 
 const iso = (ms: number) => new Date(ms).toISOString();
+/**
+ * The window as it will be written back by Back. The analysis on screen echoes the server's query, and the server formats a time with
+ * its trailing zeros dropped ("...:44.12Z"); the saved investigation only takes the exact form toISOString gives, so every time is
+ * rewritten in that form here. The instant never changes. A value that is not a time is kept as it was.
+ */
+const canonicalTime = (value: string) => { const ms = Date.parse(value); return Number.isFinite(ms) ? iso(ms) : value; };
 const copyFields = (fields: WindowFields): WindowFields => ({
-  start: fields.start, end: fields.end, baselineStart: fields.baselineStart, baselineEnd: fields.baselineEnd, bucketSeconds: fields.bucketSeconds
+  start: canonicalTime(fields.start), end: canonicalTime(fields.end), baselineStart: canonicalTime(fields.baselineStart), baselineEnd: canonicalTime(fields.baselineEnd), bucketSeconds: fields.bucketSeconds
 });
 
 /** The queried window as milliseconds: the root of the zoom stack that analysis opens. */
