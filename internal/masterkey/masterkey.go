@@ -8,6 +8,7 @@
 package masterkey
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -16,6 +17,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
@@ -55,10 +57,26 @@ const (
 	verifierConst = "unravis master key verifier v1"
 )
 
+// MinVisibleLen is the fewest visible characters a passphrase must hold: runes
+// that are not white space, control or format characters (zero-width spaces,
+// bidi marks, variation selectors) and not one of the blank filler letters. A
+// passphrase of twelve blanks is 12 characters long but nobody can see or
+// recall it.
+const MinVisibleLen = 8
+
 var (
-	// ErrWrongKey is the only failure Unlock reports for a bad passphrase or a
-	// damaged or out-of-bounds masterkey.dat, so callers cannot tell them apart.
+	// ErrWrongKey is the failure Unlock reports for a passphrase that does not
+	// match a well-formed masterkey.dat.
 	ErrWrongKey = errors.New("master key is wrong")
+	// ErrDamaged means masterkey.dat exists but is not a usable key file: empty,
+	// oversized, not JSON, unknown version, out-of-bounds parameters, bad
+	// salt or verifier, or not a regular file at all. No passphrase can open it.
+	ErrDamaged = errors.New("master key file is damaged")
+	// ErrBlank means the passphrase has too few visible characters.
+	ErrBlank = errors.New("passphrase has too few visible characters")
+	// ErrInvalidChars means the passphrase is not valid text (invalid UTF-8 or
+	// the replacement character U+FFFD that a lone surrogate turns into).
+	ErrInvalidChars = errors.New("passphrase has invalid characters")
 	// ErrNotSet means no master key has been set up in this folder.
 	ErrNotSet = errors.New("master key is not set")
 	// ErrAlreadySet means Setup was asked to overwrite an existing master key.
@@ -105,6 +123,111 @@ func Path(dir string) string { return filepath.Join(dir, FileName) }
 func Exists(dir string) bool {
 	fi, err := os.Stat(Path(dir))
 	return err == nil && fi.Mode().IsRegular()
+}
+
+// FileState is what is in the master key slot of a folder.
+type FileState int
+
+const (
+	// FileAbsent: nothing at masterkey.dat.
+	FileAbsent FileState = iota
+	// FileUsable: a well-formed key file (the passphrase is not checked).
+	FileUsable
+	// FileDamaged: something is there that no passphrase can open.
+	FileDamaged
+)
+
+// Inspect classifies masterkey.dat in dir without any passphrase. A read error
+// that is not proof of damage (a sharing violation, say) counts as usable, so a
+// passing glitch never offers the user a reset.
+func Inspect(dir string) FileState {
+	_, _, _, st, err := readDoc(dir)
+	if err != nil {
+		return FileUsable
+	}
+	return st
+}
+
+// readDoc reads and structurally validates masterkey.dat. It reports FileAbsent
+// or FileDamaged without an error; a non-nil error is an I/O failure that proves
+// nothing either way.
+func readDoc(dir string) (doc fileDoc, salt, ver []byte, st FileState, err error) {
+	fi, err := os.Lstat(Path(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return doc, nil, nil, FileAbsent, nil
+	}
+	if err != nil {
+		return doc, nil, nil, FileUsable, err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() == 0 || fi.Size() > fileMax {
+		return doc, nil, nil, FileDamaged, nil
+	}
+	raw, err := os.ReadFile(Path(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return doc, nil, nil, FileAbsent, nil
+	}
+	if err != nil {
+		return doc, nil, nil, FileUsable, err
+	}
+	if json.Unmarshal(raw, &doc) != nil || doc.V != fileVersion || doc.KDF != "argon2id" {
+		return doc, nil, nil, FileDamaged, nil
+	}
+	salt, err1 := hex.DecodeString(doc.Salt)
+	ver, err2 := hex.DecodeString(doc.Verifier)
+	if err1 != nil || err2 != nil || !doc.Params.Validate() ||
+		len(salt) < 8 || len(salt) > 64 ||
+		len(ver) != 1+nonceLen+len(verifierConst)+gcmTag {
+		return doc, nil, nil, FileDamaged, nil
+	}
+	return doc, salt, ver, FileUsable, nil
+}
+
+// gcmTag is the AES-GCM tag length.
+const gcmTag = 16
+
+// Visible counts the characters of pass (read as UTF-8) a person can see: not
+// white space, control, format, surrogate or private-use characters, not a
+// variation selector, and not a blank filler letter.
+func Visible(pass []byte) int {
+	n := 0
+	for len(pass) > 0 {
+		r, size := utf8.DecodeRune(pass)
+		pass = pass[size:]
+		if isVisible(r) {
+			n++
+		}
+	}
+	return n
+}
+
+func isVisible(r rune) bool {
+	switch r {
+	case 0x115F, 0x1160, 0x3164, 0xFFA0, 0x2800, 0x180E, 0x034F, 0x17B4, 0x17B5:
+		return false // Hangul/Khmer fillers, braille blank, Mongolian vowel separator, grapheme joiner
+	}
+	if r >= 0xFE00 && r <= 0xFE0F || r >= 0xE0100 && r <= 0xE01EF {
+		return false // variation selectors
+	}
+	if unicode.IsSpace(r) || unicode.IsControl(r) {
+		return false
+	}
+	return !unicode.In(r, unicode.Zs, unicode.Zl, unicode.Zp, unicode.Cc, unicode.Cf, unicode.Cs, unicode.Co, unicode.Cn)
+}
+
+// CheckPassphrase applies the rules for choosing a new passphrase to the NFC
+// form n: valid text, at least MinPassphraseLen characters, at least
+// MinVisibleLen of them visible.
+func CheckPassphrase(n []byte) error {
+	if !utf8.Valid(n) || bytes.ContainsRune(n, utf8.RuneError) {
+		return ErrInvalidChars
+	}
+	if utf8.RuneCount(n) < MinPassphraseLen {
+		return ErrTooShort
+	}
+	if Visible(n) < MinVisibleLen {
+		return ErrBlank
+	}
+	return nil
 }
 
 // Normalize returns pass in Unicode NFC form as a new slice. The caller owns it
@@ -182,10 +305,13 @@ func Setup(dir string, pass []byte) error {
 	defer clear(pass)
 	n := Normalize(pass)
 	defer clear(n)
-	if utf8.RuneCount(n) < MinPassphraseLen {
-		return ErrTooShort
+	if err := CheckPassphrase(n); err != nil {
+		return err
 	}
 	if _, err := os.Lstat(Path(dir)); err == nil {
+		if Inspect(dir) == FileDamaged {
+			return ErrDamaged
+		}
 		return ErrAlreadySet
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -214,40 +340,26 @@ func Setup(dir string, pass []byte) error {
 	return sealedfile.WriteAtomic(Path(dir), "masterkey.*.tmp", data)
 }
 
-// Unlock derives the key from pass and checks it against the verifier. A wrong
-// passphrase and a damaged or out-of-bounds file both give ErrWrongKey; a
-// missing file gives ErrNotSet. pass is zeroed before Unlock returns.
+// Unlock derives the key from pass and checks it against the verifier. A
+// passphrase that does not match gives ErrWrongKey; a masterkey.dat that no
+// passphrase could open (empty, garbage, out-of-bounds parameters, not a file)
+// gives ErrDamaged, before any key derivation; a missing file gives ErrNotSet.
+// pass is zeroed before Unlock returns.
 func Unlock(dir string, pass []byte) (*Keyring, error) {
 	defer clear(pass)
-	fi, err := os.Stat(Path(dir))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, ErrNotSet
-	}
+	doc, salt, ver, st, err := readDoc(dir)
 	if err != nil {
 		return nil, err
 	}
-	if !fi.Mode().IsRegular() || fi.Size() == 0 || fi.Size() > fileMax {
-		return nil, ErrWrongKey
-	}
-	raw, err := os.ReadFile(Path(dir))
-	if errors.Is(err, os.ErrNotExist) {
+	switch st {
+	case FileAbsent:
 		return nil, ErrNotSet
-	}
-	if err != nil {
-		return nil, err
-	}
-	var doc fileDoc
-	if json.Unmarshal(raw, &doc) != nil || doc.V != fileVersion || doc.KDF != "argon2id" {
-		return nil, ErrWrongKey
-	}
-	salt, err1 := hex.DecodeString(doc.Salt)
-	ver, err2 := hex.DecodeString(doc.Verifier)
-	if err1 != nil || err2 != nil || !doc.Params.Validate() {
-		return nil, ErrWrongKey
+	case FileDamaged:
+		return nil, ErrDamaged
 	}
 	key, err := DeriveKey(pass, salt, doc.Params)
 	if err != nil {
-		return nil, ErrWrongKey
+		return nil, ErrDamaged
 	}
 	plain, err := OpenWith(key, verifierLabel, ver)
 	if err != nil || string(plain) != verifierConst {

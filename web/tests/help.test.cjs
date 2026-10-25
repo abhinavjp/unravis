@@ -32,7 +32,7 @@ const WHAT_FIELDS = ['outcome', 'rf-completion', 'controller', 'action', 'rf-ope
 const DETAIL_FIELDS = ['rf-user-ids', 'rf-ui-versions', 'rf-user-ips', 'rf-status-codes', 'rf-agent', 'rf-url', 'rf-audit-id'];
 const RANGE_ROWS = ['observedMs', 'apiTimeMs', 'auditCreateTimeMs', 'requestKb', 'responseKb', 'incompleteAgeMs'].map((key) => 'rf-' + key);
 const CHART_FIELDS = ['metric', 'bucket', 'latency-target'];
-const SCREENS = ['drill-navigator', 'drill-investigate', 'drill-back', 'pulse', 'where', 'inspector', 'resource', 'patterns', 'ledger', 'export', 'import', 'discover'];
+const SCREENS = ['drill-navigator', 'drill-investigate', 'drill-back', 'pulse', 'where', 'inspector', 'resource', 'patterns', 'ledger', 'export', 'import', 'discover', 'start', 'enter', 'masterkey', 'unlock', 'wizard', 'wizard-envs', 'wizard-sources', 'wizard-review'];
 const REQUIRED = [...GROUPS, ...WHEN_FIELDS, ...WHAT_FIELDS, ...DETAIL_FIELDS, ...RANGE_ROWS, ...CHART_FIELDS, ...SCREENS];
 const sentences = (text) => text.split(/[.!?]+(?=\s|$)/).filter((part) => /[A-Za-z0-9]/.test(part)).length;
 
@@ -226,8 +226,8 @@ test('new files keep CRLF line endings', () => {
   }
 });
 
-// The nine screens and panels that carry a note, one component each, directly under the title.
-const SCREEN_KEYS = ['pulse', 'where', 'inspector', 'resource', 'patterns', 'ledger', 'export', 'import', 'discover'];
+// The twelve screens and panels that carry a note, one component each, directly under the title.
+const SCREEN_KEYS = ['pulse', 'where', 'inspector', 'resource', 'patterns', 'ledger', 'export', 'import', 'discover', 'start', 'enter', 'masterkey', 'unlock', 'wizard', 'wizard-envs', 'wizard-sources', 'wizard-review'];
 const sveltePaths = () => {
   const files = [];
   (function walk(d) { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (p.endsWith('.svelte')) files.push(p); } })(path.join(root, 'src'));
@@ -240,7 +240,7 @@ test('each screen help key is used by exactly one component, and only once in it
     const src = fs.readFileSync(file, 'utf8');
     for (const m of src.matchAll(/<HelpNote\s+id="([^"]+)"/g)) (users[m[1]] ??= []).push(path.basename(file));
   }
-  const expected = { pulse: 'Pulse', where: 'WhereView', inspector: 'Inspector', resource: 'ResourcePanel', patterns: 'PatternsPanel', ledger: 'LedgerPanel', export: 'ExportPanel', discover: 'DiscoverPanel', import: 'ImportPanel' };
+  const expected = { pulse: 'Pulse', where: 'WhereView', inspector: 'Inspector', resource: 'ResourcePanel', patterns: 'PatternsPanel', ledger: 'LedgerPanel', export: 'ExportPanel', discover: 'DiscoverPanel', import: 'ImportPanel', start: 'StartScreen', enter: 'EnterCase', masterkey: 'MasterKeySetup', unlock: 'MasterKeyUnlock', wizard: 'CreateWizard', 'wizard-envs': 'CreateWizard', 'wizard-sources': 'SourceGallery', 'wizard-review': 'ReviewStep' };
   for (const key of SCREEN_KEYS) {
     assert.deepEqual(users[key], [expected[key] + '.svelte'], key + ' is used once, in ' + expected[key]);
   }

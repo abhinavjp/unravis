@@ -243,3 +243,98 @@ test('the shell shows Retry only when retrying can help', () => {
   assert.doesNotMatch(app, /<strong>Explorer unavailable<\/strong>/);
   assert.match(app, /comparisonLabel\(/);
 });
+
+// ---- Screen routing (TSK-15): one reducer, legal moves only ----
+const { SCREENS: SCREEN_LIST, canGo, go: moveScreen, initialScreen, afterUnlock, createRoute, leavesCaseWork, WIZARD_READY } = loadTypeScript('src/lib/screenFlow.ts');
+
+const LEGAL_MOVES = {
+  loading: ['unlock', 'start', 'running'],
+  unlock: ['start', 'running', 'create'],
+  setup: ['start', 'unlock'],
+  start: ['setup', 'create', 'running', 'unlock'],
+  create: ['start', 'running', 'unlock'],
+  running: ['start', 'unlock']
+};
+
+test('every legal screen move is allowed and returns the target screen', () => {
+  for (const [from, targets] of Object.entries(LEGAL_MOVES)) {
+    for (const to of targets) {
+      assert.equal(canGo(from, to), true, from + ' to ' + to);
+      assert.deepEqual(moveScreen(from, to), { ok: true, screen: to }, from + ' to ' + to);
+    }
+  }
+});
+
+test('every move outside the table is refused, keeps the current screen, and says why', () => {
+  for (const from of SCREEN_LIST) {
+    for (const to of SCREEN_LIST) {
+      if (from === to || LEGAL_MOVES[from].includes(to)) continue;
+      const move = moveScreen(from, to);
+      assert.equal(move.ok, false, from + ' to ' + to);
+      assert.equal(move.screen, from);
+      assert.match(move.reason, new RegExp(from + '.*' + to));
+    }
+  }
+  // The named illegal ones: nothing goes back to loading, and set-up cannot jump into the analysis.
+  assert.equal(moveScreen('running', 'loading').ok, false);
+  assert.equal(moveScreen('setup', 'running').ok, false);
+  assert.equal(moveScreen('unlock', 'setup').ok, false);
+});
+
+test('staying on a screen is allowed and does nothing', () => {
+  for (const screen of SCREEN_LIST) assert.deepEqual(moveScreen(screen, screen), { ok: true, screen });
+});
+
+test('the first screen: demo runs, a locked key unlocks, a link or remembered tab resumes, else start', () => {
+  const facts = (over) => ({ demo: false, deepLink: false, resume: false, lock: 'unlocked', ...over });
+  assert.equal(initialScreen(facts({ demo: true, lock: 'locked' })), 'running', 'the demo flow is untouched');
+  assert.equal(initialScreen(facts({ lock: 'locked' })), 'unlock');
+  assert.equal(initialScreen(facts({ lock: 'locked', deepLink: true })), 'unlock', 'a locked key comes before a deep link');
+  assert.equal(initialScreen(facts({ deepLink: true })), 'running');
+  assert.equal(initialScreen(facts({ resume: true })), 'running');
+  assert.equal(initialScreen(facts({ lock: 'none' })), 'start');
+  assert.equal(initialScreen(facts({ lock: 'unknown' })), 'start');
+  assert.equal(initialScreen(facts()), 'start');
+});
+
+test('after unlock the person returns to the work that was interrupted, else the start screen', () => {
+  assert.equal(afterUnlock('running'), 'running');
+  assert.equal(afterUnlock('start'), 'start');
+  assert.equal(afterUnlock('create'), 'create', 'the create guide comes back as it was (TSK-19)');
+  assert.equal(afterUnlock(null), 'start');
+});
+
+test('Create a new one opens the guided flow; with it off it falls back to the import panel', () => {
+  assert.equal(WIZARD_READY, true);
+  assert.deepEqual(createRoute(), { screen: 'create', panel: null });
+  assert.deepEqual(createRoute(false), { screen: 'running', panel: 'import' });
+  assert.deepEqual(createRoute(true), { screen: 'create', panel: null });
+  assert.equal(canGo('start', createRoute().screen), true);
+});
+
+test('only the working screen keeps a case drawer open', () => {
+  assert.equal(leavesCaseWork('running'), false);
+  for (const screen of ['unlock', 'setup', 'start', 'create']) assert.equal(leavesCaseWork(screen), true, screen);
+});
+
+test('appState routes through the reducer, logs refused moves in dev only, and the header Home returns to start without closing', () => {
+  const state = read('src/lib/appState.svelte.ts');
+  assert.match(state, /const move = moveScreen\(screen, to\);/);
+  assert.match(state, /if \(!move\.ok\) \{ devLog\(move\.reason\); return false; \}/);
+  assert.match(state, /import\.meta as unknown as \{ env\?: \{ DEV\?: boolean \} \}\)\.env\?\.DEV/);
+  assert.match(state, /export function goHome\(\) \{ go\('start'\); \}/);
+  assert.doesNotMatch(state.slice(state.indexOf('export function goHome')), /^[^\n]*closeCase/);
+  const header = read('src/components/AppHeader.svelte');
+  assert.match(header, /goHome/);
+  const mount = state.slice(state.indexOf('const stopLockListener'), state.indexOf('const stopLockListener') + 200);
+  assert.match(mount, /onCasesLocked\(noteLocked\)/);
+});
+
+test('the autorun waits for the working screen, so the start screen never starts a query', () => {
+  assert.match(read('src/lib/appState.svelte.ts'), /autoRan \|\| screen !== 'running'/);
+});
+
+test('the close-case action returns to the start screen', () => {
+  assert.match(read('src/lib/components/ImportPanel.svelte'), /<CasePanel [^>]*onClosed=\{goHome\}/);
+  assert.match(read('src/lib/components/CasePanel.svelte'), /onClosed\?\.\(\)/);
+});

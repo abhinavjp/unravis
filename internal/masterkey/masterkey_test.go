@@ -284,18 +284,17 @@ func TestDamagedParametersRejectedWithoutAllocating(t *testing.T) {
 			runtime.ReadMemStats(&before)
 			_, err := Unlock(dir, []byte(goodPass))
 			runtime.ReadMemStats(&after)
-			if err != ErrWrongKey {
-				t.Fatalf("want ErrWrongKey, got %v", err)
+			if err != ErrDamaged {
+				t.Fatalf("want ErrDamaged, got %v", err)
 			}
-			// A bad verifier has valid parameters, so the key is legitimately derived.
-			if d := after.TotalAlloc - before.TotalAlloc; d > 8<<20 && name != "bad verifier" {
+			if d := after.TotalAlloc - before.TotalAlloc; d > 8<<20 {
 				t.Fatalf("allocated %d bytes for damaged file", d)
 			}
 		})
 	}
 }
 
-func TestDamagedFilesGiveWrongKey(t *testing.T) {
+func TestDamagedFilesGiveDamaged(t *testing.T) {
 	dir := setup(t, goodPass)
 	for name, content := range map[string][]byte{
 		"empty":     {},
@@ -305,9 +304,74 @@ func TestDamagedFilesGiveWrongKey(t *testing.T) {
 		if err := os.WriteFile(Path(dir), content, 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Unlock(dir, []byte(goodPass)); err != ErrWrongKey {
-			t.Errorf("%s: want ErrWrongKey, got %v", name, err)
+		if _, err := Unlock(dir, []byte(goodPass)); err != ErrDamaged {
+			t.Errorf("%s: want ErrDamaged, got %v", name, err)
 		}
+		if got := Inspect(dir); got != FileDamaged {
+			t.Errorf("%s: Inspect = %v, want FileDamaged", name, got)
+		}
+		if err := Setup(dir, []byte(goodPass)); err != ErrDamaged {
+			t.Errorf("%s: Setup over it = %v, want ErrDamaged (never overwrite)", name, err)
+		}
+	}
+}
+
+func TestKeyFileAsDirectoryIsDamaged(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(Path(dir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := Inspect(dir); got != FileDamaged {
+		t.Fatalf("Inspect = %v", got)
+	}
+	if _, err := Unlock(dir, []byte(goodPass)); err != ErrDamaged {
+		t.Fatalf("Unlock = %v", err)
+	}
+	if err := Setup(dir, []byte(goodPass)); err != ErrDamaged {
+		t.Fatalf("Setup = %v", err)
+	}
+}
+
+func TestInspectStates(t *testing.T) {
+	dir := t.TempDir()
+	if got := Inspect(dir); got != FileAbsent {
+		t.Fatalf("empty dir = %v", got)
+	}
+	if err := Setup(dir, []byte(goodPass)); err != nil {
+		t.Fatal(err)
+	}
+	if got := Inspect(dir); got != FileUsable {
+		t.Fatalf("good file = %v", got)
+	}
+}
+
+func TestBlankAndInvalidPassphrasesRefused(t *testing.T) {
+	for name, tc := range map[string]struct {
+		pass string
+		want error
+	}{
+		"spaces":            {strings.Repeat(" ", 12), ErrBlank},
+		"zero width spaces": {strings.Repeat("​", 12), ErrBlank},
+		"ideographic space": {strings.Repeat("　", 12), ErrBlank},
+		"hangul filler":     {strings.Repeat("ㅤ", 12), ErrBlank},
+		"tabs and newlines": {"\t\n\t\n\t\n\t\n\t\n\t\n", ErrBlank},
+		"bidi marks":        {strings.Repeat("‮", 12), ErrBlank},
+		"seven visible":     {"abcdefg" + strings.Repeat(" ", 10), ErrBlank},
+		"replacement char":  {strings.Repeat("�", 12), ErrInvalidChars},
+		"invalid utf-8":     {strings.Repeat("\xff", 12), ErrInvalidChars},
+		"eleven":            {"abcdefghijk", ErrTooShort},
+	} {
+		dir := t.TempDir()
+		if err := Setup(dir, []byte(tc.pass)); !errors.Is(err, tc.want) {
+			t.Errorf("%s: got %v, want %v", name, err, tc.want)
+		}
+		if Exists(dir) {
+			t.Errorf("%s: a refused passphrase wrote a key file", name)
+		}
+	}
+	// Spaces inside a real phrase are fine: 8 or more visible characters.
+	if err := Setup(t.TempDir(), []byte("a b c d e f g h")); err != nil {
+		t.Fatalf("spaced phrase: %v", err)
 	}
 }
 

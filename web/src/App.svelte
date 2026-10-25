@@ -56,7 +56,9 @@
 
   {#if app.initError}<div class="banner error-banner" role="alert"><strong>{STARTUP_TITLE}</strong><span>{app.initError}</span>{#if app.initCanRetry}<button class="quiet-button" onclick={() => { app.initError = ''; void initialize(); }}>Retry</button>{/if}</div>{/if}
 
-  {#if info && !app.firstRun}<SubBar />{/if}
+  {#if app.lockError}<div class="banner error-banner" role="alert"><span>{app.lockError}</span><button class="quiet-button" onclick={() => { app.lockError = ''; }}>Dismiss</button></div>{/if}
+
+  {#if info && !app.firstRun && app.screen === 'running'}<SubBar />{/if}
 
     {#if panels.connectionsOpen}<ConnectionsDrawer />{/if}
 
@@ -70,8 +72,17 @@
 
     <main class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={panels.modalOpen}>
       <div class="stage-inner">
-        {#if !info && !app.initError}
+        {#if !app.initError && (!info || app.screen === 'loading')}
           <Landing mode="loading" />
+        {:else if app.screen === 'unlock'}
+          <Landing mode="unlock" />
+        {:else if app.screen === 'setup'}
+          <Landing mode="setup" />
+        {:else if app.screen === 'start'}
+          <Landing mode="cases" />
+        {:else if app.screen === 'create'}
+          <!-- The guided flow. createRoute() leads here only once WIZARD_READY is on (end of phase 05). -->
+          <Landing mode="create" />
         {:else if app.firstRun}
           <Landing mode="connect" />
         {:else if info}

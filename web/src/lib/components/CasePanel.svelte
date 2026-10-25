@@ -5,7 +5,8 @@
 
   // The case list: pick a case, create one, close one, or erase one. Erase asks for the case code to be typed, then shows the one storage sentence.
   // The parent owns the list and the choice (both bindable) and calls refresh() after an import changes a case's size.
-  let { cases = $bindable<CaseInfo[]>([]), selectedId = $bindable(''), onChanged }: { cases?: CaseInfo[]; selectedId?: string; onChanged?: () => void } = $props();
+  // `onClosed` runs after a case is closed, so the app can go back to the start screen, where the closed case is labelled.
+  let { cases = $bindable<CaseInfo[]>([]), selectedId = $bindable(''), onChanged, onClosed }: { cases?: CaseInfo[]; selectedId?: string; onChanged?: () => void; onClosed?: () => void } = $props();
 
   let loading = $state(true);
   let loadFailed = $state(false);
@@ -64,7 +65,7 @@
   async function close(c: CaseInfo) {
     if (busy) return;
     busy = true; problem = ''; erased = false;
-    try { await closeCase(c.id, controller?.signal); await refresh(); onChanged?.(); } catch (error) { fail(error); } finally { busy = false; }
+    try { await closeCase(c.id, controller?.signal); await refresh(); onChanged?.(); onClosed?.(); } catch (error) { fail(error); } finally { busy = false; }
   }
 
   function askErase(c: CaseInfo) { eraseId = c.id; typed = ''; problem = ''; erased = false; }

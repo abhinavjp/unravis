@@ -201,5 +201,37 @@ export const help: Record<string, { plain: string; simple: string }> = {
   discover: {
     plain: 'Look on this computer for logs and data that Unravis can import.',
     simple: 'It is like asking a librarian what is on the shelf before you borrow any book. It reads file names and sizes first and opens nothing until you choose.'
+  },
+  start: {
+    plain: 'Pick a saved case, enter a case you were given, or begin a new one.',
+    simple: 'It is like the front desk of an archive, where you can ask for a folder you already have or start a fresh one. Everything stays on this computer.'
+  },
+  enter: {
+    plain: 'Type the code of a case on this computer, or restore a case from a case file as a new case.',
+    simple: 'It is like giving the archive clerk a folder number to fetch a folder. A case file is a sealed copy of a folder, and opening it always makes a new folder, so the old one stays as it was.'
+  },
+  wizard: {
+    plain: 'Name your case, choose what to look at, then check it all before the case is created.',
+    simple: 'It is like writing a label for a new folder and then picking which papers go inside. Nothing goes into the folder until you press create at the end.'
+  },
+  'wizard-envs': {
+    plain: 'An environment is one copy of your system, such as production or a client sandbox.',
+    simple: 'It is like giving each building of a company its own name, so you can tell which building a report came from. You can skip this and add names later.'
+  },
+  'wizard-sources': {
+    plain: 'Choose which logs and data to look at, and name each one by environment, portal and API.',
+    simple: 'It is like sorting your papers into labelled piles before you start. A pile with no label still works, and you can name it later.'
+  },
+  'wizard-review': {
+    plain: 'Check the summary, tick the notice if logs will be read, then create the case.',
+    simple: 'It is like reading your order before you pay. Once you press create, the folder is made and the papers you chose are filed into it, and anything that fails is kept aside so you can try it again.'
+  },
+  masterkey: {
+    plain: 'A master key locks your saved cases on this computer, and it is never sent anywhere.',
+    simple: 'It is like the one key to a filing cabinet that you keep in your own pocket. If you lose it, nobody can open the cabinet for you.'
+  },
+  unlock: {
+    plain: 'Type your master key to open your saved cases for this session.',
+    simple: 'It is like unlocking the filing cabinet once when you arrive. You only do it again the next time you start the app.'
   }
 };

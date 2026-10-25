@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { theme } from '../lib/theme.svelte';
-  import { app, conn, deleteSource, goTo, navigation, onScopeChange, openConnections, openCoverage, openGlossary, openSidePanel, panels, scope, startNewConnection } from '../lib/appState.svelte';
+  import { app, conn, deleteSource, goHome, goTo, lockCases, navigation, onScopeChange, openConnections, openCoverage, openGlossary, openSidePanel, panels, scope, startNewConnection } from '../lib/appState.svelte';
+  import { offersLock } from '../lib/masterKey';
+  import { KEY_TEXT } from '../lib/copy/masterKeyCopy';
   import { nextMenuIndex } from '../lib/wayfinding';
   import Breadcrumb from './Breadcrumb.svelte';
   import LedgerCount from './LedgerCount.svelte';
@@ -33,6 +35,14 @@
   // Patterns, Ledger, Export and Import are the page's navigation; Glossary sits with the utilities at the far right.
   const navDrawers = drawers.filter(item => item.id !== 'glossary');
   const glossary = drawers.find(item => item.id === 'glossary')!;
+  // The analysis controls belong to the working screen. The start, unlock and set-up screens keep only the brand and the utilities.
+  const working = $derived(app.screen === 'running');
+  // Home leads to the start screen (the demo has no case list, so no Home there). Lock shows while a master key is set and open.
+  const showHome = $derived(working && !!info && !info.demo);
+  const showLock = $derived(offersLock(app.lockState));
+  const home = { id: 'home', label: KEY_TEXT.home, open: () => goHome() };
+  const lock = { id: 'lock', label: KEY_TEXT.lock, open: () => { void lockCases(); } };
+  const menuEntries = $derived([...(showHome ? [home] : []), ...(working ? navDrawers : []), glossary, ...(showLock ? [lock] : [])]);
   const isOpen = (id: string) => id === 'glossary' ? panels.glossaryOpen : panels.sidePanel === id;
   const anyOpen = $derived(drawers.some(item => isOpen(item.id)));
   const ledgerTotal = $derived(ledger.items.length);
@@ -54,7 +64,7 @@
   }
   function closeMenu(returnFocus: boolean) { menuOpen = false; if (returnFocus) moreButton?.focus(); }
   // The drawer remembers the focused control to return to, so focus the More button first: the menu item is about to leave the page.
-  function chooseDrawer(item: (typeof drawers)[number]) { closeMenu(true); item.open(); }
+  function chooseDrawer(item: { open: () => void }) { closeMenu(true); item.open(); }
   function onMenuKey(event: KeyboardEvent) {
     if (event.key === 'Tab') { closeMenu(false); return; }
     const list = menuItems();
@@ -77,8 +87,9 @@
 
 <header class="topbar">
   <div class="brand-lockup"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><h1>Unravis</h1></div>
-  {#if !compact}
+  {#if !compact && working}
     <div class="nav-items">
+      {#if showHome}<button type="button" class="header-button nav-button" title={KEY_TEXT.homeLabel} onclick={goHome}>{KEY_TEXT.home}</button>{/if}
       {#each navDrawers as item (item.id)}
         <button type="button" class="header-button nav-button" aria-haspopup="dialog" aria-expanded={isOpen(item.id)} onclick={item.open}>{item.label}{#if item.id === 'ledger'}<LedgerCount />{/if}</button>
       {/each}
@@ -88,7 +99,7 @@
     <div class="status">
     {#if info}<span class:demo-badge={info.demo} class="mode-badge badge" title={info.demo ? 'Demo data. Reference time ' + referenceTime : 'Live mode'}>{info.demo ? 'Demo data' : 'Live mode'}</span>{/if}
     {#if info?.demo}<span class="updated-label reference"><span class="ref-full">Data reference time</span><span class="ref-short" aria-hidden="true">Ref.</span> <time>{referenceTime}</time></span>{/if}
-    {#if info && !app.firstRun}
+    {#if info && !app.firstRun && working}
       <SourcePopover groups={app.connectionGroups} selectedIds={scope.query.sourceIds} total={app.sources.length} demo={info.demo} busyDelete={conn.busyDelete} sourceError={conn.sourceError} sourceSuccess={conn.sourceSuccess} savedCount={conn.recentConnections.length}
         onToggle={(id, checked) => { scope.query.sourceIds = checked ? [...scope.query.sourceIds.filter(item => item !== id), id] : scope.query.sourceIds.filter(item => item !== id); onScopeChange(); }}
         onDelete={deleteSource} onManage={() => openConnections('saved')} onAdd={startNewConnection} onCoverage={openCoverage} />
@@ -103,7 +114,7 @@
         </button>
         {#if menuOpen}
           <ul class="more-menu" role="menu" aria-label="More" tabindex="-1" onkeydown={onMenuKey}>
-            {#each drawers as item (item.id)}
+            {#each menuEntries as item (item.id)}
               <li role="none"><button type="button" role="menuitem" onclick={() => chooseDrawer(item)}>{item.label}{#if item.id === 'ledger'}<LedgerCount />{/if}</button></li>
             {/each}
             <li role="none" class="menu-switch"><Eli10Toggle menu /></li>
@@ -113,6 +124,7 @@
     {:else}
       <Eli10Toggle />
       <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={isOpen(glossary.id)} onclick={glossary.open}>{glossary.label}</button>
+      {#if showLock}<button type="button" class="header-button" aria-label={KEY_TEXT.lockLabel} onclick={() => { void lockCases(); }}>{KEY_TEXT.lock}</button>{/if}
     {/if}
     <TimeZoneToggle />
     <button type="button" class="header-button theme-toggle" onclick={() => theme.cycle()} aria-label={'Theme: ' + theme.choice + '. Change theme'} title={'Theme: ' + theme.choice}>
@@ -128,7 +140,7 @@
   </div>
 </header>
 
-{#if crumbs.length}
+{#if crumbs.length && working}
   <div class="crumbbar" inert={panels.modalOpen}>
     <Breadcrumb {crumbs} onNavigate={(crumb) => goTo(crumb.depth)} />
     {#if info?.demo}<span class="crumb-reference">Data reference time <time>{referenceTime}</time></span>{/if}

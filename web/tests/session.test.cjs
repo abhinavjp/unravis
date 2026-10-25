@@ -167,3 +167,36 @@ test('blocked session storage does not stop the launch link from working', async
     assert.equal(calls[0].headers.get('X-Audit-Token'), TOKEN);
   });
 });
+
+// ---- A 423 from a case route hands over to the unlock screen (TSK-15) ----
+test('lockSignal calls the one listener, stops after it is removed, and carries no data', () => {
+  const { onCasesLocked, signalCasesLocked, LOCKED_STATUS } = loadTypeScript('src/lib/lockSignal.ts');
+  assert.equal(LOCKED_STATUS, 423);
+  const seen = [];
+  const stop = onCasesLocked((...args) => seen.push(args.length));
+  signalCasesLocked();
+  assert.deepEqual(seen, [0]);
+  stop();
+  signalCasesLocked();
+  assert.deepEqual(seen, [0], 'removed listeners are not called');
+  // A stale unregister does not remove a newer listener.
+  const first = onCasesLocked(() => seen.push('first'));
+  onCasesLocked(() => seen.push('second'));
+  first();
+  signalCasesLocked();
+  assert.deepEqual(seen, [0, 'second']);
+});
+
+test('every case route answer of 423 raises the lock signal and a 401 still forgets the session', () => {
+  const cases = fs.readFileSync(path.join(root, 'src/lib/cases.ts'), 'utf8');
+  assert.match(cases, /if \(response\.status === LOCKED_STATUS\) signalCasesLocked\(\);\s*\r?\n\s*if \(!response\.ok\)/);
+  assert.match(cases, /forgetSession/);
+});
+
+test('the start intent is taken once', () => {
+  const { requestCase, takeCaseIntent } = loadTypeScript('src/lib/startIntent.ts');
+  assert.equal(takeCaseIntent(), '');
+  requestCase('case-7');
+  assert.equal(takeCaseIntent(), 'case-7');
+  assert.equal(takeCaseIntent(), '');
+});

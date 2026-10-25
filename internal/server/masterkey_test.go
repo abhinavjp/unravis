@@ -277,12 +277,14 @@ func TestSetupRefusals(t *testing.T) {
 	}
 }
 
-func TestSetupThrottleCountsFailures(t *testing.T) {
+func TestSetupThrottleCountsKeyWriteFailures(t *testing.T) {
 	e := newMKEnv(t)
 	now := time.Unix(1_000_000, 0)
 	e.sess.setupTh.now = func() time.Time { return now }
+	// Validation failures are not counted (F7), so drive the counter directly: it
+	// is the failure of the key file write that counts.
 	for i := 0; i < 5; i++ {
-		e.wantFail(e.do(http.MethodPost, "/api/master-key/setup", setupBody(mkPass, "different "+strconv.Itoa(i), true)), http.StatusBadRequest, "mismatch")
+		e.sess.setupTh.fail()
 	}
 	f := e.wantFail(e.do(http.MethodPost, "/api/master-key/setup", setupBody(mkPass, mkPass, true)), http.StatusTooManyRequests, "throttled")
 	if f.RetryAfterSeconds != 1 {

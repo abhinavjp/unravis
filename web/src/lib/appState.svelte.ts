@@ -13,6 +13,12 @@ import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestig
 import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './types';
 import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './breakdown';
 import type { RunningImport } from './cases';
+import { afterUnlock, createRoute, go as moveScreen, initialScreen, leavesCaseWork, type Screen } from './screenFlow';
+import { onCasesLocked } from './lockSignal';
+import { requestCase } from './startIntent';
+import { getMasterKeyStatus, lockMasterKey } from './masterKeyApi';
+import type { KeyStatus, LockState } from './masterKey';
+import { KEY_TEXT } from './copy/masterKeyCopy';
 import { theme } from './theme.svelte';
 import { timeZone } from './timeZone.svelte';
 import { applyChipPatch, breadcrumb, depthOf, evidenceTabs, filterChips, moreFiltersCount, type FilterChip } from './depth';
@@ -69,6 +75,14 @@ let sourceSuccess = $state('');
 let requestError = $state('');
 let recordError = $state('');
 let initError = $state('');
+// Which screen shows (see screenFlow.ts): the master key unlock, the start screen, the working analysis. Changed only through go().
+let screen = $state<Screen>('loading');
+// The master key state the server last reported, or 'unknown' when it could not be read. Never holds a key.
+let lockState = $state<LockState | 'unknown'>('unknown');
+let dpapiCases = $state(0);
+let lockError = $state('');
+// Where a successful unlock returns to: the screen that was interrupted, or the first screen the person would have had.
+let unlockOrigin: Screen | null = null;
 let initCanRetry = $state(true);
 let addLabel = $state('');
 let addUri = $state('');
@@ -270,13 +284,14 @@ export function startApp() {
 
   onMount(() => {
     theme.start(); void initialize();
+    const stopLockListener = onCasesLocked(noteLocked);
     window.addEventListener(GLOSSARY_EVENT, onGlossaryRequest);
     drawerHistory = createDrawerHistory(history, closeDrawerById);
     viewHistory = createViewHistory(location, history);
     // Browser Back closes an open drawer first; only an event no drawer used is a move between views.
     const onPop = () => { if (drawerHistory?.pop()) return; const target = viewHistory?.pop(); if (target !== undefined) void applyView(target); };
     window.addEventListener('popstate', onPop);
-    return () => { window.removeEventListener(GLOSSARY_EVENT, onGlossaryRequest); window.removeEventListener('popstate', onPop); viewHistory = null; drawerHistory = null; };
+    return () => { stopLockListener(); window.removeEventListener(GLOSSARY_EVENT, onGlossaryRequest); window.removeEventListener('popstate', onPop); viewHistory = null; drawerHistory = null; };
   });
 
   $effect(() => {
@@ -297,7 +312,7 @@ export function startApp() {
   // The landing run: sources are chosen and the dates are valid, so the pulse is ready without a button press. Only a primary window of at most
   // 24 hours starts by itself; a wider one (a restored 7-day snapshot) waits for the Run analysis button. Later scope changes run through onScopeChange.
   $effect(() => {
-    if (autoRan || !info || !sources.length || !query.sourceIds.length || !dateInputsValid || !investigationReady) return;
+    if (autoRan || screen !== 'running' || !info || !sources.length || !query.sourceIds.length || !dateInputsValid || !investigationReady) return;
     autoRan = true;
     if (!landingMayAutoRun(query)) return;
     untrack(() => { void runAnalysis(true); });
@@ -364,6 +379,7 @@ export async function initialize() {
     investigationReady = true;
     pendingInvestigation = null;
     setLocalInputs();
+    await chooseFirstScreen(info.demo, restoredInTab);
     if (!info.demo) {
       try {
         const recents = await api.recentConnections();
@@ -373,6 +389,8 @@ export async function initialize() {
       }
     }
   } catch (cause) {
+    // A failure after the app info arrived keeps the screen the app always showed (the connect prompt and the Retry banner).
+    if (screen === 'loading' && info) go('running');
     const text = message(cause);
     const failure = classifyStartupFailure({ hadToken, cause });
     initError = failure.kind === 'other' ? text : failure.message;
@@ -381,6 +399,99 @@ export async function initialize() {
 }
 function setLocalInputs() {
 }
+
+// ---- Screens: unlock, start, working (see lib/screenFlow.ts for the legal moves) ----
+function devLog(text: string) {
+  // Dev only: a refused move is logged for the developer and ignored for the person. Never anything a person typed.
+  if ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) console.warn('[screens] ' + text);
+}
+/** Asks to move to another screen. A move the table does not allow is ignored (and logged in dev); returns whether the app is on `to` now. */
+export function go(to: Screen): boolean {
+  const move = moveScreen(screen, to);
+  if (!move.ok) { devLog(move.reason); return false; }
+  if (move.screen === screen) return true;
+  // Leaving the working screen puts away its case panel. The case itself stays open on the server; nothing is closed or erased.
+  if (leavesCaseWork(move.screen) && sidePanel) void closeSidePanel();
+  screen = move.screen;
+  return true;
+}
+// Reads the key state once the app info is in, then picks the first screen. A status that cannot be read is treated as "no key" for routing.
+async function chooseFirstScreen(demo: boolean, resume: boolean) {
+  let lock: LockState | 'unknown' = 'unknown';
+  if (!demo) {
+    try { noteKeyStatus(await getMasterKeyStatus()); lock = lockState; } catch { lockState = 'unknown'; }
+  }
+  const deepLink = initialView != null;
+  const target = initialScreen({ demo, deepLink, resume, lock });
+  if (lock === 'locked' || lock === 'damaged') unlockOrigin = initialScreen({ demo, deepLink, resume, lock: 'unlocked' });
+  go(target);
+}
+/** Takes in a status the server reported. */
+export function noteKeyStatus(status: KeyStatus) {
+  lockState = status.state;
+  dpapiCases = status.dpapiCases;
+}
+/** A case route answered 423, or the status said locked: the key is closed, so the unlock screen takes over. Nothing is cleared. */
+export function noteLocked() {
+  if (screen === 'unlock') return;
+  // A damaged key file stays "damaged": the unlock screen shows the start-over screen for it, not the key field.
+  if (lockState !== 'damaged') lockState = 'locked';
+  if (screen === 'running' || screen === 'start' || screen === 'create') unlockOrigin = screen;
+  bumpEpoch();
+  go('unlock');
+}
+/** The right key was typed: back to the work that was interrupted, or to the start screen. */
+export function finishUnlock(status: KeyStatus) {
+  noteKeyStatus(status);
+  lockError = '';
+  const target = afterUnlock(unlockOrigin);
+  unlockOrigin = null;
+  go(target);
+}
+/**
+ * A damaged key file was set aside. The status is now "none", so the set-up screen can make a new key. `unlock` cannot move to `setup` (that
+ * move is refused on purpose), so the route is unlock -> start -> setup.
+ */
+export function finishReset(status: KeyStatus) {
+  noteKeyStatus(status);
+  unlockOrigin = null;
+  lockError = '';
+  go('start');
+  go('setup');
+}
+/** The header Lock action: locks the key on the server, then shows the unlock screen. Nothing is cleared from the open analysis. */
+let locking = false;
+// A function, so the screen is read again after the await (a 423 on another call may have moved it to unlock meanwhile).
+const onUnlockScreen = (): boolean => screen === 'unlock';
+export async function lockCases() {
+  // A second click while the first is in flight must not run, or its reply would see the unlock screen and reset where unlocking returns to.
+  if (locking || screen === 'unlock') return;
+  locking = true;
+  lockError = '';
+  try {
+    noteKeyStatus(await lockMasterKey());
+    if (!onUnlockScreen()) unlockOrigin = screen === 'running' ? 'running' : 'start';
+    bumpEpoch();
+    go('unlock');
+  } catch {
+    lockError = KEY_TEXT.lockFailed;
+  } finally {
+    locking = false;
+  }
+}
+/** Home: back to the start screen. The open case is not closed and the analysis keeps its filters, zoom and ledger. */
+export function goHome() { go('start'); }
+/** "Use an existing case": opens the import panel on that case. */
+export function openCase(id: string) {
+  requestCase(id);
+  if (go('running')) openSidePanel('import');
+}
+/** "Create a new one": the guided flow when it exists, otherwise the import panel over the working screen. */
+export function startCreate() {
+  const route = createRoute();
+  if (go(route.screen) && route.panel) openSidePanel(route.panel);
+}
+export function openKeySetup() { go('setup'); }
 // A 401 means the session was forgotten: the evidence memo must not serve anything shown under it.
 function message(cause: unknown) { if (cause instanceof ApiError && cause.status === 401) bumpEpoch(); return cause instanceof Error ? cause.message : 'The request could not be completed.'; }
 function friendlyConnectionStage(cause: unknown) {
@@ -1130,6 +1241,10 @@ export const app = {
   get sources() { return sources; }, set sources(value) { sources = value; },
   get initError() { return initError; }, set initError(value) { initError = value; },
   get initCanRetry() { return initCanRetry; },
+  get screen() { return screen; },
+  get lockState() { return lockState; },
+  get dpapiCases() { return dpapiCases; },
+  get lockError() { return lockError; }, set lockError(value) { lockError = value; },
   get firstRun() { return firstRun; },
   get maxSources() { return maxSources; },
   get remainingSourceSlots() { return remainingSourceSlots; },

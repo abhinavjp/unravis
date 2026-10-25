@@ -112,6 +112,7 @@ var routes = []route{
 	{pattern: "/api/master-key/unlock", match: exactPath("/api/master-key/unlock"), methods: post((*handler).masterKeyUnlock)},
 	{pattern: "/api/master-key/lock", match: exactPath("/api/master-key/lock"), methods: post((*handler).masterKeyLock)},
 	{pattern: "/api/master-key/rewrap", match: exactPath("/api/master-key/rewrap"), methods: post((*handler).masterKeyRewrap)},
+	{pattern: "/api/master-key/reset-damaged", match: exactPath("/api/master-key/reset-damaged"), methods: post((*handler).masterKeyResetDamaged)},
 	{pattern: "/api/info", match: exactPath("/api/info"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, _ *http.Request, _ string) { h.info(w) },
 	}},
@@ -219,6 +220,14 @@ var routes = []route{
 	}},
 	{pattern: "/api/cases/{id}/mongo-sources", match: caseSubpath("/mongo-sources"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getMongoSources(w, r, id) },
+	}},
+	// Case files. restore must stay ahead of /api/cases/{id}, which would
+	// otherwise read "restore" as a case id.
+	{pattern: "/api/cases/restore", match: exactPath("/api/cases/restore"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.restoreCaseFile(w, r) },
+	}},
+	{pattern: "/api/cases/{id}/export", match: caseSubpath("/export"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.exportCaseFile(w, r, id) },
 	}},
 	{pattern: "/api/cases/{id}", match: caseSubpath(""), methods: map[string]routeFunc{
 		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getCase(w, r, id) },

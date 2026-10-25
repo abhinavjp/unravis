@@ -1,21 +1,51 @@
 <script lang="ts">
   import { landingMayAutoRun } from '../lib/autorun';
-  import { app, openConnections, openSidePanel, runAnalysis, scope, startNewConnection } from '../lib/appState.svelte';
+  import { app, go, goHome, openCase, openConnections, openKeySetup, openSidePanel, runAnalysis, scope, startCreate, startNewConnection } from '../lib/appState.svelte';
+  import { resetWizard, wizard } from '../lib/wizard.svelte';
+  import { blockers, caseMade, createNow, createView } from '../lib/wizardCreate.svelte';
+  import { createButtonText } from '../lib/copy/wizardCreateCopy';
   import { requestDiscover } from '../lib/discoverIntent';
   import DiscoverEntry from './DiscoverEntry.svelte';
+  import StartScreen from './StartScreen.svelte';
+  import EnterCase from './EnterCase.svelte';
+  import CreateWizard from './CreateWizard.svelte';
+  import SourceGallery from './wizard/SourceGallery.svelte';
+  import ReviewStep from './wizard/ReviewStep.svelte';
+  import CreateProgress from './wizard/CreateProgress.svelte';
+  import MasterKeySetup from './MasterKeySetup.svelte';
+  import MasterKeyUnlock from './MasterKeyUnlock.svelte';
+  import MasterKeyDamaged from './MasterKeyDamaged.svelte';
 
   // The empty and start states of the stage. 'loading': the app is starting. 'connect': no audit source yet (first run).
   // 'running': the first analysis is loading and there is nothing on screen yet. 'start': sources are ready but nothing has run.
-  let { mode }: { mode: 'loading' | 'connect' | 'running' | 'start' } = $props();
+  // 'cases': the start screen of a launch (three cards). 'unlock' and 'setup': the master key screens (see lib/screenFlow.ts).
+  // 'create': the guided "create a new case" flow. TSK-18 mounts the sources step and TSK-19 the review step inside it (snippets `sources`, `review`, `finish`).
+  let { mode }: { mode: 'loading' | 'connect' | 'running' | 'start' | 'cases' | 'unlock' | 'setup' | 'create' } = $props();
 
   // "This computer" lives in the import drawer. This screen has no case, so it leaves a request and opens the drawer, which shows the panel.
   function openDiscover() { requestDiscover(); openSidePanel('import'); }
+  // The case is made and kept on the server. The draft is done with, so it is cleared, then the case opens with the import drawer for Add more data.
+  function openCreated(id: string) { resetWizard(); openCase(id); }
 </script>
 
 {#if mode === 'loading'}
   <div class="loading-state"><div class="loading-pulse"></div><strong>Starting Unravis</strong><p>Loading sources and settings.</p></div>
 {:else if mode === 'connect'}
   <div class="welcome-state no-connections-state"><h3>Connect an audit source</h3><p>Load saved settings or create a MongoDB connection, then choose databases that contain API audit logs.</p><div class="empty-actions"><button class="primary-button" onclick={startNewConnection}>New connection</button><button class="secondary-button" onclick={() => openConnections('saved')}>Saved connections</button><DiscoverEntry onOpen={openDiscover} /></div></div>
+{:else if mode === 'cases'}
+  <StartScreen onCreate={startCreate} onOpen={openCase} onSetup={openKeySetup} onAnalysis={() => go('running')}>
+    {#snippet enter()}<EnterCase onOpen={openCase} onSetup={openKeySetup} />{/snippet}
+  </StartScreen>
+{:else if mode === 'create'}
+  <CreateWizard onLeave={goHome} busy={createView.running || caseMade()}>
+    {#snippet sources()}<SourceGallery />{/snippet}
+    {#snippet review()}{#if createView.running || caseMade()}<CreateProgress onOpen={openCreated} />{:else}<ReviewStep />{/if}{/snippet}
+    {#snippet finish()}{#if !caseMade()}<button type="button" class="primary-button" disabled={createView.running || blockers().length > 0} onclick={() => void createNow()}>{createButtonText(wizard.sources.length, createView.running)}</button>{/if}{/snippet}
+  </CreateWizard>
+{:else if mode === 'unlock'}
+  {#if app.lockState === 'damaged'}<MasterKeyDamaged />{:else}<MasterKeyUnlock />{/if}
+{:else if mode === 'setup'}
+  <MasterKeySetup />
 {:else if mode === 'running'}
   <div class="skeleton" role="status" aria-label="Reading selected audit sources">
     <div class="skeleton-figures"><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div></div>

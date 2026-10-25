@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { takeDiscoverIntent } from '../discoverIntent';
+  import { takeCaseIntent } from '../startIntent';
   import DiscoverPanel from '../../components/DiscoverPanel.svelte';
   import {
     CaseApiError, cancelImportJob, caseCode, checkAllSupplied, commitBlock, fetchImportJob, fileSizeProblem, importProgressPercent, isCaseGone, listHosts, listImporters, listImports,
@@ -11,6 +12,7 @@
     jobProgressText, qualityDetails, reasonText, sizeProblemText, statusLabel, suppliedPairs
   } from '../copy/importCopy';
   import { importWork } from '../appState.svelte';
+  import { goHome } from '../appState.svelte';
   import { formatTime } from '../time';
   import { caseSpan } from '../resourceSpan';
   import Drawer from '../../components/Drawer.svelte';
@@ -31,6 +33,8 @@
 
   let cases = $state<CaseInfo[]>([]);
   let selectedId = $state(untrack(() => importWork.running?.caseId ?? ''));
+  // The case a person chose on the start screen (taken once), unless an import is already running on another case.
+  untrack(() => { const chosen = takeCaseIntent(); if (chosen && !selectedId) selectedId = chosen; });
   let casePanel = $state<CasePanel>();
   let hosts = $state<string[]>([]);
   let imports = $state<ImportRecord[]>([]);
@@ -330,7 +334,7 @@
 <HelpNote id="import" />
   <p class="gate" role="note" aria-label={IMPORT_TEXT.noticeLabel}>{GATING_BANNER}</p>
 
-  <CasePanel bind:this={casePanel} bind:cases bind:selectedId />
+  <CasePanel bind:this={casePanel} bind:cases bind:selectedId onClosed={goHome} />
 
   <!-- Outside the {#key} below, so a new import does not close the panel or reset its checklist. -->
   {#if discoverOpen}

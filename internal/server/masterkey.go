@@ -9,6 +9,8 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,6 +28,9 @@ const (
 	MasterKeyNone     = "none"
 	MasterKeyLocked   = "locked"
 	MasterKeyUnlocked = "unlocked"
+	// MasterKeyDamaged: something is at masterkey.dat that no passphrase can open
+	// (empty, garbage, a folder, an unknown version). Cases are kept closed.
+	MasterKeyDamaged = "damaged"
 )
 
 const (
@@ -79,8 +84,11 @@ func (s *MasterKeySession) State() string {
 	if r != nil && !r.Locked() {
 		return MasterKeyUnlocked
 	}
-	if masterkey.Exists(s.dir) {
+	switch masterkey.Inspect(s.dir) {
+	case masterkey.FileUsable:
 		return MasterKeyLocked
+	case masterkey.FileDamaged:
+		return MasterKeyDamaged
 	}
 	return MasterKeyNone
 }
@@ -215,7 +223,14 @@ func WithMasterKey(s *MasterKeySession) Option { return func(h *handler) { h.mk 
 // route is gated by its pattern, so a route added under /api/cases cannot
 // forget it; the route-table test walks the table to prove it.
 func (h *handler) lockedGate(rt *route) bool {
-	return h.mk != nil && gatedByMasterKey(rt) && h.mk.State() == MasterKeyLocked
+	if h.mk == nil || !gatedByMasterKey(rt) {
+		return false
+	}
+	// A damaged key file keeps the cases closed exactly like a locked key: the
+	// master-key cases cannot be opened and a new case must not be sealed with
+	// anything else.
+	st := h.mk.State()
+	return st == MasterKeyLocked || st == MasterKeyDamaged
 }
 
 func gatedByMasterKey(rt *route) bool {
@@ -477,7 +492,7 @@ type rewrapStore interface {
 // dpapiCaseCount counts the cases that could still be re-wrapped. It is 0
 // while locked and when the store cannot report kinds.
 func (h *handler) dpapiCaseCount(ctx context.Context) int {
-	if h.masterKeyState() == MasterKeyLocked || h.cases == nil {
+	if st := h.masterKeyState(); st == MasterKeyLocked || st == MasterKeyDamaged || h.cases == nil {
 		return 0
 	}
 	rs, ok := h.cases.(rewrapStore)
@@ -514,36 +529,47 @@ func (h *handler) masterKeySetup(w http.ResponseWriter, r *http.Request) {
 	s := h.mk
 	s.op.Lock()
 	defer s.op.Unlock()
-	if masterkey.Exists(s.dir) {
+	switch masterkey.Inspect(s.dir) {
+	case masterkey.FileUsable:
 		h.masterKeyFail(w, http.StatusConflict, "already-set", "A master key is already set.")
+		return
+	case masterkey.FileDamaged:
+		// Never overwrite what is there: it may be a good file the user can put
+		// back. The separate reset-damaged action moves it aside first.
+		h.masterKeyFail(w, http.StatusConflict, "key-file-damaged", keyFileDamagedText)
 		return
 	}
 	if wait := s.setupTh.wait(); wait > 0 {
 		h.masterKeyThrottled(w, wait)
 		return
 	}
+	// Validation failures below are cheap, answer no secret question and are
+	// not counted: a user who mistypes the confirmation five times must not be
+	// locked out of setting up. Only a failure of the key file write counts.
 	if !b.acknowledged {
-		s.setupTh.fail()
 		h.masterKeyFail(w, http.StatusBadRequest, "acknowledgement-required", "Confirm that you understand there is no recovery.")
 		return
 	}
 	a, c := masterkey.Normalize(b.passphrase), masterkey.Normalize(b.confirm)
 	same := len(a) == len(c) && subtle.ConstantTimeCompare(a, c) == 1
-	short := utf8.RuneCount(a) < masterkey.MinPassphraseLen
+	rules := masterkey.CheckPassphrase(a)
 	tooLong := len(b.passphrase) > maxPassphraseBytes
 	clear(a)
 	clear(c)
 	switch {
 	case !same:
-		s.setupTh.fail()
 		h.masterKeyFail(w, http.StatusBadRequest, "mismatch", "The two entries do not match.")
 		return
-	case short:
-		s.setupTh.fail()
+	case errors.Is(rules, masterkey.ErrInvalidChars):
+		h.masterKeyFail(w, http.StatusBadRequest, "invalid-characters", "The passphrase contains characters that cannot be used.")
+		return
+	case errors.Is(rules, masterkey.ErrTooShort):
 		h.masterKeyFail(w, http.StatusBadRequest, "too-short", "The passphrase is too short.")
 		return
+	case errors.Is(rules, masterkey.ErrBlank):
+		h.masterKeyFail(w, http.StatusBadRequest, "blank", "The passphrase needs more visible characters.")
+		return
 	case tooLong:
-		s.setupTh.fail()
 		h.masterKeyFail(w, http.StatusBadRequest, "too-long", "The passphrase is too long.")
 		return
 	}
@@ -555,8 +581,11 @@ func (h *handler) masterKeySetup(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, masterkey.ErrAlreadySet):
 		h.masterKeyFail(w, http.StatusConflict, "already-set", "A master key is already set.")
 		return
-	case errors.Is(err, masterkey.ErrTooShort):
-		s.setupTh.fail()
+	case errors.Is(err, masterkey.ErrDamaged):
+		h.masterKeyFail(w, http.StatusConflict, "key-file-damaged", keyFileDamagedText)
+		return
+	case errors.Is(err, masterkey.ErrTooShort), errors.Is(err, masterkey.ErrBlank), errors.Is(err, masterkey.ErrInvalidChars):
+		// Unreachable: checked above. Fail closed with the generic refusal.
 		h.masterKeyFail(w, http.StatusBadRequest, "too-short", "The passphrase is too short.")
 		return
 	case err != nil:
@@ -597,6 +626,10 @@ func (h *handler) masterKeyUnlock(w http.ResponseWriter, r *http.Request) {
 	case MasterKeyNone:
 		h.masterKeyFail(w, http.StatusConflict, "not-set", "No master key is set.")
 		return
+	case MasterKeyDamaged:
+		// Not a wrong passphrase, so not judged, not counted, no Argon2.
+		h.masterKeyFail(w, http.StatusConflict, "key-file-damaged", keyFileDamagedText)
+		return
 	}
 	if wait := s.unlockTh.wait(); wait > 0 {
 		h.masterKeyThrottled(w, wait)
@@ -620,6 +653,9 @@ func (h *handler) masterKeyUnlock(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, masterkey.ErrNotSet):
 		h.masterKeyFail(w, http.StatusConflict, "not-set", "No master key is set.")
 		return
+	case errors.Is(err, masterkey.ErrDamaged):
+		h.masterKeyFail(w, http.StatusConflict, "key-file-damaged", keyFileDamagedText)
+		return
 	case err != nil:
 		h.masterKeyFail(w, http.StatusInternalServerError, "unlock-failed", "The master key could not be unlocked.")
 		return
@@ -642,7 +678,7 @@ func (h *handler) masterKeyLock(w http.ResponseWriter, r *http.Request) {
 	h.stopSamplerAll()
 	h.jobs.cancelAll()
 	h.mk.lock(h.closeCaseHandles)
-	writeJSON(w, http.StatusOK, masterKeyStatus{State: MasterKeyLocked}, 4096)
+	writeJSON(w, http.StatusOK, masterKeyStatus{State: h.mk.State()}, 4096)
 }
 
 // closeCaseHandles closes every case handle the store holds open.
@@ -684,7 +720,7 @@ func (h *handler) masterKeyRewrap(w http.ResponseWriter, r *http.Request) {
 	case MasterKeyNone:
 		h.masterKeyFail(w, http.StatusConflict, "no-master-key", "Set a master key first.")
 		return
-	case MasterKeyLocked:
+	case MasterKeyLocked, MasterKeyDamaged:
 		writeLocked(w)
 		return
 	}
@@ -746,4 +782,67 @@ func rewrapOne(ctx context.Context, rs rewrapStore, id casestore.CaseID) rewrapR
 		res.Reason = "rewrap-failed"
 	}
 	return res
+}
+
+/* ------------------------------------------------- damaged key file reset */
+
+const keyFileDamagedText = "The master key file on this PC is damaged or has been replaced, so no passphrase can open it."
+
+type resetDamagedRequest struct {
+	// Acknowledged must be the literal true: the user has read that cases
+	// sealed with the existing master key stay unreadable under a new one.
+	Acknowledged bool `json:"acknowledged"`
+}
+
+type resetDamagedReply struct {
+	State      string `json:"state"`
+	DPAPICases int    `json:"dpapiCases"`
+	// KeptAs is the file name (no folder) the damaged item was moved to, next to
+	// where it was. Nothing is deleted: put it back under its old name to undo.
+	KeptAs string `json:"keptAs"`
+}
+
+// masterKeyResetDamaged is the one recovery from a damaged masterkey.dat. It is
+// a separate action from setup, needs an explicit acknowledgement, works only
+// while the file is judged damaged (checked again under the operation lock) and
+// never deletes: the damaged item is renamed aside, so a file that was actually
+// good (restored from a backup, say) can be put back. Afterwards the state is
+// "none" and the normal setup route creates a new key. Cases sealed with the old
+// master key stay unreadable under the new one, and the client must say so.
+func (h *handler) masterKeyResetDamaged(w http.ResponseWriter, r *http.Request) {
+	if h.masterKeyUnavailable(w) {
+		return
+	}
+	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || media != "application/json" {
+		h.masterKeyFail(w, http.StatusUnsupportedMediaType, "bad-content-type", "Content-Type must be application/json.")
+		return
+	}
+	var req resetDamagedRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil || dec.More() {
+		h.masterKeyFail(w, http.StatusBadRequest, "bad-request", "The request body is invalid.")
+		return
+	}
+	s := h.mk
+	s.op.Lock()
+	defer s.op.Unlock()
+	if s.State() != MasterKeyDamaged {
+		// Refuse before the acknowledgement: a good key file is never touched.
+		h.masterKeyFail(w, http.StatusConflict, "not-damaged", "The master key file is not damaged.")
+		return
+	}
+	if !req.Acknowledged {
+		h.masterKeyFail(w, http.StatusBadRequest, "acknowledgement-required",
+			"Confirm that cases protected by the old master key will stay unreadable.")
+		return
+	}
+	from := masterkey.Path(s.dir)
+	keptAs := masterkey.FileName + ".damaged-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+	if err := os.Rename(from, filepath.Join(s.dir, keptAs)); err != nil {
+		h.masterKeyFail(w, http.StatusInternalServerError, "reset-failed", "The damaged master key file could not be moved aside.")
+		return
+	}
+	writeJSON(w, http.StatusOK, resetDamagedReply{State: s.State(), DPAPICases: h.dpapiCaseCount(r.Context()), KeptAs: keptAs}, 4096)
 }
