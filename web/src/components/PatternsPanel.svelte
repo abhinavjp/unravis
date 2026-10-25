@@ -535,7 +535,7 @@
   .finding { padding: 9px 0; background: transparent; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; }
   .finding p { margin: 6px 0 0; font-size: var(--fs-3); overflow-wrap: anywhere; }
   .finding-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: var(--fs-2); }
-  .evidence-badge { padding: 2px 8px; color: var(--text); border: 1px solid var(--line); border-radius: 4px; font-weight: 600; }
+  .evidence-badge { padding: 2px 8px; color: var(--text); border: 1px solid var(--line); border-radius: var(--radius-sm); font-weight: 600; }
   .evidence-badge.strong { border-color: var(--accent); }
   .finding-n { color: var(--text-2); font-variant-numeric: tabular-nums; }
   .finding p.finding-ref { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; color: var(--text-2); font-size: var(--fs-1); }
@@ -543,7 +543,7 @@
   .cite-button { padding: 3px 0; color: var(--text-2); background: none; border: 0; font-size: var(--fs-2); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; white-space: nowrap; }
   .cite-button:hover, .record-link:hover { color: var(--text); }
   .record-link { padding: 0; color: var(--text); background: none; border: 0; font: inherit; text-align: left; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; overflow-wrap: anywhere; }
-  .low-n { padding: 1px 6px; color: var(--warn); border: 1px solid var(--warn); border-radius: 4px; }
+  .low-n { padding: 1px 6px; color: var(--warn); border: 1px solid var(--warn); border-radius: var(--radius-sm); }
   .patterns-quality { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
   .patterns-detail { margin-top: var(--space-4); min-width: 0; }
   .patterns-detail h3 { margin: 0 0 8px; font-size: var(--fs-4); font-weight: 600; }
