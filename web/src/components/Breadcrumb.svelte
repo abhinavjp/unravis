@@ -75,12 +75,12 @@
   ol { display: flex; align-items: center; flex-wrap: nowrap; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; }
   li { display: flex; align-items: center; min-width: 0; position: relative; }
   ol > li + li::before { content: "\203A"; padding: 0 6px; color: var(--text-2); }
-  button, [aria-current] { max-width: 28ch; min-height: 28px; display: inline-flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 6px; border: 0; border-radius: var(--radius); background: transparent; font-size: 13px; }
+  button, [aria-current] { max-width: 28ch; min-height: 28px; display: inline-flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 6px; border: 0; border-radius: var(--radius-sm); background: transparent; font-size: 13px; }
   button { color: var(--text-2); }
   button:hover { color: var(--text); background: var(--surface-2); }
-  [aria-current] { color: var(--text); font-weight: 650; }
+  [aria-current] { color: var(--text); font-weight: 600; }
   .gap-button { padding: 4px 8px; letter-spacing: .06em; }
-  .gap-menu { position: absolute; z-index: 30; left: 0; top: calc(100% + 4px); min-width: 180px; max-width: min(320px, calc(100vw - 28px)); margin: 0; padding: 4px; list-style: none; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 12px 32px color-mix(in srgb, var(--bg) 70%, transparent); }
+  .gap-menu { position: absolute; z-index: 30; left: 0; top: calc(100% + 4px); min-width: 180px; max-width: min(320px, calc(100vw - 28px)); margin: 0; padding: 4px; list-style: none; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: 0 12px 32px color-mix(in srgb, var(--bg) 70%, transparent); }
   .gap-menu li { display: block; }
   .gap-menu button { width: 100%; max-width: none; min-height: 36px; justify-content: flex-start; padding: 6px 10px; color: var(--text); }
   @media (max-width: 767px) {

@@ -29,6 +29,9 @@
     { id: 'import', label: 'Import', open: () => openSidePanel('import') },
     { id: 'glossary', label: 'Glossary', open: () => openGlossary() }
   ];
+  // Patterns, Ledger, Export and Import are the page's navigation; Glossary sits with the utilities at the far right.
+  const navDrawers = drawers.filter(item => item.id !== 'glossary');
+  const glossary = drawers.find(item => item.id === 'glossary')!;
   const isOpen = (id: string) => id === 'glossary' ? panels.glossaryOpen : panels.sidePanel === id;
   const anyOpen = $derived(drawers.some(item => isOpen(item.id)));
   const ledgerTotal = $derived(ledger.items.length);
@@ -70,7 +73,15 @@
 
 <header class="topbar">
   <div class="brand-lockup"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><h1>Unravis</h1></div>
+  {#if !compact}
+    <div class="nav-items">
+      {#each navDrawers as item (item.id)}
+        <button type="button" class="header-button nav-button" aria-haspopup="dialog" aria-expanded={isOpen(item.id)} onclick={item.open}>{item.label}{#if item.id === 'ledger'}<LedgerCount />{/if}</button>
+      {/each}
+    </div>
+  {/if}
   <div class="actions">
+    <div class="status">
     {#if info}<span class:demo-badge={info.demo} class="mode-badge badge" title={info.demo ? 'Demo data. Reference time ' + referenceTime : 'Live mode'}>{info.demo ? 'Demo data' : 'Live mode'}</span>{/if}
     {#if info?.demo}<span class="updated-label reference">Data reference time <time>{referenceTime}</time></span>{/if}
     {#if info && !app.firstRun}
@@ -78,6 +89,8 @@
         onToggle={(id, checked) => { scope.query.sourceIds = checked ? [...scope.query.sourceIds.filter(item => item !== id), id] : scope.query.sourceIds.filter(item => item !== id); onScopeChange(); }}
         onDelete={deleteSource} onManage={() => openConnections('saved')} onAdd={startNewConnection} onCoverage={openCoverage} />
     {/if}
+    </div>
+    <div class="utilities">
     {#if compact}
       <div class="more" bind:this={menuWrap}>
         <button type="button" class="header-button more-button" bind:this={moreButton} aria-haspopup="menu" aria-expanded={menuOpen} aria-label={moreLabel} onclick={toggleMenu}>
@@ -93,9 +106,7 @@
         {/if}
       </div>
     {:else}
-      {#each drawers as item (item.id)}
-        <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={isOpen(item.id)} onclick={item.open}>{item.label}{#if item.id === 'ledger'}<LedgerCount />{/if}</button>
-      {/each}
+      <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={isOpen(glossary.id)} onclick={glossary.open}>{glossary.label}</button>
     {/if}
     <TimeZoneToggle />
     <button type="button" class="header-button theme-toggle" onclick={() => theme.cycle()} aria-label={'Theme: ' + theme.choice + '. Change theme'} title={'Theme: ' + theme.choice}>
@@ -107,6 +118,7 @@
         <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="6.6"></circle><path d="M10 3.4a6.6 6.6 0 0 1 0 13.2Z" fill="currentColor" stroke="none"></path></svg>
       {/if}
     </button>
+    </div>
   </div>
 </header>
 
@@ -121,13 +133,18 @@
   /* One row at every width: nothing in the bar wraps, so the page never scrolls sideways because of it. */
   .topbar { flex-wrap: nowrap; gap: 12px; }
   .brand-lockup { min-width: 0; }
-  .actions { margin-left: auto; display: flex; align-items: center; flex-wrap: nowrap; flex-shrink: 0; gap: 8px; }
+  .actions { margin-left: auto; display: flex; align-items: center; flex-wrap: nowrap; flex-shrink: 0; gap: 12px; }
   .actions > :global(*) { flex-shrink: 0; }
+  /* Status reads as quiet text; the utilities sit apart behind one hairline. */
+  .status, .utilities { display: flex; align-items: center; flex-wrap: nowrap; flex-shrink: 0; gap: 8px; }
+  .status > :global(*), .utilities > :global(*) { flex-shrink: 0; }
+  .utilities { gap: 4px; padding-left: 12px; border-left: 1px solid var(--line); }
+  .utilities > :global(.zone-toggle) { margin: 0 4px; }
   .reference { display: none; }
   .badge { display: none; }
   .more { position: relative; }
-  .more-menu { position: absolute; z-index: 30; right: 0; top: calc(100% + 6px); min-width: 170px; margin: 0; padding: 4px; list-style: none; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 12px 32px color-mix(in srgb, var(--bg) 70%, transparent); }
-  .more-menu button { display: flex; align-items: center; width: 100%; min-height: 40px; padding: 8px 12px; color: var(--text); background: transparent; border: 0; border-radius: var(--radius); font-size: 14px; text-align: left; }
+  .more-menu { position: absolute; z-index: 30; right: 0; top: calc(100% + 6px); min-width: 170px; margin: 0; padding: 4px; list-style: none; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: 0 12px 32px color-mix(in srgb, var(--bg) 70%, transparent); }
+  .more-menu button { display: flex; align-items: center; width: 100%; min-height: 40px; padding: 8px 12px; color: var(--text); background: transparent; border: 0; border-radius: var(--radius-sm); font-size: 14px; text-align: left; }
   .more-menu button:hover, .more-menu button:focus-visible { background: color-mix(in srgb, var(--text) 8%, transparent); }
 
   .crumbbar { position: relative; z-index: 11; flex: 0 0 auto; min-height: 36px; padding: 0 24px; display: flex; align-items: center; justify-content: flex-start; gap: 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
@@ -141,6 +158,8 @@
   }
   @media (max-width: 720px) {
     .topbar { padding: 0 14px; gap: 8px; flex-wrap: nowrap; align-content: normal; }
+    .actions { gap: 8px; }
+    .utilities { padding-left: 8px; }
     .crumbbar { position: sticky; top: var(--header-h); padding: 2px 14px; }
   }
   @media (max-width: 599px) { .more-label { display: none; } .more-button { padding: 6px 9px; } }
