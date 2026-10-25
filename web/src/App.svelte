@@ -2,7 +2,7 @@
   import { comparisonLabel, STARTUP_TITLE } from './lib/copy/startupCopy';
   import { scopeProblem } from './lib/autorun';
   import { VALIDATION_MESSAGE } from './lib/api';
-  import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeSidePanel, onWindowKey, panels, resetInvestigation, results, scope, startApp } from './lib/appState.svelte';
+  import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeSidePanel, onWindowKey, openSidePanel, panels, resetInvestigation, results, scope, startApp } from './lib/appState.svelte';
   import AppHeader from './components/AppHeader.svelte';
   import SubBar from './components/SubBar.svelte';
   import Landing from './components/Landing.svelte';
@@ -23,6 +23,7 @@
   import { zoomView } from './lib/zoomView.svelte';
   import { timeZone } from './lib/timeZone.svelte';
   import { backLabel, investigateState } from './lib/promote';
+  import { requestDiscover } from './lib/discoverIntent';
 
   // The page shell. The state and the logic live in lib/appState.svelte.ts; each region of the page is its own component.
   // startApp registers the effects and the mount work (theme, first load, the glossary event) for this component.
@@ -43,6 +44,8 @@
   // "Investigate this window" is offered once zoomed. "Back to ..." shows while the queried window is the one the last promotion made.
   const investigate = $derived(investigateState({ isRoot: zoomModel?.isRoot ?? true, runLoading: loading, stale: results.displayedRunIsStale }));
   const windowBackLabel = $derived(results.windowBack ? backLabel(results.windowBack) : null);
+  // Opens the Import drawer with the "This computer" scan showing, so server data can be added without leaving the analysis.
+  function addData() { requestDiscover(); openSidePanel('import'); }
 </script>
 
 <svelte:head><title>Unravis</title></svelte:head>
@@ -88,7 +91,7 @@
               <!-- D0 Pulse -->
               <div class="view" class:off={depth > 0}>
                 <Pulse {analysis} {zone} onOpen={openWhere} />
-                <div class="pulse-actions"><button type="button" class="primary-button" onclick={() => openWhere(navigation.lens)}>Where is it?</button><button type="button" class="secondary-button" onclick={openComparison}>All operations</button><p>Tap a figure, or open the ranked list of operations.</p></div>
+                <div class="pulse-actions"><button type="button" class="primary-button" onclick={() => openWhere(navigation.lens)}>Where is it?</button><button type="button" class="secondary-button" onclick={openComparison}>All operations</button><button type="button" class="secondary-button" aria-haspopup="dialog" onclick={addData}>Add more data</button><p>Tap a figure, or open the ranked list of operations. Add more data to bring in SQL, Redis, IIS or server logs for the same period.</p></div>
                 <RollupView />
               </div>
 
