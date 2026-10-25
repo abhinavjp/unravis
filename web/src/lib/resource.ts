@@ -461,6 +461,16 @@ export function toPoints(points: SeriesPoint[], bucketMs: number, mul = 1, pick:
 }
 const round = (value: number): number => Math.round(value * 1000) / 1000;
 
+/**
+ * Which points stand alone: a value with a gap (or the edge of the line) on both sides draws no line segment, so it needs a dot or it is
+ * invisible. Sparse samples (a 15 s counter read in a window narrow enough that every bucket is empty between them) are all lone points.
+ * A line of fewer than three entries keeps a dot on every value, as before.
+ */
+export function lonePoints(points: Point[]): boolean[] {
+  const present = (index: number): boolean => index >= 0 && index < points.length && points[index][1] != null;
+  return points.map((point, index) => point[1] != null && (points.length < 3 || (!present(index - 1) && !present(index + 1))));
+}
+
 function lineFor(def: LineDef, host: string, items: Map<string, SeriesItem>, bucketMs: number): Line | null {
   if (def.combine === 'first') {
     for (const cand of def.cands) {
@@ -633,8 +643,10 @@ export function stripsOption(input: OptionInput) {
     titles.push({ text: strip.title + (strip.unit ? ' (' + strip.unit + ')' : ''), left: GRID_LEFT, top: top - 17, textStyle: { color: pal.text2, fontSize: 11, fontWeight: 600 } });
     strip.lines.forEach((line, k) => {
       const color = line.band ? pal.axisLine : pal.series[k % pal.series.length];
+      const lone = lonePoints(line.points);
       series.push({
-        type: 'line', name: line.name, xAxisIndex: i, yAxisIndex: i, data: line.points, connectNulls: false, showSymbol: line.points.length < 3, symbolSize: 5,
+        type: 'line', name: line.name, xAxisIndex: i, yAxisIndex: i, data: line.points, connectNulls: false, showSymbol: true,
+        symbolSize: (_value: unknown, params: { dataIndex: number }) => (lone[params.dataIndex] ? 5 : 0),
         z: line.band ? 1 : 3, lineStyle: line.band ? { opacity: 0 } : { color, width: 1.6 }, itemStyle: { color },
         ...(line.band ? { areaStyle: { color: withAlpha(pal.text2, 0.18) }, emphasis: { disabled: true } } : {})
       });

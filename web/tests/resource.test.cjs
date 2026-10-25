@@ -365,6 +365,23 @@ test('escapeHTML escapes the five characters', () => {
   assert.equal(r.escapeHTML('plain'), 'plain');
 });
 
+test('a lone sample (gaps on both sides) is drawn as a dot, a joined run is not', () => {
+  assert.deepEqual(r.lonePoints([]), []);
+  assert.deepEqual(r.lonePoints([[T0, 1]]), [true]);
+  assert.deepEqual(r.lonePoints([[T0, 1], [T0 + 1000, 2]]), [true, true], 'short lines keep a dot on every value');
+  // Sparse samples: each read sits in its own bucket, so toPoints puts a gap between all of them and no segment is drawn.
+  const sparse = r.toPoints([point(T0, 1), point(T0 + 15000, 2), point(T0 + 30000, 3), point(T0 + 45000, 4)], 2324);
+  assert.equal(sparse.filter((p) => p[1] != null).length, 4);
+  assert.deepEqual(r.lonePoints(sparse).filter(Boolean).length, 4, 'every sparse sample is a lone point');
+  assert.deepEqual(r.lonePoints([[T0, 1], [T0 + 1000, 2], [T0 + 2000, 3], [T0 + 3000, null], [T0 + 9000, 4], [T0 + 10000, null]]), [false, false, false, false, true, false]);
+  const pal = { text: '#111111', accent: '#2457c5', accentSoft: '#9db6ea', warn: '#96600a', bad: '#b02a3d', pending: '#5b6878', text2: '#4d5a6b', axisLine: '#d5dbe3', grid: '#e6eaf0', empty: '#eee', heat: [], series: ['#146b58'], surface: '#ffffff' };
+  const option = r.stripsOption({ strips: [{ id: 'a', title: 'CPU', unit: '%', lines: [{ id: 'l', name: 'Host CPU', points: sparse }] }], view: { fromMs: T0, toMs: T0 + 60000 }, episodes: [], markers: [], zone: 'UTC', pal });
+  const line = option.series.find((s) => s.name === 'Host CPU');
+  assert.equal(line.showSymbol, true);
+  assert.equal(line.symbolSize(4, { dataIndex: 0 }), 5, 'the dot is sized, not hidden');
+  assert.equal(line.symbolSize(null, { dataIndex: 1 }), 0, 'a gap entry has no dot');
+});
+
 test('the chart tooltip escapes every name and value, and the option has one grid per strip', () => {
   const pal = { text: '#111111', accent: '#2457c5', accentSoft: '#9db6ea', warn: '#96600a', bad: '#b02a3d', pending: '#5b6878', text2: '#4d5a6b', axisLine: '#d5dbe3', grid: '#e6eaf0', empty: '#eee', heat: [], series: ['#146b58', '#2457c5'], surface: '#ffffff' };
   const strips = [
