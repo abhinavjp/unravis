@@ -6,7 +6,7 @@ Status as of 2026-10-25. Question: can Unravis take every log that helps find a 
 
 | Source | Importers shipped | Verdict | Missing, with the call |
 |---|---|---|---|
-| IIS | `iis-w3c` (W3C access logs, UTC, per-site), `iis-httperr` (HTTP.sys), win-events with WAS classifier | Supported | **FREB** (failed-request tracing XML): not built. Add only if an analyst can supply an export; it is per-request and the audit log already carries per-request timing. ANCM stdout is covered by `ancm-stdout`. |
+| IIS | `iis-w3c` (W3C access logs, UTC, per-site), `iis-httperr` (HTTP.sys), win-events with WAS classifier | Supported | `iis-freb` (failed-request tracing XML) is built. ANCM stdout is covered by `ancm-stdout`. |
 | log4net | `log4net-text`, `log4net-xml` | Supported | Custom pattern layouts beyond the common `%date [%thread] %level %logger - %message` are refused with a reason, not guessed. |
 | NLog | `nlog-text` (default pipe-delimited layout; time is host-local unless `log-time=utc` is stated) | Supported | Space-delimited and custom layouts are refused as unsupported. JSON layout is read by the Serilog CLEF or MEL JSON path when keys match. |
 | Serilog | `serilog-clef`, `serilog-text` | Supported | None. |
@@ -18,12 +18,19 @@ Status as of 2026-10-25. Question: can Unravis take every log that helps find a 
 | Redis | `redis-slowlog`, `redis-latency`, `redis-info`, `redis-log` | Supported | Node-side Redis proxy logs: not built, no known format to target. |
 | MongoDB | `mongod-json` (structured JSON log), `mongo-profile`, `mongo-currentop`, `mongo-serverstatus`, `mongostat-json` | Supported | Verified on synthetic data only. `$collStats`, `getMore` and `maxTimeMS` behaviour and Mongo 3.4 text logs wait on the Mongo owner (held item T0). |
 | SQL Server | `sql-xe` (extended events), `sql-errorlog`, `sql-pdh` (perfmon CSV for the instance) | Supported | Query Store export is not read. |
-| nginx or Apache access logs | none | Missing | Add `nginx-access` / `apache-combined` only when a reverse proxy appears in a real case. Low risk, one afternoon, Sonnet. Not started: no evidence they are in this estate. |
-| Linux sadf, pidstat, vmstat | none | Missing | Same call: only if a Linux host joins a case. |
-| Perfmon `.blg` | none | Missing | Binary. The supported path is `relog -f csv`, which `win-counters` reads. |
+| nginx or Apache access logs | `nginx-access`, `apache-combined` | Supported | Formats are from documentation, not a real export. Custom `log_format` strings are refused with a reason. |
+| Linux sadf, pidstat, vmstat | `linux-sadf`, `linux-pidstat`, `linux-vmstat` | Supported | Formats are from documentation, not a real export. |
+| Perfmon `.blg`, ETW `.etl`, `.nettrace` | refused as binary | Export needed | Binary. A scan reports an `export-needed` finding with a How step: `relog -f csv` for `.blg`, then `win-counters` reads it. |
+
+## On-host discovery
+
+Unravis will run on the target Windows server, so the first path is auto-detect and direct import (spec `docs/superpowers/specs/2026-10-25-host-discovery-design.md`). Built and merged: core and hardened reader, IIS (sites, W3C, HTTP.sys, FREB, ANCM), Windows event channels (System fields only, never Security), app-logger configs (log4net, NLog, Serilog, MEL; paths only, no secrets), Redis, MongoDB and SQL Server file detectors, nginx and Apache, Perfmon and host hints, the `win-live` sampler (off by default) and the This-computer UI. In progress: API routes, audit and watermark tables, and the scan service that wires detectors to the UI. Held: live probes of Redis, Mongo and SQL, and the scheduled task.
+
+No detector has run on a real server yet. See the real-server list in `2026-10-25-held-items.md`.
 
 ## CPU and memory, per time and per process
 
+- **Live on the host**: the `win-live` sampler records host CPU and memory and per-process figures for server processes at 5, 15, 30 or 60 s, off by default and stopped at 72 h or 2M events. Not yet run on a real server.
 - **Host level**: `win-counters` (perfmon CSV from `relog`), `sql-pdh`, `dotnet-counters`, `redis-info`, `mongo-serverstatus` and `mongostat-json` give CPU, available memory, and engine counters per time bucket.
 - **Per process**: `win-counters` w3wp and other process instances give CPU, working set, private bytes, handles and threads. `win-procsnap` takes `Get-Process`-style snapshots.
 - **Shown where**: Resource panel (`web/src/components/ResourcePanel.svelte`): rule chips RC1 to RC9, a host summary, per-process measure tabs, zoom controls, markers, and gap lines for windows with no data.
