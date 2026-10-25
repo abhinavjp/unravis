@@ -95,7 +95,7 @@ test('when zoomed, the trail links back up and the movement buttons turn on', ()
   for (const label of [zoomCopy.back, zoomCopy.earlier, zoomCopy.later, zoomCopy.zoomIn, zoomCopy.zoomOut, zoomCopy.reset]) assert.equal(isDisabled(markup, label), false, label + ' should be on');
   assert.match(markup, /Zoom: 24 Oct 14:00/);
   assert.match(markup, /Hour/);
-  assert.match(markup, /Interval: 1 minute \(automatic\)\./);
+  assert.match(markup, /Interval: 30 seconds \(automatic\)\./);
 });
 
 test('the day level reads as Day and keeps its own breadcrumb', () => {
