@@ -108,6 +108,7 @@ var displayNames = map[string]string{
 	"mongostat-json":     "mongostat samples",
 	"linux-sadf":         "Linux sar samples",
 	"linux-pidstat":      "Linux pidstat samples",
+	"linux-vmstat":       "Linux vmstat samples",
 }
 
 // eventPhrases are the plain event names whose kind does not read well with

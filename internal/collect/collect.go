@@ -85,6 +85,10 @@ var (
 	// machineSignals are files that say the host is a plain Windows machine
 	// the counters and process list can be taken from.
 	machineSignals = []string{winCounters, winProcsnap, winEvents}
+	// linuxSignals are the Linux host CPU, memory and process samples. They
+	// are known to the package but make no suggestion: the rules above ask for
+	// Windows logs, and a Linux host has no list of its own yet.
+	linuxSignals = []string{"linux-sadf", "linux-pidstat", "linux-vmstat"}
 )
 
 // profile is what the case already holds for one host.
@@ -107,7 +111,7 @@ func (p profile) none(names ...string) bool { return !p.any(names...) }
 // is ignored: it neither makes a suggestion nor removes one.
 var known = func() map[string]bool {
 	m := map[string]bool{}
-	for _, list := range [][]string{webSignals, sqlSignals, redisSignals, mongoSignals, machineSignals} {
+	for _, list := range [][]string{webSignals, sqlSignals, redisSignals, mongoSignals, machineSignals, linuxSignals} {
 		for _, n := range list {
 			m[n] = true
 		}

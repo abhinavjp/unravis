@@ -13,7 +13,7 @@ func TestW2FDisplayNamesAndPhrases(t *testing.T) {
 	for _, s := range []string{"schedule-hangfire", "schedule-agent",
 		"log4net-text", "log4net-xml", "serilog-clef", "serilog-text", "nlog-text", "mel-console", "mel-json", "ancm-stdout",
 		"node-jsonl", "dotnet-counters", "win-procsnap", "redis-slowlog", "redis-latency", "redis-info", "redis-log",
-		"mongo-profile", "mongo-currentop", "mongo-serverstatus", "mongostat-json", "linux-sadf", "linux-pidstat"} {
+		"mongo-profile", "mongo-currentop", "mongo-serverstatus", "mongostat-json", "linux-sadf", "linux-pidstat", "linux-vmstat"} {
 		if n := displayName(s); n == s || n == "" {
 			t.Errorf("%s has no display name", s)
 		}

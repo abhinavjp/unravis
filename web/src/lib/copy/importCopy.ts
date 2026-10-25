@@ -289,7 +289,8 @@ export const IMPORTER_LABELS: Record<string, string> = {
   'mongo-serverstatus': 'MongoDB serverStatus samples',
   'mongostat-json': 'mongostat samples',
   'linux-sadf': 'Linux sar samples',
-  'linux-pidstat': 'Linux pidstat samples'
+  'linux-pidstat': 'Linux pidstat samples',
+  'linux-vmstat': 'Linux vmstat samples'
 };
 
 /** One short line per importer saying what file it reads. A name the screen does not know has no help line. */
@@ -324,8 +325,9 @@ export const IMPORTER_HELP: Record<string, string> = {
   'mongo-currentop': 'Current operation samples saved by the mongosh loop.',
   'mongo-serverstatus': 'serverStatus samples saved by the mongosh loop.',
   'mongostat-json': 'The JSON output of mongostat.',
-  'linux-sadf': 'CPU and memory samples saved by sadf.',
-  'linux-pidstat': 'Process CPU and memory samples saved by pidstat.'
+  'linux-sadf': 'CPU and memory samples saved by sadf -d (semicolon-delimited).',
+  'linux-pidstat': 'Process CPU and memory samples saved by pidstat -h -u -r.',
+  'linux-vmstat': 'CPU and free memory samples saved by vmstat -t.'
 };
 
 export const importerHelp = (name: string): string => (Object.prototype.hasOwnProperty.call(IMPORTER_HELP, name) ? IMPORTER_HELP[name] : '');

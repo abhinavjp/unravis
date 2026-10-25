@@ -14,7 +14,6 @@ import (
 // registers it, the full check applies and its entry here should go.
 var w2Pending = map[string]string{
 	"node-jsonl": "W2-j",
-	"linux-sadf": "W2-m", "linux-pidstat": "W2-m",
 }
 
 // Every attribute an importer may write must be either listed in the case

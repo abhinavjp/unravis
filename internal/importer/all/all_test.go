@@ -90,6 +90,9 @@ var samples = map[string]sample{
 	"serilog-clef":      {file: "serilog/testdata/clef_good.jsonl"},
 	"serilog-text":      {file: "serilog/testdata/text_good.log"},
 	"nlog-text":         {file: "nlog/testdata/good.log"},
+	"linux-sadf":        {file: "linuxperf/testdata/sadf_cpu_mem.txt"},
+	"linux-pidstat":     {file: "linuxperf/testdata/pidstat_ur.txt"},
+	"linux-vmstat":      {file: "linuxperf/testdata/vmstat_t.txt"},
 	"redis-slowlog":     {inline: redisSlowSample},
 	"redis-latency":     {inline: redisLatencySample},
 	"redis-info":        {inline: redisInfoSample},
@@ -148,8 +151,8 @@ var knownTies = map[string][]string{"sql-pdh": {"sql-pdh", "win-counters"}}
 func TestCrossDetectMatrix(t *testing.T) {
 	reg := all.Registry()
 	names := reg.Names()
-	if len(names) < 28 {
-		t.Fatalf("registry holds %d importers, want at least 28", len(names))
+	if len(names) < 31 {
+		t.Fatalf("registry holds %d importers, want at least 31", len(names))
 	}
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
@@ -173,6 +176,29 @@ func TestCrossDetectMatrix(t *testing.T) {
 				t.Errorf("another importer is within %d points: %v", importer.TieWindow, tied)
 			}
 		})
+	}
+}
+
+// The other Linux sample files (local time, epoch, vmstat -a, the files with
+// bad cells) go to the same importer, with no other importer within the tie
+// window, whatever the upload is called.
+func TestLinuxVariantsAreClaimedByTheirImporter(t *testing.T) {
+	reg := all.Registry()
+	for file, want := range map[string]string{
+		"sadf_cpu_mem.txt": "linux-sadf", "sadf_local.txt": "linux-sadf", "sadf_epoch.txt": "linux-sadf", "bad_sadf.txt": "linux-sadf",
+		"pidstat_ur.txt": "linux-pidstat", "bad_pidstat.txt": "linux-pidstat",
+		"vmstat_t.txt": "linux-vmstat", "vmstat_a_local.txt": "linux-vmstat", "bad_vmstat.txt": "linux-vmstat",
+	} {
+		b, err := os.ReadFile(filepath.Join("..", "linuxperf", "testdata", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{file, "sar.csv", "export.log", "data.txt"} {
+			best, score, tied := reg.Detect(b, name)
+			if best == nil || best.Name() != want || tied != nil {
+				t.Errorf("%s as %s: claimed by %v (score %d, tied %v), want %s alone", file, name, best, score, tied, want)
+			}
+		}
 	}
 }
 

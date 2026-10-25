@@ -6,6 +6,7 @@ import (
 	"api-audit-explorer/internal/importer/appinsights"
 	"api-audit-explorer/internal/importer/dotnetcounters"
 	"api-audit-explorer/internal/importer/iis"
+	"api-audit-explorer/internal/importer/linuxperf"
 	"api-audit-explorer/internal/importer/log4net"
 	"api-audit-explorer/internal/importer/mel"
 	"api-audit-explorer/internal/importer/mongodlog"
@@ -51,6 +52,9 @@ func Importers() []importer.Importer {
 		log4net.NewText(),
 		log4net.NewXML(),
 		nlog.NewText(),
+		linuxperf.NewSadf(),
+		linuxperf.NewPidstat(),
+		linuxperf.NewVmstat(),
 		mel.NewConsole(),
 		mel.NewJSON(),
 		mel.NewStdout(),

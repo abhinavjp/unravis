@@ -657,7 +657,8 @@ export const IMPORT_CAPS: Record<string, number> = {
   'mongo-serverstatus': 512 * MiB,
   'mongostat-json': 256 * MiB,
   'linux-sadf': 256 * MiB,
-  'linux-pidstat': 256 * MiB
+  'linux-pidstat': 256 * MiB,
+  'linux-vmstat': 256 * MiB
 };
 /** No importer takes more than this, so a larger file is refused before it is sent. */
 export const LARGEST_CAP = 2 * GiB;

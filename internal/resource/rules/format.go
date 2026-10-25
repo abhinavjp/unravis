@@ -37,6 +37,7 @@ var displayNames = map[string]string{
 	"node-jsonl":         "Node proxy log",
 	"linux-sadf":         "Linux sar samples",
 	"linux-pidstat":      "Linux pidstat samples",
+	"linux-vmstat":       "Linux vmstat samples",
 	"sql-pdh":            "SQL Server performance counters",
 }
 
@@ -59,6 +60,7 @@ var sampleSources = map[string]string{
 	"mongostat-json":     "mongostat",
 	"linux-sadf":         "Linux sar",
 	"linux-pidstat":      "Linux pidstat",
+	"linux-vmstat":       "Linux vmstat",
 	"sql-pdh":            "SQL Server performance counter",
 }
 
