@@ -175,8 +175,8 @@ export const help: Record<string, { plain: string; simple: string }> = {
     simple: 'It is like a list of shops sorted by how busy each one was. Open one to look through its receipts.'
   },
   inspector: {
-    plain: 'Shows the details of one request record, such as its times, status and user.',
-    simple: 'It is like opening one envelope from a stack of mail. You read what the record holds and nothing more.'
+    plain: 'Shows the evidence for one operation: when it ran, which calls were slow, and the records.',
+    simple: 'It is like opening the file for one shop. The tabs show its busy hours, its slowest customers and the receipts.'
   },
   resource: {
     plain: 'What each host measured around the stalls: CPU, memory, queues and logs.',

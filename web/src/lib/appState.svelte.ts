@@ -281,7 +281,8 @@ export function startApp() {
 
   $effect(() => {
     const current = querySignature;
-    if (querySnapshot && querySnapshot !== current) {
+    // A run already started for exactly this query (Investigate and Back write the window, then run at once) is the one to keep.
+    if (querySnapshot && querySnapshot !== current && current !== inflightSignature) {
       analysisSequence++;
       analysisController?.abort();
       analysisController = null;
