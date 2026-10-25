@@ -27,6 +27,7 @@ export const DISCOVER_TEXT = {
   scanCancelled: 'The scan was cancelled.',
   scanFailed: 'The scan could not finish. Try again.',
   scanExpired: 'This scan is over an hour old. Scan again.',
+  caseChanged: 'The case changed, so the import results were cleared.',
 
   nothingFound: 'No logs were found in the usual places. You can still import files by hand.',
   allDenied: 'Most sources need administrator rights. Close Unravis and start it with Run as administrator.',
@@ -258,7 +259,7 @@ export function timeFieldText(field: string, problem: string): string {
 /** "About 1.2 GB will be read." */
 export const estimateText = (bytes: number): string => (bytes <= 0 ? DISCOVER_TEXT.estimateNone : 'About ' + formatBytes(bytes) + ' will be read.');
 
-export const importButtonText = (count: number): string => 'Import ' + count + (count === 1 ? ' source' : ' sources');
+export const importButtonText = (count: number): string => (count <= 0 ? 'Import' : 'Import ' + count + (count === 1 ? ' source' : ' sources'));
 
 export const blockedText = (block: string): string => (has(DISCOVER_TEXT.importBlocked, block) ? DISCOVER_TEXT.importBlocked[block] : '');
 
@@ -267,7 +268,7 @@ const number = (n: number): string => n.toLocaleString('en-US');
 /** The line for one source after its import: what was added, or why not. */
 export function rowOutcomeText(outcome: { kind: string; rows?: number; reason?: string }): string {
   switch (outcome.kind) {
-    case 'added': return 'Added ' + number(outcome.rows ?? 0) + ' rows';
+    case 'added': return 'Added ' + number(outcome.rows ?? 0) + (outcome.rows === 1 ? ' row' : ' rows');
     case 'duplicate': return 'Nothing new to add';
     case 'needs-admin': return 'Needs administrator';
     case 'cancelled': return 'Cancelled';
@@ -298,8 +299,8 @@ export function finishedText(added: number, total: number): string {
   return 'Done. Added ' + added + ' of ' + total + (total === 1 ? ' source.' : ' sources.');
 }
 
-/** "Record CPU and memory every 15 seconds". */
-export const liveToggleLabel = (intervalSec: number): string => 'Record CPU and memory every ' + intervalSec + ' seconds';
+/** "Record CPU and memory every 15 seconds". With no interval (a recording found already running, whose interval the server does not say) it names no number. */
+export const liveToggleLabel = (intervalSec: number | null): string => 'Record CPU and memory' + (intervalSec === null ? '' : ' every ' + intervalSec + ' seconds');
 
 /** "Recording since 08:00, 1,440 samples." `since` is a time already formatted for the screen. */
 export function liveStatusText(since: string, samples: number): string {
@@ -367,6 +368,8 @@ export function discoverCopyEntries(): LintEntry[] {
     { id: 'discover.sample.import.one', text: importButtonText(1) },
     { id: 'discover.sample.import.many', text: importButtonText(3) },
     { id: 'discover.sample.row.added', text: rowOutcomeText({ kind: 'added', rows: 41200 }) },
+    { id: 'discover.sample.row.added.one', text: rowOutcomeText({ kind: 'added', rows: 1 }) },
+    { id: 'discover.sample.import.none', text: importButtonText(0) },
     { id: 'discover.sample.row.duplicate', text: rowOutcomeText({ kind: 'duplicate' }) },
     { id: 'discover.sample.row.admin', text: rowOutcomeText({ kind: 'needs-admin' }) },
     { id: 'discover.sample.row.cancelled', text: rowOutcomeText({ kind: 'cancelled' }) },
@@ -377,6 +380,7 @@ export function discoverCopyEntries(): LintEntry[] {
     { id: 'discover.sample.finished', text: finishedText(3, 4) },
     { id: 'discover.sample.finished.one', text: finishedText(1, 1) },
     { id: 'discover.sample.live.toggle', text: liveToggleLabel(15) },
+    { id: 'discover.sample.live.toggle.bare', text: liveToggleLabel(null) },
     { id: 'discover.sample.live.status', text: liveStatusText('08:00 UTC', 1440) },
     { id: 'discover.sample.live.status.bare', text: liveStatusText('', 1) },
     { id: 'discover.sample.live.stop.cap', text: liveStopText('cap', 17280) },
