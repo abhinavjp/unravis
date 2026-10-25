@@ -4,13 +4,14 @@
   import { listCases } from '../lib/cases';
   import type { CaseInfo } from '../lib/cases';
   import { getMasterKeyStatus } from '../lib/masterKeyApi';
-  import { closesCases } from '../lib/masterKey';
+  import { closesCases, offersRewrap } from '../lib/masterKey';
   import type { LockState } from '../lib/masterKey';
   import { KEY_TEXT } from '../lib/copy/masterKeyCopy';
   import { START_TEXT, openLabel } from '../lib/copy/startCopy';
   import { startView } from '../lib/startScreen';
   import { app, noteKeyStatus, noteLocked } from '../lib/appState.svelte';
   import HelpNote from './HelpNote.svelte';
+  import RewrapNotice from './RewrapNotice.svelte';
 
   // The first screen of a launch: three cards, always shown. Use an existing case, enter an existing case (a slot for the code field), create a new one.
   // It reads the master key status first. A locked key shows no titles and no counts and hands over to the unlock screen; the case list is never asked for.
@@ -27,6 +28,8 @@
   let phase = $state<'checking' | 'loading' | 'ready' | 'failed'>('checking');
   let lock = $state<LockState | null>(app.lockState === 'unknown' ? null : app.lockState);
   let statusFailed = $state(false);
+  // Kept on once the notice has been used, so its answer stays on screen after the count drops to nothing.
+  let rewrapShown = $state(false);
   let cases = $state.raw<CaseInfo[]>([]);
   let pages = $state(1);
   let controller: AbortController | null = null;
@@ -72,6 +75,7 @@
     </header>
 
     {#if statusFailed}<p class="start-note" role="status">{START_TEXT.statusFailed}</p>{/if}
+    {#if offersRewrap(lock, app.dpapiCases) || rewrapShown}<RewrapNotice count={app.dpapiCases} onChange={(left) => { rewrapShown = true; noteKeyStatus({ state: 'unlocked', dpapiCases: left }); }} />{/if}
 
     <div class="cards">
       <section class="card" aria-labelledby="card-existing">

@@ -878,13 +878,13 @@ func TestMasterKeyUnavailableWithoutSession(t *testing.T) {
 	}
 }
 
-func TestStatusRevealsOnlyStateAndCount(t *testing.T) {
+func TestStatusRevealsOnlyStateAndCounts(t *testing.T) {
 	e := newMKEnv(t)
 	e.presetKey(mkPass)
 	res := e.do(http.MethodGet, "/api/master-key/status", "")
 	var m map[string]any
 	decodeBody(t, res, &m)
-	if len(m) != 2 || m["state"] != "locked" || m["dpapiCases"] != float64(0) {
+	if len(m) != 3 || m["state"] != "locked" || m["dpapiCases"] != float64(0) || m["needsRewrap"] != float64(0) {
 		t.Fatalf("status body = %s", res.Body)
 	}
 	if res.Header().Get("Cache-Control") != "no-store" {

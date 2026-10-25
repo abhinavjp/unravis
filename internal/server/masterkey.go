@@ -161,6 +161,53 @@ func (s *MasterKeySession) lock(closeHandles func()) {
 	}
 }
 
+// checkPassphrase is the one place the master passphrase is judged, for unlock
+// and for the export re-authentication alike, so a guesser gets one shared set of
+// attempts whichever route it uses. The caller holds op. It returns the unlocked
+// Keyring on success (the caller installs or Locks it). A non-zero wait means the
+// throttle refused the attempt (not evaluated, not counted). A wrong passphrase,
+// an empty one and one over maxPassphraseBytes all count as masterkey.ErrWrongKey
+// without running Argon2 for the last two. Any other error is not a judgement of
+// the passphrase and is not counted.
+func (s *MasterKeySession) checkPassphrase(pass []byte) (*masterkey.Keyring, time.Duration, error) {
+	if wait := s.unlockTh.wait(); wait > 0 {
+		return nil, wait, nil
+	}
+	if len(pass) == 0 || len(pass) > maxPassphraseBytes {
+		s.unlockTh.fail()
+		return nil, 0, masterkey.ErrWrongKey
+	}
+	// Unlock zeroes the slice it is given; hand it its own copy.
+	cp := bytes.Clone(pass)
+	ring, err := masterkey.Unlock(s.dir, cp)
+	clear(cp)
+	if errors.Is(err, masterkey.ErrWrongKey) {
+		s.unlockTh.fail()
+		return nil, 0, err
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	s.unlockTh.reset()
+	return ring, 0, nil
+}
+
+// VerifyPassphrase checks pass against the master key file under the operation
+// lock and the shared unlock throttle, and drops the derived key at once. It is
+// for re-authentication of a sensitive action while the session is unlocked.
+func (s *MasterKeySession) VerifyPassphrase(pass []byte) (time.Duration, error) {
+	s.op.Lock()
+	defer s.op.Unlock()
+	ring, wait, err := s.checkPassphrase(pass)
+	if ring != nil {
+		ring.Lock()
+	}
+	return wait, err
+}
+
+// throttleWait is how long the shared passphrase throttle still refuses attempts.
+func (s *MasterKeySession) throttleWait() time.Duration { return s.unlockTh.wait() }
+
 /* ------------------------------------------------------------- throttle */
 
 // throttle counts failures. After throttleAfter of them it refuses attempts
@@ -252,9 +299,20 @@ func (h *handler) masterKeyState() string {
 /* ----------------------------------------------------------------- DTOs */
 
 type masterKeyStatus struct {
-	State      string `json:"state"`
-	DPAPICases int    `json:"dpapiCases"`
+	State string `json:"state"`
+	// DPAPICases counts cases whose key file is still sealed by Windows (including
+	// any left half re-wrapped). Re-wrapping them is the "Protect older cases" action.
+	DPAPICases int `json:"dpapiCases"`
+	// NeedsRewrap counts the cases among those that a cut re-wrap left half done:
+	// the manifest is under the master key, the key file is not. Opening one
+	// repairs it by itself while the key is unlocked; when that cannot happen the
+	// case routes answer 409 reason "needs-rewrap", and the client offers the same
+	// "Protect older cases" action (POST /api/master-key/rewrap, {"all":true}),
+	// which finishes it. Always 0 while locked.
+	NeedsRewrap int `json:"needsRewrap"`
 }
+
+const needsRewrapText = "This case was only partly protected with the master key. Protect older cases to finish it."
 
 type masterKeyFailure struct {
 	Error             string `json:"error"`
@@ -489,32 +547,37 @@ type rewrapStore interface {
 	Rewrap(ctx context.Context, id casestore.CaseID) error
 }
 
-// dpapiCaseCount counts the cases that could still be re-wrapped. It is 0
-// while locked and when the store cannot report kinds.
-func (h *handler) dpapiCaseCount(ctx context.Context) int {
+// dpapiCaseCount counts the cases that could still be re-wrapped, and how many
+// of those a cut re-wrap left half done. Both are 0 while locked and when the
+// store cannot report kinds.
+func (h *handler) dpapiCaseCount(ctx context.Context) (dpapi, half int) {
 	if st := h.masterKeyState(); st == MasterKeyLocked || st == MasterKeyDamaged || h.cases == nil {
-		return 0
+		return 0, 0
 	}
 	rs, ok := h.cases.(rewrapStore)
 	if !ok {
-		return 0
+		return 0, 0
 	}
 	list, err := h.cases.List(ctx)
 	if err != nil {
-		return 0
+		return 0, 0
 	}
-	n := 0
+	partial, _ := h.cases.(interface{ NeedsRewrap(casestore.CaseID) bool })
 	for _, info := range list {
 		if kind, err := rs.CaseKind(info.ID); err == nil && kind == casestore.KindDPAPI {
-			n++
+			dpapi++
+			if partial != nil && partial.NeedsRewrap(info.ID) {
+				half++
+			}
 		}
 	}
-	return n
+	return dpapi, half
 }
 
 func (h *handler) masterKeyReply(w http.ResponseWriter, r *http.Request) {
 	st := h.masterKeyState()
-	writeJSON(w, http.StatusOK, masterKeyStatus{State: st, DPAPICases: h.dpapiCaseCount(r.Context())}, 4096)
+	n, half := h.dpapiCaseCount(r.Context())
+	writeJSON(w, http.StatusOK, masterKeyStatus{State: st, DPAPICases: n, NeedsRewrap: half}, 4096)
 }
 
 func (h *handler) masterKeySetup(w http.ResponseWriter, r *http.Request) {
@@ -631,24 +694,14 @@ func (h *handler) masterKeyUnlock(w http.ResponseWriter, r *http.Request) {
 		h.masterKeyFail(w, http.StatusConflict, "key-file-damaged", keyFileDamagedText)
 		return
 	}
-	if wait := s.unlockTh.wait(); wait > 0 {
+	ring, wait, err := s.checkPassphrase(b.passphrase)
+	if wait > 0 {
 		h.masterKeyThrottled(w, wait)
 		return
 	}
-	wrong := func() {
-		s.unlockTh.fail()
-		h.masterKeyFail(w, http.StatusUnauthorized, "wrong-key", "The passphrase is wrong.")
-	}
-	if len(b.passphrase) == 0 || len(b.passphrase) > maxPassphraseBytes {
-		wrong()
-		return
-	}
-	forUnlock := bytes.Clone(b.passphrase)
-	ring, err := masterkey.Unlock(s.dir, forUnlock)
-	clear(forUnlock)
 	switch {
 	case errors.Is(err, masterkey.ErrWrongKey):
-		wrong()
+		h.masterKeyFail(w, http.StatusUnauthorized, "wrong-key", "The passphrase is wrong.")
 		return
 	case errors.Is(err, masterkey.ErrNotSet):
 		h.masterKeyFail(w, http.StatusConflict, "not-set", "No master key is set.")
@@ -660,7 +713,6 @@ func (h *handler) masterKeyUnlock(w http.ResponseWriter, r *http.Request) {
 		h.masterKeyFail(w, http.StatusInternalServerError, "unlock-failed", "The master key could not be unlocked.")
 		return
 	}
-	s.unlockTh.reset()
 	s.install(ring)
 	h.masterKeyReply(w, r)
 }
@@ -840,9 +892,18 @@ func (h *handler) masterKeyResetDamaged(w http.ResponseWriter, r *http.Request) 
 	}
 	from := masterkey.Path(s.dir)
 	keptAs := masterkey.FileName + ".damaged-" + time.Now().UTC().Format("20060102T150405.000000000Z")
+	// Judge the file again immediately before moving it: a good key file put back
+	// by hand since the check above must never be renamed away. (A rename by path
+	// cannot be made atomic with the check; this narrows the window to the two
+	// calls.)
+	if masterkey.Inspect(s.dir) != masterkey.FileDamaged {
+		h.masterKeyFail(w, http.StatusConflict, "not-damaged", "The master key file is not damaged.")
+		return
+	}
 	if err := os.Rename(from, filepath.Join(s.dir, keptAs)); err != nil {
 		h.masterKeyFail(w, http.StatusInternalServerError, "reset-failed", "The damaged master key file could not be moved aside.")
 		return
 	}
-	writeJSON(w, http.StatusOK, resetDamagedReply{State: s.State(), DPAPICases: h.dpapiCaseCount(r.Context()), KeptAs: keptAs}, 4096)
+	n, _ := h.dpapiCaseCount(r.Context())
+	writeJSON(w, http.StatusOK, resetDamagedReply{State: s.State(), DPAPICases: n, KeptAs: keptAs}, 4096)
 }

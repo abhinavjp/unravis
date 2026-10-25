@@ -50,8 +50,7 @@ var caseFileParams masterkey.Params
 // caseFileState is the per-handler state of the case-file routes.
 type caseFileState struct {
 	busy       atomic.Bool // one export or restore at a time: each streams a whole database
-	exportTh   throttle
-	restoreTh  throttle
+	restoreTh  throttle    // restore judges a case file's own passphrase: a different target than the master key
 	exportOnce sync.Once
 }
 
@@ -246,7 +245,7 @@ func (h *handler) exportCaseFile(w http.ResponseWriter, r *http.Request, raw str
 		return
 	}
 	st := h.caseFiles()
-	if wait := st.exportTh.wait(); wait > 0 {
+	if wait := h.mk.throttleWait(); wait > 0 {
 		h.masterKeyThrottled(w, wait)
 		return
 	}
@@ -269,25 +268,20 @@ func (h *handler) exportCaseFile(w http.ResponseWriter, r *http.Request, raw str
 
 	// The typed passphrase must be this PC's master key passphrase: a file sealed
 	// with anything else could never be restored by the key the user holds.
-	if len(b.pass) == 0 || len(b.pass) > maxPassphraseBytes {
-		st.exportTh.fail()
-		writeCaseFailure(w, http.StatusUnauthorized, "wrong-key", "The passphrase is wrong.")
-		return
-	}
-	check := append([]byte(nil), b.pass...)
-	ring, err := masterkey.Unlock(h.mk.dir, check)
-	clear(check)
+	// The check goes through the session's one passphrase throttle (shared with
+	// unlock), under its operation lock.
+	wait, err := h.mk.VerifyPassphrase(b.pass)
 	switch {
+	case wait > 0:
+		h.masterKeyThrottled(w, wait)
+		return
 	case errors.Is(err, masterkey.ErrWrongKey):
-		st.exportTh.fail()
 		writeCaseFailure(w, http.StatusUnauthorized, "wrong-key", "The passphrase is wrong.")
 		return
 	case err != nil:
 		writeCaseFailure(w, http.StatusInternalServerError, "export-failed", caseFileExportFailed)
 		return
 	}
-	ring.Lock()
-	st.exportTh.reset()
 
 	target, ok := h.exportTarget(w, clean, root, id)
 	if !ok {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { go, noteKeyStatus } from '../lib/appState.svelte';
-  import { canSubmitSetup, setupFailureOf, strengthHint } from '../lib/masterKey';
+  import { canSubmitSetup, keysMatch, setupFailureOf, strengthHint } from '../lib/masterKey';
   import { rewrapCounts, rewrapCases, setupMasterKey } from '../lib/masterKeyApi';
   import { KEY_TEXT, rewrapAction, rewrapDone, rewrapOffer, setupErrorText } from '../lib/copy/masterKeyCopy';
   import HelpNote from './HelpNote.svelte';
@@ -22,7 +22,7 @@
 
   const ready = $derived(canSubmitSetup(pass, confirm, ack));
   const hint = $derived(strengthHint(pass));
-  const mismatch = $derived(confirm.length > 0 && pass !== confirm);
+  const mismatch = $derived(confirm.length > 0 && !keysMatch(pass, confirm));
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();

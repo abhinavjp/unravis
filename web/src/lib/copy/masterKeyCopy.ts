@@ -32,6 +32,8 @@ export const KEY_TEXT = {
   doneText: 'Your cases are locked with it. You will type it each time Unravis starts.',
   rewrapping: 'Protecting your cases…',
   rewrapNone: 'Nothing was changed.',
+  rewrapLabel: 'Older cases',
+  rewrapFailed: 'Your cases could not be protected just now. Try again.',
   continue: 'Continue',
   retry: 'Try again',
 
@@ -109,6 +111,11 @@ export function strengthText(length: number, kinds: number, minimum: number): st
 /** The line under the key field when it has 12 characters but too few of them show anything (spaces, invisible marks). */
 export function blankHint(minimum: number): string {
   return 'Use at least ' + minimum + ' characters that are not spaces or invisible marks.';
+}
+
+/** A gentle note when the key starts or ends with a space. The key is kept as typed; the space counts. */
+export function edgeSpaceNote(): string {
+  return 'The key starts or ends with a space. The space counts as part of the key, so you will need to type it again each time.';
 }
 
 export type SetupFailureKind = 'too-short' | 'too-long' | 'blank' | 'invalid-characters' | 'mismatch' | 'acknowledgement-required' | 'already-set' | 'damaged' | 'throttled' | 'incomplete' | 'network' | 'other';
@@ -201,6 +208,7 @@ export function masterKeyLintEntries(): LintEntry[] {
     ...Object.entries(DAMAGED_TEXT).map(([id, text]) => ({ id: 'masterkey.damaged.' + id, text })),
     ...RESET_KINDS.map((kind) => ({ id: 'masterkey.sample.reset.' + kind, text: resetErrorText(kind) })),
     { id: 'masterkey.sample.blankHint', text: blankHint(8) },
+    { id: 'masterkey.sample.edgeSpace', text: edgeSpaceNote() },
     { id: 'masterkey.sample.rewrapOne', text: rewrapOffer(1) },
     { id: 'masterkey.sample.rewrapMany', text: rewrapOffer(5) },
     { id: 'masterkey.sample.rewrapActionOne', text: rewrapAction(1) },

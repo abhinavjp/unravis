@@ -18,7 +18,8 @@ const IGNORED = /[\s\-‐-―−\p{Cf}]/gu;
 /** The code with spaces, dashes and case removed, or null when it is not a 26-character case code. */
 export function normaliseCode(input: string): string | null {
   if (typeof input !== 'string' || input.length > MAX_TYPED) return null;
-  const code = input.replace(IGNORED, '').toLowerCase();
+  // Full-width and other look-alike letters and digits are folded to plain ones first (NFKC); the code alphabet is plain ASCII, so a wrong code cannot start to match.
+  const code = input.normalize('NFKC').replace(IGNORED, '').toLowerCase();
   return CODE_PATTERN.test(code) ? code : null;
 }
 

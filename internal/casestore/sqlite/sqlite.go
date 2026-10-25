@@ -597,6 +597,7 @@ func (s *Store) load(ctx context.Context, id casestore.CaseID) (*caseState, erro
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return nil, casestore.ErrNotFound
 	}
+	s.healHalfRewrap(id, dir)
 	keys, man, err := s.readCaseFiles(dir, id)
 	if err != nil {
 		return nil, err
@@ -648,6 +649,10 @@ func (s *Store) readCaseFiles(dir string, id casestore.CaseID) (casestore.Keys, 
 	// (a re-wrap that was cut short), never silently repaired here.
 	if mk, mkErr := casestore.FileKind(filepath.Join(dir, manifestName)); mkErr == nil && mk != kind {
 		keys.Zero()
+		if mk == casestore.KindMasterKey && kind == casestore.KindDPAPI {
+			// The one shape a cut re-wrap leaves behind; Store.Rewrap finishes it.
+			return casestore.Keys{}, manifest{}, casestore.ErrNeedsRewrap
+		}
 		return casestore.Keys{}, manifest{}, casestore.ErrKeyFile
 	}
 	man, err := readManifest(dir, s.sealer(dir, kind))
@@ -784,6 +789,51 @@ func (s *Store) Rewrap(ctx context.Context, id casestore.CaseID) error {
 	}
 	h := s.open[id]
 	s.mu.Unlock()
+	return s.rewrapDir(id, dir, to, h)
+}
+
+// NeedsRewrap reports whether the case is in the half re-wrapped shape: the
+// manifest is already sealed with the master key and case.key still with
+// Windows (a re-wrap cut short). Store.Rewrap finishes it, and Open does so by
+// itself while the master key is unlocked. It reads headers only.
+func (s *Store) NeedsRewrap(id casestore.CaseID) bool {
+	dir, err := s.caseDir(id)
+	if err != nil || erasePending(dir) {
+		return false
+	}
+	return halfRewrapped(dir)
+}
+
+func halfRewrapped(dir string) bool {
+	mk, err1 := casestore.FileKind(filepath.Join(dir, manifestName))
+	kk, err2 := casestore.FileKind(filepath.Join(dir, keyName))
+	return err1 == nil && err2 == nil && mk == casestore.KindMasterKey && kk == casestore.KindDPAPI
+}
+
+// healHalfRewrap finishes a re-wrap that was cut after the manifest replace, so
+// the case opens instead of being refused as damaged. It runs under Store.mu
+// (from Open, h is nil there) and does nothing unless the case has exactly that
+// shape, the master key is unlocked and Windows sealing is available. Failure is
+// not reported here: readCaseFiles then answers casestore.ErrNeedsRewrap and the
+// person can retry from the status screen.
+func (s *Store) healHalfRewrap(id casestore.CaseID, dir string) {
+	if s.opt.Protector == nil || !halfRewrapped(dir) || s.isLocked(casestore.KindMasterKey) {
+		return
+	}
+	to, err := s.lookup(casestore.KindMasterKey)
+	if err != nil || to == nil {
+		return
+	}
+	if err := s.rewrapDir(id, dir, to, nil); err != nil {
+		s.logf("case %s re-wrap could not be finished", id)
+		return
+	}
+	s.logf("case %s re-wrap finished on open", id)
+}
+
+// rewrapDir is the Rewrap work for one case folder. h is the open handle of the
+// case in this Store, or nil.
+func (s *Store) rewrapDir(id casestore.CaseID, dir string, to sealedfile.Protector, h *caseState) error {
 	// Lock order everywhere is folder lock, then the case's mu (as CloseCase does).
 	// Holding the case mu keeps this Store's own manifest writers out meanwhile.
 	opt := casestore.RewrapOptions{Step: s.opt.rewrapStep, Enter: func() (func(), error) {
@@ -796,7 +846,7 @@ func (s *Store) Rewrap(ctx context.Context, id casestore.CaseID) error {
 		h.mu.Lock()
 		return h.mu.Unlock, nil
 	}}
-	err = casestore.Rewrap(dir,
+	err := casestore.Rewrap(dir,
 		casestore.Sealing{Kind: casestore.KindDPAPI, P: s.opt.Protector},
 		casestore.Sealing{Kind: casestore.KindMasterKey, P: to}, opt)
 	if err != nil {
@@ -940,6 +990,7 @@ func eraseFiles(dir string) error {
 // erase that was started but not completed, and returns their IDs. One failure
 // does not stop the others.
 func (s *Store) Sweep(ctx context.Context, now time.Time) ([]casestore.CaseID, error) {
+	s.sweepRestoreStaging(now)
 	infos, err := s.List(ctx)
 	if err != nil {
 		return nil, err
@@ -959,6 +1010,54 @@ func (s *Store) Sweep(ctx context.Context, now time.Time) ([]casestore.CaseID, e
 	}
 	sort.Slice(erased, func(i, j int) bool { return erased[i] < erased[j] })
 	return erased, errors.Join(errs...)
+}
+
+// restoreStagingMaxAge is how old a restore-<hex>.part staging file must be
+// before Sweep removes it. A restore writes the file continuously, so one being
+// written keeps a fresh modification time; an hour with no write is a crash.
+const restoreStagingMaxAge = time.Hour
+
+// sweepRestoreStaging removes restore-<16 hex>.part files that casestore's restore
+// left in the cases folder (the staged database of a restore that was cut off).
+// Only plain files of exactly that name shape and older than
+// restoreStagingMaxAge go; a file that is in use (or cannot be removed) stays and
+// is retried by the next Sweep. Nothing is reported: this is housekeeping.
+func (s *Store) sweepRestoreStaging(now time.Time) {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !isRestoreStaging(name) {
+			continue
+		}
+		fi, err := os.Lstat(filepath.Join(s.root, name))
+		if err != nil || !fi.Mode().IsRegular() || now.Sub(fi.ModTime()) <= restoreStagingMaxAge {
+			continue
+		}
+		if os.Remove(filepath.Join(s.root, name)) == nil {
+			s.logf("removed a leftover restore staging file")
+		}
+	}
+}
+
+// isRestoreStaging matches "restore-" + 16 lower-case hex digits + ".part".
+func isRestoreStaging(name string) bool {
+	hexPart, ok := strings.CutPrefix(name, "restore-")
+	if !ok {
+		return false
+	}
+	hexPart, ok = strings.CutSuffix(hexPart, ".part")
+	if !ok || len(hexPart) != 16 {
+		return false
+	}
+	for _, c := range hexPart {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // dirBytes sums the regular files directly inside dir (database, WAL, SHM, key,

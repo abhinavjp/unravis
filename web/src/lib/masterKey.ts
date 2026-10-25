@@ -1,4 +1,4 @@
-import { UNLOCK_MESSAGE, blankHint, strengthText, unlockMessage as unlockText } from './copy/masterKeyCopy';
+import { UNLOCK_MESSAGE, blankHint, edgeSpaceNote, strengthText, unlockMessage as unlockText } from './copy/masterKeyCopy';
 import type { ResetFailureKind, SetupFailureKind, UnlockFailure } from './copy/masterKeyCopy';
 
 /**
@@ -57,6 +57,12 @@ export function visibleCount(text: string): number {
   return seen;
 }
 
+/** Whether the two entries are the same key. They are compared composed (NFC), as the server does, so a letter typed as two code points matches the one-piece letter. */
+export const keysMatch = (pass: string, confirm: string): boolean => composed(pass) === composed(confirm);
+
+/** True when the key starts or ends with a space (or another blank). The key is kept exactly as typed; this only lets the screen say so. */
+export const hasEdgeSpace = (pass: string): boolean => pass.length > 0 && (BLANK.test([...pass][0]) || BLANK.test([...pass].at(-1) as string));
+
 export type SetupProblem = 'invalid-characters' | 'too-short' | 'blank' | 'too-long' | 'mismatch' | 'acknowledgement-required';
 
 /** The first thing that keeps the set-up button off, or null when the key can be sent. Order: length, size, match, tick. */
@@ -65,7 +71,7 @@ export function setupProblem(pass: string, confirm: string, acknowledged: boolea
   if (charCount(composed(pass)) < MIN_PASSPHRASE_CHARS) return 'too-short';
   if (visibleCount(pass) < MIN_VISIBLE_CHARS) return 'blank';
   if (byteCount(composed(pass)) > MAX_PASSPHRASE_BYTES) return 'too-long';
-  if (pass !== confirm) return 'mismatch';
+  if (!keysMatch(pass, confirm)) return 'mismatch';
   if (!acknowledged) return 'acknowledgement-required';
   return null;
 }
@@ -89,7 +95,8 @@ export function characterKinds(pass: string): number {
 export function strengthHint(pass: string): string {
   const length = charCount(composed(pass));
   if (length >= MIN_PASSPHRASE_CHARS && visibleCount(pass) < MIN_VISIBLE_CHARS) return blankHint(MIN_VISIBLE_CHARS);
-  return strengthText(length, characterKinds(pass), MIN_PASSPHRASE_CHARS);
+  const line = strengthText(length, characterKinds(pass), MIN_PASSPHRASE_CHARS);
+  return hasEdgeSpace(pass) ? line + ' ' + edgeSpaceNote() : line;
 }
 
 /** The message under the unlock field. "Not the master key" only for a refused key; other failures say what happened. */
@@ -149,6 +156,9 @@ export function resetFailureOf(error: unknown): { kind: ResetFailureKind } {
     default: return { kind: 'other' };
   }
 }
+
+/** Whether Home offers to protect older cases: only while the key is open and some cases are still protected the older way. */
+export const offersRewrap = (state: LockState | 'unknown' | null, dpapiCases: number): boolean => state === 'unlocked' && Number.isFinite(dpapiCases) && dpapiCases > 0;
 
 /** Whether the start screen offers the set-up link: only while no key exists. */
 export const offersSetup = (state: LockState | 'unknown'): boolean => state === 'none';

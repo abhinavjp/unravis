@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"unicode"
@@ -152,6 +153,10 @@ func Inspect(dir string) FileState {
 // or FileDamaged without an error; a non-nil error is an I/O failure that proves
 // nothing either way.
 func readDoc(dir string) (doc fileDoc, salt, ver []byte, st FileState, err error) {
+	// Look at the name first (Lstat does not follow a link or reparse point), open
+	// it once, then require that the open handle is the very file Lstat described.
+	// A swap between the two calls is caught by SameFile, and the read goes through
+	// the handle with a hard cap, so no size check by path can be outrun.
 	fi, err := os.Lstat(Path(dir))
 	if errors.Is(err, os.ErrNotExist) {
 		return doc, nil, nil, FileAbsent, nil
@@ -162,12 +167,27 @@ func readDoc(dir string) (doc fileDoc, salt, ver []byte, st FileState, err error
 	if !fi.Mode().IsRegular() || fi.Size() == 0 || fi.Size() > fileMax {
 		return doc, nil, nil, FileDamaged, nil
 	}
-	raw, err := os.ReadFile(Path(dir))
+	f, err := os.Open(Path(dir))
 	if errors.Is(err, os.ErrNotExist) {
 		return doc, nil, nil, FileAbsent, nil
 	}
 	if err != nil {
 		return doc, nil, nil, FileUsable, err
+	}
+	defer f.Close()
+	hi, err := f.Stat()
+	if err != nil {
+		return doc, nil, nil, FileUsable, err
+	}
+	if !hi.Mode().IsRegular() || !os.SameFile(fi, hi) {
+		return doc, nil, nil, FileDamaged, nil
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, fileMax+1))
+	if err != nil {
+		return doc, nil, nil, FileUsable, err
+	}
+	if len(raw) == 0 || len(raw) > fileMax {
+		return doc, nil, nil, FileDamaged, nil
 	}
 	if json.Unmarshal(raw, &doc) != nil || doc.V != fileVersion || doc.KDF != "argon2id" {
 		return doc, nil, nil, FileDamaged, nil

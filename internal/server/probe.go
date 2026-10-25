@@ -168,8 +168,58 @@ func probeBlockedAddr(a netip.Addr) bool {
 		if a == netip.AddrFrom4([4]byte{100, 100, 100, 200}) { // Alibaba Cloud metadata
 			return true
 		}
+		if a == netip.AddrFrom4([4]byte{168, 63, 129, 16}) { // Azure WireServer
+			return true
+		}
+		return false
 	}
-	return a == netip.MustParseAddr("fd00:ec2::254") // AWS IPv6 metadata
+	if a == netip.MustParseAddr("fd00:ec2::254") { // AWS IPv6 metadata
+		return true
+	}
+	// An IPv6 address that carries an IPv4 one (NAT64, 6to4) reaches that IPv4
+	// host through a translator, so the embedded address is judged like a plain one.
+	for _, v4 := range embeddedIPv4(a) {
+		if probeBlockedAddr(v4) {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	nat64WellKnown = netip.MustParsePrefix("64:ff9b::/96")
+	nat64LocalUse  = netip.MustParsePrefix("64:ff9b:1::/48")
+	sixToFour      = netip.MustParsePrefix("2002::/16")
+)
+
+// embeddedIPv4 returns the IPv4 addresses a with a translator prefix could stand
+// for: the last 32 bits for 64:ff9b::/96, bits 16..47 for 6to4 (2002::/16) and,
+// for the local-use NAT64 block 64:ff9b:1::/48 whose operator picks any RFC 6052
+// prefix length, every RFC 6052 position (prefix lengths 32, 40, 48, 56, 64, 96).
+func embeddedIPv4(a netip.Addr) []netip.Addr {
+	if !a.Is6() {
+		return nil
+	}
+	b := a.As16()
+	at := func(idx ...int) netip.Addr {
+		return netip.AddrFrom4([4]byte{b[idx[0]], b[idx[1]], b[idx[2]], b[idx[3]]})
+	}
+	switch {
+	case nat64WellKnown.Contains(a):
+		return []netip.Addr{at(12, 13, 14, 15)}
+	case sixToFour.Contains(a):
+		return []netip.Addr{at(2, 3, 4, 5)}
+	case nat64LocalUse.Contains(a):
+		return []netip.Addr{
+			at(4, 5, 6, 7),     // /32
+			at(5, 6, 7, 9),     // /40
+			at(6, 7, 9, 10),    // /48
+			at(7, 9, 10, 11),   // /56
+			at(9, 10, 11, 12),  // /64
+			at(12, 13, 14, 15), // /96
+		}
+	}
+	return nil
 }
 
 // normalizeProbeHost validates a typed host. It accepts a hostname or an IP

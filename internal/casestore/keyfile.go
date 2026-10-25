@@ -178,6 +178,13 @@ const keyFileMax = 4 << 10
 // carries key bytes.
 var ErrKeyFile = errors.New("case key file is unreadable")
 
+// ErrNeedsRewrap means a re-wrap was cut short after the manifest was replaced
+// and before the key file was: the manifest is sealed with the master key, the
+// key file is still sealed by Windows. Nothing is lost; Store.Rewrap finishes it.
+// It wraps ErrKeyFile, so a caller that does not know it still sees a key-file
+// failure.
+var ErrNeedsRewrap = fmt.Errorf("case was only partly re-wrapped: %w", ErrKeyFile)
+
 // Keys are the two per-case secrets, kept in one blob so a single deletion
 // destroys both (storage decision, "Pseudonym key").
 type Keys struct {
