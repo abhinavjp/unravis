@@ -92,6 +92,14 @@
     "text": "They show CPU, memory, disk and network use on this host, minute by minute."
   },
   {
+    "key": "discover.quartz.how",
+    "text": "Quartz writes to the app's own log. Find that log file, then import it as a Quartz.NET scheduler log."
+  },
+  {
+    "key": "discover.quartz.shows",
+    "text": "It lists scheduled jobs and triggers as they fired, with times."
+  },
+  {
     "key": "discover.redis.shows",
     "text": "It lists Redis server messages, such as restarts and saves, with times."
   },

@@ -151,6 +151,7 @@ const SHOWS: Record<string, string> = {
 const HOW: Record<string, string> = {
   appinsights: 'Run your App Insights query in the Azure portal, then export the result as CSV.',
   hangfire: 'Run the job history query on the Hangfire database, then export the result as CSV or JSON.',
+  quartz: "Quartz writes to the app's own log. Find that log file, then import it as a Quartz.NET scheduler log.",
   'sql-xe': 'Open the system_health session in SQL Server Management Studio. Export its events to CSV.',
   'sql-agent': 'Run the job history query in SQL Server Management Studio. Export the result as CSV.',
   sql: 'In SQL Server Management Studio, export the events to CSV.',

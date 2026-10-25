@@ -125,6 +125,7 @@ type appRun struct {
 
 	appInsights bool
 	hangfire    bool
+	quartz      bool
 
 	findings []Finding
 	gaps     []Gap
@@ -203,15 +204,22 @@ func (r *appRun) scanSite(ctx context.Context, dir string) {
 			r.appInsights = true
 		case isHangfireDLL(lower):
 			r.hangfire = true
+		case isQuartzDLL(lower):
+			r.quartz = true
 		}
 	}
 	// Hangfire ships as a package dll in bin. Only names are read.
-	if bin := WinJoin(dir, "bin"); !r.hangfire {
+	if bin := WinJoin(dir, "bin"); !r.hangfire || !r.quartz {
 		if be, berr := r.list(bin); berr == nil || errors.Is(berr, ErrTooManyEntries) {
 			for _, e := range be {
-				if !e.IsDir && isHangfireDLL(strings.ToLower(e.Name)) {
+				if e.IsDir {
+					continue
+				}
+				lower := strings.ToLower(e.Name)
+				if isHangfireDLL(lower) {
 					r.hangfire = true
-					break
+				} else if isQuartzDLL(lower) {
+					r.quartz = true
 				}
 			}
 		} else if IsAccessDenied(berr) {
@@ -232,6 +240,12 @@ func (r *appRun) scanSite(ctx context.Context, dir string) {
 
 func isHangfireDLL(lower string) bool {
 	return strings.HasPrefix(lower, "hangfire.") && strings.HasSuffix(lower, ".dll")
+}
+
+// isQuartzDLL matches Quartz.dll and its companion packages, such as
+// Quartz.Extensions.Hosting.dll. Only the name is read.
+func isQuartzDLL(lower string) bool {
+	return strings.HasPrefix(lower, "quartz.") && strings.HasSuffix(lower, ".dll")
 }
 
 // readConfig loads one config file, up to MaxConfigBytes.
@@ -908,6 +922,14 @@ func (r *appRun) emitPresence() {
 			Shows: wordHangfireShows, How: wordHangfireHow, Cost: CostSmall,
 		}
 		f.SetSites(nil, "Hangfire job history")
+		r.findings = append(r.findings, f)
+	}
+	if r.quartz {
+		f := Finding{
+			Detector: r.name, Kind: KindExportNeeded, HostLabel: r.host, Confidence: 40,
+			Shows: wordQuartzShows, How: wordQuartzHow, Cost: CostSmall,
+		}
+		f.SetSites(nil, "Quartz.NET scheduler log")
 		r.findings = append(r.findings, f)
 	}
 }

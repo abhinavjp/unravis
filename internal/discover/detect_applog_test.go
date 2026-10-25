@@ -719,3 +719,17 @@ func TestNoDirectoryWalkBeyondSiteAndLogFolders(t *testing.T) {
 		t.Fatalf("head called %d times", n)
 	}
 }
+
+func TestQuartzPresenceFinding(t *testing.T) {
+	e := fake.New()
+	put(e, site+`\bin\Quartz.dll`, "MZ", 0)
+	put(e, site+`\bin\Quartz.Extensions.Hosting.dll`, "MZ", 0)
+	fs, gs := detect(t, e)
+	if len(fs) != 1 || len(gs) != 0 {
+		t.Fatalf("findings=%v gaps=%v", fs, gs)
+	}
+	f := fs[0]
+	if f.Kind != discover.KindExportNeeded || f.How != "discover.quartz.how" || f.Shows != "discover.quartz.shows" || len(f.Paths()) != 0 {
+		t.Fatalf("quartz finding: %+v", f)
+	}
+}

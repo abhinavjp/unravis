@@ -12,4 +12,6 @@ const (
 	wordAppInsightsHow   = "discover.appinsights.how"
 	wordHangfireShows    = "discover.hangfire.shows"
 	wordHangfireHow      = "discover.hangfire.how"
+	wordQuartzShows      = "discover.quartz.shows"
+	wordQuartzHow        = "discover.quartz.how"
 )
