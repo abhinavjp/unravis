@@ -248,12 +248,12 @@
 
 <style>
   .tools { display: grid; gap: var(--space-2); min-width: 0; padding-top: var(--space-4); border-top: 1px solid var(--hairline); }
-  h3 { margin: 0; font-size: var(--fs-4); font-weight: 600; }
-  h4 { margin: var(--space-2) 0 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
+  h3 { margin: 0; font-size: var(--fs-4); font-weight: 600; letter-spacing: -.01em; }
+  h4 { margin: var(--space-2) 0 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
   .note { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; }
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .line { margin: 0; font-size: var(--fs-3); font-weight: 600; font-variant-numeric: tabular-nums; }
-  .empty, .done { margin: 0; padding: 8px 10px; font-size: var(--fs-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); overflow-wrap: anywhere; }
+  .empty, .done { margin: 0; padding: 8px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; font-size: var(--fs-3); overflow-wrap: anywhere; }
   .plain { display: grid; gap: 4px; margin: 0; padding: 0 0 0 18px; font-size: var(--fs-3); line-height: 1.5; }
   .hash { margin: 0; font-size: var(--fs-2); color: var(--text-2); overflow-wrap: anywhere; }
   .hash code { font-family: var(--mono); user-select: all; }
@@ -261,17 +261,17 @@
   details.collect { display: grid; gap: var(--space-2); min-width: 0; }
   details.collect > summary { color: var(--text); font-size: var(--fs-4); font-weight: 600; cursor: pointer; }
   details.collect > summary:focus-visible { outline: 2px solid var(--focus, currentColor); outline-offset: 2px; border-radius: var(--radius); }
-  .collect-list { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
-  .collect-list li { display: grid; gap: 4px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--surface-2); }
-  .collect-list h4 { margin: 0; color: var(--text); font-size: var(--fs-3); font-weight: 650; overflow-wrap: anywhere; }
+  .collect-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+  .collect-list li { display: grid; gap: 4px; min-width: 0; padding: 10px 0; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; background: transparent; }
+  .collect-list h4 { margin: 0; color: var(--text); font-size: var(--fs-3); font-weight: 600; overflow-wrap: anywhere; }
   .collect-list .host { margin: 0; color: var(--text-2); font-size: var(--fs-2); overflow-wrap: anywhere; }
   .collect-list dl { display: grid; gap: 2px; margin: 0; min-width: 0; }
-  .collect-list dt { margin-top: 4px; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
+  .collect-list dt { margin-top: 4px; color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
   .collect-list dd { margin: 0; font-size: var(--fs-3); line-height: 1.5; overflow-wrap: anywhere; }
-  pre { max-height: 320px; margin: 6px 0 0; padding: 8px 10px; overflow: auto; font-family: var(--mono); font-size: 11px; line-height: 1.45; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); white-space: pre-wrap; overflow-wrap: anywhere; }
+  pre { max-height: 320px; margin: 6px 0 0; padding: 8px 10px; overflow: auto; font-family: var(--mono); font-size: 11px; line-height: 1.45; background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: var(--fs-2); }
   th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--line-soft); vertical-align: top; overflow-wrap: anywhere; }
-  th { color: var(--text-2); font-weight: 650; }
+  th { color: var(--text-2); font-weight: 500; border-bottom-color: var(--line); }
   .num { text-align: right; font-variant-numeric: tabular-nums; }
 </style>

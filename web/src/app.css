@@ -650,57 +650,60 @@ th.numeric { text-align: right; }
 
 /* ---------- Connections drawer ---------- */
 .drawer-scrim { position: fixed; z-index: 40; inset: 0; width: 100%; height: 100%; border: 0; background: var(--scrim); cursor: default; }
-.connections-drawer { position: fixed; z-index: 41; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; width: min(520px, calc(100vw - 24px)); overflow: auto; padding: 22px 26px 30px; color: var(--text); background: var(--surface); border-left: 1px solid var(--line); animation: slide-in 200ms var(--ease) both; }
+.connections-drawer { position: fixed; z-index: 41; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; width: min(520px, calc(100vw - 24px)); overflow: auto; padding: 22px 26px 30px; color: var(--text); background: var(--surface); border-left: 1px solid var(--line); box-shadow: -12px 0 32px color-mix(in srgb, var(--bg) 60%, transparent); scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text-2) 50%, transparent) transparent; animation: slide-in 200ms var(--ease) both; }
+.connections-drawer input, .connections-drawer select { border-radius: var(--radius-sm); }
 .connections-drawer > * { flex-shrink: 0; }
 .drawer-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding-bottom: 13px; border-bottom: 1px solid var(--line); }
-.drawer-header h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.drawer-header h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -.01em; }
 .drawer-header p { margin: 3px 0 0; color: var(--text-2); font-size: 12px; }
 .drawer-close { font-size: 22px; }
 .connection-tabs { display: flex; gap: 2px; margin: 13px 0; border-bottom: 1px solid var(--line); }
-.connection-tabs button { padding: 8px 12px; color: var(--text-2); border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: transparent; font-size: 13px; }
-.connection-tabs button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 650; }
+.connection-tabs button { padding: 8px 12px; color: var(--text-2); border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: transparent; font-size: 13px; font-weight: 500; }
+.connection-tabs button:hover { color: var(--text); }
+.connection-tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
 .saved-connections-panel { display: grid; gap: 9px; }
 .drawer-empty { padding: 28px 12px; text-align: center; color: var(--text-2); }
 .drawer-empty strong { color: var(--text); }
 .drawer-empty p { font-size: 13px; }
 .empty-actions { display: flex; justify-content: center; gap: 8px; margin-top: 12px; }
-.recent-card { display: grid; gap: 6px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+.recent-card { display: grid; gap: 6px; min-width: 0; padding: 12px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
 .recent-card-copy { display: grid; min-width: 0; gap: 2px; }
 .recent-card-copy strong { font-size: 13px; overflow-wrap: anywhere; }
 .recent-card-copy small { color: var(--text-2); font-size: 12px; overflow-wrap: anywhere; }
 .recent-username { display: grid; gap: 2px; margin: 4px 0; min-width: 0; }
 .recent-username span { color: var(--text-2); font-size: 12px; }
-.recent-username b { font-size: 13px; font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; }
+.recent-username b { font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
 .recent-card-actions { display: flex; gap: 5px; margin-left: -6px; }
 .saved-badge { justify-self: start; margin-top: 3px; padding: 2px 6px; border-radius: 4px; color: var(--text-2); background: var(--surface); border: 1px solid var(--line); font-size: 12px; }
 .saved-password-note { color: var(--text-2); }
 .source-form { display: grid; gap: 6px; padding: 6px 1px 20px; }
 .connection-section { display: grid; gap: 6px; min-width: 0; margin: 0 0 8px; padding: 12px 0 8px; border: 0; border-top: 1px solid var(--line); }
-.connection-section legend { padding: 0 7px 0 0; color: var(--text); font-size: 14px; font-weight: 650; }
+.connection-section legend { padding: 0 7px 0 0; color: var(--text); font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
 .source-form input[type="file"] { padding: 5px; font-size: 12px; }
-.connections-drawer .source-form input, .connections-drawer .source-form select { min-height: 38px; font-size: 14px; }
+.connections-drawer .source-form input, .connections-drawer .source-form select { min-height: 34px; font-size: 13px; }
 .connections-drawer .source-form label, .connections-drawer .source-form .field-note { font-size: 12px; }
-.source-form .remember-password-control { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
-.source-form .remember-password-control > label { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text); font-weight: 600; }
+.connections-drawer .source-form label { color: var(--text-2); font-weight: 500; }
+.source-form .remember-password-control { display: grid; gap: 3px; padding: 10px 0 8px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
+.source-form .remember-password-control > label { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text); font-weight: 500; }
 .remember-password-control input { width: 15px; height: 15px; margin: 0; min-height: 0 !important; }
 .remember-password-control .field-note { margin-left: 23px; }
 .certificate-file { display: flex; justify-content: space-between; align-items: center; gap: 6px; min-width: 0; color: var(--text-2); font-size: 12px; overflow-wrap: anywhere; }
 .certificate-file span { min-width: 0; }
-.tls-insecure-warning { padding: 9px 10px; border: 1px solid var(--bad); border-radius: var(--radius); color: var(--text); background: color-mix(in srgb, var(--bad) 10%, var(--surface)); font-size: 12px; line-height: 1.5; }
+.tls-insecure-warning { padding: 9px 10px; border: 1px solid var(--bad); border-radius: var(--radius-sm); color: var(--text); background: color-mix(in srgb, var(--bad) 10%, var(--surface)); font-size: 12px; line-height: 1.5; }
 .clear-connection, .manual-database-toggle { justify-self: start; text-align: left; padding-left: 0; }
-.database-discovery { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+.database-discovery { display: grid; gap: 6px; padding: 10px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
 .database-heading { display: grid; gap: 2px; font-size: 13px; }
 .database-heading span { color: var(--text-2); font-size: 12px; }
 .database-actions { display: flex; gap: 8px; margin-left: -7px; }
 .database-checks { display: grid; gap: 2px; max-height: 180px; overflow: auto; scrollbar-width: thin; }
-.database-option { display: flex !important; align-items: center; gap: 8px; margin: 0 !important; padding: 5px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+.database-option { display: flex !important; align-items: center; gap: 8px; margin: 0 !important; padding: 5px 4px; border-radius: var(--radius-sm); overflow-wrap: anywhere; }
 .database-option:hover { background: var(--surface); }
 .database-option input { width: 15px !important; height: 15px; min-height: 0 !important; flex: 0 0 auto; margin: 0; }
-.database-option span { font-size: 13px; font-weight: 450; color: var(--text); }
+.database-option span { font-size: 13px; font-weight: 400; color: var(--text); }
 .save-connection-button { margin-top: 2px; }
 .auth-options { display: grid; gap: 6px; }
 .auth-options label { margin-top: 0 !important; }
-.demo-note { margin: 12px 0; padding: 9px 11px; color: var(--text-2); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); font-size: 12px; line-height: 1.55; }
+.demo-note { margin: 12px 0; padding: 10px 0 0; color: var(--text-2); border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; font-size: 12px; line-height: 1.55; }
 
 /* ---------- Shared small pieces ---------- */
 .pulse { display: grid; gap: 14px; min-width: 0; }

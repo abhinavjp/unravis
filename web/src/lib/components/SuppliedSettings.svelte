@@ -73,12 +73,12 @@
 
 <style>
   .supplied { min-width: 0; }
-  summary { width: fit-content; max-width: 100%; color: var(--text-2); font-size: var(--fs-3); font-weight: 600; cursor: pointer; overflow-wrap: anywhere; }
-  .body { display: grid; gap: var(--space-3); min-width: 0; margin-top: var(--space-2); padding: var(--space-3); background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); }
+  summary { width: fit-content; max-width: 100%; color: var(--text-2); font-size: var(--fs-3); font-weight: 500; cursor: pointer; overflow-wrap: anywhere; }
+  .body { display: grid; gap: var(--space-3); min-width: 0; margin-top: var(--space-2); padding: var(--space-3) 0 0; background: transparent; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; }
   .field { display: grid; gap: 4px; min-width: 0; }
-  .field label { color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
+  .field label { color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
   .field input, .field select { width: 100%; }
   .field input[aria-invalid='true'] { border-color: var(--bad); }
   .note { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; overflow-wrap: anywhere; }
-  .problem { margin: 0; color: var(--bad); font-size: var(--fs-2); font-weight: 650; line-height: 1.5; overflow-wrap: anywhere; }
+  .problem { margin: 0; color: var(--bad); font-size: var(--fs-2); font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
 </style>

@@ -492,27 +492,27 @@
 <style>
   .discover { display: grid; gap: var(--space-3); min-width: 0; padding-top: var(--space-4); border-top: 1px solid var(--hairline); }
   .head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  h3 { margin: 0; font-size: var(--fs-4); font-weight: 600; }
-  h4 { margin: 0; font-size: var(--fs-3); font-weight: 650; }
+  h3 { margin: 0; font-size: var(--fs-4); font-weight: 600; letter-spacing: -.01em; }
+  h4 { margin: 0; font-size: var(--fs-3); font-weight: 600; }
   h4:focus-visible { outline: 2px solid var(--focus, currentColor); outline-offset: 3px; border-radius: var(--radius); }
   .step { display: grid; gap: var(--space-2); min-width: 0; }
   .note { margin: 0; color: var(--text-2); font-size: var(--fs-2); line-height: 1.5; overflow-wrap: anywhere; }
   .problem { color: var(--bad); }
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .messages { display: grid; gap: var(--space-2); }
-  .empty, .done { margin: 0; padding: 8px 10px; font-size: var(--fs-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); overflow-wrap: anywhere; }
+  .empty, .done { margin: 0; padding: 8px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; font-size: var(--fs-3); overflow-wrap: anywhere; }
   .badge-row { margin: 0; }
-  .badge { padding: 2px 8px; color: var(--text-2); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); font-weight: 650; }
+  .badge { padding: 2px 8px; color: var(--text-2); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); font-weight: 500; }
   .badge.on { color: var(--text); border-color: var(--text-2); }
   .plain { display: grid; gap: 4px; margin: 0; padding: 0 0 0 18px; font-size: var(--fs-3); line-height: 1.5; }
   progress { width: 100%; height: 8px; accent-color: var(--accent, currentColor); }
   .group { display: grid; gap: var(--space-2); min-width: 0; margin: 0; padding: var(--space-3) 0 0; border: 0; border-top: 1px solid var(--hairline); }
-  .group legend { padding: 0 var(--space-2) 0 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
+  .group legend { padding: 0 var(--space-2) 0 0; color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
   .row { display: grid; gap: 2px; min-width: 0; padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
   /* A gap row is dimmed by its name alone. Its reason keeps the full secondary text colour, which clears 4.5:1 in both themes (an opacity on the row did not). */
   .row.gap .name { color: var(--text-2); }
   /* Every tick box and its label is a target at least 24px high and wide. */
-  .pick, .ack, .choice { display: flex; align-items: flex-start; gap: var(--space-2); min-height: 24px; font-size: var(--fs-3); font-weight: 600; }
+  .pick, .ack, .choice { display: flex; align-items: flex-start; gap: var(--space-2); min-height: 24px; font-size: var(--fs-3); font-weight: 500; }
   .choice { align-items: center; font-weight: 400; }
   .pick input, .ack input, .choice input { flex: 0 0 auto; width: 24px; height: 24px; margin: 0; }
   .pick .name, .ack span, .choice span { align-self: center; padding-block: 2px; }
@@ -520,26 +520,23 @@
   .plain-name { margin: 0; font-size: var(--fs-3); font-weight: 600; }
   .tags { display: flex; flex-wrap: wrap; gap: 4px; }
   .tags:empty { display: none; }
-  .tag { padding: 1px 7px; color: var(--text-2); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); font-weight: 650; }
+  .tag { padding: 1px 7px; color: var(--text-2); border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); font-weight: 500; }
   .tag.warn { color: var(--text); border-color: var(--warn); }
   .shows, .meta, .how { margin: 0; font-size: var(--fs-2); line-height: 1.5; overflow-wrap: anywhere; }
   .shows { color: var(--text); }
   .meta { color: var(--text-2); font-variant-numeric: tabular-nums; }
-  .how { padding: 4px 8px; font-family: var(--mono); background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius); }
+  .how { padding: 4px 8px; font-family: var(--mono); background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
   .choices { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
   .custom { display: flex; flex-wrap: wrap; gap: var(--space-3); }
   .custom-field { display: grid; gap: 4px; align-content: start; min-width: 0; }
-  .custom label, .inline-field { display: grid; gap: 4px; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
+  .custom label, .inline-field { display: grid; gap: 4px; color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
   .custom input, .inline-field select { min-height: 28px; }
   .estimate { margin: 0; font-size: var(--fs-3); font-weight: 600; font-variant-numeric: tabular-nums; }
   .notice, .live { display: grid; gap: var(--space-2); min-width: 0; padding-top: var(--space-3); border-top: 1px solid var(--hairline); }
-  .rows { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-  .result { display: grid; gap: 4px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--surface-2); }
-  .result { border-left-width: 4px; }
-  .result.good { border-left-color: var(--accent); }
-  .result.bad { border-left-color: var(--bad); }
-  .result.neutral { border-left-color: var(--line); }
-  .mark { color: var(--text); font-weight: 650; }
+  .rows { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+  .result { display: grid; gap: 4px; min-width: 0; padding: 8px 0; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; background: transparent; }
+  .mark { color: var(--text); font-weight: 600; }
+  .mark[data-tone='bad'] { color: var(--bad); }
   .status { color: var(--text-2); font-size: var(--fs-2); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 </style>

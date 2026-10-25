@@ -77,11 +77,11 @@
   .drawer-header.panel { flex: 0 0 auto; padding: var(--space-4) var(--space-5) 0; border-bottom: 0; }
   .drawer-header.panel:not(.has-extra) { padding-bottom: var(--space-3); border-bottom: 1px solid var(--hairline); }
   .drawer-heading { min-width: 0; }
-  .drawer-header h2 { margin: 0; font-size: var(--fs-6); font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
-  .drawer-header h2:focus-visible { outline-offset: 3px; border-radius: var(--radius); }
+  .drawer-header h2 { margin: 0; font-size: var(--fs-6); font-weight: 600; letter-spacing: -.01em; line-height: 1.2; overflow-wrap: anywhere; }
+  .drawer-header h2:focus-visible { outline-offset: 3px; border-radius: var(--radius-sm); }
   .drawer-header p { margin: var(--space-1) 0 0; color: var(--text-2); font-size: var(--fs-3); line-height: 1.45; overflow-wrap: anywhere; }
-  .drawer-close { flex: 0 0 auto; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; color: var(--text-2); background: transparent; border: 1px solid var(--line); border-radius: var(--radius); font-size: 20px; line-height: 1; }
-  .drawer-close:hover { color: var(--text); border-color: var(--text-2); background: var(--surface-2); }
+  .drawer-close { flex: 0 0 auto; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; color: var(--text-2); background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); font-size: 20px; line-height: 1; }
+  .drawer-close:hover { color: var(--text); background: var(--surface-2); }
 
   /* The footer holds the drawer's actions. It stays at the bottom edge of a modal drawer and sits under a hairline. */
   .drawer-footer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin-top: auto; padding: var(--space-3) 0 0; border-top: 1px solid var(--hairline); }
@@ -99,8 +99,8 @@
   :global(.connections-drawer .drawer-section) { padding-top: var(--space-4); border-top: 1px solid var(--hairline); }
   :global(.connections-drawer details > summary) { display: flex; align-items: center; gap: var(--space-2); list-style: none; cursor: pointer; }
   :global(.connections-drawer details > summary::-webkit-details-marker) { display: none; }
-  :global(.connections-drawer details > summary::after) { content: ""; flex: 0 0 auto; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg) translateY(-2px); transition: transform var(--dur) var(--ease); }
-  :global(.connections-drawer details[open] > summary::after) { transform: rotate(-135deg) translateY(-2px); }
+  :global(.connections-drawer details > summary::after) { content: ""; flex: 0 0 auto; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; order: -1; transform: rotate(-45deg); transition: transform var(--dur) var(--ease); }
+  :global(.connections-drawer details[open] > summary::after) { transform: rotate(45deg); }
   :global(.connections-drawer .finding) { padding: var(--space-3) 0; background: transparent; border: 0; border-top: 1px solid var(--hairline); border-radius: 0; }
   :global(.connections-drawer .low-n) { padding: 0; color: var(--text-2); border: 0; border-radius: 0; font-style: italic; }
 </style>

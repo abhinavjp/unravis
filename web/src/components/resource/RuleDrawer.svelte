@@ -48,11 +48,11 @@
   .rows { display: grid; gap: var(--space-4); margin: var(--space-3) 0 0; padding: 0; list-style: none; }
   .row { display: grid; gap: 4px; padding-top: var(--space-3); border-top: 1px solid var(--hairline); }
   .row:first-child { padding-top: 0; border-top: 0; }
-  h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 0; font-size: var(--fs-4); font-weight: 600; }
-  .label { padding: 0 6px; color: var(--text-2); font-size: 12px; font-weight: 400; border: 1px solid var(--line); border-radius: 999px; }
+  h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 0; font-size: var(--fs-4); font-weight: 600; letter-spacing: -.01em; }
+  .label { padding: 0 6px; color: var(--text-2); font-size: 12px; font-weight: 400; border: 1px solid var(--line); border-radius: var(--radius-sm); }
   p { margin: 0; font-size: var(--fs-3); line-height: 1.5; overflow-wrap: anywhere; }
   .meta, .hint { color: var(--text-2); font-size: var(--fs-2); }
-  .key { margin-top: 4px; color: var(--text-2); font-size: var(--fs-2); font-weight: 650; }
+  .key { margin-top: 4px; color: var(--text-2); font-size: var(--fs-2); font-weight: 500; }
   .plain, .ids { display: grid; gap: 2px; margin: 0; padding: 0 0 0 18px; font-size: var(--fs-2); }
   .ids { padding-left: 0; list-style: none; }
   .ids code { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; user-select: all; }
