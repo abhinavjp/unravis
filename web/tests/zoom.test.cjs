@@ -471,3 +471,88 @@ test('every zoom string passes the copy lint and names no cause', () => {
   assert.deepEqual(lintScreenStrings(entries, deck.terms), []);
   for (const { text } of entries) assert.doesNotMatch(text, /\bproven\b|\bcause|\bbecause\b|\bdue to\b|\bresult of\b/i, text);
 });
+
+test('setTop replaces the top frame, pushes at the root, and keeps the floor', () => {
+  const top = z.createStack(week);
+  const day1 = { start: at('2001-10-24T00:00:00Z'), end: at('2001-10-25T00:00:00Z') };
+  const pushed = z.setTop(top, day1);
+  assert.equal(top.frames.length, 0);
+  assert.equal(pushed.frames.length, 1);
+  assert.deepEqual(z.currentOf(pushed), day1);
+  // One level down it replaces: the length stays 1 and the top is the new window.
+  const next = { start: at('2001-10-25T06:00:00Z'), end: at('2001-10-25T18:00:00Z') };
+  const replaced = z.setTop(pushed, next);
+  assert.equal(replaced.frames.length, 1);
+  assert.deepEqual(z.currentOf(replaced), next);
+  // Two levels down it still replaces only the top.
+  const deeper = z.setTop(z.push(pushed, { start: at('2001-10-24T05:00:00Z'), end: at('2001-10-24T06:00:00Z') }), { start: at('2001-10-24T05:10:00Z'), end: at('2001-10-24T05:40:00Z') });
+  assert.equal(deeper.frames.length, 2);
+  assert.deepEqual(deeper.frames[0], day1);
+  // Under the floor, outside the root, invalid or unchanged: the same stack comes back.
+  assert.equal(z.setTop(pushed, { start: day1.start, end: day1.start + 30_000 }), pushed);
+  assert.equal(z.setTop(pushed, { start: week.end - HOUR, end: week.end + 5_000 }), pushed);
+  assert.equal(z.setTop(pushed, { start: week.end + HOUR, end: week.end + 2 * HOUR }), pushed);
+  assert.equal(z.setTop(top, { start: week.end - HOUR, end: week.end + HOUR }), top);
+  assert.equal(z.setTop(pushed, { start: NaN, end: 5 }), pushed);
+  assert.equal(z.setTop(pushed, { start: day1.end, end: day1.start }), pushed);
+  assert.equal(z.setTop(pushed, { ...day1 }), pushed);
+  // The whole period steps back to the top; the step one up is that step, not a repeat.
+  assert.equal(z.setTop(pushed, week).frames.length, 0);
+  const two = z.push(pushed, next);
+  assert.equal(z.setTop(two, day1).frames.length, 1);
+});
+
+test('dragReadout snaps and describes the range', () => {
+  const view = { start: at('2001-10-24T14:00:00Z'), end: at('2001-10-24T15:00:00Z') };
+  const slots = z.slotsOf(view, 60);
+  const ok = z.dragReadout(slots, 3, 7, 60, view, 'UTC');
+  assert.equal(ok.ok, true);
+  assert.ok(ok.text.includes('5 minutes'), ok.text);
+  assert.equal(ok.text, z.rangeReadout({ start: at('2001-10-24T14:03:00Z'), end: at('2001-10-24T14:08:00Z') }, 'UTC'));
+  assert.deepEqual(z.dragReadout(slots, 7, 3, 60, view, 'UTC'), ok);
+  const fine = z.slotsOf(view, 10);
+  assert.deepEqual(z.dragReadout(fine, 4, 4, 10, view, 'UTC'), { text: zoomCopy.tooShort, ok: false });
+  assert.deepEqual(z.dragReadout(slots, 0, slots.length - 1, 60, view, 'UTC'), { text: zoomCopy.readoutWhole, ok: false });
+  assert.deepEqual(z.dragReadout(slots, -4, 999, 60, view, 'UTC'), { text: zoomCopy.readoutWhole, ok: false });
+  assert.equal(z.dragReadout([], 0, 1, 60, view, 'UTC').ok, false);
+});
+
+test('rangeReadout joins the range and its length', () => {
+  const win = { start: at('2001-10-24T14:00:00Z'), end: at('2001-10-24T14:05:00Z') };
+  assert.equal(z.rangeReadout(win, 'UTC'), z.windowLabel(win, 'UTC') + ' · 5 minutes');
+});
+
+test('stripModel exposes the brush and the hint', () => {
+  const top = z.createStack(week);
+  const base = { zone: 'UTC', loading: false, error: '', hasData: true, asOf: null, overviewCounts: [] };
+  const dayStack = z.zoomIntoSlot(top, z.slotsOf(week, 86_400)[2], 'UTC');
+  const model = z.stripModel({ ...base, stack: dayStack, bucket: z.bucketForView(z.currentOf(dayStack)) });
+  assert.equal(model.brush.rootStart, week.start);
+  assert.equal(model.brush.rootEnd, week.end);
+  assert.equal(model.brush.viewEnd - model.brush.viewStart, DAY);
+  assert.equal(model.brush.stepMs, 900_000);
+  assert.equal(model.brush.startText, '24 Oct 00:00 UTC');
+  assert.equal(model.brush.endText, '25 Oct 00:00 UTC');
+  assert.equal(model.hint, zoomCopy.hint);
+  // At the top the brush spans the root, and the step follows the bucket on screen.
+  const topModel = z.stripModel({ ...base, stack: top, bucket: z.bucketForView(week) });
+  assert.deepEqual([topModel.brush.viewStart, topModel.brush.viewEnd], [week.start, week.end]);
+  assert.equal(topModel.brush.stepMs, 7_200_000);
+  // With no interval the step still has a usable floor.
+  assert.equal(z.stripModel({ ...base, stack: top, bucket: null }).brush.stepMs, 10_000);
+});
+
+test('the new strip strings are in the lint list and read as plain facts', () => {
+  const all = allZoomStrings();
+  for (const key of ['hint', 'investigate', 'investigateTitle', 'investigateTop', 'investigateBusy', 'investigateStale', 'brushStart', 'brushEnd', 'readoutWhole']) {
+    assert.equal(typeof zoomCopy[key], 'string', key);
+    assert.ok(all.includes(zoomCopy[key]), key);
+  }
+  const { zoomText } = loadTypeScript('src/lib/copy/zoomCopy.ts');
+  assert.equal(zoomCopy.hint, 'Drag across a chart to zoom in.');
+  assert.equal(zoomCopy.investigate, 'Investigate this window');
+  assert.equal(zoomText.readout('24 Oct 14:00 to 14:05 UTC', '5 minutes'), '24 Oct 14:00 to 14:05 UTC · 5 minutes');
+  assert.equal(zoomText.backTo('7 days'), 'Back to 7 days');
+  assert.equal(zoomText.investigated('24 Oct 14:00 to 14:05 UTC'), 'Now investigating 24 Oct 14:00 to 14:05 UTC.');
+  for (const text of [zoomText.readout('24 Oct 14:00 to 14:05 UTC', '5 minutes'), zoomText.backTo('7 days'), zoomText.investigated('24 Oct 14:00 to 14:05 UTC')]) assert.ok(all.includes(text), text);
+});

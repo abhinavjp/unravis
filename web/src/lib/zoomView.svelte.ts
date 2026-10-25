@@ -12,8 +12,8 @@ import { api } from './api';
 import { currentEpoch, isStorable } from './evidenceMemo';
 import { timeZone } from './timeZone.svelte';
 import {
-  applyChartKey, bucketForView, emptyWindowMessage, createStack, currentOf, isManualBucket, isRoot, jumpTo, back, reset, scale, shift, slotDescription, slotsOf, stripModel, zoomBlockedNotice, zoomIntoSlot, zoomQuery, zoomToRange,
-  type BucketChoice, type ChartKeyAction, type StripModel, type ZoomSlot, type ZoomStack
+  applyChartKey, bucketForView, dragReadout, emptyWindowMessage, createStack, currentOf, isManualBucket, isRoot, jumpTo, back, reset, sameWindow, scale, setTop, shift, slotDescription, slotsOf, stripModel, zoomBlockedNotice, zoomIntoSlot, zoomQuery, zoomToRange,
+  type BucketChoice, type ChartKeyAction, type StripModel, type ZoomSlot, type ZoomStack, type ZoomWindow
 } from './zoom';
 import { zoomCopy } from './copy/zoomCopy';
 
@@ -29,6 +29,8 @@ let asOf = $state<number | null>(null);
 let open = $state(false);
 let announcement = $state('');
 let notice = $state('');
+/** A lens to open on the next analysis whose queried window is `root` (set by "Back to ..."). */
+let pending: { root: ZoomWindow; lens: ZoomWindow } | null = null;
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 const NOTICE_MS = 6000;
 
@@ -137,8 +139,11 @@ export const zoomView = {
   follow(analysis: Analysis | null) {
     untrack(() => {
       if (analysis === base) return;
+      const wanted = pending; pending = null;
       base = analysis; cache.clear(); open = open && analysis != null; announcement = ''; say('');
       stack = analysis ? createStack(asWindow(analysis.query)) : null;
+      // "Back to ..." asked for this root: reopen the lens on the window that was investigated.
+      if (stack && wanted && sameWindow(wanted.root, stack.root)) stack = setTop(stack, wanted.lens);
       refresh();
     });
   },
@@ -146,6 +151,8 @@ export const zoomView = {
   analysisFor(analysis: Analysis): Analysis {
     return base === analysis && stack && !isRoot(stack) && answer ? answer : analysis;
   },
+  /** The window the charts are zoomed to, or null at the whole period. */
+  get view(): ZoomWindow | null { return stack && !isRoot(stack) ? currentOf(stack) : null; },
   get zoomed() { return stack != null && !isRoot(stack); },
   /** Nothing in the view window was found: the charts say so. */
   get empty() { return model?.isRoot === false && answer != null && !loading && !error && !hasRequests(answer); },
@@ -178,6 +185,14 @@ export const zoomView = {
     explainBlocked(slot);
     return false;
   },
+  /** Make `win` the zoomed window (the brush): at the whole period it zooms in, otherwise it replaces the top step. One read. */
+  setWindow(win: ZoomWindow): void { if (stack) apply(setTop(stack, win)); },
+  /** What a drag from slot `fromIndex` to `toIndex` would zoom to, for the band on the chart. */
+  readout(fromIndex: number, toIndex: number): { text: string; ok: boolean } {
+    return stack && bucket ? dragReadout(slots, fromIndex, toIndex, bucket.seconds, currentOf(stack), timeZone.zone) : { text: '', ok: false };
+  },
+  /** The next `follow` whose queried window is `root` opens on `lens`. Any `follow` that brings a new analysis clears this. */
+  expect(root: ZoomWindow, lens: ZoomWindow): void { pending = { root: { start: root.start, end: root.end }, lens: { start: lens.start, end: lens.end } }; },
   /** A drag from one slot to another (either order). */
   zoomIndexRange(from: number, to: number): boolean {
     if (!stack || !bucket || !slots.length) return false;

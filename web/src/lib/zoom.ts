@@ -191,6 +191,16 @@ const replaceTop = (stack: ZoomStack, win: ZoomWindow): ZoomStack => {
   if (above.length && sameWindow(inside, above[above.length - 1])) return { root: stack.root, frames: above };
   return { root: stack.root, frames: [...above, inside] };
 };
+/**
+ * Make `win` the top step without growing the trail: at the whole period it zooms in (one new step), anywhere else it replaces the
+ * top step, which is what a brush drag does. The same stack comes back for a window that is unreadable, shorter than the 1-minute
+ * floor, not wholly inside the queried window, or the one already on screen.
+ */
+export function setTop(stack: ZoomStack, win: ZoomWindow): ZoomStack {
+  if (!isWindow(win) || win.start < stack.root.start || win.end > stack.root.end) return stack;
+  if (widthOf(win) < Math.min(MIN_VIEW_MS, widthOf(stack.root))) return stack;
+  return replaceTop(stack, win);
+}
 
 /** The window one level down for a clicked slot: its day, hour or minute in the display zone, cut to the view. Null when there is no deeper level. */
 export function childWindow(view: ZoomWindow, slot: Pick<ZoomSlot, 'start' | 'end'>, zone: string, root?: ZoomWindow): ZoomWindow | null {
@@ -341,6 +351,24 @@ export function windowLabel(win: ZoomWindow, zone: string): string {
 export function slotDescription(slot: ZoomSlot, index: number, count: number, zone: string): string {
   return zoomText.slot(index + 1, count, chartRange(slot.start, slot.end, zone, { seconds: slot.end - slot.start < MINUTE }));
 }
+/** A window with its length: "24 Oct 14:00 to 14:05 UTC · 5 minutes". */
+export function rangeReadout(win: ZoomWindow, zone: string): string {
+  return zoomText.readout(windowLabel(win, zone), durationLabel(widthOf(win)));
+}
+/**
+ * What a drag across the chart would zoom to, said while the pointer moves. `a` and `b` are slot indices in either order (cut to the
+ * slots there are); the range is snapped exactly as the zoom itself snaps it. `ok` is false when releasing would do nothing: the range
+ * is under a minute, or it is the whole window on screen.
+ */
+export function dragReadout(slots: ZoomSlot[], a: number, b: number, bucketSeconds: number, view: ZoomWindow, zone: string): { text: string; ok: boolean } {
+  if (!slots.length || !Number.isFinite(a) || !Number.isFinite(b)) return { text: '', ok: false };
+  const last = slots.length - 1;
+  const low = slots[Math.min(last, Math.max(0, Math.min(a, b)))], high = slots[Math.min(last, Math.max(0, Math.max(a, b)))];
+  const range = snapRange(low.start, high.end, bucketSeconds, view);
+  if (range) return { text: rangeReadout(range, zone), ok: true };
+  const whole = isWindow(view) && low.start <= view.start && high.end >= view.end;
+  return { text: whole ? zoomCopy.readoutWhole : zoomCopy.tooShort, ok: false };
+}
 
 /**
  * The name of the level on screen. "Whole period" is only the queried window itself. A zoomed window is a "Day", "Hour" or "Minute"
@@ -371,12 +399,16 @@ export function zoomBlockedNotice(stack: ZoomStack, slot: Pick<ZoomSlot, 'start'
 
 export interface Crumb { index: number; label: string; current: boolean }
 export interface OverviewModel { bars: number[]; left: number; width: number; hasData: boolean; alt: string }
+/** The overview brush: the queried window, the view inside it, the step an edge moves by, and the two edges in words (for screen readers). */
+export interface BrushModel { rootStart: number; rootEnd: number; viewStart: number; viewEnd: number; stepMs: number; startText: string; endText: string }
 export interface StripModel {
   level: ZoomLevel; levelName: string; summary: string; rangeLine: string; intervalLine: string; asOfLine: string; scopeLine: string; referenceLine: string; message: string; messageTone: 'info' | 'warn' | 'error' | '';
   /** A short answer to a click or key that could not zoom ("This is the smallest window."), or empty. */ notice: string;
   crumbs: Crumb[]; isRoot: boolean; loading: boolean;
   canBack: boolean; canEarlier: boolean; canLater: boolean; canIn: boolean; canOut: boolean; canReset: boolean;
   overview: OverviewModel;
+  brush: BrushModel;
+  /** The one-line instruction under the strip ("Drag across a chart to zoom in."). */ hint: string;
 }
 export interface StripInput {
   stack: ZoomStack; zone: string; bucket: BucketChoice | null; loading: boolean; error: string; hasData: boolean | null;
@@ -407,6 +439,11 @@ export function stripModel(input: StripInput): StripModel {
     scopeLine: top ? '' : zoomText.scope(rootRange), referenceLine: top ? '' : zoomCopy.referenceNote, message, messageTone, notice: input.notice ?? '',
     crumbs, isRoot: top, loading,
     canBack: canBack(stack), canEarlier: canShift(stack, -1, zone), canLater: canShift(stack, 1, zone), canIn: canScale(stack, 'in'), canOut: canScale(stack, 'out'), canReset: !top,
+    brush: {
+      rootStart: stack.root.start, rootEnd: stack.root.end, viewStart: view.start, viewEnd: view.end, stepMs: Math.max(MIN_BUCKET_SECONDS * SECOND, (bucket?.seconds ?? 0) * SECOND),
+      startText: chartTime(view.start, zone, { seconds: widthOf(view) < 10 * MINUTE }), endText: chartTime(view.end, zone, { seconds: widthOf(view) < 10 * MINUTE })
+    },
+    hint: zoomCopy.hint,
     overview: { bars: peak > 0 ? bars.map(count => count / peak) : bars.map(() => 0), left, width, hasData: peak > 0, alt: zoomText.overviewAlt(chartRange(view.start, view.end, zone, { seconds: false }), durationLabel(rootWidth)) }
   };
 }
