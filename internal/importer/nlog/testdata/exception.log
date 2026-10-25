@@ -1,0 +1,14 @@
+log file opened by the synthetic host web-a.example.test
+2001-10-25 14:02:30.0000|INFO|Synthetic.Api.Startup|Application_Start
+2001-10-25 14:02:31.4000|ERROR|Synthetic.Api.OrdersController|Unhandled error, first line of a message
+that continues on a second line with no time stamp
+System.InvalidOperationException: Sequence contains no elements
+ ---> System.Threading.ThreadAbortException: Thread was being aborted.
+   at Synthetic.Api.OrdersController.Get(Int32 id) in C:\src\Synthetic\OrdersController.cs:line 42
+   at System.Web.Http.Controllers.ApiControllerActionInvoker.Invoke()
+   --- End of inner exception stack trace ---
+
+2001-10-25 14:02:32.0000|WARN|Synthetic.Api.OrdersController|Retrying after a failure
+2001-10-25 14:02:33.5000|ERROR|Synthetic.Api.Jobs|Job failed
+Synthetic.Domain.CustomFailureException: a type outside the framework rule SENTINEL-7f3a
+   at Synthetic.Domain.Job.Run()

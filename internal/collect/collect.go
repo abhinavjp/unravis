@@ -73,7 +73,7 @@ const (
 
 // appLogImporters are the application log formats. ancm-stdout is the .NET
 // console capture, so it counts as an application log.
-var appLogImporters = []string{"log4net-text", "log4net-xml", "serilog-clef", "serilog-text", "mel-console", "mel-json", ancm}
+var appLogImporters = []string{"log4net-text", "log4net-xml", "serilog-clef", "serilog-text", "nlog-text", "mel-console", "mel-json", ancm}
 
 // Which importers say what kind of server a host is. A host can be several
 // kinds at once; a file whose importer is in no list says nothing about it.

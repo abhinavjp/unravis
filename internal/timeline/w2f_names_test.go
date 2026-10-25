@@ -11,7 +11,7 @@ import (
 // interval kinds read as plain phrases in OverlapUnique.
 func TestW2FDisplayNamesAndPhrases(t *testing.T) {
 	for _, s := range []string{"schedule-hangfire", "schedule-agent",
-		"log4net-text", "log4net-xml", "serilog-clef", "serilog-text", "mel-console", "mel-json", "ancm-stdout",
+		"log4net-text", "log4net-xml", "serilog-clef", "serilog-text", "nlog-text", "mel-console", "mel-json", "ancm-stdout",
 		"node-jsonl", "dotnet-counters", "win-procsnap", "redis-slowlog", "redis-latency", "redis-info", "redis-log",
 		"mongo-profile", "mongo-currentop", "mongo-serverstatus", "mongostat-json", "linux-sadf", "linux-pidstat"} {
 		if n := displayName(s); n == s || n == "" {

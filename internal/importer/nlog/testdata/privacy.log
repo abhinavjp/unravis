@@ -1,0 +1,6 @@
+2001-10-25 14:02:30.9500|INFO|Synthetic.Api.OrdersController|GET /orders/SENTINEL-7f3a by alice@example.test from 192.0.2.10 token=SENTINEL-7f3a
+2001-10-25 14:02:31.1230|WARN|Synthetic.Api.SENTINEL-7f3a.Client|Cache call slow for "alice" at \\web-a\share\SENTINEL-7f3a.txt
+2001-10-25 14:02:31.4000|ERROR|Synthetic.Api.OrdersController|Unhandled exception for 198.51.100.7
+System.TimeoutException: SENTINEL-7f3a connection string Server=sql-a.example.test;Password=SENTINEL-7f3a
+   at Synthetic.Api.CacheClient.GetAsync(String key) in C:\src\SENTINEL-7f3a\CacheClient.cs:line 7
+2001-10-25 14:02:32.0000|INFO|Synthetic.Api.OrdersController|HTTP GET /orders/SENTINEL-7f3a responded 200 in 1834.2000 ms

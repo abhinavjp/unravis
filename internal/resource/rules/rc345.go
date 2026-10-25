@@ -11,7 +11,7 @@ import (
 const familyRedisTimeout = "redis-timeout"
 
 // appLogSources are the application log importers.
-var appLogSources = []string{"log4net-text", "log4net-xml", "serilog-clef", "serilog-text",
+var appLogSources = []string{"log4net-text", "log4net-xml", "serilog-clef", "serilog-text", "nlog-text",
 	"mel-console", "mel-json", "ancm-stdout", "node-jsonl"}
 
 /* ---------------------------------------------------------------- RC3 */

@@ -641,6 +641,7 @@ export const IMPORT_CAPS: Record<string, number> = {
   'log4net-xml': 2 * GiB,
   'serilog-clef': 2 * GiB,
   'serilog-text': 2 * GiB,
+  'nlog-text': 2 * GiB,
   'mel-console': 2 * GiB,
   'mel-json': 2 * GiB,
   'ancm-stdout': 256 * MiB,

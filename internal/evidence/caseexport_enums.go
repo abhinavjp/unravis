@@ -55,6 +55,7 @@ var exportKinds = map[string]map[string]bool{
 	"log4net-xml":  appLogKindsPlus(),
 	"serilog-clef": appLogKindsPlus(),
 	"serilog-text": appLogKindsPlus(),
+	"nlog-text":    appLogKindsPlus(),
 	"mel-console":  appLogKindsPlus(),
 	"mel-json":     appLogKindsPlus(),
 	"ancm-stdout":  appLogKindsPlus("app-session"),

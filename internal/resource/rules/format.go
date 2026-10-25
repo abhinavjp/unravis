@@ -28,6 +28,7 @@ var displayNames = map[string]string{
 	"mongostat-json":     "mongostat samples",
 	"log4net-text":       "log4net log",
 	"log4net-xml":        "log4net XML log",
+	"nlog-text":          "NLog log",
 	"serilog-clef":       "Serilog JSON log",
 	"serilog-text":       "Serilog log",
 	"mel-console":        "ASP.NET Core console log",

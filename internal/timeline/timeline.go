@@ -89,6 +89,7 @@ var displayNames = map[string]string{
 	// Wave 2 (pre-landed by W2-F).
 	"log4net-text":       "log4net log",
 	"log4net-xml":        "log4net XML log",
+	"nlog-text":          "NLog log",
 	"serilog-clef":       "Serilog JSON log",
 	"serilog-text":       "Serilog log",
 	"mel-console":        "ASP.NET Core console log",

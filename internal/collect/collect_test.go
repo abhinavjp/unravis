@@ -168,6 +168,7 @@ func TestEveryFamilyIsCovered(t *testing.T) {
 		"events":   {winEvents},
 		"log4net":  {"log4net-text", "log4net-xml"},
 		"Serilog":  {"serilog-clef", "serilog-text"},
+		"NLog":     {"nlog-text"},
 		"MEL":      {"mel-console", "mel-json"},
 		"ANCM":     {ancm},
 		"dotnet":   {dotnetCnt},

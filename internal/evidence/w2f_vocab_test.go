@@ -32,6 +32,7 @@ func TestW2FExportVocabulary(t *testing.T) {
 		{"log4net-xml", appAttrs, appKinds},
 		{"serilog-clef", appAttrs, appKinds},
 		{"serilog-text", appAttrs, appKinds},
+		{"nlog-text", appAttrs, appKinds},
 		{"mel-console", appAttrs, appKinds},
 		{"mel-json", appAttrs, appKinds},
 		{"ancm-stdout", appAttrs, appKinds + " app-session"},
