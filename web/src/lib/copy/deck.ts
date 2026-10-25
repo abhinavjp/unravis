@@ -406,6 +406,14 @@ export const deck: Deck = {
       definition: 'Concentration compares an operation or user share of the slow requests with its share of all requests. The ratio is called lift, and a lift of 2 or more counts as concentrated.',
       notMeaning: 'A high lift does not show why the requests were slow. It only shows where the slow requests gathered.',
       aliases: ['Lift', 'Concentrated', 'Concentration ratio']
+    },
+    {
+      id: 'import',
+      term: 'Import',
+      hint: 'Adding a file exported from a server to a case, where it stays on this computer.',
+      definition: 'To import is to add a file exported from a server to a case. The copy stays on this computer and is encrypted, and you can erase it by erasing the case.',
+      notMeaning: 'An import does not send the file anywhere, and it does not change the server it came from.',
+      aliases: ['Imported', 'Add a file']
     }
   ]
 };

@@ -167,7 +167,7 @@ test('the glossary has one new term for concentration, and the deck stays within
   const term = deck.terms.find((t) => t.id === 'concentration');
   assert.ok(term);
   assert.ok(term.aliases.includes('Lift'));
-  assert.ok(deck.terms.length <= 52, String(deck.terms.length));
+  assert.ok(deck.terms.length <= 53, String(deck.terms.length));
 });
 
 test('B3a and A3 copy passes the lint and names no cause', () => {

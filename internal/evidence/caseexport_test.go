@@ -718,3 +718,30 @@ func TestEventsCSV(t *testing.T) {
 		t.Errorf("attrs cell: %q", rows[2][11])
 	}
 }
+
+// The SQL XE importer marks an error_reported row with no severity value as
+// sql_severity "unknown". The export keeps exactly that literal (and still
+// removes any other non-number), and the event is in the export and counted.
+func TestBuildCaseKeepsUnknownSQLSeverity(t *testing.T) {
+	ev := []Event{
+		caseEvent("sql-xe", "error", 0, map[string]string{"event": "error_reported", "error_number": "823", "sql_severity": "unknown"}),
+		caseEvent("sql-xe", "error", 1, map[string]string{"event": "error_reported", "error_number": "823", "sql_severity": "24"}),
+		caseEvent("sql-xe", "error", 2, map[string]string{"event": "error_reported", "error_number": "823", "sql_severity": "high"}),
+	}
+	e, raw := mustBuildCase(t, CaseInput{Events: ev, Now: testNow, Key: caseKey(11)})
+	if len(e.Body.Events) != 3 {
+		t.Fatalf("events in export = %d, want 3", len(e.Body.Events))
+	}
+	for n, want := range map[int]string{0: "unknown", 1: "24", 2: removedText} {
+		if got := eventByID(t, e, 11, caseEvID("sql-xe", n)).Attrs["sql_severity"]; got != want {
+			t.Errorf("event %d sql_severity = %q, want %q", n, got, want)
+		}
+	}
+	// The file verifies, and the CSV carries the value.
+	if err := Verify(raw); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !bytes.Contains(mustCSV(t, e), []byte("sql_severity=unknown")) {
+		t.Errorf("CSV lacks sql_severity=unknown")
+	}
+}
