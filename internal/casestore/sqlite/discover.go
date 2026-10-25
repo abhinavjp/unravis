@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS discover_reads(
 
 var _ casestore.Discoverer = (*Case)(nil)
 
-// migrate brings an older case up to schemaVersion. It only ever adds tables.
+// migrate brings an older case up to schemaVersion. It only ever adds tables
+// and writes the version; the schema-3 indexes are built lazily
+// (ensureAttrIndexes), so opening a large old case stays fast.
 func (c *Case) migrate(ctx context.Context, from int) error {
 	if from >= schemaVersion {
 		return nil

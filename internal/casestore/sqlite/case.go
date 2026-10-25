@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,6 +63,20 @@ type caseState struct {
 	// Each stops at once instead of holding the files open through an Erase.
 	stop     chan struct{}
 	stopOnce sync.Once
+
+	// quit is closed first thing in shutdown, before it waits for importMu, so an
+	// index build that holds importMu gives way (see ensureAttrIndexes).
+	quit     chan struct{}
+	quitOnce sync.Once
+
+	// attrIdx is 0 until the series-key indexes are known to exist (1) or
+	// building them failed (2); attrIdxMu serialises the check and the build.
+	attrIdx   atomic.Int32
+	attrIdxMu sync.Mutex
+
+	// stats caches the event counts preferScan reads; statsMu guards it.
+	stats   *evStats
+	statsMu sync.Mutex
 }
 
 // Case is one handle from Store.Open. Handles of the same case share a
@@ -138,6 +154,11 @@ func (c *Case) Close() error {
 
 // shutdown closes the database and zeroes the keys. Erase calls it directly.
 func (c *caseState) shutdown() error {
+	c.quitOnce.Do(func() {
+		if c.quit != nil {
+			close(c.quit)
+		}
+	})
 	c.importMu.Lock() // let a running import finish first
 	defer c.importMu.Unlock()
 	c.mu.Lock()
@@ -999,6 +1020,9 @@ func (c *Case) Events(ctx context.Context, q casestore.EventQuery) ([]evidence.E
 	if err != nil {
 		return nil, err
 	}
+	if wantsAttrIndex(q) {
+		c.ensureAttrIndexes()
+	}
 	limit := q.Limit
 	if limit <= 0 || limit > maxEvents {
 		limit = maxEvents
@@ -1027,14 +1051,25 @@ const selectEvents = `SELECT evidence_id, source, kind, host, ts_ms, te_ms, dura
 // eventFilter builds the WHERE clause (with its leading space, or empty) and the
 // arguments for q's window and Kinds, Sources and Hosts filters.
 func eventFilter(q casestore.EventQuery) (string, []any, error) {
+	return eventFilterAs(q, false)
+}
+
+// eventFilterAs is eventFilter. With scan set the plain columns carry a unary
+// plus, which keeps SQLite from using an index for them, so the query reads the
+// table in storage order (NOT INDEXED is not honoured for a WITHOUT ROWID table).
+func eventFilterAs(q casestore.EventQuery, scan bool) (string, []any, error) {
 	var where []string
 	var args []any
+	plus := ""
+	if scan {
+		plus = "+"
+	}
 	if !q.Window.From.IsZero() {
-		where = append(where, "ts_ms >= ?")
+		where = append(where, plus+"ts_ms >= ?")
 		args = append(args, q.Window.From.UnixMilli())
 	}
 	if !q.Window.To.IsZero() {
-		where = append(where, "ts_ms <= ?")
+		where = append(where, plus+"ts_ms <= ?")
 		args = append(args, q.Window.To.UnixMilli())
 	}
 	for _, f := range []struct {
@@ -1047,15 +1082,129 @@ func eventFilter(q casestore.EventQuery) (string, []any, error) {
 		if len(f.vals) > maxFilter {
 			return "", nil, fmt.Errorf("%w: too many %s filters", ErrInvalid, f.col)
 		}
-		where = append(where, f.col+" IN ("+strings.TrimSuffix(strings.Repeat("?,", len(f.vals)), ",")+")")
+		where = append(where, plus+f.col+" IN ("+strings.TrimSuffix(strings.Repeat("?,", len(f.vals)), ",")+")")
 		for _, v := range f.vals {
 			args = append(args, v)
+		}
+	}
+	if err := q.CheckAttrs(); err != nil {
+		return "", nil, fmt.Errorf("%w: attribute filter", ErrInvalid)
+	}
+	names := make([]string, 0, len(q.Attrs))
+	for k := range q.Attrs {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		// The two indexed names are written as the literal path the index uses;
+		// any other name goes through a bound path, quoted so a '.' or '-' in it
+		// is part of the name. CheckAttrs has already limited the characters.
+		if slices.Contains(attrIndexColumns, name) {
+			where = append(where, "json_extract(attrs_json,'$."+name+"') = ?")
+			args = append(args, q.Attrs[name])
+		} else {
+			where = append(where, "json_extract(attrs_json, ?) = ?")
+			args = append(args, `$."`+name+`"`, q.Attrs[name])
 		}
 	}
 	if len(where) == 0 {
 		return "", args, nil
 	}
 	return " WHERE " + strings.Join(where, " AND "), args, nil
+}
+
+// wantsAttrIndex reports whether q filters on an attribute the series-key
+// indexes serve.
+func wantsAttrIndex(q casestore.EventQuery) bool {
+	for _, n := range attrIndexNames {
+		if _, ok := q.Attrs[n]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// attrIndexHint names the series-key index for a one-kind query on a series
+// key, once the indexes are known to exist. Without it SQLite, which holds no
+// statistics for a case, prefers the (kind, ts_ms) index whenever the selector
+// leaves out a trailing key attribute (a Memory counter has no instance), and
+// reads the whole kind again. The caller retries without the hint should
+// SQLite find the index unusable.
+func (c *Case) attrIndexHint(q casestore.EventQuery) string {
+	if c.attrIdx.Load() != 1 || len(q.Kinds) != 1 {
+		return ""
+	}
+	if _, ok := q.Attrs["counter"]; ok {
+		return " INDEXED BY ev_kind_counter"
+	}
+	if _, ok := q.Attrs["metric"]; ok {
+		return " INDEXED BY ev_kind_metric"
+	}
+	return ""
+}
+
+// ensureAttrIndexes makes sure the series-key indexes exist. A case imported
+// by this build has them already; a case written before schema 3 gets them here,
+// the first time a query filters on a series key, and the build runs once per
+// opened case (it reads every event of the case, so on a very large old case it
+// takes seconds to tens of seconds; the scan budget does not count it). It holds
+// the import lock, so an import or a shutdown waits, and shutdown cancels it.
+// It never fails a query: when the build cannot finish (busy database, no space,
+// the case is closing) the query runs without the indexes, as slowly as before,
+// and a failed build is not tried again until the case is reopened.
+func (c *Case) ensureAttrIndexes() {
+	if c.attrIdx.Load() != 0 {
+		return
+	}
+	c.attrIdxMu.Lock()
+	defer c.attrIdxMu.Unlock()
+	if c.attrIdx.Load() != 0 {
+		return
+	}
+	c.importMu.Lock()
+	defer c.importMu.Unlock()
+	db, err := c.handle()
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-c.quit:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	var have int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='index' AND name IN ('ev_kind_counter','ev_kind_metric')`).Scan(&have); err != nil {
+		return
+	}
+	if have == len(attrIndexNames) {
+		c.attrIdx.Store(1)
+		return
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return
+	}
+	if _, err := tx.ExecContext(ctx, attrIndexSQL); err != nil {
+		_ = tx.Rollback()
+		if ctx.Err() == nil {
+			c.attrIdx.Store(2)
+			c.s.logf("case %s series-key index build failed: %v", c.id, err)
+		}
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		if ctx.Err() == nil {
+			c.attrIdx.Store(2)
+			c.s.logf("case %s series-key index build failed: %v", c.id, err)
+		}
+		return
+	}
+	c.attrIdx.Store(1)
+	_, _ = db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
 }
 
 // scanEvent reads one row of selectEvents.
@@ -1104,6 +1253,13 @@ func (c *Case) Each(ctx context.Context, q casestore.EventQuery, fn func(evidenc
 	if err != nil {
 		return err
 	}
+	if wantsAttrIndex(q) {
+		c.ensureAttrIndexes() // before the budget starts: building is not scanning
+	}
+	tableScan := c.preferScan(ctx, db, q) // counting is not scanning either
+	if tableScan {
+		where, args, _ = eventFilterAs(q, true)
+	}
 	budget := q.NewScanBudget()
 
 	qctx, cancel := context.WithCancel(ctx)
@@ -1134,10 +1290,22 @@ func (c *Case) Each(ctx context.Context, q casestore.EventQuery, fn func(evidenc
 		if _, herr := c.handle(); herr != nil {
 			return herr
 		}
+		if err != nil && strings.Contains(err.Error(), "malformed JSON") {
+			return ErrDamaged // an attribute filter met a row whose attrs_json is not JSON
+		}
 		return err
 	}
 
-	rows, err := db.QueryContext(qctx, selectEvents+where+" ORDER BY kind, ts_ms", args...)
+	hint := c.attrIndexHint(q)
+	var rows *sql.Rows
+	if tableScan {
+		rows, err = db.QueryContext(qctx, selectEvents+where, args...)
+	} else {
+		rows, err = db.QueryContext(qctx, selectEvents+hint+where+" ORDER BY kind, ts_ms", args...)
+		if err != nil && hint != "" && strings.Contains(err.Error(), "no query solution") {
+			rows, err = db.QueryContext(qctx, selectEvents+where+" ORDER BY kind, ts_ms", args...)
+		}
+	}
 	if err != nil {
 		return why(err)
 	}

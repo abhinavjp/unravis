@@ -361,6 +361,7 @@ func initConn(c *sqlite3.Conn, hexKey string, maxPages int64) error {
 		fmt.Sprintf("PRAGMA max_page_count=%d", maxPages),
 		"PRAGMA journal_mode=WAL",
 		"PRAGMA journal_size_limit=67108864",
+		"PRAGMA cache_size=-65536",
 		"PRAGMA synchronous=NORMAL",
 	} {
 		if err := c.Exec(stmt); err != nil {
@@ -490,7 +491,7 @@ func (s *Store) load(ctx context.Context, id casestore.CaseID) (*caseState, erro
 		keys.Zero()
 		return nil, err
 	}
-	st := &caseState{s: s, id: id, dir: dir, db: db, keys: keys, man: man, refs: 1, stop: make(chan struct{})}
+	st := &caseState{s: s, id: id, dir: dir, db: db, keys: keys, man: man, refs: 1, stop: make(chan struct{}), quit: make(chan struct{})}
 	if err := (&Case{caseState: st}).verify(ctx); err != nil {
 		_ = db.Close()
 		keys.Zero()

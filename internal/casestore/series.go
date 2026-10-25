@@ -206,6 +206,19 @@ func (s *selector) matches(ev *evidence.Event) bool {
 	return true
 }
 
+// hasIndexedAttr reports whether the selector pins an attribute a store
+// indexes (IndexedAttrs): the series key of a counter or a metric.
+func (s *selector) hasIndexedAttr() bool {
+	for _, a := range s.attrs {
+		for _, n := range IndexedAttrs {
+			if a[0] == n {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 type seriesAgg struct {
 	count    []int64
 	sum      []float64
@@ -245,101 +258,177 @@ func Series(ctx context.Context, c Case, q SeriesQuery) (SeriesResult, error) {
 		return res, seriesErr(SeriesTooManySeries, "At most %d series per request.", MaxSeriesCount)
 	}
 	sels := make([]selector, len(q.Sel))
-	byKind := map[string][]int{}
-	kinds := make([]string, 0, len(q.Sel))
-	allSource, allHost := true, true
-	sources, hosts := map[string]bool{}, map[string]bool{}
+	// A selector that names a series key (an attribute a store indexes) is read
+	// by a pass of its own, the store returning only the events of that series.
+	// The others share one pass over their kinds, as before.
+	var own, shared []int
 	for i, s := range q.Sel {
 		p, err := parseSelector(s)
 		if err != nil {
 			return res, err
 		}
 		sels[i] = p
-		if _, ok := byKind[p.kind]; !ok {
-			kinds = append(kinds, p.kind)
+		if p.hasIndexedAttr() {
+			own = append(own, i)
+		} else {
+			shared = append(shared, i)
 		}
-		byKind[p.kind] = append(byKind[p.kind], i)
-		if p.source == "" {
-			allSource = false
-		}
-		sources[p.source] = true
-		if p.host == "" {
-			allHost = false
-		}
-		hosts[p.host] = true
-	}
-	eq := EventQuery{
-		Window: importer.Window{From: q.From.UTC(), To: q.To.UTC()},
-		Kinds:  kinds, MaxScan: q.MaxScan, MaxScanTime: q.MaxScanTime,
-	}
-	if allSource {
-		eq.Sources = keys(sources)
-	}
-	if allHost {
-		eq.Hosts = keys(hosts)
 	}
 
 	aggs := make([]seriesAgg, len(sels))
+	add := func(i int, ev *evidence.Event, b int) {
+		sel := &sels[i]
+		if !sel.matches(ev) {
+			return
+		}
+		p := ev.Value
+		if sel.duration {
+			p = ev.DurationMs
+		}
+		if p == nil || math.IsNaN(*p) || math.IsInf(*p, 0) {
+			return
+		}
+		a := &aggs[i]
+		if a.count == nil {
+			a.count = make([]int64, nb)
+			a.sum = make([]float64, nb)
+			a.min = make([]float64, nb)
+			a.max = make([]float64, nb)
+		}
+		v := *p
+		if a.count[b] == 0 {
+			a.min[b], a.max[b] = v, v
+		} else {
+			if v < a.min[b] {
+				a.min[b] = v
+			}
+			if v > a.max[b] {
+				a.max[b] = v
+			}
+		}
+		a.count[b]++
+		a.sum[b] += v
+		a.total++
+		if !a.unitSet {
+			a.unit, a.unitSet = ev.Unit, ev.Unit != ""
+		} else if ev.Unit != "" && ev.Unit != a.unit {
+			a.mixed = true
+		}
+	}
+
+	// One scan budget for the whole query, shared by the passes in turn.
+	maxEvents, maxTime := int64(MaxScanEvents), MaxScanTime
+	if q.MaxScan > 0 && q.MaxScan < maxEvents {
+		maxEvents = q.MaxScan
+	}
+	if q.MaxScanTime > 0 && q.MaxScanTime < maxTime {
+		maxTime = q.MaxScanTime
+	}
+	began := time.Now()
 	var scanned int64
-	err := c.Each(ctx, eq, func(ev evidence.Event) error {
-		scanned++
-		idxs := byKind[ev.Kind]
-		if len(idxs) == 0 {
-			return nil
-		}
-		ts := ev.Start.UnixMilli()
-		if ts < fromMs || ts > toMs {
-			return nil
-		}
-		b := int((ts - fromMs) / q.BucketMs)
-		for _, i := range idxs {
-			sel := &sels[i]
-			if !sel.matches(&ev) {
-				continue
-			}
-			p := ev.Value
-			if sel.duration {
-				p = ev.DurationMs
-			}
-			if p == nil || math.IsNaN(*p) || math.IsInf(*p, 0) {
-				continue
-			}
-			a := &aggs[i]
-			if a.count == nil {
-				a.count = make([]int64, nb)
-				a.sum = make([]float64, nb)
-				a.min = make([]float64, nb)
-				a.max = make([]float64, nb)
-			}
-			v := *p
-			if a.count[b] == 0 {
-				a.min[b], a.max[b] = v, v
-			} else {
-				if v < a.min[b] {
-					a.min[b] = v
-				}
-				if v > a.max[b] {
-					a.max[b] = v
-				}
-			}
-			a.count[b]++
-			a.sum[b] += v
-			a.total++
-			if !a.unitSet {
-				a.unit, a.unitSet = ev.Unit, ev.Unit != ""
-			} else if ev.Unit != "" && ev.Unit != a.unit {
-				a.mixed = true
-			}
-		}
-		return nil
-	})
 	partial := false
-	switch {
-	case err == nil:
-	case errors.Is(err, ErrScanBudget):
-		partial = true
-	default:
-		return res, err
+	// pass runs one Each under what is left of the budget. It returns true when
+	// the budget stopped it, and any other error as err.
+	pass := func(eq EventQuery, fn func(ev *evidence.Event)) (bool, error) {
+		left, leftT := maxEvents-scanned, maxTime-time.Since(began)
+		eq.MaxScan, eq.MaxScanTime = left, leftT
+		exhausted := left <= 0
+		if exhausted { // nothing may be read, but a pass that finds no event is not partial
+			eq.MaxScan = 1
+		}
+		if leftT <= 0 {
+			eq.MaxScanTime = time.Nanosecond
+		}
+		err := c.Each(ctx, eq, func(ev evidence.Event) error {
+			if exhausted {
+				return ErrScanBudget
+			}
+			scanned++
+			fn(&ev)
+			return nil
+		})
+		switch {
+		case err == nil:
+			return false, nil
+		case errors.Is(err, ErrScanBudget):
+			return true, nil
+		}
+		return false, err
+	}
+
+	if len(shared) > 0 {
+		byKind := map[string][]int{}
+		kinds := make([]string, 0, len(shared))
+		allSource, allHost := true, true
+		sources, hosts := map[string]bool{}, map[string]bool{}
+		for _, i := range shared {
+			p := sels[i]
+			if _, ok := byKind[p.kind]; !ok {
+				kinds = append(kinds, p.kind)
+			}
+			byKind[p.kind] = append(byKind[p.kind], i)
+			if p.source == "" {
+				allSource = false
+			}
+			sources[p.source] = true
+			if p.host == "" {
+				allHost = false
+			}
+			hosts[p.host] = true
+		}
+		eq := EventQuery{Window: importer.Window{From: q.From.UTC(), To: q.To.UTC()}, Kinds: kinds}
+		if allSource {
+			eq.Sources = keys(sources)
+		}
+		if allHost {
+			eq.Hosts = keys(hosts)
+		}
+		stopped, err := pass(eq, func(ev *evidence.Event) {
+			idxs := byKind[ev.Kind]
+			if len(idxs) == 0 {
+				return
+			}
+			ts := ev.Start.UnixMilli()
+			if ts < fromMs || ts > toMs {
+				return
+			}
+			b := int((ts - fromMs) / q.BucketMs)
+			for _, i := range idxs {
+				add(i, ev, b)
+			}
+		})
+		if err != nil {
+			return res, err
+		}
+		partial = partial || stopped
+	}
+	for _, i := range own {
+		if partial {
+			break // the budget is spent: the series left are not read
+		}
+		sel := &sels[i]
+		eq := EventQuery{Window: importer.Window{From: q.From.UTC(), To: q.To.UTC()}, Kinds: []string{sel.kind}}
+		if sel.source != "" {
+			eq.Sources = []string{sel.source}
+		}
+		if sel.host != "" {
+			eq.Hosts = []string{sel.host}
+		}
+		eq.Attrs = make(map[string]string, len(sel.attrs))
+		for _, a := range sel.attrs {
+			eq.Attrs[a[0]] = a[1]
+		}
+		stopped, err := pass(eq, func(ev *evidence.Event) {
+			ts := ev.Start.UnixMilli()
+			if ev.Kind != sel.kind || ts < fromMs || ts > toMs {
+				return
+			}
+			add(i, ev, int((ts-fromMs)/q.BucketMs))
+		})
+		if err != nil {
+			return res, err
+		}
+		partial = partial || stopped
 	}
 
 	res = SeriesResult{

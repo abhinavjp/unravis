@@ -163,26 +163,55 @@ directory listing and stat latency is not in this number.
 ## Defects and findings
 
 Nothing exceeded 2 GB RAM. Nothing exceeded 10 minutes outright, but the 5M-line import came
-within 50 s of it. Production code was not touched; hints are for whoever fixes these.
+within 50 s of it. The measurements below were taken before any fix; D1 and D2 have since been fixed (see each entry).
 
-**D1. Series and resource queries cannot finish on a realistic 24 h counter case (high).**
-200 counters x 24 h x 15 s (1.14M events) always returns `partial` after ~11.3 s, for every
-query shape, and the partial answer covers about the first half of the window. Root-cause hint:
-`Case.Each` (`internal/casestore/sqlite/case.go`) streams `SELECT ... ORDER BY kind, ts_ms`
-filtered only by kind and time, JSON-decodes `attrs` per row, and the selector match runs in Go
-(`internal/casestore/series.go`). A 1-selector query therefore costs the same as a 50-selector
-one (3.8 s vs 4.3 s on the 6 h case). Pushing source/host/object/counter/instance into SQL
-(a series-key column plus index), or rolling counters up at import, would make it proportional
-to the answer.
+**D1. Series and resource queries cannot finish on a realistic 24 h counter case (high). FIXED, see after-numbers.**
+Before: 200 counters x 24 h x 15 s (1.14M events) always returned `partial` after ~11.3 s, for every
+query shape, covering about the first half of the window. Cause: `Case.Each` streamed
+`SELECT ... ORDER BY kind, ts_ms` filtered only by kind and time, and the selector match ran in Go,
+so a 1-selector query cost the same as a 50-selector one (3.8 s vs 4.3 s on the 6 h case).
 
-**D2. Resource evaluation memory grows with the events scanned (streaming violation, high).**
-`/resource` heap was 328 MiB at 285k events and 678 MiB at the 583k events scanned before the
-budget cut it off, about 1.15 KB per event (ws 802 MiB at 24 h). It is bounded only by the scan
-budget. On this machine the 10 s budget caps it near 0.8 GB, but the budget is also 20M events,
-and the counters importer accepts up to 2M events: the projection at 2M events is about 2.3 GB,
-past the 2 GB bar (extrapolation from the two measured points). A faster disk or CPU raises
-the cap. Hint: the resource evaluators appear to buffer every event in the window; they should
-aggregate per series and bucket while streaming.
+Fix: `EventQuery` gained `Attrs` (up to 4 exact attribute pairs) and `Unordered`. The sqlite store
+now pushes the selector into SQL and uses two additive partial expression indexes
+(`ev_kind_counter`, `ev_kind_metric`, schema version 3). Old case files open unchanged; the version is
+bumped on open and the indexes are built lazily on the first selector query, with a plain scan as
+fallback. `Series` makes one shared pass for selectors that cannot use an index and one narrow pass per
+other selector, under one shared scan budget. The response shape is unchanged. Tests: an old-version
+(schema 2) fixture migration test, a contract test (`each-attribute-filter`) run against both stores, and
+a plan test in `internal/casestore/sqlite/scan_test.go`.
+
+After (synthetic, one PC, 1,140,629 events, 24 h window; `UNRAVIS_BENCH=1`, `TestBenchSynthQueries`):
+
+| Series query | Wall | Partial | Events scanned |
+|---|---|---|---|
+| 1 selector | 0.08 s | no | 5,700 |
+| 10 selectors | 0.51 s | no | 57,035 |
+| 50 selectors | 2.06 s | no | 233,821 |
+
+Heap stayed at 6-8 MiB during these. A budget far below the case size (20,000 events) still gives a
+partial answer after exactly 20,000 events; the bench asserts both. Not measured: how long the lazy index
+build takes on a very old 1.14M-event case (the code comment says seconds to tens of seconds; the
+measured case was built with the indexes in place). The indexes add to case.db size, not measured.
+
+**D2. Resource evaluation memory grows with the events scanned (streaming violation, high). FIXED, see after-numbers.**
+Before: `/resource` heap was 328 MiB at 285k events and 678 MiB at the 583k events scanned before the
+budget cut it off, about 1.15 KB per event (ws 802 MiB at 24 h), bounded only by the scan budget;
+projected about 2.3 GB at the 2M-event counters cap.
+
+Fix: the catalogue builder (`internal/resource/catalogue.go`) keeps one compact row per event (about
+115 B) with the fields shared by a series stored once, instead of the whole event. It reads with
+`Unordered`, and on the sqlite store a table scan when the wanted kinds are at least 1 in 5 of the case
+(a unary-plus plan, about 3.8x faster than the index walk on a counter-dominated case). The rows are
+re-ordered to the old scan order (kind, start, id), so results are identical; a test compares against a
+reference implementation, including shuffled delivery.
+
+After (synthetic, one PC, same 1.14M-event case, whole 24 h window): resource evaluation took 3.64 s,
+not partial, HeapInuse max 260 MiB, working set max 575 MiB over a 220 MiB base, total allocation 2,490 MiB.
+Before the unordered scan the same case took about 10.2 s and one run was partial, so the scan plan
+matters as much as the memory fix. Caveats: 260 MiB is still mostly the compact rows plus the Series
+samples, so memory still grows with scanned events (about 230 B per event overall here), but at about
+a fifth of before. At the 2M-event counters cap this projects to roughly 0.5 GB (extrapolation, not
+measured). The sqlite page cache is now 64 MiB per connection (pool of 4, 256 MiB worst case).
 
 **D3. Import throughput is low and degrades as the case grows (medium).** iis-w3c ran at 11.5k
 rows/s for 1M lines and 9.1k rows/s for 5M (a 20k-row smoke run reached 32.6k rows/s). Counters
