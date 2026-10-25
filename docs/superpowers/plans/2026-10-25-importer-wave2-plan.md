@@ -653,3 +653,14 @@ Haiku re-reviews the fix rounds. After merge and run: one "clumsiest user" revie
   - The Node proxy format is unknown, so W2-j is conditional.
   - Linux hosts are unconfirmed, so W2-m is conditional.
 - **Dependency:** U1 depends on `wave/drill`'s `zoom.ts` names. If they change, only the adapter in `resource.ts` changes.
+
+## Ruling: logger depth for W2-a
+
+The intended ruling was that the log4net, Serilog and Microsoft.Extensions.Logging (MEL) importers record a logger name only to its first two dotted segments. The code does not do that, and this note records what the code does.
+
+- The three importers share `internal/importer/applog` (`logger.go`, `LoggerLabel`). No importer cuts a logger name short.
+- A name is kept whole when it matches the framework allowlist: `System`, `Microsoft`, `MongoDB`, `Serilog`, `log4net`, `Hangfire`, `Polly`, `Grpc`, `Azure`, `Newtonsoft` or `NHibernate`, plus at most two more segments (three segments in all); `StackExchange.Redis` plus at most one more segment; or `ioredis` or `redis` alone. Each segment is 1 to 64 letters, digits or `_`.
+- Any other name becomes a per-case `logger-xxxxxxxx` pseudonym. This includes a framework name that is deeper than three segments, so a long framework name is replaced whole, not cut to its first two segments. If no pseudonym can be made, the file is refused.
+- The export applies the same rule (`internal/evidence/caseexport.go`). `TestLoggerRuleMatchesExport` and `TestW2FExportValueRules` check that the two agree.
+
+If the owner still wants a two-segment cut, that is a new change to `applog/logger.go` and the export rule together.
