@@ -145,7 +145,7 @@ const (
 	qsMaxMicros = 7 * 24 * 3600 * 1e6 // one week, in microseconds
 	qsMaxMillis = 7 * 24 * 3600 * 1e3
 	qsMaxCount  = 1e12
-	qsMaxID     = 1e15
+	qsMaxID     = 1e15 - 1 // the largest 15-digit id the case export keeps
 )
 
 var (
@@ -196,6 +196,9 @@ func qsNum(v string, max float64) (f float64, present, ok bool) {
 	f, err := strconv.ParseFloat(v, 64)
 	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f > max {
 		return 0, true, false
+	}
+	if f == 0 {
+		f = 0 // "-0" is zero, not negative zero
 	}
 	return f, true, true
 }
@@ -386,7 +389,7 @@ func (p *qsProc) row(cells map[string]string, line int64) (importer.Reason, erro
 	case !okS && !okE:
 		return importer.ReasonBadTime, nil
 	}
-	if end.Before(start) {
+	if end.Before(start) || end.Sub(start) > 7*24*time.Hour {
 		return importer.ReasonBadTime, nil
 	}
 
