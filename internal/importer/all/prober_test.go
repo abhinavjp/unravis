@@ -30,7 +30,7 @@ func TestProberSet(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	want := []string{"iis-httperr", "iis-w3c","log4net-text", "mel-json", "mongod-json", "nlog-text", "serilog-clef", "serilog-text"}
+	want := []string{"iis-httperr", "iis-w3c", "log4net-text", "mel-json", "mongod-json", "nlog-text", "schedule-quartz", "serilog-clef", "serilog-text"}
 	if len(got) != len(want) {
 		t.Fatalf("probers %v, want %v", got, want)
 	}
@@ -100,6 +100,19 @@ func TestProbeTime(t *testing.T) {
 		{"mel json local", "mel-json", `{"Timestamp":"2001-10-25T14:02:30","EventId":0,"LogLevel":"Information","Category":"A"}`, local, "2001-10-25T01:02:30Z"},
 		{"mel json local no tz", "mel-json", `{"Timestamp":"2001-10-25T14:02:30","EventId":0,"LogLevel":"Information","Category":"A"}`, noTZ, ""},
 		{"mel json no timestamp", "mel-json", `{"EventId":0,"LogLevel":"Information","Category":"A"}`, none, ""},
+
+		{"quartz log4net local", "schedule-quartz", "2001-10-25 14:02:30,950 [QuartzScheduler_Worker-1] INFO  Quartz.Core.JobRunShell - Job DEFAULT.nightly-sync execution complete in 5 ms", local, "2001-10-25T01:02:30.95Z"},
+		{"quartz log4net utc stated", "schedule-quartz", "2001-10-25 14:02:30,950 [W-1] INFO  Quartz.Core.JobRunShell - SENTINEL-7f3a", utcStated, "2001-10-25T14:02:30.95Z"},
+		{"quartz log4net no tz", "schedule-quartz", "2001-10-25 14:02:30,950 [W-1] INFO  Quartz.Core.JobRunShell - x", noTZ, ""},
+		{"quartz log4net no host", "schedule-quartz", "2001-10-25 14:02:30,950 [W-1] INFO  Quartz.Core.JobRunShell - x", none, ""},
+		{"quartz log4net other logger", "schedule-quartz", "2001-10-25 14:02:30,950 [12] INFO  Synthetic.Api.A - x", local, "2001-10-25T01:02:30.95Z"},
+		{"quartz log4net bad level", "schedule-quartz", "2001-10-25 14:02:30,950 [W-1] NOPE  Quartz.Core.X - x", local, ""},
+		{"quartz log4net bad time", "schedule-quartz", "2001-10-25 99:02:30,950 [W-1] INFO  Quartz.Core.X - x", local, ""},
+		{"quartz mel header", "schedule-quartz", "2001-10-25 14:02:30 info: Quartz.Core.JobRunShell[0]", local, "2001-10-25T01:02:30Z"},
+		{"quartz mel no stamp", "schedule-quartz", "info: Quartz.Core.JobRunShell[0]", local, ""},
+		{"quartz message line", "schedule-quartz", "      Job DEFAULT.SENTINEL-7f3a execution complete", local, ""},
+		{"quartz continuation", "schedule-quartz", "   at Synthetic.Api.A()", local, ""},
+		{"quartz empty", "schedule-quartz", "", local, ""},
 
 		{"mongod", "mongod-json", `{"t":{"$date":"2001-10-25T01:02:30.123+00:00"},"s":"I","c":"COMMAND","id":51803,"msg":"SENTINEL-7f3a"}`, none, "2001-10-25T01:02:30.123Z"},
 		{"mongod naive", "mongod-json", `{"t":{"$date":"2001-10-25T01:02:30.123"},"s":"I"}`, none, ""},

@@ -134,6 +134,27 @@ func TestLinuxSamplesAreKnownButSuggestNothing(t *testing.T) {
 	}
 }
 
+// A Quartz.NET scheduler log marks a host as an app host exactly as a Hangfire
+// export does, and is no application log: the app-log suggestion stays.
+func TestQuartzIsSuggestedLikeHangfire(t *testing.T) {
+	if !known[quartz] {
+		t.Fatal("schedule-quartz is not known")
+	}
+	q := Suggest(cover(webA, quartz), []string{webA})
+	h := Suggest(cover(webA, hangfire), []string{webA})
+	if len(q) == 0 || !reflect.DeepEqual(ids(q), ids(h)) {
+		t.Fatalf("quartz suggests %v, hangfire suggests %v", ids(q), ids(h))
+	}
+	if !strings.Contains(strings.Join(ids(q), ","), "app-log") {
+		t.Errorf("a Quartz log must not satisfy the app-log suggestion: %v", ids(q))
+	}
+	with := Suggest(cover(webA, iisW3C, quartz), nil)
+	without := Suggest(cover(webA, iisW3C), nil)
+	if !reflect.DeepEqual(ids(with), ids(without)) {
+		t.Errorf("a Quartz file changes the list of an IIS host: %v vs %v", ids(with), ids(without))
+	}
+}
+
 func TestEveryImporterIsRegisteredAndEveryRuleIsReachable(t *testing.T) {
 	registered := map[string]bool{}
 	for _, n := range allImporterNames() {
