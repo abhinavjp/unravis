@@ -82,6 +82,7 @@ func (a *AppLog) Detect(ctx context.Context, env Env) ([]Finding, []Gap) {
 			continue
 		}
 		seen[CanonKey(clean)] = true
+		r.roots = append(r.roots, clean)
 		if n++; n > maxSites {
 			r.addGap(Gap{Detector: r.name, Display: "site folders", Reason: ReasonTooLarge})
 			break
@@ -119,6 +120,7 @@ type appRun struct {
 	host        string
 	environment string
 
+	roots    []string // site and extra folders the scan was given
 	lists    map[string]listing
 	dirs     map[string]error
 	sinks    []*sink
@@ -730,13 +732,18 @@ type matchedFile struct {
 // emitSink lists a sink's folder, picks the files that belong to the log,
 // confirms the format with a 64 KiB head and adds the finding.
 func (r *appRun) emitSink(ctx context.Context, s *sink) {
+	// A label a config chose may name a key or credential file; never show it.
+	disp := s.label
+	if sensitiveLogName(disp) {
+		disp = "log file"
+	}
 	if err := r.checkDir(s.dir); err != nil {
-		r.gapErr(KindLogSet, s.label, err)
+		r.gapErr(KindLogSet, disp, err)
 		return
 	}
 	entries, err := r.list(s.dir)
 	if err != nil {
-		r.gapErr(KindLogSet, s.label, err)
+		r.gapErr(KindLogSet, disp, err)
 		if !errors.Is(err, ErrTooManyEntries) {
 			return
 		}
@@ -752,14 +759,18 @@ func (r *appRun) emitSink(ctx context.Context, s *sink) {
 			unsafe = true
 			continue
 		}
+		if !logExtOK(e.Name) || sensitiveLogName(e.Name) {
+			unsafe = true
+			continue
+		}
 		files = append(files, matchedFile{e, p})
 	}
 	if unsafe {
-		r.addGap(Gap{Detector: r.name, Kind: KindLogSet, Display: s.label, Reason: ReasonUnsafePath})
+		r.addGap(Gap{Detector: r.name, Kind: KindLogSet, Display: disp, Reason: ReasonUnsafePath})
 	}
 	if len(files) == 0 {
 		if !unsafe {
-			r.addGap(Gap{Detector: r.name, Kind: KindLogSet, Display: s.label, Reason: ReasonNotFound})
+			r.addGap(Gap{Detector: r.name, Kind: KindLogSet, Display: disp, Reason: ReasonNotFound})
 		}
 		return
 	}
@@ -773,11 +784,17 @@ func (r *appRun) emitSink(ctx context.Context, s *sink) {
 
 	imp, conf, err := r.pickImporter(files, s.cands)
 	if err != nil {
-		r.gapErr(KindLogSet, s.label, err)
+		r.gapErr(KindLogSet, disp, err)
 		return
 	}
 	if imp == "" {
-		r.addGap(Gap{Detector: r.name, Kind: KindLogSet, Display: s.label, Reason: ReasonUnreadable})
+		r.addGap(Gap{Detector: r.name, Kind: KindLogSet, Display: disp, Reason: ReasonUnreadable})
+		return
+	}
+	// Outside the site folders a config may point anywhere, so the head must
+	// have been read and recognised (pickImporter scores 40 when it was not).
+	if conf < 70 && !underRoots(s.dir, r.roots) {
+		r.addGap(Gap{Detector: r.name, Kind: KindLogSet, Display: disp, Reason: ReasonUnsafePath})
 		return
 	}
 

@@ -7,7 +7,6 @@
 package configparse
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/xml"
 	"errors"
@@ -48,13 +47,31 @@ func (c *capReader) Read(p []byte) (int, error) {
 // element with the names of its ancestors and itself (local names, namespaces
 // ignored) and its attributes. visit must copy only the values it keeps. The
 // path slice is reused: visit must not keep it.
+//
+// The document is read in full under the MaxBytes cap, then a UTF-8 or UTF-16
+// byte order mark is handled (toUTF8) and a declared encoding is accepted the
+// same way ParseXML accepts it (charsetReader), so a UTF-16 applicationHost.config
+// or web.config reads like a UTF-8 one. A DOCTYPE or any directive is still
+// refused, and the converted text is held to the same cap.
 func scan(r io.Reader, visit func(path []string, attrs []xml.Attr)) error {
-	br := bufio.NewReader(&capReader{r: r})
-	if b, _ := br.Peek(3); bytes.Equal(b, []byte{0xEF, 0xBB, 0xBF}) {
-		_, _ = br.Discard(3)
+	raw, err := io.ReadAll(&capReader{r: r})
+	if err != nil {
+		if errors.Is(err, ErrTooLarge) {
+			return ErrTooLarge
+		}
+		return ErrSyntax
 	}
-	dec := xml.NewDecoder(br)
+	data, err := toUTF8(raw)
+	if err != nil {
+		return err
+	}
+	if len(data) > MaxBytes {
+		return ErrTooLarge
+	}
+	dec := xml.NewDecoder(bytes.NewReader(data))
 	dec.Strict = true
+	dec.Entity = nil
+	dec.CharsetReader = charsetReader
 	var path []string
 	seen := false
 	for {
