@@ -42,7 +42,8 @@
   };
 
   // Each row's help flag: the button sits beside the measure name and the block spans the row, so the row holds the flag for both.
-  let helpOpen = $state<Record<string, boolean>>({});
+  // Every key starts false: a bound child prop with a fallback may not be bound to undefined.
+  let helpOpen = $state<Record<string, boolean>>(Object.fromEntries(RANGE_FIELDS.map(field => [field.key, false])));
 
   type RangeDraft = { min: string; max: string };
   const draftOf = (range: NumberRange | undefined): RangeDraft => ({

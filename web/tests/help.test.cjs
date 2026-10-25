@@ -366,3 +366,17 @@ test('the group rail keeps one roving tab stop: help sits inside the panes, neve
 test('FieldHelp keeps CRLF line endings', () => {
   assert.ok(!/(?<!\r)\n/.test(read('src/components/FieldHelp.svelte')));
 });
+
+test('a bind: into an indexed record is never backed by an empty {} state (a $bindable fallback may not be bound to undefined)', () => {
+  const dir = path.join(__dirname, '..', 'src', 'components');
+  const files = [];
+  const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (p.endsWith('.svelte')) files.push(p); } };
+  walk(dir);
+  for (const file of files) {
+    const src = fs.readFileSync(file, 'utf8');
+    for (const m of src.matchAll(/bind:\w+=\{(\w+)\[/g)) {
+      const decl = new RegExp('let\s+' + m[1] + '\s*=\s*\$state(?:<[^>]*>)?\(\s*\{\s*\}\s*\)');
+      assert.ok(!decl.test(src), path.basename(file) + ': ' + m[1] + ' starts empty but is bound by index');
+    }
+  }
+});
