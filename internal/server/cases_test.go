@@ -25,6 +25,7 @@ import (
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/hosts"
 	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/importer/winlive"
 	"api-audit-explorer/internal/ledger"
 )
 
@@ -690,6 +691,26 @@ func TestImportRequestShapeErrors(t *testing.T) {
 	}
 	if n := len(e.importsOf(id)); n != 0 {
 		t.Fatalf("refused requests stored %d imports", n)
+	}
+}
+
+// A win-live batch is written only by the sampler inside the process; one that
+// arrives over the network is refused, on a commit and on a preview, and
+// nothing is stored.
+func TestWinLiveUploadIsRefused(t *testing.T) {
+	e := newCaseEnv(t, envConfig{importers: []importer.Importer{toyImporter{name: "toy", score: 90}, winlive.New()}})
+	id := e.newCase("Live case")
+	file := &upload{"live.csv", winlive.Header(15, 4) + "\n" + winlive.ColumnLine() + "\n"}
+	for name, res := range map[string]*httptest.ResponseRecorder{
+		"commit":  e.upload("/api/cases/"+id+"/imports?importer=win-live&host=web-a", ackFields, file),
+		"preview": e.upload("/api/cases/"+id+"/imports?importer=win-live&preview=1&host=web-a", nil, file),
+	} {
+		if res.Code != http.StatusBadRequest || failureOf(t, res).Reason != "importer-internal" {
+			t.Errorf("%s: %d %s", name, res.Code, res.Body)
+		}
+	}
+	if n := len(e.importsOf(id)); n != 0 {
+		t.Fatalf("a refused win-live upload stored %d imports", n)
 	}
 }
 

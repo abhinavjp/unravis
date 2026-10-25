@@ -945,6 +945,12 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 			writeCaseFailure(w, http.StatusBadRequest, "unknown-importer", "That importer is not available.")
 			return
 		}
+		if found.Name() == "win-live" {
+			// Only the in-process sampler writes win-live batches; a body
+			// that arrives over the network is never one of them.
+			writeCaseFailure(w, http.StatusBadRequest, "importer-internal", "That importer is used only by the live sampler on this computer.")
+			return
+		}
 		imp = found
 	} else if !preview {
 		writeCaseFailure(w, http.StatusBadRequest, "importer-required", "Choose an importer before importing.")

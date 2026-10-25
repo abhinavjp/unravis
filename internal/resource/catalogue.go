@@ -520,7 +520,7 @@ func (b *builder) resolve() {
 				}
 			}
 		}
-		if o.proc.PID > 0 && (o.source == sourceProcSnap || o.source == sourcePidstat) {
+		if o.proc.PID > 0 && (o.source == sourceProcSnap || o.source == sourceWinLive || o.source == sourcePidstat) {
 			ts := b.starts[startKey(o.host, o.proc.Name, o.proc.PID)]
 			// latest start at or before the sample
 			j := sort.Search(len(ts), func(j int) bool { return ts[j].After(o.t) })

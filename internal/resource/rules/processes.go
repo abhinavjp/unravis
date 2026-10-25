@@ -137,7 +137,7 @@ func seriesSelector(s resource.Series) (string, bool) {
 		}
 		kind = "counter"
 		attrs = [][2]string{{"object", object}, {"instance", inst}, {"counter", counter}}
-	case "win-procsnap", "linux-pidstat", "dotnet-counters":
+	case "win-procsnap", "win-live", "linux-pidstat", "dotnet-counters":
 		name := "metric"
 		if s.Source == "dotnet-counters" {
 			name = "counter"

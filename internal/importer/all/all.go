@@ -19,6 +19,7 @@ import (
 	"api-audit-explorer/internal/importer/sqlserver"
 	"api-audit-explorer/internal/importer/wincounters"
 	"api-audit-explorer/internal/importer/winevents"
+	"api-audit-explorer/internal/importer/winlive"
 )
 
 // Importers returns a fresh instance of every importer. win-events carries the
@@ -57,6 +58,7 @@ func Importers() []importer.Importer {
 		mel.NewConsole(),
 		mel.NewJSON(),
 		mel.NewStdout(),
+		winlive.New(), // internal: written by the live sampler, never detected, refused over HTTP
 	}
 }
 

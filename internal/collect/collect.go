@@ -52,7 +52,8 @@ const (
 	winEvents   = "win-events"
 	winCounters = "win-counters"
 	winProcsnap = "win-procsnap"
-	dotnetCnt   = "dotnet-counters"
+	winLive     = "win-live"
+	dotnetCnt  = "dotnet-counters"
 	ancm        = "ancm-stdout"
 	appInsights = "appinsights"
 	hangfire    = "schedule-hangfire"
@@ -84,7 +85,9 @@ var (
 	mongoSignals = []string{mongodJSON, mongoStatus, mongoProf, mongoCurOp, mongostat}
 	// machineSignals are files that say the host is a plain Windows machine
 	// the counters and process list can be taken from.
-	machineSignals = []string{winCounters, winProcsnap, winEvents}
+	// The live sampler's batches (win-live) read the host's own CPU and memory,
+	// so they count as a machine signal and stand in for process snapshots.
+	machineSignals = []string{winCounters, winProcsnap, winEvents, winLive}
 	// accessLogSignals are nginx and Apache access logs. They are read, so a
 	// host holding one is recognised, but they say nothing about a Windows
 	// web host: they are in no signal list above, so they never make or

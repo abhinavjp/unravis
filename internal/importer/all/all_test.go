@@ -101,6 +101,7 @@ var samples = map[string]sample{
 	"mel-console":       {file: "mel/testdata/console_basic.log"},
 	"mel-json":          {file: "mel/testdata/json_basic.log"},
 	"ancm-stdout":       {file: "mel/testdata/stdout_basic.log", as: "stdout_20010304050607_1234.log"},
+	"win-live":          {file: "winlive/testdata/good.csv"},
 }
 
 // mongo exports are named by their export kind; their testdata is one file each.
@@ -150,8 +151,8 @@ var knownTies = map[string][]string{"sql-pdh": {"sql-pdh", "win-counters"}}
 func TestCrossDetectMatrix(t *testing.T) {
 	reg := all.Registry()
 	names := reg.Names()
-	if len(names) < 31 {
-		t.Fatalf("registry holds %d importers, want at least 31", len(names))
+	if len(names) < 32 {
+		t.Fatalf("registry holds %d importers, want at least 32", len(names))
 	}
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
@@ -161,6 +162,14 @@ func TestCrossDetectMatrix(t *testing.T) {
 			}
 			head, base := s.bytes(t)
 			best, score, tied := reg.Detect(head, base)
+			if name == "win-live" {
+				// An internal format: no upload is ever picked for it, and no
+				// other importer claims its batches either.
+				if best != nil {
+					t.Errorf("win-live sample claimed by %q (score %d)", best.Name(), score)
+				}
+				return
+			}
 			if best == nil {
 				t.Fatalf("no importer claims the sample")
 			}

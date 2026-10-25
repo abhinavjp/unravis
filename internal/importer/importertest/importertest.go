@@ -75,6 +75,10 @@ type Fixtures struct {
 	// is unaffected: its Bad fixture must put the sentinel in a cell that is
 	// not kept. The default (false) keeps the strict check.
 	KeepsCellValues bool
+	// NeverDetected declares an internal-format importer whose Detect always
+	// returns 0 (no upload is ever picked for it). The harness then requires 0
+	// for every head instead of requiring a positive score for Good.
+	NeverDetected bool
 	// Large is an optional valid file of more than 2*importer.HeadSize bytes.
 	// The byte-limit and read-error checks need a file that is bigger than the
 	// head Prepare peeks, so the breach or failure happens inside Parse. When
@@ -255,7 +259,11 @@ func detect(t *testing.T, imp importer.Importer, fx Fixtures) {
 		if s < 0 || s > 100 {
 			t.Errorf("Detect(%s) = %d, want 0..100", name, s)
 		}
-		if name == "good" && s == 0 {
+		if fx.NeverDetected {
+			if s != 0 {
+				t.Errorf("Detect(%s) = %d, want 0 for an importer that is never picked by content", name, s)
+			}
+		} else if name == "good" && s == 0 {
 			t.Errorf("Detect gives 0 for the importer's own Good fixture")
 		}
 	}
