@@ -28,6 +28,10 @@
     "text": "They record app pool starts, stops and recycles, and service events, with times."
   },
   {
+    "key": "discover.eventsapp.shows",
+    "text": "They record app crashes, hangs and start failures, with times."
+  },
+  {
     "key": "discover.freb.shows",
     "text": "It holds a step-by-step record of each request that IIS was set to trace."
   },
