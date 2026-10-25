@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { rangeReadout, sameWindow, type StripModel, type ZoomWindow } from '../lib/zoom';
-  import { brushCentre, brushDrag, brushHit, brushKey, type BrushMode } from '../lib/zoomBrush';
+  import { brushEdgeText, rangeReadout, sameWindow, type StripModel, type ZoomWindow } from '../lib/zoom';
+  import { brushCentre, brushDrag, brushFloor, brushHit, brushKey, type BrushMode } from '../lib/zoomBrush';
   import { zoomCopy } from '../lib/copy/zoomCopy';
   import HelpNote from './HelpNote.svelte';
 
@@ -33,10 +33,14 @@
   const left = $derived(((shown.start - brush.rootStart) / rootWidth) * 100);
   const right = $derived(((shown.end - brush.rootStart) / rootWidth) * 100);
   const previewText = $derived(preview ? rangeReadout(preview, zone) : '');
+  // The handles' spoken values follow what is shown (the preview while a drag or key run is under way), like aria-valuenow does.
+  const floor = $derived(brushFloor(root));
+  const startText = $derived(brushEdgeText(shown.start, shown, zone));
+  const endText = $derived(brushEdgeText(shown.end, shown, zone));
   let spoken = $state('');
 
   let track: HTMLElement | undefined;
-  interface Drag { mode: BrushMode; start: ZoomWindow; fromMs: number; x0: number; moved: boolean; id: number }
+  interface Drag { mode: BrushMode; start: ZoomWindow; fromMs: number; x0: number; moved: boolean; id: number; rect: DOMRect }
   let drag: Drag | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -64,14 +68,15 @@
     let mode = brushHit(at, { left: (view.start - brush.rootStart) / rootWidth, right: (view.end - brush.rootStart) / rootWidth }, halfHit() / rect.width);
     // Nothing is left to move when the whole period is on screen, so a press in the middle starts a new range.
     if (mode === 'move' && view.start <= root.start && view.end >= root.end) mode = 'new';
-    drag = { mode, start: view, fromMs: msAt(event.clientX, rect), x0: event.clientX, moved: false, id: event.pointerId };
+    // The track does not move during a drag, so its box is read once here and not on every pointermove.
+    drag = { mode, start: view, fromMs: msAt(event.clientX, rect), x0: event.clientX, moved: false, id: event.pointerId, rect };
     track.setPointerCapture?.(event.pointerId);
   }
   function move(event: PointerEvent) {
     if (!drag || event.pointerId !== drag.id || !track) return;
     if (!drag.moved && Math.abs(event.clientX - drag.x0) < DRAG_PX) return;
     drag.moved = true;
-    preview = brushDrag(drag.mode, root, drag.start, drag.fromMs, msAt(event.clientX, track.getBoundingClientRect()), brush.stepMs);
+    preview = brushDrag(drag.mode, root, drag.start, drag.fromMs, msAt(event.clientX, drag.rect), brush.stepMs);
   }
   function up(event: PointerEvent) {
     const current = drag;
@@ -153,8 +158,8 @@
           {#each bars as value, index (index)}<rect class="bar" x={index * step} y={14 - value * 12} width={Math.max(step - 0.3, 0.2)} height={value * 12} />{/each}
         </svg>
         <div class="nav-body" style:left={left + '%'} style:width={Math.max(right - left, 0) + '%'}></div>
-        <div class="nav-handle" role="slider" tabindex="0" aria-label={zoomCopy.brushStart} aria-orientation="horizontal" aria-valuemin={brush.rootStart} aria-valuemax={brush.rootEnd} aria-valuenow={shown.start} aria-valuetext={brush.startText} style:left={left + '%'} onkeydown={(event) => keydown('start', event)} onblur={flush}></div>
-        <div class="nav-handle" role="slider" tabindex="0" aria-label={zoomCopy.brushEnd} aria-orientation="horizontal" aria-valuemin={brush.rootStart} aria-valuemax={brush.rootEnd} aria-valuenow={shown.end} aria-valuetext={brush.endText} style:left={right + '%'} onkeydown={(event) => keydown('end', event)} onblur={flush}></div>
+        <div class="nav-handle" role="slider" tabindex="0" aria-label={zoomCopy.brushStart} aria-orientation="horizontal" aria-valuemin={brush.rootStart} aria-valuemax={Math.max(shown.end - floor, brush.rootStart)} aria-valuenow={shown.start} aria-valuetext={startText} style:left={left + '%'} onkeydown={(event) => keydown('start', event)} onblur={flush}></div>
+        <div class="nav-handle" role="slider" tabindex="0" aria-label={zoomCopy.brushEnd} aria-orientation="horizontal" aria-valuemin={Math.min(shown.start + floor, brush.rootEnd)} aria-valuemax={brush.rootEnd} aria-valuenow={shown.end} aria-valuetext={endText} style:left={right + '%'} onkeydown={(event) => keydown('end', event)} onblur={flush}></div>
       </div>
       <button type="button" class="quiet-button nav-later" disabled={!model.canLater} onclick={onLater}>{zoomCopy.later}</button>
     </div>

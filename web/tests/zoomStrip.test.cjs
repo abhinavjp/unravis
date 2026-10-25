@@ -163,11 +163,12 @@ test('the brush is two sliders in a labelled group, with spoken values', () => {
   assert.match(markup, /<div class="nav-track[^"]*" role="group" aria-label="[^"]+"/);
   assert.equal(attr(found[0], 'aria-label'), zoomCopy.brushStart);
   assert.equal(attr(found[1], 'aria-label'), zoomCopy.brushEnd);
-  for (const one of found) {
-    assert.equal(attr(one, 'aria-valuemin'), String(brush.rootStart));
-    assert.equal(attr(one, 'aria-valuemax'), String(brush.rootEnd));
-    assert.equal(attr(one, 'tabindex'), '0');
-  }
+  for (const one of found) assert.equal(attr(one, 'tabindex'), '0');
+  // Each handle may go as far as one floor from the other (changed: both used to span the whole root).
+  assert.equal(attr(found[0], 'aria-valuemin'), String(brush.rootStart));
+  assert.equal(attr(found[0], 'aria-valuemax'), String(brush.viewEnd - z.MIN_VIEW_MS));
+  assert.equal(attr(found[1], 'aria-valuemin'), String(brush.viewStart + z.MIN_VIEW_MS));
+  assert.equal(attr(found[1], 'aria-valuemax'), String(brush.rootEnd));
   assert.equal(attr(found[0], 'aria-valuenow'), String(brush.viewStart));
   assert.equal(attr(found[1], 'aria-valuenow'), String(brush.viewEnd));
   assert.equal(attr(found[0], 'aria-valuetext'), brush.startText);
@@ -333,4 +334,30 @@ test('the strip file imports nothing but the zoom libraries, the copy, the help 
   const imports = [...source.matchAll(/^\s*import .* from '([^']+)'/gm)].map((match) => match[1]);
   assert.deepEqual(imports.sort(), ['../lib/copy/zoomCopy', '../lib/zoom', '../lib/zoomBrush', './HelpNote.svelte']);
   assert.ok(DAY > 0);
+});
+
+test('the slider readouts are built from the window on show (preview or committed), with the model formatter and zone', () => {
+  assert.match(source, /aria-valuetext=\{startText\}/);
+  assert.match(source, /aria-valuetext=\{endText\}/);
+  assert.doesNotMatch(source, /brush\.startText|brush\.endText/, 'the committed text is not used for the readout');
+  assert.match(source, /startText = \$derived\(brushEdgeText\(shown\.start, shown, zone\)\)/);
+  assert.match(source, /endText = \$derived\(brushEdgeText\(shown\.end, shown, zone\)\)/);
+  // Same words as the model gives the committed window, in the zone it uses, and to the second under ten minutes.
+  const marks = { start: Date.parse('2001-10-24T14:03:22Z'), end: Date.parse('2001-10-24T14:08:22Z') };
+  assert.match(z.brushEdgeText(marks.start, marks, 'UTC'), /14:03:22/);
+  const wide = { start: marks.start, end: marks.start + 2 * 3_600_000 };
+  assert.doesNotMatch(z.brushEdgeText(wide.start, wide, 'UTC'), /14:03:22/);
+  const zoomed = z.stripModel({ ...baseInput, stack: hourStack, bucket: z.bucketForView(z.currentOf(hourStack)) });
+  const hv = z.currentOf(hourStack);
+  assert.equal(zoomed.brush.startText, z.brushEdgeText(hv.start, hv, zone));
+  assert.equal(zoomed.brush.endText, z.brushEdgeText(hv.end, hv, zone));
+});
+
+test('a pointer move does not read layout: the track box is taken once, when the drag begins', () => {
+  const move = source.slice(source.indexOf('function move('), source.indexOf('function up('));
+  assert.doesNotMatch(move, /getBoundingClientRect|offsetWidth|getComputedStyle/);
+  assert.match(move, /drag\.rect/);
+  const down = source.slice(source.indexOf('function down('), source.indexOf('function move('));
+  assert.equal((down.match(/getBoundingClientRect/g) || []).length, 1);
+  assert.match(down, /rect \}/);
 });
