@@ -249,11 +249,12 @@ const { SCREENS: SCREEN_LIST, canGo, go: moveScreen, initialScreen, afterUnlock,
 
 const LEGAL_MOVES = {
   loading: ['unlock', 'start', 'running'],
-  unlock: ['start', 'running', 'create'],
+  unlock: ['start', 'running', 'create', 'case'],
   setup: ['start', 'unlock'],
-  start: ['setup', 'create', 'running', 'unlock'],
-  create: ['start', 'running', 'unlock'],
-  running: ['start', 'unlock']
+  start: ['setup', 'create', 'running', 'unlock', 'case'],
+  create: ['start', 'running', 'unlock', 'case'],
+  running: ['start', 'unlock', 'case'],
+  case: ['start', 'running', 'create', 'unlock']
 };
 
 test('every legal screen move is allowed and returns the target screen', () => {
@@ -301,6 +302,7 @@ test('after unlock the person returns to the work that was interrupted, else the
   assert.equal(afterUnlock('running'), 'running');
   assert.equal(afterUnlock('start'), 'start');
   assert.equal(afterUnlock('create'), 'create', 'the create guide comes back as it was (TSK-19)');
+  assert.equal(afterUnlock('case'), 'case', 'the case home comes back after a lock');
   assert.equal(afterUnlock(null), 'start');
 });
 
@@ -314,7 +316,7 @@ test('Create a new one opens the guided flow; with it off it falls back to the i
 
 test('only the working screen keeps a case drawer open', () => {
   assert.equal(leavesCaseWork('running'), false);
-  for (const screen of ['unlock', 'setup', 'start', 'create']) assert.equal(leavesCaseWork(screen), true, screen);
+  for (const screen of ['unlock', 'setup', 'start', 'create', 'case']) assert.equal(leavesCaseWork(screen), true, screen);
 });
 
 test('appState routes through the reducer, logs refused moves in dev only, and the header Home returns to start without closing', () => {

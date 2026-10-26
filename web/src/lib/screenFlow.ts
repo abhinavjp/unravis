@@ -5,25 +5,27 @@ import type { LockState } from './masterKey';
  * appState.svelte.ts holds the current screen and asks `go` whether a move is allowed.
  *
  *   loading -> unlock | start | running
- *   unlock  -> start | running | create  (after the right key; back to the work it interrupted: the analysis, or the create guide)
+ *   unlock  -> start | running | create | case  (after the right key; back to the work it interrupted: the analysis, the case home, or the create guide)
  *   setup   -> start | unlock
- *   start   -> setup | create | running | unlock
- *   create  -> start | running | unlock
- *   running -> start | unlock
+ *   start   -> setup | create | running | unlock | case
+ *   create  -> start | running | unlock | case
+ *   running -> start | unlock | case
+ *   case    -> start | running | create | unlock   (the home page of one case: story, theories, health checks, files)
  *
  * Staying where you are is allowed and does nothing. Any other move is refused and left as it was.
  */
-export type Screen = 'loading' | 'unlock' | 'setup' | 'start' | 'create' | 'running';
+export type Screen = 'loading' | 'unlock' | 'setup' | 'start' | 'create' | 'running' | 'case';
 
-export const SCREENS: readonly Screen[] = ['loading', 'unlock', 'setup', 'start', 'create', 'running'];
+export const SCREENS: readonly Screen[] = ['loading', 'unlock', 'setup', 'start', 'create', 'running', 'case'];
 
 const MOVES: Readonly<Record<Screen, readonly Screen[]>> = {
   loading: ['unlock', 'start', 'running'],
-  unlock: ['start', 'running', 'create'],
+  unlock: ['start', 'running', 'create', 'case'],
   setup: ['start', 'unlock'],
-  start: ['setup', 'create', 'running', 'unlock'],
-  create: ['start', 'running', 'unlock'],
-  running: ['start', 'unlock']
+  start: ['setup', 'create', 'running', 'unlock', 'case'],
+  create: ['start', 'running', 'unlock', 'case'],
+  running: ['start', 'unlock', 'case'],
+  case: ['start', 'running', 'create', 'unlock']
 };
 
 export type Move = { ok: true; screen: Screen } | { ok: false; screen: Screen; reason: string };
@@ -63,7 +65,7 @@ export function initialScreen(facts: StartFacts): Screen {
  * case that was being made carries on from where it stopped (TSK-19).
  */
 export function afterUnlock(origin: Screen | null): Screen {
-  return origin === 'running' || origin === 'create' ? origin : 'start';
+  return origin === 'running' || origin === 'create' || origin === 'case' ? origin : 'start';
 }
 
 /**

@@ -58,8 +58,11 @@
     if (!text) { addNote = copy.addEmpty; return; }
     if (adding) return;
     adding = true; loadError = '';
+    const cid = ledger.caseId;
     try {
-      const created = await api.ledgerCreate(text);
+      const created = await api.ledgerCreate(text, cid);
+      // The person moved to another case while this was saving: the new entry belongs to the old one.
+      if (ledger.caseId !== cid) return;
       replace(created);
       ledger.newText = '';
       ledger.openId = created.id;
@@ -82,9 +85,12 @@
     const editor = ledger.editors[h.id];
     if (!editor || busy[h.id]) return;
     busy[h.id] = 'save'; delete problem[h.id]; delete blocked[h.id];
+    const cid = ledger.caseId;
     try {
-      replace(await api.ledgerUpdate(h.id, buildInput(editor)));
+      const saved = await api.ledgerUpdate(h.id, buildInput(editor), cid);
+      if (ledger.caseId === cid) replace(saved);
     } catch (error) {
+      if (ledger.caseId !== cid) return;
       if (error instanceof ApiError && error.code === 'guard_blocked') {
         blocked[h.id] = error.reasons ?? [];
         editor.state = h.state; // the previous state stays
@@ -94,8 +100,10 @@
   async function reuse(h: Hypothesis) {
     if (busy[h.id]) return;
     busy[h.id] = 'reuse'; delete problem[h.id];
+    const cid = ledger.caseId;
     try {
-      const fresh = await api.ledgerReuse(h.id);
+      const fresh = await api.ledgerReuse(h.id, cid);
+      if (ledger.caseId !== cid) return;
       replace(fresh);
       ledger.openId = fresh.id;
     } catch (error) { problem[h.id] = messageOf(error); }
@@ -104,8 +112,10 @@
   async function remove(h: Hypothesis) {
     if (busy[h.id]) return;
     busy[h.id] = 'delete'; delete problem[h.id];
+    const cid = ledger.caseId;
     try {
-      await api.ledgerDelete(h.id);
+      await api.ledgerDelete(h.id, cid);
+      if (ledger.caseId !== cid) return;
       ledger.items = ledger.items.filter((x) => x.id !== h.id);
       delete ledger.editors[h.id];
       if (ledger.openId === h.id) ledger.openId = null;

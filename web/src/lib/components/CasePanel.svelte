@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { caseErased } from '../appState.svelte';
   import { CaseApiError, caseCode, closeCase, createCase, eraseCase, eraseConfirmed, isCaseGone, listCases, type CaseInfo } from '../cases';
   import { ERASE_DONE, IMPORT_TEXT, caseStats, errorText, erasePrompt } from '../copy/importCopy';
 
@@ -80,6 +81,7 @@
       await eraseCase(id, controller?.signal);
       eraseId = ''; typed = '';
       if (selectedId === id) selectedId = '';
+      caseErased(id);
       erased = true;
       await refresh();
       onChanged?.();

@@ -745,3 +745,48 @@ func TestCaseFileFormatConstants(t *testing.T) {
 		t.Fatal(casestore.CaseFileMessage)
 	}
 }
+
+func TestCaseFileRestoreRewritesLedgerEvidencePrefix(t *testing.T) {
+	src, dst := newCFEnv(t), newCFEnv(t)
+	ctx := context.Background()
+	info := cfSeed(t, src, "Ledger travels", 5)
+	oldTag := "ev:" + string(info.ID)[:8] + ":"
+	blob := []byte(`{"version":1,"hypotheses":[{"evidenceIds":["` + oldTag + `test.csv:abc"]}]}`)
+
+	c, err := src.st.Open(ctx, info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.(casestore.LedgerBlobStore).SetLedgerBlob(ctx, blob); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Close()
+
+	file := filepath.Join(t.TempDir(), "ledger"+casestore.CaseFileExt)
+	if _, err := cfExport(t, src, info, file, cfPass); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cfRestore(dst, file, cfPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, err := dst.st.Open(ctx, got.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	have, err := rc.(casestore.LedgerBlobStore).LedgerBlob(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newTag := "ev:" + string(got.ID)[:8] + ":"
+	if want := strings.ReplaceAll(string(blob), oldTag, newTag); string(have) != want {
+		t.Fatalf("restored ledger blob = %s, want %s", have, want)
+	}
+	// The source keeps its own ledger untouched.
+	sc, _ := src.st.Open(ctx, info.ID)
+	defer sc.Close()
+	if keep, _ := sc.(casestore.LedgerBlobStore).LedgerBlob(ctx); !bytes.Equal(keep, blob) {
+		t.Fatalf("source ledger changed: %s", keep)
+	}
+}

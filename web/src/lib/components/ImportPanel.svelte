@@ -11,7 +11,7 @@
     ACK_LABEL, GATING_BANNER, IMPORT_TEXT, ackTextFor, coverageText, detectedText, errorText, formatBytes, importedText, importerLabel, isUnknownHost,
     jobProgressText, qualityDetails, reasonText, sizeProblemText, statusLabel, suppliedPairs
   } from '../copy/importCopy';
-  import { importWork } from '../appState.svelte';
+  import { importWork, setActiveCase } from '../appState.svelte';
   import { goHome } from '../appState.svelte';
   import { formatTime } from '../time';
   import { caseSpan } from '../resourceSpan';
@@ -32,9 +32,10 @@
   let { onClose, onImported, query, zone = 'UTC' }: { onClose: () => void; onImported?: (record: ImportRecord) => void; query: Query; zone?: string } = $props();
 
   let cases = $state<CaseInfo[]>([]);
-  let selectedId = $state(untrack(() => importWork.running?.caseId ?? ''));
-  // The case a person chose on the start screen (taken once), unless an import is already running on another case.
-  untrack(() => { const chosen = takeCaseIntent(); if (chosen && !selectedId) selectedId = chosen; });
+  // The case a person chose on the start screen or the case home (taken once) wins; otherwise the case an import is already running on.
+  let selectedId = $state(untrack(() => takeCaseIntent() || importWork.running?.caseId || ''));
+  // The case picked here is the case being worked in, so its home page and theories follow it.
+  $effect(() => { if (selectedId) setActiveCase(selectedId); });
   let casePanel = $state<CasePanel>();
   let hosts = $state<string[]>([]);
   let imports = $state<ImportRecord[]>([]);

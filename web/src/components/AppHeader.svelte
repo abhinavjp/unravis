@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { theme } from '../lib/theme.svelte';
-  import { app, conn, deleteSource, goHome, goTo, lockCases, navigation, onScopeChange, openConnections, openCoverage, openGlossary, openSidePanel, panels, scope, startNewConnection } from '../lib/appState.svelte';
+  import { app, conn, deleteSource, goHome, goTo, lockCases, navigation, onScopeChange, openCaseHome, openConnections, openCoverage, openGlossary, openSidePanel, panels, scope, startNewConnection } from '../lib/appState.svelte';
+  import { CASE_HOME_TEXT } from '../lib/copy/caseHomeCopy';
   import { offersLock } from '../lib/masterKey';
   import { KEY_TEXT } from '../lib/copy/masterKeyCopy';
   import { nextMenuIndex } from '../lib/wayfinding';
@@ -40,9 +41,12 @@
   // Home leads to the start screen (the demo has no case list, so no Home there). Lock shows while a master key is set and open.
   const showHome = $derived(working && !!info && !info.demo);
   const showLock = $derived(offersLock(app.lockState));
+  // Case home leads back to the page of the case being worked in: its story, theories, health checks and files.
+  const showCaseHome = $derived(working && !!app.activeCaseId && !info?.demo);
   const home = { id: 'home', label: KEY_TEXT.home, open: () => goHome() };
+  const caseHome = { id: 'case-home', label: CASE_HOME_TEXT.navButton, open: () => openCaseHome() };
   const lock = { id: 'lock', label: KEY_TEXT.lock, open: () => { void lockCases(); } };
-  const menuEntries = $derived([...(showHome ? [home] : []), ...(working ? navDrawers : []), glossary, ...(showLock ? [lock] : [])]);
+  const menuEntries = $derived([...(showHome ? [home] : []), ...(showCaseHome ? [caseHome] : []), ...(working ? navDrawers : []), glossary, ...(showLock ? [lock] : [])]);
   const isOpen = (id: string) => id === 'glossary' ? panels.glossaryOpen : panels.sidePanel === id;
   const anyOpen = $derived(drawers.some(item => isOpen(item.id)));
   const ledgerTotal = $derived(ledger.items.length);
@@ -90,6 +94,7 @@
   {#if !compact && working}
     <div class="nav-items">
       {#if showHome}<button type="button" class="header-button nav-button" title={KEY_TEXT.homeLabel} onclick={goHome}>{KEY_TEXT.home}</button>{/if}
+      {#if showCaseHome}<button type="button" class="header-button nav-button" title={CASE_HOME_TEXT.navLabel} onclick={openCaseHome}>{CASE_HOME_TEXT.navButton}</button>{/if}
       {#each navDrawers as item (item.id)}
         <button type="button" class="header-button nav-button" aria-haspopup="dialog" aria-expanded={isOpen(item.id)} onclick={item.open}>{item.label}{#if item.id === 'ledger'}<LedgerCount />{/if}</button>
       {/each}

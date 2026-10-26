@@ -241,8 +241,8 @@ test('the screen sends files as background jobs, polls through the client, and s
 
 test('a running import is kept in the app state, outside the drawer, and the drawer picks it up again', () => {
   assert.match(appStateSource, /export const importWork = \{\s*get running\(\) \{ return runningImport; \}, set running\(value\) \{ runningImport = value; \}/);
-  assert.match(panel, /import \{ importWork \} from '..\/appState\.svelte'/);
-  assert.match(panel, /let selectedId = \$state\(untrack\(\(\) => importWork\.running\?\.caseId \?\? ''\)\)/);
+  assert.match(panel, /import \{ importWork(, setActiveCase)? \} from '..\/appState\.svelte'/);
+  assert.match(panel, /let selectedId = \$state\(untrack\(\(\) => (takeCaseIntent\(\) \|\| )?importWork\.running\?\.caseId (\?\?|\|\|) ''\)\)/);
   assert.match(panel, /void resumeRunning\(id\)/);
   assert.match(panel, /importWork\.running = \{ caseId, jobId: first\.id \}/);
   // Closing the drawer only stops the asking: an aborted wait must not forget the job.

@@ -115,6 +115,22 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/health/run", match: caseSubpath("/health/run"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseHealthRun(w, r, id) },
 	}},
+	// A case's own theories ledger. copy-shared is a fixed word and must stay ahead
+	// of the {hid} item route, which would otherwise read it as an entry id.
+	{pattern: "/api/cases/{id}/ledger", match: caseSubpath("/ledger"), methods: map[string]routeFunc{
+		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseLedgerList(w, r, id) },
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseLedgerCreate(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/ledger/copy-shared", match: caseSubpath("/ledger/copy-shared"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseLedgerCopyShared(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/ledger/{hid}", match: caseLedgerItemPath, methods: map[string]routeFunc{
+		http.MethodPut:    func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.caseLedgerUpdate(w, r, arg) },
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.caseLedgerDelete(w, r, arg) },
+	}},
+	{pattern: "/api/cases/{id}/ledger/{hid}/reuse", match: caseLedgerReusePath, methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.caseLedgerReuse(w, r, arg) },
+	}},
 	{pattern: "/api/sql-connections/{id}", match: prefixPath("/api/sql-connections/"), methods: map[string]routeFunc{
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, _ *http.Request, id string) { h.deleteSQLConnection(w, id) },
 	}},
@@ -200,6 +216,10 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/timeline", match: caseSubpath("/timeline"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseTimeline(w, r, id) },
 	}},
+	{pattern: "/api/cases/{id}/call-trace", match: caseSubpath("/call-trace"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseCallTrace(w, r, id) },
+	}},
+	{pattern: "/api/call-trace", match: exactPath("/api/call-trace"), methods: post((*handler).callTrace)},
 	{pattern: "/api/discover/capabilities", match: exactPath("/api/discover/capabilities"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.discoverCapabilities(w, r) },
 	}},

@@ -16,6 +16,7 @@ import type { RunningImport } from './cases';
 import { afterUnlock, createRoute, go as moveScreen, initialScreen, leavesCaseWork, type Screen } from './screenFlow';
 import { onCasesLocked } from './lockSignal';
 import { requestCase } from './startIntent';
+import { setLedgerCase } from './ledgerStore.svelte';
 import { getMasterKeyStatus, lockMasterKey } from './masterKeyApi';
 import type { KeyStatus, LockState } from './masterKey';
 import { KEY_TEXT } from './copy/masterKeyCopy';
@@ -83,6 +84,18 @@ let dpapiCases = $state(0);
 let lockError = $state('');
 // Where a successful unlock returns to: the screen that was interrupted, or the first screen the person would have had.
 let unlockOrigin: Screen | null = null;
+// The case the person is working in. The case home, the theories and the analysis screen's case tools all follow it. Empty until one is opened.
+// This tab remembers it, so a reload keeps the case and its theories instead of falling back to the older shared list.
+const ACTIVE_CASE_KEY = 'unravis.activeCase';
+function storedCase(write?: string): string {
+  try {
+    if (typeof sessionStorage === 'undefined') return '';
+    if (write === undefined) return sessionStorage.getItem(ACTIVE_CASE_KEY) ?? '';
+    if (write) sessionStorage.setItem(ACTIVE_CASE_KEY, write); else sessionStorage.removeItem(ACTIVE_CASE_KEY);
+  } catch { /* storage blocked: the case is simply not remembered */ }
+  return '';
+}
+let activeCaseId = $state(storedCase());
 let initCanRetry = $state(true);
 let addLabel = $state('');
 let addUri = $state('');
@@ -363,7 +376,9 @@ export async function initialize() {
   initCanRetry = true;
   try {
     info = await api.info();
-    pendingInvestigation = readInvestigationSnapshot(undefined, info.demo ? 'demo' : 'live');
+    // A reload keeps the case this tab was working in, so its theories stay in view. The demo has no cases.
+    if (info.demo) setActiveCase(''); else if (activeCaseId) setLedgerCase(activeCaseId);
+    pendingInvestigation =readInvestigationSnapshot(undefined, info.demo ? 'demo' : 'live');
     const loaded = (await api.sources()) ?? [];
     sources = loaded;
     if (pendingInvestigation) {
@@ -437,7 +452,7 @@ export function noteLocked() {
   if (screen === 'unlock') return;
   // A damaged key file stays "damaged": the unlock screen shows the start-over screen for it, not the key field.
   if (lockState !== 'damaged') lockState = 'locked';
-  if (screen === 'running' || screen === 'start' || screen === 'create') unlockOrigin = screen;
+  if (screen === 'running' || screen === 'start' || screen === 'create' || screen === 'case') unlockOrigin = screen;
   bumpEpoch();
   go('unlock');
 }
@@ -471,7 +486,7 @@ export async function lockCases() {
   lockError = '';
   try {
     noteKeyStatus(await lockMasterKey());
-    if (!onUnlockScreen()) unlockOrigin = screen === 'running' || screen === 'create' ? screen : 'start';
+    if (!onUnlockScreen()) unlockOrigin = screen === 'running' || screen === 'create' || screen === 'case' ? screen : 'start';
     bumpEpoch();
     go('unlock');
   } catch {
@@ -482,10 +497,35 @@ export async function lockCases() {
 }
 /** Home: back to the start screen. The open case is not closed and the analysis keeps its filters, zoom and ledger. */
 export function goHome() { go('start'); }
-/** "Use an existing case": opens the import panel on that case. */
+/** Makes a case the one being worked in: the theories follow it. Passing an empty id clears it. */
+export function setActiveCase(id: string) {
+  if (activeCaseId === id) return;
+  activeCaseId = id;
+  storedCase(id);
+  setLedgerCase(id);
+}
+/** A case was erased. If it was the one being worked in, it stops being active and its page gives way to the start screen. */
+export function caseErased(id: string) {
+  if (!id || activeCaseId !== id) return;
+  setActiveCase('');
+  if (screen === 'case') go('start');
+}
+/** "Use an existing case": opens that case's home page (story, theories, health checks, files). The analysis is one tap away from there. */
 export function openCase(id: string) {
-  requestCase(id);
-  if (go('running')) openSidePanel('import');
+  setActiveCase(id);
+  go('case');
+}
+/** Back to the home page of the case being worked in. Does nothing when no case has been opened. */
+export function openCaseHome() {
+  if (activeCaseId) go('case');
+}
+/** From the case home to the analysis. The case stays the active one. */
+export function openAnalysis() { go('running'); }
+/** From the case home to the import drawer for that case, over the case home. */
+export function openCaseImport() {
+  if (!activeCaseId) return;
+  requestCase(activeCaseId);
+  openSidePanel('import');
 }
 /**
  * A case just made by the create guide. The guide added its audit sources on the server directly, so this page's source list is stale:
@@ -494,6 +534,7 @@ export function openCase(id: string) {
  */
 export async function openCreatedCase(id: string) {
   requestCase(id);
+  setActiveCase(id);
   let hasSources = sources.length > 0;
   try {
     const loaded = (await api.sources()) ?? [];
@@ -1252,6 +1293,7 @@ export const app = {
   get initError() { return initError; }, set initError(value) { initError = value; },
   get initCanRetry() { return initCanRetry; },
   get screen() { return screen; },
+  get activeCaseId() { return activeCaseId; },
   get lockState() { return lockState; },
   get dpapiCases() { return dpapiCases; },
   get lockError() { return lockError; }, set lockError(value) { lockError = value; },

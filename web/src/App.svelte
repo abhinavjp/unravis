@@ -13,6 +13,7 @@
   import LedgerPanel from './components/LedgerPanel.svelte';
   import ExportPanel from './components/ExportPanel.svelte';
   import ImportPanel from './lib/components/ImportPanel.svelte';
+  import CaseHome from './lib/components/CaseHome.svelte';
   import Pulse from './components/Pulse.svelte';
   import RollupView from './components/RollupView.svelte';
   import WhereView from './components/WhereView.svelte';
@@ -83,6 +84,8 @@
         {:else if app.screen === 'create'}
           <!-- The guided flow. createRoute() leads here only once WIZARD_READY is on (end of phase 05). -->
           <Landing mode="create" />
+        {:else if app.screen === 'case'}
+          <CaseHome />
         {:else if app.firstRun}
           <Landing mode="connect" />
         {:else if info}

@@ -1,4 +1,5 @@
 import type { SavedSqlConnection, SqlConnectionInput, SqlTestRequest, SqlTestResult,Analysis,Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile } from './types';
+import { LOCKED_STATUS, signalCasesLocked } from './lockSignal';
 import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
 
 const base = '/api';
@@ -70,6 +71,8 @@ export class ApiError extends Error {
   }
 }
 
+const ledgerBase = (caseId: string): string => (caseId ? '/cases/' + encodeURIComponent(caseId) + '/ledger' : '/ledger');
+
 async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<T> {
   if (!token) throw noSession();
   const headers = new Headers(init.headers);
@@ -80,6 +83,8 @@ async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSi
     forgetSession();
     throw noSession();
   }
+  // 423: the master key is locked. Tell the app so it shows the unlock screen; the caller still gets the refusal.
+  if (response.status === LOCKED_STATUS) signalCasesLocked();
   if (!response.ok) {
     let message = 'Request failed (' + response.status + ')';
     let code: string | undefined;
@@ -128,12 +133,17 @@ export const api = {
   /** The daily p95 and count of one operation, one entry for each whole local day. A live source is refused beyond 14 days (409, code broad_scan_refused). */
   endpointDaily: (operation: string, sourceIds: string[], start: string, end: string, tz: string, signal?: AbortSignal) =>
     request<EndpointDaily>('/endpoint-daily?' + new URLSearchParams({ op: operation, sources: sourceIds.join(','), start, end, ...(tz ? { tz } : {}) }).toString(), {}, signal),
-  ledgerList: () => request<Hypothesis[]>('/ledger'),
-  ledgerCreate: (text: string) => request<Hypothesis>('/ledger', json({ text })),
+  /** The theories. With a case id they belong to that case (/cases/{id}/ledger); without one, the older shared list. */
+  ledgerList: (caseId = '') => request<Hypothesis[]>(ledgerBase(caseId)),
+  ledgerCreate: (text: string, caseId = '') => request<Hypothesis>(ledgerBase(caseId), json({ text })),
   /** A 422 ApiError with code guard_blocked carries .reasons. */
-  ledgerUpdate: (id: string, input: HypothesisInput) => request<Hypothesis>('/ledger/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(input) }),
-  ledgerReuse: (id: string) => request<Hypothesis>('/ledger/' + encodeURIComponent(id) + '/reuse', { method: 'POST' }),
-  ledgerDelete: (id: string) => request<void>('/ledger/' + encodeURIComponent(id), { method: 'DELETE' }),
+  ledgerUpdate: (id: string, input: HypothesisInput, caseId = '') => request<Hypothesis>(ledgerBase(caseId) + '/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(input) }),
+  ledgerReuse: (id: string, caseId = '') => request<Hypothesis>(ledgerBase(caseId) + '/' + encodeURIComponent(id) + '/reuse', { method: 'POST' }),
+  ledgerDelete: (id: string, caseId = '') => request<void>(ledgerBase(caseId) + '/' + encodeURIComponent(id), { method: 'DELETE' }),
+  /** Copies the older shared theories into this case once. Refused (409) when the case already has theories. */
+  ledgerCopyShared: (caseId: string) => request<Hypothesis[]>(ledgerBase(caseId) + '/copy-shared', { method: 'POST' }),
+  /** The older shared list, read-only here: used to offer the one-time copy into a case. */
+  ledgerSharedList: () => request<Hypothesis[]>('/ledger'),
   exportPreview: (input: ExportPreviewInput) => request<ExportPreview>('/export/preview', json(input)),
   exportConfirm: (previewId: string) => request<ExportFile>('/export/confirm', json({ previewId })),
   /** The daily table and the hour grid: one read of the sources each, cached for a minute by the server. */
@@ -151,6 +161,8 @@ export const api = {
   record: (sourceId: string, id: string, signal?: AbortSignal) =>
     request<RecordDetail>('/record', json({ sourceId, id }), signal),
   activity: (input: import('./types').ActivityInput, signal?: AbortSignal) => request<Page>('/activity', json(input), signal),
+  /** One audited call as a timeline. With a case id the case's files are read too (/cases/{id}/call-trace); without one only the audit record is. */
+  callTrace: (input: import('./callTrace').CallTraceRequest, caseId = '', signal?: AbortSignal) => request<import('./callTrace').CallTraceResult>((caseId ? '/cases/' + encodeURIComponent(caseId) : '') + '/call-trace', json(input), signal),
   export: async (query: Query, apiKey: string, signal?: AbortSignal, state = '', order = '') => {
     if (!token) throw noSession();
     const response = await fetch(base + '/export', {

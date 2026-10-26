@@ -60,6 +60,7 @@ type memData struct {
 	nextSrc int64
 	health  []HealthRun // newest first (see HealthStore)
 	nextRun int64
+	ledger  []byte // the case's theories ledger JSON (see LedgerBlobStore)
 }
 
 func (s *memStore) Create(ctx context.Context, title string) (CaseInfo, error) {
@@ -665,6 +666,39 @@ func (c *memCase) HealthRuns(ctx context.Context) ([]HealthRun, error) {
 		out[i] = r
 	}
 	return out, nil
+}
+
+var _ LedgerBlobStore = (*memCase)(nil)
+
+func (c *memCase) SetLedgerBlob(ctx context.Context, b []byte) error {
+	if len(b) > MaxLedgerBlob {
+		return ErrCapExceeded
+	}
+	if err := c.tagWrite(ctx); err != nil {
+		return err
+	}
+	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	if c.d.erased {
+		return ErrNotFound
+	}
+	if c.d.info.Closed != nil {
+		return ErrCaseClosed
+	}
+	c.d.ledger = append([]byte(nil), b...)
+	return nil
+}
+
+func (c *memCase) LedgerBlob(ctx context.Context) ([]byte, error) {
+	if err := c.check(ctx); err != nil {
+		return nil, err
+	}
+	c.d.mu.RLock()
+	defer c.d.mu.RUnlock()
+	if len(c.d.ledger) == 0 {
+		return nil, nil
+	}
+	return append([]byte(nil), c.d.ledger...), nil
 }
 
 // tagWrite is the handle check for the Tagger writes; the closed-case refusal

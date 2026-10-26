@@ -667,6 +667,21 @@ func RebindCaseDB(ctx context.Context, dbPath string, dbKey []byte, oldID, newID
 			moved += n
 		}
 	}
+	if oldTag != newTag {
+		// The case's own theories ledger (table ledger_blob, absent in older cases)
+		// refers to events by the same prefix; keep those references pointing at them.
+		var body []byte
+		switch err := conn.QueryRowContext(ctx, "SELECT body FROM ledger_blob WHERE id = 1").Scan(&body); {
+		case err == nil:
+			rewritten := bytes.ReplaceAll(body, []byte(oldTag+":"), []byte(newTag+":"))
+			if _, err := conn.ExecContext(ctx, "UPDATE ledger_blob SET body = ? WHERE id = 1", rewritten); err != nil {
+				return 0, errCaseDB
+			}
+		case errors.Is(err, sql.ErrNoRows), strings.Contains(err.Error(), "no such table"):
+		default:
+			return 0, errCaseDB
+		}
+	}
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return 0, errCaseDB
 	}

@@ -9,7 +9,8 @@
 
   // Read-only checks of a SQL Server or MongoDB the case depends on. Nothing here runs by itself: a check starts only on "Run checks".
   // The server writes the checks; nothing typed here is ever run as a query. A password typed for a run is sent once and not kept.
-  let { caseId, onGone }: { caseId: string; onGone?: () => void } = $props();
+  // onRan tells the page around it that a run was made, so a list built from the case's runs (the case story) can read them again.
+  let { caseId, onGone, onRan }: { caseId: string; onGone?: () => void; onRan?: () => void } = $props();
 
   let sqlKept = $state.raw<SavedSqlConnection[]>([]);
   let mongoKept = $state.raw<RecentConnection[]>([]);
@@ -121,6 +122,7 @@
       shown = result.run; openId = result.run.id;
       runs = [result.run, ...runs.filter(item => item.id !== result.run.id)].slice(0, 20);
       if (!result.saved) problem = HEALTH_TEXT.notSaved + (result.saveError || HEALTH_TEXT.failed);
+      else onRan?.();
     } catch (error) { problem = failure(error); }
     finally { busy = ''; }
   }

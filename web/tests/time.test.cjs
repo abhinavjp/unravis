@@ -116,7 +116,7 @@ test('the time zone store is wired to the app scope and the toggle component exi
 });
 
 test('timestamps in the screens go through formatTime, not the browser default format', () => {
-  for (const file of ['RequestTable', 'RecordDetail', 'ActivityContext', 'MultiTimeline', 'RequestVolume', 'TrafficSlowness', 'PatternsPanel', 'ExportPanel']) {
+  for (const file of ['RequestTable', 'RecordDetail', 'ActivityContext', 'CallTrace', 'MultiTimeline', 'RequestVolume', 'TrafficSlowness', 'PatternsPanel', 'ExportPanel']) {
     const source = read('src/components/' + file + '.svelte');
     assert.match(source, /formatTime|chartTime|chartRange/, file);
     assert.doesNotMatch(source, /\.toLocaleString\(\)\s*:\s*'N\/A'|new Intl\.DateTimeFormat|formatLocal/, file);

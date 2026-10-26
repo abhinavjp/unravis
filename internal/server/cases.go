@@ -68,6 +68,7 @@ type casesState struct {
 	gates     caseGates
 	imports   importLimiter
 	pending   pendingStrips
+	ledgers   caseLedgerLocks
 	jobs      importJobs
 	disc      discoverState
 	maxUpload int64 // test hook: replaces the computed upload cap when > 0

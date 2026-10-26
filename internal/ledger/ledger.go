@@ -176,7 +176,10 @@ type store struct {
 	mu   sync.Mutex
 	path string
 	// seal is nil when the file at path is plain JSON (Open) and set when it is sealed (OpenSealed).
-	seal  sealedfile.Protector
+	seal sealedfile.Protector
+	// write, when set (OpenFunc), receives the ledger JSON on every change instead
+	// of a file at path; whoever supplied it owns the encryption and the storage.
+	write func([]byte) error
 	items []Hypothesis // stored entries are never mutated in place; edits replace them
 }
 
@@ -395,6 +398,16 @@ func (s *store) commit(next []Hypothesis) error {
 }
 
 func (s *store) save(items []Hypothesis) error {
+	if s.write != nil {
+		data, err := json.Marshal(fileData{Version: fileVersion, Hypotheses: items})
+		if err != nil {
+			return saveErr(err)
+		}
+		if err := s.write(data); err != nil {
+			return saveErr(err)
+		}
+		return nil
+	}
 	if s.path == "" {
 		return nil
 	}
