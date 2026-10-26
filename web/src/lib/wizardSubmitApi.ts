@@ -7,6 +7,7 @@ import { putEnvironments, postSourceTag } from './caseTagsApi';
 import { ackTextFor } from './copy/importCopy';
 import { heldCollection, heldConnection } from './wizardConnections';
 import type { SubmitApi } from './wizardSubmit';
+import { registerSourceSaved, resolveSavedRecent, suggestedConnectionLabel } from './sourceSaved';
 
 /**
  * The real calls behind `submitWizard` (TSK-19). Every one goes through an existing client, so the token header, the 423 lock signal and
@@ -15,6 +16,31 @@ import type { SubmitApi } from './wizardSubmit';
  */
 
 const percentOf = (job: ImportJob): number | null => importProgressPercent(job);
+
+/**
+ * Names the saved connection a new source came from, so the case can reopen it later. The saved record that is already there is used as it
+ * is: saving the details again would REPLACE it and wipe its stored password. One is made (without a password) only when the list, read
+ * again right now, has none for this address and collection. Quiet: if the list cannot be read or nothing could be saved, the case only
+ * cannot reconnect this source by itself.
+ */
+async function rememberForCase(held: Parameters<typeof api.rememberConnection>[0]['connection'], collection: string, source: { id: string; connectionId?: string }): Promise<void> {
+  try {
+    const { recent } = await resolveSavedRecent({
+      details: { uri: held.uri, username: held.username, collection, authSource: held.authSource, tlsMode: held.tlsMode, caCertificate: held.caCertificate },
+      savedId: held.savedConnectionId,
+      recents: [],
+      refresh: async () => {
+        const list = await api.recentConnections();
+        return Array.isArray(list) ? list.filter((item) => !!item && typeof item.id === 'string' && typeof item.uri === 'string') : null;
+      },
+      create: async () => {
+        const made = await api.rememberConnection({ label: suggestedConnectionLabel(held.uri), connection: { ...held, savedConnectionId: undefined }, collection, rememberPassword: false });
+        return made && typeof made.id === 'string' ? made : null;
+      }
+    });
+    if (recent) registerSourceSaved(source, recent.id);
+  } catch { /* nothing to do */ }
+}
 
 export const wizardSubmitApi: SubmitApi = {
   createCase: async (title) => ({ id: (await createCase(title)).id }),
@@ -37,7 +63,10 @@ export const wizardSubmitApi: SubmitApi = {
   async addAuditSource(connectionId, database) {
     const held = heldConnection(connectionId);
     if (!held) throw new CaseApiError('That connection is no longer held.', 422, 'connection-lost');
-    return api.addSource({ ...held, label: database, database, collection: heldCollection(connectionId) });
+    const collection = heldCollection(connectionId);
+    const source = await api.addSource({ ...held, label: database, database, collection });
+    await rememberForCase(held, collection, source);
+    return source;
   },
 
   confirmHost: (host) => discoverClient.confirmHost?.(host) ?? Promise.resolve(),

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { landingMayAutoRun } from '../lib/autorun';
-  import { app, go, goHome, openCase, openConnections, openCreatedCase, openKeySetup, openSidePanel, runAnalysis, scope, startCreate, startNewConnection } from '../lib/appState.svelte';
+  import { app, go, goHome, openCase, openConnections, openCreatedCase, openKeySetup, openSidePanel, restore, runAnalysis, scope, startCreate, startNewConnection } from '../lib/appState.svelte';
   import { resetWizard, wizard } from '../lib/wizard.svelte';
   import { blockers, caseMade, createNow, createView } from '../lib/wizardCreate.svelte';
   import { createButtonText } from '../lib/copy/wizardCreateCopy';
@@ -15,12 +15,14 @@
   import MasterKeySetup from './MasterKeySetup.svelte';
   import MasterKeyUnlock from './MasterKeyUnlock.svelte';
   import MasterKeyDamaged from './MasterKeyDamaged.svelte';
+  import { CASE_RESTORE_TEXT } from '../lib/copy/caseRestoreCopy';
 
   // The empty and start states of the stage. 'loading': the app is starting. 'connect': no audit source yet (first run).
   // 'running': the first analysis is loading and there is nothing on screen yet. 'start': sources are ready but nothing has run.
   // 'cases': the start screen of a launch (three cards). 'unlock' and 'setup': the master key screens (see lib/screenFlow.ts).
+  // 'restoring': an opened case is getting its MongoDB sources back, so the first-run connect step is not shown meanwhile.
   // 'create': the guided "create a new case" flow. TSK-18 mounts the sources step and TSK-19 the review step inside it (snippets `sources`, `review`, `finish`).
-  let { mode }: { mode: 'loading' | 'connect' | 'running' | 'start' | 'cases' | 'unlock' | 'setup' | 'create' } = $props();
+  let { mode }: { mode: 'loading' | 'connect' | 'restoring' | 'running' | 'start' | 'cases' | 'unlock' | 'setup' | 'create' } = $props();
 
   // "This computer" lives in the import drawer. This screen has no case, so it leaves a request and opens the drawer, which shows the panel.
   function openDiscover() { requestDiscover(); openSidePanel('import'); }
@@ -46,6 +48,12 @@
   {#if app.lockState === 'damaged'}<MasterKeyDamaged />{:else}<MasterKeyUnlock />{/if}
 {:else if mode === 'setup'}
   <MasterKeySetup />
+{:else if mode === 'restoring'}
+  <div class="skeleton" role="status" aria-label={CASE_RESTORE_TEXT.workingLabel}>
+    <div class="skeleton-figures"><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div></div>
+    <div class="skeleton-block skeleton-hero"></div>
+    <p class="restoring-note">{CASE_RESTORE_TEXT.working} <button type="button" class="quiet-button" onclick={restore.cancel}>{CASE_RESTORE_TEXT.cancelButton}</button></p>
+  </div>
 {:else if mode === 'running'}
   <div class="skeleton" role="status" aria-label="Reading selected audit sources">
     <div class="skeleton-figures"><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div><div class="skeleton-block"></div></div>
@@ -64,3 +72,7 @@
     <button class="primary-button" disabled={!scope.query.sourceIds.length || !scope.dateInputsValid} onclick={() => runAnalysis()}>Run analysis</button>
   </div>
 {/if}
+
+<style>
+  .restoring-note { margin: 0; color: var(--muted, inherit); text-align: center; }
+</style>

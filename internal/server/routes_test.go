@@ -34,6 +34,7 @@ var routeCases = []routeCase{
 	{"/api/cases/{id}/ledger/copy-shared", "/api/cases/c1/ledger/copy-shared", "POST"},
 	{"/api/cases/{id}/ledger/{hid}", "/api/cases/c1/ledger/h1", "DELETE, PUT"},
 	{"/api/cases/{id}/ledger/{hid}/reuse", "/api/cases/c1/ledger/h1/reuse", "POST"},
+	{"/api/cases/{id}/workspace", "/api/cases/c1/workspace", "GET, PUT"},
 	{"/api/connections/remember","/api/connections/remember", "POST"},
 	{"/api/connections/test", "/api/connections/test", "POST"},
 	{"/api/probe/reachable", "/api/probe/reachable", "POST"},

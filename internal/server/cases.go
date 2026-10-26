@@ -69,6 +69,7 @@ type casesState struct {
 	imports   importLimiter
 	pending   pendingStrips
 	ledgers   caseLedgerLocks
+	wsLocks   caseLedgerLocks // serialises writes of each case's workspace note
 	jobs      importJobs
 	disc      discoverState
 	maxUpload int64 // test hook: replaces the computed upload cap when > 0

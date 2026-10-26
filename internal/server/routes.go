@@ -131,6 +131,11 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/ledger/{hid}/reuse", match: caseLedgerReusePath, methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.caseLedgerReuse(w, r, arg) },
 	}},
+	// A case's own workspace note (non-secret connection reference + last filters).
+	{pattern: "/api/cases/{id}/workspace", match: caseSubpath("/workspace"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseWorkspaceGet(w, r, id) },
+		http.MethodPut: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseWorkspacePut(w, r, id) },
+	}},
 	{pattern: "/api/sql-connections/{id}", match: prefixPath("/api/sql-connections/"), methods: map[string]routeFunc{
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, _ *http.Request, id string) { h.deleteSQLConnection(w, id) },
 	}},

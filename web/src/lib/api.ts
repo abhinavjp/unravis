@@ -144,6 +144,10 @@ export const api = {
   ledgerCopyShared: (caseId: string) => request<Hypothesis[]>(ledgerBase(caseId) + '/copy-shared', { method: 'POST' }),
   /** The older shared list, read-only here: used to offer the one-time copy into a case. */
   ledgerSharedList: () => request<Hypothesis[]>('/ledger'),
+  /** The case's saved workspace: which saved MongoDB connection and databases it used, and the investigation filters. {} when none. No secrets. */
+  caseWorkspace: (caseId: string, signal?: AbortSignal) => request<unknown>('/cases/' + encodeURIComponent(caseId) + '/workspace', {}, signal),
+  /** Replaces the case's workspace. The server refuses any key that looks like a password, address or user name (400). */
+  saveCaseWorkspace: (caseId: string, workspace: object) => request<unknown>('/cases/' + encodeURIComponent(caseId) + '/workspace', { method: 'PUT', body: JSON.stringify(workspace) }),
   exportPreview: (input: ExportPreviewInput) => request<ExportPreview>('/export/preview', json(input)),
   exportConfirm: (previewId: string) => request<ExportFile>('/export/confirm', json({ previewId })),
   /** The daily table and the hour grid: one read of the sources each, cached for a minute by the server. */

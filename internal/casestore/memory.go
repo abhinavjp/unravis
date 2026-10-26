@@ -61,6 +61,8 @@ type memData struct {
 	health  []HealthRun // newest first (see HealthStore)
 	nextRun int64
 	ledger  []byte // the case's theories ledger JSON (see LedgerBlobStore)
+	// workspace is the case's workspace note JSON (see WorkspaceBlobStore).
+	workspace []byte
 }
 
 func (s *memStore) Create(ctx context.Context, title string) (CaseInfo, error) {
@@ -699,6 +701,43 @@ func (c *memCase) LedgerBlob(ctx context.Context) ([]byte, error) {
 		return nil, nil
 	}
 	return append([]byte(nil), c.d.ledger...), nil
+}
+
+var _ WorkspaceBlobStore = (*memCase)(nil)
+
+func (c *memCase) SetWorkspaceBlob(ctx context.Context, b []byte) error {
+	if len(b) > MaxWorkspaceBlob {
+		return ErrCapExceeded
+	}
+	if err := c.tagWrite(ctx); err != nil {
+		return err
+	}
+	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	if c.d.erased {
+		return ErrNotFound
+	}
+	if c.d.info.Closed != nil {
+		return ErrCaseClosed
+	}
+	if len(b) == 0 {
+		c.d.workspace = nil
+		return nil
+	}
+	c.d.workspace = append([]byte(nil), b...)
+	return nil
+}
+
+func (c *memCase) WorkspaceBlob(ctx context.Context) ([]byte, error) {
+	if err := c.check(ctx); err != nil {
+		return nil, err
+	}
+	c.d.mu.RLock()
+	defer c.d.mu.RUnlock()
+	if len(c.d.workspace) == 0 {
+		return nil, nil
+	}
+	return append([]byte(nil), c.d.workspace...), nil
 }
 
 // tagWrite is the handle check for the Tagger writes; the closed-case refusal

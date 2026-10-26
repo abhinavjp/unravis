@@ -195,6 +195,7 @@ func Run(t *testing.T, f Factory) {
 	t.Run("discover-tables", func(t *testing.T) { discoverTables(t, f, caps) })
 	t.Run("tags-and-environments", func(t *testing.T) { tagsContract(t, f, caps) })
 	t.Run("ledger-blob", func(t *testing.T) { ledgerBlobContract(t, f, caps) })
+	t.Run("workspace-blob", func(t *testing.T) { workspaceBlobContract(t, f, caps) })
 }
 
 func ids(t *testing.T, f Factory, caps casestore.Caps) {

@@ -2,10 +2,11 @@
   import { comparisonLabel, STARTUP_TITLE } from './lib/copy/startupCopy';
   import { scopeProblem } from './lib/autorun';
   import { VALIDATION_MESSAGE } from './lib/api';
-  import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeSidePanel, onWindowKey, openSidePanel, panels, resetInvestigation, results, scope, startApp } from './lib/appState.svelte';
+  import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeSidePanel, onWindowKey, openSidePanel, panels, resetInvestigation, restore, results, scope, startApp } from './lib/appState.svelte';
   import AppHeader from './components/AppHeader.svelte';
   import SubBar from './components/SubBar.svelte';
   import Landing from './components/Landing.svelte';
+  import CaseReconnect from './components/CaseReconnect.svelte';
   import ConnectionsDrawer from './components/ConnectionsDrawer.svelte';
   import CoverageDrawer from './components/CoverageDrawer.svelte';
   import Glossary from './components/Glossary.svelte';
@@ -86,9 +87,13 @@
           <Landing mode="create" />
         {:else if app.screen === 'case'}
           <CaseHome />
+        {:else if app.firstRun && restore.active}
+          <!-- A case that used MongoDB is being reopened: reconnecting quietly, or asking for the sign-in, never the first-run connect step. -->
+          {#if restore.working}<Landing mode="restoring" />{:else}<CaseReconnect />{/if}
         {:else if app.firstRun}
           <Landing mode="connect" />
         {:else if info}
+          {#if restore.needsAttention || restore.working}<CaseReconnect compact />{/if}
           {#if results.error}<div class="banner error-banner" role="alert"><strong>{comparisonLabel(results.error, [VALIDATION_MESSAGE, scopeProblem(scope.query, scope.dateInputsValid)])}</strong><span>{results.error}</span></div>{/if}
           {#if analysis}
             {#if results.displayedRunIsStale && !loading}<div class="notice frozen-run-note" role="status">The figures below are from the last run. Press <strong>Run analysis</strong> to apply your changes.</div>{/if}

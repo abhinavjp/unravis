@@ -9,13 +9,16 @@ import { classifyStartupFailure } from './copy/startupCopy';
 import { bumpEpoch } from './evidenceMemo';
 import { defaultQuery } from './time';
 import { initialComparison, kindLabel, queryFingerprint, resultNotes, rankComparisons, stateLabel } from './presentation';
-import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, serializeRecordFilters, shouldSelectAddedSource, writeInvestigationSnapshot } from './investigation';
+import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, serializeRecordFilters, shouldSelectAddedSource, writeInvestigationSnapshot, type InvestigationSnapshot } from './investigation';
+import { buildWorkspace, classifyRestoreFailure, createWorkspaceSaver, parseWorkspace, planRestore, pruneWorkspace, queueWorkspace, RESTORE_TIMEOUT_MS, sourceMatches, workspaceSaveAllowed, type Workspace, type WorkspaceDatabase } from './caseWorkspace';
+import { forgetSavedRecord, forgetSourceSaved, registerSourceSaved, resolveSavedRecent, savedIdFor, suggestedConnectionLabel } from './sourceSaved';
 import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './types';
 import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './breakdown';
 import type { RunningImport } from './cases';
 import { afterUnlock, createRoute, go as moveScreen, initialScreen, leavesCaseWork, type Screen } from './screenFlow';
 import { onCasesLocked } from './lockSignal';
 import { requestCase } from './startIntent';
+import { CASE_RESTORE_TEXT } from './copy/caseRestoreCopy';
 import { setLedgerCase } from './ledgerStore.svelte';
 import { getMasterKeyStatus, lockMasterKey } from './masterKeyApi';
 import type { KeyStatus, LockState } from './masterKey';
@@ -96,6 +99,23 @@ function storedCase(write?: string): string {
   return '';
 }
 let activeCaseId = $state(storedCase());
+// Opening a case restores what it saved: its MongoDB connection and databases, then its filters (see caseWorkspace.ts). 'working' is the quiet
+// reconnect; the others wait for the person. Saves of the case workspace stay off until the case's own workspace has been read and applied.
+type RestorePhase = 'idle' | 'working' | 'signin' | 'unreachable' | 'missing' | 'failed';
+let restorePhase = $state<RestorePhase>('idle');
+let restoreDatabases = $state<string[]>([]);
+let restoreRecentId = $state('');
+let restoreLabel = $state('');
+let restoredCaseId = '';
+let workspaceBaseline: Workspace | null = null;
+let restoreSequence = 0;
+let pendingRestore: { workspace: Workspace | null; keepTab: boolean } | null = null;
+// What the running restore knows so far, so the time limit and Cancel can end it the right way from outside the run.
+interface RestoreRun { id: string; run: number; workspace: Workspace | null; keepTab: boolean; databases: WorkspaceDatabase[]; recent: RecentConnection | null }
+let restoreRun: RestoreRun | null = null;
+let restoreTimer: ReturnType<typeof setTimeout> | null = null;
+let sourceCountSeen = 0;
+let tabInvestigationHeld = false;
 let initCanRetry = $state(true);
 let addLabel = $state('');
 let addUri = $state('');
@@ -165,7 +185,7 @@ let compare = $state(false);
 let operation = $state<Rollup | null>(null);
 let inspectorTab = $state('timeline');
 let splitDim = $state<BreakdownDim | ''>('');
-let autoRan = false;
+let autoRan = $state(false);
 // The scope fingerprint of the run in flight; '' when none.
 let inflightSignature = '';
 // Where the reader was one level up (scroll positions and the control used), so stepping back lands in the same place.
@@ -326,7 +346,7 @@ export function startApp() {
   // The landing run: sources are chosen and the dates are valid, so the pulse is ready without a button press. Only a primary window of at most
   // 24 hours starts by itself; a wider one (a restored 7-day snapshot) waits for the Run analysis button. Later scope changes run through onScopeChange.
   $effect(() => {
-    if (autoRan || screen !== 'running' || !info || !sources.length || !query.sourceIds.length || !dateInputsValid || !investigationReady) return;
+    if (autoRan || screen !== 'running' || restorePhase === 'working' || !info || !sources.length || !query.sourceIds.length || !dateInputsValid || !investigationReady) return;
     autoRan = true;
     if (!landingMayAutoRun(query)) return;
     untrack(() => { void runAnalysis(true); });
@@ -340,6 +360,23 @@ export function startApp() {
     investigationNotice = remembered
       ? 'Remembered in this tab. Changes stay until this tab closes.'
       : 'Could not remember these edits in this tab. The explorer remains usable.';
+  });
+
+  // The case remembers the same filters, and which saved connection and databases it used. Saved quietly after a pause; see queueWorkspaceSave.
+  $effect(() => {
+    const changed = JSON.stringify([query, zone, targetMs, sources]);
+    const caseId = activeCaseId, phase = restorePhase;
+    if (!changed || !caseId || phase === 'working') return;
+    untrack(() => queueWorkspaceSave());
+  });
+
+  // A source added by any route (the connect drawer, the import panel, the create guide) while the reconnect waits ends the waiting: the saved filters go on.
+  (() => {
+    const count = sources.length;
+    untrack(() => {
+      if (count > sourceCountSeen && restoreWaiting(restorePhase)) completePendingRestore();
+      sourceCountSeen = count;
+    });
   });
 
   // A link that carries a view (a reload or a shared address): rebuild it once the comparison is on screen, or give up when it cannot come.
@@ -395,7 +432,9 @@ export async function initialize() {
     investigationReady = true;
     pendingInvestigation = null;
     setLocalInputs();
+    tabInvestigationHeld = restoredInTab;
     await chooseFirstScreen(info.demo, restoredInTab);
+    tabInvestigationHeld = false;
     if (!info.demo) {
       try {
         const recents = await api.recentConnections();
@@ -429,6 +468,8 @@ export function go(to: Screen): boolean {
   // Leaving the working screen puts away its case panel. The case itself stays open on the server; nothing is closed or erased.
   if (leavesCaseWork(move.screen) && sidePanel) void closeSidePanel();
   screen = move.screen;
+  // Arriving at the case or the analysis with a case open: bring back what the case saved, once (see restoreCaseWorkspace).
+  if ((move.screen === 'running' || move.screen === 'case') && activeCaseId && restoredCaseId !== activeCaseId && restorePhase === 'idle' && info && !info.demo) void restoreCaseWorkspace(activeCaseId);
   return true;
 }
 // Reads the key state once the app info is in, then picks the first screen. A status that cannot be read is treated as "no key" for routing.
@@ -497,12 +538,181 @@ export async function lockCases() {
 }
 /** Home: back to the start screen. The open case is not closed and the analysis keeps its filters, zoom and ledger. */
 export function goHome() { go('start'); }
-/** Makes a case the one being worked in: the theories follow it. Passing an empty id clears it. */
-export function setActiveCase(id: string) {
+// ---- The case workspace: saving it, and bringing it back when the case is opened (see lib/caseWorkspace.ts) ----
+function setRestore(phase: RestorePhase, databases: string[] = [], recentId = '', label = '') {
+  restorePhase = phase; restoreDatabases = databases; restoreRecentId = recentId; restoreLabel = label;
+  if (phase !== 'working' && restoreTimer !== null) { clearTimeout(restoreTimer); restoreTimer = null; }
+}
+/** The restore is waiting for the person (sign in, a new connection, a retry) rather than running. */
+const restoreWaiting = (phase: RestorePhase): boolean => phase === 'signin' || phase === 'unreachable' || phase === 'missing' || phase === 'failed';
+const saveAllowed = (caseId: string): boolean =>
+  caseId === activeCaseId && workspaceSaveAllowed({ demo: !!info?.demo, caseId: activeCaseId, ready: investigationReady && !!info, restoring: restorePhase === 'working', restoredCaseId });
+const workspaceSaver = createWorkspaceSaver({
+  send: (caseId, workspace) => api.saveCaseWorkspace(caseId, workspace),
+  allowed: saveAllowed,
+  sent: (caseId, workspace) => { if (caseId === activeCaseId) workspaceBaseline = workspace; }
+});
+/** Saves the case's workspace after a quiet pause. Does nothing in the demo, with no case, or until the case's own workspace was read. */
+function queueWorkspaceSave() {
+  if (!saveAllowed(activeCaseId)) return;
+  const workspace = buildWorkspace({ query: cloneQuery(), sources, zone, targetMs, intent: investigationIntent, savedIdOf: source => savedIdFor(source, recentConnections), previous: workspaceBaseline });
+  if (!workspace) return;
+  queueWorkspace(workspaceSaver, activeCaseId, workspaceBaseline, workspace); // back to what the case holds also drops an older change still waiting
+}
+/** Puts a saved investigation on the page: the filters, the chosen sources, the zone; the old results and details go. */
+function applyWorkspaceInvestigation(snapshot: InvestigationSnapshot | null) {
+  if (!snapshot) return;
+  const restored = restoreInvestigation(snapshot, sources);
+  const { zone: restoredZone, targetMs: restoredTargetMs, ...restoredQuery } = restored;
+  if (!restoredQuery.sourceIds.length) restoredQuery.sourceIds = query.sourceIds.filter(id => sources.some(source => source.id === id));
+  if (!restoredQuery.sourceIds.length) restoredQuery.sourceIds = sources.map(source => source.id);
+  analysisSequence++; analysisController?.abort(); analysisController = null; inflightSignature = ''; loading = false; error = '';
+  invalidateDetails(); bumpEpoch();
+  analysis = null; selectedKey = ''; operation = null; contextAnchor = null; windowTrail = [];
+  query = restoredQuery;
+  zone = restoredZone; targetMs = restoredTargetMs;
+  dateInputsValid = true; restoredInTab = false; controlsResetKey++;
+  investigationIntent = hasUnresolvedKnownSources(snapshot, sources) ? snapshot : null;
+}
+function finishRestore(id: string, workspace: Workspace | null, keepTab: boolean) {
+  if (!keepTab) applyWorkspaceInvestigation(workspace?.investigation ?? null);
+  workspaceBaseline = workspace;
+  restoredCaseId = id;
+  pendingRestore = null;
+  restoreRun = null;
+  autoRan = false;
+  setRestore('idle');
+}
+/** The person connected something, or put the waiting aside: the saved filters go on now and the case saves again. */
+function completePendingRestore() {
+  const pending = pendingRestore;
+  if (!pending || !activeCaseId || !restoreWaiting(restorePhase)) return;
+  finishRestore(activeCaseId, pending.workspace, pending.keepTab);
+}
+const namesOf = (databases: readonly WorkspaceDatabase[]): string[] => databases.map(item => item.name);
+/** The restore stops and waits for the person. The saved filters are held back until they connect something or put the waiting aside. */
+function enterRestoreWait(ctx: RestoreRun, phase: 'signin' | 'unreachable' | 'missing' | 'failed', databases: readonly WorkspaceDatabase[], recent: RecentConnection | null) {
+  pendingRestore = { workspace: ctx.workspace, keepTab: ctx.keepTab };
+  if (!ctx.keepTab && ctx.workspace?.investigation) investigationIntent = ctx.workspace.investigation;
+  restoreRun = null;
+  setRestore(phase, namesOf(databases), recent?.id ?? '', recent?.label ?? '');
+}
+/** The time limit ran out: whatever the run still brings back is dropped, and MongoDB is reported as not reachable. */
+function expireRestore(run: number) {
+  restoreTimer = null;
+  const ctx = restoreRun;
+  if (!ctx || ctx.run !== run || run !== restoreSequence || restorePhase !== 'working') return;
+  restoreSequence++;
+  if (!ctx.workspace) { restoreRun = null; setRestore('idle'); return; } // the case's own settings never came: nothing is saved over them
+  enterRestoreWait(ctx, 'unreachable', ctx.databases.length ? ctx.databases : ctx.workspace.mongo?.databases ?? [], ctx.recent);
+}
+/**
+ * Brings back what the case saved: its MongoDB connection and databases (reconnected from the saved connection when that holds a login,
+ * otherwise asked for), then its filters. One run at a time; a newer one or a change of case ends an older one, and so does the time limit
+ * (RESTORE_TIMEOUT_MS for all of it) or Cancel.
+ */
+async function restoreCaseWorkspace(id: string) {
+  const keepTab = tabInvestigationHeld; // a reload keeps the filters this tab already had
+  tabInvestigationHeld = false;
+  const run = ++restoreSequence;
+  const alive = () => run === restoreSequence && activeCaseId === id;
+  restoredCaseId = ''; workspaceBaseline = null; pendingRestore = null;
+  workspaceSaver.cancel(); workspaceSaver.forget();
+  const ctx: RestoreRun = { id, run, workspace: null, keepTab, databases: [], recent: null };
+  restoreRun = ctx;
+  setRestore('working');
+  restoreTimer = setTimeout(() => expireRestore(run), RESTORE_TIMEOUT_MS);
+  let workspace: Workspace | null;
+  try { workspace = parseWorkspace(await api.caseWorkspace(id)); } catch { if (alive()) { restoreRun = null; setRestore('idle'); } return; }
+  if (!alive()) return;
+  if (!workspace) { restoreRun = null; setRestore('idle'); return; }
+  ctx.workspace = workspace;
+  const mongo = workspace.mongo;
+  if (!mongo) { finishRestore(id, workspace, keepTab); return; }
+  try {
+    const fresh = await api.recentConnections();
+    if (Array.isArray(fresh)) recentConnections = fresh.filter(isRecentConnection).slice(0, 20);
+  } catch { /* the list already on the page is used */ }
+  if (!alive()) return;
+  const plan = planRestore({ workspace, sources, recents: recentConnections, sessionIds: sessionCredentialIds });
+  if (plan.kind === 'none') { finishRestore(id, workspace, keepTab); return; }
+  if (plan.kind === 'connected') {
+    for (const source of sources) if (mongo.databases.some(item => sourceMatches(source, item))) registerSourceSaved(source, mongo.savedConnectionId);
+    finishRestore(id, workspace, keepTab);
+    return;
+  }
+  ctx.databases = plan.databases;
+  if (plan.kind === 'missing') { enterRestoreWait(ctx, 'missing', plan.databases, null); return; }
+  ctx.recent = plan.recent;
+  if (plan.kind === 'signin') { enterRestoreWait(ctx, 'signin', plan.databases, plan.recent); return; }
+  const recent = plan.recent;
+  const failures: unknown[] = [];
+  let added = 0;
+  for (const database of plan.databases) {
+    const input: SourceInput = {
+      uri: recent.uri, username: recent.username, password: '', authSource: recent.authSource, tlsMode: recent.tlsMode || 'uri', caCertificate: recent.caCertificate || '',
+      savedConnectionId: recent.id,
+      label: plan.databases.length > 1 ? `${recent.label} / ${database.name}`.slice(0, 100) : recent.label,
+      // The collection the source itself read; the saved record's one only for a workspace saved before collections were kept.
+      connectionLabel: recent.label, database: database.name, collection: database.collection || recent.collection || 'ApiAuditLog'
+    };
+    let source: Source;
+    try { source = await api.addSource(input); } catch (cause) { if (!alive()) return; failures.push(cause); continue; }
+    // The case changed (or the restore was ended) while this was connecting: the result belongs to nobody here, so it is neither listed nor registered.
+    if (!alive()) return;
+    if (!sources.some(item => item.id === source.id)) sources = [...sources, source];
+    registerSourceSaved(source, recent.id);
+    if (keepTab && shouldSelectAddedSource(source, investigationIntent)) query.sourceIds = [...query.sourceIds, source.id];
+    added++;
+  }
+  if (added === 0) { enterRestoreWait(ctx, classifyRestoreFailure(failures, recent.username !== ''), plan.databases, recent); return; }
+  if (added < plan.databases.length) investigationNotice = CASE_RESTORE_TEXT.partial;
+  finishRestore(id, workspace, keepTab);
+}
+/** "Sign in to reconnect": opens the saved connection in the connection drawer, ready for the password. */
+export async function reconnectRestore() {
+  const recent = recentConnections.find(item => item.id === restoreRecentId);
+  if (!recent) { await startNewConnection(); return; }
+  clearConnectionDetails();
+  loadRecent(recent);
+  await openConnections('new');
+}
+/** "Try again" after MongoDB could not be reached: the same reconnect, from the start. */
+export async function retryRestore() {
+  if (restorePhase !== 'unreachable' || !activeCaseId) return;
+  tabInvestigationHeld = pendingRestore?.keepTab ?? false;
+  pendingRestore = null;
+  setRestore('idle');
+  await restoreCaseWorkspace(activeCaseId);
+}
+/**
+ * Cancel. While the reconnect runs it ends at once and the case opens without those databases; while it waits for the person it is put
+ * aside. Either way the case's saved connection stays on record (a save never drops it), and saving carries on. When the case's own
+ * settings were not read yet nothing is saved over them.
+ */
+export function cancelRestore() {
+  if (restorePhase === 'working') {
+    const ctx = restoreRun;
+    restoreSequence++;
+    if (ctx && ctx.id === activeCaseId && ctx.workspace) finishRestore(ctx.id, ctx.workspace, ctx.keepTab);
+    else { restoreRun = null; setRestore('idle'); }
+    return;
+  }
+  completePendingRestore();
+}
+/** Makes a case the one being worked in: the theories follow it. Passing an empty id clears it. Opening a case on the working screens brings its workspace back. */
+export function setActiveCase(id: string, options: { restore?: boolean } = {}) {
   if (activeCaseId === id) return;
+  // What waits to be saved belongs to the case being left, so it goes now; the new case starts with nothing restored.
+  workspaceSaver.flush();
+  restoreSequence++;
+  restoredCaseId = ''; workspaceBaseline = null; pendingRestore = null; restoreRun = null;
+  setRestore('idle');
   activeCaseId = id;
   storedCase(id);
   setLedgerCase(id);
+  // Already on the case or the analysis (the import drawer picks a case here), so no screen change will start the restore: start it now.
+  if (options.restore !== false && id && (screen === 'running' || screen === 'case') && info && !info.demo) void restoreCaseWorkspace(id);
 }
 /** A case was erased. If it was the one being worked in, it stops being active and its page gives way to the start screen. */
 export function caseErased(id: string) {
@@ -534,7 +744,9 @@ export function openCaseImport() {
  */
 export async function openCreatedCase(id: string) {
   requestCase(id);
-  setActiveCase(id);
+  setActiveCase(id, { restore: false });
+  // A case just made has no workspace yet, so there is nothing to restore; what it connects from now on is saved with it.
+  restoredCaseId = id;
   let hasSources = sources.length > 0;
   try {
     const loaded = (await api.sources()) ?? [];
@@ -620,6 +832,7 @@ export async function forgetRecent(recent: RecentConnection) {
   try {
     await api.forgetConnection(recent.id);
     sessionCredentialIds.delete(recent.id);
+    forgetSavedRecord(recent.id);
     recentConnections = recentConnections.filter(item => item.id !== recent.id);
     if (savedConnectionId === recent.id) {
       savedConnectionId = ''; savedCredentialAvailable = false; savedCredentialSessionOnly = false; rememberPassword = false; addPassword = '';
@@ -667,14 +880,6 @@ async function rememberConnection(connection: ConnectionInput, label: string, co
     recentSaveErrorStage = friendlyConnectionStage(cause);
     return false;
   } finally { historyMutationBusy = false; }
-}
-function suggestedConnectionLabel(uri: string) {
-  const address = uri.trim();
-  try {
-    const parsed = new URL(address.includes('://') ? address : `mongodb://${address}`);
-    if (parsed.hostname) return parsed.hostname;
-  } catch { /* backend validation gives the address error */ }
-  return address.split(/[/?#]/, 1)[0] || 'MongoDB connection';
 }
 export async function saveConnectionDetails() {
   if (forgetInProgress || historyMutationBusy || connectionTesting || sourceBusy) return;
@@ -744,6 +949,10 @@ export async function testConnection() {
     discoveredDatabases = Array.isArray(result?.databases) ? result.databases.filter((item): item is string => typeof item === 'string' && item.length > 0) : [];
     connectionWarning = result?.warning ?? '';
     connectionTestedSignature = signature;
+    // A case waiting for its database: the databases it used are ticked already.
+    if (restoreRecentId && restoreRecentId === connection.savedConnectionId && (restorePhase === 'signin' || restorePhase === 'failed' || restorePhase === 'unreachable')) {
+      selectedDatabases = restoreDatabases.filter(name => discoveredDatabases.includes(name)).slice(0, remainingSourceSlots);
+    }
     if (!discoveredDatabases.length && !connectionWarning) connectionWarning = 'Connected, but no databases were returned. Enter a database manually if your account has restricted database discovery.';
     if (!info?.demo) await rememberConnection(connection, label.trim() || suggestedConnectionLabel(connection.uri), collection, keepPassword, 'tested');
   } catch (cause) {
@@ -809,6 +1018,30 @@ export function resetInvestigation() {
   investigationFingerprint = JSON.stringify([query, zone, targetMs, sources]);
 }
 
+/**
+ * Learns which saved connection new sources came from, so the case can name it (never the address or login). The record in use, else the
+ * record that matches the details just used, else a quiet attempt to save them. Failing to find one only means the case cannot reopen
+ * this connection by itself.
+ */
+async function noteSavedConnection(added: Source[], connection: ConnectionInput, label: string, collection: string) {
+  // Never saves over a record that exists (that would replace it and wipe its stored password): the one in use, else the one at the same
+  // address, else a new one. The list is read again first, since the page's copy may be old.
+  const found = await resolveSavedRecent({
+    details: { uri: connection.uri, username: connection.username, collection, authSource: connection.authSource, tlsMode: connection.tlsMode, caCertificate: connection.caCertificate },
+    savedId: connection.savedConnectionId,
+    recents: recentConnections,
+    refresh: async () => { const fresh = await api.recentConnections(); return Array.isArray(fresh) ? fresh.filter(isRecentConnection).slice(0, 20) : null; },
+    create: async () => {
+      const made = await api.rememberConnection({ label: label.trim() || suggestedConnectionLabel(connection.uri), connection: { ...connection, savedConnectionId: undefined }, collection, rememberPassword: false });
+      return isRecentConnection(made) ? made : null;
+    }
+  });
+  recentConnections = found.recents.slice(0, 20);
+  const saved = found.recent;
+  if (!saved) return; // the case just cannot reopen this connection by itself
+  for (const source of added) registerSourceSaved(source, saved.id);
+  if (connection.password && !saved.hasCredentials) sessionCredentialIds.add(saved.id);
+}
 export async function addSource(event: SubmitEvent) {
   event.preventDefault();
   // A second submit while one add is running (a double click, Enter held down) must not add every database twice.
@@ -833,6 +1066,7 @@ export async function addSource(event: SubmitEvent) {
   const failures: Array<{ database: string; error: string }> = [];
   let addedCount = 0;
   let allAdded = false;
+  const addedSources: Source[] = [];
   try {
     for (const database of databaseNames) {
       try {
@@ -841,6 +1075,7 @@ export async function addSource(event: SubmitEvent) {
         const added = await api.addSource(input);
         const selectAdded = shouldSelectAddedSource(added, investigationIntent);
         sources = [...sources, added];
+        addedSources.push(added);
         if (selectAdded) query.sourceIds = [...query.sourceIds, added.id];
         if (!hasUnresolvedKnownSources(investigationIntent, sources)) investigationIntent = null;
         completedDatabases = [...completedDatabases, database];
@@ -860,6 +1095,8 @@ export async function addSource(event: SubmitEvent) {
     }
   }
   finally { sourceBusy = false; }
+  if (addedSources.length && !info?.demo) await noteSavedConnection(addedSources, connection, labelPrefix, collection);
+  if (addedCount) { completePendingRestore(); queueWorkspaceSave(); }
   // A fully successful add is done: close the drawer and show the result in the source list. A partial failure stays open so the failed databases can be retried.
   if (allAdded) await closeConnections();
 }
@@ -869,11 +1106,14 @@ export async function deleteSource(source: Source) {
     await api.deleteSource(source.id);
     investigationIntent = forgetInvestigationSource(investigationIntent, source);
     sources = sources.filter(item => item.id !== source.id);
+    forgetSourceSaved(source);
+    workspaceBaseline = pruneWorkspace(workspaceBaseline, source);
     if (!hasUnresolvedKnownSources(investigationIntent, sources)) investigationIntent = null;
     query.sourceIds = query.sourceIds.filter(id => id !== source.id);
     analysis = analysis ? { ...analysis, sources: analysis.sources.filter(result => result.sourceId !== source.id), apis: analysis.apis.filter(row => row.sourceId !== source.id) } : null;
     selectedKey = ''; operation = null; contextAnchor = null;
     invalidateDetails(); bumpEpoch();
+    queueWorkspaceSave();
   } catch (cause) { sourceError = message(cause); }
   finally { busyDelete = ''; }
 }
@@ -896,6 +1136,7 @@ export async function runAnalysis(auto = false) {
     bumpEpoch(); // the old analysis stays on screen while this runs, so anything read meanwhile belongs to it, not to this result
     analysis = result;
     timelineKeys = rankComparisons(result.apis).filter(row => row.state === 'compared').slice(0, 1).map(row => row.key); // only the top group starts checked: three overlapping lines were unreadable
+    queueWorkspaceSave();
   } catch (cause) {
     if (run === analysisSequence && !(cause instanceof DOMException && cause.name === 'AbortError')) {
       const detail = message(cause);
@@ -1435,4 +1676,19 @@ export const conn = {
   get manualDatabase() { return manualDatabase; }, set manualDatabase(value) { manualDatabase = value; },
   get connectionSignature() { return connectionSignature; },
   get availableDatabases() { return availableDatabases; }
+};
+
+/** A case that was opened and is getting its MongoDB sources back (or needs the person to sign in). Read by the screens that would otherwise show the first-run connect step. */
+export const restore = {
+  get phase() { return restorePhase; },
+  get active() { return restorePhase !== 'idle'; },
+  get working() { return restorePhase === 'working'; },
+  get unreachable() { return restorePhase === 'unreachable'; },
+  get needsAttention() { return restoreWaiting(restorePhase); },
+  get databases() { return restoreDatabases; },
+  get label() { return restoreLabel; },
+  reconnect: reconnectRestore,
+  retry: retryRestore,
+  cancel: cancelRestore,
+  another: startNewConnection
 };
