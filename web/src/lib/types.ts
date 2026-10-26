@@ -12,6 +12,18 @@ export interface RecentConnection {
   id: string; label: string; uri: string; username: string; authSource: string; tlsMode: TLSMode;
   caCertificate: string; collection: string; hasCredentials: boolean; lastUsedAt: string;
 }
+/** SQL Server details as SQL Server Management Studio asks for them. Stored only; nothing connects with them yet. */
+export type SqlAuth = 'sql' | 'windows';
+export type SqlEncrypt = 'mandatory' | 'optional' | 'strict';
+export interface SqlConnectionInput {
+  label: string; server: string; auth: SqlAuth; username: string; password: string; rememberPassword: boolean;
+  database: string; encrypt: SqlEncrypt; trustServerCertificate: boolean;
+}
+/** A saved SQL Server entry. The password is never returned, only whether one is stored. */
+export interface SavedSqlConnection {
+  id: string; label: string; server: string; host: string; port: number; auth: SqlAuth; username: string; database: string;
+  encrypt: SqlEncrypt; trustServerCertificate: boolean; hasPassword: boolean; savedAt: string;
+}
 export interface RememberConnectionInput { label: string; connection: ConnectionInput; collection: string; rememberPassword: boolean }
 export interface SourceResult { sourceId: string; ok: boolean; error: string; version: string; indexWarning: string }
 export interface Info {

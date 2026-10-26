@@ -10,6 +10,10 @@ import type { ConnectionInput } from './types';
  */
 
 const held = new Map<string, ConnectionInput>();
+/** The collection that holds the API audit log, per held connection. It is not secret. */
+const collections = new Map<string, string>();
+
+export const DEFAULT_COLLECTION = 'ApiAuditLog';
 
 const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -36,13 +40,21 @@ export function heldConnection(id: string): ConnectionInput | null {
   return found ? { ...found } : null;
 }
 
+export function holdCollection(id: string, collection: string): void {
+  collections.set(id, collection.trim() === '' ? DEFAULT_COLLECTION : collection.trim());
+}
+
+export const heldCollection = (id: string): string => collections.get(id) ?? DEFAULT_COLLECTION;
+
 export function releaseConnection(id: string): void {
   held.delete(id);
+  collections.delete(id);
 }
 
 /** Forgets every held connection. */
 export function releaseConnections(): void {
   held.clear();
+  collections.clear();
 }
 
 export const heldCount = (): number => held.size;

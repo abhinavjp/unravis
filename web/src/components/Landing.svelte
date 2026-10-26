@@ -1,6 +1,6 @@
 <script lang="ts">
   import { landingMayAutoRun } from '../lib/autorun';
-  import { app, go, goHome, openCase, openConnections, openKeySetup, openSidePanel, runAnalysis, scope, startCreate, startNewConnection } from '../lib/appState.svelte';
+  import { app, go, goHome, openCase, openConnections, openCreatedCase, openKeySetup, openSidePanel, runAnalysis, scope, startCreate, startNewConnection } from '../lib/appState.svelte';
   import { resetWizard, wizard } from '../lib/wizard.svelte';
   import { blockers, caseMade, createNow, createView } from '../lib/wizardCreate.svelte';
   import { createButtonText } from '../lib/copy/wizardCreateCopy';
@@ -24,8 +24,8 @@
 
   // "This computer" lives in the import drawer. This screen has no case, so it leaves a request and opens the drawer, which shows the panel.
   function openDiscover() { requestDiscover(); openSidePanel('import'); }
-  // The case is made and kept on the server. The draft is done with, so it is cleared, then the case opens with the import drawer for Add more data.
-  function openCreated(id: string) { resetWizard(); openCase(id); }
+  // The case is made and kept on the server. The draft is done with, so it is cleared, then the case opens on its analysis.
+  function openCreated(id: string) { resetWizard(); void openCreatedCase(id); }
 </script>
 
 {#if mode === 'loading'}

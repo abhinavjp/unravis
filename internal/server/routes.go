@@ -104,6 +104,13 @@ var routes = []route{
 	{pattern: "/api/connections/recent/{id}", match: prefixPath("/api/connections/recent/"), methods: map[string]routeFunc{
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.deleteRecent(w, r, id) },
 	}},
+	{pattern: "/api/sql-connections", match: exactPath("/api/sql-connections"), methods: map[string]routeFunc{
+		http.MethodGet:  func(h *handler, w http.ResponseWriter, _ *http.Request, _ string) { h.listSQLConnections(w) },
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.saveSQLConnection(w, r) },
+	}},
+	{pattern: "/api/sql-connections/{id}", match: prefixPath("/api/sql-connections/"), methods: map[string]routeFunc{
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, _ *http.Request, id string) { h.deleteSQLConnection(w, id) },
+	}},
 	{pattern: "/api/connections/remember", match: exactPath("/api/connections/remember"), methods: post((*handler).rememberConnection)},
 	{pattern: "/api/connections/test", match: exactPath("/api/connections/test"), methods: post((*handler).testConnection)},
 	{pattern: "/api/probe/reachable", match: exactPath("/api/probe/reachable"), methods: post((*handler).probeReachable)},

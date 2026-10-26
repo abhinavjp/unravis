@@ -5,7 +5,7 @@ import type { DetectorProgress, DiscoverClient, EntryState, Finding, Gap, Locate
 import { DISCOVER_TEXT, problemText } from './copy/discoverCopy';
 import { safeServerLine, scanDroppedText, envsClearedText } from './copy/wizardSourcesCopy';
 import { draftEnvs, onWizardReset, setSources, wizard } from './wizard.svelte';
-import { heldConnection, holdConnection, releaseConnection, secretsOf } from './wizardConnections';
+import { heldConnection, holdCollection, holdConnection, releaseConnection, secretsOf } from './wizardConnections';
 import {
   ADDRESS_KINDS, DEFAULT_PORT, addSource, addressSource, addressText, classifyDatabase, cleanTag, fileSource, hostLabel, looksLikeSecret, nextFileNumber, parseAddress,
   parseAddressRef, reachFrom, reconcileEnvs, reconcileWithScan, removeConnectionSources, removeSource, replaceFinding, setTag, sourceKey, toggleFinding, withReach, withoutReach
@@ -216,7 +216,7 @@ export type AddOutcome =
  */
 export async function addByAddress(kind: AddressKind, text: string, given?: Partial<SourcesDeps>): Promise<AddOutcome> {
   if (!ADDRESS_KINDS.includes(kind)) return { ok: false, problem: 'bad-host' };
-  const parsed = parseAddress(text, DEFAULT_PORT[kind]);
+  const parsed = parseAddress(text, DEFAULT_PORT[kind], kind === 'sql-server');
   if (!parsed.ok) return { ok: false, problem: parsed.problem };
   const source = addressSource(kind, parsed.host, parsed.port, addressText(parsed.host, parsed.port));
   const added = addSource(wizard.sources, source);
@@ -273,7 +273,7 @@ export type TestOutcome = { ok: true; id: string; databases: number } | { ok: fa
  * Any message from the server is cleaned of the address, user name and password before it is returned.
  * With `existingId` the connection is tested again and its list of databases is refreshed.
  */
-export async function testMongo(input: ConnectionInput, existingId = '', given?: Partial<SourcesDeps>): Promise<TestOutcome> {
+export async function testMongo(input: ConnectionInput, existingId = '', given?: Partial<SourcesDeps>, collection = ''): Promise<TestOutcome> {
   const deps = depsOf(given);
   const secrets = secretsOf(input);
   let result: ConnectionTestResult;
@@ -287,6 +287,7 @@ export async function testMongo(input: ConnectionInput, existingId = '', given?:
   const warning = typeof result?.warning === 'string' ? safeServerLine(result.warning, secrets) : '';
   const id = existingId !== '' && heldConnection(existingId) ? existingId : '';
   const connectionId = holdConnection(input, id === '' ? undefined : id);
+  holdCollection(connectionId, collection);
   const view: ConnectionView = { id: connectionId, host: hostLabel(input.uri), databases, warning };
   if (id === '') {
     sourcesView.connections = [...sourcesView.connections, view];

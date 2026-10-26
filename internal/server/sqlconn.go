@@ -1,0 +1,77 @@
+package server
+
+import (
+	"errors"
+	"net/http"
+	"net/url"
+	"strings"
+
+	"api-audit-explorer/internal/sqlconn"
+)
+
+// savedSQL keeps the SQL Server details typed in the create wizard. Nothing connects with them yet.
+type savedSQL interface {
+	List() ([]sqlconn.Recent, error)
+	Save(sqlconn.Input) (sqlconn.Recent, error)
+	Delete(string) error
+}
+
+const sqlUnavailable = "Saved SQL Server connections are unavailable on this platform."
+
+func (h *handler) listSQLConnections(w http.ResponseWriter) {
+	if h.sqlConns == nil {
+		writeError(w, http.StatusServiceUnavailable, sqlUnavailable)
+		return
+	}
+	items, err := h.sqlConns.List()
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "Saved SQL Server connections could not be read. The saved file was left unchanged.")
+		return
+	}
+	if items == nil {
+		items = []sqlconn.Recent{}
+	}
+	writeJSON(w, http.StatusOK, items, maxResponseBytes)
+}
+
+func (h *handler) saveSQLConnection(w http.ResponseWriter, r *http.Request) {
+	if h.sqlConns == nil {
+		writeError(w, http.StatusServiceUnavailable, sqlUnavailable)
+		return
+	}
+	var input sqlconn.Input
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	item, err := h.sqlConns.Save(input)
+	if err != nil {
+		if errors.Is(err, sqlconn.ErrInvalid) {
+			writeError(w, http.StatusBadRequest, "SQL Server connection details are invalid. Check the server name, login and encryption choice.")
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "The SQL Server connection could not be saved. The existing file was left unchanged.")
+		return
+	}
+	writeJSON(w, http.StatusOK, item, maxResponseBytes)
+}
+
+func (h *handler) deleteSQLConnection(w http.ResponseWriter, id string) {
+	decoded, err := url.PathUnescape(id)
+	if err != nil || decoded == "" || strings.Contains(decoded, "/") {
+		writeError(w, http.StatusBadRequest, "Invalid saved connection identifier.")
+		return
+	}
+	if h.sqlConns == nil {
+		writeError(w, http.StatusServiceUnavailable, sqlUnavailable)
+		return
+	}
+	if err := h.sqlConns.Delete(decoded); err != nil {
+		if errors.Is(err, sqlconn.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "Saved connection was not found.")
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "The saved connection could not be removed.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

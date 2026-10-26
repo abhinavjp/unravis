@@ -25,6 +25,7 @@ import (
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/history"
+	"api-audit-explorer/internal/sqlconn"
 	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/sealedfile"
@@ -138,6 +139,9 @@ func run(args []string, getenv func(string) string) error {
 		repo = store.New(storeOptions(f)...)
 		if savedHistory, historyErr := history.NewDefault(getenv); historyErr == nil {
 			serverOptions = append(serverOptions, server.WithHistory(savedHistory))
+		}
+		if savedSQL, sqlErr := sqlconn.NewDefault(getenv); sqlErr == nil {
+			serverOptions = append(serverOptions, server.WithSQLConnections(savedSQL))
 		}
 	}
 	hypotheses, ledgerErr := openLedger(*demo, getenv)

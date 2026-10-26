@@ -1,9 +1,10 @@
 <script lang="ts">
   import { wizard } from '../../lib/wizard.svelte';
   import { classifyMongo, removeConnection, sourcesView, testMongo } from '../../lib/wizardSources.svelte';
-  import { heldConnection } from '../../lib/wizardConnections';
+  import { DEFAULT_COLLECTION, heldCollection, heldConnection } from '../../lib/wizardConnections';
   import { databaseClass } from '../../lib/wizardSources';
-  import type { ConnectionInput } from '../../lib/types';
+  import type { ConnectionInput, RecentConnection, TLSMode } from '../../lib/types';
+  import { conn } from '../../lib/appState.svelte';
   import { SOURCES_TEXT, classSummaryText, databaseProblemText, testedText } from '../../lib/copy/wizardSourcesCopy';
 
   // Connect to MongoDB, list its databases, and say what each one is: API audit logs, other data, or not used. Only a database that was listed
@@ -15,6 +16,14 @@
   let username = $state('');
   let password = $state('');
   let authSource = $state('');
+  // A saved connection (Windows-protected, from before): its address and user come back, and the server supplies the saved password.
+  let savedId = $state('');
+  let savedTls = $state<TLSMode>('uri');
+  let savedCa = $state('');
+  let savedHasPassword = $state(false);
+  let tlsMode = $state<TLSMode>('system');
+  let caCertificate = $state('');
+  let collection = $state(DEFAULT_COLLECTION);
   let busy = $state(false);
   let line = $state('');
   let failed = $state(false);
@@ -38,16 +47,37 @@
   };
   const valueOf = (id: string, database: string): string => databaseClass(wizard.sources, id, database) || (setAside[id + '/' + database] ? 'unused' : '');
 
+  function useSaved(id: string) {
+    const recent: RecentConnection | undefined = conn.recentConnections.find((r) => r.id === id);
+    if (!recent) { savedId = ''; savedHasPassword = false; savedTls = 'uri'; savedCa = ''; return; }
+    uri = recent.uri; username = recent.username; authSource = recent.authSource; password = '';
+    savedId = recent.id; savedTls = recent.tlsMode || 'uri'; savedCa = recent.caCertificate || ''; savedHasPassword = recent.hasCredentials;
+    tlsMode = savedTls; caCertificate = savedCa; collection = recent.collection || DEFAULT_COLLECTION;
+  }
+  async function loadCa(event: Event) {
+    const el = event.currentTarget as HTMLInputElement;
+    const file = el.files?.[0];
+    if (!file) return;
+    try {
+      const text = file.size > 256 * 1024 ? '' : await file.text();
+      if (!/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/.test(text) || /-----BEGIN [^-]*PRIVATE KEY-----/.test(text)) { caCertificate = ''; el.value = ''; failed = true; line = SOURCES_TEXT.mongoCaBad; return; }
+      caCertificate = text; failed = false; line = '';
+    } catch { caCertificate = ''; el.value = ''; failed = true; line = SOURCES_TEXT.mongoCaBad; }
+  }
+  // Editing the address, user or auth database makes it a new connection, so the saved id no longer applies.
+  function edited() { if (savedId !== '') { savedId = ''; savedHasPassword = false; savedTls = 'uri'; savedCa = ''; } }
+
   async function test() {
     if (busy) return;
     if (uri.trim() === '') { failed = true; line = SOURCES_TEXT.mongoNeedsAddress; uriField?.focus(); return; }
+    if (tlsMode === 'custom' && caCertificate === '') { failed = true; line = SOURCES_TEXT.mongoCaNeeded; return; }
     busy = true; failed = false; line = SOURCES_TEXT.mongoTesting;
-    const input: ConnectionInput = { uri: uri.trim(), username: username.trim(), password, authSource: authSource.trim(), tlsMode: 'uri', caCertificate: '' };
-    const result = await testMongo(input);
+    const input: ConnectionInput = { uri: uri.trim(), username: username.trim(), password, authSource: authSource.trim(), tlsMode, caCertificate: tlsMode === 'custom' ? caCertificate : '', ...(savedId ? { savedConnectionId: savedId } : {}) };
+    const result = await testMongo(input, '', undefined, collection);
     busy = false;
     if (!result.ok) { failed = true; line = result.text !== '' ? result.text : SOURCES_TEXT.mongoFailed; return; }
     // The connection is held now; clear the typed fields so a password does not stay in the form.
-    uri = ''; username = ''; password = ''; authSource = '';
+    uri = ''; username = ''; password = ''; authSource = ''; savedId = ''; savedHasPassword = false; savedTls = 'uri'; savedCa = ''; caCertificate = ''; tlsMode = 'system'; collection = DEFAULT_COLLECTION;
     line = testedText(result.databases);
     onDone?.();
   }
@@ -56,7 +86,7 @@
     const input = heldConnection(id);
     if (!input || retesting[id]) return;
     retesting[id] = true; retestLine[id] = SOURCES_TEXT.mongoTesting;
-    const result = await testMongo(input, id);
+    const result = await testMongo(input, id, undefined, heldCollection(id));
     retesting[id] = false;
     retestLine[id] = result.ok ? testedText(result.databases) : (result.text !== '' ? result.text : SOURCES_TEXT.mongoFailed);
   }
@@ -77,16 +107,44 @@
 <div class="mongo">
   <p class="hint">{SOURCES_TEXT.mongoIntro}</p>
   <div class="form">
+    {#if conn.recentConnections.length}
+      <div class="field">
+        <label for="{uid}-saved">{SOURCES_TEXT.mongoSaved}</label>
+        <select id="{uid}-saved" value={savedId} onchange={(e) => useSaved((e.currentTarget as HTMLSelectElement).value)}>
+          <option value="">{SOURCES_TEXT.mongoSavedNone}</option>
+          {#each conn.recentConnections as recent (recent.id)}<option value={recent.id}>{recent.label}{recent.hasCredentials ? ' ' + SOURCES_TEXT.mongoSavedHasPassword : ''}</option>{/each}
+        </select>
+        {#if savedId !== '' && savedHasPassword}<p class="hint">{SOURCES_TEXT.mongoSavedPasswordUsed}</p>{/if}
+      </div>
+    {/if}
     <div class="field">
       <label for="{uid}-uri">{SOURCES_TEXT.mongoUri}</label>
-      <input id="{uid}-uri" type="text" bind:this={uriField} bind:value={uri} autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="2000"
+      <input id="{uid}-uri" type="text" bind:this={uriField} bind:value={uri} oninput={edited} autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="2000"
         aria-describedby="{uid}-uri-hint {uid}-line" aria-invalid={failed && uri.trim() === '' && line !== '' ? true : undefined} onkeydown={onKey} />
       <p class="hint" id="{uid}-uri-hint">{SOURCES_TEXT.mongoUriHint}</p>
+    </div>
+    <div class="field">
+      <label for="{uid}-tls">{SOURCES_TEXT.mongoTls}</label>
+      <select id="{uid}-tls" bind:value={tlsMode}>
+        <option value="system">{SOURCES_TEXT.mongoTlsSystem}</option>
+        <option value="custom">{SOURCES_TEXT.mongoTlsCustom}</option>
+        <option value="insecure">{SOURCES_TEXT.mongoTlsInsecure}</option>
+        <option value="uri">{SOURCES_TEXT.mongoTlsUri}</option>
+        <option value="off">{SOURCES_TEXT.mongoTlsOff}</option>
+      </select>
+      {#if tlsMode === 'custom'}<label for="{uid}-ca">{SOURCES_TEXT.mongoCa}</label><input id="{uid}-ca" type="file" accept=".pem,.crt,application/x-pem-file" onchange={loadCa} />{/if}
+      {#if tlsMode === 'insecure'}<p class="hint" role="alert">{SOURCES_TEXT.mongoTlsInsecureWarning}</p>{/if}
+      {#if tlsMode === 'off'}<p class="hint" role="alert">{SOURCES_TEXT.mongoTlsOffWarning}</p>{/if}
+    </div>
+    <div class="field">
+      <label for="{uid}-coll">{SOURCES_TEXT.mongoCollection}</label>
+      <input id="{uid}-coll" type="text" bind:value={collection} autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" onkeydown={onKey} />
+      <p class="hint">{SOURCES_TEXT.mongoCollectionHint}</p>
     </div>
     <div class="pair">
       <div class="field">
         <label for="{uid}-user">{SOURCES_TEXT.mongoUser}</label>
-        <input id="{uid}-user" type="text" bind:value={username} autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="200" onkeydown={onKey} />
+        <input id="{uid}-user" type="text" bind:value={username} oninput={edited} autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="200" onkeydown={onKey} />
       </div>
       <div class="field">
         <label for="{uid}-pass">{SOURCES_TEXT.mongoPassword}</label>
@@ -94,7 +152,7 @@
       </div>
       <div class="field">
         <label for="{uid}-auth">{SOURCES_TEXT.mongoAuth}</label>
-        <input id="{uid}-auth" type="text" bind:value={authSource} autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" onkeydown={onKey} />
+        <input id="{uid}-auth" type="text" bind:value={authSource} oninput={edited} autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="120" onkeydown={onKey} />
       </div>
     </div>
     <div class="actions"><button type="button" class="primary-button" disabled={busy} onclick={() => void test()}>{busy ? SOURCES_TEXT.mongoTesting : SOURCES_TEXT.mongoTest}</button></div>
@@ -144,8 +202,8 @@
   .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--space-3); }
   .field { display: grid; gap: var(--space-1); align-content: start; min-width: 0; }
   .field label { font-size: var(--fs-3); font-weight: 600; }
-  .field input, .db select { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 44px; padding: 8px 10px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-4); }
-  .field input:focus-visible, .db select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .field input, .field select, .db select { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 44px; padding: 8px 10px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-4); }
+  .field input:focus-visible, .field select:focus-visible, .db select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
   .field input[aria-invalid='true'], .db select[aria-invalid='true'] { border-color: var(--bad); }
   .hint { margin: 0; color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }

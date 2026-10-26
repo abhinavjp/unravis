@@ -41,6 +41,7 @@ type handler struct {
 	token   string
 	demo    bool
 	history savedHistory
+	sqlConns savedSQL
 	ledger  ledger.Store
 	tests   connectionTestLimiter
 	adds    connectionTestLimiter
@@ -70,6 +71,8 @@ type savedHistory interface {
 type Option func(*handler)
 
 func WithHistory(value savedHistory) Option { return func(h *handler) { h.history = value } }
+
+func WithSQLConnections(value savedSQL) Option { return func(h *handler) { h.sqlConns = value } }
 
 func New(repo audit.Repository, assets fs.FS, token string, demo bool, options ...Option) http.Handler {
 	h := &handler{repo: repo, assets: assets, token: token, demo: demo}

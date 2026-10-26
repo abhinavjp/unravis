@@ -13,6 +13,7 @@
   import LocateFolder from './LocateFolder.svelte';
   import MongoClassify from './MongoClassify.svelte';
   import ReachableCheck from './ReachableCheck.svelte';
+  import SqlServerForm from './SqlServerForm.svelte';
   import SourceTagRow from './SourceTagRow.svelte';
 
   // The sources step of the create wizard (TSK-18). Three parts: what the scan of this computer found, ways to reach another computer, and the
@@ -208,7 +209,7 @@
     {#if openForm === 'mongo'}
       <div class="panel" id="{uid}-mongo"><h5>{SOURCES_TEXT.mongoHeading}</h5><MongoClassify /></div>
     {:else if openForm === 'sql'}
-      <div class="panel" id="{uid}-sql"><ReachableCheck kind="sql-server" /></div>
+      <div class="panel" id="{uid}-sql"><SqlServerForm /></div>
     {:else if openForm === 'redis'}
       <div class="panel" id="{uid}-redis"><ReachableCheck kind="redis" /></div>
     {:else if openForm === 'files'}

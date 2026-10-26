@@ -261,9 +261,11 @@ const HOST_CHARS = /^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$/;
  * Reads "host", "host:port" or "[::1]:port". With no port the default for the kind is used. A text that carries a scheme, a user name or a
  * password is refused (it is a connection string, which never goes in this field). A port outside 1 to 65535 is refused.
  */
-export function parseAddress(text: string, defaultPort: number): ParsedAddress {
-  const raw = String(text ?? '').trim();
+export function parseAddress(text: string, defaultPort: number, commaPort = false): ParsedAddress {
+  let raw = String(text ?? '').trim();
   if (raw === '') return { ok: false, problem: 'empty' };
+  // SQL Server tools write the port after a comma ("192.168.4.2,1655"). Read that as "host:port".
+  if (commaPort && !raw.includes(':') && raw.split(',').length === 2) raw = raw.split(',').map((part) => part.trim()).join(':');
   if (looksLikeSecret(raw) || raw.includes('@') || raw.includes('/')) return { ok: false, problem: 'secret' };
   if (/\s/.test(raw)) return { ok: false, problem: 'bad-host' };
   let host = raw;

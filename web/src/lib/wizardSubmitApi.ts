@@ -5,7 +5,7 @@ import { discoverClient, outcomeFromError, outcomeFromJob, watchJob } from './di
 import type { RowOutcome } from './discover';
 import { putEnvironments, postSourceTag } from './caseTagsApi';
 import { ackTextFor } from './copy/importCopy';
-import { heldConnection } from './wizardConnections';
+import { heldCollection, heldConnection } from './wizardConnections';
 import type { SubmitApi } from './wizardSubmit';
 
 /**
@@ -37,7 +37,7 @@ export const wizardSubmitApi: SubmitApi = {
   async addAuditSource(connectionId, database) {
     const held = heldConnection(connectionId);
     if (!held) throw new CaseApiError('That connection is no longer held.', 422, 'connection-lost');
-    return api.addSource({ ...held, label: database, database, collection: '' });
+    return api.addSource({ ...held, label: database, database, collection: heldCollection(connectionId) });
   },
 
   confirmHost: (host) => discoverClient.confirmHost?.(host) ?? Promise.resolve(),

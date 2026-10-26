@@ -221,6 +221,14 @@ test('parseAddress reads host, host:port and [v6]:port, and uses the default por
   assert.deepEqual(model.parseAddress('[::1]', 6379), { ok: true, host: '::1', port: 6379 });
 });
 
+test('parseAddress reads the SQL Server host,port form only when asked', () => {
+  assert.deepEqual(model.parseAddress('192.168.4.2,1655', 1433, true), { ok: true, host: '192.168.4.2', port: 1655 });
+  assert.deepEqual(model.parseAddress(' db1 , 14330 ', 1433, true), { ok: true, host: 'db1', port: 14330 });
+  assert.equal(model.parseAddress('192.168.4.2,1655', 1433).problem, 'bad-host');
+  assert.equal(model.parseAddress('a,b,c', 1433, true).problem, 'bad-host');
+  assert.equal(model.parseAddress('h,99999', 1433, true).problem, 'bad-port');
+});
+
 test('parseAddress refuses an empty text, a connection string, a bad host and a bad port', () => {
   assert.equal(model.parseAddress('', 1).problem, 'empty');
   assert.equal(model.parseAddress('   ', 1).problem, 'empty');
@@ -569,4 +577,83 @@ test('the store keeps no password in the shared draft model', () => {
   const text = read('src/lib/wizardSources.svelte.ts') + read('src/lib/wizardSources.ts');
   assert.doesNotMatch(text, /localStorage|sessionStorage/);
   assert.doesNotMatch(text, /console\./);
+});
+
+test('a tested MongoDB connection holds its audit collection, and a blank one means ApiAuditLog', async () => {
+  blank();
+  const first = await store.testMongo(mongoInput, '', { testConnection: async () => ({ databases: ['a'] }) }, ' Audit2 ');
+  assert.equal(held.heldCollection(first.id), 'Audit2');
+  const second = await store.testMongo(mongoInput, '', { testConnection: async () => ({ databases: ['a'] }) });
+  assert.equal(held.heldCollection(second.id), 'ApiAuditLog');
+  held.releaseConnection(first.id);
+  assert.equal(held.heldCollection(first.id), 'ApiAuditLog');
+});
+
+test('a case made by the create guide adopts its new sources and starts the analysis', () => {
+  const state = fs.readFileSync(path.join(root, 'src/lib/appState.svelte.ts'), 'utf8');
+  const body = state.slice(state.indexOf('export async function openCreatedCase'));
+  const fn = body.slice(0, body.indexOf('\n}\n'));
+  assert.match(fn, /api\.sources\(\)/, 'reloads the source list the guide changed on the server');
+  assert.match(fn, /query\.sourceIds = /, 'selects the new sources');
+  assert.match(fn, /autoRan = false/, 'lets the landing run start by itself');
+  assert.match(fn, /!hasSources\) openSidePanel\('import'\)/, 'opens the import drawer only when there is nothing to analyse');
+  const landing = fs.readFileSync(path.join(root, 'src/components/Landing.svelte'), 'utf8');
+  assert.match(landing, /openCreatedCase\(id\)/);
+});
+
+/* ------------------------------------------------------------------ SQL Server form (SSMS-style, stored only) */
+
+const sqlForm = loadTypeScript('src/lib/sqlConnection.ts');
+
+test('sql form: the SSMS details become one request, and a password goes only when asked to be remembered', () => {
+  const form = { ...sqlForm.blankSqlForm(), server: ' 192.168.4.2,1655 ', username: ' sa ', password: 'secret', database: ' ', trustServerCertificate: true };
+  const off = sqlForm.sqlInput(form);
+  assert.equal(off.server, '192.168.4.2,1655');
+  assert.equal(off.username, 'sa');
+  assert.equal(off.password, '');
+  assert.equal(off.rememberPassword, false);
+  assert.equal(off.encrypt, 'mandatory');
+  assert.equal(off.trustServerCertificate, true);
+  const on = sqlForm.sqlInput({ ...form, rememberPassword: true });
+  assert.equal(on.password, 'secret');
+  assert.equal(on.rememberPassword, true);
+});
+
+test('sql form: Windows login sends no user name or password', () => {
+  const body = sqlForm.sqlInput({ ...sqlForm.blankSqlForm(), server: 'db1', auth: 'windows', username: 'x', password: 'y', rememberPassword: true });
+  assert.equal(body.username, '');
+  assert.equal(body.password, '');
+  assert.equal(body.rememberPassword, false);
+});
+
+test('sql form: a missing server or login is named before anything is sent', () => {
+  assert.equal(sqlForm.sqlFormProblem(sqlForm.blankSqlForm()), 'server');
+  assert.equal(sqlForm.sqlFormProblem({ ...sqlForm.blankSqlForm(), server: 'db1' }), 'username');
+  assert.equal(sqlForm.sqlFormProblem({ ...sqlForm.blankSqlForm(), server: 'db1', auth: 'windows' }), null);
+  assert.equal(sqlForm.sqlFormProblem({ ...sqlForm.blankSqlForm(), server: 'db1', username: 'sa' }), null);
+});
+
+test('sql form: choosing a kept entry fills everything but the password', () => {
+  const form = sqlForm.formFromSaved({ id: 'a', label: '192.168.4.2,1655', server: '192.168.4.2,1655', host: '192.168.4.2', port: 1655, auth: 'sql', username: 'sa', database: 'Audit', encrypt: 'strict', trustServerCertificate: true, hasPassword: true, savedAt: '' });
+  assert.equal(form.server, '192.168.4.2,1655');
+  assert.equal(form.label, '');
+  assert.equal(form.password, '');
+  assert.equal(form.rememberPassword, true);
+  assert.equal(form.encrypt, 'strict');
+});
+
+test('sql form: the component adds the server through the address path and never puts a password in the draft', () => {
+  const component = read('src/components/wizard/SqlServerForm.svelte');
+  assert.match(component, /addByAddress\('sql-server', shown\)/);
+  assert.match(component, /api\.saveSqlConnection\(sqlInput\(form\)\)/);
+  assert.match(component, /type="password"/);
+  assert.doesNotMatch(component, /wizard\.sources|setSources/);
+  assert.match(read('src/components/wizard/SourceGallery.svelte'), /<SqlServerForm \/>/);
+});
+
+test('sql form: its copy passes the screen-text lint', () => {
+  const keys = Object.keys(copy.SOURCES_TEXT).filter((k) => k.startsWith('sql'));
+  assert.ok(keys.length >= 20);
+  const problems = lintScreenStrings(keys.map((k) => ({ id: 'wizard.sources.' + k, text: copy.SOURCES_TEXT[k] })));
+  assert.deepEqual(problems, []);
 });
