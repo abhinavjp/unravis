@@ -9,9 +9,11 @@ import (
 	"api-audit-explorer/internal/sqlconn"
 )
 
-// savedSQL keeps the SQL Server details typed in the create wizard. Nothing connects with them yet.
+// savedSQL keeps the SQL Server details typed in the create wizard. Resolve hands the stored password to the server-side health checks only;
+// it is never sent to the browser.
 type savedSQL interface {
 	List() ([]sqlconn.Recent, error)
+	Resolve(string) (sqlconn.Input, error)
 	Save(sqlconn.Input) (sqlconn.Recent, error)
 	Delete(string) error
 }

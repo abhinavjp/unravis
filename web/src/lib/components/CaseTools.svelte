@@ -7,6 +7,7 @@
   import type { Query } from '../types';
   import Timeline from './Timeline.svelte';
   import ResourcePanel from '../../components/ResourcePanel.svelte';
+  import HealthPanel from './HealthPanel.svelte';
   import type { Span } from '../resourceSpan';
   import { results } from '../appState.svelte';
   import { DISCOVER_TEXT } from '../copy/discoverCopy';
@@ -158,6 +159,8 @@
 </section>
 
 <ResourcePanel {caseId} {query} {zone} {span} {apiWindows} {onGone} />
+
+<HealthPanel {caseId} {onGone} />
 
 <section class="tools" aria-labelledby="collect-heading">
   <details class="collect" ontoggle={onCollectToggle}>

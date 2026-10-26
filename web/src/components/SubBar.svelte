@@ -33,7 +33,7 @@
         {#key scope.controlsResetKey}<QueryControls bind:query={scope.query} bind:targetMs={scope.targetMs} bind:dateInputsValid={scope.dateInputsValid} bind:activeGroup={panelGroup} part="panel" {groupNames} now={app.info?.now ?? ''} {onScopeChange} />{/key}
       </div>
     </details>
-    <div class="run-actions"><span class="run-hint" id="run-hint" role="status">{runHint}</span>{#if loading}<button class="quiet-button" onclick={cancelAnalysis}>Cancel run</button>{/if}<button class="primary-button" aria-describedby="run-hint" disabled={loading || !scope.query.sourceIds.length || !scope.dateInputsValid} onclick={() => runAnalysis()}>{loading ? 'Comparing…' : 'Run analysis'}</button></div>
+    <div class="run-actions"><span class="run-hint" class:stale={results.displayedRunIsStale && !loading} id="run-hint" role="status">{runHint}</span>{#if loading}<button class="quiet-button" onclick={cancelAnalysis}>Cancel run</button>{/if}<button class="primary-button" aria-describedby="run-hint" disabled={loading || !scope.query.sourceIds.length || !scope.dateInputsValid} onclick={() => runAnalysis()}>{loading ? 'Comparing…' : 'Run analysis'}</button></div>
   </div>
   {#if intervalNote.text}<p class="interval-note" role="status">{intervalNote.text}</p>{/if}
   {#if !moreOpen}<FilterChips chips={scope.filterChipList} onRemove={removeChip} onClear={clearChips} onEmpty={() => summaryEl?.focus()} />{/if}

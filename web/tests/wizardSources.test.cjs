@@ -657,3 +657,70 @@ test('sql form: its copy passes the screen-text lint', () => {
   const problems = lintScreenStrings(keys.map((k) => ({ id: 'wizard.sources.' + k, text: copy.SOURCES_TEXT[k] })));
   assert.deepEqual(problems, []);
 });
+
+/* ------------------------------------------------------------------ SQL test request, Mongo checks hint, Health checks */
+
+test('sql test: a typed password always wins, and a kept one is used only while the login is unchanged', () => {
+  const kept = sqlForm.formFromSaved({ id: 'k1', label: 'x', server: 'db1', host: 'db1', port: 1433, auth: 'sql', username: 'sa', database: '', encrypt: 'mandatory', trustServerCertificate: false, hasPassword: true, savedAt: '' });
+  assert.equal(sqlForm.sqlTestInput(kept).savedId, 'k1');
+  assert.equal(sqlForm.usesKeptPassword(kept), true);
+  assert.equal(sqlForm.sqlTestInput({ ...kept, password: 'typed' }).savedId, undefined);
+  assert.equal(sqlForm.sqlTestInput({ ...kept, password: 'typed' }).password, 'typed');
+  for (const change of [{ server: 'other' }, { username: 'root' }, { auth: 'windows' }]) {
+    assert.equal(sqlForm.sqlTestInput({ ...kept, ...change }).savedId, undefined, JSON.stringify(change));
+  }
+  const windows = sqlForm.sqlTestInput({ ...kept, auth: 'windows', username: 'x', password: 'y' });
+  assert.equal(windows.username, '');
+  assert.equal(windows.password, '');
+});
+
+test('sql test: a change to any connection field makes an earlier database list stale', () => {
+  const base = { ...sqlForm.blankSqlForm(), server: 'db1', username: 'sa' };
+  const key = sqlForm.sqlConnectionKey(base);
+  assert.equal(sqlForm.sqlConnectionKey({ ...base, database: 'Other', password: 'p', label: 'l' }), key);
+  for (const change of [{ server: 'db2' }, { username: 'x' }, { encrypt: 'optional' }, { trustServerCertificate: true }, { auth: 'windows' }]) {
+    assert.notEqual(sqlForm.sqlConnectionKey({ ...base, ...change }), key, JSON.stringify(change));
+  }
+});
+
+test('mongo wizard: the issue-checks hint points to Health checks and says nothing runs by itself', () => {
+  assert.match(copy.SOURCES_TEXT.mongoChecksHint, /Health checks/);
+  assert.match(copy.SOURCES_TEXT.mongoChecksHint, /until you press Run checks/);
+  assert.match(read('src/components/wizard/MongoClassify.svelte'), /SOURCES_TEXT\.mongoChecksHint/);
+});
+
+const health = loadTypeScript('src/lib/health.ts');
+const healthCopy = loadTypeScript('src/lib/copy/healthCopy.ts');
+
+test('health: a report from the server is read defensively', () => {
+  assert.equal(health.toReport(null), null);
+  assert.equal(health.toReport('x'), null);
+  const report = health.toReport({ kind: 'mongo', label: 'L', findings: [{ id: 'a', title: 'T', status: 'weird', rows: [[1, 'x']] }, null, 5], overall: 'bad' });
+  assert.equal(report.kind, 'mongo');
+  assert.equal(report.overall, 'bad');
+  assert.equal(report.findings.length, 1);
+  assert.equal(report.findings[0].status, 'unavailable');
+  assert.deepEqual(report.findings[0].rows, [['', 'x']]);
+  assert.equal(health.toRun(undefined).id, 0);
+  assert.equal(health.toRun({ id: 3, kind: 'x', status: 'ok' }).kind, 'sql');
+});
+
+test('health: findings that need a look come first and the counts add up', () => {
+  const f = (id, status) => ({ id, title: id, status, summary: '', why: '', columns: [], rows: [] });
+  const report = { kind: 'sql', label: '', database: '', version: '', startedAt: '', finishedAt: '', overall: 'bad', findings: [f('a', 'ok'), f('b', 'unavailable'), f('c', 'bad'), f('d', 'note'), f('e', 'warn'), f('f', 'bad')] };
+  assert.deepEqual(health.sortedFindings(report).map((x) => x.id), ['c', 'f', 'e', 'd', 'a', 'b']);
+  assert.deepEqual(health.countByStatus(report), { ok: 1, note: 1, warn: 1, bad: 2, unavailable: 1 });
+});
+
+test('health: the panel runs checks only on a press and sends no free-text query', () => {
+  const panel = read('src/lib/components/HealthPanel.svelte');
+  assert.match(panel, /onclick=\{run\}/);
+  assert.doesNotMatch(panel, /\$effect/);
+  assert.match(read('src/lib/components/CaseTools.svelte'), /<HealthPanel \{caseId\} \{onGone\} \/>/);
+  assert.match(panel, /type="password"/);
+});
+
+test('health: its copy passes the screen-text lint', () => {
+  assert.deepEqual(lintScreenStrings(healthCopy.healthCopyEntries()), []);
+  assert.deepEqual(lintScreenStrings([{ id: 'wizard.sources.mongoChecksHint', text: copy.SOURCES_TEXT.mongoChecksHint }]), []);
+});

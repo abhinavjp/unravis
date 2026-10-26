@@ -58,6 +58,8 @@ type memData struct {
 	envs    []string    // environment names in order (see Tagger)
 	sources []SourceTag // source tags, oldest first
 	nextSrc int64
+	health  []HealthRun // newest first (see HealthStore)
+	nextRun int64
 }
 
 func (s *memStore) Create(ctx context.Context, title string) (CaseInfo, error) {
@@ -622,6 +624,48 @@ func (c *memCase) record(meta ImportMeta, rep importer.Report, bytes int64, sha 
 }
 
 var _ Tagger = (*memCase)(nil)
+var _ HealthStore = (*memCase)(nil)
+
+func (c *memCase) AddHealthRun(ctx context.Context, r HealthRun) (HealthRun, error) {
+	clean, err := CleanHealthRun(r)
+	if err != nil {
+		return HealthRun{}, err
+	}
+	if err := c.tagWrite(ctx); err != nil {
+		return HealthRun{}, err
+	}
+	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	if c.d.erased {
+		return HealthRun{}, ErrNotFound
+	}
+	if c.d.info.Closed != nil {
+		return HealthRun{}, ErrCaseClosed
+	}
+	c.d.nextRun++
+	clean.ID = c.d.nextRun
+	clean.At = c.s.now().UTC().Truncate(time.Millisecond)
+	clean.Report = append([]byte(nil), clean.Report...)
+	c.d.health = append([]HealthRun{clean}, c.d.health...)
+	if len(c.d.health) > MaxHealthRuns {
+		c.d.health = c.d.health[:MaxHealthRuns]
+	}
+	return clean, nil
+}
+
+func (c *memCase) HealthRuns(ctx context.Context) ([]HealthRun, error) {
+	if err := c.check(ctx); err != nil {
+		return nil, err
+	}
+	c.d.mu.RLock()
+	defer c.d.mu.RUnlock()
+	out := make([]HealthRun, len(c.d.health))
+	for i, r := range c.d.health {
+		r.Report = append([]byte(nil), r.Report...)
+		out[i] = r
+	}
+	return out, nil
+}
 
 // tagWrite is the handle check for the Tagger writes; the closed-case refusal
 // follows under c.d.mu.

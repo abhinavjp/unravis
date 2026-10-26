@@ -1,4 +1,4 @@
-import type { SavedSqlConnection, SqlConnectionInput, Analysis,Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile } from './types';
+import type { SavedSqlConnection, SqlConnectionInput, SqlTestRequest, SqlTestResult,Analysis,Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile } from './types';
 import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
 
 const base = '/api';
@@ -107,6 +107,7 @@ export const api = {
   forgetConnection: (id: string) => request<void>('/connections/recent/' + encodeURIComponent(id), { method: 'DELETE' }),
   sqlConnections: () => request<SavedSqlConnection[]>('/sql-connections'),
   saveSqlConnection: (input: SqlConnectionInput) => request<SavedSqlConnection>('/sql-connections', json(input)),
+  testSqlConnection: (input: SqlTestRequest, signal?: AbortSignal) => request<SqlTestResult>('/sql-connections/test', json(input), signal),
   forgetSqlConnection: (id: string) => request<void>('/sql-connections/' + encodeURIComponent(id), { method: 'DELETE' }),
   testConnection: (input: ConnectionInput, signal?: AbortSignal) => request<ConnectionTestResult>('/connections/test', {
     method: 'POST', body: JSON.stringify(input)

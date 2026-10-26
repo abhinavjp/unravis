@@ -108,6 +108,13 @@ var routes = []route{
 		http.MethodGet:  func(h *handler, w http.ResponseWriter, _ *http.Request, _ string) { h.listSQLConnections(w) },
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.saveSQLConnection(w, r) },
 	}},
+	{pattern: "/api/sql-connections/test", match: exactPath("/api/sql-connections/test"), methods: post((*handler).testSQLConnection)},
+	{pattern: "/api/cases/{id}/health", match: caseSubpath("/health"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseHealthList(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/health/run", match: caseSubpath("/health/run"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseHealthRun(w, r, id) },
+	}},
 	{pattern: "/api/sql-connections/{id}", match: prefixPath("/api/sql-connections/"), methods: map[string]routeFunc{
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, _ *http.Request, id string) { h.deleteSQLConnection(w, id) },
 	}},

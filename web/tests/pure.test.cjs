@@ -1625,12 +1625,13 @@ test('the redesign keeps its contrast, status and navigation fixes in the source
   assert.match(fs.readFileSync(path.join(root, 'src/components/Breadcrumb.svelte'), 'utf8'), /li\.last\s*\{[^}]*flex:\s*1 1 auto/);
   assert.doesNotMatch(css, /\.crumbs|\.topbar-meta/, 'the old trail rules are gone');
   assert.doesNotMatch(app, /onclick=\{runAnalysis\}/);
-  assert.match(app, /scopeRun\.schedule\(\)/);
+  assert.doesNotMatch(app, /scopeRun/, 'a scope change never starts a run by itself');
+  assert.match(app, /Filters changed\. Click Run analysis/);
 });
 
 test('the run hint is a persistent status region tied to the run button, the back link has a full label, and no screen says "Run comparison"', () => {
   const app = appSource();
-  assert.match(app, /<span class="run-hint" id="run-hint" role="status">\{runHint\}<\/span>/);
+  assert.match(app, /<span class="run-hint"[^>]* id="run-hint" role="status">\{runHint\}<\/span>/);
   assert.doesNotMatch(app, /\{#if runHint\}/);
   assert.match(app, /class="primary-button" aria-describedby="run-hint"/);
   assert.match(fs.readFileSync(path.join(root, 'src/components/Breadcrumb.svelte'), 'utf8'), /aria-label=\{'Back to ' \+ crumb\.label\}/);

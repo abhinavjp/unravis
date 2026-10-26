@@ -25,6 +25,9 @@
   let caCertificate = $state('');
   let collection = $state(DEFAULT_COLLECTION);
   let busy = $state(false);
+  // Set after a good test: the form stays filled and says which connection is held. A password typed for it is kept in memory, not in the field.
+  let connectedTo = $state('');
+  let passwordKept = $state(false);
   let line = $state('');
   let failed = $state(false);
   let uriField = $state<HTMLInputElement>();
@@ -65,7 +68,7 @@
     } catch { caCertificate = ''; el.value = ''; failed = true; line = SOURCES_TEXT.mongoCaBad; }
   }
   // Editing the address, user or auth database makes it a new connection, so the saved id no longer applies.
-  function edited() { if (savedId !== '') { savedId = ''; savedHasPassword = false; savedTls = 'uri'; savedCa = ''; } }
+  function edited() { connectedTo = ''; passwordKept = false; if (savedId !== '') { savedId = ''; savedHasPassword = false; savedTls = 'uri'; savedCa = ''; } }
 
   async function test() {
     if (busy) return;
@@ -76,8 +79,10 @@
     const result = await testMongo(input, '', undefined, collection);
     busy = false;
     if (!result.ok) { failed = true; line = result.text !== '' ? result.text : SOURCES_TEXT.mongoFailed; return; }
-    // The connection is held now; clear the typed fields so a password does not stay in the form.
-    uri = ''; username = ''; password = ''; authSource = ''; savedId = ''; savedHasPassword = false; savedTls = 'uri'; savedCa = ''; caCertificate = ''; tlsMode = 'system'; collection = DEFAULT_COLLECTION;
+    // The connection is held now. The form keeps what was typed so it is clear which connection is in use; only the password is cleared, so it does not stay in the form.
+    if (password !== '') passwordKept = true;
+    password = '';
+    connectedTo = uri.trim();
     line = testedText(result.databases);
     onDone?.();
   }
@@ -148,7 +153,7 @@
       </div>
       <div class="field">
         <label for="{uid}-pass">{SOURCES_TEXT.mongoPassword}</label>
-        <input id="{uid}-pass" type="password" bind:value={password} autocomplete="new-password" spellcheck="false" maxlength="500" onkeydown={onKey} />
+        <input id="{uid}-pass" type="password" bind:value={password} oninput={() => { passwordKept = false; }} placeholder={passwordKept || (savedId !== '' && savedHasPassword) ? SOURCES_TEXT.mongoPasswordKept : ''} autocomplete="new-password" spellcheck="false" maxlength="500" onkeydown={onKey} />
       </div>
       <div class="field">
         <label for="{uid}-auth">{SOURCES_TEXT.mongoAuth}</label>
@@ -157,6 +162,7 @@
     </div>
     <div class="actions"><button type="button" class="primary-button" disabled={busy} onclick={() => void test()}>{busy ? SOURCES_TEXT.mongoTesting : SOURCES_TEXT.mongoTest}</button></div>
     <p class="line" class:bad={failed} id="{uid}-line" role="status" hidden={line === ''}>{line}</p>
+    {#if connectedTo !== '' && !failed}<p class="hint connected">{SOURCES_TEXT.mongoConnectedTo}: {connectedTo}</p>{/if}
   </div>
 
   <p class="hint">{SOURCES_TEXT.mongoNow}</p>
@@ -177,6 +183,7 @@
         <p class="hint">{SOURCES_TEXT.mongoNoDatabases}</p>
       {:else}
         <p class="hint">{SOURCES_TEXT.mongoClassifyHelp} {SOURCES_TEXT.mongoAuditOptional}</p>
+        <p class="hint">{SOURCES_TEXT.mongoChecksHint}</p>
         <ul class="dbs">
           {#each connection.databases as database (database)}
             {@const rowId = uid + '-' + connection.id + '-' + database.replace(/[^A-Za-z0-9_-]/g, '_')}
@@ -209,6 +216,7 @@
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .line { margin: 0; color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
   .line.bad { color: var(--text); }
+  .connected { color: var(--text); font-weight: 600; }
   .line[hidden], .inline-error[hidden] { display: none; }
   .conn { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .conn-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }

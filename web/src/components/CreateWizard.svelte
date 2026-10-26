@@ -168,7 +168,7 @@
     </ol>
   </nav>
 
-  <div class="stage">
+  <div class="step-body">
     <p class="step-count">{stepOfText(current.number, views.length, STEP_TEXT[current.id].label)}</p>
     <h3 class="step-heading" tabindex="-1" bind:this={heading}>{STEP_TEXT[wizard.step].heading}</h3>
 
@@ -248,7 +248,8 @@
   .step:disabled { cursor: default; opacity: 0.6; }
   .step:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 
-  .stage { display: grid; gap: var(--space-3); align-content: start; min-width: 0; }
+  /* Not ".stage": that name is the app's scroll container, and its overscroll-behavior stopped the mouse wheel from reaching it. */
+  .step-body { display: grid; gap: var(--space-3); align-content: start; min-width: 0; }
   .step-count { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
   .step-heading { margin: 0; font-size: clamp(24px, 4vw, 34px); font-weight: 600; line-height: 1.2; }
   .step-heading:focus { outline: none; }

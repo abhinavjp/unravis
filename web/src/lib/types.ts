@@ -24,6 +24,10 @@ export interface SavedSqlConnection {
   id: string; label: string; server: string; host: string; port: number; auth: SqlAuth; username: string; database: string;
   encrypt: SqlEncrypt; trustServerCertificate: boolean; hasPassword: boolean; savedAt: string;
 }
+/** The answer to "Test and list databases" for SQL Server. A login that connects but cannot list databases still succeeds (listError says why). */
+export interface SqlTestResult { ok: boolean; version: string; edition: string; databases: string[]; listError?: string }
+/** What the server accepts for a test or a check: a typed login, or a kept one (savedId) with a password or database typed for this run only. */
+export interface SqlTestRequest extends Partial<SqlConnectionInput> { savedId?: string }
 export interface RememberConnectionInput { label: string; connection: ConnectionInput; collection: string; rememberPassword: boolean }
 export interface SourceResult { sourceId: string; ok: boolean; error: string; version: string; indexWarning: string }
 export interface Info {

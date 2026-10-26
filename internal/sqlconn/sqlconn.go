@@ -258,6 +258,23 @@ func (s *Service) Save(in Input) (Recent, error) {
 	return rec.Recent, nil
 }
 
+// Resolve returns a saved entry with its stored password, for the server side only: it is used to open a connection and is never sent to the browser.
+func (s *Service) Resolve(id string) (Input, error) {
+	v, err := s.read()
+	if err != nil {
+		return Input{}, err
+	}
+	for _, r := range v.Records {
+		if r.ID == id {
+			return Input{
+				Label: r.Label, Server: r.Server, Auth: r.Auth, Username: r.Username, Password: r.Password,
+				Database: r.Database, Encrypt: r.Encrypt, TrustServerCertificate: r.TrustServerCertificate,
+			}, nil
+		}
+	}
+	return Input{}, ErrNotFound
+}
+
 func (s *Service) Delete(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

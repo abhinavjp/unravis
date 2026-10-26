@@ -737,6 +737,7 @@ th.numeric { text-align: right; }
 .run-hint { margin: 0; color: var(--text-2); font-size: 12px; }
 /* The status region stays in the page (never display:none) so a hint that appears is announced; empty, it takes no room. */
 .run-hint:empty { margin-right: -8px; }
+.run-hint.stale { color: var(--text); font-size: 13px; font-weight: 600; padding: 4px 10px; border-left: 3px solid var(--accent); background: var(--bg-2, transparent); }
 
 /* ---------- Terminal layer: mono for numbers, tables, ids, times and small labels; prose stays in Plex Sans ---------- */
 .mode-badge, .updated-label, .count-badge, .figure-label, .figure-value, .where-rank, .where-value strong, .where-value small, .where-delta,

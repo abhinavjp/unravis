@@ -22,7 +22,7 @@ import { KEY_TEXT } from './copy/masterKeyCopy';
 import { theme } from './theme.svelte';
 import { timeZone } from './timeZone.svelte';
 import { applyChipPatch, breadcrumb, depthOf, evidenceTabs, filterChips, moreFiltersCount, type FilterChip } from './depth';
-import { autoRunDecision, createCoalescer, landingMayAutoRun, scopeHint, scopeProblem } from './autorun';
+import { landingMayAutoRun, scopeHint, scopeProblem } from './autorun';
 import type { Lens } from './pulse';
 import { GLOSSARY_EVENT, glossaryTermFrom } from './copy/hintState';
 import { plainTypicalVsSlowest } from './copy/plainSummary';
@@ -153,9 +153,8 @@ let operation = $state<Rollup | null>(null);
 let inspectorTab = $state('timeline');
 let splitDim = $state<BreakdownDim | ''>('');
 let autoRan = false;
-// The scope fingerprint of the run in flight; '' when none. Scope changes coalesce into one automatic run through scopeRun.
+// The scope fingerprint of the run in flight; '' when none.
 let inflightSignature = '';
-const scopeRun = createCoalescer(() => flushScope());
 // Where the reader was one level up (scroll positions and the control used), so stepping back lands in the same place.
 interface Place { stage: number; page: number; body: number; opener: HTMLElement | null }
 let evidencePlace: Place | null = null;
@@ -212,7 +211,9 @@ const evidenceName = $derived(operation ? operation.controller + '.' + operation
 // No operation and no group: the evidence is comparison-wide (all operations, an overview or quality drill, a breakdown filter).
 const drillOperation = $derived(drillOverview?.controller !== undefined && drillOverview.action !== undefined ? drillOverview : null);
 const comparisonWide = $derived(hasContext && !operation && !selected && !drillOperation);
-const runHint = $derived(scopeHint(query, dateInputsValid));
+// A changed scope never runs by itself: while the analysis on screen is for an older scope, the hint says so and points at the button.
+export const FILTERS_CHANGED_HINT = 'Filters changed. Click Run analysis to use the new window.';
+const runHint = $derived(scopeHint(query, dateInputsValid) || (displayedRunIsStale && !loading ? FILTERS_CHANGED_HINT : ''));
 // Slowest follows the operation that is open, or the one a drill (a table row's counts, the stale list) narrowed to; otherwise it is comparison-wide.
 const slowScope = $derived(operation && analysis
   ? { ...operationDrill(operation, analysis.query.kind), label: operation.controller + '.' + operation.action + ' · ' + kindLabel(operation.kind ?? 'unknown') }
@@ -753,7 +754,6 @@ export function clearConnectionDetails() {
   manualDatabase = false; sourceError = ''; sourceSuccess = '';
 }
 export function resetInvestigation() {
-  scopeRun.cancel();
   analysisSequence++;
   analysisController?.abort(); analysisController = null; inflightSignature = ''; loading = false;
   invalidateDetails();
@@ -844,7 +844,6 @@ export async function runAnalysis(auto = false) {
   const problem = scopeProblem(query, dateInputsValid);
   if (problem) { if (!auto) error = problem; return; }
   if (auto) error = '';
-  scopeRun.cancel();
   analysisController?.abort(); analysisController = new AbortController();
   const run = ++analysisSequence;
   inflightSignature = queryFingerprint(query);
@@ -865,17 +864,7 @@ export async function runAnalysis(auto = false) {
     }
   } finally { if (run === analysisSequence) { loading = false; inflightSignature = ''; } }
 }
-// Runs once the scope has been quiet for the debounce period: only a valid scope that is not already shown or in flight.
-function flushScope() {
-  // A skipped scope (invalid or unchanged) never leaves an old "Comparison not run" banner behind; the hint explains what is missing.
-  error = '';
-  const decision = autoRunDecision({
-    problem: scopeProblem(query, dateInputsValid), signature: queryFingerprint(query),
-    shown: analysis ? queryFingerprint(analysis.query) : null, inflight: inflightSignature || null
-  });
-  if (decision === 'run') void runAnalysis(true);
-}
-export function cancelAnalysis() { scopeRun.cancel(); analysisSequence++; analysisController?.abort(); inflightSignature = ''; loading = false; }
+export function cancelAnalysis() { analysisSequence++; analysisController?.abort(); inflightSignature = ''; loading = false; }
 export async function closeConnections() {
   connectionsOpen = false;
   await tick();
@@ -1100,8 +1089,8 @@ export function onWindowKey(event: KeyboardEvent) {
   if (open && (inside || loose)) { open.open = false; open.querySelector<HTMLElement>('summary')?.focus(); return; }
   stepUpOnce();
 }
-// A scope change (range chip, request type, source, filter) re-runs the analysis after a short quiet period; a burst becomes one run and the last change wins.
-export function onScopeChange() { error = ''; scopeRun.schedule(); }
+// A scope change (range chip, request type, source, filter) only marks the analysis on screen as out of date (runHint); the Run analysis button starts the run.
+export function onScopeChange() { error = ''; }
 /** A chosen hour of the hour grid becomes the primary window, with the hour before it as the reference. */
 export function setWindowFromHour(window: RollupWindow) { Object.assign(query, hourWindowQuery(window)); controlsResetKey++; onScopeChange(); }
 /**
