@@ -5,6 +5,8 @@ import type { DiscoverImportRequest, JobRef, RowOutcome, ScanHost, TimeWindow } 
 import type { SourceTagInput } from './caseTagsApi';
 import { parseDatabaseRef, sourceKey } from './wizardSources';
 import type { DraftSource } from './wizardFlow';
+import type { RetryInput } from './cases';
+import { requestIdFor } from './createRequest';
 
 /**
  * The last step of the create wizard (TSK-19): make the case, write its environments and source tags, then import what was chosen.
@@ -16,7 +18,8 @@ import type { DraftSource } from './wizardFlow';
  *  - One failed import does not stop the others.
  *  - A locked master key (HTTP 423) stops the run where it is, keeps everything that is done, and returns `locked`. Calling `submitWizard`
  *    again with the same state carries on from there; it never creates the case a second time and never repeats a tag that was written.
- *  - A second call while one is running returns the running one (a double click makes one case).
+ *  - A second call while one is running returns the running one (a double click makes one case). The case is made with a request id kept for
+ *    the run (createRequest.ts), so a lost reply, a reload or a restart in the middle of "make the case" ends in the same one case.
  *  - Nothing here holds a password, a connection string or a path. A Mongo connection is named by an id the api adapter looks up.
  */
 
@@ -35,6 +38,8 @@ export interface ImportRow extends StepState {
 export interface SubmitState {
   caseId: string;
   caseTitle: string;
+  /** The create request id for this run. Empty until the case is first asked for. */
+  requestId: string;
   /** Why the case could not be made (no case exists then). */
   createError: string;
   envs: StepState;
@@ -48,7 +53,7 @@ export interface SubmitState {
 }
 
 export const blankSubmitState = (): SubmitState => ({
-  caseId: '', caseTitle: '', createError: '', envs: { status: 'waiting', reason: '' }, tags: {}, audit: {}, imports: {}, locked: false, finished: false
+  caseId: '', caseTitle: '', requestId: '', createError: '', envs: { status: 'waiting', reason: '' }, tags: {}, audit: {}, imports: {}, locked: false, finished: false
 });
 
 /** What the review step hands over. Titles, environments and tags are already cleaned by the draft. */
@@ -68,12 +73,8 @@ export interface SubmitInput {
 
 /** The calls the run makes. The real ones are in wizardSubmitApi.ts. */
 export interface SubmitApi {
-  createCase(title: string): Promise<{ id: string }>;
-  /**
-   * Finds a case with this title that was made at or after `sinceMs` (epoch milliseconds), or null. Used only before a retry of a failed
-   * "make the case": a reply may have been lost after the server made it, and a second click must not make a second case.
-   */
-  findRecentCase?(title: string, sinceMs: number): Promise<{ id: string } | null>;
+  /** Makes the case. The same request id always answers the same case, so a repeat after a lost reply never makes a second one. */
+  createCase(title: string, requestId: string): Promise<{ id: string }>;
   putEnvironments(caseId: string, envs: readonly string[]): Promise<unknown>;
   postSourceTag(caseId: string, tag: SourceTagInput): Promise<unknown>;
   /** Tests the held MongoDB connection again so the server accepts a classification of its databases. */
@@ -81,6 +82,8 @@ export interface SubmitApi {
   /** Makes a classified audit database a source of the analysis. */
   addAuditSource(connectionId: string, database: string): Promise<unknown>;
   confirmHost?(host: ScanHost): Promise<unknown>;
+  /** Replaces the case's "needs another try" list with what is still not done (empty when everything went through). Best effort. */
+  saveRetries?(caseId: string, items: RetryInput[]): Promise<unknown>;
   startImports(caseId: string, request: DiscoverImportRequest): Promise<JobRef[]>;
   /** Follows one job to its end. Resolves with the outcome; never throws for a refusal. */
   watchJob(caseId: string, ref: JobRef, onProgress: (percent: number | null) => void): Promise<RowOutcome>;
@@ -190,6 +193,24 @@ export function failuresOf(state: SubmitState, sources: readonly Pick<DraftSourc
   return out;
 }
 
+/**
+ * What did not go through, as the list the case keeps (A14, C19). It is the same list as failuresOf, plus what the server needs to do an
+ * environments or a plain tag item again. "Not added to analysis" (audit-source) and "import failed" (import) stay different kinds.
+ */
+export function retryItemsOf(state: SubmitState, input: Pick<SubmitInput, 'envs' | 'sources'>): RetryInput[] {
+  if (!state.caseId) return [];
+  const bySource = new Map(input.sources.map((source) => [sourceKey(source), source] as const));
+  return failuresOf(state, input.sources).filter((failure) => failure.step !== 'case').map((failure): RetryInput => {
+    const item: RetryInput = { kind: failure.step, key: failure.key, label: failure.label, reason: failure.reason };
+    if (failure.step === 'environments') item.payload = { environments: [...input.envs] };
+    const source = bySource.get(failure.key);
+    if (failure.step === 'tag' && source && source.kind !== 'mongo-database') {
+      item.payload = { importId: 0, kind: source.kind, label: source.label, env: source.env, portal: source.portal, api: source.api, classification: '' };
+    }
+    return item;
+  });
+}
+
 export const importedCount = (state: SubmitState): number => Object.values(state.imports).filter((row) => row.status === 'done').length;
 
 /** True when the analysis should open by itself: everything went through. Otherwise the person reads what failed first. */
@@ -213,10 +234,6 @@ function failRows(rows: ImportRow[], error: unknown): void {
 }
 
 const inflight = new WeakMap<SubmitState, Promise<SubmitResult>>();
-/** When "make the case" was last tried without a known answer, per run. Kept beside the state, not in it. */
-const createTriedAt = new WeakMap<SubmitState, number>();
-/** The server stamps a case with its own clock; allow for the small difference when looking for the case a lost reply made. */
-const CLOCK_SLACK_MS = 5000;
 
 /**
  * Runs the whole submit. Never throws for a failed step: it records the failure and goes on. Resolves when every step has been tried,
@@ -240,16 +257,10 @@ async function execute(input: SubmitInput, api: SubmitApi, state: SubmitState): 
     if (!state.caseId) {
       state.createError = '';
       try {
-        // After a failed try, the server may still have made the case (the reply was lost): look for it before making another.
-        const triedAt = createTriedAt.get(state);
-        let made: { id: string } | null = null;
-        if (triedAt !== undefined && api.findRecentCase) {
-          try { made = await guarded(() => api.findRecentCase!(input.title, triedAt - CLOCK_SLACK_MS)); }
-          catch (error) { if (error instanceof Locked) throw error; made = null; }
-        }
-        createTriedAt.set(state, Date.now());
-        if (!made) made = await guarded(() => api.createCase(input.title));
-        createTriedAt.delete(state);
+        // The reply may be lost after the server made the case: asking again with the same request id returns that same case.
+        if (!state.requestId) state.requestId = requestIdFor(input.title);
+        const requestId = state.requestId;
+        const made = await guarded(() => api.createCase(input.title, requestId));
         state.caseId = made.id;
         state.caseTitle = input.title;
       } catch (error) {
@@ -305,7 +316,14 @@ async function execute(input: SubmitInput, api: SubmitApi, state: SubmitState): 
 
     // 4. The imports. A row that is already done (an earlier run) is left alone; an interrupted one starts again.
     await importAll(input, api, state, caseId);
-    if (!state.locked) state.finished = true;
+    if (!state.locked) {
+      state.finished = true;
+      // The list the case keeps for later. A failure to save it never changes the result the person sees on this screen.
+      if (api.saveRetries) {
+        try { await guarded(() => api.saveRetries!(caseId, retryItemsOf(state, input))); }
+        catch (error) { if (error instanceof Locked) { state.finished = false; throw error; } }
+      }
+    }
   } catch (error) {
     if (error instanceof Locked) state.locked = true;
     else if (!isAbort(error)) throw error;

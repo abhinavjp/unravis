@@ -53,21 +53,22 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
 /** A fake server that remembers what it was told, even when the reply to the caller is lost. */
 function fakeApi(o = {}) {
   const log = [];
-  const server = { cases: [], tags: [], audit: [] };
+  const server = { cases: [], ids: [], requestIds: [], tags: [], audit: [] };
   let creates = 0;
   let imports423 = o.imports423 ?? 0;
   const api = {
     log, server,
-    async createCase(title) {
+    /** The real server makes one case per request id: the same id answers the same case, even when an earlier reply was lost. */
+    async createCase(title, requestId) {
       creates += 1; log.push('createCase');
+      server.requestIds.push(requestId);
       if (o.create423 && creates === 1) throw new CaseApiError('locked', 423, 'locked');
-      server.cases.push(title);
+      let at = server.ids.indexOf(requestId);
+      if (at < 0) { server.cases.push(title); server.ids.push(requestId); at = server.ids.length - 1; }
       if (o.createLosesReply && creates === 1) throw new TypeError('network dropped after the server answered');
       if (o.slow) await tick(20);
-      return { id: 'c' + server.cases.length };
+      return { id: 'c' + (at + 1) };
     },
-    /** The list route of the real server: a case made by an earlier try, even when its reply was lost. */
-    async findRecentCase(title) { log.push('find'); const at = server.cases.indexOf(title); return at >= 0 ? { id: 'c' + (at + 1) } : null; },
     async putEnvironments() { log.push('env'); },
     async postSourceTag(caseId, tag) { log.push('tag:' + tag.label); server.tags.push(tag.label); },
     async testConnection(id) { log.push('test:' + id); if (o.testError) throw o.testError; return {}; },
@@ -404,17 +405,29 @@ test('p05: an ApiError 423 from a step stops the run as locked, and 400 and 429 
   conns.releaseConnections();
 });
 
-test('p05: a retry after a failed create asks for a case made by the first try, and makes one only when there is none', async () => {
-  freshDraft('Retry looks first');
+test('p2: a retry after a failed create sends the same request id, so the server can answer with the case the first try made', async () => {
+  freshDraft('Retry keeps its id');
   const api = fakeApi();
-  api.createCase = async () => { api.log.push('createCase'); throw new CaseApiError('boom', 500, 'boom'); };
+  const sent = [];
+  api.createCase = async (title, requestId) => { api.log.push('createCase'); sent.push(requestId); throw new CaseApiError('boom', 500, 'boom'); };
   await C.createNow(api);
   assert.equal(C.caseMade(), false);
-  assert.ok(!api.log.includes('find'), 'the first try has nothing to look for');
   const second = await C.createNow(api);
-  assert.ok(api.log.includes('find'), 'the second try looks first');
-  assert.equal(api.log.filter((entry) => entry === 'createCase').length, 2, 'nothing was found, so it makes one');
+  assert.equal(sent.length, 2);
+  assert.ok(/^[A-Za-z0-9_-]{8,64}$/.test(sent[0]), 'the id has the shape the server accepts: ' + sent[0]);
+  assert.equal(sent[0], sent[1], 'one id for one wizard run');
   assert.equal(second.caseId, '');
+});
+
+test('p2: a new wizard run gets a new request id', async () => {
+  freshDraft('First run');
+  const api = fakeApi();
+  await C.createNow(api);
+  const first = api.server.requestIds[0];
+  freshDraft('Second run');
+  await C.createNow(api);
+  assert.equal(api.server.cases.length, 2);
+  assert.notEqual(api.server.requestIds[1], first);
 });
 
 test('p05: the review names a missing scan, and the fixed lines for the new reasons are plain', () => {
