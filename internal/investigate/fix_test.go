@@ -90,3 +90,49 @@ func TestFixF1UnplacedSlowdownLeavesPartsUnknown(t *testing.T) {
 		t.Errorf("c_large = %+v, want no", s.Flags[SigCLarge])
 	}
 }
+
+// F2: Step 10 must agree with the origin the headline reports. The sql-pool day
+// names the action time as the origin, so Step 10 cannot say "Cannot test yet".
+func TestFixF2StepTenAgreesWithTheOrigin(t *testing.T) {
+	ref, inc := stdWindows()
+	lim := 10
+	sqlPool := gen(genCfg{seed: 12, ref: ref, inc: inc, perMin: 30, iis: true,
+		mods: []mod{{from: at(10, 20), to: at(11, 30), addC: 450}}})
+	sqlPool.PoolLimit = &lim
+	r := Analyze(sqlPool)
+	if r.Origin.Status != OriginNamed || r.Origin.Tier != "c" {
+		t.Fatalf("origin = %+v, the test needs a named origin", r.Origin)
+	}
+	if got := r.Steps[10].Readiness; got == CannotTestYet {
+		t.Errorf("step 10 = %q while the origin is named: %v", got, r.Steps[10].Reasons)
+	}
+
+	together := withLimit(stepScenario(mod{from: at(10, 20), to: at(11, 30), addC: 400}), 1000)
+	together.LaneOnsets = map[string]time.Time{"sql": at(10, 20).Add(30 * time.Second)}
+	cases := map[string]Input{
+		"named":         sqlPool,
+		"no clear":      together,
+		"nothing dated": tailSlowdown(gen(genCfg{seed: 41, ref: ref, inc: inc, perMin: 30, routes: []string{"Orders.Get"}}), at(10, 20), 900),
+		"quiet":         gen(genCfg{seed: 21, ref: ref, inc: inc, perMin: 30, iis: true}),
+		"no audit":      {Incident: inc, Reference: ref, Audit: AuditMissing},
+		"audit step":    stepScenario(mod{from: at(10, 20), to: at(11, 30), addA: 400}),
+		"outside step":  stepScenario(mod{from: at(10, 20), to: at(11, 30), addO: 400}),
+		"surge":         stepScenario(mod{from: at(10, 20), to: at(11, 30), countMul: 3}),
+		"empty":         {},
+	}
+	for name, in := range cases {
+		r := Analyze(in)
+		st := r.Steps[10]
+		cannot := st.Readiness == CannotTestYet
+		switch r.Origin.Status {
+		case OriginNotEnough:
+			if !cannot {
+				t.Errorf("%s: origin %q but step 10 = %q", name, r.Origin.Status, st.Readiness)
+			}
+		default:
+			if cannot {
+				t.Errorf("%s: origin %q but step 10 = %q: %v", name, r.Origin.Status, st.Readiness, st.Reasons)
+			}
+		}
+	}
+}

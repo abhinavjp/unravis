@@ -144,6 +144,9 @@ func goldenCases() []goldenCase {
 			if res.Origin.Tier != "c" {
 				t.Errorf("origin tier = %q, want c", res.Origin.Tier)
 			}
+			if res.Steps[10].Readiness == CannotTestYet {
+				t.Errorf("step 10 = %q while the origin is named", res.Steps[10].Readiness)
+			}
 		}},
 		{"missing-iis-logs", func(t *testing.T) Input {
 			// An outside-time change happened but no IIS file was imported, so it

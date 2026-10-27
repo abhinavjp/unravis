@@ -667,9 +667,11 @@
     {
       "number": 10,
       "name": "Origin",
-      "readiness": "Cannot test yet",
+      "readiness": "Partly ready",
       "reasons": [
-        "Fewer than two tiers could be dated, so no origin is named."
+        "The SQL tier was not fully tested, so the origin is read from the tiers that could be dated.",
+        "The Mongo tier was not fully tested, so the origin is read from the tiers that could be dated.",
+        "The Host tier was not fully tested, so the origin is read from the tiers that could be dated."
       ],
       "nutshell": "We line up when each tier first moved. The earliest is the origin and the others followed or amplified it. If they moved together, we say there is no clear origin.",
       "findings": [

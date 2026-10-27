@@ -710,7 +710,7 @@
       "name": "Origin",
       "readiness": "Cannot test yet",
       "reasons": [
-        "Fewer than two tiers could be dated, so no origin is named."
+        "Only Action time (C) could be dated, and another tier could not be read in every minute, so no origin is named."
       ],
       "nutshell": "We line up when each tier first moved. The earliest is the origin and the others followed or amplified it. If they moved together, we say there is no clear origin.",
       "findings": [

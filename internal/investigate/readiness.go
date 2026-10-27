@@ -391,19 +391,15 @@ func Steps(in Input, f Facts, s Signals, th Thresholds) []Step {
 	// Step 10: Origin.
 	{
 		st := &steps[10]
-		dated := 0
-		for _, t := range f.Tiers {
-			if t.At != nil {
-				dated++
-			}
-		}
+		// The step follows the origin the headline reports, so the two cannot
+		// disagree: a named origin or "no clear origin" is an answer, and only "not
+		// enough data" is Cannot test yet.
+		origin := ComputeOrigin(in, f, s, th)
 		switch {
 		case !audit:
 			st.set(CannotTestYet, noAuditReason(in))
-		case f.Onset.Status != "found":
-			st.set(CannotTestYet, "There is no dated start of the change, so tiers cannot be put in order.")
-		case dated < 2:
-			st.set(CannotTestYet, "Fewer than two tiers could be dated, so no origin is named.")
+		case origin.Status == OriginNotEnough:
+			st.set(CannotTestYet, origin.Note)
 		default:
 			st.set(Ready, "")
 			for _, n := range []int{7, 8, 9} {
