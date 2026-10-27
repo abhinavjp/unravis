@@ -76,6 +76,104 @@
         {"click": "role=button[name=\"Export\"s]"},
         {"waitFor": "role=dialog"}
       ]
+    },
+    {
+      "id": "p7-connections", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"waitFor": "#conn-head"},
+        {"scrollTo": "#conn-head"}
+      ]
+    },
+    {
+      "id": "p7-sql-form", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=button[name=\"+ SQL Server\"s]"},
+        {"waitFor": "role=heading[name=\"SQL Server connection\"]"}
+      ]
+    },
+    {
+      "id": "p7-grant-script-2019", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=tab[name=\"Step 7: SQL Server\"]"},
+        {"click": "role=button[name=\"SQL Server 2019 or earlier\"]"},
+        {"waitFor": "[data-version-note]"},
+        {"scrollTo": "#grant-head"}
+      ]
+    },
+    {
+      "id": "p7-grant-script-2022", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=tab[name=\"Step 7: SQL Server\"]"},
+        {"click": "role=button[name=\"SQL Server 2022 or later\"]"},
+        {"waitFor": "[data-version-note]"},
+        {"scrollTo": "#grant-head"}
+      ]
+    },
+    {
+      "id": "p7-step-7", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=tab[name=\"Step 7: SQL Server\"]"},
+        {"waitFor": "#step-sql-head"},
+        {"scrollTo": "#step-sql-head"}
+      ]
+    },
+    {
+      "id": "p7-step-8", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=tab[name=\"Step 8: MongoDB\"]"},
+        {"waitFor": "#step-mongo-head"},
+        {"scrollTo": "#step-mongo-head"}
+      ]
+    },
+    {
+      "id": "p7-add-day", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=tab[name=\"Add another day\"]"},
+        {"waitFor": "#day-head"},
+        {"scrollTo": "#day-head"}
+      ]
     }
   ]
 }
