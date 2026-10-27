@@ -391,6 +391,9 @@ func Steps(in Input, f Facts, s Signals, th Thresholds) []Step {
 		st.Findings = append(st.Findings, fmt.Sprintf("Suspects with a reading: %d of %d.", known, total))
 	}
 
+	// Host lane gaps (A35): any gap lowers Step 9 to at most Partly ready.
+	laneGapStep(&steps[9], "host", in.LaneGaps["host"])
+
 	// Step 10: Origin.
 	{
 		st := &steps[10]

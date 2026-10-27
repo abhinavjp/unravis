@@ -138,6 +138,10 @@ type Input struct {
 	Lanes       map[string]Tri       `json:"lanes,omitempty"`
 	LaneOnsets  map[string]time.Time `json:"laneOnsets,omitempty"`
 	LaneSources []string             `json:"laneSources,omitempty"`
+	// LaneGaps maps a tier to the stretches its data has no readings for inside the
+	// windows (rule A35). A short gap warns; a long one cannot be tested. Only the
+	// host lane fills it in this release (see ApplyHost).
+	LaneGaps map[string][]Span `json:"laneGaps,omitempty"`
 }
 
 // NormalizePath lower-cases a request path, drops a query string and a trailing
