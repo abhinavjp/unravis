@@ -27,6 +27,15 @@ type StoreOptions struct {
 	Now             func() time.Time
 }
 
+// recFile is the open hour file: what Append needs of it.
+type recFile interface {
+	Write([]byte) (int, error)
+	Sync() error
+	Seek(int64, int) (int64, error)
+	Truncate(int64) error
+	Close() error
+}
+
 // Store keeps the recordings: hourly NDJSON files plus the manifest. Files are
 // append-only and each sample is flushed to disk before Append returns. All
 // methods are safe to call from several goroutines (the sampling loop writes,
@@ -37,8 +46,11 @@ type Store struct {
 	now  func() time.Time
 	mu   sync.Mutex
 	m    Manifest
-	cur  *os.File
+	cur  recFile
 	curN string
+
+	// wrapFile lets tests put a failing writer around the opened file.
+	wrapFile func(*os.File) recFile
 
 	firstOfRun bool
 	priorClean bool
@@ -314,11 +326,11 @@ func (s *Store) Append(smp Sample, causeHint string) error {
 		return err
 	}
 	if _, err := s.cur.Write(line); err != nil {
-		_ = s.cur.Truncate(before)
+		s.rollbackLocked(before)
 		return err
 	}
 	if err := s.cur.Sync(); err != nil {
-		_ = s.cur.Truncate(before)
+		s.rollbackLocked(before)
 		return err
 	}
 
@@ -362,6 +374,24 @@ func (s *Store) Append(smp Sample, causeHint string) error {
 	return nil
 }
 
+// rollbackLocked cuts the hour file back to size before, so a half-written line
+// never stays in it. The file is opened for plain writing at the end (never
+// O_APPEND): on Windows a handle opened with O_APPEND has no right to change the
+// file's length, so Truncate on it is refused and the half line would stay and
+// get the next sample glued onto it. If the handle still cannot truncate, the
+// file is closed and cut by name; the next Append reopens it.
+func (s *Store) rollbackLocked(before int64) {
+	if err := s.cur.Truncate(before); err == nil {
+		return
+	}
+	name := s.curN
+	_ = s.cur.Close()
+	s.cur, s.curN = nil, ""
+	if err := os.Truncate(filepath.Join(s.dir, name), before); err != nil {
+		s.event(s.now(), EventWriteFailed, "could not cut a half-written line out of "+name+": "+err.Error())
+	}
+}
+
 // entryLocked finds or adds the manifest entry of a file.
 func (s *Store) entryLocked(name string, t time.Time) *FileEntry {
 	for i := range s.m.Files {
@@ -389,11 +419,16 @@ func (s *Store) openFileLocked(name string) error {
 		_ = s.cur.Close()
 		s.cur, s.curN = nil, ""
 	}
-	f, err := os.OpenFile(filepath.Join(s.dir, name), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	// Not O_APPEND, see rollbackLocked. Append seeks to the end before each write
+	// and the store is the only writer.
+	f, err := os.OpenFile(filepath.Join(s.dir, name), os.O_WRONLY|os.O_CREATE, 0o644)
 	if err != nil {
 		return err
 	}
-	s.cur, s.curN = f, name
+	s.cur, s.curN = recFile(f), name
+	if s.wrapFile != nil {
+		s.cur = s.wrapFile(f)
+	}
 	return nil
 }
 

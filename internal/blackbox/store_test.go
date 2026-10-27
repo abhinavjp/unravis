@@ -321,3 +321,120 @@ func TestStoreManifestWriteFailureDoesNotStopRecording(t *testing.T) {
 		t.Fatal("sample lost")
 	}
 }
+
+// halfWriter writes half of the next line to the real file and then fails, the
+// way a volume that fills up mid-write does. syncFails makes Sync fail after a
+// whole line instead.
+type halfWriter struct {
+	*os.File
+	fail      *bool
+	syncFails bool
+}
+
+func (h halfWriter) Write(b []byte) (int, error) {
+	if *h.fail && !h.syncFails {
+		n, _ := h.File.Write(b[:len(b)/2])
+		return n, errors.New("There is not enough space on the disk.")
+	}
+	return h.File.Write(b)
+}
+
+func (h halfWriter) Sync() error {
+	if *h.fail && h.syncFails {
+		return errors.New("I/O error")
+	}
+	return h.File.Sync()
+}
+
+// F3: a failed write must leave no half line, so the next good sample lands on
+// its own line. On Windows a handle opened with O_APPEND cannot be truncated, so
+// this failed (the partial bytes stayed and the next line was glued onto them).
+func TestStoreFailedWriteLeavesNoHalfLineAndNextSampleIsClean(t *testing.T) {
+	for _, syncFails := range []bool{false, true} {
+		dir := t.TempDir()
+		c := &clock{t: t0}
+		s := openT(t, dir, "r1", c)
+		fail := false
+		s.wrapFile = func(f *os.File) recFile { return halfWriter{File: f, fail: &fail, syncFails: syncFails} }
+		if err := s.Append(smp("r1", 1, t0), ""); err != nil {
+			t.Fatal(err)
+		}
+		fail = true
+		if err := s.Append(smp("r1", 2, t0.Add(15*time.Second)), ""); err == nil {
+			t.Fatal("the failing write was reported as fine")
+		}
+		path := filepath.Join(dir, s.CurrentFile())
+		if s.CurrentFile() == "" {
+			path = filepath.Join(dir, FileNameFor(t0))
+		}
+		data, _ := os.ReadFile(path)
+		if strings.Count(string(data), "\n") != 1 || !strings.HasSuffix(string(data), "}\n") {
+			t.Fatalf("syncFails=%v: a half line was left behind:\n%q", syncFails, data)
+		}
+		fail = false // space comes back
+		if err := s.Append(smp("r1", 3, t0.Add(30*time.Second)), ""); err != nil {
+			t.Fatal(err)
+		}
+		data, _ = os.ReadFile(path)
+		lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+		if len(lines) != 2 {
+			t.Fatalf("syncFails=%v: want 2 whole lines, got %q", syncFails, data)
+		}
+		for _, l := range lines {
+			if !strings.HasPrefix(l, "{") || !strings.HasSuffix(l, "}") || strings.Count(l, `"seq"`) != 1 {
+				t.Fatalf("syncFails=%v: a corrupt line: %q", syncFails, l)
+			}
+		}
+		if m := s.Manifest(); m.SampleCount() != 2 {
+			t.Fatalf("manifest counts %d samples, file has 2", m.SampleCount())
+		}
+	}
+}
+
+// When even the open handle cannot truncate, the file is cut by name.
+func TestStoreRollbackFallsBackToCuttingByName(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	s := openT(t, dir, "r1", c)
+	fail := false
+	s.wrapFile = func(f *os.File) recFile { return noTruncate{halfWriter{File: f, fail: &fail}} }
+	if err := s.Append(smp("r1", 1, t0), ""); err != nil {
+		t.Fatal(err)
+	}
+	fail = true
+	if err := s.Append(smp("r1", 2, t0.Add(15*time.Second)), ""); err == nil {
+		t.Fatal("should fail")
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, FileNameFor(t0)))
+	if strings.Count(string(data), "\n") != 1 || !strings.HasSuffix(string(data), "}\n") {
+		t.Fatalf("%q", data)
+	}
+	fail = false
+	if err := s.Append(smp("r1", 3, t0.Add(30*time.Second)), ""); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(filepath.Join(dir, FileNameFor(t0)))
+	if strings.Count(string(data), "\n") != 2 {
+		t.Fatalf("%q", data)
+	}
+}
+
+type noTruncate struct{ halfWriter }
+
+func (noTruncate) Truncate(int64) error { return errors.New("Access is denied.") }
+
+// The hour file's handle itself must be able to cut the file back. On Windows a
+// handle opened with O_APPEND has no right to do that ("Access is denied").
+func TestStoreHourFileHandleCanTruncate(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	s := openT(t, dir, "r1", c)
+	if err := s.Append(smp("r1", 1, t0), ""); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.cur.Truncate(0); err != nil {
+		t.Fatalf("the open hour file cannot be truncated: %v", err)
+	}
+}
