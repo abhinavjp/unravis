@@ -201,25 +201,42 @@ func (h *handler) reopenCase(w http.ResponseWriter, r *http.Request, raw string)
 
 /* --------------------------------------------------------------- retries */
 
-// retryCaseOf opens the case for a retry request and returns its RetryStore.
-func (h *handler) retryCaseOf(w http.ResponseWriter, r *http.Request, raw string) (casestore.Case, casestore.RetryStore, bool) {
-	if _, err := casestore.ParseID(raw); err != nil {
+// retryCaseOf takes the case's gate, opens the case for a retry request and returns its RetryStore and the state the page believes (""
+// when the request carries none). The gate is the same slot Close, Reopen and import take, so a retry list change and a retry run cannot
+// overlap a move of the case (A15), and the same item cannot run twice at once. done closes the case and lets go of the gate.
+func (h *handler) retryCaseOf(w http.ResponseWriter, r *http.Request, raw string) (c casestore.Case, rs casestore.RetryStore, believed casestore.State, done func(), ok bool) {
+	id, err := casestore.ParseID(raw)
+	if err != nil {
 		if h.casesAvailable(w) {
 			writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
 		}
-		return nil, nil, false
+		return nil, nil, "", nil, false
 	}
-	_, c, ok := h.openCase(w, r, raw)
+	if !h.casesAvailable(w) {
+		return nil, nil, "", nil, false
+	}
+	believed, ok = believedState(w, r)
 	if !ok {
-		return nil, nil, false
+		return nil, nil, "", nil, false
 	}
-	rs, ok := innerCase(c).(casestore.RetryStore)
+	release, err := h.gates.acquire(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return nil, nil, "", nil, false
+	}
+	_, c, ok = h.openCaseForWrite(w, r, raw)
+	if !ok {
+		release()
+		return nil, nil, "", nil, false
+	}
+	rs, ok = c.(casestore.RetryStore)
 	if !ok {
 		_ = c.Close()
+		release()
 		writeCaseFailure(w, http.StatusServiceUnavailable, "retries-unavailable", "This case store cannot keep a list of items to try again.")
-		return nil, nil, false
+		return nil, nil, "", nil, false
 	}
-	return c, rs, true
+	return c, rs, believed, func() { _ = c.Close(); release() }, true
 }
 
 func writeRetryError(w http.ResponseWriter, err error) {
@@ -261,11 +278,11 @@ func credentialFree(parts ...string) bool {
 // putRetries replaces the case's list. The wizard sends the whole list of what
 // failed after each run, so a repeated run never doubles an item.
 func (h *handler) putRetries(w http.ResponseWriter, r *http.Request, raw string) {
-	c, rs, ok := h.retryCaseOf(w, r, raw)
+	_, rs, _, done, ok := h.retryCaseOf(w, r, raw)
 	if !ok {
 		return
 	}
-	defer c.Close()
+	defer done()
 	var body retriesBody
 	if !decodeJSON(w, r, &body) {
 		return
@@ -334,11 +351,11 @@ func (h *handler) deleteRetry(w http.ResponseWriter, r *http.Request, arg string
 	if !ok {
 		return
 	}
-	c, rs, ok := h.retryCaseOf(w, r, rawCase)
+	_, rs, _, done, ok := h.retryCaseOf(w, r, rawCase)
 	if !ok {
 		return
 	}
-	defer c.Close()
+	defer done()
 	if err := rs.RemoveRetry(r.Context(), rid); err != nil {
 		writeRetryError(w, err)
 		return
@@ -355,11 +372,16 @@ func (h *handler) runRetry(w http.ResponseWriter, r *http.Request, arg string) {
 	if !ok {
 		return
 	}
-	c, rs, ok := h.retryCaseOf(w, r, rawCase)
+	c, rs, believed, done, ok := h.retryCaseOf(w, r, rawCase)
 	if !ok {
 		return
 	}
-	defer c.Close()
+	defer done()
+	// The page asked to run an item in the state it saw. If the case moved in another tab, that is M2, not a run in a state nobody chose.
+	if believed != "" && believed != casestore.StateOf(c.Info()) {
+		writeStoreError(w, casestore.ErrCaseChanged)
+		return
+	}
 	items, err := rs.Retries(r.Context())
 	if err != nil {
 		writeRetryError(w, err)
@@ -385,6 +407,11 @@ func (h *handler) runRetry(w http.ResponseWriter, r *http.Request, arg string) {
 		writeCaseFailure(w, http.StatusConflict, "case-closed", retryClosedText)
 		return
 	}
+	// What the item asks for is read and checked first, so a bad or page-only item is refused with the list untouched.
+	var (
+		run     func() error
+		capText string
+	)
 	switch item.Kind {
 	case casestore.RetryEnvironments:
 		var p environmentsDTO
@@ -392,30 +419,32 @@ func (h *handler) runRetry(w http.ResponseWriter, r *http.Request, arg string) {
 			writeCaseFailure(w, http.StatusUnprocessableEntity, "bad-retry", badRetryText)
 			return
 		}
-		if err := tg.SetEnvs(r.Context(), p.Environments); err != nil {
-			writeTagError(w, err, tagEnvCapText)
-			return
-		}
+		capText = tagEnvCapText
+		run = func() error { return tg.SetEnvs(r.Context(), p.Environments) }
 	case casestore.RetryTag:
 		var p sourceTagBody
-		if err := json.Unmarshal(item.Payload, &p); err != nil || p.Kind == mongoDatabaseKind {
+		if err := json.Unmarshal(item.Payload, &p); err != nil || p.Kind == mongoDatabaseKind || !credentialFree(p.Kind, p.Label, p.Env, p.Portal, p.API) {
 			writeCaseFailure(w, http.StatusUnprocessableEntity, "bad-retry", badRetryText)
 			return
 		}
-		if !credentialFree(p.Kind, p.Label, p.Env, p.Portal, p.API) {
-			writeCaseFailure(w, http.StatusUnprocessableEntity, "bad-retry", badRetryText)
-			return
-		}
-		if _, err := tg.AddSource(r.Context(), casestore.SourceTag{ImportID: p.ImportID, Kind: p.Kind, Label: p.Label, Env: p.Env, Portal: p.Portal, API: p.API, Classification: p.Classification}); err != nil {
-			writeTagError(w, err, tagSourceCapText)
-			return
+		capText = tagSourceCapText
+		run = func() error {
+			_, err := tg.AddSource(r.Context(), casestore.SourceTag{ImportID: p.ImportID, Kind: p.Kind, Label: p.Label, Env: p.Env, Portal: p.Portal, API: p.API, Classification: p.Classification})
+			return err
 		}
 	default:
 		writeCaseFailure(w, http.StatusUnprocessableEntity, "retry-in-page", retryInPageText)
 		return
 	}
+	// The item leaves the list before it runs, under the gate: a second press finds nothing to run, and a run that succeeds can never be
+	// followed by a failed removal that would let the same tag go in twice. A run that fails puts the item back.
 	if err := rs.RemoveRetry(r.Context(), rid); err != nil {
 		writeRetryError(w, err)
+		return
+	}
+	if err := run(); err != nil {
+		_, _ = rs.NoteRetry(context.WithoutCancel(r.Context()), casestore.RetryItem{Kind: item.Kind, Key: item.Key, Label: item.Label, Reason: item.Reason, Payload: item.Payload})
+		writeTagError(w, err, capText)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

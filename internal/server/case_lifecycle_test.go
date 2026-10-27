@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+	"time"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -677,4 +679,118 @@ func noteAttempt(t *testing.T, e *caseEnv, id, fileName string) {
 	}
 	defer c.Close()
 	noteImportAttempt(context.Background(), c, fileName)
+}
+
+/* ------------------------------------------------- retry routes under the gate */
+
+func retryPath(id string, it retryDTO) string {
+	return "/api/cases/" + id + "/retries/" + strconv.FormatInt(it.ID, 10) + "/retry"
+}
+
+// A retry run carries the page's belief like every move: a page that thinks the case is Open while another tab closed it gets M2, and
+// nothing runs or leaves the list.
+func TestRetryRunChecksTheBelief(t *testing.T) {
+	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
+		putRetries(e, id, `{"items":[{"kind":"environments","key":"environments","label":"Environments","reason":"failed","payload":{"environments":["prod"]}}]}`)
+		it := e.view(t, id).Retries[0]
+		wantFailure(t, e.believing(http.MethodPost, retryPath(id, it), "", "closed"), 409, "case-changed", m2Text)
+		if got := envsOf(t, e, id); len(got) != 0 {
+			t.Fatalf("a stale retry ran: %v", got)
+		}
+		e.believing(http.MethodPost, "/api/cases/"+id+"/close", "", "open")
+		wantFailure(t, e.believing(http.MethodPost, retryPath(id, it), "", "open"), 409, "case-changed", m2Text)
+		if v := e.view(t, id); len(v.Retries) != 1 {
+			t.Fatalf("a stale retry changed the list: %+v", v.Retries)
+		}
+		wantFailure(t, e.believing(http.MethodPost, "/api/cases/"+id+"/retries/1/retry", "", "sideways"), 400, "bad-expect-state", "")
+	})
+}
+
+// Two presses of one retry at once run it once: the second finds the item gone. The tag goes in one time.
+func TestRetryPressedTwiceRunsOnce(t *testing.T) {
+	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
+		putRetries(e, id, `{"items":[{"kind":"tag","key":"iis:web","label":"web","reason":"failed","payload":{"kind":"iis-logs","label":"web","env":"prod"}}]}`)
+		it := e.view(t, id).Retries[0]
+		var wg sync.WaitGroup
+		codes := make([]int, 6)
+		for i := range codes {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				codes[i] = e.believing(http.MethodPost, retryPath(id, it), "", "open").Code
+			}()
+		}
+		wg.Wait()
+		done, gone := 0, 0
+		for _, c := range codes {
+			switch c {
+			case http.StatusNoContent:
+				done++
+			case http.StatusNotFound:
+				gone++
+			default:
+				t.Fatalf("codes = %v", codes)
+			}
+		}
+		if done != 1 || gone != len(codes)-1 {
+			t.Fatalf("codes = %v, want one 204", codes)
+		}
+		if got := sourcesOf(t, e, "/api/cases/"+id+"/sources"); len(got) != 1 {
+			t.Fatalf("the tag went in %d times", len(got))
+		}
+	})
+}
+
+// A run the store refuses puts the item back, so nothing is lost for the person to try again.
+func TestRetryThatFailsKeepsTheItem(t *testing.T) {
+	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
+		names := make([]string, casestore.MaxEnvs+1)
+		for i := range names {
+			names[i] = "e" + strconv.Itoa(i)
+		}
+		payload, _ := json.Marshal(map[string]any{"environments": names})
+		body, _ := json.Marshal(map[string]any{"items": []any{map[string]any{"kind": "environments", "key": "environments", "label": "Environments", "reason": "failed", "payload": json.RawMessage(payload)}}})
+		if res := putRetries(e, id, string(body)); res.Code != 200 {
+			t.Fatalf("put = %d %s", res.Code, res.Body)
+		}
+		it := e.view(t, id).Retries[0]
+		if res := e.believing(http.MethodPost, retryPath(id, it), "", "open"); res.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("over-cap retry = %d %s", res.Code, res.Body)
+		}
+		if v := e.view(t, id); len(v.Retries) != 1 || v.Retries[0].Kind != "environments" {
+			t.Fatalf("a failed retry lost the item: %+v", v.Retries)
+		}
+	})
+}
+
+// The list routes take the case's gate, so they never overlap a move: with the gate held (a Close in flight) they wait for it.
+func TestRetryRoutesWaitForTheCaseGate(t *testing.T) {
+	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
+		putRetries(e, id, twoRetries)
+		item := e.view(t, id).Retries[0]
+		release, err := e.handler().gates.acquire(context.Background(), casestore.CaseID(id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		finished := make(chan string, 3)
+		go func() { putRetries(e, id, `{"items":[]}`); finished <- "put" }()
+		go func() {
+			e.json(http.MethodDelete, "/api/cases/"+id+"/retries/"+strconv.FormatInt(item.ID, 10), "")
+			finished <- "delete"
+		}()
+		go func() { e.believing(http.MethodPost, retryPath(id, item), "", "open"); finished <- "run" }()
+		select {
+		case who := <-finished:
+			t.Fatalf("%s did not wait for the case gate", who)
+		case <-time.After(300 * time.Millisecond):
+		}
+		release()
+		for i := 0; i < 3; i++ {
+			select {
+			case <-finished:
+			case <-time.After(5 * time.Second):
+				t.Fatal("a retry route stayed blocked after the gate was released")
+			}
+		}
+	})
 }
