@@ -42,6 +42,8 @@ Status page
 -----------
 http://<this server>:7788/status answers with the read key in the
 X-Blackbox-Key header (never in the address). /manifest, /files and
-/files/<name> are read only too. Without a firewall rule only this computer
-can reach it; allow port 7788 in Windows Firewall to let Unravis read it from
-another PC.
+/files/<name> are read only too. The page listens on this computer only
+(127.0.0.1) until you opt in. To let Unravis read it from another PC, set
+"bind" in blackbox.json to this server's address (or 0.0.0.0) and run
+"unravis-blackbox apply", then add a Windows Firewall rule for port 7788 that
+allows only the addresses you type.

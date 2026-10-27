@@ -6,7 +6,7 @@
   "maxGB": 2,
   "minFreePercent": 10,
   "port": 7788,
-  "bind": "0.0.0.0",
+  "bind": "127.0.0.1",
   "record": {
     "processes": true,
     "logsCatalogue": true,

@@ -31,7 +31,7 @@ const (
 	DefaultMaxGB          = 2.0
 	DefaultMinFreePercent = 10
 	DefaultPort           = 7788
-	DefaultBind           = "0.0.0.0"
+	DefaultBind           = "127.0.0.1" // decision A53: loopback until the owner opts in
 )
 
 // Limits on what blackbox.json may say. They bound the values from below too:
@@ -151,7 +151,7 @@ func (c Config) Validate() error {
 		return invalidf(`"port" must be 1 to 65535`)
 	}
 	if c.Bind == "" {
-		return invalidf(`"bind" must be an address such as 0.0.0.0 or 127.0.0.1`)
+		return invalidf(`"bind" must be an address such as 127.0.0.1 or 0.0.0.0`)
 	}
 	if len(c.LogPaths) > maxLogPaths {
 		return invalidf(`"logPaths" may list at most %d folders`, maxLogPaths)

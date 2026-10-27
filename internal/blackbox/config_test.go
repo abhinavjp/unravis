@@ -36,7 +36,7 @@ func TestParseConfigFillsDefaultsAndKeepsProbeOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.KeepDays != 7 || c.Port != 7788 || c.Bind != "0.0.0.0" || len(c.LogPaths) != 1 || c.Probe.Enabled {
+	if c.KeepDays != 7 || c.Port != 7788 || c.Bind != "127.0.0.1" || len(c.LogPaths) != 1 || c.Probe.Enabled {
 		t.Fatalf("%+v", c)
 	}
 	if !c.Record.Processes || !c.Record.LogsCatalogue || c.Record.CopyLogsOnSnapshot {
@@ -142,5 +142,16 @@ func TestMarshalShowsEmptyProbeBlock(t *testing.T) {
 	b, _ := c.Marshal()
 	if !strings.Contains(string(b), `"probe": {`) || !strings.Contains(string(b), `"enabled": false`) {
 		t.Fatalf("probe block missing:\n%s", b)
+	}
+}
+
+// A53: without the owner's opt-in the status page answers on loopback only.
+func TestDefaultBindIsLoopbackNotEveryInterface(t *testing.T) {
+	if DefaultBind != "127.0.0.1" || Default().Bind != "127.0.0.1" {
+		t.Fatalf("default bind is %q, want 127.0.0.1 (A53)", Default().Bind)
+	}
+	c, err := ParseConfig([]byte(`{"name":"a"}`))
+	if err != nil || c.Bind != "127.0.0.1" {
+		t.Fatalf("a file with no bind must listen on loopback: %+v %v", c, err)
 	}
 }

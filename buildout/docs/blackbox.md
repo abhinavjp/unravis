@@ -28,7 +28,7 @@ Settings are in `blackbox.json` next to the program:
 | `maxGB` | 2 | Delete the oldest recordings above this size |
 | `minFreePercent` | 10 | Delete the oldest recordings when the drive has less free space |
 | `port` | 7788 | Status page port |
-| `bind` | `0.0.0.0` | Address the status page listens on |
+| `bind` | `127.0.0.1` | Address the status page listens on. Loopback means only this computer can reach it (decision A53) |
 | `record.processes` | true | Record the busiest processes |
 | `record.logsCatalogue` | true | Record the log file catalogue |
 | `record.copyLogsOnSnapshot` | false | Include log files in a snapshot |
@@ -43,7 +43,7 @@ Copy `unravis-blackbox.exe`, `blackbox.json` and `README.txt` to the server. Ope
 .\unravis-blackbox.exe install
 ```
 
-Add `--name web-b` to choose a name, `--folder E:\Rec` to choose the folder, `--port 7790` for another port, `--bind 127.0.0.1` to listen on this computer only. Add `--json` for one line of machine-readable output (`{"ok":true,"reason":"","message":"..."}`).
+Add `--name web-b` to choose a name, `--folder E:\Rec` to choose the folder, `--port 7790` for another port, `--bind 10.0.0.5` (or `0.0.0.0`) to let other computers reach the status page; see Status page below. Add `--json` for one line of machine-readable output (`{"ok":true,"reason":"","message":"..."}`).
 
 It does these things, in this order:
 
@@ -129,7 +129,7 @@ States: `running`, `running-late` (the newest sample is more than three interval
 
 Every answer carries the Blackbox clock in `time`, so Unravis can show a clock difference between the server and the PC reading it.
 
-Without a firewall rule only this computer can reach the page. To let Unravis read it from another PC, allow the port in Windows Firewall.
+The page listens on this computer only (`127.0.0.1`) until you opt in. To let Unravis read it from another PC, do both: set `bind` to the server address (or `0.0.0.0`) in `blackbox.json` and run `apply` (or install with `--bind`), and add a Windows Firewall rule for the port that allows only the addresses you type. Without both steps nothing on the network can reach it.
 
 Captured `/status` answer from a foreground run (`p8-status-json`):
 

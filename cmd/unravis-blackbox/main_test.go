@@ -330,3 +330,13 @@ func TestSafeName(t *testing.T) {
 		}
 	}
 }
+
+func TestPackTemplateBindsLoopbackOnly(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("pack", "blackbox.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"bind": "127.0.0.1"`) || strings.Contains(string(b), "0.0.0.0") {
+		t.Fatalf("pack blackbox.json must bind loopback (A53):\n%s", b)
+	}
+}
