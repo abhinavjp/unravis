@@ -21,6 +21,8 @@ const (
 		`(SELECT ISNULL(SUM(waiting_tasks_count), 0) FROM sys.dm_os_wait_stats WHERE wait_type = 'THREADPOOL') AS threadpool_tasks`
 	qLaneLogFlush   = `/* unravis:errorlog:flush */ EXEC sp_readerrorlog 0, 1, N'cachestore flush'`
 	qLaneLogStart   = `/* unravis:errorlog:start */ EXEC sp_readerrorlog 0, 1, N'SQL Server is starting'`
+	// The list of error log files. Archive 1 was last written when the current log was started, so its date is when the current log begins.
+	qLaneLogEnum    = `/* unravis:errorlog:enum */ EXEC sp_enumerrorlogs 1`
 	qLaneQSOptions  = `/* unravis:qs_options */ SELECT TOP 1 actual_state_desc, desired_state_desc, readonly_reason, interval_length_minutes FROM sys.database_query_store_options`
 	qLaneQSFirst    = `/* unravis:qs_first */ SELECT MIN(start_time) AS first_start FROM sys.query_store_runtime_stats_interval`
 	laneMinRuns     = 5   // a query counts only when it ran this often in both windows
@@ -107,6 +109,7 @@ type sqlLane struct {
 	b    *laneBuilder
 
 	serverReady, logReady bool
+	logCovers             bool
 	start                 time.Time
 	hasStart              bool
 	flushes, starts       int
@@ -249,6 +252,24 @@ func (s *sqlLane) checkServer(ctx context.Context) LaneCheck {
 type logOutcome struct {
 	check           LaneCheck
 	flushes, starts int
+	// covers is true when the current log reaches back to the start of the reference window, so that finding nothing in it rules something out.
+	covers bool
+}
+
+// logBegins reads when the current error log was started from the file list. known is false when the list could not be read or has no usable
+// date. A server whose log was never cycled has no archive 1: the log reaches back to the install, so it covers any window.
+func logBegins(enum []Row, base baseInfo) (begins time.Time, never, known bool) {
+	for _, r := range enum {
+		if num(r["Archive #"]) != 1 {
+			continue
+		}
+		t, ok := rowTime(r["Date"])
+		if !ok {
+			return time.Time{}, false, false
+		}
+		return wall(t, base.offsetMin), false, true
+	}
+	return time.Time{}, true, true
 }
 
 func countLog(rows []Row, base baseInfo, span Window) int {
@@ -261,10 +282,18 @@ func countLog(rows []Row, base baseInfo, span Window) int {
 	return n
 }
 
-func evalLaneErrorLog(flush, start []Row, base baseInfo, req LaneRequest) logOutcome {
+func evalLaneErrorLog(flush, start []Row, enum []Row, enumErr bool, base baseInfo, req LaneRequest) logOutcome {
 	span := Window{Start: req.Reference.Start, End: req.Incident.End}
 	o := logOutcome{flushes: countLog(flush, base, span), starts: countLog(start, base, span)}
+	begins, never, known := logBegins(enum, base)
+	o.covers = known && !enumErr && (never || !begins.After(req.Reference.Start))
 	switch {
+	case o.flushes == 0 && o.starts == 0 && !o.covers:
+		why := "when the current error log begins could not be read"
+		if known && !enumErr {
+			why = "the current log only begins at " + utcText(begins) + ", after the reference window began"
+		}
+		o.check = LaneCheck{State: StateReady, Summary: "The current error log shows no restart and no plan-cache clear in the part it holds, but " + why + ", so an older restart or clear may have been cycled out of it. This does not rule one out."}
 	case o.flushes == 0 && o.starts == 0:
 		o.check = LaneCheck{State: StateReady, Summary: "The current error log shows no restart and no plan-cache clear between the start of the reference window and the end of the incident."}
 	default:
@@ -292,8 +321,10 @@ func (s *sqlLane) checkErrorLog(ctx context.Context) LaneCheck {
 	if err != nil {
 		return s.failed(CheckErrorLog, err, "")
 	}
-	o := evalLaneErrorLog(flush, start, s.base, s.req)
-	s.logReady, s.flushes, s.starts = true, o.flushes, o.starts
+	// The file list only tells how far back the log goes. If it cannot be read, a quiet log is still reported but never rules anything out.
+	enum, enumErr := s.q.Query(ctx, qLaneLogEnum)
+	o := evalLaneErrorLog(flush, start, enum, enumErr != nil, s.base, s.req)
+	s.logReady, s.logCovers, s.flushes, s.starts = true, o.covers, o.flushes, o.starts
 	return o.check
 }
 
@@ -307,7 +338,7 @@ func (s *sqlLane) coldCache() {
 	if s.serverReady && s.hasStart {
 		if span.Contains(s.start) {
 			s.b.answer("D5", AnswerYes)
-		} else if s.start.Before(span.Start) && s.logReady && s.flushes == 0 && s.starts == 0 {
+		} else if s.start.Before(span.Start) && s.logReady && s.logCovers && s.flushes == 0 && s.starts == 0 {
 			s.b.answer("D5", AnswerNo)
 		}
 	}

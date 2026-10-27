@@ -139,6 +139,51 @@ func TestSQLLaneErrorLogShowsRestartAndFlush(t *testing.T) {
 	}
 }
 
+func TestSQLLaneCycledErrorLogNeverRulesOutACold(t *testing.T) {
+	// Server started long before the reference window; the log was cycled after the incident, so the restart or clear is not in the file.
+	cycled := func(q fakeQ, archive1 any) {
+		q.by["unravis:errorlog:enum"] = []Row{{"Archive #": int64(0), "Date": at(26, 0, 0)}, {"Archive #": int64(1), "Date": archive1}}
+	}
+	q := healthySQL("16.0.1")
+	cycled(q, at(22, 0, 0))
+	r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if a, ok := r.Lane.Answers["D5"]; ok {
+		t.Errorf("a log that begins after the reference window began must not rule cold cache out: %v", a)
+	}
+	c := checkByID(t, r, CheckErrorLog)
+	if c.State != StateReady || !strings.Contains(c.Summary, "does not rule one out") {
+		t.Errorf("errorlog = %+v", c)
+	}
+	// The log reaches back before the reference window: nothing in it is a real no.
+	q = healthySQL("16.0.1")
+	cycled(q, at(10, 0, 0))
+	r = RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if r.Lane.Answers["D5"] != AnswerNo {
+		t.Errorf("a log that covers the windows and is quiet is D5 no: %v", r.Lane.Answers)
+	}
+	// Never cycled (no archive 1) also covers any window.
+	q = healthySQL("16.0.1")
+	r = RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if r.Lane.Answers["D5"] != AnswerNo {
+		t.Errorf("a log never cycled is D5 no: %v", r.Lane.Answers)
+	}
+	// The file list cannot be read: stay unknown.
+	q = healthySQL("16.0.1")
+	q.err = map[string]error{"unravis:errorlog:enum": errors.New("denied")}
+	r = RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if _, ok := r.Lane.Answers["D5"]; ok {
+		t.Errorf("unreadable log list must leave D5 unknown: %v", r.Lane.Answers)
+	}
+	// A flush that is in the log still stands as a yes even when the log is short.
+	q = healthySQL("16.0.1")
+	cycled(q, at(22, 0, 0))
+	q.by["unravis:errorlog:flush"] = []Row{{"LogDate": at(20, 10, 30)}}
+	r = RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if r.Lane.Answers["D5"] != AnswerYes {
+		t.Errorf("flush found is yes: %v", r.Lane.Answers)
+	}
+}
+
 func TestSQLLaneTimesUseServerOffset(t *testing.T) {
 	// Server clock is UTC+5:30. A start at 15:40 local is 10:10 UTC, inside the incident.
 	q := healthySQL("16.0.1")
@@ -399,7 +444,7 @@ func TestSQLLaneQueriesAreReadOnly(t *testing.T) {
 				t.Errorf("query contains %q: %s", bad, s)
 			}
 		}
-		if strings.Contains(up, "EXEC ") && !strings.Contains(s, "sp_readerrorlog 0, 1,") {
+		if strings.Contains(up, "EXEC ") && !strings.Contains(s, "sp_readerrorlog 0, 1,") && !strings.Contains(s, "sp_enumerrorlogs 1") {
 			t.Errorf("unexpected EXEC: %s", s)
 		}
 	}
