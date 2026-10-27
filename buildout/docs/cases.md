@@ -37,6 +37,8 @@ Health checks look at the SQL Server or MongoDB your logs depend on and say in p
 ![Health checks in Case home, dark](../screenshots/P1/p1-health-dark.png)
 ![Health checks in Case home, light](../screenshots/P1/p1-health-light.png)
 
+The demo has no SQL Server kept and has run no checks, so these pictures show the empty state: "No SQL Server is kept yet" and "No checks have been run". Pictures with results arrive with the health-check phase.
+
 ## Export evidence
 
 Export builds a file of the findings in the window you are looking at. You see a preview before anything is saved.
