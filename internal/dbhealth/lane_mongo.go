@@ -106,7 +106,10 @@ const profileOldest = `{"find":"system.profile","filter":{},"sort":{"ts":1},"lim
 
 // evalLaneProfiler reads the slow operations in both windows. oldest is when the profile collection's first record was written (zero when it is
 // empty): the profiler cannot describe anything before that.
-func evalLaneProfiler(slowms float64, oldest time.Time, docs []map[string]any, req LaneRequest) profileOutcome {
+//
+// truncated is true when the read came back full (mongoMaxProfileDocs records, oldest first): the incident may be cut off, so a no and an onset
+// are withheld and the summary says the read was cut short. A scan that was seen is still a yes.
+func evalLaneProfiler(slowms float64, oldest time.Time, docs []map[string]any, truncated bool, req LaneRequest) profileOutcome {
 	var o profileOutcome
 	if !oldest.IsZero() && !oldest.Before(req.Incident.End) {
 		o.check = LaneCheck{State: StateNotYet, Summary: "The profiler started recording at " + utcText(oldest) + ", after the incident ended, so it holds nothing from it."}
@@ -158,9 +161,12 @@ func evalLaneProfiler(slowms float64, oldest time.Time, docs []map[string]any, r
 	case scans > 0:
 		o.answer = AnswerYes
 		parts = append(parts, plural(scans, "read", "reads")+" the whole collection.")
-	case indexed > 0 && wholeIncident:
+	case indexed > 0 && wholeIncident && !truncated:
 		o.answer = AnswerNo
 		parts = append(parts, "Every slow operation used an index.")
+	}
+	if truncated {
+		parts = append(parts, "The read was cut short at "+fmtInt(float64(mongoMaxProfileDocs))+" records, so later slow operations were not read. These counts are lower bounds, and no answer of No or start time is given. Try a shorter reference window.")
 	}
 	if !wholeIncident && !oldest.IsZero() {
 		parts = append(parts, "It only started recording at "+utcText(oldest)+", after the incident began, so it holds part of the incident.")
@@ -168,7 +174,7 @@ func evalLaneProfiler(slowms float64, oldest time.Time, docs []map[string]any, r
 	if oldest.IsZero() {
 		parts = append(parts, "Its record is empty, so it cannot say how long it has been on.")
 	}
-	if coversReference && incN > 0 {
+	if coversReference && incN > 0 && !truncated {
 		minutes := req.Reference.End.Sub(req.Reference.Start).Minutes()
 		rate := 0.0
 		if minutes > 0 {
@@ -222,7 +228,8 @@ func (l *mongoLane) checkProfiler(ctx context.Context) LaneCheck {
 	if err != nil {
 		return l.failed(err, perm)
 	}
-	o := evalLaneProfiler(jnum(lvl["slowms"]), oldest, list(dig(r, "cursor", "firstBatch")), l.req)
+	batch := list(dig(r, "cursor", "firstBatch"))
+	o := evalLaneProfiler(jnum(lvl["slowms"]), oldest, batch, len(batch) >= mongoMaxProfileDocs, l.req)
 	if o.check.State == StateReady {
 		if o.answer != "" {
 			l.b.answer("M6", o.answer)

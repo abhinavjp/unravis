@@ -114,6 +114,27 @@ func TestMongoLaneIndexedOnlyIsNoOnlyWhenProfilerCoversIncident(t *testing.T) {
 	}
 }
 
+// Review F4: a read that came back full may have cut the incident off, so it gives no No and no start time.
+func TestMongoLaneFullProfileReadGivesNoNoAndNoOnset(t *testing.T) {
+	docs := make([]map[string]any, 0, mongoMaxProfileDocs)
+	for i := 0; i < mongoMaxProfileDocs; i++ { // all in the reference window, all indexed: the incident was never reached
+		docs = append(docs, profDoc(at(19, 10, 0).Add(time.Duration(i)*time.Second), "AuditDb.Logs", "IXSCAN { ts: 1 }"))
+	}
+	r := RunMongoLane(context.Background(), newProf(at(2, 0, 0), docs...), "Mongo", mreq(), fixedNow)
+	if _, ok := r.Lane.Answers["M6"]; ok || r.Lane.Onset != nil {
+		t.Fatalf("a cut-short read answered: %v onset %v", r.Lane.Answers, r.Lane.Onset)
+	}
+	if !strings.Contains(checkByID(t, r, CheckMongoProfiler).Summary, "cut short") {
+		t.Fatalf("summary = %s", checkByID(t, r, CheckMongoProfiler).Summary)
+	}
+	// One fewer record is a whole read and answers as before.
+	whole := append(append([]map[string]any{}, docs[2:]...), profDoc(at(20, 10, 12), "AuditDb.Logs", "IXSCAN { ts: 1 }"))
+	r = RunMongoLane(context.Background(), newProf(at(2, 0, 0), whole...), "Mongo", mreq(), fixedNow)
+	if r.Lane.Answers["M6"] != AnswerNo {
+		t.Fatalf("whole read = %v", r.Lane.Answers)
+	}
+}
+
 func TestMongoLaneNoSlowOperationsIsNotAPass(t *testing.T) {
 	r := RunMongoLane(context.Background(), newProf(at(2, 0, 0)), "Mongo", mreq(), fixedNow)
 	if _, ok := r.Lane.Answers["M6"]; ok {
