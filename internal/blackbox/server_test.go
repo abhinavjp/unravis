@@ -359,3 +359,12 @@ func TestStatusServedOverRealListener(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A stalled client must not hold a recording file open for ever: an open file
+// cannot be removed by housekeeping on Windows (review F4).
+func TestServerHasWriteAndHeaderTimeouts(t *testing.T) {
+	g := newSrvRig(t)
+	if g.srv.srv.WriteTimeout <= 0 || g.srv.srv.ReadHeaderTimeout <= 0 || g.srv.srv.IdleTimeout <= 0 {
+		t.Fatalf("timeouts %v %v %v", g.srv.srv.WriteTimeout, g.srv.srv.ReadHeaderTimeout, g.srv.srv.IdleTimeout)
+	}
+}

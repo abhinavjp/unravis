@@ -83,7 +83,10 @@ func NewServer(o ServerOptions) *Server {
 	mux.HandleFunc("/manifest", s.guard(s.handleManifest))
 	mux.HandleFunc("/files", s.guard(s.handleFiles))
 	mux.HandleFunc("/files/", s.guard(s.handleFile))
-	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+	// WriteTimeout bounds how long a stalled client can hold a recording file
+	// open (an open file cannot be removed by housekeeping on Windows). Reads
+	// answer ranges, so a reader that is cut off resumes where it stopped.
+	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, WriteTimeout: 2 * time.Minute, IdleTimeout: 30 * time.Second}
 	return s
 }
 

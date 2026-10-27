@@ -16,11 +16,17 @@ type Limits struct {
 // Housekeeping is what one housekeeping pass did.
 type Housekeeping struct {
 	Removed     []string // files removed, oldest first
+	Skipped     []string // files that could not be removed (a reader holds them); tried again next pass
 	FreePercent float64  // free space of the recordings volume after the pass
 	DiskKnown   bool     // false when the volume could not be read
 	DiskLow     bool     // still below the free-disk limit after removing what may go
 	Bytes       int64    // size of the recordings after the pass
 }
+
+// Incomplete reports that a file could not be removed, so the pass may have
+// left the recordings over a limit. The caller must not read "disk not low"
+// out of such a pass without a fresh free-space reading.
+func (h Housekeeping) Incomplete() bool { return len(h.Skipped) > 0 }
 
 // Housekeep removes the oldest recording files until the limits are met: first
 // the files older than the keep days, then the oldest files until the total is
@@ -29,24 +35,30 @@ type Housekeeping struct {
 // current hour) is never removed, and nothing outside the recording files is
 // touched (the snapshots folder, the manifest). If the free space is still too
 // low when only protected files are left, DiskLow is set: the recorder pauses
-// until space comes back.
+// until space comes back. A file that cannot be removed (a reader downloading
+// it holds it open on Windows) is skipped and listed in Skipped; the pass goes
+// on with the next candidate and the next rule, and tries the file again next
+// pass.
 func (s *Store) Housekeep(l Limits, disk DiskSpace, now time.Time) (Housekeeping, error) {
 	var res Housekeeping
 	now = now.UTC()
 	protected := FileNameFor(now)
 
-	remove := func(name string) error {
+	skipped := map[string]bool{}
+	// remove takes one file out; a failure parks the file for this pass.
+	remove := func(name string) {
 		if err := s.Remove(name); err != nil {
-			return err
+			skipped[name] = true
+			res.Skipped = append(res.Skipped, name)
+			return
 		}
 		res.Removed = append(res.Removed, name)
-		return nil
 	}
 	// next is the oldest file that may go, or "".
 	next := func() string {
 		cur := s.CurrentFile()
 		for _, f := range s.Manifest().Files {
-			if f.Name != cur && f.Name != protected {
+			if f.Name != cur && f.Name != protected && !skipped[f.Name] {
 				return f.Name
 			}
 		}
@@ -61,9 +73,7 @@ func (s *Store) Housekeep(l Limits, disk DiskSpace, now time.Time) (Housekeeping
 				continue
 			}
 			if f.Hour.Add(time.Hour).Before(cutoff) {
-				if err := remove(f.Name); err != nil {
-					return res, err
-				}
+				remove(f.Name)
 			}
 		}
 	}
@@ -74,9 +84,7 @@ func (s *Store) Housekeep(l Limits, disk DiskSpace, now time.Time) (Housekeeping
 			if n == "" {
 				break
 			}
-			if err := remove(n); err != nil {
-				return res, err
-			}
+			remove(n)
 		}
 	}
 	// Free space.
@@ -95,9 +103,7 @@ func (s *Store) Housekeep(l Limits, disk DiskSpace, now time.Time) (Housekeeping
 				res.DiskLow = true
 				break
 			}
-			if err := remove(n); err != nil {
-				return res, err
-			}
+			remove(n)
 		}
 	}
 	res.Bytes = s.Manifest().TotalBytes()

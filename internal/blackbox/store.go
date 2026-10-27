@@ -51,6 +51,9 @@ type Store struct {
 
 	// wrapFile lets tests put a failing writer around the opened file.
 	wrapFile func(*os.File) recFile
+	// removeFile is os.Remove; tests make it fail to stand for a file a
+	// reader holds open (which Windows will not delete).
+	removeFile func(string) error
 
 	firstOfRun bool
 	priorClean bool
@@ -501,7 +504,11 @@ func (s *Store) Remove(name string) error {
 	if name == s.curN {
 		return ErrCurrentFile
 	}
-	if err := os.Remove(filepath.Join(s.dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	rm := os.Remove
+	if s.removeFile != nil {
+		rm = s.removeFile
+	}
+	if err := rm(filepath.Join(s.dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	kept := s.m.Files[:0]

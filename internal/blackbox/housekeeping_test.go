@@ -183,3 +183,61 @@ func TestHousekeepProtectsFileOfTheCurrentHourBeforeFirstAppend(t *testing.T) {
 		}
 	}
 }
+
+// lockFiles makes Remove fail for the named files, as Windows does for a file
+// a client is downloading.
+func lockFiles(s *Store, names ...string) {
+	s.removeFile = func(p string) error {
+		for _, n := range names {
+			if filepath.Base(p) == n {
+				return errors.New("The process cannot access the file because it is being used by another process.")
+			}
+		}
+		return os.Remove(p)
+	}
+}
+
+func TestHousekeepSkipsLockedFileAndRunsTheOtherRules(t *testing.T) {
+	from := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	s, dir, _ := filled(t, 6, from, 1000)
+	// The oldest file is held by a slow reader. Age removes hours 00-02 (all
+	// older than 7 days), size and free space must still run for the rest.
+	lockFiles(s, "bb-20261001-00.ndjson")
+	now := from.Add(8*24*time.Hour + 2*time.Hour + 30*time.Minute)
+	disk := &fakeDisk{dir: dir, total: 10000, other: 3500}
+	res, err := s.Housekeep(Limits{KeepDays: 7, MaxBytes: 2500, MinFreePercent: 20}, disk, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Incomplete() || len(res.Skipped) != 1 || res.Skipped[0] != "bb-20261001-00.ndjson" {
+		t.Fatalf("skipped %v", res.Skipped)
+	}
+	// Hours 01 and 02 went by age; the size rule then still ran past the
+	// locked file: 3 files of 1000 left is over 2500, so hour 03 goes too.
+	if len(res.Removed) != 4 || res.Removed[0] != "bb-20261001-01.ndjson" || res.Removed[3] != "bb-20261001-04.ndjson" {
+		t.Fatalf("removed %v", res.Removed)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bb-20261001-00.ndjson")); err != nil {
+		t.Fatal("locked file should still be there")
+	}
+	// Once the reader lets go, the next pass removes it.
+	s.removeFile = nil
+	res, _ = s.Housekeep(Limits{KeepDays: 7}, nil, now)
+	if len(res.Removed) != 1 || res.Removed[0] != "bb-20261001-00.ndjson" || res.Incomplete() {
+		t.Fatalf("second pass %+v", res)
+	}
+}
+
+func TestHousekeepOnlyLockedFilesLeftTerminates(t *testing.T) {
+	from := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
+	s, dir, _ := filled(t, 4, from, 1000)
+	lockFiles(s, "bb-20261027-00.ndjson", "bb-20261027-01.ndjson", "bb-20261027-02.ndjson")
+	disk := &fakeDisk{dir: dir, total: 10000, other: 9000}
+	res, err := s.Housekeep(Limits{MaxBytes: 10, MinFreePercent: 10}, disk, from.Add(3*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skipped) != 3 || len(res.Removed) != 0 || !res.DiskLow {
+		t.Fatalf("%+v", res)
+	}
+}

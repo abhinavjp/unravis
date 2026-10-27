@@ -3,6 +3,9 @@ package blackbox
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -264,5 +267,78 @@ func TestRecorderRunStopsCleanly(t *testing.T) {
 	}
 	if m.SampleCount() < 1 {
 		t.Fatal("no first sample")
+	}
+}
+
+// seedOld writes one-sample hour files at the given times into dir, as an
+// earlier run would have, and closes that store.
+func seedOld(t *testing.T, dir string, at ...time.Time) {
+	t.Helper()
+	c := &clock{t: at[0]}
+	st := openT(t, dir, "run0", c)
+	for i, a := range at {
+		c.t = a
+		if err := st.Append(smp("run0", uint64(i+1), a), ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.Close("stopped"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A reader holding the oldest file must not make a paused recorder start
+// writing again onto a full drive (review F4).
+func TestRecorderStaysPausedWhenHousekeepingCannotRemoveALockedFile(t *testing.T) {
+	old1, old2 := t0.Add(-3*time.Hour), t0.Add(-2*time.Hour)
+	g := newRig(t, func(c *Config) { seedOld(t, c.Folder, old1, old2) })
+	lockFiles(g.s, FileNameFor(old1))
+	g.r.Tick(g.clk.t)
+	g.disk.set(5) // below the 10% limit
+	g.tick(60 * time.Second)
+	// The unlocked old file went, the locked one stays, nothing else may go.
+	if _, err := os.Stat(filepath.Join(g.s.Dir(), FileNameFor(old1))); err != nil {
+		t.Fatal("the locked file should still be there")
+	}
+	if _, err := os.Stat(filepath.Join(g.s.Dir(), FileNameFor(old2))); err == nil {
+		t.Fatal("the unlocked old file should have been removed")
+	}
+	if g.r.Status(g.clk.t).State != StateDiskLow {
+		t.Fatalf("not paused: %s", g.r.Status(g.clk.t).State)
+	}
+	n := g.s.Manifest().SampleCount()
+	for i := 0; i < 3; i++ {
+		g.tick(60 * time.Second)
+	}
+	if g.s.Manifest().SampleCount() != n || g.r.Status(g.clk.t).State != StateDiskLow {
+		t.Fatalf("recorder wrote or resumed while the disk is full: %d vs %d", g.s.Manifest().SampleCount(), n)
+	}
+	// Still low and the locked file still in the way: the event is logged once.
+	cnt := 0
+	for _, e := range g.s.Manifest().Events {
+		if e.Kind == EventHousekeeping && strings.Contains(e.Detail, "could not remove") {
+			cnt++
+		}
+	}
+	if cnt != 1 {
+		t.Fatalf("event logged %d times", cnt)
+	}
+}
+
+// With no fresh free-space reading, an incomplete pass leaves the pause alone.
+func TestRecorderIncompletePassWithoutDiskReadingKeepsPauseState(t *testing.T) {
+	old1 := t0.Add(-30 * 24 * time.Hour) // older than keepDays: the age rule wants it
+	g := newRig(t, func(c *Config) { seedOld(t, c.Folder, old1) })
+	lockFiles(g.s, FileNameFor(old1))
+	g.r.Tick(g.clk.t)
+	g.disk.set(5)
+	g.tick(60 * time.Second) // age rule is blocked by the lock; disk low, nothing removable: paused
+	if g.r.Status(g.clk.t).State != StateDiskLow {
+		t.Fatal("not paused")
+	}
+	g.r.o.Disk = &fakeDisk{err: errors.New("no reading")}
+	g.tick(60 * time.Second)
+	if g.r.Status(g.clk.t).State != StateDiskLow {
+		t.Fatalf("pause lifted by an incomplete pass without a disk reading: %+v", g.s.Manifest().Events)
 	}
 }

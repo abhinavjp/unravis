@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 )
@@ -78,6 +79,7 @@ type Recorder struct {
 	logs         []LogEntry
 	resumedFlag  bool // next sample follows a disk-low pause
 	forceHK      bool
+	lastSkipMsg  string
 }
 
 // NewRecorder makes a recorder. The caller opened the store and the collector.
@@ -211,8 +213,17 @@ func (r *Recorder) housekeep(now time.Time) {
 	r.lastHK = now
 	res, err := r.o.Store.Housekeep(r.limits(), r.o.Disk, now)
 	if err != nil {
-		// A file held open by a reader cannot be removed; try again next round.
-		r.o.Store.Event(EventHousekeeping, "could not remove a file: "+err.Error())
+		r.o.Store.Event(EventHousekeeping, "housekeeping failed: "+err.Error())
+	}
+	if res.Incomplete() {
+		// A file held open by a reader cannot be removed; it is tried again
+		// next round. Say so once per set of files, not every minute.
+		if msg := "could not remove " + strings.Join(res.Skipped, ", ") + " (in use), will retry"; msg != r.lastSkipMsg {
+			r.lastSkipMsg = msg
+			r.o.Store.Event(EventHousekeeping, msg)
+		}
+	} else {
+		r.lastSkipMsg = ""
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -222,6 +233,12 @@ func (r *Recorder) housekeep(now time.Time) {
 		if info, derr := r.o.Disk.Free(r.o.Store.Dir()); derr == nil {
 			r.freePct, r.freeKnown = info.FreePercent(), true
 		}
+	}
+	// A pass that could not remove everything says nothing about whether the
+	// disk is still full, unless the free space was read fresh after it. With
+	// no fresh reading, or after a failed pass, the pause state stays as it is.
+	if err != nil || (res.Incomplete() && !res.DiskKnown) {
+		return
 	}
 	switch {
 	case res.DiskLow && !r.paused:
