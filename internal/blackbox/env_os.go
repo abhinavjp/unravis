@@ -76,10 +76,10 @@ func (OSEnv) FileSHA256(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// ProbeStatus asks the local status page for /status with the key, and checks
+// ProbeStatus asks the status page at host:port for /status with the key, and checks
 // that a request without the key is refused.
-func (OSEnv) ProbeStatus(port int, key string) error {
-	url := fmt.Sprintf("http://127.0.0.1:%d/status", port)
+func (OSEnv) ProbeStatus(host string, port int, key string) error {
+	url := fmt.Sprintf("http://%s/status", net.JoinHostPort(host, strconv.Itoa(port)))
 	c := &http.Client{Timeout: 3 * time.Second}
 	var last error
 	for i := 0; i < 8; i++ { // the service may need a moment to open the port

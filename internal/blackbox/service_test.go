@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -70,6 +71,8 @@ type fakeEnv struct {
 	portErr   error
 	folder    error
 	probeErr  error
+	listensOn string   // when set, only this host answers a probe
+	probed    []string // host:port of each ProbeStatus call
 	real      OSEnv
 	slept     time.Duration
 	prog      string // the program folder (stands for %ProgramFiles%\Unravis Blackbox)
@@ -90,8 +93,14 @@ func (e *fakeEnv) SecureDir(dir string, usersRead bool) error {
 func (e *fakeEnv) PortFree(string, int) error          { return e.portErr }
 func (e *fakeEnv) FolderWritable(string) error         { return e.folder }
 func (e *fakeEnv) FileSHA256(p string) (string, error) { return e.real.FileSHA256(p) }
-func (e *fakeEnv) ProbeStatus(int, string) error       { return e.probeErr }
-func (e *fakeEnv) Sleep(d time.Duration)               { e.slept += d }
+func (e *fakeEnv) ProbeStatus(host string, port int, _ string) error {
+	e.probed = append(e.probed, net.JoinHostPort(host, strconv.Itoa(port)))
+	if e.listensOn != "" && host != e.listensOn {
+		return errors.New("connection refused") // nothing listens on that address
+	}
+	return e.probeErr
+}
+func (e *fakeEnv) Sleep(d time.Duration) { e.slept += d }
 
 type fixedDisk struct{ free uint64 }
 
@@ -719,5 +728,42 @@ func TestOSEnvFolderWritableAndHash(t *testing.T) {
 	h, err := (OSEnv{}).FileSHA256(f)
 	if err != nil || h != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
 		t.Fatalf("%s %v", h, err)
+	}
+}
+
+func TestProbeHost(t *testing.T) {
+	for bind, want := range map[string]string{
+		"": "127.0.0.1", "0.0.0.0": "127.0.0.1", "::": "127.0.0.1", "[::]": "127.0.0.1",
+		"127.0.0.1": "127.0.0.1", "127.0.0.2": "127.0.0.2", "::1": "::1",
+		"10.0.0.5": "10.0.0.5", "192.168.1.20": "192.168.1.20", "fe80::1": "fe80::1",
+	} {
+		if got := ProbeHost(bind); got != want {
+			t.Errorf("ProbeHost(%q) = %q, want %q", bind, got, want)
+		}
+	}
+}
+
+// Review F5: install --bind <LAN address> failed and was undone, because the
+// probe only ever asked 127.0.0.1, where nothing listens.
+func TestInstallWithASpecificBindProbesThatAddress(t *testing.T) {
+	for _, tc := range []struct{ bind, listensOn, want string }{
+		{"10.0.0.5", "10.0.0.5", "10.0.0.5:7788"},
+		{"::1", "::1", "[::1]:7788"},
+		{"0.0.0.0", "127.0.0.1", "127.0.0.1:7788"},
+		{"127.0.0.1", "127.0.0.1", "127.0.0.1:7788"},
+	} {
+		g := newSvcRig(t)
+		g.env.listensOn = tc.listensOn
+		cfg := g.cfg
+		cfg.Bind = tc.bind
+		if _, err := g.m.Install(cfg); err != nil {
+			t.Fatalf("bind %s: %v", tc.bind, err)
+		}
+		if len(g.env.probed) == 0 || g.env.probed[0] != tc.want {
+			t.Fatalf("bind %s probed %v, want %s", tc.bind, g.env.probed, tc.want)
+		}
+		if g.svc.state != SvcRunning {
+			t.Fatalf("bind %s: service not left running", tc.bind)
+		}
 	}
 }

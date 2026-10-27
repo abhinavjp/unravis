@@ -47,6 +47,10 @@ type memEnv struct {
 	exe   string
 	port  error
 	prog  string
+	// listensOn, when set, makes the probe fail for any other host, as a
+	// service bound to one address would.
+	listensOn string
+	probed    []string
 }
 
 func (e *memEnv) IsAdmin() bool                       { return e.admin }
@@ -56,8 +60,14 @@ func (e *memEnv) SecureDir(string, bool) error        { return nil }
 func (e *memEnv) PortFree(string, int) error          { return e.port }
 func (e *memEnv) FolderWritable(string) error         { return nil }
 func (e *memEnv) FileSHA256(p string) (string, error) { return blackbox.OSEnv{}.FileSHA256(p) }
-func (e *memEnv) ProbeStatus(int, string) error       { return nil }
-func (e *memEnv) Sleep(time.Duration)                 {}
+func (e *memEnv) ProbeStatus(host string, _ int, _ string) error {
+	e.probed = append(e.probed, host)
+	if e.listensOn != "" && host != e.listensOn {
+		return errors.New("connection refused")
+	}
+	return nil
+}
+func (e *memEnv) Sleep(time.Duration) {}
 
 type bigDisk struct{}
 
@@ -364,5 +374,22 @@ func TestCommandsAfterInstallUseTheInstalledSettingsNotTheUnpackedCopy(t *testin
 	_, out2, _ := r2.do(append([]string{"install", "--json"}, r2.args...)...)
 	if !strings.Contains(out2, `"exePath":`) || !strings.Contains(out2, "Unravis Blackbox") {
 		t.Fatalf("%s", out2)
+	}
+}
+
+// Review F5: install --bind <specific address> must ask that address, not
+// loopback, whether the service is up.
+func TestInstallWithABindAddressProbesThatAddress(t *testing.T) {
+	r := newRig(t)
+	r.env.listensOn = "10.0.0.5"
+	c, out, errOut := r.do(append([]string{"install", "--bind", "10.0.0.5"}, r.args...)...)
+	if c != exitOK {
+		t.Fatalf("exit %d\n%s\n%s", c, out, errOut)
+	}
+	if len(r.env.probed) == 0 || r.env.probed[0] != "10.0.0.5" {
+		t.Fatalf("probed %v", r.env.probed)
+	}
+	if r.svc.state != blackbox.SvcRunning {
+		t.Fatal("service not left running")
 	}
 }

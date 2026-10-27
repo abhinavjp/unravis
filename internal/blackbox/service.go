@@ -3,6 +3,7 @@ package blackbox
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,9 +71,9 @@ type Env interface {
 	PortFree(bind string, port int) error
 	FolderWritable(dir string) error
 	FileSHA256(path string) (string, error)
-	// ProbeStatus checks the status page: it answers with the key and refuses
-	// without it.
-	ProbeStatus(port int, key string) error
+	// ProbeStatus checks the status page at host:port (see ProbeHost): it
+	// answers with the key and refuses without it.
+	ProbeStatus(host string, port int, key string) error
 	Sleep(d time.Duration)
 }
 
@@ -343,11 +344,27 @@ func (m *Manager) Install(cfg Config) (res InstallResult, err error) {
 	if werr := m.waitFor(SvcRunning, 15*time.Second); werr != nil {
 		return res, failedStart(werr)
 	}
-	if perr := m.Env.ProbeStatus(cfg.Port, key); perr != nil {
+	if perr := m.Env.ProbeStatus(ProbeHost(cfg.Bind), cfg.Port, key); perr != nil {
 		return res, failedStart(fmt.Errorf("the status page did not answer as expected: %w", perr))
 	}
 	return InstallResult{ReadKey: key, Service: ServiceName, Folder: cfg.Folder, Port: cfg.Port,
 		ExePath: exe, ConfigPath: p.ConfigPath, KeyPath: p.KeyPath}, nil
+}
+
+// ProbeHost is where to ask a service that listens on bind. A service bound to
+// every interface (0.0.0.0 or ::) answers on loopback; one bound to a specific
+// address, a LAN address or ::1, listens only there, so that is the address to
+// ask (nothing listens on 127.0.0.1 then).
+func ProbeHost(bind string) string {
+	ip := net.ParseIP(strings.Trim(bind, "[]"))
+	switch {
+	case bind == "" || (ip != nil && ip.IsUnspecified()):
+		return "127.0.0.1"
+	case ip == nil:
+		return bind
+	default:
+		return ip.String()
+	}
 }
 
 // samePath says whether two paths name the same file (Windows paths are not
