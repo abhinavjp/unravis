@@ -73,7 +73,18 @@ func (e OSElevator) Run(ctx context.Context, exe string, args []string, elevated
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(dir)
+	// finished is set once the elevated process has ended. Until then the folder is
+	// not removed: the process could still write the answer, which can hold the key.
+	finished := false
+	defer func() {
+		if finished {
+			os.RemoveAll(dir)
+		}
+	}()
+	if err := makePrivateDir(dir); err != nil {
+		os.RemoveAll(dir)
+		return nil, err
+	}
 	outPath := filepath.Join(dir, "answer.json")
 	parts := make([]string, 0, len(args)+1)
 	parts = append(parts, windows.EscapeArg(exe))
@@ -94,7 +105,12 @@ func (e OSElevator) Run(ctx context.Context, exe string, args []string, elevated
 		}
 		return nil, callErr
 	}
-	defer windows.CloseHandle(info.hProcess)
+	closeProc := true
+	defer func() {
+		if closeProc {
+			windows.CloseHandle(info.hProcess)
+		}
+	}()
 	limit := e.Timeout
 	if limit == 0 {
 		limit = 2 * time.Minute
@@ -107,10 +123,52 @@ func (e OSElevator) Run(ctx context.Context, exe string, args []string, elevated
 	select {
 	case ev := <-done:
 		if ev != windows.WAIT_OBJECT_0 {
+			closeProc = false
+			lateCleanup(info.hProcess, dir)
 			return nil, errors.New("the Blackbox program did not finish in time")
 		}
+		finished = true
 	case <-ctx.Done():
+		closeProc = false
+		lateCleanup(info.hProcess, dir)
 		return nil, ctx.Err()
 	}
 	return os.ReadFile(outPath)
+}
+
+// lateCleanup removes the answer folder after an elevated process that Unravis
+// stopped waiting for has ended, and closes its handle. A process that is still
+// running could write the answer (and the key in it) after the folder was removed.
+func lateCleanup(proc windows.Handle, dir string) {
+	go func() {
+		defer windows.CloseHandle(proc)
+		windows.WaitForSingleObject(proc, lateCleanupWait)
+		os.RemoveAll(dir)
+	}()
+}
+
+// lateCleanupWait is how long the late cleanup waits for the process to end.
+const lateCleanupWait = uint32(30 * 60 * 1000)
+
+// makePrivateDir limits dir to the signed-in user, administrators and the system,
+// with no inherited entries, so another account on the PC cannot read an answer
+// that holds a read key. (An administrator who approves the prompt with other
+// credentials still can write it.)
+func makePrivateDir(dir string) error {
+	tok := windows.GetCurrentProcessToken()
+	u, err := tok.GetTokenUser()
+	if err != nil {
+		return err
+	}
+	sddl := "D:PAI(A;OICI;FA;;;" + u.User.Sid.String() + ")(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)"
+	sd, err := windows.SecurityDescriptorFromString(sddl)
+	if err != nil {
+		return err
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
 }
