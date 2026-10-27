@@ -1,0 +1,615 @@
+package blackbox
+
+import (
+	"errors"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// fakeSvc is a service manager that lives in memory.
+type fakeSvc struct {
+	state    SvcState
+	spec     ServiceSpec
+	calls    []string
+	startErr error
+	stuck    bool // Start leaves the service pending
+	onStart  func()
+}
+
+func (f *fakeSvc) State(string) (SvcState, error) { return f.state, nil }
+func (f *fakeSvc) Create(spec ServiceSpec) error {
+	f.calls = append(f.calls, "create")
+	f.spec, f.state = spec, SvcStopped
+	return nil
+}
+func (f *fakeSvc) Start(string) error {
+	f.calls = append(f.calls, "start")
+	if f.onStart != nil {
+		f.onStart()
+	}
+	if f.startErr != nil {
+		return f.startErr
+	}
+	if f.stuck {
+		f.state = SvcStartPending
+	} else {
+		f.state = SvcRunning
+	}
+	return nil
+}
+func (f *fakeSvc) Stop(string) error {
+	f.calls = append(f.calls, "stop")
+	f.state = SvcStopped
+	return nil
+}
+func (f *fakeSvc) Delete(string) error {
+	f.calls = append(f.calls, "delete")
+	f.state = SvcNotInstalled
+	return nil
+}
+func (f *fakeSvc) did(c string) int {
+	n := 0
+	for _, x := range f.calls {
+		if x == c {
+			n++
+		}
+	}
+	return n
+}
+
+// fakeEnv answers for a machine we control. The "program" is a real file so its
+// hash can change or the file can go.
+type fakeEnv struct {
+	admin    bool
+	exe      string
+	portErr  error
+	folder   error
+	probeErr error
+	real     OSEnv
+	slept    time.Duration
+}
+
+func (e *fakeEnv) IsAdmin() bool                       { return e.admin }
+func (e *fakeEnv) ExePath() (string, error)            { return e.exe, nil }
+func (e *fakeEnv) PortFree(string, int) error          { return e.portErr }
+func (e *fakeEnv) FolderWritable(string) error         { return e.folder }
+func (e *fakeEnv) FileSHA256(p string) (string, error) { return e.real.FileSHA256(p) }
+func (e *fakeEnv) ProbeStatus(int, string) error       { return e.probeErr }
+func (e *fakeEnv) Sleep(d time.Duration)               { e.slept += d }
+
+type fixedDisk struct{ free uint64 }
+
+func (d fixedDisk) Free(string) (DiskInfo, error) { return DiskInfo{Free: d.free, Total: 1 << 40}, nil }
+
+type svcRig struct {
+	m    *Manager
+	svc  *fakeSvc
+	env  *fakeEnv
+	cfg  Config
+	p    Paths
+	root string
+}
+
+func newSvcRig(t *testing.T) *svcRig {
+	t.Helper()
+	root := t.TempDir()
+	exe := filepath.Join(root, "unravis-blackbox.exe")
+	if err := os.WriteFile(exe, []byte("MZ program"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Default()
+	cfg.Name = "web-b"
+	cfg.Folder = filepath.Join(root, "data", "UnravisBlackbox")
+	cfg.Port = 7788
+	g := &svcRig{svc: &fakeSvc{}, env: &fakeEnv{admin: true, exe: exe}, cfg: cfg, root: root,
+		p: Paths{ConfigPath: filepath.Join(root, "etc", "blackbox.json"), KeyPath: filepath.Join(root, "etc", "readkey.sha256")}}
+	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	g.m = &Manager{Svc: g.svc, Env: g.env, Disk: fixedDisk{free: 50 << 30}}
+	return g
+}
+
+// nothingLeft checks that a failed install left no service, folder, config or key.
+func (g *svcRig) nothingLeft(t *testing.T) {
+	t.Helper()
+	if g.svc.state != SvcNotInstalled {
+		t.Fatalf("service left behind: %s", g.svc.state)
+	}
+	for _, p := range []string{g.cfg.Folder, filepath.Dir(g.cfg.Folder), g.p.ConfigPath, g.p.KeyPath, g.p.ConfigPath + ".bak"} {
+		if _, err := os.Stat(p); err == nil && p != filepath.Join(g.root, "etc") {
+			t.Fatalf("left behind: %s", p)
+		}
+	}
+}
+
+func installReason(t *testing.T, err error) Reason {
+	t.Helper()
+	var ie *InstallError
+	if !errors.As(err, &ie) {
+		t.Fatalf("not an InstallError: %v", err)
+	}
+	return ie.Reason
+}
+
+func TestInstallHappyPath(t *testing.T) {
+	g := newSvcRig(t)
+	res, err := g.m.Install(g.cfg, g.p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.svc.state != SvcRunning || g.svc.spec.Name != ServiceName || g.svc.spec.ExePath != g.env.exe {
+		t.Fatalf("%+v %s", g.svc.spec, g.svc.state)
+	}
+	// The key is shown once and only its hash is kept.
+	kc, err := LoadKeyCheck(g.p.KeyPath)
+	if err != nil || !kc.Check(res.ReadKey) {
+		t.Fatalf("key hash: %v", err)
+	}
+	cfgText, _ := os.ReadFile(g.p.ConfigPath)
+	if strings.Contains(string(cfgText), res.ReadKey) {
+		t.Fatal("the key is in the config")
+	}
+	for _, a := range g.svc.spec.Args {
+		if strings.Contains(a, res.ReadKey) {
+			t.Fatal("the key is on the service command line")
+		}
+	}
+	got, err := LoadConfig(g.p.ConfigPath)
+	if err != nil || got.Name != "web-b" || got.Port != 7788 {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if st, _ := os.Stat(g.cfg.Folder); st == nil || !st.IsDir() {
+		t.Fatal("folder not made")
+	}
+}
+
+func TestInstallFiveFailureReasonsLeaveNothingBehind(t *testing.T) {
+	cases := []struct {
+		name   string
+		setup  func(g *svcRig)
+		reason Reason
+		text   string
+	}{
+		{"no admin", func(g *svcRig) { g.env.admin = false }, ReasonNoAdmin, "administrator"},
+		{"port busy", func(g *svcRig) { g.env.portErr = errors.New("in use") }, ReasonPortBusy, "Port 7788 is busy"},
+		{"read-only folder", func(g *svcRig) { g.env.folder = errors.New("access denied") }, ReasonFolder, "read-only or has under 1 GB free"},
+		{"disk nearly full", func(g *svcRig) { g.m.Disk = fixedDisk{free: 100 << 20} }, ReasonFolder, "under 1 GB free"},
+		{"antivirus ate the program", func(g *svcRig) {
+			g.svc.onStart = func() { _ = os.Remove(g.env.exe) }
+			g.svc.startErr = errors.New("the file cannot be found")
+		}, ReasonAntivirus, "Antivirus blocked it"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g := newSvcRig(t)
+			c.setup(g)
+			_, err := g.m.Install(g.cfg, g.p)
+			if err == nil {
+				t.Fatal("install should fail")
+			}
+			if r := installReason(t, err); r != c.reason {
+				t.Fatalf("reason %s: %v", r, err)
+			}
+			if !strings.Contains(err.Error(), c.text) {
+				t.Fatalf("message %q lacks %q", err.Error(), c.text)
+			}
+			g.nothingLeft(t)
+		})
+	}
+}
+
+func TestInstallTwiceSaysAlreadyInstalledAndKeepsTheFirst(t *testing.T) {
+	g := newSvcRig(t)
+	first, err := g.m.Install(g.cfg, g.p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first install is running and holds the port: the second must still say
+	// "already installed", not "port busy".
+	g.env.portErr = errors.New("in use")
+	_, err = g.m.Install(g.cfg, g.p)
+	if installReason(t, err) != ReasonExists {
+		t.Fatalf("%v", err)
+	}
+	if g.svc.state != SvcRunning || g.svc.did("create") != 1 || g.svc.did("delete") != 0 {
+		t.Fatalf("the first install was disturbed: %v", g.svc.calls)
+	}
+	kc, _ := LoadKeyCheck(g.p.KeyPath)
+	if !kc.Check(first.ReadKey) {
+		t.Fatal("the first key was replaced")
+	}
+	if _, err := os.Stat(g.cfg.Folder); err != nil {
+		t.Fatal("the first folder was removed")
+	}
+}
+
+func TestInstallUndoKeepsPreviousConfigAndKey(t *testing.T) {
+	g := newSvcRig(t)
+	if err := os.WriteFile(g.p.ConfigPath, []byte(`{"old":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(g.p.KeyPath, []byte("oldhash"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g.svc.startErr = errors.New("boom")
+	if _, err := g.m.Install(g.cfg, g.p); err == nil {
+		t.Fatal("should fail")
+	}
+	b, _ := os.ReadFile(g.p.ConfigPath)
+	k, _ := os.ReadFile(g.p.KeyPath)
+	if string(b) != `{"old":true}` || string(k) != "oldhash" {
+		t.Fatalf("not restored: %q %q", b, k)
+	}
+}
+
+func TestInstallServiceThatNeverRunsOrAnswersIsUndone(t *testing.T) {
+	g := newSvcRig(t)
+	g.svc.stuck = true
+	_, err := g.m.Install(g.cfg, g.p)
+	if installReason(t, err) != ReasonOther {
+		t.Fatalf("%v", err)
+	}
+	g.svc.stuck = false
+	g.nothingLeft(t)
+
+	g2 := newSvcRig(t)
+	g2.env.probeErr = errors.New("connection refused")
+	_, err = g2.m.Install(g2.cfg, g2.p)
+	if installReason(t, err) != ReasonOther {
+		t.Fatalf("%v", err)
+	}
+	g2.nothingLeft(t)
+}
+
+func TestInstallRefusesBadConfigBeforeTouchingAnything(t *testing.T) {
+	g := newSvcRig(t)
+	g.cfg.Port = 0
+	if _, err := g.m.Install(g.cfg, g.p); err == nil {
+		t.Fatal("accepted")
+	}
+	if len(g.svc.calls) != 0 {
+		t.Fatalf("%v", g.svc.calls)
+	}
+}
+
+func TestStartStopApply(t *testing.T) {
+	g := newSvcRig(t)
+	if err := g.m.Start(); !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("%v", err)
+	}
+	if _, err := g.m.Install(g.cfg, g.p); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.m.Stop(); err != nil || g.svc.state != SvcStopped {
+		t.Fatalf("%v %s", err, g.svc.state)
+	}
+	if err := g.m.Stop(); err != nil {
+		t.Fatal("stopping a stopped service must not fail")
+	}
+	// Apply on a stopped service changes nothing running.
+	res, err := g.m.Apply(g.p.ConfigPath)
+	if err != nil || res.Restarted {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if err := g.m.Start(); err != nil || g.svc.state != SvcRunning {
+		t.Fatalf("%v", err)
+	}
+	if err := g.m.Start(); err != nil {
+		t.Fatal("starting a running service must not fail")
+	}
+	before := g.svc.did("start")
+	res, err = g.m.Apply(g.p.ConfigPath)
+	if err != nil || !res.Restarted || g.svc.did("start") != before+1 || g.svc.state != SvcRunning {
+		t.Fatalf("%+v %v %v", res, err, g.svc.calls)
+	}
+}
+
+func TestApplyWithBrokenConfigStopsNothing(t *testing.T) {
+	g := newSvcRig(t)
+	if _, err := g.m.Install(g.cfg, g.p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(g.p.ConfigPath, []byte(`{"port": 0, "keepDays": `), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stops := g.svc.did("stop")
+	if _, err := g.m.Apply(g.p.ConfigPath); err == nil {
+		t.Fatal("accepted a broken file")
+	}
+	if g.svc.did("stop") != stops || g.svc.state != SvcRunning {
+		t.Fatal("the recorder was stopped by a typo")
+	}
+}
+
+func TestServiceCommandsNeedAdmin(t *testing.T) {
+	g := newSvcRig(t)
+	g.env.admin = false
+	if err := g.m.Start(); !errors.Is(err, ErrNotAdmin) {
+		t.Fatal(err)
+	}
+	if err := g.m.Stop(); !errors.Is(err, ErrNotAdmin) {
+		t.Fatal(err)
+	}
+	if _, err := g.m.Apply(g.p.ConfigPath); !errors.Is(err, ErrNotAdmin) {
+		t.Fatal(err)
+	}
+	if _, err := g.m.Remove(g.cfg, g.p.KeyPath, false, ""); !errors.Is(err, ErrNotAdmin) {
+		t.Fatal(err)
+	}
+}
+
+func TestRemoveKeepsRecordingsUnlessAskedAndNamed(t *testing.T) {
+	g := newSvcRig(t)
+	if _, err := g.m.Install(g.cfg, g.p); err != nil {
+		t.Fatal(err)
+	}
+	rec := filepath.Join(g.cfg.Folder, FileNameFor(t0))
+	stranger := filepath.Join(g.cfg.Folder, "my-notes.txt")
+	for _, f := range []string{rec, filepath.Join(g.cfg.Folder, ManifestName), stranger} {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Wrong name: nothing at all is changed.
+	if _, err := g.m.Remove(g.cfg, g.p.KeyPath, true, "web-c"); !errors.Is(err, ErrConfirmName) {
+		t.Fatalf("%v", err)
+	}
+	if g.svc.state != SvcRunning {
+		t.Fatal("service touched before the name was confirmed")
+	}
+	// Plain remove: service and key go, recordings stay.
+	res, err := g.m.Remove(g.cfg, g.p.KeyPath, false, "")
+	if err != nil || !res.ServiceRemoved || res.RecordingsDeleted {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if _, err := os.Stat(rec); err != nil {
+		t.Fatal("recordings were deleted")
+	}
+	if _, err := os.Stat(g.p.KeyPath); err == nil {
+		t.Fatal("key hash left behind")
+	}
+	// Remove again, with recordings and the right name.
+	res, err = g.m.Remove(g.cfg, g.p.KeyPath, true, "web-b")
+	if err != nil || !res.RecordingsDeleted || res.FilesDeleted != 2 {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if _, err := os.Stat(rec); err == nil {
+		t.Fatal("recording left")
+	}
+	if _, err := os.Stat(stranger); err != nil {
+		t.Fatal("a file that is not the Blackbox's was deleted")
+	}
+	if _, err := os.Stat(g.cfg.Folder); err != nil {
+		t.Fatal("a folder with someone else's file in it was removed")
+	}
+}
+
+func TestRemoveWhenNothingIsInstalled(t *testing.T) {
+	g := newSvcRig(t)
+	if _, err := g.m.Remove(g.cfg, g.p.KeyPath, false, ""); !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestRemoveStopsARunningServiceFirst(t *testing.T) {
+	g := newSvcRig(t)
+	if _, err := g.m.Install(g.cfg, g.p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.m.Remove(g.cfg, g.p.KeyPath, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	n := len(g.svc.calls)
+	if g.svc.calls[n-2] != "stop" || g.svc.calls[n-1] != "delete" {
+		t.Fatalf("%v", g.svc.calls)
+	}
+}
+
+func TestRemoveRecordingsRemovesFolderWhenEmpty(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "rec")
+	_ = os.MkdirAll(filepath.Join(dir, SnapshotsDir, "x"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, FileNameFor(t0)), []byte("a"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, ManifestName+".bad-20261027"), []byte("a"), 0o644)
+	n, err := RemoveRecordings(dir)
+	if err != nil || n != 3 {
+		t.Fatalf("%d %v", n, err)
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Fatal("empty folder kept")
+	}
+	if n, err := RemoveRecordings(dir); err != nil || n != 0 {
+		t.Fatalf("missing folder: %d %v", n, err)
+	}
+}
+
+// ---- snapshot ----
+
+func snapRig(t *testing.T) (Config, string) {
+	t.Helper()
+	cfg := Default()
+	cfg.Name = "web-b"
+	cfg.Folder = t.TempDir()
+	logs := t.TempDir()
+	cfg.LogPaths = []string{logs}
+	for i, h := range []time.Time{t0, t0.Add(time.Hour)} {
+		if err := os.WriteFile(filepath.Join(cfg.Folder, FileNameFor(h)), []byte(strings.Repeat("{}\n", 10+i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = os.WriteFile(filepath.Join(cfg.Folder, ManifestName), []byte(`{"format":1}`), 0o644)
+	_ = os.WriteFile(filepath.Join(cfg.Folder, "readkey.sha256"), []byte("secret-hash"), 0o644)
+	return cfg, logs
+}
+
+func TestSnapshotCopiesRecordingsNotLogsByDefault(t *testing.T) {
+	cfg, logs := snapRig(t)
+	writeLog(t, logs, "u_ex.log")
+	now := time.Date(2026, 10, 27, 11, 5, 0, 0, time.Local)
+	res, err := Snapshot(cfg, now, SnapshotOptions{Disk: fixedDisk{free: 1 << 30}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(res.Dir) != "web-b-2026-10-27-1105" || filepath.Base(filepath.Dir(res.Dir)) != SnapshotsDir {
+		t.Fatalf("%s", res.Dir)
+	}
+	if res.Recordings != 2 || res.Logs != 0 {
+		t.Fatalf("%+v", res)
+	}
+	ents, _ := os.ReadDir(res.Dir)
+	var names []string
+	for _, e := range ents {
+		names = append(names, e.Name())
+	}
+	joined := strings.Join(names, " ")
+	if !strings.Contains(joined, ManifestName) || strings.Contains(joined, "readkey") || strings.Contains(joined, "logs") {
+		t.Fatalf("%v", names)
+	}
+	// Recordings are byte for byte.
+	a, _ := os.ReadFile(filepath.Join(cfg.Folder, FileNameFor(t0)))
+	b, _ := os.ReadFile(filepath.Join(res.Dir, FileNameFor(t0)))
+	if string(a) != string(b) {
+		t.Fatal("not copied as they are")
+	}
+}
+
+func TestSnapshotCopiesLogsOnlyWhenSettingIsTicked(t *testing.T) {
+	cfg, logs := snapRig(t)
+	cfg.Record.CopyLogsOnSnapshot = true
+	writeLog(t, logs, "u_ex.log")
+	old := filepath.Join(logs, "old.log")
+	writeLog(t, logs, "old.log")
+	_ = os.Chtimes(old, t0.Add(-48*time.Hour), t0.Add(-48*time.Hour))
+	_ = os.Chtimes(filepath.Join(logs, "u_ex.log"), t0.Add(30*time.Minute), t0.Add(30*time.Minute))
+	res, err := Snapshot(cfg, time.Now(), SnapshotOptions{Disk: fixedDisk{free: 1 << 30}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Logs != 1 {
+		t.Fatalf("%+v", res)
+	}
+	ents, _ := os.ReadDir(filepath.Join(res.Dir, "logs"))
+	if len(ents) != 1 || !strings.HasSuffix(ents[0].Name(), "u_ex.log") {
+		t.Fatalf("%v", ents)
+	}
+}
+
+func TestSnapshotTwiceInOneMinuteKeepsBoth(t *testing.T) {
+	cfg, _ := snapRig(t)
+	now := time.Date(2026, 10, 27, 11, 5, 0, 0, time.Local)
+	a, err1 := Snapshot(cfg, now, SnapshotOptions{Disk: fixedDisk{free: 1 << 30}})
+	b, err2 := Snapshot(cfg, now, SnapshotOptions{Disk: fixedDisk{free: 1 << 30}})
+	if err1 != nil || err2 != nil || a.Dir == b.Dir {
+		t.Fatalf("%v %v %s %s", err1, err2, a.Dir, b.Dir)
+	}
+}
+
+func TestSnapshotDriveFullIsRefusedUpFrontAndLeavesNothing(t *testing.T) {
+	cfg, _ := snapRig(t)
+	_, err := Snapshot(cfg, time.Now(), SnapshotOptions{Disk: fixedDisk{free: 5}})
+	var se *SnapshotError
+	if !errors.As(err, &se) || se.Reason != SnapDriveFull || !strings.Contains(se.Message, "The drive is full") {
+		t.Fatalf("%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Folder, SnapshotsDir)); err == nil {
+		t.Fatal("snapshots folder left")
+	}
+}
+
+func TestSnapshotFailureMidwayRemovesHalfSnapshot(t *testing.T) {
+	cfg, _ := snapRig(t)
+	calls := 0
+	opt := SnapshotOptions{Disk: fixedDisk{free: 1 << 30}, CopyFile: func(src, dst string) (int64, error) {
+		calls++
+		if calls == 2 {
+			return 0, &openErr{errors.New("The process cannot access the file because it is being used by another process.")}
+		}
+		return defaultCopy(src, dst)
+	}}
+	_, err := Snapshot(cfg, time.Now(), opt)
+	var se *SnapshotError
+	if !errors.As(err, &se) || se.Reason != SnapFileOpen || !strings.Contains(se.Message, "open in another program") {
+		t.Fatalf("%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Folder, SnapshotsDir)); err == nil {
+		t.Fatal("half snapshot left")
+	}
+
+	// Disk fills during the copy.
+	calls = 0
+	opt.CopyFile = func(src, dst string) (int64, error) {
+		calls++
+		if calls == 2 {
+			return 0, errors.New("There is not enough space on the disk.")
+		}
+		return defaultCopy(src, dst)
+	}
+	_, err = Snapshot(cfg, time.Now(), opt)
+	if !errors.As(err, &se) || se.Reason != SnapDriveFull {
+		t.Fatalf("%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Folder, SnapshotsDir)); err == nil {
+		t.Fatal("half snapshot left")
+	}
+}
+
+func TestSnapshotKeepsEarlierSnapshotsOnFailure(t *testing.T) {
+	cfg, _ := snapRig(t)
+	first, err := Snapshot(cfg, time.Date(2026, 10, 27, 9, 0, 0, 0, time.Local), SnapshotOptions{Disk: fixedDisk{free: 1 << 30}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Snapshot(cfg, time.Date(2026, 10, 27, 10, 0, 0, 0, time.Local), SnapshotOptions{Disk: fixedDisk{free: 1 << 30},
+		CopyFile: func(string, string) (int64, error) { return 0, &openErr{errors.New("locked")} }})
+	if err == nil {
+		t.Fatal("should fail")
+	}
+	if _, err := os.Stat(first.Dir); err != nil {
+		t.Fatal("an earlier snapshot was removed")
+	}
+}
+
+func TestSnapshotWithNoRecordings(t *testing.T) {
+	cfg := Default()
+	cfg.Name = "box"
+	cfg.Folder = t.TempDir()
+	if _, err := Snapshot(cfg, time.Now(), SnapshotOptions{Disk: fixedDisk{free: 1 << 30}}); err == nil {
+		t.Fatal("empty snapshot made")
+	}
+}
+
+func TestOSEnvPortFreeSeesARealListener(t *testing.T) {
+	ln, err := Listen("127.0.0.1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	n := ln.Addr().(*net.TCPAddr).Port
+	if (OSEnv{}).PortFree("127.0.0.1", n) == nil {
+		t.Fatal("a busy port was reported free")
+	}
+	ln.Close()
+	if err := (OSEnv{}).PortFree("127.0.0.1", n); err != nil {
+		t.Fatalf("a free port was reported busy: %v", err)
+	}
+}
+
+func TestOSEnvFolderWritableAndHash(t *testing.T) {
+	dir := t.TempDir()
+	if err := (OSEnv{}).FolderWritable(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := (OSEnv{}).FolderWritable(filepath.Join(dir, "nope")); err == nil {
+		t.Fatal("missing folder is not writable")
+	}
+	f := filepath.Join(dir, "a")
+	_ = os.WriteFile(f, []byte("abc"), 0o644)
+	h, err := (OSEnv{}).FileSHA256(f)
+	if err != nil || h != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
+		t.Fatalf("%s %v", h, err)
+	}
+}
