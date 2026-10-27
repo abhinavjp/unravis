@@ -25,7 +25,7 @@ test('the rail has eleven steps, 0 to 10, and shows the engine word for every st
 
 test('before an answer a step is Waiting, during a run Running, and neither is a pass word', () => {
   assert.deepEqual(m.stickerFor(null, 4, 'idle'), { word: 'Waiting', tone: 'waiting', outOfDate: false });
-  assert.equal(m.stickerFor(null, 4, 'failed').word, 'Waiting');
+  assert.deepEqual(m.stickerFor(null, 4, 'failed'), { word: 'Failed', tone: 'failed', outOfDate: false });
   assert.equal(m.stickerFor(result(), 4, 'running').word, 'Running');
   assert.equal(m.stickerFor(result({ steps: [] }), 4, 'done').word, 'Waiting');
 });

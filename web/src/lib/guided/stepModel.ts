@@ -39,7 +39,8 @@ export const stepOf = (result: Result | null | undefined, n: number): Step | und
 export function stickerFor(result: Result | null | undefined, n: number, phase: RunPhase, outOfDate = false): Sticker {
   if (phase === 'running') return { word: 'Running', tone: 'running', outOfDate: false };
   const step = stepOf(result, n);
-  if (!step) return { word: 'Waiting', tone: 'waiting', outOfDate: false };
+  // A run that failed before any answer arrived says Failed, not Waiting: nothing is pending any more.
+  if (!step) return phase === 'failed' && !result ? { word: 'Failed', tone: 'failed', outOfDate: false } : { word: 'Waiting', tone: 'waiting', outOfDate: false };
   return { word: step.readiness, tone: TONE[step.readiness] ?? 'cannot', outOfDate };
 }
 
