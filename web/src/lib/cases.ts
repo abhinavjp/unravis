@@ -309,13 +309,13 @@ export async function putRetries(id: string, items: readonly RetryInput[], signa
   return toRetries(body.retries);
 }
 
-export async function deleteRetry(id: string, retryId: number, signal?: AbortSignal): Promise<void> {
-  await send(casePath(id, '/retries/' + encodeURIComponent(String(retryId))), { method: 'DELETE' }, signal);
+export async function deleteRetry(id: string, retryId: number, believed?: CaseState, signal?: AbortSignal): Promise<void> {
+  await send(casePath(id, '/retries/' + encodeURIComponent(String(retryId))), { method: 'DELETE', ...expecting(believed) }, signal);
 }
 
 /** Asks the server to do one item again and drop it from the list. Only environments and plain tags can be done there; the rest answer 422 retry-in-page. */
-export async function runRetry(id: string, retryId: number, signal?: AbortSignal): Promise<void> {
-  await send(casePath(id, '/retries/' + encodeURIComponent(String(retryId)) + '/retry'), { method: 'POST' }, signal);
+export async function runRetry(id: string, retryId: number, believed?: CaseState, signal?: AbortSignal): Promise<void> {
+  await send(casePath(id, '/retries/' + encodeURIComponent(String(retryId)) + '/retry'), { method: 'POST', ...expecting(believed) }, signal);
 }
 
 export const retryInPage = (error: unknown): boolean => error instanceof CaseApiError && error.reason === 'retry-in-page';

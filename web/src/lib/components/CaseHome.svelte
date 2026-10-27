@@ -159,7 +159,7 @@
     tryingId = item.id;
     retryNote = { ...retryNote, [item.id]: '' };
     try {
-      await runRetry(id, item.id);
+      await runRetry(id, item.id, believedState(info));
       await rereadFiles();
     } catch (error) {
       if (retryInPage(error)) retryNote = { ...retryNote, [item.id]: CASE_HOME_TEXT.retryInPage };
@@ -172,7 +172,7 @@
     const id = caseId;
     if (tryingId !== 0) return;
     tryingId = item.id;
-    try { await deleteRetry(id, item.id); await rereadFiles(); } catch (error) { lifeFailed(error); } finally { tryingId = 0; }
+    try { await deleteRetry(id, item.id, info ? believedState(info) : undefined); await rereadFiles(); } catch (error) { lifeFailed(error); } finally { tryingId = 0; }
   }
 
   $effect(() => {

@@ -419,6 +419,19 @@ test('p2: a retry after a failed create sends the same request id, so the server
   assert.equal(second.caseId, '');
 });
 
+test('p2: a title changed after a lost reply is another case and gets its own request id', async () => {
+  freshDraft('Before the edit');
+  const api = fakeApi({ createLosesReply: true });
+  await C.createNow(api);
+  assert.equal(C.caseMade(), false, 'the reply was lost');
+  W.wizard.title = 'After the edit';
+  await C.createNow(api);
+  assert.equal(api.server.requestIds.length, 2);
+  assert.notEqual(api.server.requestIds[0], api.server.requestIds[1], 'a new title is not answered with the first case');
+  assert.equal(api.server.cases.length, 2);
+  W.wizard.title = 'After the edit';
+});
+
 test('p2: a new wizard run gets a new request id', async () => {
   freshDraft('First run');
   const api = fakeApi();

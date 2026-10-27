@@ -131,8 +131,10 @@ test('p2: the retry list is read with the case, put as a replacement, removed on
     assert.equal(put[0].id, 4);
     assert.equal(calls[1].method, 'PUT');
     assert.match(calls[1].url, /\/retries$/);
-    await cases.deleteRetry(CASE_ID, 4);
-    await cases.runRetry(CASE_ID, 4);
+    await cases.deleteRetry(CASE_ID, 4, 'open');
+    await cases.runRetry(CASE_ID, 4, 'open');
+    assert.equal(calls[2].headers.get('X-Expect-State'), 'open', 'removing an item says which state the page believes');
+    assert.equal(calls[3].headers.get('X-Expect-State'), 'open', 'so does trying one again');
     assert.equal(calls[2].method, 'DELETE');
     assert.match(calls[2].url, /\/retries\/4$/);
     assert.match(calls[3].url, /\/retries\/4\/retry$/);

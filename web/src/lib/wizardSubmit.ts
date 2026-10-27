@@ -40,6 +40,8 @@ export interface SubmitState {
   caseTitle: string;
   /** The create request id for this run. Empty until the case is first asked for. */
   requestId: string;
+  /** The title the request id was made for. A changed title is a different case, so it gets its own id. */
+  requestTitle: string;
   /** Why the case could not be made (no case exists then). */
   createError: string;
   envs: StepState;
@@ -53,7 +55,7 @@ export interface SubmitState {
 }
 
 export const blankSubmitState = (): SubmitState => ({
-  caseId: '', caseTitle: '', requestId: '', createError: '', envs: { status: 'waiting', reason: '' }, tags: {}, audit: {}, imports: {}, locked: false, finished: false
+  caseId: '', caseTitle: '', requestId: '', requestTitle: '', createError: '', envs: { status: 'waiting', reason: '' }, tags: {}, audit: {}, imports: {}, locked: false, finished: false
 });
 
 /** What the review step hands over. Titles, environments and tags are already cleaned by the draft. */
@@ -258,7 +260,9 @@ async function execute(input: SubmitInput, api: SubmitApi, state: SubmitState): 
       state.createError = '';
       try {
         // The reply may be lost after the server made the case: asking again with the same request id returns that same case.
-        if (!state.requestId) state.requestId = requestIdFor(input.title);
+        // A title changed after a lost reply is another case: it must not be answered with the first one.
+        const titleNow = input.title.trim();
+        if (!state.requestId || state.requestTitle !== titleNow) { state.requestId = requestIdFor(input.title); state.requestTitle = titleNow; }
         const requestId = state.requestId;
         const made = await guarded(() => api.createCase(input.title, requestId));
         state.caseId = made.id;
