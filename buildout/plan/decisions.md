@@ -58,30 +58,46 @@ Part B lists planner proposals. They are marked PROPOSAL and stand until the own
 - A37. Housekeeping cannot be turned off. Defaults: keep 7 days, 2 GB, 10% free disk, folder `D:\UnravisBlackbox`.
 - A38. On this PC: Install, Start, Apply settings (restarts), Stop, Remove, "Delete the recordings too" (type the name to confirm), Snapshot. Service changes need admin approval. Another server gets user-run steps only (`sc stop UnravisBlackbox`, `sc delete UnravisBlackbox`).
 - A39. Install failure reasons: no admin rights, port busy, folder not writable or less than 1 GB free, service already exists, antivirus. A failed install is undone.
-- A40. SQL probe: in Release 1, optional, OFF by default, ticked per Blackbox, SQL Server only. Limits: 5 s timeout, LOCK_TIMEOUT 2 s, DEADLOCK_PRIORITY LOW, every 15 s. Read-only; creates nothing on the server. Where its login is stored is UNDECIDED (open question Q1).
+- A40. SQL probe: NOT in Release 1 (owner ruling 2026-10-27, A43). It reverses the earlier "optional, off by default" ruling. The design stays for a later release: optional, OFF by default, ticked per Blackbox, SQL Server only; 5 s timeout, LOCK_TIMEOUT 2 s, DEADLOCK_PRIORITY LOW, every 15 s; read-only, creates nothing on the server; login storage to be decided then.
 
 ### Brand
 
 - A41. Dark by default, follows the system theme, `data-theme` forces it. IBM Plex Sans and Mono bundled. Accent `#3fd6b0` (dark) / `#0b6b57` (light). Radius 2 px. Pending is hatched, never green.
 - A42. Installer: same tokens and fonts, 56 px header with brand mark, left step rail with a 2 px accent marker, one primary button bottom right, step stickers Waiting / Running / Done / Failed, thin accent progress bar, admin approval explained before the Windows prompt.
 
+### Owner rulings on the open questions (2026-10-27)
+
+Answered in the visual walkthrough. They replace the planner picks for Q1 to Q10 in plan.md.
+
+- A43. Q1: no Blackbox SQL probe in Release 1. P10 moves to Deferred.
+- A44. Q2: Unravis stays a per-user app (not a service) but its data is shared by everyone who uses the PC. Owner's words: "Everything shared, but noone can see any passwords ever and they should not be able to bypass and hack anything". Shared means cases, saved connections and settings, kept in one machine-wide data folder (`C:\ProgramData\Unravis`) with locked permissions.
+- A45. Q2 safety: a small helper service (the key keeper) holds the sealing key. Saved passwords are sealed to a dedicated service account. Users and the UI can only ask the keeper to open a connection; no one can ask it for the password itself (extends A2). Honest limit, shown in docs: a local administrator can stop the service or take over the machine, and no local scheme fully stops that. The plan states the limit and logs every keeper request.
+- A46. Q3: installer is a Go single-file installer with an embedded web UI.
+- A47. Q4: installer window is an app window (WebView2), falling back to Edge or Chrome app mode, then the default browser.
+- A48. Q5: code signing through SignPath Foundation (free for open source). Condition: the repo must be public and meet their rules, and each release needs an approval. Until approved, releases ship unsigned with SHA-256 checksums and docs about the SmartScreen warning.
+- A49. Q6: docs live in the repo (`docs/user/`) and the same pages are embedded as in-app help.
+- A50. Q7: case identity is the long id plus an 8-character short code shown to users (spec v7 stands).
+- A51. Q8: if the server has no modern browser, the installer warns, links to Edge, and carries on. It never blocks.
+- A52. Q9: update check is a manual "Check for updates" button only. No background network calls.
+- A53. Q10: the firewall rule for port 7788 is opt-in and scoped to addresses the owner types. Without a rule the Blackbox answers on loopback only.
+
 ## Part B: planner proposals
 
 Each stands as the plan's default. Owner can overturn any of them.
 
 - B1. PROPOSAL: Release 1 includes the Blackbox, even though spec v7 lists it as out of scope. Reason: later owner decisions (A31 to A40) put it in.
-- B2. PROPOSAL: Unravis stays a per-user app, started at sign-in by a shortcut, not a Windows service. Only the Blackbox is a service. Reason: user-scope DPAPI, the per-user session file and browser opening all assume a signed-in user. See Q2.
-- B3. PROPOSAL: Installer technology is a Go self-extracting installer (`cmd/unravis-setup`) with an embedded local web UI. Reason in installer-and-releases.md. See Q3.
-- B4. PROPOSAL: Installer window is a WebView2 window when the runtime is present, otherwise Edge or Chrome in `--app` mode, otherwise the default browser. See Q4.
+- B2. SETTLED as A44 and A45 with a change: Unravis stays a per-user app started at sign-in, but its data moves to a shared machine-wide folder and a small key-keeper service holds the sealing key. The Blackbox is also a service. Details of the keeper are PROPOSALS in plan.md P14.
+- B3. SETTLED as A46. Installer is a Go self-extracting installer (`cmd/unravis-setup`) with an embedded local web UI.
+- B4. SETTLED as A47. WebView2 window, else Edge or Chrome `--app`, else the default browser.
 - B5. PROPOSAL: The installer runs as two processes: an unelevated UI process and an elevated worker started with "run as administrator", talking over a named pipe locked to the current user. Reason: an elevated process must never open the browser or the app.
 - B6. PROPOSAL: Brand tokens move from the top of `web/src/app.css` to `web/src/brand/tokens.css`. The app and the installer both import that one file. A test fails on colour literals outside it (with a short allowlist).
 - B7. PROPOSAL: Version comes from a git tag `vX.Y.Z`, stamped with Go ldflags into `internal/version`. Local builds say `git describe` output; untagged builds say `dev`.
 - B8. PROPOSAL: Screenshots are taken by Playwright against `unravis.exe --demo` with a fixed demo clock (`UNRAVIS_DEMO_NOW`, honoured only with `--demo`), viewport 1440x900 (plus 390x844 for a few screens), both themes, timezone UTC, locale en-GB. Captures go to `buildout/screenshots/<phase>/<id>-<theme>.png`. The CI Windows runner is the reference renderer.
 - B9. PROPOSAL: Demo gains capture-only cases: with `--demo` and `UNRAVIS_DEMO_CASES=1` and `AUDIT_CONFIG_DIR` set, a seeded case store is opened in that folder. Plain `--demo` is unchanged and still writes nothing.
-- B10. PROPOSAL: Draft docs live in `buildout/docs/` during the build. Final location decided in Q6; the plan's default is `docs/user/` in the repo plus the same pages embedded as in-app help.
-- B11. PROPOSAL: Update check is a manual "Check for updates" button that calls the GitHub `releases/latest` API. No background calls, no auto-download.
-- B12. PROPOSAL: The firewall rule for port 7788 is opt-in, scoped to a remote address list the owner types, and shown as a script when the target is another server.
-- B13. PROPOSAL: The pipeline signs only when signing secrets are present. Unsigned builds are still published with SHA-256 checksums and docs that explain the SmartScreen warning.
+- B10. Draft docs live in `buildout/docs/` during the build. Final location is settled as A49: `docs/user/` in the repo plus the same pages embedded as in-app help.
+- B11. SETTLED as A52. Manual "Check for updates" button that calls the GitHub `releases/latest` API. No background calls, no auto-download.
+- B12. SETTLED as A53. The firewall rule is opt-in, scoped to a remote address list the owner types, and shown as a script when the target is another server.
+- B13. PROPOSAL: The pipeline signs through SignPath (A48) only when it is approved and the repo is public. Unsigned builds are still published with SHA-256 checksums and docs that explain the SmartScreen warning.
 - B14. PROPOSAL: Investigation logic lives in a new package `internal/investigate` (facts, signals, evaluation), pure functions, golden tests. The UI only renders its output.
 - B15. PROPOSAL: Blackbox recorder is a new binary `cmd/unravis-blackbox` that reuses `internal/sampler`, writes a manifest plus NDJSON files per hour, and serves status on 7788.
 - B16. PROPOSAL: A clumsy-user review follows each phase: someone tries to break the shipped screens; each finding becomes a test or a recorded "won't fix".

@@ -1,6 +1,6 @@
 # Installer and releases
 
-Detail behind plan phases P11 (installer) and P12 (release pipeline). Every choice here is a planner proposal unless decisions.md Part A says otherwise. Open questions Q2 to Q5, Q8, Q9 and Q10 in plan.md can change it.
+Detail behind plan phases P11 (installer) and P12 (release pipeline). Every choice here is a planner proposal unless decisions.md Part A says otherwise. The owner answered Q1 to Q10 on 2026-10-27 (decisions.md A43 to A53): Go single-file installer, app window with browser fallback, SignPath signing, warn-and-continue without a browser, manual update check, opt-in scoped firewall rule. Q2 adds a shared data folder and a key-keeper service (P14) that the installer must create, upgrade, repair and remove, and undo on rollback.
 
 ## 1. Installer technology
 
@@ -322,9 +322,13 @@ A `--capture` mode (only in builds with a `capture` build tag, never in release 
 | OV certificate on a cloud HSM or hardware token | Yearly fee | Publisher name on UAC; reputation builds over time | Cloud HSM works in CI; a USB token does not |
 | EV certificate | Higher yearly fee | Same as OV since Microsoft removed instant SmartScreen reputation for EV | As OV |
 
+### Owner choice: SignPath Foundation (A48)
+
+SignPath needs the repository to be public and to meet their rules, and each release needs an approval in their service. Check the repo's visibility and apply before P12 starts. Until it is approved the pipeline ships the unsigned case below.
+
 ### Plan for both cases
 
-- The pipeline has a `sign` step that runs only when the secret `SIGNING_METHOD` is set. It signs `unravis.exe`, `unravis-blackbox.exe` and `unravis-setup.exe` (inner binaries first, then the installer that embeds them), with an RFC 3161 timestamp.
+- The pipeline has a `sign` step that runs only when the secret `SIGNING_METHOD` is set. It signs `unravis.exe`, `unravis-blackbox.exe`, `unravis-keeper.exe` and `unravis-setup.exe` (inner binaries first, then the installer that embeds them), with an RFC 3161 timestamp.
 - Unsigned release: release notes and `install.md` show the SmartScreen screen and explain "More info", then "Run anyway", and how to check the SHA-256 with `Get-FileHash`. Builds are submitted to Microsoft's malware analysis portal to reduce antivirus false alarms.
 - Signed release: `install.md` shows the publisher name on the UAC prompt and how to check the signature (`Get-AuthenticodeSignature`).
 - The installer's preflight never depends on being signed.

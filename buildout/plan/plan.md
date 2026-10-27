@@ -22,9 +22,9 @@ Every phase has a `risk:` label and six headings in this order: Outcome, Write s
 - Investigation engine Phase A (audit only) plus SQL, Mongo and Blackbox lanes feeding Steps 7 to 9 (P5, P7, P9).
 - Guided analysis Steps 0 to 10, Manual tools, checklist, after-the-fix compare, export without payloads (P6).
 - Blackbox recorder, its page and wizard in Unravis, this-PC scan, folder / UNC / URL sources (P8, P9).
-- Optional Blackbox SQL probe, off by default, only once its login storage is decided (P10).
+- Shared machine-wide data folder and a key-keeper service so everyone on the PC shares cases and saved connections while no one can read a saved password (P14).
 - One-file installer with upgrade, repair, uninstall, silent mode and rollback (P11).
-- GitHub Releases pipeline, upgrade check, clean-machine smoke (P12).
+- GitHub Releases pipeline, manual update check, clean-machine smoke (P12).
 - User docs with screenshots that match the shipped screens (every phase, final pass in P13).
 
 ### Out
@@ -39,7 +39,8 @@ Every phase has a `risk:` label and six headings in this order: Outcome, Write s
 - An MSI wrapper for group-policy deployment (only if asked for).
 - Mongo FTDC (diagnostic.data) decoding.
 - Thread-pool and GC counters (H3 stays grey).
-- Running Unravis itself as a Windows service (only if Q2 is answered that way).
+- Blackbox SQL probe (was P10; owner ruling Q1, A43).
+- Running Unravis itself as a Windows service (Q2 answered: no).
 - Product Phase C extras beyond after-the-fix and export (deeper drill-down).
 
 ## Phase list
@@ -55,10 +56,11 @@ Every phase has a `risk:` label and six headings in this order: Outcome, Write s
 | P7 | SQL and Mongo lanes and sources | medium | P5 |
 | P8 | Blackbox recorder binary (`cmd/unravis-blackbox`) | high | P1 |
 | P9 | Blackbox in Unravis: page, wizard, pack, scan, source, Step 9 | medium | P8, P5 |
-| P10 | Blackbox SQL probe (optional, off by default) | medium | P9, P7, Q1 answered |
-| P11 | One-file installer (`cmd/unravis-setup`) | high | P1, P8 |
-| P12 | GitHub Releases pipeline, upgrade check, clean-machine smoke | medium | P11 |
-| P13 | Release 1 hardening: final docs, full screenshot refresh, end-to-end review | medium | P2 to P12 |
+| P10 | Blackbox SQL probe. DEFERRED out of Release 1 (A43); the section below is kept for a later release | medium | P9, P7 |
+| P11 | One-file installer (`cmd/unravis-setup`) | high | P1, P8, P14 |
+| P12 | GitHub Releases pipeline, manual update check, clean-machine smoke | medium | P11 |
+| P13 | Release 1 hardening: final docs, full screenshot refresh, end-to-end review | medium | P2 to P9, P11, P12, P14 |
+| P14 | Shared data folder and key-keeper service (`cmd/unravis-keeper`) | high | P1, P2 |
 
 ## Parallel lanes
 
@@ -66,10 +68,10 @@ After P1 merges, four lanes can run at the same time.
 
 | Lane | Order | Note |
 |---|---|---|
-| A: cases | P2, then P3 and P4 | P3 and P4 both touch `internal/casestore/sqlite`. They may be built in parallel but merge one at a time, P3 first. |
-| B: investigation | P5, then P6 and P7 | P6 and P7 can run in parallel after P5. P7 adds lanes; P6 renders them when present. |
-| C: Blackbox | P8, then P9 (also needs P5), then P10 (also needs P7) | P8 can start the day P1 merges. |
-| D: ship | P11 (needs P8 for the Blackbox zip), then P12 | P11's UI shell and preflight can start before P8 finishes, using a stub Blackbox zip. |
+| A: cases | P2, then P3 and P4, then P14 | P3 and P4 both touch `internal/casestore/sqlite`. They may be built in parallel but merge one at a time, P3 first. P14 moves the data folder, so it merges after P3 and P4. |
+| B: investigation | P5, then P6 and P7 | P6 and P7 can run in parallel after P5. P7 adds lanes; P6 renders them when present. P7 uses `internal/sqlconn` as it is; P14 swaps what is behind it. |
+| C: Blackbox | P8, then P9 (also needs P5) | P8 can start the day P1 merges. Lane ends at P9 (P10 deferred). |
+| D: ship | P11 (needs P8 for the Blackbox zip and P14 for the keeper), then P12 | P11's UI shell and preflight can start before P8 and P14 finish, using stubs. |
 
 P13 starts when everything else has merged.
 
@@ -594,6 +596,8 @@ P8 (recorder formats), P5 (engine lanes).
 
 ## P10. Blackbox SQL probe
 
+**DEFERRED. Not part of Release 1 (owner ruling Q1, A43). Do not start. Kept as the starting design for a later release; the P8 `blackbox.json` probe block stays present and off.**
+
 risk: medium
 
 ### Outcome
@@ -628,7 +632,7 @@ A Blackbox can run an optional SQL Server probe every 15 s, off by default, with
 
 ### Depends on
 
-P9, P7, and an answer to open question Q1. Without Q1 answered, P10 does not start and Release 1 ships without the probe.
+P9, P7 and a decision on where the probe's login is kept (the old Q1, now deferred with the phase).
 
 ---
 
@@ -674,7 +678,7 @@ See `installer-and-releases.md` sections 2 to 7. Summary:
 
 ### Depends on
 
-P1 (tokens, version), P8 (Blackbox binary to package).
+P1 (tokens, version), P8 (Blackbox binary to package), P14 (keeper binary and the shared data folder to install). The installer adds two steps for P14: create `C:\ProgramData\Unravis` with its permissions, and install, upgrade or remove the `UnravisKeeper` service (admin approval, explained before the Windows prompt, undone on rollback). Uninstall asks before deleting the shared data and never deletes it silently.
 
 ---
 
@@ -755,15 +759,66 @@ Docs move to their final location, every screenshot is recaptured from the relea
 
 ### Depends on
 
-P2 to P12 (P10 only if Q1 was answered).
+P2 to P9, P11, P12 and P14 (P10 is deferred).
 
 ---
 
-## Open questions
+## P14. Shared data folder and key-keeper service
 
-Each has a planner pick so work can go on. The owner decides.
+risk: high
+
+### Outcome
+
+Everyone who signs in to the PC sees the same cases, saved connections and settings, from one folder, `C:\ProgramData\Unravis`. A saved password is sealed by a small helper service (`UnravisKeeper`) and never reaches the UI, a log, a case file or an API reply. This delivers owner rulings A44 and A45.
+
+### Write scope
+
+- `cmd/unravis-keeper/` (new), `internal/keeper/` (new: pipe server, sealing, request audit log, rate limit)
+- `internal/sqlconn/` (new implementation behind the existing interface: asks the keeper)
+- `internal/` data-folder resolution, `cmd/audit-explorer/main.go` (data folder only), `internal/casestore/` (path only)
+- `web/src/` (states for "key keeper not running", one-time migration prompt)
+- `tools/screens/screens.json`, `buildout/screenshots/P14/`, `buildout/docs/security.md`
+
+### Must not change
+
+- A2: a sealed password is never returned to the UI, a log or a case file.
+- The `.unravis-case` file format and per-case key rules (P4).
+- The saved-connection API shape the UI already uses.
+
+### Changes
+
+PROPOSAL, details to confirm in the first step:
+
+1. Spike first, one day: list the operations the saved connections must do (test, the P7 read-only checks, Mongo reads). If they are a narrow set, the keeper runs them for Unravis and returns rows only, so Unravis never holds a password. If not, stop and ask the owner before choosing a weaker design (keeper hands the password to the Unravis process over the pipe).
+2. Data folder `C:\ProgramData\Unravis`: users can read and write cases and settings; the keeper's own folder is readable only by its service account, SYSTEM and Administrators.
+3. Service `UnravisKeeper` under a virtual account (`NT SERVICE\UnravisKeeper`). Named pipe open to local interactive users only, never remote. Every request is logged (who, which saved connection, when) and rate limited.
+4. One-time migration: a per-user `sqlconnections.dat` is offered for import into the keeper; the old file is removed only after the owner confirms the import worked. Saved Mongo links with a password are sealed the same way.
+5. If the keeper is stopped, the UI says plainly that saved connections are unavailable and how to start it. Cases still open.
+6. Docs and screenshots: `security.md` states what is protected and the honest limit (a local administrator can stop the service or take over the machine; no local scheme fully stops that). Screens `p14-connection-saved`, `p14-keeper-stopped`, `p14-migrate`.
+7. Hostile-user review: another signed-in user tries to read the files, call the pipe from a remote session, replay a request, stop the service, and copy a saved connection.
+
+### Proof
+
+1. Go tests for sealing, the pipe (local only), the audit log, rate limiting and migration.
+2. A two-user VM run: user B uses user A's saved connection and cases, and cannot read any file or API reply that contains the password.
+3. A search test: the test password does not appear in any API response, log, case file or Unravis process memory dump.
+4. Upgrade test: a saved connection survives upgrade, repair and keeper restart.
+5. Docs: P14 screens match the build; `docs-check.mjs` passes.
+6. Hostile-user findings closed or recorded as accepted limits in `security.md`.
+
+### Depends on
+
+P1, P2. It swaps the implementation behind `internal/sqlconn`, so P7 does not wait for it. P11 installs the service.
+
+---
+
+## Questions (all answered 2026-10-27)
+
+The owner answered all ten. The tables stay as the record of the options; the line under each heading is the ruling (see decisions.md A43 to A53).
 
 ### Q1. Where does the Blackbox SQL probe store its login?
+
+**Answered: no probe in Release 1 (option d). P10 deferred.**
 
 | Option | Pros | Cons |
 |---|---|---|
@@ -776,6 +831,8 @@ Planner pick: a, with d as the fallback if the owner cannot grant a Windows logi
 
 ### Q2. Should Unravis itself run as a Windows service?
 
+**Answered: no service for Unravis, but all data shared by everyone on the PC, and no one can ever see a password or bypass the protection. Delivered by a small key-keeper service and a machine-wide data folder (P14, A44, A45). This is none of a, b or c as written.**
+
 | Option | Pros | Cons |
 |---|---|---|
 | a. Per-user app, start at sign-in (planner pick) | Works with user-scope DPAPI, session file and browser opening as built | Not running when nobody is signed in; each user has their own data |
@@ -783,6 +840,8 @@ Planner pick: a, with d as the fallback if the owner cannot grant a Windows logi
 | c. DPAPI machine scope and a service | Simple unseal | Any local admin or process can unseal; weakens A2 |
 
 ### Q3. Installer technology
+
+**Answered: a, Go single file (A46).**
 
 | Option | Pros | Cons |
 |---|---|---|
@@ -795,6 +854,8 @@ MSIX is ruled out: signing is mandatory, and services plus firewall rules are li
 
 ### Q4. Installer UI shell
 
+**Answered: a, app window with browser fallback (A47).**
+
 | Option | Pros | Cons |
 |---|---|---|
 | a. WebView2 window, fall back to browser (planner pick) | Looks like a real installer; WebView2 is present on Windows 11 and most Server 2022 | Fallback path to maintain; WebView2 may be missing on Server 2019 |
@@ -802,6 +863,8 @@ MSIX is ruled out: signing is mandatory, and services plus firewall rules are li
 | c. Native Win32 UI in Go | No browser need | Cannot reuse the tokens or Svelte; drift risk |
 
 ### Q5. Code signing
+
+**Answered: c, SignPath Foundation (A48). Needs a public repo and a per-release approval. Until then releases ship unsigned (option a) with checksums.**
 
 | Option | Pros | Cons |
 |---|---|---|
@@ -814,6 +877,8 @@ EV certificates no longer give instant SmartScreen reputation, so they add cost 
 
 ### Q6. Final docs location
 
+**Answered: a, repo plus in-app help (A49).**
+
 | Option | Pros | Cons |
 |---|---|---|
 | a. `docs/user/` Markdown in the repo plus the same pages embedded as in-app help (planner pick) | Works offline; versioned with code; one source | In-app help needs a small Markdown renderer |
@@ -823,12 +888,16 @@ EV certificates no longer give instant SmartScreen reputation, so they add cost 
 
 ### Q7. Case code length (spec gap)
 
+**Answered: a, long id plus 8-character short code (A50). The wireframe's single 8-character code is updated to match before P2 UI work.**
+
 | Option | Pros | Cons |
 |---|---|---|
 | a. Keep the spec: 26-character id plus 8-character short code shown to users (planner pick) | Matches the spec and tests; short code is what people type | Two ids to explain |
 | b. 8-character code only, as in the wireframe | Simple | Higher chance of clashes; changes the spec |
 
 ### Q8. Browser on servers
+
+**Answered: a, warn and link to Edge, carry on (A51).**
 
 | Option | Pros | Cons |
 |---|---|---|
@@ -838,6 +907,8 @@ EV certificates no longer give instant SmartScreen reputation, so they add cost 
 
 ### Q9. Update check network policy
 
+**Answered: a, manual button only (A52).**
+
 | Option | Pros | Cons |
 |---|---|---|
 | a. Manual button only (planner pick) | No surprise network calls | Users may stay on old versions |
@@ -845,6 +916,8 @@ EV certificates no longer give instant SmartScreen reputation, so they add cost 
 | c. No update check | Nothing to explain | Upgrades only by reading GitHub |
 
 ### Q10. Firewall rule for port 7788
+
+**Answered: a, opt-in and scoped to typed addresses (A53).**
 
 | Option | Pros | Cons |
 |---|---|---|
@@ -856,11 +929,14 @@ EV certificates no longer give instant SmartScreen reputation, so they add cost 
 
 | Risk | Effect | Mitigation |
 |---|---|---|
-| DPAPI scope changes on upgrade or a service change | Sealed connections and keys cannot be read | Upgrade never changes scope; test upgrade keeps a saved connection; Q2 default keeps user scope |
-| SmartScreen and antivirus on unsigned builds | Users scared off, Blackbox quarantined | Checksums, docs, Q5 signing path, submit builds to Microsoft for analysis |
+| Moving saved passwords from per-user DPAPI to the keeper (P14) | Saved connections lost or readable | One-time confirmed migration; old file removed only after the owner confirms; upgrade, repair and keeper-restart tests keep a saved connection |
+| Keeper service is a new attack surface and a single point of failure | Passwords exposed, or saved connections unavailable | Local-only pipe, request log, rate limit, plain "keeper not running" state; hostile-user review; honest limit (local admin) written in `security.md` |
+| Keeper proxy turns out too narrow for all connection uses | P14 redesign | Spike first; stop and ask before weakening the design |
+| SmartScreen and antivirus on unsigned builds | Users scared off, Blackbox and keeper quarantined | Checksums, docs, SignPath (Q5), submit builds to Microsoft for analysis |
+| SignPath needs a public repo and approval | Signing never starts, or private code made public | Check repo visibility before P12; ship unsigned with checksums until approved |
 | Screenshot flakiness across renderers | False failures, ignored diffs | Pinned runner image and Playwright, fixed clock, fonts awaited, CI is the only baseline maker |
 | Rollback gaps in a home-made installer | Half-installed PC | Journal of every action with an undo; injection test per action |
-| Scope size (13 phases) | Release slips | Lanes run in parallel; P10 is optional; deferred list kept honest |
+| Scope size (13 phases, P10 deferred, P14 added) | Release slips | Lanes run in parallel; deferred list kept honest |
 | Blackbox disk use on production servers | Disk fills | Housekeeping always on, Disk low state, 10% free floor |
 | Blackbox port exposure | Status reachable by others | Read key, opt-in firewall rule, loopback by default if no rule |
-| Spec and wireframe disagree (case codes, Blackbox scope) | Rework | Q7 answered before P2 starts UI work |
+| Spec and wireframe disagree (case codes, Blackbox scope) | Rework | Q7 is answered (long id plus 8-character code); update the wireframe before P2 starts UI work |
