@@ -2,7 +2,7 @@
 
 The guided analysis walks a slowdown through eleven steps, Step 0 to Step 10. It reads data you already have, turns it into plain facts, reads signals off the facts, and then checks a catalog of suspects against the signals. It never names what is to blame. It says what fits the data, what does not, and what could not be tested.
 
-This page describes the method. The screens that show it come with the guided analysis screens in a later phase; nothing here depends on them.
+This page describes the method first, then the screens that show it (see [The screens](#the-screens)). The screens live in the case: open a case, then choose **Open guided analysis**. Pictures are listed by screen id. They are saved by the screenshot harness and are pending until it has run on a build.
 
 ## How the engine thinks
 
@@ -135,6 +135,113 @@ Each tier that can be dated gets a start minute: the arrival rate, audit set-up,
 How sure the engine is shows as one word: None, Low, Medium or High. None means there is no answer. Low means the audit alone, or no clear origin. Medium means the audit and the IIS logs. High means the audit, the IIS logs and at least one other tier's own data. A clock anomaly or a long gap lowers it one step. There is no score and no percentage.
 
 The step also lists the sources used, the sources missing, the suspects that could not be tested, and one check that would overturn the answer.
+
+## The screens
+
+Open a case and choose **Open guided analysis**. The page has a left rail with Steps 0 to 10, a tab row (Steps, Checklist, After the fix, Nearby activity, Export) and one **Run the steps** button. The windows are typed in UTC. A run only reads: it cannot change a case or a source.
+
+Every step page has the same frame: the step name, a status sticker, an **In a nutshell** sentence, the reasons for any step that could not be fully tested, the body, and Previous step and Next step.
+
+Status words are fixed. After a run they are Ready, Partly ready, Cannot test yet or Failed. Before a run a step reads Waiting, during a run Running, and both are hatched, never green. A run that fails before any answer arrives reads Failed on every step. When the windows, sources or lists change after a run, each step after Step 0 says **Out of date, rerun**. The numbers on screen stay those of the earlier run until you run again.
+
+The rail rows are buttons (outlined). The status next to each row is a sticker: information, not a button. There is one primary button on a screen. On the Steps tab it is **Run the steps** until an answer is on screen, then **Run again** (outlined) takes over.
+
+You can jump to any step without running first. It then shows the last run, or says to run the steps first.
+
+### Step 0 screen
+
+Screen id `p6-step-0`.
+
+The question: an incident window and a normal reference window, both in UTC, an optional API to focus on, an optional SqlClient pool limit, and a list of changes (up to 50, each with a time and a label). Quick picks (Last hour, Today, Yesterday) fill the incident window and a normal period of the same length just before it. After a run the page shows the onset Unravis found and how many calls the run used. When no onset is found, the page says that is a finding, not an error, and offers **Carry on without an onset**.
+
+Windows that overlap, run backwards or are longer than 7 days are explained in a sentence and the run button waits.
+
+### Step 1 screen
+
+Screen id `p6-step-1`.
+
+Trust the data: cards for the incident and reference windows (calls, how many had no start time or no end time), one row per source with its status, and the gaps found in the minutes. If a window has too few calls, the page says so and offers to widen the incident window.
+
+### Step 2 screen
+
+Screen id `p6-step-2`.
+
+Shape: the minute-by-minute line of the slow end, the onset, the shape of the slowdown in a word and a table of APIs ranked by the biggest rise. A rise counts only when it passes both marks, 30 percent and 100 ms. When nothing moved, the page says what the two marks were.
+
+### Step 3 screen
+
+Screen id `p6-step-3`.
+
+Time split: the parts A, C, P and O drawn as bars on one scale. Only parts that could be tested are drawn. Part O needs an IIS file, and when it is missing the page names it as Cannot test yet.
+
+### Step 4 screen
+
+Screen id `p6-step-4`.
+
+Load: four measures for both windows (calls a second, time in system, calls in flight on average, calls in flight at the peak), each with No data when it could not be measured, and the pool answer when a limit was entered.
+
+### Step 5 screen
+
+Screen id `p6-step-5`.
+
+Changes: each change you listed with its time in UTC, its label and how it sits against the onset, and the suspects of that group. Changes are only compared when you list them in Step 0.
+
+### Step 6 to Step 9 screens
+
+Screen ids `p6-step-6`, `p6-step-7`, `p6-step-8`, `p6-step-9`.
+
+One page per tier: application, SQL Server, MongoDB and host. Each page shows the findings the engine made for the tier and a card for every suspect of the tier. The SQL, Mongo and Host pages say Cannot test yet until the case holds that source, and offer **Add data**. A suspect that could not be tested is grey and never counts as ruled out.
+
+### Step 10 screen
+
+Screen ids `p6-step-10`, `p6-no-clear-origin`.
+
+Origin and suspects. The page shows, in order:
+
+1. **What moved first**: the origin and victim table (tier, when it first moved in UTC, what moved, role). When two tiers moved together the page says **No clear origin** and lists them without calling one first.
+2. **Colours**: red most likely, orange likely, green ruled out, grey not sure. Grey is never a pass.
+3. **Suspects**: each ranked suspect as a card with its colour word, why it fits, the evidence kind (observed on its own data or inferred), the check that would overturn it, and **Add this check** to the checklist. Grey suspects follow, then the ones ruled out (collapsed).
+4. **The cheapest check** to make next.
+5. **How sure we are**: None, Low, Medium or High, the sources used and missing, and the one check that would overturn the answer.
+
+Unravis does not name a culprit.
+
+### Nearby activity screen
+
+This panel has no screen of its own: it is captured inside the Tools screens.
+
+Pick a moment in UTC and a span of 0 to 120 minutes either side. The audit lane lists the calls of the window (the first 200 at most) as bars, banded by their time: under 1 second, 1 to 2 seconds, over 2 seconds. These bands are not the suspect colours. A call with no time is shown as No time, never as fast. The SQL Server, MongoDB and Host lanes read Cannot test yet. The page never shows a user, an address or a URL. Nearby activity is not included in the report.
+
+### Checklist screen
+
+Screen id `p6-checklist` (also drawn narrow).
+
+Four lists: What to do, What is under way, What we learned and What is ruled out. A counter shows how many items are open and how many are done. You can add an item (up to 300 characters, 500 items in all), move it to another list, or delete it. **Add suggested checks from Step 10** adds each suggested check once. On a closed case the lists can be read but not changed.
+
+### After the fix screens
+
+Screen ids `p6-after-fix-1`, `p6-after-fix-2`.
+
+Pick a later day. Unravis compares the same hours on that day with the incident window you ran, using the incident as the normal period. The page shows the earlier day, the later day and the change for the slow end, the middle, the mean and the load. The verdict is one of Fixed, Better (not fixed), Unchanged, Worse, Partly there, No data for that day or The days are not alike.
+
+- Fixed needs a known normal range and a slow end back inside it.
+- A fall that is still above normal is Better, not Fixed.
+- A day with missing minutes is Partly there. Missing minutes are not counted as zero.
+- If the two days are not alike (the calls differ by more than 50 percent, or the API mix moved by more than 0.3, or the later day has less than 0.8 of the minutes) the page warns and never says Fixed. **Pick a more alike day** and **Compare one route only** are offered.
+
+**Record result** writes one line (300 characters at most) under What we learned. Nothing is recorded without a click.
+
+### Export screens
+
+Screen ids `p6-export-1`, `p6-export-2`.
+
+The report is made from the run on screen. Tick what to include: the headline figures, the suspects, the checklist and the sources. **Download report (HTML)** is the one primary button. **Download data (CSV)** has the numbers only. **Preview** shows the report in a sandboxed frame before you save.
+
+- The file never contains a request payload, a user id, a connection detail or a password.
+- The CSV starts with a byte-order mark so a spreadsheet reads it as UTF-8, and any cell that starts with =, +, - or @ is written as text so it cannot run as a formula.
+- The file is saved only when its checksum matches what was built. If it does not, nothing is saved and the page says so.
+- A report made from a run that is out of date, or from a read that stopped at its limit, says so at the top and the button asks you to confirm.
+- An empty case still exports, with a note that nothing was analysed.
 
 ## What the engine does not do yet
 
