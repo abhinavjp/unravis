@@ -365,6 +365,10 @@ func (h *handler) rememberConnection(w http.ResponseWriter, r *http.Request) {
 	connection.SavedConnectionID = savedConnectionID
 	item, err := h.history.Remember(input.Label, connection, input.Collection, input.RememberPassword)
 	if err != nil {
+		if errors.Is(err, history.ErrFull) {
+			writeError(w, http.StatusConflict, "You already have 20 saved MongoDB connections. Remove one first, then save this one. Nothing was removed for you.")
+			return
+		}
 		if errors.Is(err, audit.ErrInvalidInput) || errors.Is(err, history.ErrNotFound) {
 			writeError(w, http.StatusBadRequest, "Saved connection details are invalid.")
 			return
