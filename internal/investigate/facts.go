@@ -159,7 +159,7 @@ type Load struct {
 	PlannedL    *float64 `json:"plannedL,omitempty"`
 	PoolLimit   *int     `json:"poolLimit,omitempty"`
 	PlannedFill *float64 `json:"plannedFill,omitempty"`
-	FlatTop     bool     `json:"flatTop"`
+	FlatTop     bool     `json:"flatTop"` // a flat top that is new against the reference or near the limit
 	FlatTopAt   int      `json:"flatTopAt,omitempty"`
 	Reading     string   `json:"reading"`
 }

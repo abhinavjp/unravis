@@ -332,7 +332,21 @@ func (p *prep) load() {
 			l.PlannedFill = ptr(*l.PlannedL / float64(lim))
 		}
 	}
+	// A flat top is a capacity sign only when it is new: higher than the reference
+	// peak by the load mark, or within PoolFullShare of the entered limit. A plateau
+	// that the reference has too is just the normal level of traffic.
 	l.FlatTopAt, l.FlatTop = p.flatTop(p.incBins)
+	if l.FlatTop {
+		newTop := false
+		if l.RefPeak > 0 {
+			d, _ := compareRate(float64(l.RefPeak), float64(l.FlatTopAt), true, true, p.th)
+			newTop = d == "up"
+		}
+		nearLimit := l.PoolLimit != nil && float64(l.FlatTopAt) >= p.th.PoolFullShare*float64(*l.PoolLimit)-floatEps
+		if !newTop && !nearLimit {
+			l.FlatTop, l.FlatTopAt = false, 0
+		}
+	}
 	switch {
 	case l.LambdaDx == "unknown" || l.WDx == "unknown" || l.LDx == "unknown":
 		l.Reading = "cannot read"

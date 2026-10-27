@@ -357,9 +357,8 @@
       "wDirection": "flat",
       "lDirection": "up",
       "plannedL": 5.03,
-      "flatTop": true,
-      "flatTopAt": 6,
-      "reading": "a pool or cap looks full"
+      "flatTop": false,
+      "reading": "no clear reading"
     },
     "retries": {
       "known": true,
@@ -518,7 +517,7 @@
       "plannedL": 5.03,
       "wouldFill": "unknown",
       "atLimit": "unknown",
-      "reading": "a pool or cap looks full",
+      "reading": "no clear reading",
       "why": "No pool limit was entered, so load cannot be set against a limit."
     },
     "changes": {
@@ -592,7 +591,7 @@
       ],
       "nutshell": "We set the number of calls arriving against how long each one takes, to see whether a pool or a limit could have filled up.",
       "findings": [
-        "Reading: a pool or cap looks full.",
+        "Reading: no clear reading.",
         "Planning load is 5.0 requests in flight at 40 requests per second.",
         "No pool limit was entered, so load cannot be set against a limit."
       ]

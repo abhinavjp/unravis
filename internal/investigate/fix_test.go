@@ -161,3 +161,53 @@ func TestFixF3NoDatedOnsetNeverPaintsRed(t *testing.T) {
 		}
 	}
 }
+
+// F5: a plateau in the incident that the reference has too is the normal level of
+// traffic, not a full pool. The demo day has such a plateau.
+func TestFixF5EqualPlateauIsNotAFullPool(t *testing.T) {
+	r := Analyze(demoInput(t))
+	l := r.Facts.Load
+	if l.Reading == "a pool or cap looks full" {
+		t.Errorf("reading = %q although the reference peak is %d and the incident peak %d", l.Reading, l.RefPeak, l.IncPeak)
+	}
+	if l.FlatTop {
+		t.Errorf("flat top %d reported against a reference peak of %d", l.FlatTopAt, l.RefPeak)
+	}
+}
+
+// burst makes every call in the window start on the same second of its minute, so
+// the in-flight peak is the whole minute's count while the rate and the time each
+// call takes stay as they were.
+func burst(in Input, w Window) Input {
+	for i := range in.Requests {
+		r := &in.Requests[i]
+		if !w.Contains(r.Start) {
+			continue
+		}
+		d := r.End.Sub(r.Start)
+		s := minuteOf(r.Start).Add(10 * time.Second)
+		r.Start = s
+		e := s.Add(d)
+		r.End = &e
+	}
+	return in
+}
+
+// F5: a flat top well above the reference peak, with rate and time unchanged, is
+// still read as a pool or cap; the same plateau in both windows is not.
+func TestFixF5NewPlateauAboveTheReferenceIsReadAsFull(t *testing.T) {
+	ref, inc := stdWindows()
+	base := func() Input { return gen(genCfg{seed: 61, ref: ref, inc: inc, perMin: 30, routes: []string{"Orders.Get"}}) }
+
+	r := Analyze(burst(base(), inc))
+	l := r.Facts.Load
+	if l.Reading != "a pool or cap looks full" || !l.FlatTop {
+		t.Errorf("new plateau: reading %q flat %v (peaks ref %d inc %d, dx %s/%s/%s)", l.Reading, l.FlatTop, l.RefPeak, l.IncPeak, l.LambdaDx, l.WDx, l.LDx)
+	}
+
+	both := burst(burst(base(), inc), ref)
+	l = Analyze(both).Facts.Load
+	if l.Reading == "a pool or cap looks full" || l.FlatTop {
+		t.Errorf("same plateau in both windows: reading %q flat %v (peaks ref %d inc %d)", l.Reading, l.FlatTop, l.RefPeak, l.IncPeak)
+	}
+}
