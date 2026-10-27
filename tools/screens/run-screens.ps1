@@ -22,6 +22,16 @@ $Here = $PSScriptRoot
 $RepoRoot = (Resolve-Path -LiteralPath (Join-Path $Here '..\..')).Path
 $Exe = Join-Path $RepoRoot 'dist\unravis.exe'
 
+# Two runs at once would write to the same pictures and the same results folder.
+# The lock belongs to this Windows session and is let go when this script ends, however it ends.
+$Lock = New-Object System.Threading.Mutex($false, 'Local\UnravisScreenshotRun')
+$HaveLock = $false
+try { $HaveLock = $Lock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $HaveLock = $true }
+if (-not $HaveLock) {
+    Write-Host 'Another screenshot run is already going on this computer. Wait for it to finish, then run this again.' -ForegroundColor Red
+    exit 4
+}
+
 if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) {
     Write-Host 'dist\unravis.exe is missing. Build first: .\build.ps1' -ForegroundColor Red
     exit 2
@@ -29,6 +39,13 @@ if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath (Join-Path $Here 'node_modules\@playwright\test') -PathType Container)) {
     Write-Host 'The screenshot tools are not installed. In tools\screens run: npm ci, then npx playwright install chromium' -ForegroundColor Red
     exit 2
+}
+
+# A run that was killed outright (not stopped with Ctrl+C) cannot clean up after itself.
+# Remove what such a run left in the temp folder: only folders this script made, and only after an hour.
+$Temp = [System.IO.Path]::GetTempPath()
+foreach ($old in @(Get-ChildItem -LiteralPath $Temp -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^unravis-screens-[0-9a-f]{32}$' -and $_.LastWriteTime -lt (Get-Date).AddHours(-1) })) {
+    try { Remove-Item -LiteralPath $old.FullName -Recurse -Force -ErrorAction Stop } catch { }
 }
 
 $DemoNow = '2026-10-20T09:00:00Z'
@@ -51,6 +68,41 @@ try {
 
     $Process = Start-Process -FilePath $Exe -ArgumentList @('--demo', '--no-browser', '--port', "$Port") `
         -RedirectStandardOutput $OutLog -RedirectStandardError $ErrLog -PassThru -WindowStyle Hidden
+
+    # If this script is killed outright, Windows ends the demo with it: the demo belongs to a job
+    # that is set to end when the last handle to it closes, and that handle dies with this process.
+    $JobCode = @'
+using System;
+using System.Runtime.InteropServices;
+public static class UnravisJob {
+    [StructLayout(LayoutKind.Sequential)] struct Basic { public long PerProcessUserTimeLimit; public long PerJobUserTimeLimit; public uint LimitFlags; public UIntPtr MinimumWorkingSetSize; public UIntPtr MaximumWorkingSetSize; public uint ActiveProcessLimit; public UIntPtr Affinity; public uint PriorityClass; public uint SchedulingClass; }
+    [StructLayout(LayoutKind.Sequential)] struct Io { public ulong A, B, C, D, E, F; }
+    [StructLayout(LayoutKind.Sequential)] struct Extended { public Basic BasicLimit; public Io IoInfo; public UIntPtr ProcessMemoryLimit; public UIntPtr JobMemoryLimit; public UIntPtr PeakProcessMemoryUsed; public UIntPtr PeakJobMemoryUsed; }
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetInformationJobObject(IntPtr job, int infoClass, IntPtr info, uint size);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+    static IntPtr job = IntPtr.Zero;
+    public static bool Bind(IntPtr process) {
+        job = CreateJobObject(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) return false;
+        Extended info = new Extended();
+        info.BasicLimit.LimitFlags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        int size = Marshal.SizeOf(typeof(Extended));
+        IntPtr buffer = Marshal.AllocHGlobal(size);
+        try {
+            Marshal.StructureToPtr(info, buffer, false);
+            if (!SetInformationJobObject(job, 9, buffer, (uint)size)) return false;
+        } finally { Marshal.FreeHGlobal(buffer); }
+        return AssignProcessToJobObject(job, process);
+    }
+}
+'@
+    try {
+        Add-Type -TypeDefinition $JobCode -ErrorAction Stop
+        if (-not [UnravisJob]::Bind($Process.Handle)) { Write-Host 'Note: the demo is not tied to this window; if you kill this window the demo keeps running.' -ForegroundColor Yellow }
+    } catch {
+        Write-Host 'Note: the demo is not tied to this window; if you kill this window the demo keeps running.' -ForegroundColor Yellow
+    }
 
     # Wait for "listening at" and the one-time launch link (both go to the log).
     $Link = $null

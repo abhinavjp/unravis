@@ -77,6 +77,10 @@ jobs:
           npm ci
           npx playwright install chromium
 
+      - name: Screenshots - tests of the tools themselves
+        working-directory: tools/screens
+        run: npm test
+
       - name: Screenshots - compare with the saved pictures
         run: ./tools/screens/run-screens.ps1
 

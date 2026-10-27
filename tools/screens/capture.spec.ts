@@ -24,6 +24,9 @@ interface Screen { id: string; phase: string; doc: string; narrow: boolean; step
 const screens: Screen[] = JSON.parse(readFileSync(join(__dirname, 'screens.json'), 'utf8')).screens;
 const only = (process.env.UNRAVIS_ONLY ?? '').split(',').map((part) => part.trim()).filter(Boolean);
 const demoNow = new Date(process.env.UNRAVIS_DEMO_NOW ?? '2026-10-20T09:00:00Z');
+if (Number.isNaN(demoNow.getTime())) {
+  throw new Error('UNRAVIS_DEMO_NOW must look like 2026-10-20T09:00:00Z, but it is "' + process.env.UNRAVIS_DEMO_NOW + '". run-screens.ps1 sets it for you; leave it unset.');
+}
 
 async function run(page: Page, step: Step): Promise<void> {
   if ('goto' in step) {
@@ -41,6 +44,8 @@ async function run(page: Page, step: Step): Promise<void> {
     await page.locator(step.scrollTo).first().scrollIntoViewIfNeeded();
   } else if ('theme' in step) {
     await page.evaluate((theme) => document.documentElement.setAttribute('data-theme', theme), step.theme);
+  } else {
+    throw new Error('A step in screens.json has no known action: ' + JSON.stringify(step) + '. Use goto, click, fill, waitFor, scrollTo or theme.');
   }
 }
 

@@ -2,19 +2,22 @@
 //   a) every image link in buildout/docs/*.md points to a file that exists;
 //   b) every id in screens.json appears in the doc page it names;
 //   c) no page links to a screenshot of a screen that is no longer in screens.json.
+//   d) screens.json itself is sound: no screen named twice, every id starts with its phase, every screen has steps.
+// An optional first argument names the project folder (default: two folders up from this file); the tests use it.
 // Exit 0 when all hold, 1 with one plain line per problem otherwise.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const docsDir = resolve(here, '..', '..', 'buildout', 'docs');
-const shotsDir = resolve(here, '..', '..', 'buildout', 'screenshots');
+const root = process.argv[2] ? resolve(process.argv[2]) : resolve(here, '..', '..');
+const docsDir = join(root, 'buildout', 'docs');
+const shotsDir = join(root, 'buildout', 'screenshots');
 const problems = [];
 
 let screens = [];
 try {
-  screens = JSON.parse(readFileSync(join(here, 'screens.json'), 'utf8')).screens;
+  screens = JSON.parse(readFileSync(join(root, 'tools', 'screens', 'screens.json'), 'utf8')).screens;
 } catch (err) {
   console.error('screens.json could not be read: ' + err.message);
   process.exit(1);
@@ -27,6 +30,17 @@ if (!existsSync(docsDir)) {
 const pages = readdirSync(docsDir).filter((name) => name.endsWith('.md'));
 const text = new Map(pages.map((name) => [name, readFileSync(join(docsDir, name), 'utf8')]));
 const knownIds = new Set(screens.map((s) => s.id));
+
+// d) the screens file
+const seen = new Set();
+for (const s of screens) {
+  if (typeof s.id !== 'string' || !/^p\d+-[a-z0-9-]+$/.test(s.id)) problems.push(`screens.json: the id ${JSON.stringify(s.id)} must look like p1-home.`);
+  else if (s.phase !== undefined && !s.id.startsWith(String(s.phase).toLowerCase() + '-')) problems.push(`screens.json: ${s.id} must start with its phase (${s.phase}).`);
+  if (seen.has(s.id)) problems.push(`screens.json: the screen ${s.id} is listed twice.`);
+  seen.add(s.id);
+  if (!Array.isArray(s.steps) || s.steps.length === 0) problems.push(`screens.json: ${s.id} has no steps.`);
+  if (typeof s.doc !== 'string') problems.push(`screens.json: ${s.id} names no doc page.`);
+}
 
 // a) and c): every image link
 const image = /!\[[^\]]*\]\(([^)\s]+)\)/g;
