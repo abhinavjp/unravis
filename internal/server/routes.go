@@ -225,6 +225,9 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/call-trace", match: caseSubpath("/call-trace"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseCallTrace(w, r, id) },
 	}},
+	{pattern: "/api/cases/{id}/investigation", match: caseSubpath("/investigation"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseInvestigation(w, r, id) },
+	}},
 	{pattern: "/api/call-trace", match: exactPath("/api/call-trace"), methods: post((*handler).callTrace)},
 	{pattern: "/api/discover/capabilities", match: exactPath("/api/discover/capabilities"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.discoverCapabilities(w, r) },
