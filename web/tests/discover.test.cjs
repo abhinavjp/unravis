@@ -751,7 +751,7 @@ function luminance(hex) { const n = parseInt(hex.slice(1), 16); return 0.2126 * 
 function ratio(a, b) { const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); }
 
 test('the secondary text colour used for a gap reason clears 4.5:1 on the surface in dark and light', () => {
-  const css = read('src/app.css');
+  const css = read('src/brand/tokens.css') + '\n' + read('src/app.css');
   const pairs = [...css.matchAll(/--surface:\s*(#[0-9a-f]{6});[\s\S]*?--text-2:\s*(#[0-9a-f]{6});/gi)];
   assert.ok(pairs.length >= 2, 'dark and light token sets are found');
   for (const [, surface, text] of pairs) assert.ok(ratio(text, surface) >= 4.5, text + ' on ' + surface + ' is ' + ratio(text, surface).toFixed(2));

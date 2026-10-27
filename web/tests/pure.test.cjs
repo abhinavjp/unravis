@@ -219,7 +219,7 @@ test('API-by-time heatmap preserves exact cohort rows and missing timeline cells
   assert.equal(option.series[0].data[0].name, rowA.key);
   assert.equal(option.series[0].data[4].name, rowB.key);
   assert.deepEqual(values, [[0, 0, 2], [1, 0, null], [2, 0, null], [0, 1, null], [1, 1, 3], [2, 1, null]]);
-  assert.equal(option.series[0].data[1].itemStyle.color, '#edf0f4');
+  assert.equal(option.series[0].data[1].itemStyle.color, '#efefec');
 });
 
 test('registered ECharts legends and markLine render without missing-component warnings', () => {
@@ -1614,7 +1614,7 @@ test('the all-operations drill is comparison-wide: no controller or action, ever
 });
 
 test('the redesign keeps its contrast, status and navigation fixes in the sources', () => {
-  const css = fs.readFileSync(path.join(root, 'src/app.css'), 'utf8');
+  const css = ['src/brand/tokens.css', 'src/app.css'].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
   const phaseBar = fs.readFileSync(path.join(root, 'src/components/PhaseBar.svelte'), 'utf8');
   const app = appSource();
   assert.equal((css.match(/--control-line:\s*#[0-9a-f]{6}/gi) ?? []).length, 3, 'one control boundary per theme block');

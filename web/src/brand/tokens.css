@@ -1,0 +1,151 @@
+/* IBM Plex (SIL OFL 1.1, see fonts/OFL.txt). Latin subsets bundled locally and served from the app origin; a missing file falls back to the system stacks in --font and --mono. */
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 400; font-display: swap; src: url("../fonts/ibm-plex-sans-latin-400-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 500; font-display: swap; src: url("../fonts/ibm-plex-sans-latin-500-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 600; font-display: swap; src: url("../fonts/ibm-plex-sans-latin-600-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("../fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 500; font-display: swap; src: url("../fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+/*
+  Unravis design tokens. Dark is the default; the light theme follows prefers-color-scheme and can be forced either way with
+  [data-theme="light"] or [data-theme="dark"] on <html>. These blocks are the only place colours are written as values.
+  Status colours carry data only: 4xx amber, 5xx rose, incomplete and pending slate (hatched, never green), healthy stays neutral.
+*/
+:root {
+  color-scheme: dark;
+  --bg: #050807;
+  --surface: #0a0f0d;
+  --surface-2: #101714;
+  --line: #1a2621;
+  --line-soft: #131c18;
+  --control-line: #6b8478;
+  --text: #eef3f1;
+  --text-2: #93a39b;
+  --accent: #3fd6b0;
+  --accent-ink: #03130e;
+  --warn: #e3b341;
+  --bad: #ff7b72;
+  --tone-ok: #3fb27f;
+  --pending: #8fa39a;
+  --focus: #7ff0d0;
+  --scrim: rgb(2 5 9 / 62%);
+  --chart-empty: #0a0f0d;
+  --heat-1: #1d3a52;
+  --heat-2: #2f7f86;
+  --heat-3: #c9962f;
+  --heat-4: #d0604f;
+  --series-1: #6ea8ff;
+  --series-2: #c58bd6;
+  --series-3: #e3a23c;
+  --series-4: #f07a88;
+  --series-5: #b9bd52;
+  --series-6: #54c2d9;
+  --series-7: #c79a7a;
+  --series-8: #9fb0c6;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #f5f5f3;
+    --surface: #ffffff;
+    --surface-2: #eeeeeb;
+    --line: #d9d9d4;
+    --line-soft: #e8e8e4;
+    --control-line: #74808f;
+    --text: #16191d;
+    --text-2: #4a525c;
+    --accent: #0b6b57;
+    --accent-ink: #ffffff;
+    --warn: #96600a;
+    --bad: #b02a3d;
+    --pending: #5b6878;
+    --focus: #0b6b57;
+    --scrim: rgb(20 28 40 / 38%);
+    --chart-empty: #efefec;
+    --heat-1: #dce9f6;
+    --heat-2: #83bdb5;
+    --heat-3: #e4ae5b;
+    --heat-4: #b85a42;
+    --series-1: #2457c5;
+    --series-2: #9956a1;
+    --series-3: #ad6511;
+    --series-4: #b02a3d;
+    --series-5: #6e6f24;
+    --series-6: #157d94;
+    --series-7: #76563f;
+    --series-8: #5b6878;
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f5f3;
+  --surface: #ffffff;
+  --surface-2: #eeeeeb;
+  --line: #d9d9d4;
+  --line-soft: #e8e8e4;
+  --control-line: #74808f;
+  --text: #16191d;
+  --text-2: #4a525c;
+  --accent: #0b6b57;
+  --accent-ink: #ffffff;
+  --warn: #96600a;
+  --bad: #b02a3d;
+  --pending: #5b6878;
+  --focus: #0b6b57;
+  --scrim: rgb(20 28 40 / 38%);
+  --chart-empty: #efefec;
+  --heat-1: #dce9f6;
+  --heat-2: #83bdb5;
+  --heat-3: #e4ae5b;
+  --heat-4: #b85a42;
+  --series-1: #2457c5;
+  --series-2: #9956a1;
+  --series-3: #ad6511;
+  --series-4: #b02a3d;
+  --series-5: #6e6f24;
+  --series-6: #157d94;
+  --series-7: #76563f;
+  --series-8: #5b6878;
+}
+
+:root {
+  --font: "IBM Plex Sans", "Segoe UI Variable Text", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  --radius: 2px;
+  --ease: cubic-bezier(.2, .7, .2, 1);
+  --dur: 180ms;
+  --header-h: 56px;
+  --drawer-w: min(720px, 56vw);
+  --hatch: repeating-linear-gradient(135deg, var(--pending) 0 2px, transparent 2px 6px);
+  /* Layout scale for new and refreshed components. Existing rules keep their literal values until each one is restyled.
+     Type: six sizes, caption to heading. Spacing: 4px steps. Radii: small (tags, bars) and the standard control radius.
+     The hairline is the one-pixel divider colour; it follows the theme blocks above through --line. */
+  --fs-1: 11px;
+  --fs-2: 12px;
+  --fs-3: 13px;
+  --fs-4: 14px;
+  --fs-5: 16px;
+  --fs-6: 20px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --radius-sm: 2px;
+  --radius-md: var(--radius);
+  --hairline: var(--line);
+  --hairline-width: 1px;
+  font-family: var(--font);
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: style;
+  text-rendering: optimizeLegibility;
+  font-kerning: normal;
+  font-size: 14px;
+  line-height: 1.45;
+  font-weight: 400;
+  font-feature-settings: "tnum" 1;
+  scrollbar-color: var(--control-line) transparent;
+}

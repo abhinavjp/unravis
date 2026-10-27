@@ -6,7 +6,7 @@ const test = require('node:test');
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
 const inspector = read('src/components/Inspector.svelte');
-const css = read('src/app.css');
+const css = read('src/brand/tokens.css') + '\n' + read('src/app.css');
 
 test('the inspector is built on the shared Drawer as a non-modal panel', () => {
   assert.match(inspector, /import Drawer from '\.\/Drawer\.svelte'/);

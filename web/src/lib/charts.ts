@@ -7,6 +7,7 @@ import { axisLabels, chartTime } from './chartTime';
 import { axisDuration, niceHistogram } from './chartScale';
 import { gapBridge, heroOutliers, type HeroSlot } from './chartHero';
 import { MIN_SAMPLE } from './thresholds';
+import { lightFallback } from '../brand/fallback';
 
 echarts.use([LineChart, BarChart, HeatmapChart, ScatterChart, GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
 export { echarts };
@@ -19,11 +20,7 @@ export interface Palette {
   text: string; accent: string; accentSoft: string; warn: string; bad: string; pending: string; text2: string; axisLine: string; grid: string;
   empty: string; heat: string[]; series: string[]; surface: string;
 }
-const fallbackPalette: Palette = {
-  text: '#151b24', accent: '#2457c5', accentSoft: '#9db6ea', warn: '#96600a', bad: '#b02a3d', pending: '#5b6878', text2: '#4d5a6b', axisLine: '#d5dbe3', grid: '#e6eaf0',
-  empty: '#edf0f4', heat: ['#dce9f6', '#83bdb5', '#e4ae5b', '#b85a42'], surface: '#ffffff',
-  series: ['#146b58', '#2457c5', '#ad6511', '#9956a1', '#b02a3d', '#157d94', '#6e6f24', '#76563f']
-};
+const fallbackPalette: Palette = lightFallback;
 export const palette = (): Palette => {
   if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return fallbackPalette;
   const style = getComputedStyle(document.documentElement);
