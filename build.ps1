@@ -1,6 +1,8 @@
 param(
     [string]$GoPath,
-    [switch]$SkipWeb
+    [switch]$SkipWeb,
+    # Stamped into the program (shown by --version and /api/version). Default: git describe, else "dev".
+    [string]$Version
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,6 +50,25 @@ $env:GOTOOLCHAIN = 'local'
 $env:CGO_ENABLED = '0'
 New-Item -ItemType Directory -Force -Path $env:GOCACHE, $env:GOMODCACHE, $env:GOPATH | Out-Null
 
+# Version, commit and date for -ldflags. A missing git or a folder that is not a clone gives "dev".
+function Get-GitText {
+    param([string[]]$GitArgs)
+    $git = Get-Command git.exe -ErrorAction SilentlyContinue
+    if (-not $git) { return '' }
+    try {
+        $text = & $git.Source -C $UtilityRoot @GitArgs 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $text) { return '' }
+        return ([string]($text | Select-Object -First 1)).Trim()
+    } catch { return '' }
+}
+if (-not $Version) { $Version = Get-GitText @('describe', '--tags', '--always', '--dirty') }
+if (-not $Version) { $Version = 'dev' }
+if ($Version -notmatch '^[0-9A-Za-z][0-9A-Za-z._+-]*$') { throw "Version may only use letters, digits and . _ + - : $Version" }
+$Commit = Get-GitText @('rev-parse', 'HEAD')
+$BuildDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+$VersionPackage = 'api-audit-explorer/internal/version'
+$LdFlags = "-X $VersionPackage.Version=$Version -X $VersionPackage.Commit=$Commit -X $VersionPackage.Date=$BuildDate"
+
 function Invoke-Checked {
     param([string]$Executable, [string[]]$CommandArgs)
     & $Executable @CommandArgs
@@ -70,7 +91,7 @@ try {
     Invoke-Checked $GoExe @('test', './...')
     Invoke-Checked $GoExe @('vet', './...')
     New-Item -ItemType Directory -Force -Path (Join-Path $UtilityRoot 'dist') | Out-Null
-    Invoke-Checked $GoExe @('build', '-o', (Join-Path $UtilityRoot 'dist\unravis.exe'), './cmd/audit-explorer')
+    Invoke-Checked $GoExe @('build', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis.exe'), './cmd/audit-explorer')
     # Compatibility copy for MCP client configs that still point at dist\api-audit-explorer.exe.
     # Remove this copy and the MCP.md note after 2026-12-31 (one release after the rename).
     Copy-Item -LiteralPath (Join-Path $UtilityRoot 'dist\unravis.exe') -Destination (Join-Path $UtilityRoot 'dist\api-audit-explorer.exe') -Force

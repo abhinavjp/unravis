@@ -151,6 +151,7 @@ var routes = []route{
 	{pattern: "/api/info", match: exactPath("/api/info"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, _ *http.Request, _ string) { h.info(w) },
 	}},
+	{pattern: "/api/version", match: exactPath("/api/version"), methods: get((*handler).version)},
 	{pattern: "/api/sources", match: exactPath("/api/sources"), methods: map[string]routeFunc{
 		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.sources(w, r) },
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.addSource(w, r) },
