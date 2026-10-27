@@ -113,3 +113,68 @@ func (s *memStore) CreateFor(ctx context.Context, title, requestID string) (Case
 	d.mu.Unlock()
 	return info, false, nil
 }
+
+var _ RetryStore = (*memCase)(nil)
+
+func copyRetries(in []RetryItem) []RetryItem {
+	out := make([]RetryItem, len(in))
+	for i, it := range in {
+		out[i] = it
+		out[i].Payload = append([]byte(nil), it.Payload...)
+		if len(it.Payload) == 0 {
+			out[i].Payload = nil
+		}
+	}
+	return out
+}
+
+func (c *memCase) Retries(ctx context.Context) ([]RetryItem, error) {
+	if err := c.check(ctx); err != nil {
+		return nil, err
+	}
+	c.d.mu.RLock()
+	defer c.d.mu.RUnlock()
+	return copyRetries(c.d.retries), nil
+}
+
+func (c *memCase) ReplaceRetries(ctx context.Context, items []RetryItem) ([]RetryItem, error) {
+	clean, err := CleanRetries(items)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.check(ctx); err != nil {
+		return nil, err
+	}
+	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	if c.d.erased {
+		return nil, ErrNotFound
+	}
+	now := c.s.now().UTC().Truncate(time.Millisecond)
+	for i := range clean {
+		c.d.nextRetry++
+		clean[i].ID = c.d.nextRetry
+		clean[i].Created = now
+	}
+	c.d.retries = clean
+	return copyRetries(clean), nil
+}
+
+func (c *memCase) RemoveRetry(ctx context.Context, id int64) error {
+	if err := c.check(ctx); err != nil {
+		return err
+	}
+	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	if c.d.erased {
+		return ErrNotFound
+	}
+	kept := c.d.retries[:0:0]
+	for _, it := range c.d.retries {
+		if it.ID != id {
+			kept = append(kept, it)
+		}
+	}
+	c.d.retries = kept
+	return nil
+}

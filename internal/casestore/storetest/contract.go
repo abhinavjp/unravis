@@ -199,6 +199,7 @@ func Run(t *testing.T, f Factory) {
 	t.Run("reopen", func(t *testing.T) { reopenContract(t, f, caps) })
 	t.Run("create-for-request-id", func(t *testing.T) { createForContract(t, f, caps) })
 	t.Run("marks", func(t *testing.T) { markContract(t, f, caps) })
+	t.Run("retries", func(t *testing.T) { retriesContract(t, f, caps) })
 }
 
 func ids(t *testing.T, f Factory, caps casestore.Caps) {
