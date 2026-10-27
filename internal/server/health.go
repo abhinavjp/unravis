@@ -323,6 +323,9 @@ func (h *handler) caseHealthList(w http.ResponseWriter, r *http.Request, raw str
 	}
 	out := make([]healthRunDTO, 0, len(runs))
 	for _, run := range runs {
+		if run.Key != "" { // a lane day belongs to the lanes list, not to the run history
+			continue
+		}
 		out = append(out, healthDTO(run))
 	}
 	writeJSON(w, http.StatusOK, struct {

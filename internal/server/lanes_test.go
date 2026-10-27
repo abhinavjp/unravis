@@ -117,10 +117,10 @@ func TestLaneSQLRunsSavesAndLists(t *testing.T) {
 		if len(list.Days) != 2 {
 			t.Fatalf("days = %d", len(list.Days))
 		}
-		// The ordinary health list still holds the runs, with the lane inside the report.
+		// Lane days are kept apart from the run history: the re-check replaced the first read, and the history list does not show them.
 		var runs struct{ Runs []healthRunDTO }
 		decodeBody(t, e.get("/api/cases/"+id+"/health"), &runs)
-		if len(runs.Runs) != 3 {
+		if len(runs.Runs) != 0 {
 			t.Fatalf("health runs = %d", len(runs.Runs))
 		}
 	})
@@ -527,6 +527,50 @@ func TestGrantScriptsRoute(t *testing.T) {
 		}
 		if res := e.json(http.MethodPost, "/api/grant-scripts?kind=mongo", ""); res.Code != http.StatusMethodNotAllowed {
 			t.Errorf("POST = %d", res.Code)
+		}
+	})
+}
+
+// Review F1: a day that was read must survive any number of ordinary health runs, and reading it again must replace it, not add a row.
+func TestLaneDaysSurviveHealthRunsAndRechecksReplace(t *testing.T) {
+	stubLaneSQL(t, healthyLaneSQL())
+	healthEnv(t, savedLane(), func(t *testing.T, e *caseEnv, id string) {
+		path := "/api/cases/" + id + "/lanes/sql"
+		for i := 0; i < 3; i++ { // the same day again is a re-check that replaces the earlier read
+			if res := e.json(http.MethodPost, path, laneSQLBodyJSON("")); res.Code != http.StatusOK {
+				t.Fatalf("read %d = %d %s", i, res.Code, res.Body)
+			}
+		}
+		c, err := e.store.Open(context.Background(), casestore.CaseID(id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		hs := c.(casestore.HealthStore)
+		for i := 0; i < casestore.MaxHealthRuns+5; i++ { // ordinary runs fill their own cap
+			if _, err := hs.AddHealthRun(context.Background(), casestore.HealthRun{Kind: "sql", Label: "SQL Server", Status: "ok", Report: []byte(`{}`)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		runs, err := hs.HealthRuns(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain, keyed := 0, 0
+		for _, r := range runs {
+			if r.Key == "" {
+				plain++
+			} else {
+				keyed++
+			}
+		}
+		if plain != casestore.MaxHealthRuns || keyed != 1 {
+			t.Fatalf("plain = %d, lane days = %d; want %d and 1", plain, keyed, casestore.MaxHealthRuns)
+		}
+		var list struct{ Days []laneDayDTO }
+		decodeBody(t, e.get("/api/cases/"+id+"/lanes"), &list)
+		if len(list.Days) != 1 {
+			t.Fatalf("days = %d", len(list.Days))
 		}
 	})
 }

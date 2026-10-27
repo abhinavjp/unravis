@@ -111,6 +111,13 @@ func overlapsHeldDay(held []laneRun, kind, label, database string, incident dbhe
 
 const laneOverlapText = "You already added a day for this database that overlaps these times. Use the same start and end to check that day again, or pick times that do not overlap. Nothing was read."
 
+// laneKey names a lane day by its source and window. The case keeps one run per key and holds lane days apart from the plain health runs, so
+// reading the same day again replaces it and a run of the health checks can never push a day out.
+func laneKey(kind string, report dbhealth.Report) string {
+	in := report.Lane.Incident
+	return kind + "|" + report.Label + "|" + report.Database + "|" + in.Start.UTC().Format(time.RFC3339) + "|" + in.End.UTC().Format(time.RFC3339)
+}
+
 // laneSave keeps a finished lane run in the case and answers like a health run does.
 func laneSave(w http.ResponseWriter, r *http.Request, hs casestore.HealthStore, kind string, report dbhealth.Report) {
 	enc, err := json.Marshal(report)
@@ -120,7 +127,7 @@ func laneSave(w http.ResponseWriter, r *http.Request, hs casestore.HealthStore, 
 	}
 	sctx, scancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer scancel()
-	saved, err := hs.AddHealthRun(sctx, casestore.HealthRun{Kind: kind, Label: report.Label, Status: string(report.Overall), Report: enc})
+	saved, err := hs.AddHealthRun(sctx, casestore.HealthRun{Kind: kind, Label: report.Label, Status: string(report.Overall), Report: enc, Key: laneKey(kind, report)})
 	out := struct {
 		Saved bool         `json:"saved"`
 		State string       `json:"state"`

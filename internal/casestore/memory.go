@@ -649,10 +649,7 @@ func (c *memCase) AddHealthRun(ctx context.Context, r HealthRun) (HealthRun, err
 	clean.ID = c.d.nextRun
 	clean.At = c.s.now().UTC().Truncate(time.Millisecond)
 	clean.Report = append([]byte(nil), clean.Report...)
-	c.d.health = append([]HealthRun{clean}, c.d.health...)
-	if len(c.d.health) > MaxHealthRuns {
-		c.d.health = c.d.health[:MaxHealthRuns]
-	}
+	c.d.health = TrimHealthRuns(append([]HealthRun{clean}, c.d.health...))
 	return clean, nil
 }
 
