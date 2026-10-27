@@ -79,7 +79,8 @@ func caseLedgerParts(path string) ([]string, bool) {
 
 // caseLedgerOf opens the case for a ledger request (same 404 rule as healthCaseOf).
 func (h *handler) caseLedgerOf(w http.ResponseWriter, r *http.Request, raw string) (casestore.Case, casestore.LedgerBlobStore, casestore.CaseID, bool) {
-	if h.demo {
+	// The capture-only demo cases keep their theories in the case, so this route works there.
+	if h.demo && !h.captureCases {
 		writeError(w, http.StatusServiceUnavailable, caseLedgerDemoText)
 		return nil, nil, "", false
 	}

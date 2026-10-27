@@ -6,3 +6,8 @@
 .superpowers/
 .diagnostics/
 /.dev/
+
+# Screenshot harness
+/tools/screens/node_modules/
+/tools/screens/test-results/
+/tools/screens/playwright-report/

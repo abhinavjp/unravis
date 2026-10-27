@@ -21,6 +21,7 @@ import (
 	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/masterkey"
 	"api-audit-explorer/internal/mcp"
+	"api-audit-explorer/internal/server"
 )
 
 // Capture-only demo settings (decisions B8 and B9). They exist so the screenshot
@@ -192,6 +193,9 @@ func openDemoCases(getenv func(string) string, hypotheses ledger.Store, now time
 	}
 	untrustedOn.Store(true)
 	clk.set(now)
+	// The page hides Home and Case home in the demo. This tells it the demo has
+	// cases, so the capture run can reach the case list and a case's home page.
+	wiring.options = append(wiring.options, server.WithCaptureCases())
 	log.Printf("Demo cases ready (%d), clock fixed at %s.", len(demoCaseIDs()), now.Format(time.RFC3339))
 	return wiring, nil
 }

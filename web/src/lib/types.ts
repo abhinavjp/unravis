@@ -32,6 +32,8 @@ export interface RememberConnectionInput { label: string; connection: Connection
 export interface SourceResult { sourceId: string; ok: boolean; error: string; version: string; indexWarning: string }
 export interface Info {
   demo: boolean;
+  /** Set only by the capture-only demo cases: the demo has cases, so Home and Case home show. */
+  captureCases?: boolean;
   limits: { maxSources: number; maxPageSize: number; maxSummaryRows: number; maxTimeBuckets: number };
   now: string;
 }
