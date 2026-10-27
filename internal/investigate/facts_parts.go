@@ -73,6 +73,7 @@ func (p *prep) iisSplit() {
 	sort.SliceStable(calls, func(i, j int) bool { return expected(calls[i]).Before(expected(calls[j])) })
 	tol := time.Duration(p.th.IISMatchToleranceMs * float64(time.Millisecond))
 	matched := 0
+	var offsets []time.Duration
 	for _, c := range calls {
 		if c.r.Path == "" {
 			continue
@@ -102,6 +103,7 @@ func (p *prep) iisSplit() {
 		}
 		best.used = true
 		matched++
+		offsets = append(offsets, best.end.Sub(target))
 		pv := 0.0
 		if c.r.P != nil {
 			pv = *c.r.P
@@ -125,6 +127,36 @@ func (p *prep) iisSplit() {
 		}
 		pt.IISMatched = 0
 		pt.OWhy = fmt.Sprintf("Only %d of %d audited calls matched an IIS row, too few to show outside time.", matched, len(calls))
+		return
+	}
+	// A steady clock difference between the two hosts shows as matched pairs whose end
+	// times differ by about the same amount. Pairs that scatter across the whole
+	// tolerance are neighbours of the same route, not the same call, so outside time
+	// from them would be noise.
+	if len(offsets) == 0 {
+		pt.OWhy = "No audited call matched an IIS row, so outside time is not shown."
+		return
+	}
+	sort.Slice(offsets, func(i, j int) bool { return offsets[i] < offsets[j] })
+	med := offsets[len(offsets)/2]
+	pt.IISOffsetMs = ptr(float64(med) / float64(time.Millisecond))
+	near := 0
+	clock := time.Duration(p.th.ClockToleranceMs * float64(time.Millisecond))
+	for _, o := range offsets {
+		d := o - med
+		if d < 0 {
+			d = -d
+		}
+		if d <= clock {
+			near++
+		}
+	}
+	if float64(near)/float64(len(offsets)) < p.th.IISOffsetClusterShare-floatEps {
+		for _, c := range calls {
+			c.o = nil
+		}
+		pt.IISMatched = 0
+		pt.OWhy = "The IIS rows do not line up with the audited calls at one steady clock difference, so they may not be the same calls and outside time is not shown."
 		return
 	}
 	pt.OTested = true

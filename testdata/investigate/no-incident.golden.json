@@ -28,6 +28,7 @@
     "partsMinCoverage": 0.8,
     "iisMatchToleranceMs": 3000,
     "iisMatchMinRate": 0.5,
+    "iisOffsetClusterShare": 0.8,
     "auditDipShare": 0.3,
     "flatTopMinutes": 3,
     "flatTopTolerance": 0.05,
@@ -301,7 +302,8 @@
       "oTested": true,
       "oWhy": "",
       "iisMatched": 4500,
-      "iisMatchRate": 1
+      "iisMatchRate": 1,
+      "iisOffsetMs": 0
     },
     "load": {
       "planningPerSec": 40,

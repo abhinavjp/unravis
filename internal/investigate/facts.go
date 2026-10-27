@@ -128,6 +128,9 @@ type Parts struct {
 	OWhy         string      `json:"oWhy"`
 	IISMatched   int         `json:"iisMatched"`
 	IISMatchRate *float64    `json:"iisMatchRate,omitempty"`
+	// IISOffsetMs is the usual gap between an IIS end time and the matching audit end
+	// time (the clock difference between the hosts, when the pairs line up).
+	IISOffsetMs *float64 `json:"iisOffsetMs,omitempty"`
 }
 
 // Load is Step 4: Little's Law, L = lambda x W, from the audit documents.

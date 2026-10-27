@@ -107,6 +107,10 @@ type Thresholds struct {
 	// match an IIS row before outside time (O) is shown.
 	IISMatchToleranceMs float64 `json:"iisMatchToleranceMs"`
 	IISMatchMinRate     float64 `json:"iisMatchMinRate"`
+	// IISOffsetClusterShare is the share of matched pairs whose end-time gap must sit
+	// within ClockToleranceMs of the median gap. A steady clock difference passes;
+	// pairs that scatter do not, and outside time is then not shown.
+	IISOffsetClusterShare float64 `json:"iisOffsetClusterShare"`
 	// AuditDipShare is how far the audit share of IIS requests may fall in the
 	// incident window, against the reference, before audit coverage is in doubt.
 	AuditDipShare float64 `json:"auditDipShare"`
@@ -169,6 +173,7 @@ func Current() Thresholds {
 		PartsMinCoverage:      0.8,
 		IISMatchToleranceMs:   3000,
 		IISMatchMinRate:       0.5,
+		IISOffsetClusterShare: 0.8,
 		AuditDipShare:         0.3,
 		FlatTopMinutes:        3,
 		FlatTopTolerance:      0.05,
@@ -222,6 +227,7 @@ func (t Thresholds) Entries() []Entry {
 		f("partsMinCoverage", t.PartsMinCoverage),
 		f("iisMatchToleranceMs", t.IISMatchToleranceMs),
 		f("iisMatchMinRate", t.IISMatchMinRate),
+		f("iisOffsetClusterShare", t.IISOffsetClusterShare),
 		f("auditDipShare", t.AuditDipShare),
 		i("flatTopMinutes", t.FlatTopMinutes),
 		f("flatTopTolerance", t.FlatTopTolerance),

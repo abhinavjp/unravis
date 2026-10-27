@@ -2,6 +2,7 @@ package investigate
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -183,6 +184,9 @@ func Steps(in Input, f Facts, s Signals, th Thresholds) []Step {
 			}
 			if f.Counts.NoStart > 0 {
 				st.Reasons = append(st.Reasons, fmt.Sprintf("%d audit documents had no start time and were dropped.", f.Counts.NoStart))
+			}
+			if off := f.Parts.IISOffsetMs; off != nil && math.Abs(*off) > th.ClockToleranceMs {
+				st.Reasons = append(st.Reasons, fmt.Sprintf("The IIS clock and the audit clock differ by about %.1f s, more than the %.0f s allowed for, so onsets from the two sources less than that apart are not put in order.", math.Abs(*off)/1000, th.ClockToleranceMs/1000))
 			}
 			if s.Flags[SigAuditDip].Value == Yes {
 				st.Reasons = append(st.Reasons, "The audit share of IIS requests fell in the incident window, so some calls may be missing from the audit.")

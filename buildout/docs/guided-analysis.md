@@ -83,7 +83,7 @@ If the audit shows no clear start but the time outside the app does, the start i
 
 A call's recorded time is audit set-up (A) plus the action (C). Payload capture (P) comes after and is outside it. Time outside the app (O) is the IIS time taken, minus the recorded time, minus P. Each part's growth is shown as a share of the extra time. A part is dominant when it holds at least half of the extra time and has risen by a meaningful amount.
 
-O needs the IIS logs. Without them O is Cannot test yet; it is never shown as zero. The IIS logs are matched to audit calls by their end time within 3 seconds and the same route, one to one. If fewer than half of the audit calls find a match, O is not shown.
+O needs the IIS logs. Without them O is Cannot test yet; it is never shown as zero. The IIS logs are matched to audit calls by their end time within 3 seconds and the same route, one to one. If fewer than half of the audit calls find a match, O is not shown. O is also not shown when the matched pairs do not line up at one steady clock difference between the two hosts, because they may then be different calls on the same route. A steady difference of more than 1 second is shown as a note on Step 1.
 
 ## Step 4. Load
 
