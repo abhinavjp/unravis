@@ -133,6 +133,9 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.Folder) == "" || !filepath.IsAbs(c.Folder) {
 		return invalidf(`"folder" must be a full path such as %s`, DefaultFolder)
 	}
+	if why := unsafeFolder(c.Folder); why != "" {
+		return invalidf(`"folder" must be a folder of its own such as %s, not %s`, DefaultFolder, why)
+	}
 	switch c.IntervalSeconds {
 	case 5, 15, 30, 60:
 	default:
@@ -165,6 +168,28 @@ func (c Config) Validate() error {
 		return invalidf(`"probe.enabled" must be false: the SQL probe is not part of this release`)
 	}
 	return nil
+}
+
+// unsafeFolder says why folder must not hold recordings: a drive or share root,
+// or a Windows system folder. Recordings are deleted from this folder by Remove
+// and by a failed install, so it must be one only the Blackbox uses. Empty when
+// the folder is fine.
+func unsafeFolder(folder string) string {
+	p := filepath.Clean(folder)
+	rest := strings.Trim(strings.TrimPrefix(p, filepath.VolumeName(p)), `\/`)
+	if rest == "" || rest == "." {
+		return "a drive or share root"
+	}
+	parts := strings.FieldsFunc(rest, func(r rune) bool { return r == '\\' || r == '/' })
+	switch strings.ToLower(parts[0]) {
+	case "windows", "program files", "program files (x86)", "system volume information", "$recycle.bin":
+		return "a Windows system folder"
+	case "users", "programdata", "documents and settings":
+		if len(parts) == 1 {
+			return "a Windows system folder"
+		}
+	}
+	return ""
 }
 
 // ParseConfig reads blackbox.json text. A UTF-8 byte order mark (which

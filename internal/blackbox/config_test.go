@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -153,5 +154,37 @@ func TestDefaultBindIsLoopbackNotEveryInterface(t *testing.T) {
 	c, err := ParseConfig([]byte(`{"name":"a"}`))
 	if err != nil || c.Bind != "127.0.0.1" {
 		t.Fatalf("a file with no bind must listen on loopback: %+v %v", c, err)
+	}
+}
+
+var unsafeFolderCases = []string{
+	`D:\`, `C:\`, `C:`, `\\files01\share`, `D:\Windows`, `C:\Windows\System32\blackbox`,
+	`C:\Program Files`, `C:\Program Files\Unravis`, `C:\Program Files (x86)\x`, `C:\Users`, `D:\ProgramData`,
+}
+
+// Review F6.2: recordings are deleted from this folder, so it must be one the
+// Blackbox owns.
+func TestValidateRefusesDriveRootsAndSystemFolders(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows paths")
+	}
+	for _, p := range unsafeFolderCases {
+		c := Default()
+		c.Name = "box"
+		c.Folder = p
+		if !filepath.IsAbs(p) {
+			continue // refused earlier, as not a full path
+		}
+		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), `"folder"`) {
+			t.Errorf("folder %q accepted: %v", p, err)
+		}
+	}
+	for _, p := range []string{`D:\UnravisBlackbox`, `C:\UnravisBlackbox`, `E:\data\bb`, `C:\Users\svc\bb`, `\\files01\share\bb`, `C:\ProgramData\Unravis\bb`} {
+		c := Default()
+		c.Name = "box"
+		c.Folder = p
+		if err := c.Validate(); err != nil {
+			t.Errorf("folder %q refused: %v", p, err)
+		}
 	}
 }

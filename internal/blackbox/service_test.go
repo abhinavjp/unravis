@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -529,7 +530,7 @@ func TestRemoveStopsARunningServiceFirst(t *testing.T) {
 
 func TestRemoveRecordingsRemovesFolderWhenEmpty(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "rec")
-	_ = os.MkdirAll(filepath.Join(dir, SnapshotsDir, "x"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, SnapshotsDir, SnapshotName("web-b", t0)), 0o755)
 	_ = os.WriteFile(filepath.Join(dir, FileNameFor(t0)), []byte("a"), 0o644)
 	_ = os.WriteFile(filepath.Join(dir, ManifestName+".bad-20261027"), []byte("a"), 0o644)
 	n, err := RemoveRecordings(dir)
@@ -766,4 +767,110 @@ func TestInstallWithASpecificBindProbesThatAddress(t *testing.T) {
 			t.Fatalf("bind %s: service not left running", tc.bind)
 		}
 	}
+}
+
+// Review F6.2: Remove deletes only what the recorder made, even when the folder
+// is shared with other things.
+func TestRemoveRecordingsSparesEverythingTheRecorderDidNotMake(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "shared")
+	snap := filepath.Join(dir, SnapshotsDir)
+	mine := []string{
+		filepath.Join(snap, SnapshotName("web-b", t0)),
+		filepath.Join(snap, SnapshotName("web-b", t0)+"-2"),
+	}
+	theirs := []string{
+		filepath.Join(snap, "my-old-reports"), // someone else's folder under snapshots
+		filepath.Join(dir, "reports"),         // a folder next to the recordings
+		filepath.Join(dir, "reports", "q3"),
+	}
+	for _, d := range append(append([]string{}, mine...), theirs...) {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.WriteFile(filepath.Join(d, "f.txt"), []byte("x"), 0o644)
+	}
+	files := map[string]bool{ // name -> must survive
+		FileNameFor(t0): false, ManifestName: false, ManifestName + ".tmp-123": false,
+		"backup.tmp-2026.sql": true, "notes.txt": true, "bb-notes.ndjson": true, "snapshots.txt": true,
+	}
+	for n := range files {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := RemoveRecordings(dir); err != nil {
+		t.Fatal(err)
+	}
+	for n, keep := range files {
+		_, err := os.Stat(filepath.Join(dir, n))
+		if keep != (err == nil) {
+			t.Errorf("%s: kept=%v want %v", n, err == nil, keep)
+		}
+	}
+	for _, d := range mine {
+		if _, err := os.Stat(d); err == nil {
+			t.Errorf("snapshot %s should be gone", d)
+		}
+	}
+	for _, d := range theirs {
+		if _, err := os.Stat(filepath.Join(d, "f.txt")); err != nil {
+			t.Errorf("%s was deleted", d)
+		}
+	}
+}
+
+func TestRemoveRecordingsRefusesDriveRootsAndSystemFolders(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows paths")
+	}
+	for _, p := range unsafeFolderCases {
+		if _, err := RemoveRecordings(p); err == nil {
+			t.Errorf("RemoveRecordings(%q) went ahead", p)
+		}
+	}
+}
+
+// Review F6.1: a service that started and wrote samples before the status
+// probe failed leaves nothing behind when the install is undone.
+func TestInstallUndoRemovesRecordingsTheServiceWrote(t *testing.T) {
+	write := func(dir string) {
+		_ = os.WriteFile(filepath.Join(dir, FileNameFor(t0)), []byte("{}"), 0o644)
+		_ = os.WriteFile(filepath.Join(dir, ManifestName), []byte("{}"), 0o644)
+		_ = os.MkdirAll(filepath.Join(dir, SnapshotsDir, SnapshotName("web-b", t0)), 0o755)
+	}
+	t.Run("folder made by the install is gone", func(t *testing.T) {
+		g := newSvcRig(t)
+		g.svc.onStart = func() { write(g.cfg.Folder) }
+		g.env.probeErr = errors.New("connection refused")
+		if _, err := g.m.Install(g.cfg); err == nil {
+			t.Fatal("install should fail")
+		}
+		g.nothingLeft(t)
+	})
+	t.Run("a folder that was already there keeps what it had", func(t *testing.T) {
+		g := newSvcRig(t)
+		_ = os.MkdirAll(g.cfg.Folder, 0o755)
+		old := filepath.Join(g.cfg.Folder, FileNameFor(t0.Add(-48*time.Hour)))
+		notes := filepath.Join(g.cfg.Folder, "notes.txt")
+		_ = os.WriteFile(old, []byte("old"), 0o644)
+		_ = os.WriteFile(notes, []byte("mine"), 0o644)
+		g.svc.onStart = func() { write(g.cfg.Folder) }
+		g.env.probeErr = errors.New("connection refused")
+		if _, err := g.m.Install(g.cfg); err == nil {
+			t.Fatal("install should fail")
+		}
+		for _, p := range []string{old, notes} {
+			if _, err := os.Stat(p); err != nil {
+				t.Fatalf("%s was removed", p)
+			}
+		}
+		for _, p := range []string{filepath.Join(g.cfg.Folder, FileNameFor(t0)), filepath.Join(g.cfg.Folder, ManifestName), filepath.Join(g.cfg.Folder, SnapshotsDir)} {
+			if _, err := os.Stat(p); err == nil {
+				t.Fatalf("%s left behind", p)
+			}
+		}
+		if _, err := os.Stat(g.cfg.Folder); err != nil {
+			t.Fatal("pre-existing folder removed")
+		}
+	})
 }

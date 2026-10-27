@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -251,9 +252,14 @@ func (m *Manager) Install(cfg Config) (res InstallResult, err error) {
 	folderErr := func(cause error) error {
 		return &InstallError{Reason: ReasonFolder, Message: fmt.Sprintf("%s is read-only or has under 1 GB free. Choose another folder in Settings, or free space.", cfg.Folder), Cause: cause}
 	}
+	before := folderNames(cfg.Folder) // what was already there is never undone
 	if derr := ensureDir(cfg.Folder, &undo); derr != nil {
 		return res, folderErr(derr)
 	}
+	// The service may have written samples before a later step fails. Undo runs
+	// last-added first: this goes after the service is stopped and deleted, and
+	// before the folder itself (only an empty folder can be removed).
+	undo.add(func() { _, _ = removeRecordings(cfg.Folder, before, false) })
 	if werr := m.Env.FolderWritable(cfg.Folder); werr != nil {
 		return res, folderErr(werr)
 	}
@@ -557,8 +563,29 @@ func (m *Manager) Remove(cfg Config, keyPath string, deleteRecordings bool, conf
 	return res, nil
 }
 
-// RemoveRecordings deletes what the recorder wrote in dir and nothing else.
+// snapshotDirRe matches the folders Snapshot makes: <name>-YYYY-MM-DD-HHMM, with
+// -2, -3 ... when two are made in the same minute.
+var snapshotDirRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*-\d{4}-\d{2}-\d{2}-\d{4}(-\d+)?$`)
+
+// isStoreTemp is the store's own temporary file (the manifest is written through
+// <manifest>.tmp-*). Other .tmp- files in the folder are not ours.
+func isStoreTemp(name string) bool { return strings.HasPrefix(name, ManifestName+".tmp-") }
+
+// RemoveRecordings deletes what the recorder wrote in dir and nothing else: the
+// recording files, the manifest (and its .bad- copies and temp files), and the
+// snapshot folders Snapshot made. The folder itself goes only when that leaves
+// it empty. A drive root or a system folder is refused outright.
 func RemoveRecordings(dir string) (int, error) {
+	return removeRecordings(dir, nil, true)
+}
+
+// removeRecordings is RemoveRecordings that leaves the names in keep alone (what
+// was in the folder before an install started) and removes the folder itself
+// only when removeDir is set.
+func removeRecordings(dir string, keep map[string]bool, removeDir bool) (int, error) {
+	if why := unsafeFolder(dir); why != "" {
+		return 0, fmt.Errorf("blackbox: will not delete recordings in %s: it is %s", dir, why)
+	}
 	ents, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
@@ -570,19 +597,46 @@ func RemoveRecordings(dir string) (int, error) {
 	for _, e := range ents {
 		name := e.Name()
 		path := filepath.Join(dir, name)
+		if keep[name] {
+			continue
+		}
 		switch {
-		case e.IsDir() && name == "snapshots":
-			if err := os.RemoveAll(path); err != nil {
-				return n, err
+		case e.IsDir() && name == SnapshotsDir:
+			sub, serr := os.ReadDir(path)
+			if serr != nil {
+				continue
 			}
-			n++
-		case !e.IsDir() && (ValidFileName(name) || name == ManifestName || strings.HasPrefix(name, ManifestName+".bad-") || strings.Contains(name, ".tmp-")):
+			for _, se := range sub {
+				if se.IsDir() && snapshotDirRe.MatchString(se.Name()) {
+					if err := os.RemoveAll(filepath.Join(path, se.Name())); err != nil {
+						return n, err
+					}
+					n++
+				}
+			}
+			_ = os.Remove(path) // only succeeds when empty
+		case !e.IsDir() && (ValidFileName(name) || name == ManifestName || strings.HasPrefix(name, ManifestName+".bad-") || isStoreTemp(name)):
 			if err := os.Remove(path); err != nil {
 				return n, err
 			}
 			n++
 		}
 	}
-	_ = os.Remove(dir) // only succeeds when empty
+	if removeDir {
+		_ = os.Remove(dir) // only succeeds when empty
+	}
 	return n, nil
+}
+
+// folderNames lists the names in dir (nil when it cannot be read).
+func folderNames(dir string) map[string]bool {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]bool, len(ents))
+	for _, e := range ents {
+		m[e.Name()] = true
+	}
+	return m
 }
