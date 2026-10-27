@@ -251,6 +251,21 @@ func (s *Store) SetKey(id, key string) error {
 	})
 }
 
+// SetRecorder records which recorder an entry reaches, once a read has told
+// (so the same Blackbox reached another way is still one entry). It fills only
+// what is empty.
+func (s *Store) SetRecorder(id, host, name string) error {
+	host, name = clean(host), clean(name)
+	if host == "" || name == "" || len(host) > maxText || len(name) > maxText {
+		return ErrInvalid
+	}
+	return s.update(id, func(r *stored) {
+		if r.RecorderHost == "" && r.RecorderName == "" {
+			r.RecorderHost, r.RecorderName = host, name
+		}
+	})
+}
+
 func (s *Store) update(id string, f func(*stored)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

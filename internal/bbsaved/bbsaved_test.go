@@ -230,3 +230,28 @@ func TestNewNeedsAPathAndAProtector(t *testing.T) {
 		t.Fatal()
 	}
 }
+
+func TestSetRecorderFillsOnlyWhatIsEmpty(t *testing.T) {
+	s, _ := open(t)
+	e, _ := s.Add(AddInput{Name: "web-b", Location: loc(t, "web-b:7788"), Key: secret})
+	if err := s.SetRecorder(e.ID, "WEB-B", "web-b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetRecorder(e.ID, "other", "other"); err != nil {
+		t.Fatal(err)
+	}
+	g, _ := s.Get(e.ID)
+	if g.RecorderHost != "WEB-B" || g.RecorderName != "web-b" {
+		t.Fatalf("%+v", g)
+	}
+	if err := s.SetRecorder(e.ID, "", "x"); !errors.Is(err, ErrInvalid) {
+		t.Fatal(err)
+	}
+	if err := s.SetRecorder("nope", "a", "b"); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	// Now the same recorder reached by a folder is a duplicate.
+	if _, err := s.Add(AddInput{Name: "web-b", Location: loc(t, `\\web-b\Bb`), RecorderHost: "web-b", RecorderName: "WEB-B"}); !errors.Is(err, ErrDuplicate) {
+		t.Fatal(err)
+	}
+}

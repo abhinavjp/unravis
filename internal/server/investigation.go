@@ -161,6 +161,7 @@ func (h *handler) caseInvestigation(w http.ResponseWriter, r *http.Request, raw 
 		writeStoreError(w, err)
 		return
 	}
+	h.applyBlackboxLane(ctx, c, &in, &read)
 	res := investigate.Analyze(in)
 	if !body.IncludeSeries {
 		res = res.Compact()
