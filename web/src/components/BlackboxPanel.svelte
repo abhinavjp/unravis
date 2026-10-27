@@ -236,7 +236,7 @@
             <div><dt>{T.host}</dt><dd>{item.facts.host}{#if item.facts.version}, {T.version} {item.facts.version}{/if}</dd></div>
           {/if}
         </dl>
-        <p class="bb-note">{item.kind === 'url' ? (item.hasKey ? T.readKeySaved : T.readKeyNone) : T.readKeyNone} {item.kind === 'url' ? T.readKeyNote : ''}</p>
+        <p class="bb-note">{item.kind === 'url' ? (item.hasKey ? T.readKeySaved : T.readKeyNone) : T.readKeyNone} {item.kind === 'url' ? (item.thisPc ? T.readKeyNoteThisPc : T.readKeyNote) : ''}</p>
 
         <div aria-live="polite">
           {#if working}<p class="bb-note" role="status">{working}</p>{/if}

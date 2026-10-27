@@ -67,6 +67,7 @@ export const BB_TEXT = {
   servicesTitle: 'Steps for the server',
   anotherServer: 'This Blackbox is on another server, so Unravis does not offer Stop or Snapshot for it. Use the steps below.',
   readKeyNote: 'The read key was shown once on that server when the Blackbox was installed. It is saved here, sealed with Windows data protection, and never shown again.',
+  readKeyNoteThisPc: 'Unravis made the read key when it installed this Blackbox and sealed it on this PC at once. It is never shown, and never put in a case file.',
   readKeySaved: 'A read key is saved on this PC.',
   readKeyNone: 'This place needs no read key.',
   changeKey: 'Type a new read key',
