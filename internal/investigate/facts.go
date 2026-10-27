@@ -74,11 +74,15 @@ type OverallShift struct {
 
 // Onset is t0 by rule A24. Status is "found", "not found" or "cannot date".
 type Onset struct {
-	Status      string     `json:"status"`
-	T0          *time.Time `json:"t0,omitempty"`
-	RefP95Ms    *float64   `json:"refP95Ms,omitempty"`
-	ThresholdMs *float64   `json:"thresholdMs,omitempty"`
-	Why         string     `json:"why"`
+	Status string     `json:"status"`
+	T0     *time.Time `json:"t0,omitempty"`
+	// Basis says what was timed: "audit duration" (rule A24 as written) or
+	// "outside time" (the audit durations did not move, but IIS time-taken outside
+	// the audited span did).
+	Basis       string   `json:"basis,omitempty"`
+	RefP95Ms    *float64 `json:"refP95Ms,omitempty"`
+	ThresholdMs *float64 `json:"thresholdMs,omitempty"`
+	Why         string   `json:"why"`
 }
 
 // Shape is "step", "ramp", "periodic", "none" (nothing to shape) or "unknown".
@@ -298,6 +302,7 @@ func ComputeFacts(in Input, th Thresholds) Facts {
 	p.errors()
 	p.coverage()
 	p.tiers()
+	p.onsetFromOutside()
 	p.series()
 	return p.facts
 }
@@ -696,7 +701,7 @@ func (p *prep) onset() {
 	idx, ok := findRun(p.incBins, p.th.OnsetRunMinutes, func(b *bin) minStatus { return p.hotMinute(b, *ref) })
 	if ok {
 		t := p.incBins[idx].at
-		o.Status, o.T0 = "found", &t
+		o.Status, o.T0, o.Basis = "found", &t, "audit duration"
 		o.Why = "The P95 stayed above the reference P95 for the run of minutes the rule needs."
 		return
 	}
@@ -828,5 +833,25 @@ func (p *prep) scope() {
 		sc.Kind, sc.Why = "everything", "Nearly every route with enough calls rose by the change mark."
 	default:
 		sc.Kind, sc.Why = "many routes", "Many routes rose by the change mark, but not nearly all."
+	}
+}
+
+// onsetFromOutside covers a slowdown the audit durations cannot see. Outside time
+// (IIS time-taken minus the audited span and payload capture) lies outside the
+// audited duration, so a queue in front of the app leaves the audit P95 flat. When
+// no run was found on the audit durations but outside time moved, t0 is dated from
+// outside time and the basis says so.
+func (p *prep) onsetFromOutside() {
+	o := &p.facts.Onset
+	if o.Status != "not found" {
+		return
+	}
+	for _, t := range p.facts.Tiers {
+		if t.Tier == "o" && t.At != nil {
+			at := *t.At
+			o.Status, o.T0, o.Basis = "found", &at, "outside time"
+			o.Why = "The audit durations did not move, but outside time stayed above its reference for the run of minutes the rule needs."
+			return
+		}
 	}
 }

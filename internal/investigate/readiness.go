@@ -216,6 +216,9 @@ func Steps(in Input, f Facts, s Signals, th Thresholds) []Step {
 			if referenceAfter(in) {
 				st.degrade(PartlyReady, "The reference window comes after the incident window.")
 			}
+			if f.Onset.Basis == "outside time" {
+				st.degrade(PartlyReady, "The audit durations did not move. The start is dated from outside time, so the shape and the scope, which read audit durations, are not shown.")
+			}
 		}
 		if audit {
 			switch f.Onset.Status {
