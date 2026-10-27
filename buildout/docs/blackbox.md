@@ -2,7 +2,130 @@
 
 The Blackbox is a small program that sits on a server and keeps a flight recorder of it. When an incident happens, Unravis reads the recording and shows what the server was doing at that minute. It only reads the server. It never changes anything on it except its own recordings folder.
 
-Screenshots pending harness: this page has one captured terminal block (`p8-status-json`) and no browser screens. `tools/screens/docs-check.mjs` does not exist yet (P1 creates it), so this page has not been run through it.
+## Place
+
+Screens in this part: `p9-blackbox-list`, `p9-wizard-1`, `p9-wizard-2`, `p9-wizard-3`, `p9-wizard-4`.
+
+Open **Blackbox** in the header, on any screen. The list shows every Blackbox Unravis knows, each with a sticker for its state, how it is reached, the last sample and how often it samples. The Blackbox is not part of a case: it records all the time, before any incident.
+
+![The Blackbox list, dark](../screenshots/P9/p9-blackbox-list-dark.png)
+![The Blackbox list, light](../screenshots/P9/p9-blackbox-list-light.png)
+
+**Place a Blackbox** starts a four-part wizard. Nothing is saved until the last part.
+
+1. **Name.** Letters, numbers and dashes, up to 63 characters. Keep it the same as the server name so cases find it.
+
+![Place a Blackbox, part 1 of 4, dark](../screenshots/P9/p9-wizard-1-dark.png)
+![Place a Blackbox, part 1 of 4, light](../screenshots/P9/p9-wizard-1-light.png)
+
+2. **Where.** On this PC, Unravis installs the recorder as a Windows service (Windows asks for administrator approval). On another server, Unravis builds a zip, the pack, that you copy there. The pack holds the recorder program, `blackbox.json` and a README. It holds no passwords and no data. If a Blackbox is already installed on this PC, the first choice is off.
+
+![Place a Blackbox, part 2 of 4, dark](../screenshots/P9/p9-wizard-2-dark.png)
+![Place a Blackbox, part 2 of 4, light](../screenshots/P9/p9-wizard-2-light.png)
+
+3. **Settings.** The sampling interval (5, 15, 30 or 60 seconds), what to record, how long to keep it, the size limit, the free disk to keep, the folder, the port and the address it listens on. The defaults match the table in What it records. The listen address stays `127.0.0.1` unless you change it (decision A53).
+
+![Place a Blackbox, part 3 of 4, dark](../screenshots/P9/p9-wizard-3-dark.png)
+![Place a Blackbox, part 3 of 4, light](../screenshots/P9/p9-wizard-3-light.png)
+
+4. **Review.** One screen with every choice. **Install and start here** or **Download the pack** is the only button that changes anything.
+
+![Place a Blackbox, part 4 of 4, dark](../screenshots/P9/p9-wizard-4-dark.png)
+![Place a Blackbox, part 4 of 4, light](../screenshots/P9/p9-wizard-4-light.png)
+
+**On this PC.** Install runs the recorder's own `install` through a small helper that Windows asks you to approve. Unravis makes the read key itself and seals it on this PC with Windows data protection the moment it exists. It is never shown, so there is nothing to copy. If the install fails, it is undone and nothing is left half done. The page then offers **Start**, **Stop**, **Apply settings** (restarts the service with new settings), **Snapshot now** (copies the recordings into one folder) and **Remove**. Remove keeps the recordings unless you tick **Delete the recordings too**, which needs the exact Blackbox name typed.
+
+**On another server.** The pack is a zip named `unravis-blackbox-<name>.zip`. Copy it to the server, unzip it, and run `unravis-blackbox.exe install` as an administrator (see Install). The install prints the read key once on that server; copy it then, and use it in Add. For a Blackbox on another server Unravis offers script steps only. It never stops, starts or removes anything there.
+
+## Add
+
+**Add one by folder, share or address** adds a Blackbox that already exists. Type one of:
+
+- a folder on this PC, for example `D:\UnravisBlackbox`;
+- a network share, for example `\\web-b\UnravisBlackbox`;
+- an address and port, for example `web-b:7788`.
+
+Unravis does not scan the network. It only goes where you point it. Only an address needs a read key. A folder or a share needs none, so the field is not shown. The key is sent once to be tried, then sealed with Windows data protection and kept on this PC. It is never put in a case file or an export, and it is not shown again. A wrong or old key can be replaced with **Type a new read key**.
+
+Add checks the place first and reports one of the states below. Adding the same Blackbox twice, by the same place or by the same server name and recorder name, is refused with a note that it is already in the list. Redirects are never followed. If a share drops while it is being read, the Blackbox shows **Unreachable**. **Check again** reads it afresh.
+
+**Scan this PC** looks for a Blackbox installed on this PC. If it finds one that is not in the list, it offers **Add it to the list**.
+
+## States
+
+Screens in this part: `p9-state-running`, `p9-state-running-late`, `p9-state-stopped`, `p9-state-disk-low`, `p9-state-clock-differs`, `p9-state-not-found`, `p9-state-unreachable`, `p9-state-incomplete`, `p9-state-not-placed`.
+
+Every Blackbox is in one of nine states. The sticker carries the word, and the readiness word is what a case step says: **Ready**, **Partly ready** or **Cannot test yet**. A sticker is never colour alone.
+
+| State | Readiness | What it means and what to do |
+| --- | --- | --- |
+| Running | Ready | Nothing to do. It is recording. |
+| Running late | Partly ready | The newest sample is more than three intervals old. On the server, open Services, find UnravisBlackbox and restart it. |
+| Stopped | Cannot test yet | On this PC press Start. On another server start it from Services. |
+| Disk low | Partly ready | Free space on that drive, or lower the size limit. Recording resumes by itself. |
+| Clock differs | Partly ready | The server clock and this PC differ by more than a second. Fix the clock on the server. Until then, events less than a second apart are not put in order. |
+| Not found | Cannot test yet | The folder, share or address does not exist. Check it, then check again. |
+| Unreachable | Cannot test yet | Nothing answered, the key was refused, or the share dropped. Check the share permissions or the firewall port, then check again. |
+| Incomplete | Partly ready | The recording has gaps. A gap of up to 2 minutes only warns. A longer gap makes the minutes inside it Cannot test yet. |
+| Not placed | Cannot test yet | A this-PC entry whose service is gone. Place a Blackbox again, or forget the place. |
+
+![State Running, web-a, dark](../screenshots/P9/p9-state-running-dark.png)
+![State Running, web-a, light](../screenshots/P9/p9-state-running-light.png)
+
+![State Running late, web-b, dark](../screenshots/P9/p9-state-running-late-dark.png)
+![State Running late, web-b, light](../screenshots/P9/p9-state-running-late-light.png)
+
+![State Stopped, web-old, dark](../screenshots/P9/p9-state-stopped-dark.png)
+![State Stopped, web-old, light](../screenshots/P9/p9-state-stopped-light.png)
+
+![State Disk low, web-c, dark](../screenshots/P9/p9-state-disk-low-dark.png)
+![State Disk low, web-c, light](../screenshots/P9/p9-state-disk-low-light.png)
+
+![State Clock differs, web-d, dark](../screenshots/P9/p9-state-clock-differs-dark.png)
+![State Clock differs, web-d, light](../screenshots/P9/p9-state-clock-differs-light.png)
+
+![State Not found, old-box, dark](../screenshots/P9/p9-state-not-found-dark.png)
+![State Not found, old-box, light](../screenshots/P9/p9-state-not-found-light.png)
+
+![State Unreachable, web-e, dark](../screenshots/P9/p9-state-unreachable-dark.png)
+![State Unreachable, web-e, light](../screenshots/P9/p9-state-unreachable-light.png)
+
+![State Incomplete, web-f, dark](../screenshots/P9/p9-state-incomplete-dark.png)
+![State Incomplete, web-f, light](../screenshots/P9/p9-state-incomplete-light.png)
+
+![State Not placed, web-g, dark](../screenshots/P9/p9-state-not-placed-dark.png)
+![State Not placed, web-g, light](../screenshots/P9/p9-state-not-placed-light.png)
+
+**Clock differs** is only checked for an address, where the server reports its own clock. **Disk low** for a folder or share comes from the recorder's own pause and resume events in the manifest. A recording in a newer format than Unravis knows, a refused key and a throttled address all show as **Unreachable**, with the reason in the detail line.
+
+## Use in a case
+
+Screens in this part: `p9-step-9`, `p9-gap-warning`.
+
+Step 9, Host and network, asks one question: was the web server or the SQL server short of CPU, memory or disk? A case that names a Blackbox as a source reads it once, for the incident window and the reference window. The case keeps only the Blackbox name. It never keeps the address, the folder or the read key.
+
+![Step 9 read from web-a, dark](../screenshots/P9/p9-step-9-dark.png)
+![Step 9 read from web-a, light](../screenshots/P9/p9-step-9-light.png)
+
+The panel can also run the same read by hand: open a Blackbox, open **Read for a case window**, type the two windows (UTC) and press **Read the host for these windows**. This is how the pictures here were made. In this release the host data gives CPU, memory, disk and network. Checks that need the database or the process list stay **Cannot test yet**, so Step 9 is at most **Partly ready**.
+
+### Gaps
+
+A recording can have holes: the PC was busy, the service was restarted, the share dropped. Missing minutes are never counted as zero.
+
+- A gap of **2 minutes or less** only warns. The check runs on the minutes that exist.
+- A gap of **more than 2 minutes** is not tested. Those minutes say **Cannot test yet**, and the warning lists each one with its start, end and which window it falls in.
+
+![A gap longer than 2 minutes in the reference window of web-b, dark](../screenshots/P9/p9-gap-warning-dark.png)
+![A gap longer than 2 minutes in the reference window of web-b, light](../screenshots/P9/p9-gap-warning-light.png)
+
+If the Blackbox is stopped or removed while a case reads it, the read that is under way finishes on what the recorder already wrote. The next read says **Cannot test yet** for the minutes that are missing. Reading never changes the Blackbox.
+
+Screenshots in this page are made on a developer PC. The CI runner is the reference renderer, so they are replaced on the next CI run.
+
+## About the recorder
+
+The sections below describe the recorder program itself.
 
 ## What it records
 
