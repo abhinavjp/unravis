@@ -72,13 +72,13 @@ func (p *prep) iisSplit() {
 	}
 	sort.SliceStable(calls, func(i, j int) bool { return expected(calls[i]).Before(expected(calls[j])) })
 	tol := time.Duration(p.th.IISMatchToleranceMs * float64(time.Millisecond))
-	matched := 0
+	matched, clamped := 0, 0
 	var offsets []time.Duration
 	for _, c := range calls {
 		if c.r.Path == "" {
 			continue
 		}
-		l := byPath[c.r.Path]
+		l := byPath[NormalizePath(c.r.Path)]
 		if len(l) == 0 {
 			continue
 		}
@@ -111,10 +111,12 @@ func (p *prep) iisSplit() {
 		o := best.taken - c.d - pv
 		if o < 0 {
 			o = 0
+			clamped++
 		}
 		c.o = &o
 	}
 	pt.IISMatched = matched
+	pt.OClamped = clamped
 	if len(calls) == 0 {
 		pt.OWhy = "There are no audited calls to match against the IIS rows."
 		return
@@ -227,13 +229,20 @@ func (p *prep) parts() {
 	case positive <= 0:
 		pt.DominantWhy = "No part took more time in the incident window than in the reference window."
 	default:
+		qualifying := 0
 		for _, it := range pt.Items {
 			if it.Share != nil && *it.Share >= p.th.DominantMinShare-floatEps && it.Change.Meaningful && it.Change.Direction == "up" {
+				qualifying++
 				pt.Dominant = it.Name
 				pt.DominantWhy = "This part holds at least half of the extra time and rose by the change mark."
 			}
 		}
-		if pt.Dominant == "" {
+		if qualifying > 1 {
+			// An exact split between two parts: neither is the dominant one.
+			pt.Dominant = ""
+			pt.DominantWhy = "Two parts each hold half of the extra time, so no single part is dominant."
+		}
+		if pt.Dominant == "" && qualifying == 0 {
 			pt.DominantWhy = "No single part holds half of the extra time with a change of the size the mark needs."
 		}
 	}

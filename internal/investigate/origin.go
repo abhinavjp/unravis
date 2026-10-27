@@ -3,6 +3,7 @@ package investigate
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -124,6 +125,11 @@ func ComputeOrigin(in Input, f Facts, s Signals, th Thresholds) Origin {
 		if together > 1 {
 			o.Status = OriginNone
 			o.Note = "Several tiers moved at about the same time, so the data does not show which moved first. " + noOriginClockNote
+		} else if unread := unreadTiers(f); len(unread) > 0 {
+			// A tier whose own data was not read in every minute could have moved
+			// before the first dated one, so nothing is named (as for a lone tier).
+			o.Status = OriginNotEnough
+			o.Note = tierLabel(first.tier) + " is the earliest tier that could be dated, but " + joinLabels(unread) + " could not be read in every minute, so one of them may have moved earlier and no origin is named."
 		} else {
 			o.Status = OriginNamed
 			o.Tier, o.Label, o.At = first.tier, tierLabel(first.tier), ptrTime(first.at)
@@ -297,4 +303,30 @@ func Headline(f Facts, o Origin, sps []Suspect) string {
 		h += " Too few tiers could be dated to name an origin."
 	}
 	return h
+}
+
+// unreadTiers lists the tiers with no onset whose own data was not read in every
+// incident minute: any of them might have moved first.
+func unreadTiers(f Facts) []string {
+	var out []string
+	for _, t := range f.Tiers {
+		if t.At == nil && !t.Tested {
+			out = append(out, t.Tier)
+		}
+	}
+	return out
+}
+
+func joinLabels(tiers []string) string {
+	names := make([]string, len(tiers))
+	for i, t := range tiers {
+		names[i] = tierLabel(t)
+	}
+	switch len(names) {
+	case 1:
+		return names[0]
+	case 2:
+		return names[0] + " and " + names[1]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }

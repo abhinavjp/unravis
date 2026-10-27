@@ -123,14 +123,17 @@ type PartFacts struct {
 
 // Parts is the Step 3 time split. Dominant is "A", "C", "P", "O" or "" (none).
 type Parts struct {
-	Items        []PartFacts `json:"items"`
-	Coverage     *float64    `json:"coverage,omitempty"`
-	Dominant     string      `json:"dominant"`
-	DominantWhy  string      `json:"dominantWhy"`
-	OTested      bool        `json:"oTested"`
-	OWhy         string      `json:"oWhy"`
-	IISMatched   int         `json:"iisMatched"`
-	IISMatchRate *float64    `json:"iisMatchRate,omitempty"`
+	Items       []PartFacts `json:"items"`
+	Coverage    *float64    `json:"coverage,omitempty"`
+	Dominant    string      `json:"dominant"`
+	DominantWhy string      `json:"dominantWhy"`
+	OTested     bool        `json:"oTested"`
+	OWhy        string      `json:"oWhy"`
+	IISMatched  int         `json:"iisMatched"`
+	// OClamped counts matched pairs whose outside time came out below zero and was
+	// set to zero.
+	OClamped     int      `json:"oClamped,omitempty"`
+	IISMatchRate *float64 `json:"iisMatchRate,omitempty"`
 	// IISOffsetMs is the usual gap between an IIS end time and the matching audit end
 	// time (the clock difference between the hosts, when the pairs line up).
 	IISOffsetMs *float64 `json:"iisOffsetMs,omitempty"`

@@ -258,6 +258,9 @@ func Steps(in Input, f Facts, s Signals, th Thresholds) []Step {
 			if !f.Parts.OTested {
 				st.degrade(PartlyReady, "Outside time was not tested: "+f.Parts.OWhy)
 			}
+			if f.Parts.OTested && f.Parts.IISMatched > 0 && float64(f.Parts.OClamped) > oClampNoteShare*float64(f.Parts.IISMatched) {
+				st.degrade(PartlyReady, fmt.Sprintf("Outside time came out below zero for %d of %d matched calls and was set to zero, so it may be understated.", f.Parts.OClamped, f.Parts.IISMatched))
+			}
 			if f.Parts.Coverage != nil && *f.Parts.Coverage < th.PartsMinCoverage {
 				st.degrade(PartlyReady, "Too few calls carry both parts of the split.")
 			}
@@ -447,3 +450,7 @@ func IsReadinessWord(r Readiness) bool {
 	}
 	return false
 }
+
+// oClampNoteShare is the share of matched pairs with a negative outside time (set
+// to zero) above which Step 3 says so. It only adds a note; it moves no colour.
+const oClampNoteShare = 0.25

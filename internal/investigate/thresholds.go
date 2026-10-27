@@ -102,8 +102,9 @@ type Thresholds struct {
 	DominantMinShare float64 `json:"dominantMinShare"`
 	PartsMinCoverage float64 `json:"partsMinCoverage"`
 
-	// IISMatchToleranceMs is how far apart an audit start and an IIS start may be
-	// and still be one request. IISMatchMinRate is the share of audit calls that must
+	// IISMatchToleranceMs is how far apart the expected end of an audit call and the
+	// end of an IIS row may be and still be one request (rows are matched by end
+	// time). IISMatchMinRate is the share of audit calls that must
 	// match an IIS row before outside time (O) is shown.
 	IISMatchToleranceMs float64 `json:"iisMatchToleranceMs"`
 	IISMatchMinRate     float64 `json:"iisMatchMinRate"`

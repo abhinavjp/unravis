@@ -1,6 +1,7 @@
 package investigate
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -197,7 +198,9 @@ func burst(in Input, w Window) Input {
 // still read as a pool or cap; the same plateau in both windows is not.
 func TestFixF5NewPlateauAboveTheReferenceIsReadAsFull(t *testing.T) {
 	ref, inc := stdWindows()
-	base := func() Input { return gen(genCfg{seed: 61, ref: ref, inc: inc, perMin: 30, routes: []string{"Orders.Get"}}) }
+	base := func() Input {
+		return gen(genCfg{seed: 61, ref: ref, inc: inc, perMin: 30, routes: []string{"Orders.Get"}})
+	}
 
 	r := Analyze(burst(base(), inc))
 	l := r.Facts.Load
@@ -209,5 +212,96 @@ func TestFixF5NewPlateauAboveTheReferenceIsReadAsFull(t *testing.T) {
 	l = Analyze(both).Facts.Load
 	if l.Reading == "a pool or cap looks full" || l.FlatTop {
 		t.Errorf("same plateau in both windows: reading %q flat %v (peaks ref %d inc %d)", l.Reading, l.FlatTop, l.RefPeak, l.IncPeak)
+	}
+}
+
+// F6: with a tier whose own data was not read (O with no IIS), the first dated tier
+// is not named, because the unread one could have moved earlier.
+func TestFixF6UnreadTierBlocksTheOrigin(t *testing.T) {
+	th := Current()
+	a, c := at(10, 20), at(10, 25)
+	f := Facts{Onset: Onset{Status: "found", T0: &a}, Tiers: []TierOnset{
+		{Tier: "load", Tested: true},
+		{Tier: "a", At: &a, Tested: true},
+		{Tier: "c", At: &c, Tested: true},
+		{Tier: "o", Tested: false, Why: "There is no IIS source in this case."},
+	}}
+	in := Input{Audit: AuditPresent}
+	o := ComputeOrigin(in, f, ComputeSignals(in, f, th), th)
+	if o.Status == OriginNamed {
+		t.Fatalf("origin = %+v: A named first while O was never read", o)
+	}
+	if o.Status != OriginNotEnough || !strings.Contains(o.Note, "Outside time (O)") {
+		t.Errorf("origin = %+v, want not enough data naming O", o)
+	}
+	// The same two onsets with O read and flat name A.
+	f.Tiers[3].Tested = true
+	o = ComputeOrigin(in, f, ComputeSignals(in, f, th), th)
+	if o.Status != OriginNamed || o.Tier != "a" {
+		t.Errorf("origin = %+v, want A named when every tier was read", o)
+	}
+}
+
+// F7: t0 is a whole minute, so a release made inside that minute leads the change.
+func TestFixF7ReleaseInsideTheStartMinuteLeads(t *testing.T) {
+	th := Current()
+	t0 := at(10, 20)
+	f := Facts{Onset: Onset{Status: "found", T0: &t0}}
+	in := Input{ReleasesEntered: true, Releases: []Release{{At: t0.Add(30 * time.Second), Label: "C1"}}}
+	tl := computeTimeline(in, f, th)
+	if tl.Verdict != Yes || len(tl.Leading) != 1 || tl.Items[0].Relation != "just before the start" {
+		t.Errorf("timeline = %+v", tl)
+	}
+	if m := tl.Items[0].MinutesBefore; m == nil || *m != 0 {
+		t.Errorf("minutes before = %v", m)
+	}
+	in.Releases[0].At = t0.Add(time.Minute + time.Second)
+	if tl := computeTimeline(in, f, th); tl.Items[0].Relation != "after the start" {
+		t.Errorf("a release in the next minute reads %q", tl.Items[0].Relation)
+	}
+}
+
+// F8: an exact split between two parts names neither; an unnormalised audit path
+// still matches its IIS rows; a systematic negative O is noted in Step 3.
+func TestFixF8PartsAndIISEdges(t *testing.T) {
+	ref, inc := stdWindows()
+	base := func() Input {
+		return gen(genCfg{seed: 71, ref: ref, inc: inc, perMin: 30, iis: true, routes: []string{"Orders.Get"}})
+	}
+
+	tie := base()
+	for i := range tie.Requests {
+		r := &tie.Requests[i]
+		a, c := 10.0, 100.0
+		if inc.Contains(r.Start) {
+			a, c = 110, 200
+		}
+		r.A, r.C = &a, &c
+		e := r.Start.Add(time.Duration((a + c + 5) * float64(time.Millisecond)))
+		r.End = &e
+	}
+	if d := Analyze(tie).Facts.Parts; d.Dominant != "" {
+		t.Errorf("an even split named %q: %s", d.Dominant, d.DominantWhy)
+	}
+
+	messy := base()
+	for i := range messy.Requests {
+		messy.Requests[i].Path = "/API/Orders.Get/"
+	}
+	clean := Analyze(base()).Facts.Parts.IISMatched
+	if got := Analyze(messy).Facts.Parts.IISMatched; got == 0 || got != clean {
+		t.Errorf("matched %d with an unnormalised path, %d with a normalised one", got, clean)
+	}
+
+	neg := base()
+	for i := range neg.IIS {
+		neg.IIS[i].TakenMs -= 400
+	}
+	r := Analyze(neg)
+	if r.Facts.Parts.OClamped == 0 {
+		t.Fatalf("no clamped pairs: %+v", r.Facts.Parts)
+	}
+	if r.Steps[3].Readiness == Ready || !strings.Contains(strings.Join(r.Steps[3].Reasons, " "), "below zero") {
+		t.Errorf("step 3 = %q %v", r.Steps[3].Readiness, r.Steps[3].Reasons)
 	}
 }

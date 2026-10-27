@@ -306,19 +306,22 @@ func computeTimeline(in Input, f Facts, th Thresholds) ChangeTimeline {
 	lead := time.Duration(th.ChangeLeadMinutes) * time.Minute
 	for _, r := range rel {
 		it := ChangeItem{At: r.At.UTC(), Label: r.Label}
+		// t0 is a whole minute (onsets are read by the minute), so a change made
+		// inside that minute is compared by its minute, not its second.
+		at := r.At.UTC().Truncate(time.Minute)
 		switch {
 		case t0 == nil:
 			it.Relation = "no start time to compare with"
-		case r.At.After(*t0):
+		case at.After(*t0):
 			it.Relation = "after the start"
-		case t0.Sub(r.At) <= lead:
+		case t0.Sub(at) <= lead:
 			it.Relation = "just before the start"
-			m := int(t0.Sub(r.At) / time.Minute)
+			m := int(t0.Sub(at) / time.Minute)
 			it.MinutesBefore = &m
 			t.Leading = append(t.Leading, r.Label)
 		default:
 			it.Relation = "long before the start"
-			m := int(t0.Sub(r.At) / time.Minute)
+			m := int(t0.Sub(at) / time.Minute)
 			it.MinutesBefore = &m
 		}
 		t.Items = append(t.Items, it)
