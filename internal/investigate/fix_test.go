@@ -136,3 +136,28 @@ func TestFixF2StepTenAgreesWithTheOrigin(t *testing.T) {
 		}
 	}
 }
+
+// F3: red means "most likely" and goes only to a tier that is clearly first. With
+// no dated onset nothing is first, so a lone supported suspect is orange at most.
+func TestFixF3NoDatedOnsetNeverPaintsRed(t *testing.T) {
+	ref, inc := stdWindows()
+	slow := tailSlowdown(gen(genCfg{seed: 41, ref: ref, inc: inc, perMin: 30, routes: []string{"Orders.Get"}}), at(10, 20), 900)
+	cases := map[string]Input{"tail slowdown": slow, "demo": demoInput(t)}
+	for name, in := range cases {
+		r := Analyze(in)
+		if r.Origin.Status != OriginNotEnough {
+			t.Logf("%s: origin %q", name, r.Origin.Status)
+		}
+		for _, s := range r.Suspects {
+			if s.Colour != Red || s.Group == GroupQ {
+				continue
+			}
+			if s.OnsetAt == nil {
+				t.Errorf("%s: %s is red with no dated onset: %s", name, s.ID, s.Why)
+			}
+		}
+		if s := findSuspect(r, "L2"); s != nil && s.Colour == Red {
+			t.Errorf("%s: L2 is red with origin %q", name, r.Origin.Status)
+		}
+	}
+}

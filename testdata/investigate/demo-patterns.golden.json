@@ -681,8 +681,8 @@
       "group": "L",
       "title": "Mix shift: one route or client dominates",
       "result": "Consistent",
-      "colour": "red",
-      "why": "Every reading it needs is present. It is the only suspect the data supports.",
+      "colour": "orange",
+      "why": "Every reading it needs is present.",
       "tier": "c",
       "evidence": [
         {

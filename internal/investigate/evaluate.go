@@ -338,10 +338,9 @@ func colour(sps []Suspect, in Input, f Facts, th Thresholds) {
 		case earliest != nil && sp.OnsetAt != nil && sp.OnsetAt.Sub(*earliest) < sep:
 			sp.Colour = Orange
 			sp.Why += " Its tier moved at about the same time as another, so they cannot be told apart."
-		case earliest == nil && len(comp) == 1:
-			sp.Colour = Red
-			sp.Why += " It is the only suspect the data supports."
 		default:
+			// Red is only for a tier that is clearly first. With no dated onset
+			// nothing is first, so a lone supported suspect is orange at most.
 			sp.Colour = Orange
 			if earliest != nil && sp.OnsetAt != nil {
 				sp.Why += " Its tier moved after an earlier one."
