@@ -981,3 +981,26 @@ func TestBlackboxFailureAnswersNeverCarryTheKeyText(t *testing.T) {
 		}
 	}
 }
+
+// Clumsy-user extras: a double click on Forget, a key typed for a folder, a key made only of spaces.
+func TestBlackboxClumsyRepeatsAreAnswered(t *testing.T) {
+	b := newBBEnv(t, nil)
+	b.world.put(share, bbRec("web-b", nil))
+	it := b.mustAdd(share, "")
+	if res := b.e.json(http.MethodDelete, "/api/blackbox/"+it.ID, ""); res.Code != http.StatusOK {
+		t.Fatalf("first delete = %d %s", res.Code, res.Body)
+	}
+	bbFail(t, b.e.json(http.MethodDelete, "/api/blackbox/"+it.ID, ""), http.StatusNotFound, "not-listed")
+	// A key for a share is refused and nothing is stored.
+	it = b.mustAdd(share, "")
+	res := b.e.json(http.MethodPut, "/api/blackbox/"+it.ID+"/key", `{"key":"ubk-not-a-real-key"}`)
+	bbFail(t, res, http.StatusUnprocessableEntity, "invalid")
+	if strings.Contains(res.Body.String(), "ubk-not-a-real-key") {
+		t.Fatalf("the typed key was echoed: %s", res.Body)
+	}
+	bbFail(t, b.e.json(http.MethodPut, "/api/blackbox/"+it.ID+"/key", `{"key":"   "}`), http.StatusUnprocessableEntity, "invalid")
+	// Adding an empty place or only spaces is refused.
+	if res := b.add("   ", ""); res.Code < 400 || res.Code >= 500 {
+		t.Fatalf("empty place = %d %s", res.Code, res.Body)
+	}
+}

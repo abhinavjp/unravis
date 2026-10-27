@@ -119,7 +119,7 @@ A recording can have holes: the PC was busy, the service was restarted, the shar
 ![A gap longer than 2 minutes in the reference window of web-b, dark](../screenshots/P9/p9-gap-warning-dark.png)
 ![A gap longer than 2 minutes in the reference window of web-b, light](../screenshots/P9/p9-gap-warning-light.png)
 
-If the Blackbox is stopped or removed while a case reads it, the read that is under way finishes on what the recorder already wrote. The next read says **Cannot test yet** for the minutes that are missing. Reading never changes the Blackbox.
+If the Blackbox is removed from this PC while a case uses it, the entry stays and shows Not placed. The case says the Blackbox could not be read, and Step 9 is not Ready. If the entry is also forgotten, the case says the Blackbox is no longer in the list. The case itself is not changed. Reading never changes the Blackbox.
 
 Screenshots in this page are made on a developer PC. The CI runner is the reference renderer, so they are replaced on the next CI run.
 
