@@ -305,14 +305,17 @@ func (d demoSeeder) seed(ctx context.Context) error {
 			func(ctx context.Context, c casestore.Case, created time.Time) error {
 				return d.importOK(ctx, c, "closed-1", created.Add(10*time.Minute))
 			}},
-		// A good import, then a file the importer refused. The "needs another try" list
-		// arrives with the case lifecycle phase; until then the refused file stands in.
+		// A good import, then a file the importer refused, and the two-item "needs another try"
+		// list they left: a file that did not import, a database not added to the analysis (C19).
 		{demoCaseFailedID, "Report export timeouts, 18 October", 2 * day,
 			func(ctx context.Context, c casestore.Case, created time.Time) error {
 				if err := d.importOK(ctx, c, "failed-1", created.Add(10*time.Minute)); err != nil {
 					return err
 				}
-				return d.importRefused(ctx, c, "failed-2", created.Add(25*time.Minute))
+				if err := d.importRefused(ctx, c, "failed-2", created.Add(25*time.Minute)); err != nil {
+					return err
+				}
+				return d.retryItems(ctx, c, created.Add(30*time.Minute))
 			}},
 		// Created like the others; openDemoCases then has the legacy check call it untrusted.
 		{demoCaseUntrustedID, "Case from another folder", 6 * day,
@@ -418,5 +421,20 @@ func (d demoSeeder) importRefused(ctx context.Context, c casestore.Case, label s
 	if err == nil {
 		return errors.New("the demo's refused file was accepted")
 	}
+	return err
+}
+
+// retryItems writes the two items the demo's "needs another try" list holds. They
+// carry words and ids only, as the store requires.
+func (d demoSeeder) retryItems(ctx context.Context, c casestore.Case, at time.Time) error {
+	rs, ok := c.(casestore.RetryStore)
+	if !ok {
+		return errors.New("the demo case store keeps no retry list")
+	}
+	d.clock.set(at)
+	_, err := rs.ReplaceRetries(ctx, []casestore.RetryItem{
+		{Kind: casestore.RetryImport, Key: "file:demo-access-web-b.log", Label: "demo-access-web-b.log", Reason: "bad-time"},
+		{Kind: casestore.RetryAudit, Key: "audit:demo-reports", Label: "Reports database", Reason: "unreachable"},
+	})
 	return err
 }

@@ -428,3 +428,42 @@ func TestCreatingACaseAfterSeedingGetsAFreshValidIDAndSurvivesARestart(t *testin
 		t.Errorf("after a restart a new case got the old ID %s", c)
 	}
 }
+
+// The demo has a Closed case ready to Reopen and a case with two retry items
+// (one "import failed", one "not added to the analysis", kept apart).
+func TestDemoCasesHoldAClosedCaseAndTwoRetryItems(t *testing.T) {
+	h, closeCases := seededServer(t, t.TempDir())
+	defer closeCases()
+	view := func(id casestore.CaseID) map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/cases/"+string(id), nil)
+		req.Host = "127.0.0.1:8765"
+		req.Header.Set("X-Audit-Token", demoTestToken)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d %s", id, res.Code, res.Body)
+		}
+		var out map[string]any
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	closed := view(demoCaseClosedID)
+	if closed["state"] != "closed" {
+		t.Errorf("the closed demo case is %v, want closed", closed["state"])
+	}
+	failed := view(demoCaseFailedID)
+	items, _ := failed["retries"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("the failed demo case has %d retry items, want 2: %v", len(items), failed["retries"])
+	}
+	kinds := items[0].(map[string]any)["kind"].(string) + "," + items[1].(map[string]any)["kind"].(string)
+	if kinds != "import,audit-source" {
+		t.Errorf("retry kinds = %s, want import,audit-source", kinds)
+	}
+	if open := view(demoCaseOpenID); open["state"] != "open" {
+		t.Errorf("the open demo case is %v", open["state"])
+	}
+}
