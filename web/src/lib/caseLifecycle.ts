@@ -25,14 +25,16 @@ export function reopenButton(c: Pick<CaseInfo, 'state' | 'closed' | 'untrusted'>
 /**
  * What one item of the "needs another try" list offers (A14).
  * retry: press to do it again on the server. add-file: a file has to be picked again, so the button opens the file drawer.
+ * in-wizard: the server cannot do it alone (an audit source needs the saved connection), so the line says where to do it and offers only Remove.
  * reopen-first: the case is closed, so the line says to reopen it. hidden: the case is archived, untrusted or erased, so no button.
  */
-export type RetryAction = 'retry' | 'add-file' | 'reopen-first' | 'hidden';
+export type RetryAction = 'retry' | 'add-file' | 'in-wizard' | 'reopen-first' | 'hidden';
 
 export function retryAction(item: Pick<RetryItem, 'kind'>, c: Pick<CaseInfo, 'state' | 'closed' | 'untrusted'>): RetryAction {
   if (c.untrusted) return 'hidden';
   const state: CaseState = believedState(c);
   if (state === 'closed') return 'reopen-first';
   if (state !== 'open') return 'hidden';
-  return item.kind === 'import' ? 'add-file' : 'retry';
+  if (item.kind === 'import') return 'add-file';
+  return item.kind === 'audit-source' ? 'in-wizard' : 'retry';
 }

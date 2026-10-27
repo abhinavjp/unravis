@@ -303,10 +303,11 @@
                 {#if item.label}<strong>{item.label}</strong>{/if}
                 {#if retryNote[item.id]}<p class="note" role="status">{retryNote[item.id]}</p>{/if}
                 {#if action === 'reopen-first'}<p class="note">{CASE_HOME_TEXT.retryClosed}</p>{/if}
+                {#if action === 'in-wizard'}<p class="note">{CASE_HOME_TEXT.retryInPage}</p>{/if}
               </div>
               {#if action !== 'hidden'}
                 <div class="actions">
-                  {#if action !== 'reopen-first'}
+                  {#if action === 'retry' || action === 'add-file'}
                     <button type="button" class="secondary-button" disabled={tryingId !== 0} onclick={() => void tryAgain(item)}>{tryingId === item.id ? CASE_HOME_TEXT.retrying : action === 'add-file' ? CASE_HOME_TEXT.retryAddFile : CASE_HOME_TEXT.retryButton}</button>
                   {/if}
                   <button type="button" class="secondary-button" disabled={tryingId !== 0 || action === 'reopen-first'} onclick={() => void dropRetry(item)}>{CASE_HOME_TEXT.retryDrop}</button>
@@ -362,8 +363,8 @@
   .theories li, .files li { font-size: 14px; overflow-wrap: anywhere; }
   .theories .state { margin-right: 6px; padding: 0 6px; color: var(--text-2); font-size: 12px; border: 1px solid var(--line); border-radius: 4px; }
   .files li span { color: var(--text-2); font-size: 13px; }
-  .retries { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-  .retries li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; font-size: 14px; }
+  .retries { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+  .retries li { padding: 10px 0; border-top: 1px solid var(--line-soft); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; font-size: 14px; }
   .retry-main { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
   .retries .state { justify-self: start; padding: 0 6px; color: var(--text-2); font-size: 12px; border: 1px solid var(--line); border-radius: 4px; }
   .offer { display: grid; gap: 6px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: var(--radius-sm); }

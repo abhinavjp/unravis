@@ -167,7 +167,7 @@ test('p2: each retry item offers what the case state allows', () => {
   const open = { state: 'open', closed: null };
   assert.equal(life.retryAction({ kind: 'environments' }, open), 'retry');
   assert.equal(life.retryAction({ kind: 'tag' }, open), 'retry');
-  assert.equal(life.retryAction({ kind: 'audit-source' }, open), 'retry');
+  assert.equal(life.retryAction({ kind: 'audit-source' }, open), 'in-wizard', 'the server cannot redo it alone, so the line says where to do it');
   assert.equal(life.retryAction({ kind: 'import' }, open), 'add-file', 'a file has to be picked again');
   assert.equal(life.retryAction({ kind: 'tag' }, { state: 'closed', closed: 'x' }), 'reopen-first');
   assert.equal(life.retryAction({ kind: 'tag' }, { state: 'archived', closed: 'x' }), 'hidden');
