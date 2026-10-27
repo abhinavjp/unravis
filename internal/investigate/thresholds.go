@@ -129,6 +129,10 @@ type Thresholds struct {
 	// RetryMinCalls is the fewest retried calls in the incident window before a rise in
 	// retries is read as a rise at all.
 	RetryMinCalls int `json:"retryMinCalls"`
+	// RetryMinShare is the smallest share of incident calls that are retried before a
+	// rise in retries is read as a rise: a handful of repeats among thousands of calls
+	// is noise.
+	RetryMinShare float64 `json:"retryMinShare"`
 	// OriginBucketSeconds is the minute bucket of the charts; onsets closer than the
 	// bucket plus the clock tolerance are "not separable".
 	OriginBucketSeconds int `json:"originBucketSeconds"`
@@ -173,6 +177,7 @@ func Current() Thresholds {
 		ChangeLeadMinutes:     30,
 		RetryWindowSeconds:    10,
 		RetryMinCalls:         5,
+		RetryMinShare:         0.02,
 		OriginBucketSeconds:   60,
 	}
 }
@@ -225,6 +230,7 @@ func (t Thresholds) Entries() []Entry {
 		i("changeLeadMinutes", t.ChangeLeadMinutes),
 		i("retryWindowSeconds", t.RetryWindowSeconds),
 		i("retryMinCalls", t.RetryMinCalls),
+		f("retryMinShare", t.RetryMinShare),
 		i("originBucketSeconds", t.OriginBucketSeconds),
 	}
 }

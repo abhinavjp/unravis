@@ -350,7 +350,7 @@ func (p *prep) retries() {
 	is, rs := float64(ir)/float64(ik), float64(rr)/float64(rk)
 	r.IncShare, r.RefShare = ptr(is), ptr(rs)
 	dir, _ := compareRate(rs, is, true, true, p.th)
-	if dir == "up" && ir < p.th.RetryMinCalls {
+	if dir == "up" && (ir < p.th.RetryMinCalls || is < p.th.RetryMinShare) {
 		dir = "flat"
 	}
 	r.Direction = dir
@@ -431,10 +431,25 @@ func (p *prep) coverage() {
 // metricOnset dates one tier: the first minute whose median of the metric stays
 // above OnsetFactor times the reference median (and above it by ChangeMinMs) for
 // OnsetRunMinutes minutes.
-func (p *prep) metricOnset(f func(*call) *float64) (*time.Time, string) {
+// readAll reports whether every minute of the incident window was read: no gap
+// and no minute too thin to read. Only then does "did not move" mean the part
+// held flat; otherwise a move may have been hidden.
+func readAll(bins []*bin, thin func(*bin) bool) bool {
+	for _, b := range bins {
+		if b.gap != "" || thin(b) {
+			return false
+		}
+	}
+	return true
+}
+
+// metricOnset dates when a part first stayed above its reference. The third
+// result is true when the part's own data was read well enough to say it held
+// flat if it did not move.
+func (p *prep) metricOnset(f func(*call) *float64) (*time.Time, string, bool) {
 	rv := valuesOf(p.ref, f)
 	if len(rv) < p.th.GroupSizeP95 {
-		return nil, "The reference window holds too few readings of this part to set a baseline."
+		return nil, "The reference window holds too few readings of this part to set a baseline.", false
 	}
 	refMed, _ := median(rv)
 	idx, ok := findRun(p.incBins, p.th.OnsetRunMinutes, func(b *bin) minStatus {
@@ -449,15 +464,16 @@ func (p *prep) metricOnset(f func(*call) *float64) (*time.Time, string) {
 		return stMiss
 	})
 	if !ok {
-		return nil, "This part did not stay above its reference for the run of minutes the rule needs."
+		full := readAll(p.incBins, func(b *bin) bool { return len(valuesOf(b.calls, f)) < p.th.OnsetMinSamples })
+		return nil, "This part did not stay above its reference for the run of minutes the rule needs.", full
 	}
 	t := p.incBins[idx].at
-	return &t, "This part stayed above its reference for the run of minutes the rule needs."
+	return &t, "This part stayed above its reference for the run of minutes the rule needs.", true
 }
 
-func (p *prep) loadOnset() (*time.Time, string) {
+func (p *prep) loadOnset() (*time.Time, string, bool) {
 	if len(p.refBins) == 0 {
-		return nil, "There is no reference window."
+		return nil, "There is no reference window.", false
 	}
 	counts := make([]float64, 0, len(p.refBins))
 	for _, b := range p.refBins {
@@ -467,7 +483,7 @@ func (p *prep) loadOnset() (*time.Time, string) {
 	}
 	refMed, ok := median(counts)
 	if !ok || refMed < float64(p.th.GapRefMinPerMinute) {
-		return nil, "The reference window holds too few calls per minute to read a change in arrivals."
+		return nil, "The reference window holds too few calls per minute to read a change in arrivals.", false
 	}
 	factor := 1 + p.th.LoadChangePercent/100
 	idx, found := findRun(p.incBins, p.th.OnsetRunMinutes, func(b *bin) minStatus {
@@ -477,30 +493,28 @@ func (p *prep) loadOnset() (*time.Time, string) {
 		return stMiss
 	})
 	if !found {
-		return nil, "Arrivals did not stay above the reference for the run of minutes the rule needs."
+		full := readAll(p.incBins, func(*bin) bool { return false })
+		return nil, "Arrivals did not stay above the reference for the run of minutes the rule needs.", full
 	}
 	t := p.incBins[idx].at
-	return &t, "Arrivals stayed above the reference for the run of minutes the rule needs."
+	return &t, "Arrivals stayed above the reference for the run of minutes the rule needs.", true
 }
 
 func (p *prep) tiers() {
-	add := func(tier string, at *time.Time, why string) {
-		p.facts.Tiers = append(p.facts.Tiers, TierOnset{Tier: tier, At: at, Why: why})
+	add := func(tier string, at *time.Time, why string, tested bool) {
+		p.facts.Tiers = append(p.facts.Tiers, TierOnset{Tier: tier, At: at, Why: why, Tested: tested})
 	}
-	if t, w := p.loadOnset(); true {
-		add("load", t, w)
-	}
-	if t, w := p.metricOnset((*call).a); true {
-		add("a", t, w)
-	}
-	if t, w := p.metricOnset((*call).cc); true {
-		add("c", t, w)
-	}
+	t, w, ok := p.loadOnset()
+	add("load", t, w, ok)
+	t, w, ok = p.metricOnset((*call).a)
+	add("a", t, w, ok)
+	t, w, ok = p.metricOnset((*call).cc)
+	add("c", t, w, ok)
 	if p.facts.Parts.OTested {
-		t, w := p.metricOnset((*call).oo)
-		add("o", t, w)
+		t, w, ok = p.metricOnset((*call).oo)
+		add("o", t, w, ok)
 	} else {
-		add("o", nil, p.facts.Parts.OWhy)
+		add("o", nil, p.facts.Parts.OWhy, false)
 	}
 	names := make([]string, 0, len(p.in.LaneOnsets))
 	for k := range p.in.LaneOnsets {
@@ -509,7 +523,7 @@ func (p *prep) tiers() {
 	sort.Strings(names)
 	for _, k := range names {
 		t := p.in.LaneOnsets[k].UTC()
-		add(k, &t, "From the "+k+" lane's own data.")
+		add(k, &t, "From the "+k+" lane's own data.", true)
 	}
 }
 

@@ -99,10 +99,16 @@ func ComputeOrigin(in Input, f Facts, s Signals, th Thresholds) Origin {
 	case in.Audit != AuditPresent || f.Onset.Status != "found":
 		o.Status = OriginNotEnough
 		o.Note = "There is no dated start of the change, so tiers cannot be put in order."
+	case len(ds) == 1 && othersHeldFlat(f, ds[0].tier):
+		// Every other tier's own data was read in every incident minute and held
+		// flat, so the one that moved is the first to move.
+		o.Status = OriginNamed
+		o.Tier, o.Label, o.At = ds[0].tier, tierLabel(ds[0].tier), ptrTime(ds[0].at)
+		o.Note = o.Label + " moved first, at " + fmtT(ds[0].at) + ". It was the only tier that moved; the others were read and held flat."
 	case len(ds) < 2:
 		o.Status = OriginNotEnough
 		if len(ds) == 1 {
-			o.Note = "Only " + tierLabel(ds[0].tier) + " could be dated, so no origin is named."
+			o.Note = "Only " + tierLabel(ds[0].tier) + " could be dated, and another tier could not be read in every minute, so no origin is named."
 		} else {
 			o.Note = "No tier could be dated, so no origin is named."
 		}
@@ -157,6 +163,20 @@ func ComputeOrigin(in Input, f Facts, s Signals, th Thresholds) Origin {
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
+
+// othersHeldFlat is true when every tier except the named one has its own data
+// read in every incident minute and did not move.
+func othersHeldFlat(f Facts, tier string) bool {
+	for _, t := range f.Tiers {
+		if t.Tier == tier {
+			continue
+		}
+		if t.At != nil || !t.Tested {
+			return false
+		}
+	}
+	return true
+}
 
 // ComputeConfidence builds the "How sure are we" panel. Audit alone gives Low at
 // best, audit with IIS gives Medium, and High needs the other tiers' own data as

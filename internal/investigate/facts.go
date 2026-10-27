@@ -211,6 +211,10 @@ type TierOnset struct {
 	Tier string     `json:"tier"`
 	At   *time.Time `json:"at,omitempty"`
 	Why  string     `json:"why"`
+	// Tested is true when the tier's own data was read in every minute of the
+	// incident window, so "no onset" means it held flat. It is false when the data
+	// was missing, thin or gapped: unknown is never "did not move".
+	Tested bool `json:"tested"`
 }
 
 // Minute is one minute of the charts.
