@@ -88,9 +88,11 @@ test('one primary button per screen, and the others are outlined', () => {
   for (const name of ['ConnectionsPage', 'SqlConnectionForm', 'LaneRunner', 'GrantScriptPanel', 'ProfilerGuide', 'LaneResultView', 'NothingRead', 'AddDataPanel', 'SourceCombinations', 'SourcesHub']) {
     assert.ok(primary(name) <= 1, name + ' has at most one primary button');
   }
-  assert.equal(primary('ConnectionsPage'), 1);
-  assert.equal(primary('SqlConnectionForm'), 1);
-  assert.equal(primary('LaneRunner'), 1);
+  // On case home these buttons are outlined (the home already has its main button); a shell may promote one with the primary prop.
+  for (const name of ['ConnectionsPage', 'SqlConnectionForm', 'LaneRunner']) {
+    assert.equal(primary(name), 0, name + ' is outlined by default');
+    assert.match(comp(name), /class=\{primary \? 'btn-primary' : 'btn'\}/, name + ' can be promoted');
+  }
   assert.equal(primary('AddDataPanel'), 0, 'Add data only offers choices');
 });
 

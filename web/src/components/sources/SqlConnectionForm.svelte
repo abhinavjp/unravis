@@ -11,7 +11,7 @@
   // Screen 54: one SQL Server connection, filled in the way SQL Server Management Studio asks for it. "Save connection" keeps the details on
   // this PC. A password is kept only when "Remember password" is ticked, sealed to the Windows account, and is never shown again: on edit the
   // password field starts empty and an empty field keeps the saved one. The 21st connection is refused by the server (409), and its sentence is shown.
-  let { initial = null, onSaved, onCancel }: { initial?: SavedSqlConnection | null; onSaved?: (saved: SavedSqlConnection) => void; onCancel?: () => void } = $props();
+  let { initial = null, primary = false, onSaved, onCancel }: { initial?: SavedSqlConnection | null; primary?: boolean; onSaved?: (saved: SavedSqlConnection) => void; onCancel?: () => void } = $props();
 
   const uid = $props.id();
   let form = $state<SqlForm>(blankSqlForm());
@@ -114,7 +114,7 @@
   </div>
 
   <div class="actions">
-    <button type="button" class="btn-primary" disabled={busy !== ''} onclick={() => void save()}>{busy === 'save' ? CONN_TEXT.saving : CONN_TEXT.save}</button>
+    <button type="button" class={primary ? 'btn-primary' : 'btn'} disabled={busy !== ''} onclick={() => void save()}>{busy === 'save' ? CONN_TEXT.saving : CONN_TEXT.save}</button>
     <button type="button" class="btn" disabled={busy !== ''} onclick={() => void test()}>{busy === 'test' ? CONN_TEXT.testing : CONN_TEXT.test}</button>
     <button type="button" class="btn" onclick={() => onCancel?.()}>{CONN_TEXT.cancel}</button>
     {#if word !== ''}<StateSticker word={word} />{/if}

@@ -13,10 +13,10 @@
   // here is ever run as a query. A password typed for this run goes out once and is dropped. Times are UTC and read strictly. A day that overlaps
   // one already added (for the same server and database) is refused here and again by the server, with nothing read.
   let {
-    caseId, kind, days = [], database = '', incident = null, reference = null, lockDatabase = false, connectionLabel = '', runLabel = '', onRan, onGone
+    caseId, kind, days = [], database = '', incident = null, reference = null, lockDatabase = false, connectionLabel = '', runLabel = '', primary = false, onRan, onGone
   }: {
     caseId: string; kind: 'sql' | 'mongo'; days?: LaneDay[]; database?: string; incident?: LaneWindow | null; reference?: LaneWindow | null;
-    lockDatabase?: boolean; connectionLabel?: string; runLabel?: string; onRan?: (result: LaneRunResult) => void; onGone?: () => void;
+    lockDatabase?: boolean; connectionLabel?: string; runLabel?: string; primary?: boolean; onRan?: (result: LaneRunResult) => void; onGone?: () => void;
   } = $props();
 
   const uid = $props.id();
@@ -142,7 +142,7 @@
   <p class="hint">{RUN_TEXT.timesHint}</p>
   <p class="hint">{DAY_TEXT.checkAgain}</p>
   <div class="actions">
-    <button type="button" class="btn-primary" disabled={busy} onclick={() => void run()}>{busy ? RUN_TEXT.running : (runLabel || RUN_TEXT.run)}</button>
+    <button type="button" class={primary ? 'btn-primary' : 'btn'} disabled={busy} onclick={() => void run()}>{busy ? RUN_TEXT.running : (runLabel || RUN_TEXT.run)}</button>
   </div>
   <div aria-live="polite">
     {#if problem}<p class="say bad" role="alert" data-problem>{problem}</p>{/if}

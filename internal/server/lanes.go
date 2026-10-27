@@ -149,6 +149,12 @@ func laneKey(source string, report dbhealth.Report) string {
 	return source + "|" + in.Start.UTC().Format(time.RFC3339) + "|" + in.End.UTC().Format(time.RFC3339)
 }
 
+// LaneDayKey is the key a lane day is kept under, for a day made outside the lane routes (the capture-only demo cases). The server address is
+// left out, as it is for a day with no address to fingerprint.
+func LaneDayKey(kind string, report dbhealth.Report) string {
+	return laneKey(laneSourceID(kind, report.Label, report.Database, ""), report)
+}
+
 // laneSave keeps a finished lane run in the case and answers like a health run does.
 func laneSave(w http.ResponseWriter, r *http.Request, hs casestore.HealthStore, kind, server string, report dbhealth.Report) {
 	enc, err := json.Marshal(report)

@@ -15,7 +15,9 @@
   // Screens 52 and 53: every saved connection in one list, SQL Server and MongoDB. Test says only Works, Failed or Not tested, and the last
   // test is kept in memory only (it is not a saved fact). A saved password is never shown or sent back: a row only says whether one is saved.
   // Forget asks once. At 20 SQL connections the server refuses the 21st (409); this page says so first and disables the add button.
-  let { onMongoAdd }: { onMongoAdd?: () => void } = $props();
+  // primary: the one button this page may offer as the main action. It is outlined by default, so a case home that already has its own main
+  // button keeps a single one; the guided shell passes primary where this page is the whole screen.
+  let { onMongoAdd, primary = false }: { onMongoAdd?: () => void; primary?: boolean } = $props();
 
   let sql = $state.raw<SavedSqlConnection[]>([]);
   let mongo = $state.raw<RecentConnection[]>([]);
@@ -108,7 +110,7 @@
     <SqlConnectionForm initial={editing} onSaved={saved} onCancel={() => { adding = false; editing = null; }} />
   {:else}
     <div class="actions">
-      <button type="button" class="btn-primary" disabled={full} onclick={() => { editing = null; adding = true; }}>{CONN_TEXT.addSql}</button>
+      <button type="button" class={primary ? 'btn-primary' : 'btn'} disabled={full} onclick={() => { editing = null; adding = true; }}>{CONN_TEXT.addSql}</button>
       <button type="button" class="btn" onclick={() => onMongoAdd?.()}>{CONN_TEXT.addMongo}</button>
       <span class="hint" data-count>{sql.length} / {CONNECTION_LIMIT}</span>
     </div>

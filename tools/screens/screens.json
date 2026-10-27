@@ -174,6 +174,20 @@
         {"waitFor": "#day-head"},
         {"scrollTo": "#day-head"}
       ]
+    },
+    {
+      "id": "p7-nothing-read", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Report export timeouts, 18 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=tab[name=\"Step 7: SQL Server\"]"},
+        {"waitFor": "[data-nothing-read]"},
+        {"scrollTo": "[data-nothing-read]"}
+      ]
     }
   ]
 }

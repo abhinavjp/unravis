@@ -46,7 +46,7 @@
 .src pre.script { box-sizing: border-box; max-width: 100%; margin: 0; padding: var(--space-3); overflow: auto; color: var(--text); background: var(--bg); border: var(--hairline-width, 1px) solid var(--line); border-radius: var(--radius-sm); font-family: var(--font-mono, ui-monospace, Consolas, monospace); font-size: var(--fs-3); line-height: 1.5; white-space: pre; max-height: 22rem; }
 .src .table-wrap { overflow-x: auto; }
 .src table { width: 100%; border-collapse: collapse; font-size: var(--fs-3); }
-.src th, .src td { padding: 6px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line-soft, var(--line)); overflow-wrap: anywhere; }
+.src th, .src td { padding: 6px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line-soft, var(--line)); overflow-wrap: anywhere; white-space: normal; }
 .src th { color: var(--text-2); font-weight: 500; border-bottom-color: var(--line); }
 .src .tabs { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .src .tabs button[aria-selected='true'],

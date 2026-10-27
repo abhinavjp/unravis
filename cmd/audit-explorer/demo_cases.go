@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/clock"
+	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/importer"
 	"api-audit-explorer/internal/ledger"
@@ -312,7 +314,11 @@ func (d demoSeeder) seed(ctx context.Context) error {
 				if err := d.importOK(ctx, c, "failed-1", created.Add(10*time.Minute)); err != nil {
 					return err
 				}
-				return d.importRefused(ctx, c, "failed-2", created.Add(25*time.Minute))
+				if err := d.importRefused(ctx, c, "failed-2", created.Add(25*time.Minute)); err != nil {
+					return err
+				}
+				// A SQL Server day whose hours held nothing to read: it stands for screen p7-nothing-read.
+				return d.laneDayNothingRead(ctx, c, created.Add(40*time.Minute))
 			}},
 		// Created like the others; openDemoCases then has the legacy check call it untrusted.
 		{demoCaseUntrustedID, "Case from another folder", 6 * day,
@@ -349,6 +355,37 @@ func (d demoSeeder) seed(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// laneDayNothingRead keeps one SQL Server day in which every check came back Cannot test yet and none has a permission to fix. Lane reads are
+// off in the demo, so this is the only way the capture run can show that screen. Nothing here came from a server.
+func (d demoSeeder) laneDayNothingRead(ctx context.Context, c casestore.Case, at time.Time) error {
+	hs, ok := c.(casestore.HealthStore)
+	if !ok {
+		return errors.New("the demo case cannot keep a SQL Server day")
+	}
+	d.clock.set(at)
+	hour := func(daysBack int) dbhealth.Window {
+		start := d.now.Add(-2 * day).Truncate(24 * time.Hour).Add(13 * time.Hour).Add(-time.Duration(daysBack) * day)
+		return dbhealth.Window{Start: start, End: start.Add(time.Hour)}
+	}
+	const why = "The server answered, but it holds nothing for these hours."
+	lane := dbhealth.LaneResult{Incident: hour(0), Reference: hour(1), Era: "2022", Sources: []string{"SQL Server"}}
+	rep := dbhealth.Report{Kind: "sql", Label: "SQL Server", Database: "AuditDb", Version: "16.0", StartedAt: at, FinishedAt: at, Overall: dbhealth.Unavailable, Lane: &lane}
+	for _, ck := range []struct{ id, title string }{
+		{dbhealth.CheckServer, "Server start and thread pool"}, {dbhealth.CheckErrorLog, "Error log"},
+		{dbhealth.CheckQueryStore, "Query Store"}, {dbhealth.CheckAgentJobs, "Agent jobs and backups"},
+	} {
+		lane.Checks = append(lane.Checks, dbhealth.LaneCheck{ID: ck.id, Title: ck.title, State: dbhealth.StateNotYet, Summary: why})
+		rep.Findings = append(rep.Findings, dbhealth.Finding{ID: ck.id, Title: ck.title, Status: dbhealth.Unavailable, Summary: why})
+	}
+	rep.Lane = &lane
+	enc, err := json.Marshal(rep)
+	if err != nil {
+		return err
+	}
+	_, err = hs.AddHealthRun(ctx, casestore.HealthRun{Kind: "sql", Label: rep.Label, Status: string(rep.Overall), Report: enc, Key: server.LaneDayKey("sql", rep)})
+	return err
 }
 
 func demoMeta(file string) casestore.ImportMeta {

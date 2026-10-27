@@ -17,11 +17,14 @@ A case can read a SQL Server and a MongoDB server on top of its audit logs. They
 
 The case page has a section called SQL Server and MongoDB. It holds six tabs: Connections, Step 7: SQL Server, Step 8: MongoDB, Add data, Add another day and Combinations. The guided steps show the same Step 7 and Step 8 panels.
 
-Pictures for this page come from the screenshot tool (see `screenshots.md`). Screenshots pending harness: they are named below and will be added by the next screenshot run on the reference runner.
+Pictures for this page come from the screenshot tool (see `screenshots.md`). Each screen below has a dark and a light picture. They were made on a developer PC and are replaced when the reference runner regenerates the baselines.
 
 ### Saved connections
 
 Screen `p7-connections` lists every saved connection, SQL Server and MongoDB, in one list. Each row shows its name, whether a password is saved, and the result of its last test.
+
+![The connections list, dark](../screenshots/P7/p7-connections-dark.png)
+![The connections list, light](../screenshots/P7/p7-connections-light.png)
 
 - A test says only Works, Failed or Not tested. These three words are for a connection test and nothing else. A source is never "Works". It is Ready, Partly ready, Cannot test yet or Failed.
 - The last test result is kept only while the page is open. It is not saved in the case.
@@ -31,7 +34,10 @@ Screen `p7-connections` lists every saved connection, SQL Server and MongoDB, in
 - A wrong password shows Failed with the server's own message. It never shows the password.
 - In the demo nothing can be saved, so the page says the demo does not keep connections.
 
-Screen `p7-sql-form` is the form for one SQL Server connection. Save is the one filled button. Test and Cancel are outlined. Leave the password box empty on an edit to keep the saved password.
+Screen `p7-sql-form` is the form for one SQL Server connection. Save, Test and Cancel are all outlined while the form sits on case home, because case home already has its main button. Leave the password box empty on an edit to keep the saved password.
+
+![The SQL Server connection form, dark](../screenshots/P7/p7-sql-form-dark.png)
+![The SQL Server connection form, light](../screenshots/P7/p7-sql-form-light.png)
 
 ### Step 7: SQL Server
 
@@ -48,6 +54,9 @@ A check that cannot run says Cannot test yet and shows the permission it is miss
 
 Screen `p7-step-7` is Step 7. With no SQL Server read yet it says Cannot test yet, shows the grant script and offers to add one.
 
+![Step 7, SQL Server, dark](../screenshots/P7/p7-step-7-dark.png)
+![Step 7, SQL Server, light](../screenshots/P7/p7-step-7-light.png)
+
 ### Grants for the owner to run
 
 Unravis never runs a grant. The panel writes the script, you copy it, and the owner of the server runs it in SSMS. Run it once per login.
@@ -63,6 +72,11 @@ SQL Server 2019 and earlier name some permissions differently from 2022 and late
 
 Screens `p7-grant-script-2019` and `p7-grant-script-2022` show the same panel with each version chosen. Type the login and the audit database to fill them into the script. The version is read from the server on a read, and 2022 is assumed when it is unknown.
 
+![The grant script for SQL Server 2019 or earlier, dark](../screenshots/P7/p7-grant-script-2019-dark.png)
+![The grant script for SQL Server 2019 or earlier, light](../screenshots/P7/p7-grant-script-2019-light.png)
+![The grant script for SQL Server 2022 or later, dark](../screenshots/P7/p7-grant-script-2022-dark.png)
+![The grant script for SQL Server 2022 or later, light](../screenshots/P7/p7-grant-script-2022-light.png)
+
 ### Step 8: MongoDB
 
 Step 8 reads the MongoDB server itself, not the audit logs. The user needs the clusterMonitor role on admin and the read role on the audit database. The panel shows the script for the owner to run in mongosh.
@@ -70,6 +84,9 @@ Step 8 reads the MongoDB server itself, not the audit logs. The user needs the c
 Step 8 currently checks the slow operations the profiler recorded (answer M6) and when they began. Other Mongo questions need a time series and are not read yet. The screen says so rather than guessing.
 
 Screen `p7-step-8` is Step 8. With no MongoDB server read it says Cannot test yet and shows the roles script and the profiler guide.
+
+![Step 8, MongoDB, dark](../screenshots/P7/p7-step-8-dark.png)
+![Step 8, MongoDB, light](../screenshots/P7/p7-step-8-light.png)
 
 ### The profiler guide
 
@@ -83,6 +100,9 @@ Screen: Add data tab. It has five cards: SQL Server, MongoDB, Blackbox, Files an
 
 Screen `p7-add-day` reads more hours of a SQL Server the case already holds, for example the day after a fix. The times start as the same hours on the next day and are UTC. They are read as typed and strictly: a time that cannot be read is refused, not guessed.
 
+![Add another day, dark](../screenshots/P7/p7-add-day-dark.png)
+![Add another day, light](../screenshots/P7/p7-add-day-light.png)
+
 - Only SQL Server can be read by day. MongoDB is listed as Not by day, because the profiler keeps only the latest entries and an older day cannot be read.
 - A day is added next to the days already held. Nothing is replaced.
 - Reading exactly the same hours again is a re-check and is allowed.
@@ -91,7 +111,10 @@ Screen `p7-add-day` reads more hours of a SQL Server the case already holds, for
 
 ### When nothing could be read
 
-Screen `p7-nothing-read` appears when the server answered but every check came back Cannot test yet and none has a grant to fix. The case is not broken. The hours may be wrong, or that hour is before the system was used. The screen lists what the case can and cannot answer and offers Add another day or Add data. It never says a check passed. Screenshots pending harness: this screen needs a seeded case that the demo does not hold yet, so it is not in `screens.json` until one exists.
+Screen `p7-nothing-read` appears when the server answered but every check came back Cannot test yet and none has a grant to fix. The case is not broken. The hours may be wrong, or that hour is before the system was used. The screen lists what the case can and cannot answer and offers Add another day or Add data. It never says a check passed. In the capture demo it is the case Report export timeouts, 18 October, which holds one SQL Server day with nothing read.
+
+![Nothing could be read, dark](../screenshots/P7/p7-nothing-read-dark.png)
+![Nothing could be read, light](../screenshots/P7/p7-nothing-read-light.png)
 
 ### What each combination can answer
 
