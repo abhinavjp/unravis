@@ -163,7 +163,7 @@ func (s *FolderSource) Manifest(ctx context.Context) (ManifestRead, error) {
 	if err := ctx.Err(); err != nil {
 		return ManifestRead{}, readErr(ReadUnreachable, "The read was cancelled.", err)
 	}
-	b, err := s.Access.ReadFile(ManifestName)
+	b, err := readFileCtx(ctx, s.Access, ManifestName)
 	if err != nil {
 		return ManifestRead{}, s.classifyFile(err, ManifestName)
 	}
@@ -182,11 +182,106 @@ func (s *FolderSource) OpenFile(ctx context.Context, name string) (io.ReadCloser
 	if !ValidFileName(name) {
 		return nil, readErr(ReadBadData, "That is not a recording file name.", nil)
 	}
-	f, err := s.Access.Open(name)
+	f, err := openFileCtx(ctx, s.Access, name)
 	if err != nil {
 		return nil, s.classifyFile(err, name)
 	}
 	return f, nil
+}
+
+// errReadCancelled is what a folder or share read returns when its time ran out
+// while the file system had not answered. It is not "not found": a dead share is
+// Unreachable.
+var errReadCancelled = errors.New("the read ran out of time before the share answered")
+
+// readFileCtx reads one file through acc but stops waiting when ctx ends. A dead
+// or dropped share can hold a file system call for a long time; the call is left to
+// finish on its own goroutine and its answer is thrown away.
+func readFileCtx(ctx context.Context, acc FileAccess, name string) ([]byte, error) {
+	type res struct {
+		b   []byte
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		b, err := acc.ReadFile(name)
+		ch <- res{b, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.b, r.err
+	case <-ctx.Done():
+		return nil, errReadCancelled
+	}
+}
+
+// openFileCtx opens one file through acc, stopping the wait when ctx ends (a file
+// that opens after that is closed again), and wraps the stream so that each read
+// also stops waiting when ctx ends.
+func openFileCtx(ctx context.Context, acc FileAccess, name string) (io.ReadCloser, error) {
+	type res struct {
+		rc  io.ReadCloser
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		rc, err := acc.Open(name)
+		ch <- res{rc, err}
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			return nil, r.err
+		}
+		return &ctxReadCloser{ctx: ctx, rc: r.rc}, nil
+	case <-ctx.Done():
+		go func() {
+			if r := <-ch; r.rc != nil {
+				r.rc.Close()
+			}
+		}()
+		return nil, errReadCancelled
+	}
+}
+
+// ctxReadCloser reads from rc on a helper goroutine so that a read that never
+// comes back (a share that dropped mid-file) ends with the context. After a
+// cancelled read the stream is closed and not used again.
+type ctxReadCloser struct {
+	ctx    context.Context
+	rc     io.ReadCloser
+	failed error
+}
+
+func (c *ctxReadCloser) Read(p []byte) (int, error) {
+	if c.failed != nil {
+		return 0, c.failed
+	}
+	type res struct {
+		buf []byte
+		err error
+	}
+	ch := make(chan res, 1)
+	buf := make([]byte, len(p)) // the helper owns buf; p is touched only here
+	go func() {
+		n, err := c.rc.Read(buf)
+		ch <- res{buf[:n], err}
+	}()
+	select {
+	case r := <-ch:
+		return copy(p, r.buf), r.err
+	case <-c.ctx.Done():
+		c.failed = errReadCancelled
+		go c.rc.Close()
+		return 0, errReadCancelled
+	}
+}
+
+func (c *ctxReadCloser) Close() error {
+	if c.failed != nil {
+		return nil // already being closed
+	}
+	return c.rc.Close()
 }
 
 func parseManifest(b []byte) (Manifest, *ReadError) {

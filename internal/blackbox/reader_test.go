@@ -488,3 +488,68 @@ func TestURLConnectionCutMidFileKeepsEarlySamples(t *testing.T) {
 		t.Fatalf("got %d report %+v", len(got), rep)
 	}
 }
+
+// hangAccess blocks the way a dead share does: the call does not come back until
+// release is closed.
+type hangAccess struct{ release chan struct{} }
+
+func (h hangAccess) ReadFile(string) ([]byte, error) { <-h.release; return nil, errors.New("late") }
+func (h hangAccess) Open(string) (io.ReadCloser, error) {
+	<-h.release
+	return nil, errors.New("late")
+}
+
+// hangRead opens fine, then the first read blocks.
+type hangReadAccess struct{ release chan struct{} }
+
+func (h hangReadAccess) ReadFile(string) ([]byte, error) { return nil, errors.New("unused") }
+func (h hangReadAccess) Open(string) (io.ReadCloser, error) {
+	return blockedReader{release: h.release}, nil
+}
+
+type blockedReader struct{ release chan struct{} }
+
+func (b blockedReader) Read(p []byte) (int, error) { <-b.release; return 0, io.EOF }
+func (b blockedReader) Close() error              { return nil }
+
+// A dead share must not hold a read past its time limit (F2): the call comes back
+// as Unreachable when the context ends, whatever the file system is doing.
+func TestDeadShareHonoursTheContextOnManifestOpenAndRead(t *testing.T) {
+	loc, _ := ParseLocation(`\gone\share`)
+	rel := make(chan struct{})
+	defer close(rel)
+	within := func(name string, f func(ctx context.Context) error) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- f(ctx) }()
+		select {
+		case err := <-done:
+			if KindOf(err) != ReadUnreachable {
+				t.Errorf("%s: kind %v err %v", name, KindOf(err), err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s: hung past the context", name)
+		}
+	}
+	hang := &FolderSource{Loc: loc, Access: hangAccess{release: rel}}
+	within("manifest", func(ctx context.Context) error { _, err := hang.Manifest(ctx); return err })
+	within("open", func(ctx context.Context) error {
+		rc, err := hang.OpenFile(ctx, FileNameFor(t0))
+		if rc != nil {
+			rc.Close()
+		}
+		return err
+	})
+	slow := &FolderSource{Loc: loc, Access: hangReadAccess{release: rel}}
+	within("read", func(ctx context.Context) error {
+		rc, err := slow.OpenFile(ctx, FileNameFor(t0))
+		if err != nil {
+			return err
+		}
+		defer rc.Close()
+		_, err = io.ReadAll(rc)
+		return err
+	})
+}
