@@ -130,6 +130,12 @@ export function classifyDay(result: Result, ctx: FixContext): FixVerdict {
 }
 
 /** `27 Oct 10:30 to 11:00`: the later day's hours in UTC, from two ISO times. */
+/**
+ * A verdict belongs to the answer it was compared against. When a new run replaces that answer the verdict is no longer about what is on
+ * screen, so it is not shown.
+ */
+export const verdictIsCurrent = (madeFor: unknown, now: unknown): boolean => madeFor !== null && madeFor !== undefined && madeFor === now;
+
 export function dayLabel(startIso: string, endIso: string): string {
   const s = fmtWhen(startIso);
   const e = fmtWhen(endIso);

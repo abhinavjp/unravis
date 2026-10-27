@@ -2,6 +2,7 @@
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
   import { frameProblems } from '../../guided/frame';
   import type { GuidedStore } from '../../guided/guided.svelte';
+  import { runIsPrimary } from '../../guided/stepModel';
 
   // The run bar. "Run the steps" is the one primary button of the steps page until an answer is on screen; after that it is "Run again" and
   // secondary. A run only reads: it cannot change a case or a source.
@@ -20,7 +21,7 @@
     <div><button type="button" class="secondary-button" disabled={readOnly} onclick={onAddData}>{T.addData}</button></div>
   {:else}
     <div class="row">
-      <button type="button" class={hasAnswer && store.phase !== 'failed' ? 'secondary-button' : 'primary-button'} disabled={running || problems.length > 0} onclick={() => void store.run(sourceIds)}>{label}</button>
+      <button type="button" class={runIsPrimary(hasAnswer) ? 'primary-button' : 'secondary-button'} disabled={running || problems.length > 0} onclick={() => void store.run(sourceIds)}>{label}</button>
       {#if running}<button type="button" class="secondary-button" onclick={() => store.cancel()}>{T.cancel}</button>{/if}
     </div>
     {#if problems.length > 0}<p class="note">{T.fixWindows} {problems[0]}</p>{/if}

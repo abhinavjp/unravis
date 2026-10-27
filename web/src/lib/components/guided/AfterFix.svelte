@@ -1,6 +1,6 @@
 <script lang="ts">
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
-  import { classifyDay, dayLabel, laterFrame, type FixVerdict } from '../../guided/afterFix';
+  import { classifyDay, dayLabel, laterFrame, verdictIsCurrent, type FixVerdict } from '../../guided/afterFix';
   import { runInvestigation } from '../../guided/api';
   import { frameProblems, toRequest, windowMinutes } from '../../guided/frame';
   import type { GuidedStore } from '../../guided/guided.svelte';
@@ -12,13 +12,16 @@
   let day = $state('');
   let route = $state('');
   let phase = $state<'idle' | 'running' | 'done' | 'failed'>('idle');
-  let verdict = $state.raw<FixVerdict | null>(null);
+  let made = $state.raw<FixVerdict | null>(null);
+  // The answer the verdict was compared against: a new main run makes the verdict stale, so it goes from the page.
+  let madeFor = $state.raw<unknown>(null);
   let problem = $state('');
   let recorded = $state(false);
   let run = 0;
   let controller: AbortController | null = null;
 
   const result = $derived(store.result);
+  const verdict = $derived(made && verdictIsCurrent(madeFor, store.answer) ? made : null);
   const routes = $derived((result?.facts.routes ?? []).map((r) => r.route));
 
   async function compare() {
@@ -31,6 +34,8 @@
     const issues = frameProblems(frame);
     const request = toRequest(frame, sourceIds, false);
     if (!request) { problem = issues[0] ?? T.noSources; return; }
+    const base = result;
+    const forAnswer = store.answer;
     controller?.abort();
     const mine = new AbortController();
     controller = mine;
@@ -39,11 +44,12 @@
     try {
       const answer = await runInvestigation(store.caseId, request, mine.signal);
       if (id !== run) return;
-      verdict = classifyDay(answer.result, {
-        normalP95: result.facts.change.p95.refMs,
+      made = classifyDay(answer.result, {
+        normalP95: base.facts.change.p95.refMs,
         windowMinutes: windowMinutes(frame.incidentStart, frame.incidentEnd),
         laterLabel: dayLabel(request.incident.start, request.incident.end)
       });
+      madeFor = forAnswer;
       phase = 'done';
     } catch {
       if (id !== run || mine.signal.aborted) return;
@@ -114,7 +120,7 @@
       {:else}
         <div class="row">
           <button type="button" class="primary-button" onclick={() => void record()}>{verdict.warnings.length > 0 ? T.recordWarning : T.record}</button>
-          <button type="button" class="quiet-button" onclick={() => { verdict = null; phase = 'idle'; }}>{T.notNow}</button>
+          <button type="button" class="quiet-button" onclick={() => { made = null; phase = 'idle'; }}>{T.notNow}</button>
         </div>
       {/if}
     {/if}

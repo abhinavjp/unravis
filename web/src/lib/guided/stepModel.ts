@@ -32,6 +32,15 @@ const TONE: Record<Readiness, StickerTone> = { Ready: 'ready', 'Partly ready': '
 
 export const stepOf = (result: Result | null | undefined, n: number): Step | undefined => result?.steps.find((s) => s.number === n);
 
+/** The guided view is open for the case it was opened on. Switching to another case goes back to that case's home. */
+export const guidedOpenFor = (openedFor: string, caseId: string): boolean => openedFor !== '' && openedFor === caseId;
+
+/**
+ * Whether "Run the steps" is the primary button. It is only while no answer is on screen; once there is one (even after a failed rerun) the
+ * run button is outlined, so a tool that has its own primary button (After the fix) never shares the screen with a second one.
+ */
+export const runIsPrimary = (hasAnswer: boolean): boolean => !hasAnswer;
+
 /**
  * The sticker on a step. With no answer yet it is Waiting (hatched); while a run is going it is Running. With an answer it is the engine's word,
  * and `outOfDate` says the windows, sources or lists have changed since: the word then stays but the page asks for a rerun.

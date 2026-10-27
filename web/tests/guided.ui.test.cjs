@@ -136,3 +136,46 @@ test('byte labels are short and never negative', () => {
   assert.equal(r.byteLabel(3 * 1024 * 1024), '3.0 MB');
   assert.equal(r.byteLabel(-5), '0 bytes');
 });
+
+/* ---------------------------------------------------------- review fixes */
+
+test('the run button is the primary only while no answer is on screen, so it never shares a screen with After the fix', () => {
+  assert.equal(m.runIsPrimary(false), true);
+  assert.equal(m.runIsPrimary(true), false);
+});
+
+test('a view is saved without an API name that holds a URL, and without one that is too long', () => {
+  const base = { ...f.emptyFrame(), incidentStart: '2026-10-17T10:30', incidentEnd: '2026-10-17T11:00', referenceStart: '2026-10-17T09:30', referenceEnd: '2026-10-17T10:30' };
+  assert.equal(t.viewSettings({ ...base, route: 'A.One' }).route, 'A.One');
+  assert.equal('route' in t.viewSettings({ ...base, route: 'https://evil.example/x' }), false);
+  assert.equal('route' in t.viewSettings({ ...base, route: 'x'.repeat(257) }), false);
+  assert.equal('route' in t.viewSettings({ ...base, route: '' }), false);
+  // What the client sends is what the client would read back.
+  assert.equal(t.readViewSettings(t.viewSettings({ ...base, route: 'A.One' })).route, 'A.One');
+});
+
+test('an after-the-fix verdict is shown only for the answer it was compared against', () => {
+  const answer = { id: 1 };
+  assert.equal(fix.verdictIsCurrent(answer, answer), true);
+  assert.equal(fix.verdictIsCurrent(answer, { id: 1 }), false);
+  assert.equal(fix.verdictIsCurrent(answer, null), false);
+  assert.equal(fix.verdictIsCurrent(null, null), false);
+  assert.equal(fix.verdictIsCurrent(undefined, undefined), false);
+});
+
+test('the guided view is open only on the case it was opened for', () => {
+  assert.equal(m.guidedOpenFor('c1', 'c1'), true);
+  assert.equal(m.guidedOpenFor('c1', 'c2'), false);
+  assert.equal(m.guidedOpenFor('', 'c1'), false);
+  assert.equal(m.guidedOpenFor('', ''), false);
+});
+
+test('step stickers use the four fixed words, plus Waiting and Running before an answer, and nothing else', () => {
+  const allowed = new Set([...WORDS, 'Waiting', 'Running']);
+  const answer = result({ steps: Array.from({ length: 11 }, (_, i) => step(i, WORDS[i % 4])) });
+  for (let number = 0; number <= 10; number += 1) {
+    for (const phase of ['idle', 'running', 'done', 'failed']) {
+      for (const r of [null, answer]) assert.ok(allowed.has(m.stickerFor(r, number, phase).word), `${number} ${phase}`);
+    }
+  }
+});

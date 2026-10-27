@@ -10,6 +10,7 @@
   import { ledger, refreshLedger } from '../ledgerStore.svelte';
   import { buildStory, shortText } from '../story';
   import { GUIDED_TEXT } from '../copy/guidedCopy';
+  import { guidedOpenFor } from '../guided/stepModel';
   import GuidedAnalysis from './guided/GuidedAnalysis.svelte';
   import HealthPanel from './HealthPanel.svelte';
 
@@ -26,7 +27,9 @@
   let copying = $state(false);
   let copyNote = $state('');
   let copyProblem = $state('');
-  let guidedOpen = $state(false);
+  // The case the guided view was opened on. Another case starts at its own home.
+  let guidedFor = $state('');
+  const guidedOpen = $derived(guidedOpenFor(guidedFor, caseId));
   let controller: AbortController | null = null;
   let loadedFor = '';
 
@@ -149,7 +152,7 @@
     <div><button type="button" class="secondary-button" onclick={() => void load(caseId)}>{CASE_HOME_TEXT.retry}</button></div>
   {:else if guidedOpen}
     {#key caseId}
-      <GuidedAnalysis {caseId} closed={!!info?.closed} {readOnly} {hasIis} onAddData={openCaseImport} onClose={() => (guidedOpen = false)} />
+      <GuidedAnalysis {caseId} closed={!!info?.closed} {readOnly} {hasIis} onAddData={openCaseImport} onClose={() => (guidedFor = '')} />
     {/key}
   {:else}
     <header class="head">
@@ -176,7 +179,7 @@
     <section class="block" aria-labelledby="home-guided">
       <h3 id="home-guided">{GUIDED_TEXT.heading}</h3>
       <p class="note">{GUIDED_TEXT.openGuidedNote}</p>
-      <div><button type="button" class="secondary-button" onclick={() => (guidedOpen = true)}>{GUIDED_TEXT.openGuided}</button></div>
+      <div><button type="button" class="secondary-button" onclick={() => (guidedFor = caseId)}>{GUIDED_TEXT.openGuided}</button></div>
     </section>
 
     <section class="block" aria-labelledby="home-story">

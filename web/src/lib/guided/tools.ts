@@ -102,9 +102,10 @@ const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
  */
 export function viewSettings(frame: Frame, extra: Pick<ViewSettings, 'minCalls' | 'match'> = {}): Record<string, unknown> {
   const out: ViewSettings = {
-    incidentStart: frame.incidentStart, incidentEnd: frame.incidentEnd, referenceStart: frame.referenceStart, referenceEnd: frame.referenceEnd,
-    route: frame.route
+    incidentStart: frame.incidentStart, incidentEnd: frame.incidentEnd, referenceStart: frame.referenceStart, referenceEnd: frame.referenceEnd
   };
+  // The server refuses a value with a URL in it, so the view is saved without the API rather than not saved at all.
+  if (frame.route && frame.route.length <= 256 && !frame.route.includes('://')) out.route = frame.route;
   if (typeof extra.minCalls === 'number' && Number.isFinite(extra.minCalls)) out.minCalls = Math.max(0, Math.min(1_000_000, Math.floor(extra.minCalls)));
   if (typeof extra.match === 'string' && extra.match && !extra.match.includes('://')) out.match = extra.match.slice(0, 100);
   return out as Record<string, unknown>;
