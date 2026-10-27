@@ -2,7 +2,9 @@ package dbhealth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -282,5 +284,81 @@ func TestMongoLaneNeverSendsAWrite(t *testing.T) {
 		if err := ReadOnlyCommand(c); err == nil {
 			t.Errorf("%s must be refused", c)
 		}
+	}
+}
+
+// cursorMongo answers a profile find the way a real MongoDB does: the first batch holds at most batchSize documents (101 when the command sets
+// none) and never more than limit, and a cursor id that is not 0 says there is more to fetch with getMore, which the lane never sends.
+type cursorMongo struct {
+	*profMongo
+	all   []map[string]any
+	asked []string
+}
+
+func (c *cursorMongo) Command(ctx context.Context, db, cmd string) (map[string]any, error) {
+	if cmd == profileOldest || !strings.HasPrefix(cmd, `{"find"`) {
+		return c.profMongo.Command(ctx, db, cmd)
+	}
+	c.asked = append(c.asked, cmd)
+	var q struct {
+		Limit     int `json:"limit"`
+		BatchSize int `json:"batchSize"`
+	}
+	if err := json.Unmarshal([]byte(cmd), &q); err != nil {
+		return nil, err
+	}
+	if q.BatchSize == 0 {
+		q.BatchSize = 101
+	}
+	want := len(c.all)
+	if q.Limit > 0 && q.Limit < want {
+		want = q.Limit
+	}
+	n := want
+	if q.BatchSize < n {
+		n = q.BatchSize
+	}
+	out := batch(c.all[:n]...)
+	id := float64(0)
+	if n < want {
+		id = 7771234567
+	}
+	out["cursor"].(map[string]any)["id"] = map[string]any{"$numberLong": strconv.FormatFloat(id, 'f', 0, 64)}
+	return out, nil
+}
+
+// Review re-review F4: on a real server the first batch is short, so the lane must ask for a full batch and treat an open cursor as a cut-short read.
+func TestMongoLaneProfileReadSurvivesRealCursorBatching(t *testing.T) {
+	var all []map[string]any
+	for i := 0; i < 400; i++ { // a busy reference window: 400 indexed slow operations, none from the incident
+		all = append(all, profDoc(at(19, 10, 0).Add(time.Duration(i)*time.Second), "AuditDb.Logs", "IXSCAN { ts: 1 }"))
+	}
+	all = append(all, profDoc(at(20, 10, 12), "AuditDb.Logs", "COLLSCAN"))
+	c := &cursorMongo{profMongo: newProf(at(2, 0, 0)), all: all}
+	r := RunMongoLane(context.Background(), c, "Mongo", mreq(), fixedNow)
+	if r.Lane.Answers["M6"] != AnswerYes {
+		t.Fatalf("the scan after 400 earlier records was never read: %v", r.Lane.Answers)
+	}
+	if len(c.asked) != 1 || !strings.Contains(c.asked[0], `"batchSize":`+strconv.Itoa(mongoMaxProfileDocs)) {
+		t.Fatalf("the find must set an explicit batch size: %v", c.asked)
+	}
+	// Indexed only: with every record read, the answer is No.
+	indexed := append(append([]map[string]any{}, all[:400]...), profDoc(at(20, 10, 12), "AuditDb.Logs", "IXSCAN { ts: 1 }"))
+	c = &cursorMongo{profMongo: newProf(at(2, 0, 0)), all: indexed}
+	if r = RunMongoLane(context.Background(), c, "Mongo", mreq(), fixedNow); r.Lane.Answers["M6"] != AnswerNo {
+		t.Fatalf("a whole read of indexed records = %v", r.Lane.Answers)
+	}
+}
+
+// A reply that is short but leaves its cursor open was cut off by the server: no No and no start time, whatever the batch held.
+func TestMongoLaneOpenCursorIsACutShortRead(t *testing.T) {
+	m := newProf(at(2, 0, 0), profDoc(at(19, 10, 0), "AuditDb.Logs", "IXSCAN { ts: 1 }"))
+	m.fakeMongo.by["find"]["cursor"].(map[string]any)["id"] = map[string]any{"$numberLong": "7771234567"}
+	r := RunMongoLane(context.Background(), m, "Mongo", mreq(), fixedNow)
+	if _, ok := r.Lane.Answers["M6"]; ok || r.Lane.Onset != nil {
+		t.Fatalf("an open cursor answered: %v onset %v", r.Lane.Answers, r.Lane.Onset)
+	}
+	if !strings.Contains(checkByID(t, r, CheckMongoProfiler).Summary, "cut short") {
+		t.Fatalf("summary = %s", checkByID(t, r, CheckMongoProfiler).Summary)
 	}
 }

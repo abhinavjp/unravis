@@ -99,7 +99,7 @@ func profileFind(req LaneRequest, limit int, ascending bool) string {
 	// Built by hand, not marshalled: ReadOnlyCommand reads the first key as the command name, and a marshalled map sorts its keys.
 	return `{"find":"system.profile","filter":{"ts":{"$gte":{"$date":"` + req.Reference.Start.UTC().Format(time.RFC3339) +
 		`"},"$lt":{"$date":"` + req.Incident.End.UTC().Format(time.RFC3339) + `"}}},"sort":{"ts":` + strconv.Itoa(sortDir) +
-		`},"limit":` + strconv.Itoa(limit) + `,"projection":{"op":1,"ns":1,"millis":1,"planSummary":1,"ts":1}}`
+		`},"limit":` + strconv.Itoa(limit) + `,"batchSize":` + strconv.Itoa(limit) + `,"projection":{"op":1,"ns":1,"millis":1,"planSummary":1,"ts":1}}`
 }
 
 const profileOldest = `{"find":"system.profile","filter":{},"sort":{"ts":1},"limit":1,"projection":{"ts":1}}`
@@ -229,7 +229,10 @@ func (l *mongoLane) checkProfiler(ctx context.Context) LaneCheck {
 		return l.failed(err, perm)
 	}
 	batch := list(dig(r, "cursor", "firstBatch"))
-	o := evalLaneProfiler(jnum(lvl["slowms"]), oldest, batch, len(batch) >= mongoMaxProfileDocs, l.req)
+	// A real server answers a find with its first batch only (101 documents unless batchSize says more), and says there is more by a cursor id that is
+	// not 0. Either that or a full batch means the read stopped before the end of the window.
+	truncated := len(batch) >= mongoMaxProfileDocs || jnum(dig(r, "cursor", "id")) != 0
+	o := evalLaneProfiler(jnum(lvl["slowms"]), oldest, batch, truncated, l.req)
 	if o.check.State == StateReady {
 		if o.answer != "" {
 			l.b.answer("M6", o.answer)
