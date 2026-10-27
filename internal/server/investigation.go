@@ -1,0 +1,256 @@
+package server
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/investigate"
+)
+
+// Investigation: the guided analysis engine (internal/investigate) run on the
+// audit data of the chosen sources and the IIS rows of the open case. The route
+// only reads. It builds an Input, hands it to the pure engine and returns the
+// answer; it never changes /api/analyze or /api/breakdown and writes nothing to
+// the case.
+
+const (
+	investigationMaxRows     = 30000 // audit calls read for one run (300 pages)
+	investigationMaxSpan     = 7 * 24 * time.Hour
+	investigationMaxReleases = 50
+	investigationMaxLabel    = 200
+	investigationMaxPool     = 100000
+	investigationIISSource   = "iis-w3c"
+)
+
+type investigationWindow struct {
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
+}
+
+type investigationRelease struct {
+	At    time.Time `json:"at"`
+	Label string    `json:"label"`
+}
+
+// investigationRequest is the body. ReleasesEntered must be true for the change
+// list to count as entered (an empty list entered on purpose reads "No change
+// listed"). IncludeSeries asks for the per-minute rows the charts draw.
+type investigationRequest struct {
+	SourceIDs       []string               `json:"sourceIds"`
+	Incident        investigationWindow    `json:"incident"`
+	Reference       investigationWindow    `json:"reference"`
+	Route           string                 `json:"route"`
+	PoolLimit       *int                   `json:"poolLimit"`
+	Releases        []investigationRelease `json:"releases"`
+	ReleasesEntered bool                   `json:"releasesEntered"`
+	IncludeSeries   bool                   `json:"includeSeries"`
+}
+
+// investigationRead says what the run read, so a reader knows what the answer
+// stands on.
+type investigationRead struct {
+	Requests  int      `json:"requests"`
+	IISRows   int      `json:"iisRows"`
+	Truncated bool     `json:"truncated"`
+	Warnings  []string `json:"warnings"`
+}
+
+type investigationAnswer struct {
+	Result investigate.Result `json:"result"`
+	Read   investigationRead  `json:"read"`
+}
+
+func (b investigationRequest) validate() bool {
+	w := func(x investigationWindow) bool { return !x.Start.IsZero() && !x.End.IsZero() && x.End.After(x.Start) }
+	if !w(b.Incident) || !w(b.Reference) || len(b.Route) > 256 || len(b.Releases) > investigationMaxReleases {
+		return false
+	}
+	if b.PoolLimit != nil && (*b.PoolLimit < 1 || *b.PoolLimit > investigationMaxPool) {
+		return false
+	}
+	lo, hi := b.span()
+	if hi.Sub(lo) > investigationMaxSpan {
+		return false
+	}
+	for _, r := range b.Releases {
+		if r.At.IsZero() || len(r.Label) > investigationMaxLabel {
+			return false
+		}
+	}
+	return true
+}
+
+// span is the stretch that covers both windows.
+func (b investigationRequest) span() (time.Time, time.Time) {
+	lo, hi := b.Reference.Start, b.Reference.End
+	if b.Incident.Start.Before(lo) {
+		lo = b.Incident.Start
+	}
+	if b.Incident.End.After(hi) {
+		hi = b.Incident.End
+	}
+	return lo.UTC(), hi.UTC()
+}
+
+func (h *handler) caseInvestigation(w http.ResponseWriter, r *http.Request, raw string) {
+	var body investigationRequest
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if !body.validate() {
+		writeError(w, http.StatusBadRequest, "Request validation failed.")
+		return
+	}
+	if _, ok := caseIDOf(w, raw); !ok {
+		return
+	}
+	lo, hi := body.span()
+	q := audit.Query{
+		SourceIDs: body.SourceIDs,
+		Start:     lo, End: hi,
+		BaselineStart: lo.Add(-time.Hour), BaselineEnd: lo,
+		BucketSeconds: 86400,
+	}
+	applyQueryDefaults(&q)
+	q.Kind = "all"
+	if err := audit.ValidateQuery(q); err != nil {
+		writeError(w, http.StatusBadRequest, "Request validation failed.")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+
+	// Audit first, so a failing source answers before the case is opened.
+	rows, read, status, err := h.readInvestigationAudit(ctx, q)
+	if err != nil {
+		writeTraceRepoError(w, err)
+		return
+	}
+	_, c, ok := h.openCase(w, r, raw)
+	if !ok {
+		return
+	}
+	defer c.Close()
+
+	in, err := buildInvestigationInput(ctx, c, body, rows, status, &read)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	res := investigate.Analyze(in)
+	if !body.IncludeSeries {
+		res = res.Compact()
+	}
+	if read.Warnings == nil {
+		read.Warnings = []string{}
+	}
+	writeJSON(w, http.StatusOK, investigationAnswer{Result: res, Read: read}, maxResponseBytes)
+}
+
+// readInvestigationAudit pages the audit calls of the span, newest first. A
+// source that cannot be queried, or a span with more calls than the cap, gives
+// AuditFailed: a partial read is never passed on as the whole data (it would cut
+// the earliest calls, which are the reference window).
+func (h *handler) readInvestigationAudit(ctx context.Context, q audit.Query) ([]audit.RequestRecord, investigationRead, investigate.AuditStatus, error) {
+	var rows []audit.RequestRecord
+	read := investigationRead{Warnings: []string{}}
+	status := investigate.AuditPresent
+	cursor := ""
+	for {
+		page, err := h.repo.Requests(ctx, audit.PageInput{Query: q, Cursor: cursor, Limit: audit.MaxPageSize, Order: audit.OrderNewest})
+		if err != nil {
+			return nil, read, "", err
+		}
+		for _, s := range page.Sources {
+			if !s.OK {
+				status = investigate.AuditFailed
+				read.Warnings = append(read.Warnings, "One or more audit sources could not be queried.")
+				return nil, read, status, nil
+			}
+		}
+		rows = append(rows, page.Rows...)
+		if page.Truncated {
+			read.Truncated = true
+		}
+		if page.NextCursor == "" || len(page.Rows) == 0 {
+			break
+		}
+		if len(rows) >= investigationMaxRows {
+			read.Truncated = true
+			break
+		}
+		cursor = page.NextCursor
+	}
+	if read.Truncated {
+		status = investigate.AuditFailed
+		read.Warnings = append(read.Warnings, "There are too many audit calls in these windows to read in full, so none were used. Shorten the windows.")
+		rows = nil
+	}
+	read.Requests = len(rows)
+	return rows, read, status, nil
+}
+
+// buildInvestigationInput joins the audit calls, the case's IIS rows and the
+// user's entries into one engine Input. An IIS read that hit the event cap is
+// treated as no IIS: a partial list would read as missing calls.
+func buildInvestigationInput(ctx context.Context, c casestore.Case, body investigationRequest, rows []audit.RequestRecord, status investigate.AuditStatus, read *investigationRead) (investigate.Input, error) {
+	reqs, noStart := investigate.FromRecords(rows)
+	in := investigate.Input{
+		Incident:        investigate.Window{Start: body.Incident.Start.UTC(), End: body.Incident.End.UTC()},
+		Reference:       investigate.Window{Start: body.Reference.Start.UTC(), End: body.Reference.End.UTC()},
+		Route:           body.Route,
+		Audit:           status,
+		Requests:        reqs,
+		NoStart:         noStart,
+		PoolLimit:       body.PoolLimit,
+		ReleasesEntered: body.ReleasesEntered,
+	}
+	for _, r := range body.Releases {
+		in.Releases = append(in.Releases, investigate.Release{At: r.At.UTC(), Label: r.Label})
+	}
+
+	sources, err := caseSources(ctx, c)
+	if err != nil {
+		return in, err
+	}
+	readable := false
+	for _, s := range sources {
+		if s.Name == investigationIISSource && s.Validated {
+			readable = true
+		}
+	}
+	if !readable {
+		return in, nil
+	}
+	lo, hi := body.span()
+	evs, err := c.Events(ctx, casestore.EventQuery{
+		Window:  importer.Window{From: lo.Add(-callTraceLookback), To: hi},
+		Sources: []string{investigationIISSource},
+		Kinds:   []string{"request"},
+		Limit:   casestore.MaxEventQuery,
+	})
+	if err != nil {
+		return in, err
+	}
+	if len(evs) >= casestore.MaxEventQuery {
+		read.Warnings = append(read.Warnings, "There are too many IIS rows in these windows to read in full, so the IIS logs were not used.")
+		return in, nil
+	}
+	in.IISPresent = true
+	for _, e := range evs {
+		if e.DurationMs == nil {
+			continue
+		}
+		end := e.End
+		if end.Before(e.Start) {
+			end = e.Start
+		}
+		in.IIS = append(in.IIS, investigate.IISRow{Start: e.Start.UTC(), End: end.UTC(), TakenMs: *e.DurationMs, Path: investigate.NormalizePath(e.Attrs["stem"])})
+	}
+	read.IISRows = len(in.IIS)
+	return in, nil
+}
