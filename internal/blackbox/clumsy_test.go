@@ -3,6 +3,7 @@ package blackbox
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -42,6 +43,8 @@ func (g *hostRig) do(t *testing.T, method, path string, hdr map[string]string) (
 func (g *hostRig) startAndWait(t *testing.T, o HostOptions) {
 	t.Helper()
 	g.start(t, o)
+	// Wait for the host to finish before the temp folder is removed.
+	t.Cleanup(func() { _ = g.stop(t) })
 	select {
 	case <-g.ready:
 	case <-time.After(5 * time.Second):
@@ -174,8 +177,13 @@ func TestClumsyClockMovedFiveSecondsIsInTheManifestAndOnTheStatusClock(t *testin
 	}
 	found := false
 	for _, e := range doc.Manifest.Events {
-		if e.Kind == EventClockJump && strings.HasPrefix(e.Detail, "clock moved forward by 5.") {
-			found = true
+		// The jump is 5 s minus the real time between the two ticks, which on a
+		// busy test machine can be a little: accept 3.5 to 5.5 s.
+		var secs float64
+		if e.Kind == EventClockJump && strings.HasPrefix(e.Detail, "clock moved forward by ") {
+			if _, err := fmt.Sscanf(e.Detail, "clock moved forward by %f s", &secs); err == nil && secs >= 3.5 && secs <= 5.5 {
+				found = true
+			}
 		}
 	}
 	if !found {

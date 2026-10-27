@@ -24,6 +24,9 @@ type hostRig struct {
 	cancel context.CancelFunc
 	done   chan error
 	logs   chan string
+
+	stopped bool
+	stopErr error
 }
 
 func newHostRig(t *testing.T) *hostRig {
@@ -68,9 +71,13 @@ func (g *hostRig) start(t *testing.T, o HostOptions) {
 
 func (g *hostRig) stop(t *testing.T) error {
 	t.Helper()
+	if g.stopped {
+		return g.stopErr
+	}
 	g.cancel()
 	select {
 	case err := <-g.done:
+		g.stopped, g.stopErr = true, err
 		return err
 	case <-time.After(10 * time.Second):
 		t.Fatal("RunHost did not stop")
