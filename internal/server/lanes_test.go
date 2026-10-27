@@ -145,6 +145,15 @@ func TestLaneSQLTwoOverlappingDaysAreRefused(t *testing.T) {
 		if len(*seen) != before {
 			t.Error("the server was read for a day that was refused")
 		}
+		// Refused days must not use up the checks allowed per minute.
+		for i := 0; i < connectionTestsPerWindow+2; i++ {
+			if res = e.json(http.MethodPost, path, overlap); res.Code != http.StatusConflict {
+				t.Fatalf("refusal %d = %d %s", i, res.Code, res.Body)
+			}
+		}
+		if res = e.json(http.MethodPost, path, laneSQLBodyJSON("")); res.Code != http.StatusOK {
+			t.Fatalf("re-check after refusals = %d %s", res.Code, res.Body)
+		}
 		// A different database is a different source: no conflict.
 		other := `{"savedId":"saved1","database":"OtherDb","incident":{"start":"2026-10-20T10:30:00Z","end":"2026-10-20T12:00:00Z"},"reference":{"start":"2026-10-19T10:00:00Z","end":"2026-10-19T11:00:00Z"}}`
 		if res = e.json(http.MethodPost, path, other); res.Code != http.StatusOK {
@@ -334,6 +343,46 @@ func TestLaneMongoRunsAndAnswersM6(t *testing.T) {
 			t.Fatalf("days = %+v", list.Days)
 		}
 	})
+}
+
+func TestLaneMongoTwoServersWithTheSameDatabaseAreTwoSources(t *testing.T) {
+	repo := &mongoLaneRepo{fakeRepository: &fakeRepository{}, run: func(_ context.Context, _, cmd string) (map[string]any, error) { return healthyMongo(cmd) }}
+	mongoLaneEnv(t, repo, func(t *testing.T, e *caseEnv, id string) {
+		path := "/api/cases/" + id + "/lanes/mongo"
+		if res := e.json(http.MethodPost, path, laneMongoBodyJSON); res.Code != http.StatusOK {
+			t.Fatalf("first = %d %s", res.Code, res.Body)
+		}
+		shifted := strings.Replace(laneMongoBodyJSON, `"start":"2026-10-20T10:00:00Z"`, `"start":"2026-10-20T10:30:00Z"`, 1)
+		shifted = strings.Replace(shifted, `"end":"2026-10-20T11:00:00Z"`, `"end":"2026-10-20T11:30:00Z"`, 1)
+		// The same server with times that overlap but differ is refused.
+		if res := e.json(http.MethodPost, path, shifted); res.Code != http.StatusConflict {
+			t.Fatalf("same server, overlapping = %d %s", res.Code, res.Body)
+		}
+		// Another server with the same database name is another source: not merged, not refused.
+		other := strings.Replace(shifted, "mongo01.corp.example", "mongo02.corp.example", 1)
+		res := e.json(http.MethodPost, path, other)
+		if res.Code != http.StatusOK {
+			t.Fatalf("other server = %d %s", res.Code, res.Body)
+		}
+		if strings.Contains(res.Body.String(), "mongo02.corp.example") {
+			t.Fatalf("the address leaked: %s", res.Body)
+		}
+		var list struct{ Days []laneDayDTO }
+		decodeBody(t, e.get("/api/cases/"+id+"/lanes"), &list)
+		if len(list.Days) != 2 {
+			t.Fatalf("two servers should keep two days: %+v", list.Days)
+		}
+	})
+}
+
+func TestServerPrintKeepsOnlyTheAddress(t *testing.T) {
+	a := serverPrint("mongodb://user:pw@Host1:27017,host2:27017/db?replicaSet=r")
+	if a == "" || strings.Contains(a, "pw") || a != serverPrint("mongodb://other:x@host1:27017,host2:27017") {
+		t.Errorf("print = %q", a)
+	}
+	if a == serverPrint("mongodb://host3:27017") || serverPrint("") != "" {
+		t.Error("distinct servers must differ and empty stays empty")
+	}
 }
 
 func TestLaneMongoDownMidReadFailsTheCheckNotTheServer(t *testing.T) {

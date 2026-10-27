@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -75,8 +77,38 @@ type laneRun struct {
 	Report dbhealth.Report
 }
 
+// source names where the day was read from. It is the key without its two window times, so it also tells two servers apart that share a label
+// and a database name; a run kept without a key falls back to the label and database.
 func (l laneRun) source() string {
-	return l.Run.Kind + "\x00" + l.Report.Label + "\x00" + l.Report.Database
+	if parts := strings.Split(l.Run.Key, "|"); len(parts) >= 6 {
+		return strings.Join(parts[:len(parts)-2], "|")
+	}
+	return laneSourceID(l.Run.Kind, l.Report.Label, l.Report.Database, "")
+}
+
+// laneSourceID joins what makes one source: kind, label, database and a fingerprint of the server address.
+func laneSourceID(kind, label, database, server string) string {
+	return kind + "|" + label + "|" + database + "|" + server
+}
+
+// serverPrint is a short opaque fingerprint of a server address, so two servers can be told apart without the address being kept anywhere
+// readable. Credentials and options in a connection string are left out first.
+func serverPrint(address string) string {
+	a := strings.ToLower(strings.TrimSpace(address))
+	if i := strings.Index(a, "://"); i >= 0 {
+		a = a[i+3:]
+	}
+	if i := strings.IndexAny(a, "/?"); i >= 0 {
+		a = a[:i]
+	}
+	if i := strings.LastIndex(a, "@"); i >= 0 {
+		a = a[i+1:]
+	}
+	if a == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(a))
+	return hex.EncodeToString(sum[:4])
 }
 
 func laneRunsOf(runs []casestore.HealthRun) []laneRun {
@@ -96,10 +128,9 @@ func laneRunsOf(runs []casestore.HealthRun) []laneRun {
 
 // overlapsHeldDay reports a day already held for the same source whose incident window overlaps the new one without being the same window. The
 // same window again is a re-check and is allowed; two different days that share minutes would be counted twice, so the second is refused.
-func overlapsHeldDay(held []laneRun, kind, label, database string, incident dbhealth.Window) bool {
-	probe := laneRun{Run: casestore.HealthRun{Kind: kind}, Report: dbhealth.Report{Label: label, Database: database}}
+func overlapsHeldDay(held []laneRun, source string, incident dbhealth.Window) bool {
 	for _, h := range held {
-		if h.source() != probe.source() {
+		if h.source() != source {
 			continue
 		}
 		if h.Report.Lane.Incident.Overlaps(incident) && !h.Report.Lane.Incident.Same(incident) {
@@ -113,13 +144,13 @@ const laneOverlapText = "You already added a day for this database that overlaps
 
 // laneKey names a lane day by its source and window. The case keeps one run per key and holds lane days apart from the plain health runs, so
 // reading the same day again replaces it and a run of the health checks can never push a day out.
-func laneKey(kind string, report dbhealth.Report) string {
+func laneKey(source string, report dbhealth.Report) string {
 	in := report.Lane.Incident
-	return kind + "|" + report.Label + "|" + report.Database + "|" + in.Start.UTC().Format(time.RFC3339) + "|" + in.End.UTC().Format(time.RFC3339)
+	return source + "|" + in.Start.UTC().Format(time.RFC3339) + "|" + in.End.UTC().Format(time.RFC3339)
 }
 
 // laneSave keeps a finished lane run in the case and answers like a health run does.
-func laneSave(w http.ResponseWriter, r *http.Request, hs casestore.HealthStore, kind string, report dbhealth.Report) {
+func laneSave(w http.ResponseWriter, r *http.Request, hs casestore.HealthStore, kind, server string, report dbhealth.Report) {
 	enc, err := json.Marshal(report)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "The result could not be prepared.")
@@ -127,7 +158,7 @@ func laneSave(w http.ResponseWriter, r *http.Request, hs casestore.HealthStore, 
 	}
 	sctx, scancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer scancel()
-	saved, err := hs.AddHealthRun(sctx, casestore.HealthRun{Kind: kind, Label: report.Label, Status: string(report.Overall), Report: enc, Key: laneKey(kind, report)})
+	saved, err := hs.AddHealthRun(sctx, casestore.HealthRun{Kind: kind, Label: report.Label, Status: string(report.Overall), Report: enc, Key: laneKey(laneSourceID(kind, report.Label, report.Database, server), report)})
 	out := struct {
 		Saved bool         `json:"saved"`
 		State string       `json:"state"`
@@ -174,10 +205,6 @@ func (h *handler) caseLaneSQL(w http.ResponseWriter, r *http.Request, raw string
 		return
 	}
 	defer c.Close()
-	if !h.tests.allow() {
-		writeError(w, http.StatusTooManyRequests, "Too many checks in the last minute. Wait a minute, then run again.")
-		return
-	}
 	target, label, ok := h.resolveSQL(w, body.sqlRequest)
 	if !ok {
 		return
@@ -197,8 +224,13 @@ func (h *handler) caseLaneSQL(w http.ResponseWriter, r *http.Request, raw string
 		writeTagError(w, err, "")
 		return
 	}
-	if overlapsHeldDay(held, "sql", label, req.Database, req.Incident) {
+	serverID := serverPrint(target.Server)
+	if overlapsHeldDay(held, laneSourceID("sql", label, req.Database, serverID), req.Incident) {
 		writeError(w, http.StatusConflict, laneOverlapText)
+		return
+	}
+	if !h.tests.allow() {
+		writeError(w, http.StatusTooManyRequests, "Too many checks in the last minute. Wait a minute, then run again.")
 		return
 	}
 	if !healthBusy.TryLock() {
@@ -213,7 +245,7 @@ func (h *handler) caseLaneSQL(w http.ResponseWriter, r *http.Request, raw string
 	}
 	defer q.Close()
 	report := dbhealth.RunSQLLane(ctx, q, label, req, time.Now)
-	laneSave(w, r, hs, "sql", report)
+	laneSave(w, r, hs, "sql", serverID, report)
 }
 
 func (h *handler) caseLaneMongo(w http.ResponseWriter, r *http.Request, raw string) {
@@ -239,10 +271,6 @@ func (h *handler) caseLaneMongo(w http.ResponseWriter, r *http.Request, raw stri
 		return
 	}
 	defer c.Close()
-	if !h.tests.allow() {
-		writeError(w, http.StatusTooManyRequests, "Too many checks in the last minute. Wait a minute, then run again.")
-		return
-	}
 	input, ok := h.resolveConnection(w, body.ConnectionInput)
 	if !ok {
 		return
@@ -260,8 +288,13 @@ func (h *handler) caseLaneMongo(w http.ResponseWriter, r *http.Request, raw stri
 		writeTagError(w, err, "")
 		return
 	}
-	if overlapsHeldDay(held, "mongo", laneMongoLabel, req.Database, req.Incident) {
+	serverID := serverPrint(input.URI)
+	if overlapsHeldDay(held, laneSourceID("mongo", laneMongoLabel, req.Database, serverID), req.Incident) {
 		writeError(w, http.StatusConflict, laneOverlapText)
+		return
+	}
+	if !h.tests.allow() {
+		writeError(w, http.StatusTooManyRequests, "Too many checks in the last minute. Wait a minute, then run again.")
 		return
 	}
 	if !healthBusy.TryLock() {
@@ -279,7 +312,7 @@ func (h *handler) caseLaneMongo(w http.ResponseWriter, r *http.Request, raw stri
 	}
 	defer closeFn()
 	report := dbhealth.RunMongoLane(ctx, mongoAdapter(run), laneMongoLabel, req, time.Now)
-	laneSave(w, r, hs, "mongo", report)
+	laneSave(w, r, hs, "mongo", serverID, report)
 }
 
 type laneDayDTO struct {
