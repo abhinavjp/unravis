@@ -43,7 +43,7 @@ Copy `unravis-blackbox.exe`, `blackbox.json` and `README.txt` to the server. Ope
 .\unravis-blackbox.exe install
 ```
 
-Add `--name web-b` to choose a name, `--folder E:\Rec` to choose the folder, `--port 7790` for another port, `--bind 10.0.0.5` (or `0.0.0.0`) to let other computers reach the status page; see Status page below. Add `--json` for one line of machine-readable output (`{"ok":true,"reason":"","message":"..."}`).
+Add `--name web-b` to choose a name, `--folder E:\Rec` to choose the folder, `--port 7790` for another port, `--bind 10.0.0.5` (or `0.0.0.0`) to let other computers reach the status page; see Status page below. Add `--json` for one line of machine-readable output. A success has `"ok":true` and the fields `readKey`, `service`, `folder`, `port`, `name`, `exePath` and `configPath`; a failure is `{"ok":false,"reason":"port-busy","message":"..."}` with one of the reasons listed below.
 
 It does these things, in this order:
 
@@ -114,7 +114,7 @@ The Blackbox cleans up after itself and this cannot be turned off, so it cannot 
 - All recordings together are over `maxGB`.
 - The drive has less than `minFreePercent` free.
 
-The file being written is never deleted. If Windows will not let a file go (a reader has it open), the Blackbox notes it in the manifest and tries again at the next pass. Snapshots are not touched by housekeeping: delete them yourself when you have what you need.
+The file being written is never deleted. If Windows will not let a file go (a reader has it open), the Blackbox skips it, carries on with the next file and the other limits, notes it in the manifest, and tries again at the next pass; a recording that is paused for a full drive stays paused until the drive really has room. Age deletes at most 6 files per pass, and skips the pass right after the clock jumps forward, so a wrong clock cannot erase the history in one go. Snapshots are not touched by housekeeping: delete them yourself when you have what you need.
 
 If the drive is still low after everything older has gone, recording pauses, the status page shows state `disk-low`, and recording resumes by itself once there is room. The pause shows up as a gap with cause `disk-low`.
 
@@ -135,14 +135,14 @@ Every answer carries the Blackbox clock in `time`, so Unravis can show a clock d
 
 The page listens on this computer only (`127.0.0.1`) until you opt in. To let Unravis read it from another PC, do both: set `bind` to the server address (or `0.0.0.0`) in `blackbox.json` and run `apply` (or install with `--bind`), and add a Windows Firewall rule for the port that allows only the addresses you type. Without both steps nothing on the network can reach it.
 
-Captured `/status` answer from a foreground run (`p8-status-json`):
+Captured `/status` answer from a foreground run of `unravis-blackbox run`, 30 seconds at the default 15 second interval (`p8-status-json`; the computer name and version are replaced):
 
 ```json
-{"format":1,"time":"2026-10-27T20:03:45.5386874Z","name":"web-b","version":"0.1.0","host":"DESKTOP-QQDVSD1","state":"running","run":"7d6facbb0d7a","intervalSeconds":15,"started":"2026-10-27T20:03:41.117834Z","firstSample":"2026-10-27T20:03:41.117Z","lastSample":"2026-10-27T20:03:44.436Z","samples":5,"files":1,"bytes":11743,"gaps":0,"freePercent":80,"minFreePercent":10,"keepDays":7,"maxGB":2,"manifestOK":true,"writeOK":true,"probe":{"enabled":false}}
+{"format":1,"time":"2026-10-27T20:38:08.6343162Z","name":"web-b","version":"0.1.0","host":"SERVER01","state":"running","run":"16f9a0caf978","intervalSeconds":15,"started":"2026-10-27T20:37:30.7575331Z","firstSample":"2026-10-27T20:37:30.757Z","lastSample":"2026-10-27T20:38:00.757Z","samples":3,"files":1,"bytes":9890,"gaps":0,"freePercent":35.62075395669758,"minFreePercent":10,"keepDays":7,"maxGB":2,"manifestOK":true,"writeOK":true,"probe":{"enabled":false}}
 ```
 
 A wrong or missing key gets HTTP 401:
 
 ```json
-{"error":"the read key is missing or wrong","format":1,"time":"2026-10-27T20:03:45.539224Z"}
+{"error":"the read key is missing or wrong","format":1,"time":"2026-10-27T20:38:08.6715332Z"}
 ```
