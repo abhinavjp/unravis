@@ -241,3 +241,40 @@ func TestHousekeepOnlyLockedFilesLeftTerminates(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 }
+
+// Review F6.5: a clock that jumps forward must not empty the history in one
+// pass.
+func TestHousekeepAgeRuleRemovesAtMostAFewFilesPerPass(t *testing.T) {
+	from := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	s, _, _ := filled(t, 20, from, 100)
+	now := from.Add(30 * 24 * time.Hour) // every file is far past keepDays
+	res, err := s.Housekeep(Limits{KeepDays: 7}, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Removed) != MaxAgeRemovalsPerPass || res.Removed[0] != "bb-20261001-00.ndjson" {
+		t.Fatalf("removed %v", res.Removed)
+	}
+	passes := 1
+	for len(s.Manifest().Files) > 1 && passes < 10 {
+		_, _ = s.Housekeep(Limits{KeepDays: 7}, nil, now)
+		passes++
+	}
+	if len(s.Manifest().Files) != 1 {
+		t.Fatalf("history never cleared: %d files left", len(s.Manifest().Files))
+	}
+}
+
+func TestHousekeepSkipAgeStillAppliesSizeAndFreeSpace(t *testing.T) {
+	from := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	s, _, _ := filled(t, 5, from, 1000)
+	now := from.Add(30 * 24 * time.Hour)
+	res, _ := s.Housekeep(Limits{KeepDays: 7, SkipAge: true}, nil, now)
+	if len(res.Removed) != 0 {
+		t.Fatalf("age rule ran: %v", res.Removed)
+	}
+	res, _ = s.Housekeep(Limits{KeepDays: 7, SkipAge: true, MaxBytes: 2500}, nil, now)
+	if len(res.Removed) != 3 {
+		t.Fatalf("size rule did not run: %v", res.Removed)
+	}
+}

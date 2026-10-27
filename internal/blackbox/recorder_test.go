@@ -342,3 +342,25 @@ func TestRecorderIncompletePassWithoutDiskReadingKeepsPauseState(t *testing.T) {
 		t.Fatalf("pause lifted by an incomplete pass without a disk reading: %+v", g.s.Manifest().Events)
 	}
 }
+
+// Review F6.5: the pass right after a forward clock jump keeps the history.
+func TestRecorderForwardClockJumpDoesNotAgeOutHistoryInThatPass(t *testing.T) {
+	old := t0.Add(-3 * 24 * time.Hour) // inside keepDays until the clock jumps
+	g := newRig(t, func(c *Config) { seedOld(t, c.Folder, old) })
+	g.r.Tick(g.clk.t)
+	if _, err := os.Stat(filepath.Join(g.s.Dir(), FileNameFor(old))); err != nil {
+		t.Fatal("file removed before the jump")
+	}
+	// The wall clock jumps a month while the steady clock moves 60 s.
+	g.clk.t = g.clk.t.Add(60*time.Second + 30*24*time.Hour)
+	g.mono += 60 * time.Second
+	g.r.Tick(g.clk.t)
+	if _, err := os.Stat(filepath.Join(g.s.Dir(), FileNameFor(old))); err != nil {
+		t.Fatal("history removed in the pass right after the jump")
+	}
+	// The next due pass applies the age rule again.
+	g.tick(60 * time.Second)
+	if _, err := os.Stat(filepath.Join(g.s.Dir(), FileNameFor(old))); err == nil {
+		t.Fatal("age rule never came back")
+	}
+}

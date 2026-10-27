@@ -80,6 +80,7 @@ type Recorder struct {
 	resumedFlag  bool // next sample follows a disk-low pause
 	forceHK      bool
 	lastSkipMsg  string
+	clockFwd     bool // the wall clock jumped forward since the last housekeeping pass
 }
 
 // NewRecorder makes a recorder. The caller opened the store and the collector.
@@ -201,6 +202,8 @@ func (r *Recorder) checkClock(now time.Time) {
 			dir := "forward"
 			if d < 0 {
 				dir = "back"
+			} else {
+				r.clockFwd = true // housekeeping leaves the age rule out once
 			}
 			r.o.Store.Event(EventClockJump, fmt.Sprintf("clock moved %s by %.1f s", dir, math.Abs(d)))
 		}
@@ -211,7 +214,13 @@ func (r *Recorder) checkClock(now time.Time) {
 func (r *Recorder) housekeep(now time.Time) {
 	r.forceHK = false
 	r.lastHK = now
-	res, err := r.o.Store.Housekeep(r.limits(), r.o.Disk, now)
+	lim := r.limits()
+	if r.clockFwd {
+		// By a clock that just jumped forward every file may look old. Leave
+		// the age rule out for this pass; size and free space still apply.
+		lim.SkipAge, r.clockFwd = true, false
+	}
+	res, err := r.o.Store.Housekeep(lim, r.o.Disk, now)
 	if err != nil {
 		r.o.Store.Event(EventHousekeeping, "housekeeping failed: "+err.Error())
 	}

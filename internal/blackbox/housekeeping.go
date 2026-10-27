@@ -11,7 +11,17 @@ type Limits struct {
 	KeepDays       int
 	MaxBytes       int64
 	MinFreePercent float64
+	// SkipAge leaves the age rule out of this pass. The recorder sets it right
+	// after it saw the wall clock jump forward: by the clock, every file may
+	// look old, and the clock may be about to be corrected.
+	SkipAge bool
 }
+
+// MaxAgeRemovalsPerPass caps how many files the age rule removes in one pass.
+// Normally it removes one an hour, so the cap is never reached; after a clock
+// that stays wrong, or a long stop, the history goes in steps the owner can
+// notice, not all at once.
+const MaxAgeRemovalsPerPass = 6
 
 // Housekeeping is what one housekeeping pass did.
 type Housekeeping struct {
@@ -66,13 +76,18 @@ func (s *Store) Housekeep(l Limits, disk DiskSpace, now time.Time) (Housekeeping
 	}
 
 	// Age: a file goes once the whole hour it covers is older than the keep time.
-	if l.KeepDays > 0 {
+	if l.KeepDays > 0 && !l.SkipAge {
 		cutoff := now.Add(-time.Duration(l.KeepDays) * 24 * time.Hour)
+		byAge := 0
 		for _, f := range s.Manifest().Files {
 			if f.Name == s.CurrentFile() || f.Name == protected {
 				continue
 			}
 			if f.Hour.Add(time.Hour).Before(cutoff) {
+				if byAge >= MaxAgeRemovalsPerPass {
+					break
+				}
+				byAge++
 				remove(f.Name)
 			}
 		}
