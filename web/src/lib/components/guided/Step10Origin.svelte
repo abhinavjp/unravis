@@ -17,7 +17,10 @@
   const cheapest = $derived(result ? cheapestCheck(result) : null);
   let showSetAside = $state(false);
 
-  const addCheck = (s: Suspect) => { void store.addItem('todo', `${s.id}: ${s.nextCheck}`, s.id); };
+  const checkText = (s: Suspect) => `${s.id}: ${s.nextCheck}`.slice(0, 300);
+  // The same check is added once, however many times the button is pressed.
+  const onList = (s: Suspect) => store.items.some((i) => i.text.trim().toLowerCase() === checkText(s).toLowerCase());
+  const addCheck = (s: Suspect) => { if (!onList(s)) void store.addItem('todo', checkText(s), s.id); };
   const list = (items: string[]) => (items.length ? items : [T.noneWord]);
 </script>
 
@@ -65,14 +68,14 @@
       {#if groups.ranked.length === 0}
         <p class="note">{T.noRanked}</p>
       {:else}
-        <div class="stack">{#each groups.ranked as s (s.id)}<SuspectCard suspect={s} canAdd={!readOnly} onAdd={addCheck} />{/each}</div>
+        <div class="stack">{#each groups.ranked as s (s.id)}<SuspectCard suspect={s} canAdd={!readOnly} added={onList(s)} onAdd={addCheck} />{/each}</div>
       {/if}
     </section>
 
     {#if groups.notTested.length > 0}
       <section aria-labelledby="origin-grey">
         <h4 id="origin-grey">{T.notTested}</h4>
-        <div class="stack">{#each groups.notTested as s (s.id)}<SuspectCard suspect={s} compact canAdd={!readOnly} onAdd={addCheck} />{/each}</div>
+        <div class="stack">{#each groups.notTested as s (s.id)}<SuspectCard suspect={s} compact canAdd={!readOnly} added={onList(s)} onAdd={addCheck} />{/each}</div>
       </section>
     {/if}
 

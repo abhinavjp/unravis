@@ -43,7 +43,7 @@
   {#if store.views.length === 0}
     <p class="note">{T.viewsEmpty}</p>
   {:else}
-    <div class="table-scroll">
+    <div class="table-scroll list">
       <table>
         <thead>
           <tr><th scope="col">{T.viewName}</th><th scope="col">{T.viewToolCol}</th><th scope="col">{T.viewWindowsCol}</th><th scope="col">{T.viewSavedCol}</th><th scope="col">{T.viewActionsCol}</th></tr>
@@ -76,4 +76,6 @@
   .row { display: flex; flex-wrap: wrap; gap: 8px; }
   table { white-space: normal; }
   .acts { white-space: nowrap; }
+  /* Two hundred views must not push the rest of the page away. */
+  .list { max-height: 420px; }
 </style>

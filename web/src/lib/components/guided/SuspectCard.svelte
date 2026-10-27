@@ -4,7 +4,7 @@
   import type { Suspect } from '../../guided/types';
 
   // One suspect. The colour is a left bar and a word, never colour alone. Grey is "not sure", never a pass.
-  let { suspect, compact = false, canAdd = false, onAdd }: { suspect: Suspect; compact?: boolean; canAdd?: boolean; onAdd?: (suspect: Suspect) => void } = $props();
+  let { suspect, compact = false, canAdd = false, added = false, onAdd }: { suspect: Suspect; compact?: boolean; canAdd?: boolean; added?: boolean; onAdd?: (suspect: Suspect) => void } = $props();
   const kind = $derived(evidenceKind(suspect));
 </script>
 
@@ -25,7 +25,7 @@
   {#if suspect.nextCheck}<p class="check"><strong>{T.cheapest}:</strong> {suspect.nextCheck}</p>{/if}
   {#if !compact && suspect.overturn}<p class="overturn"><strong>{T.overturn}:</strong> {suspect.overturn}</p>{/if}
   {#if canAdd && suspect.nextCheck && onAdd}
-    <div><button type="button" class="quiet-button" onclick={() => onAdd(suspect)}>+ {T.addCheck}</button></div>
+    <div>{#if added}<span class="added">{T.checkAdded}</span>{:else}<button type="button" class="quiet-button" onclick={() => onAdd(suspect)}>+ {T.addCheck}</button>{/if}</div>
   {/if}
 </article>
 
@@ -50,4 +50,5 @@
   p { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
   .evidence { display: grid; gap: 2px; font-size: 13px; }
   ul { margin: 0; padding-left: 18px; color: var(--text-2); }
+  .added { color: var(--text-2); font-size: 12px; }
 </style>

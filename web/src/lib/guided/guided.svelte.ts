@@ -58,6 +58,9 @@ export class GuidedStore {
   #answered: InvestigationRequest | null = null;
   #controller: AbortController | null = null;
   #plan = 0;
+  // A second click while a save is on its way would write the same line twice.
+  #writing = false;
+  #bulk = false;
 
   constructor(caseId: string) {
     this.caseId = caseId;
@@ -144,7 +147,8 @@ export class GuidedStore {
 
   async addItem(list: ChecklistList, text: string, suspect?: string): Promise<boolean> {
     const clean = text.trim();
-    if (!clean) return false;
+    if (!clean || this.#writing) return false;
+    this.#writing = true;
     try {
       const item = await addChecklistItem(this.caseId, { list, text: clean.slice(0, 300), ...(suspect ? { suspect } : {}) });
       this.items = [...this.items, item];
@@ -154,17 +158,24 @@ export class GuidedStore {
       this.planError = failureText(cause, CHECKLIST_ERRORS, 'That item could not be saved.');
       if (cause instanceof CaseApiError && cause.reason === 'item-not-found') void this.loadPlan();
       return false;
+    } finally {
+      this.#writing = false;
     }
   }
 
   /** Adds every check Step 10 suggests that is not on the list yet. Returns how many were added. */
   async addSuggested(): Promise<number> {
     const result = this.result;
-    if (!result) return 0;
+    if (!result || this.#bulk) return 0;
+    this.#bulk = true;
     let added = 0;
-    for (const check of suggestedChecks(result, this.items)) {
-      if (!(await this.addItem('todo', check.text, check.suspect))) break;
-      added++;
+    try {
+      for (const check of suggestedChecks(result, this.items)) {
+        if (!(await this.addItem('todo', check.text, check.suspect))) break;
+        added++;
+      }
+    } finally {
+      this.#bulk = false;
     }
     return added;
   }
@@ -196,6 +207,8 @@ export class GuidedStore {
     const clean = cleanViewName(name);
     if (!clean) { this.viewError = GUIDED_TEXT.viewNameMissing; return false; }
     if (viewsFull(this.views)) { this.viewError = GUIDED_TEXT.viewsFull; return false; }
+    if (this.#writing) return false;
+    this.#writing = true;
     try {
       const view = await saveView(this.caseId, { name: clean, tool, settings: viewSettings(this.frame, extra) });
       this.views = [view, ...this.views];
@@ -204,6 +217,8 @@ export class GuidedStore {
     } catch (cause) {
       this.viewError = failureText(cause, SAVED_VIEW_ERRORS, 'That view could not be saved.');
       return false;
+    } finally {
+      this.#writing = false;
     }
   }
 

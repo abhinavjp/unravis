@@ -188,6 +188,7 @@ export const GUIDED_TEXT = {
   inferred: 'Inferred',
   needsLabel: 'Needs',
   addCheck: 'Add its check to the checklist',
+  checkAdded: 'On the checklist',
   noClearOrigin: 'No clear origin',
   noClearOriginNote: 'Two or more tiers moved within the same minute, or the clocks differ by more than the order can be told. The table lists them together, and none is called first.',
   notEnoughOrigin: 'Not enough data to date any tier. Add the sources listed under How sure are we.',
