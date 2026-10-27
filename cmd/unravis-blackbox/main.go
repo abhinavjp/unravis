@@ -256,19 +256,22 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 // installConfig is the settings of an install: the file if there is one, else
 // the defaults, then the options given on the command line.
 func installConfig(path string, d deps, name, folder string, port int, bind string) (blackbox.Config, error) {
-	cfg, err := blackbox.LoadConfig(path)
+	cfg, err := blackbox.LoadConfigDraft(path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return cfg, err
 		}
 		cfg = blackbox.Default()
-		cfg.Folder = blackbox.ChooseFolder(d.driveOK)
 	}
 	if name != "" {
 		cfg.Name = name
 	}
 	if cfg.Name == "" {
 		cfg.Name = safeName(d.hostname())
+	}
+	if cfg.Folder == blackbox.DefaultFolder {
+		// The pack's template names D:. A server with no D: drive gets C:.
+		cfg.Folder = blackbox.ChooseFolder(d.driveOK)
 	}
 	if folder != "" {
 		cfg.Folder = folder

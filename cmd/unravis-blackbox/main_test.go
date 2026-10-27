@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -269,6 +270,56 @@ func TestRunPassesSettingsAndReportsRefusal(t *testing.T) {
 	}
 	if c, _, _ := r.do("run", "--config", filepath.Join(r.dir, "missing.json")); c != exitFail {
 		t.Fatal("run without settings must fail")
+	}
+}
+
+func TestPackTemplateIsTheDefaultsWithNoName(t *testing.T) {
+	got, err := blackbox.LoadConfigDraft(filepath.Join("pack", "blackbox.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := blackbox.Default()
+	want.Name = ""
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("pack\\blackbox.json drifted from the defaults:\n got %+v\nwant %+v", got, want)
+	}
+	// The template is not a valid running config until install names it.
+	if _, err := blackbox.LoadConfig(filepath.Join("pack", "blackbox.json")); err == nil {
+		t.Fatal("a nameless template must not run")
+	}
+}
+
+func TestInstallFromThePackTemplateNamesAfterTheComputerAndUsesCWhenThereIsNoD(t *testing.T) {
+	r := newRig(t)
+	tpl, _ := os.ReadFile(filepath.Join("pack", "blackbox.json"))
+	if err := os.WriteFile(filepath.Join(r.dir, defaultConfigName), tpl, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := installConfig(filepath.Join(r.dir, defaultConfigName), r.d, "", "", 0, "")
+	if err != nil || cfg.Name != "WEB-B-corp" || cfg.Folder != blackbox.FallbackFolder {
+		t.Fatalf("%+v %v", cfg, err)
+	}
+	r.d.driveOK = func(root string) bool { return root == `D:\` }
+	cfg, _ = installConfig(filepath.Join(r.dir, defaultConfigName), r.d, "", "", 0, "")
+	if cfg.Folder != blackbox.DefaultFolder {
+		t.Fatalf("%s", cfg.Folder)
+	}
+	// A hand-edited file that is broken stops the install with a clear message.
+	_ = os.WriteFile(filepath.Join(r.dir, defaultConfigName), []byte(`{"keepDays": `), 0o644)
+	if _, err := installConfig(filepath.Join(r.dir, defaultConfigName), r.d, "", "", 0, ""); err == nil {
+		t.Fatal("accepted a broken file")
+	}
+}
+
+func TestPackReadmeNamesEveryCommand(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("pack", "README.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []string{"install", "start", "stop", "apply", "snapshot", "remove", "--delete-recordings", "--confirm-name", "run", "version", "X-Blackbox-Key", "7788"} {
+		if !strings.Contains(string(b), c) {
+			t.Errorf("README.txt does not mention %q", c)
+		}
 	}
 }
 

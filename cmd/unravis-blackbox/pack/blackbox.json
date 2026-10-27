@@ -1,0 +1,21 @@
+{
+  "name": "",
+  "folder": "D:\\UnravisBlackbox",
+  "intervalSeconds": 15,
+  "keepDays": 7,
+  "maxGB": 2,
+  "minFreePercent": 10,
+  "port": 7788,
+  "bind": "0.0.0.0",
+  "record": {
+    "processes": true,
+    "logsCatalogue": true,
+    "copyLogsOnSnapshot": false
+  },
+  "logPaths": [
+    "C:\\inetpub\\logs\\LogFiles"
+  ],
+  "probe": {
+    "enabled": false
+  }
+}

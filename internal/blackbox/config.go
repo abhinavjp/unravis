@@ -172,6 +172,28 @@ func (c Config) Validate() error {
 // cannot silently leave a limit at its default. Fields that are missing take
 // their defaults, except the name, which has none.
 func ParseConfig(data []byte) (Config, error) {
+	c, err := parseDraft(data)
+	if err != nil {
+		return Config{}, err
+	}
+	if err := c.Validate(); err != nil {
+		return Config{}, err
+	}
+	return c, nil
+}
+
+// LoadConfigDraft reads the file at path without checking the values. Install
+// uses it so the pack's blackbox.json can leave the name empty (install then
+// names the Blackbox after the computer); Install validates the result.
+func LoadConfigDraft(path string) (Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, err
+	}
+	return parseDraft(data)
+}
+
+func parseDraft(data []byte) (Config, error) {
 	if len(data) > maxConfigBytes {
 		return Config{}, invalidf("the file is too large")
 	}
@@ -188,9 +210,6 @@ func ParseConfig(data []byte) (Config, error) {
 	}
 	if c.LogPaths == nil {
 		c.LogPaths = DefaultLogPaths()
-	}
-	if err := c.Validate(); err != nil {
-		return Config{}, err
 	}
 	return c, nil
 }
