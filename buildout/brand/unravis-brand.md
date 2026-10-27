@@ -1,7 +1,7 @@
 # Unravis brand and design tokens
 
 Reusable reference for every Unravis screen: the web app, the setup installer, docs and any future surface.
-Source of truth in code: `web/src/app.css` (tokens at the top, components below). If this file and the CSS differ, the CSS wins; update this file.
+Source of truth in code: `web/src/brand/tokens.css` (all tokens and the IBM Plex `@font-face` blocks; `web/src/app.css` imports it, components follow). If this file and the CSS differ, the CSS wins; update this file.
 
 ## Character
 

@@ -39,10 +39,11 @@
   // The analysis controls belong to the working screen. The start, unlock and set-up screens keep only the brand and the utilities.
   const working = $derived(app.screen === 'running');
   // Home leads to the start screen (the demo has no case list, so no Home there). Lock shows while a master key is set and open.
-  const showHome = $derived(working && !!info && !info.demo);
+  const hasCases = $derived(!!info && (!info.demo || !!info.captureCases));
+  const showHome = $derived(working && hasCases);
   const showLock = $derived(offersLock(app.lockState));
   // Case home leads back to the page of the case being worked in: its story, theories, health checks and files.
-  const showCaseHome = $derived(working && !!app.activeCaseId && !info?.demo);
+  const showCaseHome = $derived(working && !!app.activeCaseId && hasCases);
   const home = { id: 'home', label: KEY_TEXT.home, open: () => goHome() };
   const caseHome = { id: 'case-home', label: CASE_HOME_TEXT.navButton, open: () => openCaseHome() };
   const lock = { id: 'lock', label: KEY_TEXT.lock, open: () => { void lockCases(); } };

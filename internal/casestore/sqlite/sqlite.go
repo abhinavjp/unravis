@@ -76,6 +76,9 @@ type Options struct {
 	LegacyDone func(id casestore.CaseID)
 	// Now is the clock. Default: time.Now.
 	Now func() time.Time
+	// NewID makes the ID of a new case. Default: 128 random bits. It exists so the
+	// demo's capture-only cases can have fixed IDs; the live app never sets it.
+	NewID func() (casestore.CaseID, error)
 	// MaxFileBytes and MaxFileRows cap one imported file (default 2 GiB and 10M
 	// rows). An importer's own, smaller limit applies first.
 	MaxFileBytes, MaxFileRows int64
@@ -359,9 +362,16 @@ func (s *Store) Create(ctx context.Context, title string) (casestore.CaseInfo, e
 	if err != nil {
 		return casestore.CaseInfo{}, err
 	}
-	id, err := newID()
+	idFunc := s.opt.NewID
+	if idFunc == nil {
+		idFunc = newID
+	}
+	id, err := idFunc()
 	if err != nil {
 		return casestore.CaseInfo{}, err
+	}
+	if !id.Valid() {
+		return casestore.CaseInfo{}, casestore.ErrBadID
 	}
 	dir := filepath.Join(s.root, string(id))
 	if err := os.Mkdir(dir, 0o700); err != nil {

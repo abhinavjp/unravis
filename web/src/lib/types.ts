@@ -32,9 +32,13 @@ export interface RememberConnectionInput { label: string; connection: Connection
 export interface SourceResult { sourceId: string; ok: boolean; error: string; version: string; indexWarning: string }
 export interface Info {
   demo: boolean;
+  /** Set only by the capture-only demo cases: the demo has cases, so Home and Case home show. */
+  captureCases?: boolean;
   limits: { maxSources: number; maxPageSize: number; maxSummaryRows: number; maxTimeBuckets: number };
   now: string;
 }
+/** What /api/version answers: the build's stamped version, commit and date. Empty strings mean not stamped. */
+export interface VersionInfo { version: string; commit: string; date: string }
 /** Record-level completion: complete rows have a usable duration, pending rows are accepted asynchronous jobs. */
 export type Completion = 'all' | 'complete' | 'incomplete' | 'pending' | 'invalid';
 /** An inclusive numeric bound; either end may be absent, and a range with neither end is not in use. */

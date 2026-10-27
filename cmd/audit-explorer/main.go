@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -25,12 +26,13 @@ import (
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/history"
-	"api-audit-explorer/internal/sqlconn"
 	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/server"
+	"api-audit-explorer/internal/sqlconn"
 	"api-audit-explorer/internal/store"
+	"api-audit-explorer/internal/version"
 )
 
 const (
@@ -42,6 +44,9 @@ const (
 	httpReadTimeout  = 35 * time.Second
 	httpWriteTimeout = httpReadTimeout + audit.OperationTimeout + 10*time.Second
 )
+
+// stdout is where --version prints. Tests swap it.
+var stdout io.Writer = os.Stdout
 
 func main() {
 	if err := run(os.Args[1:], os.Getenv); err != nil {
@@ -58,6 +63,7 @@ type runFlags struct {
 	mcpAllowIdentifiers bool
 	allowBroadScans     bool
 	docsExaminedBudget  int64
+	version             bool
 }
 
 // parseFlags parses and validates the command line. Every privacy and
@@ -73,8 +79,13 @@ func parseFlags(args []string) (runFlags, error) {
 	flags.BoolVar(&f.mcpAllowIdentifiers, "mcp-allow-identifiers", false, "with --mcp: let MCP return user ids, user agents and IP addresses, and filter on them, URLs and audit ids (off by default, demo included)")
 	flags.BoolVar(&f.allowBroadScans, "allow-broad-scans", false, "dashboard only: allow checks that read every record in a window on a live source (off by default)")
 	flags.Int64Var(&f.docsExaminedBudget, "docs-examined-budget", 0, "dashboard only: cap on records examined per query; 0 leaves it unset")
+	flags.BoolVar(&f.version, "version", false, "print the version and exit")
 	if err := flags.Parse(args); err != nil {
 		return runFlags{}, err
+	}
+	if f.version {
+		// Asking for the version wins over every other flag, so it never fails on them.
+		return runFlags{version: true}, nil
 	}
 	if flags.NArg() != 0 {
 		return runFlags{}, fmt.Errorf("unexpected positional arguments")
@@ -109,7 +120,18 @@ func run(args []string, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
+	if f.version {
+		_, err := fmt.Fprintln(stdout, version.String())
+		return err
+	}
 	demo, port, noBrowser, mcpMode := &f.demo, &f.port, &f.noBrowser, &f.mcp
+	demoCfg, demoNotes, err := demoEnv(*demo, getenv, time.Now())
+	if err != nil {
+		return err
+	}
+	for _, note := range demoNotes {
+		log.Print(note)
+	}
 	if *mcpMode {
 		options := []mcp.Option{mcp.WithIdentifiers(f.mcpAllowIdentifiers), mcp.WithToken(getenv("AUDIT_SESSION_TOKEN"))}
 		if path, pathErr := mcp.SessionFilePath(getenv); pathErr == nil {
@@ -134,7 +156,7 @@ func run(args []string, getenv func(string) string) error {
 	var serverOptions []server.Option
 	if *demo {
 		// The shipped demo carries a little unfinished work so the incomplete panel has something to show.
-		repo = audit.NewDemoWithPatterns(time.Now())
+		repo = audit.NewDemoWithPatterns(demoCfg.now)
 	} else {
 		repo = store.New(storeOptions(f)...)
 		if savedHistory, historyErr := history.NewDefault(getenv); historyErr == nil {
@@ -154,14 +176,14 @@ func run(args []string, getenv func(string) string) error {
 	// Imported cases (the importer wave) are live-mode only: demo mode runs on
 	// illustrative data and writes nothing to disk, so its case and host routes
 	// answer 503 "not available" rather than keep a case store nobody asked for.
-	if !*demo {
-		if wiring, casesErr := openCases(getenv, hypotheses); casesErr != nil {
-			log.Printf("Imported cases unavailable: %v", casesErr)
-		} else {
-			serverOptions = append(serverOptions, wiring.options...)
-			defer wiring.close()
-		}
+	// The one exception is the screenshot harness: --demo with UNRAVIS_DEMO_CASES=1
+	// and AUDIT_CONFIG_DIR opens a seeded store under that folder.
+	caseOptions, closeCases, casesErr := wireCases(*demo, demoCfg, getenv, hypotheses)
+	if casesErr != nil {
+		return casesErr
 	}
+	serverOptions = append(serverOptions, caseOptions...)
+	defer closeCases()
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -272,7 +294,7 @@ func launchLink(localURL, code string) string {
 // at all. Otherwise it contains the one-time launch link, which works once and
 // then expires.
 func startupLines(localURL, code string, life time.Duration, demo, opened bool) []string {
-	lines := []string{fmt.Sprintf("Unravis listening at %s (demo=%t)", localURL, demo)}
+	lines := []string{fmt.Sprintf("%s listening at %s (demo=%t)", version.Short(), localURL, demo)}
 	if opened {
 		return append(lines, "Unravis was opened in your browser. To open it again, restart it, or start it with --no-browser to get a link.")
 	}

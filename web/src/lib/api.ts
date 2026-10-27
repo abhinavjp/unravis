@@ -1,4 +1,4 @@
-import type { SavedSqlConnection, SqlConnectionInput, SqlTestRequest, SqlTestResult,Analysis,Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile } from './types';
+import type { SavedSqlConnection, SqlConnectionInput, SqlTestRequest, SqlTestResult,Analysis,Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile, VersionInfo } from './types';
 import { LOCKED_STATUS, signalCasesLocked } from './lockSignal';
 import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
 
@@ -106,6 +106,7 @@ async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSi
 const json = (value: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(value) });
 export const api = {
   info: () => request<Info>('/info'),
+  version: () => request<VersionInfo>('/version'),
   sources: () => request<Source[]>('/sources'),
   recentConnections: () => request<RecentConnection[]>('/connections/recent'),
   rememberConnection: (input: RememberConnectionInput) => request<RecentConnection>('/connections/remember', json(input)),

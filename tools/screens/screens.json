@@ -1,0 +1,81 @@
+{
+  "screens": [
+    {
+      "id": "p1-home", "phase": "P1", "doc": "getting-started.md", "narrow": true,
+      "steps": [
+        {"goto": "/"},
+        {"waitFor": "role=button[name=\"Run analysis\"]"},
+        {"waitFor": "text=Whole period"}
+      ]
+    },
+    {
+      "id": "p1-case-list", "phase": "P1", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"waitFor": "#start-title"},
+        {"waitFor": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"}
+      ]
+    },
+    {
+      "id": "p1-case-home", "phase": "P1", "doc": "cases.md", "narrow": true,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "text=Case started"}
+      ]
+    },
+    {
+      "id": "p1-create-1", "phase": "P1", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Create a new case\"]"},
+        {"waitFor": "role=navigation[name=\"Steps of the guide\"]"}
+      ]
+    },
+    {
+      "id": "p1-health", "phase": "P1", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#health-heading"},
+        {"scrollTo": "#health-heading"}
+      ]
+    },
+    {
+      "id": "p1-connections", "phase": "P1", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"click": "role=button[name=/Audit sources/]"},
+        {"waitFor": "role=dialog"}
+      ]
+    },
+    {
+      "id": "p1-glossary", "phase": "P1", "doc": "getting-started.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"click": "role=button[name=\"Glossary\"]"},
+        {"waitFor": "#glossary-title"}
+      ]
+    },
+    {
+      "id": "p1-export", "phase": "P1", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"click": "role=button[name=\"Export\"s]"},
+        {"waitFor": "role=dialog"}
+      ]
+    }
+  ]
+}

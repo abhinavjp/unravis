@@ -40,6 +40,8 @@ type handler struct {
 	index   []byte
 	token   string
 	demo    bool
+	// captureCases is set only by the demo's capture-only cases (see WithCaptureCases).
+	captureCases bool
 	history savedHistory
 	sqlConns savedSQL
 	ledger  ledger.Store
@@ -69,6 +71,11 @@ type savedHistory interface {
 }
 
 type Option func(*handler)
+
+// WithCaptureCases tells the page that this demo has seeded cases, so it shows
+// Home and Case home as it does in live mode. Only the capture-only demo cases
+// set it; plain --demo never does.
+func WithCaptureCases() Option { return func(h *handler) { h.captureCases = true } }
 
 func WithHistory(value savedHistory) Option { return func(h *handler) { h.history = value } }
 
@@ -435,6 +442,8 @@ func (h *handler) info(w http.ResponseWriter) {
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Demo   bool `json:"demo"`
+		// CaptureCases is left out of the answer unless the demo has capture cases.
+		CaptureCases bool `json:"captureCases,omitempty"`
 		Limits struct {
 			MaxSources     int `json:"maxSources"`
 			MaxPageSize    int `json:"maxPageSize"`
@@ -442,7 +451,7 @@ func (h *handler) info(w http.ResponseWriter) {
 			MaxTimeBuckets int `json:"maxTimeBuckets"`
 		} `json:"limits"`
 		Now time.Time `json:"now"`
-	}{Demo: h.demo, Limits: struct {
+	}{Demo: h.demo, CaptureCases: h.demo && h.captureCases, Limits: struct {
 		MaxSources     int `json:"maxSources"`
 		MaxPageSize    int `json:"maxPageSize"`
 		MaxSummaryRows int `json:"maxSummaryRows"`

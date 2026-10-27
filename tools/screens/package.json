@@ -1,0 +1,14 @@
+{
+  "name": "unravis-screens",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Takes the Unravis screenshots in dark and light, against unravis.exe --demo with a fixed clock.",
+  "scripts": {
+    "capture": "playwright test",
+    "docs-check": "node docs-check.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
+}

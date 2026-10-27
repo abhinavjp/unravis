@@ -61,7 +61,7 @@ test('FilterGroup is a labelled ruled section with a counted title and no box', 
   assert.match(src, /<section class="filter-group"[^>]*aria-labelledby=\{'fg-' \+ id \+ '-title'\}/);
   assert.match(src, /<h2 class="fg-title" id=\{'fg-' \+ id \+ '-title'\}>/);
   assert.match(src, /<span class="visually-hidden"> in use<\/span>/);
-  const css = read('src/app.css');
+  const css = read('src/brand/tokens.css') + '\n' + read('src/app.css');
   const block = css.slice(css.indexOf('/* More filters panel */'));
   assert.match(block, /\.filter-group\s*\{[^}]*border-top:\s*1px solid var\(--line\)/);
   assert.doesNotMatch(block.slice(0, block.indexOf('/* ----------')), /#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/);
@@ -118,7 +118,7 @@ test('QueryControls keeps its quick range guard and no longer owns the date vali
 });
 
 test('the stylesheet keeps the panel scroll cap and drops the old flat grid', () => {
-  const css = read('src/app.css');
+  const css = read('src/brand/tokens.css') + '\n' + read('src/app.css');
   assert.match(css, /@media \(min-width: 721px\)[^@]*\.more-filters\[open\] > \.more-body\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/);
   assert.doesNotMatch(css, /\.query-ranges|\.advanced-filters|\.exact-times|\.record-chips/);
   assert.match(css, /\.auth-options summary/);

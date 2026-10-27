@@ -261,14 +261,14 @@
   .field small { font-size: var(--fs-2); color: var(--text-2); }
   .findings, .history { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
   .findings li { display: grid; gap: 4px; min-width: 0; padding: 10px 0 10px 10px; border-top: 1px solid var(--line-soft); border-left: 3px solid var(--line); }
-  .findings li.bad { border-left-color: var(--bad, #c0392b); }
-  .findings li.warn { border-left-color: var(--warn, #b7791f); }
-  .findings li.note { border-left-color: var(--accent, #2b6cb0); }
+  .findings li.bad { border-left-color: var(--bad); }
+  .findings li.warn { border-left-color: var(--warn); }
+  .findings li.note { border-left-color: var(--accent); }
   .head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
   .head strong { font-size: var(--fs-3); overflow-wrap: anywhere; }
   .chip { display: inline-flex; gap: 4px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; font-size: var(--fs-2); white-space: nowrap; }
-  .chip.bad { border-color: var(--bad, #c0392b); }
-  .chip.warn { border-color: var(--warn, #b7791f); }
+  .chip.bad { border-color: var(--bad); }
+  .chip.warn { border-color: var(--warn); }
   .sum, .why { margin: 0; font-size: var(--fs-3); line-height: 1.5; overflow-wrap: anywhere; }
   .why { color: var(--text-2); }
   .why span { font-weight: 500; }

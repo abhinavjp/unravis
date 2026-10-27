@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { api } from '../lib/api';
   import { findTerm } from '../lib/copy/lookup';
   import { searchTerms } from '../lib/copy/lookup';
   import { HELP_STEPS, HELP_TEXT, glossaryCount } from '../lib/copy/screenCopy';
+  import { versionLine } from '../lib/versionLine';
   import Drawer from './Drawer.svelte';
 
   // The glossary drawer: every term in the copy deck, alphabetical, with a plain text filter. It opens from the Help button in the header.
@@ -14,6 +16,11 @@
   let search = $state<HTMLInputElement>();
   const results = $derived(searchTerms(query));
   const summary = $derived(glossaryCount(results.length, query));
+  // Which build this is, quietly, at the foot of the panel. If the call fails the line is simply absent.
+  let build = $state('');
+  onMount(() => {
+    void api.version().then((info) => { build = versionLine(info); }).catch(() => { build = ''; });
+  });
   onMount(() => { if (!focusTerm || !findTerm(focusTerm)) search?.focus(); });
   $effect(() => {
     const id = focusTerm;
@@ -53,6 +60,7 @@
       </div>
     {/each}
   </dl>
+  {#if build}<p class="build-line" data-testid="build-line">{build}</p>{/if}
 </Drawer>
 
 <style>
@@ -72,6 +80,7 @@
   .help-start ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
   .glossary-entry dt { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
   .glossary-entry dd { margin: 5px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+  .build-line { margin: 14px 0 0; color: var(--text-2); font: 12px var(--mono); }
   .glossary-hint { font-weight: 600; }
   .glossary-not, .glossary-alias { color: var(--text-2); }
   .glossary-not span, .glossary-alias span { display: block; color: var(--text); font-size: 12px; font-weight: 600; }

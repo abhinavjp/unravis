@@ -5,7 +5,7 @@ const test = require('node:test');
 
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
-const css = read('src/app.css');
+const css = read('src/brand/tokens.css') + '\n' + read('src/app.css');
 
 // ---- token blocks ----
 function block(opener) {
@@ -174,12 +174,12 @@ test('every @font-face url is a relative path to a file that exists', () => {
   for (const url of urls) {
     assert.doesNotMatch(url, /^[a-z]+:|^\/\//i, url + ' is relative');
     assert.match(url, /\.woff2$/);
-    assert.ok(fs.existsSync(path.join(root, 'src', url)), url + ' exists under src/');
+    assert.ok(fs.existsSync(path.join(root, 'src', 'brand', url)), url + ' exists, resolved from src/brand/');
   }
 });
 
-test('the stylesheet has no @import and no http reference', () => {
-  assert.doesNotMatch(css, /@import/);
+test('the stylesheet has no @import but the one local tokens file, and no http reference', () => {
+  assert.deepEqual([...css.matchAll(/@import[^;]*;/g)].map((match) => match[0]), ['@import "./brand/tokens.css";']);
   assert.doesNotMatch(css, /https?:/i);
 });
 

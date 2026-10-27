@@ -254,9 +254,9 @@
   .story { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; border-left: 2px solid var(--line); }
   .story li { position: relative; display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 8px 0 8px 16px; }
   .story li::before { content: ''; position: absolute; left: -6px; top: 14px; width: 10px; height: 10px; border-radius: 50%; background: var(--text-2); }
-  .story li.tone-ok::before { background: var(--ok, #3fb27f); }
-  .story li.tone-warn::before { background: var(--warn, #d9a441); }
-  .story li.tone-bad::before { background: var(--bad, #e0584f); }
+  .story li.tone-ok::before { background: var(--tone-ok); }
+  .story li.tone-warn::before { background: var(--warn); }
+  .story li.tone-bad::before { background: var(--bad); }
   .story time { color: var(--text-2); font-size: 12px; padding-top: 2px; }
   .story .title { margin: 0; font-size: 14px; }
   .story .kind { display: inline-block; margin-right: 6px; padding: 0 6px; color: var(--text-2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; border: 1px solid var(--line); border-radius: 4px; }
