@@ -70,6 +70,9 @@ export const TITLE_PROBLEM_TEXT: Readonly<Record<TitleProblem, string>> = {
   'bad-characters': 'The name has a character that is not allowed. Remove it and try again.'
 };
 
+/** The line beside a blocked Next: the problem with the name when there is one worth naming, else the plain "give it a name". */
+export const nextBlockedLine = (problem: TitleProblem | null): string => (problem === null || problem === 'empty' ? WIZARD_TEXT.nextBlocked : TITLE_PROBLEM_TEXT[problem]);
+
 /** "12 of 80". */
 export const titleCountText = (length: number, max: number): string => length + ' of ' + max;
 

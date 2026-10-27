@@ -249,6 +249,22 @@ test('p05: odd titles: blank, emoji, RTL and very long are judged by characters,
   assert.equal(flow.titleProblem('a\u0000b incident'), 'bad-characters');
 });
 
+test('p05: a name over 80 characters says so at once, in the hint and on the counter', () => {
+  const wc = load('src/lib/copy/wizardCopy.ts');
+  assert.equal(flow.titleProblemShows('too-long', false), true, 'too long shows without waiting for the field to be left');
+  assert.equal(flow.titleProblemShows('bad-characters', false), true);
+  assert.equal(flow.titleProblemShows('empty', false), false, 'an unfinished name waits until the field is left');
+  assert.equal(flow.titleProblemShows('too-short', false), false);
+  assert.equal(flow.titleProblemShows('empty', true), true);
+  assert.equal(flow.titleProblemShows(null, true), false);
+  assert.equal(wc.nextBlockedLine(flow.titleProblem('x'.repeat(120))), wc.TITLE_PROBLEM_TEXT['too-long']);
+  assert.equal(wc.nextBlockedLine(flow.titleProblem('')), wc.WIZARD_TEXT.nextBlocked);
+  assert.equal(wc.nextBlockedLine(null), wc.WIZARD_TEXT.nextBlocked);
+  const wizard = fs.readFileSync(path.join(__dirname, '..', 'src/components/CreateWizard.svelte'), 'utf8');
+  assert.match(wizard, /class:over=\{problem === 'too-long'\}/);
+  assert.match(wizard, /nextBlockedLine\(problem\)/);
+});
+
 test('p05: environment names are bounded, repeats collapse, the chevron and control characters are removed', () => {
   const parsed = envs.parseEnvs('Prod, prod, PROD\nUAT; a\u202Eb, x\u203Ay, ' + 'z'.repeat(200));
   assert.ok(parsed.names.every((n) => [...n].length <= 60));

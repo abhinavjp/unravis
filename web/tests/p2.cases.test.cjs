@@ -74,8 +74,10 @@ async function withServer(responses, fn) {
 test('p2: a 409 case-changed is the M2 sentence and is told apart from the other 409 answers', () => {
   const changed = new cases.CaseApiError('x', 409, 'case-changed');
   assert.equal(cases.isCaseChanged(changed), true);
-  assert.equal(importCopy.errorText(changed), 'This case changed in another tab. Reload.');
-  assert.equal(copy.CASE_HOME_TEXT.changedElsewhere, 'This case changed in another tab. Reload.');
+  // One instruction only: Case home shows the Reload button after the sentence, and the drawer has already refreshed its list.
+  assert.equal(importCopy.errorText(changed), 'This case changed in another tab. The list now shows how it is.');
+  assert.equal(copy.CASE_HOME_TEXT.changedElsewhere, 'This case changed in another tab.');
+  assert.doesNotMatch(copy.CASE_HOME_TEXT.changedElsewhere, /reload/i);
   assert.equal(cases.isCaseChanged(new cases.CaseApiError('x', 409, 'case-closed')), false, 'a closed-case refusal is not M2');
   assert.equal(cases.isCaseChanged(new cases.CaseApiError('x', 423, 'locked')), false, 'the key-locked answer keeps its meaning');
   assert.equal(cases.isCaseChanged(new Error('plain')), false);
@@ -196,7 +198,15 @@ test('p2: Case home and the case list wire Reopen, the retry list and the M2 not
   const home = read('src/lib/components/CaseHome.svelte');
   assert.match(home, /reopenButton\(info, reopening\)/);
   assert.match(home, /reopenCase\(id, believedState\(info\)\)/);
-  assert.match(home, /if \(!info \|\| reopening \|\| reopenState !== 'enabled'\) return;/, 'a second press while it runs does nothing');
+  assert.match(home, /if \(!info \|\| reopening \|\| stale \|\| reopenState !== 'enabled'\) return;/, 'a second press while it runs does nothing, and nor does a press on a page another tab has outdated');
+  assert.match(home, /disabled=\{reopenState !== 'enabled' \|\| stale\}/, 'the stale Reopen is disabled');
+  assert.match(home, /disabled=\{tryingId !== 0 \|\| stale\}/, 'the stale Try again is disabled');
+  assert.match(home, /formatTime\(value, \{ zone: timeZone\.zone/, 'dates follow the UTC / Local choice');
+  assert.doesNotMatch(home, /toLocaleString/);
+  assert.match(home, /headingEl\?\.focus\(\)/, 'focus goes somewhere real after Reopen and Reload');
+  assert.match(home, /focusRetry\(index, item\.id\)/, 'focus goes to a real place after Try again or Remove from list');
+  assert.ok(home.indexOf('home-retries') < home.indexOf('home-analysis'), 'the retry list sits above Analysis');
+  assert.match(home, /CASE_HOME_TEXT\.retryCount/, 'the header counts the items needing another try');
   assert.match(home, /CASE_HOME_TEXT\.changedElsewhere/);
   assert.match(home, /CASE_HOME_TEXT\.retryHeading/);
   assert.match(home, /history: info\?\.history/);

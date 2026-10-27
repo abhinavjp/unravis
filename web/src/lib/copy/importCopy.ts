@@ -200,7 +200,7 @@ export const REASON_TEXT: Record<string, string> = {
   'cases-unavailable': 'Imported cases are not available in this session.',
   'case-not-found': 'That case was not found. It may have been erased.',
   'case-closed': 'This case is closed, so nothing can be imported into it.',
-  'case-changed': 'This case changed in another tab. Reload.',
+  'case-changed': 'This case changed in another tab. The list now shows how it is.',
   'archive-running': 'An archive is already running.',
   'cancel-archive-first': 'An archive is running. Cancel it first.',
   'case-erasing': 'This case is being erased.',

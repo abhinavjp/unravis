@@ -118,7 +118,7 @@
           <div class="case-row">
             <div class="case-main">
               <strong>{nameOf(c)}</strong>
-              <span class="meta"><code>{caseCode(c.id)}</code> · {caseStats(c)}{#if c.closed} · <span class="badge">{IMPORT_TEXT.closedBadge}</span>{/if}</span>
+              <span class="meta"><code>{caseCode(c.id)}</code> · {caseStats(c)}{#if c.closed}{' · '}<span class="badge">{IMPORT_TEXT.closedBadge}</span>{/if}</span>
             </div>
             <div class="case-actions">
               {#if c.id === selectedId}

@@ -3,9 +3,9 @@
   import type { Snippet } from 'svelte';
   import { backStep, draftEnvs, goToStep, nextStep, resetWizard, resumeWizard, wizard, wizardIsDirty } from '../lib/wizard.svelte';
   import { ENV_FIELD_MAX, hasDropped } from '../lib/wizardEnvs';
-  import { STEPS, TITLE_MAX, stepViews, titleLength, titleProblem } from '../lib/wizardFlow';
+  import { STEPS, TITLE_MAX, stepViews, titleLength, titleProblem, titleProblemShows } from '../lib/wizardFlow';
   import type { StepId } from '../lib/wizardFlow';
-  import { STEP_TEXT, TITLE_PROBLEM_TEXT, WIZARD_TEXT, chosenText, envCountText, envNotes, stepButtonLabel, stepOfText, titleCountText } from '../lib/copy/wizardCopy';
+  import { STEP_TEXT, TITLE_PROBLEM_TEXT, WIZARD_TEXT, chosenText, envCountText, envNotes, nextBlockedLine, stepButtonLabel, stepOfText, titleCountText } from '../lib/copy/wizardCopy';
   import HelpNote from './HelpNote.svelte';
 
   // The frame of the guide that creates a new case (layout B, Workspace): three steps (Name, Sources, Review), a progress strip, Back and Next,
@@ -46,7 +46,7 @@
   const views = $derived(stepViews(wizard.step, facts));
   const current = $derived(views.find((view) => view.state === 'current') ?? views[0]);
   const problem = $derived(titleProblem(wizard.title));
-  const showProblem = $derived(titleTouched && problem !== null);
+  const showProblem = $derived(titleProblemShows(problem, titleTouched));
   const parsed = $derived(draftEnvs());
   const notes = $derived(envNotes(parsed.dropped));
   const dirty = $derived(wizardIsDirty());
@@ -181,7 +181,7 @@
           <input id={titleFieldId} type="text" autocomplete="off" autocapitalize="off" spellcheck="false" bind:this={titleField} bind:value={wizard.title} onblur={() => { if (wizard.title !== '') titleTouched = true; }} onkeydown={titleKey} aria-describedby={titleHintId + (showProblem ? ' ' + titleProblemId : '')} aria-invalid={showProblem ? true : undefined} aria-required="true" />
           <div class="field-foot">
             <p class="hint" id={titleHintId}>{WIZARD_TEXT.titleHint}</p>
-            <span class="count" aria-hidden="true">{titleCountText(titleLength(wizard.title), TITLE_MAX)}</span>
+            <span class="count" class:over={problem === 'too-long'} aria-hidden="true">{titleCountText(titleLength(wizard.title), TITLE_MAX)}</span>
           </div>
           <p class="inline-error" id={titleProblemId} role="alert" hidden={!showProblem}>{problem ? TITLE_PROBLEM_TEXT[problem] : ''}</p>
         </div>
@@ -218,7 +218,7 @@
     {#if wizard.step !== STEPS[0]}<button type="button" class="secondary-button" disabled={busy} onclick={() => void onBack()}>{WIZARD_TEXT.back}</button>{/if}
     <span class="chosen" role="status">{chosenText(wizard.sources.length)}</span>
     <span class="spacer"></span>
-    {#if nextBlocked}<span class="blocked" id={nextHintId}>{WIZARD_TEXT.nextBlocked}</span>{/if}
+    {#if nextBlocked}<span class="blocked" id={nextHintId}>{nextBlockedLine(problem)}</span>{/if}
     {#if last}
       {#if finish}{@render finish()}{/if}
     {:else}
@@ -265,6 +265,7 @@
   .field-foot { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
   .hint { margin: 0; color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
   .count { flex-shrink: 0; color: var(--text-2); font-size: var(--fs-2); }
+  .count.over { color: var(--bad); font-weight: 600; }
   .inline-error { margin: 0; }
   .inline-error[hidden] { display: none; }
   .envs { display: grid; gap: var(--space-2); }
