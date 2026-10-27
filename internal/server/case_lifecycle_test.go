@@ -111,6 +111,23 @@ func TestCloseAndReopenCheckTheBelief(t *testing.T) {
 	})
 }
 
+// A request with no X-Expect-State (an older client) asks for a state: Close of a Closed case succeeds and writes nothing.
+func TestHeaderlessCloseIsIdempotent(t *testing.T) {
+	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
+		base := "/api/cases/" + id
+		for i := 0; i < 2; i++ {
+			if res := e.believing(http.MethodPost, base+"/close", "", ""); res.Code != http.StatusOK {
+				t.Fatalf("headerless close #%d = %d %s", i, res.Code, res.Body)
+			}
+		}
+		if v := e.view(t, id); v.State != "closed" || historyKinds(v) != "created,closed" {
+			t.Fatalf("after two headerless closes: %s %s", v.State, historyKinds(v))
+		}
+		// A page that does say what it believes is still told about a move it missed.
+		wantFailure(t, e.believing(http.MethodPost, base+"/close", "", "open"), 409, "case-changed", m2Text)
+	})
+}
+
 func TestReopenTwiceFastReopensOnce(t *testing.T) {
 	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
 		base := "/api/cases/" + id

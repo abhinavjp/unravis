@@ -130,6 +130,11 @@ func CheckBelief(a Action, believed, actual State) error {
 	default:
 		return ErrCaseChanged
 	}
+	// A request with no belief (an older client, which had Close long before it had a belief) asks for a state, not a change from one: Close of
+	// a Closed case is already what was asked for, so it succeeds and changes nothing. Reopen is new, so no older client sends it: it stays strict.
+	if believed == "" && a == ActionClose && actual == StateClosed {
+		return nil
+	}
 	if actual != from {
 		return ErrCaseChanged
 	}

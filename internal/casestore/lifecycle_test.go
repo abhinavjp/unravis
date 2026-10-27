@@ -53,7 +53,7 @@ func TestCheckBeliefTable(t *testing.T) {
 		{"import into archived", ActionAddImport, O, Ad, ErrCaseClosed},
 		// no belief supplied (an older client): the state still has to fit
 		{"no belief, close an open case", ActionClose, "", O, nil},
-		{"no belief, close a closed case", ActionClose, "", C, ErrCaseChanged},
+		{"no belief, close a closed case", ActionClose, "", C, nil},
 		{"no belief, reopen a closed case", ActionReopen, "", C, nil},
 		{"no belief, reopen an open case", ActionReopen, "", O, ErrCaseChanged},
 		{"unknown action", Action("nope"), O, O, ErrCaseChanged},
