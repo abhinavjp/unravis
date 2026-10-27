@@ -8,11 +8,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
 
 	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/masterkey"
 	"api-audit-explorer/internal/server"
@@ -309,5 +311,120 @@ func TestDemoCasesRefuseAFolderWithRealCasesOrAMasterKey(t *testing.T) {
 	// Nothing was added beside the real case.
 	if names := entriesOf(t, filepath.Join(realCase, "cases")); len(names) != 1 {
 		t.Errorf("the refused start left %v in the real cases folder", names)
+	}
+}
+
+func TestDemoIDSourceGivesTheForcedIDOnceThenFreshValidDistinctOnes(t *testing.T) {
+	taken := map[casestore.CaseID]bool{demoNewID(1): true}
+	ids := &demoIDSource{exists: func(id casestore.CaseID) bool { return taken[id] }}
+	ids.force(demoCaseOpenID)
+	first, _ := ids.next()
+	if first != demoCaseOpenID {
+		t.Fatalf("first = %s, want the forced ID", first)
+	}
+	seen := map[casestore.CaseID]bool{}
+	firstEight := map[string]bool{}
+	for i := 0; i < 40; i++ {
+		id, err := ids.next()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !id.Valid() {
+			t.Fatalf("%q is not a valid case ID", id)
+		}
+		if seen[id] || taken[id] || id == demoCaseOpenID {
+			t.Fatalf("%s was given twice or is taken", id)
+		}
+		seen[id] = true
+		firstEight[string(id)[:8]] = true
+	}
+	if len(firstEight) < 31 {
+		t.Errorf("only %d distinct first-eight prefixes in 40 IDs; evidence IDs carry only those", len(firstEight))
+	}
+	// Same on every run.
+	again := &demoIDSource{exists: func(id casestore.CaseID) bool { return taken[id] }}
+	a, _ := again.next()
+	if a != demoNewID(0) || a != demoNewID(0) {
+		t.Errorf("the counter is not fixed: %s", a)
+	}
+}
+
+func TestDemoIDSourceIsSafeForManyGoroutinesAndRunsOut(t *testing.T) {
+	ids := &demoIDSource{}
+	var mu sync.Mutex
+	got := map[casestore.CaseID]bool{}
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				id, err := ids.next()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				mu.Lock()
+				if got[id] {
+					t.Errorf("%s given twice", id)
+				}
+				got[id] = true
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	ids.count = demoNewIDLimit
+	if _, err := ids.next(); err == nil {
+		t.Error("an empty counter must refuse, not repeat an ID")
+	}
+}
+
+func createCase(t *testing.T, h http.Handler, title string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/cases", strings.NewReader(`{"title":"`+title+`"}`))
+	req.Host = "127.0.0.1:8765"
+	req.Header.Set("X-Audit-Token", demoTestToken)
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("create case = %d %s", res.Code, res.Body)
+	}
+	var dto struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &dto); err != nil {
+		t.Fatal(err)
+	}
+	return dto.ID
+}
+
+func TestCreatingACaseAfterSeedingGetsAFreshValidIDAndSurvivesARestart(t *testing.T) {
+	dir := t.TempDir()
+	h, closeCases := seededServer(t, dir)
+	a := createCase(t, h, "First made in the demo")
+	b := createCase(t, h, "Second made in the demo")
+	closeCases()
+	for _, id := range []string{a, b} {
+		if !casestore.CaseID(id).Valid() {
+			t.Errorf("%q is not a valid case ID", id)
+		}
+		for _, seeded := range demoCaseIDs() {
+			if id == string(seeded) {
+				t.Errorf("a new case got the seeded ID %s", id)
+			}
+		}
+	}
+	if a == b {
+		t.Fatalf("two new cases got the same ID %s", a)
+	}
+	// A restart on the same folder is not refused for the cases made before, and a
+	// case made after it does not collide with them.
+	h2, close2 := seededServer(t, dir)
+	defer close2()
+	c := createCase(t, h2, "Made after a restart")
+	if c == a || c == b {
+		t.Errorf("after a restart a new case got the old ID %s", c)
 	}
 }

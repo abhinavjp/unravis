@@ -151,7 +151,8 @@ func checkDemoFolder(getenv func(string) string) error {
 		own[string(id)] = true
 	}
 	for _, e := range entries {
-		if !own[e.Name()] {
+		// A case made in an earlier capture run on this folder has a demonew ID.
+		if !own[e.Name()] && !isDemoNewID(e.Name()) {
 			return errors.New(demoCasesNeedEmptyDir)
 		}
 	}
@@ -166,11 +167,18 @@ func openDemoCases(getenv func(string) string, hypotheses ledger.Store, now time
 		return nil, err
 	}
 	clk := &demoClock{t: now}
-	var nextID casestore.CaseID
+	root, err := casesRoot(getenv)
+	if err != nil {
+		return nil, err
+	}
+	ids := &demoIDSource{exists: func(id casestore.CaseID) bool {
+		_, statErr := os.Stat(filepath.Join(root, string(id)))
+		return statErr == nil
+	}}
 	var untrustedOn atomic.Bool
 	seams := caseSeams{
 		now:   clk.Now,
-		newID: func() (casestore.CaseID, error) { return nextID, nil },
+		newID: ids.next,
 		wrapLegacy: func(inner func(casestore.CaseID) error) func(casestore.CaseID) error {
 			return func(id casestore.CaseID) error {
 				if untrustedOn.Load() && id == demoCaseUntrustedID {
@@ -186,10 +194,12 @@ func openDemoCases(getenv func(string) string, hypotheses ledger.Store, now time
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	seeder := demoSeeder{store: wiring.store, clock: clk, setID: func(id casestore.CaseID) { nextID = id }, now: now}
-	if err := seeder.seed(ctx); err != nil {
+	seeder := demoSeeder{store: wiring.store, clock: clk, setID: ids.force, now: now}
+	seedErr := seeder.seed(ctx)
+	ids.force("") // nothing forced is left over: a case made after seeding gets a fresh ID
+	if seedErr != nil {
 		wiring.close()
-		return nil, fmt.Errorf("demo cases could not be seeded: %w", err)
+		return nil, fmt.Errorf("demo cases could not be seeded: %w", seedErr)
 	}
 	untrustedOn.Store(true)
 	clk.set(now)
@@ -198,6 +208,59 @@ func openDemoCases(getenv func(string) string, hypotheses ledger.Store, now time
 	wiring.options = append(wiring.options, server.WithCaptureCases())
 	log.Printf("Demo cases ready (%d), clock fixed at %s.", len(demoCaseIDs()), now.Format(time.RFC3339))
 	return wiring, nil
+}
+
+// demoIDSource gives the case store its IDs. While seeding, force names the
+// next ID, used once. After that every new case gets the next ID from a counter:
+// fixed, valid and never one that is already taken, so a capture run that
+// presses "Create case" gets the same ID on every run. Server goroutines call
+// next at the same time, so it holds a lock.
+type demoIDSource struct {
+	mu     sync.Mutex
+	forced casestore.CaseID
+	count  int
+	exists func(casestore.CaseID) bool // true if a case folder with this ID is already there
+}
+
+func (s *demoIDSource) force(id casestore.CaseID) {
+	s.mu.Lock()
+	s.forced = id
+	s.mu.Unlock()
+}
+
+func (s *demoIDSource) next() (casestore.CaseID, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.forced != "" {
+		id := s.forced
+		s.forced = ""
+		return id, nil
+	}
+	for s.count < demoNewIDLimit {
+		id := demoNewID(s.count)
+		s.count++
+		if s.exists == nil || !s.exists(id) {
+			return id, nil
+		}
+	}
+	return "", errors.New("the demo has no more case IDs to give")
+}
+
+// demoNewIDLimit is how many IDs the counter has: three base32 digits.
+const demoNewIDLimit = 32 * 32 * 32
+
+// demoNewID is "demonew", three base32 digits (lowest first, so the eighth
+// character already differs between cases) and padding: 26 characters of a-z and 2-7.
+func demoNewID(n int) casestore.CaseID {
+	const digits = "abcdefghijklmnopqrstuvwxyz234567"
+	suffix := string([]byte{digits[n%32], digits[(n/32)%32], digits[(n/1024)%32]})
+	return demoCaseID("demonew" + suffix)
+}
+
+// isDemoNewID reports whether name is an ID demoNewID can make.
+func isDemoNewID(name string) bool {
+	id := casestore.CaseID(name)
+	return id.Valid() && strings.HasPrefix(name, "demonew")
 }
 
 // demoStore is the part of the case store the seeder needs.
