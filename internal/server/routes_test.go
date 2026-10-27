@@ -81,6 +81,7 @@ var routeCases = []routeCase{
 	{"/api/cases/{id}/collect", "/api/cases/c1/collect", "GET"},
 	{"/api/cases/{id}/timeline", "/api/cases/c1/timeline", "POST"},
 	{"/api/cases/{id}/call-trace", "/api/cases/c1/call-trace", "POST"},
+	{"/api/cases/{id}/investigation", "/api/cases/c1/investigation", "POST"},
 	{"/api/call-trace", "/api/call-trace", "POST"},
 	{"/api/discover/capabilities", "/api/discover/capabilities", "GET"},
 	{"/api/discover/scans", "/api/discover/scans", "POST"},
