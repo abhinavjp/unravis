@@ -16,10 +16,10 @@ const (
 	SigScopeAll      = "scope_all"       // nearly every route
 	SigRetriesUp     = "retries_up"      // retried calls rose by the rate mark
 	SigErrorsPrecede = "errors_precede"  // the first server error is at or before t0
-	SigALarge        = "a_large"         // A rose by the change mark
-	SigCLarge        = "c_large"         // C rose by the change mark
-	SigPLarge        = "p_large"         // P rose by the change mark
-	SigOLarge        = "o_large"         // O rose by the change mark
+	SigALarge        = "a_large"         // A rose by the change mark (mean or P95)
+	SigCLarge        = "c_large"         // C rose by the change mark (mean or P95)
+	SigPLarge        = "p_large"         // P rose by the change mark (mean or P95)
+	SigOLarge        = "o_large"         // O rose by the change mark (mean or P95)
 	SigOOrALarge     = "o_or_a_large"    // O or A rose by the change mark
 	SigPoolWouldFill = "pool_would_fill" // lambda x W reaches the entered pool limit
 	SigLAtLimit      = "l_at_limit"      // in flight sits at the limit, or lambda x W reaches it
@@ -172,8 +172,35 @@ func ComputeSignals(in Input, f Facts, th Thresholds) Signals {
 				fl[name] = missing("iis", p.Why)
 			case !p.Tested:
 				fl[name] = missing("audit", p.Why)
+			case p.Change.Meaningful && p.Change.Direction == "up":
+				fl[name] = sig(Yes, "Mean of this part compared with the change mark.")
+			case p.Tail.Meaningful && p.Tail.Direction == "up":
+				// A slowdown in some calls barely moves a mean, so the slow end of
+				// the part is read too.
+				fl[name] = sig(Yes, "The slow calls of this part, compared with the change mark.")
+			case !p.Tail.Known && fl[SigP95Up].Value != No:
+				// The mean did not rise and the slow end cannot be compared, while the
+				// calls overall did get slower: unknown, never no (A5, A6).
+				fl[name] = sig(Unknown, "The mean of this part did not rise by the change mark, but the calls got slower and there are too few readings to compare its slow end.")
 			default:
-				fl[name] = sig(yn(p.Change.Meaningful && p.Change.Direction == "up"), "Mean of this part compared with the change mark.")
+				fl[name] = sig(No, "Mean and slow end of this part compared with the change mark.")
+			}
+		}
+		// The calls got slower yet no part moved: the audit cannot place the
+		// slowdown, so it cannot say that any one part held flat.
+		if fl[SigP95Up].Value == Yes {
+			anyYes := false
+			for _, n := range []string{SigALarge, SigCLarge, SigPLarge, SigOLarge} {
+				if fl[n].Value == Yes {
+					anyYes = true
+				}
+			}
+			if !anyYes {
+				for _, n := range []string{SigALarge, SigCLarge, SigPLarge, SigOLarge} {
+					if fl[n].Value == No {
+						fl[n] = sig(Unknown, "The calls got slower, but no part of the time moved by the change mark, so the audit cannot say this part held flat.")
+					}
+				}
 			}
 		}
 		fl[SigClockAnomaly] = Signal{Value: f.Clock.Anomaly, Why: "Calls that end before they start, or last longer than the clock limit."}

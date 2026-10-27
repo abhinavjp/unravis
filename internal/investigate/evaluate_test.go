@@ -42,7 +42,7 @@ func TestEvaluateCStepNamesThePoolSuspect(t *testing.T) {
 	wantSuspect(t, r, "S1", ResContra, Green)
 	wantSuspect(t, r, "S5", ResContra, Green)
 	wantSuspect(t, r, "L1", ResContra, Green)
-	wantSuspect(t, r, "S4", ResContra, Green) // A did not rise, so the audit contradicts it
+	wantSuspect(t, r, "S4", ResCannotTest, Grey) // needs driver data the audit does not hold: not checked, never ruled out
 	wantSuspect(t, r, "D1", ResCannotTest, Grey)
 	wantSuspect(t, r, "Q1", ResPartly, Grey)
 	wantSuspect(t, r, "C1", ResPartly, Grey)

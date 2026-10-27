@@ -237,6 +237,17 @@
             "markPercent": 30,
             "markMs": 100
           },
+          "tail": {
+            "known": true,
+            "refMs": 11.8,
+            "incMs": 11.82,
+            "deltaMs": 0.02,
+            "deltaPct": 0.17,
+            "meaningful": false,
+            "direction": "flat",
+            "markPercent": 30,
+            "markMs": 100
+          },
           "excessMs": 0,
           "tested": true
         },
@@ -252,6 +263,17 @@
             "incMs": 429.47,
             "deltaMs": 350.12,
             "deltaPct": 441.24,
+            "meaningful": true,
+            "direction": "up",
+            "markPercent": 30,
+            "markMs": 100
+          },
+          "tail": {
+            "known": true,
+            "refMs": 97.79,
+            "incMs": 547.47,
+            "deltaMs": 449.68,
+            "deltaPct": 459.84,
             "meaningful": true,
             "direction": "up",
             "markPercent": 30,
@@ -278,6 +300,17 @@
             "markPercent": 30,
             "markMs": 100
           },
+          "tail": {
+            "known": true,
+            "refMs": 5,
+            "incMs": 5,
+            "deltaMs": 0,
+            "deltaPct": 0,
+            "meaningful": false,
+            "direction": "flat",
+            "markPercent": 30,
+            "markMs": 100
+          },
           "excessMs": 0,
           "tested": true
         },
@@ -293,6 +326,17 @@
             "incMs": 2.99,
             "deltaMs": 0.02,
             "deltaPct": 0.67,
+            "meaningful": false,
+            "direction": "flat",
+            "markPercent": 30,
+            "markMs": 100
+          },
+          "tail": {
+            "known": true,
+            "refMs": 3.9,
+            "incMs": 3.9,
+            "deltaMs": 0,
+            "deltaPct": 0,
             "meaningful": false,
             "direction": "flat",
             "markPercent": 30,
@@ -384,7 +428,7 @@
     "flags": {
       "a_large": {
         "value": "no",
-        "why": "Mean of this part compared with the change mark."
+        "why": "Mean and slow end of this part compared with the change mark."
       },
       "arrivals_up": {
         "value": "no",
@@ -416,7 +460,7 @@
       },
       "o_large": {
         "value": "no",
-        "why": "Mean of this part compared with the change mark."
+        "why": "Mean and slow end of this part compared with the change mark."
       },
       "o_or_a_large": {
         "value": "no",
@@ -432,7 +476,7 @@
       },
       "p_large": {
         "value": "no",
-        "why": "Mean of this part compared with the change mark."
+        "why": "Mean and slow end of this part compared with the change mark."
       },
       "pool_would_fill": {
         "value": "yes",
@@ -713,7 +757,7 @@
       "title": "Slow downstream HTTP dependency",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: Timings of outbound calls.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: Timings of outbound calls.",
       "tier": "c",
       "onsetAt": "2026-10-20T10:20:00Z",
       "evidence": [
@@ -735,7 +779,7 @@
       "title": "Slow permission check",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: PreActionFilterTimings in the audit documents.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: PreActionFilterTimings in the audit documents.",
       "tier": "c",
       "onsetAt": "2026-10-20T10:20:00Z",
       "evidence": [
@@ -752,12 +796,33 @@
       "rank": 5
     },
     {
+      "id": "S4",
+      "group": "S",
+      "title": "Mongo driver pool or wait-queue exhaustion",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: Driver pool events or a pool-wait log classifier.",
+      "tier": "a",
+      "evidence": [
+        {
+          "signal": "a_large",
+          "role": "must",
+          "value": "no",
+          "why": "Mean and slow end of this part compared with the change mark."
+        }
+      ],
+      "nextCheck": "Driver check-out wait against the command duration.",
+      "overturn": "Check-out wait is normal.",
+      "needs": "Driver pool events or a pool-wait log classifier.",
+      "rank": 6
+    },
+    {
       "id": "D1",
       "group": "D",
       "title": "Blocking chain (head blocker or open transaction)",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -770,7 +835,7 @@
       "nextCheck": "Head blocker in the blocking snapshot or blocked-process report.",
       "overturn": "No lock waits.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 6
+      "rank": 7
     },
     {
       "id": "D2",
@@ -778,7 +843,7 @@
       "title": "Deadlock storm and retries",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -791,7 +856,7 @@
       "nextCheck": "system_health deadlock events.",
       "overturn": "No deadlocks logged.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 7
+      "rank": 8
     },
     {
       "id": "D3",
@@ -799,7 +864,7 @@
       "title": "Plan regression or parameter sniffing",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -812,7 +877,7 @@
       "nextCheck": "Plan history of the affected query.",
       "overturn": "The plan did not change.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 8
+      "rank": 9
     },
     {
       "id": "D4",
@@ -820,7 +885,7 @@
       "title": "Statistics change or auto-update recompile",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -833,7 +898,7 @@
       "nextCheck": "Statistics last-updated time against t0.",
       "overturn": "No statistics update near t0.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 9
+      "rank": 10
     },
     {
       "id": "D5",
@@ -841,7 +906,7 @@
       "title": "Cold cache after restart, failover or plan-cache clear",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -854,7 +919,7 @@
       "nextCheck": "SQL Server start time and the error log.",
       "overturn": "Page life expectancy steady and no restart.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 10
+      "rank": 11
     },
     {
       "id": "D6",
@@ -862,7 +927,7 @@
       "title": "Memory pressure or grant waits",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -875,7 +940,7 @@
       "nextCheck": "Memory grants with a null grant time.",
       "overturn": "No grant waits.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 11
+      "rank": 12
     },
     {
       "id": "D7",
@@ -883,7 +948,7 @@
       "title": "tempdb contention or spills",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -896,7 +961,7 @@
       "nextCheck": "Waiting-task resource descriptions starting 2:.",
       "overturn": "No latch waits on tempdb.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 12
+      "rank": 13
     },
     {
       "id": "D8",
@@ -904,7 +969,7 @@
       "title": "Log flush stall, autogrow or large VLF count",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -917,7 +982,7 @@
       "nextCheck": "Log-file write stall per IO.",
       "overturn": "WRITELOG wait flat.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 13
+      "rank": 14
     },
     {
       "id": "D9",
@@ -925,7 +990,7 @@
       "title": "Disk IO latency",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -938,7 +1003,7 @@
       "nextCheck": "Per-file IO stall deltas.",
       "overturn": "Normal IO latency.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 14
+      "rank": 15
     },
     {
       "id": "D10",
@@ -946,7 +1011,7 @@
       "title": "SQL CPU saturation or parallelism",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -959,7 +1024,7 @@
       "nextCheck": "SQL CPU against OS CPU.",
       "overturn": "CPU is low.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 15
+      "rank": 16
     },
     {
       "id": "D11",
@@ -967,7 +1032,7 @@
       "title": "Maintenance job overlap",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -980,7 +1045,7 @@
       "nextCheck": "Job history and backup history against t0, in UTC.",
       "overturn": "No job overlaps t0.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 16
+      "rank": 17
     },
     {
       "id": "D12",
@@ -988,7 +1053,7 @@
       "title": "Availability-group synchronous-commit delay",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -1001,7 +1066,7 @@
       "nextCheck": "Wait delta and availability-group health.",
       "overturn": "No availability group.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 17
+      "rank": 18
     },
     {
       "id": "D13",
@@ -1009,7 +1074,7 @@
       "title": "Worker-thread exhaustion",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -1022,7 +1087,7 @@
       "nextCheck": "THREADPOOL wait delta.",
       "overturn": "Zero THREADPOOL wait.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 18
+      "rank": 19
     },
     {
       "id": "D14",
@@ -1030,7 +1095,7 @@
       "title": "Query Store itself (recently enabled)",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -1043,7 +1108,7 @@
       "nextCheck": "Onset against the time Query Store was enabled; its state and size.",
       "overturn": "Store healthy and onset unrelated to the enable time.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 19
+      "rank": 20
     },
     {
       "id": "D15",
@@ -1051,7 +1116,7 @@
       "title": "Data growth crossing a threshold, or a missing index",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: SQL Server wait, blocking or Query Store snapshots for the incident window.",
       "tier": "sql",
       "evidence": [
         {
@@ -1064,7 +1129,28 @@
       "nextCheck": "Multi-day reads-per-execution trend.",
       "overturn": "A sudden step with no history of growth.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 20
+      "rank": 21
+    },
+    {
+      "id": "M1",
+      "group": "M",
+      "title": "WiredTiger cache pressure or application-thread eviction",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: MongoDB slow-operation lines or server status for the incident window.",
+      "tier": "mongo",
+      "evidence": [
+        {
+          "signal": "a_large",
+          "role": "must",
+          "value": "no",
+          "why": "Mean and slow end of this part compared with the change mark."
+        }
+      ],
+      "nextCheck": "Cache and eviction series.",
+      "overturn": "Cache steady.",
+      "needs": "MongoDB slow-operation lines or server status for the incident window.",
+      "rank": 22
     },
     {
       "id": "M2",
@@ -1078,7 +1164,133 @@
       "nextCheck": "Disk latency series.",
       "overturn": "No regular cadence.",
       "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 21
+      "rank": 23
+    },
+    {
+      "id": "M5",
+      "group": "M",
+      "title": "Ticket or lock queue",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: MongoDB slow-operation lines or server status for the incident window.",
+      "tier": "mongo",
+      "evidence": [
+        {
+          "signal": "a_large",
+          "role": "must",
+          "value": "no",
+          "why": "Mean and slow end of this part compared with the change mark."
+        }
+      ],
+      "nextCheck": "Duration minus working time; global lock queue.",
+      "overturn": "Both equal.",
+      "needs": "MongoDB slow-operation lines or server status for the incident window.",
+      "rank": 24
+    },
+    {
+      "id": "M6",
+      "group": "M",
+      "title": "Collection scan or missing index on the audit collection",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: MongoDB slow-operation lines or server status for the incident window.",
+      "tier": "mongo",
+      "evidence": [
+        {
+          "signal": "a_large",
+          "role": "must",
+          "value": "no",
+          "why": "Mean and slow end of this part compared with the change mark."
+        }
+      ],
+      "nextCheck": "Plan summary in the slow lines.",
+      "overturn": "Index scan in use.",
+      "needs": "MongoDB slow-operation lines or server status for the incident window.",
+      "rank": 25
+    },
+    {
+      "id": "M7",
+      "group": "M",
+      "title": "TTL delete burst, index build or large delete",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: MongoDB slow-operation lines or server status for the incident window.",
+      "tier": "mongo",
+      "evidence": [
+        {
+          "signal": "a_large",
+          "role": "must",
+          "value": "no",
+          "why": "Mean and slow end of this part compared with the change mark."
+        }
+      ],
+      "nextCheck": "Log lines for TTL and index builds.",
+      "overturn": "None present.",
+      "needs": "MongoDB slow-operation lines or server status for the incident window.",
+      "rank": 26
+    },
+    {
+      "id": "M8",
+      "group": "M",
+      "title": "Large payloads or document growth",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: MongoDB slow-operation lines or server status for the incident window.",
+      "tier": "mongo",
+      "evidence": [
+        {
+          "signal": "p_large",
+          "role": "must",
+          "value": "no",
+          "why": "Mean and slow end of this part compared with the change mark."
+        }
+      ],
+      "nextCheck": "Correlation of A or P with body size.",
+      "overturn": "Uniform sizes.",
+      "needs": "MongoDB slow-operation lines or server status for the incident window.",
+      "rank": 27
+    },
+    {
+      "id": "M9",
+      "group": "M",
+      "title": "Connection storm or churn",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: MongoDB slow-operation lines or server status for the incident window.",
+      "tier": "mongo",
+      "evidence": [
+        {
+          "signal": "a_large",
+          "role": "must",
+          "value": "no",
+          "why": "Mean and slow end of this part compared with the change mark."
+        }
+      ],
+      "nextCheck": "Connections created, per minute.",
+      "overturn": "Steady.",
+      "needs": "MongoDB slow-operation lines or server status for the incident window.",
+      "rank": 28
+    },
+    {
+      "id": "M10",
+      "group": "M",
+      "title": "Shared mongod: another tenant or maintenance job",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: MongoDB slow-operation lines or server status for the incident window.",
+      "tier": "mongo",
+      "evidence": [
+        {
+          "signal": "a_large",
+          "role": "must",
+          "value": "no",
+          "why": "Mean and slow end of this part compared with the change mark."
+        }
+      ],
+      "nextCheck": "Slow lines grouped by database; current operations by namespace.",
+      "overturn": "Other databases flat while this one is slow.",
+      "needs": "MongoDB slow-operation lines or server status for the incident window.",
+      "rank": 29
     },
     {
       "id": "H1",
@@ -1086,13 +1298,13 @@
       "title": "Host CPU contention",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: Host performance counters for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: Host performance counters for the incident window.",
       "tier": "host",
       "evidence": [],
       "nextCheck": "CPU by process.",
       "overturn": "Process CPU accounts for it.",
       "needs": "Host performance counters for the incident window.",
-      "rank": 22
+      "rank": 30
     },
     {
       "id": "H2",
@@ -1106,7 +1318,7 @@
       "nextCheck": "GC pause counters.",
       "overturn": "GC time flat.",
       "needs": "Host performance counters for the incident window.",
-      "rank": 23
+      "rank": 31
     },
     {
       "id": "H3",
@@ -1120,7 +1332,7 @@
       "nextCheck": "Recycle event times.",
       "overturn": "No recycle.",
       "needs": "Host performance counters for the incident window.",
-      "rank": 24
+      "rank": 32
     },
     {
       "id": "H4",
@@ -1128,13 +1340,13 @@
       "title": "Network (retransmits, DNS, TLS, port exhaustion)",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: Host performance counters for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: Host performance counters for the incident window.",
       "tier": "host",
       "evidence": [],
       "nextCheck": "Retransmit counter and port-exhaustion events.",
       "overturn": "Retransmits flat.",
       "needs": "Host performance counters for the incident window.",
-      "rank": 25
+      "rank": 33
     },
     {
       "id": "H5",
@@ -1142,13 +1354,13 @@
       "title": "App-host disk or certificate-check delay",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: Host performance counters for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: Host performance counters for the incident window.",
       "tier": "host",
       "evidence": [],
       "nextCheck": "Timing mode of the first call.",
       "overturn": "No bimodal slowness.",
       "needs": "Host performance counters for the incident window.",
-      "rank": 26
+      "rank": 34
     },
     {
       "id": "H6",
@@ -1156,13 +1368,13 @@
       "title": "Shared effect across tiers (VM, hypervisor, storage, network)",
       "result": "Cannot test yet",
       "colour": "grey",
-      "why": "The audit cannot test this suspect. It needs: Host performance counters for the incident window.",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: Host performance counters for the incident window.",
       "tier": "host",
       "evidence": [],
       "nextCheck": "Whether trivial, unrelated operations slow at the same moment on every tier.",
       "overturn": "Only one tier is slow.",
       "needs": "Host performance counters for the incident window.",
-      "rank": 27
+      "rank": 35
     },
     {
       "id": "L2",
@@ -1170,7 +1382,7 @@
       "title": "Mix shift: one route or client dominates",
       "result": "Contradicted",
       "colour": "green",
-      "why": "A reading it needs is absent: Nearly every route with enough calls rose by the change mark.",
+      "why": "A reading it needs did not appear in the data: Nearly every route with enough calls rose by the change mark.",
       "tier": "c",
       "onsetAt": "2026-10-20T10:20:00Z",
       "evidence": [
@@ -1195,7 +1407,7 @@
       ],
       "nextCheck": "Group the slow calls by route, client and body size.",
       "overturn": "The rise is spread across routes.",
-      "rank": 28
+      "rank": 36
     },
     {
       "id": "L1",
@@ -1203,7 +1415,7 @@
       "title": "Traffic surge",
       "result": "Contradicted",
       "colour": "green",
-      "why": "A reading it needs is absent: Calls per second did not rise by the rate mark.",
+      "why": "A reading it needs did not appear in the data: Calls per second did not rise by the rate mark.",
       "tier": "load",
       "evidence": [
         {
@@ -1215,7 +1427,7 @@
       ],
       "nextCheck": "Calls per minute against the reference; a per-call service time that did not move early separates a surge from a slowdown.",
       "overturn": "Calls per second flat or down.",
-      "rank": 29
+      "rank": 37
     },
     {
       "id": "L3",
@@ -1223,7 +1435,7 @@
       "title": "Retry storm or client loop (amplifier)",
       "result": "Contradicted",
       "colour": "green",
-      "why": "A reading it needs is absent: Retried calls compared with the reference.",
+      "why": "A reading it needs did not appear in the data: Retried calls compared with the reference.",
       "tier": "load",
       "evidence": [
         {
@@ -1241,7 +1453,7 @@
       ],
       "nextCheck": "Group by client and route; compare the first failure with the start of the surge.",
       "overturn": "No failures before the surge.",
-      "rank": 30
+      "rank": 38
     },
     {
       "id": "Q2",
@@ -1261,7 +1473,7 @@
       "nextCheck": "Audit count per minute divided by the IIS request count for the same paths.",
       "overturn": "Audit and IIS counts agree.",
       "needs": "IIS log rows for the incident and reference windows.",
-      "rank": 31
+      "rank": 39
     },
     {
       "id": "S1",
@@ -1269,20 +1481,20 @@
       "title": "HTTP.sys or IIS queue backup",
       "result": "Contradicted",
       "colour": "green",
-      "why": "A reading it needs is absent: Mean of this part compared with the change mark.",
+      "why": "A reading it needs did not appear in the data: Mean and slow end of this part compared with the change mark.",
       "tier": "o",
       "evidence": [
         {
           "signal": "o_large",
           "role": "must",
           "value": "no",
-          "why": "Mean of this part compared with the change mark."
+          "why": "Mean and slow end of this part compared with the change mark."
         }
       ],
       "nextCheck": "HTTP.sys counters and the HTTPERR log against the audit duration.",
       "overturn": "The queue length stays at zero.",
       "needs": "IIS log rows; HTTPERR and queue counters for a direct reading.",
-      "rank": 32
+      "rank": 40
     },
     {
       "id": "S2",
@@ -1290,7 +1502,7 @@
       "title": ".NET thread-pool starvation",
       "result": "Contradicted",
       "colour": "green",
-      "why": "A reading it needs is absent: Neither audit set-up nor outside time rose by the change mark.",
+      "why": "A reading it needs did not appear in the data: Neither audit set-up nor outside time rose by the change mark.",
       "tier": "o",
       "evidence": [
         {
@@ -1303,7 +1515,7 @@
       "nextCheck": "Thread-pool queue length and thread count; latency of a trivial route.",
       "overturn": "Thread-pool queue length flat at zero.",
       "needs": "IIS log rows; .NET counters for a direct reading.",
-      "rank": 33
+      "rank": 41
     },
     {
       "id": "S5",
@@ -1311,14 +1523,14 @@
       "title": "Audit-write coupling",
       "result": "Contradicted",
       "colour": "green",
-      "why": "A reading it needs is absent: Mean of this part compared with the change mark.",
+      "why": "A reading it needs did not appear in the data: Mean and slow end of this part compared with the change mark.",
       "tier": "a",
       "evidence": [
         {
           "signal": "a_large",
           "role": "must",
           "value": "no",
-          "why": "Mean of this part compared with the change mark."
+          "why": "Mean and slow end of this part compared with the change mark."
         },
         {
           "signal": "scope_all",
@@ -1330,174 +1542,6 @@
       "nextCheck": "Server-side latency of inserts on the audit collection only; confirm the write is awaited inside the request.",
       "overturn": "A is small.",
       "needs": "MongoDB slow-operation lines to separate set-up from the insert.",
-      "rank": 34
-    },
-    {
-      "id": "S4",
-      "group": "S",
-      "title": "Mongo driver pool or wait-queue exhaustion",
-      "result": "Contradicted",
-      "colour": "green",
-      "why": "A reading it needs is absent: Mean of this part compared with the change mark.",
-      "tier": "a",
-      "evidence": [
-        {
-          "signal": "a_large",
-          "role": "must",
-          "value": "no",
-          "why": "Mean of this part compared with the change mark."
-        }
-      ],
-      "nextCheck": "Driver check-out wait against the command duration.",
-      "overturn": "Check-out wait is normal.",
-      "needs": "Driver pool events or a pool-wait log classifier.",
-      "rank": 35
-    },
-    {
-      "id": "M1",
-      "group": "M",
-      "title": "WiredTiger cache pressure or application-thread eviction",
-      "result": "Contradicted",
-      "colour": "green",
-      "why": "A reading it needs is absent: Mean of this part compared with the change mark.",
-      "tier": "mongo",
-      "evidence": [
-        {
-          "signal": "a_large",
-          "role": "must",
-          "value": "no",
-          "why": "Mean of this part compared with the change mark."
-        }
-      ],
-      "nextCheck": "Cache and eviction series.",
-      "overturn": "Cache steady.",
-      "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 36
-    },
-    {
-      "id": "M5",
-      "group": "M",
-      "title": "Ticket or lock queue",
-      "result": "Contradicted",
-      "colour": "green",
-      "why": "A reading it needs is absent: Mean of this part compared with the change mark.",
-      "tier": "mongo",
-      "evidence": [
-        {
-          "signal": "a_large",
-          "role": "must",
-          "value": "no",
-          "why": "Mean of this part compared with the change mark."
-        }
-      ],
-      "nextCheck": "Duration minus working time; global lock queue.",
-      "overturn": "Both equal.",
-      "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 37
-    },
-    {
-      "id": "M6",
-      "group": "M",
-      "title": "Collection scan or missing index on the audit collection",
-      "result": "Contradicted",
-      "colour": "green",
-      "why": "A reading it needs is absent: Mean of this part compared with the change mark.",
-      "tier": "mongo",
-      "evidence": [
-        {
-          "signal": "a_large",
-          "role": "must",
-          "value": "no",
-          "why": "Mean of this part compared with the change mark."
-        }
-      ],
-      "nextCheck": "Plan summary in the slow lines.",
-      "overturn": "Index scan in use.",
-      "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 38
-    },
-    {
-      "id": "M7",
-      "group": "M",
-      "title": "TTL delete burst, index build or large delete",
-      "result": "Contradicted",
-      "colour": "green",
-      "why": "A reading it needs is absent: Mean of this part compared with the change mark.",
-      "tier": "mongo",
-      "evidence": [
-        {
-          "signal": "a_large",
-          "role": "must",
-          "value": "no",
-          "why": "Mean of this part compared with the change mark."
-        }
-      ],
-      "nextCheck": "Log lines for TTL and index builds.",
-      "overturn": "None present.",
-      "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 39
-    },
-    {
-      "id": "M8",
-      "group": "M",
-      "title": "Large payloads or document growth",
-      "result": "Contradicted",
-      "colour": "green",
-      "why": "A reading it needs is absent: Mean of this part compared with the change mark.",
-      "tier": "mongo",
-      "evidence": [
-        {
-          "signal": "p_large",
-          "role": "must",
-          "value": "no",
-          "why": "Mean of this part compared with the change mark."
-        }
-      ],
-      "nextCheck": "Correlation of A or P with body size.",
-      "overturn": "Uniform sizes.",
-      "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 40
-    },
-    {
-      "id": "M9",
-      "group": "M",
-      "title": "Connection storm or churn",
-      "result": "Contradicted",
-      "colour": "green",
-      "why": "A reading it needs is absent: Mean of this part compared with the change mark.",
-      "tier": "mongo",
-      "evidence": [
-        {
-          "signal": "a_large",
-          "role": "must",
-          "value": "no",
-          "why": "Mean of this part compared with the change mark."
-        }
-      ],
-      "nextCheck": "Connections created, per minute.",
-      "overturn": "Steady.",
-      "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 41
-    },
-    {
-      "id": "M10",
-      "group": "M",
-      "title": "Shared mongod: another tenant or maintenance job",
-      "result": "Contradicted",
-      "colour": "green",
-      "why": "A reading it needs is absent: Mean of this part compared with the change mark.",
-      "tier": "mongo",
-      "evidence": [
-        {
-          "signal": "a_large",
-          "role": "must",
-          "value": "no",
-          "why": "Mean of this part compared with the change mark."
-        }
-      ],
-      "nextCheck": "Slow lines grouped by database; current operations by namespace.",
-      "overturn": "Other databases flat while this one is slow.",
-      "needs": "MongoDB slow-operation lines or server status for the incident window.",
       "rank": 42
     }
   ],
@@ -1590,8 +1634,16 @@
       "H4",
       "H5",
       "H6",
+      "M1",
+      "M10",
       "M2",
+      "M5",
+      "M6",
+      "M7",
+      "M8",
+      "M9",
       "Q1",
+      "S4",
       "S6",
       "S7"
     ],

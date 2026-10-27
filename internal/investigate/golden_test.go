@@ -198,6 +198,17 @@ func TestGolden(t *testing.T) {
 			res := Analyze(c.build(t))
 			c.check(t, res)
 			assertWording(t, c.name, res)
+			// No golden case imports a lane, so no suspect that needs one may be
+			// anything but "Cannot test yet" / grey (A5, A6).
+			laneNeeded := map[string]bool{}
+			for _, e := range Catalog() {
+				laneNeeded[e.ID] = e.LaneRequired
+			}
+			for _, s := range res.Suspects {
+				if laneNeeded[s.ID] && (s.Result != ResCannotTest || s.Colour != Grey) {
+					t.Errorf("%s = %s/%s without its own data: %s", s.ID, s.Result, s.Colour, s.Why)
+				}
+			}
 			if res.Version != Version {
 				t.Errorf("version = %q", res.Version)
 			}

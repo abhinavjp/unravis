@@ -192,6 +192,10 @@ func (p *prep) parts() {
 			it.RefMeanMs = ptr(m)
 		}
 		it.Tested = len(iv) > 0 && len(rv) > 0
+		it.Tail = compareMs(nil, nil, p.th)
+		if len(iv) >= p.th.GroupSizeP95 && len(rv) >= p.th.GroupSizeP95 {
+			it.Tail = compareMs(summarize(rv, p.th).P95, summarize(iv, p.th).P95, p.th)
+		}
 		if d.name == "O" && !pt.OTested {
 			it.Tested = false
 			it.Why = pt.OWhy

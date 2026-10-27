@@ -248,10 +248,14 @@ func evaluateOne(sp *Suspect, e CatalogEntry, in Input, s Signals) {
 	switch {
 	case haveLane && laneVal == No:
 		sp.set(ResContra, Green, "This suspect's own data source shows evidence against it.")
-	case mustNo != "":
-		sp.set(ResContra, Green, "A reading it needs is absent: "+mustNo)
 	case e.LaneRequired && !haveLane:
-		sp.set(ResCannotTest, Grey, "The audit cannot test this suspect. "+needsLine(e))
+		// Its own data was never read, so nothing here can rule it out: an audit
+		// part that did not rise says nothing about SQL, Mongo or the host (A5, A6).
+		sp.set(ResCannotTest, Grey, "Not checked: its own data has not been read, and the audit cannot test it. "+needsLine(e))
+	case mustNo != "" && haveLane:
+		sp.set(ResPartly, Orange, "Its own data source shows it, but a reading the audit gives does not fit: "+mustNo)
+	case mustNo != "":
+		sp.set(ResContra, Green, "A reading it needs did not appear in the data: "+mustNo)
 	case mustUnknownMissing != "":
 		sp.set(ResCannotTest, Grey, "Missing data: "+mustUnknownMissing)
 	case mustUnknownOther != "":

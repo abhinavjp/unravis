@@ -110,6 +110,9 @@ type PartFacts struct {
 	IncMeanMs *float64 `json:"incMeanMs,omitempty"`
 	RefMeanMs *float64 `json:"refMeanMs,omitempty"`
 	Change    Change   `json:"change"`
+	// Tail compares the part's P95 across the windows, so a slowdown in only some
+	// calls shows even when the mean barely moves.
+	Tail Change `json:"tail"`
 	// ExcessMs is the incident total minus what the incident calls would have taken
 	// at the reference mean. Share is the part's share of the positive excess.
 	ExcessMs *float64 `json:"excessMs,omitempty"`
