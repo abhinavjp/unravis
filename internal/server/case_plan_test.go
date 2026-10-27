@@ -220,7 +220,7 @@ func TestChecklistLists(t *testing.T) {
 			"no text":       `{"list":"todo","text":"  "}`,
 			"text too long": `{"list":"todo","text":"` + strings.Repeat("t", 301) + `"}`,
 			"bad suspect":   `{"list":"todo","text":"x","suspect":"a b"}`,
-			"negative":      `{"list":"todo","text":"x","order":-1}`,
+			"negative":      `{"list":"todo","text":"x","order":-2}`,
 			"unknown field": `{"list":"todo","text":"x","id":"y"}`,
 		} {
 			if res := e.json(http.MethodPost, base, body); res.Code != http.StatusBadRequest {

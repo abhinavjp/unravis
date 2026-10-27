@@ -156,6 +156,13 @@ func (c *memCase) PutChecklistItem(ctx context.Context, it ChecklistItem) (Check
 	if clean.ID != "" {
 		for i := range p.items {
 			if p.items[i].ID == clean.ID {
+				if clean.Order == OrderAuto {
+					if p.items[i].List == clean.List {
+						clean.Order = p.items[i].Order
+					} else {
+						clean.Order = lastPlace(p.items, clean.List, clean.ID)
+					}
+				}
 				clean.Created = p.items[i].Created
 				clean.Updated = now
 				p.items[i] = clean
@@ -171,9 +178,26 @@ func (c *memCase) PutChecklistItem(ctx context.Context, it ChecklistItem) (Check
 	if err != nil {
 		return ChecklistItem{}, err
 	}
+	if clean.Order == OrderAuto {
+		clean.Order = lastPlace(p.items, clean.List, "")
+	}
 	clean.ID, clean.Created, clean.Updated = id, now, now
 	p.items = append(p.items, clean)
 	return clean, nil
+}
+
+// lastPlace is the Order after every other item of the list.
+func lastPlace(items []ChecklistItem, list, except string) int {
+	next := 0
+	for _, o := range items {
+		if o.List == list && o.ID != except && o.Order >= next {
+			next = o.Order + 1
+		}
+	}
+	if next > maxChecklistOrder {
+		next = maxChecklistOrder
+	}
+	return next
 }
 
 func (c *memCase) DeleteChecklistItem(ctx context.Context, id string) error {

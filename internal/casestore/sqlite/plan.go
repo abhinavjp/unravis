@@ -187,12 +187,21 @@ func (c *Case) PutChecklistItem(ctx context.Context, it casestore.ChecklistItem)
 	err = c.planTx(ctx, checklistItemSQL, func(tx *sql.Tx) error {
 		if clean.ID != "" {
 			var created int64
-			err := tx.QueryRowContext(ctx, "SELECT created FROM checklist_items WHERE id = ?", clean.ID).Scan(&created)
+			var oldList string
+			var oldOrder int
+			err := tx.QueryRowContext(ctx, "SELECT created, list, ord FROM checklist_items WHERE id = ?", clean.ID).Scan(&created, &oldList, &oldOrder)
 			if errors.Is(err, sql.ErrNoRows) {
 				return casestore.ErrNotFound
 			}
 			if err != nil {
 				return err
+			}
+			if clean.Order == casestore.OrderAuto {
+				if oldList == clean.List {
+					clean.Order = oldOrder
+				} else if clean.Order, err = lastPlace(ctx, tx, clean.List, clean.ID); err != nil {
+					return err
+				}
 			}
 			clean.Created = time.UnixMilli(created).UTC()
 			_, err = tx.ExecContext(ctx, "UPDATE checklist_items SET list = ?, text = ?, suspect = ?, ord = ?, updated = ? WHERE id = ?",
@@ -210,6 +219,11 @@ func (c *Case) PutChecklistItem(ctx context.Context, it casestore.ChecklistItem)
 		if err != nil {
 			return err
 		}
+		if clean.Order == casestore.OrderAuto {
+			if clean.Order, err = lastPlace(ctx, tx, clean.List, ""); err != nil {
+				return err
+			}
+		}
 		clean.ID, clean.Created = id, now
 		_, err = tx.ExecContext(ctx, "INSERT INTO checklist_items(id, list, text, suspect, ord, created, updated) VALUES(?, ?, ?, ?, ?, ?, ?)",
 			id, clean.List, clean.Text, clean.Suspect, clean.Order, now.UnixMilli(), now.UnixMilli())
@@ -219,6 +233,19 @@ func (c *Case) PutChecklistItem(ctx context.Context, it casestore.ChecklistItem)
 		return casestore.ChecklistItem{}, err
 	}
 	return clean, nil
+}
+
+// lastPlace is the Order after every other item of the list, read inside the
+// write so that two adds at once do not share a place.
+func lastPlace(ctx context.Context, tx *sql.Tx, list, except string) (int, error) {
+	var next int
+	if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(ord) + 1, 0) FROM checklist_items WHERE list = ? AND id <> ?", list, except).Scan(&next); err != nil {
+		return 0, err
+	}
+	if next > 1_000_000 {
+		next = 1_000_000
+	}
+	return next, nil
 }
 
 func (c *Case) DeleteChecklistItem(ctx context.Context, id string) error {

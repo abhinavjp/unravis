@@ -252,18 +252,12 @@ func (h *handler) caseChecklistCreate(w http.ResponseWriter, r *http.Request, ra
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	it := casestore.ChecklistItem{List: body.List, Text: body.Text, Suspect: body.Suspect}
+	// Without an order the store puts a new line last in its list, inside its own write.
+	it := casestore.ChecklistItem{List: body.List, Text: body.Text, Suspect: body.Suspect, Order: casestore.OrderAuto}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 	if body.Order != nil {
 		it.Order = *body.Order
-	} else if items, err := ps.ChecklistItems(ctx); err == nil {
-		// A new line goes last in its list.
-		for _, o := range items {
-			if o.List == it.List && o.Order >= it.Order {
-				it.Order = o.Order + 1
-			}
-		}
 	}
 	h.putChecklist(w, ctx, ps, it)
 }
@@ -285,24 +279,11 @@ func (h *handler) caseChecklistUpdate(w http.ResponseWriter, r *http.Request, ar
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
-	it := casestore.ChecklistItem{ID: iid, List: body.List, Text: body.Text, Suspect: body.Suspect}
+	// Without an order the line keeps its place when it stays in its list and goes last when it
+	// moves to another one; the store works that out inside its own write.
+	it := casestore.ChecklistItem{ID: iid, List: body.List, Text: body.Text, Suspect: body.Suspect, Order: casestore.OrderAuto}
 	if body.Order != nil {
 		it.Order = *body.Order
-	} else if items, err := ps.ChecklistItems(ctx); err == nil {
-		// Without an order, the line keeps its place when it stays in its list, and
-		// goes last when it moves to another one.
-		next, kept := 0, false
-		for _, o := range items {
-			if o.ID == iid && o.List == it.List {
-				it.Order, kept = o.Order, true
-			}
-			if o.ID != iid && o.List == it.List && o.Order >= next {
-				next = o.Order + 1
-			}
-		}
-		if !kept {
-			it.Order = next
-		}
 	}
 	h.putChecklist(w, ctx, ps, it)
 }

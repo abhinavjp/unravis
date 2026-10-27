@@ -69,6 +69,12 @@ type SavedView struct {
 	Settings json.RawMessage `json:"settings"`
 }
 
+// OrderAuto is the Order that lets the store pick the place (see ChecklistItem).
+const OrderAuto = -1
+
+// maxChecklistOrder is the highest Order a store keeps.
+const maxChecklistOrder = 1_000_000
+
 // ChecklistItem is one line on one of the four lists.
 type ChecklistItem struct {
 	ID   string `json:"id"`
@@ -76,7 +82,10 @@ type ChecklistItem struct {
 	Text string `json:"text"`
 	// Suspect is the catalogue id (N1, H2, ...) the line is about, or empty.
 	Suspect string `json:"suspect,omitempty"`
-	// Order sorts items inside a list; lower comes first.
+	// Order sorts items inside a list; lower comes first. OrderAuto asks the
+	// store to choose: a new item, or one moved to another list, goes last in its
+	// list; an item that stays in its list keeps its place. The store chooses
+	// inside its own write, so two adds at once never share a place.
 	Order   int       `json:"order"`
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
@@ -148,7 +157,7 @@ func CleanChecklistItem(it ChecklistItem) (ChecklistItem, error) {
 	if it.Suspect != "" && (utf8.RuneCountInString(it.Suspect) > maxSuspectID || !slug(it.Suspect)) {
 		return it, ErrBadPlan
 	}
-	if it.Order < 0 || it.Order > 1_000_000 {
+	if it.Order < OrderAuto || it.Order > maxChecklistOrder {
 		return it, ErrBadPlan
 	}
 	return it, nil

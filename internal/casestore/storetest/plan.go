@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"api-audit-explorer/internal/casestore"
@@ -157,12 +158,43 @@ func planContract(t *testing.T, f Factory, caps casestore.Caps) {
 		"long text":    {List: casestore.ListToDo, Text: strings.Repeat("t", casestore.MaxChecklistText+1)},
 		"odd suspect":  {List: casestore.ListToDo, Text: "x", Suspect: "N 1"},
 		"long suspect": {List: casestore.ListToDo, Text: "x", Suspect: strings.Repeat("N", 40)},
-		"negative":     {List: casestore.ListToDo, Text: "x", Order: -1},
+		"negative":     {List: casestore.ListToDo, Text: "x", Order: -2},
 		"bad id":       {ID: "zz", List: casestore.ListToDo, Text: "x"},
 	} {
 		if _, err := pa.PutChecklistItem(ctx, bad); !errors.Is(err, casestore.ErrBadPlan) {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+	// OrderAuto is chosen inside the write: adds made at the same moment never share a
+	// place, a move goes last in the new list, and an edit in place keeps its place.
+	const adds = 8
+	var wg sync.WaitGroup
+	par := make([]casestore.ChecklistItem, adds)
+	for i := 0; i < adds; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			par[i], _ = pa.PutChecklistItem(ctx, casestore.ChecklistItem{List: casestore.ListDoing, Text: fmt.Sprintf("parallel %d", i), Order: casestore.OrderAuto})
+		}(i)
+	}
+	wg.Wait()
+	places := map[int]bool{}
+	for _, it := range par {
+		if it.ID == "" {
+			t.Fatalf("parallel add failed: %+v", it)
+		}
+		if places[it.Order] {
+			t.Errorf("two parallel adds share the place %d", it.Order)
+		}
+		places[it.Order] = true
+	}
+	stay, err := pa.PutChecklistItem(ctx, casestore.ChecklistItem{ID: par[3].ID, List: casestore.ListDoing, Text: "parallel 3, edited", Order: casestore.OrderAuto})
+	if err != nil || stay.Order != par[3].Order {
+		t.Errorf("an edit in place moved the item: %+v then %+v (%v)", par[3], stay, err)
+	}
+	tail, err2 := pa.PutChecklistItem(ctx, casestore.ChecklistItem{ID: par[0].ID, List: casestore.ListRuledOut, Text: "parallel 0, moved", Order: casestore.OrderAuto})
+	if err2 != nil || tail.Order <= i4.Order {
+		t.Errorf("a moved item did not go last in its new list: %+v (%v)", tail, err2)
 	}
 	if err := pa.DeleteChecklistItem(ctx, i4.ID); err != nil {
 		t.Fatal(err)
