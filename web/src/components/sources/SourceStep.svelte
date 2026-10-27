@@ -1,0 +1,111 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { fetchLaneDays, groupSources, readableByDay, shiftDays, type LaneDay, type LaneRunResult, type LaneSource } from '../../lib/lanes';
+  import { runProblem } from '../../lib/lanes';
+  import { NUTSHELL, STEP_TEXT } from '../../lib/copy/sourcesCopy';
+  import GrantScriptPanel from './GrantScriptPanel.svelte';
+  import LaneResultView from './LaneResultView.svelte';
+  import LaneRunner from './LaneRunner.svelte';
+  import ProfilerGuide from './ProfilerGuide.svelte';
+  import StateSticker from './StateSticker.svelte';
+  import './sources.css';
+
+  // Step 7 (SQL Server) and Step 8 (MongoDB). The days already read for this case are listed by source, newest first; one is open at a time.
+  // Nothing is read until "Read this day" is pressed. With no source of this kind the step says Cannot test yet and offers to add one: it never
+  // reads as a pass. For Step 8 the audit logs alone do not count: the step needs the server itself, its profiler and its health.
+  let { caseId, kind, onGone, onChanged, onAddData }: {
+    caseId: string; kind: 'sql' | 'mongo'; onGone?: () => void; onChanged?: () => void; onAddData?: () => void;
+  } = $props();
+
+  let days = $state.raw<LaneDay[]>([]);
+  let loaded = $state(false);
+  let loadFailed = $state(false);
+  let openId = $state(0);
+  let adding = $state(false);
+  let controller: AbortController | null = null;
+
+  const mine = $derived(days.filter(d => d.kind === kind));
+  const sources = $derived<LaneSource[]>(groupSources(mine));
+  const open = $derived(mine.find(d => d.id === openId) ?? mine[0] ?? null);
+  const title = $derived(kind === 'sql' ? STEP_TEXT.sqlHeading : STEP_TEXT.mongoHeading);
+  const missing = $derived(open?.lane?.checks.some(c => c.fix !== null) ?? false);
+  const firstFix = $derived(open?.lane?.checks.find(c => c.fix !== null)?.fix ?? null);
+  const preset = $derived(open ? { incident: shiftDays(open.incident, readableByDay(kind) ? 1 : 0), reference: open.reference } : null);
+
+  async function load() {
+    controller?.abort();
+    const signal = (controller = new AbortController()).signal;
+    loadFailed = false;
+    try {
+      const list = await fetchLaneDays(caseId, signal);
+      if (signal.aborted) return;
+      days = list;
+    } catch (error) {
+      if (signal.aborted) return;
+      if (runProblem(error).gone) onGone?.();
+      loadFailed = true;
+    }
+    loaded = true;
+  }
+  onMount(() => { void load(); return () => controller?.abort(); });
+
+  async function ran(result: LaneRunResult) {
+    openId = result.day.id; adding = false;
+    await load();
+    if (result.day.id !== 0) openId = result.day.id;
+    onChanged?.();
+  }
+  const when = (iso: string) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(); };
+</script>
+
+<section class="src" aria-labelledby="step-{kind}-head" data-step={kind}>
+  <div class="nutshell"><b>{NUTSHELL}</b><p>{kind === 'sql' ? STEP_TEXT.sqlLead : STEP_TEXT.mongoLead}</p></div>
+  <h3 id="step-{kind}-head">{title}</h3>
+
+  {#if loadFailed}
+    <div class="empty"><p class="say bad" role="alert">{STEP_TEXT.loadFailed}</p><div class="actions"><button type="button" class="btn" onclick={() => void load()}>{STEP_TEXT.retry}</button></div></div>
+  {:else if !loaded}
+    <p class="hint">{STEP_TEXT.loading}</p>
+  {:else if mine.length === 0}
+    <div class="empty" data-no-source>
+      <div class="actions"><StateSticker word="Cannot test yet" /></div>
+      <p>{kind === 'sql' ? STEP_TEXT.noSql : STEP_TEXT.noMongo}</p>
+      {#if kind === 'mongo'}<p class="hint">{STEP_TEXT.noMongoWhy}</p>{/if}
+    </div>
+    <LaneRunner {caseId} {kind} {days} onRan={ran} {onGone} runLabel={kind === 'sql' ? STEP_TEXT.addSql : STEP_TEXT.addMongo} />
+  {:else}
+    <section class="field" aria-label={STEP_TEXT.daysHeading}>
+      <h4>{STEP_TEXT.daysHeading}</h4>
+      {#each sources as source (source.key)}
+        <div class="field" data-source={source.key}>
+          <h5>{source.label}{source.database ? ' · ' + source.database : ''}</h5>
+          <ul class="rows">
+            {#each source.days as day (day.id)}
+              <li>
+                <span class="what"><span class="name">{day.incident.start.slice(0, 16).replace('T', ' ')} UTC</span><span class="hint">{STEP_TEXT.readAt} {when(day.at)}</span></span>
+                <StateSticker word={day.state} />
+                <button type="button" class="btn" aria-pressed={open?.id === day.id} onclick={() => { openId = day.id; }}>{open?.id === day.id ? STEP_TEXT.shown : STEP_TEXT.show}</button>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/each}
+    </section>
+
+    {#if open}
+      <LaneResultView day={open} onAddDay={readableByDay(kind) ? () => { adding = true; } : undefined} {onAddData} />
+      {#if missing}
+        <GrantScriptPanel kind={kind} version={open.lane?.era === '2019' ? '2019' : '2022'} database={open.database}
+          permission={firstFix?.permission ?? ''} fixScript={firstFix?.script ?? ''} />
+      {/if}
+      {#if kind === 'mongo'}<ProfilerGuide database={open.database} guide={open.lane?.guide ?? null} />{/if}
+    {/if}
+
+    {#if adding || kind === 'mongo'}
+      <LaneRunner {caseId} {kind} {days} database={open?.database ?? ''} incident={preset?.incident ?? null} reference={preset?.reference ?? null}
+        connectionLabel={open?.label ?? ''} onRan={ran} {onGone} />
+    {:else}
+      <div class="actions"><button type="button" class="btn" onclick={() => { adding = true; }}>{STEP_TEXT.addSql}</button></div>
+    {/if}
+  {/if}
+</section>

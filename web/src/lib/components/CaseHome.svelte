@@ -10,6 +10,8 @@
   import { ledger, refreshLedger } from '../ledgerStore.svelte';
   import { buildStory, shortText } from '../story';
   import HealthPanel from './HealthPanel.svelte';
+  import SourcesHub from '../../components/sources/SourcesHub.svelte';
+  import { HUB_TEXT } from '../copy/sourcesCopy';
 
   // One page per case: the story (what happened, in order), the theories, the health checks, the analysis and the files.
   // Everything here is read from what the case already saved. Nothing runs by itself.
@@ -219,6 +221,12 @@
       <h3 id="home-health">{CASE_HOME_TEXT.healthHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.healthText}</p>
       <HealthPanel {caseId} onGone={gone} onRan={() => void rereadHealth()} />
+    </section>
+
+    <section class="block" aria-labelledby="home-sources">
+      <h3 id="home-sources">{HUB_TEXT.heading}</h3>
+      <p class="note">{HUB_TEXT.intro}</p>
+      <SourcesHub {caseId} onGone={gone} />
     </section>
 
     <section class="block" aria-labelledby="home-files">

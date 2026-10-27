@@ -1,0 +1,57 @@
+/* Shared look of the SQL Server and MongoDB source screens (P7). Outline = press me, sticker = information, one primary button per screen.
+   Pending is hatched and never green. Everything reads the brand tokens, so both themes work. */
+.src { display: grid; gap: var(--space-4); min-width: 0; }
+.src h3, .src h4, .src h5 { margin: 0; font-weight: 600; }
+.src h3 { font-size: var(--fs-5, var(--fs-4)); }
+.src h4 { font-size: var(--fs-4); }
+.src h5 { font-size: var(--fs-3); color: var(--text-2); }
+.src p { margin: 0; }
+.src .lead, .src .hint { color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
+.src .nutshell { display: grid; gap: var(--space-1); padding: var(--space-3) var(--space-4); background: var(--surface); border: var(--hairline-width, 1px) solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius-sm); }
+.src .nutshell b { font-size: var(--fs-2); letter-spacing: .04em; text-transform: uppercase; color: var(--text-2); }
+.src .panel { display: grid; gap: var(--space-3); min-width: 0; padding: var(--space-4); background: var(--surface); border: var(--hairline-width, 1px) solid var(--line); border-radius: var(--radius-sm); }
+.src .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.src .field { display: grid; gap: var(--space-1); min-width: 0; }
+.src .field label { font-size: var(--fs-3); font-weight: 600; }
+.src .field input, .src .field select { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 44px; padding: 8px 10px; color: var(--text); background-color: var(--bg); border: var(--hairline-width, 1px) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-4); }
+.src .field input:focus-visible, .src .field select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.src .field input[aria-invalid='true'] { border-color: var(--bad); }
+.src .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-3); min-width: 0; }
+.src .tick { display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-4); }
+.src .tick input { width: 22px; height: 22px; margin: 0; accent-color: var(--accent); }
+.src button { font: inherit; }
+.src .btn, .src .btn-primary { min-height: 44px; padding: 0 var(--space-4); border-radius: var(--radius-sm); font-size: var(--fs-4); font-weight: 600; cursor: pointer; }
+.src .btn { color: var(--text); background: transparent; border: var(--hairline-width, 1px) solid var(--control-line); }
+.src .btn:hover:not(:disabled) { border-color: var(--text-2); }
+.src .btn-primary { color: var(--accent-ink); background: var(--accent); border: 1px solid var(--accent); }
+.src .btn:disabled, .src .btn-primary:disabled { opacity: .55; cursor: not-allowed; }
+.src .btn:focus-visible, .src .btn-primary:focus-visible, .src .link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.src .link { min-height: 44px; padding: 0 var(--space-1); color: var(--accent); background: transparent; border: 0; font-size: var(--fs-3); text-decoration: underline; cursor: pointer; }
+.src-sticker { display: inline-flex; align-items: center; padding: 1px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); font-weight: 600; white-space: nowrap; color: var(--text); background: var(--surface-2); }
+.src-sticker.ready, .src-sticker.works { border-color: var(--accent); }
+.src-sticker.partly { border-color: var(--warn); }
+.src-sticker.failed { border-color: var(--bad); }
+.src-sticker.cannot, .src-sticker.untested { border-color: var(--pending); background-image: var(--hatch); background-blend-mode: soft-light; }
+.src .say { padding: var(--space-2) var(--space-3); color: var(--text-2); font-size: var(--fs-3); border-left: 3px solid var(--line); overflow-wrap: anywhere; }
+.src .say.bad { color: var(--text); border-left-color: var(--bad); }
+.src .say.good { color: var(--text); border-left-color: var(--accent); }
+.src .say[hidden] { display: none; }
+.src .rows { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.src .rows > li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); min-width: 0; padding: var(--space-2) var(--space-3); background: var(--bg); border: var(--hairline-width, 1px) solid var(--line); border-radius: var(--radius-sm); }
+.src .what { display: grid; flex: 1 1 220px; min-width: 0; }
+.src .name { font-size: var(--fs-4); font-weight: 600; overflow-wrap: anywhere; }
+.src .mono { font-family: var(--font-mono, ui-monospace, Consolas, monospace); font-size: var(--fs-3); }
+.src pre.script { box-sizing: border-box; max-width: 100%; margin: 0; padding: var(--space-3); overflow: auto; color: var(--text); background: var(--bg); border: var(--hairline-width, 1px) solid var(--line); border-radius: var(--radius-sm); font-family: var(--font-mono, ui-monospace, Consolas, monospace); font-size: var(--fs-3); line-height: 1.5; white-space: pre; max-height: 22rem; }
+.src .table-wrap { overflow-x: auto; }
+.src table { width: 100%; border-collapse: collapse; font-size: var(--fs-3); }
+.src th, .src td { padding: 6px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line-soft, var(--line)); overflow-wrap: anywhere; }
+.src th { color: var(--text-2); font-weight: 500; border-bottom-color: var(--line); }
+.src .tabs { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.src .tabs button[aria-selected='true'],
+.src .tabs button[aria-pressed='true'] { border-color: var(--accent); background: var(--surface-2); }
+.src .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-3); }
+.src .card { display: grid; align-content: start; gap: var(--space-2); padding: var(--space-3); background: var(--surface); border: var(--hairline-width, 1px) solid var(--line); border-radius: var(--radius-sm); }
+.src .empty { display: grid; gap: var(--space-2); padding: var(--space-4); border: 1px dashed var(--line); border-radius: var(--radius-sm); }
+@media (prefers-reduced-motion: no-preference) {
+  .src .btn, .src .btn-primary { transition: background var(--dur, 180ms) var(--ease, ease), border-color var(--dur, 180ms) var(--ease, ease); }
+}
