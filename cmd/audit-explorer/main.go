@@ -26,11 +26,11 @@ import (
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/history"
-	"api-audit-explorer/internal/sqlconn"
 	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/server"
+	"api-audit-explorer/internal/sqlconn"
 	"api-audit-explorer/internal/store"
 	"api-audit-explorer/internal/version"
 )
@@ -125,6 +125,13 @@ func run(args []string, getenv func(string) string) error {
 		return err
 	}
 	demo, port, noBrowser, mcpMode := &f.demo, &f.port, &f.noBrowser, &f.mcp
+	demoCfg, demoNotes, err := demoEnv(*demo, getenv, time.Now())
+	if err != nil {
+		return err
+	}
+	for _, note := range demoNotes {
+		log.Print(note)
+	}
 	if *mcpMode {
 		options := []mcp.Option{mcp.WithIdentifiers(f.mcpAllowIdentifiers), mcp.WithToken(getenv("AUDIT_SESSION_TOKEN"))}
 		if path, pathErr := mcp.SessionFilePath(getenv); pathErr == nil {
@@ -149,7 +156,7 @@ func run(args []string, getenv func(string) string) error {
 	var serverOptions []server.Option
 	if *demo {
 		// The shipped demo carries a little unfinished work so the incomplete panel has something to show.
-		repo = audit.NewDemoWithPatterns(time.Now())
+		repo = audit.NewDemoWithPatterns(demoCfg.now)
 	} else {
 		repo = store.New(storeOptions(f)...)
 		if savedHistory, historyErr := history.NewDefault(getenv); historyErr == nil {
@@ -169,14 +176,14 @@ func run(args []string, getenv func(string) string) error {
 	// Imported cases (the importer wave) are live-mode only: demo mode runs on
 	// illustrative data and writes nothing to disk, so its case and host routes
 	// answer 503 "not available" rather than keep a case store nobody asked for.
-	if !*demo {
-		if wiring, casesErr := openCases(getenv, hypotheses); casesErr != nil {
-			log.Printf("Imported cases unavailable: %v", casesErr)
-		} else {
-			serverOptions = append(serverOptions, wiring.options...)
-			defer wiring.close()
-		}
+	// The one exception is the screenshot harness: --demo with UNRAVIS_DEMO_CASES=1
+	// and AUDIT_CONFIG_DIR opens a seeded store under that folder.
+	caseOptions, closeCases, casesErr := wireCases(*demo, demoCfg, getenv, hypotheses)
+	if casesErr != nil {
+		return casesErr
 	}
+	serverOptions = append(serverOptions, caseOptions...)
+	defer closeCases()
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

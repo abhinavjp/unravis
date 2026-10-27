@@ -66,6 +66,44 @@ func eraseHook(hypotheses ledger.Store) func(context.Context, casestore.CaseID) 
 // leaves the case and host routes unwired (they answer 503) and the rest of the
 // dashboard keeps working. Nothing is ever written in plaintext.
 func openCases(getenv func(string) string, hypotheses ledger.Store) (*casesWiring, error) {
+	return openCasesWith(getenv, hypotheses, caseSeams{})
+}
+
+// wireCases decides which case wiring the server gets. Live mode opens the
+// real store and carries on without it when that fails. Plain --demo gets
+// nothing and touches no file. --demo with UNRAVIS_DEMO_CASES=1 gets the seeded
+// capture store, and a failure there stops start-up (see openDemoCases).
+func wireCases(demo bool, cfg demoSettings, getenv func(string) string, hypotheses ledger.Store) ([]server.Option, func(), error) {
+	switch {
+	case !demo:
+		wiring, err := openCases(getenv, hypotheses)
+		if err != nil {
+			log.Printf("Imported cases unavailable: %v", err)
+			return nil, func() {}, nil
+		}
+		return wiring.options, wiring.close, nil
+	case cfg.cases:
+		wiring, err := openDemoCases(getenv, hypotheses, cfg.now)
+		if err != nil {
+			return nil, func() {}, err
+		}
+		return wiring.options, wiring.close, nil
+	}
+	return nil, func() {}, nil
+}
+
+// caseSeams are the few things the demo's capture-only cases change about the
+// store: the clock, the IDs of new cases, and which case counts as untrusted.
+// Live mode passes the zero value and gets exactly what it had before. When
+// now is set the start-up sweep is skipped, so a made-up clock can never erase a
+// case.
+type caseSeams struct {
+	now        func() time.Time
+	newID      func() (casestore.CaseID, error)
+	wrapLegacy func(inner func(casestore.CaseID) error) func(casestore.CaseID) error
+}
+
+func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams caseSeams) (*casesWiring, error) {
 	base, err := mcp.SessionDir(getenv)
 	if err != nil {
 		return nil, err
@@ -90,13 +128,30 @@ func openCases(getenv func(string) string, hypotheses ledger.Store) (*casesWirin
 	// "none" otherwise. The store and the server share it, so unlock, lock and
 	// the 423 gate act on the one Keyring the store opens cases with.
 	session := server.NewMasterKeySession(base)
+	legacyCheck := session.LegacyCheck
+	if seams.wrapLegacy != nil {
+		legacyCheck = seams.wrapLegacy(legacyCheck)
+	}
 	store, err := sqlite.New(sqlite.Options{
 		Root: root, Protector: protector, OnErase: onErase,
 		Protectors: session.Lookup, NewCaseKind: session.NewCaseKind,
-		LegacyCheck: session.LegacyCheck, LegacyDone: session.LegacyDone,
+		LegacyCheck: legacyCheck, LegacyDone: session.LegacyDone,
+		Now: seams.now, NewID: seams.newID,
 	})
 	if err != nil {
 		return nil, err
+	}
+	wiring := &casesWiring{
+		store: store,
+		options: []server.Option{
+			server.WithCases(store, sealedHosts.Map(), all.Registry()),
+			server.WithHostsSaver(sealedHosts.Save),
+			server.WithSystemDiscover(),
+			server.WithMasterKey(session),
+		},
+	}
+	if seams.now != nil {
+		return wiring, nil
 	}
 	// Finish any erase that was interrupted and erase cases closed over 30 days
 	// ago. A failure is logged by case; it never stops the dashboard starting.
@@ -107,13 +162,5 @@ func openCases(getenv func(string) string, hypotheses ledger.Store) (*casesWirin
 	} else if len(erased) > 0 {
 		log.Printf("Erased %d expired case(s)", len(erased))
 	}
-	return &casesWiring{
-		store: store,
-		options: []server.Option{
-			server.WithCases(store, sealedHosts.Map(), all.Registry()),
-			server.WithHostsSaver(sealedHosts.Save),
-			server.WithSystemDiscover(),
-			server.WithMasterKey(session),
-		},
-	}, nil
+	return wiring, nil
 }
