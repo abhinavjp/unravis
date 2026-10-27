@@ -31,10 +31,13 @@
     { id: 'ledger', label: 'Ledger', open: () => openSidePanel('ledger') },
     { id: 'export', label: 'Export', open: () => openSidePanel('export') },
     { id: 'import', label: 'Import', open: () => openSidePanel('import') },
+    { id: 'blackbox', label: 'Blackbox', open: () => openSidePanel('blackbox') },
     { id: 'glossary', label: 'Glossary', open: () => openGlossary() }
   ];
   // Patterns, Ledger, Export and Import are the page's navigation; Glossary sits with the utilities at the far right.
-  const navDrawers = drawers.filter(item => item.id !== 'glossary');
+  const navDrawers = drawers.filter(item => item.id !== 'glossary' && item.id !== 'blackbox');
+  // Blackbox is placed before a case exists, so it is a utility: it shows on every screen, beside Glossary.
+  const blackbox = drawers.find(item => item.id === 'blackbox')!;
   const glossary = drawers.find(item => item.id === 'glossary')!;
   // The analysis controls belong to the working screen. The start, unlock and set-up screens keep only the brand and the utilities.
   const working = $derived(app.screen === 'running');
@@ -47,7 +50,7 @@
   const home = { id: 'home', label: KEY_TEXT.home, open: () => goHome() };
   const caseHome = { id: 'case-home', label: CASE_HOME_TEXT.navButton, open: () => openCaseHome() };
   const lock = { id: 'lock', label: KEY_TEXT.lock, open: () => { void lockCases(); } };
-  const menuEntries = $derived([...(showHome ? [home] : []), ...(showCaseHome ? [caseHome] : []), ...(working ? navDrawers : []), glossary, ...(showLock ? [lock] : [])]);
+  const menuEntries = $derived([...(showHome ? [home] : []), ...(showCaseHome ? [caseHome] : []), ...(working ? navDrawers : []), blackbox, glossary, ...(showLock ? [lock] : [])]);
   const isOpen = (id: string) => id === 'glossary' ? panels.glossaryOpen : panels.sidePanel === id;
   const anyOpen = $derived(drawers.some(item => isOpen(item.id)));
   const ledgerTotal = $derived(ledger.items.length);
@@ -129,6 +132,7 @@
       </div>
     {:else}
       <Eli10Toggle />
+      <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={isOpen(blackbox.id)} onclick={blackbox.open}>{blackbox.label}</button>
       <button type="button" class="header-button" aria-haspopup="dialog" aria-expanded={isOpen(glossary.id)} onclick={glossary.open}>{glossary.label}</button>
       {#if showLock}<button type="button" class="header-button" aria-label={KEY_TEXT.lockLabel} onclick={() => { void lockCases(); }}>{KEY_TEXT.lock}</button>{/if}
     {/if}
