@@ -142,7 +142,7 @@ Open a case and choose **Open guided analysis**. The page has a left rail with S
 
 Every step page has the same frame: the step name, a status sticker, an **In a nutshell** sentence, the reasons for any step that could not be fully tested, the body, and Previous step and Next step.
 
-Status words are fixed. After a run they are Ready, Partly ready, Cannot test yet or Failed. Before a run a step reads Waiting, during a run Running, and both are hatched, never green. A run that fails before any answer arrives reads Failed on every step. When the windows, sources or lists change after a run, each step after Step 0 says **Out of date, rerun**. The numbers on screen stay those of the earlier run until you run again.
+Status words are fixed. After a run they are Ready, Partly ready, Cannot test yet or Failed. Before a run a step reads Waiting, during a run Running, and both are hatched, never green. These two and the **Out of date, rerun** line are the only words beyond the four. They say a step has no answer to show yet, or that the answer is old, and never that anything passed. A run that fails before any answer arrives reads Failed on every step. When the windows, sources or lists change after a run, each step after Step 0 says **Out of date, rerun**. The numbers on screen stay those of the earlier run until you run again.
 
 The rail rows are buttons (outlined). The status next to each row is a sticker: information, not a button. There is one primary button on a screen. On the Steps tab it is **Run the steps** until an answer is on screen, then **Run again** (outlined) takes over.
 
@@ -199,7 +199,7 @@ Screen ids `p6-step-10`, `p6-no-clear-origin`.
 Origin and suspects. The page shows, in order:
 
 1. **What moved first**: the origin and victim table (tier, when it first moved in UTC, what moved, role). When two tiers moved together the page says **No clear origin** and lists them without calling one first.
-2. **Colours**: red most likely, orange likely, green ruled out, grey not sure. Grey is never a pass.
+2. **Colours**: red most likely, orange likely, green ruled out, grey not sure. Grey is never a pass. The green card reads "Ruled out by the data we have", so a ruling-out is never worded as stronger than the data behind it.
 3. **Suspects**: each ranked suspect as a card with its colour word, why it fits, the evidence kind (observed on its own data or inferred), the check that would overturn it, and **Add this check** to the checklist. Grey suspects follow, then the ones ruled out (collapsed).
 4. **The cheapest check** to make next.
 5. **How sure we are**: None, Low, Medium or High, the sources used and missing, and the one check that would overturn the answer.
@@ -235,7 +235,7 @@ Pick a later day. Unravis compares the same hours on that day with the incident 
 
 Screen ids `p6-export-1`, `p6-export-2`.
 
-The report is made from the run on screen. Tick what to include: the headline figures, the suspects, the checklist and the sources. **Download report (HTML)** is the one primary button. **Download data (CSV)** has the numbers only. **Preview** shows the report in a sandboxed frame before you save.
+The report is made from the run on screen. The server reads the case data again to build it, so a large case can take a moment. Tick what to include: the headline figures, the suspects, the checklist and the sources. **Download report (HTML)** is the one primary button. **Download data (CSV)** has the numbers only. **Preview** shows the report in a sandboxed frame before you save.
 
 - The file never contains a request payload, a user id, a connection detail or a password.
 - The CSV starts with a byte-order mark so a spreadsheet reads it as UTF-8, and any cell that starts with =, +, - or @ is written as text so it cannot run as a formula.
