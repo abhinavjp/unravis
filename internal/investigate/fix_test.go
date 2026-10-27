@@ -305,3 +305,34 @@ func TestFixF8PartsAndIISEdges(t *testing.T) {
 		t.Errorf("step 3 = %q %v", r.Steps[3].Readiness, r.Steps[3].Reasons)
 	}
 }
+
+// N1: with no IIS rows the origin is "not enough data" (outside time was never
+// read), so no suspect may be red on the strength of "its tier moved first".
+func TestFixN1NoRedWhileTheOriginIsNotNamed(t *testing.T) {
+	ref, inc := stdWindows()
+	lim := 10
+	mk := func(iis bool) Input {
+		in := gen(genCfg{seed: 12, ref: ref, inc: inc, perMin: 30, iis: iis,
+			mods: []mod{{from: at(10, 20), to: at(11, 30), addC: 450}}})
+		in.PoolLimit = &lim
+		in.ReleasesEntered = true
+		return in
+	}
+	r := Analyze(mk(false))
+	if r.Origin.Status == OriginNamed {
+		t.Fatalf("origin = %+v, the test needs no named origin", r.Origin)
+	}
+	for _, s := range r.Suspects {
+		if s.Colour == Red {
+			t.Errorf("%s is red while the origin is %q: %s", s.ID, r.Origin.Status, s.Why)
+		}
+	}
+	if s := findSuspect(r, "S3"); s == nil || s.Result != ResConsistent || s.Colour != Orange {
+		t.Errorf("S3 = %+v, want consistent / orange", s)
+	}
+	// With IIS read, the origin is named and S3 stays red.
+	r = Analyze(mk(true))
+	if s := findSuspect(r, "S3"); r.Origin.Status != OriginNamed || s == nil || s.Colour != Red {
+		t.Errorf("with IIS: origin %q S3 %+v, want named and red", r.Origin.Status, s)
+	}
+}

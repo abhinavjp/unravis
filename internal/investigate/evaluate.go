@@ -329,9 +329,15 @@ func colour(sps []Suspect, in Input, f Facts, th Thresholds) {
 			}
 		}
 	}
+	unread := unreadTiers(f)
 	for _, i := range comp {
 		sp := &sps[i]
 		switch {
+		case earliest != nil && sp.OnsetAt != nil && sp.OnsetAt.Sub(*earliest) < sep && len(nearTiers) == 1 && len(unread) > 0:
+			// A tier whose own data was not read could have moved first, so no tier is
+			// clearly first and none is red (the origin says the same).
+			sp.Colour = Orange
+			sp.Why += " Its tier moved first of those that could be dated, but " + joinLabels(unread) + " could not be read in every minute, so it is not called the first."
 		case earliest != nil && sp.OnsetAt != nil && sp.OnsetAt.Sub(*earliest) < sep && len(nearTiers) == 1:
 			sp.Colour = Red
 			sp.Why += " Its tier moved first."
