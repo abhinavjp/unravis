@@ -128,6 +128,58 @@ func (c *Case) ReplaceRetries(ctx context.Context, items []casestore.RetryItem) 
 	return out, nil
 }
 
+// NoteRetry writes one item, replacing the one with the same kind and key.
+func (c *Case) NoteRetry(ctx context.Context, item casestore.RetryItem) (casestore.RetryItem, error) {
+	clean, err := casestore.CleanRetries([]casestore.RetryItem{item})
+	if err != nil {
+		return casestore.RetryItem{}, err
+	}
+	db, release, err := c.retryGate(ctx)
+	if err != nil {
+		return casestore.RetryItem{}, err
+	}
+	defer release()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return casestore.RetryItem{}, c.mapDBErr(err)
+	}
+	if _, err := tx.ExecContext(ctx, retriesSQL); err != nil {
+		_ = tx.Rollback()
+		return casestore.RetryItem{}, c.mapDBErr(err)
+	}
+	it := clean[0]
+	if _, err := tx.ExecContext(ctx, "DELETE FROM case_retries WHERE kind = ? AND lower(key) = lower(?)", it.Kind, it.Key); err != nil {
+		_ = tx.Rollback()
+		return casestore.RetryItem{}, c.mapDBErr(err)
+	}
+	var n int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM case_retries").Scan(&n); err != nil {
+		_ = tx.Rollback()
+		return casestore.RetryItem{}, c.mapDBErr(err)
+	}
+	if n >= casestore.MaxRetries {
+		_ = tx.Rollback()
+		return casestore.RetryItem{}, casestore.ErrCapExceeded
+	}
+	var payload any
+	if len(it.Payload) > 0 {
+		payload = it.Payload
+	}
+	now := c.s.now().UTC().Truncate(time.Millisecond)
+	res, err := tx.ExecContext(ctx, "INSERT INTO case_retries(kind, key, label, reason, payload, created) VALUES(?,?,?,?,?,?)",
+		it.Kind, it.Key, it.Label, it.Reason, payload, now.Format(time.RFC3339Nano))
+	if err != nil {
+		_ = tx.Rollback()
+		return casestore.RetryItem{}, c.mapDBErr(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return casestore.RetryItem{}, c.mapDBErr(err)
+	}
+	it.ID, _ = res.LastInsertId()
+	it.Created = now
+	return it, nil
+}
+
 func (c *Case) RemoveRetry(ctx context.Context, id int64) error {
 	db, release, err := c.retryGate(ctx)
 	if err != nil {

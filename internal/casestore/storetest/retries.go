@@ -66,6 +66,26 @@ func retriesContract(t *testing.T, f Factory, caps casestore.Caps) {
 	if list, _ = r.Retries(e.ctx); len(list) != 0 {
 		t.Errorf("list after remove: %+v", list)
 	}
+	// NoteRetry adds one line and leaves the rest alone; the same kind and key (any case) is replaced, not doubled.
+	if _, err := r.ReplaceRetries(e.ctx, in[:1]); err != nil {
+		t.Fatal(err)
+	}
+	noted, err := r.NoteRetry(e.ctx, casestore.RetryItem{Kind: casestore.RetryImport, Key: "file:a.csv", Label: "a.csv", Reason: "import-failed"})
+	if err != nil || noted.ID == 0 || noted.Created.IsZero() {
+		t.Fatalf("NoteRetry: %+v %v", noted, err)
+	}
+	if _, err := r.NoteRetry(e.ctx, casestore.RetryItem{Kind: casestore.RetryImport, Key: "FILE:A.CSV", Label: "a.csv", Reason: "import-failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ = r.Retries(e.ctx); len(list) != 2 || list[0].Kind != casestore.RetryAudit || list[1].Kind != casestore.RetryImport {
+		t.Fatalf("after NoteRetry twice: %+v", list)
+	}
+	if _, err := r.NoteRetry(e.ctx, casestore.RetryItem{Kind: "other", Key: "k", Label: "l", Reason: "r"}); !errors.Is(err, casestore.ErrBadRetry) {
+		t.Errorf("NoteRetry of a bad item: %v", err)
+	}
+	if _, err := r.ReplaceRetries(e.ctx, nil); err != nil {
+		t.Fatal(err)
+	}
 	// Bounds.
 	bad := []casestore.RetryItem{
 		{Kind: "other", Key: "k", Label: "l", Reason: "r"},

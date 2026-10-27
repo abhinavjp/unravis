@@ -1341,7 +1341,14 @@ func (h *handler) importFileWith(ctx context.Context, w http.ResponseWriter, id 
 		meta.AckGating, meta.AckText = true, "preview"
 	}
 	var sum string
+	if !preview {
+		// Say "this file needs another try" before the work starts: a kill in the middle leaves the line (C17).
+		noteImportAttempt(ctx, c, fileName)
+	}
 	res, err := c.Import(ctx, meta, body, importRun(ctx, imp, opts, preview, &sum))
+	if !preview && importLanded(err) {
+		clearImportAttempt(ctx, c, fileName)
+	}
 	if preview && errors.Is(err, errPreviewDone) {
 		if existing, found := h.sameBytes(ctx, c, sum); found {
 			writeJSON(w, http.StatusConflict, caseFailure{Error: "These bytes are already imported into this case.", Reason: "duplicate", ImportID: existing}, 4096)

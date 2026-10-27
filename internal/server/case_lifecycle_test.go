@@ -621,3 +621,60 @@ func TestInj7LockTheKeyBetweenCreateSteps(t *testing.T) {
 		t.Fatalf("store holds %d cases, want 1", len(items))
 	}
 }
+
+// C17: an import that failed, or was killed, is listed as needing another try by the server itself, not only by the wizard. A kill
+// in the middle is the same as a failure here: the line is written before the work starts and removed only when the file is in.
+func TestFailedImportIsListedAsNeedingAnotherTry(t *testing.T) {
+	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
+		bad := &upload{"orders.csv", toyCSV(toyRow(1, "web-a", "BOOM", 5))}
+		if res := e.upload(commitPath(id), ackFields, bad); res.Code != http.StatusInternalServerError {
+			t.Fatalf("failing import = %d %s", res.Code, res.Body)
+		}
+		v := e.view(t, id)
+		if len(v.Retries) != 1 || v.Retries[0].Kind != "import" || v.Retries[0].Label != "orders.csv" || v.Retries[0].Reason != "import-failed" {
+			t.Fatalf("after a failed import the list is %+v", v.Retries)
+		}
+		// A preview keeps nothing, so it leaves no line either.
+		good := &upload{"fresh.csv", toyCSV(toyRow(1, "web-a", "alpha", 5))}
+		if res := e.upload(commitPath(id)+"&preview=1", nil, good); res.Code != http.StatusOK {
+			t.Fatalf("preview = %d %s", res.Code, res.Body)
+		}
+		if v := e.view(t, id); len(v.Retries) != 1 {
+			t.Fatalf("a preview changed the list: %+v", v.Retries)
+		}
+		// The same file name, tried again and landed: the line goes, whichever side wrote it. The wizard's own line for the file
+		// (its key is the source key) goes too; a line for another file stays.
+		putRetries(e, id, `{"items":[{"kind":"import","key":"file|orders.csv","label":"orders.csv","reason":"import-failed"},{"kind":"import","key":"file|other.csv","label":"other.csv","reason":"import-failed"}]}`)
+		noteAttempt(t, e, id, "orders.csv")
+		if v := e.view(t, id); len(v.Retries) != 3 {
+			t.Fatalf("setup: %+v", v.Retries)
+		}
+		again := &upload{"orders.csv", toyCSV(toyRow(1, "web-a", "alpha", 5))}
+		if res := e.upload(commitPath(id), ackFields, again); res.Code != http.StatusCreated {
+			t.Fatalf("second try = %d %s", res.Code, res.Body)
+		}
+		v = e.view(t, id)
+		if len(v.Retries) != 1 || v.Retries[0].Label != "other.csv" {
+			t.Fatalf("after the file landed the list is %+v", v.Retries)
+		}
+		// The same bytes again is a duplicate: the file is in the case, so its line goes as well.
+		noteAttempt(t, e, id, "renamed.csv")
+		if res := e.upload(commitPath(id), ackFields, &upload{"renamed.csv", again.content}); res.Code != http.StatusConflict {
+			t.Fatalf("duplicate = %d %s", res.Code, res.Body)
+		}
+		if v := e.view(t, id); len(v.Retries) != 1 {
+			t.Fatalf("a duplicate left its line: %+v", v.Retries)
+		}
+	})
+}
+
+// noteAttempt writes the server's line for a file the way an import that starts does, to stand in for a run that was killed.
+func noteAttempt(t *testing.T, e *caseEnv, id, fileName string) {
+	t.Helper()
+	c, err := e.store.Open(context.Background(), casestore.CaseID(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	noteImportAttempt(context.Background(), c, fileName)
+}

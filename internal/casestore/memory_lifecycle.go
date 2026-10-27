@@ -3,6 +3,7 @@ package casestore
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -158,6 +159,37 @@ func (c *memCase) ReplaceRetries(ctx context.Context, items []RetryItem) ([]Retr
 	}
 	c.d.retries = clean
 	return copyRetries(clean), nil
+}
+
+func (c *memCase) NoteRetry(ctx context.Context, item RetryItem) (RetryItem, error) {
+	clean, err := CleanRetries([]RetryItem{item})
+	if err != nil {
+		return RetryItem{}, err
+	}
+	if err := c.check(ctx); err != nil {
+		return RetryItem{}, err
+	}
+	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	if c.d.erased {
+		return RetryItem{}, ErrNotFound
+	}
+	it := clean[0]
+	kept := c.d.retries[:0:0]
+	for _, old := range c.d.retries {
+		if old.Kind == it.Kind && strings.EqualFold(old.Key, it.Key) {
+			continue
+		}
+		kept = append(kept, old)
+	}
+	if len(kept) >= MaxRetries {
+		return RetryItem{}, ErrCapExceeded
+	}
+	c.d.nextRetry++
+	it.ID = c.d.nextRetry
+	it.Created = c.s.now().UTC().Truncate(time.Millisecond)
+	c.d.retries = append(kept, it)
+	return copyRetries([]RetryItem{it})[0], nil
 }
 
 func (c *memCase) RemoveRetry(ctx context.Context, id int64) error {

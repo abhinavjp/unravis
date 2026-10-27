@@ -57,6 +57,11 @@ type RetryStore interface {
 	ReplaceRetries(ctx context.Context, items []RetryItem) ([]RetryItem, error)
 	// RemoveRetry deletes one item. An ID that is not there is not an error.
 	RemoveRetry(ctx context.Context, id int64) error
+	// NoteRetry writes one item without touching the others: an item with the same
+	// kind and key (any case) is replaced, otherwise it is added. The server uses it
+	// to say "this file needs another try" before an import starts, so a crash
+	// in the middle leaves the line behind (C17). Same refusals as ReplaceRetries.
+	NoteRetry(ctx context.Context, item RetryItem) (RetryItem, error)
 }
 
 // ErrBadRetry is the refusal of a retry item that breaks the bounds above.
