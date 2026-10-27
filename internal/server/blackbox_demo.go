@@ -716,6 +716,11 @@ func demoBlackboxes(now time.Time) (*memBBStore, *simWorld, *simPC) {
 		_ = e
 		_ = err
 	}
+	// Not placed: an entry for a Blackbox on this PC whose service is gone (the service
+	// now running here has another name).
+	if loc, err := blackbox.ParseLocation(`D:\UnravisBlackboxOld`); err == nil {
+		_, _ = store.Add(bbsaved.AddInput{Name: "web-g", Location: loc, ThisPC: true, RecorderName: "web-g"})
+	}
 	// Not found: the folder is in the list but nothing is there.
 	if loc, err := blackbox.ParseLocation(`E:\OldBox`); err == nil {
 		_, _ = store.Add(bbsaved.AddInput{Name: "old-box", Location: loc})

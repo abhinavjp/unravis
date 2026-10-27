@@ -263,6 +263,7 @@ export const BB_TEXT = {
   removeOtherSteps: 'Run in an administrator command prompt on that server. The recordings in the folder stay.',
   removeOtherCommands: 'sc stop UnravisBlackbox\nsc delete UnravisBlackbox',
   removeOtherAfter: 'Afterwards use Forget this place, so Unravis stops asking for it. That also drops the sealed read key.',
+  removeNotPlaced: 'No service with this name is installed on this PC now. Forget this place to clear it from the list. Nothing else is touched.',
   forgetText: 'Forget removes the saved place and its sealed read key from this PC. The Blackbox and its recordings are not touched.',
   forgotten: 'Removed from the list. The Blackbox and its recordings were not touched.',
 

@@ -355,7 +355,7 @@ func TestBlackboxEveryStateAppearsOnTheDemoList(t *testing.T) {
 	}
 	want := map[string]string{
 		"web-a": "running", "web-b": "running-late", "web-old": "stopped", "web-c": "disk-low", "web-d": "clock-differs",
-		"web-e": "unreachable", "web-f": "incomplete", "old-box": "not-found",
+		"web-e": "unreachable", "web-f": "incomplete", "old-box": "not-found", "web-g": "not-placed",
 	}
 	for n, s := range want {
 		if got[n] != s {

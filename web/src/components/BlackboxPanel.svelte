@@ -244,7 +244,12 @@
           {#if actionError}<div class="inline-error" role="alert">{actionError}</div>{/if}
         </div>
 
-        {#if item.thisPc}
+        {#if item.thisPc && item.state.state === 'not-placed'}
+          <div class="bb-actions">
+            <button type="button" class="primary-button" disabled={!!working} onclick={() => show({ kind: 'wizard' })}>{T.place}</button>
+            <button type="button" class="secondary-button" disabled={!!working} onclick={() => show({ kind: 'remove', id: item.id })}>{T.removeForget}</button>
+          </div>
+        {:else if item.thisPc}
           <p class="bb-note">{T.adminNote}</p>
           <div class="bb-actions">
             {#if !running(item) && thisPc.installed}<button type="button" class="primary-button" disabled={!!working} onclick={start}>{T.start}</button>{/if}

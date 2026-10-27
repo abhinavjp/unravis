@@ -12,7 +12,8 @@
   } = $props();
 
   type Phase = { kind: 'idle' } | { kind: 'working' } | { kind: 'done'; text: string } | { kind: 'failed'; text: string };
-  const here = $derived(item.thisPc);
+  const gone = $derived(item.thisPc && item.state.state === 'not-placed');
+  const here = $derived(item.thisPc && !gone);
   const typedName = $derived(thisPc.name || item.name);
   let deleteRecordings = $state(false);
   let typed = $state('');
@@ -73,6 +74,15 @@
     </div>
     <div class="bb-actions">
       <button type="button" class="primary-button" disabled={busy || !ready} onclick={removeHere}>{T.removeButton}</button>
+      <button type="button" class="secondary-button" disabled={busy} onclick={onCancel}>{T.cancel}</button>
+    </div>
+  {:else if gone}
+    <p class="bb-note">{T.removeNotPlaced}</p>
+    <div aria-live="polite">
+      {#if phase.kind === 'failed'}<div class="inline-error" role="alert">{phase.text}</div>{/if}
+    </div>
+    <div class="bb-actions">
+      <button type="button" class="primary-button" disabled={busy} onclick={forget}>{T.removeForget}</button>
       <button type="button" class="secondary-button" disabled={busy} onclick={onCancel}>{T.cancel}</button>
     </div>
   {:else}

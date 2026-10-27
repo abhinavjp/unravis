@@ -315,6 +315,10 @@ func (b *blackboxHub) lookEntry(ctx context.Context, e bbsaved.Entry, found *bla
 	if e.ThisPC && found != nil && !found.Installed {
 		placed = false
 	}
+	// The service on this PC belongs to another name: this entry's service is gone.
+	if e.ThisPC && found != nil && found.Installed && found.Name != "" && e.RecorderName != "" && !strings.EqualFold(found.Name, e.RecorderName) {
+		placed = false
+	}
 	src, err := b.source(e)
 	if err != nil {
 		return bbLook{Err: err, State: blackbox.DeriveState(blackbox.StateInput{Placed: placed, Err: err})}
@@ -766,7 +770,7 @@ func (h *handler) bbInstall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, bbFailure{
 			Error:  "The Blackbox was installed on this PC, but Unravis could not save its read key.",
 			Reason: "key-not-saved",
-			Next:   "Remove the Blackbox from this PC and install it again. The read key is shown only once.",
+			Next:   "Remove the Blackbox from this PC and install it again.",
 		}, 4096)
 		return
 	}

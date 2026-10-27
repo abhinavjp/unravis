@@ -170,3 +170,10 @@ test('the panel shows no network scan and says the Blackbox only reads', () => {
   assert.doesNotMatch(panel, /scan the network|discover/i);
   assert.ok(BB_TEXT.readOnly.length > 20);
 });
+
+test('a not-placed entry offers to place a Blackbox or forget the place, and the remove dialog has a words-only branch', () => {
+  const panel = read('src/components/BlackboxPanel.svelte');
+  assert.match(panel, /not-placed/);
+  assert.ok(BB_TEXT.removeNotPlaced && BB_TEXT.removeNotPlaced.length > 20);
+  assert.match(read('src/components/BlackboxRemove.svelte'), /gone/);
+});
