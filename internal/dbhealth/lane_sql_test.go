@@ -83,6 +83,15 @@ func TestSQLLaneServerCheckRestartInsideWindows(t *testing.T) {
 	if !strings.Contains(checkByID(t, r, CheckServer).Summary, "cold") {
 		t.Errorf("summary = %s", checkByID(t, r, CheckServer).Summary)
 	}
+	if a, ok := r.Lane.Answers["D13"]; ok {
+		t.Errorf("counters since a restart inside the windows miss what came before it, so D13 stays open: %v", a)
+	}
+	q = healthySQL("16.0.1")
+	q.by["unravis:server"] = []Row{{"started_local": at(1, 3, 0), "threadpool_tasks": int64(0)}}
+	r = RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if r.Lane.Answers["D13"] != AnswerNo {
+		t.Errorf("a server running since before the reference window with no waits is D13 no: %v", r.Lane.Answers)
+	}
 }
 
 func TestSQLLaneServerStartedAfterIncidentDoesNotAnswer(t *testing.T) {
@@ -230,12 +239,40 @@ func TestSQLLaneQueryStoreFewRunsStaysUnknown(t *testing.T) {
 	}
 }
 
-func TestSQLLaneQueryStoreHistoryStartedLateIsD14(t *testing.T) {
+func TestSQLLaneQueryStoreFullReadGivesNoNo(t *testing.T) {
+	q := healthySQL("16.0.1")
+	rows := []Row{qsRow(1, 10, "ref", 60, 10, 100), qsRow(1, 10, "inc", 60, 11, 100)}
+	for i := 0; i < laneQSMaxRows-2; i++ {
+		rows = append(rows, qsRow(1000+i, 5000+i, "ref", 1, 1, 1))
+	}
+	q.by["unravis:qs_stats"] = rows
+	r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if _, ok := r.Lane.Answers["D3"]; ok {
+		t.Errorf("a read cut short must not rule a plan change out: %v", r.Lane.Answers)
+	}
+	if _, ok := r.Lane.Answers["D15"]; ok {
+		t.Errorf("a read cut short must not rule growth out: %v", r.Lane.Answers)
+	}
+	if !strings.Contains(checkByID(t, r, CheckQueryStore).Summary, "cut short") {
+		t.Errorf("summary = %s", checkByID(t, r, CheckQueryStore).Summary)
+	}
+	// The same quiet data read whole is a real no.
+	q.by["unravis:qs_stats"] = rows[:2]
+	r = RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if r.Lane.Answers["D3"] != AnswerNo {
+		t.Errorf("whole read: %v", r.Lane.Answers)
+	}
+}
+
+func TestSQLLaneQueryStoreHistoryStartedLateIsNotAnswered(t *testing.T) {
 	q := healthySQL("16.0.1")
 	q.by["unravis:qs_first"] = []Row{{"first_start": at(19, 18, 0)}}
 	r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
-	if r.Lane.Answers["D14"] != AnswerYes {
-		t.Fatalf("D14 = %v", r.Lane.Answers)
+	if _, ok := r.Lane.Answers["D14"]; ok {
+		t.Fatalf("oldest kept history cannot tell enable time from cleanup: %v", r.Lane.Answers)
+	}
+	if !strings.Contains(checkByID(t, r, CheckQueryStore).Summary, "cleaned up") {
+		t.Errorf("summary = %s", checkByID(t, r, CheckQueryStore).Summary)
 	}
 	q.by["unravis:qs_first"] = []Row{{"first_start": at(1, 0, 0)}}
 	r = RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)

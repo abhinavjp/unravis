@@ -32,9 +32,12 @@ const (
 	laneNearAfter   = 5 * time.Minute
 )
 
+// laneQSMaxRows is how many query and plan rows the stats read returns. A full batch means busier queries were kept and quieter ones cut off.
+const laneQSMaxRows = 3000
+
 func qLaneQSStats(req LaneRequest) string {
 	incStart := sqlOffsetLit(req.Incident.Start)
-	return `/* unravis:qs_stats */ SELECT TOP 3000 q.query_id, p.plan_id, ` +
+	return `/* unravis:qs_stats */ SELECT TOP ` + fmt.Sprint(laneQSMaxRows) + ` q.query_id, p.plan_id, ` +
 		`CASE WHEN i.start_time >= ` + incStart + ` THEN 'inc' ELSE 'ref' END AS win, ` +
 		`SUM(rs.count_executions) AS execs, ` +
 		`SUM(rs.avg_duration * rs.count_executions) / NULLIF(SUM(rs.count_executions), 0) / 1000.0 AS avg_ms, ` +
@@ -217,7 +220,9 @@ func evalLaneServer(rows []Row, base baseInfo, req LaneRequest) serverOutcome {
 		parts = append(parts, "An availability group is set up; its commit delay is not read here.")
 	}
 	// The wait counters are totals since the start, so they can rule threads out (never waited) but cannot place a wait inside the window.
-	if !out.start.After(span.End) {
+	// They only describe the windows when the server was already running before the reference window began: after a restart inside the
+	// span, the counters miss everything that happened before it.
+	if out.start.Before(span.Start) {
 		if num(r["threadpool_tasks"]) == 0 {
 			out.answers["D13"] = AnswerNo
 			parts = append(parts, "No task has waited for a worker thread since the start.")
@@ -395,6 +400,7 @@ type qsOutcome struct {
 // evalLaneQueryStore compares the two windows. Plans are compared per query: a plan seen only in the incident, together with a duration at least
 // twice the reference, is a regression (D3); the same plans with reads and duration both at least twice as high is growth (D15).
 func evalLaneQueryStore(opt qsOptions, first time.Time, hasFirst bool, stats, intervals []Row, req LaneRequest) qsOutcome {
+	truncated := len(stats) >= laneQSMaxRows
 	out := qsOutcome{answers: map[string]string{}}
 	ref, inc := qsGroup(stats, "ref"), qsGroup(stats, "inc")
 	if len(inc) == 0 {
@@ -408,8 +414,8 @@ func evalLaneQueryStore(opt qsOptions, first time.Time, hasFirst bool, stats, in
 	var summary []string
 	if hasFirst {
 		if first.After(req.Reference.Start) {
-			out.answers["D14"] = AnswerYes
-			summary = append(summary, "Query Store's history starts at "+utcText(first)+", after the reference window began.")
+			// The oldest kept interval is when it was switched on or when older history was cleaned up; the two cannot be told apart here.
+			summary = append(summary, "Query Store's oldest kept history starts at "+utcText(first)+", after the reference window began. That is either when it was switched on or when older history was cleaned up, so this stays open.")
 		} else {
 			out.answers["D14"] = AnswerNo
 			summary = append(summary, "Query Store has history from before the reference window.")
@@ -458,17 +464,22 @@ func evalLaneQueryStore(opt qsOptions, first time.Time, hasFirst bool, stats, in
 		summary = append(summary, "No query ran "+fmt.Sprint(laneMinRuns)+" or more times in both windows, so plans cannot be compared.")
 	} else {
 		summary = append(summary, plural(matched, "query", "queries")+" ran "+fmt.Sprint(laneMinRuns)+" or more times in both windows.")
+		if truncated {
+			summary = append(summary, "The read was cut short at "+fmtInt(laneQSMaxRows)+" query and plan rows (the busiest first), so a query that is not in it may have changed plan; a yes still stands, a no is not given.")
+		}
 		if slowNew > 0 {
 			out.answers["D3"] = AnswerYes
 			summary = append(summary, plural(slowNew, "got", "got")+" a new plan and ran "+fmtF(worst, 1)+" times slower at worst.")
-		} else {
+		} else if !truncated {
 			out.answers["D3"] = AnswerNo
 			summary = append(summary, "None got a new plan and ran twice as slow.")
+		} else {
+			summary = append(summary, "None of those read got a new plan and ran twice as slow.")
 		}
 		if grown > 0 {
 			out.answers["D15"] = AnswerYes
 			summary = append(summary, plural(grown, "kept", "kept")+" its plan but read and took at least twice as much.")
-		} else if readsUp == 0 {
+		} else if readsUp == 0 && !truncated {
 			out.answers["D15"] = AnswerNo
 			summary = append(summary, "Reads per run did not grow.")
 		}
