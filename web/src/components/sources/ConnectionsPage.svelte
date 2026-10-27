@@ -21,6 +21,7 @@
   let mongo = $state.raw<RecentConnection[]>([]);
   let loaded = $state(false);
   let loadFailed = $state(false);
+  let demo = $state(false);
   let tests = $state.raw<Record<string, { word: ConnectionWord; at: string; problem: string }>>({});
   let testing = $state('');
   let asking = $state('');
@@ -40,7 +41,9 @@
     const [a, b] = await Promise.allSettled([api.sqlConnections(), api.recentConnections()]);
     if (a.status === 'fulfilled' && Array.isArray(a.value)) sql = a.value;
     if (b.status === 'fulfilled' && Array.isArray(b.value)) mongo = b.value;
-    loadFailed = a.status === 'rejected' && b.status === 'rejected';
+    const refused = (r: PromiseSettledResult<unknown>) => r.status === 'rejected' && (r.reason as { status?: number } | null)?.status === 503;
+    demo = refused(a) && refused(b);
+    loadFailed = a.status === 'rejected' && b.status === 'rejected' && !demo;
     loaded = true;
   }
   onMount(() => { void load(); });
@@ -113,7 +116,9 @@
     <p class="hint">{CONN_TEXT.mongoHere}</p>
   {/if}
 
-  {#if loadFailed}
+  {#if demo}
+    <div class="empty" data-demo><p class="lead">{CONN_TEXT.demo}</p></div>
+  {:else if loadFailed}
     <div class="empty"><p class="say bad" role="alert">{CONN_TEXT.loadFailed}</p><div class="actions"><button type="button" class="btn" onclick={() => void load()}>{CONN_TEXT.retry}</button></div></div>
   {:else if loaded && rows.length === 0}
     <div class="empty"><h4>{CONN_TEXT.noneHeading}</h4><p class="lead">{CONN_TEXT.noneBody}</p></div>

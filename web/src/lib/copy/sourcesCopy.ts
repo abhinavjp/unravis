@@ -29,6 +29,7 @@ export const CONN_TEXT = {
   wordsNote: 'Works, Failed and Not tested describe one connection test only. They are not the readiness words used for sources (Ready, Partly ready, Cannot test yet, Failed).',
   origin: 'Passwords are sealed on this PC with Windows data protection, only when you tick Remember password, and are never sent back to this screen. Up to 20 SQL connections. Forget removes the saved connection and its password. It does not touch any server.',
   full: 'You have 20 of 20 saved SQL Server connections. Forget one before you save another.',
+  demo: 'The demo does not keep connections. Real ones are saved on your own computer.',
   loadFailed: 'The saved connections could not be read. Try again.',
   retry: 'Try again',
   testNeedsPassword: 'This connection has no saved password. Edit it and type one to test.',

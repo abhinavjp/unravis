@@ -72,6 +72,8 @@
       <p>{kind === 'sql' ? STEP_TEXT.noSql : STEP_TEXT.noMongo}</p>
       {#if kind === 'mongo'}<p class="hint">{STEP_TEXT.noMongoWhy}</p>{/if}
     </div>
+    <GrantScriptPanel {kind} />
+    {#if kind === 'mongo'}<ProfilerGuide database="" guide={null} />{/if}
     <LaneRunner {caseId} {kind} {days} onRan={ran} {onGone} runLabel={kind === 'sql' ? STEP_TEXT.addSql : STEP_TEXT.addMongo} />
   {:else}
     <section class="field" aria-label={STEP_TEXT.daysHeading}>

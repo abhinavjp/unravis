@@ -50,11 +50,11 @@
 
   {#if kind === 'sql'}
     <div class="field">
-      <label for="grant-version">{GRANT_TEXT.version}</label>
-      <select id="grant-version" bind:value={chosen}>
-        <option value="2022">{GRANT_TEXT.v2022}</option>
-        <option value="2019">{GRANT_TEXT.v2019}</option>
-      </select>
+      <span class="label" id="grant-version">{GRANT_TEXT.version}</span>
+      <div class="actions" role="group" aria-labelledby="grant-version">
+        <button type="button" class="btn" aria-pressed={chosen === '2022'} onclick={() => { chosen = '2022'; }}>{GRANT_TEXT.v2022}</button>
+        <button type="button" class="btn" aria-pressed={chosen === '2019'} onclick={() => { chosen = '2019'; }}>{GRANT_TEXT.v2019}</button>
+      </div>
       <p class="hint" data-version-note>{versionNote(chosen)}</p>
     </div>
   {/if}

@@ -179,3 +179,16 @@ test('the case page mounts the hub additively', () => {
   for (const name of ['ConnectionsPage', 'SqlStepPanel', 'MongoStepPanel', 'AddDataPanel', 'AddAnotherDay', 'SourceCombinations']) assert.match(hub, new RegExp(name));
   assert.match(hub, /role="tablist"/);
 });
+
+test('the demo does not keep connections, and the connections page says so instead of failing', () => {
+  const page = comp('ConnectionsPage');
+  assert.match(page, /data-demo/);
+  assert.match(page, /CONN_TEXT\.demo/);
+  assert.ok(copy.CONN_TEXT.demo.length > 0);
+});
+
+test('the empty steps still show the grant script so the owner can run it before connecting', () => {
+  const step = comp('SourceStep');
+  assert.match(step, /<GrantScriptPanel \{kind\} \/>/);
+  assert.match(comp('GrantScriptPanel'), /aria-pressed/);
+});

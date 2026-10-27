@@ -24,6 +24,8 @@
 .src .btn { color: var(--text); background: transparent; border: var(--hairline-width, 1px) solid var(--control-line); }
 .src .btn:hover:not(:disabled) { border-color: var(--text-2); }
 .src .btn-primary { color: var(--accent-ink); background: var(--accent); border: 1px solid var(--accent); }
+.src .btn[aria-pressed='true'] { border-color: var(--accent); background: var(--surface-2); }
+.src .label { font-weight: 600; font-size: var(--fs-3); }
 .src .btn:disabled, .src .btn-primary:disabled { opacity: .55; cursor: not-allowed; }
 .src .btn:focus-visible, .src .btn-primary:focus-visible, .src .link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .src .link { min-height: 44px; padding: 0 var(--space-1); color: var(--accent); background: transparent; border: 0; font-size: var(--fs-3); text-decoration: underline; cursor: pointer; }
