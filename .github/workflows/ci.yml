@@ -3,10 +3,29 @@ name: CI
 # Runs on every push to master and on every pull request.
 # The runner is pinned (windows-2022, not windows-latest): it is also the reference
 # renderer for the screenshots, so it must not change without anyone choosing it.
+#
+# Screenshot baselines and this runner (decision recorded in the P1 fix report):
+# the pictures in buildout/screenshots were first made on a developer PC, and text
+# is drawn a little differently on every machine. So the screenshot compare step is
+# NON-BLOCKING (it reports a warning and keeps the differences) until the file
+# buildout/screenshots/RUNNER-BASELINES.txt is committed. That file only ever comes
+# out of the "regenerate baselines" run below, which is how the runner's own pictures
+# reach the repo. Once it is committed, a difference fails the build.
+#
+# To regenerate: Actions, CI, "Run workflow", tick "Regenerate screenshot baselines".
+# The run skips the compare, takes new pictures on the runner and uploads them as the
+# artifact "screenshot-baselines". Unzip it over buildout/screenshots in a clone and
+# commit it (the marker file comes with the pictures).
 on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      regenerate_baselines:
+        description: Regenerate screenshot baselines on this runner and upload them (no compare)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -81,15 +100,49 @@ jobs:
         working-directory: tools/screens
         run: npm test
 
+      - name: Screenshots - are the saved pictures from this runner?
+        id: reference
+        shell: pwsh
+        run: |
+          $blocking = Test-Path -LiteralPath buildout/screenshots/RUNNER-BASELINES.txt -PathType Leaf
+          "blocking=$($blocking.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          if (-not $blocking) {
+            Write-Host '::notice::The saved screenshots were not made on this runner yet, so a difference only warns. Run this workflow with "Regenerate screenshot baselines" and commit the result.'
+          }
+
       - name: Screenshots - compare with the saved pictures
+        id: compare
+        if: ${{ inputs.regenerate_baselines != true }}
+        # Until baselines from the runner are committed, a difference is a warning, not a failure.
+        continue-on-error: ${{ steps.reference.outputs.blocking != 'true' }}
         run: ./tools/screens/run-screens.ps1
+
+      - name: Screenshots - warn that the compare did not match
+        if: ${{ steps.compare.outcome == 'failure' && steps.reference.outputs.blocking != 'true' }}
+        shell: pwsh
+        run: Write-Host '::warning::Screenshots differ from the saved pictures. Not blocking, because those pictures were not made on this runner. Regenerate them (see the top of ci.yml).'
+
+      - name: Screenshots - regenerate baselines on this runner
+        if: ${{ inputs.regenerate_baselines == true }}
+        run: |
+          ./tools/screens/run-screens.ps1 -Update
+          "Made on the CI runner (windows-2022) by workflow run $($env:GITHUB_RUN_ID), commit $($env:GITHUB_SHA)." | Set-Content -Encoding utf8 buildout/screenshots/RUNNER-BASELINES.txt
+
+      - name: Screenshots - keep the regenerated baselines
+        if: ${{ inputs.regenerate_baselines == true }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: screenshot-baselines
+          path: buildout/screenshots
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Docs - check links and screens
         working-directory: tools/screens
         run: node docs-check.mjs
 
       - name: Screenshots - keep the differences
-        if: failure()
+        if: ${{ always() && (failure() || steps.compare.outcome == 'failure') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: screenshot-differences

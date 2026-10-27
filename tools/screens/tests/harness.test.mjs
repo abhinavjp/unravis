@@ -243,3 +243,36 @@ test('build.ps1 runs npm ci as before when web/node_modules is an ordinary folde
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ci.yml cannot run here, so these checks hold its screenshot rules in place: the compare may
+// only block once baselines made on the runner are committed, and there is a way to make them.
+const ci = readFileSync(join(repo, '.github', 'workflows', 'ci.yml'), 'utf8').replace(/\r\n/g, '\n');
+const ciStep = (name) => {
+  const start = ci.indexOf(`- name: ${name}`);
+  assert.notEqual(start, -1, `ci.yml has no step "${name}"`);
+  const next = ci.indexOf('\n      - name:', start + 1);
+  return ci.slice(start, next === -1 ? undefined : next);
+};
+
+test('ci.yml has a manual run that regenerates the screenshot baselines and keeps them', () => {
+  assert.match(ci, /\n  workflow_dispatch:\n    inputs:\n      regenerate_baselines:\n        description: .+\n        type: boolean\n        default: false\n/);
+  const regen = ciStep('Screenshots - regenerate baselines on this runner');
+  assert.match(regen, /if: \$\{\{ inputs\.regenerate_baselines == true \}\}/);
+  assert.match(regen, /run-screens\.ps1 -Update/);
+  assert.match(regen, /RUNNER-BASELINES\.txt/);
+  const keep = ciStep('Screenshots - keep the regenerated baselines');
+  assert.match(keep, /name: screenshot-baselines/);
+  assert.match(keep, /path: buildout\/screenshots/);
+});
+
+test('ci.yml compare is non-blocking until baselines from the runner are committed, and skipped when regenerating', () => {
+  const compare = ciStep('Screenshots - compare with the saved pictures');
+  assert.match(compare, /continue-on-error: \$\{\{ steps\.reference\.outputs\.blocking != 'true' \}\}/);
+  assert.match(compare, /if: \$\{\{ inputs\.regenerate_baselines != true \}\}/);
+  assert.match(compare, /run-screens\.ps1\s*$/m);
+  const reference = ciStep('Screenshots - are the saved pictures from this runner?');
+  assert.match(reference, /buildout\/screenshots\/RUNNER-BASELINES\.txt/);
+  assert.match(reference, />> \$env:GITHUB_OUTPUT/);
+  // The differences are kept even when the compare only warns.
+  assert.match(ciStep('Screenshots - keep the differences'), /steps\.compare\.outcome == 'failure'/);
+});
