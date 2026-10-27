@@ -84,6 +84,30 @@ func (WinService) State(name string) (SvcState, error) {
 	return mapState(st.State), nil
 }
 
+// recoverySetter is the part of a Windows service handle setRecovery uses.
+type recoverySetter interface {
+	SetRecoveryActions([]mgr.RecoveryAction, uint32) error
+	SetRecoveryActionsOnNonCrashFailures(bool) error
+}
+
+// recoveryActions restart the service after a failure: quickly the first two
+// times, then after a minute; the count resets after a day.
+var recoveryActions = []mgr.RecoveryAction{
+	{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
+	{Type: mgr.ServiceRestart, Delay: 15 * time.Second},
+	{Type: mgr.ServiceRestart, Delay: 60 * time.Second},
+}
+
+// setRecovery makes Windows restart the service after a crash and also after it
+// exits with an error (a clean exit with a non-zero code, such as a failed
+// start-up, counts as a non-crash failure and is ignored without the flag).
+func setRecovery(s recoverySetter) error {
+	if err := s.SetRecoveryActions(recoveryActions, 86400); err != nil {
+		return err
+	}
+	return s.SetRecoveryActionsOnNonCrashFailures(true)
+}
+
 // Create registers the service to start automatically as LocalSystem and to
 // restart itself after a crash (the recorder must keep recording).
 func (WinService) Create(spec ServiceSpec) error {
@@ -101,11 +125,7 @@ func (WinService) Create(spec ServiceSpec) error {
 		return err
 	}
 	defer s.Close()
-	_ = s.SetRecoveryActions([]mgr.RecoveryAction{
-		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
-		{Type: mgr.ServiceRestart, Delay: 15 * time.Second},
-		{Type: mgr.ServiceRestart, Delay: 60 * time.Second},
-	}, 86400)
+	_ = setRecovery(s) // best effort: the service still installs without it
 	return nil
 }
 
