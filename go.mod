@@ -3,6 +3,7 @@ module api-audit-explorer
 go 1.27.3
 
 require (
+	github.com/microsoft/go-mssqldb v1.11.2
 	github.com/ncruces/go-sqlite3 v0.35.6
 	go.mongodb.org/mongo-driver v1.10.6
 	go.mongodb.org/mongo-driver/v2 v2.9.2
@@ -17,7 +18,6 @@ require (
 	github.com/golang/snappy v0.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect
-	github.com/microsoft/go-mssqldb v1.11.2 // indirect
 	github.com/montanaflynn/stats v0.0.0-20171201202039-1bf9dbcd8cbe // indirect
 	github.com/ncruces/go-sqlite3-wasm/v6 v6.3.35304 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
