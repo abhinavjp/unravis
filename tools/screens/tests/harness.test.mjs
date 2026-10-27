@@ -2,7 +2,7 @@
 // Run: npm test (in tools/screens). Needs Windows PowerShell. The tests that start the demo need
 // dist\unravis.exe (.\build.ps1) and skip themselves, saying so, when it is missing.
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -196,5 +196,50 @@ test('killing run-screens.ps1 outright ends the demo with it', { skip: (!windows
     // The folder of a killed run stays until the next run sweeps it; this test removes its own.
     for (const name of leftovers()) if (!before.has(name)) rmSync(join(tmpdir(), name), { recursive: true, force: true });
     await sleep(3000); // let the capture it was running notice the demo is gone
+  }
+});
+
+// build.ps1 in a throwaway folder with a fake npm.cmd and a fake go.cmd, so nothing real runs.
+function buildFolder() {
+  const root = mkdtempSync(join(tmpdir(), 'unravis-buildps1-'));
+  mkdirSync(join(root, 'bin'), { recursive: true });
+  mkdirSync(join(root, 'web'), { recursive: true });
+  cpSync(join(repo, 'build.ps1'), join(root, 'build.ps1'));
+  writeFileSync(join(root, 'bin', 'npm.cmd'), '@echo npm %* >> "%~dp0..\\calls.txt"\r\n@exit /b 0\r\n');
+  writeFileSync(join(root, 'bin', 'go.cmd'), '@echo go %* >> "%~dp0..\\calls.txt"\r\n@exit /b 1\r\n');
+  return root;
+}
+function buildPs1(root) {
+  const env = { ...process.env, PATH: join(root, 'bin') + ';' + process.env.PATH };
+  return powershell([join(root, 'build.ps1'), '-GoPath', join(root, 'bin', 'go.cmd'), '-Version', 'test'], { env });
+}
+const calls = (root) => (existsSync(join(root, 'calls.txt')) ? readFileSync(join(root, 'calls.txt'), 'utf8') : '');
+
+test('build.ps1 refuses to run npm when web/node_modules is a junction, and leaves the target alone', { skip: !windows && 'Windows only' }, () => {
+  const root = buildFolder();
+  const shared = mkdtempSync(join(tmpdir(), 'unravis-sharednm-'));
+  try {
+    writeFileSync(join(shared, 'sentinel.txt'), 'still here');
+    symlinkSync(shared, join(root, 'web', 'node_modules'), 'junction');
+    const run = buildPs1(root);
+    assert.notEqual(run.status, 0, run.stdout + run.stderr);
+    assert.match(run.stdout + run.stderr, /web\\node_modules is a junction/);
+    assert.equal(calls(root), '', 'npm or go ran: ' + calls(root));
+    assert.equal(readFileSync(join(shared, 'sentinel.txt'), 'utf8'), 'still here');
+  } finally {
+    rmSync(join(root, 'web', 'node_modules'), { recursive: true, force: true }); // removes the link only
+    rmSync(root, { recursive: true, force: true });
+    rmSync(shared, { recursive: true, force: true });
+  }
+});
+
+test('build.ps1 runs npm ci as before when web/node_modules is an ordinary folder', { skip: !windows && 'Windows only' }, () => {
+  const root = buildFolder();
+  try {
+    mkdirSync(join(root, 'web', 'node_modules'));
+    buildPs1(root);
+    assert.match(calls(root), /npm ci *\r?\nnpm run check *\r?\nnpm run build *\r?\n/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

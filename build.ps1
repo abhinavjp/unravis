@@ -76,6 +76,14 @@ function Invoke-Checked {
 }
 
 if (-not $SkipWeb) {
+    # `npm ci` deletes web\node_modules before it installs. In a git worktree that folder can be a
+    # junction to another checkout's, and the delete would empty the folder that checkout (and every
+    # other worktree) uses. So stop before npm runs; never follow the link.
+    $NodeModules = Join-Path $UtilityRoot 'web\node_modules'
+    $NodeModulesItem = Get-Item -LiteralPath $NodeModules -Force -ErrorAction SilentlyContinue
+    if ($NodeModulesItem -and ($NodeModulesItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        throw 'web\node_modules is a junction to another checkout. npm ci would empty it for every checkout that shares it. Run "npm run build" in web, then .\build.ps1 -SkipWeb, or remove the junction yourself first.'
+    }
     Push-Location (Join-Path $UtilityRoot 'web')
     try {
         Invoke-Checked 'npm.cmd' @('ci')
