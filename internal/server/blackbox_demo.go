@@ -605,6 +605,13 @@ func (p *simPC) Snapshot(ctx context.Context) (blackbox.SnapshotOutcome, error) 
 	}, nil
 }
 
+// cloneCfg copies the settings the simulated service runs with. The caller holds p.mu.
+func (p *simPC) cloneCfg() *blackbox.Config {
+	c := p.cfg
+	c.LogPaths = append([]string{}, p.cfg.LogPaths...)
+	return &c
+}
+
 // Scan is BlackboxDeps.Scan.
 func (p *simPC) Scan() (blackbox.LocalFound, error) {
 	p.mu.Lock()
@@ -613,7 +620,7 @@ func (p *simPC) Scan() (blackbox.LocalFound, error) {
 		return blackbox.LocalFound{}, nil
 	}
 	return blackbox.LocalFound{
-		Installed: true, Running: p.running, Name: p.cfg.Name, Folder: p.cfg.Folder, Port: p.cfg.Port, Bind: p.cfg.Bind,
+		Installed: true, Running: p.running, Name: p.cfg.Name, Folder: p.cfg.Folder, Port: p.cfg.Port, Bind: p.cfg.Bind, Settings: p.cloneCfg(),
 	}, nil
 }
 

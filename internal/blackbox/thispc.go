@@ -336,6 +336,8 @@ type LocalFound struct {
 	Bind      string   `json:"bind,omitempty"`
 	// ConfigUnreadable is set when the service exists but its settings could not be read.
 	ConfigUnreadable bool `json:"configUnreadable,omitempty"`
+	// Settings is the whole blackbox.json that was read (it holds no secret). nil when unreadable.
+	Settings *Config `json:"-"`
 }
 
 // ScanThisPC looks for a Blackbox service on this PC. A failure to ask the
@@ -360,6 +362,8 @@ func ScanThisPC(svc ServiceControl, env Env, load func(path string) (Config, err
 		return f, nil
 	}
 	f.Name, f.Folder, f.Port, f.Bind = cfg.Name, cfg.Folder, cfg.Port, cfg.Bind
+	settings := cfg
+	f.Settings = &settings
 	return f, nil
 }
 

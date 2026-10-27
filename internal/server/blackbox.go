@@ -198,6 +198,8 @@ type bbThisPC struct {
 	Listed  bool   `json:"listed"`
 	ListID  string `json:"listId,omitempty"`
 	Problem string `json:"problem,omitempty"`
+	// Settings is what the installed service runs with, so Apply settings starts from it.
+	Settings *blackbox.Config `json:"settings,omitempty"`
 }
 
 type bbListAnswer struct {
@@ -395,6 +397,7 @@ func (b *blackboxHub) thisPCBlock(entries []bbsaved.Entry, found *blackbox.Local
 		t.Scanned = true
 		t.Installed, t.Running = found.Installed, found.Running
 		t.Name, t.Folder, t.Port, t.Bind, t.ConfigUnreadable = found.Name, found.Folder, found.Port, found.Bind, found.ConfigUnreadable
+		t.Settings = found.Settings
 	}
 	return t
 }
