@@ -256,6 +256,8 @@ func buildInvestigationInput(ctx context.Context, c casestore.Case, body investi
 		in.Releases = append(in.Releases, investigate.Release{At: r.At.UTC(), Label: r.Label})
 	}
 
+	applyLaneRuns(ctx, c, &in, read)
+
 	sources, err := caseSources(ctx, c)
 	if err != nil {
 		return in, err
