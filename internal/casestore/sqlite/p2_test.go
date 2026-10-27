@@ -15,6 +15,7 @@ import (
 	"api-audit-explorer/internal/casestore/storetest"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/sealedfile"
 )
 
 // copyTree copies a case folder as a crash would leave it: whatever bytes are on
@@ -204,5 +205,55 @@ func TestColdOpenRacingCloseCaseDoesNotDeadlock(t *testing.T) {
 			t.Fatalf("round %d took %s: a lock-order wait", i, took)
 		}
 		_ = s.Close()
+	}
+}
+
+// An import holds a case's folder lock for its whole run. A Close that waits for it must not hold the store's lock while it waits, or every
+// other call of the store (here Open and List of another case) would wait too.
+func TestCloseWaitingForTheFolderLockDoesNotStallTheStore(t *testing.T) {
+	s, _ := newTestStore(t)
+	busy := mustCreate(t, s, "busy")
+	other := mustCreate(t, s, "other")
+	dir, err := s.caseDir(busy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, letGo := make(chan struct{}), make(chan struct{})
+	freed := make(chan struct{})
+	go func() {
+		release, lerr := sealedfile.Lock(dir)
+		if lerr != nil {
+			t.Error(lerr)
+			close(held)
+			close(freed)
+			return
+		}
+		close(held)
+		<-letGo
+		release()
+		close(freed)
+	}()
+	<-held
+	closed := make(chan error, 1)
+	go func() { closed <- s.CloseCase(context.Background(), busy.ID) }()
+	time.Sleep(150 * time.Millisecond) // the Close is now waiting for the folder lock
+	start := time.Now()
+	c := mustOpen(t, s, other.ID)
+	_ = c.Close()
+	if _, err := s.List(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("Open and List of another case took %v while a Close waited for the folder lock", took)
+	}
+	select {
+	case err := <-closed:
+		t.Fatalf("Close finished (%v) while the folder lock was held", err)
+	default:
+	}
+	close(letGo)
+	<-freed
+	if err := <-closed; err != nil {
+		t.Fatalf("Close after the lock was let go: %v", err)
 	}
 }

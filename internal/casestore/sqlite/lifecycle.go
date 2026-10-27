@@ -169,17 +169,33 @@ func (s *Store) CreateFor(ctx context.Context, title, requestID string) (casesto
 	return info, false, err
 }
 
-// lockCase takes the case folder's lock and, in the same step, reads the open
-// state of the case. Open holds s.mu while it loads (and so waits for the folder
-// lock); taking the two in the other order here would deadlock a Close that races
-// a cold Open. s.mu is held only while the folder lock is taken, so no Open can
-// finish between the two reads.
+// lockCase takes the case folder's lock and, with it held, reads the open state
+// of the case under s.mu. Open holds s.mu while it loads (and so waits for the
+// folder lock), so waiting for s.mu while holding the folder lock could deadlock
+// a Close that races a cold Open: s.mu is only tried, and when Open has it the
+// folder lock is let go and taken again. s.mu is never held while waiting for the
+// folder lock, so an import that holds the folder lock for its whole run stalls
+// that case's Close or Reopen but no other call of the store. With the folder
+// lock held no Open can finish its load, so the two reads agree.
 func (s *Store) lockCase(dir string, id casestore.CaseID) (release func(), h *caseState, erasing bool, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	release, err = sealedfile.Lock(dir)
-	if err != nil {
-		return nil, nil, false, err
+	deadline := time.Now().Add(lockCaseWait)
+	for {
+		release, err = sealedfile.Lock(dir)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if s.mu.TryLock() {
+			h, erasing = s.open[id], s.erasing[id]
+			s.mu.Unlock()
+			return release, h, erasing, nil
+		}
+		release()
+		if time.Now().After(deadline) {
+			return nil, nil, false, sealedfile.ErrUnavailable
+		}
+		time.Sleep(time.Millisecond)
 	}
-	return release, s.open[id], s.erasing[id], nil
 }
+
+// lockCaseWait bounds how long lockCase keeps trying while another call holds s.mu.
+const lockCaseWait = 5 * time.Second
