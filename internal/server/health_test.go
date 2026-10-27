@@ -12,10 +12,13 @@ import (
 	"api-audit-explorer/internal/sqlconn"
 )
 
-type fakeSavedSQL struct{ in sqlconn.Input }
+type fakeSavedSQL struct {
+	in      sqlconn.Input
+	saveErr error
+}
 
 func (f *fakeSavedSQL) List() ([]sqlconn.Recent, error)               { return nil, nil }
-func (f *fakeSavedSQL) Save(sqlconn.Input) (sqlconn.Recent, error)    { return sqlconn.Recent{}, nil }
+func (f *fakeSavedSQL) Save(sqlconn.Input) (sqlconn.Recent, error)    { return sqlconn.Recent{}, f.saveErr }
 func (f *fakeSavedSQL) Delete(string) error                           { return nil }
 func (f *fakeSavedSQL) Resolve(id string) (sqlconn.Input, error) {
 	if id != "saved1" {
