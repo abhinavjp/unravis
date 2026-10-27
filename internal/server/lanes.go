@@ -357,17 +357,19 @@ func applyLaneRuns(ctx context.Context, c casestore.Case, in *investigate.Input,
 		if !lane.Incident.Overlaps(incident) {
 			continue
 		}
+		// A day that only touches the incident can show something happened (yes) but cannot rule anything out for all of it.
+		whole := laneCovers(lane.Incident, incident)
 		for id, v := range lane.Answers {
 			switch v {
 			case dbhealth.AnswerYes:
 				ensureLanes(in)[id] = investigate.Yes
 			case dbhealth.AnswerNo:
-				if in.Lanes[id] != investigate.Yes {
+				if whole && in.Lanes[id] != investigate.Yes {
 					ensureLanes(in)[id] = investigate.No
 				}
 			}
 		}
-		if lane.Onset != nil {
+		if lane.Onset != nil && !lane.Onset.Before(incident.Start) && lane.Onset.Before(incident.End) {
 			if in.LaneOnsets == nil {
 				in.LaneOnsets = map[string]time.Time{}
 			}
@@ -383,6 +385,25 @@ func applyLaneRuns(ctx context.Context, c casestore.Case, in *investigate.Input,
 			}
 		}
 	}
+}
+
+// laneCoverShare is how much of the investigated incident a day must have been read over before its "no" answers apply to the incident.
+const laneCoverShare = 0.8
+
+// laneCovers says whether the day's incident window spans at least laneCoverShare of the investigated incident.
+func laneCovers(day, incident dbhealth.Window) bool {
+	total := incident.End.Sub(incident.Start)
+	if total <= 0 {
+		return false
+	}
+	from, to := day.Start, day.End
+	if incident.Start.After(from) {
+		from = incident.Start
+	}
+	if incident.End.Before(to) {
+		to = incident.End
+	}
+	return float64(to.Sub(from)) >= laneCoverShare*float64(total)
 }
 
 func ensureLanes(in *investigate.Input) map[string]investigate.Tri {

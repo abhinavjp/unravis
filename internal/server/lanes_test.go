@@ -491,6 +491,34 @@ func TestApplyLaneRunsFeedsTheEngineAndLeavesAuditOnlyAlone(t *testing.T) {
 	}
 }
 
+func TestApplyLaneRunsPartialDayCannotRuleOutTheWholeIncident(t *testing.T) {
+	inc := dbhealth.Window{Start: lday(20, 10), End: lday(20, 12)}
+	in := investigate.Input{Incident: investigate.Window{Start: inc.Start, End: inc.End}}
+	// This day was read over the last minute of the incident and the hour after it.
+	day := dbhealth.Window{Start: lday(20, 12).Add(-time.Minute), End: lday(20, 13)}
+	outside := lday(20, 12).Add(30 * time.Minute)
+	c := &healthyCase{stubTraceCase: &stubTraceCase{}}
+	c.runs = []casestore.HealthRun{laneReportJSON(t, "sql", "AuditDb", day, map[string]string{"D5": "no", "D3": "yes"}, &outside)}
+	var read investigationRead
+	applyLaneRuns(context.Background(), c, &in, &read)
+	if v, ok := in.Lanes["D5"]; ok {
+		t.Errorf("a one-minute overlap ruled D5 out for the whole incident: %v", v)
+	}
+	if in.Lanes["D3"] != investigate.Yes {
+		t.Errorf("a yes from a partial day still counts: %v", in.Lanes)
+	}
+	if len(in.LaneOnsets) != 0 {
+		t.Errorf("an onset outside the incident was used: %v", in.LaneOnsets)
+	}
+	// A day that spans the incident (with some slack either side) still rules things out.
+	c.runs = []casestore.HealthRun{laneReportJSON(t, "sql", "AuditDb", dbhealth.Window{Start: lday(20, 9), End: lday(20, 13)}, map[string]string{"D5": "no"}, nil)}
+	in = investigate.Input{Incident: investigate.Window{Start: inc.Start, End: inc.End}}
+	applyLaneRuns(context.Background(), c, &in, &read)
+	if in.Lanes["D5"] != investigate.No {
+		t.Errorf("a day over the whole incident gives no: %v", in.Lanes)
+	}
+}
+
 func TestGrantScriptsRoute(t *testing.T) {
 	healthEnv(t, &fakeSavedSQL{}, func(t *testing.T, e *caseEnv, _ string) {
 		get := func(q string) (int, string) {
