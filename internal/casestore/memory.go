@@ -30,7 +30,8 @@ func NewMemoryWith(caps Caps, now func() time.Time) Store {
 }
 
 type memStore struct {
-	mu    sync.Mutex
+	createMu sync.Mutex // CreateFor's scan-then-create is one step
+	mu       sync.Mutex
 	cases map[CaseID]*memData
 	caps  Caps
 	now   func() time.Time
@@ -80,8 +81,9 @@ func (s *memStore) Create(ctx context.Context, title string) (CaseInfo, error) {
 	if _, err := rand.Read(key); err != nil {
 		return CaseInfo{}, err
 	}
+	created := s.now().UTC()
 	d := &memData{
-		info: CaseInfo{ID: id, Title: title, Created: s.now().UTC()},
+		info: CaseInfo{ID: id, Title: title, Created: created, History: appendHistory(nil, created, HistoryCreated)},
 		key:  key,
 		ids:  map[string]struct{}{},
 	}
@@ -95,6 +97,10 @@ func copyInfo(i CaseInfo) CaseInfo {
 	if i.Closed != nil {
 		c := *i.Closed
 		i.Closed = &c
+	}
+	i.History = append([]HistoryEntry(nil), i.History...)
+	if len(i.History) == 0 {
+		i.History = nil
 	}
 	return i
 }
@@ -159,8 +165,12 @@ func (s *memStore) CloseCase(ctx context.Context, id CaseID) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.info.Closed == nil { // closing twice keeps the first time
+		if err := CheckMark(d.info.Mark); err != nil {
+			return err
+		}
 		t := s.now().UTC()
 		d.info.Closed = &t
+		d.info.History = appendHistory(d.info.History, t, HistoryClosed)
 	}
 	return nil
 }
