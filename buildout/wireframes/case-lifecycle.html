@@ -1,0 +1,831 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Case lifecycle wireframe (Unravis)</title>
+<!--
+  WIREFRAME, THROWAWAY. Rebuilt in spec v7 so it looks like the real Unravis app.
+  Reuses the app's own tokens (web/src/app.css), IBM Plex fonts (web/src/fonts), markup patterns and copy style.
+  Dummy data only. Nothing here is connected to the app. Spec: buildout/specs/2026-10-26-case-lifecycle-spec.md
+  Open it from this folder so the fonts load (../../web/src/fonts). Without them it falls back to system fonts.
+-->
+<style>
+@font-face { font-family: "IBM Plex Sans"; font-weight: 400; font-display: swap; src: url("../../web/src/fonts/ibm-plex-sans-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 500; font-display: swap; src: url("../../web/src/fonts/ibm-plex-sans-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 600; font-display: swap; src: url("../../web/src/fonts/ibm-plex-sans-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-display: swap; src: url("../../web/src/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 500; font-display: swap; src: url("../../web/src/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); }
+
+/* Tokens copied from web/src/app.css (dark default, light by [data-theme]). */
+:root { color-scheme: dark; --bg:#050807; --surface:#0a0f0d; --surface-2:#101714; --line:#1a2621; --line-soft:#131c18; --control-line:#6b8478; --text:#eef3f1; --text-2:#93a39b; --accent:#3fd6b0; --accent-ink:#03130e; --warn:#e3b341; --bad:#ff7b72; --pending:#8fa39a; --focus:#7ff0d0; --scrim:rgb(2 5 9 / 62%); }
+:root[data-theme="light"] { color-scheme: light; --bg:#f5f5f3; --surface:#ffffff; --surface-2:#eeeeeb; --line:#d9d9d4; --line-soft:#e8e8e4; --control-line:#74808f; --text:#16191d; --text-2:#4a525c; --accent:#0b6b57; --accent-ink:#ffffff; --warn:#96600a; --bad:#b02a3d; --pending:#5b6878; --focus:#0b6b57; --scrim:rgb(20 28 40 / 38%); }
+:root {
+  --font: "IBM Plex Sans","Segoe UI Variable Text",system-ui,sans-serif; --mono: "IBM Plex Mono",ui-monospace,"Cascadia Code",Consolas,monospace;
+  --radius-sm:2px; --radius-md:2px; --ease:cubic-bezier(.2,.7,.2,1); --dur:180ms; --header-h:56px;
+  --fs-1:11px; --fs-2:12px; --fs-3:13px; --fs-4:14px; --fs-5:16px; --fs-6:20px;
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px; --space-8:32px;
+  --hairline-width:1px;
+  font-family:var(--font); color:var(--text); background:var(--bg); font-size:14px; line-height:1.45; font-feature-settings:"tnum" 1; text-rendering:optimizeLegibility;
+}
+* { box-sizing:border-box; }
+body { margin:0; min-width:320px; background:var(--bg); color:var(--text); font-size:13px; }
+button, input, select { font:inherit; color:inherit; }
+button { cursor:pointer; }
+a { color:var(--accent); text-underline-offset:3px; }
+h1,h2,h3,h4,p { overflow-wrap:anywhere; }
+h1,h2,h3,h4 { font-weight:600; letter-spacing:-.01em; }
+:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+
+/* ---------- Real app shell pieces (app.css) ---------- */
+.topbar { position:relative; z-index:12; min-height:var(--header-h); padding:0 24px; display:flex; align-items:center; gap:12px; background:var(--surface); border-bottom:1px solid var(--line); flex-wrap:nowrap; }
+.brand-lockup { display:flex; align-items:center; gap:10px; flex:0 0 auto; }
+.brand-lockup h1 { margin:0; font-size:16px; line-height:1.1; }
+.brand-mark { width:26px; height:26px; padding:5px; display:flex; align-items:end; gap:2px; border-radius:var(--radius-sm); background:var(--surface-2); border:1px solid var(--line); }
+.brand-mark span { display:block; flex:1; border-radius:1px; background:var(--accent); }
+.brand-mark span:nth-child(1){height:7px;opacity:.55} .brand-mark span:nth-child(2){height:14px} .brand-mark span:nth-child(3){height:10px;opacity:.8}
+.mode-badge { color:var(--text-2); font-size:12px; font-weight:500; white-space:nowrap; }
+.header-button { display:inline-flex; align-items:center; gap:8px; min-height:32px; padding:4px 8px; color:var(--text-2); background:transparent; border:1px solid transparent; border-radius:var(--radius-sm); font-size:13px; font-weight:500; }
+.header-button:hover { color:var(--text); background:var(--surface-2); }
+.theme-toggle { width:32px; padding:0; justify-content:center; }
+.nav-items { align-self:stretch; display:flex; align-items:stretch; gap:2px; }
+.nav-button { padding:0 12px; min-height:0; color:var(--text); border-radius:0; }
+.nav-button.on { box-shadow:inset 0 -2px 0 var(--accent); }
+.actions { margin-left:auto; display:flex; align-items:center; gap:12px; }
+.utilities { display:flex; align-items:center; gap:4px; padding-left:12px; border-left:1px solid var(--line); }
+.more-btn { display:none; }
+.stage { padding:22px 24px 40px; }
+.stage-inner { max-width:1320px; margin:0 auto; display:grid; gap:12px; min-width:0; }
+.primary-button,.secondary-button,.quiet-button { border-radius:var(--radius-sm); padding:6px 12px; font-size:13px; font-weight:600; transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease); }
+.primary-button { color:var(--accent-ink); background:var(--accent); border:1px solid var(--accent); }
+.primary-button:hover:not(:disabled) { background:color-mix(in srgb,var(--accent) 88%,var(--text)); }
+.primary-button:disabled { opacity:1; color:var(--text-2); background:var(--surface-2); border-color:var(--control-line); cursor:not-allowed; }
+.secondary-button { color:var(--text); background:transparent; border:1px solid var(--line); }
+.secondary-button:hover:not(:disabled) { border-color:var(--text-2); background:var(--surface-2); }
+.secondary-button:disabled { opacity:.55; cursor:not-allowed; }
+.quiet-button { color:var(--text-2); background:transparent; border:1px solid transparent; padding:5px 8px; font-size:12px; }
+.quiet-button:hover { color:var(--text); background:var(--surface-2); }
+.link-button { padding:0; color:var(--accent); background:transparent; border:0; font:inherit; font-size:var(--fs-3); text-decoration:underline; }
+.danger { color:var(--bad); border-color:var(--bad); }
+.danger-fill { background:var(--bad); border-color:var(--bad); color:var(--bg); }
+.danger-fill:disabled { opacity:.5; }
+.inline-error { margin:0; padding:8px 10px; color:var(--text); border:1px solid var(--bad); border-radius:var(--radius-sm); background:color-mix(in srgb,var(--bad) 10%,var(--surface)); font-size:13px; }
+.notice { margin:0; padding:9px 12px; color:var(--text-2); background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); font-size:13px; }
+.notice.ok { border-color:var(--accent); color:var(--text); }
+.notice button { margin-left:8px; }
+.sample-note { margin:0; padding:9px 12px; color:var(--text); border:1px solid var(--warn); border-radius:var(--radius-sm); background:color-mix(in srgb,var(--warn) 8%,var(--surface)); font-size:13px; }
+.hint { margin:0; color:var(--text-2); font-size:var(--fs-3); }
+.hint.sm { font-size:var(--fs-2); }
+code,.mono { font-family:var(--mono); }
+
+/* Start screen (StartScreen.svelte) */
+.start,.wizard { font-family:var(--mono); }
+.start { display:grid; gap:var(--space-4); min-width:0; }
+.start-head { display:grid; gap:var(--space-2); max-width:64ch; }
+.start-head h2 { margin:0; font-size:20px; }
+.start-head p { margin:0; color:var(--text-2); font-size:var(--fs-3); }
+.cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:var(--space-3); align-items:start; }
+.card { display:grid; gap:var(--space-2); align-content:start; min-width:0; padding:var(--space-4); background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); }
+.card h3 { margin:0; font-size:15px; }
+.card-text { margin:0; color:var(--text-2); font-size:var(--fs-3); }
+.card .primary-button,.card .secondary-button { justify-self:start; }
+.cases { display:grid; gap:var(--space-2); margin:var(--space-2) 0 0; padding:0; list-style:none; }
+.case-row { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); min-width:0; padding:var(--space-2) var(--space-3); background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); }
+.case-row.flag { border-color:var(--control-line); }
+.case-info { display:grid; gap:2px; min-width:0; }
+.case-title { font-size:var(--fs-3); font-weight:600; }
+.case-meta { color:var(--text-2); font-size:var(--fs-2); }
+.chipline { display:flex; flex-wrap:wrap; gap:var(--space-1); align-items:center; }
+.state { padding:0 var(--space-1); color:var(--text-2); border:1px solid var(--control-line); border-radius:var(--radius-sm); font-size:var(--fs-2); }
+.state.open { color:var(--text); border-color:var(--accent); }
+.state.warn { color:var(--warn); border-color:var(--warn); }
+.row-actions { display:flex; flex-wrap:wrap; gap:var(--space-2); align-items:center; flex-shrink:0; position:relative; }
+.row-actions button { min-height:30px; padding:4px 10px; }
+.start-foot { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-3); }
+.fold { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); margin-top:var(--space-2); }
+.progress { height:6px; width:100%; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); }
+.progress i { display:block; height:100%; background:var(--accent); }
+
+/* Wizard (CreateWizard.svelte) */
+.wizard { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--space-4); max-width:1100px; min-width:0; margin:0 auto; font-size:var(--fs-5); }
+.wiz-top { display:grid; gap:var(--space-2); max-width:72ch; }
+.wiz-top-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-3); }
+.wiz-name { margin:0; font-size:var(--fs-6); }
+.wiz-note { margin:0; color:var(--text-2); font-size:var(--fs-3); }
+.steps ol { display:flex; margin:0; padding:0; list-style:none; border-bottom:1px solid var(--line); overflow-x:auto; }
+.step { display:flex; align-items:center; gap:var(--space-3); min-height:44px; padding:var(--space-3) var(--space-5); color:var(--text-2); border-bottom:2px solid transparent; font-size:var(--fs-4); white-space:nowrap; }
+.step i { display:grid; place-items:center; width:22px; height:22px; font-style:normal; font-size:var(--fs-2); border:1px solid var(--control-line); border-radius:50%; }
+.step.on { color:var(--text); border-bottom-color:var(--accent); } .step.on i { color:var(--accent); border-color:var(--accent); }
+.step.done i { color:var(--accent-ink); background:var(--accent); border-color:var(--accent); }
+.step-body { display:grid; gap:var(--space-3); align-content:start; min-width:0; }
+.step-count { margin:0; color:var(--text-2); font-size:var(--fs-2); }
+.step-heading { margin:0; font-size:clamp(22px,3.6vw,30px); line-height:1.2; }
+.lead { margin:0; max-width:64ch; color:var(--text-2); font-size:var(--fs-5); }
+.name-step { display:grid; gap:var(--space-5); max-width:720px; min-width:0; }
+.field { display:grid; gap:var(--space-2); min-width:0; }
+.field > label,.label { font-size:var(--fs-4); font-weight:600; }
+input[type=text],input[type=password] { width:100%; min-height:44px; padding:10px 12px; color:var(--text); background:var(--bg); border:1px solid var(--control-line); border-radius:var(--radius-sm); font:inherit; font-size:var(--fs-5); caret-color:var(--accent); }
+input[aria-invalid=true] { border-color:var(--bad); }
+.field-foot { display:flex; align-items:baseline; justify-content:space-between; gap:var(--space-3); }
+.count { flex-shrink:0; color:var(--text-2); font-size:var(--fs-2); }
+.chip { padding:2px var(--space-3); background:var(--surface-2); border:1px solid var(--control-line); border-radius:var(--radius-sm); font-size:var(--fs-3); }
+.bar { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-3); padding-top:var(--space-3); border-top:1px solid var(--line); }
+.bar .spacer { flex:1 1 0; }
+.optional { display:grid; gap:var(--space-3); padding:var(--space-4); background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); }
+.check { display:flex; align-items:flex-start; gap:var(--space-3); font-size:var(--fs-4); font-weight:600; }
+.check input { width:16px; height:16px; margin:2px 0 0; accent-color:var(--accent); flex:0 0 auto; }
+.check small { display:block; margin-top:2px; color:var(--text-2); font-size:var(--fs-3); font-weight:400; }
+.kv { display:grid; grid-template-columns:150px 1fr; gap:6px var(--space-4); margin:0; font-size:var(--fs-4); }
+.kv dt { color:var(--text-2); } .kv dd { margin:0; }
+.review-block { display:grid; gap:var(--space-2); padding:var(--space-4); background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-sm); }
+.review-block h4 { margin:0; font-size:var(--fs-4); }
+.found { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--space-2) var(--space-3); padding:var(--space-2) var(--space-3); background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); font-size:var(--fs-3); }
+
+/* Case home (CaseHome.svelte) */
+.case-home { display:grid; gap:20px; max-width:880px; margin:0 auto; font-size:14px; }
+.case-home .head h2 { margin:2px 0 6px; font-size:24px; }
+.eyebrow { margin:0; color:var(--text-2); font-size:12px; letter-spacing:.04em; text-transform:uppercase; font-weight:500; }
+.counts { display:flex; flex-wrap:wrap; gap:8px 28px; margin:14px 0 0; }
+.counts div { display:grid; gap:2px; } .counts dt { color:var(--text-2); font-size:12px; } .counts dd { margin:0; font-size:15px; }
+.block { display:grid; gap:10px; padding:16px 18px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md); }
+.block h3 { margin:0; font-size:16px; }
+.note,.empty { margin:0; color:var(--text-2); font-size:14px; }
+.actions-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; position:relative; }
+.story { list-style:none; margin:0; padding:0; display:grid; border-left:2px solid var(--line); }
+.story li { position:relative; display:grid; grid-template-columns:150px 1fr; gap:12px; padding:8px 0 8px 16px; }
+.story li::before { content:''; position:absolute; left:-6px; top:14px; width:10px; height:10px; border-radius:50%; background:var(--text-2); }
+.story li.tone-ok::before { background:var(--accent); } .story li.tone-warn::before { background:var(--warn); } .story li.tone-bad::before { background:var(--bad); }
+.story time { color:var(--text-2); font-size:12px; padding-top:2px; }
+.story .title { margin:0; font-size:14px; }
+.story .kind { display:inline-block; margin-right:6px; padding:0 6px; color:var(--text-2); font-size:11px; text-transform:uppercase; letter-spacing:.04em; border:1px solid var(--line); border-radius:4px; }
+.story .detail { margin:2px 0 0; color:var(--text-2); font-size:13px; }
+.plain { list-style:none; margin:0; padding:0; display:grid; gap:6px; font-size:14px; }
+.plain span { color:var(--text-2); font-size:13px; }
+.offer { display:grid; gap:6px; padding:10px 12px; border:1px dashed var(--line); border-radius:var(--radius-sm); }
+.offer .retry { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; font-size:13px; }
+
+/* Menu popover (header More menu pattern) */
+.menu { position:absolute; z-index:5; top:calc(100% + 6px); left:0; min-width:260px; margin:0; padding:4px; list-style:none; background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-md); box-shadow:0 12px 32px color-mix(in srgb,var(--bg) 70%,transparent); }
+.menu.right { left:auto; right:0; }
+.menu button { display:flex; width:100%; min-height:36px; align-items:center; padding:6px 12px; color:var(--text); background:transparent; border:0; border-radius:var(--radius-sm); font-size:14px; text-align:left; }
+.menu button:hover { background:color-mix(in srgb,var(--text) 8%,transparent); }
+.menu .sep { margin-top:4px; padding-top:4px; border-top:1px solid var(--line); }
+.menu .bad { color:var(--bad); }
+
+/* Drawer (drawer-header pattern) laid inside a frame */
+.under { position:relative; }
+.scrim { position:absolute; inset:0; background:var(--scrim); z-index:3; }
+.drawer { position:absolute; z-index:4; top:0; right:0; bottom:0; width:min(720px,56cqw); display:grid; gap:14px; align-content:start; padding:20px 22px; background:var(--surface); border-left:1px solid var(--line); overflow:auto; font-family:var(--font); font-size:13px; }
+.drawer-header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding-bottom:13px; border-bottom:1px solid var(--line); }
+.drawer-header h2 { margin:0; font-size:18px; } .drawer-header p { margin:3px 0 0; color:var(--text-2); font-size:12px; }
+.drawer-close { font-size:22px; line-height:1; }
+.drawer h3 { margin:0; font-size:14px; }
+.drawer .field > label { font-size:12px; color:var(--text-2); font-weight:500; }
+.drawer input[type=text],.drawer input[type=password] { min-height:36px; padding:6px 10px; font-size:13px; }
+.mini { display:grid; gap:6px; padding:12px; background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); }
+.mini p { margin:0; font-size:13px; }
+.drawer-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.case-list { display:grid; margin:0; padding:0; list-style:none; }
+.case-list > li { padding:12px 8px; margin-inline:-8px; border-top:1px solid var(--line-soft); }
+.case-list > li.on { background:var(--surface-2); box-shadow:inset 0 0 0 1px var(--accent); }
+.crow { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 12px; }
+.cmain { display:grid; gap:2px; min-width:0; } .cmain strong { font-size:13px; } .cmeta { color:var(--text-2); font-size:12px; } .cmeta code { font-family:var(--mono); }
+.erase { display:grid; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+.erase p { margin:0; font-size:13px; line-height:1.5; }
+.erase label { color:var(--text-2); font-size:12px; font-weight:500; }
+.erase input { font-family:var(--mono); }
+
+/* Tables */
+.tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--surface); }
+table { width:100%; border-collapse:collapse; font-size:12px; }
+th,td { padding:7px 10px; text-align:left; border-bottom:1px solid var(--line-soft); vertical-align:top; }
+th { color:var(--text-2); font-weight:500; white-space:nowrap; background:var(--surface); }
+tr:last-child td { border-bottom:0; }
+td.no { color:var(--text-2); } td.yes { color:var(--text); font-weight:600; }
+td:first-child,th:first-child { white-space:nowrap; }
+.msgs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-3); }
+.msg { display:grid; gap:6px; align-content:start; }
+.msg > b { font-family:var(--mono); font-size:11px; color:var(--text-2); font-weight:500; }
+.msg > small { color:var(--text-2); font-size:11px; }
+
+/* ---------- Review chrome (not part of the app) ---------- */
+.rv-bar { position:sticky; top:0; z-index:50; display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; padding:10px 24px; background:var(--surface); border-bottom:1px solid var(--line); }
+.rv-bar strong { font-size:14px; }
+.rv-nav { display:flex; flex-wrap:wrap; gap:2px; }
+.rv-nav a { padding:3px 8px; color:var(--text-2); text-decoration:none; border-radius:var(--radius-sm); font-size:12px; font-weight:500; }
+.rv-nav a:hover { color:var(--text); background:var(--surface-2); }
+.rv-tools { margin-left:auto; display:flex; gap:8px; align-items:center; }
+.seg { display:inline-flex; border:1px solid var(--line); border-radius:var(--radius-sm); overflow:hidden; }
+.seg button { min-height:28px; padding:3px 12px; color:var(--text-2); background:transparent; border:0; border-right:1px solid var(--line); font-size:12px; font-weight:500; }
+.seg button:last-child { border-right:0; }
+.seg button[aria-pressed=true] { color:var(--text); background:var(--surface-2); box-shadow:inset 0 -2px 0 var(--accent); }
+.rv-main { max-width:1360px; margin:0 auto; padding:20px 24px 80px; display:grid; gap:36px; }
+.rv-intro { max-width:78ch; display:grid; gap:8px; }
+.rv-intro h1 { margin:0; font-size:22px; } .rv-intro p { margin:0; color:var(--text-2); }
+.rv-group > h2 { margin:0 0 4px; font-size:16px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+.shot { display:grid; gap:8px; margin-top:22px; scroll-margin-top:64px; }
+.cap { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px; }
+.cap .sid { font-family:var(--mono); font-size:12px; color:var(--accent); font-weight:500; }
+.cap h3 { margin:0; font-size:14px; }
+.cap .ref { margin-left:auto; color:var(--text-2); font-size:12px; font-family:var(--mono); }
+.sub { margin:0; color:var(--text-2); font-size:12px; max-width:90ch; }
+.look { margin:0; padding:0 0 0 18px; color:var(--text-2); font-size:12px; display:grid; gap:2px; max-width:100ch; }
+.app { container-type:inline-size; container-name:app; position:relative; margin:0 auto; width:100%; background:var(--bg); border:1px solid var(--control-line); border-radius:var(--radius-sm); overflow:hidden; }
+.app.tall { min-height:700px; }
+body.phone .app { max-width:390px; }
+body.phone .rv-main { padding-inline:12px; }
+body.phone .rv-bar { padding-inline:12px; }
+
+/* Narrow frames follow the app's own breakpoints, via container width (the real app uses viewport width). */
+@container app (max-width:1099px) { .nav-items { display:none; } .more-btn { display:inline-flex; } }
+@container app (max-width:960px) { .cards { grid-template-columns:minmax(0,1fr); } .msgs { grid-template-columns:minmax(0,1fr); } .drawer { width:min(720px,92cqw); } }
+@container app (max-width:719px) { .topbar { padding:0 14px; gap:8px; } .mode-badge { display:none; } .stage { padding:16px 14px 32px; } .step { padding-inline:var(--space-3); } .kv { grid-template-columns:1fr; gap:0; } .kv dd { margin-bottom:8px; } }
+@container app (max-width:640px) { .menu.right { right:auto; left:0; } .menu { min-width:0; width:min(260px,86cqw); } .row-actions { flex-shrink:1; width:100%; } .story li { grid-template-columns:1fr; gap:2px; } .case-row { flex-wrap:wrap; } .drawer { width:100cqw; padding:16px 14px; } }
+@container app (max-width:460px) { .brand-lockup h1 { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); } .more-label { display:none; } .utilities .header-button:not(.theme-toggle):not(.more-btn) { display:none; } }
+</style>
+</head>
+<body>
+
+<div class="rv-bar">
+  <strong>Case lifecycle wireframe</strong>
+  <nav class="rv-nav" aria-label="Sections">
+    <a href="#start">Start</a><a href="#create">Create</a><a href="#home">Case home</a><a href="#archive">Archive</a><a href="#restore">Restore</a><a href="#free">Free the space</a><a href="#erase">Erase</a><a href="#keys">Keys</a><a href="#messages">Messages</a><a href="#states">States</a>
+  </nav>
+  <div class="rv-tools">
+    <div class="seg" role="group" aria-label="Theme"><button type="button" data-theme-set="dark" aria-pressed="true">Dark</button><button type="button" data-theme-set="light" aria-pressed="false">Light</button></div>
+    <div class="seg" role="group" aria-label="Width"><button type="button" data-width-set="desktop" aria-pressed="true">Desktop</button><button type="button" data-width-set="phone" aria-pressed="false">Phone</button></div>
+  </div>
+</div>
+
+<main class="rv-main">
+
+<header class="rv-intro">
+  <h1>Create, open, archive, restore, free, erase</h1>
+  <p>Every screen below is drawn with the real Unravis styles, fonts and wording style, with dummy data. The start screen, wizard and case home keep the layout the app has today. New parts (state chips, Case actions menu, Archive and Restore drawers, Free the space, Erase, case key) follow the same patterns. Screens are static; use the Theme and Width switches to check both themes and a phone.</p>
+  <p>Spec v7: <code>buildout/specs/2026-10-26-case-lifecycle-spec.md</code>. Message ids M1 to M19 are from its catalogue. Copy marked "sample" is new wording proposed for the build.</p>
+</header>
+
+<!-- ======================= START ======================= -->
+<section class="rv-group" id="start">
+<h2>1. Start screen: use, enter, create</h2>
+
+<section class="shot" id="s1">
+  <header class="cap"><span class="sid">S1</span><h3>Use an existing case</h3><span class="ref">spec 4, 6.2, 7.4</span></header>
+  <p class="sub">The three cards the app already has. Rows gain a state chip and one date. An Archiving row shows progress and no buttons. Archived cases sit behind a toggle.</p>
+  <div class="app" data-bar="start">
+    <div class="stage"><div class="stage-inner">
+      <div class="start">
+        <div class="start-head"><h2>Start an investigation</h2><p>Open a case you already have, enter a case code, or create a new case.</p></div>
+        <div class="cards">
+          <section class="card">
+            <h3>Use an existing case</h3>
+            <p class="card-text">Open a case that is saved on this computer.</p>
+            <ul class="cases">
+              <li class="case-row"><div class="case-info"><span class="case-title">Slow login after release 24.3</span><span class="case-meta">6 imports · 3 sources · Opened 26 Oct 2026</span><span class="chipline"><span class="state open">Open</span></span></div><div class="row-actions"><button class="secondary-button" type="button">Open</button></div></li>
+              <li class="case-row"><div class="case-info"><span class="case-title">Payroll batch timeouts, week 42</span><span class="case-meta">4 imports · 2 sources · Opened 19 Oct 2026</span><span class="chipline"><span class="state">Closed</span></span></div><div class="row-actions"><button class="secondary-button" type="button">Open</button></div></li>
+              <li class="case-row"><div class="case-info"><span class="case-title">Nightly export stalls</span><span class="case-meta">0 imports · 0 sources · Not opened</span><span class="chipline"><span class="state open">Open</span></span></div><div class="row-actions"><button class="secondary-button" type="button">Open</button></div></li>
+              <li class="case-row"><div class="case-info" style="flex:1"><span class="case-title">Checkout 502 spike</span><span class="case-meta">Archiving, 42%</span><span class="chipline"><span class="state warn">Archiving</span></span><div class="progress" role="progressbar" aria-valuenow="42" aria-valuemin="0" aria-valuemax="100" aria-label="Archiving, 42%"><i style="width:42%"></i></div></div></li>
+              <li class="case-row flag"><div class="case-info"><span class="case-title">Old Redis latency</span><span class="case-meta">Working copy missing</span><span class="chipline"><span class="state warn">Missing</span></span></div><div class="row-actions"><button class="secondary-button danger" type="button">Erase</button></div></li>
+              <li class="case-row flag"><div class="case-info"><span class="case-title">Untitled case</span><span class="case-meta">Not opened: this folder was not here when the master key was set up.</span><span class="chipline"><span class="state warn">Not opened</span></span></div><div class="row-actions"><button class="secondary-button danger" type="button">Erase</button></div></li>
+            </ul>
+            <div class="fold"><span class="hint sm">6 of 6 cases shown.</span><button class="link-button" type="button">Archived (3)</button></div>
+          </section>
+          <section class="card">
+            <h3>Enter an existing case</h3>
+            <p class="card-text">Type a case code to open a case on this computer, or restore one from a case file.</p>
+            <button class="secondary-button" type="button">Enter a case code</button>
+          </section>
+          <section class="card">
+            <h3>Create a new one</h3>
+            <p class="card-text">Start a new case and add the logs and data you want to look at.</p>
+            <button class="primary-button" type="button">Create a new case</button>
+          </section>
+        </div>
+        <div class="start-foot"><button class="link-button" type="button">Set up the master key</button><button class="quiet-button" type="button">Go to the analysis</button></div>
+      </div>
+    </div></div>
+  </div>
+  <ul class="look"><li>Sorted by last activity, 50 at a time; the Archived toggle counts every archived case on the server, not only the ones loaded.</li><li>Archiving row: no Open, no Erase (M15). Missing and untrusted rows offer Erase only.</li><li>Zero cases: "No cases yet. Create a new case to begin."</li></ul>
+</section>
+
+<section class="shot" id="s2">
+  <header class="cap"><span class="sid">S2</span><h3>Archived list and row menu</h3><span class="ref">spec 7.4, 7.5, 9</span></header>
+  <p class="sub">Archived cases are never opened in place. Restore is the row's main action; the rest is behind More. A freed case has no working copy and offers only the case file route.</p>
+  <div class="app" data-bar="start">
+    <div class="stage"><div class="stage-inner">
+      <div class="start">
+        <div class="start-head"><h2>Start an investigation</h2><p>Open a case you already have, enter a case code, or create a new case.</p></div>
+        <div class="cards">
+          <section class="card" style="grid-column:1 / -1">
+            <h3>Archived cases (3)</h3>
+            <p class="card-text">Kept outside the working list. Restore one to read it again.</p>
+            <ul class="cases">
+              <li class="case-row"><div class="case-info"><span class="case-title">Q3 month-end slowdown</span><span class="case-meta">Archived on 12 Oct 2026 · 9 imports · 4 sources</span><span class="case-meta">Case file: <code>q3-month-end-slowdown-p4w9c6xe-20261012-174455.unravis-case</code> in <code>D:\Unravis archive</code></span><span class="chipline"><span class="state">Archived</span><span class="state open">Working copy kept</span></span></div>
+                <div class="row-actions"><button class="secondary-button" type="button">Restore</button><button class="secondary-button" type="button" aria-expanded="true">More ▾</button>
+                  <ul class="menu right" role="menu"><li><button type="button" role="menuitem">Restore from the case file as a new case</button></li><li><button type="button" role="menuitem">Free the space</button></li><li class="sep"><button type="button" role="menuitem" class="bad">Erase</button></li></ul></div></li>
+              <li class="case-row"><div class="case-info"><span class="case-title">Mongo failover drill</span><span class="case-meta">Archived on 2 Oct 2026 · 3 imports · 2 sources</span><span class="case-meta">Case file: <code>mongo-failover-drill-h2v8n5ta-20261002-091200.unravis-case</code> in <code>D:\Unravis archive</code></span><span class="chipline"><span class="state">Archived</span><span class="state">Space freed</span><span class="state">Key ending 7f3a</span></span></div><div class="row-actions"><button class="secondary-button" type="button">Restore from the case file as a new case</button><button class="secondary-button danger" type="button">Erase</button></div></li>
+              <li class="case-row flag"><div class="case-info"><span class="case-title">Report timeouts, September</span><span class="case-meta">Archived on 28 Sep 2026 · Working copy missing</span><span class="chipline"><span class="state">Archived</span><span class="state warn">Missing</span></span></div><div class="row-actions"><button class="secondary-button" type="button">Restore from the case file as a new case</button><button class="secondary-button danger" type="button">Erase</button></div></li>
+            </ul>
+            <div class="fold"><span class="hint sm">3 of 3 archived cases shown.</span><button class="link-button" type="button">Back to the working list</button></div>
+          </section>
+        </div>
+      </div>
+    </div></div>
+  </div>
+  <ul class="look"><li>Restore (in place) always gives a Closed case, even if it was Open when archived.</li><li>Erase on an archived case removes the entry and history, never the case file.</li><li>A freed row shows "Key ending 7f3a" so the person knows which key the file needs.</li></ul>
+</section>
+
+<section class="shot" id="s3">
+  <header class="cap"><span class="sid">S3</span><h3>Enter a case code, or restore from a case file</h3><span class="ref">spec 6.1, O3 to O8</span></header>
+  <p class="sub">The middle card, opened. A code that fails for any reason gets the same sentence plus the fixed line (M6), so nothing leaks about archived or erased cases.</p>
+  <div class="app" data-bar="start">
+    <div class="stage"><div class="stage-inner">
+      <div class="start">
+        <div class="start-head"><h2>Start an investigation</h2><p>Open a case you already have, enter a case code, or create a new case.</p></div>
+        <div class="cards">
+          <section class="card"><h3>Use an existing case</h3><p class="card-text">Open a case that is saved on this computer.</p><button class="secondary-button" type="button">Show cases</button></section>
+          <section class="card">
+            <h3>Enter an existing case</h3>
+            <p class="card-text">Type a case code to open a case on this computer, or restore one from a case file.</p>
+            <div class="field"><label for="x-code" class="label">Case code</label>
+              <input id="x-code" type="text" value="k7m2 qx4a-6bnr" aria-invalid="true" readonly>
+              <div class="field-foot"><span class="hint sm">Letters a to z and digits 2 to 7. Spaces and dashes are ignored.</span><span class="count">12 of 26</span></div></div>
+            <p class="inline-error" role="alert">This case could not be found. It may have been erased.</p>
+            <p class="notice">Archived cases are in the Archived list on the start screen.</p>
+            <div class="row-actions"><button class="primary-button" type="button" disabled>Open the case</button></div>
+            <p class="hint sm" style="margin-top:6px"><button class="link-button" type="button">Restore from a case file</button> instead</p>
+          </section>
+          <section class="card">
+            <h3>Restore from a case file</h3>
+            <p class="card-text">Always makes a new case. The file stays where it is.</p>
+            <div class="field"><label for="x-path" class="label">Case file</label><input id="x-path" type="text" value="D:\Unravis archive\q3-month-end-slowdown-p4w9c6xe-20261012-174455.unravis-case" readonly></div>
+            <div class="field"><label for="x-key" class="label">Key the file was made with</label><input id="x-key" type="password" value="••••••••••••••" readonly><span class="hint sm">The case's own key, else the master key it was sealed with.</span></div>
+            <p class="inline-error" role="alert">This file could not be restored. Check the path and the key. Nothing was written.</p>
+            <div class="row-actions"><button class="primary-button" type="button">Restore as a new case</button></div>
+          </section>
+        </div>
+      </div>
+    </div></div>
+  </div>
+  <ul class="look"><li>A code is 26 characters, case-insensitive; other characters get a plain message and the counter keeps "n of 26".</li><li>Restore is throttled: "Too many tries." with the wait. No master key on this PC: "Restoring needs a master key on this PC too." Another save running: "Another case file is being saved or restored."</li><li>There is no share link and no temporary address; a case is reached only through the app (decision R6-2).</li></ul>
+</section>
+</section>
+
+<!-- ======================= CREATE ======================= -->
+<section class="rv-group" id="create">
+<h2>2. Create a case</h2>
+
+<section class="shot" id="s4">
+  <header class="cap"><span class="sid">S4</span><h3>Step 1 of 4: Name, with an optional case key</h3><span class="ref">spec 5.1, 7.6</span></header>
+  <p class="sub">The wizard as it is today: mono type, step tabs, one heading, a bar at the foot. The only new part is the optional case key, off by default.</p>
+  <div class="app" data-bar="start">
+    <div class="stage"><div class="stage-inner">
+      <section class="wizard">
+        <header class="wiz-top"><div class="wiz-top-row"><h2 class="wiz-name">Create a new case</h2><button class="quiet-button" type="button">← Leave the guide</button></div><p class="wiz-note">Nothing is saved until the last step.</p></header>
+        <nav class="steps" aria-label="Steps"><ol>
+          <li><span class="step on"><i>1</i>Name</span></li><li><span class="step"><i>2</i>Look around</span></li><li><span class="step"><i>3</i>Connect</span></li><li><span class="step"><i>4</i>Review</span></li>
+        </ol></nav>
+        <div class="step-body">
+          <p class="step-count">Step 1 of 4: Name</p>
+          <h3 class="step-heading">Name your case</h3>
+          <div class="name-step">
+            <p class="lead">Pick a name you will recognise later, such as the problem or the week. A case can cover one or several environments.</p>
+            <div class="field"><label for="x-name">Case name</label><input id="x-name" type="text" value="Slow login after release 24.3" readonly>
+              <div class="field-foot"><p class="hint">Use 2 to 80 characters. You can rename it later. Do not put passwords or customer names here.</p><span class="count">29 of 80</span></div></div>
+            <div class="optional">
+              <label class="check"><input type="checkbox" checked><span>Give this case its own key (optional)<small>Off by default. The case then opens with this key, not the master key. Unravis cannot recover a lost case key.</small></span></label>
+              <div class="field"><label for="x-ck">Case key</label><input id="x-ck" type="password" value="••••••••••••••••" readonly><span class="hint sm">At least 12 characters. Kept in memory only while the case is unlocked.</span></div>
+              <div class="field"><label for="x-ck2">Type it again</label><input id="x-ck2" type="password" value="••••••••••••••••" readonly></div>
+              <p class="hint sm">Only this case uses the key. Resetting the master key does not affect it. Sample copy.</p>
+            </div>
+          </div>
+        </div>
+        <footer class="bar"><span class="spacer"></span><button class="primary-button" type="button">Next</button></footer>
+      </section>
+    </div></div>
+  </div>
+  <ul class="look"><li>Next stays disabled until the name is 2 to 80 characters; with the key box ticked it also needs 12 or more characters and a match.</li><li>Duplicate names are allowed; the two cases get different codes and the screen says so.</li><li>No master key and no case key: nothing is asked, and archive files then use a one-off passphrase (S10).</li></ul>
+</section>
+
+<section class="shot" id="s5">
+  <header class="cap"><span class="sid">S5</span><h3>Step 4 of 4: Review</h3><span class="ref">spec 5.1, C1, C16</span></header>
+  <p class="sub">Everything that will happen, then one button. Without sources the button reads "Create empty case". Nothing is saved before it.</p>
+  <div class="app" data-bar="start">
+    <div class="stage"><div class="stage-inner">
+      <section class="wizard">
+        <header class="wiz-top"><div class="wiz-top-row"><h2 class="wiz-name">Create a new case</h2><button class="quiet-button" type="button">← Leave the guide</button></div><p class="wiz-note">Nothing is saved until the last step.</p></header>
+        <nav class="steps" aria-label="Steps"><ol>
+          <li><span class="step done"><i>✓</i>Name</span></li><li><span class="step done"><i>✓</i>Look around</span></li><li><span class="step done"><i>✓</i>Connect</span></li><li><span class="step on"><i>4</i>Review</span></li>
+        </ol></nav>
+        <div class="step-body">
+          <p class="step-count">Step 4 of 4: Review</p>
+          <h3 class="step-heading">Check, then create</h3>
+          <div class="review-block"><h4>The case</h4>
+            <dl class="kv"><dt>Name</dt><dd>Slow login after release 24.3</dd><dt>Environments</dt><dd>UAT, Prod</dd><dt>Key</dt><dd>This case's own key (Argon2id, memory only)</dd><dt>Look back</dt><dd>24 Oct 2026 08:00 to 26 Oct 2026 18:00</dd></dl></div>
+          <div class="review-block"><h4>Sources (3)</h4>
+            <div class="found"><span>MongoDB, audit logs <span class="hint sm">tag: prod-api</span></span><span class="chip">Read from this computer</span></div>
+            <div class="found"><span>SQL Server, health checks</span><span class="chip">Read from this computer</span></div>
+            <div class="found"><span>web-2026-10-24.log <span class="hint sm">IIS log</span></span><span class="chip">Read from a file</span></div></div>
+          <label class="check"><input type="checkbox" checked><span>I understand this reads logs and data from this computer and keeps a copy inside this case.</span></label>
+        </div>
+        <footer class="bar"><button class="secondary-button" type="button">Back</button><span class="hint">3 sources chosen</span><span class="spacer"></span><button class="primary-button" type="button">Create case</button></footer>
+      </section>
+    </div></div>
+  </div>
+  <ul class="look"><li>Notice not ticked: Create is disabled with "Tick the box above to confirm the notice." A file source with no file, or a window that is missing, backwards or too long, also disables it with the reason.</li><li>Pressing Create twice, or reloading, makes one case (the same request id is kept for the wizard run).</li><li>Demo mode hides Create and says why in one line.</li></ul>
+</section>
+
+<section class="shot" id="s6">
+  <header class="cap"><span class="sid">S6</span><h3>After Create: ready, or kept with a try-again list</h3><span class="ref">spec 5.2, C3, C17, C19</span></header>
+  <p class="sub">The case is kept once step 1 succeeds, whatever happens later. If a source fails, the case opens anyway with a "needs another try" list stored in the case. An import is one transaction, so a stop or restart never leaves a half-imported file.</p>
+  <div class="app" data-bar="start">
+    <div class="stage"><div class="stage-inner">
+      <section class="wizard">
+        <header class="wiz-top"><div class="wiz-top-row"><h2 class="wiz-name">Creating the case</h2></div></header>
+        <div class="step-body">
+          <p class="notice ok" role="status">Your case is ready. Opening it now.</p>
+          <div class="review-block"><h4>What was done</h4>
+            <div class="found"><span>Case made</span><span class="state open">Done</span></div>
+            <div class="found"><span>Environments saved</span><span class="state open">Done</span></div>
+            <div class="found"><span>Tags saved, 3 sources</span><span class="state open">Done</span></div>
+            <div class="found"><span>MongoDB, audit logs: added to the analysis</span><span class="state open">Done</span></div>
+            <div class="found"><span>web-2026-10-24.log: import</span><span class="state open">1,204 rows</span></div>
+            <div class="found"><span>SQL Server, health checks: import</span><span class="state warn">Needs another try</span></div>
+          </div>
+          <p class="inline-error" role="alert">SQL Server, health checks: the import stopped because the server restarted. The password is not kept, so type it again to retry. Nothing partial was saved.</p>
+        </div>
+        <footer class="bar"><span class="spacer"></span><button class="primary-button" type="button">Open the case</button></footer>
+      </section>
+    </div></div>
+  </div>
+  <ul class="look"><li>"Not added to the analysis" and "import failed" are listed separately, each with its own retry.</li><li>On a Closed case the list says "Reopen to try again"; on an Archived case it is not shown. It travels in a case file.</li><li>Server stops mid-create: the page repeats the same request id and the wizard re-runs the remaining steps; connection sources are listed, never imported twice.</li></ul>
+</section>
+</section>
+
+<!-- ======================= CASE HOME ======================= -->
+<section class="rv-group" id="home">
+<h2>3. Case home: open, closed, reopened</h2>
+
+<section class="shot" id="s7">
+  <header class="cap"><span class="sid">S7</span><h3>Case home (Open) with the case actions menu</h3><span class="ref">spec 6.3, 7.2, 8</span></header>
+  <p class="sub">The page the app has today (header, counts, Analysis, Story so far, Theories, Health checks, Files). New: a quiet "Case actions" menu holding Close, Archive and Erase, and a try-again list when create left items behind.</p>
+  <div class="app" data-bar="work" data-active="case-home">
+    <div class="stage"><div class="stage-inner">
+      <div class="case-home" id="home-open">
+        <div class="top"><button class="quiet-button" type="button">← All cases</button></div>
+        <div class="head" style="display:grid;gap:4px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+            <div><p class="eyebrow">Your case · k7m2qx4a</p><h2>Slow login after release 24.3</h2></div>
+            <div class="actions-row"><button class="secondary-button" type="button" aria-expanded="true">Case actions ▾</button>
+              <ul class="menu right" role="menu"><li><button type="button" role="menuitem">Close this case</button></li><li><button type="button" role="menuitem">Archive this case…</button></li><li class="sep"><button type="button" role="menuitem" class="bad">Erase this case…</button></li></ul></div>
+          </div>
+          <p class="note">Everything about this case is here. See what happened, your theories, the health checks, the analysis and the files.</p>
+          <dl class="counts"><div><dt>Started</dt><dd>24 Oct 2026</dd></div><div><dt>Files</dt><dd>2</dd></div><div><dt>Theories</dt><dd>3</dd></div><div><dt>Health checks</dt><dd>1</dd></div></dl>
+        </div>
+        <section class="block"><h3>Needs another try</h3><div class="offer"><div class="retry"><span>SQL Server, health checks: import failed. Type the password again to retry.</span><button class="secondary-button" type="button">Retry the import</button></div></div></section>
+        <section class="block"><h3>Analysis</h3><p class="note">Open the charts and the ranked list of operations for this case.</p><div class="actions-row"><button class="primary-button" type="button">Open the analysis</button></div></section>
+        <section class="block"><h3>Story so far</h3><p class="note">One list, oldest first. It shows only what this case has saved.</p>
+          <ol class="story">
+            <li class="tone-ok"><time>24 Oct 2026, 09:14</time><div><p class="title"><span class="kind">Case</span>Case started</p></div></li>
+            <li><time>24 Oct 2026, 09:21</time><div><p class="title"><span class="kind">File</span>File added</p><p class="detail">web-2026-10-24.log: 1,204 rows from IIS log, 3 skipped.</p></div></li>
+            <li class="tone-warn"><time>25 Oct 2026, 14:02</time><div><p class="title"><span class="kind">Health check</span>Health check on SQL Server</p></div></li>
+            <li><time>26 Oct 2026, 10:40</time><div><p class="title"><span class="kind">Theory</span>Theory added</p></div></li>
+          </ol></section>
+        <section class="block"><h3>Theories</h3><ul class="plain"><li><span class="state" style="margin-right:6px;font-size:12px">Supported by correlation</span>Token cache expires at the release boundary</li><li><span class="state" style="margin-right:6px;font-size:12px">Open</span>Redis eviction raises login time</li></ul></section>
+        <section class="block"><h3>Files</h3><ul class="plain"><li>web-2026-10-24.log <span>1,204 rows from IIS log, 3 skipped</span></li><li>audit-uat-24-oct.json <span>5,880 rows from MongoDB</span></li></ul></section>
+      </div>
+    </div></div>
+  </div>
+  <ul class="look"><li>Archive is refused with M1 while an import runs; Erase stops it first. Both appear in the menu; refusals show as an inline error under the menu.</li><li>The Case actions menu is new; everything else on the page is unchanged.</li></ul>
+</section>
+
+<section class="shot" id="s8">
+  <header class="cap"><span class="sid">S8</span><h3>Closed case: read-only, with Reopen</h3><span class="ref">spec 2, 6.2, R6-6</span></header>
+  <p class="sub">Close is reversible. Reopen applies the case's saved Mongo link and filters and lets the person run the sampler again. It never starts the sampler by itself.</p>
+  <div class="app" data-bar="work" data-active="case-home">
+    <div class="stage"><div class="stage-inner">
+      <div class="case-home">
+        <div class="top"><button class="quiet-button" type="button">← All cases</button></div>
+        <div class="head" style="display:grid;gap:4px"><p class="eyebrow">Your case · bt9w3hcv</p><h2>Payroll batch timeouts, week 42</h2></div>
+        <p class="notice">This case is closed. You can read it, but nothing can be added. <button class="secondary-button" type="button">Reopen this case</button></p>
+        <section class="block"><h3>Analysis</h3><p class="note">Open the charts and the ranked list of operations for this case.</p><div class="actions-row"><button class="primary-button" type="button">Open the analysis</button></div></section>
+        <section class="block"><h3>Files</h3><p class="empty">No files can be added while the case is closed.</p><div class="actions-row"><button class="secondary-button" type="button" disabled>Add a file</button><button class="secondary-button" type="button" disabled>Add a theory</button></div></section>
+        <p class="hint">Case actions: <button class="link-button" type="button">Archive this case…</button> · <button class="link-button" type="button" style="color:var(--bad)">Erase this case…</button></p>
+      </div>
+    </div></div>
+  </div>
+  <p class="hint sm" style="margin-top:4px">After pressing Reopen (sample copy):</p>
+  <div class="app" data-bar="work" data-active="case-home" style="margin-top:4px">
+    <div class="stage"><div class="stage-inner">
+      <div class="case-home">
+        <div class="top"><button class="quiet-button" type="button">← All cases</button></div>
+        <div class="head" style="display:grid;gap:4px"><p class="eyebrow">Your case · bt9w3hcv</p><h2>Payroll batch timeouts, week 42</h2></div>
+        <p class="notice ok" role="status">The case is open again. Your saved Mongo link and filters are applied. Press Run when you want the sampler to start.</p>
+        <section class="block"><h3>Analysis</h3><div class="actions-row"><button class="primary-button" type="button">Open the analysis</button><button class="secondary-button" type="button">Run the sampler</button></div></section>
+      </div>
+    </div></div>
+  </div>
+  <ul class="look"><li>M7 on any add attempt: "This case is closed. You can read it, but nothing can be added."</li><li>Reopen is written to the story. Only a return from Archiving restores a sampler that was running.</li></ul>
+</section>
+</section>
+
+<!-- ======================= ARCHIVE ======================= -->
+<section class="rv-group" id="archive">
+<h2>4. Archive</h2>
+
+<section class="shot" id="s10">
+  <header class="cap"><span class="sid">S10</span><h3>Archive this case: choose a folder</h3><span class="ref">spec 7.2</span></header>
+  <p class="sub">A drawer, in the app's drawer style, over the case home. One typed folder path, a preview of the file name, the space check and the key the file will be sealed with. Archive does not close the case first.</p>
+  <div class="app tall" data-bar="work" data-active="case-home" data-under="home-open">
+    <div class="scrim"></div>
+    <aside class="drawer" aria-label="Archive this case">
+      <div class="drawer-header"><div><h2>Archive this case</h2><p>Slow login after release 24.3 · k7m2qx4a</p></div><button class="quiet-button drawer-close" type="button" aria-label="Close">×</button></div>
+      <p class="note" style="margin:0;color:var(--text-2)">Imports stop and the case becomes read-only. Everything in it, including the story and theories, is saved into one case file. The working copy is kept until you free the space.</p>
+      <div class="field"><label for="x-folder">Folder for the case file (a full path on this computer)</label><input id="x-folder" type="text" value="D:\Unravis archive" readonly><span class="hint sm">A drive path you can write to. Not a network drive, not a relative path, and not inside Unravis's own data folder.</span></div>
+      <div class="mini"><p><span class="hint sm">The file will be named</span></p><p class="mono" style="font-size:12px;overflow-wrap:anywhere">slow-login-after-release-24-3-k7m2qx4a-20261027-091500.unravis-case</p><p class="hint sm">88 characters with the folder (limit 240).</p></div>
+      <dl class="kv" style="grid-template-columns:130px 1fr;font-size:13px"><dt>Case size</dt><dd>340 MB</dd><dt>Space needed</dt><dd>408 MB (1.2 times)</dd><dt>Free on D:</dt><dd>41 GB</dd><dt>Sealed with</dt><dd>This case's own key</dd></dl>
+      <p class="hint sm">Sealed with: the case key if the case has one, else the master key, else a passphrase you type now and Unravis never stores.</p>
+      <div class="drawer-actions"><button class="primary-button" type="button">Archive the case</button><button class="secondary-button" type="button">Cancel</button></div>
+    </aside>
+  </div>
+  <ul class="look"><li>The slug is lowercase letters and digits, at most 40 characters, never from tags. A name that exists gets -2, -3; Unravis never overwrites.</li><li>With no master key and no case key a "Passphrase for this file" field appears here instead of the "Sealed with" line.</li><li>Hidden in demo mode; not offered for an untrusted case.</li></ul>
+</section>
+
+<section class="shot" id="s11">
+  <header class="cap"><span class="sid">S11</span><h3>Archive: what can go wrong before it starts</h3><span class="ref">spec A1, A2, A5, A6, A17, A18</span></header>
+  <p class="sub">Each refusal is an inline error under the field it belongs to, and nothing changes.</p>
+  <div class="app" data-bar="work" data-active="case-home" style="padding:16px">
+    <div class="msgs" style="font-family:var(--font)">
+      <div class="msg"><b>Bad folder (A1)</b><div class="field"><input type="text" value="\\fileserver\share\archive" aria-invalid="true" readonly></div><p class="inline-error" role="alert">The folder cannot be used. Choose a folder on this computer that you can write to.</p><small>M8. Also for relative or ".." paths, a network or mapped drive, Unravis's own data folder, or a path over 240 characters with the file name.</small></div>
+      <div class="msg"><b>Not enough space (A2)</b><p class="inline-error" role="alert">There is not enough free space for the archive.</p><small>M9. Needs 1.2 times the case size on the target drive.</small></div>
+      <div class="msg"><b>Import running (A5)</b><p class="inline-error" role="alert">An import is still running. Wait for it or stop it first.</p><small>M1. The Archive button stays pressable; the refusal is the server's.</small></div>
+      <div class="msg"><b>Pressed twice (A6)</b><p class="inline-error" role="alert">An archive is already running.</p><small>M3. One job only.</small></div>
+      <div class="msg"><b>Too large (A17)</b><div class="drawer-actions"><button class="primary-button" type="button" disabled>Archive the case</button></div><p class="inline-error" role="alert">This case is too large to archive in one file.</p><small>M16. Only above the existing 8 GiB case file limit.</small></div>
+      <div class="msg"><b>Save already running (A18)</b><p class="inline-error" role="alert">Another case file is being saved or restored.</p><small>Existing sentence. Export, Verify and Restore share one lock.</small></div>
+    </div>
+  </div>
+</section>
+
+<section class="shot" id="s12">
+  <header class="cap"><span class="sid">S12</span><h3>Archiving: progress, Cancel, and a failed write</h3><span class="ref">spec 7.2, A3, A4, A13, A14</span></header>
+  <p class="sub">A background job with percent and Cancel. The case keeps its state; failure, Cancel, a key lock or a crash returns it exactly as it was.</p>
+  <div class="app tall" data-bar="work" data-active="case-home" data-under="home-open">
+    <div class="scrim"></div>
+    <aside class="drawer" aria-label="Archiving">
+      <div class="drawer-header"><div><h2>Archiving</h2><p>Slow login after release 24.3 · k7m2qx4a</p></div><button class="quiet-button drawer-close" type="button" aria-label="Close">×</button></div>
+      <div class="mini" role="status"><p><b>Writing the case file, 42%</b></p><div class="progress" role="progressbar" aria-valuenow="42" aria-valuemin="0" aria-valuemax="100"><i style="width:42%"></i></div><p class="hint sm">Then it is read back and checked before the case is marked Archived.</p></div>
+      <div class="drawer-actions"><button class="secondary-button" type="button">Cancel archiving</button></div>
+      <h3>If it stops</h3>
+      <p class="inline-error" role="alert">Archiving was stopped. The case is back as it was. Try again.</p>
+      <p class="inline-error" role="alert">The archive file could not be checked. Nothing was changed. Try again.</p>
+      <p class="hint sm">M14 for Cancel and for a crash or lock. M10 when the read-back does not match; a retry makes a new file name. If the server stops, the case returns to its earlier state at the next start, a running sampler starts again, and a finished file left behind is listed in the health panel (never deleted).</p>
+    </aside>
+  </div>
+</section>
+
+<section class="shot" id="s13">
+  <header class="cap"><span class="sid">S13</span><h3>Archived: the record and the way back</h3><span class="ref">spec 7.3, 7.4</span></header>
+  <p class="sub">When the file is written, read back, renamed and committed, the case leaves the working list. The row carries the record so the person can find the file.</p>
+  <div class="app" data-bar="start">
+    <div class="stage"><div class="stage-inner">
+      <div class="start">
+        <p class="notice ok" role="status">Archived. The case file is <code>slow-login-after-release-24-3-k7m2qx4a-20261027-091500.unravis-case</code> in <code>D:\Unravis archive</code>. Key ending 91c0.</p>
+        <section class="card"><h3>Archived cases (4)</h3>
+          <ul class="cases"><li class="case-row"><div class="case-info"><span class="case-title">Slow login after release 24.3</span><span class="case-meta">Archived on 27 Oct 2026 · 6 imports · 3 sources · 340 MB</span><span class="case-meta">Case files made earlier: 0</span><span class="chipline"><span class="state">Archived</span><span class="state open">Working copy kept</span><span class="state">Key ending 91c0</span></span></div><div class="row-actions"><button class="secondary-button" type="button">Restore</button><button class="secondary-button" type="button">More ▾</button></div></li></ul></section>
+      </div>
+    </div></div>
+  </div>
+  <ul class="look"><li>Archive again after a restore makes a new file; older files are left alone and counted as "Case files made earlier".</li><li>Unravis never deletes a finished <code>.unravis-case</code>.</li></ul>
+</section>
+</section>
+
+<!-- ======================= RESTORE ======================= -->
+<section class="rv-group" id="restore">
+<h2>5. Restore</h2>
+<section class="shot" id="s14">
+  <header class="cap"><span class="sid">S14</span><h3>Restore from the case file as a new case</h3><span class="ref">spec 7.4, O5 to O8</span></header>
+  <p class="sub">Works for kept, freed and missing archived cases, and can be repeated. Each restore makes another new, Closed case and adds a line to the original's restores list. Restore in place has no form: it is one press on the row and gives a Closed case with the same code.</p>
+  <div class="app tall" data-bar="start" data-under="s2-stage">
+    <div class="scrim"></div>
+    <aside class="drawer" aria-label="Restore from the case file">
+      <div class="drawer-header"><div><h2>Restore as a new case</h2><p>Mongo failover drill · h2v8n5ta</p></div><button class="quiet-button drawer-close" type="button" aria-label="Close">×</button></div>
+      <div class="mini"><p class="hint sm">Case file</p><p class="mono" style="font-size:12px">D:\Unravis archive\mongo-failover-drill-h2v8n5ta-20261002-091200.unravis-case</p><p class="hint sm">Made 2 Oct 2026 · Key ending 7f3a</p></div>
+      <div class="field"><label for="x-rk">Key this file was made with</label><input id="x-rk" type="password" value="••••••••••••••••" readonly><span class="hint sm">It may differ from this PC's key. The new case is sealed with this PC's key.</span></div>
+      <p class="inline-error" role="alert">This file can only be opened with the key it was made with.</p>
+      <div class="drawer-actions"><button class="primary-button" type="button">Restore as a new case</button><button class="secondary-button" type="button">Cancel</button></div>
+      <p class="notice ok" role="status">A new case was made: Mongo failover drill, code r8t5mk2z. It is closed. Reopen it to add data. Sample copy.</p>
+    </aside>
+  </div>
+  <ul class="look"><li>The new case keeps the original story and adds "Restored from a case file made 2 Oct 2026" and "Restored from case h2v8n5ta".</li><li>Its try-again list comes back with it; connection imports need their password typed again.</li><li>Wrong key, wrong path or a damaged file all give one fixed sentence; nothing is written.</li></ul>
+</section>
+</section>
+
+<!-- ======================= FREE ======================= -->
+<section class="rv-group" id="free">
+<h2>6. Free the space</h2>
+<section class="shot" id="s15">
+  <header class="cap"><span class="sid">S15</span><h3>Verify first, then one confirmation</h3><span class="ref">spec 7.5</span></header>
+  <p class="sub">Freed means the case file is the only copy. So Unravis first proves the file restores (a test restore into a temporary store), then asks once, naming the file and folder.</p>
+  <div class="app tall" data-bar="start" data-under="s2-stage">
+    <div class="scrim"></div>
+    <aside class="drawer" aria-label="Free the space">
+      <div class="drawer-header"><div><h2>Free the space</h2><p>Q3 month-end slowdown · p4w9c6xe</p></div><button class="quiet-button drawer-close" type="button" aria-label="Close">×</button></div>
+      <h3>1. Check the case file</h3>
+      <div class="mini" role="status"><p><b>Checking the case file, 68%</b></p><div class="progress" role="progressbar" aria-valuenow="68" aria-valuemin="0" aria-valuemax="100"><i style="width:68%"></i></div><p class="hint sm">It is opened into a temporary store, the checksum and the counts of imports, sources and events are compared, then the store is discarded.</p></div>
+      <div class="drawer-actions"><button class="secondary-button" type="button">Cancel the check</button></div>
+      <h3>2. Confirm</h3>
+      <div class="mini">
+        <p>After this the working copy is gone. The only copy is:</p>
+        <p class="mono" style="font-size:12px">D:\Unravis archive\q3-month-end-slowdown-p4w9c6xe-20261012-174455.unravis-case</p>
+        <p>This file can only be opened with the key it was made with. Key ending 7f3a.</p>
+        <div class="field"><label for="x-fc">Type the case code <code>p4w9c6xe</code> to free the space</label><input id="x-fc" type="text" value="p4w9" readonly></div>
+        <div class="drawer-actions"><button class="primary-button danger-fill" type="button" disabled>Free the space</button><button class="secondary-button" type="button">Keep the working copy</button></div>
+      </div>
+      <p class="inline-error" role="alert">The case file did not pass the check. The working copy was kept.</p>
+      <p class="inline-error" role="alert">The case is in use. Close its other tabs, then try again.</p>
+      <p class="hint sm">M11 when the file fails the check, M13 at once if the key changed, M17 if the check is stopped, M4 after a 30 second wait for readers. While freeing runs every call on the case answers "This case is being freed. Try again in a moment." (M19).</p>
+    </aside>
+  </div>
+</section>
+</section>
+
+<!-- ======================= ERASE ======================= -->
+<section class="rv-group" id="erase">
+<h2>7. Erase</h2>
+<section class="shot" id="s16">
+  <header class="cap"><span class="sid">S16</span><h3>Erase: type the short code</h3><span class="ref">spec 8</span></header>
+  <p class="sub">The Case card in the app's Import drawer, with its inline erase form (type the code, red confirm). Three cases shown: a normal case, a freed archived case, and a wait that timed out.</p>
+  <div class="app tall" data-bar="work" data-active="import">
+    <div class="stage" style="padding-bottom:0"><div class="stage-inner"><div class="case-home" style="opacity:.55"><p class="eyebrow">Your case · k7m2qx4a</p><h2 style="margin:2px 0;font-size:24px">Slow login after release 24.3</h2></div></div></div>
+    <div class="scrim"></div>
+    <aside class="drawer" aria-label="Import">
+      <div class="drawer-header"><div><h2>Import</h2><p>Add data, and look after your cases.</p></div><button class="quiet-button drawer-close" type="button" aria-label="Close">×</button></div>
+      <h3>Case</h3>
+      <ul class="case-list">
+        <li class="on"><div class="crow"><div class="cmain"><strong>Slow login after release 24.3</strong><span class="cmeta"><code>k7m2qx4a</code> · 6 imports · 3 sources</span></div><div class="drawer-actions"><span class="state open">In use</span><button class="secondary-button" type="button">Close case</button><button class="secondary-button danger" type="button">Erase case</button></div></div>
+          <div class="erase">
+            <p>Erasing cannot be undone. A running import will be stopped. A case file made earlier is not touched.</p>
+            <label for="x-ec1">Type the case code <code>k7m2qx4a</code> to erase this case</label>
+            <input id="x-ec1" type="text" value="k7m2qx4a" readonly>
+            <div class="drawer-actions"><button class="primary-button danger-fill" type="button">Erase case</button><button class="secondary-button" type="button">Cancel</button></div>
+          </div></li>
+        <li><div class="crow"><div class="cmain"><strong>Mongo failover drill</strong><span class="cmeta"><code>h2v8n5ta</code> · Archived, space freed</span></div><div class="drawer-actions"><button class="secondary-button danger" type="button">Erase case</button></div></div>
+          <div class="erase">
+            <p>Erasing cannot be undone. No working copy remains. This removes the case's record and history here. Your case file is not touched; it is at <code>D:\Unravis archive\mongo-failover-drill-h2v8n5ta-20261002-091200.unravis-case</code>.</p>
+            <label for="x-ec2">Type the case code <code>h2v8n5ta</code> to erase this case</label>
+            <input id="x-ec2" type="text" value="" readonly>
+            <div class="drawer-actions"><button class="primary-button danger-fill" type="button" disabled>Erase case</button><button class="secondary-button" type="button">Cancel</button></div>
+          </div></li>
+        <li><div class="crow"><div class="cmain"><strong>Payroll batch timeouts, week 42</strong><span class="cmeta"><code>bt9w3hcv</code> · Closed · 4 imports · 2 sources</span></div><div class="drawer-actions"><span class="state warn">Waiting for readers…</span></div></div>
+          <p class="inline-error" role="alert" style="margin-top:8px">The case is in use. Close its other tabs, then try again.</p>
+          <p class="hint sm" style="margin-top:6px">Unravis stops a running import, closes live streams, then waits up to 30 seconds for readers. If one is still open, nothing is erased or marked.</p></li>
+      </ul>
+    </aside>
+  </div>
+  <ul class="look"><li>Hidden on an Archiving row; the server answers "An archive is running. Cancel it first." (M15).</li><li>Once the wait is over the entry is marked Erasing (the commit point); a crash or lock afterwards is finished by recovery with no restart needed. Meanwhile other calls answer "This case is being erased." (M5).</li></ul>
+</section>
+</section>
+
+<!-- ======================= KEYS ======================= -->
+<section class="rv-group" id="keys">
+<h2>8. Keys</h2>
+<section class="shot" id="s17">
+  <header class="cap"><span class="sid">S17</span><h3>Case key: unlock, master key reset, a changed key</h3><span class="ref">spec 7.6, R6-2</span></header>
+  <p class="sub">The master key stays machine-wide and optional ("Not now"). A case may have its own key instead; it is unlocked for that case alone. A master key reset never touches a case with its own key.</p>
+  <div class="app" data-bar="start">
+    <div class="stage"><div class="stage-inner">
+      <div class="start">
+        <div class="cards">
+          <section class="card"><h3>Open a case with its own key</h3><p class="card-text">Slow login after release 24.3 has a key of its own. Other cases open with the master key.</p>
+            <div class="field"><label for="x-uk" class="label">Case key</label><input id="x-uk" type="password" value="••••••••••••••••" readonly></div>
+            <p class="inline-error" role="alert">That key did not unlock this case. Try again.</p>
+            <div class="row-actions"><button class="primary-button" type="button">Unlock this case</button><button class="secondary-button" type="button">Not now</button></div>
+            <p class="hint sm">Locking it closes this case only. Sample copy; wrong keys are throttled like the master key.</p></section>
+          <section class="card"><h3>Start over with a new master key</h3><p class="card-text">The old key file is set aside. Cases that used it stay unreadable.</p>
+            <p class="sample-note">2 archived cases can only be opened with the old key.</p>
+            <p class="hint sm">Counts only archived cases whose working copy is freed and that were sealed under the master key (M12). Cases with their own key are not counted and are not affected.</p>
+            <div class="row-actions"><button class="primary-button danger-fill" type="button">Start over</button><button class="secondary-button" type="button">Cancel</button></div></section>
+          <section class="card"><h3>A case file and a changed key</h3><p class="card-text">Verify compares the key check value (Key ending 7f3a) before it opens anything.</p>
+            <p class="inline-error" role="alert">This file can only be opened with the key it was made with.</p>
+            <p class="hint sm">M13. Nothing is freed; the file can still be restored as a new case with the old key. The check value is an HMAC under the derived key; the full value stays in the sealed record and only four characters are shown.</p></section>
+        </div>
+      </div>
+    </div></div>
+  </div>
+  <ul class="look"><li>Case key: at least 12 characters, same Argon2id derivation as the master key, memory only. Chosen at Create (S4) or later from the case's drawer.</li><li>No new token, link or temporary address anywhere; the one-time launch link the app already uses is unchanged.</li></ul>
+</section>
+</section>
+
+<!-- ======================= MESSAGES ======================= -->
+<section class="rv-group" id="messages">
+<h2>9. Messages M1 to M19</h2>
+<section class="shot" id="s18">
+  <header class="cap"><span class="sid">S18</span><h3>Every new sentence, in its component</h3><span class="ref">spec 10, Appendix B</span></header>
+  <p class="sub">Errors use the app's inline error. Information uses the notice. A warning that needs a decision uses the amber note.</p>
+  <div class="app" data-bar="start" style="padding:16px">
+    <div class="msgs" style="font-family:var(--font)">
+      <div class="msg"><b>M1</b><p class="inline-error">An import is still running. Wait for it or stop it first.</p><small>Archive</small></div>
+      <div class="msg"><b>M2</b><p class="inline-error">This case changed in another tab. Reload.</p><small>Any state-changing call whose belief is out of date</small></div>
+      <div class="msg"><b>M3</b><p class="inline-error">An archive is already running.</p><small>Archive pressed twice</small></div>
+      <div class="msg"><b>M4</b><p class="inline-error">The case is in use. Close its other tabs, then try again.</p><small>Erase or Free after the 30 second wait</small></div>
+      <div class="msg"><b>M5</b><p class="inline-error">This case is being erased.</p><small>Any call while Erasing</small></div>
+      <div class="msg"><b>M6</b><p class="notice">Archived cases are in the Archived list on the start screen.</p><small>After every failed code or link</small></div>
+      <div class="msg"><b>M7</b><p class="notice">This case is closed. You can read it, but nothing can be added.</p><small>Closed case home, any add</small></div>
+      <div class="msg"><b>M8</b><p class="inline-error">The folder cannot be used. Choose a folder on this computer that you can write to.</p><small>Archive folder</small></div>
+      <div class="msg"><b>M9</b><p class="inline-error">There is not enough free space for the archive.</p><small>Archive, Verify</small></div>
+      <div class="msg"><b>M10</b><p class="inline-error">The archive file could not be checked. Nothing was changed. Try again.</p><small>Read-back mismatch</small></div>
+      <div class="msg"><b>M11</b><p class="inline-error">The case file did not pass the check. The working copy was kept.</p><small>Verify</small></div>
+      <div class="msg"><b>M12</b><p class="sample-note">N archived cases can only be opened with the old key.</p><small>Master key reset; N counts freed archives sealed under the master key</small></div>
+      <div class="msg"><b>M13</b><p class="inline-error">This file can only be opened with the key it was made with.</p><small>Verify, Free the space confirmation, Restore</small></div>
+      <div class="msg"><b>M14</b><p class="notice">Archiving was stopped. The case is back as it was. Try again.</p><small>Cancel, crash or lock</small></div>
+      <div class="msg"><b>M15</b><p class="inline-error">An archive is running. Cancel it first.</p><small>Erase on an Archiving case</small></div>
+      <div class="msg"><b>M16</b><p class="inline-error">This case is too large to archive in one file.</p><small>Archive, over 8 GiB</small></div>
+      <div class="msg"><b>M17</b><p class="notice">The check was stopped. Nothing was changed. Try again.</p><small>Verify cancelled or key locked</small></div>
+      <div class="msg"><b>M18</b><p class="notice">This case was already made. Find it on the start screen.</p><small>Create with a request id for an archived case</small></div>
+      <div class="msg"><b>M19</b><p class="inline-error">This case is being freed. Try again in a moment.</p><small>Any call while Freeing</small></div>
+    </div>
+  </div>
+</section>
+</section>
+
+<!-- ======================= STATES ======================= -->
+<section class="rv-group" id="states">
+<h2>10. What each state allows</h2>
+<section class="shot" id="s19">
+  <header class="cap"><span class="sid">S19</span><h3>Action by state</h3><span class="ref">spec 9</span></header>
+  <p class="sub">The server decides under one lock per case. Every state-changing call carries the state the page believes; a mismatch is M2 (exceptions in the spec's 9.1). M5 is for Erasing, M19 for Freeing.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Action</th><th>Open</th><th>Closed</th><th>Archiving</th><th>Archived (kept)</th><th>Archived (freed)</th><th>Untrusted</th><th>Missing</th><th>Freeing / Erasing</th></tr></thead>
+    <tbody>
+      <tr><td>Open in place</td><td class="yes">yes</td><td>read-only</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no (M5/M19)</td></tr>
+      <tr><td>Add import</td><td class="yes">yes</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no (M5/M19)</td></tr>
+      <tr><td>Read analysis</td><td class="yes">yes</td><td class="yes">yes</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no (M5/M19)</td></tr>
+      <tr><td>Export</td><td class="yes">yes</td><td class="yes">yes</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no (M5/M19)</td></tr>
+      <tr><td>Close</td><td class="yes">yes</td><td class="no">n/a</td><td class="no">no</td><td class="no">n/a</td><td class="no">n/a</td><td class="no">no</td><td class="no">no</td><td class="no">no (M5/M19)</td></tr>
+      <tr><td>Reopen</td><td class="no">n/a</td><td class="yes">yes</td><td class="no">no</td><td class="no">n/a</td><td class="no">n/a</td><td class="no">no</td><td class="no">no</td><td class="no">no (M5/M19)</td></tr>
+      <tr><td>Archive</td><td class="yes">yes</td><td class="yes">yes</td><td class="no">n/a</td><td class="no">n/a</td><td class="no">n/a</td><td class="no">no</td><td class="no">no</td><td class="no">no (M5/M19)</td></tr>
+      <tr><td>Cancel archive</td><td class="no">n/a</td><td class="no">n/a</td><td class="yes">yes (live job only)</td><td class="no">n/a</td><td class="no">n/a</td><td class="no">n/a</td><td class="no">n/a</td><td class="no">n/a</td></tr>
+      <tr><td>Restore (in place)</td><td class="no">n/a</td><td class="no">n/a</td><td class="no">no</td><td class="yes">yes</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no (M5/M19)</td></tr>
+      <tr><td>Restore from case file as new</td><td class="no">n/a</td><td class="no">n/a</td><td class="no">no</td><td class="yes">yes</td><td class="yes">yes</td><td class="no">no</td><td>yes if Archived</td><td>yes (not Erasing)</td></tr>
+      <tr><td>Free the space</td><td class="no">n/a</td><td class="no">n/a</td><td class="no">n/a</td><td class="yes">yes</td><td class="no">n/a</td><td class="no">n/a</td><td class="no">no</td><td class="no">no (M5/M19)</td></tr>
+      <tr><td>Erase</td><td class="yes">yes</td><td class="yes">yes</td><td class="no">no (M15)</td><td class="yes">yes</td><td>yes (entry and history only)</td><td class="yes">yes</td><td>yes (entry only)</td><td class="no">no (M5/M19)</td></tr>
+    </tbody></table></div>
+  <p class="sub" style="margin-top:8px">Two tabs, one lock: Open and Close pressed while another tab archived gives M2. Archive from a belief of Open or Closed runs from either; if the server finds Archiving it answers M3. A Freed case is never Missing.</p>
+</section>
+</section>
+
+</main>
+
+<script>
+(function () {
+  const root = document.documentElement;
+  const moon = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M16.5 11.6A6.6 6.6 0 0 1 8.4 3.5a6.6 6.6 0 1 0 8.1 8.1Z"></path></svg>';
+  function bar(kind, active) {
+    const work = kind === 'work';
+    const nav = work
+      ? '<div class="nav-items"><button type="button" class="header-button nav-button">Home</button><button type="button" class="header-button nav-button' + (active === 'case-home' ? ' on' : '') + '">Case home</button><button type="button" class="header-button nav-button">Patterns</button><button type="button" class="header-button nav-button">Ledger</button><button type="button" class="header-button nav-button">Export</button><button type="button" class="header-button nav-button' + (active === 'import' ? ' on' : '') + '">Import</button></div>'
+      : '';
+    return '<header class="topbar"><div class="brand-lockup"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><h1>Unravis</h1></div>' + nav +
+      '<div class="actions"><span class="mode-badge">Live mode</span><div class="utilities">' +
+      (work ? '<button type="button" class="header-button more-btn"><svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="4" cy="10" r="1.7"></circle><circle cx="10" cy="10" r="1.7"></circle><circle cx="16" cy="10" r="1.7"></circle></svg><span class="more-label">More</span></button>' : '') +
+      '<button type="button" class="header-button">Glossary</button><button type="button" class="header-button">Lock</button>' +
+      '<button type="button" class="header-button theme-toggle" aria-label="Theme">' + moon + '</button></div></div></header>';
+  }
+  document.querySelectorAll('.app[data-bar]').forEach(function (app) {
+    app.insertAdjacentHTML('afterbegin', bar(app.dataset.bar, app.dataset.active));
+  });
+  // Drawer frames show the screen they open over: clone an earlier frame's stage (throwaway; ids stripped).
+  document.querySelectorAll('.app[data-under]').forEach(function (app) {
+    const key = app.dataset.under;
+    const src = key === 's2-stage' ? document.querySelector('#s2 .stage') : document.getElementById(key);
+    if (!src) return;
+    const clone = src.cloneNode(true);
+    clone.querySelectorAll('[id]').forEach(function (n) { n.removeAttribute('id'); });
+    clone.querySelectorAll('.menu').forEach(function (n) { n.remove(); });
+    let holder = clone;
+    if (key !== 's2-stage') {
+      holder = document.createElement('div'); holder.className = 'stage';
+      const inner = document.createElement('div'); inner.className = 'stage-inner'; inner.appendChild(clone); holder.appendChild(inner);
+    }
+    holder.setAttribute('aria-hidden', 'true');
+    app.querySelector('.topbar').after(holder);
+  });
+  document.querySelectorAll('[data-theme-set]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      root.setAttribute('data-theme', b.dataset.themeSet);
+      document.querySelectorAll('[data-theme-set]').forEach(function (o) { o.setAttribute('aria-pressed', String(o === b)); });
+    });
+  });
+  document.querySelectorAll('[data-width-set]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.body.classList.toggle('phone', b.dataset.widthSet === 'phone');
+      document.querySelectorAll('[data-width-set]').forEach(function (o) { o.setAttribute('aria-pressed', String(o === b)); });
+    });
+  });
+  document.querySelectorAll('.theme-toggle').forEach(function (b) {
+    b.addEventListener('click', function () { document.querySelector('[data-theme-set="' + (root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark') + '"]').click(); });
+  });
+})();
+</script>
+</body>
+</html>
