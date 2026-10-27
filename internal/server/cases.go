@@ -703,9 +703,6 @@ func (h *handler) closeCase(w http.ResponseWriter, r *http.Request, raw string) 
 	if !ok {
 		return
 	}
-	// A sampler recording into this case is stopped first, so its last batch is
-	// saved before the case closes.
-	h.stopSamplerFor(id, false, stopCaseClosed)
 	// Close takes the case's gate, like import and erase: an import in flight
 	// finishes first, and no import starts between the close and its answer.
 	release, err := h.gates.acquire(r.Context(), id)
@@ -720,6 +717,9 @@ func (h *handler) closeCase(w http.ResponseWriter, r *http.Request, raw string) 
 		writeStoreError(w, err)
 		return
 	}
+	// A sampler recording into this case is stopped once the move is allowed (a stale tab that gets M2 must not stop a live sampler), and
+	// before the case closes, so its last batch is saved first.
+	h.stopSamplerFor(id, false, stopCaseClosed)
 	if err := h.cases.CloseCase(r.Context(), id); err != nil {
 		writeStoreError(w, err)
 		return
