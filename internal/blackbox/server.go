@@ -22,6 +22,7 @@ const (
 	maxConcurrent = 8
 	failWindow    = time.Minute
 	maxFailures   = 5
+	maxTrackedIPs = 1024 // addresses kept in the failure table
 )
 
 // StatusDoc is the answer of /status. Every answer carries Time.
@@ -163,10 +164,34 @@ func (s *Server) throttled(ip string, now time.Time) bool {
 func (s *Server) fail(ip string, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.fails) > 1024 { // bound the table against a spray of addresses
-		s.fails = map[string][]time.Time{}
+	if _, known := s.fails[ip]; !known && len(s.fails) >= maxTrackedIPs {
+		s.evictLocked(now)
 	}
 	s.fails[ip] = append(s.fails[ip], now)
+}
+
+// evictLocked makes room in the failure table. Addresses whose failures are all
+// outside the window go first. If the table is still full, the address with the
+// fewest recent failures goes (the oldest of those on a tie), so a spray of
+// one-off addresses pushes out other one-off addresses and never an address that
+// is locked out.
+func (s *Server) evictLocked(now time.Time) {
+	for ip, ts := range s.fails {
+		if len(ts) == 0 || now.Sub(ts[len(ts)-1]) >= failWindow {
+			delete(s.fails, ip)
+		}
+	}
+	if len(s.fails) < maxTrackedIPs {
+		return
+	}
+	victim, n, last := "", 0, time.Time{}
+	for ip, ts := range s.fails {
+		l := ts[len(ts)-1]
+		if victim == "" || len(ts) < n || (len(ts) == n && l.Before(last)) {
+			victim, n, last = ip, len(ts), l
+		}
+	}
+	delete(s.fails, victim)
 }
 
 // guard wraps a handler with method, key, throttle and concurrency checks.

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -366,5 +367,39 @@ func TestServerHasWriteAndHeaderTimeouts(t *testing.T) {
 	g := newSrvRig(t)
 	if g.srv.srv.WriteTimeout <= 0 || g.srv.srv.ReadHeaderTimeout <= 0 || g.srv.srv.IdleTimeout <= 0 {
 		t.Fatalf("timeouts %v %v %v", g.srv.srv.WriteTimeout, g.srv.srv.ReadHeaderTimeout, g.srv.srv.IdleTimeout)
+	}
+}
+
+// Review F6.3: a spray of source addresses must not clear the lockout of an
+// address that is locked out.
+func TestThrottleTableEvictsOneOffAddressesNotLockedOutOnes(t *testing.T) {
+	g := newSrvRig(t)
+	now := g.clk.t
+	for i := 0; i < maxFailures; i++ {
+		g.srv.fail("203.0.113.9", now)
+	}
+	if !g.srv.throttled("203.0.113.9", now) {
+		t.Fatal("not locked out")
+	}
+	for i := 0; i < 3*maxTrackedIPs; i++ {
+		g.srv.fail(fmt.Sprintf("10.%d.%d.%d", i/65536, i/256%256, i%256), now.Add(time.Duration(i)*time.Millisecond))
+	}
+	if !g.srv.throttled("203.0.113.9", now.Add(time.Second)) {
+		t.Fatal("lockout cleared by a spray of addresses")
+	}
+	g.srv.mu.Lock()
+	n := len(g.srv.fails)
+	g.srv.mu.Unlock()
+	if n > maxTrackedIPs {
+		t.Fatalf("table grew to %d", n)
+	}
+	// Once the window passes, expired addresses make room first.
+	later := now.Add(failWindow + time.Hour)
+	g.srv.fail("198.51.100.1", later)
+	g.srv.mu.Lock()
+	n = len(g.srv.fails)
+	g.srv.mu.Unlock()
+	if n > maxTrackedIPs {
+		t.Fatalf("table grew to %d", n)
 	}
 }
