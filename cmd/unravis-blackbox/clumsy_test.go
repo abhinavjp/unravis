@@ -34,7 +34,7 @@ func TestClumsyInstallTwiceSaysSoAndKeepsTheFirstKey(t *testing.T) {
 	if c, out, _ := r.do(append([]string{"install", "--json"}, r.args...)...); c != 0 {
 		t.Fatal(out)
 	}
-	keyPath := filepath.Join(r.dir, defaultKeyName)
+	keyPath := filepath.Join(r.env.prog, defaultKeyName)
 	before, err := os.ReadFile(keyPath)
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func TestClumsyDefaultPortBusyNamesPort7788(t *testing.T) {
 	if c != exitFail || got["reason"] != "port-busy" || !strings.Contains(got["message"].(string), "7788") {
 		t.Fatalf("%d %v", c, got)
 	}
-	if _, err := os.Stat(filepath.Join(r.dir, defaultKeyName)); err == nil {
+	if _, err := os.Stat(filepath.Join(r.env.prog, defaultKeyName)); err == nil {
 		t.Fatal("a key file was left behind")
 	}
 }
@@ -79,7 +79,7 @@ func TestClumsyInstallOnAFullDriveSaysFolderAndLeavesNothing(t *testing.T) {
 	if r.svc.state != blackbox.SvcNotInstalled || len(r.svc.calls) != 0 {
 		t.Fatalf("the service was touched: %v", r.svc.calls)
 	}
-	if _, err := os.Stat(filepath.Join(r.dir, defaultKeyName)); err == nil {
+	if _, err := os.Stat(filepath.Join(r.env.prog, defaultKeyName)); err == nil {
 		t.Fatal("a key file was left behind")
 	}
 }
@@ -109,7 +109,7 @@ func TestClumsyRemoveTwiceAndTypoedNameDeleteNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A typo in the confirming name changes nothing, not even the service.
-	c, out, _ := r.do("remove", "--json", "--delete-recordings", "--confirm-name", "web-bb", "--config", filepath.Join(r.dir, defaultConfigName))
+	c, out, _ := r.do("remove", "--json", "--delete-recordings", "--confirm-name", "web-bb", "--config", filepath.Join(r.env.prog, defaultConfigName))
 	got := jsonAnswer(t, out)
 	if c != exitFail || got["ok"] != false || r.svc.state != blackbox.SvcRunning {
 		t.Fatalf("%d %v state %v", c, got, r.svc.state)
@@ -139,7 +139,7 @@ func TestClumsyStopWhenNotInstalledAndApplyWithAHandEditedBrokenFile(t *testing.
 	if c, out, _ := r.do(append([]string{"install", "--json"}, r.args...)...); c != 0 {
 		t.Fatal(out)
 	}
-	cfgPath := filepath.Join(r.dir, defaultConfigName)
+	cfgPath := filepath.Join(r.env.prog, defaultConfigName)
 	// Someone edits the file and leaves a comma behind.
 	if err := os.WriteFile(cfgPath, []byte(`{"name":"x","keepDays":7,}`), 0o644); err != nil {
 		t.Fatal(err)

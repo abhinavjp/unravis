@@ -52,8 +52,8 @@ Other commands:
   version     Print the version.
 
 Options for every command:
-  --config <file>     blackbox.json (default: next to this program)
-  --key-file <file>   read key hash (default: next to this program)
+  --config <file>     blackbox.json (default: the installed copy, else next to this program)
+  --key-file <file>   read key hash (default: the installed copy, else next to this program)
   --json              answer as one JSON line (for the Unravis installer)
 `
 
@@ -178,12 +178,29 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	}
 	ans := answer{out: stdout, err: stderr, asJSON: *asJSON}
 	paths := blackbox.Paths{ConfigPath: *configPath, KeyPath: *keyPath}
-	if paths.ConfigPath == "" {
-		paths.ConfigPath = filepath.Join(d.exeDir(), defaultConfigName)
+	// Install reads its settings from next to this program (the unpacked zip) and
+	// puts the live copies in the program folder. Every other command works on
+	// the installed copies when there are any, so "apply" from the unpacked zip
+	// does not read a file the service never sees.
+	progDir := ""
+	if cmd != "install" {
+		if pd, err := d.mgr.Env.ProgramDir(); err == nil {
+			progDir = pd
+		}
 	}
-	if paths.KeyPath == "" {
-		paths.KeyPath = filepath.Join(d.exeDir(), defaultKeyName)
+	pick := func(given, name string) string {
+		if given != "" {
+			return given
+		}
+		if progDir != "" {
+			if _, err := os.Stat(filepath.Join(progDir, name)); err == nil {
+				return filepath.Join(progDir, name)
+			}
+		}
+		return filepath.Join(d.exeDir(), name)
 	}
+	paths.ConfigPath = pick(paths.ConfigPath, defaultConfigName)
+	paths.KeyPath = pick(paths.KeyPath, defaultKeyName)
 
 	switch cmd {
 	case "install":
@@ -191,13 +208,14 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		if err != nil {
 			return ans.fail(err)
 		}
-		res, err := d.mgr.Install(cfg, paths)
+		res, err := d.mgr.Install(cfg)
 		if err != nil {
 			return ans.fail(err)
 		}
-		return ans.ok(fmt.Sprintf("Installed. The %s service is running.\nFolder: %s\nStatus port: %d\n\nRead key (shown once, copy it now):\n  %s\n\nOnly a fingerprint of the key is kept on this server.",
-			res.Service, res.Folder, res.Port, res.ReadKey),
-			map[string]any{"readKey": res.ReadKey, "service": res.Service, "folder": res.Folder, "port": res.Port, "name": cfg.Name})
+		return ans.ok(fmt.Sprintf("Installed. The %s service is running.\nFolder: %s\nProgram and settings: %s\nStatus port: %d\n\nRead key (shown once, copy it now):\n  %s\n\nOnly a fingerprint of the key is kept on this server.",
+			res.Service, res.Folder, filepath.Dir(res.ExePath), res.Port, res.ReadKey),
+			map[string]any{"readKey": res.ReadKey, "service": res.Service, "folder": res.Folder, "port": res.Port, "name": cfg.Name,
+				"exePath": res.ExePath, "configPath": res.ConfigPath})
 	case "start":
 		if err := d.mgr.Start(); err != nil {
 			return ans.fail(err)

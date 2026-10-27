@@ -46,10 +46,13 @@ type memEnv struct {
 	admin bool
 	exe   string
 	port  error
+	prog  string
 }
 
 func (e *memEnv) IsAdmin() bool                       { return e.admin }
 func (e *memEnv) ExePath() (string, error)            { return e.exe, nil }
+func (e *memEnv) ProgramDir() (string, error)         { return e.prog, nil }
+func (e *memEnv) SecureDir(string, bool) error        { return nil }
 func (e *memEnv) PortFree(string, int) error          { return e.port }
 func (e *memEnv) FolderWritable(string) error         { return nil }
 func (e *memEnv) FileSHA256(p string) (string, error) { return blackbox.OSEnv{}.FileSHA256(p) }
@@ -77,7 +80,7 @@ func newRig(t *testing.T) *rig {
 	if err := os.WriteFile(exe, []byte("MZ"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r := &rig{svc: &memSvc{}, env: &memEnv{admin: true, exe: exe}, dir: dir}
+	r := &rig{svc: &memSvc{}, env: &memEnv{admin: true, exe: exe, prog: filepath.Join(dir, "Program Files", "Unravis Blackbox")}, dir: dir}
 	r.d = deps{
 		mgr:      &blackbox.Manager{Svc: r.svc, Env: r.env, Disk: bigDisk{}},
 		exeDir:   func() string { return dir },
@@ -132,7 +135,7 @@ func TestInstallPrintsKeyOnceAndNamesTheBoxAfterTheComputer(t *testing.T) {
 	if got["ok"] != true || !strings.HasPrefix(key, "ubk-") || got["name"] != "WEB-B-corp" {
 		t.Fatalf("%v", got)
 	}
-	cfg, err := blackbox.LoadConfig(filepath.Join(r.dir, defaultConfigName))
+	cfg, err := blackbox.LoadConfig(filepath.Join(r.env.prog, defaultConfigName))
 	if err != nil || cfg.Name != "WEB-B-corp" || cfg.Port != 7788 {
 		t.Fatalf("%+v %v", cfg, err)
 	}
@@ -261,7 +264,7 @@ func TestRunPassesSettingsAndReportsRefusal(t *testing.T) {
 	_, _, _ = r.do(append([]string{"install", "--name", "box-1"}, r.args...)...)
 	var seen blackbox.HostOptions
 	r.d.hostRun = func(_ context.Context, o blackbox.HostOptions) error { seen = o; return nil }
-	if c, _, _ := r.do("run"); c != 0 || seen.Config.Name != "box-1" || seen.KeyPath != filepath.Join(r.dir, defaultKeyName) {
+	if c, _, _ := r.do("run"); c != 0 || seen.Config.Name != "box-1" || seen.KeyPath != filepath.Join(r.env.prog, defaultKeyName) {
 		t.Fatalf("%+v", seen)
 	}
 	r.d.hostRun = func(context.Context, blackbox.HostOptions) error { return blackbox.ErrNoReadKey }
@@ -338,5 +341,28 @@ func TestPackTemplateBindsLoopbackOnly(t *testing.T) {
 	}
 	if !strings.Contains(string(b), `"bind": "127.0.0.1"`) || strings.Contains(string(b), "0.0.0.0") {
 		t.Fatalf("pack blackbox.json must bind loopback (A53):\n%s", b)
+	}
+}
+
+// After install the live settings are in the program folder; commands run from
+// the unpacked zip must use them, not a stale copy next to this program.
+func TestCommandsAfterInstallUseTheInstalledSettingsNotTheUnpackedCopy(t *testing.T) {
+	r := newRig(t)
+	if c, out, _ := r.do(append([]string{"install", "--json", "--name", "web-b"}, r.args...)...); c != 0 {
+		t.Fatal(out)
+	}
+	// The unpacked zip still has a broken blackbox.json; the installed one is fine.
+	if err := os.WriteFile(filepath.Join(r.dir, defaultConfigName), []byte(`{"keepDays": `), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, out, _ := r.do("apply", "--json")
+	if c != 0 || !strings.Contains(out, `"restarted":true`) {
+		t.Fatalf("apply read the wrong file: %d %s", c, out)
+	}
+	// The install answer says where the service runs from.
+	r2 := newRig(t)
+	_, out2, _ := r2.do(append([]string{"install", "--json"}, r2.args...)...)
+	if !strings.Contains(out2, `"exePath":`) || !strings.Contains(out2, "Unravis Blackbox") {
+		t.Fatalf("%s", out2)
 	}
 }

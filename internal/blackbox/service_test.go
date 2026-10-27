@@ -2,6 +2,7 @@ package blackbox
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -64,17 +65,28 @@ func (f *fakeSvc) did(c string) int {
 // fakeEnv answers for a machine we control. The "program" is a real file so its
 // hash can change or the file can go.
 type fakeEnv struct {
-	admin    bool
-	exe      string
-	portErr  error
-	folder   error
-	probeErr error
-	real     OSEnv
-	slept    time.Duration
+	admin     bool
+	exe       string
+	portErr   error
+	folder    error
+	probeErr  error
+	real      OSEnv
+	slept     time.Duration
+	prog      string // the program folder (stands for %ProgramFiles%\Unravis Blackbox)
+	secureErr error
+	secured   []string // folders SecureDir was asked about, in order, with the state of the program folder at the time
+	log       []string
 }
 
-func (e *fakeEnv) IsAdmin() bool                       { return e.admin }
-func (e *fakeEnv) ExePath() (string, error)            { return e.exe, nil }
+func (e *fakeEnv) IsAdmin() bool               { return e.admin }
+func (e *fakeEnv) ExePath() (string, error)    { return e.exe, nil }
+func (e *fakeEnv) ProgramDir() (string, error) { return e.prog, nil }
+func (e *fakeEnv) SecureDir(dir string, usersRead bool) error {
+	_, haveExe := os.Stat(filepath.Join(e.prog, InstalledExeName))
+	e.log = append(e.log, fmt.Sprintf("secure %s read=%v exeAlreadyThere=%v", dir, usersRead, haveExe == nil))
+	e.secured = append(e.secured, dir)
+	return e.secureErr
+}
 func (e *fakeEnv) PortFree(string, int) error          { return e.portErr }
 func (e *fakeEnv) FolderWritable(string) error         { return e.folder }
 func (e *fakeEnv) FileSHA256(p string) (string, error) { return e.real.FileSHA256(p) }
@@ -90,8 +102,9 @@ type svcRig struct {
 	svc  *fakeSvc
 	env  *fakeEnv
 	cfg  Config
-	p    Paths
+	p    Paths // the settings files Install writes, in the program folder
 	root string
+	prog string
 }
 
 func newSvcRig(t *testing.T) *svcRig {
@@ -105,9 +118,11 @@ func newSvcRig(t *testing.T) *svcRig {
 	cfg.Name = "web-b"
 	cfg.Folder = filepath.Join(root, "data", "UnravisBlackbox")
 	cfg.Port = 7788
-	g := &svcRig{svc: &fakeSvc{}, env: &fakeEnv{admin: true, exe: exe}, cfg: cfg, root: root,
-		p: Paths{ConfigPath: filepath.Join(root, "etc", "blackbox.json"), KeyPath: filepath.Join(root, "etc", "readkey.sha256")}}
-	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
+	// The zip is unpacked in root; the service is installed into prog.
+	prog := filepath.Join(root, "Program Files", "Unravis Blackbox")
+	g := &svcRig{svc: &fakeSvc{}, env: &fakeEnv{admin: true, exe: exe, prog: prog}, cfg: cfg, root: root, prog: prog,
+		p: Paths{ConfigPath: filepath.Join(prog, ConfigFileName), KeyPath: filepath.Join(prog, KeyFileName)}}
+	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	g.m = &Manager{Svc: g.svc, Env: g.env, Disk: fixedDisk{free: 50 << 30}}
@@ -120,8 +135,8 @@ func (g *svcRig) nothingLeft(t *testing.T) {
 	if g.svc.state != SvcNotInstalled {
 		t.Fatalf("service left behind: %s", g.svc.state)
 	}
-	for _, p := range []string{g.cfg.Folder, filepath.Dir(g.cfg.Folder), g.p.ConfigPath, g.p.KeyPath, g.p.ConfigPath + ".bak"} {
-		if _, err := os.Stat(p); err == nil && p != filepath.Join(g.root, "etc") {
+	for _, p := range []string{g.cfg.Folder, filepath.Dir(g.cfg.Folder), g.p.ConfigPath, g.p.KeyPath, g.p.ConfigPath + ".bak", filepath.Join(g.prog, InstalledExeName)} {
+		if _, err := os.Stat(p); err == nil {
 			t.Fatalf("left behind: %s", p)
 		}
 	}
@@ -138,11 +153,11 @@ func installReason(t *testing.T, err error) Reason {
 
 func TestInstallHappyPath(t *testing.T) {
 	g := newSvcRig(t)
-	res, err := g.m.Install(g.cfg, g.p)
+	res, err := g.m.Install(g.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.svc.state != SvcRunning || g.svc.spec.Name != ServiceName || g.svc.spec.ExePath != g.env.exe {
+	if g.svc.state != SvcRunning || g.svc.spec.Name != ServiceName || g.svc.spec.ExePath != filepath.Join(g.prog, InstalledExeName) {
 		t.Fatalf("%+v %s", g.svc.spec, g.svc.state)
 	}
 	// The key is shown once and only its hash is kept.
@@ -180,7 +195,7 @@ func TestInstallFiveFailureReasonsLeaveNothingBehind(t *testing.T) {
 		{"read-only folder", func(g *svcRig) { g.env.folder = errors.New("access denied") }, ReasonFolder, "read-only or has under 1 GB free"},
 		{"disk nearly full", func(g *svcRig) { g.m.Disk = fixedDisk{free: 100 << 20} }, ReasonFolder, "under 1 GB free"},
 		{"antivirus ate the program", func(g *svcRig) {
-			g.svc.onStart = func() { _ = os.Remove(g.env.exe) }
+			g.svc.onStart = func() { _ = os.Remove(filepath.Join(g.prog, InstalledExeName)) }
 			g.svc.startErr = errors.New("the file cannot be found")
 		}, ReasonAntivirus, "Antivirus blocked it"},
 	}
@@ -188,7 +203,7 @@ func TestInstallFiveFailureReasonsLeaveNothingBehind(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			g := newSvcRig(t)
 			c.setup(g)
-			_, err := g.m.Install(g.cfg, g.p)
+			_, err := g.m.Install(g.cfg)
 			if err == nil {
 				t.Fatal("install should fail")
 			}
@@ -203,16 +218,109 @@ func TestInstallFiveFailureReasonsLeaveNothingBehind(t *testing.T) {
 	}
 }
 
+// F2: the service runs as LocalSystem, so it must not run a program from where
+// the zip was unpacked (any user may be able to write there).
+func TestInstallRunsTheServiceFromTheLockedProgramFolderNotTheUnpackedZip(t *testing.T) {
+	g := newSvcRig(t)
+	res, err := g.m.Install(g.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(g.prog, InstalledExeName)
+	if g.svc.spec.ExePath != want || res.ExePath != want {
+		t.Fatalf("service runs %q, want the copy in %q", g.svc.spec.ExePath, g.prog)
+	}
+	if samePath(g.svc.spec.ExePath, g.env.exe) {
+		t.Fatal("the service runs the unpacked zip's program")
+	}
+	copied, err := os.ReadFile(want)
+	orig, _ := os.ReadFile(g.env.exe)
+	if err != nil || string(copied) != string(orig) {
+		t.Fatalf("the installed program is not a copy of the original: %v", err)
+	}
+	// Settings and key hash are read from the locked folder too.
+	args := strings.Join(g.svc.spec.Args, " ")
+	if !strings.Contains(args, filepath.Join(g.prog, ConfigFileName)) || !strings.Contains(args, filepath.Join(g.prog, KeyFileName)) {
+		t.Fatalf("service reads its settings from elsewhere: %s", args)
+	}
+	// The program folder is locked before the program goes in, with no read
+	// access for users; the recordings folder is locked too, readable by users.
+	if len(g.env.log) != 2 {
+		t.Fatalf("%v", g.env.log)
+	}
+	if !strings.Contains(g.env.log[0], g.cfg.Folder) || !strings.Contains(g.env.log[0], "read=true") {
+		t.Fatalf("recordings folder not locked: %v", g.env.log)
+	}
+	if !strings.Contains(g.env.log[1], g.prog) || !strings.Contains(g.env.log[1], "read=false") || !strings.Contains(g.env.log[1], "exeAlreadyThere=false") {
+		t.Fatalf("program folder must be locked before the program is copied in: %v", g.env.log)
+	}
+}
+
+func TestInstallFromTheProgramFolderItselfDoesNotCopyOntoItself(t *testing.T) {
+	g := newSvcRig(t)
+	exe := filepath.Join(g.prog, InstalledExeName)
+	if err := os.WriteFile(exe, []byte("MZ program"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	g.env.exe = exe
+	if _, err := g.m.Install(g.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "MZ program" || g.svc.spec.ExePath != exe {
+		t.Fatalf("%q %s", b, g.svc.spec.ExePath)
+	}
+}
+
+func TestInstallThatCannotLockTheProgramFolderStopsAndLeavesNothing(t *testing.T) {
+	g := newSvcRig(t)
+	g.env.secureErr = errors.New("access denied")
+	_, err := g.m.Install(g.cfg)
+	if err == nil || !strings.Contains(err.Error(), "only administrators may change it") && !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("%v", err)
+	}
+	if g.svc.did("create") != 0 {
+		t.Fatal("a service was registered although the folders could not be locked")
+	}
+	g.nothingLeft(t)
+}
+
+func TestInstallUndoRemovesTheCopiedProgram(t *testing.T) {
+	g := newSvcRig(t)
+	g.svc.startErr = errors.New("boom")
+	if _, err := g.m.Install(g.cfg); err == nil {
+		t.Fatal("should fail")
+	}
+	if _, err := os.Stat(filepath.Join(g.prog, InstalledExeName)); err == nil {
+		t.Fatal("the copied program was left behind")
+	}
+	if _, err := os.Stat(g.env.exe); err != nil {
+		t.Fatal("the user's own program file was removed")
+	}
+}
+
+func TestRemoveDeletesTheInstalledProgramCopy(t *testing.T) {
+	g := newSvcRig(t)
+	if _, err := g.m.Install(g.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.m.Remove(g.cfg, g.p.KeyPath, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(g.prog, InstalledExeName)); err == nil {
+		t.Fatal("the installed program copy was left in the program folder")
+	}
+}
+
 func TestInstallTwiceSaysAlreadyInstalledAndKeepsTheFirst(t *testing.T) {
 	g := newSvcRig(t)
-	first, err := g.m.Install(g.cfg, g.p)
+	first, err := g.m.Install(g.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The first install is running and holds the port: the second must still say
 	// "already installed", not "port busy".
 	g.env.portErr = errors.New("in use")
-	_, err = g.m.Install(g.cfg, g.p)
+	_, err = g.m.Install(g.cfg)
 	if installReason(t, err) != ReasonExists {
 		t.Fatalf("%v", err)
 	}
@@ -237,7 +345,7 @@ func TestInstallUndoKeepsPreviousConfigAndKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.svc.startErr = errors.New("boom")
-	if _, err := g.m.Install(g.cfg, g.p); err == nil {
+	if _, err := g.m.Install(g.cfg); err == nil {
 		t.Fatal("should fail")
 	}
 	b, _ := os.ReadFile(g.p.ConfigPath)
@@ -250,7 +358,7 @@ func TestInstallUndoKeepsPreviousConfigAndKey(t *testing.T) {
 func TestInstallServiceThatNeverRunsOrAnswersIsUndone(t *testing.T) {
 	g := newSvcRig(t)
 	g.svc.stuck = true
-	_, err := g.m.Install(g.cfg, g.p)
+	_, err := g.m.Install(g.cfg)
 	if installReason(t, err) != ReasonOther {
 		t.Fatalf("%v", err)
 	}
@@ -259,7 +367,7 @@ func TestInstallServiceThatNeverRunsOrAnswersIsUndone(t *testing.T) {
 
 	g2 := newSvcRig(t)
 	g2.env.probeErr = errors.New("connection refused")
-	_, err = g2.m.Install(g2.cfg, g2.p)
+	_, err = g2.m.Install(g2.cfg)
 	if installReason(t, err) != ReasonOther {
 		t.Fatalf("%v", err)
 	}
@@ -269,7 +377,7 @@ func TestInstallServiceThatNeverRunsOrAnswersIsUndone(t *testing.T) {
 func TestInstallRefusesBadConfigBeforeTouchingAnything(t *testing.T) {
 	g := newSvcRig(t)
 	g.cfg.Port = 0
-	if _, err := g.m.Install(g.cfg, g.p); err == nil {
+	if _, err := g.m.Install(g.cfg); err == nil {
 		t.Fatal("accepted")
 	}
 	if len(g.svc.calls) != 0 {
@@ -282,7 +390,7 @@ func TestStartStopApply(t *testing.T) {
 	if err := g.m.Start(); !errors.Is(err, ErrNotInstalled) {
 		t.Fatalf("%v", err)
 	}
-	if _, err := g.m.Install(g.cfg, g.p); err != nil {
+	if _, err := g.m.Install(g.cfg); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.m.Stop(); err != nil || g.svc.state != SvcStopped {
@@ -311,7 +419,7 @@ func TestStartStopApply(t *testing.T) {
 
 func TestApplyWithBrokenConfigStopsNothing(t *testing.T) {
 	g := newSvcRig(t)
-	if _, err := g.m.Install(g.cfg, g.p); err != nil {
+	if _, err := g.m.Install(g.cfg); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(g.p.ConfigPath, []byte(`{"port": 0, "keepDays": `), 0o644); err != nil {
@@ -345,7 +453,7 @@ func TestServiceCommandsNeedAdmin(t *testing.T) {
 
 func TestRemoveKeepsRecordingsUnlessAskedAndNamed(t *testing.T) {
 	g := newSvcRig(t)
-	if _, err := g.m.Install(g.cfg, g.p); err != nil {
+	if _, err := g.m.Install(g.cfg); err != nil {
 		t.Fatal(err)
 	}
 	rec := filepath.Join(g.cfg.Folder, FileNameFor(t0))
@@ -398,7 +506,7 @@ func TestRemoveWhenNothingIsInstalled(t *testing.T) {
 
 func TestRemoveStopsARunningServiceFirst(t *testing.T) {
 	g := newSvcRig(t)
-	if _, err := g.m.Install(g.cfg, g.p); err != nil {
+	if _, err := g.m.Install(g.cfg); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := g.m.Remove(g.cfg, g.p.KeyPath, false, ""); err != nil {

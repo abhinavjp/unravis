@@ -17,7 +17,7 @@ It does not record request bodies, passwords, environment variables or command l
 
 Recordings are plain text, one JSON line per sample, one file per hour: `bb-YYYYMMDD-HH.ndjson`. A `manifest.json` next to them lists the files and is rewritten atomically. If two samples are more than three intervals apart, the manifest records a gap, with its cause when the recorder knows it (for example `disk-low`), so the case screens show "no data" instead of a flat line.
 
-Settings are in `blackbox.json` next to the program:
+Settings are in `blackbox.json`. Before install it sits next to the program in the unpacked zip; install keeps the live copy in `%ProgramFiles%\Unravis Blackbox`, next to the installed program (see Install):
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -48,14 +48,16 @@ Add `--name web-b` to choose a name, `--folder E:\Rec` to choose the folder, `--
 It does these things, in this order:
 
 1. Checks the install can work: administrator rights, no Blackbox installed yet, port free, folder writable with at least 1 GB free, and that antivirus has not quarantined the program.
-2. Makes the folder, stores the fingerprint of the read key outside it, and creates the `UnravisBlackbox` Windows service (automatic start, restarts itself after a crash).
-3. Starts the service and opens its status page once to prove it answers.
+2. Makes the recordings folder and the program folder `%ProgramFiles%\Unravis Blackbox`, and restricts both so only administrators and the system can change them (ordinary users can still read the recordings folder). The service runs as the system account, so it never runs the program from the unpacked zip, where other users might be able to replace it: install copies `unravis-blackbox.exe` into the program folder, and keeps `blackbox.json` and the fingerprint of the read key there too.
+3. Creates the `UnravisBlackbox` Windows service from that copy (automatic start, restarts itself after a crash).
+4. Starts the service and opens its status page once to prove it answers.
 
 The read key is printed once:
 
 ```
 Installed. The UnravisBlackbox service is running.
 Folder: D:\UnravisBlackbox
+Program and settings: C:\Program Files\Unravis Blackbox
 Status port: 7788
 
 Read key (shown once, copy it now):
@@ -92,7 +94,9 @@ Other commands:
 .\unravis-blackbox.exe remove
 ```
 
-stops and removes the service and deletes the stored fingerprint of the read key. `blackbox.json` and the recordings stay where they are.
+stops and removes the service, deletes the stored fingerprint of the read key and the installed copy of the program (when it is not the one running the command; if you run `remove` from the program folder, `unravis-blackbox.exe` stays and can be deleted by hand). `blackbox.json` and the recordings stay where they are.
+
+After an install, run `apply`, `remove` and the other commands from the program folder, or from the unpacked zip: they use the installed `blackbox.json` when there is one.
 
 To delete the recordings too, type the Blackbox name so a slip cannot do it:
 

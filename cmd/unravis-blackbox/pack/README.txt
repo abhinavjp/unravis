@@ -12,7 +12,11 @@ Install (run PowerShell as administrator, in this folder)
 
 It names the Blackbox after this computer (add --name web-b to choose), makes
 the recordings folder (D:\UnravisBlackbox, or C:\UnravisBlackbox when there is
-no D: drive), installs the UnravisBlackbox service and starts it.
+no D: drive) and the program folder C:\Program Files\Unravis Blackbox, locks
+both so only administrators can change them, copies the program into the
+program folder (the service runs as the system account, so it never runs from
+this unpacked folder), installs the UnravisBlackbox service and starts it.
+Edit blackbox.json in the program folder after install, then run apply.
 
 The READ KEY is printed once. Copy it now. Only a fingerprint of it is kept on
 this server. Unravis asks for it when you add this Blackbox to a case.
@@ -33,7 +37,7 @@ Other commands
     unravis-blackbox run         record in this window (Ctrl+C stops it)
     unravis-blackbox version
 
-Settings are in blackbox.json next to the program. After a change run
+Settings are in blackbox.json (the installed copy is in the program folder). After a change run
 "unravis-blackbox apply". Housekeeping cannot be turned off: the oldest files
 go first when the recordings pass keepDays, maxGB, or leave less than
 minFreePercent of the drive free.

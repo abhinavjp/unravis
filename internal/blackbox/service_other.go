@@ -7,6 +7,9 @@ import "errors"
 // IsAdmin is false off Windows: the service only exists on Windows.
 func (OSEnv) IsAdmin() bool { return false }
 
+// SecureDir is not available off Windows.
+func (OSEnv) SecureDir(string, bool) error { return errNoService }
+
 // WinService does not exist off Windows; every call says so.
 type WinService struct{}
 

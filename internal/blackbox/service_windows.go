@@ -18,6 +18,34 @@ type WinService struct{}
 // IsAdmin says whether this process runs elevated.
 func (OSEnv) IsAdmin() bool { return windows.GetCurrentProcessToken().IsElevated() }
 
+// secureSDDL is the permission list SecureDir sets: protected (nothing
+// inherited), full control for SYSTEM and Administrators, and with usersRead
+// read and list for ordinary users.
+func secureSDDL(usersRead bool) string {
+	sddl := "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
+	if usersRead {
+		sddl += "(A;OICI;GRGX;;;BU)"
+	}
+	return sddl
+}
+
+// SecureDir gives SYSTEM and Administrators full control of dir, removes every
+// inherited permission, and, with usersRead, lets ordinary users read and list
+// it. What is already inside gets the same rights.
+func (OSEnv) SecureDir(dir string, usersRead bool) error {
+	sd, err := windows.SecurityDescriptorFromString(secureSDDL(usersRead))
+	if err != nil {
+		return err
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil)
+}
+
 func connect() (*mgr.Mgr, error) { return mgr.Connect() }
 
 func mapState(s svc.State) SvcState {

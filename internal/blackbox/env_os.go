@@ -3,6 +3,7 @@ package blackbox
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -23,6 +24,15 @@ func (OSEnv) ExePath() (string, error) {
 		return "", err
 	}
 	return filepath.EvalSymlinks(p)
+}
+
+// ProgramDir is %ProgramFiles%\Unravis Blackbox.
+func (OSEnv) ProgramDir() (string, error) {
+	pf := os.Getenv("ProgramFiles")
+	if pf == "" {
+		return "", errors.New("the ProgramFiles folder is not set on this computer")
+	}
+	return filepath.Join(pf, "Unravis Blackbox"), nil
 }
 
 // PortFree tries to listen on the port and lets go again.

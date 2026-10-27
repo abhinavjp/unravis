@@ -61,6 +61,12 @@ type ServiceControl interface {
 type Env interface {
 	IsAdmin() bool
 	ExePath() (string, error)
+	// ProgramDir is the folder the service program is installed into, one that
+	// only administrators can write to (%ProgramFiles%\Unravis Blackbox).
+	ProgramDir() (string, error)
+	// SecureDir limits who may change dir: only SYSTEM and administrators can
+	// write there. With usersRead, ordinary users may still read it.
+	SecureDir(dir string, usersRead bool) error
 	PortFree(bind string, port int) error
 	FolderWritable(dir string) error
 	FileSHA256(path string) (string, error)
@@ -70,8 +76,8 @@ type Env interface {
 	Sleep(d time.Duration)
 }
 
-// Paths are the files next to the program: the config and the read key hash.
-// Both live outside the recordings folder.
+// Paths are the config and the read key hash. Install puts them in the program
+// folder next to the installed program; both live outside the recordings folder.
 type Paths struct {
 	ConfigPath string
 	KeyPath    string
@@ -130,7 +136,21 @@ type InstallResult struct {
 	Service string
 	Folder  string
 	Port    int
+	// Where the service runs from: the installed program and its settings.
+	ExePath    string
+	ConfigPath string
+	KeyPath    string
 }
+
+// InstalledExeName is the program file inside the program folder.
+const InstalledExeName = "unravis-blackbox.exe"
+
+// ConfigFileName and KeyFileName are the settings files inside the program
+// folder.
+const (
+	ConfigFileName = "blackbox.json"
+	KeyFileName    = "readkey.sha256"
+)
 
 // undoList runs undo steps in reverse order.
 type undoList []func()
@@ -193,10 +213,17 @@ func ensureDir(dir string, undo *undoList) error {
 // Install places the recorder as a service on this PC. It checks the reasons an
 // install can fail, in this order: administrator rights, a service of the same
 // name, the port, the folder, then antivirus. Whatever it did is undone when a
-// step fails. The service name is checked before the port because a first
+// step fails.
+//
+// The service runs as LocalSystem, so the program is never run from where the
+// zip was unpacked (a folder under C:\ or D:\ lets ordinary users replace it).
+// Install copies the program into the program folder, locks that folder to
+// administrators and SYSTEM before anything goes in, and keeps the settings and
+// the read key hash there too. The recordings folder is locked so only
+// administrators and SYSTEM can write to it. The service name is checked before the port because a first
 // install that is running holds the port: a second install must say "already
 // installed", not "port busy".
-func (m *Manager) Install(cfg Config, p Paths) (res InstallResult, err error) {
+func (m *Manager) Install(cfg Config) (res InstallResult, err error) {
 	if err := cfg.Validate(); err != nil {
 		return res, err
 	}
@@ -237,12 +264,39 @@ func (m *Manager) Install(cfg Config, p Paths) (res InstallResult, err error) {
 		return res, folderErr(fmt.Errorf("%d bytes free", info.Free))
 	}
 
+	if serr := m.Env.SecureDir(cfg.Folder, true); serr != nil {
+		return res, folderErr(serr)
+	}
+
 	avErr := func(cause error) error {
 		return &InstallError{Reason: ReasonAntivirus, Message: "Antivirus blocked it. Your security software quarantined the program. Allow the folder, then try again.", Cause: cause}
 	}
-	exe, eerr := m.Env.ExePath()
+	src, eerr := m.Env.ExePath()
 	if eerr != nil {
 		return res, avErr(eerr)
+	}
+	progDir, perr2 := m.Env.ProgramDir()
+	if perr2 != nil {
+		return res, &InstallError{Reason: ReasonOther, Message: "Could not find the Program Files folder: " + perr2.Error(), Cause: perr2}
+	}
+	lockErr := func(cause error) error {
+		return &InstallError{Reason: ReasonOther, Message: fmt.Sprintf("Could not make %s safe (only administrators may change it): %s", progDir, cause.Error()), Cause: cause}
+	}
+	if derr := ensureDir(progDir, &undo); derr != nil {
+		return res, lockErr(derr)
+	}
+	// Lock the folder before the program goes in, so there is no moment when a
+	// user could swap it.
+	if serr := m.Env.SecureDir(progDir, false); serr != nil {
+		return res, lockErr(serr)
+	}
+	p := Paths{ConfigPath: filepath.Join(progDir, ConfigFileName), KeyPath: filepath.Join(progDir, KeyFileName)}
+	exe := filepath.Join(progDir, InstalledExeName)
+	if !samePath(src, exe) {
+		undo.add(fileMemory(exe))
+		if cerr := copyProgram(src, exe); cerr != nil {
+			return res, avErr(cerr)
+		}
 	}
 	want, herr := m.Env.FileSHA256(exe)
 	if herr != nil {
@@ -292,7 +346,24 @@ func (m *Manager) Install(cfg Config, p Paths) (res InstallResult, err error) {
 	if perr := m.Env.ProbeStatus(cfg.Port, key); perr != nil {
 		return res, failedStart(fmt.Errorf("the status page did not answer as expected: %w", perr))
 	}
-	return InstallResult{ReadKey: key, Service: ServiceName, Folder: cfg.Folder, Port: cfg.Port}, nil
+	return InstallResult{ReadKey: key, Service: ServiceName, Folder: cfg.Folder, Port: cfg.Port,
+		ExePath: exe, ConfigPath: p.ConfigPath, KeyPath: p.KeyPath}, nil
+}
+
+// samePath says whether two paths name the same file (Windows paths are not
+// case sensitive).
+func samePath(a, b string) bool {
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+}
+
+// copyProgram copies the program to dst through a temporary file, so a crash or
+// full disk never leaves half a program where the service expects a whole one.
+func copyProgram(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(dst, data, 0o755)
 }
 
 // waitFor polls the service until it reaches want or the time is up.
@@ -413,7 +484,8 @@ type RemoveResult struct {
 	FilesDeleted      int
 }
 
-// Remove stops and deletes the service and the read key hash. With
+// Remove stops and deletes the service, the read key hash and the installed
+// program copy. With
 // deleteRecordings it also deletes the recordings, but only when confirmName is
 // the Blackbox name: the check happens before anything is changed. Deleting the
 // recordings removes the recording files, the manifest, the snapshots folder and
@@ -447,6 +519,12 @@ func (m *Manager) Remove(cfg Config, keyPath string, deleteRecordings bool, conf
 	}
 	if keyPath != "" {
 		_ = os.Remove(keyPath)
+	}
+	// The installed program copy goes too. A program that is running (this one,
+	// when it was started from the program folder) cannot delete itself: it is
+	// left, with blackbox.json, and can be deleted by hand.
+	if dir, derr := m.Env.ProgramDir(); derr == nil {
+		_ = os.Remove(filepath.Join(dir, InstalledExeName))
 	}
 	if deleteRecordings {
 		n, err := RemoveRecordings(cfg.Folder)
