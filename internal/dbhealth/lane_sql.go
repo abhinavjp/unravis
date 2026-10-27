@@ -585,10 +585,15 @@ func overlaps(jobs, backups []Row, base baseInfo, req LaneRequest) []jobHit {
 	return hits
 }
 
-func evalLaneJobs(jobs, backups []Row, base baseInfo, req LaneRequest) (LaneCheck, map[string]string) {
+// evalLaneJobs answers D11. When the backup history could not be read (backupsRead false) a job or backup that ran is still a yes, but a no is
+// never given: a backup may have run, so the question stays open and the summary says backups were not checked.
+func evalLaneJobs(jobs, backups []Row, backupsRead bool, base baseInfo, req LaneRequest) (LaneCheck, map[string]string) {
 	hits := overlaps(jobs, backups, base, req)
 	answers := map[string]string{}
 	if len(hits) == 0 {
+		if !backupsRead {
+			return LaneCheck{State: StateReady, Summary: "No Agent job was running in the 15 minutes before the incident started. Backup history could not be read with this login, so backups were not checked and the question stays open."}, answers
+		}
 		answers["D11"] = AnswerNo
 		return LaneCheck{State: StateReady, Summary: "No Agent job or backup was running in the 15 minutes before the incident started."}, answers
 	}
@@ -613,8 +618,8 @@ func (s *sqlLane) checkAgentJobs(ctx context.Context) LaneCheck {
 		return s.failed(CheckAgentJobs, err, "")
 	}
 	// Backup history is read as well when the login can; the job history alone is enough to answer.
-	backups, _ := s.q.Query(ctx, qLaneBackups(s.req, s.base.offsetMin))
-	c, answers := evalLaneJobs(jobs, backups, s.base, s.req)
+	backups, berr := s.q.Query(ctx, qLaneBackups(s.req, s.base.offsetMin))
+	c, answers := evalLaneJobs(jobs, backups, berr == nil, s.base, s.req)
 	for id, v := range answers {
 		s.b.answer(id, v)
 	}

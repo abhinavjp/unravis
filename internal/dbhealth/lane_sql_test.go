@@ -262,6 +262,27 @@ func TestSQLLaneAgentJobOverlap(t *testing.T) {
 	}
 }
 
+// Review F3: when backup history cannot be read, a quiet job history must not rule backups out.
+func TestSQLLaneUnreadableBackupHistoryNeverAnswersNo(t *testing.T) {
+	q := healthySQL("16.0.1")
+	q.err = map[string]error{"unravis:backups": errors.New("The SELECT permission was denied on the object 'backupset'.")}
+	q.by["unravis:agentjobs"] = []Row{{"name": "Early", "start_local": at(20, 8, 0), "hhmmss": int64(1000)}}
+	r := RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	c := checkByID(t, r, CheckAgentJobs)
+	if _, has := r.Lane.Answers["D11"]; has {
+		t.Fatalf("D11 answered %q with backups unread", r.Lane.Answers["D11"])
+	}
+	if c.State != StateReady || !strings.Contains(c.Summary, "backups were not checked") || strings.Contains(c.Summary, "denied") {
+		t.Fatalf("check = %+v", c)
+	}
+	// A job that did run is still a yes.
+	q.by["unravis:agentjobs"] = []Row{{"name": "Nightly reindex", "start_local": at(20, 9, 50), "hhmmss": int64(2000)}}
+	r = RunSQLLane(context.Background(), q, "Prod", laneReq, fixedNow)
+	if r.Lane.Answers["D11"] != AnswerYes {
+		t.Fatalf("D11 = %v", r.Lane.Answers)
+	}
+}
+
 func TestHHMMSS(t *testing.T) {
 	for in, want := range map[float64]time.Duration{0: 0, 45: 45 * time.Second, 130: 90 * time.Second, 10203: time.Hour + 2*time.Minute + 3*time.Second} {
 		if got := hhmmss(in); got != want {
