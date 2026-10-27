@@ -17,6 +17,12 @@ export const GUIDED_TEXT = {
   modeKept: 'Your notes, checklist and saved views are kept.',
   modeGuidedNow: 'You are using Guided analysis.',
   modeManualNow: 'You are using Manual tools.',
+  panelsLabel: 'Parts of the analysis',
+  tabSteps: 'Steps',
+  tabTools: 'Tools',
+  openGuided: 'Open guided analysis',
+  openGuidedNote: 'Walk from the question to the suspects in eleven steps. Or pick one tool at a time. Keep a checklist and save a report.',
+  closeGuided: 'Back to the case',
   nutshell: 'In a nutshell',
 
   run: 'Run the steps',
@@ -64,6 +70,7 @@ export const GUIDED_TEXT = {
   useSuggested: 'Use suggested',
   useMine: 'Use my time',
   carryOn: 'Carry on without an onset',
+  carryOnNote: 'The next steps run without an onset.',
   widen: 'Widen the incident window',
   myOnset: 'My onset (UTC)',
   myOnsetNote: 'Your time is shown beside the suggested one. The steps still use the minute Unravis found.',
@@ -128,10 +135,15 @@ export const GUIDED_TEXT = {
   addAuditLogs: 'Add the audit logs',
   openNearby: 'Open nearby activity',
   slowestCalls: 'Slowest calls in the incident window',
+  showSlowCalls: 'Show the slowest calls',
+  startedCol: 'Started (UTC)',
+  timeCol: 'Time',
 
   /* Step 4 */
   loadLead: 'How many calls were open at once? More calls in flight can mean the system was busier, or that each call stayed longer.',
   measureCol: 'Measure',
+  p95Label: 'P95 by minute (ms)',
+  inFlightLabel: 'Calls in flight by minute',
 
   /* Step 5 */
   changesLead: 'Did something change just before the onset? Only changes you list are compared.',
@@ -175,6 +187,7 @@ export const GUIDED_TEXT = {
   observed: 'Observed',
   inferred: 'Inferred',
   needsLabel: 'Needs',
+  addCheck: 'Add its check to the checklist',
   noClearOrigin: 'No clear origin',
   noClearOriginNote: 'Two or more tiers moved within the same minute, or the clocks differ by more than the order can be told. The table lists them together, and none is called first.',
   notEnoughOrigin: 'Not enough data to date any tier. Add the sources listed under How sure are we.',
@@ -199,6 +212,19 @@ export const GUIDED_TEXT = {
   nearbyNoCase: 'Open a case with a source first.',
   nearbyScale: 'Bar colours: red striped over 2 seconds, orange 1 to 2 seconds, green under 1 second. These are not the suspect colours.',
   nearbyEmpty: 'Nothing was recorded in this window.',
+  nearbyLanes: 'Sources',
+  laneApi: 'API calls',
+  laneSql: 'SQL Server',
+  laneMongo: 'MongoDB',
+  laneHost: 'Host',
+  laneNone: 'Cannot test yet: this case has no source of this kind.',
+  nearbyBad: 'Pick a moment in UTC and a span of 0 to 120 minutes.',
+  nearbyMore: (n: number) => `Showing the first ${n} calls of the window. Narrow the window to see the rest.`,
+  nearbyFailed: 'The activity could not be read.',
+  nearbyBandFast: 'Under 1 second',
+  nearbyBandSlow: '1 to 2 seconds',
+  nearbyBandVerySlow: 'Over 2 seconds',
+  nearbyBandUnknown: 'No time',
 
   /* Checklist */
   checklistHeading: 'Checklist',
@@ -238,6 +264,11 @@ export const GUIDED_TEXT = {
   recordWarning: 'Record with this warning',
   fixNeedsRun: 'Run the steps first. The comparison needs the incident day.',
   fixDayFirst: 'Pick the later day first.',
+  fixRunning: 'Reading the later day.',
+  fixFailed: 'The later day could not be compared.',
+  fixRoute: 'Compare one route only (optional)',
+  fixWarnings: 'Warnings',
+  fixClosed: 'This case is closed, so the result cannot be recorded. You can still compare.',
 
   /* Manual tools */
   toolsHeading: 'Manual tools',
@@ -303,6 +334,9 @@ export const GUIDED_TEXT = {
   exportEmpty: 'Nothing has been analysed yet. The report will say so and list the case sources only.',
   exportWarningsHeading: 'This report has warnings',
   exportFailed: 'The report could not be built.',
+  exportOptions: 'Include',
+  exportStale: 'The windows or lists changed after the last run. The report holds the earlier run, as it is on screen.',
+  exportClose: 'Close preview',
   backToImport: 'Back to the import'
 } as const;
 
@@ -351,6 +385,7 @@ export function guidedLintEntries(): LintEntry[] {
   add('guided.noApiRows', GUIDED_TEXT.noApiRows(20));
   add('guided.missingLead', GUIDED_TEXT.missingLead('a Blackbox source'));
   add('guided.exportReady', GUIDED_TEXT.exportReady('report.html', '12 KB'));
+  add('guided.nearbyMore', GUIDED_TEXT.nearbyMore(200));
   for (const [key, value] of Object.entries(SAVED_VIEW_ERRORS)) add(`views.${key}`, value);
   for (const [key, value] of Object.entries(CHECKLIST_ERRORS)) add(`checklist.${key}`, value);
   return entries;

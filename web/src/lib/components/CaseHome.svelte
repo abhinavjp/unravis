@@ -9,6 +9,8 @@
   import { stateLabel } from '../ledger';
   import { ledger, refreshLedger } from '../ledgerStore.svelte';
   import { buildStory, shortText } from '../story';
+  import { GUIDED_TEXT } from '../copy/guidedCopy';
+  import GuidedAnalysis from './guided/GuidedAnalysis.svelte';
   import HealthPanel from './HealthPanel.svelte';
 
   // One page per case: the story (what happened, in order), the theories, the health checks, the analysis and the files.
@@ -24,12 +26,14 @@
   let copying = $state(false);
   let copyNote = $state('');
   let copyProblem = $state('');
+  let guidedOpen = $state(false);
   let controller: AbortController | null = null;
   let loadedFor = '';
 
   const story = $derived(buildStory({ info, imports, health, theories: ledger.items }));
   const theories = $derived(ledger.items);
   const keptFiles = $derived(imports.filter(record => record.status === 'ok'));
+  const hasIis = $derived(keptFiles.some(record => record.importer === 'iis-w3c'));
   // A closed or untrusted case is read-only: nothing can be added, so the buttons that add say so up front.
   const readOnly = $derived(!!info?.untrusted || !!info?.closed);
 
@@ -143,6 +147,10 @@
   {:else if phase === 'failed'}
     <div class="inline-error" role="alert">{CASE_HOME_TEXT.failed}</div>
     <div><button type="button" class="secondary-button" onclick={() => void load(caseId)}>{CASE_HOME_TEXT.retry}</button></div>
+  {:else if guidedOpen}
+    {#key caseId}
+      <GuidedAnalysis {caseId} closed={!!info?.closed} {readOnly} {hasIis} onAddData={openCaseImport} onClose={() => (guidedOpen = false)} />
+    {/key}
   {:else}
     <header class="head">
       <p class="eyebrow">{CASE_HOME_TEXT.heading} · {caseCode(caseId)}</p>
@@ -163,6 +171,12 @@
       <p class="note">{CASE_HOME_TEXT.analysisText}</p>
       <div><button type="button" class="primary-button" onclick={openAnalysis}>{CASE_HOME_TEXT.analysisButton}</button></div>
       <p class="note">{CASE_HOME_TEXT.analysisHint}</p>
+    </section>
+
+    <section class="block" aria-labelledby="home-guided">
+      <h3 id="home-guided">{GUIDED_TEXT.heading}</h3>
+      <p class="note">{GUIDED_TEXT.openGuidedNote}</p>
+      <div><button type="button" class="secondary-button" onclick={() => (guidedOpen = true)}>{GUIDED_TEXT.openGuided}</button></div>
     </section>
 
     <section class="block" aria-labelledby="home-story">

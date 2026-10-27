@@ -1,3 +1,4 @@
+import { parseLocalUtc, toLocalUtc, type Frame } from './frame';
 import { fmtMs, fmtNumber, fmtPct, fmtWhen, markFor, type ChangeMark } from './stepModel';
 import type { Change, Result } from './types';
 
@@ -134,4 +135,23 @@ export function dayLabel(startIso: string, endIso: string): string {
   const e = fmtWhen(endIso);
   if (s === 'No data' || e === 'No data') return 'the chosen hours';
   return s.slice(0, 6) === e.slice(0, 6) ? `${s} to ${e.slice(7)}` : `${s} to ${e}`;
+}
+
+/**
+ * The frame for the comparison run: the incident window of the case becomes the earlier (reference) window, and the same hours on `day`
+ * (`YYYY-MM-DD`, UTC) become the incident window. Returns null when the day cannot be read or the incident window cannot be used. A later
+ * window that shares time with the earlier one is returned as it is: `frameProblems` says so in words.
+ */
+export function laterFrame(frame: Frame, day: string): Frame | null {
+  const dayMs = parseLocalUtc(`${day}T00:00`);
+  const start = parseLocalUtc(frame.incidentStart);
+  const end = parseLocalUtc(frame.incidentEnd);
+  if (!Number.isFinite(dayMs) || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  const startOfDay = Math.floor(start / 86400000) * 86400000;
+  const laterStart = dayMs + (start - startOfDay);
+  return {
+    ...frame,
+    incidentStart: toLocalUtc(laterStart), incidentEnd: toLocalUtc(laterStart + (end - start)),
+    referenceStart: frame.incidentStart, referenceEnd: frame.incidentEnd
+  };
 }

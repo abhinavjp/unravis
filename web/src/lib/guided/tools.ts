@@ -1,5 +1,5 @@
 import type { Frame } from './frame';
-import { stepOf } from './stepModel';
+import { fmtChange, fmtMs, markFor, stepOf, type ChangeMark } from './stepModel';
 import type { Readiness, Result, SavedView } from './types';
 
 /**
@@ -141,4 +141,25 @@ export function viewWindows(settings: ViewSettings): string {
   const part = (s?: string, e?: string) => (s && e ? s.replace('T', ' ') + ' to ' + e.replace('T', ' ') : '');
   const inc = part(settings.incidentStart, settings.incidentEnd);
   return inc || 'No window saved';
+}
+
+/* ----------------------------------------------------------------- slowest APIs */
+
+export interface SlowApiRow { route: string; calls: number; p95: string; reference: string; change: string; mark: ChangeMark }
+
+/**
+ * The Slowest APIs tool: every API of the last run ranked by its slow end in the incident window. An API with fewer calls than `minCalls`, or whose
+ * name does not contain `match`, is left out. An API with no slow end (too few calls) goes last, never first.
+ */
+export function slowestApiRows(result: Result | null | undefined, minCalls: number, match: string): SlowApiRow[] {
+  if (!result) return [];
+  const needle = match.trim().toLowerCase();
+  const min = Number.isFinite(minCalls) && minCalls > 0 ? Math.floor(minCalls) : 0;
+  const key = (p?: number) => (typeof p === 'number' && Number.isFinite(p) ? p : -Infinity);
+  return result.facts.routes
+    .filter((r) => r.incident.n >= min && (!needle || r.route.toLowerCase().includes(needle)))
+    .sort((a, b) => key(b.incident.p95) - key(a.incident.p95) || a.route.localeCompare(b.route))
+    .map((r) => ({
+      route: r.route, calls: r.incident.n, p95: fmtMs(r.incident.p95), reference: fmtMs(r.reference.p95), change: fmtChange(r.p95Change), mark: markFor(r.p95Change)
+    }));
 }
