@@ -553,3 +553,24 @@ func TestDeadShareHonoursTheContextOnManifestOpenAndRead(t *testing.T) {
 		return err
 	})
 }
+
+// The read key is sent in a header, so a read never goes through an environment
+// proxy (F5): the transport has no proxy, whichever client was given.
+func TestHTTPReadNeverUsesAProxy(t *testing.T) {
+	loc, _ := ParseLocation("web-b:7788")
+	withProxy := &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}}
+	for name, c := range map[string]*http.Client{"default": nil, "given": withProxy} {
+		src := NewHTTPSource(loc, "k", c)
+		tr, ok := src.Client.Transport.(*http.Transport)
+		if !ok {
+			t.Fatalf("%s: transport is %T", name, src.Client.Transport)
+		}
+		if tr.Proxy != nil {
+			t.Errorf("%s: a proxy is set", name)
+		}
+	}
+	// The caller's own client is left as it was.
+	if withProxy.Transport.(*http.Transport).Proxy == nil {
+		t.Error("the given client was changed")
+	}
+}

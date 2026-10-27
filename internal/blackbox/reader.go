@@ -316,6 +316,20 @@ func NewHTTPSource(loc Location, key string, client *http.Client) *HTTPSource {
 		client = &http.Client{}
 	}
 	c := *client
+	// The key travels in a header, so a Blackbox read never goes through a proxy
+	// taken from the environment: the proxy would see the key over plain http.
+	switch t := c.Transport.(type) {
+	case nil:
+		if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+			nt := dt.Clone()
+			nt.Proxy = nil
+			c.Transport = nt
+		}
+	case *http.Transport:
+		nt := t.Clone()
+		nt.Proxy = nil
+		c.Transport = nt
+	}
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	if c.Timeout == 0 {
 		c.Timeout = RequestTimeout
