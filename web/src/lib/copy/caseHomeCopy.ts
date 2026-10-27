@@ -21,6 +21,27 @@ export const CASE_HOME_TEXT = {
   checksCount: 'Health checks',
   untrusted: 'This case came from another place, so it is read-only here.',
   closedNote: 'This case is closed. You can read it, but nothing can be added.',
+  reopenButton: 'Reopen this case',
+  reopening: 'Reopening…',
+  reopenHint: 'Reopening makes the case open again. Its saved links and filters come back, and nothing starts until you start it.',
+  changedElsewhere: 'This case changed in another tab. Reload.',
+  reload: 'Reload',
+
+  retryHeading: 'Needs another try',
+  retryIntro: 'These did not go through when the case was made. The case is kept as it is. Try each one again when you are ready.',
+  retryClosed: 'This case is closed. Reopen it to try again.',
+  retryButton: 'Try again',
+  retrying: 'Trying…',
+  retryAddFile: 'Add the file again',
+  retryDrop: 'Remove from list',
+  retryInPage: 'This one needs details only the wizard holds. Remove it, then add it again from Connections or Add a file.',
+  retryFailed: 'It did not go through again. It stays on the list.',
+  retryEnvironments: 'Environments not saved',
+  retryTag: 'Source not saved',
+  retryAuditSource: 'Not added to analysis',
+  retryImport: 'Import failed',
+  retryOther: 'Needs another try',
+  retryNone: 'Nothing needs another try.',
 
   analysisHeading: 'Analysis',
   analysisText: 'Open the charts and the ranked list of operations for this case.',
@@ -60,6 +81,8 @@ export const CASE_HOME_TEXT = {
   kindTheory: 'Theory',
 
   eventCase: 'Case started',
+  eventClosed: 'Case closed',
+  eventReopened: 'Case reopened',
   eventFile: 'File added',
   eventFileKept: 'File read, not kept',
   eventHealthSql: 'Health check on SQL Server',
@@ -72,6 +95,17 @@ export const CASE_HOME_TEXT = {
 export function fileDetail(fileName: string, rows: number, source: string, skipped: number): string {
   const head = `${fileName || 'A file'}: ${rows} ${rows === 1 ? 'row' : 'rows'}${source ? ' from ' + source : ''}`;
   return skipped > 0 ? `${head}, ${skipped} skipped.` : head + '.';
+}
+
+/** The sticker for one item of the list. "Not added to analysis" and "import failed" stay different words (C19). */
+export function retryKindLabel(kind: string): string {
+  switch (kind) {
+    case 'environments': return CASE_HOME_TEXT.retryEnvironments;
+    case 'tag': return CASE_HOME_TEXT.retryTag;
+    case 'audit-source': return CASE_HOME_TEXT.retryAuditSource;
+    case 'import': return CASE_HOME_TEXT.retryImport;
+    default: return CASE_HOME_TEXT.retryOther;
+  }
 }
 
 export function theoryChangedDetail(stateText: string): string {

@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { caseErased } from '../appState.svelte';
-  import { CaseApiError, caseCode, closeCase, createCase, eraseCase, eraseConfirmed, isCaseGone, listCases, type CaseInfo } from '../cases';
+  import { CaseApiError, believedState, caseCode, closeCase, createCase, eraseCase, eraseConfirmed, isCaseChanged, isCaseGone, listCases, reopenCase, type CaseInfo } from '../cases';
+  import { reopenButton } from '../caseLifecycle';
+  import { newRequestId } from '../createRequest';
   import { ERASE_DONE, IMPORT_TEXT, caseStats, errorText, erasePrompt } from '../copy/importCopy';
 
   // The case list: pick a case, create one, close one, or erase one. Erase asks for the case code to be typed, then shows the one storage sentence.
@@ -17,7 +19,10 @@
   let erased = $state(false);
   let eraseId = $state('');
   let typed = $state('');
+  let reopeningId = $state('');
   let controller: AbortController | null = null;
+  // One id per press-and-retry of Create: a double press or a retry after a lost reply asks the server for the same case (A14).
+  let requestId = '';
 
   const nameOf = (c: CaseInfo) => c.title || 'Case ' + caseCode(c.id);
   const confirmed = $derived(eraseId !== '' && eraseConfirmed(typed, eraseId));
@@ -25,6 +30,7 @@
   function fail(error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') return;
     if (isCaseGone(error)) { void noteGone(); return; }
+    if (isCaseChanged(error)) { problem = errorText(error as CaseApiError); void refresh(); return; }
     problem = error instanceof CaseApiError ? errorText(error) : errorText({ status: 0, reason: 'unreachable', message: '' });
   }
 
@@ -54,8 +60,10 @@
     if (busy) return;
     if (!title.trim()) { problem = IMPORT_TEXT.titleMissing; return; }
     busy = true; problem = ''; erased = false;
+    if (!requestId) requestId = newRequestId();
     try {
-      const made = await createCase(title, controller?.signal);
+      const made = await createCase(title, requestId, controller?.signal);
+      requestId = '';
       title = '';
       await refresh();
       selectedId = made.id;
@@ -66,7 +74,13 @@
   async function close(c: CaseInfo) {
     if (busy) return;
     busy = true; problem = ''; erased = false;
-    try { await closeCase(c.id, controller?.signal); await refresh(); onChanged?.(); onClosed?.(); } catch (error) { fail(error); } finally { busy = false; }
+    try { await closeCase(c.id, believedState(c), controller?.signal); await refresh(); onChanged?.(); onClosed?.(); } catch (error) { fail(error); } finally { busy = false; }
+  }
+
+  async function reopen(c: CaseInfo) {
+    if (busy || reopeningId) return;
+    busy = true; reopeningId = c.id; problem = ''; erased = false;
+    try { await reopenCase(c.id, believedState(c), controller?.signal); await refresh(); onChanged?.(); } catch (error) { fail(error); } finally { busy = false; reopeningId = ''; }
   }
 
   function askErase(c: CaseInfo) { eraseId = c.id; typed = ''; problem = ''; erased = false; }
@@ -112,8 +126,10 @@
               {:else}
                 <button type="button" class="secondary-button" disabled={busy} aria-label={IMPORT_TEXT.useCase + ': ' + nameOf(c)} onclick={() => { selectedId = c.id; erased = false; }}>{IMPORT_TEXT.useCase}</button>
               {/if}
-              {#if !c.closed}
+              {#if believedState(c) === 'open'}
                 <button type="button" class="secondary-button" disabled={busy} aria-label={IMPORT_TEXT.closeCase + ': ' + nameOf(c)} onclick={() => close(c)}>{IMPORT_TEXT.closeCase}</button>
+              {:else if reopenButton(c, reopeningId === c.id) !== 'hidden'}
+                <button type="button" class="secondary-button" disabled={busy || reopenButton(c, reopeningId === c.id) !== 'enabled'} aria-label={IMPORT_TEXT.reopenCase + ': ' + nameOf(c)} onclick={() => reopen(c)}>{reopeningId === c.id ? IMPORT_TEXT.reopening : IMPORT_TEXT.reopenCase}</button>
               {/if}
               <button type="button" class="secondary-button danger" disabled={busy} aria-label={IMPORT_TEXT.eraseCase + ': ' + nameOf(c)} aria-expanded={eraseId === c.id} onclick={() => askErase(c)}>{IMPORT_TEXT.eraseCase}</button>
             </div>
