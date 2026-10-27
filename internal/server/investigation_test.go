@@ -233,3 +233,111 @@ func TestInvestigationIISRowsAreReadFromTheCase(t *testing.T) {
 		t.Errorf("capped IIS read was used: %v %+v", in.IISPresent, read)
 	}
 }
+
+// windowRepo answers each audit query with the calls of that query's own window
+// (one call a second on one route) and records the windows it was asked for.
+type windowRepo struct {
+	*fakeRepository
+	asked []audit.Query
+}
+
+func (w *windowRepo) Requests(_ context.Context, in audit.PageInput) (audit.Page, error) {
+	w.asked = append(w.asked, in.Query)
+	var rows []audit.RequestRecord
+	n := 0
+	for t := in.Query.Start; t.Before(in.Query.End); t = t.Add(time.Second) {
+		rows = append(rows, invRow(n, t, 300*time.Millisecond, 250))
+		n++
+	}
+	return okPage(rows), nil
+}
+
+// F4: the two windows are read on their own. A reference a week or a day earlier
+// must not make the span a 400 or push the read over the row cap.
+func TestInvestigationReadsEachWindowNotTheSpanBetween(t *testing.T) {
+	cases := map[string]string{
+		"a week earlier": `2026-10-13T10:00:00Z","end":"2026-10-13T11:00:00Z`,
+		"a day earlier":  `2026-10-19T10:00:00Z","end":"2026-10-19T11:00:00Z`,
+	}
+	for name, ref := range cases {
+		repo := &windowRepo{fakeRepository: &fakeRepository{}}
+		e := tagEnv(t, casestore.NewMemory(), repo)
+		id := e.newCase("inv")
+		body := `{"sourceIds":["demo-west"],
+ "incident":{"start":"2026-10-20T10:00:00Z","end":"2026-10-20T11:00:00Z"},
+ "reference":{"start":"` + ref + `"}}`
+		res := e.json(http.MethodPost, "/api/cases/"+id+"/investigation", body)
+		if res.Code != http.StatusOK {
+			t.Fatalf("%s: code = %d %s", name, res.Code, res.Body)
+		}
+		var out investigationAnswer
+		decodeBody(t, res, &out)
+		if out.Read.Truncated || out.Read.Requests != 7200 || out.Result.Facts.Counts.Used == 0 {
+			t.Errorf("%s: read = %+v", name, out.Read)
+		}
+		if out.Result.Steps[0].Readiness == investigate.Failed || out.Result.Facts.Counts.Used != 7200 {
+			t.Errorf("%s: audit failed or partly used: used %d", name, out.Result.Facts.Counts.Used)
+		}
+		if len(repo.asked) != 2 {
+			t.Fatalf("%s: %d audit queries, want one per window", name, len(repo.asked))
+		}
+		for _, q := range repo.asked {
+			if q.End.Sub(q.Start) != time.Hour {
+				t.Errorf("%s: asked for %v to %v", name, q.Start, q.End)
+			}
+		}
+	}
+}
+
+func TestInvestigationRangesAreEachReadOnce(t *testing.T) {
+	at := func(d, h int) time.Time { return time.Date(2026, 10, d, h, 0, 0, 0, time.UTC) }
+	win := func(a, b time.Time) investigationWindow { return investigationWindow{a, b} }
+	cases := []struct {
+		name     string
+		ref, inc investigationWindow
+		want     []investigationWindow
+	}{
+		{"apart", win(at(13, 10), at(13, 11)), win(at(20, 10), at(20, 11)), []investigationWindow{win(at(13, 10), at(13, 11)), win(at(20, 10), at(20, 11))}},
+		{"touching", win(at(20, 9), at(20, 10)), win(at(20, 10), at(20, 11)), []investigationWindow{win(at(20, 9), at(20, 11))}},
+		{"overlapping", win(at(20, 9), at(20, 11)), win(at(20, 10), at(20, 12)), []investigationWindow{win(at(20, 9), at(20, 12))}},
+		{"incident first", win(at(20, 12), at(20, 13)), win(at(20, 10), at(20, 11)), []investigationWindow{win(at(20, 10), at(20, 11)), win(at(20, 12), at(20, 13))}},
+		{"inside", win(at(20, 10), at(20, 11)), win(at(20, 10), at(20, 11)), []investigationWindow{win(at(20, 10), at(20, 11))}},
+	}
+	for _, c := range cases {
+		got := investigationRequest{Incident: c.inc, Reference: c.ref}.ranges()
+		if len(got) != len(c.want) {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+			continue
+		}
+		for i := range got {
+			if !got[i].Start.Equal(c.want[i].Start) || !got[i].End.Equal(c.want[i].End) {
+				t.Errorf("%s: %v, want %v", c.name, got, c.want)
+			}
+		}
+	}
+}
+
+// F4: IIS is read per window too, each with its own cap, and an event held by both
+// reads is counted once.
+func TestInvestigationIISIsReadPerWindow(t *testing.T) {
+	body := investigationRequest{SourceIDs: []string{"demo-west"},
+		Incident:  investigationWindow{invT0.Add(24 * time.Hour), invT0.Add(25 * time.Hour)},
+		Reference: investigationWindow{invT0, invT0.Add(time.Hour)}}
+	c := &stubTraceCase{
+		imports: []casestore.ImportRecord{stubImport(investigationIISSource, invT0, invT0.Add(30*time.Hour))},
+		events: func(q casestore.EventQuery) []evidence.Event {
+			if q.Window.To.Sub(q.Window.From) > 2*time.Hour {
+				t.Errorf("IIS read %v to %v spans the gap", q.Window.From, q.Window.To)
+			}
+			return []evidence.Event{iisEvent(1, invT0.Add(time.Minute), 120)}
+		},
+	}
+	var read investigationRead
+	in, err := buildInvestigationInput(context.Background(), c, body, nil, investigate.AuditPresent, &read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.queries) != 2 || !in.IISPresent || len(in.IIS) != 1 {
+		t.Errorf("queries %d present %v rows %d", len(c.queries), in.IISPresent, len(in.IIS))
+	}
+}

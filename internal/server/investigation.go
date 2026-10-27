@@ -7,6 +7,7 @@ import (
 
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/importer"
 	"api-audit-explorer/internal/investigate"
 )
@@ -72,8 +73,8 @@ func (b investigationRequest) validate() bool {
 	if b.PoolLimit != nil && (*b.PoolLimit < 1 || *b.PoolLimit > investigationMaxPool) {
 		return false
 	}
-	lo, hi := b.span()
-	if hi.Sub(lo) > investigationMaxSpan {
+	// Each window has its own limit; the stretch between them is never read.
+	if b.Incident.End.Sub(b.Incident.Start) > investigationMaxSpan || b.Reference.End.Sub(b.Reference.Start) > investigationMaxSpan {
 		return false
 	}
 	for _, r := range b.Releases {
@@ -84,16 +85,32 @@ func (b investigationRequest) validate() bool {
 	return true
 }
 
-// span is the stretch that covers both windows.
-func (b investigationRequest) span() (time.Time, time.Time) {
-	lo, hi := b.Reference.Start, b.Reference.End
-	if b.Incident.Start.Before(lo) {
-		lo = b.Incident.Start
+// ranges are the stretches to read: the two windows and nothing between them. Two
+// windows that overlap or touch are read as one stretch (when that stays within
+// the 7-day limit), otherwise the later one is clipped so that no moment is read
+// twice. The row cap and the span limit apply to each stretch.
+func (b investigationRequest) ranges() []investigationWindow {
+	a := investigationWindow{b.Reference.Start.UTC(), b.Reference.End.UTC()}
+	c := investigationWindow{b.Incident.Start.UTC(), b.Incident.End.UTC()}
+	if c.Start.Before(a.Start) {
+		a, c = c, a
 	}
-	if b.Incident.End.After(hi) {
-		hi = b.Incident.End
+	if !c.Start.After(a.End) {
+		end := a.End
+		if c.End.After(end) {
+			end = c.End
+		}
+		if end.Sub(a.Start) <= investigationMaxSpan {
+			return []investigationWindow{{a.Start, end}}
+		}
 	}
-	return lo.UTC(), hi.UTC()
+	if c.Start.Before(a.End) {
+		c.Start = a.End
+	}
+	if !c.End.After(c.Start) {
+		return []investigationWindow{a}
+	}
+	return []investigationWindow{a, c}
 }
 
 func (h *handler) caseInvestigation(w http.ResponseWriter, r *http.Request, raw string) {
@@ -108,24 +125,27 @@ func (h *handler) caseInvestigation(w http.ResponseWriter, r *http.Request, raw 
 	if _, ok := caseIDOf(w, raw); !ok {
 		return
 	}
-	lo, hi := body.span()
-	q := audit.Query{
-		SourceIDs: body.SourceIDs,
-		Start:     lo, End: hi,
-		BaselineStart: lo.Add(-time.Hour), BaselineEnd: lo,
-		BucketSeconds: 86400,
-	}
-	applyQueryDefaults(&q)
-	q.Kind = "all"
-	if err := audit.ValidateQuery(q); err != nil {
-		writeError(w, http.StatusBadRequest, "Request validation failed.")
-		return
+	var queries []audit.Query
+	for _, rg := range body.ranges() {
+		q := audit.Query{
+			SourceIDs: body.SourceIDs,
+			Start:     rg.Start, End: rg.End,
+			BaselineStart: rg.Start.Add(-time.Hour), BaselineEnd: rg.Start,
+			BucketSeconds: 86400,
+		}
+		applyQueryDefaults(&q)
+		q.Kind = "all"
+		if err := audit.ValidateQuery(q); err != nil {
+			writeError(w, http.StatusBadRequest, "Request validation failed.")
+			return
+		}
+		queries = append(queries, q)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 
 	// Audit first, so a failing source answers before the case is opened.
-	rows, read, status, err := h.readInvestigationAudit(ctx, q)
+	rows, read, status, err := h.readInvestigationRanges(ctx, queries)
 	if err != nil {
 		writeTraceRepoError(w, err)
 		return
@@ -149,6 +169,29 @@ func (h *handler) caseInvestigation(w http.ResponseWriter, r *http.Request, raw 
 		read.Warnings = []string{}
 	}
 	writeJSON(w, http.StatusOK, investigationAnswer{Result: res, Read: read}, maxResponseBytes)
+}
+
+// readInvestigationRanges reads each stretch on its own, so the row cap applies to
+// a stretch and not to the sum, and a failed or capped stretch fails the whole
+// read (a window missing from the data is never passed on as a whole picture).
+func (h *handler) readInvestigationRanges(ctx context.Context, queries []audit.Query) ([]audit.RequestRecord, investigationRead, investigate.AuditStatus, error) {
+	var all []audit.RequestRecord
+	read := investigationRead{Warnings: []string{}}
+	for _, q := range queries {
+		rows, one, status, err := h.readInvestigationAudit(ctx, q)
+		if err != nil {
+			return nil, one, "", err
+		}
+		read.Truncated = read.Truncated || one.Truncated
+		read.Warnings = append(read.Warnings, one.Warnings...)
+		if status != investigate.AuditPresent {
+			read.Requests = 0
+			return nil, read, status, nil
+		}
+		all = append(all, rows...)
+	}
+	read.Requests = len(all)
+	return all, read, investigate.AuditPresent, nil
 }
 
 // readInvestigationAudit pages the audit calls of the span, newest first. A
@@ -226,19 +269,32 @@ func buildInvestigationInput(ctx context.Context, c casestore.Case, body investi
 	if !readable {
 		return in, nil
 	}
-	lo, hi := body.span()
-	evs, err := c.Events(ctx, casestore.EventQuery{
-		Window:  importer.Window{From: lo.Add(-callTraceLookback), To: hi},
-		Sources: []string{investigationIISSource},
-		Kinds:   []string{"request"},
-		Limit:   casestore.MaxEventQuery,
-	})
-	if err != nil {
-		return in, err
-	}
-	if len(evs) >= casestore.MaxEventQuery {
-		read.Warnings = append(read.Warnings, "There are too many IIS rows in these windows to read in full, so the IIS logs were not used.")
-		return in, nil
+	// One read per stretch, each with its own cap. The store selects by start time,
+	// so the lookback of the second stretch can reach events the first one holds;
+	// they are counted once.
+	var evs []evidence.Event
+	seen := map[string]bool{}
+	for _, rg := range body.ranges() {
+		part, err := c.Events(ctx, casestore.EventQuery{
+			Window:  importer.Window{From: rg.Start.Add(-callTraceLookback), To: rg.End},
+			Sources: []string{investigationIISSource},
+			Kinds:   []string{"request"},
+			Limit:   casestore.MaxEventQuery,
+		})
+		if err != nil {
+			return in, err
+		}
+		if len(part) >= casestore.MaxEventQuery {
+			read.Warnings = append(read.Warnings, "There are too many IIS rows in these windows to read in full, so the IIS logs were not used.")
+			return in, nil
+		}
+		for _, e := range part {
+			if e.EvidenceID != "" && seen[e.EvidenceID] {
+				continue
+			}
+			seen[e.EvidenceID] = true
+			evs = append(evs, e)
+		}
 	}
 	in.IISPresent = true
 	for _, e := range evs {
