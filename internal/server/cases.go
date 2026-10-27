@@ -10,6 +10,7 @@ import (
 	"errors"
 	"hash"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"strconv"
@@ -65,6 +66,9 @@ type casesState struct {
 	cases     casestore.Store
 	registry  *importer.Registry
 	hostsSave func(*hosts.Map) error
+	// recoverer runs the recovery hooks of marked cases (see casestore.Recoverer).
+	// nil means no hook is registered and nothing is ever marked.
+	recoverer *casestore.Recoverer
 	gates     caseGates
 	imports   importLimiter
 	pending   pendingStrips
@@ -84,6 +88,30 @@ type casesState struct {
 func WithCases(store casestore.Store, hostMap *hosts.Map, registry *importer.Registry) Option {
 	return func(h *handler) {
 		h.cases, h.hostMap, h.registry = store, hostMap, registry
+	}
+}
+
+// WithRecoverer gives the server the marks-and-recovery framework. The server
+// runs it at unlock (before the first reply that follows) and at the start of a
+// call that touches a marked case. Start-up recovery is the caller's.
+func WithRecoverer(r *casestore.Recoverer) Option {
+	return func(h *handler) { h.recoverer = r }
+}
+
+// recoverAll repairs every marked case. Called after the master key is unlocked
+// and before the unlock reply, so the first reply already tells the truth. A
+// failure is logged; it never fails the unlock.
+func (h *handler) recoverAll(ctx context.Context) {
+	if h.recoverer == nil {
+		return
+	}
+	rep, err := h.recoverer.RecoverAll(ctx)
+	if err != nil {
+		log.Printf("Case recovery after unlock did not run: %v", err)
+		return
+	}
+	if rep.Marked > 0 {
+		log.Printf("Case recovery after unlock: %d marked, %d finished, %d need another try", rep.Marked, rep.Recovered, len(rep.Failed))
 	}
 }
 
