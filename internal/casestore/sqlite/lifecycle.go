@@ -48,7 +48,7 @@ func (s *Store) mutate(ctx context.Context, id casestore.CaseID, fn func(m *mani
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return casestore.ErrNotFound
 	}
-	release, err := sealedfile.Lock(dir)
+	release, h, erasing, err := s.lockCase(dir, id)
 	if err != nil {
 		return err
 	}
@@ -56,10 +56,6 @@ func (s *Store) mutate(ctx context.Context, id casestore.CaseID, fn func(m *mani
 	if erasePending(dir) {
 		return casestore.ErrNotFound
 	}
-	s.mu.Lock()
-	erasing := s.erasing[id]
-	h := s.open[id]
-	s.mu.Unlock()
 	if erasing {
 		return casestore.ErrNotFound
 	}
@@ -171,4 +167,19 @@ func (s *Store) CreateFor(ctx context.Context, title, requestID string) (casesto
 	}
 	info, err := s.create(ctx, title, requestID)
 	return info, false, err
+}
+
+// lockCase takes the case folder's lock and, in the same step, reads the open
+// state of the case. Open holds s.mu while it loads (and so waits for the folder
+// lock); taking the two in the other order here would deadlock a Close that races
+// a cold Open. s.mu is held only while the folder lock is taken, so no Open can
+// finish between the two reads.
+func (s *Store) lockCase(dir string, id casestore.CaseID) (release func(), h *caseState, erasing bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	release, err = sealedfile.Lock(dir)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return release, s.open[id], s.erasing[id], nil
 }

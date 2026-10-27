@@ -777,7 +777,7 @@ func (s *Store) CloseCase(ctx context.Context, id casestore.CaseID) error {
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return casestore.ErrNotFound
 	}
-	release, err := sealedfile.Lock(dir)
+	release, h, _, err := s.lockCase(dir, id)
 	if err != nil {
 		return err
 	}
@@ -785,9 +785,6 @@ func (s *Store) CloseCase(ctx context.Context, id casestore.CaseID) error {
 	if erasePending(dir) {
 		return casestore.ErrNotFound
 	}
-	s.mu.Lock()
-	h := s.open[id]
-	s.mu.Unlock()
 	// The on-disk manifest is the starting point even when this Store holds the
 	// case open: another Store on the folder may have mirrored imports since.
 	if k := caseKind(dir); k == casestore.KindMasterKey && s.isLocked(k) {

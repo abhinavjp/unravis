@@ -199,6 +199,18 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/close", match: caseSubpath("/close"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.closeCase(w, r, id) },
 	}},
+	{pattern: "/api/cases/{id}/reopen", match: caseSubpath("/reopen"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.reopenCase(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/retries", match: caseSubpath("/retries"), methods: map[string]routeFunc{
+		http.MethodPut: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.putRetries(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/retries/{retryId}", match: caseRetryPath, methods: map[string]routeFunc{
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.deleteRetry(w, r, arg) },
+	}},
+	{pattern: "/api/cases/{id}/retries/{retryId}/retry", match: caseRetryRunPath, methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.runRetry(w, r, arg) },
+	}},
 	{pattern: "/api/cases/{id}/imports", match: caseSubpath("/imports"), methods: map[string]routeFunc{
 		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.listImports(w, r, id) },
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.postImport(w, r, id) },
