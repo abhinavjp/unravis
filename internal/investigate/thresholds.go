@@ -66,11 +66,15 @@ type Thresholds struct {
 	// the reference; otherwise it was already building (a ramp).
 	StepRiseMinutes     int     `json:"stepRiseMinutes"`
 	StepRampBelowFactor float64 `json:"stepRampBelowFactor"`
-	// PeriodicMinCorrelation and PeriodicMinCycles: the shape is periodic when the
-	// per-minute P95 correlates at least this much with itself one period (15 or 60
-	// minutes) later and the window holds at least this many periods.
-	PeriodicMinCorrelation float64 `json:"periodicMinCorrelation"`
-	PeriodicMinCycles      int     `json:"periodicMinCycles"`
+	// PeriodicMinExcursions, PeriodicShortMinutes, PeriodicLongMinutes and
+	// PeriodicToleranceMin: the shape is periodic when the window holds at least
+	// PeriodicMinExcursions separate slow bursts whose starts sit a whole number of
+	// periods apart (a short period of 15 minutes or a long one of 60), give or take
+	// PeriodicToleranceMin minutes.
+	PeriodicMinExcursions int `json:"periodicMinExcursions"`
+	PeriodicShortMinutes  int `json:"periodicShortMinutes"`
+	PeriodicLongMinutes   int `json:"periodicLongMinutes"`
+	PeriodicToleranceMin  int `json:"periodicToleranceMin"`
 
 	// ScopeFewMaxRoutes and ScopeAllShare: one route moved is "one route", up to
 	// ScopeFewMaxRoutes is "a few routes", at least ScopeAllShare of the testable
@@ -122,6 +126,9 @@ type Thresholds struct {
 	// RetryWindowSeconds: the same client calling the same URL again within this
 	// many seconds is a retried call.
 	RetryWindowSeconds int `json:"retryWindowSeconds"`
+	// RetryMinCalls is the fewest retried calls in the incident window before a rise in
+	// retries is read as a rise at all.
+	RetryMinCalls int `json:"retryMinCalls"`
 	// OriginBucketSeconds is the minute bucket of the charts; onsets closer than the
 	// bucket plus the clock tolerance are "not separable".
 	OriginBucketSeconds int `json:"originBucketSeconds"`
@@ -131,39 +138,42 @@ type Thresholds struct {
 // caller cannot change a threshold at run time.
 func Current() Thresholds {
 	return Thresholds{
-		Version:                Version,
-		ArrivalRatePerSec:      40,
-		GroupSizeP95:           20,
-		GroupSizeP99:           100,
-		ClockToleranceMs:       1000,
-		ChangeMinPercent:       30,
-		ChangeMinMs:            100,
-		LoadChangePercent:      30,
-		OnsetFactor:            2,
-		OnsetRunMinutes:        5,
-		OnsetMinSamples:        5,
-		StepRiseMinutes:        2,
-		StepRampBelowFactor:    1.5,
-		PeriodicMinCorrelation: 0.5,
-		PeriodicMinCycles:      2,
-		ScopeFewMaxRoutes:      3,
-		ScopeAllShare:          0.8,
-		GapWarnMinutes:         2,
-		GapRefMinPerMinute:     5,
-		ClockMaxSpanHours:      6,
-		ClockAnomalyShare:      0.01,
-		DominantMinShare:       0.5,
-		PartsMinCoverage:       0.8,
-		IISMatchToleranceMs:    3000,
-		IISMatchMinRate:        0.5,
-		AuditDipShare:          0.3,
-		FlatTopMinutes:         3,
-		FlatTopTolerance:       0.05,
-		FlatTopMinLevel:        5,
-		PoolFullShare:          0.95,
-		ChangeLeadMinutes:      30,
-		RetryWindowSeconds:     10,
-		OriginBucketSeconds:    60,
+		Version:               Version,
+		ArrivalRatePerSec:     40,
+		GroupSizeP95:          20,
+		GroupSizeP99:          100,
+		ClockToleranceMs:      1000,
+		ChangeMinPercent:      30,
+		ChangeMinMs:           100,
+		LoadChangePercent:     30,
+		OnsetFactor:           2,
+		OnsetRunMinutes:       5,
+		OnsetMinSamples:       5,
+		StepRiseMinutes:       2,
+		StepRampBelowFactor:   1.5,
+		PeriodicMinExcursions: 3,
+		PeriodicShortMinutes:  15,
+		PeriodicLongMinutes:   60,
+		PeriodicToleranceMin:  2,
+		ScopeFewMaxRoutes:     3,
+		ScopeAllShare:         0.8,
+		GapWarnMinutes:        2,
+		GapRefMinPerMinute:    5,
+		ClockMaxSpanHours:     6,
+		ClockAnomalyShare:     0.01,
+		DominantMinShare:      0.5,
+		PartsMinCoverage:      0.8,
+		IISMatchToleranceMs:   3000,
+		IISMatchMinRate:       0.5,
+		AuditDipShare:         0.3,
+		FlatTopMinutes:        3,
+		FlatTopTolerance:      0.05,
+		FlatTopMinLevel:       5,
+		PoolFullShare:         0.95,
+		ChangeLeadMinutes:     30,
+		RetryWindowSeconds:    10,
+		RetryMinCalls:         5,
+		OriginBucketSeconds:   60,
 	}
 }
 
@@ -193,8 +203,10 @@ func (t Thresholds) Entries() []Entry {
 		i("onsetMinSamples", t.OnsetMinSamples),
 		i("stepRiseMinutes", t.StepRiseMinutes),
 		f("stepRampBelowFactor", t.StepRampBelowFactor),
-		f("periodicMinCorrelation", t.PeriodicMinCorrelation),
-		i("periodicMinCycles", t.PeriodicMinCycles),
+		i("periodicMinExcursions", t.PeriodicMinExcursions),
+		i("periodicShortMinutes", t.PeriodicShortMinutes),
+		i("periodicLongMinutes", t.PeriodicLongMinutes),
+		i("periodicToleranceMin", t.PeriodicToleranceMin),
 		i("scopeFewMaxRoutes", t.ScopeFewMaxRoutes),
 		f("scopeAllShare", t.ScopeAllShare),
 		i("gapWarnMinutes", t.GapWarnMinutes),
@@ -212,6 +224,7 @@ func (t Thresholds) Entries() []Entry {
 		f("poolFullShare", t.PoolFullShare),
 		i("changeLeadMinutes", t.ChangeLeadMinutes),
 		i("retryWindowSeconds", t.RetryWindowSeconds),
+		i("retryMinCalls", t.RetryMinCalls),
 		i("originBucketSeconds", t.OriginBucketSeconds),
 	}
 }
