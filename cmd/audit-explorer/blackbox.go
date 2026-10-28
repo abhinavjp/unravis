@@ -21,7 +21,7 @@ import (
 // the per-user sealed list, as before.
 func wireBlackbox(demo bool, cfg demoSettings, getenv func(string) string, kept server.BlackboxStore) []server.Option {
 	if demo {
-		return []server.Option{server.WithBlackboxDemo(cfg.now)}
+		return []server.Option{server.WithBlackboxDemo(cfg.now), server.WithUpdateCheckDemo()}
 	}
 	var saved server.BlackboxStore = kept
 	if saved == nil {

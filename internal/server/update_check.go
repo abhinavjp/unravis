@@ -48,6 +48,7 @@ type updateCheckState struct {
 	cached updateCheckReply
 	at     time.Time
 	valid  bool
+	demo   bool // demo build: ?preview= answers a canned reply (screenshots only)
 }
 
 // updateCheckStates holds one state per server. The handler struct lives in
@@ -71,10 +72,45 @@ func WithUpdateCheckHTTP(client *http.Client) Option {
 	}
 }
 
+// WithUpdateCheckDemo lets a demo build answer POST /api/update-check?preview=
+// latest|available|offline with a canned reply and no outgoing call, so
+// screenshots can show every state. A real build never sets it.
+func WithUpdateCheckDemo() Option {
+	return func(h *handler) {
+		state := updateCheckStateFor(h)
+		state.mu.Lock()
+		state.demo = true
+		state.mu.Unlock()
+	}
+}
+
+// updateCheckDemoReply returns the canned reply for a preview value.
+func updateCheckDemoReply(preview string) (updateCheckReply, bool) {
+	switch preview {
+	case "latest":
+		return updateCheckReply{Status: "latest", Current: "1.2.0"}, true
+	case "available":
+		return updateCheckReply{Status: "available", Current: "1.2.0", Latest: "1.3.0", URL: "https://github.com/abhinavjp/unravis/releases/tag/v1.3.0"}, true
+	case "offline":
+		return updateCheckReply{Status: "unreachable", Current: "1.2.0"}, true
+	}
+	return updateCheckReply{}, false
+}
+
 // updateCheck answers POST /api/update-check. It always answers 200; a failed
 // check is status "unreachable", never an HTTP error.
 func (h *handler) updateCheck(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, updateCheckStateFor(h).check(r.Context()), 4096)
+	state := updateCheckStateFor(h)
+	state.mu.Lock()
+	demo := state.demo
+	state.mu.Unlock()
+	if demo {
+		if reply, ok := updateCheckDemoReply(r.URL.Query().Get("preview")); ok {
+			writeJSON(w, http.StatusOK, reply, 4096)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, state.check(r.Context()), 4096)
 }
 
 func (s *updateCheckState) check(ctx context.Context) updateCheckReply {

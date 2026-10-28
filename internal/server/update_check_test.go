@@ -319,6 +319,78 @@ func TestUpdateCheckSerialisesConcurrentChecks(t *testing.T) {
 	}
 }
 
+func updateCheckDemoHandler(rt http.RoundTripper) http.Handler {
+	return New(audit.NewDemo(time.Now()), nil, testToken, true, WithUpdateCheckHTTP(&http.Client{Transport: rt}), WithUpdateCheckDemo())
+}
+
+func postUpdateCheckPath(t *testing.T, h http.Handler, path string) updateCheckReply {
+	t.Helper()
+	res := request(h, http.MethodPost, path, "", true)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", res.Code, res.Body.String())
+	}
+	var reply updateCheckReply
+	if err := json.Unmarshal(res.Body.Bytes(), &reply); err != nil {
+		t.Fatalf("body %q: %v", res.Body.String(), err)
+	}
+	return reply
+}
+
+func TestUpdateCheckDemoPreviewIsCannedAndMakesNoCall(t *testing.T) {
+	setUpdateCheckVersion(t, "dev")
+	var calls atomic.Int64
+	h := updateCheckDemoHandler(updateCheckRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return updateCheckHTTPResponse(http.StatusOK, `{"tag_name":"v9.9.9"}`), nil
+	}))
+	want := map[string]updateCheckReply{
+		"latest":    {Status: "latest", Current: "1.2.0"},
+		"available": {Status: "available", Current: "1.2.0", Latest: "1.3.0", URL: "https://github.com/abhinavjp/unravis/releases/tag/v1.3.0"},
+		"offline":   {Status: "unreachable", Current: "1.2.0"},
+	}
+	for preview, expected := range want {
+		if reply := postUpdateCheckPath(t, h, "/api/update-check?preview="+preview); reply != expected {
+			t.Errorf("preview %s: reply = %+v, want %+v", preview, reply, expected)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Errorf("the fake was hit %d times", calls.Load())
+	}
+}
+
+func TestUpdateCheckPreviewIgnoredWithoutDemo(t *testing.T) {
+	setUpdateCheckVersion(t, "dev")
+	var calls atomic.Int64
+	h := updateCheckHandler(updateCheckRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return updateCheckHTTPResponse(http.StatusOK, `{"tag_name":"v9.9.9"}`), nil
+	}))
+	reply := postUpdateCheckPath(t, h, "/api/update-check?preview=available")
+	if reply.Status != "dev" || reply.Latest != "" || reply.URL != "" {
+		t.Errorf("reply = %+v", reply)
+	}
+	if calls.Load() != 0 {
+		t.Errorf("the fake was hit %d times", calls.Load())
+	}
+}
+
+func TestUpdateCheckDemoUnknownPreviewFallsThrough(t *testing.T) {
+	setUpdateCheckVersion(t, "dev")
+	var calls atomic.Int64
+	h := updateCheckDemoHandler(updateCheckRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return updateCheckHTTPResponse(http.StatusOK, `{"tag_name":"v9.9.9"}`), nil
+	}))
+	for _, path := range []string{"/api/update-check?preview=bogus", "/api/update-check?preview=", "/api/update-check"} {
+		if reply := postUpdateCheckPath(t, h, path); reply.Status != "dev" {
+			t.Errorf("%s: reply = %+v", path, reply)
+		}
+	}
+	if calls.Load() != 0 {
+		t.Errorf("the fake was hit %d times", calls.Load())
+	}
+}
+
 func strconvQuote(s string) string {
 	data, _ := json.Marshal(s)
 	return string(data)
