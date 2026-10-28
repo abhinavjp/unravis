@@ -41,7 +41,8 @@ func (s *Step) degrade(r Readiness, reason string) {
 	}
 }
 
-func fmtT(t time.Time) string { return t.UTC().Format("2006-01-02 15:04") + " UTC" }
+// fmtT writes a moment the way the rest of the app does ("28 Oct 2026 02:56 UTC"), so engine words and the report agree.
+func fmtT(t time.Time) string { return t.UTC().Format("2 Jan 2006 15:04") + " UTC" }
 
 func fmtMs(v *float64) string {
 	if v == nil {
@@ -108,6 +109,14 @@ func laneGroup(group string) []CatalogEntry {
 		}
 	}
 	return out
+}
+
+// greyReason is the sentence for suspects held grey, in the right singular or plural.
+func greyReason(grey int) string {
+	if grey == 1 {
+		return "1 suspect is held grey in this release and is not tested."
+	}
+	return fmt.Sprintf("%d suspects are held grey in this release and are not tested.", grey)
 }
 
 // laneCount says how many of the entries have a reading from their own lane.
@@ -386,10 +395,13 @@ func Steps(in Input, f Facts, s Signals, th Thresholds) []Step {
 			st.set(Ready, "")
 		}
 		if known > 0 && grey > 0 {
-			st.degrade(PartlyReady, fmt.Sprintf("%d suspect(s) are held grey in this release and are not tested.", grey))
+			st.degrade(PartlyReady, greyReason(grey))
 		}
 		st.Findings = append(st.Findings, fmt.Sprintf("Suspects with a reading: %d of %d.", known, total))
 	}
+
+	// Host lane gaps (A35): any gap lowers Step 9 to at most Partly ready.
+	laneGapStep(&steps[9], "host", in.LaneGaps["host"])
 
 	// Step 10: Origin.
 	{

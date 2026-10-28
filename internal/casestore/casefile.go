@@ -215,7 +215,7 @@ func WriteCaseFile(ctx context.Context, dst string, src CaseFileSource, pass []b
 		if err := tmp.Truncate(0); err != nil {
 			return 0, err
 		}
-		total, err = writeCaseFileOnce(ctx, tmp, src, key, salt, params)
+		total, err = writeCaseFileOnce(ctx, tmp, src, key, salt, params, nil)
 		if err == nil {
 			break
 		}
@@ -236,7 +236,7 @@ func WriteCaseFile(ctx context.Context, dst string, src CaseFileSource, pass []b
 	return total, nil
 }
 
-func writeCaseFileOnce(ctx context.Context, out *os.File, src CaseFileSource, key, salt []byte, params masterkey.Params) (int64, error) {
+func writeCaseFileOnce(ctx context.Context, out *os.File, src CaseFileSource, key, salt []byte, params masterkey.Params, probe *partProbe) (int64, error) {
 	db, err := os.Open(src.DBPath)
 	if err != nil {
 		return 0, err
@@ -251,7 +251,7 @@ func writeCaseFileOnce(ctx context.Context, out *os.File, src CaseFileSource, ke
 	}
 	// Pass 1: the hash for the header.
 	h := sha256.New()
-	n, err := copyCtx(ctx, h, db)
+	n, err := copyCtx(ctx, probe.counting(h), db)
 	if err != nil {
 		return 0, err
 	}
@@ -287,12 +287,14 @@ func writeCaseFileOnce(ctx context.Context, out *os.File, src CaseFileSource, ke
 	if _, err := out.Write(ct); err != nil {
 		return 0, err
 	}
+	probe.sumOnly(prefix)
+	probe.sumOnly(ct)
 	// Pass 2: copy, hashing what is actually written.
 	if _, err := db.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
 	h2 := sha256.New()
-	copied, err := copyCtx(ctx, io.MultiWriter(out, h2), db)
+	copied, err := copyCtx(ctx, probe.tee(io.MultiWriter(out, h2)), db)
 	if err != nil {
 		return 0, err
 	}
@@ -374,7 +376,36 @@ func OpenCaseFile(path string, pass []byte) (*CaseFile, error) {
 	return cf, nil
 }
 
+// OpenCaseFileWith is OpenCaseFile with the header key supplied by derive.
+func OpenCaseFileWith(path string, derive KeyDeriver) (*CaseFile, error) {
+	li, err := os.Lstat(path)
+	if err != nil || !li.Mode().IsRegular() {
+		return nil, ErrCaseFile
+	}
+	if li.Size() < caseFilePrefixLen+1+12+16 || li.Size() > caseFilePrefixLen+caseFileHeaderMax+MaxCaseFileDB {
+		return nil, ErrCaseFile
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, ErrCaseFile
+	}
+	cf, err := openCaseFileWith(f, li.Size(), derive)
+	if err != nil {
+		_ = f.Close()
+		return nil, ErrCaseFile
+	}
+	return cf, nil
+}
+
 func openCaseFile(f *os.File, size int64, pass []byte) (*CaseFile, error) {
+	return openCaseFileWith(f, size, func(salt []byte, p masterkey.Params) ([]byte, error) {
+		return masterkey.DeriveKey(pass, salt, p)
+	})
+}
+
+// openCaseFileWith opens a case file whose header key derive supplies from the
+// salt and parameters recorded in the file's prefix.
+func openCaseFileWith(f *os.File, size int64, derive KeyDeriver) (*CaseFile, error) {
 	prefix := make([]byte, caseFilePrefixLen)
 	if _, err := io.ReadFull(f, prefix); err != nil {
 		return nil, ErrCaseFile
@@ -395,8 +426,8 @@ func openCaseFile(f *os.File, size int64, pass []byte) (*CaseFile, error) {
 	if _, err := io.ReadFull(f, ct); err != nil {
 		return nil, ErrCaseFile
 	}
-	key, err := masterkey.DeriveKey(pass, prefix[21:37], params)
-	if err != nil {
+	key, err := derive(prefix[21:37], params)
+	if err != nil || len(key) != masterkey.KeyLen {
 		return nil, ErrCaseFile
 	}
 	defer clear(key)
@@ -447,6 +478,11 @@ func (c *CaseFile) Close() error {
 // caller moves it to its final name afterwards. Any content failure is
 // ErrCaseFile; a failure to write is returned as is.
 func (c *CaseFile) ExtractDB(ctx context.Context, dst string) (err error) {
+	return c.extractDB(ctx, dst, nil)
+}
+
+// extractDB is ExtractDB that reports the bytes written to step.
+func (c *CaseFile) extractDB(ctx context.Context, dst string, step func(int64)) (err error) {
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
@@ -477,6 +513,9 @@ func (c *CaseFile) ExtractDB(ctx context.Context, dst string) (err error) {
 			if _, werr := out.Write(chunk[:m]); werr != nil {
 				err = werr
 				return err
+			}
+			if step != nil {
+				step(int64(m))
 			}
 			remaining -= int64(m)
 		}
@@ -742,13 +781,29 @@ type RestoreStore interface {
 // overwritten, so restoring one file twice makes two cases. On any failure the
 // new case is erased and no folder is left. Content failures are ErrCaseFile.
 func RestoreCaseFile(ctx context.Context, st RestoreStore, lookup ProtectorLookup, path string, pass []byte) (CaseInfo, error) {
+	return RestoreCaseFileWith(ctx, st, lookup, path, func(salt []byte, p masterkey.Params) ([]byte, error) {
+		return masterkey.DeriveKey(pass, salt, p)
+	})
+}
+
+// RestoreCaseFileWith is RestoreCaseFile with the header key supplied by derive,
+// so a file sealed under the key this PC already holds opens without a typed
+// passphrase.
+func RestoreCaseFileWith(ctx context.Context, st RestoreStore, lookup ProtectorLookup, path string, derive KeyDeriver) (CaseInfo, error) {
+	info, _, err := RestoreCaseFileFull(ctx, st, lookup, path, derive)
+	return info, err
+}
+
+// RestoreCaseFileFull is RestoreCaseFileWith that also returns what the file's
+// header said (the original case id, title and dates), for the story of the new case.
+func RestoreCaseFileFull(ctx context.Context, st RestoreStore, lookup ProtectorLookup, path string, derive KeyDeriver) (CaseInfo, CaseFileInfo, error) {
 	base, err := lookup(KindMasterKey)
 	if err != nil || base == nil {
-		return CaseInfo{}, ErrLocked
+		return CaseInfo{}, CaseFileInfo{}, ErrLocked
 	}
-	cf, err := OpenCaseFile(path, pass)
+	cf, err := OpenCaseFileWith(path, derive)
 	if err != nil {
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	defer cf.Close()
 	info := cf.Info()
@@ -758,20 +813,20 @@ func RestoreCaseFile(ctx context.Context, st RestoreStore, lookup ProtectorLooku
 	root := st.Root()
 	var tag [8]byte
 	if _, err := rand.Read(tag[:]); err != nil {
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	stage := filepath.Join(root, "restore-"+hex.EncodeToString(tag[:])+".part")
 	if err := cf.ExtractDB(ctx, stage); err != nil {
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	defer os.Remove(stage)
 
 	created, err := st.Create(ctx, info.Title)
 	if err != nil {
 		if errors.Is(err, ErrBadTitle) {
-			return CaseInfo{}, ErrCaseFile
+			return CaseInfo{}, CaseFileInfo{}, ErrCaseFile
 		}
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	id := created.ID
 	ok := false
@@ -789,37 +844,37 @@ func RestoreCaseFile(ctx context.Context, st RestoreStore, lookup ProtectorLooku
 	}()
 	dir := filepath.Join(root, string(id))
 	if err := RejectReparse(root, dir); err != nil {
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	dbPath := filepath.Join(dir, "case.db")
 	for _, suffix := range []string{"-wal", "-shm"} {
 		_ = os.Remove(dbPath + suffix)
 	}
 	if err := sealedfile.Replace(stage, dbPath); err != nil {
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	keys := cf.Keys(string(id))
 	defer keys.Zero()
 	if err := WriteKeyFileKind(filepath.Join(dir, KeyFileName), KindMasterKey, base, keys); err != nil {
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	if _, err := RebindCaseDB(ctx, dbPath, keys.DB, info.CaseID, string(id)); err != nil {
 		if ctx.Err() != nil {
-			return CaseInfo{}, ctx.Err()
+			return CaseInfo{}, CaseFileInfo{}, ctx.Err()
 		}
-		return CaseInfo{}, ErrCaseFile
+		return CaseInfo{}, CaseFileInfo{}, ErrCaseFile
 	}
 	c, err := st.Open(ctx, id)
 	if err != nil {
 		if errors.Is(err, ErrLocked) || ctx.Err() != nil {
-			return CaseInfo{}, err
+			return CaseInfo{}, CaseFileInfo{}, err
 		}
-		return CaseInfo{}, ErrCaseFile
+		return CaseInfo{}, CaseFileInfo{}, ErrCaseFile
 	}
 	out := c.Info()
 	if err := c.Close(); err != nil {
-		return CaseInfo{}, fmt.Errorf("closing restored case: %w", err)
+		return CaseInfo{}, CaseFileInfo{}, fmt.Errorf("closing restored case: %w", err)
 	}
 	ok = true
-	return out, nil
+	return out, info, nil
 }

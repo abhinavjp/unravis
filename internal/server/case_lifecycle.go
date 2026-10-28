@@ -36,7 +36,6 @@ const (
 	archiveRunningText    = "An archive is already running."
 	caseErasingText       = "This case is being erased."
 	cancelArchiveText     = "An archive is running. Cancel it first."
-	caseInUseText         = "The case is in use. Close its other tabs, then try again."
 	caseAlreadyMadeText   = "This case was already made. Find it on the start screen."
 	caseFreeingText       = "This case is being freed. Try again in a moment."
 	badExpectStateText    = "The state the page expects is not one of the case states."
@@ -86,17 +85,33 @@ func (h *handler) markAnswer(ctx context.Context, info casestore.CaseInfo) error
 // recover a marked case, refuse one that must wait, then compare the belief with
 // the state found. nil means the move may go ahead.
 func (h *handler) guard(ctx context.Context, id casestore.CaseID, a casestore.Action, believed casestore.State) error {
-	c, err := h.cases.Open(ctx, id)
+	info, err := h.infoOf(ctx, id)
 	if err != nil {
 		return err
 	}
-	info := c.Info()
-	_ = c.Close()
 	info = h.settle(ctx, info)
 	if err := casestore.CheckMark(info.Mark); err != nil {
 		return err
 	}
 	return casestore.CheckBelief(a, believed, casestore.StateOf(info))
+}
+
+// infoOf reads the case's info. An open case is read through its handle; an
+// archived one cannot be opened, so it is read as a record (Entry), which needs
+// no database. A case that cannot be read either way is the store's error.
+func (h *handler) infoOf(ctx context.Context, id casestore.CaseID) (casestore.CaseInfo, error) {
+	c, err := h.cases.Open(ctx, id)
+	if err == nil {
+		info := c.Info()
+		_ = c.Close()
+		return info, nil
+	}
+	if ar, ok := h.cases.(casestore.Archiver); ok && errors.Is(err, casestore.ErrArchived) {
+		if info, eerr := ar.Entry(ctx, id); eerr == nil {
+			return info, nil
+		}
+	}
+	return casestore.CaseInfo{}, err
 }
 
 // innerCase unwraps the read-share wrapper so an optional interface can be asserted.
@@ -112,6 +127,9 @@ func innerCase(c casestore.Case) casestore.Case {
 type historyDTO struct {
 	At   time.Time `json:"at"`
 	Kind string    `json:"kind"`
+	// Detail is a short fact that goes with some kinds (the file of an archive, the
+	// short code of a restored case). Never a key and never a path.
+	Detail string `json:"detail,omitempty"`
 }
 
 type retryDTO struct {
@@ -139,9 +157,18 @@ func toRetryDTOs(items []casestore.RetryItem) []retryDTO {
 func toHistoryDTOs(h []casestore.HistoryEntry) []historyDTO {
 	out := make([]historyDTO, 0, len(h))
 	for _, e := range h {
-		out = append(out, historyDTO{At: e.At.UTC(), Kind: e.Kind})
+		out = append(out, historyDTO{At: e.At.UTC(), Kind: e.Kind, Detail: e.Detail})
 	}
 	return out
+}
+
+// recordView is the case view built from the record alone: what an archived or
+// missing case can show without opening a database. The whole list of case files
+// and restores is in it.
+func recordView(info casestore.CaseInfo) caseViewDTO {
+	v := caseViewDTO{caseDTO: toCaseDTO(info), Envs: info.Envs, Sources: info.Sources, History: toHistoryDTOs(info.History), Retries: []retryDTO{}}
+	v.Archive = toArchiveDTO(info.Archive, true)
+	return v
 }
 
 // viewOf builds the case view of an opened case: the list fields, the counts, the
@@ -149,7 +176,7 @@ func toHistoryDTOs(h []casestore.HistoryEntry) []historyDTO {
 // has none) shows an empty list.
 func (h *handler) viewOf(ctx context.Context, c casestore.Case) caseViewDTO {
 	info := c.Info()
-	v := caseViewDTO{caseDTO: toCaseDTO(info), Envs: info.Envs, Sources: info.Sources, History: toHistoryDTOs(info.History), Retries: []retryDTO{}}
+	v := recordView(info)
 	if rs, ok := innerCase(c).(casestore.RetryStore); ok {
 		if items, err := rs.Retries(ctx); err == nil {
 			v.Retries = toRetryDTOs(items)

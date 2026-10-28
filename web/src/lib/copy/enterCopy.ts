@@ -25,8 +25,8 @@ export const ENTER_TEXT = {
   restoreIntro: 'A case file is one encrypted file with a copy of a case. Restoring it always makes a new case. It never changes a case you already have.',
   pathLabel: 'Path of the case file',
   pathHint: 'The full path of a file that ends in .unravis-case. In File Explorer, select the file and press Ctrl+Shift+C to copy its path.',
-  keyLabel: 'Master key of the PC it was saved on',
-  keyHint: 'Type the master key that was used when the case file was made. It is not kept after you press the button.',
+  keyLabel: 'Master key or passphrase the file was made with',
+  keyHint: 'Type the master key of the PC it was saved on, or the passphrase typed when the file was made. It is not kept after you press the button.',
   restoreButton: 'Restore as a new case',
   restoring: 'Restoring…',
 
@@ -35,7 +35,7 @@ export const ENTER_TEXT = {
   pathName: 'The file name must end in .unravis-case.',
   pathShape: 'Use the full path on this computer, such as C:\\Cases\\mycase.unravis-case. Network paths are not accepted.',
   pathTooLong: 'That path is too long. Move the file to a folder with a shorter path, then try again.',
-  keyEmpty: 'Type the master key the case file was saved with.',
+  keyEmpty: 'Type the master key or passphrase the case file was made with.',
 
   // After the server answered
   needKey: 'Restoring needs a master key on this PC too. Set one up first.',

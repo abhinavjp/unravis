@@ -164,9 +164,15 @@ export function archiveOnlyText(count: number): string {
     : count + ' archived cases can only be opened with the old key.';
 }
 
+/** M12: what a start-over costs the archived cases whose working copy was freed (the case file is then the only copy). */
+export function freedArchivesWarning(count: number): string {
+  return archiveOnlyText(count) + ' Their working copies were freed.';
+}
+
 /**
  * What a start-over would do, in counts, said before the box is ticked. A case with its own key is left alone, so it is named as safe
- * and never counted as lost. Empty when the server gave no counts.
+ * and never counted as lost. Empty when the server gave no counts. The M12 line is left out here when the screen shows it on its own
+ * (see freedArchivesWarning), so it is never said twice.
  */
 export function resetImpactLines(impact: { masterKeyCases: number; ownKeyCases: number; archiveOnly: number } | null | undefined): string[] {
   if (!impact) return [];
@@ -236,6 +242,8 @@ export function masterKeyLintEntries(): LintEntry[] {
     ...SETUP_KINDS.map((kind) => ({ id: 'masterkey.sample.setup.' + kind, text: setupErrorText(kind, 4) })),
     ...Object.entries(DAMAGED_TEXT).map(([id, text]) => ({ id: 'masterkey.damaged.' + id, text })),
     ...RESET_KINDS.map((kind) => ({ id: 'masterkey.sample.reset.' + kind, text: resetErrorText(kind) })),
+    { id: 'masterkey.sample.freedOne', text: freedArchivesWarning(1) },
+    { id: 'masterkey.sample.freedMany', text: freedArchivesWarning(2) },
     { id: 'masterkey.sample.blankHint', text: blankHint(8) },
     { id: 'masterkey.sample.edgeSpace', text: edgeSpaceNote() },
     { id: 'masterkey.sample.rewrapOne', text: rewrapOffer(1) },

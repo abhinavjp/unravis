@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/clock"
+	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/importer"
 	"api-audit-explorer/internal/ledger"
@@ -64,6 +66,11 @@ var (
 	// Two erased cases leave only their Erased lines (screen 124): an id and a time.
 	demoErasedOneID = demoCaseID("k7m2qx4a")
 	demoErasedTwoID = demoCaseID("q2w7exak")
+	// P3 seeds: an archive whose working copy is kept, one whose working copy was
+	// freed, and a case whose folder is gone.
+	demoCaseArchivedID = demoCaseID("demoarchived")
+	demoCaseFreedID    = demoCaseID("demofreed")
+	demoCaseMissingID  = demoCaseID("demomissing")
 )
 
 // demoCaseKeyPassphrase is the demo-only passphrase of the keyed demo case. It protects nothing
@@ -76,7 +83,8 @@ const demoCaseKeySalt = "unravis-demo-key"
 
 // demoCaseIDs lists the IDs above.
 func demoCaseIDs() []casestore.CaseID {
-	return []casestore.CaseID{demoCaseOpenID, demoCaseClosedID, demoCaseFailedID, demoCaseStaleID, demoCaseUntrustedID, demoCaseKeyedID}
+	return []casestore.CaseID{demoCaseOpenID, demoCaseClosedID, demoCaseFailedID, demoCaseStaleID, demoCaseUntrustedID, demoCaseKeyedID,
+		demoCaseArchivedID, demoCaseFreedID, demoCaseMissingID}
 }
 
 // demoSettings is what the two capture-only variables ask for.
@@ -169,6 +177,9 @@ func checkDemoFolder(getenv func(string) string) error {
 		own[string(id)] = true
 	}
 	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue // the store's own .index folder is not a case
+		}
 		// A case made in an earlier capture run on this folder has a demonew ID.
 		if !own[e.Name()] && !isDemoNewID(e.Name()) {
 			return errors.New(demoCasesNeedEmptyDir)
@@ -213,7 +224,7 @@ func openDemoCases(getenv func(string) string, hypotheses ledger.Store, now time
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	seeder := demoSeeder{store: wiring.store, clock: clk, setID: ids.force, now: now, erased: wiring.erased}
+	seeder := demoSeeder{store: wiring.store, ar: wiring.store, root: root, clock: clk, setID: ids.force, now: now, erased: wiring.erased}
 	seedErr := seeder.seed(ctx)
 	ids.force("") // nothing forced is left over: a case made after seeding gets a fresh ID
 	if seedErr != nil {
@@ -298,6 +309,8 @@ type demoKeyedStore interface {
 
 type demoSeeder struct {
 	store  demoStore
+	ar     casestore.Archiver // nil: no archive seeds
+	root   string
 	clock  *demoClock
 	setID  func(casestore.CaseID)
 	now    time.Time
@@ -341,11 +354,27 @@ func (d demoSeeder) seed(ctx context.Context) error {
 				if err := d.importRefused(ctx, c, "failed-2", created.Add(25*time.Minute)); err != nil {
 					return err
 				}
-				return d.retryItems(ctx, c, created.Add(30*time.Minute))
+				if err := d.retryItems(ctx, c, created.Add(30*time.Minute)); err != nil {
+					return err
+				}
+				// A SQL Server day whose hours held nothing to read: it stands for screen p7-nothing-read.
+				return d.laneDayNothingRead(ctx, c, created.Add(40*time.Minute))
 			}},
 		{demoCaseStaleID, "Ledger posting lag, 12 October", 8 * day,
 			func(ctx context.Context, c casestore.Case, created time.Time) error {
 				return d.importOK(ctx, c, "stale-1", created.Add(10*time.Minute))
+			}},
+		{demoCaseArchivedID, "Month-end batch stall, 2 October", 26 * day,
+			func(ctx context.Context, c casestore.Case, created time.Time) error {
+				return d.importOK(ctx, c, "archived-1", created.Add(10*time.Minute))
+			}},
+		{demoCaseFreedID, "Payment gateway retries, 28 September", 30 * day,
+			func(ctx context.Context, c casestore.Case, created time.Time) error {
+				return d.importOK(ctx, c, "freed-1", created.Add(10*time.Minute))
+			}},
+		{demoCaseMissingID, "Search index rebuild, 9 October", 19 * day,
+			func(ctx context.Context, c casestore.Case, created time.Time) error {
+				return d.importOK(ctx, c, "missing-1", created.Add(10*time.Minute))
 			}},
 		// Created like the others; openDemoCases then has the legacy check call it untrusted.
 			{demoCaseUntrustedID, "Case from another folder", 6 * day,
@@ -404,6 +433,9 @@ func (d demoSeeder) seed(ctx context.Context) error {
 				return fmt.Errorf("close %s: %w", step.id, err)
 			}
 		}
+		if err := d.afterCreate(ctx, step.id, step.title); err != nil {
+			return fmt.Errorf("finish %s: %w", step.id, err)
+		}
 	}
 	return d.seedErased()
 }
@@ -418,6 +450,37 @@ func (d demoSeeder) seedErased() error {
 		return err
 	}
 	return d.erased.Add(demoErasedTwoID, d.now.Add(-1*day))
+}
+
+// laneDayNothingRead keeps one SQL Server day in which every check came back Cannot test yet and none has a permission to fix, so the capture
+// run opens straight onto that screen. (The demo's own fake server gives the same answer for a database named EmptyDb.) Nothing here came from a server.
+func (d demoSeeder) laneDayNothingRead(ctx context.Context, c casestore.Case, at time.Time) error {
+	hs, ok := c.(casestore.HealthStore)
+	if !ok {
+		return errors.New("the demo case cannot keep a SQL Server day")
+	}
+	d.clock.set(at)
+	hour := func(daysBack int) dbhealth.Window {
+		start := d.now.Add(-2 * day).Truncate(24 * time.Hour).Add(13 * time.Hour).Add(-time.Duration(daysBack) * day)
+		return dbhealth.Window{Start: start, End: start.Add(time.Hour)}
+	}
+	const why = "The server answered, but it holds nothing for these hours."
+	lane := dbhealth.LaneResult{Incident: hour(0), Reference: hour(1), Era: "2022", Sources: []string{"SQL Server"}}
+	rep := dbhealth.Report{Kind: "sql", Label: "SQL Server", Database: "AuditDb", Version: "16.0", StartedAt: at, FinishedAt: at, Overall: dbhealth.Unavailable, Lane: &lane}
+	for _, ck := range []struct{ id, title string }{
+		{dbhealth.CheckServer, "Server start and thread pool"}, {dbhealth.CheckErrorLog, "Error log"},
+		{dbhealth.CheckQueryStore, "Query Store"}, {dbhealth.CheckAgentJobs, "Agent jobs and backups"},
+	} {
+		lane.Checks = append(lane.Checks, dbhealth.LaneCheck{ID: ck.id, Title: ck.title, State: dbhealth.StateNotYet, Summary: why})
+		rep.Findings = append(rep.Findings, dbhealth.Finding{ID: ck.id, Title: ck.title, Status: dbhealth.Unavailable, Summary: why})
+	}
+	rep.Lane = &lane
+	enc, err := json.Marshal(rep)
+	if err != nil {
+		return err
+	}
+	_, err = hs.AddHealthRun(ctx, casestore.HealthRun{Kind: "sql", Label: rep.Label, Status: string(rep.Overall), Report: enc, Key: server.LaneDayKey("sql", rep)})
+	return err
 }
 
 func demoMeta(file string) casestore.ImportMeta {
@@ -503,4 +566,74 @@ func (d demoSeeder) retryItems(ctx context.Context, c casestore.Case, at time.Ti
 		{Kind: casestore.RetryAudit, Key: "audit:demo-reports", Label: "Reports database", Reason: "unreachable"},
 	})
 	return err
+}
+
+// afterCreate takes the three P3 seeds to their states. The archives carry the
+// record a real archive writes (the file, its check value, its counts) but no file
+// on disk: the pictures show the lists and the case home, and a case file made by
+// hand is what the Verify and Restore pictures use.
+func (d demoSeeder) afterCreate(ctx context.Context, id casestore.CaseID, title string) error {
+	if d.ar == nil {
+		return nil
+	}
+	switch id {
+	case demoCaseArchivedID, demoCaseFreedID:
+		closedAgo, archivedAgo := 22*day, 14*day
+		if id == demoCaseFreedID {
+			closedAgo, archivedAgo = 27*day, 21*day
+		}
+		d.clock.set(d.now.Add(-closedAgo))
+		if err := d.store.CloseCase(ctx, id); err != nil {
+			return err
+		}
+		at := d.now.Add(-archivedAgo)
+		d.clock.set(at)
+		folder := `C:\Unravis case files`
+		name := demoArchiveName(title, id, at)
+		if _, err := d.ar.BeginArchive(ctx, id, "", casestore.ArchivePending{Folder: folder, Name: name, Started: at.UTC()}); err != nil {
+			return err
+		}
+		sum := strings.Repeat(string(id)[4:8], 16) // fixed text: 64 hex-looking characters
+		file := casestore.ArchiveFile{
+			Name: name, Folder: folder, Bytes: 4_718_592, SHA256: sum, KeyKind: casestore.KeyKindMaster,
+			KeyCheck: strings.Repeat("0", 60) + "7c3e", Made: at.UTC(),
+			Counts: casestore.Counts{Imports: 1, Sources: 0, Events: demoEventsPerImort},
+		}
+		if err := d.ar.CommitArchive(ctx, id, file); err != nil {
+			return err
+		}
+		if id == demoCaseFreedID {
+			d.clock.set(d.now.Add(-14 * day))
+			if err := d.ar.BeginFree(ctx, id, ""); err != nil {
+				return err
+			}
+			return d.ar.FinishFree(ctx, id)
+		}
+	case demoCaseMissingID:
+		d.clock.set(d.now.Add(-12 * day))
+		if err := d.store.CloseCase(ctx, id); err != nil {
+			return err
+		}
+		// The folder is removed behind the application's back: Unravis lists the case
+		// as "Working copy missing" from its record outside the folder.
+		return os.RemoveAll(filepath.Join(d.root, string(id)))
+	}
+	return nil
+}
+
+// demoArchiveName spells a case file name the way Archive does.
+func demoArchiveName(title string, id casestore.CaseID, at time.Time) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(title) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			dash = false
+		} else if !dash && b.Len() > 0 {
+			b.WriteByte('-')
+			dash = true
+		}
+	}
+	slug := strings.TrimRight(b.String(), "-")
+	return slug + "-" + string(id)[:8] + "-" + at.UTC().Format("20060102-150405") + ".unravis-case"
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/discover"
@@ -52,6 +53,9 @@ type caseFileState struct {
 	busy       atomic.Bool // one export or restore at a time: each streams a whole database
 	restoreTh  throttle    // restore judges a case file's own passphrase: a different target than the master key
 	exportOnce sync.Once
+	jobs       fileJobs    // the archive and verify jobs (P3)
+	verified   verifiedSet // files that passed a test restore, the gate of Free (P3)
+	freeing    freeingSet  // cases a Free is waiting on: new readers get M19 (P3)
 }
 
 var caseFileStates sync.Map // *handler -> *caseFileState
@@ -76,6 +80,21 @@ type restoreAdapter struct {
 }
 
 func (a restoreAdapter) Root() string { return a.root }
+
+// Create makes the case Closed from the start: every restore ends Closed, and a
+// crash anywhere inside the restore must not leave an Open case behind (spec 7.4).
+// A case that cannot be closed is erased and the restore fails.
+func (a restoreAdapter) Create(ctx context.Context, title string) (casestore.CaseInfo, error) {
+	info, err := a.Store.Create(ctx, title)
+	if err != nil {
+		return info, err
+	}
+	if err := a.Store.CloseCase(ctx, info.ID); err != nil {
+		_ = a.Store.Erase(context.WithoutCancel(ctx), info.ID)
+		return casestore.CaseInfo{}, err
+	}
+	return info, nil
+}
 
 // caseFileBody is a decoded request body. pass never becomes a Go string.
 type caseFileBody struct {
@@ -250,7 +269,7 @@ func (h *handler) exportCaseFile(w http.ResponseWriter, r *http.Request, raw str
 		return
 	}
 	if !st.busy.CompareAndSwap(false, true) {
-		writeCaseFailure(w, http.StatusConflict, "busy", "Another case file is being written or read. Try again in a moment.")
+		writeCaseFailure(w, http.StatusConflict, "busy", caseFileBusyText)
 		return
 	}
 	defer st.busy.Store(false)
@@ -384,7 +403,7 @@ func (h *handler) restoreCaseFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !st.busy.CompareAndSwap(false, true) {
-		writeCaseFailure(w, http.StatusConflict, "busy", "Another case file is being written or read. Try again in a moment.")
+		writeCaseFailure(w, http.StatusConflict, "busy", caseFileBusyText)
 		return
 	}
 	defer st.busy.Store(false)
@@ -397,11 +416,15 @@ func (h *handler) restoreCaseFile(w http.ResponseWriter, r *http.Request) {
 		notOpened()
 		return
 	}
-	info, err := casestore.RestoreCaseFile(r.Context(), restoreAdapter{Store: h.cases, root: root}, h.mk.Lookup, src, b.pass)
+	info, from, err := casestore.RestoreCaseFileFull(r.Context(), restoreAdapter{Store: h.cases, root: root}, h.mk.Lookup, src, casestore.PassphraseKey(b.pass))
 	switch {
 	case err == nil:
 		st.restoreTh.reset()
-		writeJSON(w, http.StatusCreated, toCaseDTO(info), maxResponseBytes)
+		made := time.Now()
+		if fi, serr := os.Stat(src); serr == nil {
+			made = fi.ModTime()
+		}
+		writeJSON(w, http.StatusCreated, toCaseDTO(h.afterRestore(r.Context(), info, from, made)), maxResponseBytes)
 	case errors.Is(err, casestore.ErrCaseFile):
 		notOpened()
 	case errors.Is(err, casestore.ErrLocked), errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):

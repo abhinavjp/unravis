@@ -124,6 +124,17 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/health/run", match: caseSubpath("/health/run"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseHealthRun(w, r, id) },
 	}},
+	// SQL and Mongo lanes: read one database for one incident, keep it as a day, and the scripts the owner runs to allow it.
+	{pattern: "/api/cases/{id}/lanes", match: caseSubpath("/lanes"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseLaneList(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/lanes/sql", match: caseSubpath("/lanes/sql"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseLaneSQL(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/lanes/mongo", match: caseSubpath("/lanes/mongo"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseLaneMongo(w, r, id) },
+	}},
+	{pattern: "/api/grant-scripts", match: exactPath("/api/grant-scripts"), methods: get((*handler).grantScripts)},
 	// A case's own theories ledger. copy-shared is a fixed word and must stay ahead
 	// of the {hid} item route, which would otherwise read it as an entry id.
 	{pattern: "/api/cases/{id}/ledger", match: caseSubpath("/ledger"), methods: map[string]routeFunc{
@@ -269,6 +280,25 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/investigation", match: caseSubpath("/investigation"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseInvestigation(w, r, id) },
 	}},
+	// Guided analysis: a case's saved views and checklist, and the report.
+	{pattern: "/api/cases/{id}/views", match: caseSubpath("/views"), methods: map[string]routeFunc{
+		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseViewsList(w, r, id) },
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseViewSave(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/views/{vid}", match: casePlanItemPath("views"), methods: map[string]routeFunc{
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.caseViewDelete(w, r, arg) },
+	}},
+	{pattern: "/api/cases/{id}/checklist", match: caseSubpath("/checklist"), methods: map[string]routeFunc{
+		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseChecklistList(w, r, id) },
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseChecklistCreate(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/checklist/{iid}", match: casePlanItemPath("checklist"), methods: map[string]routeFunc{
+		http.MethodPut:    func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.caseChecklistUpdate(w, r, arg) },
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.caseChecklistDelete(w, r, arg) },
+	}},
+	{pattern: "/api/cases/{id}/report", match: caseSubpath("/report"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseReport(w, r, id) },
+	}},
 	{pattern: "/api/call-trace", match: exactPath("/api/call-trace"), methods: post((*handler).callTrace)},
 	{pattern: "/api/discover/capabilities", match: exactPath("/api/discover/capabilities"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.discoverCapabilities(w, r) },
@@ -316,6 +346,30 @@ var routes = []route{
 	// An Erased line is cleared by id; it stays ahead of /api/cases/{id}.
 	{pattern: "/api/cases/erased/{id}", match: erasedLinePath, methods: map[string]routeFunc{
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.clearErased(w, r, id) },
+	}},
+	// Archive, verify, free and restore (P3). orphan-files must stay ahead of
+	// /api/cases/{id} like restore does.
+	{pattern: "/api/cases/orphan-files", match: exactPath("/api/cases/orphan-files"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.orphanFiles(w, r) },
+	}},
+	{pattern: "/api/cases/{id}/archive", match: caseSubpath("/archive"), methods: map[string]routeFunc{
+		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.archiveStatus(w, r, id) },
+		http.MethodPost:   func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.archiveCase(w, r, id) },
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.archiveCancel(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/verify", match: caseSubpath("/verify"), methods: map[string]routeFunc{
+		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.verifyStatus(w, r, id) },
+		http.MethodPost:   func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.verifyCase(w, r, id) },
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.verifyCancel(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/free", match: caseSubpath("/free"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.freeCase(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/restore-in-place", match: caseSubpath("/restore-in-place"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.restoreInPlace(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/restore-as-new", match: caseSubpath("/restore-as-new"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.restoreAsNew(w, r, id) },
 	}},
 	{pattern: "/api/cases/{id}", match: caseSubpath(""), methods: map[string]routeFunc{
 		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getCase(w, r, id) },

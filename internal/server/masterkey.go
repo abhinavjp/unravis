@@ -409,6 +409,13 @@ type masterKeyStatus struct {
 	// They are refused (409 reason "untrusted-case"), cannot be re-wrapped, and are
 	// not in DPAPICases; they can still be erased. Omitted when 0 (always while locked).
 	UntrustedCases int `json:"untrustedCases,omitempty"`
+	// FreedArchives is M12's N: the archived cases whose working copy was freed and
+	// whose case file was sealed under the master key. Only a key reset makes them
+	// unreadable, so it is reported where a reset is offered (the damaged state)
+	// and omitted otherwise and when 0. A damaged key file cannot open the sealed
+	// case records, so the number comes from a plain note kept beside the key file
+	// (freedNoteName), refreshed while the key is unlocked.
+	FreedArchives int `json:"freedArchives,omitempty"`
 	// Reset is present only while the key file is damaged: what starting over with
 	// a new master key would do to the cases (key_reset.go). The page says it
 	// before the person ticks the box.
@@ -712,10 +719,80 @@ func (h *handler) masterKeyReply(w http.ResponseWriter, r *http.Request) {
 	st := h.masterKeyState()
 	n, half, bad := h.dpapiCaseCount(r.Context())
 	out := masterKeyStatus{State: st, DPAPICases: n, NeedsRewrap: half, UntrustedCases: bad}
-	if st == MasterKeyDamaged {
+	switch st {
+	case MasterKeyDamaged:
+		out.FreedArchives = readFreedNote(h.mk.dir)
 		out.Reset = h.masterKeyResetImpact(r.Context())
+	case MasterKeyUnlocked:
+		h.noteFreedArchives(r.Context())
 	}
 	writeJSON(w, http.StatusOK, out, 4096)
+}
+
+// freedNoteName is the note of how many freed archives the master key seals: just
+// a number, no case id, title or path, so it can sit unsealed beside the key file
+// and still be read when the key file cannot be opened.
+const freedNoteName = "masterkey.freed"
+
+type freedNote struct {
+	V int `json:"v"`
+	N int `json:"n"`
+}
+
+// noteFreedArchives refreshes the note while the key is unlocked (the only time the
+// case records can be read). It is called where the number can change: when the
+// status is read, after a Free and after an erase. A failure is not reported: the
+// note is only the number M12 shows.
+func (h *handler) noteFreedArchives(ctx context.Context) {
+	if h.mk == nil || h.mk.State() != MasterKeyUnlocked || h.cases == nil {
+		return
+	}
+	n := h.freedMasterArchives(ctx)
+	if n == readFreedNote(h.mk.dir) {
+		return
+	}
+	raw, err := json.Marshal(freedNote{V: 1, N: n})
+	if err != nil {
+		return
+	}
+	_ = sealedfile.WriteAtomic(filepath.Join(h.mk.dir, freedNoteName), "freed.*.tmp", raw)
+}
+
+// readFreedNote reads the note; no note or an unreadable one is 0.
+func readFreedNote(dir string) int {
+	raw, err := os.ReadFile(filepath.Join(dir, freedNoteName))
+	if err != nil || len(raw) > 256 {
+		return 0
+	}
+	var f freedNote
+	if json.Unmarshal(raw, &f) != nil || f.V != 1 || f.N < 0 {
+		return 0
+	}
+	return f.N
+}
+
+// freedMasterArchives counts the Archived cases whose working copy is freed and
+// whose current case file was sealed under the master key (M12). Their case file is
+// the only copy, and a new master key cannot open it. Kept working copies are not
+// counted (they can be archived again), nor are files with a key of their own.
+func (h *handler) freedMasterArchives(ctx context.Context) int {
+	if h.cases == nil {
+		return 0
+	}
+	list, err := h.cases.List(ctx)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, info := range list {
+		if !info.Archive.Freed() {
+			continue
+		}
+		if cur := info.Archive.Current(); cur != nil && cur.KeyKind == casestore.KeyKindMaster {
+			n++
+		}
+	}
+	return n
 }
 
 func (h *handler) masterKeySetup(w http.ResponseWriter, r *http.Request) {
@@ -873,6 +950,7 @@ func (h *handler) masterKeyLock(w http.ResponseWriter, r *http.Request) {
 	// every open handle (zeroing the case keys) before answering.
 	h.stopSamplerAll()
 	h.jobs.cancelAll()
+	h.caseFiles().jobs.stopAll()
 	h.mk.lock(h.closeCaseHandles)
 	// Lock locks all of Unravis: a case with its own key asks for that key again.
 	if ck, ok := h.cases.(casestore.CaseKeyer); ok {
@@ -940,6 +1018,9 @@ func (h *handler) masterKeyRewrap(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, info := range list {
+			if info.Missing || info.Archive.Freed() {
+				continue // no working copy, no key file to protect
+			}
 			ids = append(ids, info.ID)
 		}
 	} else {

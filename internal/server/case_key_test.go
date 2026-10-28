@@ -383,7 +383,11 @@ func TestCaseKeyResetLeavesOwnKeyCasesAlone(t *testing.T) {
 	if err := os.WriteFile(masterkey.Path(e.dir), []byte("garbage"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	e.h.(*handler).archiveOnly = func(context.Context) int { return 3 }
+	// M12's N is kept in a note beside the key file (see archive_m12_test.go for the
+	// real count); this test only checks that the reset impact carries it.
+	if err := os.WriteFile(filepath.Join(e.dir, freedNoteName), []byte(`{"v":1,"n":3}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	// The status carries the impact before anything is changed.
 	type statusOut struct {

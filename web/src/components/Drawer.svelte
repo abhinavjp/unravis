@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, type Snippet } from 'svelte';
+  import { onDestroy, onMount, type Snippet } from 'svelte';
 
   // The one drawer template: a title row (title, one-line purpose, close button), optional header extras such as tabs, the body, and an optional footer of actions.
   // Modal (the default): the scrim, the dialog box, Esc to close and a Tab trap, as Glossary, Patterns, Ledger, Export and Connections use it.
@@ -21,6 +21,7 @@
     returnFocus = false,
     modal = true,
     focusTitle = false,
+    focusOnOpen = false,
     element = $bindable(),
     onClose,
     headerExtra,
@@ -38,6 +39,7 @@
     returnFocus?: boolean;
     modal?: boolean;
     focusTitle?: boolean;
+    focusOnOpen?: boolean;
     element?: HTMLElement;
     onClose: () => void;
     headerExtra?: Snippet;
@@ -47,6 +49,9 @@
 
   const opener = typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null;
   onDestroy(() => { if (returnFocus) opener?.focus(); });
+  // focusOnOpen (off by default) puts focus on the title when the drawer opens, so a keyboard user starts inside it and not on the page behind.
+  let titleElement = $state<HTMLElement>();
+  onMount(() => { if (focusOnOpen) titleElement?.focus({ preventScroll: true }); });
 
   function onKey(event: KeyboardEvent) {
     if (event.key === 'Escape') { event.preventDefault(); if (stopEscape) event.stopPropagation(); onClose(); return; }
@@ -63,7 +68,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <svelte:element this={modal ? 'div' : 'aside'} class={modal ? (extra ? 'connections-drawer ' + extra : 'connections-drawer') : extra} bind:this={element} onkeydown={modal ? onKey : undefined} role={modal ? 'dialog' : undefined} aria-modal={modal ? 'true' : undefined} aria-labelledby={titleId} tabindex={modal ? -1 : undefined}>
   <div class="drawer-header" class:panel={!modal} class:has-extra={!!headerExtra}>
-    <div class="drawer-heading"><h2 id={titleId} tabindex={focusTitle ? -1 : undefined}>{title}</h2>{#if intro}<p>{intro}</p>{/if}</div>
+    <div class="drawer-heading"><h2 id={titleId} bind:this={titleElement} tabindex={focusTitle || focusOnOpen ? -1 : undefined}>{title}</h2>{#if intro}<p>{intro}</p>{/if}</div>
     <button type="button" class="drawer-close" aria-label={closeLabel} title={closeTitle || undefined} onclick={onClose}>×</button>
   </div>
   {#if headerExtra}{@render headerExtra()}{/if}

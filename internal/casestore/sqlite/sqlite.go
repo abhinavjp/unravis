@@ -476,7 +476,7 @@ func (s *Store) createWith(ctx context.Context, title, requestID string, pass []
 		History: []manifestHistory{{At: now, Kind: casestore.HistoryCreated}}}
 	sealer := s.sealer(dir, kind)
 	sealer.look = look
-	if err := writeManifest(dir, sealer, man); err != nil {
+	if err := s.writeManSealed(dir, sealer, man); err != nil {
 		return casestore.CaseInfo{}, err
 	}
 	ok = true
@@ -639,6 +639,7 @@ func (s *Store) List(ctx context.Context) ([]casestore.CaseInfo, error) {
 		return nil, err
 	}
 	out := []casestore.CaseInfo{}
+	have := map[casestore.CaseID]bool{}
 	for _, e := range entries {
 		id := casestore.CaseID(e.Name())
 		if !e.IsDir() || !validID(id) {
@@ -651,44 +652,11 @@ func (s *Store) List(ctx context.Context) ([]casestore.CaseInfo, error) {
 		if casestore.RejectReparse(s.root, dir) != nil {
 			continue
 		}
-		info := casestore.CaseInfo{ID: id, Title: "(unreadable case)"}
-		if erasePending(dir) {
-			// The pending-erase marker is the Erasing mark: recovery reads it
-			// from the row and finishes the erase.
-			info.Title, info.Mark = "(erase pending)", casestore.MarkErasing
-			out = append(out, info)
-			continue
-		}
-		if wrapExists(dir) {
-			// A case with its own key: the wrap's headers say so, the manifest is
-			// read only when that key is unlocked.
-			info.OwnKey = true
-			if end, err := wrapEnding(dir); err == nil {
-				info.KeyEnding = end
-			}
-			if s.ck.get(id) == nil {
-				info.KeyLocked = true
-				if info.KeyEnding != "" {
-					info.Title = "(locked)"
-				}
-				out = append(out, info)
-				continue
-			}
-		} else if err := s.legacyGate(id, dir); errors.Is(err, casestore.ErrUntrustedLegacy) {
-			// Listed, so the person can see and erase it, but nothing of it is read.
-			info.Title, info.Untrusted = "(untrusted case)", true
-			out = append(out, info)
-			continue
-		}
-		if m, err := readManifest(dir, s.sealer(dir, "")); err == nil && m.CaseID == string(id) {
-			info.Title, info.Created, info.Closed, info.Imports = m.Title, m.Created, m.Closed, len(m.Imports)
-			info.Bytes = manifestBytes(m)
-			info.Mark, info.RequestID = m.Mark, m.RequestID
-		} else if err != nil && caseKind(dir) == casestore.KindMasterKey && s.isLocked(casestore.KindMasterKey) {
-			info.Title = "(locked)" // nothing else about a locked case is shown
-		}
+		have[id] = true
+		info := s.listRow(id, dir)
 		out = append(out, info)
 	}
+	out = append(out, s.missingRows(have)...)
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].Created.Equal(out[j].Created) {
 			return out[i].Created.Before(out[j].Created)
@@ -712,8 +680,11 @@ func (s *Store) Open(ctx context.Context, id casestore.CaseID) (casestore.Case, 
 	}
 	if st := s.open[id]; st != nil {
 		st.mu.Lock()
+		defer st.mu.Unlock()
+		if archived(st.man) {
+			return nil, casestore.ErrArchived // archived while this process held it open
+		}
 		st.refs++
-		st.mu.Unlock()
 		return &Case{caseState: st}, nil
 	}
 	st, err := s.load(ctx, id)
@@ -799,6 +770,11 @@ func (s *Store) readCaseFiles(dir string, id casestore.CaseID) (casestore.Keys, 
 	} else if k, kErr := casestore.FileKind(filepath.Join(dir, keyName)); kErr == nil && k == casestore.KindCaseKey {
 		return casestore.Keys{}, manifest{}, casestore.ErrKeyFile // sealed under a key whose wrap is gone
 	}
+	// An archived case is a record, never a working case, and a freed one has no
+	// key left to read: both answer ErrArchived before anything is opened.
+	if m, mErr := readManifest(dir, s.sealer(dir, "")); mErr == nil && m.CaseID == string(id) && archived(m) {
+		return casestore.Keys{}, manifest{}, casestore.ErrArchived
+	}
 	keys, kind, err := casestore.ReadKeyFileAny(filepath.Join(dir, keyName), s.lookupFor(id))
 	if errors.Is(err, os.ErrNotExist) {
 		return casestore.Keys{}, manifest{}, casestore.ErrNotFound // the key is gone: the case is erased
@@ -835,6 +811,10 @@ func (s *Store) readCaseFiles(dir string, id casestore.CaseID) (casestore.Keys, 
 	if man.CaseID != string(id) || keys.CaseID != string(id) {
 		keys.Zero()
 		return casestore.Keys{}, manifest{}, ErrDamaged
+	}
+	if archived(man) {
+		keys.Zero()
+		return casestore.Keys{}, manifest{}, casestore.ErrArchived
 	}
 	return keys, man, nil
 }
@@ -897,13 +877,16 @@ func (s *Store) CloseCase(ctx context.Context, id casestore.CaseID) error {
 	if err := casestore.CheckMark(m.Mark); err != nil {
 		return err
 	}
+	if archived(m) {
+		return casestore.ErrCaseChanged
+	}
 	if m.Closed != nil {
 		return nil
 	}
 	now := s.now()
 	m.Closed = &now
 	m.History = appendHistory(m.History, now, casestore.HistoryClosed)
-	if err := writeManifest(dir, s.sealer(dir, ""), m); err != nil {
+	if err := s.writeMan(dir, m); err != nil {
 		return err
 	}
 	if h != nil {
@@ -950,6 +933,9 @@ func (s *Store) Rewrap(ctx context.Context, id casestore.CaseID) error {
 	}
 	if wrapExists(dir) {
 		return nil // a case with its own key is never moved to the master key
+	}
+	if m, mErr := readManifest(dir, s.sealer(dir, "")); mErr == nil && freed(m) {
+		return nil // a freed case keeps only its record: there is no key to re-wrap
 	}
 	if s.isLocked(casestore.KindMasterKey) {
 		return ErrLocked
@@ -1095,6 +1081,9 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 			s.logf("case %s erase not started", id)
 			return errors.Join(errs...)
 		}
+		// The erase has started and cannot be undone: the index record goes too, so
+		// a crash from here on never leaves a Missing row for a case that is gone.
+		s.removeIndex(id)
 	}
 	s.eraseStepAt("files")
 	if s.opt.OnErase != nil {
@@ -1109,6 +1098,7 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 		s.logf("case %s erase incomplete", id)
 		return err
 	}
+	s.removeIndex(id) // a Missing case has no folder: this is all its erase does
 	s.logf("case %s erased", id)
 	return nil
 }
@@ -1202,6 +1192,9 @@ func (s *Store) Sweep(ctx context.Context, now time.Time) ([]casestore.CaseID, e
 	var errs []error
 	for _, info := range infos {
 		pending := erasePending(filepath.Join(s.root, string(info.ID)))
+		if !pending && sweepSkips(info) {
+			continue
+		}
 		if !pending && (info.Closed == nil || now.Sub(*info.Closed) <= retention) {
 			continue
 		}

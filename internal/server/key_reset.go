@@ -18,19 +18,10 @@ type resetImpact struct {
 	MasterKeyCases int `json:"masterKeyCases"`
 	// OwnKeyCases are cases with their own key. The reset does not touch them.
 	OwnKeyCases int `json:"ownKeyCases"`
-	// ArchiveOnly is M12: archived cases whose working copy is freed and that were
-	// sealed under the old master key, so their case file can only be opened with
-	// the old key. It counts none of the own-key cases and none whose working copy
-	// is kept.
+	// ArchiveOnly is M12: archived cases whose working copy is freed and whose case
+	// file was sealed under the old master key, so it can only be opened with the old
+	// key. It counts none of the own-key cases and none whose working copy is kept.
 	ArchiveOnly int `json:"archiveOnly"`
-}
-
-// WithArchiveOnlyCount gives the server the count M12 needs: how many archived
-// cases are freed (their working copy is gone, the case file is all that is left)
-// and were sealed under the master key. The archive feature supplies it; without
-// it the count is 0, which is true while no case can be freed.
-func WithArchiveOnlyCount(fn func(ctx context.Context) int) Option {
-	return func(h *handler) { h.archiveOnly = fn }
 }
 
 // masterKeyResetImpact counts the cases a reset would leave unreadable and the
@@ -38,10 +29,11 @@ func WithArchiveOnlyCount(fn func(ctx context.Context) int) Option {
 // works while the master key is damaged and never opens a case.
 func (h *handler) masterKeyResetImpact(ctx context.Context) *resetImpact {
 	out := &resetImpact{}
-	if h.archiveOnly != nil {
-		if n := h.archiveOnly(ctx); n > 0 {
-			out.ArchiveOnly = n
-		}
+	// M12's N is the one the archive feature keeps beside the key file (a damaged
+	// key file cannot open the sealed case records, so it is not counted live). A
+	// case whose case file was made with its own key is not in it.
+	if h.mk != nil {
+		out.ArchiveOnly = readFreedNote(h.mk.dir)
 	}
 	if h.cases == nil {
 		return out

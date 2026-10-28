@@ -69,6 +69,17 @@ test('damaged: the status answer is accepted, and closes the cases like locked',
   assert.equal(mk.offersLock('damaged'), false);
 });
 
+test('damaged: M12 count (freed archives) is kept only when above 0, and the warning reads right', () => {
+  assert.deepEqual(mk.parseStatus({ state: 'damaged', dpapiCases: 0, freedArchives: 2 }), { state: 'damaged', dpapiCases: 0, freedArchives: 2 });
+  assert.deepEqual(mk.parseStatus({ state: 'damaged', dpapiCases: 0, freedArchives: 0 }), { state: 'damaged', dpapiCases: 0 });
+  assert.deepEqual(mk.parseStatus({ state: 'damaged', dpapiCases: 0, freedArchives: 'x' }), { state: 'damaged', dpapiCases: 0 });
+  assert.equal(copy.freedArchivesWarning(1), '1 archived case can only be opened with the old key. Their working copies were freed.');
+  assert.equal(copy.freedArchivesWarning(2), '2 archived cases can only be opened with the old key. Their working copies were freed.');
+  const view = read('src/components/MasterKeyDamaged.svelte');
+  assert.match(view, /freedArchivesWarning\(freed\)/);
+  assert.match(view, /getMasterKeyStatus/);
+});
+
 test('damaged: the first screen is unlock, and the start screen shows nothing from the cases', () => {
   assert.equal(flow.initialScreen({ demo: false, deepLink: false, resume: false, lock: 'damaged' }), 'unlock');
   assert.equal(flow.initialScreen({ demo: false, deepLink: true, resume: true, lock: 'damaged' }), 'unlock');
@@ -284,7 +295,8 @@ test('damaged: the status carries what a start-over would do, and the screen say
   // A case with its own key is never counted among the ones that stay unreadable.
   assert.doesNotMatch(copy.resetImpactLines({ masterKeyCases: 0, ownKeyCases: 2, archiveOnly: 0 }).join(' '), /unreadable/);
   const src = read('src/components/MasterKeyDamaged.svelte');
-  assert.match(src, /getMasterKeyStatus\(\)\.then\(\(status\) => \{ impact = resetImpactLines\(status\.reset\)/);
+  assert.match(src, /impact = resetImpactLines\(status\.reset \? \{ \.\.\.status\.reset, archiveOnly: 0 \} : null\)/, 'the M12 line is said once, in its own warning');
+  assert.match(src, /freed = status\.freedArchives \?\? status\.reset\?\.archiveOnly \?\? 0/);
   assert.match(src, /\{#each impact as line/);
   assert.match(read('src/lib/copy/masterKeyCopy.ts'), /impactMany/, 'the lines are in the copy lint');
 });

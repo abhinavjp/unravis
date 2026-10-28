@@ -242,8 +242,8 @@ func TestDemoCasesSeedSixCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	for _, c := range list {
 		byID[c["id"].(string)] = c
 	}
-	if len(list) != 6 {
-		t.Fatalf("got %d cases, want 6: %v", len(list), list)
+	if len(list) != 7 {
+		t.Fatalf("got %d cases, want 7 (the Missing one and the keyed one are listed with the others): %v", len(list), list)
 	}
 	want := func(id, title string, created time.Time, closed *time.Time, imports float64) {
 		t.Helper()
@@ -281,6 +281,9 @@ func TestDemoCasesSeedSixCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	want(string(demoCaseStaleID), "Ledger posting lag, 12 October", demoTestNow.Add(-8*day), &staleClosedAt, 1)
 	if u := byID[string(demoCaseUntrustedID)]; u == nil || u["untrusted"] != true {
 		t.Errorf("the untrusted demo case = %v, want untrusted", u)
+	}
+	if m := byID[string(demoCaseMissingID)]; m == nil || m["missing"] != true {
+		t.Errorf("the missing demo case = %v, want missing", m)
 	}
 }
 
@@ -534,5 +537,119 @@ func TestDemoCasesHoldAClosedCaseAndTwoRetryItems(t *testing.T) {
 	}
 	if open := view(demoCaseOpenID); open["state"] != "open" {
 		t.Errorf("the open demo case is %v", open["state"])
+	}
+}
+
+// The archived demo cases live in their own list, newest archive first, and the
+// default list only counts them.
+func TestDemoArchivedCasesAreInTheirOwnList(t *testing.T) {
+	h, closeCases := seededServer(t, t.TempDir())
+	defer closeCases()
+	get := func(path string) (out struct {
+		Cases         []map[string]any `json:"cases"`
+		ArchivedTotal int              `json:"archivedTotal"`
+	}) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "127.0.0.1:8765"
+		req.Header.Set("X-Audit-Token", demoTestToken)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d %s", path, res.Code, res.Body)
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	def := get("/api/cases")
+	if def.ArchivedTotal != 2 {
+		t.Errorf("archivedTotal = %d, want 2", def.ArchivedTotal)
+	}
+	for _, c := range def.Cases {
+		if c["state"] == "archived" {
+			t.Errorf("the default list holds an archived case: %v", c)
+		}
+	}
+	arch := get("/api/cases?archived=1")
+	if len(arch.Cases) != 2 {
+		t.Fatalf("archived list = %v, want 2 cases", arch.Cases)
+	}
+	if arch.Cases[0]["id"] != string(demoCaseArchivedID) || arch.Cases[1]["id"] != string(demoCaseFreedID) {
+		t.Errorf("order = %v then %v, want newest archive first (kept, then freed)", arch.Cases[0]["id"], arch.Cases[1]["id"])
+	}
+	freed := arch.Cases[1]["archive"].(map[string]any)
+	if freed["freed"] != true {
+		t.Errorf("the freed demo case = %v, want freed", freed)
+	}
+	if kept := arch.Cases[0]["archive"].(map[string]any); kept["freed"] != false {
+		t.Errorf("the kept demo case = %v, want kept", kept)
+	}
+	if page := get("/api/cases?archived=1&offset=1"); len(page.Cases) != 1 {
+		t.Errorf("offset 1 gave %d cases, want 1", len(page.Cases))
+	}
+}
+
+// The P7 "nothing read" screen needs a held lane day whose every check is
+// "Cannot test yet" with no fix. Only the failed-import demo case holds one.
+func TestDemoCasesSeedOneNothingReadLaneDay(t *testing.T) {
+	h, closeCases := seededServer(t, t.TempDir())
+	defer closeCases()
+	_, list := listCases(t, h)
+	held := map[string]int{}
+	for _, c := range list {
+		id, _ := c["id"].(string)
+		req := httptest.NewRequest(http.MethodGet, "/api/cases/"+id+"/lanes", nil)
+		req.Host = "127.0.0.1:8765"
+		req.Header.Set("X-Audit-Token", demoTestToken)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		if res.Code == http.StatusConflict && strings.HasPrefix(id, string(demoCaseUntrustedID)) {
+			continue // not opened by design
+		}
+		if res.Code == http.StatusLocked && strings.HasPrefix(id, string(demoCaseKeyedID)) {
+			continue // locked by its own key, by design
+		}
+		if res.Code == http.StatusNotFound && strings.HasPrefix(id, string(demoCaseMissingID)) {
+			continue // its file is gone by design
+		}
+		if res.Code != http.StatusOK {
+			t.Fatalf("GET lanes for %s = %d: %s", id, res.Code, res.Body)
+		}
+		var out struct {
+			Days []struct {
+				Kind string `json:"kind"`
+				Lane struct {
+					Checks []struct {
+						State string `json:"state"`
+						Fix   any    `json:"fix"`
+					} `json:"checks"`
+				} `json:"lane"`
+			} `json:"days"`
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode %s: %v: %s", id, err, res.Body)
+		}
+		held[id] = len(out.Days)
+		for _, l := range out.Days {
+			if l.Kind != "sql" || len(l.Lane.Checks) == 0 {
+				t.Fatalf("%s: unexpected lane %+v", id, l)
+			}
+			for _, ck := range l.Lane.Checks {
+				if ck.State != "Cannot test yet" || ck.Fix != nil {
+					t.Fatalf("%s: check %+v is not a nothing-read check", id, ck)
+				}
+			}
+		}
+	}
+	for id, n := range held {
+		want := 0
+		if id == string(demoCaseFailedID) {
+			want = 1
+		}
+		if n != want {
+			t.Errorf("case %s holds %d lane days, want %d", id, n, want)
+		}
 	}
 }

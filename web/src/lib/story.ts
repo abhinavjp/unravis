@@ -1,4 +1,5 @@
 import type { CaseInfo, HistoryEntry, ImportRecord } from './cases';
+import { historyLine } from './copy/archiveCopy';
 import { CASE_HOME_TEXT, fileDetail, theoryChangedDetail } from './copy/caseHomeCopy';
 import { overallText } from './copy/healthCopy';
 import { importerLabel } from './copy/importCopy';
@@ -56,8 +57,11 @@ export function buildStory(input: StoryInput): StoryEvent[] {
     events.push({ id: 'case:' + input.info.id, at: input.info.created, kind: 'case', title: CASE_HOME_TEXT.eventCase, detail: input.info.title ? '“' + shortText(input.info.title, 80) + '”' : '', tone: 'plain' });
   }
   (input.history ?? []).forEach((entry, index) => {
-    const title = entry.kind === 'closed' ? CASE_HOME_TEXT.eventClosed : entry.kind === 'reopened' ? CASE_HOME_TEXT.eventReopened : '';
-    if (title) events.push({ id: 'history:' + index + ':' + entry.kind, at: entry.at, kind: 'case', title, detail: '', tone: 'plain' });
+    const plain = entry.kind === 'closed' ? CASE_HOME_TEXT.eventClosed : entry.kind === 'reopened' ? CASE_HOME_TEXT.eventReopened : '';
+    if (plain) { events.push({ id: 'history:' + index + ':' + entry.kind, at: entry.at, kind: 'case', title: plain, detail: '', tone: 'plain' }); return; }
+    const ending = input.info?.archive?.files.find((f) => f.name === entry.detail)?.keyEnding ?? '';
+    const line = historyLine(entry.kind, entry.detail ?? '', ending);
+    if (line) events.push({ id: 'history:' + index + ':' + entry.kind, at: entry.at, kind: 'case', title: line.title, detail: line.detail, tone: 'plain' });
   });
   for (const record of input.imports) {
     const kept = record.status === 'ok';

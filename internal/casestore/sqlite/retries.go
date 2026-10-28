@@ -24,7 +24,7 @@ const retriesSQL = `CREATE TABLE IF NOT EXISTS case_retries(
  kind TEXT NOT NULL, key TEXT NOT NULL, label TEXT NOT NULL, reason TEXT NOT NULL,
  payload BLOB, created TEXT NOT NULL)`
 
-// retryGate is tagGate without the closed-case refusal.
+// retryGate is tagGate without the closed-case refusal (it still refuses an archive in flight).
 func (c *Case) retryGate(ctx context.Context) (*sql.DB, func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -38,6 +38,14 @@ func (c *Case) retryGate(ctx context.Context) (*sql.DB, func(), error) {
 		return nil, nil, err
 	}
 	if err := c.syncManifest(ctx, db); err != nil {
+		release()
+		return nil, nil, err
+	}
+	// A Closed case still takes this list, but one being archived (or archived) does
+	// not: a write after the archive's snapshot would sit in the WAL only, and Free
+	// would drop it with the working copy. The folder lock held here is the one
+	// BeginArchive takes, so the check cannot be overtaken.
+	if err := c.archiveRefusal(); err != nil {
 		release()
 		return nil, nil, err
 	}

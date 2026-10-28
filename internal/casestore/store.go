@@ -126,6 +126,13 @@ type CaseInfo struct {
 	// History lists the saved moves (created, closed, reopened), oldest first. It is
 	// filled by Case.Info; Store.List leaves it nil.
 	History []HistoryEntry
+	// Archive is the archive record (P3), or nil for a case that was never archived
+	// and is not being. It is filled by Store.List and Entry (they read the manifest)
+	// and by Case.Info.
+	Archive *ArchiveInfo
+	// Missing is a listing condition: the case has a record but its folder is gone
+	// (spec 7.7). Never set for a freed case, whose working copy is meant to be gone.
+	Missing bool
 }
 
 type ImportMeta struct {

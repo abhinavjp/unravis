@@ -208,6 +208,17 @@ func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams ca
 	}); err != nil {
 		return nil, err
 	}
+	// The archive and free hooks (P3). They are registered before start-up
+	// recovery runs, so a stop in the middle of an archive or a free is repaired
+	// before the first call.
+	archiveRec := server.NewArchiveRecovery(store, root)
+	if err := archiveRec.Register(recoverer); err != nil {
+		return nil, err
+	}
+	wiring.options = append(wiring.options, server.WithArchiveRecovery(archiveRec))
+	if err := archiveRec.CleanVerify(); err != nil {
+		log.Printf("Left-over check copies could not be removed yet: %v", err)
+	}
 	// Finish any move that a stop interrupted (a case still carrying an Archiving,
 	// Freeing or Erasing mark). With the master key locked the list cannot be read
 	// yet; the server runs the same recovery again at unlock. The hooks are

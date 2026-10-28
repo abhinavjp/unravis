@@ -264,7 +264,7 @@ func (s *Store) resealFiles(dir string, id casestore.CaseID, ring *masterkey.Key
 		if err != nil {
 			return err
 		}
-		if err := writeManifest(dir, fileSealer{s: s, dir: dir, kind: to, look: look}, m); err != nil {
+		if err := s.writeManSealed(dir, fileSealer{s: s, dir: dir, kind: to, look: look}, m); err != nil {
 			return err
 		}
 	}

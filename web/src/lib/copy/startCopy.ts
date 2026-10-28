@@ -19,6 +19,7 @@ export const START_TEXT = {
   retry: 'Try again',
   open: 'Open',
   closedLabel: 'Closed',
+  codeLabel: 'Code',
   untrustedLabel: 'Legacy case from an older version',
   showMore: 'Show more cases',
   untitled: 'Untitled case',

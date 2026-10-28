@@ -160,8 +160,8 @@ test('p2: the Reopen button is shown for a Closed case only, and is off while it
   assert.equal(life.reopenButton(open, false), 'hidden');
   assert.equal(life.reopenButton(closed, false), 'enabled');
   assert.equal(life.reopenButton(closed, true), 'busy');
-  assert.equal(life.reopenButton({ state: 'archived', closed: 'x' }, false), 'disabled');
-  assert.equal(life.reopenButton({ state: 'archiving', closed: 'x' }, false), 'disabled');
+  assert.equal(life.reopenButton({ state: 'archived', closed: 'x' }, false), 'hidden');
+  assert.equal(life.reopenButton({ state: 'archiving', closed: 'x' }, false), 'hidden');
   assert.equal(life.reopenButton({ state: 'closed', closed: 'x', untrusted: true }, false), 'hidden');
   assert.equal(life.reopenButton({ state: 'erased', closed: null }, false), 'hidden');
   assert.equal(life.reopenButton({ closed: 'x' }, false), 'enabled', 'an older server with only the closed stamp still reads as Closed');

@@ -4,7 +4,7 @@
   import { canReset, resetFailureOf } from '../lib/masterKey';
   import type { KeyStatus } from '../lib/masterKey';
   import { getMasterKeyStatus, resetDamagedKey } from '../lib/masterKeyApi';
-  import { DAMAGED_TEXT, resetErrorText, resetImpactLines } from '../lib/copy/masterKeyCopy';
+  import { DAMAGED_TEXT, freedArchivesWarning, resetErrorText, resetImpactLines } from '../lib/copy/masterKeyCopy';
 
   // The master key file on this PC cannot be read by any key. This screen says so, says nothing was changed, and offers one way on:
   // set the old file aside and make a new key. That button stays off until the box is ticked, and no request is sent without the tick.
@@ -22,9 +22,16 @@
   // What starting over would do to the cases, said before the box is ticked. The count is read once; if it cannot be read the screen
   // still works and keeps its general warning.
   let impact = $state<string[]>([]);
+  // M12: how many archived cases (working copy freed) only the old key opens. Unknown means nothing extra is said. It is said once, in
+  // its own warning, so the impact list leaves its M12 line out.
+  let freed = $state(0);
+
   onMount(() => {
     void tick().then(() => title?.focus());
-    void getMasterKeyStatus().then((status) => { impact = resetImpactLines(status.reset); }).catch(() => { impact = []; });
+    getMasterKeyStatus().then((status) => {
+      freed = status.freedArchives ?? status.reset?.archiveOnly ?? 0;
+      impact = resetImpactLines(status.reset ? { ...status.reset, archiveOnly: 0 } : null);
+    }).catch(() => { impact = []; });
   });
 
   const ready = $derived(canReset(ack) && !busy);
@@ -66,6 +73,7 @@
     <p class="intro">{DAMAGED_TEXT.dpapi}</p>
     <p class="intro">{DAMAGED_TEXT.option}</p>
     <p class="intro">{DAMAGED_TEXT.keptAside}</p>
+    {#if freed > 0}<p class="warning" id="damaged-freed">{freedArchivesWarning(freed)}</p>{/if}
     <p class="warning">{DAMAGED_TEXT.warning}</p>
     {#if impact.length}
       <ul class="impact" aria-label={DAMAGED_TEXT.impactLabel}>{#each impact as line (line)}<li>{line}</li>{/each}</ul>
