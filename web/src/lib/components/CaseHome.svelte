@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../api';
-  import { app, goHome, openAnalysis, openCaseImport, openSidePanel, panels } from '../appState.svelte';
-  import { believedState, caseCode, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseView, type ImportRecord, type RetryItem } from '../cases';
+  import { app, caseErased, goHome, openAnalysis, openCaseImport, openSidePanel, panels } from '../appState.svelte';
+  import { believedState, caseCode, CaseApiError, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { reopenButton, retryAction } from '../caseLifecycle';
   import { CASE_HOME_TEXT, retryKindLabel } from '../copy/caseHomeCopy';
   import { errorText, importerLabel, formatBytes } from '../copy/importCopy';
@@ -12,13 +12,27 @@
   import { buildStory, shortText } from '../story';
   import { formatTime } from '../time';
   import { timeZone } from '../timeZone.svelte';
+  import { getCaseKeyStatus } from '../caseKeyApi';
+  import { keyEndingLabel, type CaseKeyStatus } from '../caseKey';
+  import { CASE_KEY_TEXT } from '../copy/caseKeyCopy';
+  import { ERASE_TEXT } from '../copy/eraseCopy';
+  import { eraseOffered } from '../erase';
+  import { requestRestore } from '../restoreIntent';
+  import CaseKeyCard from '../../components/CaseKeyCard.svelte';
+  import CaseKeyPage from '../../components/CaseKeyPage.svelte';
+  import EraseCase from '../../components/EraseCase.svelte';
   import HealthPanel from './HealthPanel.svelte';
 
   // One page per case: the story (what happened, in order), the theories, the health checks, the analysis and the files.
   // Everything here is read from what the case already saved. Nothing runs by itself.
   const caseId = $derived(app.activeCaseId);
 
-  let phase = $state<'loading' | 'ready' | 'gone' | 'failed'>('loading');
+  // `locked`: the case has its own key and it is not entered yet. `untrusted`: an older version made it and it cannot be opened.
+  let phase = $state<'loading' | 'ready' | 'gone' | 'failed' | 'locked' | 'untrusted'>('loading');
+  // What the page shows over the home: the case key page or the Erase dialog. Each is a page of its own with one main button.
+  let view = $state<'home' | 'key' | 'erase'>('home');
+  let keyStatus = $state<CaseKeyStatus>({ ownKey: false, locked: false });
+  let keyNote = $state('');
   let info = $state.raw<CaseView | null>(null);
   // The "needs another try" list the case keeps, the item being tried, and the notes this page shows about a move on the case.
   let reopening = $state(false);
@@ -62,18 +76,55 @@
     changed = false;
     lifeProblem = '';
     retryNote = {};
-    const [view, files, runs, theory] = await Promise.allSettled([getCaseView(id, mine.signal), listImports(id, mine.signal), fetchHealthRuns(id, mine.signal), refreshLedger()]);
+    view = 'home';
+    keyNote = '';
+    const [caseView, files, runs, theory, keys] = await Promise.allSettled([getCaseView(id, mine.signal), listImports(id, mine.signal), fetchHealthRuns(id, mine.signal), refreshLedger(), getCaseKeyStatus(id, mine.signal)]);
     if (mine.signal.aborted || id !== caseId) return;
-    const found = view.status === 'fulfilled' ? view.value : null;
+    const found = caseView.status === 'fulfilled' ? caseView.value : null;
     if (files.status === 'rejected' && isCaseGone(files.reason)) { phase = 'gone'; return; }
-    if (view.status === 'rejected' && isCaseGone(view.reason)) { phase = 'gone'; return; }
-    if (view.status === 'rejected' && files.status === 'rejected') { phase = 'failed'; return; }
+    if (caseView.status === 'rejected' && isCaseGone(caseView.reason)) { phase = 'gone'; return; }
+    keyStatus = keys.status === 'fulfilled' ? keys.value : { ownKey: false, locked: false };
+    if (refusedWith(caseView, 'case-locked') || refusedWith(files, 'case-locked')) { phase = 'locked'; return; }
+    if (refusedWith(caseView, 'untrusted-case')) { phase = 'untrusted'; return; }
+    if (caseView.status === 'rejected' && files.status === 'rejected') { phase = 'failed'; return; }
     info = found;
     imports = files.status === 'fulfilled' ? files.value : [];
     health = runs.status === 'fulfilled' ? runs.value : [];
     theoryProblem = theory.status === 'rejected';
     phase = 'ready';
     if (theory.status === 'fulfilled' && ledger.items.length === 0) void findShared(mine.signal);
+  }
+
+  function refusedWith(result: PromiseSettledResult<unknown>, reason: string): boolean {
+    return result.status === 'rejected' && result.reason instanceof CaseApiError && result.reason.reason === reason;
+  }
+
+  // A case key was added, changed or removed (or the case was locked again). A locked case goes back to its key page; otherwise the new
+  // state is kept and a short note says what changed.
+  function keyChanged(status: CaseKeyStatus, note: string) {
+    keyStatus = status;
+    if (status.locked) { void load(caseId); return; }
+    keyNote = note;
+    view = 'home';
+    void tick().then(() => headingEl?.focus());
+  }
+
+  // After an erase the case is gone: the list is shown, with one line left where the case was.
+  function erasedDone() {
+    const id = caseId;
+    caseErased(id);
+    goHome();
+  }
+
+  function restoreFromFile() {
+    requestRestore();
+    goHome();
+  }
+
+  async function backFromDialog() {
+    view = 'home';
+    await tick();
+    headingEl?.focus();
   }
 
   // Theories written before cases kept their own are offered once, and only while this case has none.
@@ -115,9 +166,9 @@
     const id = caseId;
     if (!id || phase !== 'ready') return;
     try {
-      const [view, files] = await Promise.all([getCaseView(id), listImports(id)]);
+      const [fresh, files] = await Promise.all([getCaseView(id), listImports(id)]);
       if (id !== caseId) return;
-      info = view;
+      info = fresh;
       imports = files;
     } catch { /* the page keeps the list it had */ }
   }
@@ -228,6 +279,24 @@
   {:else if phase === 'failed'}
     <div class="inline-error" role="alert">{CASE_HOME_TEXT.failed}</div>
     <div><button type="button" class="secondary-button" onclick={() => void load(caseId)}>{CASE_HOME_TEXT.retry}</button></div>
+  {:else if view === 'erase'}
+    <EraseCase {caseId} onDone={erasedDone} onCancel={() => void backFromDialog()} />
+  {:else if phase === 'locked'}
+    <CaseKeyCard {caseId} ending={keyStatus.ending} onOpened={() => void load(caseId)} onCancel={goHome} />
+    <div class="actions"><button type="button" class="secondary-button danger" aria-haspopup="dialog" onclick={() => { view = 'erase'; }}>{ERASE_TEXT.open}</button></div>
+  {:else if phase === 'untrusted'}
+    <section class="block untrusted" aria-labelledby="untrusted-title">
+      <p class="eyebrow">Case {caseCode(caseId)} · {ERASE_TEXT.untrustedEyebrow}</p>
+      <h2 id="untrusted-title" tabindex="-1" bind:this={headingEl}>{ERASE_TEXT.untrustedTitle}</h2>
+      <p class="note">{ERASE_TEXT.untrustedWhy}</p>
+      <p class="note">{ERASE_TEXT.untrustedSafe}</p>
+      <div class="actions">
+        <button type="button" class="primary-button" onclick={restoreFromFile}>{ERASE_TEXT.restore}</button>
+        <button type="button" class="secondary-button" onclick={() => { view = 'erase'; }}>{ERASE_TEXT.open}</button>
+      </div>
+    </section>
+  {:else if view === 'key'}
+    <CaseKeyPage {caseId} status={keyStatus} masterState={app.lockState} onChanged={keyChanged} onCancel={() => void backFromDialog()} />
   {:else}
     <header class="head">
       <p class="eyebrow">{CASE_HOME_TEXT.heading} · {caseCode(caseId)}</p>
@@ -361,6 +430,21 @@
       {/if}
       <div class="actions"><button type="button" class="secondary-button" aria-haspopup="dialog" disabled={readOnly} onclick={openCaseImport}>{CASE_HOME_TEXT.filesAdd}</button></div>
     </section>
+
+    <section class="block" aria-labelledby="home-key">
+      <h3 id="home-key">{CASE_KEY_TEXT.homeLabel}{#if keyStatus.ownKey && keyEndingLabel(keyStatus.ending)} <span class="sticker">{keyEndingLabel(keyStatus.ending)}</span>{/if}</h3>
+      <p class="note">{keyStatus.ownKey ? CASE_KEY_TEXT.sealedCase + ' ' + CASE_KEY_TEXT.separate : CASE_KEY_TEXT.createHelp}</p>
+      {#if keyNote}<p class="note" role="status">{keyNote}</p>{/if}
+      <div class="actions"><button type="button" class="secondary-button" aria-haspopup="dialog" onclick={() => { keyNote = ''; view = 'key'; }}>{keyStatus.ownKey ? CASE_KEY_TEXT.homeManage : CASE_KEY_TEXT.homeAdd}</button></div>
+    </section>
+
+    {#if info && eraseOffered(info)}
+      <section class="block" aria-labelledby="home-erase">
+        <h3 id="home-erase">{ERASE_TEXT.open}</h3>
+        <p class="note">{ERASE_TEXT.removes} {ERASE_TEXT.archiveKept}</p>
+        <div class="actions"><button type="button" class="secondary-button danger" aria-haspopup="dialog" onclick={() => { view = 'erase'; }}>{ERASE_TEXT.open}</button></div>
+      </section>
+    {/if}
   {/if}
 </div>
 
@@ -396,6 +480,8 @@
   .retries li { padding: 10px 0; border-top: 1px solid var(--line-soft); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; font-size: 14px; }
   .retry-main { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
   .retries .state { justify-self: start; padding: 0 6px; color: var(--text-2); font-size: 12px; border: 1px solid var(--line); border-radius: 4px; }
+  .sticker { padding: 0 6px; color: var(--text-2); font-size: 12px; font-weight: 400; border: 1px solid var(--line); border-radius: 4px; }
+  .danger { color: var(--bad); border-color: var(--bad); }
   .offer { display: grid; gap: 6px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: var(--radius-sm); }
   @media (max-width: 640px) {
     .story li { grid-template-columns: 1fr; gap: 2px; }

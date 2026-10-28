@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { app } from '../lib/appState.svelte';
   import { listImports } from '../lib/cases';
   import { resolveCode } from '../lib/caseCode';
   import { restoreCaseFile } from '../lib/caseFileApi';
+  import { takeRestoreIntent } from '../lib/restoreIntent';
   import { checkRestoreInput, restoreFailureOf, restoreNeedsKey, restoreView } from '../lib/restoreCase';
   import { ENTER_TEXT } from '../lib/copy/enterCopy';
   import { KEY_TEXT } from '../lib/copy/masterKeyCopy';
@@ -47,7 +48,8 @@
   }
 
   // The case file
-  let open = $state(false);
+  // Opens already when the page for a case that cannot be opened sent the person here to restore.
+  let open = $state(takeRestoreIntent());
   let path = $state('');
   let pass = $state('');
   let busy = $state(false);
@@ -57,6 +59,8 @@
   let pathField = $state<HTMLInputElement>();
   let keyField = $state<HTMLInputElement>();
   const needsKey = $derived(restoreNeedsKey(app.lockState));
+
+  onMount(() => { if (open && !needsKey) void tick().then(() => pathField?.focus()); });
 
   async function toggle() {
     open = !open;

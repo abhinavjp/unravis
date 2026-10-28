@@ -59,6 +59,12 @@ export interface CaseInfo {
   closed?: string | null;
   /** The state the server reported when the page read the case. Missing from an old server. */
   state?: CaseState;
+  /** The case has a key of its own (the PC key is not used for it). */
+  ownKey?: boolean;
+  /** The case has its own key and it is not unlocked now: the title is hidden until it is. */
+  keyLocked?: boolean;
+  /** The last four characters of the key's check value ("Key ending xxxx"). Empty when the case has no key of its own. */
+  keyEnding?: string;
   /** True for a folder the server refuses (sealed by Windows only, not known when the master key was set up). Its title is a fixed placeholder. */
   untrusted?: boolean;
   bytes: number;
@@ -230,6 +236,12 @@ function toCase(raw: Partial<CaseInfo>): CaseInfo {
   const out: CaseInfo = { id: asString(raw.id), title: asString(raw.title), created: asString(raw.created), closed: raw.closed ? String(raw.closed) : null, bytes: asNumber(raw.bytes), imports: asNumber(raw.imports) };
   if (CASE_STATES.includes(stated)) out.state = stated as CaseState;
   if (raw.untrusted === true) out.untrusted = true;
+  if (raw.ownKey === true) {
+    out.ownKey = true;
+    if (raw.keyLocked === true) out.keyLocked = true;
+    const ending = asString(raw.keyEnding);
+    if (/^[0-9a-f]{4}$/i.test(ending)) out.keyEnding = ending.toLowerCase();
+  }
   return out;
 }
 
@@ -272,15 +284,40 @@ function toRecord(raw: Partial<ImportRecord> | null | undefined): ImportRecord |
   };
 }
 
+/** One erased case on the start list: its id and when it was erased. Nothing else is kept (no title, no content). */
+export interface ErasedLine { id: string; at: string }
+
+const toErased = (raw: unknown): ErasedLine | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const line = raw as { id?: unknown; at?: unknown };
+  const id = asString(line.id);
+  const at = asString(line.at);
+  return isCaseId(id) && at ? { id, at } : null;
+};
+
+/** The case list with the Erased lines beside it. */
+export async function listCasesAndErased(signal?: AbortSignal): Promise<{ cases: CaseInfo[]; erased: ErasedLine[] }> {
+  const body = await json<{ cases?: Partial<CaseInfo>[]; erased?: unknown }>(await send('/cases', {}, signal));
+  const erased = Array.isArray(body.erased) ? body.erased.map(toErased).filter((l): l is ErasedLine => l !== null) : [];
+  return { cases: (body.cases ?? []).map(toCase).filter((c) => isCaseId(c.id)), erased };
+}
+
 export async function listCases(signal?: AbortSignal): Promise<CaseInfo[]> {
-  const body = await json<{ cases?: Partial<CaseInfo>[] }>(await send('/cases', {}, signal));
-  return (body.cases ?? []).map(toCase).filter((c) => isCaseId(c.id));
+  return (await listCasesAndErased(signal)).cases;
+}
+
+/** Clear on an Erased line: only the line goes. */
+export async function clearErasedLine(id: string, signal?: AbortSignal): Promise<void> {
+  if (!isCaseId(id)) throw new CaseApiError('That is not a case id.', 400, 'bad-case-id');
+  await send('/cases/erased/' + id, { method: 'DELETE' }, signal);
 }
 
 /** Makes a case. With a request id (kept for one wizard run) a repeated call, a reload or a restart returns the same case. */
-export async function createCase(title: string, requestId?: string, signal?: AbortSignal): Promise<CaseInfo> {
-  const body: { title: string; requestId?: string } = { title: title.trim() };
+export async function createCase(title: string, requestId?: string, signal?: AbortSignal, key?: { key: string; confirm: string }): Promise<CaseInfo> {
+  const body: { title: string; requestId?: string; caseKey?: string; caseKeyConfirm?: string } = { title: title.trim() };
   if (requestId) body.requestId = requestId;
+  // The case's own key goes only in this body: never in a URL, storage or a log.
+  if (key) { body.caseKey = key.key; body.caseKeyConfirm = key.confirm; }
   return toCase(await json<Partial<CaseInfo>>(await send('/cases', { method: 'POST', body: JSON.stringify(body) }, signal)));
 }
 
@@ -320,9 +357,13 @@ export async function runRetry(id: string, retryId: number, believed?: CaseState
 
 export const retryInPage = (error: unknown): boolean => error instanceof CaseApiError && error.reason === 'retry-in-page';
 
-/** Erases the case. The server wants the id echoed back as the confirmation; the screen has already had the code typed. */
-export async function eraseCase(id: string, signal?: AbortSignal): Promise<void> {
-  await send(casePath(id), { method: 'DELETE', body: JSON.stringify({ confirm: id }) }, signal);
+/**
+ * Erases the case. The confirmation is the case code the person typed (the first 8 characters of the id; the server also takes the whole
+ * id). Without one the whole id is sent, for callers that have no typed code.
+ */
+export async function eraseCase(id: string, typed?: string, signal?: AbortSignal): Promise<void> {
+  const confirm = typed !== undefined ? typed.trim() : id;
+  await send(casePath(id), { method: 'DELETE', body: JSON.stringify({ confirm }) }, signal);
 }
 
 export async function listImports(id: string, signal?: AbortSignal): Promise<ImportRecord[]> {

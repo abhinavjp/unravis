@@ -19,7 +19,7 @@ export const START_TEXT = {
   retry: 'Try again',
   open: 'Open',
   closedLabel: 'Closed',
-  untrustedLabel: 'Not opened: this folder was not here when the master key was set up.',
+  untrustedLabel: 'Legacy case from an older version',
   showMore: 'Show more cases',
   untitled: 'Untitled case',
 

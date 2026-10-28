@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import type { Snippet } from 'svelte';
-  import { backStep, draftEnvs, goToStep, nextStep, resetWizard, resumeWizard, wizard, wizardIsDirty } from '../lib/wizard.svelte';
+  import { backStep, draftEnvs, draftKeyProblem, goToStep, nextStep, resetWizard, resumeWizard, wipeCaseKey, wizard, wizardIsDirty } from '../lib/wizard.svelte';
+  import { newKeyHint, repeatMismatch } from '../lib/caseKey';
+  import { CASE_KEY_TEXT, newKeyProblemText } from '../lib/copy/caseKeyCopy';
   import { ENV_FIELD_MAX, hasDropped } from '../lib/wizardEnvs';
   import { STEPS, TITLE_MAX, stepViews, titleLength, titleProblem, titleProblemShows } from '../lib/wizardFlow';
   import type { StepId } from '../lib/wizardFlow';
@@ -42,7 +44,9 @@
   // The name problem is shown once the person has left the field or tried to go on; a fresh empty field is not scolded.
   let titleTouched = $state(false);
 
-  const facts = $derived({ title: wizard.title });
+  const keyProblem = $derived(draftKeyProblem());
+  const keyTyped = $derived(wizard.caseKey.key.length > 0 || wizard.caseKey.again.length > 0);
+  const facts = $derived({ title: wizard.title, keyOk: keyProblem === null });
   const views = $derived(stepViews(wizard.step, facts));
   const current = $derived(views.find((view) => view.state === 'current') ?? views[0]);
   const problem = $derived(titleProblem(wizard.title));
@@ -51,7 +55,8 @@
   const notes = $derived(envNotes(parsed.dropped));
   const dirty = $derived(wizardIsDirty());
   const last = $derived(wizard.step === STEPS[STEPS.length - 1]);
-  const nextBlocked = $derived(!last && problem !== null);
+  const nextBlocked = $derived(!last && (problem !== null || keyProblem !== null));
+  const blockedLine = $derived(problem !== null ? nextBlockedLine(problem) : keyProblem ? newKeyProblemText(keyProblem) : WIZARD_TEXT.nextBlocked);
 
   async function focusHeading() {
     await tick();
@@ -206,6 +211,23 @@
             </div>
           </div>
         </div>
+
+        <div class="field">
+          <label class="check" for="{uid}-own-key">
+            <input id="{uid}-own-key" type="checkbox" checked={wizard.caseKey.on} onchange={(event) => { wizard.caseKey.on = event.currentTarget.checked; if (!wizard.caseKey.on) wipeCaseKey(); }} aria-describedby="{uid}-own-key-help" />
+            <span>{CASE_KEY_TEXT.createToggle}</span>
+          </label>
+          <p class="hint" id="{uid}-own-key-help">{CASE_KEY_TEXT.createHelp}</p>
+          {#if wizard.caseKey.on}
+            <label for="{uid}-ck">{CASE_KEY_TEXT.createKeyLabel}</label>
+            <input id="{uid}-ck" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={wizard.caseKey.key} aria-describedby="{uid}-ck-hint" />
+            <p class="hint" id="{uid}-ck-hint" aria-live="polite">{wizard.caseKey.key.length > 0 ? newKeyHint(wizard.caseKey.key) : CASE_KEY_TEXT.createKeyHelp}</p>
+            <label for="{uid}-ck2">{CASE_KEY_TEXT.createRepeatLabel}</label>
+            <input id="{uid}-ck2" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={wizard.caseKey.again} aria-describedby="{uid}-ck-problem" aria-invalid={repeatMismatch(wizard.caseKey.key, wizard.caseKey.again) ? true : undefined} />
+            <p class="inline-error" id="{uid}-ck-problem" role="alert" hidden={!(keyTyped && keyProblem)}>{keyProblem ? newKeyProblemText(keyProblem) : ''}</p>
+            <p class="hint">{CASE_KEY_TEXT.loseWarning}</p>
+          {/if}
+        </div>
       </div>
     {:else if wizard.step === 'sources'}
       {#if sources}{@render sources()}{:else}<p class="lead">{WIZARD_TEXT.sourcesSoon}</p>{/if}
@@ -218,7 +240,7 @@
     {#if wizard.step !== STEPS[0]}<button type="button" class="secondary-button" disabled={busy} onclick={() => void onBack()}>{WIZARD_TEXT.back}</button>{/if}
     <span class="chosen" role="status">{chosenText(wizard.sources.length)}</span>
     <span class="spacer"></span>
-    {#if nextBlocked}<span class="blocked" id={nextHintId}>{nextBlockedLine(problem)}</span>{/if}
+    {#if nextBlocked}<span class="blocked" id={nextHintId}>{blockedLine}</span>{/if}
     {#if last}
       {#if finish}{@render finish()}{/if}
     {:else}
@@ -258,7 +280,9 @@
   .name-step { display: grid; gap: var(--space-5); max-width: 720px; min-width: 0; }
   .field { display: grid; gap: var(--space-2); min-width: 0; }
   .field label { font-size: var(--fs-4); font-weight: 600; }
-  .field input, .field textarea { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 44px; padding: 10px 12px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-5); }
+  .check { display: flex; align-items: center; gap: var(--space-2); font-weight: 600; }
+  .check input { width: auto; min-height: 0; }
+  .field input[type='password'], .field input[type='text'], .field textarea { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 44px; padding: 10px 12px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-5); }
   .field textarea { resize: vertical; }
   .field input:focus-visible, .field textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
   .field input[aria-invalid='true'] { border-color: var(--bad); }

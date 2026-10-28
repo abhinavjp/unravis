@@ -37,6 +37,8 @@ export async function resolveCode(input: string, check: (id: string) => Promise<
     return { ok: true, id };
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    // A case with its own key answers "locked" until its key is typed: the code is right, and the case opens on its key card.
+    if (error && typeof error === 'object' && (error as { reason?: unknown }).reason === 'case-locked') return { ok: true, id };
     return { ok: false, message: CODE_NOT_FOUND };
   }
 }

@@ -92,7 +92,8 @@
     const id = eraseId;
     busy = true; problem = '';
     try {
-      await eraseCase(id, controller?.signal);
+      const entered = typed;
+      await eraseCase(id, entered, controller?.signal);
       eraseId = ''; typed = '';
       if (selectedId === id) selectedId = '';
       caseErased(id);

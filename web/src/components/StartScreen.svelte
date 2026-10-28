@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { Snippet } from 'svelte';
-  import { listCases } from '../lib/cases';
-  import type { CaseInfo } from '../lib/cases';
+  import { clearErasedLine, listCasesAndErased } from '../lib/cases';
+  import type { CaseInfo, ErasedLine } from '../lib/cases';
+  import { ERASE_TEXT } from '../lib/copy/eraseCopy';
   import { getMasterKeyStatus } from '../lib/masterKeyApi';
   import { closesCases, offersRewrap } from '../lib/masterKey';
   import type { LockState } from '../lib/masterKey';
@@ -31,10 +32,12 @@
   // Kept on once the notice has been used, so its answer stays on screen after the count drops to nothing.
   let rewrapShown = $state(false);
   let cases = $state.raw<CaseInfo[]>([]);
+  let erased = $state.raw<ErasedLine[]>([]);
+  let clearProblem = $state('');
   let pages = $state(1);
   let controller: AbortController | null = null;
 
-  const view = $derived(startView(lock, cases, pages));
+  const view = $derived(startView(lock, cases, pages, erased));
 
   async function load() {
     const signal = controller?.signal;
@@ -51,11 +54,25 @@
     if (closesCases(lock)) { noteLocked(); return; }
     phase = 'loading';
     try {
-      cases = await listCases(signal);
+      const listed = await listCasesAndErased(signal);
+      cases = listed.cases;
+      erased = listed.erased;
       phase = 'ready';
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
       phase = 'failed';
+    }
+  }
+
+  // Clearing a line removes only that line: the case itself is already gone.
+  async function clearLine(id: string) {
+    clearProblem = '';
+    try {
+      await clearErasedLine(id, controller?.signal);
+      erased = erased.filter((line) => line.id !== id);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      clearProblem = ERASE_TEXT.clearFailed;
     }
   }
 
@@ -99,12 +116,10 @@
                   <strong class="case-title" title={row.fullTitle}>{row.title}</strong>
                   <span class="case-meta">{row.created}{row.created ? ' · ' : ''}{row.counts}</span>
                   {#if row.closed}<span class="case-closed">{row.closedLabel}</span>{/if}
+                  {#if row.untrusted}<span class="case-closed">{row.untrustedLabel}</span>{/if}
+                  {#if row.keyEnding}<span class="case-closed">{row.keyEnding}</span>{/if}
                 </div>
-                {#if row.untrusted}
-                  <span class="case-closed" role="note">{row.untrustedLabel}</span>
-                {:else}
-                  <button type="button" class="secondary-button" aria-label={openLabel(row.fullTitle)} onclick={() => onOpen(row.id)}>{START_TEXT.open}</button>
-                {/if}
+                <button type="button" class="secondary-button" aria-label={openLabel(row.fullTitle)} onclick={() => onOpen(row.id)}>{START_TEXT.open}</button>
               </li>
             {/each}
           </ul>
@@ -112,6 +127,20 @@
             <p class="card-note">{view.shown}</p>
             <button type="button" class="quiet-button" onclick={() => (pages += 1)}>{START_TEXT.showMore}</button>
           {/if}
+        {/if}
+        {#if phase === 'ready' && view.erased.length}
+          <ul class="cases erased" aria-label={ERASE_TEXT.erasedSticker}>
+            {#each view.erased as line (line.id)}
+              <li class="case-row">
+                <div class="case-info">
+                  <span class="case-closed">{line.sticker}</span>
+                  <span class="case-meta">{line.text}</span>
+                </div>
+                <button type="button" class="secondary-button" aria-label={ERASE_TEXT.clear + ' ' + line.code} onclick={() => void clearLine(line.id)}>{ERASE_TEXT.clear}</button>
+              </li>
+            {/each}
+          </ul>
+          {#if clearProblem}<p class="inline-error" role="alert">{clearProblem}</p>{/if}
         {/if}
       </section>
 
