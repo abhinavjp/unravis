@@ -46,6 +46,47 @@ export const CONN_TEXT = {
   keepPasswordNote: 'A password is saved. Leave the password empty to keep it.'
 } as const;
 
+/**
+ * Words for the key keeper (P14). On a PC set up for everyone, saved passwords and read keys live only in the Unravis Key Keeper
+ * service, which does the checks that need them. Unravis itself never gets them back.
+ */
+export const KEEPER_TEXT = {
+  held: 'Password held by the key keeper',
+  origin: 'On this PC, saved passwords and Blackbox read keys are kept by the Unravis Key Keeper service. Unravis asks it to run a check by name and never gets a password back. Up to 20 SQL connections. Forget removes the saved connection and its password. It does not touch any server.',
+  stoppedHeading: 'The key keeper is not running',
+  stoppedBody: 'Saved passwords and read keys cannot be used until the Unravis Key Keeper service runs again. Start the service, or ask the person who looks after this PC. Connections that need no password still work.',
+  impostorHeading: 'The key keeper could not be trusted',
+  impostorBody: 'Something other than the Unravis Key Keeper service answered, so nothing was sent to it. Ask the person who looks after this PC.',
+  retry: 'Check again',
+  checking: 'Checking…',
+  migrateHeading: 'Move your saved connections to the key keeper',
+  migrateBody: 'This PC now keeps saved passwords in one place for everyone who uses Unravis on it. Your saved connections from before are still in your own folder. Move them so the key keeper holds their passwords.',
+  move: 'Move them',
+  moving: 'Moving…',
+  notNow: 'Not now',
+  notNowNote: 'Your old saved connections stay where they are until you move them.',
+  movedHeading: 'Your saved connections are in the key keeper',
+  movedBody: 'The old copies are still in your own folder. Remove them once you have checked that the connections work here.',
+  removeOld: 'Remove old copies',
+  removeAsk: 'Remove the old copies from your own folder? The key keeper keeps its copies. No server is touched.',
+  removeYes: 'Yes, remove',
+  removeNo: 'Keep them',
+  removed: 'The old copies were removed.',
+  failed: 'That did not work. Your old files were left unchanged. Try again.'
+} as const;
+
+/** The counts line of the move card, for example "2 SQL Server connections, 1 MongoDB link and 1 Blackbox read key wait to be moved." */
+export const keeperPendingText = (sql: number, mongo: number, blackbox: number): string => {
+  const parts: string[] = [];
+  if (sql > 0) parts.push(sql + (sql === 1 ? ' SQL Server connection' : ' SQL Server connections'));
+  if (mongo > 0) parts.push(mongo + (mongo === 1 ? ' MongoDB link' : ' MongoDB links'));
+  if (blackbox > 0) parts.push(blackbox + (blackbox === 1 ? ' Blackbox read key' : ' Blackbox read keys'));
+  if (parts.length === 0) return 'Nothing waits to be moved.';
+  const list = parts.length === 1 ? parts[0] : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+  const total = sql + mongo + blackbox;
+  return list + (total === 1 ? ' waits' : ' wait') + ' to be moved.';
+};
+
 export const GRANT_TEXT = {
   heading: 'Permissions to give the login',
   notRun: 'Unravis never runs this script. It only shows it, so the owner of the server can run it.',
@@ -276,5 +317,7 @@ export const sourcesCopyEntries = (): LintEntry[] => [
   ...Object.entries(DAY_TEXT).map(([id, text]) => sample('day.' + id, text)),
   sample('combo.lead', COMBO_TEXT.lead), sample('combo.note', COMBO_TEXT.note), sample('combo.today', COMBO_TEXT.todayNone),
   ...Object.entries(HUB_TEXT).map(([id, text]) => sample('hub.' + id, text)),
+  ...Object.entries(KEEPER_TEXT).map(([id, text]) => sample('keeper.' + id, text)),
+  sample('keeper.pending', keeperPendingText(2, 1, 1)), sample('keeper.pendingOne', keeperPendingText(1, 0, 0)),
   ...Object.entries(NOTHING_TEXT).map(([id, text]) => sample('nothing.' + id, text))
 ];

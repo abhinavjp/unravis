@@ -1,0 +1,113 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { createRequire } = require('node:module');
+const test = require('node:test');
+const ts = require('typescript');
+
+// The key keeper on the connections page (P14): which state shows, a stopped keeper is not the demo, the move card holds the one main
+// button, and no password ever reaches this page.
+const root = path.resolve(__dirname, '..');
+const cache = new Map();
+function loadTypeScript(relativePath) {
+  const filename = path.join(root, relativePath);
+  if (cache.has(filename)) return cache.get(filename).exports;
+  const source = fs.readFileSync(filename, 'utf8');
+  const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText;
+  const module = { exports: {} };
+  cache.set(filename, module);
+  const nodeRequire = createRequire(filename);
+  const load = (request) => {
+    if (/^\.\.?\//.test(request)) {
+      const plain = path.join(path.dirname(filename), request + '.ts');
+      if (fs.existsSync(plain)) return loadTypeScript(path.relative(root, plain));
+    }
+    return nodeRequire(request);
+  };
+  new Function('require', 'module', 'exports', output)(load, module, module.exports);
+  return module.exports;
+}
+const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
+const keeper = loadTypeScript('src/lib/keeper.ts');
+const copy = loadTypeScript('src/lib/copy/sourcesCopy.ts');
+const { ApiError } = loadTypeScript('src/lib/api.ts');
+const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
+
+const none = { sql: 0, mongo: 0, blackbox: 0 };
+const status = (over = {}) => ({ mode: 'shared', running: true, pending: none, oldFilesPresent: false, ...over });
+
+test('keeperView: per-user PCs show nothing, the shared layout shows its state', () => {
+  assert.equal(keeper.keeperView(null), 'none');
+  assert.equal(keeper.keeperView({ mode: 'user', running: false, pending: none, oldFilesPresent: false }), 'none');
+  assert.equal(keeper.keeperView(status()), 'ready');
+  assert.equal(keeper.keeperView(status({ running: false, problem: 'stopped' })), 'stopped');
+  assert.equal(keeper.keeperView(status({ running: false })), 'stopped', 'not running with no reason reads as stopped');
+  assert.equal(keeper.keeperView(status({ running: false, problem: 'impostor' })), 'impostor');
+  assert.equal(keeper.keeperView(status({ pending: { sql: 1, mongo: 0, blackbox: 0 }, oldFilesPresent: true })), 'migrate');
+  assert.equal(keeper.keeperView(status({ oldFilesPresent: true })), 'moved');
+  assert.equal(
+    keeper.keeperView(status({ running: false, problem: 'stopped', pending: { sql: 2, mongo: 0, blackbox: 0 }, oldFilesPresent: true })),
+    'stopped', 'a stopped keeper comes before the move: nothing can be moved into it'
+  );
+});
+
+test('keeperPreviewFrom: only the named previews, anywhere in the address', () => {
+  assert.equal(keeper.keeperPreviewFrom('#keeper=stopped'), 'stopped');
+  assert.equal(keeper.keeperPreviewFrom('#t=abc&keeper=migrate'), 'migrate');
+  assert.equal(keeper.keeperPreviewFrom('#keeper=saved'), 'saved');
+  assert.equal(keeper.keeperPreviewFrom('#keeper=moved'), 'moved');
+  assert.equal(keeper.keeperPreviewFrom('#keeper=password'), '');
+  assert.equal(keeper.keeperPreviewFrom('#case=keeper'), '');
+  assert.equal(keeper.keeperPreviewFrom(''), '');
+  assert.equal(keeper.keeperPreview(), '', 'no address in node');
+});
+
+test('isKeeperDown: only the keeper codes, never a plain 503', () => {
+  assert.equal(keeper.isKeeperDown(new ApiError('x', 'keeper-stopped', undefined, 503)), true);
+  assert.equal(keeper.isKeeperDown(new ApiError('x', 'keeper-impostor', undefined, 503)), true);
+  assert.equal(keeper.isKeeperDown(new ApiError('x', undefined, undefined, 503)), false, 'the demo answers a plain 503');
+  assert.equal(keeper.isKeeperDown(new ApiError('x', 'keeper-busy', undefined, 409)), false);
+  assert.equal(keeper.isKeeperDown(null), false);
+});
+
+test('keeperPendingText counts each kind in plain words', () => {
+  assert.equal(copy.keeperPendingText(2, 1, 1), '2 SQL Server connections, 1 MongoDB link and 1 Blackbox read key wait to be moved.');
+  assert.equal(copy.keeperPendingText(1, 0, 0), '1 SQL Server connection waits to be moved.');
+  assert.equal(copy.keeperPendingText(0, 3, 0), '3 MongoDB links wait to be moved.');
+  assert.equal(copy.keeperPendingText(0, 0, 0), 'Nothing waits to be moved.');
+});
+
+test('keeper words pass the copy lint and use no status word of their own', () => {
+  const entries = copy.sourcesCopyEntries().filter((e) => e.id.startsWith('sources.keeper.'));
+  assert.ok(entries.length > 10);
+  assert.deepEqual(lintScreenStrings(entries, []), []);
+  for (const word of ['Works', 'Failed', 'Ready', 'Not tested']) {
+    assert.ok(!Object.values(copy.KEEPER_TEXT).some((t) => t === word), word + ' stays a test or readiness word');
+  }
+});
+
+test('the connections page: a keeper 503 is not the demo, the move card holds the main button, the held sticker shows', () => {
+  const page = read('src/components/sources/ConnectionsPage.svelte');
+  assert.match(page, /demo = refused\(a\) && refused\(b\) && !keeperDown/);
+  assert.match(page, /loadFailed = [^\n]*!keeperDown/);
+  assert.match(page, /const primary = \$derived\(promoted && !offerMove\)/, 'the add button gives way to the move card');
+  assert.match(page, /<KeeperCard primary=\{promoted\}/, 'the move card is the main button only where the page is promoted');
+  assert.match(page, /KEEPER_TEXT\.held/);
+  assert.match(page, /shared \? KEEPER_TEXT\.origin : CONN_TEXT\.origin/);
+  assert.match(page, /api\.keeperStatus\(keeperPreview\(\)\)/);
+  const card = read('src/components/sources/KeeperCard.svelte');
+  assert.equal((card.match(/btn-primary/g) || []).length, 1, 'one main button, on the move card');
+  assert.equal((card.match(/class="btn-primary"/g) || []).length, 0, 'outlined unless promoted (case home has its own main button)');
+  assert.match(card, /role="alert" data-keeper=\{view\}/, 'a stopped keeper is an alert');
+  assert.match(card, /removeAsk/, 'removing the old copies asks once');
+});
+
+test('no password field or value reaches the keeper side of the page', () => {
+  const api = read('src/lib/api.ts');
+  const block = api.split('\n').filter((l) => /keeper/i.test(l)).join('\n');
+  assert.doesNotMatch(block, /password/i);
+  for (const file of ['src/lib/keeper.ts', 'src/components/sources/KeeperCard.svelte']) {
+    const text = read(file);
+    assert.doesNotMatch(text, /type="password"|\.password\b|password:/, file + ' never names a password field');
+  }
+});
