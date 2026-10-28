@@ -12,6 +12,9 @@ import (
 // from writing sensitive state in plaintext on a platform that cannot protect it.
 func CurrentUser() (Protector, error) { return nil, ErrUnavailable }
 
+// LocalMachine has no sealing backend off Windows either.
+func LocalMachine() (Protector, error) { return nil, ErrUnavailable }
+
 var localLocks sync.Map
 
 // Lock serialises callers inside this process.

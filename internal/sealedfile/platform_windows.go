@@ -31,21 +31,34 @@ type dataBlob struct {
 	Data *byte
 }
 
-type dpapiProtector struct{}
+// dpapiProtector seals with DPAPI. flags is CRYPTPROTECT_UI_FORBIDDEN (1), plus CRYPTPROTECT_LOCAL_MACHINE (4) for the machine scope.
+type dpapiProtector struct{ flags uintptr }
+
+const (
+	cryptprotectUIForbidden  = 0x1
+	cryptprotectLocalMachine = 0x4
+)
 
 // CurrentUser returns a Protector that seals data with Windows DPAPI for the
 // current user (never the machine scope).
-func CurrentUser() (Protector, error) { return dpapiProtector{}, nil }
+func CurrentUser() (Protector, error) { return dpapiProtector{flags: cryptprotectUIForbidden}, nil }
 
-func (dpapiProtector) Protect(plain []byte) ([]byte, error) {
-	return dpapi(true, plain)
+// LocalMachine returns a Protector that seals data with Windows DPAPI for this PC: any account on this PC can unseal it, no other PC can.
+// It is used only for the shared data folder (cases, hosts, ledger), whose folder ACL decides who may read the files. Saved passwords and
+// read keys are never sealed this way: they live in the key keeper, sealed for its own service account.
+func LocalMachine() (Protector, error) {
+	return dpapiProtector{flags: cryptprotectUIForbidden | cryptprotectLocalMachine}, nil
 }
 
-func (dpapiProtector) Unprotect(ciphertext []byte) ([]byte, error) {
-	return dpapi(false, ciphertext)
+func (p dpapiProtector) Protect(plain []byte) ([]byte, error) {
+	return dpapi(true, plain, p.flags)
 }
 
-func dpapi(protect bool, input []byte) ([]byte, error) {
+func (p dpapiProtector) Unprotect(ciphertext []byte) ([]byte, error) {
+	return dpapi(false, ciphertext, p.flags)
+}
+
+func dpapi(protect bool, input []byte, flags uintptr) ([]byte, error) {
 	if len(input) == 0 {
 		return nil, errors.New("empty DPAPI input")
 	}
@@ -54,9 +67,9 @@ func dpapi(protect bool, input []byte) ([]byte, error) {
 	var ok uintptr
 	var callErr error
 	if protect {
-		ok, _, callErr = cryptProtectData.Call(uintptr(unsafe.Pointer(&in)), 0, 0, 0, 0, 1, uintptr(unsafe.Pointer(&out)))
+		ok, _, callErr = cryptProtectData.Call(uintptr(unsafe.Pointer(&in)), 0, 0, 0, 0, flags, uintptr(unsafe.Pointer(&out)))
 	} else {
-		ok, _, callErr = cryptUnprotectData.Call(uintptr(unsafe.Pointer(&in)), 0, 0, 0, 0, 1, uintptr(unsafe.Pointer(&out)))
+		ok, _, callErr = cryptUnprotectData.Call(uintptr(unsafe.Pointer(&in)), 0, 0, 0, 0, flags&cryptprotectUIForbidden, uintptr(unsafe.Pointer(&out)))
 	}
 	runtime.KeepAlive(input)
 	if out.Data != nil {
