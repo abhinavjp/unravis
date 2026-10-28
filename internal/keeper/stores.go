@@ -161,6 +161,14 @@ func (s *MongoStore) Remember(label string, in audit.ConnectionInput, collection
 // RememberChecked sends the link to the keeper, which resolves a saved id, validates the settings and saves it.
 func (s *MongoStore) RememberChecked(ctx context.Context, label string, in audit.ConnectionInput, collection string, remember bool) (history.Recent, error) {
 	var out history.Recent
+	if in.Password == "" && in.SavedConnectionID != "" {
+		// A link saved for this session only: its password lives here, not in the keeper, so it rides along again.
+		s.mu.Lock()
+		if c, ok := s.session[in.SavedConnectionID]; ok {
+			in.Password = c.password
+		}
+		s.mu.Unlock()
+	}
 	err := s.c.Call(ctx, OpMongoRemember, MongoRememberArgs{Label: label, Connection: in, Collection: collection, RememberPassword: remember}, &out)
 	if err != nil {
 		return history.Recent{}, native(err, kindMongo)
@@ -354,7 +362,9 @@ type keeperNetError struct {
 	cause   error
 }
 
-func (e *keeperNetError) Error() string   { return "the Blackbox could not be reached from the key keeper" }
+func (e *keeperNetError) Error() string {
+	return "the Blackbox could not be reached from the key keeper"
+}
 func (e *keeperNetError) Timeout() bool   { return e.timeout }
 func (e *keeperNetError) Temporary() bool { return false }
 func (e *keeperNetError) Unwrap() error   { return e.cause }

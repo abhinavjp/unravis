@@ -131,8 +131,8 @@ type SQLTestResult struct {
 
 // SQLRunArgs is sql.health and sql.lane.
 type SQLRunArgs struct {
-	Ref   SQLRef               `json:"ref"`
-	Label string               `json:"label,omitempty"`
+	Ref   SQLRef                `json:"ref"`
+	Label string                `json:"label,omitempty"`
 	Lane  *dbhealth.LaneRequest `json:"lane,omitempty"`
 }
 
@@ -313,10 +313,10 @@ type MongoConnArgs struct {
 
 // MongoRunArgs is mongo.health and mongo.lane.
 type MongoRunArgs struct {
-	Connection audit.ConnectionInput  `json:"connection"`
-	Database   string                 `json:"database,omitempty"`
-	Collection string                 `json:"collection,omitempty"`
-	Label      string                 `json:"label,omitempty"`
+	Connection audit.ConnectionInput `json:"connection"`
+	Database   string                `json:"database,omitempty"`
+	Collection string                `json:"collection,omitempty"`
+	Label      string                `json:"label,omitempty"`
 	Lane       *dbhealth.LaneRequest `json:"lane,omitempty"`
 }
 
