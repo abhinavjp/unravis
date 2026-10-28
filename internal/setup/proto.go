@@ -26,6 +26,9 @@ type WorkRequest struct {
 	Uninstall      UninstallOptions `json:"uninstall"`
 	AllowDowngrade bool             `json:"allowDowngrade,omitempty"`
 	Silent         bool             `json:"silent,omitempty"`
+	// User is the person's own folders, sent by the window to the elevated worker (an administrator approving over the shoulder has
+	// folders of their own). The worker checks them with WorkerPrepare before it uses them.
+	User *UserDirs `json:"user,omitempty"`
 }
 
 // Message types on the pipe.
@@ -122,8 +125,8 @@ func newWireScanner(r io.Reader) *bufio.Scanner {
 
 // ServeWorker is the elevated side: it reads one request, runs it, streams the progress back and ends with the result. A cancel
 // message, or the window going away, cancels the run (which puts everything back). The runner's own Log still gets every line (the
-// worker's copy of the log file).
-func ServeWorker(ctx context.Context, rw io.ReadWriter, r *Runner) Result {
+// worker's copy of the log file). prepare (may be nil) checks the request and fits the runner to the person before anything runs.
+func ServeWorker(ctx context.Context, rw io.ReadWriter, r *Runner, prepare func(*WorkRequest, *Runner) error) Result {
 	ww := &wireWriter{w: rw}
 	sc := newWireScanner(rw)
 	finish := func(res Result) Result {
@@ -141,6 +144,12 @@ func ServeWorker(ctx context.Context, rw io.ReadWriter, r *Runner) Result {
 	if !workerOps[req.Op] {
 		return finish(Result{Outcome: OutcomeInvalid, Op: req.Op, Message: fmt.Sprintf("The worker does not accept the action %q. Nothing was changed.", req.Op)})
 	}
+	w := *r
+	if prepare != nil {
+		if err := prepare(&req, &w); err != nil {
+			return finish(Result{Outcome: OutcomeInvalid, Op: req.Op, Message: "The worker refused the request: " + err.Error() + ". Nothing was changed."})
+		}
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -153,7 +162,6 @@ func ServeWorker(ctx context.Context, rw io.ReadWriter, r *Runner) Result {
 		}
 		cancel()
 	}()
-	w := *r
 	w.Log = func(s string) {
 		if r.Log != nil {
 			r.Log(s)
@@ -167,6 +175,29 @@ func ServeWorker(ctx context.Context, rw io.ReadWriter, r *Runner) Result {
 		_ = ww.send(WireMsg{Type: MsgEvent, Event: &e})
 	}
 	return finish(w.Perform(ctx, req))
+}
+
+// WorkerPrepare is the worker's check of who it works for. sid is the account of the setup window, read by the worker from Windows
+// (the pipe's server process), and profile that account's profile folder from the registry; neither comes from the request. The
+// request's folders must be the usual folders of that profile. The runner then works for that person: their folders, their SID.
+func WorkerPrepare(sid, profile string) func(*WorkRequest, *Runner) error {
+	return func(req *WorkRequest, r *Runner) error {
+		if req.User == nil {
+			return errors.New("the request does not say whose folders to use")
+		}
+		if err := CheckUserDirs(*req.User); err != nil {
+			return err
+		}
+		if profile != "" && !samePath(req.User.UserProfile, profile) {
+			return errors.New("the folders sent are not the profile of the person running setup")
+		}
+		r.Dirs = r.Dirs.WithUser(*req.User)
+		if sid != "" {
+			r.UserSID = sid
+		}
+		req.User = nil
+		return nil
+	}
 }
 
 // ErrUACCancelled is the person saying No at the Windows approval prompt.

@@ -442,6 +442,8 @@ func (b *LocalBackend) Run(ctx context.Context, req WorkRequest, onEvent func(St
 		if b.Elev == nil {
 			return Result{Outcome: OutcomeRolledBack, Op: req.Op, Message: "This choice needs administrator approval, which this setup cannot ask for. Nothing was changed."}
 		}
+		u := b.R.Dirs.User()
+		req.User = &u // the worker checks these against the profile Windows names for this account
 		res := RunWorker(ctx, b.Elev, req, onEvent, func(s string) {
 			if b.Log != nil {
 				b.Log("worker: " + s)

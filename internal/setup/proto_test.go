@@ -20,6 +20,8 @@ type pipeElevator struct {
 	served chan Result
 	// hook runs on the worker's end before it serves (to cut the pipe early).
 	hook func(net.Conn)
+	// prepare is the worker's check of the request (WorkerPrepare in the real worker).
+	prepare func(*WorkRequest, *Runner) error
 }
 
 func (p *pipeElevator) Start(ctx context.Context) (io.ReadWriteCloser, error) {
@@ -35,7 +37,7 @@ func (p *pipeElevator) Start(ctx context.Context) (io.ReadWriteCloser, error) {
 			p.served <- Result{}
 			return
 		}
-		p.served <- ServeWorker(context.Background(), b, p.r)
+		p.served <- ServeWorker(context.Background(), b, p.r, p.prepare)
 	}()
 	return a, nil
 }
@@ -86,7 +88,7 @@ func TestWorkerRefusesUnknownActionsAndGarbage(t *testing.T) {
 	} {
 		a, b := net.Pipe()
 		done := make(chan Result, 1)
-		go func() { done <- ServeWorker(context.Background(), b, e.r); b.Close() }()
+		go func() { done <- ServeWorker(context.Background(), b, e.r, nil); b.Close() }()
 		go func() { _, _ = a.Write([]byte(line + "\n")) }()
 		var m WireMsg
 		dec := json.NewDecoder(a)
@@ -164,7 +166,7 @@ func TestWindowGoneCancelsTheWorkersRun(t *testing.T) {
 		_, _ = a.Write(append(req, '\n'))
 		_, _ = io.Copy(io.Discard, a)
 	}()
-	res := ServeWorker(context.Background(), b, e.r)
+	res := ServeWorker(context.Background(), b, e.r, nil)
 	if res.Outcome != OutcomeCancelled {
 		t.Fatalf("outcome %s: %s", res.Outcome, res.Message)
 	}
@@ -211,6 +213,46 @@ func TestPerformTurnsASecondInstallIntoARepair(t *testing.T) {
 func TestElevatorErrorIsNotACancel(t *testing.T) {
 	res := RunWorker(context.Background(), &pipeElevator{err: errors.New("pipe busy")}, WorkRequest{Op: OpInstall}, nil, nil)
 	if res.Outcome != OutcomeRolledBack || !strings.Contains(res.Message, "nothing was changed") {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// The worker uses the person's folders only when they are the usual folders of the profile Windows names for the window's account.
+func TestWorkerPrepareChecksWhoseFoldersTheyAre(t *testing.T) {
+	e := newEnv(t, "1.0.0")
+	prep := WorkerPrepare("S-1-5-21-2000", e.dirs.UserProfile)
+	u := e.dirs.User()
+	r := *e.r
+	r.Dirs = r.Dirs.WithUser(UserDirs{})
+	req := WorkRequest{Op: OpInstall, User: &u}
+	if err := prep(&req, &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.UserSID != "S-1-5-21-2000" || r.Dirs.LocalAppData != e.dirs.LocalAppData || req.User != nil {
+		t.Fatalf("%+v %+v", r.Dirs, req)
+	}
+	other := u
+	other.UserProfile = filepath.Join(e.root, "Users", "Admin")
+	other.LocalAppData = filepath.Join(other.UserProfile, "AppData", "Local")
+	other.AppData = filepath.Join(other.UserProfile, "AppData", "Roaming")
+	other.Programs = filepath.Join(other.AppData, "Microsoft", "Windows", "Start Menu", "Programs")
+	other.Startup = filepath.Join(other.Programs, "Startup")
+	bad := u
+	bad.Startup = filepath.Join(e.root, "Windows", "System32")
+	for name, req := range map[string]WorkRequest{
+		"no folders":       {Op: OpInstall},
+		"another profile":  {Op: OpInstall, User: &other},
+		"not a usual path": {Op: OpInstall, User: &bad},
+	} {
+		if err := prep(&req, &r); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	// Through the pipe: a refused request changes nothing and says why.
+	before := e.snapshot()
+	el := &pipeElevator{r: e.r, prepare: prep}
+	res := RunWorker(context.Background(), el, WorkRequest{Op: OpInstall, Options: e.machineOpts(), User: &other}, nil, nil)
+	if res.Outcome != OutcomeInvalid || !strings.Contains(res.Message, "profile") || e.snapshot() != before {
 		t.Fatalf("%+v", res)
 	}
 }

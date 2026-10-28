@@ -273,7 +273,7 @@ func TestLocalBackendRunsInPlaceOrThroughTheWorker(t *testing.T) {
 	if res.Outcome == OutcomeDone || e.snapshot() != before {
 		t.Fatalf("%+v", res)
 	}
-	el := &pipeElevator{r: e.r}
+	el := &pipeElevator{r: e.r, prepare: WorkerPrepare("S-1-5-21-1000", e.dirs.UserProfile)}
 	be.Elev = el
 	var l eventLog
 	res = be.Run(context.Background(), WorkRequest{Op: OpInstall, Options: e.machineOpts()}, l.ev, l.ln)
