@@ -70,6 +70,84 @@
       ]
     },
     {
+      "id": "p2-close", "phase": "P2", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Import\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Import\"s]"},
+        {"waitFor": "role=button[name=\"Close case: Checkout slowdown, 17 October\"]"},
+        {"scrollTo": "#case-heading"}
+      ]
+    },
+    {
+      "id": "p2-closed-readonly", "phase": "P2", "doc": "cases.md", "narrow": true,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Night batch overrun, 10 October\"]"},
+        {"waitFor": "text=This case is closed. You can read it, but nothing can be added."},
+        {"scrollTo": "#home-files"}
+      ]
+    },
+    {
+      "id": "p2-reopen", "phase": "P2", "doc": "cases.md", "narrow": true,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Night batch overrun, 10 October\"]"},
+        {"waitFor": "role=button[name=\"Reopen this case\"]"}
+      ]
+    },
+    {
+      "id": "p2-retry-list", "phase": "P2", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Report export timeouts, 18 October\"]"},
+        {"waitFor": "#home-retries"},
+        {"scrollTo": "#home-retries"}
+      ]
+    },
+    {
+      "id": "p2-changed-elsewhere", "phase": "P2", "doc": "cases.md", "narrow": true,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Ledger posting lag, 12 October\"]"},
+        {"waitFor": "role=button[name=\"Reopen this case\"]"},
+        {"aside": [
+          {"goto": "/"},
+          {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+          {"when": "narrow", "click": "role=button[name=/^More/]"},
+          {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+          {"click": "role=button[name=\"Open case Ledger posting lag, 12 October\"]"},
+          {"click": "role=button[name=\"Reopen this case\"]"},
+          {"waitFor": "text=Case reopened"}
+        ]},
+        {"click": "role=button[name=\"Reopen this case\"]"},
+        {"waitFor": "text=This case changed in another tab."}
+      ],
+      "after": [
+        {"aside": [
+          {"goto": "/"},
+          {"when": "wide", "click": "role=button[name=\"Import\"s]"},
+          {"when": "narrow", "click": "role=button[name=/^More/]"},
+          {"when": "narrow", "click": "role=menuitem[name=\"Import\"s]"},
+          {"click": "role=button[name=\"Close case: Ledger posting lag, 12 October\"]"},
+          {"waitFor": "#start-title"}
+        ]}
+      ]
+    },
+    {
       "id": "p1-export", "phase": "P1", "doc": "cases.md", "narrow": false,
       "steps": [
         {"goto": "/"},

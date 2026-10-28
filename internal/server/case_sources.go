@@ -90,6 +90,10 @@ type caseViewDTO struct {
 	caseDTO
 	Envs    int `json:"envs"`
 	Sources int `json:"sources"`
+	// History is what happened to the case: made, closed, reopened (A8).
+	History []historyDTO `json:"history"`
+	// Retries is the "needs another try" list stored in the case (A14, C19).
+	Retries []retryDTO `json:"retries"`
 }
 
 /* ------------------------------------------------------- recent tests */

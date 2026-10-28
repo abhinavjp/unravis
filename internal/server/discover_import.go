@@ -201,6 +201,11 @@ func (h *handler) postDiscoverImports(w http.ResponseWriter, r *http.Request, ra
 		writeStoreError(w, err)
 		return
 	}
+	if err := h.guard(r.Context(), id, casestore.ActionAddImport, ""); err != nil {
+		release()
+		writeStoreError(w, err)
+		return
+	}
 	slot, ok := h.imports.tryAcquire()
 	if !ok {
 		release()

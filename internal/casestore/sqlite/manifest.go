@@ -28,6 +28,19 @@ type manifest struct {
 	Created time.Time        `json:"created"`
 	Closed  *time.Time       `json:"closed,omitempty"`
 	Imports []manifestImport `json:"imports"`
+	// Mark, RequestID and History are the lifecycle fields (P2). They are omitted
+	// when empty, so a manifest from before them reads and writes as before and the
+	// manifest version stays 1. They live only here: a case file carries the
+	// database, so a restored case starts with no mark, no request id and a fresh
+	// history.
+	Mark      string            `json:"mark,omitempty"`
+	RequestID string            `json:"requestId,omitempty"`
+	History   []manifestHistory `json:"history,omitempty"`
+}
+
+type manifestHistory struct {
+	At   time.Time `json:"at"`
+	Kind string    `json:"kind"`
 }
 
 type manifestImport struct {

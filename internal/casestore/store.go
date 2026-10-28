@@ -111,6 +111,13 @@ type CaseInfo struct {
 	// fixed title and no other detail, and every other operation except Erase
 	// refuses it.
 	Untrusted bool
+	// Mark is the in-flight stamp (MarkArchiving, MarkFreeing, MarkErasing) or empty.
+	Mark string
+	// RequestID is the create request id the case was made under, or empty.
+	RequestID string
+	// History lists the saved moves (created, closed, reopened), oldest first. It is
+	// filled by Case.Info; Store.List leaves it nil.
+	History []HistoryEntry
 }
 
 type ImportMeta struct {

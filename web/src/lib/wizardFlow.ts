@@ -48,6 +48,13 @@ export function titleProblem(text: string): TitleProblem | null {
 
 export const titleLength = (text: string): number => [...cleanTitle(text)].length;
 
+/**
+ * Whether the name problem shows now. A name that is too long or has a character that is not allowed is wrong as it is typed, so it shows at once;
+ * an empty or one-letter name is only a name not finished, so it waits until the person leaves the field or tries to go on.
+ */
+export const titleProblemShows = (problem: TitleProblem | null, touched: boolean): boolean =>
+  problem !== null && (touched || problem === 'too-long' || problem === 'bad-characters');
+
 /** What the step rules need to know about the draft. */
 export interface StepFacts { title: string }
 
