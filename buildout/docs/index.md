@@ -12,8 +12,8 @@ These pages are drafts. Each phase of the build fills in the pages for the featu
 | [Black box](blackbox.md) | Always-on recording of what the servers were doing | Coming in P8 |
 | [Guided analysis](guided-analysis.md) | The step-by-step method that walks you to a cause | Coming in P5 |
 | [Manual tools](manual-tools.md) | The charts and lists you can use on your own | Coming in P6 |
-| [Install](install.md) | The one-file installer | Coming in P11 |
-| [Upgrade and uninstall](upgrade-and-uninstall.md) | Move to a new version, or remove Unravis | Coming in P11 |
+| [Install](install.md) | The one-file installer | Written; not yet run on a clean PC |
+| [Upgrade and uninstall](upgrade-and-uninstall.md) | Move to a new version, or remove Unravis | Written; not yet run on a clean PC |
 | [Troubleshooting](troubleshooting.md) | Common problems and what to do | Started |
 | [Security](security.md) | What Unravis reads, what it keeps, and what it never does | Started |
 | [Screenshots](screenshots.md) | How the pictures in these pages are made (for contributors) | Written |

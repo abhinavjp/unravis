@@ -26,6 +26,13 @@
   --bad: #ff7b72;
   --tone-ok: #3fb27f;
   --pending: #8fa39a;
+  /* Status sticker inks, used by the setup window only: 4.5:1 against their own fill and 3:1 for the edge on every surface. The app keeps its own tone tokens. */
+  --setup-ok: #3fb27f;
+  --setup-warn: #e3b341;
+  --setup-bad: #ff7b72;
+  --setup-run: #3fd6b0;
+  --setup-pending: #8fa39a;
+  --setup-neutral: #93a39b;
   --focus: #7ff0d0;
   --scrim: rgb(2 5 9 / 62%);
   --chart-empty: #0a0f0d;
@@ -66,6 +73,13 @@
     --warn: #96600a;
     --bad: #b02a3d;
     --pending: #5b6878;
+    /* Status sticker inks, used by the setup window only: 4.5:1 against their own fill and 3:1 for the edge on every surface. The app keeps its own tone tokens. */
+    --setup-ok: #176b43;
+    --setup-warn: #7d4e06;
+    --setup-bad: #a02336;
+    --setup-run: #0a5f4d;
+    --setup-pending: #4d5a6b;
+    --setup-neutral: #4a525c;
     --focus: #0b6b57;
     --scrim: rgb(20 28 40 / 38%);
     --chart-empty: #efefec;
@@ -106,6 +120,13 @@
   --warn: #96600a;
   --bad: #b02a3d;
   --pending: #5b6878;
+  /* Status sticker inks, used by the setup window only: 4.5:1 against their own fill and 3:1 for the edge on every surface. The app keeps its own tone tokens. */
+  --setup-ok: #176b43;
+  --setup-warn: #7d4e06;
+  --setup-bad: #a02336;
+  --setup-run: #0a5f4d;
+  --setup-pending: #4d5a6b;
+  --setup-neutral: #4a525c;
   --focus: #0b6b57;
   --scrim: rgb(20 28 40 / 38%);
   --chart-empty: #efefec;

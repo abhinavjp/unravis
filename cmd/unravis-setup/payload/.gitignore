@@ -1,0 +1,4 @@
+# Program files for the installer payload: build output, never committed.
+*
+!.gitignore
+!README.txt

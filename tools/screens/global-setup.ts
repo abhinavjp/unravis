@@ -3,6 +3,8 @@
 // opens the page at /#t=<token>, which is exactly what the launch link does.
 export default async function globalSetup(): Promise<void> {
   const link = process.env.UNRAVIS_LAUNCH_URL;
+  // A run of setup-window screens only (P11) needs the setup window, not the demo.
+  if (!link && process.env.UNRAVIS_SETUP_URL) return;
   if (!link) {
     throw new Error('UNRAVIS_LAUNCH_URL is not set. Run tools\\screens\\run-screens.ps1, which starts the demo and passes the launch link.');
   }
