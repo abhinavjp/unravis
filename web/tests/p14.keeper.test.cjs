@@ -149,3 +149,14 @@ test('old per-user cases are said on the start screen, never opened or moved', (
   assert.match(screen, /oldCases = page\.oldCases/);
   assert.match(screen, /\{#if phase === 'ready' && oldCases > 0\}<p class="card-note" role="note" data-old-cases>\{oldCasesText\(oldCases\)\}<\/p>\{\/if\}/);
 });
+
+test('the keeper card re-reads the page when the preview in the address changes (D-A-35)', () => {
+  const card = read('src/components/sources/KeeperCard.svelte');
+  assert.match(card, /import \{ onMount, tick \} from 'svelte';/);
+  assert.match(card, /import \{ keeperView, onKeeperPreview, type KeeperStatus \} from '\.\.\/\.\.\/lib\/keeper';/);
+  assert.match(card, /async function refreshFromPreview\(\) \{\s*if \(busy !== ''\) return;\s*try \{ await onRetry\(\); \} catch \{[^}]*\}\s*\}/);
+  assert.match(card, /onMount\(\(\) => onKeeperPreview\(\(\) => void refreshFromPreview\(\)\)\);/, 'the unsubscribe function is returned to onMount');
+  assert.doesNotMatch(card, /type="password"|\.password\b|password:/);
+  const keeperTs = read('src/lib/keeper.ts');
+  assert.match(keeperTs, /export function onKeeperPreview\(listener: \(\) => void\): \(\) => void \{/);
+});

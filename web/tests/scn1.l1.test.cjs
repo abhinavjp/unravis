@@ -297,3 +297,23 @@ test('D-A-25: a 423 case-locked answer on any case call sends Case home back to 
   assert.match(again, /\} catch \(error\) \{\s*if \(lockedUnder\(error\)\) return;\s*if \(retryInPage\(error\)\)/);
   assert.match(again, /\} finally \{ tryingId = 0; \}/);
 });
+
+test('D-A-34: recent connections are read in the demo too and the demo New tab explains itself', () => {
+  const state = read('src/lib/appState.svelte.ts');
+  const init = state.slice(state.indexOf('export async function initialize'), state.indexOf('function setLocalInputs'));
+  assert.match(init, /tabInvestigationHeld = false;\s*try \{\s*const recents = await api\.recentConnections\(\);/);
+  assert.doesNotMatch(init, /if \(!info\.demo\) \{\s*try \{\s*const recents/, 'the demo guard around the recents read is gone');
+  assert.match(init, /recentHistoryError = 'Recent connections could not be loaded\. You can still test and add a connection\.';/);
+  assert.match(state, /if \(!info\?\.demo\) await rememberConnection\(/, 'the demo still saves nothing');
+  const drawer = read('src/components/ConnectionsDrawer.svelte');
+  assert.match(drawer, /\{#if !app\.info\?\.demo\}<button class="primary-button" onclick=\{startNewConnection\}>Create a connection<\/button>\{\/if\}/);
+  assert.match(drawer, /\{#if !app\.info\?\.demo\}<div class="recent-card-actions">/);
+  assert.match(drawer, /'Forget'\}<\/button><\/div>\{\/if\}<\/article>/);
+  assert.match(drawer, /<\/form>\s*\{:else\}\s*<div class="drawer-empty" data-demo-connections><strong>This is the demo<\/strong><p>The demo uses sample data, so new connections cannot be added here\.<\/p><\/div>\s*\{\/if\}\s*\{\/if\}\s*<\/Drawer>/);
+  for (const text of ['This is the demo', 'The demo uses sample data, so new connections cannot be added here.']) {
+    assert.doesNotMatch(text, /[‒-―−]| - |--/, 'no dash as punctuation');
+    assert.doesNotMatch(text, /\p{Extended_Pictographic}/u, 'no emoji');
+  }
+  const tag = /<Drawer\b[^>]*>/.exec(drawer);
+  for (const prop of ['title=', 'titleId=', 'closeLabel=']) assert.ok(tag[0].includes(prop), 'Drawer keeps ' + prop);
+});

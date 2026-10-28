@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../../lib/api';
-  import { keeperView, type KeeperStatus } from '../../lib/keeper';
+  import { keeperView, onKeeperPreview, type KeeperStatus } from '../../lib/keeper';
   import { KEEPER_TEXT, keeperDuplicatesText, keeperPendingText } from '../../lib/copy/sourcesCopy';
 
   // The key keeper's state on the connections page (P14): not running, not trusted, old saved files to move, or old copies to remove.
@@ -63,6 +63,15 @@
   function escape(event: KeyboardEvent) {
     if (event.key === 'Escape' && busy === '') { event.preventDefault(); void ask(false); }
   }
+
+  // D-A-35: a screenshot preview named in the address after this page opened (#keeper=migrate and so on) re-reads the page's own
+  // list and the keeper's counts, through the same reader the Try again button uses, so the rows and this card change together.
+  // A read that is already running (busy) makes the page's own refresh, so this one waits for the next change.
+  async function refreshFromPreview() {
+    if (busy !== '') return;
+    try { await onRetry(); } catch { /* the page keeps what it showed */ }
+  }
+  onMount(() => onKeeperPreview(() => void refreshFromPreview()));
 </script>
 
 <div class="keeper-box" bind:this={box}>

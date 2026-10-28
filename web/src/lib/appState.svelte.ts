@@ -453,13 +453,11 @@ export async function initialize() {
     tabInvestigationHeld = restoredInTab;
     await chooseFirstScreen(info.demo, restoredInTab);
     tabInvestigationHeld = false;
-    if (!info.demo) {
-      try {
-        const recents = await api.recentConnections();
-        recentConnections = Array.isArray(recents) ? recents.filter(isRecentConnection).slice(0, 20) : [];
-      } catch {
-        recentHistoryError = 'Recent connections could not be loaded. You can still test and add a connection.';
-      }
+    try {
+      const recents = await api.recentConnections();
+      recentConnections = Array.isArray(recents) ? recents.filter(isRecentConnection).slice(0, 20) : [];
+    } catch {
+      recentHistoryError = 'Recent connections could not be loaded. You can still test and add a connection.';
     }
   } catch (cause) {
     // A failure after the app info arrived keeps the screen the app always showed (the connect prompt and the Retry banner).
