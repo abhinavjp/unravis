@@ -351,3 +351,58 @@ func TestNoImportIntoACaseBeingArchivedOrArchived(t *testing.T) {
 	try("after Archived")
 	_ = h.Close()
 }
+
+// F4 of the P3 review: the retry list and the discovery writers take no more writes once
+// an archive has started (a write after the snapshot would be lost when Free drops the
+// WAL), while a plain Closed case still takes the retry list.
+func TestNoRetryOrDiscoveryWriteIntoACaseBeingArchivedOrArchived(t *testing.T) {
+	s, _ := newTestStore(t)
+	id := mustCreate(t, s, "Frozen writes").ID
+	c := mustOpen(t, s, id)
+	defer c.Close()
+	item := casestore.RetryItem{Kind: "import", Key: "k1", Label: "a.csv", Reason: "stopped"}
+	key := casestore.DiscoverFileKey{VolumeSerial: 1, FileIndex: 2}
+	mark := casestore.DiscoverMark{Offset: 5}
+	read := casestore.DiscoverRead{At: time.Now(), Detector: "d", Importer: "i", Kind: "file", Display: "x"}
+	writes := func(when string, want error) {
+		t.Helper()
+		check := func(what string, err error) {
+			t.Helper()
+			if want == nil && err != nil {
+				t.Fatalf("%s %s: %v, want it to work", what, when, err)
+			}
+			if want != nil && !errors.Is(err, want) {
+				t.Fatalf("%s %s: %v, want %v", what, when, err, want)
+			}
+		}
+		_, err := c.NoteRetry(p3ctx, item)
+		check("NoteRetry", err)
+		_, err = c.ReplaceRetries(p3ctx, []casestore.RetryItem{item})
+		check("ReplaceRetries", err)
+		check("RemoveRetry", c.RemoveRetry(p3ctx, 1))
+		check("PutDiscoverMark", c.PutDiscoverMark(p3ctx, key, mark))
+		check("DeleteDiscoverMark", c.DeleteDiscoverMark(p3ctx, key))
+		check("RecordDiscoverRead", c.RecordDiscoverRead(p3ctx, read))
+	}
+	writes("on an open case", nil)
+	pend := casestore.ArchivePending{Folder: `D:\archives`, Name: "frozen.unravis-case", Started: time.Now()}
+	if _, err := s.BeginArchive(p3ctx, id, "", pend); err != nil {
+		t.Fatal(err)
+	}
+	writes("while Archiving", casestore.ErrCaseClosed)
+	if err := s.AbortArchive(p3ctx, id, false); err != nil {
+		t.Fatal(err)
+	}
+	writes("after the archive was stopped", nil)
+	if err := s.CloseCase(p3ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	writes("on a Closed case", nil)
+	if _, err := s.BeginArchive(p3ctx, id, "", pend); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CommitArchive(p3ctx, id, p3File("frozen.unravis-case")); err != nil {
+		t.Fatal(err)
+	}
+	writes("after Archived", casestore.ErrArchived)
+}

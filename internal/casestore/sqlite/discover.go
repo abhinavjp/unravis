@@ -117,6 +117,11 @@ func (c *Case) PutDiscoverMark(ctx context.Context, k casestore.DiscoverFileKey,
 	if err != nil {
 		return err
 	}
+	done, err := c.archiveWriteGate()
+	if err != nil {
+		return err
+	}
+	defer done()
 	if m.Offset < 0 || m.HeadLen < 0 {
 		return ErrInvalid
 	}
@@ -147,6 +152,11 @@ func (c *Case) DeleteDiscoverMark(ctx context.Context, k casestore.DiscoverFileK
 	if err != nil {
 		return err
 	}
+	done, err := c.archiveWriteGate()
+	if err != nil {
+		return err
+	}
+	defer done()
 	_, err = db.ExecContext(ctx, `DELETE FROM discover_watermarks WHERE volume_serial=? AND file_index=? AND path_hmac=?`,
 		int64(k.VolumeSerial), int64(k.FileIndex), k.PathHMAC[:])
 	return err
@@ -157,6 +167,11 @@ func (c *Case) RecordDiscoverRead(ctx context.Context, r casestore.DiscoverRead)
 	if err != nil {
 		return err
 	}
+	done, err := c.archiveWriteGate()
+	if err != nil {
+		return err
+	}
+	defer done()
 	r, err = casestore.CleanDiscoverRead(r)
 	if err != nil {
 		return err

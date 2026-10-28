@@ -797,6 +797,38 @@ func (c *Case) isClosed() bool {
 	return c.man.Closed != nil || c.man.Mark == casestore.MarkArchiving || archived(c.man)
 }
 
+// archiveRefusal answers a write that must not land once an archive has started:
+// ErrCaseClosed while Archiving, ErrArchived after. It reads the cached manifest,
+// which syncManifest and every lifecycle move keep current.
+func (c *Case) archiveRefusal() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.archiveRefusalLocked()
+}
+
+func (c *Case) archiveRefusalLocked() error {
+	switch {
+	case archived(c.man):
+		return casestore.ErrArchived
+	case c.man.Mark == casestore.MarkArchiving:
+		return casestore.ErrCaseClosed
+	}
+	return nil
+}
+
+// archiveWriteGate is archiveRefusal for a write that takes no folder lock (the
+// discovery marks and the read audit). It holds the case's state lock until done is
+// called, so a lifecycle move (which needs that lock to stamp Archiving) waits for the
+// write instead of overtaking it, and the archive's snapshot then includes the write.
+func (c *Case) archiveWriteGate() (done func(), err error) {
+	c.mu.Lock()
+	if err := c.archiveRefusalLocked(); err != nil {
+		c.mu.Unlock()
+		return nil, err
+	}
+	return c.mu.Unlock, nil
+}
+
 // mirror appends a committed import to the sealed manifest. A failure is not an
 // import failure (the database is the truth): the next import or the next open
 // notices the manifest is behind and rebuilds it from the database.
