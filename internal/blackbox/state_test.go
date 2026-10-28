@@ -176,6 +176,21 @@ func TestIncompleteWinsOverRunning(t *testing.T) {
 	}
 }
 
+func TestIncompleteDetailUsesSingularOrPluralFileWording(t *testing.T) {
+	now := t0.Add(2 * time.Hour)
+	r := stReading(stManifest(now.Add(-5*time.Second), nil), now, nil)
+
+	si := derive(r, &ReadReport{Missing: []string{"a"}})
+	if !strings.Contains(si.Detail, "1 recording file could not be read to the end") {
+		t.Fatalf("n=1: %s", si.Detail)
+	}
+
+	si = derive(r, &ReadReport{Missing: []string{"a", "b"}})
+	if !strings.Contains(si.Detail, "2 recording files could not be read to the end") {
+		t.Fatalf("n=2: %s", si.Detail)
+	}
+}
+
 func TestReadFailuresMapToUnreachableWithAReason(t *testing.T) {
 	for _, c := range []struct {
 		kind   ReadKind

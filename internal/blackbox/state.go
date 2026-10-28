@@ -102,6 +102,15 @@ func info(s PageState, tone, readiness, detail string) StateInfo {
 	return StateInfo{State: s, Label: s.Label(), Tone: tone, Readiness: readiness, Detail: detail}
 }
 
+// recordingFileCount says how many recording files, with correct singular/plural
+// wording: "1 recording file" vs "N recording files".
+func recordingFileCount(n int) string {
+	if n == 1 {
+		return "1 recording file"
+	}
+	return fmt.Sprintf("%d recording files", n)
+}
+
 // DeriveState decides the one state to show. The order is: nothing placed, the
 // read failed, part of the data was not read, stopped, paused for disk, late,
 // disk low, clock differs, running. The first that fits wins, so the most serious
@@ -121,7 +130,7 @@ func DeriveState(in StateInput) StateInfo {
 	if in.Report != nil && in.Report.Incomplete() {
 		n := len(in.Report.Dropped) + len(in.Report.Missing)
 		return info(SIncomplete, ToneWarn, WordPartlyReady,
-			fmt.Sprintf("%d recording file(s) could not be read to the end. What was read is used; the rest counts as a gap, never as zero.", n))
+			fmt.Sprintf("%s could not be read to the end. What was read is used; the rest counts as a gap, never as zero.", recordingFileCount(n)))
 	}
 
 	interval := m.IntervalSeconds
