@@ -86,6 +86,10 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
+      - name: Release scripts - checksum self-test
+        shell: pwsh
+        run: ./tools/release/Test-Release.ps1
+
       - name: Build dist\unravis.exe
         # The web step above already built web/dist, so it is skipped here.
         run: ./build.ps1 -SkipWeb -Version "ci-$($env:GITHUB_SHA.Substring(0, 7))"
