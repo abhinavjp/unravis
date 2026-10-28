@@ -6,7 +6,7 @@ Start Unravis with `--no-browser`, then paste the one-time link from its window 
 
 ## The link says it has expired or was already used
 
-The link works once and expires after 10 minutes. Restart Unravis to get a new one.
+The link works once. A link that Unravis opens in your browser for you expires after 2 minutes. A link printed in the window for you to paste (started with `--no-browser`) expires after 10 minutes. Restart Unravis to get a new one.
 
 ## Unravis will not start on my port
 

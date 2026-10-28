@@ -1,0 +1,5 @@
+﻿section,item,status,normal stretch,slow stretch,text
+case,Snapshot Case,,,,"Case {CASE}, report made 20 Oct 2026 09:00 UTC"
+notice,,Cannot test yet,,,"Nothing has been analysed in this case yet. Pick a slow stretch and a normal stretch in Guided analysis, then export again."
+note,,,,,"Typed notes are printed as written, with secrets removed."
+footer,,,,,"No request payloads, no user ids, no connection details, no passwords. Dates in UTC. Unravis only reads."

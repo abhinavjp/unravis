@@ -2,6 +2,7 @@
   import { brushEdgeText, rangeReadout, sameWindow, type StripModel, type ZoomWindow } from '../lib/zoom';
   import { brushCentre, brushDrag, brushFloor, brushHit, brushKey, type BrushMode } from '../lib/zoomBrush';
   import { zoomCopy } from '../lib/copy/zoomCopy';
+  import { ZOOM_NOTES } from '../lib/copy/screenCopy';
   import HelpNote from './HelpNote.svelte';
 
   // The zoom strip above the time charts. It only draws the model it is given (lib/zoom.ts stripModel) and reports what was pressed.
@@ -38,6 +39,9 @@
   const startText = $derived(brushEdgeText(shown.start, shown, zone));
   const endText = $derived(brushEdgeText(shown.end, shown, zone));
   let spoken = $state('');
+  // Said when a drag ends on the window that is already shown. Cleared when the window changes and when the next press starts.
+  let dragNote = $state('');
+  $effect(() => { void view.start; void view.end; dragNote = ''; });
 
   let track: HTMLElement | undefined;
   interface Drag { mode: BrushMode; start: ZoomWindow; fromMs: number; x0: number; moved: boolean; id: number; rect: DOMRect }
@@ -61,6 +65,7 @@
 
   function down(event: PointerEvent) {
     if (event.button !== 0 || !track) return;
+    dragNote = '';
     flush();
     const rect = track.getBoundingClientRect();
     if (rect.width <= 0) return;
@@ -87,7 +92,9 @@
     if (current.moved) next = preview;
     else if (current.mode === 'new') next = brushCentre(root, current.start, current.fromMs, brush.stepMs);
     preview = null;
-    if (next) emit(next);
+    if (!next) return;
+    if (current.moved && sameWindow(next, view)) dragNote = ZOOM_NOTES.tinyDrag;
+    else emit(next);
   }
   function cancel(event: PointerEvent) { if (drag && event.pointerId === drag.id) revert(); }
 
@@ -150,6 +157,7 @@
   {#if !model.isRoot}<div class="zoom-help"><HelpNote id="drill-investigate" /></div>{/if}
   {#if model.message}<p class="zoom-message" data-tone={model.messageTone}>{model.message}</p>{/if}
   {#if model.notice}<p class="zoom-message" data-tone="info">{model.notice}</p>{/if}
+  {#if dragNote}<p class="zoom-message" data-tone="info">{dragNote}</p>{/if}
 
   <div class="navigator">
     <HelpNote id="drill-navigator" />
@@ -173,7 +181,7 @@
   {#if model.scopeLine}<p class="zoom-note">{model.scopeLine}</p>{/if}
   {#if model.referenceLine}<p class="zoom-note">{model.referenceLine}</p>{/if}
   <p class="zoom-note">{zoomCopy.howTo}</p>
-  <p class="sr-only" role="status" aria-live="polite">{model.rangeLine} {model.message} {model.notice} {announcement} {previewText} {spoken}</p>
+  <p class="sr-only" role="status" aria-live="polite">{model.rangeLine} {model.message} {model.notice} {dragNote} {announcement} {previewText} {spoken}</p>
 </section>
 
 <style>

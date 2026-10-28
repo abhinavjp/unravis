@@ -339,6 +339,28 @@ var scrubPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`[0-9a-fA-F]{24,}`),
 }
 
+// hostLike matches any other dotted host-like token, whatever its last label
+// and its case ("demo-sql.example.invalid", "Db01.Example.Invalid"). The last
+// label must be 2 or more letters so versions and numbers ("1.2.3", "1.5") stay.
+var hostLike = regexp.MustCompile(`(?i)\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}\b`)
+
+// pascalLabel is one capitalised word run: "Orders", "OrdersController".
+var pascalLabel = regexp.MustCompile(`^(?:[A-Z][a-z]+)+$`)
+
+// scrubHostLike removes host-like tokens, except a Controller.Action style name
+// whose every label is PascalCase with no digit or hyphen: a host name is
+// rarely written that way, and a code name is.
+func scrubHostLike(text string) string {
+	return hostLike.ReplaceAllStringFunc(text, func(m string) string {
+		for _, label := range strings.Split(m, ".") {
+			if !pascalLabel.MatchString(label) {
+				return removedText
+			}
+		}
+		return m
+	})
+}
+
 // absPath matches a bare absolute path ("/a/b", "/api/orders/98765") that
 // starts the text or follows a space, quote, bracket or separator.
 var absPath = regexp.MustCompile(`(^|[\s"'(\[{=,;])/[\w.~%+\-]\S*`)
@@ -399,6 +421,7 @@ func scrubText(text string) string {
 	for _, re := range scrubPatterns {
 		text = re.ReplaceAllString(text, removedText)
 	}
+	text = scrubHostLike(text)
 	text = ipv6Candidate.ReplaceAllStringFunc(text, func(m string) string {
 		if ipv6Token(m) {
 			return removedText
@@ -460,7 +483,9 @@ func residualRisk(text string) bool {
 // holds a long digit run, an "@" or "://", the whole text is replaced with
 // withheld rather than exported with a possible identifier in it.
 func cleanFreeText(text string, ids map[int]bool, withheld string) string {
-	out := maskNumbers(removeUserIDs(scrubText(text), ids))
+	// Secrets first, on the normalised text, so "password=x" cannot be half-masked
+	// by a later pattern and slip through.
+	out := maskNumbers(removeUserIDs(scrubText(ScrubSecrets(normalizeText(text))), ids))
 	if residualRisk(out) || containsProven(out) {
 		return withheld
 	}

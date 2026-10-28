@@ -225,7 +225,16 @@ func (p *prep) parts() {
 		}
 	}
 	pt.Dominant = ""
+	tested := 0
+	for _, it := range pt.Items {
+		if it.Tested {
+			tested++
+		}
+	}
 	switch {
+	case tested == 0:
+		// No part has data in both windows: say nothing about which part took the time.
+		pt.DominantWhy = ""
 	case positive <= 0:
 		pt.DominantWhy = "No part took more time in the incident window than in the reference window."
 	default:
@@ -244,9 +253,22 @@ func (p *prep) parts() {
 		}
 		if pt.Dominant == "" && qualifying == 0 {
 			pt.DominantWhy = "No single part holds half of the extra time with a change of the size the mark needs."
+			// One part holds half or more but its change is under the mark: name it, with the qualifier.
+			// The share is a ratio like the Step 3 findings (no percent sign in generated text).
+			over := 0
+			var big PartFacts
+			for _, it := range pt.Items {
+				if it.Share != nil && *it.Share >= p.th.DominantMinShare-floatEps {
+					over++
+					big = it
+				}
+			}
+			if over == 1 {
+				pt.DominantWhy = fmt.Sprintf("Part %s holds %.2f of the extra time, which is under the change mark.", big.Name, *big.Share)
+			}
 		}
 	}
-	if !pt.OTested {
+	if tested > 0 && !pt.OTested {
 		if pt.DominantWhy != "" {
 			pt.DominantWhy += " "
 		}

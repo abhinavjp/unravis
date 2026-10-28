@@ -45,6 +45,21 @@ type erasedFile struct {
 // screen and nothing else.
 func NewErasedFile(path string) ErasedLog { return &erasedFile{path: path} }
 
+// NewClockedErasedLog gives an ErasedLog a clock of its own. The server stamps an
+// erase with that clock instead of the real time; the demo uses it so its fixed
+// clock dates the lines too (D-A-18).
+func NewClockedErasedLog(inner ErasedLog, now func() time.Time) ErasedLog {
+	return clockedErased{ErasedLog: inner, now: now}
+}
+
+type clockedErased struct {
+	ErasedLog
+	now func() time.Time
+}
+
+// Now is the clock the server asks, when the log has one.
+func (c clockedErased) Now() time.Time { return c.now() }
+
 type erasedDoc struct {
 	Version int          `json:"version"`
 	Lines   []ErasedLine `json:"lines"`
@@ -155,7 +170,11 @@ func (h *handler) erasedLines() []erasedDTO {
 // is not worth failing the erase for.
 func (h *handler) noteErased(id casestore.CaseID) {
 	if h.erased != nil {
-		_ = h.erased.Add(id, time.Now())
+		at := time.Now()
+		if c, ok := h.erased.(interface{ Now() time.Time }); ok {
+			at = c.Now()
+		}
+		_ = h.erased.Add(id, at)
 	}
 }
 

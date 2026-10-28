@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { caseCode, eraseCase } from '../lib/cases';
+  import { caseCode, eraseCase, type CaseState } from '../lib/cases';
   import { eraseFailureText, eraseReady } from '../lib/erase';
   import { ERASE_TEXT, eraseBody, eraseDoneText, erasePromptText } from '../lib/copy/eraseCopy';
 
   // Screens 138 and 139: Erase asks for the short case code to be typed, shows what goes, then says the case is removed.
   // The erase can wait up to 30 seconds for the case to be released (another tab may still be reading it), and says so while it waits.
   // Nothing typed here is kept: the code is cleared when the dialog closes. `onDone` runs when the person leaves the confirmation.
-  let { caseId, archivePath, onDone, onCancel }: { caseId: string; archivePath?: string; onDone: () => void; onCancel: () => void } = $props();
+  let { caseId, archivePath, believed, onDone, onCancel }: { caseId: string; archivePath?: string; believed?: CaseState; onDone: () => void; onCancel: () => void } = $props();
 
   let typed = $state('');
   let busy = $state(false);
@@ -40,7 +40,7 @@
     busy = true;
     problem = '';
     try {
-      await eraseCase(caseId, entered, controller.signal);
+      await eraseCase(caseId, entered, believed, controller.signal);
       typed = '';
       finished = true;
       busy = false;

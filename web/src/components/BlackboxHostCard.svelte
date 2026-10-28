@@ -36,7 +36,7 @@
   async function read() {
     if (busy) return;
     problem = '';
-    if (!windowsOk()) { problem = T.hostWindowProblem; return; }
+    if (!windowsOk()) { answer = null; problem = T.hostWindowProblem; return; }
     busy = true;
     try {
       answer = await blackboxApi.hostReading(item.id, {
@@ -56,7 +56,7 @@
   <h4>{T.hostTitle}</h4>
   <p class="bb-note">{T.hostQuestion}</p>
 
-  <details class="bb-windows" open={!answer}>
+  <details class="bb-windows" open>
     <summary>{T.hostRead}: {item.name}</summary>
     <div class="bb-grid">
       <fieldset><legend>{T.hostIncident} (UTC)</legend>

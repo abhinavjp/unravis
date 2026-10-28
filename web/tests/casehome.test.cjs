@@ -121,3 +121,10 @@ test('the case page survives a reload, an erase, a lock and a closed case', () =
 test('the back button name contains its visible text', () => {
   assert.ok(copy.CASE_HOME_TEXT.backLabel.includes(copy.CASE_HOME_TEXT.back));
 });
+
+test('the case home still treats a 409 from the shared theories as fine, and keeps its reads and its lock handling', () => {
+  const page = read('src/lib/components/CaseHome.svelte');
+  assert.match(page, /error instanceof ApiError && error\.status === 409/);
+  assert.match(page, /isCaseLocked/);
+  assert.match(page, /phase = 'locked'; return;/);
+});

@@ -110,7 +110,7 @@ func TestReportOfAnAnalysedCase(t *testing.T) {
 	if res := e.json(http.MethodPost, "/api/cases/"+id+"/checklist", `{"list":"doing","text":"Ask the database team","suspect":"H1"}`); res.Code != http.StatusOK {
 		t.Fatal(res.Body)
 	}
-	if res := e.json(http.MethodPost, "/api/cases/"+id+"/views", `{"name":"Slow hour","tool":"routes","settings":{"minMs":500}}`); res.Code != http.StatusOK {
+	if res := e.json(http.MethodPost, "/api/cases/"+id+"/views", `{"name":"Slow hour","tool":"slowest-apis","settings":{"minMs":500}}`); res.Code != http.StatusOK {
 		t.Fatal(res.Body)
 	}
 	base := "/api/cases/" + id + "/report"

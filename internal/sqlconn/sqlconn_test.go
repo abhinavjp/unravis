@@ -278,3 +278,66 @@ func TestCorruptFileIsLeftAlone(t *testing.T) {
 		t.Fatal("file was changed")
 	}
 }
+
+func TestNormalizeReadsTheServerLikeSave(t *testing.T) {
+	rec, err := Normalize(Input{Server: "tcp:db1,1655", Auth: AuthSQL, Username: "sa", Password: "p", RememberPassword: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Host != "db1" || rec.Port != 1655 || rec.Server != "db1,1655" || rec.Label != "db1,1655" || rec.Encrypt != EncryptMandatory || !rec.HasPassword || rec.ID != "" {
+		t.Fatalf("normalize = %+v", rec)
+	}
+}
+
+func TestNormalizeWindowsAuthDropsTheUserAndRefusesBadInput(t *testing.T) {
+	rec, err := Normalize(Input{Server: "db2:1444", Auth: AuthWindows, Username: "ignored"})
+	if err != nil || rec.Username != "" || rec.Port != 1444 {
+		t.Fatalf("windows = %+v, %v", rec, err)
+	}
+	for name, in := range map[string]Input{
+		"bad auth":      {Server: "db2", Auth: "other"},
+		"no user":       {Server: "db2", Auth: AuthSQL},
+		"bad encrypt":   {Server: "db2", Auth: AuthWindows, Encrypt: "bogus"},
+		"long password": {Server: "db2", Auth: AuthSQL, Username: "u", Password: string(bytes.Repeat([]byte("a"), 513))},
+	} {
+		if _, err := Normalize(in); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%s: err = %v, want ErrInvalid", name, err)
+		}
+	}
+}
+
+func TestNormalizeServerAndLabelLimits(t *testing.T) {
+	a := func(n int) string { return string(bytes.Repeat([]byte("a"), n)) }
+	if _, err := Normalize(Input{Server: a(195) + ",1433", Label: "x", Auth: AuthWindows}); err != nil {
+		t.Fatalf("200 characters refused: %v", err)
+	}
+	if _, err := Normalize(Input{Server: a(196) + ",1433", Label: "x", Auth: AuthWindows}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("201 characters: err = %v, want ErrInvalid", err)
+	}
+	if _, err := Normalize(Input{Server: "db", Label: a(201), Auth: AuthWindows}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("long label: err = %v, want ErrInvalid", err)
+	}
+	if _, err := Normalize(Input{Server: "db", Database: a(201), Auth: AuthWindows}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("long database: err = %v, want ErrInvalid", err)
+	}
+}
+
+func TestKeepsPassword(t *testing.T) {
+	cases := []struct {
+		name        string
+		next, prior Recent
+		want        bool
+	}{
+		{"same", Recent{Encrypt: EncryptMandatory}, Recent{Encrypt: EncryptMandatory}, true},
+		{"stricter", Recent{Encrypt: EncryptStrict}, Recent{Encrypt: EncryptMandatory}, true},
+		{"weaker", Recent{Encrypt: EncryptOptional}, Recent{Encrypt: EncryptMandatory}, false},
+		{"optional to mandatory", Recent{Encrypt: EncryptMandatory}, Recent{Encrypt: EncryptOptional}, true},
+		{"trust added", Recent{Encrypt: EncryptMandatory, TrustServerCertificate: true}, Recent{Encrypt: EncryptMandatory}, false},
+		{"trust kept", Recent{Encrypt: EncryptMandatory, TrustServerCertificate: true}, Recent{Encrypt: EncryptMandatory, TrustServerCertificate: true}, true},
+	}
+	for _, c := range cases {
+		if got := KeepsPassword(c.next, c.prior); got != c.want {
+			t.Errorf("%s: KeepsPassword = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

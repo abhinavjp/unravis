@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -469,5 +470,53 @@ func TestKeeperFolderListIsPutBackWhenDifferent(t *testing.T) {
 				t.Fatalf("list is %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+// An uninstall goes on past a removal that fails and ends as "done with leftovers" (D-C-15, INST-17): the item and the reason are
+// listed, the failed step is reported as left, and everything else is still removed.
+func TestUninstallThatCannotRemoveOneThingEndsWithLeftovers(t *testing.T) {
+	user := func(e *testEnv) Options { return e.userOpts() }
+	e := newEnv(t, "1.2.0")
+	priorInstall(user)(e)
+	l := NewLayout(user(e), e.dirs)
+	// Windows refuses to delete the Installed apps entry.
+	e.f.Faults.Set("reg.DeleteKey:"+l.ARPRoot.String()+`\`+ARPKey, errors.New("access denied"))
+
+	res := e.run(OpUninstall, Options{}, UninstallOptions{})
+	if res.Outcome != OutcomeLeftovers {
+		t.Fatalf("outcome = %s, want %s\n%+v\n%s", res.Outcome, OutcomeLeftovers, res, strings.Join(e.log, "\n"))
+	}
+	if res.Outcome.ExitCode() != 5 {
+		t.Errorf("exit code = %d, want 5", res.Outcome.ExitCode())
+	}
+	if res.Message != "Unravis is uninstalled, but some items could not be removed." {
+		t.Errorf("message = %q", res.Message)
+	}
+	if len(res.Left) != 1 || !strings.Contains(res.Left[0], "Registry key") || !strings.Contains(res.Left[0], ARPKey) || !strings.Contains(res.Left[0], "access denied") {
+		t.Errorf("left = %q, want one line naming the registry key and the reason", res.Left)
+	}
+	// The failed step is shown as left; the steps after it still ran.
+	states := map[string]StepState{}
+	for _, ev := range e.evs {
+		states[ev.ID] = ev.State
+	}
+	if states["arp"] != StepLeft {
+		t.Errorf("the arp step ended as %q, want %q", states["arp"], StepLeft)
+	}
+	if states["program-files"] != StepDone {
+		t.Errorf("the step after the failed one ended as %q, want %q", states["program-files"], StepDone)
+	}
+	// Everything else is gone, the Installed apps entry is what is left.
+	for _, p := range []string{l.AppExe, l.StateFile, l.StartMenuLink, l.InstallDir} {
+		if exists(p) {
+			t.Errorf("%s is still there", p)
+		}
+	}
+	if ok, _ := e.f.Reg.KeyExists(l.ARPRoot, ARPKey); !ok {
+		t.Error("the Installed apps entry went although the removal was made to fail")
+	}
+	if !strings.Contains(strings.Join(e.log, "\n"), "uninstall done with 1 item(s) left") {
+		t.Errorf("the log does not say how many items were left:\n%s", strings.Join(e.log, "\n"))
 	}
 }

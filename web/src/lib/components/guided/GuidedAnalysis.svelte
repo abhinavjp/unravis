@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
-  import { GuidedStore } from '../../guided/guided.svelte';
+  import { SHELL_TEXT as S } from '../../copy/guidedShellCopy';
+  import { storeFor } from '../../guided/guided.svelte';
   import { nextTabIndex, railItems, stepOf, stickerFor } from '../../guided/stepModel';
-  import type { SourceNeed } from '../../guided/tools';
+  import { caseSourceIds, type SourceNeed } from '../../guided/tools';
   import { app } from '../../appState.svelte';
   import AfterFix from './AfterFix.svelte';
   import Checklist from './Checklist.svelte';
@@ -24,12 +25,29 @@
   } = $props();
 
   type Panel = 'main' | 'checklist' | 'fix' | 'nearby' | 'export';
-  const store = new GuidedStore(untrack(() => caseId));
+  // One store per case, held in memory: leaving this screen and coming back finds the run, windows and note as they were.
+  const store = storeFor(untrack(() => caseId));
   let panel = $state<Panel>('main');
   let menu = $state<HTMLDetailsElement | null>(null);
   let heading = $state<HTMLHeadingElement | null>(null);
+  // A step change (rail, Previous, Next, a link inside a step) moves the keyboard to the new step title. The first value is read
+  // once, so remounting a case that already has a count does not steal focus.
+  let seenFocus = untrack(() => store.titleFocus);
+  $effect(() => {
+    const wanted = store.titleFocus;
+    if (wanted === seenFocus) return;
+    seenFocus = wanted;
+    if (untrack(() => store.mode !== 'guided' || panel !== 'main')) return;
+    void tick().then(() => document.getElementById('step-title-' + store.step)?.focus());
+  });
 
-  const sourceIds = $derived(app.sources.map((s) => s.id));
+  // Only the sources of this case. The demo has no case sources to read, so it keeps the connected list.
+  const demo = $derived(!!app.info?.demo);
+  const sourceIds = $derived(
+    demo ? app.sources.map((s) => s.id) : store.sourcesState === 'ready' ? caseSourceIds(app.sources, store.auditLabels, store.workspaceDbs) : []
+  );
+  const sourcesWait = $derived(!demo && store.sourcesState === 'loading');
+  const sourcesFailed = $derived(!demo && store.sourcesState === 'failed');
   // SQL, Mongo and host files have no importer yet, so only the audit source and the IIS file can be present.
   const have = $derived<ReadonlySet<SourceNeed>>(new Set<SourceNeed>([...(sourceIds.length > 0 ? ['audit' as const] : []), ...(hasIis ? ['iis' as const] : [])]));
   const stale = $derived(store.outOfDate(sourceIds));
@@ -46,7 +64,16 @@
 
   onMount(() => {
     void store.loadPlan();
-    return () => store.dispose();
+    if (!untrack(() => demo)) void store.loadCaseSources();
+    // Coming back to the window after adding data elsewhere: read what the case holds again.
+    const onFocus = () => { void store.refreshStamp(); if (!demo) void store.loadCaseSources(); };
+    window.addEventListener('focus', onFocus);
+    return () => { window.removeEventListener('focus', onFocus); store.dispose(); };
+  });
+  // Read when the panel opens, and again when an IIS file arrives or goes (`hasIis` is the page's own view of the case's files).
+  $effect(() => {
+    void hasIis;
+    untrack(() => { void store.refreshStamp(); });
   });
 
   function switchMode() {
@@ -74,7 +101,7 @@
 
   <header class="head">
     <div class="titles">
-      <h2 tabindex="-1" bind:this={heading}>{T.heading}</h2>
+      <h2 tabindex="-1" bind:this={heading}>{store.mode === 'guided' ? T.heading : S.manualHeading}</h2>
       <p class="note">{store.mode === 'guided' ? `${T.modeGuidedNow} ${T.intro}` : `${T.modeManualNow} ${T.introManual}`}</p>
     </div>
     <details class="menu" bind:this={menu}>
@@ -96,6 +123,10 @@
   <div id="guided-panel" role="tabpanel" aria-labelledby={'guided-tab-' + panel} class="panel">
     {#if panel === 'checklist'}
       <Checklist {store} {readOnly} />
+    {:else if sourcesWait}
+      <p class="note" role="status">{S.sourcesLoading}</p>
+    {:else if sourcesFailed}
+      <p class="inline-error" role="alert">{S.sourcesFailed}</p>
     {:else if panel === 'fix'}
       <AfterFix {store} {sourceIds} {readOnly} />
     {:else if panel === 'nearby'}

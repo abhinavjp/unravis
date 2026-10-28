@@ -106,6 +106,10 @@ jobs:
       - name: Go - tests
         run: go test ./...
 
+      - name: Release scripts - checksum self-test
+        shell: pwsh
+        run: ./tools/release/Test-Release.ps1
+
       - name: Build the programs and the installer
         # The web step above already built web/dist, so it is skipped here (same as ci.yml).
         # build.ps1 also builds the keeper, the Blackbox and the installer with its embedded payload.

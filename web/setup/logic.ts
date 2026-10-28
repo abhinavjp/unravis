@@ -104,14 +104,19 @@ export function railCurrent(screen: Screen): string {
   return screen === 'failed' ? 'progress' : screen;
 }
 
-/** The rail steps before the current one: done, or not needed (approval when no administrator rights were needed). */
+/**
+ * The rail steps before the current one: done, or not needed (approval when no administrator rights were needed). When the page does
+ * not know (approvalNeeded is null, as after a reload in the middle of a run, because the answer lived only in the page), approval is
+ * shown as neither done nor not needed instead of claiming it was done.
+ */
 export function railPosition(op: Op, screen: Screen, approvalNeeded: boolean | null): { current: string; done: string[]; skipped: string[] } {
   const steps = railSteps(op).map((step) => step.id);
   const current = railCurrent(screen);
   const index = steps.indexOf(current);
   const before = index < 0 ? [] : steps.slice(0, index);
   const skipped = approvalNeeded === false && before.includes('approval') ? ['approval'] : [];
-  const done = before.filter((id) => !skipped.includes(id));
+  const unknown = approvalNeeded === null && before.includes('approval') ? ['approval'] : [];
+  const done = before.filter((id) => !skipped.includes(id) && !unknown.includes(id));
   if (screen === 'done') done.push('done');
   return { current, done, skipped };
 }
@@ -121,6 +126,13 @@ export function welcomeHeading(state: Pick<UIState, 'mode' | 'version' | 'instal
   if (state.mode === 'repair') return 'Repair Unravis ' + state.version;
   if (state.mode === 'uninstall') return 'Remove Unravis';
   return 'Install Unravis';
+}
+
+/** The "In a nutshell" sentence on the Welcome step. Upgrade and repair each say what they do. */
+export function welcomeNutshell(op: Op): string {
+  if (op === 'install') return 'Unravis reads audit logs and server health. It never changes your servers.';
+  if (op === 'repair') return 'Repair puts back program files that are missing or damaged. Your settings, cases, saved connections and recordings stay as they are.';
+  return 'Your cases, saved connections and recordings stay as they are. Only the program files change.';
 }
 
 const workNoun: Record<Op, string> = { install: 'Install', upgrade: 'Upgrade', repair: 'Repair', uninstall: 'Removal' };
@@ -138,6 +150,13 @@ export function failedHeading(result: Pick<Result, 'outcome' | 'op'>): string {
   if (result.outcome === 'rollback-incomplete') return noun + ' did not finish. Some items are left.';
   if (result.outcome === 'cancelled') return noun + ' was cancelled. Nothing was left behind.';
   return noun + ' did not finish. Nothing was left behind.';
+}
+
+/** What a screen reader is told when the window changes screen: where the person is, and on the two end screens how the run ended. */
+export function stepAnnouncement(op: Op, screen: Screen, number: number, count: number, label: string, result: Pick<Result, 'outcome' | 'op' | 'left'> | null): string {
+  if (screen === 'done' && result) return doneHeading(op) + (result.outcome === 'done-with-leftovers' && result.left?.length ? '. Some items are left behind.' : '.');
+  if (screen === 'failed' && result) return failedHeading(result);
+  return 'Step ' + number + ' of ' + count + ': ' + label;
 }
 
 /** Folds the event stream into one row per step, in the order the steps first appeared, keeping the last detail given. */

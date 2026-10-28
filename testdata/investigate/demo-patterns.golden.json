@@ -338,7 +338,7 @@
       ],
       "coverage": 1,
       "dominant": "",
-      "dominantWhy": "No single part holds half of the extra time with a change of the size the mark needs. Outside time was not tested, so the shares cover A, C and P only.",
+      "dominantWhy": "Part C holds 0.73 of the extra time, which is under the change mark. Outside time was not tested, so the shares cover A, C and P only.",
       "oTested": false,
       "oWhy": "There is no IIS source in this case, so outside time cannot be tested.",
       "iisMatched": 0
@@ -578,7 +578,7 @@
         "C: share of the extra time 0.73.",
         "P: share of the extra time 0.09.",
         "O: not tested.",
-        "No one part holds most of the extra time. No single part holds half of the extra time with a change of the size the mark needs. Outside time was not tested, so the shares cover A, C and P only.",
+        "Part C holds 0.73 of the extra time, which is under the change mark. Outside time was not tested, so the shares cover A, C and P only.",
         "Outside time was not tested, so the shares cover A, C and P only."
       ]
     },

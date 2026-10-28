@@ -10,7 +10,6 @@ import (
 	"html/template"
 	"math"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -45,6 +44,9 @@ const (
 	reportNothingText = "Nothing has been analysed in this case yet. Pick a slow stretch and a normal stretch in Guided analysis, then export again."
 	reportNoPayloads  = "No request payloads, no user ids, no connection details, no passwords. Dates in UTC. Unravis only reads."
 	reportMaxText     = 2000
+
+	reportWarnStale     = "The windows or lists changed after the last run. This report holds the earlier run, as it was on screen."
+	reportWarnTruncated = "The read stopped at its limit, so some calls are not in the figures. Narrow the window to read everything."
 )
 
 type reportRequest struct {
@@ -60,6 +62,9 @@ type reportInclude struct {
 	Suspects  *bool `json:"suspects"`
 	Checklist *bool `json:"checklist"`
 	Sources   *bool `json:"sources"`
+	// Warnings are codes, never text: "stale" or "truncated". The server prints a
+	// fixed sentence for each. Anything else is refused.
+	Warnings []string `json:"warnings"`
 }
 
 func (i *reportInclude) on(pick func(*reportInclude) *bool) bool {
@@ -70,6 +75,66 @@ func (i *reportInclude) on(pick func(*reportInclude) *bool) bool {
 		return *v
 	}
 	return true
+}
+
+var reportWarningOrder = []string{"stale", "truncated"}
+
+var reportWarningSentences = map[string]string{"stale": reportWarnStale, "truncated": reportWarnTruncated}
+
+// reportWarningCodes checks the warning codes in a request. It returns false for
+// a code the report does not know, or for a list that is far too long.
+func reportWarningCodes(in *reportInclude) ([]string, bool) {
+	if in == nil {
+		return nil, true
+	}
+	if len(in.Warnings) > 8 {
+		return nil, false
+	}
+	var out []string
+	for _, code := range in.Warnings {
+		if _, known := reportWarningSentences[code]; !known {
+			return nil, false
+		}
+		out = appendOnce(out, code)
+	}
+	return out, true
+}
+
+func appendOnce(list []string, s string) []string {
+	for _, have := range list {
+		if have == s {
+			return list
+		}
+	}
+	return append(list, s)
+}
+
+// reportCautions is the list of fixed sentences printed at the top of the file:
+// the client's codes, the run's own truncation, then the run's read warnings.
+func reportCautions(src reportSource) []string {
+	var codes []string
+	for _, c := range src.Warnings {
+		codes = appendOnce(codes, c)
+	}
+	if src.Read != nil && src.Read.Truncated {
+		codes = appendOnce(codes, "truncated")
+	}
+	var out []string
+	for _, want := range reportWarningOrder {
+		for _, have := range codes {
+			if have == want {
+				out = append(out, reportWarningSentences[want])
+			}
+		}
+	}
+	if src.Read != nil {
+		for _, w := range src.Read.Warnings {
+			if t := clipText(w, reportMaxText); strings.TrimSpace(t) != "" {
+				out = appendOnce(out, t)
+			}
+		}
+	}
+	return out
 }
 
 type reportAnswer struct {
@@ -92,6 +157,8 @@ type reportDoc struct {
 	// Notice is set when nothing was analysed; the sections below it are empty.
 	Notice   string
 	Analysed bool
+	// Cautions are fixed sentences about this file, printed before everything else.
+	Cautions []string
 	Windows  []reportFact
 	Headline string
 	How      reportHow
@@ -113,6 +180,9 @@ type reportDoc struct {
 	ShowChecklist bool
 	Lists         []reportList
 	Views         []reportView
+
+	// TypedNote is the fixed line saying notes are scrubbed.
+	TypedNote string
 
 	Footer string
 }
@@ -167,6 +237,7 @@ type reportSource struct {
 	Items     []casestore.ChecklistItem
 	Views     []casestore.SavedView
 	Include   *reportInclude
+	Warnings  []string // checked codes, see reportWarningCodes
 }
 
 var (
@@ -186,13 +257,14 @@ var (
 // newReportDoc copies the words and numbers a report prints out of the source.
 func newReportDoc(src reportSource) reportDoc {
 	d := reportDoc{
-		Title: clipText(src.Title, 200), CaseID: src.CaseID, Closed: src.Closed,
+		Title: clipText(scrubTypedNote(src.Title), 200), CaseID: src.CaseID, Closed: src.Closed,
 		Generated:     src.Generated.UTC().Format("2 Jan 2006 15:04 UTC"),
 		ShowFigures:   src.Include.on(func(i *reportInclude) *bool { return i.Figures }),
 		ShowSuspects:  src.Include.on(func(i *reportInclude) *bool { return i.Suspects }),
 		ShowSources:   src.Include.on(func(i *reportInclude) *bool { return i.Sources }),
 		ShowChecklist: src.Include.on(func(i *reportInclude) *bool { return i.Checklist }),
 		Footer:        reportNoPayloads,
+		TypedNote:     reportTypedNotes,
 	}
 	if d.Title == "" {
 		d.Title = "Untitled case"
@@ -224,14 +296,15 @@ func newReportDoc(src reportSource) reportDoc {
 		list := reportList{Key: l, Name: reportListNames[l], Items: []reportItem{}}
 		for _, it := range src.Items {
 			if it.List == l {
-				list.Items = append(list.Items, reportItem{Text: clipText(it.Text, reportMaxText), Suspect: it.Suspect})
+				list.Items = append(list.Items, reportItem{Text: clipText(scrubTypedNote(it.Text), reportMaxText), Suspect: it.Suspect})
 			}
 		}
 		d.Lists = append(d.Lists, list)
 	}
 	for _, v := range src.Views {
-		d.Views = append(d.Views, reportView{Name: clipText(v.Name, 200), Tool: v.Tool})
+		d.Views = append(d.Views, reportView{Name: clipText(scrubTypedNote(v.Name), 200), Tool: v.Tool})
 	}
+	d.Cautions = reportCautions(src)
 	return d
 }
 
@@ -470,6 +543,8 @@ p{margin:4px 0 8px}ul{margin:4px 0 8px;padding-left:20px}
 .nutshell{border:1px solid var(--line);background:var(--surface);padding:12px;border-radius:2px}
 .nutshell b{display:block;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--text2)}
 .notice{border:1px dashed var(--grey);padding:12px;border-radius:2px}
+.warnbox{border:1px solid var(--orange);padding:8px 12px;margin:8px 0;border-radius:2px}
+.warnbox b{display:block}.warnbox ul{margin:4px 0 0}
 table{border-collapse:collapse;width:100%;background:var(--surface);font-size:14px}
 th,td{border:1px solid var(--line);padding:4px 8px;text-align:left;vertical-align:top}
 th{background:var(--bg);font-weight:600}
@@ -487,6 +562,7 @@ footer{margin-top:40px;border-top:1px solid var(--line);padding-top:12px;color:v
 <main>
 <h1>{{.Title}}</h1>
 <p class="meta">Case {{.CaseID}} · Report made {{.Generated}}{{if .Closed}} · This case is closed{{end}}</p>
+{{if .Cautions}}<div class="warnbox" role="note"><b>This report has warnings</b><ul>{{range .Cautions}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
 {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
 {{if .Analysed}}
 {{if .Windows}}<p class="meta">{{range $i, $w := .Windows}}{{if $i}} · {{end}}{{$w.Label}}: {{$w.Text}}{{end}}</p>{{end}}
@@ -546,6 +622,7 @@ footer{margin-top:40px;border-top:1px solid var(--line);padding-top:12px;color:v
 {{if .Views}}<h3>Saved views (names only)</h3><ul>{{range .Views}}<li>{{.Name}} <span class="meta">({{.Tool}})</span></li>{{end}}</ul>{{end}}
 {{end}}
 
+<p class="meta">{{.TypedNote}}</p>
 <footer>{{.Footer}}</footer>
 </main>
 </body>
@@ -554,25 +631,12 @@ footer{margin-top:40px;border-top:1px solid var(--line);padding-top:12px;color:v
 
 /* ---------------------------------------------------------------- csv */
 
-// plainNumber is a signed figure such as +733% or -12. A spreadsheet reads it as
-// a number, so it is the one thing that keeps its leading sign.
-var plainNumber = regexp.MustCompile(`^[+-][0-9][0-9.,]*%?$`)
-
-// csvCell stops a spreadsheet from running a typed cell as a formula: a cell that
-// starts with = + - @ or a tab or return gets a leading apostrophe, unless it is
-// a plain signed number.
+// csvCell stops a spreadsheet from running a typed cell as a formula. Every cell
+// goes through the same rule as the request export (spreadsheetSafe), with no
+// exception for signed numbers: a cell that starts with = + - @ or a tab or
+// return gets a leading apostrophe.
 func csvCell(s string) string {
-	if s == "" {
-		return s
-	}
-	switch s[0] {
-	case '=', '+', '-', '@', '\t', '\r':
-		if plainNumber.MatchString(s) {
-			return s
-		}
-		return "'" + s
-	}
-	return s
+	return spreadsheetSafe(s)
 }
 
 func renderReportCSV(d reportDoc) ([]byte, error) {
@@ -589,6 +653,9 @@ func renderReportCSV(d reportDoc) ([]byte, error) {
 	}
 	if d.Notice != "" {
 		row("notice", "", "Cannot test yet", "", "", d.Notice)
+	}
+	for _, c := range d.Cautions {
+		row("warning", "", "Cannot test yet", "", "", c)
 	}
 	if d.Analysed {
 		for _, f := range d.Windows {
@@ -658,6 +725,7 @@ func renderReportCSV(d reportDoc) ([]byte, error) {
 			row("saved-view", v.Name, v.Tool, "", "", "")
 		}
 	}
+	row("note", "", "", "", "", d.TypedNote)
 	row("footer", "", "", "", "", d.Footer)
 	w.Flush()
 	if err := w.Error(); err != nil {
@@ -677,11 +745,22 @@ func (h *handler) caseReport(w http.ResponseWriter, r *http.Request, raw string)
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if (body.Format != reportHTML && body.Format != reportCSV) || (body.Request != nil && !body.Request.validate()) {
-		writeError(w, http.StatusBadRequest, "Request validation failed.")
+	if body.Format != reportHTML && body.Format != reportCSV {
+		writeError(w, http.StatusBadRequest, "The report format must be html or csv.")
 		return
 	}
-	src := reportSource{Request: body.Request, Include: body.Include, Generated: h.reportNow()}
+	if body.Request != nil {
+		if problem := body.Request.problem(); problem != "" {
+			writeError(w, http.StatusBadRequest, problem)
+			return
+		}
+	}
+	codes, known := reportWarningCodes(body.Include)
+	if !known {
+		writeError(w, http.StatusBadRequest, "The report warnings were not recognised.")
+		return
+	}
+	src := reportSource{Request: body.Request, Include: body.Include, Warnings: codes, Generated: h.reportNow()}
 	var c casestore.Case
 	if body.Request != nil {
 		res, read, open, ok := h.runInvestigation(w, r, raw, *body.Request)

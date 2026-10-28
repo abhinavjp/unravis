@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -185,10 +186,9 @@ func run(args []string, getenv func(string) string) error {
 		_ = repo.Close(ctx)
 	}()
 
-	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(*port))
-	listener, err := net.Listen("tcp4", address)
+	listener, err := listenLoopback(*port)
 	if err != nil {
-		return fmt.Errorf("could not listen on loopback address: %w", err)
+		return err
 	}
 	// Listen for Ctrl+C before the session file exists, so an early interrupt
 	// still takes the clean path that removes it.
@@ -261,6 +261,32 @@ func run(args []string, getenv func(string) string) error {
 		}
 		return nil
 	}
+}
+
+// listenLoopback opens the dashboard's listening socket on 127.0.0.1. When the port is taken it says so in plain words and names the
+// next step instead of printing the raw bind error (D-C-18); any other failure keeps the raw error behind a short lead.
+func listenLoopback(port int) (net.Listener, error) {
+	listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err == nil {
+		return listener, nil
+	}
+	if port != 0 && isAddressInUse(err) {
+		return nil, fmt.Errorf("port %d on 127.0.0.1 is already in use. Another Unravis may already be running; close it, or start this one with a different --port (--port 0 picks a free one)", port)
+	}
+	return nil, fmt.Errorf("could not listen on loopback address: %w", err)
+}
+
+// isAddressInUse reports whether a listen error means the port is already taken. Windows reports WSAEADDRINUSE (10048), which is not
+// syscall.EADDRINUSE there, so both are checked; the text is the last resort for a wrapped error that lost its code.
+func isAddressInUse(err error) bool {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		if errno == syscall.EADDRINUSE || uintptr(errno) == 10048 {
+			return true
+		}
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "address already in use") || strings.Contains(text, "only one usage of each socket address")
 }
 
 const (

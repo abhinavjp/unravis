@@ -21,6 +21,7 @@ const (
 	archiveNotKeptText   = "This case is not archived, or its working copy is already gone."
 	checkFirstText       = "Check the case file first."
 	archiveTypedPassText = "Type a passphrase of at least 12 characters for this file."
+	archiveKeyedPassText = "This case has its own key, which seals the file. Leave the passphrase empty."
 	archiveKeyLockedText = "The master key is locked. Unlock it and try again."
 	restoreNeedsFileText = "The case file for this case is not in the folder it was saved to."
 )

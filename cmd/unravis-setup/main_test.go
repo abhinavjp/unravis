@@ -308,6 +308,82 @@ func TestSilentUninstallWithoutConfigKeepsData(t *testing.T) {
 	}
 }
 
+// The silent uninstall's config, end to end through run(): null, false and an empty object keep the cases and saved connections;
+// only an explicit true removes them (D-C-14; the owner ruled that null counts as keep).
+func TestSilentUninstallConfigKeepsOrRemovesData(t *testing.T) {
+	for _, c := range []struct {
+		name, body string
+		gone       bool
+	}{
+		{"whole object null", `{"uninstall":null}`, false},
+		{"deleteCases null", `{"uninstall":{"deleteCases":null}}`, false},
+		{"deleteCases false", `{"uninstall":{"deleteCases":false}}`, false},
+		{"empty object", `{"uninstall":{}}`, false},
+		{"deleteCases true", `{"uninstall":{"deleteCases":true}}`, true},
+	} {
+		rg := newRig(t)
+		if got := run([]string{"--silent", "--config", rg.config(`{"scope":"user"}`)}, rg.env); got != 0 {
+			t.Fatalf("%s: install: exit %d\n%s", c.name, got, rg.out)
+		}
+		// For a just-for-me install the person's data folders are the two APIAuditExplorer folders (layout.go UserData).
+		marker := filepath.Join(rg.dirs.LocalAppData, "APIAuditExplorer", "cases", "case one.db")
+		if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(marker, []byte("case"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rg.out.b.Reset()
+		if got := run([]string{"--silent", "--uninstall", "--config", rg.config(c.body)}, rg.env); got != 0 {
+			t.Fatalf("%s: uninstall: exit %d\n%s", c.name, got, rg.out)
+		}
+		if exists(filepath.Join(setup.DefaultLocation(setup.ScopeUser, rg.dirs), setup.AppExeName)) {
+			t.Errorf("%s: the program is still there", c.name)
+		}
+		if c.gone == exists(marker) {
+			t.Errorf("%s: case data present = %v, want %v\n%s", c.name, exists(marker), !c.gone, rg.out)
+		}
+	}
+}
+
+// A silent uninstall config that cannot be used stops with exit 2, says which key, and changes nothing (INST-14 to INST-16, INST-20).
+func TestSilentUninstallBadConfigExitsTwoAndChangesNothing(t *testing.T) {
+	for _, c := range []struct {
+		name, body string
+		args       []string
+		want       string
+	}{
+		{"quoted true", `{"uninstall":{"deleteCases":"true"}}`, []string{"--silent", "--uninstall"}, "uninstall.deleteCases must be true or false (without quotes)"},
+		{"unknown key inside uninstall", `{"uninstall":{"deleteCase":true}}`, []string{"--silent", "--uninstall"}, `"deleteCase" inside "uninstall"`},
+		{"uninstall object in an install", `{"scope":"user","uninstall":{"deleteCases":true}}`, []string{"--silent"}, "--uninstall"},
+	} {
+		rg := newRig(t)
+		if got := run([]string{"--silent", "--config", rg.config(`{"scope":"user"}`)}, rg.env); got != 0 {
+			t.Fatalf("%s: install: exit %d\n%s", c.name, got, rg.out)
+		}
+		marker := filepath.Join(rg.dirs.LocalAppData, "APIAuditExplorer", "cases", "case one.db")
+		if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(marker, []byte("case"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		before := rg.f.Snapshot()
+		rg.out.b.Reset()
+		args := append(append([]string{}, c.args...), "--config", rg.config(c.body))
+		if got := run(args, rg.env); got != exitInvalid {
+			t.Errorf("%s: exit %d, want %d\n%s", c.name, got, exitInvalid, rg.out)
+		}
+		out := rg.out.String()
+		if !strings.Contains(out, "Setup cannot use the config") || !strings.Contains(out, c.want) || !strings.Contains(out, "Nothing was changed.") {
+			t.Errorf("%s: output %q", c.name, out)
+		}
+		if rg.f.Snapshot() != before || !exists(marker) || !exists(filepath.Join(setup.DefaultLocation(setup.ScopeUser, rg.dirs), setup.AppExeName)) {
+			t.Errorf("%s: the PC changed", c.name)
+		}
+	}
+}
+
 func TestSilentWithoutProgramFilesStops(t *testing.T) {
 	rg := newRig(t)
 	rg.env.payload = func() (*setup.Payload, error) { return nil, errors.New("this setup program has no program files inside.") }

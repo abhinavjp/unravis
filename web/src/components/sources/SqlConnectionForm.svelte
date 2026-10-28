@@ -27,12 +27,13 @@
     const problem = sqlFormProblem(form);
     if (problem === 'server') { failed = true; word = ''; line = SOURCES_TEXT.sqlNeedServer; server?.focus(); return true; }
     if (problem === 'username') { failed = true; word = ''; line = SOURCES_TEXT.sqlNeedUser; return true; }
+    if (form.server.trim().length > 200) { failed = true; word = ''; line = SOURCES_TEXT.sqlServerTooLong; server?.focus(); return true; }
     return false;
   }
 
   async function test() {
     if (busy || invalid()) return;
-    if (form.auth === 'sql' && form.password === '' && !usesKeptPassword(form)) { failed = true; word = 'Failed'; line = CONN_TEXT.testNeedsPassword; return; }
+    if (form.auth === 'sql' && form.password === '' && !usesKeptPassword(form)) { failed = true; word = 'Failed'; line = SOURCES_TEXT.sqlTestNeedPassword; return; }
     busy = 'test'; failed = false; word = ''; line = '';
     try {
       const result = await api.testSqlConnection(sqlTestInput(form));
@@ -47,7 +48,7 @@
     busy = 'save'; failed = false; line = '';
     try {
       const kept = await api.saveSqlConnection(sqlInput(form));
-      line = CONN_TEXT.saved; word = '';
+      line = ''; word = '';
       onSaved?.(kept);
     } catch (error) {
       failed = true; word = ''; line = error instanceof Error && error.message ? error.message : SOURCES_TEXT.sqlNotKept;
@@ -61,7 +62,7 @@
 
 <section class="src panel" aria-labelledby="{uid}-head">
   <h4 id="{uid}-head">{CONN_TEXT.sqlFormHeading}</h4>
-  <p class="lead">{SOURCES_TEXT.sqlIntro}</p>
+  <p class="lead">{CONN_TEXT.sqlFormIntro}</p>
   <div class="field">
     <label for="{uid}-name">{SOURCES_TEXT.sqlName}</label>
     <input id="{uid}-name" type="text" bind:value={form.label} maxlength="200" autocomplete="off" spellcheck="false" onkeydown={onKey} />
@@ -69,7 +70,7 @@
   </div>
   <div class="field">
     <label for="{uid}-server">{SOURCES_TEXT.sqlServer}</label>
-    <input id="{uid}-server" type="text" bind:this={server} bind:value={form.server} maxlength="260" autocomplete="off" autocapitalize="off" spellcheck="false"
+    <input id="{uid}-server" type="text" bind:this={server} bind:value={form.server} maxlength="400" autocomplete="off" autocapitalize="off" spellcheck="false"
       aria-describedby="{uid}-server-hint {uid}-line" aria-invalid={failed && form.server.trim() === '' ? true : undefined} onkeydown={onKey} />
     <p class="hint" id="{uid}-server-hint">{SOURCES_TEXT.sqlServerHint}</p>
   </div>

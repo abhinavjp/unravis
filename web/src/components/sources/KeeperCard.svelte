@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../../lib/api';
-  import { keeperView, type KeeperStatus } from '../../lib/keeper';
+  import { holdBackground, keeperView, onKeeperPreview, trapTarget, type KeeperStatus } from '../../lib/keeper';
   import { KEEPER_TEXT, keeperDuplicatesText, keeperPendingText } from '../../lib/copy/sourcesCopy';
 
   // The key keeper's state on the connections page (P14): not running, not trusted, old saved files to move, or old copies to remove.
@@ -26,43 +26,87 @@
   // Set when the server kept the old copies because a record is not in the keeper yet: the moved card then offers the move again.
   let refused = $state(false);
   let box = $state<HTMLElement | null>(null);
+  // The remove question's own box, so the rest of the page can be held still while it is open; and a note that the question has just
+  // closed, so the focus goes back to the button that opened it.
+  let dialogEl = $state<HTMLElement | null>(null);
+  let back = false;
 
   async function focusCard() {
     await tick();
+    const returning = back;
+    back = false;
     if (!box) return;
-    const target = box.querySelector<HTMLElement>(asking ? '[data-keep]' : '[data-keeper-head]') ?? box.querySelector<HTMLElement>('[data-keeper-done]');
+    // The question opens on "Keep them"; when it has just closed the focus returns to "Remove old copies" (when that button is still
+    // there), otherwise to the card's heading, and last to the "done" sentence.
+    const first = asking ? '[data-keep]' : returning ? '[data-remove-old]' : '[data-keeper-head]';
+    const target = box.querySelector<HTMLElement>(first) ?? box.querySelector<HTMLElement>('[data-keeper-head]') ?? box.querySelector<HTMLElement>('[data-keeper-done]');
     target?.focus();
   }
 
   async function ask(open: boolean) {
     asking = open;
-    if (open) problem = '';
+    if (open) problem = ''; else back = true;
     await focusCard();
   }
 
   async function run(kind: 'retry' | 'move' | 'remove') {
     if (busy) return;
+    // The dialog's buttons are disabled while the request runs, so the focus moves to the dialog box before that, not to the page body.
+    if (kind === 'remove') dialogEl?.focus();
     busy = kind; problem = ''; done = '';
+    // The message waits until the remove question has closed and released the page: an alert shown inside the held (inert) page is not announced.
+    let failure = '';
     if (kind !== 'remove') refused = false;
     try {
       if (kind === 'retry') await onRetry();
       else if (kind === 'move') onStatus(await api.keeperMigrate());
       else { onStatus(await api.keeperRemoveOld(duplicates > 0)); done = KEEPER_TEXT.removed; }
     } catch (error) {
-      problem = error instanceof Error && error.message ? error.message : KEEPER_TEXT.failed;
+      failure = error instanceof Error && error.message ? error.message : KEEPER_TEXT.failed;
       const code = error instanceof ApiError ? error.code : undefined;
       if (code === 'not-verified' || code === 'duplicates-unconfirmed') {
         // The old copies were kept: fetch the counts again so the card shows what still waits (and the move, when anything does).
         refused = code === 'not-verified';
         try { await onRetry(); } catch { /* the message above still says what happened */ }
       }
-    } finally { busy = ''; asking = false; }
+    } finally { busy = ''; asking = false; back = kind === 'remove'; }
+    await tick();
+    problem = failure;
     await focusCard();
   }
 
   function escape(event: KeyboardEvent) {
-    if (event.key === 'Escape' && busy === '') { event.preventDefault(); void ask(false); }
+    if (event.key === 'Escape' && busy === '') { event.preventDefault(); void ask(false); return; }
+    if (event.key !== 'Tab') return;
+    // Tab stays on the dialog's own buttons. While a request runs both are disabled: the focus then rests on the dialog box itself.
+    const dialog = event.currentTarget as HTMLElement;
+    const buttons = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+    const next = trapTarget(buttons.length, buttons.indexOf(document.activeElement as HTMLButtonElement), event.shiftKey);
+    event.preventDefault();
+    if (next >= 0) buttons[next].focus(); else dialog.focus();
   }
+
+  // D-A-35: a screenshot preview named in the address after this page opened (#keeper=migrate and so on) re-reads the page's own
+  // list and the keeper's counts, through the same reader the Try again button uses, so the rows and this card change together.
+  // A read that is already running (busy) makes the page's own refresh, so this one waits for the next change.
+  async function refreshFromPreview() {
+    if (busy !== '') return;
+    try { await onRetry(); } catch { /* the page keeps what it showed */ }
+  }
+  onMount(() => onKeeperPreview(() => void refreshFromPreview()));
+
+  // While the remove question is open the rest of the page is held still (inert). The cleanup runs when the question closes and when
+  // the card itself goes away, so the page can never stay locked.
+  $effect(() => {
+    const dialog = dialogEl;
+    if (!dialog) return;
+    return holdBackground(dialog);
+  });
+
+  // The question belongs to the "moved" card: when the view leaves it the question is dropped, so it does not come back open later.
+  $effect(() => {
+    if (view !== 'moved') asking = false;
+  });
 </script>
 
 <div class="keeper-box" bind:this={box}>
@@ -90,7 +134,7 @@
     {#if duplicates > 0}<p class="hint" data-keeper-duplicates>{keeperDuplicatesText(duplicates)}</p>{/if}
     {#if asking}
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-      <div role="alertdialog" aria-label={KEEPER_TEXT.removeAsk} tabindex="-1" onkeydown={escape}>
+      <div role="alertdialog" aria-modal="true" aria-label={KEEPER_TEXT.removeAsk} tabindex="-1" onkeydown={escape} bind:this={dialogEl}>
         <p class="hint">{KEEPER_TEXT.removeAsk}</p>
         <div class="actions">
           <button type="button" class="btn" disabled={busy !== ''} onclick={() => void run('remove')}>{KEEPER_TEXT.removeYes}</button>
@@ -99,7 +143,7 @@
       </div>
     {:else}
       <div class="actions">
-        <button type="button" class="btn" onclick={() => void ask(true)}>{KEEPER_TEXT.removeOld}</button>
+        <button type="button" class="btn" data-remove-old onclick={() => void ask(true)}>{KEEPER_TEXT.removeOld}</button>
         {#if refused}<button type="button" class="btn" disabled={busy !== ''} onclick={() => void run('move')}>{busy === 'move' ? KEEPER_TEXT.moving : KEEPER_TEXT.moveAgain}</button>{/if}
       </div>
     {/if}

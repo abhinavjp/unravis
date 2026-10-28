@@ -2,6 +2,8 @@
   import { MIN_SAMPLE } from '../lib/thresholds';
   import { tick } from 'svelte';
   import { drillHeading } from '../lib/overview';
+  import { phasesNote } from '../lib/depth';
+  import { phaseSegments } from '../lib/phases';
   import { kindLabel, stateLabel, unknownKindTip } from '../lib/presentation';
   import type { Analysis, Comparison } from '../lib/types';
   import { app, chooseGroup, clearDrill, closeInspector, drillFromIncomplete, drillInto, evidence, exportCSV, loadRequests, navigation, scope, showRecord } from '../lib/appState.svelte';
@@ -52,6 +54,9 @@
   // The request history belongs to the tabs that list requests (B18); Breakdown shows it only once a breakdown filter is applied.
   const showHistory = $derived(activeTab === 'failures' || activeTab === 'incomplete' || activeTab === 'slowest' || (activeTab === 'breakdown' && drillActive));
   const groupLabel = (row: Comparison) => (sourceLabels.get(row.sourceId) ?? 'Source unavailable') + ' · ' + row.outcome;
+  // The Phases pane draws a split or a payload time; when it has neither, it says why instead of hiding the tab.
+  const hasPhases = $derived(!!(selected && (phaseSegments(selected.current.phases ?? null) || (selected.current.phases?.payloadMs != null && Number.isFinite(selected.current.phases.payloadMs)))));
+  const noPhases = $derived(selected ? phasesNote(selected.outcome, hasPhases) : '');
 </script>
 
 <Inspector off={depth !== 2} title={evidenceName} subtitle={operation ? kindLabel(operation.kind ?? 'unknown') + ' · ' + operation.requests.toLocaleString() + ' requests' : ''} tabs={inspectorTabs} active={activeTab} onTab={(id) => evidence.inspectorTab = id} onClose={closeInspector}>
@@ -73,6 +78,7 @@
     <section class="phase-group" aria-label="Where the time goes">
       <p>{sourceLabels.get(selected.sourceId) ?? 'Source unavailable'} · <span title={selected.kind === 'unknown' ? unknownKindTip : undefined}>{kindLabel(selected.kind)}</span> · {selected.outcome}</p>
       <PhaseBar phases={selected.current.phases ?? null} delta={selected.phaseDeltaMs ?? null} />
+      {#if noPhases}<p class="sample-note">{noPhases}</p>{/if}
       <div class="selected-api-stats"><span><strong>{selected.current.count.toLocaleString()}</strong> current timings</span><span><strong>{selected.reference.count.toLocaleString()}</strong> reference timings</span><span><strong>{selected.p95Ratio == null ? 'Unavailable' : '≈ ' + selected.p95Ratio.toFixed(2) + '×'}</strong> P95 vs reference</span>{#if targetMs != null}<span>Target {targetMs} ms: {targetAssessment}</span>{/if}</div>
       {#if selected.current.count < MIN_SAMPLE || selected.reference.count < MIN_SAMPLE}<p class="sample-note">{selected.current.count === 0 ? 'No usable timings in the current period.' : selected.reference.count === 0 ? 'No usable timings in the reference period.' : 'Fewer than ' + MIN_SAMPLE + ' usable timings in at least one period.'} A slowdown comparison needs at least {MIN_SAMPLE} usable timings in each period.<Hint termId="low-sample" /></p>{/if}
     </section>

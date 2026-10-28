@@ -61,5 +61,3 @@ Press Glossary in the header for plain-words meanings of the terms Unravis uses.
 ## Help inside Unravis
 
 The Glossary button in the header opens Help. Help holds the glossary and the same pages as this guide. Press Open the user guide in Help to read them. The pictures are left out in the app. Each picture shows a short line of text instead.
-
-Screens in this part: `p13-guide-index`, `p13-guide-page`.

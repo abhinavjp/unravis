@@ -72,6 +72,7 @@
     --accent-ink: #ffffff;
     --warn: #96600a;
     --bad: #b02a3d;
+    --tone-ok: #176b43;
     --pending: #5b6878;
     /* Status sticker inks, used by the setup window only: 4.5:1 against their own fill and 3:1 for the edge on every surface. The app keeps its own tone tokens. */
     --setup-ok: #176b43;
@@ -119,6 +120,7 @@
   --accent-ink: #ffffff;
   --warn: #96600a;
   --bad: #b02a3d;
+  --tone-ok: #176b43;
   --pending: #5b6878;
   /* Status sticker inks, used by the setup window only: 4.5:1 against their own fill and 3:1 for the edge on every surface. The app keeps its own tone tokens. */
   --setup-ok: #176b43;

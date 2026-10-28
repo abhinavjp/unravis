@@ -23,6 +23,7 @@ const z = loadTypeScript('src/lib/zoom.ts');
 const brushLib = loadTypeScript('src/lib/zoomBrush.ts');
 const { zoomCopy, allZoomStrings } = loadTypeScript('src/lib/copy/zoomCopy.ts');
 const { help } = loadTypeScript('src/lib/copy/helpCopy.ts');
+const { ZOOM_NOTES } = loadTypeScript('src/lib/copy/screenCopy.ts');
 const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
 const { compile } = require('svelte/compiler');
@@ -45,7 +46,7 @@ const HelpNote = loadComponent('src/components/HelpNote.svelte', (request) => ({
   '../lib/copy/helpCopy': { help }, '../lib/eli10.svelte': { eli10: { on: false } }
 })[request]);
 const Strip = loadComponent('src/components/ZoomStrip.svelte', (request) => ({
-  '../lib/zoom': z, '../lib/zoomBrush': brushLib, '../lib/copy/zoomCopy': { zoomCopy }, './HelpNote.svelte': { default: HelpNote }
+  '../lib/zoom': z, '../lib/zoomBrush': brushLib, '../lib/copy/zoomCopy': { zoomCopy }, '../lib/copy/screenCopy': { ZOOM_NOTES }, './HelpNote.svelte': { default: HelpNote }
 })[request]);
 const { render } = require('svelte/server');
 const noop = () => {};
@@ -313,7 +314,7 @@ test('every strip string passes the copy lint, and the removed copy and store st
 });
 
 test('the live region carries the range, the preview and a spoken reason', () => {
-  assert.match(source, /role="status" aria-live="polite">\{model\.rangeLine\} \{model\.message\} \{model\.notice\} \{announcement\} \{previewText\} \{spoken\}/);
+  assert.match(source, /role="status" aria-live="polite">\{model\.rangeLine\} \{model\.message\} \{model\.notice\} \{dragNote\} \{announcement\} \{previewText\} \{spoken\}/);
   assert.match(html(hourModel, { announcement: 'Part 3 of 60: 14:02 to 14:03 UTC.' }), /role="status"[^>]*>[^<]*Showing 24 Oct 14:00 to 15:00 UTC\.[^<]*Part 3 of 60/);
 });
 
@@ -332,7 +333,7 @@ test('App wires the strip: investigate, back to the previous window, the brush, 
 
 test('the strip file imports nothing but the zoom libraries, the copy, the help note and Svelte', () => {
   const imports = [...source.matchAll(/^\s*import .* from '([^']+)'/gm)].map((match) => match[1]);
-  assert.deepEqual(imports.sort(), ['../lib/copy/zoomCopy', '../lib/zoom', '../lib/zoomBrush', './HelpNote.svelte']);
+  assert.deepEqual(imports.sort(), ['../lib/copy/screenCopy', '../lib/copy/zoomCopy', '../lib/zoom', '../lib/zoomBrush', './HelpNote.svelte']);
   assert.ok(DAY > 0);
 });
 

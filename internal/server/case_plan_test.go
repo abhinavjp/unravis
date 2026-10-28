@@ -66,7 +66,7 @@ func TestSavedViewsRoundTrip(t *testing.T) {
 		if got := viewsOf(t, e, id); len(got) != 0 {
 			t.Fatalf("fresh case has views: %v", got)
 		}
-		res := e.json(http.MethodPost, base, `{"name":"Busy routes","tool":"routes","settings":{"route":"Payroll.Run","minMs":500}}`)
+		res := e.json(http.MethodPost, base, `{"name":"Busy routes","tool":"slowest-apis","settings":{"route":"Payroll.Run","minMs":500}}`)
 		if res.Code != http.StatusOK {
 			t.Fatalf("save = %d %s", res.Code, res.Body)
 		}
@@ -76,7 +76,7 @@ func TestSavedViewsRoundTrip(t *testing.T) {
 			t.Fatalf("saved = %+v", v)
 		}
 		// An id replaces the view in place.
-		res = e.json(http.MethodPost, base, fmt.Sprintf(`{"id":%q,"name":"Busy routes v2","tool":"routes","settings":{}}`, v.ID))
+		res = e.json(http.MethodPost, base, fmt.Sprintf(`{"id":%q,"name":"Busy routes v2","tool":"slowest-apis","settings":{}}`, v.ID))
 		if res.Code != http.StatusOK {
 			t.Fatalf("replace = %d %s", res.Code, res.Body)
 		}
@@ -85,7 +85,7 @@ func TestSavedViewsRoundTrip(t *testing.T) {
 			t.Fatalf("after replace = %+v", got)
 		}
 		// A valid id that is not there is "view-not-found".
-		res = e.json(http.MethodPost, base, `{"id":"`+strings.Repeat("a", 32)+`","name":"x","tool":"routes","settings":{}}`)
+		res = e.json(http.MethodPost, base, `{"id":"`+strings.Repeat("a", 32)+`","name":"x","tool":"slowest-apis","settings":{}}`)
 		if res.Code != http.StatusNotFound || failureOf(t, res).Reason != "view-not-found" {
 			t.Errorf("unknown id = %d %s", res.Code, res.Body)
 		}
@@ -108,20 +108,20 @@ func TestSavedViewsRefuseWhatBreaksARule(t *testing.T) {
 	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
 		base := "/api/cases/" + id + "/views"
 		bad := map[string]string{
-			"no name":              `{"name":"","tool":"routes","settings":{}}`,
-			"name too long":        `{"name":"` + strings.Repeat("n", 61) + `","tool":"routes","settings":{}}`,
-			"control character":    `{"name":"a\u0001b","tool":"routes","settings":{}}`,
+			"no name":              `{"name":"","tool":"slowest-apis","settings":{}}`,
+			"name too long":        `{"name":"` + strings.Repeat("n", 61) + `","tool":"slowest-apis","settings":{}}`,
+			"control character":    `{"name":"a\u0001b","tool":"slowest-apis","settings":{}}`,
 			"tool not a slug":      `{"name":"x","tool":"a b","settings":{}}`,
 			"no tool":              `{"name":"x","settings":{}}`,
-			"settings an array":    `{"name":"x","tool":"routes","settings":[1]}`,
-			"settings a string":    `{"name":"x","tool":"routes","settings":"x"}`,
-			"password key":         `{"name":"x","tool":"routes","settings":{"password":"p"}}`,
-			"nested token key":     `{"name":"x","tool":"routes","settings":{"a":{"Api-Key":"p"}}}`,
-			"pasted address":       `{"name":"x","tool":"routes","settings":{"note":"mongodb://h/db"}}`,
-			"bad id shape":         `{"id":"nope","name":"x","tool":"routes","settings":{}}`,
-			"unknown body field":   `{"name":"x","tool":"routes","settings":{},"extra":1}`,
+			"settings an array":    `{"name":"x","tool":"slowest-apis","settings":[1]}`,
+			"settings a string":    `{"name":"x","tool":"slowest-apis","settings":"x"}`,
+			"password key":         `{"name":"x","tool":"slowest-apis","settings":{"password":"p"}}`,
+			"nested token key":     `{"name":"x","tool":"slowest-apis","settings":{"a":{"Api-Key":"p"}}}`,
+			"pasted address":       `{"name":"x","tool":"slowest-apis","settings":{"note":"mongodb://h/db"}}`,
+			"bad id shape":         `{"id":"nope","name":"x","tool":"slowest-apis","settings":{}}`,
+			"unknown body field":   `{"name":"x","tool":"slowest-apis","settings":{},"extra":1}`,
 			"not json":             `{`,
-			"settings very nested": `{"name":"x","tool":"routes","settings":` + strings.Repeat(`{"a":`, 12) + `1` + strings.Repeat(`}`, 12) + `}`,
+			"settings very nested": `{"name":"x","tool":"slowest-apis","settings":` + strings.Repeat(`{"a":`, 12) + `1` + strings.Repeat(`}`, 12) + `}`,
 		}
 		for name, body := range bad {
 			res := e.json(http.MethodPost, base, body)
@@ -132,7 +132,7 @@ func TestSavedViewsRefuseWhatBreaksARule(t *testing.T) {
 				t.Errorf("%s: the answer repeats the input: %s", name, res.Body)
 			}
 		}
-		big := `{"name":"x","tool":"routes","settings":{"a":"` + strings.Repeat("z", casestore.MaxViewSettings) + `"}}`
+		big := `{"name":"x","tool":"slowest-apis","settings":{"a":"` + strings.Repeat("z", casestore.MaxViewSettings) + `"}}`
 		res := e.json(http.MethodPost, base, big)
 		if res.Code != http.StatusRequestEntityTooLarge || failureOf(t, res).Reason != "plan-too-large" {
 			t.Errorf("big settings = %d %s", res.Code, res.Body)
@@ -148,7 +148,7 @@ func TestSavedViewsHundredThenTheCap(t *testing.T) {
 	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
 		base := "/api/cases/" + id + "/views"
 		for i := 0; i < 100; i++ {
-			body := fmt.Sprintf(`{"name":"View %d","tool":"routes","settings":{"n":%d}}`, i, i)
+			body := fmt.Sprintf(`{"name":"View %d","tool":"slowest-apis","settings":{"n":%d}}`, i, i)
 			if res := e.json(http.MethodPost, base, body); res.Code != http.StatusOK {
 				t.Fatalf("view %d = %d %s", i, res.Code, res.Body)
 			}
@@ -157,11 +157,11 @@ func TestSavedViewsHundredThenTheCap(t *testing.T) {
 			t.Fatalf("views = %d, want 100", len(got))
 		}
 		for i := 100; i < casestore.MaxSavedViews; i++ {
-			if res := e.json(http.MethodPost, base, fmt.Sprintf(`{"name":"View %d","tool":"routes","settings":{}}`, i)); res.Code != http.StatusOK {
+			if res := e.json(http.MethodPost, base, fmt.Sprintf(`{"name":"View %d","tool":"slowest-apis","settings":{}}`, i)); res.Code != http.StatusOK {
 				t.Fatalf("view %d = %d %s", i, res.Code, res.Body)
 			}
 		}
-		res := e.json(http.MethodPost, base, `{"name":"One too many","tool":"routes","settings":{}}`)
+		res := e.json(http.MethodPost, base, `{"name":"One too many","tool":"slowest-apis","settings":{}}`)
 		if res.Code != http.StatusRequestEntityTooLarge || failureOf(t, res).Reason != "plan-full" {
 			t.Fatalf("201st view = %d %s", res.Code, res.Body)
 		}
@@ -170,7 +170,7 @@ func TestSavedViewsHundredThenTheCap(t *testing.T) {
 		}
 		// Replacing at the cap still works.
 		first := viewsOf(t, e, id)[0]
-		res = e.json(http.MethodPost, base, fmt.Sprintf(`{"id":%q,"name":"Renamed","tool":"routes","settings":{}}`, first.ID))
+		res = e.json(http.MethodPost, base, fmt.Sprintf(`{"id":%q,"name":"Renamed","tool":"slowest-apis","settings":{}}`, first.ID))
 		if res.Code != http.StatusOK {
 			t.Errorf("replace at the cap = %d %s", res.Code, res.Body)
 		}
@@ -244,7 +244,7 @@ func TestChecklistLists(t *testing.T) {
 
 func TestPlanRoutesOnAClosedCaseReadButDoNotWrite(t *testing.T) {
 	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
-		if res := e.json(http.MethodPost, "/api/cases/"+id+"/views", `{"name":"Kept","tool":"routes","settings":{}}`); res.Code != http.StatusOK {
+		if res := e.json(http.MethodPost, "/api/cases/"+id+"/views", `{"name":"Kept","tool":"slowest-apis","settings":{}}`); res.Code != http.StatusOK {
 			t.Fatal(res.Body)
 		}
 		if res := e.json(http.MethodPost, "/api/cases/"+id+"/checklist", `{"list":"todo","text":"Kept"}`); res.Code != http.StatusOK {
@@ -257,7 +257,7 @@ func TestPlanRoutesOnAClosedCaseReadButDoNotWrite(t *testing.T) {
 			t.Error("a closed case lost its views or items on read")
 		}
 		for name, res := range map[string]*httptest.ResponseRecorder{
-			"save view": e.json(http.MethodPost, "/api/cases/"+id+"/views", `{"name":"New","tool":"routes","settings":{}}`),
+			"save view": e.json(http.MethodPost, "/api/cases/"+id+"/views", `{"name":"New","tool":"slowest-apis","settings":{}}`),
 			"add item":  e.json(http.MethodPost, "/api/cases/"+id+"/checklist", `{"list":"todo","text":"New"}`),
 			"delete":    e.json(http.MethodDelete, "/api/cases/"+id+"/views/"+viewsOf(t, e, id)[0].ID, ""),
 		} {

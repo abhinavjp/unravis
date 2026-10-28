@@ -11,9 +11,7 @@ func (b *Bridge) activity(ctx context.Context, raw json.RawMessage) (any, error)
 	if err := strictArgs(raw, &input); err != nil {
 		return nil, err
 	}
-	if input.Limit == 0 {
-		input.Limit = 20
-	}
+	input.Limit = defaultLimit(raw, input.Limit, 20)
 	if _, err := audit.ActivityQuery(input); err != nil {
 		return nil, err
 	}

@@ -173,6 +173,9 @@ export const isCaseGone = (error: unknown): boolean => error instanceof CaseApiE
 /** True when the case changed in another tab since this page read it (409 case-changed, message M2). The page reloads it. */
 export const isCaseChanged = (error: unknown): boolean => error instanceof CaseApiError && error.status === 409 && error.reason === 'case-changed';
 
+/** True when the case has its own key and it is not entered now (423, reason case-locked): for example another tab locked it. */
+export const isCaseLocked = (error: unknown): boolean => error instanceof CaseApiError && error.status === 423 && error.reason === 'case-locked';
+
 /** The header that carries what the page believes about the case. */
 export const EXPECT_STATE_HEADER = 'X-Expect-State';
 
@@ -379,9 +382,9 @@ export const retryInPage = (error: unknown): boolean => error instanceof CaseApi
  * Erases the case. The confirmation is the case code the person typed (the first 8 characters of the id; the server also takes the whole
  * id). Without one the whole id is sent, for callers that have no typed code.
  */
-export async function eraseCase(id: string, typed?: string, signal?: AbortSignal): Promise<void> {
+export async function eraseCase(id: string, typed?: string, believed?: CaseState, signal?: AbortSignal): Promise<void> {
   const confirm = typed !== undefined ? typed.trim() : id;
-  await send(casePath(id), { method: 'DELETE', body: JSON.stringify({ confirm }) }, signal);
+  await send(casePath(id), { method: 'DELETE', body: JSON.stringify({ confirm }), ...expecting(believed) }, signal);
 }
 
 export async function listImports(id: string, signal?: AbortSignal): Promise<ImportRecord[]> {

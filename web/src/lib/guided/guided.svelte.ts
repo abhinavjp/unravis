@@ -1,12 +1,15 @@
-import { CaseApiError } from '../cases';
+import { CaseApiError, casePath, json, listImports, send } from '../cases';
+import { api } from '../api';
+import { parseWorkspace, type WorkspaceDatabase } from '../caseWorkspace';
 import { CHECKLIST_ERRORS, GUIDED_TEXT, SAVED_VIEW_ERRORS, refusalText } from '../copy/guidedCopy';
+import { SHELL_TEXT } from '../copy/guidedShellCopy';
 import {
   addChecklistItem, buildReport, deleteChecklistItem, deleteView, listChecklist, listViews, runInvestigation, saveView, updateChecklistItem
 } from './api';
 import { emptyFrame, quickPick, requestKey, toRequest, type Frame, type QuickPick } from './frame';
 import { InFlight } from './inflight';
-import { clampStep, suggestedChecks, type RunPhase } from './stepModel';
-import { cleanViewName, viewSettings, viewsFull, type ToolId } from './tools';
+import { clampStep, type RunPhase } from './stepModel';
+import { cleanViewName, dataStamp, itemTooLong, originChecks, stampChanged, viewNameTooLong, viewSettings, viewsFull, type ToolId } from './tools';
 import type { ChecklistItem, ChecklistList, InvestigationAnswer, InvestigationRequest, ReportAnswer, ReportInclude, SavedView } from './types';
 
 /**
@@ -32,6 +35,31 @@ function failureText(cause: unknown, table: Readonly<Record<string, string>>, fa
   return cause instanceof CaseApiError ? refusalText(cause.reason ?? '', table, fallback) : fallback;
 }
 
+/** The source tags of a case: GET /api/cases/{id}/sources. Only the id and the kind are read. */
+async function listSourceTags(caseId: string): Promise<Array<{ id: number; kind: string }>> {
+  const body = await json<{ sources?: unknown }>(await send(casePath(caseId, '/sources')));
+  const list = Array.isArray(body.sources) ? body.sources : [];
+  return list.flatMap((raw) => {
+    const r = raw as { id?: unknown; kind?: unknown };
+    return typeof r.id === 'number' ? [{ id: r.id, kind: typeof r.kind === 'string' ? r.kind : '' }] : [];
+  });
+}
+
+/** The database names of the case's audit Mongo sources: GET /api/cases/{id}/mongo-sources. Only the label (the database name) is read. */
+async function listAuditLabels(caseId: string): Promise<string[]> {
+  const body = await json<{ sources?: unknown }>(await send(casePath(caseId, '/mongo-sources')));
+  const list = Array.isArray(body.sources) ? body.sources : [];
+  return list.flatMap((raw) => {
+    const r = raw as { label?: unknown; classification?: unknown };
+    return typeof r.label === 'string' && r.label !== '' && (r.classification === undefined || r.classification === 'audit') ? [r.label] : [];
+  });
+}
+
+/** The databases the case's saved workspace names. A case with no workspace, or one that cannot be read, names none. */
+async function listWorkspaceDatabases(caseId: string): Promise<WorkspaceDatabase[]> {
+  try { return parseWorkspace(await api.caseWorkspace(caseId))?.mongo?.databases ?? []; } catch { return []; }
+}
+
 export class GuidedStore {
   caseId: string;
   mode = $state<Mode>('guided');
@@ -44,15 +72,28 @@ export class GuidedStore {
   error = $state('');
   /** The key of the request the answer on screen was made from. */
   answeredKey = $state('');
+  /** What the case holds now (kept files and source tags) as one short fingerprint. null until it has been read. */
+  stamp = $state<string | null>(null);
+  /** What the case held when the answer on screen was made. */
+  answeredStamp = $state<string | null>(null);
   items = $state.raw<ChecklistItem[]>([]);
   views = $state.raw<SavedView[]>([]);
   planLoaded = $state(false);
   planError = $state('');
+  /** Goes up on every step change. The page watches it and moves the keyboard to the new step title. */
+  titleFocus = $state(0);
   viewError = $state('');
   report = $state.raw<ReportAnswer | null>(null);
   reportState = $state<'idle' | 'building' | 'failed'>('idle');
   reportError = $state('');
   tool = $state<ToolId | ''>('');
+  /** The note typed in Manual tools and not yet saved. Kept with the store so leaving the screen does not lose it. */
+  noteDraft = $state('');
+  /** Reading which sources belong to this case. The page sends no source id until this is 'ready'. */
+  sourcesState = $state<'loading' | 'ready' | 'failed'>('loading');
+  /** The database names of the case's own audit sources, and the databases its workspace names. */
+  auditLabels = $state.raw<string[]>([]);
+  workspaceDbs = $state.raw<WorkspaceDatabase[]>([]);
 
   #run = 0;
   /** The request the answer on screen was made from. A report is built from this one, so it matches what the person sees. */
@@ -63,6 +104,8 @@ export class GuidedStore {
   // A second click while a save is on its way would write the same line twice.
   #writing = false;
   #bulk = false;
+  #stampRun = 0;
+  #sourcesRun = 0;
 
   constructor(caseId: string) {
     this.caseId = caseId;
@@ -77,9 +120,45 @@ export class GuidedStore {
     return request ? requestKey(request) : '';
   }
 
-  /** True when an answer is on screen and the windows, sources or lists have changed since it was made. */
+  /** True when an answer is on screen and the windows, sources or lists have changed since it was made, or the case holds other files or sources than it did. */
   outOfDate(sourceIds: readonly string[]): boolean {
-    return !!this.answer && this.phase !== 'running' && this.answeredKey !== '' && this.keyFor(sourceIds) !== this.answeredKey;
+    if (!this.answer || this.phase === 'running' || this.answeredKey === '') return false;
+    return this.keyFor(sourceIds) !== this.answeredKey || stampChanged(this.answeredStamp, this.stamp);
+  }
+
+  /**
+   * Reads the case's kept files and source tags and keeps their fingerprint. Returns the fingerprint. A read that fails keeps the last one, so
+   * a network blip never shows a false Out of date. A read that has been replaced by a later one returns its own value but does not store it.
+   */
+  async refreshStamp(): Promise<string | null> {
+    const mine = ++this.#stampRun;
+    try {
+      const [imports, tags] = await Promise.all([listImports(this.caseId), listSourceTags(this.caseId)]);
+      const value = dataStamp(imports, tags);
+      if (mine === this.#stampRun) this.stamp = value;
+      return value;
+    } catch {
+      return this.stamp;
+    }
+  }
+
+  /**
+   * Reads which sources belong to this case. The first read shows 'loading'; a later read (back to the window) keeps what is shown until it
+   * answers, and a later failure keeps the last good list. Read only.
+   */
+  async loadCaseSources(): Promise<void> {
+    const mine = ++this.#sourcesRun;
+    if (this.sourcesState === 'failed') this.sourcesState = 'loading';
+    try {
+      const [labels, databases] = await Promise.all([listAuditLabels(this.caseId), listWorkspaceDatabases(this.caseId)]);
+      if (mine !== this.#sourcesRun) return;
+      this.auditLabels = labels;
+      this.workspaceDbs = databases;
+      this.sourcesState = 'ready';
+    } catch {
+      if (mine !== this.#sourcesRun) return;
+      if (this.sourcesState !== 'ready') this.sourcesState = 'failed';
+    }
   }
 
   setMode(mode: Mode): void {
@@ -87,7 +166,7 @@ export class GuidedStore {
     writeMode(this.caseId, mode);
   }
 
-  goTo(step: number): void { this.step = clampStep(step); }
+  goTo(step: number): void { this.step = clampStep(step); this.titleFocus++; }
 
   pick(pick: QuickPick, now: number): void { this.frame = { ...this.frame, ...quickPick(pick, now) }; }
 
@@ -102,10 +181,14 @@ export class GuidedStore {
     this.phase = 'running';
     this.error = '';
     try {
+      // The fingerprint is read just before the run, so it names what this run is about to read.
+      const stamp = await this.refreshStamp();
+      if (mine !== this.#run) return false;
       const answer = await runInvestigation(this.caseId, request, controller.signal);
       if (mine !== this.#run) return false;
       this.answer = answer;
       this.answeredKey = requestKey(request);
+      this.answeredStamp = stamp;
       this.#answered = request;
       this.phase = 'done';
       return true;
@@ -127,7 +210,7 @@ export class GuidedStore {
     if (this.phase === 'running') this.phase = this.answer ? 'done' : 'idle';
   }
 
-  dispose(): void { this.cancel(); this.#plan++; }
+  dispose(): void { this.cancel(); this.#plan++; this.#stampRun++; this.#sourcesRun++; }
 
   /* ------------------------------------------------------------- checklist and views */
 
@@ -150,14 +233,18 @@ export class GuidedStore {
   async addItem(list: ChecklistList, text: string, suspect?: string): Promise<boolean> {
     const clean = text.trim();
     if (!clean || this.#writing) return false;
+    // Over the limit is refused and said, never cut in silence.
+    if (itemTooLong(clean)) { this.planError = GUIDED_TEXT.itemTooLong; return false; }
     this.#writing = true;
     try {
-      const item = await addChecklistItem(this.caseId, { list, text: clean.slice(0, 300), ...(suspect ? { suspect } : {}) });
+      const item = await addChecklistItem(this.caseId, { list, text: clean, ...(suspect ? { suspect } : {}) });
       this.items = [...this.items, item];
       this.planError = '';
       return true;
     } catch (cause) {
-      this.planError = failureText(cause, CHECKLIST_ERRORS, 'That item could not be saved.');
+      this.planError = cause instanceof CaseApiError && cause.reason === 'plan-invalid'
+        ? SHELL_TEXT.itemNotPlain
+        : failureText(cause, CHECKLIST_ERRORS, 'That item could not be saved.');
       if (cause instanceof CaseApiError && cause.reason === 'item-not-found') void this.loadPlan();
       return false;
     } finally {
@@ -165,14 +252,14 @@ export class GuidedStore {
     }
   }
 
-  /** Adds every check Step 10 suggests that is not on the list yet. Returns how many were added. */
+  /** Adds the checks of the red and orange suspects of Step 10 that are not on the list yet. Returns how many were added. */
   async addSuggested(): Promise<number> {
     const result = this.result;
     if (!result || this.#bulk) return 0;
     this.#bulk = true;
     let added = 0;
     try {
-      for (const check of suggestedChecks(result, this.items)) {
+      for (const check of originChecks(result, this.items)) {
         if (!(await this.addItem('todo', check.text, check.suspect))) break;
         added++;
       }
@@ -208,6 +295,7 @@ export class GuidedStore {
   async saveCurrentView(name: string, tool: string, extra: { minCalls?: number; match?: string } = {}): Promise<boolean> {
     const clean = cleanViewName(name);
     if (!clean) { this.viewError = GUIDED_TEXT.viewNameMissing; return false; }
+    if (viewNameTooLong(name)) { this.viewError = SHELL_TEXT.viewNameTooLong; return false; }
     if (viewsFull(this.views)) { this.viewError = GUIDED_TEXT.viewsFull; return false; }
     if (this.#writing) return false;
     this.#writing = true;
@@ -258,3 +346,40 @@ export class GuidedStore {
     }
   }
 }
+
+/* ----------------------------------------------------------------- one store per case, in memory */
+
+const MAX_KEPT_STORES = 5;
+/** Insertion order is the order of last use: the first key is the one to drop. */
+const kept = new Map<string, GuidedStore>();
+
+/**
+ * The store of this case. Coming back to the analysis finds the run, windows, step, tool and unsaved note where they were left. A store is
+ * returned only for the case id it was made for. Memory only: nothing is written anywhere.
+ */
+export function storeFor(caseId: string): GuidedStore {
+  const held = kept.get(caseId);
+  if (held && held.caseId === caseId) {
+    kept.delete(caseId);
+    kept.set(caseId, held);
+    return held;
+  }
+  const made = new GuidedStore(caseId);
+  kept.set(caseId, made);
+  while (kept.size > MAX_KEPT_STORES) {
+    const oldest = kept.keys().next().value;
+    if (oldest === undefined) break;
+    kept.get(oldest)?.dispose();
+    kept.delete(oldest);
+  }
+  return made;
+}
+
+/** Drops the store of a case, for a case that has gone. Nothing calls it yet; the cap above bounds the memory meanwhile. */
+export function releaseStore(caseId: string): void {
+  kept.get(caseId)?.dispose();
+  kept.delete(caseId);
+}
+
+/** For tests: how many stores are held now. */
+export const keptStoreCount = (): number => kept.size;

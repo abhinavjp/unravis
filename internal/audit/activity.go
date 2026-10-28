@@ -21,10 +21,10 @@ type ActivityReader interface {
 
 func ActivityQuery(input ActivityInput) (Query, error) {
 	if input.End.Sub(input.Start) > 24*time.Hour {
-		return Query{}, fmt.Errorf("%w: activity window must be at most24hours", ErrInvalidInput)
+		return Query{}, fmt.Errorf("%w: activity window must be at most 24 hours", ErrInvalidInput)
 	}
 	if input.Limit < 1 || input.Limit > MaxPageSize || len(input.Cursor) > 4096 {
-		return Query{}, fmt.Errorf("%w: invalid activity page", ErrInvalidInput)
+		return Query{}, fmt.Errorf("%w: invalid activity page: limit must be 1 to 100 and the cursor at most 4096 bytes", ErrInvalidInput)
 	}
 	// Requests' common validator requires a preceding reference; it is an internal
 	// pagination adapter only. Activity performs no reference query or comparison.

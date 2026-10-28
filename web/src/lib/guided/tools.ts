@@ -1,6 +1,6 @@
 import type { Frame } from './frame';
-import { fmtChange, fmtMs, markFor, stepOf, type ChangeMark } from './stepModel';
-import type { Readiness, Result, SavedView } from './types';
+import { fmtChange, fmtMs, markFor, stepOf, suggestedChecks, suspectGroups, type ChangeMark, type StickerTone } from './stepModel';
+import type { ChecklistItem, Readiness, Result, SavedView } from './types';
 
 /**
  * Manual tools: the same facts as the guided steps, one tool at a time, in any order. This file lists the tools, says whether each one can run
@@ -47,7 +47,13 @@ export const TOOLS: readonly ToolDef[] = [
 
 export const toolById = (id: string): ToolDef | undefined => TOOLS.find((t) => t.id === id);
 
-export interface ToolState { word: Readiness; missing: SourceNeed[]; why: string }
+/** The four fixed readiness words, plus Waiting for a tool that has nothing to show until the steps have been run. */
+export type ToolWord = Readiness | 'Waiting';
+
+export interface ToolState { word: ToolWord; missing: SourceNeed[]; why: string }
+
+/** Tools that read the audit source on their own, with their own button. They need no guided run, so they are never Waiting. */
+const READS_ITSELF: ReadonlySet<ToolId> = new Set<ToolId>(['slowest-calls', 'nearby-activity']);
 
 export interface ToolContext {
   /** The kinds of source the case holds. The audit source is the one every guided tool reads. */
@@ -57,7 +63,8 @@ export interface ToolContext {
 
 /**
  * Whether a tool can run. A tool whose source is missing is "Cannot test yet" and names the source. With an engine answer, a tool that shows a
- * step takes the step's own word; without one it is "Ready" only when every source it needs is in the case.
+ * step takes the step's own word. Without an engine answer a tool that reads the run is Waiting; Slowest calls and Nearby activity are Ready, and
+ * the time split without IIS is Partly ready.
  */
 export function toolState(tool: ToolDef, ctx: ToolContext): ToolState {
   // IIS only completes the time split, so beside the audit source it is a soft need: a tool that lists both runs without it.
@@ -67,7 +74,25 @@ export function toolState(tool: ToolDef, ctx: ToolContext): ToolState {
   const step = tool.step !== undefined ? stepOf(ctx.result, tool.step) : undefined;
   if (step) return { word: step.readiness, missing: [], why: step.reasons[0] ?? '' };
   const partly = tool.needs.some((n) => soft(n) && !ctx.have.has(n));
-  return { word: partly ? 'Partly ready' : 'Ready', missing: [], why: partly ? 'The audit part runs. The outside time needs an IIS log source.' : '' };
+  if (partly) return { word: 'Partly ready', missing: [], why: 'The audit part runs. The outside time needs an IIS log source.' };
+  // Source present, nothing run yet: a card with no numbers behind it must not read as a pass.
+  if (!ctx.result && !READS_ITSELF.has(tool.id)) return { word: 'Waiting', missing: [], why: '' };
+  return { word: 'Ready', missing: [], why: '' };
+}
+
+const WORD_TONE: Readonly<Record<ToolWord, StickerTone>> = {
+  Ready: 'ready', 'Partly ready': 'partly', 'Cannot test yet': 'cannot', Failed: 'failed', Waiting: 'waiting'
+};
+
+export interface ToolSticker { word: ToolWord; tone: StickerTone; outOfDate: boolean }
+
+/**
+ * The sticker of a tool card or of the open tool. `stale` is the store's out-of-date flag. A tool that cannot run, or has not run, has nothing
+ * to be out of date, so only Ready, Partly ready and Failed carry the Out of date mark.
+ */
+export function toolSticker(state: ToolState, stale: boolean): ToolSticker {
+  const mark = stale && state.word !== 'Cannot test yet' && state.word !== 'Waiting';
+  return { word: state.word, tone: WORD_TONE[state.word], outOfDate: mark };
 }
 
 /* ----------------------------------------------------------------- saved views */
@@ -75,11 +100,22 @@ export function toolState(tool: ToolDef, ctx: ToolContext): ToolState {
 export const MAX_VIEW_NAME = 60;
 export const MAX_VIEWS = 200;
 
+/** The plain text of a view name: control characters become spaces, runs of space collapse, the ends are trimmed. */
+// eslint-disable-next-line no-control-regex
+const plainName = (raw: string): string => raw.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+
 /** A view name is shown in lists and in exports, so it is trimmed to plain text. Returns '' when nothing usable is left. */
 export function cleanViewName(raw: string): string {
-  // eslint-disable-next-line no-control-regex
-  return raw.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_VIEW_NAME);
+  return Array.from(plainName(raw)).slice(0, MAX_VIEW_NAME).join('');
 }
+
+/** True when the name, once plain, is longer than a view name may be (counted in characters, as the server counts). */
+export const viewNameTooLong = (raw: string): boolean => Array.from(plainName(raw)).length > MAX_VIEW_NAME;
+
+export const MAX_ITEM_TEXT = 300;
+
+/** True when a checklist item or note is longer than the server accepts (300 characters once trimmed). */
+export const itemTooLong = (raw: string): boolean => Array.from(raw.trim()).length > MAX_ITEM_TEXT;
 
 export interface ViewSettings {
   incidentStart?: string;
@@ -163,4 +199,58 @@ export function slowestApiRows(result: Result | null | undefined, minCalls: numb
     .map((r) => ({
       route: r.route, calls: r.incident.n, p95: fmtMs(r.incident.p95), reference: fmtMs(r.reference.p95), change: fmtChange(r.p95Change), mark: markFor(r.p95Change)
     }));
+}
+
+/* ----------------------------------------------------------------- what the case holds */
+
+export interface StampImport { id: number; importer: string; status: string }
+export interface StampTag { id: number; kind: string }
+
+/**
+ * A short fingerprint of what a case holds: the ids of its kept files (status ok) and of its source tags, sorted. Two reads of the same case give
+ * the same text; a new file, a removed file or a new source tag changes it. It holds ids only, no name, path or setting.
+ */
+export function dataStamp(imports: readonly StampImport[], tags: readonly StampTag[]): string {
+  return [...imports.filter((i) => i.status === 'ok').map((i) => 'i' + i.id), ...tags.map((t) => 't' + t.id)].sort().join(',');
+}
+
+/** True only when both fingerprints are known and differ. An unknown fingerprint is never a change. */
+export const stampChanged = (then: string | null, now: string | null): boolean => then !== null && now !== null && then !== now;
+
+/* ----------------------------------------------------------------- the sources of one case */
+
+export interface CaseSourceLike { id: string; database: string; selectionKey?: string }
+export interface CaseWorkspaceDatabase { name: string; selectionKey?: string }
+
+/**
+ * The ids of the connected sources that belong to the open case. The case's own audit source tags name databases (`auditLabels`); a source
+ * belongs to the case when its database is one of them. A case with no tag of this kind (an older case) falls back to the databases its saved
+ * workspace names, matched by selection key when both sides have one and by database name otherwise. Nothing else is read: with neither, the list is empty.
+ */
+export function caseSourceIds(
+  sources: readonly CaseSourceLike[], auditLabels: readonly string[], workspaceDatabases: readonly CaseWorkspaceDatabase[]
+): string[] {
+  if (auditLabels.length > 0) {
+    const labels = new Set(auditLabels);
+    return sources.filter((s) => labels.has(s.database)).map((s) => s.id);
+  }
+  return sources
+    .filter((s) => workspaceDatabases.some((d) => (d.selectionKey && s.selectionKey ? d.selectionKey === s.selectionKey : d.name === s.database)))
+    .map((s) => s.id);
+}
+
+/* ----------------------------------------------------------------- Step 10 checks and lines */
+
+/**
+ * The checks "Add suggested checks from Step 10" adds: those of the red and orange suspects not on the list yet. The origin's one cheapest
+ * check is the first of them. Grey suspects are left out on purpose; each has its own button.
+ */
+export function originChecks(result: Result, items: readonly ChecklistItem[]): Array<{ text: string; suspect: string }> {
+  const ranked = new Set(suspectGroups(result).ranked.map((s) => s.id));
+  return suggestedChecks(result, items).filter((check) => ranked.has(check.suspect));
+}
+
+/** True when Confidence reads None and an orange (Likely) suspect is listed: the case Step 10 explains with one line. */
+export function likelyWithoutTier(result: Result | null | undefined): boolean {
+  return !!result && result.confidence.word === 'None' && suspectGroups(result).ranked.some((s) => s.colour === 'orange');
 }

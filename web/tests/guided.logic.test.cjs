@@ -125,7 +125,7 @@ test('a rise is Worse, and no movement is Unchanged', () => {
   assert.equal(fix.classifyDay(day(change(3000, 2950)), ctx).outcome, 'unchanged');
 });
 
-test('a day with no calls, or no earlier day, or no slow end is No data and cannot be recorded', () => {
+test('a day with no calls, or no earlier day, is No data and cannot be recorded; too few calls to read the slow end is its own outcome', () => {
   const base = result();
   const none = result({ facts: { ...base.facts, counts: { ...base.facts.counts, incident: 0 } } });
   const v = fix.classifyDay(none, ctx);
@@ -133,7 +133,7 @@ test('a day with no calls, or no earlier day, or no slow end is No data and cann
   assert.equal(v.canRecord, false);
   assert.equal(v.recordLine, '');
   assert.equal(fix.classifyDay(result({ facts: { ...base.facts, counts: { ...base.facts.counts, reference: 0 } } }), ctx).outcome, 'no-data');
-  assert.equal(fix.classifyDay(day(unknown()), ctx).outcome, 'no-data');
+  assert.equal(fix.classifyDay(day(unknown()), ctx).outcome, 'too-few');
   // never a zero comparison: every row of a no-data day reads No data or the figures the engine gave
   assert.ok(!v.rows.some((r) => /^0 ms$/.test(r.later) && r.later === r.earlier));
 });
@@ -210,7 +210,7 @@ test('a tool missing its source is Cannot test yet and names the source', () => 
   assert.match(t.toolState(t.toolById('sql-waits'), audit).why, /SQL Server source/);
   assert.match(t.toolState(t.toolById('mongo-health'), audit).why, /MongoDB source/);
   assert.match(t.toolState(t.toolById('host-resources'), audit).why, /Blackbox source/);
-  assert.equal(t.toolState(t.toolById('slowest-apis'), audit).word, 'Ready');
+  assert.equal(t.toolState(t.toolById('slowest-apis'), audit).word, 'Waiting');
 });
 
 test('the time split runs on audit alone and says what IIS would add', () => {
@@ -218,7 +218,7 @@ test('the time split runs on audit alone and says what IIS would add', () => {
   const s = t.toolState(t.toolById('time-split'), audit);
   assert.equal(s.word, 'Partly ready');
   assert.match(s.why, /IIS/);
-  assert.equal(t.toolState(t.toolById('time-split'), { have: new Set(['audit', 'iis']), result: null }).word, 'Ready');
+  assert.equal(t.toolState(t.toolById('time-split'), { have: new Set(['audit', 'iis']), result: null }).word, 'Waiting');
 });
 
 test('a tool that shows a step takes the engine word for that step', () => {

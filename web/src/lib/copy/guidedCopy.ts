@@ -39,6 +39,7 @@ export const GUIDED_TEXT = {
   outOfDate: 'Out of date, rerun',
   outOfDateNote: 'The windows, sources or lists changed after this ran. The numbers below are from the earlier run.',
   readNote: (calls: string, rows: string) => `This run read ${calls} audit calls and ${rows} IIS rows.`,
+  readGap: (total: string, used: string, parts: string[]) => `Scope counts ${used} of the ${total} calls read. Left out: ${parts.join(', ')}.`,
   truncated: 'The read stopped at its limit. Narrow the window to read everything.',
   nextStep: 'Next step',
   previousStep: 'Previous step',
@@ -60,7 +61,7 @@ export const GUIDED_TEXT = {
   quickNote: 'A quick pick sets the incident window and a normal period of the same length just before it.',
   focus: 'Focus on one API (optional)',
   allApis: 'All APIs',
-  focusNote: 'An API is the URL path of one endpoint. Steps 2 to 4 then show only that API. The rest still read every API.',
+  focusNote: 'An API is the URL path of one endpoint. Steps 3 and 4 show only that API. The rest still read every API.',
   poolLimit: 'SqlClient pool limit (optional)',
   poolNote: 'If you know the pool limit, enter it. Step 4 then says whether the calls in flight fill it.',
   onset: 'Onset t0',
@@ -87,6 +88,8 @@ export const GUIDED_TEXT = {
   noChanges: 'No change listed.',
   changesEntered: 'I have listed every change I know of',
   changesEnteredNote: 'Leave this off if you have not looked yet. An empty list entered on purpose reads "No change listed".',
+  changesFull: 'The change list holds at most 50 changes.',
+  changesUnticked: 'These changes are used only when the box beside Add a change is ticked.',
 
   /* Step 1 */
   trustLead: 'Check that the data can be trusted before reading what it says.',
@@ -122,6 +125,7 @@ export const GUIDED_TEXT = {
   shapeKind: (kind: string) => `Shape of the slowdown: ${kind}.`,
   showAll: 'Show every API',
   showLess: 'Show fewer',
+  byApiFocusNote: 'This table lists every API, so you can see whether the API you chose is the only one that moved.',
 
   /* Step 3 */
   splitLead: 'Where did the time of a call go? Each call is split into audit set-up, action time, payload record and outside time.',
@@ -133,7 +137,8 @@ export const GUIDED_TEXT = {
   barIncident: 'Incident',
   barLabel: 'Bars of the average time of a call, on one scale.',
   untestedParts: 'Not drawn: parts that could not be tested.',
-  addAuditLogs: 'Add the audit logs',
+  addIisLogs: 'Add the IIS logs',
+  iisAdds: 'IIS logs show the time before a call reaches the app (outside time, O).',
   openNearby: 'Open nearby activity',
   slowestCalls: 'Slowest calls in the incident window',
   showSlowCalls: 'Show the slowest calls',
@@ -149,6 +154,8 @@ export const GUIDED_TEXT = {
   /* Step 5 */
   changesLead: 'Did something change just before the onset? Only changes you list are compared.',
   changesNone: 'No change listed. Add the releases or changes you know of in Step 0.',
+  changesNoneEntered: 'You said there was no change to list.',
+  changeListButton: 'Change the list',
   changeTimeCol: 'When',
   changeWhatCol: 'What',
   changeRelCol: 'Against the onset',
@@ -230,7 +237,7 @@ export const GUIDED_TEXT = {
 
   /* Checklist */
   checklistHeading: 'Checklist',
-  checklistLead: 'What to do, what is under way, what we learned and what is ruled out.',
+  checklistLead: 'Keep four lists: Need to do, Working on, What we learned and Ruled out.',
   done: 'Done',
   open: 'Open',
   addItem: '+ Add item',
@@ -266,6 +273,7 @@ export const GUIDED_TEXT = {
   recordWarning: 'Record with this warning',
   fixNeedsRun: 'Run the steps first. The comparison needs the incident day.',
   fixDayFirst: 'Pick the later day first.',
+  fixDayAfter: 'The later day must come after the incident day. Pick a later date.',
   fixRunning: 'Reading the later day.',
   fixFailed: 'The later day could not be compared.',
   fixRoute: 'Compare one route only (optional)',
@@ -333,7 +341,7 @@ export const GUIDED_TEXT = {
   exportReady: (name: string, bytes: string) => `${name} is ready, ${bytes}.`,
   exportSaved: (hash: string) => `Saved. SHA-256 of the saved file: ${hash}`,
   exportMismatch: 'The report did not match its checksum, so it was not saved. Try again.',
-  exportEmpty: 'Nothing has been analysed yet. The report will say so and list the case sources only.',
+  exportEmpty: 'Nothing has been analysed yet. The report will say so and hold only the checklist, if you include it.',
   exportWarningsHeading: 'This report has warnings',
   exportFailed: 'The report could not be built.',
   exportOptions: 'Include',
@@ -377,6 +385,7 @@ export function guidedLintEntries(): LintEntry[] {
     add(`guided.${key}`, value);
   }
   add('guided.readNote', GUIDED_TEXT.readNote('12,000', '3,400'));
+  add('guided.readGap', GUIDED_TEXT.readGap('1,514', '1,500', ['14 not completed', '3 with no start time']));
   add('guided.onsetFound', GUIDED_TEXT.onsetFound('26 Oct 10:42'));
   add('guided.scope', GUIDED_TEXT.scope('73,648', '30 minutes', '60 minutes'));
   add('guided.shapeRule', GUIDED_TEXT.shapeRule(30, 100));

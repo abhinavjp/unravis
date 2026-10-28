@@ -15,7 +15,7 @@ import { forgetSavedRecord, forgetSourceSaved, registerSourceSaved, resolveSaved
 import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './types';
 import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './breakdown';
 import type { RunningImport } from './cases';
-import { afterUnlock, createRoute, go as moveScreen, initialScreen, leavesCaseWork, type Screen } from './screenFlow';
+import { afterUnlock, createRoute, go as moveScreen, historyStep, initialScreen, isHistoryScreen, leavesCaseWork, setupReturn, type Screen } from './screenFlow';
 import { onCasesLocked } from './lockSignal';
 import { requestCase } from './startIntent';
 import { CASE_RESTORE_TEXT } from './copy/caseRestoreCopy';
@@ -88,6 +88,8 @@ let dpapiCases = $state(0);
 let lockError = $state('');
 // Where a successful unlock returns to: the screen that was interrupted, or the first screen the person would have had.
 let unlockOrigin: Screen | null = null;
+// Where set-up was opened from ('case' returns there; anything else returns to the start screen). Read once on the way out of set-up.
+let setupOrigin: Screen | null = null;
 // The case the person is working in. The case home, the theories and the analysis screen's case tools all follow it. Empty until one is opened.
 // This tab remembers it, so a reload keeps the case and its theories instead of falling back to the older shared list.
 const ACTIVE_CASE_KEY = 'unravis.activeCase';
@@ -200,6 +202,8 @@ let viewRun = 0;
 let initialView: View | null = null;
 let viewHistory: ReturnType<typeof createViewHistory> | null = null;
 let drawerHistory: ReturnType<typeof createDrawerHistory> | null = null;
+// True while Back or Forward is moving the screen: that move must not add a history entry of its own.
+let poppingScreen = false;
 let viewSyncQueued = false;
 
 const connectionSignature = $derived(JSON.stringify([addUri, addUsername, addPassword, addAuthSource, addTLSMode, addCACertificate, savedConnectionId]));
@@ -323,8 +327,14 @@ export function startApp() {
     window.addEventListener(GLOSSARY_EVENT, onGlossaryRequest);
     drawerHistory = createDrawerHistory(history, closeDrawerById);
     viewHistory = createViewHistory(location, history);
-    // Browser Back closes an open drawer first; only an event no drawer used is a move between views.
-    const onPop = () => { if (drawerHistory?.pop()) return; const target = viewHistory?.pop(); if (target !== undefined) void applyView(target); };
+    // Browser Back closes an open drawer first; an event no drawer used steps to the screen the entry was made on, then rebuilds the view.
+    const onPop = () => {
+      if (drawerHistory?.pop()) return;
+      const target = viewHistory?.pop();
+      if (target === undefined) return;
+      stepScreenFromHistory(viewHistory?.screen ?? '');
+      void applyView(target);
+    };
     window.addEventListener('popstate', onPop);
     return () => { stopLockListener(); window.removeEventListener(GLOSSARY_EVENT, onGlossaryRequest); window.removeEventListener('popstate', onPop); viewHistory = null; drawerHistory = null; };
   });
@@ -443,13 +453,11 @@ export async function initialize() {
     tabInvestigationHeld = restoredInTab;
     await chooseFirstScreen(info.demo, restoredInTab);
     tabInvestigationHeld = false;
-    if (!info.demo) {
-      try {
-        const recents = await api.recentConnections();
-        recentConnections = Array.isArray(recents) ? recents.filter(isRecentConnection).slice(0, 20) : [];
-      } catch {
-        recentHistoryError = 'Recent connections could not be loaded. You can still test and add a connection.';
-      }
+    try {
+      const recents = await api.recentConnections();
+      recentConnections = Array.isArray(recents) ? recents.filter(isRecentConnection).slice(0, 20) : [];
+    } catch {
+      recentHistoryError = 'Recent connections could not be loaded. You can still test and add a connection.';
     }
   } catch (cause) {
     // A failure after the app info arrived keeps the screen the app always showed (the connect prompt and the Retry banner).
@@ -470,15 +478,39 @@ function devLog(text: string) {
 }
 /** Asks to move to another screen. A move the table does not allow is ignored (and logged in dev); returns whether the app is on `to` now. */
 export function go(to: Screen): boolean {
+  const from = screen;
+  // Leaving set-up with "Later" or "Continue" (both ask for 'start') goes back to where set-up was opened from.
+  if (screen === 'setup' && to === 'start' && setupOrigin) to = setupReturn(setupOrigin);
   const move = moveScreen(screen, to);
   if (!move.ok) { devLog(move.reason); return false; }
   if (move.screen === screen) return true;
   // Leaving the working screen puts away its case panel. The case itself stays open on the server; nothing is closed or erased.
   if (leavesCaseWork(move.screen) && sidePanel) void closeSidePanel();
   screen = move.screen;
+  if (move.screen !== 'setup') setupOrigin = null;
+  if (!poppingScreen) noteScreenHistory(from, move.screen);
   // Arriving at the case or the analysis with a case open: bring back what the case saved, once (see restoreCaseWorkspace).
   if ((move.screen === 'running' || move.screen === 'case') && activeCaseId && restoredCaseId !== activeCaseId && restorePhase === 'idle' && info && !info.demo) void restoreCaseWorkspace(activeCaseId);
   return true;
+}
+// A move to start, case, create or the analysis gets a browser history entry once no drawer entry is open (see lib/screenFlow.ts historyStep).
+function noteScreenHistory(from: Screen, to: Screen) {
+  const marker = viewHistory, drawers = drawerHistory;
+  if (!marker || !drawers || !isHistoryScreen(to)) return;
+  drawers.whenClear(() => {
+    if (screen !== to || viewHistory !== marker) return;
+    const step = historyStep(from, to, marker.screen);
+    if (step !== 'none') marker.markScreen(to, step === 'replace');
+  });
+}
+// Back or Forward landed on an entry marked with another screen: go there through the same move table. Key screens are never stepped onto or off.
+// A move the table refuses, or a case page with no case open, re-marks the entry for the screen that stays, so Back cannot loop or trap.
+function stepScreenFromHistory(wanted: string) {
+  const marker = viewHistory;
+  if (!marker || !isHistoryScreen(wanted) || !isHistoryScreen(screen) || wanted === screen) return;
+  if (wanted === 'case' && !activeCaseId) { marker.markScreen(screen, true); return; }
+  poppingScreen = true;
+  try { if (!go(wanted)) marker.markScreen(screen, true); } finally { poppingScreen = false; }
 }
 // Reads the key state once the app info is in, then picks the first screen. A status that cannot be read is treated as "no key" for routing.
 async function chooseFirstScreen(demo: boolean, resume: boolean) {
@@ -520,6 +552,7 @@ export function finishUnlock(status: KeyStatus) {
 export function finishReset(status: KeyStatus) {
   noteKeyStatus(status);
   unlockOrigin = null;
+  setupOrigin = null;
   lockError = '';
   go('start');
   go('setup');
@@ -729,9 +762,12 @@ export function caseErased(id: string) {
   if (screen === 'case') go('start');
 }
 /** "Use an existing case": opens that case's home page (story, theories, health checks, files). The analysis is one tap away from there. */
-export function openCase(id: string, options: { archived?: boolean } = {}) {
+export function openCase(id: string, options: { archived?: boolean; held?: boolean } = {}) {
   // An archived case's theories are not asked for: the server answers 409 for them.
   holdLedger(id, options.archived === true);
+  // A case the list already shows as locked or as one that cannot be opened answers 423 or 409 too, so its theories are not asked for either.
+  // The case page reads the case itself and lets them go again when the case turns out to be open.
+  if (options.held === true) holdLedger(id, true);
   setActiveCase(id);
   go('case');
 }
@@ -749,8 +785,8 @@ export function openCaseImport() {
 }
 /**
  * A case just made by the create guide. The guide added its audit sources on the server directly, so this page's source list is stale:
- * reload it, select the new sources and let the landing run start, then show the analysis. The import drawer opens only when there is
- * still nothing to analyse (a case made from files alone).
+ * reload it and select the new sources (the analysis starts by itself when the user opens it), then show Case home. The import drawer
+ * opens over Case home only when there is still nothing to analyse (a case made from files alone).
  */
 export async function openCreatedCase(id: string) {
   requestCase(id);
@@ -769,14 +805,17 @@ export async function openCreatedCase(id: string) {
     }
     hasSources = loaded.length > 0;
   } catch { /* the list could not be read: the analysis screen still opens and its own connect step can add sources */ }
-  if (go('running') && !hasSources) openSidePanel('import');
+  if (go('case') && !hasSources) openSidePanel('import');
 }
 /** "Create a new one": the guided flow when it exists, otherwise the import panel over the working screen. */
 export function startCreate() {
   const route = createRoute();
   if (go(route.screen) && route.panel) openSidePanel(route.panel);
 }
-export function openKeySetup() { go('setup'); }
+export function openKeySetup() {
+  const from = screen;
+  if (go('setup')) setupOrigin = from === 'case' ? 'case' : null;
+}
 // A 401 means the session was forgotten: the evidence memo must not serve anything shown under it.
 function message(cause: unknown) { if (cause instanceof ApiError && cause.status === 401) bumpEpoch(); return cause instanceof Error ? cause.message : 'The request could not be completed.'; }
 function friendlyConnectionStage(cause: unknown) {
@@ -1216,15 +1255,23 @@ export function openSidePanel(which: 'patterns' | 'ledger' | 'export' | 'import'
   sidePanelReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   sidePanel = which;
 }
-export function openGlossary(termId: string | null = null) {
+// The glossary drawer itself: notes where the keyboard was, then shows the term (or the whole list).
+function showGlossary(termId: string | null) {
   glossaryReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   glossaryTerm = termId;
   glossaryOpen = true;
 }
-// A hint's "Learn more in the glossary" button sends this window event.
+// The Glossary button: one side panel at a time (D-C-27), so a Patterns, Ledger, Export, Import or Blackbox panel that is open is put away first.
+// Its history entry follows the state. Its old button does not get the focus back, because the glossary takes it.
+export function openGlossary(termId: string | null = null) {
+  if (sidePanel) { sidePanel = null; sidePanelReturnFocus = null; }
+  showGlossary(termId);
+}
+// A hint's "Learn more in the glossary" button sends this window event. The hint sits inside a drawer that may hold text the person typed,
+// so that drawer stays open and the glossary opens on top of it, as before.
 function onGlossaryRequest(event: Event) {
   const termId = glossaryTermFrom((event as CustomEvent).detail);
-  if (termId && !glossaryOpen) openGlossary(termId);
+  if (termId && !glossaryOpen) showGlossary(termId);
 }
 export async function openConnections(tab: 'saved' | 'new' = 'saved') {
   if (sourceBusy || connectionTesting || historyMutationBusy) return;

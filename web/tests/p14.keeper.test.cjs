@@ -149,3 +149,70 @@ test('old per-user cases are said on the start screen, never opened or moved', (
   assert.match(screen, /oldCases = page\.oldCases/);
   assert.match(screen, /\{#if phase === 'ready' && oldCases > 0\}<p class="card-note" role="note" data-old-cases>\{oldCasesText\(oldCases\)\}<\/p>\{\/if\}/);
 });
+
+test('the keeper card re-reads the page when the preview in the address changes (D-A-35)', () => {
+  const card = read('src/components/sources/KeeperCard.svelte');
+  assert.match(card, /import \{ onMount, tick \} from 'svelte';/);
+  assert.match(card, /import \{ (?:holdBackground, )?keeperView, onKeeperPreview, (?:trapTarget, )?type KeeperStatus \} from '\.\.\/\.\.\/lib\/keeper';/);
+  assert.match(card, /async function refreshFromPreview\(\) \{\s*if \(busy !== ''\) return;\s*try \{ await onRetry\(\); \} catch \{[^}]*\}\s*\}/);
+  assert.match(card, /onMount\(\(\) => onKeeperPreview\(\(\) => void refreshFromPreview\(\)\)\);/, 'the unsubscribe function is returned to onMount');
+  assert.doesNotMatch(card, /type="password"|\.password\b|password:/);
+  const keeperTs = read('src/lib/keeper.ts');
+  assert.match(keeperTs, /export function onKeeperPreview\(listener: \(\) => void\): \(\) => void \{/);
+});
+
+test('trapTarget keeps Tab inside a small dialog and wraps at both ends (D-C-04)', () => {
+  assert.equal(keeper.trapTarget(0, -1, false), -1, 'no controls: nowhere to go');
+  assert.equal(keeper.trapTarget(0, 0, true), -1);
+  assert.equal(keeper.trapTarget(3, -1, false), 0, 'from outside, Tab enters at the first');
+  assert.equal(keeper.trapTarget(3, -1, true), 2, 'from outside, Shift+Tab enters at the last');
+  assert.equal(keeper.trapTarget(3, 0, false), 1);
+  assert.equal(keeper.trapTarget(3, 2, false), 0, 'Tab on the last wraps to the first');
+  assert.equal(keeper.trapTarget(3, 0, true), 2, 'Shift+Tab on the first wraps to the last');
+  assert.equal(keeper.trapTarget(3, 1, true), 0);
+  assert.equal(keeper.trapTarget(1, 0, false), 0);
+  assert.equal(keeper.trapTarget(1, 0, true), 0);
+});
+
+test('holdBackground makes everything outside the dialog inert and gives it all back (D-C-04)', () => {
+  const make = (name, children = []) => {
+    const node = { name, inert: false, children, parentElement: null };
+    for (const child of children) child.parentElement = node;
+    return node;
+  };
+  const dialog = make('dialog');
+  const note = make('note');
+  const card = make('card', [make('head'), dialog, note]);
+  const aside = make('aside');
+  const main = make('main', [card, aside]);
+  const nav = make('nav');
+  const body = make('body', [nav, main]);
+  dialog.ownerDocument = { body };
+  const already = make('already');
+  already.inert = true;
+  card.children.push(already); already.parentElement = card;
+  const release = keeper.holdBackground(dialog);
+  for (const outside of [card.children[0], note, aside, nav]) assert.equal(outside.inert, true, outside.name + ' is held');
+  for (const inside of [dialog, card, main, body]) assert.equal(inside.inert, false, inside.name + ' stays usable');
+  release();
+  for (const node of [card.children[0], note, aside, nav, dialog, card, main, body]) assert.equal(node.inert, false, node.name + ' is free again');
+  assert.equal(already.inert, true, 'something that was inert before stays inert');
+});
+
+test('the remove question is a modal that returns focus to "Remove old copies" (D-C-04)', () => {
+  const card = read('src/components/sources/KeeperCard.svelte');
+  assert.match(card, /<div role="alertdialog" aria-modal="true" aria-label=\{KEEPER_TEXT\.removeAsk\} tabindex="-1" onkeydown=\{escape\} bind:this=\{dialogEl\}>/);
+  assert.match(card, /role="alertdialog"[^>]*onkeydown=\{escape\}/, 'the older pin still matches');
+  assert.match(card, /<button type="button" class="btn" data-remove-old onclick=\{\(\) => void ask\(true\)\}>\{KEEPER_TEXT\.removeOld\}<\/button>/);
+  assert.match(card, /if \(open\) problem = ''; else back = true;/, 'every close of the question asks for the focus to go back');
+  assert.match(card, /\} finally \{ busy = ''; asking = false; back = kind === 'remove'; \}/);
+  assert.match(card, /const first = asking \? '\[data-keep\]' : returning \? '\[data-remove-old\]' : '\[data-keeper-head\]';/);
+  assert.match(card, /\?\? box\.querySelector<HTMLElement>\('\[data-keeper-head\]'\) \?\? box\.querySelector<HTMLElement>\('\[data-keeper-done\]'\)/);
+  assert.match(card, /if \(event\.key === 'Escape' && busy === ''\) \{ event\.preventDefault\(\); void ask\(false\); return; \}/);
+  assert.match(card, /if \(event\.key !== 'Tab'\) return;/);
+  assert.match(card, /trapTarget\(buttons\.length, buttons\.indexOf\(document\.activeElement as HTMLButtonElement\), event\.shiftKey\)/);
+  assert.match(card, /if \(next >= 0\) buttons\[next\]\.focus\(\); else dialog\.focus\(\);/);
+  assert.match(card, /\$effect\(\(\) => \{\s*const dialog = dialogEl;\s*if \(!dialog\) return;\s*return holdBackground\(dialog\);\s*\}\);/, 'the cleanup of the effect releases the page');
+  assert.equal((card.match(/btn-primary/g) || []).length, 1, 'still one main button');
+  assert.doesNotMatch(card, /type="password"|\.password\b|password:|console\./);
+});

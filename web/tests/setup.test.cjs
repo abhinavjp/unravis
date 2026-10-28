@@ -53,7 +53,28 @@ test('the rail marks Approval as not needed when no administrator rights were as
   assert.deepEqual(logic.railPosition('install', 'progress', false), { current: 'progress', done: ['welcome', 'options'], skipped: ['approval'] });
   assert.deepEqual(logic.railPosition('install', 'progress', true), { current: 'progress', done: ['welcome', 'options', 'approval'], skipped: [] });
   assert.equal(logic.railPosition('install', 'failed', true).current, 'progress');
-  assert.deepEqual(logic.railPosition('install', 'done', null).done, ['welcome', 'options', 'approval', 'progress', 'done']);
+  assert.deepEqual(logic.railPosition('install', 'done', true).done, ['welcome', 'options', 'approval', 'progress', 'done']);
+  assert.deepEqual(logic.railPosition('install', 'done', false), { current: 'done', done: ['welcome', 'options', 'progress', 'done'], skipped: ['approval'] });
+});
+
+test('after a reload in the middle of a run the rail does not claim Approval was done (D-C-11)', () => {
+  // changes is null after a reload, so the page does not know whether administrator rights were asked for.
+  for (const op of ['install', 'upgrade', 'repair', 'uninstall']) {
+    for (const screen of ['progress', 'failed', 'done']) {
+      const position = logic.railPosition(op, screen, null);
+      assert.ok(!position.done.includes('approval'), `${op}/${screen}: Approval must not be Done when it is not known`);
+      assert.ok(!position.skipped.includes('approval'), `${op}/${screen}: Approval must not be Not needed when it is not known`);
+    }
+  }
+  assert.deepEqual(logic.railPosition('install', 'progress', null), { current: 'progress', done: ['welcome', 'options'], skipped: [] });
+  assert.deepEqual(logic.railPosition('uninstall', 'progress', null), { current: 'progress', done: ['uninstall'], skipped: [] });
+  assert.deepEqual(logic.railPosition('repair', 'done', null).done, ['welcome', 'progress', 'done']);
+  // Before Approval, and on it, a missing answer changes nothing.
+  assert.deepEqual(logic.railPosition('install', 'options', null), { current: 'options', done: ['welcome'], skipped: [] });
+  assert.deepEqual(logic.railPosition('install', 'approval', null), { current: 'approval', done: ['welcome', 'options'], skipped: [] });
+  // A known answer is unchanged.
+  assert.deepEqual(logic.railPosition('upgrade', 'progress', true), { current: 'progress', done: ['welcome', 'approval'], skipped: [] });
+  assert.deepEqual(logic.railPosition('upgrade', 'progress', false), { current: 'progress', done: ['welcome'], skipped: ['approval'] });
 });
 
 test('headings follow the wireframes', () => {

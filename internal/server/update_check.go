@@ -26,9 +26,14 @@ import (
 // process.
 
 const (
+	updateCheckBodyLimit = 256 * 1024
+	updateCheckCacheTTL  = 5 * time.Second
+)
+
+// updateCheckReleasesURL and updateCheckTimeout are variables only so a test can point the check at a local server and shorten the
+// wait; nothing in the product changes them.
+var (
 	updateCheckReleasesURL = "https://api.github.com/repos/abhinavjp/unravis/releases/latest"
-	updateCheckBodyLimit   = 256 * 1024
-	updateCheckCacheTTL    = 5 * time.Second
 	updateCheckTimeout     = 10 * time.Second
 )
 
@@ -205,7 +210,7 @@ func (s *updateCheckState) fetch(ctx context.Context, current string) updateChec
 
 // defaultUpdateCheckClient is the client used when no other is set: a ten
 // second timeout, and redirects that leave the API host are not followed.
-var defaultUpdateCheckClient = sync.OnceValue(func() *http.Client {
+func defaultUpdateCheckClient() *http.Client {
 	return &http.Client{
 		Timeout: updateCheckTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -218,7 +223,7 @@ var defaultUpdateCheckClient = sync.OnceValue(func() *http.Client {
 			return nil
 		},
 	}
-})
+}
 
 // compareVersions compares two dotted numeric versions and returns 1 when a
 // is newer than b, 0 when equal and -1 when older. A leading v is ignored. A

@@ -237,6 +237,8 @@ func openDemoCases(getenv func(string) string, hypotheses ledger.Store, now time
 	// The page hides Home and Case home in the demo. This tells it the demo has
 	// cases, so the capture run can reach the case list and a case's home page.
 	wiring.options = append(wiring.options, server.WithCaptureCases())
+	// The Erased line of a case erased in the demo is dated by the demo clock too.
+	wiring.options = append(wiring.options, server.WithErasedLog(server.NewClockedErasedLog(wiring.erased, clk.Now)))
 	log.Printf("Demo cases ready (%d), clock fixed at %s.", len(demoCaseIDs()), now.Format(time.RFC3339))
 	return wiring, nil
 }

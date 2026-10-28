@@ -6,11 +6,11 @@ import type { LockState } from './masterKey';
  *
  *   loading -> unlock | start | running
  *   unlock  -> start | running | create | case  (after the right key; back to the work it interrupted: the analysis, the case home, or the create guide)
- *   setup   -> start | unlock
+ *   setup   -> start | unlock | case   (case: only when set-up was opened from a case page, so it can go back there)
  *   start   -> setup | create | running | unlock | case
  *   create  -> start | running | unlock | case
  *   running -> start | unlock | case
- *   case    -> start | running | create | unlock   (the home page of one case: story, theories, health checks, files)
+ *   case    -> start | running | create | unlock | setup   (the home page of one case: story, theories, health checks, files)
  *
  * Staying where you are is allowed and does nothing. Any other move is refused and left as it was.
  */
@@ -21,11 +21,11 @@ export const SCREENS: readonly Screen[] = ['loading', 'unlock', 'setup', 'start'
 const MOVES: Readonly<Record<Screen, readonly Screen[]>> = {
   loading: ['unlock', 'start', 'running'],
   unlock: ['start', 'running', 'create', 'case'],
-  setup: ['start', 'unlock'],
+  setup: ['start', 'unlock', 'case'],
   start: ['setup', 'create', 'running', 'unlock', 'case'],
   create: ['start', 'running', 'unlock', 'case'],
   running: ['start', 'unlock', 'case'],
-  case: ['start', 'running', 'create', 'unlock']
+  case: ['start', 'running', 'create', 'unlock', 'setup']
 };
 
 export type Move = { ok: true; screen: Screen } | { ok: false; screen: Screen; reason: string };
@@ -68,6 +68,11 @@ export function afterUnlock(origin: Screen | null): Screen {
   return origin === 'running' || origin === 'create' || origin === 'case' ? origin : 'start';
 }
 
+/** Where leaving the master key set-up goes: back to the case page it was opened from, otherwise the start screen. */
+export function setupReturn(origin: Screen | null): Screen {
+  return origin === 'case' ? 'case' : 'start';
+}
+
 /**
  * The guided "create a new case" flow is built (phase 05), so "Create a new one" opens it. With this off, the card opens the existing
  * import panel over the working screen instead.
@@ -84,4 +89,25 @@ export function createRoute(wizardReady: boolean = WIZARD_READY): CreateRoute {
 /** Screens that show nothing from a case, so a case drawer must not stay open on them. */
 export function leavesCaseWork(to: Screen): boolean {
   return to !== 'running';
+}
+
+/** Screens the browser Back and Forward buttons step between. The key screens (loading, unlock, setup) never get a history entry. */
+export const HISTORY_SCREENS: readonly Screen[] = ['start', 'case', 'create', 'running'];
+export function isHistoryScreen(value: string): value is Screen {
+  return (HISTORY_SCREENS as readonly string[]).includes(value);
+}
+
+export type HistoryStep = 'none' | 'replace' | 'push';
+
+/**
+ * What the browser history does for a move to `to`. `shown` is the screen the current history entry is marked with ('' when unmarked).
+ * Nothing for a key screen or when the entry already says `to`. The first move off the loading or key screens marks the entry the page
+ * was opened on, and Create ending on Case home marks the create entry in place (so Back does not return to a finished guide).
+ * Every other move adds an entry.
+ */
+export function historyStep(from: Screen, to: Screen, shown: string): HistoryStep {
+  if (!isHistoryScreen(to) || shown === to) return 'none';
+  if (from === 'create' && to === 'case') return 'replace';
+  if (shown === '' && (from === 'loading' || from === 'unlock' || from === 'setup')) return 'replace';
+  return 'push';
 }

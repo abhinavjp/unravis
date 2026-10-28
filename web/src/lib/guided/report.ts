@@ -14,6 +14,17 @@ export function reportWarnings(read: InvestigationRead | undefined, outOfDate: b
   return out;
 }
 
+/**
+ * The warning codes sent with the report request. The server prints a fixed sentence for each in the saved file, so the file carries what
+ * the screen said. Codes only, never text.
+ */
+export function reportWarningCodes(outOfDate: boolean, read: InvestigationRead | undefined): string[] {
+  const out: string[] = [];
+  if (outOfDate) out.push('stale');
+  if (read?.truncated) out.push('truncated');
+  return out;
+}
+
 /** A file name with no folders and no control characters, or the fallback for its format. */
 export function reportFileName(answer: Pick<ReportAnswer, 'filename' | 'format'>): string {
   const last = (answer.filename ?? '').split(/[\/]/).pop() ?? '';

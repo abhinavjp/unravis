@@ -85,6 +85,7 @@ export function frameProblems(frame: Frame): string[] {
   }
   if (frame.releases.length > MAX_RELEASES) out.push('The change list holds at most 50 changes.');
   if (frame.releases.some((r) => !Number.isFinite(parseLocalUtc(r.at)))) out.push('Each change needs a time, in UTC.');
+  if (frame.releases.some((r) => r.label.trim() === '')) out.push('Each change needs a name.');
   return out;
 }
 
@@ -129,6 +130,23 @@ export function windowMinutes(start: string, end: string): number {
   return Number.isFinite(s) && Number.isFinite(e) && e > s ? Math.round((e - s) / MINUTE) : 0;
 }
 
+/** The most buckets the server accepts in one window (internal/audit/models.go MaxTimeBuckets). */
+export const MAX_BUCKETS = 120;
+
+/**
+ * The bucket size, in seconds, for the slowest-calls query: a whole number of minutes, at least one, so that the longer of the two windows
+ * stays inside the server cap. Buckets are aligned to the Unix epoch, so a window can touch one bucket more than span / size; dividing by
+ * MAX_BUCKETS - 1 keeps that extra bucket inside the cap too.
+ */
+export function slowBucketSeconds(frame: Frame): number {
+  const spans = [
+    parseLocalUtc(frame.incidentEnd) - parseLocalUtc(frame.incidentStart),
+    parseLocalUtc(frame.referenceEnd) - parseLocalUtc(frame.referenceStart)
+  ].filter((n) => Number.isFinite(n) && n > 0);
+  const seconds = Math.max(0, ...spans) / 1000;
+  return Math.max(1, Math.ceil(seconds / (MAX_BUCKETS - 1) / 60)) * 60;
+}
+
 /** The query the slowest-calls list reads: the incident window, every kind of call, the one API if one is chosen. */
 export function slowQuery(frame: Frame, sourceIds: readonly string[]): Query | null {
   if (frameProblems(frame).length || !sourceIds.length) return null;
@@ -136,7 +154,7 @@ export function slowQuery(frame: Frame, sourceIds: readonly string[]): Query | n
   return {
     sourceIds: [...sourceIds], start: iso(frame.incidentStart), end: iso(frame.incidentEnd),
     baselineStart: iso(frame.referenceStart), baselineEnd: iso(frame.referenceEnd),
-    kind: 'all', outcome: 'all', metric: 'total', bucketSeconds: 60,
+    kind: 'all', outcome: 'all', metric: 'total', bucketSeconds: slowBucketSeconds(frame),
     controller: controller ?? '', action: rest.join('.')
   };
 }

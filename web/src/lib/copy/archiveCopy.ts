@@ -34,7 +34,6 @@ export const ARCHIVE_TEXT = {
   archiveDone: 'Archived.',
   progressLabel: 'Archive progress',
   // Check
-  verifyButton: 'Check the case file',
   verifyRunning: 'Checking the case file',
   verifyStop: 'Cancel the check',
   verifyStopping: 'Stopping\u2026',
@@ -50,7 +49,6 @@ export const ARCHIVE_TEXT = {
   caseFileLine: 'Case file',
   inFolder: 'in',
   keyEnding: 'Key ending',
-  restoredLine: 'Restored as a new case',
   code: 'code',
 
   // The archived list (screen 129)
@@ -89,7 +87,6 @@ export const ARCHIVE_TEXT = {
   restoreNewTitle: 'Restore as a new case',
   restoreNewIntro: 'This reads the case file and makes a new case from it. The archived case and the file are not changed.',
   restoreFile: 'Case file',
-  restoreMade: 'Made',
   restoreKeyLabel: 'Passphrase this file was made with',
   restoreKeyHint: 'The passphrase you typed when the file was made.',
   restoreCaseKeyLabel: 'Case key this file was made with',
@@ -119,10 +116,8 @@ export const ARCHIVE_TEXT = {
   // Orphan files (health panel)
   orphanHeading: 'Case files left over',
   orphanIntro: 'These case files were finished but the archive was not completed. Unravis never deletes them. Keep, move or delete them yourself.',
-  orphanNone: 'No case files left over.',
   orphanLoadFailed: 'The list of left-over case files could not be loaded.',
   orphanCleanup: 'Cleanup pending: a temporary folder from a check is still on disk. It is removed when Unravis starts again.',
-  orphanFrom: 'for case',
   orphanMade: 'Made',
 
   // Sentences the server sends as failures (archive_messages.go). Kept word for word.

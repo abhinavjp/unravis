@@ -179,6 +179,15 @@ test('every drawer in the page state reaches the history through the one module'
   assert.match(state, /if \(drawerHistory\?\.pop\(\)\) return;/);
 });
 
+test('D-A-07: popstate steps screens through go() and key screens get no history entry', () => {
+  const state = read('src/lib/appState.svelte.ts');
+  assert.match(state, /stepScreenFromHistory\(viewHistory\?\.screen \?\? ''\);\s*void applyView\(target\);/);
+  assert.match(state, /if \(!poppingScreen\) noteScreenHistory\(from, move\.screen\);/);
+  const step = state.slice(state.indexOf('function stepScreenFromHistory'), state.indexOf('// Reads the key state once the app info is in'));
+  assert.match(step, /!isHistoryScreen\(screen\)/, 'a key screen is never left by Back');
+  assert.match(step, /poppingScreen = true;[\s\S]*go\(wanted\)[\s\S]*poppingScreen = false;/);
+});
+
 /* ---------------------------------------------------------------- startup failures */
 
 const apiError = (status, code) => Object.assign(new Error('Open Unravis from the link it printed when it started, or restart it.'), { name: 'ApiError', status, code });
@@ -250,11 +259,11 @@ const { SCREENS: SCREEN_LIST, canGo, go: moveScreen, initialScreen, afterUnlock,
 const LEGAL_MOVES = {
   loading: ['unlock', 'start', 'running'],
   unlock: ['start', 'running', 'create', 'case'],
-  setup: ['start', 'unlock'],
+  setup: ['start', 'unlock', 'case'],
   start: ['setup', 'create', 'running', 'unlock', 'case'],
   create: ['start', 'running', 'unlock', 'case'],
   running: ['start', 'unlock', 'case'],
-  case: ['start', 'running', 'create', 'unlock']
+  case: ['start', 'running', 'create', 'unlock', 'setup']
 };
 
 test('every legal screen move is allowed and returns the target screen', () => {
@@ -276,9 +285,9 @@ test('every move outside the table is refused, keeps the current screen, and say
       assert.match(move.reason, new RegExp(from + '.*' + to));
     }
   }
-  // The named illegal ones: nothing goes back to loading, and set-up cannot jump into the analysis.
+  // The named illegal ones: nothing goes back to loading, and set-up can only go back to start, unlock or the case it was opened from.
   assert.equal(moveScreen('running', 'loading').ok, false);
-  assert.equal(moveScreen('setup', 'running').ok, false);
+  assert.equal(moveScreen('setup', 'create').ok, false);
   assert.equal(moveScreen('unlock', 'setup').ok, false);
 });
 
@@ -339,4 +348,12 @@ test('the autorun waits for the working screen, so the start screen never starts
 test('the close-case action returns to the start screen', () => {
   assert.match(read('src/lib/components/ImportPanel.svelte'), /<CasePanel [^>]*onClosed=\{goHome\}/);
   assert.match(read('src/lib/components/CasePanel.svelte'), /onClosed\?\.\(\)/);
+});
+
+test('only the analysis bar holds the main Run analysis button; the start card outlines its own (D-A-37)', () => {
+  const landing = read('src/components/Landing.svelte');
+  assert.match(landing, /<button class="secondary-button" disabled=\{!scope\.query\.sourceIds\.length \|\| !scope\.dateInputsValid\} onclick=\{\(\) => runAnalysis\(\)\}>Run analysis<\/button>/);
+  assert.doesNotMatch(landing, /<button class="primary-button"[^\n]*>Run analysis<\/button>/);
+  const bar = read('src/components/SubBar.svelte');
+  assert.equal((bar.match(/class="primary-button" aria-describedby="run-hint"/g) ?? []).length, 1, 'the bar keeps the one main button');
 });

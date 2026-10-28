@@ -1,9 +1,10 @@
 <script lang="ts">
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
-  import { classifyDay, dayLabel, laterFrame, verdictToShow, type FixVerdict } from '../../guided/afterFix';
+  import { classifyDay, dayLabel, isLaterDay, laterFrame, verdictToShow, type FixVerdict } from '../../guided/afterFix';
   import { runInvestigation } from '../../guided/api';
   import { frameProblems, toRequest, windowMinutes } from '../../guided/frame';
   import type { GuidedStore } from '../../guided/guided.svelte';
+  import { answeredRoute } from '../../guided/stepModel';
 
   // After the fix: the same hours on a later day, set beside the incident day. One more run of the engine with the later day as the incident
   // window and the earlier day as the reference. Nothing here says a day is fixed unless the slow end is back inside the normal range.
@@ -33,12 +34,18 @@
     phase = 'idle';
     if (!result) { problem = T.fixNeedsRun; return; }
     if (!day) { problem = T.fixDayFirst; return; }
+    if (!isLaterDay(store.frame, day)) { problem = store.frame.incidentStart && Number.isFinite(Date.parse(day)) ? T.fixDayAfter : T.fixDayFirst; return; }
     const frame = laterFrame({ ...store.frame, route: route || store.frame.route }, day);
     if (!frame) { problem = T.fixDayFirst; return; }
     const issues = frameProblems(frame);
     const request = toRequest(frame, sourceIds, false);
     if (!request) { problem = issues[0] ?? T.noSources; return; }
     const base = result;
+    // The case's own figures for the earlier day only stand in for the run's when the same API is compared.
+    const sameApi = frame.route.trim() === answeredRoute(store.answeredKey);
+    const earlier = sameApi
+      ? { p95: base.facts.change.p95.incMs, p50: base.facts.change.p50.incMs, mean: base.facts.change.mean.incMs, l: base.facts.load.incL }
+      : undefined;
     const forAnswer = store.answer;
     controller?.abort();
     const mine = new AbortController();
@@ -51,7 +58,8 @@
       made = classifyDay(answer.result, {
         normalP95: base.facts.change.p95.refMs,
         windowMinutes: windowMinutes(frame.incidentStart, frame.incidentEnd),
-        laterLabel: dayLabel(request.incident.start, request.incident.end)
+        laterLabel: dayLabel(request.incident.start, request.incident.end),
+        earlier
       });
       madeFor = forAnswer;
       phase = 'done';

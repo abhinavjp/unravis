@@ -91,7 +91,7 @@ Cloudflare Code Mode is intentionally deferred. This small typed tool set can be
 
 ## Multi-API timeline in the dashboard
 
-After a comparison, the first three comparable slowdown groups are selected automatically. Use the Timeline checkboxes beside API names to choose up to eight groups across sources; selections survive local search/pagination. The multi-API chart appears immediately below the results table. Switch between percentage and millisecond increases over each API's own fixed earlier P95. Above zero means slower; below zero means faster. The selected API's detailed charts remain below it.
+After a comparison, the top comparable slowdown group is selected automatically. Use the Compare checkboxes beside API names to choose up to eight groups across sources; selections survive local search/pagination. The multi-API chart appears immediately below the results table. Switch between percentage and millisecond increases over each API's own fixed earlier P95. Above zero means slower; below zero means faster. The selected API's detailed charts remain below it.
 
 Hover for the source/action, timing counts and before/after estimates. Hollow faded points have fewer than 20 timings in a slot or an unreliable group comparison; they suggest questions rather than prove incident boundaries. Gaps remain missing. Similar changes can suggest a common dependency, but do not establish the cause. Selecting groups/removing groups/changing units makes no database calls. AI can request the equivalent data with audit_compare_timelines and combine it with its repo inspection.
 

@@ -8,8 +8,8 @@
   import { api, ApiError } from './api.ts';
   import {
     approvalReason, blockedLine, blocked, buildRequest, canFinish, checksFailedFirst, CONFIRM_DELETE_WORD, doneHeading, failedHeading, formatBytes, mergeEvents,
-    parseAddresses, progressHeading, progressPercent, railPosition, railSteps, retryHelps, screenAfterResult, settleSteps, uninstallReady,
-    validateOptions, welcomeHeading,
+    parseAddresses, progressHeading, progressPercent, railPosition, railSteps, retryHelps, screenAfterResult, settleSteps, stepAnnouncement, uninstallReady,
+    validateOptions, welcomeHeading, welcomeNutshell,
     type BlackboxOptions, type Check, type Op, type Options, type Problem, type Result, type Scope, type Screen, type StepEvent,
     type UIChanges, type UIState, type UninstallOptions
   } from './logic.ts';
@@ -73,6 +73,8 @@
   const stepNumber = $derived(Math.max(0, rail.findIndex((step) => step.id === position.current)) + 1);
   const stepLabel = $derived(rail.find((step) => step.id === position.current)?.label ?? '');
   const deleting = $derived(op === 'uninstall' && (uninst.deleteCases || uninst.deleteRecordings));
+  // Said to a screen reader, not shown: a screen change names the step; the two end screens say how the run ended (D-C-26).
+  const announcement = $derived(fatal || !ui ? '' : closed ? 'Setup is closed.' : stepAnnouncement(op, screen, stepNumber, rail.length, stepLabel, result));
 
   // After each screen change the new heading takes the focus, so a keyboard user starts at the top of what changed.
   $effect(() => {
@@ -319,6 +321,7 @@
       <BrandMark wordmark="Unravis Setup" />
       {#if ui?.version}<span class="mono version">v{ui.version}</span>{/if}
     </header>
+    <p class="sr" role="status" aria-live="polite" aria-atomic="true">{announcement}</p>
 
     {#if fatal}
       <main class="solo"><h1>Setup cannot go on</h1><p>{fatal}</p></main>
@@ -337,8 +340,7 @@
             {#if screen === 'welcome'}
               <h1>{welcomeHeading(ui)}</h1>
               <div class="nutshell"><b>In a nutshell</b>
-                {#if op === 'install'}Unravis reads audit logs and server health. It never changes your servers.
-                {:else}Your cases, saved connections and recordings stay as they are. Only the program files change.{/if}
+                {welcomeNutshell(op)}
               </div>
               {#if blockedNote}<p class="blocked" role="alert">{blockedNote}</p>{/if}
               {#if checking && !checks.length}<p class="quiet">Checking this PC…</p>{:else}<CheckList checks={orderedChecks} />{/if}
@@ -391,7 +393,7 @@
 
             {:else if screen === 'progress'}
               <h1>{progressHeading(op)}</h1>
-              <div class="bar" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent(rows)}>
+              <div class="bar" role="progressbar" aria-label="Progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={progressPercent(rows)} aria-valuetext={progressPercent(rows) + ' percent'}>
                 <span style:width={progressPercent(rows) + '%'}></span>
               </div>
               {#if rows.length}<StepList {rows} />{:else}<p class="quiet">Starting…</p>{/if}
@@ -410,10 +412,10 @@
                 {#if result.readKey}
                   <section class="key">
                     <h2>Read key (shown once)</h2>
-                    <p class="quiet">Unravis on another PC needs this key to read this Blackbox. It is not saved anywhere you can see it again.</p>
+                    <p class="quiet" id="key-hint">Unravis on another PC needs this key to read this Blackbox. It is not saved anywhere you can see it again.</p>
                     <div class="key-row"><code class="mono">{result.readKey}</code><Button onclick={copyKey}>Copy</Button></div>
                     {#if copyNote}<p class="quiet" role="status">{copyNote}</p>{/if}
-                    <label class="tick"><input type="checkbox" bind:checked={keySaved} /> I have saved the read key</label>
+                    <label class="tick"><input type="checkbox" bind:checked={keySaved} aria-describedby="key-hint" /> I have saved the read key</label>
                   </section>
                 {/if}
               {/if}
@@ -436,21 +438,21 @@
               <div class="nutshell"><b>In a nutshell</b>
                 Always removed: the program, its shortcuts and the Installed apps entry{everyone ? ', the key keeper service' : ''}{blackboxName ? ', the Blackbox service and its firewall rule' : ''}. Your data stays unless you tick it below.
               </div>
-              <label class="tick"><input type="checkbox" bind:checked={uninst.deleteCases} /> {everyone ? 'Also delete the cases and saved connections of everyone on this PC' : 'Also delete my cases and saved connections'}</label>
+              <label class="tick"><input type="checkbox" bind:checked={uninst.deleteCases} aria-describedby={casesPlace ? 'cases-place' : undefined} /> {everyone ? 'Also delete the cases and saved connections of everyone on this PC' : 'Also delete my cases and saved connections'}</label>
               <div class="indent">
-                {#if casesPlace}<p class="quiet"><span class="mono">{casesPlace.folder}</span> ({formatBytes(casesPlace.bytes)})</p>{/if}
+                {#if casesPlace}<p class="quiet" id="cases-place"><span class="mono">{casesPlace.folder}</span> ({formatBytes(casesPlace.bytes)})</p>{/if}
                 {#if uninst.deleteCases}
-                  <p class="danger">{FOREVER}</p>
-                  <label class="field"><span>Type {CONFIRM_DELETE_WORD} to confirm</span><input type="text" class="mono" bind:value={uninst.confirmCases} autocomplete="off" spellcheck="false" /></label>
+                  <p class="danger" id="forever-cases">{FOREVER}</p>
+                  <label class="field"><span>Type {CONFIRM_DELETE_WORD} to confirm</span><input type="text" class="mono" bind:value={uninst.confirmCases} aria-describedby="forever-cases" autocomplete="off" spellcheck="false" /></label>
                 {/if}
               </div>
               {#if blackboxName}
-                <label class="tick"><input type="checkbox" bind:checked={uninst.deleteRecordings} /> Also delete the Blackbox recordings</label>
+                <label class="tick"><input type="checkbox" bind:checked={uninst.deleteRecordings} aria-describedby={recordingsPlace ? 'recordings-place' : undefined} /> Also delete the Blackbox recordings</label>
                 <div class="indent">
-                  {#if recordingsPlace}<p class="quiet"><span class="mono">{recordingsPlace.folder}</span> ({formatBytes(recordingsPlace.bytes)})</p>{/if}
+                  {#if recordingsPlace}<p class="quiet" id="recordings-place"><span class="mono">{recordingsPlace.folder}</span> ({formatBytes(recordingsPlace.bytes)})</p>{/if}
                   {#if uninst.deleteRecordings}
-                    <p class="danger">{FOREVER}</p>
-                    <label class="field"><span>Type the name {blackboxName} to confirm</span><input type="text" class="mono" bind:value={uninst.confirmRecordings} autocomplete="off" spellcheck="false" /></label>
+                    <p class="danger" id="forever-recordings">{FOREVER}</p>
+                    <label class="field"><span>Type the name {blackboxName} to confirm</span><input type="text" class="mono" bind:value={uninst.confirmRecordings} aria-describedby="forever-recordings" autocomplete="off" spellcheck="false" /></label>
                   {/if}
                 </div>
               {/if}

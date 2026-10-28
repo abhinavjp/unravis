@@ -113,13 +113,17 @@ func (h *handler) restoreAsNew(w http.ResponseWriter, r *http.Request, raw strin
 	if !ok {
 		return
 	}
+	believed, ok := believedState(w, r)
+	if !ok {
+		return
+	}
+	if err := h.beliefFirst(r.Context(), id, casestore.ActionRestoreAsNew, believed); err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	// The new case is sealed with this PC's master key.
 	if h.mk.State() != MasterKeyUnlocked {
 		h.masterKeyFail(w, http.StatusConflict, "no-master-key", "Set a master key first.")
-		return
-	}
-	believed, ok := believedState(w, r)
-	if !ok {
 		return
 	}
 	b := h.readCaseFileBody(w, r)
@@ -134,6 +138,12 @@ func (h *handler) restoreAsNew(w http.ResponseWriter, r *http.Request, raw strin
 	info, err := h.entryOf(r.Context(), ar, id)
 	if err != nil {
 		writeStoreError(w, err)
+		return
+	}
+	// CheckBelief takes any belief for restore as new, and beliefFirst lets a case
+	// marked mid-archive through, so a stale belief is refused here as well.
+	if believed != "" && believed != casestore.StateArchived {
+		writeStoreError(w, casestore.ErrCaseChanged)
 		return
 	}
 	if err := casestore.CheckBelief(casestore.ActionRestoreAsNew, believed, casestore.StateOf(info)); err != nil {

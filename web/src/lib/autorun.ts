@@ -10,7 +10,13 @@ export const AUTO_RUN_DELAY_MS = 300;
 export const LANDING_MAX_WINDOW_MS = 24 * 3_600_000;
 const DAY_MS = 86_400_000;
 
-type ScopeShape = Pick<Query, 'sourceIds' | 'start' | 'end' | 'baselineStart' | 'baselineEnd' | 'bucketSeconds'>;
+type ScopeShape = Pick<Query, 'sourceIds' | 'start' | 'end' | 'baselineStart' | 'baselineEnd' | 'bucketSeconds'> & Partial<Pick<Query, 'auditId'>>;
+
+/** An audit ID is 24 hexadecimal characters. The field in More filters and the run gate share this one rule. */
+export const AUDIT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
+/** The sentence for an audit ID that cannot run; null when it is empty or valid. */
+export const auditIdProblem = (value: string | undefined): string | null =>
+  !value || AUDIT_ID_PATTERN.test(value) ? null : 'An audit ID is exactly 24 hexadecimal characters.';
 
 /** The first reason the scope cannot be analysed, in the words the run button reports; null when it can run. Same checks, same order as a manual run. */
 export function scopeProblem(query: ScopeShape, datesValid: boolean): string | null {
@@ -23,7 +29,7 @@ export function scopeProblem(query: ScopeShape, datesValid: boolean): string | n
   if (baselineEnd > start) return 'The reference window must end at or before the current window starts.';
   if (!(Number.isInteger(query.bucketSeconds) && query.bucketSeconds >= 10 && query.bucketSeconds <= 86400)) return 'Bucket size must be a whole number between 10 and 86,400 seconds.';
   if (countEpochBuckets(start, end, query.bucketSeconds) > 120 || countEpochBuckets(baselineStart, baselineEnd, query.bucketSeconds) > 120) return 'This bucket size creates more than 120 time points. Increase the bucket size or shorten a window.';
-  return null;
+  return auditIdProblem(query.auditId);
 }
 
 /** The short hint shown beside the run button while the scope is incomplete: the cause, not an error banner. */
@@ -35,10 +41,10 @@ export function scopeHint(query: ScopeShape, datesValid: boolean): string {
   const baselineStart = new Date(query.baselineStart).getTime(), baselineEnd = new Date(query.baselineEnd).getTime();
   if (!(start < end) || !(baselineStart < baselineEnd)) return 'Each window must start before it ends.';
   if (end - start > 7 * DAY_MS || baselineEnd - baselineStart > 7 * DAY_MS) return 'Each window can be at most 7 days.';
-  if (baselineEnd > start) return 'The reference window must end before the current window starts.';
+  if (baselineEnd > start) return 'The reference window must end at or before the current window starts.';
   if (!(Number.isInteger(query.bucketSeconds) && query.bucketSeconds >= 10 && query.bucketSeconds <= 86400)) return 'Bucket size must be 10 to 86,400 seconds.';
   if (countEpochBuckets(start, end, query.bucketSeconds) > 120 || countEpochBuckets(baselineStart, baselineEnd, query.bucketSeconds) > 120) return 'That bucket size makes over 120 time points; use a larger bucket or a shorter window.';
-  return '';
+  return auditIdProblem(query.auditId) ?? '';
 }
 
 /** Whether the landing view may run without a click: only a primary window of at most 24 hours. An unparseable or empty window never does. */

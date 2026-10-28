@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"api-audit-explorer/internal/audit"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -21,10 +22,21 @@ type groupArgs struct {
 	Sort     string `json:"sort"`
 }
 
-func groupPage(rows []audit.Comparison, args groupArgs) (map[string]any, error) {
-	if args.Limit == 0 {
-		args.Limit = 20
+// defaultLimit gives the page size when the caller named none. Zero is only "none" when the key is absent
+// (or null) in the raw arguments: an explicit "limit": 0 is passed on unchanged so the range check refuses it.
+func defaultLimit(raw json.RawMessage, limit, def int) int {
+	var keys map[string]json.RawMessage
+	if json.Unmarshal(raw, &keys) != nil {
+		return limit
 	}
+	v, ok := keys["limit"]
+	if !ok || string(bytes.TrimSpace(v)) == "null" {
+		return def
+	}
+	return limit
+}
+
+func groupPage(rows []audit.Comparison, args groupArgs) (map[string]any, error) {
 	if args.Offset < 0 || args.Limit < 1 || args.Limit > 100 || len(args.Search) > 200 {
 		return nil, errors.New("offset must be non-negative, limit 1–100, search at most 200 bytes")
 	}
@@ -129,7 +141,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if err := b.checkIdentifierFilters(args.Query); err != nil {
 			return nil, err
 		}
-		pageArgs := groupArgs{Limit: args.Limit, Sort: args.Sort}
+		pageArgs := groupArgs{Limit: defaultLimit(raw, args.Limit, 20), Sort: args.Sort}
 		if _, err := groupPage(nil, pageArgs); err != nil {
 			return nil, err
 		}
@@ -184,6 +196,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if err := strictArgs(raw, &args); err != nil {
 			return nil, err
 		}
+		args.Limit = defaultLimit(raw, args.Limit, 20)
 		result, err := b.cached(args.ResultID)
 		if err != nil {
 			return nil, err
@@ -241,9 +254,7 @@ func (b *Bridge) call(ctx context.Context, name string, raw json.RawMessage) (an
 		if err := strictArgs(raw, &args); err != nil {
 			return nil, err
 		}
-		if args.Limit == 0 {
-			args.Limit = 20
-		}
+		args.Limit = defaultLimit(raw, args.Limit, 20)
 		if args.Limit < 1 || args.Limit > 100 || len(args.Cursor) > 4096 {
 			return nil, errors.New("limit must be 1–100 and cursor at most 4096 bytes")
 		}

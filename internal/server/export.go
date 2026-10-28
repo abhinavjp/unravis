@@ -37,6 +37,9 @@ type exportPreviewRequest struct {
 	End               time.Time `json:"end"`
 	IncludePseudonyms bool      `json:"includePseudonyms"`
 	IncludeLedger     bool      `json:"includeLedger"`
+	// LedgerCaseID, when set with IncludeLedger, names the case whose own ledger is
+	// read instead of the shared one. It is not CaseID: that means a case export.
+	LedgerCaseID string `json:"ledgerCaseId,omitempty"`
 	// CaseID, when set, previews the redacted export of that case instead of
 	// the pattern findings; the other fields are then ignored.
 	CaseID string `json:"caseId,omitempty"`
@@ -49,6 +52,10 @@ type exportConfirmRequest struct {
 type exportPreviewResponse struct {
 	PreviewID string          `json:"previewId"`
 	Export    evidence.Export `json:"export"`
+	// LedgerIncluded and PseudonymsIncluded say which lists were asked for. They sit
+	// outside the file because the file leaves an empty list out.
+	LedgerIncluded     bool `json:"ledgerIncluded,omitempty"`
+	PseudonymsIncluded bool `json:"pseudonymsIncluded,omitempty"`
 }
 
 type exportConfirmResponse struct {
@@ -170,14 +177,9 @@ func (h *handler) exportPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	report = exportableReport(report)
 
-	var hypotheses []ledger.Hypothesis
-	if body.IncludeLedger && h.ledger != nil {
-		all, err := h.ledger.List()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "The hypothesis ledger could not be read.")
-			return
-		}
-		hypotheses = relatedHypotheses(all, report)
+	hypotheses, ledgerCase, ok := h.exportLedger(w, r, body, report)
+	if !ok {
+		return
 	}
 
 	key, err := newExportKey()
@@ -218,8 +220,52 @@ func (h *handler) exportPreview(w http.ResponseWriter, r *http.Request) {
 	// bodySha256 inside the file is a different hash (manifest and body with
 	// that value blanked) and is left as the engine wrote it.
 	sum := sha256.Sum256(canonical)
-	h.exports().put(id, storedExport{canonical: canonical, sha256: hex.EncodeToString(sum[:])})
-	writeJSON(w, http.StatusOK, exportPreviewResponse{PreviewID: id, Export: export}, maxResponseBytes)
+	h.exports().put(id, storedExport{canonical: canonical, sha256: hex.EncodeToString(sum[:]), caseID: ledgerCase})
+	writeJSON(w, http.StatusOK, exportPreviewResponse{
+		PreviewID: id, Export: export,
+		LedgerIncluded: body.IncludeLedger, PseudonymsIncluded: body.IncludePseudonyms,
+	}, maxResponseBytes)
+}
+
+// exportLedger returns the ledger entries a findings export may carry: none unless
+// asked for; the open case's own ledger when ledgerCaseId is set; otherwise the
+// shared ledger. Entries are kept only when they reference a finding of this report.
+// It also returns the id of the case the ledger came from (empty for the shared
+// ledger), so the stored preview is dropped when that case is erased.
+// On false the answer has been written.
+func (h *handler) exportLedger(w http.ResponseWriter, r *http.Request, body exportPreviewRequest, report audit.PatternReport) ([]ledger.Hypothesis, string, bool) {
+	if !body.IncludeLedger {
+		return nil, "", true
+	}
+	caseID := ""
+	var all []ledger.Hypothesis
+	if body.LedgerCaseID != "" {
+		c, lb, id, ok := h.caseLedgerOf(w, r, body.LedgerCaseID)
+		if !ok {
+			return nil, "", false
+		}
+		defer c.Close()
+		caseID = string(id)
+		s, done, ok := h.caseLedgerStore(w, r, id, lb, false)
+		if !ok {
+			return nil, "", false
+		}
+		defer done()
+		items, err := s.List()
+		if err != nil {
+			writeCaseLedgerError(w, err)
+			return nil, "", false
+		}
+		all = items
+	} else if h.ledger != nil {
+		items, err := h.ledger.List()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "The hypothesis ledger could not be read.")
+			return nil, "", false
+		}
+		all = items
+	}
+	return relatedHypotheses(all, report), caseID, true
 }
 
 // exportableReport removes what the evidence export has no record type for: the
@@ -264,7 +310,7 @@ func relatedHypotheses(all []ledger.Hypothesis, report audit.PatternReport) []le
 
 func writeExportBuildError(w http.ResponseWriter, err error) {
 	if errors.Is(err, evidence.ErrInvalid) {
-		writeError(w, http.StatusBadRequest, "Request validation failed.")
+		writeError(w, http.StatusBadRequest, "The export could not be built from this input. Check the sources and the window.")
 		return
 	}
 	writeError(w, http.StatusInternalServerError, "The export could not be built.")

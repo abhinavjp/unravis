@@ -42,7 +42,6 @@ export const CASE_HOME_TEXT = {
   retryAuditSource: 'Not added to analysis',
   retryImport: 'Import failed',
   retryOther: 'Needs another try',
-  retryNone: 'Nothing needs another try.',
 
   analysisHeading: 'Analysis',
   analysisText: 'Open the charts and the ranked list of operations for this case.',

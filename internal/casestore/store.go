@@ -56,6 +56,14 @@ func NewID() (CaseID, error) {
 // MaxTitleBytes bounds a case title.
 const MaxTitleBytes = 200
 
+// The product rule for a title typed for a NEW case (D-A-08): 2 to 80 characters,
+// counted as characters (runes), not bytes. Stored titles keep the wider ValidTitle
+// rule so an old case never becomes unreadable.
+const (
+	MinTitleRunes = 2
+	MaxTitleRunes = 80
+)
+
 // ValidTitle reports whether a title is non-empty, bounded and valid UTF-8
 // without control or format characters: C0/C1 controls, and invisible
 // formatting such as bidi overrides, zero-width joiners and line separators,
@@ -70,6 +78,17 @@ func ValidTitle(title string) bool {
 		}
 	}
 	return true
+}
+
+// ValidNewTitle is the check for a title given to a new case: everything ValidTitle
+// demands, and 2 to 80 characters after trimming surrounding spaces. Use it only on
+// create; reads and stored titles use ValidTitle.
+func ValidNewTitle(title string) bool {
+	if !ValidTitle(title) {
+		return false
+	}
+	n := utf8.RuneCountInString(strings.TrimSpace(title))
+	return n >= MinTitleRunes && n <= MaxTitleRunes
 }
 
 // Retention is how long a closed case is kept before Sweep erases it (R16).

@@ -61,7 +61,7 @@
 </script>
 
 <section class="data-section breakdown-panel" id={panelId} aria-label="Request breakdown">
-  <div class="section-heading"><div><h3>{heading}</h3><p>See which {label.toLowerCase()} values the requests in the current period share.{#if bucket} Rows count requests only.{:else} Choose a row to list matching requests.{/if} Counts follow the request type and result filters above; the current period only.</p></div></div>
+  <div class="section-heading"><div><h3>{heading}</h3><p>See which {label.toLowerCase()} values the requests in the current period share.{#if bucket}{' '}Rows count requests only.{:else}{' '}Choose a row to list matching requests.{/if} Counts follow the request type and result filters above; the current period only.</p></div></div>
   {#if !lockedDim}<div class="breakdown-tabs" role="tablist" aria-label="Breakdown by">
     {#each breakdownDims as item (item.dim)}
       <button role="tab" aria-selected={dim === item.dim} class:active={dim === item.dim} onclick={() => picked = item.dim}>{item.label}</button>

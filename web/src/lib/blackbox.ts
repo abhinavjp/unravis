@@ -49,6 +49,8 @@ export interface Facts {
   files: number;
   samples: number;
   gaps: number;
+  /** Length in seconds of the longest gap. Absent when there is none (or from an older server). */
+  longestGapSeconds?: number;
   /** Recording files that were not read to the end (dropped or missing). Absent when none. */
   unread?: number;
   freePercent?: number;
@@ -312,6 +314,22 @@ export function settingsProblem(s: Settings): SettingsProblem | null {
   return null;
 }
 
+/** Whether the listen address is every address (IPv4 0.0.0.0 or IPv6 ::), so other computers can reach the status port (D-B-50). */
+export function listensOnAll(bind: string): boolean {
+  const s = bind.trim();
+  return s === '0.0.0.0' || s === '::';
+}
+
+/**
+ * The settings problem to show beside a field: the one found at the last attempt (`found`), but only while that field is still wrong,
+ * so the message goes away as soon as the person fixes it (D-B-50). `logPathsText` is the log box text, one folder per line.
+ */
+export function fieldProblemNow(found: SettingsProblem | null, s: Settings, logPathsText: string): SettingsProblem | null {
+  if (!found) return null;
+  const logPaths = logPathsText.split('\n').map((p) => p.trim()).filter(Boolean);
+  return settingsProblem({ ...s, logPaths }) === found ? found : null;
+}
+
 /** What kind of place the typed text looks like. The server decides; this only decides whether to ask for a read key. */
 export function guessKind(location: string): LocationKind | null {
   const s = location.trim();
@@ -356,4 +374,15 @@ export function gapSummary(gaps: Span[] | undefined): { short: Span[]; long: Spa
   const short = gaps.filter(g => g.kind === 'short');
   const long = gaps.filter(g => g.kind === 'long');
   return { short, long, shortMinutes: short.reduce((n, g) => n + g.minutes, 0), longMinutes: long.reduce((n, g) => n + g.minutes, 0) };
+}
+
+/**
+ * What Escape does inside the Place a Blackbox wizard (D-B-49). `none` leaves the key to the drawer (the finished screens),
+ * `swallow` eats it while an install or pack is running, `back` goes one part back, `leave` goes to the list from Part 1.
+ */
+export type WizardEscape = 'none' | 'swallow' | 'back' | 'leave';
+export function wizardEscape(part: number, busy: boolean, finished: boolean): WizardEscape {
+  if (finished) return 'none';
+  if (busy) return 'swallow';
+  return part > 1 ? 'back' : 'leave';
 }

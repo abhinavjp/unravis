@@ -8,7 +8,7 @@
   import { focusEmpty } from '../lib/focusEmpty';
   import { timeZone } from '../lib/timeZone.svelte';
   import { trafficData } from '../lib/traffic';
-  import { heroHasData, pulseFigures, singleKind, type Lens } from '../lib/pulse';
+  import { heroHasData, pulseFigures, singleKind, topRiseName, type Lens } from '../lib/pulse';
   import { heroOutliers } from '../lib/chartHero';
   import { axisDuration } from '../lib/chartScale';
   import { metricLabels } from '../lib/presentation';
@@ -36,8 +36,8 @@
     const sum = (pick: (row: (typeof rollups)[number]) => number | undefined) => rollups.reduce((total, row) => total + (pick(row) ?? 0), 0);
     return plainIncomplete({ completed: sum(row => row.completed), incomplete: sum(row => row.incomplete), pending: sum(row => row.pending), invalid: sum(row => row.invalid), window: { start: analysis.query.start, end: analysis.query.end, zone: timeZone.zone } });
   });
-  // When the P95 is clearly higher than in the earlier period, one sentence says so and points to the ranked view. It never names a reason.
-  const headline = $derived(p95Sentence(figures.find(figure => figure.id === 'p95')?.change ?? null, periodLengthMs(analysis.query.baselineStart, analysis.query.baselineEnd)));
+  // When the P95 is clearly higher than in the earlier period, one sentence says so and points to the ranked view. It names the operation with the biggest rise, never a reason.
+  const headline = $derived(p95Sentence(figures.find(figure => figure.id === 'p95')?.change ?? null, periodLengthMs(analysis.query.baselineStart, analysis.query.baselineEnd), topRiseName(analysis.rollups ?? [])));
   const toneOf = (id: Lens, value: string) => value === '0' || value === '—' ? (value === '—' ? 'muted' : '') : id === 'client' ? 'warn' : id === 'server' ? 'bad' : '';
   let node = $state<HTMLDivElement>();
   let chart = $state<ReturnType<typeof echarts.init>>();

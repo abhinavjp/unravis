@@ -573,6 +573,10 @@ func (h *handler) deleteSource(w http.ResponseWriter, r *http.Request, id string
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 	if err := h.repo.DeleteSource(ctx, decoded); err != nil {
+		if errors.Is(err, audit.ErrInvalidInput) && strings.Contains(err.Error(), "demo sources are fixed") {
+			writeError(w, http.StatusBadRequest, "Demo sources are built in and cannot be removed.")
+			return
+		}
 		writeRepoError(w, err)
 		return
 	}
@@ -587,7 +591,7 @@ func (h *handler) analyze(w http.ResponseWriter, r *http.Request) {
 	}
 	applyQueryDefaults(&q)
 	if err := audit.ValidateQuery(q); err != nil {
-		writeRepoError(w, fmt.Errorf("%w: invalid query", audit.ErrInvalidInput))
+		writeQueryProblem(w, err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
@@ -654,7 +658,7 @@ func (h *handler) requests(w http.ResponseWriter, r *http.Request) {
 	}
 	applyQueryDefaults(&input.Query)
 	if err := audit.ValidateQuery(input.Query); err != nil {
-		writeRepoError(w, fmt.Errorf("%w: invalid query", audit.ErrInvalidInput))
+		writeQueryProblem(w, err)
 		return
 	}
 	if input.Limit < 1 || input.Limit > audit.MaxPageSize {
@@ -754,6 +758,8 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			writeError(w, http.StatusRequestEntityTooLarge, "Request body exceeds 1 MiB.")
+		} else if strings.HasPrefix(err.Error(), "json: unknown field") {
+			writeError(w, http.StatusBadRequest, "Request body has a field this server does not know.")
 		} else {
 			writeError(w, http.StatusBadRequest, "Request body is invalid JSON.")
 		}
@@ -850,7 +856,7 @@ func (h *handler) export(w http.ResponseWriter, r *http.Request) {
 	}
 	applyQueryDefaults(&input.Query)
 	if err := audit.ValidateQuery(input.Query); err != nil {
-		writeRepoError(w, fmt.Errorf("%w: invalid query", audit.ErrInvalidInput))
+		writeQueryProblem(w, err)
 		return
 	}
 	if input.Cursor != "" {
@@ -862,7 +868,7 @@ func (h *handler) export(w http.ResponseWriter, r *http.Request) {
 	var output boundedBuffer
 	output.limit = maxResponseBytes
 	usedBytes := 0
-	if !writeCSVRow(&output, []string{"id", "sourceId", "controller", "action", "kind", "outcome", "status", "url", "initiatedAt", "completedAt", "durationMs", "apiTimeMs", "auditCreateTimeMs", "payloadRecordTimeMs", "requestKB", "responseKB", "userId", "userIp", "userAgent", "uiVersion", "createdOn", "updatedOn", "pollingTypeRaw"}, &usedBytes) {
+	if !writeCSVRow(&output, []string{"id", "sourceId", "controller", "action", "kind", "outcome", "status", "url", "initiatedAt", "completedAt", "durationMs", "apiTimeMs", "auditCreateTimeMs", "payloadRecordTimeMs", "requestKB", "responseKB", "userId", "userAgent", "uiVersion", "createdOn", "updatedOn", "pollingTypeRaw"}, &usedBytes) {
 		return
 	}
 	rows := 0
@@ -970,7 +976,7 @@ func requestCSVRow(row audit.RequestRecord) []string {
 	if row.UserID != nil {
 		userID = strconv.Itoa(*row.UserID)
 	}
-	return []string{str(row.ID), str(row.SourceID), str(row.Controller), str(row.Action), str(row.Kind), str(row.Outcome), str(row.Status), str(row.URL), str(timeValue(row.InitiatedAt)), str(timeValue(row.CompletedAt)), number(row.DurationMs), number(row.ApiTimeMs), number(row.AuditCreateTimeMs), number(row.PayloadRecordTimeMs), strconv.FormatFloat(row.RequestKB, 'f', -1, 64), strconv.FormatFloat(row.ResponseKB, 'f', -1, 64), userID, str(row.UserIP), str(row.UserAgent), str(row.UIVersion), str(timeValue(row.CreatedOn)), str(timeValue(row.UpdatedOn)), str(row.PollingTypeRaw)}
+	return []string{str(row.ID), str(row.SourceID), str(row.Controller), str(row.Action), str(row.Kind), str(row.Outcome), str(row.Status), str(row.URL), str(timeValue(row.InitiatedAt)), str(timeValue(row.CompletedAt)), number(row.DurationMs), number(row.ApiTimeMs), number(row.AuditCreateTimeMs), number(row.PayloadRecordTimeMs), strconv.FormatFloat(row.RequestKB, 'f', -1, 64), strconv.FormatFloat(row.ResponseKB, 'f', -1, 64), userID, str(row.UserAgent), str(row.UIVersion), str(timeValue(row.CreatedOn)), str(timeValue(row.UpdatedOn)), str(row.PollingTypeRaw)}
 }
 
 func spreadsheetSafe(value string) string {

@@ -8,7 +8,7 @@ import type { Change, Result } from './types';
  * never calls a day fixed unless the slow end is back inside the normal range, and it never compares against minutes that do not exist.
  */
 
-export type FixOutcome = 'fixed' | 'better' | 'unchanged' | 'worse' | 'no-data' | 'partly' | 'unlike';
+export type FixOutcome = 'fixed' | 'better' | 'unchanged' | 'worse' | 'no-data' | 'too-few' | 'partly' | 'unlike';
 
 /** Calls per second that differ by this many percent make the days unlike. */
 export const UNLIKE_CALLS_PCT = 50;
@@ -24,6 +24,11 @@ export interface FixContext {
   windowMinutes: number;
   /** Words for the later day, such as "27 Oct 10:30 to 11:00". */
   laterLabel: string;
+  /**
+   * The case's own figures for the earlier day (the incident day of the main run), used for the Earlier day column when the comparison run
+   * has none. Give it only when the same API is compared; for another API these figures would be about something else.
+   */
+  earlier?: { p95?: number; p50?: number; mean?: number; l?: number };
 }
 
 export interface FixRow { measure: string; earlier: string; later: string; change: string; mark: ChangeMark | null }
@@ -42,7 +47,7 @@ export interface FixVerdict {
 }
 
 export const OUTCOME_WORD: Readonly<Record<FixOutcome, string>> = {
-  fixed: 'Fixed', better: 'Better, not fixed', unchanged: 'Unchanged', worse: 'Worse', 'no-data': 'No data for that day', partly: 'Partly there', unlike: 'The days are not alike'
+  fixed: 'Fixed', better: 'Better, not fixed', unchanged: 'Unchanged', worse: 'Worse', 'no-data': 'No data for that day', 'too-few': 'Too few calls', partly: 'Partly there', unlike: 'The days are not alike'
 };
 
 const pct = (from: number | undefined, to: number | undefined): number | undefined => (typeof from === 'number' && typeof to === 'number' && from > 0 ? ((to - from) / from) * 100 : undefined);
@@ -63,18 +68,19 @@ export function aboveNormal(normal: number, later: number, th: { changeMinPercen
   return delta >= th.changeMinMs && (delta / normal) * 100 >= th.changeMinPercent;
 }
 
-function rowsFor(result: Result): FixRow[] {
+function rowsFor(result: Result, earlier: FixContext['earlier']): FixRow[] {
   const c = result.facts.change;
   const l = result.facts.load;
-  const row = (measure: string, change: Change): FixRow => ({
-    measure, earlier: fmtMs(change.refMs), later: fmtMs(change.incMs), change: change.known && typeof change.deltaPct === 'number' ? fmtPct(change.deltaPct) : 'No data', mark: markFor(change)
+  const row = (measure: string, change: Change, fallback: number | undefined): FixRow => ({
+    measure, earlier: fmtMs(change.refMs ?? fallback), later: fmtMs(change.incMs), change: change.known && typeof change.deltaPct === 'number' ? fmtPct(change.deltaPct) : 'No data', mark: markFor(change)
   });
-  const lChange = pct(l.refL, l.incL);
+  const refL = l.refL ?? earlier?.l;
+  const lChange = pct(refL, l.incL);
   return [
-    row('P95 (slow end)', c.p95),
-    row('P50 (middle)', c.p50),
-    row('D (whole call, average)', c.mean),
-    { measure: 'L (calls in flight)', earlier: fmtNumber(l.refL, 1), later: fmtNumber(l.incL, 1), change: lChange === undefined ? 'No data' : fmtPct(lChange), mark: null }
+    row('P95 (slow end)', c.p95, earlier?.p95),
+    row('P50 (middle)', c.p50, earlier?.p50),
+    row('D (whole call, average)', c.mean, earlier?.mean),
+    { measure: 'L (calls in flight)', earlier: fmtNumber(refL, 1), later: fmtNumber(l.incL, 1), change: lChange === undefined ? 'No data' : fmtPct(lChange), mark: null }
   ];
 }
 
@@ -87,16 +93,16 @@ export function classifyDay(result: Result, ctx: FixContext): FixVerdict {
   const f = result.facts;
   const p95 = f.change.p95;
   const th = result.thresholds;
-  const rows = rowsFor(result);
+  const rows = rowsFor(result, ctx.earlier);
   const warnings: string[] = [];
-  const done = (outcome: FixOutcome, sentence: string, record = outcome !== 'no-data', extra = ''): FixVerdict => ({
+  const done = (outcome: FixOutcome, sentence: string, record = outcome !== 'no-data' && outcome !== 'too-few', extra = ''): FixVerdict => ({
     outcome, word: OUTCOME_WORD[outcome], sentence, rows, warnings, canRecord: record,
     recordLine: record ? ofLine(ctx, p95, OUTCOME_WORD[outcome], extra) : ''
   });
 
   if (f.counts.incident === 0) return done('no-data', 'Unravis found no calls on that day, in those hours. Nothing is compared against zero. Pick another day, or add the data for it.');
   if (f.counts.reference === 0) return done('no-data', 'The earlier day has no calls in the audit data, so there is nothing to compare with.');
-  if (!p95.known) return done('no-data', 'Too few calls on one of the days to read the slow end. Pick a wider window or another day.');
+  if (!p95.known) return done('too-few', 'Too few calls on one of the days to read the slow end. Pick a wider window or another day.');
 
   const callsChange = pct(f.reference.perSec, f.incident.perSec);
   const mix = mixShift(result);
@@ -170,4 +176,15 @@ export function laterFrame(frame: Frame, day: string): Frame | null {
     incidentStart: toLocalUtc(laterStart), incidentEnd: toLocalUtc(laterStart + (end - start)),
     referenceStart: frame.incidentStart, referenceEnd: frame.incidentEnd
   };
+}
+
+/**
+ * True when `day` (`YYYY-MM-DD`, UTC) is a day after the incident day of `frame`. The comparison is the same hours on a later day, so the
+ * incident day itself, and any day before it, cannot be that. False also when either date cannot be read.
+ */
+export function isLaterDay(frame: Frame, day: string): boolean {
+  const dayMs = parseLocalUtc(`${day}T00:00`);
+  const start = parseLocalUtc(frame.incidentStart);
+  if (!Number.isFinite(dayMs) || !Number.isFinite(start)) return false;
+  return dayMs > Math.floor(start / 86400000) * 86400000;
 }

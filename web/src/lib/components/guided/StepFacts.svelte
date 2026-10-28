@@ -6,7 +6,7 @@
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
   import type { GuidedStore } from '../../guided/guided.svelte';
   import {
-    fmtCount, fmtWhen, loadRows, movedCount, notEnoughData, nothingMoved, partBars, partRows, shapeRows, sourceRows, stepOf, stickerFor,
+    answeredRoute, fmtCount, fmtWhen, loadRows, movedCount, notEnoughData, nothingMoved, partBars, partRows, readGap, shapeRows, sourceRows, stepOf, stickerFor,
     suspectsForStep, trustCards
   } from '../../guided/stepModel';
   import type { Suspect } from '../../guided/types';
@@ -23,6 +23,8 @@
   const sticker = $derived(stickerFor(result, step, store.phase, store.outOfDate(sourceIds)));
   const suspects = $derived(result ? suspectsForStep(result, step) : []);
   const read = $derived(store.answer?.read);
+  const focusRoute = $derived(answeredRoute(store.answeredKey));
+  const gap = $derived(result ? readGap(result, focusRoute) : null);
   let showAll = $state(false);
 
   const GROUP_LEAD: Record<number, string> = { 6: T.groupLead6, 7: T.groupLead7, 8: T.groupLead8, 9: T.groupLead9 };
@@ -71,6 +73,7 @@
     {/if}
     {#if read}
       <p class="note">{T.readNote(fmtCount(read.requests), fmtCount(read.iisRows))}</p>
+      {#if gap}<p class="note">{T.readGap(gap.total, gap.used, gap.parts)}</p>{/if}
       {#if read.truncated}<p class="warn" role="alert">{T.truncated}</p>{/if}
       {#each read.warnings as warning (warning)}<p class="note">{warning}</p>{/each}
     {/if}
@@ -100,6 +103,7 @@
       </div>
       {#if rows.length > 8}<div><button type="button" class="quiet-button" onclick={() => (showAll = !showAll)}>{showAll ? T.showLess : T.showAll}</button></div>{/if}
     {/if}
+    {#if focusRoute}<p class="note">{T.byApiFocusNote}</p>{/if}
     <p class="note">{T.shapeRule(result.thresholds.changeMinPercent, result.thresholds.changeMinMs)}</p>
     {#if result.facts.retries.known}
       <p class="note">{T.retriesLine(fmtCount(result.facts.retries.incRetried), fmtCount(result.facts.retries.refRetried))}</p>
@@ -134,7 +138,8 @@
     {#each rows.filter((r) => !r.tested) as row (row.key)}<p class="note">{T.untestedParts} {row.label}: {row.why || T.noRecords}</p>{/each}
     {#if result.facts.parts.dominantWhy}<p class="note">{result.facts.parts.dominantWhy}</p>{/if}
     {#if !result.facts.parts.oTested}
-      <div class="row"><button type="button" class="secondary-button" disabled={readOnly} onclick={onAddData}>{T.addAuditLogs}</button></div>
+      <p class="note">{T.iisAdds}</p>
+      <div class="row"><button type="button" class="secondary-button" disabled={readOnly} onclick={onAddData}>{T.addIisLogs}</button></div>
     {/if}
     <SlowCalls {store} {sourceIds} />
   {:else if step === 4}
@@ -151,8 +156,8 @@
   {:else if step === 5}
     <p class="lead">{T.changesLead}</p>
     {#if !result.signals.changes.entered || result.signals.changes.items.length === 0}
-      <p class="note">{T.changesNone}</p>
-      <div><button type="button" class="secondary-button" onclick={() => store.goTo(0)}>{T.changeWindow}</button></div>
+      <p class="note">{result.signals.changes.entered ? T.changesNoneEntered : T.changesNone}</p>
+      <div><button type="button" class="secondary-button" onclick={() => store.goTo(0)}>{T.changeListButton}</button></div>
     {:else}
       <div class="table-scroll">
         <table>

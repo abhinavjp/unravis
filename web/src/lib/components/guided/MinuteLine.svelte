@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fmtWhen } from '../../guided/stepModel';
+  import { fmtWhen, peakCaption } from '../../guided/stepModel';
   import type { Minute } from '../../guided/types';
 
   // A small line chart of one number per minute. A minute with no value breaks the line: it is never drawn as zero.
@@ -12,7 +12,8 @@
   const points = $derived(
     [...series].sort((a, b) => a.at.localeCompare(b.at)).map((m) => ({ at: m.at, window: m.window, v: field === 'p95' ? m.p95 : m.inFlight, gap: !!m.gap }))
   );
-  const top = $derived(Math.max(1, ...points.map((p) => (typeof p.v === 'number' ? p.v : 0))));
+  const peak = $derived(Math.max(0, ...points.map((p) => (typeof p.v === 'number' ? p.v : 0))));
+  const top = $derived(Math.max(1, peak));
   const x = (i: number) => (points.length <= 1 ? W / 2 : PAD + (i / (points.length - 1)) * (W - 2 * PAD));
   const y = (v: number) => H - PAD - (v / top) * (H - 2 * PAD);
 
@@ -37,7 +38,7 @@
 
 {#if points.length > 1}
   <figure>
-    <figcaption>{label} <span class="range">{fmtWhen(first?.at)} to {fmtWhen(last?.at)} UTC. Highest {Math.round(top).toLocaleString('en-US')} {unit}.</span></figcaption>
+    <figcaption>{label} <span class="range">{fmtWhen(first?.at)} to {fmtWhen(last?.at)} UTC. {peakCaption(field, peak, unit)}</span></figcaption>
     <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label} preserveAspectRatio="none">
       <line x1={PAD} y1={H - PAD} x2={W - PAD} y2={H - PAD} class="axis" />
       {#each runs as run, i (i)}<path d={run.d} class={'line ' + (run.window === 'incident' ? 'incident' : 'normal')} />{/each}

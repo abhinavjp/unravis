@@ -4,13 +4,22 @@
 /** How long the key stays on the screen before it is hidden again. */
 export const KEY_SHOW_MS = 30000;
 
+export type CopyKeyResult = 'copied' | 'no-key' | 'no-clipboard' | 'keeper-held';
+
+/** True for a refused Blackbox call whose reason is keeper-held (a BlackboxError, matched by shape so this file needs no import). */
+export function isKeeperHeldError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const refusal = (error as { refusal?: { reason?: unknown } }).refusal;
+  return !!refusal && refusal.reason === 'keeper-held';
+}
+
 /** Fetches the key, puts it on the clipboard and lets it go. Never throws. */
-export async function copyKeyOnce(fetchKey: () => Promise<string>, write: (text: string) => Promise<void>): Promise<'copied' | 'no-key' | 'no-clipboard'> {
+export async function copyKeyOnce(fetchKey: () => Promise<string>, write: (text: string) => Promise<void>): Promise<CopyKeyResult> {
   let key = '';
   try {
     key = await fetchKey();
-  } catch {
-    return 'no-key';
+  } catch (error) {
+    return isKeeperHeldError(error) ? 'keeper-held' : 'no-key';
   }
   if (!key) return 'no-key';
   try {

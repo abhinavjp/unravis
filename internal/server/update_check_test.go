@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -539,4 +540,75 @@ func TestUpdateCheckVersionRules(t *testing.T) {
 func strconvQuote(s string) string {
 	data, _ := json.Marshal(s)
 	return string(data)
+}
+
+// setUpdateCheckEndpoint points the check at url with timeout, and restores both after the test. The tests that use it must not run in
+// parallel (none in this package does).
+func setUpdateCheckEndpoint(t *testing.T, url string, timeout time.Duration) {
+	t.Helper()
+	oldURL, oldTimeout := updateCheckReleasesURL, updateCheckTimeout
+	t.Cleanup(func() { updateCheckReleasesURL, updateCheckTimeout = oldURL, oldTimeout })
+	updateCheckReleasesURL, updateCheckTimeout = url, timeout
+}
+
+// A GitHub that never answers ends in "could not check" after the timeout: the page gets 200 and "unreachable", not a hang (D-C-08).
+func TestUpdateCheckSlowServerEndsUnreachable(t *testing.T) {
+	setUpdateCheckVersion(t, "1.2.3")
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) }) // runs before srv.Close (cleanups run last in, first out)
+	setUpdateCheckEndpoint(t, srv.URL, 100*time.Millisecond)
+	// No WithUpdateCheckHTTP: this is the product's own client, the one that carries the timeout.
+	h := New(audit.NewDemo(time.Now()), nil, testToken, true)
+	start := time.Now()
+	reply := postUpdateCheck(t, h)
+	if reply.Status != "unreachable" || reply.Current != "1.2.3" || reply.Latest != "" || reply.URL != "" {
+		t.Errorf("reply = %+v", reply)
+	}
+	if took := time.Since(start); took < 80*time.Millisecond || took > 5*time.Second {
+		t.Errorf("the check took %s; it should stop at about the 100 ms timeout", took)
+	}
+}
+
+// The product default is ten seconds, and the client built for a check carries the current value.
+func TestUpdateCheckClientTimeout(t *testing.T) {
+	if updateCheckTimeout != 10*time.Second {
+		t.Fatalf("updateCheckTimeout = %s, want 10s", updateCheckTimeout)
+	}
+	if got := defaultUpdateCheckClient().Timeout; got != 10*time.Second {
+		t.Errorf("client timeout = %s, want 10s", got)
+	}
+	setUpdateCheckEndpoint(t, updateCheckReleasesURL, 7*time.Millisecond)
+	if got := defaultUpdateCheckClient().Timeout; got != 7*time.Millisecond {
+		t.Errorf("client timeout after the change = %s, want 7ms", got)
+	}
+}
+
+// The body limit is 256 KiB: exactly that is read, one byte more is "unreachable" (D-C-08).
+func TestUpdateCheckBodyLimitBoundary(t *testing.T) {
+	setUpdateCheckVersion(t, "1.2.3")
+	if updateCheckBodyLimit != 256*1024 {
+		t.Fatalf("updateCheckBodyLimit = %d, want 262144", updateCheckBodyLimit)
+	}
+	const head = `{"tag_name":"v9.9.9","html_url":"https://github.com/abhinavjp/unravis/releases/tag/v9.9.9","notes":"`
+	const tail = `"}`
+	pad := updateCheckBodyLimit - len(head) - len(tail)
+	for _, c := range []struct {
+		extra int
+		want  string
+	}{{0, "available"}, {1, "unreachable"}} {
+		body := head + strings.Repeat("x", pad+c.extra) + tail
+		h := updateCheckHandler(updateCheckRoundTripFunc(func(*http.Request) (*http.Response, error) {
+			return updateCheckHTTPResponse(http.StatusOK, body), nil
+		}))
+		if reply := postUpdateCheck(t, h); reply.Status != c.want {
+			t.Errorf("a body of %d bytes: status = %q, want %q", len(body), reply.Status, c.want)
+		}
+	}
 }

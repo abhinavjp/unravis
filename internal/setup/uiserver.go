@@ -465,6 +465,8 @@ func DescribeChanges(req WorkRequest, old *Installed, d Dirs, isAdmin bool) UICh
 			c.WillChange = append(c.WillChange, "Firewall rule for port "+strconv.Itoa(o.Blackbox.Port)+", open only to "+strings.Join(o.Firewall.RemoteAddresses, ", "))
 		}
 	}
+	// The last steps of every install, upgrade and repair (plan.go: "shortcuts" and "arp"); the approval screen names them too.
+	c.WillChange = append(c.WillChange, "Start menu shortcut", "Installed apps entry")
 	c.WillNotChange = []string{"Your cases and saved connections", "Saved passwords (they stay sealed as they are)", "Other programs and services", "Any database or server"}
 	return c
 }
