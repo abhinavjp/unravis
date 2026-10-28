@@ -17,7 +17,11 @@ const defaultSlowestLimit = 20
 // and the timing phases. It never carries a raw URL, an IP address, a user
 // agent, a header or any payload text, whatever the upstream row holds.
 func projectRecord(record audit.RequestRecord) map[string]any {
-	return map[string]any{"id": record.ID, "state": record.State, "initiatedAt": record.InitiatedAt, "completedAt": record.CompletedAt, "durationMs": record.DurationMs, "apiTimeMs": record.ApiTimeMs, "auditCreateTimeMs": record.AuditCreateTimeMs, "payloadRecordTimeMs": record.PayloadRecordTimeMs, "requestKB": record.RequestKB, "responseKB": record.ResponseKB, "outcome": record.Outcome, "status": record.Status}
+	state := record.State
+	if state == "" {
+		state = "valid" // the word the demo rows use for a complete row with no state
+	}
+	return map[string]any{"id": record.ID, "state": state, "initiatedAt": record.InitiatedAt, "completedAt": record.CompletedAt, "durationMs": record.DurationMs, "apiTimeMs": record.ApiTimeMs, "auditCreateTimeMs": record.AuditCreateTimeMs, "payloadRecordTimeMs": record.PayloadRecordTimeMs, "requestKB": record.RequestKB, "responseKB": record.ResponseKB, "outcome": record.Outcome, "status": record.Status}
 }
 
 func (b *Bridge) slowest(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -30,9 +34,7 @@ func (b *Bridge) slowest(ctx context.Context, raw json.RawMessage) (any, error) 
 	if err := strictArgs(raw, &args); err != nil {
 		return nil, err
 	}
-	if args.Limit == 0 {
-		args.Limit = defaultSlowestLimit
-	}
+	args.Limit = defaultLimit(raw, args.Limit, defaultSlowestLimit)
 	if args.Limit < 1 || args.Limit > audit.MaxSlowestPageSize || len(args.Cursor) > 4096 {
 		return nil, errors.New("limit must be 1–50 and cursor at most 4096 bytes")
 	}
