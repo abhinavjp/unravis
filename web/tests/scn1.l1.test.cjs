@@ -317,3 +317,16 @@ test('D-A-34: recent connections are read in the demo too and the demo New tab e
   const tag = /<Drawer\b[^>]*>/.exec(drawer);
   for (const prop of ['title=', 'titleId=', 'closeLabel=']) assert.ok(tag[0].includes(prop), 'Drawer keeps ' + prop);
 });
+
+test('D-C-04: the keeper modal helpers are exported next to the older ones and nothing was removed', () => {
+  const keeperTs = read('src/lib/keeper.ts');
+  for (const name of ['keeperPreviewFrom', 'onKeeperPreview', 'keeperPreview', 'pendingTotal', 'keeperView', 'isKeeperDown', 'heldSourceText', 'keeperSourceChanged', 'onKeeperRefusal', 'noticeKeeperRefusal', 'keeperUnreadable', 'trapTarget', 'holdBackground']) {
+    assert.match(keeperTs, new RegExp('export (function|const) ' + name + '\\b'), name + ' is still exported');
+  }
+  assert.doesNotMatch(keeperTs, /type="password"|\.password\b|password:/);
+  const card = read('src/components/sources/KeeperCard.svelte');
+  assert.match(card, /import \{ onMount, tick \} from 'svelte';/, 'the L1-08 import stays');
+  assert.match(card, /import \{ holdBackground, keeperView, onKeeperPreview, trapTarget, type KeeperStatus \} from '\.\.\/\.\.\/lib\/keeper';/);
+  assert.match(card, /onMount\(\(\) => onKeeperPreview\(\(\) => void refreshFromPreview\(\)\)\);/, 'the L1-08 refresh stays');
+  assert.ok(card.indexOf('$effect(') > card.indexOf('onMount('), 'the effect sits after the mount hook');
+});
