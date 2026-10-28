@@ -376,6 +376,11 @@ func caseIDOf(w http.ResponseWriter, raw string) (casestore.CaseID, bool) {
 // writeStoreError maps a store failure outside an import.
 func writeStoreError(w http.ResponseWriter, err error) {
 	switch {
+	// An archived case is a kind of not-found to the store, so M6 is listed first.
+	case errors.Is(err, casestore.ErrArchived):
+		writeCaseFailure(w, http.StatusConflict, "case-archived", caseArchivedText)
+	case errors.Is(err, casestore.ErrCaseInUse):
+		writeCaseFailure(w, http.StatusConflict, "case-in-use", caseInUseText)
 	case errors.Is(err, casestore.ErrNotFound):
 		writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
 	case errors.Is(err, casestore.ErrBadID):
@@ -427,10 +432,19 @@ type caseDTO struct {
 	// Untrusted is true for a folder the store refuses (see
 	// casestore.ErrUntrustedLegacy). Its title is a fixed placeholder.
 	Untrusted bool `json:"untrusted,omitempty"`
+	// Missing is true for a case whose working copy is gone without a Free: no
+	// folder and no mark ("Working copy missing"). Only Erase, and Restore as new
+	// when it was archived, are offered.
+	Missing bool `json:"missing,omitempty"`
+	// FilesMade is how many case files were made from this case (the home says
+	// "Case files made earlier: n").
+	FilesMade int         `json:"filesMade,omitempty"`
+	Archive   *archiveDTO `json:"archive,omitempty"`
 }
 
 func toCaseDTO(c casestore.CaseInfo) caseDTO {
-	d := caseDTO{ID: string(c.ID), Title: c.Title, Created: c.Created.UTC(), Bytes: c.Bytes, Imports: c.Imports, Untrusted: c.Untrusted, State: string(casestore.StateOf(c))}
+	d := caseDTO{ID: string(c.ID), Title: c.Title, Created: c.Created.UTC(), Bytes: c.Bytes, Imports: c.Imports, Untrusted: c.Untrusted, State: string(casestore.StateOf(c)),
+		Missing: c.Missing, FilesMade: filesMade(c.Archive), Archive: toArchiveDTO(c.Archive, false)}
 	if c.Closed != nil {
 		t := c.Closed.UTC()
 		d.Closed = &t
