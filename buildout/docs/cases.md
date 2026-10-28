@@ -146,7 +146,7 @@ Before a master key is reset ("Start over with a new master key"), the page says
 
 A freed case is not "Missing". An archived case page is read-only: the analysis and Reopen are not offered, and the page says to restore first. A freed case stays in the Archived list, labelled "Space freed", and can be restored as a new case.
 
-Screens: `p3-free-1` is the first stage.
+Screens: `p3-free-1` is the first stage. The demo has no master key, so it shows the "Set a master key" message instead of the check.
 
 ![Free the space, stage 1, dark](../screenshots/P3/p3-free-1-dark.png)
 ![Free the space, stage 1, light](../screenshots/P3/p3-free-1-light.png)
@@ -160,7 +160,7 @@ There are two ways back.
 
 A case file made before this version still restores with "Restore from a case file" on the start screen.
 
-Screens: `p3-restore-in-place` and `p3-restore-as-new`.
+Screens: `p3-restore-in-place` and `p3-restore-as-new`. The demo has no master key, so the second shows the "Set a master key" message.
 
 ![Restore in place, light](../screenshots/P3/p3-restore-in-place-light.png)
 ![Restore as a new case, dark](../screenshots/P3/p3-restore-as-new-dark.png)
