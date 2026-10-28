@@ -677,9 +677,15 @@ func (h *handler) caseReport(w http.ResponseWriter, r *http.Request, raw string)
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if (body.Format != reportHTML && body.Format != reportCSV) || (body.Request != nil && !body.Request.validate()) {
-		writeError(w, http.StatusBadRequest, "Request validation failed.")
+	if body.Format != reportHTML && body.Format != reportCSV {
+		writeError(w, http.StatusBadRequest, "The report format must be html or csv.")
 		return
+	}
+	if body.Request != nil {
+		if problem := body.Request.problem(); problem != "" {
+			writeError(w, http.StatusBadRequest, problem)
+			return
+		}
 	}
 	src := reportSource{Request: body.Request, Include: body.Include, Generated: h.reportNow()}
 	var c casestore.Case

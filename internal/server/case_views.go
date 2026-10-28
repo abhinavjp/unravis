@@ -109,7 +109,7 @@ func (h *handler) caseTimeline(w http.ResponseWriter, r *http.Request, raw strin
 	q := body.Query
 	applyQueryDefaults(&q)
 	if err := audit.ValidateQuery(q); err != nil {
-		writeRepoError(w, fmt.Errorf("%w: invalid query", audit.ErrInvalidInput))
+		writeQueryProblem(w, err)
 		return
 	}
 	min := float64(audit.DefaultAuditStallMs)

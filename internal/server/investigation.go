@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -65,25 +66,38 @@ type investigationAnswer struct {
 	Read   investigationRead  `json:"read"`
 }
 
-func (b investigationRequest) validate() bool {
+// problem is the first thing wrong with the request, as a fixed sentence, or ""
+// when the request is acceptable. The checks run in the order they always did.
+func (b investigationRequest) problem() string {
 	w := func(x investigationWindow) bool { return !x.Start.IsZero() && !x.End.IsZero() && x.End.After(x.Start) }
-	if !w(b.Incident) || !w(b.Reference) || len(b.Route) > 256 || len(b.Releases) > investigationMaxReleases {
-		return false
+	if !w(b.Incident) || !w(b.Reference) {
+		return "Both windows need a start and an end, and each end must be after its start."
+	}
+	if len(b.Route) > 256 {
+		return "The route is longer than 256 characters."
+	}
+	if len(b.Releases) > investigationMaxReleases {
+		return fmt.Sprintf("A run can list at most %d changes.", investigationMaxReleases)
 	}
 	if b.PoolLimit != nil && (*b.PoolLimit < 1 || *b.PoolLimit > investigationMaxPool) {
-		return false
+		return fmt.Sprintf("The pool limit must be a whole number from 1 to %d.", investigationMaxPool)
 	}
 	// Each window has its own limit; the stretch between them is never read.
 	if b.Incident.End.Sub(b.Incident.Start) > investigationMaxSpan || b.Reference.End.Sub(b.Reference.Start) > investigationMaxSpan {
-		return false
+		return "A time window can be at most 7 days long."
 	}
 	for _, r := range b.Releases {
-		if r.At.IsZero() || len(r.Label) > investigationMaxLabel {
-			return false
+		if r.At.IsZero() {
+			return "Each listed change needs a time."
+		}
+		if len(r.Label) > investigationMaxLabel {
+			return fmt.Sprintf("A change label can be at most %d characters.", investigationMaxLabel)
 		}
 	}
-	return true
+	return ""
 }
+
+func (b investigationRequest) validate() bool { return b.problem() == "" }
 
 // ranges are the stretches to read: the two windows and nothing between them. Two
 // windows that overlap or touch are read as one stretch (when that stays within
@@ -118,8 +132,8 @@ func (h *handler) caseInvestigation(w http.ResponseWriter, r *http.Request, raw 
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if !body.validate() {
-		writeError(w, http.StatusBadRequest, "Request validation failed.")
+	if problem := body.problem(); problem != "" {
+		writeError(w, http.StatusBadRequest, problem)
 		return
 	}
 	res, read, c, ok := h.runInvestigation(w, r, raw, body)
@@ -153,7 +167,7 @@ func (h *handler) runInvestigation(w http.ResponseWriter, r *http.Request, raw s
 		applyQueryDefaults(&q)
 		q.Kind = "all"
 		if err := audit.ValidateQuery(q); err != nil {
-			writeError(w, http.StatusBadRequest, "Request validation failed.")
+			writeQueryProblem(w, err)
 			return none, investigationRead{}, nil, false
 		}
 		queries = append(queries, q)

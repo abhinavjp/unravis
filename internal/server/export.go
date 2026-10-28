@@ -264,7 +264,7 @@ func relatedHypotheses(all []ledger.Hypothesis, report audit.PatternReport) []le
 
 func writeExportBuildError(w http.ResponseWriter, err error) {
 	if errors.Is(err, evidence.ErrInvalid) {
-		writeError(w, http.StatusBadRequest, "Request validation failed.")
+		writeError(w, http.StatusBadRequest, "The export could not be built from this input. Check the sources and the window.")
 		return
 	}
 	writeError(w, http.StatusInternalServerError, "The export could not be built.")

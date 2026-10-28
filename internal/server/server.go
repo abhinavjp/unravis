@@ -587,7 +587,7 @@ func (h *handler) analyze(w http.ResponseWriter, r *http.Request) {
 	}
 	applyQueryDefaults(&q)
 	if err := audit.ValidateQuery(q); err != nil {
-		writeRepoError(w, fmt.Errorf("%w: invalid query", audit.ErrInvalidInput))
+		writeQueryProblem(w, err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
@@ -654,7 +654,7 @@ func (h *handler) requests(w http.ResponseWriter, r *http.Request) {
 	}
 	applyQueryDefaults(&input.Query)
 	if err := audit.ValidateQuery(input.Query); err != nil {
-		writeRepoError(w, fmt.Errorf("%w: invalid query", audit.ErrInvalidInput))
+		writeQueryProblem(w, err)
 		return
 	}
 	if input.Limit < 1 || input.Limit > audit.MaxPageSize {
@@ -754,6 +754,8 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			writeError(w, http.StatusRequestEntityTooLarge, "Request body exceeds 1 MiB.")
+		} else if strings.HasPrefix(err.Error(), "json: unknown field") {
+			writeError(w, http.StatusBadRequest, "Request body has a field this server does not know.")
 		} else {
 			writeError(w, http.StatusBadRequest, "Request body is invalid JSON.")
 		}
@@ -850,7 +852,7 @@ func (h *handler) export(w http.ResponseWriter, r *http.Request) {
 	}
 	applyQueryDefaults(&input.Query)
 	if err := audit.ValidateQuery(input.Query); err != nil {
-		writeRepoError(w, fmt.Errorf("%w: invalid query", audit.ErrInvalidInput))
+		writeQueryProblem(w, err)
 		return
 	}
 	if input.Cursor != "" {
