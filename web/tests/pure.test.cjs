@@ -1515,7 +1515,7 @@ test('the run hint also explains a window, reference, bucket or point-count prob
   const base = scopeAt();
   const hint = (extra) => autorun.scopeHint(scopeAt(extra), true);
   assert.equal(hint({ start: base.end, end: base.start }), 'Each window must start before it ends.');
-  assert.equal(hint({ baselineEnd: base.end }), 'The reference window must end before the current window starts.');
+  assert.equal(hint({ baselineEnd: base.end }), 'The reference window must end at or before the current window starts.');
   assert.equal(hint({ bucketSeconds: 5 }), 'Bucket size must be 10 to 86,400 seconds.');
   assert.match(hint({ bucketSeconds: 10, start: '2026-10-22T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-10-21T12:00:00Z', baselineEnd: '2026-10-22T00:00:00Z' }), /over 120 time points/);
   assert.equal(hint({ start: '2026-10-01T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-09-01T00:00:00Z', baselineEnd: '2026-10-01T00:00:00Z' }), 'Each window can be at most 7 days.');

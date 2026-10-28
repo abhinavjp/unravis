@@ -35,7 +35,7 @@ export function scopeHint(query: ScopeShape, datesValid: boolean): string {
   const baselineStart = new Date(query.baselineStart).getTime(), baselineEnd = new Date(query.baselineEnd).getTime();
   if (!(start < end) || !(baselineStart < baselineEnd)) return 'Each window must start before it ends.';
   if (end - start > 7 * DAY_MS || baselineEnd - baselineStart > 7 * DAY_MS) return 'Each window can be at most 7 days.';
-  if (baselineEnd > start) return 'The reference window must end before the current window starts.';
+  if (baselineEnd > start) return 'The reference window must end at or before the current window starts.';
   if (!(Number.isInteger(query.bucketSeconds) && query.bucketSeconds >= 10 && query.bucketSeconds <= 86400)) return 'Bucket size must be 10 to 86,400 seconds.';
   if (countEpochBuckets(start, end, query.bucketSeconds) > 120 || countEpochBuckets(baselineStart, baselineEnd, query.bucketSeconds) > 120) return 'That bucket size makes over 120 time points; use a larger bucket or a shorter window.';
   return '';
