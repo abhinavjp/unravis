@@ -222,6 +222,21 @@ const uniqueDescriptors = (descriptors: SourceDescriptor[]) => descriptors.filte
     ? other.selectionKey === item.selectionKey
     : !other.selectionKey && !item.selectionKey && other.id === item.id) === index);
 
+/** The largest response-time target the field accepts, in milliseconds (one hour). */
+export const MAX_TARGET_MS = 3_600_000;
+
+/** The target the chart uses: a finite number above 0 and at most MAX_TARGET_MS. Anything else means no target. */
+export const appliedTarget = (value: number | null | undefined): number | null =>
+  value != null && Number.isFinite(value) && value > 0 && value <= MAX_TARGET_MS ? value : null;
+
+/** The line under the target field when what was typed is not used. Empty when the field is empty or the target is used. */
+export const targetProblem = (value: number | null | undefined): string =>
+  value == null || appliedTarget(value) != null ? '' : 'Not applied. Enter a response time above 0 and up to 3,600,000 ms.';
+
+/** The line under the interval field when it is not a whole number from 10 to 86,400 (an empty field counts). Empty when it is fine. */
+export const intervalRangeProblem = (seconds: number | null | undefined): string =>
+  Number.isInteger(seconds) && (seconds as number) >= 10 && (seconds as number) <= 86_400 ? '' : 'Use a whole number from 10 to 86,400 seconds. The run waits until you do.';
+
 export function createInvestigationSnapshot(query: Query, sources: Source[], zone: string, targetMs: number | null, previous: InvestigationSnapshot | null = null): InvestigationSnapshot {
   const sourceById = new Map(sources.map(source => [source.id, source]));
   const currentSelected = query.sourceIds.flatMap(id => {

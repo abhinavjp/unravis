@@ -7,6 +7,7 @@
   import { zoomView } from '../lib/zoomView.svelte';
   import { zoomable } from '../lib/chartZoom';
   import { focusEmpty } from '../lib/focusEmpty';
+  import { appliedTarget } from '../lib/investigation';
   let { analysis: whole, selected: chosen, zone, targetMs: wholeTargetMs }: {
     analysis: Analysis; selected: Comparison | null; zone: string; targetMs: number | null
   } = $props();
@@ -14,7 +15,7 @@
   const analysis = $derived(zoomView.analysisFor(whole));
   const zoomedView = $derived(analysis !== whole);
   const viewSelected = $derived(zoomedView ? (analysis.apis.find(row => row.key === chosen?.key) ?? null) : chosen);
-  const targetMs = $derived(wholeTargetMs != null && wholeTargetMs >= Date.parse(analysis.query.start) && wholeTargetMs < Date.parse(analysis.query.end) ? wholeTargetMs : null);
+  const targetMs = $derived(appliedTarget(wholeTargetMs));
   let timeline = $state<HTMLDivElement>();
   let ratio = $state<HTMLDivElement>();
   let histogram = $state<HTMLDivElement>();
