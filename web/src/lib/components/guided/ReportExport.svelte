@@ -2,7 +2,7 @@
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
   import { contentMatches } from '../../export';
   import type { GuidedStore } from '../../guided/guided.svelte';
-  import { byteLabel, reportFileName, reportWarnings } from '../../guided/report';
+  import { byteLabel, reportFileName, reportWarningCodes, reportWarnings } from '../../guided/report';
   import type { ReportInclude } from '../../guided/types';
 
   // Export: an HTML report or a CSV of the numbers, built on the server from the run on screen. No payloads, no user ids, no connection
@@ -27,7 +27,9 @@
     problem = '';
     saved = '';
     ready = '';
-    return store.buildReport(format, { ...include });
+    // The warnings travel as codes inside `include`; the server prints a fixed sentence for each in the saved file.
+    const sent: ReportInclude & { warnings: string[] } = { ...include, warnings: reportWarningCodes(store.outOfDate(sourceIds), store.answer?.read) };
+    return store.buildReport(format, sent);
   }
 
   async function showPreview() {

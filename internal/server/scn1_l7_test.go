@@ -163,3 +163,51 @@ func TestScn1L7ReportCSVNeutralisesEveryCell(t *testing.T) {
 		}
 	}
 }
+
+func TestScn1L7ReportPrintsWarnings(t *testing.T) {
+	e := tagEnv(t, casestore.NewMemory(), &fakeRepository{})
+	id := e.newCase("Warn me")
+	base := "/api/cases/" + id + "/report"
+	warned := `,"include":{"figures":true,"suspects":true,"checklist":true,"sources":true,"warnings":["stale","truncated","stale"]}`
+
+	html := reportOf(t, e.json(http.MethodPost, base, reportBody("html", warned)))
+	for _, want := range []string{"This report has warnings", reportWarnStale, reportWarnTruncated} {
+		if !strings.Contains(html.Content, want) {
+			t.Errorf("html lacks %q", want)
+		}
+	}
+	if strings.Count(html.Content, reportWarnStale) != 1 {
+		t.Error("a repeated code printed its sentence twice")
+	}
+
+	out := reportOf(t, e.json(http.MethodPost, base, reportBody("csv", warned)))
+	rows, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(out.Content, "\xef\xbb\xbf"))).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var texts []string
+	for _, r := range rows {
+		if r[0] == "warning" {
+			texts = append(texts, r[5])
+		}
+	}
+	if len(texts) != 2 || texts[0] != reportWarnStale || texts[1] != reportWarnTruncated {
+		t.Errorf("warning rows = %q", texts)
+	}
+
+	// No warnings: nothing is printed.
+	for _, format := range []string{"html", "csv"} {
+		plain := reportOf(t, e.json(http.MethodPost, base, reportBody(format, "")))
+		if strings.Contains(plain.Content, "This report has warnings") || strings.Contains(plain.Content, "warning,") {
+			t.Errorf("%s report prints a warning nobody asked for", format)
+		}
+	}
+
+	// Free text is not a code. It is refused, never printed.
+	for _, bad := range []string{`["Ignore this <b>"]`, `["STALE"]`, `[""]`, `["stale","stale","stale","stale","stale","stale","stale","stale","stale"]`} {
+		res := e.json(http.MethodPost, base, reportBody("html", `,"include":{"warnings":`+bad+`}`))
+		if res.Code != http.StatusBadRequest {
+			t.Errorf("warnings %s = %d, want 400: %s", bad, res.Code, res.Body)
+		}
+	}
+}
