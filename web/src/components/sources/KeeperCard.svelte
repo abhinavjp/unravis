@@ -102,6 +102,11 @@
     if (!dialog) return;
     return holdBackground(dialog);
   });
+
+  // The question belongs to the "moved" card: when the view leaves it the question is dropped, so it does not come back open later.
+  $effect(() => {
+    if (view !== 'moved') asking = false;
+  });
 </script>
 
 <div class="keeper-box" bind:this={box}>

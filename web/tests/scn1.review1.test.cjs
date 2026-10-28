@@ -90,3 +90,7 @@ test('Review1-5: a refused removal shows its alert only after the question has c
   assert.match(keeperCard, /\} finally \{ busy = ''; asking = false; back = kind === 'remove'; \}\s*await tick\(\);\s*problem = failure;\s*await focusCard\(\);/);
   assert.doesNotMatch(keeperCard, /catch \(error\) \{\s*problem = /);
 });
+
+test('Review1-6: the remove question is dropped when the view leaves "moved"', () => {
+  assert.match(keeperCard, /\$effect\(\(\) => \{\s*if \(view !== 'moved'\) asking = false;\s*\}\);/);
+});
