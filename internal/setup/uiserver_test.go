@@ -218,7 +218,7 @@ func TestSetupPageScenarioHeaderPicksTheFake(t *testing.T) {
 
 // Every screenshot scenario is a sane run: a version, a mode, checks where the screen shows them, and a result that ends.
 func TestCaptureScenariosAreSane(t *testing.T) {
-	want := []string{"fresh", "preflight-fail", "progress", "done", "failed", "upgrade", "repair", "uninstall"}
+	want := []string{"fresh", "preflight-fail", "progress", "done", "failed", "upgrade", "repair", "uninstall", "uninstall-left"}
 	sc := CaptureScenarios()
 	if len(sc) != len(want) {
 		t.Fatalf("%d scenarios", len(sc))
@@ -373,5 +373,97 @@ func TestLocalBackendPageCannotAskForADowngrade(t *testing.T) {
 	r := be.Run(context.Background(), WorkRequest{Op: OpUpgrade, Options: e.userOpts()}, func(StepEvent) {}, func(string) {})
 	if r.Outcome != OutcomeDone {
 		t.Fatalf("with --allow-downgrade: %+v", r)
+	}
+}
+
+// The "Left behind" screen has a scenario of its own (D-C-13): a done-with-leftovers uninstall with a list that is shown, and the exit
+// code the command line gives it.
+func TestCaptureUninstallLeftReachesTheLeftBehindScreen(t *testing.T) {
+	be, ok := CaptureScenarios()["uninstall-left"]
+	if !ok {
+		t.Fatal("no uninstall-left scenario")
+	}
+	if st := be.State(); st.Mode != OpUninstall || st.Installed == nil {
+		t.Fatalf("state = %+v", st)
+	}
+	var events []StepEvent
+	res := be.Run(context.Background(), WorkRequest{Op: OpUninstall}, func(e StepEvent) { events = append(events, e) }, func(string) {})
+	if res.Outcome != OutcomeLeftovers || len(res.Left) == 0 {
+		t.Fatalf("result = %+v", res)
+	}
+	if res.Outcome.ExitCode() != 5 {
+		t.Errorf("exit code = %d, want 5", res.Outcome.ExitCode())
+	}
+	sawLeft := false
+	for _, e := range events {
+		if e.State == StepLeft && e.ID == "program-files" {
+			sawLeft = true
+		}
+	}
+	if !sawLeft {
+		t.Errorf("no step ended as left: %+v", events)
+	}
+	// Through the page's own endpoints, as the screenshot build serves it.
+	c := newUIClient(t, be)
+	if code, _ := c.do("POST", "/api/run", `{"op":"uninstall"}`, nil); code != http.StatusAccepted {
+		t.Fatalf("run: %d", code)
+	}
+	out := c.waitResult()
+	r := out["result"].(map[string]any)
+	left, _ := r["left"].([]any)
+	if r["outcome"] != string(OutcomeLeftovers) || len(left) != 2 {
+		t.Fatalf("result over HTTP = %v", r)
+	}
+}
+
+// The list shown before approval covers everything the plan creates (D-C-10).
+func TestInstallChangesNameTheShortcutAndTheInstalledAppsEntry(t *testing.T) {
+	d := captureDirs()
+	cases := []struct {
+		name string
+		op   Op
+		opts Options
+	}{
+		{"just for me", OpInstall, Options{Scope: ScopeUser, Location: DefaultLocation(ScopeUser, d)}},
+		{"everyone", OpInstall, Options{Scope: ScopeMachine, Location: DefaultLocation(ScopeMachine, d)}},
+		{"repair", OpRepair, Options{Scope: ScopeUser, Location: DefaultLocation(ScopeUser, d)}},
+		{"upgrade", OpUpgrade, Options{Scope: ScopeUser, Location: DefaultLocation(ScopeUser, d)}},
+	}
+	for _, c := range cases {
+		ch := DescribeChanges(WorkRequest{Op: c.op, Options: c.opts}, nil, d, false)
+		var shortcut, arp int
+		for _, line := range ch.WillChange {
+			switch line {
+			case "Start menu shortcut":
+				shortcut++
+			case "Installed apps entry":
+				arp++
+			}
+		}
+		if shortcut != 1 || arp != 1 {
+			t.Errorf("%s: shortcut %d, installed apps entry %d in %q", c.name, shortcut, arp, ch.WillChange)
+		}
+		if len(ch.WillNotChange) != 4 {
+			t.Errorf("%s: will-not-change = %q", c.name, ch.WillNotChange)
+		}
+	}
+}
+
+// The uninstall list keeps its own wording.
+func TestUninstallChangesStillNameTheShortcutAndTheEntry(t *testing.T) {
+	d := captureDirs()
+	o := Options{Scope: ScopeUser, Location: DefaultLocation(ScopeUser, d)}
+	ch := DescribeChanges(WorkRequest{Op: OpUninstall, Options: o}, nil, d, false)
+	found := false
+	for _, line := range ch.WillChange {
+		if line == "Remove the Start menu shortcut and the Installed apps entry" {
+			found = true
+		}
+		if line == "Start menu shortcut" || line == "Installed apps entry" {
+			t.Errorf("an install line leaked into the uninstall list: %q", line)
+		}
+	}
+	if !found {
+		t.Errorf("uninstall list = %q", ch.WillChange)
 	}
 }
