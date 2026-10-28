@@ -13,7 +13,7 @@
 
 <section class="shell" aria-labelledby={'step-title-' + step}>
   <header>
-    <h3 id={'step-title-' + step}>Step {step}. {def?.title ?? ''}</h3>
+    <h3 id={'step-title-' + step} tabindex="-1">Step {step}. {def?.title ?? ''}</h3>
     <Sticker word={sticker.word} tone={sticker.tone} outOfDate={sticker.outOfDate} />
   </header>
   {#if nutshell}

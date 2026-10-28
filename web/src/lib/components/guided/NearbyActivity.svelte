@@ -18,15 +18,18 @@
   let phase = $state<'idle' | 'loading' | 'done' | 'failed'>('idle');
   let rows = $state.raw<RequestRecord[]>([]);
   let more = $state(false);
+  let touched = $state(false);
   let controller: AbortController | null = null;
+  let busy = false;
 
   const win = $derived(nearbyWindow(around, Number(before), Number(after)));
   const longest = $derived(rows.reduce((m, r) => Math.max(m, r.durationMs ?? 0), 0));
   const BAND_WORD: Record<DurationBand, string> = { fast: T.nearbyBandFast, slow: T.nearbyBandSlow, 'very-slow': T.nearbyBandVerySlow, unknown: T.nearbyBandUnknown };
 
   async function run() {
+    if (busy) return;
     if (!win || sourceIds.length === 0) { phase = 'failed'; return; }
-    controller?.abort();
+    busy = true;
     const mine = new AbortController();
     controller = mine;
     phase = 'loading';
@@ -38,12 +41,14 @@
       phase = 'done';
     } catch {
       if (!mine.signal.aborted) phase = 'failed';
+    } finally {
+      busy = false;
     }
   }
   $effect(() => () => controller?.abort());
 
   const clock = (iso: string | null) => (iso && iso.length >= 19 ? iso.slice(11, 19) : '');
-  const pick = (b: number, a: number) => { before = b; after = a; };
+  const pick = (b: number, a: number) => { before = b; after = a; touched = true; };
 </script>
 
 <section class="nearby" aria-labelledby="nearby-title">
@@ -53,14 +58,14 @@
     <p class="notice">{T.nearbyNoCase}</p>
   {:else}
     <div class="form">
-      <label>{T.around} (UTC)<input type="datetime-local" bind:value={around} /></label>
-      <label>{T.before}<input type="number" min="0" max="120" step="1" bind:value={before} /></label>
-      <label>{T.after}<input type="number" min="0" max="120" step="1" bind:value={after} /></label>
+      <label>{T.around} (UTC)<input type="datetime-local" bind:value={around} oninput={() => (touched = true)} /></label>
+      <label>{T.before}<input type="number" min="0" max="120" step="1" bind:value={before} oninput={() => (touched = true)} /></label>
+      <label>{T.after}<input type="number" min="0" max="120" step="1" bind:value={after} oninput={() => (touched = true)} /></label>
     </div>
     <div class="picks" role="group" aria-label={T.picks}>
       {#each QUICK_SPANS as q (q.label)}<button type="button" class="quiet-button" onclick={() => pick(q.before, q.after)}>{q.label}</button>{/each}
     </div>
-    {#if !win}<p class="note" role="status">{T.nearbyBad}</p>{/if}
+    {#if touched && !win}<p class="note" role="status">{T.nearbyBad}</p>{/if}
     <div><button type="button" class="primary-button" disabled={!win || phase === 'loading'} onclick={() => void run()}>{T.nearbyRun}</button></div>
   {/if}
 

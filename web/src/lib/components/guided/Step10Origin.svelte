@@ -1,7 +1,9 @@
 <script lang="ts">
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
+  import { SHELL_TEXT as S } from '../../copy/guidedShellCopy';
   import type { GuidedStore } from '../../guided/guided.svelte';
   import { cheapestCheck, hasNamedOrigin, originRows, stepOf, stickerFor, suspectGroups } from '../../guided/stepModel';
+  import { likelyWithoutTier } from '../../guided/tools';
   import type { Suspect } from '../../guided/types';
   import StepShell from './StepShell.svelte';
   import SuspectCard from './SuspectCard.svelte';
@@ -15,6 +17,7 @@
   const engineStep = $derived(stepOf(result, 10));
   const groups = $derived(result ? suspectGroups(result) : { ranked: [], notTested: [], setAside: [] });
   const cheapest = $derived(result ? cheapestCheck(result) : null);
+  const likelyNoTier = $derived(likelyWithoutTier(result));
   let showSetAside = $state(false);
 
   const checkText = (s: Suspect) => `${s.id}: ${s.nextCheck}`.slice(0, 300);
@@ -65,6 +68,7 @@
 
     <section aria-labelledby="origin-suspects">
       <h4 id="origin-suspects">{T.suspectsHeading}</h4>
+      {#if readOnly && store.mode === 'guided' && (groups.ranked.length > 0 || groups.notTested.length > 0)}<p class="notice" role="status">{S.closedNoAdd}</p>{/if}
       {#if groups.ranked.length === 0}
         <p class="note">{T.noRanked}</p>
       {:else}
@@ -82,7 +86,7 @@
     {#if groups.setAside.length > 0}
       <section aria-labelledby="origin-green">
         <h4 id="origin-green">{T.setAside(groups.setAside.length)}</h4>
-        <div><button type="button" class="quiet-button" aria-expanded={showSetAside} onclick={() => (showSetAside = !showSetAside)}>{showSetAside ? T.showLess : T.showAll}</button></div>
+        <div><button type="button" class="quiet-button" aria-expanded={showSetAside} onclick={() => (showSetAside = !showSetAside)}>{showSetAside ? S.showFewerSuspects : S.showRuledOut}</button></div>
         {#if showSetAside}
           <div class="stack">{#each groups.setAside as s (s.id)}<SuspectCard suspect={s} compact />{/each}</div>
         {/if}
@@ -99,6 +103,7 @@
     <section aria-labelledby="origin-sure">
       <h4 id="origin-sure">{T.howSure}</h4>
       <p class="finding"><strong>{T.confidenceWord(result.confidence.word)}.</strong> {result.confidence.why}</p>
+      {#if likelyNoTier}<p class="note">{S.likelyNoTier}</p>{/if}
       <div class="table-scroll">
         <table>
           <thead><tr><th scope="col">{T.sureCol}</th><th scope="col">{T.stateCol}</th></tr></thead>

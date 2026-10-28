@@ -1,13 +1,13 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
+  import { SHELL_TEXT as S } from '../../copy/guidedShellCopy';
   import type { GuidedStore } from '../../guided/guided.svelte';
-  import type { StickerTone } from '../../guided/stepModel';
   import { fmtCount } from '../../guided/stepModel';
   import {
-    applyViewToFrame, NEED_WORD, readViewSettings, slowestApiRows, toolById, toolState, TOOLS, type SourceNeed, type ToolDef, type ToolId
+    applyViewToFrame, itemTooLong, NEED_WORD, readViewSettings, slowestApiRows, toolById, toolSticker, toolState, TOOLS, type SourceNeed, type ToolDef, type ToolId
   } from '../../guided/tools';
-  import type { Readiness, SavedView } from '../../guided/types';
+  import type { SavedView } from '../../guided/types';
   import AfterFix from './AfterFix.svelte';
   import NearbyActivity from './NearbyActivity.svelte';
   import RunBar from './RunBar.svelte';
@@ -23,20 +23,24 @@
     store: GuidedStore; sourceIds: string[]; readOnly: boolean; have: ReadonlySet<SourceNeed>; onAddData: () => void; onOpenChecklist: () => void;
   } = $props();
 
-  const TONE: Record<Readiness, StickerTone> = { Ready: 'ready', 'Partly ready': 'partly', 'Cannot test yet': 'cannot', Failed: 'failed' };
   const stateOf = (tool: ToolDef) => toolState(tool, { have, result: store.result });
+  // The same flag the run bar and the step stickers read, so a card says Out of date when the windows, sources or lists have changed.
+  const stale = $derived(store.outOfDate(sourceIds));
 
   // The windows start open while empty and stay as the person left them; a bound
   // `open={frame.incidentStart === ''}` would fold the panel on the first keystroke.
   let windowsOpen = $state(untrack(() => store.frame.incidentStart === ''));
   let minCalls = $state(20);
   let match = $state('');
-  let note = $state('');
   let noted = $state(false);
 
   const open = $derived(store.tool ? (toolById(store.tool) ?? null) : null);
   const openState = $derived(open ? stateOf(open) : null);
+  const openSticker = $derived(openState ? toolSticker(openState, stale) : null);
   const apiRows = $derived(slowestApiRows(store.result, Number(minCalls), match));
+  // A text that matches no API at all is a different problem from a minimum that is too high.
+  const noMatch = $derived(match.trim() !== '' && slowestApiRows(store.result, 0, match).length === 0);
+  const noteOver = $derived(itemTooLong(store.noteDraft));
 
   const openTool = (id: ToolId) => { store.tool = id; noted = false; };
   const back = () => { store.tool = ''; };
@@ -50,7 +54,7 @@
   }
 
   async function addNote() {
-    if (await store.addItem('learned', note)) { note = ''; noted = true; }
+    if (await store.addItem('learned', store.noteDraft)) { store.noteDraft = ''; noted = true; }
   }
 </script>
 
@@ -61,11 +65,13 @@
     <ul class="cards">
       {#each TOOLS as tool (tool.id)}
         {@const st = stateOf(tool)}
+        {@const sk = toolSticker(st, stale)}
         <li class="card">
-          <div class="top"><h4>{tool.title}</h4><Sticker word={st.word} tone={TONE[st.word]} /></div>
+          <div class="top"><h4>{tool.title}</h4><Sticker word={sk.word} tone={sk.tone} outOfDate={sk.outOfDate} /></div>
           <p class="blurb">{tool.blurb}</p>
           <p class="src">{T.sourcesLabel}: {tool.sources}</p>
           {#if st.word === 'Cannot test yet' && st.missing.length > 0}<p class="src">{T.toolNeedsHint}</p>{/if}
+          {#if st.word === 'Waiting'}<p class="src">{S.toolWaitingHint}</p>{/if}
           <div><button type="button" class="secondary-button" onclick={() => openTool(tool.id)}>{T.openTool}: {tool.title}</button></div>
         </li>
       {/each}
@@ -75,7 +81,7 @@
     <header class="head">
       <button type="button" class="quiet-button" onclick={back}>&larr; {T.backToTools}</button>
       <h3 id="tools-title">{open.title}</h3>
-      <Sticker word={openState.word} tone={TONE[openState.word]} />
+      {#if openSticker}<Sticker word={openSticker.word} tone={openSticker.tone} outOfDate={openSticker.outOfDate} />{/if}
     </header>
     <p class="lead">{open.blurb}</p>
 
@@ -107,7 +113,7 @@
           {:else if store.result.facts.routes.length === 0}
             <p class="note">{T.noRecords}</p>
           {:else if apiRows.length === 0}
-            <p class="note">{T.noApiRows(Number(minCalls))}</p>
+            <p class="note">{noMatch ? S.noApiMatch(match.trim()) : T.noApiRows(Number(minCalls))}</p>
           {:else}
             <div class="table-scroll">
               <table>
@@ -135,12 +141,15 @@
 
     {#if !readOnly}
       <form class="note-form" onsubmit={(e) => { e.preventDefault(); void addNote(); }}>
-        <label>{T.addNote}<input type="text" maxlength="300" bind:value={note} /></label>
+        <label>{T.addNote}<input type="text" bind:value={store.noteDraft} aria-invalid={noteOver} /></label>
+        {#if noteOver}<p class="note" role="status">{T.itemTooLong}</p>{/if}
         <div class="row">
-          <button type="submit" class="secondary-button" disabled={note.trim() === ''}>{T.itemSave}</button>
+          <button type="submit" class="secondary-button" disabled={store.noteDraft.trim() === '' || noteOver}>{T.itemSave}</button>
           {#if noted}<span class="note" role="status">{T.noteAdded}</span>{/if}
         </div>
       </form>
+    {:else}
+      <p class="notice" role="status">{S.closedNoAdd}</p>
     {/if}
 
     <SavedViews {store} {readOnly} tool={open.id} extra={{ minCalls: open.id === 'slowest-apis' ? Number(minCalls) : undefined, match: open.id === 'slowest-apis' ? match : undefined }} onOpen={openView} />

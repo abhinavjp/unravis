@@ -1,5 +1,6 @@
 <script lang="ts">
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
+  import { SHELL_TEXT as S } from '../../copy/guidedShellCopy';
   import { frameProblems } from '../../guided/frame';
   import type { GuidedStore } from '../../guided/guided.svelte';
   import { runIsPrimary } from '../../guided/stepModel';
@@ -19,6 +20,7 @@
   {#if sourceIds.length === 0}
     <p class="note" role="status">{T.noSources}</p>
     <div><button type="button" class="secondary-button" disabled={readOnly} onclick={onAddData}>{T.addData}</button></div>
+    {#if readOnly}<p class="note" role="status">{S.closedNoData}</p>{/if}
   {:else}
     <div class="row">
       <button type="button" class={runIsPrimary(hasAnswer) ? 'primary-button' : 'secondary-button'} disabled={running || problems.length > 0} onclick={() => void store.run(sourceIds)}>{label}</button>
