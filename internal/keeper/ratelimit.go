@@ -12,6 +12,9 @@ const (
 	classWrite = "write"
 	classReach = "reach"
 	classBlob  = "blob" // Blackbox file reads: many small GETs per look
+	// classAudit counts reads of an audit source the keeper hosts (P14b): one page of Unravis asks several at once, each bounded by
+	// the audit repository's own scan budgets.
+	classAudit = "audit"
 	// classBad counts requests the keeper will not run (not understood, another version, an unknown operation): Unravis never sends
 	// them, so a few a minute is plenty, and the limit keeps a loop of them from filling the audit log.
 	classBad = "bad"
@@ -23,6 +26,7 @@ var DefaultLimits = map[string]int{
 	classWrite: 60,
 	classReach: 30,
 	classBlob:  3000,
+	classAudit: 600,
 	classBad:   30,
 }
 

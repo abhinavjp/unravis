@@ -111,7 +111,6 @@ type MongoStore struct {
 	c       *Client
 	mu      sync.Mutex
 	session map[string]sessionSecret
-	legacy  *history.Service
 }
 
 type sessionSecret struct {
@@ -122,13 +121,6 @@ type sessionSecret struct {
 // NewMongoStore uses c.
 func NewMongoStore(c *Client) *MongoStore {
 	return &MongoStore{c: c, session: map[string]sessionSecret{}}
-}
-
-// WithLegacy is the TEMPORARY P14b adapter: until the keeper hosts the MongoDB audit source (P14b), adding an audit source from a saved
-// link whose password the keeper holds falls back to the person's own old per-user file, while it is still on disk. Remove with P14b.
-func (s *MongoStore) WithLegacy(old *history.Service) *MongoStore {
-	s.legacy = old
-	return s
 }
 
 func sameAddress(saved history.Recent, in audit.ConnectionInput) bool {
@@ -238,20 +230,6 @@ func (s *MongoStore) Held(in audit.ConnectionInput) (bool, error) {
 		return false, nil // Resolve answers the mismatch
 	}
 	return rec.HasCredentials && s.sessionPassword(rec) == "", nil
-}
-
-// ResolveForSource is the TEMPORARY P14b adapter for adding an audit source: Resolve, and when the keeper holds the password, the old
-// per-user file while it exists. Remove with P14b, when the keeper opens audit sources itself.
-func (s *MongoStore) ResolveForSource(in audit.ConnectionInput) (audit.ConnectionInput, error) {
-	out, err := s.Resolve(in)
-	if !errors.Is(err, ErrKeeperHeld) || s.legacy == nil {
-		return out, err
-	}
-	old, lerr := s.legacy.Resolve(in)
-	if lerr != nil || old.Password == "" {
-		return audit.ConnectionInput{}, ErrKeeperHeld
-	}
-	return old, nil
 }
 
 // TestSaved tests a saved link inside the keeper.

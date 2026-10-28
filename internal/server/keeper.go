@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -32,8 +33,13 @@ type keeperMongo interface {
 	HealthSaved(ctx context.Context, in audit.ConnectionInput, database, collection string) (dbhealth.Report, error)
 	LaneSaved(ctx context.Context, in audit.ConnectionInput, label string, req dbhealth.LaneRequest) (dbhealth.Report, error)
 	RememberChecked(ctx context.Context, label string, in audit.ConnectionInput, collection string, remember bool) (history.Recent, error)
-	// ResolveForSource is the TEMPORARY P14b adapter (see keeper.MongoStore.ResolveForSource).
-	ResolveForSource(audit.ConnectionInput) (audit.ConnectionInput, error)
+}
+
+// keeperAudit is the audit repository of the shared layout (keeper.AuditRouter): a source from a saved link whose password the keeper
+// holds is opened in the keeper and read there (P14b), so the password never reaches this process.
+type keeperAudit interface {
+	AddHeldSource(ctx context.Context, in audit.SourceInput) (audit.Source, error)
+	SourcesWithKeeper(ctx context.Context) ([]audit.Source, map[string]keeper.HeldState, error)
 }
 
 // keeperBB is the keeper side of the saved Blackbox list: reads that need a read key go through the keeper (Key never answers).
@@ -55,12 +61,16 @@ type KeeperHub struct {
 func WithKeeper(k *KeeperHub) Option { return func(h *handler) { h.keeper = k } }
 
 const (
-	keeperStoppedText  = "The Unravis Key Keeper service is not running, so saved passwords and read keys cannot be used. Start the service, or ask the person who looks after this PC."
-	keeperImpostorText = "Something other than the Unravis Key Keeper service answered on its pipe, so nothing was sent to it. Ask the person who looks after this PC."
-	keeperHeldSource   = "The key keeper holds this link's password and cannot open audit sources yet. Type the password to add it for this session."
-	keeperBusyText     = "A check with this saved connection is already running. Wait for it to finish."
-	keeperRateText     = "The key keeper is answering too many requests. Wait a minute, then try again."
-	keeperRefusedText  = "The key keeper refused this request."
+	keeperStoppedText   = "The Unravis Key Keeper service is not running, so saved passwords and read keys cannot be used. Start the service, or ask the person who looks after this PC."
+	keeperImpostorText  = "Something other than the Unravis Key Keeper service answered on its pipe, so nothing was sent to it. Ask the person who looks after this PC."
+	keeperHeldSource    = "The key keeper holds this link's password, and this Unravis cannot ask it to open the source. Restart Unravis, or ask the person who looks after this PC."
+	keeperSeatsText     = "The key keeper has too many audit sources open for this PC. Remove a source you no longer need, or close another Unravis, then try again."
+	keeperGoneText      = "The key keeper closed this source: it was restarted, or the source was not used for a long time. Add it again from its saved link."
+	keeperMixedText     = "Sources opened by the key keeper cannot be compared in one view with sources whose password you typed. Choose sources of one kind."
+	keeperBusyText      = "A check with this saved connection is already running. Wait for it to finish."
+	keeperAuditBusyText = "The key keeper is busy with other reads. Wait a few seconds, then try again."
+	keeperRateText      = "The key keeper is answering too many requests. Wait a minute, then try again."
+	keeperRefusedText   = "The key keeper refused this request."
 )
 
 // writeKeeperError words the keeper's own refusals (stopped, busy, too many requests). Store answers (not found, invalid, connect
@@ -83,6 +93,12 @@ func writeKeeperError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, keeper.ErrKeeperHeld):
 		writeJSON(w, http.StatusBadRequest, failure{keeperHeldSource, "keeper-held"}, 4096)
 		return true
+	case errors.Is(err, keeper.ErrHeldSourceGone):
+		writeJSON(w, http.StatusNotFound, failure{keeperGoneText, "keeper-source-gone"}, 4096)
+		return true
+	case errors.Is(err, keeper.ErrMixedSources):
+		writeJSON(w, http.StatusBadRequest, failure{keeperMixedText, "keeper-mixed"}, 4096)
+		return true
 	}
 	var we *keeper.WireError
 	if !errors.As(err, &we) {
@@ -90,6 +106,15 @@ func writeKeeperError(w http.ResponseWriter, err error) bool {
 	}
 	switch we.Code {
 	case keeper.CodeBusy:
+		var d struct {
+			Scope string `json:"scope"`
+		}
+		_ = json.Unmarshal(we.Detail, &d)
+		if d.Scope == "audit" {
+			// An audit read the keeper had no room for: nothing is running for this source, the read only has to be asked again.
+			writeJSON(w, http.StatusServiceUnavailable, failure{keeperAuditBusyText, "keeper-audit-busy"}, 4096)
+			break
+		}
 		writeJSON(w, http.StatusConflict, failure{keeperBusyText, "keeper-busy"}, 4096)
 	case keeper.CodeRateLimited:
 		writeJSON(w, http.StatusTooManyRequests, failure{keeperRateText, "keeper-rate"}, 4096)
@@ -190,22 +215,61 @@ func (h *handler) rememberInKeeper(w http.ResponseWriter, r *http.Request, k kee
 	writeJSON(w, http.StatusOK, item, maxResponseBytes)
 }
 
-// resolveSourceConnection fills a saved MongoDB link for a new audit source. With the keeper this goes through the TEMPORARY P14b
-// adapter (keeperMongo.ResolveForSource): until the keeper opens audit sources itself, a link whose password only the keeper holds
-// needs the password typed (or the person's old per-user file, while it is still on disk).
-func (h *handler) resolveSourceConnection(w http.ResponseWriter, in audit.ConnectionInput) (audit.ConnectionInput, bool) {
-	k, isKeeper := h.history.(keeperMongo)
-	if !isKeeper || in.SavedConnectionID == "" {
-		return h.resolveConnection(w, in)
-	}
-	out, err := k.ResolveForSource(in)
+// heldSourceDTO is a source in the list, with how the key keeper holds it: "held" (opened by the keeper from a saved link whose
+// password it stores) or "stopped" (the same, but the keeper cannot be reached, so the source cannot be read until it runs again).
+type heldSourceDTO struct {
+	audit.Source
+	Keeper keeper.HeldState `json:"keeper,omitempty"`
+}
+
+func (h *handler) sourcesWithKeeper(ctx context.Context, w http.ResponseWriter, ka keeperAudit) {
+	items, states, err := ka.SourcesWithKeeper(ctx)
 	if err != nil {
-		if !writeKeeperError(w, err) {
-			writeSavedMongoError(w, err)
-		}
-		return audit.ConnectionInput{}, false
+		writeRepoError(w, err)
+		return
 	}
-	return out, true
+	out := make([]heldSourceDTO, 0, len(items))
+	for _, s := range items {
+		out = append(out, heldSourceDTO{Source: s, Keeper: states[s.ID]})
+	}
+	writeJSON(w, http.StatusOK, out, maxResponseBytes)
+}
+
+// addHeldSource opens an audit source in the key keeper from a saved link whose password it stores. Nothing typed is sent: the keeper
+// resolves the saved link itself and checks that it still matches the settings the person saw.
+func (h *handler) addHeldSource(w http.ResponseWriter, r *http.Request, ka keeperAudit, input audit.SourceInput) {
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+	input.Password = ""
+	item, err := ka.AddHeldSource(ctx, input)
+	if err != nil {
+		writeHeldSourceError(w, err)
+		return
+	}
+	h.rollups.clear()
+	writeJSON(w, http.StatusCreated, heldSourceDTO{Source: item, Keeper: keeper.HeldByKeeper}, maxResponseBytes)
+}
+
+func writeHeldSourceError(w http.ResponseWriter, err error) {
+	var we *keeper.WireError
+	if errors.As(err, &we) {
+		switch we.Code {
+		case keeper.CodeBusy:
+			writeJSON(w, http.StatusServiceUnavailable, struct {
+				Error string `json:"error"`
+				Code  string `json:"code"`
+			}{keeperSeatsText, "keeper-full"}, 4096)
+			return
+		case keeper.CodeMismatch, keeper.CodeNotFound, keeper.CodeCorrupt, keeper.CodeUnavailable:
+			writeSavedMongoError(w, err)
+			return
+		}
+	}
+	switch {
+	case writeKeeperError(w, err), writeConnectionError(w, err):
+	default:
+		writeRepoError(w, err)
+	}
 }
 
 // writeHeldMongoFailure words a failed keeper MongoDB check the way the local path does.
@@ -244,6 +308,24 @@ func demoKeeperStatus(preview string) (keeperStatusDTO, bool) {
 		return keeperStatusDTO{Mode: "shared", Running: true, OldFilesPresent: true}, true
 	}
 	return keeperStatusDTO{}, false
+}
+
+// demoHeldSources is the canned source list for the screenshot previews (?preview=saved|stopped, demo only): the demo's sources shown
+// as opened by the key keeper, which runs (saved) or cannot be reached (stopped).
+func demoHeldSources(items []audit.Source, preview string) ([]heldSourceDTO, bool) {
+	state := keeper.HeldByKeeper
+	switch preview {
+	case "saved":
+	case "stopped":
+		state = keeper.HeldButDown
+	default:
+		return nil, false
+	}
+	out := make([]heldSourceDTO, 0, len(items))
+	for _, s := range items {
+		out = append(out, heldSourceDTO{Source: s, Keeper: state})
+	}
+	return out, true
 }
 
 func keeperProblem(err error) string {

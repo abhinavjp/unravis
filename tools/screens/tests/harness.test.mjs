@@ -115,6 +115,17 @@ test('docs-check fails when a screen is listed twice, badly named, or has no ste
   assert.match(out, /p1-empty has no steps/);
 });
 
+test('docs-check takes a part phase such as P14b, still tied to its phase', () => {
+  const root = project({
+    'tools/screens/screens.json': screensFile(screen('p14b-held', { phase: 'P14b' }), screen('p14-held', { phase: 'P14b' })),
+    'buildout/docs/a.md': 'p14b-held p14-held\n'
+  });
+  const { code, out } = docsCheck(root);
+  assert.equal(code, 1);
+  assert.doesNotMatch(out, /p14b-held/);
+  assert.match(out, /p14-held must start with its phase \(P14b\)/);
+});
+
 test('a bad UNRAVIS_DEMO_NOW stops the capture with a plain message', { skip: !haveExe && 'needs npm ci in tools/screens' }, () => {
   const run = spawnSync('npx.cmd', ['playwright', 'test', '--list'], {
     cwd: here, encoding: 'utf8', shell: true, env: { ...process.env, UNRAVIS_DEMO_NOW: 'yesterday' }

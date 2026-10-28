@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -75,9 +76,68 @@ func (f *keeperRunner) LaneMongo(_ context.Context, in audit.ConnectionInput, la
 	return dbhealth.Report{Kind: "mongo", Label: label, Database: req.Database, Overall: "ok", FinishedAt: time.Now(), Lane: &dbhealth.LaneResult{Incident: req.Incident, Reference: req.Reference}}, nil
 }
 
+// keeperHosted stands in for the audit repository the keeper hosts (P14b): it records the passwords it was handed (inside the keeper)
+// and answers from memory, never connecting.
+type keeperHosted struct {
+	mu        sync.Mutex
+	passwords []string
+	sources   []audit.Source
+	next      int
+}
+
+func (f *keeperHosted) seen() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.passwords...)
+}
+
+func (f *keeperHosted) Sources(context.Context) ([]audit.Source, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]audit.Source(nil), f.sources...), nil
+}
+
+func (f *keeperHosted) AddSource(_ context.Context, in audit.SourceInput) (audit.Source, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.passwords = append(f.passwords, in.Password)
+	f.next++
+	id := fmt.Sprintf("kept-%d", f.next)
+	src := audit.Source{ID: id, Label: in.Label, Database: in.Database, Collection: in.Collection, SelectionKey: id}
+	f.sources = append(f.sources, src)
+	return src, nil
+}
+
+func (f *keeperHosted) DeleteSource(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, s := range f.sources {
+		if s.ID == id {
+			f.sources = append(f.sources[:i], f.sources[i+1:]...)
+			return nil
+		}
+	}
+	return audit.ErrNotFound
+}
+
+func (f *keeperHosted) Analyze(context.Context, audit.Query) (audit.Analysis, error) {
+	return audit.Analysis{Sources: []audit.SourceResult{{SourceID: "answered-by-the-keeper", OK: true}}}, nil
+}
+func (f *keeperHosted) Requests(context.Context, audit.PageInput) (audit.Page, error) {
+	return audit.Page{}, nil
+}
+func (f *keeperHosted) Payload(context.Context, audit.PayloadInput) (audit.Payload, error) {
+	return audit.Payload{}, nil
+}
+func (f *keeperHosted) Record(context.Context, audit.RecordInput) (audit.RecordDetail, error) {
+	return audit.RecordDetail{}, nil
+}
+func (f *keeperHosted) Close(context.Context) error { return nil }
+
 type keeperEnv struct {
 	*caseEnv
 	runner *keeperRunner
+	hosted *keeperHosted
 	client *keeper.Client
 	dir    string
 	stop   func()
@@ -106,10 +166,12 @@ func newKeeperEnv(t *testing.T, store casestore.Store, legacy keeper.Legacy) *ke
 		t.Fatal(err)
 	}
 	runner := &keeperRunner{}
+	hosted := &keeperHosted{}
 	auditPath := filepath.Join(dir, "keeper-audit.log")
 	auditLog := keeper.NewAuditLog(auditPath, 0)
-	srv := keeper.NewServer(keeper.ServerOptions{Log: auditLog, Limiter: keeper.NewRateLimiter(map[string]int{"read": 10000, "write": 10000, "reach": 10000, "blob": 10000}, time.Minute)})
-	(&keeper.Backend{SQL: sql, Mongo: mongo, BB: bb, Runner: runner}).Register(srv)
+	srv := keeper.NewServer(keeper.ServerOptions{Log: auditLog, Limiter: keeper.NewRateLimiter(map[string]int{"read": 10000, "write": 10000, "reach": 10000, "blob": 10000, "audit": 10000}, time.Minute)})
+	host := keeper.NewAuditHost(func() keeper.HostedRepo { return hosted })
+	(&keeper.Backend{SQL: sql, Mongo: mongo, BB: bb, Runner: runner, Audit: host}).Register(srv)
 	l := keeper.NewMemoryListener()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -122,15 +184,13 @@ func newKeeperEnv(t *testing.T, store casestore.Store, legacy keeper.Legacy) *ke
 	t.Cleanup(stop)
 	c := keeper.NewClient(l.Dialer(keeper.Caller{SID: "S-1-5-21-1-2-3-1001", Name: `PC\analyst`, PID: 4242, Session: 1}))
 	ms := keeper.NewMongoStore(c)
-	if legacy.Mongo != nil {
-		ms.WithLegacy(legacy.Mongo)
-	}
 	var mig *keeper.Migration
 	if legacy.SQL != nil || legacy.Mongo != nil || legacy.BB != nil {
 		mig = &keeper.Migration{Legacy: legacy, Client: c}
 	}
-	e := tagEnv(t, store, &fakeRepository{}, WithSQLConnections(keeper.NewSQLStore(c)), WithHistory(ms), WithKeeper(&KeeperHub{Client: c, Migration: mig}))
-	return &keeperEnv{caseEnv: e, runner: runner, client: c, dir: dir, stop: stop, legacy: legacy, audit: auditLog, auditPath: auditPath, protector: protector}
+	// The audit repository is wired as main wires it in the shared layout: this process's own one behind the keeper router.
+	e := tagEnv(t, store, keeper.NewAuditRouter(&fakeRepository{}, c), WithSQLConnections(keeper.NewSQLStore(c)), WithHistory(ms), WithKeeper(&KeeperHub{Client: c, Migration: mig}))
+	return &keeperEnv{caseEnv: e, runner: runner, hosted: hosted, client: c, dir: dir, stop: stop, legacy: legacy, audit: auditLog, auditPath: auditPath, protector: protector}
 }
 
 func TestSavedPasswordsStayInTheKeeper(t *testing.T) {
@@ -191,10 +251,24 @@ func TestSavedPasswordsStayInTheKeeper(t *testing.T) {
 	runBody, _ := json.Marshal(map[string]any{"kind": "mongo", "mongo": mongoRun})
 	call(http.MethodPost, "/api/cases/"+id+"/health/run", string(runBody), http.StatusOK)
 
-	// An audit source from a saved link: the keeper holds the password and cannot open audit sources before P14b.
-	res = call(http.MethodPost, "/api/sources", string(ref), http.StatusBadRequest)
-	if !strings.Contains(res.Body.String(), "keeper-held") {
-		t.Fatalf("add source = %s", res.Body)
+	// An audit source from a saved link: the keeper opens it with the password it stores and answers every read of it (P14b).
+	var source heldSourceDTO
+	srcBody, _ := json.Marshal(map[string]any{"uri": link.URI, "username": link.Username, "authSource": link.AuthSource, "tlsMode": link.TLSMode, "savedConnectionId": link.ID, "database": "audit", "collection": "auditLogs", "label": "Prod audit"})
+	decodeBody(t, call(http.MethodPost, "/api/sources", string(srcBody), http.StatusCreated), &source)
+	if source.ID == "" || source.Keeper != keeper.HeldByKeeper {
+		t.Fatalf("add source = %+v", source)
+	}
+	if res = call(http.MethodGet, "/api/sources", "", http.StatusOK); !strings.Contains(res.Body.String(), `"keeper":"held"`) {
+		t.Fatalf("sources = %s", res.Body)
+	}
+	q := testQuery()
+	q.SourceIDs = []string{source.ID}
+	qBody, _ := json.Marshal(q)
+	if res = call(http.MethodPost, "/api/analyze", string(qBody), http.StatusOK); !strings.Contains(res.Body.String(), "answered-by-the-keeper") {
+		t.Fatalf("analyze in the keeper = %s", res.Body)
+	}
+	if got := e.hosted.seen(); len(got) != 1 || got[0] != mongoSecret {
+		t.Fatalf("the keeper's audit repository was handed %d passwords", len(got))
 	}
 
 	// The work ran in the keeper with the stored passwords.
@@ -386,7 +460,6 @@ func TestMoveOldSavedFilesIntoTheKeeper(t *testing.T) {
 	if !st.OldFilesPresent || st.Pending.SQL != 1 || st.Pending.Mongo != 1 {
 		t.Fatalf("before = %+v", st)
 	}
-	// While the old file is there, an audit source from the moved link uses it (TEMPORARY adapter until P14b).
 	if res := e.json(http.MethodPost, "/api/keeper/remove-old", `{"confirm":true}`); res.Code != http.StatusConflict || !strings.Contains(res.Body.String(), "not-verified") {
 		t.Fatalf("remove before the move = %d %s", res.Code, res.Body)
 	}
@@ -415,9 +488,12 @@ func TestMoveOldSavedFilesIntoTheKeeper(t *testing.T) {
 			t.Fatalf("%s still there: %v", f, err)
 		}
 	}
-	// With the old file gone, the held password has to be typed for an audit source until P14b.
-	if res := e.json(http.MethodPost, "/api/sources", string(ref)); res.Code != http.StatusBadRequest || !strings.Contains(res.Body.String(), "keeper-held") {
+	// With the old file gone the moved link still opens audit sources: the keeper holds its password (P14b).
+	if res := e.json(http.MethodPost, "/api/sources", string(ref)); res.Code != http.StatusCreated || !strings.Contains(res.Body.String(), `"keeper":"held"`) {
 		t.Fatalf("source after removal = %d %s", res.Code, res.Body)
+	}
+	if got := e.hosted.seen(); len(got) != 2 || got[0] != "old-mongo-pw" || got[1] != "old-mongo-pw" {
+		t.Fatalf("the keeper opened the moved link's sources with %d passwords", len(got))
 	}
 }
 
@@ -476,7 +552,10 @@ func TestKeeperErrorsAreWordedForPeople(t *testing.T) {
 		{keeper.ErrNotRunning, http.StatusServiceUnavailable, "keeper-stopped"},
 		{keeper.ErrImpostor, http.StatusServiceUnavailable, "keeper-impostor"},
 		{keeper.ErrKeeperHeld, http.StatusBadRequest, "keeper-held"},
+		{keeper.ErrHeldSourceGone, http.StatusNotFound, "keeper-source-gone"},
+		{keeper.ErrMixedSources, http.StatusBadRequest, "keeper-mixed"},
 		{&keeper.WireError{Code: keeper.CodeBusy}, http.StatusConflict, "keeper-busy"},
+		{&keeper.WireError{Code: keeper.CodeBusy, Detail: json.RawMessage(`{"scope":"audit"}`)}, http.StatusServiceUnavailable, "keeper-audit-busy"},
 		{&keeper.WireError{Code: keeper.CodeRateLimited}, http.StatusTooManyRequests, "keeper-rate"},
 		{&keeper.WireError{Code: keeper.CodeRefused}, http.StatusForbidden, "keeper-refused"},
 		{&keeper.WireError{Code: keeper.CodeInternal, Message: "x"}, http.StatusServiceUnavailable, "keeper-error"},
@@ -485,8 +564,80 @@ func TestKeeperErrorsAreWordedForPeople(t *testing.T) {
 		if !writeKeeperError(w, c.err) || w.Code != c.code || !strings.Contains(w.Body.String(), c.want) {
 			t.Errorf("%v = %d %s", c.err, w.Code, w.Body)
 		}
+		// A busy audit read is not worded as a check that is already running.
+		if c.want == "keeper-audit-busy" && strings.Contains(w.Body.String(), "already running") {
+			t.Errorf("audit busy is worded as a running check: %s", w.Body)
+		}
 	}
 	if writeKeeperError(httptest.NewRecorder(), &keeper.WireError{Code: keeper.CodeConnect}) {
 		t.Error("a connect failure is the handler's to word")
+	}
+}
+
+// An audit source the keeper opened, when the keeper stops (P14b): it stays listed, marked stopped, its reads say the keeper is not
+// running, and removing it only forgets it. A source whose password was typed keeps working in this Unravis.
+func TestKeeperHeldAuditSourceWhenTheKeeperStops(t *testing.T) {
+	stubDrivers(t)
+	e := newKeeperEnv(t, casestore.NewMemory(), keeper.Legacy{})
+	var link history.Recent
+	decodeBody(t, e.json(http.MethodPost, "/api/connections/remember", `{"label":"Prod","connection":{"uri":"mongodb://mongo01.example.test:27017","username":"auditor","password":"held-pw","authSource":"admin"},"collection":"auditLogs","rememberPassword":true}`), &link)
+	add, _ := json.Marshal(map[string]any{"uri": link.URI, "username": link.Username, "authSource": link.AuthSource, "tlsMode": link.TLSMode, "savedConnectionId": link.ID, "database": "audit", "collection": "auditLogs"})
+	var source heldSourceDTO
+	res := e.json(http.MethodPost, "/api/sources", string(add))
+	decodeBody(t, res, &source)
+	if res.Code != http.StatusCreated || source.Keeper != keeper.HeldByKeeper {
+		t.Fatalf("add = %d %s", res.Code, res.Body)
+	}
+	// A typed password for the same link opens the source here, not in the keeper.
+	typed, _ := json.Marshal(map[string]any{"uri": link.URI, "username": link.Username, "password": "typed-now", "authSource": link.AuthSource, "savedConnectionId": link.ID, "database": "audit", "collection": "other"})
+	if res := e.json(http.MethodPost, "/api/sources", string(typed)); res.Code != http.StatusCreated || strings.Contains(res.Body.String(), `"keeper"`) {
+		t.Fatalf("typed = %d %s", res.Code, res.Body)
+	}
+	if got := e.hosted.seen(); len(got) != 1 {
+		t.Fatalf("the typed source reached the keeper: %d", len(got))
+	}
+
+	e.stop()
+	var listed []heldSourceDTO
+	res = e.get("/api/sources")
+	decodeBody(t, res, &listed)
+	if res.Code != http.StatusOK || len(listed) != 1 || listed[0].ID != source.ID || listed[0].Keeper != keeper.HeldButDown {
+		t.Fatalf("sources when stopped = %d %s", res.Code, res.Body)
+	}
+	q := testQuery()
+	q.SourceIDs = []string{source.ID}
+	qBody, _ := json.Marshal(q)
+	if res := e.json(http.MethodPost, "/api/analyze", string(qBody)); res.Code != http.StatusServiceUnavailable || !strings.Contains(res.Body.String(), `"keeper-stopped"`) {
+		t.Fatalf("analyze when stopped = %d %s", res.Code, res.Body)
+	}
+	if res := e.json(http.MethodPost, "/api/sources", string(add)); res.Code != http.StatusServiceUnavailable || !strings.Contains(res.Body.String(), `"keeper-stopped"`) {
+		t.Fatalf("add when stopped = %d %s", res.Code, res.Body)
+	}
+	if res := e.json(http.MethodDelete, "/api/sources/"+source.ID, ""); res.Code != http.StatusNoContent {
+		t.Fatalf("remove when stopped = %d %s", res.Code, res.Body)
+	}
+	if res = e.get("/api/sources"); strings.Contains(res.Body.String(), source.ID) {
+		t.Fatalf("removed source still listed: %s", res.Body)
+	}
+}
+
+// The screenshot previews of keeper-held audit sources (P14b) answer only in the demo, and only for the named previews.
+func TestDemoPreviewsOfKeeperHeldSources(t *testing.T) {
+	demo := &caseEnv{t: t, h: New(audit.NewDemo(time.Now()), testAssets(), testToken, true)}
+	for preview, want := range map[string]keeper.HeldState{"saved": keeper.HeldByKeeper, "stopped": keeper.HeldButDown, "": "", "migrate": ""} {
+		var listed []heldSourceDTO
+		decodeBody(t, demo.get("/api/sources?preview="+preview), &listed)
+		if len(listed) == 0 {
+			t.Fatalf("%q: the demo lists no sources", preview)
+		}
+		for _, s := range listed {
+			if s.Keeper != want {
+				t.Fatalf("%q: source %s keeper = %q, want %q", preview, s.ID, s.Keeper, want)
+			}
+		}
+	}
+	live := tagEnv(t, casestore.NewMemory(), &fakeRepository{})
+	if res := live.get("/api/sources?preview=stopped"); res.Code != http.StatusOK || strings.Contains(res.Body.String(), "keeper") {
+		t.Fatalf("preview outside the demo = %d %s", res.Code, res.Body)
 	}
 }

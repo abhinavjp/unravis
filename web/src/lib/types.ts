@@ -3,7 +3,8 @@ export type Kind = 'synchronous' | 'asynchronous' | 'hangfire' | 'http' | 'http_
 export type Outcome = 'success' | 'failure' | 'client_error' | 'server_error' | 'all';
 export type Metric = 'total' | 'api';
 
-export interface Source { selectionKey?: string; connectionId?: string; connectionLabel?: string; id: string; label: string; database: string; collection: string }
+/** keeper (P14b): "held" when the key keeper opened the source from a saved link and answers its reads, "stopped" when it cannot be reached now. */
+export interface Source { selectionKey?: string; connectionId?: string; connectionLabel?: string; id: string; label: string; database: string; collection: string; keeper?: 'held' | 'stopped' }
 export type TLSMode = '' | 'uri' | 'system' | 'custom' | 'insecure' | 'off';
 export interface ConnectionInput { uri: string; username: string; password: string; authSource: string; tlsMode: TLSMode; caCertificate: string; savedConnectionId?: string }
 export interface ConnectionTestResult { databases: string[]; warning?: string }
