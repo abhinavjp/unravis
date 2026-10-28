@@ -69,3 +69,110 @@ test('D-A-05: a case made by the create guide opens on Case home, import drawer 
   const copy = read('src/lib/copy/wizardCreateCopy.ts');
   assert.match(copy, /openCase: 'Open the case'/);
 });
+
+function fakeHistory(hash = '') {
+  const entries = [{ hash, state: null }];
+  let at = 0;
+  const loc = { pathname: '/', search: '', get hash() { return entries[at].hash; } };
+  const hashOf = (url, keep) => (typeof url === 'string' ? (url.includes('#') ? url.slice(url.indexOf('#')) : '') : keep);
+  const hist = {
+    get state() { return entries[at].state; },
+    pushState(state, _unused, url) { entries.length = at + 1; entries.push({ hash: hashOf(url, entries[at].hash), state }); at++; },
+    replaceState(state, _unused, url) { entries[at] = { hash: hashOf(url, entries[at].hash), state }; },
+    back() {}
+  };
+  return { loc, hist, entries, get at() { return at; }, goTo(to) { at = to; } };
+}
+const whereView = { type: 'where', lens: 'requests' };
+const opView = { type: 'op', lens: 'requests', controller: 'C', action: 'A' };
+
+test('D-A-07: historyStep decides none, replace or push and never marks a key screen', () => {
+  const flow = loadTypeScript('src/lib/screenFlow.ts');
+  assert.deepEqual([...flow.HISTORY_SCREENS], ['start', 'case', 'create', 'running']);
+  for (const key of ['loading', 'unlock', 'setup']) assert.equal(flow.isHistoryScreen(key), false, key);
+  assert.equal(flow.historyStep('loading', 'start', ''), 'replace');
+  assert.equal(flow.historyStep('unlock', 'start', ''), 'replace');
+  assert.equal(flow.historyStep('setup', 'start', ''), 'replace');
+  assert.equal(flow.historyStep('start', 'running', 'start'), 'push');
+  assert.equal(flow.historyStep('start', 'case', 'start'), 'push');
+  assert.equal(flow.historyStep('start', 'create', 'start'), 'push');
+  assert.equal(flow.historyStep('case', 'start', 'case'), 'push');
+  assert.equal(flow.historyStep('start', 'case', ''), 'push', 'an unmarked entry after a normal move still adds an entry');
+  assert.equal(flow.historyStep('create', 'case', 'create'), 'replace', 'Create ends on Case home in place');
+  assert.equal(flow.historyStep('start', 'unlock', 'start'), 'none');
+  assert.equal(flow.historyStep('start', 'setup', 'start'), 'none');
+  assert.equal(flow.historyStep('unlock', 'case', 'case'), 'none', 'the entry already says case');
+});
+
+test('D-A-07: markScreen marks in place or adds an entry, and Back and Forward report the entry screen', () => {
+  const { createViewHistory } = loadTypeScript('src/lib/wayfinding.ts');
+  const b = fakeHistory();
+  const h = createViewHistory(b.loc, b.hist);
+  assert.equal(h.screen, '');
+  h.markScreen('start', true);
+  assert.equal(b.entries.length, 1);
+  assert.equal(h.screen, 'start');
+  h.markScreen('start');
+  assert.equal(b.entries.length, 1, 'the same screen adds nothing');
+  h.markScreen('case');
+  h.markScreen('running');
+  assert.equal(b.entries.length, 3);
+  assert.equal(b.at, 2);
+  b.goTo(1);
+  assert.equal(h.pop(), null);
+  assert.equal(h.screen, 'case');
+  b.goTo(0);
+  h.pop();
+  assert.equal(h.screen, 'start');
+  b.goTo(2);
+  h.pop();
+  assert.equal(h.screen, 'running');
+  h.markScreen('start');
+  assert.equal(b.entries.length, 4, 'a new move from a middle entry drops the entries after it');
+  b.goTo(1);
+  h.pop();
+  h.markScreen('create');
+  assert.equal(b.entries.length, 3);
+});
+
+test('D-A-07: a reload ignores marks from the page before it', () => {
+  const { createViewHistory } = loadTypeScript('src/lib/wayfinding.ts');
+  const b = fakeHistory();
+  const first = createViewHistory(b.loc, b.hist);
+  first.markScreen('case', true);
+  assert.equal(first.screen, 'case');
+  const second = createViewHistory(b.loc, b.hist);
+  assert.equal(second.screen, '', 'the old mark belongs to the old page life');
+  second.markScreen('start', true);
+  assert.equal(second.screen, 'start');
+});
+
+test('D-A-07: view changes keep the screen mark, and stepping up never goes Back across a screen', () => {
+  const { createViewHistory, SCREEN_MARK } = loadTypeScript('src/lib/wayfinding.ts');
+  const b = fakeHistory();
+  const h = createViewHistory(b.loc, b.hist);
+  h.markScreen('running', true);
+  assert.equal(h.sync(whereView), 'push');
+  assert.equal(b.entries[1].state[SCREEN_MARK], 'running');
+  h.markScreen('case');
+  assert.equal(h.sync(opView), 'push');
+  assert.equal(b.entries[3].state[SCREEN_MARK], 'case');
+  h.markScreen('running', true);
+  assert.equal(h.sync(whereView), 'push', 'the entry before was made on the case page, so this is not a Back');
+  const plain = fakeHistory();
+  const hp = createViewHistory(plain.loc, plain.hist);
+  assert.equal(hp.sync(whereView), 'push');
+  assert.deepEqual(plain.entries[1].state, { uvIdx: 1 }, 'with no screen mark the state is exactly what it was before');
+});
+
+test('D-A-07: appState marks screens through the history, ignores key screens and refuses safely', () => {
+  const state = read('src/lib/appState.svelte.ts');
+  assert.match(state, /let poppingScreen = false;/);
+  const go = state.slice(state.indexOf('export function go(to: Screen)'), state.indexOf('// Reads the key state once the app info is in'));
+  assert.match(go, /^export function go\(to: Screen\): boolean \{\s*const from = screen;/);
+  assert.match(go, /if \(!poppingScreen\) noteScreenHistory\(from, move\.screen\);/);
+  assert.match(go, /function noteScreenHistory\(from: Screen, to: Screen\) \{[\s\S]*drawers\.whenClear\([\s\S]*historyStep\(from, to, marker\.screen\)[\s\S]*marker\.markScreen\(to, step === 'replace'\)/);
+  assert.match(go, /function stepScreenFromHistory\(wanted: string\) \{[\s\S]*wanted === 'case' && !activeCaseId[\s\S]*marker\.markScreen\(screen, true\)/);
+  assert.match(go, /try \{ if \(!go\(wanted\)\) marker\.markScreen\(screen, true\); \} finally \{ poppingScreen = false; \}/);
+  assert.match(state, /if \(drawerHistory\?\.pop\(\)\) return;\s*const target = viewHistory\?\.pop\(\);\s*if \(target === undefined\) return;/);
+});

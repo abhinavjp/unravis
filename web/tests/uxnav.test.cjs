@@ -179,6 +179,15 @@ test('every drawer in the page state reaches the history through the one module'
   assert.match(state, /if \(drawerHistory\?\.pop\(\)\) return;/);
 });
 
+test('D-A-07: popstate steps screens through go() and key screens get no history entry', () => {
+  const state = read('src/lib/appState.svelte.ts');
+  assert.match(state, /stepScreenFromHistory\(viewHistory\?\.screen \?\? ''\);\s*void applyView\(target\);/);
+  assert.match(state, /if \(!poppingScreen\) noteScreenHistory\(from, move\.screen\);/);
+  const step = state.slice(state.indexOf('function stepScreenFromHistory'), state.indexOf('// Reads the key state once the app info is in'));
+  assert.match(step, /!isHistoryScreen\(screen\)/, 'a key screen is never left by Back');
+  assert.match(step, /poppingScreen = true;[\s\S]*go\(wanted\)[\s\S]*poppingScreen = false;/);
+});
+
 /* ---------------------------------------------------------------- startup failures */
 
 const apiError = (status, code) => Object.assign(new Error('Open Unravis from the link it printed when it started, or restart it.'), { name: 'ApiError', status, code });

@@ -90,3 +90,24 @@ export function createRoute(wizardReady: boolean = WIZARD_READY): CreateRoute {
 export function leavesCaseWork(to: Screen): boolean {
   return to !== 'running';
 }
+
+/** Screens the browser Back and Forward buttons step between. The key screens (loading, unlock, setup) never get a history entry. */
+export const HISTORY_SCREENS: readonly Screen[] = ['start', 'case', 'create', 'running'];
+export function isHistoryScreen(value: string): value is Screen {
+  return (HISTORY_SCREENS as readonly string[]).includes(value);
+}
+
+export type HistoryStep = 'none' | 'replace' | 'push';
+
+/**
+ * What the browser history does for a move to `to`. `shown` is the screen the current history entry is marked with ('' when unmarked).
+ * Nothing for a key screen or when the entry already says `to`. The first move off the loading or key screens marks the entry the page
+ * was opened on, and Create ending on Case home marks the create entry in place (so Back does not return to a finished guide).
+ * Every other move adds an entry.
+ */
+export function historyStep(from: Screen, to: Screen, shown: string): HistoryStep {
+  if (!isHistoryScreen(to) || shown === to) return 'none';
+  if (from === 'create' && to === 'case') return 'replace';
+  if (shown === '' && (from === 'loading' || from === 'unlock' || from === 'setup')) return 'replace';
+  return 'push';
+}

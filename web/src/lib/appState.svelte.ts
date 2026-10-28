@@ -15,7 +15,7 @@ import { forgetSavedRecord, forgetSourceSaved, registerSourceSaved, resolveSaved
 import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './types';
 import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './breakdown';
 import type { RunningImport } from './cases';
-import { afterUnlock, createRoute, go as moveScreen, initialScreen, leavesCaseWork, setupReturn, type Screen } from './screenFlow';
+import { afterUnlock, createRoute, go as moveScreen, historyStep, initialScreen, isHistoryScreen, leavesCaseWork, setupReturn, type Screen } from './screenFlow';
 import { onCasesLocked } from './lockSignal';
 import { requestCase } from './startIntent';
 import { CASE_RESTORE_TEXT } from './copy/caseRestoreCopy';
@@ -202,6 +202,8 @@ let viewRun = 0;
 let initialView: View | null = null;
 let viewHistory: ReturnType<typeof createViewHistory> | null = null;
 let drawerHistory: ReturnType<typeof createDrawerHistory> | null = null;
+// True while Back or Forward is moving the screen: that move must not add a history entry of its own.
+let poppingScreen = false;
 let viewSyncQueued = false;
 
 const connectionSignature = $derived(JSON.stringify([addUri, addUsername, addPassword, addAuthSource, addTLSMode, addCACertificate, savedConnectionId]));
@@ -325,8 +327,14 @@ export function startApp() {
     window.addEventListener(GLOSSARY_EVENT, onGlossaryRequest);
     drawerHistory = createDrawerHistory(history, closeDrawerById);
     viewHistory = createViewHistory(location, history);
-    // Browser Back closes an open drawer first; only an event no drawer used is a move between views.
-    const onPop = () => { if (drawerHistory?.pop()) return; const target = viewHistory?.pop(); if (target !== undefined) void applyView(target); };
+    // Browser Back closes an open drawer first; an event no drawer used steps to the screen the entry was made on, then rebuilds the view.
+    const onPop = () => {
+      if (drawerHistory?.pop()) return;
+      const target = viewHistory?.pop();
+      if (target === undefined) return;
+      stepScreenFromHistory(viewHistory?.screen ?? '');
+      void applyView(target);
+    };
     window.addEventListener('popstate', onPop);
     return () => { stopLockListener(); window.removeEventListener(GLOSSARY_EVENT, onGlossaryRequest); window.removeEventListener('popstate', onPop); viewHistory = null; drawerHistory = null; };
   });
@@ -472,6 +480,7 @@ function devLog(text: string) {
 }
 /** Asks to move to another screen. A move the table does not allow is ignored (and logged in dev); returns whether the app is on `to` now. */
 export function go(to: Screen): boolean {
+  const from = screen;
   // Leaving set-up with "Later" or "Continue" (both ask for 'start') goes back to where set-up was opened from.
   if (screen === 'setup' && to === 'start' && setupOrigin) to = setupReturn(setupOrigin);
   const move = moveScreen(screen, to);
@@ -481,9 +490,29 @@ export function go(to: Screen): boolean {
   if (leavesCaseWork(move.screen) && sidePanel) void closeSidePanel();
   screen = move.screen;
   if (move.screen !== 'setup') setupOrigin = null;
+  if (!poppingScreen) noteScreenHistory(from, move.screen);
   // Arriving at the case or the analysis with a case open: bring back what the case saved, once (see restoreCaseWorkspace).
   if ((move.screen === 'running' || move.screen === 'case') && activeCaseId && restoredCaseId !== activeCaseId && restorePhase === 'idle' && info && !info.demo) void restoreCaseWorkspace(activeCaseId);
   return true;
+}
+// A move to start, case, create or the analysis gets a browser history entry once no drawer entry is open (see lib/screenFlow.ts historyStep).
+function noteScreenHistory(from: Screen, to: Screen) {
+  const marker = viewHistory, drawers = drawerHistory;
+  if (!marker || !drawers || !isHistoryScreen(to)) return;
+  drawers.whenClear(() => {
+    if (screen !== to || viewHistory !== marker) return;
+    const step = historyStep(from, to, marker.screen);
+    if (step !== 'none') marker.markScreen(to, step === 'replace');
+  });
+}
+// Back or Forward landed on an entry marked with another screen: go there through the same move table. Key screens are never stepped onto or off.
+// A move the table refuses, or a case page with no case open, re-marks the entry for the screen that stays, so Back cannot loop or trap.
+function stepScreenFromHistory(wanted: string) {
+  const marker = viewHistory;
+  if (!marker || !isHistoryScreen(wanted) || !isHistoryScreen(screen) || wanted === screen) return;
+  if (wanted === 'case' && !activeCaseId) { marker.markScreen(screen, true); return; }
+  poppingScreen = true;
+  try { if (!go(wanted)) marker.markScreen(screen, true); } finally { poppingScreen = false; }
 }
 // Reads the key state once the app info is in, then picks the first screen. A status that cannot be read is treated as "no key" for routing.
 async function chooseFirstScreen(demo: boolean, resume: boolean) {
