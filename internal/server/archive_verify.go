@@ -140,8 +140,13 @@ func (h *handler) verifyCase(w http.ResponseWriter, r *http.Request, raw string)
 			return
 		}
 	}
-	derive, clean, oldKey := h.openDeriver(cur, b.pass)
+	// The job outlives this request, and the request wipes its body when it ends:
+	// the job gets its own copy of the passphrase and clears it when it is done.
+	pass := append([]byte(nil), b.pass...)
+	derive, cleanKey, oldKey := h.openDeriver(cur, pass)
+	clean := func() { cleanKey(); clear(pass) }
 	if oldKey {
+		clean()
 		writeCaseFailure(w, http.StatusConflict, "old-key-only", oldKeyOnlyText)
 		return
 	}

@@ -17,6 +17,7 @@ import (
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/casestore/sqlite"
 	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/sealedfile"
 )
 
 // The harness of the archive scenarios (P3 proof, A1-A18 and INJ-1 to INJ-10).
@@ -34,6 +35,10 @@ func newArchPC(t *testing.T, pass string) *archPC {
 	t.Helper()
 	pc := newCFSPC(t, pass, pass != "")
 	a := &archPC{cfsPC: pc}
+	// Cases made before a master key exists are sealed with the test protector.
+	oldDPAPI := caseFileDPAPI
+	caseFileDPAPI = func() (sealedfile.Protector, error) { return pc.prot, nil }
+	t.Cleanup(func() { caseFileDPAPI = oldDPAPI })
 	a.wire()
 	steppingClock(t)
 	return a
