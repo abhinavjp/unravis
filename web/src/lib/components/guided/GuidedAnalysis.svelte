@@ -2,7 +2,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
   import { SHELL_TEXT as S } from '../../copy/guidedShellCopy';
-  import { GuidedStore } from '../../guided/guided.svelte';
+  import { storeFor } from '../../guided/guided.svelte';
   import { nextTabIndex, railItems, stepOf, stickerFor } from '../../guided/stepModel';
   import type { SourceNeed } from '../../guided/tools';
   import { app } from '../../appState.svelte';
@@ -25,7 +25,8 @@
   } = $props();
 
   type Panel = 'main' | 'checklist' | 'fix' | 'nearby' | 'export';
-  const store = new GuidedStore(untrack(() => caseId));
+  // One store per case, held in memory: leaving this screen and coming back finds the run, windows and note as they were.
+  const store = storeFor(untrack(() => caseId));
   let panel = $state<Panel>('main');
   let menu = $state<HTMLDetailsElement | null>(null);
   let heading = $state<HTMLHeadingElement | null>(null);

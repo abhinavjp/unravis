@@ -32,7 +32,6 @@
   let windowsOpen = $state(untrack(() => store.frame.incidentStart === ''));
   let minCalls = $state(20);
   let match = $state('');
-  let note = $state('');
   let noted = $state(false);
 
   const open = $derived(store.tool ? (toolById(store.tool) ?? null) : null);
@@ -52,7 +51,7 @@
   }
 
   async function addNote() {
-    if (await store.addItem('learned', note)) { note = ''; noted = true; }
+    if (await store.addItem('learned', store.noteDraft)) { store.noteDraft = ''; noted = true; }
   }
 </script>
 
@@ -139,9 +138,9 @@
 
     {#if !readOnly}
       <form class="note-form" onsubmit={(e) => { e.preventDefault(); void addNote(); }}>
-        <label>{T.addNote}<input type="text" maxlength="300" bind:value={note} /></label>
+        <label>{T.addNote}<input type="text" maxlength="300" bind:value={store.noteDraft} /></label>
         <div class="row">
-          <button type="submit" class="secondary-button" disabled={note.trim() === ''}>{T.itemSave}</button>
+          <button type="submit" class="secondary-button" disabled={store.noteDraft.trim() === ''}>{T.itemSave}</button>
           {#if noted}<span class="note" role="status">{T.noteAdded}</span>{/if}
         </div>
       </form>

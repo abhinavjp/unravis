@@ -122,3 +122,28 @@ test('B-09: the store records the fingerprint at run time and compares it in out
   assert.match(g, /window\.removeEventListener\('focus', onFocus\);/);
   assert.match(g, /void hasIis;/);
 });
+
+test('B-10: the store is kept per case in memory, keyed by case id, with a cap', () => {
+  const s = store();
+  assert.match(s, /export function storeFor\(caseId: string\): GuidedStore \{/);
+  assert.match(s, /held && held\.caseId === caseId/);
+  assert.match(s, /const MAX_KEPT_STORES = 5;/);
+  assert.match(s, /kept\.get\(oldest\)\?\.dispose\(\);/);
+  assert.match(s, /export function releaseStore\(caseId: string\): void \{/);
+  assert.match(s, /noteDraft = \$state\(''\);/);
+  // The mode is the one value that is persisted (readMode and writeMode); every other line of the store stays off disk.
+  const rest = s.split(/\r?\n/).filter((line) => !/MODE_KEY/.test(line)).join('\n');
+  assert.ok(!/localStorage|sessionStorage|indexedDB/.test(rest), 'kept state stays in memory');
+  const g = guided('GuidedAnalysis.svelte');
+  assert.match(g, /const store = storeFor\(untrack\(\(\) => caseId\)\);/);
+  assert.ok(!/new GuidedStore\(/.test(g), 'the screen no longer makes its own store');
+  assert.match(g, /return \(\) => \{ window\.removeEventListener\('focus', onFocus\); store\.dispose\(\); \};/);
+});
+
+test('B-10: the unsaved note lives on the store, not in the screen', () => {
+  const m = guided('ManualTools.svelte');
+  assert.ok(!/let note = \$state/.test(m));
+  assert.match(m, /store\.addItem\('learned', store\.noteDraft\)/);
+  assert.match(m, /bind:value=\{store\.noteDraft\}/);
+  assert.match(m, /disabled=\{store\.noteDraft\.trim\(\) === ''\}/);
+});

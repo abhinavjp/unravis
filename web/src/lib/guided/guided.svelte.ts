@@ -69,6 +69,8 @@ export class GuidedStore {
   reportState = $state<'idle' | 'building' | 'failed'>('idle');
   reportError = $state('');
   tool = $state<ToolId | ''>('');
+  /** The note typed in Manual tools and not yet saved. Kept with the store so leaving the screen does not lose it. */
+  noteDraft = $state('');
 
   #run = 0;
   /** The request the answer on screen was made from. A report is built from this one, so it matches what the person sees. */
@@ -296,3 +298,40 @@ export class GuidedStore {
     }
   }
 }
+
+/* ----------------------------------------------------------------- one store per case, in memory */
+
+const MAX_KEPT_STORES = 5;
+/** Insertion order is the order of last use: the first key is the one to drop. */
+const kept = new Map<string, GuidedStore>();
+
+/**
+ * The store of this case. Coming back to the analysis finds the run, windows, step, tool and unsaved note where they were left. A store is
+ * returned only for the case id it was made for. Memory only: nothing is written anywhere.
+ */
+export function storeFor(caseId: string): GuidedStore {
+  const held = kept.get(caseId);
+  if (held && held.caseId === caseId) {
+    kept.delete(caseId);
+    kept.set(caseId, held);
+    return held;
+  }
+  const made = new GuidedStore(caseId);
+  kept.set(caseId, made);
+  while (kept.size > MAX_KEPT_STORES) {
+    const oldest = kept.keys().next().value;
+    if (oldest === undefined) break;
+    kept.get(oldest)?.dispose();
+    kept.delete(oldest);
+  }
+  return made;
+}
+
+/** Drops the store of a case, for a case that has gone. Nothing calls it yet; the cap above bounds the memory meanwhile. */
+export function releaseStore(caseId: string): void {
+  kept.get(caseId)?.dispose();
+  kept.delete(caseId);
+}
+
+/** For tests: how many stores are held now. */
+export const keptStoreCount = (): number => kept.size;
