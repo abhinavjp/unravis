@@ -222,7 +222,7 @@ test('p2: the workspace (Mongo link and filters) is restored when a case is open
   const restoreLines = app.split('\n').filter((line) => /void restoreCaseWorkspace\(/.test(line));
   assert.ok(restoreLines.length >= 2, 'both arrival paths restore');
   for (const line of restoreLines) assert.doesNotMatch(line, /closed|state/i, 'the restore is not held back for a Closed case: ' + line.trim());
-  const docs = fs.readFileSync(path.join(__dirname, '..', '..', 'buildout', 'docs', 'cases.md'), 'utf8');
+  const docs = fs.readFileSync(path.join(__dirname, '..', '..', 'docs', 'user', 'cases.md'), 'utf8');
   assert.doesNotMatch(docs, /Reopen:[\s\S]{0,200}brings back the saved MongoDB link/, 'the docs do not say Reopen brings the link back');
   assert.doesNotMatch(copy.CASE_HOME_TEXT.reopenHint, /link|filter/i);
 });
