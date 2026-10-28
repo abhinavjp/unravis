@@ -38,7 +38,7 @@ import { createViewHistory, describeView, parseViewHash, type View } from './way
 import { hourWindowQuery, type RollupWindow } from './rollup';
 import { backTarget, planBack, planInvestigation, rootOf, type TrailEntry } from './promote';
 import { zoomView } from './zoomView.svelte';
-import { keeperPreview, keeperSourceChanged, onKeeperPreview } from './keeper';
+import { keeperPreview, keeperUnreadable, onKeeperPreview, onKeeperRefusal } from './keeper';
 
 let info = $state<Info | null>(null);
 let sources = $state<Source[]>([]);
@@ -435,6 +435,7 @@ export async function initialize() {
       restoredInTab = true;
     } else query = defaultQuery(new Date(info.now), loaded.map(source => source.id));
     if (!hasUnresolvedKnownSources(investigationIntent, loaded)) investigationIntent = null;
+    unselectUnreadableSources();
     investigationFingerprint = JSON.stringify([query, zone, targetMs, sources]);
     investigationReady = true;
     pendingInvestigation = null;
@@ -1134,13 +1135,24 @@ function forgetSource(source: Source) {
  * A read the key keeper refused (P14b): it is not running, or it closed a source. The list is read again, so each source the keeper
  * opened says whether it can be read now, and a source the keeper closed leaves the page as a removal would. The error banner stays.
  */
+/** A source the stopped key keeper holds cannot be read, so it is not left chosen (a run would only be refused). It can be chosen again once the list says it is held. */
+function unselectUnreadableSources() {
+  const unreadable = new Set(sources.filter(keeperUnreadable).map(source => source.id));
+  if (unreadable.size && query.sourceIds.some(id => unreadable.has(id))) query.sourceIds = query.sourceIds.filter(id => !unreadable.has(id));
+}
+let keeperRefreshing = false;
 async function refreshKeeperSources() {
+  if (keeperRefreshing) return; // a burst of refused reads (and the list read itself) makes one re-read
+  keeperRefreshing = true;
   let loaded: Source[];
-  try { loaded = (await api.sources(keeperPreview())) ?? []; } catch { return; }
+  try { loaded = (await api.sources(keeperPreview())) ?? []; } catch { return; } finally { keeperRefreshing = false; }
   const now = new Set(loaded.map(source => source.id));
   for (const source of sources) if (!now.has(source.id)) forgetSource(source);
   sources = loaded;
+  unselectUnreadableSources();
 }
+// Any read the keeper refuses (coverage, requests, payload, record, grids, an analysis) comes here from the one place that reads the server.
+onKeeperRefusal(() => void refreshKeeperSources());
 // A manual run (the button) reports a problem in the error banner and ignores clicks while loading. An automatic run (a scope change)
 // never gets here with a problem, replaces an in-flight run, and leaves the banner alone.
 export async function runAnalysis(auto = false) {
@@ -1164,7 +1176,6 @@ export async function runAnalysis(auto = false) {
   } catch (cause) {
     if (run === analysisSequence && !(cause instanceof DOMException && cause.name === 'AbortError')) {
       const detail = message(cause);
-      if (keeperSourceChanged(cause)) void refreshKeeperSources();
       error = /exceeds a configured limit/i.test(detail)
         ? 'This comparison reached a processing safety limit. Your settings are kept. Try shorter periods, fewer sources, or a controller or action filter.'
         : detail;

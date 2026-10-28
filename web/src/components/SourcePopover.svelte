@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
   import { COVERAGE_TEXT } from '../lib/provenance';
   import { KEEPER_TEXT } from '../lib/copy/sourcesCopy';
-  import { heldSourceText } from '../lib/keeper';
+  import { heldSourceText, keeperUnreadable } from '../lib/keeper';
   import type { Source } from '../lib/types';
   import './sources/sources.css';
 
@@ -19,7 +19,10 @@
   let trigger = $state<HTMLButtonElement>();
   // Sources the key keeper opened from saved links (P14b) say so; when it is not running they say they cannot be read.
   const keeperStopped = $derived(groups.some(group => group.sources.some(source => source.keeper === 'stopped')));
-  const summary = $derived(total === 0 ? 'No sources' : selectedIds.length === 0 ? 'Choose sources' : selectedIds.length === 1 ? (groups.flatMap(group => group.sources).find(source => source.id === selectedIds[0])?.database ?? '1 source') : selectedIds.length + ' sources');
+  // A source the stopped keeper holds cannot be read: it shows unticked and cannot be ticked, and the header counts only what a run can read.
+  const unreadableIds = $derived(new Set(groups.flatMap(group => group.sources).filter(keeperUnreadable).map(source => source.id)));
+  const shownIds = $derived(selectedIds.filter(id => !unreadableIds.has(id)));
+  const summary = $derived(total === 0 ? 'No sources' : shownIds.length === 0 ? 'Choose sources' : shownIds.length === 1 ? (groups.flatMap(group => group.sources).find(source => source.id === shownIds[0])?.database ?? '1 source') : shownIds.length + ' sources');
 
   async function toggle() {
     open = !open;
@@ -49,7 +52,7 @@
   {#if open}
     <div class="popover" role="dialog" aria-label="Audit sources">
       <h2>Sources</h2>
-      <p class="source-count">{selectedIds.length} selected · {total} available</p>
+      <p class="source-count">{shownIds.length} selected · {total} available{unreadableIds.size ? ' · ' + unreadableIds.size + ' cannot be read now' : ''}</p>
       {#if sourceError}<div class="inline-error" role="alert">{sourceError}</div>{/if}
       {#if sourceSuccess}<div class="connection-status" role="status">{sourceSuccess}</div>{/if}
       {#if keeperStopped}<p class="keeper-note" role="note" data-keeper-sources-stopped>{KEEPER_TEXT.sourcesStopped}</p>{/if}
@@ -59,7 +62,7 @@
             <div class="source-group-heading"><strong>{group.label}</strong><small>{group.sources.length} audit source{group.sources.length === 1 ? '' : 's'}</small></div>
             {#each group.sources as source (source.id)}
               <div class="source-item">
-                <label class="source-choice"><input type="checkbox" checked={selectedIds.includes(source.id)} onchange={(event) => onToggle(source.id, event.currentTarget.checked)} /><span><strong>{source.database}</strong><small>{source.collection}</small>{#if heldSourceText(source)}<span class="src-sticker held" class:down={source.keeper === 'stopped'} data-keeper-source={source.keeper}>{heldSourceText(source)}</span>{/if}</span></label>
+                <label class="source-choice"><input type="checkbox" checked={shownIds.includes(source.id)} disabled={unreadableIds.has(source.id)} onchange={(event) => onToggle(source.id, event.currentTarget.checked)} /><span><strong>{source.database}</strong><small>{source.collection}</small>{#if heldSourceText(source)}<span class="src-sticker held" class:down={source.keeper === 'stopped'} data-keeper-source={source.keeper}>{heldSourceText(source)}</span>{/if}</span></label>
                 <button type="button" class="quiet-button coverage-toggle" aria-haspopup="dialog" aria-label={COVERAGE_TEXT.heading + ': ' + source.label} onclick={() => showCoverage(source)}>{COVERAGE_TEXT.heading} ›</button>
                 {#if !demo}<button type="button" class="icon-button" aria-label={'Remove ' + source.label} title="Remove source" disabled={busyDelete === source.id} onclick={() => onDelete(source)}>×</button>{/if}
               </div>
@@ -83,6 +86,9 @@
 <style>
   .coverage-toggle { flex: 0 0 auto; white-space: nowrap; }
   .source-choice .src-sticker { display: inline-flex; justify-self: start; }
+  /* On a narrow screen the long status words wrap; the hatch behind bold wrapped words is busy, so here the held-down sticker is a plain outline. */
+  .source-choice .src-sticker.held { padding: 1px 6px; line-height: 1.25; }
+  .source-choice .src-sticker.held.down { background-image: none; }
   .keeper-note { margin: 0 0 var(--space-2); color: var(--text-2); font-size: var(--fs-2); }
   /* A long source summary is cut with an ellipsis (the full text is in the aria-label) so the header row never overflows. */
   .header-button .label { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

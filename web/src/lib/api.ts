@@ -1,6 +1,6 @@
 import type { SavedSqlConnection, SqlConnectionInput, SqlTestRequest, SqlTestResult,Analysis,Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile, VersionInfo } from './types';
 import { signalIfAppLocked } from './lockSignal';
-import type { KeeperStatus } from './keeper';
+import { noticeKeeperRefusal, type KeeperStatus } from './keeper';
 import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
 
 const base = '/api';
@@ -98,7 +98,9 @@ async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSi
       if (body.stage) stage = body.stage;
       if (Array.isArray(body.reasons)) reasons = body.reasons;
     } catch { /* keep status message */ }
-    throw new ApiError(plainApiMessage(response.status, message), code, stage, response.status, reasons);
+    const failure = new ApiError(plainApiMessage(response.status, message), code, stage, response.status, reasons);
+    noticeKeeperRefusal(failure); // any read the key keeper refused makes the page read the source list again, not only an analysis
+    throw failure;
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;

@@ -89,3 +89,20 @@ export const heldSourceText = (source: { keeper?: 'held' | 'stopped' }): string 
  */
 export const keeperSourceChanged = (error: unknown): boolean =>
   isKeeperDown(error) || (error as { code?: string } | null)?.code === 'keeper-source-gone';
+
+const refusalListeners = new Set<() => void>();
+
+/** Calls back whenever any server read is refused because of the keeper (see keeperSourceChanged), whichever read it was. */
+export function onKeeperRefusal(listener: () => void): () => void {
+  refusalListeners.add(listener);
+  return () => { refusalListeners.delete(listener); };
+}
+
+/** Called once for every failed server answer, so coverage, requests, payloads, records and grids refresh the source list like an analysis. */
+export function noticeKeeperRefusal(error: unknown): void {
+  if (!keeperSourceChanged(error)) return;
+  for (const listener of [...refusalListeners]) listener();
+}
+
+/** A source the key keeper holds but cannot use now: it cannot be chosen until the keeper runs again. */
+export const keeperUnreadable = (source: { keeper?: 'held' | 'stopped' }): boolean => source.keeper === 'stopped';
