@@ -64,7 +64,7 @@ export function caseCounts(c: Pick<StartCase, 'imports' | 'sources'>): string {
 
 export function caseRow(c: StartCase): CaseRow {
   // A case that is locked, or that cannot be opened, is named by its short code: its title is not read.
-  const byCode = c.keyLocked === true || (c.untrusted === true && !c.title.trim());
+  const byCode = c.keyLocked === true || c.untrusted === true;
   const named = byCode ? 'Case ' + caseCode(c.id) : '';
   return {
     id: c.id,
@@ -72,8 +72,8 @@ export function caseRow(c: StartCase): CaseRow {
     fullTitle: named || c.title.trim() || START_TEXT.untitled,
     keyLocked: c.keyLocked === true,
     keyEnding: c.ownKey === true ? keyEndingLabel(c.keyEnding) : '',
-    created: formatTime(c.created, { year: true, precision: 'minute', fallback: '' }),
-    counts: caseCounts(c),
+    created: byCode ? '' : formatTime(c.created, { year: true, precision: 'minute', fallback: '' }),
+    counts: byCode ? '' : caseCounts(c),
     closed: Boolean(c.closed),
     closedLabel: START_TEXT.closedLabel,
     untrusted: c.untrusted === true,

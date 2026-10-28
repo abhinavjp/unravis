@@ -312,6 +312,7 @@ test('the list shows a locked case by its short code with the key ending, and an
   assert.equal(view.rows[0].title, 'Case k7m2qx4a');
   assert.equal(view.rows[0].keyEnding, 'Key ending abcd');
   assert.equal(view.rows[0].keyLocked, true);
+  assert.equal(view.rows[0].created + view.rows[0].counts + view.rows[1].created + view.rows[1].counts, '', 'no dates or counts are read from a case that is locked or not trusted');
   assert.equal(view.rows[1].title, 'Case q2w7exak');
   assert.equal(view.rows[1].untrusted, true);
   assert.equal(view.erased.length, 1);

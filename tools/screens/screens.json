@@ -154,6 +154,83 @@
         {"click": "role=button[name=\"Export\"s]"},
         {"waitFor": "role=dialog"}
       ]
+    },
+    {
+      "id": "p4-case-key-create", "phase": "P4", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Create a new case\"]"},
+        {"waitFor": "role=navigation[name=\"Steps of the guide\"]"},
+        {"click": "role=checkbox[name=\"Protect this case with its own key\"]"},
+        {"fill": ["input[id$=\"-ck\"]", "unravis demo case key"]},
+        {"fill": ["input[id$=\"-ck2\"]", "unravis demo case key"]},
+        {"scrollTo": "input[id$=\"-ck2\"]"}
+      ]
+    },
+    {
+      "id": "p4-case-key-unlock", "phase": "P4", "doc": "cases.md", "narrow": true,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=/^Open case Case demokeye/]"},
+        {"waitFor": "#case-key-unlock"},
+        {"fill": ["#case-key-unlock", "unravis demo case key"]}
+      ]
+    },
+    {
+      "id": "p4-erase-1", "phase": "P4", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Report export timeouts, 18 October\"]"},
+        {"waitFor": "role=button[name=\"Erase this case\"]"},
+        {"click": "role=button[name=\"Erase this case\"]"},
+        {"waitFor": "#erase-code"}
+      ]
+    },
+    {
+      "id": "p4-erase-2", "phase": "P4", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Report export timeouts, 18 October\"]"},
+        {"waitFor": "role=button[name=\"Erase this case\"]"},
+        {"click": "role=button[name=\"Erase this case\"]"},
+        {"waitFor": "#erase-code"},
+        {"fill": ["#erase-code", "demofail"]}
+      ]
+    },
+    {
+      "id": "p4-erased-home", "phase": "P4", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"waitFor": "#start-title"},
+        {"waitFor": "text=Erased case k7m2qx4a"},
+        {"scrollTo": "text=Erased case q2w7exak"}
+      ]
+    },
+    {
+      "id": "p4-untrusted-home", "phase": "P4", "doc": "cases.md", "narrow": true,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=/^Open case Case demountr/]"},
+        {"waitFor": "text=This case cannot be opened."}
+      ]
     }
   ]
 }

@@ -110,7 +110,53 @@ Screen: `p2-changed-elsewhere`. A second tab reopens the case, then the first ta
 ![Changed in another tab](../screenshots/P2/p2-changed-elsewhere-light.png)
 ![Changed in another tab, narrow](../screenshots/P2/p2-changed-elsewhere-dark-narrow.png)
 
+## Case key (optional)
+
+A case can have its own key. It is off by default, and the demo never asks for one. A case without its own key opens as before: with the PC key if you set one, or with nothing if you chose Not now.
+
+You can add a key when you create the case: on the name step, tick "Protect this case with its own key", then type the key twice. Next stays off until the two match and the key is at least 12 characters. You can also add, change or remove it later, from the "Case key" block on Case home.
+
+What the key does:
+
+- It seals this case only. It is separate from your Windows sign-in and from the PC key. Neither of them opens a case that has its own key.
+- Unravis shows the last four characters of a check code as "Key ending xxxx", so you can tell two keys apart. The key itself is never shown, never written to the log and never saved in a case file. It is not in the address bar either.
+- A case with a key opens on one page: one field and one Open case button. A wrong key changes nothing and says so. After five wrong keys in a row Unravis makes you wait: one second, then twice as long each time, up to one minute. The Open case button is held for that time. The wait covers the whole case, not one browser tab.
+- The case list shows a locked case by its short code ("Case k7m2qx4a") with its key ending. Its title is not read until the case is open.
+- Master Lock in the top bar locks the case keys as well. After you unlock the PC key, a keyed case still asks for its own key.
+
+Change and Remove both ask for the current key. A key that is lost cannot be recovered and there is no reset. The case, and any case file made from it, stay shut. The only way to free the space is Erase.
+
+If you reset a damaged PC key, Unravis tells you first how many cases it will leave alone. Cases with their own key are never changed or counted by that reset, because the PC key does not seal them.
+
+Screens: `p4-case-key-create` is the name step with the key fields. `p4-case-key-unlock` is the page that opens a locked case. The demo's keyed case is "Payroll run discrepancy, 14 October", and the picture types its demo key into the field without pressing the button.
+
+![Create a case with its own key](../screenshots/P4/p4-case-key-create-light.png)
+![Open a case that has its own key, narrow](../screenshots/P4/p4-case-key-unlock-dark-narrow.png)
+
+## Erase a case
+
+Erase removes a case from this computer for good. It is on Case home ("Erase this case"), and on the key page and the untrusted page when a case cannot be opened. It is not offered while an archive of the case is running: cancel the archive first.
+
+What Erase does:
+
+- You type the short case code, for example k7m2qx4a. The button stays off until the code matches.
+- It removes the working copy, notes, suspects and checklist from this computer. An import or recording for that case stops.
+- A case file you saved is not touched.
+- It cannot be undone.
+
+Erase first writes an "Erasing" mark. Once the mark is there, the erase is committed: if Unravis stops half way, for example the PC loses power, the next start finishes it. Nothing is half erased and left open. While it runs, the case answers "This case is being erased."
+
+If another tab still has the case open, Erase waits up to 30 seconds for that tab to let go. If the tab does not, you see "The case is in use. Close its other tabs, then try again." and nothing is removed. Press Erase again after you close it.
+
+What is left: one line on the case list, "Erased case q2w7exak", with the time. It holds only the case code and the time, no title and no file name. Press Clear to remove the line. Clear never touches anything else.
+
+Screens: `p4-erase-1` is the dialog when it opens, and `p4-erase-2` is the same dialog with the code typed and the Erase button on. `p4-erased-home` is the case list with two Erased lines. `p4-untrusted-home` is a legacy case that an older version made without a seal. Unravis will not open it, because it cannot tell whether it was changed. You can restore a case file you made yourself, or erase it.
+
+![Erase dialog](../screenshots/P4/p4-erase-1-light.png)
+![Erase dialog with the code typed](../screenshots/P4/p4-erase-2-dark.png)
+![The case list with Erased lines](../screenshots/P4/p4-erased-home-light.png)
+![A legacy case that cannot be opened, narrow](../screenshots/P4/p4-untrusted-home-light-narrow.png)
+
 ## Coming later
 
-- Archive, verify, free and restore: Coming in P3.
-- Case keys and erase: Coming in P4.
+- Archive, verify, free and restore: Coming in P3. A case file made from a case with its own key will need that same key.
