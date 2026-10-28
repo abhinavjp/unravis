@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import {
-    blackboxApi, defaultSettings, refusalText, settingsProblem, shownTime,
-    type BlackboxItem, type BlackboxList, type Settings, type SnapshotAnswer, type ThisPc, shownBytes
+    blackboxApi, defaultSettings, fieldProblemNow, refusalText, settingsProblem, shownTime,
+    type BlackboxItem, type BlackboxList, type Settings, type SettingsProblem, type SnapshotAnswer, type ThisPc, shownBytes
   } from '../lib/blackbox';
   import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
   import Drawer from './Drawer.svelte';
@@ -43,6 +43,8 @@
   let applySettings = $state<Settings>(defaultSettings());
   let applyLogs = $state('');
   let applyProblem = $state('');
+  let applyField = $state<SettingsProblem | null>(null);
+  const applyFieldShown = $derived(fieldProblemNow(applyField, applySettings, applyLogs));
   let body = $state<HTMLElement>();
   let drawerEl = $state<HTMLElement>();
 
@@ -174,13 +176,22 @@
       applySettings = JSON.parse(JSON.stringify(found)) as Settings;
       applyLogs = (found.logPaths ?? []).join('\n');
     }
+    applyField = null;
     applyProblem = found ? '' : T.applyUnreadable;
   }
   async function apply(item: BlackboxItem) {
     if (working) return;
+    applyField = null;
     applySettings.logPaths = applyLogs.split('\n').map((s) => s.trim()).filter(Boolean);
     const first = settingsProblem(applySettings);
-    if (first) { applyProblem = T.settingProblems[first]; return; }
+    if (first === 'name') { applyProblem = T.settingProblems.name; return; }
+    if (first) {
+      applyProblem = '';
+      applyField = first;
+      await tick();
+      body?.querySelector<HTMLElement>('#bb-apply-f-' + first)?.focus();
+      return;
+    }
     applyProblem = '';
     working = T.working;
     try {
@@ -230,7 +241,7 @@
         <h3 tabindex="-1">{T.applyTitle}</h3>
         <p class="bb-note">{T.applyIntro}</p>
         {#if thisPc.settings}
-          <SettingsFields bind:settings={applySettings} bind:logPathsText={applyLogs} idPrefix="bb-apply" />
+          <SettingsFields bind:settings={applySettings} bind:logPathsText={applyLogs} idPrefix="bb-apply" problem={applyFieldShown} />
         {/if}
         <div aria-live="polite">
           {#if working}<p class="bb-note" role="status">{working}</p>{/if}

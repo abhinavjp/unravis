@@ -193,9 +193,50 @@ test('D-B-50 and D-C-20: the warning, the Review sentence and the opt-in firewal
   assert.doesNotMatch(T.bindHelp, /and add a firewall rule/);
   const fields = read('src/components/BlackboxSettings.svelte');
   assert.match(fields, /\{#if warnAll\}<p class="bb-note bb-warn" id="\{idPrefix\}-bind-warn">\{T\.bindWarn\}<\/p>\{\/if\}/);
-  assert.match(fields, /aria-describedby="\{idPrefix\}-bind-help\{warnAll \? ' ' \+ idPrefix \+ '-bind-warn' : ''\}"/);
+  assert.match(fields, /aria-describedby="\{idPrefix\}-bind-help\{warnAll \? ' ' \+ idPrefix \+ '-bind-warn' : ''\}\{problem === 'bind' \? ' ' \+ idPrefix \+ '-bind-error' : ''\}"/);
   const wizard = read('src/components/BlackboxWizard.svelte');
   assert.match(wizard, /\{#if listensOnAll\(settings\.bind\)\}<p class="bb-note bb-warn">\{T\.reviewBindWarn\}<\/p>\{\/if\}/);
   // The Review sentence sits after the facts list and before the read-only note.
   assert.ok(wizard.indexOf('T.reviewBindWarn') > wizard.indexOf('T.reviewBind}') && wizard.indexOf('T.reviewBindWarn') < wizard.indexOf('{T.readOnly}', wizard.indexOf('T.reviewBindWarn')));
+});
+
+test('D-B-50: fieldProblemNow keeps a message only while that field is still wrong', () => {
+  const good = { ...bb.defaultSettings(), name: 'web-a' };
+  assert.equal(bb.fieldProblemNow(null, good, 'C:\\logs'), null);
+  const bad = { ...good, keepDays: 0 };
+  assert.equal(bb.fieldProblemNow('keep', bad, 'C:\\logs'), 'keep');
+  assert.equal(bb.fieldProblemNow('keep', { ...bad, keepDays: 7 }, 'C:\\logs'), null);
+  // The log box text is read as one folder per line, as the wizard does before it checks.
+  assert.equal(bb.fieldProblemNow('logs', good, 'logs'), 'logs');
+  assert.equal(bb.fieldProblemNow('logs', good, 'C:\\a\n\nD:\\b\n'), null);
+});
+
+test('D-B-50: each settings field has an id, an error line and aria-describedby that names it', () => {
+  const fields = read('src/components/BlackboxSettings.svelte');
+  assert.match(fields, /problem = null \}: \{ settings: Settings; logPathsText: string; idPrefix\?: string; problem\?: SettingsProblem \| null \}/);
+  assert.match(fields, /\{#snippet fieldError\(key: SettingsProblem\)\}/);
+  assert.match(fields, /<p class="inline-error" id="\{idPrefix\}-\{key\}-error" role="alert">\{T\.settingProblems\[key\]\}<\/p>/);
+  for (const key of ['interval', 'keep', 'size', 'free', 'folder', 'port', 'bind', 'logs']) {
+    assert.ok(fields.includes('id="{idPrefix}-f-' + key + '"'), 'field id ' + key);
+    assert.ok(fields.includes("{@render fieldError('" + key + "')}"), 'error line ' + key);
+  }
+  assert.equal((fields.match(/aria-invalid=\{invalid\('/g) ?? []).length, 8);
+  assert.match(fields, /aria-describedby=\{described\('keep', 'keep-help'\)\}/);
+  assert.match(fields, /aria-describedby=\{problem === 'logs' \? idPrefix \+ '-logs-error' : undefined\}/);
+  // The help notes keep their ids.
+  for (const help of ['keep', 'size', 'free', 'folder', 'port', 'bind']) assert.ok(fields.includes('id="{idPrefix}-' + help + '-help"'), 'help id ' + help);
+});
+
+test('D-B-50: the wizard and Apply put a field problem beside the field and focus it; name and refusals stay at the bottom', () => {
+  const wizard = read('src/components/BlackboxWizard.svelte');
+  assert.match(wizard, /const shownField = \$derived\(fieldProblemNow\(fieldProblem, settings, logPathsText\)\);/);
+  assert.match(wizard, /if \(first === 'name'\) \{ problem = T\.settingProblems\.name; return; \}/);
+  assert.match(wizard, /fieldProblem = first;\s*await tick\(\);\s*rootEl\?\.querySelector<HTMLElement>\('#bb-f-' \+ first\)\?\.focus\(\);/);
+  assert.match(wizard, /<SettingsFields bind:settings bind:logPathsText problem=\{shownField\} \/>/);
+  assert.match(wizard, /problem = refusalText\(error, BB_REFUSAL\);/);
+  const panel = read('src/components/BlackboxPanel.svelte');
+  assert.match(panel, /const applyFieldShown = \$derived\(fieldProblemNow\(applyField, applySettings, applyLogs\)\);/);
+  assert.match(panel, /applyField = first;\s*await tick\(\);\s*body\?\.querySelector<HTMLElement>\('#bb-apply-f-' \+ first\)\?\.focus\(\);/);
+  assert.match(panel, /idPrefix="bb-apply" problem=\{applyFieldShown\} \/>/);
+  assert.match(panel, /applyProblem = refusalText\(error, BB_REFUSAL\);/);
 });

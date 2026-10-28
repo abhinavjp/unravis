@@ -320,6 +320,16 @@ export function listensOnAll(bind: string): boolean {
   return s === '0.0.0.0' || s === '::';
 }
 
+/**
+ * The settings problem to show beside a field: the one found at the last attempt (`found`), but only while that field is still wrong,
+ * so the message goes away as soon as the person fixes it (D-B-50). `logPathsText` is the log box text, one folder per line.
+ */
+export function fieldProblemNow(found: SettingsProblem | null, s: Settings, logPathsText: string): SettingsProblem | null {
+  if (!found) return null;
+  const logPaths = logPathsText.split('\n').map((p) => p.trim()).filter(Boolean);
+  return settingsProblem({ ...s, logPaths }) === found ? found : null;
+}
+
 /** What kind of place the typed text looks like. The server decides; this only decides whether to ask for a read key. */
 export function guessKind(location: string): LocationKind | null {
   const s = location.trim();

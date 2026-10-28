@@ -1,8 +1,8 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import {
-    NAME_MAX, blackboxApi, defaultSettings, listensOnAll, nameProblem, packFileName, refusalText, saveBlob, settingsProblem, wizardEscape,
-    type BlackboxItem, type InstallAnswer, type Settings, type ThisPc
+    NAME_MAX, blackboxApi, defaultSettings, fieldProblemNow, listensOnAll, nameProblem, packFileName, refusalText, saveBlob, settingsProblem, wizardEscape,
+    type BlackboxItem, type InstallAnswer, type Settings, type SettingsProblem, type ThisPc
   } from '../lib/blackbox';
   import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
   import SettingsFields from './BlackboxSettings.svelte';
@@ -30,6 +30,9 @@
   let settings = $state<Settings>(defaultSettings());
   let logPathsText = $state(defaultSettings().logPaths.join('\n'));
   let problem = $state('');
+  // A problem with one settings field (not the name): shown beside that field (D-B-50).
+  let fieldProblem = $state<SettingsProblem | null>(null);
+  const shownField = $derived(fieldProblemNow(fieldProblem, settings, logPathsText));
   let phase = $state<Phase>({ kind: 'idle' });
   let heading = $state<HTMLElement>();
   let rootEl = $state<HTMLElement>();
@@ -43,6 +46,7 @@
 
   async function go(to: number) {
     problem = '';
+    fieldProblem = null;
     part = to;
     await tick();
     heading?.focus();
@@ -58,10 +62,18 @@
     go(3);
   }
   async function toReview() {
+    problem = '';
+    fieldProblem = null;
     settings.name = name;
     settings.logPaths = logPathsText.split('\n').map((s) => s.trim()).filter(Boolean);
     const first = settingsProblem(settings);
-    if (first) { problem = T.settingProblems[first]; return; }
+    if (first === 'name') { problem = T.settingProblems.name; return; }
+    if (first) {
+      fieldProblem = first;
+      await tick();
+      rootEl?.querySelector<HTMLElement>('#bb-f-' + first)?.focus();
+      return;
+    }
     try {
       await blackboxApi.validate($state.snapshot(settings) as Settings);
     } catch (error) {
@@ -177,7 +189,7 @@
       <button type="button" class="secondary-button" onclick={() => go(1)}>{T.backStep}</button>
     </div>
   {:else if part === 3}
-    <SettingsFields bind:settings bind:logPathsText />
+    <SettingsFields bind:settings bind:logPathsText problem={shownField} />
     {#if problem}<div class="inline-error" role="alert">{problem}</div>{/if}
     <div class="bb-actions">
       <button type="button" class="primary-button" onclick={toReview}>{T.nextReview}</button>
