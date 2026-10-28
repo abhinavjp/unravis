@@ -239,9 +239,9 @@
         {#if phase.kind === 'saved'}
           <p class="export-saved" role="status">{savedLine(phase.sha256)}</p>
           <p class="export-note">{phase.filename}</p>
-        {:else}
+        {:else if !summary.empty}
           <button type="button" class="primary-button" disabled={!canSave(phase)} onclick={save}>{phase.kind === 'saving' ? EXPORT_TEXT.saving : EXPORT_TEXT.save}</button>
-          {#if !summary.empty}<p class="export-note">{EXPORT_TEXT.saveNote}</p>{/if}
+          <p class="export-note">{EXPORT_TEXT.saveNote}</p>
         {/if}
       </div>
     {/if}

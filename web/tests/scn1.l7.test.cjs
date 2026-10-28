@@ -58,3 +58,15 @@ test('the drawer shows the none-sentences from what was asked, not from the file
   assert.match(panel, /exp\.body\.pseudonyms \|\| asked\.pseudonyms/);
   assert.match(panel, /exportInput\(query, includePseudonyms, includeLedger, ledger\.caseId\)/);
 });
+
+// L7-08: nothing to save, so no Save button.
+test('the export drawer has no Save button for an empty preview', () => {
+  const panel = read('src/components/ExportPanel.svelte');
+  const block = panel.slice(panel.indexOf('<div class="export-save">'));
+  const end = block.indexOf('</div>');
+  const saveBlock = block.slice(0, end);
+  assert.match(saveBlock, /{:else if !summary.empty}/, 'the Save button only exists when the preview has findings');
+  assert.ok(saveBlock.indexOf('{:else if !summary.empty}') < saveBlock.indexOf('EXPORT_TEXT.save}'), 'the button sits inside that branch');
+  assert.doesNotMatch(saveBlock, /{:else}/, 'there is no unconditional Save button');
+  assert.equal((panel.match(/class="primary-button"/g) ?? []).length, 2, 'the Preview button and the Save button are the only primary buttons');
+});
