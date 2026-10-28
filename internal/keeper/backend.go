@@ -40,6 +40,8 @@ type Backend struct {
 	Runner Runner
 	// HTTP reads a Blackbox by URL. nil builds one with no proxy, no redirects and BBRequestTimeout.
 	HTTP *http.Client
+	// Audit hosts the MongoDB audit sources opened from saved links (P14b). nil leaves the audit.* operations out.
+	Audit *AuditHost
 
 	busyMu sync.Mutex
 	busy   map[string]bool
@@ -86,6 +88,10 @@ func (b *Backend) Register(s *Server) {
 	s.Handle(OpBBRemove, classWrite, storeTimeout, b.bbRemove)
 	s.Handle(OpBBImport, classWrite, storeTimeout, b.bbImport)
 	s.Handle(OpBBHTTP, classBlob, bbFileTimeout, b.bbHTTP)
+
+	if b.Audit != nil {
+		b.registerAudit(s)
+	}
 }
 
 func (b *Backend) claim(key string) bool {

@@ -25,6 +25,8 @@ type Call struct {
 	// Record is the saved record the call touched, for the audit log. Handlers set it.
 	Record string
 	stream StreamFunc
+	// gone closes when the client's side of the connection ended (set for audit reads, which watch for it).
+	gone <-chan struct{}
 }
 
 // Decode reads the arguments strictly: unknown fields are refused.
@@ -53,8 +55,13 @@ type opEntry struct {
 type ServerOptions struct {
 	Log           *AuditLog
 	Limiter       *RateLimiter
-	MaxConns      int           // 0 means 16
-	MaxPerSession int           // open connections one Windows session may hold; 0 means half of MaxConns
+	MaxConns      int // 0 means 16
+	MaxPerSession int // open connections one Windows session may hold; 0 means half of MaxConns
+	// MaxAuditConns bounds the connections busy with audit reads (running or waiting for a run slot) at once; 0 means 6. The rest of
+	// the pool is always left for sql, mongo and bb operations. MaxAuditRuns bounds the audit reads running at once; 0 means 4.
+	MaxAuditConns int
+	MaxAuditRuns  int
+	AuditWait     time.Duration // how long an admitted audit read waits for a run slot; 0 means 20 s
 	ReadTimeout   time.Duration // time allowed for the request frame; 0 means 5 s
 	Now           func() time.Time
 }
@@ -67,6 +74,21 @@ const refuseTimeout = time.Second
 
 // unknownSession is the per-session bucket for connections whose Windows session cannot be told. No real session has this number.
 const unknownSession = ^uint32(0)
+
+// Audit reads are long: each holds a pipe connection while it runs. They get their own budget inside the pool so a burst of them (one
+// dashboard load sends several at once) can never take the connections the short sql, mongo and bb operations need.
+const (
+	defaultAuditConns = 6
+	defaultAuditRuns  = 4
+	defaultAuditWait  = 20 * time.Second
+	// auditReadCap is the longest one audit read may take in the keeper, waiting for a run slot included. A caller may ask for less
+	// (AuditArgs.TimeoutMs), never for more.
+	auditReadCap = 90 * time.Second
+)
+
+// errAuditBusy answers an audit read when the audit budget is full. The detail says it is the audit budget, so the person is told to
+// try again rather than that a check is already running.
+var errAuditBusy = &WireError{Code: CodeBusy, Message: "The key keeper is busy with other audit reads. Try again in a few seconds.", Detail: json.RawMessage(`{"scope":"audit"}`)}
 
 // maxAuditOp is the most of any caller-chosen text (an operation name, a record id) that reaches the audit log.
 const maxAuditOp = 32
@@ -106,12 +128,16 @@ type Server struct {
 	limit    *RateLimiter
 	sem      chan struct{}
 	refusers chan struct{}
-	pmu      sync.Mutex
-	open     map[uint32]int // open connections per Windows session
-	maxPer   int
-	readTO   time.Duration
-	now      func() time.Time
-	started  time.Time
+	// auditConns holds a token for every connection admitted to an audit read; auditRuns for every audit read running.
+	auditConns chan struct{}
+	auditRuns  chan struct{}
+	auditWait  time.Duration
+	pmu        sync.Mutex
+	open       map[uint32]int // open connections per Windows session
+	maxPer     int
+	readTO     time.Duration
+	now        func() time.Time
+	started    time.Time
 }
 
 // NewServer makes a server with ping and status registered.
@@ -125,11 +151,31 @@ func NewServer(o ServerOptions) *Server {
 	if o.ReadTimeout <= 0 {
 		o.ReadTimeout = 5 * time.Second
 	}
+	if o.MaxAuditConns <= 0 {
+		o.MaxAuditConns = defaultAuditConns
+	}
+	if o.MaxAuditRuns <= 0 {
+		o.MaxAuditRuns = defaultAuditRuns
+	}
+	if o.AuditWait <= 0 {
+		o.AuditWait = defaultAuditWait
+	}
+	// The audit budget is a part of the pool, never the whole of it.
+	if o.MaxAuditConns > o.MaxConns/2 {
+		o.MaxAuditConns = o.MaxConns / 2
+	}
+	if o.MaxAuditConns < 1 {
+		o.MaxAuditConns = 1
+	}
+	if o.MaxAuditRuns > o.MaxAuditConns {
+		o.MaxAuditRuns = o.MaxAuditConns
+	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
 	s := &Server{ops: map[string]opEntry{}, log: o.Log, limit: o.Limiter, sem: make(chan struct{}, o.MaxConns), refusers: make(chan struct{}, maxRefusers),
-		open: map[uint32]int{}, maxPer: o.MaxPerSession, readTO: o.ReadTimeout, now: o.Now}
+		open: map[uint32]int{}, maxPer: o.MaxPerSession, readTO: o.ReadTimeout, now: o.Now,
+		auditConns: make(chan struct{}, o.MaxAuditConns), auditRuns: make(chan struct{}, o.MaxAuditRuns), auditWait: o.AuditWait}
 	s.started = o.Now()
 	s.Handle(OpPing, classRead, 5*time.Second, func(context.Context, *Call) (any, error) {
 		return map[string]any{"v": ProtocolVersion}, nil
@@ -287,12 +333,67 @@ func (s *Server) serveConn(ctx context.Context, c Conn) {
 		s.finish(c, caller, req.Op, "", nil, &WireError{Code: CodeRateLimited, Message: "Too many requests to the key keeper in the last minute. Wait a minute, then try again."})
 		return
 	}
+	call := &Call{Caller: caller, Op: req.Op, Args: req.Args}
+	audit := op.class == classAudit
+	runSlot := false
+	if audit {
+		// Admission is at once or not at all: a read the audit budget cannot take is answered "busy" with no wait, so it never holds
+		// a connection another operation needs.
+		select {
+		case s.auditConns <- struct{}{}:
+			defer func() { <-s.auditConns }()
+		default:
+			s.finish(c, caller, req.Op, "", nil, errAuditBusy)
+			return
+		}
+	}
 	opCtx, cancel := context.WithTimeout(ctx, op.timeout)
 	defer cancel()
 	_ = c.SetDeadline(s.now().Add(op.timeout + 10*time.Second))
-	call := &Call{Caller: caller, Op: req.Op, Args: req.Args}
+	if audit {
+		// An audit read can run a long time. Watch the client: when it goes away the read stops and its connection and run slot are freed
+		// at once, rather than when the read would have ended.
+		call.gone = watchClient(c, cancel)
+		wait := time.NewTimer(s.auditWait)
+		defer wait.Stop()
+		select {
+		case s.auditRuns <- struct{}{}:
+			runSlot = true
+		case <-wait.C:
+			s.finishCall(opCtx, c, caller, call, nil, errAuditBusy)
+			return
+		case <-opCtx.Done():
+			s.finishCall(opCtx, c, caller, call, nil, opCtx.Err())
+			return
+		}
+	}
 	result, herr := runHandler(opCtx, op.h, call)
+	if runSlot {
+		// The read is over: its slot goes back before the answer is written, so a slow client cannot keep others waiting.
+		<-s.auditRuns
+	}
 	s.finishCall(opCtx, c, caller, call, result, herr)
+}
+
+// watchClient reads the connection while an audit read runs. The client sends nothing after its request, so a read that ends (the
+// client closed, or the pipe broke) means it went away: cancel is called. The channel closes when the watcher stops, which lets the
+// server wait for the client to close after the answer, in place of a second reader.
+func watchClient(c Conn, cancel context.CancelFunc) <-chan struct{} {
+	gone := make(chan struct{})
+	go func() {
+		defer close(gone)
+		var buf [512]byte
+		extra := 0
+		for {
+			n, err := c.Read(buf[:])
+			extra += n
+			if err != nil || extra > 64<<10 {
+				cancel()
+				return
+			}
+		}
+	}()
+	return gone
 }
 
 func runHandler(ctx context.Context, h Handler, call *Call) (result any, err error) {
@@ -340,7 +441,16 @@ func (s *Server) finishCall(ctx context.Context, c Conn, caller Caller, call *Ca
 		}
 	}
 	if werr == nil {
-		drain(c, s.now)
+		if call.gone != nil {
+			t := time.NewTimer(5 * time.Second)
+			select {
+			case <-call.gone:
+			case <-t.C:
+			}
+			t.Stop()
+		} else {
+			drain(c, s.now)
+		}
 	}
 }
 

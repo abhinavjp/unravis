@@ -55,6 +55,29 @@ Screen `p14-migrate`: saved connections you made before the PC was set up for ev
 
 The demo shows these three states only for the pictures. It never runs a keeper and never keeps a password.
 
+#### Audit sources from a saved MongoDB link
+
+On a PC set up for everyone, an audit source added from a saved MongoDB link is opened by the key keeper, with the password it stores. Unravis never receives that password. The keeper reads the audit log for it and sends back only the answers. A source whose password you typed is opened by your own Unravis, as before, and the keeper never sees it.
+
+Screen `p14b-source-held`: in the Audit sources menu, a source the keeper opened says "Password held by the key keeper". This is a sticker, not a button. Nothing asks for a password.
+
+![An audit source opened by the key keeper, dark](../screenshots/P14b/p14b-source-held-dark.png)
+![An audit source opened by the key keeper, light](../screenshots/P14b/p14b-source-held-light.png)
+
+Screen `p14b-source-stopped`: when the keeper is not running, those sources stay in the menu, their sticker says the password cannot be used until the keeper runs again, and a note above the list says they cannot be read. Sources whose password you typed still work. Remove still works: it only takes the source off the list.
+
+![Audit sources while the key keeper is not running, dark](../screenshots/P14b/p14b-source-stopped-dark.png)
+![Audit sources while the key keeper is not running, light](../screenshots/P14b/p14b-source-stopped-light.png)
+
+- A read the keeper refuses because it is not running, or because it closed the source, makes the page read the source list again. A source the keeper closed leaves the list the way Remove takes it off, and you add it again from the saved link.
+- The keeper closes the sources of an Unravis that has not asked for anything in 8 hours, and when it restarts. It keeps sources open for at most 16 running Unravis programs at once, 4 per Windows account. Past that it answers that it is full (`keeper-full`), and you close another Unravis or wait.
+- One analysis reads either sources the keeper opened or sources your Unravis opened, not both (`keeper-mixed`). Only the timeline across sources takes both at once. The limit of 8 sources counts both kinds together.
+- The keeper opens sources with the normal limits. A broad scan, which `--allow-broad-scans` allows in your own Unravis, is refused for a source the keeper opened. A source opened from a saved link always uses these default limits. When a message says to raise a limit (for example `--allow-broad-scans` or `--docs-examined-budget`), that flag changes nothing for such a source. To scan wider, type the password so your own Unravis opens the source.
+- The keeper reads for every Unravis on the PC, so it keeps a share of its connections for other work and answers a read it has no room for with "busy, try again" (`keeper-audit-busy`, 503). Wait a few seconds and ask again. A read the keeper runs for a source stops after at most 90 seconds, or sooner when the page stops waiting, and an answer larger than 64 MiB is refused as over a limit.
+- Error codes: `keeper-stopped` (503, the keeper is not running), `keeper-source-gone` (404, the keeper closed the source), `keeper-mixed` (400), `keeper-full` (503), `keeper-audit-busy` (503, the keeper has no room for another read right now).
+
+The demo shows these two states only for the pictures (`#keeper=saved` and `#keeper=stopped`). It never runs a keeper.
+
 Screen `p7-sql-form` is the form for one SQL Server connection. Save, Test and Cancel are all outlined while the form sits on case home, because case home already has its main button. Leave the password box empty on an edit to keep the saved password.
 
 ![The SQL Server connection form, dark](../screenshots/P7/p7-sql-form-dark.png)

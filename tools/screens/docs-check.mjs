@@ -34,7 +34,7 @@ const knownIds = new Set(screens.map((s) => s.id));
 // d) the screens file
 const seen = new Set();
 for (const s of screens) {
-  if (typeof s.id !== 'string' || !/^p\d+-[a-z0-9-]+$/.test(s.id)) problems.push(`screens.json: the id ${JSON.stringify(s.id)} must look like p1-home.`);
+  if (typeof s.id !== 'string' || !/^p\d+[a-z]?-[a-z0-9-]+$/.test(s.id)) problems.push(`screens.json: the id ${JSON.stringify(s.id)} must look like p1-home (or p14b-home for a part phase).`);
   else if (s.phase !== undefined && !s.id.startsWith(String(s.phase).toLowerCase() + '-')) problems.push(`screens.json: ${s.id} must start with its phase (${s.phase}).`);
   if (seen.has(s.id)) problems.push(`screens.json: the screen ${s.id} is listed twice.`);
   seen.add(s.id);
