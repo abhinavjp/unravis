@@ -204,15 +204,31 @@ export function partBars(result: Result): { normal: Bar[]; incident: Bar[] } {
 
 /* ----------------------------------------------------------------- Step 4 */
 
+/**
+ * The sentence after the time range under a minute chart. The P95 chart plots one slow-end figure per minute, so it keeps "Highest N ms".
+ * The calls in flight chart plots the average of each minute, which is not the "highest minute" figure in the table, so it says what it is.
+ */
+export function peakCaption(field: 'p95' | 'inFlight', peak: number, unit: string): string {
+  if (field === 'p95') return `Highest ${Math.round(peak).toLocaleString('en-US')} ${unit}.`;
+  const n = fmtNumber(peak, peak < 1 ? 2 : 1);
+  const noun = n === '1' ? unit.replace(/s$/, '') : unit;
+  return `Highest minute average: ${n} ${noun}.`;
+}
+
 export interface LoadRow { measure: string; normal: string; incident: string; direction: string }
 
 export function loadRows(result: Result): LoadRow[] {
   const l = result.facts.load;
   const dir = (word: string) => (word === 'up' ? 'Higher' : word === 'down' ? 'Lower' : word === 'flat' ? 'About the same' : 'Not sure');
+  // Two decimals when either figure is under 1, so 0.1 against 0.14 can be told apart. Equal shown figures are "About the same".
+  const lDigits = (l.refL ?? 1) < 1 || (l.incL ?? 1) < 1 ? 2 : 1;
+  const lNormal = fmtNumber(l.refL, lDigits);
+  const lIncident = fmtNumber(l.incL, lDigits);
+  const lSame = typeof l.refL === 'number' && typeof l.incL === 'number' && lNormal === lIncident;
   return [
     { measure: 'Calls arriving per second', normal: fmtNumber(l.refPerSec, 2), incident: fmtNumber(l.incPerSec, 2), direction: dir(l.lambdaDirection) },
     { measure: 'Time a call spends in the system', normal: fmtMs(l.refWms), incident: fmtMs(l.incWms), direction: dir(l.wDirection) },
-    { measure: 'Calls in flight (average)', normal: fmtNumber(l.refL, 1), incident: fmtNumber(l.incL, 1), direction: dir(l.lDirection) },
+    { measure: 'Calls in flight (average)', normal: lNormal, incident: lIncident, direction: lSame ? 'About the same' : dir(l.lDirection) },
     { measure: 'Calls in flight (highest minute)', normal: fmtCount(l.refPeak), incident: fmtCount(l.incPeak), direction: l.incPeak > l.refPeak ? 'Higher' : l.incPeak < l.refPeak ? 'Lower' : 'About the same' }
   ];
 }

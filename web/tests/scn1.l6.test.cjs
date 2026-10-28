@@ -99,3 +99,33 @@ test('B-03: answeredRoute reads the route out of a request key and never throws'
   assert.equal(m.answeredRoute('{"a":1}'), '');
   assert.equal(m.answeredRoute('[1,2,3,4]'), '');
 });
+
+test('B-26: the minute chart caption says what it is, and the P95 caption is unchanged', () => {
+  assert.equal(m.peakCaption('p95', 2345.6, 'ms'), 'Highest 2,346 ms.');
+  assert.equal(m.peakCaption('inFlight', 1.4, 'calls'), 'Highest minute average: 1.4 calls.');
+  assert.equal(m.peakCaption('inFlight', 1, 'calls'), 'Highest minute average: 1 call.');
+  assert.equal(m.peakCaption('inFlight', 0.04, 'calls'), 'Highest minute average: 0.04 calls.');
+  assert.equal(m.peakCaption('inFlight', 0, 'calls'), 'Highest minute average: 0 calls.');
+  const src = read('src/lib/components/guided/MinuteLine.svelte');
+  assert.ok(/import \{ fmtWhen, peakCaption \} from/.test(src));
+  assert.ok(/\{peakCaption\(field, peak, unit\)\}/.test(src));
+  assert.ok(!/Math\.round\(top\)/.test(src), 'the clamped scale is no longer printed as the highest value');
+  assert.ok(/const top = \$derived\(Math\.max\(1, peak\)\)/.test(src), 'the scale keeps its floor of 1');
+});
+
+test('B-28: Calls in flight (average) shows enough decimals and never calls equal figures higher', () => {
+  const r = result();
+  const withLoad = (load) => result({ facts: { ...r.facts, load: { ...r.facts.load, ...load } } });
+  const row = (load) => m.loadRows(withLoad(load))[2];
+  // 0.101 and 0.104 both show as 0.1, so the direction is About the same even though the engine said up
+  assert.deepEqual(row({ refL: 0.101, incL: 0.104, lDirection: 'up' }), { measure: 'Calls in flight (average)', normal: '0.1', incident: '0.1', direction: 'About the same' });
+  // under 1 uses two decimals, so a visible difference keeps the engine direction
+  assert.deepEqual(row({ refL: 0.12, incL: 0.18, lDirection: 'up' }), { measure: 'Calls in flight (average)', normal: '0.12', incident: '0.18', direction: 'Higher' });
+  // over 1 keeps one decimal
+  assert.deepEqual(row({ refL: 2.04, incL: 2.31, lDirection: 'up' }), { measure: 'Calls in flight (average)', normal: '2', incident: '2.3', direction: 'Higher' });
+  // missing figures still read No data and Not sure
+  const gone = row({ refL: undefined, incL: undefined, lDirection: 'unknown' });
+  assert.equal(gone.incident, 'No data');
+  assert.equal(gone.direction, 'Not sure');
+  assert.equal(m.loadRows(result())[2].direction, 'Higher');
+});
