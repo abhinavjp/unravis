@@ -217,3 +217,21 @@ test('D-A-22/23: the key card still keeps the key out of storage and keeps one m
   const lint = loadTypeScript('src/lib/copy/caseKeyCopy.ts').caseKeyLintEntries();
   assert.ok(lint.some((entry) => entry.id === 'casekey.unlockEmpty'), 'the new sentence is in the copy lint');
 });
+
+test('D-A-13: one More menu is open at a time and Escape closes it and returns focus to its button', () => {
+  const list = read('src/lib/components/ArchivedList.svelte');
+  assert.match(list, /<details class="more" ontoggle=\{moreToggled\}>/);
+  assert.match(list, /<svelte:window onkeydown=\{closeMoreOnEscape\} \/>/);
+  const toggled = list.slice(list.indexOf('function moreToggled'), list.indexOf('function closeMoreOnEscape'));
+  assert.match(toggled, /if \(!opened\.open\) return;/);
+  assert.match(toggled, /if \(other !== opened\) other\.open = false;/);
+  const esc = list.slice(list.indexOf('function closeMoreOnEscape'), list.indexOf('async function erase'));
+  assert.match(esc, /event\.key !== 'Escape'/);
+  assert.match(esc, /menu\.open = false;\s*menu\.querySelector\('summary'\)\?\.focus\(\);/);
+  assert.match(list, /menu\?\.closest\('details'\)\?\.removeAttribute\('open'\)/, 'the close-after-action code is kept');
+});
+
+test('D-A-10/13: the typed passphrase sentence is still used and nothing was deleted from archiveCopy', () => {
+  const copy = loadTypeScript('src/lib/copy/archiveCopy.ts');
+  assert.equal(copy.archiveReasonText('bad-passphrase', 400), copy.ARCHIVE_TEXT.typedPass);
+});

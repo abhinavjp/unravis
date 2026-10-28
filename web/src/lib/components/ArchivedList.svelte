@@ -80,6 +80,23 @@
     eraseId = c.id; typed = ''; problem = ''; note = '';
   }
   function cancelErase() { eraseId = ''; typed = ''; }
+  // One More menu at a time (D-A-13): opening one closes the others in this list.
+  function moreToggled(event: Event) {
+    const opened = event.currentTarget as HTMLDetailsElement;
+    if (!opened.open) return;
+    for (const other of document.querySelectorAll<HTMLDetailsElement>('.archived details.more[open]')) {
+      if (other !== opened) other.open = false;
+    }
+  }
+  // Escape closes the open menu and puts focus back on its More button, while focus is inside this list.
+  function closeMoreOnEscape(event: KeyboardEvent) {
+    if (event.key !== 'Escape') return;
+    const menu = document.querySelector<HTMLDetailsElement>('.archived details.more[open]');
+    if (!menu || !(document.activeElement as HTMLElement | null)?.closest('.archived')) return;
+    event.preventDefault();
+    menu.open = false;
+    menu.querySelector('summary')?.focus();
+  }
 
   async function erase(event: SubmitEvent) {
     event.preventDefault();
@@ -104,6 +121,7 @@
   function gone() { reread(); }
 </script>
 
+<svelte:window onkeydown={closeMoreOnEscape} />
 <section class="archived" aria-labelledby="archived-title">
   <h3 id="archived-title">{ARCHIVE_TEXT.listHeading} ({count})</h3>
   <div aria-live="polite">
@@ -141,7 +159,7 @@
               {#if actions.restoreInPlace || actions.restoreAsNew}
                 <button type="button" class="secondary-button" aria-label={ARCHIVE_TEXT.restore + ': ' + row.fullTitle} onclick={(e) => restore(c, e.currentTarget)}>{ARCHIVE_TEXT.restore}</button>
               {/if}
-              <details class="more">
+              <details class="more" ontoggle={moreToggled}>
                 <summary aria-label={ARCHIVE_TEXT.moreLabel + ': ' + row.fullTitle}>{ARCHIVE_TEXT.more}</summary>
                 <div class="menu">
                   {#if actions.restoreInPlace && actions.restoreAsNew}<button type="button" class="quiet-button" onclick={(e) => open('restore-as-new', c, e.currentTarget)}>{ARCHIVE_TEXT.restoreAsNewMenu}</button>{/if}

@@ -132,13 +132,13 @@
           <div><dt>{ARCHIVE_TEXT.sealedWith}</dt><dd>{sealedText}</dd></div>
         </dl>
         <label for="archive-folder">{ARCHIVE_TEXT.folderLabel}</label>
-        <input id="archive-folder" type="text" bind:value={folder} placeholder={ARCHIVE_TEXT.folderPlaceholder} autocomplete="off" spellcheck="false" disabled={starting} />
+        <input id="archive-folder" type="text" bind:value={folder} oninput={() => { problem = ''; }} placeholder={ARCHIVE_TEXT.folderPlaceholder} autocomplete="off" spellcheck="false" disabled={starting} />
         <p class="hint">{ARCHIVE_TEXT.folderHint}</p>
         {#if ownKey}
           <p class="hint">{ARCHIVE_TEXT.sealedCaseHint}</p>
         {:else if typed}
           <label for="archive-pass">{ARCHIVE_TEXT.passphraseLabel}</label>
-          <input id="archive-pass" type="password" bind:value={passphrase} autocomplete="new-password" spellcheck="false" disabled={starting} />
+          <input id="archive-pass" type="password" bind:value={passphrase} oninput={() => { problem = ''; }} autocomplete="new-password" spellcheck="false" disabled={starting} />
           <p class="hint">{ARCHIVE_TEXT.passphraseHint}</p>
         {/if}
         {#if failed}<p class="inline-error" role="alert">{failureText}</p>{/if}
