@@ -399,7 +399,6 @@ func TestA14_CancelRemovesThePartAndTheCaseIsBackAsItWas(t *testing.T) {
 	archReason(t, a.req(http.MethodDelete, "/api/cases/"+id+"/archive", "", "archiving"), http.StatusConflict, "case-changed", caseChangedText)
 }
 
-
 func TestINJ9_CancelAndCommitExactlyOneWins(t *testing.T) {
 	// Cancel first: the job has the gate but has not decided yet. Cancel wins, the finished
 	// file is listed, the case is back as it was.

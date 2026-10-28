@@ -53,7 +53,7 @@ type caseFileState struct {
 	busy       atomic.Bool // one export or restore at a time: each streams a whole database
 	restoreTh  throttle    // restore judges a case file's own passphrase: a different target than the master key
 	exportOnce sync.Once
-	jobs       fileJobs // the archive and verify jobs (P3)
+	jobs       fileJobs    // the archive and verify jobs (P3)
 	verified   verifiedSet // files that passed a test restore, the gate of Free (P3)
 	freeing    freeingSet  // cases a Free is waiting on: new readers get M19 (P3)
 }

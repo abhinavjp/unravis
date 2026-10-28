@@ -69,16 +69,16 @@ type casesState struct {
 	hostsSave func(*hosts.Map) error
 	// recoverer runs the recovery hooks of marked cases (see casestore.Recoverer).
 	// nil means no hook is registered and nothing is ever marked.
-	recoverer *casestore.Recoverer
+	recoverer  *casestore.Recoverer
 	archiveRec *ArchiveRecovery // the archive hooks, so a live job is told from a dead one
-	gates     caseGates
-	imports   importLimiter
-	pending   pendingStrips
-	ledgers   caseLedgerLocks
-	wsLocks   caseLedgerLocks // serialises writes of each case's workspace note
-	jobs      importJobs
-	disc      discoverState
-	maxUpload int64 // test hook: replaces the computed upload cap when > 0
+	gates      caseGates
+	imports    importLimiter
+	pending    pendingStrips
+	ledgers    caseLedgerLocks
+	wsLocks    caseLedgerLocks // serialises writes of each case's workspace note
+	jobs       importJobs
+	disc       discoverState
+	maxUpload  int64 // test hook: replaces the computed upload cap when > 0
 
 	hostsMu sync.RWMutex
 	hostMap *hosts.Map
