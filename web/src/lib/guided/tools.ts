@@ -1,5 +1,5 @@
 import type { Frame } from './frame';
-import { fmtChange, fmtMs, markFor, stepOf, type ChangeMark } from './stepModel';
+import { fmtChange, fmtMs, markFor, stepOf, type ChangeMark, type StickerTone } from './stepModel';
 import type { Readiness, Result, SavedView } from './types';
 
 /**
@@ -47,7 +47,13 @@ export const TOOLS: readonly ToolDef[] = [
 
 export const toolById = (id: string): ToolDef | undefined => TOOLS.find((t) => t.id === id);
 
-export interface ToolState { word: Readiness; missing: SourceNeed[]; why: string }
+/** The four fixed readiness words, plus Waiting for a tool that has nothing to show until the steps have been run. */
+export type ToolWord = Readiness | 'Waiting';
+
+export interface ToolState { word: ToolWord; missing: SourceNeed[]; why: string }
+
+/** Tools that read the audit source on their own, with their own button. They need no guided run, so they are never Waiting. */
+const READS_ITSELF: ReadonlySet<ToolId> = new Set<ToolId>(['slowest-calls', 'nearby-activity']);
 
 export interface ToolContext {
   /** The kinds of source the case holds. The audit source is the one every guided tool reads. */
@@ -57,7 +63,8 @@ export interface ToolContext {
 
 /**
  * Whether a tool can run. A tool whose source is missing is "Cannot test yet" and names the source. With an engine answer, a tool that shows a
- * step takes the step's own word; without one it is "Ready" only when every source it needs is in the case.
+ * step takes the step's own word. Without an engine answer a tool that reads the run is Waiting; Slowest calls and Nearby activity are Ready, and
+ * the time split without IIS is Partly ready.
  */
 export function toolState(tool: ToolDef, ctx: ToolContext): ToolState {
   // IIS only completes the time split, so beside the audit source it is a soft need: a tool that lists both runs without it.
@@ -67,7 +74,25 @@ export function toolState(tool: ToolDef, ctx: ToolContext): ToolState {
   const step = tool.step !== undefined ? stepOf(ctx.result, tool.step) : undefined;
   if (step) return { word: step.readiness, missing: [], why: step.reasons[0] ?? '' };
   const partly = tool.needs.some((n) => soft(n) && !ctx.have.has(n));
-  return { word: partly ? 'Partly ready' : 'Ready', missing: [], why: partly ? 'The audit part runs. The outside time needs an IIS log source.' : '' };
+  if (partly) return { word: 'Partly ready', missing: [], why: 'The audit part runs. The outside time needs an IIS log source.' };
+  // Source present, nothing run yet: a card with no numbers behind it must not read as a pass.
+  if (!ctx.result && !READS_ITSELF.has(tool.id)) return { word: 'Waiting', missing: [], why: '' };
+  return { word: 'Ready', missing: [], why: '' };
+}
+
+const WORD_TONE: Readonly<Record<ToolWord, StickerTone>> = {
+  Ready: 'ready', 'Partly ready': 'partly', 'Cannot test yet': 'cannot', Failed: 'failed', Waiting: 'waiting'
+};
+
+export interface ToolSticker { word: ToolWord; tone: StickerTone; outOfDate: boolean }
+
+/**
+ * The sticker of a tool card or of the open tool. `stale` is the store's out-of-date flag. A tool that cannot run, or has not run, has nothing
+ * to be out of date, so only Ready, Partly ready and Failed carry the Out of date mark.
+ */
+export function toolSticker(state: ToolState, stale: boolean): ToolSticker {
+  const mark = stale && state.word !== 'Cannot test yet' && state.word !== 'Waiting';
+  return { word: state.word, tone: WORD_TONE[state.word], outOfDate: mark };
 }
 
 /* ----------------------------------------------------------------- saved views */

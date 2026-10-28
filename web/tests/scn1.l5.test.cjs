@@ -48,3 +48,42 @@ test('B-31: the heading names the mode on screen', () => {
   assert.match(g, /<h2 tabindex="-1" bind:this=\{heading\}>\{store\.mode === 'guided' \? T\.heading : S\.manualHeading\}<\/h2>/);
   assert.match(g, /import \{ SHELL_TEXT as S \} from '\.\.\/\.\.\/copy\/guidedShellCopy';/);
 });
+
+const tools = loadTypeScript('src/lib/guided/tools.ts');
+
+test('B-11: a tool with its source but no run is Waiting; Slowest calls and Nearby activity are Ready', () => {
+  const audit = { have: new Set(['audit']), result: null };
+  for (const id of ['response-time', 'slowest-apis', 'calls-in-flight', 'changes', 'after-fix', 'suspect-summary']) {
+    const s = tools.toolState(tools.toolById(id), audit);
+    assert.equal(s.word, 'Waiting', id);
+    assert.deepEqual(s.missing, [], id);
+    assert.equal(s.why, '', id);
+  }
+  for (const id of ['slowest-calls', 'nearby-activity']) assert.equal(tools.toolState(tools.toolById(id), audit).word, 'Ready', id);
+  assert.equal(tools.toolState(tools.toolById('time-split'), audit).word, 'Partly ready');
+  assert.equal(tools.toolState(tools.toolById('time-split'), { have: new Set(['audit', 'iis']), result: null }).word, 'Waiting');
+  assert.equal(tools.toolState(tools.toolById('sql-waits'), audit).word, 'Cannot test yet');
+  // With a run the old rules apply again.
+  const run = { have: new Set(['audit']), result: result() };
+  assert.equal(tools.toolState(tools.toolById('slowest-apis'), run).word, 'Ready');
+  assert.equal(tools.toolState(tools.toolById('response-time'), run).word, 'Ready');
+});
+
+test('B-08: a tool sticker carries Out of date only when it has a run to be out of date', () => {
+  const st = (word) => ({ word, missing: [], why: '' });
+  assert.deepEqual(tools.toolSticker(st('Ready'), true), { word: 'Ready', tone: 'ready', outOfDate: true });
+  assert.deepEqual(tools.toolSticker(st('Partly ready'), true), { word: 'Partly ready', tone: 'partly', outOfDate: true });
+  assert.deepEqual(tools.toolSticker(st('Failed'), true), { word: 'Failed', tone: 'failed', outOfDate: true });
+  assert.deepEqual(tools.toolSticker(st('Waiting'), true), { word: 'Waiting', tone: 'waiting', outOfDate: false });
+  assert.deepEqual(tools.toolSticker(st('Cannot test yet'), true), { word: 'Cannot test yet', tone: 'cannot', outOfDate: false });
+  assert.equal(tools.toolSticker(st('Ready'), false).outOfDate, false);
+});
+
+test('B-08 and B-11: ManualTools passes the stale flag to both stickers and shows the Waiting hint', () => {
+  const m = guided('ManualTools.svelte');
+  assert.match(m, /const stale = \$derived\(store\.outOfDate\(sourceIds\)\);/);
+  assert.match(m, /<Sticker word=\{sk\.word\} tone=\{sk\.tone\} outOfDate=\{sk\.outOfDate\} \/>/);
+  assert.match(m, /<Sticker word=\{openSticker\.word\} tone=\{openSticker\.tone\} outOfDate=\{openSticker\.outOfDate\} \/>/);
+  assert.match(m, /\{#if st\.word === 'Waiting'\}<p class="src">\{S\.toolWaitingHint\}<\/p>\{\/if\}/);
+  assert.ok(!/const TONE/.test(m), 'the local tone table is replaced by toolSticker');
+});

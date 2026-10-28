@@ -210,7 +210,7 @@ test('a tool missing its source is Cannot test yet and names the source', () => 
   assert.match(t.toolState(t.toolById('sql-waits'), audit).why, /SQL Server source/);
   assert.match(t.toolState(t.toolById('mongo-health'), audit).why, /MongoDB source/);
   assert.match(t.toolState(t.toolById('host-resources'), audit).why, /Blackbox source/);
-  assert.equal(t.toolState(t.toolById('slowest-apis'), audit).word, 'Ready');
+  assert.equal(t.toolState(t.toolById('slowest-apis'), audit).word, 'Waiting');
 });
 
 test('the time split runs on audit alone and says what IIS would add', () => {
@@ -218,7 +218,7 @@ test('the time split runs on audit alone and says what IIS would add', () => {
   const s = t.toolState(t.toolById('time-split'), audit);
   assert.equal(s.word, 'Partly ready');
   assert.match(s.why, /IIS/);
-  assert.equal(t.toolState(t.toolById('time-split'), { have: new Set(['audit', 'iis']), result: null }).word, 'Ready');
+  assert.equal(t.toolState(t.toolById('time-split'), { have: new Set(['audit', 'iis']), result: null }).word, 'Waiting');
 });
 
 test('a tool that shows a step takes the engine word for that step', () => {
