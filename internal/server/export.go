@@ -177,7 +177,7 @@ func (h *handler) exportPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	report = exportableReport(report)
 
-	hypotheses, ok := h.exportLedger(w, r, body, report)
+	hypotheses, ledgerCase, ok := h.exportLedger(w, r, body, report)
 	if !ok {
 		return
 	}
@@ -220,7 +220,7 @@ func (h *handler) exportPreview(w http.ResponseWriter, r *http.Request) {
 	// bodySha256 inside the file is a different hash (manifest and body with
 	// that value blanked) and is left as the engine wrote it.
 	sum := sha256.Sum256(canonical)
-	h.exports().put(id, storedExport{canonical: canonical, sha256: hex.EncodeToString(sum[:])})
+	h.exports().put(id, storedExport{canonical: canonical, sha256: hex.EncodeToString(sum[:]), caseID: ledgerCase})
 	writeJSON(w, http.StatusOK, exportPreviewResponse{
 		PreviewID: id, Export: export,
 		LedgerIncluded: body.IncludeLedger, PseudonymsIncluded: body.IncludePseudonyms,
@@ -230,38 +230,42 @@ func (h *handler) exportPreview(w http.ResponseWriter, r *http.Request) {
 // exportLedger returns the ledger entries a findings export may carry: none unless
 // asked for; the open case's own ledger when ledgerCaseId is set; otherwise the
 // shared ledger. Entries are kept only when they reference a finding of this report.
+// It also returns the id of the case the ledger came from (empty for the shared
+// ledger), so the stored preview is dropped when that case is erased.
 // On false the answer has been written.
-func (h *handler) exportLedger(w http.ResponseWriter, r *http.Request, body exportPreviewRequest, report audit.PatternReport) ([]ledger.Hypothesis, bool) {
+func (h *handler) exportLedger(w http.ResponseWriter, r *http.Request, body exportPreviewRequest, report audit.PatternReport) ([]ledger.Hypothesis, string, bool) {
 	if !body.IncludeLedger {
-		return nil, true
+		return nil, "", true
 	}
+	caseID := ""
 	var all []ledger.Hypothesis
 	if body.LedgerCaseID != "" {
 		c, lb, id, ok := h.caseLedgerOf(w, r, body.LedgerCaseID)
 		if !ok {
-			return nil, false
+			return nil, "", false
 		}
 		defer c.Close()
+		caseID = string(id)
 		s, done, ok := h.caseLedgerStore(w, r, id, lb, false)
 		if !ok {
-			return nil, false
+			return nil, "", false
 		}
 		defer done()
 		items, err := s.List()
 		if err != nil {
 			writeCaseLedgerError(w, err)
-			return nil, false
+			return nil, "", false
 		}
 		all = items
 	} else if h.ledger != nil {
 		items, err := h.ledger.List()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "The hypothesis ledger could not be read.")
-			return nil, false
+			return nil, "", false
 		}
 		all = items
 	}
-	return relatedHypotheses(all, report), true
+	return relatedHypotheses(all, report), caseID, true
 }
 
 // exportableReport removes what the evidence export has no record type for: the

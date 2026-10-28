@@ -5,8 +5,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/importer"
 )
 
 // Review 2 of the scenario fixes.
@@ -70,5 +73,52 @@ func TestScn1Review2BasicAndSchemelessCredentials(t *testing.T) {
 		if got := scrubTypedNote(kept); got != kept {
 			t.Errorf("scrubTypedNote(%q) = %q, want it unchanged", kept, got)
 		}
+	}
+}
+
+// Review2-5: a findings preview built from a case ledger is dropped when the case
+// is erased, so Confirm cannot save the erased case's text.
+func TestScn1Review2ErasedCaseDropsLedgerPreview(t *testing.T) {
+	fb := installExportFakes(t)
+	store := casestore.NewMemory()
+	exportNow = time.Now().UTC().Truncate(time.Second)
+	h := New(audit.NewDemoWithPatterns(exportNow), nil, testToken, true,
+		WithCases(store, mustHosts(t, hostsDoc), importer.NewRegistry(toyImporter{name: "toy", score: 90})),
+		WithCaptureCases(), WithLedger(&fakeLedger{}))
+	e := &caseEnv{t: t, store: store, h: h}
+	body := exportBody("demo-west")
+	if r := request(h, http.MethodPost, "/api/export/preview", body, true); r.Code != http.StatusOK {
+		t.Fatalf("probe = %d %s", r.Code, r.Body.String())
+	}
+	related := fb.inputs[0].Report.Findings[0].EvidenceID
+
+	id := e.newCase("erase me")
+	th := createCaseTheory(t, e, id, "Slow calls follow the nightly job")
+	upd := `{"text":"Slow calls follow the nightly job","state":"supported_by_correlation","evidenceIds":["` + related + `"],"notes":"seen twice","settlingObservation":"Run with the job paused","facts":{"presentK":2,"totalN":3}}`
+	if res := e.json(http.MethodPut, caseLedgerPath(id)+"/"+th.ID, upd); res.Code != http.StatusOK {
+		t.Fatalf("update = %d %s", res.Code, res.Body)
+	}
+	var withCase map[string]any
+	if err := json.Unmarshal([]byte(body), &withCase); err != nil {
+		t.Fatal(err)
+	}
+	withCase["ledgerCaseId"] = id
+	raw, _ := json.Marshal(withCase)
+	r := request(h, http.MethodPost, "/api/export/preview", string(raw), true)
+	if r.Code != http.StatusOK {
+		t.Fatalf("preview = %d %s", r.Code, r.Body.String())
+	}
+	var p struct {
+		PreviewID string `json:"previewId"`
+	}
+	if err := json.Unmarshal(r.Body.Bytes(), &p); err != nil || p.PreviewID == "" {
+		t.Fatalf("no preview id: %v %s", err, r.Body.String())
+	}
+	if res := e.json(http.MethodDelete, "/api/cases/"+id, `{"confirm":`+q(id)+`}`); res.Code != http.StatusNoContent {
+		t.Fatalf("erase = %d %s", res.Code, res.Body)
+	}
+	c := request(h, http.MethodPost, "/api/export/confirm", `{"previewId":"`+p.PreviewID+`"}`, true)
+	if c.Code != http.StatusNotFound {
+		t.Errorf("confirm after erase = %d %s, want 404", c.Code, c.Body.String())
 	}
 }
