@@ -6,11 +6,13 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"api-audit-explorer/internal/version"
 )
@@ -25,7 +27,6 @@ import (
 
 const (
 	updateCheckReleasesURL = "https://api.github.com/repos/abhinavjp/unravis/releases/latest"
-	updateCheckPagePrefix  = "https://github.com/abhinavjp/unravis/"
 	updateCheckBodyLimit   = 256 * 1024
 	updateCheckCacheTTL    = 5 * time.Second
 	updateCheckTimeout     = 10 * time.Second
@@ -129,14 +130,18 @@ func (s *updateCheckState) check(ctx context.Context) updateCheckReply {
 	return reply
 }
 
-// isDevVersion reports whether the stamp is a development build: "dev",
-// empty, or anything not starting with a digit once a leading v is trimmed.
+// versionCorePattern is a dotted numeric version core such as 1.2 or 1.2.0.
+var versionCorePattern = regexp.MustCompile(`^\d+\.\d+(\.\d+)*$`)
+
+// isDevVersion reports whether the stamp is a development build: anything whose
+// numeric core (the text before the first - or +, after a leading v is
+// trimmed) is not dotted, so "dev", "", "3fa9c1b" and "1" are dev builds.
 func isDevVersion(v string) bool {
 	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	if v == "" {
-		return true
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
 	}
-	return !unicode.IsDigit(rune(v[0]))
+	return !versionCorePattern.MatchString(v)
 }
 
 func (s *updateCheckState) fetch(ctx context.Context, current string) updateCheckReply {
@@ -181,12 +186,18 @@ func (s *updateCheckState) fetch(ctx context.Context, current string) updateChec
 		return updateCheckReply{Status: "latest", Current: current}
 	}
 	latest := strings.TrimPrefix(strings.TrimSpace(release.TagName), "v")
+	if strings.Contains(latest, "-") {
+		// A tag with a prerelease suffix (v1.1.0-rc.1) is not an offer either,
+		// even when GitHub did not flag the release as a prerelease.
+		return updateCheckReply{Status: "latest", Current: current}
+	}
 	if compareVersions(latest, current) <= 0 {
 		return updateCheckReply{Status: "latest", Current: current}
 	}
 	reply := updateCheckReply{Status: "available", Current: current, Latest: latest}
 	// Only link to the project's own release pages.
-	if strings.HasPrefix(release.HTMLURL, updateCheckPagePrefix) {
+	if u, err := url.Parse(release.HTMLURL); err == nil && u.Scheme == "https" && u.Host == "github.com" &&
+		path.Clean(u.Path) == u.Path && strings.HasPrefix(u.Path, "/abhinavjp/unravis/") {
 		reply.URL = release.HTMLURL
 	}
 	return reply
@@ -210,9 +221,10 @@ var defaultUpdateCheckClient = sync.OnceValue(func() *http.Client {
 })
 
 // compareVersions compares two dotted numeric versions and returns 1 when a
-// is newer than b, 0 when equal and -1 when older. A leading v and any
-// -suffix (a prerelease marker on the tag, or "-dirty"/a hash on the running
-// build) are ignored.
+// is newer than b, 0 when equal and -1 when older. A leading v is ignored. A
+// prerelease suffix (-rc.1) ranks below the same numbers without it; a describe
+// suffix on a running build (-3-gabc1234, -dirty) is a build after the tag and
+// ranks equal to the tag.
 func compareVersions(a, b string) int {
 	an, bn := versionNumbers(a), versionNumbers(b)
 	for i := 0; i < len(an) || i < len(bn); i++ {
@@ -230,12 +242,64 @@ func compareVersions(a, b string) int {
 			return -1
 		}
 	}
+	ap, bp := versionIsPrerelease(a), versionIsPrerelease(b)
+	switch {
+	case ap && !bp:
+		return -1
+	case !ap && bp:
+		return 1
+	}
 	return 0
+}
+
+func versionIsPrerelease(v string) bool {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if i := strings.IndexByte(v, '+'); i >= 0 {
+		v = v[:i]
+	}
+	_, suffix, found := strings.Cut(v, "-")
+	return found && isPrereleaseSuffix(suffix)
+}
+
+// isPrereleaseSuffix reports whether s (the text after the first - of a
+// version) marks a prerelease: its first dot- or dash-separated word is
+// non-empty, starts with a letter, is not "dirty" and is not "g" followed only
+// by hex digits (a git describe hash).
+func isPrereleaseSuffix(s string) bool {
+	word := s
+	if i := strings.IndexAny(word, ".-"); i >= 0 {
+		word = word[:i]
+	}
+	if word == "" {
+		return false
+	}
+	c := word[0]
+	if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+		return false
+	}
+	if word == "dirty" {
+		return false
+	}
+	if c == 'g' {
+		hash := true
+		for _, r := range word[1:] {
+			if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F') {
+				hash = false
+				break
+			}
+		}
+		if hash {
+			return false
+		}
+	}
+	return true
 }
 
 func versionNumbers(v string) []int {
 	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	v, _, _ = strings.Cut(v, "-")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
 	parts := strings.Split(v, ".")
 	numbers := make([]int, 0, len(parts))
 	for _, part := range parts {
