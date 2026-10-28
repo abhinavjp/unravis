@@ -181,6 +181,9 @@ type reportDoc struct {
 	Lists         []reportList
 	Views         []reportView
 
+	// TypedNote is the fixed line saying notes are scrubbed.
+	TypedNote string
+
 	Footer string
 }
 
@@ -254,13 +257,14 @@ var (
 // newReportDoc copies the words and numbers a report prints out of the source.
 func newReportDoc(src reportSource) reportDoc {
 	d := reportDoc{
-		Title: clipText(src.Title, 200), CaseID: src.CaseID, Closed: src.Closed,
+		Title: clipText(scrubTypedNote(src.Title), 200), CaseID: src.CaseID, Closed: src.Closed,
 		Generated:     src.Generated.UTC().Format("2 Jan 2006 15:04 UTC"),
 		ShowFigures:   src.Include.on(func(i *reportInclude) *bool { return i.Figures }),
 		ShowSuspects:  src.Include.on(func(i *reportInclude) *bool { return i.Suspects }),
 		ShowSources:   src.Include.on(func(i *reportInclude) *bool { return i.Sources }),
 		ShowChecklist: src.Include.on(func(i *reportInclude) *bool { return i.Checklist }),
 		Footer:        reportNoPayloads,
+		TypedNote:     reportTypedNotes,
 	}
 	if d.Title == "" {
 		d.Title = "Untitled case"
@@ -292,13 +296,13 @@ func newReportDoc(src reportSource) reportDoc {
 		list := reportList{Key: l, Name: reportListNames[l], Items: []reportItem{}}
 		for _, it := range src.Items {
 			if it.List == l {
-				list.Items = append(list.Items, reportItem{Text: clipText(it.Text, reportMaxText), Suspect: it.Suspect})
+				list.Items = append(list.Items, reportItem{Text: clipText(scrubTypedNote(it.Text), reportMaxText), Suspect: it.Suspect})
 			}
 		}
 		d.Lists = append(d.Lists, list)
 	}
 	for _, v := range src.Views {
-		d.Views = append(d.Views, reportView{Name: clipText(v.Name, 200), Tool: v.Tool})
+		d.Views = append(d.Views, reportView{Name: clipText(scrubTypedNote(v.Name), 200), Tool: v.Tool})
 	}
 	d.Cautions = reportCautions(src)
 	return d
@@ -618,6 +622,7 @@ footer{margin-top:40px;border-top:1px solid var(--line);padding-top:12px;color:v
 {{if .Views}}<h3>Saved views (names only)</h3><ul>{{range .Views}}<li>{{.Name}} <span class="meta">({{.Tool}})</span></li>{{end}}</ul>{{end}}
 {{end}}
 
+<p class="meta">{{.TypedNote}}</p>
 <footer>{{.Footer}}</footer>
 </main>
 </body>
@@ -720,6 +725,7 @@ func renderReportCSV(d reportDoc) ([]byte, error) {
 			row("saved-view", v.Name, v.Tool, "", "", "")
 		}
 	}
+	row("note", "", "", "", "", d.TypedNote)
 	row("footer", "", "", "", "", d.Footer)
 	w.Flush()
 	if err := w.Error(); err != nil {

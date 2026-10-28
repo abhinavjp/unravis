@@ -211,3 +211,62 @@ func TestScn1L7ReportPrintsWarnings(t *testing.T) {
 		}
 	}
 }
+
+func TestScn1L7ScrubTypedNote(t *testing.T) {
+	changed := map[string]string{
+		"see mongodb://admin:hunter2@db01:27017/pay for details":           "see [removed] for details",
+		"Server=db01;Database=pay;User Id=sa;Password=hunter2; restart it": "[removed] restart it",
+		"Server = db01 ; Database = pay":                                   "[removed]",
+		"password=hunter2 failed":                                          "[removed] failed",
+		`Password: "hunter two" was wrong`:                                 "[removed] was wrong",
+		"api_key=abc123 and token=xyz":                                     "[removed] and [removed]",
+		"my_password=zz":                                                   "my_[removed]",
+		"pwd='my secret pass' ok":                                          "[removed] ok",
+		"Bearer abcdef123456 was sent":                                     "[removed] was sent",
+		"tried mongodb://u:p@h/x then Password=zz":                         "tried [removed] then [removed]",
+	}
+	for in, want := range changed {
+		if got := scrubTypedNote(in); got != want {
+			t.Errorf("scrubTypedNote(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, kept := range []string{
+		"the password was reset", "password reset done", "Server is down", "Server=db01 is down",
+		"Token expired at 10:30", "token: expired", "Ask the database team", "check a=b and c=d", "Bearer short",
+	} {
+		if got := scrubTypedNote(kept); got != kept {
+			t.Errorf("scrubTypedNote(%q) = %q, want it unchanged", kept, got)
+		}
+	}
+}
+
+func TestScn1L7TypedNotesAreScrubbedInTheReport(t *testing.T) {
+	e := tagEnv(t, casestore.NewMemory(), &fakeRepository{})
+	id := e.newCase("Outage pwd=titlesecret")
+	for _, text := range []string{
+		"Server=db01;Database=pay;User Id=sa;Password=hunter2; restart it",
+		"see mongodb://admin:linksecret@db01:27017/pay",
+		"Ask the database team",
+	} {
+		body, _ := json.Marshal(map[string]string{"list": "todo", "text": text})
+		if res := e.json(http.MethodPost, "/api/cases/"+id+"/checklist", string(body)); res.Code != http.StatusOK {
+			t.Fatal(res.Body)
+		}
+	}
+	if res := e.json(http.MethodPost, "/api/cases/"+id+"/views", `{"name":"token=viewsecret","tool":"routes","settings":{"minMs":500}}`); res.Code != http.StatusOK {
+		t.Fatal(res.Body)
+	}
+	for _, format := range []string{"html", "csv"} {
+		out := reportOf(t, e.json(http.MethodPost, "/api/cases/"+id+"/report", reportBody(format, "")))
+		for _, secret := range []string{"titlesecret", "hunter2", "linksecret", "db01", "viewsecret", "admin:"} {
+			if strings.Contains(out.Content, secret) {
+				t.Errorf("%s report still carries %q", format, secret)
+			}
+		}
+		for _, want := range []string{"[removed]", reportTypedNotes, "Ask the database team"} {
+			if !strings.Contains(out.Content, want) {
+				t.Errorf("%s report lacks %q", format, want)
+			}
+		}
+	}
+}
