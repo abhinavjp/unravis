@@ -14,12 +14,12 @@
   <p class="hint">{NOTHING_TEXT.hours}</p>
   <p class="hint">{NOTHING_TEXT.change}</p>
   <div class="table-wrap">
-    <table>
+    <table class="stack">
       <caption class="hint">{NOTHING_TEXT.tableHeading}</caption>
       <thead><tr><th scope="col">{NOTHING_TEXT.colQuestion}</th><th scope="col">{NOTHING_TEXT.colNeeds}</th><th scope="col">{NOTHING_TEXT.colCan}</th></tr></thead>
       <tbody>
-        <tr><td>{NOTHING_TEXT.qSlower}</td><td>{NOTHING_TEXT.needAudit}</td><td>{NOTHING_TEXT.cannotNoRecords}</td></tr>
-        <tr><td>{NOTHING_TEXT.qBlocking}</td><td>{NOTHING_TEXT.needSql}</td><td>{NOTHING_TEXT.cannotNoWindow}</td></tr>
+        <tr><td data-label={NOTHING_TEXT.colQuestion}>{NOTHING_TEXT.qSlower}</td><td data-label={NOTHING_TEXT.colNeeds}>{NOTHING_TEXT.needAudit}</td><td data-label={NOTHING_TEXT.colCan}>{NOTHING_TEXT.cannotNoRecords}</td></tr>
+        <tr><td data-label={NOTHING_TEXT.colQuestion}>{NOTHING_TEXT.qBlocking}</td><td data-label={NOTHING_TEXT.colNeeds}>{NOTHING_TEXT.needSql}</td><td data-label={NOTHING_TEXT.colCan}>{NOTHING_TEXT.cannotNoWindow}</td></tr>
       </tbody>
     </table>
   </div>

@@ -83,11 +83,12 @@
       <p>{kind === 'sql' ? STEP_TEXT.noSql : STEP_TEXT.noMongo}</p>
       {#if kind === 'mongo'}<p class="hint">{STEP_TEXT.noMongoWhy}</p>{/if}
     </div>
-    <GrantScriptPanel {kind} />
-    {#if kind === 'mongo'}<ProfilerGuide database="" guide={null} />{/if}
+    <!-- The form to read a day comes first: the scripts below are long, and the form was easy to miss under them. -->
     {#if readOnly}<p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>{:else}
       <LaneRunner {caseId} {kind} {days} onRan={ran} {onGone} ownNotice />
     {/if}
+    <GrantScriptPanel {kind} />
+    {#if kind === 'mongo'}<ProfilerGuide database="" guide={null} />{/if}
   {:else}
     <section class="field" aria-label={STEP_TEXT.daysHeading}>
       <h4>{STEP_TEXT.daysHeading}</h4>

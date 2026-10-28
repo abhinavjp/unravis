@@ -241,3 +241,31 @@ test('minor 10 and 11: the tab row is flush in the panel, and hover shows on the
   assert.match(css, /\.src \.tabs button\[aria-selected='true'\]:hover/, 'the selected tab has a hover of its own');
   assert.match(css, /\.src \.tabs button\[aria-selected='true'\]:hover[^}]*background: color-mix/);
 });
+
+// ---- minors 9, 14, 15 ----------------------------------------------------------------------------------------------------------------
+
+test('minor 9: with no day yet, the read form comes before the long scripts', () => {
+  const step = comp('SourceStep');
+  const empty = step.slice(step.indexOf('data-no-source'), step.indexOf('{:else}\n    <section class="field"'));
+  const form = empty.indexOf('<LaneRunner');
+  assert.ok(form > 0, 'the empty step has the form');
+  assert.ok(form < empty.indexOf('<GrantScriptPanel {kind} />'), 'the form is above the grant script');
+  assert.ok(form < empty.indexOf('<ProfilerGuide'), 'and above the profiler guide');
+});
+
+test('minor 14: the count says it is for SQL Server, and MongoDB is counted apart', () => {
+  const page = comp('ConnectionsPage');
+  assert.match(page, /CONN_TEXT\.countSql\} \{sql\.length\} \/ \{CONNECTION_LIMIT\}\. \{CONN_TEXT\.countMongo\} \{mongo\.length\}/);
+  assert.match(copy.CONN_TEXT.countSql, /SQL Server/);
+  assert.match(copy.CONN_TEXT.countMongo, /MongoDB/);
+  assert.match(copy.CONN_TEXT.countMongo, /no limit/);
+});
+
+test('minor 15: the nothing-read table becomes a block per row on a narrow screen', () => {
+  const view = comp('NothingRead');
+  assert.match(view, /<table class="stack">/);
+  assert.equal((view.match(/data-label=/g) ?? []).length, 6, 'every cell of both rows names its column');
+  const css = read('src/components/sources/sources.css');
+  assert.match(css, /@media \(max-width: 600px\) \{[^@]*table\.stack td::before \{ content: attr\(data-label\)/);
+  assert.match(css, /table\.stack tbody, \.src table\.stack tr, \.src table\.stack td \{ display: block; \}/);
+});

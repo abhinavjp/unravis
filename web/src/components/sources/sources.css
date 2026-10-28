@@ -48,6 +48,14 @@
 .src table { width: 100%; border-collapse: collapse; font-size: var(--fs-3); }
 .src th, .src td { padding: 6px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line-soft, var(--line)); overflow-wrap: anywhere; white-space: normal; }
 .src th { color: var(--text-2); font-weight: 500; border-bottom-color: var(--line); }
+/* On a narrow screen a three-column table becomes one block per row, each cell under its own column name. */
+@media (max-width: 600px) {
+  .src table.stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .src table.stack, .src table.stack tbody, .src table.stack tr, .src table.stack td { display: block; }
+  .src table.stack tr { padding: var(--space-3) 0; border-bottom: 1px solid var(--line); }
+  .src table.stack td { padding: var(--space-1, 4px) 0; border: 0; }
+  .src table.stack td::before { content: attr(data-label); display: block; color: var(--text-2); font-weight: 500; font-size: var(--fs-3); }
+}
 /* The global .tabs rule (app.css) pads, underlines and scrolls the app's own tab rows; this row sits flush in the panel instead. */
 .src .tabs { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-3); padding: 0; overflow: visible; border-bottom: 0; }
 .src .tabs button[aria-selected='true'],

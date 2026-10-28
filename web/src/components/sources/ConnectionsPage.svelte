@@ -114,7 +114,7 @@
       <button type="button" class={primary ? 'btn-primary' : 'btn'} disabled={full || readOnly} onclick={() => { editing = null; adding = true; }}>{CONN_TEXT.addSql}</button>
       <button type="button" class="btn" disabled={readOnly || !onMongoAdd} onclick={() => { askedMongo = true; onMongoAdd?.(); }}>{CONN_TEXT.addMongo}</button>
       {#if askedMongo}<button type="button" class="btn" onclick={() => void load()}>{CONN_TEXT.refresh}</button>{/if}
-      <span class="hint" data-count>{sql.length} / {CONNECTION_LIMIT}</span>
+      <span class="hint" data-count>{CONN_TEXT.countSql} {sql.length} / {CONNECTION_LIMIT}. {CONN_TEXT.countMongo} {mongo.length}.</span>
     </div>
     {#if full}<p class="say bad" role="status" data-full>{CONN_TEXT.full}</p>{/if}
     <p class="hint">{onMongoAdd ? CONN_TEXT.mongoHere : CONN_TEXT.mongoNowhere}</p>
