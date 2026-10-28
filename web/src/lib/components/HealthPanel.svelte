@@ -7,6 +7,8 @@
   import { HEALTH_TEXT, HEALTH_STATUS_LABEL, HEALTH_STATUS_MARK, overallText, connectedText } from '../copy/healthCopy';
   import { DEFAULT_COLLECTION } from '../wizardConnections';
   import type { RecentConnection, SavedSqlConnection, SqlTestRequest } from '../types';
+  import { app } from '../appState.svelte';
+  import { onConnectionsChanged } from '../../components/sources/connectionMemory';
 
   // Read-only checks of a SQL Server or MongoDB the case depends on. Nothing here runs by itself: a check starts only on "Run checks".
   // The server writes the checks; nothing typed here is ever run as a query. A password typed for a run is sent once and not kept.
@@ -41,6 +43,7 @@
   const needsSqlPassword = $derived(sqlPicked !== null && sqlPicked.auth === 'sql' && !sqlPicked.hasPassword);
   const needsMongoPassword = $derived(mongoPicked !== null && !mongoPicked.hasCredentials && mongoPicked.username !== '');
   const report = $derived<HealthReport | null>(shown?.report ?? null);
+  const demo = $derived(app.info?.demo === true);
 
   onMount(() => {
     const mine = new AbortController();
@@ -55,8 +58,23 @@
       if (sqlKept.length === 0 && mongoKept.length > 0) kind = 'mongo';
       loaded = true;
     })();
-    return () => { mine.abort(); controller?.abort(); };
+    const stop = onConnectionsChanged(() => { void reloadKept(mine.signal); });
+    return () => { stop(); mine.abort(); controller?.abort(); };
   });
+
+  // A connection added, saved or forgotten on the connections page: read both lists again, and let go of a pick that no longer exists.
+  async function reloadKept(signal: AbortSignal) {
+    const [sql, mongo] = await Promise.allSettled([api.sqlConnections(), api.recentConnections()]);
+    if (signal.aborted) return;
+    if (sql.status === 'fulfilled' && Array.isArray(sql.value)) {
+      sqlKept = sql.value;
+      if (sqlId !== '' && !sqlKept.some(item => item.id === sqlId)) { sqlId = ''; sqlPassword = ''; reset(); }
+    }
+    if (mongo.status === 'fulfilled' && Array.isArray(mongo.value)) {
+      mongoKept = mongo.value;
+      if (mongoId !== '' && !mongoKept.some(item => item.id === mongoId)) { mongoId = ''; mongoPassword = ''; reset(); }
+    }
+  }
 
   function reset() { databases = []; database = ''; typed = false; testNote = ''; problem = ''; }
   function setKind(next: 'sql' | 'mongo') { if (next !== kind) { kind = next; reset(); } }
@@ -201,7 +219,7 @@
     {/if}
   {/if}
 
-  <div class="actions"><button type="button" class="primary-button" disabled={busy !== '' || !picked} onclick={run}>{busy === 'run' ? HEALTH_TEXT.running : HEALTH_TEXT.run}</button></div>
+  <div class="actions"><button type="button" class="primary-button" disabled={busy !== '' || !picked || demo} onclick={run}>{busy === 'run' ? HEALTH_TEXT.running : HEALTH_TEXT.run}</button>{#if demo}<span class="note" data-demo>{HEALTH_TEXT.demo}</span>{/if}</div>
   <div aria-live="polite">{#if problem}<div class="inline-error" role="alert">{problem}</div>{/if}</div>
 
   {#if report}

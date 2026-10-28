@@ -162,3 +162,23 @@ test('L3-05 the census panel notes an unticked source and still allows the run',
   assert.ok(copy.CENSUS_TEXT.notTicked.includes('only reads'));
   assert.ok(copy.sourcesCopyEntries().some((e) => e.id === 'sources.census.notTicked'));
 });
+
+test('L3-06 the Health panel says it is not in the demo and follows the saved connections', () => {
+  const panel = read('src/lib/components/HealthPanel.svelte');
+  assert.match(panel, /import \{ app \} from '\.\.\/appState\.svelte'/);
+  assert.match(panel, /import \{ onConnectionsChanged \} from '\.\.\/\.\.\/components\/sources\/connectionMemory'/);
+  assert.match(panel, /const demo = \$derived\(app\.info\?\.demo === true\)/);
+  assert.match(panel, /disabled=\{busy !== '' \|\| !picked \|\| demo\} onclick=\{run\}/);
+  assert.match(panel, /\{#if demo\}<span class="note" data-demo>\{HEALTH_TEXT\.demo\}<\/span>\{\/if\}/);
+  assert.match(panel, /const stop = onConnectionsChanged\(\(\) => \{ void reloadKept\(mine\.signal\); \}\);/);
+  assert.match(panel, /return \(\) => \{ stop\(\); mine\.abort\(\); controller\?\.abort\(\); \};/);
+  assert.match(panel, /!sqlKept\.some\(item => item\.id === sqlId\)\) \{ sqlId = ''; sqlPassword = ''; reset\(\); \}/);
+  assert.match(panel, /!mongoKept\.some\(item => item\.id === mongoId\)\) \{ mongoId = ''; mongoPassword = ''; reset\(\); \}/);
+  assert.doesNotMatch(panel, /\$effect/);
+  assert.match(panel, /onclick=\{run\}/);
+  assert.match(panel, /type="password"/);
+  assert.match(panel, /onRan\?\.\(\)/);
+  assert.doesNotMatch(panel.slice(panel.indexOf('async function reloadKept'), panel.indexOf('function reset()')), /console\.|localStorage|sessionStorage/);
+  const health = loadTypeScript('src/lib/copy/healthCopy.ts');
+  assert.equal(health.HEALTH_TEXT.demo, 'Health checks are not available in the demo.');
+});
