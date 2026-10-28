@@ -225,6 +225,37 @@ func TestA8_MovedChangedOrUncheckedFile(t *testing.T) {
 	})
 }
 
+// A failed re-check leaves the case file not verified (D-A-14).
+func TestA14_FailedRecheckIsNotVerified(t *testing.T) {
+	a := newArchPC(t, cfsPassA)
+	id, _, _ := a.archivedCase("recheck", 3)
+	a.verifyDone(id)
+	if !a.verifyState(id).Verified {
+		t.Fatal("not verified after a passing check")
+	}
+	f, err := os.OpenFile(a.casePath(id), os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte{0}); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	if res := a.req(http.MethodPost, "/api/cases/"+id+"/verify", `{}`, "archived"); res.Code != http.StatusAccepted {
+		t.Fatalf("re-check = %d %s", res.Code, res.Body)
+	}
+	if j := a.wait(id, "verify"); j.State != fileJobFailed {
+		t.Fatalf("re-check = %+v", j)
+	}
+	if v := a.verifyState(id); v.State != fileJobFailed || v.Verified {
+		t.Fatalf("status after a failed re-check = %+v", v)
+	}
+	archReason(t, a.freeReq(id), http.StatusConflict, "check-first", checkFirstText)
+	if !a.dbExists(id) {
+		t.Fatal("working copy removed after a failed re-check")
+	}
+}
+
 func (a *archPC) verifyState(id string) verifyDTO {
 	a.t.Helper()
 	res := a.req(http.MethodGet, "/api/cases/"+id+"/verify", "", "")
