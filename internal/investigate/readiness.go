@@ -111,6 +111,14 @@ func laneGroup(group string) []CatalogEntry {
 	return out
 }
 
+// greyReason is the sentence for suspects held grey, in the right singular or plural.
+func greyReason(grey int) string {
+	if grey == 1 {
+		return "1 suspect is held grey in this release and is not tested."
+	}
+	return fmt.Sprintf("%d suspects are held grey in this release and are not tested.", grey)
+}
+
 // laneCount says how many of the entries have a reading from their own lane.
 // Entries held grey in Release 1 never count as read.
 func laneCount(in Input, entries []CatalogEntry) (known, total, grey int) {
@@ -387,7 +395,7 @@ func Steps(in Input, f Facts, s Signals, th Thresholds) []Step {
 			st.set(Ready, "")
 		}
 		if known > 0 && grey > 0 {
-			st.degrade(PartlyReady, fmt.Sprintf("%d suspect(s) are held grey in this release and are not tested.", grey))
+			st.degrade(PartlyReady, greyReason(grey))
 		}
 		st.Findings = append(st.Findings, fmt.Sprintf("Suspects with a reading: %d of %d.", known, total))
 	}

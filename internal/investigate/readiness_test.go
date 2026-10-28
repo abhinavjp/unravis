@@ -204,3 +204,12 @@ func TestFixedWordsAreNonCausalAndHaveNoPercent(t *testing.T) {
 		}
 	}
 }
+
+func TestGreyReasonIsNeverALazyPlural(t *testing.T) {
+	if got := greyReason(1); strings.Contains(got, "(s)") || !strings.HasPrefix(got, "1 suspect is ") {
+		t.Fatalf("one: %q", got)
+	}
+	if got := greyReason(2); strings.Contains(got, "(s)") || !strings.HasPrefix(got, "2 suspects are ") {
+		t.Fatalf("two: %q", got)
+	}
+}
