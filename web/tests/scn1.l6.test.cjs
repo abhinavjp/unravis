@@ -146,3 +146,31 @@ test('B-20: the checklist subtitle names the four lists exactly as the headings 
   for (const l of m.LISTS) assert.ok(copy.GUIDED_TEXT.checklistLead.includes(l.label), l.label);
   assert.ok(!/what is under way/i.test(copy.GUIDED_TEXT.checklistLead));
 });
+
+test('B-30: Step 1 names what is left out of the scope', () => {
+  const base = result();
+  const withCounts = (counts) => result({ facts: { ...base.facts, counts: { ...base.facts.counts, ...counts } } });
+  assert.equal(m.readGap(base, ''), null, 'read equals used: nothing to explain');
+  const stale = m.readGap(withCounts({ read: 1514, used: 1500, incomplete: 14, incident: 764, reference: 750 }), '');
+  assert.deepEqual(stale, { total: '1,514', used: '1,500', parts: ['14 not completed'] });
+  assert.equal(copy.GUIDED_TEXT.readGap(stale.total, stale.used, stale.parts), 'Scope counts 1,500 of the 1,514 calls read. Left out: 14 not completed.');
+  const many = m.readGap(withCounts({ read: 1000, used: 940, incomplete: 20, noStart: 3, anomalous: 2, outside: 35 }), '');
+  assert.deepEqual(many.parts, ['20 not completed', '3 with no start time', '2 with a clock anomaly', '35 outside both windows']);
+  // an API focus leaves other APIs out by design
+  const focus = m.readGap(withCounts({ read: 1000, used: 400 }), 'A.One');
+  assert.deepEqual(focus.parts, ['600 to other APIs']);
+  // no focus and no named reason: say nothing rather than guess
+  assert.equal(m.readGap(withCounts({ read: 1000, used: 400 }), ''), null);
+  const src = read('src/lib/components/guided/StepFacts.svelte');
+  assert.ok(/\{#if gap\}<p class="note">\{T\.readGap\(gap\.total, gap\.used, gap\.parts\)\}<\/p>\{\/if\}/.test(src));
+  assert.ok(/const gap = \$derived\(result \? readGap\(result, focusRoute\) : null\)/.test(src));
+});
+
+test('B-54: Step 3 says what IIS would add and the button names the IIS source', () => {
+  assert.equal(copy.GUIDED_TEXT.addIisLogs, 'Add the IIS logs');
+  assert.equal(copy.GUIDED_TEXT.iisAdds, 'IIS logs show the time before a call reaches the app (outside time, O).');
+  assert.equal(copy.GUIDED_TEXT.addAuditLogs, undefined, 'the old audit logs name is gone');
+  const src = read('src/lib/components/guided/StepFacts.svelte');
+  assert.ok(/<p class="note">\{T\.iisAdds\}<\/p>\s*<div class="row"><button[^>]*onclick=\{onAddData\}>\{T\.addIisLogs\}<\/button><\/div>/.test(src));
+  assert.ok(!/addAuditLogs/.test(src));
+});

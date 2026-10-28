@@ -39,6 +39,7 @@ export const GUIDED_TEXT = {
   outOfDate: 'Out of date, rerun',
   outOfDateNote: 'The windows, sources or lists changed after this ran. The numbers below are from the earlier run.',
   readNote: (calls: string, rows: string) => `This run read ${calls} audit calls and ${rows} IIS rows.`,
+  readGap: (total: string, used: string, parts: string[]) => `Scope counts ${used} of the ${total} calls read. Left out: ${parts.join(', ')}.`,
   truncated: 'The read stopped at its limit. Narrow the window to read everything.',
   nextStep: 'Next step',
   previousStep: 'Previous step',
@@ -136,7 +137,8 @@ export const GUIDED_TEXT = {
   barIncident: 'Incident',
   barLabel: 'Bars of the average time of a call, on one scale.',
   untestedParts: 'Not drawn: parts that could not be tested.',
-  addAuditLogs: 'Add the audit logs',
+  addIisLogs: 'Add the IIS logs',
+  iisAdds: 'IIS logs show the time before a call reaches the app (outside time, O).',
   openNearby: 'Open nearby activity',
   slowestCalls: 'Slowest calls in the incident window',
   showSlowCalls: 'Show the slowest calls',
@@ -382,6 +384,7 @@ export function guidedLintEntries(): LintEntry[] {
     add(`guided.${key}`, value);
   }
   add('guided.readNote', GUIDED_TEXT.readNote('12,000', '3,400'));
+  add('guided.readGap', GUIDED_TEXT.readGap('1,514', '1,500', ['14 not completed', '3 with no start time']));
   add('guided.onsetFound', GUIDED_TEXT.onsetFound('26 Oct 10:42'));
   add('guided.scope', GUIDED_TEXT.scope('73,648', '30 minutes', '60 minutes'));
   add('guided.shapeRule', GUIDED_TEXT.shapeRule(30, 100));

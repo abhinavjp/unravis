@@ -126,6 +126,25 @@ export function trustCards(result: Result): Card[] {
   ];
 }
 
+/**
+ * Why the calls read are more than the calls in the scope, as figures for `T.readGap`. Null when everything read is in the scope, or when
+ * the engine's counts give no reason to name. `read` is the engine's count of calls read; `used` is what the scope counts. With an API
+ * focused, calls to other APIs are left out by design and make up whatever the named reasons do not explain.
+ */
+export function readGap(result: Result, focusRoute: string): { total: string; used: string; parts: string[] } | null {
+  const c = result.facts.counts;
+  const left = c.read - c.used;
+  if (!(left > 0)) return null;
+  const parts: string[] = [];
+  if (c.incomplete > 0) parts.push(`${fmtCount(c.incomplete)} not completed`);
+  if (c.noStart > 0) parts.push(`${fmtCount(c.noStart)} with no start time`);
+  if (c.anomalous > 0) parts.push(`${fmtCount(c.anomalous)} with a clock anomaly`);
+  if (c.outside > 0) parts.push(`${fmtCount(c.outside)} outside both windows`);
+  const other = left - c.incomplete - c.noStart - c.anomalous - c.outside;
+  if (focusRoute && other > 0) parts.push(`${fmtCount(other)} to other APIs`);
+  return parts.length ? { total: fmtCount(c.read), used: fmtCount(c.used), parts } : null;
+}
+
 export interface SourceRow { name: string; state: 'Ready' | 'Cannot test yet'; used: boolean }
 
 export function sourceRows(result: Result): SourceRow[] {
