@@ -1,9 +1,12 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../api';
-  import { app, goHome, openAnalysis, openCaseImport, openSidePanel, panels } from '../appState.svelte';
-  import { believedState, caseCode, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseView, type ImportRecord, type RetryItem } from '../cases';
-  import { reopenButton, retryAction } from '../caseLifecycle';
+  import { app, goHome, openAnalysis, openCase, openCaseImport, openSidePanel, panels } from '../appState.svelte';
+  import { believedState, caseCode, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
+  import { archiveButton, reopenButton, retryAction } from '../caseLifecycle';
+  import { archivedActions, keyEndingOf, type ArchiveDrawerKind } from '../archiveModel';
+  import { ARCHIVE_TEXT, archivedNotice, filesMadeText, restoredNewNotice } from '../copy/archiveCopy';
+  import ArchiveDrawers from './ArchiveDrawers.svelte';
   import { CASE_HOME_TEXT, retryKindLabel } from '../copy/caseHomeCopy';
   import { errorText, importerLabel, formatBytes } from '../copy/importCopy';
   import { fetchHealthRuns, type HealthRun } from '../health';
@@ -49,6 +52,30 @@
   // Once another tab has moved the case this page is out of date: nothing that moves the case is offered until it is reloaded.
   const stale = $derived(changed);
   const retries = $derived(info?.retries ?? []);
+
+  // Archive, restore and free. The drawer is local to this page; the notice says what the last move made, until another move or a reload.
+  let archiveDrawer = $state<ArchiveDrawerKind | null>(null);
+  let archiveNote = $state('');
+  const archiveState = $derived(info ? archiveButton(info) : 'hidden');
+  const isArchived = $derived(!!info && believedState(info) === 'archived');
+  const archivedMoves = $derived(info ? archivedActions(info) : null);
+  const madeCount = $derived(info?.archive?.files?.length || info?.filesMade || 0);
+  const currentFile = $derived(info?.archive?.current ?? null);
+  const archivingNow = $derived(!!info && believedState(info) === 'archiving');
+
+  function archiveMoved(kind: ArchiveDrawerKind, made: CaseInfo | null) {
+    void (async () => {
+      await rereadFiles();
+      if (kind === 'archive') {
+        const file = info?.archive?.current;
+        if (file) archiveNote = archivedNotice(file.name, file.folder, keyEndingOf(file));
+      } else if (kind === 'restore-in-place') archiveNote = ARCHIVE_TEXT.restoreInPlaceDone;
+      else if (kind === 'free') archiveNote = ARCHIVE_TEXT.freeDone;
+      else if (made) archiveNote = restoredNewNotice(made.title || caseCode(made.id), caseCode(made.id));
+    })();
+  }
+  function closeArchiveDrawer() { archiveDrawer = null; void tick().then(() => headingEl?.focus()); }
+  function archiveChanged() { archiveDrawer = null; changed = true; void tick().then(() => reloadEl?.focus()); }
 
   async function load(id: string) {
     controller?.abort();
@@ -240,8 +267,22 @@
         <div><dt>{CASE_HOME_TEXT.checksCount}</dt><dd>{health.length}</dd></div>
         {#if retries.length > 0}<div><dt>{CASE_HOME_TEXT.retryCount}</dt><dd>{retries.length}</dd></div>{/if}
       </dl>
+      {#if madeCount > 0}<p class="note files-made">{filesMadeText(madeCount)}</p>{/if}
       {#if info?.untrusted}<p class="notice" role="status">{CASE_HOME_TEXT.untrusted}</p>
+      {:else if isArchived}
+        <p class="notice" role="status">{info?.missing ? ARCHIVE_TEXT.workingCopyMissing : info?.archive?.freed ? ARCHIVE_TEXT.freedNote : ARCHIVE_TEXT.archivedNote}</p>
+        {#if currentFile}<p class="note">{ARCHIVE_TEXT.caseFileLine}: {currentFile.name}{currentFile.folder ? ' ' + ARCHIVE_TEXT.inFolder + ' ' + currentFile.folder : ''}{currentFile.keyEnding ? ' · ' + ARCHIVE_TEXT.keyEnding + ' ' + currentFile.keyEnding : ''}</p>{/if}
+      {:else if archivingNow}<p class="notice" role="status">{ARCHIVE_TEXT.chipArchiving}{info?.percent !== undefined ? ' ' + info.percent + '%' : ''}</p>
       {:else if info && believedState(info) === 'closed'}<p class="notice" role="status">{CASE_HOME_TEXT.closedNote}</p>{/if}
+      {#if archiveNote}<p class="notice" role="status">{archiveNote}</p>{/if}
+      {#if archiveState !== 'hidden' || isArchived}
+        <div class="actions">
+          {#if archiveState !== 'hidden'}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={archiveState !== 'enabled' || stale} onclick={() => { archiveNote = ''; archiveDrawer = 'archive'; }}>{ARCHIVE_TEXT.archiveButton}</button>{/if}
+          {#if archivedMoves?.restoreInPlace}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={() => { archiveNote = ''; archiveDrawer = 'restore-in-place'; }}>{ARCHIVE_TEXT.restore}</button>{/if}
+          {#if archivedMoves?.restoreAsNew}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={() => { archiveNote = ''; archiveDrawer = 'restore-as-new'; }}>{ARCHIVE_TEXT.restoreAsNewMenu}</button>{/if}
+          {#if archivedMoves?.free}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={() => { archiveNote = ''; archiveDrawer = 'free'; }}>{ARCHIVE_TEXT.freeMenu}</button>{/if}
+        </div>
+      {/if}
       {#if reopenState !== 'hidden'}
         <div class="actions">
           <button type="button" class="secondary-button" disabled={reopenState !== 'enabled' || stale} aria-busy={reopenState === 'busy'} onclick={() => void reopen()}>{reopenState === 'busy' ? CASE_HOME_TEXT.reopening : CASE_HOME_TEXT.reopenButton}</button>
@@ -363,6 +404,8 @@
     </section>
   {/if}
 </div>
+
+<ArchiveDrawers drawer={archiveDrawer} {info} onClose={closeArchiveDrawer} onChanged={archiveChanged} onGone={() => { archiveDrawer = null; gone(); }} onOpenNew={(id) => { archiveDrawer = null; openCase(id); }} onDone={archiveMoved} />
 
 <style>
   .case-home { display: grid; gap: 20px; max-width: 880px; margin: 0 auto; padding: 8px 0 48px; }

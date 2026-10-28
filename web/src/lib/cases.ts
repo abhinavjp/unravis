@@ -3,6 +3,7 @@ import { LOCKED_STATUS, signalCasesLocked } from './lockSignal';
 import { parseTimelineView, type TimelineView } from './timeline';
 import { parseResource, parseSeries, type ResourceView, type SeriesView } from './resource';
 import { parseCollect, type CollectItem } from './collect';
+import { parseArchive, type ArchiveInfo } from './archiveModel';
 import type { EvidenceExport, ExportFile, Query } from './types';
 
 /**
@@ -63,10 +64,18 @@ export interface CaseInfo {
   untrusted?: boolean;
   bytes: number;
   imports: number;
+  /** True when the working copy is gone without a Free ("Working copy missing"). Only Erase, and Restore as new when archived, are offered. */
+  missing?: boolean;
+  /** How many case files were made from this case ("Case files made earlier: n"). */
+  filesMade?: number;
+  /** The archive record: the case file in force, whether the space was freed, and (in a case view) the whole list. */
+  archive?: ArchiveInfo;
+  /** How far a running archive has got, on an Archiving row. */
+  percent?: number;
 }
 
-/** What happened to a case: made, closed, reopened (A8). */
-export interface HistoryEntry { at: string; kind: string }
+/** What happened to a case: made, closed, reopened, archived, restored, freed (A8). `detail` is a short fact such as a file name or a code, never a key or a path. */
+export interface HistoryEntry { at: string; kind: string; detail?: string }
 
 /** One thing that did not go through, kept in the case until it is retried or dropped (A14, C19). */
 export interface RetryItem {
@@ -225,11 +234,16 @@ function asSupplied(value: unknown): Record<string, string> {
 
 const CASE_STATES: readonly string[] = ['open', 'closed', 'archiving', 'archived', 'untrusted', 'erased'];
 
-function toCase(raw: Partial<CaseInfo>): CaseInfo {
+export function toCase(raw: Partial<CaseInfo>): CaseInfo {
   const stated = asString(raw.state);
   const out: CaseInfo = { id: asString(raw.id), title: asString(raw.title), created: asString(raw.created), closed: raw.closed ? String(raw.closed) : null, bytes: asNumber(raw.bytes), imports: asNumber(raw.imports) };
   if (CASE_STATES.includes(stated)) out.state = stated as CaseState;
   if (raw.untrusted === true) out.untrusted = true;
+  if (raw.missing === true) out.missing = true;
+  if (typeof raw.filesMade === 'number' && raw.filesMade > 0) out.filesMade = Math.floor(raw.filesMade);
+  const archive = parseArchive(raw.archive);
+  if (archive) out.archive = archive;
+  if (typeof raw.percent === 'number' && Number.isFinite(raw.percent)) out.percent = Math.max(0, Math.min(100, Math.floor(raw.percent)));
   return out;
 }
 
@@ -240,8 +254,10 @@ function toRetry(raw: Partial<RetryItem> | null | undefined): RetryItem | null {
 
 const toRetries = (raw: unknown): RetryItem[] => (Array.isArray(raw) ? raw.map(toRetry).filter((r): r is RetryItem => r !== null) : []);
 
-function toView(raw: Partial<CaseView>): CaseView {
-  const history = Array.isArray(raw.history) ? raw.history.filter((h) => h && typeof h.kind === 'string').map((h) => ({ at: asString(h.at), kind: h.kind })) : [];
+export function toView(raw: Partial<CaseView>): CaseView {
+  const history = Array.isArray(raw.history)
+    ? raw.history.filter((h) => h && typeof h.kind === 'string').map((h): HistoryEntry => (typeof h.detail === 'string' && h.detail ? { at: asString(h.at), kind: h.kind, detail: h.detail } : { at: asString(h.at), kind: h.kind }))
+    : [];
   return { ...toCase(raw), history, retries: toRetries(raw.retries) };
 }
 

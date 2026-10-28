@@ -38,3 +38,15 @@ export function retryAction(item: Pick<RetryItem, 'kind'>, c: Pick<CaseInfo, 'st
   if (item.kind === 'import') return 'add-file';
   return item.kind === 'audit-source' ? 'in-wizard' : 'retry';
 }
+
+/**
+ * Archive is offered on an Open or a Closed case, without closing it first (A2). An archiving case is already being archived, an archived case is archived,
+ * and an untrusted or missing one cannot be read, so the button is hidden for those. disabled: shown but off.
+ */
+export type ArchiveButton = 'hidden' | 'enabled' | 'disabled';
+
+export function archiveButton(c: Pick<CaseInfo, 'state' | 'closed' | 'untrusted' | 'missing'>): ArchiveButton {
+  if (c.untrusted || c.missing) return 'hidden';
+  const state = believedState(c);
+  return state === 'open' || state === 'closed' ? 'enabled' : 'hidden';
+}

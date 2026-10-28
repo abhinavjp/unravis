@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import OrphanFiles from './OrphanFiles.svelte';
   import { api, ApiError } from '../api';
   import { CaseApiError, isCaseGone } from '../cases';
   import { fetchHealthRuns, runHealth, sortedFindings, countByStatus, type HealthRun, type HealthReport, type HealthTarget } from '../health';
@@ -245,6 +246,7 @@
       {/each}
     </ul>
   {/if}
+  <OrphanFiles {caseId} />
 </section>
 
 <style>

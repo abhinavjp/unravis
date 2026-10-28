@@ -137,7 +137,7 @@ test('the master key link is offered only while no key is set', () => {
 test('the start screen reads the key status first and asks for no cases while locked', () => {
   const src = read('src/components/StartScreen.svelte');
   const status = src.indexOf('getMasterKeyStatus(');
-  const list = src.indexOf('listCases(');
+  const list = src.indexOf('listCasesPage(');
   assert.ok(status > 0 && list > status, 'status is read before the case list');
   assert.match(src, /if \(closesCases\(lock\)\) \{ noteLocked\(\); return; \}/);
   assert.match(src, /\{#if !view\.locked\}/);
