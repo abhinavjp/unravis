@@ -511,24 +511,35 @@ func TestUnknownOpFloodCannotFillTheAuditLog(t *testing.T) {
 	long := strings.Repeat("A", 60<<10)
 	codes := map[string]int{}
 	for i := 0; i < 100; i++ {
-		c, err := l.Dialer(Caller{SID: testSID, Name: `PC\flood`, PID: 9, Session: 1}).Dial(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		req := Request{V: ProtocolVersion, Op: fmt.Sprintf("x%03d\n\"%s", i, long)}
-		if i%10 == 9 {
-			req.V = 99 // another version, same limit
-		}
-		if err := writeJSONFrame(c, req); err != nil {
-			t.Fatal(err)
-		}
-		f, err := ReadFrame(c)
-		if err != nil {
-			t.Fatal(err)
-		}
+		// The keeper frees a connection's slot only after it has finished draining the 60 KB request, which can be after this
+		// side has read the answer, so the next connection may be refused "busy" by the per-session cap. That refusal is not a
+		// request the keeper judged (it does not touch the "bad" limit), so ask again until the keeper takes it.
 		var r Response
-		_ = json.Unmarshal(f, &r)
-		c.Close()
+		for try := 0; ; try++ {
+			c, err := l.Dialer(Caller{SID: testSID, Name: `PC\flood`, PID: 9, Session: 1}).Dial(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := Request{V: ProtocolVersion, Op: fmt.Sprintf("x%03d\n\"%s", i, long)}
+			if i%10 == 9 {
+				req.V = 99 // another version, same limit
+			}
+			if err := writeJSONFrame(c, req); err != nil {
+				t.Fatal(err)
+			}
+			f, err := ReadFrame(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r = Response{}
+			_ = json.Unmarshal(f, &r)
+			c.Close()
+			if r.Error != nil && r.Error.Code == CodeBusy && try < 2000 {
+				time.Sleep(time.Millisecond)
+				continue
+			}
+			break
+		}
 		if r.Error == nil {
 			t.Fatalf("request %d was run", i)
 		}
@@ -539,8 +550,17 @@ func TestUnknownOpFloodCannotFillTheAuditLog(t *testing.T) {
 	}
 	// The flooder is limited, not everyone: a real request from the same person still runs.
 	var out map[string]any
-	if err := NewClient(l.Dialer(Caller{SID: testSID, PID: 9, Session: 1})).Call(ctx, OpPing, nil, &out); err != nil {
-		t.Fatalf("ping after the flood: %v", err)
+	// (The last flood connection may still be draining, so a "busy" answer is asked again.)
+	var pingErr error
+	for try := 0; try < 2000; try++ {
+		pingErr = NewClient(l.Dialer(Caller{SID: testSID, PID: 9, Session: 1})).Call(ctx, OpPing, nil, &out)
+		if pingErr == nil || wireCode(pingErr) != CodeBusy {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if pingErr != nil {
+		t.Fatalf("ping after the flood: %v", pingErr)
 	}
 	cancel()
 	<-done
