@@ -107,6 +107,7 @@ var routeCases = []routeCase{
 	{"/api/blackbox/this-pc/snapshot", "/api/blackbox/this-pc/snapshot", "POST"},
 	{"/api/blackbox/{id}/check", "/api/blackbox/bb-1/check", "POST"},
 	{"/api/blackbox/{id}/key", "/api/blackbox/bb-1/key", "PUT"},
+	{"/api/blackbox/{id}/reveal-key", "/api/blackbox/bb-1/reveal-key", "POST"},
 	{"/api/blackbox/{id}/host-reading", "/api/blackbox/bb-1/host-reading", "POST"},
 	{"/api/blackbox/{id}", "/api/blackbox/bb-1", "DELETE"},
 }

@@ -220,6 +220,11 @@ export const blackboxApi = {
   snapshot: () => call<SnapshotAnswer>('POST', '/this-pc/snapshot', {}),
   hostReading: (id: string, body: { incident: { start: string; end: string }; reference: { start: string; end: string } }) =>
     call<HostAnswer>('POST', '/' + encodeURIComponent(id) + '/host-reading', body),
+  /**
+   * The sealed read key of the Blackbox installed on this PC, for Show and Copy (A33, wireframe 65). A POST that is never
+   * cached. The caller holds the answer only while it is on view and never stores it.
+   */
+  revealKey: async (id: string): Promise<string> => (await call<{ key: string }>('POST', '/' + encodeURIComponent(id) + '/reveal-key', {})).key,
   /** The pack zip for the settings. The read key is not in it: the Blackbox makes its own on its server. */
   pack: async (settings: Settings): Promise<{ blob: Blob; fileName: string }> => {
     const response = await send('POST', '/pack', settings);

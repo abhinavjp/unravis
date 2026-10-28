@@ -1004,3 +1004,63 @@ func TestBlackboxClumsyRepeatsAreAnswered(t *testing.T) {
 		t.Fatalf("empty place = %d %s", res.Code, res.Body)
 	}
 }
+
+// F3: the read key of the Blackbox installed on this PC is shown only on a press of
+// Show or Copy (A33, wireframe 65). It is never in the list, a check, a failure or the
+// sealed file, and a typed-URL entry never gives its key back.
+func TestBlackboxRevealKeyOnlyForThisPC(t *testing.T) {
+	b := newBBEnv(t, nil)
+	res := b.post("/api/blackbox/this-pc/install", `{"name":"web-a"}`)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("install = %d %s", res.Code, res.Body)
+	}
+	it := b.list().Items[0]
+	sealed, err := b.bbs.Key(it.ID)
+	if err != nil || sealed == "" {
+		t.Fatalf("sealed key = %q %v", sealed, err)
+	}
+
+	got := b.post("/api/blackbox/"+it.ID+"/reveal-key", "")
+	if got.Code != http.StatusOK {
+		t.Fatalf("reveal = %d %s", got.Code, got.Body)
+	}
+	var out bbRevealKeyAnswer
+	decodeBody(t, got, &out)
+	if out.Key != sealed {
+		t.Fatalf("revealed %q, want the sealed key", out.Key)
+	}
+	if cc := got.Header().Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Fatalf("Cache-Control = %q", cc)
+	}
+
+	// The key is in no other answer.
+	for _, p := range []string{"/api/blackbox", "/api/blackbox/this-pc"} {
+		if body := b.e.get(p).Body.String(); strings.Contains(body, sealed) {
+			t.Fatalf("%s carries the key", p)
+		}
+	}
+	if raw, _ := os.ReadFile(b.path); bytes.Contains(raw, []byte(sealed)) {
+		t.Fatal("the sealed file holds the key in the clear")
+	}
+	// A second install refusal and a repeat reveal do not leak it into a failure.
+	if f := b.post("/api/blackbox/this-pc/install", `{"name":"web-a"}`); strings.Contains(f.Body.String(), sealed) {
+		t.Fatalf("a refusal carried the key: %s", f.Body)
+	}
+}
+
+func TestBlackboxRevealKeyRefusedForTypedEntryAndUnknownId(t *testing.T) {
+	b := newBBEnv(t, nil)
+	b.world.put("http://web-c:7788", bbRec("web-c", func(r *simRec) { r.Key = bbKeyA }))
+	it := b.mustAdd("web-c:7788", bbKeyA)
+
+	res := b.post("/api/blackbox/"+it.ID+"/reveal-key", "")
+	bbFail(t, res, http.StatusForbidden, "not-this-pc")
+	if strings.Contains(res.Body.String(), "SENTINEL") {
+		t.Fatalf("a refusal carried the key: %s", res.Body)
+	}
+	bbFail(t, b.post("/api/blackbox/bb-nope/reveal-key", ""), http.StatusNotFound, "not-listed")
+	// GET is not allowed: the key is never reachable by a link.
+	if got := b.e.get("/api/blackbox/" + it.ID + "/reveal-key"); got.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET reveal = %d", got.Code)
+	}
+}

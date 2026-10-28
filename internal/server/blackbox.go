@@ -154,6 +154,7 @@ func init() {
 		bbRoute("/api/blackbox/this-pc/snapshot", bbExact("/api/blackbox/this-pc/snapshot"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbSnapshot(w, r) })),
 		bbRoute("/api/blackbox/{id}/check", bbEntryPath("/check"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbCheck(w, r, id) })),
 		bbRoute("/api/blackbox/{id}/key", bbEntryPath("/key"), bbM(http.MethodPut, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbSetKey(w, r, id) })),
+		bbRoute("/api/blackbox/{id}/reveal-key", bbEntryPath("/reveal-key"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbRevealKey(w, r, id) })),
 		bbRoute("/api/blackbox/{id}/host-reading", bbEntryPath("/host-reading"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbHostReading(w, r, id) })),
 		bbRoute("/api/blackbox/{id}", bbEntryPath(""), bbM(http.MethodDelete, func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.bbRemoveEntry(w, r, id) })),
 	)
@@ -586,6 +587,42 @@ func (h *handler) bbSetKey(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	e, _ = b.deps.Store.Get(id)
 	writeJSON(w, http.StatusOK, b.item(e, l), 16384)
+}
+
+// bbRevealKeyAnswer is the one place a read key leaves the sealed list: the answer to
+// a press of Show or Copy on a Blackbox installed on this PC (A33, wireframe 65).
+type bbRevealKeyAnswer struct {
+	Key string `json:"key"`
+}
+
+// bbRevealKey answers POST /api/blackbox/{id}/reveal-key with the sealed read key of
+// the Blackbox that this Unravis installed on this PC, so its owner can give the key
+// to another PC's Unravis. It is a POST, never cached, never logged and never kept: the
+// page holds the key only while it is on view. A key the owner typed for another
+// server is not given back, and neither is any key of a folder or share (none exists).
+func (h *handler) bbRevealKey(w http.ResponseWriter, _ *http.Request, id string) {
+	if !h.bbReady(w) {
+		return
+	}
+	e, err := h.bb.deps.Store.Get(id)
+	if err != nil {
+		bbStoreFailure(w, err)
+		return
+	}
+	if !e.ThisPC {
+		writeJSON(w, http.StatusForbidden, bbFailure{Error: "A read key is shown only for the Blackbox installed on this PC.", Reason: "not-this-pc"}, 4096)
+		return
+	}
+	key, err := h.bb.deps.Store.Key(id)
+	if err != nil {
+		bbStoreFailure(w, err)
+		return
+	}
+	if key == "" {
+		writeJSON(w, http.StatusNotFound, bbFailure{Error: "This Blackbox has no read key saved.", Reason: "no-key", Next: "Remove it from this PC and install it again to make a new key."}, 4096)
+		return
+	}
+	writeJSON(w, http.StatusOK, bbRevealKeyAnswer{Key: key}, 1024)
 }
 
 // bbRemoveEntry takes a Blackbox out of the list and drops its sealed key. The

@@ -234,3 +234,42 @@ test('the status screen offers use in this case and the control posts a name tag
   assert.match(api, /postSourceTag/);
   assert.equal(BB_TEXT.caseUseButton, 'Use in this case');
 });
+
+// F3: Screen 65, Show and Copy of the read key of the Blackbox on this PC.
+const bbKey = loadTypeScript('src/lib/blackboxKey.ts');
+
+test('copy fetches the key once, hands it to the clipboard and keeps nothing', async () => {
+  let fetched = 0;
+  let written = '';
+  const done = await bbKey.copyKeyOnce(async () => { fetched += 1; return 'ubk-test-value'; }, async (text) => { written = text; });
+  assert.equal(done, 'copied');
+  assert.equal(fetched, 1);
+  assert.equal(written, 'ubk-test-value');
+});
+
+test('copy says so when the key is not given or the clipboard refuses, and never throws', async () => {
+  assert.equal(await bbKey.copyKeyOnce(async () => { throw new Error('refused'); }, async () => {}), 'no-key');
+  assert.equal(await bbKey.copyKeyOnce(async () => '', async () => {}), 'no-key');
+  assert.equal(await bbKey.copyKeyOnce(async () => 'ubk-x', async () => { throw new Error('denied'); }), 'no-clipboard');
+});
+
+test('the read key row is on this PC only, masked, and the key stays in the component and goes nowhere else', () => {
+  const panel = read('src/components/BlackboxPanel.svelte');
+  assert.match(panel, /item\.thisPc && item\.kind === 'url' && item\.hasKey\}\{#key item\.id\}<ReadKey \{item\} \/>/);
+  const row = read('src/components/BlackboxReadKey.svelte');
+  assert.match(row, /blackboxApi\.revealKey\(item\.id\)/);
+  assert.match(row, /onDestroy\(letGo\)/);
+  assert.match(row, /KEY_SHOW_MS/);
+  assert.doesNotMatch(row, /localStorage|sessionStorage|indexedDB|app\.|console\./);
+  assert.match(row, /aria-hidden="true">•+</);
+  assert.match(read('src/lib/blackbox.ts'), /reveal-key', \{\}\)\)\.key/);
+  assert.equal(BB_TEXT.keyHereOnly, 'Shown here only for a Blackbox that is on this PC.');
+  assert.equal(BB_TEXT.keyShow, 'Show');
+  assert.equal(BB_TEXT.keyCopy, 'Copy');
+  assert.ok(bbKey.KEY_SHOW_MS > 0 && bbKey.KEY_SHOW_MS <= 60000);
+});
+
+test('no other screen or case file holds a key field', () => {
+  assert.doesNotMatch(read('src/components/BlackboxCaseUse.svelte'), /revealKey/);
+  assert.doesNotMatch(read('src/lib/blackboxCase.ts'), /revealKey|\bkey:/);
+});

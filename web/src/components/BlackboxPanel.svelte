@@ -13,6 +13,7 @@
   import SettingsFields from './BlackboxSettings.svelte';
   import HostCard from './BlackboxHostCard.svelte';
   import CaseUse from './BlackboxCaseUse.svelte';
+  import ReadKey from './BlackboxReadKey.svelte';
 
   // The Blackbox page: the list with a sticker per state, the Place wizard, Add by folder, share or address, a status
   // screen per Blackbox with the actions that exist for it, Remove and Snapshot. It is not part of a case.
@@ -280,6 +281,7 @@
           </details>
         {/if}
 
+        {#if item.thisPc && item.kind === 'url' && item.hasKey}{#key item.id}<ReadKey {item} />{/key}{/if}
         {#key item.id}<CaseUse {item} />{/key}
 
         {#if item.facts}
