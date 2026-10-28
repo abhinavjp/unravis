@@ -216,6 +216,7 @@ func (h *handler) archiveCase(w http.ResponseWriter, r *http.Request, raw string
 		run.sampler, run.hadSamp = p, true
 		h.stopSamplerFor(id, false, stopCaseClosed)
 	}
+	injectAt("before-begin", "", "")
 	_, err = ar.BeginArchive(r.Context(), id, believed, casestore.ArchivePending{
 		Folder: folder, Name: name, Started: now.UTC(), SamplerWas: run.hadSamp,
 	})
@@ -225,6 +226,15 @@ func (h *handler) archiveCase(w http.ResponseWriter, r *http.Request, raw string
 		}
 		writeStoreError(w, err)
 		return
+	}
+	// A recording another tab started between the first look and the stamp is
+	// stopped now, so none runs into the case while it is archived. It is put back
+	// like the first one if the archive does not go through.
+	if !run.hadSamp {
+		if p, running := h.samplerRunningFor(id); running {
+			run.sampler, run.hadSamp = p, true
+			h.stopSamplerFor(id, false, stopCaseClosed)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

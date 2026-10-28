@@ -221,6 +221,14 @@ func (h *handler) launchSamplerLocked(id casestore.CaseID, p samplerParams) *lau
 	if err != nil {
 		return &launchFailure{err: err}
 	}
+	// A case being archived takes no recording (its writes would miss the file and
+	// Free would drop them, and the open handle would hold Free off). The caller
+	// holds smu, and the archive looks for a recording under it again once it has
+	// stamped Archiving, so a start that slips in before the stamp is stopped there.
+	if pc.Info().Mark == casestore.MarkArchiving {
+		_ = pc.Close()
+		return &launchFailure{err: casestore.ErrArchiveRunning}
+	}
 	h.disc.mu.Lock()
 	runCtx, shut := h.disc.context(), h.disc.closed
 	h.disc.mu.Unlock()
