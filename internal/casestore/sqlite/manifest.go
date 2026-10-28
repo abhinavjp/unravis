@@ -36,11 +36,15 @@ type manifest struct {
 	Mark      string            `json:"mark,omitempty"`
 	RequestID string            `json:"requestId,omitempty"`
 	History   []manifestHistory `json:"history,omitempty"`
+	// Arch is the archive record (P3). Omitted for a case never archived, so older
+	// manifests read and write as before and the version stays 1.
+	Arch *manifestArch `json:"arch,omitempty"`
 }
 
 type manifestHistory struct {
-	At   time.Time `json:"at"`
-	Kind string    `json:"kind"`
+	At     time.Time `json:"at"`
+	Kind   string    `json:"kind"`
+	Detail string    `json:"detail,omitempty"`
 }
 
 type manifestImport struct {

@@ -132,7 +132,7 @@ func (c *Case) Info() casestore.CaseInfo {
 		ID: c.id, Title: c.man.Title, Created: c.man.Created, Closed: c.man.Closed,
 		Bytes: manifestBytes(c.man), Imports: len(c.man.Imports),
 		Envs: int(c.tagEnvs.Load()), Sources: int(c.tagSources.Load()),
-		Mark: c.man.Mark, RequestID: c.man.RequestID, History: historyOf(c.man),
+		Mark: c.man.Mark, RequestID: c.man.RequestID, History: historyOf(c.man), Archive: c.man.Arch.info(),
 	}
 }
 
@@ -291,9 +291,9 @@ func (c *Case) rebuildManifest() {
 	}
 	defer release()
 	if disk, err := readManifest(c.dir, c.s.sealer(c.dir, "")); err == nil && disk.CaseID == string(c.id) {
-		c.man.Closed, c.man.Mark, c.man.RequestID, c.man.History = disk.Closed, disk.Mark, disk.RequestID, disk.History
+		c.man.Closed, c.man.Mark, c.man.RequestID, c.man.History, c.man.Arch = disk.Closed, disk.Mark, disk.RequestID, disk.History, disk.Arch
 	}
-	_ = writeManifest(c.dir, c.s.sealer(c.dir, ""), c.man)
+	_ = c.s.writeMan(c.dir, c.man)
 }
 
 // dbManifestImports reads the imports table with per-import event counts, in the
@@ -792,7 +792,41 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 func (c *Case) isClosed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.man.Closed != nil
+	// An archive in flight (the mark) or a finished one takes no more writes either:
+	// the file being written must stay a copy of what the case holds.
+	return c.man.Closed != nil || c.man.Mark == casestore.MarkArchiving || archived(c.man)
+}
+
+// archiveRefusal answers a write that must not land once an archive has started:
+// ErrCaseClosed while Archiving, ErrArchived after. It reads the cached manifest,
+// which syncManifest and every lifecycle move keep current.
+func (c *Case) archiveRefusal() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.archiveRefusalLocked()
+}
+
+func (c *Case) archiveRefusalLocked() error {
+	switch {
+	case archived(c.man):
+		return casestore.ErrArchived
+	case c.man.Mark == casestore.MarkArchiving:
+		return casestore.ErrCaseClosed
+	}
+	return nil
+}
+
+// archiveWriteGate is archiveRefusal for a write that takes no folder lock (the
+// discovery marks and the read audit). It holds the case's state lock until done is
+// called, so a lifecycle move (which needs that lock to stamp Archiving) waits for the
+// write instead of overtaking it, and the archive's snapshot then includes the write.
+func (c *Case) archiveWriteGate() (done func(), err error) {
+	c.mu.Lock()
+	if err := c.archiveRefusalLocked(); err != nil {
+		c.mu.Unlock()
+		return nil, err
+	}
+	return c.mu.Unlock, nil
 }
 
 // mirror appends a committed import to the sealed manifest. A failure is not an
@@ -805,7 +839,7 @@ func (c *Case) mirror(m manifestImport) {
 	if hook := c.s.opt.afterCommit; hook != nil && hook() != nil {
 		return
 	}
-	_ = writeManifest(c.dir, c.s.sealer(c.dir, ""), c.man)
+	_ = c.s.writeMan(c.dir, c.man)
 }
 
 // syncManifest runs under the folder lock before an import. It takes the
@@ -830,7 +864,7 @@ func (c *Case) syncManifest(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	c.man.Imports = imports
-	return writeManifest(c.dir, c.s.sealer(c.dir, ""), c.man)
+	return c.s.writeMan(c.dir, c.man)
 }
 
 func sameImport(a, b manifestImport) bool {

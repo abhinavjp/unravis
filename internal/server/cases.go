@@ -13,6 +13,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -68,15 +69,16 @@ type casesState struct {
 	hostsSave func(*hosts.Map) error
 	// recoverer runs the recovery hooks of marked cases (see casestore.Recoverer).
 	// nil means no hook is registered and nothing is ever marked.
-	recoverer *casestore.Recoverer
-	gates     caseGates
-	imports   importLimiter
-	pending   pendingStrips
-	ledgers   caseLedgerLocks
-	wsLocks   caseLedgerLocks // serialises writes of each case's workspace note
-	jobs      importJobs
-	disc      discoverState
-	maxUpload int64 // test hook: replaces the computed upload cap when > 0
+	recoverer  *casestore.Recoverer
+	archiveRec *ArchiveRecovery // the archive hooks, so a live job is told from a dead one
+	gates      caseGates
+	imports    importLimiter
+	pending    pendingStrips
+	ledgers    caseLedgerLocks
+	wsLocks    caseLedgerLocks // serialises writes of each case's workspace note
+	jobs       importJobs
+	disc       discoverState
+	maxUpload  int64 // test hook: replaces the computed upload cap when > 0
 
 	hostsMu sync.RWMutex
 	hostMap *hosts.Map
@@ -376,6 +378,11 @@ func caseIDOf(w http.ResponseWriter, raw string) (casestore.CaseID, bool) {
 // writeStoreError maps a store failure outside an import.
 func writeStoreError(w http.ResponseWriter, err error) {
 	switch {
+	// An archived case is a kind of not-found to the store, so M6 is listed first.
+	case errors.Is(err, casestore.ErrArchived):
+		writeCaseFailure(w, http.StatusConflict, "case-archived", caseArchivedText)
+	case errors.Is(err, casestore.ErrCaseInUse):
+		writeCaseFailure(w, http.StatusConflict, "case-in-use", caseInUseText)
 	case errors.Is(err, casestore.ErrNotFound):
 		writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
 	case errors.Is(err, casestore.ErrBadID):
@@ -427,10 +434,21 @@ type caseDTO struct {
 	// Untrusted is true for a folder the store refuses (see
 	// casestore.ErrUntrustedLegacy). Its title is a fixed placeholder.
 	Untrusted bool `json:"untrusted,omitempty"`
+	// Missing is true for a case whose working copy is gone without a Free: no
+	// folder and no mark ("Working copy missing"). Only Erase, and Restore as new
+	// when it was archived, are offered.
+	Missing bool `json:"missing,omitempty"`
+	// FilesMade is how many case files were made from this case (the home says
+	// "Case files made earlier: n").
+	FilesMade int         `json:"filesMade,omitempty"`
+	Archive   *archiveDTO `json:"archive,omitempty"`
+	// Percent is how far a running archive has got (an Archiving row only).
+	Percent *int `json:"percent,omitempty"`
 }
 
 func toCaseDTO(c casestore.CaseInfo) caseDTO {
-	d := caseDTO{ID: string(c.ID), Title: c.Title, Created: c.Created.UTC(), Bytes: c.Bytes, Imports: c.Imports, Untrusted: c.Untrusted, State: string(casestore.StateOf(c))}
+	d := caseDTO{ID: string(c.ID), Title: c.Title, Created: c.Created.UTC(), Bytes: c.Bytes, Imports: c.Imports, Untrusted: c.Untrusted, State: string(casestore.StateOf(c)),
+		Missing: c.Missing, FilesMade: filesMade(c.Archive), Archive: toArchiveDTO(c.Archive, false)}
 	if c.Closed != nil {
 		t := c.Closed.UTC()
 		d.Closed = &t
@@ -572,17 +590,70 @@ func (h *handler) listCases(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	// Archived cases have their own list, 50 to a page, newest archive first; the
+	// default list holds every other case (Missing ones included) and carries the
+	// archived total for the toggle.
+	var live, kept []casestore.CaseInfo
+	for _, c := range items {
+		if c.Archive != nil && c.Archive.Active {
+			kept = append(kept, c)
+		} else {
+			live = append(live, c)
+		}
+	}
+	page, offset := live, 0
+	wantArchived := r.URL.Query().Get("archived") == "1"
+	if wantArchived {
+		sort.SliceStable(kept, func(i, j int) bool { return archivedAt(kept[i]).After(archivedAt(kept[j])) })
+		if v := r.URL.Query().Get("offset"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				writeCaseFailure(w, http.StatusBadRequest, "bad-request", "The request is invalid.")
+				return
+			}
+			offset = n
+		}
+		if offset > len(kept) {
+			offset = len(kept)
+		}
+		end := offset + archivedPageSize
+		if end > len(kept) {
+			end = len(kept)
+		}
+		page = kept[offset:end]
+	}
 	// A listing repairs only the marked rows of the page it returns.
 	if h.recoverer != nil {
-		items = h.recoverer.RecoverPage(r.Context(), items)
+		page = h.recoverer.RecoverPage(r.Context(), page)
 	}
-	out := make([]caseDTO, 0, len(items))
-	for _, c := range items {
-		out = append(out, toCaseDTO(c))
+	out := make([]caseDTO, 0, len(page))
+	for _, c := range page {
+		d := toCaseDTO(c)
+		if c.Mark == casestore.MarkArchiving {
+			if j := h.caseFiles().jobs.running(jobArchive, c.ID); j != nil {
+				p := j.percent()
+				d.Percent = &p
+			}
+		}
+		out = append(out, d)
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Cases []caseDTO `json:"cases"`
-	}{out}, maxResponseBytes)
+		Cases         []caseDTO `json:"cases"`
+		ArchivedTotal int       `json:"archivedTotal"`
+		Offset        int       `json:"offset"`
+		PageSize      int       `json:"pageSize"`
+	}{out, len(kept), offset, archivedPageSize}, maxResponseBytes)
+}
+
+// archivedPageSize is how many archived cases one page of the archived list holds.
+const archivedPageSize = 50
+
+// archivedAt is when a case was archived, for the order of the archived list.
+func archivedAt(c casestore.CaseInfo) time.Time {
+	if c.Archive != nil && c.Archive.At != nil {
+		return *c.Archive.At
+	}
+	return c.Created
 }
 
 func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
@@ -643,6 +714,12 @@ func (h *handler) openCase(w http.ResponseWriter, r *http.Request, raw string) (
 	if !h.casesAvailable(w) {
 		return "", nil, false
 	}
+	// A Free is waiting for the readers of this case to let go: a new one is told
+	// to wait (M19) instead of joining them.
+	if h.caseFiles().freeing.has(id) {
+		writeStoreError(w, casestore.ErrFreeing)
+		return "", nil, false
+	}
 	release, ok := h.gates.acquireRead(id)
 	if !ok {
 		writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
@@ -677,6 +754,10 @@ func (h *handler) openCaseForWrite(w http.ResponseWriter, r *http.Request, raw s
 		return "", nil, false
 	}
 	if !h.casesAvailable(w) {
+		return "", nil, false
+	}
+	if h.caseFiles().freeing.has(id) {
+		writeStoreError(w, casestore.ErrFreeing)
 		return "", nil, false
 	}
 	c, err := h.cases.Open(r.Context(), id)
@@ -788,6 +869,7 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 		}
 	}
 	h.pending.remove(id)
+	h.noteFreedArchives(context.Background()) // an erased freed archive is no longer counted by M12
 	w.WriteHeader(http.StatusNoContent)
 }
 

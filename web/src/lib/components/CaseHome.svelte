@@ -1,14 +1,17 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../api';
-  import { app, goHome, openAnalysis, openCaseImport, openConnections, openSidePanel, panels } from '../appState.svelte';
-  import { believedState, caseCode, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseView, type ImportRecord, type RetryItem } from '../cases';
-  import { reopenButton, retryAction } from '../caseLifecycle';
+  import { app, goHome, openAnalysis, openCase, openCaseImport, openConnections, openSidePanel, panels } from '../appState.svelte';
+  import { JOB_POLL_MS, believedState, caseCode, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
+  import { archiveButton, readsCaseData, reopenButton, retryAction } from '../caseLifecycle';
+  import { archivedActions, keyEndingOf, type ArchiveDrawerKind } from '../archiveModel';
+  import { ARCHIVE_TEXT, archivedNotice, filesMadeText, restoredNewNotice } from '../copy/archiveCopy';
+  import ArchiveDrawers from './ArchiveDrawers.svelte';
   import { CASE_HOME_TEXT, retryKindLabel } from '../copy/caseHomeCopy';
   import { errorText, importerLabel, formatBytes } from '../copy/importCopy';
   import { fetchHealthRuns, type HealthRun } from '../health';
   import { stateLabel } from '../ledger';
-  import { ledger, refreshLedger } from '../ledgerStore.svelte';
+  import { holdLedger, ledger, refreshLedger } from '../ledgerStore.svelte';
   import { buildStory, shortText } from '../story';
   import { GUIDED_TEXT } from '../copy/guidedCopy';
   import { guidedOpenFor } from '../guided/stepModel';
@@ -48,8 +51,10 @@
   let controller: AbortController | null = null;
   let loadedFor = '';
 
-  const story = $derived(buildStory({ info, imports, health, theories: ledger.items, history: info?.history }));
-  const theories = $derived(ledger.items);
+  // An archived case offers no analysis, files, checks or theories (spec section 9): the page shows its record and the way back.
+  const offersWork = $derived(!info || readsCaseData(info));
+  const theories = $derived(offersWork ? ledger.items : []);
+  const story = $derived(buildStory({ info, imports, health, theories, history: info?.history }));
   const keptFiles = $derived(imports.filter(record => record.status === 'ok'));
   const hasIis = $derived(keptFiles.some(record => record.importer === 'iis-w3c'));
   // A case that is not open (closed, archived) or is untrusted is read-only: nothing can be added, so the buttons that add say so up front.
@@ -59,11 +64,45 @@
   const stale = $derived(changed);
   const retries = $derived(info?.retries ?? []);
 
-  async function load(id: string) {
+  // Archive, restore and free. The drawer is local to this page; the notice says what the last move made, until another move or a reload.
+  let archiveDrawer = $state<ArchiveDrawerKind | null>(null);
+  let archiveNote = $state('');
+  const archiveState = $derived(info ? archiveButton(info) : 'hidden');
+  const isArchived = $derived(!!info && believedState(info) === 'archived');
+  const archivedMoves = $derived(info ? archivedActions(info) : null);
+  const madeCount = $derived(info?.archive?.files?.length || info?.filesMade || 0);
+  const currentFile = $derived(info?.archive?.current ?? null);
+  const archivingNow = $derived(!!info && believedState(info) === 'archiving');
+
+  function archiveMoved(kind: ArchiveDrawerKind, made: CaseInfo | null) {
+    void (async () => {
+      // A move changes what the page may ask for (an archived case has no files or checks to read, a restored one has them again), so the
+      // whole page is read again, quietly. Restore as new leaves this case as it was.
+      if (kind === 'restore-as-new') await rereadFiles(); else if (caseId) await load(caseId, true);
+      if (kind === 'archive') {
+        const file = info?.archive?.current;
+        if (file) archiveNote = archivedNotice(file.name, file.folder, keyEndingOf(file));
+      } else if (kind === 'restore-in-place') archiveNote = ARCHIVE_TEXT.restoreInPlaceDone;
+      else if (kind === 'free') archiveNote = ARCHIVE_TEXT.freeDone;
+      else if (made) archiveNote = restoredNewNotice(made.title || caseCode(made.id), caseCode(made.id));
+    })();
+  }
+  // The drawer hands focus back to the button that opened it. When that button is gone (an archive finished, the page changed) the case name takes it.
+  function closeArchiveDrawer() {
+    const was = archiveDrawer;
+    archiveDrawer = null;
+    // Closed while the archive runs: read the case again so the page shows that it is being archived (and keeps showing how far it has got).
+    if (was === 'archive' && caseId) void load(caseId, true);
+    void tick().then(() => { const now = document.activeElement; if (!now || now === document.body) headingEl?.focus(); });
+  }
+  function archiveChanged() { archiveDrawer = null; changed = true; void tick().then(() => reloadEl?.focus()); }
+
+  // quiet: the page is read again after a move on the case (archive, restore, free), so it stays on screen and does not show the loading text.
+  async function load(id: string, quiet = false) {
     controller?.abort();
     const mine = new AbortController();
     controller = mine;
-    phase = 'loading';
+    if (!quiet) phase = 'loading';
     loadedFor = id;
     copyNote = '';
     copyProblem = '';
@@ -71,9 +110,15 @@
     changed = false;
     lifeProblem = '';
     retryNote = {};
-    const [view, files, runs, theory] = await Promise.allSettled([getCaseView(id, mine.signal), listImports(id, mine.signal), fetchHealthRuns(id, mine.signal), refreshLedger()]);
+    // The case is read first: an archived case answers 409 to its files, checks and theories, so those are not asked for.
+    const [view] = await Promise.allSettled([getCaseView(id, mine.signal)]);
     if (mine.signal.aborted || id !== caseId) return;
     const found = view.status === 'fulfilled' ? view.value : null;
+    const reads = found ? readsCaseData(found) : true;
+    holdLedger(id, !reads);
+    const none = <T,>(value: T): Promise<T> => Promise.resolve(value);
+    const [files, runs, theory] = await Promise.allSettled([reads ? listImports(id, mine.signal) : none<ImportRecord[]>([]), reads ? fetchHealthRuns(id, mine.signal) : none<HealthRun[]>([]), reads ? refreshLedger() : none<void>(undefined)]);
+    if (mine.signal.aborted || id !== caseId) return;
     if (files.status === 'rejected' && isCaseGone(files.reason)) { phase = 'gone'; return; }
     if (view.status === 'rejected' && isCaseGone(view.reason)) { phase = 'gone'; return; }
     if (view.status === 'rejected' && files.status === 'rejected') { phase = 'failed'; return; }
@@ -124,7 +169,8 @@
     const id = caseId;
     if (!id || phase !== 'ready') return;
     try {
-      const [view, files] = await Promise.all([getCaseView(id), listImports(id)]);
+      const view = await getCaseView(id);
+      const files = readsCaseData(view) ? await listImports(id) : [];
       if (id !== caseId) return;
       info = view;
       imports = files;
@@ -220,6 +266,15 @@
   });
   onMount(() => () => controller?.abort());
 
+  // An archive that runs while its drawer is closed (closed on purpose, or the page was reloaded) is followed here, so it never finishes unseen.
+  $effect(() => {
+    const now = info;
+    const id = caseId;
+    if (!id || !now || archiveDrawer || believedState(now) !== 'archiving') return;
+    const timer = setTimeout(() => { if (id === caseId && !archiveDrawer) void load(id, true); }, JOB_POLL_MS);
+    return () => clearTimeout(timer);
+  });
+
   // Every date on this page follows the UTC / Local choice in the header, like the start screen's case list.
   const when = (value: string): string => formatTime(value, { zone: timeZone.zone, year: true, precision: 'minute', fallback: value });
   const kindLabel = { case: CASE_HOME_TEXT.kindCase, file: CASE_HOME_TEXT.kindFile, health: CASE_HOME_TEXT.kindHealth, theory: CASE_HOME_TEXT.kindTheory } as const;
@@ -253,8 +308,25 @@
         <div><dt>{CASE_HOME_TEXT.checksCount}</dt><dd>{health.length}</dd></div>
         {#if retries.length > 0}<div><dt>{CASE_HOME_TEXT.retryCount}</dt><dd>{retries.length}</dd></div>{/if}
       </dl>
+      {#if madeCount > 0}<p class="note files-made">{filesMadeText(madeCount)}</p>{/if}
       {#if info?.untrusted}<p class="notice" role="status">{CASE_HOME_TEXT.untrusted}</p>
+      {:else if isArchived}
+        <p class="notice" role="status">{info?.missing ? ARCHIVE_TEXT.workingCopyMissing : info?.archive?.freed ? ARCHIVE_TEXT.freedNote : ARCHIVE_TEXT.archivedNote}</p>
+        <p class="note">{ARCHIVE_TEXT.archivedWork}</p>
+        {#if currentFile}<p class="note">{ARCHIVE_TEXT.caseFileLine}: {currentFile.name}{currentFile.folder ? ' ' + ARCHIVE_TEXT.inFolder + ' ' + currentFile.folder : ''}{currentFile.keyEnding ? ' · ' + ARCHIVE_TEXT.keyEnding + ' ' + currentFile.keyEnding : ''}</p>{/if}
+      {:else if archivingNow}
+        <p class="notice" role="status">{ARCHIVE_TEXT.archivingNote}{info?.percent !== undefined ? ' ' + info.percent + '%' : ''}</p>
+        <div class="actions"><button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={() => { archiveNote = ''; archiveDrawer = 'archive'; }}>{ARCHIVE_TEXT.showProgress}</button></div>
       {:else if info && believedState(info) === 'closed'}<p class="notice" role="status">{CASE_HOME_TEXT.closedNote}</p>{/if}
+      {#if archiveNote}<p class="notice" role="status">{archiveNote}</p>{/if}
+      {#if archiveState !== 'hidden' || isArchived}
+        <div class="actions">
+          {#if archiveState !== 'hidden'}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={archiveState !== 'enabled' || stale} onclick={() => { archiveNote = ''; archiveDrawer = 'archive'; }}>{ARCHIVE_TEXT.archiveButton}</button>{/if}
+          {#if archivedMoves?.restoreInPlace}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={() => { archiveNote = ''; archiveDrawer = 'restore-in-place'; }}>{ARCHIVE_TEXT.restore}</button>{/if}
+          {#if archivedMoves?.restoreAsNew}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={() => { archiveNote = ''; archiveDrawer = 'restore-as-new'; }}>{ARCHIVE_TEXT.restoreAsNewMenu}</button>{/if}
+          {#if archivedMoves?.free}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={() => { archiveNote = ''; archiveDrawer = 'free'; }}>{ARCHIVE_TEXT.freeMenu}</button>{/if}
+        </div>
+      {/if}
       {#if reopenState !== 'hidden'}
         <div class="actions">
           <button type="button" class="secondary-button" disabled={reopenState !== 'enabled' || stale} aria-busy={reopenState === 'busy'} onclick={() => void reopen()}>{reopenState === 'busy' ? CASE_HOME_TEXT.reopening : CASE_HOME_TEXT.reopenButton}</button>
@@ -298,6 +370,7 @@
       </section>
     {/if}
 
+    {#if offersWork}
     <section class="block" aria-labelledby="home-analysis">
       <h3 id="home-analysis">{CASE_HOME_TEXT.analysisHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.analysisText}</p>
@@ -310,6 +383,8 @@
       <p class="note">{GUIDED_TEXT.openGuidedNote}</p>
       <div><button type="button" class="secondary-button" onclick={() => (guidedFor = caseId)}>{GUIDED_TEXT.openGuided}</button></div>
     </section>
+
+    {/if}
 
     <section class="block" aria-labelledby="home-story">
       <h3 id="home-story">{CASE_HOME_TEXT.storyHeading}</h3>
@@ -332,6 +407,7 @@
       <p class="note gap">{CASE_HOME_TEXT.storyGap}</p>
     </section>
 
+    {#if offersWork}
     <section class="block" aria-labelledby="home-theories">
       <h3 id="home-theories">{CASE_HOME_TEXT.theoriesHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.theoriesIntro}</p>
@@ -386,8 +462,11 @@
       {/if}
       <div class="actions"><button type="button" class="secondary-button" aria-haspopup="dialog" disabled={readOnly} onclick={openCaseImport}>{CASE_HOME_TEXT.filesAdd}</button></div>
     </section>
+    {/if}
   {/if}
 </div>
+
+<ArchiveDrawers drawer={archiveDrawer} {info} onClose={closeArchiveDrawer} onChanged={archiveChanged} onGone={() => { archiveDrawer = null; gone(); }} onOpenNew={(id) => { archiveDrawer = null; openCase(id); }} onDone={archiveMoved} />
 
 <style>
   .case-home { display: grid; gap: 20px; max-width: 880px; margin: 0 auto; padding: 8px 0 48px; }
@@ -403,6 +482,8 @@
   .note, .empty { margin: 0; color: var(--text-2); font-size: 14px; }
   .gap { font-size: 13px; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .head .actions { margin-top: 14px; }
+  .head .actions + .actions { margin-top: 8px; }
   .story { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; border-left: 2px solid var(--line); }
   .story li { position: relative; display: grid; grid-template-columns: 170px 1fr; gap: 12px; padding: 8px 0 8px 16px; }
   .story li::before { content: ''; position: absolute; left: -6px; top: 14px; width: 10px; height: 10px; border-radius: 50%; background: var(--text-2); }

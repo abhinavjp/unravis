@@ -924,6 +924,88 @@
         {"click":"role=button[name=\"Preview\"]"},
         {"waitFor":"iframe"}
       ]
+    },
+    {
+      "id": "p3-archive", "phase": "P3", "doc": "cases.md", "narrow": true,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "role=button[name=\"Archive this case\"]"},
+        {"click": "role=button[name=\"Archive this case\"]"},
+        {"waitFor": "role=dialog"}
+      ]
+    },
+    {
+      "id": "p3-archived-list", "phase": "P3", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=/^Archived cases/]"},
+        {"waitFor": "#archived-title"}
+      ]
+    },
+    {
+      "id": "p3-archived-home", "phase": "P3", "doc": "cases.md", "narrow": true,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=/^Archived cases/]"},
+        {"waitFor": "#archived-title"},
+        {"click": "role=button[name=\"Open case Month-end batch stall, 2 October\"]"},
+        {"waitFor": "text=This case is archived. It is read-only here."}
+      ]
+    },
+    {
+      "id": "p3-restore-in-place", "phase": "P3", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=/^Archived cases/]"},
+        {"waitFor": "#archived-title"},
+        {"click": "role=button[name=\"Open case Month-end batch stall, 2 October\"]"},
+        {"waitFor": "text=This case is archived. It is read-only here."},
+        {"click": "role=button[name=\"Restore\"s]"},
+        {"waitFor": "role=dialog"}
+      ]
+    },
+    {
+      "id": "p3-restore-as-new", "phase": "P3", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=/^Archived cases/]"},
+        {"waitFor": "#archived-title"},
+        {"click": "role=button[name=\"Open case Month-end batch stall, 2 October\"]"},
+        {"waitFor": "text=This case is archived. It is read-only here."},
+        {"click": "role=button[name=\"Restore from the case file as a new case\"]"},
+        {"waitFor": "role=dialog"}
+      ]
+    },
+    {
+      "id": "p3-free-1", "phase": "P3", "doc": "cases.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=/^Archived cases/]"},
+        {"waitFor": "#archived-title"},
+        {"click": "role=button[name=\"Open case Month-end batch stall, 2 October\"]"},
+        {"waitFor": "text=This case is archived. It is read-only here."},
+        {"click": "role=button[name=\"Free the space\"]"},
+        {"waitFor": "role=dialog"}
+      ]
     }
   ]
 }

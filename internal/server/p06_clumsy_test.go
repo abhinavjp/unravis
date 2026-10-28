@@ -131,6 +131,9 @@ func p06Names(dir string) []string {
 	ents, _ := os.ReadDir(dir)
 	var out []string
 	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue // the store's own .index folder is not a case
+		}
 		out = append(out, e.Name())
 	}
 	return out
@@ -373,8 +376,8 @@ func TestP06_RestoreTheSameFileTwice(t *testing.T) {
 		var d caseDTO
 		decodeBody(t, res, &d)
 		got = append(got, d.ID)
-		if d.Closed != nil {
-			t.Errorf("restored case #%d is closed", i+1)
+		if d.Closed == nil {
+			t.Errorf("restored case #%d is open, want closed (every restore ends Closed)", i+1)
 		}
 	}
 	if got[0] == got[1] {

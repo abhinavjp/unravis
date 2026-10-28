@@ -1,5 +1,6 @@
-import type { CaseInfo } from './cases';
+import { caseCode, type CaseInfo } from './cases';
 import type { LockState } from './masterKey';
+import { ARCHIVE_TEXT } from './copy/archiveCopy';
 import { START_TEXT, importsText, shownText, sourcesText } from './copy/startCopy';
 import { formatTime } from './time';
 
@@ -20,7 +21,7 @@ export const CASE_PAGE_SIZE = 50;
 export const TITLE_MAX = 60;
 
 /** A case as the list knows it. `sources` is shown only when the server sent it; the case list does not carry it today. */
-export type StartCase = Pick<CaseInfo, 'id' | 'title' | 'created' | 'closed' | 'imports' | 'untrusted'> & { sources?: number };
+export type StartCase = Pick<CaseInfo, 'id' | 'title' | 'created' | 'closed' | 'imports' | 'untrusted' | 'state' | 'percent' | 'missing'> & { sources?: number };
 
 export interface CaseRow {
   id: string;
@@ -32,11 +33,19 @@ export interface CaseRow {
   created: string;
   /** For example "3 imports, 2 sources". */
   counts: string;
+  /** The short case code, for example "Code 3F9A27C1". Two cases with the same title (a restore as new) differ by it. */
+  codeText: string;
   closed: boolean;
   closedLabel: string;
   /** True when the server refuses this folder: show a plain note and no Open button. */
   untrusted: boolean;
   untrustedLabel: string;
+  /** True while an archive is running on this case: show "Archiving n%" and no Open button (A18). */
+  archiving: boolean;
+  archivingLabel: string;
+  /** True when the working copy is gone: no Open button, a plain note instead. */
+  missing: boolean;
+  missingLabel: string;
 }
 
 /** Cuts a title to `max` characters (as a person counts them) and adds an ellipsis. A blank title becomes "Untitled case". */
@@ -60,10 +69,15 @@ export function caseRow(c: StartCase): CaseRow {
     fullTitle: c.title.trim() || START_TEXT.untitled,
     created: formatTime(c.created, { year: true, precision: 'minute', fallback: '' }),
     counts: caseCounts(c),
+    codeText: START_TEXT.codeLabel + ' ' + caseCode(c.id),
     closed: Boolean(c.closed),
     closedLabel: START_TEXT.closedLabel,
     untrusted: c.untrusted === true,
-    untrustedLabel: START_TEXT.untrustedLabel
+    untrustedLabel: START_TEXT.untrustedLabel,
+    archiving: c.state === 'archiving',
+    archivingLabel: ARCHIVE_TEXT.chipArchiving + (typeof c.percent === 'number' ? ' ' + Math.round(c.percent) + '%' : ''),
+    missing: c.missing === true,
+    missingLabel: ARCHIVE_TEXT.workingCopyMissing
   };
 }
 

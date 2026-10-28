@@ -34,12 +34,41 @@ func (h *handler) getCase(w http.ResponseWriter, r *http.Request, raw string) {
 		}
 		return
 	}
+	if h.recordCaseView(w, r, raw) {
+		return
+	}
 	_, c, ok := h.openCase(w, r, raw)
 	if !ok {
 		return
 	}
 	defer c.Close()
 	writeJSON(w, http.StatusOK, h.viewOf(r.Context(), c), maxResponseBytes)
+}
+
+// recordCaseView answers the case view of an archived or missing case from its
+// record, since it has no working copy to open. It returns false for any other
+// case, which the caller opens as usual. A mark still there after recovery answers
+// M19 or M5.
+func (h *handler) recordCaseView(w http.ResponseWriter, r *http.Request, raw string) bool {
+	ar, ok := h.cases.(casestore.Archiver)
+	if !ok {
+		return false
+	}
+	id, err := casestore.ParseID(raw)
+	if err != nil {
+		return false
+	}
+	info, err := ar.Entry(r.Context(), id)
+	if err != nil || !(info.Missing || (info.Archive != nil && info.Archive.Active)) {
+		return false
+	}
+	info = h.settle(r.Context(), info)
+	if err := casestore.CheckMark(info.Mark); err != nil {
+		writeStoreError(w, err)
+		return true
+	}
+	writeJSON(w, http.StatusOK, recordView(info), maxResponseBytes)
+	return true
 }
 
 /* ------------------------------------------------------------- timeline */

@@ -314,6 +314,30 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/export", match: caseSubpath("/export"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.exportCaseFile(w, r, id) },
 	}},
+	// Archive, verify, free and restore (P3). orphan-files must stay ahead of
+	// /api/cases/{id} like restore does.
+	{pattern: "/api/cases/orphan-files", match: exactPath("/api/cases/orphan-files"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.orphanFiles(w, r) },
+	}},
+	{pattern: "/api/cases/{id}/archive", match: caseSubpath("/archive"), methods: map[string]routeFunc{
+		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.archiveStatus(w, r, id) },
+		http.MethodPost:   func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.archiveCase(w, r, id) },
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.archiveCancel(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/verify", match: caseSubpath("/verify"), methods: map[string]routeFunc{
+		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.verifyStatus(w, r, id) },
+		http.MethodPost:   func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.verifyCase(w, r, id) },
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.verifyCancel(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/free", match: caseSubpath("/free"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.freeCase(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/restore-in-place", match: caseSubpath("/restore-in-place"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.restoreInPlace(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/restore-as-new", match: caseSubpath("/restore-as-new"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.restoreAsNew(w, r, id) },
+	}},
 	{pattern: "/api/cases/{id}", match: caseSubpath(""), methods: map[string]routeFunc{
 		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getCase(w, r, id) },
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.eraseCase(w, r, id) },

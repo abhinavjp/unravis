@@ -3,8 +3,8 @@
   import { finishReset } from '../lib/appState.svelte';
   import { canReset, resetFailureOf } from '../lib/masterKey';
   import type { KeyStatus } from '../lib/masterKey';
-  import { resetDamagedKey } from '../lib/masterKeyApi';
-  import { DAMAGED_TEXT, resetErrorText } from '../lib/copy/masterKeyCopy';
+  import { getMasterKeyStatus, resetDamagedKey } from '../lib/masterKeyApi';
+  import { DAMAGED_TEXT, freedArchivesWarning, resetErrorText } from '../lib/copy/masterKeyCopy';
 
   // The master key file on this PC cannot be read by any key. This screen says so, says nothing was changed, and offers one way on:
   // set the old file aside and make a new key. That button stays off until the box is ticked, and no request is sent without the tick.
@@ -19,7 +19,13 @@
   let title = $state<HTMLHeadingElement>();
   let box = $state<HTMLInputElement>();
 
-  onMount(() => { void tick().then(() => title?.focus()); });
+  // M12: how many archived cases (working copy freed) only the old key opens. Unknown means nothing extra is said.
+  let freed = $state(0);
+
+  onMount(() => {
+    void tick().then(() => title?.focus());
+    getMasterKeyStatus().then((status) => { freed = status.freedArchives ?? 0; }).catch(() => {});
+  });
 
   const ready = $derived(canReset(ack) && !busy);
 
@@ -60,6 +66,7 @@
     <p class="intro">{DAMAGED_TEXT.dpapi}</p>
     <p class="intro">{DAMAGED_TEXT.option}</p>
     <p class="intro">{DAMAGED_TEXT.keptAside}</p>
+    {#if freed > 0}<p class="warning" id="damaged-freed">{freedArchivesWarning(freed)}</p>{/if}
     <p class="warning">{DAMAGED_TEXT.warning}</p>
     <form onsubmit={submit}>
       <label class="ack"><input type="checkbox" bind:this={box} bind:checked={ack} disabled={busy} aria-describedby={problem ? 'damaged-problem' : undefined} /> <span>{DAMAGED_TEXT.ackLabel}</span></label>

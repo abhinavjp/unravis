@@ -44,6 +44,7 @@ type samplerRun struct {
 	s      *sampler.Sampler
 	cancel context.CancelFunc
 	closed chan struct{} // closed when the run has ended and released its case
+	params samplerParams // what it was started with
 
 	mu       sync.Mutex
 	why      string // set before a stop the server asked for
@@ -173,49 +174,87 @@ func (h *handler) postSampler(w http.ResponseWriter, r *http.Request, raw string
 		return
 	}
 
+	p := samplerParams{interval: req.IntervalSec, ackText: ackText, hint: host.hint, imp: imp, flush: cfg.SamplerFlush, source: cfg.SamplerSource}
 	h.disc.smu.Lock()
 	defer h.disc.smu.Unlock()
 	if cur := h.disc.sampler; cur != nil && cur.s.Status().Running {
 		writeCaseFailure(w, http.StatusConflict, "sampler-busy", "A recording is already running. Stop it first.")
 		return
 	}
+	if f := h.launchSamplerLocked(id, p); f != nil {
+		if f.err != nil {
+			writeStoreError(w, f.err)
+			return
+		}
+		writeCaseFailure(w, f.status, f.reason, f.msg)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, samplerDTO{State: "recording"}, 1<<12)
+}
+
+// samplerParams is what a recording was started with, kept so an archive that is
+// stopped or cancelled can start the same recording again.
+type samplerParams struct {
+	interval int
+	ackText  string
+	hint     importer.HostHint
+	imp      importer.Importer
+	flush    time.Duration
+	source   sampler.Source
+}
+
+// launchFailure is why a recording could not start: a store error (err), or a
+// status, reason and message of its own.
+type launchFailure struct {
+	err    error
+	status int
+	reason string
+	msg    string
+}
+
+// launchSamplerLocked starts the recording into case id. The caller holds
+// h.disc.smu and has checked that no recording is running.
+func (h *handler) launchSamplerLocked(id casestore.CaseID, p samplerParams) *launchFailure {
 	// The run keeps its own handle on the case: it names processes through it
 	// and stores batches through it.
 	pc, err := h.cases.Open(context.Background(), id)
 	if err != nil {
-		writeStoreError(w, err)
-		return
+		return &launchFailure{err: err}
+	}
+	// A case being archived takes no recording (its writes would miss the file and
+	// Free would drop them, and the open handle would hold Free off). The caller
+	// holds smu, and the archive looks for a recording under it again once it has
+	// stamped Archiving, so a start that slips in before the stamp is stopped there.
+	if pc.Info().Mark == casestore.MarkArchiving {
+		_ = pc.Close()
+		return &launchFailure{err: casestore.ErrArchiveRunning}
 	}
 	h.disc.mu.Lock()
 	runCtx, shut := h.disc.context(), h.disc.closed
 	h.disc.mu.Unlock()
 	if shut {
 		_ = pc.Close()
-		writeCaseFailure(w, http.StatusServiceUnavailable, "shutting-down", "The dashboard is shutting down.")
-		return
+		return &launchFailure{status: http.StatusServiceUnavailable, reason: "shutting-down", msg: "The dashboard is shutting down."}
 	}
 	ctx, cancel := context.WithCancel(runCtx)
-	run := &samplerRun{caseID: id, cancel: cancel, closed: make(chan struct{})}
-	hint := host.hint
-	flush := cfg.SamplerFlush
+	run := &samplerRun{caseID: id, cancel: cancel, closed: make(chan struct{}), params: p}
+	hint := p.hint
 	s, err := sampler.Start(sampler.Config{
-		IntervalSeconds: req.IntervalSec,
+		IntervalSeconds: p.interval,
 		Pseudonymize:    pc.Pseudonymize,
-		Source:          cfg.SamplerSource,
-		FlushEvery:      flush,
+		Source:          p.source,
+		FlushEvery:      p.flush,
 		Import: func(name string, body []byte) error {
-			return h.sampleBatch(ctx, run, pc, imp, &hint, ackText, name, body)
+			return h.sampleBatch(ctx, run, pc, p.imp, &hint, p.ackText, name, body)
 		},
 	})
 	if err != nil {
 		cancel()
 		_ = pc.Close()
 		if errors.Is(err, sampler.ErrNotSupportedOS) {
-			writeCaseFailure(w, http.StatusNotImplemented, string(discover.ReasonNotSupportedOS), "Live recording is not available on this computer.")
-			return
+			return &launchFailure{status: http.StatusNotImplemented, reason: string(discover.ReasonNotSupportedOS), msg: "Live recording is not available on this computer."}
 		}
-		writeCaseFailure(w, http.StatusInternalServerError, "sampler-failed", "The recording could not be started.")
-		return
+		return &launchFailure{status: http.StatusInternalServerError, reason: "sampler-failed", msg: "The recording could not be started."}
 	}
 	run.s = s
 	h.disc.sampler = run
@@ -225,7 +264,31 @@ func (h *handler) postSampler(w http.ResponseWriter, r *http.Request, raw string
 		_ = pc.Close()
 		close(run.closed)
 	}()
-	writeJSON(w, http.StatusAccepted, samplerDTO{State: "recording"}, 1<<12)
+	return nil
+}
+
+// samplerRunningFor reports the parameters of a recording that is running into
+// case id.
+func (h *handler) samplerRunningFor(id casestore.CaseID) (samplerParams, bool) {
+	h.disc.smu.Lock()
+	defer h.disc.smu.Unlock()
+	run := h.disc.sampler
+	if run == nil || run.caseID != id || run.s == nil || !run.s.Status().Running {
+		return samplerParams{}, false
+	}
+	return run.params, true
+}
+
+// restartSampler starts a recording again with the parameters it had. It is best
+// effort: a recording that cannot start leaves the case as it is, and the page
+// shows it as stopped.
+func (h *handler) restartSampler(id casestore.CaseID, p samplerParams) {
+	h.disc.smu.Lock()
+	defer h.disc.smu.Unlock()
+	if cur := h.disc.sampler; cur != nil && cur.s != nil && cur.s.Status().Running {
+		return
+	}
+	_ = h.launchSamplerLocked(id, p)
 }
 
 // sampleBatch stores one batch of samples through the shared import path.

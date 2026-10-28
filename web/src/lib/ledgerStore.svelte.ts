@@ -17,6 +17,12 @@ export const ledger = $state({
 });
 
 let inflight: { caseId: string; promise: Promise<void> } | null = null;
+// Cases known to be archived: their theories are not asked for (the server answers 409 for them), so the console stays clean.
+const held = new Set<string>();
+export function holdLedger(caseId: string, hold: boolean): void {
+  if (!caseId) return;
+  if (hold) held.add(caseId); else held.delete(caseId);
+}
 
 /**
  * Points the ledger at another case's theories. The list, the drafts and the open entry belong to one case, so they are put away; the new
@@ -37,6 +43,7 @@ export function setLedgerCase(caseId: string): void {
 /** Reads the saved entries. Existing drafts are kept; entries with no draft get a fresh editor. Rejects with the API error. */
 export function refreshLedger(): Promise<void> {
   const caseId = ledger.caseId;
+  if (held.has(caseId)) return Promise.resolve();
   if (inflight && inflight.caseId === caseId) return inflight.promise;
   const mine: { caseId: string; promise: Promise<void> } = { caseId, promise: Promise.resolve() };
   mine.promise = (async () => {

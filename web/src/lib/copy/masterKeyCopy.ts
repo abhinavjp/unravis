@@ -156,6 +156,11 @@ export const DAMAGED_TEXT = {
   continue: 'Set a new master key'
 } as const;
 
+/** M12: what a start-over costs the archived cases whose working copy was freed (the case file is then the only copy). */
+export function freedArchivesWarning(count: number): string {
+  return (count === 1 ? '1 archived case can only be opened with the old key.' : count + ' archived cases can only be opened with the old key.') + ' Their working copies were freed.';
+}
+
 export type ResetFailureKind = 'acknowledgement-required' | 'not-damaged' | 'failed' | 'unavailable' | 'network' | 'other';
 
 /** The text for a start-over that did not work. */
@@ -207,6 +212,8 @@ export function masterKeyLintEntries(): LintEntry[] {
     ...SETUP_KINDS.map((kind) => ({ id: 'masterkey.sample.setup.' + kind, text: setupErrorText(kind, 4) })),
     ...Object.entries(DAMAGED_TEXT).map(([id, text]) => ({ id: 'masterkey.damaged.' + id, text })),
     ...RESET_KINDS.map((kind) => ({ id: 'masterkey.sample.reset.' + kind, text: resetErrorText(kind) })),
+    { id: 'masterkey.sample.freedOne', text: freedArchivesWarning(1) },
+    { id: 'masterkey.sample.freedMany', text: freedArchivesWarning(2) },
     { id: 'masterkey.sample.blankHint', text: blankHint(8) },
     { id: 'masterkey.sample.edgeSpace', text: edgeSpaceNote() },
     { id: 'masterkey.sample.rewrapOne', text: rewrapOffer(1) },

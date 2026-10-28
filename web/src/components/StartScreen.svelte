@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { Snippet } from 'svelte';
-  import { listCases } from '../lib/cases';
+  import { listCasesPage } from '../lib/archiveApi';
+  import { archivedToggleText } from '../lib/copy/archiveCopy';
+  import ArchivedList from '../lib/components/ArchivedList.svelte';
   import type { CaseInfo } from '../lib/cases';
   import { getMasterKeyStatus } from '../lib/masterKeyApi';
   import { closesCases, offersRewrap } from '../lib/masterKey';
@@ -19,7 +21,7 @@
   // `onAnalysis` goes on to the analysis of the connected sources.
   let { onCreate, onOpen, onSetup, onAnalysis, enter }: {
     onCreate: () => void;
-    onOpen: (id: string) => void;
+    onOpen: (id: string, options?: { archived?: boolean }) => void;
     onSetup: () => void;
     onAnalysis: () => void;
     enter?: Snippet;
@@ -32,6 +34,8 @@
   let rewrapShown = $state(false);
   let cases = $state.raw<CaseInfo[]>([]);
   let pages = $state(1);
+  let archivedTotal = $state(0);
+  let showArchived = $state(false);
   let controller: AbortController | null = null;
 
   const view = $derived(startView(lock, cases, pages));
@@ -51,7 +55,9 @@
     if (closesCases(lock)) { noteLocked(); return; }
     phase = 'loading';
     try {
-      cases = await listCases(signal);
+      const page = await listCasesPage(signal);
+      cases = page.cases;
+      archivedTotal = page.archivedTotal;
       phase = 'ready';
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -91,16 +97,22 @@
             <p class="card-note">{view.empty}</p>
           {/if}
         </div>
-        {#if phase === 'ready' && view.rows.length}
+        {#if showArchived}
+          <ArchivedList total={archivedTotal} onOpen={(id) => onOpen(id, { archived: true })} onBack={() => { showArchived = false; void load(); }} />
+        {:else if phase === 'ready' && view.rows.length}
           <ul class="cases">
             {#each view.rows as row (row.id)}
               <li class="case-row">
                 <div class="case-info">
                   <strong class="case-title" title={row.fullTitle}>{row.title}</strong>
-                  <span class="case-meta">{row.created}{row.created ? ' · ' : ''}{row.counts}</span>
+                  <span class="case-meta">{row.created}{row.created ? ' · ' : ''}{row.counts} · {row.codeText}</span>
                   {#if row.closed}<span class="case-closed">{row.closedLabel}</span>{/if}
                 </div>
-                {#if row.untrusted}
+                {#if row.archiving}
+                  <span class="case-closed" role="note">{row.archivingLabel}</span>
+                {:else if row.missing}
+                  <span class="case-closed" role="note">{row.missingLabel}</span>
+                {:else if row.untrusted}
                   <span class="case-closed" role="note">{row.untrustedLabel}</span>
                 {:else}
                   <button type="button" class="secondary-button" aria-label={openLabel(row.fullTitle)} onclick={() => onOpen(row.id)}>{START_TEXT.open}</button>
@@ -112,6 +124,9 @@
             <p class="card-note">{view.shown}</p>
             <button type="button" class="quiet-button" onclick={() => (pages += 1)}>{START_TEXT.showMore}</button>
           {/if}
+        {/if}
+        {#if phase === 'ready' && !showArchived && archivedTotal > 0}
+          <button type="button" class="quiet-button archived-toggle" onclick={() => (showArchived = true)}>{archivedToggleText(archivedTotal)}</button>
         {/if}
       </section>
 

@@ -59,11 +59,17 @@ var (
 	// second tab. No other picture shows it, so its history never leaks into theirs.
 	demoCaseStaleID     = demoCaseID("demostale")
 	demoCaseUntrustedID = demoCaseID("demountrusted")
+	// P3 seeds: an archive whose working copy is kept, one whose working copy was
+	// freed, and a case whose folder is gone.
+	demoCaseArchivedID = demoCaseID("demoarchived")
+	demoCaseFreedID    = demoCaseID("demofreed")
+	demoCaseMissingID  = demoCaseID("demomissing")
 )
 
 // demoCaseIDs lists the IDs above.
 func demoCaseIDs() []casestore.CaseID {
-	return []casestore.CaseID{demoCaseOpenID, demoCaseClosedID, demoCaseFailedID, demoCaseStaleID, demoCaseUntrustedID}
+	return []casestore.CaseID{demoCaseOpenID, demoCaseClosedID, demoCaseFailedID, demoCaseStaleID, demoCaseUntrustedID,
+		demoCaseArchivedID, demoCaseFreedID, demoCaseMissingID}
 }
 
 // demoSettings is what the two capture-only variables ask for.
@@ -156,6 +162,9 @@ func checkDemoFolder(getenv func(string) string) error {
 		own[string(id)] = true
 	}
 	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue // the store's own .index folder is not a case
+		}
 		// A case made in an earlier capture run on this folder has a demonew ID.
 		if !own[e.Name()] && !isDemoNewID(e.Name()) {
 			return errors.New(demoCasesNeedEmptyDir)
@@ -199,7 +208,7 @@ func openDemoCases(getenv func(string) string, hypotheses ledger.Store, now time
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	seeder := demoSeeder{store: wiring.store, clock: clk, setID: ids.force, now: now}
+	seeder := demoSeeder{store: wiring.store, ar: wiring.store, root: root, clock: clk, setID: ids.force, now: now}
 	seedErr := seeder.seed(ctx)
 	ids.force("") // nothing forced is left over: a case made after seeding gets a fresh ID
 	if seedErr != nil {
@@ -278,6 +287,8 @@ type demoStore interface {
 
 type demoSeeder struct {
 	store demoStore
+	ar    casestore.Archiver // nil: no archive seeds
+	root  string
 	clock *demoClock
 	setID func(casestore.CaseID)
 	now   time.Time
@@ -330,6 +341,18 @@ func (d demoSeeder) seed(ctx context.Context) error {
 			func(ctx context.Context, c casestore.Case, created time.Time) error {
 				return d.importOK(ctx, c, "stale-1", created.Add(10*time.Minute))
 			}},
+		{demoCaseArchivedID, "Month-end batch stall, 2 October", 26 * day,
+			func(ctx context.Context, c casestore.Case, created time.Time) error {
+				return d.importOK(ctx, c, "archived-1", created.Add(10*time.Minute))
+			}},
+		{demoCaseFreedID, "Payment gateway retries, 28 September", 30 * day,
+			func(ctx context.Context, c casestore.Case, created time.Time) error {
+				return d.importOK(ctx, c, "freed-1", created.Add(10*time.Minute))
+			}},
+		{demoCaseMissingID, "Search index rebuild, 9 October", 19 * day,
+			func(ctx context.Context, c casestore.Case, created time.Time) error {
+				return d.importOK(ctx, c, "missing-1", created.Add(10*time.Minute))
+			}},
 		// Created like the others; openDemoCases then has the legacy check call it untrusted.
 		{demoCaseUntrustedID, "Case from another folder", 6 * day,
 			func(context.Context, casestore.Case, time.Time) error { return nil }},
@@ -366,6 +389,9 @@ func (d demoSeeder) seed(ctx context.Context) error {
 			if err := d.store.CloseCase(ctx, step.id); err != nil {
 				return fmt.Errorf("close %s: %w", step.id, err)
 			}
+		}
+		if err := d.afterCreate(ctx, step.id, step.title); err != nil {
+			return fmt.Errorf("finish %s: %w", step.id, err)
 		}
 	}
 	return nil
@@ -485,4 +511,74 @@ func (d demoSeeder) retryItems(ctx context.Context, c casestore.Case, at time.Ti
 		{Kind: casestore.RetryAudit, Key: "audit:demo-reports", Label: "Reports database", Reason: "unreachable"},
 	})
 	return err
+}
+
+// afterCreate takes the three P3 seeds to their states. The archives carry the
+// record a real archive writes (the file, its check value, its counts) but no file
+// on disk: the pictures show the lists and the case home, and a case file made by
+// hand is what the Verify and Restore pictures use.
+func (d demoSeeder) afterCreate(ctx context.Context, id casestore.CaseID, title string) error {
+	if d.ar == nil {
+		return nil
+	}
+	switch id {
+	case demoCaseArchivedID, demoCaseFreedID:
+		closedAgo, archivedAgo := 22*day, 14*day
+		if id == demoCaseFreedID {
+			closedAgo, archivedAgo = 27*day, 21*day
+		}
+		d.clock.set(d.now.Add(-closedAgo))
+		if err := d.store.CloseCase(ctx, id); err != nil {
+			return err
+		}
+		at := d.now.Add(-archivedAgo)
+		d.clock.set(at)
+		folder := `C:\Unravis case files`
+		name := demoArchiveName(title, id, at)
+		if _, err := d.ar.BeginArchive(ctx, id, "", casestore.ArchivePending{Folder: folder, Name: name, Started: at.UTC()}); err != nil {
+			return err
+		}
+		sum := strings.Repeat(string(id)[4:8], 16) // fixed text: 64 hex-looking characters
+		file := casestore.ArchiveFile{
+			Name: name, Folder: folder, Bytes: 4_718_592, SHA256: sum, KeyKind: casestore.KeyKindMaster,
+			KeyCheck: strings.Repeat("0", 60) + "7c3e", Made: at.UTC(),
+			Counts: casestore.Counts{Imports: 1, Sources: 0, Events: demoEventsPerImort},
+		}
+		if err := d.ar.CommitArchive(ctx, id, file); err != nil {
+			return err
+		}
+		if id == demoCaseFreedID {
+			d.clock.set(d.now.Add(-14 * day))
+			if err := d.ar.BeginFree(ctx, id, ""); err != nil {
+				return err
+			}
+			return d.ar.FinishFree(ctx, id)
+		}
+	case demoCaseMissingID:
+		d.clock.set(d.now.Add(-12 * day))
+		if err := d.store.CloseCase(ctx, id); err != nil {
+			return err
+		}
+		// The folder is removed behind the application's back: Unravis lists the case
+		// as "Working copy missing" from its record outside the folder.
+		return os.RemoveAll(filepath.Join(d.root, string(id)))
+	}
+	return nil
+}
+
+// demoArchiveName spells a case file name the way Archive does.
+func demoArchiveName(title string, id casestore.CaseID, at time.Time) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(title) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			dash = false
+		} else if !dash && b.Len() > 0 {
+			b.WriteByte('-')
+			dash = true
+		}
+	}
+	slug := strings.TrimRight(b.String(), "-")
+	return slug + "-" + string(id)[:8] + "-" + at.UTC().Format("20060102-150405") + ".unravis-case"
 }

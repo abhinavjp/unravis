@@ -15,11 +15,7 @@ var _ casestore.Lifecycle = (*Store)(nil)
 
 // appendHistory adds one entry and keeps the newest casestore.MaxHistory.
 func appendHistory(h []manifestHistory, at time.Time, kind string) []manifestHistory {
-	h = append(h, manifestHistory{At: at.UTC().Truncate(time.Millisecond), Kind: kind})
-	if len(h) > casestore.MaxHistory {
-		h = append([]manifestHistory(nil), h[len(h)-casestore.MaxHistory:]...)
-	}
-	return h
+	return appendHistoryDetail(h, at, kind, "")
 }
 
 func historyOf(m manifest) []casestore.HistoryEntry {
@@ -28,7 +24,7 @@ func historyOf(m manifest) []casestore.HistoryEntry {
 	}
 	out := make([]casestore.HistoryEntry, len(m.History))
 	for i, e := range m.History {
-		out[i] = casestore.HistoryEntry{At: e.At, Kind: e.Kind}
+		out[i] = casestore.HistoryEntry{At: e.At, Kind: e.Kind, Detail: e.Detail}
 	}
 	return out
 }
@@ -38,6 +34,13 @@ func historyOf(m manifest) []casestore.HistoryEntry {
 // this process or another). fn returns whether it changed the manifest; a change
 // is sealed and written, and an open handle's cached copy is replaced.
 func (s *Store) mutate(ctx context.Context, id casestore.CaseID, fn func(m *manifest) (bool, error)) error {
+	return s.mutateH(ctx, id, func(m *manifest, _ *caseState) (bool, error) { return fn(m) })
+}
+
+// mutateH is mutate for a move that needs to know whether the case is open in
+// this process: fn gets the open state (nil when no handle exists), whose lock is
+// held, so its fields can be read.
+func (s *Store) mutateH(ctx context.Context, id casestore.CaseID, fn func(m *manifest, h *caseState) (bool, error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -76,11 +79,11 @@ func (s *Store) mutate(ctx context.Context, id casestore.CaseID, fn func(m *mani
 		h.mu.Lock()
 		defer h.mu.Unlock()
 	}
-	changed, err := fn(&m)
+	changed, err := fn(&m, h)
 	if err != nil || !changed {
 		return err
 	}
-	if err := writeManifest(dir, s.sealer(dir, ""), m); err != nil {
+	if err := s.writeMan(dir, m); err != nil {
 		return err
 	}
 	if h != nil {
@@ -110,7 +113,11 @@ func (s *Store) ReopenCase(ctx context.Context, id casestore.CaseID) error {
 }
 
 func stateOfManifest(m manifest) casestore.State {
-	return casestore.StateOf(casestore.CaseInfo{Closed: m.Closed, Mark: m.Mark})
+	info := casestore.CaseInfo{Closed: m.Closed, Mark: m.Mark}
+	if archived(m) {
+		info.Archive = &casestore.ArchiveInfo{Active: true}
+	}
+	return casestore.StateOf(info)
 }
 
 // SetMark stamps the case; "" clears the stamp.
