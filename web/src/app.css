@@ -347,10 +347,15 @@ th.numeric { text-align: right; }
 .table-empty { color: var(--text-2); text-align: center; padding: 19px; }
 .drawer-only { display: none; }
 .inspector .drawer-only { display: block; }
-.inspector .request-table :is(th, td):is(:nth-child(2), :nth-child(5), :nth-child(8), :nth-child(9), :nth-child(10)) { display: none; }
+/* In the drawer the table must fit 720 px without a sideways scroll: fewer columns, narrower caps, wrapped text, stacked buttons. */
+.inspector .request-table :is(th, td):is(:nth-child(2), :nth-child(5), :nth-child(7), :nth-child(8), :nth-child(9), :nth-child(10)) { display: none; }
 .inspector .request-table :is(th, td) { padding-left: 8px; padding-right: 8px; }
-.inspector .request-table td:last-child { white-space: normal; min-width: 150px; }
-.inspector .request-table td:last-child button { margin: 0 4px 4px 0; }
+.inspector .request-table td:first-child { white-space: normal; }
+.inspector .request-table td:nth-child(3) { max-width: 170px; }
+.inspector .request-table td small { max-width: 170px; }
+.inspector .request-table td:nth-child(4) small { max-width: 110px; white-space: normal; }
+.inspector .request-table td:last-child { white-space: normal; min-width: 130px; overflow: visible; }
+.inspector .request-table td:last-child button { display: block; margin: 0 0 4px 0; }
 .request-table td { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
 .request-table td:first-child { color: var(--text-2); font-size: 12px; }
 .request-table td:nth-child(3) { max-width: 280px; }
