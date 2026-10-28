@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -31,8 +32,9 @@ const (
 	DefaultMaxSeats = 16
 	// DefaultSeatsPerPerson bounds them per Windows account, so one person cannot take every seat.
 	DefaultSeatsPerPerson = 4
-	// auditQueryTimeout is the longest one audit read may run in the keeper (Unravis's own bound on one read).
-	auditQueryTimeout = audit.OperationTimeout
+	// auditQueryTimeout is the longest one audit read may take in the keeper, waiting for a run slot included. It is much shorter than
+	// Unravis's own bound on a read (audit.OperationTimeout): a read holds a pipe connection while it runs. A caller may ask for less.
+	auditQueryTimeout = auditReadCap
 	// maxInstance bounds the instance id an Unravis sends.
 	maxInstance = 64
 )
@@ -208,6 +210,12 @@ func leaks(raw []byte, secrets []string) bool {
 	return false
 }
 
+// auditAnswerCap is the largest audit answer the keeper builds and sends (a variable so a test can lower it).
+var auditAnswerCap = MaxAuditAnswer
+
+// errAnswerTooLarge is an audit answer past auditAnswerCap. It is an audit limit, so Unravis words it as one.
+var errAnswerTooLarge = fmt.Errorf("%w: the answer is too large", audit.ErrLimit)
+
 var errAnswerHeldSecret = &WireError{Code: CodeInternal, Message: "The key keeper did not send an answer that held a stored password."}
 
 // scrubbed is auditWireError, and a connection failure whose text holds a stored password loses that text.
@@ -297,6 +305,9 @@ type AuditIDArgs struct {
 type AuditArgs[T any] struct {
 	Instance string `json:"instance"`
 	Input    T      `json:"input"`
+	// TimeoutMs is how long the caller will wait for the answer. The keeper stops the read after that long, or after auditQueryTimeout,
+	// whichever is less; 0 means auditQueryTimeout.
+	TimeoutMs int `json:"timeoutMs,omitempty"`
 }
 
 // AuditSchemaInput is audit.schema's input.
@@ -519,6 +530,13 @@ func auditRead[T any](b *Backend, run func(context.Context, HostedRepo, T) (any,
 			return nil, errNoAuditSource
 		}
 		defer release()
+		if a.TimeoutMs > 0 {
+			if d := time.Duration(a.TimeoutMs) * time.Millisecond; d < auditQueryTimeout {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, d)
+				defer cancel()
+			}
+		}
 		secrets := b.Audit.secretsOf(s, "")
 		out, err := run(ctx, s.repo, a.Input)
 		if err != nil {
@@ -527,6 +545,10 @@ func auditRead[T any](b *Backend, run func(context.Context, HostedRepo, T) (any,
 		raw, err := json.Marshal(out)
 		if err != nil {
 			return nil, &WireError{Code: CodeInternal, Message: "The key keeper could not prepare the answer."}
+		}
+		if len(raw) > auditAnswerCap {
+			// Nothing is streamed: the client would only throw the answer away at its own cap.
+			return nil, scrubbed(errAnswerTooLarge, secrets)
 		}
 		if leaks(raw, secrets) {
 			return nil, errAnswerHeldSecret

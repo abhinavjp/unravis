@@ -113,7 +113,15 @@ func (r *AuditRouter) side(ids []string) (bool, error) {
 
 // read runs one audit read in the keeper and decodes its streamed answer into out.
 func (r *AuditRouter) read(ctx context.Context, op string, input any, out any) error {
-	rc, err := r.client.Open(ctx, op, AuditArgs[any]{Instance: r.instance, Input: input}, nil)
+	args := AuditArgs[any]{Instance: r.instance, Input: input}
+	if d, ok := ctx.Deadline(); ok {
+		// The keeper stops the read when this Unravis would have stopped waiting for it.
+		args.TimeoutMs = int(time.Until(d) / time.Millisecond)
+		if args.TimeoutMs < 1 {
+			args.TimeoutMs = 1
+		}
+	}
+	rc, err := r.client.Open(ctx, op, args, nil)
 	if err != nil {
 		return r.goneOrNative(err)
 	}

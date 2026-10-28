@@ -555,6 +555,7 @@ func TestKeeperErrorsAreWordedForPeople(t *testing.T) {
 		{keeper.ErrHeldSourceGone, http.StatusNotFound, "keeper-source-gone"},
 		{keeper.ErrMixedSources, http.StatusBadRequest, "keeper-mixed"},
 		{&keeper.WireError{Code: keeper.CodeBusy}, http.StatusConflict, "keeper-busy"},
+		{&keeper.WireError{Code: keeper.CodeBusy, Detail: json.RawMessage(`{"scope":"audit"}`)}, http.StatusServiceUnavailable, "keeper-audit-busy"},
 		{&keeper.WireError{Code: keeper.CodeRateLimited}, http.StatusTooManyRequests, "keeper-rate"},
 		{&keeper.WireError{Code: keeper.CodeRefused}, http.StatusForbidden, "keeper-refused"},
 		{&keeper.WireError{Code: keeper.CodeInternal, Message: "x"}, http.StatusServiceUnavailable, "keeper-error"},
@@ -562,6 +563,10 @@ func TestKeeperErrorsAreWordedForPeople(t *testing.T) {
 		w := httptest.NewRecorder()
 		if !writeKeeperError(w, c.err) || w.Code != c.code || !strings.Contains(w.Body.String(), c.want) {
 			t.Errorf("%v = %d %s", c.err, w.Code, w.Body)
+		}
+		// A busy audit read is not worded as a check that is already running.
+		if c.want == "keeper-audit-busy" && strings.Contains(w.Body.String(), "already running") {
+			t.Errorf("audit busy is worded as a running check: %s", w.Body)
 		}
 	}
 	if writeKeeperError(httptest.NewRecorder(), &keeper.WireError{Code: keeper.CodeConnect}) {

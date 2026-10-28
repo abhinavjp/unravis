@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -60,15 +61,16 @@ type KeeperHub struct {
 func WithKeeper(k *KeeperHub) Option { return func(h *handler) { h.keeper = k } }
 
 const (
-	keeperStoppedText  = "The Unravis Key Keeper service is not running, so saved passwords and read keys cannot be used. Start the service, or ask the person who looks after this PC."
-	keeperImpostorText = "Something other than the Unravis Key Keeper service answered on its pipe, so nothing was sent to it. Ask the person who looks after this PC."
-	keeperHeldSource   = "The key keeper holds this link's password, and this Unravis cannot ask it to open the source. Restart Unravis, or ask the person who looks after this PC."
-	keeperSeatsText    = "The key keeper has too many audit sources open for this PC. Remove a source you no longer need, or close another Unravis window, then try again."
-	keeperGoneText     = "The key keeper closed this source: it was restarted, or the source was not used for a long time. Add it again from its saved link."
-	keeperMixedText    = "Sources opened by the key keeper cannot be compared in one view with sources whose password you typed. Choose sources of one kind."
-	keeperBusyText     = "A check with this saved connection is already running. Wait for it to finish."
-	keeperRateText     = "The key keeper is answering too many requests. Wait a minute, then try again."
-	keeperRefusedText  = "The key keeper refused this request."
+	keeperStoppedText   = "The Unravis Key Keeper service is not running, so saved passwords and read keys cannot be used. Start the service, or ask the person who looks after this PC."
+	keeperImpostorText  = "Something other than the Unravis Key Keeper service answered on its pipe, so nothing was sent to it. Ask the person who looks after this PC."
+	keeperHeldSource    = "The key keeper holds this link's password, and this Unravis cannot ask it to open the source. Restart Unravis, or ask the person who looks after this PC."
+	keeperSeatsText     = "The key keeper has too many audit sources open for this PC. Remove a source you no longer need, or close another Unravis, then try again."
+	keeperGoneText      = "The key keeper closed this source: it was restarted, or the source was not used for a long time. Add it again from its saved link."
+	keeperMixedText     = "Sources opened by the key keeper cannot be compared in one view with sources whose password you typed. Choose sources of one kind."
+	keeperBusyText      = "A check with this saved connection is already running. Wait for it to finish."
+	keeperAuditBusyText = "The key keeper is busy with other reads. Wait a few seconds, then try again."
+	keeperRateText      = "The key keeper is answering too many requests. Wait a minute, then try again."
+	keeperRefusedText   = "The key keeper refused this request."
 )
 
 // writeKeeperError words the keeper's own refusals (stopped, busy, too many requests). Store answers (not found, invalid, connect
@@ -104,6 +106,15 @@ func writeKeeperError(w http.ResponseWriter, err error) bool {
 	}
 	switch we.Code {
 	case keeper.CodeBusy:
+		var d struct {
+			Scope string `json:"scope"`
+		}
+		_ = json.Unmarshal(we.Detail, &d)
+		if d.Scope == "audit" {
+			// An audit read the keeper had no room for: nothing is running for this source, the read only has to be asked again.
+			writeJSON(w, http.StatusServiceUnavailable, failure{keeperAuditBusyText, "keeper-audit-busy"}, 4096)
+			break
+		}
 		writeJSON(w, http.StatusConflict, failure{keeperBusyText, "keeper-busy"}, 4096)
 	case keeper.CodeRateLimited:
 		writeJSON(w, http.StatusTooManyRequests, failure{keeperRateText, "keeper-rate"}, 4096)

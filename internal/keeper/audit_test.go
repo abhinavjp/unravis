@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +23,12 @@ type hostedFactory struct {
 	made []*fakeHosted
 	leak string
 	big  int // bytes of warnings Analyze answers with
+
+	// gate, when set, makes Analyze wait until it is closed (or its context ends). started counts the reads that began, canceled the
+	// ones whose context ended while they waited.
+	gate     chan struct{}
+	started  atomic.Int32
+	canceled atomic.Int32
 }
 
 func (f *hostedFactory) make() HostedRepo {
@@ -118,7 +125,16 @@ func (f *fakeHosted) DeleteSource(_ context.Context, id string) error {
 	return fmt.Errorf("%w: source not found", audit.ErrNotFound)
 }
 
-func (f *fakeHosted) Analyze(_ context.Context, q audit.Query) (audit.Analysis, error) {
+func (f *fakeHosted) Analyze(ctx context.Context, q audit.Query) (audit.Analysis, error) {
+	if f.factory != nil && f.factory.gate != nil {
+		f.factory.started.Add(1)
+		select {
+		case <-f.factory.gate:
+		case <-ctx.Done():
+			f.factory.canceled.Add(1)
+			return audit.Analysis{}, ctx.Err()
+		}
+	}
 	leak, big := f.mode()
 	pw := f.password()
 	switch leak {

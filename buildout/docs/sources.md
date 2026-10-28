@@ -70,10 +70,11 @@ Screen `p14b-source-stopped`: when the keeper is not running, those sources stay
 ![Audit sources while the key keeper is not running, light](../screenshots/P14b/p14b-source-stopped-light.png)
 
 - A read the keeper refuses because it is not running, or because it closed the source, makes the page read the source list again. A source the keeper closed leaves the list the way Remove takes it off, and you add it again from the saved link.
-- The keeper closes the sources of an Unravis that has not asked for anything in 8 hours, and when it restarts. It keeps sources open for at most 16 Unravis windows at once, 4 per Windows account. Past that it answers that it is full (`keeper-full`), and you close another Unravis or wait.
+- The keeper closes the sources of an Unravis that has not asked for anything in 8 hours, and when it restarts. It keeps sources open for at most 16 running Unravis programs at once, 4 per Windows account. Past that it answers that it is full (`keeper-full`), and you close another Unravis or wait.
 - One analysis reads either sources the keeper opened or sources your Unravis opened, not both (`keeper-mixed`). Only the timeline across sources takes both at once. The limit of 8 sources counts both kinds together.
-- The keeper opens sources with the normal limits. A broad scan, which `--allow-broad-scans` allows in your own Unravis, is refused for a source the keeper opened. Type the password to open the source yourself if you need one.
-- Error codes: `keeper-stopped` (503, the keeper is not running), `keeper-source-gone` (404, the keeper closed the source), `keeper-mixed` (400), `keeper-full` (503).
+- The keeper opens sources with the normal limits. A broad scan, which `--allow-broad-scans` allows in your own Unravis, is refused for a source the keeper opened. A source opened from a saved link always uses these default limits. When a message says to raise a limit (for example `--allow-broad-scans` or `--docs-examined-budget`), that flag changes nothing for such a source. To scan wider, type the password so your own Unravis opens the source.
+- The keeper reads for every Unravis on the PC, so it keeps a share of its connections for other work and answers a read it has no room for with "busy, try again" (`keeper-audit-busy`, 503). Wait a few seconds and ask again. A read the keeper runs for a source stops after at most 90 seconds, or sooner when the page stops waiting, and an answer larger than 64 MiB is refused as over a limit.
+- Error codes: `keeper-stopped` (503, the keeper is not running), `keeper-source-gone` (404, the keeper closed the source), `keeper-mixed` (400), `keeper-full` (503), `keeper-audit-busy` (503, the keeper has no room for another read right now).
 
 The demo shows these two states only for the pictures (`#keeper=saved` and `#keeper=stopped`). It never runs a keeper.
 
