@@ -81,6 +81,21 @@ type restoreAdapter struct {
 
 func (a restoreAdapter) Root() string { return a.root }
 
+// Create makes the case Closed from the start: every restore ends Closed, and a
+// crash anywhere inside the restore must not leave an Open case behind (spec 7.4).
+// A case that cannot be closed is erased and the restore fails.
+func (a restoreAdapter) Create(ctx context.Context, title string) (casestore.CaseInfo, error) {
+	info, err := a.Store.Create(ctx, title)
+	if err != nil {
+		return info, err
+	}
+	if err := a.Store.CloseCase(ctx, info.ID); err != nil {
+		_ = a.Store.Erase(context.WithoutCancel(ctx), info.ID)
+		return casestore.CaseInfo{}, err
+	}
+	return info, nil
+}
+
 // caseFileBody is a decoded request body. pass never becomes a Go string.
 type caseFileBody struct {
 	raw    []byte

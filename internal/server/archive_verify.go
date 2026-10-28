@@ -229,7 +229,9 @@ func (h *handler) runVerify(ctx context.Context, job *fileJob, ar casestore.Arch
 	if typed {
 		st.restoreTh.reset()
 	}
-	if cur.Counts != (casestore.Counts{}) && res.Counts != cur.Counts {
+	// Every archive this program makes records its counts, zeros included (an empty
+	// case is 0, 0, 0), so the record is compared as it stands.
+	if res.Counts != cur.Counts {
 		failed()
 		return
 	}

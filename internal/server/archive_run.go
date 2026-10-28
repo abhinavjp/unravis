@@ -26,6 +26,8 @@ var (
 	archiveInject func(point, part, final string) (kill bool)
 	// archiveWriter writes the .part file.
 	archiveWriter = casestore.WriteArchivePart
+	// archiveCountFn counts what the record will state.
+	archiveCountFn = casestore.CountCaseDB
 	// archiveFreeFn reports the free bytes of the volume holding a folder.
 	archiveFreeFn = archiveFreeBytes
 	// archiveNow is the clock of file names and records.
@@ -106,7 +108,7 @@ func (h *handler) runArchive(ctx context.Context, job *fileJob, run archiveRun) 
 	removePart := func() { _ = os.Remove(run.part) }
 
 	// What the record will state: counted from the database the file is made from.
-	if c, err := casestore.CountCaseDB(ctx, run.src.DBPath, run.keys.DB); err == nil {
+	if c, err := archiveCountFn(ctx, run.src.DBPath, run.keys.DB); err == nil {
 		run.counts, run.hasCount = c, true
 	} else if ctx.Err() != nil {
 		stopWhy()

@@ -49,6 +49,9 @@ func caseDBPath(root string, id casestore.CaseID) string {
 	return filepath.Join(root, string(id), "case.db")
 }
 
+// archiveMinRoom is the least free space an archive asks for.
+const archiveMinRoom = 1 << 20
+
 // caseDBBytes is the size of the case database and its journal, the number the
 // 8 GiB limit and the free-space check use.
 func caseDBBytes(root string, id casestore.CaseID) int64 {
@@ -152,7 +155,13 @@ func (h *handler) archiveCase(w http.ResponseWriter, r *http.Request, raw string
 		writeCaseFailure(w, http.StatusBadRequest, "bad-folder", archiveFolderText)
 		return
 	}
-	if dbBytes > 0 && free < uint64(dbBytes)+uint64(dbBytes)/5 {
+	// The file is the database plus a fifth, and never less than the header, the key
+	// block and the smallest database: an unreadable size must not skip the check.
+	need := uint64(dbBytes) + uint64(dbBytes)/5
+	if need < archiveMinRoom {
+		need = archiveMinRoom
+	}
+	if free < need {
 		writeCaseFailure(w, http.StatusInsufficientStorage, "no-space", archiveNoSpaceText)
 		return
 	}
