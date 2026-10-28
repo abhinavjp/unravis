@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../api';
-  import { app, goHome, openAnalysis, openCaseImport, openSidePanel, panels } from '../appState.svelte';
+  import { app, goHome, openAnalysis, openCaseImport, openConnections, openSidePanel, panels } from '../appState.svelte';
   import { believedState, caseCode, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { reopenButton, retryAction } from '../caseLifecycle';
   import { CASE_HOME_TEXT, retryKindLabel } from '../copy/caseHomeCopy';
@@ -16,6 +16,8 @@
   import { formatTime } from '../time';
   import { timeZone } from '../timeZone.svelte';
   import HealthPanel from './HealthPanel.svelte';
+  import SourcesHub from '../../components/sources/SourcesHub.svelte';
+  import { HUB_TEXT } from '../copy/sourcesCopy';
 
   // One page per case: the story (what happened, in order), the theories, the health checks, the analysis and the files.
   // Everything here is read from what the case already saved. Nothing runs by itself.
@@ -363,6 +365,12 @@
       <h3 id="home-health">{CASE_HOME_TEXT.healthHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.healthText}</p>
       <HealthPanel {caseId} onGone={gone} onRan={() => void rereadHealth()} />
+    </section>
+
+    <section class="block" aria-labelledby="home-sources">
+      <h3 id="home-sources">{HUB_TEXT.heading}</h3>
+      <p class="note">{HUB_TEXT.intro}</p>
+      <SourcesHub {caseId} {readOnly} onGone={gone} onAddFiles={openCaseImport} onAddMongo={() => void openConnections('new')} />
     </section>
 
     <section class="block" aria-labelledby="home-files">

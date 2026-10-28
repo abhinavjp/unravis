@@ -137,22 +137,79 @@ func TestInvalidInputs(t *testing.T) {
 }
 
 func TestDeleteAndLimit(t *testing.T) {
-	s, _ := service(t)
-	first, _ := s.Save(Input{Server: "h0", Auth: AuthWindows})
-	for i := 1; i <= MaxRecords+3; i++ {
+	s, path := service(t)
+	first, err := s.Save(Input{Server: "h0", Auth: AuthWindows})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i < MaxRecords; i++ {
 		if _, err := s.Save(Input{Server: "h" + strconv.Itoa(i), Auth: AuthWindows}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	before, _ := os.ReadFile(path)
+	// The 21st is refused outright. Nothing older is dropped to make room and the sealed file is not rewritten.
+	if _, err := s.Save(Input{Server: "one-too-many", Auth: AuthWindows}); !errors.Is(err, ErrFull) {
+		t.Fatalf("21st connection: %v", err)
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+		t.Fatal("a refused save changed the file")
 	}
 	items, _ := s.List()
 	if len(items) != MaxRecords {
 		t.Fatalf("limit: %d", len(items))
 	}
-	if err := s.Delete(items[0].ID); err != nil {
+	for _, it := range items {
+		if it.Server == "one-too-many:1433" || it.Host == "one-too-many" {
+			t.Fatal("the refused connection was stored")
+		}
+	}
+	// Saving an existing connection again is an edit, not a new one, so it still works when the list is full.
+	if _, err := s.Save(Input{Server: "h0", Auth: AuthWindows, Label: "renamed"}); err != nil {
+		t.Fatalf("editing a saved connection when full: %v", err)
+	}
+	// Deleting one makes room.
+	if err := s.Delete(first.ID); err != nil {
+		// h0 was re-saved under the same id, so it is still there to delete
 		t.Fatal(err)
 	}
+	if _, err := s.Save(Input{Server: "one-too-many", Auth: AuthWindows}); err != nil {
+		t.Fatalf("after deleting one: %v", err)
+	}
 	if err := s.Delete(first.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("first was pushed out: %v", err)
+		t.Fatalf("already deleted: %v", err)
+	}
+}
+
+func TestFullListKeepsPasswordsAndNeverReturnsThem(t *testing.T) {
+	s, path := service(t)
+	for i := 0; i < MaxRecords; i++ {
+		in := ssms()
+		in.Server = "h" + strconv.Itoa(i)
+		in.RememberPassword = true
+		if _, err := s.Save(in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	in := ssms()
+	in.Server = "extra"
+	in.RememberPassword = true
+	_, err := s.Save(in)
+	if !errors.Is(err, ErrFull) {
+		t.Fatalf("%v", err)
+	}
+	if msg := err.Error(); bytes.Contains([]byte(msg), []byte("hunter2")) {
+		t.Fatal("the refusal carries a password")
+	}
+	raw, _ := os.ReadFile(path)
+	if bytes.Contains(raw, []byte("hunter2-secret")) {
+		t.Fatal("password is in the file in clear")
+	}
+	items, _ := s.List()
+	for _, it := range items {
+		if !it.HasPassword {
+			t.Fatal("a kept password was lost")
+		}
 	}
 }
 

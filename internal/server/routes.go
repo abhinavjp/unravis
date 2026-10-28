@@ -115,6 +115,17 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/health/run", match: caseSubpath("/health/run"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseHealthRun(w, r, id) },
 	}},
+	// SQL and Mongo lanes: read one database for one incident, keep it as a day, and the scripts the owner runs to allow it.
+	{pattern: "/api/cases/{id}/lanes", match: caseSubpath("/lanes"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseLaneList(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/lanes/sql", match: caseSubpath("/lanes/sql"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseLaneSQL(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/lanes/mongo", match: caseSubpath("/lanes/mongo"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseLaneMongo(w, r, id) },
+	}},
+	{pattern: "/api/grant-scripts", match: exactPath("/api/grant-scripts"), methods: get((*handler).grantScripts)},
 	// A case's own theories ledger. copy-shared is a fixed word and must stay ahead
 	// of the {hid} item route, which would otherwise read it as an entry id.
 	{pattern: "/api/cases/{id}/ledger", match: caseSubpath("/ledger"), methods: map[string]routeFunc{

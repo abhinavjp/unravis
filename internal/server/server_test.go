@@ -566,12 +566,16 @@ type fakeHistory struct {
 	rememberedPassword bool
 	deleted            string
 	rememberCalls      int
+	rememberErr        error
 }
 
 func (f *fakeHistory) List() ([]history.Recent, error) { return f.items, nil }
 func (f *fakeHistory) Remember(label string, in audit.ConnectionInput, collection string, rememberPassword bool) (history.Recent, error) {
 	f.rememberCalls++
 	f.remembered, f.rememberedPassword = in, rememberPassword
+	if f.rememberErr != nil {
+		return history.Recent{}, f.rememberErr
+	}
 	return history.Recent{ID: "saved-1", Label: label, URI: in.URI, Username: in.Username, AuthSource: in.AuthSource, TLSMode: in.TLSMode, CACertificate: in.CACertificate, Collection: collection, HasCredentials: rememberPassword, LastUsedAt: time.Now().UTC()}, nil
 }
 func (f *fakeHistory) Resolve(in audit.ConnectionInput) (audit.ConnectionInput, error) {
@@ -634,6 +638,18 @@ func TestSavedConnectionRoutesHidePasswordAndUseSharedGuards(t *testing.T) {
 	deleted := request(h, http.MethodDelete, "/api/connections/recent/saved-1", "", true)
 	if deleted.Code != http.StatusNoContent || saved.deleted != "saved-1" {
 		t.Fatalf("delete status=%d id=%q", deleted.Code, saved.deleted)
+	}
+}
+
+// Review F2: the 21st saved MongoDB connection is refused with 409 and the text says nothing was removed.
+func TestRememberRefusesTheTwentyFirstConnection(t *testing.T) {
+	input := audit.ConnectionInput{URI: "mongodb://db.example", Username: "reader", Password: "private-password", AuthSource: "admin", TLSMode: "system"}
+	saved := &fakeHistory{rememberErr: history.ErrFull}
+	h := New(&connectionTestRepository{fakeRepository: &fakeRepository{}}, nil, testToken, false, WithHistory(saved))
+	body, _ := json.Marshal(map[string]any{"label": "production", "connection": input, "collection": "audit", "rememberPassword": true})
+	res := request(h, http.MethodPost, "/api/connections/remember", string(body), true)
+	if res.Code != http.StatusConflict || !strings.Contains(res.Body.String(), "Nothing was removed") || strings.Contains(res.Body.String(), input.Password) {
+		t.Fatalf("21st connection = %d %s", res.Code, res.Body.String())
 	}
 }
 

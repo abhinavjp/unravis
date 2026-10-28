@@ -91,6 +91,19 @@ func New(repo audit.Repository, assets fs.FS, token string, demo bool, options .
 			option(h)
 		}
 	}
+	if demo {
+		// The demo keeps its saved connections in memory and reads from canned rows, so the SQL Server and MongoDB screens work without a server.
+		now := time.Now().UTC()
+		if clock, ok := repo.(interface{ DemoTime() time.Time }); ok {
+			now = clock.DemoTime().UTC()
+		}
+		if h.sqlConns == nil {
+			h.sqlConns = newDemoSQLStore(now)
+		}
+		if h.history == nil {
+			h.history = newDemoHistory(now)
+		}
+	}
 	if assets != nil {
 		// The page is served as built. The session token is never written into it:
 		// GET / is unauthenticated and loopback is shared by every local user, so
@@ -365,6 +378,10 @@ func (h *handler) rememberConnection(w http.ResponseWriter, r *http.Request) {
 	connection.SavedConnectionID = savedConnectionID
 	item, err := h.history.Remember(input.Label, connection, input.Collection, input.RememberPassword)
 	if err != nil {
+		if errors.Is(err, history.ErrFull) {
+			writeError(w, http.StatusConflict, "You already have 20 saved MongoDB connections. Remove one first, then save this one. Nothing was removed for you.")
+			return
+		}
 		if errors.Is(err, audit.ErrInvalidInput) || errors.Is(err, history.ErrNotFound) {
 			writeError(w, http.StatusBadRequest, "Saved connection details are invalid.")
 			return
