@@ -112,3 +112,36 @@ func TestSharedLayoutAsksTheKeeper(t *testing.T) {
 		t.Fatalf("the old per-user folder was written: %v", entries)
 	}
 }
+
+// The person's own cases from before the shared layout are counted by folder name only, never opened.
+func TestOldCaseCounterCountsCaseFoldersOnly(t *testing.T) {
+	dir := t.TempDir()
+	getenv := func(k string) string {
+		if k == "AUDIT_CONFIG_DIR" {
+			return dir
+		}
+		return ""
+	}
+	root := filepath.Join(dir, "cases")
+	for _, name := range []string{"abcdefghijklmnopqrstuvwxyz", "a2345672345672345672345672", "not-a-case", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"} {
+		if err := os.MkdirAll(filepath.Join(root, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "bcdefghijklmnopqrstuvwxyza"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	count := oldCaseCounter(getenv)
+	if count == nil {
+		t.Fatal("no counter")
+	}
+	if n := count(); n != 2 {
+		t.Fatalf("count = %d, want 2", n)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(); n != 0 {
+		t.Fatalf("count without the folder = %d", n)
+	}
+}

@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"regexp"
 
 	"api-audit-explorer/internal/bbsaved"
 	"api-audit-explorer/internal/datadir"
@@ -104,9 +106,34 @@ func wireSaved(getenv func(string) string, s storage) savedWiring {
 		options: []server.Option{
 			server.WithSQLConnections(keeper.NewSQLStore(c)),
 			server.WithHistory(mongo),
-			server.WithKeeper(&server.KeeperHub{Client: c, Migration: &keeper.Migration{Legacy: legacy, Client: c}}),
+			server.WithKeeper(&server.KeeperHub{Client: c, Migration: &keeper.Migration{Legacy: legacy, Client: c}, OldCases: oldCaseCounter(getenv)}),
 		},
 		bb: keeper.NewBBStore(c),
+	}
+}
+
+// caseFolderName is a case's folder in a case root: its id.
+var caseFolderName = regexp.MustCompile(`^[a-z2-7]{26}$`)
+
+// oldCaseCounter counts the person's cases in their own (per-user) case folder, which the shared layout does not open. It only lists
+// folder names: nothing is opened or unsealed.
+func oldCaseCounter(getenv func(string) string) func() int {
+	root, err := casesRoot(getenv)
+	if err != nil {
+		return nil
+	}
+	return func() int {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			return 0
+		}
+		n := 0
+		for _, e := range entries {
+			if e.IsDir() && caseFolderName.MatchString(e.Name()) {
+				n++
+			}
+		}
+		return n
 	}
 }
 

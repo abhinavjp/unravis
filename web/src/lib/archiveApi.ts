@@ -17,9 +17,10 @@ function asJob(raw: unknown, kind: FileJobKind): FileJob {
 }
 
 /** One page of cases. The working list carries the archived total so the toggle can say how many there are. */
-export interface CasesPage { cases: CaseInfo[]; archivedTotal: number; offset: number; pageSize: number; erased: ErasedLine[] }
+/** oldCases: the person's cases from before this PC was set up for everyone, left in their own folder (P14). */
+export interface CasesPage { cases: CaseInfo[]; archivedTotal: number; offset: number; pageSize: number; erased: ErasedLine[]; oldCases: number }
 
-function toPage(body: { cases?: Partial<CaseInfo>[]; archivedTotal?: unknown; offset?: unknown; pageSize?: unknown; erased?: unknown }): CasesPage {
+function toPage(body: { cases?: Partial<CaseInfo>[]; archivedTotal?: unknown; offset?: unknown; pageSize?: unknown; erased?: unknown; oldCases?: unknown }): CasesPage {
   const num = (v: unknown, d: number): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : d);
   return {
     cases: (body.cases ?? []).map(toCase).filter((c) => /^[a-z2-7]{26}$/.test(c.id)),
@@ -27,7 +28,8 @@ function toPage(body: { cases?: Partial<CaseInfo>[]; archivedTotal?: unknown; of
     offset: num(body.offset, 0),
     pageSize: num(body.pageSize, 50),
     // The lines left by erased cases (id and time only). The archived list never carries them.
-    erased: Array.isArray(body.erased) ? body.erased.map(toErased).filter((l): l is ErasedLine => l !== null) : []
+    erased: Array.isArray(body.erased) ? body.erased.map(toErased).filter((l): l is ErasedLine => l !== null) : [],
+    oldCases: num(body.oldCases, 0)
   };
 }
 

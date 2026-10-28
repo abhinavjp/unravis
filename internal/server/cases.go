@@ -1,8 +1,8 @@
 package server
 
 import (
-	"bytes"
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -694,13 +694,19 @@ func (h *handler) listCases(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, d)
 	}
+	oldCases := 0
+	if h.keeper != nil && h.keeper.OldCases != nil {
+		oldCases = h.keeper.OldCases()
+	}
 	writeJSON(w, http.StatusOK, struct {
 		Cases         []caseDTO   `json:"cases"`
 		ArchivedTotal int         `json:"archivedTotal"`
 		Offset        int         `json:"offset"`
 		PageSize      int         `json:"pageSize"`
 		Erased        []erasedDTO `json:"erased"`
-	}{out, len(kept), offset, archivedPageSize, h.erasedLines()}, maxResponseBytes)
+		// OldCases is how many of the person's cases from before the shared layout stay in their own folder (P14, not moved).
+		OldCases int `json:"oldCases,omitempty"`
+	}{out, len(kept), offset, archivedPageSize, h.erasedLines(), oldCases}, maxResponseBytes)
 }
 
 // archivedPageSize is how many archived cases one page of the archived list holds.

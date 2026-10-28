@@ -11,7 +11,7 @@
   import { closesCases, offersRewrap } from '../lib/masterKey';
   import type { LockState } from '../lib/masterKey';
   import { KEY_TEXT } from '../lib/copy/masterKeyCopy';
-  import { START_TEXT, openLabel } from '../lib/copy/startCopy';
+  import { START_TEXT, oldCasesText, openLabel } from '../lib/copy/startCopy';
   import { startView } from '../lib/startScreen';
   import { app, noteKeyStatus, noteLocked } from '../lib/appState.svelte';
   import HelpNote from './HelpNote.svelte';
@@ -39,6 +39,8 @@
   let clearProblem = $state('');
   let pages = $state(1);
   let archivedTotal = $state(0);
+  // Cases from before this PC was set up for everyone: they stay in the person's own folder and are not shown here (P14).
+  let oldCases = $state(0);
   let showArchived = $state(false);
   let controller: AbortController | null = null;
 
@@ -63,6 +65,7 @@
       cases = page.cases;
       archivedTotal = page.archivedTotal;
       erased = page.erased;
+      oldCases = page.oldCases;
       phase = 'ready';
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -142,6 +145,7 @@
             <button type="button" class="quiet-button" onclick={() => (pages += 1)}>{START_TEXT.showMore}</button>
           {/if}
         {/if}
+        {#if phase === 'ready' && oldCases > 0}<p class="card-note" role="note" data-old-cases>{oldCasesText(oldCases)}</p>{/if}
         {#if phase === 'ready' && !showArchived && archivedTotal > 0}
           <button type="button" class="quiet-button archived-toggle" onclick={() => (showArchived = true)}>{archivedToggleText(archivedTotal)}</button>
         {/if}

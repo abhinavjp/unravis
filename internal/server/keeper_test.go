@@ -442,6 +442,30 @@ func TestKeeperStatusOutsideTheSharedLayout(t *testing.T) {
 	}
 }
 
+// The person's cases from before the shared layout stay in their own folder (P14 ruling): the case list only says how many there are.
+func TestOldPerUserCasesAreCountedNotOpened(t *testing.T) {
+	type page struct {
+		Cases    []caseDTO `json:"cases"`
+		OldCases int       `json:"oldCases"`
+	}
+	n := 3
+	e := tagEnv(t, casestore.NewMemory(), &fakeRepository{}, WithKeeper(&KeeperHub{OldCases: func() int { return n }}))
+	var got page
+	decodeBody(t, e.get("/api/cases"), &got)
+	if got.OldCases != 3 || len(got.Cases) != 0 {
+		t.Fatalf("page = %+v", got)
+	}
+	n = 0
+	res := e.get("/api/cases")
+	if strings.Contains(res.Body.String(), "oldCases") {
+		t.Fatalf("no old cases still named: %s", res.Body.String())
+	}
+	plain := tagEnv(t, casestore.NewMemory(), &fakeRepository{})
+	if res := plain.get("/api/cases"); strings.Contains(res.Body.String(), "oldCases") {
+		t.Fatalf("per-user layout names old cases: %s", res.Body.String())
+	}
+}
+
 func TestKeeperErrorsAreWordedForPeople(t *testing.T) {
 	for _, c := range []struct {
 		err  error

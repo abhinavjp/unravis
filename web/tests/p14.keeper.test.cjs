@@ -135,3 +135,17 @@ test('no password field or value reaches the keeper side of the page', () => {
     assert.doesNotMatch(text, /type="password"|\.password\b|password:/, file + ' never names a password field');
   }
 });
+
+test('old per-user cases are said on the start screen, never opened or moved', () => {
+  const start = loadTypeScript('src/lib/copy/startCopy.ts');
+  assert.match(start.oldCasesText(1), /^1 case from before/);
+  assert.match(start.oldCasesText(4), /^4 cases from before .* are still in your own Windows folder/);
+  assert.match(start.oldCasesText(4), /has not deleted them/);
+  const issues = lintScreenStrings(start.startLintEntries().filter((e) => e.id.startsWith('start.sample.old')), []);
+  assert.deepEqual(issues, []);
+  const archive = read('src/lib/archiveApi.ts');
+  assert.match(archive, /oldCases: num\(body\.oldCases, 0\)/);
+  const screen = read('src/components/StartScreen.svelte');
+  assert.match(screen, /oldCases = page\.oldCases/);
+  assert.match(screen, /\{#if phase === 'ready' && oldCases > 0\}<p class="card-note" role="note" data-old-cases>\{oldCasesText\(oldCases\)\}<\/p>\{\/if\}/);
+});

@@ -46,6 +46,9 @@ type KeeperHub struct {
 	Client *keeper.Client
 	// Migration moves the person's old per-user saved files into the keeper (nil when there is nothing to look at).
 	Migration *keeper.Migration
+	// OldCases counts the person's cases from before the PC was set up for everyone, which stay in their own folder, sealed for them
+	// (owner ruling for P14a: not moved, said on the start screen). nil counts none.
+	OldCases func() int
 }
 
 // WithKeeper turns on the shared layout's keeper routes.
