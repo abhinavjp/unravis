@@ -178,6 +178,7 @@ func (h *handler) runInvestigation(w http.ResponseWriter, r *http.Request, raw s
 		writeStoreError(w, err)
 		return none, read, nil, false
 	}
+	h.applyBlackboxLane(ctx, c, &in, &read)
 	res := investigate.Analyze(in)
 	if read.Warnings == nil {
 		read.Warnings = []string{}

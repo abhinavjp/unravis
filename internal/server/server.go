@@ -56,6 +56,8 @@ type handler struct {
 	mongoTests mongoTests
 	// mk is the master-key session (nil when the feature is not wired).
 	mk *MasterKeySession
+	// bb is the Blackbox pages (nil when not wired, see WithBlackbox).
+	bb *blackboxHub
 
 	casesState
 

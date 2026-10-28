@@ -107,6 +107,22 @@ var routeCases = []routeCase{
 	{"/api/cases/{id}", "/api/cases/c1", "DELETE, GET"},
 	{"/api/hosts", "/api/hosts", "GET, PUT"},
 	{"/api/importers", "/api/importers", "GET"},
+	{"/api/blackbox", "/api/blackbox", "GET, POST"},
+	{"/api/blackbox/test", "/api/blackbox/test", "POST"},
+	{"/api/blackbox/validate", "/api/blackbox/validate", "POST"},
+	{"/api/blackbox/pack", "/api/blackbox/pack", "POST"},
+	{"/api/blackbox/this-pc", "/api/blackbox/this-pc", "GET"},
+	{"/api/blackbox/this-pc/install", "/api/blackbox/this-pc/install", "POST"},
+	{"/api/blackbox/this-pc/start", "/api/blackbox/this-pc/start", "POST"},
+	{"/api/blackbox/this-pc/stop", "/api/blackbox/this-pc/stop", "POST"},
+	{"/api/blackbox/this-pc/apply", "/api/blackbox/this-pc/apply", "POST"},
+	{"/api/blackbox/this-pc/remove", "/api/blackbox/this-pc/remove", "POST"},
+	{"/api/blackbox/this-pc/snapshot", "/api/blackbox/this-pc/snapshot", "POST"},
+	{"/api/blackbox/{id}/check", "/api/blackbox/bb-1/check", "POST"},
+	{"/api/blackbox/{id}/key", "/api/blackbox/bb-1/key", "PUT"},
+	{"/api/blackbox/{id}/reveal-key", "/api/blackbox/bb-1/reveal-key", "POST"},
+	{"/api/blackbox/{id}/host-reading", "/api/blackbox/bb-1/host-reading", "POST"},
+	{"/api/blackbox/{id}", "/api/blackbox/bb-1", "DELETE"},
 }
 
 var routeTestMethods = []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete}

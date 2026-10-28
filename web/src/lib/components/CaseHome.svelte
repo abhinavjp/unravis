@@ -370,7 +370,7 @@
     <section class="block" aria-labelledby="home-sources">
       <h3 id="home-sources">{HUB_TEXT.heading}</h3>
       <p class="note">{HUB_TEXT.intro}</p>
-      <SourcesHub {caseId} {readOnly} onGone={gone} onAddFiles={openCaseImport} onAddMongo={() => void openConnections('new')} />
+      <SourcesHub {caseId} {readOnly} onGone={gone} onAddFiles={openCaseImport} onAddBlackbox={() => openSidePanel('blackbox')} onAddMongo={() => void openConnections('new')} />
     </section>
 
     <section class="block" aria-labelledby="home-files">

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '../../lib/api';
+  import { BLACKBOX_TAG_KIND } from '../../lib/blackboxCase';
+  import { caseUseApi } from '../../lib/blackboxCaseApi';
   import { fetchLaneDays, groupSources, readableByDay, type LaneDay } from '../../lib/lanes';
   import { ADD_TEXT, HUB_TEXT, NUTSHELL } from '../../lib/copy/sourcesCopy';
   import './sources.css';
@@ -9,12 +11,14 @@
   // exists and hands the choice on; nothing is read or changed here. A step that ran before the new data arrived is marked Out of date by the
   // screen that finishes the add, never by itself.
   export type AddChoice = 'sql' | 'mongo' | 'blackbox' | 'files' | 'day';
-  // files and blackbox say whether the page that adds them exists in this build. A card whose page is missing is switched off and says so, never a dead click.
-  let { caseId, readOnly = false, files = false, blackbox = false, onChoose }: { caseId: string; readOnly?: boolean; files?: boolean; blackbox?: boolean; onChoose?: (what: AddChoice) => void } = $props();
+  // files says whether the page that adds files exists in this build. A card whose page is missing is switched off, never a dead click. The Blackbox page is always there.
+  let { caseId, readOnly = false, files = false, onChoose }: { caseId: string; readOnly?: boolean; files?: boolean; onChoose?: (what: AddChoice) => void } = $props();
 
   let days = $state.raw<LaneDay[]>([]);
   let sqlSaved = $state(0);
   let mongoSaved = $state(0);
+  // The case keeps one tag per Blackbox it reads (a case reads one), so the card can say whether this case does.
+  let blackboxHeld = $state(0);
 
   const sources = $derived(groupSources(days));
   const sqlHeld = $derived(sources.filter(s => s.kind === 'sql').length);
@@ -24,11 +28,12 @@
   onMount(() => {
     const mine = new AbortController();
     void (async () => {
-      const [list, sql, mongo] = await Promise.allSettled([fetchLaneDays(caseId, mine.signal), api.sqlConnections(), api.recentConnections()]);
+      const [list, sql, mongo, tags] = await Promise.allSettled([fetchLaneDays(caseId, mine.signal), api.sqlConnections(), api.recentConnections(), caseUseApi.listTags(caseId)]);
       if (mine.signal.aborted) return;
       if (list.status === 'fulfilled') days = list.value;
       if (sql.status === 'fulfilled' && Array.isArray(sql.value)) sqlSaved = sql.value.length;
       if (mongo.status === 'fulfilled' && Array.isArray(mongo.value)) mongoSaved = mongo.value.length;
+      if (tags.status === 'fulfilled') blackboxHeld = tags.value.filter((t) => t.kind === BLACKBOX_TAG_KIND).length;
     })();
     return () => mine.abort();
   });
@@ -57,8 +62,8 @@
     <div class="card" data-card="blackbox">
       <h4>{ADD_TEXT.blackboxTitle}</h4>
       <p class="hint">{ADD_TEXT.blackboxBody}</p>
-      <div class="actions"><button type="button" class="btn" disabled={readOnly || !blackbox} onclick={() => choose('blackbox')}>{ADD_TEXT.addBlackbox}</button></div>
-      {#if !blackbox}<p class="hint" data-unavailable="blackbox">{ADD_TEXT.blackboxLater}</p>{/if}
+      <p class="hint">{ADD_TEXT.held(blackboxHeld)}</p>
+      <div class="actions"><button type="button" class="btn" disabled={readOnly} onclick={() => choose('blackbox')}>{ADD_TEXT.addBlackbox}</button></div>
     </div>
     <div class="card" data-card="files">
       <h4>{ADD_TEXT.filesTitle}</h4>

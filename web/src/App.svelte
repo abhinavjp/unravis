@@ -14,6 +14,7 @@
   import LedgerPanel from './components/LedgerPanel.svelte';
   import ExportPanel from './components/ExportPanel.svelte';
   import ImportPanel from './lib/components/ImportPanel.svelte';
+  import BlackboxPanel from './components/BlackboxPanel.svelte';
   import CaseHome from './lib/components/CaseHome.svelte';
   import Pulse from './components/Pulse.svelte';
   import RollupView from './components/RollupView.svelte';
@@ -71,6 +72,7 @@
     {#if panels.sidePanel === 'ledger'}<LedgerPanel onClose={closeSidePanel} />{/if}
     {#if panels.sidePanel === 'export'}<ExportPanel query={scope.query} {zone} {sourceLabels} onClose={closeSidePanel} />{/if}
     {#if panels.sidePanel === 'import'}<ImportPanel query={scope.query} {zone} onClose={closeSidePanel} />{/if}
+    {#if panels.sidePanel === 'blackbox'}<BlackboxPanel onClose={closeSidePanel} />{/if}
 
     <main class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={panels.modalOpen}>
       <div class="stage-inner">

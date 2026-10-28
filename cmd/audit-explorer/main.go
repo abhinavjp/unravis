@@ -183,6 +183,7 @@ func run(args []string, getenv func(string) string) error {
 		return casesErr
 	}
 	serverOptions = append(serverOptions, caseOptions...)
+	serverOptions = append(serverOptions, wireBlackbox(*demo, demoCfg, getenv)...)
 	defer closeCases()
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
