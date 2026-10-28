@@ -29,7 +29,7 @@ func TestCreateValidatesTitle(t *testing.T) {
 	if !validID(info.ID) {
 		t.Fatalf("ID %q does not match the case ID pattern", info.ID)
 	}
-	if entries, _ := os.ReadDir(s.root); len(entries) != 1 {
+	if entries := caseFolders(s.root); len(entries) != 1 {
 		t.Fatalf("a rejected title left folders behind: %d entries", len(entries))
 	}
 }

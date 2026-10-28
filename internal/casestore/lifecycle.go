@@ -39,6 +39,8 @@ func StateOf(i CaseInfo) State {
 		return StateUntrusted
 	case i.Mark == MarkArchiving:
 		return StateArchiving
+	case i.Archive != nil && i.Archive.Active:
+		return StateArchived
 	case i.Closed != nil:
 		return StateClosed
 	}
@@ -179,6 +181,9 @@ const MaxHistory = 200
 type HistoryEntry struct {
 	At   time.Time
 	Kind string
+	// Detail is a short fact that goes with some kinds: the case file name of an
+	// archive, the short code of a case restored from this one. Never a secret.
+	Detail string
 }
 
 // MaxRequestIDLen bounds a create request id.

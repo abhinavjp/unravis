@@ -131,6 +131,9 @@ func p06Names(dir string) []string {
 	ents, _ := os.ReadDir(dir)
 	var out []string
 	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue // the store's own .index folder is not a case
+		}
 		out = append(out, e.Name())
 	}
 	return out

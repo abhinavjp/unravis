@@ -154,6 +154,9 @@ func checkDemoFolder(getenv func(string) string) error {
 		own[string(id)] = true
 	}
 	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue // the store's own .index folder is not a case
+		}
 		// A case made in an earlier capture run on this folder has a demonew ID.
 		if !own[e.Name()] && !isDemoNewID(e.Name()) {
 			return errors.New(demoCasesNeedEmptyDir)

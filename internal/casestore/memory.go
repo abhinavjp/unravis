@@ -35,6 +35,9 @@ type memStore struct {
 	cases map[CaseID]*memData
 	caps  Caps
 	now   func() time.Time
+	// archive holds the unresolved-files list (P3).
+	archOnce sync.Once
+	archive  *memArchive
 }
 
 // memData is one case. importMu serialises imports for the whole of an import
@@ -66,6 +69,10 @@ type memData struct {
 	workspace []byte
 	retries   []RetryItem // the needs-another-try list (see RetryStore)
 	nextRetry int64
+	// refs counts open handles, so Free can refuse a case that is in use (P3).
+	refs int
+	// missing marks a case whose folder is gone, as a demo or test seeds it (P3).
+	missing bool
 }
 
 func (s *memStore) Create(ctx context.Context, title string) (CaseInfo, error) {
@@ -104,6 +111,7 @@ func copyInfo(i CaseInfo) CaseInfo {
 	if len(i.History) == 0 {
 		i.History = nil
 	}
+	i.Archive = i.Archive.clone()
 	return i
 }
 
@@ -153,6 +161,12 @@ func (s *memStore) Open(ctx context.Context, id CaseID) (Case, error) {
 	if err != nil {
 		return nil, err
 	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.info.Archive != nil && d.info.Archive.Active {
+		return nil, ErrArchived
+	}
+	d.refs++
 	return &memCase{s: s, d: d}, nil
 }
 
@@ -166,6 +180,9 @@ func (s *memStore) CloseCase(ctx context.Context, id CaseID) error {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.info.Archive != nil && d.info.Archive.Active {
+		return ErrCaseChanged
+	}
 	if d.info.Closed == nil { // closing twice keeps the first time
 		if err := CheckMark(d.info.Mark); err != nil {
 			return err
@@ -215,7 +232,9 @@ func (s *memStore) Sweep(ctx context.Context, now time.Time) ([]CaseID, error) {
 	var due []CaseID
 	for id, d := range s.cases {
 		d.mu.RLock()
-		if c := d.info.Closed; c != nil && now.Sub(*c) > Retention {
+		a := d.info.Archive
+		skip := d.missing || d.info.Mark == MarkArchiving || d.info.Mark == MarkFreeing || a != nil && (a.Active || a.Pending != nil)
+		if c := d.info.Closed; !skip && c != nil && now.Sub(*c) > Retention {
 			due = append(due, id)
 		}
 		d.mu.RUnlock()
@@ -266,8 +285,16 @@ func (c *memCase) Info() CaseInfo {
 
 func (c *memCase) Close() error {
 	c.mu.Lock()
+	first := !c.closed
 	c.closed = true
 	c.mu.Unlock()
+	if first {
+		c.d.mu.Lock()
+		if c.d.refs > 0 {
+			c.d.refs--
+		}
+		c.d.mu.Unlock()
+	}
 	return nil
 }
 

@@ -132,7 +132,7 @@ func (c *Case) Info() casestore.CaseInfo {
 		ID: c.id, Title: c.man.Title, Created: c.man.Created, Closed: c.man.Closed,
 		Bytes: manifestBytes(c.man), Imports: len(c.man.Imports),
 		Envs: int(c.tagEnvs.Load()), Sources: int(c.tagSources.Load()),
-		Mark: c.man.Mark, RequestID: c.man.RequestID, History: historyOf(c.man),
+		Mark: c.man.Mark, RequestID: c.man.RequestID, History: historyOf(c.man), Archive: c.man.Arch.info(),
 	}
 }
 
@@ -291,9 +291,9 @@ func (c *Case) rebuildManifest() {
 	}
 	defer release()
 	if disk, err := readManifest(c.dir, c.s.sealer(c.dir, "")); err == nil && disk.CaseID == string(c.id) {
-		c.man.Closed, c.man.Mark, c.man.RequestID, c.man.History = disk.Closed, disk.Mark, disk.RequestID, disk.History
+		c.man.Closed, c.man.Mark, c.man.RequestID, c.man.History, c.man.Arch = disk.Closed, disk.Mark, disk.RequestID, disk.History, disk.Arch
 	}
-	_ = writeManifest(c.dir, c.s.sealer(c.dir, ""), c.man)
+	_ = c.s.writeMan(c.dir, c.man)
 }
 
 // dbManifestImports reads the imports table with per-import event counts, in the
@@ -805,7 +805,7 @@ func (c *Case) mirror(m manifestImport) {
 	if hook := c.s.opt.afterCommit; hook != nil && hook() != nil {
 		return
 	}
-	_ = writeManifest(c.dir, c.s.sealer(c.dir, ""), c.man)
+	_ = c.s.writeMan(c.dir, c.man)
 }
 
 // syncManifest runs under the folder lock before an import. It takes the
@@ -830,7 +830,7 @@ func (c *Case) syncManifest(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	c.man.Imports = imports
-	return writeManifest(c.dir, c.s.sealer(c.dir, ""), c.man)
+	return c.s.writeMan(c.dir, c.man)
 }
 
 func sameImport(a, b manifestImport) bool {

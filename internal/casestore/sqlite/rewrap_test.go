@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -328,7 +327,7 @@ func TestNewCaseKindCreatesMasterKeyCases(t *testing.T) {
 	if _, err := s.Create(ctx, "Nope"); !errors.Is(err, casestore.ErrLocked) {
 		t.Fatalf("Create while locked = %v, want ErrLocked", err)
 	}
-	entries, _ := os.ReadDir(root)
+	entries := caseFolders(root)
 	if len(entries) != 1 {
 		t.Fatalf("%d entries in the root after a refused Create", len(entries))
 	}
