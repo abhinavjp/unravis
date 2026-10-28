@@ -641,3 +641,51 @@ func TestDemoPreviewsOfKeeperHeldSources(t *testing.T) {
 		t.Fatalf("preview outside the demo = %d %s", res.Code, res.Body)
 	}
 }
+
+// Someone else on this PC already saved the same address in the keeper, so the person's old copy is only a duplicate: the old
+// file is kept until the person confirms they saw that (D-C-03, KEEP-07).
+func TestRemoveOldCopiesNeedsDuplicatesConfirmation(t *testing.T) {
+	old := t.TempDir()
+	lsql, err := sqlconn.New(filepath.Join(old, "sqlconnections.dat"), storetest.RandomProtector())
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := sqlconn.Input{Server: "old01", Auth: "sql", Username: "u", Password: "old-pw", RememberPassword: true, Encrypt: "mandatory"}
+	if _, err := lsql.Save(in); err != nil {
+		t.Fatal(err)
+	}
+	e := newKeeperEnv(t, casestore.NewMemory(), keeper.Legacy{SQL: lsql})
+	// The same address already in the keeper under another id, with another password.
+	theirs := in
+	theirs.Password = "someone-elses-pw"
+	if _, err := keeper.NewSQLStore(e.client).Save(theirs); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(old, "sqlconnections.dat")
+
+	res := e.json(http.MethodPost, "/api/keeper/remove-old", `{"confirm":true}`)
+	if res.Code != http.StatusConflict || !strings.Contains(res.Body.String(), `"code":"duplicates-unconfirmed"`) {
+		t.Fatalf("remove without confirming duplicates = %d %s", res.Code, res.Body)
+	}
+	if !strings.Contains(res.Body.String(), "already saved by someone else") {
+		t.Fatalf("the answer does not say why: %s", res.Body)
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("the old file went although the duplicates were not confirmed: %v", err)
+	}
+	// confirmDuplicates alone is not enough: confirm is still needed.
+	if res := e.json(http.MethodPost, "/api/keeper/remove-old", `{"confirmDuplicates":true}`); res.Code != http.StatusBadRequest {
+		t.Fatalf("confirmDuplicates without confirm = %d", res.Code)
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("the old file went without confirm: %v", err)
+	}
+
+	res = e.json(http.MethodPost, "/api/keeper/remove-old", `{"confirm":true,"confirmDuplicates":true}`)
+	if res.Code != http.StatusOK {
+		t.Fatalf("remove with both confirmations = %d %s", res.Code, res.Body)
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("the old file is still there: %v", err)
+	}
+}
