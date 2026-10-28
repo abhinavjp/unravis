@@ -163,6 +163,13 @@ func checkViewSettings(settings json.RawMessage) bool {
 	if json.Unmarshal(settings, &obj) != nil {
 		return false
 	}
+	// A JSON null unmarshals into a string or a number without an error, so it is
+	// refused by name: a checked key holds a value or is left out.
+	for _, key := range append([]string{"route", "match", "minCalls"}, viewWindowKeys...) {
+		if raw, present := obj[key]; present && string(raw) == "null" {
+			return false
+		}
+	}
 	for _, key := range viewWindowKeys {
 		raw, present := obj[key]
 		if !present {

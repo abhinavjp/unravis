@@ -122,3 +122,20 @@ func TestScn1Review2ErasedCaseDropsLedgerPreview(t *testing.T) {
 		t.Errorf("confirm after erase = %d %s, want 404", c.Code, c.Body.String())
 	}
 }
+
+// Review2-6: a saved view with a null for a checked key is refused like any other bad value.
+func TestScn1Review2SavedViewRefusesNull(t *testing.T) {
+	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
+		base := "/api/cases/" + id + "/views"
+		for _, settings := range []string{
+			`{"incidentStart":null,"minCalls":null,"route":null}`,
+			`{"incidentStart":null}`, `{"incidentEnd":null}`, `{"referenceStart":null}`, `{"referenceEnd":null}`,
+			`{"minCalls":null}`, `{"route":null}`, `{"match":null}`,
+		} {
+			res := e.json(http.MethodPost, base, `{"name":"v","tool":"slowest-apis","settings":`+settings+`}`)
+			if res.Code != http.StatusBadRequest || failureOf(t, res).Reason != "plan-invalid" {
+				t.Errorf("settings %s = %d %s, want 400 plan-invalid", settings, res.Code, res.Body)
+			}
+		}
+	})
+}
