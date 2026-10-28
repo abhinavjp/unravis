@@ -263,6 +263,11 @@ export const DAY_TEXT = {
   added: 'Day added to the case.'
 } as const;
 
+/** The coverage census panel, when its source is not part of the current search. The panel itself lives in components/CoveragePanel.svelte. */
+export const CENSUS_TEXT = {
+  notTicked: 'This source is not ticked for the current search. The census still runs on it. It only reads.'
+} as const;
+
 export const COMBO_TEXT = {
   heading: 'Source combinations',
   lead: 'A case does not need every source. This is what each combination can answer, so you know what to add next. What a source cannot answer is Cannot test yet, never a pass.',
@@ -334,5 +339,6 @@ export const sourcesCopyEntries = (): LintEntry[] => [
   ...Object.entries(HUB_TEXT).map(([id, text]) => sample('hub.' + id, text)),
   ...Object.entries(KEEPER_TEXT).map(([id, text]) => sample('keeper.' + id, text)),
   sample('keeper.pending', keeperPendingText(2, 1, 1)), sample('keeper.duplicates', keeperDuplicatesText(2)), sample('keeper.duplicatesOne', keeperDuplicatesText(1)), sample('keeper.pendingOne', keeperPendingText(1, 0, 0)),
-  ...Object.entries(NOTHING_TEXT).map(([id, text]) => sample('nothing.' + id, text))
+  ...Object.entries(NOTHING_TEXT).map(([id, text]) => sample('nothing.' + id, text)),
+  ...Object.entries(CENSUS_TEXT).map(([id, text]) => sample('census.' + id, text))
 ];

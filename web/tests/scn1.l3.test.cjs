@@ -145,3 +145,20 @@ test('L3-04 Add another day copy', () => {
   assert.equal(lanes.runNotice({ saved: true, saveError: '', day: {} }).good, true);
   assert.equal(lanes.runNotice({ saved: false, saveError: 'x', day: {} }).good, false);
 });
+
+test('L3-05 the census panel notes an unticked source and still allows the run', () => {
+  const panel = read('src/components/CoveragePanel.svelte');
+  assert.match(panel, /import \{ CENSUS_TEXT \} from '\.\.\/lib\/copy\/sourcesCopy'/);
+  assert.match(panel, /const unticked = \$derived\(!scope\.query\.sourceIds\.includes\(sourceId\)\)/);
+  assert.match(panel, /\{#if unticked\}<p class="coverage-intro" data-unticked>\{CENSUS_TEXT\.notTicked\}<\/p>\{\/if\}/);
+  assert.ok(panel.indexOf('data-unticked') > 0 && panel.indexOf('data-unticked') < panel.indexOf('coverage-run'));
+  assert.match(panel, /disabled=\{!range \|\| phase\.kind === 'running'\}/);
+  assert.doesNotMatch(panel, /disabled=\{[^}]*unticked/);
+  assert.equal((panel.match(/api\.coverage\(/g) ?? []).length, 1);
+  const mount = panel.match(/onMount\(\(\) => \{[\s\S]*?\n  \}\);/);
+  assert.ok(mount);
+  assert.doesNotMatch(mount[0], /unticked|CENSUS_TEXT/);
+  assert.ok(copy.CENSUS_TEXT.notTicked.includes('not ticked'));
+  assert.ok(copy.CENSUS_TEXT.notTicked.includes('only reads'));
+  assert.ok(copy.sourcesCopyEntries().some((e) => e.id === 'sources.census.notTicked'));
+});
