@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
@@ -109,5 +110,19 @@ func TestScn1L7UnknownFieldIsNotInvalidJSON(t *testing.T) {
 	res = request(h, http.MethodPost, "/api/record", `{"sourceId":"s","id":"r"} {}`, true)
 	if res.Code != http.StatusBadRequest || l7ErrorText(t, res) != "Request body must contain one JSON value." {
 		t.Errorf("two values: code = %d %s", res.Code, res.Body)
+	}
+}
+
+func TestScn1L7DemoSourceDeleteSaysWhy(t *testing.T) {
+	h := New(audit.NewDemo(time.Now()), nil, testToken, true)
+	res := request(h, http.MethodDelete, "/api/sources/demo-west", "", true)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", res.Code, res.Body)
+	}
+	if got := l7ErrorText(t, res); got != "Demo sources are built in and cannot be removed." {
+		t.Errorf("message = %q", got)
+	}
+	if res := request(h, http.MethodDelete, "/api/sources/not-a-source", "", true); res.Code != http.StatusNotFound {
+		t.Errorf("unknown source = %d, want 404: %s", res.Code, res.Body)
 	}
 }
