@@ -62,13 +62,19 @@ Close puts a case away without losing anything. A closed case can be read, but n
 
 Closing is not final. Press Reopen on Case home (or on the Import page, in the row of the closed case) and the case is open again. Reopen:
 
-- brings back the saved MongoDB link and the filters the case had when it was closed;
+- changes nothing but the state: the case is open again and what you may add to it is back;
 - never starts anything by itself. Sampling and checks start only when you press them;
 - writes "Case reopened" into the story.
 
 A closed case is still erased 30 days after it was closed, unless you reopen it.
 
-Screens: `p2-close` is the case list on the Import page. `p2-closed-readonly` is a closed case with its buttons turned off. `p2-reopen` is the same case with the Reopen button. The pictures are made by `toolsscreensun-screens.ps1 -Update`; until they are saved they are not linked here.
+The MongoDB link and the filters the case had are not part of Reopen. They are saved with the case as you work, and Unravis puts them back whenever you open the case, closed or not. While the case is closed they cannot be changed, so nothing new is saved; once you reopen it, saving carries on.
+
+Screens: `p2-close` is the case list on the Import page. `p2-closed-readonly` is a closed case with its buttons turned off. `p2-reopen` is the same case with the Reopen button. The pictures are made by `tools/screens/run-screens.ps1 -Update`.
+
+![Close case, in the Import page case list](../screenshots/P2/p2-close-light.png)
+![A closed case, read only](../screenshots/P2/p2-closed-readonly-light-narrow.png)
+![A closed case with the Reopen button](../screenshots/P2/p2-reopen-dark-narrow.png)
 
 Pressing Reopen twice quickly sends one request. The second press does nothing while the first is running.
 
@@ -87,17 +93,22 @@ Each item says what failed, in one of four ways. They are different on purpose:
 
 You can also Remove an item from the list. On a closed case the list says "This case is closed. Reopen it to try again." and shows no buttons. The list never keeps passwords or text from your files.
 
-Screen: `p2-retry-list`. The picture is not saved yet.
+Screen: `p2-retry-list`. The list sits above Analysis, and Case home counts the items in the header ("Needs another try").
+
+![Needs another try list](../screenshots/P2/p2-retry-list-light.png)
 
 ## Two tabs
 
 You can have the same case open in two browser tabs. Every case action checks what the page believes the case is (open, closed) against what it is now, and only one action runs on a case at a time.
 
-If another tab changed the case first, the page changes nothing and says: "This case changed in another tab. Reload." Press Reload to see the case as it is now. This is the 409 answer with the message id M2. It is different from the two older answers: 423 means the master key is locked, and 409 "untrusted" means the case was not opened because its folder was not here when the key was set up.
+If another tab changed the case first, the page changes nothing and says: "This case changed in another tab." with a Reload button. Press Reload to see the case as it is now. Until you do, Reopen and the retry buttons on that page are turned off. In the Import page's case list the same refusal says the list now shows how the case is, because the list has already refreshed. This is the 409 answer with the message id M2. It is different from the two older answers: 423 means the master key is locked, and 409 "untrusted" means the case was not opened because its folder was not here when the key was set up.
 
 Examples: you close a case in tab A, and then add a file in tab B. Tab B is told the case is closed. You press Reopen in two tabs: the first reopens, the second sees M2.
 
-Screen: `p2-changed-elsewhere`. It cannot be captured by the screenshot tool yet, because it needs a second tab to change the case in the middle of the steps. It is checked by hand and by tests.
+Screen: `p2-changed-elsewhere`. A second tab reopens the case, then the first tab presses Reopen. The tool puts the case back as it was afterwards.
+
+![Changed in another tab](../screenshots/P2/p2-changed-elsewhere-light.png)
+![Changed in another tab, narrow](../screenshots/P2/p2-changed-elsewhere-dark-narrow.png)
 
 ## Coming later
 

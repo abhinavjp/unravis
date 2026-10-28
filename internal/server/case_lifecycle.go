@@ -161,7 +161,9 @@ func (h *handler) viewOf(ctx context.Context, c casestore.Case) caseViewDTO {
 
 // reopenCase answers POST /api/cases/{id}/reopen. It clears the Closed stamp and
 // writes a history entry. It does not start the sampler and does not touch the
-// workspace note: the page reads the saved Mongo link and filters back from it.
+// workspace note. The saved Mongo link and filters are not applied here: the page
+// reads them back from the workspace note when it opens the case (a Closed case
+// reads its note too), and its saving resumes once the case is Open again.
 func (h *handler) reopenCase(w http.ResponseWriter, r *http.Request, raw string) {
 	id, ok := caseIDOf(w, raw)
 	if !ok || !h.casesAvailable(w) {

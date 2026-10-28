@@ -295,7 +295,7 @@ export async function closeCase(id: string, believed?: CaseState, signal?: Abort
   return toCase(await json<Partial<CaseInfo>>(await send(casePath(id, '/close'), { method: 'POST', ...expecting(believed) }, signal)));
 }
 
-/** Closed to Open. It applies nothing else: the saved Mongo link and filters come back by themselves, and nothing starts. */
+/** Closed to Open. It applies nothing else and starts nothing. The saved Mongo link and filters are read back when the case is opened (a Closed case reads them too), and saving them resumes now. */
 export async function reopenCase(id: string, believed?: CaseState, signal?: AbortSignal): Promise<CaseInfo> {
   return toCase(await json<Partial<CaseInfo>>(await send(casePath(id, '/reopen'), { method: 'POST', ...expecting(believed) }, signal)));
 }
