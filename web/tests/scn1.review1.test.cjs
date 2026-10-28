@@ -94,3 +94,11 @@ test('Review1-5: a refused removal shows its alert only after the question has c
 test('Review1-6: the remove question is dropped when the view leaves "moved"', () => {
   assert.match(keeperCard, /\$effect\(\(\) => \{\s*if \(view !== 'moved'\) asking = false;\s*\}\);/);
 });
+
+test('D-A-35 rows: migrate view shows the old row text, not the held sticker', () => {
+  const fs = require('node:fs'), path = require('node:path');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'sources', 'ConnectionsPage.svelte'), 'utf8');
+  const assert = require('node:assert/strict');
+  assert.match(page, /\{#if shared && kView !== 'migrate' && row\.password === 'saved'\}/);
+  assert.match(page, /kView !== 'migrate'[\s\S]{0,300}data-keeper-held/);
+});

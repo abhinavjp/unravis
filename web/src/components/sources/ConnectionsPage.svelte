@@ -171,7 +171,7 @@
         <li data-kind={row.kind}>
           <span class="what">
             <span class="name">{row.label}</span>
-            {#if shared && row.password === 'saved'}
+            {#if shared && kView !== 'migrate' && row.password === 'saved'}
               <span class="hint">{row.detail}</span>
               <span><span class="src-sticker held" class:down={keeperUnusable} data-keeper-held>{keeperUnusable ? KEEPER_TEXT.heldDown : KEEPER_TEXT.held}</span></span>
             {:else}
