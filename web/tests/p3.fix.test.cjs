@@ -137,3 +137,18 @@ test('Free and Restore as new look at the master key state on open and show the 
   assert.match(small, /class="primary-button"/);
   assert.match(small, /class="secondary-button"/);
 });
+
+// UI minor 5: closing the archive drawer while the archive runs must leave a sign on the page, keep following the job, and offer the way back in.
+test('an archive that runs with its drawer closed is shown and followed on the case home', () => {
+  const home = read('src/lib/components/CaseHome.svelte');
+  const close = home.match(/function closeArchiveDrawer\(\) \{[\s\S]*?\n  \}/)[0];
+  assert.match(close, /was === 'archive' && caseId\) void load\(caseId, true\)/, 'closing mid-run reads the case again');
+  const follow = home.match(/\$effect\(\(\) => \{\n    const now = info;[\s\S]*?\n  \}\);/)[0];
+  assert.match(follow, /believedState\(now\) !== 'archiving'\) return/, 'polls only while the case is being archived');
+  assert.match(follow, /archiveDrawer/, 'and not while the drawer (which polls itself) is open');
+  assert.match(follow, /JOB_POLL_MS/);
+  assert.match(follow, /clearTimeout\(timer\)/);
+  const at = home.indexOf('{:else if archivingNow}');
+  assert.ok(at > 0 && /ARCHIVE_TEXT\.archivingNote/.test(home.slice(at, at + 400)) && /ARCHIVE_TEXT\.showProgress/.test(home.slice(at, at + 700)), 'a notice and a Show progress button');
+  for (const key of ['archivingNote', 'showProgress']) assert.ok(copy.archiveLintEntries().some((entry) => entry.text === copy.ARCHIVE_TEXT[key]), key + ' is in the copy lint');
+});

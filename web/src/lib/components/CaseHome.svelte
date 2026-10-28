@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../api';
   import { app, goHome, openAnalysis, openCase, openCaseImport, openConnections, openSidePanel, panels } from '../appState.svelte';
-  import { believedState, caseCode, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
+  import { JOB_POLL_MS, believedState, caseCode, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { archiveButton, readsCaseData, reopenButton, retryAction } from '../caseLifecycle';
   import { archivedActions, keyEndingOf, type ArchiveDrawerKind } from '../archiveModel';
   import { ARCHIVE_TEXT, archivedNotice, filesMadeText, restoredNewNotice } from '../copy/archiveCopy';
@@ -89,7 +89,10 @@
   }
   // The drawer hands focus back to the button that opened it. When that button is gone (an archive finished, the page changed) the case name takes it.
   function closeArchiveDrawer() {
+    const was = archiveDrawer;
     archiveDrawer = null;
+    // Closed while the archive runs: read the case again so the page shows that it is being archived (and keeps showing how far it has got).
+    if (was === 'archive' && caseId) void load(caseId, true);
     void tick().then(() => { const now = document.activeElement; if (!now || now === document.body) headingEl?.focus(); });
   }
   function archiveChanged() { archiveDrawer = null; changed = true; void tick().then(() => reloadEl?.focus()); }
@@ -263,6 +266,15 @@
   });
   onMount(() => () => controller?.abort());
 
+  // An archive that runs while its drawer is closed (closed on purpose, or the page was reloaded) is followed here, so it never finishes unseen.
+  $effect(() => {
+    const now = info;
+    const id = caseId;
+    if (!id || !now || archiveDrawer || believedState(now) !== 'archiving') return;
+    const timer = setTimeout(() => { if (id === caseId && !archiveDrawer) void load(id, true); }, JOB_POLL_MS);
+    return () => clearTimeout(timer);
+  });
+
   // Every date on this page follows the UTC / Local choice in the header, like the start screen's case list.
   const when = (value: string): string => formatTime(value, { zone: timeZone.zone, year: true, precision: 'minute', fallback: value });
   const kindLabel = { case: CASE_HOME_TEXT.kindCase, file: CASE_HOME_TEXT.kindFile, health: CASE_HOME_TEXT.kindHealth, theory: CASE_HOME_TEXT.kindTheory } as const;
@@ -302,7 +314,9 @@
         <p class="notice" role="status">{info?.missing ? ARCHIVE_TEXT.workingCopyMissing : info?.archive?.freed ? ARCHIVE_TEXT.freedNote : ARCHIVE_TEXT.archivedNote}</p>
         <p class="note">{ARCHIVE_TEXT.archivedWork}</p>
         {#if currentFile}<p class="note">{ARCHIVE_TEXT.caseFileLine}: {currentFile.name}{currentFile.folder ? ' ' + ARCHIVE_TEXT.inFolder + ' ' + currentFile.folder : ''}{currentFile.keyEnding ? ' · ' + ARCHIVE_TEXT.keyEnding + ' ' + currentFile.keyEnding : ''}</p>{/if}
-      {:else if archivingNow}<p class="notice" role="status">{ARCHIVE_TEXT.chipArchiving}{info?.percent !== undefined ? ' ' + info.percent + '%' : ''}</p>
+      {:else if archivingNow}
+        <p class="notice" role="status">{ARCHIVE_TEXT.archivingNote}{info?.percent !== undefined ? ' ' + info.percent + '%' : ''}</p>
+        <div class="actions"><button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={() => { archiveNote = ''; archiveDrawer = 'archive'; }}>{ARCHIVE_TEXT.showProgress}</button></div>
       {:else if info && believedState(info) === 'closed'}<p class="notice" role="status">{CASE_HOME_TEXT.closedNote}</p>{/if}
       {#if archiveNote}<p class="notice" role="status">{archiveNote}</p>{/if}
       {#if archiveState !== 'hidden' || isArchived}

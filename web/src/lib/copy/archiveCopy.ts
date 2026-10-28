@@ -66,6 +66,8 @@ export const ARCHIVE_TEXT = {
   chipFreed: 'Space freed',
   chipMissing: 'Missing',
   chipArchiving: 'Archiving',
+  archivingNote: 'This case is being archived.',
+  showProgress: 'Show progress',
   workingCopyMissing: 'Working copy missing',
   more: 'More',
   moreLabel: 'More for this case',
