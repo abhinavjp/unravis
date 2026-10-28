@@ -31,6 +31,10 @@ var secretScrubbers = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(?:token|secret)\s*:\s*(?:"[^"]*"|'[^']*')`),
 	// A bearer token.
 	regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+/=-]{8,}`),
+	// An Authorization Basic credential.
+	regexp.MustCompile(`(?i)\bbasic\s+[a-z0-9+/=]{8,}`),
+	// user:pass@host without a scheme. An email has no colon before the "@".
+	regexp.MustCompile(`\S+:\S+@\S+`),
 }
 
 // ScrubSecrets replaces connection strings, URLs, secret key/value pairs

@@ -54,3 +54,21 @@ func TestScn1Review2JSONSecretsInReport(t *testing.T) {
 		t.Errorf("scrubTypedNote left %q", got)
 	}
 }
+
+// Review2-3: an Authorization Basic credential and user:pass@host are taken out;
+// a plain email address is not.
+func TestScn1Review2BasicAndSchemelessCredentials(t *testing.T) {
+	for in, leak := range map[string]string{
+		"sent Authorization: Basic dXNlcjpwdw== to the api": "dXNlcjpwdw",
+		"connect as admin:hunter2@db01 failed":              "hunter2",
+	} {
+		if got := scrubTypedNote(in); strings.Contains(got, leak) || !strings.Contains(got, "[removed]") {
+			t.Errorf("scrubTypedNote(%q) = %q", in, got)
+		}
+	}
+	for _, kept := range []string{"mail a@b.com about it", "contact first.last@corp.example today"} {
+		if got := scrubTypedNote(kept); got != kept {
+			t.Errorf("scrubTypedNote(%q) = %q, want it unchanged", kept, got)
+		}
+	}
+}
