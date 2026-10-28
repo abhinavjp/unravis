@@ -1255,15 +1255,23 @@ export function openSidePanel(which: 'patterns' | 'ledger' | 'export' | 'import'
   sidePanelReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   sidePanel = which;
 }
-export function openGlossary(termId: string | null = null) {
+// The glossary drawer itself: notes where the keyboard was, then shows the term (or the whole list).
+function showGlossary(termId: string | null) {
   glossaryReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   glossaryTerm = termId;
   glossaryOpen = true;
 }
-// A hint's "Learn more in the glossary" button sends this window event.
+// The Glossary button: one side panel at a time (D-C-27), so a Patterns, Ledger, Export, Import or Blackbox panel that is open is put away first.
+// Its history entry follows the state. Its old button does not get the focus back, because the glossary takes it.
+export function openGlossary(termId: string | null = null) {
+  if (sidePanel) { sidePanel = null; sidePanelReturnFocus = null; }
+  showGlossary(termId);
+}
+// A hint's "Learn more in the glossary" button sends this window event. The hint sits inside a drawer that may hold text the person typed,
+// so that drawer stays open and the glossary opens on top of it, as before.
 function onGlossaryRequest(event: Event) {
   const termId = glossaryTermFrom((event as CustomEvent).detail);
-  if (termId && !glossaryOpen) openGlossary(termId);
+  if (termId && !glossaryOpen) showGlossary(termId);
 }
 export async function openConnections(tab: 'saved' | 'new' = 'saved') {
   if (sourceBusy || connectionTesting || historyMutationBusy) return;

@@ -330,3 +330,13 @@ test('D-C-04: the keeper modal helpers are exported next to the older ones and n
   assert.match(card, /onMount\(\(\) => onKeeperPreview\(\(\) => void refreshFromPreview\(\)\)\);/, 'the L1-08 refresh stays');
   assert.ok(card.indexOf('$effect(') > card.indexOf('onMount('), 'the effect sits after the mount hook');
 });
+
+test('D-A-37/C-27: no second main Run analysis button and no stacked side panels from the Glossary button', () => {
+  const landing = read('src/components/Landing.svelte');
+  assert.equal((landing.match(/<button class="primary-button"[^\n]*>Run analysis<\/button>/g) ?? []).length, 0);
+  assert.equal((landing.match(/<button class="secondary-button"[^\n]*>Run analysis<\/button>/g) ?? []).length, 1);
+  const state = read('src/lib/appState.svelte.ts');
+  const open = state.slice(state.indexOf('export function openGlossary'), state.indexOf('function onGlossaryRequest'));
+  assert.ok(open.indexOf('sidePanel = null') > -1 && open.indexOf('sidePanel = null') < open.indexOf('showGlossary(termId)'), 'the panel is put away before the glossary opens');
+  assert.match(state, /const open = \[connectionsOpen \? 'connections' : '', glossaryOpen \? 'glossary' : '', coverageSource \? 'coverage' : '', sidePanel \? 'side' : ''\]/, 'the drawer history effect is untouched');
+});

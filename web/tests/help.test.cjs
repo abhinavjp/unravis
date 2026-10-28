@@ -380,3 +380,13 @@ test('a bind: into an indexed record is never backed by an empty {} state (a $bi
     }
   }
 });
+
+test('the Glossary button puts an open side panel away first; a hint request leaves it open (D-C-27)', () => {
+  const state = read('src/lib/appState.svelte.ts');
+  const block = state.slice(state.indexOf('function showGlossary'), state.indexOf('export async function openConnections'));
+  assert.match(block, /export function openGlossary\(termId: string \| null = null\) \{\s*if \(sidePanel\) \{ sidePanel = null; sidePanelReturnFocus = null; \}\s*showGlossary\(termId\);\s*\}/);
+  assert.match(block, /function showGlossary\(termId: string \| null\) \{\s*glossaryReturnFocus = document\.activeElement instanceof HTMLElement \? document\.activeElement : null;\s*glossaryTerm = termId;\s*glossaryOpen = true;\s*\}/);
+  assert.match(block, /if \(termId && !glossaryOpen\) showGlossary\(termId\);/, 'the hint request does not close the drawer that holds the hint');
+  assert.doesNotMatch(block, /closeSidePanel/, 'no second focus move');
+  assert.match(read('src/components/AppHeader.svelte'), /\{ id: 'glossary', label: 'Glossary', open: \(\) => openGlossary\(\) \}/);
+});

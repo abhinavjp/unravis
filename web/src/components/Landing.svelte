@@ -69,7 +69,7 @@
     {/if}
     {#if !landingMayAutoRun(scope.query)}<p>This period is longer than 24 hours, so it does not run by itself. Press Run analysis to read it, or pick a shorter range above.</p>{/if}
     {#if app.sources.length && !scope.query.sourceIds.length}<p>Choose at least one database source from the Sources button above to run the analysis.</p>{/if}
-    <button class="primary-button" disabled={!scope.query.sourceIds.length || !scope.dateInputsValid} onclick={() => runAnalysis()}>Run analysis</button>
+    <button class="secondary-button" disabled={!scope.query.sourceIds.length || !scope.dateInputsValid} onclick={() => runAnalysis()}>Run analysis</button>
   </div>
 {/if}
 
