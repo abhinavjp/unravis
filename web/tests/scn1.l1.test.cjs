@@ -53,3 +53,19 @@ test('D-A-15: go() sends set-up back to its origin and openKeySetup records it',
   assert.match(src, /unlockOrigin = null;\s*setupOrigin = null;\s*lockError = '';/);
   assert.match(src, /go\('start'\);\s*go\('setup'\);/);
 });
+
+test('D-A-05: a case made by the create guide opens on Case home, import drawer only when there are no sources', () => {
+  const state = read('src/lib/appState.svelte.ts');
+  const body = state.slice(state.indexOf('export async function openCreatedCase'));
+  const fn = body.slice(0, body.search(/\r?\n\}\r?\n/));
+  assert.match(fn, /if \(go\('case'\) && !hasSources\) openSidePanel\('import'\);/);
+  assert.doesNotMatch(fn, /go\('running'\)/, 'no longer jumps to the analysis');
+  assert.match(fn, /setActiveCase\(id, \{ restore: false \}\)/);
+  assert.match(fn, /autoRan = false/);
+  const flow = loadTypeScript('src/lib/screenFlow.ts');
+  assert.equal(flow.canGo('create', 'case'), true, 'the move the new tail asks for is legal');
+  const landing = read('src/components/Landing.svelte');
+  assert.match(landing, /function openCreated\(id: string\) \{ resetWizard\(\); void openCreatedCase\(id\); \}/);
+  const copy = read('src/lib/copy/wizardCreateCopy.ts');
+  assert.match(copy, /openCase: 'Open the case'/);
+});

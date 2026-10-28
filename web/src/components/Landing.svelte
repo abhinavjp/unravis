@@ -26,7 +26,7 @@
 
   // "This computer" lives in the import drawer. This screen has no case, so it leaves a request and opens the drawer, which shows the panel.
   function openDiscover() { requestDiscover(); openSidePanel('import'); }
-  // The case is made and kept on the server. The draft is done with, so it is cleared, then the case opens on its analysis.
+  // The case is made and kept on the server. The draft is done with, so it is cleared, then the case opens on its home page.
   function openCreated(id: string) { resetWizard(); void openCreatedCase(id); }
 </script>
 

@@ -755,8 +755,8 @@ export function openCaseImport() {
 }
 /**
  * A case just made by the create guide. The guide added its audit sources on the server directly, so this page's source list is stale:
- * reload it, select the new sources and let the landing run start, then show the analysis. The import drawer opens only when there is
- * still nothing to analyse (a case made from files alone).
+ * reload it and select the new sources (the analysis starts by itself when the user opens it), then show Case home. The import drawer
+ * opens over Case home only when there is still nothing to analyse (a case made from files alone).
  */
 export async function openCreatedCase(id: string) {
   requestCase(id);
@@ -775,7 +775,7 @@ export async function openCreatedCase(id: string) {
     }
     hasSources = loaded.length > 0;
   } catch { /* the list could not be read: the analysis screen still opens and its own connect step can add sources */ }
-  if (go('running') && !hasSources) openSidePanel('import');
+  if (go('case') && !hasSources) openSidePanel('import');
 }
 /** "Create a new one": the guided flow when it exists, otherwise the import panel over the working screen. */
 export function startCreate() {
