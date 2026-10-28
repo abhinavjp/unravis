@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/bbsaved"
 	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/casestore/sqlite"
 	"api-audit-explorer/internal/casestore/storetest"
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/history"
@@ -80,26 +82,33 @@ type keeperEnv struct {
 	dir    string
 	stop   func()
 	legacy keeper.Legacy
+	// audit is the keeper's own audit log, on disk at auditPath; protector seals the keeper's saved files.
+	audit     *keeper.AuditLog
+	auditPath string
+	protector *storetest.Protector
 }
 
 // newKeeperEnv runs a keeper in this process (in-memory pipe, fake drivers) and an Unravis wired to it as in the shared layout.
 func newKeeperEnv(t *testing.T, store casestore.Store, legacy keeper.Legacy) *keeperEnv {
 	t.Helper()
 	dir := t.TempDir()
-	sql, err := sqlconn.New(filepath.Join(dir, "sqlconnections.dat"), storetest.RandomProtector())
+	protector := storetest.RandomProtector()
+	sql, err := sqlconn.New(filepath.Join(dir, "sqlconnections.dat"), protector)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mongo, err := history.New(filepath.Join(dir, "connections.dat"), storetest.RandomProtector())
+	mongo, err := history.New(filepath.Join(dir, "connections.dat"), protector)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bb, err := bbsaved.New(filepath.Join(dir, "blackboxes.dat"), storetest.RandomProtector())
+	bb, err := bbsaved.New(filepath.Join(dir, "blackboxes.dat"), protector)
 	if err != nil {
 		t.Fatal(err)
 	}
 	runner := &keeperRunner{}
-	srv := keeper.NewServer(keeper.ServerOptions{Log: keeper.NewAuditWriter(&strings.Builder{}), Limiter: keeper.NewRateLimiter(map[string]int{"read": 10000, "write": 10000, "reach": 10000, "blob": 10000}, time.Minute)})
+	auditPath := filepath.Join(dir, "keeper-audit.log")
+	auditLog := keeper.NewAuditLog(auditPath, 0)
+	srv := keeper.NewServer(keeper.ServerOptions{Log: auditLog, Limiter: keeper.NewRateLimiter(map[string]int{"read": 10000, "write": 10000, "reach": 10000, "blob": 10000}, time.Minute)})
 	(&keeper.Backend{SQL: sql, Mongo: mongo, BB: bb, Runner: runner}).Register(srv)
 	l := keeper.NewMemoryListener()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -121,13 +130,23 @@ func newKeeperEnv(t *testing.T, store casestore.Store, legacy keeper.Legacy) *ke
 		mig = &keeper.Migration{Legacy: legacy, Client: c}
 	}
 	e := tagEnv(t, store, &fakeRepository{}, WithSQLConnections(keeper.NewSQLStore(c)), WithHistory(ms), WithKeeper(&KeeperHub{Client: c, Migration: mig}))
-	return &keeperEnv{caseEnv: e, runner: runner, client: c, dir: dir, stop: stop, legacy: legacy}
+	return &keeperEnv{caseEnv: e, runner: runner, client: c, dir: dir, stop: stop, legacy: legacy, audit: auditLog, auditPath: auditPath, protector: protector}
 }
 
 func TestSavedPasswordsStayInTheKeeper(t *testing.T) {
 	const sqlSecret, mongoSecret = "sql-NEVER-in-unravis-7731", "mongo-NEVER-in-unravis-5512"
 	unravisDrivers := stubDrivers(t)
-	e := newKeeperEnv(t, casestore.NewMemory(), keeper.Legacy{})
+	// Every log line Unravis writes while this runs, and the case files on disk, are searched for the passwords at the end.
+	var logged syncBuffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	casesRoot := filepath.Join(t.TempDir(), "cases")
+	casesProtector := storetest.RandomProtector()
+	cases, err := sqlite.New(sqlite.Options{Root: casesRoot, Protector: casesProtector, MinFreeBytes: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newKeeperEnv(t, cases, keeper.Legacy{})
 	id := e.newCase("keeper")
 	var bodies []string
 	call := func(method, path, body string, want int) *httptest.ResponseRecorder {
@@ -209,6 +228,86 @@ func TestSavedPasswordsStayInTheKeeper(t *testing.T) {
 	if strings.Contains(res.Body.String(), sqlSecret) || strings.Contains(res.Body.String(), mongoSecret) {
 		t.Fatalf("case health list: %s", res.Body)
 	}
+
+	// Logs and files: Unravis's log output, the keeper's audit log (read plainly), every file of the case store and every file in the
+	// keeper's folder, byte for byte and, where a file is one sealed blob, unsealed too. Only the keeper's three saved-connection files may
+	// hold a password once unsealed: that is where it is kept.
+	e.audit.Flush()
+	secrets := []string{sqlSecret, mongoSecret}
+	holds := func(b []byte) bool {
+		for _, s := range secrets {
+			if strings.Contains(string(b), s) {
+				return true
+			}
+		}
+		return false
+	}
+	if holds([]byte(logged.String())) {
+		t.Fatalf("a password reached Unravis's log: %s", logged.String())
+	}
+	auditText, err := os.ReadFile(e.auditPath)
+	if err != nil || len(auditText) == 0 {
+		t.Fatalf("keeper audit log: %v (%d bytes)", err, len(auditText))
+	}
+	if holds(auditText) {
+		t.Fatalf("a password reached the keeper's audit log: %s", auditText)
+	}
+	keeperStores := map[string]bool{"sqlconnections.dat": true, "connections.dat": true, "blackboxes.dat": true}
+	searched, unsealed, kept := 0, 0, 0
+	for _, root := range []struct {
+		dir       string
+		protector *storetest.Protector
+		keeper    bool
+	}{{casesRoot, casesProtector, false}, {e.dir, e.protector, true}} {
+		err := filepath.WalkDir(root.dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			searched++
+			if holds(raw) {
+				t.Errorf("a password sits in plain bytes in %s", path)
+			}
+			if plain, err := root.protector.Unprotect(raw); err == nil {
+				unsealed++
+				switch {
+				case holds(plain) && root.keeper && keeperStores[filepath.Base(path)]:
+					kept++
+				case holds(plain):
+					t.Errorf("a password sits sealed in %s", path)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The search must have seen the passwords where they are kept, or it proves nothing.
+	if searched < 4 || unsealed < 2 || kept != 2 {
+		t.Fatalf("searched %d files, unsealed %d, found the kept passwords in %d: the search did not see the stores", searched, unsealed, kept)
+	}
+}
+
+// syncBuffer is a log destination the server may write from several goroutines.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
 
 func TestATypedPasswordStillWorksWithTheKeeper(t *testing.T) {
