@@ -103,6 +103,32 @@ try {
     # Compatibility copy for MCP client configs that still point at dist\api-audit-explorer.exe.
     # Remove this copy and the MCP.md note after 2026-12-31 (one release after the rename).
     Copy-Item -LiteralPath (Join-Path $UtilityRoot 'dist\unravis.exe') -Destination (Join-Path $UtilityRoot 'dist\api-audit-explorer.exe') -Force
+    Invoke-Checked $GoExe @('build', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-keeper.exe'), './cmd/unravis-keeper')
+    Invoke-Checked $GoExe @('build', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-blackbox.exe'), './cmd/unravis-blackbox')
+
+    # The one-file installer comes last: it embeds the programs above with a manifest of their SHA-256, so setup refuses a
+    # payload that was changed after the build. The payload folder is cleared first and is not committed (see its README.txt).
+    # Nothing is signed here; signing is a release step (docs: installer-and-releases.md).
+    $PayloadDir = Join-Path $UtilityRoot 'cmd\unravis-setup\payload'
+    Get-ChildItem -LiteralPath $PayloadDir -Force | Where-Object { $_.Name -ne 'README.txt' } | Remove-Item -Recurse -Force
+    $PayloadFiles = @()
+    foreach ($Name in @('unravis.exe', 'unravis-keeper.exe', 'unravis-blackbox.exe')) {
+        $Source = Join-Path $UtilityRoot "dist\$Name"
+        Copy-Item -LiteralPath $Source -Destination (Join-Path $PayloadDir $Name) -Force
+        $PayloadFiles += [ordered]@{
+            name   = $Name
+            sha256 = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash.ToLowerInvariant()
+            size   = (Get-Item -LiteralPath $Source).Length
+        }
+    }
+    $Manifest = [ordered]@{ version = $Version; files = $PayloadFiles } | ConvertTo-Json -Depth 4
+    [System.IO.File]::WriteAllText((Join-Path $PayloadDir 'manifest.json'), $Manifest, (New-Object System.Text.UTF8Encoding($false)))
+    try {
+        Invoke-Checked $GoExe @('build', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-setup.exe'), './cmd/unravis-setup')
+    } finally {
+        # The programs stay in dist; the copies in the source tree go, so a later `go test` does not carry them.
+        Get-ChildItem -LiteralPath $PayloadDir -Force | Where-Object { $_.Name -ne 'README.txt' } | Remove-Item -Recurse -Force
+    }
 } finally {
     Pop-Location
 }

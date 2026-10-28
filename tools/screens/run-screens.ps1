@@ -10,6 +10,10 @@
   -Update: write new pictures. Only the CI runner is the reference renderer, so do not
            commit pictures made on a developer PC unless the team agreed that PC is the reference.
   -Only:   one screen id, or several separated by commas (for example p1-home,p1-glossary).
+
+  The setup-window screens (p11-*) run against the screenshot build of unravis-setup: this script builds it
+  with Go (go build -tags capture) into the temporary folder and starts it with --capture, which fakes every
+  change. Go is found the way build.ps1 finds it. Without Go those screens are skipped, and the run says so.
 #>
 param(
     [switch]$Update,
@@ -54,8 +58,9 @@ $OutLog = Join-Path $Work 'unravis.out.log'
 $ErrLog = Join-Path $Work 'unravis.err.log'
 $ConfigDir = Join-Path $Work 'config'
 $Process = $null
+$SetupProcess = $null
 $Saved = @{}
-$Names = @('AUDIT_CONFIG_DIR', 'UNRAVIS_DEMO_NOW', 'UNRAVIS_DEMO_CASES', 'UNRAVIS_LAUNCH_URL', 'UNRAVIS_ONLY')
+$Names = @('AUDIT_CONFIG_DIR', 'UNRAVIS_DEMO_NOW', 'UNRAVIS_DEMO_CASES', 'UNRAVIS_LAUNCH_URL', 'UNRAVIS_ONLY', 'UNRAVIS_SETUP_URL', 'UNRAVIS_SETUP_KEY', 'CGO_ENABLED', 'GOTOOLCHAIN')
 foreach ($n in $Names) { $Saved[$n] = [Environment]::GetEnvironmentVariable($n, 'Process') }
 $Code = 1
 
@@ -128,6 +133,68 @@ public static class UnravisJob {
     }
     $env:UNRAVIS_LAUNCH_URL = $Link
 
+    # The setup window with its fake runs (P11). Built fresh each run so it always matches web\setup and internal\setup.
+    $env:UNRAVIS_SETUP_URL = ''
+    $env:UNRAVIS_SETUP_KEY = ''
+    $Go = $env:AUDIT_EXPLORER_GO
+    if (-not $Go) { $GoCommand = Get-Command go.exe -ErrorAction SilentlyContinue; if ($GoCommand) { $Go = $GoCommand.Source } }
+    if (-not $Go) {
+        $Probe = $RepoRoot
+        while ($Probe -and -not $Go) {
+            $Candidate = Join-Path $Probe '.dev\toolchains\go\bin\go.exe'
+            if (Test-Path -LiteralPath $Candidate -PathType Leaf) { $Go = $Candidate }
+            $Probe = Split-Path -Parent $Probe
+        }
+    }
+    if (-not $Go -or -not (Test-Path -LiteralPath $Go -PathType Leaf)) {
+        Write-Host 'Note: Go was not found, so the setup-window screens (p11-*) are skipped.' -ForegroundColor Yellow
+    } else {
+        $SetupExe = Join-Path $Work 'unravis-setup-capture.exe'
+        $SetupOut = Join-Path $Work 'setup.out.log'
+        $SetupErr = Join-Path $Work 'setup.err.log'
+        $env:CGO_ENABLED = '0'
+        $env:GOTOOLCHAIN = 'local'
+        Push-Location $RepoRoot
+        $ErrorActionPreference = 'Continue'
+        try {
+            & $Go build -tags capture -o $SetupExe ./cmd/unravis-setup
+            $BuildCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = 'Stop'
+            Pop-Location
+        }
+        if ($BuildCode -ne 0) {
+            Write-Host 'The screenshot build of unravis-setup did not build (see above).' -ForegroundColor Red
+            exit 3
+        }
+        $SetupProcess = Start-Process -FilePath $SetupExe -ArgumentList @('--capture', '--no-browser') `
+            -RedirectStandardOutput $SetupOut -RedirectStandardError $SetupErr -PassThru -WindowStyle Hidden
+        try { [void][UnravisJob]::Bind($SetupProcess.Handle) } catch { }
+        $SetupDeadline = (Get-Date).AddSeconds(30)
+        while ((Get-Date) -lt $SetupDeadline -and -not $env:UNRAVIS_SETUP_URL) {
+            Start-Sleep -Milliseconds 200
+            $Text = ''
+            foreach ($f in @($SetupOut, $SetupErr)) {
+                if (Test-Path -LiteralPath $f) {
+                    $part = Get-Content -LiteralPath $f -Raw -ErrorAction SilentlyContinue
+                    if ($part) { $Text += $part }
+                }
+            }
+            if ($Text -match 'listening at (http://127\.0\.0\.1:\d+)/#k=([A-Za-z0-9_-]+)') {
+                $env:UNRAVIS_SETUP_URL = $Matches[1]
+                $env:UNRAVIS_SETUP_KEY = $Matches[2]
+            }
+            if ($SetupProcess.HasExited) { break }
+        }
+        if (-not $env:UNRAVIS_SETUP_URL) {
+            Write-Host 'The setup window did not start. Its log says:' -ForegroundColor Red
+            foreach ($f in @($SetupOut, $SetupErr)) {
+                if (Test-Path -LiteralPath $f) { Get-Content -LiteralPath $f -Tail 15 | ForEach-Object { Write-Host ('  ' + $_) } }
+            }
+            exit 3
+        }
+    }
+
     $Args2 = @('playwright', 'test')
     if ($Update) { $Args2 += '--update-snapshots' }
     Push-Location $Here
@@ -141,6 +208,10 @@ public static class UnravisJob {
         Pop-Location
     }
 } finally {
+    if ($SetupProcess -and -not $SetupProcess.HasExited) {
+        try { Stop-Process -Id $SetupProcess.Id -Force -ErrorAction SilentlyContinue } catch { }
+        try { $SetupProcess.WaitForExit(5000) | Out-Null } catch { }
+    }
     if ($Process -and -not $Process.HasExited) {
         try { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue } catch { }
         try { $Process.WaitForExit(5000) | Out-Null } catch { }

@@ -15,8 +15,11 @@ function walk(dir) {
   });
 }
 const rel = (file) => 'web/' + path.relative(root, file).split(path.sep).join('/');
-const brandDir = path.join(src, 'brand') + path.sep;
-const files = walk(src).filter((file) => /\.(css|svelte|ts)$/.test(file) && !file.startsWith(brandDir));
+const setupDir = path.join(root, 'setup');
+// The token sheet and the chart fallback are where colours live; every other file of the app, the shared brand components and the
+// setup window use the tokens.
+const tokenHomes = [path.join(src, 'brand', 'tokens.css'), path.join(src, 'brand', 'fallback.ts')];
+const files = [...walk(src), ...walk(setupDir)].filter((file) => /\.(css|svelte|ts)$/.test(file) && !tokenHomes.includes(file));
 
 // A colour literal is a hex colour (not an HTML entity such as &#9670; and not inside a word) or an rgb(, rgba(, hsl(, hsla( call.
 const colourLiteral = /(?<![&\w#])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})(?![0-9a-zA-Z_-])|\b(?:rgba?|hsla?)\(/g;
@@ -26,7 +29,7 @@ const allowed = {
   'web/src/components/Inspector.svelte': { literals: ['#000'], why: 'the colour of a mask-image gradient only matters as opaque versus transparent; it is never painted' }
 };
 
-test('no colour literal outside web/src/brand, except the allowlist', () => {
+test('no colour literal outside tokens.css and fallback.ts, except the allowlist', () => {
   const offenders = [];
   for (const file of files) {
     const text = norm(fs.readFileSync(file, 'utf8'));
@@ -58,7 +61,7 @@ test('the scanner catches the shapes it is meant to catch', () => {
 });
 
 // A var() that names a fallback (var(--x, inherit)) is a deliberate optional hook and may be undefined; one without a fallback must exist.
-test('every var(--name) without a fallback used in web/src is defined in tokens.css or in the same file', () => {
+test('every var(--name) without a fallback used in web/src or web/setup is defined in tokens.css or in the same file', () => {
   const globalNames = new Set([...tokensCss.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map((match) => match[1]));
   const missing = [];
   for (const file of files) {
@@ -92,4 +95,18 @@ test('app.css imports the tokens first and holds no font-face or theme block', (
   assert.ok(app.startsWith('@import "./brand/tokens.css";'));
   assert.doesNotMatch(app, /@font-face/);
   assert.doesNotMatch(app, /\[data-theme=/);
+});
+
+test('the setup window imports the tokens first and redefines none of them', () => {
+  const setupCss = norm(fs.readFileSync(path.join(setupDir, 'setup.css'), 'utf8'));
+  assert.ok(setupCss.startsWith('@import "../src/brand/tokens.css";'));
+  assert.doesNotMatch(setupCss, /@font-face/);
+  const globalNames = new Set([...tokensCss.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map((match) => match[1]));
+  const redefined = [];
+  for (const file of walk(setupDir).filter((name) => /\.(css|svelte|ts)$/.test(name))) {
+    for (const match of norm(fs.readFileSync(file, 'utf8')).matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)) {
+      if (globalNames.has(match[1])) redefined.push(rel(file) + ' ' + match[1]);
+    }
+  }
+  assert.deepEqual(redefined, [], 'the setup window uses the app tokens as they are');
 });
