@@ -83,6 +83,13 @@ func (l *AuditLog) Write(e AuditEntry) {
 	if l == nil {
 		return
 	}
+	// Every line passes here, so this is where text a caller chose (the operation name, the saved record id) is cut to a short, clean
+	// form: no handler can write a long or odd string into the log. Real ids are at most 32 characters, so they pass unchanged. SID and
+	// Name come from Windows (the pipe client's token), not from the request.
+	e.Op, e.Outcome = auditOp(e.Op), auditOp(e.Outcome)
+	if e.Record != "" {
+		e.Record = auditOp(e.Record)
+	}
 	now := l.now().UTC()
 	if e.Time.IsZero() {
 		e.Time = now

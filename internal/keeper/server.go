@@ -68,10 +68,10 @@ const refuseTimeout = time.Second
 // unknownSession is the per-session bucket for connections whose Windows session cannot be told. No real session has this number.
 const unknownSession = ^uint32(0)
 
-// maxAuditOp is the most of a request's operation name that reaches the audit log when the keeper does not know the operation.
+// maxAuditOp is the most of any caller-chosen text (an operation name, a record id) that reaches the audit log.
 const maxAuditOp = 32
 
-// auditOp is how an operation name the keeper did not accept is written to the audit log: only letters, digits, '.', '_' and '-', at
+// auditOp is how caller-chosen text (an operation name, a record id) is written to the audit log: only letters, digits, '.', '_' and '-', at
 // most maxAuditOp of them, with a trailing '~' when anything was dropped, and "?" when nothing is left. A caller controls this text,
 // so it must not be able to fill the log or write anything but a short name into it.
 func auditOp(op string) string {
@@ -265,7 +265,7 @@ func (s *Server) serveConn(ctx context.Context, c Conn) {
 		if !s.limit.Allow(caller.SID, classBad) {
 			op, werr = "?", &WireError{Code: CodeRateLimited, Message: "Too many requests to the key keeper in the last minute. Wait a minute, then try again."}
 		}
-		s.finish(c, caller, auditOp(op), "", nil, werr)
+		s.finish(c, caller, op, "", nil, werr) // AuditLog.Write cleans op
 	}
 	var req Request
 	if err := json.Unmarshal(frame, &req); err != nil || req.Op == "" {

@@ -565,6 +565,85 @@ func TestUnknownOpFloodCannotFillTheAuditLog(t *testing.T) {
 	}
 }
 
+// TestCallerIDsCannotFillTheAuditLog sends 1 MB record ids, 100 times on each of three operations that log the id before checking it.
+// Every line must stay short and clean, and the log must stay small and never rotate.
+func TestCallerIDsCannotFillTheAuditLog(t *testing.T) {
+	dir := t.TempDir()
+	sql, err := sqlconn.New(filepath.Join(dir, "sqlconnections.dat"), xorProtector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mongo, err := history.New(filepath.Join(dir, "connections.dat"), xorProtector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bb, err := bbsaved.New(filepath.Join(dir, "blackboxes.dat"), xorProtector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "audit.log")
+	const limit = 128 << 10
+	audit := NewAuditLog(path, limit)
+	s := NewServer(ServerOptions{Log: audit, Limiter: NewRateLimiter(map[string]int{classRead: 10000, classWrite: 10000, classReach: 10000, classBlob: 10000}, time.Minute)})
+	(&Backend{SQL: sql, Mongo: mongo, BB: bb, Runner: &fakeRunner{}}).Register(s)
+	l := NewMemoryListener()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = s.Serve(ctx, l)
+	}()
+	id := "x\n\"" + strings.Repeat("B", MaxFrame-512)
+	ops := map[string]any{
+		OpSQLDescribe: IDArgs{ID: id},
+		OpBBGet:       IDArgs{ID: id},
+		OpBBHTTP:      BBHTTPArgs{ID: id, Path: "/manifest"},
+	}
+	for op, args := range ops {
+		raw, _ := json.Marshal(args)
+		for i := 0; i < 100; i++ {
+			c, err := l.Dialer(Caller{SID: testSID, Name: `PC\flood`, PID: 9, Session: 1}).Dial(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writeJSONFrame(c, Request{V: ProtocolVersion, Op: op, Args: raw}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ReadFrame(c); err != nil {
+				t.Fatalf("%s %d: %v", op, i, err)
+			}
+			c.Close()
+		}
+	}
+	cancel()
+	<-done
+	audit.Flush()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".1"); err == nil {
+		t.Fatal("the long ids rotated the log")
+	}
+	if len(raw) >= limit {
+		t.Fatalf("the log grew to %d bytes", len(raw))
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) < 300 {
+		t.Fatalf("only %d lines: the calls did not all reach the log", len(lines))
+	}
+	for _, ln := range lines {
+		if len(ln) > 400 || strings.Contains(ln, strings.Repeat("B", maxAuditOp+1)) || strings.Contains(ln, `\n`) || strings.Contains(ln, `\"`) {
+			t.Fatalf("a caller's id reached the log: %.500s", ln)
+		}
+	}
+	for op := range ops {
+		if !strings.Contains(string(raw), `"op":"`+op+`","record":"x`+strings.Repeat("B", maxAuditOp-1)+`~"`) {
+			t.Fatalf("no cut record for %s in:\n%.2000s", op, raw)
+		}
+	}
+}
+
 func TestAuditOpIsShortAndClean(t *testing.T) {
 	for in, want := range map[string]string{
 		"sql.reveal":                        "sql.reveal",
