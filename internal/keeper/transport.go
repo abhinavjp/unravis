@@ -26,6 +26,12 @@ type Conn interface {
 	Identify() (Caller, error)
 }
 
+// peerConn is a connection that can tell the client's process and Windows session before any data has arrived (the pipe asks the OS;
+// the in-memory transport knows its caller). The keeper uses it to share its connection slots fairly between the people signed in.
+type peerConn interface {
+	Peer() (pid, session uint32, ok bool)
+}
+
 // Listener accepts connections.
 type Listener interface {
 	Accept() (Conn, error)
@@ -125,6 +131,8 @@ type memoryConn struct {
 }
 
 func (c *memoryConn) Identify() (Caller, error) { return c.caller, nil }
+
+func (c *memoryConn) Peer() (uint32, uint32, bool) { return c.caller.PID, c.caller.Session, true }
 
 // StoppedDialer always reports that the keeper is not running (the UI state "keeper stopped").
 type StoppedDialer struct{}

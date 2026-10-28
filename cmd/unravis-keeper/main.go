@@ -95,8 +95,10 @@ func serve(ctx context.Context, d deps, dir, pipe string, logf func(string, ...a
 	if err != nil {
 		return fmt.Errorf("pipe: %w", err)
 	}
+	audit := keeper.NewAuditLog(f.Log, 0)
+	defer audit.Flush()
 	s := keeper.NewServer(keeper.ServerOptions{
-		Log:     keeper.NewAuditLog(f.Log, 0),
+		Log:     audit,
 		Limiter: keeper.NewRateLimiter(nil, 0),
 	})
 	(&keeper.Backend{SQL: sql, Mongo: mongo, BB: bb, Runner: d.runner()}).Register(s)

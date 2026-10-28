@@ -30,12 +30,25 @@ type Client struct {
 // NewClient makes a client over d.
 func NewClient(d Dialer) *Client { return &Client{Dialer: d} }
 
+// MaxClientCalls is how many keeper calls one Unravis process has open at once (the keeper allows a session more than this).
+const MaxClientCalls = 6
+
+var callSlots = make(chan struct{}, MaxClientCalls)
+
 func (c *Client) start(ctx context.Context, op string, args any) (ClientConn, Response, func(), error) {
 	if c == nil || c.Dialer == nil {
 		return nil, Response{}, nil, ErrNotRunning
 	}
+	// The keeper gives one Windows session only part of its connections; calls from this Unravis wait their turn here rather than be
+	// refused as busy.
+	select {
+	case callSlots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, Response{}, nil, ctx.Err()
+	}
 	conn, err := c.Dialer.Dial(ctx)
 	if err != nil {
+		<-callSlots
 		return nil, Response{}, nil, err
 	}
 	deadline, ok := ctx.Deadline()
@@ -49,12 +62,13 @@ func (c *Client) start(ctx context.Context, op string, args any) (ClientConn, Re
 		once.Do(func() {
 			close(done)
 			_ = conn.Close()
+			<-callSlots
 		})
 	}
 	go func() {
 		select {
 		case <-ctx.Done():
-			_ = conn.Close()
+			stop() // also gives back the call slot if the caller never closes a stream
 		case <-done:
 		}
 	}()

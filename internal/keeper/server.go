@@ -51,23 +51,34 @@ type opEntry struct {
 
 // ServerOptions configures a Server.
 type ServerOptions struct {
-	Log         *AuditLog
-	Limiter     *RateLimiter
-	MaxConns    int           // 0 means 16
-	ReadTimeout time.Duration // time allowed for the request frame; 0 means 10 s
-	Now         func() time.Time
+	Log           *AuditLog
+	Limiter       *RateLimiter
+	MaxConns      int           // 0 means 16
+	MaxPerSession int           // open connections one Windows session may hold; 0 means half of MaxConns
+	ReadTimeout   time.Duration // time allowed for the request frame; 0 means 5 s
+	Now           func() time.Time
 }
+
+// maxRefusers bounds the connections being answered "busy" at once; beyond it a connection is closed without a word.
+const maxRefusers = 4
+
+// refuseTimeout is how long a connection that will be refused may take to send its request.
+const refuseTimeout = time.Second
 
 // Server answers keeper requests.
 type Server struct {
-	mu      sync.RWMutex
-	ops     map[string]opEntry
-	log     *AuditLog
-	limit   *RateLimiter
-	sem     chan struct{}
-	readTO  time.Duration
-	now     func() time.Time
-	started time.Time
+	mu       sync.RWMutex
+	ops      map[string]opEntry
+	log      *AuditLog
+	limit    *RateLimiter
+	sem      chan struct{}
+	refusers chan struct{}
+	pmu      sync.Mutex
+	open     map[uint32]int // open connections per Windows session
+	maxPer   int
+	readTO   time.Duration
+	now      func() time.Time
+	started  time.Time
 }
 
 // NewServer makes a server with ping and status registered.
@@ -75,13 +86,17 @@ func NewServer(o ServerOptions) *Server {
 	if o.MaxConns <= 0 {
 		o.MaxConns = 16
 	}
+	if o.MaxPerSession <= 0 {
+		o.MaxPerSession = (o.MaxConns + 1) / 2
+	}
 	if o.ReadTimeout <= 0 {
-		o.ReadTimeout = 10 * time.Second
+		o.ReadTimeout = 5 * time.Second
 	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	s := &Server{ops: map[string]opEntry{}, log: o.Log, limit: o.Limiter, sem: make(chan struct{}, o.MaxConns), readTO: o.ReadTimeout, now: o.Now}
+	s := &Server{ops: map[string]opEntry{}, log: o.Log, limit: o.Limiter, sem: make(chan struct{}, o.MaxConns), refusers: make(chan struct{}, maxRefusers),
+		open: map[uint32]int{}, maxPer: o.MaxPerSession, readTO: o.ReadTimeout, now: o.Now}
 	s.started = o.Now()
 	s.Handle(OpPing, classRead, 5*time.Second, func(context.Context, *Call) (any, error) {
 		return map[string]any{"v": ProtocolVersion}, nil
@@ -117,33 +132,83 @@ func (s *Server) Serve(ctx context.Context, l Listener) error {
 			}
 			return err
 		}
+		// One person (one Windows session) may hold only part of the slots, so a loop of connections from one session cannot keep
+		// the keeper from everyone else.
+		var pid, session uint32
+		known := false
+		if p, ok := c.(peerConn); ok {
+			pid, session, known = p.Peer()
+		}
+		if known && !s.enter(session) {
+			s.refuse(&wg, c, pid, session)
+			continue
+		}
 		select {
 		case s.sem <- struct{}{}:
 		default:
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				s.refuseBusy(c)
-			}()
+			if known {
+				s.leave(session)
+			}
+			s.refuse(&wg, c, pid, session)
 			continue
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer func() { <-s.sem }()
+			if known {
+				defer s.leave(session)
+			}
 			s.serveConn(ctx, c)
 		}()
 	}
 }
 
+func (s *Server) enter(session uint32) bool {
+	s.pmu.Lock()
+	defer s.pmu.Unlock()
+	if s.open[session] >= s.maxPer {
+		return false
+	}
+	s.open[session]++
+	return true
+}
+
+func (s *Server) leave(session uint32) {
+	s.pmu.Lock()
+	defer s.pmu.Unlock()
+	if s.open[session]--; s.open[session] <= 0 {
+		delete(s.open, session)
+	}
+}
+
+// refuse answers "busy" on a few connections at a time and closes the rest at once, so refusals cannot pile up either. Each refusal
+// is an audit line, folded per caller and minute by the audit log.
+func (s *Server) refuse(wg *sync.WaitGroup, c Conn, pid, session uint32) {
+	s.log.Write(AuditEntry{Op: "?", Outcome: CodeBusy, PID: pid, Session: session})
+	select {
+	case s.refusers <- struct{}{}:
+	default:
+		_ = c.Close()
+		return
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() { <-s.refusers }()
+		s.refuseBusy(c)
+	}()
+}
+
 func (s *Server) refuseBusy(c Conn) {
 	defer c.Close()
-	_ = c.SetDeadline(s.now().Add(s.readTO))
+	_ = c.SetDeadline(s.now().Add(refuseTimeout))
 	if _, err := ReadFrame(c); err != nil {
 		return
 	}
 	_ = writeJSONFrame(c, Response{Error: &WireError{Code: CodeBusy, Message: "The key keeper is busy. Try again in a few seconds."}})
-	drain(c, s.now)
+	_ = c.SetDeadline(s.now().Add(refuseTimeout))
+	_, _ = io.Copy(io.Discard, io.LimitReader(c, 64<<10))
 }
 
 func (s *Server) serveConn(ctx context.Context, c Conn) {
@@ -222,13 +287,16 @@ func (s *Server) finishCall(ctx context.Context, c Conn, caller Caller, call *Ca
 			resp.Stream = call.stream != nil
 		}
 	}
+	// The line is written before the answer, so a keeper that stops right after answering has still recorded the request.
+	entry := AuditEntry{SID: caller.SID, Name: caller.Name, PID: caller.PID, Session: caller.Session, Op: call.Op, Record: call.Record, Outcome: outcome}
+	s.log.Write(entry)
 	werr := writeJSONFrame(c, resp)
 	if werr == nil && resp.OK && resp.Stream {
 		if serr := writeStream(ctx, c, call.stream); serr != nil {
-			outcome = "stream-failed"
+			entry.Time, entry.Outcome = time.Time{}, "stream-failed"
+			s.log.Write(entry)
 		}
 	}
-	s.log.Write(AuditEntry{SID: caller.SID, Name: caller.Name, PID: caller.PID, Session: caller.Session, Op: call.Op, Record: call.Record, Outcome: outcome})
 	if werr == nil {
 		drain(c, s.now)
 	}

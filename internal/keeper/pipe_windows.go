@@ -376,6 +376,21 @@ func (c *pipeConn) Close() error {
 	return err
 }
 
+// Peer reads the client's process id and Windows session from the OS. It works as soon as the client has connected, before it sends.
+func (c *pipeConn) Peer() (uint32, uint32, bool) {
+	if !c.server {
+		return 0, 0, false
+	}
+	var pid, session uint32
+	if err := windows.GetNamedPipeClientProcessId(c.h, &pid); err != nil {
+		return 0, 0, false
+	}
+	if err := windows.ProcessIdToSessionId(pid, &session); err != nil {
+		return pid, 0, false
+	}
+	return pid, session, true
+}
+
 // Identify reads who is on the other end from the OS: the token of the client's own connection (impersonated at identification level
 // only, then reverted at once), its process id and its Windows session. Nothing the client sends is trusted for this.
 func (c *pipeConn) Identify() (Caller, error) {

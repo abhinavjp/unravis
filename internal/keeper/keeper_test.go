@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -443,6 +444,90 @@ func TestRateLimitPerCallerAndClass(t *testing.T) {
 	now = now.Add(time.Minute)
 	if !r.Allow("a", classWrite) {
 		t.Fatal("the window slides")
+	}
+}
+
+// One person opening connections in a loop holds at most part of the keeper's slots: someone else signed in at the same time is still
+// answered, and the flood of refusals is one audit line per caller and minute, not thousands.
+func TestOneSessionCannotStarveTheOthers(t *testing.T) {
+	log := &syncBuffer{}
+	l := NewMemoryListener()
+	s := NewServer(ServerOptions{Log: NewAuditWriter(log), Limiter: NewRateLimiter(nil, 0), MaxConns: 4, MaxPerSession: 2, ReadTimeout: 3 * time.Second})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = s.Serve(ctx, l)
+	}()
+	defer func() { cancel(); <-done }()
+
+	flooder := Caller{SID: testSID, Name: `PClood`, PID: 7, Session: 1}
+	var idle []ClientConn
+	for i := 0; i < 20; i++ { // connect and send nothing
+		c, err := l.Dialer(flooder).Dial(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		idle = append(idle, c)
+	}
+	defer func() {
+		for _, c := range idle {
+			c.Close()
+		}
+	}()
+	other := NewClient(l.Dialer(Caller{SID: "S-1-5-21-1-2-3-2002", Name: `PC\other`, PID: 8, Session: 2}))
+	var out map[string]any
+	if err := other.Call(ctx, OpPing, nil, &out); err != nil {
+		t.Fatalf("another person is starved: %v", err)
+	}
+	// The line is written before the answer is sent.
+	if !strings.Contains(log.String(), `"op":"ping"`) {
+		t.Fatal("the request was answered before it was recorded")
+	}
+	// The flooding session itself is answered "busy", or (with every refusal slot taken) simply closed.
+	if err := NewClient(l.Dialer(flooder)).Call(ctx, OpPing, nil, &out); err == nil || (wireCode(err) != CodeBusy && !errors.Is(err, errTransport)) {
+		t.Fatalf("the flooding session got a slot: %v", err)
+	}
+	if n := strings.Count(log.String(), `"outcome":"busy"`); n != 1 {
+		t.Fatalf("%d busy lines for one caller within a minute:\n%s", n, log.String())
+	}
+}
+
+func TestAuditLogFoldsRepeatsAndKeepsSeveralFiles(t *testing.T) {
+	var b syncBuffer
+	l := NewAuditWriter(&b)
+	now := time.Unix(5000, 0)
+	l.now = func() time.Time { return now }
+	for i := 0; i < 50; i++ {
+		l.Write(AuditEntry{SID: testSID, Op: OpSQLList, Outcome: CodeRateLimited})
+	}
+	l.Write(AuditEntry{SID: testSID, Op: OpSQLList, Outcome: "ok"})
+	if n := strings.Count(b.String(), "\n"); n != 2 {
+		t.Fatalf("want the first refusal and the ok line, got %d lines:\n%s", n, b.String())
+	}
+	now = now.Add(61 * time.Second)
+	l.Write(AuditEntry{SID: testSID, Op: OpSQLList, Outcome: CodeRateLimited})
+	if !strings.Contains(b.String(), `"repeated":49`) || strings.Count(b.String(), "\n") != 4 {
+		t.Fatalf("summary line missing:\n%s", b.String())
+	}
+	l.Write(AuditEntry{SID: testSID, Op: OpSQLList, Outcome: CodeRateLimited})
+	l.Flush()
+	if !strings.Contains(b.String(), `"repeated":1`) {
+		t.Fatalf("flush on stop:\n%s", b.String())
+	}
+
+	path := filepath.Join(t.TempDir(), "audit.log")
+	fl := NewAuditLog(path, 200)
+	for i := 0; i < 40; i++ {
+		fl.Write(AuditEntry{SID: testSID, Op: OpPing, Outcome: "ok"})
+	}
+	for i := 1; i <= AuditKeep; i++ {
+		if _, err := os.Stat(fmt.Sprintf("%s.%d", path, i)); err != nil {
+			t.Fatalf("rotated file %d: %v", i, err)
+		}
+	}
+	if _, err := os.Stat(fmt.Sprintf("%s.%d", path, AuditKeep+1)); err == nil {
+		t.Fatal("more rotated files than kept")
 	}
 }
 
