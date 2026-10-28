@@ -5,7 +5,7 @@
   import { searchTerms } from '../lib/copy/lookup';
   import { HELP_STEPS, HELP_TEXT, glossaryCount } from '../lib/copy/screenCopy';
   import { versionLine } from '../lib/versionLine';
-  import { updateCheckNote, updatePreviewFrom, isOwnReleaseUrl } from '../lib/updateCheck';
+  import { updateCheckNote, updateCheckState, updatePreviewNow, isOwnReleaseUrl } from '../lib/updateCheck';
   import type { UpdateCheckReply } from '../lib/types';
   import Drawer from './Drawer.svelte';
 
@@ -26,12 +26,20 @@
   // The manual update check: only runs when the button is pressed, never by itself.
   let checking = $state(false);
   let update = $state<UpdateCheckReply | null>(null);
+  let checkId = $state(0);
+  const unreachableReply = (): UpdateCheckReply => ({ status: 'unreachable', current: '', latest: '', url: '' });
   async function checkForUpdates() {
     if (checking) return;
     checking = true;
-    try { update = await api.updateCheck(updatePreviewFrom(location.hash)); }
-    catch { update = { status: 'unreachable', current: '', latest: '', url: '' }; }
+    update = null;
+    try {
+      const reply = await api.updateCheck(updatePreviewNow());
+      update = reply && typeof reply.status === 'string' ? reply : unreachableReply();
+    } catch { update = unreachableReply(); }
     finally { checking = false; }
+    checkId += 1;
+    await tick();
+    document.querySelector('[data-testid=update-check-result]')?.scrollIntoView({ block: 'nearest' });
   }
   onMount(() => { if (!focusTerm || !findTerm(focusTerm)) search?.focus(); });
   $effect(() => {
@@ -73,8 +81,8 @@
     {/each}
   </dl>
   {#if build}<p class="build-line" data-testid="build-line">{build}</p>{/if}
-  <div class="update-check"><button type="button" class="update-button" data-testid="update-check-button" disabled={checking} onclick={checkForUpdates}>{checking ? 'Checking...' : 'Check for updates'}</button>
-    <div role="status" aria-live="polite">{#if update}<p class="update-note" data-testid="update-check-result" data-state={update.status}>{updateCheckNote(update)}{#if update.status === 'available' && update.url && isOwnReleaseUrl(update.url)} <a data-testid="update-check-link" href={update.url} target="_blank" rel="noopener noreferrer">Open the release page</a>{/if}</p>{/if}</div></div>
+  <div class="update-check"><button type="button" class="update-button" data-testid="update-check-button" aria-disabled={checking} onclick={checkForUpdates}>{checking ? 'Checking...' : 'Check for updates'}</button>
+    <div role="status" aria-live="polite" aria-busy={checking}>{#if update}{#key checkId}<p class="update-note" data-testid="update-check-result" data-state={updateCheckState(update)}>{updateCheckNote(update)}{#if update.status === 'available' && update.url && isOwnReleaseUrl(update.url)}{' '}<a data-testid="update-check-link" href={update.url} target="_blank" rel="noopener noreferrer">Open the release page</a>{/if}</p>{/key}{/if}</div></div>
 </Drawer>
 
 <style>
@@ -99,7 +107,7 @@
   .update-button { border: 1px solid var(--control-line); background: transparent; color: var(--text); padding: 6px 12px; border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
   .update-button:hover { background: var(--surface-2); }
   .update-button:focus-visible { outline: 2px solid var(--focus); }
-  .update-button:disabled { opacity: .6; cursor: default; }
+  .update-button[aria-disabled='true'] { opacity: .6; cursor: default; }
   .update-note { margin: 0; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-2); font-size: 13px; }
   .glossary-hint { font-weight: 600; }
   .glossary-not, .glossary-alias { color: var(--text-2); }

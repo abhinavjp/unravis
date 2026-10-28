@@ -67,3 +67,13 @@ test('only links inside the project own repository count as release links', () =
   assert.equal(upd.isOwnReleaseUrl('http://github.com/abhinavjp/unravis/'), false);
   assert.equal(upd.isOwnReleaseUrl(''), false);
 });
+
+test('the result state is always one of the four known names', () => {
+  for (const name of ['latest', 'available', 'dev']) assert.equal(upd.updateCheckState({ status: name }), name);
+  assert.equal(upd.updateCheckState({ status: 'weird' }), 'unreachable');
+  assert.equal(upd.updateCheckState({ status: 'unreachable' }), 'unreachable');
+});
+
+test('without a window there is no remembered preview', () => {
+  assert.equal(upd.updatePreviewNow(), '');
+});
