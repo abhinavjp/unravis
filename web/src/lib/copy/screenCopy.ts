@@ -34,12 +34,14 @@ export function p95Change(currentMs: number | null | undefined, referenceMs: num
 
 /**
  * One sentence under the figures when the P95 clearly rose. It states the comparison and points to the ranked view;
- * it does not name an operation or a reason, because the headline alone cannot show either.
+ * it names the operation with the biggest rise when one is passed, and never gives a reason.
  */
-export function p95Sentence(change: P95Change | null, referenceMs: number | null | undefined): string {
+export function p95Sentence(change: P95Change | null, referenceMs: number | null | undefined, topName: string = ''): string {
   if (!change || !change.severe) return '';
   const period = finitePositive(referenceMs) ? 'the previous ' + durationWords(referenceMs) : 'the earlier period';
-  return 'P95 is about ' + (change.ratio >= 10 ? Math.round(change.ratio) : Number(change.ratio.toFixed(1))) + ' times what it was in ' + period + '. Open "Where is it?" to see which operations changed most.';
+  const ratio = change.ratio >= 10 ? Math.round(change.ratio) : Number(change.ratio.toFixed(1));
+  const named = topName ? ' The biggest rise is in ' + topName + '.' : '';
+  return 'P95 is about ' + ratio + ' times what it was in ' + period + '.' + named + ' Open "Where is it?" to see which operations changed most.';
 }
 
 /** The length of the earlier period in milliseconds, or null when its ends are not readable. */
