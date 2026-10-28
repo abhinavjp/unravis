@@ -219,8 +219,23 @@ func CaptureScenarios() map[string]UIBackend {
 		Res: Result{Outcome: OutcomeDone, Version: version, Message: "Unravis is removed.",
 			Kept: []string{`Cases and saved connections of everyone on this PC in C:\ProgramData\Unravis`, `Blackbox recordings in D:\UnravisBlackbox`}}}
 
+	// An uninstall that could not remove everything (OutcomeLeftovers): the "Left behind" list. The program folder is the step that
+	// is left; the data step still ends, as in the real run (uninstall.go keeps going after a left item).
+	leftScript := all(unSteps, StepWaiting)
+	for _, s := range unSteps[:5] {
+		leftScript = append(leftScript, ev(s[0], s[1], StepRunning, ""), ev(s[0], s[1], StepDone, ""))
+	}
+	leftScript = append(leftScript,
+		ev("program-files", "Remove the program files", StepRunning, ""), ev("program-files", "Remove the program files", StepLeft, ""),
+		ev("data", "Deal with your data", StepRunning, ""), ev("data", "Deal with your data", StepDone, ""))
+	uninstallLeft := &ScriptedBackend{St: un, Script: leftScript,
+		Res: Result{Outcome: OutcomeLeftovers, Version: version, Message: "Unravis is uninstalled, but some items could not be removed.",
+			Left: []string{`File ` + machineLoc + `\unravis.exe (The process cannot access the file because it is being used by another process.)`,
+				`Folder ` + machineLoc + ` (removed at the next restart)`},
+			Kept: []string{`Cases and saved connections of everyone on this PC in C:\ProgramData\Unravis`, `Blackbox recordings in D:\UnravisBlackbox`}}}
+
 	return map[string]UIBackend{
 		"fresh": fresh, "preflight-fail": preflightFail, "progress": progress, "done": done, "failed": failed,
-		"upgrade": upgrade, "repair": repair, "uninstall": uninstall,
+		"upgrade": upgrade, "repair": repair, "uninstall": uninstall, "uninstall-left": uninstallLeft,
 	}
 }
