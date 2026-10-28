@@ -79,6 +79,7 @@ export const BB_TEXT = {
   keyHiddenAgain: 'The key was hidden again after a short time.',
   keyFailed: 'The read key could not be shown.',
   keyCopyFailed: 'Copy did not work here. Press Show and copy it by hand.',
+  keyHeld: 'The key keeper holds this read key and never shows it. Ask the person who looks after this PC.',
   readKeySaved: 'A read key is saved on this PC.',
   readKeyNone: 'This place needs no read key.',
   changeKey: 'Type a new read key',
