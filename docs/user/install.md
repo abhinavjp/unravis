@@ -8,8 +8,6 @@ Setup never asks for a password, never connects to a database, and holds no secr
 
 ## Checks
 
-Screens in this part: `p11-welcome`, `p11-preflight-fail`.
-
 Setup opens its window in Microsoft Edge or Google Chrome, in a plain app window. The first screen lists the checks it made, each with a sticker: **Ready**, **Partly ready** or **Failed**.
 
 ![Install Unravis, checks all ready, dark](screenshots/P11/p11-welcome-dark.png)
@@ -43,31 +41,25 @@ A **Failed** check stops the install and says what to do. Fix it, then press **C
 
 ## Options
 
-Screen in this part: `p11-options`.
-
 - **Just for me** installs into `%LOCALAPPDATA%\Programs\Unravis`. It needs no administrator approval, unless you also place a Blackbox.
 - **For everyone on this PC** installs into `C:\Program Files\Unravis`. It also makes the shared data folder `C:\ProgramData\Unravis`, records it under `HKLM\SOFTWARE\Unravis`, and sets up the key keeper service (`UnravisKeeper`) that holds saved connections for everyone. This needs administrator approval.
 - **Folder.** You can type another folder. Spaces and letters such as é are fine. There is no Browse button. A name cannot end with a dot or a space, because Windows would drop it. Short names such as `PROGRA~1` are read as the real folder before anything is checked. For everyone on this PC the folder cannot be inside a person's profile (such as `C:\Users\Ana`).
 - **Start Unravis when I sign in** is ticked by default.
-- **Close Unravis for me** is ticked by default. It only matters when Unravis is open.
-- **Also place a Blackbox recorder on this PC** installs the Blackbox service (`UnravisBlackbox`) in `C:\Program Files\Unravis Blackbox`. It uses the same settings as the Place a Blackbox wizard: name, recordings folder, days to keep, size limit, free disk to keep, and port. See [Unravis Blackbox](blackbox.md).
-- **Open the Blackbox port to these PCs** adds a Windows firewall rule, `Unravis Blackbox (TCP <port>)`, open only to the addresses you list. Without it no rule is added.
+- **Close Unravis for me** appears only when Unravis is open. It is ticked by default. When Unravis is not open the option is not shown.
+- **Also place a Blackbox recorder on this PC** installs the Blackbox service (`UnravisBlackbox`) in `C:\Program Files\Unravis Blackbox`. It uses the same settings as the Place a Blackbox wizard: **Name**, **Folder**, **Keep (days)**, **Max (GB)**, **Keep free (%)** and **Port**. See [Unravis Blackbox](blackbox.md).
+- **Allow other PCs to read it (firewall rule)** is shown under the Blackbox choices. It adds a Windows firewall rule, `Unravis Blackbox (TCP <port>)`, open only to the addresses you list in **Addresses**. Without it no rule is added.
 
 ![Where and how, with the Blackbox ticked, dark](screenshots/P11/p11-options-dark.png)
 ![Where and how, with the Blackbox ticked, light](screenshots/P11/p11-options-light.png)
 
 ## Approval
 
-Screen in this part: `p11-uac-explain`.
-
-When an install needs administrator approval, setup says why before Windows asks: for example, installing for everyone on this PC and placing the Blackbox. It also lists what it will not change. Press **Continue** and approve in the Windows prompt. If you say No there, nothing is changed and you are back on this screen. When no approval is needed, the step rail shows **Not needed** for Approval.
+When an install needs administrator approval, setup shows a screen headed **Windows will ask for admin approval** before Windows asks. It says why, for example installing for everyone on this PC or placing the Blackbox, and lists what it **Will change** and what it **Will not change**. Press **Continue** and choose Yes in the Windows prompt. If you choose No there, nothing is changed, setup says so, and **Continue** asks again. When no approval is needed, the step rail shows **Not needed** for Approval.
 
 ![Windows will ask for admin approval, dark](screenshots/P11/p11-uac-explain-dark.png)
 ![Windows will ask for admin approval, light](screenshots/P11/p11-uac-explain-light.png)
 
 ## Progress
-
-Screen in this part: `p11-progress`.
 
 Each step has its own row: **Waiting**, **Running**, **Done** or **Failed**. The steps for an install are:
 
@@ -89,16 +81,12 @@ Every change is written to a journal before it is made. **Cancel** stops the run
 
 ## Done
 
-Screen in this part: `p11-done`.
-
 When you placed a Blackbox, the Done screen shows its read key **once**. Unravis on another PC needs this key to read this Blackbox. Press **Copy** and keep it somewhere safe: **Close** and **Open Unravis** stay off until you have copied it. The key is never written to the log.
 
 ![Unravis is installed, with the read key, dark](screenshots/P11/p11-done-dark.png)
 ![Unravis is installed, with the read key, light](screenshots/P11/p11-done-light.png)
 
 ## When it fails
-
-Screen in this part: `p11-failed-rolled-back`.
 
 If a step fails, setup stops, puts back every step before it in reverse order, and says which step failed and what to do. The heading says whether everything was put back. If something could not be put back, it is listed by name with its path, and the log has the details. After a failed install, **Back to Options** lets you change a choice, for example the port, and run again. After a failed upgrade or repair, **Try again** runs it again (it is off when something could not be put back: read the log first).
 
@@ -129,6 +117,7 @@ unravis-setup.exe --silent --config setup.json [--log C:\path\setup.log]
 - `readKeyFile` is required when a Blackbox is placed. The read key is written there once, readable only by you. The file must not exist yet: setup never replaces a file, and it makes the new file with its permissions already set. Silent mode shows it nowhere else.
 - `startAtSignIn` defaults to true. `openWhenDone` is accepted but ignored: silent mode never opens a window.
 - Keys are case sensitive. An unknown key, a wrong type, a second JSON value or a file over 64 KB stops setup with a sentence that names the problem, before it changes anything. A Notepad UTF-8 mark at the start is fine.
+- A key set to `null` counts as left out, as if it were not in the file. For `scope` that gives the same sentence as a missing `scope`.
 
 Silent mode never closes a running Unravis. If it is open, the check fails and setup stops.
 

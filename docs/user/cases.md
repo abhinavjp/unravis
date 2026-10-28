@@ -70,11 +70,11 @@ A closed case is still erased 30 days after it was closed, unless you reopen it.
 
 The MongoDB link and the filters the case had are not part of Reopen. They are saved with the case as you work, and Unravis puts them back whenever you open the case, closed or not. While the case is closed they cannot be changed, so nothing new is saved; once you reopen it, saving carries on.
 
-Screens: `p2-close` is the case list on the Import page. `p2-closed-readonly` is a closed case with its buttons turned off. `p2-reopen` is the same case with the Reopen button. The pictures are made by `tools/screens/run-screens.ps1 -Update`.
+The first picture is the case list on the Import page. The second is a closed case with its buttons turned off. The third is the same case with the Reopen button. The pictures are made by `tools/screens/run-screens.ps1 -Update`.
 
-![Close case, in the Import page case list](screenshots/P2/p2-close-light.png)
-![A closed case, read only](screenshots/P2/p2-closed-readonly-light-narrow.png)
-![A closed case with the Reopen button](screenshots/P2/p2-reopen-dark-narrow.png)
+![Close case, in the Import page case list, light](screenshots/P2/p2-close-light.png)
+![A closed case, read only, light, narrow](screenshots/P2/p2-closed-readonly-light-narrow.png)
+![A closed case with the Reopen button, dark, narrow](screenshots/P2/p2-reopen-dark-narrow.png)
 
 Pressing Reopen twice quickly sends one request. The second press does nothing while the first is running.
 
@@ -93,9 +93,9 @@ Each item says what failed, in one of four ways. They are different on purpose:
 
 You can also Remove an item from the list. On a closed case the list says "This case is closed. Reopen it to try again." and shows no buttons. The list never keeps passwords or text from your files.
 
-Screen: `p2-retry-list`. The list sits above Analysis, and Case home counts the items in the header ("Needs another try").
+The list sits above Analysis, and Case home counts the items in the header ("Needs another try").
 
-![Needs another try list](screenshots/P2/p2-retry-list-light.png)
+![Needs another try list, light](screenshots/P2/p2-retry-list-light.png)
 
 ## Two tabs
 
@@ -105,10 +105,10 @@ If another tab changed the case first, the page changes nothing and says: "This 
 
 Examples: you close a case in tab A, and then add a file in tab B. Tab B is told the case is closed. You press Reopen in two tabs: the first reopens, the second sees M2.
 
-Screen: `p2-changed-elsewhere`. A second tab reopens the case, then the first tab presses Reopen. The tool puts the case back as it was afterwards.
+A second tab reopens the case, then the first tab presses Reopen. The tool puts the case back as it was afterwards.
 
-![Changed in another tab](screenshots/P2/p2-changed-elsewhere-light.png)
-![Changed in another tab, narrow](screenshots/P2/p2-changed-elsewhere-dark-narrow.png)
+![Changed in another tab, light](screenshots/P2/p2-changed-elsewhere-light.png)
+![Changed in another tab, dark, narrow](screenshots/P2/p2-changed-elsewhere-dark-narrow.png)
 
 ## Archive
 
@@ -121,14 +121,14 @@ Archive saves the whole case in one file you can keep, copy or move. You do not 
 - When the file is written, Unravis reads it back to check it, and only then marks the case "Archived". An archived case is read-only. It moves to the Archived list on the start screen, and the working copy is kept.
 - A case file Unravis finished but could not commit (for example Cancel at the last moment) is never deleted. It is listed under "Case files left over" in the health checks. See Troubleshooting.
 
-Screens: `p3-archive` is the drawer on an open case.
+The pictures show the archive drawer on an open case.
 
 ![Archive drawer, light](screenshots/P3/p3-archive-light.png)
 ![Archive drawer, dark, narrow](screenshots/P3/p3-archive-dark-narrow.png)
 
 ## Check the case file
 
-"Check the case file" proves the case file can be restored. Unravis restores it to a temporary store (the `.verify` folder under the case root), compares it with the case, and removes the temporary store. The check does not change the case or the file. It can be cancelled. A passed check counts for one hour and only for that exact file: a file that changed since has to be checked again. A passed check is never trusted on its own to free space (see below).
+"Check the case file" confirms that the case file can be restored. Unravis restores it to a temporary store (the `.verify` folder under the case root), compares it with the case, and removes the temporary store. The check does not change the case or the file. It can be cancelled. A passed check counts for one hour and only for that exact file: a file that changed since has to be checked again. A passed check is never trusted on its own to free space (see below).
 
 If the file is missing or does not match, the check fails with "The case file did not pass the check. The working copy was kept."
 
@@ -146,7 +146,7 @@ Before a master key is reset ("Start over with a new master key"), the page says
 
 A freed case is not "Missing". An archived case page is read-only: the analysis and Reopen are not offered, and the page says to restore first. A freed case stays in the Archived list, labelled "Space freed", and can be restored as a new case.
 
-Screens: `p3-free-1` is the first stage. The demo has no master key, so it shows the "Set a master key" message instead of the check.
+The pictures show the first stage. The demo has no master key, so it shows the "Set a master key" message instead of the check.
 
 ![Free the space, stage 1, dark](screenshots/P3/p3-free-1-dark.png)
 ![Free the space, stage 1, light](screenshots/P3/p3-free-1-light.png)
@@ -160,7 +160,7 @@ There are two ways back.
 
 A case file made before this version still restores with "Restore from a case file" on the start screen.
 
-Screens: `p3-restore-in-place` and `p3-restore-as-new`. The demo has no master key, so the second shows the "Set a master key" message.
+The pictures show restoring in place, then restoring as a new case. The demo has no master key, so the second shows the "Set a master key" message.
 
 ![Restore in place, light](screenshots/P3/p3-restore-in-place-light.png)
 ![Restore as a new case, dark](screenshots/P3/p3-restore-as-new-dark.png)
@@ -169,7 +169,7 @@ Screens: `p3-restore-in-place` and `p3-restore-as-new`. The demo has no master k
 
 The start screen shows "Archived cases (N)" under the working cases. The list is paged 50 at a time with "Show more archived cases". Each row shows the short case code ("Code 3f9a27c1"), so a case restored twice from one file can be told apart. Each row says "Archived", whether the working copy is kept or the space is freed, and "Key ending xxxx". A row whose working copy has disappeared reads "Working copy missing" and offers no Open. Rows offer Open, Restore and, under More, "Restore from the case file as a new case", "Free the space" and Erase.
 
-Screens: `p3-archived-list` is the list. `p3-archived-home` is Case home of an archived case.
+The first picture is the archived list. The second is Case home of an archived case.
 
 ![Archived list, light](screenshots/P3/p3-archived-list-light.png)
 ![An archived case, light, narrow](screenshots/P3/p3-archived-home-light-narrow.png)
@@ -198,10 +198,10 @@ If you reset a damaged PC key, Unravis tells you first how many cases it will le
 
 An archive of a case with its own key is sealed with that key, not with the PC key, and shows that key's "Key ending xxxx". The case key has to be open to archive the case. The file opens anywhere with the case key alone, and the PC key does not open it. A freed case with its own key stays locked until you enter its key; Restore as a new case then reads the file. If the key was changed after the archive, Verify, Free and Restore say "This file can only be opened with the key it was made with."; type the key the file was made with. The reset warning counts only the freed archives sealed with the PC key, never the ones sealed with a case key.
 
-Screens: `p4-case-key-create` is the name step with the key fields. `p4-case-key-unlock` is the page that opens a locked case. The demo's keyed case is "Payroll run discrepancy, 14 October", and the picture types its demo key into the field without pressing the button.
+The first picture is the name step with the key fields. The second is the page that opens a locked case. The demo's keyed case is "Payroll run discrepancy, 14 October", and the picture types its demo key into the field without pressing the button.
 
-![Create a case with its own key](screenshots/P4/p4-case-key-create-light.png)
-![Open a case that has its own key, narrow](screenshots/P4/p4-case-key-unlock-dark-narrow.png)
+![Create a case with its own key, light](screenshots/P4/p4-case-key-create-light.png)
+![Open a case that has its own key, dark, narrow](screenshots/P4/p4-case-key-unlock-dark-narrow.png)
 
 ## Erase a case
 
@@ -220,10 +220,10 @@ If another tab still has the case open, Erase waits up to 30 seconds for that ta
 
 What is left: one line on the case list, "Erased case q2w7exak", with the time. It holds only the case code and the time, no title and no file name. Press Clear to remove the line. Clear never touches anything else.
 
-Screens: `p4-erase-1` is the dialog when it opens, and `p4-erase-2` is the same dialog with the code typed and the Erase button on. `p4-erased-home` is the case list with two Erased lines. `p4-untrusted-home` is a legacy case that an older version made without a seal. Unravis will not open it, because it cannot tell whether it was changed. You can restore a case file you made yourself, or erase it.
+The first picture is the dialog when it opens. The second is the same dialog with the code typed and the Erase button on. The third is the case list with two Erased lines. The fourth is a legacy case that an older version made without a seal. Unravis will not open it, because it cannot tell whether it was changed. You can restore a case file you made yourself, or erase it.
 
-![Erase dialog](screenshots/P4/p4-erase-1-light.png)
-![Erase dialog with the code typed](screenshots/P4/p4-erase-2-dark.png)
-![The case list with Erased lines](screenshots/P4/p4-erased-home-light.png)
-![A legacy case that cannot be opened, narrow](screenshots/P4/p4-untrusted-home-light-narrow.png)
+![Erase dialog, light](screenshots/P4/p4-erase-1-light.png)
+![Erase dialog with the code typed, dark](screenshots/P4/p4-erase-2-dark.png)
+![The case list with Erased lines, light](screenshots/P4/p4-erased-home-light.png)
+![A legacy case that cannot be opened, light, narrow](screenshots/P4/p4-untrusted-home-light-narrow.png)
 

@@ -54,7 +54,7 @@ test('docs-check passes on the real docs and screens', () => {
 test('docs-check passes a sound project', () => {
   const root = project({
     'tools/screens/screens.json': screensFile(screen('p1-home')),
-    'docs/user/a.md': '# A\n\n![x](screenshots/P1/p1-home-dark.png)\n',
+    'docs/user/a.md': '# A\n\n![Home, dark](screenshots/P1/p1-home-dark.png)\n',
     'docs/user/screenshots/P1/p1-home-dark.png': 'png'
   });
   const { code, out } = docsCheck(root);
@@ -64,21 +64,126 @@ test('docs-check passes a sound project', () => {
 test('docs-check fails on an image that does not exist', () => {
   const root = project({
     'tools/screens/screens.json': screensFile(screen('p1-home')),
-    'docs/user/a.md': '# A\n\n![x](screenshots/P1/p1-home-dark.png)\n'
+    'docs/user/a.md': '# A\n\n![Home, dark](screenshots/P1/p1-home-dark.png)\n'
   });
   const { code, out } = docsCheck(root);
   assert.equal(code, 1);
   assert.match(out, /p1-home-dark\.png does not exist/);
 });
 
-test('docs-check fails on a screen its page does not mention', () => {
+test('docs-check fails on a screen its page has no picture of', () => {
   const root = project({
     'tools/screens/screens.json': screensFile(screen('p1-home')),
     'docs/user/a.md': '# A\n'
   });
   const { code, out } = docsCheck(root);
   assert.equal(code, 1);
-  assert.match(out, /a\.md: it does not mention the screen p1-home/);
+  assert.match(out, /a\.md: it has no picture of the screen p1-home/);
+});
+
+test('docs-check fails on a page that only names the screen id', () => {
+  const root = project({
+    'tools/screens/screens.json': screensFile(screen('p1-home')),
+    'docs/user/a.md': '# A\n\nScreen id p1-home.\n'
+  });
+  const { code, out } = docsCheck(root);
+  assert.equal(code, 1);
+  assert.match(out, /a\.md: it has no picture of the screen p1-home/);
+  assert.match(out, /a\.md: it names the screen id p1-home in its text/);
+});
+
+test('docs-check lets a pending screen go without a picture, but not be named', () => {
+  const pending = screen('p12-update-none', { phase: 'P12' });
+  const quiet = project({
+    'tools/screens/screens.json': screensFile(pending),
+    'docs/user/a.md': '# A\n'
+  });
+  const first = docsCheck(quiet);
+  assert.equal(first.code, 0, first.out);
+  const named = project({
+    'tools/screens/screens.json': screensFile(pending),
+    'docs/user/a.md': '# A\n\nSee p12-update-none.\n'
+  });
+  const second = docsCheck(named);
+  assert.equal(second.code, 1);
+  assert.match(second.out, /a\.md: it names the screen id p12-update-none in its text/);
+});
+
+test('docs-check fails on a screenshot whose alt text has no theme', () => {
+  const root = project({
+    'tools/screens/screens.json': screensFile(screen('p1-home')),
+    'docs/user/a.md': '# A\n\n![Home](screenshots/P1/p1-home-dark.png)\n',
+    'docs/user/screenshots/P1/p1-home-dark.png': 'png'
+  });
+  const { code, out } = docsCheck(root);
+  assert.equal(code, 1);
+  assert.match(out, /p1-home-dark\.png needs "dark" or "light" in its alt text/);
+});
+
+test('docs-check fails on a screen id in the prose, except on screenshots.md and inside longer words', () => {
+  const files = {
+    'tools/screens/screens.json': screensFile(screen('p1-home')),
+    'docs/user/screenshots/P1/p1-home-dark.png': 'png'
+  };
+  const bad = project({ ...files, 'docs/user/a.md': '# A\n\n![Home, dark](screenshots/P1/p1-home-dark.png)\n\nThe screen p1-home shows it.\n' });
+  const first = docsCheck(bad);
+  assert.equal(first.code, 1);
+  assert.match(first.out, /a\.md: it names the screen id p1-home in its text/);
+  const fine = project({
+    ...files,
+    'docs/user/a.md': '# A\n\n![Home, dark](screenshots/P1/p1-home-dark.png)\n\nThe files are named like p1-home-dark.png, and p1-homepage is another word.\n',
+    'docs/user/screenshots.md': '# Screenshots\n\nThe id p1-home is the start of each file name.\n'
+  });
+  const second = docsCheck(fine);
+  assert.equal(second.code, 0, second.out);
+});
+
+test('docs-check fails on words that claim a cause or a proof, except in code and when negated', () => {
+  const fence = '`'.repeat(3);
+  const files = {
+    'tools/screens/screens.json': screensFile(screen('p1-home')),
+    'docs/user/screenshots/P1/p1-home-dark.png': 'png'
+  };
+  const picture = '![Home, dark](screenshots/P1/p1-home-dark.png)\n\n';
+  const bad = project({ ...files, 'docs/user/a.md': '# A\n\n' + picture + 'It was caused by a lock, blocked by a job, and due to load. This proves it.\n' });
+  const first = docsCheck(bad);
+  assert.equal(first.code, 1);
+  for (const word of ['caused', 'blocked by', 'due to', 'proves']) assert.match(first.out, new RegExp(`a\\.md: the text says "${word}"`));
+  const fine = project({
+    ...files,
+    'docs/user/a.md': '# A\n\n' + picture
+      + 'Because it is slow, it is not proven. It never proves a cause, and it cannot prove one. It isn\'t proof.\n\n'
+      + 'The word `caused` and the line below are code.\n\n' + fence + '\nit was caused by x, due to y\n' + fence + '\n'
+  });
+  const second = docsCheck(fine);
+  assert.equal(second.code, 0, second.out);
+});
+
+// The Blackbox states table has to say what the app says (web/src/lib/copy/blackboxCopy.ts, stateNext).
+const copyTs = "export const BLACKBOX_TEXT = {\n  stateNext: {\n    running: 'Nothing to do. It is recording.',\n    'running-late': 'No sample for more than three intervals.',\n    stopped: 'On this PC, press Start.'\n  } as Record<PageState, string>,\n  other: 'x'\n};\n";
+const blackboxDoc = (stopped, stoppedText) => `# Blackbox\n\n![Home, dark](screenshots/P1/p1-home-dark.png)\n\n| State | Readiness | What it means and what to do |\n| --- | --- | --- |\n| Running | Ready | Nothing to do. It is recording. |\n| Running late | Partly ready | No sample for more than three intervals. |\n| Stopped | ${stopped} | ${stoppedText} |\n`;
+const blackboxFiles = (doc) => ({
+  'tools/screens/screens.json': screensFile(screen('p1-home', { doc: 'blackbox.md' })),
+  'docs/user/blackbox.md': doc,
+  'docs/user/screenshots/P1/p1-home-dark.png': 'png',
+  'web/src/lib/copy/blackboxCopy.ts': copyTs
+});
+
+test('docs-check passes when the Blackbox table says what the app says', () => {
+  const { code, out } = docsCheck(project(blackboxFiles(blackboxDoc('Partly ready', 'On this PC, press Start.'))));
+  assert.equal(code, 0, out);
+});
+
+test('docs-check fails when the Blackbox table misses a sentence of the app', () => {
+  const { code, out } = docsCheck(project(blackboxFiles(blackboxDoc('Partly ready', 'Start it from Services.'))));
+  assert.equal(code, 1);
+  assert.match(out, /blackbox\.md: the states table does not say "On this PC, press Start\." \(state stopped\)/);
+});
+
+test('docs-check fails when the Stopped row says Cannot test yet', () => {
+  const { code, out } = docsCheck(project(blackboxFiles(blackboxDoc('Cannot test yet', 'On this PC, press Start.'))));
+  assert.equal(code, 1);
+  assert.match(out, /blackbox\.md: the Stopped row of the states table must say Partly ready/);
 });
 
 test('docs-check fails on a screen whose page does not exist', () => {
@@ -94,7 +199,8 @@ test('docs-check fails on a screen whose page does not exist', () => {
 test('docs-check fails on a link to a picture of a screen that is no longer captured', () => {
   const root = project({
     'tools/screens/screens.json': screensFile(screen('p1-home')),
-    'docs/user/a.md': 'p1-home\n\n![x](screenshots/P1/p1-old-dark.png)\n',
+    'docs/user/a.md': '![Home, dark](screenshots/P1/p1-home-dark.png)\n\n![Old, dark](screenshots/P1/p1-old-dark.png)\n',
+    'docs/user/screenshots/P1/p1-home-dark.png': 'png',
     'docs/user/screenshots/P1/p1-old-dark.png': 'png'
   });
   const { code, out } = docsCheck(root);
@@ -118,7 +224,9 @@ test('docs-check fails when a screen is listed twice, badly named, or has no ste
 test('docs-check takes a part phase such as P14b, still tied to its phase', () => {
   const root = project({
     'tools/screens/screens.json': screensFile(screen('p14b-held', { phase: 'P14b' }), screen('p14-held', { phase: 'P14b' })),
-    'docs/user/a.md': 'p14b-held p14-held\n'
+    'docs/user/a.md': '![Held, dark](screenshots/P1/p14b-held-dark.png)\n\n![Held, dark](screenshots/P1/p14-held-dark.png)\n',
+    'docs/user/screenshots/P1/p14b-held-dark.png': 'png',
+    'docs/user/screenshots/P1/p14-held-dark.png': 'png'
   });
   const { code, out } = docsCheck(root);
   assert.equal(code, 1);

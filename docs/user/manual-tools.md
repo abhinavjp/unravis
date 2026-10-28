@@ -10,7 +10,12 @@ Switching never loses anything. Your notes, the checklist, the saved views and t
 
 ## The tools
 
-Screen ids `p6-tools-1`, `p6-tools-2`, `p6-tools-3`.
+![The tools page, dark](screenshots/P6/p6-tools-1-dark.png)
+![The tools page, light](screenshots/P6/p6-tools-1-light.png)
+![The Slowest APIs tool after a run, dark](screenshots/P6/p6-tools-2-dark.png)
+![The Slowest APIs tool after a run, light](screenshots/P6/p6-tools-2-light.png)
+![The SQL blocking and waits tool, Cannot test yet, dark](screenshots/P6/p6-tools-3-dark.png)
+![The SQL blocking and waits tool, Cannot test yet, light](screenshots/P6/p6-tools-3-light.png)
 
 The tools page is a grid of cards. Each card has the tool name, one line about it, the sources it reads and a status sticker, and one outlined button to open it. There are thirteen tools.
 
@@ -38,7 +43,7 @@ A tool never shows an empty chart and never says it passed. When a source it nee
 
 ### Inside a tool
 
-Each tool opens with a **Back to tools** button, the incident and reference windows (folded away once they are set), the **Run the steps** bar, the tool itself, a place to write a note, saved views, and **Run Guided analysis instead**. The note is added to the checklist under What we learned.
+Each tool opens with a **Back to tools** button, the incident and reference windows (folded away when you open a tool with the windows already set; they stay open while you work), the **Run the steps** bar, the tool itself, a place to write a note, saved views, and **Run Guided analysis instead**. The note is added to the checklist under What we learned.
 
 **Slowest APIs** lists every API of the last run, ranked by its slow end in the incident window. Two filters narrow it: the fewest calls an API must have, and part of its name. An API with too few calls to have a slow end goes last, never first. **Slowest calls** lists the individual calls that took longest in a window. It shows the API, the start and the time of each call, and nothing about who sent it.
 
@@ -53,4 +58,4 @@ A saved view keeps a name, a tool, the two windows, the API focus and the tool's
 
 ## Export
 
-Screen ids `p6-export-1`, `p6-export-2`. The export is the last tab of the guided analysis and is described with the other screens in [Guided analysis](guided-analysis.md#export-screens). It works from either way of working.
+The export is the last tab of the guided analysis and is described with the other screens in [Guided analysis](guided-analysis.md#export-screens). It works from either way of working.

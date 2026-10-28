@@ -8,7 +8,7 @@ Unravis helps you find out what went wrong in production. It reads your audit lo
 | [Cases](cases.md) | Keep one investigation together: files, theories, health checks |
 | [Sources](sources.md) | Connect SQL Server and MongoDB, and add log files |
 | [Blackbox](blackbox.md) | Always-on recording of what the servers were doing |
-| [Guided analysis](guided-analysis.md) | The step-by-step method that walks you to a cause |
+| [Guided analysis](guided-analysis.md) | The step-by-step method that walks you to a finding |
 | [Manual tools](manual-tools.md) | The charts and lists you can use on your own |
 | [Install](install.md) | The one-file installer |
 | [Upgrade and uninstall](upgrade-and-uninstall.md) | Move to a new version, or remove Unravis |

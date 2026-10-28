@@ -4,8 +4,6 @@ The Blackbox is a small program that sits on a server and keeps a flight recorde
 
 ## Place
 
-Screens in this part: `p9-blackbox-list`, `p9-wizard-1`, `p9-wizard-2`, `p9-wizard-3`, `p9-wizard-4`.
-
 Open **Blackbox** in the header, on any screen. The list shows every Blackbox Unravis knows, each with a sticker for its state, how it is reached, the last sample and how often it samples. The Blackbox is not part of a case: it records all the time, before any incident.
 
 ![The Blackbox list, dark](screenshots/P9/p9-blackbox-list-dark.png)
@@ -35,7 +33,7 @@ Open **Blackbox** in the header, on any screen. The list shows every Blackbox Un
 
 **On this PC.** Install runs the recorder's own `install` through a small helper that Windows asks you to approve. Unravis makes the read key itself and seals it on this PC with Windows data protection the moment it exists. It is shown again only when you press **Show** or **Copy** on that Blackbox's status screen, and only for the Blackbox on this PC: the row stays masked until then, is hidden again after 30 seconds, and the key is never written to a log, a case file or a stored answer. A key you typed for another server is never shown back. If the install fails, it is undone and nothing is left half done. The page then offers **Start**, **Stop**, **Apply settings** (restarts the service with new settings), **Snapshot now** (copies the recordings into one folder) and **Remove**. Remove keeps the recordings unless you tick **Delete the recordings too**, which needs the exact Blackbox name typed.
 
-**On another server.** The pack is a zip named `unravis-blackbox-<name>.zip`. Copy it to the server, unzip it, and run `unravis-blackbox.exe install` as an administrator (see Install). The install prints the read key once on that server; copy it then, and use it in Add. For a Blackbox on another server Unravis offers script steps only. It never stops, starts or removes anything there.
+**On another server.** The pack is a zip named `unravis-blackbox-<name>.zip`. Copy it to the server, unzip it, and run `unravis-blackbox.exe install` as an administrator (see Install). The name comes from the pack's `blackbox.json`, so you do not need to type it. The install prints the read key once on that server; copy it then, and use it in Add. For a Blackbox on another server Unravis offers script steps only. It never stops, starts or removes anything there.
 
 ## Add
 
@@ -53,21 +51,21 @@ Add checks the place first and reports one of the states below. Adding the same 
 
 ## States
 
-Screens in this part: `p9-state-running`, `p9-read-key`, `p9-state-running-late`, `p9-state-stopped`, `p9-state-disk-low`, `p9-state-clock-differs`, `p9-state-not-found`, `p9-state-unreachable`, `p9-state-incomplete`, `p9-state-not-placed`.
-
 Every Blackbox is in one of nine states. The sticker carries the word, and the readiness word is what a case step says: **Ready**, **Partly ready** or **Cannot test yet**. A sticker is never colour alone.
 
 | State | Readiness | What it means and what to do |
 | --- | --- | --- |
 | Running | Ready | Nothing to do. It is recording. |
-| Running late | Partly ready | The newest sample is more than three intervals old. On the server, open Services, find UnravisBlackbox and restart it. |
-| Stopped | Cannot test yet | On this PC press Start. On another server start it from Services. |
+| Running late | Partly ready | No sample for more than three intervals. On the server, open Services, find UnravisBlackbox and restart it. |
+| Stopped | Partly ready | On this PC, press Start. On another server, start it from Services. |
 | Disk low | Partly ready | Free space on that drive, or lower the size limit. Recording resumes by itself. |
-| Clock differs | Partly ready | The server clock and this PC differ by more than a second. Fix the clock on the server. Until then, events less than a second apart are not put in order. |
-| Not found | Cannot test yet | The folder, share or address does not exist. Check it, then check again. |
-| Unreachable | Cannot test yet | Nothing answered, the key was refused, or the share dropped. Check the share permissions or the firewall port, then check again. |
+| Clock differs | Partly ready | Fix the clock on that server. Until then, events less than a second apart are not put in order. |
+| Not found | Cannot test yet | Check the folder, share or address, then check again. |
+| Unreachable | Cannot test yet | Check the share permissions or the firewall port, then check again. |
 | Incomplete | Partly ready | The recording has gaps. A gap of up to 2 minutes only warns. A longer gap makes the minutes inside it Cannot test yet. |
-| Not placed | Cannot test yet | A this-PC entry whose service is gone. Place a Blackbox again, or forget the place. |
+| Not placed | Cannot test yet | Place a Blackbox before you need it. Until then host steps say Cannot test yet. |
+
+Stopped is Partly ready because the recordings are kept and can still be read. Clock differs means the server clock and this PC differ by more than a second. Not found means the folder, share or address does not exist. Unreachable means nothing answered, the key was refused, or the share dropped. Not placed is a this-PC entry whose service is gone; place a Blackbox again, or forget the place.
 
 ![State Running, web-a, dark](screenshots/P9/p9-state-running-dark.png)
 ![State Running, web-a, light](screenshots/P9/p9-state-running-light.png)
@@ -105,8 +103,6 @@ The Blackbox on this PC also shows its read key, masked. **Show** reveals it for
 
 ## Use in a case
 
-Screens in this part: `p9-step-9`, `p9-gap-warning`.
-
 Step 9, Host and network, asks one question: was the web server or the SQL server short of CPU, memory or disk? A case that names a Blackbox as a source reads it once, for the incident window and the reference window. The case keeps only the Blackbox name. It never keeps the address, the folder or the read key.
 
 To use one, open the case, open **Blackbox** in the header, open the Blackbox and press **Use in this case**. A case reads one Blackbox, so press **Stop using it in this case** before choosing another. Stopping only takes the name out of the case. The Blackbox and its recordings are as they were.
@@ -122,6 +118,8 @@ A recording can have holes: the PC was busy, the service was restarted, the shar
 
 - A gap of **2 minutes or less** only warns. The check runs on the minutes that exist.
 - A gap of **more than 2 minutes** is not tested. Those minutes say **Cannot test yet**, and the warning lists each one with its start, end and which window it falls in.
+
+Where the long gap falls matters. A gap of more than 2 minutes in the incident window hides minutes of the very window being judged, so the host step cannot be read as flat and says Cannot test yet. The same gap in the reference window only means the usual level is known from fewer readings, so the answer is weaker and reads Partly ready rather than Cannot test yet.
 
 ![A gap longer than 2 minutes in the reference window of web-b, dark](screenshots/P9/p9-gap-warning-dark.png)
 ![A gap longer than 2 minutes in the reference window of web-b, light](screenshots/P9/p9-gap-warning-light.png)
@@ -163,7 +161,6 @@ Settings are in `blackbox.json`. Before install it sits next to the program in t
 | `record.logsCatalogue` | true | Record the log file catalogue |
 | `record.copyLogsOnSnapshot` | false | Include log files in a snapshot |
 | `logPaths` | IIS log folder | Folders searched for log files |
-| `probe.enabled` | false | Reserved. The SQL probe is not in release 1; leave it off |
 
 ## Install
 
@@ -173,14 +170,14 @@ Copy `unravis-blackbox.exe`, `blackbox.json` and `README.txt` to the server. Ope
 .\unravis-blackbox.exe install
 ```
 
-Add `--name web-b` to choose a name, `--folder E:\Rec` to choose the folder, `--port 7790` for another port, `--bind 10.0.0.5` (or `0.0.0.0`) to let other computers reach the status page; see Status page below. Add `--json` for one line of machine-readable output. A success has `"ok":true` and the fields `readKey`, `service`, `folder`, `port`, `name`, `exePath` and `configPath`; a failure is `{"ok":false,"reason":"port-busy","message":"..."}` with one of the reasons listed below.
+Without `--name`, the name is the one in the pack's `blackbox.json`, or the computer name when there is no pack. Add `--name web-b` to choose a name, `--folder E:\Rec` to choose the folder, `--port 7790` for another port, `--bind 10.0.0.5` (or `0.0.0.0`) to let other computers reach the status page; see Status page below. Add `--json` for one line of machine-readable output. A success has `"ok":true` and the fields `readKey`, `service`, `folder`, `port`, `name`, `exePath` and `configPath`; a failure is `{"ok":false,"reason":"port-busy","message":"..."}` with one of the reasons listed below.
 
 It does these things, in this order:
 
 1. Checks the install can work: administrator rights, no Blackbox installed yet, port free, folder writable with at least 1 GB free, and that antivirus has not quarantined the program.
 2. Makes the recordings folder and the program folder `%ProgramFiles%\Unravis Blackbox`, and restricts both so only administrators and the system can change them (ordinary users can still read the recordings folder). The service runs as the system account, so it never runs the program from the unpacked zip, where other users might be able to replace it: install copies `unravis-blackbox.exe` into the program folder, and keeps `blackbox.json` and the fingerprint of the read key there too.
 3. Creates the `UnravisBlackbox` Windows service from that copy (automatic start, restarts itself after a crash).
-4. Starts the service and opens its status page once to prove it answers.
+4. Starts the service and opens its status page once to check that it answers.
 
 The read key is printed once:
 
