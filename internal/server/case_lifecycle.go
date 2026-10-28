@@ -137,6 +137,20 @@ func (h *handler) eraseBelief(ctx context.Context, id casestore.CaseID, believed
 	return nil
 }
 
+// beliefFirst answers a stale tab before any input is judged (D-A-02). It reads
+// without the gate and settles nothing; the guard under the gate still decides. A
+// case that cannot be read or is marked keeps its existing answers.
+func (h *handler) beliefFirst(ctx context.Context, id casestore.CaseID, a casestore.Action, believed casestore.State) error {
+	if believed == "" {
+		return nil
+	}
+	info, err := h.infoOf(ctx, id)
+	if err != nil || info.Mark != "" {
+		return nil
+	}
+	return casestore.CheckBelief(a, believed, casestore.StateOf(info))
+}
+
 // innerCase unwraps the read-share wrapper so an optional interface can be asserted.
 func innerCase(c casestore.Case) casestore.Case {
 	if sc, ok := c.(*sharedCase); ok {
