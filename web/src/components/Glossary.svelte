@@ -5,6 +5,8 @@
   import { searchTerms } from '../lib/copy/lookup';
   import { HELP_STEPS, HELP_TEXT, glossaryCount } from '../lib/copy/screenCopy';
   import { versionLine } from '../lib/versionLine';
+  import { updateCheckNote, updateCheckState, updatePreviewNow, isOwnReleaseUrl } from '../lib/updateCheck';
+  import type { UpdateCheckReply } from '../lib/types';
   import Drawer from './Drawer.svelte';
 
   // The glossary drawer: every term in the copy deck, alphabetical, with a plain text filter. It opens from the Help button in the header.
@@ -21,6 +23,24 @@
   onMount(() => {
     void api.version().then((info) => { build = versionLine(info); }).catch(() => { build = ''; });
   });
+  // The manual update check: only runs when the button is pressed, never by itself.
+  let checking = $state(false);
+  let update = $state<UpdateCheckReply | null>(null);
+  let checkId = $state(0);
+  const unreachableReply = (): UpdateCheckReply => ({ status: 'unreachable', current: '', latest: '', url: '' });
+  async function checkForUpdates() {
+    if (checking) return;
+    checking = true;
+    update = null;
+    try {
+      const reply = await api.updateCheck(updatePreviewNow());
+      update = reply && typeof reply.status === 'string' ? reply : unreachableReply();
+    } catch { update = unreachableReply(); }
+    finally { checking = false; }
+    checkId += 1;
+    await tick();
+    document.querySelector('[data-testid=update-check-result]')?.scrollIntoView({ block: 'nearest' });
+  }
   onMount(() => { if (!focusTerm || !findTerm(focusTerm)) search?.focus(); });
   $effect(() => {
     const id = focusTerm;
@@ -61,6 +81,8 @@
     {/each}
   </dl>
   {#if build}<p class="build-line" data-testid="build-line">{build}</p>{/if}
+  <div class="update-check"><button type="button" class="update-button" data-testid="update-check-button" aria-disabled={checking} onclick={checkForUpdates}>{checking ? 'Checking...' : 'Check for updates'}</button>
+    <div role="status" aria-live="polite" aria-busy={checking}>{#if update}{#key checkId}<p class="update-note" data-testid="update-check-result" data-state={updateCheckState(update)}>{updateCheckNote(update)}{#if update.status === 'available' && update.url && isOwnReleaseUrl(update.url)}{' '}<a data-testid="update-check-link" href={update.url} target="_blank" rel="noopener noreferrer">Open the release page</a>{/if}</p>{/key}{/if}</div></div>
 </Drawer>
 
 <style>
@@ -81,6 +103,12 @@
   .glossary-entry dt { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
   .glossary-entry dd { margin: 5px 0 0; font-size: 13px; overflow-wrap: anywhere; }
   .build-line { margin: 14px 0 0; color: var(--text-2); font: 12px var(--mono); }
+  .update-check { margin-top: 10px; display: grid; gap: 8px; justify-items: start; }
+  .update-button { border: 1px solid var(--control-line); background: transparent; color: var(--text); padding: 6px 12px; border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
+  .update-button:hover { background: var(--surface-2); }
+  .update-button:focus-visible { outline: 2px solid var(--focus); }
+  .update-button[aria-disabled='true'] { opacity: .6; cursor: default; }
+  .update-note { margin: 0; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-2); font-size: 13px; }
   .glossary-hint { font-weight: 600; }
   .glossary-not, .glossary-alias { color: var(--text-2); }
   .glossary-not span, .glossary-alias span { display: block; color: var(--text); font-size: 12px; font-weight: 600; }

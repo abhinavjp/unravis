@@ -3611,6 +3611,39 @@
           "waitFor": "text=Type DELETE to confirm"
         }
       ]
+    },
+    {
+      "id": "p12-update-none", "phase": "P12", "doc": "upgrade-and-uninstall.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"goto": "#update=latest"},
+        {"click": "role=button[name=\"Glossary\"]"},
+        {"waitFor": "#glossary-title"},
+        {"click": "[data-testid=update-check-button]"},
+        {"waitFor": "[data-testid=update-check-result]"}
+      ]
+    },
+    {
+      "id": "p12-update-available", "phase": "P12", "doc": "upgrade-and-uninstall.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"goto": "#update=available"},
+        {"click": "role=button[name=\"Glossary\"]"},
+        {"waitFor": "#glossary-title"},
+        {"click": "[data-testid=update-check-button]"},
+        {"waitFor": "[data-testid=update-check-result]"}
+      ]
+    },
+    {
+      "id": "p12-update-offline", "phase": "P12", "doc": "upgrade-and-uninstall.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"goto": "#update=offline"},
+        {"click": "role=button[name=\"Glossary\"]"},
+        {"waitFor": "#glossary-title"},
+        {"click": "[data-testid=update-check-button]"},
+        {"waitFor": "[data-testid=update-check-result]"}
+      ]
     }
   ]
 }

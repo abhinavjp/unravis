@@ -1,0 +1,297 @@
+name: Release
+
+# Runs when a tag matching vX.Y.Z (or vX.Y.Z-pre.N) is pushed. Tags without the "v" prefix never
+# match this trigger, so they never start a release. workflow_dispatch lets a person re-run a
+# release for a tag that already exists (see the "draft" job: a re-run replaces the assets of an
+# existing DRAFT and refuses a published release).
+#
+# This workflow never publishes anything. The "draft" job only ever creates or updates a DRAFT
+# release. A person presses Publish by hand after the smoke job is green (see
+# buildout/plan/installer-and-releases.md sections 9 to 11).
+#
+# Third-party actions are pinned to a full commit SHA, the same convention as ci.yml. To update
+# one, look up the new SHA (git ls-remote https://github.com/actions/<name>.git refs/tags/<tag>)
+# and change both the SHA and the tag comment.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and draft a release for (e.g. v1.0.0 or v1.0.0-rc.1). The tag must already exist.'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # Keyed by tag, not by ref, so two different tags build in parallel but the same tag never does.
+  group: release-${{ github.workflow }}-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      # No checkout is needed yet: the tag name comes from the trigger event, not the tree.
+      - name: Resolve and validate the release tag
+        id: tag
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $tag = if ($env:EVENT_NAME -eq 'workflow_dispatch') { $env:INPUT_TAG } else { $env:REF_NAME }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') {
+            throw "Tag '$tag' does not look like vX.Y.Z or vX.Y.Z-pre.N (installer-and-releases.md section 9). A tag without the v prefix never reaches this workflow."
+          }
+          $version = $tag.Substring(1)
+          Write-Host "Releasing $tag (version $version)"
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Decide whether signing is enabled
+        id: signgate
+        shell: pwsh
+        env:
+          # The secrets context cannot be read in a step "if", so only this step sees the secret
+          # and passes on a plain true/false.
+          SIGNPATH_SET: ${{ secrets.SIGNPATH != '' }}
+        run: |
+          "enabled=$($env:SIGNPATH_SET.ToLower())" >> $env:GITHUB_OUTPUT
+
+      - name: Check out the code at the tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 0 # full history: the notes generator walks git log back to the previous tag
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Web - install
+        working-directory: web
+        run: npm ci
+
+      - name: Web - type check
+        working-directory: web
+        run: npm run check
+
+      - name: Web - tests
+        working-directory: web
+        run: npm test
+
+      - name: Web - build
+        working-directory: web
+        run: npm run build
+
+      - name: Go - vet
+        run: go vet ./...
+
+      - name: Go - tests
+        run: go test ./...
+
+      - name: Build the programs and the installer
+        # The web step above already built web/dist, so it is skipped here (same as ci.yml).
+        # build.ps1 also builds the keeper, the Blackbox and the installer with its embedded payload.
+        shell: pwsh
+        run: |
+          ./build.ps1 -SkipWeb -Version "${{ steps.tag.outputs.version }}"
+          Copy-Item -LiteralPath 'dist/unravis-setup.exe' -Destination "dist/unravis-setup-v${{ steps.tag.outputs.version }}-windows-x64.exe" -Force
+
+      - name: Build dist\unravis-blackbox.exe and its zip
+        run: ./build-blackbox.ps1 -Version "${{ steps.tag.outputs.version }}"
+
+      - name: Sign the binaries (SignPath)
+        # Skipped entirely unless the SIGNPATH secret is set (see the signgate step). Until the
+        # SignPath client call is wired up, setting the secret fails the build instead of shipping
+        # unsigned files under a signed notice (installer-and-releases.md section 8).
+        if: ${{ steps.signgate.outputs.enabled == 'true' }}
+        shell: pwsh
+        run: |
+          Write-Host '::error::SIGNPATH is set but the SignPath client call is not wired up yet. Refusing to ship a release that claims to be signed.'
+          exit 1
+
+      - name: Package the portable zip
+        shell: pwsh
+        run: |
+          $Version = '${{ steps.tag.outputs.version }}'
+          $Stage = 'dist/portable-pack'
+          if (Test-Path -LiteralPath $Stage) { Remove-Item -LiteralPath $Stage -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $Stage | Out-Null
+          Copy-Item -LiteralPath 'dist/unravis.exe' -Destination $Stage
+          # Picked up automatically once a LICENSE file exists at the repo root; there is none today.
+          Get-ChildItem -LiteralPath '.' -Filter 'LICENSE*' -File -ErrorAction SilentlyContinue | Copy-Item -Destination $Stage
+          # A plain array (not a here-string): a here-string's closing '@ has to sit at column 0,
+          # which this YAML block literal's indentation would break.
+          $Readme = @(
+            'Unravis',
+            '=======',
+            '',
+            'Unravis reads audit logs and server health so an incident can be',
+            'reconstructed after the fact. It never changes the servers it reads.',
+            '',
+            'Run',
+            '---',
+            '    unravis.exe',
+            '',
+            'It opens your browser to a local dashboard (loopback only; nothing is',
+            'exposed on the network). Use --no-browser to get a one-time link to open',
+            'by hand, and --help for the full list of options.',
+            '',
+            'Verify your download',
+            '---------------------',
+            "Compare this file's hash with the matching line in SHA256SUMS.txt from the",
+            'same release:',
+            '    Get-FileHash .\unravis.exe -Algorithm SHA256'
+          )
+          $Readme | Set-Content -Encoding utf8 (Join-Path $Stage 'README.txt')
+          $Zip = "dist/unravis-v$Version-windows-x64.zip"
+          if (Test-Path -LiteralPath $Zip) { Remove-Item -LiteralPath $Zip -Force }
+          Compress-Archive -Path (Join-Path $Stage '*') -DestinationPath $Zip -CompressionLevel Optimal
+          Remove-Item -LiteralPath $Stage -Recurse -Force
+
+      - name: Collect the release assets and write SHA256SUMS.txt
+        id: assets
+        shell: pwsh
+        run: |
+          # $Assets is the one list every later step (checksums, the artifact upload, the smoke
+          # job, the draft job) reads from, instead of each recomputing its own file names.
+          $Version = '${{ steps.tag.outputs.version }}'
+          $Assets = @(
+            "unravis-v$Version-windows-x64.zip",
+            "unravis-blackbox-v$Version-windows-x64.zip",
+            "unravis-setup-v$Version-windows-x64.exe"
+          )
+          foreach ($name in $Assets) {
+            $path = Join-Path 'dist' $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing release asset: $path" }
+          }
+          ./tools/release/New-Sha256Sums.ps1 -AssetDir 'dist' -Names $Assets -OutFile 'dist/SHA256SUMS.txt'
+          $Assets += 'SHA256SUMS.txt'
+          ($Assets -join "`n") | Set-Content -Encoding utf8 'dist/ASSET-LIST.txt'
+
+      - name: Write the release notes
+        shell: pwsh
+        env:
+          # Becomes true only when the sign step really signs (it fails the build today).
+          SIGNED: 'false'
+        run: |
+          ./tools/release/New-ReleaseNotes.ps1 `
+            -Tag '${{ steps.tag.outputs.tag }}' `
+            -Version '${{ steps.tag.outputs.version }}' `
+            -TemplatePath '.github/release-notes-template.md' `
+            -OutFile 'dist/RELEASE-NOTES.md' `
+            -Signed:($env:SIGNED -eq 'true')
+
+      - name: Upload the release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-assets
+          # Only the release files; dist also holds the loose programs, which are not assets.
+          path: |
+            dist/unravis-v*-windows-x64.zip
+            dist/unravis-blackbox-v*-windows-x64.zip
+            dist/unravis-setup-v*-windows-x64.exe
+            dist/SHA256SUMS.txt
+            dist/ASSET-LIST.txt
+            dist/RELEASE-NOTES.md
+          if-no-files-found: error
+          retention-days: 14
+
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out the code at the tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.build.outputs.tag }}
+
+      - name: Download the release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Smoke test the release on a clean runner
+        shell: pwsh
+        run: ./tools/release/Invoke-Smoke.ps1 -AssetDir 'dist' -Tag '${{ needs.build.outputs.tag }}'
+
+      - name: Keep the smoke log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smoke-log-${{ matrix.os }}
+          path: dist/smoke-*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  draft:
+    # Gated on smoke: a release never reaches a draft until the installer has been proven to run
+    # silently on both runner images. Publishing the draft is still a person, not this workflow.
+    needs: [build, smoke]
+    runs-on: windows-2022
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the code at the tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.build.outputs.tag }}
+
+      - name: Download the release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Create or update the draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ needs.build.outputs.tag }}'
+          $names = Get-Content -LiteralPath 'dist/ASSET-LIST.txt' | Where-Object { $_.Trim() -ne '' }
+          $assetPaths = $names | ForEach-Object { Join-Path 'dist' $_ }
+          foreach ($p in $assetPaths) {
+            if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { throw "Missing asset to attach: $p" }
+          }
+
+          $isRc = $tag.Contains('-')
+          $json = gh release view $tag --json isDraft 2>$null
+          $exists = ($LASTEXITCODE -eq 0)
+          if ($exists) {
+            $isDraft = [bool](($json | ConvertFrom-Json).isDraft)
+            if (-not $isDraft) { throw "Release $tag is already published. Refusing to change a published release; delete it by hand first if you really mean to rebuild it." }
+            Write-Host "Draft $tag exists. Replacing its assets and keeping its notes."
+            gh release upload $tag @assetPaths --clobber
+            if ($LASTEXITCODE -ne 0) { throw "gh release upload failed with exit code $LASTEXITCODE" }
+          } else {
+            $flags = @('--draft', '--verify-tag', '--title', $tag, '--notes-file', 'dist/RELEASE-NOTES.md')
+            if ($isRc) { $flags += '--prerelease' }
+            gh release create $tag @assetPaths @flags
+            if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE" }
+          }
+          Write-Host "Draft release $tag is ready. A person must press Publish; nothing here does that."
