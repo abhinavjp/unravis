@@ -28,7 +28,7 @@ function load(relativePath) {
   new Function('require', 'module', 'exports', '$state', output)(req, module, module.exports, (value) => value);
   return module.exports;
 }
-const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
+const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8').replace(/\r\n/g, '\n');
 
 // UI major 1: the four archive drawers take focus when they open (so Escape and Tab work from the first key press)
 // and give it back to the button that opened them.
@@ -50,4 +50,61 @@ test('closing a drawer lets focus go back to the trigger, and falls back to the 
   assert.match(fn, /document\.activeElement/);
   assert.match(fn, /document\.body/);
   assert.match(fn, /headingEl\?\.focus\(\)/);
+});
+
+const life = load('src/lib/caseLifecycle.ts');
+const copy = load('src/lib/copy/archiveCopy.ts');
+const { lintScreenStrings } = load('src/lib/copy/copylint.ts');
+
+// UI major 2, minor 8 and 9: an archived case answers 409 to its files, checks and theories, so the case home must not ask for them
+// (that read failing silently is what left the page stale after archiving), and it offers no analysis for it (spec section 9).
+test('only an open or closed case reads its own data', () => {
+  assert.equal(life.readsCaseData({ state: 'open', closed: null }), true);
+  assert.equal(life.readsCaseData({ state: 'closed', closed: 'x' }), true);
+  assert.equal(life.readsCaseData({ closed: 'x' }), true, 'an older server with only the closed stamp');
+  assert.equal(life.readsCaseData({ state: 'archived', closed: 'x' }), false);
+  assert.equal(life.readsCaseData({ state: 'archiving', closed: 'x' }), false);
+});
+
+test('an archived case has no Reopen button (it would never work); Restore is the way back', () => {
+  assert.equal(life.reopenButton({ state: 'archived', closed: 'x' }, false), 'hidden');
+  assert.equal(life.reopenButton({ state: 'archiving', closed: 'x' }, false), 'hidden');
+});
+
+test('the case home reads the case first and asks for files, checks and theories only when it may', () => {
+  const home = read('src/lib/components/CaseHome.svelte');
+  const load = home.match(/async function load\(id: string, quiet = false\) \{[\s\S]*?\n  \}\n/)[0];
+  assert.match(load, /getCaseView\(id, mine\.signal\)\]\);[\s\S]*readsCaseData\(found\)/, 'the view is read before anything else');
+  assert.match(load, /reads \? listImports\(/);
+  assert.match(load, /reads \? fetchHealthRuns\(/);
+  assert.match(load, /reads \? refreshLedger\(/);
+  assert.doesNotMatch(load, /Promise\.allSettled\(\[getCaseView\(id, mine\.signal\), listImports/, 'no read of an archived case in parallel with the view');
+  const reread = home.match(/async function rereadFiles\(\) \{[\s\S]*?\n  \}\n/)[0];
+  assert.match(reread, /readsCaseData\(view\) \? await listImports/, 'a reread of an archived case does not list files');
+});
+
+test('after a move the whole page is read again, so an archived case shows as archived at once', () => {
+  const home = read('src/lib/components/CaseHome.svelte');
+  const moved = home.match(/function archiveMoved\([\s\S]*?\n  \}\n/)[0];
+  assert.match(moved, /load\(caseId, true\)/);
+  assert.match(moved, /restore-as-new/);
+});
+
+test('the archived home hides the analysis, the checks, the sources, the theories and the file list, and says why', () => {
+  const home = read('src/lib/components/CaseHome.svelte');
+  const at = (needle) => home.indexOf(needle);
+  const open1 = at('{#if offersWork}');
+  const story = at('aria-labelledby="home-story"');
+  const open2 = home.indexOf('{#if offersWork}', open1 + 1);
+  assert.ok(open1 > 0 && open2 > story, 'two guarded runs, one before the story and one after');
+  for (const id of ['home-analysis', 'home-guided']) assert.ok(at(id) > open1 && at(id) < story, id);
+  for (const id of ['home-theories', 'home-health', 'home-sources', 'home-files']) assert.ok(at(id) > open2, id);
+  assert.match(home, /ARCHIVE_TEXT\.archivedWork/);
+  assert.ok(copy.archiveLintEntries().some((entry) => entry.text === copy.ARCHIVE_TEXT.archivedWork), 'the new sentence is in the copy lint');
+});
+
+test('the archived list opens a case with its theories held back, and nothing else holds them', () => {
+  assert.match(read('src/components/StartScreen.svelte'), /onOpen=\{\(id\) => onOpen\(id, \{ archived: true \}\)\}/);
+  assert.match(read('src/lib/appState.svelte.ts'), /holdLedger\(id, options\.archived === true\)/);
+  assert.match(read('src/lib/ledgerStore.svelte.ts'), /if \(held\.has\(caseId\)\) return Promise\.resolve\(\);/);
 });

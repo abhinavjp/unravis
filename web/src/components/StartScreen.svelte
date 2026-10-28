@@ -21,7 +21,7 @@
   // `onAnalysis` goes on to the analysis of the connected sources.
   let { onCreate, onOpen, onSetup, onAnalysis, enter }: {
     onCreate: () => void;
-    onOpen: (id: string) => void;
+    onOpen: (id: string, options?: { archived?: boolean }) => void;
     onSetup: () => void;
     onAnalysis: () => void;
     enter?: Snippet;
@@ -98,7 +98,7 @@
           {/if}
         </div>
         {#if showArchived}
-          <ArchivedList total={archivedTotal} {onOpen} onBack={() => { showArchived = false; void load(); }} />
+          <ArchivedList total={archivedTotal} onOpen={(id) => onOpen(id, { archived: true })} onBack={() => { showArchived = false; void load(); }} />
         {:else if phase === 'ready' && view.rows.length}
           <ul class="cases">
             {#each view.rows as row (row.id)}
