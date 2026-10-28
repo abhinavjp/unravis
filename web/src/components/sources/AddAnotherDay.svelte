@@ -73,7 +73,7 @@
     {:else if picked && latest && preset}
       {#key picked.key + preset.start}
         <LaneRunner {caseId} kind="sql" {days} database={picked.database} lockDatabase incident={preset} reference={latest.reference}
-          connectionLabel={picked.label} runLabel={DAY_TEXT.run} onRan={ran} {onGone} />
+          connectionLabel={picked.label} onRan={ran} {onGone} />
       {/key}
       <p class="hint">{DAY_TEXT.prefill}</p>
       <p class="hint">{DAY_TEXT.expects}</p>

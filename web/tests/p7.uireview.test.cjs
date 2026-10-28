@@ -180,3 +180,40 @@ test('minor 4: the grant script does not blank while it reloads, and a pick surv
   assert.match(panel, /const kept = recallGrant\(kind\)/);
   assert.match(panel, /rememberGrant\(kind, \{ version: '2019' \}\)/);
 });
+
+// ---- minors 5, 6, 7, 12 --------------------------------------------------------------------------------------------------------------
+
+test('minor 5: every read button says Read this day, not what it adds', () => {
+  assert.equal(copy.RUN_TEXT.run, 'Read this day');
+  assert.doesNotMatch(comp('SourceStep'), /<LaneRunner [^>]*runLabel/);
+  assert.doesNotMatch(comp('AddAnotherDay'), /<LaneRunner [^>]*runLabel/);
+  assert.equal(copy.DAY_TEXT.run, undefined, 'the old label is gone');
+});
+
+test('minor 6: the prefilled times use the shape of the hint, and a bad time gets its own sentence', () => {
+  assert.equal(lanes.utcInput('2026-10-26T10:30:00Z'), '2026-10-26 10:30');
+  assert.ok(lanes.utcWindow(lanes.utcInput('2026-10-26T10:30:00Z'), lanes.utcInput('2026-10-26T11:00:00Z')), 'a prefilled value reads back');
+  assert.equal(lanes.unreadableTime('2026-10-26 10:30', '2026-10-26T11:00', ''), false, 'empty is the missing-window message, T still reads');
+  assert.equal(lanes.unreadableTime('26/10/2026 10:30'), true);
+  assert.equal(lanes.unreadableTime('2026-02-31 10:30'), true, 'a date that is not real');
+  assert.match(copy.RUN_TEXT.badTime, /2026-10-26 10:30/);
+  const runner = comp('LaneRunner');
+  const bad = runner.indexOf('unreadableTime(incStart');
+  assert.ok(bad > 0 && bad < runner.indexOf('utcWindow(incStart'), 'the specific message comes before the generic one');
+  assert.match(runner, /problem = RUN_TEXT\.badTime/);
+});
+
+test('minor 7: the Read time follows the UTC or Local choice and names the zone', () => {
+  const step = comp('SourceStep');
+  assert.doesNotMatch(step, /toLocaleString/);
+  assert.match(step, /formatTime\(iso, \{ zone: timeZone\.zone/);
+  assert.match(step, /import \{ timeZone \} from '\.\.\/\.\.\/lib\/timeZone\.svelte'/);
+});
+
+test('minor 12: a missing session says how to get back in, not that the read failed', () => {
+  const out = lanes.runProblem(new CaseApiError('Open Unravis from the link it printed when it started, or restart it.', 401, 'no_session'));
+  assert.equal(out.text, copy.RUN_TEXT.signedOut);
+  assert.equal(lanes.runProblem(new CaseApiError('x', 401)).text, copy.RUN_TEXT.signedOut);
+  assert.match(copy.RUN_TEXT.signedOut, /Reload|link/);
+  assert.notEqual(copy.RUN_TEXT.signedOut, copy.RUN_TEXT.failed);
+});

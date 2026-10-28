@@ -115,13 +115,13 @@ test('the 20th connection can be saved and the 21st cannot', () => {
 });
 
 test('UTC windows are read strictly', () => {
-  assert.deepEqual(lanes.utcWindow('2026-10-26T10:30', '2026-10-26 11:00'), win('2026-10-26T10:30:00.000Z', '2026-10-26T11:00:00.000Z'));
+  assert.deepEqual(lanes.utcWindow('2026-10-26 10:30', '2026-10-26 11:00'), win('2026-10-26T10:30:00.000Z', '2026-10-26T11:00:00.000Z'));
   assert.equal(lanes.utcWindow('', '2026-10-26T11:00'), null);
   assert.equal(lanes.utcWindow('2026-10-26T11:00', '2026-10-26T11:00'), null, 'end must be after start');
   assert.equal(lanes.utcWindow('2026-10-26T12:00', '2026-10-26T11:00'), null);
   assert.equal(lanes.utcWindow('2026-02-31T10:00', '2026-03-01T10:00'), null, '31 February is not a day');
   assert.equal(lanes.utcWindow('26/10/2026 10:30', '26/10/2026 11:00'), null);
-  assert.equal(lanes.utcInput('2026-10-26T10:30:00Z'), '2026-10-26T10:30');
+  assert.equal(lanes.utcInput('2026-10-26T10:30:00Z'), '2026-10-26 10:30');
   assert.equal(lanes.utcInput('nope'), '');
 });
 

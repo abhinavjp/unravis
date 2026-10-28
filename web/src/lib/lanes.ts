@@ -186,8 +186,10 @@ function parseUtc(text: string): number | null {
   // Date.UTC rolls 31 Feb over to March; a roll-over means the date was not real.
   return d.getUTCFullYear() === +m[1] && d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3] ? t : null;
 }
-/** The "YYYY-MM-DDTHH:MM" UTC text of an ISO time, for an input. */
-export const utcInput = (iso: string): string => (Number.isNaN(Date.parse(iso)) ? '' : new Date(iso).toISOString().slice(0, 16));
+/** The "YYYY-MM-DD HH:MM" UTC text of an ISO time, for an input (the same shape as the hint and the placeholder). */
+export const utcInput = (iso: string): string => (Number.isNaN(Date.parse(iso)) ? '' : new Date(iso).toISOString().slice(0, 16).replace('T', ' '));
+/** True when any of the typed times is filled in but is not a real "YYYY-MM-DD HH:MM" time (an empty one is the missing-window message instead). */
+export const unreadableTime = (...texts: string[]): boolean => texts.some(text => text.trim() !== '' && parseUtc(text) === null);
 export const sameWindow = (a: LaneWindow, b: LaneWindow): boolean => Date.parse(a.start) === Date.parse(b.start) && Date.parse(a.end) === Date.parse(b.end);
 export const windowsOverlap = (a: LaneWindow, b: LaneWindow): boolean => Date.parse(a.start) < Date.parse(b.end) && Date.parse(b.start) < Date.parse(a.end);
 
@@ -255,6 +257,8 @@ export function runProblem(error: unknown): { text: string; gone: boolean } {
   const message = error instanceof Error ? error.message : '';
   // A closed case refuses a read before any server is asked; the reason says so, whatever the status words are.
   if (error instanceof CaseApiError && error.reason === 'case-closed') return { text: RUN_TEXT.closed, gone };
+  // No session token (or a refused one) is not a failed read: the page has to be reopened, and the sentence says how.
+  if (error instanceof CaseApiError && (error.reason === 'no_session' || error.status === 401)) return { text: RUN_TEXT.signedOut, gone };
   if (status === 409) return { text: /already/i.test(message) ? message : RUN_TEXT.busy, gone };
   if (status === 429) return { text: RUN_TEXT.limited, gone };
   if (status === 423) return { text: RUN_TEXT.locked, gone };

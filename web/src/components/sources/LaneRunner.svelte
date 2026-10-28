@@ -3,7 +3,7 @@
   import { api } from '../../lib/api';
   import { DEFAULT_COLLECTION } from '../../lib/wizardConnections';
   import {
-    overlapProblem, runMongoLane, runNotice, runProblem, runSqlLane, utcInput, utcWindow, type LaneDay, type LaneRunResult, type LaneWindow
+    overlapProblem, runMongoLane, runNotice, runProblem, runSqlLane, unreadableTime, utcInput, utcWindow, type LaneDay, type LaneRunResult, type LaneWindow
   } from '../../lib/lanes';
   import { RUN_TEXT, DAY_TEXT } from '../../lib/copy/sourcesCopy';
   import type { RecentConnection, SavedSqlConnection } from '../../lib/types';
@@ -69,6 +69,7 @@
     done = ''; problem = '';
     if (pickId === '' || (kind === 'sql' ? sqlPicked === null : mongoPicked === null)) { problem = RUN_TEXT.needPick; return; }
     if (db.trim() === '') { problem = RUN_TEXT.needDatabase; return; }
+    if (unreadableTime(incStart, incEnd, refStart, refEnd)) { problem = RUN_TEXT.badTime; return; }
     const inc = utcWindow(incStart, incEnd);
     if (!inc) { problem = RUN_TEXT.needIncident; return; }
     const ref = utcWindow(refStart, refEnd);

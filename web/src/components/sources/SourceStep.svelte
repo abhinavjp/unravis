@@ -3,6 +3,8 @@
   import { fetchLaneDays, groupSources, newestDay, readableByDay, runNotice, shiftDays, type LaneDay, type LaneRunResult, type LaneSource } from '../../lib/lanes';
   import { runProblem } from '../../lib/lanes';
   import { HUB_TEXT, NUTSHELL, STEP_TEXT } from '../../lib/copy/sourcesCopy';
+  import { formatTime } from '../../lib/time';
+  import { timeZone } from '../../lib/timeZone.svelte';
   import GrantScriptPanel from './GrantScriptPanel.svelte';
   import LaneResultView from './LaneResultView.svelte';
   import LaneRunner from './LaneRunner.svelte';
@@ -61,7 +63,7 @@
     if (result.saved && result.day.id !== 0) openId = result.day.id;
     onChanged?.();
   }
-  const when = (iso: string) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(); };
+  const when = (iso: string) => formatTime(iso, { zone: timeZone.zone, precision: 'minute', year: true, fallback: iso });
 </script>
 
 <section class="src" aria-labelledby="step-{kind}-head" data-step={kind}>
@@ -84,7 +86,7 @@
     <GrantScriptPanel {kind} />
     {#if kind === 'mongo'}<ProfilerGuide database="" guide={null} />{/if}
     {#if readOnly}<p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>{:else}
-      <LaneRunner {caseId} {kind} {days} onRan={ran} {onGone} ownNotice runLabel={kind === 'sql' ? STEP_TEXT.addSql : STEP_TEXT.addMongo} />
+      <LaneRunner {caseId} {kind} {days} onRan={ran} {onGone} ownNotice />
     {/if}
   {:else}
     <section class="field" aria-label={STEP_TEXT.daysHeading}>
