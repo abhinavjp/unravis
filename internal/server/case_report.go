@@ -10,7 +10,6 @@ import (
 	"html/template"
 	"math"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -554,25 +553,12 @@ footer{margin-top:40px;border-top:1px solid var(--line);padding-top:12px;color:v
 
 /* ---------------------------------------------------------------- csv */
 
-// plainNumber is a signed figure such as +733% or -12. A spreadsheet reads it as
-// a number, so it is the one thing that keeps its leading sign.
-var plainNumber = regexp.MustCompile(`^[+-][0-9][0-9.,]*%?$`)
-
-// csvCell stops a spreadsheet from running a typed cell as a formula: a cell that
-// starts with = + - @ or a tab or return gets a leading apostrophe, unless it is
-// a plain signed number.
+// csvCell stops a spreadsheet from running a typed cell as a formula. Every cell
+// goes through the same rule as the request export (spreadsheetSafe), with no
+// exception for signed numbers: a cell that starts with = + - @ or a tab or
+// return gets a leading apostrophe.
 func csvCell(s string) string {
-	if s == "" {
-		return s
-	}
-	switch s[0] {
-	case '=', '+', '-', '@', '\t', '\r':
-		if plainNumber.MatchString(s) {
-			return s
-		}
-		return "'" + s
-	}
-	return s
+	return spreadsheetSafe(s)
 }
 
 func renderReportCSV(d reportDoc) ([]byte, error) {

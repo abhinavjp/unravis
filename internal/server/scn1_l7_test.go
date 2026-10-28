@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -124,5 +125,41 @@ func TestScn1L7DemoSourceDeleteSaysWhy(t *testing.T) {
 	}
 	if res := request(h, http.MethodDelete, "/api/sources/not-a-source", "", true); res.Code != http.StatusNotFound {
 		t.Errorf("unknown source = %d, want 404: %s", res.Code, res.Body)
+	}
+}
+
+func TestScn1L7ReportCSVNeutralisesEveryCell(t *testing.T) {
+	repo := &fakeRepository{requestPages: []audit.Page{okPage(invRows())}}
+	e := tagEnv(t, casestore.NewMemory(), repo)
+	id := e.newCase("Checkout slowdown")
+	out := reportOf(t, e.json(http.MethodPost, "/api/cases/"+id+"/report", fullReportRequest("csv", "")))
+	rows, err := csv.NewReader(strings.NewReader(strings.TrimPrefix(out.Content, "\xef\xbb\xbf"))).ReadAll()
+	if err != nil {
+		t.Fatalf("csv does not parse: %v", err)
+	}
+	figures := 0
+	for _, r := range rows {
+		for _, cell := range r {
+			if cell != "" && strings.ContainsAny(cell[:1], "=+-@\t\r") {
+				t.Errorf("cell %q would run as a formula (row %v)", cell, r)
+			}
+		}
+		if r[0] == "figure" {
+			figures++
+		}
+	}
+	if figures == 0 {
+		t.Fatalf("the analysed report has no figure rows, so the check proved nothing: %d rows", len(rows))
+	}
+	// The unit itself: signed numbers get the apostrophe too.
+	for _, in := range []string{"+150%", "-12", "+733%", "=1+1", "@x", "\tx", "\rx"} {
+		if got := csvCell(in); got != "'"+in {
+			t.Errorf("csvCell(%q) = %q, want an apostrophe in front", in, got)
+		}
+	}
+	for _, in := range []string{"", "150%", "text", "'+already"} {
+		if got := csvCell(in); got != in {
+			t.Errorf("csvCell(%q) = %q, want it unchanged", in, got)
+		}
 	}
 }
