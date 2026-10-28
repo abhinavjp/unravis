@@ -57,11 +57,26 @@ var (
 	// second tab. No other picture shows it, so its history never leaks into theirs.
 	demoCaseStaleID     = demoCaseID("demostale")
 	demoCaseUntrustedID = demoCaseID("demountrusted")
+	// A case with its own key, locked after seeding (screens 125 and 126). The demo never reads or
+	// asks for a key: the passphrase below only exists so the seeder can seal the case and the
+	// capture run can type it into the unlock card.
+	demoCaseKeyedID = demoCaseID("demokeyed")
+	// Two erased cases leave only their Erased lines (screen 124): an id and a time.
+	demoErasedOneID = demoCaseID("k7m2qx4a")
+	demoErasedTwoID = demoCaseID("q2w7exak")
 )
+
+// demoCaseKeyPassphrase is the demo-only passphrase of the keyed demo case. It protects nothing
+// real: the case holds synthetic events and lives only in a capture run's own folder.
+const demoCaseKeyPassphrase = "unravis demo case key"
+
+// demoCaseKeySalt is the 16-byte salt of a case key made in the demo, fixed so the key ending
+// on screen is the same on every run.
+const demoCaseKeySalt = "unravis-demo-key"
 
 // demoCaseIDs lists the IDs above.
 func demoCaseIDs() []casestore.CaseID {
-	return []casestore.CaseID{demoCaseOpenID, demoCaseClosedID, demoCaseFailedID, demoCaseStaleID, demoCaseUntrustedID}
+	return []casestore.CaseID{demoCaseOpenID, demoCaseClosedID, demoCaseFailedID, demoCaseStaleID, demoCaseUntrustedID, demoCaseKeyedID}
 }
 
 // demoSettings is what the two capture-only variables ask for.
@@ -180,8 +195,9 @@ func openDemoCases(getenv func(string) string, hypotheses ledger.Store, now time
 	}}
 	var untrustedOn atomic.Bool
 	seams := caseSeams{
-		now:   clk.Now,
-		newID: ids.next,
+		now:     clk.Now,
+		newID:   ids.next,
+		keySalt: func() []byte { return []byte(demoCaseKeySalt) },
 		wrapLegacy: func(inner func(casestore.CaseID) error) func(casestore.CaseID) error {
 			return func(id casestore.CaseID) error {
 				if untrustedOn.Load() && id == demoCaseUntrustedID {
@@ -197,7 +213,7 @@ func openDemoCases(getenv func(string) string, hypotheses ledger.Store, now time
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	seeder := demoSeeder{store: wiring.store, clock: clk, setID: ids.force, now: now}
+	seeder := demoSeeder{store: wiring.store, clock: clk, setID: ids.force, now: now, erased: wiring.erased}
 	seedErr := seeder.seed(ctx)
 	ids.force("") // nothing forced is left over: a case made after seeding gets a fresh ID
 	if seedErr != nil {
@@ -274,11 +290,18 @@ type demoStore interface {
 	List(ctx context.Context) ([]casestore.CaseInfo, error)
 }
 
+// demoKeyedStore is the part of the store that makes and locks a case with its own key.
+type demoKeyedStore interface {
+	CreateWithKey(ctx context.Context, title, requestID string, pass []byte) (casestore.CaseInfo, bool, error)
+	LockCaseKey(id casestore.CaseID) error
+}
+
 type demoSeeder struct {
-	store demoStore
-	clock *demoClock
-	setID func(casestore.CaseID)
-	now   time.Time
+	store  demoStore
+	clock  *demoClock
+	setID  func(casestore.CaseID)
+	now    time.Time
+	erased server.ErasedLog // nil: no Erased lines are seeded
 }
 
 const day = 24 * time.Hour
@@ -325,8 +348,12 @@ func (d demoSeeder) seed(ctx context.Context) error {
 				return d.importOK(ctx, c, "stale-1", created.Add(10*time.Minute))
 			}},
 		// Created like the others; openDemoCases then has the legacy check call it untrusted.
-		{demoCaseUntrustedID, "Case from another folder", 6 * day,
+			{demoCaseUntrustedID, "Case from another folder", 6 * day,
 			func(context.Context, casestore.Case, time.Time) error { return nil }},
+		{demoCaseKeyedID, "Payroll run discrepancy, 14 October", 5 * day,
+			func(ctx context.Context, c casestore.Case, created time.Time) error {
+				return d.importOK(ctx, c, "keyed-1", created.Add(10*time.Minute))
+			}},
 	}
 	for _, step := range steps {
 		if have[step.id] {
@@ -335,7 +362,17 @@ func (d demoSeeder) seed(ctx context.Context) error {
 		created := d.now.Add(-step.age)
 		d.clock.set(created)
 		d.setID(step.id)
-		info, err := d.store.Create(ctx, step.title)
+		var info casestore.CaseInfo
+		var err error
+		if step.id == demoCaseKeyedID {
+			ks, ok := d.store.(demoKeyedStore)
+			if !ok {
+				return errors.New("the demo store cannot make a case with its own key")
+			}
+			info, _, err = ks.CreateWithKey(ctx, step.title, "", []byte(demoCaseKeyPassphrase))
+		} else {
+			info, err = d.store.Create(ctx, step.title)
+		}
 		if err != nil {
 			return fmt.Errorf("create %s: %w", step.id, err)
 		}
@@ -351,7 +388,13 @@ func (d demoSeeder) seed(ctx context.Context) error {
 		if closeErr != nil {
 			return closeErr
 		}
-		if step.id == demoCaseClosedID || step.id == demoCaseStaleID {
+		if step.id == demoCaseKeyedID {
+				// Locked after seeding: the start screen shows it by its short code.
+				if err := d.store.(demoKeyedStore).LockCaseKey(step.id); err != nil {
+					return fmt.Errorf("lock %s: %w", step.id, err)
+				}
+			}
+			if step.id == demoCaseClosedID || step.id == demoCaseStaleID {
 			closedAgo := 4 * day
 			if step.id == demoCaseStaleID {
 				closedAgo = 3 * day
@@ -362,7 +405,19 @@ func (d demoSeeder) seed(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return d.seedErased()
+}
+
+// seedErased leaves the two Erased lines. Add replaces a line of the same id, so a second
+// start leaves the same two.
+func (d demoSeeder) seedErased() error {
+	if d.erased == nil {
+		return nil
+	}
+	if err := d.erased.Add(demoErasedOneID, d.now.Add(-7*day)); err != nil {
+		return err
+	}
+	return d.erased.Add(demoErasedTwoID, d.now.Add(-1*day))
 }
 
 func demoMeta(file string) casestore.ImportMeta {

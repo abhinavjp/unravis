@@ -150,3 +150,28 @@ func TestOpenedNeverPrintsSecrets(t *testing.T) {
 		}
 	}
 }
+
+// A named salt gives the same key ending twice (the demo's keyed case); a wrong-size salt is
+// refused; a nil salt is fresh every time.
+func TestNewWithSaltIsRepeatableAndNilSaltIsNot(t *testing.T) {
+	salt := []byte("0123456789abcdef")
+	_, a, err := NewWithSalt([]byte(pass), fast, "case1", nil, StateActive, salt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, b, err := NewWithSalt([]byte(pass), fast, "case1", nil, StateActive, salt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Ending != b.Ending || a.Check != b.Check {
+		t.Fatalf("same salt and key, endings %s and %s", a.Ending, b.Ending)
+	}
+	if _, _, err := NewWithSalt([]byte(pass), fast, "case1", nil, StateActive, []byte("short")); err == nil {
+		t.Fatal("a salt of the wrong size was accepted")
+	}
+	_, c, _ := New([]byte(pass), fast, "case1", nil, StateActive)
+	_, d, _ := New([]byte(pass), fast, "case1", nil, StateActive)
+	if c.Check == d.Check {
+		t.Fatal("two fresh salts gave one check value")
+	}
+}

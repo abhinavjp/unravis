@@ -25,6 +25,7 @@ type casesWiring struct {
 	options   []server.Option
 	store     *sqlite.Store
 	recoverer *casestore.Recoverer
+	erased    server.ErasedLog // the Erased lines on the start screen
 }
 
 // recoverAtStart runs the case recovery hooks once at start-up. It never stops
@@ -137,6 +138,7 @@ type caseSeams struct {
 	now        func() time.Time
 	newID      func() (casestore.CaseID, error)
 	wrapLegacy func(inner func(casestore.CaseID) error) func(casestore.CaseID) error
+	keySalt    func() []byte // a fixed key salt for the demo's keyed case; nil in live mode
 }
 
 func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams caseSeams) (*casesWiring, error) {
@@ -177,7 +179,7 @@ func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams ca
 		Root: root, Protector: protector, OnErase: onErase,
 		Protectors: session.Lookup, NewCaseKind: session.NewCaseKind,
 		LegacyCheck: legacyCheck, LegacyDone: session.LegacyDone,
-		Now: seams.now, NewID: seams.newID,
+		Now: seams.now, NewID: seams.newID, NewKeySalt: seams.keySalt,
 	})
 	if err != nil {
 		return nil, err
@@ -189,6 +191,7 @@ func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams ca
 	wiring := &casesWiring{
 		store:     store,
 		recoverer: recoverer,
+		erased:    erasedLog,
 		options: []server.Option{
 			server.WithCases(store, sealedHosts.Map(), all.Registry()),
 			server.WithHostsSaver(sealedHosts.Save),

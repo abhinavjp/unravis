@@ -81,6 +81,9 @@ type Options struct {
 	// NewID makes the ID of a new case. Default: 128 random bits. It exists so the
 	// demo's capture-only cases can have fixed IDs; the live app never sets it.
 	NewID func() (casestore.CaseID, error)
+	// NewKeySalt, when set, gives the 16-byte salt of a new case's own key, so the demo's
+	// capture-only keyed case shows the same key ending on every run. The live app never sets it.
+	NewKeySalt func() []byte
 	// MaxFileBytes and MaxFileRows cap one imported file (default 2 GiB and 10M
 	// rows). An importer's own, smaller limit applies first.
 	MaxFileBytes, MaxFileRows int64
@@ -440,7 +443,11 @@ func (s *Store) createWith(ctx context.Context, title, requestID string, pass []
 	var opened *casekey.Opened
 	var look casestore.ProtectorLookup
 	if pass != nil {
-		data, o, err := casekey.New(pass, s.keyParams(), string(id), nil, casekey.StateActive)
+		var salt []byte
+		if s.opt.NewKeySalt != nil {
+			salt = s.opt.NewKeySalt()
+		}
+		data, o, err := casekey.NewWithSalt(pass, s.keyParams(), string(id), nil, casekey.StateActive, salt)
 		if err != nil {
 			return casestore.CaseInfo{}, ruleErr(err)
 		}

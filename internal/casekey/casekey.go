@@ -133,8 +133,18 @@ func (o *Opened) GoString() string { return o.String() }
 // file bytes. cm is the case master to wrap; nil draws a new one (returned in
 // Opened). state is one of the State constants.
 func New(pass []byte, params masterkey.Params, caseID string, cm []byte, state string) ([]byte, *Opened, error) {
+	return NewWithSalt(pass, params, caseID, cm, state, nil)
+}
+
+// NewWithSalt is New with the salt named. A nil salt draws a fresh one. A fixed salt exists
+// only so the demo's capture-only case shows the same key ending on every run; the live app
+// never passes one.
+func NewWithSalt(pass []byte, params masterkey.Params, caseID string, cm []byte, state string, salt []byte) ([]byte, *Opened, error) {
 	if err := CheckPassphrase(pass); err != nil {
 		return nil, nil, err
+	}
+	if salt != nil && len(salt) != saltLen {
+		return nil, nil, ErrDamaged
 	}
 	if cm == nil {
 		cm = make([]byte, masterkey.KeyLen)
@@ -144,9 +154,13 @@ func New(pass []byte, params masterkey.Params, caseID string, cm []byte, state s
 	} else {
 		cm = append([]byte(nil), cm...)
 	}
-	salt := make([]byte, saltLen)
-	if _, err := rand.Read(salt); err != nil {
-		return nil, nil, err
+	if salt == nil {
+		salt = make([]byte, saltLen)
+		if _, err := rand.Read(salt); err != nil {
+			return nil, nil, err
+		}
+	} else {
+		salt = append([]byte(nil), salt...)
 	}
 	kek, err := masterkey.DeriveKey(pass, salt, params)
 	if err != nil {
