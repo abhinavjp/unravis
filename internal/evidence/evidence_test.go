@@ -360,9 +360,9 @@ func TestRemoveUserIDs(t *testing.T) {
 }
 
 func TestScrubText(t *testing.T) {
-	in := "see https://x.example/secret?a=1 www.x.example ops@corp.example 10.1.2.3 Orders507f1f77bcf86cd799439011 not proven cause, unproven"
+	in := "see https://x.example/secret?a=1 www.x.example ops@corp.example 10.1.2.3 Orders507f1f77bcf86cd799439011 not proven cause, unproven demo-sql.example.invalid app01.corp"
 	got := scrubText(in)
-	for _, bad := range []string{"x.example", "secret", "ops@", "10.1.2.3", "507f1f77"} {
+	for _, bad := range []string{"x.example", "secret", "ops@", "10.1.2.3", "507f1f77", "demo-sql", "app01"} {
 		if strings.Contains(got, bad) {
 			t.Errorf("scrubText left %q in %q", bad, got)
 		}

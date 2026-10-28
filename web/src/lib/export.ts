@@ -110,9 +110,22 @@ export function exportSummary(exp: EvidenceExport): ExportSummary {
   };
 }
 
-/** The request body for the preview: the window on screen plus the two options. */
-export function exportInput(query: Pick<Query, 'sourceIds' | 'start' | 'end'>, includePseudonyms: boolean, includeLedger: boolean): ExportPreviewInput {
-  return { sourceIds: query.sourceIds, start: query.start, end: query.end, includePseudonyms, includeLedger };
+/** The request body for the preview: the window on screen, the two options, and the open case (its ledger is the one read). */
+export function exportInput(
+  query: Pick<Query, 'sourceIds' | 'start' | 'end'>,
+  includePseudonyms: boolean,
+  includeLedger: boolean,
+  ledgerCaseId = ''
+): ExportPreviewInput & { ledgerCaseId?: string } {
+  const input: ExportPreviewInput & { ledgerCaseId?: string } = { sourceIds: query.sourceIds, start: query.start, end: query.end, includePseudonyms, includeLedger };
+  if (includeLedger && ledgerCaseId) input.ledgerCaseId = ledgerCaseId;
+  return input;
+}
+
+/** Which lists the server was asked for. They are sent next to the file because the file leaves an empty list out. */
+export function listsAsked(preview: unknown): { ledger: boolean; pseudonyms: boolean } {
+  const p = (preview ?? {}) as { ledgerIncluded?: unknown; pseudonymsIncluded?: unknown };
+  return { ledger: p.ledgerIncluded === true, pseudonyms: p.pseudonymsIncluded === true };
 }
 
 const FALLBACK_NAME = 'evidence-export.json';

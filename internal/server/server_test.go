@@ -398,11 +398,25 @@ func TestExportIncludesAuditEvidenceColumns(t *testing.T) {
 	for i, name := range records[0] {
 		got[name] = records[1][i]
 	}
-	want := map[string]string{"userId": "7", "userIp": "203.0.113.9", "userAgent": "'=cmd", "uiVersion": "9.4.1", "createdOn": "2026-10-01T09:00:00Z", "updatedOn": "", "pollingTypeRaw": "Synchronous ", "auditCreateTimeMs": ""}
+	want := map[string]string{"userId": "7", "userAgent": "'=cmd", "uiVersion": "9.4.1", "createdOn": "2026-10-01T09:00:00Z", "updatedOn": "", "pollingTypeRaw": "Synchronous ", "auditCreateTimeMs": ""}
 	for name, value := range want {
 		if v, ok := got[name]; !ok || v != value {
 			t.Errorf("column %s = %q (present=%t), want %q", name, v, ok, value)
 		}
+	}
+	if _, present := got["userIp"]; present {
+		t.Errorf("the request CSV still has a userIp column: %v", records[0])
+	}
+	for _, kept := range []string{"url", "userId", "userAgent"} {
+		if _, present := got[kept]; !present {
+			t.Errorf("column %s was dropped: %v", kept, records[0])
+		}
+	}
+	if len(records[0]) != 22 || len(records[1]) != 22 {
+		t.Errorf("columns = %d header, %d row; want 22", len(records[0]), len(records[1]))
+	}
+	if strings.Contains(res.Body.String(), "203.0.113.9") {
+		t.Errorf("the IP address is in the CSV: %s", res.Body.String())
 	}
 	if records[0][0] != "id" || records[0][15] != "responseKB" {
 		t.Errorf("existing column order changed: %v", records[0])
