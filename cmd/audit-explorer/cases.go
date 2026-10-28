@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"path/filepath"
 	"time"
@@ -14,8 +13,6 @@ import (
 	"api-audit-explorer/internal/hosts"
 	"api-audit-explorer/internal/importer/all"
 	"api-audit-explorer/internal/ledger"
-	"api-audit-explorer/internal/mcp"
-	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/server"
 )
 
@@ -139,20 +136,25 @@ type caseSeams struct {
 	newID      func() (casestore.CaseID, error)
 	wrapLegacy func(inner func(casestore.CaseID) error) func(casestore.CaseID) error
 	keySalt    func() []byte // a fixed key salt for the demo's keyed case; nil in live mode
+	perUser    bool          // the demo's capture store always uses the per-user layout under AUDIT_CONFIG_DIR
 }
 
 func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams caseSeams) (*casesWiring, error) {
-	base, err := mcp.SessionDir(getenv)
+	st := storageFor(getenv)
+	if seams.perUser {
+		st = userStorage()
+	}
+	base, err := st.base(getenv)
 	if err != nil {
 		return nil, err
 	}
-	root, err := casesRoot(getenv)
+	root, err := st.casesRoot(getenv)
 	if err != nil {
 		return nil, err
 	}
-	protector, err := sealedfile.CurrentUser()
+	protector, err := st.protector()
 	if err != nil {
-		return nil, fmt.Errorf("encrypted storage is unavailable on this platform")
+		return nil, err
 	}
 	sealedHosts, err := hosts.OpenSealed(filepath.Join(base, "hosts.dat"), protector)
 	if err != nil {

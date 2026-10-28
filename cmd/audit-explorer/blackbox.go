@@ -16,14 +16,21 @@ import (
 // unravis-blackbox.exe sits next to this program, the elevated helper and the pack
 // builder. A list that cannot be opened leaves the pages off with a log line; it
 // never stops Unravis from starting.
-func wireBlackbox(demo bool, cfg demoSettings, getenv func(string) string) []server.Option {
+//
+// kept is the key keeper's Blackbox list in the shared layout (P14): the read keys stay in the keeper, which does the keyed reads. Nil means
+// the per-user sealed list, as before.
+func wireBlackbox(demo bool, cfg demoSettings, getenv func(string) string, kept server.BlackboxStore) []server.Option {
 	if demo {
 		return []server.Option{server.WithBlackboxDemo(cfg.now)}
 	}
-	saved, err := bbsaved.NewDefault(getenv)
-	if err != nil {
-		log.Printf("Blackbox list unavailable: %v", err)
-		return nil
+	var saved server.BlackboxStore = kept
+	if saved == nil {
+		list, err := bbsaved.NewDefault(getenv)
+		if err != nil {
+			log.Printf("Blackbox list unavailable: %v", err)
+			return nil
+		}
+		saved = list
 	}
 	deps := server.BlackboxDeps{
 		Store: saved,

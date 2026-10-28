@@ -27,6 +27,9 @@ func (h *handler) listSQLConnections(w http.ResponseWriter) {
 	}
 	items, err := h.sqlConns.List()
 	if err != nil {
+		if writeKeeperError(w, err) {
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "Saved SQL Server connections could not be read. The saved file was left unchanged.")
 		return
 	}
@@ -55,6 +58,9 @@ func (h *handler) saveSQLConnection(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "You already have 20 saved SQL Server connections. Remove one first, then save this one. Nothing was removed for you.")
 			return
 		}
+		if writeKeeperError(w, err) {
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "The SQL Server connection could not be saved. The existing file was left unchanged.")
 		return
 	}
@@ -74,6 +80,9 @@ func (h *handler) deleteSQLConnection(w http.ResponseWriter, id string) {
 	if err := h.sqlConns.Delete(decoded); err != nil {
 		if errors.Is(err, sqlconn.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "Saved connection was not found.")
+			return
+		}
+		if writeKeeperError(w, err) {
 			return
 		}
 		writeError(w, http.StatusServiceUnavailable, "The saved connection could not be removed.")

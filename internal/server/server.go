@@ -341,6 +341,9 @@ func (h *handler) listRecent(w http.ResponseWriter) {
 	}
 	items, err := h.history.List()
 	if err != nil {
+		if writeKeeperError(w, err) {
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "Saved connections could not be read. The saved file was left unchanged.")
 		return
 	}
@@ -440,6 +443,9 @@ func (h *handler) deleteRecent(w http.ResponseWriter, r *http.Request, id string
 	if err := h.history.Delete(decoded); err != nil {
 		if errors.Is(err, history.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "Saved connection was not found.")
+			return
+		}
+		if writeKeeperError(w, err) {
 			return
 		}
 		writeError(w, http.StatusServiceUnavailable, "Saved connection could not be removed.")

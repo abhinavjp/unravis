@@ -52,9 +52,9 @@ func demoCaseID(name string) casestore.CaseID {
 }
 
 var (
-	demoCaseOpenID      = demoCaseID("demoopen")
-	demoCaseClosedID    = demoCaseID("democlosed")
-	demoCaseFailedID    = demoCaseID("demofailed")
+	demoCaseOpenID   = demoCaseID("demoopen")
+	demoCaseClosedID = demoCaseID("democlosed")
+	demoCaseFailedID = demoCaseID("demofailed")
 	// A Closed case kept apart for the p2-changed-elsewhere picture, which reopens and closes it from a
 	// second tab. No other picture shows it, so its history never leaks into theirs.
 	demoCaseStaleID     = demoCaseID("demostale")
@@ -208,6 +208,7 @@ func openDemoCases(getenv func(string) string, hypotheses ledger.Store, now time
 	seams := caseSeams{
 		now:     clk.Now,
 		newID:   ids.next,
+		perUser: true,
 		keySalt: func() []byte { return []byte(demoCaseKeySalt) },
 		wrapLegacy: func(inner func(casestore.CaseID) error) func(casestore.CaseID) error {
 			return func(id casestore.CaseID) error {
@@ -377,7 +378,7 @@ func (d demoSeeder) seed(ctx context.Context) error {
 				return d.importOK(ctx, c, "missing-1", created.Add(10*time.Minute))
 			}},
 		// Created like the others; openDemoCases then has the legacy check call it untrusted.
-			{demoCaseUntrustedID, "Case from another folder", 6 * day,
+		{demoCaseUntrustedID, "Case from another folder", 6 * day,
 			func(context.Context, casestore.Case, time.Time) error { return nil }},
 		{demoCaseKeyedID, "Payroll run discrepancy, 14 October", 5 * day,
 			func(ctx context.Context, c casestore.Case, created time.Time) error {
@@ -418,12 +419,12 @@ func (d demoSeeder) seed(ctx context.Context) error {
 			return closeErr
 		}
 		if step.id == demoCaseKeyedID {
-				// Locked after seeding: the start screen shows it by its short code.
-				if err := d.store.(demoKeyedStore).LockCaseKey(step.id); err != nil {
-					return fmt.Errorf("lock %s: %w", step.id, err)
-				}
+			// Locked after seeding: the start screen shows it by its short code.
+			if err := d.store.(demoKeyedStore).LockCaseKey(step.id); err != nil {
+				return fmt.Errorf("lock %s: %w", step.id, err)
 			}
-			if step.id == demoCaseClosedID || step.id == demoCaseStaleID {
+		}
+		if step.id == demoCaseClosedID || step.id == demoCaseStaleID {
 			closedAgo := 4 * day
 			if step.id == demoCaseStaleID {
 				closedAgo = 3 * day
