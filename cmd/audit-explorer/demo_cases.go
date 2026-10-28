@@ -371,8 +371,8 @@ func (d demoSeeder) seed(ctx context.Context) error {
 	return nil
 }
 
-// laneDayNothingRead keeps one SQL Server day in which every check came back Cannot test yet and none has a permission to fix. Lane reads are
-// off in the demo, so this is the only way the capture run can show that screen. Nothing here came from a server.
+// laneDayNothingRead keeps one SQL Server day in which every check came back Cannot test yet and none has a permission to fix, so the capture
+// run opens straight onto that screen. (The demo's own fake server gives the same answer for a database named EmptyDb.) Nothing here came from a server.
 func (d demoSeeder) laneDayNothingRead(ctx context.Context, c casestore.Case, at time.Time) error {
 	hs, ok := c.(casestore.HealthStore)
 	if !ok {

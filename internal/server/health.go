@@ -104,10 +104,6 @@ func writeConnectFailure(w http.ResponseWriter, err error) {
 // testSQLConnection connects, reads the version and lists the databases the login can open. A login that connects but cannot list the databases
 // is still a success (listError says why), so the person can type the name.
 func (h *handler) testSQLConnection(w http.ResponseWriter, r *http.Request) {
-	if h.demo {
-		writeError(w, http.StatusServiceUnavailable, healthDemoText)
-		return
-	}
 	if !h.tests.allow() {
 		writeError(w, http.StatusTooManyRequests, "Too many connection tests in the last minute. Wait a minute, then test again.")
 		return
@@ -122,7 +118,14 @@ func (h *handler) testSQLConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
-	res, err := testSQLFn(ctx, target)
+	// The demo answers with canned details and never connects.
+	var res dbhealth.TestResult
+	var err error
+	if h.demo {
+		res = demoTestResult()
+	} else {
+		res, err = testSQLFn(ctx, target)
+	}
 	out := struct {
 		OK        bool     `json:"ok"`
 		Version   string   `json:"version"`

@@ -13,7 +13,6 @@ import (
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/dbhealth"
-	"api-audit-explorer/internal/importer"
 	"api-audit-explorer/internal/investigate"
 	"api-audit-explorer/internal/sqlconn"
 	"api-audit-explorer/internal/store"
@@ -252,21 +251,6 @@ func TestLaneRefusals(t *testing.T) {
 			t.Errorf("GET on a run route = %d", res.Code)
 		}
 	})
-}
-
-func TestLaneRoutesAreOffInTheDemo(t *testing.T) {
-	stubLaneSQL(t, healthyLaneSQL())
-	store := casestore.NewMemory()
-	e := tagEnv(t, store, &fakeRepository{}, WithSQLConnections(savedLane()))
-	id := e.newCase("demo-ish")
-	h := New(&fakeRepository{}, testAssets(), testToken, true, WithCases(store, mustHosts(t, hostsDoc), importer.NewRegistry(toyImporter{name: "toy", score: 90})), WithSQLConnections(savedLane()))
-	d := &caseEnv{t: t, store: store, h: h}
-	for _, p := range []string{"sql", "mongo"} {
-		res := d.json(http.MethodPost, "/api/cases/"+id+"/lanes/"+p, laneSQLBodyJSON(""))
-		if res.Code != http.StatusServiceUnavailable || !strings.Contains(res.Body.String(), "demo") {
-			t.Errorf("%s in demo = %d %s", p, res.Code, res.Body)
-		}
-	}
 }
 
 /* ------------------------------------------------------------------- mongo */

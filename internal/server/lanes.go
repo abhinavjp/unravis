@@ -15,6 +15,7 @@ import (
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/investigate"
+	"api-audit-explorer/internal/store"
 )
 
 // The lane routes read one database for one incident (SQL Server or MongoDB), keep the answer in the case as a health run whose report carries the
@@ -205,10 +206,6 @@ func laneHeld(ctx context.Context, hs casestore.HealthStore) ([]laneRun, error) 
 }
 
 func (h *handler) caseLaneSQL(w http.ResponseWriter, r *http.Request, raw string) {
-	if h.demo {
-		writeError(w, http.StatusServiceUnavailable, healthDemoText)
-		return
-	}
 	var body laneSQLBody
 	if !decodeJSON(w, r, &body) {
 		return
@@ -259,8 +256,11 @@ func (h *handler) caseLaneSQL(w http.ResponseWriter, r *http.Request, raw string
 		return
 	}
 	defer healthBusy.Unlock()
-	q, err := openSQLFn(ctx, target)
-	if err != nil {
+	// The demo answers from canned rows and never opens a connection.
+	var q healthQueryer
+	if h.demo {
+		q = demoSQLQueryer(req)
+	} else if q, err = openSQLFn(ctx, target); err != nil {
 		writeConnectFailure(w, err)
 		return
 	}
@@ -270,10 +270,6 @@ func (h *handler) caseLaneSQL(w http.ResponseWriter, r *http.Request, raw string
 }
 
 func (h *handler) caseLaneMongo(w http.ResponseWriter, r *http.Request, raw string) {
-	if h.demo {
-		writeError(w, http.StatusServiceUnavailable, healthDemoText)
-		return
-	}
 	var body laneMongoBody
 	if !decodeJSON(w, r, &body) {
 		return
@@ -299,8 +295,8 @@ func (h *handler) caseLaneMongo(w http.ResponseWriter, r *http.Request, raw stri
 	if !ok {
 		return
 	}
-	opener, ok := h.repo.(mongoCommandOpener)
-	if !ok {
+	opener, canOpen := h.repo.(mongoCommandOpener)
+	if !canOpen && !h.demo {
 		writeError(w, http.StatusBadRequest, "MongoDB checks are unavailable for this repository.")
 		return
 	}
@@ -326,15 +322,22 @@ func (h *handler) caseLaneMongo(w http.ResponseWriter, r *http.Request, raw stri
 		return
 	}
 	defer healthBusy.Unlock()
-	run, closeFn, err := opener.OpenCommandClient(ctx, input)
-	if err != nil {
-		if writeConnectionError(w, err) {
+	// The demo answers from canned documents and never opens a connection.
+	var run store.MongoCommandFunc
+	if h.demo {
+		run = demoMongoRun(req)
+	} else {
+		var closeFn func()
+		run, closeFn, err = opener.OpenCommandClient(ctx, input)
+		if err != nil {
+			if writeConnectionError(w, err) {
+				return
+			}
+			writeError(w, http.StatusBadRequest, "Could not connect to MongoDB. Check the connection details and permissions.")
 			return
 		}
-		writeError(w, http.StatusBadRequest, "Could not connect to MongoDB. Check the connection details and permissions.")
-		return
+		defer closeFn()
 	}
-	defer closeFn()
 	report := dbhealth.RunMongoLane(ctx, mongoAdapter(run), laneMongoLabel, req, time.Now)
 	laneSave(w, r, hs, "mongo", serverID, report)
 }

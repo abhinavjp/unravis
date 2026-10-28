@@ -91,6 +91,19 @@ func New(repo audit.Repository, assets fs.FS, token string, demo bool, options .
 			option(h)
 		}
 	}
+	if demo {
+		// The demo keeps its saved connections in memory and reads from canned rows, so the SQL Server and MongoDB screens work without a server.
+		now := time.Now().UTC()
+		if clock, ok := repo.(interface{ DemoTime() time.Time }); ok {
+			now = clock.DemoTime().UTC()
+		}
+		if h.sqlConns == nil {
+			h.sqlConns = newDemoSQLStore(now)
+		}
+		if h.history == nil {
+			h.history = newDemoHistory(now)
+		}
+	}
 	if assets != nil {
 		// The page is served as built. The session token is never written into it:
 		// GET / is unauthenticated and loopback is shared by every local user, so

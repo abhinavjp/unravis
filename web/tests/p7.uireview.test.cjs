@@ -269,3 +269,11 @@ test('minor 15: the nothing-read table becomes a block per row on a narrow scree
   assert.match(css, /@media \(max-width: 600px\) \{[^@]*table\.stack td::before \{ content: attr\(data-label\)/);
   assert.match(css, /table\.stack tbody, \.src table\.stack tr, \.src table\.stack td \{ display: block; \}/);
 });
+
+// ---- the demo serves the P7 screens ---------------------------------------------------------------------------------------------------
+
+test('the demo no longer claims the servers are off, and a 503 reads as unavailable', () => {
+  assert.doesNotMatch(copy.RUN_TEXT.demo, /demo/i);
+  assert.doesNotMatch(copy.CONN_TEXT.demo, /demo/i);
+  assert.equal(lanes.runProblem(new CaseApiError('x', 503)).text, copy.RUN_TEXT.demo);
+});
