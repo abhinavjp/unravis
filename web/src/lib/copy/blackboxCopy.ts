@@ -314,6 +314,7 @@ export const BB_TEXT = {
   caseUseNoCase: 'Open a case first. Then this Blackbox can be used in it.',
   caseUseNotPlaced: 'This Blackbox is not placed yet, so a case cannot use it.',
   caseUseNotReadable: 'This Blackbox cannot be read right now, so a case cannot use it yet. Fix that first, then use it here.',
+  caseUseClosed: 'This case is closed. Its Blackbox use cannot be changed. Reopen the case to change it.',
   caseUseButton: 'Use in this case',
   caseUseStop: 'Stop using it in this case',
   caseUseChecking: 'Looking at the case.',

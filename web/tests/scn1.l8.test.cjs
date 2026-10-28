@@ -123,3 +123,22 @@ test('D-B-51: the panel and the facts type carry the length, and the lint reads 
   }
   assert.deepEqual(lintScreenStrings(entries, deck.terms), []);
 });
+
+test('D-B-46: Use in this case is off on a closed case, with the reason', () => {
+  const use = read('src/components/BlackboxCaseUse.svelte');
+  assert.match(use, /import \{ believedState, getCaseView \} from '\.\.\/lib\/cases';/);
+  assert.match(use, /caseClosed = view \? believedState\(view\) === 'closed' : false;/);
+  assert.match(use, /const closed = \$derived\(!!caseId && caseClosed\);/);
+  assert.match(use, /\{#if closed\}<p class="bb-note">\{T\.caseUseClosed\}<\/p>\{\/if\}/);
+  assert.match(use, /disabled=\{!!busy \|\| !caseId \|\| !readable \|\| closed \|\| use\?\.state === 'other'\}/);
+  assert.match(use, /disabled=\{!!busy \|\| closed\} onclick=\{remove\}/);
+  assert.equal(T.caseUseClosed, 'This case is closed. Its Blackbox use cannot be changed. Reopen the case to change it.');
+  assert.doesNotMatch(use, /item\.location|\.key\b|hasKey|revealKey/);
+});
+
+test('D-B-47: a refused host read clears the old answer and the windows panel stays open', () => {
+  const card = read('src/components/BlackboxHostCard.svelte');
+  assert.match(card, /if \(!windowsOk\(\)\) \{ answer = null; problem = T\.hostWindowProblem; return; \}/);
+  assert.match(card, /<details class="bb-windows" open>/);
+  assert.doesNotMatch(card, /open=\{!answer\}/);
+});

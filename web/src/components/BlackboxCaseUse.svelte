@@ -2,6 +2,7 @@
   import { app } from '../lib/appState.svelte';
   import { caseUse, stopUsingInCase, useInCase, type CaseUse } from '../lib/blackboxCase';
   import { caseUseApi } from '../lib/blackboxCaseApi';
+  import { believedState, getCaseView } from '../lib/cases';
   import { type BlackboxItem } from '../lib/blackbox';
   import { BB_TEXT as T } from '../lib/copy/blackboxCopy';
   import { onMount } from 'svelte';
@@ -17,14 +18,19 @@
   let busy = $state('');
   let note = $state('');
   let problem = $state('');
+  // The case is closed: the server refuses any change to its tags, so the buttons are off up front (D-B-46).
+  let caseClosed = $state(false);
+  const closed = $derived(!!caseId && caseClosed);
 
   onMount(() => { void refresh(); });
 
   async function refresh() {
-    if (!caseId) { use = null; return; }
+    if (!caseId) { use = null; caseClosed = false; return; }
     busy = T.caseUseChecking;
     try {
-      use = caseUse(await caseUseApi.listTags(caseId), item.name);
+      const [tags, view] = await Promise.all([caseUseApi.listTags(caseId), getCaseView(caseId).catch(() => null)]);
+      use = caseUse(tags, item.name);
+      caseClosed = view ? believedState(view) === 'closed' : false;
     } catch (error) {
       use = null;
       problem = error instanceof Error && error.message ? error.message : T.caseUseFailed;
@@ -64,6 +70,7 @@
   {:else if use?.state === 'other'}
     <p>{T.caseUseOther(use.name)}</p>
   {/if}
+  {#if closed}<p class="bb-note">{T.caseUseClosed}</p>{/if}
   <div aria-live="polite">
     {#if busy}<p class="bb-note" role="status">{busy}</p>{/if}
     {#if note}<p class="bb-ok" role="status">{note}</p>{/if}
@@ -71,9 +78,9 @@
   </div>
   <div class="bb-actions">
     {#if use?.state === 'this'}
-      <button type="button" class="secondary-button" disabled={!!busy} onclick={remove}>{T.caseUseStop}</button>
+      <button type="button" class="secondary-button" disabled={!!busy || closed} onclick={remove}>{T.caseUseStop}</button>
     {:else}
-      <button type="button" class="secondary-button" disabled={!!busy || !caseId || !readable || use?.state === 'other'} onclick={add}>{T.caseUseButton}</button>
+      <button type="button" class="secondary-button" disabled={!!busy || !caseId || !readable || closed || use?.state === 'other'} onclick={add}>{T.caseUseButton}</button>
     {/if}
   </div>
 </section>

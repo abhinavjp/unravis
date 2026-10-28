@@ -110,7 +110,7 @@ test('review 9: the host card has its own nutshell and never a lazy plural', () 
 test('review 10: Use in this case is off for Not placed, Unreachable and Not found entries', () => {
   const use = read('src/components/BlackboxCaseUse.svelte');
   assert.match(use, /const readable = \$derived\(placed && item\.state\.state !== 'unreachable' && item\.state\.state !== 'not-found'\)/);
-  assert.match(use, /disabled=\{!!busy \|\| !caseId \|\| !readable \|\| use\?\.state === 'other'\}/);
+  assert.match(use, /disabled=\{!!busy \|\| !caseId \|\| !readable \|\| closed \|\| use\?\.state === 'other'\}/);
   assert.match(use, /\{T\.caseUseNotReadable\}/);
 });
 
