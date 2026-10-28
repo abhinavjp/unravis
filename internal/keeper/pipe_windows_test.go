@@ -62,7 +62,9 @@ func TestRealPipe(t *testing.T) {
 
 	var seen Caller
 	var mu sync.Mutex
-	s := NewServer(ServerOptions{Log: NewAuditWriter(&syncBuffer{})})
+	// Sixteen callers at once below all come from this one Windows session, which the default server (8 per session) would answer
+	// "busy" from the ninth on whenever they overlap. This test is about concurrency working, not about that cap, so give it room.
+	s := NewServer(ServerOptions{Log: NewAuditWriter(&syncBuffer{}), MaxConns: 64, MaxPerSession: 32})
 	s.Handle("test.whoami", classRead, 5*time.Second, func(_ context.Context, c *Call) (any, error) {
 		mu.Lock()
 		seen = c.Caller

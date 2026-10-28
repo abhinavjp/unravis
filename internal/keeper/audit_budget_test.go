@@ -70,6 +70,9 @@ func TestAFloodOfSlowAuditReadsLeavesRoomForOtherOperations(t *testing.T) {
 	var conns []ClientConn
 	var answers []<-chan Response
 	for i := 0; i < reads; i++ {
+		// The reads already started are held open; every earlier connection (the one that stored the source) must be released first,
+		// or the eighth read would meet the per-session cap for a reason this test is not about.
+		h.server.waitOpenAtMost(t, harnessCaller.Session, i)
 		c, a := h.rawAnalyze(r, id, 0)
 		conns = append(conns, c)
 		answers = append(answers, a)
