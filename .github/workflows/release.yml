@@ -2,7 +2,8 @@ name: Release
 
 # Runs when a tag matching vX.Y.Z (or vX.Y.Z-pre.N) is pushed. Tags without the "v" prefix never
 # match this trigger, so they never start a release. workflow_dispatch lets a person re-run a
-# release for a tag that already exists (see the "draft" job: it replaces assets, it does not fail).
+# release for a tag that already exists (see the "draft" job: a re-run replaces the assets of an
+# existing DRAFT and refuses a published release).
 #
 # This workflow never publishes anything. The "draft" job only ever creates or updates a DRAFT
 # release. A person presses Publish by hand after the smoke job is green (see
@@ -33,20 +34,20 @@ jobs:
   build:
     runs-on: windows-2022
     timeout-minutes: 45
-    env:
-      # The secrets context cannot be read in a step "if", so the signing gate reads this instead.
-      SIGNPATH: ${{ secrets.SIGNPATH }}
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       version: ${{ steps.tag.outputs.version }}
-      has_installer: ${{ steps.installer.outputs.exists }}
     steps:
       # No checkout is needed yet: the tag name comes from the trigger event, not the tree.
       - name: Resolve and validate the release tag
         id: tag
         shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          $tag = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.tag }}' } else { '${{ github.ref_name }}' }
+          $tag = if ($env:EVENT_NAME -eq 'workflow_dispatch') { $env:INPUT_TAG } else { $env:REF_NAME }
           if ($tag -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') {
             throw "Tag '$tag' does not look like vX.Y.Z or vX.Y.Z-pre.N (installer-and-releases.md section 9). A tag without the v prefix never reaches this workflow."
           }
@@ -54,6 +55,16 @@ jobs:
           Write-Host "Releasing $tag (version $version)"
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Decide whether signing is enabled
+        id: signgate
+        shell: pwsh
+        env:
+          # The secrets context cannot be read in a step "if", so only this step sees the secret
+          # and passes on a plain true/false.
+          SIGNPATH_SET: ${{ secrets.SIGNPATH != '' }}
+        run: |
+          "enabled=$($env:SIGNPATH_SET.ToLower())" >> $env:GITHUB_OUTPUT
 
       - name: Check out the code at the tag
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -95,47 +106,26 @@ jobs:
       - name: Go - tests
         run: go test ./...
 
-      - name: Build dist\unravis.exe
+      - name: Build the programs and the installer
         # The web step above already built web/dist, so it is skipped here (same as ci.yml).
-        run: ./build.ps1 -SkipWeb -Version "${{ steps.tag.outputs.version }}"
+        # build.ps1 also builds the keeper, the Blackbox and the installer with its embedded payload.
+        shell: pwsh
+        run: |
+          ./build.ps1 -SkipWeb -Version "${{ steps.tag.outputs.version }}"
+          Copy-Item -LiteralPath 'dist/unravis-setup.exe' -Destination "dist/unravis-setup-v${{ steps.tag.outputs.version }}-windows-x64.exe" -Force
 
       - name: Build dist\unravis-blackbox.exe and its zip
         run: ./build-blackbox.ps1 -Version "${{ steps.tag.outputs.version }}"
 
-      - name: Build dist\unravis-keeper.exe
-        # No build-keeper.ps1 exists yet; same flags as build-blackbox.ps1 uses for its binary.
+      - name: Sign the binaries (SignPath)
+        # Skipped entirely unless the SIGNPATH secret is set (see the signgate step). Until the
+        # SignPath client call is wired up, setting the secret fails the build instead of shipping
+        # unsigned files under a signed notice (installer-and-releases.md section 8).
+        if: ${{ steps.signgate.outputs.enabled == 'true' }}
         shell: pwsh
         run: |
-          $env:CGO_ENABLED = '0'
-          $env:GOOS = 'windows'
-          $env:GOARCH = 'amd64'
-          go build -trimpath -ldflags "-s -w -X main.version=${{ steps.tag.outputs.version }}" -o dist/unravis-keeper.exe ./cmd/unravis-keeper
-          if ($LASTEXITCODE -ne 0) { throw "go build failed with exit code $LASTEXITCODE" }
-
-      - name: Check whether the installer is in this checkout
-        id: installer
-        shell: pwsh
-        run: |
-          # cmd/unravis-setup is P11, built on another branch at the time this workflow was written.
-          # The installer asset is simply left out of the release until that branch merges.
-          $exists = Test-Path -LiteralPath 'cmd/unravis-setup' -PathType Container
-          "exists=$($exists.ToString().ToLower())" >> $env:GITHUB_OUTPUT
-          if (-not $exists) {
-            Write-Host '::notice::cmd/unravis-setup is not in this checkout. Skipping the installer build and asset.'
-          }
-
-      - name: Build dist\unravis-setup-<version>-windows-x64.exe
-        if: steps.installer.outputs.exists == 'true'
-        shell: pwsh
-        run: |
-          # Plain go build for now. Once P11 lands its own packaging script (the installer embeds
-          # the other two binaries and the Blackbox zip with go:embed), call that script here instead.
-          $env:CGO_ENABLED = '0'
-          $env:GOOS = 'windows'
-          $env:GOARCH = 'amd64'
-          $out = "dist/unravis-setup-v${{ steps.tag.outputs.version }}-windows-x64.exe"
-          go build -trimpath -ldflags "-s -w -X main.version=${{ steps.tag.outputs.version }}" -o $out ./cmd/unravis-setup
-          if ($LASTEXITCODE -ne 0) { throw "go build failed with exit code $LASTEXITCODE" }
+          Write-Host '::error::SIGNPATH is set but the SignPath client call is not wired up yet. Refusing to ship a release that claims to be signed.'
+          exit 1
 
       - name: Package the portable zip
         shell: pwsh
@@ -185,11 +175,9 @@ jobs:
           $Version = '${{ steps.tag.outputs.version }}'
           $Assets = @(
             "unravis-v$Version-windows-x64.zip",
-            "unravis-blackbox-v$Version-windows-x64.zip"
+            "unravis-blackbox-v$Version-windows-x64.zip",
+            "unravis-setup-v$Version-windows-x64.exe"
           )
-          if ('${{ steps.installer.outputs.exists }}' -eq 'true') {
-            $Assets += "unravis-setup-v$Version-windows-x64.exe"
-          }
           foreach ($name in $Assets) {
             $path = Join-Path 'dist' $name
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing release asset: $path" }
@@ -201,7 +189,8 @@ jobs:
       - name: Write the release notes
         shell: pwsh
         env:
-          SIGNED: ${{ env.SIGNPATH != '' && 'true' || 'false' }}
+          # Becomes true only when the sign step really signs (it fails the build today).
+          SIGNED: 'false'
         run: |
           ./tools/release/New-ReleaseNotes.ps1 `
             -Tag '${{ steps.tag.outputs.tag }}' `
@@ -209,15 +198,6 @@ jobs:
             -TemplatePath '.github/release-notes-template.md' `
             -OutFile 'dist/RELEASE-NOTES.md' `
             -Signed:($env:SIGNED -eq 'true')
-
-      - name: Sign the binaries (SignPath)
-        # Skipped entirely unless the SIGNPATH secret is set. Until the repository is approved by
-        # SignPath Foundation (installer-and-releases.md section 8), the pipeline ships unsigned;
-        # this step is the gate that turns signing on later without touching the rest of the file.
-        if: ${{ env.SIGNPATH != '' }}
-        shell: pwsh
-        run: |
-          Write-Host '::notice::SIGNPATH is set, but the SignPath client call is not wired up yet. Shipping this release unsigned (installer-and-releases.md section 8).'
 
       - name: Upload the release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -292,17 +272,19 @@ jobs:
             if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { throw "Missing asset to attach: $p" }
           }
 
-          gh release view $tag --json tagName 1>$null 2>$null
+          $isRc = $tag.Contains('-')
+          $json = gh release view $tag --json isDraft 2>$null
           $exists = ($LASTEXITCODE -eq 0)
-
           if ($exists) {
-            Write-Host "Release $tag already exists. Re-run: replacing its assets, not failing."
+            $isDraft = [bool](($json | ConvertFrom-Json).isDraft)
+            if (-not $isDraft) { throw "Release $tag is already published. Refusing to change a published release; delete it by hand first if you really mean to rebuild it." }
+            Write-Host "Draft $tag exists. Replacing its assets and keeping its notes."
             gh release upload $tag @assetPaths --clobber
             if ($LASTEXITCODE -ne 0) { throw "gh release upload failed with exit code $LASTEXITCODE" }
-            gh release edit $tag --draft --title $tag --notes-file 'dist/RELEASE-NOTES.md'
-            if ($LASTEXITCODE -ne 0) { throw "gh release edit failed with exit code $LASTEXITCODE" }
           } else {
-            gh release create $tag @assetPaths --draft --verify-tag --title $tag --notes-file 'dist/RELEASE-NOTES.md'
+            $flags = @('--draft', '--verify-tag', '--title', $tag, '--notes-file', 'dist/RELEASE-NOTES.md')
+            if ($isRc) { $flags += '--prerelease' }
+            gh release create $tag @assetPaths @flags
             if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE" }
           }
           Write-Host "Draft release $tag is ready. A person must press Publish; nothing here does that."
