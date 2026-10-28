@@ -1,6 +1,6 @@
 import type { Frame } from './frame';
-import { fmtChange, fmtMs, markFor, stepOf, type ChangeMark, type StickerTone } from './stepModel';
-import type { Readiness, Result, SavedView } from './types';
+import { fmtChange, fmtMs, markFor, stepOf, suggestedChecks, suspectGroups, type ChangeMark, type StickerTone } from './stepModel';
+import type { ChecklistItem, Readiness, Result, SavedView } from './types';
 
 /**
  * Manual tools: the same facts as the guided steps, one tool at a time, in any order. This file lists the tools, says whether each one can run
@@ -226,4 +226,20 @@ export function caseSourceIds(
   return sources
     .filter((s) => workspaceDatabases.some((d) => (d.selectionKey && s.selectionKey ? d.selectionKey === s.selectionKey : d.name === s.database)))
     .map((s) => s.id);
+}
+
+/* ----------------------------------------------------------------- Step 10 checks and lines */
+
+/**
+ * The checks "Add suggested checks from Step 10" adds: those of the red and orange suspects not on the list yet. The origin's one cheapest
+ * check is the first of them. Grey suspects are left out on purpose; each has its own button.
+ */
+export function originChecks(result: Result, items: readonly ChecklistItem[]): Array<{ text: string; suspect: string }> {
+  const ranked = new Set(suspectGroups(result).ranked.map((s) => s.id));
+  return suggestedChecks(result, items).filter((check) => ranked.has(check.suspect));
+}
+
+/** True when Confidence reads None and an orange (Likely) suspect is listed: the case Step 10 explains with one line. */
+export function likelyWithoutTier(result: Result | null | undefined): boolean {
+  return !!result && result.confidence.word === 'None' && suspectGroups(result).ranked.some((s) => s.colour === 'orange');
 }

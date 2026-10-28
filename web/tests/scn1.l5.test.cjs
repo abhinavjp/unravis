@@ -181,3 +181,41 @@ test('B-34: the new sentences are plain', () => {
   assert.equal(SHELL.sourcesLoading, 'Reading the sources this case holds.');
   assert.equal(SHELL.sourcesFailed, 'The sources of this case could not be read. Reload the page and try again.');
 });
+
+const sus = (id, colour, rank) => suspect(id, colour, { rank, nextCheck: 'check ' + id });
+const conf = (word) => ({ word, why: 'x', sourcesUsed: [], sourcesMissing: [], notTested: [], overturn: '' });
+
+test('B-25: suggested checks are the red and orange ones, not the grey', () => {
+  const grey = Array.from({ length: 38 }, (_, i) => sus('G' + (i + 1), 'grey', 10 + i));
+  const r = result({ suspects: [sus('L1', 'red', 1), sus('D1', 'orange', 2), sus('H1', 'green', 3), ...grey] });
+  const got = tools.originChecks(r, []);
+  assert.deepEqual(got.map((c) => c.suspect), ['L1', 'D1']);
+  assert.equal(got[0].text, 'L1: check L1', 'the cheapest check is the first ranked one');
+  const onList = [{ id: 1, list: 'todo', text: 'L1: check L1', order: 1 }];
+  assert.deepEqual(tools.originChecks(r, onList).map((c) => c.suspect), ['D1'], 'a check already on the list is not added twice');
+  assert.deepEqual(tools.originChecks(result({ suspects: [sus('G1', 'grey', 1)] }), []), []);
+});
+
+test('B-04: the Likely-without-tier line shows only for None confidence with an orange suspect', () => {
+  const orange = [sus('D1', 'orange', 1)];
+  assert.equal(tools.likelyWithoutTier(result({ suspects: orange, confidence: conf('None') })), true);
+  assert.equal(tools.likelyWithoutTier(result({ suspects: orange, confidence: conf('Medium') })), false);
+  assert.equal(tools.likelyWithoutTier(result({ suspects: [sus('L1', 'red', 1)], confidence: conf('None') })), false);
+  assert.equal(tools.likelyWithoutTier(result({ suspects: [sus('M1', 'grey', 1)], confidence: conf('None') })), false);
+  assert.equal(tools.likelyWithoutTier(null), false);
+});
+
+test('B-04, B-24, B-25: Step 10 and the checklist use the new lines and the right helper', () => {
+  assert.match(SHELL.likelyNoTier, /^A suspect can be listed as Likely while no tier is dated\./);
+  assert.equal(SHELL.showRuledOut, 'Show the suspects set aside');
+  assert.equal(SHELL.showFewerSuspects, 'Show fewer suspects');
+  assert.equal(SHELL.suggestedAdded(1), 'Added 1 check.');
+  assert.equal(SHELL.suggestedAdded(3), 'Added 3 checks.');
+  const s10 = guided('Step10Origin.svelte');
+  assert.match(s10, /\{showSetAside \? S\.showFewerSuspects : S\.showRuledOut\}/);
+  assert.ok(!/T\.showAll|T\.showLess/.test(s10), 'the set-aside button no longer says every API');
+  assert.match(s10, /\{#if likelyNoTier\}<p class="note">\{S\.likelyNoTier\}<\/p>\{\/if\}/);
+  assert.match(guided('Checklist.svelte'), /originChecks\(store\.result, store\.items\)/);
+  assert.match(guided('Checklist.svelte'), /if \(added > 0\) note = S\.suggestedAdded\(added\);/);
+  assert.match(store(), /for \(const check of originChecks\(result, this\.items\)\)/);
+});

@@ -1,7 +1,9 @@
 <script lang="ts">
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
+  import { SHELL_TEXT as S } from '../../copy/guidedShellCopy';
   import type { GuidedStore } from '../../guided/guided.svelte';
-  import { counters, groupItems, LISTS, suggestedChecks } from '../../guided/stepModel';
+  import { counters, groupItems, LISTS } from '../../guided/stepModel';
+  import { originChecks } from '../../guided/tools';
   import type { ChecklistItem, ChecklistList } from '../../guided/types';
 
   // The checklist: four lists, a counter of what is done and what is open. Notes here are the person's own words and are kept with the case.
@@ -9,7 +11,7 @@
 
   const grouped = $derived(groupItems(store.items));
   const count = $derived(counters(store.items));
-  const suggested = $derived(store.result ? suggestedChecks(store.result, store.items) : []);
+  const suggested = $derived(store.result ? originChecks(store.result, store.items) : []);
 
   let adding = $state(false);
   let text = $state('');
@@ -23,7 +25,8 @@
   async function addAllSuggested() {
     note = '';
     if (suggested.length === 0) { note = T.noSuggested; return; }
-    await store.addSuggested();
+    const added = await store.addSuggested();
+    if (added > 0) note = S.suggestedAdded(added);
   }
   const move = (item: ChecklistItem, e: Event) => { void store.moveItem(item, (e.currentTarget as HTMLSelectElement).value as ChecklistList); };
 </script>

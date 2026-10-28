@@ -7,8 +7,8 @@ import {
 } from './api';
 import { emptyFrame, quickPick, requestKey, toRequest, type Frame, type QuickPick } from './frame';
 import { InFlight } from './inflight';
-import { clampStep, suggestedChecks, type RunPhase } from './stepModel';
-import { cleanViewName, dataStamp, stampChanged, viewSettings, viewsFull, type ToolId } from './tools';
+import { clampStep, type RunPhase } from './stepModel';
+import { cleanViewName, dataStamp, originChecks, stampChanged, viewSettings, viewsFull, type ToolId } from './tools';
 import type { ChecklistItem, ChecklistList, InvestigationAnswer, InvestigationRequest, ReportAnswer, ReportInclude, SavedView } from './types';
 
 /**
@@ -247,14 +247,14 @@ export class GuidedStore {
     }
   }
 
-  /** Adds every check Step 10 suggests that is not on the list yet. Returns how many were added. */
+  /** Adds the checks of the red and orange suspects of Step 10 that are not on the list yet. Returns how many were added. */
   async addSuggested(): Promise<number> {
     const result = this.result;
     if (!result || this.#bulk) return 0;
     this.#bulk = true;
     let added = 0;
     try {
-      for (const check of suggestedChecks(result, this.items)) {
+      for (const check of originChecks(result, this.items)) {
         if (!(await this.addItem('todo', check.text, check.suspect))) break;
         added++;
       }
