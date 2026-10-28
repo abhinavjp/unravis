@@ -45,6 +45,11 @@ func (f *fakeSource) Close() error {
 	f.mu.Unlock()
 	return nil
 }
+func (f *fakeSource) isClosed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closed
+}
 func (f *fakeSource) Host() (HostSample, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -482,7 +487,7 @@ func TestStartValidatesTheConfig(t *testing.T) {
 			continue
 		}
 		s.Stop()
-		if !f.closed {
+		if !f.isClosed() {
 			t.Errorf("interval %d: the source was not closed", iv)
 		}
 	}
@@ -497,7 +502,7 @@ func TestStartValidatesTheConfig(t *testing.T) {
 	if _, err := Start(Config{Import: log.Import, Source: f}); err == nil {
 		t.Error("an unreadable source was accepted")
 	}
-	if !f.closed {
+	if !f.isClosed() {
 		t.Error("the unreadable source was not closed")
 	}
 }
@@ -564,7 +569,7 @@ func TestSamplerStopsAtTheEventCap(t *testing.T) {
 	if st.Events > 60 || st.Events == 0 || samples >= 50 {
 		t.Errorf("events %d (cap 60), ticks sent %d", st.Events, samples)
 	}
-	if !f.closed {
+	if !f.isClosed() {
 		t.Error("the source was not closed")
 	}
 	// What was sampled before the cap is imported.

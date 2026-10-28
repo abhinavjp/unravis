@@ -229,8 +229,10 @@ func (s *Sampler) run() {
 		endBackground()
 		runtime.UnlockOSThread()
 	}()
-	defer s.cfg.Source.Close()
+	// Deferred calls run last to first: the source is closed before finish marks the run over, so once Done is closed (and Stop has
+	// returned) the source is already released.
 	defer s.finish() // the last batch goes out on its own goroutine
+	defer s.cfg.Source.Close()
 
 	tick, stopTicker := s.newTicker(time.Duration(s.cfg.IntervalSeconds) * time.Second)
 	defer stopTicker()
