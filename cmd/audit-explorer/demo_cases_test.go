@@ -541,6 +541,9 @@ func TestDemoCasesSeedOneNothingReadLaneDay(t *testing.T) {
 		if res.Code == http.StatusConflict && strings.HasPrefix(id, string(demoCaseUntrustedID)) {
 			continue // not opened by design
 		}
+		if res.Code == http.StatusNotFound && strings.HasPrefix(id, string(demoCaseMissingID)) {
+			continue // its file is gone by design
+		}
 		if res.Code != http.StatusOK {
 			t.Fatalf("GET lanes for %s = %d: %s", id, res.Code, res.Body)
 		}
