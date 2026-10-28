@@ -22,4 +22,8 @@ Run `unravis.exe --version`.
 
 ## Files left behind after an archive or restore
 
-Coming in P3.
+Case files that an archive or a restore finished but did not commit are called left-over files. They appear under "Case files left over" in the health checks of the case. Unravis lists the name, the folder, when it was made and its size. It never deletes, moves or adopts one. Keep it, move it, or delete it yourself in File Explorer.
+
+A temporary folder from a check (`.verify`) that could not be removed is reported as "Cleanup pending" and is removed the next time Unravis starts.
+
+If an archive was stopped by a crash or a power cut, start Unravis again. The case comes back as it was; a half-written `.part` file is not a case file and can be deleted.
