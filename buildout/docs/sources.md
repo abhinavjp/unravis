@@ -99,7 +99,7 @@ The MongoDB profiler is how slow operations are seen. It is off by default. The 
 
 ### Add data
 
-Screen: Add data tab. It has five cards: SQL Server, MongoDB, Blackbox, Files and Another day. Each card says how many saved connections are ready and how many reads the case already holds. Adding reads the new data on its own and does not touch what is there. A step that ran before the new data arrived is marked Out of date, rerun. It does not change by itself.
+Screen: Add data tab. It has five cards: SQL Server, MongoDB, Blackbox, Files and Another day. **Add a Blackbox** opens the Blackbox page, the same one the header opens, where a Blackbox is added and then used in this case. It is off in a closed case. Each card says how many saved connections are ready and how many reads the case already holds. Adding reads the new data on its own and does not touch what is there. A step that ran before the new data arrived is marked Out of date, rerun. It does not change by itself.
 
 ### Add another day
 

@@ -173,7 +173,6 @@ export const ADD_TEXT = {
   addSql: 'Add SQL source',
   addMongo: 'Add Mongo source',
   addBlackbox: 'Add a Blackbox',
-  blackboxLater: 'Not available yet: the Blackbox page is not part of this version.',
   addFiles: 'Add files',
   addDay: 'Add another day',
   connReady: (n: number): string => (n === 0 ? 'No saved connection yet' : n === 1 ? '1 saved connection ready' : n + ' saved connections ready'),

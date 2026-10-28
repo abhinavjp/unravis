@@ -103,20 +103,21 @@ test('M2: the case-closed refusal reads as a plain sentence, not as another read
 
 // ---- M3 ------------------------------------------------------------------------------------------------------------------------------
 
-test('M3: Add data never clicks into nothing: Files opens the import page, Blackbox is off with a reason until its page exists', () => {
+test('M3: Add data never clicks into nothing: Files opens the import page, Blackbox opens the Blackbox page and is off only in a closed case', () => {
   const hub = comp('SourcesHub');
   assert.doesNotMatch(hub, /else tab = 'add';/, 'choosing files or blackbox no longer lands back on the same tab');
   assert.match(hub, /what === 'files'\) onAddFiles\?\.\(\)/);
   assert.match(hub, /what === 'blackbox'\) onAddBlackbox\?\.\(\)/);
-  assert.match(hub, /files=\{!!onAddFiles\} blackbox=\{!!onAddBlackbox\}/, 'a card is on only when its page was handed in');
+  assert.match(hub, /files=\{!!onAddFiles\} onChoose/, 'the Files card is on only when its page was handed in');
   const add = comp('AddDataPanel');
-  assert.match(add, /disabled=\{readOnly \|\| !blackbox\} onclick=\{\(\) => choose\('blackbox'\)\}/);
+  assert.match(add, /disabled=\{readOnly\} onclick=\{\(\) => choose\('blackbox'\)\}/, 'the Blackbox card is on unless the case is closed');
   assert.match(add, /disabled=\{readOnly \|\| !files\} onclick=\{\(\) => choose\('files'\)\}/);
-  assert.match(add, /\{#if !blackbox\}<p class="hint" data-unavailable="blackbox">\{ADD_TEXT\.blackboxLater\}/);
-  assert.match(copy.ADD_TEXT.blackboxLater, /not part of this version/);
+  assert.doesNotMatch(add, /data-unavailable="blackbox"|blackboxLater/, 'no until-P9 note is left');
+  assert.equal(copy.ADD_TEXT.blackboxLater, undefined);
   const home = read('src/lib/components/CaseHome.svelte');
   assert.match(home, /onAddFiles=\{openCaseImport\}/, 'Files opens the import drawer that exists on this branch');
-  assert.doesNotMatch(home, /onAddBlackbox/, 'the Blackbox page is wired by the phase that adds it');
+  assert.match(home, /onAddBlackbox=\{\(\) => openSidePanel\('blackbox'\)\}/, 'Blackbox opens the Blackbox side panel (App.svelte panels.sidePanel)');
+  assert.match(read('src/App.svelte'), /panels\.sidePanel === 'blackbox'\}<BlackboxPanel/);
 });
 
 // ---- M4 ------------------------------------------------------------------------------------------------------------------------------

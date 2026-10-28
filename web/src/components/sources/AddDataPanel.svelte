@@ -9,8 +9,8 @@
   // exists and hands the choice on; nothing is read or changed here. A step that ran before the new data arrived is marked Out of date by the
   // screen that finishes the add, never by itself.
   export type AddChoice = 'sql' | 'mongo' | 'blackbox' | 'files' | 'day';
-  // files and blackbox say whether the page that adds them exists in this build. A card whose page is missing is switched off and says so, never a dead click.
-  let { caseId, readOnly = false, files = false, blackbox = false, onChoose }: { caseId: string; readOnly?: boolean; files?: boolean; blackbox?: boolean; onChoose?: (what: AddChoice) => void } = $props();
+  // files says whether the page that adds files exists in this build. A card whose page is missing is switched off, never a dead click. The Blackbox page is always there.
+  let { caseId, readOnly = false, files = false, onChoose }: { caseId: string; readOnly?: boolean; files?: boolean; onChoose?: (what: AddChoice) => void } = $props();
 
   let days = $state.raw<LaneDay[]>([]);
   let sqlSaved = $state(0);
@@ -57,8 +57,7 @@
     <div class="card" data-card="blackbox">
       <h4>{ADD_TEXT.blackboxTitle}</h4>
       <p class="hint">{ADD_TEXT.blackboxBody}</p>
-      <div class="actions"><button type="button" class="btn" disabled={readOnly || !blackbox} onclick={() => choose('blackbox')}>{ADD_TEXT.addBlackbox}</button></div>
-      {#if !blackbox}<p class="hint" data-unavailable="blackbox">{ADD_TEXT.blackboxLater}</p>{/if}
+      <div class="actions"><button type="button" class="btn" disabled={readOnly} onclick={() => choose('blackbox')}>{ADD_TEXT.addBlackbox}</button></div>
     </div>
     <div class="card" data-card="files">
       <h4>{ADD_TEXT.filesTitle}</h4>
