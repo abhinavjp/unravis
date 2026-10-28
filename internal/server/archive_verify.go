@@ -107,6 +107,10 @@ func (h *handler) verifyCase(w http.ResponseWriter, r *http.Request, raw string)
 	if !ok {
 		return
 	}
+	if err := h.beliefFirst(r.Context(), id, casestore.ActionFree, believed); err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	b := h.readCaseFileBody(w, r)
 	if b == nil {
 		return
@@ -170,6 +174,9 @@ func (h *handler) verifyCase(w http.ResponseWriter, r *http.Request, raw string)
 		total = 1
 	}
 	job.total.Store(total)
+	// A new check starts from nothing: an earlier pass must not outlive a failed or
+	// stopped re-check (D-A-14).
+	st.verified.drop(id)
 	st.jobs.put(job)
 	typed := len(b.pass) > 0
 	go h.runVerify(ctx, job, ar, root, id, *cur, derive, clean, typed)
@@ -269,7 +276,7 @@ func (h *handler) verifyStatus(w http.ResponseWriter, r *http.Request, raw strin
 	}
 	if ar, ok := h.cases.(casestore.Archiver); ok {
 		if info, err := ar.Entry(r.Context(), id); err == nil {
-			if cur, kept := keptFile(info); kept {
+			if cur, kept := keptFile(info); kept && d.State != fileJobRunning && d.State != fileJobFailed && d.State != fileJobStopped {
 				d.Verified = st.verified.ok(id, cur.SHA256, archiveNow())
 			}
 		}

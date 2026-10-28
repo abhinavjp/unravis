@@ -102,6 +102,10 @@ func (h *handler) archiveCase(w http.ResponseWriter, r *http.Request, raw string
 	if !ok {
 		return
 	}
+	if err := h.beliefFirst(r.Context(), id, casestore.ActionArchive, believed); err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	b := h.readCaseFileBody(w, r)
 	if b == nil {
 		return
@@ -186,6 +190,8 @@ func (h *handler) archiveCase(w http.ResponseWriter, r *http.Request, raw string
 		switch {
 		case errors.Is(err, errArchivePassphrase):
 			writeCaseFailure(w, http.StatusBadRequest, "bad-passphrase", archiveTypedPassText)
+		case errors.Is(err, errArchiveKeyedPass):
+			writeCaseFailure(w, http.StatusBadRequest, "bad-passphrase", archiveKeyedPassText)
 		case errors.Is(err, casestore.ErrLocked):
 			writeLocked(w)
 		case errors.Is(err, casestore.ErrCaseLocked):

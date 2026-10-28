@@ -249,3 +249,32 @@ func TestExportOfAnErasingCaseGivesM5(t *testing.T) {
 	res := a.export(id, filepath.Join(t.TempDir(), "x"+casestore.CaseFileExt), cfsPassA)
 	archReason(t, res, http.StatusConflict, "case-erasing", caseErasingText)
 }
+
+// A typed passphrase sent for a keyed case is refused, not ignored (D-A-26).
+func TestOwnKeyArchiveRefusesATypedPassphrase(t *testing.T) {
+	a := newArchPC(t, cfsPassA)
+	id := a.seedKeyed("keyed", 3)
+	dir := a.folder()
+	res := a.req(http.MethodPost, "/api/cases/"+id+"/archive", `{"path":`+q(dir)+`,"passphrase":`+q(cfsPassA)+`}`, "open")
+	archReason(t, res, http.StatusBadRequest, "bad-passphrase", archiveKeyedPassText)
+	if strings.Contains(res.Body.String(), cfsPassA) {
+		t.Fatal("the answer echoes the passphrase")
+	}
+	if a.state(id) != casestore.StateOpen || a.entry(id).Mark != "" {
+		t.Fatalf("a refused archive changed the case: %q mark %q", a.state(id), a.entry(id).Mark)
+	}
+	if len(caseFilesIn(t, dir)) != 0 || len(partsIn(t, dir)) != 0 {
+		t.Fatal("a refused archive left a file")
+	}
+	// Without a passphrase the same case archives, sealed by its own key.
+	a.archiveDone(id, dir, "open")
+	if kind := a.entry(id).Archive.Current().KeyKind; kind != casestore.KeyKindCase {
+		t.Fatalf("key kind = %q, want the case key", kind)
+	}
+	// An unkeyed case with the master key unlocked still ignores a typed passphrase.
+	plain := a.seed("plain", 2)
+	res = a.req(http.MethodPost, "/api/cases/"+plain+"/archive", `{"path":`+q(a.folder())+`,"passphrase":"x"}`, "open")
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("unkeyed archive = %d %s", res.Code, res.Body)
+	}
+}

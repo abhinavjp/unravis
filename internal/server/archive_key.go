@@ -85,6 +85,10 @@ func (h *handler) caseFileLookupFor(id casestore.CaseID) casestore.ProtectorLook
 // kept in the record. A case whose own key is locked is casestore.ErrCaseLocked.
 func (h *handler) newArchiveKey(ctx context.Context, id casestore.CaseID, pass []byte) (fk casestore.FileKey, kind, check string, err error) {
 	if h.hasOwnKey(ctx, id) {
+		// The case key seals the file; a typed passphrase would be ignored, so say so (D-A-26).
+		if len(pass) > 0 {
+			return casestore.FileKey{}, "", "", errArchiveKeyedPass
+		}
 		ck, _ := h.ownKeyer()
 		fk, check, err = ck.CaseArchiveKey(id)
 		if err != nil {
@@ -122,6 +126,9 @@ func (h *handler) newArchiveKey(ctx context.Context, id casestore.CaseID, pass [
 
 // errArchivePassphrase is a typed passphrase that is missing or too short.
 var errArchivePassphrase = errors.New("server: the archive passphrase is missing or too short")
+
+// errArchiveKeyedPass is a typed passphrase sent for a case that has its own key.
+var errArchiveKeyedPass = errors.New("server: a case with its own key takes no archive passphrase")
 
 // openDeriver chooses how an existing case file is opened. A file sealed under the
 // master key opens with it when the key check still matches (the key in force is

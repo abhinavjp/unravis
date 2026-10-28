@@ -164,17 +164,18 @@ func TestA1_FolderRulesGiveM8AndChangeNothing(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(a.dir, "sub"), 0o700)
 
 	cases := map[string]string{
-		"empty":          "",
-		"relative":       "relative\\folder",
-		"dot dot":        filepath.Join(good, "..", "elsewhere"),
-		"dot dot inside": good + string(os.PathSeparator) + ".." + string(os.PathSeparator) + filepath.Base(good),
-		"UNC share":      `\\server\share\folder`,
-		"UNC long form":  `\\?\UNC\server\share\folder`,
-		"device path":    `\\.\C:\folder`,
-		"not a folder":   file,
-		"missing":        filepath.Join(good, "nope"),
-		"data folder":    a.root,
-		"inside data":    filepath.Join(a.root, id),
+		"empty":                 "",
+		"relative":              "relative\\folder",
+		"dot dot":               filepath.Join(good, "..", "elsewhere"),
+		"dot dot inside":        good + string(os.PathSeparator) + ".." + string(os.PathSeparator) + filepath.Base(good),
+		"UNC share":             `\\server\share\folder`,
+		"UNC long form":         `\\?\UNC\server\share\folder`,
+		"extended drive prefix": `\\?\` + good,
+		"device path":           `\\.\C:\folder`,
+		"not a folder":          file,
+		"missing":               filepath.Join(good, "nope"),
+		"data folder":           a.root,
+		"inside data":           filepath.Join(a.root, id),
 		// UI review major 4: the folder with the master key file, the saved files and
 		// the history (AUDIT_CONFIG_DIR moves it), and the folder the cases sit in.
 		"config folder":      a.dir,

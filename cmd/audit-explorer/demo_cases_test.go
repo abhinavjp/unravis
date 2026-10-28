@@ -337,6 +337,40 @@ func TestDemoSeedsTwoErasedLinesWithFixedTimes(t *testing.T) {
 	}
 }
 
+func TestDemoEraseLineIsDatedByTheDemoClock(t *testing.T) {
+	h, closeCases := seededServer(t, t.TempDir())
+	defer closeCases()
+	id := createCase(t, h, "Erase me")
+	req := httptest.NewRequest(http.MethodDelete, "/api/cases/"+id, strings.NewReader(`{"confirm":"`+id+`"}`))
+	req.Host = "127.0.0.1:8765"
+	req.Header.Set("X-Audit-Token", demoTestToken)
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("erase = %d %s", res.Code, res.Body)
+	}
+	lines := listErased(t, h)
+	if len(lines) != 3 {
+		t.Fatalf("erased lines = %v, want the 2 seeded and the new one", lines)
+	}
+	found := false
+	for _, l := range lines {
+		if l["id"] != id {
+			continue
+		}
+		found = true
+		at, _ := l["at"].(string)
+		got, err := time.Parse(time.RFC3339Nano, at)
+		if err != nil || !got.Equal(demoTestNow) {
+			t.Errorf("erased line at %q, want %v", at, demoTestNow)
+		}
+	}
+	if !found {
+		t.Fatalf("no Erased line for %s: %v", id, lines)
+	}
+}
+
 func TestDemoCasesAreTheSameOnEveryRunAndOnASecondStart(t *testing.T) {
 	first := t.TempDir()
 	h1, close1 := seededServer(t, first)

@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/clock"
@@ -258,6 +259,9 @@ func (e *caseEnv) upload(path string, fields []formField, file *upload) *httptes
 
 func (e *caseEnv) newCase(title string) string {
 	e.t.Helper()
+	if utf8.RuneCountInString(strings.TrimSpace(title)) < 2 {
+		title = title + title
+	}
 	res := e.json(http.MethodPost, "/api/cases", `{"title":`+strconv.Quote(title)+`}`)
 	if res.Code != http.StatusCreated {
 		e.t.Fatalf("create case = %d %s", res.Code, res.Body)
@@ -459,9 +463,11 @@ func TestCreateCaseRejectsBadTitles(t *testing.T) {
 		"blank":        `{"title":"   "}`,
 		"too long":     `{"title":"` + strings.Repeat("x", casestore.MaxTitleBytes+1) + `"}`,
 		"control char": `{"title":"a\u0007b"}`,
+		"one letter":   `{"title":"a"}`,
+		"81 letters":   `{"title":"` + strings.Repeat("x", 81) + `"}`,
 	} {
 		res := e.json(http.MethodPost, "/api/cases", body)
-		if res.Code != http.StatusBadRequest || failureOf(t, res).Reason != "bad-title" {
+		if res.Code != http.StatusBadRequest || failureOf(t, res).Reason != "bad-title" || failureOf(t, res).Error != badTitleText {
 			t.Errorf("%s: %d %s", name, res.Code, res.Body)
 		}
 	}
@@ -479,6 +485,19 @@ func TestCreateCaseRejectsBadTitles(t *testing.T) {
 	decodeBody(t, e.get("/api/cases"), &list)
 	if len(list.Cases) != 0 {
 		t.Fatalf("a refused title created %d cases", len(list.Cases))
+	}
+}
+
+func TestCreateCaseTitleBounds(t *testing.T) {
+	e := newCaseEnv(t, envConfig{})
+	for name, title := range map[string]string{
+		"80 accented letters": strings.Repeat("é", 80),
+		"two letters":         "ab",
+	} {
+		res := e.json(http.MethodPost, "/api/cases", `{"title":`+strconv.Quote(title)+`}`)
+		if res.Code != http.StatusCreated {
+			t.Errorf("%s: %d %s", name, res.Code, res.Body)
+		}
 	}
 }
 

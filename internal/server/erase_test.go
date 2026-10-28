@@ -56,6 +56,86 @@ func (e *eraseEnv) list() (cases []caseDTO, erased []erasedDTO) {
 	return out.Cases, out.Erased
 }
 
+func TestEraseHonoursTheBelief(t *testing.T) {
+	has := func(ee *eraseEnv, id string) bool {
+		cases, _ := ee.list()
+		for _, c := range cases {
+			if c.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	del := func(ee *eraseEnv, id, belief string) *httptest.ResponseRecorder {
+		return ee.believing(http.MethodDelete, "/api/cases/"+id, `{"confirm":`+q(id)+`}`, belief)
+	}
+	t.Run("wrong belief", func(t *testing.T) {
+		ee := newEraseEnv(t, envConfig{})
+		id := ee.newCase("Alpha")
+		wantFailure(t, del(ee, id, "closed"), http.StatusConflict, "case-changed", m2Text)
+		if !has(ee, id) {
+			t.Fatal("a refused erase removed the case")
+		}
+	})
+	t.Run("right belief", func(t *testing.T) {
+		ee := newEraseEnv(t, envConfig{})
+		id := ee.newCase("Alpha")
+		if res := del(ee, id, "open"); res.Code != http.StatusNoContent {
+			t.Fatalf("erase = %d %s", res.Code, res.Body)
+		}
+		if has(ee, id) {
+			t.Fatal("the case is still listed")
+		}
+	})
+	t.Run("no header", func(t *testing.T) {
+		ee := newEraseEnv(t, envConfig{})
+		id := ee.newCase("Alpha")
+		if res := ee.erase(id, id); res.Code != http.StatusNoContent {
+			t.Fatalf("erase = %d %s", res.Code, res.Body)
+		}
+	})
+	t.Run("closed case", func(t *testing.T) {
+		ee := newEraseEnv(t, envConfig{})
+		id := ee.newCase("Alpha")
+		ee.believing(http.MethodPost, "/api/cases/"+id+"/close", "", "open")
+		wantFailure(t, del(ee, id, "open"), http.StatusConflict, "case-changed", m2Text)
+		if !has(ee, id) {
+			t.Fatal("a refused erase removed the case")
+		}
+		if res := del(ee, id, "closed"); res.Code != http.StatusNoContent {
+			t.Fatalf("erase = %d %s", res.Code, res.Body)
+		}
+	})
+}
+
+func TestEraseLineUsesTheLogsOwnClock(t *testing.T) {
+	t.Run("log with a clock", func(t *testing.T) {
+		fixed := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+		log := NewClockedErasedLog(NewErasedFile(filepath.Join(t.TempDir(), "erased.json")), func() time.Time { return fixed })
+		e := newCaseEnv(t, envConfig{options: []Option{WithErasedLog(log)}})
+		id := e.newCase("Clocked")
+		if res := e.json(http.MethodDelete, "/api/cases/"+id, `{"confirm":`+q(id)+`}`); res.Code != http.StatusNoContent {
+			t.Fatalf("erase = %d %s", res.Code, res.Body)
+		}
+		lines := log.Lines()
+		if len(lines) != 1 || string(lines[0].ID) != id || !lines[0].At.Equal(fixed) {
+			t.Fatalf("lines = %+v, want one line for %s at %v", lines, id, fixed)
+		}
+	})
+	t.Run("plain log", func(t *testing.T) {
+		log := NewErasedFile(filepath.Join(t.TempDir(), "erased.json"))
+		e := newCaseEnv(t, envConfig{options: []Option{WithErasedLog(log)}})
+		id := e.newCase("Plain")
+		if res := e.json(http.MethodDelete, "/api/cases/"+id, `{"confirm":`+q(id)+`}`); res.Code != http.StatusNoContent {
+			t.Fatalf("erase = %d %s", res.Code, res.Body)
+		}
+		lines := log.Lines()
+		if len(lines) != 1 || time.Since(lines[0].At) >= time.Minute {
+			t.Fatalf("lines = %+v, want one line made just now", lines)
+		}
+	})
+}
+
 func TestEraseTakesTheShortCodeOrTheFullID(t *testing.T) {
 	e := newEraseEnv(t, envConfig{})
 	a, b := e.newCase("A"), e.newCase("B")

@@ -114,6 +114,48 @@ func (h *handler) infoOf(ctx context.Context, id casestore.CaseID) (casestore.Ca
 	return casestore.CaseInfo{}, err
 }
 
+// eraseBelief refuses an erase sent by a tab that believes the case is in another
+// state than it is (D-A-01). CheckBelief lets an erase pass for any belief, so the
+// handler compares here. A case that cannot be read, is marked in flight, is being
+// archived, is untrusted or is already erased keeps its existing answers.
+func (h *handler) eraseBelief(ctx context.Context, id casestore.CaseID, believed casestore.State) error {
+	if believed == "" {
+		return nil
+	}
+	info, err := h.infoOf(ctx, id)
+	if err != nil || info.Mark != "" {
+		return nil
+	}
+	switch got := casestore.StateOf(info); got {
+	case casestore.StateArchiving, casestore.StateUntrusted, casestore.StateErased:
+		return nil
+	default:
+		if got != believed {
+			return casestore.ErrCaseChanged
+		}
+	}
+	return nil
+}
+
+// beliefFirst answers a stale tab before any input is judged (D-A-02). It reads
+// without the gate and settles nothing; the guard under the gate still decides. A
+// case that cannot be read or is marked keeps its existing answers.
+func (h *handler) beliefFirst(ctx context.Context, id casestore.CaseID, a casestore.Action, believed casestore.State) error {
+	if believed == "" {
+		return nil
+	}
+	info, err := h.infoOf(ctx, id)
+	if err != nil || info.Mark != "" {
+		return nil
+	}
+	// CheckBelief looks only at the real state for restore as new (it takes any
+	// belief), so a tab that believes anything but "archived" is stale here.
+	if a == casestore.ActionRestoreAsNew && believed != casestore.StateArchived {
+		return casestore.ErrCaseChanged
+	}
+	return casestore.CheckBelief(a, believed, casestore.StateOf(info))
+}
+
 // innerCase unwraps the read-share wrapper so an optional interface can be asserted.
 func innerCase(c casestore.Case) casestore.Case {
 	if sc, ok := c.(*sharedCase); ok {
@@ -381,11 +423,15 @@ func (h *handler) deleteRetry(w http.ResponseWriter, r *http.Request, arg string
 	if !ok {
 		return
 	}
-	_, rs, _, done, ok := h.retryCaseOf(w, r, rawCase)
+	c, rs, _, done, ok := h.retryCaseOf(w, r, rawCase)
 	if !ok {
 		return
 	}
 	defer done()
+	if casestore.StateOf(c.Info()) != casestore.StateOpen {
+		writeCaseFailure(w, http.StatusConflict, "case-closed", retryClosedText)
+		return
+	}
 	if err := rs.RemoveRetry(r.Context(), rid); err != nil {
 		writeRetryError(w, err)
 		return

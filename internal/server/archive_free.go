@@ -76,14 +76,18 @@ func (h *handler) freeCase(w http.ResponseWriter, r *http.Request, raw string) {
 	if !ok {
 		return
 	}
+	believed, ok := believedState(w, r)
+	if !ok {
+		return
+	}
+	if err := h.beliefFirst(r.Context(), id, casestore.ActionFree, believed); err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	// Free needs the master key in force: blocked while it is locked, damaged or
 	// not set up yet.
 	if h.mk.State() != MasterKeyUnlocked {
 		h.masterKeyFail(w, http.StatusConflict, "no-master-key", "Set a master key first.")
-		return
-	}
-	believed, ok := believedState(w, r)
-	if !ok {
 		return
 	}
 	var body freeBody

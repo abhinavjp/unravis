@@ -720,6 +720,9 @@ func archivedAt(c casestore.CaseInfo) time.Time {
 	return c.Created
 }
 
+// badTitleText is the answer for a title the create rule refuses (D-A-08).
+const badTitleText = "The title must be 2 to 80 characters and hold no control characters."
+
 func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 	if !h.casesAvailable(w) {
 		return
@@ -735,8 +738,8 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 	// case the first request made (200) and makes no second one.
 	requestID := body.strs["requestId"]
 	title := strings.TrimSpace(body.strs["title"])
-	if !casestore.ValidTitle(title) {
-		writeCaseFailure(w, http.StatusBadRequest, "bad-title", "The title is empty, too long or holds control characters.")
+	if !casestore.ValidNewTitle(title) {
+		writeCaseFailure(w, http.StatusBadRequest, "bad-title", badTitleText)
 		return
 	}
 	if requestID != "" && !casestore.ValidRequestID(requestID) {
@@ -769,7 +772,7 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if errors.Is(err, casestore.ErrBadTitle) {
-			writeCaseFailure(w, http.StatusBadRequest, "bad-title", "The title is empty, too long or holds control characters.")
+			writeCaseFailure(w, http.StatusBadRequest, "bad-title", badTitleText)
 			return
 		}
 		writeStoreError(w, err)
@@ -924,9 +927,17 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 		writeCaseFailure(w, http.StatusBadRequest, "confirm-mismatch", "The code does not match the case code.")
 		return
 	}
+	believed, ok := believedState(w, r)
+	if !ok {
+		return
+	}
 	// An archive that is running must be cancelled first (M15). Checked before anything
 	// is stopped, so a refused erase touches nothing, and again under the gate.
 	if err := h.refuseWhileArchiving(r.Context(), id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if err := h.eraseBelief(r.Context(), id, believed); err != nil {
 		writeStoreError(w, err)
 		return
 	}
@@ -945,6 +956,10 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 	}
 	defer release()
 	if err := h.refuseWhileArchiving(r.Context(), id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if err := h.eraseBelief(r.Context(), id, believed); err != nil {
 		writeStoreError(w, err)
 		return
 	}

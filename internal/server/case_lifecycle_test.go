@@ -243,7 +243,7 @@ func TestCreateWithRequestIDMakesOneCase(t *testing.T) {
 				t.Fatal("a new request id reused a case")
 			}
 			// An id the server cannot log safely is refused.
-			wantFailure(t, createWith(e, "x", "bad id!"), 400, "bad-request-id", "")
+			wantFailure(t, createWith(e, "xx", "bad id!"), 400, "bad-request-id", "")
 			if items, _ := store.List(context.Background()); len(items) != 2 {
 				t.Fatalf("store holds %d cases, want 2", len(items))
 			}
@@ -429,6 +429,26 @@ func TestRetryOnAClosedCaseWaitsForReopen(t *testing.T) {
 		res = e.json(http.MethodPost, "/api/cases/"+id+"/retries/"+strconv.FormatInt(v.Retries[0].ID, 10)+"/retry", "")
 		if res.Code != http.StatusNoContent {
 			t.Fatalf("retry after reopen = %d %s", res.Code, res.Body)
+		}
+	})
+}
+
+func TestDeleteRetryOnAClosedCaseWaitsForReopen(t *testing.T) {
+	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
+		putRetries(e, id, `{"items":[{"kind":"environments","key":"environments","label":"Environments","reason":"failed","payload":{"environments":["prod"]}}]}`)
+		e.believing(http.MethodPost, "/api/cases/"+id+"/close", "", "open")
+		v := e.view(t, id)
+		rid := strconv.FormatInt(v.Retries[0].ID, 10)
+		wantFailure(t, e.json(http.MethodDelete, "/api/cases/"+id+"/retries/"+rid, ""), 409, "case-closed", "The case is closed. Reopen it to try again.")
+		if v := e.view(t, id); len(v.Retries) != 1 {
+			t.Fatal("a refused delete dropped the item")
+		}
+		e.believing(http.MethodPost, "/api/cases/"+id+"/reopen", "", "closed")
+		if res := e.json(http.MethodDelete, "/api/cases/"+id+"/retries/"+rid, ""); res.Code != http.StatusNoContent {
+			t.Fatalf("delete after reopen = %d %s", res.Code, res.Body)
+		}
+		if v := e.view(t, id); len(v.Retries) != 0 {
+			t.Fatalf("retries after delete = %+v", v.Retries)
 		}
 	})
 }
