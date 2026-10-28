@@ -65,8 +65,20 @@ test('the export drawer has no Save button for an empty preview', () => {
   const block = panel.slice(panel.indexOf('<div class="export-save">'));
   const end = block.indexOf('</div>');
   const saveBlock = block.slice(0, end);
-  assert.match(saveBlock, /{:else if !summary.empty}/, 'the Save button only exists when the preview has findings');
+  assert.match(saveBlock, /\{:else if !summary\.empty\}/, 'the Save button only exists when the preview has findings');
   assert.ok(saveBlock.indexOf('{:else if !summary.empty}') < saveBlock.indexOf('EXPORT_TEXT.save}'), 'the button sits inside that branch');
-  assert.doesNotMatch(saveBlock, /{:else}/, 'there is no unconditional Save button');
+  assert.doesNotMatch(saveBlock, /\{:else\}/, 'there is no unconditional Save button');
   assert.equal((panel.match(/class="primary-button"/g) ?? []).length, 2, 'the Preview button and the Save button are the only primary buttons');
+});
+
+// L7-10: Escape closes the report preview.
+test('Escape closes the report preview and focus goes back to the Preview button', () => {
+  const src = read('src/lib/components/guided/ReportExport.svelte');
+  assert.match(src, /function closePreview\(\)\s*\{\s*preview = '';\s*previewButton\?\.focus\(\);/);
+  assert.match(src, /if \(preview\) closeButton\?\.focus\(\)/);
+  assert.match(src, /event\.key === 'Escape'[^}]*closePreview\(\)/);
+  assert.match(src, /bind:this=\{previewButton\}/);
+  assert.match(src, /bind:this=\{closeButton\}[^>]*onclick=\{closePreview\}/);
+  assert.match(src, /<iframe title=\{T\.preview\} sandbox="" srcdoc=\{preview\}><\/iframe>/, 'the sandbox stays empty');
+  assert.doesNotMatch(src, /(let|const)\s+state\b/);
 });

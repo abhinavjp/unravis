@@ -14,6 +14,17 @@
   let saved = $state('');
   let problem = $state('');
   let ready = $state('');
+  let previewButton = $state<HTMLButtonElement>();
+  let closeButton = $state<HTMLButtonElement>();
+
+  function closePreview() {
+    preview = '';
+    previewButton?.focus();
+  }
+  // Opening the preview puts focus on its Close button, so Escape reaches this page (a key pressed inside the sandboxed frame does not).
+  $effect(() => {
+    if (preview) closeButton?.focus();
+  });
 
   const empty = $derived(!store.answer);
   const warnings = $derived(reportWarnings(store.answer?.read, store.outOfDate(sourceIds), T.truncated, T.exportStale));
@@ -80,7 +91,7 @@
   <div class="row">
     <button type="button" class="primary-button" disabled={building} onclick={() => void download('html')}>{warnings.length > 0 ? T.downloadHtmlWarn : T.downloadHtml}</button>
     <button type="button" class="secondary-button" disabled={building} onclick={() => void download('csv')}>{T.downloadCsv}</button>
-    <button type="button" class="secondary-button" disabled={building} onclick={() => void showPreview()}>{T.preview}</button>
+    <button type="button" class="secondary-button" bind:this={previewButton} disabled={building} onclick={() => void showPreview()}>{T.preview}</button>
   </div>
   <p class="note">{T.exportPrivacy}</p>
 
@@ -91,9 +102,10 @@
   {#if saved}<p class="note" role="status">{saved}</p>{/if}
 
   {#if preview}
-    <div class="preview">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="preview" onkeydown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); closePreview(); } }}>
       <iframe title={T.preview} sandbox="" srcdoc={preview}></iframe>
-      <div><button type="button" class="quiet-button" onclick={() => (preview = '')}>{T.exportClose}</button></div>
+      <div><button type="button" class="quiet-button" bind:this={closeButton} onclick={closePreview}>{T.exportClose}</button></div>
     </div>
   {/if}
 </section>
