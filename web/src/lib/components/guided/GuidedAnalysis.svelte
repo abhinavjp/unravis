@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
+  import { SHELL_TEXT as S } from '../../copy/guidedShellCopy';
   import { GuidedStore } from '../../guided/guided.svelte';
   import { nextTabIndex, railItems, stepOf, stickerFor } from '../../guided/stepModel';
   import type { SourceNeed } from '../../guided/tools';
@@ -28,6 +29,16 @@
   let panel = $state<Panel>('main');
   let menu = $state<HTMLDetailsElement | null>(null);
   let heading = $state<HTMLHeadingElement | null>(null);
+  // A step change (rail, Previous, Next, a link inside a step) moves the keyboard to the new step title. The first value is read
+  // once, so remounting a case that already has a count does not steal focus.
+  let seenFocus = untrack(() => store.titleFocus);
+  $effect(() => {
+    const wanted = store.titleFocus;
+    if (wanted === seenFocus) return;
+    seenFocus = wanted;
+    if (untrack(() => store.mode !== 'guided' || panel !== 'main')) return;
+    void tick().then(() => document.getElementById('step-title-' + store.step)?.focus());
+  });
 
   const sourceIds = $derived(app.sources.map((s) => s.id));
   // SQL, Mongo and host files have no importer yet, so only the audit source and the IIS file can be present.
@@ -74,7 +85,7 @@
 
   <header class="head">
     <div class="titles">
-      <h2 tabindex="-1" bind:this={heading}>{T.heading}</h2>
+      <h2 tabindex="-1" bind:this={heading}>{store.mode === 'guided' ? T.heading : S.manualHeading}</h2>
       <p class="note">{store.mode === 'guided' ? `${T.modeGuidedNow} ${T.intro}` : `${T.modeManualNow} ${T.introManual}`}</p>
     </div>
     <details class="menu" bind:this={menu}>

@@ -48,6 +48,8 @@ export class GuidedStore {
   views = $state.raw<SavedView[]>([]);
   planLoaded = $state(false);
   planError = $state('');
+  /** Goes up on every step change. The page watches it and moves the keyboard to the new step title. */
+  titleFocus = $state(0);
   viewError = $state('');
   report = $state.raw<ReportAnswer | null>(null);
   reportState = $state<'idle' | 'building' | 'failed'>('idle');
@@ -87,7 +89,7 @@ export class GuidedStore {
     writeMode(this.caseId, mode);
   }
 
-  goTo(step: number): void { this.step = clampStep(step); }
+  goTo(step: number): void { this.step = clampStep(step); this.titleFocus++; }
 
   pick(pick: QuickPick, now: number): void { this.frame = { ...this.frame, ...quickPick(pick, now) }; }
 
