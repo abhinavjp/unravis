@@ -162,6 +162,14 @@ export function mongoRow(item: MongoSaved, tested?: { word: ConnectionWord; at: 
 /** True while another SQL connection can be saved. */
 export const canSaveAnother = (savedSql: number): boolean => savedSql < CONNECTION_LIMIT;
 
+// ---- grant script choices -----------------------------------------------------------------------------------------------------
+
+/** What a person typed or picked in the grant script panel. Kept in memory while the page is open, so the panel coming and going does not undo it. */
+export interface GrantChoice { version?: '2019' | '2022'; login?: string; database?: string }
+const grantMemory: { sql: GrantChoice; mongo: GrantChoice } = { sql: {}, mongo: {} };
+export const recallGrant = (kind: 'sql' | 'mongo'): GrantChoice => grantMemory[kind];
+export function rememberGrant(kind: 'sql' | 'mongo', choice: GrantChoice): void { grantMemory[kind] = { ...grantMemory[kind], ...choice }; }
+
 // ---- windows ----------------------------------------------------------------------------------------------------------------------
 
 /** A window from two "YYYY-MM-DDTHH:MM" UTC inputs, or null when either is empty, unreadable or the end is not after the start. */

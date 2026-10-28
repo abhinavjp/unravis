@@ -135,3 +135,48 @@ test('M4: + MongoDB opens the window where a connection is saved, and is off whe
   assert.match(copy.CONN_TEXT.mongoHere, /Refresh/);
   assert.doesNotMatch(copy.CONN_TEXT.mongoHere, /drawer/i, 'the old sentence named a drawer the user was never taken to');
 });
+
+// ---- minors 1 to 4: the grant script panel -------------------------------------------------------------------------------------------
+
+test('minor 1: a missing permission\'s script is shown once, with its check, not again in the grant panel', () => {
+  const panel = comp('GrantScriptPanel');
+  assert.doesNotMatch(panel, /fixScript|permission=|{permission}/, 'the panel has no per-check script of its own');
+  assert.doesNotMatch(comp('SourceStep'), /fixScript|firstFix|permission=/);
+  const view = comp('LaneResultView');
+  assert.match(view, /data-fix=\{check\.id\}/, 'each fix is listed once, with its check');
+  assert.equal((view.match(/<pre class="script"/g) ?? []).length, 1);
+});
+
+test('minor 2: the grant script follows the login and the version (the real route takes both)', () => {
+  const src = read('src/lib/lanes.ts');
+  assert.match(src, /query\(\{ kind: 'sql', version, login, database \}\)/);
+  assert.match(src, /query\(\{ kind: 'mongo', login, database \}\)/);
+  const panel = comp('GrantScriptPanel');
+  assert.match(panel, /const v = chosen; const l = who\.trim\(\); const d = db\.trim\(\)/, 'a change of version, login or database runs the fetch again');
+  assert.match(panel, /fetchSqlGrantScripts\(v, l, d, mine\.signal\)/);
+  assert.match(panel, /bind:value=\{who\}/);
+  assert.match(panel, /bind:value=\{db\}/);
+});
+
+test('minor 3: every Copy says Copied beside itself', () => {
+  const view = comp('LaneResultView');
+  assert.match(view, /copied === check\.id \? GRANT_TEXT\.copied/, 'each fix has its own note');
+  const panel = comp('GrantScriptPanel');
+  assert.match(panel, /copied === 'yes' \? GRANT_TEXT\.copied/);
+  assert.equal((panel.match(/GRANT_TEXT\.copy\}/g) ?? []).length, 1, 'the one Copy button of the panel has its note');
+});
+
+test('minor 4: the grant script does not blank while it reloads, and a pick survives the panel leaving', () => {
+  const panel = comp('GrantScriptPanel');
+  assert.match(panel, /\{#if script !== ''\}/, 'the script on screen stays while the next one loads');
+  assert.doesNotMatch(panel, /script !== '' && !loading/);
+  assert.match(panel, /\{#if loading && script === ''\}/, 'Writing the script only shows when there is nothing to show yet');
+  assert.match(panel, /aria-busy=\{loading\}/);
+  assert.match(panel, /disabled=\{loading\} onclick=\{\(\) => void copy\(script\)\}/, 'a half-loaded script cannot be copied');
+  lanes.rememberGrant('sql', { version: '2019' });
+  lanes.rememberGrant('sql', { login: 'unravis_ro' });
+  assert.deepEqual({ ...lanes.recallGrant('sql') }, { version: '2019', login: 'unravis_ro' });
+  assert.deepEqual({ ...lanes.recallGrant('mongo') }, {}, 'the two kinds keep their own picks');
+  assert.match(panel, /const kept = recallGrant\(kind\)/);
+  assert.match(panel, /rememberGrant\(kind, \{ version: '2019' \}\)/);
+});

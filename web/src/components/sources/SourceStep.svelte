@@ -33,7 +33,6 @@
   const open = $derived(unsaved ?? mine.find(d => d.id === openId) ?? newestDay(mine));
   const title = $derived(kind === 'sql' ? STEP_TEXT.sqlHeading : STEP_TEXT.mongoHeading);
   const missing = $derived(open?.lane?.checks.some(c => c.fix !== null) ?? false);
-  const firstFix = $derived(open?.lane?.checks.find(c => c.fix !== null)?.fix ?? null);
   const preset = $derived(open ? { incident: shiftDays(open.incident, readableByDay(kind) ? 1 : 0), reference: open.reference } : null);
 
   async function load() {
@@ -109,8 +108,7 @@
     {#if open}
       <LaneResultView day={open} onAddDay={readableByDay(kind) && !readOnly ? () => { adding = true; } : undefined} onAddData={readOnly ? undefined : onAddData} />
       {#if missing}
-        <GrantScriptPanel kind={kind} version={open.lane?.era === '2019' ? '2019' : '2022'} database={open.database}
-          permission={firstFix?.permission ?? ''} fixScript={firstFix?.script ?? ''} />
+        <GrantScriptPanel kind={kind} version={open.lane?.era === '2019' ? '2019' : '2022'} database={open.database} />
       {/if}
       {#if kind === 'mongo'}<ProfilerGuide database={open.database} guide={open.lane?.guide ?? null} />{/if}
     {/if}
