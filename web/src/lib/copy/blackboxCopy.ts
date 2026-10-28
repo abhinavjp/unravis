@@ -185,7 +185,10 @@ export const BB_TEXT = {
   port: 'Status port',
   portHelp: 'The recorder answers on this port.',
   bind: 'Listens on',
-  bindHelp: '127.0.0.1 means only this computer can ask it. To let Unravis on another PC read it, set the server address and add a firewall rule for the port.',
+  bindHelp: '127.0.0.1 means only this computer can ask it. To let Unravis on another PC read it, set the server address. Unravis does not add a firewall rule. Adding one is your own choice.',
+  // Shown when the listen address is every address (D-B-50, D-C-20). Warn only; never refuse.
+  bindWarn: 'This lets other computers on the network reach the status port. The read key is the only protection.',
+  reviewBindWarn: 'This Blackbox listens on every address, so other computers can reach it. The read key is the only protection.',
   housekeepingNote: 'Housekeeping always runs. You can lower the limits but not turn them off.',
   settingProblems: {
     name: 'Go back and fix the name.',

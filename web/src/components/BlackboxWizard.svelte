@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import {
-    NAME_MAX, blackboxApi, defaultSettings, nameProblem, packFileName, refusalText, saveBlob, settingsProblem, wizardEscape,
+    NAME_MAX, blackboxApi, defaultSettings, listensOnAll, nameProblem, packFileName, refusalText, saveBlob, settingsProblem, wizardEscape,
     type BlackboxItem, type InstallAnswer, type Settings, type ThisPc
   } from '../lib/blackbox';
   import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
@@ -196,6 +196,7 @@
         <div><dt>{T.reviewBind}</dt><dd>{settings.bind}</dd></div>
         <div><dt>{T.reviewProbe}</dt><dd>{T.reviewProbeOff}</dd></div>
       </dl>
+      {#if listensOnAll(settings.bind)}<p class="bb-note bb-warn">{T.reviewBindWarn}</p>{/if}
       <p class="bb-note">{T.readOnly}</p>
       {#if where === 'pc'}<p class="bb-note">{T.windowsAsks}</p>{:else}<p class="bb-note">{T.packWill(file, name)}</p>{/if}
     </section>
@@ -226,6 +227,7 @@
   .bb-wizard-head h3 { margin: 0; font-size: var(--fs-5); font-weight: 600; }
   .bb-wizard-head h3:focus-visible { outline-offset: 3px; }
   .bb-part-now { display: block; margin-top: 2px; font-size: 13px; font-weight: 500; color: var(--text-2); }
+  .bb-warn { color: var(--text); border-left: 3px solid var(--warn); padding-left: var(--space-2); }
   .bb-parts { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin: var(--space-3) 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--text-2); }
   .bb-parts li.current { color: var(--text); font-weight: 600; }
   .bb-part-n { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 50%; font-size: 12px; font-variant-numeric: tabular-nums; }

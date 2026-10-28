@@ -175,3 +175,27 @@ test('D-B-49: the heading shows the real part, for example "Part 2 of 4: Where"'
   assert.match(wizard, /aria-label=\{T\.partOf\(part\)\}/);
   assert.ok(blackboxCopyEntries().some((entry) => entry.id === 'blackbox.partHeading'), 'the lint reads partHeading');
 });
+
+test('D-B-50: listensOnAll is true for every address and false otherwise, and 0.0.0.0 stays valid', () => {
+  for (const yes of ['0.0.0.0', ' 0.0.0.0 ', '::']) assert.equal(bb.listensOnAll(yes), true, yes);
+  for (const no of ['127.0.0.1', 'web-a', '', '0.0.0.1', '10.0.0.5', '[::]', '::1']) assert.equal(bb.listensOnAll(no), false, no);
+  // Warn only, never refuse.
+  assert.equal(bb.validBind('0.0.0.0'), true);
+  const settings = { ...bb.defaultSettings(), name: 'web-a', bind: '0.0.0.0' };
+  assert.notEqual(bb.settingsProblem(settings), 'bind');
+  assert.equal(bb.listensOnAll(bb.defaultSettings().bind), false);
+});
+
+test('D-B-50 and D-C-20: the warning, the Review sentence and the opt-in firewall note', () => {
+  assert.equal(T.bindWarn, 'This lets other computers on the network reach the status port. The read key is the only protection.');
+  assert.match(T.reviewBindWarn, /The read key is the only protection\./);
+  assert.match(T.bindHelp, /Unravis does not add a firewall rule\. Adding one is your own choice\./);
+  assert.doesNotMatch(T.bindHelp, /and add a firewall rule/);
+  const fields = read('src/components/BlackboxSettings.svelte');
+  assert.match(fields, /\{#if warnAll\}<p class="bb-note bb-warn" id="\{idPrefix\}-bind-warn">\{T\.bindWarn\}<\/p>\{\/if\}/);
+  assert.match(fields, /aria-describedby="\{idPrefix\}-bind-help\{warnAll \? ' ' \+ idPrefix \+ '-bind-warn' : ''\}"/);
+  const wizard = read('src/components/BlackboxWizard.svelte');
+  assert.match(wizard, /\{#if listensOnAll\(settings\.bind\)\}<p class="bb-note bb-warn">\{T\.reviewBindWarn\}<\/p>\{\/if\}/);
+  // The Review sentence sits after the facts list and before the read-only note.
+  assert.ok(wizard.indexOf('T.reviewBindWarn') > wizard.indexOf('T.reviewBind}') && wizard.indexOf('T.reviewBindWarn') < wizard.indexOf('{T.readOnly}', wizard.indexOf('T.reviewBindWarn')));
+});

@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { INTERVALS, type Settings } from '../lib/blackbox';
+  import { INTERVALS, listensOnAll, type Settings } from '../lib/blackbox';
   import { BB_TEXT as T } from '../lib/copy/blackboxCopy';
 
   // The settings fields of a Blackbox, shared by the Place wizard (part 3) and Apply settings on this PC.
   let { settings = $bindable(), logPathsText = $bindable(), idPrefix = 'bb' }: { settings: Settings; logPathsText: string; idPrefix?: string } = $props();
+  const warnAll = $derived(listensOnAll(settings.bind));
 </script>
 
 <section class="bb-block" aria-label={T.settingsHeading}>
@@ -32,8 +33,9 @@
   <p class="bb-note" id="{idPrefix}-folder-help">{T.folderHelp}</p>
   <label class="bb-field"><span>{T.port}</span><input type="number" min="1" max="65535" step="1" bind:value={settings.port} aria-describedby="{idPrefix}-port-help" /></label>
   <p class="bb-note" id="{idPrefix}-port-help">{T.portHelp}</p>
-  <label class="bb-field"><span>{T.bind}</span><input type="text" bind:value={settings.bind} autocomplete="off" spellcheck="false" aria-describedby="{idPrefix}-bind-help" /></label>
+  <label class="bb-field"><span>{T.bind}</span><input type="text" bind:value={settings.bind} autocomplete="off" spellcheck="false" aria-describedby="{idPrefix}-bind-help{warnAll ? ' ' + idPrefix + '-bind-warn' : ''}" /></label>
   <p class="bb-note" id="{idPrefix}-bind-help">{T.bindHelp}</p>
+  {#if warnAll}<p class="bb-note bb-warn" id="{idPrefix}-bind-warn">{T.bindWarn}</p>{/if}
   <label class="bb-field"><span>{T.logPaths}</span><textarea rows="2" bind:value={logPathsText} spellcheck="false"></textarea></label>
 </section>
 
@@ -41,6 +43,7 @@
   .bb-block { display: grid; gap: var(--space-2); min-width: 0; margin: 0; padding: 0; border: 0; }
   .bb-block h4 { margin: 0; font-size: 14px; font-weight: 600; }
   .bb-note { margin: 0; color: var(--text-2); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+  .bb-warn { color: var(--text); border-left: 3px solid var(--warn); padding-left: var(--space-2); }
   .bb-field { display: grid; gap: 4px; font-size: 13px; font-weight: 500; }
   .bb-field input[type='text'], .bb-field input[type='number'], .bb-field select, .bb-field textarea { width: 100%; max-width: 420px; padding: 6px 8px; font: inherit; font-weight: 400; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-sizing: border-box; }
   .bb-field textarea { font-family: var(--mono); font-size: 12px; resize: vertical; }

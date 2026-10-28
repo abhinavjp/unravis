@@ -314,6 +314,12 @@ export function settingsProblem(s: Settings): SettingsProblem | null {
   return null;
 }
 
+/** Whether the listen address is every address (IPv4 0.0.0.0 or IPv6 ::), so other computers can reach the status port (D-B-50). */
+export function listensOnAll(bind: string): boolean {
+  const s = bind.trim();
+  return s === '0.0.0.0' || s === '::';
+}
+
 /** What kind of place the typed text looks like. The server decides; this only decides whether to ask for a read key. */
 export function guessKind(location: string): LocationKind | null {
   const s = location.trim();
