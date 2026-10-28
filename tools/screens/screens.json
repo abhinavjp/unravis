@@ -1125,6 +1125,110 @@
         {"waitFor": "[data-keeper=migrate]"},
         {"scrollTo": "#conn-head"}
       ]
+    },
+    {
+      "id": "p11-welcome", "phase": "P11", "doc": "install.md", "narrow": false, "app": "setup",
+      "steps": [
+        {"goto": "/?scenario=fresh"},
+        {"waitFor": "role=heading[name=\"Install Unravis\"]"},
+        {"waitFor": "text=41.0 GB free on C:."}
+      ]
+    },
+    {
+      "id": "p11-preflight-fail", "phase": "P11", "doc": "install.md", "narrow": false, "app": "setup",
+      "steps": [
+        {"goto": "/?scenario=preflight-fail"},
+        {"waitFor": "role=heading[name=\"Install Unravis\"]"},
+        {"waitFor": "text=Free some space on C:"}
+      ]
+    },
+    {
+      "id": "p11-options", "phase": "P11", "doc": "install.md", "narrow": false, "app": "setup",
+      "steps": [
+        {"goto": "/?scenario=fresh"},
+        {"waitFor": "text=41.0 GB free on C:."},
+        {"click": "role=button[name=\"Next\"]"},
+        {"waitFor": "role=heading[name=\"Where and how\"]"},
+        {"click": "role=checkbox[name=\"Also place a Blackbox recorder on this PC\"]"},
+        {"waitFor": "role=checkbox[name=\"Allow other PCs to read it (firewall rule)\"]"}
+      ]
+    },
+    {
+      "id": "p11-uac-explain", "phase": "P11", "doc": "install.md", "narrow": false, "app": "setup",
+      "steps": [
+        {"goto": "/?scenario=done"},
+        {"waitFor": "text=41.0 GB free on C:."},
+        {"click": "role=button[name=\"Next\"]"},
+        {"click": "role=radio[name=/For everyone on this PC/]"},
+        {"click": "role=checkbox[name=\"Also place a Blackbox recorder on this PC\"]"},
+        {"click": "role=button[name=\"Next\"]"},
+        {"waitFor": "role=heading[name=\"Windows will ask for admin approval\"]"},
+        {"waitFor": "role=heading[name=\"Will not change\"]"}
+      ]
+    },
+    {
+      "id": "p11-progress", "phase": "P11", "doc": "install.md", "narrow": false, "app": "setup",
+      "steps": [
+        {"goto": "/?scenario=progress"},
+        {"waitFor": "text=41.0 GB free on C:."},
+        {"click": "role=button[name=\"Next\"]"},
+        {"click": "role=button[name=\"Next\"]"},
+        {"waitFor": "role=heading[name=\"Installing\"]"},
+        {"waitFor": "[role=progressbar][aria-valuenow=\"43\"]"}
+      ]
+    },
+    {
+      "id": "p11-done", "phase": "P11", "doc": "install.md", "narrow": false, "app": "setup",
+      "steps": [
+        {"goto": "/?scenario=done"},
+        {"waitFor": "text=41.0 GB free on C:."},
+        {"click": "role=button[name=\"Next\"]"},
+        {"click": "role=radio[name=/For everyone on this PC/]"},
+        {"click": "role=checkbox[name=\"Also place a Blackbox recorder on this PC\"]"},
+        {"click": "role=button[name=\"Next\"]"},
+        {"click": "role=button[name=\"Continue\"]"},
+        {"waitFor": "role=heading[name=\"Unravis is installed\"]"},
+        {"waitFor": "role=heading[name=\"Read key (shown once)\"]"}
+      ]
+    },
+    {
+      "id": "p11-failed-rolled-back", "phase": "P11", "doc": "install.md", "narrow": false, "app": "setup",
+      "steps": [
+        {"goto": "/?scenario=failed"},
+        {"waitFor": "text=41.0 GB free on C:."},
+        {"click": "role=button[name=\"Next\"]"},
+        {"click": "role=radio[name=/For everyone on this PC/]"},
+        {"click": "role=checkbox[name=\"Also place a Blackbox recorder on this PC\"]"},
+        {"click": "role=button[name=\"Next\"]"},
+        {"click": "role=button[name=\"Continue\"]"},
+        {"waitFor": "role=heading[name=\"Install did not finish. Nothing was left behind.\"]"},
+        {"waitFor": "role=button[name=\"Back to Options\"]"}
+      ]
+    },
+    {
+      "id": "p11-upgrade", "phase": "P11", "doc": "upgrade-and-uninstall.md", "narrow": false, "app": "setup",
+      "steps": [
+        {"goto": "/?scenario=upgrade"},
+        {"waitFor": "role=heading[name=\"Upgrade Unravis 0.9.2 to 1.0.0\"]"},
+        {"waitFor": "text=Setup closes it, and opens it again"}
+      ]
+    },
+    {
+      "id": "p11-repair", "phase": "P11", "doc": "upgrade-and-uninstall.md", "narrow": false, "app": "setup",
+      "steps": [
+        {"goto": "/?scenario=repair"},
+        {"waitFor": "role=heading[name=\"Repair Unravis 1.0.0\"]"},
+        {"waitFor": "text=Unravis 1.0.0 is installed in"}
+      ]
+    },
+    {
+      "id": "p11-uninstall", "phase": "P11", "doc": "upgrade-and-uninstall.md", "narrow": false, "app": "setup",
+      "steps": [
+        {"goto": "/?scenario=uninstall"},
+        {"waitFor": "role=heading[name=\"Remove Unravis\"]"},
+        {"click": "role=checkbox[name=\"Also delete the cases and saved connections of everyone on this PC\"]"},
+        {"waitFor": "text=Type DELETE to confirm"}
+      ]
     }
   ]
 }
