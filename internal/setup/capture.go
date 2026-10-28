@@ -2,6 +2,7 @@ package setup
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -49,9 +50,28 @@ func (b *ScriptedBackend) Run(ctx context.Context, req WorkRequest, onEvent func
 	}
 	if b.Hold {
 		<-ctx.Done()
+		// As the engine does on a cancel: the step that was running stops, and every step that finished is put back, last first.
+		var done []StepEvent
+		for _, e := range b.Script {
+			if e.State == StepDone {
+				done = append(done, e)
+			}
+		}
+		for i := len(done) - 1; i >= 0; i-- {
+			onEvent(ev(done[i].ID, done[i].Title, StepUndone, ""))
+		}
 		return Result{Outcome: OutcomeCancelled, Op: req.Op, Message: "Cancelled. Everything setup changed has been put back."}
 	}
 	res := b.Res
+	// What the person ticked for deletion is not kept.
+	var kept []string
+	for _, k := range res.Kept {
+		if (req.Uninstall.DeleteCases && strings.HasPrefix(k, "Cases")) || (req.Uninstall.DeleteRecordings && strings.HasPrefix(k, "Blackbox recordings")) {
+			continue
+		}
+		kept = append(kept, k)
+	}
+	res.Kept = kept
 	res.Op = req.Op
 	if res.Op == "" {
 		res.Op = b.St.Mode
@@ -84,7 +104,7 @@ func CaptureScenarios() map[string]UIBackend {
 	ready := []Check{
 		{ID: "windows", Title: "Windows", Status: CheckReady, Detail: "Windows 11 64-bit (build 22631)"},
 		{ID: "browser", Title: "Browser", Status: CheckReady, Detail: "Microsoft Edge"},
-		{ID: "disk", Title: "Disk space", Status: CheckReady, Detail: "C: has 41 GB free"},
+		{ID: "install-folder", Title: "Disk space", Status: CheckReady, Detail: "C: has 41 GB free"},
 		{ID: "admin", Title: "Administrator approval", Status: CheckReady, Detail: "You can approve administrator changes when Windows asks"},
 		{ID: "reboot", Title: "Restart pending", Status: CheckReady, Detail: "No restart is waiting"},
 	}
@@ -119,11 +139,10 @@ func CaptureScenarios() map[string]UIBackend {
 		Res: Result{Outcome: OutcomeDone, Message: "Unravis " + version + " is installed.", Version: version, AppExe: userLoc + `\unravis.exe`}}
 
 	failChecks := append([]Check{}, ready...)
-	failChecks[2] = Check{ID: "disk", Title: "Disk space", Status: CheckFailed, Detail: "C: has 61 MB free; Unravis needs 100 MB",
+	failChecks[2] = Check{ID: "install-folder", Title: "Disk space", Status: CheckFailed, Detail: "C: has 61 MB free; Unravis needs 100 MB",
 		Fix: "Free some space on C: (empty the Recycle Bin, or remove files you no longer need), then press Check again."}
-	failChecks = append(failChecks, Check{ID: "reboot2", Title: "Restart pending", Status: CheckPartly,
-		Detail: "Windows is waiting for a restart after an update", Fix: "Setup can go on. Restart when it suits you."})
-	failChecks = append(failChecks[:4], failChecks[5:]...)
+	failChecks[4] = Check{ID: "reboot", Title: "Restart pending", Status: CheckPartly,
+		Detail: "Windows is waiting for a restart after an update", Fix: "Setup can go on. Restart when it suits you."}
 	preflightFail := &ScriptedBackend{St: base, Checks: failChecks}
 
 	// The progress screen: three steps done, one running, the rest waiting. It holds until Cancel.
@@ -140,7 +159,7 @@ func CaptureScenarios() map[string]UIBackend {
 
 	bbChecks := append([]Check{}, ready...)
 	bbChecks = append(bbChecks, Check{ID: "port", Title: "Blackbox port", Status: CheckReady, Detail: "Port 7788 is free"},
-		Check{ID: "recordings", Title: "Recordings folder", Status: CheckReady, Detail: `D: has 212 GB free`})
+		Check{ID: "recordings-folder", Title: "Recordings folder", Status: CheckReady, Detail: `D: has 212 GB free`})
 	done := &ScriptedBackend{St: base, Checks: bbChecks,
 		Script: finished(machineSteps, map[string]string{"copy-files": machineLoc + `\unravis.exe`, "blackbox": "web-01 is Running on port 7788"}),
 		Res: Result{Outcome: OutcomeDone, Message: "Unravis " + version + " is installed.", Version: version, AppExe: machineLoc + `\unravis.exe`,
@@ -166,7 +185,7 @@ func CaptureScenarios() map[string]UIBackend {
 	up.Installed = &UIInstalled{Version: "0.9.2", Scope: ScopeUser, Location: userLoc}
 	upChecks := []Check{ready[0], ready[1], ready[2],
 		{ID: "existing", Title: "Unravis already installed", Status: CheckReady, Detail: "Version 0.9.2 in " + userLoc + ". This will upgrade it."},
-		{ID: "running", Title: "Unravis is running", Status: CheckPartly, Detail: "It will be closed. Unsaved work in an open wizard is lost.",
+		{ID: "app-running", Title: "Unravis is running", Status: CheckPartly, Detail: "It will be closed. Unsaved work in an open wizard is lost.",
 			Fix: "Finish what you are doing in Unravis first, or let setup close it."}}
 	upSteps := [][2]string{{"close-app", "Close Unravis"}, {"copy-files", "Copy the program files"}, {"shortcuts", "Add the Start menu shortcut"},
 		{"arp", "Add Unravis to Installed apps"}, {"state", "Save the setup choices"}, {"verify", "Check that Unravis starts"}}

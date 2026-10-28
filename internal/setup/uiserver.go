@@ -433,7 +433,25 @@ func DescribeChanges(req WorkRequest, old *Installed, d Dirs, isAdmin bool) UICh
 		if o.Firewall != nil {
 			c.WillChange = append(c.WillChange, "Remove the firewall rule for port "+strconv.Itoa(o.Blackbox.Port))
 		}
-		c.WillNotChange = []string{"Cases and saved connections (unless you ticked them)", "Blackbox recordings (unless you ticked them)", "Other programs and services", "Any database or server"}
+		// A ticked deletion is named in the first list, so the approval screen never hides what goes.
+		u := req.Uninstall
+		if u.DeleteCases {
+			if o.Scope == ScopeMachine {
+				c.WillChange = append(c.WillChange, "Delete the cases and saved connections of everyone on this PC in "+l.SharedRoot)
+			} else {
+				c.WillChange = append(c.WillChange, "Delete your cases and saved connections in "+strings.Join(l.UserData, ", "))
+			}
+		} else {
+			c.WillNotChange = append(c.WillNotChange, "Cases and saved connections")
+		}
+		if o.Blackbox != nil {
+			if u.DeleteRecordings {
+				c.WillChange = append(c.WillChange, "Delete the Blackbox recordings in "+o.Blackbox.Folder)
+			} else {
+				c.WillNotChange = append(c.WillNotChange, "Blackbox recordings in "+o.Blackbox.Folder)
+			}
+		}
+		c.WillNotChange = append(c.WillNotChange, "Other programs and services", "Any database or server")
 		return c
 	}
 	c.WillChange = append(c.WillChange, "Program files in "+l.InstallDir)
