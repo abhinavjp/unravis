@@ -12,6 +12,9 @@ const (
 	classWrite = "write"
 	classReach = "reach"
 	classBlob  = "blob" // Blackbox file reads: many small GETs per look
+	// classBad counts requests the keeper will not run (not understood, another version, an unknown operation): Unravis never sends
+	// them, so a few a minute is plenty, and the limit keeps a loop of them from filling the audit log.
+	classBad = "bad"
 )
 
 // DefaultLimits is calls per caller per window, by class.
@@ -20,6 +23,7 @@ var DefaultLimits = map[string]int{
 	classWrite: 60,
 	classReach: 30,
 	classBlob:  3000,
+	classBad:   30,
 }
 
 // DefaultWindow is the sliding window of the rate limit.
@@ -34,10 +38,20 @@ type RateLimiter struct {
 	now    func() time.Time
 }
 
-// NewRateLimiter uses limits (nil means DefaultLimits) over window (0 means DefaultWindow).
+// NewRateLimiter uses limits (nil means DefaultLimits) over window (0 means DefaultWindow). Limits that leave out the "bad" class get
+// its default: that limit is never off.
 func NewRateLimiter(limits map[string]int, window time.Duration) *RateLimiter {
 	if limits == nil {
 		limits = DefaultLimits
+	}
+	if n, ok := limits[classBad]; !ok || n <= 0 {
+		withBad := map[string]int{classBad: DefaultLimits[classBad]}
+		for k, v := range limits {
+			if k != classBad {
+				withBad[k] = v
+			}
+		}
+		limits = withBad
 	}
 	if window <= 0 {
 		window = DefaultWindow

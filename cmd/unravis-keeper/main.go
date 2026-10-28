@@ -41,6 +41,8 @@ type deps struct {
 	protector func() (sealedfile.Protector, error)
 	listen    func(name string) (keeper.Listener, error)
 	runner    func() keeper.Runner
+	// trust checks the shared folder against the installer's record (datadir.TrustSharedFolder); fake in tests.
+	trust func(root string) error
 }
 
 func realDeps() deps {
@@ -49,7 +51,29 @@ func realDeps() deps {
 		protector: sealedfile.CurrentUser, // the keeper's own service account: nobody else can open its files
 		listen:    func(name string) (keeper.Listener, error) { return keeper.ListenPipe(name, keeper.PipeListenOptions{}) },
 		runner:    func() keeper.Runner { return keeper.NewRealRunner() },
+		trust:     datadir.TrustInstalled,
 	}
+}
+
+// checkRoot refuses to start in a shared folder the installer did not make: one moved there, copied, or replaced, or one with no
+// installer record (the same check Unravis makes before it uses the folder). The keeper's files and audit log live in <shared
+// folder>\keeper. A folder named by UNRAVIS_KEEPER_DIR or UNRAVIS_DATA_DIR (developer PCs, tests) is the operator's choice and is not
+// checked.
+func checkRoot(d deps, dir string) error {
+	if d.getenv(datadir.EnvKeeperDir) != "" || d.getenv(datadir.EnvDataDir) != "" {
+		return nil
+	}
+	root := filepath.Dir(dir)
+	if d.trust == nil {
+		return fmt.Errorf("%s cannot be checked", root)
+	}
+	if err := d.trust(root); err != nil {
+		if errors.Is(err, datadir.ErrNotShared) {
+			return fmt.Errorf("%s is missing; the Unravis installer makes it", root)
+		}
+		return fmt.Errorf("the shared folder is not trusted: %w", err)
+	}
+	return nil
 }
 
 // keeperFiles are the keeper's own files in its folder.
@@ -135,6 +159,10 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 			return exitUsage
 		}
 		dir, pipe := datadir.KeeperDefault(d.getenv)
+		if err := checkRoot(d, dir); err != nil {
+			fmt.Fprintln(stderr, "The key keeper did not start:", err)
+			return exitFail
+		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
 		logf := func(f string, a ...any) { fmt.Fprintf(stdout, f+"\n", a...) }

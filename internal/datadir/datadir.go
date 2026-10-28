@@ -10,9 +10,11 @@
 //   - Per user (developer builds, tests, and a PC where the installer has not created the shared folder): what every earlier phase used,
 //     %APPDATA%\APIAuditExplorer and %LOCALAPPDATA%\APIAuditExplorer\cases, sealed for the current user.
 //
-// Unravis never creates the shared folder itself: the installer does, with its ACL. Existence alone never turns shared mode on: any
-// person may create a folder under C:\ProgramData and own it, so the folder is used only when TrustSharedFolder accepts its owner and
-// ACL (trust.go). A folder that is present but not trusted means per-user mode, with the reason kept in Layout.SharedRefused.
+// Unravis never creates the shared folder itself: the installer does, with its ACL, and records the folder and its file IDs under
+// HKLM\SOFTWARE\Unravis. Existence alone never turns shared mode on: any person may create a folder under C:\ProgramData and own it, or
+// move a loosely protected system folder there, so the folder is used only when TrustSharedFolder finds it is the very folder the
+// installer recorded and accepts its owner and ACL (trust.go). A folder that is present but not trusted means per-user mode, with the
+// reason kept in Layout.SharedRefused.
 package datadir
 
 import (
@@ -113,9 +115,12 @@ func Resolve(getenv func(string) string, programData, userConfig string, trust f
 // Default resolves the layout from the real environment.
 func Default(getenv func(string) string) Layout {
 	userConfig, _ := os.UserConfigDir()
-	return Resolve(getenv, os.Getenv("ProgramData"), userConfig, func(p string) error {
-		return TrustSharedFolder(p, ReadFolderSecurity)
-	})
+	return Resolve(getenv, os.Getenv("ProgramData"), userConfig, TrustInstalled)
+}
+
+// TrustInstalled checks root against the real folder and the installer's real record. Both Unravis and the key keeper use it.
+func TrustInstalled(root string) error {
+	return TrustSharedFolder(root, ReadFolderSecurity, ReadAnchor)
 }
 
 // KeeperDefault is the keeper's own view: its folder, from UNRAVIS_KEEPER_DIR, else <data folder>\keeper, else

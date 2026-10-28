@@ -493,6 +493,145 @@ func TestOneSessionCannotStarveTheOthers(t *testing.T) {
 	}
 }
 
+// A caller who sends a stream of requests the keeper will not run, each naming a long operation of its own, gets short cleaned names
+// into the log, at most the "bad" limit of them a minute, and then one folded rate-limited line: the log stays small and never
+// rotates, so the real lines in it are not pushed out.
+func TestUnknownOpFloodCannotFillTheAuditLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.log")
+	audit := NewAuditLog(path, 16<<10)
+	l := NewMemoryListener()
+	s := NewServer(ServerOptions{Log: audit, Limiter: NewRateLimiter(nil, 0)})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = s.Serve(ctx, l)
+	}()
+	long := strings.Repeat("A", 60<<10)
+	codes := map[string]int{}
+	for i := 0; i < 100; i++ {
+		c, err := l.Dialer(Caller{SID: testSID, Name: `PC\flood`, PID: 9, Session: 1}).Dial(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := Request{V: ProtocolVersion, Op: fmt.Sprintf("x%03d\n\"%s", i, long)}
+		if i%10 == 9 {
+			req.V = 99 // another version, same limit
+		}
+		if err := writeJSONFrame(c, req); err != nil {
+			t.Fatal(err)
+		}
+		f, err := ReadFrame(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r Response
+		_ = json.Unmarshal(f, &r)
+		c.Close()
+		if r.Error == nil {
+			t.Fatalf("request %d was run", i)
+		}
+		codes[r.Error.Code]++
+	}
+	if codes[CodeRateLimited] != 100-DefaultLimits[classBad] {
+		t.Fatalf("answers: %v", codes)
+	}
+	// The flooder is limited, not everyone: a real request from the same person still runs.
+	var out map[string]any
+	if err := NewClient(l.Dialer(Caller{SID: testSID, PID: 9, Session: 1})).Call(ctx, OpPing, nil, &out); err != nil {
+		t.Fatalf("ping after the flood: %v", err)
+	}
+	cancel()
+	<-done
+	audit.Flush()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".1"); err == nil {
+		t.Fatal("the flood rotated the log")
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(raw) > 12<<10 || len(lines) > DefaultLimits[classBad]+4 {
+		t.Fatalf("%d bytes, %d lines", len(raw), len(lines))
+	}
+	for _, ln := range lines {
+		if len(ln) > 400 || strings.Contains(ln, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") || strings.Contains(ln, `\n`) || strings.Contains(ln, `\"`) {
+			t.Fatalf("a caller's text reached the log: %s", ln)
+		}
+	}
+	if !strings.Contains(string(raw), `"op":"x000AAAAAAAAAAAAAAAAAAAAAAAAAAAA~"`) || !strings.Contains(string(raw), `"outcome":"rate-limited"`) || !strings.Contains(string(raw), `"op":"ping"`) {
+		t.Fatalf("log:\n%s", raw)
+	}
+}
+
+func TestAuditOpIsShortAndClean(t *testing.T) {
+	for in, want := range map[string]string{
+		"sql.reveal":                        "sql.reveal",
+		"":                                  "?",
+		"\n\"{}":                            "?",
+		"sql.list\n{\"op\":\"fake\"}":       "sql.listopfake~",
+		strings.Repeat("b", 40):             strings.Repeat("b", maxAuditOp) + "~",
+		strings.Repeat("c", maxAuditOp):     strings.Repeat("c", maxAuditOp),
+		"bb.read‮" + strings.Repeat("d", 5): "bb.readddddd~",
+	} {
+		if got := auditOp(in); got != want {
+			t.Errorf("auditOp(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if r := NewRateLimiter(map[string]int{classRead: 1}, 0); r.limits[classBad] != DefaultLimits[classBad] {
+		t.Fatal("limits without the bad class must still limit it")
+	}
+}
+
+// A connection whose Windows session cannot be told is not exempt from the per-session cap: all such connections share one bucket.
+func TestUnknownSessionSharesOneCappedBucket(t *testing.T) {
+	log := &syncBuffer{}
+	l := anonListener{NewMemoryListener()}
+	s := NewServer(ServerOptions{Log: NewAuditWriter(log), Limiter: NewRateLimiter(nil, 0), MaxConns: 8, MaxPerSession: 2, ReadTimeout: 3 * time.Second})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = s.Serve(ctx, l)
+	}()
+	defer func() { cancel(); <-done }()
+	var idle []ClientConn
+	defer func() {
+		for _, c := range idle {
+			c.Close()
+		}
+	}()
+	for i := 0; i < 2; i++ {
+		c, err := l.Dialer(Caller{SID: testSID, PID: uint32(10 + i), Session: uint32(1 + i)}).Dial(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		idle = append(idle, c)
+	}
+	var out map[string]any
+	err := NewClient(l.Dialer(Caller{SID: testSID, PID: 12, Session: 3})).Call(ctx, OpPing, nil, &out)
+	if err == nil || (wireCode(err) != CodeBusy && !errors.Is(err, errTransport)) {
+		t.Fatalf("a third connection of unknown session got a slot: %v", err)
+	}
+	if !strings.Contains(log.String(), fmt.Sprintf(`"session":%d`, unknownSession)) {
+		t.Fatalf("refusal not logged under the unknown-session bucket:\n%s", log.String())
+	}
+}
+
+// anonListener hands out connections that cannot tell their caller's session (no Peer method).
+type anonListener struct{ *MemoryListener }
+
+type anonConn struct{ Conn }
+
+func (l anonListener) Accept() (Conn, error) {
+	c, err := l.MemoryListener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return anonConn{c}, nil
+}
+
 func TestAuditLogFoldsRepeatsAndKeepsSeveralFiles(t *testing.T) {
 	var b syncBuffer
 	l := NewAuditWriter(&b)

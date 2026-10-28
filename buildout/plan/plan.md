@@ -678,7 +678,7 @@ See `installer-and-releases.md` sections 2 to 7. Summary:
 
 ### Depends on
 
-P1 (tokens, version), P8 (Blackbox binary to package), P14 (keeper binary and the shared data folder to install). The installer adds two steps for P14: create `C:\ProgramData\Unravis` with its permissions, and install, upgrade or remove the `UnravisKeeper` service (admin approval, explained before the Windows prompt, undone on rollback). Uninstall asks before deleting the shared data and never deletes it silently.
+P1 (tokens, version), P8 (Blackbox binary to package), P14 (keeper binary and the shared data folder to install). The installer adds two steps for P14: create `C:\ProgramData\Unravis` with its permissions (the exact list is in security.md) and record it under `HKLM\SOFTWARE\Unravis` (`SharedRoot`, `SharedRootID`, `SharedCasesID`: the path and the file IDs of the folder and its `cases` folder, which Unravis and the keeper check before using it), and install, upgrade or remove the `UnravisKeeper` service (admin approval, explained before the Windows prompt, undone on rollback). Uninstall asks before deleting the shared data and never deletes it silently.
 
 ---
 

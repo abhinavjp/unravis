@@ -36,6 +36,12 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 		logf = func(f string, a ...any) { _ = el.Info(1, fmt.Sprintf(f, a...)) }
 	}
 	dir, pipe := datadir.KeeperDefault(h.d.getenv)
+	if err := checkRoot(h.d, dir); err != nil {
+		if logf != nil {
+			logf("did not start: %v", err)
+		}
+		return false, 2
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)

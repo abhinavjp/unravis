@@ -231,7 +231,8 @@ func TestSavedPasswordsStayInTheKeeper(t *testing.T) {
 
 	// Logs and files: Unravis's log output, the keeper's audit log (read plainly), every file of the case store and every file in the
 	// keeper's folder, byte for byte and, where a file is one sealed blob, unsealed too. Only the keeper's three saved-connection files may
-	// hold a password once unsealed: that is where it is kept.
+	// hold a password once unsealed: that is where it is kept. The case database itself is encrypted page by page, so this byte search
+	// cannot see inside it: what it stores (health runs, notes, the workspace) is covered only through the API answers searched above.
 	e.audit.Flush()
 	secrets := []string{sqlSecret, mongoSecret}
 	holds := func(b []byte) bool {

@@ -28,7 +28,11 @@ type AuditEntry struct {
 
 // noisy reports whether an entry is a refusal that a loop of requests could repeat thousands of times a minute.
 func noisy(e AuditEntry) bool {
-	return e.Op == "?" || e.Outcome == CodeRateLimited || e.Outcome == CodeBusy
+	switch e.Outcome {
+	case CodeRateLimited, CodeBusy, CodeInvalid, CodeVersion, CodeUnknownOp:
+		return true
+	}
+	return e.Op == "?"
 }
 
 // burst is a noisy line already written in the current minute, and how many repeats of it were held back.

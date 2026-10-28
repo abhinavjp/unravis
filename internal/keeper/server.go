@@ -65,6 +65,39 @@ const maxRefusers = 4
 // refuseTimeout is how long a connection that will be refused may take to send its request.
 const refuseTimeout = time.Second
 
+// unknownSession is the per-session bucket for connections whose Windows session cannot be told. No real session has this number.
+const unknownSession = ^uint32(0)
+
+// maxAuditOp is the most of a request's operation name that reaches the audit log when the keeper does not know the operation.
+const maxAuditOp = 32
+
+// auditOp is how an operation name the keeper did not accept is written to the audit log: only letters, digits, '.', '_' and '-', at
+// most maxAuditOp of them, with a trailing '~' when anything was dropped, and "?" when nothing is left. A caller controls this text,
+// so it must not be able to fill the log or write anything but a short name into it.
+func auditOp(op string) string {
+	var b []byte
+	cut := false
+	for i := 0; i < len(op); i++ {
+		ch := op[i]
+		ok := ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '.' || ch == '_' || ch == '-'
+		if !ok || len(b) >= maxAuditOp {
+			cut = true
+			if len(b) >= maxAuditOp {
+				break
+			}
+			continue
+		}
+		b = append(b, ch)
+	}
+	if len(b) == 0 {
+		return "?"
+	}
+	if cut {
+		b = append(b, '~')
+	}
+	return string(b)
+}
+
 // Server answers keeper requests.
 type Server struct {
 	mu       sync.RWMutex
@@ -133,22 +166,24 @@ func (s *Server) Serve(ctx context.Context, l Listener) error {
 			return err
 		}
 		// One person (one Windows session) may hold only part of the slots, so a loop of connections from one session cannot keep
-		// the keeper from everyone else.
+		// the keeper from everyone else. A connection whose session cannot be told shares one bucket of the same size with every other
+		// such connection: the cap fails closed, it is never skipped.
 		var pid, session uint32
 		known := false
 		if p, ok := c.(peerConn); ok {
 			pid, session, known = p.Peer()
 		}
-		if known && !s.enter(session) {
+		if !known {
+			pid, session = 0, unknownSession
+		}
+		if !s.enter(session) {
 			s.refuse(&wg, c, pid, session)
 			continue
 		}
 		select {
 		case s.sem <- struct{}{}:
 		default:
-			if known {
-				s.leave(session)
-			}
+			s.leave(session)
 			s.refuse(&wg, c, pid, session)
 			continue
 		}
@@ -156,9 +191,7 @@ func (s *Server) Serve(ctx context.Context, l Listener) error {
 		go func() {
 			defer wg.Done()
 			defer func() { <-s.sem }()
-			if known {
-				defer s.leave(session)
-			}
+			defer s.leave(session)
 			s.serveConn(ctx, c)
 		}()
 	}
@@ -225,20 +258,29 @@ func (s *Server) serveConn(ctx context.Context, c Conn) {
 		drain(c, s.now)
 		return
 	}
+	// A request the keeper will not run (not understood, another version, an operation it does not know) counts against the caller's
+	// "bad" limit before it is logged, and its operation name is logged only in short, cleaned form: a loop of them cannot fill the
+	// audit log or push real lines out of the kept files.
+	bad := func(op string, werr *WireError) {
+		if !s.limit.Allow(caller.SID, classBad) {
+			op, werr = "?", &WireError{Code: CodeRateLimited, Message: "Too many requests to the key keeper in the last minute. Wait a minute, then try again."}
+		}
+		s.finish(c, caller, auditOp(op), "", nil, werr)
+	}
 	var req Request
 	if err := json.Unmarshal(frame, &req); err != nil || req.Op == "" {
-		s.finish(c, caller, "?", "", nil, &WireError{Code: CodeInvalid, Message: "The request to the key keeper was not understood."})
+		bad("?", &WireError{Code: CodeInvalid, Message: "The request to the key keeper was not understood."})
 		return
 	}
 	if req.V != ProtocolVersion {
-		s.finish(c, caller, req.Op, "", nil, &WireError{Code: CodeVersion, Message: "This Unravis and the key keeper are different versions. Install the same version of both."})
+		bad(req.Op, &WireError{Code: CodeVersion, Message: "This Unravis and the key keeper are different versions. Install the same version of both."})
 		return
 	}
 	s.mu.RLock()
 	op, ok := s.ops[req.Op]
 	s.mu.RUnlock()
 	if !ok {
-		s.finish(c, caller, req.Op, "", nil, &WireError{Code: CodeUnknownOp, Message: "The key keeper does not know that request."})
+		bad(req.Op, &WireError{Code: CodeUnknownOp, Message: "The key keeper does not know that request."})
 		return
 	}
 	if !s.limit.Allow(caller.SID, op.class) {

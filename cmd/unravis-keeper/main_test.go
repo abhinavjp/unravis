@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"api-audit-explorer/internal/datadir"
 	"api-audit-explorer/internal/keeper"
 	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/sqlconn"
@@ -42,6 +43,55 @@ func testDeps(l *keeper.MemoryListener) deps {
 		protector: func() (sealedfile.Protector, error) { return xorProtector{}, nil },
 		listen:    func(string) (keeper.Listener, error) { return l, nil },
 		runner:    func() keeper.Runner { return keeper.NewRealRunner() },
+		trust:     func(string) error { return nil },
+	}
+}
+
+// The keeper makes the same installer-record check as Unravis before it opens anything in the shared folder: a folder moved in,
+// copied or replaced, or one with no installer record, stops it; a folder named by the operator is not checked.
+func TestKeeperChecksTheSharedFolder(t *testing.T) {
+	dir := filepath.Join(`C:\ProgramData`, "Unravis", "keeper")
+	var asked []string
+	d := testDeps(nil)
+	d.trust = func(root string) error {
+		asked = append(asked, root)
+		return errors.New(root + ` is not the folder the installer made (it was moved, copied or replaced)`)
+	}
+	if err := checkRoot(d, dir); err == nil || !strings.Contains(err.Error(), "not trusted") {
+		t.Fatalf("untrusted folder: %v", err)
+	}
+	if len(asked) != 1 || asked[0] != filepath.Join(`C:\ProgramData`, "Unravis") {
+		t.Fatalf("checked %q", asked)
+	}
+	d.trust = func(string) error { return datadir.ErrNotShared }
+	if err := checkRoot(d, dir); err == nil || !strings.Contains(err.Error(), "installer makes it") {
+		t.Fatalf("missing folder: %v", err)
+	}
+	d.trust = nil
+	if err := checkRoot(d, dir); err == nil {
+		t.Fatal("no check must not mean trusted")
+	}
+	d.trust = func(string) error { return errors.New("refused") }
+	d.listen = func(string) (keeper.Listener, error) { t.Fatal("listened on an untrusted folder"); return nil, nil }
+	var out, errb bytes.Buffer
+	if c := run([]string{"console"}, &out, &errb, d); c != exitFail || !strings.Contains(errb.String(), "did not start") {
+		t.Fatalf("console: %d %q", c, errb.String())
+	}
+	for _, v := range []string{datadir.EnvKeeperDir, datadir.EnvDataDir} {
+		v := v
+		d.getenv = func(k string) string {
+			if k == v {
+				return `D:\dev\keeper`
+			}
+			return ""
+		}
+		if err := checkRoot(d, dir); err != nil {
+			t.Fatalf("%s set: %v", v, err)
+		}
+	}
+	d = testDeps(nil)
+	if err := checkRoot(d, dir); err != nil {
+		t.Fatalf("trusted: %v", err)
 	}
 }
 
