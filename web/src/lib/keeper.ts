@@ -4,7 +4,8 @@
  * runs and whether the person's old per-user saved files still wait to be moved.
  */
 
-export type KeeperPending = { sql: number; mongo: number; blackbox: number };
+/** duplicates: old records the keeper holds only as someone else's copy (not in the move count; removing the old copies confirms them). */
+export type KeeperPending = { sql: number; mongo: number; blackbox: number; duplicates?: number };
 
 export type KeeperStatus = {
   /** "user": saved connections are per person, as before. "shared": the key keeper holds every saved secret. */

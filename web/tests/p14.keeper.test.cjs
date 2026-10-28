@@ -102,6 +102,30 @@ test('the connections page: a keeper 503 is not the demo, the move card holds th
   assert.match(card, /removeAsk/, 'removing the old copies asks once');
 });
 
+test('the keeper card keeps the keyboard in place and offers a way on after a refusal', () => {
+  const card = read('src/components/sources/KeeperCard.svelte');
+  assert.match(card, /await tick\(\)/, 'focus moves only after the new content is drawn');
+  assert.equal((card.match(/data-keeper-head/g) || []).length >= 4, true, 'every card heading can take the focus');
+  assert.match(card, /tabindex="-1" data-keeper-head/);
+  assert.match(card, /\[data-keep\]/, 'opening the remove question focuses "Keep them", the safe answer');
+  assert.match(card, /role="alertdialog"[^>]*onkeydown=\{escape\}/, 'Escape closes the remove question');
+  assert.match(card, /event\.key === 'Escape'/);
+  assert.match(card, /code === 'not-verified' \|\| code === 'duplicates-unconfirmed'/, 'a refused removal fetches the counts again');
+  assert.match(card, /KEEPER_TEXT\.moveAgain/, 'the moved card offers the move again after a refusal');
+  assert.match(card, /keeperRemoveOld\(duplicates > 0\)/, 'copies someone else saved first are confirmed only when shown');
+  assert.match(card, /keeperDuplicatesText\(duplicates\)/);
+  const page = read('src/components/sources/ConnectionsPage.svelte');
+  assert.match(page, /keeperUnusable \? KEEPER_TEXT\.heldDown : KEEPER_TEXT\.held/, 'a stopped keeper does not promise a usable password');
+  assert.match(page, /KEEPER_TEXT\.notNowUndo/, '"Not now" can be taken back');
+  assert.match(page, /keeper = next; await load\(false\)/, 'a move or removal keeps the state it answered');
+});
+
+test('keeperDuplicatesText says whose copy was kept', () => {
+  assert.match(copy.keeperDuplicatesText(1), /^1 of your old saved connections was already saved/);
+  assert.match(copy.keeperDuplicatesText(3), /^3 of your old saved connections were already saved/);
+  assert.match(copy.keeperDuplicatesText(2), /may not be yours/);
+});
+
 test('no password field or value reaches the keeper side of the page', () => {
   const api = read('src/lib/api.ts');
   const block = api.split('\n').filter((l) => /keeper/i.test(l)).join('\n');

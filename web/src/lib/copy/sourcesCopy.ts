@@ -52,6 +52,7 @@ export const CONN_TEXT = {
  */
 export const KEEPER_TEXT = {
   held: 'Password held by the key keeper',
+  heldDown: 'Password held by the key keeper, which cannot be used until it runs again',
   origin: 'On this PC, saved passwords and Blackbox read keys are kept by the Unravis Key Keeper service. Unravis asks it to run a check by name and never gets a password back. Up to 20 SQL connections. Forget removes the saved connection and its password. It does not touch any server.',
   stoppedHeading: 'The key keeper is not running',
   stoppedBody: 'Saved passwords and read keys cannot be used until the Unravis Key Keeper service runs again. Start the service, or ask the person who looks after this PC. Connections that need no password still work.',
@@ -65,6 +66,8 @@ export const KEEPER_TEXT = {
   moving: 'Moving…',
   notNow: 'Not now',
   notNowNote: 'Your old saved connections stay where they are until you move them.',
+  notNowUndo: 'Show the move again',
+  moveAgain: 'Move them again',
   movedHeading: 'Your saved connections are in the key keeper',
   movedBody: 'The old copies are still in your own folder. Remove them once you have checked that the connections work here.',
   removeOld: 'Remove old copies',
@@ -74,6 +77,11 @@ export const KEEPER_TEXT = {
   removed: 'The old copies were removed.',
   failed: 'That did not work. Your old files were left unchanged. Try again.'
 } as const;
+
+/** The note on the moved card when some old records were already saved in the key keeper by someone else on this PC. */
+export const keeperDuplicatesText = (n: number): string =>
+  (n === 1 ? '1 of your old saved connections was' : n + ' of your old saved connections were') +
+  ' already saved in the key keeper by someone else on this PC, so theirs was kept and yours was not moved. Its saved password may not be yours. Removing the old copies removes yours too.';
 
 /** The counts line of the move card, for example "2 SQL Server connections, 1 MongoDB link and 1 Blackbox read key wait to be moved." */
 export const keeperPendingText = (sql: number, mongo: number, blackbox: number): string => {
@@ -318,6 +326,6 @@ export const sourcesCopyEntries = (): LintEntry[] => [
   sample('combo.lead', COMBO_TEXT.lead), sample('combo.note', COMBO_TEXT.note), sample('combo.today', COMBO_TEXT.todayNone),
   ...Object.entries(HUB_TEXT).map(([id, text]) => sample('hub.' + id, text)),
   ...Object.entries(KEEPER_TEXT).map(([id, text]) => sample('keeper.' + id, text)),
-  sample('keeper.pending', keeperPendingText(2, 1, 1)), sample('keeper.pendingOne', keeperPendingText(1, 0, 0)),
+  sample('keeper.pending', keeperPendingText(2, 1, 1)), sample('keeper.duplicates', keeperDuplicatesText(2)), sample('keeper.duplicatesOne', keeperDuplicatesText(1)), sample('keeper.pendingOne', keeperPendingText(1, 0, 0)),
   ...Object.entries(NOTHING_TEXT).map(([id, text]) => sample('nothing.' + id, text))
 ];

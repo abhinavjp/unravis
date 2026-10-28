@@ -119,7 +119,7 @@ export const api = {
   /** The key keeper (P14): whether it runs and what still waits to be moved. preview is answered only in the demo. */
   keeperStatus: (preview = '') => request<KeeperStatus>('/keeper/status' + (preview ? '?preview=' + encodeURIComponent(preview) : '')),
   keeperMigrate: () => request<KeeperStatus>('/keeper/migrate', json({})),
-  keeperRemoveOld: () => request<KeeperStatus>('/keeper/remove-old', json({ confirm: true })),
+  keeperRemoveOld: (confirmDuplicates = false) => request<KeeperStatus>('/keeper/remove-old', json({ confirm: true, confirmDuplicates })),
   testConnection: (input: ConnectionInput, signal?: AbortSignal) => request<ConnectionTestResult>('/connections/test', {
     method: 'POST', body: JSON.stringify(input)
   }, signal),

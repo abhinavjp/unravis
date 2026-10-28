@@ -50,9 +50,10 @@
   const primary = $derived(promoted && !offerMove);
   const pwText = (p: ConnectionRow['password']) => (p === 'saved' ? CONN_TEXT.pwSaved : p === 'none' ? CONN_TEXT.pwNone : CONN_TEXT.pwNotNeeded);
 
-  async function load() {
+  // withKeeper false keeps the keeper status the last move or removal answered (in the demo the preview would otherwise put the old state back).
+  async function load(withKeeper = true) {
     loadFailed = false;
-    const [a, b, k] = await Promise.allSettled([api.sqlConnections(), api.recentConnections(), api.keeperStatus(keeperPreview())]);
+    const [a, b, k] = await Promise.allSettled([api.sqlConnections(), api.recentConnections(), withKeeper ? api.keeperStatus(keeperPreview()) : Promise.resolve(keeper)]);
     if (a.status === 'fulfilled' && Array.isArray(a.value)) sql = a.value;
     if (b.status === 'fulfilled' && Array.isArray(b.value)) mongo = b.value;
     keeper = k.status === 'fulfilled' && k.value && typeof k.value === 'object' ? k.value : null;
@@ -115,15 +116,17 @@
     adding = editing !== null;
   }
   function saved() { adding = false; editing = null; void load(); }
-  async function keeperChanged(next: KeeperStatus) { keeper = next; await load(); }
+  async function keeperChanged(next: KeeperStatus) { keeper = next; await load(false); }
+  // A stopped or untrusted keeper cannot use a saved password, so the row says so instead of only "held".
+  const keeperUnusable = $derived(kView === 'stopped' || kView === 'impostor');
 </script>
 
 <section class="src" aria-labelledby="conn-head">
   <div class="nutshell"><b>{NUTSHELL}</b><p>{CONN_TEXT.intro}</p></div>
   <h3 id="conn-head">{CONN_TEXT.heading}</h3>
 
-  <KeeperCard primary={promoted} status={offerMove || kView !== 'migrate' ? keeper : null} onStatus={(next) => void keeperChanged(next)} onRetry={load} onLater={() => { moveLater = true; }} />
-  {#if moveLater && kView === 'migrate'}<p class="hint" data-keeper-later>{KEEPER_TEXT.notNowNote}</p>{/if}
+  <KeeperCard primary={promoted} status={offerMove || kView !== 'migrate' ? keeper : null} onStatus={(next) => void keeperChanged(next)} onRetry={() => load()} onLater={() => { moveLater = true; }} />
+  {#if moveLater && kView === 'migrate'}<div class="actions" data-keeper-later><span class="hint">{KEEPER_TEXT.notNowNote}</span><button type="button" class="btn" onclick={() => { moveLater = false; }}>{KEEPER_TEXT.notNowUndo}</button></div>{/if}
 
   {#if adding}
     <SqlConnectionForm initial={editing} onSaved={saved} onCancel={() => { adding = false; editing = null; }} />
@@ -153,7 +156,7 @@
             <span class="name">{row.label}</span>
             {#if shared && row.password === 'saved'}
               <span class="hint">{row.detail}</span>
-              <span><span class="src-sticker held" data-keeper-held>{KEEPER_TEXT.held}</span></span>
+              <span><span class="src-sticker held" class:down={keeperUnusable} data-keeper-held>{keeperUnusable ? KEEPER_TEXT.heldDown : KEEPER_TEXT.held}</span></span>
             {:else}
               <span class="hint">{row.detail} · {pwText(row.password)}</span>
             {/if}
