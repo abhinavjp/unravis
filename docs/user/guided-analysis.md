@@ -2,7 +2,7 @@
 
 The guided analysis walks a slowdown through eleven steps, Step 0 to Step 10. It reads data you already have, turns it into plain facts, reads signals off the facts, and then checks a catalog of suspects against the signals. It never names what is to blame. It says what fits the data, what does not, and what could not be tested.
 
-This page describes the method first, then the screens that show it (see [The screens](#the-screens)). The screens live in the case: open a case, then choose **Open guided analysis**. Pictures are listed by screen id. They are saved by the screenshot harness and are pending until it has run on a build.
+This page describes the method first, then the screens that show it (see [The screens](#the-screens)). The screens live in the case: open a case, then choose **Open guided analysis**. Each screen is shown in dark and light.
 
 ## How the engine thinks
 
@@ -148,53 +148,75 @@ The rail rows are buttons (outlined). The status next to each row is a sticker: 
 
 You can jump to any step without running first. It then shows the last run, or says to run the steps first.
 
+Use **Previous step**, **Next step** and the step list to move between steps. The browser's Back button does not step back through them, and Reload does not return to the same step. Steps and cases have no address of their own in this release.
+
 ### Step 0 screen
 
-Screen id `p6-step-0`.
+![Step 0, the question, dark](screenshots/P6/p6-step-0-dark.png)
+![Step 0, the question, light](screenshots/P6/p6-step-0-light.png)
 
 The question: an incident window and a normal reference window, both in UTC, an optional API to focus on, an optional SqlClient pool limit, and a list of changes (up to 50, each with a time and a label). Quick picks (Last hour, Today, Yesterday) fill the incident window and a normal period of the same length just before it. After a run the page shows the onset Unravis found and how many calls the run used. When no onset is found, the page says that is a finding, not an error, and offers **Carry on without an onset**.
+
+A change needs a time and a name. Changes you type are used in Step 5 only when **I have listed every change I know of** is ticked.
 
 Windows that overlap, run backwards or are longer than 7 days are explained in a sentence and the run button waits.
 
 ### Step 1 screen
 
-Screen id `p6-step-1`.
+![Step 1, trust the data, dark](screenshots/P6/p6-step-1-dark.png)
+![Step 1, trust the data, light](screenshots/P6/p6-step-1-light.png)
 
 Trust the data: cards for the incident and reference windows (calls, how many had no start time or no end time), one row per source with its status, and the gaps found in the minutes. If a window has too few calls, the page says so and offers to widen the incident window.
 
 ### Step 2 screen
 
-Screen id `p6-step-2`.
+![Step 2, shape, dark](screenshots/P6/p6-step-2-dark.png)
+![Step 2, shape, light](screenshots/P6/p6-step-2-light.png)
 
 Shape: the minute-by-minute line of the slow end, the onset, the shape of the slowdown in a word and a table of APIs ranked by the biggest rise. A rise counts only when it passes both marks, 30 percent and 100 ms. When nothing moved, the page says what the two marks were.
 
 ### Step 3 screen
 
-Screen id `p6-step-3`.
+![Step 3, time split, dark](screenshots/P6/p6-step-3-dark.png)
+![Step 3, time split, light](screenshots/P6/p6-step-3-light.png)
 
 Time split: the parts A, C, P and O drawn as bars on one scale. Only parts that could be tested are drawn. Part O needs an IIS file, and when it is missing the page names it as Cannot test yet.
 
 ### Step 4 screen
 
-Screen id `p6-step-4`.
+![Step 4, load, dark](screenshots/P6/p6-step-4-dark.png)
+![Step 4, load, light](screenshots/P6/p6-step-4-light.png)
 
 Load: four measures for both windows (calls a second, time in system, calls in flight on average, calls in flight at the peak), each with No data when it could not be measured, and the pool answer when a limit was entered.
 
 ### Step 5 screen
 
-Screen id `p6-step-5`.
+![Step 5, changes, dark](screenshots/P6/p6-step-5-dark.png)
+![Step 5, changes, light](screenshots/P6/p6-step-5-light.png)
 
 Changes: each change you listed with its time in UTC, its label and how it sits against the onset, and the suspects of that group. Changes are only compared when you list them in Step 0.
 
 ### Step 6 to Step 9 screens
 
-Screen ids `p6-step-6`, `p6-step-7`, `p6-step-8`, `p6-step-9`.
+![Step 6, application, dark](screenshots/P6/p6-step-6-dark.png)
+![Step 6, application, light](screenshots/P6/p6-step-6-light.png)
+![Step 7, SQL Server, dark](screenshots/P6/p6-step-7-dark.png)
+![Step 7, SQL Server, light](screenshots/P6/p6-step-7-light.png)
+![Step 8, MongoDB, dark](screenshots/P6/p6-step-8-dark.png)
+![Step 8, MongoDB, light](screenshots/P6/p6-step-8-light.png)
+![Step 9, host, dark](screenshots/P6/p6-step-9-dark.png)
+![Step 9, host, light](screenshots/P6/p6-step-9-light.png)
 
 One page per tier: application, SQL Server, MongoDB and host. Each page shows the findings the engine made for the tier and a card for every suspect of the tier. The SQL, Mongo and Host pages say Cannot test yet until the case holds that source, and offer **Add data**. A suspect that could not be tested is grey and never counts as ruled out.
 
 ### Step 10 screen
 
-Screen ids `p6-step-10`, `p6-no-clear-origin`.
+![Step 10, origin and suspects, dark](screenshots/P6/p6-step-10-dark.png)
+![Step 10, origin and suspects, light](screenshots/P6/p6-step-10-light.png)
+![Step 10, origin and suspects, dark, narrow](screenshots/P6/p6-step-10-dark-narrow.png)
+![Step 10, origin and suspects, light, narrow](screenshots/P6/p6-step-10-light-narrow.png)
+![Step 10 when no origin is clear, dark](screenshots/P6/p6-no-clear-origin-dark.png)
+![Step 10 when no origin is clear, light](screenshots/P6/p6-no-clear-origin-light.png)
 
 Origin and suspects. The page shows, in order:
 
@@ -214,13 +236,19 @@ Pick a moment in UTC and a span of 0 to 120 minutes either side. The audit lane 
 
 ### Checklist screen
 
-Screen id `p6-checklist` (also drawn narrow).
+![The Checklist tab, dark](screenshots/P6/p6-checklist-dark.png)
+![The Checklist tab, light](screenshots/P6/p6-checklist-light.png)
+![The Checklist tab, dark, narrow](screenshots/P6/p6-checklist-dark-narrow.png)
+![The Checklist tab, light, narrow](screenshots/P6/p6-checklist-light-narrow.png)
 
-Four lists: What to do, What is under way, What we learned and What is ruled out. A counter shows how many items are open and how many are done. You can add an item (up to 300 characters, 500 items in all), move it to another list, or delete it. **Add suggested checks from Step 10** adds each suggested check once. On a closed case the lists can be read but not changed.
+Four lists: Need to do, Working on, What we learned and Ruled out. A counter shows how many items are open and how many are done. You can add an item (up to 300 characters, 500 items in all), move it to another list, or delete it. **Add suggested checks from Step 10** adds each suggested check once. On a closed case the lists can be read but not changed.
 
 ### After the fix screens
 
-Screen ids `p6-after-fix-1`, `p6-after-fix-2`.
+![After the fix, before a later day is picked, dark](screenshots/P6/p6-after-fix-1-dark.png)
+![After the fix, before a later day is picked, light](screenshots/P6/p6-after-fix-1-light.png)
+![After the fix, with a later day compared, dark](screenshots/P6/p6-after-fix-2-dark.png)
+![After the fix, with a later day compared, light](screenshots/P6/p6-after-fix-2-light.png)
 
 Pick a later day. Unravis compares the same hours on that day with the incident window you ran, using the incident as the normal period. The page shows the earlier day, the later day and the change for the slow end, the middle, the mean and the load. The verdict is one of Fixed, Better (not fixed), Unchanged, Worse, Partly there, No data for that day or The days are not alike.
 
@@ -233,7 +261,10 @@ Pick a later day. Unravis compares the same hours on that day with the incident 
 
 ### Export screens
 
-Screen ids `p6-export-1`, `p6-export-2`.
+![The Export tab, dark](screenshots/P6/p6-export-1-dark.png)
+![The Export tab, light](screenshots/P6/p6-export-1-light.png)
+![The report preview after a run, dark](screenshots/P6/p6-export-2-dark.png)
+![The report preview after a run, light](screenshots/P6/p6-export-2-light.png)
 
 The report is made from the run on screen. The server reads the case data again to build it, so a large case can take a moment. Tick what to include: the headline figures, the suspects, the checklist and the sources. **Download report (HTML)** is the one primary button. **Download data (CSV)** has the numbers only. **Preview** shows the report in a sandboxed frame before you save.
 
