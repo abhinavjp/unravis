@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '../../lib/api';
+  import { BLACKBOX_TAG_KIND } from '../../lib/blackboxCase';
+  import { caseUseApi } from '../../lib/blackboxCaseApi';
   import { fetchLaneDays, groupSources, readableByDay, type LaneDay } from '../../lib/lanes';
   import { ADD_TEXT, HUB_TEXT, NUTSHELL } from '../../lib/copy/sourcesCopy';
   import './sources.css';
@@ -15,6 +17,8 @@
   let days = $state.raw<LaneDay[]>([]);
   let sqlSaved = $state(0);
   let mongoSaved = $state(0);
+  // The case keeps one tag per Blackbox it reads (a case reads one), so the card can say whether this case does.
+  let blackboxHeld = $state(0);
 
   const sources = $derived(groupSources(days));
   const sqlHeld = $derived(sources.filter(s => s.kind === 'sql').length);
@@ -24,11 +28,12 @@
   onMount(() => {
     const mine = new AbortController();
     void (async () => {
-      const [list, sql, mongo] = await Promise.allSettled([fetchLaneDays(caseId, mine.signal), api.sqlConnections(), api.recentConnections()]);
+      const [list, sql, mongo, tags] = await Promise.allSettled([fetchLaneDays(caseId, mine.signal), api.sqlConnections(), api.recentConnections(), caseUseApi.listTags(caseId)]);
       if (mine.signal.aborted) return;
       if (list.status === 'fulfilled') days = list.value;
       if (sql.status === 'fulfilled' && Array.isArray(sql.value)) sqlSaved = sql.value.length;
       if (mongo.status === 'fulfilled' && Array.isArray(mongo.value)) mongoSaved = mongo.value.length;
+      if (tags.status === 'fulfilled') blackboxHeld = tags.value.filter((t) => t.kind === BLACKBOX_TAG_KIND).length;
     })();
     return () => mine.abort();
   });
@@ -57,6 +62,7 @@
     <div class="card" data-card="blackbox">
       <h4>{ADD_TEXT.blackboxTitle}</h4>
       <p class="hint">{ADD_TEXT.blackboxBody}</p>
+      <p class="hint">{ADD_TEXT.held(blackboxHeld)}</p>
       <div class="actions"><button type="button" class="btn" disabled={readOnly} onclick={() => choose('blackbox')}>{ADD_TEXT.addBlackbox}</button></div>
     </div>
     <div class="card" data-card="files">

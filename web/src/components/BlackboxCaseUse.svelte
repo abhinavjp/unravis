@@ -10,7 +10,9 @@
   let { item }: { item: BlackboxItem } = $props();
 
   const caseId = $derived(app.activeCaseId);
+  // Not placed, Not found and Unreachable read nothing now, so adding them to a case would only give an empty Step 9.
   const placed = $derived(item.state.state !== 'not-placed');
+  const readable = $derived(placed && item.state.state !== 'unreachable' && item.state.state !== 'not-found');
   let use = $state<CaseUse | null>(null);
   let busy = $state('');
   let note = $state('');
@@ -55,6 +57,8 @@
     <p class="bb-note">{T.caseUseNoCase}</p>
   {:else if !placed}
     <p class="bb-note">{T.caseUseNotPlaced}</p>
+  {:else if !readable && use?.state !== 'this'}
+    <p class="bb-note">{T.caseUseNotReadable}</p>
   {:else if use?.state === 'this'}
     <p>{T.caseUseOn}</p>
   {:else if use?.state === 'other'}
@@ -69,7 +73,7 @@
     {#if use?.state === 'this'}
       <button type="button" class="secondary-button" disabled={!!busy} onclick={remove}>{T.caseUseStop}</button>
     {:else}
-      <button type="button" class="secondary-button" disabled={!!busy || !caseId || !placed || use?.state === 'other'} onclick={add}>{T.caseUseButton}</button>
+      <button type="button" class="secondary-button" disabled={!!busy || !caseId || !readable || use?.state === 'other'} onclick={add}>{T.caseUseButton}</button>
     {/if}
   </div>
 </section>
