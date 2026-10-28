@@ -145,7 +145,7 @@ test('B-10: the unsaved note lives on the store, not in the screen', () => {
   assert.ok(!/let note = \$state/.test(m));
   assert.match(m, /store\.addItem\('learned', store\.noteDraft\)/);
   assert.match(m, /bind:value=\{store\.noteDraft\}/);
-  assert.match(m, /disabled=\{store\.noteDraft\.trim\(\) === ''\}/);
+  assert.match(m, /disabled=\{store\.noteDraft\.trim\(\) === ''( \|\| noteOver)?\}/);
 });
 
 test('B-34: only the sources of the open case are read', () => {
@@ -218,4 +218,53 @@ test('B-04, B-24, B-25: Step 10 and the checklist use the new lines and the righ
   assert.match(guided('Checklist.svelte'), /originChecks\(store\.result, store\.items\)/);
   assert.match(guided('Checklist.svelte'), /if \(added > 0\) note = S\.suggestedAdded\(added\);/);
   assert.match(store(), /for \(const check of originChecks\(result, this\.items\)\)/);
+});
+
+test('B-13: limits are counted in characters and said, never cut in silence', () => {
+  assert.equal(tools.MAX_ITEM_TEXT, 300);
+  assert.equal(tools.itemTooLong('x'.repeat(300)), false);
+  assert.equal(tools.itemTooLong('x'.repeat(301)), true);
+  assert.equal(tools.itemTooLong('  ' + 'x'.repeat(300) + '  '), false, 'the ends are trimmed first');
+  assert.equal(tools.itemTooLong('\u{1F600}'.repeat(300)), false, 'wide characters count once');
+  assert.equal(tools.viewNameTooLong('n'.repeat(60)), false);
+  assert.equal(tools.viewNameTooLong('n'.repeat(61)), true);
+  assert.equal(tools.viewNameTooLong('a\u0001   b'), false);
+  assert.equal(tools.cleanViewName('  a \u0001 b  '), 'a b');
+  assert.equal(tools.cleanViewName('\u{1F600}'.repeat(70)), '\u{1F600}'.repeat(60));
+  assert.equal(tools.cleanViewName('   '), '');
+});
+
+test('B-13, B-14: the fields no longer cut with maxlength and the store refuses over the limit', () => {
+  const list = guided('Checklist.svelte');
+  const views = guided('SavedViews.svelte');
+  const manual = guided('ManualTools.svelte');
+  for (const [name, source] of [['Checklist', list], ['SavedViews', views], ['ManualTools', manual]]) {
+    assert.ok(!/maxlength=\{?"?(300|MAX_VIEW_NAME)/.test(source.replace(/maxlength="100"/g, '')), `${name}: no silent maxlength on a counted field`);
+  }
+  assert.match(list, /<input type="text" bind:value=\{text\} required aria-invalid=\{over\} \/>/);
+  assert.match(list, /disabled=\{text\.trim\(\) === '' \|\| over\}/);
+  assert.match(manual, /disabled=\{store\.noteDraft\.trim\(\) === '' \|\| noteOver\}/);
+  assert.match(manual, /maxlength="100" bind:value=\{match\}/, 'the match box keeps its own short limit');
+  assert.match(views, /<input type="text" bind:value=\{name\} aria-invalid=\{over\} \/>/);
+  assert.ok(!/<input[^>]*bind:value=\{name\}[^>]*required/.test(views), 'B-14: no browser bubble on the view name');
+  assert.match(views, /disabled=\{over\}/);
+  const s = store();
+  assert.match(s, /if \(itemTooLong\(clean\)\) \{ this\.planError = GUIDED_TEXT\.itemTooLong; return false; \}/);
+  assert.ok(!/clean\.slice\(0, 300\)/.test(s));
+  assert.match(s, /if \(viewNameTooLong\(name\)\) \{ this\.viewError = SHELL_TEXT\.viewNameTooLong; return false; \}/);
+  assert.match(s, /cause\.reason === 'plan-invalid'\s*\? SHELL_TEXT\.itemNotPlain/);
+  assert.equal(SHELL.viewNameTooLong, 'A view name holds up to 60 characters. Shorten it to save.');
+  assert.equal(SHELL.itemNotPlain, 'An item holds plain text only. Remove any control characters and try again.');
+});
+
+test('B-12: a text that matches no API says so, a high minimum keeps its own sentence', () => {
+  assert.equal(SHELL.noApiMatch('orders'), 'No API matches "orders".');
+  const m = guided('ManualTools.svelte');
+  assert.match(m, /const noMatch = \$derived\(match\.trim\(\) !== '' && slowestApiRows\(store\.result, 0, match\)\.length === 0\);/);
+  assert.match(m, /\{noMatch \? S\.noApiMatch\(match\.trim\(\)\) : T\.noApiRows\(Number\(minCalls\)\)\}/);
+  const r = result();
+  const rows = tools.slowestApiRows(r, 0, '');
+  assert.ok(rows.length > 0, 'the fixture has at least one API');
+  assert.equal(tools.slowestApiRows(r, 0, 'no-such-route-zzz').length, 0);
+  assert.equal(tools.slowestApiRows(r, 1e9, '').length, 0, 'a minimum that is too high is a different empty state');
 });

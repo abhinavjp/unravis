@@ -1,7 +1,8 @@
 <script lang="ts">
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
+  import { SHELL_TEXT as S } from '../../copy/guidedShellCopy';
   import type { GuidedStore } from '../../guided/guided.svelte';
-  import { MAX_VIEW_NAME, readViewSettings, toolById, viewWindows } from '../../guided/tools';
+  import { readViewSettings, toolById, viewNameTooLong, viewWindows } from '../../guided/tools';
   import type { SavedView } from '../../guided/types';
 
   // Saved views: the windows, the API and the tool's own filters under a name. A view holds no result and no row of data.
@@ -11,6 +12,7 @@
 
   let saving = $state(false);
   let name = $state('');
+  const over = $derived(viewNameTooLong(name));
 
   async function save() {
     if (await store.saveCurrentView(name, tool, extra)) { name = ''; saving = false; }
@@ -29,11 +31,12 @@
     </div>
     {#if saving}
       <form class="save" onsubmit={(e) => { e.preventDefault(); void save(); }}>
-        <label>{T.viewName}<input type="text" maxlength={MAX_VIEW_NAME} bind:value={name} required /></label>
+        <label>{T.viewName}<input type="text" bind:value={name} aria-invalid={over} /></label>
+        {#if over}<p class="note" role="status">{S.viewNameTooLong}</p>{/if}
         <p class="note">{T.viewNameNote}</p>
         <p class="note">{T.viewSaves}</p>
         <div class="row">
-          <button type="submit" class="secondary-button">{T.viewSave}</button>
+          <button type="submit" class="secondary-button" disabled={over}>{T.viewSave}</button>
           <button type="button" class="quiet-button" onclick={() => { saving = false; name = ''; }}>{T.viewCancel}</button>
         </div>
       </form>

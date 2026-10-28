@@ -2,13 +2,14 @@ import { CaseApiError, casePath, json, listImports, send } from '../cases';
 import { api } from '../api';
 import { parseWorkspace, type WorkspaceDatabase } from '../caseWorkspace';
 import { CHECKLIST_ERRORS, GUIDED_TEXT, SAVED_VIEW_ERRORS, refusalText } from '../copy/guidedCopy';
+import { SHELL_TEXT } from '../copy/guidedShellCopy';
 import {
   addChecklistItem, buildReport, deleteChecklistItem, deleteView, listChecklist, listViews, runInvestigation, saveView, updateChecklistItem
 } from './api';
 import { emptyFrame, quickPick, requestKey, toRequest, type Frame, type QuickPick } from './frame';
 import { InFlight } from './inflight';
 import { clampStep, type RunPhase } from './stepModel';
-import { cleanViewName, dataStamp, originChecks, stampChanged, viewSettings, viewsFull, type ToolId } from './tools';
+import { cleanViewName, dataStamp, itemTooLong, originChecks, stampChanged, viewNameTooLong, viewSettings, viewsFull, type ToolId } from './tools';
 import type { ChecklistItem, ChecklistList, InvestigationAnswer, InvestigationRequest, ReportAnswer, ReportInclude, SavedView } from './types';
 
 /**
@@ -232,14 +233,18 @@ export class GuidedStore {
   async addItem(list: ChecklistList, text: string, suspect?: string): Promise<boolean> {
     const clean = text.trim();
     if (!clean || this.#writing) return false;
+    // Over the limit is refused and said, never cut in silence.
+    if (itemTooLong(clean)) { this.planError = GUIDED_TEXT.itemTooLong; return false; }
     this.#writing = true;
     try {
-      const item = await addChecklistItem(this.caseId, { list, text: clean.slice(0, 300), ...(suspect ? { suspect } : {}) });
+      const item = await addChecklistItem(this.caseId, { list, text: clean, ...(suspect ? { suspect } : {}) });
       this.items = [...this.items, item];
       this.planError = '';
       return true;
     } catch (cause) {
-      this.planError = failureText(cause, CHECKLIST_ERRORS, 'That item could not be saved.');
+      this.planError = cause instanceof CaseApiError && cause.reason === 'plan-invalid'
+        ? SHELL_TEXT.itemNotPlain
+        : failureText(cause, CHECKLIST_ERRORS, 'That item could not be saved.');
       if (cause instanceof CaseApiError && cause.reason === 'item-not-found') void this.loadPlan();
       return false;
     } finally {
@@ -290,6 +295,7 @@ export class GuidedStore {
   async saveCurrentView(name: string, tool: string, extra: { minCalls?: number; match?: string } = {}): Promise<boolean> {
     const clean = cleanViewName(name);
     if (!clean) { this.viewError = GUIDED_TEXT.viewNameMissing; return false; }
+    if (viewNameTooLong(name)) { this.viewError = SHELL_TEXT.viewNameTooLong; return false; }
     if (viewsFull(this.views)) { this.viewError = GUIDED_TEXT.viewsFull; return false; }
     if (this.#writing) return false;
     this.#writing = true;

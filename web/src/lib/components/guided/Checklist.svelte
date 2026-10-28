@@ -3,7 +3,7 @@
   import { SHELL_TEXT as S } from '../../copy/guidedShellCopy';
   import type { GuidedStore } from '../../guided/guided.svelte';
   import { counters, groupItems, LISTS } from '../../guided/stepModel';
-  import { originChecks } from '../../guided/tools';
+  import { itemTooLong, originChecks } from '../../guided/tools';
   import type { ChecklistItem, ChecklistList } from '../../guided/types';
 
   // The checklist: four lists, a counter of what is done and what is open. Notes here are the person's own words and are kept with the case.
@@ -17,6 +17,7 @@
   let text = $state('');
   let list = $state<ChecklistList>('todo');
   let note = $state('');
+  const over = $derived(itemTooLong(text));
 
   async function add() {
     const ok = await store.addItem(list, text);
@@ -49,12 +50,13 @@
     {#if note}<p class="note" role="status">{note}</p>{/if}
     {#if adding}
       <form class="add" onsubmit={(e) => { e.preventDefault(); void add(); }}>
-        <label>{T.itemText}<input type="text" maxlength="300" bind:value={text} required /></label>
+        <label>{T.itemText}<input type="text" bind:value={text} required aria-invalid={over} /></label>
+        {#if over}<p class="note" role="status">{T.itemTooLong}</p>{/if}
         <label>{T.itemMove}
           <select bind:value={list}>{#each LISTS as l (l.id)}<option value={l.id}>{l.label}</option>{/each}</select>
         </label>
         <div class="row">
-          <button type="submit" class="secondary-button" disabled={text.trim() === ''}>{T.itemSave}</button>
+          <button type="submit" class="secondary-button" disabled={text.trim() === '' || over}>{T.itemSave}</button>
           <button type="button" class="quiet-button" onclick={() => { adding = false; text = ''; }}>{T.viewCancel}</button>
         </div>
       </form>

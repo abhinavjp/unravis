@@ -5,7 +5,7 @@
   import type { GuidedStore } from '../../guided/guided.svelte';
   import { fmtCount } from '../../guided/stepModel';
   import {
-    applyViewToFrame, NEED_WORD, readViewSettings, slowestApiRows, toolById, toolSticker, toolState, TOOLS, type SourceNeed, type ToolDef, type ToolId
+    applyViewToFrame, itemTooLong, NEED_WORD, readViewSettings, slowestApiRows, toolById, toolSticker, toolState, TOOLS, type SourceNeed, type ToolDef, type ToolId
   } from '../../guided/tools';
   import type { SavedView } from '../../guided/types';
   import AfterFix from './AfterFix.svelte';
@@ -38,6 +38,9 @@
   const openState = $derived(open ? stateOf(open) : null);
   const openSticker = $derived(openState ? toolSticker(openState, stale) : null);
   const apiRows = $derived(slowestApiRows(store.result, Number(minCalls), match));
+  // A text that matches no API at all is a different problem from a minimum that is too high.
+  const noMatch = $derived(match.trim() !== '' && slowestApiRows(store.result, 0, match).length === 0);
+  const noteOver = $derived(itemTooLong(store.noteDraft));
 
   const openTool = (id: ToolId) => { store.tool = id; noted = false; };
   const back = () => { store.tool = ''; };
@@ -110,7 +113,7 @@
           {:else if store.result.facts.routes.length === 0}
             <p class="note">{T.noRecords}</p>
           {:else if apiRows.length === 0}
-            <p class="note">{T.noApiRows(Number(minCalls))}</p>
+            <p class="note">{noMatch ? S.noApiMatch(match.trim()) : T.noApiRows(Number(minCalls))}</p>
           {:else}
             <div class="table-scroll">
               <table>
@@ -138,9 +141,10 @@
 
     {#if !readOnly}
       <form class="note-form" onsubmit={(e) => { e.preventDefault(); void addNote(); }}>
-        <label>{T.addNote}<input type="text" maxlength="300" bind:value={store.noteDraft} /></label>
+        <label>{T.addNote}<input type="text" bind:value={store.noteDraft} aria-invalid={noteOver} /></label>
+        {#if noteOver}<p class="note" role="status">{T.itemTooLong}</p>{/if}
         <div class="row">
-          <button type="submit" class="secondary-button" disabled={store.noteDraft.trim() === ''}>{T.itemSave}</button>
+          <button type="submit" class="secondary-button" disabled={store.noteDraft.trim() === '' || noteOver}>{T.itemSave}</button>
           {#if noted}<span class="note" role="status">{T.noteAdded}</span>{/if}
         </div>
       </form>

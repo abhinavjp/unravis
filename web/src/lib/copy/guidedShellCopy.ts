@@ -10,5 +10,8 @@ export const SHELL_TEXT = {
   likelyNoTier: 'A suspect can be listed as Likely while no tier is dated. The data fits it, but Confidence stays None and no origin is named.',
   showRuledOut: 'Show the suspects set aside',
   showFewerSuspects: 'Show fewer suspects',
-  suggestedAdded: (n: number) => (n === 1 ? 'Added 1 check.' : `Added ${n} checks.`)
+  suggestedAdded: (n: number) => (n === 1 ? 'Added 1 check.' : `Added ${n} checks.`),
+  noApiMatch: (text: string) => `No API matches "${text}".`,
+  viewNameTooLong: 'A view name holds up to 60 characters. Shorten it to save.',
+  itemNotPlain: 'An item holds plain text only. Remove any control characters and try again.'
 } as const;

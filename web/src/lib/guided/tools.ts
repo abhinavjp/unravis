@@ -100,11 +100,22 @@ export function toolSticker(state: ToolState, stale: boolean): ToolSticker {
 export const MAX_VIEW_NAME = 60;
 export const MAX_VIEWS = 200;
 
+/** The plain text of a view name: control characters become spaces, runs of space collapse, the ends are trimmed. */
+// eslint-disable-next-line no-control-regex
+const plainName = (raw: string): string => raw.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+
 /** A view name is shown in lists and in exports, so it is trimmed to plain text. Returns '' when nothing usable is left. */
 export function cleanViewName(raw: string): string {
-  // eslint-disable-next-line no-control-regex
-  return raw.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_VIEW_NAME);
+  return Array.from(plainName(raw)).slice(0, MAX_VIEW_NAME).join('');
 }
+
+/** True when the name, once plain, is longer than a view name may be (counted in characters, as the server counts). */
+export const viewNameTooLong = (raw: string): boolean => Array.from(plainName(raw)).length > MAX_VIEW_NAME;
+
+export const MAX_ITEM_TEXT = 300;
+
+/** True when a checklist item or note is longer than the server accepts (300 characters once trimmed). */
+export const itemTooLong = (raw: string): boolean => Array.from(raw.trim()).length > MAX_ITEM_TEXT;
 
 export interface ViewSettings {
   incidentStart?: string;
