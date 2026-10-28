@@ -3,6 +3,7 @@
   import { metricLabels } from '../../lib/presentation';
   import { intervalFitNote } from '../../lib/autorun';
   import { chartIntervalProblem } from '../../lib/filterRail';
+  import { intervalRangeProblem, targetProblem } from '../../lib/investigation';
   import { intervalNote } from '../../lib/intervalNote.svelte';
   import FilterGroup from './FilterGroup.svelte';
   import Hint from '../Hint.svelte';
@@ -13,6 +14,8 @@
   // hasError lets the panel rail show a problem dot while this group is on a hidden pane; it is true when the interval would stop the run.
   let { query = $bindable(), targetMs = $bindable(), count = 0, hasError = $bindable(false) }: { query: Query; targetMs: number | null; count?: number; hasError?: boolean } = $props();
   const intervalFitText = $derived(intervalFitNote(query));
+  const intervalRangeText = $derived(intervalRangeProblem(query.bucketSeconds));
+  const targetText = $derived(targetProblem(targetMs));
   $effect(() => { hasError = chartIntervalProblem(query); });
 </script>
 
@@ -22,14 +25,16 @@
     <div class="control-group"><span class="label-line"><label for="metric">Time measured</label><Hint termId="response-time" /><FieldHelp id="metric" /></span><select id="metric" bind:value={query.metric}><option value="total">{metricLabels.total}</option><option value="api">{metricLabels.api}</option></select></div>
     <div class="control-group">
       <span class="label-line"><label for="bucket">Chart interval (seconds)</label><Hint termId="time-slice" /><FieldHelp id="bucket" /></span>
-      <input id="bucket" type="number" min="10" max="86400" step="1" bind:value={query.bucketSeconds} oninput={() => intervalNote.clear()} />
+      <input id="bucket" type="number" min="10" max="86400" step="1" bind:value={query.bucketSeconds} oninput={() => intervalNote.clear()} aria-invalid={intervalRangeText !== ''} aria-describedby={intervalRangeText ? 'bucket-error' : undefined} />
       <p class="field-note">10–86,400 seconds; no more than 120 points.</p>
+      {#if intervalRangeText}<p class="inline-error" id="bucket-error" role="alert">{intervalRangeText}</p>{/if}
       {#if intervalFitText}<p class="field-note interval-note" role="status">{intervalFitText}</p>{/if}
     </div>
     <div class="control-group wide">
       <span class="label-line"><label for="latency-target">Optional response-time target (ms)</label><Hint termId="p95" /><FieldHelp id="latency-target" /></span>
-      <input id="latency-target" type="number" min="0.01" step="any" bind:value={targetMs} placeholder="No target" />
+      <input id="latency-target" type="number" min="0.01" max="3600000" step="any" bind:value={targetMs} placeholder="No target" aria-invalid={targetText !== ''} aria-describedby={targetText ? 'latency-target-error' : undefined} />
       <p class="field-note">Adds a chart line compared with P95.</p>
+      {#if targetText}<p class="inline-error" id="latency-target-error" role="alert">{targetText}</p>{/if}
     </div>
   </div>
 </FilterGroup>

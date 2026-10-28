@@ -1515,7 +1515,7 @@ test('the run hint also explains a window, reference, bucket or point-count prob
   const base = scopeAt();
   const hint = (extra) => autorun.scopeHint(scopeAt(extra), true);
   assert.equal(hint({ start: base.end, end: base.start }), 'Each window must start before it ends.');
-  assert.equal(hint({ baselineEnd: base.end }), 'The reference window must end before the current window starts.');
+  assert.equal(hint({ baselineEnd: base.end }), 'The reference window must end at or before the current window starts.');
   assert.equal(hint({ bucketSeconds: 5 }), 'Bucket size must be 10 to 86,400 seconds.');
   assert.match(hint({ bucketSeconds: 10, start: '2026-10-22T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-10-21T12:00:00Z', baselineEnd: '2026-10-22T00:00:00Z' }), /over 120 time points/);
   assert.equal(hint({ start: '2026-10-01T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-09-01T00:00:00Z', baselineEnd: '2026-10-01T00:00:00Z' }), 'Each window can be at most 7 days.');
@@ -1597,8 +1597,8 @@ test('the evidence frame always keeps Slowest, and comparison-wide contexts keep
   assert.deepEqual(ids({}), ['failures', 'slowest', 'breakdown']);
   assert.deepEqual(ids({ scoped: false }), ['slowest']);
   assert.deepEqual(ids({ operation: true, group: true, phases: true, failed: 3, unfinished: 2 }), ['timeline', 'phases', 'failures', 'incomplete', 'slowest', 'breakdown']);
-  assert.deepEqual(ids({ operation: true, group: true }), ['timeline', 'slowest', 'breakdown']);
-  assert.deepEqual(ids({ group: true, failed: 1 }), ['timeline', 'failures', 'slowest', 'breakdown']);
+  assert.deepEqual(ids({ operation: true, group: true }), ['timeline', 'phases', 'slowest', 'breakdown']);
+  assert.deepEqual(ids({ group: true, failed: 1 }), ['timeline', 'phases', 'failures', 'slowest', 'breakdown']);
   assert.ok(ids({ operation: true }).includes('slowest'));
 });
 

@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import type { Query } from '../../lib/types';
   import { MAX_FILTER_VALUES, MAX_USER_IDS, isValidUserId, itemsOverLimit, splitList, syncListDraft } from '../../lib/investigation';
+  import { AUDIT_ID_PATTERN } from '../../lib/autorun';
   import FilterGroup from './FilterGroup.svelte';
   import HelpNote from '../HelpNote.svelte';
   import FieldHelp from '../FieldHelp.svelte';
@@ -10,7 +11,6 @@
   // draft so that typing "1, " is not rewritten under the cursor. The panel never starts a run, so nothing here calls onScopeChange.
   // hasError lets the panel rail show a problem dot while this group is on a hidden pane.
   let { query = $bindable(), count = 0, hasError = $bindable(false) }: { query: Query; count?: number; hasError?: boolean } = $props();
-  const AUDIT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
   const joinList = (items: readonly (string | number)[] | undefined) => (items ?? []).join(', ');
   const initialText = untrack(() => ({ userIds: joinList(query.userIds), uiVersions: joinList(query.uiVersions), userIps: joinList(query.userIps), statusCodes: joinList(query.statusCodes) }));
   let userIdsText = $state(initialText.userIds);

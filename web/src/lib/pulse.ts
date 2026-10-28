@@ -52,9 +52,20 @@ export function pulseFigures(overview: OverviewRow[], queryKind: Kind, metric: M
     { id: 'requests', label: 'Requests', value: events.toLocaleString(), hint: events ? 'in the selected period' : 'none in this period', tip: 'Every event of the request types in scope that matches the filters, including incomplete and pending ones.' },
     { id: 'completion', label: 'Completion', value: share(completed, events), hint: events ? completed.toLocaleString() + ' completed' : 'nothing to measure', tip: 'Completed ÷ all events. Incomplete, pending and unusable events are in the denominator and never counted as fast or successful.' },
     { id: 'p95', change: change ?? undefined, label: metric === 'api' ? 'API P95' : 'Observed P95', value: single ? durationText(p95) : dash, hint: p95Hint, tip: single ? 'A histogram estimate over the valid timings of this request type. ' + metricLabel + '.' : 'Latency is not pooled across request types. Pick Sync, Async, Hangfire or HTTP (polling type unknown) to see a P95.' },
-    { id: 'client', label: '4xx', value: client.toLocaleString(), hint: events ? share(client, events) + ' of requests' : '—', tip: 'Client-error responses.' },
-    { id: 'server', label: '5xx', value: server.toLocaleString(), hint: events ? share(server, events) + ' of requests' : '—', tip: 'Server-error responses, including failed Hangfire jobs.' }
+    { id: 'client', label: '4xx', value: events ? client.toLocaleString() : dash, hint: events ? share(client, events) + ' of requests' : 'nothing to measure', tip: 'Client-error responses.' },
+    { id: 'server', label: '5xx', value: events ? server.toLocaleString() : dash, hint: events ? share(server, events) + ' of requests' : 'nothing to measure', tip: 'Server-error responses, including failed Hangfire jobs.' }
   ];
+}
+
+/** "Controller.Action" of the operation whose P95 rose most against the earlier period; empty when none has a known rise. */
+export function topRiseName(rollups: readonly Rollup[]): string {
+  let best: Rollup | null = null;
+  for (const row of rollups) {
+    const rise = row.p95DeltaMs;
+    if (typeof rise !== 'number' || !Number.isFinite(rise) || rise <= 0) continue;
+    if (!best || rise > (best.p95DeltaMs as number)) best = row;
+  }
+  return best ? best.controller + '.' + best.action : '';
 }
 
 export interface HeroWindow { at: number; count: number; latency: number | null }

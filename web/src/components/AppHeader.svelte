@@ -15,7 +15,7 @@
   import SourcePopover from './SourcePopover.svelte';
   import Eli10Toggle from './Eli10Toggle.svelte';
 
-  // The top bar: brand, the mode badge, the Sources popover, the drawer buttons and the theme toggle, always on one row.
+  // The top bar: brand, the mode badge, the Sources popover, the drawer buttons and the theme toggle, on one row while they fit and wrapping to a second row from 721px when they do not.
   // Below 1100px Patterns, Ledger, Export, Import and Glossary fold into a "More" menu, together with the Explain simply switch. The depth breadcrumb sits on its own bar beneath.
   const info = $derived(app.info);
   const crumbs = $derived(navigation.crumbs);
@@ -158,7 +158,7 @@
 {/if}
 
 <style>
-  /* One row at every width: nothing in the bar wraps, so the page never scrolls sideways because of it. */
+  /* One row while it fits. From 721px a crowded bar wraps its right hand group to a second row (see the media block below) so no button is pushed off screen; at 720px and below it stays one row. */
   .topbar { flex-wrap: nowrap; gap: 12px; }
   .brand-lockup { min-width: 0; }
   .actions { margin-left: auto; display: flex; align-items: center; flex-wrap: nowrap; flex-shrink: 0; gap: 12px; }
@@ -174,6 +174,12 @@
   @media (max-width: 1279px) {
     .ref-full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     .ref-short { display: inline; }
+  }
+  /* From 721px the bar may wrap: the actions group moves to a second row, right aligned, instead of running past the edge. */
+  @media (min-width: 721px) {
+    .topbar { flex: 0 0 auto; flex-wrap: wrap; row-gap: 4px; padding-top: 4px; padding-bottom: 4px; }
+    .actions { flex-shrink: 1; min-width: 0; flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
+    .status { flex-shrink: 1; min-width: 0; flex-wrap: wrap; }
   }
   .badge { display: none; }
   .more { position: relative; }

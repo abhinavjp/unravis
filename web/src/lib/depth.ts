@@ -120,7 +120,7 @@ export interface EvidenceContext {
   group: boolean;
   /** The query that scopes Failures and Breakdown exists. */
   scoped: boolean;
-  /** The group has a phase split or a payload time to show. */
+  /** The group has a phase split or a payload time to show. The tab stays either way; the pane explains an empty one. */
   phases: boolean;
   /** Failed events in the operation or group; 0 when none are known. */
   failed: number;
@@ -137,12 +137,18 @@ export function evidenceTabs(context: EvidenceContext): EvidenceTab[] {
   const tabs: EvidenceTab[] = [];
   const focused = context.operation || context.group;
   if (context.group) tabs.push({ id: 'timeline', label: 'Timeline' });
-  if (context.group && context.phases) tabs.push({ id: 'phases', label: 'Phases' });
+  if (context.group) tabs.push({ id: 'phases', label: 'Phases' });
   if (context.scoped && (!focused || context.failed > 0)) tabs.push({ id: 'failures', label: 'Failures' });
   if (context.operation && context.unfinished > 0) tabs.push({ id: 'incomplete', label: 'Incomplete' });
   tabs.push({ id: 'slowest', label: 'Slowest' });
   if (context.scoped) tabs.push({ id: 'breakdown', label: 'Breakdown' });
   return tabs;
+}
+
+/** The line in the Phases pane when a group has nothing to draw. Empty when it has phases. */
+export function phasesNote(outcome: string, hasPhases: boolean): string {
+  if (hasPhases) return '';
+  return outcome === 'unknown' ? 'No timings for requests of unknown result.' : 'No phase timings were recorded for this group.';
 }
 
 /** The four More filters groups that carry a count. The When group has no chips: the time windows are not filters in use. */

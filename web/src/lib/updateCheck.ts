@@ -41,12 +41,20 @@ type UpdatePreview = '' | 'latest' | 'available' | 'offline';
 const UPDATE_PREVIEW_KEY = 'unravis.updatePreview';
 let updatePreview: UpdatePreview = '';
 
-/** Notes a demo preview named in the address and keeps it for this tab, so moving around the app (which changes the address) keeps it. */
+/** The preview after the address changes: an address that names update= decides (a bad value gives ''), an address that does not name it keeps what was stored. */
+export function updatePreviewAfter(hash: string, stored: UpdatePreview): UpdatePreview {
+  return /(?:^#|[#&])update=/.test(hash) ? updatePreviewFrom(hash) : stored;
+}
+
+/** Notes a demo preview named in the address and keeps it for this tab, so moving around the app (which changes the address) keeps it. A bad value clears it. */
 function noticeUpdatePreview(): void {
-  const found = updatePreviewFrom(location.hash);
-  if (!found) return;
-  updatePreview = found;
-  try { sessionStorage.setItem(UPDATE_PREVIEW_KEY, found); } catch { /* the preview then lasts until the page reloads */ }
+  const next = updatePreviewAfter(location.hash, updatePreview);
+  if (next === updatePreview) return;
+  updatePreview = next;
+  try {
+    if (next) sessionStorage.setItem(UPDATE_PREVIEW_KEY, next);
+    else sessionStorage.removeItem(UPDATE_PREVIEW_KEY);
+  } catch { /* the preview then lasts until the page reloads */ }
 }
 
 if (typeof location !== 'undefined' && typeof window !== 'undefined') {
@@ -59,3 +67,13 @@ if (typeof location !== 'undefined' && typeof window !== 'undefined') {
 
 /** The demo preview for this tab ('' for none). */
 export const updatePreviewNow = (): UpdatePreview => updatePreview;
+
+/** Every sentence the update check can show, for the copy lint. The Help panel labels are linted from the component source. */
+export function updateCheckSentences(): string[] {
+  return [
+    updateCheckNote({ status: 'latest', current: '1.2.0', latest: '1.2.0', url: '' }),
+    updateCheckNote({ status: 'available', current: '1.2.0', latest: '1.3.0', url: 'https://github.com/abhinavjp/unravis/releases/tag/v1.3.0' }),
+    updateCheckNote({ status: 'dev', current: 'dev', latest: '', url: '' }),
+    updateCheckNote({ status: 'unreachable', current: '1.2.0', latest: '', url: '' })
+  ];
+}

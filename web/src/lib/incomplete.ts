@@ -84,7 +84,7 @@ export const staleDrill = (
   const drill: StaleDrill = {
     kind: kind as OverviewDrill['kind'], state: 'all', outcome: '',
     label: name + ' · ' + (completion === 'pending' ? 'pending async' : 'incomplete, includes pending') + ' for at least ' + minutesText(minutes) + ' min · oldest first',
-    note: '',
+    note: 'the button count covers every age, so this list can be shorter',
     completion, order: 'oldest', incompleteAgeMs: { min: staleThresholdMs(minutes) }
   };
   if (operation) { drill.controller = operation.controller; drill.action = operation.action; }
