@@ -77,3 +77,10 @@ test('Review1-3: every erase caller passes the case state it shows', () => {
   assert.match(read('src/lib/components/ArchivedList.svelte'), /eraseCase\(id, undefined, row \? believedState\(row\) : undefined\)/);
   assert.match(read('src/components/StartScreen.svelte'), /eraseCase\(id, undefined, row \? believedState\(row\) : undefined\)/);
 });
+
+const keeperCard = read('src/components/sources/KeeperCard.svelte');
+
+test('Review1-4: "Yes remove" moves the focus to the dialog box before the buttons are disabled', () => {
+  assert.match(keeperCard, /if \(kind === 'remove'\) dialogEl\?\.focus\(\);\s*busy = kind;/);
+  assert.match(keeperCard, /role="alertdialog"[^>]*tabindex="-1"/);
+});

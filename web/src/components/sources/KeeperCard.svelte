@@ -51,6 +51,8 @@
 
   async function run(kind: 'retry' | 'move' | 'remove') {
     if (busy) return;
+    // The dialog's buttons are disabled while the request runs, so the focus moves to the dialog box before that, not to the page body.
+    if (kind === 'remove') dialogEl?.focus();
     busy = kind; problem = ''; done = '';
     if (kind !== 'remove') refused = false;
     try {
