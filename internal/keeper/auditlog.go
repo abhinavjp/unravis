@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,13 +27,27 @@ type AuditEntry struct {
 	Repeated int `json:"repeated,omitempty"`
 }
 
-// noisy reports whether an entry is a refusal that a loop of requests could repeat thousands of times a minute.
+// noisy reports whether an entry is a refusal that a loop of requests could repeat thousands of times a minute, or a read of an audit
+// source the keeper hosts (P14b), which one page of Unravis makes many of: those are written once per caller, read and outcome a
+// minute, then counted. Opening, removing and closing audit sources are written one by one.
 func noisy(e AuditEntry) bool {
 	switch e.Outcome {
 	case CodeRateLimited, CodeBusy, CodeInvalid, CodeVersion, CodeUnknownOp:
 		return true
 	}
-	return e.Op == "?"
+	return e.Op == "?" || isAuditRead(e.Op)
+}
+
+// isAuditRead reports whether op is an audit.* read.
+func isAuditRead(op string) bool {
+	if !strings.HasPrefix(op, ReservedPrefixP14b) {
+		return false
+	}
+	switch op {
+	case OpAuditAdd, OpAuditDelete, OpAuditClose:
+		return false
+	}
+	return true
 }
 
 // burst is a noisy line already written in the current minute, and how many repeats of it were held back.

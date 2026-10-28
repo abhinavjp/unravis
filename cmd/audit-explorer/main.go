@@ -156,8 +156,8 @@ func run(args []string, getenv func(string) string) error {
 		// The shipped demo carries a little unfinished work so the incomplete panel has something to show.
 		repo = audit.NewDemoWithPatterns(demoCfg.now)
 	} else {
-		repo = store.New(storeOptions(f)...)
 		saved = wireSaved(getenv, storageFor(getenv))
+		repo = saved.auditRepo(store.New(storeOptions(f)...))
 		serverOptions = append(serverOptions, saved.options...)
 	}
 	hypotheses, ledgerErr := openLedger(*demo, getenv)

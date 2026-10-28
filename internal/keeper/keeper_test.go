@@ -174,6 +174,7 @@ type harness struct {
 	runner  *fakeRunner
 	log     *syncBuffer
 	wire    *syncBuffer
+	hosted  *hostedFactory
 	l       *MemoryListener
 	client  *Client
 	server  *Server
@@ -221,10 +222,10 @@ func newHarness(t *testing.T, limits map[string]int) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, runner: &fakeRunner{}, log: &syncBuffer{}, wire: &syncBuffer{}, l: NewMemoryListener(), done: make(chan struct{})}
-	h.backend = &Backend{SQL: sql, Mongo: mongo, BB: bb, Runner: h.runner}
+	h := &harness{t: t, runner: &fakeRunner{}, log: &syncBuffer{}, wire: &syncBuffer{}, hosted: &hostedFactory{}, l: NewMemoryListener(), done: make(chan struct{})}
+	h.backend = &Backend{SQL: sql, Mongo: mongo, BB: bb, Runner: h.runner, Audit: NewAuditHost(h.hosted.make)}
 	if limits == nil {
-		limits = map[string]int{classRead: 10000, classWrite: 10000, classReach: 10000, classBlob: 10000}
+		limits = map[string]int{classRead: 10000, classWrite: 10000, classReach: 10000, classBlob: 10000, classAudit: 10000}
 	}
 	h.server = NewServer(ServerOptions{Log: NewAuditWriter(h.log), Limiter: NewRateLimiter(limits, time.Minute)})
 	h.backend.Register(h.server)
@@ -838,6 +839,10 @@ func TestNoOperationGivesOutASecret(t *testing.T) {
 				`{"ref":{"id":"` + id + `"}}`,
 				`{"connection":{"uri":"` + mongoLink.URI + `","username":"reader","authSource":"admin","tlsMode":"system","savedConnectionId":"` + id + `"}}`,
 				`{"id":"` + id + `","path":"/manifest"}`,
+				`{"instance":"probe","id":"` + id + `"}`,
+				`{"instance":"probe","connection":{"uri":"` + mongoLink.URI + `","username":"reader","authSource":"admin","tlsMode":"system","savedConnectionId":"` + id + `"}}`,
+				`{"instance":"probe","input":{"sourceId":"kept-1"}}`,
+				`{"instance":"probe","input":{"sourceIds":["kept-1"]}}`,
 			} {
 				var out json.RawMessage
 				_ = h.client.Call(context.Background(), op, json.RawMessage(args), &out)
@@ -988,42 +993,6 @@ func TestMongoLinksThatWouldUseTheKeepersAccountAreRefused(t *testing.T) {
 	}
 	refused("file option stored earlier", audit.ConnectionInput{URI: "mongodb://m9.example.test:27017/?tlsCAFile=C:/a.pem", Username: "reader", TLSMode: "uri", SavedConnectionID: stored.ID})
 	h.noSecrets()
-}
-
-func TestResolveForSourceTemporaryAdapter(t *testing.T) {
-	h := newHarness(t, nil)
-	legacy, err := history.New(filepath.Join(t.TempDir(), "connections.dat"), xorProtector{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	link := mongoLink
-	link.Password = mongoSecret
-	old, err := legacy.Remember("Audit prod", link, "events", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := legacy.Export(); err != nil {
-		t.Fatal(err)
-	}
-	recs, _ := legacy.Export()
-	if _, err := h.backend.Mongo.Import(recs); err != nil {
-		t.Fatal(err)
-	}
-	ref := mongoLink
-	ref.SavedConnectionID = old.ID
-
-	m := NewMongoStore(h.client)
-	if _, err := m.ResolveForSource(ref); !errors.Is(err, ErrKeeperHeld) {
-		t.Fatalf("without the old file: %v", err)
-	}
-	got, err := m.WithLegacy(legacy).ResolveForSource(ref)
-	if err != nil || got.Password != mongoSecret {
-		t.Fatalf("with the old file: %v", err)
-	}
-	_ = os.Remove(legacy.Path())
-	if _, err := m.ResolveForSource(ref); !errors.Is(err, ErrKeeperHeld) {
-		t.Fatalf("after the old file is removed: %v", err)
-	}
 }
 
 /* ------------------------------------------------------------- Blackbox */

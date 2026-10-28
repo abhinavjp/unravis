@@ -505,6 +505,10 @@ func (h *handler) info(w http.ResponseWriter) {
 func (h *handler) sources(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
+	if ka, ok := h.repo.(keeperAudit); ok {
+		h.sourcesWithKeeper(ctx, w, ka)
+		return
+	}
 	items, err := h.repo.Sources(ctx)
 	if err != nil {
 		writeRepoError(w, err)
@@ -525,7 +529,19 @@ func (h *handler) addSource(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	resolved, ok := h.resolveSourceConnection(w, audit.ConnectionInput{URI: input.URI, Username: input.Username, Password: input.Password, AuthSource: input.AuthSource, TLSMode: input.TLSMode, CACertificate: input.CACertificate, SavedConnectionID: input.SavedConnectionID})
+	conn := audit.ConnectionInput{URI: input.URI, Username: input.Username, Password: input.Password, AuthSource: input.AuthSource, TLSMode: input.TLSMode, CACertificate: input.CACertificate, SavedConnectionID: input.SavedConnectionID}
+	if ka, isKeeper := h.repo.(keeperAudit); isKeeper {
+		k, proceed := h.heldMongo(w, conn)
+		if !proceed {
+			return
+		}
+		if k != nil {
+			// The keeper stores this link's password: it opens the source and answers every read of it (P14b).
+			h.addHeldSource(w, r, ka, input)
+			return
+		}
+	}
+	resolved, ok := h.resolveConnection(w, conn)
 	if !ok {
 		return
 	}
@@ -746,6 +762,10 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 }
 
 func writeRepoError(w http.ResponseWriter, err error) {
+	if writeKeeperError(w, err) {
+		// An audit source opened by the key keeper (P14b): the keeper stopped, refused or was too busy.
+		return
+	}
 	switch {
 	case errors.Is(err, audit.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, "Request validation failed.")

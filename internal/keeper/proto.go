@@ -17,8 +17,9 @@
 //   - The caller is identified by Windows itself (the pipe client token), per connection, so there is nothing to replay: a request
 //     carries no session token, and a copied frame sent by another account is that other account's request.
 //
-// Operations are grouped in namespaces: ping/status, sql.*, mongo.*, bb.*. The namespace audit.* is reserved for P14b, which will
-// host the MongoDB audit repository (internal/store) behind this same pipe, using the stream frames for query results. See
+// Operations are grouped in namespaces: ping/status, sql.*, mongo.*, bb.*, audit.*. The audit.* operations (P14b) host the MongoDB
+// audit repository (internal/store) for sources opened from a saved link whose password the keeper holds: named, read-only reads that
+// take the audit package's typed inputs, with every answer sent as stream frames so its size is not bounded by MaxFrame. See
 // Server.Handle for the extension point.
 package keeper
 
@@ -77,6 +78,7 @@ const (
 	CodeRefused       = "refused"
 	CodeBusy          = "busy"
 	CodeBBRead        = "bb-read" // Blackbox read: Detail is {kind, message}
+	CodeAudit         = "audit"   // audit repository refusal: Detail is {kinds: [...]}, names from auditKinds
 	CodeUnknownOp     = "unknown-op"
 	CodeVersion       = "version"
 	CodeInternal      = "internal"
@@ -115,9 +117,25 @@ const (
 	OpBBRemove      = "bb.remove"
 	OpBBHTTP        = "bb.http"
 	OpBBImport      = "bb.import"
+
+	// The MongoDB audit data plane (P14b): every name starts with ReservedPrefixP14b.
+	OpAuditAdd       = "audit.add"
+	OpAuditSources   = "audit.sources"
+	OpAuditDelete    = "audit.delete"
+	OpAuditClose     = "audit.close"
+	OpAuditAnalyze   = "audit.analyze"
+	OpAuditRequests  = "audit.requests"
+	OpAuditPayload   = "audit.payload"
+	OpAuditRecord    = "audit.record"
+	OpAuditActivity  = "audit.activity"
+	OpAuditBreakdown = "audit.breakdown"
+	OpAuditCoverage  = "audit.coverage"
+	OpAuditSlowest   = "audit.slowest"
+	OpAuditRollup    = "audit.rollup"
+	OpAuditSchema    = "audit.schema"
 )
 
-// ReservedPrefixP14b is the namespace kept free for the MongoDB audit data plane (P14b).
+// ReservedPrefixP14b is the namespace of the MongoDB audit data plane (P14b).
 const ReservedPrefixP14b = "audit."
 
 // Chunk kinds of a stream.

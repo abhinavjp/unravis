@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 
+	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/bbsaved"
 	"api-audit-explorer/internal/datadir"
 	"api-audit-explorer/internal/history"
@@ -79,6 +80,18 @@ type savedWiring struct {
 	options []server.Option
 	// bb is the Blackbox list to use; nil means open the per-user list as before.
 	bb server.BlackboxStore
+	// keeper is the key keeper client of the shared layout (nil per user): audit sources opened from a saved MongoDB link whose
+	// password it holds are opened and read in the keeper (P14b, see auditRepo).
+	keeper *keeper.Client
+}
+
+// auditRepo is the audit repository Unravis serves: its own one per user, and in the shared layout one that sends the sources opened
+// from keeper-held saved links to the keeper (the keeper's password never reaches this process).
+func (w savedWiring) auditRepo(local audit.Repository) audit.Repository {
+	if w.keeper == nil {
+		return local
+	}
+	return keeper.NewAuditRouter(local, w.keeper)
 }
 
 // wireSaved attaches the saved SQL and MongoDB connections. Per user, they are the sealed per-user files as before. Shared, every saved
@@ -98,11 +111,8 @@ func wireSaved(getenv func(string) string, s storage) savedWiring {
 	c := keeper.NewClient(keeper.NewPipeDialer(s.layout.Pipe))
 	legacy := legacyStores(getenv)
 	mongo := keeper.NewMongoStore(c)
-	if legacy.Mongo != nil {
-		// TEMPORARY until P14b: an audit source from a saved MongoDB link still opens from the old per-user file while it exists.
-		mongo = mongo.WithLegacy(legacy.Mongo)
-	}
 	return savedWiring{
+		keeper: c,
 		options: []server.Option{
 			server.WithSQLConnections(keeper.NewSQLStore(c)),
 			server.WithHistory(mongo),

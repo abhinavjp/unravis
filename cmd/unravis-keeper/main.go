@@ -1,6 +1,6 @@
 // Command unravis-keeper is the Unravis Key Keeper (P14): a small Windows service that holds saved SQL Server passwords, saved MongoDB
-// link passwords and Blackbox read keys, and does the work that needs them (the fixed checks and the keyed Blackbox reads) on behalf of
-// Unravis, over a local named pipe. It never hands a secret back.
+// link passwords and Blackbox read keys, and does the work that needs them (the fixed checks, the keyed Blackbox reads and the MongoDB
+// audit sources opened from saved links) on behalf of Unravis, over a local named pipe. It never hands a secret back.
 //
 // It installs nothing. The installer registers it as a service (P14 installer work); on a developer PC "unravis-keeper console" runs the
 // same thing in the foreground with the keeper folder taken from UNRAVIS_KEEPER_DIR, for trying it by hand.
@@ -22,6 +22,7 @@ import (
 	"api-audit-explorer/internal/keeper"
 	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/sqlconn"
+	"api-audit-explorer/internal/store"
 )
 
 // ServiceName is the Windows service name the installer registers.
@@ -125,7 +126,10 @@ func serve(ctx context.Context, d deps, dir, pipe string, logf func(string, ...a
 		Log:     audit,
 		Limiter: keeper.NewRateLimiter(nil, 0),
 	})
-	(&keeper.Backend{SQL: sql, Mongo: mongo, BB: bb, Runner: d.runner()}).Register(s)
+	// The audit sources opened from saved MongoDB links (P14b) run on the same repository Unravis uses, with its default limits.
+	hosted := keeper.NewAuditHost(func() keeper.HostedRepo { return store.New() })
+	defer hosted.Close()
+	(&keeper.Backend{SQL: sql, Mongo: mongo, BB: bb, Runner: d.runner(), Audit: hosted}).Register(s)
 	if logf != nil {
 		logf("Unravis Key Keeper %s is answering on %s", version, pipe)
 	}
