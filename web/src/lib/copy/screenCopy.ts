@@ -51,6 +51,13 @@ export function periodLengthMs(start: string | null | undefined, end: string | n
   return Number.isFinite(from) && Number.isFinite(to) && to > from ? to - from : null;
 }
 
+/** Notes the zoom strip draws itself. The strip's other wording lives in zoomCopy.ts. */
+export const ZOOM_NOTES = {
+  tinyDrag: 'That drag was too short to change the window. Drag across more of the strip, or use Zoom in.',
+  emptyForApi: 'No usable timings for this API in this zoomed window.',
+  emptyForApiMore: 'Other APIs may have data here. Zoom out, or choose another API above.'
+} as const;
+
 /* ------------------------------------------------------------------ coverage: tenant line */
 
 export const TENANT_TEXT = {
