@@ -36,9 +36,15 @@ type FileLog struct {
 	now func() time.Time
 }
 
-// DefaultLogPath is where setup keeps its log when no --log is given: %TEMP%\Unravis-setup-<time>.log.
-func DefaultLogPath(now time.Time) string {
-	return filepath.Join(os.TempDir(), "Unravis-setup-"+now.Format("20060102-150405")+".log")
+// DefaultLogPath is where setup keeps its log when no --log is given (installer-and-releases.md section 4):
+// %LOCALAPPDATA%\Unravis\setup-logs\setup-<yyyymmdd-hhmmss>.log. The elevated worker writes to its own file next to it
+// (worker true), so the two never share one file.
+func DefaultLogPath(localAppData string, now time.Time, worker bool) string {
+	name := "setup-" + now.Format("20060102-150405")
+	if worker {
+		name += "-admin"
+	}
+	return filepath.Join(localAppData, "Unravis", "setup-logs", name+".log")
 }
 
 // OpenFileLog opens (appends to) a log file.
