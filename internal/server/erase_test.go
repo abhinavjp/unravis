@@ -56,6 +56,58 @@ func (e *eraseEnv) list() (cases []caseDTO, erased []erasedDTO) {
 	return out.Cases, out.Erased
 }
 
+func TestEraseHonoursTheBelief(t *testing.T) {
+	has := func(ee *eraseEnv, id string) bool {
+		cases, _ := ee.list()
+		for _, c := range cases {
+			if c.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	del := func(ee *eraseEnv, id, belief string) *httptest.ResponseRecorder {
+		return ee.believing(http.MethodDelete, "/api/cases/"+id, `{"confirm":`+q(id)+`}`, belief)
+	}
+	t.Run("wrong belief", func(t *testing.T) {
+		ee := newEraseEnv(t, envConfig{})
+		id := ee.newCase("Alpha")
+		wantFailure(t, del(ee, id, "closed"), http.StatusConflict, "case-changed", m2Text)
+		if !has(ee, id) {
+			t.Fatal("a refused erase removed the case")
+		}
+	})
+	t.Run("right belief", func(t *testing.T) {
+		ee := newEraseEnv(t, envConfig{})
+		id := ee.newCase("Alpha")
+		if res := del(ee, id, "open"); res.Code != http.StatusNoContent {
+			t.Fatalf("erase = %d %s", res.Code, res.Body)
+		}
+		if has(ee, id) {
+			t.Fatal("the case is still listed")
+		}
+	})
+	t.Run("no header", func(t *testing.T) {
+		ee := newEraseEnv(t, envConfig{})
+		id := ee.newCase("Alpha")
+		if res := ee.erase(id, id); res.Code != http.StatusNoContent {
+			t.Fatalf("erase = %d %s", res.Code, res.Body)
+		}
+	})
+	t.Run("closed case", func(t *testing.T) {
+		ee := newEraseEnv(t, envConfig{})
+		id := ee.newCase("Alpha")
+		ee.believing(http.MethodPost, "/api/cases/"+id+"/close", "", "open")
+		wantFailure(t, del(ee, id, "open"), http.StatusConflict, "case-changed", m2Text)
+		if !has(ee, id) {
+			t.Fatal("a refused erase removed the case")
+		}
+		if res := del(ee, id, "closed"); res.Code != http.StatusNoContent {
+			t.Fatalf("erase = %d %s", res.Code, res.Body)
+		}
+	})
+}
+
 func TestEraseTakesTheShortCodeOrTheFullID(t *testing.T) {
 	e := newEraseEnv(t, envConfig{})
 	a, b := e.newCase("A"), e.newCase("B")
