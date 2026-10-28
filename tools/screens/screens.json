@@ -1125,6 +1125,24 @@
         {"waitFor": "[data-keeper=migrate]"},
         {"scrollTo": "#conn-head"}
       ]
+    },
+    {
+      "id": "p14b-source-held", "phase": "P14b", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"goto": "#keeper=saved"},
+        {"click": "role=button[name=/Audit sources/]"},
+        {"waitFor": "[data-keeper-source=held]"}
+      ]
+    },
+    {
+      "id": "p14b-source-stopped", "phase": "P14b", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"goto": "#keeper=stopped"},
+        {"click": "role=button[name=/Audit sources/]"},
+        {"waitFor": "[data-keeper-sources-stopped]"}
+      ]
     }
   ]
 }

@@ -517,6 +517,12 @@ func (h *handler) sources(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []audit.Source{}
 	}
+	if h.demo {
+		if held, ok := demoHeldSources(items, r.URL.Query().Get("preview")); ok {
+			writeJSON(w, http.StatusOK, held, maxResponseBytes)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, items, maxResponseBytes)
 }
 

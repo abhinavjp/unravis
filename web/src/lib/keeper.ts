@@ -4,6 +4,8 @@
  * runs and whether the person's old per-user saved files still wait to be moved.
  */
 
+import { KEEPER_TEXT } from './copy/sourcesCopy';
+
 /** duplicates: old records the keeper holds only as someone else's copy (not in the move count; removing the old copies confirms them). */
 export type KeeperPending = { sql: number; mongo: number; blackbox: number; duplicates?: number };
 
@@ -32,13 +34,22 @@ export function keeperPreviewFrom(hash: string): KeeperPreview | '' {
 
 const PREVIEW_KEY = 'unravis.keeperPreview';
 let preview: KeeperPreview | '' = '';
+const previewListeners = new Set<() => void>();
+
+/** Calls back when the address names a different preview (the screenshot tool sets it after the page has loaded). */
+export function onKeeperPreview(listener: () => void): () => void {
+  previewListeners.add(listener);
+  return () => { previewListeners.delete(listener); };
+}
 
 /** Notes a preview named in the address and keeps it for this tab, so moving around the app (which changes the address) keeps it. */
 function noticePreview(): void {
   const found = keeperPreviewFrom(location.hash);
   if (!found) return;
+  const changed = found !== preview;
   preview = found;
   try { sessionStorage.setItem(PREVIEW_KEY, found); } catch { /* the preview then lasts until the page reloads */ }
+  if (changed) for (const listener of previewListeners) listener();
 }
 
 if (typeof location !== 'undefined' && typeof window !== 'undefined') {
@@ -67,3 +78,14 @@ export const isKeeperDown = (error: unknown): boolean => {
   const code = (error as { code?: string } | null)?.code;
   return code === 'keeper-stopped' || code === 'keeper-impostor';
 };
+
+/** The sticker on an audit source the key keeper opened from a saved link (P14b); '' for a source this Unravis opened itself. */
+export const heldSourceText = (source: { keeper?: 'held' | 'stopped' }): string =>
+  source.keeper === 'held' ? KEEPER_TEXT.held : source.keeper === 'stopped' ? KEEPER_TEXT.heldDown : '';
+
+/**
+ * A read refused because of the keeper: it is not running, or it closed a source it had open (restarted, or idle too long). The page
+ * then reads the source list again, so the stickers say which sources cannot be read and closed sources leave the list.
+ */
+export const keeperSourceChanged = (error: unknown): boolean =>
+  isKeeperDown(error) || (error as { code?: string } | null)?.code === 'keeper-source-gone';

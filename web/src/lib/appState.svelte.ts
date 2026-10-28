@@ -38,6 +38,7 @@ import { createViewHistory, describeView, parseViewHash, type View } from './way
 import { hourWindowQuery, type RollupWindow } from './rollup';
 import { backTarget, planBack, planInvestigation, rootOf, type TrailEntry } from './promote';
 import { zoomView } from './zoomView.svelte';
+import { keeperPreview, keeperSourceChanged, onKeeperPreview } from './keeper';
 
 let info = $state<Info | null>(null);
 let sources = $state<Source[]>([]);
@@ -408,6 +409,7 @@ export function startApp() {
   });
 }
 
+let keeperPreviewWatched = false;
 export async function initialize() {
   const hadToken = hasSessionToken();
   initCanRetry = true;
@@ -416,8 +418,13 @@ export async function initialize() {
     // A reload keeps the case this tab was working in, so its theories stay in view. The demo has no cases.
     if (info.demo) setActiveCase(''); else if (activeCaseId) setLedgerCase(activeCaseId);
     pendingInvestigation =readInvestigationSnapshot(undefined, info.demo ? 'demo' : 'live');
-    const loaded = (await api.sources()) ?? [];
+    const asked = keeperPreview();
+    const loaded = (await api.sources(asked)) ?? [];
     sources = loaded;
+    // In the demo a keeper preview named after the page loaded marks the sources too (the screenshots of P14b), also one named
+    // while this list was on its way.
+    if (info.demo && !keeperPreviewWatched) { keeperPreviewWatched = true; onKeeperPreview(() => void refreshKeeperSources()); }
+    if (info.demo && keeperPreview() !== asked) void refreshKeeperSources();
     if (pendingInvestigation) {
       investigationIntent = pendingInvestigation;
       const restored = restoreInvestigation(pendingInvestigation, loaded);
@@ -1106,18 +1113,33 @@ export async function deleteSource(source: Source) {
   sourceError = ''; busyDelete = source.id;
   try {
     await api.deleteSource(source.id);
-    investigationIntent = forgetInvestigationSource(investigationIntent, source);
-    sources = sources.filter(item => item.id !== source.id);
-    forgetSourceSaved(source);
-    workspaceBaseline = pruneWorkspace(workspaceBaseline, source);
-    if (!hasUnresolvedKnownSources(investigationIntent, sources)) investigationIntent = null;
-    query.sourceIds = query.sourceIds.filter(id => id !== source.id);
-    analysis = analysis ? { ...analysis, sources: analysis.sources.filter(result => result.sourceId !== source.id), apis: analysis.apis.filter(row => row.sourceId !== source.id) } : null;
-    selectedKey = ''; operation = null; contextAnchor = null;
-    invalidateDetails(); bumpEpoch();
-    queueWorkspaceSave();
+    forgetSource(source);
   } catch (cause) { sourceError = message(cause); }
   finally { busyDelete = ''; }
+}
+/** Takes a source that is gone on the server off the page: its selection, its results and the case's record of it. */
+function forgetSource(source: Source) {
+  investigationIntent = forgetInvestigationSource(investigationIntent, source);
+  sources = sources.filter(item => item.id !== source.id);
+  forgetSourceSaved(source);
+  workspaceBaseline = pruneWorkspace(workspaceBaseline, source);
+  if (!hasUnresolvedKnownSources(investigationIntent, sources)) investigationIntent = null;
+  query.sourceIds = query.sourceIds.filter(id => id !== source.id);
+  analysis = analysis ? { ...analysis, sources: analysis.sources.filter(result => result.sourceId !== source.id), apis: analysis.apis.filter(row => row.sourceId !== source.id) } : null;
+  selectedKey = ''; operation = null; contextAnchor = null;
+  invalidateDetails(); bumpEpoch();
+  queueWorkspaceSave();
+}
+/**
+ * A read the key keeper refused (P14b): it is not running, or it closed a source. The list is read again, so each source the keeper
+ * opened says whether it can be read now, and a source the keeper closed leaves the page as a removal would. The error banner stays.
+ */
+async function refreshKeeperSources() {
+  let loaded: Source[];
+  try { loaded = (await api.sources(keeperPreview())) ?? []; } catch { return; }
+  const now = new Set(loaded.map(source => source.id));
+  for (const source of sources) if (!now.has(source.id)) forgetSource(source);
+  sources = loaded;
 }
 // A manual run (the button) reports a problem in the error banner and ignores clicks while loading. An automatic run (a scope change)
 // never gets here with a problem, replaces an in-flight run, and leaves the banner alone.
@@ -1142,6 +1164,7 @@ export async function runAnalysis(auto = false) {
   } catch (cause) {
     if (run === analysisSequence && !(cause instanceof DOMException && cause.name === 'AbortError')) {
       const detail = message(cause);
+      if (keeperSourceChanged(cause)) void refreshKeeperSources();
       error = /exceeds a configured limit/i.test(detail)
         ? 'This comparison reached a processing safety limit. Your settings are kept. Try shorter periods, fewer sources, or a controller or action filter.'
         : detail;

@@ -615,3 +615,24 @@ func TestKeeperHeldAuditSourceWhenTheKeeperStops(t *testing.T) {
 		t.Fatalf("removed source still listed: %s", res.Body)
 	}
 }
+
+// The screenshot previews of keeper-held audit sources (P14b) answer only in the demo, and only for the named previews.
+func TestDemoPreviewsOfKeeperHeldSources(t *testing.T) {
+	demo := &caseEnv{t: t, h: New(audit.NewDemo(time.Now()), testAssets(), testToken, true)}
+	for preview, want := range map[string]keeper.HeldState{"saved": keeper.HeldByKeeper, "stopped": keeper.HeldButDown, "": "", "migrate": ""} {
+		var listed []heldSourceDTO
+		decodeBody(t, demo.get("/api/sources?preview="+preview), &listed)
+		if len(listed) == 0 {
+			t.Fatalf("%q: the demo lists no sources", preview)
+		}
+		for _, s := range listed {
+			if s.Keeper != want {
+				t.Fatalf("%q: source %s keeper = %q, want %q", preview, s.ID, s.Keeper, want)
+			}
+		}
+	}
+	live := tagEnv(t, casestore.NewMemory(), &fakeRepository{})
+	if res := live.get("/api/sources?preview=stopped"); res.Code != http.StatusOK || strings.Contains(res.Body.String(), "keeper") {
+		t.Fatalf("preview outside the demo = %d %s", res.Code, res.Body)
+	}
+}

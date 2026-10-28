@@ -108,7 +108,8 @@ const json = (value: unknown): RequestInit => ({ method: 'POST', body: JSON.stri
 export const api = {
   info: () => request<Info>('/info'),
   version: () => request<VersionInfo>('/version'),
-  sources: () => request<Source[]>('/sources'),
+  /** preview: a keeper screenshot preview (saved or stopped), answered only in the demo. */
+  sources: (preview = '') => request<Source[]>('/sources' + (preview ? '?preview=' + encodeURIComponent(preview) : '')),
   recentConnections: () => request<RecentConnection[]>('/connections/recent'),
   rememberConnection: (input: RememberConnectionInput) => request<RecentConnection>('/connections/remember', json(input)),
   forgetConnection: (id: string) => request<void>('/connections/recent/' + encodeURIComponent(id), { method: 'DELETE' }),

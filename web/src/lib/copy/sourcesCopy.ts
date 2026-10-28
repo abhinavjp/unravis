@@ -53,6 +53,7 @@ export const CONN_TEXT = {
 export const KEEPER_TEXT = {
   held: 'Password held by the key keeper',
   heldDown: 'Password held by the key keeper, which cannot be used until it runs again',
+  sourcesStopped: 'Sources opened with a password held by the key keeper cannot be read until it runs again. Sources whose password you typed still work.',
   origin: 'On this PC, saved passwords and Blackbox read keys are kept by the Unravis Key Keeper service. Unravis asks it to run a check by name and never gets a password back. Up to 20 SQL connections. Forget removes the saved connection and its password. It does not touch any server.',
   stoppedHeading: 'The key keeper is not running',
   stoppedBody: 'Saved passwords and read keys cannot be used until the Unravis Key Keeper service runs again. Start the service, or ask the person who looks after this PC. Connections that need no password still work.',

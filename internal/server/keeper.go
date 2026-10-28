@@ -299,6 +299,24 @@ func demoKeeperStatus(preview string) (keeperStatusDTO, bool) {
 	return keeperStatusDTO{}, false
 }
 
+// demoHeldSources is the canned source list for the screenshot previews (?preview=saved|stopped, demo only): the demo's sources shown
+// as opened by the key keeper, which runs (saved) or cannot be reached (stopped).
+func demoHeldSources(items []audit.Source, preview string) ([]heldSourceDTO, bool) {
+	state := keeper.HeldByKeeper
+	switch preview {
+	case "saved":
+	case "stopped":
+		state = keeper.HeldButDown
+	default:
+		return nil, false
+	}
+	out := make([]heldSourceDTO, 0, len(items))
+	for _, s := range items {
+		out = append(out, heldSourceDTO{Source: s, Keeper: state})
+	}
+	return out, true
+}
+
 func keeperProblem(err error) string {
 	if errors.Is(err, keeper.ErrImpostor) {
 		return "impostor"
