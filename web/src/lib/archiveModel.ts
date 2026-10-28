@@ -4,7 +4,7 @@
  * knows and never a key: a file's key shows as "Key ending xxxx" (the last four characters of its key check value).
  */
 
-export type KeyKind = 'master' | 'typed';
+export type KeyKind = 'master' | 'typed' | 'case';
 
 export interface ArchiveCounts { imports: number; sources: number; events: number }
 
@@ -48,7 +48,7 @@ export function parseArchiveFile(raw: unknown): ArchiveFile | null {
     name: r.name,
     folder: asString(r.folder),
     bytes: Math.max(0, asNumber(r.bytes)),
-    keyKind: r.keyKind === 'typed' ? 'typed' : 'master',
+    keyKind: r.keyKind === 'typed' ? 'typed' : r.keyKind === 'case' ? 'case' : 'master',
     keyEnding: /^[0-9a-f]{1,8}$/i.test(ending) ? ending.toLowerCase() : '',
     made: asString(r.made),
     counts: { imports: asNumber(counts?.imports), sources: asNumber(counts?.sources), events: asNumber(counts?.events) }
@@ -135,6 +135,10 @@ export const orphansFor = (report: OrphanReport, caseId: string): OrphanFile[] =
 /* ------------------------------------------------------------------ rules */
 
 /** "Key ending 7f3a", or empty when no ending is known. */
+/** The full path of a case file: the folder it was saved to and the name the server gave it. Empty when the file is not known. */
+export const archiveFilePath = (file: Pick<ArchiveFile, 'folder' | 'name'> | null | undefined): string =>
+  !file || !file.name ? '' : file.folder ? file.folder.replace(/[\\/]+$/, '') + '\\' + file.name : file.name;
+
 export const keyEndingOf = (file: Pick<ArchiveFile, 'keyEnding'> | null | undefined): string => file?.keyEnding ?? '';
 
 /** The case code typed to free the space: the first 8 characters of the id, case and spaces around it do not matter. */

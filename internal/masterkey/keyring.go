@@ -72,3 +72,13 @@ func (k *Keyring) Lock() {
 	clear(k.key)
 	k.key = nil
 }
+
+// NewKeyring returns an unlocked Keyring over a copy of key, which must be KeyLen
+// bytes (nil otherwise). The per-case key (internal/casekey) uses one Keyring per
+// unlocked case to seal that case files; the caller may clear key afterwards.
+func NewKeyring(key []byte) *Keyring {
+	if len(key) != KeyLen {
+		return nil
+	}
+	return &Keyring{key: append([]byte(nil), key...)}
+}

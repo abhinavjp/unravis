@@ -43,7 +43,7 @@ async function rememberForCase(held: Parameters<typeof api.rememberConnection>[0
 }
 
 export const wizardSubmitApi: SubmitApi = {
-  createCase: async (title, requestId) => ({ id: (await createCase(title, requestId)).id }),
+  createCase: async (title, requestId, caseKey) => ({ id: (await createCase(title, requestId, undefined, caseKey ?? undefined)).id }),
   saveRetries: (caseId, items) => putRetries(caseId, items),
   putEnvironments: (caseId, envs) => putEnvironments(caseId, envs),
   postSourceTag: (caseId, tag) => postSourceTag(caseId, tag),

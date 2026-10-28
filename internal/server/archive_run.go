@@ -58,7 +58,7 @@ type archiveRun struct {
 	src      casestore.CaseFileSource
 	keys     casestore.Keys
 	fk       casestore.FileKey
-	kind     string // KeyKindMaster or KeyKindTyped
+	kind     string // KeyKindMaster, KeyKindCase or KeyKindTyped
 	check    string // key check value
 	folder   string
 	name     string
@@ -209,7 +209,7 @@ func (h *handler) runArchive(ctx context.Context, job *fileJob, run archiveRun) 
 		// the mark to the recovery hook, which puts the case back.
 		h.leftOver(run)
 		reason, text := "check-failed", archiveCheckText
-		if errors.Is(err, casestore.ErrLocked) {
+		if errors.Is(err, casestore.ErrLocked) || errors.Is(err, casestore.ErrCaseLocked) {
 			reason, text = "key-locked", archiveStoppedText
 		}
 		job.finish(fileJobFailed, reason, text)

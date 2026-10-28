@@ -34,7 +34,8 @@
   let noKey = $state(false);
   const blocked = $derived(mode === 'as-new' && noKey);
 
-  const needsKey = $derived(mode === 'as-new' && file?.keyKind === 'typed');
+  const caseKeyed = $derived(mode === 'as-new' && file?.keyKind === 'case');
+  const needsKey = $derived(mode === 'as-new' && (file?.keyKind === 'typed' || caseKeyed));
   const ending = $derived(keyEndingOf(file));
   const canSubmit = $derived(!busy && !made && !placed && (!needsKey || passphraseOk(passphrase)));
   const title = $derived(mode === 'in-place' ? ARCHIVE_TEXT.restoreInPlaceTitle : ARCHIVE_TEXT.restoreNewTitle);
@@ -98,9 +99,9 @@
     {:else}
       <form class="form" onsubmit={submit}>
         {#if needsKey}
-          <label for="restore-pass">{ARCHIVE_TEXT.restoreKeyLabel}{ending ? ' (' + keyEndingText(ending) + ')' : ''}</label>
+          <label for="restore-pass">{caseKeyed ? ARCHIVE_TEXT.restoreCaseKeyLabel : ARCHIVE_TEXT.restoreKeyLabel}{ending ? ' (' + keyEndingText(ending) + ')' : ''}</label>
           <input id="restore-pass" type="password" bind:value={passphrase} autocomplete="off" spellcheck="false" disabled={busy} />
-          <p class="hint">{ARCHIVE_TEXT.restoreKeyHint}</p>
+          <p class="hint">{caseKeyed ? ARCHIVE_TEXT.restoreCaseKeyHint : ARCHIVE_TEXT.restoreKeyHint}</p>
         {/if}
         <div class="actions">
           <button type="submit" class="primary-button" disabled={!canSubmit}>{busy ? ARCHIVE_TEXT.restoreWorking : mode === 'in-place' ? ARCHIVE_TEXT.restoreInPlaceSubmit : ARCHIVE_TEXT.restoreNewSubmit}</button>

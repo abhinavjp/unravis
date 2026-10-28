@@ -2,7 +2,7 @@ import { listCases } from './cases';
 import { windowFor } from './discover';
 import type { WindowChoice } from './discover';
 import { sourcesView, scanIsStale } from './wizardSources.svelte';
-import { draftSnapshot, onWizardReset, wizard } from './wizard.svelte';
+import { draftCaseKey, draftSnapshot, onWizardReset, wipeCaseKey, wizard } from './wizard.svelte';
 import { importPlan, filesMissing, submitWizard, blankSubmitState, failuresOf, importedCount, isScanSource } from './wizardSubmit';
 import type { SubmitApi, SubmitInput, SubmitResult } from './wizardSubmit';
 import { wizardSubmitApi } from './wizardSubmitApi';
@@ -94,7 +94,7 @@ export function buildInput(now: number = Date.now()): SubmitInput {
   return {
     title: draft.title, envs: draft.envs, sources: draft.sources,
     window: draft.sources.some(isScanSource) ? windowFor(createView.window, now, null, { from: '', to: '' }) : null,
-    scanId: sourcesView.scanId, host: sourcesView.host, files, ackText: ackTextFor()
+    scanId: sourcesView.scanId, host: sourcesView.host, files, ackText: ackTextFor(), caseKey: draftCaseKey()
   };
 }
 
@@ -114,6 +114,8 @@ export async function createNow(api: SubmitApi = wizardSubmitApi): Promise<Submi
     return result;
   } finally {
     createView.running = false;
+    // Once the case exists the key was used and is not needed again (a later step never makes the case twice): it is cleared at once.
+    if (caseMade()) wipeCaseKey();
   }
 }
 

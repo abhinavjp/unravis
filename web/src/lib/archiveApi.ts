@@ -2,7 +2,7 @@
  * Calls for archive, check, free and restore (P3). Every call carries what the page believes the case is
  * (X-Expect-State). A passphrase travels only in a JSON body, never in a URL, and is never kept here.
  */
-import { send, json, casePath, toCase, believedState, EXPECT_STATE_HEADER, CaseApiError, type CaseInfo, type CaseState } from './cases';
+import { send, json, casePath, toCase, toErased, believedState, EXPECT_STATE_HEADER, CaseApiError, type CaseInfo, type CaseState, type ErasedLine } from './cases';
 import { parseFileJob, parseOrphans, type FileJob, type FileJobKind, type OrphanReport } from './archiveModel';
 
 const expecting = (believed?: CaseState): Record<string, string> => (believed ? { [EXPECT_STATE_HEADER]: believed } : {});
@@ -17,15 +17,17 @@ function asJob(raw: unknown, kind: FileJobKind): FileJob {
 }
 
 /** One page of cases. The working list carries the archived total so the toggle can say how many there are. */
-export interface CasesPage { cases: CaseInfo[]; archivedTotal: number; offset: number; pageSize: number }
+export interface CasesPage { cases: CaseInfo[]; archivedTotal: number; offset: number; pageSize: number; erased: ErasedLine[] }
 
-function toPage(body: { cases?: Partial<CaseInfo>[]; archivedTotal?: unknown; offset?: unknown; pageSize?: unknown }): CasesPage {
+function toPage(body: { cases?: Partial<CaseInfo>[]; archivedTotal?: unknown; offset?: unknown; pageSize?: unknown; erased?: unknown }): CasesPage {
   const num = (v: unknown, d: number): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : d);
   return {
     cases: (body.cases ?? []).map(toCase).filter((c) => /^[a-z2-7]{26}$/.test(c.id)),
     archivedTotal: num(body.archivedTotal, 0),
     offset: num(body.offset, 0),
-    pageSize: num(body.pageSize, 50)
+    pageSize: num(body.pageSize, 50),
+    // The lines left by erased cases (id and time only). The archived list never carries them.
+    erased: Array.isArray(body.erased) ? body.erased.map(toErased).filter((l): l is ErasedLine => l !== null) : []
   };
 }
 

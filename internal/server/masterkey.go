@@ -416,6 +416,10 @@ type masterKeyStatus struct {
 	// case records, so the number comes from a plain note kept beside the key file
 	// (freedNoteName), refreshed while the key is unlocked.
 	FreedArchives int `json:"freedArchives,omitempty"`
+	// Reset is present only while the key file is damaged: what starting over with
+	// a new master key would do to the cases (key_reset.go). The page says it
+	// before the person ticks the box.
+	Reset *resetImpact `json:"reset,omitempty"`
 }
 
 const needsRewrapText = "This case was only partly protected with the master key. Protect older cases to finish it."
@@ -718,6 +722,7 @@ func (h *handler) masterKeyReply(w http.ResponseWriter, r *http.Request) {
 	switch st {
 	case MasterKeyDamaged:
 		out.FreedArchives = readFreedNote(h.mk.dir)
+		out.Reset = h.masterKeyResetImpact(r.Context())
 	case MasterKeyUnlocked:
 		h.noteFreedArchives(r.Context())
 	}
@@ -947,6 +952,10 @@ func (h *handler) masterKeyLock(w http.ResponseWriter, r *http.Request) {
 	h.jobs.cancelAll()
 	h.caseFiles().jobs.stopAll()
 	h.mk.lock(h.closeCaseHandles)
+	// Lock locks all of Unravis: a case with its own key asks for that key again.
+	if ck, ok := h.cases.(casestore.CaseKeyer); ok {
+		ck.LockAllCaseKeys()
+	}
 	writeJSON(w, http.StatusOK, masterKeyStatus{State: h.mk.State()}, 4096)
 }
 
@@ -1031,7 +1040,8 @@ func (h *handler) masterKeyRewrap(w http.ResponseWriter, r *http.Request) {
 func rewrapOne(ctx context.Context, rs rewrapStore, id casestore.CaseID) rewrapResult {
 	res := rewrapResult{CaseID: string(id)}
 	kind, err := rs.CaseKind(id)
-	if err == nil && kind == casestore.KindMasterKey {
+	// A case with its own key is never moved to the master key.
+	if err == nil && (kind == casestore.KindMasterKey || kind == casestore.KindCaseKey) {
 		res.Status = "already"
 		return res
 	}
@@ -1074,6 +1084,8 @@ type resetDamagedReply struct {
 	// KeptAs is the file name (no folder) the damaged item was moved to, next to
 	// where it was. Nothing is deleted: put it back under its old name to undo.
 	KeptAs string `json:"keptAs"`
+	// Reset is what the reset left unreadable and what it left alone (counts).
+	Reset *resetImpact `json:"reset,omitempty"`
 }
 
 // masterKeyResetDamaged is the one recovery from a damaged masterkey.dat. It is
@@ -1112,6 +1124,8 @@ func (h *handler) masterKeyResetDamaged(w http.ResponseWriter, r *http.Request) 
 			"Confirm that cases protected by the old master key will stay unreadable.")
 		return
 	}
+	// Counted before the file moves, so the answer names what the reset affected.
+	impact := h.masterKeyResetImpact(r.Context())
 	from := masterkey.Path(s.dir)
 	keptAs := masterkey.FileName + ".damaged-" + time.Now().UTC().Format("20060102T150405.000000000Z")
 	// Judge the file again immediately before moving it: a good key file put back
@@ -1127,5 +1141,5 @@ func (h *handler) masterKeyResetDamaged(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	n, _, _ := h.dpapiCaseCount(r.Context())
-	writeJSON(w, http.StatusOK, resetDamagedReply{State: s.State(), DPAPICases: n, KeptAs: keptAs}, 4096)
+	writeJSON(w, http.StatusOK, resetDamagedReply{State: s.State(), DPAPICases: n, KeptAs: keptAs, Reset: impact}, 4096)
 }

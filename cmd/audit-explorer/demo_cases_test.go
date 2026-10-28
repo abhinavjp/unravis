@@ -110,6 +110,23 @@ func listCases(t *testing.T, h http.Handler) (int, []map[string]any) {
 	return res.Code, out.Cases
 }
 
+// listErased reads the Erased lines of the same list.
+func listErased(t *testing.T, h http.Handler) []map[string]any {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/cases", nil)
+	req.Host = "127.0.0.1:8765"
+	req.Header.Set("X-Audit-Token", demoTestToken)
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	var out struct {
+		Erased []map[string]any `json:"erased"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v: %s", err, res.Body)
+	}
+	return out.Erased
+}
+
 func demoServer(t *testing.T, options []server.Option) http.Handler {
 	t.Helper()
 	assets := fstest.MapFS{"index.html": {Data: []byte("<!doctype html><html><head></head><body>ok</body></html>")}}
@@ -214,7 +231,7 @@ func seededServer(t *testing.T, dir string) (http.Handler, func()) {
 	return demoServer(t, options), closeCases
 }
 
-func TestDemoCasesSeedFiveCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
+func TestDemoCasesSeedSixCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	h, closeCases := seededServer(t, t.TempDir())
 	defer closeCases()
 	code, list := listCases(t, h)
@@ -225,8 +242,8 @@ func TestDemoCasesSeedFiveCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	for _, c := range list {
 		byID[c["id"].(string)] = c
 	}
-	if len(list) != 6 {
-		t.Fatalf("got %d cases, want 6 (the Missing one is listed with the others): %v", len(list), list)
+	if len(list) != 7 {
+		t.Fatalf("got %d cases, want 7 (the Missing one and the keyed one are listed with the others): %v", len(list), list)
 	}
 	want := func(id, title string, created time.Time, closed *time.Time, imports float64) {
 		t.Helper()
@@ -267,6 +284,56 @@ func TestDemoCasesSeedFiveCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	}
 	if m := byID[string(demoCaseMissingID)]; m == nil || m["missing"] != true {
 		t.Errorf("the missing demo case = %v, want missing", m)
+	}
+}
+
+// The keyed demo case is locked from the first list: its row shows the short code and the key
+// ending's lock state, never the title, and the demo's passphrase is nowhere in the answer.
+func TestDemoKeyedCaseIsLockedAndHidesItsTitle(t *testing.T) {
+	h, closeCases := seededServer(t, t.TempDir())
+	defer closeCases()
+	_, list := listCases(t, h)
+	var row map[string]any
+	for _, c := range list {
+		if c["id"] == string(demoCaseKeyedID) {
+			row = c
+		}
+	}
+	if row == nil {
+		t.Fatalf("the keyed demo case is not listed: %v", list)
+	}
+	if row["keyLocked"] != true || row["ownKey"] != true {
+		t.Errorf("the keyed demo case = %v, want ownKey and keyLocked", row)
+	}
+	if title, _ := row["title"].(string); strings.Contains(title, "Payroll") {
+		t.Errorf("a locked case's list row leaks its title: %q", title)
+	}
+	raw, _ := json.Marshal(list)
+	if strings.Contains(string(raw), demoCaseKeyPassphrase) {
+		t.Error("the demo passphrase is in the case list")
+	}
+}
+
+func TestDemoSeedsTwoErasedLinesWithFixedTimes(t *testing.T) {
+	h, closeCases := seededServer(t, t.TempDir())
+	defer closeCases()
+	lines := listErased(t, h)
+	if len(lines) != 2 {
+		t.Fatalf("erased lines = %v, want 2", lines)
+	}
+	ids := map[string]string{}
+	for _, l := range lines {
+		ids[l["id"].(string)], _ = l["at"].(string)
+	}
+	for id, ago := range map[casestore.CaseID]time.Duration{demoErasedOneID: 7 * day, demoErasedTwoID: day} {
+		at, ok := ids[string(id)]
+		if !ok {
+			t.Fatalf("no Erased line for %s: %v", id, lines)
+		}
+		got, _ := time.Parse(time.RFC3339Nano, at)
+		if !got.Equal(demoTestNow.Add(-ago)) {
+			t.Errorf("%s erased at %v, want %v", id, at, demoTestNow.Add(-ago))
+		}
 	}
 }
 
@@ -540,6 +607,9 @@ func TestDemoCasesSeedOneNothingReadLaneDay(t *testing.T) {
 		h.ServeHTTP(res, req)
 		if res.Code == http.StatusConflict && strings.HasPrefix(id, string(demoCaseUntrustedID)) {
 			continue // not opened by design
+		}
+		if res.Code == http.StatusLocked && strings.HasPrefix(id, string(demoCaseKeyedID)) {
+			continue // locked by its own key, by design
 		}
 		if res.Code == http.StatusNotFound && strings.HasPrefix(id, string(demoCaseMissingID)) {
 			continue // its file is gone by design

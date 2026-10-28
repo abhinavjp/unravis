@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"bufio"
 	"context"
 	"crypto/rand"
@@ -78,6 +79,12 @@ type casesState struct {
 	wsLocks    caseLedgerLocks // serialises writes of each case's workspace note
 	jobs       importJobs
 	disc       discoverState
+	keyTh      caseThrottles // failure throttles of the per-case keys (case_key.go)
+	keyOp      sync.Mutex    // one case-key derivation (Argon2) at a time
+	erased     ErasedLog     // the Erased lines of the start screen (erased_log.go); nil keeps none
+	// eraseWait is how long Erase waits for the case to be free (A16); eraseAfter makes the timer. Tests replace the timer.
+	eraseWait  time.Duration
+	eraseAfter func(time.Duration) <-chan time.Time
 	maxUpload  int64 // test hook: replaces the computed upload cap when > 0
 
 	hostsMu sync.RWMutex
@@ -232,11 +239,39 @@ func (g *caseGates) acquireRead(id casestore.CaseID) (func(), bool) {
 }
 
 // acquireErase takes the exclusive slot, then blocks new reads and waits for
-// the reads in flight to finish before it returns.
+// the reads in flight to finish before it returns. It waits as long as it takes.
 func (g *caseGates) acquireErase(ctx context.Context, id casestore.CaseID) (func(), error) {
-	release, gate, err := g.acquireGate(ctx, id)
-	if err != nil {
-		return nil, err
+	return g.acquireEraseWithin(ctx, id, nil)
+}
+
+// errCaseInUse is M4: the erase gave up waiting for the case to be free.
+var errCaseInUse = errors.New("the case is in use")
+
+// acquireEraseWithin is acquireErase with a deadline: when timeout fires before the
+// slot is taken and the readers have left, the refusal of new readers is lifted, the
+// slot is given back and errCaseInUse is returned. Nothing was marked or erased. A nil
+// timeout waits for ever.
+func (g *caseGates) acquireEraseWithin(ctx context.Context, id casestore.CaseID, timeout <-chan time.Time) (func(), error) {
+	g.mu.Lock()
+	gate := g.ref(id)
+	g.mu.Unlock()
+	leave := func() {
+		g.mu.Lock()
+		g.unref(id, gate)
+		g.mu.Unlock()
+	}
+	select {
+	case gate.ch <- struct{}{}:
+	case <-ctx.Done():
+		leave()
+		return nil, ctx.Err()
+	case <-timeout:
+		leave()
+		return nil, errCaseInUse
+	}
+	release := func() {
+		<-gate.ch
+		leave()
 	}
 	g.mu.Lock()
 	gate.erasing = true
@@ -257,7 +292,16 @@ func (g *caseGates) acquireErase(ctx context.Context, id casestore.CaseID) (func
 		case <-wait:
 		case <-ctx.Done():
 			done()
+			g.mu.Lock()
+			gate.idle = nil
+			g.mu.Unlock()
 			return nil, ctx.Err()
+		case <-timeout:
+			done()
+			g.mu.Lock()
+			gate.idle = nil
+			g.mu.Unlock()
+			return nil, errCaseInUse
 		}
 	}
 	return done, nil
@@ -389,6 +433,10 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeCaseFailure(w, http.StatusBadRequest, "bad-case-id", "That is not a case id.")
 	case errors.Is(err, casestore.ErrLocked):
 		writeLocked(w)
+	case errors.Is(err, casestore.ErrCaseLocked):
+		writeCaseLocked(w)
+	case errors.Is(err, casestore.ErrWrongCaseKey):
+		writeWrongCaseKey(w)
 	case errors.Is(err, casestore.ErrUntrustedLegacy):
 		writeCaseFailure(w, http.StatusConflict, "untrusted-case", untrustedCaseText)
 	case errors.Is(err, casestore.ErrNeedsRewrap):
@@ -404,6 +452,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeCaseFailure(w, http.StatusConflict, "cancel-archive-first", cancelArchiveText)
 	case errors.Is(err, casestore.ErrErasing):
 		writeCaseFailure(w, http.StatusConflict, "case-erasing", caseErasingText)
+	case errors.Is(err, errCaseInUse):
+		writeCaseFailure(w, http.StatusConflict, "case-in-use", caseInUseText)
 	case errors.Is(err, casestore.ErrFreeing):
 		writeCaseFailure(w, http.StatusConflict, "case-freeing", caseFreeingText)
 	case errors.Is(err, casestore.ErrAlreadyMade):
@@ -434,6 +484,12 @@ type caseDTO struct {
 	// Untrusted is true for a folder the store refuses (see
 	// casestore.ErrUntrustedLegacy). Its title is a fixed placeholder.
 	Untrusted bool `json:"untrusted,omitempty"`
+	// OwnKey: the case is sealed with its own key. KeyLocked: that key is not
+	// unlocked, so the case cannot be opened (its title is hidden then). KeyEnding
+	// is "Key ending xxxx", the last 4 characters of the key check value.
+	OwnKey    bool   `json:"ownKey,omitempty"`
+	KeyLocked bool   `json:"keyLocked,omitempty"`
+	KeyEnding string `json:"keyEnding,omitempty"`
 	// Missing is true for a case whose working copy is gone without a Free: no
 	// folder and no mark ("Working copy missing"). Only Erase, and Restore as new
 	// when it was archived, are offered.
@@ -448,6 +504,7 @@ type caseDTO struct {
 
 func toCaseDTO(c casestore.CaseInfo) caseDTO {
 	d := caseDTO{ID: string(c.ID), Title: c.Title, Created: c.Created.UTC(), Bytes: c.Bytes, Imports: c.Imports, Untrusted: c.Untrusted, State: string(casestore.StateOf(c)),
+		OwnKey: c.OwnKey, KeyLocked: c.KeyLocked, KeyEnding: c.KeyEnding,
 		Missing: c.Missing, FilesMade: filesMade(c.Archive), Archive: toArchiveDTO(c.Archive, false)}
 	if c.Closed != nil {
 		t := c.Closed.UTC()
@@ -638,11 +695,12 @@ func (h *handler) listCases(w http.ResponseWriter, r *http.Request) {
 		out = append(out, d)
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Cases         []caseDTO `json:"cases"`
-		ArchivedTotal int       `json:"archivedTotal"`
-		Offset        int       `json:"offset"`
-		PageSize      int       `json:"pageSize"`
-	}{out, len(kept), offset, archivedPageSize}, maxResponseBytes)
+		Cases         []caseDTO   `json:"cases"`
+		ArchivedTotal int         `json:"archivedTotal"`
+		Offset        int         `json:"offset"`
+		PageSize      int         `json:"pageSize"`
+		Erased        []erasedDTO `json:"erased"`
+	}{out, len(kept), offset, archivedPageSize, h.erasedLines()}, maxResponseBytes)
 }
 
 // archivedPageSize is how many archived cases one page of the archived list holds.
@@ -660,21 +718,22 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 	if !h.casesAvailable(w) {
 		return
 	}
-	var body struct {
-		Title string `json:"title"`
-		// RequestID is kept by the page for one wizard run. A repeated id answers
-		// the case the first request made (200) and makes no second one.
-		RequestID string `json:"requestId"`
-	}
-	if !decodeJSON(w, r, &body) {
+	// title and requestId are text; caseKey and caseKeyConfirm (the optional own
+	// key of the case) are read as bytes that never become strings.
+	body := readKeyBody(w, r, []string{"caseKey", "caseKeyConfirm"}, []string{"title", "requestId"})
+	if body == nil {
 		return
 	}
-	title := strings.TrimSpace(body.Title)
+	defer body.wipe()
+	// RequestID is kept by the page for one wizard run. A repeated id answers the
+	// case the first request made (200) and makes no second one.
+	requestID := body.strs["requestId"]
+	title := strings.TrimSpace(body.strs["title"])
 	if !casestore.ValidTitle(title) {
 		writeCaseFailure(w, http.StatusBadRequest, "bad-title", "The title is empty, too long or holds control characters.")
 		return
 	}
-	if body.RequestID != "" && !casestore.ValidRequestID(body.RequestID) {
+	if requestID != "" && !casestore.ValidRequestID(requestID) {
 		writeCaseFailure(w, http.StatusBadRequest, "bad-request-id", badRequestIDText)
 		return
 	}
@@ -683,8 +742,22 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 		existed bool
 		err     error
 	)
-	if lc, ok := h.cases.(casestore.Lifecycle); ok && body.RequestID != "" {
-		info, existed, err = lc.CreateFor(r.Context(), title, body.RequestID)
+	if key, withKey := body.secrets["caseKey"]; withKey {
+		ck, ok := h.caseKeyer(w)
+		if !ok {
+			return
+		}
+		if !newKeyChecked(w, key, body.secrets["caseKeyConfirm"]) {
+			return
+		}
+		kc := bytes.Clone(key)
+		defer clear(kc)
+		info, existed, err = ck.CreateWithKey(r.Context(), title, requestID, kc)
+	} else if _, stray := body.secrets["caseKeyConfirm"]; stray {
+		writeCaseKeyFail(w, http.StatusBadRequest, "bad-request", "The request body is invalid.")
+		return
+	} else if lc, ok := h.cases.(casestore.Lifecycle); ok && requestID != "" {
+		info, existed, err = lc.CreateFor(r.Context(), title, requestID)
 	} else {
 		info, err = h.cases.Create(r.Context(), title)
 	}
@@ -722,13 +795,14 @@ func (h *handler) openCase(w http.ResponseWriter, r *http.Request, raw string) (
 	}
 	release, ok := h.gates.acquireRead(id)
 	if !ok {
-		writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
+		// An erase is waiting for the readers in flight: new ones are told so (M5).
+		writeStoreError(w, casestore.ErrErasing)
 		return "", nil, false
 	}
 	c, err := h.cases.Open(r.Context(), id)
 	if err != nil {
 		release()
-		writeStoreError(w, err)
+		writeStoreError(w, h.openFailed(r.Context(), id, err))
 		return "", nil, false
 	}
 	// A case still marked Freeing or Erasing is repaired first; if the mark is
@@ -762,7 +836,7 @@ func (h *handler) openCaseForWrite(w http.ResponseWriter, r *http.Request, raw s
 	}
 	c, err := h.cases.Open(r.Context(), id)
 	if err != nil {
-		writeStoreError(w, err)
+		writeStoreError(w, h.openFailed(r.Context(), id, err))
 		return "", nil, false
 	}
 	if info := c.Info(); info.Mark != "" {
@@ -773,6 +847,21 @@ func (h *handler) openCaseForWrite(w http.ResponseWriter, r *http.Request, raw s
 		}
 	}
 	return id, c, true
+}
+
+// openFailed is the answer to a case that did not open. A case that is "not found"
+// may be one whose erase was marked and not finished (the process died, or the key
+// was locked at the time): the store hides it, so the next call finishes the erase
+// here. If the finish works the case is gone (404); if it cannot yet, the call is
+// told the erase is under way (M5).
+func (h *handler) openFailed(ctx context.Context, id casestore.CaseID, err error) error {
+	if !errors.Is(err, casestore.ErrNotFound) || h.recoverer == nil {
+		return err
+	}
+	if mark, _ := h.recoverer.RecoverOne(ctx, id); mark == casestore.MarkErasing {
+		return casestore.ErrErasing
+	}
+	return err
 }
 
 func (h *handler) closeCase(w http.ResponseWriter, r *http.Request, raw string) {
@@ -825,23 +914,34 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if body.Confirm != string(id) {
-		writeCaseFailure(w, http.StatusBadRequest, "confirm-mismatch", "The confirmation does not match the case id.")
+	if !eraseCodeMatches(body.Confirm, id) {
+		writeCaseFailure(w, http.StatusBadRequest, "confirm-mismatch", "The code does not match the case code.")
 		return
 	}
-	// An import in flight finishes before the case is erased, and so does every
-	// read that already opened the case; reads that start now answer 404. A
-	// background import job is cancelled first, so the erase waits only for it to
-	// stop, not for it to finish.
+	// An archive that is running must be cancelled first (M15). Checked before anything
+	// is stopped, so a refused erase touches nothing, and again under the gate.
+	if err := h.refuseWhileArchiving(r.Context(), id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	// An import in flight is stopped, the sampler is stopped and its streams closed,
+	// and the erase waits up to 30 s for every read that already opened the case
+	// (A16). New reads are told "being erased" (M5) meanwhile. If the wait runs out
+	// the answer is M4 and nothing was marked or erased. A background import job is
+	// cancelled first, so the erase waits only for it to stop, not to finish.
 	h.stopSamplerFor(id, true, stopCaseClosed)
 	stopCancelling := h.jobs.cancelCaseUntilStopped(id)
-	release, err := h.gates.acquireErase(r.Context(), id)
+	release, err := h.gates.acquireEraseWithin(r.Context(), id, h.eraseTimer())
 	stopCancelling()
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
 	defer release()
+	if err := h.refuseWhileArchiving(r.Context(), id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	// An id that names no case is a 404 and touches nothing, the ledger included.
 	// The exception is a case whose erase started and did not finish (the ledger
 	// could not be stripped): erasing it again completes the job.
@@ -869,8 +969,76 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 		}
 	}
 	h.pending.remove(id)
+	h.noteErased(id)
 	h.noteFreedArchives(context.Background()) // an erased freed archive is no longer counted by M12
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// eraseCodeLen is the length of the short code typed to erase a case.
+const eraseCodeLen = 8
+
+// defaultEraseWait is how long Erase waits for the case to be free (A16).
+const defaultEraseWait = 30 * time.Second
+
+// eraseTimer starts the wait of one erase.
+func (h *handler) eraseTimer() <-chan time.Time {
+	d := h.eraseWait
+	if d <= 0 {
+		d = defaultEraseWait
+	}
+	if h.eraseAfter != nil {
+		return h.eraseAfter(d)
+	}
+	return time.After(d)
+}
+
+// withEraseTimer replaces the timer of the 30 s wait. Tests only.
+func withEraseTimer(after func(time.Duration) <-chan time.Time) Option {
+	return func(h *handler) { h.eraseAfter = after }
+}
+
+// eraseCodeMatches reports whether typed names the case. The code is the first eight
+// characters of the id, typed in any case, with spaces or dashes allowed
+// ("K7M2-QX4A"). The whole id is accepted too, exactly as it is.
+func eraseCodeMatches(typed string, id casestore.CaseID) bool {
+	if typed == string(id) {
+		return true
+	}
+	code := strings.Map(func(r rune) rune {
+		if r == ' ' || r == '-' || r == '\t' {
+			return -1
+		}
+		return r
+	}, strings.ToLower(typed))
+	return len(code) == eraseCodeLen && len(id) >= eraseCodeLen && code == string(id[:eraseCodeLen])
+}
+
+// refuseWhileArchiving answers M15 when the case's archive is running.
+func (h *handler) refuseWhileArchiving(ctx context.Context, id casestore.CaseID) error {
+	// The job is the truth while it runs: a locked keyed case shows no Archiving mark in
+	// the list (its manifest is sealed), but its archive is still writing.
+	if h.caseFiles().jobs.running(jobArchive, id) != nil {
+		return casestore.ErrCancelArchiveFirst
+	}
+	info, found, err := h.caseRow(ctx, id)
+	if err != nil || !found {
+		return err
+	}
+	return casestore.CheckBelief(casestore.ActionErase, "", casestore.StateOf(info))
+}
+
+// caseRow is the case's row of the listing, as the store holds it (no repair).
+func (h *handler) caseRow(ctx context.Context, id casestore.CaseID) (casestore.CaseInfo, bool, error) {
+	items, err := h.cases.List(ctx)
+	if err != nil {
+		return casestore.CaseInfo{}, false, err
+	}
+	for _, c := range items {
+		if c.ID == id {
+			return c, true, nil
+		}
+	}
+	return casestore.CaseInfo{}, false, nil
 }
 
 // caseExists reports whether the store lists the case.

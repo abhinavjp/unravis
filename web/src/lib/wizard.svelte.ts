@@ -1,6 +1,7 @@
 import { releaseConnections } from './wizardConnections';
 import { parseEnvs } from './wizardEnvs';
 import type { ParsedEnvs } from './wizardEnvs';
+import { newKeyProblem, type NewKeyProblem } from './caseKey';
 import { backStepOf, cleanTitle, isDirty as draftIsDirty, moveToStep, nextStepOf, resumeStep, titleProblem } from './wizardFlow';
 import type { DraftSource, StepId } from './wizardFlow';
 
@@ -18,9 +19,11 @@ export interface WizardDraft {
   envText: string;
   /** Sources ticked or connected on the sources step, each with its environment / portal / API tags. */
   sources: DraftSource[];
+  /** The optional key of this case (decision A12): off by default. The key and its repeat live here only until the case is made, then are cleared. */
+  caseKey: { on: boolean; key: string; again: string };
 }
 
-const blank = (): WizardDraft => ({ step: 'name', title: '', envText: '', sources: [] });
+const blank = (): WizardDraft => ({ step: 'name', title: '', envText: '', sources: [], caseKey: { on: false, key: '', again: '' } });
 
 /** The one draft. Bind the fields with `bind:value={wizard.title}`; change the step with `goToStep`, `nextStep` and `backStep`. */
 export const wizard = $state<WizardDraft>(blank());
@@ -48,12 +51,24 @@ export const wizardIsDirty = (): boolean => draftIsDirty(wizard);
 /** The environments typed so far, parsed. */
 export const draftEnvs = (): ParsedEnvs => parseEnvs(wizard.envText);
 
+/** The first problem with the case key when one is asked for (none when it is off). */
+export const draftKeyProblem = (): NewKeyProblem | null => (wizard.caseKey.on ? newKeyProblem(wizard.caseKey.key, wizard.caseKey.again) : null);
+
+/** The key and its repeat for the one create call, or null when the case gets no key of its own. */
+export const draftCaseKey = (): { key: string; confirm: string } | null => (wizard.caseKey.on ? { key: wizard.caseKey.key, confirm: wizard.caseKey.again } : null);
+
+/** Clears the key and its repeat (the case was made, or the person turned the key off). */
+export function wipeCaseKey(): void {
+  wizard.caseKey.key = '';
+  wizard.caseKey.again = '';
+}
+
 /** The problem with the case name, or null. */
 export const draftTitleProblem = () => titleProblem(wizard.title);
 
 /** Asks to move to a step. A forward move needs a valid name; a refused move keeps the step. Returns whether the wizard is on `to` now. */
 export function goToStep(to: StepId): boolean {
-  const move = moveToStep(wizard.step, to, { title: wizard.title });
+  const move = moveToStep(wizard.step, to, { title: wizard.title, keyOk: draftKeyProblem() === null });
   if (!move.ok) return false;
   wizard.step = move.step;
   return true;
@@ -78,7 +93,7 @@ export function setSources(list: readonly DraftSource[]) {
 
 /** Puts the wizard back on a step it may show, for a draft that is picked up again. */
 export function resumeWizard() {
-  wizard.step = resumeStep(wizard.step, { title: wizard.title });
+  wizard.step = resumeStep(wizard.step, { title: wizard.title, keyOk: draftKeyProblem() === null });
 }
 
 /** A plain copy of what will be created, safe to hand to the submit step. Title and environments are cleaned and bounded. */

@@ -73,7 +73,7 @@ test('damaged: M12 count (freed archives) is kept only when above 0, and the war
   assert.deepEqual(mk.parseStatus({ state: 'damaged', dpapiCases: 0, freedArchives: 2 }), { state: 'damaged', dpapiCases: 0, freedArchives: 2 });
   assert.deepEqual(mk.parseStatus({ state: 'damaged', dpapiCases: 0, freedArchives: 0 }), { state: 'damaged', dpapiCases: 0 });
   assert.deepEqual(mk.parseStatus({ state: 'damaged', dpapiCases: 0, freedArchives: 'x' }), { state: 'damaged', dpapiCases: 0 });
-  assert.equal(copy.freedArchivesWarning(1), '1 archived case can only be opened with the old key. Their working copies were freed.');
+  assert.equal(copy.freedArchivesWarning(1), '1 archived case can only be opened with the old key. Its working copy was freed.');
   assert.equal(copy.freedArchivesWarning(2), '2 archived cases can only be opened with the old key. Their working copies were freed.');
   const view = read('src/components/MasterKeyDamaged.svelte');
   assert.match(view, /freedArchivesWarning\(freed\)/);
@@ -277,4 +277,26 @@ test('damaged: every new sentence passes the copy lint and none holds a key or a
   assert.deepEqual(lintScreenStrings(enter.enterLintEntries(), deck.terms).map((f) => f.id + ': ' + f.message), []);
   const all = [...Object.values(copy.DAMAGED_TEXT), ...['acknowledgement-required', 'not-damaged', 'failed', 'unavailable', 'network', 'other'].map((k) => copy.resetErrorText(k))];
   for (const text of all) assert.doesNotMatch(text, /[A-Za-z]:\\|\/Users\/|masterkey\.dat/i, text);
+});
+
+test('damaged: the status carries what a start-over would do, and the screen says it before the tick (M12)', () => {
+  const status = mk.parseStatus({ state: 'damaged', dpapiCases: 0, reset: { masterKeyCases: 2, ownKeyCases: 1, archiveOnly: 3 } });
+  assert.deepEqual(status.reset, { masterKeyCases: 2, ownKeyCases: 1, archiveOnly: 3 });
+  assert.equal(mk.parseStatus({ state: 'unlocked', dpapiCases: 0 }).reset, undefined, 'no block, no counts');
+  assert.deepEqual(mk.parseStatus({ state: 'damaged', reset: { masterKeyCases: -4, ownKeyCases: 'x', archiveOnly: 2.9 } }).reset, { masterKeyCases: 0, ownKeyCases: 0, archiveOnly: 2 });
+  assert.deepEqual(copy.resetImpactLines(null), []);
+  assert.deepEqual(copy.resetImpactLines({ masterKeyCases: 0, ownKeyCases: 0, archiveOnly: 0 }), []);
+  const lines = copy.resetImpactLines({ masterKeyCases: 2, ownKeyCases: 1, archiveOnly: 3 });
+  assert.equal(lines.length, 3);
+  assert.match(lines[0], /^2 cases .* old master key .* unreadable/);
+  assert.match(lines[1], /^1 case with its own key is not affected/);
+  assert.equal(lines[2], '3 archived cases can only be opened with the old key.');
+  assert.equal(copy.archiveOnlyText(1), '1 archived case can only be opened with the old key.');
+  // A case with its own key is never counted among the ones that stay unreadable.
+  assert.doesNotMatch(copy.resetImpactLines({ masterKeyCases: 0, ownKeyCases: 2, archiveOnly: 0 }).join(' '), /unreadable/);
+  const src = read('src/components/MasterKeyDamaged.svelte');
+  assert.match(src, /impact = resetImpactLines\(status\.reset \? \{ \.\.\.status\.reset, archiveOnly: 0 \} : null\)/, 'the M12 line is said once, in its own warning');
+  assert.match(src, /freed = status\.freedArchives \?\? status\.reset\?\.archiveOnly \?\? 0/);
+  assert.match(src, /\{#each impact as line/);
+  assert.match(read('src/lib/copy/masterKeyCopy.ts'), /impactMany/, 'the lines are in the copy lint');
 });

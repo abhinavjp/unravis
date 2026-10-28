@@ -1,6 +1,6 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
 import { casePath, isCaseId } from './cases';
-import { LOCKED_STATUS, signalCasesLocked } from './lockSignal';
+import { LOCKED_STATUS, isCaseKeyReason, signalCasesLocked } from './lockSignal';
 import { retryAfterOf } from './restoreCase';
 
 /**
@@ -43,7 +43,7 @@ async function call(path: string, body: Record<string, string>, signal?: AbortSi
   }
   let parsed: unknown = null;
   try { parsed = await response.json(); } catch { /* an empty or unreadable body is fine */ }
-  if (response.status === LOCKED_STATUS) signalCasesLocked();
+  if (response.status === LOCKED_STATUS && !isCaseKeyReason((parsed as { reason?: unknown } | null)?.reason)) signalCasesLocked();
   if (!response.ok) {
     const fields = parsed && typeof parsed === 'object' ? parsed as { reason?: unknown; retryAfterSeconds?: unknown } : {};
     const reason = typeof fields.reason === 'string' ? fields.reason : '';

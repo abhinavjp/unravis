@@ -133,7 +133,7 @@ test('a draft with nothing in it is not dirty; any entry makes it dirty', () => 
 
 test('the draft starts blank on the first step', () => {
   store.resetWizard();
-  assert.deepEqual({ ...store.wizard }, { step: 'name', title: '', envText: '', sources: [] });
+  assert.deepEqual({ ...store.wizard }, { step: 'name', title: '', envText: '', sources: [], caseKey: { on: false, key: '', again: '' } });
   assert.equal(store.wizardIsDirty(), false);
 });
 
@@ -223,7 +223,7 @@ test('resetWizard throws everything away', () => {
   store.setSources([{ kind: 'iis', ref: 'r', label: 'L', env: '', portal: '', api: '', classification: '' }]);
   assert.equal(store.wizardIsDirty(), true);
   store.resetWizard();
-  assert.deepEqual({ ...store.wizard }, { step: 'name', title: '', envText: '', sources: [] });
+  assert.deepEqual({ ...store.wizard }, { step: 'name', title: '', envText: '', sources: [], caseKey: { on: false, key: '', again: '' } });
   assert.equal(store.wizardIsDirty(), false);
 });
 

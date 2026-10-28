@@ -1,7 +1,9 @@
-import { caseCode, type CaseInfo } from './cases';
+import { caseCode, type CaseInfo, type ErasedLine } from './cases';
+import { keyEndingLabel } from './caseKey';
 import type { LockState } from './masterKey';
 import { ARCHIVE_TEXT } from './copy/archiveCopy';
 import { START_TEXT, importsText, shownText, sourcesText } from './copy/startCopy';
+import { ERASE_TEXT, erasedLineText } from './copy/eraseCopy';
 import { formatTime } from './time';
 
 /**
@@ -21,7 +23,7 @@ export const CASE_PAGE_SIZE = 50;
 export const TITLE_MAX = 60;
 
 /** A case as the list knows it. `sources` is shown only when the server sent it; the case list does not carry it today. */
-export type StartCase = Pick<CaseInfo, 'id' | 'title' | 'created' | 'closed' | 'imports' | 'untrusted' | 'state' | 'percent' | 'missing'> & { sources?: number };
+export type StartCase = Pick<CaseInfo, 'id' | 'title' | 'created' | 'closed' | 'imports' | 'untrusted' | 'state' | 'percent' | 'missing'> & Partial<Pick<CaseInfo, 'ownKey' | 'keyLocked' | 'keyEnding'>> & { sources?: number };
 
 export interface CaseRow {
   id: string;
@@ -37,9 +39,13 @@ export interface CaseRow {
   codeText: string;
   closed: boolean;
   closedLabel: string;
-  /** True when the server refuses this folder: show a plain note and no Open button. */
+  /** True when an older version made this case and it cannot be opened: the row says so, and Open leads to a page that explains it. */
   untrusted: boolean;
   untrustedLabel: string;
+  /** True when the case has its own key and it is not entered: the row shows the short code, never the title. */
+  keyLocked: boolean;
+  /** "Key ending abcd" for a case with its own key, else empty. */
+  keyEnding: string;
   /** True while an archive is running on this case: show "Archiving n%" and no Open button (A18). */
   archiving: boolean;
   archivingLabel: string;
@@ -47,6 +53,9 @@ export interface CaseRow {
   missing: boolean;
   missingLabel: string;
 }
+
+/** One line left where an erased case was: the short code and when, nothing else. */
+export interface ErasedRow { id: string; code: string; text: string; sticker: string }
 
 /** Cuts a title to `max` characters (as a person counts them) and adds an ellipsis. A blank title becomes "Untitled case". */
 export function truncateTitle(title: string, max = TITLE_MAX): string {
@@ -63,12 +72,17 @@ export function caseCounts(c: Pick<StartCase, 'imports' | 'sources'>): string {
 }
 
 export function caseRow(c: StartCase): CaseRow {
+  // A case that is locked, or that cannot be opened, is named by its short code: its title is not read.
+  const byCode = c.keyLocked === true || c.untrusted === true;
+  const named = byCode ? 'Case ' + caseCode(c.id) : '';
   return {
     id: c.id,
-    title: truncateTitle(c.title),
-    fullTitle: c.title.trim() || START_TEXT.untitled,
-    created: formatTime(c.created, { year: true, precision: 'minute', fallback: '' }),
-    counts: caseCounts(c),
+    title: named || truncateTitle(c.title),
+    fullTitle: named || c.title.trim() || START_TEXT.untitled,
+    keyLocked: c.keyLocked === true,
+    keyEnding: c.ownKey === true ? keyEndingLabel(c.keyEnding) : '',
+    created: byCode ? '' : formatTime(c.created, { year: true, precision: 'minute', fallback: '' }),
+    counts: byCode ? '' : caseCounts(c),
     codeText: START_TEXT.codeLabel + ' ' + caseCode(c.id),
     closed: Boolean(c.closed),
     closedLabel: START_TEXT.closedLabel,
@@ -102,6 +116,13 @@ export interface StartView {
   empty: string;
   /** Whether the "Protect your cases with a master key" link shows: only while no key is set. */
   offerSetup: boolean;
+  /** The lines left by erased cases, newest first as the server sent them. */
+  erased: ErasedRow[];
+}
+
+export function erasedRow(line: ErasedLine): ErasedRow {
+  const code = caseCode(line.id);
+  return { id: line.id, code, text: erasedLineText(code, formatTime(line.at, { year: true, precision: 'minute', fallback: line.at })), sticker: ERASE_TEXT.erasedSticker };
 }
 
 /** How many rows to show for a "Show more" count: the first page, then a page more each time. */
@@ -111,9 +132,9 @@ export const visibleCount = (pages: number): number => CASE_PAGE_SIZE * Math.max
  * Everything the screen shows, from the key state and the case list. A locked key returns no rows, no titles and no counts, even
  * if a list is passed in. `lock` of null means the status has not been read yet: show the cards without the setup link.
  */
-export function startView(lock: LockState | null, cases: readonly StartCase[], pages = 1): StartView {
+export function startView(lock: LockState | null, cases: readonly StartCase[], pages = 1, erased: readonly ErasedLine[] = []): StartView {
   if (lock === 'locked' || lock === 'damaged') {
-    return { locked: true, cards: [], rows: [], hidden: 0, total: 0, shown: '', empty: '', offerSetup: false };
+    return { locked: true, cards: [], rows: [], hidden: 0, total: 0, shown: '', empty: '', offerSetup: false, erased: [] };
   }
   const total = cases.length;
   const limit = visibleCount(pages);
@@ -127,6 +148,7 @@ export function startView(lock: LockState | null, cases: readonly StartCase[], p
     total,
     shown: hidden > 0 ? shownText(rows.length, total) : '',
     empty: total === 0 ? START_TEXT.existingEmpty : '',
-    offerSetup: lock === 'none'
+    offerSetup: lock === 'none',
+    erased: erased.map(erasedRow)
   };
 }

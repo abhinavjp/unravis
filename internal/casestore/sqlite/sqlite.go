@@ -23,7 +23,9 @@ import (
 	"github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/vfs/adiantum" // registers the "adiantum" VFS
 
+	"api-audit-explorer/internal/casekey"
 	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/masterkey"
 	"api-audit-explorer/internal/sealedfile"
 )
 
@@ -79,6 +81,9 @@ type Options struct {
 	// NewID makes the ID of a new case. Default: 128 random bits. It exists so the
 	// demo's capture-only cases can have fixed IDs; the live app never sets it.
 	NewID func() (casestore.CaseID, error)
+	// NewKeySalt, when set, gives the 16-byte salt of a new case's own key, so the demo's
+	// capture-only keyed case shows the same key ending on every run. The live app never sets it.
+	NewKeySalt func() []byte
 	// MaxFileBytes and MaxFileRows cap one imported file (default 2 GiB and 10M
 	// rows). An importer's own, smaller limit applies first.
 	MaxFileBytes, MaxFileRows int64
@@ -106,10 +111,15 @@ type Options struct {
 	// Logf receives one line per import and per erase: case ID, file name, hash,
 	// counts and reasons only. Default: no logging.
 	Logf func(format string, args ...any)
+	// KeyParams are the Argon2id costs of a new per-case key. Zero means
+	// masterkey.DefaultParams. Tests use small ones.
+	KeyParams masterkey.Params
 
 	afterCommit func() error             // test hook, runs between commit and manifest mirror
 	rewrapStep  func(stage string) error // test hook, see casestore.RewrapOptions.Step
 	duringErase func()                   // test hook, runs in Erase after the handle is released, before any file is touched
+	ckStep      func(stage string) error // test hook for the per-case key moves; an error stands for a crash at that step
+	eraseStep   func(step string)        // test hook, runs in Erase after the Erasing mark ("marked"), after the files ("files") and after OnErase ("hook"); a panic stands for a kill
 }
 
 // DefaultRoot is %LOCALAPPDATA%\APIAuditExplorer\cases, so multi-GiB case files
@@ -132,6 +142,8 @@ type Store struct {
 	mu      sync.Mutex // guards open and erasing, and serialises Open with the start of Erase
 	open    map[casestore.CaseID]*caseState
 	erasing map[casestore.CaseID]bool // IDs with an Erase in flight; Open refuses them
+
+	ck caseKeys // unlocked per-case keys (casekey.go)
 }
 
 var _ casestore.Store = (*Store)(nil)
@@ -258,6 +270,11 @@ func (s *Store) legacyGate(id casestore.CaseID, dir string) error {
 	if k, err := casestore.FileKind(filepath.Join(dir, keyName)); err != nil || k != casestore.KindDPAPI {
 		return nil
 	}
+	if wrapExists(dir) {
+		// A key being set on a case whose key file is still Windows-sealed: the unlock
+		// that finishes it (and readCaseFiles) apply the legacy rule themselves.
+		return nil
+	}
 	return s.legacyCheck(id, dir)
 }
 
@@ -285,6 +302,17 @@ type fileSealer struct {
 	s    *Store
 	dir  string
 	kind string // required on read and used on write; "" = any on read, the case's current kind on write
+	// look overrides the protector lookup (a per-case key move that has not
+	// registered its key yet). Nil means the case's own lookup.
+	look casestore.ProtectorLookup
+}
+
+func (f fileSealer) resolve(kind, label string) (sealedfile.Protector, error) {
+	look := f.look
+	if look == nil {
+		look = f.s.lookupFor(idOfDir(f.dir))
+	}
+	return casestore.Resolve(look, kind, label)
 }
 
 // sealer is the manifest protector for the case folder dir. kind may be "".
@@ -295,7 +323,7 @@ func (f fileSealer) Protect(plain []byte) ([]byte, error) {
 	if kind == "" {
 		kind = caseKind(f.dir)
 	}
-	p, err := f.s.protector(kind, casestore.LabelManifest)
+	p, err := f.resolve(kind, casestore.LabelManifest)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +342,7 @@ func (f fileSealer) Unprotect(raw []byte) ([]byte, error) {
 	if f.kind != "" && kind != f.kind {
 		return nil, casestore.ErrKeyFile
 	}
-	p, err := f.s.protector(kind, casestore.LabelManifest)
+	p, err := f.resolve(kind, casestore.LabelManifest)
 	if err != nil {
 		return nil, err
 	}
@@ -362,6 +390,13 @@ func (s *Store) Create(ctx context.Context, title string) (casestore.CaseInfo, e
 
 // create is Create with the request id the case is made under (empty for none).
 func (s *Store) create(ctx context.Context, title, requestID string) (casestore.CaseInfo, error) {
+	return s.createWith(ctx, title, requestID, nil)
+}
+
+// createWith is create for a case sealed under its own key when pass is not nil.
+// The keyed order is wrap (active), key file, database, manifest: a cut before the
+// end leaves a folder the deferred cleanup (or a later Erase) removes.
+func (s *Store) createWith(ctx context.Context, title, requestID string, pass []byte) (casestore.CaseInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return casestore.CaseInfo{}, err
 	}
@@ -404,9 +439,31 @@ func (s *Store) create(ctx context.Context, title, requestID string) (casestore.
 	defer keys.Zero()
 	keys.CaseID = string(id)
 	kind := s.newKind()
-	base, err := s.lookup(kind)
-	if err != nil || base == nil {
-		return casestore.CaseInfo{}, ErrLocked
+	var base sealedfile.Protector
+	var opened *casekey.Opened
+	var look casestore.ProtectorLookup
+	if pass != nil {
+		var salt []byte
+		if s.opt.NewKeySalt != nil {
+			salt = s.opt.NewKeySalt()
+		}
+		data, o, err := casekey.NewWithSalt(pass, s.keyParams(), string(id), nil, casekey.StateActive, salt)
+		if err != nil {
+			return casestore.CaseInfo{}, ruleErr(err)
+		}
+		defer o.Zero()
+		opened = o
+		ring := masterkey.NewKeyring(o.CM)
+		defer ring.Lock()
+		if err := writeWrapFile(dir, data); err != nil {
+			return casestore.CaseInfo{}, err
+		}
+		kind, base, look = casestore.KindCaseKey, ring, s.lookupWith(ring)
+	} else {
+		base, err = s.lookup(kind)
+		if err != nil || base == nil {
+			return casestore.CaseInfo{}, ErrLocked
+		}
 	}
 	if err := casestore.WriteKeyFileKind(filepath.Join(dir, keyName), kind, base, keys); err != nil {
 		return casestore.CaseInfo{}, err
@@ -417,12 +474,21 @@ func (s *Store) create(ctx context.Context, title, requestID string) (casestore.
 	}
 	man := manifest{CaseID: string(id), Title: title, Created: now, Imports: []manifestImport{}, RequestID: requestID,
 		History: []manifestHistory{{At: now, Kind: casestore.HistoryCreated}}}
-	if err := s.writeMan(dir, man); err != nil {
+	sealer := s.sealer(dir, kind)
+	sealer.look = look
+	if err := s.writeManSealed(dir, sealer, man); err != nil {
 		return casestore.CaseInfo{}, err
 	}
 	ok = true
+	info := casestore.CaseInfo{ID: id, Title: title, Created: now, RequestID: requestID}
+	if opened != nil {
+		s.ck.install(id, opened)
+		info.OwnKey, info.KeyEnding = true, opened.Ending
+		s.logf("case %s created with its own key", id)
+		return info, nil
+	}
 	s.logf("case %s created", id)
-	return casestore.CaseInfo{ID: id, Title: title, Created: now, RequestID: requestID}, nil
+	return info, nil
 }
 
 // createDB builds the schema in a new database, then turns page checksums on
@@ -697,12 +763,19 @@ func (s *Store) readCaseFiles(dir string, id casestore.CaseID) (casestore.Keys, 
 	if err := requirePlainFiles(dir); err != nil {
 		return casestore.Keys{}, manifest{}, err
 	}
+	if wrapExists(dir) {
+		if s.ck.get(id) == nil {
+			return casestore.Keys{}, manifest{}, casestore.ErrCaseLocked
+		}
+	} else if k, kErr := casestore.FileKind(filepath.Join(dir, keyName)); kErr == nil && k == casestore.KindCaseKey {
+		return casestore.Keys{}, manifest{}, casestore.ErrKeyFile // sealed under a key whose wrap is gone
+	}
 	// An archived case is a record, never a working case, and a freed one has no
 	// key left to read: both answer ErrArchived before anything is opened.
 	if m, mErr := readManifest(dir, s.sealer(dir, "")); mErr == nil && m.CaseID == string(id) && archived(m) {
 		return casestore.Keys{}, manifest{}, casestore.ErrArchived
 	}
-	keys, kind, err := casestore.ReadKeyFileAny(filepath.Join(dir, keyName), s.lookup)
+	keys, kind, err := casestore.ReadKeyFileAny(filepath.Join(dir, keyName), s.lookupFor(id))
 	if errors.Is(err, os.ErrNotExist) {
 		return casestore.Keys{}, manifest{}, casestore.ErrNotFound // the key is gone: the case is erased
 	}
@@ -750,7 +823,7 @@ func (s *Store) readCaseFiles(dir string, id casestore.CaseID) (casestore.Keys, 
 // a link or other non-regular file (section 4 rule 7). A missing file is left
 // for the readers to report.
 func requirePlainFiles(dir string) error {
-	for _, name := range []string{keyName, dbName, dbName + "-wal", dbName + "-shm", manifestName} {
+	for _, name := range []string{keyName, wrapName, dbName, dbName + "-wal", dbName + "-shm", manifestName} {
 		fi, err := os.Lstat(filepath.Join(dir, name))
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -857,6 +930,9 @@ func (s *Store) Rewrap(ctx context.Context, id casestore.CaseID) error {
 	}
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return casestore.ErrNotFound
+	}
+	if wrapExists(dir) {
+		return nil // a case with its own key is never moved to the master key
 	}
 	if m, mErr := readManifest(dir, s.sealer(dir, "")); mErr == nil && freed(m) {
 		return nil // a freed case keeps only its record: there is no key to re-wrap
@@ -980,6 +1056,7 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 	h := s.open[id]
 	delete(s.open, id)
 	s.mu.Unlock()
+	s.ck.drop(id)
 	defer func() {
 		s.mu.Lock()
 		delete(s.erasing, id)
@@ -996,17 +1073,10 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 	}
 	var errs []error
 	if _, statErr := os.Lstat(dir); statErr == nil {
-		release, lockErr := sealedfile.Lock(dir)
+		markErr, lockErr := s.eraseLocked(dir, &errs)
 		if lockErr != nil {
 			return lockErr
 		}
-		markErr := markErase(dir)
-		if markErr == nil {
-			errs = append(errs, eraseFiles(dir))
-		} else {
-			errs = append(errs, markErr) // nothing destroyed yet: the case is intact
-		}
-		release()
 		if markErr != nil {
 			s.logf("case %s erase not started", id)
 			return errors.Join(errs...)
@@ -1015,6 +1085,7 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 		// a crash from here on never leaves a Missing row for a case that is gone.
 		s.removeIndex(id)
 	}
+	s.eraseStepAt("files")
 	if s.opt.OnErase != nil {
 		errs = append(errs, s.opt.OnErase(ctx, id))
 	}
@@ -1022,6 +1093,7 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 		s.logf("case %s erase incomplete", id)
 		return err
 	}
+	s.eraseStepAt("hook")
 	if err := removeMarkerAndDir(dir); err != nil {
 		s.logf("case %s erase incomplete", id)
 		return err
@@ -1029,6 +1101,30 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 	s.removeIndex(id) // a Missing case has no folder: this is all its erase does
 	s.logf("case %s erased", id)
 	return nil
+}
+
+// eraseLocked writes the Erasing mark and removes the files, under the case's folder
+// lock (released even when a step panics). markErr says the mark could not be
+// written (the case is intact); lockErr says the lock could not be taken.
+func (s *Store) eraseLocked(dir string, errs *[]error) (markErr, lockErr error) {
+	release, lockErr := sealedfile.Lock(dir)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer release()
+	if markErr = markErase(dir); markErr != nil {
+		*errs = append(*errs, markErr) // nothing destroyed yet: the case is intact
+		return markErr, nil
+	}
+	s.eraseStepAt("marked")
+	*errs = append(*errs, eraseFiles(dir))
+	return nil, nil
+}
+
+func (s *Store) eraseStepAt(step string) {
+	if s.opt.eraseStep != nil {
+		s.opt.eraseStep(step)
+	}
 }
 
 // markErase writes and flushes the pending-erase marker.

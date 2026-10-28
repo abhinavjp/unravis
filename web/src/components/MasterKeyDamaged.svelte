@@ -4,7 +4,7 @@
   import { canReset, resetFailureOf } from '../lib/masterKey';
   import type { KeyStatus } from '../lib/masterKey';
   import { getMasterKeyStatus, resetDamagedKey } from '../lib/masterKeyApi';
-  import { DAMAGED_TEXT, freedArchivesWarning, resetErrorText } from '../lib/copy/masterKeyCopy';
+  import { DAMAGED_TEXT, freedArchivesWarning, resetErrorText, resetImpactLines } from '../lib/copy/masterKeyCopy';
 
   // The master key file on this PC cannot be read by any key. This screen says so, says nothing was changed, and offers one way on:
   // set the old file aside and make a new key. That button stays off until the box is ticked, and no request is sent without the tick.
@@ -19,12 +19,19 @@
   let title = $state<HTMLHeadingElement>();
   let box = $state<HTMLInputElement>();
 
-  // M12: how many archived cases (working copy freed) only the old key opens. Unknown means nothing extra is said.
+  // What starting over would do to the cases, said before the box is ticked. The count is read once; if it cannot be read the screen
+  // still works and keeps its general warning.
+  let impact = $state<string[]>([]);
+  // M12: how many archived cases (working copy freed) only the old key opens. Unknown means nothing extra is said. It is said once, in
+  // its own warning, so the impact list leaves its M12 line out.
   let freed = $state(0);
 
   onMount(() => {
     void tick().then(() => title?.focus());
-    getMasterKeyStatus().then((status) => { freed = status.freedArchives ?? 0; }).catch(() => {});
+    getMasterKeyStatus().then((status) => {
+      freed = status.freedArchives ?? status.reset?.archiveOnly ?? 0;
+      impact = resetImpactLines(status.reset ? { ...status.reset, archiveOnly: 0 } : null);
+    }).catch(() => { impact = []; });
   });
 
   const ready = $derived(canReset(ack) && !busy);
@@ -68,6 +75,9 @@
     <p class="intro">{DAMAGED_TEXT.keptAside}</p>
     {#if freed > 0}<p class="warning" id="damaged-freed">{freedArchivesWarning(freed)}</p>{/if}
     <p class="warning">{DAMAGED_TEXT.warning}</p>
+    {#if impact.length}
+      <ul class="impact" aria-label={DAMAGED_TEXT.impactLabel}>{#each impact as line (line)}<li>{line}</li>{/each}</ul>
+    {/if}
     <form onsubmit={submit}>
       <label class="ack"><input type="checkbox" bind:this={box} bind:checked={ack} disabled={busy} aria-describedby={problem ? 'damaged-problem' : undefined} /> <span>{DAMAGED_TEXT.ackLabel}</span></label>
       <p id="damaged-problem" class="inline-error" role="alert" hidden={!problem}>{problem}</p>
@@ -88,6 +98,7 @@
   .intro, .warning { margin: 0; font-size: var(--fs-3); }
   .intro { color: var(--text-2); }
   .warning { font-weight: 600; }
+  .impact { margin: 0; padding-left: var(--space-4); display: grid; gap: var(--space-1); font-size: var(--fs-3); color: var(--text-2); }
   code { overflow-wrap: anywhere; }
   form { display: grid; gap: var(--space-2); justify-items: start; }
   .ack { display: flex; align-items: flex-start; gap: var(--space-2); font-size: var(--fs-3); }

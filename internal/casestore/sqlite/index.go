@@ -49,14 +49,22 @@ func (s *Store) indexPath(id casestore.CaseID) string {
 // write is the one that counts; the index is best effort and a failure is not
 // reported (the next write repairs it).
 func (s *Store) writeMan(dir string, m manifest) error {
-	if err := writeManifest(dir, s.sealer(dir, ""), m); err != nil {
+	return s.writeManSealed(dir, s.sealer(dir, ""), m)
+}
+
+// writeManSealed is writeMan with the sealer named: Create uses it to seal a new
+// case with its own key before that key is registered with the Store.
+func (s *Store) writeManSealed(dir string, sl fileSealer, m manifest) error {
+	if err := writeManifest(dir, sl, m); err != nil {
 		return err
 	}
-	s.writeIndex(dir, m)
+	s.writeIndex(dir, sl, m)
 	return nil
 }
 
-func (s *Store) writeIndex(dir string, m manifest) {
+// writeIndex seals the record the way the manifest is sealed, so a case with its
+// own key keeps its title under that key in the index as well.
+func (s *Store) writeIndex(dir string, sl fileSealer, m manifest) {
 	id := casestore.CaseID(m.CaseID)
 	if !validID(id) {
 		return
@@ -68,7 +76,7 @@ func (s *Store) writeIndex(dir string, m manifest) {
 		return
 	}
 	defer clear(plain)
-	sealed, err := s.sealer(dir, "").Protect(plain)
+	sealed, err := sl.Protect(plain)
 	if err != nil {
 		return
 	}
@@ -99,7 +107,7 @@ func (s *Store) readIndex(id casestore.CaseID) (indexRecord, error) {
 	if err != nil {
 		return indexRecord{}, err
 	}
-	plain, err := s.sealer("", "").Unprotect(raw)
+	plain, err := fileSealer{s: s, dir: filepath.Join(s.root, string(id))}.Unprotect(raw)
 	if err != nil {
 		return indexRecord{}, err
 	}

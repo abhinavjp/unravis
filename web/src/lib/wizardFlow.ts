@@ -56,12 +56,13 @@ export const titleProblemShows = (problem: TitleProblem | null, touched: boolean
   problem !== null && (touched || problem === 'too-long' || problem === 'bad-characters');
 
 /** What the step rules need to know about the draft. */
-export interface StepFacts { title: string }
+/** `keyOk` is false while the case key asked for on the name step is not valid yet (left out, it counts as fine). */
+export interface StepFacts { title: string; keyOk?: boolean }
 
 /** True when the person may be on this step. Name is always open; Sources and Review need a valid name. */
 export function canEnter(step: StepId, facts: StepFacts): boolean {
   if (step === 'name') return true;
-  return titleProblem(facts.title) === null;
+  return titleProblem(facts.title) === null && facts.keyOk !== false;
 }
 
 export type StepMove = { ok: true; step: StepId } | { ok: false; step: StepId; reason: string };
@@ -70,7 +71,7 @@ export type StepMove = { ok: true; step: StepId } | { ok: false; step: StepId; r
 export function moveToStep(from: StepId, to: StepId, facts: StepFacts): StepMove {
   if (!STEPS.includes(to)) return { ok: false, step: from, reason: 'There is no such step.' };
   if (stepIndex(to) <= stepIndex(from)) return { ok: true, step: to };
-  if (!canEnter(to, facts)) return { ok: false, step: from, reason: 'The name must be valid before going on.' };
+  if (!canEnter(to, facts)) return { ok: false, step: from, reason: 'The name and the case key must be valid before going on.' };
   return { ok: true, step: to };
 }
 
@@ -83,8 +84,8 @@ export function resumeStep(step: StepId, facts: StepFacts): StepId {
 }
 
 /** Whether leaving would throw something away. A draft with nothing typed or chosen is not worth a question. */
-export function isDirty(draft: { title: string; envText: string; sources: readonly DraftSource[] }): boolean {
-  return cleanTitle(draft.title) !== '' || draft.envText.replace(/[,\s]/g, '') !== '' || draft.sources.length > 0;
+export function isDirty(draft: { title: string; envText: string; sources: readonly DraftSource[]; caseKey?: { on: boolean } }): boolean {
+  return cleanTitle(draft.title) !== '' || draft.caseKey?.on === true || draft.envText.replace(/[,\s]/g, '') !== '' || draft.sources.length > 0;
 }
 
 /** One step's state for the progress strip. */

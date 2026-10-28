@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -10,6 +11,9 @@ import (
 
 	"api-audit-explorer/internal/casestore"
 )
+
+// caseKeyNeededText is M-text for a restore of a case that had a key of its own.
+const caseKeyNeededText = "Type the case key to restore this case. The new case keeps it."
 
 // Restore (P3, spec v7 section 7.3).
 //
@@ -157,7 +161,22 @@ func (h *handler) restoreAsNew(w http.ResponseWriter, r *http.Request, raw strin
 			return
 		}
 	}
-	derive, clean, oldKey := h.openDeriver(cur, b.pass)
+	var (
+		derive casestore.KeyDeriver
+		clean  func()
+		oldKey bool
+	)
+	if cur.KeyKind == casestore.KeyKindCase {
+		// The new case keeps the case key, and a key held in memory cannot be turned
+		// into a new wrap: the case passphrase is typed, even while the case is unlocked.
+		if !typed {
+			writeCaseFailure(w, http.StatusConflict, "case-key-needed", caseKeyNeededText)
+			return
+		}
+		derive, clean = checkedKey(casestore.PassphraseKey(b.pass), cur.KeyCheck), func() {}
+	} else {
+		derive, clean, oldKey = h.openDeriver(id, cur, b.pass)
+	}
 	if oldKey {
 		writeCaseFailure(w, http.StatusConflict, "old-key-only", oldKeyOnlyText)
 		return
@@ -175,6 +194,12 @@ func (h *handler) restoreAsNew(w http.ResponseWriter, r *http.Request, raw strin
 		if typed {
 			st.restoreTh.reset()
 		}
+		if cur.KeyKind == casestore.KeyKindCase || from.OwnKey {
+			if err := h.keepOwnKey(r.Context(), newInfo.ID, b.pass); err != nil {
+				writeCaseFailure(w, http.StatusInternalServerError, "restore-failed", caseFileRestoreFailed)
+				return
+			}
+		}
 		out := h.afterRestore(r.Context(), newInfo, from, cur.Made)
 		writeJSON(w, http.StatusCreated, toCaseDTO(out), maxResponseBytes)
 	case errors.Is(err, casestore.ErrCaseFile):
@@ -187,4 +212,28 @@ func (h *handler) restoreAsNew(w http.ResponseWriter, r *http.Request, raw strin
 	default:
 		writeCaseFailure(w, http.StatusInternalServerError, "restore-failed", caseFileRestoreFailed)
 	}
+}
+
+// keepOwnKey gives a case just restored from a file made under a case key that same
+// key, so a restore never turns a keyed case into one under the master key. When it
+// cannot, the new case is erased: nothing is left silently downgraded.
+func (h *handler) keepOwnKey(ctx context.Context, id casestore.CaseID, pass []byte) error {
+	ck, ok := h.ownKeyer()
+	var err error
+	if !ok {
+		err = errors.New("server: this store has no case keys")
+	} else if release, aerr := h.gates.acquire(ctx, id); aerr != nil {
+		err = aerr
+	} else {
+		h.keyOp.Lock()
+		pc := bytes.Clone(pass)
+		err = ck.SetCaseKey(ctx, id, pc)
+		clear(pc)
+		h.keyOp.Unlock()
+		release()
+	}
+	if err != nil {
+		_ = h.cases.Erase(context.WithoutCancel(ctx), id)
+	}
+	return err
 }

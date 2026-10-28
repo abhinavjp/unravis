@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { draftSnapshot } from '../../lib/wizard.svelte';
+  import { draftSnapshot, wizard } from '../../lib/wizard.svelte';
   import { scanIsStale } from '../../lib/wizardSources.svelte';
   import { REVIEW_WINDOWS, blockers, chooseWindow, createView, loadTitles, pickFile, pickedFile, setAck, titleRepeats } from '../../lib/wizardCreate.svelte';
   import { filesMissing, importPlan, isFileSource, reviewCounts } from '../../lib/wizardSubmit';
@@ -50,6 +50,8 @@
       <dd>{draft.title}</dd>
       <dt>{CREATE_TEXT.envsLabel}</dt>
       <dd>{#if draft.envs.length}{draft.envs.join(', ')}{:else}{CREATE_TEXT.noEnvs}{/if}</dd>
+      <dt>{CREATE_TEXT.keyLabel}</dt>
+      <dd>{wizard.caseKey.on ? CREATE_TEXT.keyOn : CREATE_TEXT.keyOff}</dd>
     </dl>
     <p class="hint" role="status">{#if repeats}{CREATE_TEXT.duplicateTitle}{/if}</p>
   </section>

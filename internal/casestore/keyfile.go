@@ -19,6 +19,9 @@ import (
 const (
 	KindDPAPI     = "dpapi"
 	KindMasterKey = "masterkey"
+	// KindCaseKey means the file is sealed under the case's own key (internal/casekey),
+	// not under the master key. Only this case's unlocked key opens it.
+	KindCaseKey = "casekey"
 )
 
 // Labels bind a master-key blob to its purpose (AAD), so a sealed case.key
@@ -29,7 +32,7 @@ const (
 )
 
 // ValidKind reports whether k is a protector kind this build knows.
-func ValidKind(k string) bool { return k == KindDPAPI || k == KindMasterKey }
+func ValidKind(k string) bool { return k == KindDPAPI || k == KindMasterKey || k == KindCaseKey }
 
 // ErrLocked means a case is sealed under the master key and the master key is
 // locked or not set up. It is the same value as masterkey.ErrLocked, so either
@@ -47,10 +50,11 @@ type Labeller interface {
 	WithLabel(label string) sealedfile.Protector
 }
 
-// Bind returns the protector to use for one file: a master-key protector that can
-// label is bound to label; everything else (DPAPI, test fakes) is used as is.
+// Bind returns the protector to use for one file: a master-key or case-key
+// protector that can label is bound to label; everything else (DPAPI, test fakes)
+// is used as is.
 func Bind(p sealedfile.Protector, kind, label string) sealedfile.Protector {
-	if kind == KindMasterKey {
+	if kind == KindMasterKey || kind == KindCaseKey {
 		if l, ok := p.(Labeller); ok {
 			return l.WithLabel(label)
 		}

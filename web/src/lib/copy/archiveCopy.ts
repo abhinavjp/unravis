@@ -19,6 +19,8 @@ export const ARCHIVE_TEXT = {
   sealedWith: 'Sealed with',
   sealedMaster: 'The master key of this computer',
   sealedTyped: 'The passphrase you type below',
+  sealedCase: 'The case key of this case',
+  sealedCaseHint: 'The file opens with the case key, on this or any computer. Keep the key: without it the file cannot be opened.',
   passphraseLabel: 'Passphrase for this file',
   passphraseHint: 'At least 12 characters. Keep it: without it the file cannot be opened.',
   archiveSubmit: 'Archive the case',
@@ -90,6 +92,9 @@ export const ARCHIVE_TEXT = {
   restoreMade: 'Made',
   restoreKeyLabel: 'Passphrase this file was made with',
   restoreKeyHint: 'The passphrase you typed when the file was made.',
+  restoreCaseKeyLabel: 'Case key this file was made with',
+  restoreCaseKeyHint: 'The new case keeps this key.',
+  caseKeyNeeded: 'Type the case key to restore this case. The new case keeps it.',
   restoreNewSubmit: 'Restore as a new case',
   restoreWorking: 'Restoring\u2026',
   restoreCancel: 'Cancel',
@@ -185,6 +190,7 @@ export function archiveReasonText(reason: string, status = 0): string {
     case 'bad-passphrase': return ARCHIVE_TEXT.typedPass;
     case 'file-missing': return ARCHIVE_TEXT.needsFile;
     case 'confirm-mismatch': return ARCHIVE_TEXT.confirmMismatch;
+    case 'case-key-needed': return ARCHIVE_TEXT.caseKeyNeeded;
     case 'no-master-key': return ARCHIVE_TEXT.noMasterKey;
     case 'case-not-found': return ARCHIVE_TEXT.notFound;
     case 'store-error': return ARCHIVE_TEXT.storeError;

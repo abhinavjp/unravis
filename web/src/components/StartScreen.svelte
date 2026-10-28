@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { Snippet } from 'svelte';
+  import { clearErasedLine } from '../lib/cases';
+  import type { CaseInfo, ErasedLine } from '../lib/cases';
+  import { ERASE_TEXT } from '../lib/copy/eraseCopy';
   import { listCasesPage } from '../lib/archiveApi';
   import { archivedToggleText } from '../lib/copy/archiveCopy';
   import ArchivedList from '../lib/components/ArchivedList.svelte';
-  import type { CaseInfo } from '../lib/cases';
   import { getMasterKeyStatus } from '../lib/masterKeyApi';
   import { closesCases, offersRewrap } from '../lib/masterKey';
   import type { LockState } from '../lib/masterKey';
@@ -33,12 +35,14 @@
   // Kept on once the notice has been used, so its answer stays on screen after the count drops to nothing.
   let rewrapShown = $state(false);
   let cases = $state.raw<CaseInfo[]>([]);
+  let erased = $state.raw<ErasedLine[]>([]);
+  let clearProblem = $state('');
   let pages = $state(1);
   let archivedTotal = $state(0);
   let showArchived = $state(false);
   let controller: AbortController | null = null;
 
-  const view = $derived(startView(lock, cases, pages));
+  const view = $derived(startView(lock, cases, pages, erased));
 
   async function load() {
     const signal = controller?.signal;
@@ -58,10 +62,23 @@
       const page = await listCasesPage(signal);
       cases = page.cases;
       archivedTotal = page.archivedTotal;
+      erased = page.erased;
       phase = 'ready';
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
       phase = 'failed';
+    }
+  }
+
+  // Clearing a line removes only that line: the case itself is already gone.
+  async function clearLine(id: string) {
+    clearProblem = '';
+    try {
+      await clearErasedLine(id, controller?.signal);
+      erased = erased.filter((line) => line.id !== id);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      clearProblem = ERASE_TEXT.clearFailed;
     }
   }
 
@@ -107,13 +124,13 @@
                   <strong class="case-title" title={row.fullTitle}>{row.title}</strong>
                   <span class="case-meta">{row.created}{row.created ? ' · ' : ''}{row.counts} · {row.codeText}</span>
                   {#if row.closed}<span class="case-closed">{row.closedLabel}</span>{/if}
+                  {#if row.keyEnding}<span class="case-closed">{row.keyEnding}</span>{/if}
+                  {#if row.untrusted}<span class="case-closed" role="note">{row.untrustedLabel}</span>{/if}
                 </div>
                 {#if row.archiving}
                   <span class="case-closed" role="note">{row.archivingLabel}</span>
                 {:else if row.missing}
                   <span class="case-closed" role="note">{row.missingLabel}</span>
-                {:else if row.untrusted}
-                  <span class="case-closed" role="note">{row.untrustedLabel}</span>
                 {:else}
                   <button type="button" class="secondary-button" aria-label={openLabel(row.fullTitle)} onclick={() => onOpen(row.id)}>{START_TEXT.open}</button>
                 {/if}
@@ -127,6 +144,20 @@
         {/if}
         {#if phase === 'ready' && !showArchived && archivedTotal > 0}
           <button type="button" class="quiet-button archived-toggle" onclick={() => (showArchived = true)}>{archivedToggleText(archivedTotal)}</button>
+        {/if}
+        {#if phase === 'ready' && view.erased.length}
+          <ul class="cases erased" aria-label={ERASE_TEXT.erasedSticker}>
+            {#each view.erased as line (line.id)}
+              <li class="case-row">
+                <div class="case-info">
+                  <span class="case-closed">{line.sticker}</span>
+                  <span class="case-meta">{line.text}</span>
+                </div>
+                <button type="button" class="secondary-button" aria-label={ERASE_TEXT.clear + ' ' + line.code} onclick={() => void clearLine(line.id)}>{ERASE_TEXT.clear}</button>
+              </li>
+            {/each}
+          </ul>
+          {#if clearProblem}<p class="inline-error" role="alert">{clearProblem}</p>{/if}
         {/if}
       </section>
 

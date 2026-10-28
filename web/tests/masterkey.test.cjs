@@ -268,7 +268,7 @@ test('the header offers Lock only while the key is open, and the case routes han
   assert.match(header, /offersLock\(app\.lockState\)/);
   assert.match(header, /lockCases/);
   const cases = read('src/lib/cases.ts');
-  assert.match(cases, /if \(response\.status === LOCKED_STATUS\) signalCasesLocked\(\);/);
+  assert.match(cases, /await signalIfAppLocked\(response\);/);
 });
 
 test('master key copy passes the copy lint', () => {

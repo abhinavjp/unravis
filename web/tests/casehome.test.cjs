@@ -109,7 +109,7 @@ test('the case page survives a reload, an erase, a lock and a closed case', () =
   const cases = read('src/lib/components/CasePanel.svelte');
   assert.match(cases, /caseErased\(id\)/);
   const api = read('src/lib/api.ts');
-  assert.match(api, /LOCKED_STATUS\) signalCasesLocked\(\)/);
+  assert.match(api, /await signalIfAppLocked\(response\)/);
   const page = read('src/lib/components/CaseHome.svelte');
   assert.match(page, /panels\.sidePanel/);
   assert.match(page, /status === 409/);

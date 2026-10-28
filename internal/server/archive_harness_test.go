@@ -75,6 +75,7 @@ func (a *archPC) restart() casestore.RecoverReport {
 		Root: a.root, Protector: a.prot, MinFreeBytes: -1,
 		Protectors: a.sess.Lookup, NewCaseKind: a.sess.NewCaseKind,
 		LegacyCheck: a.sess.LegacyCheck, LegacyDone: a.sess.LegacyDone,
+		KeyParams: cfsFast,
 	})
 	if err != nil {
 		a.t.Fatal(err)

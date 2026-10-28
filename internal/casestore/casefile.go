@@ -106,6 +106,9 @@ type caseFileHeader struct {
 	PseudoKey string     `json:"pseudoKey"`
 	DBBytes   int64      `json:"dbBytes"`
 	DBSHA256  string     `json:"dbSha256"`
+	// OwnKey is set on a file made from a case that has a key of its own: the file
+	// is sealed with that key, and restoring it gives the new case the same key.
+	OwnKey bool `json:"ownKey,omitempty"`
 }
 
 func caseFilePrefix(p masterkey.Params, salt []byte, headerLen int) []byte {
@@ -135,6 +138,8 @@ type CaseFileSource struct {
 	// Created and Closed are informational: restore starts a fresh case.
 	Created time.Time
 	Closed  *time.Time
+	// OwnKey marks a file sealed with the case's own key (see caseFileHeader).
+	OwnKey bool
 	// Keys are the case's DB and pseudonym keys. WriteCaseFile does not zero them.
 	Keys Keys
 	// Hold, when set, runs before the database is read and the function it returns
@@ -263,7 +268,7 @@ func writeCaseFileOnce(ctx context.Context, out *os.File, src CaseFileSource, ke
 	hdr := caseFileHeader{
 		V: 1, CaseID: src.CaseID, Title: src.Title, Created: src.Created.UTC(), Closed: src.Closed,
 		DBKey: hex.EncodeToString(src.Keys.DB), PseudoKey: hex.EncodeToString(src.Keys.Pseudo),
-		DBBytes: n, DBSHA256: hex.EncodeToString(want),
+		DBBytes: n, DBSHA256: hex.EncodeToString(want), OwnKey: src.OwnKey,
 	}
 	plain, err := json.Marshal(hdr)
 	if err != nil {
@@ -342,6 +347,8 @@ type CaseFileInfo struct {
 	Created time.Time
 	Closed  *time.Time
 	DBBytes int64
+	// OwnKey is true when the case the file holds had a key of its own.
+	OwnKey bool
 }
 
 // CaseFile is an opened case file: header verified, database part not yet read.
@@ -458,7 +465,7 @@ func openCaseFileWith(f *os.File, size int64, derive KeyDeriver) (*CaseFile, err
 
 // Info describes the case in the file.
 func (c *CaseFile) Info() CaseFileInfo {
-	return CaseFileInfo{CaseID: c.hdr.CaseID, Title: c.hdr.Title, Created: c.hdr.Created, Closed: c.hdr.Closed, DBBytes: c.hdr.DBBytes}
+	return CaseFileInfo{CaseID: c.hdr.CaseID, Title: c.hdr.Title, Created: c.hdr.Created, Closed: c.hdr.Closed, DBBytes: c.hdr.DBBytes, OwnKey: c.hdr.OwnKey}
 }
 
 // Keys returns a copy of the case's keys, with CaseID set to id. The caller zeroes it.

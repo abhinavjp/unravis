@@ -71,12 +71,14 @@ export interface SubmitInput {
   files: Readonly<Record<string, File>>;
   /** The notice the person ticked, sent with every import. */
   ackText: string;
+  /** The case's own key and its repeat, only when the person asked for one. Used for the create call alone; never kept in the run state. */
+  caseKey?: { key: string; confirm: string } | null;
 }
 
 /** The calls the run makes. The real ones are in wizardSubmitApi.ts. */
 export interface SubmitApi {
   /** Makes the case. The same request id always answers the same case, so a repeat after a lost reply never makes a second one. */
-  createCase(title: string, requestId: string): Promise<{ id: string }>;
+  createCase(title: string, requestId: string, caseKey?: { key: string; confirm: string } | null): Promise<{ id: string }>;
   putEnvironments(caseId: string, envs: readonly string[]): Promise<unknown>;
   postSourceTag(caseId: string, tag: SourceTagInput): Promise<unknown>;
   /** Tests the held MongoDB connection again so the server accepts a classification of its databases. */
@@ -264,7 +266,7 @@ async function execute(input: SubmitInput, api: SubmitApi, state: SubmitState): 
         const titleNow = input.title.trim();
         if (!state.requestId || state.requestTitle !== titleNow) { state.requestId = requestIdFor(input.title); state.requestTitle = titleNow; }
         const requestId = state.requestId;
-        const made = await guarded(() => api.createCase(input.title, requestId));
+        const made = await guarded(() => api.createCase(input.title, requestId, input.caseKey));
         state.caseId = made.id;
         state.caseTitle = input.title;
       } catch (error) {

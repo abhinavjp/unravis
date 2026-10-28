@@ -117,7 +117,10 @@ func (h *handler) freeCase(w http.ResponseWriter, r *http.Request, raw string) {
 	// The key may have changed since the check (a reset): the file could then only
 	// be opened with the passphrase it was made with, and that is M13 before the
 	// working copy goes, not after.
-	if cur.KeyKind == casestore.KeyKindMaster && cur.KeyCheck != "" && h.mk.masterCheck() != cur.KeyCheck {
+	if stale, kerr := h.archiveKeyStale(id, cur); kerr != nil {
+		writeStoreError(w, kerr)
+		return
+	} else if stale {
 		st.verified.drop(id)
 		writeCaseFailure(w, http.StatusConflict, "old-key-only", oldKeyOnlyText)
 		return
@@ -239,7 +242,9 @@ func (h *handler) freeRecheck(ctx context.Context, ar casestore.Archiver, id cas
 	if !h.caseFiles().verified.ok(id, cur.SHA256, archiveNow()) {
 		return again()
 	}
-	if cur.KeyKind == casestore.KeyKindMaster && cur.KeyCheck != "" && h.mk.masterCheck() != cur.KeyCheck {
+	if stale, kerr := h.archiveKeyStale(id, cur); kerr != nil {
+		return out, kerr
+	} else if stale {
 		out.refused = &freeRefusal{"old-key-only", oldKeyOnlyText}
 		return out, nil
 	}

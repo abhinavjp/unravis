@@ -113,6 +113,14 @@ type CaseInfo struct {
 	Untrusted bool
 	// Mark is the in-flight stamp (MarkArchiving, MarkFreeing, MarkErasing) or empty.
 	Mark string
+	// OwnKey is true for a case with its own key (CaseKeyer). KeyLocked is true while
+	// that key is not unlocked: the folder lists with no title (Title "(locked)") and
+	// nothing else of it is read. KeyEnding is the last 4 characters of the check
+	// value, shown as "Key ending xxxx"; it is read from the key's header, so it is
+	// there while locked too.
+	OwnKey    bool
+	KeyLocked bool
+	KeyEnding string
 	// RequestID is the create request id the case was made under, or empty.
 	RequestID string
 	// History lists the saved moves (created, closed, reopened), oldest first. It is

@@ -37,6 +37,10 @@ export async function resolveCode(input: string, check: (id: string) => Promise<
     return { ok: true, id };
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    // A case with its own key answers "locked" until its key is typed: the code is right, and the case opens on its key card.
+    // A legacy case an older version made answers "untrusted-case": the code is right, and its page offers Restore and Erase.
+    const reason = error && typeof error === 'object' ? (error as { reason?: unknown }).reason : undefined;
+    if (reason === 'case-locked' || reason === 'untrusted-case') return { ok: true, id };
     return { ok: false, message: CODE_NOT_FOUND };
   }
 }

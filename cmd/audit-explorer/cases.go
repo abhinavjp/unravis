@@ -25,6 +25,7 @@ type casesWiring struct {
 	options   []server.Option
 	store     *sqlite.Store
 	recoverer *casestore.Recoverer
+	erased    server.ErasedLog // the Erased lines on the start screen
 }
 
 // recoverAtStart runs the case recovery hooks once at start-up. It never stops
@@ -62,6 +63,22 @@ func casesRoot(getenv func(string) string) (string, error) {
 		return filepath.Join(dir, "cases"), nil
 	}
 	return sqlite.DefaultRoot()
+}
+
+// withErasedLine runs next, then records the erase on the Erased lines. A failure to record is
+// logged and never fails the erase: the case is gone either way.
+func withErasedLine(next func(context.Context, casestore.CaseID) error, erased server.ErasedLog) func(context.Context, casestore.CaseID) error {
+	return func(ctx context.Context, id casestore.CaseID) error {
+		if next != nil {
+			if err := next(ctx, id); err != nil {
+				return err
+			}
+		}
+		if err := erased.Add(id, time.Now()); err != nil {
+			log.Printf("The erased line of a case could not be saved: %v", err)
+		}
+		return nil
+	}
 }
 
 // eraseHook returns the OnErase hook of the case store. It removes every ledger
@@ -121,6 +138,7 @@ type caseSeams struct {
 	now        func() time.Time
 	newID      func() (casestore.CaseID, error)
 	wrapLegacy func(inner func(casestore.CaseID) error) func(casestore.CaseID) error
+	keySalt    func() []byte // a fixed key salt for the demo's keyed case; nil in live mode
 }
 
 func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams caseSeams) (*casesWiring, error) {
@@ -140,10 +158,15 @@ func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams ca
 	if err != nil {
 		return nil, err
 	}
+	// An erase leaves one line on the start screen (id and time, nothing else). The line is
+	// added by the store's erase hook, so an erase that start-up recovery or the retention
+	// sweep finishes leaves it too.
+	erasedLog := server.NewErasedFile(filepath.Join(base, "erased.json"))
 	var onErase func(context.Context, casestore.CaseID) error
 	if hypotheses != nil {
 		onErase = eraseHook(hypotheses)
 	}
+	onErase = withErasedLine(onErase, erasedLog)
 	// The master-key session starts locked when masterkey.dat exists in base and
 	// "none" otherwise. The store and the server share it, so unlock, lock and
 	// the 423 gate act on the one Keyring the store opens cases with.
@@ -156,7 +179,7 @@ func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams ca
 		Root: root, Protector: protector, OnErase: onErase,
 		Protectors: session.Lookup, NewCaseKind: session.NewCaseKind,
 		LegacyCheck: legacyCheck, LegacyDone: session.LegacyDone,
-		Now: seams.now, NewID: seams.newID,
+		Now: seams.now, NewID: seams.newID, NewKeySalt: seams.keySalt,
 	})
 	if err != nil {
 		return nil, err
@@ -168,13 +191,22 @@ func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams ca
 	wiring := &casesWiring{
 		store:     store,
 		recoverer: recoverer,
+		erased:    erasedLog,
 		options: []server.Option{
 			server.WithCases(store, sealedHosts.Map(), all.Registry()),
 			server.WithHostsSaver(sealedHosts.Save),
 			server.WithSystemDiscover(),
 			server.WithMasterKey(session),
 			server.WithRecoverer(recoverer),
+			server.WithErasedLog(erasedLog),
 		},
+	}
+	// An Erasing mark (a case whose erase was marked and not finished) is finished by the
+	// store's own Erase, which is idempotent and needs no case key.
+	if err := recoverer.Register(casestore.MarkErasing, func(ctx context.Context, id casestore.CaseID) error {
+		return store.Erase(ctx, id)
+	}); err != nil {
+		return nil, err
 	}
 	// The archive and free hooks (P3). They are registered before start-up
 	// recovery runs, so a stop in the middle of an archive or a free is repaired

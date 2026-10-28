@@ -44,10 +44,26 @@ func (m *manifest) tidyArch() {
 func (s *Store) listRow(id casestore.CaseID, dir string) casestore.CaseInfo {
 	info := casestore.CaseInfo{ID: id, Title: "(unreadable case)"}
 	if erasePending(dir) {
-		info.Title = "(erase pending)"
+		// The pending-erase marker is the Erasing mark: recovery reads it from the
+		// row and finishes the erase.
+		info.Title, info.Mark = "(erase pending)", casestore.MarkErasing
 		return info
 	}
-	if err := s.legacyGate(id, dir); errors.Is(err, casestore.ErrUntrustedLegacy) {
+	if wrapExists(dir) {
+		// A case with its own key: the wrap's headers say so, the manifest is
+		// read only when that key is unlocked.
+		info.OwnKey = true
+		if end, err := wrapEnding(dir); err == nil {
+			info.KeyEnding = end
+		}
+		if s.ck.get(id) == nil {
+			info.KeyLocked = true
+			if info.KeyEnding != "" {
+				info.Title = "(locked)"
+			}
+			return info
+		}
+	} else if err := s.legacyGate(id, dir); errors.Is(err, casestore.ErrUntrustedLegacy) {
 		// Listed, so the person can see and erase it, but nothing of it is read.
 		info.Title, info.Untrusted = "(untrusted case)", true
 		return info
@@ -74,6 +90,11 @@ func (s *Store) Entry(ctx context.Context, id casestore.CaseID) (casestore.CaseI
 	}
 	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
 		info := s.listRow(id, dir)
+		if info.OwnKey && info.KeyLocked && info.Mark != casestore.MarkErasing {
+			// The record of a case with its own key is sealed under that key: with the key
+			// locked there is nothing to read, and a blank row would read as a changed case.
+			return casestore.CaseInfo{}, casestore.ErrCaseLocked
+		}
 		if m, err := readManifest(dir, s.sealer(dir, "")); err == nil && m.CaseID == string(id) {
 			info.History = historyOf(m)
 		}
@@ -255,7 +276,7 @@ func removeWorkingCopy(dir string) error {
 	}
 	for _, e := range entries {
 		switch e.Name() {
-		case manifestName, keyName, eraseMarker:
+		case manifestName, keyName, eraseMarker, wrapName:
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {

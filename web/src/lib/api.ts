@@ -1,5 +1,5 @@
 import type { SavedSqlConnection, SqlConnectionInput, SqlTestRequest, SqlTestResult,Analysis,Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile, VersionInfo } from './types';
-import { LOCKED_STATUS, signalCasesLocked } from './lockSignal';
+import { signalIfAppLocked } from './lockSignal';
 import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
 
 const base = '/api';
@@ -84,7 +84,7 @@ async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSi
     throw noSession();
   }
   // 423: the master key is locked. Tell the app so it shows the unlock screen; the caller still gets the refusal.
-  if (response.status === LOCKED_STATUS) signalCasesLocked();
+  await signalIfAppLocked(response);
   if (!response.ok) {
     let message = 'Request failed (' + response.status + ')';
     let code: string | undefined;

@@ -74,13 +74,13 @@ test('an archived case has no Reopen button (it would never work); Restore is th
 test('the case home reads the case first and asks for files, checks and theories only when it may', () => {
   const home = read('src/lib/components/CaseHome.svelte');
   const load = home.match(/async function load\(id: string, quiet = false\) \{[\s\S]*?\n  \}\n/)[0];
-  assert.match(load, /getCaseView\(id, mine\.signal\)\]\);[\s\S]*readsCaseData\(found\)/, 'the view is read before anything else');
+  assert.match(load, /getCaseView\(id, mine\.signal\), getCaseKeyStatus\(id, mine\.signal\)\]\);[\s\S]*readsCaseData\(found\)/, 'the view is read before anything else');
   assert.match(load, /reads \? listImports\(/);
   assert.match(load, /reads \? fetchHealthRuns\(/);
   assert.match(load, /reads \? refreshLedger\(/);
   assert.doesNotMatch(load, /Promise\.allSettled\(\[getCaseView\(id, mine\.signal\), listImports/, 'no read of an archived case in parallel with the view');
   const reread = home.match(/async function rereadFiles\(\) \{[\s\S]*?\n  \}\n/)[0];
-  assert.match(reread, /readsCaseData\(view\) \? await listImports/, 'a reread of an archived case does not list files');
+  assert.match(reread, /readsCaseData\(fresh\) \? await listImports/, 'a reread of an archived case does not list files');
 });
 
 test('after a move the whole page is read again, so an archived case shows as archived at once', () => {
