@@ -57,7 +57,15 @@
 
   onMount(() => {
     void store.loadPlan();
-    return () => store.dispose();
+    // Coming back to the window after adding data elsewhere: read what the case holds again.
+    const onFocus = () => { void store.refreshStamp(); };
+    window.addEventListener('focus', onFocus);
+    return () => { window.removeEventListener('focus', onFocus); store.dispose(); };
+  });
+  // Read when the panel opens, and again when an IIS file arrives or goes (`hasIis` is the page's own view of the case's files).
+  $effect(() => {
+    void hasIis;
+    untrack(() => { void store.refreshStamp(); });
   });
 
   function switchMode() {

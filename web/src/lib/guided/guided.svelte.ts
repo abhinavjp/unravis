@@ -1,4 +1,4 @@
-import { CaseApiError } from '../cases';
+import { CaseApiError, casePath, json, listImports, send } from '../cases';
 import { CHECKLIST_ERRORS, GUIDED_TEXT, SAVED_VIEW_ERRORS, refusalText } from '../copy/guidedCopy';
 import {
   addChecklistItem, buildReport, deleteChecklistItem, deleteView, listChecklist, listViews, runInvestigation, saveView, updateChecklistItem
@@ -6,7 +6,7 @@ import {
 import { emptyFrame, quickPick, requestKey, toRequest, type Frame, type QuickPick } from './frame';
 import { InFlight } from './inflight';
 import { clampStep, suggestedChecks, type RunPhase } from './stepModel';
-import { cleanViewName, viewSettings, viewsFull, type ToolId } from './tools';
+import { cleanViewName, dataStamp, stampChanged, viewSettings, viewsFull, type ToolId } from './tools';
 import type { ChecklistItem, ChecklistList, InvestigationAnswer, InvestigationRequest, ReportAnswer, ReportInclude, SavedView } from './types';
 
 /**
@@ -32,6 +32,16 @@ function failureText(cause: unknown, table: Readonly<Record<string, string>>, fa
   return cause instanceof CaseApiError ? refusalText(cause.reason ?? '', table, fallback) : fallback;
 }
 
+/** The source tags of a case: GET /api/cases/{id}/sources. Only the id and the kind are read. */
+async function listSourceTags(caseId: string): Promise<Array<{ id: number; kind: string }>> {
+  const body = await json<{ sources?: unknown }>(await send(casePath(caseId, '/sources')));
+  const list = Array.isArray(body.sources) ? body.sources : [];
+  return list.flatMap((raw) => {
+    const r = raw as { id?: unknown; kind?: unknown };
+    return typeof r.id === 'number' ? [{ id: r.id, kind: typeof r.kind === 'string' ? r.kind : '' }] : [];
+  });
+}
+
 export class GuidedStore {
   caseId: string;
   mode = $state<Mode>('guided');
@@ -44,6 +54,10 @@ export class GuidedStore {
   error = $state('');
   /** The key of the request the answer on screen was made from. */
   answeredKey = $state('');
+  /** What the case holds now (kept files and source tags) as one short fingerprint. null until it has been read. */
+  stamp = $state<string | null>(null);
+  /** What the case held when the answer on screen was made. */
+  answeredStamp = $state<string | null>(null);
   items = $state.raw<ChecklistItem[]>([]);
   views = $state.raw<SavedView[]>([]);
   planLoaded = $state(false);
@@ -65,6 +79,7 @@ export class GuidedStore {
   // A second click while a save is on its way would write the same line twice.
   #writing = false;
   #bulk = false;
+  #stampRun = 0;
 
   constructor(caseId: string) {
     this.caseId = caseId;
@@ -79,9 +94,26 @@ export class GuidedStore {
     return request ? requestKey(request) : '';
   }
 
-  /** True when an answer is on screen and the windows, sources or lists have changed since it was made. */
+  /** True when an answer is on screen and the windows, sources or lists have changed since it was made, or the case holds other files or sources than it did. */
   outOfDate(sourceIds: readonly string[]): boolean {
-    return !!this.answer && this.phase !== 'running' && this.answeredKey !== '' && this.keyFor(sourceIds) !== this.answeredKey;
+    if (!this.answer || this.phase === 'running' || this.answeredKey === '') return false;
+    return this.keyFor(sourceIds) !== this.answeredKey || stampChanged(this.answeredStamp, this.stamp);
+  }
+
+  /**
+   * Reads the case's kept files and source tags and keeps their fingerprint. Returns the fingerprint. A read that fails keeps the last one, so
+   * a network blip never shows a false Out of date. A read that has been replaced by a later one returns its own value but does not store it.
+   */
+  async refreshStamp(): Promise<string | null> {
+    const mine = ++this.#stampRun;
+    try {
+      const [imports, tags] = await Promise.all([listImports(this.caseId), listSourceTags(this.caseId)]);
+      const value = dataStamp(imports, tags);
+      if (mine === this.#stampRun) this.stamp = value;
+      return value;
+    } catch {
+      return this.stamp;
+    }
   }
 
   setMode(mode: Mode): void {
@@ -104,10 +136,14 @@ export class GuidedStore {
     this.phase = 'running';
     this.error = '';
     try {
+      // The fingerprint is read just before the run, so it names what this run is about to read.
+      const stamp = await this.refreshStamp();
+      if (mine !== this.#run) return false;
       const answer = await runInvestigation(this.caseId, request, controller.signal);
       if (mine !== this.#run) return false;
       this.answer = answer;
       this.answeredKey = requestKey(request);
+      this.answeredStamp = stamp;
       this.#answered = request;
       this.phase = 'done';
       return true;
@@ -129,7 +165,7 @@ export class GuidedStore {
     if (this.phase === 'running') this.phase = this.answer ? 'done' : 'idle';
   }
 
-  dispose(): void { this.cancel(); this.#plan++; }
+  dispose(): void { this.cancel(); this.#plan++; this.#stampRun++; }
 
   /* ------------------------------------------------------------- checklist and views */
 

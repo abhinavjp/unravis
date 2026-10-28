@@ -189,3 +189,19 @@ export function slowestApiRows(result: Result | null | undefined, minCalls: numb
       route: r.route, calls: r.incident.n, p95: fmtMs(r.incident.p95), reference: fmtMs(r.reference.p95), change: fmtChange(r.p95Change), mark: markFor(r.p95Change)
     }));
 }
+
+/* ----------------------------------------------------------------- what the case holds */
+
+export interface StampImport { id: number; importer: string; status: string }
+export interface StampTag { id: number; kind: string }
+
+/**
+ * A short fingerprint of what a case holds: the ids of its kept files (status ok) and of its source tags, sorted. Two reads of the same case give
+ * the same text; a new file, a removed file or a new source tag changes it. It holds ids only, no name, path or setting.
+ */
+export function dataStamp(imports: readonly StampImport[], tags: readonly StampTag[]): string {
+  return [...imports.filter((i) => i.status === 'ok').map((i) => 'i' + i.id), ...tags.map((t) => 't' + t.id)].sort().join(',');
+}
+
+/** True only when both fingerprints are known and differ. An unknown fingerprint is never a change. */
+export const stampChanged = (then: string | null, now: string | null): boolean => then !== null && now !== null && then !== now;

@@ -87,3 +87,38 @@ test('B-08 and B-11: ManualTools passes the stale flag to both stickers and show
   assert.match(m, /\{#if st\.word === 'Waiting'\}<p class="src">\{S\.toolWaitingHint\}<\/p>\{\/if\}/);
   assert.ok(!/const TONE/.test(m), 'the local tone table is replaced by toolSticker');
 });
+
+test('B-09: the fingerprint of a case changes with its files and source tags, and ignores order and rejected files', () => {
+  const imp = (id, status = 'ok', importer = 'iis-w3c') => ({ id, importer, status });
+  const tag = (id, kind = 'mongo-database') => ({ id, kind });
+  const base = tools.dataStamp([imp(1), imp(2)], [tag(1)]);
+  assert.equal(tools.dataStamp([imp(2), imp(1)], [tag(1)]), base);
+  assert.notEqual(tools.dataStamp([imp(1), imp(2), imp(3)], [tag(1)]), base, 'a new file');
+  assert.notEqual(tools.dataStamp([imp(1), imp(2)], [tag(1), tag(2, 'sql')]), base, 'a new source tag');
+  assert.notEqual(tools.dataStamp([imp(1)], [tag(1)]), base, 'a removed file');
+  assert.equal(tools.dataStamp([imp(1), imp(2), imp(3, 'failed')], [tag(1)]), base, 'a rejected file is not kept data');
+  assert.equal(tools.dataStamp([], []), '');
+});
+
+test('B-09: an unknown fingerprint is never a change', () => {
+  assert.equal(tools.stampChanged(null, 'i1'), false);
+  assert.equal(tools.stampChanged('i1', null), false);
+  assert.equal(tools.stampChanged('i1', 'i1'), false);
+  assert.equal(tools.stampChanged('i1', 'i1,i2'), true);
+  assert.equal(tools.stampChanged('', 'i1'), true);
+});
+
+test('B-09: the store records the fingerprint at run time and compares it in outOfDate', () => {
+  const s = store();
+  assert.match(s, /stamp = \$state<string \| null>\(null\);/);
+  assert.match(s, /answeredStamp = \$state<string \| null>\(null\);/);
+  assert.match(s, /return this\.keyFor\(sourceIds\) !== this\.answeredKey \|\| stampChanged\(this\.answeredStamp, this\.stamp\);/);
+  assert.match(s, /const stamp = await this\.refreshStamp\(\);/);
+  assert.match(s, /this\.answeredStamp = stamp;/);
+  assert.match(s, /dispose\(\): void \{ this\.cancel\(\); this\.#plan\+\+; this\.#stampRun\+\+; \}/);
+  assert.match(s, /casePath\(caseId, '\/sources'\)/);
+  const g = guided('GuidedAnalysis.svelte');
+  assert.match(g, /window\.addEventListener\('focus', onFocus\);/);
+  assert.match(g, /window\.removeEventListener\('focus', onFocus\);/);
+  assert.match(g, /void hasIis;/);
+});
