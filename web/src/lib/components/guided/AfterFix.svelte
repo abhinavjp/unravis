@@ -140,7 +140,7 @@
   .warn { display: grid; gap: 4px; padding: 8px 12px; border: 1px solid var(--warn); border-radius: var(--radius-sm); font-size: 13px; }
   .warn ul { margin: 0; padding-left: 18px; }
   table { white-space: normal; }
-  .mark { font-weight: 600; white-space: nowrap; }
+  .mark { font-weight: 600; white-space: nowrap; margin-inline-end: 0.5em; }
   .mark.bad { color: var(--suspect-red); }
   .mark.ok { color: var(--suspect-green); }
   .mark.grey { color: var(--text-2); }

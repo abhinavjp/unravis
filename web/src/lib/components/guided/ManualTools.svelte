@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
   import type { GuidedStore } from '../../guided/guided.svelte';
   import type { StickerTone } from '../../guided/stepModel';
@@ -25,6 +26,9 @@
   const TONE: Record<Readiness, StickerTone> = { Ready: 'ready', 'Partly ready': 'partly', 'Cannot test yet': 'cannot', Failed: 'failed' };
   const stateOf = (tool: ToolDef) => toolState(tool, { have, result: store.result });
 
+  // The windows start open while empty and stay as the person left them; a bound
+  // `open={frame.incidentStart === ''}` would fold the panel on the first keystroke.
+  let windowsOpen = $state(untrack(() => store.frame.incidentStart === ''));
   let minCalls = $state(20);
   let match = $state('');
   let note = $state('');
@@ -82,7 +86,7 @@
         <div><button type="button" class="secondary-button" disabled={readOnly} onclick={onAddData}>{T.addByLocation}</button></div>
       </div>
     {:else}
-      <details class="windows" open={store.frame.incidentStart === ''}>
+      <details class="windows" bind:open={windowsOpen}>
         <summary>{T.incidentWindow} and {T.referenceWindow}</summary>
         <Step0Frame {store} />
       </details>

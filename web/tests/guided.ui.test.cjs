@@ -179,3 +179,11 @@ test('step stickers use the four fixed words, plus Waiting and Running before an
     }
   }
 });
+
+test('the Manual tools windows panel does not fold itself when the first date is typed', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/lib/components/guided/ManualTools.svelte'), 'utf8');
+  assert.ok(!/<details class="windows"[^>]*\bopen=\{store\.frame/.test(src), 'open must not follow the frame');
+  assert.ok(/<details class="windows" bind:open=\{windowsOpen\}>/.test(src));
+});
