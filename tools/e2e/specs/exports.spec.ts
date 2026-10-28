@@ -122,7 +122,7 @@ async function openExportTab(page: Page) {
 
 test('EXP-04a: the Export tab before any run says so in one sentence', async ({ page }) => {
   await openExportTab(page);
-  await expect(page.getByText('Nothing has been analysed yet. The report will say so and list the case sources only.')).toBeVisible();
+  await expect(page.getByText('Nothing has been analysed yet. The report will say so and hold only the checklist, if you include it.')).toBeVisible();
 });
 
 test('EXP-06: a bad case id, a bad format and a wrong method are refused plainly with no report body', async ({ api }) => {

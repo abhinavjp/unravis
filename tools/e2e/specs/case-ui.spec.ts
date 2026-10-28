@@ -74,8 +74,9 @@ test('CASE-04: a case code is accepted in any layout and refused with one senten
     await expect(refused, bad).toBeVisible();
     expect(page.url(), 'the typed code is not put in the address').not.toContain(bad);
   }
+  // An empty field is not asked about (D-A-04): the button is off.
   await page.getByLabel('Case code').fill('');
-  await open.click();
+  await expect(open).toBeDisabled();
   await expect(page.locator('#start-title')).toBeVisible();
 });
 
@@ -88,8 +89,7 @@ test('CASE-05: the wizard makes an empty case that appears in the list', async (
   await expect(page.getByText('No sources chosen. The case will be made empty')).toBeVisible();
   await expect(page.getByText('None. This case has no key of its own.')).toBeVisible();
   await page.getByRole('button', { name: 'Create empty case' }).click();
-  // The built app lands on the analysis page after creating; Case home is one header button away.
-  await page.getByRole('button', { name: 'Case home', exact: true }).click();
+  // A created case opens on Case home (D-A-05).
   await expect(page.getByRole('heading', { level: 2, name: 'QA Wizard Happy' })).toBeVisible();
   await expect(page.getByText('Case started').first()).toBeVisible();
   await page.getByRole('button', { name: 'All cases' }).click();

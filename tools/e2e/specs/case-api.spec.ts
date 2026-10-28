@@ -104,7 +104,7 @@ test('CASE-15: file names follow the slug rules and orphan-files stays empty', a
   const vectors: [string, string][] = [
     ['Q3 Slow API!', 'q3-slow-api-'],
     ['CON', 'case-con-'],
-    ['x'.repeat(100), 'x'.repeat(40) + '-']
+    ['x'.repeat(80), 'x'.repeat(40) + '-']
   ];
   for (const [title, prefix] of vectors) {
     const id = await createCase(api, title);
