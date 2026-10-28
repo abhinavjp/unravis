@@ -465,7 +465,9 @@ func residualRisk(text string) bool {
 // holds a long digit run, an "@" or "://", the whole text is replaced with
 // withheld rather than exported with a possible identifier in it.
 func cleanFreeText(text string, ids map[int]bool, withheld string) string {
-	out := maskNumbers(removeUserIDs(scrubText(text), ids))
+	// Secrets first, on the normalised text, so "password=x" cannot be half-masked
+	// by a later pattern and slip through.
+	out := maskNumbers(removeUserIDs(scrubText(ScrubSecrets(normalizeText(text))), ids))
 	if residualRisk(out) || containsProven(out) {
 		return withheld
 	}
