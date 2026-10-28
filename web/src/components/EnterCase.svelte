@@ -2,7 +2,7 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { app } from '../lib/appState.svelte';
   import { listImports } from '../lib/cases';
-  import { resolveCode } from '../lib/caseCode';
+  import { codeIsEmpty, resolveCode } from '../lib/caseCode';
   import { restoreCaseFile } from '../lib/caseFileApi';
   import { takeRestoreIntent } from '../lib/restoreIntent';
   import { checkRestoreInput, restoreFailureOf, restoreNeedsKey, restoreView } from '../lib/restoreCase';
@@ -30,6 +30,7 @@
   async function openByCode(event: SubmitEvent) {
     event.preventDefault();
     if (codeBusy) return;
+    if (codeIsEmpty(code)) return;
     codeBusy = true;
     codeProblem = '';
     try {
@@ -119,7 +120,7 @@
     <label for="{uid}-code">{ENTER_TEXT.codeLabel}</label>
     <input id="{uid}-code" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" bind:this={codeField} bind:value={code} disabled={codeBusy} aria-describedby={uid + '-code-hint' + (codeProblem ? ' ' + uid + '-code-problem' : '')} aria-invalid={codeProblem ? true : undefined} />
     <p class="hint" id="{uid}-code-hint">{ENTER_TEXT.codeHint}</p>
-    <button type="submit" class="secondary-button" disabled={codeBusy}>{codeBusy ? ENTER_TEXT.codeChecking : ENTER_TEXT.codeButton}</button>
+    <button type="submit" class="secondary-button" disabled={codeBusy || codeIsEmpty(code)}>{codeBusy ? ENTER_TEXT.codeChecking : ENTER_TEXT.codeButton}</button>
     <p class="inline-error" id="{uid}-code-problem" role="alert" hidden={!codeProblem}>{codeProblem}</p>
   </form>
 

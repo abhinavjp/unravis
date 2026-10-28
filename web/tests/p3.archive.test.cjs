@@ -320,3 +320,10 @@ test('the start screen offers the archived toggle only when there are archived c
   assert.match(src, /archivedToggleText\(archivedTotal\)/);
   assert.match(src, /<ArchivedList/);
 });
+
+test('the archive drawer clears its error line when the folder or the passphrase is edited (D-A-10)', () => {
+  const src = read('src/lib/components/ArchiveDrawer.svelte');
+  assert.match(src, /<input id="archive-folder" type="text" bind:value=\{folder\} oninput=\{\(\) => \{ problem = ''; \}\}/);
+  assert.match(src, /<input id="archive-pass" type="password" bind:value=\{passphrase\} oninput=\{\(\) => \{ problem = ''; \}\}/);
+  assert.match(src, /async function submit\(event: SubmitEvent\) \{[\s\S]*?starting = true;\s*problem = '';/);
+});

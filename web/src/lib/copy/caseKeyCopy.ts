@@ -25,9 +25,8 @@ export const CASE_KEY_TEXT = {
   unlocking: 'Opening…',
   unlockCancel: 'Cancel',
   unlockWrong: 'That key did not open this case. Nothing was opened or changed.',
+  unlockEmpty: 'Type the case key first.',
   unlockNote: 'Case keys cannot be recovered. If it is lost, only erasing the case frees the space.',
-  lockedTitle: '(locked)',
-  lockedEyebrow: 'Case key needed',
 
   // Keys page (screens 125 and 126)
   pageTitle: 'Case key (optional)',
@@ -57,7 +56,6 @@ export const CASE_KEY_TEXT = {
   changed: 'The case key is changed.',
   removed: 'The case key is removed. The case is sealed with the PC key now.',
   lockCase: 'Lock this case',
-  locking: 'Locking…',
   homeLabel: 'Case key',
   homeAdd: 'Add a case key',
   homeManage: 'Change or remove the case key',
@@ -81,6 +79,11 @@ export const CASE_KEY_TEXT = {
   other: 'The case key could not be checked. Try again.',
   throttled: 'Too many tries.'
 } as const;
+
+/** Whole seconds left until `endsAt` (a time in milliseconds), never below zero. The wait line follows this, not the figure the server first named. */
+export function secondsLeft(endsAt: number, now: number): number {
+  return Math.max(0, Math.ceil((endsAt - now) / 1000));
+}
 
 export type CaseKeyContext = 'unlock' | 'current' | 'new';
 

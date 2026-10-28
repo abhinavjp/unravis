@@ -106,3 +106,32 @@ export function noticeKeeperRefusal(error: unknown): void {
 
 /** A source the key keeper holds but cannot use now: it cannot be chosen until the keeper runs again. */
 export const keeperUnreadable = (source: { keeper?: 'held' | 'stopped' }): boolean => source.keeper === 'stopped';
+
+/**
+ * Where Tab goes inside a small dialog with `count` focusable controls when the focus is on control `current` (-1 when the focus is
+ * outside them). The focus wraps at both ends; with no controls there is nowhere to go (-1).
+ */
+export function trapTarget(count: number, current: number, shift: boolean): number {
+  if (count <= 0) return -1;
+  if (current < 0) return shift ? count - 1 : 0;
+  return (current + (shift ? -1 : 1) + count) % count;
+}
+
+/**
+ * Makes everything outside `dialog` inert (not reachable by keyboard, mouse or screen reader): walks up from the dialog to the page body
+ * and marks every sibling on the way. Returns the function that gives all of it back; call it whenever the dialog goes away.
+ */
+export function holdBackground(dialog: HTMLElement): () => void {
+  const body = dialog.ownerDocument.body;
+  const held: HTMLElement[] = [];
+  for (let node: HTMLElement | null = dialog; node && node !== body; node = node.parentElement) {
+    const parent: HTMLElement | null = node.parentElement;
+    if (!parent) break;
+    for (const sibling of Array.from(parent.children) as HTMLElement[]) {
+      if (sibling === node || sibling.inert) continue;
+      sibling.inert = true;
+      held.push(sibling);
+    }
+  }
+  return () => { for (const item of held) item.inert = false; };
+}

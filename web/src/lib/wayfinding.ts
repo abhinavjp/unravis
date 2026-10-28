@@ -172,6 +172,10 @@ const indexOf = (state: unknown): number => {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0;
 };
 
+/** history.state keys that name the screen an entry belongs to. The life key ties a mark to this page load, so a reload ignores old marks. */
+export const SCREEN_MARK = 'uvScreen';
+const LIFE_MARK = 'uvLife';
+
 /**
  * Keeps the address in step with the screen. Going deeper adds a history step, so the browser Back button walks back up; stepping up with Esc
  * or a breadcrumb goes back one step when the entry before is the place being returned to, so Back and Esc stay the same thing.
@@ -184,29 +188,53 @@ export function createViewHistory(loc: LocationLike, hist: HistoryLike) {
   let current = parseViewHash(loc.hash);
   let ownBacks = 0;
   const url = (hash: string) => loc.pathname + loc.search + hash;
+  // The screen the current entry was made on ('' when unknown), read only from marks written during this page load.
+  const life = Math.random().toString(36).slice(2);
+  const screenOf = (state: unknown): string => {
+    if (!state || typeof state !== 'object') return '';
+    const record = state as Record<string, unknown>;
+    return record[LIFE_MARK] === life && typeof record[SCREEN_MARK] === 'string' ? (record[SCREEN_MARK] as string) : '';
+  };
+  const stamp = (name: string): Record<string, unknown> => (name ? { uvIdx: index, [SCREEN_MARK]: name, [LIFE_MARK]: life } : { uvIdx: index });
+  let shown = screenOf(hist.state);
+  const marks: string[] = [];
+  marks[index] = shown;
   return {
     /** The view the address describes right now. */
     get view() { return current; },
+    /** The screen the current history entry stands for, or '' when it has no mark from this page load. */
+    get screen() { return shown; },
     /** Makes the address match a view. `replace` forces a replace (used after the screen was rebuilt from the address). */
     sync(view: View | null, replace = false): SyncResult {
       const target = formatViewHash(view, loc.hash);
       if (target === loc.hash) { current = view; stack[index] = target; return 'none'; }
       if (replace || sameLevel(current, view)) {
-        hist.replaceState({ uvIdx: index }, '', url(target));
+        hist.replaceState(stamp(shown), '', url(target));
         stack[index] = target; current = view; return 'replace';
       }
-      if (index > 0 && stack[index - 1] === target) {
+      // Stepping up goes back only when the entry before was made on the same screen.
+      if (index > 0 && stack[index - 1] === target && marks[index - 1] === shown) {
         ownBacks++; index--; current = view; hist.back(); return 'back';
       }
-      index++; stack.length = index; stack[index] = target; current = view;
-      hist.pushState({ uvIdx: index }, '', url(target));
+      index++; stack.length = index; marks.length = index; stack[index] = target; marks[index] = shown; current = view;
+      hist.pushState(stamp(shown), '', url(target));
       return 'push';
     },
-    /** Call on popstate. Returns the view to show, null for the first screen, or undefined when the event was this module's own Back. */
+    /** Marks the current entry (`replace`) or adds an entry (default) for a screen, at the address shown now. Does nothing when the entry already says `name`. */
+    markScreen(name: string, replace = false): void {
+      if (!name || name === shown) return;
+      shown = name;
+      if (replace) { hist.replaceState(stamp(name), '', url(loc.hash)); marks[index] = name; return; }
+      index++; stack.length = index; marks.length = index; stack[index] = loc.hash; marks[index] = name;
+      hist.pushState(stamp(name), '', url(loc.hash));
+    },
+    /** Call on popstate. Returns the view to show, null for the first screen, or undefined when the event was this module's own Back. `screen` then names the entry's screen. */
     pop(): View | null | undefined {
       index = indexOf(hist.state);
       if (stack[index] === undefined) stack[index] = loc.hash;
       current = parseViewHash(loc.hash);
+      shown = screenOf(hist.state);
+      marks[index] = shown;
       if (ownBacks > 0) { ownBacks--; return undefined; }
       return current;
     }

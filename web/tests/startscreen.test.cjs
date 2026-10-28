@@ -20,7 +20,7 @@ function loadTypeScript(relativePath) {
 }
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-const { startView, truncateTitle, caseCounts, caseRow, START_CARDS, CASE_PAGE_SIZE, TITLE_MAX, visibleCount } = loadTypeScript('src/lib/startScreen.ts');
+const { startView, truncateTitle, caseCounts, caseRow, START_CARDS, CASE_PAGE_SIZE, TITLE_MAX, visibleCount, orderedCases, needsAttention } = loadTypeScript('src/lib/startScreen.ts');
 const { START_TEXT, startLintEntries } = loadTypeScript('src/lib/copy/startCopy.ts');
 const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
@@ -161,4 +161,46 @@ test('a case the server refuses as untrusted is marked, a normal one is not', ()
   assert.equal(caseRow(makeCase(1, { untrusted: true })).untrusted, true);
   assert.equal(caseRow(makeCase(2, {})).untrusted, false);
   assert.equal(caseRow(makeCase(3, { untrusted: 'yes' })).untrusted, false);
+});
+
+test('untrusted and locked rows come after working cases, in the server order, and keep their other fields (D-A-03)', () => {
+  const list = [
+    makeCase(1, { untrusted: true }),
+    makeCase(2),
+    makeCase(3, { ownKey: true, keyLocked: true, keyEnding: 'abcd' }),
+    makeCase(4),
+    makeCase(5, { untrusted: true })
+  ];
+  const view = startView('unlocked', list);
+  assert.deepEqual(view.rows.map((r) => r.id), ['case-2', 'case-4', 'case-1', 'case-3', 'case-5']);
+  assert.equal(view.total, 5);
+  assert.equal(needsAttention(list[0]), true);
+  assert.equal(needsAttention(list[1]), false);
+  assert.deepEqual(orderedCases(list).map((c) => c.id), ['case-2', 'case-4', 'case-1', 'case-3', 'case-5']);
+  assert.deepEqual(list.map((c) => c.id), ['case-1', 'case-2', 'case-3', 'case-4', 'case-5'], 'the input list is not changed');
+});
+
+test('the order is applied before the page cut, so a locked case never pushes a working case onto page two (D-A-03)', () => {
+  const list = [...Array.from({ length: 3 }, (_, i) => makeCase(i + 1, { untrusted: true })), ...makeCases(CASE_PAGE_SIZE).map((c, i) => ({ ...c, id: 'ok-' + i }))];
+  const view = startView('unlocked', list);
+  assert.equal(view.rows.length, CASE_PAGE_SIZE);
+  assert.equal(view.rows.filter((r) => r.untrusted).length, 0);
+  assert.equal(view.hidden, 3);
+});
+
+test('a missing row has an Erase button and no Open button, and the form asks for the code (D-A-16)', () => {
+  const row = caseRow(makeCase(7, { missing: true }));
+  assert.equal(row.missing, true);
+  const src = read('src/components/StartScreen.svelte');
+  const missing = src.slice(src.indexOf('{:else if row.missing}'), src.indexOf('{:else}', src.indexOf('{:else if row.missing}')));
+  assert.match(missing, /askErase\(row\.id\)/);
+  assert.match(missing, /ARCHIVE_TEXT\.erase\b/);
+  assert.doesNotMatch(missing, /onOpen\(/);
+  assert.match(src, /<form class="erase" onsubmit=\{erase\}>/);
+  assert.match(src, /erasePrompt\(caseCode\(row\.id\)\)/);
+  assert.match(src, /disabled=\{erasing \|\| !confirmed\}/);
+  assert.match(src, /const confirmed = \$derived\(eraseId !== '' && eraseConfirmed\(typed, eraseId\)\);/);
+  assert.match(src, /await eraseCase\(id\);\s*cases = cases\.filter\(\(c\) => c\.id !== id\);/);
+  assert.match(src, /if \(isCaseGone\(error\)\) \{ cases = cases\.filter\(\(c\) => c\.id !== id\);/);
+  assert.match(src, /caseErased\(id\);/);
 });

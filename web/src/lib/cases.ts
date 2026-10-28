@@ -173,6 +173,9 @@ export const isCaseGone = (error: unknown): boolean => error instanceof CaseApiE
 /** True when the case changed in another tab since this page read it (409 case-changed, message M2). The page reloads it. */
 export const isCaseChanged = (error: unknown): boolean => error instanceof CaseApiError && error.status === 409 && error.reason === 'case-changed';
 
+/** True when the case has its own key and it is not entered now (423, reason case-locked): for example another tab locked it. */
+export const isCaseLocked = (error: unknown): boolean => error instanceof CaseApiError && error.status === 423 && error.reason === 'case-locked';
+
 /** The header that carries what the page believes about the case. */
 export const EXPECT_STATE_HEADER = 'X-Expect-State';
 

@@ -2,10 +2,10 @@
   import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../api';
   import { app, caseErased, goHome, openAnalysis, openCase, openCaseImport, openConnections, openSidePanel, panels } from '../appState.svelte';
-  import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
+  import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { archiveButton, readsCaseData, reopenButton, retryAction } from '../caseLifecycle';
-  import { archiveFilePath, archivedActions, keyEndingOf, type ArchiveDrawerKind } from '../archiveModel';
-  import { ARCHIVE_TEXT, archivedNotice, filesMadeText, restoredNewNotice } from '../copy/archiveCopy';
+  import { archiveFilePath, archivedActions, type ArchiveDrawerKind } from '../archiveModel';
+  import { ARCHIVE_TEXT, filesMadeText, restoredNewNotice } from '../copy/archiveCopy';
   import ArchiveDrawers from './ArchiveDrawers.svelte';
   import { CASE_HOME_TEXT, retryKindLabel } from '../copy/caseHomeCopy';
   import { errorText, importerLabel, formatBytes } from '../copy/importCopy';
@@ -70,6 +70,8 @@
   const theories = $derived(offersWork ? ledger.items : []);
   const story = $derived(buildStory({ info, imports, health, theories, history: info?.history }));
   const keptFiles = $derived(imports.filter(record => record.status === 'ok'));
+  // An archived case reads no files, so the header counts them from the case record until the working copy is freed; after that there is no count.
+  const filesShown = $derived(offersWork ? keptFiles.length : info?.archive?.freed ? null : (info?.imports ?? 0));
   const hasIis = $derived(keptFiles.some(record => record.importer === 'iis-w3c'));
   // A case that is not open (closed, archived) or is untrusted is read-only: nothing can be added, so the buttons that add say so up front.
   const readOnly = $derived(!!info && (!!info.untrusted || believedState(info) !== 'open'));
@@ -93,12 +95,9 @@
       // A move changes what the page may ask for (an archived case has no files or checks to read, a restored one has them again), so the
       // whole page is read again, quietly. Restore as new leaves this case as it was.
       if (kind === 'restore-as-new') await rereadFiles(); else if (caseId) await load(caseId, true);
-      if (kind === 'archive') {
-        const file = info?.archive?.current;
-        if (file) archiveNote = archivedNotice(file.name, file.folder, keyEndingOf(file));
-      } else if (kind === 'restore-in-place') archiveNote = ARCHIVE_TEXT.restoreInPlaceDone;
+      if (kind === 'restore-in-place') archiveNote = ARCHIVE_TEXT.restoreInPlaceDone;
       else if (kind === 'free') archiveNote = ARCHIVE_TEXT.freeDone;
-      else if (made) archiveNote = restoredNewNotice(made.title || caseCode(made.id), caseCode(made.id));
+      else if (kind === 'restore-as-new' && made) archiveNote = restoredNewNotice(made.title || caseCode(made.id), caseCode(made.id));
     })();
   }
   // The drawer hands focus back to the button that opened it. When that button is gone (an archive finished, the page changed) the case name takes it.
@@ -131,7 +130,8 @@
     const [caseView, keys] = await Promise.allSettled([getCaseView(id, mine.signal), getCaseKeyStatus(id, mine.signal)]);
     if (mine.signal.aborted || id !== caseId) return;
     const found = caseView.status === 'fulfilled' ? caseView.value : null;
-    const reads = found ? readsCaseData(found) : true;
+    const refused = caseView.status === 'rejected' && (isCaseGone(caseView.reason) || isCaseLocked(caseView.reason) || refusedWith(caseView, 'untrusted-case'));
+    const reads = found ? readsCaseData(found) : !refused;
     holdLedger(id, !reads);
     const none = <T,>(value: T): Promise<T> => Promise.resolve(value);
     const [files, runs, theory] = await Promise.allSettled([reads ? listImports(id, mine.signal) : none<ImportRecord[]>([]), reads ? fetchHealthRuns(id, mine.signal) : none<HealthRun[]>([]), reads ? refreshLedger() : none<void>(undefined)]);
@@ -226,7 +226,7 @@
       if (id !== caseId) return;
       info = fresh;
       imports = files;
-    } catch { /* the page keeps the list it had */ }
+    } catch (error) { lockedUnder(error); /* otherwise the page keeps the list it had */ }
   }
   $effect(() => {
     const now = panels.sidePanel;
@@ -240,7 +240,14 @@
     try {
       const runs = await fetchHealthRuns(id);
       if (id === caseId) health = runs;
-    } catch { /* the story keeps the list it had */ }
+    } catch (error) { lockedUnder(error); /* otherwise the story keeps the list it had */ }
+  }
+
+  // The case was locked (for example in another tab) while this page showed it: read it again, which ends on the key card. True when it was that.
+  function lockedUnder(error: unknown): boolean {
+    if (!isCaseLocked(error)) return false;
+    if (caseId) void load(caseId);
+    return true;
   }
 
   function gone() { phase = 'gone'; }
@@ -249,6 +256,7 @@
   // shows that and offers a reload, and changes nothing by itself.
   function lifeFailed(error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') return;
+    if (lockedUnder(error)) return;
     if (isCaseGone(error)) { gone(); return; }
     if (isCaseChanged(error)) { changed = true; void tick().then(() => reloadEl?.focus()); return; }
     lifeProblem = error instanceof Error && 'status' in error ? errorText(error as never) : errorText({ status: 0, reason: 'unreachable', message: '' });
@@ -296,6 +304,7 @@
       await runRetry(id, item.id, believedState(info));
       await rereadFiles();
     } catch (error) {
+      if (lockedUnder(error)) return;
       if (retryInPage(error)) retryNote = { ...retryNote, [item.id]: CASE_HOME_TEXT.retryInPage };
       else if (isCaseChanged(error) || isCaseGone(error)) lifeFailed(error);
       else retryNote = { ...retryNote, [item.id]: CASE_HOME_TEXT.retryFailed };
@@ -373,7 +382,7 @@
       <p class="note">{CASE_HOME_TEXT.intro}</p>
       <dl class="counts">
         {#if info?.created}<div><dt>{CASE_HOME_TEXT.created}</dt><dd>{when(info.created)}</dd></div>{/if}
-        <div><dt>{CASE_HOME_TEXT.filesCount}</dt><dd>{keptFiles.length}</dd></div>
+        {#if filesShown !== null}<div><dt>{CASE_HOME_TEXT.filesCount}</dt><dd>{filesShown}</dd></div>{/if}
         <div><dt>{CASE_HOME_TEXT.theoriesCount}</dt><dd>{theories.length}</dd></div>
         <div><dt>{CASE_HOME_TEXT.checksCount}</dt><dd>{health.length}</dd></div>
         {#if retries.length > 0}<div><dt>{CASE_HOME_TEXT.retryCount}</dt><dd>{retries.length}</dd></div>{/if}
