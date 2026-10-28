@@ -121,7 +121,7 @@
   });
 </script>
 
-<Drawer class="free-drawer" title={ARCHIVE_TEXT.freeTitle} titleId="free-title" intro={ARCHIVE_TEXT.freeIntro} closeLabel={ARCHIVE_TEXT.freeClose} {onClose}>
+<Drawer class="free-drawer" title={ARCHIVE_TEXT.freeTitle} titleId="free-title" intro={ARCHIVE_TEXT.freeIntro} focusOnOpen returnFocus closeLabel={ARCHIVE_TEXT.freeClose} {onClose}>
   <div class="free-body">
     <ol class="stages" aria-label={ARCHIVE_TEXT.freeTitle}>
       <li class:current={stage === 1} aria-current={stage === 1 ? 'step' : undefined}>{ARCHIVE_TEXT.freeStage1}</li>

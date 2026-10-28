@@ -83,7 +83,11 @@
       else if (made) archiveNote = restoredNewNotice(made.title || caseCode(made.id), caseCode(made.id));
     })();
   }
-  function closeArchiveDrawer() { archiveDrawer = null; void tick().then(() => headingEl?.focus()); }
+  // The drawer hands focus back to the button that opened it. When that button is gone (an archive finished, the page changed) the case name takes it.
+  function closeArchiveDrawer() {
+    archiveDrawer = null;
+    void tick().then(() => { const now = document.activeElement; if (!now || now === document.body) headingEl?.focus(); });
+  }
   function archiveChanged() { archiveDrawer = null; changed = true; void tick().then(() => reloadEl?.focus()); }
 
   async function load(id: string) {

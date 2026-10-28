@@ -109,7 +109,7 @@
   });
 </script>
 
-<Drawer class="archive-drawer" title={ARCHIVE_TEXT.archiveTitle} titleId="archive-title" intro={ARCHIVE_TEXT.archiveIntro} closeLabel={ARCHIVE_TEXT.archiveClose} {onClose}>
+<Drawer class="archive-drawer" title={ARCHIVE_TEXT.archiveTitle} titleId="archive-title" intro={ARCHIVE_TEXT.archiveIntro} focusOnOpen returnFocus closeLabel={ARCHIVE_TEXT.archiveClose} {onClose}>
   <div class="archive-body">
     {#if running}
       <section class="running" aria-label={ARCHIVE_TEXT.progressLabel}>
