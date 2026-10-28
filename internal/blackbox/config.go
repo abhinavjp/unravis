@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -124,6 +125,44 @@ func invalidf(format string, a ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidConfig, fmt.Sprintf(format, a...))
 }
 
+// The two refusals a person can type their way into on the Place screen. Each has a plain sentence for the page
+// (PlainReason), so the page never shows a file name or a field name.
+var (
+	// ErrUnsafeFolder: the folder is a drive or share root or a Windows system folder.
+	ErrUnsafeFolder = errors.New("the recordings folder is not safe")
+	// ErrBadBind: "bind" is not an address.
+	ErrBadBind = errors.New("the listen address is not an address")
+)
+
+// PlainReason is a sentence for the page when err is one of the refusals above, else "".
+func PlainReason(err error) string {
+	switch {
+	case errors.Is(err, ErrUnsafeFolder):
+		return "Choose a folder that only the Blackbox uses, such as " + DefaultFolder + ". A drive, a share root or a Windows system folder is not allowed."
+	case errors.Is(err, ErrBadBind):
+		return "Listens on needs an address such as 127.0.0.1, or a server name. Spaces and other symbols are not allowed."
+	}
+	return ""
+}
+
+var hostNameRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$`)
+var digitsAndDotsRe = regexp.MustCompile(`^[0-9.]+$`)
+
+// validBind says whether s can be a listen address: an IP address (v4 or v6) or a host name. Digits and dots that
+// do not make an address (999.1.1.1) are refused rather than taken as a name.
+func validBind(s string) bool {
+	if len(s) > 253 {
+		return false
+	}
+	if net.ParseIP(s) != nil {
+		return true
+	}
+	if digitsAndDotsRe.MatchString(s) {
+		return false
+	}
+	return hostNameRe.MatchString(s)
+}
+
 // Validate checks every field and says which one is wrong. Housekeeping limits
 // below their minimum are refused, not clamped: the limits cannot be turned off.
 func (c Config) Validate() error {
@@ -134,7 +173,7 @@ func (c Config) Validate() error {
 		return invalidf(`"folder" must be a full path such as %s`, DefaultFolder)
 	}
 	if why := unsafeFolder(c.Folder); why != "" {
-		return invalidf(`"folder" must be a folder of its own such as %s, not %s`, DefaultFolder, why)
+		return fmt.Errorf("%w: %w", invalidf(`"folder" must be a folder of its own such as %s, not %s`, DefaultFolder, why), ErrUnsafeFolder)
 	}
 	switch c.IntervalSeconds {
 	case 5, 15, 30, 60:
@@ -153,8 +192,8 @@ func (c Config) Validate() error {
 	if c.Port < 1 || c.Port > 65535 {
 		return invalidf(`"port" must be 1 to 65535`)
 	}
-	if c.Bind == "" {
-		return invalidf(`"bind" must be an address such as 127.0.0.1 or 0.0.0.0`)
+	if !validBind(c.Bind) {
+		return fmt.Errorf("%w: %w", invalidf(`"bind" must be an address such as 127.0.0.1 or 0.0.0.0`), ErrBadBind)
 	}
 	if len(c.LogPaths) > maxLogPaths {
 		return invalidf(`"logPaths" may list at most %d folders`, maxLogPaths)

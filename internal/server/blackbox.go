@@ -174,7 +174,9 @@ type bbFacts struct {
 	Files           int        `json:"files"`
 	Samples         int        `json:"samples"`
 	Gaps            int        `json:"gaps"`
-	FreePercent     *float64   `json:"freePercent,omitempty"`
+	// Unread is the number of recording files that could not be read to the end. It is what makes a Blackbox Incomplete.
+	Unread      int      `json:"unread,omitempty"`
+	FreePercent *float64 `json:"freePercent,omitempty"`
 }
 
 type bbItem struct {
@@ -219,7 +221,7 @@ type bbFailure struct {
 	Existing *bbItem `json:"existing,omitempty"`
 }
 
-func (b *blackboxHub) facts(rd *blackbox.Reading) *bbFacts {
+func (b *blackboxHub) facts(rd *blackbox.Reading, rep *blackbox.ReadReport) *bbFacts {
 	if rd == nil {
 		return nil
 	}
@@ -230,6 +232,9 @@ func (b *blackboxHub) facts(rd *blackbox.Reading) *bbFacts {
 	}
 	for _, fe := range m.Files {
 		f.Samples += fe.Samples
+	}
+	if rep != nil {
+		f.Unread = len(rep.Dropped) + len(rep.Missing)
 	}
 	if rd.Status != nil {
 		f.FreePercent = rd.Status.FreePercent
@@ -335,7 +340,7 @@ func (b *blackboxHub) lookEntry(ctx context.Context, e bbsaved.Entry, found *bla
 }
 
 func (b *blackboxHub) item(e bbsaved.Entry, l bbLook) bbItem {
-	return bbItem{Entry: e, State: l.State, Facts: b.facts(l.Reading)}
+	return bbItem{Entry: e, State: l.State, Facts: b.facts(l.Reading, l.Report)}
 }
 
 /* --------------------------------------------------------- unavailable */
@@ -459,11 +464,21 @@ func failFromLook(w http.ResponseWriter, l bbLook) {
 	writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: msg, Reason: bbReason(st), Next: readNext(st), State: &st}, 8192)
 }
 
+// bbInvalid is the refusal for settings that failed Validate. A folder or a listen address a person typed wrong
+// also carries a plain sentence (What), so the page never shows the file name or the field name.
+func bbInvalid(err error) bbFailure {
+	return bbFailure{Error: err.Error(), Reason: blackbox.ReasonInvalid, What: blackbox.PlainReason(err)}
+}
+
 func bbReason(st blackbox.StateInfo) string {
 	if st.Reason != "" {
 		return st.Reason
 	}
 	return string(st.State)
+}
+
+func bbDuplicate(e bbsaved.Entry, it bbItem) bbFailure {
+	return bbFailure{Error: "That Blackbox is already in the list as " + e.Name + ". It was not added again.", Reason: "duplicate", Existing: &it}
 }
 
 // bbAdd adds a Blackbox (save true) or only tries it (save false). A Blackbox that
@@ -485,6 +500,14 @@ func (h *handler) bbAdd(w http.ResponseWriter, r *http.Request, save bool) {
 	if err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: err.Error(), Reason: "location"}, 4096)
 		return
+	}
+	if save {
+		// The same place typed again is a duplicate whatever key came with it, so it is answered before the key is tried.
+		if e, found := b.deps.Store.Find(loc.Canonical(), "", ""); found {
+			it := b.item(e, b.lookEntry(r.Context(), e, nil))
+			writeJSON(w, http.StatusConflict, bbDuplicate(e, it), 16384)
+			return
+		}
 	}
 	key := strings.TrimSpace(body.Key)
 	if loc.NeedsKey() && key == "" {
@@ -510,7 +533,7 @@ func (h *handler) bbAdd(w http.ResponseWriter, r *http.Request, save bool) {
 			Name  string             `json:"name"`
 			State blackbox.StateInfo `json:"state"`
 			Facts *bbFacts           `json:"facts"`
-		}{true, name, l.State, b.facts(l.Reading)}, 16384)
+		}{true, name, l.State, b.facts(l.Reading, l.Report)}, 16384)
 		return
 	}
 	e, err := b.deps.Store.Add(bbsaved.AddInput{
@@ -520,7 +543,7 @@ func (h *handler) bbAdd(w http.ResponseWriter, r *http.Request, save bool) {
 	switch {
 	case errors.Is(err, bbsaved.ErrDuplicate):
 		it := b.item(e, b.lookEntry(r.Context(), e, nil))
-		writeJSON(w, http.StatusConflict, bbFailure{Error: "That Blackbox is already in the list as " + e.Name + ". It was not added again.", Reason: "duplicate", Existing: &it}, 16384)
+		writeJSON(w, http.StatusConflict, bbDuplicate(e, it), 16384)
 		return
 	case err != nil:
 		bbStoreFailure(w, err)
@@ -662,7 +685,7 @@ func (h *handler) bbValidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := cfg.Validate(); err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: err.Error(), Reason: blackbox.ReasonInvalid}, 4096)
+		writeJSON(w, http.StatusUnprocessableEntity, bbInvalid(err), 4096)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
@@ -681,7 +704,7 @@ func (h *handler) bbPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := cfg.Validate(); err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: err.Error(), Reason: blackbox.ReasonInvalid}, 4096)
+		writeJSON(w, http.StatusUnprocessableEntity, bbInvalid(err), 4096)
 		return
 	}
 	if h.bb.deps.Program == nil {
@@ -768,7 +791,7 @@ func (h *handler) bbInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := cfg.Validate(); err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: err.Error(), Reason: blackbox.ReasonInvalid}, 4096)
+		writeJSON(w, http.StatusUnprocessableEntity, bbInvalid(err), 4096)
 		return
 	}
 	if !h.bbLockPC(w) {
@@ -858,7 +881,7 @@ func (h *handler) bbApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := cfg.Validate(); err != nil {
-		writeJSON(w, http.StatusUnprocessableEntity, bbFailure{Error: err.Error(), Reason: blackbox.ReasonInvalid}, 4096)
+		writeJSON(w, http.StatusUnprocessableEntity, bbInvalid(err), 4096)
 		return
 	}
 	if !h.bbLockPC(w) {

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -229,8 +230,9 @@ func TestBlackboxAddByURLKeepsTheKeySealed(t *testing.T) {
 	if k, err := b.bbs.Key(it.ID); err != nil || k != bbKeyA {
 		t.Fatalf("key = %q %v", k, err)
 	}
-	// An address needs a key.
-	bbFail(t, b.add("web-c:7788", ""), http.StatusUnprocessableEntity, "key")
+	// An address that is not in the list yet needs a key.
+	b.world.put("http://web-d:7788", bbRec("web-d", func(r *simRec) { r.Key = bbKeyA }))
+	bbFail(t, b.add("web-d:7788", ""), http.StatusUnprocessableEntity, "key")
 }
 
 func TestBlackboxBadLocations(t *testing.T) {
@@ -1062,5 +1064,70 @@ func TestBlackboxRevealKeyRefusedForTypedEntryAndUnknownId(t *testing.T) {
 	// GET is not allowed: the key is never reachable by a link.
 	if got := b.e.get("/api/blackbox/" + it.ID + "/reveal-key"); got.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET reveal = %d", got.Code)
+	}
+}
+
+/* ------------------------------------------------- P9 fix round */
+
+// A garbage Listens on address and a system folder are refused in plain words on
+// every route that checks the settings, with no file or field name in the sentence.
+func TestBlackboxBadSettingsAreRefusedInPlainWords(t *testing.T) {
+	b := newBBEnv(t, nil)
+	bodies := map[string]string{
+		"bind":   `{"name":"web-b","bind":"not an address !!"}`,
+		"folder": `{"name":"web-b","folder":"C:\\Windows\\System32"}`,
+	}
+	for _, route := range []string{"/api/blackbox/validate", "/api/blackbox/pack", "/api/blackbox/this-pc/apply", "/api/blackbox/this-pc/install"} {
+		for label, body := range bodies {
+			if label == "folder" && runtime.GOOS != "windows" {
+				continue
+			}
+			f := bbFail(t, b.post(route, body), http.StatusUnprocessableEntity, blackbox.ReasonInvalid)
+			if f.What == "" || strings.Contains(f.What, "blackbox.json") || strings.Contains(f.What, `"`) {
+				t.Errorf("%s %s: what = %q", route, label, f.What)
+			}
+		}
+	}
+	if len(b.list().Items) != 0 {
+		t.Fatal("a refused install left an entry")
+	}
+}
+
+// Clumsy-user finding 11: the same URL again with a wrong key is a duplicate, not a
+// refused key, and the saved key stays.
+func TestBlackboxDuplicateIsAnsweredBeforeTheKeyIsChecked(t *testing.T) {
+	b := newBBEnv(t, nil)
+	b.world.put("http://web-c:7788", bbRec("web-c", func(r *simRec) { r.Key = bbKeyA }))
+	first := b.mustAdd("web-c:7788", bbKeyA)
+	f := bbFail(t, b.add("web-c:7788", bbKeyB), http.StatusConflict, "duplicate")
+	if f.Existing == nil || f.Existing.ID != first.ID {
+		t.Fatalf("existing = %+v", f.Existing)
+	}
+	if k, _ := b.bbs.Key(first.ID); k != bbKeyA {
+		t.Fatalf("saved key changed: %q", k)
+	}
+	// Trying without saving still checks the key.
+	bbFail(t, b.post("/api/blackbox/test", jb(map[string]string{"location": "web-c:7788", "key": bbKeyB})), http.StatusUnprocessableEntity, "key")
+}
+
+// Finding 6: a Blackbox that is Incomplete says how many files were not read, so the
+// facts do not read as "no gaps".
+func TestBlackboxIncompleteFactsCountTheUnreadFiles(t *testing.T) {
+	b := newBBEnv(t, nil)
+	b.setNow(invT0.Add(3*time.Hour + 20*time.Minute + 10*time.Second))
+	b.world.put(`\\web-f\Blackbox`, bbRec("web-f", func(r *simRec) {
+		r.End = invT0.Add(3*time.Hour + 20*time.Minute)
+		r.DropBefore = 5 * time.Minute
+	}))
+	it := b.mustAdd(`\\web-f\Blackbox`, "")
+	if it.State.State != blackbox.SIncomplete {
+		t.Fatalf("state = %+v", it.State)
+	}
+	if it.Facts == nil || it.Facts.Unread < 1 {
+		t.Fatalf("facts = %+v", it.Facts)
+	}
+	b.world.put(share, bbRec("web-b", nil))
+	if whole := b.mustAdd(share, ""); whole.Facts == nil || whole.Facts.Unread != 0 {
+		t.Fatalf("a whole read has unread files: %+v", whole.Facts)
 	}
 }

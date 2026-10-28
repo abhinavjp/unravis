@@ -188,3 +188,54 @@ func TestValidateRefusesDriveRootsAndSystemFolders(t *testing.T) {
 		}
 	}
 }
+
+func TestBindMustBeAnAddressOrAName(t *testing.T) {
+	good := []string{"127.0.0.1", "0.0.0.0", "::1", "localhost", "web-01", "web-01.corp.example"}
+	for _, bind := range good {
+		c := Default()
+		c.Name = "web-01"
+		c.Bind = bind
+		if err := c.Validate(); err != nil {
+			t.Errorf("bind %q refused: %v", bind, err)
+		}
+	}
+	bad := []string{"", " ", "not an address !!", "999.1.1.1", "1.2.3", "web 01", "-web", "web-", "a..b", "http://x"}
+	for _, bind := range bad {
+		c := Default()
+		c.Name = "web-01"
+		c.Bind = bind
+		err := c.Validate()
+		if !errors.Is(err, ErrBadBind) || !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("bind %q: want ErrBadBind, got %v", bind, err)
+		}
+	}
+}
+
+func TestPlainReasonHasNoFileOrFieldNames(t *testing.T) {
+	c := Default()
+	c.Name = "web-01"
+	c.Bind = "not an address !!"
+	got := PlainReason(c.Validate())
+	if got == "" || strings.Contains(got, `"`) || strings.Contains(got, "blackbox.json") || strings.Contains(got, "bind") {
+		t.Fatalf("bind sentence = %q", got)
+	}
+	if !strings.Contains(got, "Listens on") {
+		t.Fatalf("bind sentence = %q", got)
+	}
+	if runtime.GOOS == "windows" {
+		c = Default()
+		c.Name = "web-01"
+		c.Folder = `C:\Windows\System32`
+		err := c.Validate()
+		if !errors.Is(err, ErrUnsafeFolder) {
+			t.Fatalf("system folder: %v", err)
+		}
+		got = PlainReason(err)
+		if got == "" || strings.Contains(got, `"folder"`) || strings.Contains(got, "blackbox.json") || !strings.Contains(got, DefaultFolder) {
+			t.Fatalf("folder sentence = %q", got)
+		}
+	}
+	if PlainReason(errors.New("other")) != "" || PlainReason(nil) != "" {
+		t.Fatal("PlainReason invents a sentence for other errors")
+	}
+}
