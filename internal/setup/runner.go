@@ -107,6 +107,8 @@ type Runner struct {
 	FailAfter func(step string) error
 	// BeforeStep is for tests: it runs before each step (a cancel in the middle of a run).
 	BeforeStep func(step string)
+	// BeforeCommit is for tests: it runs once every step is done, before the journal is retired.
+	BeforeCommit func(j *Journal)
 }
 
 func (r *Runner) logf(format string, a ...any) {
@@ -162,10 +164,18 @@ func (r *Runner) RecoverJournal(elevated bool) (found bool, left []string, err e
 			return true, nil, fmt.Errorf("an earlier setup left a journal in a folder others can change, so it is not used: %v", err)
 		}
 	}
+	if j.f.Committed {
+		// That run finished; only its journal could not be deleted. Replaying it would undo a good install.
+		r.logf("recover journal: the journal of an earlier %s that finished is deleted, not replayed", j.f.Op)
+		if cerr := j.Close(); cerr != nil {
+			r.logf("recover journal: could not delete it: %v", cerr)
+		}
+		return false, nil, nil
+	}
 	r.logf("recover journal: an earlier %s did not finish; putting back what it changed", j.f.Op)
 	left = Rollback(r.Sys, j.Undos(), func(u Undo, err error) { r.logUndo(u, err) })
 	if len(left) == 0 {
-		_ = j.Close()
+		_, _ = j.Commit(r.Sys.sleep) // fully undone: if it cannot be deleted it is marked so it is never replayed
 	}
 	return true, left, nil
 }
@@ -248,18 +258,33 @@ func (r *Runner) Execute(ctx context.Context, p *Plan) Result {
 		r.emit(StepEvent{ID: s.ID, Title: s.Title, State: StepDone})
 	}
 	if failed == nil {
-		for _, dir := range keep {
-			if err := os.RemoveAll(dir); err != nil {
-				r.logf("commit: could not remove working folder %s: %v", dir, err)
-			}
+		// Commit: the journal is retired first and the backups go only after that, so a journal that is still on disk always has
+		// what its rollback needs. If it cannot be retired the run counts as failed and is rolled back below, backups intact.
+		if r.BeforeCommit != nil {
+			r.BeforeCommit(j)
 		}
-		_ = j.Close()
-		res.Outcome = OutcomeDone
-		res.ReadKey = p.readKey
-		res.RestartApp = p.appWasRunning
-		res.Message = doneMessage(p)
-		r.logf("done %s %s", p.Op, p.Version)
-		return res
+		gone, cerr := j.Commit(r.Sys.sleep)
+		if cerr != nil && len(p.Steps) > 0 {
+			failed = &p.Steps[len(p.Steps)-1]
+			ferr = &StepError{Msg: "Setup finished its work but could not close its journal in " + filepath.Dir(j.Path()),
+				Fix: "Close programs that may hold files in that folder (antivirus, file sync), then run setup again.", Err: cerr}
+			r.logf("commit: FAILED: %v", cerr)
+		} else {
+			if !gone {
+				r.logf("commit: the journal %s could not be deleted; it is marked finished and the next run deletes it", j.Path())
+			}
+			for _, dir := range keep {
+				if err := os.RemoveAll(dir); err != nil {
+					r.logf("commit: could not remove working folder %s: %v", dir, err)
+				}
+			}
+			res.Outcome = OutcomeDone
+			res.ReadKey = p.readKey
+			res.RestartApp = p.appWasRunning
+			res.Message = doneMessage(p)
+			r.logf("done %s %s", p.Op, p.Version)
+			return res
+		}
 	}
 
 	cancelled := errors.Is(ferr, context.Canceled)
@@ -302,12 +327,12 @@ func (r *Runner) Execute(ctx context.Context, p *Plan) Result {
 		res.Message = "Setup stopped at “" + failed.Title + "” and could not put everything back."
 		r.logf("rollback incomplete: %d item(s) left; the journal is kept at %s", len(left), j.Path())
 	case cancelled:
-		_ = j.Close()
+		_, _ = j.Commit(r.Sys.sleep) // fully undone: if it cannot be deleted it is marked so it is never replayed
 		res.Outcome = OutcomeCancelled
 		res.Message = "Cancelled. Everything setup changed has been put back."
 		r.logf("cancelled; everything put back")
 	default:
-		_ = j.Close()
+		_, _ = j.Commit(r.Sys.sleep) // fully undone: if it cannot be deleted it is marked so it is never replayed
 		res.Outcome = OutcomeRolledBack
 		res.Message = "Setup stopped at “" + failed.Title + "”: " + plainError(ferr) + " Everything it changed has been put back."
 		r.logf("rolled back; everything put back")

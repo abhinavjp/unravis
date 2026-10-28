@@ -23,6 +23,29 @@ type Faults struct {
 	mu   sync.Mutex
 	m    map[string]error
 	once map[string]bool
+	// calls counts every checked call since StartCounting; failAt makes the failAt-th one fail with failErr (0: none).
+	counting bool
+	calls    []string
+	failAt   int
+	failErr  error
+}
+
+// StartCounting starts numbering the checked calls (1, 2, ...) and records their names. failAt, when above 0, makes that numbered call
+// fail with err, once: a test can fail every fake-system call of a run in turn.
+func (f *Faults) StartCounting(failAt int, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.counting, f.calls, f.failAt, f.failErr = true, nil, failAt, err
+}
+
+// StopCounting stops numbering and returns the names of the calls made since StartCounting, in order.
+func (f *Faults) StopCounting() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.counting, f.failAt, f.failErr = false, 0, nil
+	c := f.calls
+	f.calls = nil
+	return c
 }
 
 // Once makes op fail with err the next time only (a fault that clears itself, so the undo of the same operation works).
@@ -57,6 +80,12 @@ func (f *Faults) check(op string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	k := strings.ToLower(op)
+	if f.counting {
+		f.calls = append(f.calls, op)
+		if f.failAt > 0 && len(f.calls) == f.failAt {
+			return f.failErr
+		}
+	}
 	err := f.m[k]
 	if err != nil && f.once[k] {
 		delete(f.m, k)

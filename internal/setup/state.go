@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -237,8 +238,10 @@ func fileSHA256(p string) (string, error) {
 
 // ---- versions ----
 
-// CompareVersions compares two release versions ("1.2.3", "v1.2.3", "1.2.3-rc1"). ok is false when either is not a release number
-// (a commit hash, "dev"): then setup does not refuse anything on the grounds of version.
+// CompareVersions compares two release versions ("1.2.3", "v1.2.3", "1.2.3-rc1") and the git-describe form build.ps1 stamps
+// ("v1.2.3-4-gabc1234", "v1.2.3-dirty"): that is the release plus 4 commits, which is newer than the bare tag and older than 5 commits;
+// "-dirty" does not change the order. Pre-release parts are compared piece by piece with numbers as numbers (rc2 is older than rc10).
+// ok is false when either is not a release number (a commit hash, "dev"): then setup does not refuse anything on the grounds of version.
 func CompareVersions(a, b string) (cmp int, ok bool) {
 	pa, oka := parseVersion(a)
 	pb, okb := parseVersion(b)
@@ -255,27 +258,47 @@ func CompareVersions(a, b string) (cmp int, ok bool) {
 	}
 	switch {
 	case pa.pre == pb.pre:
-		return 0, true
 	case pa.pre == "": // a release is newer than its pre-releases
 		return 1, true
 	case pb.pre == "":
 		return -1, true
-	case pa.pre < pb.pre:
-		return -1, true
+	default:
+		if c := comparePre(pa.pre, pb.pre); c != 0 {
+			return c, true
+		}
 	}
-	return 1, true
+	switch {
+	case pa.commits < pb.commits:
+		return -1, true
+	case pa.commits > pb.commits:
+		return 1, true
+	}
+	return 0, true
 }
 
 type parsedVersion struct {
-	n   [3]int
-	pre string
+	n       [3]int
+	pre     string
+	commits int // commits after the tag, from a git-describe version
 }
+
+// describeTail matches the "-N-gHASH" git describe adds after a tag.
+var describeTail = regexp.MustCompile(`-(\d+)-g[0-9a-fA-F]+$`)
 
 func parseVersion(s string) (parsedVersion, bool) {
 	var v parsedVersion
 	s = strings.TrimPrefix(strings.TrimSpace(s), "v")
 	if i := strings.IndexByte(s, '+'); i >= 0 {
 		s = s[:i]
+	}
+	s = strings.TrimSuffix(s, "-dirty") // a build with local changes sorts as the same numbers
+	if m := describeTail.FindStringSubmatchIndex(s); m != nil {
+		n, err := strconv.Atoi(s[m[2]:m[3]])
+		if err != nil {
+			return v, false
+		}
+		v.commits = n
+		s = s[:m[0]]
 	}
 	if i := strings.IndexByte(s, '-'); i >= 0 {
 		s, v.pre = s[:i], s[i+1:]
@@ -295,4 +318,64 @@ func parseVersion(s string) (parsedVersion, bool) {
 		v.n[i] = n
 	}
 	return v, true
+}
+
+// comparePre compares two pre-release strings part by part (split at dots); within a part, runs of digits compare as numbers.
+func comparePre(a, b string) int {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(pa) && i < len(pb); i++ {
+		if c := compareNatural(pa[i], pb[i]); c != 0 {
+			return c
+		}
+	}
+	switch {
+	case len(pa) < len(pb):
+		return -1
+	case len(pa) > len(pb):
+		return 1
+	}
+	return 0
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+// compareNatural compares two strings with runs of digits compared as numbers ("rc2" < "rc10").
+func compareNatural(a, b string) int {
+	for a != "" && b != "" {
+		if isDigit(a[0]) && isDigit(b[0]) {
+			i, j := 0, 0
+			for i < len(a) && isDigit(a[i]) {
+				i++
+			}
+			for j < len(b) && isDigit(b[j]) {
+				j++
+			}
+			na, nb := strings.TrimLeft(a[:i], "0"), strings.TrimLeft(b[:j], "0")
+			if len(na) != len(nb) {
+				if len(na) < len(nb) {
+					return -1
+				}
+				return 1
+			}
+			if c := strings.Compare(na, nb); c != 0 {
+				return c
+			}
+			a, b = a[i:], b[j:]
+			continue
+		}
+		if a[0] != b[0] {
+			if a[0] < b[0] {
+				return -1
+			}
+			return 1
+		}
+		a, b = a[1:], b[1:]
+	}
+	switch {
+	case a == "" && b == "":
+		return 0
+	case a == "":
+		return -1
+	}
+	return 1
 }

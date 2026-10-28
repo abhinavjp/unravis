@@ -55,6 +55,8 @@ type Undo struct {
 	// Dir is the Blackbox program folder; DirCreated says setup made it.
 	Dir        string `json:"dir,omitempty"`
 	DirCreated bool   `json:"dirCreated,omitempty"`
+	// Kept names the files of Dir that were already there before the install: the undo leaves them to their restore-file entries.
+	Kept []string `json:"kept,omitempty"`
 }
 
 // JournalFile is the journal on disk.
@@ -63,12 +65,31 @@ type JournalFile struct {
 	Version string    `json:"version"`
 	Started time.Time `json:"started"`
 	Undos   []Undo    `json:"undos"`
+	// Committed says the run finished and the journal only waits to be deleted. A journal marked so is never replayed.
+	Committed bool `json:"committed,omitempty"`
 }
 
 // Journal is the write-ahead list of what a run did. Every Record is on disk before the action it describes runs.
 type Journal struct {
 	path string
 	f    JournalFile
+	// remove and rename stand for os.Remove and os.Rename (tests replace them to simulate a locked file).
+	remove func(string) error
+	rename func(string, string) error
+}
+
+func (j *Journal) removeFile(p string) error {
+	if j.remove != nil {
+		return j.remove(p)
+	}
+	return os.Remove(p)
+}
+
+func (j *Journal) renameFile(from, to string) error {
+	if j.rename != nil {
+		return j.rename(from, to)
+	}
+	return os.Rename(from, to)
 }
 
 // JournalName is the journal's file name.
@@ -83,7 +104,10 @@ func UserJournalDir(d Dirs) string { return filepath.Join(d.LocalAppData, Machin
 // NewJournal starts a journal at path. A journal already there is an earlier run that did not finish: the caller rolls it back first.
 func NewJournal(path string, op Op, version string, now time.Time) (*Journal, error) {
 	if _, err := os.Stat(path); err == nil {
-		return nil, fmt.Errorf("an earlier setup left a journal at %s", path)
+		// The journal of a run that finished (it could not be deleted) is not a run to roll back; it is simply replaced.
+		if old, lerr := LoadJournal(path); lerr != nil || !old.f.Committed {
+			return nil, fmt.Errorf("an earlier setup left a journal at %s", path)
+		}
 	}
 	j := &Journal{path: path, f: JournalFile{Op: op, Version: version, Started: now}}
 	return j, j.save()
@@ -107,11 +131,39 @@ func (j *Journal) Path() string { return j.path }
 
 // Close deletes the journal: the run is finished (or fully undone).
 func (j *Journal) Close() error {
-	err := os.Remove(j.path)
+	err := j.removeFile(j.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	return err
+}
+
+// Commit retires the journal of a run that finished, before anything a rollback needs is removed. It first marks the journal as
+// committed (one atomic write), so even a journal that cannot be deleted is never replayed; then it deletes it, trying again briefly
+// (antivirus and indexers hold files for a moment), then moves it aside. gone says the journal file is no longer there under its name.
+// An error means the journal is neither marked nor removed: the run is not committed and the caller must roll it back.
+func (j *Journal) Commit(sleep func(time.Duration)) (gone bool, err error) {
+	j.f.Committed = true
+	markErr := j.save()
+	if markErr != nil {
+		j.f.Committed = false
+	}
+	var rmErr error
+	for i := 0; i < 5; i++ {
+		if i > 0 && sleep != nil {
+			sleep(time.Duration(i) * 100 * time.Millisecond)
+		}
+		if rmErr = j.Close(); rmErr == nil {
+			return true, nil
+		}
+	}
+	if mvErr := j.renameFile(j.path, j.path+".done"); mvErr == nil {
+		return true, nil
+	}
+	if markErr == nil {
+		return false, nil
+	}
+	return false, fmt.Errorf("the setup journal could neither be deleted (%v) nor marked as finished (%v)", rmErr, markErr)
 }
 
 func (j *Journal) save() error {
@@ -275,7 +327,8 @@ func undoOne(sys *System, u Undo) error {
 }
 
 // undoBlackbox takes back a Blackbox install: the service, the read key hash, the settings and the program copy, and the recordings the
-// service wrote, but only when setup made the recordings folder (recordings that were there before are never touched).
+// service wrote, but only when setup made the recordings folder (recordings that were there before are never touched). Files that were
+// in the program folder before are not deleted here: their restore-file entries (journalled before this one) put the old copies back.
 func undoBlackbox(sys *System, u Undo) error {
 	var errs []error
 	if st, err := sys.Svc.State(blackbox.ServiceName); err != nil {
@@ -287,7 +340,14 @@ func undoBlackbox(sys *System, u Undo) error {
 			errs = append(errs, err)
 		}
 	}
+	kept := map[string]bool{}
+	for _, n := range u.Kept {
+		kept[n] = true
+	}
 	for _, name := range []string{blackbox.KeyFileName, blackbox.ConfigFileName, blackbox.ConfigFileName + ".bak", blackbox.InstalledExeName} {
+		if kept[name] {
+			continue
+		}
 		if err := os.Remove(filepath.Join(u.Dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			errs = append(errs, err)
 		}

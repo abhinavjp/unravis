@@ -28,6 +28,19 @@ type Txn struct {
 
 func (t *Txn) record(u Undo) error {
 	u.Step = t.step
+	if u.Kind == UndoBlackbox && u.Dir != "" {
+		// Settings, key and program files already in the Blackbox folder are copied to the backup folder first, so the rollback puts
+		// them back instead of deleting them. Their entries come before this one, so they are undone after it.
+		for _, name := range []string{blackbox.KeyFileName, blackbox.ConfigFileName, blackbox.ConfigFileName + ".bak", blackbox.InstalledExeName} {
+			had, err := t.keepCopy(filepath.Join(u.Dir, name), "Blackbox file")
+			if err != nil {
+				return err
+			}
+			if had {
+				u.Kept = append(u.Kept, name)
+			}
+		}
+	}
 	return t.j.Record(u)
 }
 
@@ -117,6 +130,28 @@ func (t *Txn) keepOld(path, what string) error {
 		return err
 	}
 	return moveFile(path, b)
+}
+
+// keepCopy journals a file that exists and will be overwritten by something else: a copy goes to the backup folder and the rollback puts
+// it back. It reports whether the file was there; a file that was not there is left to the caller's own undo.
+func (t *Txn) keepCopy(path, what string) (bool, error) {
+	if _, err := os.Lstat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	b, err := t.backupPath(path)
+	if err != nil {
+		return false, err
+	}
+	if err := t.record(Undo{Kind: UndoRestoreFile, Path: path, Backup: b, Note: what + " overwritten: restore from backup " + b}); err != nil {
+		return false, err
+	}
+	if err := copyFile(context.Background(), path, b+".part"); err != nil {
+		return false, err
+	}
+	return true, os.Rename(b+".part", b)
 }
 
 // WriteFile writes data to path, keeping any old file for the rollback.
