@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/keeper"
@@ -97,6 +98,23 @@ type UIServer struct {
 	result  *Result
 	// keyShown is set once the read key has been handed to the page: it is shown once and never again.
 	keyShown bool
+	// lastSeen is the last keyed request; the page asks for its state every 30 seconds while it is open.
+	lastSeen time.Time
+}
+
+// Idle reports that no run is going and the page has not been heard from for d: the person closed the window without pressing
+// Close, and setup can end. The clock starts at the first call.
+func (s *UIServer) Idle(now time.Time, d time.Duration) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running {
+		return false
+	}
+	if s.lastSeen.IsZero() {
+		s.lastSeen = now
+		return false
+	}
+	return now.Sub(s.lastSeen) > d
 }
 
 // NewKey makes a one-time key for the page address.
@@ -147,6 +165,9 @@ func (s *UIServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "This setup window has expired. Close it and start setup again."})
 		return
 	}
+	s.mu.Lock()
+	s.lastSeen = time.Now()
+	s.mu.Unlock()
 	be := s.Backend
 	if s.Scenarios != nil {
 		if b, ok := s.Scenarios[r.Header.Get("X-Setup-Scenario")]; ok {
@@ -298,6 +319,8 @@ type LocalBackend struct {
 	LogPath string
 	// Log is this process's log file.
 	Log func(string)
+	// AllowDowngrade is --allow-downgrade: the only way to install an older version over a newer one.
+	AllowDowngrade bool
 }
 
 func (b *LocalBackend) installed() *Installed {
@@ -374,7 +397,7 @@ func folderSize(dir string) (int64, error) {
 func (b *LocalBackend) Preflight(req WorkRequest) []Check {
 	old := b.installed()
 	op := ResolveOp(req.Op, old, b.version())
-	return b.R.Preflight(PreflightInput{Op: op, Opts: req.Options, Old: old, AllowDowngrade: req.AllowDowngrade})
+	return b.R.Preflight(PreflightInput{Op: op, Opts: req.Options, Old: old, AllowDowngrade: b.AllowDowngrade})
 }
 
 func (b *LocalBackend) version() string {
@@ -430,6 +453,8 @@ func DescribeChanges(req WorkRequest, old *Installed, d Dirs, isAdmin bool) UICh
 
 // Run runs the request, through the elevated worker when it needs administrator rights.
 func (b *LocalBackend) Run(ctx context.Context, req WorkRequest, onEvent func(StepEvent), onLog func(string)) Result {
+	req.AllowDowngrade = b.AllowDowngrade // the page cannot ask for a downgrade; only the command line can
+	req.Silent = false
 	old := b.installed()
 	o := req.Options
 	if req.Op != OpInstall && old != nil {

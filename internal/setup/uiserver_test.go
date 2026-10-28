@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -316,5 +317,61 @@ func TestLocalBackendUserInstallStaysUnelevated(t *testing.T) {
 	res = be2.Run(context.Background(), WorkRequest{Op: OpInstall, Options: e2.machineOpts()}, func(StepEvent) {}, func(string) {})
 	if res.Outcome != OutcomeCancelledUAC || res.Outcome.ExitCode() != 3 || e2.snapshot() != before {
 		t.Fatalf("%+v", res)
+	}
+}
+
+func TestSetupPageIdleEndsOnlyWhenThePageIsQuietAndNothingRuns(t *testing.T) {
+	c := newUIClient(t, CaptureScenarios()["fresh"])
+	t0 := time.Now()
+	if c.s.Idle(t0, time.Minute) {
+		t.Fatal("idle before the clock started")
+	}
+	if !c.s.Idle(t0.Add(2*time.Minute), time.Minute) {
+		t.Fatal("a page that never asked anything is not idle")
+	}
+	c.do("GET", "/api/state", "", nil) // the page's ping
+	if c.s.Idle(time.Now().Add(30*time.Second), time.Minute) {
+		t.Fatal("idle right after a ping")
+	}
+	// A stranger's request (no key) does not keep setup alive.
+	c.s.mu.Lock()
+	c.s.lastSeen = time.Now().Add(-2 * time.Minute)
+	c.s.mu.Unlock()
+	c.do("GET", "/api/state", "", map[string]string{"X-Setup-Key": "wrong"})
+	if !c.s.Idle(time.Now(), time.Minute) {
+		t.Fatal("a request without the key kept setup alive")
+	}
+	// While a run is going, setup never ends on its own.
+	c.s.mu.Lock()
+	c.s.running = true
+	c.s.mu.Unlock()
+	if c.s.Idle(time.Now().Add(time.Hour), time.Minute) {
+		t.Fatal("idle during a run")
+	}
+}
+
+func TestLocalBackendPageCannotAskForADowngrade(t *testing.T) {
+	e := newEnv(t, "2.0.0")
+	e.r.Payload = testPayload(t, "2.0.0", true)
+	e.mustRun(OpInstall, e.userOpts(), UninstallOptions{})
+	// The older setup: the page sends allowDowngrade, which is ignored.
+	e.r.Payload = testPayload(t, "1.0.0", true)
+	e.f.Versions[strings.ToLower(filepath.Join(e.userOpts().Location, AppExeName))] = "unravis 1.0.0"
+	be := &LocalBackend{R: e.r, Mode: OpInstall}
+	c := newUIClient(t, be)
+	before := e.snapshot()
+	if code, _ := c.do("POST", "/api/run", `{"op":"upgrade","allowDowngrade":true,"options":{"scope":"user"}}`, nil); code != http.StatusOK && code != http.StatusAccepted {
+		t.Fatalf("run: %d", code)
+	}
+	out := c.waitResult()
+	res := out["result"].(map[string]any)
+	if res["outcome"] != string(OutcomePreflightFailed) || e.snapshot() != before {
+		t.Fatalf("the page downgraded: %v", res)
+	}
+	// --allow-downgrade on the command line is the way.
+	be.AllowDowngrade = true
+	r := be.Run(context.Background(), WorkRequest{Op: OpUpgrade, Options: e.userOpts()}, func(StepEvent) {}, func(string) {})
+	if r.Outcome != OutcomeDone {
+		t.Fatalf("with --allow-downgrade: %+v", r)
 	}
 }
