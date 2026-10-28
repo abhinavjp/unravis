@@ -790,3 +790,41 @@ func TestCaseFileRestoreRewritesLedgerEvidencePrefix(t *testing.T) {
 		t.Fatalf("source ledger changed: %s", keep)
 	}
 }
+
+// The needs-another-try list is stored in the case database, so it travels in the
+// case file (A14). A restored case has the same list; the history of the source
+// (Close and Reopen) does not travel.
+func TestCaseFileCarriesTheRetryList(t *testing.T) {
+	src, dst := newCFEnv(t), newCFEnv(t)
+	ctx := context.Background()
+	info := cfSeed(t, src, "Retries travel", 3)
+	c, err := src.st.Open(ctx, info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.(casestore.RetryStore).ReplaceRetries(ctx, []casestore.RetryItem{
+		{Kind: casestore.RetryAudit, Key: "a", Label: "Orders database", Reason: "unreachable"},
+		{Kind: casestore.RetryImport, Key: "b", Label: "orders.csv", Reason: "import-failed"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Close()
+
+	file := filepath.Join(t.TempDir(), "retries"+casestore.CaseFileExt)
+	if _, err := cfExport(t, src, info, file, cfPass); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cfRestore(dst, file, cfPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc, err := dst.st.Open(ctx, got.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	list, err := rc.(casestore.RetryStore).Retries(ctx)
+	if err != nil || len(list) != 2 || list[0].Kind != casestore.RetryAudit || list[1].Kind != casestore.RetryImport {
+		t.Fatalf("restored retry list = %+v %v", list, err)
+	}
+}

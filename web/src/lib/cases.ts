@@ -11,8 +11,13 @@ import type { EvidenceExport, ExportFile, Query } from './types';
  *
  * The contract this file mocks (JSON is camelCase; every request carries X-Audit-Token):
  *   GET    /api/cases                          -> { cases: CaseInfo[] }
- *   POST   /api/cases            {title}       -> CaseInfo
- *   POST   /api/cases/{id}/close               -> CaseInfo
+ *   POST   /api/cases            {title, requestId} -> CaseInfo (201 made, 200 when this request id already made it)
+ *   GET    /api/cases/{id}                     -> CaseView (CaseInfo + history + retries)
+ *   POST   /api/cases/{id}/close               -> CaseInfo   (X-Expect-State: what the page believes; a mismatch is 409 case-changed)
+ *   POST   /api/cases/{id}/reopen              -> CaseInfo   (Closed to Open only; same header)
+ *   PUT    /api/cases/{id}/retries {items}     -> { retries }  (replaces the "needs another try" list)
+ *   DELETE /api/cases/{id}/retries/{retryId}   -> 204
+ *   POST   /api/cases/{id}/retries/{retryId}/retry -> 204 (environments and plain tags only; others answer 422 retry-in-page)
  *   DELETE /api/cases/{id}       {confirm:id}  -> 204, or {} (any 2xx)
  *   GET    /api/cases/{id}/imports             -> { imports: ImportRecord[] }
  *   POST   /api/cases/{id}/imports?importer=&host=&preview=1
@@ -44,16 +49,37 @@ export function eraseConfirmed(typed: string, id: string): boolean {
   return isCaseId(id) && typed.trim().toLowerCase() === caseCode(id);
 }
 
+/** A case's place in its life (decisions A7). The page sends what it believes back as X-Expect-State. */
+export type CaseState = 'open' | 'closed' | 'archiving' | 'archived' | 'untrusted' | 'erased';
+
 export interface CaseInfo {
   id: string;
   title: string;
   created: string;
   closed?: string | null;
+  /** The state the server reported when the page read the case. Missing from an old server. */
+  state?: CaseState;
   /** True for a folder the server refuses (sealed by Windows only, not known when the master key was set up). Its title is a fixed placeholder. */
   untrusted?: boolean;
   bytes: number;
   imports: number;
 }
+
+/** What happened to a case: made, closed, reopened (A8). */
+export interface HistoryEntry { at: string; kind: string }
+
+/** One thing that did not go through, kept in the case until it is retried or dropped (A14, C19). */
+export interface RetryItem {
+  id: number;
+  /** environments | tag | audit-source | import. "Not added to analysis" (audit-source) and "import failed" (import) stay apart (C19). */
+  kind: string;
+  key: string;
+  label: string;
+  reason: string;
+  created: string;
+}
+
+export interface CaseView extends CaseInfo { history: HistoryEntry[]; retries: RetryItem[] }
 
 export interface SourceQualityInfo {
   sourceVersion?: string;
@@ -127,6 +153,12 @@ export class CaseApiError extends Error {
 /** True when the server says the case is gone (erased in another tab or window), so the case list on screen is out of date. */
 export const isCaseGone = (error: unknown): boolean => error instanceof CaseApiError && error.reason === 'case-not-found';
 
+/** True when the case changed in another tab since this page read it (409 case-changed, message M2). The page reloads it. */
+export const isCaseChanged = (error: unknown): boolean => error instanceof CaseApiError && error.status === 409 && error.reason === 'case-changed';
+
+/** The header that carries what the page believes about the case. */
+export const EXPECT_STATE_HEADER = 'X-Expect-State';
+
 /* ------------------------------------------------------------------ requests */
 
 export async function send(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<Response> {
@@ -191,8 +223,32 @@ function asSupplied(value: unknown): Record<string, string> {
   return out;
 }
 
+const CASE_STATES: readonly string[] = ['open', 'closed', 'archiving', 'archived', 'untrusted', 'erased'];
+
 function toCase(raw: Partial<CaseInfo>): CaseInfo {
-  return { id: asString(raw.id), title: asString(raw.title), created: asString(raw.created), closed: raw.closed ? String(raw.closed) : null, bytes: asNumber(raw.bytes), imports: asNumber(raw.imports) };
+  const stated = asString(raw.state);
+  const out: CaseInfo = { id: asString(raw.id), title: asString(raw.title), created: asString(raw.created), closed: raw.closed ? String(raw.closed) : null, bytes: asNumber(raw.bytes), imports: asNumber(raw.imports) };
+  if (CASE_STATES.includes(stated)) out.state = stated as CaseState;
+  if (raw.untrusted === true) out.untrusted = true;
+  return out;
+}
+
+function toRetry(raw: Partial<RetryItem> | null | undefined): RetryItem | null {
+  if (!raw || typeof raw !== 'object' || typeof raw.id !== 'number') return null;
+  return { id: raw.id, kind: asString(raw.kind), key: asString(raw.key), label: asString(raw.label), reason: asString(raw.reason), created: asString(raw.created) };
+}
+
+const toRetries = (raw: unknown): RetryItem[] => (Array.isArray(raw) ? raw.map(toRetry).filter((r): r is RetryItem => r !== null) : []);
+
+function toView(raw: Partial<CaseView>): CaseView {
+  const history = Array.isArray(raw.history) ? raw.history.filter((h) => h && typeof h.kind === 'string').map((h) => ({ at: asString(h.at), kind: h.kind })) : [];
+  return { ...toCase(raw), history, retries: toRetries(raw.retries) };
+}
+
+/** The state a page believes a case is in, for X-Expect-State. A closed stamp means closed even from an old server. */
+export function believedState(c: Pick<CaseInfo, 'state' | 'closed'>): CaseState {
+  if (c.state) return c.state;
+  return c.closed ? 'closed' : 'open';
 }
 
 function toReport(raw: Partial<ImportReport> | null | undefined): ImportReport | null {
@@ -221,13 +277,48 @@ export async function listCases(signal?: AbortSignal): Promise<CaseInfo[]> {
   return (body.cases ?? []).map(toCase).filter((c) => isCaseId(c.id));
 }
 
-export async function createCase(title: string, signal?: AbortSignal): Promise<CaseInfo> {
-  return toCase(await json<Partial<CaseInfo>>(await send('/cases', { method: 'POST', body: JSON.stringify({ title: title.trim() }) }, signal)));
+/** Makes a case. With a request id (kept for one wizard run) a repeated call, a reload or a restart returns the same case. */
+export async function createCase(title: string, requestId?: string, signal?: AbortSignal): Promise<CaseInfo> {
+  const body: { title: string; requestId?: string } = { title: title.trim() };
+  if (requestId) body.requestId = requestId;
+  return toCase(await json<Partial<CaseInfo>>(await send('/cases', { method: 'POST', body: JSON.stringify(body) }, signal)));
 }
 
-export async function closeCase(id: string, signal?: AbortSignal): Promise<CaseInfo> {
-  return toCase(await json<Partial<CaseInfo>>(await send(casePath(id, '/close'), { method: 'POST' }, signal)));
+const expecting = (believed?: CaseState): RequestInit => (believed ? { headers: { [EXPECT_STATE_HEADER]: believed } } : {});
+
+/** One case with its history and its "needs another try" list. */
+export async function getCaseView(id: string, signal?: AbortSignal): Promise<CaseView> {
+  return toView(await json<Partial<CaseView>>(await send(casePath(id), {}, signal)));
 }
+
+export async function closeCase(id: string, believed?: CaseState, signal?: AbortSignal): Promise<CaseInfo> {
+  return toCase(await json<Partial<CaseInfo>>(await send(casePath(id, '/close'), { method: 'POST', ...expecting(believed) }, signal)));
+}
+
+/** Closed to Open. It applies nothing else and starts nothing. The saved Mongo link and filters are read back when the case is opened (a Closed case reads them too), and saving them resumes now. */
+export async function reopenCase(id: string, believed?: CaseState, signal?: AbortSignal): Promise<CaseInfo> {
+  return toCase(await json<Partial<CaseInfo>>(await send(casePath(id, '/reopen'), { method: 'POST', ...expecting(believed) }, signal)));
+}
+
+/** The payload of an environments or plain-tag item is what the server needs to do it again ({environments} or the tag fields). */
+export interface RetryInput { kind: string; key: string; label: string; reason: string; payload?: unknown }
+
+/** Replaces the list with what is still not done. Reasons are short codes, never text from a file. */
+export async function putRetries(id: string, items: readonly RetryInput[], signal?: AbortSignal): Promise<RetryItem[]> {
+  const body = await json<{ retries?: unknown }>(await send(casePath(id, '/retries'), { method: 'PUT', body: JSON.stringify({ items }) }, signal));
+  return toRetries(body.retries);
+}
+
+export async function deleteRetry(id: string, retryId: number, believed?: CaseState, signal?: AbortSignal): Promise<void> {
+  await send(casePath(id, '/retries/' + encodeURIComponent(String(retryId))), { method: 'DELETE', ...expecting(believed) }, signal);
+}
+
+/** Asks the server to do one item again and drop it from the list. Only environments and plain tags can be done there; the rest answer 422 retry-in-page. */
+export async function runRetry(id: string, retryId: number, believed?: CaseState, signal?: AbortSignal): Promise<void> {
+  await send(casePath(id, '/retries/' + encodeURIComponent(String(retryId)) + '/retry'), { method: 'POST', ...expecting(believed) }, signal);
+}
+
+export const retryInPage = (error: unknown): boolean => error instanceof CaseApiError && error.reason === 'retry-in-page';
 
 /** Erases the case. The server wants the id echoed back as the confirmation; the screen has already had the code typed. */
 export async function eraseCase(id: string, signal?: AbortSignal): Promise<void> {
