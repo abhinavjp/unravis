@@ -58,6 +58,7 @@ var routeCases = []routeCase{
 	{"/api/master-key/reset-damaged", "/api/master-key/reset-damaged", "POST"},
 	{"/api/info", "/api/info", "GET"},
 	{"/api/version", "/api/version", "GET"},
+	{"/api/update-check", "/api/update-check", "POST"},
 	{"/api/sources", "/api/sources", "GET, POST"},
 	{"/api/sources/{id}/schema", "/api/sources/s/schema", "GET"},
 	{"/api/sources/{id}/coverage", "/api/sources/s/coverage", "GET"},
