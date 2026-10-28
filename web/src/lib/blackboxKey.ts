@@ -22,3 +22,16 @@ export async function copyKeyOnce(fetchKey: () => Promise<string>, write: (text:
     key = '';
   }
 }
+
+/**
+ * A token for one Show. A late answer may set the key only while its token is still the current one: Hide, the 30 second
+ * timer and closing the screen each call `cancel`, so an answer that lands after any of them is dropped.
+ */
+export function makeRevealGuard(): { next: () => number; valid: (token: number) => boolean; cancel: () => void } {
+  let current = 0;
+  return {
+    next: () => ++current,
+    valid: (token: number) => token === current,
+    cancel: () => { current++; }
+  };
+}
