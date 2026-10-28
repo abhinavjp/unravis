@@ -235,3 +235,65 @@ test('D-A-10/13: the typed passphrase sentence is still used and nothing was del
   const copy = loadTypeScript('src/lib/copy/archiveCopy.ts');
   assert.equal(copy.archiveReasonText('bad-passphrase', 400), copy.ARCHIVE_TEXT.typedPass);
 });
+
+test('D-A-12: an archived case keeps its Files count until freed, and the file name and folder appear once', () => {
+  const home = read('src/lib/components/CaseHome.svelte');
+  assert.match(home, /const filesShown = \$derived\(offersWork \? keptFiles\.length : info\?\.archive\?\.freed \? null : \(info\?\.imports \?\? 0\)\);/);
+  assert.match(home, /\{#if filesShown !== null\}<div><dt>\{CASE_HOME_TEXT\.filesCount\}<\/dt><dd>\{filesShown\}<\/dd><\/div>\{\/if\}/);
+  assert.doesNotMatch(home, /<dd>\{keptFiles\.length\}<\/dd>/, 'the header no longer counts the empty file list');
+  assert.doesNotMatch(home, /archivedNotice|keyEndingOf/, 'the repeated archive note is gone');
+  assert.match(home, /\{ARCHIVE_TEXT\.caseFileLine\}: \{currentFile\.name\}/, 'the one place that names the file and folder stays');
+  const moved = home.slice(home.indexOf('function archiveMoved'), home.indexOf('// The drawer hands focus back'));
+  assert.match(moved, /else if \(kind === 'restore-as-new' && made\) archiveNote = restoredNewNotice\(/);
+  assert.doesNotMatch(moved, /kind === 'archive'\) \{/);
+  assert.match(moved, /if \(kind === 'restore-as-new'\) await rereadFiles\(\); else if \(caseId\) await load\(caseId, true\);/);
+});
+
+test('D-A-17: a case already refused as locked, untrusted or gone is not probed for files, checks or theories', () => {
+  const home = read('src/lib/components/CaseHome.svelte');
+  const load = home.slice(home.indexOf('async function load('), home.indexOf('function refusedWith'));
+  assert.match(load, /const refused = caseView\.status === 'rejected' && \(isCaseGone\(caseView\.reason\) \|\| isCaseLocked\(caseView\.reason\) \|\| refusedWith\(caseView, 'untrusted-case'\)\);/);
+  assert.match(load, /const reads = found \? readsCaseData\(found\) : !refused;/);
+  assert.doesNotMatch(load, /readsCaseData\(found\) : true/);
+  assert.match(load, /holdLedger\(id, !reads\);/);
+  const state = read('src/lib/appState.svelte.ts');
+  const open = state.slice(state.indexOf('export function openCase('), state.indexOf('/** Back to the home page'));
+  assert.match(open, /options: \{ archived\?: boolean; held\?: boolean \} = \{\}/);
+  assert.match(open, /holdLedger\(id, options\.archived === true\);/);
+  assert.match(open, /if \(options\.held === true\) holdLedger\(id, true\);\s*setActiveCase\(id\);/);
+  const start = read('src/components/StartScreen.svelte');
+  assert.match(start, /onOpen: \(id: string, options\?: \{ archived\?: boolean; held\?: boolean \}\) => void;/);
+  assert.match(start, /onclick=\{\(\) => onOpen\(row\.id, \{ held: row\.keyLocked \|\| row\.untrusted \}\)\}/);
+  assert.match(start, /onOpen=\{\(id\) => onOpen\(id, \{ archived: true \}\)\}/, 'the archived list call is unchanged');
+});
+
+test('D-A-17: the copy for states that are never shown is deleted, the copy that is shown stays', () => {
+  const archive = loadTypeScript('src/lib/copy/archiveCopy.ts');
+  for (const key of ['verifyButton', 'restoredLine', 'restoreMade', 'orphanNone', 'orphanFrom']) assert.equal(key in archive.ARCHIVE_TEXT, false, key + ' is deleted');
+  for (const key of ['typedPass', 'archiveDone', 'verifyRunning', 'orphanMade', 'caseFileLine']) assert.equal(key in archive.ARCHIVE_TEXT, true, key + ' stays');
+  const keys = loadTypeScript('src/lib/copy/caseKeyCopy.ts');
+  for (const key of ['lockedTitle', 'lockedEyebrow', 'locking']) assert.equal(key in keys.CASE_KEY_TEXT, false, key + ' is deleted');
+  assert.equal('unlockEmpty' in keys.CASE_KEY_TEXT, true, 'the empty-field sentence stays');
+  const home = loadTypeScript('src/lib/copy/caseHomeCopy.ts');
+  assert.equal('retryNone' in home.CASE_HOME_TEXT, false);
+  assert.equal(typeof archive.archivedNotice, 'function', 'the function that tests and the lint sample use stays');
+});
+
+test('D-A-25: a 423 case-locked answer on any case call sends Case home back to the key card', () => {
+  const cases = loadTypeScript('src/lib/cases.ts');
+  assert.equal(cases.isCaseLocked(new cases.CaseApiError('locked', 423, 'case-locked')), true);
+  assert.equal(cases.isCaseLocked(new cases.CaseApiError('wrong', 423, 'wrong-case-key')), false, 'a wrong key is not a lock');
+  assert.equal(cases.isCaseLocked(new cases.CaseApiError('other', 409, 'case-locked')), false);
+  assert.equal(cases.isCaseLocked(new cases.CaseApiError('gone', 404, 'case-not-found')), false);
+  assert.equal(cases.isCaseLocked(new Error('case-locked')), false);
+  assert.equal(cases.isCaseLocked(null), false);
+  const home = read('src/lib/components/CaseHome.svelte');
+  assert.match(home, /function lockedUnder\(error: unknown\): boolean \{\s*if \(!isCaseLocked\(error\)\) return false;\s*if \(caseId\) void load\(caseId\);\s*return true;\s*\}/);
+  assert.match(home, /\} catch \(error\) \{ lockedUnder\(error\); \/\* otherwise the page keeps the list it had \*\/ \}/);
+  assert.match(home, /\} catch \(error\) \{ lockedUnder\(error\); \/\* otherwise the story keeps the list it had \*\/ \}/);
+  const failed = home.slice(home.indexOf('function lifeFailed'), home.indexOf('async function reopen()'));
+  assert.match(failed, /AbortError'\) return;\s*if \(lockedUnder\(error\)\) return;/);
+  const again = home.slice(home.indexOf('async function tryAgain'), home.indexOf('async function dropRetry'));
+  assert.match(again, /\} catch \(error\) \{\s*if \(lockedUnder\(error\)\) return;\s*if \(retryInPage\(error\)\)/);
+  assert.match(again, /\} finally \{ tryingId = 0; \}/);
+});

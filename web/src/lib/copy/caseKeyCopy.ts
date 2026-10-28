@@ -27,8 +27,6 @@ export const CASE_KEY_TEXT = {
   unlockWrong: 'That key did not open this case. Nothing was opened or changed.',
   unlockEmpty: 'Type the case key first.',
   unlockNote: 'Case keys cannot be recovered. If it is lost, only erasing the case frees the space.',
-  lockedTitle: '(locked)',
-  lockedEyebrow: 'Case key needed',
 
   // Keys page (screens 125 and 126)
   pageTitle: 'Case key (optional)',
@@ -58,7 +56,6 @@ export const CASE_KEY_TEXT = {
   changed: 'The case key is changed.',
   removed: 'The case key is removed. The case is sealed with the PC key now.',
   lockCase: 'Lock this case',
-  locking: 'Locking…',
   homeLabel: 'Case key',
   homeAdd: 'Add a case key',
   homeManage: 'Change or remove the case key',

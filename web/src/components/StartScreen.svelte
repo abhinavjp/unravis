@@ -24,7 +24,7 @@
   // `onAnalysis` goes on to the analysis of the connected sources.
   let { onCreate, onOpen, onSetup, onAnalysis, enter }: {
     onCreate: () => void;
-    onOpen: (id: string, options?: { archived?: boolean }) => void;
+    onOpen: (id: string, options?: { archived?: boolean; held?: boolean }) => void;
     onSetup: () => void;
     onAnalysis: () => void;
     enter?: Snippet;
@@ -164,7 +164,7 @@
                   <span class="case-closed" role="note">{row.missingLabel}</span>
                   <button type="button" class="secondary-button" aria-label={ARCHIVE_TEXT.erase + ': ' + row.fullTitle} onclick={() => askErase(row.id)}>{ARCHIVE_TEXT.erase}</button>
                 {:else}
-                  <button type="button" class="secondary-button" aria-label={openLabel(row.fullTitle)} onclick={() => onOpen(row.id)}>{START_TEXT.open}</button>
+                  <button type="button" class="secondary-button" aria-label={openLabel(row.fullTitle)} onclick={() => onOpen(row.id, { held: row.keyLocked || row.untrusted })}>{START_TEXT.open}</button>
                 {/if}
                 {#if eraseId === row.id}
                   <form class="erase" onsubmit={erase}>

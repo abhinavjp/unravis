@@ -764,9 +764,12 @@ export function caseErased(id: string) {
   if (screen === 'case') go('start');
 }
 /** "Use an existing case": opens that case's home page (story, theories, health checks, files). The analysis is one tap away from there. */
-export function openCase(id: string, options: { archived?: boolean } = {}) {
+export function openCase(id: string, options: { archived?: boolean; held?: boolean } = {}) {
   // An archived case's theories are not asked for: the server answers 409 for them.
   holdLedger(id, options.archived === true);
+  // A case the list already shows as locked or as one that cannot be opened answers 423 or 409 too, so its theories are not asked for either.
+  // The case page reads the case itself and lets them go again when the case turns out to be open.
+  if (options.held === true) holdLedger(id, true);
   setActiveCase(id);
   go('case');
 }
