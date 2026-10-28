@@ -56,15 +56,36 @@ func launchRequest(h http.Handler, query string) *httptest.ResponseRecorder {
 	return request(h, http.MethodGet, launchPath+query, "", false)
 }
 
+func wantGonePage(t *testing.T, name string, res *httptest.ResponseRecorder, secrets ...string) {
+	t.Helper()
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("%s = %d, want 404", name, res.Code)
+	}
+	if ct := res.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("%s: Content-Type = %q", name, ct)
+	}
+	if res.Header().Get("Cache-Control") != "no-store" {
+		t.Errorf("%s: Cache-Control = %q, want no-store", name, res.Header().Get("Cache-Control"))
+	}
+	if res.Header().Get("Location") != "" {
+		t.Errorf("%s: a Location header was sent", name)
+	}
+	body := res.Body.String()
+	if !strings.Contains(body, "already been used") {
+		t.Errorf("%s: body has no explanation: %q", name, body)
+	}
+	for _, s := range append(secrets, testToken, "<script") {
+		if strings.Contains(body, s) {
+			t.Errorf("%s: body contains %q", name, s)
+		}
+	}
+}
+
 func TestLaunchCodeRedirectsOnceWithTheTokenInTheFragment(t *testing.T) {
 	code := strings.Repeat("c", 32)
 	h := New(&fakeRepository{}, testAssets(), testToken, false, WithLaunchCode(code, time.Now().Add(time.Minute)))
-	if res := launchRequest(h, "?c=wrong"+code[5:]); res.Code != http.StatusNotFound {
-		t.Fatalf("wrong code = %d, want 404", res.Code)
-	}
-	if res := launchRequest(h, ""); res.Code != http.StatusNotFound {
-		t.Fatalf("no code = %d, want 404", res.Code)
-	}
+	wantGonePage(t, "wrong code", launchRequest(h, "?c=wrong"+code[5:]), code)
+	wantGonePage(t, "no code", launchRequest(h, ""), code)
 	res := launchRequest(h, "?c="+code)
 	if res.Code != http.StatusFound {
 		t.Fatalf("right code = %d, want 302", res.Code)
@@ -78,24 +99,22 @@ func TestLaunchCodeRedirectsOnceWithTheTokenInTheFragment(t *testing.T) {
 	if strings.Contains(res.Body.String(), testToken) {
 		t.Error("the token is in the launch body")
 	}
-	if res := launchRequest(h, "?c="+code); res.Code != http.StatusNotFound {
-		t.Fatalf("second use = %d, want 404", res.Code)
-	}
+	wantGonePage(t, "second use", launchRequest(h, "?c="+code), code)
 }
 
 func TestLaunchCodeExpires(t *testing.T) {
 	code := strings.Repeat("d", 32)
 	h := New(&fakeRepository{}, testAssets(), testToken, false, WithLaunchCode(code, time.Now().Add(-time.Second)))
-	if res := launchRequest(h, "?c="+code); res.Code != http.StatusNotFound {
-		t.Fatalf("expired code = %d, want 404", res.Code)
-	}
+	wantGonePage(t, "expired", launchRequest(h, "?c="+code), code)
 }
 
 func TestLaunchIsClosedWithoutACode(t *testing.T) {
 	h := New(&fakeRepository{}, testAssets(), testToken, false)
-	if res := launchRequest(h, "?c="); res.Code != http.StatusNotFound {
+	res := launchRequest(h, "?c=")
+	if res.Code != http.StatusNotFound {
 		t.Fatalf("no armed code = %d, want 404", res.Code)
 	}
+	wantGonePage(t, "no armed code", res)
 	if res := launchRequest(h, "?c="+strings.Repeat("e", 300)); res.Code != http.StatusNotFound {
 		t.Fatalf("long code = %d, want 404", res.Code)
 	}
