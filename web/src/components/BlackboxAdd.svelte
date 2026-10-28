@@ -71,7 +71,7 @@
 </script>
 
 <div class="bb-add">
-  <h3>{T.addTitle}</h3>
+  <h3 tabindex="-1">{T.addTitle}</h3>
   <section class="bb-block" aria-label={T.addWhere}>
     <h4>{T.addWhere}</h4>
     <label class="bb-field"><span>{T.addPlace}</span>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import {
     blackboxApi, defaultSettings, refusalText, settingsProblem, shownTime,
     type BlackboxItem, type BlackboxList, type Settings, type SnapshotAnswer, type ThisPc, shownBytes
@@ -44,6 +44,7 @@
   let applyLogs = $state('');
   let applyProblem = $state('');
   let body = $state<HTMLElement>();
+  let drawerEl = $state<HTMLElement>();
 
   const items = $derived(list?.items ?? []);
   const thisPc = $derived<ThisPc>(list?.thisPc ?? { available: false, scanned: false, installed: false, running: false, listed: false });
@@ -67,13 +68,31 @@
     }
     if (!keepView) view = { kind: 'list' };
   }
-  function show(next: View) {
+  /**
+   * Shows a screen. The drawer is the thing that scrolls, so it goes back to the top, and focus moves to the new screen's
+   * heading (or the drawer title on the list), so a keyboard or screen reader user lands on what changed. Opening a status
+   * from the list also looks at the list again, in case another tab changed it.
+   */
+  async function show(next: View) {
+    const fromList = view.kind === 'list';
     view = next;
     actionNote = '';
     actionError = '';
     keyOpen = false;
     newKey = '';
-    body?.scrollTo?.({ top: 0 });
+    await tick();
+    drawerEl?.scrollTo?.({ top: 0 });
+    const target = body?.querySelector<HTMLElement>('h3[tabindex="-1"]') ?? drawerEl?.querySelector<HTMLElement>('h2');
+    target?.focus({ preventScroll: true });
+    if (fromList && next.kind === 'status') void refreshOpened(next.id);
+  }
+  /** Reloads the list after a status opened. If that Blackbox was removed elsewhere, say so and show the list. */
+  async function refreshOpened(id: string) {
+    await load();
+    if (view.kind === 'status' && view.id === id && !items.some((i) => i.id === id)) {
+      await show({ kind: 'list' });
+      scanNote = T.goneFromList;
+    }
   }
   async function scan() {
     if (scanning) return;
@@ -175,7 +194,7 @@
   const running = (item: BlackboxItem) => item.state.state === 'running' || item.state.state === 'running-late' || item.state.state === 'disk-low' || item.state.state === 'incomplete' || item.state.state === 'clock-differs';
 </script>
 
-<Drawer class="glossary-drawer blackbox-drawer" title={T.title} titleId="blackbox-title" intro={T.intro} closeLabel={T.close} {onClose}>
+<Drawer class="glossary-drawer blackbox-drawer" focusOnOpen bind:element={drawerEl} title={T.title} titleId="blackbox-title" intro={T.intro} closeLabel={T.close} {onClose}>
   <div class="bb-body" bind:this={body}>
     {#if view.kind === 'wizard'}
       <Wizard {thisPc} canPack={list?.canPack ?? false} onLeave={() => show({ kind: 'list' })} onPlaced={async () => { await load(); show({ kind: 'list' }); }} />
@@ -193,7 +212,7 @@
 
     {:else if view.kind === 'snapshot'}
       <section class="bb-block" aria-label={T.snapshotTitle(current?.name ?? '')}>
-        <h3>{T.snapshotTitle(current?.name ?? '')}</h3>
+        <h3 tabindex="-1">{T.snapshotTitle(current?.name ?? '')}</h3>
         <p role="status">{T.snapshotSaved(view.answer.dir, shownBytes(view.answer.bytes))}</p>
         <p class="bb-note">{T.snapshotRecordings(view.answer.recordings)}</p>
         <p class="bb-note">{T.snapshotLogs(view.answer.logs)}</p>
@@ -203,7 +222,7 @@
 
     {:else if view.kind === 'apply' && current}
       <section class="bb-block" aria-label={T.applyTitle}>
-        <h3>{T.applyTitle}</h3>
+        <h3 tabindex="-1">{T.applyTitle}</h3>
         <p class="bb-note">{T.applyIntro}</p>
         {#if thisPc.settings}
           <SettingsFields bind:settings={applySettings} bind:logPathsText={applyLogs} idPrefix="bb-apply" />
@@ -223,7 +242,7 @@
       {@const item = current}
       <section class="bb-block" aria-label={item.name}>
         <button type="button" class="quiet-button bb-back" onclick={() => show({ kind: 'list' })}>{T.back}</button>
-        <h3>{item.name} <Sticker info={item.state} />{#if item.thisPc}<span class="bb-chip">{T.rowThisPc}</span>{/if}</h3>
+        <h3 tabindex="-1">{item.name} <Sticker info={item.state} />{#if item.thisPc}<span class="bb-chip">{T.rowThisPc}</span>{/if}</h3>
         <p class="bb-ready"><strong>{item.state.readiness}</strong></p>
         <p>{item.state.detail}</p>
         <p class="bb-note">{T.stateNext[item.state.state]}</p>
@@ -232,8 +251,8 @@
           <div><dt>{T.lastSample}</dt><dd>{shownTime(item.facts?.lastSample)}</dd></div>
           {#if item.facts}
             <div><dt>{T.samplesEvery}</dt><dd>{item.facts.intervalSeconds} {T.seconds}</dd></div>
-            <div><dt>{T.files}</dt><dd>{item.facts.files}, {item.facts.samples} {T.samples}</dd></div>
-            <div><dt>{T.gaps}</dt><dd>{item.facts.gaps || T.noGaps}</dd></div>
+            <div><dt>{T.recorded}</dt><dd>{T.filesAndSamples(item.facts.files, item.facts.samples)}</dd></div>
+            <div><dt>{T.gaps}</dt><dd>{T.gapsText(item.facts.gaps, item.facts.unread ?? 0)}</dd></div>
             {#if item.facts.freePercent != null}<div><dt>{T.diskFree}</dt><dd>{item.facts.freePercent} %</dd></div>{/if}
             <div><dt>{T.host}</dt><dd>{item.facts.host}{#if item.facts.version}, {T.version} {item.facts.version}{/if}</dd></div>
           {/if}
@@ -315,7 +334,7 @@
         <div class="bb-actions"><button type="button" class="secondary-button" onclick={() => load()}>{T.retry}</button></div>
       {:else if items.length === 0}
         <section class="bb-empty" aria-label={T.emptyTitle}>
-          <h3>{T.emptyTitle}</h3>
+          <h3 tabindex="-1">{T.emptyTitle}</h3>
           <p>{T.emptyText}</p>
         </section>
       {:else}

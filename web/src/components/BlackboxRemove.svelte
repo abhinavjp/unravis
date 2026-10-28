@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { blackboxApi, refusalText, removeConfirmed, type BlackboxItem, type RemoveAnswer, type ThisPc } from '../lib/blackbox';
+  import { BlackboxError, blackboxApi, refusalText, removeConfirmed, type BlackboxItem, type RemoveAnswer, type ThisPc } from '../lib/blackbox';
   import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
 
   // Remove a Blackbox. On this PC: stop and uninstall the service, keep or delete the recordings (typing the name
@@ -11,7 +11,7 @@
     onCancel: () => void;
   } = $props();
 
-  type Phase = { kind: 'idle' } | { kind: 'working' } | { kind: 'done'; text: string } | { kind: 'failed'; text: string };
+  type Phase = { kind: 'idle' } | { kind: 'working' } | { kind: 'done'; text: string } | { kind: 'failed'; text: string; missing?: boolean };
   const gone = $derived(item.thisPc && item.state.state === 'not-placed');
   const here = $derived(item.thisPc && !gone);
   const typedName = $derived(thisPc.name || item.name);
@@ -38,13 +38,14 @@
       await blackboxApi.forget(item.id);
       phase = { kind: 'done', text: T.forgotten };
     } catch (error) {
-      phase = { kind: 'failed', text: refusalText(error, BB_REFUSAL) };
+      // 404: another window already took it out of the list. There is nothing left to forget, so the way on is the list.
+      phase = { kind: 'failed', text: refusalText(error, BB_REFUSAL), missing: error instanceof BlackboxError && error.refusal.status === 404 };
     }
   }
 </script>
 
 <div class="bb-remove">
-  <h3>{T.removeTitle(item.name)}</h3>
+  <h3 tabindex="-1">{T.removeTitle(item.name)}</h3>
 
   {#if phase.kind === 'done'}
     <section class="bb-block" aria-label={T.removedTitle}>
@@ -73,8 +74,8 @@
       {#if phase.kind === 'failed'}<div class="inline-error" role="alert">{phase.text}</div>{/if}
     </div>
     <div class="bb-actions">
-      <button type="button" class="primary-button" disabled={busy || !ready} onclick={removeHere}>{T.removeButton}</button>
-      <button type="button" class="secondary-button" disabled={busy} onclick={onCancel}>{T.cancel}</button>
+      <button type="button" class="secondary-button" disabled={busy || !ready} onclick={removeHere}>{T.removeButton}</button>
+      <button type="button" class="primary-button" disabled={busy} onclick={onCancel}>{T.cancel}</button>
     </div>
   {:else if gone}
     <p class="bb-note">{T.removeNotPlaced}</p>
@@ -82,8 +83,12 @@
       {#if phase.kind === 'failed'}<div class="inline-error" role="alert">{phase.text}</div>{/if}
     </div>
     <div class="bb-actions">
-      <button type="button" class="primary-button" disabled={busy} onclick={forget}>{T.removeForget}</button>
-      <button type="button" class="secondary-button" disabled={busy} onclick={onCancel}>{T.cancel}</button>
+      {#if phase.kind === 'failed' && phase.missing}
+        <button type="button" class="primary-button" onclick={onChanged}>{T.back}</button>
+      {:else}
+        <button type="button" class="secondary-button" disabled={busy} onclick={forget}>{T.removeForget}</button>
+        <button type="button" class="primary-button" disabled={busy} onclick={onCancel}>{T.cancel}</button>
+      {/if}
     </div>
   {:else}
     <section class="bb-block" aria-label={T.removeOther}>
@@ -98,8 +103,12 @@
       {#if phase.kind === 'failed'}<div class="inline-error" role="alert">{phase.text}</div>{/if}
     </div>
     <div class="bb-actions">
-      <button type="button" class="primary-button" disabled={busy} onclick={forget}>{T.removeForget}</button>
-      <button type="button" class="secondary-button" disabled={busy} onclick={onCancel}>{T.cancel}</button>
+      {#if phase.kind === 'failed' && phase.missing}
+        <button type="button" class="primary-button" onclick={onChanged}>{T.back}</button>
+      {:else}
+        <button type="button" class="secondary-button" disabled={busy} onclick={forget}>{T.removeForget}</button>
+        <button type="button" class="primary-button" disabled={busy} onclick={onCancel}>{T.cancel}</button>
+      {/if}
     </div>
   {/if}
 </div>
