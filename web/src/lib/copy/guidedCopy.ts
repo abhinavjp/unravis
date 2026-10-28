@@ -152,6 +152,8 @@ export const GUIDED_TEXT = {
   /* Step 5 */
   changesLead: 'Did something change just before the onset? Only changes you list are compared.',
   changesNone: 'No change listed. Add the releases or changes you know of in Step 0.',
+  changesNoneEntered: 'You said there was no change to list.',
+  changeListButton: 'Change the list',
   changeTimeCol: 'When',
   changeWhatCol: 'What',
   changeRelCol: 'Against the onset',
@@ -233,7 +235,7 @@ export const GUIDED_TEXT = {
 
   /* Checklist */
   checklistHeading: 'Checklist',
-  checklistLead: 'What to do, what is under way, what we learned and what is ruled out.',
+  checklistLead: 'Keep four lists: Need to do, Working on, What we learned and Ruled out.',
   done: 'Done',
   open: 'Open',
   addItem: '+ Add item',

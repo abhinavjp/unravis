@@ -129,3 +129,20 @@ test('B-28: Calls in flight (average) shows enough decimals and never calls equa
   assert.equal(gone.direction, 'Not sure');
   assert.equal(m.loadRows(result())[2].direction, 'Higher');
 });
+
+test('B-23: Step 5 says Change the list, and a list entered on purpose is not asked for again', () => {
+  const src = read('src/lib/components/guided/StepFacts.svelte');
+  assert.equal(copy.GUIDED_TEXT.changeListButton, 'Change the list');
+  assert.equal(copy.GUIDED_TEXT.changesNoneEntered, 'You said there was no change to list.');
+  assert.equal(copy.GUIDED_TEXT.changeWindow, 'Change the window');
+  assert.ok(/\{result\.signals\.changes\.entered \? T\.changesNoneEntered : T\.changesNone\}/.test(src));
+  assert.ok(/onclick=\{\(\) => store\.goTo\(0\)\}>\{T\.changeListButton\}<\/button>/.test(src));
+  // Step 1 keeps its own button
+  assert.ok(/\{T\.changeWindow\}/.test(src));
+});
+
+test('B-20: the checklist subtitle names the four lists exactly as the headings do', () => {
+  assert.deepEqual(m.LISTS.map((l) => l.label), ['Need to do', 'Working on', 'What we learned', 'Ruled out']);
+  for (const l of m.LISTS) assert.ok(copy.GUIDED_TEXT.checklistLead.includes(l.label), l.label);
+  assert.ok(!/what is under way/i.test(copy.GUIDED_TEXT.checklistLead));
+});

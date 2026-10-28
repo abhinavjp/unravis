@@ -153,8 +153,8 @@
   {:else if step === 5}
     <p class="lead">{T.changesLead}</p>
     {#if !result.signals.changes.entered || result.signals.changes.items.length === 0}
-      <p class="note">{T.changesNone}</p>
-      <div><button type="button" class="secondary-button" onclick={() => store.goTo(0)}>{T.changeWindow}</button></div>
+      <p class="note">{result.signals.changes.entered ? T.changesNoneEntered : T.changesNone}</p>
+      <div><button type="button" class="secondary-button" onclick={() => store.goTo(0)}>{T.changeListButton}</button></div>
     {:else}
       <div class="table-scroll">
         <table>
