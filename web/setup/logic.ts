@@ -104,14 +104,19 @@ export function railCurrent(screen: Screen): string {
   return screen === 'failed' ? 'progress' : screen;
 }
 
-/** The rail steps before the current one: done, or not needed (approval when no administrator rights were needed). */
+/**
+ * The rail steps before the current one: done, or not needed (approval when no administrator rights were needed). When the page does
+ * not know (approvalNeeded is null, as after a reload in the middle of a run, because the answer lived only in the page), approval is
+ * shown as neither done nor not needed instead of claiming it was done.
+ */
 export function railPosition(op: Op, screen: Screen, approvalNeeded: boolean | null): { current: string; done: string[]; skipped: string[] } {
   const steps = railSteps(op).map((step) => step.id);
   const current = railCurrent(screen);
   const index = steps.indexOf(current);
   const before = index < 0 ? [] : steps.slice(0, index);
   const skipped = approvalNeeded === false && before.includes('approval') ? ['approval'] : [];
-  const done = before.filter((id) => !skipped.includes(id));
+  const unknown = approvalNeeded === null && before.includes('approval') ? ['approval'] : [];
+  const done = before.filter((id) => !skipped.includes(id) && !unknown.includes(id));
   if (screen === 'done') done.push('done');
   return { current, done, skipped };
 }
