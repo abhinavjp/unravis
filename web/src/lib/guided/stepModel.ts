@@ -159,6 +159,19 @@ export function nothingMoved(result: Result): boolean {
   return compared > 0 && movedCount(result) === 0;
 }
 
+/**
+ * The API a run was made for, read back from `store.answeredKey` (the `requestKey` string:
+ * `[sourceIds, incident, reference, route, poolLimit, releases, releasesEntered]`). Empty for All APIs or a key that cannot be read.
+ */
+export function answeredRoute(key: string): string {
+  try {
+    const parsed: unknown = JSON.parse(key);
+    return Array.isArray(parsed) && typeof parsed[3] === 'string' ? parsed[3] : '';
+  } catch {
+    return '';
+  }
+}
+
 /* ----------------------------------------------------------------- Step 3 */
 
 export interface PartRow { key: string; label: string; normal: string; incident: string; change: string; share: string; tested: boolean; why: string }

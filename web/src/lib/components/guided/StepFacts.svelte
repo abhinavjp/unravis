@@ -6,7 +6,7 @@
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
   import type { GuidedStore } from '../../guided/guided.svelte';
   import {
-    fmtCount, fmtWhen, loadRows, movedCount, notEnoughData, nothingMoved, partBars, partRows, shapeRows, sourceRows, stepOf, stickerFor,
+    answeredRoute, fmtCount, fmtWhen, loadRows, movedCount, notEnoughData, nothingMoved, partBars, partRows, shapeRows, sourceRows, stepOf, stickerFor,
     suspectsForStep, trustCards
   } from '../../guided/stepModel';
   import type { Suspect } from '../../guided/types';
@@ -23,6 +23,7 @@
   const sticker = $derived(stickerFor(result, step, store.phase, store.outOfDate(sourceIds)));
   const suspects = $derived(result ? suspectsForStep(result, step) : []);
   const read = $derived(store.answer?.read);
+  const focusRoute = $derived(answeredRoute(store.answeredKey));
   let showAll = $state(false);
 
   const GROUP_LEAD: Record<number, string> = { 6: T.groupLead6, 7: T.groupLead7, 8: T.groupLead8, 9: T.groupLead9 };
@@ -100,6 +101,7 @@
       </div>
       {#if rows.length > 8}<div><button type="button" class="quiet-button" onclick={() => (showAll = !showAll)}>{showAll ? T.showLess : T.showAll}</button></div>{/if}
     {/if}
+    {#if focusRoute}<p class="note">{T.byApiFocusNote}</p>{/if}
     <p class="note">{T.shapeRule(result.thresholds.changeMinPercent, result.thresholds.changeMinMs)}</p>
     {#if result.facts.retries.known}
       <p class="note">{T.retriesLine(fmtCount(result.facts.retries.incRetried), fmtCount(result.facts.retries.refRetried))}</p>

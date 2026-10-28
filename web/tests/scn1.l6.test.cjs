@@ -77,3 +77,25 @@ test('B-21 and B-22: Step 0 explains an unticked box and a full change list', ()
   const base = { ...f.emptyFrame(), incidentStart: '2026-10-17T10:30', incidentEnd: '2026-10-17T11:00', referenceStart: '2026-10-17T09:30', referenceEnd: '2026-10-17T10:30' };
   assert.deepEqual(f.frameProblems({ ...base, releases: many }), [copy.GUIDED_TEXT.changesFull]);
 });
+
+const m = loadTypeScript('src/lib/guided/stepModel.ts');
+
+test('B-03: the focus hint names Steps 3 and 4 and the table says it lists every API', () => {
+  assert.equal(copy.GUIDED_TEXT.focusNote, 'An API is the URL path of one endpoint. Steps 3 and 4 show only that API. The rest still read every API.');
+  assert.ok(!/Steps 2 to 4/.test(copy.GUIDED_TEXT.focusNote));
+  assert.equal(copy.GUIDED_TEXT.byApiFocusNote, 'This table lists every API, so you can see whether the API you chose is the only one that moved.');
+  const src = read('src/lib/components/guided/StepFacts.svelte');
+  assert.ok(/const focusRoute = \$derived\(answeredRoute\(store\.answeredKey\)\)/.test(src));
+  assert.ok(/\{#if focusRoute\}<p class="note">\{T\.byApiFocusNote\}<\/p>\{\/if\}/.test(src));
+});
+
+test('B-03: answeredRoute reads the route out of a request key and never throws', () => {
+  const frame = { ...f.emptyFrame(), incidentStart: '2026-10-17T10:30', incidentEnd: '2026-10-17T11:00', referenceStart: '2026-10-17T09:30', referenceEnd: '2026-10-17T10:30' };
+  const keyOf = (route) => f.requestKey(f.toRequest({ ...frame, route }, ['b', 'a']));
+  assert.equal(m.answeredRoute(keyOf(' Reports.Generate ')), 'Reports.Generate');
+  assert.equal(m.answeredRoute(keyOf('')), '');
+  assert.equal(m.answeredRoute(''), '');
+  assert.equal(m.answeredRoute('not json'), '');
+  assert.equal(m.answeredRoute('{"a":1}'), '');
+  assert.equal(m.answeredRoute('[1,2,3,4]'), '');
+});

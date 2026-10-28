@@ -60,7 +60,7 @@ export const GUIDED_TEXT = {
   quickNote: 'A quick pick sets the incident window and a normal period of the same length just before it.',
   focus: 'Focus on one API (optional)',
   allApis: 'All APIs',
-  focusNote: 'An API is the URL path of one endpoint. Steps 2 to 4 then show only that API. The rest still read every API.',
+  focusNote: 'An API is the URL path of one endpoint. Steps 3 and 4 show only that API. The rest still read every API.',
   poolLimit: 'SqlClient pool limit (optional)',
   poolNote: 'If you know the pool limit, enter it. Step 4 then says whether the calls in flight fill it.',
   onset: 'Onset t0',
@@ -124,6 +124,7 @@ export const GUIDED_TEXT = {
   shapeKind: (kind: string) => `Shape of the slowdown: ${kind}.`,
   showAll: 'Show every API',
   showLess: 'Show fewer',
+  byApiFocusNote: 'This table lists every API, so you can see whether the API you chose is the only one that moved.',
 
   /* Step 3 */
   splitLead: 'Where did the time of a call go? Each call is split into audit set-up, action time, payload record and outside time.',
