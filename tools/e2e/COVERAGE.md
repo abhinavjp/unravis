@@ -8,7 +8,7 @@ The catalogue is in `.dev/scenarios/groups` (g01 to g12). Status words:
 - manual-only: not automatable here, with the reason.
 - not yet automated: reachable in the demo but no spec written yet.
 
-Totals: 53 covered, 20 expected-fail, 45 manual-only, 117 not yet automated, 235 scenarios.
+Totals: 68 covered, 5 expected-fail, 45 manual-only, 117 not yet automated, 235 scenarios.
 Extra ids with no catalogue entry (IMP-01 to IMP-04, the file import fixtures) are in `specs/imports.spec.ts`.
 A scenario id with a letter after it (for example SRC-07a) is an extra check that belongs to the same scenario.
 
@@ -48,10 +48,10 @@ on port 0 with a new empty data folder and a fixed clock, and stops it at the en
 | CASE-04 | case-ui.spec.ts | covered |
 | CASE-05 | case-ui.spec.ts | covered |
 | CASE-06 | - | not yet automated (see the scenario file; a manual run covers it) |
-| CASE-07 | case-api.spec.ts | expected-fail (CASE-07b D-A-08) |
+| CASE-07 | case-api.spec.ts | covered |
 | CASE-08 | case-ui.spec.ts | covered |
 | CASE-09 | case-ui.spec.ts | covered |
-| CASE-10 | case-api.spec.ts, security.spec.ts | expected-fail (CASE-10 D-A-01) |
+| CASE-10 | case-api.spec.ts, security.spec.ts | covered |
 | CASE-11 | - | not yet automated (see the scenario file; a manual run covers it) |
 | CASE-12 | case-api.spec.ts | covered |
 | CASE-13 | case-api.spec.ts | covered |
@@ -59,10 +59,10 @@ on port 0 with a new empty data folder and a fixed clock, and stops it at the en
 | CASE-15 | case-api.spec.ts | covered |
 | CASE-16 | case-drawers.spec.ts | covered |
 | CASE-17 | case-api.spec.ts | covered |
-| CASE-18 | case-api.spec.ts, case-drawers.spec.ts | expected-fail (CASE-18 D-A-15) |
+| CASE-18 | case-api.spec.ts, case-drawers.spec.ts | covered |
 | CASE-19 | - | manual-only: needs a master key and a real archive round trip |
 | CASE-20 | case-api.spec.ts | covered |
-| CASE-21 | case-drawers.spec.ts | expected-fail (CASE-21 D-A-16) |
+| CASE-21 | case-drawers.spec.ts | covered |
 | CASE-22 | case-api.spec.ts | covered |
 | CASE-23 | - | not yet automated (see the scenario file; a manual run covers it) |
 | CASE-24 | - | not yet automated (see the scenario file; a manual run covers it) |
@@ -80,10 +80,10 @@ on port 0 with a new empty data folder and a fixed clock, and stops it at the en
 | SRC-01 | sources.spec.ts | covered |
 | SRC-02 | sources.spec.ts | covered |
 | SRC-03 | - | not yet automated (see the scenario file; a manual run covers it) |
-| SRC-04 | sources.spec.ts | expected-fail (SRC-04a D-A-28) |
+| SRC-04 | sources.spec.ts | covered |
 | SRC-05 | - | not yet automated (see the scenario file; a manual run covers it) |
 | SRC-06 | - | not yet automated (see the scenario file; a manual run covers it) |
-| SRC-07 | sources.spec.ts | expected-fail (SRC-07c D-A-30, SRC-07a D-A-31, SRC-07b D-A-32) |
+| SRC-07 | sources.spec.ts | covered |
 | SRC-08 | - | not yet automated (see the scenario file; a manual run covers it) |
 | SRC-09 | sources-limit.spec.ts | covered |
 | SRC-10 | - | not yet automated (see the scenario file; a manual run covers it) |
@@ -133,7 +133,7 @@ on port 0 with a new empty data folder and a fixed clock, and stops it at the en
 | GUIDE-16 | - | not yet automated (see the scenario file; a manual run covers it) |
 | GUIDE-17 | - | not yet automated (see the scenario file; a manual run covers it) |
 | GUIDE-18 | - | not yet automated (see the scenario file; a manual run covers it) |
-| GUIDE-19 | guided.spec.ts | expected-fail (GUIDE-19 D-B-02) |
+| GUIDE-19 | guided.spec.ts | covered |
 | GUIDE-20 | - | manual-only: not reachable in the demo |
 | GUIDE-21 | - | not yet automated (see the scenario file; a manual run covers it) |
 | GUIDE-22 | - | not yet automated (see the scenario file; a manual run covers it) |
@@ -143,22 +143,22 @@ on port 0 with a new empty data folder and a fixed clock, and stops it at the en
 | MAN-01 | - | not yet automated (see the scenario file; a manual run covers it) |
 | MAN-02 | - | not yet automated (see the scenario file; a manual run covers it) |
 | MAN-03 | - | not yet automated (see the scenario file; a manual run covers it) |
-| MAN-04 | guided.spec.ts | expected-fail (MAN-04 D-B-01) |
+| MAN-04 | guided.spec.ts | covered |
 | MAN-05 | - | not yet automated (see the scenario file; a manual run covers it) |
 | MAN-06 | - | not yet automated (see the scenario file; a manual run covers it) |
 | MAN-07 | - | not yet automated (see the scenario file; a manual run covers it) |
 | MAN-08 | - | not yet automated (see the scenario file; a manual run covers it) |
-| MAN-09 | plan.spec.ts | expected-fail (MAN-09c D-B-15) |
+| MAN-09 | plan.spec.ts | covered |
 | MAN-10 | - | not yet automated (see the scenario file; a manual run covers it) |
 | EXP-01 | - | not yet automated (see the scenario file; a manual run covers it) |
 | EXP-02 | - | not yet automated (see the scenario file; a manual run covers it) |
-| EXP-03 | exports.spec.ts | expected-fail (EXP-03 D-B-36) |
+| EXP-03 | exports.spec.ts | covered |
 | EXP-04 | exports.spec.ts | covered |
 | EXP-05 | - | not yet automated (see the scenario file; a manual run covers it) |
 | EXP-06 | exports.spec.ts | covered |
 | EXP-07 | - | not yet automated (see the scenario file; a manual run covers it) |
 | EXP-08 | exports.spec.ts | expected-fail (EXP-08 D-B-05) |
-| EXP-09 | exports.spec.ts | expected-fail (EXP-09 D-B-41) |
+| EXP-09 | exports.spec.ts | covered |
 | EXP-10 | - | not yet automated (see the scenario file; a manual run covers it) |
 | BB-01 | blackbox.spec.ts | covered |
 | BB-02 | blackbox.spec.ts | covered |
@@ -250,7 +250,7 @@ on port 0 with a new empty data folder and a fixed clock, and stops it at the en
 | SEC-05 | - | not yet automated (see the scenario file; a manual run covers it) |
 | SEC-06 | security.spec.ts | covered |
 | SEC-07 | security.spec.ts | covered |
-| SEC-08 | security.spec.ts | expected-fail (SEC-08 D-C-17) |
+| SEC-08 | security.spec.ts | covered |
 | SEC-09 | - | not yet automated (see the scenario file; a manual run covers it) |
 | SEC-10 | - | not yet automated (see the scenario file; a manual run covers it) |
 | SEC-11 | - | not yet automated (see the scenario file; a manual run covers it) |
@@ -268,12 +268,12 @@ on port 0 with a new empty data folder and a fixed clock, and stops it at the en
 | A11Y-12 | - | not yet automated (see the scenario file; a manual run covers it) |
 | DOC-01 | - | not yet automated (see the scenario file; a manual run covers it) |
 | DOC-02 | docs.spec.ts | expected-fail (DOC-02 D-C-29) |
-| DOC-03 | docs.spec.ts | expected-fail (DOC-03 D-C-30) |
+| DOC-03 | docs.spec.ts | covered |
 | DOC-04 | - | not yet automated (see the scenario file; a manual run covers it) |
-| DOC-05 | docs.spec.ts | expected-fail (DOC-05 D-C-31) |
+| DOC-05 | docs.spec.ts | covered |
 | DOC-06 | - | not yet automated (see the scenario file; a manual run covers it) |
 | DOC-07 | - | not yet automated (see the scenario file; a manual run covers it) |
 | DOC-08 | - | not yet automated (see the scenario file; a manual run covers it) |
 | DOC-09 | - | not yet automated (see the scenario file; a manual run covers it) |
-| DOC-10 | docs.spec.ts | expected-fail (DOC-10 D-C-18) |
+| DOC-10 | docs.spec.ts | covered |
 | DOC-11 | - | not yet automated (see the scenario file; a manual run covers it) |
