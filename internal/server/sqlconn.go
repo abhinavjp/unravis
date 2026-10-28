@@ -58,6 +58,10 @@ func (h *handler) saveSQLConnection(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "You already have 20 saved SQL Server connections. Remove one first, then save this one. Nothing was removed for you.")
 			return
 		}
+		if errors.Is(err, sqlconn.ErrPasswordAgain) {
+			writeError(w, http.StatusBadRequest, "Type the password again to save weaker encryption settings. The saved password is kept only while encryption stays as strict. Nothing was changed.")
+			return
+		}
 		if writeKeeperError(w, err) {
 			return
 		}

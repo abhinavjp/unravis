@@ -230,6 +230,8 @@ func native(err error, kind storeKind) error {
 		n = pick(sqlconn.ErrNotFound, history.ErrNotFound, bbsaved.ErrNotFound)
 	case CodeFull:
 		n = pick(sqlconn.ErrFull, history.ErrFull, bbsaved.ErrTooMany)
+	case CodePasswordAgain:
+		n = sqlconn.ErrPasswordAgain
 	case CodeInvalid:
 		n = pick(sqlconn.ErrInvalid, audit.ErrInvalidInput, bbsaved.ErrInvalid)
 	case CodeDuplicate:

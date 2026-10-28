@@ -36,6 +36,10 @@ var (
 	// ErrFull means MaxRecords connections are already saved and this one is new. Nothing is removed to make room: a saved password is the
 	// owner's to delete, never quietly dropped.
 	ErrFull = errors.New("the list of saved SQL Server connections is full")
+	// ErrPasswordAgain means a re-save with a blank password asked for weaker encryption than the saved entry has. The stored password
+	// is carried over only when encryption stays as strict, so nobody can re-save a connection (in the shared keeper, someone else's)
+	// to send its saved password over a weaker or unchecked channel.
+	ErrPasswordAgain = errors.New("type the password again to save weaker encryption settings")
 )
 
 const (
@@ -206,6 +210,23 @@ func validate(in Input) (stored, error) {
 	return rec, nil
 }
 
+// encryptRank orders the encryption choices from weakest to strictest.
+func encryptRank(e string) int {
+	switch e {
+	case EncryptOptional:
+		return 0
+	case EncryptStrict:
+		return 2
+	}
+	return 1
+}
+
+// asStrict reports whether next encrypts at least as strictly as prior: the same or a stricter choice, and the server certificate still
+// checked when it was before.
+func asStrict(next, prior stored) bool {
+	return encryptRank(next.Encrypt) >= encryptRank(prior.Encrypt) && (!next.TrustServerCertificate || prior.TrustServerCertificate)
+}
+
 func (s *Service) List() ([]Recent, error) {
 	v, err := s.read()
 	if err != nil {
@@ -244,8 +265,12 @@ func (s *Service) Save(in Input) (Recent, error) {
 	for i, prior := range v.Records {
 		if prior.Host == rec.Host && prior.Port == rec.Port && prior.Username == rec.Username && prior.Auth == rec.Auth && strings.EqualFold(prior.Database, rec.Database) {
 			rec.ID = prior.ID
-			// A blank password with "Remember password" still ticked keeps the one stored earlier.
+			// A blank password with "Remember password" still ticked keeps the one stored earlier, but only when encryption stays as
+			// strict as it was.
 			if rec.Password == "" && in.RememberPassword && rec.Auth == AuthSQL && prior.Password != "" {
+				if !asStrict(rec, prior) {
+					return Recent{}, ErrPasswordAgain
+				}
 				rec.Password, rec.HasPassword = prior.Password, true
 			}
 			v.Records = append(v.Records[:i], v.Records[i+1:]...)

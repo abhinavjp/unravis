@@ -63,22 +63,23 @@ func (e *WireError) Error() string { return e.Message }
 
 // Error codes.
 const (
-	CodeNotFound     = "not-found"
-	CodeFull         = "full"
-	CodeInvalid      = "invalid"
-	CodeDuplicate    = "duplicate"
-	CodeCorrupt      = "corrupt"
-	CodeUnavailable  = "unavailable"
-	CodeConnect      = "connect"       // SQL Server: Detail is {code, message} from dbhealth.ClassifyConnect
-	CodeMongoConnect = "mongo-connect" // MongoDB: Detail is {stage, code, message} (audit.ConnectionError)
-	CodeMismatch     = "mismatch"      // a saved MongoDB link no longer matches the settings sent with it
-	CodeRateLimited  = "rate-limited"
-	CodeRefused      = "refused"
-	CodeBusy         = "busy"
-	CodeBBRead       = "bb-read" // Blackbox read: Detail is {kind, message}
-	CodeUnknownOp    = "unknown-op"
-	CodeVersion      = "version"
-	CodeInternal     = "internal"
+	CodeNotFound      = "not-found"
+	CodeFull          = "full"
+	CodeInvalid       = "invalid"
+	CodePasswordAgain = "password-again" // a blank-password re-save asked for weaker encryption: the password must be typed again
+	CodeDuplicate     = "duplicate"
+	CodeCorrupt       = "corrupt"
+	CodeUnavailable   = "unavailable"
+	CodeConnect       = "connect"       // SQL Server: Detail is {code, message} from dbhealth.ClassifyConnect
+	CodeMongoConnect  = "mongo-connect" // MongoDB: Detail is {stage, code, message} (audit.ConnectionError)
+	CodeMismatch      = "mismatch"      // a saved MongoDB link no longer matches the settings sent with it
+	CodeRateLimited   = "rate-limited"
+	CodeRefused       = "refused"
+	CodeBusy          = "busy"
+	CodeBBRead        = "bb-read" // Blackbox read: Detail is {kind, message}
+	CodeUnknownOp     = "unknown-op"
+	CodeVersion       = "version"
+	CodeInternal      = "internal"
 )
 
 // Operations.

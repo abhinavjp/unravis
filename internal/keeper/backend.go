@@ -729,6 +729,8 @@ func classify(err error) *WireError {
 	switch {
 	case errors.Is(err, sqlconn.ErrNotFound), errors.Is(err, history.ErrNotFound), errors.Is(err, bbsaved.ErrNotFound):
 		return &WireError{Code: CodeNotFound, Message: "Saved connection was not found."}
+	case errors.Is(err, sqlconn.ErrPasswordAgain):
+		return &WireError{Code: CodePasswordAgain, Message: "Type the password again to save weaker encryption settings."}
 	case errors.Is(err, sqlconn.ErrFull), errors.Is(err, history.ErrFull), errors.Is(err, bbsaved.ErrTooMany):
 		return &WireError{Code: CodeFull, Message: "The saved list is full."}
 	case errors.Is(err, bbsaved.ErrDuplicate):
