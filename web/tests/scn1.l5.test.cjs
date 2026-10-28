@@ -281,3 +281,19 @@ test('B-16: a closed case says why notes, checks and data cannot be added', () =
   assert.match(bar, /\{#if readOnly\}<p class="note" role="status">\{S\.closedNoData\}<\/p>\{\/if\}/);
   assert.match(bar, /disabled=\{readOnly\} onclick=\{onAddData\}/, 'the button stays off, only explained');
 });
+
+test('B-33: the bad-entry message waits for a touch, and a second press is ignored', () => {
+  const src = guided('NearbyActivity.svelte');
+  assert.match(src, /let touched = \$state\(false\);/);
+  assert.match(src, /\{#if touched && !win\}<p class="note" role="status">\{T\.nearbyBad\}<\/p>\{\/if\}/);
+  assert.ok(!/\{#if !win\}/.test(src), 'the message no longer shows on open');
+  assert.equal((src.match(/oninput=\{\(\) => \(touched = true\)\}/g) ?? []).length, 3, 'moment, before and after each mark the entry as touched');
+  assert.match(src, /before = b; after = a; touched = true;/);
+  assert.match(src, /\r?\n  let busy = false;\r?\n/, 'a plain flag, set in the same step as the press');
+  assert.match(src, /async function run\(\) \{\r?\n    if \(busy\) return;/);
+  assert.match(src, /busy = true;\r?\n    const mine = new AbortController\(\);/);
+  assert.match(src, /\} finally \{\r?\n      busy = false;\r?\n    \}/);
+  assert.ok(!/controller\?\.abort\(\);\r?\n    const mine/.test(src), 'the first request is no longer cancelled by a second press');
+  assert.match(src, /disabled=\{!win \|\| phase === 'loading'\}/, 'the button is still off for a bad entry and while loading');
+  assert.equal(SHELL.nearbyBad, undefined, 'the existing words are reused, not copied');
+});
