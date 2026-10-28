@@ -230,3 +230,11 @@ test('B-32: a later day must come after the incident day', () => {
   assert.ok(/frame\.route\.trim\(\) === answeredRoute\(store\.answeredKey\)/.test(src));
   assert.ok(/laterLabel: dayLabel\(request\.incident\.start, request\.incident\.end\),\s*earlier\s*\}\)/.test(src), 'earlier is passed to classifyDay');
 });
+
+test('B-37: the empty Export notice names what the report holds', () => {
+  assert.equal(copy.GUIDED_TEXT.exportEmpty, 'Nothing has been analysed yet. The report will say so and hold only the checklist, if you include it.');
+  assert.ok(!/case sources only/.test(copy.GUIDED_TEXT.exportEmpty));
+  assert.ok(copy.GUIDED_TEXT.includeChecklist === 'Checklist');
+  const src = read('src/lib/components/guided/ReportExport.svelte');
+  assert.ok(/\{#if empty\}<p class="notice" role="status">\{T\.exportEmpty\}<\/p>\{\/if\}/.test(src));
+});

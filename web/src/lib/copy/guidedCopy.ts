@@ -341,7 +341,7 @@ export const GUIDED_TEXT = {
   exportReady: (name: string, bytes: string) => `${name} is ready, ${bytes}.`,
   exportSaved: (hash: string) => `Saved. SHA-256 of the saved file: ${hash}`,
   exportMismatch: 'The report did not match its checksum, so it was not saved. Try again.',
-  exportEmpty: 'Nothing has been analysed yet. The report will say so and list the case sources only.',
+  exportEmpty: 'Nothing has been analysed yet. The report will say so and hold only the checklist, if you include it.',
   exportWarningsHeading: 'This report has warnings',
   exportFailed: 'The report could not be built.',
   exportOptions: 'Include',
