@@ -203,7 +203,14 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-assets
-          path: dist
+          # Only the release files; dist also holds the loose programs, which are not assets.
+          path: |
+            dist/unravis-v*-windows-x64.zip
+            dist/unravis-blackbox-v*-windows-x64.zip
+            dist/unravis-setup-v*-windows-x64.exe
+            dist/SHA256SUMS.txt
+            dist/ASSET-LIST.txt
+            dist/RELEASE-NOTES.md
           if-no-files-found: error
           retention-days: 14
 
