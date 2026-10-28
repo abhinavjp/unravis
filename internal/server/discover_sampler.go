@@ -229,6 +229,13 @@ func (h *handler) launchSamplerLocked(id casestore.CaseID, p samplerParams) *lau
 		_ = pc.Close()
 		return &launchFailure{err: casestore.ErrArchiveRunning}
 	}
+	// A closed case takes no recording. The start route checks this, but a restart
+	// after a refused erase or archive reaches here without that check, and the
+	// case may have been closed in the meantime.
+	if pc.Info().Closed != nil {
+		_ = pc.Close()
+		return &launchFailure{err: casestore.ErrCaseClosed}
+	}
 	h.disc.mu.Lock()
 	runCtx, shut := h.disc.context(), h.disc.closed
 	h.disc.mu.Unlock()

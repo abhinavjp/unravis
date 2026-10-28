@@ -139,3 +139,29 @@ func TestScn1Review2SavedViewRefusesNull(t *testing.T) {
 		}
 	})
 }
+
+// Review2-7: the deferred restart after a refused erase or archive never starts a
+// recording on a case that was closed meanwhile.
+func TestScn1Review2NoRestartOnAClosedCase(t *testing.T) {
+	a := newArchPC(t, cfsPassA)
+	id := a.seed("Alpha", 3)
+	a.startRecording(id)
+	h := a.handler()
+	rec, was := h.samplerRunningFor(casestore.CaseID(id))
+	if !was {
+		t.Fatal("recording is not running")
+	}
+	h.stopSamplerFor(casestore.CaseID(id), true, stopCaseClosed)
+	if res := a.req(http.MethodPost, "/api/cases/"+id+"/close", "", "open"); res.Code != http.StatusOK {
+		t.Fatalf("close = %d %s", res.Code, res.Body)
+	}
+	// The deferred restart of a refused erase.
+	h.restartSampler(casestore.CaseID(id), rec)
+	if a.recording(id) {
+		t.Fatal("restart started a recording on a closed case")
+	}
+	// And the launch itself refuses with the closed-case error.
+	if f := a.tryRecording(id); f == nil || f.err != casestore.ErrCaseClosed {
+		t.Fatalf("launch on a closed case = %+v, want ErrCaseClosed", f)
+	}
+}

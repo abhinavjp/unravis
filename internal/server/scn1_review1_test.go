@@ -24,7 +24,7 @@ func TestScn1Review1_RestoreAsNewStaleBeliefOnMarkedCase(t *testing.T) {
 	archReason(t, res, http.StatusConflict, "case-changed", m2Text)
 }
 
-// Review1-2: an erase refused under the gate puts the recording back.
+// Review1-2: an erase refused under the gate because the case closed does not put the recording back.
 func TestScn1Review1_RefusedEraseKeepsTheRecording(t *testing.T) {
 	a := newArchPC(t, cfsPassA)
 	id := a.seed("Alpha", 3)
@@ -40,7 +40,10 @@ func TestScn1Review1_RefusedEraseKeepsTheRecording(t *testing.T) {
 	}
 	res := a.req(http.MethodDelete, "/api/cases/"+id, `{"confirm":`+q(id)+`}`, "open")
 	archReason(t, res, http.StatusConflict, "case-changed", m2Text)
-	if !a.recording(id) {
-		t.Fatal("the refused erase left the recording stopped")
+	// The stale belief is the case being closed, and a closed case takes no
+	// recording (Review2-7), so nothing is put back. A refusal that leaves the case
+	// open still puts the recording back (TestF5 cancel restarts it).
+	if a.recording(id) {
+		t.Fatal("the refused erase restarted the recording on a closed case")
 	}
 }
