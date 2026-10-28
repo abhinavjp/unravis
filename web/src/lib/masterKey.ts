@@ -14,7 +14,7 @@ export const LOCK_STATES: readonly LockState[] = ['none', 'locked', 'unlocked', 
 export const closesCases = (state: LockState | 'unknown' | null): boolean => state === 'locked' || state === 'damaged';
 
 /** `dpapiCases` is how many cases are still protected the older way, so they could be re-wrapped. */
-export interface KeyStatus { state: LockState; dpapiCases: number }
+export interface KeyStatus { state: LockState; dpapiCases: number; freedArchives?: number }
 
 export const MIN_PASSPHRASE_CHARS = 12;
 export const MAX_PASSPHRASE_BYTES = 1024;
@@ -27,10 +27,12 @@ export const isLockState = (value: unknown): value is LockState => typeof value 
 /** Reads a status answer. Null when it is not one, so a strange answer is never taken as "unlocked". */
 export function parseStatus(raw: unknown): KeyStatus | null {
   if (!raw || typeof raw !== 'object') return null;
-  const body = raw as { state?: unknown; dpapiCases?: unknown };
+  const body = raw as { state?: unknown; dpapiCases?: unknown; freedArchives?: unknown };
   if (!isLockState(body.state)) return null;
   const count = typeof body.dpapiCases === 'number' && Number.isFinite(body.dpapiCases) && body.dpapiCases > 0 ? Math.floor(body.dpapiCases) : 0;
-  return { state: body.state, dpapiCases: count };
+  // M12's N: the server sends it only while a start-over is offered; kept only when more than 0.
+  const freed = typeof body.freedArchives === 'number' && Number.isFinite(body.freedArchives) && body.freedArchives > 0 ? Math.floor(body.freedArchives) : 0;
+  return freed > 0 ? { state: body.state, dpapiCases: count, freedArchives: freed } : { state: body.state, dpapiCases: count };
 }
 
 /** Characters as a person counts them (one emoji is one), not UTF-16 units. */

@@ -869,6 +869,7 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 		}
 	}
 	h.pending.remove(id)
+	h.noteFreedArchives(context.Background()) // an erased freed archive is no longer counted by M12
 	w.WriteHeader(http.StatusNoContent)
 }
 

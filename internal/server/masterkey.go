@@ -409,6 +409,13 @@ type masterKeyStatus struct {
 	// They are refused (409 reason "untrusted-case"), cannot be re-wrapped, and are
 	// not in DPAPICases; they can still be erased. Omitted when 0 (always while locked).
 	UntrustedCases int `json:"untrustedCases,omitempty"`
+	// FreedArchives is M12's N: the archived cases whose working copy was freed and
+	// whose case file was sealed under the master key. Only a key reset makes them
+	// unreadable, so it is reported where a reset is offered (the damaged state)
+	// and omitted otherwise and when 0. A damaged key file cannot open the sealed
+	// case records, so the number comes from a plain note kept beside the key file
+	// (freedNoteName), refreshed while the key is unlocked.
+	FreedArchives int `json:"freedArchives,omitempty"`
 }
 
 const needsRewrapText = "This case was only partly protected with the master key. Protect older cases to finish it."
@@ -707,7 +714,80 @@ func (h *handler) legacyCandidates(ctx context.Context) []string {
 func (h *handler) masterKeyReply(w http.ResponseWriter, r *http.Request) {
 	st := h.masterKeyState()
 	n, half, bad := h.dpapiCaseCount(r.Context())
-	writeJSON(w, http.StatusOK, masterKeyStatus{State: st, DPAPICases: n, NeedsRewrap: half, UntrustedCases: bad}, 4096)
+	out := masterKeyStatus{State: st, DPAPICases: n, NeedsRewrap: half, UntrustedCases: bad}
+	switch st {
+	case MasterKeyDamaged:
+		out.FreedArchives = readFreedNote(h.mk.dir)
+	case MasterKeyUnlocked:
+		h.noteFreedArchives(r.Context())
+	}
+	writeJSON(w, http.StatusOK, out, 4096)
+}
+
+// freedNoteName is the note of how many freed archives the master key seals: just
+// a number, no case id, title or path, so it can sit unsealed beside the key file
+// and still be read when the key file cannot be opened.
+const freedNoteName = "masterkey.freed"
+
+type freedNote struct {
+	V int `json:"v"`
+	N int `json:"n"`
+}
+
+// noteFreedArchives refreshes the note while the key is unlocked (the only time the
+// case records can be read). It is called where the number can change: when the
+// status is read, after a Free and after an erase. A failure is not reported: the
+// note is only the number M12 shows.
+func (h *handler) noteFreedArchives(ctx context.Context) {
+	if h.mk == nil || h.mk.State() != MasterKeyUnlocked || h.cases == nil {
+		return
+	}
+	n := h.freedMasterArchives(ctx)
+	if n == readFreedNote(h.mk.dir) {
+		return
+	}
+	raw, err := json.Marshal(freedNote{V: 1, N: n})
+	if err != nil {
+		return
+	}
+	_ = sealedfile.WriteAtomic(filepath.Join(h.mk.dir, freedNoteName), "freed.*.tmp", raw)
+}
+
+// readFreedNote reads the note; no note or an unreadable one is 0.
+func readFreedNote(dir string) int {
+	raw, err := os.ReadFile(filepath.Join(dir, freedNoteName))
+	if err != nil || len(raw) > 256 {
+		return 0
+	}
+	var f freedNote
+	if json.Unmarshal(raw, &f) != nil || f.V != 1 || f.N < 0 {
+		return 0
+	}
+	return f.N
+}
+
+// freedMasterArchives counts the Archived cases whose working copy is freed and
+// whose current case file was sealed under the master key (M12). Their case file is
+// the only copy, and a new master key cannot open it. Kept working copies are not
+// counted (they can be archived again), nor are files with a key of their own.
+func (h *handler) freedMasterArchives(ctx context.Context) int {
+	if h.cases == nil {
+		return 0
+	}
+	list, err := h.cases.List(ctx)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, info := range list {
+		if !info.Archive.Freed() {
+			continue
+		}
+		if cur := info.Archive.Current(); cur != nil && cur.KeyKind == casestore.KeyKindMaster {
+			n++
+		}
+	}
+	return n
 }
 
 func (h *handler) masterKeySetup(w http.ResponseWriter, r *http.Request) {

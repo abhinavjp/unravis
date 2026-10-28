@@ -196,6 +196,7 @@ func (h *handler) freeCase(w http.ResponseWriter, r *http.Request, raw string) {
 	}
 	st.verified.drop(id)
 	h.exports().dropCase(string(id))
+	h.noteFreedArchives(context.Background())
 	done, err := ar.Entry(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, err)
