@@ -3,7 +3,7 @@
   import { api } from '../../lib/api';
   import { DEFAULT_COLLECTION } from '../../lib/wizardConnections';
   import {
-    overlapProblem, runMongoLane, runProblem, runSqlLane, utcInput, utcWindow, type LaneDay, type LaneRunResult, type LaneWindow
+    overlapProblem, runMongoLane, runNotice, runProblem, runSqlLane, utcInput, utcWindow, type LaneDay, type LaneRunResult, type LaneWindow
   } from '../../lib/lanes';
   import { RUN_TEXT, DAY_TEXT } from '../../lib/copy/sourcesCopy';
   import type { RecentConnection, SavedSqlConnection } from '../../lib/types';
@@ -13,10 +13,10 @@
   // here is ever run as a query. A password typed for this run goes out once and is dropped. Times are UTC and read strictly. A day that overlaps
   // one already added (for the same server and database) is refused here and again by the server, with nothing read.
   let {
-    caseId, kind, days = [], database = '', incident = null, reference = null, lockDatabase = false, connectionLabel = '', runLabel = '', primary = false, onRan, onGone
+    caseId, kind, days = [], database = '', incident = null, reference = null, lockDatabase = false, connectionLabel = '', runLabel = '', primary = false, ownNotice = false, onRan, onGone
   }: {
     caseId: string; kind: 'sql' | 'mongo'; days?: LaneDay[]; database?: string; incident?: LaneWindow | null; reference?: LaneWindow | null;
-    lockDatabase?: boolean; connectionLabel?: string; runLabel?: string; primary?: boolean; onRan?: (result: LaneRunResult) => void; onGone?: () => void;
+    lockDatabase?: boolean; connectionLabel?: string; runLabel?: string; primary?: boolean; ownNotice?: boolean; onRan?: (result: LaneRunResult) => void; onGone?: () => void;
   } = $props();
 
   const uid = $props.id();
@@ -88,8 +88,11 @@
         }, windows);
       }
       password = '';
-      if (!result.saved) problem = RUN_TEXT.notSaved + (result.saveError || RUN_TEXT.failed);
-      else done = RUN_TEXT.done;
+      // ownNotice: the page that mounts this runner says what happened itself (it may remove the runner when the day list changes).
+      if (!ownNotice) {
+        const said = runNotice(result);
+        if (said.good) done = said.text; else problem = said.text;
+      }
       onRan?.(result);
     } catch (error) {
       const failure = runProblem(error);

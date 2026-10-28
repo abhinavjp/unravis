@@ -136,7 +136,8 @@ test('wrong password and a server down mid-read show a sentence, never a stack o
   assert.match(runner, /role="alert"/);
   assert.match(runner, /finally \{ busy = false; \}/, 'the button comes back after a failure');
   // A failed read that reached the server but could not be saved says so instead of showing a green result.
-  assert.match(runner, /RUN_TEXT\.notSaved/);
+  assert.match(runner, /runNotice\(result\)/);
+  assert.match(copy.RUN_TEXT.notSaved, /could not be kept/);
 });
 
 test('a login with no grants shows the script to fix it, and never runs it', () => {

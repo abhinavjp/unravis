@@ -99,6 +99,11 @@ const toRun = (raw: unknown): LaneRunResult => {
   };
 };
 
+/** The sentence for a finished read: kept in the case (good) or read but not kept (bad). Said on the page so it outlives the runner. */
+export function runNotice(result: LaneRunResult): { good: boolean; text: string } {
+  return result.saved ? { good: true, text: RUN_TEXT.done } : { good: false, text: RUN_TEXT.notSaved + (result.saveError || RUN_TEXT.failed) };
+}
+
 export interface LaneWindows { incident: LaneWindow; reference: LaneWindow }
 export interface MongoLaneTarget { savedConnectionId: string; uri: string; username: string; password: string; authSource: string; tlsMode: string; caCertificate: string; database: string; collection: string }
 
@@ -211,6 +216,13 @@ export function groupSources(days: LaneDay[]): LaneSource[] {
   const out = [...map.values()];
   for (const s of out) s.days.sort((a, b) => Date.parse(b.incident.start) - Date.parse(a.incident.start));
   return out.sort((a, b) => a.kind.localeCompare(b.kind) || a.label.localeCompare(b.label));
+}
+
+/** The day read most recently: the highest id, or the latest read time when ids are equal. A list in any order gives the same answer. */
+export function newestDay(days: LaneDay[]): LaneDay | null {
+  let best: LaneDay | null = null;
+  for (const d of days) if (best === null || d.id > best.id || (d.id === best.id && Date.parse(d.at) > Date.parse(best.at))) best = d;
+  return best;
 }
 
 /** Whether a source can be read for another day. Mongo's profiler keeps only the latest entries, so it cannot. */
