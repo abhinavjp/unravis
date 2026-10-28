@@ -140,6 +140,12 @@ func (h *handler) restoreAsNew(w http.ResponseWriter, r *http.Request, raw strin
 		writeStoreError(w, err)
 		return
 	}
+	// CheckBelief takes any belief for restore as new, and beliefFirst lets a case
+	// marked mid-archive through, so a stale belief is refused here as well.
+	if believed != "" && believed != casestore.StateArchived {
+		writeStoreError(w, casestore.ErrCaseChanged)
+		return
+	}
 	if err := casestore.CheckBelief(casestore.ActionRestoreAsNew, believed, casestore.StateOf(info)); err != nil {
 		writeStoreError(w, err)
 		return
