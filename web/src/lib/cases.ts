@@ -382,9 +382,9 @@ export const retryInPage = (error: unknown): boolean => error instanceof CaseApi
  * Erases the case. The confirmation is the case code the person typed (the first 8 characters of the id; the server also takes the whole
  * id). Without one the whole id is sent, for callers that have no typed code.
  */
-export async function eraseCase(id: string, typed?: string, signal?: AbortSignal): Promise<void> {
+export async function eraseCase(id: string, typed?: string, believed?: CaseState, signal?: AbortSignal): Promise<void> {
   const confirm = typed !== undefined ? typed.trim() : id;
-  await send(casePath(id), { method: 'DELETE', body: JSON.stringify({ confirm }) }, signal);
+  await send(casePath(id), { method: 'DELETE', body: JSON.stringify({ confirm }), ...expecting(believed) }, signal);
 }
 
 export async function listImports(id: string, signal?: AbortSignal): Promise<ImportRecord[]> {

@@ -3,7 +3,7 @@
   import { listArchivedCases } from '../archiveApi';
   import { archivedActions, archivedChips, keyEndingOf, type ArchiveDrawerKind } from '../archiveModel';
   import { caseErased } from '../appState.svelte';
-  import { CaseApiError, caseCode, eraseCase, eraseConfirmed, isCaseGone, type CaseInfo } from '../cases';
+  import { CaseApiError, believedState, caseCode, eraseCase, eraseConfirmed, isCaseGone, type CaseInfo } from '../cases';
   import { ARCHIVE_TEXT, archiveCounts, archiveReasonText, archivedShownText, keyEndingText } from '../copy/archiveCopy';
   import { ERASE_DONE, IMPORT_TEXT, erasePrompt } from '../copy/importCopy';
   import { caseRow } from '../startScreen';
@@ -104,7 +104,8 @@
     const id = eraseId;
     erasing = true; problem = '';
     try {
-      await eraseCase(id);
+      const row = rows.find((r) => r.id === id);
+      await eraseCase(id, undefined, row ? believedState(row) : undefined);
       rows = rows.filter((r) => r.id !== id);
       count = Math.max(0, count - 1);
       eraseId = ''; typed = '';

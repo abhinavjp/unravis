@@ -418,7 +418,7 @@ test('Erase cannot be pressed with the wrong code, and the home page offers it o
   assert.match(home, /phase === 'locked'/, 'a locked case opens on its key card');
   assert.match(home, /phase = 'untrusted'/);
   const panel = read('src/lib/components/CasePanel.svelte');
-  assert.match(panel, /eraseCase\(id, entered, controller\?\.signal\)/);
+  assert.match(panel, /eraseCase\(id, entered, row \? believedState\(row\) : undefined, controller\?\.signal\)/);
 });
 
 test('each page has one main button: the key card, the key page, Erase and the untrusted page', () => {

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { Snippet } from 'svelte';
-  import { CaseApiError, caseCode, clearErasedLine, eraseCase, eraseConfirmed, isCaseGone } from '../lib/cases';
+  import { CaseApiError, believedState, caseCode, clearErasedLine, eraseCase, eraseConfirmed, isCaseGone } from '../lib/cases';
   import type { CaseInfo, ErasedLine } from '../lib/cases';
   import { ERASE_TEXT } from '../lib/copy/eraseCopy';
   import { listCasesPage } from '../lib/archiveApi';
@@ -102,7 +102,8 @@
     const id = eraseId;
     erasing = true; eraseProblem = '';
     try {
-      await eraseCase(id);
+      const row = cases.find((c) => c.id === id);
+      await eraseCase(id, undefined, row ? believedState(row) : undefined);
       cases = cases.filter((c) => c.id !== id);
       eraseId = ''; typed = '';
       caseErased(id);

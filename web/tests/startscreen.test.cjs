@@ -200,7 +200,7 @@ test('a missing row has an Erase button and no Open button, and the form asks fo
   assert.match(src, /erasePrompt\(caseCode\(row\.id\)\)/);
   assert.match(src, /disabled=\{erasing \|\| !confirmed\}/);
   assert.match(src, /const confirmed = \$derived\(eraseId !== '' && eraseConfirmed\(typed, eraseId\)\);/);
-  assert.match(src, /await eraseCase\(id\);\s*cases = cases\.filter\(\(c\) => c\.id !== id\);/);
+  assert.match(src, /await eraseCase\(id, undefined, row \? believedState\(row\) : undefined\);\s*cases = cases\.filter\(\(c\) => c\.id !== id\);/);
   assert.match(src, /if \(isCaseGone\(error\)\) \{ cases = cases\.filter\(\(c\) => c\.id !== id\);/);
   assert.match(src, /caseErased\(id\);/);
 });

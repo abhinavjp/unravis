@@ -93,7 +93,8 @@
     busy = true; problem = '';
     try {
       const entered = typed;
-      await eraseCase(id, entered, controller?.signal);
+      const row = cases.find((c) => c.id === id);
+      await eraseCase(id, entered, row ? believedState(row) : undefined, controller?.signal);
       eraseId = ''; typed = '';
       if (selectedId === id) selectedId = '';
       caseErased(id);

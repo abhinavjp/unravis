@@ -354,7 +354,7 @@
     <div class="inline-error" role="alert">{CASE_HOME_TEXT.failed}</div>
     <div><button type="button" class="secondary-button" onclick={() => void load(caseId)}>{CASE_HOME_TEXT.retry}</button></div>
   {:else if view === 'erase'}
-    <EraseCase {caseId} archivePath={archiveFilePath(currentFile) || undefined} onDone={erasedDone} onCancel={() => void backFromDialog()} />
+    <EraseCase {caseId} archivePath={archiveFilePath(currentFile) || undefined} believed={info ? believedState(info) : undefined} onDone={erasedDone} onCancel={() => void backFromDialog()} />
   {:else if phase === 'locked'}
     <CaseKeyCard {caseId} ending={keyStatus.ending} onOpened={() => void load(caseId).then(() => tick()).then(() => headingEl?.focus())} onCancel={goHome} />
     <div class="actions"><button type="button" class="secondary-button danger" aria-haspopup="dialog" onclick={() => { view = 'erase'; }}>{ERASE_TEXT.open}</button></div>
