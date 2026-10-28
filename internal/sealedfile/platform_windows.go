@@ -8,9 +8,12 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 var (
@@ -84,21 +87,58 @@ func dpapi(protect bool, input []byte, flags uintptr) ([]byte, error) {
 	return append([]byte(nil), unsafe.Slice(out.Data, out.Size)...), nil
 }
 
-// Lock takes a named, per-path mutex that also serialises separate processes.
+// lockSDDL is the access list of a machine-wide lock: SYSTEM and Administrators in full; any signed-in account and services may wait on
+// it and release it (SYNCHRONIZE | MUTEX_MODIFY_STATE), nothing more.
+const mutexModifyState = 0x0001
+
+const lockSDDL = "D:(A;;0x1F0001;;;SY)(A;;0x1F0001;;;BA)(A;;0x100001;;;AU)(A;;0x100001;;;SU)"
+
+// mutexName is the named mutex for a path: per session (Local) for a person's own files, machine-wide (Global) for the shared data
+// folder, so two people signed in at once serialise on the same shared file.
+func mutexName(canonical string) (name string, global bool) {
+	if underShared(canonical) {
+		digest := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(canonical))))
+		return `Global\Unravis-` + fmtHex(digest[:16]), true
+	}
+	digest := sha256.Sum256([]byte(canonical))
+	return `Local\APIAuditExplorer-` + fmtHex(digest[:16]), false
+}
+
+// Lock takes a named, per-path mutex that also serialises separate processes (and, inside the shared data folder, separate people).
 // The caller must call the returned function to release it.
 func Lock(path string) (func(), error) {
 	canonical, err := filepath.Abs(path)
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	digest := sha256.Sum256([]byte(canonical))
-	name, err := syscall.UTF16PtrFromString(`Local\APIAuditExplorer-` + fmtHex(digest[:16]))
+	mutex, global := mutexName(canonical)
+	name, err := syscall.UTF16PtrFromString(mutex)
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	handle, _, callErr := createMutex.Call(0, 0, uintptr(unsafe.Pointer(name)))
-	if handle == 0 {
-		return nil, callErr
+	var attrs *windows.SecurityAttributes
+	if global {
+		sd, err := windows.SecurityDescriptorFromString(lockSDDL)
+		if err != nil {
+			return nil, ErrUnavailable
+		}
+		attrs = &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+	}
+	var handle uintptr
+	if global {
+		// Ask only for what the lock needs (wait and release): the list above grants no more to other accounts.
+		h, err := windows.CreateMutexEx(attrs, name, 0, windows.SYNCHRONIZE|mutexModifyState)
+		runtime.KeepAlive(attrs)
+		if h == 0 {
+			return nil, fmt.Errorf("%w: the shared folder lock cannot be opened: %v", ErrUnavailable, err)
+		}
+		handle = uintptr(h)
+	} else {
+		h, _, callErr := createMutex.Call(0, 0, uintptr(unsafe.Pointer(name)))
+		if h == 0 {
+			return nil, callErr
+		}
+		handle = h
 	}
 	runtime.LockOSThread()
 	result, _, _ := waitForSingleObject.Call(handle, uintptr((5*time.Second)/time.Millisecond))

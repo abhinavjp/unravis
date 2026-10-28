@@ -39,8 +39,11 @@ func storageFor(getenv func(string) string) storage {
 		log.Printf("The shared data folder is not used, so Unravis keeps your files in your own folder: %s", l.SharedRefused)
 	}
 	if l.Shared() {
+		// Several people may be signed in at once: their locks on shared files must be machine-wide.
+		sealedfile.SetSharedRoot(l.Root)
 		return storage{layout: l, seal: sealedfile.LocalMachine}
 	}
+	sealedfile.SetSharedRoot("")
 	return storage{layout: l, seal: sealedfile.CurrentUser}
 }
 
