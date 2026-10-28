@@ -268,3 +268,16 @@ test('B-12: a text that matches no API says so, a high minimum keeps its own sen
   assert.equal(tools.slowestApiRows(r, 0, 'no-such-route-zzz').length, 0);
   assert.equal(tools.slowestApiRows(r, 1e9, '').length, 0, 'a minimum that is too high is a different empty state');
 });
+
+test('B-16: a closed case says why notes, checks and data cannot be added', () => {
+  assert.equal(SHELL.closedNoAdd, 'This case is closed, so notes and checks cannot be added here. You can still read everything.');
+  assert.equal(SHELL.closedNoData, 'This case is closed, so no data can be added to it.');
+  const m = guided('ManualTools.svelte');
+  assert.match(m, /\{:else\}\s*<p class="notice" role="status">\{S\.closedNoAdd\}<\/p>\s*\{\/if\}/);
+  assert.match(m, /<form class="note-form"/, 'the note form is still there for an open case');
+  const s10 = guided('Step10Origin.svelte');
+  assert.match(s10, /\{#if readOnly && store\.mode === 'guided' && \(groups\.ranked\.length > 0 \|\| groups\.notTested\.length > 0\)\}<p class="notice" role="status">\{S\.closedNoAdd\}<\/p>\{\/if\}/);
+  const bar = guided('RunBar.svelte');
+  assert.match(bar, /\{#if readOnly\}<p class="note" role="status">\{S\.closedNoData\}<\/p>\{\/if\}/);
+  assert.match(bar, /disabled=\{readOnly\} onclick=\{onAddData\}/, 'the button stays off, only explained');
+});

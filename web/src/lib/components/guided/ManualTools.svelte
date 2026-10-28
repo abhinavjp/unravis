@@ -148,6 +148,8 @@
           {#if noted}<span class="note" role="status">{T.noteAdded}</span>{/if}
         </div>
       </form>
+    {:else}
+      <p class="notice" role="status">{S.closedNoAdd}</p>
     {/if}
 
     <SavedViews {store} {readOnly} tool={open.id} extra={{ minCalls: open.id === 'slowest-apis' ? Number(minCalls) : undefined, match: open.id === 'slowest-apis' ? match : undefined }} onOpen={openView} />

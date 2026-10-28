@@ -13,5 +13,7 @@ export const SHELL_TEXT = {
   suggestedAdded: (n: number) => (n === 1 ? 'Added 1 check.' : `Added ${n} checks.`),
   noApiMatch: (text: string) => `No API matches "${text}".`,
   viewNameTooLong: 'A view name holds up to 60 characters. Shorten it to save.',
-  itemNotPlain: 'An item holds plain text only. Remove any control characters and try again.'
+  itemNotPlain: 'An item holds plain text only. Remove any control characters and try again.',
+  closedNoAdd: 'This case is closed, so notes and checks cannot be added here. You can still read everything.',
+  closedNoData: 'This case is closed, so no data can be added to it.'
 } as const;

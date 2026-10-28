@@ -68,6 +68,7 @@
 
     <section aria-labelledby="origin-suspects">
       <h4 id="origin-suspects">{T.suspectsHeading}</h4>
+      {#if readOnly && store.mode === 'guided' && (groups.ranked.length > 0 || groups.notTested.length > 0)}<p class="notice" role="status">{S.closedNoAdd}</p>{/if}
       {#if groups.ranked.length === 0}
         <p class="note">{T.noRanked}</p>
       {:else}
