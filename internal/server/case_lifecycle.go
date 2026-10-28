@@ -148,6 +148,11 @@ func (h *handler) beliefFirst(ctx context.Context, id casestore.CaseID, a casest
 	if err != nil || info.Mark != "" {
 		return nil
 	}
+	// CheckBelief looks only at the real state for restore as new (it takes any
+	// belief), so a tab that believes anything but "archived" is stale here.
+	if a == casestore.ActionRestoreAsNew && believed != casestore.StateArchived {
+		return casestore.ErrCaseChanged
+	}
 	return casestore.CheckBelief(a, believed, casestore.StateOf(info))
 }
 

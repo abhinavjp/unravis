@@ -113,13 +113,17 @@ func (h *handler) restoreAsNew(w http.ResponseWriter, r *http.Request, raw strin
 	if !ok {
 		return
 	}
+	believed, ok := believedState(w, r)
+	if !ok {
+		return
+	}
+	if err := h.beliefFirst(r.Context(), id, casestore.ActionRestoreAsNew, believed); err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	// The new case is sealed with this PC's master key.
 	if h.mk.State() != MasterKeyUnlocked {
 		h.masterKeyFail(w, http.StatusConflict, "no-master-key", "Set a master key first.")
-		return
-	}
-	believed, ok := believedState(w, r)
-	if !ok {
 		return
 	}
 	b := h.readCaseFileBody(w, r)
