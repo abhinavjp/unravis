@@ -8,7 +8,7 @@ The catalogue is in `.dev/scenarios/groups` (g01 to g12). Status words:
 - manual-only: not automatable here, with the reason.
 - not yet automated: reachable in the demo but no spec written yet.
 
-Totals: 68 covered, 5 expected-fail, 45 manual-only, 117 not yet automated, 235 scenarios.
+Totals: 71 covered, 2 expected-fail, 45 manual-only, 117 not yet automated, 235 scenarios.
 Extra ids with no catalogue entry (IMP-01 to IMP-04, the file import fixtures) are in `specs/imports.spec.ts`.
 A scenario id with a letter after it (for example SRC-07a) is an extra check that belongs to the same scenario.
 
@@ -100,8 +100,8 @@ on port 0 with a new empty data folder and a fixed clock, and stops it at the en
 | INV-07 | - | not yet automated (see the scenario file; a manual run covers it) |
 | INV-08 | - | not yet automated (see the scenario file; a manual run covers it) |
 | INV-09 | - | not yet automated (see the scenario file; a manual run covers it) |
-| INV-10 | explorer.spec.ts | expected-fail (INV-10 D-A-45) |
-| INV-11 | explorer.spec.ts | expected-fail (INV-11 D-A-46) |
+| INV-10 | explorer.spec.ts | covered |
+| INV-11 | explorer.spec.ts | covered |
 | INV-12 | - | not yet automated (see the scenario file; a manual run covers it) |
 | INV-13 | plan.spec.ts | covered |
 | INV-14 | - | not yet automated (see the scenario file; a manual run covers it) |
@@ -157,7 +157,7 @@ on port 0 with a new empty data folder and a fixed clock, and stops it at the en
 | EXP-05 | - | not yet automated (see the scenario file; a manual run covers it) |
 | EXP-06 | exports.spec.ts | covered |
 | EXP-07 | - | not yet automated (see the scenario file; a manual run covers it) |
-| EXP-08 | exports.spec.ts | expected-fail (EXP-08 D-B-05) |
+| EXP-08 | exports.spec.ts | covered |
 | EXP-09 | exports.spec.ts | covered |
 | EXP-10 | - | not yet automated (see the scenario file; a manual run covers it) |
 | BB-01 | blackbox.spec.ts | covered |

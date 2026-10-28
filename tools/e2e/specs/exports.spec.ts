@@ -188,7 +188,7 @@ test('EXP-08: Include my ledger puts the case hypothesis that cites a record int
     notes: 'private note'
   });
   expect(set.status).toBe(200);
-  const withLedger = await api('POST', '/api/export/preview', { ...win, includeLedger: true });
+  const withLedger = await api('POST', '/api/export/preview', { ...win, includeLedger: true, ledgerCaseId: id }); // the page sends the open case id (D-B-05)
   const body = JSON.stringify(withLedger.json.export.body);
   expect(body, 'the ledger section of the export').toContain('Retries at the gateway were slow');
   expect(body).not.toContain('private note');

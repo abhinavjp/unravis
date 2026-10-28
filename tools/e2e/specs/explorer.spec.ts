@@ -40,12 +40,11 @@ test('INV-10a: filters become chips, narrow the groups, and Clear all removes th
   await expect(again).toContainText('Employees.List');
 });
 
-test('INV-10: an invalid Audit ID holds the run back instead of sending a bad request', async ({ page, allow }) => {
-  // When the defect is present the page sends the bad request and the browser logs the 400.
-  allow(/Failed to load resource.*400/, 'D-A-45');
+test('INV-10: an invalid Audit ID holds the run back instead of sending a bad request', async ({ page }) => {
   await openFilters(page, 'Request details');
   await page.getByLabel('Audit ID').fill('not an id!!');
-  await expect(page.getByText('An audit ID is exactly 24 hexadecimal characters.')).toBeVisible();
+  // The field's own error and the hint beside Run analysis both say it.
+  await expect(page.locator('#rf-audit-id-error')).toHaveText('An audit ID is exactly 24 hexadecimal characters.');
   let sent = 0;
   page.on('request', (r) => {
     if (r.url().includes('/api/analyze')) sent++;
@@ -91,7 +90,20 @@ test('INV-11b: a chart interval outside 10 to 86400 is refused and the run waits
 test('INV-11: a response-time target of 100 ms draws a target line', async ({ page }) => {
   await openFilters(page, 'Chart');
   await page.getByLabel('Optional response-time target (ms)').fill('100');
-  await run(page);
-  // The chart is a picture; its readable description or the page text must name the target.
-  await expect(page.locator('main').getByText(/response-time target/i).first()).toBeVisible();
+  const list = await ops(page);
+  // The target line is on the chart of one operation: open the worst one.
+  await list.getByRole('button').first().click();
+  // The chart is a canvas, so the line is read from its tooltip: moving over the chart lists every line, the target included.
+  const chart = page.getByRole('img', { name: 'Selected API response times over time' });
+  await expect(chart).toBeVisible();
+  await chart.scrollIntoViewIfNeeded();
+  const box = (await chart.boundingBox())!;
+  const tip = page.getByText(/Response-time target: ≈ 100\.00 ms/);
+  for (const f of [0.3, 0.5, 0.7]) {
+    await page.mouse.move(box.x + box.width * (f - 0.05), box.y + box.height * 0.5);
+    await page.mouse.move(box.x + box.width * f, box.y + box.height * 0.5, { steps: 8 });
+    await page.waitForTimeout(250);
+    if (await tip.count()) break;
+  }
+  await expect(tip.first()).toBeVisible();
 });
