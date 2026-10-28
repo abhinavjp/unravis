@@ -199,6 +199,26 @@ test('contract: the nearby page size never exceeds the server page limit', () =>
   assert.ok(n.NEARBY_ROWS <= serverMax, `the client asks for ${n.NEARBY_ROWS} rows, the server allows ${serverMax}`);
 });
 
+test('contract: the saved view and checklist limits match the case store, and the 200th view still saves', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const go = fs.readFileSync(path.join(__dirname, '../../internal/casestore/plan.go'), 'utf8');
+  const views = Number(/MaxSavedViews\s*=\s*(\d+)/.exec(go)?.[1]);
+  const items = Number(/MaxChecklistItems\s*=\s*(\d+)/.exec(go)?.[1]);
+  assert.ok(views > 0 && items > 0, 'limits not found in internal/casestore/plan.go');
+  assert.equal(t.MAX_VIEWS, views);
+  const copy = loadTypeScript('src/lib/copy/guidedCopy.ts');
+  assert.ok(copy.GUIDED_TEXT.viewsFull.includes(String(views)), 'the full-list sentence names the limit');
+  assert.ok(copy.GUIDED_TEXT.checklistFull.includes(String(items)), 'the full-checklist sentence names the limit');
+  // One below the limit still saves, the limit itself is refused before any request, and the server's refusal has its own sentence.
+  assert.equal(t.viewsFull(Array.from({ length: views - 1 }, () => ({}))), false);
+  assert.equal(t.viewsFull(Array.from({ length: views }, () => ({}))), true);
+  assert.equal(copy.refusalText('plan-full', copy.SAVED_VIEW_ERRORS, 'x'), copy.GUIDED_TEXT.viewsFull);
+  assert.equal(copy.refusalText('plan-full', copy.CHECKLIST_ERRORS, 'x'), copy.GUIDED_TEXT.checklistFull);
+  const store = fs.readFileSync(path.join(__dirname, '../src/lib/guided/guided.svelte.ts'), 'utf8');
+  assert.match(store, /if \(viewsFull\(this\.views\)\) \{ this\.viewError = GUIDED_TEXT\.viewsFull; return false; \}/);
+});
+
 test('a day that cannot be compared leaves no table from an earlier day', () => {
   const answer = { id: 1 };
   const made = { outcome: 'no-data' };
