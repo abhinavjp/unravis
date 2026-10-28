@@ -214,7 +214,7 @@ func seededServer(t *testing.T, dir string) (http.Handler, func()) {
 	return demoServer(t, options), closeCases
 }
 
-func TestDemoCasesSeedFourCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
+func TestDemoCasesSeedFiveCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	h, closeCases := seededServer(t, t.TempDir())
 	defer closeCases()
 	code, list := listCases(t, h)
@@ -225,8 +225,8 @@ func TestDemoCasesSeedFourCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	for _, c := range list {
 		byID[c["id"].(string)] = c
 	}
-	if len(list) != 4 {
-		t.Fatalf("got %d cases, want 4: %v", len(list), list)
+	if len(list) != 5 {
+		t.Fatalf("got %d cases, want 5: %v", len(list), list)
 	}
 	want := func(id, title string, created time.Time, closed *time.Time, imports float64) {
 		t.Helper()
@@ -260,6 +260,8 @@ func TestDemoCasesSeedFourCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	want(string(demoCaseClosedID), "Night batch overrun, 10 October", demoTestNow.Add(-10*day), &closedAt, 1)
 	// The refused file is a quarantine, not an import, so it is not counted here.
 	want(string(demoCaseFailedID), "Report export timeouts, 18 October", demoTestNow.Add(-2*day), nil, 1)
+	staleClosedAt := demoTestNow.Add(-3 * day)
+	want(string(demoCaseStaleID), "Ledger posting lag, 12 October", demoTestNow.Add(-8*day), &staleClosedAt, 1)
 	if u := byID[string(demoCaseUntrustedID)]; u == nil || u["untrusted"] != true {
 		t.Errorf("the untrusted demo case = %v, want untrusted", u)
 	}

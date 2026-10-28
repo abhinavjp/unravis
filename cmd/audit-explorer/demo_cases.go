@@ -53,12 +53,15 @@ var (
 	demoCaseOpenID      = demoCaseID("demoopen")
 	demoCaseClosedID    = demoCaseID("democlosed")
 	demoCaseFailedID    = demoCaseID("demofailed")
+	// A Closed case kept apart for the p2-changed-elsewhere picture, which reopens and closes it from a
+	// second tab. No other picture shows it, so its history never leaks into theirs.
+	demoCaseStaleID     = demoCaseID("demostale")
 	demoCaseUntrustedID = demoCaseID("demountrusted")
 )
 
 // demoCaseIDs lists the IDs above.
 func demoCaseIDs() []casestore.CaseID {
-	return []casestore.CaseID{demoCaseOpenID, demoCaseClosedID, demoCaseFailedID, demoCaseUntrustedID}
+	return []casestore.CaseID{demoCaseOpenID, demoCaseClosedID, demoCaseFailedID, demoCaseStaleID, demoCaseUntrustedID}
 }
 
 // demoSettings is what the two capture-only variables ask for.
@@ -317,6 +320,10 @@ func (d demoSeeder) seed(ctx context.Context) error {
 				}
 				return d.retryItems(ctx, c, created.Add(30*time.Minute))
 			}},
+		{demoCaseStaleID, "Ledger posting lag, 12 October", 8 * day,
+			func(ctx context.Context, c casestore.Case, created time.Time) error {
+				return d.importOK(ctx, c, "stale-1", created.Add(10*time.Minute))
+			}},
 		// Created like the others; openDemoCases then has the legacy check call it untrusted.
 		{demoCaseUntrustedID, "Case from another folder", 6 * day,
 			func(context.Context, casestore.Case, time.Time) error { return nil }},
@@ -344,8 +351,12 @@ func (d demoSeeder) seed(ctx context.Context) error {
 		if closeErr != nil {
 			return closeErr
 		}
-		if step.id == demoCaseClosedID {
-			d.clock.set(d.now.Add(-4 * day))
+		if step.id == demoCaseClosedID || step.id == demoCaseStaleID {
+			closedAgo := 4 * day
+			if step.id == demoCaseStaleID {
+				closedAgo = 3 * day
+			}
+			d.clock.set(d.now.Add(-closedAgo))
 			if err := d.store.CloseCase(ctx, step.id); err != nil {
 				return fmt.Errorf("close %s: %w", step.id, err)
 			}
