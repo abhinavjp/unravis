@@ -800,6 +800,7 @@ func (h *handler) masterKeySetup(w http.ResponseWriter, r *http.Request) {
 	// used without the master key (L4). Before the Keyring is installed.
 	s.loadLegacy(ring, true, func() []string { return h.legacyCandidates(r.Context()) })
 	s.install(ring)
+	h.recoverAll(r.Context())
 	h.masterKeyReply(w, r)
 }
 
@@ -848,6 +849,7 @@ func (h *handler) masterKeyUnlock(w http.ResponseWriter, r *http.Request) {
 	}
 	s.loadLegacy(ring, false, func() []string { return h.legacyCandidates(r.Context()) })
 	s.install(ring)
+	h.recoverAll(r.Context())
 	h.masterKeyReply(w, r)
 }
 

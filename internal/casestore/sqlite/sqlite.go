@@ -127,6 +127,8 @@ type Store struct {
 	opt  Options
 	root string
 
+	createMu sync.Mutex // serialises CreateFor's scan-then-create so one request id makes one case
+
 	mu      sync.Mutex // guards open and erasing, and serialises Open with the start of Erase
 	open    map[casestore.CaseID]*caseState
 	erasing map[casestore.CaseID]bool // IDs with an Erase in flight; Open refuses them
@@ -355,6 +357,11 @@ func cleanTitle(title string) (string, error) {
 // Create makes a new case folder with its sealed key, an empty encrypted
 // database and a manifest. The case is left closed (no handle held).
 func (s *Store) Create(ctx context.Context, title string) (casestore.CaseInfo, error) {
+	return s.create(ctx, title, "")
+}
+
+// create is Create with the request id the case is made under (empty for none).
+func (s *Store) create(ctx context.Context, title, requestID string) (casestore.CaseInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return casestore.CaseInfo{}, err
 	}
@@ -408,13 +415,14 @@ func (s *Store) Create(ctx context.Context, title string) (casestore.CaseInfo, e
 	if err := s.createDB(ctx, dir, keys, id, now); err != nil {
 		return casestore.CaseInfo{}, err
 	}
-	man := manifest{CaseID: string(id), Title: title, Created: now, Imports: []manifestImport{}}
+	man := manifest{CaseID: string(id), Title: title, Created: now, Imports: []manifestImport{}, RequestID: requestID,
+		History: []manifestHistory{{At: now, Kind: casestore.HistoryCreated}}}
 	if err := writeManifest(dir, s.sealer(dir, kind), man); err != nil {
 		return casestore.CaseInfo{}, err
 	}
 	ok = true
 	s.logf("case %s created", id)
-	return casestore.CaseInfo{ID: id, Title: title, Created: now}, nil
+	return casestore.CaseInfo{ID: id, Title: title, Created: now, RequestID: requestID}, nil
 }
 
 // createDB builds the schema in a new database, then turns page checksums on
@@ -592,6 +600,7 @@ func (s *Store) List(ctx context.Context) ([]casestore.CaseInfo, error) {
 		if m, err := readManifest(dir, s.sealer(dir, "")); err == nil && m.CaseID == string(id) {
 			info.Title, info.Created, info.Closed, info.Imports = m.Title, m.Created, m.Closed, len(m.Imports)
 			info.Bytes = manifestBytes(m)
+			info.Mark, info.RequestID = m.Mark, m.RequestID
 		} else if err != nil && caseKind(dir) == casestore.KindMasterKey && s.isLocked(casestore.KindMasterKey) {
 			info.Title = "(locked)" // nothing else about a locked case is shown
 		}
@@ -768,7 +777,7 @@ func (s *Store) CloseCase(ctx context.Context, id casestore.CaseID) error {
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return casestore.ErrNotFound
 	}
-	release, err := sealedfile.Lock(dir)
+	release, h, _, err := s.lockCase(dir, id)
 	if err != nil {
 		return err
 	}
@@ -776,9 +785,6 @@ func (s *Store) CloseCase(ctx context.Context, id casestore.CaseID) error {
 	if erasePending(dir) {
 		return casestore.ErrNotFound
 	}
-	s.mu.Lock()
-	h := s.open[id]
-	s.mu.Unlock()
 	// The on-disk manifest is the starting point even when this Store holds the
 	// case open: another Store on the folder may have mirrored imports since.
 	if k := caseKind(dir); k == casestore.KindMasterKey && s.isLocked(k) {
@@ -798,11 +804,15 @@ func (s *Store) CloseCase(ctx context.Context, id casestore.CaseID) error {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 	}
+	if err := casestore.CheckMark(m.Mark); err != nil {
+		return err
+	}
 	if m.Closed != nil {
 		return nil
 	}
 	now := s.now()
 	m.Closed = &now
+	m.History = appendHistory(m.History, now, casestore.HistoryClosed)
 	if err := writeManifest(dir, s.sealer(dir, ""), m); err != nil {
 		return err
 	}

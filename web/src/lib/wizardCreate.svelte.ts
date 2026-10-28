@@ -8,6 +8,7 @@ import type { SubmitApi, SubmitInput, SubmitResult } from './wizardSubmit';
 import { wizardSubmitApi } from './wizardSubmitApi';
 import { ackTextFor } from './copy/importCopy';
 import { sourceKey } from './wizardSources';
+import { forgetRequestId } from './createRequest';
 
 /**
  * The state of the last step of the create wizard (TSK-19): the choices made on the review (how far back to read, the ticked notice, the
@@ -48,6 +49,7 @@ export function pickFile(key: string, file: File | null): void {
 }
 
 export function resetCreate(): void {
+  forgetRequestId();
   Object.assign(createView, blank());
   pickedFiles = {};
   fileVersion++;

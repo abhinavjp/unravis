@@ -1,5 +1,5 @@
 import { api } from './api';
-import { CaseApiError, createCase, importProgressPercent, listCases, startCommitJob, startPreviewJob, waitForImportJob } from './cases';
+import { CaseApiError, createCase, importProgressPercent, putRetries, startCommitJob, startPreviewJob, waitForImportJob } from './cases';
 import type { ImportJob } from './cases';
 import { discoverClient, outcomeFromError, outcomeFromJob, watchJob } from './discover';
 import type { RowOutcome } from './discover';
@@ -43,13 +43,8 @@ async function rememberForCase(held: Parameters<typeof api.rememberConnection>[0
 }
 
 export const wizardSubmitApi: SubmitApi = {
-  createCase: async (title) => ({ id: (await createCase(title)).id }),
-  async findRecentCase(title, sinceMs) {
-    const found = (await listCases())
-      .filter((c) => c.title.trim() === title.trim() && Date.parse(c.created) >= sinceMs)
-      .sort((a, b) => Date.parse(b.created) - Date.parse(a.created))[0];
-    return found ? { id: found.id } : null;
-  },
+  createCase: async (title, requestId) => ({ id: (await createCase(title, requestId)).id }),
+  saveRetries: (caseId, items) => putRetries(caseId, items),
   putEnvironments: (caseId, envs) => putEnvironments(caseId, envs),
   postSourceTag: (caseId, tag) => postSourceTag(caseId, tag),
 

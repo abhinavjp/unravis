@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -21,8 +22,27 @@ import (
 // casesWiring is what live mode adds for the importer wave: the encrypted
 // per-case store, the sealed host map, and the server options that expose them.
 type casesWiring struct {
-	options []server.Option
-	store   *sqlite.Store
+	options   []server.Option
+	store     *sqlite.Store
+	recoverer *casestore.Recoverer
+}
+
+// recoverAtStart runs the case recovery hooks once at start-up. It never stops
+// the dashboard starting: a locked store or a hook that fails is logged, and the
+// marked case keeps answering "being freed" or "being erased" until the next try
+// (at unlock, or at the next call that touches it).
+func recoverAtStart(r *casestore.Recoverer) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	rep, err := r.RecoverAll(ctx)
+	switch {
+	case errors.Is(err, casestore.ErrLocked):
+		// Nothing to read until the master key is unlocked; the unlock path runs it.
+	case err != nil:
+		log.Printf("Case recovery did not run: %v", err)
+	case rep.Marked > 0:
+		log.Printf("Case recovery: %d marked, %d finished, %d need another try", rep.Marked, rep.Recovered, len(rep.Failed))
+	}
 }
 
 // close closes every case handle the store still holds (zeroing their keys).
@@ -141,15 +161,27 @@ func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams ca
 	if err != nil {
 		return nil, err
 	}
+	recoverer, err := casestore.NewRecoverer(store)
+	if err != nil {
+		return nil, err
+	}
 	wiring := &casesWiring{
-		store: store,
+		store:     store,
+		recoverer: recoverer,
 		options: []server.Option{
 			server.WithCases(store, sealedHosts.Map(), all.Registry()),
 			server.WithHostsSaver(sealedHosts.Save),
 			server.WithSystemDiscover(),
 			server.WithMasterKey(session),
+			server.WithRecoverer(recoverer),
 		},
 	}
+	// Finish any move that a stop interrupted (a case still carrying an Archiving,
+	// Freeing or Erasing mark). With the master key locked the list cannot be read
+	// yet; the server runs the same recovery again at unlock. The hooks are
+	// registered by the code that makes the marks (P3 and P4), through
+	// wiring.recoverer, before the server starts taking calls.
+	recoverAtStart(recoverer)
 	if seams.now != nil {
 		return wiring, nil
 	}
