@@ -108,6 +108,34 @@ func TestEraseHonoursTheBelief(t *testing.T) {
 	})
 }
 
+func TestEraseLineUsesTheLogsOwnClock(t *testing.T) {
+	t.Run("log with a clock", func(t *testing.T) {
+		fixed := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+		log := NewClockedErasedLog(NewErasedFile(filepath.Join(t.TempDir(), "erased.json")), func() time.Time { return fixed })
+		e := newCaseEnv(t, envConfig{options: []Option{WithErasedLog(log)}})
+		id := e.newCase("Clocked")
+		if res := e.json(http.MethodDelete, "/api/cases/"+id, `{"confirm":`+q(id)+`}`); res.Code != http.StatusNoContent {
+			t.Fatalf("erase = %d %s", res.Code, res.Body)
+		}
+		lines := log.Lines()
+		if len(lines) != 1 || string(lines[0].ID) != id || !lines[0].At.Equal(fixed) {
+			t.Fatalf("lines = %+v, want one line for %s at %v", lines, id, fixed)
+		}
+	})
+	t.Run("plain log", func(t *testing.T) {
+		log := NewErasedFile(filepath.Join(t.TempDir(), "erased.json"))
+		e := newCaseEnv(t, envConfig{options: []Option{WithErasedLog(log)}})
+		id := e.newCase("Plain")
+		if res := e.json(http.MethodDelete, "/api/cases/"+id, `{"confirm":`+q(id)+`}`); res.Code != http.StatusNoContent {
+			t.Fatalf("erase = %d %s", res.Code, res.Body)
+		}
+		lines := log.Lines()
+		if len(lines) != 1 || time.Since(lines[0].At) >= time.Minute {
+			t.Fatalf("lines = %+v, want one line made just now", lines)
+		}
+	})
+}
+
 func TestEraseTakesTheShortCodeOrTheFullID(t *testing.T) {
 	e := newEraseEnv(t, envConfig{})
 	a, b := e.newCase("A"), e.newCase("B")
