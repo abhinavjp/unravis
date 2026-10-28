@@ -423,11 +423,15 @@ func (h *handler) deleteRetry(w http.ResponseWriter, r *http.Request, arg string
 	if !ok {
 		return
 	}
-	_, rs, _, done, ok := h.retryCaseOf(w, r, rawCase)
+	c, rs, _, done, ok := h.retryCaseOf(w, r, rawCase)
 	if !ok {
 		return
 	}
 	defer done()
+	if casestore.StateOf(c.Info()) != casestore.StateOpen {
+		writeCaseFailure(w, http.StatusConflict, "case-closed", retryClosedText)
+		return
+	}
 	if err := rs.RemoveRetry(r.Context(), rid); err != nil {
 		writeRetryError(w, err)
 		return
