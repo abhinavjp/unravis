@@ -113,3 +113,35 @@ test('L3-03 new connection copy', () => {
   assert.ok(c.noMongo.includes('+ MongoDB'));
   assert.doesNotMatch(c.testDemo, /demo/i);
 });
+
+test('L3-04 Add another day shows only the last result and says the reference stays', () => {
+  const day = read('src/components/sources/AddAnotherDay.svelte');
+  assert.doesNotMatch(day, /let added = \$state/);
+  assert.doesNotMatch(day, /\{#if added\}/);
+  assert.match(day, /let said = \$state<\{ good: boolean; text: string \} \| null>\(null\)/);
+  assert.match(day, /said = result\.saved \? \{ good: true, text: DAY_TEXT\.added \} : runNotice\(result\)/);
+  assert.match(day, /<LaneRunner [^\n]*\n[^\n]*ownNotice onStart=\{\(\) => \{ said = null; \}\} onRan=\{ran\}/);
+  assert.doesNotMatch(day, /<LaneRunner [^>]*runLabel/);
+  assert.match(day, /shiftDays\(latest\.incident, 1\)/);
+  assert.match(day, /reference=\{latest\.reference\}/);
+  assert.match(day, /\{#if readOnly\}/);
+  assert.match(day, /<p class="hint" data-reference-stays>\{DAY_TEXT\.referenceStays\}<\/p>/);
+  assert.ok(day.indexOf('DAY_TEXT.prefill') < day.indexOf('DAY_TEXT.referenceStays'));
+  assert.match(day, /\{#if said\}[^\n]*role=\{said\.good \? 'status' : 'alert'\}/);
+  const runner = read('src/components/sources/LaneRunner.svelte');
+  assert.match(runner, /onStart\?: \(\) => void/);
+  assert.match(runner, /done = ''; problem = '';\s*\n\s*onStart\?\.\(\);/);
+  assert.match(runner, /if \(!ownNotice\)/);
+  const step = read('src/components/sources/SourceStep.svelte');
+  assert.equal((step.match(/ownNotice/g) ?? []).length, 2);
+});
+
+test('L3-04 Add another day copy', () => {
+  assert.ok(copy.DAY_TEXT.referenceStays.includes('does not move'));
+  assert.ok(copy.DAY_TEXT.referenceStays.includes('same normal period'));
+  assert.ok(copy.DAY_TEXT.prefill.startsWith('The incident times'));
+  assert.equal(copy.DAY_TEXT.added, 'Day added to the case.');
+  const lanes = loadTypeScript('src/lib/lanes.ts');
+  assert.equal(lanes.runNotice({ saved: true, saveError: '', day: {} }).good, true);
+  assert.equal(lanes.runNotice({ saved: false, saveError: 'x', day: {} }).good, false);
+});

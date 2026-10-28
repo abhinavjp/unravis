@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { fetchLaneDays, groupSources, readableByDay, shiftDays, type LaneDay, type LaneRunResult, type LaneSource } from '../../lib/lanes';
+  import { fetchLaneDays, groupSources, readableByDay, runNotice, shiftDays, type LaneDay, type LaneRunResult, type LaneSource } from '../../lib/lanes';
   import { DAY_TEXT, HUB_TEXT, NUTSHELL } from '../../lib/copy/sourcesCopy';
   import LaneRunner from './LaneRunner.svelte';
   import StateSticker from './StateSticker.svelte';
@@ -14,7 +14,7 @@
   let days = $state.raw<LaneDay[]>([]);
   let loaded = $state(false);
   let pickKey = $state('');
-  let added = $state(false);
+  let said = $state<{ good: boolean; text: string } | null>(null);
 
   const sources = $derived<LaneSource[]>(groupSources(days));
   const byDay = $derived(sources.filter(s => readableByDay(s.kind)));
@@ -29,7 +29,8 @@
   }
   onMount(() => { void load(); });
   async function ran(result: LaneRunResult) {
-    added = result.saved;
+    // One sentence for the last press only: this page says it (ownNotice), because loading the new day replaces the runner below.
+    said = result.saved ? { good: true, text: DAY_TEXT.added } : runNotice(result);
     await load();
     if (result.saved) onDone?.();
   }
@@ -73,14 +74,15 @@
     {:else if picked && latest && preset}
       {#key picked.key + preset.start}
         <LaneRunner {caseId} kind="sql" {days} database={picked.database} lockDatabase incident={preset} reference={latest.reference}
-          connectionLabel={picked.label} onRan={ran} {onGone} />
+          connectionLabel={picked.label} ownNotice onStart={() => { said = null; }} onRan={ran} {onGone} />
       {/key}
       <p class="hint">{DAY_TEXT.prefill}</p>
+      <p class="hint" data-reference-stays>{DAY_TEXT.referenceStays}</p>
       <p class="hint">{DAY_TEXT.expects}</p>
       <p class="hint">{DAY_TEXT.emptyDay}</p>
       <p class="hint">{DAY_TEXT.rerun}</p>
     {/if}
-    {#if added}<p class="say good" role="status">{DAY_TEXT.added}</p>{/if}
+    {#if said}<p class="say {said.good ? 'good' : 'bad'}" role={said.good ? 'status' : 'alert'} data-said>{said.text}</p>{/if}
   {/if}
   {#if onCancel}<div class="actions"><button type="button" class="btn" onclick={() => onCancel?.()}>{DAY_TEXT.cancel}</button></div>{/if}
 </section>
