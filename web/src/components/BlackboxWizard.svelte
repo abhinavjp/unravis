@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import {
-    NAME_MAX, blackboxApi, defaultSettings, nameProblem, packFileName, refusalText, saveBlob, settingsProblem,
+    NAME_MAX, blackboxApi, defaultSettings, nameProblem, packFileName, refusalText, saveBlob, settingsProblem, wizardEscape,
     type BlackboxItem, type InstallAnswer, type Settings, type ThisPc
   } from '../lib/blackbox';
   import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
@@ -32,6 +32,7 @@
   let problem = $state('');
   let phase = $state<Phase>({ kind: 'idle' });
   let heading = $state<HTMLElement>();
+  let rootEl = $state<HTMLElement>();
 
   const nameWords = $derived.by(() => {
     const p = nameProblem(name);
@@ -95,11 +96,27 @@
     phase = { kind: 'idle' };
     go(3);
   }
+  // Esc steps back inside the wizard. The window sees the key first (capture), so the drawer does not close. It acts only
+  // while focus is inside the wizard, as CaseKeyCard does for its own Cancel (D-B-49).
+  function escape(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || !rootEl?.contains(document.activeElement)) return;
+    const what = wizardEscape(part, busy, phase.kind === 'installed' || phase.kind === 'pack');
+    if (what === 'none') return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (what === 'back') {
+      if (part === 4) backToSettings(); else void go(part - 1);
+    } else if (what === 'leave') {
+      onLeave();
+    }
+  }
 </script>
 
-<div class="bb-wizard">
+<svelte:window onkeydowncapture={escape} />
+
+<div class="bb-wizard" bind:this={rootEl}>
   <header class="bb-wizard-head">
-    <h3 tabindex="-1" bind:this={heading}>{T.wizardTitle}</h3>
+    <h3 tabindex="-1" bind:this={heading}>{T.wizardTitle}{#if phase.kind !== 'installed' && phase.kind !== 'pack'} <span class="bb-part-now">{T.partHeading(part, T.partNames[part - 1])}</span>{/if}</h3>
     <p class="bb-note">{T.wizardNothingSaved}</p>
     <ol class="bb-parts" aria-label={T.partOf(part)}>
       {#each T.partNames as label, i (label)}
@@ -208,6 +225,7 @@
   .bb-wizard { display: grid; gap: var(--space-4); min-width: 0; }
   .bb-wizard-head h3 { margin: 0; font-size: var(--fs-5); font-weight: 600; }
   .bb-wizard-head h3:focus-visible { outline-offset: 3px; }
+  .bb-part-now { display: block; margin-top: 2px; font-size: 13px; font-weight: 500; color: var(--text-2); }
   .bb-parts { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); margin: var(--space-3) 0 0; padding: 0; list-style: none; font-size: 13px; color: var(--text-2); }
   .bb-parts li.current { color: var(--text); font-weight: 600; }
   .bb-part-n { display: inline-grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 50%; font-size: 12px; font-variant-numeric: tabular-nums; }

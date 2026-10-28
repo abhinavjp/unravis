@@ -133,6 +133,8 @@ export const BB_TEXT = {
   wizardNothingSaved: 'Nothing is saved until the last step.',
   partOf: (n: number) => 'Part ' + n + ' of 4',
   partNames: ['Name', 'Where', 'Settings', 'Review'],
+  // The visible heading line, for example "Part 2 of 4: Where" (D-B-49).
+  partHeading: (n: number, label: string) => 'Part ' + n + ' of 4: ' + label,
   done: 'Done',
   next: 'Next',
   nextWhere: 'Next: Where',
@@ -379,6 +381,7 @@ export function blackboxCopyEntries(): LintEntry[] {
       const fn = value as (...args: any[]) => string;
       if (key === 'packWill') add(key, fn('unravis-blackbox-web-a.zip', 'web-a'));
       else if (key === 'partOf') add(key, fn(2));
+      else if (key === 'partHeading') add(key, fn(2, 'Where'));
       else if (key === 'packReadyTitle' || key === 'removeTitle' || key === 'removeTypeName' || key === 'snapshotTitle' || key === 'duplicateText' || key === 'addFound' || key === 'installedText' || key === 'caseUseOther') add(key, fn('web-a'));
       else if (key === 'snapshotSaved') add(key, fn('D:\\UnravisBlackbox\\snapshots\\web-a-2026-10-20-0905', '46 MB'));
       else if (key === 'removedDeleted' || key === 'snapshotRecordings' || key === 'snapshotLogs' || key === 'hostTorn' || key === 'hostGapShort' || key === 'hostGapLong' || key === 'hostGapMinutes' || key === 'hostMinutes') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }

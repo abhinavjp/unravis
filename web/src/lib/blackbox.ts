@@ -359,3 +359,14 @@ export function gapSummary(gaps: Span[] | undefined): { short: Span[]; long: Spa
   const long = gaps.filter(g => g.kind === 'long');
   return { short, long, shortMinutes: short.reduce((n, g) => n + g.minutes, 0), longMinutes: long.reduce((n, g) => n + g.minutes, 0) };
 }
+
+/**
+ * What Escape does inside the Place a Blackbox wizard (D-B-49). `none` leaves the key to the drawer (the finished screens),
+ * `swallow` eats it while an install or pack is running, `back` goes one part back, `leave` goes to the list from Part 1.
+ */
+export type WizardEscape = 'none' | 'swallow' | 'back' | 'leave';
+export function wizardEscape(part: number, busy: boolean, finished: boolean): WizardEscape {
+  if (finished) return 'none';
+  if (busy) return 'swallow';
+  return part > 1 ? 'back' : 'leave';
+}

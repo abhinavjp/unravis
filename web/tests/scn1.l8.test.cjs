@@ -142,3 +142,36 @@ test('D-B-47: a refused host read clears the old answer and the windows panel st
   assert.match(card, /<details class="bb-windows" open>/);
   assert.doesNotMatch(card, /open=\{!answer\}/);
 });
+
+test('D-B-49: wizardEscape says what Esc does on each part', () => {
+  assert.equal(bb.wizardEscape(1, false, false), 'leave');
+  assert.equal(bb.wizardEscape(2, false, false), 'back');
+  assert.equal(bb.wizardEscape(3, false, false), 'back');
+  assert.equal(bb.wizardEscape(4, false, false), 'back');
+  assert.equal(bb.wizardEscape(4, true, false), 'swallow');
+  assert.equal(bb.wizardEscape(1, true, false), 'swallow');
+  assert.equal(bb.wizardEscape(4, false, true), 'none');
+  assert.equal(bb.wizardEscape(4, true, true), 'none');
+});
+
+test('D-B-49: the wizard takes Esc in the capture phase, only while focus is inside it, and the drawer is untouched', () => {
+  const wizard = read('src/components/BlackboxWizard.svelte');
+  assert.match(wizard, /<svelte:window onkeydowncapture=\{escape\} \/>/);
+  assert.match(wizard, /<div class="bb-wizard" bind:this=\{rootEl\}>/);
+  assert.match(wizard, /!rootEl\?\.contains\(document\.activeElement\)/);
+  assert.match(wizard, /event\.preventDefault\(\);\s*event\.stopPropagation\(\);/);
+  assert.match(wizard, /if \(part === 4\) backToSettings\(\); else void go\(part - 1\);/);
+  assert.match(wizard, /wizardEscape\(part, busy, phase\.kind === 'installed' \|\| phase\.kind === 'pack'\)/);
+  assert.doesNotMatch(wizard, /localStorage|sessionStorage|indexedDB|console\.(log|info|debug)/);
+  // The drawer keeps its own handler; nothing in this lane edits it.
+  assert.match(read('src/components/Drawer.svelte'), /stopEscape/);
+});
+
+test('D-B-49: the heading shows the real part, for example "Part 2 of 4: Where"', () => {
+  assert.equal(T.partHeading(2, T.partNames[1]), 'Part 2 of 4: Where');
+  assert.equal(T.partHeading(4, T.partNames[3]), 'Part 4 of 4: Review');
+  const wizard = read('src/components/BlackboxWizard.svelte');
+  assert.match(wizard, /<span class="bb-part-now">\{T\.partHeading\(part, T\.partNames\[part - 1\]\)\}<\/span>/);
+  assert.match(wizard, /aria-label=\{T\.partOf\(part\)\}/);
+  assert.ok(blackboxCopyEntries().some((entry) => entry.id === 'blackbox.partHeading'), 'the lint reads partHeading');
+});
