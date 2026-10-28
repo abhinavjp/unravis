@@ -210,7 +210,7 @@ Unravis does not name a culprit.
 
 This panel has no screen of its own: it is captured inside the Tools screens.
 
-Pick a moment in UTC and a span of 0 to 120 minutes either side. The audit lane lists the calls of the window (the first 200 at most) as bars, banded by their time: under 1 second, 1 to 2 seconds, over 2 seconds. These bands are not the suspect colours. A call with no time is shown as No time, never as fast. The SQL Server, MongoDB and Host lanes read Cannot test yet. The page never shows a user, an address or a URL. Nearby activity is not included in the report.
+Pick a moment in UTC and a span of 0 to 120 minutes either side. The audit lane lists the calls of the window (the first 100 at most) as bars, banded by their time: under 1 second, 1 to 2 seconds, over 2 seconds. These bands are not the suspect colours. A call with no time is shown as No time, never as fast. The SQL Server, MongoDB and Host lanes read Cannot test yet. The page never shows a user, an address or a URL. Nearby activity is not included in the report.
 
 ### Checklist screen
 

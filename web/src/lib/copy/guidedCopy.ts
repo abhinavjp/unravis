@@ -386,7 +386,7 @@ export function guidedLintEntries(): LintEntry[] {
   add('guided.noApiRows', GUIDED_TEXT.noApiRows(20));
   add('guided.missingLead', GUIDED_TEXT.missingLead('a Blackbox source'));
   add('guided.exportReady', GUIDED_TEXT.exportReady('report.html', '12 KB'));
-  add('guided.nearbyMore', GUIDED_TEXT.nearbyMore(200));
+  add('guided.nearbyMore', GUIDED_TEXT.nearbyMore(100));
   for (const [key, value] of Object.entries(SAVED_VIEW_ERRORS)) add(`views.${key}`, value);
   for (const [key, value] of Object.entries(CHECKLIST_ERRORS)) add(`checklist.${key}`, value);
   return entries;

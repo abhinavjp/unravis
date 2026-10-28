@@ -6,7 +6,8 @@ import { parseLocalUtc, toLocalUtc } from './frame';
  */
 
 export const MAX_SPAN_MINUTES = 120;
-export const NEARBY_ROWS = 200;
+/** One page. The server refuses a page over its MaxPageSize (100, internal/audit/models.go); a contract test keeps the two in step. */
+export const NEARBY_ROWS = 100;
 const MINUTE = 60 * 1000;
 
 export type DurationBand = 'fast' | 'slow' | 'very-slow' | 'unknown';

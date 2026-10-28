@@ -187,3 +187,14 @@ test('the Manual tools windows panel does not fold itself when the first date is
   assert.ok(!/<details class="windows"[^>]*\bopen=\{store\.frame/.test(src), 'open must not follow the frame');
   assert.ok(/<details class="windows" bind:open=\{windowsOpen\}>/.test(src));
 });
+
+test('contract: the nearby page size never exceeds the server page limit', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const go = fs.readFileSync(path.join(__dirname, '../../internal/audit/models.go'), 'utf8');
+  const m = /MaxPageSize\s*=\s*(\d+)/.exec(go);
+  assert.ok(m, 'MaxPageSize not found in internal/audit/models.go');
+  const serverMax = Number(m[1]);
+  assert.ok(Number.isInteger(n.NEARBY_ROWS) && n.NEARBY_ROWS >= 1, 'a page of at least one row');
+  assert.ok(n.NEARBY_ROWS <= serverMax, `the client asks for ${n.NEARBY_ROWS} rows, the server allows ${serverMax}`);
+});
