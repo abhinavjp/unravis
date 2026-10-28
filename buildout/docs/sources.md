@@ -32,12 +32,17 @@ Screen `p7-connections` lists every saved connection, SQL Server and MongoDB, in
 - Forget asks once. It removes the saved connection and its password. It does not touch the server.
 - You can save up to 20 SQL Server connections. At 20 the add button is disabled and the page says so. If a 21st is sent anyway, the server refuses it (409) and nothing is removed.
 - A wrong password shows Failed with the server's own message. It never shows the password.
-- In the demo nothing can be saved, so the page says the demo does not keep connections.
+- The demo has a sample SQL Server and a sample MongoDB already saved, and it keeps what you add only while it runs. It never opens a real connection and never keeps a password. Type the database name AuditDb to read a day that works, NoGrantDb to see the grant script, EmptyDb to see Nothing read, and for MongoDB ProfilerOffDb to see the profiler guide.
 
 Screen `p7-sql-form` is the form for one SQL Server connection. Save, Test and Cancel are all outlined while the form sits on case home, because case home already has its main button. Leave the password box empty on an edit to keep the saved password.
 
 ![The SQL Server connection form, dark](../screenshots/P7/p7-sql-form-dark.png)
 ![The SQL Server connection form, light](../screenshots/P7/p7-sql-form-light.png)
+
+Screen `p7-sql-test-ok` is the same form after Test: the word Works and the server version sit under the buttons, and no password is shown.
+
+![A SQL Server connection test that works, dark](../screenshots/P7/p7-sql-test-ok-dark.png)
+![A SQL Server connection test that works, light](../screenshots/P7/p7-sql-test-ok-light.png)
 
 ### Step 7: SQL Server
 

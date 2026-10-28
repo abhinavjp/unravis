@@ -182,6 +182,24 @@
       ]
     },
     {
+      "id": "p7-sql-test-ok", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=button[name=\"+ SQL Server\"s]"},
+        {"waitFor": "role=heading[name=\"SQL Server connection\"]"},
+        {"fill": ["role=textbox[name=\"Server name\"]", "demo-sql.example.invalid"]},
+        {"fill": ["role=textbox[name=\"User name\"]", "unravis_ro"]},
+        {"fill": ["input[type=password]", "demo-only"]},
+        {"click": "role=button[name=\"Test\"s]"},
+        {"waitFor": "text=Works"}
+      ]
+    },
+    {
       "id": "p7-grant-script-2019", "phase": "P7", "doc": "sources.md", "narrow": false,
       "steps": [
         {"goto": "/"},
