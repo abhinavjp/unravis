@@ -49,6 +49,8 @@ export interface Facts {
   files: number;
   samples: number;
   gaps: number;
+  /** Recording files that were not read to the end (dropped or missing). Absent when none. */
+  unread?: number;
   freePercent?: number;
 }
 
@@ -272,16 +274,40 @@ export function defaultSettings(name = ''): Settings {
 
 export type SettingsProblem = 'name' | 'folder' | 'interval' | 'keep' | 'size' | 'free' | 'port' | 'bind' | 'logs';
 
+const HOST_NAME = /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+
+/** Whether text can be a listen address: IPv4, IPv6 or a host name. Mirrors validBind in internal/blackbox/config.go. */
+export function validBind(text: string): boolean {
+  const s = text.trim();
+  if (!s || s.length > 253) return false;
+  if (/^[0-9.]+$/.test(s)) {
+    const parts = s.split('.');
+    return parts.length === 4 && parts.every(p => /^\d{1,3}$/.test(p) && Number(p) <= 255);
+  }
+  if (s.includes(':')) return /^[0-9A-Fa-f:.]+$/.test(s) && (s.match(/:/g) ?? []).length >= 2;
+  return HOST_NAME.test(s);
+}
+
+/** Whether a folder is a drive or share root or a Windows system folder. Mirrors unsafeFolder in internal/blackbox/config.go. */
+export function unsafeFolder(folder: string): boolean {
+  const rest = folder.trim().replace(/^[A-Za-z]:/, '').replace(/^[\\/]+|[\\/]+$/g, '');
+  if (!rest || rest === '.') return true;
+  const parts = rest.split(/[\\/]+/).filter(Boolean);
+  const first = parts[0].toLowerCase();
+  if (['windows', 'program files', 'program files (x86)', 'system volume information', '$recycle.bin'].includes(first)) return true;
+  return ['users', 'programdata', 'documents and settings'].includes(first) && parts.length === 1;
+}
+
 /** The first thing wrong with the settings, or null. The server checks again; this only saves a round trip. */
 export function settingsProblem(s: Settings): SettingsProblem | null {
   if (nameProblem(s.name)) return 'name';
-  if (!/^[A-Za-z]:[\\/]/.test(s.folder.trim()) || /^[A-Za-z]:[\\/]?$/.test(s.folder.trim())) return 'folder';
+  if (!/^[A-Za-z]:[\\/]/.test(s.folder.trim()) || unsafeFolder(s.folder)) return 'folder';
   if (!INTERVALS.includes(s.intervalSeconds as 5 | 15 | 30 | 60)) return 'interval';
   if (!Number.isInteger(s.keepDays) || s.keepDays < 1 || s.keepDays > 365) return 'keep';
   if (!(s.maxGB >= 0.1 && s.maxGB <= 10000)) return 'size';
   if (!Number.isInteger(s.minFreePercent) || s.minFreePercent < 1 || s.minFreePercent > 50) return 'free';
   if (!Number.isInteger(s.port) || s.port < 1 || s.port > 65535) return 'port';
-  if (!s.bind.trim()) return 'bind';
+  if (!validBind(s.bind)) return 'bind';
   if (s.logPaths.some(p => !/^[A-Za-z]:[\\/]/.test(p.trim()))) return 'logs';
   return null;
 }

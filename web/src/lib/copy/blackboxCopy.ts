@@ -66,7 +66,7 @@ export const BB_TEXT = {
   servicesSteps: 'On the server, open Services (services.msc). Find UnravisBlackbox. Choose Start, or Restart if it is late. Wait one minute. The state here changes to Running.',
   servicesTitle: 'Steps for the server',
   anotherServer: 'This Blackbox is on another server, so Unravis does not offer Stop or Snapshot for it. Use the steps below.',
-  readKeyNote: 'The read key was shown once on that server when the Blackbox was installed. It is saved here, sealed with Windows data protection, and never shown again.',
+  readKeyNote: 'You typed the read key when you added this Blackbox. It is saved here, sealed with Windows data protection, and never shown again. If the server makes a new key, use Type a new read key.',
   readKeyNoteThisPc: 'Unravis made the read key when it installed this Blackbox and sealed it on this PC at once. It is shown only here, only when you press Show or Copy, and never put in a case file.',
   keyTitle: 'Read key',
   keyHereOnly: 'Shown here only for a Blackbox that is on this PC.',
@@ -75,6 +75,7 @@ export const BB_TEXT = {
   keyCopy: 'Copy',
   keyWorking: 'Getting the read key.',
   keyCopied: 'Copied. Paste it where it is needed. Unravis does not keep a copy of it on this page.',
+  keyShownAnnounce: 'Read key shown.',
   keyHiddenAgain: 'The key was hidden again after a short time.',
   keyFailed: 'The read key could not be shown.',
   keyCopyFailed: 'Copy did not work here. Press Show and copy it by hand.',
@@ -104,6 +105,16 @@ export const BB_TEXT = {
   applied: 'Applied. The service restarted with the new settings.',
   appliedNoRestart: 'Applied. The service was stopped, so the new settings are used when it next starts.',
   samples: 'samples',
+  // "4 files and 960 samples", never "4, 960", which reads as 4,960.
+  filesAndSamples: (files: number, samples: number) => files + (files === 1 ? ' file' : ' files') + ' and ' + samples + (samples === 1 ? ' sample' : ' samples'),
+  // The Gaps row. Files that could not be read to the end are what make a Blackbox Incomplete, so they show here too.
+  gapsText: (gaps: number, unread: number) => {
+    const parts: string[] = [];
+    if (gaps > 0) parts.push(gaps + (gaps === 1 ? ' gap' : ' gaps'));
+    if (unread > 0) parts.push(unread + (unread === 1 ? ' recording file was' : ' recording files were') + ' not read to the end');
+    return parts.length ? parts.join('. ') : 'none';
+  },
+  goneFromList: 'That Blackbox is not in the list any more. It may have been removed in another window.',
 
   /* wizard */
   wizardTitle: 'Place a Blackbox',
@@ -165,13 +176,13 @@ export const BB_TEXT = {
   housekeepingNote: 'Housekeeping always runs. You can lower the limits but not turn them off.',
   settingProblems: {
     name: 'Go back and fix the name.',
-    folder: 'Type a full folder path such as D:\\UnravisBlackbox. A drive root is not allowed.',
+    folder: 'Type a full folder path such as D:\\UnravisBlackbox. A drive root or a Windows system folder is not allowed.',
     interval: 'Choose 5, 15, 30 or 60 seconds.',
     keep: 'Keep for 1 to 365 days.',
     size: 'Use a size from 0.1 to 10000 GB.',
     free: 'Use 1 to 50 percent.',
     port: 'Use a port from 1 to 65535.',
-    bind: 'Type an address such as 127.0.0.1.',
+    bind: 'Listens on needs an address such as 127.0.0.1, or a server name. Spaces and other symbols are not allowed.',
     logs: 'Each log folder must be a full path.'
   } as Record<SettingsProblem, string>,
 
@@ -290,6 +301,7 @@ export const BB_TEXT = {
   caseUseIntro: 'A case can take its host readings for Step 9 from one Blackbox. The case keeps only the name, never the address, the folder or the read key.',
   caseUseNoCase: 'Open a case first. Then this Blackbox can be used in it.',
   caseUseNotPlaced: 'This Blackbox is not placed yet, so a case cannot use it.',
+  caseUseNotReadable: 'This Blackbox cannot be read right now, so a case cannot use it yet. Fix that first, then use it here.',
   caseUseButton: 'Use in this case',
   caseUseStop: 'Stop using it in this case',
   caseUseChecking: 'Looking at the case.',
@@ -314,6 +326,7 @@ export const BB_TEXT = {
   hostOnset: 'The host first moved at',
   hostTopProcess: 'Busiest process near the start',
   hostNutshellLabel: 'In a nutshell',
+  hostNutshell: 'We check the host against what this Blackbox recorded: CPU, memory, disk and network. A minute it did not record is never counted as zero.',
   hostGapTitle: 'Some minutes were not recorded',
   hostGapShort: (minutes: number) => minutes + (minutes === 1 ? ' minute has' : ' minutes have') + ' no sample, in gaps of 2 minutes or less. The check ran on the minutes that exist. Missing minutes are never counted as zero.',
   hostGapLong: (minutes: number) => minutes + (minutes === 1 ? ' minute has' : ' minutes have') + ' no sample, in gaps longer than 2 minutes. For those minutes this step says Cannot test yet.',
@@ -358,6 +371,8 @@ export function blackboxCopyEntries(): LintEntry[] {
       else if (key === 'removedDeleted' || key === 'snapshotRecordings' || key === 'snapshotLogs' || key === 'hostTorn' || key === 'hostGapShort' || key === 'hostGapLong' || key === 'hostGapMinutes' || key === 'hostMinutes') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }
       else if (key === 'hostReadNote') add(key, fn(2, 240));
       else if (key === 'reviewKeepsText') add(key, fn(7, 2, 10));
+      else if (key === 'filesAndSamples') { add(key + '.1', fn(1, 1)); add(key + '.2', fn(4, 960)); }
+      else if (key === 'gapsText') { add(key + '.none', fn(0, 0)); add(key + '.gaps', fn(2, 0)); add(key + '.unread', fn(0, 1)); add(key + '.both', fn(1, 3)); }
     }
   }
   for (const id of STATE_IDS) add('stateNext.' + id, T.stateNext[id]);

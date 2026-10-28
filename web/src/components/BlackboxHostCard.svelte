@@ -76,7 +76,7 @@
     {#if answer}
       <div class="bb-step">
         <p class="bb-ready"><strong>{T.hostWords[answer.step.readiness] ?? answer.step.readiness}</strong></p>
-        {#if answer.step.nutshell}<p class="bb-nutshell"><span class="bb-label">{T.hostNutshellLabel}</span> {answer.step.nutshell}</p>{/if}
+        <p class="bb-nutshell"><span class="bb-label">{T.hostNutshellLabel}</span> {T.hostNutshell}</p>
         {#if answer.step.reasons?.length}<ul class="bb-list">{#each answer.step.reasons as reason, i (i)}<li>{reason}</li>{/each}</ul>{/if}
 
         {#if gaps}

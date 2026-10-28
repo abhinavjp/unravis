@@ -132,7 +132,7 @@
     <section class="bb-block" aria-label={T.nameHeading}>
       <h4>{T.nameHeading}</h4>
       <label class="bb-field"><span>{T.nameLabel}</span>
-        <input type="text" bind:value={name} maxlength={NAME_MAX + 8} autocomplete="off" spellcheck="false" aria-describedby="bb-name-help" aria-invalid={problem && nameWords ? 'true' : undefined} onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); toWhere(); } }} />
+        <input type="text" bind:value={name} maxlength={NAME_MAX + 8} autocomplete="off" spellcheck="false" aria-describedby="bb-name-help" aria-invalid={problem && nameWords ? 'true' : undefined} oninput={() => { if (problem && !nameProblem(name)) problem = ''; }} onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); toWhere(); } }} />
       </label>
       <p class="bb-note" id="bb-name-help">{T.nameHelp}</p>
     </section>
