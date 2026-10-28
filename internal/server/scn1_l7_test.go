@@ -255,7 +255,7 @@ func TestScn1L7TypedNotesAreScrubbedInTheReport(t *testing.T) {
 			t.Fatal(res.Body)
 		}
 	}
-	if res := e.json(http.MethodPost, "/api/cases/"+id+"/views", `{"name":"token=viewsecret","tool":"routes","settings":{"minMs":500}}`); res.Code != http.StatusOK {
+	if res := e.json(http.MethodPost, "/api/cases/"+id+"/views", `{"name":"token=viewsecret","tool":"slowest-apis","settings":{"minMs":500}}`); res.Code != http.StatusOK {
 		t.Fatal(res.Body)
 	}
 	for _, format := range []string{"html", "csv"} {
@@ -368,4 +368,55 @@ func TestScn1L7ExportReadsTheCaseLedger(t *testing.T) {
 	if r := request(h, http.MethodPost, "/api/export/preview", string(raw), true); r.Code != http.StatusNotFound {
 		t.Errorf("unknown ledgerCaseId = %d %s, want 404", r.Code, r.Body.String())
 	}
+}
+
+func TestScn1L7SavedViewsRefuseUnknownToolAndGarbageValues(t *testing.T) {
+	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
+		base := "/api/cases/" + id + "/views"
+		view := func(tool, settings string) string {
+			return `{"name":"v","tool":"` + tool + `","settings":` + settings + `}`
+		}
+		bad := map[string]string{
+			"unknown tool":      view("no-such-tool", `{}`),
+			"old tool name":     view("routes", `{}`),
+			"window not a date": view("slowest-apis", `{"incidentStart":"not-a-date"}`),
+			"window a number":   view("slowest-apis", `{"incidentEnd":12345}`),
+			"window impossible": view("slowest-apis", `{"referenceStart":"2026-13-45T99:99"}`),
+			"window an object":  view("slowest-apis", `{"referenceEnd":{"a":1}}`),
+			"minCalls text":     view("slowest-apis", `{"minCalls":"abc"}`),
+			"minCalls negative": view("slowest-apis", `{"minCalls":-1}`),
+			"minCalls fraction": view("slowest-apis", `{"minCalls":1.5}`),
+			"minCalls too big":  view("slowest-apis", `{"minCalls":1000001}`),
+			"match an object":   view("slowest-apis", `{"match":{"a":1}}`),
+			"route a number":    view("slowest-apis", `{"route":5}`),
+		}
+		for name, body := range bad {
+			res := e.json(http.MethodPost, base, body)
+			if res.Code != http.StatusBadRequest || failureOf(t, res).Reason != "plan-invalid" {
+				t.Errorf("%s = %d %s, want 400 plan-invalid", name, res.Code, res.Body)
+			}
+		}
+		good := map[string]string{
+			"page window":     view("slowest-apis", `{"incidentStart":"2026-10-24T10:00","incidentEnd":"2026-10-24T11:00","referenceStart":"","referenceEnd":""}`),
+			"seconds":         view("slowest-apis", `{"incidentStart":"2026-10-24T10:00:30"}`),
+			"full time":       view("slowest-apis", `{"incidentEnd":"2026-10-24T11:00:00Z"}`),
+			"filters":         view("slowest-apis", `{"minCalls":20,"match":"Payroll","route":"Payroll.Run"}`),
+			"minCalls zero":   view("slowest-apis", `{"minCalls":0}`),
+			"unknown key":     view("slowest-apis", `{"minMs":500}`),
+			"no settings key": `{"name":"v","tool":"changes"}`,
+		}
+		for name, body := range good {
+			if res := e.json(http.MethodPost, base, body); res.Code != http.StatusOK {
+				t.Errorf("%s = %d %s, want 200", name, res.Code, res.Body)
+			}
+		}
+		for _, tool := range []string{
+			"response-time", "slowest-apis", "slowest-calls", "time-split", "calls-in-flight", "nearby-activity", "changes",
+			"sql-waits", "mongo-health", "host-resources", "sql-host", "after-fix", "suspect-summary",
+		} {
+			if res := e.json(http.MethodPost, base, view(tool, `{}`)); res.Code != http.StatusOK {
+				t.Errorf("tool %s = %d %s, want 200", tool, res.Code, res.Body)
+			}
+		}
+	})
 }

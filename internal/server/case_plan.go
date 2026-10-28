@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strings"
+	"time"
 
 	"api-audit-explorer/internal/casestore"
 )
@@ -37,6 +39,8 @@ const (
 	planViewFullText = "This case already holds as many saved views as it can keep. Delete one to save another."
 	planItemFullText = "This case already holds as many checklist items as it can keep. Delete one to add another."
 	planTooBigText   = "The saved view is larger than a case can keep."
+	planToolText     = "That tool is not one of the manual tools."
+	planValuesText   = "A saved view window must be a date and time, and the other filters must be text or a whole number."
 )
 
 /* ---------------------------------------------------------------- routing */
@@ -130,6 +134,62 @@ type savedViewBody struct {
 	Settings json.RawMessage `json:"settings"`
 }
 
+// viewTools are the manual tools a saved view can belong to. The list is the
+// TOOLS list in web/src/lib/guided/tools.ts; keep the two in step.
+var viewTools = map[string]bool{
+	"response-time": true, "slowest-apis": true, "slowest-calls": true, "time-split": true,
+	"calls-in-flight": true, "nearby-activity": true, "changes": true, "sql-waits": true,
+	"mongo-health": true, "host-resources": true, "sql-host": true, "after-fix": true,
+	"suspect-summary": true,
+}
+
+var viewWindowKeys = []string{"incidentStart", "incidentEnd", "referenceStart", "referenceEnd"}
+
+// validViewTime accepts what the page saves ("2026-10-24T10:00") and the usual
+// longer forms.
+func validViewTime(s string) bool {
+	for _, layout := range []string{"2006-01-02T15:04", "2006-01-02T15:04:05", time.RFC3339, time.RFC3339Nano} {
+		if _, err := time.Parse(layout, s); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// checkViewSettings checks the values of the filters a saved view is known to
+// hold. Keys it does not know are not its business (checkWorkspace judges them).
+func checkViewSettings(settings json.RawMessage) bool {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(settings, &obj) != nil {
+		return false
+	}
+	for _, key := range viewWindowKeys {
+		raw, present := obj[key]
+		if !present {
+			continue
+		}
+		var s string
+		if json.Unmarshal(raw, &s) != nil || (s != "" && !validViewTime(s)) {
+			return false
+		}
+	}
+	for _, key := range []string{"route", "match"} {
+		if raw, present := obj[key]; present {
+			var s string
+			if json.Unmarshal(raw, &s) != nil {
+				return false
+			}
+		}
+	}
+	if raw, present := obj["minCalls"]; present {
+		var n float64
+		if json.Unmarshal(raw, &n) != nil || n < 0 || n > 1000000 || n != math.Trunc(n) {
+			return false
+		}
+	}
+	return true
+}
+
 func (h *handler) caseViewsList(w http.ResponseWriter, r *http.Request, raw string) {
 	c, ps, ok := h.casePlanOf(w, r, raw)
 	if !ok {
@@ -172,6 +232,14 @@ func (h *handler) caseViewSave(w http.ResponseWriter, r *http.Request, raw strin
 		return
 	case err != nil:
 		writeCaseFailure(w, http.StatusBadRequest, "plan-invalid", planInvalidText)
+		return
+	}
+	if !viewTools[v.Tool] {
+		writeCaseFailure(w, http.StatusBadRequest, "plan-invalid", planToolText)
+		return
+	}
+	if !checkViewSettings(v.Settings) {
+		writeCaseFailure(w, http.StatusBadRequest, "plan-invalid", planValuesText)
 		return
 	}
 	// The same rule as the workspace note: no key that names a credential or an
