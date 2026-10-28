@@ -77,6 +77,8 @@
       <button type="button" class="secondary-button" disabled={store.frame.releases.length >= MAX_RELEASES} onclick={addChange}>+ {T.addChange}</button>
       <label class="check"><input type="checkbox" bind:checked={store.frame.releasesEntered} /> {T.changesEntered}</label>
     </div>
+    {#if store.frame.releases.length >= MAX_RELEASES}<p class="note" role="status">{T.changesFull}</p>{/if}
+    {#if store.frame.releases.length > 0 && !store.frame.releasesEntered}<p class="note" role="status">{T.changesUnticked}</p>{/if}
     <p class="note">{T.changesEnteredNote}</p>
   </fieldset>
 
