@@ -170,6 +170,16 @@ const grantMemory: { sql: GrantChoice; mongo: GrantChoice } = { sql: {}, mongo: 
 export const recallGrant = (kind: 'sql' | 'mongo'): GrantChoice => grantMemory[kind];
 export function rememberGrant(kind: 'sql' | 'mongo', choice: GrantChoice): void { grantMemory[kind] = { ...grantMemory[kind], ...choice }; }
 
+/** The tab a key moves to in a row of tabs (arrows wrap, Home and End go to the ends), or -1 when the key is not a tab key. */
+export function tabAfterKey(key: string, at: number, count: number): number {
+  if (count <= 0) return -1;
+  if (key === 'ArrowRight') return at >= count - 1 ? 0 : at + 1;
+  if (key === 'ArrowLeft') return at <= 0 ? count - 1 : at - 1;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  return -1;
+}
+
 // ---- windows ----------------------------------------------------------------------------------------------------------------------
 
 /** A window from two "YYYY-MM-DDTHH:MM" UTC inputs, or null when either is empty, unreadable or the end is not after the start. */

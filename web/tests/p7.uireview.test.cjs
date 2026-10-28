@@ -217,3 +217,27 @@ test('minor 12: a missing session says how to get back in, not that the read fai
   assert.match(copy.RUN_TEXT.signedOut, /Reload|link/);
   assert.notEqual(copy.RUN_TEXT.signedOut, copy.RUN_TEXT.failed);
 });
+
+// ---- minors 8, 10, 11: the hub tabs ---------------------------------------------------------------------------------------------------
+
+test('minor 8: the tab row has one tab stop and answers the arrow keys, Home and End', () => {
+  assert.equal(lanes.tabAfterKey('ArrowRight', 0, 6), 1);
+  assert.equal(lanes.tabAfterKey('ArrowRight', 5, 6), 0, 'wraps to the first');
+  assert.equal(lanes.tabAfterKey('ArrowLeft', 0, 6), 5, 'wraps to the last');
+  assert.equal(lanes.tabAfterKey('ArrowLeft', 3, 6), 2);
+  assert.equal(lanes.tabAfterKey('Home', 4, 6), 0);
+  assert.equal(lanes.tabAfterKey('End', 1, 6), 5);
+  assert.equal(lanes.tabAfterKey('Tab', 1, 6), -1, 'Tab is left to the browser');
+  assert.equal(lanes.tabAfterKey('ArrowRight', 0, 0), -1);
+  const hub = comp('SourcesHub');
+  assert.match(hub, /tabindex=\{tab === item\.id \? 0 : -1\}/);
+  assert.match(hub, /onkeydown=\{roving\}/);
+  assert.match(hub, /event\.preventDefault\(\);\s+tab = tabs\[to\]\.id;\s+document\.getElementById\('hub-tab-' \+ tab\)\?\.focus\(\)/, 'the tab it lands on opens and takes focus');
+});
+
+test('minor 10 and 11: the tab row is flush in the panel, and hover shows on the selected tab', () => {
+  const css = read('src/components/sources/sources.css');
+  assert.match(css, /\.src \.tabs \{[^}]*margin: 0 0 var\(--space-3\); padding: 0; overflow: visible; border-bottom: 0;/, 'the global .tabs margin, underline and scroll do not reach it');
+  assert.match(css, /\.src \.tabs button\[aria-selected='true'\]:hover/, 'the selected tab has a hover of its own');
+  assert.match(css, /\.src \.tabs button\[aria-selected='true'\]:hover[^}]*background: color-mix/);
+});

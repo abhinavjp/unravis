@@ -6,6 +6,7 @@
   import SourceCombinations from './SourceCombinations.svelte';
   import SqlStepPanel from './SqlStepPanel.svelte';
   import { HUB_TEXT } from '../../lib/copy/sourcesCopy';
+  import { tabAfterKey } from '../../lib/lanes';
   import './sources.css';
 
   // One place for the SQL Server and MongoDB sources of the open case: saved connections, Step 7, Step 8, Add data, Add another day and the
@@ -19,6 +20,14 @@
     { id: 'connections', label: HUB_TEXT.connections }, { id: 'sql', label: HUB_TEXT.sql }, { id: 'mongo', label: HUB_TEXT.mongo },
     { id: 'add', label: HUB_TEXT.add }, { id: 'day', label: HUB_TEXT.day }, { id: 'combos', label: HUB_TEXT.combos }
   ];
+  // One tab stop for the row (the selected tab); the arrow keys, Home and End move between tabs and open the one they land on.
+  function roving(event: KeyboardEvent) {
+    const to = tabAfterKey(event.key, tabs.findIndex(item => item.id === tab), tabs.length);
+    if (to < 0) return;
+    event.preventDefault();
+    tab = tabs[to].id;
+    document.getElementById('hub-tab-' + tab)?.focus();
+  }
   function choose(what: AddChoice) {
     if (what === 'sql') tab = 'sql';
     else if (what === 'mongo') tab = 'mongo';
@@ -31,7 +40,7 @@
 <div class="src" data-sources-hub>
   <div class="tabs" role="tablist" aria-label={HUB_TEXT.label}>
     {#each tabs as item (item.id)}
-      <button type="button" role="tab" class="btn" id="hub-tab-{item.id}" aria-selected={tab === item.id} aria-controls="hub-panel" onclick={() => { tab = item.id; }}>{item.label}</button>
+      <button type="button" role="tab" class="btn" id="hub-tab-{item.id}" aria-selected={tab === item.id} tabindex={tab === item.id ? 0 : -1} aria-controls="hub-panel" onkeydown={roving} onclick={() => { tab = item.id; }}>{item.label}</button>
     {/each}
   </div>
   <div id="hub-panel" role="tabpanel" aria-labelledby="hub-tab-{tab}">
