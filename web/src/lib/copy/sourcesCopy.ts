@@ -43,7 +43,8 @@ export const CONN_TEXT = {
   saving: 'Saving…',
   cancel: 'Cancel',
   saved: 'Saved.',
-  keepPasswordNote: 'A password is saved. Leave the password empty to keep it.'
+  keepPasswordNote: 'A password is saved. Leave the password empty to keep it.',
+  sqlFormIntro: 'Fill this in the way you do in SQL Server Management Studio. Press Test to check it connects. Press Save connection to keep the details on this computer.'
 } as const;
 
 /**
