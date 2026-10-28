@@ -97,6 +97,18 @@ func TestRealPipe(t *testing.T) {
 		}
 	}
 
+	// The pipe is owned by this test's own account, which a standard user also has: the production owner check refuses it, the same
+	// check trusting this account accepts it.
+	if err := NewClient(PipeDialer{Name: name, RequireKeeperOwner: true}).Ping(context.Background()); !errors.Is(err, ErrImpostor) {
+		t.Fatalf("a pipe owned by a person's account: want ErrImpostor, got %v", err)
+	}
+	if err := NewClient(PipeDialer{Name: name, RequireKeeperOwner: true, extraOwners: []string{u.User.Sid.String()}}).Ping(context.Background()); err != nil {
+		t.Fatalf("owner check trusting this account: %v", err)
+	}
+	if p := NewPipeDialer(name); !p.RequireSession0 || !p.RequireKeeperOwner {
+		t.Fatalf("production dialer must check session and owner: %+v", p)
+	}
+
 	if err := NewClient(PipeDialer{Name: name + "-absent"}).Ping(context.Background()); !errors.Is(err, ErrNotRunning) {
 		t.Fatalf("absent pipe: %v", err)
 	}

@@ -10,11 +10,13 @@
 //   - Per user (developer builds, tests, and a PC where the installer has not created the shared folder): what every earlier phase used,
 //     %APPDATA%\APIAuditExplorer and %LOCALAPPDATA%\APIAuditExplorer\cases, sealed for the current user.
 //
-// Unravis never creates the shared folder itself: the installer does, with its ACL. A folder Unravis made would carry default
-// permissions, so the absence of the folder means per-user mode.
+// Unravis never creates the shared folder itself: the installer does, with its ACL. Existence alone never turns shared mode on: any
+// person may create a folder under C:\ProgramData and own it, so the folder is used only when TrustSharedFolder accepts its owner and
+// ACL (trust.go). A folder that is present but not trusted means per-user mode, with the reason kept in Layout.SharedRefused.
 package datadir
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 )
@@ -55,14 +57,16 @@ type Layout struct {
 	KeeperDir string
 	// Pipe is the key keeper's pipe name.
 	Pipe string
+	// SharedRefused says why a shared folder that is present was not used (per-user mode); "" otherwise.
+	SharedRefused string
 }
 
 // Shared reports whether the shared layout (and so the key keeper) is in use.
 func (l Layout) Shared() bool { return l.Mode == ModeShared }
 
-// Resolve picks the layout. programData and userConfig are injected so tests never look at the real folders; exists reports whether a
-// folder exists.
-func Resolve(getenv func(string) string, programData, userConfig string, exists func(string) bool) Layout {
+// Resolve picks the layout. programData and userConfig are injected so tests never look at the real folders; trust checks the shared
+// folder candidate: nil means present and trusted, ErrNotShared means absent, any other error means present but not trusted.
+func Resolve(getenv func(string) string, programData, userConfig string, trust func(string) error) Layout {
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}
@@ -78,14 +82,22 @@ func Resolve(getenv func(string) string, programData, userConfig string, exists 
 		userDir = cfg
 	}
 	root := getenv(EnvDataDir)
+	refused := ""
 	if root == "" && getenv(EnvConfigDir) == "" && programData != "" {
 		candidate := filepath.Join(programData, "Unravis")
-		if exists != nil && exists(candidate) {
+		err := ErrNotShared
+		if trust != nil {
+			err = trust(candidate)
+		}
+		switch {
+		case err == nil:
 			root = candidate
+		case !errors.Is(err, ErrNotShared):
+			refused = err.Error()
 		}
 	}
 	if root == "" {
-		l := Layout{Mode: ModeUser, Base: userDir, UserDir: userDir, Pipe: pipe}
+		l := Layout{Mode: ModeUser, Base: userDir, UserDir: userDir, Pipe: pipe, SharedRefused: refused}
 		if cfg := getenv(EnvConfigDir); cfg != "" {
 			l.Cases = filepath.Join(cfg, "cases")
 		}
@@ -101,9 +113,8 @@ func Resolve(getenv func(string) string, programData, userConfig string, exists 
 // Default resolves the layout from the real environment.
 func Default(getenv func(string) string) Layout {
 	userConfig, _ := os.UserConfigDir()
-	return Resolve(getenv, os.Getenv("ProgramData"), userConfig, func(p string) bool {
-		info, err := os.Stat(p)
-		return err == nil && info.IsDir()
+	return Resolve(getenv, os.Getenv("ProgramData"), userConfig, func(p string) error {
+		return TrustSharedFolder(p, ReadFolderSecurity)
 	})
 }
 

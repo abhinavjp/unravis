@@ -35,6 +35,9 @@ func userStorage() storage {
 
 func storageFor(getenv func(string) string) storage {
 	l := resolveLayout(getenv)
+	if l.SharedRefused != "" {
+		log.Printf("The shared data folder is not used, so Unravis keeps your files in your own folder: %s", l.SharedRefused)
+	}
 	if l.Shared() {
 		return storage{layout: l, seal: sealedfile.LocalMachine}
 	}

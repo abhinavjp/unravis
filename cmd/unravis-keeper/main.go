@@ -25,7 +25,7 @@ import (
 )
 
 // ServiceName is the Windows service name the installer registers.
-const ServiceName = "UnravisKeeper"
+const ServiceName = keeper.ServiceName
 
 var version = "dev"
 

@@ -443,13 +443,22 @@ func (c *pipeConn) Identify() (Caller, error) {
 // PipeDialer connects to the keeper's pipe.
 type PipeDialer struct {
 	Name string
-	// RequireSession0 refuses a pipe whose server is not in session 0, where services run (a program in someone's desktop session
-	// could otherwise pose as the keeper while the service is stopped). Only tests turn it off; no environment variable can.
+	// RequireSession0 refuses a pipe whose server is not in session 0, where services run. Only tests turn it off; no environment
+	// variable can.
 	RequireSession0 bool
+	// RequireKeeperOwner refuses a pipe whose owner is not a service identity (see trustedPipeOwner). Session 0 alone is not enough: a
+	// standard user can run a program there (a scheduled task set to run while signed out) and serve the keeper's pipe name while the
+	// service is stopped. The owner of a pipe is the creator's token owner, which a standard user cannot set to SYSTEM, Administrators,
+	// LocalService, NetworkService or the keeper's own service SID. Only tests turn it off.
+	RequireKeeperOwner bool
+	// extraOwners are owner SIDs a test also trusts (its own account).
+	extraOwners []string
 }
 
 // NewPipeDialer is the production dialer for the pipe name.
-func NewPipeDialer(name string) PipeDialer { return PipeDialer{Name: name, RequireSession0: true} }
+func NewPipeDialer(name string) PipeDialer {
+	return PipeDialer{Name: name, RequireSession0: true, RequireKeeperOwner: true}
+}
 
 func (d PipeDialer) Dial(ctx context.Context) (ClientConn, error) {
 	namep, err := windows.UTF16PtrFromString(d.Name)
@@ -481,10 +490,30 @@ func (d PipeDialer) Dial(ctx context.Context) (ClientConn, error) {
 			return nil, ErrImpostor
 		}
 	}
+	if d.RequireKeeperOwner {
+		owner, err := pipeOwner(h)
+		if err != nil || !trustedPipeOwner(owner, d.extraOwners) {
+			windows.CloseHandle(h)
+			return nil, ErrImpostor
+		}
+	}
 	c, err := newPipeConn(h, false)
 	if err != nil {
 		windows.CloseHandle(h)
 		return nil, err
 	}
 	return c, nil
+}
+
+// pipeOwner reads the owner SID of the pipe the client opened (READ_CONTROL is part of the access the pipe grants its callers).
+func pipeOwner(h windows.Handle) (string, error) {
+	sd, err := windows.GetSecurityInfo(h, windows.SE_KERNEL_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return "", err
+	}
+	owner, _, err := sd.Owner()
+	if err != nil || owner == nil {
+		return "", errors.New("the pipe has no owner")
+	}
+	return owner.String(), nil
 }
