@@ -240,3 +240,42 @@ test('D-B-50: the wizard and Apply put a field problem beside the field and focu
   assert.match(panel, /idPrefix="bb-apply" problem=\{applyFieldShown\} \/>/);
   assert.match(panel, /applyProblem = refusalText\(error, BB_REFUSAL\);/);
 });
+
+test('D-C-24: in the light theme the OK tone and the three sticker fills pass 4.5:1, and both light blocks agree', () => {
+  const css = read('src/brand/tokens.css');
+  const starts = [css.indexOf(':root:not([data-theme="dark"]) {'), css.indexOf(':root[data-theme="light"] {')];
+  assert.ok(starts.every((n) => n > 0), 'both light blocks exist');
+  const blocks = starts.map((start) => css.slice(start, css.indexOf('}', start)));
+  const get = (block, name) => (new RegExp('\\s' + name + ':\\s*(#[0-9a-fA-F]{6})').exec(block) ?? [])[1];
+  // Both light blocks carry the same dark green; the dark block keeps its own.
+  for (const block of blocks) assert.equal(get(block, '--tone-ok'), '#176b43');
+  assert.equal((css.match(/--tone-ok:/g) ?? []).length, 3, 'one per theme block');
+  assert.match(css, /:root \{[\s\S]*?--tone-ok: #3fb27f;/);
+
+  const channel = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const rgb = (hex) => { const n = parseInt(hex.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+  const luminance = (hex) => { const [r, g, b] = rgb(hex); return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b); };
+  const ratio = (a, b) => { const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+  const mixHex = (ink, ground, share) => '#' + rgb(ink).map((v, i) => Math.round(v * share + rgb(ground)[i] * (1 - share)).toString(16).padStart(2, '0')).join('');
+
+  const sticker = read('src/components/BlackboxSticker.svelte');
+  for (const block of blocks) {
+    const surface = get(block, '--surface');
+    for (const [klass, token] of [['good', '--tone-ok'], ['warn', '--warn'], ['bad', '--bad']]) {
+      // The sticker mixes 10% of its ink into the surface (read from the source, so a change there is tested too).
+      const mix = new RegExp('\\.bb-sticker\\.' + klass + ' \\{[^}]*color-mix\\(in srgb, var\\(' + token + '\\) (\\d+)%, var\\(--surface\\)\\)').exec(sticker);
+      assert.ok(mix, klass + ' mixes its ink into the surface');
+      assert.equal(mix[1], '10', klass + ' uses 10%');
+      const ink = get(block, token);
+      const fill = mixHex(ink, surface, Number(mix[1]) / 100);
+      const value = ratio(ink, fill);
+      assert.ok(value >= 4.5, klass + ' word on its own fill is ' + value.toFixed(2));
+    }
+    // The OK tone is also used as plain text on the page, the card and the raised card.
+    for (const ground of ['--bg', '--surface', '--surface-2']) {
+      const value = ratio(get(block, '--tone-ok'), get(block, ground));
+      assert.ok(value >= 4.5, '--tone-ok on ' + ground + ' is ' + value.toFixed(2));
+    }
+  }
+  assert.doesNotMatch(sticker, /14%/);
+});
