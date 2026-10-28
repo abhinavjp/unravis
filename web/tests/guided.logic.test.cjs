@@ -125,7 +125,7 @@ test('a rise is Worse, and no movement is Unchanged', () => {
   assert.equal(fix.classifyDay(day(change(3000, 2950)), ctx).outcome, 'unchanged');
 });
 
-test('a day with no calls, or no earlier day, or no slow end is No data and cannot be recorded', () => {
+test('a day with no calls, or no earlier day, is No data and cannot be recorded; too few calls to read the slow end is its own outcome', () => {
   const base = result();
   const none = result({ facts: { ...base.facts, counts: { ...base.facts.counts, incident: 0 } } });
   const v = fix.classifyDay(none, ctx);
@@ -133,7 +133,7 @@ test('a day with no calls, or no earlier day, or no slow end is No data and cann
   assert.equal(v.canRecord, false);
   assert.equal(v.recordLine, '');
   assert.equal(fix.classifyDay(result({ facts: { ...base.facts, counts: { ...base.facts.counts, reference: 0 } } }), ctx).outcome, 'no-data');
-  assert.equal(fix.classifyDay(day(unknown()), ctx).outcome, 'no-data');
+  assert.equal(fix.classifyDay(day(unknown()), ctx).outcome, 'too-few');
   // never a zero comparison: every row of a no-data day reads No data or the figures the engine gave
   assert.ok(!v.rows.some((r) => /^0 ms$/.test(r.later) && r.later === r.earlier));
 });

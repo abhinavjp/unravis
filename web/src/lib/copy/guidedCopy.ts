@@ -273,6 +273,7 @@ export const GUIDED_TEXT = {
   recordWarning: 'Record with this warning',
   fixNeedsRun: 'Run the steps first. The comparison needs the incident day.',
   fixDayFirst: 'Pick the later day first.',
+  fixDayAfter: 'The later day must come after the incident day. Pick a later date.',
   fixRunning: 'Reading the later day.',
   fixFailed: 'The later day could not be compared.',
   fixRoute: 'Compare one route only (optional)',

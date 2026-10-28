@@ -174,3 +174,59 @@ test('B-54: Step 3 says what IIS would add and the button names the IIS source',
   assert.ok(/<p class="note">\{T\.iisAdds\}<\/p>\s*<div class="row"><button[^>]*onclick=\{onAddData\}>\{T\.addIisLogs\}<\/button><\/div>/.test(src));
   assert.ok(!/addAuditLogs/.test(src));
 });
+
+const fix = loadTypeScript('src/lib/guided/afterFix.ts');
+const fixCtx = { normalP95: 500, windowMinutes: 10, laterLabel: '27 Oct 10:30 to 11:00' };
+const fixDay = (p95, over = {}) => {
+  const base = result();
+  return result({ facts: { ...base.facts, change: { ...base.facts.change, p95 }, ...over } });
+};
+
+test('B-32: too few calls to read the slow end is its own outcome and cannot be recorded', () => {
+  const v = fix.classifyDay(fixDay(unknown()), fixCtx);
+  assert.equal(v.outcome, 'too-few');
+  assert.equal(v.word, 'Too few calls');
+  assert.equal(fix.OUTCOME_WORD['too-few'], 'Too few calls');
+  assert.equal(v.sentence, 'Too few calls on one of the days to read the slow end. Pick a wider window or another day.');
+  assert.equal(v.canRecord, false);
+  assert.equal(v.recordLine, '');
+  // no calls at all is still No data
+  const base = result();
+  const none = result({ facts: { ...base.facts, counts: { ...base.facts.counts, incident: 0 } } });
+  assert.equal(fix.classifyDay(none, fixCtx).outcome, 'no-data');
+  assert.equal(fix.classifyDay(none, fixCtx).word, 'No data for that day');
+});
+
+test('B-32: the earlier column falls back to the case figures, and never invents a percent', () => {
+  const p95 = { ...change(3000, 520), refMs: undefined, deltaPct: undefined };
+  const without = fix.classifyDay(fixDay(p95), fixCtx);
+  assert.equal(without.rows[0].earlier, 'No data');
+  const withEarlier = fix.classifyDay(fixDay(p95), { ...fixCtx, earlier: { p95: 3000, p50: 800, mean: 1200, l: 1.8 } });
+  assert.equal(withEarlier.rows[0].earlier, '3,000 ms');
+  assert.equal(withEarlier.rows[0].change, 'No data');
+  // the run's own figure always wins over the fallback
+  const own = fix.classifyDay(fixDay(change(3000, 520)), { ...fixCtx, earlier: { p95: 1 } });
+  assert.equal(own.rows[0].earlier, '3,000 ms');
+  // L: the engine has 0.6 for the earlier day, so a missing one is the only case that falls back
+  const base = result();
+  const noRef = fixDay(change(3000, 520), { load: { ...base.facts.load, refL: undefined } });
+  assert.equal(fix.classifyDay(noRef, fixCtx).rows[3].earlier, 'No data');
+  assert.equal(fix.classifyDay(noRef, { ...fixCtx, earlier: { l: 1.8 } }).rows[3].earlier, '1.8');
+  assert.notEqual(fix.classifyDay(noRef, { ...fixCtx, earlier: { l: 1.8 } }).rows[3].change, 'No data');
+});
+
+test('B-32: a later day must come after the incident day', () => {
+  const frame = { ...f.emptyFrame(), incidentStart: '2026-10-17T10:30', incidentEnd: '2026-10-17T11:00', referenceStart: '2026-10-17T09:30', referenceEnd: '2026-10-17T10:30' };
+  assert.equal(fix.isLaterDay(frame, '2026-10-18'), true);
+  assert.equal(fix.isLaterDay(frame, '2026-10-17'), false, 'the incident day itself');
+  assert.equal(fix.isLaterDay(frame, '2026-10-16'), false, 'an earlier day');
+  assert.equal(fix.isLaterDay(frame, ''), false);
+  assert.equal(fix.isLaterDay(frame, 'tomorrow'), false);
+  assert.equal(fix.isLaterDay({ ...frame, incidentStart: '' }, '2026-10-18'), false);
+  assert.equal(copy.GUIDED_TEXT.fixDayAfter, 'The later day must come after the incident day. Pick a later date.');
+  const src = read('src/lib/components/guided/AfterFix.svelte');
+  assert.ok(/if \(!isLaterDay\(store\.frame, day\)\)/.test(src));
+  assert.ok(/T\.fixDayAfter/.test(src));
+  assert.ok(/frame\.route\.trim\(\) === answeredRoute\(store\.answeredKey\)/.test(src));
+  assert.ok(/laterLabel: dayLabel\(request\.incident\.start, request\.incident\.end\),\s*earlier\s*\}\)/.test(src), 'earlier is passed to classifyDay');
+});
