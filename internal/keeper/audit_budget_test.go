@@ -70,6 +70,9 @@ func TestAFloodOfSlowAuditReadsLeavesRoomForOtherOperations(t *testing.T) {
 	var conns []ClientConn
 	var answers []<-chan Response
 	for i := 0; i < reads; i++ {
+		// The reads already started are held open; every earlier connection (the one that stored the source) must be released first,
+		// or the eighth read would meet the per-session cap for a reason this test is not about.
+		h.server.waitOpenAtMost(t, harnessCaller.Session, i)
 		c, a := h.rawAnalyze(r, id, 0)
 		conns = append(conns, c)
 		answers = append(answers, a)
@@ -81,23 +84,37 @@ func TestAFloodOfSlowAuditReadsLeavesRoomForOtherOperations(t *testing.T) {
 	}()
 	waitFor(t, "the audit run slots to fill", func() bool { return h.hosted.started.Load() == int32(cap(h.server.auditRuns)) })
 
-	// Exactly the reads beyond the audit budget were answered at once, as busy with the audit scope.
-	busy := 0
-	var pending []<-chan Response
+	// Exactly the reads beyond the audit budget are answered at once, as busy with the audit scope. Wait for that many answers (no
+	// fixed delay: a slow machine only makes it take longer); the reads inside the budget are held by the gate and cannot answer.
+	type answered struct {
+		i    int
+		resp Response
+	}
+	arrived := make(chan answered, reads)
 	for i, a := range answers {
+		go func() { arrived <- answered{i, <-a} }()
+	}
+	want := reads - cap(h.server.auditConns)
+	refused := map[int]bool{}
+	for len(refused) < want {
 		select {
-		case resp := <-a:
-			if resp.OK || resp.Error == nil || resp.Error.Code != CodeBusy || !strings.Contains(string(resp.Error.Detail), `"audit"`) {
-				t.Fatalf("read %d was answered %+v", i, resp)
+		case got := <-arrived:
+			if got.resp.OK || got.resp.Error == nil || got.resp.Error.Code != CodeBusy || !strings.Contains(string(got.resp.Error.Detail), `"audit"`) {
+				t.Fatalf("read %d was answered %+v", got.i, got.resp)
 			}
-			busy++
-			conns[i].Close()
-		case <-time.After(200 * time.Millisecond):
-			pending = append(pending, a)
+			refused[got.i] = true
+			conns[got.i].Close()
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%d reads refused busy, want %d", len(refused), want)
 		}
 	}
-	if want := reads - cap(h.server.auditConns); busy != want || len(pending) != cap(h.server.auditConns) {
-		t.Fatalf("%d reads refused busy, %d pending; want %d and %d", busy, len(pending), want, cap(h.server.auditConns))
+	select {
+	case got := <-arrived:
+		t.Fatalf("a read inside the audit budget was answered while the gate was shut: read %d %+v", got.i, got.resp)
+	default:
+	}
+	if len(refused) != want {
+		t.Fatalf("%d reads refused busy, want %d", len(refused), want)
 	}
 
 	// Other operations are not starved while the audit reads hold their share.
@@ -115,14 +132,14 @@ func TestAFloodOfSlowAuditReadsLeavesRoomForOtherOperations(t *testing.T) {
 
 	// When the slow reads finish, the ones that waited for a run slot are answered too.
 	close(h.hosted.gate)
-	for i, a := range pending {
+	for n := 0; n < cap(h.server.auditConns); n++ {
 		select {
-		case resp := <-a:
-			if !resp.OK {
-				t.Fatalf("waiting read %d failed: %+v", i, resp)
+		case got := <-arrived:
+			if !got.resp.OK {
+				t.Fatalf("waiting read %d failed: %+v", got.i, got.resp)
 			}
 		case <-time.After(5 * time.Second):
-			t.Fatalf("waiting read %d was never answered", i)
+			t.Fatalf("only %d of %d waiting reads were answered", n, cap(h.server.auditConns))
 		}
 	}
 }

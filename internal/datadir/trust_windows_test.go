@@ -10,6 +10,18 @@ import (
 	"testing"
 )
 
+// readAsPerson is ReadFolderSecurity (real file IDs, real ACLs) with the owner reported as a standard person's account whenever the real
+// owner is one the trust check accepts. An elevated administrator (a CI runner is one) owns the folders it makes through the
+// Administrators group, and its own account is on their inherited ACL, so the "a person made this folder" precondition would not hold
+// there; this makes it hold everywhere and leaves a person's real owner untouched.
+func readAsPerson(path string) (FolderSecurity, error) {
+	fs, err := ReadFolderSecurity(path)
+	if err == nil && adminOwner(fs.Owner) {
+		fs.Owner = "S-1-5-21-1111111111-2222222222-3333333333-1001"
+	}
+	return fs, err
+}
+
 // The real file IDs (no registry involved: the record is a fake): a rename keeps the folder's ID, so the record also names the path; a
 // copy is a new folder with a new ID. A record naming this person's own folder still fails on its owner.
 func TestFolderIDSurvivesRenameNotCopy(t *testing.T) {
@@ -35,7 +47,7 @@ func TestFolderIDSurvivesRenameNotCopy(t *testing.T) {
 		t.Fatalf("IDs %q and %q", a.ID, c.ID)
 	}
 	rec := record(orig, a.ID, c.ID)
-	if err := TrustSharedFolder(orig, ReadFolderSecurity, rec); err == nil || !strings.Contains(err.Error(), "owned by") {
+	if err := TrustSharedFolder(orig, readAsPerson, rec); err == nil || !strings.Contains(err.Error(), "owned by") {
 		t.Fatalf("the recorded folder should get as far as the owner check: %v", err)
 	}
 	moved := filepath.Join(base, "Moved")
@@ -49,7 +61,7 @@ func TestFolderIDSurvivesRenameNotCopy(t *testing.T) {
 	if m.ID != a.ID {
 		t.Fatalf("a rename changed the ID: %q -> %q", a.ID, m.ID)
 	}
-	refused(t, "moved folder", TrustSharedFolder(moved, ReadFolderSecurity, rec))
+	refused(t, "moved folder", TrustSharedFolder(moved, readAsPerson, rec))
 	mk() // a copy (a new folder) under the recorded name
 	cp, err := ReadFolderSecurity(orig)
 	if err != nil {
@@ -58,7 +70,7 @@ func TestFolderIDSurvivesRenameNotCopy(t *testing.T) {
 	if cp.ID == a.ID {
 		t.Fatal("a new folder under the same name kept the old ID")
 	}
-	if err := TrustSharedFolder(orig, ReadFolderSecurity, rec); err == nil || !strings.Contains(err.Error(), "moved, copied or replaced") {
+	if err := TrustSharedFolder(orig, readAsPerson, rec); err == nil || !strings.Contains(err.Error(), "moved, copied or replaced") {
 		t.Fatalf("copy under the recorded name: %v", err)
 	}
 }

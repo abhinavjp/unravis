@@ -235,7 +235,7 @@ func newHarness(t *testing.T, limits map[string]int) *harness {
 		defer close(h.done)
 		_ = h.server.Serve(ctx, h.l)
 	}()
-	h.client = NewClient(recordingDialer{inner: h.l.Dialer(Caller{SID: testSID, Name: `PC\analyst`, PID: 4242, Session: 1}), buf: h.wire})
+	h.client = NewClient(recordingDialer{inner: h.server.slotDialer(h.l, Caller{SID: testSID, Name: `PC\analyst`, PID: 4242, Session: 1}), buf: h.wire})
 	t.Cleanup(h.stop)
 	return h
 }
@@ -428,7 +428,7 @@ func TestRateLimitPerCallerAndClass(t *testing.T) {
 	if _, err := s.List(); wireCode(err) != CodeRateLimited {
 		t.Fatalf("want rate-limited, got %v", err)
 	}
-	other := NewSQLStore(NewClient(h.l.Dialer(Caller{SID: "S-1-5-21-other"})))
+	other := NewSQLStore(NewClient(h.server.slotDialer(h.l, Caller{SID: "S-1-5-21-other"})))
 	if _, err := other.List(); err != nil {
 		t.Fatalf("another account has its own count: %v", err)
 	}
@@ -511,7 +511,9 @@ func TestUnknownOpFloodCannotFillTheAuditLog(t *testing.T) {
 	long := strings.Repeat("A", 60<<10)
 	codes := map[string]int{}
 	for i := 0; i < 100; i++ {
-		c, err := l.Dialer(Caller{SID: testSID, Name: `PC\flood`, PID: 9, Session: 1}).Dial(ctx)
+		// Each connection waits for the previous one's slot to be released (see slots_test.go), so no request is refused "busy" by
+		// the per-session cap: a busy refusal does not count against the "bad" limit and would change the arithmetic below.
+		c, err := s.slotDialer(l, Caller{SID: testSID, Name: `PC\flood`, PID: 9, Session: 1}).Dial(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -539,7 +541,7 @@ func TestUnknownOpFloodCannotFillTheAuditLog(t *testing.T) {
 	}
 	// The flooder is limited, not everyone: a real request from the same person still runs.
 	var out map[string]any
-	if err := NewClient(l.Dialer(Caller{SID: testSID, PID: 9, Session: 1})).Call(ctx, OpPing, nil, &out); err != nil {
+	if err := NewClient(s.slotDialer(l, Caller{SID: testSID, PID: 9, Session: 1})).Call(ctx, OpPing, nil, &out); err != nil {
 		t.Fatalf("ping after the flood: %v", err)
 	}
 	cancel()
@@ -603,7 +605,7 @@ func TestCallerIDsCannotFillTheAuditLog(t *testing.T) {
 	for op, args := range ops {
 		raw, _ := json.Marshal(args)
 		for i := 0; i < 100; i++ {
-			c, err := l.Dialer(Caller{SID: testSID, Name: `PC\flood`, PID: 9, Session: 1}).Dial(ctx)
+			c, err := s.slotDialer(l, Caller{SID: testSID, Name: `PC\flood`, PID: 9, Session: 1}).Dial(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -754,7 +756,7 @@ func TestProtocolRefusals(t *testing.T) {
 	h := newHarness(t, nil)
 	call := func(req any) Response {
 		t.Helper()
-		c, err := h.l.Dialer(Caller{SID: testSID}).Dial(context.Background())
+		c, err := h.server.slotDialer(h.l, Caller{SID: testSID}).Dial(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}

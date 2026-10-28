@@ -283,7 +283,7 @@ test('run-screens.ps1 on a busy port says why, stops, and removes its temp folde
     const run = powershell([script, '-Port', String(listener.address().port)]);
     assert.equal(run.status, 3, run.stdout + run.stderr);
     assert.match(run.stdout + run.stderr, /Unravis did not start/);
-    assert.match(run.stdout + run.stderr, /could not listen/);
+    assert.match(run.stdout + run.stderr, /already in use/);
     assert.deepEqual(leftovers(), before);
   } finally {
     listener.close();

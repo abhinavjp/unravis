@@ -71,7 +71,12 @@ func TestWindowsSamplerRunsAndWritesABatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(6 * time.Second)
+	// Wait for the first real tick (5 s after the start) instead of a fixed 6 s: the sampler thread runs at background priority and a
+	// loaded machine can make it late. A sampler that never ticks still fails, after a long wait.
+	deadline := time.Now().Add(60 * time.Second)
+	for s.Status().Samples < 1 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
 	s.Stop()
 	if st := s.Status(); st.Running || st.Stop != StopUser || st.Samples < 1 {
 		t.Fatalf("status %+v", st)

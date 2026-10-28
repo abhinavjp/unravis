@@ -362,6 +362,11 @@ func TestAuditCanaryPasswordNeverLeavesTheKeeper(t *testing.T) {
 
 func TestAuditSeatsAreKeptApart(t *testing.T) {
 	h := newHarness(t, nil)
+	// A clock that moves on every reading: "least recently used" is decided by time stamps, and the Windows wall clock can give two
+	// uses in a row the same stamp, which left the evicted seat to chance.
+	var tick atomic.Int64
+	start := time.Now()
+	h.backend.Audit.now = func() time.Time { return start.Add(time.Duration(tick.Add(1)) * time.Millisecond) }
 	in := h.rememberMongo(mongoSecret)
 	ctx := context.Background()
 	a := NewAuditRouter(&fakeHosted{prefix: "local"}, h.client)
@@ -379,7 +384,7 @@ func TestAuditSeatsAreKeptApart(t *testing.T) {
 	}
 	// Another Windows account, or another process, naming a's instance gets nothing either.
 	for _, caller := range []Caller{{SID: "S-1-5-21-9-9-9-2002", Name: `PC\other`, PID: 4242, Session: 1}, {SID: testSID, Name: `PC\analyst`, PID: 777, Session: 1}} {
-		other := NewClient(h.l.Dialer(caller))
+		other := NewClient(h.server.slotDialer(h.l, caller))
 		err := other.Call(ctx, OpAuditPayload, AuditArgs[audit.PayloadInput]{Instance: a.instance, Input: audit.PayloadInput{SourceID: src.ID}}, nil)
 		if !errors.Is(auditErr(err), ErrHeldSourceGone) {
 			t.Fatalf("%s/%d read a's source: %v", caller.Name, caller.PID, err)
