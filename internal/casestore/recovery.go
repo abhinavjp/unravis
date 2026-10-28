@@ -104,7 +104,12 @@ func (r *Recoverer) RecoverOne(ctx context.Context, id CaseID) (string, error) {
 	if err := h(ctx, id); err != nil {
 		return mark, err
 	}
-	return r.marks.Mark(ctx, id)
+	after, err := r.marks.Mark(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		// A hook that removed the case itself (Erasing) leaves nothing to mark: done.
+		return "", nil
+	}
+	return after, err
 }
 
 // RecoverIfMarked is the per-call entry. info is what the caller already holds for

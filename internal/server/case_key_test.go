@@ -26,7 +26,7 @@ const (
 )
 
 // newCKEnv is newMKEnv with small Argon2 costs for the per-case keys.
-func newCKEnv(t *testing.T) *mkEnv {
+func newCKEnv(t *testing.T, extra ...Option) *mkEnv {
 	t.Helper()
 	logs := &bytes.Buffer{}
 	log.SetOutput(logs)
@@ -45,10 +45,10 @@ func newCKEnv(t *testing.T) *mkEnv {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	e := &mkEnv{t: t, sess: sess, store: store, dir: dir, root: root, logs: logs}
-	e.h = New(&fakeRepository{}, testAssets(), testToken, false,
+	e.h = New(&fakeRepository{}, testAssets(), testToken, false, append([]Option{
 		WithCases(store, mustHosts(t, hostsDoc), importer.NewRegistry(toyImporter{name: "toy", score: 90})),
 		WithMasterKey(sess),
-	)
+	}, extra...)...)
 	return e
 }
 

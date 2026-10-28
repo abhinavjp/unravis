@@ -116,6 +116,7 @@ type Options struct {
 	rewrapStep  func(stage string) error // test hook, see casestore.RewrapOptions.Step
 	duringErase func()                   // test hook, runs in Erase after the handle is released, before any file is touched
 	ckStep      func(stage string) error // test hook for the per-case key moves; an error stands for a crash at that step
+	eraseStep   func(step string)        // test hook, runs in Erase after the Erasing mark ("marked"), after the files ("files") and after OnErase ("hook"); a panic stands for a kill
 }
 
 // DefaultRoot is %LOCALAPPDATA%\APIAuditExplorer\cases, so multi-GiB case files
@@ -645,11 +646,13 @@ func (s *Store) List(ctx context.Context) ([]casestore.CaseInfo, error) {
 		}
 		info := casestore.CaseInfo{ID: id, Title: "(unreadable case)"}
 		if erasePending(dir) {
-			info.Title = "(erase pending)"
+			// The pending-erase marker is the Erasing mark: recovery reads it
+			// from the row and finishes the erase.
+			info.Title, info.Mark = "(erase pending)", casestore.MarkErasing
 			out = append(out, info)
 			continue
 		}
-			if wrapExists(dir) {
+		if wrapExists(dir) {
 			// A case with its own key: the wrap's headers say so, the manifest is
 			// read only when that key is unlocked.
 			info.OwnKey = true
@@ -1077,22 +1080,16 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 	}
 	var errs []error
 	if _, statErr := os.Lstat(dir); statErr == nil {
-		release, lockErr := sealedfile.Lock(dir)
+		markErr, lockErr := s.eraseLocked(dir, &errs)
 		if lockErr != nil {
 			return lockErr
 		}
-		markErr := markErase(dir)
-		if markErr == nil {
-			errs = append(errs, eraseFiles(dir))
-		} else {
-			errs = append(errs, markErr) // nothing destroyed yet: the case is intact
-		}
-		release()
 		if markErr != nil {
 			s.logf("case %s erase not started", id)
 			return errors.Join(errs...)
 		}
 	}
+	s.eraseStepAt("files")
 	if s.opt.OnErase != nil {
 		errs = append(errs, s.opt.OnErase(ctx, id))
 	}
@@ -1100,12 +1097,37 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 		s.logf("case %s erase incomplete", id)
 		return err
 	}
+	s.eraseStepAt("hook")
 	if err := removeMarkerAndDir(dir); err != nil {
 		s.logf("case %s erase incomplete", id)
 		return err
 	}
 	s.logf("case %s erased", id)
 	return nil
+}
+
+// eraseLocked writes the Erasing mark and removes the files, under the case's folder
+// lock (released even when a step panics). markErr says the mark could not be
+// written (the case is intact); lockErr says the lock could not be taken.
+func (s *Store) eraseLocked(dir string, errs *[]error) (markErr, lockErr error) {
+	release, lockErr := sealedfile.Lock(dir)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer release()
+	if markErr = markErase(dir); markErr != nil {
+		*errs = append(*errs, markErr) // nothing destroyed yet: the case is intact
+		return markErr, nil
+	}
+	s.eraseStepAt("marked")
+	*errs = append(*errs, eraseFiles(dir))
+	return nil, nil
+}
+
+func (s *Store) eraseStepAt(step string) {
+	if s.opt.eraseStep != nil {
+		s.opt.eraseStep(step)
+	}
 }
 
 // markErase writes and flushes the pending-erase marker.

@@ -64,6 +64,22 @@ func casesRoot(getenv func(string) string) (string, error) {
 	return sqlite.DefaultRoot()
 }
 
+// withErasedLine runs next, then records the erase on the Erased lines. A failure to record is
+// logged and never fails the erase: the case is gone either way.
+func withErasedLine(next func(context.Context, casestore.CaseID) error, erased server.ErasedLog) func(context.Context, casestore.CaseID) error {
+	return func(ctx context.Context, id casestore.CaseID) error {
+		if next != nil {
+			if err := next(ctx, id); err != nil {
+				return err
+			}
+		}
+		if err := erased.Add(id, time.Now()); err != nil {
+			log.Printf("The erased line of a case could not be saved: %v", err)
+		}
+		return nil
+	}
+}
+
 // eraseHook returns the OnErase hook of the case store. It removes every ledger
 // reference to the erased case's evidence ("erased-case-evidence"). Export
 // previews are held in memory only and the server drops them in the erase
@@ -140,10 +156,15 @@ func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams ca
 	if err != nil {
 		return nil, err
 	}
+	// An erase leaves one line on the start screen (id and time, nothing else). The line is
+	// added by the store's erase hook, so an erase that start-up recovery or the retention
+	// sweep finishes leaves it too.
+	erasedLog := server.NewErasedFile(filepath.Join(base, "erased.json"))
 	var onErase func(context.Context, casestore.CaseID) error
 	if hypotheses != nil {
 		onErase = eraseHook(hypotheses)
 	}
+	onErase = withErasedLine(onErase, erasedLog)
 	// The master-key session starts locked when masterkey.dat exists in base and
 	// "none" otherwise. The store and the server share it, so unlock, lock and
 	// the 423 gate act on the one Keyring the store opens cases with.
@@ -174,7 +195,15 @@ func openCasesWith(getenv func(string) string, hypotheses ledger.Store, seams ca
 			server.WithSystemDiscover(),
 			server.WithMasterKey(session),
 			server.WithRecoverer(recoverer),
+			server.WithErasedLog(erasedLog),
 		},
+	}
+	// An Erasing mark (a case whose erase was marked and not finished) is finished by the
+	// store's own Erase, which is idempotent and needs no case key.
+	if err := recoverer.Register(casestore.MarkErasing, func(ctx context.Context, id casestore.CaseID) error {
+		return store.Erase(ctx, id)
+	}); err != nil {
+		return nil, err
 	}
 	// Finish any move that a stop interrupted (a case still carrying an Archiving,
 	// Freeing or Erasing mark). With the master key locked the list cannot be read

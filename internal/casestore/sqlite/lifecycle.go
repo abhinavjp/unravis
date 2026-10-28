@@ -131,6 +131,11 @@ func (s *Store) SetMark(ctx context.Context, id casestore.CaseID, mark string) e
 
 // Mark reads the stamp.
 func (s *Store) Mark(ctx context.Context, id casestore.CaseID) (string, error) {
+	// The pending-erase marker is the Erasing mark. It is read from the folder, so
+	// it answers with no key and no manifest.
+	if dir, err := s.caseDir(id); err == nil && erasePending(dir) {
+		return casestore.MarkErasing, nil
+	}
 	var mark string
 	err := s.mutate(ctx, id, func(m *manifest) (bool, error) {
 		mark = m.Mark

@@ -28,6 +28,15 @@ func exactPath(p string) func(string) (string, bool) {
 	return func(path string) (string, bool) { return "", path == p }
 }
 
+// erasedLinePath matches /api/cases/erased/{id} and returns the id.
+func erasedLinePath(path string) (string, bool) {
+	id, ok := strings.CutPrefix(path, "/api/cases/erased/")
+	if !ok || id == "" || strings.Contains(id, "/") {
+		return "", false
+	}
+	return id, true
+}
+
 func prefixPath(prefix string) func(string) (string, bool) {
 	return func(path string) (string, bool) {
 		if strings.HasPrefix(path, prefix) {
@@ -303,6 +312,10 @@ var routes = []route{
 	}},
 	{pattern: "/api/cases/{id}/export", match: caseSubpath("/export"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.exportCaseFile(w, r, id) },
+	}},
+	// An Erased line is cleared by id; it stays ahead of /api/cases/{id}.
+	{pattern: "/api/cases/erased/{id}", match: erasedLinePath, methods: map[string]routeFunc{
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.clearErased(w, r, id) },
 	}},
 	{pattern: "/api/cases/{id}", match: caseSubpath(""), methods: map[string]routeFunc{
 		http.MethodGet:    func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getCase(w, r, id) },

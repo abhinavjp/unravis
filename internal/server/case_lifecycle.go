@@ -36,6 +36,7 @@ const (
 	archiveRunningText    = "An archive is already running."
 	caseErasingText       = "This case is being erased."
 	cancelArchiveText     = "An archive is running. Cancel it first."
+	caseInUseText         = "The case is in use. Close its other tabs, then try again."
 	caseAlreadyMadeText   = "This case was already made. Find it on the start screen."
 	caseFreeingText       = "This case is being freed. Try again in a moment."
 	badExpectStateText    = "The state the page expects is not one of the case states."

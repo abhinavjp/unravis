@@ -101,6 +101,7 @@ var routeCases = []routeCase{
 	{"/api/cases/{id}/mongo-sources", "/api/cases/c1/mongo-sources", "GET"},
 	{"/api/cases/restore", "/api/cases/restore", "POST"},
 	{"/api/cases/{id}/export", "/api/cases/c1/export", "POST"},
+	{"/api/cases/erased/{id}", "/api/cases/erased/c1", "DELETE"},
 	{"/api/cases/{id}", "/api/cases/c1", "DELETE, GET"},
 	{"/api/hosts", "/api/hosts", "GET, PUT"},
 	{"/api/importers", "/api/importers", "GET"},

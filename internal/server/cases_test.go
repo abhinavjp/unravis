@@ -419,7 +419,7 @@ func TestCaseLifecycle(t *testing.T) {
 	}
 
 	// A wrong or partial confirmation erases nothing.
-	for _, confirm := range []string{"", id[:8], strings.ToUpper(id), "yes"} {
+	for _, confirm := range []string{"", id[:7], id[:9], strings.ToUpper(id), "yes"} {
 		res = e.json(http.MethodDelete, "/api/cases/"+id, `{"confirm":`+strconv.Quote(confirm)+`}`)
 		if res.Code != http.StatusBadRequest || failureOf(t, res).Reason != "confirm-mismatch" {
 			t.Errorf("erase with confirm %q = %d %s", confirm, res.Code, res.Body)

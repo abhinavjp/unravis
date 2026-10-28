@@ -317,7 +317,8 @@ func TestSeriesRacingAnEraseEndsCleanly(t *testing.T) {
 		t.Fatalf("erase = %d", code)
 	}
 	for code := range codes {
-		if code != http.StatusOK && code != http.StatusNotFound {
+		// 409 is M5: the erase was waiting for the readers in flight.
+		if code != http.StatusOK && code != http.StatusNotFound && code != http.StatusConflict {
 			t.Errorf("a series read racing an erase answered %d", code)
 		}
 	}

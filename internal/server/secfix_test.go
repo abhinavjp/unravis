@@ -129,7 +129,7 @@ func TestEraseGivesUpWhenContextEnds(t *testing.T) {
 	}
 }
 
-func TestReadsOfAnErasingCaseAnswer404(t *testing.T) {
+func TestReadsOfAnErasingCaseAnswerM5(t *testing.T) {
 	e := newCaseEnv(t, envConfig{})
 	id := e.newCase("Case A")
 	if err := id2gate(e, id); err != nil {
@@ -140,8 +140,8 @@ func TestReadsOfAnErasingCaseAnswer404(t *testing.T) {
 		"/api/cases/" + id + "/events",
 	} {
 		res := e.get(path)
-		if res.Code != http.StatusNotFound {
-			t.Errorf("GET %s during an erase = %d, want 404", path, res.Code)
+		if res.Code != http.StatusConflict || failureOf(t, res).Reason != "case-erasing" {
+			t.Errorf("GET %s during an erase = %d %s, want 409 case-erasing", path, res.Code, res.Body)
 		}
 	}
 }
