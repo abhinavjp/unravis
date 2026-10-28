@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../api';
-  import { app, goHome, openAnalysis, openCase, openCaseImport, openSidePanel, panels } from '../appState.svelte';
+  import { app, goHome, openAnalysis, openCase, openCaseImport, openConnections, openSidePanel, panels } from '../appState.svelte';
   import { believedState, caseCode, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { archiveButton, reopenButton, retryAction } from '../caseLifecycle';
   import { archivedActions, keyEndingOf, type ArchiveDrawerKind } from '../archiveModel';
@@ -13,9 +13,14 @@
   import { stateLabel } from '../ledger';
   import { ledger, refreshLedger } from '../ledgerStore.svelte';
   import { buildStory, shortText } from '../story';
+  import { GUIDED_TEXT } from '../copy/guidedCopy';
+  import { guidedOpenFor } from '../guided/stepModel';
+  import GuidedAnalysis from './guided/GuidedAnalysis.svelte';
   import { formatTime } from '../time';
   import { timeZone } from '../timeZone.svelte';
   import HealthPanel from './HealthPanel.svelte';
+  import SourcesHub from '../../components/sources/SourcesHub.svelte';
+  import { HUB_TEXT } from '../copy/sourcesCopy';
 
   // One page per case: the story (what happened, in order), the theories, the health checks, the analysis and the files.
   // Everything here is read from what the case already saved. Nothing runs by itself.
@@ -40,12 +45,16 @@
   let copying = $state(false);
   let copyNote = $state('');
   let copyProblem = $state('');
+  // The case the guided view was opened on. Another case starts at its own home.
+  let guidedFor = $state('');
+  const guidedOpen = $derived(guidedOpenFor(guidedFor, caseId));
   let controller: AbortController | null = null;
   let loadedFor = '';
 
   const story = $derived(buildStory({ info, imports, health, theories: ledger.items, history: info?.history }));
   const theories = $derived(ledger.items);
   const keptFiles = $derived(imports.filter(record => record.status === 'ok'));
+  const hasIis = $derived(keptFiles.some(record => record.importer === 'iis-w3c'));
   // A case that is not open (closed, archived) or is untrusted is read-only: nothing can be added, so the buttons that add say so up front.
   const readOnly = $derived(!!info && (!!info.untrusted || believedState(info) !== 'open'));
   const reopenState = $derived(info ? reopenButton(info, reopening) : 'hidden');
@@ -255,6 +264,10 @@
   {:else if phase === 'failed'}
     <div class="inline-error" role="alert">{CASE_HOME_TEXT.failed}</div>
     <div><button type="button" class="secondary-button" onclick={() => void load(caseId)}>{CASE_HOME_TEXT.retry}</button></div>
+  {:else if guidedOpen}
+    {#key caseId}
+      <GuidedAnalysis {caseId} closed={!!info?.closed} {readOnly} {hasIis} onAddData={openCaseImport} onClose={() => (guidedFor = '')} />
+    {/key}
   {:else}
     <header class="head">
       <p class="eyebrow">{CASE_HOME_TEXT.heading} · {caseCode(caseId)}</p>
@@ -333,6 +346,12 @@
       <p class="note">{CASE_HOME_TEXT.analysisHint}</p>
     </section>
 
+    <section class="block" aria-labelledby="home-guided">
+      <h3 id="home-guided">{GUIDED_TEXT.heading}</h3>
+      <p class="note">{GUIDED_TEXT.openGuidedNote}</p>
+      <div><button type="button" class="secondary-button" onclick={() => (guidedFor = caseId)}>{GUIDED_TEXT.openGuided}</button></div>
+    </section>
+
     <section class="block" aria-labelledby="home-story">
       <h3 id="home-story">{CASE_HOME_TEXT.storyHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.storyIntro}</p>
@@ -387,6 +406,12 @@
       <h3 id="home-health">{CASE_HOME_TEXT.healthHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.healthText}</p>
       <HealthPanel {caseId} onGone={gone} onRan={() => void rereadHealth()} />
+    </section>
+
+    <section class="block" aria-labelledby="home-sources">
+      <h3 id="home-sources">{HUB_TEXT.heading}</h3>
+      <p class="note">{HUB_TEXT.intro}</p>
+      <SourcesHub {caseId} {readOnly} onGone={gone} onAddFiles={openCaseImport} onAddBlackbox={() => openSidePanel('blackbox')} onAddMongo={() => void openConnections('new')} />
     </section>
 
     <section class="block" aria-labelledby="home-files">

@@ -523,3 +523,60 @@ func TestDemoArchivedCasesAreInTheirOwnList(t *testing.T) {
 		t.Errorf("offset 1 gave %d cases, want 1", len(page.Cases))
 	}
 }
+
+// The P7 "nothing read" screen needs a held lane day whose every check is
+// "Cannot test yet" with no fix. Only the failed-import demo case holds one.
+func TestDemoCasesSeedOneNothingReadLaneDay(t *testing.T) {
+	h, closeCases := seededServer(t, t.TempDir())
+	defer closeCases()
+	_, list := listCases(t, h)
+	held := map[string]int{}
+	for _, c := range list {
+		id, _ := c["id"].(string)
+		req := httptest.NewRequest(http.MethodGet, "/api/cases/"+id+"/lanes", nil)
+		req.Host = "127.0.0.1:8765"
+		req.Header.Set("X-Audit-Token", demoTestToken)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		if res.Code == http.StatusConflict && strings.HasPrefix(id, string(demoCaseUntrustedID)) {
+			continue // not opened by design
+		}
+		if res.Code != http.StatusOK {
+			t.Fatalf("GET lanes for %s = %d: %s", id, res.Code, res.Body)
+		}
+		var out struct {
+			Days []struct {
+				Kind string `json:"kind"`
+				Lane struct {
+					Checks []struct {
+						State string `json:"state"`
+						Fix   any    `json:"fix"`
+					} `json:"checks"`
+				} `json:"lane"`
+			} `json:"days"`
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode %s: %v: %s", id, err, res.Body)
+		}
+		held[id] = len(out.Days)
+		for _, l := range out.Days {
+			if l.Kind != "sql" || len(l.Lane.Checks) == 0 {
+				t.Fatalf("%s: unexpected lane %+v", id, l)
+			}
+			for _, ck := range l.Lane.Checks {
+				if ck.State != "Cannot test yet" || ck.Fix != nil {
+					t.Fatalf("%s: check %+v is not a nothing-read check", id, ck)
+				}
+			}
+		}
+	}
+	for id, n := range held {
+		want := 0
+		if id == string(demoCaseFailedID) {
+			want = 1
+		}
+		if n != want {
+			t.Errorf("case %s holds %d lane days, want %d", id, n, want)
+		}
+	}
+}

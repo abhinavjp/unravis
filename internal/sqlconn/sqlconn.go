@@ -33,6 +33,9 @@ var (
 	ErrCorrupt     = errors.New("saved SQL Server connections could not be read")
 	ErrNotFound    = errors.New("saved SQL Server connection was not found")
 	ErrInvalid     = errors.New("SQL Server connection details are invalid")
+	// ErrFull means MaxRecords connections are already saved and this one is new. Nothing is removed to make room: a saved password is the
+	// owner's to delete, never quietly dropped.
+	ErrFull = errors.New("the list of saved SQL Server connections is full")
 )
 
 const (
@@ -215,7 +218,8 @@ func (s *Service) List() ([]Recent, error) {
 	return out, nil
 }
 
-// Save stores the details. The same server, login and database replaces its earlier entry (newest first).
+// Save stores the details. The same server, login and database replaces its earlier entry (newest first). A new entry when MaxRecords are
+// already saved is refused with ErrFull and the file is left as it was.
 func (s *Service) Save(in Input) (Recent, error) {
 	rec, err := validate(in)
 	if err != nil {
@@ -248,10 +252,10 @@ func (s *Service) Save(in Input) (Recent, error) {
 			break
 		}
 	}
-	v.Records = append([]stored{rec}, v.Records...)
-	if len(v.Records) > MaxRecords {
-		v.Records = v.Records[:MaxRecords]
+	if len(v.Records) >= MaxRecords {
+		return Recent{}, ErrFull
 	}
+	v.Records = append([]stored{rec}, v.Records...)
 	if err := s.write(v); err != nil {
 		return Recent{}, err
 	}

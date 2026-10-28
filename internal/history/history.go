@@ -29,6 +29,9 @@ var (
 	ErrUnavailable = errors.New("encrypted connection history is unavailable")
 	ErrCorrupt     = errors.New("saved connection history could not be read")
 	ErrNotFound    = errors.New("saved connection was not found")
+	// ErrFull means MaxRecords connections are already saved and this one is new. Nothing is removed to make room: a saved password is the
+	// owner's to forget.
+	ErrFull = errors.New("the list of saved connections is full")
 )
 
 // Recent contains only fields that are safe to return to the browser.
@@ -161,10 +164,10 @@ func (s *Service) Remember(label string, input audit.ConnectionInput, collection
 				break
 			}
 		}
-		v.Records = append([]storedRecord{result}, v.Records...)
-		if len(v.Records) > MaxRecords {
-			v.Records = v.Records[:MaxRecords]
+		if len(v.Records) >= MaxRecords {
+			return ErrFull
 		}
+		v.Records = append([]storedRecord{result}, v.Records...)
 		s.pruneSessionSecrets(v.Records)
 		return nil
 	}); err != nil {

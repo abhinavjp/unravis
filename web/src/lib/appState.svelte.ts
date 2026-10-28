@@ -166,7 +166,7 @@ let querySnapshot = '';
 let connectionsOpen = $state(false);
 let glossaryOpen = $state(false);
 // P2-lite drawers: incident patterns and the hypothesis ledger.
-let sidePanel = $state<'patterns' | 'ledger' | 'export' | 'import' | null>(null);
+let sidePanel = $state<'patterns' | 'ledger' | 'export' | 'import' | 'blackbox' | null>(null);
 let sidePanelReturnFocus: HTMLElement | null = null;
 // The file import the person started that is still running on the server. It lives here, not in the import drawer, so closing and reopening the drawer finds it again.
 let runningImport = $state.raw<RunningImport | null>(null);
@@ -1176,7 +1176,7 @@ export async function closeSidePanel() {
   sidePanelReturnFocus?.focus();
   sidePanelReturnFocus = null;
 }
-export function openSidePanel(which: 'patterns' | 'ledger' | 'export' | 'import') {
+export function openSidePanel(which: 'patterns' | 'ledger' | 'export' | 'import' | 'blackbox') {
   sidePanelReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   sidePanel = which;
 }

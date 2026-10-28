@@ -156,6 +156,776 @@
       ]
     },
     {
+      "id": "p9-blackbox-list", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"scrollTo":"role=button[name=\"Open status: web-g\"s]"},
+        {"scrollTo":"#blackbox-title"}
+      ]
+    },
+    {
+      "id": "p9-wizard-1", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Place a Blackbox\"s]"},
+        {"waitFor":"role=textbox[name=/^Name/]"},
+        {"fill":["role=textbox[name=/^Name/]","sql-prod-01"]}
+      ]
+    },
+    {
+      "id": "p9-wizard-2", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Place a Blackbox\"s]"},
+        {"waitFor":"role=textbox[name=/^Name/]"},
+        {"fill":["role=textbox[name=/^Name/]","sql-prod-01"]},
+        {"click":"role=button[name=\"Next: Where\"s]"},
+        {"waitFor":"role=radio[name=/On another server/]"},
+        {"click":"role=radio[name=/On another server/]"}
+      ]
+    },
+    {
+      "id": "p9-wizard-3", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Place a Blackbox\"s]"},
+        {"waitFor":"role=textbox[name=/^Name/]"},
+        {"fill":["role=textbox[name=/^Name/]","sql-prod-01"]},
+        {"click":"role=button[name=\"Next: Where\"s]"},
+        {"waitFor":"role=radio[name=/On another server/]"},
+        {"click":"role=radio[name=/On another server/]"},
+        {"click":"role=button[name=\"Next: Settings\"s]"},
+        {"waitFor":"role=button[name=\"Next: Review\"s]"}
+      ]
+    },
+    {
+      "id": "p9-wizard-4", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Place a Blackbox\"s]"},
+        {"waitFor":"role=textbox[name=/^Name/]"},
+        {"fill":["role=textbox[name=/^Name/]","sql-prod-01"]},
+        {"click":"role=button[name=\"Next: Where\"s]"},
+        {"waitFor":"role=radio[name=/On another server/]"},
+        {"click":"role=radio[name=/On another server/]"},
+        {"click":"role=button[name=\"Next: Settings\"s]"},
+        {"waitFor":"role=button[name=\"Next: Review\"s]"},
+        {"click":"role=button[name=\"Next: Review\"s]"},
+        {"waitFor":"role=button[name=\"Download the pack\"s]"}
+      ]
+    },
+    {
+      "id": "p9-state-running", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Open status: web-a\"s]"},
+        {"waitFor":"role=button[name=\"Back to the list\"s]"}
+      ]
+    },
+    {
+      "id": "p9-read-key", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Open status: web-a\"s]"},
+        {"waitFor":"role=button[name=\"Back to the list\"s]"},
+        {"click":"role=button[name=\"Show\"s]"},
+        {"waitFor":".bb-key code"},
+        {"scrollTo":".bb-key code"}
+      ]
+    },
+    {
+      "id": "p9-state-running-late", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Open status: web-b\"s]"},
+        {"waitFor":"role=button[name=\"Back to the list\"s]"}
+      ]
+    },
+    {
+      "id": "p9-state-stopped", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Open status: web-old\"s]"},
+        {"waitFor":"role=button[name=\"Back to the list\"s]"}
+      ]
+    },
+    {
+      "id": "p9-state-disk-low", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Open status: web-c\"s]"},
+        {"waitFor":"role=button[name=\"Back to the list\"s]"}
+      ]
+    },
+    {
+      "id": "p9-state-clock-differs", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Open status: web-d\"s]"},
+        {"waitFor":"role=button[name=\"Back to the list\"s]"}
+      ]
+    },
+    {
+      "id": "p9-state-not-found", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Open status: old-box\"s]"},
+        {"waitFor":"role=button[name=\"Back to the list\"s]"}
+      ]
+    },
+    {
+      "id": "p9-state-unreachable", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Open status: web-e\"s]"},
+        {"waitFor":"role=button[name=\"Back to the list\"s]"}
+      ]
+    },
+    {
+      "id": "p9-state-incomplete", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Open status: web-f\"s]"},
+        {"waitFor":"role=button[name=\"Back to the list\"s]"}
+      ]
+    },
+    {
+      "id": "p9-state-not-placed", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Open status: web-g\"s]"},
+        {"waitFor":"role=button[name=\"Back to the list\"s]"}
+      ]
+    },
+    {
+      "id": "p9-step-9", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Open status: web-a\"s]"},
+        {"waitFor":"role=button[name=\"Back to the list\"s]"},
+        {"fill":[".bb-grid input >> nth=0","2026-10-20T07:40"]},
+        {"fill":[".bb-grid input >> nth=1","2026-10-20T07:55"]},
+        {"fill":[".bb-grid input >> nth=2","2026-10-20T07:00"]},
+        {"fill":[".bb-grid input >> nth=3","2026-10-20T07:30"]},
+        {"click":"role=button[name=\"Read the host for these windows\"s]"},
+        {"waitFor":"text=Checks"},
+        {"scrollTo":".bb-host .bb-step > :last-child"}
+      ]
+    },
+    {
+      "id": "p9-gap-warning", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Open status: web-b\"s]"},
+        {"waitFor":"role=button[name=\"Back to the list\"s]"},
+        {"fill":[".bb-grid input >> nth=0","2026-10-20T07:40"]},
+        {"fill":[".bb-grid input >> nth=1","2026-10-20T07:55"]},
+        {"fill":[".bb-grid input >> nth=2","2026-10-20T06:50"]},
+        {"fill":[".bb-grid input >> nth=3","2026-10-20T07:20"]},
+        {"click":"role=button[name=\"Read the host for these windows\"s]"},
+        {"waitFor":"#bb-gap-warning"},
+        {"scrollTo":"#bb-gap-warning ul"}
+      ]
+    },
+    {
+      "id": "p7-connections", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"waitFor": "#conn-head"},
+        {"scrollTo": "#conn-head"}
+      ]
+    },
+    {
+      "id": "p7-sql-form", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=button[name=\"+ SQL Server\"s]"},
+        {"waitFor": "role=heading[name=\"SQL Server connection\"]"}
+      ]
+    },
+    {
+      "id": "p7-sql-test-ok", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=button[name=\"+ SQL Server\"s]"},
+        {"waitFor": "role=heading[name=\"SQL Server connection\"]"},
+        {"fill": ["role=textbox[name=\"Server name\"]", "demo-sql.example.invalid"]},
+        {"fill": ["role=textbox[name=\"User name\"]", "unravis_ro"]},
+        {"fill": ["input[type=password]", "demo-only"]},
+        {"click": "role=button[name=\"Test\"s]"},
+        {"waitFor": "text=Works"}
+      ]
+    },
+    {
+      "id": "p7-grant-script-2019", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=tab[name=\"Step 7: SQL Server\"]"},
+        {"click": "role=button[name=\"SQL Server 2019 or earlier\"]"},
+        {"waitFor": "[data-version-note]"},
+        {"scrollTo": "#grant-head"}
+      ]
+    },
+    {
+      "id": "p7-grant-script-2022", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=tab[name=\"Step 7: SQL Server\"]"},
+        {"click": "role=button[name=\"SQL Server 2022 or later\"]"},
+        {"waitFor": "[data-version-note]"},
+        {"scrollTo": "#grant-head"}
+      ]
+    },
+    {
+      "id": "p7-step-7", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=tab[name=\"Step 7: SQL Server\"]"},
+        {"waitFor": "#step-sql-head"},
+        {"scrollTo": "#step-sql-head"}
+      ]
+    },
+    {
+      "id": "p7-step-8", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=tab[name=\"Step 8: MongoDB\"]"},
+        {"waitFor": "#step-mongo-head"},
+        {"scrollTo": "#step-mongo-head"}
+      ]
+    },
+    {
+      "id": "p7-add-day", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=tab[name=\"Add another day\"]"},
+        {"waitFor": "#day-head"},
+        {"scrollTo": "#day-head"}
+      ]
+    },
+    {
+      "id": "p7-nothing-read", "phase": "P7", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Report export timeouts, 18 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"click": "role=tab[name=\"Step 7: SQL Server\"]"},
+        {"waitFor": "[data-nothing-read]"},
+        {"scrollTo": "[data-nothing-read]"}
+      ]
+    },
+    {
+      "id": "p6-step-0", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"waitFor":"text=Incident window"}
+      ]
+    },
+    {
+      "id": "p6-step-1", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(2) button"},
+        {"waitFor":"#step-title-1"}
+      ]
+    },
+    {
+      "id": "p6-step-2", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(3) button"},
+        {"waitFor":"#step-title-2"}
+      ]
+    },
+    {
+      "id": "p6-step-3", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(4) button"},
+        {"waitFor":"#step-title-3"}
+      ]
+    },
+    {
+      "id": "p6-step-4", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(5) button"},
+        {"waitFor":"#step-title-4"}
+      ]
+    },
+    {
+      "id": "p6-step-5", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(6) button"},
+        {"waitFor":"#step-title-5"}
+      ]
+    },
+    {
+      "id": "p6-step-6", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(7) button"},
+        {"waitFor":"#step-title-6"}
+      ]
+    },
+    {
+      "id": "p6-step-7", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(8) button"},
+        {"waitFor":"#step-title-7"}
+      ]
+    },
+    {
+      "id": "p6-step-8", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(9) button"},
+        {"waitFor":"#step-title-8"}
+      ]
+    },
+    {
+      "id": "p6-step-9", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(10) button"},
+        {"waitFor":"#step-title-9"}
+      ]
+    },
+    {
+      "id": "p6-step-10", "phase": "P6", "doc": "guided-analysis.md", "narrow": true,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(11) button"},
+        {"waitFor":"#step-title-10"}
+      ]
+    },
+    {
+      "id": "p6-no-clear-origin", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(11) button"},
+        {"waitFor":"text=No clear origin"}
+      ]
+    },
+    {
+      "id": "p6-checklist", "phase": "P6", "doc": "guided-analysis.md", "narrow": true,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"click":"role=tab[name=\"Checklist\"]"},
+        {"waitFor":"text=Add suggested checks"}
+      ]
+    },
+    {
+      "id": "p6-after-fix-1", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=tab[name=\"After the fix\"]"},
+        {"waitFor":"text=The later day (UTC)"}
+      ]
+    },
+    {
+      "id": "p6-after-fix-2", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=tab[name=\"After the fix\"]"},
+        {"fill":["input[type=\"date\"]","2026-10-20"]},
+        {"click":"role=button[name=\"Compare\"]"},
+        {"waitFor":"text=Change vs the earlier day"}
+      ]
+    },
+    {
+      "id": "p6-tools-1", "phase": "P6", "doc": "manual-tools.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"click":"summary:text-is(\"Case actions\")"},
+        {"click":"role=button[name=\"Switch to Manual tools\"]"},
+        {"waitFor":"#tools-title"}
+      ]
+    },
+    {
+      "id": "p6-tools-2", "phase": "P6", "doc": "manual-tools.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"click":"summary:text-is(\"Case actions\")"},
+        {"click":"role=button[name=\"Switch to Manual tools\"]"},
+        {"waitFor":"#tools-title"},
+        {"click":"role=button[name=\"Open: Slowest APIs\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"waitFor":"text=Only APIs matching"}
+      ]
+    },
+    {
+      "id": "p6-tools-3", "phase": "P6", "doc": "manual-tools.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"click":"summary:text-is(\"Case actions\")"},
+        {"click":"role=button[name=\"Switch to Manual tools\"]"},
+        {"waitFor":"#tools-title"},
+        {"click":"role=button[name=\"Open: SQL blocking and waits\"]"},
+        {"waitFor":"text=Cannot test yet"}
+      ]
+    },
+    {
+      "id": "p6-export-1", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"click":"role=tab[name=\"Export\"]"},
+        {"waitFor":"role=button[name=\"Download report (HTML)\"]"}
+      ]
+    },
+    {
+      "id": "p6-export-2", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=tab[name=\"Export\"]"},
+        {"click":"role=button[name=\"Preview\"]"},
+        {"waitFor":"iframe"}
+      ]
+    },
+    {
       "id": "p3-archive", "phase": "P3", "doc": "cases.md", "narrow": true,
       "steps": [
         {"goto": "/"},

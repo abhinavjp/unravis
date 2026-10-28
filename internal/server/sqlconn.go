@@ -51,6 +51,10 @@ func (h *handler) saveSQLConnection(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "SQL Server connection details are invalid. Check the server name, login and encryption choice.")
 			return
 		}
+		if errors.Is(err, sqlconn.ErrFull) {
+			writeError(w, http.StatusConflict, "You already have 20 saved SQL Server connections. Remove one first, then save this one. Nothing was removed for you.")
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "The SQL Server connection could not be saved. The existing file was left unchanged.")
 		return
 	}
