@@ -165,6 +165,10 @@ func TestLedgerScrubberShapes(t *testing.T) {
 		`body {"user_id": 98765} and {"userId": 98765}`:   {"98765"},
 		"account 98765, uid 98765, uid=98765, cust#98765": {"98765"},
 		"user id: 98,765 and user-4243":                   {"98", "765", "4243"},
+		"see call 1003 at host demo-sql.example.invalid":  {"demo-sql", "example", "invalid"},
+		"intranet box app01.corp and db.local":            {"app01", "db.local"},
+		"bare server01.domain is down":                    {"server01", "domain"},
+		"internal name build-7.internal.test reached":     {"build-7", "internal.test"},
 	}
 	for in, bad := range cases {
 		got := ledgerText(t, in)
@@ -177,6 +181,12 @@ func TestLedgerScrubberShapes(t *testing.T) {
 	// Clock times, dates and a pseudonym-like word are kept.
 	if got := ledgerText(t, "at 10:30:00 on 2026-10-24, rule B12"); got != "at 10:30:00 on 2026-10-24, rule B12" {
 		t.Errorf("harmless text changed: %q", got)
+	}
+	if got := ledgerText(t, "OrdersController.Create was slow"); !strings.Contains(got, "OrdersController.Create") {
+		t.Errorf("Controller.Action was scrubbed: %q", got)
+	}
+	if got := ledgerText(t, "build 1.2.3 shipped"); !strings.Contains(got, "1.2.3") {
+		t.Errorf("a version number was scrubbed: %q", got)
 	}
 }
 

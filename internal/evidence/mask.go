@@ -335,6 +335,11 @@ var scrubPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?/\S*`),
 	// Bare host names on a common top-level domain.
 	regexp.MustCompile(`(?i)\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|dev|app|ai|co|cloud|local|internal|corp|lan|intranet|uk|us|de|in|eu)\b`),
+	// Any other lowercase dotted host-like token, whatever its last label
+	// ("demo-sql.example.invalid", "server01.domain"). Case-sensitive on purpose:
+	// Controller.Action names carry capitals and must survive. The last label
+	// must be 2 or more letters so versions and numbers ("1.2.3", "1.5") stay.
+	regexp.MustCompile(`\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}\b`),
 	// ObjectId-like: 24 or more hex characters, even when glued to a word.
 	regexp.MustCompile(`[0-9a-fA-F]{24,}`),
 }
