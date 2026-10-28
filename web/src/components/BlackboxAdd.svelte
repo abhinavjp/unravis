@@ -34,6 +34,9 @@
 
   const wantsKey = $derived(needsKey(location));
   const busy = $derived(outcome.kind === 'working');
+  // Which field the current message is about, so that field can point at it (D-C-23).
+  const locationBad = $derived(problem === T.locationEmpty);
+  const keyBad = $derived(problem === T.keyNeeded);
 
   onMount(() => first?.focus());
 
@@ -75,14 +78,14 @@
   <section class="bb-block" aria-label={T.addWhere}>
     <h4>{T.addWhere}</h4>
     <label class="bb-field"><span>{T.addPlace}</span>
-      <input bind:this={first} type="text" bind:value={location} autocomplete="off" spellcheck="false" placeholder={'D:\\UnravisBlackbox'} aria-describedby="bb-add-help" onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} />
+      <input bind:this={first} type="text" bind:value={location} autocomplete="off" spellcheck="false" placeholder={'D:\\UnravisBlackbox'} aria-invalid={locationBad ? 'true' : undefined} aria-describedby={locationBad ? 'bb-add-help bb-add-error' : 'bb-add-help'} oninput={() => { if (locationBad) problem = ''; }} onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} />
     </label>
     <p class="bb-note" id="bb-add-help">{T.addPlaceHelp}</p>
     <label class="bb-field"><span>{T.addName}</span><input type="text" bind:value={name} autocomplete="off" spellcheck="false" aria-describedby="bb-add-name-help" /></label>
     <p class="bb-note" id="bb-add-name-help">{T.addNameHelp}</p>
     {#if wantsKey}
       <label class="bb-field"><span>{T.addKey}</span>
-        <input type={showKey ? 'text' : 'password'} bind:value={key} autocomplete="off" spellcheck="false" aria-describedby="bb-add-key-help" />
+        <input type={showKey ? 'text' : 'password'} bind:value={key} autocomplete="off" spellcheck="false" aria-invalid={keyBad ? 'true' : undefined} aria-describedby={keyBad ? 'bb-add-key-help bb-add-error' : 'bb-add-key-help'} oninput={() => { if (keyBad) problem = ''; }} />
       </label>
       <label class="bb-check"><input type="checkbox" bind:checked={showKey} /><span>{T.addKeyShow}</span></label>
       <p class="bb-note" id="bb-add-key-help">{T.addKeyHelp}</p>
@@ -91,7 +94,7 @@
   </section>
 
   <div aria-live="polite">
-    {#if problem}<div class="inline-error" role="alert">{problem}</div>{/if}
+    {#if problem}<div class="inline-error" id="bb-add-error" role="alert">{problem}</div>{/if}
     {#if outcome.kind === 'working'}<p class="bb-note" role="status">{outcome.what === 'add' ? T.adding : T.checking}</p>{/if}
     {#if outcome.kind === 'checked'}
       <div class="bb-result" role="status">

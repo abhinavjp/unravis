@@ -79,6 +79,7 @@ export const BB_TEXT = {
   keyHiddenAgain: 'The key was hidden again after a short time.',
   keyFailed: 'The read key could not be shown.',
   keyCopyFailed: 'Copy did not work here. Press Show and copy it by hand.',
+  keyHeld: 'The key keeper holds this read key and never shows it. Ask the person who looks after this PC.',
   readKeySaved: 'A read key is saved on this PC.',
   readKeyNone: 'This place needs no read key.',
   changeKey: 'Type a new read key',
@@ -108,9 +109,19 @@ export const BB_TEXT = {
   // "4 files and 960 samples", never "4, 960", which reads as 4,960.
   filesAndSamples: (files: number, samples: number) => files + (files === 1 ? ' file' : ' files') + ' and ' + samples + (samples === 1 ? ' sample' : ' samples'),
   // The Gaps row. Files that could not be read to the end are what make a Blackbox Incomplete, so they show here too.
-  gapsText: (gaps: number, unread: number) => {
+  // With the length of the longest gap it says how long, and whether the gap only warns (2 minutes or less) or makes its minutes Cannot test yet.
+  gapsText: (gaps: number, unread: number, longestSeconds = 0) => {
     const parts: string[] = [];
-    if (gaps > 0) parts.push(gaps + (gaps === 1 ? ' gap' : ' gaps'));
+    if (gaps > 0) {
+      let text = gaps + (gaps === 1 ? ' gap' : ' gaps');
+      if (longestSeconds > 0) {
+        const short = longestSeconds <= 120;
+        const length = short ? longestSeconds + (longestSeconds === 1 ? ' second' : ' seconds') : Math.round(longestSeconds / 60) + ' minutes';
+        text = (gaps === 1 ? '1 gap of ' + length : gaps + ' gaps, the longest is ' + length)
+          + (short ? '. This is a warning only. Missing minutes are never counted as zero' : '. The minutes inside it are Cannot test yet');
+      }
+      parts.push(text);
+    }
     if (unread > 0) parts.push(unread + (unread === 1 ? ' recording file was' : ' recording files were') + ' not read to the end');
     return parts.length ? parts.join('. ') : 'none';
   },
@@ -122,6 +133,8 @@ export const BB_TEXT = {
   wizardNothingSaved: 'Nothing is saved until the last step.',
   partOf: (n: number) => 'Part ' + n + ' of 4',
   partNames: ['Name', 'Where', 'Settings', 'Review'],
+  // The visible heading line, for example "Part 2 of 4: Where" (D-B-49).
+  partHeading: (n: number, label: string) => 'Part ' + n + ' of 4: ' + label,
   done: 'Done',
   next: 'Next',
   nextWhere: 'Next: Where',
@@ -172,7 +185,10 @@ export const BB_TEXT = {
   port: 'Status port',
   portHelp: 'The recorder answers on this port.',
   bind: 'Listens on',
-  bindHelp: '127.0.0.1 means only this computer can ask it. To let Unravis on another PC read it, set the server address and add a firewall rule for the port.',
+  bindHelp: '127.0.0.1 means only this computer can ask it. To let Unravis on another PC read it, set the server address. Unravis does not add a firewall rule. Adding one is your own choice.',
+  // Shown when the listen address is every address (D-B-50, D-C-20). Warn only; never refuse.
+  bindWarn: 'This lets other computers on the network reach the status port. The read key is the only protection.',
+  reviewBindWarn: 'This Blackbox listens on every address, so other computers can reach it. The read key is the only protection.',
   housekeepingNote: 'Housekeeping always runs. You can lower the limits but not turn them off.',
   settingProblems: {
     name: 'Go back and fix the name.',
@@ -260,6 +276,7 @@ export const BB_TEXT = {
     'Key refused. The address answered but the read key was not accepted. Type the new key and look again.'
   ],
   addNothingChanged: 'Nothing was changed on that server.',
+  statusReadOnly: 'Unravis only reads here. Nothing was changed on that server.',
   duplicateTitle: 'That Blackbox is already in the list',
   duplicateText: (name: string) => 'It is listed as ' + name + '. It was not added a second time.',
   duplicateOpen: 'Open the one in the list',
@@ -302,6 +319,7 @@ export const BB_TEXT = {
   caseUseNoCase: 'Open a case first. Then this Blackbox can be used in it.',
   caseUseNotPlaced: 'This Blackbox is not placed yet, so a case cannot use it.',
   caseUseNotReadable: 'This Blackbox cannot be read right now, so a case cannot use it yet. Fix that first, then use it here.',
+  caseUseClosed: 'This case is closed. Its Blackbox use cannot be changed. Reopen the case to change it.',
   caseUseButton: 'Use in this case',
   caseUseStop: 'Stop using it in this case',
   caseUseChecking: 'Looking at the case.',
@@ -366,13 +384,17 @@ export function blackboxCopyEntries(): LintEntry[] {
       const fn = value as (...args: any[]) => string;
       if (key === 'packWill') add(key, fn('unravis-blackbox-web-a.zip', 'web-a'));
       else if (key === 'partOf') add(key, fn(2));
+      else if (key === 'partHeading') add(key, fn(2, 'Where'));
       else if (key === 'packReadyTitle' || key === 'removeTitle' || key === 'removeTypeName' || key === 'snapshotTitle' || key === 'duplicateText' || key === 'addFound' || key === 'installedText' || key === 'caseUseOther') add(key, fn('web-a'));
       else if (key === 'snapshotSaved') add(key, fn('D:\\UnravisBlackbox\\snapshots\\web-a-2026-10-20-0905', '46 MB'));
       else if (key === 'removedDeleted' || key === 'snapshotRecordings' || key === 'snapshotLogs' || key === 'hostTorn' || key === 'hostGapShort' || key === 'hostGapLong' || key === 'hostGapMinutes' || key === 'hostMinutes') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }
       else if (key === 'hostReadNote') add(key, fn(2, 240));
       else if (key === 'reviewKeepsText') add(key, fn(7, 2, 10));
       else if (key === 'filesAndSamples') { add(key + '.1', fn(1, 1)); add(key + '.2', fn(4, 960)); }
-      else if (key === 'gapsText') { add(key + '.none', fn(0, 0)); add(key + '.gaps', fn(2, 0)); add(key + '.unread', fn(0, 1)); add(key + '.both', fn(1, 3)); }
+      else if (key === 'gapsText') {
+        add(key + '.none', fn(0, 0)); add(key + '.gaps', fn(2, 0)); add(key + '.unread', fn(0, 1)); add(key + '.both', fn(1, 3));
+        add(key + '.short', fn(1, 0, 90)); add(key + '.shorts', fn(2, 0, 100)); add(key + '.long', fn(1, 0, 300)); add(key + '.longs', fn(3, 1, 1800));
+      }
     }
   }
   for (const id of STATE_IDS) add('stateNext.' + id, T.stateNext[id]);

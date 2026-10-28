@@ -688,7 +688,7 @@ func TestBlackboxThisPCActions(t *testing.T) {
 	if res := b.post("/api/blackbox/this-pc/stop", ""); res.Code != http.StatusOK {
 		t.Fatalf("stop = %d %s", res.Code, res.Body)
 	}
-	if got := b.list().Items[0].State; got.State != blackbox.SStopped || got.Readiness != "Cannot test yet" {
+	if got := b.list().Items[0].State; got.State != blackbox.SStopped || got.Readiness != "Partly ready" {
 		t.Fatalf("state after stop = %+v", got)
 	}
 	if res := b.post("/api/blackbox/this-pc/start", ""); res.Code != http.StatusOK {

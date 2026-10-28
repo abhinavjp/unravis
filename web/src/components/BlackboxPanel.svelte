@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import {
-    blackboxApi, defaultSettings, refusalText, settingsProblem, shownTime,
-    type BlackboxItem, type BlackboxList, type Settings, type SnapshotAnswer, type ThisPc, shownBytes
+    blackboxApi, defaultSettings, fieldProblemNow, refusalText, settingsProblem, shownTime,
+    type BlackboxItem, type BlackboxList, type Settings, type SettingsProblem, type SnapshotAnswer, type ThisPc, shownBytes
   } from '../lib/blackbox';
   import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
   import Drawer from './Drawer.svelte';
@@ -43,6 +43,8 @@
   let applySettings = $state<Settings>(defaultSettings());
   let applyLogs = $state('');
   let applyProblem = $state('');
+  let applyField = $state<SettingsProblem | null>(null);
+  const applyFieldShown = $derived(fieldProblemNow(applyField, applySettings, applyLogs));
   let body = $state<HTMLElement>();
   let drawerEl = $state<HTMLElement>();
 
@@ -75,6 +77,7 @@
    */
   async function show(next: View) {
     const fromList = view.kind === 'list';
+    const leavingStatus = view.kind === 'status' ? view.id : '';
     view = next;
     actionNote = '';
     actionError = '';
@@ -82,7 +85,11 @@
     newKey = '';
     await tick();
     drawerEl?.scrollTo?.({ top: 0 });
-    const target = body?.querySelector<HTMLElement>('h3[tabindex="-1"]') ?? drawerEl?.querySelector<HTMLElement>('h2');
+    // Back from a status: return to the row that was opened (D-C-22). If it is gone, use the usual target.
+    const row = next.kind === 'list' && leavingStatus
+      ? Array.from(body?.querySelectorAll<HTMLElement>('[data-open-for]') ?? []).find((el) => el.dataset.openFor === leavingStatus)
+      : undefined;
+    const target = row ?? body?.querySelector<HTMLElement>('h3[tabindex="-1"]') ?? drawerEl?.querySelector<HTMLElement>('h2');
     target?.focus({ preventScroll: true });
     if (fromList && next.kind === 'status') void refreshOpened(next.id);
   }
@@ -169,13 +176,22 @@
       applySettings = JSON.parse(JSON.stringify(found)) as Settings;
       applyLogs = (found.logPaths ?? []).join('\n');
     }
+    applyField = null;
     applyProblem = found ? '' : T.applyUnreadable;
   }
   async function apply(item: BlackboxItem) {
     if (working) return;
+    applyField = null;
     applySettings.logPaths = applyLogs.split('\n').map((s) => s.trim()).filter(Boolean);
     const first = settingsProblem(applySettings);
-    if (first) { applyProblem = T.settingProblems[first]; return; }
+    if (first === 'name') { applyProblem = T.settingProblems.name; return; }
+    if (first) {
+      applyProblem = '';
+      applyField = first;
+      await tick();
+      body?.querySelector<HTMLElement>('#bb-apply-f-' + first)?.focus();
+      return;
+    }
     applyProblem = '';
     working = T.working;
     try {
@@ -225,7 +241,7 @@
         <h3 tabindex="-1">{T.applyTitle}</h3>
         <p class="bb-note">{T.applyIntro}</p>
         {#if thisPc.settings}
-          <SettingsFields bind:settings={applySettings} bind:logPathsText={applyLogs} idPrefix="bb-apply" />
+          <SettingsFields bind:settings={applySettings} bind:logPathsText={applyLogs} idPrefix="bb-apply" problem={applyFieldShown} />
         {/if}
         <div aria-live="polite">
           {#if working}<p class="bb-note" role="status">{working}</p>{/if}
@@ -246,13 +262,14 @@
         <p class="bb-ready"><strong>{item.state.readiness}</strong></p>
         <p>{item.state.detail}</p>
         <p class="bb-note">{T.stateNext[item.state.state]}</p>
+        {#if !item.thisPc}<p class="bb-note">{T.statusReadOnly}</p>{/if}
         <dl class="bb-facts">
           <div><dt>{T.rowReachedBy}</dt><dd>{kindWord(item)}: {item.location}</dd></div>
           <div><dt>{T.lastSample}</dt><dd>{shownTime(item.facts?.lastSample)}</dd></div>
           {#if item.facts}
             <div><dt>{T.samplesEvery}</dt><dd>{item.facts.intervalSeconds} {T.seconds}</dd></div>
             <div><dt>{T.recorded}</dt><dd>{T.filesAndSamples(item.facts.files, item.facts.samples)}</dd></div>
-            <div><dt>{T.gaps}</dt><dd>{T.gapsText(item.facts.gaps, item.facts.unread ?? 0)}</dd></div>
+            <div><dt>{T.gaps}</dt><dd>{T.gapsText(item.facts.gaps, item.facts.unread ?? 0, item.facts.longestGapSeconds ?? 0)}</dd></div>
             {#if item.facts.freePercent != null}<div><dt>{T.diskFree}</dt><dd>{item.facts.freePercent} %</dd></div>{/if}
             <div><dt>{T.host}</dt><dd>{item.facts.host}{#if item.facts.version}, {T.version} {item.facts.version}{/if}</dd></div>
           {/if}
@@ -348,7 +365,7 @@
               </div>
               <p class="bb-note">{kindWord(item)}: {item.location}</p>
               <p class="bb-note">{T.lastSample}: {shownTime(item.facts?.lastSample)}{#if item.facts}. {T.samplesEvery} {item.facts.intervalSeconds} {T.seconds}{#if item.facts.freePercent != null}. {T.diskFree} {item.facts.freePercent} %{/if}{/if}</p>
-              <div class="bb-actions"><button type="button" class="secondary-button" onclick={() => show({ kind: 'status', id: item.id })} aria-label={T.openStatus + ': ' + item.name}>{T.openStatus}</button></div>
+              <div class="bb-actions"><button type="button" class="secondary-button" data-open-for={item.id} onclick={() => show({ kind: 'status', id: item.id })} aria-label={T.openStatus + ': ' + item.name}>{T.openStatus}</button></div>
             </li>
           {/each}
         </ul>

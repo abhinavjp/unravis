@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { blackboxApi, type BlackboxItem } from '../lib/blackbox';
-  import { copyKeyOnce, KEY_SHOW_MS, makeRevealGuard } from '../lib/blackboxKey';
+  import { copyKeyOnce, isKeeperHeldError, KEY_SHOW_MS, makeRevealGuard } from '../lib/blackboxKey';
   import { BB_TEXT as T } from '../lib/copy/blackboxCopy';
 
   // Screen 65: the read key, masked, with Show and Copy. It is only for the Blackbox installed on this PC. The key lives in
@@ -13,6 +13,7 @@
   let busy = $state('');
   let note = $state('');
   let problem = $state('');
+  let held = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
   // A Show whose answer lands after Hide, the timer or closing this screen must not put the key back.
   const guard = makeRevealGuard();
@@ -36,7 +37,8 @@
     } catch (error) {
       if (!guard.valid(mine)) return;
       letGo();
-      problem = error instanceof Error && error.message ? error.message : T.keyFailed;
+      if (isKeeperHeldError(error)) held = true;
+      else problem = error instanceof Error && error.message ? error.message : T.keyFailed;
     } finally {
       busy = '';
     }
@@ -48,6 +50,7 @@
     const done = await copyKeyOnce(() => key ? Promise.resolve(key) : blackboxApi.revealKey(item.id), (text) => navigator.clipboard.writeText(text));
     busy = '';
     if (done === 'copied') note = T.keyCopied;
+    else if (done === 'keeper-held') held = true;
     else problem = done === 'no-key' ? T.keyFailed : T.keyCopyFailed;
   }
 </script>
@@ -60,15 +63,16 @@
     {#if key}
       <button type="button" class="secondary-button" onclick={hide}>{T.keyHide}</button>
     {:else}
-      <button type="button" class="secondary-button" disabled={!!busy} onclick={show}>{T.keyShow}</button>
+      <button type="button" class="secondary-button" disabled={!!busy || held} onclick={show}>{T.keyShow}</button>
     {/if}
-    <button type="button" class="secondary-button" disabled={!!busy} onclick={copy}>{T.keyCopy}</button>
+    <button type="button" class="secondary-button" disabled={!!busy || held} onclick={copy}>{T.keyCopy}</button>
   </div>
   <div aria-live="polite">
     {#if key}<p class="bb-sr" role="status">{T.keyShownAnnounce}</p>{/if}
     {#if busy}<p class="bb-note" role="status">{busy}</p>{/if}
     {#if note}<p class="bb-ok" role="status">{note}</p>{/if}
     {#if problem}<div class="inline-error" role="alert">{problem}</div>{/if}
+    {#if held}<p class="bb-note" role="status">{T.keyHeld}</p>{/if}
   </div>
 </section>
 
