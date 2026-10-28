@@ -4,7 +4,7 @@
   import {
     CONNECTION_LIMIT, canSaveAnother, mongoRow, sqlRow, type ConnectionRow, type ConnectionWord
   } from '../../lib/lanes';
-  import { CONN_TEXT, NUTSHELL } from '../../lib/copy/sourcesCopy';
+  import { CONN_TEXT, HUB_TEXT, NUTSHELL } from '../../lib/copy/sourcesCopy';
   import { connectedText } from '../../lib/copy/healthCopy';
   import { sqlTestInput, formFromSaved } from '../../lib/sqlConnection';
   import type { RecentConnection, SavedSqlConnection } from '../../lib/types';
@@ -17,7 +17,7 @@
   // Forget asks once. At 20 SQL connections the server refuses the 21st (409); this page says so first and disables the add button.
   // primary: the one button this page may offer as the main action. It is outlined by default, so a case home that already has its own main
   // button keeps a single one; the guided shell passes primary where this page is the whole screen.
-  let { onMongoAdd, primary = false }: { onMongoAdd?: () => void; primary?: boolean } = $props();
+  let { onMongoAdd, primary = false, readOnly = false }: { onMongoAdd?: () => void; primary?: boolean; readOnly?: boolean } = $props();
 
   let sql = $state.raw<SavedSqlConnection[]>([]);
   let mongo = $state.raw<RecentConnection[]>([]);
@@ -110,12 +110,13 @@
     <SqlConnectionForm initial={editing} onSaved={saved} onCancel={() => { adding = false; editing = null; }} />
   {:else}
     <div class="actions">
-      <button type="button" class={primary ? 'btn-primary' : 'btn'} disabled={full} onclick={() => { editing = null; adding = true; }}>{CONN_TEXT.addSql}</button>
-      <button type="button" class="btn" onclick={() => onMongoAdd?.()}>{CONN_TEXT.addMongo}</button>
+      <button type="button" class={primary ? 'btn-primary' : 'btn'} disabled={full || readOnly} onclick={() => { editing = null; adding = true; }}>{CONN_TEXT.addSql}</button>
+      <button type="button" class="btn" disabled={readOnly} onclick={() => onMongoAdd?.()}>{CONN_TEXT.addMongo}</button>
       <span class="hint" data-count>{sql.length} / {CONNECTION_LIMIT}</span>
     </div>
     {#if full}<p class="say bad" role="status" data-full>{CONN_TEXT.full}</p>{/if}
     <p class="hint">{CONN_TEXT.mongoHere}</p>
+    {#if readOnly}<p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>{/if}
   {/if}
 
   {#if demo}
@@ -135,8 +136,8 @@
             {#if row.word === 'Works' && row.problem !== ''}<span class="hint">{row.problem}</span>{/if}
           </span>
           <StateSticker word={row.word} />
-          <button type="button" class="btn" disabled={testing !== ''} aria-label="{CONN_TEXT.test}: {row.label}" onclick={() => void test(row)}>{testing === row.key ? CONN_TEXT.testing : CONN_TEXT.test}</button>
-          {#if row.kind === 'sql'}<button type="button" class="btn" aria-label="{CONN_TEXT.edit}: {row.label}" onclick={() => edit(row)}>{CONN_TEXT.edit}</button>{/if}
+          <button type="button" class="btn" disabled={testing !== '' || readOnly} aria-label="{CONN_TEXT.test}: {row.label}" onclick={() => void test(row)}>{testing === row.key ? CONN_TEXT.testing : CONN_TEXT.test}</button>
+          {#if row.kind === 'sql'}<button type="button" class="btn" disabled={readOnly} aria-label="{CONN_TEXT.edit}: {row.label}" onclick={() => edit(row)}>{CONN_TEXT.edit}</button>{/if}
           {#if asking === row.key}
             <span class="what" role="alertdialog" aria-label={CONN_TEXT.forgetAsk}>
               <span class="hint">{CONN_TEXT.forgetAsk}</span>
@@ -146,7 +147,7 @@
               </span>
             </span>
           {:else}
-            <button type="button" class="btn" aria-label="{CONN_TEXT.forget}: {row.label}" onclick={() => { asking = row.key; }}>{CONN_TEXT.forget}</button>
+            <button type="button" class="btn" disabled={readOnly} aria-label="{CONN_TEXT.forget}: {row.label}" onclick={() => { asking = row.key; }}>{CONN_TEXT.forget}</button>
           {/if}
         </li>
       {/each}

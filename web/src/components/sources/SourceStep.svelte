@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { fetchLaneDays, groupSources, newestDay, readableByDay, runNotice, shiftDays, type LaneDay, type LaneRunResult, type LaneSource } from '../../lib/lanes';
   import { runProblem } from '../../lib/lanes';
-  import { NUTSHELL, STEP_TEXT } from '../../lib/copy/sourcesCopy';
+  import { HUB_TEXT, NUTSHELL, STEP_TEXT } from '../../lib/copy/sourcesCopy';
   import GrantScriptPanel from './GrantScriptPanel.svelte';
   import LaneResultView from './LaneResultView.svelte';
   import LaneRunner from './LaneRunner.svelte';
@@ -13,8 +13,9 @@
   // Step 7 (SQL Server) and Step 8 (MongoDB). The days already read for this case are listed by source, newest first; one is open at a time.
   // Nothing is read until "Read this day" is pressed. With no source of this kind the step says Cannot test yet and offers to add one: it never
   // reads as a pass. For Step 8 the audit logs alone do not count: the step needs the server itself, its profiler and its health.
-  let { caseId, kind, onGone, onChanged, onAddData }: {
-    caseId: string; kind: 'sql' | 'mongo'; onGone?: () => void; onChanged?: () => void; onAddData?: () => void;
+  // readOnly: the case cannot take a new day (closed, or changed elsewhere). Nothing that reads a server or adds data is offered; what is held stays readable.
+  let { caseId, kind, readOnly = false, onGone, onChanged, onAddData }: {
+    caseId: string; kind: 'sql' | 'mongo'; readOnly?: boolean; onGone?: () => void; onChanged?: () => void; onAddData?: () => void;
   } = $props();
 
   let days = $state.raw<LaneDay[]>([]);
@@ -83,7 +84,9 @@
     </div>
     <GrantScriptPanel {kind} />
     {#if kind === 'mongo'}<ProfilerGuide database="" guide={null} />{/if}
-    <LaneRunner {caseId} {kind} {days} onRan={ran} {onGone} ownNotice runLabel={kind === 'sql' ? STEP_TEXT.addSql : STEP_TEXT.addMongo} />
+    {#if readOnly}<p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>{:else}
+      <LaneRunner {caseId} {kind} {days} onRan={ran} {onGone} ownNotice runLabel={kind === 'sql' ? STEP_TEXT.addSql : STEP_TEXT.addMongo} />
+    {/if}
   {:else}
     <section class="field" aria-label={STEP_TEXT.daysHeading}>
       <h4>{STEP_TEXT.daysHeading}</h4>
@@ -104,7 +107,7 @@
     </section>
 
     {#if open}
-      <LaneResultView day={open} onAddDay={readableByDay(kind) ? () => { adding = true; } : undefined} {onAddData} />
+      <LaneResultView day={open} onAddDay={readableByDay(kind) && !readOnly ? () => { adding = true; } : undefined} onAddData={readOnly ? undefined : onAddData} />
       {#if missing}
         <GrantScriptPanel kind={kind} version={open.lane?.era === '2019' ? '2019' : '2022'} database={open.database}
           permission={firstFix?.permission ?? ''} fixScript={firstFix?.script ?? ''} />
@@ -112,7 +115,9 @@
       {#if kind === 'mongo'}<ProfilerGuide database={open.database} guide={open.lane?.guide ?? null} />{/if}
     {/if}
 
-    {#if adding || kind === 'mongo'}
+    {#if readOnly}
+      <p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>
+    {:else if adding || kind === 'mongo'}
       <LaneRunner {caseId} {kind} {days} database={open?.database ?? ''} incident={preset?.incident ?? null} reference={preset?.reference ?? null}
         connectionLabel={open?.label ?? ''} onRan={ran} {onGone} ownNotice />
     {:else}

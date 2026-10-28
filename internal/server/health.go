@@ -216,6 +216,9 @@ func (h *handler) caseHealthRun(w http.ResponseWriter, r *http.Request, raw stri
 		return
 	}
 	defer c.Close()
+	if refuseClosedCase(w, c) {
+		return
+	}
 	if !h.tests.allow() {
 		writeError(w, http.StatusTooManyRequests, "Too many checks in the last minute. Wait a minute, then run again.")
 		return

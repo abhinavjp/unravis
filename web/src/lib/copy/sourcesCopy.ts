@@ -144,6 +144,7 @@ export const RUN_TEXT = {
   limited: 'Too many tries in a short time. Wait a minute, then try again.',
   locked: 'The case files are locked. Unlock them first.',
   demo: 'Reading a server is not available in the demo.',
+  closed: 'The case is closed, so nothing was read. Reopen the case to read from a server.',
   failed: 'The read could not be made. Try again.',
   notSaved: 'The read worked, but this day could not be kept in the case: ',
   done: 'Read and added to the case.',
@@ -250,7 +251,8 @@ export const HUB_TEXT = {
   mongo: 'Step 8: MongoDB',
   add: 'Add data',
   day: 'Add another day',
-  combos: 'Combinations'
+  combos: 'Combinations',
+  readOnlyWhy: 'This case cannot take new data right now: it is closed, or it changed somewhere else. Reopen or refresh it first. What it already holds can still be read here.'
 } as const;
 
 const sample = (id: string, text: string): LintEntry => ({ id: 'sources.' + id, text });

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { fetchLaneDays, groupSources, readableByDay, shiftDays, type LaneDay, type LaneRunResult, type LaneSource } from '../../lib/lanes';
-  import { DAY_TEXT, NUTSHELL } from '../../lib/copy/sourcesCopy';
+  import { DAY_TEXT, HUB_TEXT, NUTSHELL } from '../../lib/copy/sourcesCopy';
   import LaneRunner from './LaneRunner.svelte';
   import StateSticker from './StateSticker.svelte';
   import './sources.css';
@@ -9,7 +9,7 @@
   // Screen 113: read another day of a SQL Server the case already holds. Only SQL can be read by day; MongoDB keeps just the latest profiler
   // entries, so it is listed as "Not by day" with the reason. The new range starts as the same hours on the next day. The days already held
   // are never replaced: a day is added next to them.
-  let { caseId, onGone, onDone, onCancel }: { caseId: string; onGone?: () => void; onDone?: () => void; onCancel?: () => void } = $props();
+  let { caseId, readOnly = false, onGone, onDone, onCancel }: { caseId: string; readOnly?: boolean; onGone?: () => void; onDone?: () => void; onCancel?: () => void } = $props();
 
   let days = $state.raw<LaneDay[]>([]);
   let loaded = $state(false);
@@ -68,7 +68,9 @@
         </select>
       </div>
     {/if}
-    {#if picked && latest && preset}
+    {#if readOnly}
+      <p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>
+    {:else if picked && latest && preset}
       {#key picked.key + preset.start}
         <LaneRunner {caseId} kind="sql" {days} database={picked.database} lockDatabase incident={preset} reference={latest.reference}
           connectionLabel={picked.label} runLabel={DAY_TEXT.run} onRan={ran} {onGone} />

@@ -353,7 +353,7 @@
     <section class="block" aria-labelledby="home-sources">
       <h3 id="home-sources">{HUB_TEXT.heading}</h3>
       <p class="note">{HUB_TEXT.intro}</p>
-      <SourcesHub {caseId} onGone={gone} />
+      <SourcesHub {caseId} {readOnly} onGone={gone} />
     </section>
 
     <section class="block" aria-labelledby="home-files">

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -650,4 +651,36 @@ func TestLaneDaysSurviveHealthRunsAndRechecksReplace(t *testing.T) {
 			t.Fatalf("days = %d", len(list.Days))
 		}
 	})
+}
+
+// A closed case takes no new day, so the live source must not be asked at all: the answer is 409 case-closed before any connection opens.
+func TestLaneAndHealthRunsOnAClosedCaseOpenNoConnection(t *testing.T) {
+	seen := stubLaneSQL(t, healthyLaneSQL())
+	refused := func(t *testing.T, name string, res *httptest.ResponseRecorder) {
+		t.Helper()
+		if res.Code != http.StatusConflict || !strings.Contains(res.Body.String(), `"reason":"case-closed"`) || !strings.Contains(res.Body.String(), "nothing was read") {
+			t.Errorf("%s on a closed case = %d %s", name, res.Code, res.Body)
+		}
+	}
+	healthEnv(t, savedLane(), func(t *testing.T, e *caseEnv, id string) {
+		if res := e.believing(http.MethodPost, "/api/cases/"+id+"/close", "", "open"); res.Code != http.StatusOK {
+			t.Fatalf("close = %d %s", res.Code, res.Body)
+		}
+		refused(t, "lane sql", e.json(http.MethodPost, "/api/cases/"+id+"/lanes/sql", laneSQLBodyJSON("")))
+		refused(t, "health sql", e.json(http.MethodPost, "/api/cases/"+id+"/health/run", `{"kind":"sql","sql":{"savedId":"saved1"}}`))
+		// Reading the days already held still works on a closed case.
+		if res := e.get("/api/cases/" + id + "/lanes"); res.Code != http.StatusOK {
+			t.Errorf("list on a closed case = %d", res.Code)
+		}
+	})
+	repo := &mongoLaneRepo{fakeRepository: &fakeRepository{}, run: func(_ context.Context, _, cmd string) (map[string]any, error) { return healthyMongo(cmd) }}
+	mongoLaneEnv(t, repo, func(t *testing.T, e *caseEnv, id string) {
+		if res := e.believing(http.MethodPost, "/api/cases/"+id+"/close", "", "open"); res.Code != http.StatusOK {
+			t.Fatalf("close = %d %s", res.Code, res.Body)
+		}
+		refused(t, "lane mongo", e.json(http.MethodPost, "/api/cases/"+id+"/lanes/mongo", laneMongoBodyJSON))
+	})
+	if len(*seen) != 0 || repo.opened != 0 {
+		t.Fatalf("a closed case opened %d SQL and %d Mongo connections", len(*seen), repo.opened)
+	}
 }

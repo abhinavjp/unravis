@@ -2,14 +2,14 @@
   import { onMount } from 'svelte';
   import { api } from '../../lib/api';
   import { fetchLaneDays, groupSources, readableByDay, type LaneDay } from '../../lib/lanes';
-  import { ADD_TEXT, NUTSHELL } from '../../lib/copy/sourcesCopy';
+  import { ADD_TEXT, HUB_TEXT, NUTSHELL } from '../../lib/copy/sourcesCopy';
   import './sources.css';
 
   // Screen 112: add data to a case after it was made. Every card reads on its own and does not touch what is there. This screen only counts what
   // exists and hands the choice on; nothing is read or changed here. A step that ran before the new data arrived is marked Out of date by the
   // screen that finishes the add, never by itself.
   export type AddChoice = 'sql' | 'mongo' | 'blackbox' | 'files' | 'day';
-  let { caseId, onChoose }: { caseId: string; onChoose?: (what: AddChoice) => void } = $props();
+  let { caseId, readOnly = false, onChoose }: { caseId: string; readOnly?: boolean; onChoose?: (what: AddChoice) => void } = $props();
 
   let days = $state.raw<LaneDay[]>([]);
   let sqlSaved = $state(0);
@@ -37,20 +37,21 @@
 <section class="src" aria-labelledby="add-head">
   <div class="nutshell"><b>{NUTSHELL}</b><p>{ADD_TEXT.lead}</p></div>
   <h3 id="add-head">{ADD_TEXT.heading}</h3>
+  {#if readOnly}<p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>{/if}
   <div class="cards">
     <div class="card" data-card="sql">
       <h4>{ADD_TEXT.sqlTitle}</h4>
       <p class="hint">{ADD_TEXT.sqlBody}</p>
       <p class="hint">{ADD_TEXT.connReady(sqlSaved)}</p>
       <p class="hint">{ADD_TEXT.held(sqlHeld)}</p>
-      <div class="actions"><button type="button" class="btn" onclick={() => choose('sql')}>{ADD_TEXT.addSql}</button></div>
+      <div class="actions"><button type="button" class="btn" disabled={readOnly} onclick={() => choose('sql')}>{ADD_TEXT.addSql}</button></div>
     </div>
     <div class="card" data-card="mongo">
       <h4>{ADD_TEXT.mongoTitle}</h4>
       <p class="hint">{ADD_TEXT.mongoBody}</p>
       <p class="hint">{ADD_TEXT.connReady(mongoSaved)}</p>
       <p class="hint">{ADD_TEXT.held(mongoHeld)}</p>
-      <div class="actions"><button type="button" class="btn" onclick={() => choose('mongo')}>{ADD_TEXT.addMongo}</button></div>
+      <div class="actions"><button type="button" class="btn" disabled={readOnly} onclick={() => choose('mongo')}>{ADD_TEXT.addMongo}</button></div>
     </div>
     <div class="card" data-card="blackbox">
       <h4>{ADD_TEXT.blackboxTitle}</h4>
@@ -66,7 +67,7 @@
       <h4>{ADD_TEXT.dayTitle}</h4>
       <p class="hint">{ADD_TEXT.dayBody}</p>
       <p class="hint">{ADD_TEXT.byDay(byDay, sources.length)}</p>
-      <div class="actions"><button type="button" class="btn" disabled={byDay === 0} onclick={() => choose('day')}>{ADD_TEXT.addDay}</button></div>
+      <div class="actions"><button type="button" class="btn" disabled={readOnly || byDay === 0} onclick={() => choose('day')}>{ADD_TEXT.addDay}</button></div>
     </div>
   </div>
   <p class="hint">{ADD_TEXT.outOfDate}</p>

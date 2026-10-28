@@ -155,6 +155,18 @@ func LaneDayKey(kind string, report dbhealth.Report) string {
 	return laneKey(laneSourceID(kind, report.Label, report.Database, ""), report)
 }
 
+// laneClosedText is said when a read is asked of a closed case. Nothing was read: a closed case takes no new day, so the live source is never asked.
+const laneClosedText = "The case is closed, so nothing was read. Reopen the case to read from a server."
+
+// refuseClosedCase answers 409 case-closed for a closed case before any live source is opened, and says whether it did.
+func refuseClosedCase(w http.ResponseWriter, c casestore.Case) bool {
+	if c.Info().Closed == nil {
+		return false
+	}
+	writeCaseFailure(w, http.StatusConflict, "case-closed", laneClosedText)
+	return true
+}
+
 // laneSave keeps a finished lane run in the case and answers like a health run does.
 func laneSave(w http.ResponseWriter, r *http.Request, hs casestore.HealthStore, kind, server string, report dbhealth.Report) {
 	enc, err := json.Marshal(report)
@@ -211,6 +223,9 @@ func (h *handler) caseLaneSQL(w http.ResponseWriter, r *http.Request, raw string
 		return
 	}
 	defer c.Close()
+	if refuseClosedCase(w, c) {
+		return
+	}
 	target, label, ok := h.resolveSQL(w, body.sqlRequest)
 	if !ok {
 		return
@@ -277,6 +292,9 @@ func (h *handler) caseLaneMongo(w http.ResponseWriter, r *http.Request, raw stri
 		return
 	}
 	defer c.Close()
+	if refuseClosedCase(w, c) {
+		return
+	}
 	input, ok := h.resolveConnection(w, body.ConnectionInput)
 	if !ok {
 		return

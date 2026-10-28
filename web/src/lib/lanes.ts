@@ -245,6 +245,8 @@ export function runProblem(error: unknown): { text: string; gone: boolean } {
   const gone = isCaseGone(error);
   const status = error instanceof CaseApiError || error instanceof ApiError ? (error.status ?? 0) : 0;
   const message = error instanceof Error ? error.message : '';
+  // A closed case refuses a read before any server is asked; the reason says so, whatever the status words are.
+  if (error instanceof CaseApiError && error.reason === 'case-closed') return { text: RUN_TEXT.closed, gone };
   if (status === 409) return { text: /already/i.test(message) ? message : RUN_TEXT.busy, gone };
   if (status === 429) return { text: RUN_TEXT.limited, gone };
   if (status === 423) return { text: RUN_TEXT.locked, gone };

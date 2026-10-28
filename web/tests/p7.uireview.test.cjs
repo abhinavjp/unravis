@@ -68,3 +68,35 @@ test('minor 13: with nothing chosen the newest day opens, not the first one in t
   assert.match(comp('SourceStep'), /newestDay\(mine\)/);
   assert.doesNotMatch(comp('SourceStep'), /mine\[0\]/);
 });
+
+// ---- M2 ------------------------------------------------------------------------------------------------------------------------------
+
+test('M2: a closed case offers no read, add, test, edit or forget, and says why', () => {
+  const home = read('src/lib/components/CaseHome.svelte');
+  assert.match(home, /<SourcesHub \{caseId\} \{readOnly\}/, 'the case page hands its read-only state to the hub');
+  const hub = comp('SourcesHub');
+  for (const mount of ['ConnectionsPage', 'SqlStepPanel', 'MongoStepPanel', 'AddDataPanel', 'AddAnotherDay']) {
+    assert.match(hub, new RegExp('<' + mount + ' [^>]*\\{readOnly\\}'), mount + ' gets readOnly from the hub');
+  }
+  for (const name of ['SqlStepPanel', 'MongoStepPanel']) assert.match(comp(name), /readOnly = false/, name + ' stays usable in the guided shell, which never passes it');
+  const page = comp('ConnectionsPage');
+  assert.match(page, /disabled=\{testing !== '' \|\| readOnly\}/);
+  assert.equal((page.match(/disabled=\{readOnly\}/g) ?? []).length, 3, 'edit, forget and the Mongo add are off');
+  assert.match(page, /disabled=\{full \|\| readOnly\}/);
+  const add = comp('AddDataPanel');
+  assert.match(add, /disabled=\{readOnly\} onclick=\{\(\) => choose\('sql'\)\}/);
+  assert.match(add, /disabled=\{readOnly\} onclick=\{\(\) => choose\('mongo'\)\}/);
+  assert.match(add, /disabled=\{readOnly \|\| byDay === 0\}/);
+  const step = comp('SourceStep');
+  assert.equal((step.match(/data-read-only/g) ?? []).length, 2, 'both places the step would read say why they do not');
+  assert.match(step, /onAddDay=\{readableByDay\(kind\) && !readOnly/);
+  assert.match(comp('AddAnotherDay'), /\{#if readOnly\}/);
+  assert.match(copy.HUB_TEXT.readOnlyWhy, /closed/);
+});
+
+test('M2: the case-closed refusal reads as a plain sentence, not as another read running', () => {
+  const refused = new CaseApiError('The case is closed, so nothing was read. Reopen the case to read from a server.', 409, 'case-closed');
+  assert.equal(lanes.runProblem(refused).text, copy.RUN_TEXT.closed);
+  assert.match(copy.RUN_TEXT.closed, /closed/);
+  assert.notEqual(lanes.runProblem(new CaseApiError('busy', 409, '')).text, copy.RUN_TEXT.closed, 'a plain 409 is still busy');
+});
