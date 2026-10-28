@@ -320,3 +320,34 @@ func TestSweepSkipsArchivedFreedAndMarkedCases(t *testing.T) {
 		t.Fatalf("Sweep erased %v (%v), want only the plain closed case", gone, err)
 	}
 }
+
+func TestNoImportIntoACaseBeingArchivedOrArchived(t *testing.T) {
+	s, _ := newTestStore(t)
+	id := mustCreate(t, s, "Frozen").ID
+	h := mustOpen(t, s, id)
+	c := h
+	mustImport(t, c, "before", 3)
+	pend := casestore.ArchivePending{Folder: `D:\archives`, Name: "frozen.unravis-case", Started: time.Now()}
+	if _, err := s.BeginArchive(p3ctx, id, "", pend); err != nil {
+		t.Fatal(err)
+	}
+	try := func(when string) {
+		_, err := c.Import(p3ctx, tMeta("late.csv"), tBody("late"), tRun(tEvents(c, "late", 1)))
+		if !errors.Is(err, casestore.ErrCaseClosed) {
+			t.Fatalf("import %s: %v, want ErrCaseClosed", when, err)
+		}
+	}
+	try("while Archiving")
+	if err := s.AbortArchive(p3ctx, id, false); err != nil {
+		t.Fatal(err)
+	}
+	mustImport(t, c, "after-abort", 1)
+	if _, err := s.BeginArchive(p3ctx, id, "", pend); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CommitArchive(p3ctx, id, p3File("frozen.unravis-case")); err != nil {
+		t.Fatal(err)
+	}
+	try("after Archived")
+	_ = h.Close()
+}

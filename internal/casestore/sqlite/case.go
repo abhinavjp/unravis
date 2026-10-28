@@ -792,7 +792,9 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 func (c *Case) isClosed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.man.Closed != nil
+	// An archive in flight (the mark) or a finished one takes no more writes either:
+	// the file being written must stay a copy of what the case holds.
+	return c.man.Closed != nil || c.man.Mark == casestore.MarkArchiving || archived(c.man)
 }
 
 // mirror appends a committed import to the sealed manifest. A failure is not an
