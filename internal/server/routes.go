@@ -240,6 +240,25 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/investigation", match: caseSubpath("/investigation"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseInvestigation(w, r, id) },
 	}},
+	// Guided analysis: a case's saved views and checklist, and the report.
+	{pattern: "/api/cases/{id}/views", match: caseSubpath("/views"), methods: map[string]routeFunc{
+		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseViewsList(w, r, id) },
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseViewSave(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/views/{vid}", match: casePlanItemPath("views"), methods: map[string]routeFunc{
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.caseViewDelete(w, r, arg) },
+	}},
+	{pattern: "/api/cases/{id}/checklist", match: caseSubpath("/checklist"), methods: map[string]routeFunc{
+		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseChecklistList(w, r, id) },
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseChecklistCreate(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/checklist/{iid}", match: casePlanItemPath("checklist"), methods: map[string]routeFunc{
+		http.MethodPut:    func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.caseChecklistUpdate(w, r, arg) },
+		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.caseChecklistDelete(w, r, arg) },
+	}},
+	{pattern: "/api/cases/{id}/report", match: caseSubpath("/report"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseReport(w, r, id) },
+	}},
 	{pattern: "/api/call-trace", match: exactPath("/api/call-trace"), methods: post((*handler).callTrace)},
 	{pattern: "/api/discover/capabilities", match: exactPath("/api/discover/capabilities"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.discoverCapabilities(w, r) },

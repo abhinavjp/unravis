@@ -34,6 +34,11 @@ var routeCases = []routeCase{
 	{"/api/cases/{id}/ledger/copy-shared", "/api/cases/c1/ledger/copy-shared", "POST"},
 	{"/api/cases/{id}/ledger/{hid}", "/api/cases/c1/ledger/h1", "DELETE, PUT"},
 	{"/api/cases/{id}/ledger/{hid}/reuse", "/api/cases/c1/ledger/h1/reuse", "POST"},
+	{"/api/cases/{id}/views", "/api/cases/c1/views", "GET, POST"},
+	{"/api/cases/{id}/views/{vid}", "/api/cases/c1/views/v1", "DELETE"},
+	{"/api/cases/{id}/checklist", "/api/cases/c1/checklist", "GET, POST"},
+	{"/api/cases/{id}/checklist/{iid}", "/api/cases/c1/checklist/i1", "DELETE, PUT"},
+	{"/api/cases/{id}/report", "/api/cases/c1/report", "POST"},
 	{"/api/cases/{id}/workspace", "/api/cases/c1/workspace", "GET, PUT"},
 	{"/api/connections/remember","/api/connections/remember", "POST"},
 	{"/api/connections/test", "/api/connections/test", "POST"},
@@ -194,6 +199,9 @@ func TestUnknownRoutesAre404NotMethodErrors(t *testing.T) {
 		"/api/cases/c1/ledger/h1/other",
 		"/api/cases/c1/ledger/h1/reuse/more",
 		"/api/cases/c1/ledger/copy-shared/more",
+		"/api/cases/c1/views/v1/more",
+		"/api/cases/c1/checklist/i1/more",
+		"/api/cases/c1/report/more",
 		"/api/hosts/x",
 	} {
 		for _, method := range routeTestMethods {
