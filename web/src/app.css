@@ -742,3 +742,9 @@ th.numeric { text-align: right; }
   .rail-item.on { box-shadow: inset -1px 0 0 var(--accent); }
   .more-filters[open] > .more-body { max-height: min(72vh, calc(100dvh - var(--header-h) - 120px)); overflow-y: auto; overscroll-behavior: contain; }
 }
+
+/* Tap targets: 44px tall on touch screens and narrow windows. The desktop sizes above are unchanged. */
+@media (pointer: coarse), (max-width: 720px) {
+  .header-button, .chip, .segmented button, .more-filters > summary, .filter-chip, .menu > summary, .primary-button, .secondary-button, .quiet-button { min-height: 44px; }
+  .theme-toggle, .icon-button { min-width: 44px; min-height: 44px; }
+}
