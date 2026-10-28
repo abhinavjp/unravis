@@ -275,8 +275,9 @@ func TestResourceAfterEraseIs404(t *testing.T) {
 	}
 }
 
-// Resource reads that race an erase end in 200 or 404, never in a server
-// error, and every read after the erase is 404.
+// Resource reads that race an erase end in 200, 404, or 409 "case-erasing"
+// (M5: the erase is draining the readers in flight), never in a server error
+// or any other answer, and every read after the erase is 404.
 func TestResourceRacingAnEraseEndsCleanly(t *testing.T) {
 	e := newCaseEnv(t, envConfig{})
 	id := seriesCase(t, e)
@@ -284,14 +285,19 @@ func TestResourceRacingAnEraseEndsCleanly(t *testing.T) {
 	const readers = 8
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	codes := make(chan int, readers*10)
+	type answer struct {
+		code int
+		body string
+	}
+	codes := make(chan answer, readers*10)
 	for i := 0; i < readers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-start
 			for j := 0; j < 10; j++ {
-				codes <- e.get(path).Code
+				res := e.get(path)
+				codes <- answer{res.Code, res.Body.String()}
 			}
 		}()
 	}
@@ -306,9 +312,12 @@ func TestResourceRacingAnEraseEndsCleanly(t *testing.T) {
 	if code := <-eraseDone; code != http.StatusNoContent {
 		t.Fatalf("erase = %d", code)
 	}
-	for code := range codes {
-		if code != http.StatusOK && code != http.StatusNotFound {
-			t.Errorf("a resource read racing an erase answered %d", code)
+	for a := range codes {
+		switch {
+		case a.code == http.StatusOK || a.code == http.StatusNotFound:
+		case a.code == http.StatusConflict && strings.Contains(a.body, `"case-erasing"`):
+		default:
+			t.Errorf("a resource read racing an erase answered %d %s", a.code, a.body)
 		}
 	}
 	if res := e.get(path); res.Code != http.StatusNotFound {
