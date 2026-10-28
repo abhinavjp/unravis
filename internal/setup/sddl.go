@@ -61,6 +61,10 @@ func ReadKeyFileSDDL(sid string) string {
 	return "O:" + sid + "D:P(A;;FA;;;SY)(A;;FA;;;" + sid + ")"
 }
 
+// WorkerPipeSDDL is the access list of the pipe between the setup window and its elevated worker: the person's account and the system
+// only (installer-and-releases.md section 3). Administrators are not listed.
+func WorkerPipeSDDL(sid string) string { return "D:P(A;;GA;;;SY)(A;;GA;;;" + sid + ")" }
+
 var sddlSIDs = map[string]string{
 	"SY": "S-1-5-18", "BA": "S-1-5-32-544", "BU": "S-1-5-32-545", "WD": "S-1-1-0", "AU": "S-1-5-11",
 	"CO": "S-1-3-0", "OW": "S-1-3-4", "LS": "S-1-5-19", "NS": "S-1-5-20",

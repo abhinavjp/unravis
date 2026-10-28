@@ -120,38 +120,128 @@ const maxPathLen = 200 // leaves room under MAX_PATH for the files inside
 
 // Validate checks the options against the folders of this PC. It never touches the machine.
 func (o Options) Validate(d Dirs) error {
+	_, err := o.Validated(d, nil)
+	return err
+}
+
+// Validated is Validate that also returns the options with every path written the way Windows will read it (full path, long names,
+// dot parts resolved). Every location check runs on that form, so "C:\Windows." or "C:\PROGRA~1\x" cannot slip past a check that
+// compares text. paths nil means a plain clean.
+func (o Options) Validated(d Dirs, paths Paths) (Options, error) {
+	if paths == nil {
+		paths = cleanPaths{}
+	}
 	switch o.Scope {
 	case ScopeMachine, ScopeUser:
 	default:
-		return problem("scope", `Choose "Just for me" or "For everyone on this PC".`)
+		return o, problem("scope", `Choose "Just for me" or "For everyone on this PC".`)
+	}
+	if err := checkSpelling("location", o.Location); err != nil {
+		return o, err
+	}
+	if o.Blackbox != nil {
+		if err := checkSpelling("blackbox", o.Blackbox.Folder); err != nil {
+			return o, err
+		}
+	}
+	if o.ReadKeyFile != "" {
+		if err := checkSpelling("readKeyFile", o.ReadKeyFile); err != nil {
+			return o, err
+		}
+	}
+	d, err := d.canonical(paths)
+	if err != nil {
+		return o, err
+	}
+	o, err = o.canonical(paths)
+	if err != nil {
+		return o, err
 	}
 	if err := checkLocation(o.Scope, o.Location, d); err != nil {
-		return err
+		return o, err
 	}
 	if o.Blackbox != nil {
 		cfg, _ := o.BlackboxConfig()
 		if err := cfg.Validate(); err != nil {
 			if why := blackbox.PlainReason(err); why != "" {
-				return problem("blackbox", "%s", why)
+				return o, problem("blackbox", "%s", why)
 			}
-			return problem("blackbox", "%s", strings.TrimPrefix(err.Error(), blackbox.ErrInvalidConfig.Error()+": "))
+			return o, problem("blackbox", "%s", strings.TrimPrefix(err.Error(), blackbox.ErrInvalidConfig.Error()+": "))
 		}
 		if insideFolder(o.Blackbox.Folder, o.Location) || insideFolder(o.Location, o.Blackbox.Folder) {
-			return problem("blackbox", "Keep the recordings folder apart from the program folder.")
+			return o, problem("blackbox", "Keep the recordings folder apart from the program folder.")
 		}
 	}
 	if o.Firewall != nil {
 		if o.Blackbox == nil {
-			return problem("firewall", "The firewall rule is only for the Blackbox. Add the Blackbox, or untick the rule.")
+			return o, problem("firewall", "The firewall rule is only for the Blackbox. Add the Blackbox, or untick the rule.")
 		}
 		if err := CheckRemoteAddresses(o.Firewall.RemoteAddresses); err != nil {
-			return err
+			return o, err
 		}
 	}
 	if o.ReadKeyFile != "" && !filepath.IsAbs(o.ReadKeyFile) {
-		return problem("readKeyFile", "The read key file must be a full path such as C:\\setup\\readkey.txt.")
+		return o, problem("readKeyFile", "The read key file must be a full path such as C:\\setup\\readkey.txt.")
+	}
+	return o, nil
+}
+
+// checkSpelling refuses what Windows would quietly rewrite: a folder name ending in a dot or a space (Windows drops them, so
+// "C:\Windows." is C:\Windows), and a colon after the drive (a hidden data stream, not a folder).
+func checkSpelling(field, path string) error {
+	if path == "" {
+		return nil
+	}
+	if strings.Contains(path, ":") && strings.LastIndex(path, ":") > 1 {
+		return problem(field, "The folder name has characters Windows does not allow (< > \" | ? * :).")
+	}
+	for _, part := range strings.FieldsFunc(path, func(r rune) bool { return r == '\\' || r == '/' }) {
+		if part == "." || part == ".." {
+			continue
+		}
+		if strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ") {
+			return problem(field, "A folder name cannot end with a dot or a space (%q). Windows would drop it, and the folder would not be the one you typed.", part)
+		}
 	}
 	return nil
+}
+
+func (d Dirs) canonical(paths Paths) (Dirs, error) {
+	for _, p := range []*string{&d.Windows, &d.ProgramFiles, &d.ProgramData, &d.LocalAppData, &d.AppData, &d.UserProfile, &d.Temp} {
+		if *p == "" {
+			continue
+		}
+		c, err := paths.Canonical(*p)
+		if err != nil {
+			return d, err
+		}
+		*p = c
+	}
+	return d, nil
+}
+
+func (o Options) canonical(paths Paths) (Options, error) {
+	var err error
+	if o.Location != "" && filepath.IsAbs(o.Location) {
+		if o.Location, err = paths.Canonical(o.Location); err != nil {
+			return o, problem("location", "That folder cannot be read as a path: %s.", plainError(err))
+		}
+	}
+	if o.Blackbox != nil {
+		b := *o.Blackbox
+		if b.Folder != "" && filepath.IsAbs(b.Folder) {
+			if b.Folder, err = paths.Canonical(b.Folder); err != nil {
+				return o, problem("blackbox", "The recordings folder cannot be read as a path: %s.", plainError(err))
+			}
+		}
+		o.Blackbox = &b
+	}
+	if o.ReadKeyFile != "" && filepath.IsAbs(o.ReadKeyFile) {
+		if o.ReadKeyFile, err = paths.Canonical(o.ReadKeyFile); err != nil {
+			return o, problem("readKeyFile", "The read key file cannot be read as a path: %s.", plainError(err))
+		}
+	}
+	return o, nil
 }
 
 // checkLocation refuses a program folder that is not a full path, is a drive root or a system folder, is too long, or (for an install
@@ -187,10 +277,31 @@ func checkLocation(scope Scope, loc string, d Dirs) error {
 	if d.ProgramData != "" && insideFolder(clean, d.ProgramData) {
 		return problem(field, "Choose a folder outside %s: that is where the shared data lives.", d.ProgramData)
 	}
+	if scope == ScopeMachine {
+		for _, users := range profilesRoots(d) {
+			if insideFolder(clean, users) {
+				return problem(field, "A folder inside %s belongs to one person. Choose a folder in %s, or \"Just for me\".", users, DefaultLocation(scope, d))
+			}
+		}
+	}
 	if scope == ScopeUser && d.ProgramFiles != "" && insideFolder(clean, d.ProgramFiles) {
 		return problem(field, "Only administrators can write to %s. Choose \"For everyone on this PC\", or a folder of your own.", d.ProgramFiles)
 	}
 	return nil
+}
+
+// profilesRoots are the folders that hold people's profiles (C:\Users): nothing inside them is for everyone.
+func profilesRoots(d Dirs) []string {
+	var out []string
+	if d.UserProfile != "" {
+		if up := filepath.Dir(filepath.Clean(d.UserProfile)); filepath.Dir(up) != up {
+			out = append(out, up)
+		}
+	}
+	if d.Windows != "" {
+		out = append(out, filepath.Join(filepath.Dir(filepath.Clean(d.Windows)), "Users"))
+	}
+	return out
 }
 
 // CheckRemoteAddresses accepts single IP addresses and address ranges (10.0.0.0/24). It refuses an empty list and anything that means

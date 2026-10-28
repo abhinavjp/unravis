@@ -67,10 +67,11 @@ func (r *Runner) NewPlan(op Op, opts Options, un UninstallOptions, old *Installe
 	}
 	switch op {
 	case OpInstall:
-		if err := opts.Validate(r.Dirs); err != nil {
+		canon, err := opts.Validated(r.Dirs, r.Sys.paths())
+		if err != nil {
 			return nil, err
 		}
-		p.Opts = opts
+		p.Opts = canon
 	case OpUpgrade, OpRepair, OpUninstall:
 		if old == nil {
 			return nil, errors.New("Unravis is not installed on this PC")
@@ -89,6 +90,11 @@ func (r *Runner) NewPlan(op Op, opts Options, un UninstallOptions, old *Installe
 	}
 	if opts.ReadKeyFile != "" {
 		p.Opts.ReadKeyFile = opts.ReadKeyFile
+		if op != OpInstall {
+			if c, err := r.Sys.paths().Canonical(opts.ReadKeyFile); err == nil {
+				p.Opts.ReadKeyFile = c
+			}
+		}
 	}
 	p.Layout = NewLayout(p.Opts, r.Dirs)
 	p.Elevated = NeedsAdmin(p.Opts)
@@ -159,10 +165,15 @@ func (p *Plan) closeApp(ctx context.Context, t *Txn) error {
 	if len(running) == 0 {
 		return nil
 	}
+	mine, others := p.r.splitApps(running)
+	if len(others) > 0 {
+		return ErrAppOpenForOther
+	}
 	if !p.Opts.CloseRunningApp {
 		return ErrAppRunning
 	}
-	for _, q := range running {
+	// Unravis has no way to be asked to close from outside, so the person's own copies are ended, after their yes.
+	for _, q := range mine {
 		t.Logf("close-app: closing Unravis (process %d)", q.PID)
 		if err := p.r.Sys.Proc.Terminate(q.PID); err != nil && !errors.Is(err, ErrNotFound) {
 			return &StepError{Msg: "Unravis could not be closed: " + err.Error() + ".", Fix: "Close Unravis yourself, then try again.", Err: err}
@@ -183,6 +194,18 @@ func (p *Plan) stopServices(ctx context.Context, t *Txn) error {
 
 func (p *Plan) programFolder(ctx context.Context, t *Txn) error {
 	dir := p.Layout.InstallDir
+	if err := p.r.refuseLink(dir); err != nil {
+		return err
+	}
+	if p.Opts.Scope == ScopeMachine {
+		why, err := p.r.programFolderProblem(dir, p.Old)
+		if err != nil {
+			return err
+		}
+		if why != "" {
+			return &StepError{Msg: why, Fix: "Choose a new or empty folder, then run setup again."}
+		}
+	}
 	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
 		if err := t.MkdirAll(filepath.Dir(dir)); err != nil {
 			return err
@@ -295,6 +318,11 @@ func (p *Plan) anchorMatches() bool {
 func (p *Plan) sharedFolder(ctx context.Context, t *Txn) error {
 	l := p.Layout
 	shared := SharedFolderSDDL()
+	for _, d := range []string{l.SharedRoot, l.SharedCases} {
+		if err := p.r.refuseLink(d); err != nil {
+			return err
+		}
+	}
 	if _, err := os.Lstat(l.SharedRoot); err == nil {
 		if terr := p.r.Sys.Trust(l.SharedRoot); terr == nil {
 			t.Logf("shared-folder: %s is the one setup made; kept as it is", l.SharedRoot)
@@ -328,13 +356,18 @@ func (p *Plan) sharedFolder(ctx context.Context, t *Txn) error {
 // account and setup has no business opening them.
 func (p *Plan) ensureKeeperDir(t *Txn) error {
 	dir := p.Layout.KeeperDir
+	if err := p.r.refuseLink(dir); err != nil {
+		return err
+	}
 	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
 		return t.MkdirSDDL(dir, KeeperFolderSDDL())
 	} else if err != nil {
 		return err
 	}
+	// Exactly the list of security.md (SY, BA and the keeper, nothing inherited); anything else, such as an extra reader or a missing
+	// keeper entry, is put back.
 	fs, err := p.r.Sys.Sec.Read(dir)
-	if err == nil && checkAdminOnly(dir, withoutKeeper(fs)) == nil {
+	if err == nil && sameAccess(fs, KeeperFolderSDDL()) {
 		return nil
 	}
 	return t.SetSDDL(dir, KeeperFolderSDDL())
@@ -533,16 +566,25 @@ func (p *Plan) writeReadKeyFile(t *Txn, key string) error {
 	if err := t.MkdirAll(filepath.Dir(f)); err != nil {
 		return err
 	}
-	if err := t.keepOld(f, "read key file"); err != nil {
-		return err
-	}
-	if err := os.WriteFile(f, []byte(key+"\r\n"), 0o600); err != nil {
-		return err
-	}
 	if p.r.UserSID == "" {
 		return errors.New("the person's account is not known, so the read key file cannot be locked to them")
 	}
-	return p.r.Sys.Sec.SetSDDL(f, ReadKeyFileSDDL(p.r.UserSID))
+	if _, err := os.Lstat(f); err == nil {
+		return readKeyFileExists(f)
+	}
+	// Made new, with its list in the create call: there is no moment when the key sits under the folder's inherited permissions.
+	if err := t.CreateFileSDDL(f, ReadKeyFileSDDL(p.r.UserSID), []byte(key+"\r\n")); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return readKeyFileExists(f)
+		}
+		return err
+	}
+	return nil
+}
+
+func readKeyFileExists(f string) error {
+	return &StepError{Msg: "The read key file " + f + " is already there. Setup does not replace a file.",
+		Fix: "Choose a file name that does not exist yet, then run setup again."}
 }
 
 func (p *Plan) firewall(ctx context.Context, t *Txn) error {

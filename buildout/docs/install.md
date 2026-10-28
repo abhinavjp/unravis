@@ -21,7 +21,7 @@ Setup opens its window in Microsoft Edge or Google Chrome, in a plain app window
 | Setup program | The programs inside setup match their manifest. |
 | Other setup | No other Unravis setup is running. |
 | Earlier install | Whether Unravis is already on this PC. If it is, setup upgrades or repairs it instead. |
-| Unravis open | Whether Unravis is running. Setup can close it for you and open it again afterwards. |
+| Unravis open | Whether Unravis is running. Setup can close your own Unravis for you and open it again afterwards. If it is open for another person on this PC, this check fails with "Unravis is open for another person on this PC": setup never closes someone else's Unravis, so ask them to close it or sign out. |
 | Blackbox service | Only when you place a Blackbox: no Blackbox is installed on this PC yet. |
 | Browser | Microsoft Edge or Google Chrome, which Unravis opens in. |
 | Setup window | Whether WebView2 is installed. Without it the window opens in the browser. Nothing to do. |
@@ -33,7 +33,8 @@ Setup opens its window in Microsoft Edge or Google Chrome, in a plain app window
 | Restart | A restart Windows is waiting for. Setup can go on. |
 | Earlier setup | An earlier setup that did not finish. Setup puts back what it changed before it starts. |
 | Shared data folder | For everyone on this PC: `C:\ProgramData\Unravis` is free, or was made by an earlier setup. |
-| Program folder | A new install does not go into a folder that already holds other files. |
+| Program folder | A new install does not go into a folder that already holds other files. For everyone on this PC, an existing folder is only used when an earlier Unravis setup made it, or when it is empty and only administrators own it. A folder that is a link to another place is refused, for this folder and for the data folders. |
+| Read key file | Only with a Blackbox and a read key file in silent mode: the file does not exist yet. Setup never replaces a file. |
 
 A **Failed** check stops the install and says what to do. Fix it, then press **Check again**. A **Partly ready** check does not stop anything.
 
@@ -46,7 +47,7 @@ Screen in this part: `p11-options`.
 
 - **Just for me** installs into `%LOCALAPPDATA%\Programs\Unravis`. It needs no administrator approval, unless you also place a Blackbox.
 - **For everyone on this PC** installs into `C:\Program Files\Unravis`. It also makes the shared data folder `C:\ProgramData\Unravis`, records it under `HKLM\SOFTWARE\Unravis`, and sets up the key keeper service (`UnravisKeeper`) that holds saved connections for everyone. This needs administrator approval.
-- **Folder.** You can type another folder. Spaces and letters such as é are fine. There is no Browse button.
+- **Folder.** You can type another folder. Spaces and letters such as é are fine. There is no Browse button. A name cannot end with a dot or a space, because Windows would drop it. Short names such as `PROGRA~1` are read as the real folder before anything is checked. For everyone on this PC the folder cannot be inside a person's profile (such as `C:\Users\Ana`).
 - **Start Unravis when I sign in** is ticked by default.
 - **Close Unravis for me** is ticked by default. It only matters when Unravis is open.
 - **Also place a Blackbox recorder on this PC** installs the Blackbox service (`UnravisBlackbox`) in `C:\Program Files\Unravis Blackbox`. It uses the same settings as the Place a Blackbox wizard: name, recordings folder, days to keep, size limit, free disk to keep, and port. See [Unravis Blackbox](blackbox.md).
@@ -125,7 +126,7 @@ unravis-setup.exe --silent --config setup.json [--log C:\path\setup.log]
 
 - `scope` is required: `"user"` or `"machine"`. `location` is optional.
 - `blackbox` and `firewall` are optional. `firewall` needs `blackbox`.
-- `readKeyFile` is required when a Blackbox is placed. The read key is written there once, readable only by you. Silent mode shows it nowhere else.
+- `readKeyFile` is required when a Blackbox is placed. The read key is written there once, readable only by you. The file must not exist yet: setup never replaces a file, and it makes the new file with its permissions already set. Silent mode shows it nowhere else.
 - `startAtSignIn` defaults to true. `openWhenDone` is accepted but ignored: silent mode never opens a window.
 - Keys are case sensitive. An unknown key, a wrong type, a second JSON value or a file over 64 KB stops setup with a sentence that names the problem, before it changes anything. A Notepad UTF-8 mark at the start is fine.
 

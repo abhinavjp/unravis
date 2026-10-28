@@ -84,7 +84,7 @@ func (e OSElevator) Start(ctx context.Context) (io.ReadWriteCloser, error) {
 		return nil, err
 	}
 	name := `\\.\pipe\unravis-setup-` + hex.EncodeToString(rnd[:])
-	ln, err := keeper.ListenPipe(name, keeper.PipeListenOptions{SDDL: "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;" + sid + ")"})
+	ln, err := keeper.ListenPipe(name, keeper.PipeListenOptions{SDDL: WorkerPipeSDDL(sid)})
 	if err != nil {
 		return nil, fmt.Errorf("could not make the pipe to the administrator part: %w", err)
 	}

@@ -70,6 +70,9 @@ func (r *Runner) Preflight(in PreflightInput) []Check {
 	if opts.Location == "" {
 		opts.Location = DefaultLocation(opts.Scope, r.Dirs)
 	}
+	if c, err := opts.Validated(r.Dirs, sys.paths()); err == nil && in.Op == OpInstall {
+		opts = c // the folders as Windows will read them
+	}
 	l := NewLayout(opts, r.Dirs)
 
 	add(checkWindows(sys.Mach))
@@ -156,9 +159,19 @@ func (r *Runner) Preflight(in PreflightInput) []Check {
 			add(c)
 		}
 	}
-	if in.Op == OpInstall && in.Old == nil {
+	if opts.Scope == ScopeMachine && in.Op != OpUninstall {
+		if c, ok := r.checkMachineFolder(l.InstallDir, in.Old); ok {
+			add(c)
+		}
+	} else if in.Op == OpInstall && in.Old == nil {
 		if c, ok := checkInstallFolder(l.InstallDir); ok {
 			add(c)
+		}
+	}
+	if in.Op == OpInstall && opts.ReadKeyFile != "" && opts.Blackbox != nil {
+		if _, err := os.Lstat(opts.ReadKeyFile); err == nil {
+			add(Check{ID: "read-key-file", Title: "Read key file", Status: CheckFailed, Detail: opts.ReadKeyFile + " is already there. Setup does not replace a file.",
+				Fix: "Choose a file name that does not exist yet."})
 		}
 	}
 	return out
@@ -267,10 +280,14 @@ func (r *Runner) checkRunningApp(in PreflightInput, l Layout, opts Options) (Che
 	p := &Plan{Layout: l, r: r}
 	running, err := p.runningApps()
 	c := Check{ID: "app-running", Title: "Unravis open", Status: CheckReady, Detail: "Unravis is not open."}
+	_, others := r.splitApps(running)
 	switch {
 	case err != nil:
 		c.Status, c.Detail = CheckPartly, "Setup could not see which programs are open."
 	case len(running) == 0:
+	case len(others) > 0:
+		// Setup never closes another person's Unravis, whatever was ticked: they did not say yes.
+		c.Status, c.Detail, c.Fix = CheckFailed, ErrAppOpenForOther.Msg, ErrAppOpenForOther.Fix
 	case opts.CloseRunningApp:
 		c.Status, c.Detail = CheckPartly, "Unravis is open. Setup closes it, and opens it again when it is done."
 	case in.Silent:
@@ -368,6 +385,23 @@ func (r *Runner) checkSharedFolder(l Layout) (Check, bool) {
 		c.Fix = "Move that folder somewhere else (it may hold someone's files), then run setup again."
 	}
 	return c, true
+}
+
+// checkMachineFolder is the program-folder check of an install for everyone: a folder that is there must be one this installer made,
+// or an empty one only administrators own (otherwise setup would take over somebody's folder).
+func (r *Runner) checkMachineFolder(dir string, old *Installed) (Check, bool) {
+	title := "Program folder"
+	if err := r.refuseLink(dir); err != nil {
+		return Check{ID: "install-folder", Title: title, Status: CheckFailed, Detail: err.Error(), Fix: "Ask an administrator to remove that link, or choose another folder."}, true
+	}
+	why, err := r.programFolderProblem(dir, old)
+	switch {
+	case err != nil:
+		return Check{ID: "install-folder", Title: title, Status: CheckFailed, Detail: dir + " cannot be checked: " + plainError(err) + ".", Fix: "Choose another folder."}, true
+	case why != "":
+		return Check{ID: "install-folder", Title: title, Status: CheckFailed, Detail: why, Fix: "Choose an empty folder, or a new one."}, true
+	}
+	return Check{}, false
 }
 
 func checkInstallFolder(dir string) (Check, bool) {

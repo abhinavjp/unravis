@@ -35,6 +35,7 @@ func NewOSSystem() (*System, error) {
 	return &System{
 		Reg: osRegistry{}, Svc: osServices{}, FW: osFirewall{}, Sec: osSecurity{}, Proc: osProcesses{}, Mach: m,
 		Disk:        blackbox.OSDisk{},
+		Paths:       osPaths{},
 		Trust:       datadir.TrustInstalled,
 		Probe:       blackbox.OSEnv{}.ProbeStatus,
 		RunVersion:  runVersion,
@@ -512,6 +513,94 @@ func (osSecurity) MkdirSDDL(path, sddl string) error {
 	return nil
 }
 
+// CreateFileSDDL makes the file new (CREATE_NEW: an existing file is never opened) with the security descriptor in the create call. If
+// Windows will not give the file the owner the list names (a different account approved the elevation), it is made with the default
+// owner and the same access list: the list is what keeps the key from others.
+func (osSecurity) CreateFileSDDL(path, sddl string, data []byte) error {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	create := func(sddl string) (windows.Handle, error) {
+		sd, err := windows.SecurityDescriptorFromString(sddl)
+		if err != nil {
+			return windows.InvalidHandle, err
+		}
+		sa := &windows.SecurityAttributes{SecurityDescriptor: sd}
+		sa.Length = uint32(unsafe.Sizeof(*sa))
+		return windows.CreateFile(p, windows.GENERIC_WRITE, 0, sa, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	}
+	h, err := create(sddl)
+	if errors.Is(err, windows.ERROR_INVALID_OWNER) {
+		if i := strings.Index(sddl, "D:"); i > 0 {
+			h, err = create(sddl[i:])
+		}
+	}
+	if err != nil {
+		if errors.Is(err, windows.ERROR_FILE_EXISTS) || errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+			return os.ErrExist
+		}
+		return err
+	}
+	var werr error
+	for off := 0; off < len(data) && werr == nil; {
+		var n uint32
+		werr = windows.WriteFile(h, data[off:], &n, nil)
+		off += int(n)
+	}
+	cerr := windows.CloseHandle(h)
+	if werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = os.Remove(path)
+	}
+	return werr
+}
+
+/* ------------------------------------------------------------ paths */
+
+type osPaths struct{}
+
+// Canonical is GetFullPathName (dot parts resolved, trailing dots and spaces dropped) and then GetLongPathName on the part of the path
+// that exists (8.3 names written out). The rest of the path, which does not exist yet, is appended as it is.
+func (osPaths) Canonical(path string) (string, error) {
+	full, err := windows.FullPath(path)
+	if err != nil {
+		return "", err
+	}
+	cur, rest := full, ""
+	for {
+		if _, err := os.Lstat(cur); err == nil {
+			break
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return full, nil
+		}
+		rest = filepath.Join(filepath.Base(cur), rest)
+		cur = parent
+	}
+	u, err := windows.UTF16PtrFromString(cur)
+	if err != nil {
+		return "", err
+	}
+	n, err := windows.GetLongPathName(u, nil, 0)
+	if err != nil {
+		return "", err
+	}
+	buf := make([]uint16, n+1)
+	n, err = windows.GetLongPathName(u, &buf[0], uint32(len(buf)))
+	if err != nil {
+		return "", err
+	}
+	long := windows.UTF16ToString(buf[:n])
+	if rest == "" {
+		return long, nil
+	}
+	return filepath.Join(long, rest), nil
+}
+
 /* ------------------------------------------------------------ processes */
 
 type osProcesses struct{}
@@ -530,9 +619,32 @@ func (osProcesses) List() ([]Process, error) {
 		if exe == "" {
 			continue // a process this account cannot look at is not one setup placed for it
 		}
-		out = append(out, Process{PID: e.ProcessID, Exe: exe})
+		q := Process{PID: e.ProcessID, Exe: exe}
+		if strings.EqualFold(filepath.Base(exe), AppExeName) {
+			q.SID = processSID(e.ProcessID)
+		}
+		out = append(out, q)
 	}
 	return out, nil
+}
+
+// processSID is the account a process runs as, or UnknownOwner when its token cannot be read.
+func processSID(pid uint32) string {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return UnknownOwner
+	}
+	defer windows.CloseHandle(h)
+	var tok windows.Token
+	if err := windows.OpenProcessToken(h, windows.TOKEN_QUERY, &tok); err != nil {
+		return UnknownOwner
+	}
+	defer tok.Close()
+	u, err := tok.GetTokenUser()
+	if err != nil || u.User.Sid == nil {
+		return UnknownOwner
+	}
+	return u.User.Sid.String()
 }
 
 func imagePath(pid uint32) string {

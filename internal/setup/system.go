@@ -2,6 +2,7 @@ package setup
 
 import (
 	"errors"
+	"path/filepath"
 	"time"
 
 	"api-audit-explorer/internal/blackbox"
@@ -111,13 +112,33 @@ type FileSecurity interface {
 	// MkdirSDDL creates one folder with the owner and access list already set (CreateDirectory with a security descriptor), so there
 	// is no moment when it has the parent's permissions.
 	MkdirSDDL(path, sddl string) error
+	// CreateFileSDDL creates a new file holding data with the owner and access list already set in the create call, so there is no
+	// moment when it has the parent's permissions. It fails with os.ErrExist when the file is already there.
+	CreateFileSDDL(path, sddl string, data []byte) error
 }
+
+// Paths turns a path into the one Windows would really use.
+type Paths interface {
+	// Canonical returns the full path with 8.3 short names written out, trailing dots and spaces dropped and dot parts resolved
+	// (GetFullPathName and GetLongPathName on Windows). The path need not exist: the part that does is expanded.
+	Canonical(path string) (string, error)
+}
+
+// cleanPaths is the Paths of tests: a clean of the path.
+type cleanPaths struct{}
+
+func (cleanPaths) Canonical(p string) (string, error) { return filepath.Clean(p), nil }
 
 // Process is a running program.
 type Process struct {
 	PID uint32 `json:"pid"`
 	Exe string `json:"exe"`
+	// SID is the account the program runs as. "" means the list did not say; UnknownOwner means it could not be read.
+	SID string `json:"sid,omitempty"`
 }
+
+// UnknownOwner is the SID of a program whose owner could not be read (it belongs to someone setup cannot look at).
+const UnknownOwner = "unknown"
 
 // Processes lists and ends running programs.
 type Processes interface {
@@ -157,6 +178,8 @@ type System struct {
 	Proc Processes
 	Mach Machine
 	Disk blackbox.DiskSpace
+	// Paths canonicalises the paths the person typed before they are checked. Nil means a plain clean.
+	Paths Paths
 	// Trust checks the shared folder against the installer's record (datadir.TrustInstalled on Windows).
 	Trust func(root string) error
 	// Probe asks the Blackbox status page with the read key (blackbox.OSEnv.ProbeStatus on Windows).
@@ -169,6 +192,13 @@ type System struct {
 	Lock  func() (release func(), err error)
 	Sleep func(time.Duration)
 	Now   func() time.Time
+}
+
+func (s *System) paths() Paths {
+	if s.Paths != nil {
+		return s.Paths
+	}
+	return cleanPaths{}
 }
 
 func (s *System) now() time.Time {

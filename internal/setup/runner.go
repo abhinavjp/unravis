@@ -136,16 +136,7 @@ func (r *Runner) journalDir(elevated bool) string {
 // ensureJournalDir makes the journal folder; the one under ProgramData is locked to administrators first, so nobody else can write a
 // journal that the next elevated run would replay.
 func (r *Runner) ensureJournalDir(elevated bool) (string, error) {
-	dir := r.journalDir(elevated)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	if elevated {
-		if err := r.Sys.Sec.SetSDDL(dir, AdminOnlySDDL); err != nil {
-			return "", err
-		}
-	}
-	return dir, nil
+	return r.prepareJournalDir(elevated) // fixes_b.go: refuses a link or a folder others own
 }
 
 // RecoverJournal rolls back a journal left by a run that was cut off. It returns what could not be put back.
