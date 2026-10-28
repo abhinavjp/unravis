@@ -22,11 +22,13 @@ const (
 	HistoryFreed            = "freed"
 )
 
-// Key kinds of a case file: sealed under the PC's master key, or under a
-// passphrase typed for that file and never stored.
+// Key kinds of a case file: sealed under the PC's master key, under the case's own
+// key (the passphrase typed for the case, which opens the file anywhere), or under
+// a passphrase typed for that file and never stored.
 const (
 	KeyKindMaster = "master"
 	KeyKindTyped  = "typed"
+	KeyKindCase   = "case"
 )
 
 // Bounds on what the record keeps. The oldest entry goes first.
@@ -67,7 +69,7 @@ type ArchiveFile struct {
 	Folder string // the folder as typed and resolved when it was made
 	Bytes  int64
 	SHA256 string // hex SHA-256 of the whole file
-	// KeyKind says which key sealed it (KeyKindMaster or KeyKindTyped).
+	// KeyKind says which key sealed it (KeyKindMaster, KeyKindCase or KeyKindTyped).
 	KeyKind string
 	// KeyCheck is the full key check value (hex); the screen shows its last 4
 	// characters ("Key ending xxxx"). Empty for a file made before P3.

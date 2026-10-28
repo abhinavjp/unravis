@@ -90,6 +90,11 @@ func (s *Store) Entry(ctx context.Context, id casestore.CaseID) (casestore.CaseI
 	}
 	if fi, err := os.Stat(dir); err == nil && fi.IsDir() {
 		info := s.listRow(id, dir)
+		if info.OwnKey && info.KeyLocked && info.Mark != casestore.MarkErasing {
+			// The record of a case with its own key is sealed under that key: with the key
+			// locked there is nothing to read, and a blank row would read as a changed case.
+			return casestore.CaseInfo{}, casestore.ErrCaseLocked
+		}
 		if m, err := readManifest(dir, s.sealer(dir, "")); err == nil && m.CaseID == string(id) {
 			info.History = historyOf(m)
 		}
@@ -271,7 +276,7 @@ func removeWorkingCopy(dir string) error {
 	}
 	for _, e := range entries {
 		switch e.Name() {
-		case manifestName, keyName, eraseMarker:
+		case manifestName, keyName, eraseMarker, wrapName:
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {

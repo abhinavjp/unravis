@@ -157,7 +157,7 @@ func (h *handler) restoreAsNew(w http.ResponseWriter, r *http.Request, raw strin
 			return
 		}
 	}
-	derive, clean, oldKey := h.openDeriver(cur, b.pass)
+	derive, clean, oldKey := h.openDeriver(id, cur, b.pass)
 	if oldKey {
 		writeCaseFailure(w, http.StatusConflict, "old-key-only", oldKeyOnlyText)
 		return

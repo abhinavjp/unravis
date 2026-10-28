@@ -59,4 +59,13 @@ type CaseKeyer interface {
 	// CaseKeyCheck is the full check value of an unlocked key, for sealing into a
 	// case file. It is never shown. ErrCaseLocked while locked.
 	CaseKeyCheck(id CaseID) (string, error)
+	// CaseArchiveKey is the key that seals a case file of this case (KeyKindCase),
+	// with the salt and cost the typed case passphrase derives it from, and the check
+	// value. The caller clears the key. ErrNoCaseKey when the case has no key of its
+	// own; ErrCaseLocked while locked.
+	CaseArchiveKey(id CaseID) (FileKey, string, error)
+	// CaseProtectors is the protector lookup for reading this case's files: the
+	// case-key kind resolves to its unlocked key (ErrCaseLocked while locked), the
+	// other kinds to what the store was given.
+	CaseProtectors(id CaseID) ProtectorLookup
 }

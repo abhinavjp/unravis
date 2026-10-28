@@ -58,7 +58,7 @@ type archiveRun struct {
 	src      casestore.CaseFileSource
 	keys     casestore.Keys
 	fk       casestore.FileKey
-	kind     string // KeyKindMaster or KeyKindTyped
+	kind     string // KeyKindMaster, KeyKindCase or KeyKindTyped
 	check    string // key check value
 	folder   string
 	name     string

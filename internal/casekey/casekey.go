@@ -123,6 +123,14 @@ func (o *Opened) Zero() {
 	clear(o.kek)
 }
 
+// ArchiveKey is the key that seals a case file of this case: the key-encryption key
+// with the salt and cost it was derived with. The typed passphrase derives the same
+// key from the file's own copy of the salt and cost, so the file opens anywhere. The
+// copies are the caller's to clear.
+func (o *Opened) ArchiveKey() (key, salt []byte, params masterkey.Params) {
+	return append([]byte(nil), o.kek...), append([]byte(nil), o.salt...), o.params
+}
+
 // String guards against a stray %v of an Opened writing secrets anywhere.
 func (o *Opened) String() string { return fmt.Sprintf("casekey.Opened(ending %s)", o.Ending) }
 

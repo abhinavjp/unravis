@@ -33,6 +33,11 @@ const wrapName = casekey.FileName
 type ckEntry struct {
 	ring          *masterkey.Keyring
 	check, ending string
+	// kek, salt and params are what seals a case file of this case (an archive).
+	// kek is cleared when the key is dropped.
+	kek    []byte
+	salt   []byte
+	params masterkey.Params
 }
 
 // caseKeys holds the unlocked case keys of a Store. The zero value is ready.
@@ -52,17 +57,19 @@ func (c *caseKeys) get(id casestore.CaseID) *ckEntry {
 
 // install records an unlocked key. A key already unlocked keeps its keyring (the
 // case master is the same), so a handle that is sealing right now is not cut off.
-func (c *caseKeys) install(id casestore.CaseID, cm []byte, check, ending string) {
+func (c *caseKeys) install(id casestore.CaseID, o *casekey.Opened) {
+	kek, salt, params := o.ArchiveKey()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.m == nil {
 		c.m = map[casestore.CaseID]*ckEntry{}
 	}
 	if e := c.m[id]; e != nil && !e.ring.Locked() {
-		e.check, e.ending = check, ending
+		clear(e.kek)
+		e.check, e.ending, e.kek, e.salt, e.params = o.Check, o.Ending, kek, salt, params
 		return
 	}
-	c.m[id] = &ckEntry{ring: masterkey.NewKeyring(cm), check: check, ending: ending}
+	c.m[id] = &ckEntry{ring: masterkey.NewKeyring(o.CM), check: o.Check, ending: o.Ending, kek: kek, salt: salt, params: params}
 }
 
 func (c *caseKeys) drop(id casestore.CaseID) {
@@ -70,8 +77,21 @@ func (c *caseKeys) drop(id casestore.CaseID) {
 	defer c.mu.Unlock()
 	if e := c.m[id]; e != nil {
 		e.ring.Lock()
+		clear(e.kek)
 		delete(c.m, id)
 	}
+}
+
+// archive is a copy of the key that seals a case file of an unlocked case, with its
+// check value. The caller clears the key. ok is false while the case is locked.
+func (c *caseKeys) archive(id casestore.CaseID) (fk casestore.FileKey, check string, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := c.m[id]
+	if e == nil || e.ring.Locked() || len(e.kek) == 0 {
+		return casestore.FileKey{}, "", false
+	}
+	return casestore.FileKey{Key: append([]byte(nil), e.kek...), Salt: append([]byte(nil), e.salt...), Params: e.params}, e.check, true
 }
 
 func (c *caseKeys) ids() []casestore.CaseID {
@@ -308,7 +328,11 @@ func (s *Store) settle(dir string, id casestore.CaseID, o *casekey.Opened, ring 
 	switch o.State {
 	case casekey.StateActive:
 		for _, name := range []string{manifestName, keyName} {
-			if k, err := casestore.FileKind(filepath.Join(dir, name)); err != nil || k != casestore.KindCaseKey {
+			k, err := casestore.FileKind(filepath.Join(dir, name))
+			if name == keyName && errors.Is(err, os.ErrNotExist) && s.freedUnder(dir, ring) {
+				continue // a freed case: its working copy and case.key are gone, the record is not
+			}
+			if err != nil || k != casestore.KindCaseKey {
 				return true, casestore.ErrKeyFile
 			}
 		}
@@ -338,6 +362,13 @@ func (s *Store) settle(dir string, id casestore.CaseID, o *casekey.Opened, ring 
 	return true, ErrDamaged
 }
 
+// freedUnder reports whether the manifest, opened with ring, says the working copy is
+// freed. Unreadable is not freed.
+func (s *Store) freedUnder(dir string, ring *masterkey.Keyring) bool {
+	m, err := readManifest(dir, fileSealer{s: s, dir: dir, look: s.lookupWith(ring)})
+	return err == nil && freed(m)
+}
+
 // UnlockCase opens the case key with pass and keeps it in memory.
 func (s *Store) UnlockCase(ctx context.Context, id casestore.CaseID, pass []byte) error {
 	dir, release, h, err := s.keyedDir(ctx, id)
@@ -361,7 +392,7 @@ func (s *Store) UnlockCase(ctx context.Context, id casestore.CaseID, pass []byte
 		return err
 	}
 	if keyed {
-		s.ck.install(id, o.CM, o.Check, o.Ending)
+		s.ck.install(id, o)
 	} else {
 		s.ck.drop(id)
 	}
@@ -411,6 +442,25 @@ func (s *Store) CaseKeyCheck(id casestore.CaseID) (string, error) {
 		return "", casestore.ErrNoCaseKey
 	}
 	return "", casestore.ErrCaseLocked
+}
+
+// CaseProtectors is lookupFor for callers outside the store.
+func (s *Store) CaseProtectors(id casestore.CaseID) casestore.ProtectorLookup { return s.lookupFor(id) }
+
+// CaseArchiveKey is the key that seals a case file of an unlocked keyed case, with
+// its check value. The caller clears fk.Key.
+func (s *Store) CaseArchiveKey(id casestore.CaseID) (casestore.FileKey, string, error) {
+	if fk, check, ok := s.ck.archive(id); ok {
+		return fk, check, nil
+	}
+	dir, err := s.caseDir(id)
+	if err != nil {
+		return casestore.FileKey{}, "", err
+	}
+	if !wrapExists(dir) {
+		return casestore.FileKey{}, "", casestore.ErrNoCaseKey
+	}
+	return casestore.FileKey{}, "", casestore.ErrCaseLocked
 }
 
 // SetCaseKey gives a case that has none a key of its own.
@@ -477,7 +527,7 @@ func (s *Store) SetCaseKey(ctx context.Context, id casestore.CaseID, pass []byte
 		s.rollback(dir, id, ring, oldKind)
 		return err
 	}
-	s.ck.install(id, o.CM, o.Check, o.Ending)
+	s.ck.install(id, o)
 	if h != nil {
 		h.man = m
 	}
@@ -541,7 +591,7 @@ func (s *Store) ChangeCaseKey(ctx context.Context, id casestore.CaseID, cur, nex
 	if err := writeWrapFile(dir, data); err != nil {
 		return err
 	}
-	s.ck.install(id, n.CM, n.Check, n.Ending)
+	s.ck.install(id, n)
 	s.logf("case %s key changed", id)
 	return nil
 }

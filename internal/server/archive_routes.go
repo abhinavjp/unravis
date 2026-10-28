@@ -181,13 +181,15 @@ func (h *handler) archiveCase(w http.ResponseWriter, r *http.Request, raw string
 		return
 	}
 
-	fk, kind, check, err := h.newArchiveKey(b.pass)
+	fk, kind, check, err := h.newArchiveKey(r.Context(), id, b.pass)
 	if err != nil {
 		switch {
 		case errors.Is(err, errArchivePassphrase):
 			writeCaseFailure(w, http.StatusBadRequest, "bad-passphrase", archiveTypedPassText)
 		case errors.Is(err, casestore.ErrLocked):
 			writeLocked(w)
+		case errors.Is(err, casestore.ErrCaseLocked):
+			writeStoreError(w, err)
 		default:
 			writeCaseFailure(w, http.StatusInternalServerError, "archive-failed", archiveCheckText)
 		}
@@ -204,7 +206,7 @@ func (h *handler) archiveCase(w http.ResponseWriter, r *http.Request, raw string
 		writeCaseFailure(w, http.StatusInternalServerError, "archive-failed", archiveCheckText)
 		return
 	}
-	keys, _, err := casestore.ReadKeyFileAny(filepath.Join(dir, casestore.KeyFileName), h.caseFileLookup())
+	keys, _, err := casestore.ReadKeyFileAny(filepath.Join(dir, casestore.KeyFileName), h.caseFileLookupFor(id))
 	if err != nil || keys.CaseID != string(id) {
 		if err != nil && errors.Is(err, casestore.ErrLocked) {
 			writeLocked(w)

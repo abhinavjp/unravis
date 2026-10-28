@@ -482,7 +482,7 @@ func (s *Store) createWith(ctx context.Context, title, requestID string, pass []
 	ok = true
 	info := casestore.CaseInfo{ID: id, Title: title, Created: now, RequestID: requestID}
 	if opened != nil {
-		s.ck.install(id, opened.CM, opened.Check, opened.Ending)
+		s.ck.install(id, opened)
 		info.OwnKey, info.KeyEnding = true, opened.Ending
 		s.logf("case %s created with its own key", id)
 		return info, nil
