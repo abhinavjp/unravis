@@ -46,22 +46,39 @@ function Write-Step {
 
 function Save-Log { $script:LogLines | Set-Content -Encoding utf8 -LiteralPath $LogPath }
 
+function Get-SetupExitMeaning {
+    param([int]$Code)
+    switch ($Code) {
+        1 { 'preflight failed' }
+        2 { 'config invalid' }
+        3 { 'Windows approval refused' }
+        4 { 'rolled back or cancelled' }
+        5 { 'finished with something left behind' }
+        default { 'unknown' }
+    }
+}
+
 try {
     # Step 1: verify SHA256SUMS.txt against what was actually downloaded.
     Write-Step "Checking SHA256SUMS.txt in $AssetDir"
     $sumsFile = Join-Path $AssetDir 'SHA256SUMS.txt'
     if (-not (Test-Path -LiteralPath $sumsFile -PathType Leaf)) { throw "Missing $sumsFile" }
     $checked = 0
+    $listed = [System.Collections.Generic.HashSet[string]]::new()
     foreach ($line in Get-Content -LiteralPath $sumsFile) {
         if ($line.Trim() -eq '') { continue }
         $parts = $line -split '\s{2}', 2
         if ($parts.Count -ne 2) { throw "Malformed SHA256SUMS.txt line: $line" }
         $expected, $name = $parts
+        [void]$listed.Add($name)
         $path = Join-Path $AssetDir $name
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "SHA256SUMS.txt lists '$name' but it was not downloaded" }
         $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -ne $expected.ToLowerInvariant()) { throw "Checksum mismatch for $name : expected $expected, got $actual" }
         $checked++
+    }
+    foreach ($f in Get-ChildItem -LiteralPath $AssetDir -File | Where-Object { $_.Name -notlike 'smoke-*.log' -and $_.Name -notin @('SHA256SUMS.txt','ASSET-LIST.txt','RELEASE-NOTES.md') }) {
+        if (-not $listed.Contains($f.Name)) { throw "$($f.Name) was downloaded but is not in SHA256SUMS.txt" }
     }
     Write-Step "All $checked asset(s) match SHA256SUMS.txt"
 
@@ -79,12 +96,12 @@ try {
     $setupConfig = Join-Path $Work 'setup.json'
     $setupLog = Join-Path $Work 'setup.log'
 
-    # Schema per installer-and-releases.md section 6 (silent mode). Adjust here if P11's real
-    # parser ends up differing from this draft; today's step 1 (checksums) still protects a re-run.
+    # Schema is internal/setup/silent.go (SilentConfig): readKeyFile is a top-level key, an absolute path that must not exist yet.
     @{
         scope          = 'user'
         location       = ''
-        blackbox       = @{ name = 'smoke'; folder = 'C:\UnravisBlackbox'; keepDays = 7; maxGB = 2; minFreePercent = 10; port = 7788; readKeyFile = $keyFile }
+        blackbox       = @{ name = 'smoke'; folder = 'C:\UnravisBlackbox'; keepDays = 7; maxGB = 2; minFreePercent = 10; port = 7788 }
+        readKeyFile    = $keyFile
         firewall       = $null
         startAtSignIn  = $false
         openWhenDone   = $false
@@ -92,7 +109,7 @@ try {
 
     Write-Step "Installing silently with $installer"
     & $installer.FullName --silent --config $setupConfig --log $setupLog
-    if ($LASTEXITCODE -ne 0) { throw "Silent install exited with code $LASTEXITCODE; see $setupLog" }
+    if ($LASTEXITCODE -ne 0) { throw "Silent install exited with code $LASTEXITCODE ($(Get-SetupExitMeaning $LASTEXITCODE)); see $setupLog" }
 
     $exePath = Join-Path $env:LOCALAPPDATA 'Programs\Unravis\unravis.exe'
     if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) { throw "Installed exe not found: $exePath" }
@@ -116,12 +133,15 @@ try {
 
     Write-Step 'Starting unravis.exe --no-browser'
     $outLog = Join-Path $Work 'unravis.out.log'
-    $proc = Start-Process -FilePath $exePath -ArgumentList '--no-browser', '--port', '0' -RedirectStandardOutput $outLog -PassThru -WindowStyle Hidden
+    $errLog = Join-Path $Work 'unravis.err.log'
+    $proc = Start-Process -FilePath $exePath -ArgumentList '--no-browser', '--port', '0' -RedirectStandardOutput $outLog -RedirectStandardError $errLog -PassThru -WindowStyle Hidden
     try {
         $deadline = (Get-Date).AddSeconds(20)
         $listening = $false
         while ((Get-Date) -lt $deadline) {
-            if ((Test-Path -LiteralPath $outLog) -and (Get-Content -LiteralPath $outLog -Raw) -match 'listening at') { $listening = $true; break }
+            $text = ''
+            foreach ($f in @($outLog, $errLog)) { if (Test-Path -LiteralPath $f) { $text += (Get-Content -LiteralPath $f -Raw -ErrorAction SilentlyContinue) } }
+            if ($text -match 'listening at') { $listening = $true; break }
             Start-Sleep -Milliseconds 250
         }
         if (-not $listening) { throw 'unravis.exe did not log a listening line within 20 seconds' }
@@ -135,7 +155,7 @@ try {
     @{ uninstall = @{ deleteCases = $false; deleteRecordings = $false } } | ConvertTo-Json -Depth 5 |
         Set-Content -Encoding utf8 -LiteralPath $uninstallConfig
     & $installer.FullName --uninstall --silent --config $uninstallConfig --log (Join-Path $Work 'uninstall.log')
-    if ($LASTEXITCODE -ne 0) { throw "Silent uninstall exited with code $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) { throw "Silent uninstall exited with code $LASTEXITCODE ($(Get-SetupExitMeaning $LASTEXITCODE)); see $(Join-Path $Work 'uninstall.log')" }
     if (Test-Path -LiteralPath $exePath -PathType Leaf) { throw 'unravis.exe is still present after uninstall' }
     if (Get-Service -Name 'UnravisBlackbox' -ErrorAction SilentlyContinue) { throw 'UnravisBlackbox service is still registered after uninstall' }
     Write-Step 'Uninstall removed the program and the service'
