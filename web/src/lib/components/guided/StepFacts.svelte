@@ -191,24 +191,24 @@
 </StepShell>
 
 <style>
-  .lead, .note, .finding { margin: 0; font-size: 13px; }
+  .lead, .note, .finding { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
   .lead { font-size: 14px; }
   .note { color: var(--text-2); font-size: 12px; }
   .finding { padding: 8px 12px; background: var(--surface-2); border-radius: var(--radius-sm); font-size: 14px; }
-  .warn { margin: 0; padding: 8px 12px; font-size: 13px; border: 1px solid var(--warn); border-radius: var(--radius-sm); }
+  .warn { margin: 0; overflow-wrap: anywhere; padding: 8px 12px; font-size: 13px; border: 1px solid var(--warn); border-radius: var(--radius-sm); }
   h4 { margin: 0; font-size: 14px; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; }
   .stop { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--warn); border-radius: var(--radius-sm); }
-  .stop p, .stop ul { margin: 0; font-size: 13px; }
+  .stop p, .stop ul { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
   .stop ul { padding-left: 18px; color: var(--text-2); }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 8px; }
-  .card { display: grid; gap: 2px; padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius-sm); }
+  .card { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; padding: 10px 12px; background: var(--surface-2); border-radius: var(--radius-sm); }
   .card .k { color: var(--text-2); font-size: 12px; }
   .card strong { font-size: 18px; font-variant-numeric: tabular-nums; }
   .card .n { color: var(--text-2); font-size: 12px; }
   caption { padding: 0 0 6px; text-align: left; font-size: 13px; font-weight: 600; }
   table { white-space: normal; }
-  .plain { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; }
+  .plain { margin: 0; overflow-wrap: anywhere; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; }
   .mark { font-weight: 600; white-space: nowrap; }
   .mark.bad { color: var(--suspect-red); }
   .mark.ok { color: var(--suspect-green); }

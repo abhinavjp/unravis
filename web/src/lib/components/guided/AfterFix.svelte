@@ -1,6 +1,6 @@
 <script lang="ts">
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
-  import { classifyDay, dayLabel, laterFrame, verdictIsCurrent, type FixVerdict } from '../../guided/afterFix';
+  import { classifyDay, dayLabel, laterFrame, verdictToShow, type FixVerdict } from '../../guided/afterFix';
   import { runInvestigation } from '../../guided/api';
   import { frameProblems, toRequest, windowMinutes } from '../../guided/frame';
   import type { GuidedStore } from '../../guided/guided.svelte';
@@ -21,12 +21,16 @@
   let controller: AbortController | null = null;
 
   const result = $derived(store.result);
-  const verdict = $derived(made && verdictIsCurrent(madeFor, store.answer) ? made : null);
+  const verdict = $derived(verdictToShow(made, madeFor, store.answer, phase, problem));
   const routes = $derived((result?.facts.routes ?? []).map((r) => r.route));
 
   async function compare() {
     problem = '';
     recorded = false;
+    // Whatever the earlier day showed is gone as soon as another day is asked for.
+    made = null;
+    madeFor = null;
+    phase = 'idle';
     if (!result) { problem = T.fixNeedsRun; return; }
     if (!day) { problem = T.fixDayFirst; return; }
     const frame = laterFrame({ ...store.frame, route: route || store.frame.route }, day);
@@ -87,7 +91,7 @@
   {#if phase === 'running'}<p class="loading-state" role="status">{T.fixRunning}</p>{/if}
   {#if phase === 'failed'}<p class="inline-error" role="alert">{T.fixFailed}</p>{/if}
 
-  {#if verdict && phase === 'done'}
+  {#if verdict}
     <div class="verdict" role="status">
       <h4>{verdict.word}</h4>
       <p class="finding">{verdict.sentence}</p>

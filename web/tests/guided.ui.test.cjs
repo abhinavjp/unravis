@@ -198,3 +198,68 @@ test('contract: the nearby page size never exceeds the server page limit', () =>
   assert.ok(Number.isInteger(n.NEARBY_ROWS) && n.NEARBY_ROWS >= 1, 'a page of at least one row');
   assert.ok(n.NEARBY_ROWS <= serverMax, `the client asks for ${n.NEARBY_ROWS} rows, the server allows ${serverMax}`);
 });
+
+test('a day that cannot be compared leaves no table from an earlier day', () => {
+  const answer = { id: 1 };
+  const made = { outcome: 'no-data' };
+  assert.equal(fix.verdictToShow(made, answer, answer, 'done', ''), made);
+  // The overlap message is set: nothing else is shown, even if the old verdict was kept.
+  assert.equal(fix.verdictToShow(made, answer, answer, 'done', 'The two windows overlap.'), null);
+  assert.equal(fix.verdictToShow(made, answer, answer, 'idle', ''), null);
+  assert.equal(fix.verdictToShow(made, answer, answer, 'running', ''), null);
+  assert.equal(fix.verdictToShow(made, answer, answer, 'failed', ''), null);
+  assert.equal(fix.verdictToShow(null, null, answer, 'done', ''), null);
+  assert.equal(fix.verdictToShow(made, answer, { id: 1 }, 'done', ''), null);
+});
+
+test('the tab strip handles keys, and Left on the first tab goes to the last', () => {
+  const m = loadTypeScript('src/lib/guided/stepModel.ts');
+  assert.equal(m.nextTabIndex('ArrowLeft', 0, 5), 4);
+  assert.equal(m.nextTabIndex('ArrowRight', 4, 5), 0);
+  assert.equal(m.nextTabIndex('ArrowRight', 1, 5), 2);
+  assert.equal(m.nextTabIndex('ArrowLeft', 3, 5), 2);
+  assert.equal(m.nextTabIndex('Home', 3, 5), 0);
+  assert.equal(m.nextTabIndex('End', 0, 5), 4);
+  assert.equal(m.nextTabIndex('Enter', 0, 5), null);
+  assert.equal(m.nextTabIndex('a', 2, 5), null);
+  assert.equal(m.nextTabIndex('ArrowLeft', 0, 0), null);
+});
+
+test('a second press on the same key is ignored until the first finishes', () => {
+  const { InFlight } = loadTypeScript('src/lib/guided/inflight.ts');
+  const f = new InFlight();
+  assert.equal(f.start('a'), true);
+  assert.equal(f.start('a'), false);
+  assert.equal(f.start('b'), true);
+  f.finish('a');
+  assert.equal(f.has('a'), false);
+  assert.equal(f.start('a'), true);
+});
+
+test('Manual tools words describe the tools, not the steps; the sticker keeps a gap before Out of date', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const c = loadTypeScript('src/lib/copy/guidedCopy.ts');
+  assert.ok(!/eleven steps/i.test(c.GUIDED_TEXT.introManual));
+  assert.ok(/Eleven steps/.test(c.GUIDED_TEXT.intro));
+  const src = fs.readFileSync(path.join(__dirname, '../src/lib/components/guided/GuidedAnalysis.svelte'), 'utf8');
+  assert.ok(/store\.mode === 'guided' \? `\$\{T\.modeGuidedNow\} \$\{T\.intro\}` : `\$\{T\.modeManualNow\} \$\{T\.introManual\}`/.test(src));
+  const sticker = fs.readFileSync(path.join(__dirname, '../src/lib/components/guided/Sticker.svelte'), 'utf8');
+  assert.ok(/\.stale \{[^}]*margin-inline-start/.test(sticker), 'a visible gap before the dot');
+  assert.ok(!/tone-waiting[^}]*background-size: 100% 100%/.test(sticker), 'the hatch must not run under the word');
+});
+
+test('switching mode keeps the keyboard on the page, and step pages cannot be pushed sideways by long text', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (f) => fs.readFileSync(path.join(__dirname, '../src/lib/components/guided', f), 'utf8');
+  const g = read('GuidedAnalysis.svelte');
+  assert.ok(/<h2 tabindex="-1" bind:this=\{heading\}>/.test(g));
+  assert.ok(/heading\?\.focus\(\)/.test(g));
+  const shell = read('StepShell.svelte');
+  for (const sel of ['.shell', '.nutshell', '.body', '.reasons']) {
+    const line = shell.split('\n').find((l) => l.trim().startsWith(sel + ' {'));
+    assert.ok(line && /minmax\(0, 1fr\)/.test(line), `${sel} needs a shrinkable column`);
+  }
+  assert.ok(/\.page \{[^}]*minmax\(0, 1fr\)/.test(g));
+});

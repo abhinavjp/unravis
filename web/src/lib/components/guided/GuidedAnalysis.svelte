@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
   import { GuidedStore } from '../../guided/guided.svelte';
-  import { railItems, stepOf, stickerFor } from '../../guided/stepModel';
+  import { nextTabIndex, railItems, stepOf, stickerFor } from '../../guided/stepModel';
   import type { SourceNeed } from '../../guided/tools';
   import { app } from '../../appState.svelte';
   import AfterFix from './AfterFix.svelte';
@@ -27,6 +27,7 @@
   const store = new GuidedStore(untrack(() => caseId));
   let panel = $state<Panel>('main');
   let menu = $state<HTMLDetailsElement | null>(null);
+  let heading = $state<HTMLHeadingElement | null>(null);
 
   const sourceIds = $derived(app.sources.map((s) => s.id));
   // SQL, Mongo and host files have no importer yet, so only the audit source and the IIS file can be present.
@@ -52,13 +53,15 @@
     store.setMode(store.mode === 'guided' ? 'manual' : 'guided');
     panel = 'main';
     if (menu) menu.open = false;
+    // The button that was pressed is gone with the menu; keep the keyboard on the page.
+    void tick().then(() => heading?.focus());
   }
 
   function onTabKey(event: KeyboardEvent, index: number) {
-    const next = event.key === 'ArrowRight' ? index + 1 : event.key === 'ArrowLeft' ? index - 1 : event.key === 'Home' ? 0 : event.key === 'End' ? PANELS.length - 1 : -1;
-    if (next < 0) return;
+    const next = nextTabIndex(event.key, index, PANELS.length);
+    if (next === null) return;
     event.preventDefault();
-    const target = PANELS[(next + PANELS.length) % PANELS.length];
+    const target = PANELS[next];
     panel = target.id;
     document.getElementById('guided-tab-' + target.id)?.focus();
   }
@@ -71,8 +74,8 @@
 
   <header class="head">
     <div class="titles">
-      <h2>{T.heading}</h2>
-      <p class="note">{store.mode === 'guided' ? T.modeGuidedNow : T.modeManualNow} {T.intro}</p>
+      <h2 tabindex="-1" bind:this={heading}>{T.heading}</h2>
+      <p class="note">{store.mode === 'guided' ? `${T.modeGuidedNow} ${T.intro}` : `${T.modeManualNow} ${T.introManual}`}</p>
     </div>
     <details class="menu" bind:this={menu}>
       <summary>{T.caseActions}</summary>
@@ -136,7 +139,7 @@
   .tab:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .panel { min-width: 0; }
   .steps { display: grid; grid-template-columns: minmax(200px, 240px) minmax(0, 1fr); gap: 16px; align-items: start; }
-  .page { display: grid; gap: 12px; min-width: 0; }
+  .page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
   @media (max-width: 760px) {
     .steps { grid-template-columns: minmax(0, 1fr); }
   }

@@ -4,6 +4,7 @@ import {
   addChecklistItem, buildReport, deleteChecklistItem, deleteView, listChecklist, listViews, runInvestigation, saveView, updateChecklistItem
 } from './api';
 import { emptyFrame, quickPick, requestKey, toRequest, type Frame, type QuickPick } from './frame';
+import { InFlight } from './inflight';
 import { clampStep, suggestedChecks, type RunPhase } from './stepModel';
 import { cleanViewName, viewSettings, viewsFull, type ToolId } from './tools';
 import type { ChecklistItem, ChecklistList, InvestigationAnswer, InvestigationRequest, ReportAnswer, ReportInclude, SavedView } from './types';
@@ -58,6 +59,7 @@ export class GuidedStore {
   #answered: InvestigationRequest | null = null;
   #controller: AbortController | null = null;
   #plan = 0;
+  #deleting = new InFlight();
   // A second click while a save is on its way would write the same line twice.
   #writing = false;
   #bulk = false;
@@ -223,6 +225,8 @@ export class GuidedStore {
   }
 
   async removeView(view: SavedView): Promise<void> {
+    // A second click on the same Delete while the first is on its way would meet a 404 and show a false error.
+    if (!this.#deleting.start(view.id)) return;
     try {
       await deleteView(this.caseId, view.id);
       this.views = this.views.filter((v) => v.id !== view.id);
@@ -230,6 +234,8 @@ export class GuidedStore {
     } catch (cause) {
       this.viewError = failureText(cause, SAVED_VIEW_ERRORS, 'That view could not be deleted.');
       if (cause instanceof CaseApiError && cause.reason === 'view-not-found') void this.loadPlan();
+    } finally {
+      this.#deleting.finish(view.id);
     }
   }
 

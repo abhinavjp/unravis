@@ -290,3 +290,15 @@ export function suggestedChecks(result: Result, items: readonly ChecklistItem[])
   }
   return out;
 }
+
+/** The tab to move to for a key on a tab strip, or null when the key is not one the strip handles. Left on the first tab wraps to the last. */
+export function nextTabIndex(key: string, index: number, count: number): number | null {
+  if (count < 1) return null;
+  let next: number;
+  if (key === 'ArrowRight') next = index + 1;
+  else if (key === 'ArrowLeft') next = index - 1;
+  else if (key === 'Home') next = 0;
+  else if (key === 'End') next = count - 1;
+  else return null;
+  return (next + count) % count;
+}

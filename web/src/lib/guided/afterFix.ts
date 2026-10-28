@@ -136,6 +136,16 @@ export function classifyDay(result: Result, ctx: FixContext): FixVerdict {
  */
 export const verdictIsCurrent = (madeFor: unknown, now: unknown): boolean => madeFor !== null && madeFor !== undefined && madeFor === now;
 
+/**
+ * The verdict to put on screen, or null. It shows only when the last compare finished (`phase` done), nothing is wrong with the day just
+ * picked (`problem` empty), and it was made for the answer now on screen. A day that cannot be compared, such as one that overlaps the incident,
+ * gets its one message and no table left over from an earlier day.
+ */
+export function verdictToShow(made: FixVerdict | null, madeFor: unknown, now: unknown, phase: string, problem: string): FixVerdict | null {
+  if (!made || problem || phase !== 'done') return null;
+  return verdictIsCurrent(madeFor, now) ? made : null;
+}
+
 export function dayLabel(startIso: string, endIso: string): string {
   const s = fmtWhen(startIso);
   const e = fmtWhen(endIso);

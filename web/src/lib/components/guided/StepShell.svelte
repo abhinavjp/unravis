@@ -33,14 +33,14 @@
 </section>
 
 <style>
-  .shell { display: grid; gap: 12px; min-width: 0; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); }
-  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  .shell { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; padding: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; }
   h3 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
-  .nutshell { display: grid; gap: 2px; padding: 8px 12px; background: var(--surface-2); border-radius: var(--radius-sm); }
+  .nutshell { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; min-width: 0; padding: 8px 12px; background: var(--surface-2); border-radius: var(--radius-sm); }
   .label { margin: 0; color: var(--text-2); font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
   .text { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
-  .reasons { display: grid; gap: 4px; }
-  .reasons ul { margin: 0; padding-left: 18px; color: var(--text-2); font-size: 13px; }
-  .body { display: grid; gap: 12px; min-width: 0; }
+  .reasons { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; min-width: 0; }
+  .reasons ul { margin: 0; overflow-wrap: anywhere; padding-left: 18px; color: var(--text-2); font-size: 13px; }
+  .body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
   footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line-soft); }
 </style>

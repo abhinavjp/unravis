@@ -8,6 +8,7 @@ import type { LintEntry } from './copylint';
 export const GUIDED_TEXT = {
   heading: 'Guided analysis',
   intro: 'Eleven steps, cheapest first. Each step reads the data you already have and says what it shows and what it could not test.',
+  introManual: 'Pick one tool and run it on its own. Each tool reads the same data and the same windows as the steps.',
   railLabel: 'Guided analysis steps',
   railHint: 'Each step has a status. Waiting means it has not run yet.',
   modeHeading: 'Way of working',
