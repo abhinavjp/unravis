@@ -81,7 +81,7 @@ test('M2: a closed case offers no read, add, test, edit or forget, and says why'
   for (const name of ['SqlStepPanel', 'MongoStepPanel']) assert.match(comp(name), /readOnly = false/, name + ' stays usable in the guided shell, which never passes it');
   const page = comp('ConnectionsPage');
   assert.match(page, /disabled=\{testing !== '' \|\| readOnly\}/);
-  assert.equal((page.match(/disabled=\{readOnly\}/g) ?? []).length, 3, 'edit, forget and the Mongo add are off');
+  assert.equal((page.match(/disabled=\{readOnly\}/g) ?? []).length, 2, 'edit and forget are off');
   assert.match(page, /disabled=\{full \|\| readOnly\}/);
   const add = comp('AddDataPanel');
   assert.match(add, /disabled=\{readOnly\} onclick=\{\(\) => choose\('sql'\)\}/);
@@ -117,4 +117,21 @@ test('M3: Add data never clicks into nothing: Files opens the import page, Black
   const home = read('src/lib/components/CaseHome.svelte');
   assert.match(home, /onAddFiles=\{openCaseImport\}/, 'Files opens the import drawer that exists on this branch');
   assert.doesNotMatch(home, /onAddBlackbox/, 'the Blackbox page is wired by the phase that adds it');
+});
+
+// ---- M4 ------------------------------------------------------------------------------------------------------------------------------
+
+test('M4: + MongoDB opens the window where a connection is saved, and is off when nothing can open it', () => {
+  const hub = comp('SourcesHub');
+  assert.match(hub, /<ConnectionsPage \{readOnly\} onMongoAdd=\{onAddMongo\} \/>/, 'it no longer jumps to Step 8, which has nothing to pick');
+  assert.doesNotMatch(hub, /onMongoAdd=\{\(\) => \{ tab = 'mongo'/);
+  const home = read('src/lib/components/CaseHome.svelte');
+  assert.match(home, /onAddMongo=\{\(\) => void openConnections\('new'\)\}/);
+  assert.match(home, /openConnections,/);
+  const page = comp('ConnectionsPage');
+  assert.match(page, /disabled=\{readOnly \|\| !onMongoAdd\}/);
+  assert.match(page, /CONN_TEXT\.mongoNowhere/);
+  assert.match(page, /\{#if askedMongo\}[^\n]*CONN_TEXT\.refresh/, 'after the window opens, the list can be refreshed to show the new connection');
+  assert.match(copy.CONN_TEXT.mongoHere, /Refresh/);
+  assert.doesNotMatch(copy.CONN_TEXT.mongoHere, /drawer/i, 'the old sentence named a drawer the user was never taken to');
 });

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../api';
-  import { app, goHome, openAnalysis, openCaseImport, openSidePanel, panels } from '../appState.svelte';
+  import { app, goHome, openAnalysis, openCaseImport, openConnections, openSidePanel, panels } from '../appState.svelte';
   import { believedState, caseCode, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { reopenButton, retryAction } from '../caseLifecycle';
   import { CASE_HOME_TEXT, retryKindLabel } from '../copy/caseHomeCopy';
@@ -353,7 +353,7 @@
     <section class="block" aria-labelledby="home-sources">
       <h3 id="home-sources">{HUB_TEXT.heading}</h3>
       <p class="note">{HUB_TEXT.intro}</p>
-      <SourcesHub {caseId} {readOnly} onGone={gone} onAddFiles={openCaseImport} />
+      <SourcesHub {caseId} {readOnly} onGone={gone} onAddFiles={openCaseImport} onAddMongo={() => void openConnections('new')} />
     </section>
 
     <section class="block" aria-labelledby="home-files">

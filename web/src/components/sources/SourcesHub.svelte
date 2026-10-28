@@ -11,7 +11,8 @@
   // One place for the SQL Server and MongoDB sources of the open case: saved connections, Step 7, Step 8, Add data, Add another day and the
   // combinations table. The guided shell mounts SqlStepPanel and MongoStepPanel directly; this hub keeps the lanes reachable from the case page.
   // onAddFiles and onAddBlackbox open the pages that add those sources. A card is offered only when its page is handed in.
-  let { caseId, readOnly = false, onGone, onAddFiles, onAddBlackbox }: { caseId: string; readOnly?: boolean; onGone?: () => void; onAddFiles?: () => void; onAddBlackbox?: () => void } = $props();
+  // onAddMongo opens the window where a MongoDB connection is saved; without it the + MongoDB button is off.
+  let { caseId, readOnly = false, onGone, onAddFiles, onAddBlackbox, onAddMongo }: { caseId: string; readOnly?: boolean; onGone?: () => void; onAddFiles?: () => void; onAddBlackbox?: () => void; onAddMongo?: () => void } = $props();
   type Tab = 'connections' | 'sql' | 'mongo' | 'add' | 'day' | 'combos';
   let tab = $state<Tab>('connections');
   const tabs: { id: Tab; label: string }[] = [
@@ -35,7 +36,7 @@
   </div>
   <div id="hub-panel" role="tabpanel" aria-labelledby="hub-tab-{tab}">
     {#if tab === 'connections'}
-      <ConnectionsPage {readOnly} onMongoAdd={() => { tab = 'mongo'; }} />
+      <ConnectionsPage {readOnly} onMongoAdd={onAddMongo} />
     {:else if tab === 'sql'}
       <SqlStepPanel {caseId} {readOnly} {onGone} onAddData={() => { tab = 'add'; }} />
     {:else if tab === 'mongo'}

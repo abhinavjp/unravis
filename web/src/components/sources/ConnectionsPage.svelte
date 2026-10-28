@@ -30,6 +30,7 @@
   let editing = $state<SavedSqlConnection | null>(null);
   let adding = $state(false);
   let note = $state('');
+  let askedMongo = $state(false);
 
   const rows = $derived<ConnectionRow[]>([
     ...sql.map(item => sqlRow(item, tests['sql:' + item.id])),
@@ -111,11 +112,12 @@
   {:else}
     <div class="actions">
       <button type="button" class={primary ? 'btn-primary' : 'btn'} disabled={full || readOnly} onclick={() => { editing = null; adding = true; }}>{CONN_TEXT.addSql}</button>
-      <button type="button" class="btn" disabled={readOnly} onclick={() => onMongoAdd?.()}>{CONN_TEXT.addMongo}</button>
+      <button type="button" class="btn" disabled={readOnly || !onMongoAdd} onclick={() => { askedMongo = true; onMongoAdd?.(); }}>{CONN_TEXT.addMongo}</button>
+      {#if askedMongo}<button type="button" class="btn" onclick={() => void load()}>{CONN_TEXT.refresh}</button>{/if}
       <span class="hint" data-count>{sql.length} / {CONNECTION_LIMIT}</span>
     </div>
     {#if full}<p class="say bad" role="status" data-full>{CONN_TEXT.full}</p>{/if}
-    <p class="hint">{CONN_TEXT.mongoHere}</p>
+    <p class="hint">{onMongoAdd ? CONN_TEXT.mongoHere : CONN_TEXT.mongoNowhere}</p>
     {#if readOnly}<p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>{/if}
   {/if}
 
