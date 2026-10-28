@@ -43,3 +43,17 @@ test('B-01: the longer window decides, and an odd start time stays inside the ca
   assert.ok(buckets(Date.parse(odd.start), Date.parse(odd.end), odd.bucketSeconds) <= 120);
   assert.equal(f.slowBucketSeconds(f.emptyFrame()), 60);
 });
+
+const copy = loadTypeScript('src/lib/copy/guidedCopy.ts');
+
+test('B-07: a stale sticker reads Out of date, rerun, in a neutral tone, and keeps the readiness word for screen readers', () => {
+  const src = read('src/lib/components/guided/Sticker.svelte');
+  assert.equal(copy.GUIDED_TEXT.outOfDate, 'Out of date, rerun');
+  assert.ok(/import \{ GUIDED_TEXT as T \} from '\.\.\/\.\.\/copy\/guidedCopy'/.test(src), 'the sticker uses the shared copy');
+  assert.ok(/\{T\.outOfDate\}/.test(src), 'the visible stale text is T.outOfDate');
+  assert.ok(!src.includes('· Out of date'), 'the old dotted text is gone');
+  assert.ok(/'sticker tone-' \+ \(outOfDate \? 'stale' : tone\)/.test(src), 'a stale sticker takes the neutral tone, not the readiness colour');
+  assert.ok(/class="visually-hidden">\{word\}\. </.test(src), 'the old word is kept for screen readers');
+  assert.ok(/\.tone-stale \{[^}]*var\(--surface-2\)/.test(src), 'the neutral fill exists');
+  assert.ok(/\.stale \{[^}]*margin-inline-start/.test(src), 'the rule pinned by guided.ui.test.cjs stays');
+});
