@@ -273,3 +273,19 @@ test('no other screen or case file holds a key field', () => {
   assert.doesNotMatch(read('src/components/BlackboxCaseUse.svelte'), /revealKey/);
   assert.doesNotMatch(read('src/lib/blackboxCase.ts'), /revealKey|\bkey:/);
 });
+
+test('D-C-23: the Add form marks a wrong field aria-invalid and links the error line', () => {
+  const add = read('src/components/BlackboxAdd.svelte');
+  assert.match(add, /const locationBad = \$derived\(problem === T\.locationEmpty\);/);
+  assert.match(add, /const keyBad = \$derived\(problem === T\.keyNeeded\);/);
+  assert.match(add, /<div class="inline-error" id="bb-add-error" role="alert">\{problem\}<\/div>/);
+  assert.match(add, /aria-invalid=\{locationBad \? 'true' : undefined\} aria-describedby=\{locationBad \? 'bb-add-help bb-add-error' : 'bb-add-help'\}/);
+  assert.match(add, /aria-invalid=\{keyBad \? 'true' : undefined\} aria-describedby=\{keyBad \? 'bb-add-key-help bb-add-error' : 'bb-add-key-help'\}/);
+  // The marks clear when the person types again.
+  assert.match(add, /oninput=\{\(\) => \{ if \(locationBad\) problem = ''; \}\}/);
+  assert.match(add, /oninput=\{\(\) => \{ if \(keyBad\) problem = ''; \}\}/);
+  // The read key rules still hold: hidden by default, never printed, cleared after the add.
+  assert.match(add, /type=\{showKey \? 'text' : 'password'\}/);
+  assert.doesNotMatch(add, />\s*\{key\}\s*</);
+  assert.match(add, /key = '';\s*onAdded/);
+});
