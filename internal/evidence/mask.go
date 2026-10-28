@@ -335,13 +335,30 @@ var scrubPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?/\S*`),
 	// Bare host names on a common top-level domain.
 	regexp.MustCompile(`(?i)\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|dev|app|ai|co|cloud|local|internal|corp|lan|intranet|uk|us|de|in|eu)\b`),
-	// Any other lowercase dotted host-like token, whatever its last label
-	// ("demo-sql.example.invalid", "server01.domain"). Case-sensitive on purpose:
-	// Controller.Action names carry capitals and must survive. The last label
-	// must be 2 or more letters so versions and numbers ("1.2.3", "1.5") stay.
-	regexp.MustCompile(`\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}\b`),
 	// ObjectId-like: 24 or more hex characters, even when glued to a word.
 	regexp.MustCompile(`[0-9a-fA-F]{24,}`),
+}
+
+// hostLike matches any other dotted host-like token, whatever its last label
+// and its case ("demo-sql.example.invalid", "Db01.Example.Invalid"). The last
+// label must be 2 or more letters so versions and numbers ("1.2.3", "1.5") stay.
+var hostLike = regexp.MustCompile(`(?i)\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}\b`)
+
+// pascalLabel is one capitalised word run: "Orders", "OrdersController".
+var pascalLabel = regexp.MustCompile(`^(?:[A-Z][a-z]+)+$`)
+
+// scrubHostLike removes host-like tokens, except a Controller.Action style name
+// whose every label is PascalCase with no digit or hyphen: a host name is
+// rarely written that way, and a code name is.
+func scrubHostLike(text string) string {
+	return hostLike.ReplaceAllStringFunc(text, func(m string) string {
+		for _, label := range strings.Split(m, ".") {
+			if !pascalLabel.MatchString(label) {
+				return removedText
+			}
+		}
+		return m
+	})
 }
 
 // absPath matches a bare absolute path ("/a/b", "/api/orders/98765") that
@@ -404,6 +421,7 @@ func scrubText(text string) string {
 	for _, re := range scrubPatterns {
 		text = re.ReplaceAllString(text, removedText)
 	}
+	text = scrubHostLike(text)
 	text = ipv6Candidate.ReplaceAllStringFunc(text, func(m string) string {
 		if ipv6Token(m) {
 			return removedText

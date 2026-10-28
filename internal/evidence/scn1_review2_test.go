@@ -27,3 +27,17 @@ func TestScn1Review2SecretsInFreeText(t *testing.T) {
 		}
 	}
 }
+
+// Review2-4: host names are removed in any case; a PascalCase Controller.Action
+// name stays.
+func TestScn1Review2HostCase(t *testing.T) {
+	for _, in := range []string{"Db01.Example.Invalid", "PAYSQL01.contoso.test", "PAYSQL.CONTOSO.TEST"} {
+		got := scrubText("failed on " + in + " twice")
+		if got != "failed on [removed] twice" {
+			t.Errorf("scrubText(%q) = %q", in, got)
+		}
+	}
+	if got := scrubText("slow in OrdersController.Create today"); got != "slow in OrdersController.Create today" {
+		t.Errorf("scrubText dropped a code name: %q", got)
+	}
+}
