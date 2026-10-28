@@ -11,6 +11,48 @@
   let root = $state<HTMLElement>();
   const page = $derived(helpPage(slug));
 
+  function inlineText(nodes: Inline[]): string {
+    return nodes.map((n) => (n.t === 'text' || n.t === 'code' ? n.text : n.t === 'image' ? n.alt : inlineText(n.children))).join('');
+  }
+  // The text of the nearest heading before each table of this page, so a scrolling table can be named by its section.
+  const tableLabels = $derived.by(() => {
+    const labels = new Map<Block, string>();
+    let current = page?.title ?? '';
+    const walk = (list: Block[]) => {
+      for (const block of list) {
+        if (block.t === 'heading') current = inlineText(block.children).trim() || current;
+        else if (block.t === 'table') labels.set(block, 'Table: ' + current);
+        else if (block.t === 'list') for (const item of block.items) walk(item.sub);
+        else if (block.t === 'quote') walk(block.blocks);
+      }
+    };
+    walk(page?.blocks ?? []);
+    return labels;
+  });
+  // A table wrapper is a keyboard-focusable named region only while it really scrolls sideways.
+  function scrollable(node: HTMLElement, label: string) {
+    let name = label;
+    const apply = () => {
+      if (node.scrollWidth > node.clientWidth) {
+        node.setAttribute('role', 'region');
+        node.setAttribute('aria-label', name);
+        node.setAttribute('tabindex', '0');
+      } else {
+        node.removeAttribute('role');
+        node.removeAttribute('aria-label');
+        node.removeAttribute('tabindex');
+      }
+    };
+    apply();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(apply);
+    observer?.observe(node);
+    if (node.firstElementChild) observer?.observe(node.firstElementChild);
+    return {
+      update(next: string) { name = next; apply(); },
+      destroy() { observer?.disconnect(); }
+    };
+  }
+
   function scrollParent(el: HTMLElement): HTMLElement | null {
     for (let p = el.parentElement; p; p = p.parentElement) {
       const overflow = getComputedStyle(p).overflowY;
@@ -81,8 +123,7 @@
     {:else if block.t === 'quote'}
       <blockquote>{@render blocksView(block.blocks)}</blockquote>
     {:else if block.t === 'table'}
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="guide-table" role="region" aria-label={page?.title ?? ''} tabindex="0">
+      <div class="guide-table" use:scrollable={tableLabels.get(block) ?? page?.title ?? ''}>
         <table>
           <thead><tr>{#each block.head as cell}<th scope="col">{@render inline(cell)}</th>{/each}</tr></thead>
           <tbody>
@@ -134,10 +175,10 @@
   blockquote { margin: 0 0 8px; padding: 2px 0 2px 10px; border-left: 2px solid var(--control-line); color: var(--text-2); }
   blockquote :global(p:last-child) { margin-bottom: 0; }
   .guide-table { margin: 0 0 8px; max-width: 100%; overflow-x: auto; }
-  table { border-collapse: collapse; min-width: 480px; width: 100%; font-size: 12px; }
-  th, td { padding: 5px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line-soft); }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { padding: 5px 8px; text-align: left; vertical-align: top; overflow-wrap: anywhere; border-bottom: 1px solid var(--line-soft); }
   th { color: var(--text-2); font-weight: 600; }
   .guide-link { display: inline; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; text-align: left; }
-  .guide-image { color: var(--text-2); font-style: italic; }
+  .guide-image { display: block; color: var(--text-2); font-style: italic; }
   .guide-missing { color: var(--text-2); }
 </style>

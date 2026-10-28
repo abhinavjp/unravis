@@ -3,7 +3,7 @@
 ## What you need
 
 - Windows 10 or 11, or Windows Server 2019 or later.
-- A web browser. Unravis opens its screens in your own browser, on your own computer. Nothing is sent to the internet.
+- A web browser. Unravis opens its screens in your own browser, on your own computer. Nothing is sent to the internet unless you press Check for updates.
 
 ## Start Unravis
 

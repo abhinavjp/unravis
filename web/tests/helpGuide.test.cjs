@@ -46,7 +46,7 @@ test('the guide renders headings shifted down two levels with page-scoped ids, a
   assert.match(guide, /id=\{'help-' \+ slug \+ '-' \+ block\.id\}/);
   assert.match(guide, /tabindex="-1"/);
   assert.match(guide, /<table>/);
-  assert.match(guide, /class="guide-table" role="region" aria-label=\{page\?\.title \?\? ''\} tabindex="0"/);
+  assert.match(guide, /class="guide-table" use:scrollable=/);
   assert.match(guide, /\.guide-table \{[^}]*overflow-x: auto/);
   assert.match(guide, /<pre><code>\{block\.text\}<\/code><\/pre>/);
   assert.match(guide, /pre \{[^}]*overflow-x: auto/);
@@ -60,6 +60,18 @@ test('the guide renders headings shifted down two levels with page-scoped ids, a
 test('an image shows only its description as a muted line', () => {
   assert.match(guide, /class="guide-image">\{HELP_GUIDE_TEXT\.guideImage\}\{block\.children\[0\]\.alt\}/);
   assert.match(guide, /\.guide-image \{[^}]*color: var\(--text-2\)/);
+});
+
+test('tables fit the drawer, captions sit on their own line and the table region only exists while it scrolls', () => {
+  assert.doesNotMatch(guide, /min-width: 480px/);
+  assert.match(guide, /\.guide-image \{[^}]*display: block/);
+  assert.match(guide, /th, td \{[^}]*overflow-wrap: anywhere/);
+  assert.doesNotMatch(guide, /class="guide-table"[^>]*tabindex="0"/, 'no unconditional tabindex on the wrapper');
+  assert.doesNotMatch(guide, /class="guide-table"[^>]*role="region"/);
+  assert.match(guide, /node\.scrollWidth > node\.clientWidth/);
+  assert.match(guide, /new ResizeObserver\(apply\)/);
+  assert.match(guide, /observer\?\.disconnect\(\)/);
+  assert.match(guide, /'Table: ' \+ current/);
 });
 
 test('the Help drawer opens and closes the guide, and keeps one Esc handler', () => {

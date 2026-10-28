@@ -6,7 +6,7 @@
   Starts the demo with a fixed clock and the capture-only cases, in a temporary folder that
   is deleted afterwards. Then it runs Playwright, which opens every screen in screens.json.
 
-  Default: compare with buildout\screenshots. Any difference fails the run.
+  Default: compare with docs\user\screenshots. Any difference fails the run.
   -Update: write new pictures. Only the CI runner is the reference renderer, so do not
            commit pictures made on a developer PC unless the team agreed that PC is the reference.
   -Only:   one screen id, or several separated by commas (for example p1-home,p1-glossary).
