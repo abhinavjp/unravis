@@ -101,12 +101,15 @@ func CaptureScenarios() map[string]UIBackend {
 	base := UIState{Version: version, Mode: OpInstall, LogPath: logPath, Capture: true,
 		Defaults: UIDefaults{UserLocation: DefaultLocation(ScopeUser, d), MachineLocation: DefaultLocation(ScopeMachine, d),
 			Blackbox: BlackboxOptions{Name: "web-01", Folder: `D:\UnravisBlackbox`, KeepDays: 7, MaxGB: 2, MinFreePercent: 10, Port: 7788}}}
+	// The same ids, titles and words as the real checks in preflight.go, so the pictures show what a user sees.
 	ready := []Check{
-		{ID: "windows", Title: "Windows", Status: CheckReady, Detail: "Windows 11 64-bit (build 22631)"},
-		{ID: "browser", Title: "Browser", Status: CheckReady, Detail: "Microsoft Edge"},
-		{ID: "install-folder", Title: "Disk space", Status: CheckReady, Detail: "C: has 41 GB free"},
-		{ID: "admin", Title: "Administrator approval", Status: CheckReady, Detail: "You can approve administrator changes when Windows asks"},
-		{ID: "reboot", Title: "Restart pending", Status: CheckReady, Detail: "No restart is waiting"},
+		{ID: "windows", Title: "Windows", Status: CheckReady, Detail: "Build 22631."},
+		{ID: "payload", Title: "Setup program", Status: CheckReady, Detail: "Unravis " + version + ", checked."},
+		{ID: "existing", Title: "Earlier install", Status: CheckReady, Detail: "None. This is a new install."},
+		{ID: "browser", Title: "Browser", Status: CheckReady, Detail: "Microsoft Edge is installed."},
+		{ID: "webview2", Title: "Setup window", Status: CheckReady, Detail: "WebView2 is not installed; this window opens in the browser instead. Nothing to do."},
+		{ID: "disk-app", Title: "Space for the program", Status: CheckReady, Detail: "41.0 GB free on C:."},
+		{ID: "admin", Title: "Administrator approval", Status: CheckReady, Detail: "Not needed for this install."},
 	}
 	userSteps := [][2]string{{"close-app", "Close Unravis"}, {"program-folder", "Make the program folder"}, {"copy-files", "Copy the program files"},
 		{"shortcuts", "Add the Start menu shortcut"}, {"arp", "Add Unravis to Installed apps"}, {"state", "Save the setup choices"},
@@ -139,10 +142,10 @@ func CaptureScenarios() map[string]UIBackend {
 		Res: Result{Outcome: OutcomeDone, Message: "Unravis " + version + " is installed.", Version: version, AppExe: userLoc + `\unravis.exe`}}
 
 	failChecks := append([]Check{}, ready...)
-	failChecks[2] = Check{ID: "install-folder", Title: "Disk space", Status: CheckFailed, Detail: "C: has 61 MB free; Unravis needs 100 MB",
-		Fix: "Free some space on C: (empty the Recycle Bin, or remove files you no longer need), then press Check again."}
-	failChecks[4] = Check{ID: "reboot", Title: "Restart pending", Status: CheckPartly,
-		Detail: "Windows is waiting for a restart after an update", Fix: "Setup can go on. Restart when it suits you."}
+	failChecks[5] = Check{ID: "disk-app", Title: "Space for the program", Status: CheckFailed, Detail: "C: has 61 MB free; it needs 100 MB.",
+		Fix: "Free some space on C:, or choose a folder on another drive."}
+	failChecks = append(failChecks, Check{ID: "reboot", Title: "Restart", Status: CheckPartly,
+		Detail: "Windows is waiting for a restart from an earlier update.", Fix: "Setup can go on. If a step fails, restart the PC and run setup again."})
 	preflightFail := &ScriptedBackend{St: base, Checks: failChecks}
 
 	// The progress screen: three steps done, one running, the rest waiting. It holds until Cancel.
@@ -157,9 +160,12 @@ func CaptureScenarios() map[string]UIBackend {
 	prog = append(prog, ev(userSteps[3][0], userSteps[3][1], StepRunning, ""))
 	progress := &ScriptedBackend{St: base, Checks: ready, Script: prog, Hold: true}
 
-	bbChecks := append([]Check{}, ready...)
-	bbChecks = append(bbChecks, Check{ID: "port", Title: "Blackbox port", Status: CheckReady, Detail: "Port 7788 is free"},
-		Check{ID: "recordings-folder", Title: "Recordings folder", Status: CheckReady, Detail: `D: has 212 GB free`})
+	bbChecks := append([]Check{}, ready[:6]...)
+	bbChecks = append(bbChecks, Check{ID: "blackbox-service", Title: "Blackbox service", Status: CheckReady, Detail: "No Blackbox is installed yet."},
+		Check{ID: "disk-blackbox", Title: "Space for the recordings", Status: CheckReady, Detail: "212.0 GB free on D:."},
+		Check{ID: "port", Title: "Blackbox port 7788", Status: CheckReady, Detail: "Free."},
+		Check{ID: "recordings-folder", Title: "Recordings folder", Status: CheckReady, Detail: `Setup makes D:\UnravisBlackbox.`},
+		Check{ID: "admin", Title: "Administrator approval", Status: CheckReady, Detail: "Windows asks you to approve before setup changes anything for everyone."})
 	done := &ScriptedBackend{St: base, Checks: bbChecks,
 		Script: finished(machineSteps, map[string]string{"copy-files": machineLoc + `\unravis.exe`, "blackbox": "web-01 is Running on port 7788"}),
 		Res: Result{Outcome: OutcomeDone, Message: "Unravis " + version + " is installed.", Version: version, AppExe: machineLoc + `\unravis.exe`,
@@ -183,10 +189,10 @@ func CaptureScenarios() map[string]UIBackend {
 	up := base
 	up.Mode = OpUpgrade
 	up.Installed = &UIInstalled{Version: "0.9.2", Scope: ScopeUser, Location: userLoc}
-	upChecks := []Check{ready[0], ready[1], ready[2],
-		{ID: "existing", Title: "Unravis already installed", Status: CheckReady, Detail: "Version 0.9.2 in " + userLoc + ". This will upgrade it."},
-		{ID: "app-running", Title: "Unravis is running", Status: CheckPartly, Detail: "It will be closed. Unsaved work in an open wizard is lost.",
-			Fix: "Finish what you are doing in Unravis first, or let setup close it."}}
+	upChecks := []Check{ready[0], ready[1],
+		{ID: "existing", Title: "Earlier install", Status: CheckReady, Detail: "Unravis 0.9.2 is installed in " + userLoc + ". Setup upgrades it to " + version + " and keeps your cases, saved connections and recordings."},
+		{ID: "app-running", Title: "Unravis open", Status: CheckPartly, Detail: "Unravis is open. Setup closes it, and opens it again when it is done."},
+		ready[3], ready[4], ready[5], ready[6]}
 	upSteps := [][2]string{{"close-app", "Close Unravis"}, {"copy-files", "Copy the program files"}, {"shortcuts", "Add the Start menu shortcut"},
 		{"arp", "Add Unravis to Installed apps"}, {"state", "Save the setup choices"}, {"verify", "Check that Unravis starts"}}
 	upgrade := &ScriptedBackend{St: up, Checks: upChecks, Script: finished(upSteps, nil),
@@ -196,8 +202,10 @@ func CaptureScenarios() map[string]UIBackend {
 	rep := base
 	rep.Mode = OpRepair
 	rep.Installed = &UIInstalled{Version: version, Scope: ScopeUser, Location: userLoc}
-	repChecks := []Check{ready[0], ready[1], ready[2],
-		{ID: "existing", Title: "Unravis already installed", Status: CheckReady, Detail: "Version " + version + " in " + userLoc + ". This will repair it."}}
+	repChecks := []Check{ready[0], ready[1],
+		{ID: "existing", Title: "Earlier install", Status: CheckReady, Detail: "Unravis " + version + " is installed in " + userLoc + "."},
+		{ID: "app-running", Title: "Unravis open", Status: CheckReady, Detail: "Unravis is not open."},
+		ready[3], ready[4], ready[5], ready[6]}
 	repair := &ScriptedBackend{St: rep, Checks: repChecks, Script: finished(upSteps, nil),
 		Res: Result{Outcome: OutcomeDone, Version: version, AppExe: userLoc + `\unravis.exe`, Message: "Unravis is repaired."}}
 
