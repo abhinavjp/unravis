@@ -164,17 +164,17 @@ func (e *mkEnv) listCases() []caseDTO {
 func TestCaseKeyCreateRules(t *testing.T) {
 	e := newCKEnv(t)
 	before := len(e.listCases())
-	e.wantKeyFail(e.do(http.MethodPost, "/api/cases", ckCreateBody("t", "short", "short")), http.StatusBadRequest, "too-short")
-	e.wantKeyFail(e.do(http.MethodPost, "/api/cases", ckCreateBody("t", ckPass, ckPass2)), http.StatusBadRequest, "mismatch")
-	e.wantKeyFail(e.do(http.MethodPost, "/api/cases", `{"title":"t","caseKey":`+q(ckPass)+`}`), http.StatusBadRequest, "mismatch")
-	e.wantKeyFail(e.do(http.MethodPost, "/api/cases", `{"title":"t","caseKeyConfirm":`+q(ckPass)+`}`), http.StatusBadRequest, "bad-request")
-	e.wantKeyFail(e.do(http.MethodPost, "/api/cases", `{"title":"t","caseKey":5}`), http.StatusBadRequest, "bad-request")
-	e.wantKeyFail(e.do(http.MethodPost, "/api/cases", `{"title":"t","caseKey":`+q(strings.Repeat("x", 2000))+`,"caseKeyConfirm":`+q(strings.Repeat("x", 2000))+`}`), http.StatusBadRequest, "too-long")
+	e.wantKeyFail(e.do(http.MethodPost, "/api/cases", ckCreateBody("tt", "short", "short")), http.StatusBadRequest, "too-short")
+	e.wantKeyFail(e.do(http.MethodPost, "/api/cases", ckCreateBody("tt", ckPass, ckPass2)), http.StatusBadRequest, "mismatch")
+	e.wantKeyFail(e.do(http.MethodPost, "/api/cases", `{"title":"tt","caseKey":`+q(ckPass)+`}`), http.StatusBadRequest, "mismatch")
+	e.wantKeyFail(e.do(http.MethodPost, "/api/cases", `{"title":"tt","caseKeyConfirm":`+q(ckPass)+`}`), http.StatusBadRequest, "bad-request")
+	e.wantKeyFail(e.do(http.MethodPost, "/api/cases", `{"title":"tt","caseKey":5}`), http.StatusBadRequest, "bad-request")
+	e.wantKeyFail(e.do(http.MethodPost, "/api/cases", `{"title":"tt","caseKey":`+q(strings.Repeat("x", 2000))+`,"caseKeyConfirm":`+q(strings.Repeat("x", 2000))+`}`), http.StatusBadRequest, "too-long")
 	if n := len(e.listCases()); n != before {
 		t.Fatalf("a refused create made a case: %d -> %d", before, n)
 	}
 	// A repeat of one request id answers the case already made and keeps its key.
-	body := `{"title":"t","requestId":"abcdefgh12345678","caseKey":` + q(ckPass) + `,"caseKeyConfirm":` + q(ckPass) + `}`
+	body := `{"title":"tt","requestId":"abcdefgh12345678","caseKey":` + q(ckPass) + `,"caseKeyConfirm":` + q(ckPass) + `}`
 	first := e.do(http.MethodPost, "/api/cases", body)
 	second := e.do(http.MethodPost, "/api/cases", body)
 	if first.Code != http.StatusCreated || second.Code != http.StatusOK {

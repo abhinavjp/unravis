@@ -243,7 +243,7 @@ func TestCreateWithRequestIDMakesOneCase(t *testing.T) {
 				t.Fatal("a new request id reused a case")
 			}
 			// An id the server cannot log safely is refused.
-			wantFailure(t, createWith(e, "x", "bad id!"), 400, "bad-request-id", "")
+			wantFailure(t, createWith(e, "xx", "bad id!"), 400, "bad-request-id", "")
 			if items, _ := store.List(context.Background()); len(items) != 2 {
 				t.Fatalf("store holds %d cases, want 2", len(items))
 			}
