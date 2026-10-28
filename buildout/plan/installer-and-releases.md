@@ -139,7 +139,7 @@ So an Unravis-only install for one user needs no UAC at all.
   - "Also delete the Blackbox recordings" (type the Blackbox name to confirm, as in A38).
 - Always removes: program files, shortcuts, the Add/Remove Programs entry, the service, the firewall rule.
 - Never deletes a `.unravis-case` file outside the data folder (A18).
-- Case data deletion is a normal delete to the Recycle Bin where possible, otherwise a plain delete after the typed confirmation, and is logged.
+- Case data deletion is a plain delete after the typed DELETE confirmation, and is logged. It does not go to the Recycle Bin: encrypted case folders exceed Recycle Bin limits and would be deleted outright anyway (ruling F5, 2026-10-28, owner to confirm).
 
 ## 6. Silent mode, logging, rollback
 
