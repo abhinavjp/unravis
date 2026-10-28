@@ -10,5 +10,5 @@ export async function goHome(page: Page): Promise<void> {
 /** Open a case from the start screen by its title. */
 export async function openCase(page: Page, title: string): Promise<void> {
   await page.getByRole('button', { name: 'Open case ' + title }).click();
-  await expect(page.locator('#case-heading')).toBeVisible();
+  await expect(page.getByRole('button', { name: /^All cases/ })).toBeVisible();
 }
