@@ -3,7 +3,7 @@
 ## What you need
 
 - Windows 10 or 11, or Windows Server 2019 or later.
-- A web browser. Unravis opens its screens in your own browser, on your own computer. Nothing is sent to the internet.
+- A web browser. Unravis opens its screens in your own browser, on your own computer. Nothing is sent to the internet unless you press Check for updates.
 
 ## Start Unravis
 
@@ -43,17 +43,23 @@ unravis.exe --demo
 
 The demo shows a quiet 15 minutes of sample traffic from two sample sources. The time at the top reads "Data reference time", because the sample data stands still at one moment.
 
-![The Unravis start page in the demo, dark](../screenshots/P1/p1-home-dark.png)
-![The Unravis start page in the demo, light](../screenshots/P1/p1-home-light.png)
+![The Unravis start page in the demo, dark](screenshots/P1/p1-home-dark.png)
+![The Unravis start page in the demo, light](screenshots/P1/p1-home-light.png)
 
 The same page on a narrow window, such as a small laptop or a phone-sized browser. The header folds some buttons into a More menu.
 
-![The start page on a narrow window, dark](../screenshots/P1/p1-home-dark-narrow.png)
-![The start page on a narrow window, light](../screenshots/P1/p1-home-light-narrow.png)
+![The start page on a narrow window, dark](screenshots/P1/p1-home-dark-narrow.png)
+![The start page on a narrow window, light](screenshots/P1/p1-home-light-narrow.png)
 
 ## The Glossary
 
 Press Glossary in the header for plain-words meanings of the terms Unravis uses. Turn on Explain simply to see short hints beside the figures.
 
-![The Glossary, dark](../screenshots/P1/p1-glossary-dark.png)
-![The Glossary, light](../screenshots/P1/p1-glossary-light.png)
+![The Glossary, dark](screenshots/P1/p1-glossary-dark.png)
+![The Glossary, light](screenshots/P1/p1-glossary-light.png)
+
+## Help inside Unravis
+
+The Glossary button in the header opens Help. Help holds the glossary and the same pages as this guide. Press Open the user guide in Help to read them. The pictures are left out in the app. Each picture shows a short line of text instead.
+
+Screens in this part: `p13-guide-index`, `p13-guide-page`.

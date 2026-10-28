@@ -53,4 +53,4 @@ A saved view keeps a name, a tool, the two windows, the API focus and the tool's
 
 ## Export
 
-Screen ids `p6-export-1`, `p6-export-2`. The export is the last tab of the guided analysis and is described with the other screens in [guided-analysis.md](guided-analysis.md#export-screens). It works from either way of working.
+Screen ids `p6-export-1`, `p6-export-2`. The export is the last tab of the guided analysis and is described with the other screens in [Guided analysis](guided-analysis.md#export-screens). It works from either way of working.

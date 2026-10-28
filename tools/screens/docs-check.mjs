@@ -1,5 +1,5 @@
 // Checks the draft docs against the screenshots. Run: node docs-check.mjs (from tools/screens).
-//   a) every image link in buildout/docs/*.md points to a file that exists;
+//   a) every image link in docs/user/*.md points to a file that exists;
 //   b) every id in screens.json appears in the doc page it names;
 //   c) no page links to a screenshot of a screen that is no longer in screens.json.
 //   d) screens.json itself is sound: no screen named twice, every id starts with its phase, every screen has steps.
@@ -11,8 +11,8 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = process.argv[2] ? resolve(process.argv[2]) : resolve(here, '..', '..');
-const docsDir = join(root, 'buildout', 'docs');
-const shotsDir = join(root, 'buildout', 'screenshots');
+const docsDir = join(root, 'docs', 'user');
+const shotsDir = join(root, 'docs', 'user', 'screenshots');
 const problems = [];
 
 let screens = [];

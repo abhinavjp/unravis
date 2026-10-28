@@ -27,8 +27,8 @@ Screen in this part: `p11-upgrade`.
 
 The heading names both versions, for example **Upgrade Unravis 0.9.2 to 1.0.0**. The checks are the same as for an install. There is no Options step: the upgrade keeps the choices of the first install (scope, folder, Blackbox, firewall rule), which setup saved in `setup-state.json` in the program folder. If Unravis is open, setup closes it and opens the new version when it is done.
 
-![Upgrade Unravis 0.9.2 to 1.0.0, dark](../screenshots/P11/p11-upgrade-dark.png)
-![Upgrade Unravis 0.9.2 to 1.0.0, light](../screenshots/P11/p11-upgrade-light.png)
+![Upgrade Unravis 0.9.2 to 1.0.0, dark](screenshots/P11/p11-upgrade-dark.png)
+![Upgrade Unravis 0.9.2 to 1.0.0, light](screenshots/P11/p11-upgrade-light.png)
 
 What an upgrade does:
 
@@ -50,8 +50,8 @@ Screen in this part: `p11-repair`.
 
 Repair puts back the program files, shortcuts, Installed apps entry, services and folder permissions, as the first install made them. It touches no data. Use it when Unravis does not start or a shortcut is gone. Run the same version of setup again, or run `unravis-setup.exe --repair`.
 
-![Repair Unravis 1.0.0, dark](../screenshots/P11/p11-repair-dark.png)
-![Repair Unravis 1.0.0, light](../screenshots/P11/p11-repair-light.png)
+![Repair Unravis 1.0.0, dark](screenshots/P11/p11-repair-dark.png)
+![Repair Unravis 1.0.0, light](screenshots/P11/p11-repair-light.png)
 
 ## Uninstall
 
@@ -66,8 +66,8 @@ Your data stays unless you tick it:
 
 The approval screen repeats what you ticked before Windows asks. Deleted data is deleted for good, not moved to the Recycle Bin. This cannot be undone. Copy anything you want to keep first.
 
-![Remove Unravis, with the shared data ticked, dark](../screenshots/P11/p11-uninstall-dark.png)
-![Remove Unravis, with the shared data ticked, light](../screenshots/P11/p11-uninstall-light.png)
+![Remove Unravis, with the shared data ticked, dark](screenshots/P11/p11-uninstall-dark.png)
+![Remove Unravis, with the shared data ticked, light](screenshots/P11/p11-uninstall-light.png)
 
 What is never removed:
 

@@ -3644,6 +3644,28 @@
         {"click": "[data-testid=update-check-button]"},
         {"waitFor": "[data-testid=update-check-result]"}
       ]
+    },
+    {
+      "id": "p13-guide-index", "phase": "P13", "doc": "getting-started.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"click": "role=button[name=\"Glossary\"]"},
+        {"waitFor": "#glossary-title"},
+        {"click": "[data-testid=guide-open]"},
+        {"waitFor": "[data-testid=guide-nav-index]"}
+      ]
+    },
+    {
+      "id": "p13-guide-page", "phase": "P13", "doc": "getting-started.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"click": "role=button[name=\"Glossary\"]"},
+        {"waitFor": "#glossary-title"},
+        {"click": "[data-testid=guide-open]"},
+        {"waitFor": "[data-testid=guide-nav-index]"},
+        {"click": "[data-testid=guide-nav-getting-started]"},
+        {"waitFor": "[data-testid=guide-nav-getting-started][aria-current=page]"}
+      ]
     }
   ]
 }

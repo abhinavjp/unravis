@@ -2,7 +2,7 @@ package investigate
 
 // The fixed words of the guided analysis (A25: Steps 0 to 10). The names and the
 // "In a nutshell" lines are shown on every step card and printed in
-// buildout/docs/guided-analysis.md; a test keeps the two in step. None of them
+// docs/user/guided-analysis.md; a test keeps the two in step. None of them
 // names a cause, and none uses a percentage or a score.
 
 // StepCount is the number of steps, numbered 0 to 10.

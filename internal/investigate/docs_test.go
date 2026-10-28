@@ -10,7 +10,7 @@ import (
 	"api-audit-explorer/internal/evidence"
 )
 
-const guidedDocPath = "../../buildout/docs/guided-analysis.md"
+const guidedDocPath = "../../docs/user/guided-analysis.md"
 
 func readGuidedDoc(t *testing.T) []string {
 	t.Helper()

@@ -12,8 +12,8 @@ Screens in this part: `p11-welcome`, `p11-preflight-fail`.
 
 Setup opens its window in Microsoft Edge or Google Chrome, in a plain app window. The first screen lists the checks it made, each with a sticker: **Ready**, **Partly ready** or **Failed**.
 
-![Install Unravis, checks all ready, dark](../screenshots/P11/p11-welcome-dark.png)
-![Install Unravis, checks all ready, light](../screenshots/P11/p11-welcome-light.png)
+![Install Unravis, checks all ready, dark](screenshots/P11/p11-welcome-dark.png)
+![Install Unravis, checks all ready, light](screenshots/P11/p11-welcome-light.png)
 
 | Check | What it looks at |
 |---|---|
@@ -38,8 +38,8 @@ Setup opens its window in Microsoft Edge or Google Chrome, in a plain app window
 
 A **Failed** check stops the install and says what to do. Fix it, then press **Check again**. A **Partly ready** check does not stop anything.
 
-![A failed check: not enough space, dark](../screenshots/P11/p11-preflight-fail-dark.png)
-![A failed check: not enough space, light](../screenshots/P11/p11-preflight-fail-light.png)
+![A failed check: not enough space, dark](screenshots/P11/p11-preflight-fail-dark.png)
+![A failed check: not enough space, light](screenshots/P11/p11-preflight-fail-light.png)
 
 ## Options
 
@@ -53,8 +53,8 @@ Screen in this part: `p11-options`.
 - **Also place a Blackbox recorder on this PC** installs the Blackbox service (`UnravisBlackbox`) in `C:\Program Files\Unravis Blackbox`. It uses the same settings as the Place a Blackbox wizard: name, recordings folder, days to keep, size limit, free disk to keep, and port. See [Unravis Blackbox](blackbox.md).
 - **Open the Blackbox port to these PCs** adds a Windows firewall rule, `Unravis Blackbox (TCP <port>)`, open only to the addresses you list. Without it no rule is added.
 
-![Where and how, with the Blackbox ticked, dark](../screenshots/P11/p11-options-dark.png)
-![Where and how, with the Blackbox ticked, light](../screenshots/P11/p11-options-light.png)
+![Where and how, with the Blackbox ticked, dark](screenshots/P11/p11-options-dark.png)
+![Where and how, with the Blackbox ticked, light](screenshots/P11/p11-options-light.png)
 
 ## Approval
 
@@ -62,8 +62,8 @@ Screen in this part: `p11-uac-explain`.
 
 When an install needs administrator approval, setup says why before Windows asks: for example, installing for everyone on this PC and placing the Blackbox. It also lists what it will not change. Press **Continue** and approve in the Windows prompt. If you say No there, nothing is changed and you are back on this screen. When no approval is needed, the step rail shows **Not needed** for Approval.
 
-![Windows will ask for admin approval, dark](../screenshots/P11/p11-uac-explain-dark.png)
-![Windows will ask for admin approval, light](../screenshots/P11/p11-uac-explain-light.png)
+![Windows will ask for admin approval, dark](screenshots/P11/p11-uac-explain-dark.png)
+![Windows will ask for admin approval, light](screenshots/P11/p11-uac-explain-light.png)
 
 ## Progress
 
@@ -84,8 +84,8 @@ Each step has its own row: **Waiting**, **Running**, **Done** or **Failed**. The
 
 Every change is written to a journal before it is made. **Cancel** stops the run and puts back everything it changed. Rows then show **Put back**.
 
-![Installing, step by step, dark](../screenshots/P11/p11-progress-dark.png)
-![Installing, step by step, light](../screenshots/P11/p11-progress-light.png)
+![Installing, step by step, dark](screenshots/P11/p11-progress-dark.png)
+![Installing, step by step, light](screenshots/P11/p11-progress-light.png)
 
 ## Done
 
@@ -93,8 +93,8 @@ Screen in this part: `p11-done`.
 
 When you placed a Blackbox, the Done screen shows its read key **once**. Unravis on another PC needs this key to read this Blackbox. Press **Copy** and keep it somewhere safe: **Close** and **Open Unravis** stay off until you have copied it. The key is never written to the log.
 
-![Unravis is installed, with the read key, dark](../screenshots/P11/p11-done-dark.png)
-![Unravis is installed, with the read key, light](../screenshots/P11/p11-done-light.png)
+![Unravis is installed, with the read key, dark](screenshots/P11/p11-done-dark.png)
+![Unravis is installed, with the read key, light](screenshots/P11/p11-done-light.png)
 
 ## When it fails
 
@@ -102,8 +102,8 @@ Screen in this part: `p11-failed-rolled-back`.
 
 If a step fails, setup stops, puts back every step before it in reverse order, and says which step failed and what to do. The heading says whether everything was put back. If something could not be put back, it is listed by name with its path, and the log has the details. After a failed install, **Back to Options** lets you change a choice, for example the port, and run again. After a failed upgrade or repair, **Try again** runs it again (it is off when something could not be put back: read the log first).
 
-![Install did not finish, everything put back, dark](../screenshots/P11/p11-failed-rolled-back-dark.png)
-![Install did not finish, everything put back, light](../screenshots/P11/p11-failed-rolled-back-light.png)
+![Install did not finish, everything put back, dark](screenshots/P11/p11-failed-rolled-back-dark.png)
+![Install did not finish, everything put back, light](screenshots/P11/p11-failed-rolled-back-light.png)
 
 ## Silent install
 

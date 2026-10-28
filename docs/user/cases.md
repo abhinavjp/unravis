@@ -6,8 +6,8 @@ A case keeps one investigation together: the files you added, your theories, the
 
 The start page lists your cases. Open one, type a case code, restore a case from a case file, or create a new case. A closed case is marked Closed.
 
-![The case list, dark](../screenshots/P1/p1-case-list-dark.png)
-![The case list, light](../screenshots/P1/p1-case-list-light.png)
+![The case list, dark](screenshots/P1/p1-case-list-dark.png)
+![The case list, light](screenshots/P1/p1-case-list-light.png)
 
 The case list pictures show made-up cases from the capture demo. They are not real investigations.
 
@@ -15,8 +15,8 @@ The case list pictures show made-up cases from the capture demo. They are not re
 
 Press Create a new case. The guide walks you through the steps. Step 1 asks what you are looking at.
 
-![Create a case, step 1, dark](../screenshots/P1/p1-create-1-dark.png)
-![Create a case, step 1, light](../screenshots/P1/p1-create-1-light.png)
+![Create a case, step 1, dark](screenshots/P1/p1-create-1-dark.png)
+![Create a case, step 1, light](screenshots/P1/p1-create-1-light.png)
 
 ### Pressing Create twice, reloading, or closing the window
 
@@ -32,20 +32,20 @@ If you press Create for a case that was already made and then archived, you see 
 
 Case home shows what happened so far, in order, oldest first. It shows only what the case has saved: when it started, the files you added, your theories and your health checks.
 
-![Case home, dark](../screenshots/P1/p1-case-home-dark.png)
-![Case home, light](../screenshots/P1/p1-case-home-light.png)
+![Case home, dark](screenshots/P1/p1-case-home-dark.png)
+![Case home, light](screenshots/P1/p1-case-home-light.png)
 
 On a narrow window:
 
-![Case home on a narrow window, dark](../screenshots/P1/p1-case-home-dark-narrow.png)
-![Case home on a narrow window, light](../screenshots/P1/p1-case-home-light-narrow.png)
+![Case home on a narrow window, dark](screenshots/P1/p1-case-home-dark-narrow.png)
+![Case home on a narrow window, light](screenshots/P1/p1-case-home-light-narrow.png)
 
 ## Health checks
 
 Health checks look at the SQL Server or MongoDB your logs depend on and say in plain words what looks healthy and what needs a look. They only read. They run only when you press Run checks.
 
-![Health checks in Case home, dark](../screenshots/P1/p1-health-dark.png)
-![Health checks in Case home, light](../screenshots/P1/p1-health-light.png)
+![Health checks in Case home, dark](screenshots/P1/p1-health-dark.png)
+![Health checks in Case home, light](screenshots/P1/p1-health-light.png)
 
 The demo has no SQL Server kept and has run no checks, so these pictures show the empty state: "No SQL Server is kept yet" and "No checks have been run". Pictures with results arrive with the health-check phase.
 
@@ -53,8 +53,8 @@ The demo has no SQL Server kept and has run no checks, so these pictures show th
 
 Export builds a file of the findings in the window you are looking at. You see a preview before anything is saved.
 
-![Export evidence, dark](../screenshots/P1/p1-export-dark.png)
-![Export evidence, light](../screenshots/P1/p1-export-light.png)
+![Export evidence, dark](screenshots/P1/p1-export-dark.png)
+![Export evidence, light](screenshots/P1/p1-export-light.png)
 
 ## Close and Reopen
 
@@ -72,9 +72,9 @@ The MongoDB link and the filters the case had are not part of Reopen. They are s
 
 Screens: `p2-close` is the case list on the Import page. `p2-closed-readonly` is a closed case with its buttons turned off. `p2-reopen` is the same case with the Reopen button. The pictures are made by `tools/screens/run-screens.ps1 -Update`.
 
-![Close case, in the Import page case list](../screenshots/P2/p2-close-light.png)
-![A closed case, read only](../screenshots/P2/p2-closed-readonly-light-narrow.png)
-![A closed case with the Reopen button](../screenshots/P2/p2-reopen-dark-narrow.png)
+![Close case, in the Import page case list](screenshots/P2/p2-close-light.png)
+![A closed case, read only](screenshots/P2/p2-closed-readonly-light-narrow.png)
+![A closed case with the Reopen button](screenshots/P2/p2-reopen-dark-narrow.png)
 
 Pressing Reopen twice quickly sends one request. The second press does nothing while the first is running.
 
@@ -95,7 +95,7 @@ You can also Remove an item from the list. On a closed case the list says "This 
 
 Screen: `p2-retry-list`. The list sits above Analysis, and Case home counts the items in the header ("Needs another try").
 
-![Needs another try list](../screenshots/P2/p2-retry-list-light.png)
+![Needs another try list](screenshots/P2/p2-retry-list-light.png)
 
 ## Two tabs
 
@@ -107,8 +107,8 @@ Examples: you close a case in tab A, and then add a file in tab B. Tab B is told
 
 Screen: `p2-changed-elsewhere`. A second tab reopens the case, then the first tab presses Reopen. The tool puts the case back as it was afterwards.
 
-![Changed in another tab](../screenshots/P2/p2-changed-elsewhere-light.png)
-![Changed in another tab, narrow](../screenshots/P2/p2-changed-elsewhere-dark-narrow.png)
+![Changed in another tab](screenshots/P2/p2-changed-elsewhere-light.png)
+![Changed in another tab, narrow](screenshots/P2/p2-changed-elsewhere-dark-narrow.png)
 
 ## Archive
 
@@ -123,8 +123,8 @@ Archive saves the whole case in one file you can keep, copy or move. You do not 
 
 Screens: `p3-archive` is the drawer on an open case.
 
-![Archive drawer, light](../screenshots/P3/p3-archive-light.png)
-![Archive drawer, dark, narrow](../screenshots/P3/p3-archive-dark-narrow.png)
+![Archive drawer, light](screenshots/P3/p3-archive-light.png)
+![Archive drawer, dark, narrow](screenshots/P3/p3-archive-dark-narrow.png)
 
 ## Check the case file
 
@@ -148,8 +148,8 @@ A freed case is not "Missing". An archived case page is read-only: the analysis 
 
 Screens: `p3-free-1` is the first stage. The demo has no master key, so it shows the "Set a master key" message instead of the check.
 
-![Free the space, stage 1, dark](../screenshots/P3/p3-free-1-dark.png)
-![Free the space, stage 1, light](../screenshots/P3/p3-free-1-light.png)
+![Free the space, stage 1, dark](screenshots/P3/p3-free-1-dark.png)
+![Free the space, stage 1, light](screenshots/P3/p3-free-1-light.png)
 
 ## Restore
 
@@ -162,8 +162,8 @@ A case file made before this version still restores with "Restore from a case fi
 
 Screens: `p3-restore-in-place` and `p3-restore-as-new`. The demo has no master key, so the second shows the "Set a master key" message.
 
-![Restore in place, light](../screenshots/P3/p3-restore-in-place-light.png)
-![Restore as a new case, dark](../screenshots/P3/p3-restore-as-new-dark.png)
+![Restore in place, light](screenshots/P3/p3-restore-in-place-light.png)
+![Restore as a new case, dark](screenshots/P3/p3-restore-as-new-dark.png)
 
 ## The Archived list
 
@@ -171,8 +171,8 @@ The start screen shows "Archived cases (N)" under the working cases. The list is
 
 Screens: `p3-archived-list` is the list. `p3-archived-home` is Case home of an archived case.
 
-![Archived list, light](../screenshots/P3/p3-archived-list-light.png)
-![An archived case, light, narrow](../screenshots/P3/p3-archived-home-light-narrow.png)
+![Archived list, light](screenshots/P3/p3-archived-list-light.png)
+![An archived case, light, narrow](screenshots/P3/p3-archived-home-light-narrow.png)
 
 ## History
 
@@ -200,8 +200,8 @@ An archive of a case with its own key is sealed with that key, not with the PC k
 
 Screens: `p4-case-key-create` is the name step with the key fields. `p4-case-key-unlock` is the page that opens a locked case. The demo's keyed case is "Payroll run discrepancy, 14 October", and the picture types its demo key into the field without pressing the button.
 
-![Create a case with its own key](../screenshots/P4/p4-case-key-create-light.png)
-![Open a case that has its own key, narrow](../screenshots/P4/p4-case-key-unlock-dark-narrow.png)
+![Create a case with its own key](screenshots/P4/p4-case-key-create-light.png)
+![Open a case that has its own key, narrow](screenshots/P4/p4-case-key-unlock-dark-narrow.png)
 
 ## Erase a case
 
@@ -222,8 +222,8 @@ What is left: one line on the case list, "Erased case q2w7exak", with the time. 
 
 Screens: `p4-erase-1` is the dialog when it opens, and `p4-erase-2` is the same dialog with the code typed and the Erase button on. `p4-erased-home` is the case list with two Erased lines. `p4-untrusted-home` is a legacy case that an older version made without a seal. Unravis will not open it, because it cannot tell whether it was changed. You can restore a case file you made yourself, or erase it.
 
-![Erase dialog](../screenshots/P4/p4-erase-1-light.png)
-![Erase dialog with the code typed](../screenshots/P4/p4-erase-2-dark.png)
-![The case list with Erased lines](../screenshots/P4/p4-erased-home-light.png)
-![A legacy case that cannot be opened, narrow](../screenshots/P4/p4-untrusted-home-light-narrow.png)
+![Erase dialog](screenshots/P4/p4-erase-1-light.png)
+![Erase dialog with the code typed](screenshots/P4/p4-erase-2-dark.png)
+![The case list with Erased lines](screenshots/P4/p4-erased-home-light.png)
+![A legacy case that cannot be opened, narrow](screenshots/P4/p4-untrusted-home-light-narrow.png)
 
