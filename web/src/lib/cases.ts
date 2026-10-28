@@ -1,5 +1,5 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
-import { LOCKED_STATUS, signalCasesLocked } from './lockSignal';
+import { signalIfAppLocked } from './lockSignal';
 import { parseTimelineView, type TimelineView } from './timeline';
 import { parseResource, parseSeries, type ResourceView, type SeriesView } from './resource';
 import { parseCollect, type CollectItem } from './collect';
@@ -181,7 +181,7 @@ export async function send(path: string, init: RequestInit = {}, signal?: AbortS
     throw new CaseApiError(NO_SESSION_MESSAGE, 401, 'no_session');
   }
   // 423: the master key is locked. Tell the app so it shows the unlock screen; the caller still gets the refusal.
-  if (response.status === LOCKED_STATUS) signalCasesLocked();
+  await signalIfAppLocked(response);
   if (!response.ok) throw await refusal(response);
   return response;
 }

@@ -189,8 +189,32 @@ test('lockSignal calls the one listener, stops after it is removed, and carries 
 
 test('every case route answer of 423 raises the lock signal and a 401 still forgets the session', () => {
   const cases = fs.readFileSync(path.join(root, 'src/lib/cases.ts'), 'utf8');
-  assert.match(cases, /if \(response\.status === LOCKED_STATUS\) signalCasesLocked\(\);\s*\r?\n\s*if \(!response\.ok\)/);
+  assert.match(cases, /await signalIfAppLocked\(response\);\s*\r?\n\s*if \(!response\.ok\)/);
   assert.match(cases, /forgetSession/);
+});
+
+test('a 423 raises the app lock signal unless it is about one case key', async () => {
+  const { onCasesLocked, signalIfAppLocked, isCaseKeyReason } = loadTypeScript('src/lib/lockSignal.ts');
+  let raised = 0;
+  const off = onCasesLocked(() => { raised += 1; });
+  const answer = (status, body) => new Response(body, { status });
+  await signalIfAppLocked(answer(423, JSON.stringify({ reason: 'locked' })));
+  assert.equal(raised, 1);
+  await signalIfAppLocked(answer(423, 'not json'));
+  assert.equal(raised, 2);
+  await signalIfAppLocked(answer(423, JSON.stringify({ reason: 'case-locked' })));
+  await signalIfAppLocked(answer(423, JSON.stringify({ reason: 'wrong-case-key' })));
+  assert.equal(raised, 2);
+  await signalIfAppLocked(answer(200, JSON.stringify({ reason: 'locked' })));
+  assert.equal(raised, 2);
+  // The caller can still read the answer afterwards.
+  const kept = answer(423, JSON.stringify({ reason: 'case-locked', error: 'x' }));
+  await signalIfAppLocked(kept);
+  assert.equal((await kept.json()).reason, 'case-locked');
+  assert.equal(isCaseKeyReason('case-locked'), true);
+  assert.equal(isCaseKeyReason('locked'), false);
+  assert.equal(isCaseKeyReason(undefined), false);
+  off();
 });
 
 test('the start intent is taken once', () => {

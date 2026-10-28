@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"bufio"
 	"context"
 	"crypto/rand"
@@ -76,6 +77,8 @@ type casesState struct {
 	wsLocks   caseLedgerLocks // serialises writes of each case's workspace note
 	jobs      importJobs
 	disc      discoverState
+	keyTh     caseThrottles // failure throttles of the per-case keys (case_key.go)
+	keyOp     sync.Mutex    // one case-key derivation (Argon2) at a time
 	maxUpload int64 // test hook: replaces the computed upload cap when > 0
 
 	hostsMu sync.RWMutex
@@ -382,6 +385,10 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeCaseFailure(w, http.StatusBadRequest, "bad-case-id", "That is not a case id.")
 	case errors.Is(err, casestore.ErrLocked):
 		writeLocked(w)
+	case errors.Is(err, casestore.ErrCaseLocked):
+		writeCaseLocked(w)
+	case errors.Is(err, casestore.ErrWrongCaseKey):
+		writeWrongCaseKey(w)
 	case errors.Is(err, casestore.ErrUntrustedLegacy):
 		writeCaseFailure(w, http.StatusConflict, "untrusted-case", untrustedCaseText)
 	case errors.Is(err, casestore.ErrNeedsRewrap):
@@ -427,10 +434,16 @@ type caseDTO struct {
 	// Untrusted is true for a folder the store refuses (see
 	// casestore.ErrUntrustedLegacy). Its title is a fixed placeholder.
 	Untrusted bool `json:"untrusted,omitempty"`
+	// OwnKey: the case is sealed with its own key. KeyLocked: that key is not
+	// unlocked, so the case cannot be opened (its title is hidden then). KeyEnding
+	// is "Key ending xxxx", the last 4 characters of the key check value.
+	OwnKey    bool   `json:"ownKey,omitempty"`
+	KeyLocked bool   `json:"keyLocked,omitempty"`
+	KeyEnding string `json:"keyEnding,omitempty"`
 }
 
 func toCaseDTO(c casestore.CaseInfo) caseDTO {
-	d := caseDTO{ID: string(c.ID), Title: c.Title, Created: c.Created.UTC(), Bytes: c.Bytes, Imports: c.Imports, Untrusted: c.Untrusted, State: string(casestore.StateOf(c))}
+	d := caseDTO{ID: string(c.ID), Title: c.Title, Created: c.Created.UTC(), Bytes: c.Bytes, Imports: c.Imports, Untrusted: c.Untrusted, State: string(casestore.StateOf(c)), OwnKey: c.OwnKey, KeyLocked: c.KeyLocked, KeyEnding: c.KeyEnding}
 	if c.Closed != nil {
 		t := c.Closed.UTC()
 		d.Closed = &t
@@ -589,21 +602,22 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 	if !h.casesAvailable(w) {
 		return
 	}
-	var body struct {
-		Title string `json:"title"`
-		// RequestID is kept by the page for one wizard run. A repeated id answers
-		// the case the first request made (200) and makes no second one.
-		RequestID string `json:"requestId"`
-	}
-	if !decodeJSON(w, r, &body) {
+	// title and requestId are text; caseKey and caseKeyConfirm (the optional own
+	// key of the case) are read as bytes that never become strings.
+	body := readKeyBody(w, r, []string{"caseKey", "caseKeyConfirm"}, []string{"title", "requestId"})
+	if body == nil {
 		return
 	}
-	title := strings.TrimSpace(body.Title)
+	defer body.wipe()
+	// RequestID is kept by the page for one wizard run. A repeated id answers the
+	// case the first request made (200) and makes no second one.
+	requestID := body.strs["requestId"]
+	title := strings.TrimSpace(body.strs["title"])
 	if !casestore.ValidTitle(title) {
 		writeCaseFailure(w, http.StatusBadRequest, "bad-title", "The title is empty, too long or holds control characters.")
 		return
 	}
-	if body.RequestID != "" && !casestore.ValidRequestID(body.RequestID) {
+	if requestID != "" && !casestore.ValidRequestID(requestID) {
 		writeCaseFailure(w, http.StatusBadRequest, "bad-request-id", badRequestIDText)
 		return
 	}
@@ -612,8 +626,20 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 		existed bool
 		err     error
 	)
-	if lc, ok := h.cases.(casestore.Lifecycle); ok && body.RequestID != "" {
-		info, existed, err = lc.CreateFor(r.Context(), title, body.RequestID)
+	if key, withKey := body.secrets["caseKey"]; withKey {
+		ck, ok := h.caseKeyer(w)
+		if !ok {
+			return
+		}
+		if !newKeyChecked(w, key, body.secrets["caseKeyConfirm"]) {
+			return
+		}
+		info, existed, err = ck.CreateWithKey(r.Context(), title, requestID, bytes.Clone(key))
+	} else if _, stray := body.secrets["caseKeyConfirm"]; stray {
+		writeCaseKeyFail(w, http.StatusBadRequest, "bad-request", "The request body is invalid.")
+		return
+	} else if lc, ok := h.cases.(casestore.Lifecycle); ok && requestID != "" {
+		info, existed, err = lc.CreateFor(r.Context(), title, requestID)
 	} else {
 		info, err = h.cases.Create(r.Context(), title)
 	}

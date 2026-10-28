@@ -196,6 +196,26 @@ var routes = []route{
 		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.listCases(w, r) },
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.createCase(w, r) },
 	}},
+	// The optional per-case key (A12). Status needs no secret; every other call
+	// takes the key in the body and never in the path or query.
+	{pattern: "/api/cases/{id}/key", match: caseSubpath("/key"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseKeyStatus(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/key/unlock", match: caseSubpath("/key/unlock"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseKeyUnlock(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/key/lock", match: caseSubpath("/key/lock"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseKeyLock(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/key/set", match: caseSubpath("/key/set"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseKeySet(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/key/change", match: caseSubpath("/key/change"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseKeyChange(w, r, id) },
+	}},
+	{pattern: "/api/cases/{id}/key/remove", match: caseSubpath("/key/remove"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseKeyRemove(w, r, id) },
+	}},
 	{pattern: "/api/cases/{id}/close", match: caseSubpath("/close"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.closeCase(w, r, id) },
 	}},

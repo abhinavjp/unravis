@@ -866,6 +866,10 @@ func (h *handler) masterKeyLock(w http.ResponseWriter, r *http.Request) {
 	h.stopSamplerAll()
 	h.jobs.cancelAll()
 	h.mk.lock(h.closeCaseHandles)
+	// Lock locks all of Unravis: a case with its own key asks for that key again.
+	if ck, ok := h.cases.(casestore.CaseKeyer); ok {
+		ck.LockAllCaseKeys()
+	}
 	writeJSON(w, http.StatusOK, masterKeyStatus{State: h.mk.State()}, 4096)
 }
 
@@ -947,7 +951,8 @@ func (h *handler) masterKeyRewrap(w http.ResponseWriter, r *http.Request) {
 func rewrapOne(ctx context.Context, rs rewrapStore, id casestore.CaseID) rewrapResult {
 	res := rewrapResult{CaseID: string(id)}
 	kind, err := rs.CaseKind(id)
-	if err == nil && kind == casestore.KindMasterKey {
+	// A case with its own key is never moved to the master key.
+	if err == nil && (kind == casestore.KindMasterKey || kind == casestore.KindCaseKey) {
 		res.Status = "already"
 		return res
 	}
