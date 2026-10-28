@@ -186,3 +186,34 @@ test('D-A-03/04/16: start list order, Erase on a missing row, empty code field',
   assert.match(start, /\{#if row\.untrusted\}<span class="case-closed" role="note">\{row\.untrustedLabel\}<\/span>\{\/if\}/, 'untrusted rows keep their Open button');
   assert.equal(loadTypeScript('src/lib/caseCode.ts').codeIsEmpty(''), true);
 });
+
+test('D-A-23: the wait line counts down from a fixed end time, then frees the button', () => {
+  const copy = loadTypeScript('src/lib/copy/caseKeyCopy.ts');
+  const master = loadTypeScript('src/lib/copy/masterKeyCopy.ts');
+  assert.equal(copy.secondsLeft(10000, 0), 10);
+  assert.equal(copy.secondsLeft(10000, 1), 10);
+  assert.equal(copy.secondsLeft(10000, 1000), 9);
+  assert.equal(copy.secondsLeft(10000, 9001), 1);
+  assert.equal(copy.secondsLeft(10000, 10000), 0);
+  assert.equal(copy.secondsLeft(10000, 12000), 0, 'never below zero');
+  assert.equal(master.waitText(copy.secondsLeft(60000, 0)), 'Try again in 1 minute.');
+  assert.equal(master.waitText(copy.secondsLeft(60000, 1000)), 'Try again in 59 seconds.');
+  assert.equal(master.waitText(copy.secondsLeft(8000, 7000)), 'Try again in 1 second.');
+  const card = read('src/components/CaseKeyCard.svelte');
+  assert.match(card, /waitTimer = setInterval\(\(\) => \{\s*remaining = secondsLeft\(waitEnds, Date\.now\(\)\);\s*if \(remaining > 0\) return;\s*\/\/[^\n]*\s*stopWait\(\);\s*held = false;\s*problem = '';\s*\}, 500\);/);
+  assert.match(card, /problem = CASE_KEY_TEXT\.throttled;\s*startWait\(Math\.max\(1, failure\.retryAfterSeconds \?\? 1\)\);/);
+  assert.match(card, /onDestroy\(\(\) => \{ pass = ''; controller\.abort\(\); stopWait\(\); \}\);/);
+  assert.match(card, /<p id="case-key-unlock-wait" class="inline-error" hidden=\{!held\}>\{waitText\(remaining\)\}<\/p>/);
+  assert.match(card, /aria-describedby="case-key-unlock-help case-key-unlock-problem case-key-unlock-wait"/);
+  assert.doesNotMatch(card, /role="alert"[^>]*case-key-unlock-wait|case-key-unlock-wait"[^>]*role=/, 'the countdown is not a live region');
+});
+
+test('D-A-22/23: the key card still keeps the key out of storage and keeps one main button', () => {
+  const card = read('src/components/CaseKeyCard.svelte');
+  assert.match(card, /const attempt = pass;\s*pass = '';/);
+  assert.doesNotMatch(card, /localStorage|sessionStorage|console\.|location\.|history\./);
+  assert.match(card, /disabled=\{busy \|\| held\}/);
+  assert.equal((card.match(/class="primary-button"/g) ?? []).length, 1);
+  const lint = loadTypeScript('src/lib/copy/caseKeyCopy.ts').caseKeyLintEntries();
+  assert.ok(lint.some((entry) => entry.id === 'casekey.unlockEmpty'), 'the new sentence is in the copy lint');
+});

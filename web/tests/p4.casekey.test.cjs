@@ -431,3 +431,12 @@ test('each page has one main button: the key card, the key page, Erase and the u
   const untrusted = home.slice(home.indexOf("phase === 'untrusted'"), home.indexOf("view === 'key'"));
   assert.equal(count(untrusted), 1);
 });
+
+test('an empty case key says to type the key, not that the key was wrong (D-A-22)', () => {
+  const copy = loadTypeScript('src/lib/copy/caseKeyCopy.ts');
+  assert.equal(copy.CASE_KEY_TEXT.unlockEmpty, 'Type the case key first.');
+  assert.notEqual(copy.CASE_KEY_TEXT.unlockEmpty, copy.CASE_KEY_TEXT.unlockWrong);
+  const card = read('src/components/CaseKeyCard.svelte');
+  assert.match(card, /if \(!attempt\) \{ problem = CASE_KEY_TEXT\.unlockEmpty; return; \}/);
+  assert.doesNotMatch(card, /if \(!attempt\) \{ problem = CASE_KEY_TEXT\.unlockWrong/);
+});
