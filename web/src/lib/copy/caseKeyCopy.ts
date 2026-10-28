@@ -18,7 +18,7 @@ export const CASE_KEY_TEXT = {
 
   // Open a keyed case (screen 7)
   unlockTitle: 'This case has its own key',
-  unlockIntro: 'The PC key is not used for this case. Locking this case closes only this case.',
+  unlockIntro: 'The PC key is not used for this case.',
   unlockLabel: 'Case key',
   unlockHelp: 'At least 12 characters. This case only. The PC key does not open it.',
   unlockSubmit: 'Open case',
@@ -31,6 +31,7 @@ export const CASE_KEY_TEXT = {
 
   // Keys page (screens 125 and 126)
   pageTitle: 'Case key (optional)',
+  pageTitleHas: 'Case key',
   sealedPc: 'Sealed with: PC key.',
   sealedWindows: 'Sealed with: your Windows sign-in.',
   sealedCase: 'Sealed with: Case key.',
@@ -49,8 +50,9 @@ export const CASE_KEY_TEXT = {
   changeOption: 'Change to a new case key',
   removeOption: 'Remove the case key',
   removeHelp: 'The case goes back to the PC key. The case is no longer asked for its own key.',
-  oldFileNote: 'A case file made earlier stays sealed with the old key.',
-  saveChange: 'Save',
+  oldFileNote: 'A case file you made earlier still uses the old key. Keep the old key to open it.',
+  saveChange: 'Save the new key',
+  removeConfirm: 'Remove the case key',
   currentWrong: 'The current key is not right: nothing changed. Try again.',
   changed: 'The case key is changed.',
   removed: 'The case key is removed. The case is sealed with the PC key now.',
@@ -68,6 +70,7 @@ export const CASE_KEY_TEXT = {
   mismatch: 'The two keys are not the same. Type the case key again exactly.',
   inUse: 'The case is in use. Close its other tabs, then try again.',
   erasing: 'This case is being erased.',
+  archiving: 'An archive of this case is running. Cancel it first.',
   gone: 'That case is not on this computer any more.',
   noCaseKey: 'This case has no case key.',
   hasCaseKey: 'This case already has a case key. Change or remove it instead.',
@@ -94,6 +97,7 @@ export function caseKeyErrorText(failure: CaseKeyFailure, context: CaseKeyContex
     case 'has-case-key': return CASE_KEY_TEXT.hasCaseKey;
     case 'in-use': return CASE_KEY_TEXT.inUse;
     case 'erasing': return CASE_KEY_TEXT.erasing;
+    case 'archiving': return CASE_KEY_TEXT.archiving;
     case 'gone': return CASE_KEY_TEXT.gone;
     case 'too-short': return CASE_KEY_TEXT.tooShort;
     case 'blank': return CASE_KEY_TEXT.blank;

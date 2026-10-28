@@ -15,6 +15,7 @@
   let finished = $state(false);
   let field = $state<HTMLInputElement>();
   let doneButton = $state<HTMLButtonElement>();
+  let sectionEl = $state<HTMLElement>();
   const controller = new AbortController();
 
   const code = $derived(caseCode(caseId));
@@ -24,6 +25,13 @@
     void tick().then(() => field?.focus());
     return () => { typed = ''; controller.abort(); };
   });
+
+  // Escape leaves the page, as Cancel does, while nothing is being erased and focus is inside the page. After the erase it does nothing.
+  function escape(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || busy || finished || !sectionEl?.contains(document.activeElement)) return;
+    event.preventDefault();
+    onCancel();
+  }
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -50,7 +58,8 @@
   }
 </script>
 
-<section class="erase" aria-labelledby="erase-title">
+<svelte:window onkeydown={escape} />
+<section class="erase" aria-labelledby="erase-title" bind:this={sectionEl}>
   {#if finished}
     <h3 id="erase-title">{ERASE_TEXT.title}</h3>
     <p class="note" role="status">{eraseDoneText(code)}</p>
@@ -72,7 +81,7 @@
 </section>
 
 <style>
-  .erase { display: grid; gap: var(--space-3); max-width: 560px; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  .erase { display: grid; gap: var(--space-3); box-sizing: border-box; width: 100%; max-width: 560px; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .erase h3 { margin: 0; font-size: 18px; font-weight: 600; }
   .note { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .note[hidden] { display: none; }

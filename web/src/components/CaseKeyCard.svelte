@@ -15,6 +15,7 @@
   let problem = $state('');
   let held = $state(false);
   let field = $state<HTMLInputElement>();
+  let sectionEl = $state<HTMLElement>();
   const controller = new AbortController();
   let waitTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -50,9 +51,17 @@
   }
 
   const endingText = $derived(keyEndingLabel(ending));
+
+  // Escape leaves the card, as Cancel does, while nothing is being checked and focus is inside the card.
+  function escape(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || busy || !sectionEl?.contains(document.activeElement)) return;
+    event.preventDefault();
+    onCancel();
+  }
 </script>
 
-<section class="key-card" aria-labelledby="key-card-title">
+<svelte:window onkeydown={escape} />
+<section class="key-card" aria-labelledby="key-card-title" bind:this={sectionEl}>
   <p class="eyebrow">Case {caseCode(caseId)}{#if endingText}<span class="sticker">{endingText}</span>{/if}</p>
   <h2 id="key-card-title" tabindex="-1">{CASE_KEY_TEXT.unlockTitle}</h2>
   <p class="note">{CASE_KEY_TEXT.unlockIntro}</p>

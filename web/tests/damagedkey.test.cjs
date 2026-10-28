@@ -73,7 +73,7 @@ test('damaged: M12 count (freed archives) is kept only when above 0, and the war
   assert.deepEqual(mk.parseStatus({ state: 'damaged', dpapiCases: 0, freedArchives: 2 }), { state: 'damaged', dpapiCases: 0, freedArchives: 2 });
   assert.deepEqual(mk.parseStatus({ state: 'damaged', dpapiCases: 0, freedArchives: 0 }), { state: 'damaged', dpapiCases: 0 });
   assert.deepEqual(mk.parseStatus({ state: 'damaged', dpapiCases: 0, freedArchives: 'x' }), { state: 'damaged', dpapiCases: 0 });
-  assert.equal(copy.freedArchivesWarning(1), '1 archived case can only be opened with the old key. Their working copies were freed.');
+  assert.equal(copy.freedArchivesWarning(1), '1 archived case can only be opened with the old key. Its working copy was freed.');
   assert.equal(copy.freedArchivesWarning(2), '2 archived cases can only be opened with the old key. Their working copies were freed.');
   const view = read('src/components/MasterKeyDamaged.svelte');
   assert.match(view, /freedArchivesWarning\(freed\)/);

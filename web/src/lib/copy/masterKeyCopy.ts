@@ -166,7 +166,7 @@ export function archiveOnlyText(count: number): string {
 
 /** M12: what a start-over costs the archived cases whose working copy was freed (the case file is then the only copy). */
 export function freedArchivesWarning(count: number): string {
-  return archiveOnlyText(count) + ' Their working copies were freed.';
+  return archiveOnlyText(count) + (count === 1 ? ' Its working copy was freed.' : ' Their working copies were freed.');
 }
 
 /**

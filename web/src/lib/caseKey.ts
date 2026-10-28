@@ -41,7 +41,7 @@ export function keyEndingLabel(ending: string | undefined): string {
 /** What a failed key call carried (never a key), reduced to the small set the screens act on. */
 export type CaseKeyFailureKind =
   | 'wrong-key' | 'throttled' | 'network' | 'no-case-key' | 'has-case-key' | 'in-use' | 'erasing' | 'gone'
-  | 'too-short' | 'blank' | 'too-long' | 'invalid-characters' | 'mismatch' | 'unavailable' | 'app-locked' | 'server' | 'other';
+  | 'too-short' | 'blank' | 'too-long' | 'invalid-characters' | 'mismatch' | 'unavailable' | 'app-locked' | 'archiving' | 'server' | 'other';
 
 export interface CaseKeyFailure { kind: CaseKeyFailureKind; retryAfterSeconds?: number }
 
@@ -59,6 +59,7 @@ export function caseKeyFailureOf(error: unknown): CaseKeyFailure {
     case 'has-case-key': return { kind: 'has-case-key' };
     case 'case-in-use': return { kind: 'in-use' };
     case 'case-erasing': return { kind: 'erasing' };
+    case 'cancel-archive-first': return { kind: 'archiving' };
     case 'not-found': case 'case-not-found': return { kind: 'gone' };
     case 'too-short': case 'blank': case 'too-long': case 'invalid-characters': case 'mismatch': return { kind: e.reason };
     case 'case-key-unavailable': return { kind: 'unavailable' };

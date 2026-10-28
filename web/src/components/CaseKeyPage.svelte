@@ -27,12 +27,21 @@
   let waitTimer: ReturnType<typeof setTimeout> | undefined;
 
   const has = $derived(status.ownKey);
+  const title = $derived(has ? CASE_KEY_TEXT.pageTitleHas : CASE_KEY_TEXT.pageTitle);
+  let sectionEl = $state<HTMLElement>();
   const endingText = $derived(keyEndingLabel(status.ending));
   const sealed = $derived(has ? CASE_KEY_TEXT.sealedCase : masterState === 'unlocked' ? CASE_KEY_TEXT.sealedPc : CASE_KEY_TEXT.sealedWindows);
   const newProblem = $derived(next.length > 0 || again.length > 0 ? newKeyProblem(next, again) : null);
   const ready = $derived(has ? changeReady(mode, current, next, again) : newKeyProblem(next, again) === null);
   const hint = $derived(newKeyHint(next));
   const mismatch = $derived(repeatMismatch(next, again));
+
+  // Escape leaves the page, as Cancel does, while nothing is being saved and focus is inside the page.
+  function escape(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || busy || !sectionEl?.contains(document.activeElement)) return;
+    event.preventDefault();
+    onCancel();
+  }
 
   function wipe() { current = ''; next = ''; again = ''; }
 
@@ -89,9 +98,10 @@
   }
 </script>
 
-<section class="key-page" aria-labelledby="key-page-title">
-  <p class="eyebrow">Case {caseCode(caseId)} · {CASE_KEY_TEXT.pageTitle}{#if endingText}<span class="sticker">{endingText}</span>{/if}</p>
-  <h3 id="key-page-title">{CASE_KEY_TEXT.pageTitle}</h3>
+<svelte:window onkeydown={escape} />
+<section class="key-page" aria-labelledby="key-page-title" bind:this={sectionEl}>
+  <p class="eyebrow">Case {caseCode(caseId)} · {title}{#if endingText}<span class="sticker">{endingText}</span>{/if}</p>
+  <h3 id="key-page-title">{title}</h3>
   <p class="note"><strong>{sealed}</strong> {CASE_KEY_TEXT.separate}</p>
   <form onsubmit={submit}>
     {#if has}
@@ -100,7 +110,7 @@
       <p id="ck-current-help" class="note">{CASE_KEY_TEXT.currentHelp}</p>
       <p id="ck-current-problem" class="inline-error" role="alert" hidden={!currentProblem}>{currentProblem}</p>
       <fieldset disabled={busy}>
-        <legend class="sr-only">{CASE_KEY_TEXT.pageTitle}</legend>
+        <legend class="sr-only">{title}</legend>
         <label class="choice"><input type="radio" name="ck-mode" value="change" bind:group={mode} /> <span>{CASE_KEY_TEXT.changeOption}</span></label>
         <label class="choice"><input type="radio" name="ck-mode" value="remove" bind:group={mode} /> <span>{CASE_KEY_TEXT.removeOption}</span></label>
       </fieldset>
@@ -114,12 +124,12 @@
       <input id="ck-again" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={again} disabled={busy} aria-describedby="ck-again-problem" aria-invalid={mismatch ? true : undefined} />
       <p id="ck-again-problem" class="inline-error" hidden={!(mismatch || (newProblem && newProblem !== 'mismatch'))}>{newProblem ? newKeyProblemText(newProblem) : ''}</p>
       <p class="warning">{CASE_KEY_TEXT.loseWarning}</p>
-      {#if has}<p class="note">{CASE_KEY_TEXT.oldFileNote}</p>{/if}
     {/if}
+    {#if has}<p class="note">{CASE_KEY_TEXT.oldFileNote}</p>{/if}
     <p class="note">{CASE_KEY_TEXT.lockNote}</p>
     <p class="inline-error" role="alert" hidden={!problem}>{problem}</p>
     <div class="actions">
-      <button type="submit" class="primary-button" disabled={!ready || busy || held}>{busy ? CASE_KEY_TEXT.saving : has ? CASE_KEY_TEXT.saveChange : CASE_KEY_TEXT.save}</button>
+      <button type="submit" class="primary-button" disabled={!ready || busy || held}>{busy ? CASE_KEY_TEXT.saving : !has ? CASE_KEY_TEXT.save : mode === 'remove' ? CASE_KEY_TEXT.removeConfirm : CASE_KEY_TEXT.saveChange}</button>
       {#if has}<button type="button" class="secondary-button" disabled={busy} onclick={() => void lock()}>{CASE_KEY_TEXT.lockCase}</button>{/if}
       <button type="button" class="secondary-button" disabled={busy} onclick={onCancel}>{CASE_KEY_TEXT.cancel}</button>
     </div>

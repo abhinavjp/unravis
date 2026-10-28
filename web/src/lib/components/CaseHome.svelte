@@ -347,7 +347,7 @@
   {:else if view === 'erase'}
     <EraseCase {caseId} archivePath={archiveFilePath(currentFile) || undefined} onDone={erasedDone} onCancel={() => void backFromDialog()} />
   {:else if phase === 'locked'}
-    <CaseKeyCard {caseId} ending={keyStatus.ending} onOpened={() => void load(caseId)} onCancel={goHome} />
+    <CaseKeyCard {caseId} ending={keyStatus.ending} onOpened={() => void load(caseId).then(() => tick()).then(() => headingEl?.focus())} onCancel={goHome} />
     <div class="actions"><button type="button" class="secondary-button danger" aria-haspopup="dialog" onclick={() => { view = 'erase'; }}>{ERASE_TEXT.open}</button></div>
   {:else if phase === 'untrusted'}
     <section class="block untrusted" aria-labelledby="untrusted-title">
