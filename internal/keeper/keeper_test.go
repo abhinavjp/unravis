@@ -1010,7 +1010,7 @@ func TestMigrationMovesOldFilesAndRemovesThemOnlyWhenVerified(t *testing.T) {
 	if err != nil || p != (Pending{SQL: 1, Mongo: 1, Blackbox: 1}) {
 		t.Fatalf("pending: %+v %v", p, err)
 	}
-	if err := m.RemoveOld(); !errors.Is(err, ErrNotVerified) {
+	if err := m.RemoveOld(false); !errors.Is(err, ErrNotVerified) {
 		t.Fatalf("remove before the move: %v", err)
 	}
 	if !m.OldFilesPresent() {
@@ -1030,7 +1030,7 @@ func TestMigrationMovesOldFilesAndRemovesThemOnlyWhenVerified(t *testing.T) {
 	if k, _ := h.backend.BB.List(); len(k) != 1 || !k[0].HasKey {
 		t.Fatalf("keeper bb: %+v", k)
 	}
-	if err := m.RemoveOld(); err != nil {
+	if err := m.RemoveOld(false); err != nil {
 		t.Fatal(err)
 	}
 	if m.OldFilesPresent() {
@@ -1048,7 +1048,7 @@ func TestMigrationMovesOldFilesAndRemovesThemOnlyWhenVerified(t *testing.T) {
 	if _, err := stopped.Pending(); !errors.Is(err, ErrNotRunning) {
 		t.Fatalf("stopped: %v", err)
 	}
-	if err := stopped.RemoveOld(); err == nil || !m.OldFilesPresent() {
+	if err := stopped.RemoveOld(false); err == nil || !m.OldFilesPresent() {
 		t.Fatalf("a stopped keeper must keep the old file: %v", err)
 	}
 }
@@ -1067,7 +1067,44 @@ func TestMigrationKeepsOldFilesWhenTheKeeperLostASecret(t *testing.T) {
 	if p, err := m.Pending(); err != nil || p.SQL != 1 {
 		t.Fatalf("pending: %+v %v", p, err)
 	}
-	if err := m.RemoveOld(); !errors.Is(err, ErrNotVerified) {
+	if err := m.RemoveOld(false); !errors.Is(err, ErrNotVerified) {
 		t.Fatalf("remove: %v", err)
+	}
+}
+
+// Another person on this PC saved the same address first: the move skips this person's copy, and that other record (whose password
+// may differ) must not count as this person's being verified. Removing the old files then needs their explicit confirmation.
+func TestMigrationDoesNotTakeSomeoneElsesRecordAsVerified(t *testing.T) {
+	h := newHarness(t, nil)
+	dir := t.TempDir()
+	oldSQL, _ := sqlconn.New(filepath.Join(dir, "sqlconnections.dat"), xorProtector{})
+	oldBB, _ := bbsaved.New(filepath.Join(dir, "blackboxes.dat"), xorProtector{})
+	if _, err := oldSQL.Save(sqlconn.Input{Server: "sql01.example.test", Auth: "sql", Username: "auditor", Password: sqlSecret, RememberPassword: true}); err != nil {
+		t.Fatal(err)
+	}
+	loc, _ := blackbox.ParseLocation("http://box01.example.test:8765")
+	if _, err := oldBB.Add(bbsaved.AddInput{Name: "Box", Location: loc, Key: bbSecret}); err != nil {
+		t.Fatal(err)
+	}
+	// Someone else's records at the same addresses, with their own secrets, under other ids.
+	if _, err := h.backend.SQL.Save(sqlconn.Input{Server: "sql01.example.test", Auth: "sql", Username: "auditor", Password: "someone-elses-password", RememberPassword: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.backend.BB.Add(bbsaved.AddInput{Name: "Their box", Location: loc, Key: "someone-elses-read-key-000000000000"}); err != nil {
+		t.Fatal(err)
+	}
+	m := &Migration{Legacy: Legacy{SQL: oldSQL, BB: oldBB}, Client: h.client}
+	p, err := m.Migrate(context.Background())
+	if err != nil || p.Total() != 0 || p.Duplicates != 2 {
+		t.Fatalf("migrate: %+v %v", p, err)
+	}
+	if n, _ := h.backend.SQL.List(); len(n) != 1 {
+		t.Fatalf("the person's copy was added beside the other: %d", len(n))
+	}
+	if err := m.RemoveOld(false); !errors.Is(err, ErrDuplicatesUnconfirmed) || !m.OldFilesPresent() {
+		t.Fatalf("removed without confirming someone else's copies: %v", err)
+	}
+	if err := m.RemoveOld(true); err != nil || m.OldFilesPresent() {
+		t.Fatalf("confirmed removal: %v", err)
 	}
 }

@@ -307,6 +307,8 @@ func (h *handler) keeperMigrate(w http.ResponseWriter, r *http.Request) {
 func (h *handler) keeperRemoveOld(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Confirm bool `json:"confirm"`
+		// ConfirmDuplicates says the person also saw that some of their old records are in the keeper only as someone else's copy.
+		ConfirmDuplicates bool `json:"confirmDuplicates"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -323,12 +325,17 @@ func (h *handler) keeperRemoveOld(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "There is nothing to remove: this PC keeps saved connections per person.")
 		return
 	}
-	if err := h.keeper.Migration.RemoveOld(); err != nil {
+	if err := h.keeper.Migration.RemoveOld(body.ConfirmDuplicates); err != nil {
+		type refusal struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}
 		if errors.Is(err, keeper.ErrNotVerified) {
-			writeJSON(w, http.StatusConflict, struct {
-				Error string `json:"error"`
-				Code  string `json:"code"`
-			}{"Not every old saved connection is in the key keeper yet, so the old copies were kept. Move them first.", "not-verified"}, 4096)
+			writeJSON(w, http.StatusConflict, refusal{"Not every old saved connection is in the key keeper yet, so the old copies were kept. Move them first.", "not-verified"}, 4096)
+			return
+		}
+		if errors.Is(err, keeper.ErrDuplicatesUnconfirmed) {
+			writeJSON(w, http.StatusConflict, refusal{"Some of your old saved connections were already saved by someone else on this PC, so the old copies were kept. Check the list and confirm again.", "duplicates-unconfirmed"}, 4096)
 			return
 		}
 		if !writeKeeperError(w, err) {

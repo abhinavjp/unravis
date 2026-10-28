@@ -18,14 +18,17 @@ type Legacy struct {
 	BB    *bbsaved.Store
 }
 
-// Pending counts the old records not yet in the keeper.
+// Pending counts the old records not yet in the keeper. Duplicates counts the old records whose address the keeper already holds under
+// another id (someone else on this PC saved it first, so the move skipped the person's copy): it is not in Total, but removing the old
+// files needs the person to confirm them, because the keeper's copy (and its password) is not theirs.
 type Pending struct {
-	SQL      int `json:"sql"`
-	Mongo    int `json:"mongo"`
-	Blackbox int `json:"blackbox"`
+	SQL        int `json:"sql"`
+	Mongo      int `json:"mongo"`
+	Blackbox   int `json:"blackbox"`
+	Duplicates int `json:"duplicates,omitempty"`
 }
 
-// Total is the sum of the counts.
+// Total is the sum of the missing counts (Duplicates is not in it).
 func (p Pending) Total() int { return p.SQL + p.Mongo + p.Blackbox }
 
 // Migration moves the old per-user saved files into the keeper. The old files are removed only by RemoveOld, after the person confirms
@@ -37,6 +40,19 @@ type Migration struct {
 
 // ErrNotVerified means an old record is not (yet) in the keeper with its secret, so the old files are kept.
 var ErrNotVerified = errors.New("not every old saved record is in the key keeper yet")
+
+// ErrDuplicatesUnconfirmed means some old records were kept in the keeper only as someone else's copy, and the person has not confirmed
+// that their own copies may go.
+var ErrDuplicatesUnconfirmed = errors.New("some old saved records are in the key keeper only as someone else's copy")
+
+// match is how an old record stands against the keeper.
+type match int
+
+const (
+	missing   match = iota
+	verified        // the keeper holds this very record (same id), with its secret when it had one
+	duplicate       // the keeper holds the same address under another id: someone else's record, kept instead of this one
+)
 
 func exists(path string) bool {
 	if path == "" {
@@ -79,31 +95,64 @@ func (m *Migration) view() (keeperView, error) {
 	return v, nil
 }
 
-func sqlIn(v keeperView, r sqlconn.Record) bool {
+// Verification is by id only: the import keeps ids, so the person's own record is in the keeper under its own id. A record at the same
+// address under another id is someone else's (the import skipped the person's copy) and never counts as the person's being verified;
+// when that other copy lacks the secret the person's copy has, the person's secret is in no keeper record, so it counts as missing.
+func sqlIn(v keeperView, r sqlconn.Record) match {
+	dup := false
 	for _, k := range v.sql {
-		if k.ID == r.ID || (k.Host == r.Host && k.Port == r.Port && k.Username == r.Username && k.Auth == r.Auth && equalFold(k.Database, r.Database)) {
-			return !r.HasPassword || k.HasPassword
+		if k.ID == r.ID {
+			if !r.HasPassword || k.HasPassword {
+				return verified
+			}
+			return missing
+		}
+		if k.Host == r.Host && k.Port == r.Port && k.Username == r.Username && k.Auth == r.Auth && equalFold(k.Database, r.Database) && (!r.HasPassword || k.HasPassword) {
+			dup = true
 		}
 	}
-	return false
+	if dup {
+		return duplicate
+	}
+	return missing
 }
 
-func mongoIn(v keeperView, r history.Record) bool {
+func mongoIn(v keeperView, r history.Record) match {
+	dup := false
 	for _, k := range v.mongo {
-		if k.ID == r.ID || (k.URI == r.URI && k.Username == r.Username && k.AuthSource == r.AuthSource && k.TLSMode == r.TLSMode && k.CACertificate == r.CACertificate) {
-			return !r.HasCredentials || k.HasCredentials
+		if k.ID == r.ID {
+			if !r.HasCredentials || k.HasCredentials {
+				return verified
+			}
+			return missing
+		}
+		if k.URI == r.URI && k.Username == r.Username && k.AuthSource == r.AuthSource && k.TLSMode == r.TLSMode && k.CACertificate == r.CACertificate && (!r.HasCredentials || k.HasCredentials) {
+			dup = true
 		}
 	}
-	return false
+	if dup {
+		return duplicate
+	}
+	return missing
 }
 
-func bbIn(v keeperView, r bbsaved.Record) bool {
+func bbIn(v keeperView, r bbsaved.Record) match {
+	dup := false
 	for _, k := range v.bb {
-		if k.ID == r.ID || k.Canon == r.Canon || (r.RecorderHost != "" && r.RecorderName != "" && equalFold(k.RecorderHost, r.RecorderHost) && equalFold(k.RecorderName, r.RecorderName)) {
-			return !r.HasKey || k.HasKey
+		if k.ID == r.ID {
+			if !r.HasKey || k.HasKey {
+				return verified
+			}
+			return missing
+		}
+		if (k.Canon == r.Canon || (r.RecorderHost != "" && r.RecorderName != "" && equalFold(k.RecorderHost, r.RecorderHost) && equalFold(k.RecorderName, r.RecorderName))) && (!r.HasKey || k.HasKey) {
+			dup = true
 		}
 	}
-	return false
+	if dup {
+		return duplicate
+	}
+	return missing
 }
 
 func equalFold(a, b string) bool {
@@ -154,20 +203,22 @@ func (m *Migration) read() (legacyRecords, error) {
 
 func count(l legacyRecords, v keeperView) Pending {
 	var p Pending
-	for _, r := range l.sql {
-		if !sqlIn(v, r) {
-			p.SQL++
+	tally := func(m match, missingCount *int) {
+		switch m {
+		case missing:
+			*missingCount++
+		case duplicate:
+			p.Duplicates++
 		}
+	}
+	for _, r := range l.sql {
+		tally(sqlIn(v, r), &p.SQL)
 	}
 	for _, r := range l.mongo {
-		if !mongoIn(v, r) {
-			p.Mongo++
-		}
+		tally(mongoIn(v, r), &p.Mongo)
 	}
 	for _, r := range l.bb {
-		if !bbIn(v, r) {
-			p.Blackbox++
-		}
+		tally(bbIn(v, r), &p.Blackbox)
 	}
 	return p
 }
@@ -224,9 +275,9 @@ func (m *Migration) Migrate(ctx context.Context) (Pending, error) {
 	return count(l, v), nil
 }
 
-// RemoveOld deletes the old per-user files once every record in them is verified in the keeper with its secret. It is called only after
-// the person confirms on the page.
-func (m *Migration) RemoveOld() error {
+// RemoveOld deletes the old per-user files once every record in them is verified in the keeper with its secret (by id). Records the
+// keeper holds only as someone else's copy need confirmDuplicates. It is called only after the person confirms on the page.
+func (m *Migration) RemoveOld(confirmDuplicates bool) error {
 	l, err := m.read()
 	if err != nil {
 		return err
@@ -235,8 +286,12 @@ func (m *Migration) RemoveOld() error {
 	if err != nil {
 		return err
 	}
-	if count(l, v).Total() != 0 {
+	p := count(l, v)
+	if p.Total() != 0 {
 		return ErrNotVerified
+	}
+	if p.Duplicates > 0 && !confirmDuplicates {
+		return ErrDuplicatesUnconfirmed
 	}
 	for _, p := range []string{pathOf(m.Legacy.SQL), pathOf(m.Legacy.Mongo), pathOf(m.Legacy.BB)} {
 		if p == "" {
