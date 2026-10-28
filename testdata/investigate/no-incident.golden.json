@@ -540,8 +540,8 @@
       "reasons": [],
       "nutshell": "A slow period only means something next to a normal one. Pick the slow stretch and a normal stretch from before it, and we compare the two.",
       "findings": [
-        "Incident window: 2026-10-20 10:00 UTC to 2026-10-20 11:30 UTC.",
-        "Reference window: 2026-10-20 09:00 UTC to 2026-10-20 10:00 UTC.",
+        "Incident window: 20 Oct 2026 10:00 UTC to 20 Oct 2026 11:30 UTC.",
+        "Reference window: 20 Oct 2026 09:00 UTC to 20 Oct 2026 10:00 UTC.",
         "Calls used: 2700 in the incident window, 1800 in the reference window."
       ]
     },

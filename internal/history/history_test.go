@@ -264,15 +264,31 @@ func TestHistoryIsBoundedAndSupportsDelete(t *testing.T) {
 	for i := 0; i < MaxRecords+3; i++ {
 		input := testConnection("mongodb://db" + string(rune('a'+i)) + ".example")
 		input.Password = "session-secret"
-		var err error
-		latest, err = service.Remember("database", input, "audit", false)
+		saved, err := service.Remember("database", input, "audit", false)
+		if i >= MaxRecords {
+			// Review F2: the 21st new connection is refused; nothing is dropped to make room.
+			if !errors.Is(err, ErrFull) {
+				t.Fatalf("connection %d: err=%v, want ErrFull", i+1, err)
+			}
+			continue
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
+		latest = saved
 	}
 	items, err := service.List()
 	if err != nil || len(items) != MaxRecords {
 		t.Fatalf("records=%d err=%v", len(items), err)
+	}
+	if items[MaxRecords-1].URI != "mongodb://dba.example" {
+		t.Fatalf("the oldest connection was dropped: %s", items[MaxRecords-1].URI)
+	}
+	// A connection that is already saved can still be saved again while the list is full.
+	again := testConnection("mongodb://dba.example")
+	again.Password = "session-secret"
+	if _, err := service.Remember("database", again, "audit", false); err != nil {
+		t.Fatalf("re-saving an existing connection when full: %v", err)
 	}
 	if len(service.sessionSecrets) != MaxRecords {
 		t.Fatalf("session credential cache has %d records, want cap %d", len(service.sessionSecrets), MaxRecords)

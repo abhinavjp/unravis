@@ -198,6 +198,33 @@ func TestCaseWorkspaceClosedCaseReadsButRefusesWrites(t *testing.T) {
 	})
 }
 
+// Reopen restores nothing by itself: the saved Mongo link and filters sit in the workspace
+// note, which a Closed case still reads. After Reopen the same note is there, whole, and
+// saving works again. This is the contract the Reopen docs rest on.
+func TestCaseWorkspaceSurvivesCloseAndReopen(t *testing.T) {
+	workspaceEnvs(t, func(t *testing.T, e *caseEnv) {
+		id := e.newCase("round trip")
+		if res := e.json(http.MethodPut, workspacePath(id), wsBody); res.Code != http.StatusOK {
+			t.Fatalf("PUT = %d %s", res.Code, res.Body)
+		}
+		if res := e.json(http.MethodPost, "/api/cases/"+id+"/close", ""); res.Code != http.StatusOK {
+			t.Fatalf("close = %d %s", res.Code, res.Body)
+		}
+		if res := e.get(workspacePath(id)); res.Code != http.StatusOK || strings.TrimSpace(res.Body.String()) != wsBody {
+			t.Fatalf("GET while closed = %d %s", res.Code, res.Body)
+		}
+		if res := e.json(http.MethodPost, "/api/cases/"+id+"/reopen", ""); res.Code != http.StatusOK {
+			t.Fatalf("reopen = %d %s", res.Code, res.Body)
+		}
+		if res := e.get(workspacePath(id)); res.Code != http.StatusOK || strings.TrimSpace(res.Body.String()) != wsBody {
+			t.Errorf("GET after reopen = %d %s: the note must come back whole", res.Code, res.Body)
+		}
+		if res := e.json(http.MethodPut, workspacePath(id), `{"version":3}`); res.Code != http.StatusOK {
+			t.Errorf("PUT after reopen = %d %s: saving must work again", res.Code, res.Body)
+		}
+	})
+}
+
 func TestCaseWorkspaceClumsyUse(t *testing.T) {
 	workspaceEnvs(t, func(t *testing.T, e *caseEnv) {
 		id := e.newCase("clumsy")

@@ -56,6 +56,8 @@ type Report struct {
 	FinishedAt time.Time `json:"finishedAt"`
 	Overall    Status    `json:"overall"`
 	Findings   []Finding `json:"findings"`
+	// Lane is set by a lane run (RunSQLLane, RunMongoLane): what the database's own data says about the investigation's questions for one incident.
+	Lane *LaneResult `json:"lane,omitempty"`
 }
 
 // Finish sets Overall to the worst finding that ran (ok when none did).

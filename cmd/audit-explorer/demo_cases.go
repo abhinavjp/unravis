@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/clock"
+	"api-audit-explorer/internal/dbhealth"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/importer"
 	"api-audit-explorer/internal/ledger"
@@ -53,12 +55,15 @@ var (
 	demoCaseOpenID      = demoCaseID("demoopen")
 	demoCaseClosedID    = demoCaseID("democlosed")
 	demoCaseFailedID    = demoCaseID("demofailed")
+	// A Closed case kept apart for the p2-changed-elsewhere picture, which reopens and closes it from a
+	// second tab. No other picture shows it, so its history never leaks into theirs.
+	demoCaseStaleID     = demoCaseID("demostale")
 	demoCaseUntrustedID = demoCaseID("demountrusted")
 )
 
 // demoCaseIDs lists the IDs above.
 func demoCaseIDs() []casestore.CaseID {
-	return []casestore.CaseID{demoCaseOpenID, demoCaseClosedID, demoCaseFailedID, demoCaseUntrustedID}
+	return []casestore.CaseID{demoCaseOpenID, demoCaseClosedID, demoCaseFailedID, demoCaseStaleID, demoCaseUntrustedID}
 }
 
 // demoSettings is what the two capture-only variables ask for.
@@ -305,14 +310,25 @@ func (d demoSeeder) seed(ctx context.Context) error {
 			func(ctx context.Context, c casestore.Case, created time.Time) error {
 				return d.importOK(ctx, c, "closed-1", created.Add(10*time.Minute))
 			}},
-		// A good import, then a file the importer refused. The "needs another try" list
-		// arrives with the case lifecycle phase; until then the refused file stands in.
+		// A good import, then a file the importer refused, and the two-item "needs another try"
+		// list they left: a file that did not import, a database not added to the analysis (C19).
 		{demoCaseFailedID, "Report export timeouts, 18 October", 2 * day,
 			func(ctx context.Context, c casestore.Case, created time.Time) error {
 				if err := d.importOK(ctx, c, "failed-1", created.Add(10*time.Minute)); err != nil {
 					return err
 				}
-				return d.importRefused(ctx, c, "failed-2", created.Add(25*time.Minute))
+				if err := d.importRefused(ctx, c, "failed-2", created.Add(25*time.Minute)); err != nil {
+					return err
+				}
+				if err := d.retryItems(ctx, c, created.Add(30*time.Minute)); err != nil {
+					return err
+				}
+				// A SQL Server day whose hours held nothing to read: it stands for screen p7-nothing-read.
+				return d.laneDayNothingRead(ctx, c, created.Add(40*time.Minute))
+			}},
+		{demoCaseStaleID, "Ledger posting lag, 12 October", 8 * day,
+			func(ctx context.Context, c casestore.Case, created time.Time) error {
+				return d.importOK(ctx, c, "stale-1", created.Add(10*time.Minute))
 			}},
 		// Created like the others; openDemoCases then has the legacy check call it untrusted.
 		{demoCaseUntrustedID, "Case from another folder", 6 * day,
@@ -341,14 +357,49 @@ func (d demoSeeder) seed(ctx context.Context) error {
 		if closeErr != nil {
 			return closeErr
 		}
-		if step.id == demoCaseClosedID {
-			d.clock.set(d.now.Add(-4 * day))
+		if step.id == demoCaseClosedID || step.id == demoCaseStaleID {
+			closedAgo := 4 * day
+			if step.id == demoCaseStaleID {
+				closedAgo = 3 * day
+			}
+			d.clock.set(d.now.Add(-closedAgo))
 			if err := d.store.CloseCase(ctx, step.id); err != nil {
 				return fmt.Errorf("close %s: %w", step.id, err)
 			}
 		}
 	}
 	return nil
+}
+
+// laneDayNothingRead keeps one SQL Server day in which every check came back Cannot test yet and none has a permission to fix, so the capture
+// run opens straight onto that screen. (The demo's own fake server gives the same answer for a database named EmptyDb.) Nothing here came from a server.
+func (d demoSeeder) laneDayNothingRead(ctx context.Context, c casestore.Case, at time.Time) error {
+	hs, ok := c.(casestore.HealthStore)
+	if !ok {
+		return errors.New("the demo case cannot keep a SQL Server day")
+	}
+	d.clock.set(at)
+	hour := func(daysBack int) dbhealth.Window {
+		start := d.now.Add(-2 * day).Truncate(24 * time.Hour).Add(13 * time.Hour).Add(-time.Duration(daysBack) * day)
+		return dbhealth.Window{Start: start, End: start.Add(time.Hour)}
+	}
+	const why = "The server answered, but it holds nothing for these hours."
+	lane := dbhealth.LaneResult{Incident: hour(0), Reference: hour(1), Era: "2022", Sources: []string{"SQL Server"}}
+	rep := dbhealth.Report{Kind: "sql", Label: "SQL Server", Database: "AuditDb", Version: "16.0", StartedAt: at, FinishedAt: at, Overall: dbhealth.Unavailable, Lane: &lane}
+	for _, ck := range []struct{ id, title string }{
+		{dbhealth.CheckServer, "Server start and thread pool"}, {dbhealth.CheckErrorLog, "Error log"},
+		{dbhealth.CheckQueryStore, "Query Store"}, {dbhealth.CheckAgentJobs, "Agent jobs and backups"},
+	} {
+		lane.Checks = append(lane.Checks, dbhealth.LaneCheck{ID: ck.id, Title: ck.title, State: dbhealth.StateNotYet, Summary: why})
+		rep.Findings = append(rep.Findings, dbhealth.Finding{ID: ck.id, Title: ck.title, Status: dbhealth.Unavailable, Summary: why})
+	}
+	rep.Lane = &lane
+	enc, err := json.Marshal(rep)
+	if err != nil {
+		return err
+	}
+	_, err = hs.AddHealthRun(ctx, casestore.HealthRun{Kind: "sql", Label: rep.Label, Status: string(rep.Overall), Report: enc, Key: server.LaneDayKey("sql", rep)})
+	return err
 }
 
 func demoMeta(file string) casestore.ImportMeta {
@@ -418,5 +469,20 @@ func (d demoSeeder) importRefused(ctx context.Context, c casestore.Case, label s
 	if err == nil {
 		return errors.New("the demo's refused file was accepted")
 	}
+	return err
+}
+
+// retryItems writes the two items the demo's "needs another try" list holds. They
+// carry words and ids only, as the store requires.
+func (d demoSeeder) retryItems(ctx context.Context, c casestore.Case, at time.Time) error {
+	rs, ok := c.(casestore.RetryStore)
+	if !ok {
+		return errors.New("the demo case store keeps no retry list")
+	}
+	d.clock.set(at)
+	_, err := rs.ReplaceRetries(ctx, []casestore.RetryItem{
+		{Kind: casestore.RetryImport, Key: "file:demo-access-web-b.log", Label: "demo-access-web-b.log", Reason: "bad-time"},
+		{Kind: casestore.RetryAudit, Key: "audit:demo-reports", Label: "Reports database", Reason: "unreachable"},
+	})
 	return err
 }

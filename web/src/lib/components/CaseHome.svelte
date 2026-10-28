@@ -1,22 +1,40 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../api';
-  import { app, goHome, openAnalysis, openCaseImport, openSidePanel, panels } from '../appState.svelte';
-  import { caseCode, isCaseGone, listCases, listImports, type CaseInfo, type ImportRecord } from '../cases';
-  import { CASE_HOME_TEXT } from '../copy/caseHomeCopy';
-  import { importerLabel, formatBytes } from '../copy/importCopy';
+  import { app, goHome, openAnalysis, openCaseImport, openConnections, openSidePanel, panels } from '../appState.svelte';
+  import { believedState, caseCode, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseView, type ImportRecord, type RetryItem } from '../cases';
+  import { reopenButton, retryAction } from '../caseLifecycle';
+  import { CASE_HOME_TEXT, retryKindLabel } from '../copy/caseHomeCopy';
+  import { errorText, importerLabel, formatBytes } from '../copy/importCopy';
   import { fetchHealthRuns, type HealthRun } from '../health';
   import { stateLabel } from '../ledger';
   import { ledger, refreshLedger } from '../ledgerStore.svelte';
   import { buildStory, shortText } from '../story';
+  import { GUIDED_TEXT } from '../copy/guidedCopy';
+  import { guidedOpenFor } from '../guided/stepModel';
+  import GuidedAnalysis from './guided/GuidedAnalysis.svelte';
+  import { formatTime } from '../time';
+  import { timeZone } from '../timeZone.svelte';
   import HealthPanel from './HealthPanel.svelte';
+  import SourcesHub from '../../components/sources/SourcesHub.svelte';
+  import { HUB_TEXT } from '../copy/sourcesCopy';
 
   // One page per case: the story (what happened, in order), the theories, the health checks, the analysis and the files.
   // Everything here is read from what the case already saved. Nothing runs by itself.
   const caseId = $derived(app.activeCaseId);
 
   let phase = $state<'loading' | 'ready' | 'gone' | 'failed'>('loading');
-  let info = $state.raw<CaseInfo | null>(null);
+  let info = $state.raw<CaseView | null>(null);
+  // The "needs another try" list the case keeps, the item being tried, and the notes this page shows about a move on the case.
+  let reopening = $state(false);
+  let changed = $state(false);
+  let lifeProblem = $state('');
+  let tryingId = $state(0);
+  let retryNote = $state<Record<number, string>>({});
+  // Where focus goes when the button that was pressed leaves the page (Reopen, or an item that is done or removed).
+  let headingEl = $state<HTMLElement>();
+  let retriesEl = $state<HTMLElement>();
+  let reloadEl = $state<HTMLButtonElement>();
   let imports = $state.raw<ImportRecord[]>([]);
   let health = $state.raw<HealthRun[]>([]);
   let theoryProblem = $state(false);
@@ -24,14 +42,22 @@
   let copying = $state(false);
   let copyNote = $state('');
   let copyProblem = $state('');
+  // The case the guided view was opened on. Another case starts at its own home.
+  let guidedFor = $state('');
+  const guidedOpen = $derived(guidedOpenFor(guidedFor, caseId));
   let controller: AbortController | null = null;
   let loadedFor = '';
 
-  const story = $derived(buildStory({ info, imports, health, theories: ledger.items }));
+  const story = $derived(buildStory({ info, imports, health, theories: ledger.items, history: info?.history }));
   const theories = $derived(ledger.items);
   const keptFiles = $derived(imports.filter(record => record.status === 'ok'));
-  // A closed or untrusted case is read-only: nothing can be added, so the buttons that add say so up front.
-  const readOnly = $derived(!!info?.untrusted || !!info?.closed);
+  const hasIis = $derived(keptFiles.some(record => record.importer === 'iis-w3c'));
+  // A case that is not open (closed, archived) or is untrusted is read-only: nothing can be added, so the buttons that add say so up front.
+  const readOnly = $derived(!!info && (!!info.untrusted || believedState(info) !== 'open'));
+  const reopenState = $derived(info ? reopenButton(info, reopening) : 'hidden');
+  // Once another tab has moved the case this page is out of date: nothing that moves the case is offered until it is reloaded.
+  const stale = $derived(changed);
+  const retries = $derived(info?.retries ?? []);
 
   async function load(id: string) {
     controller?.abort();
@@ -42,12 +68,15 @@
     copyNote = '';
     copyProblem = '';
     sharedCount = 0;
-    const [cases, files, runs, theory] = await Promise.allSettled([listCases(mine.signal), listImports(id, mine.signal), fetchHealthRuns(id, mine.signal), refreshLedger()]);
+    changed = false;
+    lifeProblem = '';
+    retryNote = {};
+    const [view, files, runs, theory] = await Promise.allSettled([getCaseView(id, mine.signal), listImports(id, mine.signal), fetchHealthRuns(id, mine.signal), refreshLedger()]);
     if (mine.signal.aborted || id !== caseId) return;
-    const found = cases.status === 'fulfilled' ? cases.value.find(item => item.id === id) ?? null : null;
+    const found = view.status === 'fulfilled' ? view.value : null;
     if (files.status === 'rejected' && isCaseGone(files.reason)) { phase = 'gone'; return; }
-    if (cases.status === 'fulfilled' && !found) { phase = 'gone'; return; }
-    if (cases.status === 'rejected' && files.status === 'rejected') { phase = 'failed'; return; }
+    if (view.status === 'rejected' && isCaseGone(view.reason)) { phase = 'gone'; return; }
+    if (view.status === 'rejected' && files.status === 'rejected') { phase = 'failed'; return; }
     info = found;
     imports = files.status === 'fulfilled' ? files.value : [];
     health = runs.status === 'fulfilled' ? runs.value : [];
@@ -95,9 +124,9 @@
     const id = caseId;
     if (!id || phase !== 'ready') return;
     try {
-      const [cases, files] = await Promise.all([listCases(), listImports(id)]);
+      const [view, files] = await Promise.all([getCaseView(id), listImports(id)]);
       if (id !== caseId) return;
-      info = cases.find(item => item.id === id) ?? info;
+      info = view;
       imports = files;
     } catch { /* the page keeps the list it had */ }
   }
@@ -118,16 +147,81 @@
 
   function gone() { phase = 'gone'; }
 
+  // A move on the case sends what this page believes about it. If another tab moved the case first, the server says so (409, M2): the page
+  // shows that and offers a reload, and changes nothing by itself.
+  function lifeFailed(error: unknown) {
+    if (error instanceof DOMException && error.name === 'AbortError') return;
+    if (isCaseGone(error)) { gone(); return; }
+    if (isCaseChanged(error)) { changed = true; void tick().then(() => reloadEl?.focus()); return; }
+    lifeProblem = error instanceof Error && 'status' in error ? errorText(error as never) : errorText({ status: 0, reason: 'unreachable', message: '' });
+  }
+
+  async function reopen() {
+    const id = caseId;
+    if (!info || reopening || stale || reopenState !== 'enabled') return;
+    reopening = true;
+    lifeProblem = '';
+    let done = false;
+    try {
+      await reopenCase(id, believedState(info));
+      await rereadFiles();
+      done = true;
+    } catch (error) { lifeFailed(error); } finally { reopening = false; }
+    // The Reopen button is gone now, so focus goes to the case name instead of falling back to the top of the page.
+    if (done) { await tick(); headingEl?.focus(); }
+  }
+
+  async function reload() {
+    changed = false; lifeProblem = '';
+    if (!caseId) return;
+    await load(caseId);
+    await tick();
+    headingEl?.focus();
+  }
+
+  // After an item is done or removed its button is gone: focus goes to the same item if it is still there, else the next one, else the case name.
+  async function focusRetry(index: number, id: number) {
+    await tick();
+    const rows = retriesEl ? [...retriesEl.querySelectorAll<HTMLElement>('li')] : [];
+    const row = rows.find(item => item.dataset.retry === String(id)) ?? rows[Math.min(index, rows.length - 1)];
+    ((row?.querySelector<HTMLButtonElement>('button:not(:disabled)')) ?? headingEl)?.focus();
+  }
+
+  async function tryAgain(item: RetryItem) {
+    const id = caseId;
+    if (!info || tryingId !== 0 || stale) return;
+    if (retryAction(item, info) === 'add-file') { openCaseImport(); return; }
+    const index = retries.findIndex(row => row.id === item.id);
+    tryingId = item.id;
+    retryNote = { ...retryNote, [item.id]: '' };
+    try {
+      await runRetry(id, item.id, believedState(info));
+      await rereadFiles();
+    } catch (error) {
+      if (retryInPage(error)) retryNote = { ...retryNote, [item.id]: CASE_HOME_TEXT.retryInPage };
+      else if (isCaseChanged(error) || isCaseGone(error)) lifeFailed(error);
+      else retryNote = { ...retryNote, [item.id]: CASE_HOME_TEXT.retryFailed };
+    } finally { tryingId = 0; }
+    await focusRetry(index, item.id);
+  }
+
+  async function dropRetry(item: RetryItem) {
+    const id = caseId;
+    if (tryingId !== 0 || stale) return;
+    const index = retries.findIndex(row => row.id === item.id);
+    tryingId = item.id;
+    try { await deleteRetry(id, item.id, info ? believedState(info) : undefined); await rereadFiles(); } catch (error) { lifeFailed(error); } finally { tryingId = 0; }
+    await focusRetry(index, item.id);
+  }
+
   $effect(() => {
     const id = caseId;
     if (id && id !== loadedFor) void load(id);
   });
   onMount(() => () => controller?.abort());
 
-  const when = (value: string): string => {
-    const ms = Date.parse(value);
-    return Number.isFinite(ms) ? new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : value;
-  };
+  // Every date on this page follows the UTC / Local choice in the header, like the start screen's case list.
+  const when = (value: string): string => formatTime(value, { zone: timeZone.zone, year: true, precision: 'minute', fallback: value });
   const kindLabel = { case: CASE_HOME_TEXT.kindCase, file: CASE_HOME_TEXT.kindFile, health: CASE_HOME_TEXT.kindHealth, theory: CASE_HOME_TEXT.kindTheory } as const;
 </script>
 
@@ -143,26 +237,78 @@
   {:else if phase === 'failed'}
     <div class="inline-error" role="alert">{CASE_HOME_TEXT.failed}</div>
     <div><button type="button" class="secondary-button" onclick={() => void load(caseId)}>{CASE_HOME_TEXT.retry}</button></div>
+  {:else if guidedOpen}
+    {#key caseId}
+      <GuidedAnalysis {caseId} closed={!!info?.closed} {readOnly} {hasIis} onAddData={openCaseImport} onClose={() => (guidedFor = '')} />
+    {/key}
   {:else}
     <header class="head">
       <p class="eyebrow">{CASE_HOME_TEXT.heading} · {caseCode(caseId)}</p>
-      <h2>{info?.title || caseCode(caseId)}</h2>
+      <h2 tabindex="-1" bind:this={headingEl}>{info?.title || caseCode(caseId)}</h2>
       <p class="note">{CASE_HOME_TEXT.intro}</p>
       <dl class="counts">
         {#if info?.created}<div><dt>{CASE_HOME_TEXT.created}</dt><dd>{when(info.created)}</dd></div>{/if}
         <div><dt>{CASE_HOME_TEXT.filesCount}</dt><dd>{keptFiles.length}</dd></div>
         <div><dt>{CASE_HOME_TEXT.theoriesCount}</dt><dd>{theories.length}</dd></div>
         <div><dt>{CASE_HOME_TEXT.checksCount}</dt><dd>{health.length}</dd></div>
+        {#if retries.length > 0}<div><dt>{CASE_HOME_TEXT.retryCount}</dt><dd>{retries.length}</dd></div>{/if}
       </dl>
       {#if info?.untrusted}<p class="notice" role="status">{CASE_HOME_TEXT.untrusted}</p>
-      {:else if info?.closed}<p class="notice" role="status">{CASE_HOME_TEXT.closedNote}</p>{/if}
+      {:else if info && believedState(info) === 'closed'}<p class="notice" role="status">{CASE_HOME_TEXT.closedNote}</p>{/if}
+      {#if reopenState !== 'hidden'}
+        <div class="actions">
+          <button type="button" class="secondary-button" disabled={reopenState !== 'enabled' || stale} aria-busy={reopenState === 'busy'} onclick={() => void reopen()}>{reopenState === 'busy' ? CASE_HOME_TEXT.reopening : CASE_HOME_TEXT.reopenButton}</button>
+        </div>
+        {#if reopenState === 'enabled' && !stale}<p class="note">{CASE_HOME_TEXT.reopenHint}</p>{/if}
+      {/if}
+      <div aria-live="polite">
+        {#if changed}
+          <div class="inline-error" role="alert">{CASE_HOME_TEXT.changedElsewhere} <button type="button" class="secondary-button" bind:this={reloadEl} onclick={() => void reload()}>{CASE_HOME_TEXT.reload}</button></div>
+        {/if}
+        {#if lifeProblem}<div class="inline-error" role="alert">{lifeProblem}</div>{/if}
+      </div>
     </header>
+
+    {#if retries.length > 0}
+      <section class="block" aria-labelledby="home-retries">
+        <h3 id="home-retries">{CASE_HOME_TEXT.retryHeading}</h3>
+        <p class="note">{CASE_HOME_TEXT.retryIntro}</p>
+        <ul class="retries" bind:this={retriesEl}>
+          {#each retries as item (item.id)}
+            {@const action = info ? retryAction(item, info) : 'hidden'}
+            <li data-retry={item.id}>
+              <div class="retry-main">
+                <span class="state">{retryKindLabel(item.kind)}</span>
+                {#if item.label}<strong>{item.label}</strong>{/if}
+                {#if retryNote[item.id]}<p class="note" role="status">{retryNote[item.id]}</p>{/if}
+                {#if action === 'reopen-first'}<p class="note">{CASE_HOME_TEXT.retryClosed}</p>{/if}
+                {#if action === 'in-wizard'}<p class="note">{CASE_HOME_TEXT.retryInPage}</p>{/if}
+              </div>
+              {#if action !== 'hidden'}
+                <div class="actions">
+                  {#if action === 'retry' || action === 'add-file'}
+                    <button type="button" class="secondary-button" disabled={tryingId !== 0 || stale} onclick={() => void tryAgain(item)}>{tryingId === item.id ? CASE_HOME_TEXT.retrying : action === 'add-file' ? CASE_HOME_TEXT.retryAddFile : CASE_HOME_TEXT.retryButton}</button>
+                  {/if}
+                  <button type="button" class="secondary-button" disabled={tryingId !== 0 || stale || action === 'reopen-first'} onclick={() => void dropRetry(item)}>{CASE_HOME_TEXT.retryDrop}</button>
+                </div>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
 
     <section class="block" aria-labelledby="home-analysis">
       <h3 id="home-analysis">{CASE_HOME_TEXT.analysisHeading}</h3>
       <p class="note">{CASE_HOME_TEXT.analysisText}</p>
       <div><button type="button" class="primary-button" onclick={openAnalysis}>{CASE_HOME_TEXT.analysisButton}</button></div>
       <p class="note">{CASE_HOME_TEXT.analysisHint}</p>
+    </section>
+
+    <section class="block" aria-labelledby="home-guided">
+      <h3 id="home-guided">{GUIDED_TEXT.heading}</h3>
+      <p class="note">{GUIDED_TEXT.openGuidedNote}</p>
+      <div><button type="button" class="secondary-button" onclick={() => (guidedFor = caseId)}>{GUIDED_TEXT.openGuided}</button></div>
     </section>
 
     <section class="block" aria-labelledby="home-story">
@@ -221,6 +367,12 @@
       <HealthPanel {caseId} onGone={gone} onRan={() => void rereadHealth()} />
     </section>
 
+    <section class="block" aria-labelledby="home-sources">
+      <h3 id="home-sources">{HUB_TEXT.heading}</h3>
+      <p class="note">{HUB_TEXT.intro}</p>
+      <SourcesHub {caseId} {readOnly} onGone={gone} onAddFiles={openCaseImport} onAddMongo={() => void openConnections('new')} />
+    </section>
+
     <section class="block" aria-labelledby="home-files">
       <h3 id="home-files">{CASE_HOME_TEXT.filesHeading}</h3>
       {#if keptFiles.length === 0}
@@ -252,7 +404,7 @@
   .gap { font-size: 13px; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .story { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; border-left: 2px solid var(--line); }
-  .story li { position: relative; display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 8px 0 8px 16px; }
+  .story li { position: relative; display: grid; grid-template-columns: 170px 1fr; gap: 12px; padding: 8px 0 8px 16px; }
   .story li::before { content: ''; position: absolute; left: -6px; top: 14px; width: 10px; height: 10px; border-radius: 50%; background: var(--text-2); }
   .story li.tone-ok::before { background: var(--tone-ok); }
   .story li.tone-warn::before { background: var(--warn); }
@@ -265,6 +417,10 @@
   .theories li, .files li { font-size: 14px; overflow-wrap: anywhere; }
   .theories .state { margin-right: 6px; padding: 0 6px; color: var(--text-2); font-size: 12px; border: 1px solid var(--line); border-radius: 4px; }
   .files li span { color: var(--text-2); font-size: 13px; }
+  .retries { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+  .retries li { padding: 10px 0; border-top: 1px solid var(--line-soft); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; font-size: 14px; }
+  .retry-main { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+  .retries .state { justify-self: start; padding: 0 6px; color: var(--text-2); font-size: 12px; border: 1px solid var(--line); border-radius: 4px; }
   .offer { display: grid; gap: 6px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: var(--radius-sm); }
   @media (max-width: 640px) {
     .story li { grid-template-columns: 1fr; gap: 2px; }

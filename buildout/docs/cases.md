@@ -18,6 +18,16 @@ Press Create a new case. The guide walks you through the steps. Step 1 asks what
 ![Create a case, step 1, dark](../screenshots/P1/p1-create-1-dark.png)
 ![Create a case, step 1, light](../screenshots/P1/p1-create-1-light.png)
 
+### Pressing Create twice, reloading, or closing the window
+
+Each run of the guide has its own request number, kept in this browser tab. Unravis makes one case for one request number. So these all end with one case, not two:
+
+- You press Create twice, or press it again because nothing seemed to happen.
+- You reload the page in the middle of Create. The same title picks up the same request number.
+- The computer or Unravis stops in the middle of Create. When Unravis starts again it finishes the steps that were left.
+
+If you press Create for a case that was already made and then archived, you see "This case was already made. Find it on the start screen." Starting the guide again from the start, or changing the title, makes a new case.
+
 ## Case home
 
 Case home shows what happened so far, in order, oldest first. It shows only what the case has saved: when it started, the files you added, your theories and your health checks.
@@ -46,8 +56,61 @@ Export builds a file of the findings in the window you are looking at. You see a
 ![Export evidence, dark](../screenshots/P1/p1-export-dark.png)
 ![Export evidence, light](../screenshots/P1/p1-export-light.png)
 
+## Close and Reopen
+
+Close puts a case away without losing anything. A closed case can be read, but nothing can be added to it: no files, no theories, no checks. Close is on the Import page, next to each open case. Case home then says "This case is closed. You can read it, but nothing can be added." and the story shows "Case closed".
+
+Closing is not final. Press Reopen on Case home (or on the Import page, in the row of the closed case) and the case is open again. Reopen:
+
+- changes nothing but the state: the case is open again and what you may add to it is back;
+- never starts anything by itself. Sampling and checks start only when you press them;
+- writes "Case reopened" into the story.
+
+A closed case is still erased 30 days after it was closed, unless you reopen it.
+
+The MongoDB link and the filters the case had are not part of Reopen. They are saved with the case as you work, and Unravis puts them back whenever you open the case, closed or not. While the case is closed they cannot be changed, so nothing new is saved; once you reopen it, saving carries on.
+
+Screens: `p2-close` is the case list on the Import page. `p2-closed-readonly` is a closed case with its buttons turned off. `p2-reopen` is the same case with the Reopen button. The pictures are made by `tools/screens/run-screens.ps1 -Update`.
+
+![Close case, in the Import page case list](../screenshots/P2/p2-close-light.png)
+![A closed case, read only](../screenshots/P2/p2-closed-readonly-light-narrow.png)
+![A closed case with the Reopen button](../screenshots/P2/p2-reopen-dark-narrow.png)
+
+Pressing Reopen twice quickly sends one request. The second press does nothing while the first is running.
+
+## Needs another try
+
+When you create a case and some steps do not go through (an environment list that was not saved, a source that was not tagged, a file that could not be read), the case is still made. What did not go through is kept in the case, in a list called Needs another try. It stays after you close Unravis, and it travels inside a case file.
+
+Each item says what failed, in one of four ways. They are different on purpose:
+
+| Label | What it means | Try again does |
+|---|---|---|
+| Environments not saved | The environment names were not saved. | Saves them again. |
+| Source not saved | A log source was not tagged. | Tags it again. |
+| Not added to analysis | A database was connected but not added as an audit source. | Nothing here. The line says to add it again from Connections. |
+| Import failed | A file could not be read. | Opens the file picker, because the file has to be chosen again. |
+
+You can also Remove an item from the list. On a closed case the list says "This case is closed. Reopen it to try again." and shows no buttons. The list never keeps passwords or text from your files.
+
+Screen: `p2-retry-list`. The list sits above Analysis, and Case home counts the items in the header ("Needs another try").
+
+![Needs another try list](../screenshots/P2/p2-retry-list-light.png)
+
+## Two tabs
+
+You can have the same case open in two browser tabs. Every case action checks what the page believes the case is (open, closed) against what it is now, and only one action runs on a case at a time.
+
+If another tab changed the case first, the page changes nothing and says: "This case changed in another tab." with a Reload button. Press Reload to see the case as it is now. Until you do, Reopen and the retry buttons on that page are turned off. In the Import page's case list the same refusal says the list now shows how the case is, because the list has already refreshed. This is the 409 answer with the message id M2. It is different from the two older answers: 423 means the master key is locked, and 409 "untrusted" means the case was not opened because its folder was not here when the key was set up.
+
+Examples: you close a case in tab A, and then add a file in tab B. Tab B is told the case is closed. You press Reopen in two tabs: the first reopens, the second sees M2.
+
+Screen: `p2-changed-elsewhere`. A second tab reopens the case, then the first tab presses Reopen. The tool puts the case back as it was afterwards.
+
+![Changed in another tab](../screenshots/P2/p2-changed-elsewhere-light.png)
+![Changed in another tab, narrow](../screenshots/P2/p2-changed-elsewhere-dark-narrow.png)
+
 ## Coming later
 
-- Close and reopen a case, the retry list, and two tabs on one case: Coming in P2.
 - Archive, verify, free and restore: Coming in P3.
 - Case keys and erase: Coming in P4.

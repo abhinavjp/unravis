@@ -39,8 +39,7 @@ func (h *handler) getCase(w http.ResponseWriter, r *http.Request, raw string) {
 		return
 	}
 	defer c.Close()
-	info := c.Info()
-	writeJSON(w, http.StatusOK, caseViewDTO{caseDTO: toCaseDTO(info), Envs: info.Envs, Sources: info.Sources}, maxResponseBytes)
+	writeJSON(w, http.StatusOK, h.viewOf(r.Context(), c), maxResponseBytes)
 }
 
 /* ------------------------------------------------------------- timeline */

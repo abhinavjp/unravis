@@ -214,7 +214,7 @@ func seededServer(t *testing.T, dir string) (http.Handler, func()) {
 	return demoServer(t, options), closeCases
 }
 
-func TestDemoCasesSeedFourCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
+func TestDemoCasesSeedFiveCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	h, closeCases := seededServer(t, t.TempDir())
 	defer closeCases()
 	code, list := listCases(t, h)
@@ -225,8 +225,8 @@ func TestDemoCasesSeedFourCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	for _, c := range list {
 		byID[c["id"].(string)] = c
 	}
-	if len(list) != 4 {
-		t.Fatalf("got %d cases, want 4: %v", len(list), list)
+	if len(list) != 5 {
+		t.Fatalf("got %d cases, want 5: %v", len(list), list)
 	}
 	want := func(id, title string, created time.Time, closed *time.Time, imports float64) {
 		t.Helper()
@@ -260,6 +260,8 @@ func TestDemoCasesSeedFourCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	want(string(demoCaseClosedID), "Night batch overrun, 10 October", demoTestNow.Add(-10*day), &closedAt, 1)
 	// The refused file is a quarantine, not an import, so it is not counted here.
 	want(string(demoCaseFailedID), "Report export timeouts, 18 October", demoTestNow.Add(-2*day), nil, 1)
+	staleClosedAt := demoTestNow.Add(-3 * day)
+	want(string(demoCaseStaleID), "Ledger posting lag, 12 October", demoTestNow.Add(-8*day), &staleClosedAt, 1)
 	if u := byID[string(demoCaseUntrustedID)]; u == nil || u["untrusted"] != true {
 		t.Errorf("the untrusted demo case = %v, want untrusted", u)
 	}
@@ -426,5 +428,101 @@ func TestCreatingACaseAfterSeedingGetsAFreshValidIDAndSurvivesARestart(t *testin
 	c := createCase(t, h2, "Made after a restart")
 	if c == a || c == b {
 		t.Errorf("after a restart a new case got the old ID %s", c)
+	}
+}
+
+// The demo has a Closed case ready to Reopen and a case with two retry items
+// (one "import failed", one "not added to the analysis", kept apart).
+func TestDemoCasesHoldAClosedCaseAndTwoRetryItems(t *testing.T) {
+	h, closeCases := seededServer(t, t.TempDir())
+	defer closeCases()
+	view := func(id casestore.CaseID) map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/cases/"+string(id), nil)
+		req.Host = "127.0.0.1:8765"
+		req.Header.Set("X-Audit-Token", demoTestToken)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d %s", id, res.Code, res.Body)
+		}
+		var out map[string]any
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	closed := view(demoCaseClosedID)
+	if closed["state"] != "closed" {
+		t.Errorf("the closed demo case is %v, want closed", closed["state"])
+	}
+	failed := view(demoCaseFailedID)
+	items, _ := failed["retries"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("the failed demo case has %d retry items, want 2: %v", len(items), failed["retries"])
+	}
+	kinds := items[0].(map[string]any)["kind"].(string) + "," + items[1].(map[string]any)["kind"].(string)
+	if kinds != "import,audit-source" {
+		t.Errorf("retry kinds = %s, want import,audit-source", kinds)
+	}
+	if open := view(demoCaseOpenID); open["state"] != "open" {
+		t.Errorf("the open demo case is %v", open["state"])
+	}
+}
+
+// The P7 "nothing read" screen needs a held lane day whose every check is
+// "Cannot test yet" with no fix. Only the failed-import demo case holds one.
+func TestDemoCasesSeedOneNothingReadLaneDay(t *testing.T) {
+	h, closeCases := seededServer(t, t.TempDir())
+	defer closeCases()
+	_, list := listCases(t, h)
+	held := map[string]int{}
+	for _, c := range list {
+		id, _ := c["id"].(string)
+		req := httptest.NewRequest(http.MethodGet, "/api/cases/"+id+"/lanes", nil)
+		req.Host = "127.0.0.1:8765"
+		req.Header.Set("X-Audit-Token", demoTestToken)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		if res.Code == http.StatusConflict && strings.HasPrefix(id, string(demoCaseUntrustedID)) {
+			continue // not opened by design
+		}
+		if res.Code != http.StatusOK {
+			t.Fatalf("GET lanes for %s = %d: %s", id, res.Code, res.Body)
+		}
+		var out struct {
+			Days []struct {
+				Kind string `json:"kind"`
+				Lane struct {
+					Checks []struct {
+						State string `json:"state"`
+						Fix   any    `json:"fix"`
+					} `json:"checks"`
+				} `json:"lane"`
+			} `json:"days"`
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode %s: %v: %s", id, err, res.Body)
+		}
+		held[id] = len(out.Days)
+		for _, l := range out.Days {
+			if l.Kind != "sql" || len(l.Lane.Checks) == 0 {
+				t.Fatalf("%s: unexpected lane %+v", id, l)
+			}
+			for _, ck := range l.Lane.Checks {
+				if ck.State != "Cannot test yet" || ck.Fix != nil {
+					t.Fatalf("%s: check %+v is not a nothing-read check", id, ck)
+				}
+			}
+		}
+	}
+	for id, n := range held {
+		want := 0
+		if id == string(demoCaseFailedID) {
+			want = 1
+		}
+		if n != want {
+			t.Errorf("case %s holds %d lane days, want %d", id, n, want)
+		}
 	}
 }

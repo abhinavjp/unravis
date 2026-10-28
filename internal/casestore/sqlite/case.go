@@ -132,6 +132,7 @@ func (c *Case) Info() casestore.CaseInfo {
 		ID: c.id, Title: c.man.Title, Created: c.man.Created, Closed: c.man.Closed,
 		Bytes: manifestBytes(c.man), Imports: len(c.man.Imports),
 		Envs: int(c.tagEnvs.Load()), Sources: int(c.tagSources.Load()),
+		Mark: c.man.Mark, RequestID: c.man.RequestID, History: historyOf(c.man),
 	}
 }
 
@@ -290,7 +291,7 @@ func (c *Case) rebuildManifest() {
 	}
 	defer release()
 	if disk, err := readManifest(c.dir, c.s.sealer(c.dir, "")); err == nil && disk.CaseID == string(c.id) {
-		c.man.Closed = disk.Closed
+		c.man.Closed, c.man.Mark, c.man.RequestID, c.man.History = disk.Closed, disk.Mark, disk.RequestID, disk.History
 	}
 	_ = writeManifest(c.dir, c.s.sealer(c.dir, ""), c.man)
 }

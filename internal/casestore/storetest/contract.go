@@ -196,6 +196,11 @@ func Run(t *testing.T, f Factory) {
 	t.Run("tags-and-environments", func(t *testing.T) { tagsContract(t, f, caps) })
 	t.Run("ledger-blob", func(t *testing.T) { ledgerBlobContract(t, f, caps) })
 	t.Run("workspace-blob", func(t *testing.T) { workspaceBlobContract(t, f, caps) })
+	t.Run("plan-views-and-checklist", func(t *testing.T) { planContract(t, f, caps) })
+	t.Run("reopen", func(t *testing.T) { reopenContract(t, f, caps) })
+	t.Run("create-for-request-id", func(t *testing.T) { createForContract(t, f, caps) })
+	t.Run("marks", func(t *testing.T) { markContract(t, f, caps) })
+	t.Run("retries", func(t *testing.T) { retriesContract(t, f, caps) })
 }
 
 func ids(t *testing.T, f Factory, caps casestore.Caps) {

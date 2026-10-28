@@ -1103,6 +1103,25 @@ func TestSamplerStartStopAndBusy(t *testing.T) {
 	f.req(http.MethodDelete, samplerPath(other), "")
 }
 
+// A stale tab that presses Close gets M2 and must not stop a recording it had no right to stop.
+func TestStaleCloseDoesNotStopTheSampler(t *testing.T) {
+	f := newDiscFix(t, nil)
+	cid := f.e.newCase("c")
+	if res := f.req(http.MethodPost, samplerPath(cid), samplerBody(60)); res.Code != http.StatusAccepted {
+		t.Fatalf("start = %d %s", res.Code, res.Body)
+	}
+	wantFailure(t, f.e.believing(http.MethodPost, "/api/cases/"+cid+"/close", "", "closed"), 409, "case-changed", m2Text)
+	if st := f.sampler(cid); st.State != "recording" {
+		t.Fatalf("sampler = %+v after a refused close", st)
+	}
+	if res := f.e.believing(http.MethodPost, "/api/cases/"+cid+"/close", "", "open"); res.Code != http.StatusOK {
+		t.Fatalf("close = %d %s", res.Code, res.Body)
+	}
+	if st := f.sampler(cid); st.State != "stopped" || st.StopReason != "case-closed" {
+		t.Fatalf("sampler = %+v after the real close", st)
+	}
+}
+
 func TestSamplerStopsWhenTheCaseCloses(t *testing.T) {
 	f := newDiscFix(t, nil)
 	cid := f.e.newCase("c")

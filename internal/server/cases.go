@@ -10,6 +10,7 @@ import (
 	"errors"
 	"hash"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"strconv"
@@ -65,6 +66,9 @@ type casesState struct {
 	cases     casestore.Store
 	registry  *importer.Registry
 	hostsSave func(*hosts.Map) error
+	// recoverer runs the recovery hooks of marked cases (see casestore.Recoverer).
+	// nil means no hook is registered and nothing is ever marked.
+	recoverer *casestore.Recoverer
 	gates     caseGates
 	imports   importLimiter
 	pending   pendingStrips
@@ -84,6 +88,30 @@ type casesState struct {
 func WithCases(store casestore.Store, hostMap *hosts.Map, registry *importer.Registry) Option {
 	return func(h *handler) {
 		h.cases, h.hostMap, h.registry = store, hostMap, registry
+	}
+}
+
+// WithRecoverer gives the server the marks-and-recovery framework. The server
+// runs it at unlock (before the first reply that follows) and at the start of a
+// call that touches a marked case. Start-up recovery is the caller's.
+func WithRecoverer(r *casestore.Recoverer) Option {
+	return func(h *handler) { h.recoverer = r }
+}
+
+// recoverAll repairs every marked case. Called after the master key is unlocked
+// and before the unlock reply, so the first reply already tells the truth. A
+// failure is logged; it never fails the unlock.
+func (h *handler) recoverAll(ctx context.Context) {
+	if h.recoverer == nil {
+		return
+	}
+	rep, err := h.recoverer.RecoverAll(ctx)
+	if err != nil {
+		log.Printf("Case recovery after unlock did not run: %v", err)
+		return
+	}
+	if rep.Marked > 0 {
+		log.Printf("Case recovery after unlock: %d marked, %d finished, %d need another try", rep.Marked, rep.Recovered, len(rep.Failed))
 	}
 }
 
@@ -361,6 +389,18 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeCaseFailure(w, http.StatusConflict, "needs-rewrap", needsRewrapText)
 	case errors.Is(err, casestore.ErrCaseClosed):
 		writeCaseFailure(w, http.StatusConflict, "case-closed", "The case is closed. Nothing can be imported into it.")
+	case errors.Is(err, casestore.ErrCaseChanged):
+		writeCaseFailure(w, http.StatusConflict, "case-changed", caseChangedText)
+	case errors.Is(err, casestore.ErrArchiveRunning):
+		writeCaseFailure(w, http.StatusConflict, "archive-running", archiveRunningText)
+	case errors.Is(err, casestore.ErrCancelArchiveFirst):
+		writeCaseFailure(w, http.StatusConflict, "cancel-archive-first", cancelArchiveText)
+	case errors.Is(err, casestore.ErrErasing):
+		writeCaseFailure(w, http.StatusConflict, "case-erasing", caseErasingText)
+	case errors.Is(err, casestore.ErrFreeing):
+		writeCaseFailure(w, http.StatusConflict, "case-freeing", caseFreeingText)
+	case errors.Is(err, casestore.ErrAlreadyMade):
+		writeCaseFailure(w, http.StatusConflict, "case-already-made", caseAlreadyMadeText)
 	case errors.Is(err, casestore.ErrAckTooLong):
 		writeCaseFailure(w, http.StatusBadRequest, "ack-too-long", ackTooLongText)
 	case errors.Is(err, context.Canceled):
@@ -381,13 +421,16 @@ type caseDTO struct {
 	Closed  *time.Time `json:"closed"`
 	Bytes   int64      `json:"bytes"`
 	Imports int        `json:"imports"`
+	// State is the case's place in its life: open, closed, archiving, untrusted
+	// (decisions A7). The page sends it back as X-Expect-State.
+	State string `json:"state"`
 	// Untrusted is true for a folder the store refuses (see
 	// casestore.ErrUntrustedLegacy). Its title is a fixed placeholder.
 	Untrusted bool `json:"untrusted,omitempty"`
 }
 
 func toCaseDTO(c casestore.CaseInfo) caseDTO {
-	d := caseDTO{ID: string(c.ID), Title: c.Title, Created: c.Created.UTC(), Bytes: c.Bytes, Imports: c.Imports, Untrusted: c.Untrusted}
+	d := caseDTO{ID: string(c.ID), Title: c.Title, Created: c.Created.UTC(), Bytes: c.Bytes, Imports: c.Imports, Untrusted: c.Untrusted, State: string(casestore.StateOf(c))}
 	if c.Closed != nil {
 		t := c.Closed.UTC()
 		d.Closed = &t
@@ -529,6 +572,10 @@ func (h *handler) listCases(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	// A listing repairs only the marked rows of the page it returns.
+	if h.recoverer != nil {
+		items = h.recoverer.RecoverPage(r.Context(), items)
+	}
 	out := make([]caseDTO, 0, len(items))
 	for _, c := range items {
 		out = append(out, toCaseDTO(c))
@@ -544,6 +591,9 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Title string `json:"title"`
+		// RequestID is kept by the page for one wizard run. A repeated id answers
+		// the case the first request made (200) and makes no second one.
+		RequestID string `json:"requestId"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -553,7 +603,20 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 		writeCaseFailure(w, http.StatusBadRequest, "bad-title", "The title is empty, too long or holds control characters.")
 		return
 	}
-	info, err := h.cases.Create(r.Context(), title)
+	if body.RequestID != "" && !casestore.ValidRequestID(body.RequestID) {
+		writeCaseFailure(w, http.StatusBadRequest, "bad-request-id", badRequestIDText)
+		return
+	}
+	var (
+		info    casestore.CaseInfo
+		existed bool
+		err     error
+	)
+	if lc, ok := h.cases.(casestore.Lifecycle); ok && body.RequestID != "" {
+		info, existed, err = lc.CreateFor(r.Context(), title, body.RequestID)
+	} else {
+		info, err = h.cases.Create(r.Context(), title)
+	}
 	if err != nil {
 		if errors.Is(err, casestore.ErrBadTitle) {
 			writeCaseFailure(w, http.StatusBadRequest, "bad-title", "The title is empty, too long or holds control characters.")
@@ -562,7 +625,11 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toCaseDTO(info), maxResponseBytes)
+	status := http.StatusCreated
+	if existed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, toCaseDTO(info), maxResponseBytes)
 }
 
 // openCase opens the case for one read request, holding a read share of the
@@ -587,6 +654,16 @@ func (h *handler) openCase(w http.ResponseWriter, r *http.Request, raw string) (
 		writeStoreError(w, err)
 		return "", nil, false
 	}
+	// A case still marked Freeing or Erasing is repaired first; if the mark is
+	// still there afterwards the call is told to wait (M19 / M5).
+	if info := c.Info(); info.Mark != "" {
+		if err := h.markAnswer(r.Context(), info); err != nil {
+			_ = c.Close()
+			release()
+			writeStoreError(w, err)
+			return "", nil, false
+		}
+	}
 	return id, &sharedCase{Case: c, release: release}, true
 }
 
@@ -607,6 +684,13 @@ func (h *handler) openCaseForWrite(w http.ResponseWriter, r *http.Request, raw s
 		writeStoreError(w, err)
 		return "", nil, false
 	}
+	if info := c.Info(); info.Mark != "" {
+		if err := h.markAnswer(r.Context(), info); err != nil {
+			_ = c.Close()
+			writeStoreError(w, err)
+			return "", nil, false
+		}
+	}
 	return id, c, true
 }
 
@@ -615,9 +699,10 @@ func (h *handler) closeCase(w http.ResponseWriter, r *http.Request, raw string) 
 	if !ok || !h.casesAvailable(w) {
 		return
 	}
-	// A sampler recording into this case is stopped first, so its last batch is
-	// saved before the case closes.
-	h.stopSamplerFor(id, false, stopCaseClosed)
+	believed, ok := believedState(w, r)
+	if !ok {
+		return
+	}
 	// Close takes the case's gate, like import and erase: an import in flight
 	// finishes first, and no import starts between the close and its answer.
 	release, err := h.gates.acquire(r.Context(), id)
@@ -626,6 +711,15 @@ func (h *handler) closeCase(w http.ResponseWriter, r *http.Request, raw string) 
 		return
 	}
 	defer release()
+	// The page believes the case is open. If another tab already closed it (or it
+	// moved on in some other way) the answer is M2, not a second close.
+	if err := h.guard(r.Context(), id, casestore.ActionClose, believed); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	// A sampler recording into this case is stopped once the move is allowed (a stale tab that gets M2 must not stop a live sampler), and
+	// before the case closes, so its last batch is saved first.
+	h.stopSamplerFor(id, false, stopCaseClosed)
 	if err := h.cases.CloseCase(r.Context(), id); err != nil {
 		writeStoreError(w, err)
 		return
@@ -636,7 +730,7 @@ func (h *handler) closeCase(w http.ResponseWriter, r *http.Request, raw string) 
 		return
 	}
 	defer c.Close()
-	writeJSON(w, http.StatusOK, toCaseDTO(c.Info()), maxResponseBytes)
+	writeJSON(w, http.StatusOK, h.viewOf(r.Context(), c), maxResponseBytes)
 }
 
 func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) {
@@ -988,7 +1082,14 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 	if !ok {
 		return
 	}
-	defer c.Close()
+	// The early handle serves the checks before the gate. It is dropped before the
+	// wait for the gate, so a Close that holds the gate never waits on it, and the
+	// case is opened again fresh once the gate is ours.
+	defer func() {
+		if c != nil {
+			_ = c.Close()
+		}
+	}()
 	if h.registry == nil {
 		writeCaseFailure(w, http.StatusServiceUnavailable, "cases-unavailable", "Cases are unavailable.")
 		return
@@ -1044,10 +1145,21 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 		writeCaseFailure(w, http.StatusUnsupportedMediaType, "not-multipart", "Content-Type must be multipart/form-data.")
 		return
 	}
+	_ = c.Close()
+	c = nil
 	release, err := h.gates.acquire(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	// A case that is not Open takes no file, whatever the page believed (the
+	// answer is case-closed), and a marked case is repaired or told to wait.
+	if !preview {
+		if err := h.guard(r.Context(), id, casestore.ActionAddImport, ""); err != nil {
+			release()
+			writeStoreError(w, err)
+			return
+		}
 	}
 	// The gate is taken first, so imports queued behind one case hold no slot.
 	slot, ok := h.imports.tryAcquire()
@@ -1144,6 +1256,11 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 				}, slot, release)
 				return
 			}
+			c, err = h.cases.Open(r.Context(), id)
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
 			h.importFile(r.Context(), w, id, c, imp, hint, supplied, part, preview, ackGating, ackText, baseName(part.FileName()))
 			return
 		default:
@@ -1224,7 +1341,14 @@ func (h *handler) importFileWith(ctx context.Context, w http.ResponseWriter, id 
 		meta.AckGating, meta.AckText = true, "preview"
 	}
 	var sum string
+	if !preview {
+		// Say "this file needs another try" before the work starts: a kill in the middle leaves the line (C17).
+		noteImportAttempt(ctx, c, fileName)
+	}
 	res, err := c.Import(ctx, meta, body, importRun(ctx, imp, opts, preview, &sum))
+	if !preview && importLanded(err) {
+		clearImportAttempt(ctx, c, fileName)
+	}
 	if preview && errors.Is(err, errPreviewDone) {
 		if existing, found := h.sameBytes(ctx, c, sum); found {
 			writeJSON(w, http.StatusConflict, caseFailure{Error: "These bytes are already imported into this case.", Reason: "duplicate", ImportID: existing}, 4096)

@@ -1,4 +1,4 @@
-import type { CaseInfo, ImportRecord } from './cases';
+import type { CaseInfo, HistoryEntry, ImportRecord } from './cases';
 import { CASE_HOME_TEXT, fileDetail, theoryChangedDetail } from './copy/caseHomeCopy';
 import { overallText } from './copy/healthCopy';
 import { importerLabel } from './copy/importCopy';
@@ -29,6 +29,8 @@ export interface StoryInput {
   imports: readonly ImportRecord[];
   health: readonly HealthRun[];
   theories: readonly Hypothesis[];
+  /** What happened to the case itself (closed, reopened). The start is shown from `info.created`, so a "created" entry adds nothing. */
+  history?: readonly HistoryEntry[];
 }
 
 const TONE: Record<HealthStatus, StoryTone> = { ok: 'ok', note: 'plain', warn: 'warn', bad: 'bad', unavailable: 'plain' };
@@ -53,6 +55,10 @@ export function buildStory(input: StoryInput): StoryEvent[] {
   if (input.info?.created) {
     events.push({ id: 'case:' + input.info.id, at: input.info.created, kind: 'case', title: CASE_HOME_TEXT.eventCase, detail: input.info.title ? '“' + shortText(input.info.title, 80) + '”' : '', tone: 'plain' });
   }
+  (input.history ?? []).forEach((entry, index) => {
+    const title = entry.kind === 'closed' ? CASE_HOME_TEXT.eventClosed : entry.kind === 'reopened' ? CASE_HOME_TEXT.eventReopened : '';
+    if (title) events.push({ id: 'history:' + index + ':' + entry.kind, at: entry.at, kind: 'case', title, detail: '', tone: 'plain' });
+  });
   for (const record of input.imports) {
     const kept = record.status === 'ok';
     events.push({

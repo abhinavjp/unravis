@@ -1,0 +1,515 @@
+package server
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+	"unicode"
+
+	"api-audit-explorer/internal/audit"
+	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/dbhealth"
+	"api-audit-explorer/internal/investigate"
+	"api-audit-explorer/internal/store"
+)
+
+// The lane routes read one database for one incident (SQL Server or MongoDB), keep the answer in the case as a health run whose report carries the
+// lane result, and feed it to the investigation. Unravis only reads: the grant scripts and the profiler guide are text for the owner to run.
+
+const (
+	laneSQLLabel   = "SQL Server"
+	laneMongoLabel = "MongoDB"
+	laneNoDatabase = "Pick the audit database to read."
+)
+
+type laneWindows struct {
+	Incident  investigationWindow `json:"incident"`
+	Reference investigationWindow `json:"reference"`
+}
+
+type laneSQLBody struct {
+	sqlRequest
+	laneWindows
+}
+
+type laneMongoBody struct {
+	audit.ConnectionInput
+	Database   string `json:"database"`
+	Collection string `json:"collection"`
+	laneWindows
+}
+
+func laneWindow(w investigationWindow) dbhealth.Window {
+	return dbhealth.Window{Start: w.Start.UTC(), End: w.End.UTC()}
+}
+
+// sentence turns a validation error into a sentence for the person.
+func sentence(err error) string {
+	s := strings.TrimSpace(err.Error())
+	if s == "" {
+		return "Check the windows."
+	}
+	r := []rune(s)
+	r[0] = unicode.ToUpper(r[0])
+	s = string(r)
+	if !strings.HasSuffix(s, ".") {
+		s += "."
+	}
+	return s
+}
+
+// healthStoreOf finds the health store behind a case, through the shared-case wrapper.
+func healthStoreOf(c casestore.Case) (casestore.HealthStore, bool) {
+	if sc, ok := c.(*sharedCase); ok {
+		c = sc.Case
+	}
+	hs, ok := c.(casestore.HealthStore)
+	return hs, ok
+}
+
+// laneRun is a stored health run that carries a lane result.
+type laneRun struct {
+	Run    casestore.HealthRun
+	Report dbhealth.Report
+}
+
+// source names where the day was read from. It is the key without its two window times, so it also tells two servers apart that share a label
+// and a database name; a run kept without a key falls back to the label and database.
+func (l laneRun) source() string {
+	if parts := strings.Split(l.Run.Key, "|"); len(parts) >= 6 {
+		return strings.Join(parts[:len(parts)-2], "|")
+	}
+	return laneSourceID(l.Run.Kind, l.Report.Label, l.Report.Database, "")
+}
+
+// laneSourceID joins what makes one source: kind, label, database and a fingerprint of the server address.
+func laneSourceID(kind, label, database, server string) string {
+	return kind + "|" + label + "|" + database + "|" + server
+}
+
+// serverPrint is a short opaque fingerprint of a server address, so two servers can be told apart without the address being kept anywhere
+// readable. Credentials and options in a connection string are left out first.
+func serverPrint(address string) string {
+	a := strings.ToLower(strings.TrimSpace(address))
+	if i := strings.Index(a, "://"); i >= 0 {
+		a = a[i+3:]
+	}
+	if i := strings.IndexAny(a, "/?"); i >= 0 {
+		a = a[:i]
+	}
+	if i := strings.LastIndex(a, "@"); i >= 0 {
+		a = a[i+1:]
+	}
+	if a == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(a))
+	return hex.EncodeToString(sum[:4])
+}
+
+func laneRunsOf(runs []casestore.HealthRun) []laneRun {
+	var out []laneRun
+	for _, r := range runs {
+		if r.Kind != "sql" && r.Kind != "mongo" {
+			continue
+		}
+		var rep dbhealth.Report
+		if json.Unmarshal(r.Report, &rep) != nil || rep.Lane == nil {
+			continue
+		}
+		out = append(out, laneRun{Run: r, Report: rep})
+	}
+	return out
+}
+
+// overlapsHeldDay reports a day already held for the same source whose incident window overlaps the new one without being the same window. The
+// same window again is a re-check and is allowed; two different days that share minutes would be counted twice, so the second is refused.
+func overlapsHeldDay(held []laneRun, source string, incident dbhealth.Window) bool {
+	for _, h := range held {
+		if h.source() != source {
+			continue
+		}
+		if h.Report.Lane.Incident.Overlaps(incident) && !h.Report.Lane.Incident.Same(incident) {
+			return true
+		}
+	}
+	return false
+}
+
+const laneOverlapText = "You already added a day for this database that overlaps these times. Use the same start and end to check that day again, or pick times that do not overlap. Nothing was read."
+
+// laneKey names a lane day by its source and window. The case keeps one run per key and holds lane days apart from the plain health runs, so
+// reading the same day again replaces it and a run of the health checks can never push a day out.
+func laneKey(source string, report dbhealth.Report) string {
+	in := report.Lane.Incident
+	return source + "|" + in.Start.UTC().Format(time.RFC3339) + "|" + in.End.UTC().Format(time.RFC3339)
+}
+
+// LaneDayKey is the key a lane day is kept under, for a day made outside the lane routes (the capture-only demo cases). The server address is
+// left out, as it is for a day with no address to fingerprint.
+func LaneDayKey(kind string, report dbhealth.Report) string {
+	return laneKey(laneSourceID(kind, report.Label, report.Database, ""), report)
+}
+
+// laneClosedText is said when a read is asked of a closed case. Nothing was read: a closed case takes no new day, so the live source is never asked.
+const laneClosedText = "The case is closed, so nothing was read. Reopen the case to read from a server."
+
+// refuseClosedCase answers 409 case-closed for a closed case before any live source is opened, and says whether it did.
+func refuseClosedCase(w http.ResponseWriter, c casestore.Case) bool {
+	if c.Info().Closed == nil {
+		return false
+	}
+	writeCaseFailure(w, http.StatusConflict, "case-closed", laneClosedText)
+	return true
+}
+
+// laneSave keeps a finished lane run in the case and answers like a health run does.
+func laneSave(w http.ResponseWriter, r *http.Request, hs casestore.HealthStore, kind, server string, report dbhealth.Report) {
+	enc, err := json.Marshal(report)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "The result could not be prepared.")
+		return
+	}
+	sctx, scancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer scancel()
+	saved, err := hs.AddHealthRun(sctx, casestore.HealthRun{Kind: kind, Label: report.Label, Status: string(report.Overall), Report: enc, Key: laneKey(laneSourceID(kind, report.Label, report.Database, server), report)})
+	out := struct {
+		Saved bool         `json:"saved"`
+		State string       `json:"state"`
+		Run   healthRunDTO `json:"run"`
+		Error string       `json:"saveError,omitempty"`
+	}{State: report.Lane.State()}
+	if err != nil {
+		out.Run = healthRunDTO{At: report.FinishedAt, Kind: kind, Label: report.Label, Status: string(report.Overall), Report: enc}
+		out.Error = "The result could not be saved in the case."
+		if errors.Is(err, casestore.ErrCaseClosed) {
+			out.Error = "The case is closed, so the result was not saved."
+		}
+	} else {
+		out.Saved, out.Run = true, healthDTO(saved)
+	}
+	writeJSON(w, http.StatusOK, out, maxResponseBytes)
+}
+
+// laneHeld reads the days already held, newest first.
+func laneHeld(ctx context.Context, hs casestore.HealthStore) ([]laneRun, error) {
+	runs, err := hs.HealthRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return laneRunsOf(runs), nil
+}
+
+func (h *handler) caseLaneSQL(w http.ResponseWriter, r *http.Request, raw string) {
+	var body laneSQLBody
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	req := dbhealth.LaneRequest{Incident: laneWindow(body.Incident), Reference: laneWindow(body.Reference)}
+	if err := req.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, sentence(err))
+		return
+	}
+	c, hs, ok := h.healthCaseOf(w, r, raw)
+	if !ok {
+		return
+	}
+	defer c.Close()
+	if refuseClosedCase(w, c) {
+		return
+	}
+	target, label, ok := h.resolveSQL(w, body.sqlRequest)
+	if !ok {
+		return
+	}
+	if _, valid := dbhealth.QuoteIdent(target.Database); !valid {
+		writeError(w, http.StatusBadRequest, laneNoDatabase)
+		return
+	}
+	if strings.TrimSpace(label) == "" {
+		label = laneSQLLabel
+	}
+	req.Database, req.Login = target.Database, target.Username
+	ctx, cancel := context.WithTimeout(r.Context(), healthRunTimeout)
+	defer cancel()
+	held, err := laneHeld(ctx, hs)
+	if err != nil {
+		writeTagError(w, err, "")
+		return
+	}
+	serverID := serverPrint(target.Server)
+	if overlapsHeldDay(held, laneSourceID("sql", label, req.Database, serverID), req.Incident) {
+		writeError(w, http.StatusConflict, laneOverlapText)
+		return
+	}
+	if !h.tests.allow() {
+		writeError(w, http.StatusTooManyRequests, "Too many checks in the last minute. Wait a minute, then run again.")
+		return
+	}
+	if !healthBusy.TryLock() {
+		writeError(w, http.StatusConflict, healthBusyText)
+		return
+	}
+	defer healthBusy.Unlock()
+	// The demo answers from canned rows and never opens a connection.
+	var q healthQueryer
+	if h.demo {
+		q = demoSQLQueryer(req)
+	} else if q, err = openSQLFn(ctx, target); err != nil {
+		writeConnectFailure(w, err)
+		return
+	}
+	defer q.Close()
+	report := dbhealth.RunSQLLane(ctx, q, label, req, time.Now)
+	laneSave(w, r, hs, "sql", serverID, report)
+}
+
+func (h *handler) caseLaneMongo(w http.ResponseWriter, r *http.Request, raw string) {
+	var body laneMongoBody
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	req := dbhealth.LaneRequest{Incident: laneWindow(body.Incident), Reference: laneWindow(body.Reference), Database: body.Database, Collection: body.Collection}
+	if err := req.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, sentence(err))
+		return
+	}
+	if !okMongoName(body.Database, 64, false) || (body.Collection != "" && !okMongoName(body.Collection, 120, true)) {
+		writeError(w, http.StatusBadRequest, "Pick the MongoDB database to read.")
+		return
+	}
+	c, hs, ok := h.healthCaseOf(w, r, raw)
+	if !ok {
+		return
+	}
+	defer c.Close()
+	if refuseClosedCase(w, c) {
+		return
+	}
+	input, ok := h.resolveConnection(w, body.ConnectionInput)
+	if !ok {
+		return
+	}
+	opener, canOpen := h.repo.(mongoCommandOpener)
+	if !canOpen && !h.demo {
+		writeError(w, http.StatusBadRequest, "MongoDB checks are unavailable for this repository.")
+		return
+	}
+	req.Login = input.Username
+	ctx, cancel := context.WithTimeout(r.Context(), healthRunTimeout)
+	defer cancel()
+	held, err := laneHeld(ctx, hs)
+	if err != nil {
+		writeTagError(w, err, "")
+		return
+	}
+	serverID := serverPrint(input.URI)
+	if overlapsHeldDay(held, laneSourceID("mongo", laneMongoLabel, req.Database, serverID), req.Incident) {
+		writeError(w, http.StatusConflict, laneOverlapText)
+		return
+	}
+	if !h.tests.allow() {
+		writeError(w, http.StatusTooManyRequests, "Too many checks in the last minute. Wait a minute, then run again.")
+		return
+	}
+	if !healthBusy.TryLock() {
+		writeError(w, http.StatusConflict, healthBusyText)
+		return
+	}
+	defer healthBusy.Unlock()
+	// The demo answers from canned documents and never opens a connection.
+	var run store.MongoCommandFunc
+	if h.demo {
+		run = demoMongoRun(req)
+	} else {
+		var closeFn func()
+		run, closeFn, err = opener.OpenCommandClient(ctx, input)
+		if err != nil {
+			if writeConnectionError(w, err) {
+				return
+			}
+			writeError(w, http.StatusBadRequest, "Could not connect to MongoDB. Check the connection details and permissions.")
+			return
+		}
+		defer closeFn()
+	}
+	report := dbhealth.RunMongoLane(ctx, mongoAdapter(run), laneMongoLabel, req, time.Now)
+	laneSave(w, r, hs, "mongo", serverID, report)
+}
+
+type laneDayDTO struct {
+	ID        int64                `json:"id"`
+	At        time.Time            `json:"at"`
+	Kind      string               `json:"kind"`
+	Label     string               `json:"label"`
+	Database  string               `json:"database"`
+	State     string               `json:"state"`
+	Incident  dbhealth.Window      `json:"incident"`
+	Reference dbhealth.Window      `json:"reference"`
+	Lane      *dbhealth.LaneResult `json:"lane"`
+}
+
+// caseLaneList returns the days held in the case, newest first. A day read again with the same windows replaces the older read in this list.
+func (h *handler) caseLaneList(w http.ResponseWriter, r *http.Request, raw string) {
+	c, hs, ok := h.healthCaseOf(w, r, raw)
+	if !ok {
+		return
+	}
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+	held, err := laneHeld(ctx, hs)
+	if err != nil {
+		writeTagError(w, err, "")
+		return
+	}
+	out := []laneDayDTO{}
+	for _, l := range freshestLaneRuns(held) {
+		out = append(out, laneDayDTO{ID: l.Run.ID, At: l.Run.At, Kind: l.Run.Kind, Label: l.Report.Label, Database: l.Report.Database,
+			State: l.Report.Lane.State(), Incident: l.Report.Lane.Incident, Reference: l.Report.Lane.Reference, Lane: l.Report.Lane})
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Days []laneDayDTO `json:"days"`
+	}{out}, maxResponseBytes)
+}
+
+// freshestLaneRuns keeps the newest run for each source and window (held is newest first).
+func freshestLaneRuns(held []laneRun) []laneRun {
+	var out []laneRun
+	for _, l := range held {
+		dup := false
+		for _, k := range out {
+			if k.source() == l.source() && k.Report.Lane.Incident.Same(l.Report.Lane.Incident) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// applyLaneRuns feeds the case's SQL and Mongo days into the engine. Only days whose incident window overlaps the investigated incident count. A
+// yes from any day wins; a no stands only when no day said yes. Nothing is added when the case holds no such day, so an audit-only run is unchanged.
+func applyLaneRuns(ctx context.Context, c casestore.Case, in *investigate.Input, read *investigationRead) {
+	hs, ok := healthStoreOf(c)
+	if !ok {
+		return
+	}
+	held, err := laneHeld(ctx, hs)
+	if err != nil {
+		if read != nil {
+			read.Warnings = append(read.Warnings, "The SQL and MongoDB days held in this case could not be read, so they were not used.")
+		}
+		return
+	}
+	incident := dbhealth.Window{Start: in.Incident.Start, End: in.Incident.End}
+	seenSource := map[string]bool{}
+	for _, l := range freshestLaneRuns(held) {
+		lane := l.Report.Lane
+		if !lane.Incident.Overlaps(incident) {
+			continue
+		}
+		// A day that only touches the incident can show something happened (yes) but cannot rule anything out for all of it.
+		whole := laneCovers(lane.Incident, incident)
+		for id, v := range lane.Answers {
+			switch v {
+			case dbhealth.AnswerYes:
+				ensureLanes(in)[id] = investigate.Yes
+			case dbhealth.AnswerNo:
+				if whole && in.Lanes[id] != investigate.Yes {
+					ensureLanes(in)[id] = investigate.No
+				}
+			}
+		}
+		if lane.Onset != nil && !lane.Onset.Before(incident.Start) && lane.Onset.Before(incident.End) {
+			if in.LaneOnsets == nil {
+				in.LaneOnsets = map[string]time.Time{}
+			}
+			t := lane.Onset.UTC()
+			if prev, has := in.LaneOnsets[l.Run.Kind]; !has || t.Before(prev) {
+				in.LaneOnsets[l.Run.Kind] = t
+			}
+		}
+		for _, s := range lane.Sources {
+			if !seenSource[s] {
+				seenSource[s] = true
+				in.LaneSources = append(in.LaneSources, s)
+			}
+		}
+	}
+}
+
+// laneCoverShare is how much of the investigated incident a day must have been read over before its "no" answers apply to the incident.
+const laneCoverShare = 0.8
+
+// laneCovers says whether the day's incident window spans at least laneCoverShare of the investigated incident.
+func laneCovers(day, incident dbhealth.Window) bool {
+	total := incident.End.Sub(incident.Start)
+	if total <= 0 {
+		return false
+	}
+	from, to := day.Start, day.End
+	if incident.Start.After(from) {
+		from = incident.Start
+	}
+	if incident.End.Before(to) {
+		to = incident.End
+	}
+	return float64(to.Sub(from)) >= laneCoverShare*float64(total)
+}
+
+func ensureLanes(in *investigate.Input) map[string]investigate.Tri {
+	if in.Lanes == nil {
+		in.Lanes = map[string]investigate.Tri{}
+	}
+	return in.Lanes
+}
+
+// grantScripts returns text for the owner to run. It never runs anything and never reads a connection: the login and database names only fill
+// the placeholders.
+func (h *handler) grantScripts(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	login, database := q.Get("login"), q.Get("database")
+	if len(login) > 256 || len(database) > 256 {
+		writeError(w, http.StatusBadRequest, "That name is too long.")
+		return
+	}
+	switch q.Get("kind") {
+	case "sql":
+		era, ok := dbhealth.ParseEra(q.Get("version"))
+		if !ok {
+			writeError(w, http.StatusBadRequest, "Version must be 2019 or 2022.")
+			return
+		}
+		fixes := map[string]dbhealth.GrantFix{}
+		for _, id := range []string{dbhealth.CheckServer, dbhealth.CheckErrorLog, dbhealth.CheckQueryStore, dbhealth.CheckAgentJobs} {
+			fixes[id] = dbhealth.SQLCheckGrant(id, era, login, database)
+		}
+		writeJSON(w, http.StatusOK, struct {
+			Kind    string                       `json:"kind"`
+			Version string                       `json:"version"`
+			Script  string                       `json:"script"`
+			Checks  map[string]dbhealth.GrantFix `json:"checks"`
+		}{"sql", string(era), dbhealth.SQLGrantScript(era, login, database), fixes}, 64<<10)
+	case "mongo":
+		writeJSON(w, http.StatusOK, struct {
+			Kind   string `json:"kind"`
+			Script string `json:"script"`
+		}{"mongo", dbhealth.MongoGrantScript(login, database)}, 64<<10)
+	case "mongo-profiler":
+		writeJSON(w, http.StatusOK, struct {
+			Kind  string                 `json:"kind"`
+			Guide dbhealth.ProfilerGuide `json:"guide"`
+		}{"mongo-profiler", dbhealth.MongoProfilerGuide(database)}, 64<<10)
+	default:
+		writeError(w, http.StatusBadRequest, "Kind must be sql, mongo or mongo-profiler.")
+	}
+}
