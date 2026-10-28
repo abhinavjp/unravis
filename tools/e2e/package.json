@@ -1,0 +1,11 @@
+{
+  "name": "unravis-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Deterministic end-to-end checks for the scenario catalogue, run against unravis-demo.exe.",
+  "scripts": {
+    "e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File run-e2e.ps1",
+    "test": "playwright test",
+    "fixtures": "node fixtures/make-fixtures.mjs"
+  }
+}
