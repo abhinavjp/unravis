@@ -362,6 +362,11 @@ func TestAuditCanaryPasswordNeverLeavesTheKeeper(t *testing.T) {
 
 func TestAuditSeatsAreKeptApart(t *testing.T) {
 	h := newHarness(t, nil)
+	// A clock that moves on every reading: "least recently used" is decided by time stamps, and the Windows wall clock can give two
+	// uses in a row the same stamp, which left the evicted seat to chance.
+	var tick atomic.Int64
+	start := time.Now()
+	h.backend.Audit.now = func() time.Time { return start.Add(time.Duration(tick.Add(1)) * time.Millisecond) }
 	in := h.rememberMongo(mongoSecret)
 	ctx := context.Background()
 	a := NewAuditRouter(&fakeHosted{prefix: "local"}, h.client)
