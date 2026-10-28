@@ -57,3 +57,23 @@ test('B-07: a stale sticker reads Out of date, rerun, in a neutral tone, and kee
   assert.ok(/\.tone-stale \{[^}]*var\(--surface-2\)/.test(src), 'the neutral fill exists');
   assert.ok(/\.stale \{[^}]*margin-inline-start/.test(src), 'the rule pinned by guided.ui.test.cjs stays');
 });
+
+test('B-21: a change with a blank name is a frame problem, a named one is not', () => {
+  const base = { ...f.emptyFrame(), incidentStart: '2026-10-17T10:30', incidentEnd: '2026-10-17T11:00', referenceStart: '2026-10-17T09:30', referenceEnd: '2026-10-17T10:30' };
+  assert.deepEqual(f.frameProblems({ ...base, releases: [{ at: '2026-10-17T10:00', label: '' }] }), ['Each change needs a name.']);
+  assert.deepEqual(f.frameProblems({ ...base, releases: [{ at: '2026-10-17T10:00', label: '   ' }] }), ['Each change needs a name.']);
+  assert.deepEqual(f.frameProblems({ ...base, releases: [{ at: '2026-10-17T10:00', label: 'v2' }] }), []);
+  assert.deepEqual(f.frameProblems({ ...base, releases: [{ at: 'soon', label: '' }] }), ['Each change needs a time, in UTC.', 'Each change needs a name.']);
+  assert.equal(f.toRequest({ ...base, releases: [{ at: '2026-10-17T10:00', label: '' }] }, ['s']), null);
+});
+
+test('B-21 and B-22: Step 0 explains an unticked box and a full change list', () => {
+  const src = read('src/lib/components/guided/Step0Frame.svelte');
+  assert.ok(/\{#if store\.frame\.releases\.length >= MAX_RELEASES\}<p class="note" role="status">\{T\.changesFull\}<\/p>\{\/if\}/.test(src));
+  assert.ok(/\{#if store\.frame\.releases\.length > 0 && !store\.frame\.releasesEntered\}<p class="note" role="status">\{T\.changesUnticked\}<\/p>\{\/if\}/.test(src));
+  assert.equal(copy.GUIDED_TEXT.changesUnticked, 'These changes are used only when the box beside Add a change is ticked.');
+  // the full-list note is the same sentence the frame check uses
+  const many = Array.from({ length: 51 }, () => ({ at: '2026-10-17T10:00', label: 'r' }));
+  const base = { ...f.emptyFrame(), incidentStart: '2026-10-17T10:30', incidentEnd: '2026-10-17T11:00', referenceStart: '2026-10-17T09:30', referenceEnd: '2026-10-17T10:30' };
+  assert.deepEqual(f.frameProblems({ ...base, releases: many }), [copy.GUIDED_TEXT.changesFull]);
+});

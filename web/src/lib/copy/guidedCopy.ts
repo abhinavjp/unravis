@@ -87,6 +87,8 @@ export const GUIDED_TEXT = {
   noChanges: 'No change listed.',
   changesEntered: 'I have listed every change I know of',
   changesEnteredNote: 'Leave this off if you have not looked yet. An empty list entered on purpose reads "No change listed".',
+  changesFull: 'The change list holds at most 50 changes.',
+  changesUnticked: 'These changes are used only when the box beside Add a change is ticked.',
 
   /* Step 1 */
   trustLead: 'Check that the data can be trusted before reading what it says.',

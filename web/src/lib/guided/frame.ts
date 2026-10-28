@@ -85,6 +85,7 @@ export function frameProblems(frame: Frame): string[] {
   }
   if (frame.releases.length > MAX_RELEASES) out.push('The change list holds at most 50 changes.');
   if (frame.releases.some((r) => !Number.isFinite(parseLocalUtc(r.at)))) out.push('Each change needs a time, in UTC.');
+  if (frame.releases.some((r) => r.label.trim() === '')) out.push('Each change needs a name.');
   return out;
 }
 
