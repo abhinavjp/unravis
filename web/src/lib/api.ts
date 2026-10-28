@@ -1,4 +1,4 @@
-import type { SavedSqlConnection, SqlConnectionInput, SqlTestRequest, SqlTestResult,Analysis,Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile, VersionInfo } from './types';
+import type { SavedSqlConnection, SqlConnectionInput, SqlTestRequest, SqlTestResult,Analysis,Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile, VersionInfo, UpdateCheckReply } from './types';
 import { signalIfAppLocked } from './lockSignal';
 import { noticeKeeperRefusal, type KeeperStatus } from './keeper';
 import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
@@ -110,6 +110,8 @@ const json = (value: unknown): RequestInit => ({ method: 'POST', body: JSON.stri
 export const api = {
   info: () => request<Info>('/info'),
   version: () => request<VersionInfo>('/version'),
+  /** preview: a demo-only canned answer (latest, available, offline). Ignored by a real build. */
+  updateCheck: (preview = '') => request<UpdateCheckReply>('/update-check' + (preview ? '?preview=' + encodeURIComponent(preview) : ''), { method: 'POST' }),
   /** preview: a keeper screenshot preview (saved or stopped), answered only in the demo. */
   sources: (preview = '') => request<Source[]>('/sources' + (preview ? '?preview=' + encodeURIComponent(preview) : '')),
   recentConnections: () => request<RecentConnection[]>('/connections/recent'),
