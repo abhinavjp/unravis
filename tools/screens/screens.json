@@ -175,6 +175,22 @@
       ]
     },
     {
+      "id": "p9-read-key", "phase": "P9", "doc": "blackbox.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Blackbox\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Blackbox\"s]"},
+        {"waitFor":"#blackbox-title"},
+        {"waitFor":"role=button[name=\"Open status: web-a\"s]"},
+        {"click":"role=button[name=\"Open status: web-a\"s]"},
+        {"waitFor":"role=button[name=\"Back to the list\"s]"},
+        {"click":"role=button[name=\"Show\"s]"},
+        {"waitFor":".bb-key code"},
+        {"scrollTo":".bb-key code"}
+      ]
+    },
+    {
       "id": "p9-state-running-late", "phase": "P9", "doc": "blackbox.md", "narrow": false,
       "steps": [
         {"goto":"/"},

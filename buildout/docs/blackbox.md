@@ -53,7 +53,7 @@ Add checks the place first and reports one of the states below. Adding the same 
 
 ## States
 
-Screens in this part: `p9-state-running`, `p9-state-running-late`, `p9-state-stopped`, `p9-state-disk-low`, `p9-state-clock-differs`, `p9-state-not-found`, `p9-state-unreachable`, `p9-state-incomplete`, `p9-state-not-placed`.
+Screens in this part: `p9-state-running`, `p9-read-key`, `p9-state-running-late`, `p9-state-stopped`, `p9-state-disk-low`, `p9-state-clock-differs`, `p9-state-not-found`, `p9-state-unreachable`, `p9-state-incomplete`, `p9-state-not-placed`.
 
 Every Blackbox is in one of nine states. The sticker carries the word, and the readiness word is what a case step says: **Ready**, **Partly ready** or **Cannot test yet**. A sticker is never colour alone.
 
@@ -71,6 +71,11 @@ Every Blackbox is in one of nine states. The sticker carries the word, and the r
 
 ![State Running, web-a, dark](../screenshots/P9/p9-state-running-dark.png)
 ![State Running, web-a, light](../screenshots/P9/p9-state-running-light.png)
+
+The Blackbox on this PC also shows its read key, masked. **Show** reveals it for 30 seconds and **Hide** puts it away at once. **Copy** puts it on the clipboard without showing it. This is for giving the key to another PC's Unravis. The demo key in the picture is made up.
+
+![The read key of web-a shown, dark](../screenshots/P9/p9-read-key-dark.png)
+![The read key of web-a shown, light](../screenshots/P9/p9-read-key-light.png)
 
 ![State Running late, web-b, dark](../screenshots/P9/p9-state-running-late-dark.png)
 ![State Running late, web-b, light](../screenshots/P9/p9-state-running-late-light.png)
