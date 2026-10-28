@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -126,6 +127,7 @@ func (h *handler) freeCase(w http.ResponseWriter, r *http.Request, raw string) {
 	defer st.freeing.remove(id)
 
 	deadline := time.Now().Add(freeWaitFor)
+	poll := freePoll
 	var release func()
 	for {
 		rel, err := h.gates.acquire(r.Context(), id)
@@ -137,6 +139,27 @@ func (h *handler) freeCase(w http.ResponseWriter, r *http.Request, raw string) {
 			rel()
 			writeStoreError(w, err)
 			return
+		}
+		// Everything above was read before the wait, and the record can change
+		// while no lock is held (a restore and a new archive in another tab; the
+		// file moved, cut short or replaced by another tool). Under the lock,
+		// right before the commit point, the record, the check and the file on
+		// disk are looked at again. A file that is not the one the check proved
+		// is never relied on: the working copy is the only good copy then.
+		took, err := h.freeRecheck(r.Context(), ar, id, believed)
+		if err != nil {
+			rel()
+			writeStoreError(w, err)
+			return
+		}
+		if took.refused != nil {
+			rel()
+			st.verified.drop(id)
+			writeCaseFailure(w, http.StatusConflict, took.refused.reason, took.refused.text)
+			return
+		}
+		if 2*took.hashed > poll {
+			poll = 2 * took.hashed // do not spend the wait reading the file again and again
 		}
 		err = ar.BeginFree(r.Context(), id, believed)
 		if err == nil {
@@ -152,8 +175,9 @@ func (h *handler) freeCase(w http.ResponseWriter, r *http.Request, raw string) {
 			writeStoreError(w, casestore.ErrCaseInUse)
 			return
 		}
+		injectAt("free-wait", "", "")
 		select {
-		case <-time.After(freePoll):
+		case <-time.After(poll):
 		case <-r.Context().Done():
 			writeStoreError(w, r.Context().Err())
 			return
@@ -178,4 +202,58 @@ func (h *handler) freeCase(w http.ResponseWriter, r *http.Request, raw string) {
 		return
 	}
 	writeJSON(w, http.StatusOK, recordView(done), maxResponseBytes)
+}
+
+type freeRefusal struct{ reason, text string }
+
+type freeRechecked struct {
+	refused *freeRefusal
+	hashed  time.Duration // how long reading the file took
+}
+
+// freeRecheck is the look under the case lock, just before Free marks the case:
+// the record is read again, the check must still stand for the file the record now
+// names, the key must still open it, and the file on disk is read in full and must
+// have the size and checksum the record states. It answers a refusal (the check is
+// to be made again, the working copy untouched) or an error (the state changed in a
+// way the store explains).
+func (h *handler) freeRecheck(ctx context.Context, ar casestore.Archiver, id casestore.CaseID, believed casestore.State) (freeRechecked, error) {
+	var out freeRechecked
+	again := func() (freeRechecked, error) {
+		out.refused = &freeRefusal{"check-first", checkFirstText}
+		return out, nil
+	}
+	info, err := h.entryOf(ctx, ar, id)
+	if err != nil {
+		return out, err
+	}
+	if err := casestore.CheckBelief(casestore.ActionFree, believed, casestore.StateOf(info)); err != nil {
+		return out, err
+	}
+	cur, kept := keptFile(info)
+	if !kept {
+		out.refused = &freeRefusal{"not-kept", archiveNotKeptText}
+		return out, nil
+	}
+	if !h.caseFiles().verified.ok(id, cur.SHA256, archiveNow()) {
+		return again()
+	}
+	if cur.KeyKind == casestore.KeyKindMaster && cur.KeyCheck != "" && h.mk.masterCheck() != cur.KeyCheck {
+		out.refused = &freeRefusal{"old-key-only", oldKeyOnlyText}
+		return out, nil
+	}
+	start := time.Now()
+	size, sum, err := casestore.HashFile(ctx, filepath.Join(cur.Folder, cur.Name), nil)
+	out.hashed = time.Since(start)
+	if err != nil {
+		if ctx.Err() != nil {
+			return out, ctx.Err()
+		}
+		// Gone, moved, locked or unreadable: not a file Free may depend on.
+		return again()
+	}
+	if size != cur.Bytes || sum != cur.SHA256 {
+		return again()
+	}
+	return out, nil
 }
