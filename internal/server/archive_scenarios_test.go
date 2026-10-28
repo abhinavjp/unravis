@@ -161,27 +161,33 @@ func TestA1_FolderRulesGiveM8AndChangeNothing(t *testing.T) {
 		t.Fatalf("test path length = %d", len(exact))
 	}
 	_ = os.MkdirAll(exact, 0o700)
+	_ = os.MkdirAll(filepath.Join(a.dir, "sub"), 0o700)
 
 	cases := map[string]string{
-		"empty":            "",
-		"relative":         "relative\\folder",
-		"dot dot":          filepath.Join(good, "..", "elsewhere"),
-		"dot dot inside":   good + string(os.PathSeparator) + ".." + string(os.PathSeparator) + filepath.Base(good),
-		"UNC share":        `\\server\share\folder`,
-		"UNC long form":    `\\?\UNC\server\share\folder`,
-		"device path":      `\\.\C:\folder`,
-		"not a folder":     file,
-		"missing":          filepath.Join(good, "nope"),
-		"data folder":      a.root,
-		"inside data":      filepath.Join(a.root, id),
-		"too long":         long,
-		"241 characters":   exact,
-		"reserved name":    filepath.Join(good, "CON"),
-		"stream":           good + ":stream",
-		"trailing space":   good + " ",
-		"wildcard":         filepath.Join(good, "*"),
-		"url":              "file:///C:/folder",
-		"other drive form": "C:folder",
+		"empty":          "",
+		"relative":       "relative\\folder",
+		"dot dot":        filepath.Join(good, "..", "elsewhere"),
+		"dot dot inside": good + string(os.PathSeparator) + ".." + string(os.PathSeparator) + filepath.Base(good),
+		"UNC share":      `\\server\share\folder`,
+		"UNC long form":  `\\?\UNC\server\share\folder`,
+		"device path":    `\\.\C:\folder`,
+		"not a folder":   file,
+		"missing":        filepath.Join(good, "nope"),
+		"data folder":    a.root,
+		"inside data":    filepath.Join(a.root, id),
+		// UI review major 4: the folder with the master key file, the saved files and
+		// the history (AUDIT_CONFIG_DIR moves it), and the folder the cases sit in.
+		"config folder":      a.dir,
+		"inside config":      filepath.Join(a.dir, "sub"),
+		"application folder": filepath.Dir(a.root),
+		"too long":           long,
+		"241 characters":     exact,
+		"reserved name":      filepath.Join(good, "CON"),
+		"stream":             good + ":stream",
+		"trailing space":     good + " ",
+		"wildcard":           filepath.Join(good, "*"),
+		"url":                "file:///C:/folder",
+		"other drive form":   "C:folder",
 	}
 	for name, p := range cases {
 		res := a.archiveReq(id, p, "open")

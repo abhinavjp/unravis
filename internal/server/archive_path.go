@@ -128,9 +128,11 @@ func checkArchiveShape(typed string) (string, error) {
 }
 
 // resolveArchiveFolder checks a typed folder against every rule of step 2 and
-// returns the final, resolved folder. dataFolder is Unravis's own data folder;
-// the result may not be it or inside it, whichever name or link reached it.
-func (e archiveEnv) resolveArchiveFolder(typed, dataFolder string) (string, error) {
+// returns the final, resolved folder. own lists Unravis's own folders (the case
+// folders, the folder holding the master key and saved files, the folder the case
+// folders sit in); the result may not be one of them or inside one, whichever
+// name or link reached it.
+func (e archiveEnv) resolveArchiveFolder(typed string, own ...string) (string, error) {
 	clean, err := checkArchiveShape(typed)
 	if err != nil {
 		return "", err
@@ -153,7 +155,10 @@ func (e archiveEnv) resolveArchiveFolder(typed, dataFolder string) (string, erro
 	if err != nil || remote {
 		return "", refuseFolder("remote")
 	}
-	if dataFolder != "" {
+	for _, dataFolder := range own {
+		if dataFolder == "" {
+			continue
+		}
 		data := dataFolder
 		if r, rerr := e.resolve(dataFolder); rerr == nil {
 			data = r

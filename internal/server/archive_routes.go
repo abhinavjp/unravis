@@ -65,6 +65,21 @@ func caseDBBytes(root string, id casestore.CaseID) int64 {
 	return n
 }
 
+// ownFolders are the folders an archive may never be written into: the case
+// folders, the folder they sit in (the application folder), and the folder with
+// the master key file, the saved connections and the history (the config folder,
+// which AUDIT_CONFIG_DIR moves). A case file there would sit among the key files.
+func (h *handler) ownFolders(root string) []string {
+	own := []string{root}
+	if filepath.Base(root) == "cases" {
+		own = append(own, filepath.Dir(root))
+	}
+	if h.mk != nil && h.mk.dir != "" {
+		own = append(own, h.mk.dir)
+	}
+	return own
+}
+
 // shortCode is the eight-character code a person reads and types for a case.
 func shortCode(id casestore.CaseID) string {
 	s := string(id)
@@ -93,7 +108,7 @@ func (h *handler) archiveCase(w http.ResponseWriter, r *http.Request, raw string
 	}
 	defer b.wipe()
 
-	folder, err := realArchiveEnv().resolveArchiveFolder(b.path, root)
+	folder, err := realArchiveEnv().resolveArchiveFolder(b.path, h.ownFolders(root)...)
 	if err != nil {
 		writeCaseFailure(w, http.StatusBadRequest, "bad-folder", archiveFolderText)
 		return
