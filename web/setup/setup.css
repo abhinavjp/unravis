@@ -19,3 +19,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); margi
 input[aria-invalid="true"] { border-color: var(--bad); }
 .mono { font-family: var(--mono); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+/* A long path with no spaces breaks anywhere instead of pushing the heading and the buttons out of the window. */
+h1, h2, p, li, label, .mono { overflow-wrap: anywhere; min-width: 0; }
+input.mono { overflow-wrap: normal; }

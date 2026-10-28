@@ -47,7 +47,7 @@ Your data stays unless you tick it:
 - **Also delete my cases and saved connections** (just for me), or **Also delete the cases and saved connections of everyone on this PC** (for everyone). Ticking it asks you to type `DELETE` to confirm. **Remove** stays off until you do. The screen shows the folder and its size.
 - **Also delete the Blackbox recordings.** Ticking it asks you to type the Blackbox's name exactly.
 
-The approval screen repeats what you ticked before Windows asks. Deleted data is deleted, not moved to the Recycle Bin. Copy anything you want to keep first.
+The approval screen repeats what you ticked before Windows asks. Deleted data is deleted for good, not moved to the Recycle Bin. This cannot be undone. Copy anything you want to keep first.
 
 ![Remove Unravis, with the shared data ticked, dark](../screenshots/P11/p11-uninstall-dark.png)
 ![Remove Unravis, with the shared data ticked, light](../screenshots/P11/p11-uninstall-light.png)

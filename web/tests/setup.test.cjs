@@ -172,3 +172,53 @@ test('the setup page keeps the key out of the address bar and sends it as a head
   const html = read('setup/index.html');
   assert.doesNotMatch(html, /https?:\/\//, 'the setup page loads nothing from the network');
 });
+
+test('the folder and address checks refuse what setup would refuse, in plain words', () => {
+  const loc = (location) => fields(logic.validateOptions({ ...goodOptions(), location }));
+  assert.deepEqual(loc('C:\\'), ['location']);
+  assert.deepEqual(loc('C:\\a\\..\\..\\b'), ['location']);
+  assert.deepEqual(loc('C:\\CON'), ['location']);
+  assert.deepEqual(loc('C:\\' + 'a'.repeat(250)), ['location']);
+  assert.deepEqual(loc('C:\\Mes outils\\Unravis été'), []);
+  const wall = (remoteAddresses) => fields(logic.validateOptions({ ...goodOptions(), firewall: { remoteAddresses } }));
+  assert.deepEqual(wall(['10.0.0.5', '10.0.1.0/24', 'fe80::1', '2001:db8::/32']), []);
+  for (const bad of ['abc', '999.1.1.1', '10.0.0.0/33', '*', 'any', '0.0.0.0', '10.0.0.0/0', '::', '10.0.0.1/24/1']) assert.deepEqual(wall([bad]), ['firewall'], bad);
+  assert.deepEqual(wall(Array.from({ length: 51 }, (_, n) => '10.0.0.' + (n + 1))), ['firewall']);
+});
+
+test('failed checks come first, with one line that names them', () => {
+  const check = (id, status) => ({ id, title: id.toUpperCase(), status, detail: '' });
+  const checks = [check('a', 'ready'), check('b', 'failed'), check('c', 'partly'), check('d', 'failed')];
+  assert.deepEqual(logic.checksFailedFirst(checks).map((c) => c.id), ['b', 'd', 'c', 'a']);
+  assert.equal(logic.blockedLine([check('a', 'ready')]), '');
+  assert.match(logic.blockedLine(checks), /^2 checks failed: B, D\./);
+  assert.match(logic.blockedLine([check('b', 'failed')]), /^1 check failed: B\. Fix it/);
+});
+
+test('Try again is offered only when repeating the run can change the result', () => {
+  assert.equal(logic.retryHelps({ outcome: 'rolled-back', fix: 'Free the port and try again.' }), true);
+  assert.equal(logic.retryHelps({ outcome: 'rolled-back', fix: 'Pick another port in Options, then press Next.' }), false);
+  assert.equal(logic.retryHelps({ outcome: 'rollback-incomplete', fix: '' }), false);
+  assert.equal(logic.retryHelps(null), false);
+});
+
+test('the setup sticker inks are readable: 4.5:1 on their fill and 3:1 for the edge, in both themes', () => {
+  const css = read('src/brand/tokens.css').replace(/\r\n/g, '\n');
+  const blocks = { dark: css.slice(css.indexOf(':root {'), css.indexOf('@media (prefers-color-scheme: light)')), light: css.slice(css.indexOf(':root[data-theme="light"] {')) };
+  const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const lum = (c) => c.map((v) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+  const mix = (a, b, share) => a.map((v, i) => v * share + b[i] * (1 - share));
+  for (const [theme, block] of Object.entries(blocks)) {
+    const token = (name) => rgb(block.match(new RegExp(String.raw`${name}:\s*(#[0-9a-fA-F]{6})`))[1]);
+    for (const tone of ['ok', 'warn', 'bad', 'run', 'pending', 'neutral']) {
+      const ink = token('--setup-' + tone);
+      for (const surround of ['--bg', '--surface', '--surface-2']) {
+        const base = token(surround);
+        const fill = tone === 'neutral' ? token('--surface-2') : mix(ink, token('--surface'), 0.12);
+        assert.ok(ratio(ink, fill) >= 4.5, theme + ' ' + tone + ' text on ' + surround + ': ' + ratio(ink, fill).toFixed(2));
+        assert.ok(ratio(mix(ink, base, 0.75), base) >= 3, theme + ' ' + tone + ' edge on ' + surround + ': ' + ratio(mix(ink, base, 0.75), base).toFixed(2));
+      }
+    }
+  }
+});

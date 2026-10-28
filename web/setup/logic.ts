@@ -204,17 +204,50 @@ export function formatBytes(bytes: number): string {
 
 const fullPath = /^[A-Za-z]:\\/;
 const badChars = /[<>"|?*]/;
+const MAX_PATH_LENGTH = 200;
+const reservedNames = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+const ipv4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+const ipv6 = /^[0-9a-fA-F:.]*:[0-9a-fA-F:.]*$/;
+
+/** The folder rules setup also checks (it knows the system folders; the page does not): the same plain messages, shown before the trip. */
+function folderProblem(text: string, example: string): string {
+  const folder = text.trim();
+  if (!fullPath.test(folder)) return 'Choose a folder with a full path, such as ' + example + '.';
+  if (badChars.test(folder)) return 'The folder name has characters Windows does not allow (< > " | ? *).';
+  if (folder.length > MAX_PATH_LENGTH) return 'The folder path is too long (more than ' + MAX_PATH_LENGTH + ' characters). Choose a shorter one.';
+  const parts = folder.split(/[\\/]+/).filter(Boolean);
+  if (parts.includes('..')) return 'Write the folder without "..".';
+  if (parts.length < 2) return 'Choose a folder of its own, not a whole drive.';
+  if (parts.slice(1).some((part) => reservedNames.test(part))) return 'The folder name is one Windows keeps for itself (such as CON or NUL). Choose another.';
+  return '';
+}
+
+/** One firewall address as setup reads it: an IP address or a range (10.0.0.0/24). The ones that mean every address are refused. */
+export function addressProblem(text: string): string {
+  const [host, bits, extra] = text.split('/');
+  const v4 = ipv4.test(host);
+  const v6 = !v4 && ipv6.test(host) && host.length <= 45;
+  const wrong = 'Write "' + text + '" like 10.0.0.5 or 10.0.0.0/24.';
+  if (extra !== undefined || (!v4 && !v6)) return wrong;
+  if (bits !== undefined) {
+    if (!/^\d{1,3}$/.test(bits) || Number(bits) > (v4 ? 32 : 128)) return wrong;
+    if (Number(bits) === 0) return text + ' means every address. Type a narrower range.';
+  } else if (/^0+(\.0+){3}$/.test(host) || /^[0:]+$/.test(host)) {
+    return text + ' means every address. Type the addresses of the PCs that may read the Blackbox.';
+  }
+  return '';
+}
 
 /** The checks the page can make before asking setup; setup checks everything again. */
 export function validateOptions(options: Options): Problem[] {
   const out: Problem[] = [];
-  const location = options.location.trim();
-  if (!fullPath.test(location)) out.push({ field: 'location', message: 'Choose a folder with a full path, such as C:\\Program Files\\Unravis.' });
-  else if (badChars.test(location)) out.push({ field: 'location', message: 'The folder name has characters Windows does not allow (< > " | ? *).' });
+  const location = folderProblem(options.location, 'C:\\Program Files\\Unravis');
+  if (location) out.push({ field: 'location', message: location });
   const bb = options.blackbox;
   if (bb) {
     if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,62}$/.test(bb.name.trim())) out.push({ field: 'bb-name', message: 'Give the Blackbox a name of up to 63 letters, numbers or dashes, starting with a letter or number.' });
-    if (!fullPath.test(bb.folder.trim())) out.push({ field: 'bb-folder', message: 'Choose a recordings folder with a full path, such as D:\\UnravisBlackbox.' });
+    const recordings = folderProblem(bb.folder, 'D:\\UnravisBlackbox');
+    if (recordings) out.push({ field: 'bb-folder', message: recordings.replace('Choose a folder', 'Choose a recordings folder') });
     if (!Number.isInteger(bb.keepDays) || bb.keepDays < 1 || bb.keepDays > 365) out.push({ field: 'bb-keep', message: 'Keep recordings for 1 to 365 days.' });
     if (!Number.isFinite(bb.maxGB) || bb.maxGB < 0.1 || bb.maxGB > 10000) out.push({ field: 'bb-max', message: 'Let the recordings use 0.1 to 10000 GB.' });
     if (!Number.isInteger(bb.minFreePercent) || bb.minFreePercent < 1 || bb.minFreePercent > 50) out.push({ field: 'bb-free', message: 'Keep 1 to 50 % of the disk free.' });
@@ -223,8 +256,33 @@ export function validateOptions(options: Options): Problem[] {
   if (options.firewall) {
     if (!bb) out.push({ field: 'firewall', message: 'The firewall rule is only for the Blackbox.' });
     else if (!options.firewall.remoteAddresses.length) out.push({ field: 'firewall', message: 'Name the PCs that may read the Blackbox, such as 10.0.0.5 or 10.0.1.0/24.' });
+    else if (options.firewall.remoteAddresses.length > 50) out.push({ field: 'firewall', message: 'List at most 50 addresses or ranges.' });
+    else {
+      const wrong = options.firewall.remoteAddresses.map(addressProblem).find(Boolean);
+      if (wrong) out.push({ field: 'firewall', message: wrong });
+    }
   }
   return out;
+}
+
+/** Try again repeats the same run. When the fix tells the user to change a choice in Options, repeating it would fail the same way. */
+export function retryHelps(result: Pick<Result, 'fix' | 'outcome'> | null): boolean {
+  if (!result || result.outcome === 'rollback-incomplete') return false;
+  return !/\bOptions\b/.test(result.fix ?? '');
+}
+
+/** Failed checks first, so the reason Next is off is the first thing under the heading. */
+export function checksFailedFirst(checks: Check[]): Check[] {
+  const rank = (check: Check) => (check.status === 'failed' ? 0 : check.status === 'partly' ? 1 : 2);
+  return checks.map((check, index) => ({ check, index })).sort((a, b) => rank(a.check) - rank(b.check) || a.index - b.index).map((entry) => entry.check);
+}
+
+/** The one line under the Welcome heading that names what stops Next. */
+export function blockedLine(checks: Check[]): string {
+  const failed = checks.filter((check) => check.status === 'failed');
+  if (!failed.length) return '';
+  const names = failed.map((check) => check.title).join(', ');
+  return (failed.length === 1 ? '1 check failed: ' : failed.length + ' checks failed: ') + names + '. Fix ' + (failed.length === 1 ? 'it' : 'them') + ' and press Check again; Next stays off until then.';
 }
 
 /** Remove is ready when every deletion that is ticked has its typed confirmation. */

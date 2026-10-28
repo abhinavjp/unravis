@@ -25,7 +25,7 @@
   li { padding: 7px 0; border-top: 1px solid var(--line-soft); }
   li:last-child { border-bottom: 1px solid var(--line-soft); }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .title { font-size: 13px; font-weight: 600; }
+  .title { min-width: 0; overflow-wrap: anywhere; font-size: 13px; font-weight: 600; }
   p { margin: 2px 0 0; font-size: 12px; }
   .detail { color: var(--text-2); }
   .fix { color: var(--text); }

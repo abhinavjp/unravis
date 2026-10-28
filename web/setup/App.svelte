@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import BrandMark from '../src/brand/components/BrandMark.svelte';
   import Button from '../src/brand/components/Button.svelte';
   import StepRail from '../src/brand/components/StepRail.svelte';
@@ -7,8 +7,8 @@
   import StepList from './StepList.svelte';
   import { api, ApiError } from './api.ts';
   import {
-    approvalReason, blocked, buildRequest, canFinish, CONFIRM_DELETE_WORD, doneHeading, failedHeading, formatBytes, mergeEvents,
-    parseAddresses, progressHeading, progressPercent, railPosition, railSteps, screenAfterResult, settleSteps, uninstallReady,
+    approvalReason, blockedLine, blocked, buildRequest, canFinish, checksFailedFirst, CONFIRM_DELETE_WORD, doneHeading, failedHeading, formatBytes, mergeEvents,
+    parseAddresses, progressHeading, progressPercent, railPosition, railSteps, retryHelps, screenAfterResult, settleSteps, uninstallReady,
     validateOptions, welcomeHeading,
     type BlackboxOptions, type Check, type Op, type Options, type Problem, type Result, type Scope, type Screen, type StepEvent,
     type UIChanges, type UIState, type UninstallOptions
@@ -37,6 +37,15 @@
   let cancelling = $state(false);
   let keySaved = $state(false);
   let copyNote = $state('');
+  // A press is taken once: while one is being worked on (busy), and for a moment after the window changes screen (settling), so a
+  // double click cannot also press the same place on the next screen. Settling uses aria-disabled so the buttons do not flash grey.
+  let busy = $state(false);
+  let settling = $state(false);
+  let watching = false;
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
+  const SETTLE_MS = 500;
+  // Said wherever data is about to be deleted. It is permanent: there is no Recycle Bin and no undo.
+  const FOREVER = 'This cannot be undone. The files are deleted for good, not moved to the Recycle Bin.';
 
   const wanted = (): Options => ({
     ...options,
@@ -58,6 +67,23 @@
   const everyone = $derived((ui?.installed?.scope ?? options.scope) === 'machine');
   const blackboxDone = $derived(rows.find((row) => row.id === 'blackbox' && row.state === 'done')?.detail ?? '');
   const placeLabel = $derived(ui?.installed?.location ?? options.location);
+  const hold = $derived(settling ? true : undefined);
+  const orderedChecks = $derived(checksFailedFirst(checks));
+  const blockedNote = $derived(blockedLine(checks));
+  const stepNumber = $derived(Math.max(0, rail.findIndex((step) => step.id === position.current)) + 1);
+  const stepLabel = $derived(rail.find((step) => step.id === position.current)?.label ?? '');
+  const deleting = $derived(op === 'uninstall' && (uninst.deleteCases || uninst.deleteRecordings));
+
+  // After each screen change the new heading takes the focus, so a keyboard user starts at the top of what changed.
+  $effect(() => {
+    void screen; void ui; void closed; void fatal;
+    void tick().then(() => {
+      const heading = document.querySelector<HTMLElement>('main h1');
+      if (!heading) return;
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    });
+  });
 
   onMount(() => {
     void start();
@@ -83,8 +109,33 @@
     options.location = ui.installed?.location ?? (scope === 'machine' ? ui.defaults.machineLocation : ui.defaults.userLocation);
     bb = { ...ui.defaults.blackbox };
     screen = op === 'uninstall' ? 'uninstall' : 'welcome';
+    // A refresh in the middle of a run: show the run that is still working instead of starting over.
+    try {
+      const live = await api.progress(0);
+      if (live.running) {
+        rows = mergeEvents([], live.events ?? []);
+        screen = 'progress';
+        void watch(live.next);
+        return;
+      }
+    } catch { /* no run to join: carry on from the start */ }
     await check();
   }
+
+  function go(next: Screen) {
+    screen = next;
+    settling = true;
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => { settling = false; }, SETTLE_MS);
+  }
+
+  // Runs one press at a time. A press that comes while another is being worked on, or right after a screen change, is ignored.
+  async function once(work: () => Promise<void>) {
+    if (busy || settling) return;
+    busy = true;
+    try { await work(); } finally { busy = false; }
+  }
+  const press = (work: () => void | Promise<void>) => () => { if (!settling) void work(); };
 
   async function check(): Promise<boolean> {
     checking = true;
@@ -109,35 +160,43 @@
   }
 
   // Next on Welcome: an install goes to Options; an upgrade or repair keeps the choices it was installed with.
-  async function welcomeNext() {
+  const welcomeNext = () => once(async () => {
     notice = '';
     if (op === 'install') {
-      screen = 'options';
+      go('options');
       return;
     }
-    if (await check()) proceed();
-  }
+    if (await check()) await proceed();
+  });
 
-  async function optionsNext() {
+  const optionsNext = () => once(async () => {
     notice = '';
     problems = validateOptions(wanted());
-    if (problems.length) return;
-    if (await check()) proceed();
-  }
+    if (problems.length) {
+      notice = problems.length === 1 ? 'Fix the item marked in red, then press Next.' : 'Fix the ' + problems.length + ' items marked in red, then press Next.';
+      await tick();
+      document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+      return;
+    }
+    if (await check()) await proceed();
+  });
 
-  async function removeNext() {
+  const removeNext = () => once(async () => {
     notice = '';
     if (!uninstallReady(uninst, blackboxName)) return;
-    if (await check()) proceed();
-  }
+    if (await check()) await proceed();
+  });
 
-  function proceed() {
+  async function proceed() {
     if (blocked(checks)) return;
-    if (changes?.needsAdmin) screen = 'approval';
-    else void run();
+    if (changes?.needsAdmin) go('approval');
+    else await startRun();
   }
 
-  async function run() {
+  const run = () => once(startRun);
+
+  async function startRun() {
+    if (watching) return;
     notice = '';
     result = null;
     rows = [];
@@ -152,19 +211,28 @@
       screen = back;
       return;
     }
-    screen = 'progress';
-    let since = 0;
+    go('progress');
+    void watch(0);
+  }
+
+  // Follows a run until it ends. Only one follower runs at a time.
+  async function watch(from: number) {
+    if (watching) return;
+    watching = true;
+    let since = from;
     for (;;) {
       try {
         const step = await api.progress(since);
         rows = mergeEvents(rows, step.events ?? []);
         since = step.next;
         if (!step.running && step.result) {
+          watching = false;
           finish(step.result);
           return;
         }
       } catch (err) {
         if (err instanceof ApiError && (err.status === 0 || err.status === 401)) {
+          watching = false;
           fatal = message(err);
           return;
         }
@@ -180,7 +248,7 @@
     const next = screenAfterResult(res);
     if (res.outcome === 'cancelled-at-uac') notice = 'You chose No at the Windows prompt, so nothing was changed. Press Continue to be asked again.';
     else if (next !== 'done' && next !== 'failed') notice = res.message;
-    screen = next;
+    go(next);
   }
 
   async function cancelRun() {
@@ -225,7 +293,7 @@
 
   function backToOptions() {
     notice = '';
-    screen = op === 'install' ? 'options' : op === 'uninstall' ? 'uninstall' : 'welcome';
+    go(op === 'install' ? 'options' : op === 'uninstall' ? 'uninstall' : 'welcome');
   }
 </script>
 
@@ -263,6 +331,7 @@
         <aside><StepRail steps={rail} current={position.current} done={position.done} skipped={position.skipped} label="Setup steps" /></aside>
         <main>
           <div class="content">
+            <p class="stepline" aria-hidden="true">Step {stepNumber} of {rail.length}: {stepLabel}</p>
             {#if notice}<p class="notice" role="alert">{notice}</p>{/if}
 
             {#if screen === 'welcome'}
@@ -271,7 +340,8 @@
                 {#if op === 'install'}Unravis reads audit logs and server health. It never changes your servers.
                 {:else}Your cases, saved connections and recordings stay as they are. Only the program files change.{/if}
               </div>
-              {#if checking && !checks.length}<p class="quiet">Checking this PC…</p>{:else}<CheckList {checks} />{/if}
+              {#if blockedNote}<p class="blocked" role="alert">{blockedNote}</p>{/if}
+              {#if checking && !checks.length}<p class="quiet">Checking this PC…</p>{:else}<CheckList checks={orderedChecks} />{/if}
               {@render closeCheckbox()}
 
             {:else if screen === 'options'}
@@ -283,26 +353,26 @@
               </fieldset>
               <label class="field">
                 <span>Folder</span>
-                <input type="text" class="mono" bind:value={options.location} aria-invalid={problemFor('location') ? 'true' : undefined} spellcheck="false" />
+                <input type="text" class="mono" bind:value={options.location} aria-invalid={problemFor('location') ? 'true' : undefined} aria-describedby={problemFor('location') ? 'err-location' : undefined} spellcheck="false" />
               </label>
-              {#if problemFor('location')}<p class="problem">{problemFor('location')}</p>{/if}
+              {#if problemFor('location')}<p class="problem" id="err-location">{problemFor('location')}</p>{/if}
               <label class="tick"><input type="checkbox" bind:checked={options.startAtSignIn} /> Start Unravis when I sign in</label>
               <label class="tick"><input type="checkbox" bind:checked={bbOn} /> Also place a Blackbox recorder on this PC</label>
               {#if bbOn}
                 <div class="indent">
                   <div class="grid">
-                    <label class="field"><span>Name</span><input type="text" bind:value={bb.name} aria-invalid={problemFor('bb-name') ? 'true' : undefined} spellcheck="false" /></label>
-                    <label class="field wide"><span>Folder</span><input type="text" class="mono" bind:value={bb.folder} aria-invalid={problemFor('bb-folder') ? 'true' : undefined} spellcheck="false" /></label>
-                    <label class="field"><span>Keep (days)</span><input type="number" min="1" max="365" bind:value={bb.keepDays} aria-invalid={problemFor('bb-keep') ? 'true' : undefined} /></label>
-                    <label class="field"><span>Max (GB)</span><input type="number" min="0.1" step="0.1" bind:value={bb.maxGB} aria-invalid={problemFor('bb-max') ? 'true' : undefined} /></label>
-                    <label class="field"><span>Keep free (%)</span><input type="number" min="1" max="50" bind:value={bb.minFreePercent} aria-invalid={problemFor('bb-free') ? 'true' : undefined} /></label>
-                    <label class="field"><span>Port</span><input type="number" min="1" max="65535" bind:value={bb.port} aria-invalid={problemFor('bb-port') ? 'true' : undefined} /></label>
+                    <label class="field"><span>Name</span><input type="text" bind:value={bb.name} aria-invalid={problemFor('bb-name') ? 'true' : undefined} aria-describedby={problemFor('bb-name') ? 'err-bb-name' : undefined} spellcheck="false" /></label>
+                    <label class="field wide"><span>Folder</span><input type="text" class="mono" bind:value={bb.folder} aria-invalid={problemFor('bb-folder') ? 'true' : undefined} aria-describedby={problemFor('bb-folder') ? 'err-bb-folder' : undefined} spellcheck="false" /></label>
+                    <label class="field"><span>Keep (days)</span><input type="number" min="1" max="365" bind:value={bb.keepDays} aria-invalid={problemFor('bb-keep') ? 'true' : undefined} aria-describedby={problemFor('bb-keep') ? 'err-bb-keep' : undefined} /></label>
+                    <label class="field"><span>Max (GB)</span><input type="number" min="0.1" step="0.1" bind:value={bb.maxGB} aria-invalid={problemFor('bb-max') ? 'true' : undefined} aria-describedby={problemFor('bb-max') ? 'err-bb-max' : undefined} /></label>
+                    <label class="field"><span>Keep free (%)</span><input type="number" min="1" max="50" bind:value={bb.minFreePercent} aria-invalid={problemFor('bb-free') ? 'true' : undefined} aria-describedby={problemFor('bb-free') ? 'err-bb-free' : undefined} /></label>
+                    <label class="field"><span>Port</span><input type="number" min="1" max="65535" bind:value={bb.port} aria-invalid={problemFor('bb-port') ? 'true' : undefined} aria-describedby={problemFor('bb-port') ? 'err-bb-port' : undefined} /></label>
                   </div>
-                  {#each problems.filter((problem) => problem.field.startsWith('bb-')) as problem (problem.field)}<p class="problem">{problem.message}</p>{/each}
+                  {#each problems.filter((problem) => problem.field.startsWith('bb-')) as problem (problem.field)}<p class="problem" id={'err-' + problem.field}>{problem.message}</p>{/each}
                   <label class="tick"><input type="checkbox" bind:checked={fwOn} /> Allow other PCs to read it (firewall rule)</label>
                   {#if fwOn}
-                    <label class="field indent"><span>Addresses</span><input type="text" class="mono" bind:value={fwText} placeholder="10.0.0.5, 10.0.1.0/24" aria-invalid={problemFor('firewall') ? 'true' : undefined} spellcheck="false" /></label>
-                    {#if problemFor('firewall')}<p class="problem">{problemFor('firewall')}</p>{/if}
+                    <label class="field indent"><span>Addresses</span><input type="text" class="mono" bind:value={fwText} placeholder="10.0.0.5, 10.0.1.0/24" aria-invalid={problemFor('firewall') ? 'true' : undefined} aria-describedby={problemFor('firewall') ? 'err-firewall' : undefined} spellcheck="false" /></label>
+                    {#if problemFor('firewall')}<p class="problem" id="err-firewall">{problemFor('firewall')}</p>{/if}
                   {/if}
                 </div>
               {/if}
@@ -317,6 +387,7 @@
                 <section><h2>Will change</h2><ul>{#each changes?.willChange ?? [] as item (item)}<li>{item}</li>{/each}</ul></section>
                 <section><h2>Will not change</h2><ul>{#each changes?.willNotChange ?? [] as item (item)}<li>{item}</li>{/each}</ul></section>
               </div>
+              {#if deleting}<p class="danger">{FOREVER}</p>{/if}
 
             {:else if screen === 'progress'}
               <h1>{progressHeading(op)}</h1>
@@ -354,7 +425,7 @@
             {:else if screen === 'failed' && result}
               <h1>{failedHeading(result)}</h1>
               <p>{result.message}</p>
-              <StepList rows={rows} fix={result.fix ?? ''} onretry={op === 'install' && result.outcome !== 'rollback-incomplete' ? run : undefined} />
+              <StepList rows={rows} fix={result.fix ?? ''} onretry={op === 'install' && retryHelps(result) ? run : undefined} />
               {#if result.left?.length}
                 <section><h2>Left behind</h2><ul class="plain mono">{#each result.left as item (item)}<li>{item}</li>{/each}</ul></section>
               {/if}
@@ -369,6 +440,7 @@
               <div class="indent">
                 {#if casesPlace}<p class="quiet"><span class="mono">{casesPlace.folder}</span> ({formatBytes(casesPlace.bytes)})</p>{/if}
                 {#if uninst.deleteCases}
+                  <p class="danger">{FOREVER}</p>
                   <label class="field"><span>Type {CONFIRM_DELETE_WORD} to confirm</span><input type="text" class="mono" bind:value={uninst.confirmCases} autocomplete="off" spellcheck="false" /></label>
                 {/if}
               </div>
@@ -377,6 +449,7 @@
                 <div class="indent">
                   {#if recordingsPlace}<p class="quiet"><span class="mono">{recordingsPlace.folder}</span> ({formatBytes(recordingsPlace.bytes)})</p>{/if}
                   {#if uninst.deleteRecordings}
+                    <p class="danger">{FOREVER}</p>
                     <label class="field"><span>Type the name {blackboxName} to confirm</span><input type="text" class="mono" bind:value={uninst.confirmRecordings} autocomplete="off" spellcheck="false" /></label>
                   {/if}
                 </div>
@@ -388,41 +461,41 @@
 
           <footer>
             {#if screen === 'welcome'}
-              <Button kind="quiet" onclick={() => { notice = ''; void check(); }} disabled={checking}>Check again</Button>
+              <Button kind="quiet" onclick={press(() => { notice = ''; void check(); })} disabled={checking} aria-disabled={hold}>Check again</Button>
               <span class="grow"></span>
-              <Button onclick={closeSetup}>Cancel</Button>
-              <Button kind="primary" onclick={welcomeNext} disabled={checking || blocked(checks) || !checks.length}>{op === 'upgrade' ? 'Upgrade' : op === 'repair' ? 'Repair' : 'Next'}</Button>
+              <Button onclick={press(closeSetup)} aria-disabled={hold}>Cancel</Button>
+              <Button kind="primary" onclick={welcomeNext} disabled={checking || busy || blocked(checks) || !checks.length} aria-disabled={hold}>{op === 'upgrade' ? 'Upgrade' : op === 'repair' ? 'Repair' : 'Next'}</Button>
             {:else if screen === 'options'}
               <span class="grow"></span>
-              <Button onclick={() => { problems = []; screen = 'welcome'; }}>Back</Button>
-              <Button kind="primary" onclick={optionsNext} disabled={checking}>Next</Button>
+              <Button onclick={press(() => { problems = []; notice = ''; go('welcome'); })} aria-disabled={hold}>Back</Button>
+              <Button kind="primary" onclick={optionsNext} disabled={checking || busy} aria-disabled={hold}>Next</Button>
             {:else if screen === 'approval'}
               <span class="grow"></span>
-              <Button onclick={backToOptions}>Back</Button>
-              <Button kind="primary" onclick={run}>Continue</Button>
+              <Button onclick={press(backToOptions)} aria-disabled={hold}>Back</Button>
+              <Button kind="primary" onclick={run} disabled={busy} aria-disabled={hold}>Continue</Button>
             {:else if screen === 'progress'}
               <span class="grow"></span>
-              <Button onclick={cancelRun} disabled={cancelling}>{cancelling ? 'Cancelling…' : 'Cancel'}</Button>
+              <Button onclick={press(cancelRun)} disabled={cancelling} aria-disabled={hold}>{cancelling ? 'Cancelling…' : 'Cancel'}</Button>
             {:else if screen === 'done'}
               <span class="grow"></span>
               {#if op === 'uninstall'}
-                <Button kind="primary" onclick={closeSetup}>Close</Button>
+                <Button kind="primary" onclick={press(closeSetup)} aria-disabled={hold}>Close</Button>
               {:else}
-                <Button onclick={closeSetup} disabled={!canFinish(result, keySaved)}>Close</Button>
-                <Button kind="primary" onclick={openApp} disabled={!canFinish(result, keySaved)}>Open Unravis</Button>
+                <Button onclick={press(closeSetup)} disabled={!canFinish(result, keySaved)} aria-disabled={hold}>Close</Button>
+                <Button kind="primary" onclick={press(openApp)} disabled={!canFinish(result, keySaved)} aria-disabled={hold}>Open Unravis</Button>
               {/if}
             {:else if screen === 'failed'}
               <span class="grow"></span>
-              <Button onclick={closeSetup}>Close</Button>
+              <Button onclick={press(closeSetup)} aria-disabled={hold}>Close</Button>
               {#if op === 'install'}
-                <Button kind="primary" onclick={backToOptions}>Back to Options</Button>
+                <Button kind="primary" onclick={press(backToOptions)} aria-disabled={hold}>Back to Options</Button>
               {:else}
-                <Button kind="primary" onclick={run} disabled={result?.outcome === 'rollback-incomplete'}>Try again</Button>
+                <Button kind="primary" onclick={run} disabled={busy || result?.outcome === 'rollback-incomplete'} aria-disabled={hold}>Try again</Button>
               {/if}
             {:else if screen === 'uninstall'}
               <span class="grow"></span>
-              <Button onclick={closeSetup}>Cancel</Button>
-              <Button kind="primary" onclick={removeNext} disabled={checking || !uninstallReady(uninst, blackboxName)}>Remove</Button>
+              <Button onclick={press(closeSetup)} aria-disabled={hold}>Cancel</Button>
+              <Button kind="primary" onclick={removeNext} disabled={checking || busy || !uninstallReady(uninst, blackboxName)} aria-disabled={hold}>Remove</Button>
             {/if}
           </footer>
         </main>
@@ -436,11 +509,11 @@
   .frame { width: min(880px, 100%); height: 600px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
   header { flex: 0 0 56px; height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 1px solid var(--line); }
   .version { font-size: 12px; color: var(--text-2); }
-  .body { flex: 1; min-height: 0; display: grid; grid-template-columns: 200px 1fr; }
+  .body { flex: 1; min-height: 0; display: grid; grid-template-columns: 200px minmax(0, 1fr); }
   aside { padding: 16px 10px; border-right: 1px solid var(--line); background: var(--bg); }
-  main { min-height: 0; display: flex; flex-direction: column; }
+  main { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
   main.solo { padding: 24px; }
-  .content { flex: 1; min-height: 0; overflow: auto; padding: 20px 24px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .content { flex: 1; min-height: 0; min-width: 0; overflow: auto; overflow-wrap: anywhere; padding: 20px 24px 16px; display: flex; flex-direction: column; gap: 12px; }
   footer { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 12px 24px; border-top: 1px solid var(--line); }
   .grow { flex: 1; }
   h1 { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.3; }
@@ -451,6 +524,10 @@
   .nutshell b { display: block; margin-bottom: 2px; font-size: 12px; color: var(--text-2); }
   .notice { padding: 8px 12px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 14%, var(--surface)); font-size: 13px; }
   .problem { color: var(--bad); font-size: 12px; }
+  .blocked { padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--bad); font-size: 13px; }
+  .danger { color: var(--bad); font-size: 13px; font-weight: 600; }
+  .stepline { display: none; font-size: 12px; color: var(--text-2); }
+  h1:focus-visible { outline: none; }
   .tick { display: flex; align-items: center; gap: 8px; font-size: 13px; }
   .scope { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
@@ -464,13 +541,14 @@
   .bar span { display: block; height: 100%; background: var(--accent); transition: width var(--dur) var(--ease); }
   .key { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
   .key h2 { margin: 0; }
-  .key-row { display: flex; align-items: center; gap: 10px; }
+  .key-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .key-row code { flex: 1; padding: 6px 8px; background: var(--surface-2); border-radius: var(--radius-sm); font-size: 14px; user-select: all; overflow-wrap: anywhere; }
-  .log { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+  .log { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 12px; }
   .log-label { color: var(--text-2); }
   .log-path { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--text-2); }
   @media (max-width: 700px) {
-    .body { grid-template-columns: 1fr; }
+    .body { grid-template-columns: minmax(0, 1fr); }
+    .stepline { display: block; }
     aside { display: none; }
     .frame { height: auto; min-height: 600px; }
     .grid { grid-template-columns: 1fr 1fr; }
