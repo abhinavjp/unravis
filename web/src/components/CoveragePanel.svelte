@@ -5,6 +5,7 @@
   import { DRAWER_RESULTS_TEXT, clearDrawerResults, coverageKey, foundAtText, readCoverage, saveCoverage } from '../lib/drawerResults.svelte';
   import { COVERAGE_TERM, COVERAGE_TEXT, coverageRange, coverageRefusalText, coverageRowsForDisplay, tenantLine } from '../lib/provenance';
   import { TENANT_TEXT, tenantPlain } from '../lib/copy/screenCopy';
+  import { CENSUS_TEXT } from '../lib/copy/sourcesCopy';
   import type { CoverageReport } from '../lib/types';
   import Hint from './Hint.svelte';
   import ProvenanceNote from './ProvenanceNote.svelte';
@@ -22,6 +23,8 @@
   const range = $derived(coverageRange(start, end));
   const rows = $derived(phase.kind === 'done' ? coverageRowsForDisplay(phase.report) : []);
   const labels = $derived(new Map([[sourceId, sourceLabel]]));
+  // The census may run on a source that is not ticked for the search: it only reads. The note says so (D-A-27).
+  const unticked = $derived(!scope.query.sourceIds.includes(sourceId));
 
   async function run() {
     if (!range || phase.kind === 'running') return;
@@ -71,6 +74,7 @@
   <p class="coverage-intro">{COVERAGE_TEXT.intro}</p>
   {#if range?.clamped}<p class="coverage-intro">{COVERAGE_TEXT.clamped}</p>{/if}
   {#if !range}<p class="coverage-intro">{COVERAGE_TEXT.noPeriod}</p>{/if}
+  {#if unticked}<p class="coverage-intro" data-unticked>{CENSUS_TEXT.notTicked}</p>{/if}
   <button type="button" class="secondary-button coverage-run" bind:this={runButton} disabled={!range || phase.kind === 'running'} onclick={run}>{phase.kind === 'running' ? COVERAGE_TEXT.running : COVERAGE_TEXT.button}</button>
   <div aria-live="polite">
     {#if phase.kind === 'refused'}<div class="notice coverage-refused" role="status">{phase.text}</div>{/if}

@@ -43,7 +43,12 @@ export const CONN_TEXT = {
   saving: 'Saving…',
   cancel: 'Cancel',
   saved: 'Saved.',
-  keepPasswordNote: 'A password is saved. Leave the password empty to keep it.'
+  keepPasswordNote: 'A password is saved. Leave the password empty to keep it.',
+  sqlFormIntro: 'Fill this in the way you do in SQL Server Management Studio. Press Test to check it connects. Press Save connection to keep the details on this computer.',
+  refreshAfterMongo: 'Saved a MongoDB connection in its window? Press Refresh to see it here.',
+  noSql: 'No SQL Server connection is saved yet. Press + SQL Server to add one.',
+  noMongo: 'No MongoDB connection is saved yet. Press + MongoDB to add one.',
+  testDemo: 'Testing is not available here. Real connections are tested on your own computer.'
 } as const;
 
 /**
@@ -245,7 +250,8 @@ export const DAY_TEXT = {
   nothingHeld: 'The case holds no SQL Server day yet. Read one first, then add another.',
   onlyByDay: 'Only sources that can be read by day are offered.',
   newRange: 'New range',
-  prefill: 'The times start as the same hours on the next day. Change them if you need other hours.',
+  prefill: 'The incident times start as the same hours on the next day. Change them if you need other hours.',
+  referenceStays: 'The reference window does not move. A later day is compared with the same normal period.',
   sameHours: 'Same hours as the incident, a later day. Times are UTC.',
   expects: 'SQL Server checks Query Store, and the blocked-process report if it was switched on that day.',
   emptyDay: 'The source cannot read a day that has no records yet. It then says so, and nothing is guessed.',
@@ -255,6 +261,11 @@ export const DAY_TEXT = {
   cancel: 'Cancel',
   checkAgain: 'A check of the same day again is allowed. A day that overlaps another without being the same is not.',
   added: 'Day added to the case.'
+} as const;
+
+/** The coverage census panel, when its source is not part of the current search. The panel itself lives in components/CoveragePanel.svelte. */
+export const CENSUS_TEXT = {
+  notTicked: 'This source is not ticked for the current search. The census still runs on it. It only reads.'
 } as const;
 
 export const COMBO_TEXT = {
@@ -328,5 +339,6 @@ export const sourcesCopyEntries = (): LintEntry[] => [
   ...Object.entries(HUB_TEXT).map(([id, text]) => sample('hub.' + id, text)),
   ...Object.entries(KEEPER_TEXT).map(([id, text]) => sample('keeper.' + id, text)),
   sample('keeper.pending', keeperPendingText(2, 1, 1)), sample('keeper.duplicates', keeperDuplicatesText(2)), sample('keeper.duplicatesOne', keeperDuplicatesText(1)), sample('keeper.pendingOne', keeperPendingText(1, 0, 0)),
-  ...Object.entries(NOTHING_TEXT).map(([id, text]) => sample('nothing.' + id, text))
+  ...Object.entries(NOTHING_TEXT).map(([id, text]) => sample('nothing.' + id, text)),
+  ...Object.entries(CENSUS_TEXT).map(([id, text]) => sample('census.' + id, text))
 ];

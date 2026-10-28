@@ -13,10 +13,10 @@
   // here is ever run as a query. A password typed for this run goes out once and is dropped. Times are UTC and read strictly. A day that overlaps
   // one already added (for the same server and database) is refused here and again by the server, with nothing read.
   let {
-    caseId, kind, days = [], database = '', incident = null, reference = null, lockDatabase = false, connectionLabel = '', runLabel = '', primary = false, ownNotice = false, onRan, onGone
+    caseId, kind, days = [], database = '', incident = null, reference = null, lockDatabase = false, connectionLabel = '', runLabel = '', primary = false, ownNotice = false, onStart, onRan, onGone
   }: {
     caseId: string; kind: 'sql' | 'mongo'; days?: LaneDay[]; database?: string; incident?: LaneWindow | null; reference?: LaneWindow | null;
-    lockDatabase?: boolean; connectionLabel?: string; runLabel?: string; primary?: boolean; ownNotice?: boolean; onRan?: (result: LaneRunResult) => void; onGone?: () => void;
+    lockDatabase?: boolean; connectionLabel?: string; runLabel?: string; primary?: boolean; ownNotice?: boolean; onStart?: () => void; onRan?: (result: LaneRunResult) => void; onGone?: () => void;
   } = $props();
 
   const uid = $props.id();
@@ -67,6 +67,7 @@
   async function run() {
     if (busy) return;
     done = ''; problem = '';
+    onStart?.();
     if (pickId === '' || (kind === 'sql' ? sqlPicked === null : mongoPicked === null)) { problem = RUN_TEXT.needPick; return; }
     if (db.trim() === '') { problem = RUN_TEXT.needDatabase; return; }
     if (unreadableTime(incStart, incEnd, refStart, refEnd)) { problem = RUN_TEXT.badTime; return; }

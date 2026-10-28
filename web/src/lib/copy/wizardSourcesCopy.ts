@@ -146,6 +146,7 @@ export const SOURCES_TEXT = {
   sqlAdd: 'Add and keep details',
   sqlAdding: 'Adding…',
   sqlNeedServer: 'Type the server name first.',
+  sqlServerTooLong: 'The server name is too long. Use 200 characters or fewer.',
   sqlNeedUser: 'Type the user name, or choose Windows Authentication.',
   sqlKept: 'Details kept on this computer.',
   sqlKeptWithPassword: 'Details kept on this computer, with the password.',

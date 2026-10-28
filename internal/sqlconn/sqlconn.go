@@ -210,6 +210,17 @@ func validate(in Input) (stored, error) {
 	return rec, nil
 }
 
+// Normalize reads and checks typed details exactly as Save does (server spelling, host and port, limits, Windows login, encryption
+// word) and returns the record without an id or a save time. The password is not kept: HasPassword only says one was offered and
+// would be remembered. It exists so a fake store can follow the same rules as the real one.
+func Normalize(in Input) (Recent, error) {
+	rec, err := validate(in)
+	if err != nil {
+		return Recent{}, err
+	}
+	return rec.Recent, nil
+}
+
 // encryptRank orders the encryption choices from weakest to strictest.
 func encryptRank(e string) int {
 	switch e {
@@ -221,11 +232,13 @@ func encryptRank(e string) int {
 	return 1
 }
 
-// asStrict reports whether next encrypts at least as strictly as prior: the same or a stricter choice, and the server certificate still
-// checked when it was before.
-func asStrict(next, prior stored) bool {
+// KeepsPassword reports whether next encrypts at least as strictly as prior: the same or a stricter choice, and the server
+// certificate still checked when it was before. A blank password may keep the saved one only then.
+func KeepsPassword(next, prior Recent) bool {
 	return encryptRank(next.Encrypt) >= encryptRank(prior.Encrypt) && (!next.TrustServerCertificate || prior.TrustServerCertificate)
 }
+
+func asStrict(next, prior stored) bool { return KeepsPassword(next.Recent, prior.Recent) }
 
 func (s *Service) List() ([]Recent, error) {
 	v, err := s.read()
