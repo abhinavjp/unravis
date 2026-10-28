@@ -122,8 +122,25 @@ func (h *handler) caseInvestigation(w http.ResponseWriter, r *http.Request, raw 
 		writeError(w, http.StatusBadRequest, "Request validation failed.")
 		return
 	}
-	if _, ok := caseIDOf(w, raw); !ok {
+	res, read, c, ok := h.runInvestigation(w, r, raw, body)
+	if !ok {
 		return
+	}
+	c.Close()
+	if !body.IncludeSeries {
+		res = res.Compact()
+	}
+	writeJSON(w, http.StatusOK, investigationAnswer{Result: res, Read: read}, maxResponseBytes)
+}
+
+// runInvestigation reads the audit calls and the case's IIS rows for a validated
+// request and runs the engine. On success the case is still open and the caller
+// closes it (the report reads the checklist from it); on failure the answer is
+// written, the case is closed and ok is false.
+func (h *handler) runInvestigation(w http.ResponseWriter, r *http.Request, raw string, body investigationRequest) (investigate.Result, investigationRead, casestore.Case, bool) {
+	var none investigate.Result
+	if _, ok := caseIDOf(w, raw); !ok {
+		return none, investigationRead{}, nil, false
 	}
 	var queries []audit.Query
 	for _, rg := range body.ranges() {
@@ -137,7 +154,7 @@ func (h *handler) caseInvestigation(w http.ResponseWriter, r *http.Request, raw 
 		q.Kind = "all"
 		if err := audit.ValidateQuery(q); err != nil {
 			writeError(w, http.StatusBadRequest, "Request validation failed.")
-			return
+			return none, investigationRead{}, nil, false
 		}
 		queries = append(queries, q)
 	}
@@ -148,27 +165,24 @@ func (h *handler) caseInvestigation(w http.ResponseWriter, r *http.Request, raw 
 	rows, read, status, err := h.readInvestigationRanges(ctx, queries)
 	if err != nil {
 		writeTraceRepoError(w, err)
-		return
+		return none, read, nil, false
 	}
 	_, c, ok := h.openCase(w, r, raw)
 	if !ok {
-		return
+		return none, read, nil, false
 	}
-	defer c.Close()
 
 	in, err := buildInvestigationInput(ctx, c, body, rows, status, &read)
 	if err != nil {
+		c.Close()
 		writeStoreError(w, err)
-		return
+		return none, read, nil, false
 	}
 	res := investigate.Analyze(in)
-	if !body.IncludeSeries {
-		res = res.Compact()
-	}
 	if read.Warnings == nil {
 		read.Warnings = []string{}
 	}
-	writeJSON(w, http.StatusOK, investigationAnswer{Result: res, Read: read}, maxResponseBytes)
+	return res, read, c, true
 }
 
 // readInvestigationRanges reads each stretch on its own, so the row cap applies to

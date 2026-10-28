@@ -41,7 +41,8 @@ func (s *Step) degrade(r Readiness, reason string) {
 	}
 }
 
-func fmtT(t time.Time) string { return t.UTC().Format("2006-01-02 15:04") + " UTC" }
+// fmtT writes a moment the way the rest of the app does ("28 Oct 2026 02:56 UTC"), so engine words and the report agree.
+func fmtT(t time.Time) string { return t.UTC().Format("2 Jan 2006 15:04") + " UTC" }
 
 func fmtMs(v *float64) string {
 	if v == nil {

@@ -284,6 +284,389 @@
         {"waitFor": "[data-nothing-read]"},
         {"scrollTo": "[data-nothing-read]"}
       ]
+    },
+    {
+      "id": "p6-step-0", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"waitFor":"text=Incident window"}
+      ]
+    },
+    {
+      "id": "p6-step-1", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(2) button"},
+        {"waitFor":"#step-title-1"}
+      ]
+    },
+    {
+      "id": "p6-step-2", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(3) button"},
+        {"waitFor":"#step-title-2"}
+      ]
+    },
+    {
+      "id": "p6-step-3", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(4) button"},
+        {"waitFor":"#step-title-3"}
+      ]
+    },
+    {
+      "id": "p6-step-4", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(5) button"},
+        {"waitFor":"#step-title-4"}
+      ]
+    },
+    {
+      "id": "p6-step-5", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(6) button"},
+        {"waitFor":"#step-title-5"}
+      ]
+    },
+    {
+      "id": "p6-step-6", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(7) button"},
+        {"waitFor":"#step-title-6"}
+      ]
+    },
+    {
+      "id": "p6-step-7", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(8) button"},
+        {"waitFor":"#step-title-7"}
+      ]
+    },
+    {
+      "id": "p6-step-8", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(9) button"},
+        {"waitFor":"#step-title-8"}
+      ]
+    },
+    {
+      "id": "p6-step-9", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(10) button"},
+        {"waitFor":"#step-title-9"}
+      ]
+    },
+    {
+      "id": "p6-step-10", "phase": "P6", "doc": "guided-analysis.md", "narrow": true,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(11) button"},
+        {"waitFor":"#step-title-10"}
+      ]
+    },
+    {
+      "id": "p6-no-clear-origin", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=navigation[name=\"Guided analysis steps\"] >> li:nth-child(11) button"},
+        {"waitFor":"text=No clear origin"}
+      ]
+    },
+    {
+      "id": "p6-checklist", "phase": "P6", "doc": "guided-analysis.md", "narrow": true,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"click":"role=tab[name=\"Checklist\"]"},
+        {"waitFor":"text=Add suggested checks"}
+      ]
+    },
+    {
+      "id": "p6-after-fix-1", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=tab[name=\"After the fix\"]"},
+        {"waitFor":"text=The later day (UTC)"}
+      ]
+    },
+    {
+      "id": "p6-after-fix-2", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=tab[name=\"After the fix\"]"},
+        {"fill":["input[type=\"date\"]","2026-10-20"]},
+        {"click":"role=button[name=\"Compare\"]"},
+        {"waitFor":"text=Change vs the earlier day"}
+      ]
+    },
+    {
+      "id": "p6-tools-1", "phase": "P6", "doc": "manual-tools.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"click":"summary:text-is(\"Case actions\")"},
+        {"click":"role=button[name=\"Switch to Manual tools\"]"},
+        {"waitFor":"#tools-title"}
+      ]
+    },
+    {
+      "id": "p6-tools-2", "phase": "P6", "doc": "manual-tools.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"click":"summary:text-is(\"Case actions\")"},
+        {"click":"role=button[name=\"Switch to Manual tools\"]"},
+        {"waitFor":"#tools-title"},
+        {"click":"role=button[name=\"Open: Slowest APIs\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"waitFor":"text=Only APIs matching"}
+      ]
+    },
+    {
+      "id": "p6-tools-3", "phase": "P6", "doc": "manual-tools.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"click":"summary:text-is(\"Case actions\")"},
+        {"click":"role=button[name=\"Switch to Manual tools\"]"},
+        {"waitFor":"#tools-title"},
+        {"click":"role=button[name=\"Open: SQL blocking and waits\"]"},
+        {"waitFor":"text=Cannot test yet"}
+      ]
+    },
+    {
+      "id": "p6-export-1", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"click":"role=tab[name=\"Export\"]"},
+        {"waitFor":"role=button[name=\"Download report (HTML)\"]"}
+      ]
+    },
+    {
+      "id": "p6-export-2", "phase": "P6", "doc": "guided-analysis.md", "narrow": false,
+      "steps": [
+        {"goto":"/"},
+        {"when":"wide","click":"role=button[name=\"Home\"s]"},
+        {"when":"narrow","click":"role=button[name=/^More/]"},
+        {"when":"narrow","click":"role=menuitem[name=\"Home\"s]"},
+        {"click":"role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"click":"role=button[name=\"Open guided analysis\"]"},
+        {"waitFor":"role=navigation[name=\"Guided analysis steps\"]"},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(1) input","2026-10-17T10:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Incident window\")) label:nth-of-type(2) input","2026-10-17T11:00"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(1) input","2026-10-17T09:30"]},
+        {"fill":["fieldset:has(legend:text-is(\"Reference window (normal)\")) label:nth-of-type(2) input","2026-10-17T10:30"]},
+        {"click":"role=button[name=\"Run the steps\"]"},
+        {"waitFor":"role=button[name=\"Run again\"]"},
+        {"click":"role=tab[name=\"Export\"]"},
+        {"click":"role=button[name=\"Preview\"]"},
+        {"waitFor":"iframe"}
+      ]
     }
   ]
 }
