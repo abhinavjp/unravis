@@ -946,6 +946,15 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 	// (A16). New reads are told "being erased" (M5) meanwhile. If the wait runs out
 	// the answer is M4 and nothing was marked or erased. A background import job is
 	// cancelled first, so the erase waits only for it to stop, not to finish.
+	// A recording stopped here is put back if the erase is refused before it starts
+	// (M4, or a belief that went stale), after the gate is given back.
+	rec, wasRecording := h.samplerRunningFor(id)
+	erasing := false
+	defer func() {
+		if wasRecording && !erasing {
+			h.restartSampler(id, rec)
+		}
+	}()
 	h.stopSamplerFor(id, true, stopCaseClosed)
 	stopCancelling := h.jobs.cancelCaseUntilStopped(id)
 	release, err := h.gates.acquireEraseWithin(r.Context(), id, h.eraseTimer())
@@ -975,6 +984,7 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 		writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
 		return
 	}
+	erasing = true
 	h.pending.add(id)
 	if err := h.cases.Erase(r.Context(), id); err != nil {
 		writeStoreError(w, err)

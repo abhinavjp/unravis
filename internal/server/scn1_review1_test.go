@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/casestore"
 )
@@ -21,4 +22,25 @@ func TestScn1Review1_RestoreAsNewStaleBeliefOnMarkedCase(t *testing.T) {
 	}
 	res := a.req(http.MethodPost, "/api/cases/"+id+"/restore-as-new", `{}`, "open")
 	archReason(t, res, http.StatusConflict, "case-changed", m2Text)
+}
+
+// Review1-2: an erase refused under the gate puts the recording back.
+func TestScn1Review1_RefusedEraseKeepsTheRecording(t *testing.T) {
+	a := newArchPC(t, cfsPassA)
+	id := a.seed("Alpha", 3)
+	a.startRecording(id)
+	h := a.handler()
+	// The case changes after the first belief check and before the gate is taken,
+	// so the check under the gate is the one that refuses.
+	h.eraseAfter = func(time.Duration) <-chan time.Time {
+		if res := a.req(http.MethodPost, "/api/cases/"+id+"/close", "", "open"); res.Code != http.StatusOK {
+			t.Errorf("close = %d %s", res.Code, res.Body)
+		}
+		return nil
+	}
+	res := a.req(http.MethodDelete, "/api/cases/"+id, `{"confirm":`+q(id)+`}`, "open")
+	archReason(t, res, http.StatusConflict, "case-changed", m2Text)
+	if !a.recording(id) {
+		t.Fatal("the refused erase left the recording stopped")
+	}
 }
