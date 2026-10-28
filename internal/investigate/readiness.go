@@ -291,8 +291,8 @@ func Steps(in Input, f Facts, s Signals, th Thresholds) []Step {
 			}
 			if f.Parts.Dominant != "" {
 				st.Findings = append(st.Findings, "The part that grew most is "+f.Parts.Dominant+".")
-			} else {
-				st.Findings = append(st.Findings, "No one part holds most of the extra time. "+f.Parts.DominantWhy)
+			} else if f.Parts.DominantWhy != "" {
+				st.Findings = append(st.Findings, f.Parts.DominantWhy)
 			}
 			if s.Split.Note != "" {
 				st.Findings = append(st.Findings, s.Split.Note)

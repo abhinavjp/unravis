@@ -342,7 +342,7 @@
       ],
       "coverage": 1,
       "dominant": "",
-      "dominantWhy": "No single part holds half of the extra time with a change of the size the mark needs.",
+      "dominantWhy": "Part C holds 0.85 of the extra time, which is under the change mark.",
       "oTested": true,
       "oWhy": "",
       "iisMatched": 4500,
@@ -581,7 +581,7 @@
         "C: share of the extra time 0.85.",
         "P: no share of the extra time.",
         "O: share of the extra time 0.15.",
-        "No one part holds most of the extra time. No single part holds half of the extra time with a change of the size the mark needs."
+        "Part C holds 0.85 of the extra time, which is under the change mark."
       ]
     },
     {
