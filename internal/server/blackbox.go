@@ -315,7 +315,7 @@ func (b *blackboxHub) scan() (*blackbox.LocalFound, error) {
 
 func stoppedHere() blackbox.StateInfo {
 	return blackbox.StateInfo{
-		State: blackbox.SStopped, Label: blackbox.SStopped.Label(), Tone: blackbox.ToneIdle, Readiness: blackbox.WordCannotTestYet,
+		State: blackbox.SStopped, Label: blackbox.SStopped.Label(), Tone: blackbox.ToneIdle, Readiness: blackbox.WordPartlyReady,
 		Detail: "The Blackbox service on this PC is stopped. Its recordings are kept; nothing new is recorded. Start it to record again.",
 	}
 }
