@@ -482,6 +482,8 @@
   .note, .empty { margin: 0; color: var(--text-2); font-size: 14px; }
   .gap { font-size: 13px; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .head .actions { margin-top: 14px; }
+  .head .actions + .actions { margin-top: 8px; }
   .story { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; border-left: 2px solid var(--line); }
   .story li { position: relative; display: grid; grid-template-columns: 170px 1fr; gap: 12px; padding: 8px 0 8px 16px; }
   .story li::before { content: ''; position: absolute; left: -6px; top: 14px; width: 10px; height: 10px; border-radius: 50%; background: var(--text-2); }

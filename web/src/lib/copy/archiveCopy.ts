@@ -88,7 +88,7 @@ export const ARCHIVE_TEXT = {
   restoreNewIntro: 'This reads the case file and makes a new case from it. The archived case and the file are not changed.',
   restoreFile: 'Case file',
   restoreMade: 'Made',
-  restoreKeyLabel: 'Key this file was made with',
+  restoreKeyLabel: 'Passphrase this file was made with',
   restoreKeyHint: 'The passphrase you typed when the file was made.',
   restoreNewSubmit: 'Restore as a new case',
   restoreWorking: 'Restoring\u2026',
@@ -131,6 +131,7 @@ export const ARCHIVE_TEXT = {
   m10: 'The archive file could not be checked. Nothing was changed. Try again.',
   m11: 'The case file did not pass the check. The working copy was kept.',
   m13: 'This file can only be opened with the key it was made with.',
+  m13Fix: 'To get the case back, use Restore from a case file on the start screen. Type the master key or passphrase the file was made with.',
   m14: 'Archiving was stopped. The case is back as it was. Try again.',
   m15: 'Cancel the archive first.',
   m16: 'This case is too large to archive in one file.',
@@ -171,7 +172,7 @@ export function archiveReasonText(reason: string, status = 0): string {
     case 'no-space': return ARCHIVE_TEXT.m9;
     case 'archive-failed': return ARCHIVE_TEXT.m10;
     case 'case-file-failed': return ARCHIVE_TEXT.m11;
-    case 'old-key-only': return ARCHIVE_TEXT.m13;
+    case 'old-key-only': return ARCHIVE_TEXT.m13 + ' ' + ARCHIVE_TEXT.m13Fix;
     case 'archive-stopped': return ARCHIVE_TEXT.m14;
     case 'cancel-archive-first': return ARCHIVE_TEXT.m15;
     case 'too-large': return ARCHIVE_TEXT.m16;

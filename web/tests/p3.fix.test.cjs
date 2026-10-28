@@ -173,3 +173,24 @@ test('the More menu is anchored to the card so it cannot spill to the left over 
   assert.match(menu, /position: absolute; right: var\(--space-3\)/);
   assert.match(menu, /min-width: min\(220px, calc\(100% - 2 \* var\(--space-3\)\)\)/);
 });
+
+// UI minor 10: gaps under the case home header buttons, one word for the key, and a way out of M13.
+test('the header buttons have a gap above them', () => {
+  const home = read('src/lib/components/CaseHome.svelte');
+  assert.match(home, /\.head \.actions \{ margin-top: 14px; \}/, 'Archive does not touch the counts');
+  assert.match(home, /\.head \.actions \+ \.actions \{ margin-top: 8px; \}/, 'Archive and Reopen rows do not touch');
+});
+
+test('the key is called a master key or a passphrase everywhere, and M13 says what to do', () => {
+  const { ARCHIVE_TEXT, archiveReasonText } = copy;
+  assert.equal(ARCHIVE_TEXT.restoreKeyLabel, 'Passphrase this file was made with');
+  assert.equal(ARCHIVE_TEXT.m13, 'This file can only be opened with the key it was made with.', 'spec text stays');
+  const sentence = archiveReasonText('old-key-only');
+  assert.ok(sentence.startsWith(ARCHIVE_TEXT.m13 + ' '), 'M13 first, then the way out');
+  assert.match(sentence, /Restore from a case file/);
+  assert.match(sentence, /master key or passphrase/);
+  const enter = read('src/lib/copy/enterCopy.ts');
+  assert.match(enter, /keyLabel: 'Master key or passphrase the file was made with'/);
+  assert.match(enter, /keyEmpty: 'Type the master key or passphrase/);
+  assert.ok(copy.archiveLintEntries().some((entry) => entry.text === ARCHIVE_TEXT.m13Fix), 'm13Fix is in the copy lint');
+});
