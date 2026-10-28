@@ -12,6 +12,8 @@
   import SqlConnectionForm from './SqlConnectionForm.svelte';
   import StateSticker from './StateSticker.svelte';
   import KeeperCard from './KeeperCard.svelte';
+  import { app } from '../../lib/appState.svelte';
+  import { announceConnectionsChanged, dropTest, recallTests, rememberTest, type TestResult } from './connectionMemory';
   import './sources.css';
 
   // Screens 52 and 53: every saved connection in one list, SQL Server and MongoDB. Test says only Works, Failed or Not tested, and the last
@@ -26,12 +28,13 @@
   let loaded = $state(false);
   let loadFailed = $state(false);
   let demo = $state(false);
-  let tests = $state.raw<Record<string, { word: ConnectionWord; at: string; problem: string }>>({});
+  let tests = $state.raw<Record<string, TestResult>>(recallTests());
   let testing = $state('');
   let asking = $state('');
   let editing = $state<SavedSqlConnection | null>(null);
   let adding = $state(false);
   let note = $state('');
+  let notice = $state('');
   let askedMongo = $state(false);
   // The key keeper (P14): null until asked, and on a PC without it the status says "user" and nothing about the keeper shows.
   let keeper = $state.raw<KeeperStatus | null>(null);
@@ -67,12 +70,12 @@
   onMount(() => { void load(); });
 
   const remember = (key: string, word: ConnectionWord, problem: string) => {
-    tests = { ...tests, [key]: { word, at: new Date().toLocaleString(), problem } };
+    tests = rememberTest(key, { word, at: new Date().toLocaleString(), problem });
   };
 
   async function test(row: ConnectionRow) {
     if (testing) return;
-    note = '';
+    note = ''; notice = '';
     if (row.kind === 'sql') {
       const item = sql.find(s => s.id === row.id);
       if (!item) return;
@@ -89,6 +92,7 @@
     }
     const item = mongo.find(m => m.id === row.id);
     if (!item) return;
+    if (app.info?.demo === true) { notice = CONN_TEXT.testDemo; return; }
     if (item.username !== '' && !item.hasCredentials) { remember(row.key, 'Failed', CONN_TEXT.testNeedsPassword); return; }
     testing = row.key;
     try {
@@ -103,19 +107,28 @@
   }
 
   async function forget(row: ConnectionRow) {
-    asking = ''; note = '';
+    asking = ''; note = ''; notice = '';
     try {
       if (row.kind === 'sql') await api.forgetSqlConnection(row.id); else await api.forgetConnection(row.id);
+      tests = dropTest(row.key);
+      announceConnectionsChanged();
     } catch (error) { note = error instanceof Error ? error.message : CONN_TEXT.loadFailed; }
     await load();
   }
 
   function edit(row: ConnectionRow) {
+    notice = '';
     if (row.kind !== 'sql') return;
     editing = sql.find(s => s.id === row.id) ?? null;
     adding = editing !== null;
   }
-  function saved() { adding = false; editing = null; void load(); }
+  function saved(item: SavedSqlConnection) {
+    adding = false; editing = null;
+    notice = CONN_TEXT.saved;
+    tests = dropTest('sql:' + item.id);
+    announceConnectionsChanged();
+    void load();
+  }
   async function keeperChanged(next: KeeperStatus) { keeper = next; await load(false); }
   // A stopped or untrusted keeper cannot use a saved password, so the row says so instead of only "held".
   const keeperUnusable = $derived(kView === 'stopped' || kView === 'impostor');
@@ -132,15 +145,17 @@
     <SqlConnectionForm initial={editing} onSaved={saved} onCancel={() => { adding = false; editing = null; }} />
   {:else}
     <div class="actions">
-      <button type="button" class={primary ? 'btn-primary' : 'btn'} disabled={full || readOnly} onclick={() => { editing = null; adding = true; }}>{CONN_TEXT.addSql}</button>
+      <button type="button" class={primary ? 'btn-primary' : 'btn'} disabled={full || readOnly} onclick={() => { editing = null; adding = true; notice = ''; }}>{CONN_TEXT.addSql}</button>
       <button type="button" class="btn" disabled={readOnly || !onMongoAdd} onclick={() => { askedMongo = true; onMongoAdd?.(); }}>{CONN_TEXT.addMongo}</button>
-      {#if askedMongo}<button type="button" class="btn" onclick={() => void load()}>{CONN_TEXT.refresh}</button>{/if}
+      <button type="button" class="btn" onclick={() => void load()}>{CONN_TEXT.refresh}</button>
+      {#if askedMongo}<span class="hint" data-after-mongo>{CONN_TEXT.refreshAfterMongo}</span>{/if}
       <span class="hint" data-count>{CONN_TEXT.countSql} {sql.length} / {CONNECTION_LIMIT}. {CONN_TEXT.countMongo} {mongo.length}.</span>
     </div>
     {#if full}<p class="say bad" role="status" data-full>{CONN_TEXT.full}</p>{/if}
     <p class="hint">{onMongoAdd ? CONN_TEXT.mongoHere : CONN_TEXT.mongoNowhere}</p>
     {#if readOnly}<p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>{/if}
   {/if}
+  {#if notice !== ''}<p class="say" role="status" data-notice>{notice}</p>{/if}
 
   {#if demo}
     <div class="empty" data-demo><p class="lead">{CONN_TEXT.demo}</p></div>
@@ -149,6 +164,8 @@
   {:else if loaded && rows.length === 0}
     <div class="empty"><h4>{CONN_TEXT.noneHeading}</h4><p class="lead">{CONN_TEXT.noneBody}</p></div>
   {:else}
+    {#if loaded && sql.length === 0}<p class="hint" data-no-sql>{CONN_TEXT.noSql}</p>{/if}
+    {#if loaded && mongo.length === 0}<p class="hint" data-no-mongo>{CONN_TEXT.noMongo}</p>{/if}
     <ul class="rows" aria-label={CONN_TEXT.heading}>
       {#each rows as row (row.key)}
         <li data-kind={row.kind}>

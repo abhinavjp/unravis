@@ -44,7 +44,11 @@ export const CONN_TEXT = {
   cancel: 'Cancel',
   saved: 'Saved.',
   keepPasswordNote: 'A password is saved. Leave the password empty to keep it.',
-  sqlFormIntro: 'Fill this in the way you do in SQL Server Management Studio. Press Test to check it connects. Press Save connection to keep the details on this computer.'
+  sqlFormIntro: 'Fill this in the way you do in SQL Server Management Studio. Press Test to check it connects. Press Save connection to keep the details on this computer.',
+  refreshAfterMongo: 'Saved a MongoDB connection in its window? Press Refresh to see it here.',
+  noSql: 'No SQL Server connection is saved yet. Press + SQL Server to add one.',
+  noMongo: 'No MongoDB connection is saved yet. Press + MongoDB to add one.',
+  testDemo: 'Testing is not available here. Real connections are tested on your own computer.'
 } as const;
 
 /**
