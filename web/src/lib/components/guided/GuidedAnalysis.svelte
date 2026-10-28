@@ -4,7 +4,7 @@
   import { SHELL_TEXT as S } from '../../copy/guidedShellCopy';
   import { storeFor } from '../../guided/guided.svelte';
   import { nextTabIndex, railItems, stepOf, stickerFor } from '../../guided/stepModel';
-  import type { SourceNeed } from '../../guided/tools';
+  import { caseSourceIds, type SourceNeed } from '../../guided/tools';
   import { app } from '../../appState.svelte';
   import AfterFix from './AfterFix.svelte';
   import Checklist from './Checklist.svelte';
@@ -41,7 +41,13 @@
     void tick().then(() => document.getElementById('step-title-' + store.step)?.focus());
   });
 
-  const sourceIds = $derived(app.sources.map((s) => s.id));
+  // Only the sources of this case. The demo has no case sources to read, so it keeps the connected list.
+  const demo = $derived(!!app.info?.demo);
+  const sourceIds = $derived(
+    demo ? app.sources.map((s) => s.id) : store.sourcesState === 'ready' ? caseSourceIds(app.sources, store.auditLabels, store.workspaceDbs) : []
+  );
+  const sourcesWait = $derived(!demo && store.sourcesState === 'loading');
+  const sourcesFailed = $derived(!demo && store.sourcesState === 'failed');
   // SQL, Mongo and host files have no importer yet, so only the audit source and the IIS file can be present.
   const have = $derived<ReadonlySet<SourceNeed>>(new Set<SourceNeed>([...(sourceIds.length > 0 ? ['audit' as const] : []), ...(hasIis ? ['iis' as const] : [])]));
   const stale = $derived(store.outOfDate(sourceIds));
@@ -58,8 +64,9 @@
 
   onMount(() => {
     void store.loadPlan();
+    if (!untrack(() => demo)) void store.loadCaseSources();
     // Coming back to the window after adding data elsewhere: read what the case holds again.
-    const onFocus = () => { void store.refreshStamp(); };
+    const onFocus = () => { void store.refreshStamp(); if (!demo) void store.loadCaseSources(); };
     window.addEventListener('focus', onFocus);
     return () => { window.removeEventListener('focus', onFocus); store.dispose(); };
   });
@@ -116,6 +123,10 @@
   <div id="guided-panel" role="tabpanel" aria-labelledby={'guided-tab-' + panel} class="panel">
     {#if panel === 'checklist'}
       <Checklist {store} {readOnly} />
+    {:else if sourcesWait}
+      <p class="note" role="status">{S.sourcesLoading}</p>
+    {:else if sourcesFailed}
+      <p class="inline-error" role="alert">{S.sourcesFailed}</p>
     {:else if panel === 'fix'}
       <AfterFix {store} {sourceIds} {readOnly} />
     {:else if panel === 'nearby'}

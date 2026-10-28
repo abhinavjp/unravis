@@ -205,3 +205,25 @@ export function dataStamp(imports: readonly StampImport[], tags: readonly StampT
 
 /** True only when both fingerprints are known and differ. An unknown fingerprint is never a change. */
 export const stampChanged = (then: string | null, now: string | null): boolean => then !== null && now !== null && then !== now;
+
+/* ----------------------------------------------------------------- the sources of one case */
+
+export interface CaseSourceLike { id: string; database: string; selectionKey?: string }
+export interface CaseWorkspaceDatabase { name: string; selectionKey?: string }
+
+/**
+ * The ids of the connected sources that belong to the open case. The case's own audit source tags name databases (`auditLabels`); a source
+ * belongs to the case when its database is one of them. A case with no tag of this kind (an older case) falls back to the databases its saved
+ * workspace names, matched by selection key when both sides have one and by database name otherwise. Nothing else is read: with neither, the list is empty.
+ */
+export function caseSourceIds(
+  sources: readonly CaseSourceLike[], auditLabels: readonly string[], workspaceDatabases: readonly CaseWorkspaceDatabase[]
+): string[] {
+  if (auditLabels.length > 0) {
+    const labels = new Set(auditLabels);
+    return sources.filter((s) => labels.has(s.database)).map((s) => s.id);
+  }
+  return sources
+    .filter((s) => workspaceDatabases.some((d) => (d.selectionKey && s.selectionKey ? d.selectionKey === s.selectionKey : d.name === s.database)))
+    .map((s) => s.id);
+}

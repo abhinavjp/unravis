@@ -4,5 +4,7 @@
  */
 export const SHELL_TEXT = {
   manualHeading: 'Manual tools',
-  toolWaitingHint: 'Press Run the steps first. This tool shows what that run found.'
+  toolWaitingHint: 'Press Run the steps first. This tool shows what that run found.',
+  sourcesLoading: 'Reading the sources this case holds.',
+  sourcesFailed: 'The sources of this case could not be read. Reload the page and try again.'
 } as const;

@@ -1,4 +1,6 @@
 import { CaseApiError, casePath, json, listImports, send } from '../cases';
+import { api } from '../api';
+import { parseWorkspace, type WorkspaceDatabase } from '../caseWorkspace';
 import { CHECKLIST_ERRORS, GUIDED_TEXT, SAVED_VIEW_ERRORS, refusalText } from '../copy/guidedCopy';
 import {
   addChecklistItem, buildReport, deleteChecklistItem, deleteView, listChecklist, listViews, runInvestigation, saveView, updateChecklistItem
@@ -42,6 +44,21 @@ async function listSourceTags(caseId: string): Promise<Array<{ id: number; kind:
   });
 }
 
+/** The database names of the case's audit Mongo sources: GET /api/cases/{id}/mongo-sources. Only the label (the database name) is read. */
+async function listAuditLabels(caseId: string): Promise<string[]> {
+  const body = await json<{ sources?: unknown }>(await send(casePath(caseId, '/mongo-sources')));
+  const list = Array.isArray(body.sources) ? body.sources : [];
+  return list.flatMap((raw) => {
+    const r = raw as { label?: unknown; classification?: unknown };
+    return typeof r.label === 'string' && r.label !== '' && (r.classification === undefined || r.classification === 'audit') ? [r.label] : [];
+  });
+}
+
+/** The databases the case's saved workspace names. A case with no workspace, or one that cannot be read, names none. */
+async function listWorkspaceDatabases(caseId: string): Promise<WorkspaceDatabase[]> {
+  try { return parseWorkspace(await api.caseWorkspace(caseId))?.mongo?.databases ?? []; } catch { return []; }
+}
+
 export class GuidedStore {
   caseId: string;
   mode = $state<Mode>('guided');
@@ -71,6 +88,11 @@ export class GuidedStore {
   tool = $state<ToolId | ''>('');
   /** The note typed in Manual tools and not yet saved. Kept with the store so leaving the screen does not lose it. */
   noteDraft = $state('');
+  /** Reading which sources belong to this case. The page sends no source id until this is 'ready'. */
+  sourcesState = $state<'loading' | 'ready' | 'failed'>('loading');
+  /** The database names of the case's own audit sources, and the databases its workspace names. */
+  auditLabels = $state.raw<string[]>([]);
+  workspaceDbs = $state.raw<WorkspaceDatabase[]>([]);
 
   #run = 0;
   /** The request the answer on screen was made from. A report is built from this one, so it matches what the person sees. */
@@ -82,6 +104,7 @@ export class GuidedStore {
   #writing = false;
   #bulk = false;
   #stampRun = 0;
+  #sourcesRun = 0;
 
   constructor(caseId: string) {
     this.caseId = caseId;
@@ -115,6 +138,25 @@ export class GuidedStore {
       return value;
     } catch {
       return this.stamp;
+    }
+  }
+
+  /**
+   * Reads which sources belong to this case. The first read shows 'loading'; a later read (back to the window) keeps what is shown until it
+   * answers, and a later failure keeps the last good list. Read only.
+   */
+  async loadCaseSources(): Promise<void> {
+    const mine = ++this.#sourcesRun;
+    if (this.sourcesState === 'failed') this.sourcesState = 'loading';
+    try {
+      const [labels, databases] = await Promise.all([listAuditLabels(this.caseId), listWorkspaceDatabases(this.caseId)]);
+      if (mine !== this.#sourcesRun) return;
+      this.auditLabels = labels;
+      this.workspaceDbs = databases;
+      this.sourcesState = 'ready';
+    } catch {
+      if (mine !== this.#sourcesRun) return;
+      if (this.sourcesState !== 'ready') this.sourcesState = 'failed';
     }
   }
 
@@ -167,7 +209,7 @@ export class GuidedStore {
     if (this.phase === 'running') this.phase = this.answer ? 'done' : 'idle';
   }
 
-  dispose(): void { this.cancel(); this.#plan++; this.#stampRun++; }
+  dispose(): void { this.cancel(); this.#plan++; this.#stampRun++; this.#sourcesRun++; }
 
   /* ------------------------------------------------------------- checklist and views */
 

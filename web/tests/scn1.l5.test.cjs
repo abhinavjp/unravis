@@ -115,7 +115,7 @@ test('B-09: the store records the fingerprint at run time and compares it in out
   assert.match(s, /return this\.keyFor\(sourceIds\) !== this\.answeredKey \|\| stampChanged\(this\.answeredStamp, this\.stamp\);/);
   assert.match(s, /const stamp = await this\.refreshStamp\(\);/);
   assert.match(s, /this\.answeredStamp = stamp;/);
-  assert.match(s, /dispose\(\): void \{ this\.cancel\(\); this\.#plan\+\+; this\.#stampRun\+\+; \}/);
+  assert.match(s, /dispose\(\): void \{ this\.cancel\(\); this\.#plan\+\+; this\.#stampRun\+\+; this\.#sourcesRun\+\+; \}/);
   assert.match(s, /casePath\(caseId, '\/sources'\)/);
   const g = guided('GuidedAnalysis.svelte');
   assert.match(g, /window\.addEventListener\('focus', onFocus\);/);
@@ -146,4 +146,38 @@ test('B-10: the unsaved note lives on the store, not in the screen', () => {
   assert.match(m, /store\.addItem\('learned', store\.noteDraft\)/);
   assert.match(m, /bind:value=\{store\.noteDraft\}/);
   assert.match(m, /disabled=\{store\.noteDraft\.trim\(\) === ''\}/);
+});
+
+test('B-34: only the sources of the open case are read', () => {
+  const src = (id, database, selectionKey) => ({ id, database, selectionKey });
+  const connected = [src('a', 'AuditOne'), src('b', 'AuditTwo'), src('c', 'Other', 'k3')];
+  assert.deepEqual(tools.caseSourceIds(connected, ['AuditOne'], []), ['a']);
+  assert.deepEqual(tools.caseSourceIds(connected, ['AuditOne', 'AuditTwo'], []), ['a', 'b']);
+  assert.deepEqual(tools.caseSourceIds(connected, [], []), [], 'a case with no source reads nothing, whatever is connected');
+  assert.deepEqual(tools.caseSourceIds([], ['AuditOne'], []), []);
+  assert.deepEqual(tools.caseSourceIds(connected, ['Missing'], [{ name: 'AuditOne' }]), [], 'tags win over the workspace');
+});
+
+test('B-34: an older case with no tag falls back to the databases of its workspace', () => {
+  const connected = [{ id: 'a', database: 'AuditOne', selectionKey: 'k1' }, { id: 'b', database: 'AuditTwo', selectionKey: 'k2' }, { id: 'c', database: 'Other' }];
+  assert.deepEqual(tools.caseSourceIds(connected, [], [{ name: 'AuditTwo' }]), ['b'], 'by name when the workspace has no key');
+  assert.deepEqual(tools.caseSourceIds(connected, [], [{ name: 'renamed', selectionKey: 'k1' }]), ['a'], 'by key when both have one');
+  assert.deepEqual(tools.caseSourceIds(connected, [], [{ name: 'Other', selectionKey: 'k9' }]), ['c'], 'by name when the source has no key');
+});
+
+test('B-34: the page sends the case sources, waits while reading and keeps the demo list', () => {
+  const g = guided('GuidedAnalysis.svelte');
+  assert.match(g, /demo \? app\.sources\.map\(\(s\) => s\.id\) : store\.sourcesState === 'ready' \? caseSourceIds\(app\.sources, store\.auditLabels, store\.workspaceDbs\) : \[\]/);
+  assert.match(g, /\{:else if sourcesWait\}\s*<p class="note" role="status">\{S\.sourcesLoading\}<\/p>/);
+  assert.match(g, /\{:else if sourcesFailed\}\s*<p class="inline-error" role="alert">\{S\.sourcesFailed\}<\/p>/);
+  assert.match(g, /void store\.loadCaseSources\(\);/);
+  const s = store();
+  assert.match(s, /casePath\(caseId, '\/mongo-sources'\)/);
+  assert.match(s, /sourcesState = \$state<'loading' \| 'ready' \| 'failed'>\('loading'\);/);
+  assert.ok(!/password|uri|username/i.test(s.slice(s.indexOf('async function listAuditLabels'), s.indexOf('export class GuidedStore'))), 'only names are read');
+});
+
+test('B-34: the new sentences are plain', () => {
+  assert.equal(SHELL.sourcesLoading, 'Reading the sources this case holds.');
+  assert.equal(SHELL.sourcesFailed, 'The sources of this case could not be read. Reload the page and try again.');
 });
