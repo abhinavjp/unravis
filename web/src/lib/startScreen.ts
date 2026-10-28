@@ -1,4 +1,4 @@
-import type { CaseInfo } from './cases';
+import { caseCode, type CaseInfo } from './cases';
 import type { LockState } from './masterKey';
 import { ARCHIVE_TEXT } from './copy/archiveCopy';
 import { START_TEXT, importsText, shownText, sourcesText } from './copy/startCopy';
@@ -33,6 +33,8 @@ export interface CaseRow {
   created: string;
   /** For example "3 imports, 2 sources". */
   counts: string;
+  /** The short case code, for example "Code 3F9A27C1". Two cases with the same title (a restore as new) differ by it. */
+  codeText: string;
   closed: boolean;
   closedLabel: string;
   /** True when the server refuses this folder: show a plain note and no Open button. */
@@ -67,6 +69,7 @@ export function caseRow(c: StartCase): CaseRow {
     fullTitle: c.title.trim() || START_TEXT.untitled,
     created: formatTime(c.created, { year: true, precision: 'minute', fallback: '' }),
     counts: caseCounts(c),
+    codeText: START_TEXT.codeLabel + ' ' + caseCode(c.id),
     closed: Boolean(c.closed),
     closedLabel: START_TEXT.closedLabel,
     untrusted: c.untrusted === true,

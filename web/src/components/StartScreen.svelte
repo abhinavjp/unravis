@@ -105,7 +105,7 @@
               <li class="case-row">
                 <div class="case-info">
                   <strong class="case-title" title={row.fullTitle}>{row.title}</strong>
-                  <span class="case-meta">{row.created}{row.created ? ' · ' : ''}{row.counts}</span>
+                  <span class="case-meta">{row.created}{row.created ? ' · ' : ''}{row.counts} · {row.codeText}</span>
                   {#if row.closed}<span class="case-closed">{row.closedLabel}</span>{/if}
                 </div>
                 {#if row.archiving}

@@ -127,7 +127,7 @@
           <div class="line">
             <div class="case-info">
               <strong class="case-title" title={row.fullTitle}>{row.title}</strong>
-              <span class="case-meta">{ARCHIVE_TEXT.archivedOn} {archivedOn(c)}{countsOf(c) ? ' · ' + countsOf(c) : ''}</span>
+              <span class="case-meta">{ARCHIVE_TEXT.archivedOn} {archivedOn(c)}{countsOf(c) ? ' · ' + countsOf(c) : ''} · {row.codeText}</span>
               <span class="chips">
                 {#each archivedChips(c) as chip (chip)}
                   {#if chip === 'key'}<span class="chip">{keyEndingText(keyEndingOf(c.archive?.current))}</span>
@@ -182,7 +182,7 @@
   .archived h3 { margin: 0; font-size: 15px; font-weight: 600; }
   .card-note { margin: 0; color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
   .cases { display: grid; gap: var(--space-2); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
-  .case-row { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-2) var(--space-3); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  .case-row { position: relative; display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-2) var(--space-3); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .line { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); min-width: 0; flex-wrap: wrap; }
   .case-info { display: grid; gap: 2px; min-width: 0; }
   .case-title { font-size: var(--fs-3); font-weight: 600; overflow-wrap: anywhere; }
@@ -191,10 +191,11 @@
   .chip { padding: 0 var(--space-1); color: var(--text-2); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font-size: var(--fs-2); }
   .chip.warn { color: var(--warn); border-color: var(--warn); }
   .buttons { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-  .more { position: relative; }
+  /* The menu hangs from the card, not from the small More button, so it stays inside the card at any width. */
+  .more { position: static; }
   .more summary { cursor: pointer; padding: 0 var(--space-2); color: var(--text-2); font-size: var(--fs-3); list-style: none; }
   .more summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-  .menu { position: absolute; right: 0; z-index: 2; display: grid; gap: var(--space-1); min-width: 220px; margin-top: var(--space-1); padding: var(--space-2); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  .menu { position: absolute; right: var(--space-3); z-index: 2; display: grid; gap: var(--space-1); min-width: min(220px, calc(100% - 2 * var(--space-3))); margin-top: var(--space-1); padding: var(--space-2); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .menu :global(.quiet-button) { justify-self: start; text-align: left; }
   .erase { display: grid; gap: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--line); }
   .erase p { margin: 0; font-size: var(--fs-3); line-height: 1.5; }

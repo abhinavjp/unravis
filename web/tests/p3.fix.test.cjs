@@ -152,3 +152,24 @@ test('an archive that runs with its drawer closed is shown and followed on the c
   assert.ok(at > 0 && /ARCHIVE_TEXT\.archivingNote/.test(home.slice(at, at + 400)) && /ARCHIVE_TEXT\.showProgress/.test(home.slice(at, at + 700)), 'a notice and a Show progress button');
   for (const key of ['archivingNote', 'showProgress']) assert.ok(copy.archiveLintEntries().some((entry) => entry.text === copy.ARCHIVE_TEXT[key]), key + ' is in the copy lint');
 });
+
+// UI minor 6: two cases with the same title (a restore as new) are told apart by their short code, in the working list and the archived list.
+test('rows carry the short case code so a restored copy is not a twin', () => {
+  const { caseRow } = load('src/lib/startScreen.ts');
+  const a = caseRow({ id: '3f9a27c1aaaaaaaaaaaaaaaaaa', title: 'Checkout slowdown', created: '2026-10-17T10:00:00Z', imports: 1 });
+  const b = caseRow({ id: '9c01bd44bbbbbbbbbbbbbbbbbb', title: 'Checkout slowdown', created: '2026-10-17T10:00:00Z', imports: 1 });
+  assert.equal(a.codeText, 'Code 3f9a27c1');
+  assert.notEqual(a.codeText, b.codeText);
+  assert.match(read('src/components/StartScreen.svelte'), /\{row\.counts\} · \{row\.codeText\}/);
+  assert.match(read('src/lib/components/ArchivedList.svelte'), /\{row\.codeText\}/);
+});
+
+// UI minor 7: the More menu on an archived row hangs from the card (right edge inside the card), not from the small More button.
+test('the More menu is anchored to the card so it cannot spill to the left over the next row', () => {
+  const list = read('src/lib/components/ArchivedList.svelte');
+  assert.match(list, /\.case-row \{ position: relative;/);
+  assert.match(list, /\.more \{ position: static; \}/);
+  const menu = list.match(/\.menu \{[^}]*\}/)[0];
+  assert.match(menu, /position: absolute; right: var\(--space-3\)/);
+  assert.match(menu, /min-width: min\(220px, calc\(100% - 2 \* var\(--space-3\)\)\)/);
+});
