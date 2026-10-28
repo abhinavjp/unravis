@@ -12,6 +12,8 @@ import (
 
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/ledger"
 )
 
 // l7ErrorText reads the "error" text of a JSON error answer.
@@ -268,5 +270,102 @@ func TestScn1L7TypedNotesAreScrubbedInTheReport(t *testing.T) {
 				t.Errorf("%s report lacks %q", format, want)
 			}
 		}
+	}
+}
+
+// B-40: the preview says which lists were asked for, because the file drops an empty list.
+func TestScn1L7PreviewSaysWhichListsWereAsked(t *testing.T) {
+	installExportFakes(t)
+	h := demoExportHandler(WithLedger(&fakeLedger{}))
+	asked := func(body string) map[string]any {
+		t.Helper()
+		r := request(h, http.MethodPost, "/api/export/preview", body, true)
+		if r.Code != http.StatusOK {
+			t.Fatalf("preview = %d %s", r.Code, r.Body.String())
+		}
+		var out map[string]any
+		if err := json.Unmarshal(r.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	// exportBody asks for the ledger and not for pseudonyms.
+	got := asked(exportBody("demo-west"))
+	if got["ledgerIncluded"] != true {
+		t.Errorf("ledger ticked, ledgerIncluded = %v", got["ledgerIncluded"])
+	}
+	if _, present := got["pseudonymsIncluded"]; present {
+		t.Errorf("pseudonyms not ticked, but the answer says %v", got["pseudonymsIncluded"])
+	}
+	now := exportNow
+	raw, _ := json.Marshal(map[string]any{"sourceIds": []string{"demo-west"}, "start": now.Add(-time.Hour), "end": now, "includePseudonyms": true, "includeLedger": false})
+	got = asked(string(raw))
+	if got["pseudonymsIncluded"] != true {
+		t.Errorf("pseudonyms ticked, pseudonymsIncluded = %v", got["pseudonymsIncluded"])
+	}
+	if _, present := got["ledgerIncluded"]; present {
+		t.Errorf("ledger not ticked, but the answer says %v", got["ledgerIncluded"])
+	}
+}
+
+// B-05: with ledgerCaseId the case's own ledger is read, not the shared one.
+func TestScn1L7ExportReadsTheCaseLedger(t *testing.T) {
+	fb := installExportFakes(t)
+	shared := &fakeLedger{}
+	store := casestore.NewMemory()
+	exportNow = time.Now().UTC().Truncate(time.Second)
+	h := New(audit.NewDemoWithPatterns(exportNow), nil, testToken, true,
+		WithCases(store, mustHosts(t, hostsDoc), importer.NewRegistry(toyImporter{name: "toy", score: 90})),
+		WithCaptureCases(), WithLedger(shared))
+	e := &caseEnv{t: t, store: store, h: h}
+	body := exportBody("demo-west")
+
+	// One probe finds an evidence id of this window.
+	if r := request(h, http.MethodPost, "/api/export/preview", body, true); r.Code != http.StatusOK {
+		t.Fatalf("probe = %d %s", r.Code, r.Body.String())
+	}
+	if len(fb.inputs[0].Report.Findings) == 0 {
+		t.Fatal("demo report has no findings")
+	}
+	related := fb.inputs[0].Report.Findings[0].EvidenceID
+
+	// The shared ledger holds a related entry that must NOT be used when a case is named.
+	shared.items = []ledger.Hypothesis{{ID: "shared-one", Text: "from the shared ledger", State: ledger.StateOpen, EvidenceIDs: []string{related}}}
+
+	id := e.newCase("export ledger")
+	th := createCaseTheory(t, e, id, "Slow calls follow the nightly job")
+	upd := `{"text":"Slow calls follow the nightly job","state":"supported_by_correlation","evidenceIds":["` + related + `"],"notes":"seen twice","settlingObservation":"Run with the job paused","facts":{"presentK":2,"totalN":3}}`
+	if res := e.json(http.MethodPut, caseLedgerPath(id)+"/"+th.ID, upd); res.Code != http.StatusOK {
+		t.Fatalf("update = %d %s", res.Code, res.Body)
+	}
+
+	var withCase map[string]any
+	if err := json.Unmarshal([]byte(body), &withCase); err != nil {
+		t.Fatal(err)
+	}
+	withCase["ledgerCaseId"] = id
+	raw, _ := json.Marshal(withCase)
+	if r := request(h, http.MethodPost, "/api/export/preview", string(raw), true); r.Code != http.StatusOK {
+		t.Fatalf("preview with case = %d %s", r.Code, r.Body.String())
+	}
+	in := fb.inputs[len(fb.inputs)-1]
+	if len(in.Ledger) != 1 || in.Ledger[0].ID != th.ID {
+		t.Fatalf("ledger passed to build = %+v, want only the case entry %s", in.Ledger, th.ID)
+	}
+
+	// Without ledgerCaseId the shared ledger is still the one read.
+	if r := request(h, http.MethodPost, "/api/export/preview", body, true); r.Code != http.StatusOK {
+		t.Fatalf("preview without case = %d %s", r.Code, r.Body.String())
+	}
+	in = fb.inputs[len(fb.inputs)-1]
+	if len(in.Ledger) != 1 || in.Ledger[0].ID != "shared-one" {
+		t.Fatalf("shared ledger passed to build = %+v", in.Ledger)
+	}
+
+	// An id that is not a case answers the case-ledger failure, not a silent shared read.
+	withCase["ledgerCaseId"] = "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	raw, _ = json.Marshal(withCase)
+	if r := request(h, http.MethodPost, "/api/export/preview", string(raw), true); r.Code != http.StatusNotFound {
+		t.Errorf("unknown ledgerCaseId = %d %s, want 404", r.Code, r.Body.String())
 	}
 }

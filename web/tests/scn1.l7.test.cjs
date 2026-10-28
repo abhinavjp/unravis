@@ -37,3 +37,24 @@ test('the report export sends the warning codes with the include choices', () =>
   assert.match(svelte, /store\.buildReport\(format, sent\)/);
   assert.doesNotMatch(svelte, /\bstate\s*=/);
 });
+
+// L7-07: the export reads the ledger the person sees, and says so when a list is empty.
+test('exportInput names the open case only when the ledger is asked for', () => {
+  const { exportInput } = loadTypeScript('src/lib/export.ts');
+  const q = { sourceIds: ['a'], start: '2026-01-01T00:00:00Z', end: '2026-01-02T00:00:00Z' };
+  assert.equal(exportInput(q, false, true, 'case1').ledgerCaseId, 'case1');
+  assert.equal('ledgerCaseId' in exportInput(q, false, false, 'case1'), false);
+  assert.equal('ledgerCaseId' in exportInput(q, false, true), false);
+  assert.equal('ledgerCaseId' in exportInput(q, false, true, ''), false);
+});
+
+test('the drawer shows the none-sentences from what was asked, not from the file', () => {
+  const { listsAsked } = loadTypeScript('src/lib/export.ts');
+  assert.deepEqual(listsAsked({ ledgerIncluded: true }), { ledger: true, pseudonyms: false });
+  assert.deepEqual(listsAsked({ pseudonymsIncluded: true }), { ledger: false, pseudonyms: true });
+  assert.deepEqual(listsAsked(undefined), { ledger: false, pseudonyms: false });
+  const panel = read('src/components/ExportPanel.svelte');
+  assert.match(panel, /exp\.body\.ledger \|\| asked\.ledger/);
+  assert.match(panel, /exp\.body\.pseudonyms \|\| asked\.pseudonyms/);
+  assert.match(panel, /exportInput\(query, includePseudonyms, includeLedger, ledger\.caseId\)/);
+});

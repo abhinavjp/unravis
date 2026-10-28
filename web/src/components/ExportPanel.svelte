@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '../lib/api';
+  import { ledger } from '../lib/ledgerStore.svelte';
   import { formatTime } from '../lib/time';
   import {
-    EXPORT_TEXT, RECORD_FIELDS, canSave, contentMatches, describeCount, downloadName, errorText, exportInput, exportSummary, qualityRows, savedLine, stateLabel,
+    EXPORT_TEXT, RECORD_FIELDS, canSave, contentMatches, describeCount, downloadName, errorText, exportInput, exportSummary, listsAsked, qualityRows, savedLine, stateLabel,
     type ExportPhase
   } from '../lib/export';
   import type { Query } from '../lib/types';
@@ -46,7 +47,7 @@
     problem = '';
     phase = { kind: 'previewing' };
     try {
-      const result = await api.exportPreview(exportInput(query, includePseudonyms, includeLedger));
+      const result = await api.exportPreview(exportInput(query, includePseudonyms, includeLedger, ledger.caseId));
       if (mine.signal.aborted) return;
       phase = { kind: 'preview', preview: result };
     } catch (cause) {
@@ -127,6 +128,7 @@
     {#if phase.kind === 'preview' || phase.kind === 'saving' || phase.kind === 'saved'}
       {@const exp = phase.preview.export}
       {@const summary = exportSummary(exp)}
+      {@const asked = listsAsked(phase.preview)}
       {#if summary.empty}
         <p class="export-empty">{EXPORT_TEXT.noFindings}</p>
       {/if}
@@ -179,10 +181,10 @@
         </section>
       {/if}
 
-      {#if exp.body.pseudonyms}
+      {#if exp.body.pseudonyms || asked.pseudonyms}
         <section class="export-block" aria-label={EXPORT_TEXT.pseudonyms}>
           <h3>{EXPORT_TEXT.pseudonyms}<Hint termId="pseudonym" /></h3>
-          {#if exp.body.pseudonyms.length === 0}
+          {#if !exp.body.pseudonyms || exp.body.pseudonyms.length === 0}
             <p class="export-note">{EXPORT_TEXT.pseudonymsNone}</p>
           {:else}
             <div class="table-scroll">
@@ -199,10 +201,10 @@
         </section>
       {/if}
 
-      {#if exp.body.ledger}
+      {#if exp.body.ledger || asked.ledger}
         <section class="export-block" aria-label={EXPORT_TEXT.ledger}>
           <h3>{EXPORT_TEXT.ledger}</h3>
-          {#if exp.body.ledger.length === 0}
+          {#if !exp.body.ledger || exp.body.ledger.length === 0}
             <p class="export-note">{EXPORT_TEXT.ledgerNone}</p>
           {:else}
             <ul class="export-records">
