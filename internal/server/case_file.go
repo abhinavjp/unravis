@@ -280,7 +280,8 @@ func (h *handler) exportCaseFile(w http.ResponseWriter, r *http.Request, raw str
 	}
 	release, ok := h.gates.acquireRead(id)
 	if !ok {
-		writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
+		// An erase is waiting for the readers in flight (M5), not a missing case.
+		writeStoreError(w, casestore.ErrErasing)
 		return
 	}
 	defer release()
@@ -307,7 +308,7 @@ func (h *handler) exportCaseFile(w http.ResponseWriter, r *http.Request, raw str
 		return
 	}
 	n, err := casestore.ExportCaseFile(r.Context(), root, id, info.Title, info.Created, info.Closed,
-		h.caseFileLookup(), target, b.pass, caseFileParams)
+		h.caseFileLookupFor(id), target, b.pass, caseFileParams)
 	if err != nil {
 		writeExportError(w, err)
 		return
@@ -327,6 +328,11 @@ func (h *handler) findCase(ctx context.Context, w http.ResponseWriter, id casest
 		if c.ID == id {
 			return c, true
 		}
+	}
+	// The store hides a case whose erase was marked: that is M5, not "not found".
+	if errors.Is(h.openFailed(ctx, id, casestore.ErrNotFound), casestore.ErrErasing) {
+		writeStoreError(w, casestore.ErrErasing)
+		return casestore.CaseInfo{}, false
 	}
 	writeCaseFailure(w, http.StatusNotFound, "case-not-found", "The case was not found.")
 	return casestore.CaseInfo{}, false
@@ -368,7 +374,7 @@ func writeExportError(w http.ResponseWriter, err error) {
 		writeCaseFailure(w, http.StatusConflict, "case-changed", "The case changed while it was being exported. Try again.")
 	case errors.Is(err, casestore.ErrCaseFileBusy):
 		writeCaseFailure(w, http.StatusConflict, "case-busy", "The case is busy. Try again in a moment.")
-	case errors.Is(err, casestore.ErrNotFound), errors.Is(err, casestore.ErrBadID), errors.Is(err, casestore.ErrLocked),
+	case errors.Is(err, casestore.ErrNotFound), errors.Is(err, casestore.ErrBadID), errors.Is(err, casestore.ErrLocked), errors.Is(err, casestore.ErrCaseLocked),
 		errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		writeStoreError(w, err)
 	default:
