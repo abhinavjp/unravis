@@ -102,3 +102,4 @@ Each stands as the plan's default. Owner can overturn any of them.
 - B15. PROPOSAL: Blackbox recorder is a new binary `cmd/unravis-blackbox` that reuses `internal/sampler`, writes a manifest plus NDJSON files per hour, and serves status on 7788.
 - B16. PROPOSAL: A clumsy-user review follows each phase: someone tries to break the shipped screens; each finding becomes a test or a recorded "won't fix".
 - B17. PROPOSAL: `go mod tidy` runs in Phase 1 and CI fails if it leaves a diff.
+- B18. PROPOSAL (P4): The retention sweep skips a case whose own key is locked: it cannot read the case, so it neither frees nor erases it. The docs do not promise retention for locked keyed cases; the person unlocks, and the sweep picks the case up on its next run.

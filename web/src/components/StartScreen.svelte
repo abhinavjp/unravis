@@ -125,13 +125,12 @@
                   <span class="case-meta">{row.created}{row.created ? ' · ' : ''}{row.counts} · {row.codeText}</span>
                   {#if row.closed}<span class="case-closed">{row.closedLabel}</span>{/if}
                   {#if row.keyEnding}<span class="case-closed">{row.keyEnding}</span>{/if}
+                  {#if row.untrusted}<span class="case-closed" role="note">{row.untrustedLabel}</span>{/if}
                 </div>
                 {#if row.archiving}
                   <span class="case-closed" role="note">{row.archivingLabel}</span>
                 {:else if row.missing}
                   <span class="case-closed" role="note">{row.missingLabel}</span>
-                {:else if row.untrusted}
-                  <span class="case-closed" role="note">{row.untrustedLabel}</span>
                 {:else}
                   <button type="button" class="secondary-button" aria-label={openLabel(row.fullTitle)} onclick={() => onOpen(row.id)}>{START_TEXT.open}</button>
                 {/if}

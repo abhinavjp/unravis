@@ -41,7 +41,7 @@ export const erasePromptText = (code: string): string => 'Type the case code ' +
 
 /** The first sentence of the dialog: what goes, and where a saved case file stays. A path is shown only when the page knows it. */
 export function eraseBody(archivePath?: string): string {
-  const kept = archivePath ? 'The case file in ' + archivePath + ' is not touched.' : ERASE_TEXT.archiveKept;
+  const kept = archivePath ? 'The case file ' + archivePath + ' is not touched.' : ERASE_TEXT.archiveKept;
   return [ERASE_TEXT.removes, ERASE_TEXT.stops, kept, ERASE_TEXT.final].join(' ');
 }
 
@@ -55,7 +55,7 @@ export const eraseLintEntries = (): LintEntry[] => [
   ...Object.entries(ERASE_TEXT).map(([id, text]) => ({ id: 'erase.' + id, text })),
   { id: 'erase.sample.prompt', text: erasePromptText('k7m2qx4a') },
   { id: 'erase.sample.body', text: eraseBody() },
-  { id: 'erase.sample.bodyPath', text: eraseBody('D:\\Unravis archive') },
+  { id: 'erase.sample.bodyPath', text: eraseBody('D:\\Unravis archive\\case.unravis-case') },
   { id: 'erase.sample.done', text: eraseDoneText('k7m2qx4a') },
   { id: 'erase.sample.line', text: erasedLineText('q2w7exak', '20 Oct 09:12 UTC') }
 ];

@@ -4,7 +4,7 @@
   import { app, caseErased, goHome, openAnalysis, openCase, openCaseImport, openConnections, openSidePanel, panels } from '../appState.svelte';
   import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, getCaseView, isCaseChanged, isCaseGone, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { archiveButton, readsCaseData, reopenButton, retryAction } from '../caseLifecycle';
-  import { archivedActions, keyEndingOf, type ArchiveDrawerKind } from '../archiveModel';
+  import { archiveFilePath, archivedActions, keyEndingOf, type ArchiveDrawerKind } from '../archiveModel';
   import { ARCHIVE_TEXT, archivedNotice, filesMadeText, restoredNewNotice } from '../copy/archiveCopy';
   import ArchiveDrawers from './ArchiveDrawers.svelte';
   import { CASE_HOME_TEXT, retryKindLabel } from '../copy/caseHomeCopy';
@@ -345,7 +345,7 @@
     <div class="inline-error" role="alert">{CASE_HOME_TEXT.failed}</div>
     <div><button type="button" class="secondary-button" onclick={() => void load(caseId)}>{CASE_HOME_TEXT.retry}</button></div>
   {:else if view === 'erase'}
-    <EraseCase {caseId} onDone={erasedDone} onCancel={() => void backFromDialog()} />
+    <EraseCase {caseId} archivePath={archiveFilePath(currentFile) || undefined} onDone={erasedDone} onCancel={() => void backFromDialog()} />
   {:else if phase === 'locked'}
     <CaseKeyCard {caseId} ending={keyStatus.ending} onOpened={() => void load(caseId)} onCancel={goHome} />
     <div class="actions"><button type="button" class="secondary-button danger" aria-haspopup="dialog" onclick={() => { view = 'erase'; }}>{ERASE_TEXT.open}</button></div>

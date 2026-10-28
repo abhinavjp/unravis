@@ -321,7 +321,7 @@ test('the list shows a locked case by its short code with the key ending, and an
   const locked = startView('locked', [], 1, [{ id: 'k7m2qx4aabcdefghijklmnopqr', at: '2026-10-13T09:00:00Z' }]);
   assert.deepEqual(locked.erased, [], 'a locked PC key shows nothing, not even an Erased line');
   const src = read('src/components/StartScreen.svelte');
-  assert.ok(!/\{#if row\.untrusted\}\s*<span[^>]*role="note"/.test(src), 'an untrusted row has an Open button now');
+  assert.ok(!/\{:else if row\.untrusted\}/.test(src), 'an untrusted row has an Open button now, next to its label');
 });
 
 // ---- the wizard's key step

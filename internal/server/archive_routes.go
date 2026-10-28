@@ -231,7 +231,7 @@ func (h *handler) archiveCase(w http.ResponseWriter, r *http.Request, raw string
 		part:  filepath.Join(folder, name+".part"),
 		final: filepath.Join(folder, name),
 		src: casestore.CaseFileSource{
-			DBPath: dbPath, CaseID: string(id), Title: info.Title, Created: info.Created, Closed: info.Closed, Keys: keys,
+			DBPath: dbPath, CaseID: string(id), Title: info.Title, Created: info.Created, Closed: info.Closed, Keys: keys, OwnKey: kind == casestore.KeyKindCase,
 			Hold: func() (func(), error) { return casestore.HoldCaseDB(context.Background(), dbPath, keys.DB) },
 		},
 	}

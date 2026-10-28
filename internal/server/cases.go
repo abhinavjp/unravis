@@ -750,7 +750,9 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 		if !newKeyChecked(w, key, body.secrets["caseKeyConfirm"]) {
 			return
 		}
-		info, existed, err = ck.CreateWithKey(r.Context(), title, requestID, bytes.Clone(key))
+		kc := bytes.Clone(key)
+		defer clear(kc)
+		info, existed, err = ck.CreateWithKey(r.Context(), title, requestID, kc)
 	} else if _, stray := body.secrets["caseKeyConfirm"]; stray {
 		writeCaseKeyFail(w, http.StatusBadRequest, "bad-request", "The request body is invalid.")
 		return
@@ -1013,6 +1015,11 @@ func eraseCodeMatches(typed string, id casestore.CaseID) bool {
 
 // refuseWhileArchiving answers M15 when the case's archive is running.
 func (h *handler) refuseWhileArchiving(ctx context.Context, id casestore.CaseID) error {
+	// The job is the truth while it runs: a locked keyed case shows no Archiving mark in
+	// the list (its manifest is sealed), but its archive is still writing.
+	if h.caseFiles().jobs.running(jobArchive, id) != nil {
+		return casestore.ErrCancelArchiveFirst
+	}
 	info, found, err := h.caseRow(ctx, id)
 	if err != nil || !found {
 		return err

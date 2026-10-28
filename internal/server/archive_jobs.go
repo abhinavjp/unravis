@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"api-audit-explorer/internal/casestore"
 )
@@ -198,6 +199,32 @@ func (r *fileJobs) stopAll() {
 	r.mu.Unlock()
 	for _, j := range all {
 		j.lockOut()
+	}
+}
+
+// stopCase is a case key lock reaching that case: its running archive and verify
+// stop with the key as the reason, and the call waits (bounded) until they have ended,
+// so nothing is still writing from a key that was just forgotten.
+func (r *fileJobs) stopCase(id casestore.CaseID) {
+	r.mu.Lock()
+	var hit []*fileJob
+	for _, j := range r.m {
+		if j.caseID == id {
+			hit = append(hit, j)
+		}
+	}
+	r.mu.Unlock()
+	for _, j := range hit {
+		j.lockOut()
+	}
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	for _, j := range hit {
+		select {
+		case <-j.done:
+		case <-timer.C:
+			return
+		}
 	}
 }
 

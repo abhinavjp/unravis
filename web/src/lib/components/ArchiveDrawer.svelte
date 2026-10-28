@@ -5,13 +5,13 @@
   import { folderText, jobRunning, needsTypedPassphrase, passphraseOk, type FileJob } from '../archiveModel';
   import { app } from '../appState.svelte';
   import { CaseApiError, JOB_MAX_UNREACHABLE, JOB_POLL_MS, believedState, isCaseChanged, isCaseGone, type CaseInfo } from '../cases';
-  import { ARCHIVE_TEXT, archiveReasonText, jobFailureText, runningText } from '../copy/archiveCopy';
+  import { ARCHIVE_TEXT, archiveReasonText, jobFailureText, keyEndingText, runningText } from '../copy/archiveCopy';
   import { formatBytes } from '../copy/importCopy';
 
   // Archive a case: one folder, one button. It works on an open or a closed case. The file is written, read back and checked on the server;
   // this drawer only asks and shows how far it has got. A passphrase is asked for only when no master key is in use, and it is never kept.
   let { info, onClose, onDone, onChanged, onGone }: {
-    info: Pick<CaseInfo, 'id' | 'title' | 'state' | 'closed' | 'bytes'>;
+    info: Pick<CaseInfo, 'id' | 'title' | 'state' | 'closed' | 'bytes' | 'ownKey' | 'keyEnding'>;
     onClose: () => void;
     /** The archive finished: the page reads the case again. */
     onDone: () => void;
@@ -31,7 +31,10 @@
   let timer: ReturnType<typeof setTimeout> | undefined;
   let alive = true;
 
-  const typed = $derived(needsTypedPassphrase(app.lockState));
+  // A case with a key of its own is sealed with that key: nothing is asked, whatever the master key is doing.
+  const ownKey = $derived(info.ownKey === true);
+  const typed = $derived(!ownKey && needsTypedPassphrase(app.lockState));
+  const sealedText = $derived(ownKey ? [ARCHIVE_TEXT.sealedCase, keyEndingText(info.keyEnding ?? '')].filter(Boolean).join(' · ') : typed ? ARCHIVE_TEXT.sealedTyped : ARCHIVE_TEXT.sealedMaster);
   const running = $derived(jobRunning(job));
   const failed = $derived(job !== null && (job.state === 'failed' || job.state === 'stopped'));
   const finished = $derived(job?.state === 'done');
@@ -126,12 +129,14 @@
       <form class="form" onsubmit={submit}>
         <dl class="facts">
           <div><dt>{ARCHIVE_TEXT.caseSize}</dt><dd>{formatBytes(info.bytes)}</dd></div>
-          <div><dt>{ARCHIVE_TEXT.sealedWith}</dt><dd>{typed ? ARCHIVE_TEXT.sealedTyped : ARCHIVE_TEXT.sealedMaster}</dd></div>
+          <div><dt>{ARCHIVE_TEXT.sealedWith}</dt><dd>{sealedText}</dd></div>
         </dl>
         <label for="archive-folder">{ARCHIVE_TEXT.folderLabel}</label>
         <input id="archive-folder" type="text" bind:value={folder} placeholder={ARCHIVE_TEXT.folderPlaceholder} autocomplete="off" spellcheck="false" disabled={starting} />
         <p class="hint">{ARCHIVE_TEXT.folderHint}</p>
-        {#if typed}
+        {#if ownKey}
+          <p class="hint">{ARCHIVE_TEXT.sealedCaseHint}</p>
+        {:else if typed}
           <label for="archive-pass">{ARCHIVE_TEXT.passphraseLabel}</label>
           <input id="archive-pass" type="password" bind:value={passphrase} autocomplete="new-password" spellcheck="false" disabled={starting} />
           <p class="hint">{ARCHIVE_TEXT.passphraseHint}</p>

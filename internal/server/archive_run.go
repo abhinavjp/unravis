@@ -209,7 +209,7 @@ func (h *handler) runArchive(ctx context.Context, job *fileJob, run archiveRun) 
 		// the mark to the recovery hook, which puts the case back.
 		h.leftOver(run)
 		reason, text := "check-failed", archiveCheckText
-		if errors.Is(err, casestore.ErrLocked) {
+		if errors.Is(err, casestore.ErrLocked) || errors.Is(err, casestore.ErrCaseLocked) {
 			reason, text = "key-locked", archiveStoppedText
 		}
 		job.finish(fileJobFailed, reason, text)

@@ -330,7 +330,9 @@ func (h *handler) caseKeyUnlock(w http.ResponseWriter, r *http.Request, raw stri
 	if !ok {
 		return
 	}
-	err := ck.UnlockCase(r.Context(), id, bytes.Clone(b.secret("passphrase")))
+	pc := bytes.Clone(b.secret("passphrase"))
+	defer clear(pc)
+	err := ck.UnlockCase(r.Context(), id, pc)
 	if errors.Is(err, casestore.ErrWrongCaseKey) {
 		th.fail()
 	}
@@ -378,6 +380,9 @@ func (h *handler) caseKeyLock(w http.ResponseWriter, r *http.Request, raw string
 	h.stopSamplerFor(id, true, stopCaseClosed)
 	stop := h.jobs.cancelCaseUntilStopped(id)
 	stop()
+	// A running archive or check reads with a copy of the key: it stops first, with the
+	// key as its reason, so nothing writes from a key that was just forgotten.
+	h.caseFiles().jobs.stopCase(id)
 	if err := ck.LockCaseKey(id); err != nil {
 		writeCaseKeyError(w, err)
 		return
@@ -413,7 +418,9 @@ func (h *handler) caseKeySet(w http.ResponseWriter, r *http.Request, raw string)
 	h.keyOp.Lock()
 	defer h.keyOp.Unlock()
 	h.stopSamplerFor(id, true, stopCaseClosed)
-	if err := ck.SetCaseKey(r.Context(), id, bytes.Clone(b.secret("passphrase"))); err != nil {
+	pc := bytes.Clone(b.secret("passphrase"))
+	defer clear(pc)
+	if err := ck.SetCaseKey(r.Context(), id, pc); err != nil {
 		writeCaseKeyError(w, err)
 		return
 	}
@@ -452,7 +459,15 @@ func (h *handler) caseKeyChange(w http.ResponseWriter, r *http.Request, raw stri
 	if !ok {
 		return
 	}
-	err = ck.ChangeCaseKey(r.Context(), id, bytes.Clone(b.secret("passphrase")), bytes.Clone(b.secret("newPassphrase")))
+	// A key changed under a running archive makes the file it is writing stale at once.
+	if err := h.refuseWhileArchiving(r.Context(), id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	pc, pn := bytes.Clone(b.secret("passphrase")), bytes.Clone(b.secret("newPassphrase"))
+	defer clear(pc)
+	defer clear(pn)
+	err = ck.ChangeCaseKey(r.Context(), id, pc, pn)
 	if errors.Is(err, casestore.ErrWrongCaseKey) {
 		th.fail()
 	}
@@ -492,8 +507,14 @@ func (h *handler) caseKeyRemove(w http.ResponseWriter, r *http.Request, raw stri
 	if !ok {
 		return
 	}
+	if err := h.refuseWhileArchiving(r.Context(), id); err != nil {
+		writeStoreError(w, err)
+		return
+	}
 	h.stopSamplerFor(id, true, stopCaseClosed)
-	err = ck.RemoveCaseKey(r.Context(), id, bytes.Clone(b.secret("passphrase")))
+	pc := bytes.Clone(b.secret("passphrase"))
+	defer clear(pc)
+	err = ck.RemoveCaseKey(r.Context(), id, pc)
 	if errors.Is(err, casestore.ErrWrongCaseKey) {
 		th.fail()
 	}
@@ -509,7 +530,7 @@ func (h *handler) caseKeyAnswer(w http.ResponseWriter, ck casestore.CaseKeyer, i
 	info, err := ck.CaseKey(id)
 	if err != nil && !info.Has {
 		// No key (Remove) is a normal answer; a missing case is not.
-		if errors.Is(err, casestore.ErrNotFound) {
+		if errors.Is(err, casestore.ErrNotFound) || errors.Is(err, casestore.ErrErasing) {
 			writeCaseKeyError(w, err)
 			return
 		}

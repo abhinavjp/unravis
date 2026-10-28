@@ -45,9 +45,11 @@ export const isCaseId = (id: string): boolean => CASE_ID_PATTERN.test(id);
 /** The short code shown beside a case, and the word typed to erase it. It is also the case8 in evidence ids. */
 export const caseCode = (id: string): string => id.slice(0, 8);
 
-/** True only when the typed text is this case's code (case does not matter, spaces around it do not). */
+/** True only when the typed text is this case's code (case does not matter; spaces and dashes inside it do not, as the server reads it) or its whole id. */
 export function eraseConfirmed(typed: string, id: string): boolean {
-  return isCaseId(id) && typed.trim().toLowerCase() === caseCode(id);
+  if (!isCaseId(id)) return false;
+  if (typed.trim() === id) return true;
+  return typed.toLowerCase().replace(/[ \t-]/g, '') === caseCode(id);
 }
 
 /** A case's place in its life (decisions A7). The page sends what it believes back as X-Expect-State. */

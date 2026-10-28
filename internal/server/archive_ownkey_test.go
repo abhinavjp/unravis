@@ -60,7 +60,7 @@ func TestOwnKeyArchiveVerifyFreeRestoreRoundTrip(t *testing.T) {
 	}
 
 	// Restore as new while the case key is unlocked: the file opens with it.
-	res := a.req(http.MethodPost, "/api/cases/"+id+"/restore-as-new", `{}`, archivedBelief)
+	res := a.req(http.MethodPost, "/api/cases/"+id+"/restore-as-new", `{"passphrase":`+q(ckPass)+`}`, archivedBelief)
 	if res.Code != http.StatusCreated {
 		t.Fatalf("restore as new = %d %s", res.Code, res.Body)
 	}
@@ -82,7 +82,7 @@ func TestOwnKeyArchiveVerifyFreeRestoreRoundTrip(t *testing.T) {
 	if res := a.caseKeyCall(id, "unlock", `{"passphrase":`+q(ckPass)+`}`); res.Code != http.StatusOK {
 		t.Fatalf("unlock of a freed case = %d %s", res.Code, res.Body)
 	}
-	res = a.req(http.MethodPost, "/api/cases/"+id+"/restore-as-new", `{}`, archivedBelief)
+	res = a.req(http.MethodPost, "/api/cases/"+id+"/restore-as-new", `{"passphrase":`+q(ckPass)+`}`, archivedBelief)
 	if res.Code != http.StatusCreated {
 		t.Fatalf("restore with the case unlocked = %d %s", res.Code, res.Body)
 	}
@@ -219,7 +219,7 @@ func TestOwnKeyArchivesAreNotInM12AndSurviveAReset(t *testing.T) {
 	if res := a.caseKeyCall(ownID, "unlock", `{"passphrase":`+q(ckPass)+`}`); res.Code != http.StatusOK {
 		t.Fatalf("unlock = %d %s", res.Code, res.Body)
 	}
-	res := a.req(http.MethodPost, "/api/cases/"+ownID+"/restore-as-new", `{}`, archivedBelief)
+	res := a.req(http.MethodPost, "/api/cases/"+ownID+"/restore-as-new", `{"passphrase":`+q(ckPass)+`}`, archivedBelief)
 	if res.Code != http.StatusCreated {
 		t.Fatalf("restore of the own-key archive after a reset = %d %s", res.Code, res.Body)
 	}

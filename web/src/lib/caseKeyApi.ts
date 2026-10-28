@@ -2,7 +2,7 @@ import { NO_SESSION_MESSAGE, readSessionToken } from './api';
 import { parseCaseKeyStatus } from './caseKey';
 import type { CaseKeyStatus } from './caseKey';
 import { isCaseId } from './cases';
-import { isCaseKeyReason, signalIfAppLocked } from './lockSignal';
+import { LOCKED_STATUS, isCaseKeyReason, signalCasesLocked } from './lockSignal';
 
 /**
  * The per-case key calls (server: internal/server/case_key.go). Every request carries X-Audit-Token.
@@ -55,9 +55,11 @@ async function call(url: string, method: 'GET' | 'POST', body?: Record<string, u
   let parsed: unknown = null;
   try { parsed = await response.json(); } catch { /* an empty or unreadable body is fine */ }
   if (!response.ok) {
-    await signalIfAppLocked(response);
     const fields = parsed && typeof parsed === 'object' ? parsed as { reason?: unknown; retryAfterSeconds?: unknown } : {};
     const reason = typeof fields.reason === 'string' ? fields.reason : '';
+    // The body is already read, so the reason is judged from it here (a clone of a used body throws, which used to read as
+    // "the master key is locked" and threw the whole app to the unlock screen on a wrong case key).
+    if (response.status === LOCKED_STATUS && !isCaseKeyReason(reason)) signalCasesLocked();
     const wait = typeof fields.retryAfterSeconds === 'number' && fields.retryAfterSeconds > 0 ? fields.retryAfterSeconds : undefined;
     throw new CaseKeyApiError('The case key request was refused (' + response.status + ').', response.status, reason, wait);
   }

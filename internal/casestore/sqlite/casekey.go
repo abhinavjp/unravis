@@ -46,11 +46,14 @@ type caseKeys struct {
 	m  map[casestore.CaseID]*ckEntry
 }
 
+// get is a snapshot of the unlocked entry: the keyring (which has its own lock) and
+// the check and ending, copied under the mutex so a later install does not race the
+// reader. The archive key is not in it; archive is the way to that.
 func (c *caseKeys) get(id casestore.CaseID) *ckEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if e := c.m[id]; e != nil && !e.ring.Locked() {
-		return e
+		return &ckEntry{ring: e.ring, check: e.check, ending: e.ending}
 	}
 	return nil
 }
@@ -188,8 +191,11 @@ func (s *Store) CaseKey(id casestore.CaseID) (casestore.CaseKeyInfo, error) {
 	if err != nil {
 		return casestore.CaseKeyInfo{}, err
 	}
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() || erasePending(dir) {
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return casestore.CaseKeyInfo{}, casestore.ErrNotFound
+	}
+	if erasePending(dir) {
+		return casestore.CaseKeyInfo{}, casestore.ErrErasing // M5, not "not found"
 	}
 	if !wrapExists(dir) {
 		return casestore.CaseKeyInfo{}, nil

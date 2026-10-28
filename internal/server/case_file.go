@@ -426,6 +426,12 @@ func (h *handler) restoreCaseFile(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case err == nil:
 		st.restoreTh.reset()
+		if from.OwnKey {
+			if err := h.keepOwnKey(r.Context(), info.ID, b.pass); err != nil {
+				writeCaseFailure(w, http.StatusInternalServerError, "restore-failed", caseFileRestoreFailed)
+				return
+			}
+		}
 		made := time.Now()
 		if fi, serr := os.Stat(src); serr == nil {
 			made = fi.ModTime()

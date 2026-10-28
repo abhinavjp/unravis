@@ -35,6 +35,8 @@ export function isCaseKeyReason(reason: unknown): boolean {
  */
 export async function signalIfAppLocked(response: Response): Promise<void> {
   if (response.status !== LOCKED_STATUS) return;
+  // A body somebody already read cannot be cloned; that is not a reason to lock the whole app.
+  if (response.bodyUsed) return;
   let reason: unknown = '';
   try {
     const body = await response.clone().json() as { reason?: unknown } | null;
