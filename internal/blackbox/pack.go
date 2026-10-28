@@ -148,7 +148,7 @@ func PackReadme(cfg Config) string {
 	b.WriteString("Set up (about two minutes)\r\n--------------------------\r\n")
 	fmt.Fprintf(&b, "1. Copy this folder to the server %s and unzip it there.\r\n", cfg.Name)
 	b.WriteString("2. Open PowerShell as an administrator in the unzipped folder.\r\n")
-	fmt.Fprintf(&b, "3. Run:   .\\unravis-blackbox.exe install --name %s\r\n", cfg.Name)
+	b.WriteString("3. Run:   .\\unravis-blackbox.exe install\r\n")
 	b.WriteString("   The service UnravisBlackbox starts at boot. It makes the READ KEY and prints it\r\n")
 	b.WriteString("   once. Copy it now: only a fingerprint is kept on the server, and the key is not\r\n")
 	b.WriteString("   in this zip.\r\n")
