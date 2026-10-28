@@ -84,3 +84,9 @@ test('Review1-4: "Yes remove" moves the focus to the dialog box before the butto
   assert.match(keeperCard, /if \(kind === 'remove'\) dialogEl\?\.focus\(\);\s*busy = kind;/);
   assert.match(keeperCard, /role="alertdialog"[^>]*tabindex="-1"/);
 });
+
+test('Review1-5: a refused removal shows its alert only after the question has closed', () => {
+  assert.match(keeperCard, /failure = error instanceof Error && error\.message \? error\.message : KEEPER_TEXT\.failed;/);
+  assert.match(keeperCard, /\} finally \{ busy = ''; asking = false; back = kind === 'remove'; \}\s*await tick\(\);\s*problem = failure;\s*await focusCard\(\);/);
+  assert.doesNotMatch(keeperCard, /catch \(error\) \{\s*problem = /);
+});

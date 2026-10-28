@@ -54,13 +54,15 @@
     // The dialog's buttons are disabled while the request runs, so the focus moves to the dialog box before that, not to the page body.
     if (kind === 'remove') dialogEl?.focus();
     busy = kind; problem = ''; done = '';
+    // The message waits until the remove question has closed and released the page: an alert shown inside the held (inert) page is not announced.
+    let failure = '';
     if (kind !== 'remove') refused = false;
     try {
       if (kind === 'retry') await onRetry();
       else if (kind === 'move') onStatus(await api.keeperMigrate());
       else { onStatus(await api.keeperRemoveOld(duplicates > 0)); done = KEEPER_TEXT.removed; }
     } catch (error) {
-      problem = error instanceof Error && error.message ? error.message : KEEPER_TEXT.failed;
+      failure = error instanceof Error && error.message ? error.message : KEEPER_TEXT.failed;
       const code = error instanceof ApiError ? error.code : undefined;
       if (code === 'not-verified' || code === 'duplicates-unconfirmed') {
         // The old copies were kept: fetch the counts again so the card shows what still waits (and the move, when anything does).
@@ -68,6 +70,8 @@
         try { await onRetry(); } catch { /* the message above still says what happened */ }
       }
     } finally { busy = ''; asking = false; back = kind === 'remove'; }
+    await tick();
+    problem = failure;
     await focusCard();
   }
 
