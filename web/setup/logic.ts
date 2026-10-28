@@ -128,6 +128,13 @@ export function welcomeHeading(state: Pick<UIState, 'mode' | 'version' | 'instal
   return 'Install Unravis';
 }
 
+/** The "In a nutshell" sentence on the Welcome step. Upgrade and repair each say what they do. */
+export function welcomeNutshell(op: Op): string {
+  if (op === 'install') return 'Unravis reads audit logs and server health. It never changes your servers.';
+  if (op === 'repair') return 'Repair puts back program files that are missing or damaged. Your settings, cases, saved connections and recordings stay as they are.';
+  return 'Your cases, saved connections and recordings stay as they are. Only the program files change.';
+}
+
 const workNoun: Record<Op, string> = { install: 'Install', upgrade: 'Upgrade', repair: 'Repair', uninstall: 'Removal' };
 
 export function progressHeading(op: Op): string {
@@ -143,6 +150,13 @@ export function failedHeading(result: Pick<Result, 'outcome' | 'op'>): string {
   if (result.outcome === 'rollback-incomplete') return noun + ' did not finish. Some items are left.';
   if (result.outcome === 'cancelled') return noun + ' was cancelled. Nothing was left behind.';
   return noun + ' did not finish. Nothing was left behind.';
+}
+
+/** What a screen reader is told when the window changes screen: where the person is, and on the two end screens how the run ended. */
+export function stepAnnouncement(op: Op, screen: Screen, number: number, count: number, label: string, result: Pick<Result, 'outcome' | 'op' | 'left'> | null): string {
+  if (screen === 'done' && result) return doneHeading(op) + (result.outcome === 'done-with-leftovers' && result.left?.length ? '. Some items are left behind.' : '.');
+  if (screen === 'failed' && result) return failedHeading(result);
+  return 'Step ' + number + ' of ' + count + ': ' + label;
 }
 
 /** Folds the event stream into one row per step, in the order the steps first appeared, keeping the last detail given. */
