@@ -1,6 +1,6 @@
 # Screenshots (for contributors)
 
-The pictures in these pages are made by a script, so they match the program. They live in `buildout/screenshots/<phase>/`, one file for each screen and theme, for example `p1-home-dark.png`.
+The pictures in these pages are made by a script, so they match the program. They live in `docs/user/screenshots/<phase>/`, one file for each screen and theme, for example `p1-home-dark.png`.
 
 ## What you need
 

@@ -30,8 +30,8 @@ function leftovers() {
 function project(files) {
   const root = mkdtempSync(join(tmpdir(), 'unravis-docscheck-'));
   mkdirSync(join(root, 'tools', 'screens'), { recursive: true });
-  mkdirSync(join(root, 'buildout', 'docs'), { recursive: true });
-  mkdirSync(join(root, 'buildout', 'screenshots', 'P1'), { recursive: true });
+  mkdirSync(join(root, 'docs', 'user'), { recursive: true });
+  mkdirSync(join(root, 'docs', 'user', 'screenshots', 'P1'), { recursive: true });
   for (const [path, body] of Object.entries(files)) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), body);
@@ -54,8 +54,8 @@ test('docs-check passes on the real docs and screens', () => {
 test('docs-check passes a sound project', () => {
   const root = project({
     'tools/screens/screens.json': screensFile(screen('p1-home')),
-    'buildout/docs/a.md': '# A\n\n![x](../screenshots/P1/p1-home-dark.png)\n',
-    'buildout/screenshots/P1/p1-home-dark.png': 'png'
+    'docs/user/a.md': '# A\n\n![x](screenshots/P1/p1-home-dark.png)\n',
+    'docs/user/screenshots/P1/p1-home-dark.png': 'png'
   });
   const { code, out } = docsCheck(root);
   assert.equal(code, 0, out);
@@ -64,7 +64,7 @@ test('docs-check passes a sound project', () => {
 test('docs-check fails on an image that does not exist', () => {
   const root = project({
     'tools/screens/screens.json': screensFile(screen('p1-home')),
-    'buildout/docs/a.md': '# A\n\n![x](../screenshots/P1/p1-home-dark.png)\n'
+    'docs/user/a.md': '# A\n\n![x](screenshots/P1/p1-home-dark.png)\n'
   });
   const { code, out } = docsCheck(root);
   assert.equal(code, 1);
@@ -74,7 +74,7 @@ test('docs-check fails on an image that does not exist', () => {
 test('docs-check fails on a screen its page does not mention', () => {
   const root = project({
     'tools/screens/screens.json': screensFile(screen('p1-home')),
-    'buildout/docs/a.md': '# A\n'
+    'docs/user/a.md': '# A\n'
   });
   const { code, out } = docsCheck(root);
   assert.equal(code, 1);
@@ -84,7 +84,7 @@ test('docs-check fails on a screen its page does not mention', () => {
 test('docs-check fails on a screen whose page does not exist', () => {
   const root = project({
     'tools/screens/screens.json': screensFile(screen('p1-home', { doc: 'gone.md' })),
-    'buildout/docs/a.md': '# A\n'
+    'docs/user/a.md': '# A\n'
   });
   const { code, out } = docsCheck(root);
   assert.equal(code, 1);
@@ -94,8 +94,8 @@ test('docs-check fails on a screen whose page does not exist', () => {
 test('docs-check fails on a link to a picture of a screen that is no longer captured', () => {
   const root = project({
     'tools/screens/screens.json': screensFile(screen('p1-home')),
-    'buildout/docs/a.md': 'p1-home\n\n![x](../screenshots/P1/p1-old-dark.png)\n',
-    'buildout/screenshots/P1/p1-old-dark.png': 'png'
+    'docs/user/a.md': 'p1-home\n\n![x](screenshots/P1/p1-old-dark.png)\n',
+    'docs/user/screenshots/P1/p1-old-dark.png': 'png'
   });
   const { code, out } = docsCheck(root);
   assert.equal(code, 1);
@@ -105,7 +105,7 @@ test('docs-check fails on a link to a picture of a screen that is no longer capt
 test('docs-check fails when a screen is listed twice, badly named, or has no steps', () => {
   const root = project({
     'tools/screens/screens.json': screensFile(screen('p1-home'), screen('p1-home'), screen('Home'), screen('p2-x'), screen('p1-empty', { steps: [] })),
-    'buildout/docs/a.md': 'p1-home p1-empty\n'
+    'docs/user/a.md': 'p1-home p1-empty\n'
   });
   const { code, out } = docsCheck(root);
   assert.equal(code, 1);
@@ -118,7 +118,7 @@ test('docs-check fails when a screen is listed twice, badly named, or has no ste
 test('docs-check takes a part phase such as P14b, still tied to its phase', () => {
   const root = project({
     'tools/screens/screens.json': screensFile(screen('p14b-held', { phase: 'P14b' }), screen('p14-held', { phase: 'P14b' })),
-    'buildout/docs/a.md': 'p14b-held p14-held\n'
+    'docs/user/a.md': 'p14b-held p14-held\n'
   });
   const { code, out } = docsCheck(root);
   assert.equal(code, 1);
@@ -273,7 +273,7 @@ test('ci.yml has a manual run that regenerates the screenshot baselines and keep
   assert.match(regen, /RUNNER-BASELINES\.txt/);
   const keep = ciStep('Screenshots - keep the regenerated baselines');
   assert.match(keep, /name: screenshot-baselines/);
-  assert.match(keep, /path: buildout\/screenshots/);
+  assert.match(keep, /path: docs\/user\/screenshots/);
 });
 
 test('ci.yml compare is non-blocking until baselines from the runner are committed, and skipped when regenerating', () => {
@@ -282,7 +282,7 @@ test('ci.yml compare is non-blocking until baselines from the runner are committ
   assert.match(compare, /if: \$\{\{ inputs\.regenerate_baselines != true \}\}/);
   assert.match(compare, /run-screens\.ps1\s*$/m);
   const reference = ciStep('Screenshots - are the saved pictures from this runner?');
-  assert.match(reference, /buildout\/screenshots\/RUNNER-BASELINES\.txt/);
+  assert.match(reference, /docs\/user\/screenshots\/RUNNER-BASELINES\.txt/);
   assert.match(reference, />> \$env:GITHUB_OUTPUT/);
   // The differences are kept even when the compare only warns.
   assert.match(ciStep('Screenshots - keep the differences'), /steps\.compare\.outcome == 'failure'/);

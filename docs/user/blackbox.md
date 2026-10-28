@@ -8,30 +8,30 @@ Screens in this part: `p9-blackbox-list`, `p9-wizard-1`, `p9-wizard-2`, `p9-wiza
 
 Open **Blackbox** in the header, on any screen. The list shows every Blackbox Unravis knows, each with a sticker for its state, how it is reached, the last sample and how often it samples. The Blackbox is not part of a case: it records all the time, before any incident.
 
-![The Blackbox list, dark](../screenshots/P9/p9-blackbox-list-dark.png)
-![The Blackbox list, light](../screenshots/P9/p9-blackbox-list-light.png)
+![The Blackbox list, dark](screenshots/P9/p9-blackbox-list-dark.png)
+![The Blackbox list, light](screenshots/P9/p9-blackbox-list-light.png)
 
 **Place a Blackbox** starts a four-part wizard. Nothing is saved until the last part.
 
 1. **Name.** Letters, numbers and dashes, up to 63 characters. Keep it the same as the server name so cases find it.
 
-![Place a Blackbox, part 1 of 4, dark](../screenshots/P9/p9-wizard-1-dark.png)
-![Place a Blackbox, part 1 of 4, light](../screenshots/P9/p9-wizard-1-light.png)
+![Place a Blackbox, part 1 of 4, dark](screenshots/P9/p9-wizard-1-dark.png)
+![Place a Blackbox, part 1 of 4, light](screenshots/P9/p9-wizard-1-light.png)
 
 2. **Where.** On this PC, Unravis installs the recorder as a Windows service (Windows asks for administrator approval). On another server, Unravis builds a zip, the pack, that you copy there. The pack holds the recorder program, `blackbox.json` and a README. It holds no passwords and no data. If a Blackbox is already installed on this PC, the first choice is off.
 
-![Place a Blackbox, part 2 of 4, dark](../screenshots/P9/p9-wizard-2-dark.png)
-![Place a Blackbox, part 2 of 4, light](../screenshots/P9/p9-wizard-2-light.png)
+![Place a Blackbox, part 2 of 4, dark](screenshots/P9/p9-wizard-2-dark.png)
+![Place a Blackbox, part 2 of 4, light](screenshots/P9/p9-wizard-2-light.png)
 
 3. **Settings.** The sampling interval (5, 15, 30 or 60 seconds), what to record, how long to keep it, the size limit, the free disk to keep, the folder, the port and the address it listens on. The defaults match the table in What it records. The listen address stays `127.0.0.1` unless you change it (decision A53).
 
-![Place a Blackbox, part 3 of 4, dark](../screenshots/P9/p9-wizard-3-dark.png)
-![Place a Blackbox, part 3 of 4, light](../screenshots/P9/p9-wizard-3-light.png)
+![Place a Blackbox, part 3 of 4, dark](screenshots/P9/p9-wizard-3-dark.png)
+![Place a Blackbox, part 3 of 4, light](screenshots/P9/p9-wizard-3-light.png)
 
 4. **Review.** One screen with every choice. **Install and start here** or **Download the pack** is the only button that changes anything.
 
-![Place a Blackbox, part 4 of 4, dark](../screenshots/P9/p9-wizard-4-dark.png)
-![Place a Blackbox, part 4 of 4, light](../screenshots/P9/p9-wizard-4-light.png)
+![Place a Blackbox, part 4 of 4, dark](screenshots/P9/p9-wizard-4-dark.png)
+![Place a Blackbox, part 4 of 4, light](screenshots/P9/p9-wizard-4-light.png)
 
 **On this PC.** Install runs the recorder's own `install` through a small helper that Windows asks you to approve. Unravis makes the read key itself and seals it on this PC with Windows data protection the moment it exists. It is shown again only when you press **Show** or **Copy** on that Blackbox's status screen, and only for the Blackbox on this PC: the row stays masked until then, is hidden again after 30 seconds, and the key is never written to a log, a case file or a stored answer. A key you typed for another server is never shown back. If the install fails, it is undone and nothing is left half done. The page then offers **Start**, **Stop**, **Apply settings** (restarts the service with new settings), **Snapshot now** (copies the recordings into one folder) and **Remove**. Remove keeps the recordings unless you tick **Delete the recordings too**, which needs the exact Blackbox name typed.
 
@@ -69,37 +69,37 @@ Every Blackbox is in one of nine states. The sticker carries the word, and the r
 | Incomplete | Partly ready | The recording has gaps. A gap of up to 2 minutes only warns. A longer gap makes the minutes inside it Cannot test yet. |
 | Not placed | Cannot test yet | A this-PC entry whose service is gone. Place a Blackbox again, or forget the place. |
 
-![State Running, web-a, dark](../screenshots/P9/p9-state-running-dark.png)
-![State Running, web-a, light](../screenshots/P9/p9-state-running-light.png)
+![State Running, web-a, dark](screenshots/P9/p9-state-running-dark.png)
+![State Running, web-a, light](screenshots/P9/p9-state-running-light.png)
 
 The Blackbox on this PC also shows its read key, masked. **Show** reveals it for 30 seconds and **Hide** puts it away at once. **Copy** puts it on the clipboard without showing it. This is for giving the key to another PC's Unravis. The demo key in the picture is made up.
 
-![The read key of web-a shown, dark](../screenshots/P9/p9-read-key-dark.png)
-![The read key of web-a shown, light](../screenshots/P9/p9-read-key-light.png)
+![The read key of web-a shown, dark](screenshots/P9/p9-read-key-dark.png)
+![The read key of web-a shown, light](screenshots/P9/p9-read-key-light.png)
 
-![State Running late, web-b, dark](../screenshots/P9/p9-state-running-late-dark.png)
-![State Running late, web-b, light](../screenshots/P9/p9-state-running-late-light.png)
+![State Running late, web-b, dark](screenshots/P9/p9-state-running-late-dark.png)
+![State Running late, web-b, light](screenshots/P9/p9-state-running-late-light.png)
 
-![State Stopped, web-old, dark](../screenshots/P9/p9-state-stopped-dark.png)
-![State Stopped, web-old, light](../screenshots/P9/p9-state-stopped-light.png)
+![State Stopped, web-old, dark](screenshots/P9/p9-state-stopped-dark.png)
+![State Stopped, web-old, light](screenshots/P9/p9-state-stopped-light.png)
 
-![State Disk low, web-c, dark](../screenshots/P9/p9-state-disk-low-dark.png)
-![State Disk low, web-c, light](../screenshots/P9/p9-state-disk-low-light.png)
+![State Disk low, web-c, dark](screenshots/P9/p9-state-disk-low-dark.png)
+![State Disk low, web-c, light](screenshots/P9/p9-state-disk-low-light.png)
 
-![State Clock differs, web-d, dark](../screenshots/P9/p9-state-clock-differs-dark.png)
-![State Clock differs, web-d, light](../screenshots/P9/p9-state-clock-differs-light.png)
+![State Clock differs, web-d, dark](screenshots/P9/p9-state-clock-differs-dark.png)
+![State Clock differs, web-d, light](screenshots/P9/p9-state-clock-differs-light.png)
 
-![State Not found, old-box, dark](../screenshots/P9/p9-state-not-found-dark.png)
-![State Not found, old-box, light](../screenshots/P9/p9-state-not-found-light.png)
+![State Not found, old-box, dark](screenshots/P9/p9-state-not-found-dark.png)
+![State Not found, old-box, light](screenshots/P9/p9-state-not-found-light.png)
 
-![State Unreachable, web-e, dark](../screenshots/P9/p9-state-unreachable-dark.png)
-![State Unreachable, web-e, light](../screenshots/P9/p9-state-unreachable-light.png)
+![State Unreachable, web-e, dark](screenshots/P9/p9-state-unreachable-dark.png)
+![State Unreachable, web-e, light](screenshots/P9/p9-state-unreachable-light.png)
 
-![State Incomplete, web-f, dark](../screenshots/P9/p9-state-incomplete-dark.png)
-![State Incomplete, web-f, light](../screenshots/P9/p9-state-incomplete-light.png)
+![State Incomplete, web-f, dark](screenshots/P9/p9-state-incomplete-dark.png)
+![State Incomplete, web-f, light](screenshots/P9/p9-state-incomplete-light.png)
 
-![State Not placed, web-g, dark](../screenshots/P9/p9-state-not-placed-dark.png)
-![State Not placed, web-g, light](../screenshots/P9/p9-state-not-placed-light.png)
+![State Not placed, web-g, dark](screenshots/P9/p9-state-not-placed-dark.png)
+![State Not placed, web-g, light](screenshots/P9/p9-state-not-placed-light.png)
 
 **Clock differs** is only checked for an address, where the server reports its own clock. **Disk low** for a folder or share comes from the recorder's own pause and resume events in the manifest. A recording in a newer format than Unravis knows, a refused key and a throttled address all show as **Unreachable**, with the reason in the detail line.
 
@@ -111,8 +111,8 @@ Step 9, Host and network, asks one question: was the web server or the SQL serve
 
 To use one, open the case, open **Blackbox** in the header, open the Blackbox and press **Use in this case**. A case reads one Blackbox, so press **Stop using it in this case** before choosing another. Stopping only takes the name out of the case. The Blackbox and its recordings are as they were.
 
-![Step 9 read from web-a, dark](../screenshots/P9/p9-step-9-dark.png)
-![Step 9 read from web-a, light](../screenshots/P9/p9-step-9-light.png)
+![Step 9 read from web-a, dark](screenshots/P9/p9-step-9-dark.png)
+![Step 9 read from web-a, light](screenshots/P9/p9-step-9-light.png)
 
 The panel can also run the same read by hand: open a Blackbox, open **Read for a case window**, type the two windows (UTC) and press **Read the host for these windows**. This is how the pictures here were made. In this release the host data gives CPU, memory, disk and network. Checks that need the database or the process list stay **Cannot test yet**, so Step 9 is at most **Partly ready**.
 
@@ -123,8 +123,8 @@ A recording can have holes: the PC was busy, the service was restarted, the shar
 - A gap of **2 minutes or less** only warns. The check runs on the minutes that exist.
 - A gap of **more than 2 minutes** is not tested. Those minutes say **Cannot test yet**, and the warning lists each one with its start, end and which window it falls in.
 
-![A gap longer than 2 minutes in the reference window of web-b, dark](../screenshots/P9/p9-gap-warning-dark.png)
-![A gap longer than 2 minutes in the reference window of web-b, light](../screenshots/P9/p9-gap-warning-light.png)
+![A gap longer than 2 minutes in the reference window of web-b, dark](screenshots/P9/p9-gap-warning-dark.png)
+![A gap longer than 2 minutes in the reference window of web-b, light](screenshots/P9/p9-gap-warning-light.png)
 
 If the Blackbox is removed from this PC while a case uses it, the entry stays and shows Not placed. The case says the Blackbox could not be read, and Step 9 is not Ready. If the entry is also forgotten, the case says the Blackbox is no longer in the list. The case itself is not changed. Reading never changes the Blackbox.
 

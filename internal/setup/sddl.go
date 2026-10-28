@@ -9,7 +9,7 @@ import (
 	"api-audit-explorer/internal/keeper"
 )
 
-// The permissions setup sets, as SDDL. The shared folder lists are the ones in buildout/docs/security.md ("The shared data folder"):
+// The permissions setup sets, as SDDL. The shared folder lists are the ones in docs/user/security.md ("The shared data folder"):
 //
 //   - C:\ProgramData\Unravis and its cases folder: owner Administrators; SYSTEM, Administrators and the keeper's service account have
 //     full control; Users may read the folder and add files and folders to it, and modify what is inside only through inherit-only

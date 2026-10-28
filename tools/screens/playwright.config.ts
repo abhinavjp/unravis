@@ -24,7 +24,7 @@ export default defineConfig({
   reporter: [['list']],
   outputDir: './test-results',
   timeout: 60_000,
-  snapshotPathTemplate: '../../buildout/screenshots/{arg}-{projectName}{ext}',
+  snapshotPathTemplate: '../../docs/user/screenshots/{arg}-{projectName}{ext}',
   expect: {
     toHaveScreenshot: { maxDiffPixelRatio: 0.001, animations: 'disabled', caret: 'hide' }
   },

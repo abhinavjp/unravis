@@ -6,8 +6,8 @@ A source is where Unravis reads from: an audit log, a SQL Server or a MongoDB. U
 
 Press the sources button in the header to see the sources Unravis knows and to choose which ones to include in the analysis.
 
-![The Sources drawer, dark](../screenshots/P1/p1-connections-dark.png)
-![The Sources drawer, light](../screenshots/P1/p1-connections-light.png)
+![The Sources drawer, dark](screenshots/P1/p1-connections-dark.png)
+![The Sources drawer, light](screenshots/P1/p1-connections-light.png)
 
 The demo uses sample sources and does not let you add real ones, so the pictures above show the drawer with adding blocked. Pictures with a connected source arrive with the connection phase.
 
@@ -23,8 +23,8 @@ Pictures for this page come from the screenshot tool (see `screenshots.md`). Eac
 
 Screen `p7-connections` lists every saved connection, SQL Server and MongoDB, in one list. Each row shows its name, whether a password is saved, and the result of its last test.
 
-![The connections list, dark](../screenshots/P7/p7-connections-dark.png)
-![The connections list, light](../screenshots/P7/p7-connections-light.png)
+![The connections list, dark](screenshots/P7/p7-connections-dark.png)
+![The connections list, light](screenshots/P7/p7-connections-light.png)
 
 - A test says only Works, Failed or Not tested. These three words are for a connection test and nothing else. A source is never "Works". It is Ready, Partly ready, Cannot test yet or Failed.
 - The last test result is kept only while the page is open. It is not saved in the case.
@@ -40,18 +40,18 @@ When Unravis is installed for everyone on a PC, saved passwords live in the Unra
 
 Screen `p14-connection-saved`: a row whose password is saved says "Password held by the key keeper". Test, the fixed checks and Add data still work with it: the keeper runs them and sends back only the result. The note under the list says where passwords are kept.
 
-![A saved connection held by the key keeper, dark](../screenshots/P14/p14-connection-saved-dark.png)
-![A saved connection held by the key keeper, light](../screenshots/P14/p14-connection-saved-light.png)
+![A saved connection held by the key keeper, dark](screenshots/P14/p14-connection-saved-dark.png)
+![A saved connection held by the key keeper, light](screenshots/P14/p14-connection-saved-light.png)
 
 Screen `p14-keeper-stopped`: when the keeper service is not running, the page says so above the list and offers Check again. Nothing that needs a saved password runs until it is back. Connections that need no password still work. The page does not mistake this for the demo.
 
-![The key keeper is not running, dark](../screenshots/P14/p14-keeper-stopped-dark.png)
-![The key keeper is not running, light](../screenshots/P14/p14-keeper-stopped-light.png)
+![The key keeper is not running, dark](screenshots/P14/p14-keeper-stopped-dark.png)
+![The key keeper is not running, light](screenshots/P14/p14-keeper-stopped-light.png)
 
 Screen `p14-migrate`: saved connections you made before the PC was set up for everyone are still in your own folder. The page counts them and offers Move them, or Not now. After the move, the page offers Remove old copies, which asks once. The old files are removed only then, and only once every one of them is in the keeper. Where this page is the whole screen, Move them is its main button and + SQL Server is outlined while the card shows; on case home, which has its own main button, both are outlined.
 
-![Move saved connections to the key keeper, dark](../screenshots/P14/p14-migrate-dark.png)
-![Move saved connections to the key keeper, light](../screenshots/P14/p14-migrate-light.png)
+![Move saved connections to the key keeper, dark](screenshots/P14/p14-migrate-dark.png)
+![Move saved connections to the key keeper, light](screenshots/P14/p14-migrate-light.png)
 
 The demo shows these three states only for the pictures. It never runs a keeper and never keeps a password.
 
@@ -61,13 +61,13 @@ On a PC set up for everyone, an audit source added from a saved MongoDB link is 
 
 Screen `p14b-source-held`: in the Audit sources menu, a source the keeper opened says "Password held by the key keeper". This is a sticker, not a button. Nothing asks for a password.
 
-![An audit source opened by the key keeper, dark](../screenshots/P14b/p14b-source-held-dark.png)
-![An audit source opened by the key keeper, light](../screenshots/P14b/p14b-source-held-light.png)
+![An audit source opened by the key keeper, dark](screenshots/P14b/p14b-source-held-dark.png)
+![An audit source opened by the key keeper, light](screenshots/P14b/p14b-source-held-light.png)
 
 Screen `p14b-source-stopped`: when the keeper is not running, those sources stay in the menu, their sticker says the password cannot be used until the keeper runs again, and a note above the list says they cannot be read. Sources whose password you typed still work. Remove still works: it only takes the source off the list.
 
-![Audit sources while the key keeper is not running, dark](../screenshots/P14b/p14b-source-stopped-dark.png)
-![Audit sources while the key keeper is not running, light](../screenshots/P14b/p14b-source-stopped-light.png)
+![Audit sources while the key keeper is not running, dark](screenshots/P14b/p14b-source-stopped-dark.png)
+![Audit sources while the key keeper is not running, light](screenshots/P14b/p14b-source-stopped-light.png)
 
 - A read the keeper refuses because it is not running, or because it closed the source, makes the page read the source list again. A source the keeper closed leaves the list the way Remove takes it off, and you add it again from the saved link.
 - The keeper closes the sources of an Unravis that has not asked for anything in 8 hours, and when it restarts. It keeps sources open for at most 16 running Unravis programs at once, 4 per Windows account. Past that it answers that it is full (`keeper-full`), and you close another Unravis or wait.
@@ -80,13 +80,13 @@ The demo shows these two states only for the pictures (`#keeper=saved` and `#kee
 
 Screen `p7-sql-form` is the form for one SQL Server connection. Save, Test and Cancel are all outlined while the form sits on case home, because case home already has its main button. Leave the password box empty on an edit to keep the saved password.
 
-![The SQL Server connection form, dark](../screenshots/P7/p7-sql-form-dark.png)
-![The SQL Server connection form, light](../screenshots/P7/p7-sql-form-light.png)
+![The SQL Server connection form, dark](screenshots/P7/p7-sql-form-dark.png)
+![The SQL Server connection form, light](screenshots/P7/p7-sql-form-light.png)
 
 Screen `p7-sql-test-ok` is the same form after Test: the word Works and the server version sit under the buttons, and no password is shown.
 
-![A SQL Server connection test that works, dark](../screenshots/P7/p7-sql-test-ok-dark.png)
-![A SQL Server connection test that works, light](../screenshots/P7/p7-sql-test-ok-light.png)
+![A SQL Server connection test that works, dark](screenshots/P7/p7-sql-test-ok-dark.png)
+![A SQL Server connection test that works, light](screenshots/P7/p7-sql-test-ok-light.png)
 
 ### Step 7: SQL Server
 
@@ -103,8 +103,8 @@ A check that cannot run says Cannot test yet and shows the permission it is miss
 
 Screen `p7-step-7` is Step 7. With no SQL Server read yet it says Cannot test yet, shows the grant script and offers to add one.
 
-![Step 7, SQL Server, dark](../screenshots/P7/p7-step-7-dark.png)
-![Step 7, SQL Server, light](../screenshots/P7/p7-step-7-light.png)
+![Step 7, SQL Server, dark](screenshots/P7/p7-step-7-dark.png)
+![Step 7, SQL Server, light](screenshots/P7/p7-step-7-light.png)
 
 ### Grants for the owner to run
 
@@ -121,10 +121,10 @@ SQL Server 2019 and earlier name some permissions differently from 2022 and late
 
 Screens `p7-grant-script-2019` and `p7-grant-script-2022` show the same panel with each version chosen. Type the login and the audit database to fill them into the script. The version is read from the server on a read, and 2022 is assumed when it is unknown.
 
-![The grant script for SQL Server 2019 or earlier, dark](../screenshots/P7/p7-grant-script-2019-dark.png)
-![The grant script for SQL Server 2019 or earlier, light](../screenshots/P7/p7-grant-script-2019-light.png)
-![The grant script for SQL Server 2022 or later, dark](../screenshots/P7/p7-grant-script-2022-dark.png)
-![The grant script for SQL Server 2022 or later, light](../screenshots/P7/p7-grant-script-2022-light.png)
+![The grant script for SQL Server 2019 or earlier, dark](screenshots/P7/p7-grant-script-2019-dark.png)
+![The grant script for SQL Server 2019 or earlier, light](screenshots/P7/p7-grant-script-2019-light.png)
+![The grant script for SQL Server 2022 or later, dark](screenshots/P7/p7-grant-script-2022-dark.png)
+![The grant script for SQL Server 2022 or later, light](screenshots/P7/p7-grant-script-2022-light.png)
 
 ### Step 8: MongoDB
 
@@ -134,8 +134,8 @@ Step 8 currently checks the slow operations the profiler recorded (answer M6) an
 
 Screen `p7-step-8` is Step 8. With no MongoDB server read it says Cannot test yet and shows the roles script and the profiler guide.
 
-![Step 8, MongoDB, dark](../screenshots/P7/p7-step-8-dark.png)
-![Step 8, MongoDB, light](../screenshots/P7/p7-step-8-light.png)
+![Step 8, MongoDB, dark](screenshots/P7/p7-step-8-dark.png)
+![Step 8, MongoDB, light](screenshots/P7/p7-step-8-light.png)
 
 ### The profiler guide
 
@@ -149,8 +149,8 @@ Screen: Add data tab. It has five cards: SQL Server, MongoDB, Blackbox, Files an
 
 Screen `p7-add-day` reads more hours of a SQL Server the case already holds, for example the day after a fix. The times start as the same hours on the next day and are UTC. They are read as typed and strictly: a time that cannot be read is refused, not guessed.
 
-![Add another day, dark](../screenshots/P7/p7-add-day-dark.png)
-![Add another day, light](../screenshots/P7/p7-add-day-light.png)
+![Add another day, dark](screenshots/P7/p7-add-day-dark.png)
+![Add another day, light](screenshots/P7/p7-add-day-light.png)
 
 - Only SQL Server can be read by day. MongoDB is listed as Not by day, because the profiler keeps only the latest entries and an older day cannot be read.
 - A day is added next to the days already held. Nothing is replaced.
@@ -162,8 +162,8 @@ Screen `p7-add-day` reads more hours of a SQL Server the case already holds, for
 
 Screen `p7-nothing-read` appears when the server answered but every check came back Cannot test yet and none has a grant to fix. The case is not broken. The hours may be wrong, or that hour is before the system was used. The screen lists what the case can and cannot answer and offers Add another day or Add data. It never says a check passed. In the capture demo it is the case Report export timeouts, 18 October, which holds one SQL Server day with nothing read.
 
-![Nothing could be read, dark](../screenshots/P7/p7-nothing-read-dark.png)
-![Nothing could be read, light](../screenshots/P7/p7-nothing-read-light.png)
+![Nothing could be read, dark](screenshots/P7/p7-nothing-read-dark.png)
+![Nothing could be read, light](screenshots/P7/p7-nothing-read-light.png)
 
 ### What each combination can answer
 
