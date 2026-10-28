@@ -15,7 +15,7 @@ import { forgetSavedRecord, forgetSourceSaved, registerSourceSaved, resolveSaved
 import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './types';
 import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './breakdown';
 import type { RunningImport } from './cases';
-import { afterUnlock, createRoute, go as moveScreen, initialScreen, leavesCaseWork, type Screen } from './screenFlow';
+import { afterUnlock, createRoute, go as moveScreen, initialScreen, leavesCaseWork, setupReturn, type Screen } from './screenFlow';
 import { onCasesLocked } from './lockSignal';
 import { requestCase } from './startIntent';
 import { CASE_RESTORE_TEXT } from './copy/caseRestoreCopy';
@@ -88,6 +88,8 @@ let dpapiCases = $state(0);
 let lockError = $state('');
 // Where a successful unlock returns to: the screen that was interrupted, or the first screen the person would have had.
 let unlockOrigin: Screen | null = null;
+// Where set-up was opened from ('case' returns there; anything else returns to the start screen). Read once on the way out of set-up.
+let setupOrigin: Screen | null = null;
 // The case the person is working in. The case home, the theories and the analysis screen's case tools all follow it. Empty until one is opened.
 // This tab remembers it, so a reload keeps the case and its theories instead of falling back to the older shared list.
 const ACTIVE_CASE_KEY = 'unravis.activeCase';
@@ -470,12 +472,15 @@ function devLog(text: string) {
 }
 /** Asks to move to another screen. A move the table does not allow is ignored (and logged in dev); returns whether the app is on `to` now. */
 export function go(to: Screen): boolean {
+  // Leaving set-up with "Later" or "Continue" (both ask for 'start') goes back to where set-up was opened from.
+  if (screen === 'setup' && to === 'start' && setupOrigin) to = setupReturn(setupOrigin);
   const move = moveScreen(screen, to);
   if (!move.ok) { devLog(move.reason); return false; }
   if (move.screen === screen) return true;
   // Leaving the working screen puts away its case panel. The case itself stays open on the server; nothing is closed or erased.
   if (leavesCaseWork(move.screen) && sidePanel) void closeSidePanel();
   screen = move.screen;
+  if (move.screen !== 'setup') setupOrigin = null;
   // Arriving at the case or the analysis with a case open: bring back what the case saved, once (see restoreCaseWorkspace).
   if ((move.screen === 'running' || move.screen === 'case') && activeCaseId && restoredCaseId !== activeCaseId && restorePhase === 'idle' && info && !info.demo) void restoreCaseWorkspace(activeCaseId);
   return true;
@@ -520,6 +525,7 @@ export function finishUnlock(status: KeyStatus) {
 export function finishReset(status: KeyStatus) {
   noteKeyStatus(status);
   unlockOrigin = null;
+  setupOrigin = null;
   lockError = '';
   go('start');
   go('setup');
@@ -776,7 +782,10 @@ export function startCreate() {
   const route = createRoute();
   if (go(route.screen) && route.panel) openSidePanel(route.panel);
 }
-export function openKeySetup() { go('setup'); }
+export function openKeySetup() {
+  const from = screen;
+  if (go('setup')) setupOrigin = from === 'case' ? 'case' : null;
+}
 // A 401 means the session was forgotten: the evidence memo must not serve anything shown under it.
 function message(cause: unknown) { if (cause instanceof ApiError && cause.status === 401) bumpEpoch(); return cause instanceof Error ? cause.message : 'The request could not be completed.'; }
 function friendlyConnectionStage(cause: unknown) {

@@ -274,3 +274,12 @@ test('the header offers Lock only while the key is open, and the case routes han
 test('master key copy passes the copy lint', () => {
   assert.deepEqual(lintScreenStrings(masterKeyLintEntries(), deck.terms).map((f) => f.id + ': ' + f.message), []);
 });
+
+test('opening the set-up from a case page is allowed and finishing returns there (D-A-15)', () => {
+  const flow = loadTypeScript('src/lib/screenFlow.ts');
+  assert.equal(flow.canGo('case', 'setup'), true);
+  assert.equal(flow.canGo('setup', 'case'), true);
+  assert.equal(flow.canGo('setup', 'running'), false);
+  const src = read('src/lib/appState.svelte.ts');
+  assert.match(src, /export function openKeySetup\(\) \{[^}]*go\('setup'\)[^}]*setupOrigin = from === 'case' \? 'case' : null/s);
+});

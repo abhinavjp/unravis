@@ -250,11 +250,11 @@ const { SCREENS: SCREEN_LIST, canGo, go: moveScreen, initialScreen, afterUnlock,
 const LEGAL_MOVES = {
   loading: ['unlock', 'start', 'running'],
   unlock: ['start', 'running', 'create', 'case'],
-  setup: ['start', 'unlock'],
+  setup: ['start', 'unlock', 'case'],
   start: ['setup', 'create', 'running', 'unlock', 'case'],
   create: ['start', 'running', 'unlock', 'case'],
   running: ['start', 'unlock', 'case'],
-  case: ['start', 'running', 'create', 'unlock']
+  case: ['start', 'running', 'create', 'unlock', 'setup']
 };
 
 test('every legal screen move is allowed and returns the target screen', () => {
@@ -276,9 +276,9 @@ test('every move outside the table is refused, keeps the current screen, and say
       assert.match(move.reason, new RegExp(from + '.*' + to));
     }
   }
-  // The named illegal ones: nothing goes back to loading, and set-up cannot jump into the analysis.
+  // The named illegal ones: nothing goes back to loading, and set-up can only go back to start, unlock or the case it was opened from.
   assert.equal(moveScreen('running', 'loading').ok, false);
-  assert.equal(moveScreen('setup', 'running').ok, false);
+  assert.equal(moveScreen('setup', 'create').ok, false);
   assert.equal(moveScreen('unlock', 'setup').ok, false);
 });
 
