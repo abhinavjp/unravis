@@ -225,8 +225,8 @@ func TestDemoCasesSeedFiveCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	for _, c := range list {
 		byID[c["id"].(string)] = c
 	}
-	if len(list) != 5 {
-		t.Fatalf("got %d cases, want 5: %v", len(list), list)
+	if len(list) != 6 {
+		t.Fatalf("got %d cases, want 6 (the Missing one is listed with the others): %v", len(list), list)
 	}
 	want := func(id, title string, created time.Time, closed *time.Time, imports float64) {
 		t.Helper()
@@ -264,6 +264,9 @@ func TestDemoCasesSeedFiveCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	want(string(demoCaseStaleID), "Ledger posting lag, 12 October", demoTestNow.Add(-8*day), &staleClosedAt, 1)
 	if u := byID[string(demoCaseUntrustedID)]; u == nil || u["untrusted"] != true {
 		t.Errorf("the untrusted demo case = %v, want untrusted", u)
+	}
+	if m := byID[string(demoCaseMissingID)]; m == nil || m["missing"] != true {
+		t.Errorf("the missing demo case = %v, want missing", m)
 	}
 }
 
@@ -467,5 +470,56 @@ func TestDemoCasesHoldAClosedCaseAndTwoRetryItems(t *testing.T) {
 	}
 	if open := view(demoCaseOpenID); open["state"] != "open" {
 		t.Errorf("the open demo case is %v", open["state"])
+	}
+}
+
+// The archived demo cases live in their own list, newest archive first, and the
+// default list only counts them.
+func TestDemoArchivedCasesAreInTheirOwnList(t *testing.T) {
+	h, closeCases := seededServer(t, t.TempDir())
+	defer closeCases()
+	get := func(path string) (out struct {
+		Cases         []map[string]any `json:"cases"`
+		ArchivedTotal int              `json:"archivedTotal"`
+	}) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "127.0.0.1:8765"
+		req.Header.Set("X-Audit-Token", demoTestToken)
+		res := httptest.NewRecorder()
+		h.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d %s", path, res.Code, res.Body)
+		}
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	def := get("/api/cases")
+	if def.ArchivedTotal != 2 {
+		t.Errorf("archivedTotal = %d, want 2", def.ArchivedTotal)
+	}
+	for _, c := range def.Cases {
+		if c["state"] == "archived" {
+			t.Errorf("the default list holds an archived case: %v", c)
+		}
+	}
+	arch := get("/api/cases?archived=1")
+	if len(arch.Cases) != 2 {
+		t.Fatalf("archived list = %v, want 2 cases", arch.Cases)
+	}
+	if arch.Cases[0]["id"] != string(demoCaseArchivedID) || arch.Cases[1]["id"] != string(demoCaseFreedID) {
+		t.Errorf("order = %v then %v, want newest archive first (kept, then freed)", arch.Cases[0]["id"], arch.Cases[1]["id"])
+	}
+	freed := arch.Cases[1]["archive"].(map[string]any)
+	if freed["freed"] != true {
+		t.Errorf("the freed demo case = %v, want freed", freed)
+	}
+	if kept := arch.Cases[0]["archive"].(map[string]any); kept["freed"] != false {
+		t.Errorf("the kept demo case = %v, want kept", kept)
+	}
+	if page := get("/api/cases?archived=1&offset=1"); len(page.Cases) != 1 {
+		t.Errorf("offset 1 gave %d cases, want 1", len(page.Cases))
 	}
 }
