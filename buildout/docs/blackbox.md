@@ -104,6 +104,8 @@ Screens in this part: `p9-step-9`, `p9-gap-warning`.
 
 Step 9, Host and network, asks one question: was the web server or the SQL server short of CPU, memory or disk? A case that names a Blackbox as a source reads it once, for the incident window and the reference window. The case keeps only the Blackbox name. It never keeps the address, the folder or the read key.
 
+To use one, open the case, open **Blackbox** in the header, open the Blackbox and press **Use in this case**. A case reads one Blackbox, so press **Stop using it in this case** before choosing another. Stopping only takes the name out of the case. The Blackbox and its recordings are as they were.
+
 ![Step 9 read from web-a, dark](../screenshots/P9/p9-step-9-dark.png)
 ![Step 9 read from web-a, light](../screenshots/P9/p9-step-9-light.png)
 

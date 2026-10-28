@@ -177,3 +177,60 @@ test('a not-placed entry offers to place a Blackbox or forget the place, and the
   assert.ok(BB_TEXT.removeNotPlaced && BB_TEXT.removeNotPlaced.length > 20);
   assert.match(read('src/components/BlackboxRemove.svelte'), /gone/);
 });
+
+/* ---------------------------------------------------------- use in a case (F1) */
+
+const bbCase = loadTypeScript('src/lib/blackboxCase.ts');
+
+function fakeCaseApi(start = []) {
+  const tags = start.map((t, i) => ({ id: i + 1, ...t }));
+  const calls = [];
+  return {
+    tags, calls,
+    async listTags() { calls.push('list'); return tags.map((t) => ({ ...t })); },
+    async postTag(caseId, tag) { calls.push(['post', tag]); const t = { id: tags.length + 10, kind: tag.kind, label: tag.label }; tags.push(t); return t; },
+    async removeTag(caseId, id) { calls.push(['remove', id]); const i = tags.findIndex((t) => t.id === id); if (i >= 0) tags.splice(i, 1); }
+  };
+}
+
+test('the tag a case keeps for a Blackbox is the name and nothing else', () => {
+  assert.deepEqual({ ...bbCase.blackboxTag(' web-a ') }, { importId: 0, kind: 'blackbox', label: 'web-a', env: '', portal: '', api: '', classification: '' });
+});
+
+test('use in this case adds the name tag once, and a second press adds nothing', async () => {
+  const api = fakeCaseApi();
+  const first = await bbCase.useInCase(api, 'c', 'web-a');
+  assert.equal(first.state, 'this');
+  const again = await bbCase.useInCase(api, 'c', 'WEB-A');
+  assert.equal(again.state, 'this');
+  assert.equal(api.calls.filter((c) => c[0] === 'post').length, 1);
+  assert.equal(api.tags.length, 1);
+  assert.equal(api.tags[0].label, 'web-a');
+});
+
+test('a case reads one Blackbox, so a second one is refused until the first is taken out', async () => {
+  const api = fakeCaseApi([{ kind: 'blackbox', label: 'web-b' }, { kind: 'iis', label: 'web-b' }]);
+  const r = await bbCase.useInCase(api, 'c', 'web-a');
+  assert.deepEqual({ ...r }, { state: 'other', name: 'web-b' });
+  assert.equal(api.calls.filter((c) => c[0] === 'post').length, 0);
+  await bbCase.stopUsingInCase(api, 'c', 'web-b');
+  assert.equal((await bbCase.useInCase(api, 'c', 'web-a')).state, 'this');
+});
+
+test('stop using takes out only the Blackbox tag of that name', async () => {
+  const api = fakeCaseApi([{ kind: 'iis', label: 'web-a' }, { kind: 'blackbox', label: 'web-a' }]);
+  assert.equal((await bbCase.stopUsingInCase(api, 'c', 'web-a')).state, 'none');
+  assert.deepEqual(api.tags.map((t) => t.kind), ['iis']);
+});
+
+test('the status screen offers use in this case and the control posts a name tag, never a key or an address', () => {
+  const panel = read('src/components/BlackboxPanel.svelte');
+  assert.match(panel, /BlackboxCaseUse\.svelte/);
+  assert.match(panel, /<CaseUse \{item\} \/>/);
+  const control = read('src/components/BlackboxCaseUse.svelte');
+  assert.match(control, /useInCase\(caseUseApi, caseId, item\.name\)/);
+  assert.doesNotMatch(control, /item\.location|\.key\b|hasKey/);
+  const api = read('src/lib/blackboxCaseApi.ts');
+  assert.match(api, /postSourceTag/);
+  assert.equal(BB_TEXT.caseUseButton, 'Use in this case');
+});

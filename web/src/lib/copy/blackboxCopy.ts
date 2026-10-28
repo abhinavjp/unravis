@@ -275,6 +275,20 @@ export const BB_TEXT = {
   snapshotLogs: (n: number) => 'Log files copied: ' + n + '. They are copied only when that setting is ticked.',
   snapshotNot: 'Not in it: passwords, request payloads, the read key.',
 
+  /* use in a case (wireframe 35) */
+  caseUseTitle: 'Use in a case',
+  caseUseIntro: 'A case can take its host readings for Step 9 from one Blackbox. The case keeps only the name, never the address, the folder or the read key.',
+  caseUseNoCase: 'Open a case first. Then this Blackbox can be used in it.',
+  caseUseNotPlaced: 'This Blackbox is not placed yet, so a case cannot use it.',
+  caseUseButton: 'Use in this case',
+  caseUseStop: 'Stop using it in this case',
+  caseUseChecking: 'Looking at the case.',
+  caseUseOn: 'This case uses this Blackbox for Step 9.',
+  caseUseOther: (name: string) => 'This case already uses ' + name + '. A case reads one Blackbox. Stop using that one first.',
+  caseUseAdded: 'Added. Step 9 reads this Blackbox the next time the case is investigated.',
+  caseUseRemoved: 'Removed from this case. The Blackbox and its recordings are as they were.',
+  caseUseFailed: 'The case could not be changed.',
+
   /* host reading (Step 9) */
   hostTitle: 'Step 9: Host and network',
   hostQuestion: 'Was the web server or the SQL server short of CPU, memory or disk?',
@@ -329,7 +343,7 @@ export function blackboxCopyEntries(): LintEntry[] {
       const fn = value as (...args: any[]) => string;
       if (key === 'packWill') add(key, fn('unravis-blackbox-web-a.zip', 'web-a'));
       else if (key === 'partOf') add(key, fn(2));
-      else if (key === 'packReadyTitle' || key === 'removeTitle' || key === 'removeTypeName' || key === 'snapshotTitle' || key === 'duplicateText' || key === 'addFound' || key === 'installedText') add(key, fn('web-a'));
+      else if (key === 'packReadyTitle' || key === 'removeTitle' || key === 'removeTypeName' || key === 'snapshotTitle' || key === 'duplicateText' || key === 'addFound' || key === 'installedText' || key === 'caseUseOther') add(key, fn('web-a'));
       else if (key === 'snapshotSaved') add(key, fn('D:\\UnravisBlackbox\\snapshots\\web-a-2026-10-20-0905', '46 MB'));
       else if (key === 'removedDeleted' || key === 'snapshotRecordings' || key === 'snapshotLogs' || key === 'hostTorn' || key === 'hostGapShort' || key === 'hostGapLong' || key === 'hostGapMinutes' || key === 'hostMinutes') { add(key + '.1', fn(1)); add(key + '.2', fn(3)); }
       else if (key === 'hostReadNote') add(key, fn(2, 240));
