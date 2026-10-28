@@ -49,28 +49,28 @@ test('MAN-09: the 201st saved view is refused with 413, and one delete makes roo
   const id = await createCase(api, 'QA Views Limit');
   const path = `/api/cases/${id}/views`;
   for (let i = 0; i < 200; i++) {
-    const r = await api('POST', path, { name: 'view ' + i, tool: 'routes', settings: { minMs: i } });
+    const r = await api('POST', path, { name: 'view ' + i, tool: 'response-time', settings: {} });
     if (r.status !== 200) throw new Error('view ' + i + ' answered ' + r.status + ' ' + r.text);
   }
-  const over = await api('POST', path, { name: 'one too many', tool: 'routes', settings: {} });
+  const over = await api('POST', path, { name: 'one too many', tool: 'response-time', settings: {} });
   expect(over.status).toBe(413);
   expect(over.json.reason).toBe('plan-full');
   const list = await api('GET', path);
   expect(list.json.views).toHaveLength(200);
   expect((await api('DELETE', `${path}/${list.json.views[0].id}`)).status).toBe(200);
-  expect((await api('POST', path, { name: 'fits now', tool: 'routes', settings: {} })).status).toBe(200);
+  expect((await api('POST', path, { name: 'fits now', tool: 'response-time', settings: {} })).status).toBe(200);
 });
 
 test('MAN-09a: a 61 character name, credentials, an address and a huge setting are refused', async ({ api }) => {
   const id = await createCase(api, 'QA Views Refusals');
   const path = `/api/cases/${id}/views`;
-  const longName = await api('POST', path, { name: 'n'.repeat(61), tool: 'routes', settings: {} });
+  const longName = await api('POST', path, { name: 'n'.repeat(61), tool: 'response-time', settings: {} });
   expect(longName.status).toBe(400);
-  const creds = await api('POST', path, { name: 'creds', tool: 'routes', settings: { password: 'abc' } });
+  const creds = await api('POST', path, { name: 'creds', tool: 'response-time', settings: { password: 'abc' } });
   expect(creds.status).toBe(400);
-  const url = await api('POST', path, { name: 'url', tool: 'routes', settings: { where: 'mongodb://example.invalid/db' } });
+  const url = await api('POST', path, { name: 'url', tool: 'response-time', settings: { where: 'mongodb://example.invalid/db' } });
   expect(url.status).toBe(400);
-  const big = await api('POST', path, { name: 'big', tool: 'routes', settings: { text: 'z'.repeat(9000) } });
+  const big = await api('POST', path, { name: 'big', tool: 'response-time', settings: { text: 'z'.repeat(9000) } });
   expect(big.status).toBe(413);
   expect(big.json.reason).toBe('plan-too-large');
   expect((await api('GET', path)).json.views).toEqual([]);
@@ -83,7 +83,7 @@ test('MAN-09b: a closed case keeps its views and checklist readable but refuses 
   const write = await api('POST', `/api/cases/${id}/checklist`, { list: 'todo', text: 'late' });
   expect(write.status).toBe(409);
   expect(write.json.reason).toBe('case-closed');
-  const views = await api('POST', `/api/cases/${id}/views`, { name: 'late', tool: 'routes', settings: {} });
+  const views = await api('POST', `/api/cases/${id}/views`, { name: 'late', tool: 'response-time', settings: {} });
   expect(views.status).toBe(409);
 });
 
@@ -133,4 +133,14 @@ test('INV-13b: twenty runs at once answer 200 or a busy word and never a server 
     expect(r.status).toBeLessThan(500);
   }
   expect(results.some((r) => r.status === 200)).toBe(true);
+});
+
+test('MAN-09c: a saved view with an unknown tool or a garbage window value is refused with 400', async ({ api }) => {
+  const id = await createCase(api, 'QA Views Junk');
+  const path = `/api/cases/${id}/views`;
+  const tool = await api('POST', path, { name: 'junk tool', tool: 'no-such-tool', settings: {} });
+  expect(tool.status, 'unknown tool').toBe(400);
+  const date = await api('POST', path, { name: 'junk date', tool: 'response-time', settings: { incidentStart: 'not-a-date' } });
+  expect(date.status, 'garbage window').toBe(400);
+  expect((await api('GET', path)).json.views).toEqual([]);
 });
