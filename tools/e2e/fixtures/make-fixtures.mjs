@@ -52,9 +52,16 @@ writeFileSync(join(out, 'empty.log'), '');
 const longPath = '/api/v1/search?q=' + 'x'.repeat(70 * 1024);
 writeFileSync(join(out, 'access-long-line.log'), [good[0], line(1, '20/Oct/2026:08:00:11 +0000', ['GET', longPath, 200, 10, '0.010', '0.010']), good[2]].join('\n') + '\n');
 
-// Expected CSV of the case report for the case the export spec builds: an empty case named
-// "Snapshot Case" with two checklist items. Comma separated, quoted only where needed, a byte
-// order mark first, CRLF line ends not used (the report writes LF). The case id is a slot.
-const rows = [];
-writeFileSync(join(out, 'README.txt'), 'Made by make-fixtures.mjs. Do not edit by hand.\n' + rows.length);
+// Expected CSV of the report for a new case named "Snapshot Case" before any analysis: a byte order
+// mark, LF line ends, cells quoted only where they hold a comma or a quote. {CASE} stands for the case id.
+const bom = String.fromCharCode(0xfeff);
+const csv = [
+  'section,item,status,normal stretch,slow stretch,text',
+  'case,Snapshot Case,,,,"Case {CASE}, report made 20 Oct 2026 09:00 UTC"',
+  'notice,,Cannot test yet,,,"Nothing has been analysed in this case yet. Pick a slow stretch and a normal stretch in Guided analysis, then export again."',
+  'footer,,,,,"No request payloads, no user ids, no connection details, no passwords. Dates in UTC. Unravis only reads."'
+];
+writeFileSync(join(out, 'report-empty.csv'), bom + csv.join('\n') + '\n', 'utf8');
+
+writeFileSync(join(out, 'README.txt'), 'Made by make-fixtures.mjs. Do not edit by hand.\n');
 console.log('fixtures written to ' + out);

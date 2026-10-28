@@ -224,3 +224,12 @@ test('EXP-09: typed text that looks like a password or a connection string is re
   const redacted = !csv.content.includes('abc123') && !csv.content.includes('mongodb://') && !html.content.includes('abc123') && !html.content.includes('mongodb://');
   expect(refused || redacted, 'the secret text is refused or kept out of both reports').toBe(true);
 });
+
+test('EXP-03c: the CSV of a new case is byte for byte the checked-in snapshot', async ({ api }) => {
+  const { readFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const id = await createCase(api, 'Snapshot Case');
+  const csv = await report(api, id, 'csv', false);
+  const expected = readFileSync(join(__dirname, '..', 'fixtures', 'files', 'report-empty.csv'), 'utf8').replace('{CASE}', id);
+  expect(csv.content).toBe(expected);
+});
