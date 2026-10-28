@@ -67,6 +67,7 @@ func newCFSPC(t *testing.T, pass string, unlock bool) *cfsPC {
 		Root: p.root, Protector: p.prot, MinFreeBytes: -1,
 		Protectors: p.sess.Lookup, NewCaseKind: p.sess.NewCaseKind,
 		LegacyCheck: p.sess.LegacyCheck, LegacyDone: p.sess.LegacyDone,
+		KeyParams: cfsFast,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +111,13 @@ func (p *cfsPC) restore(path, pass string) *httptest.ResponseRecorder {
 // seed creates a case through the API and fills it with n events.
 func (p *cfsPC) seed(title string, n int) string {
 	p.t.Helper()
-	res := p.do(http.MethodPost, "/api/cases", `{"title":`+q(title)+`}`)
+	return p.seedBody(title, n, `{"title":`+q(title)+`}`)
+}
+
+// seedBody is seed with the create request named (a case with its own key, say).
+func (p *cfsPC) seedBody(title string, n int, body string) string {
+	p.t.Helper()
+	res := p.do(http.MethodPost, "/api/cases", body)
 	if res.Code != http.StatusCreated {
 		p.t.Fatalf("create = %d %s", res.Code, res.Body)
 	}

@@ -196,6 +196,8 @@ Change and Remove both ask for the current key. A key that is lost cannot be rec
 
 If you reset a damaged PC key, Unravis tells you first how many cases it will leave alone. Cases with their own key are never changed or counted by that reset, because the PC key does not seal them.
 
+An archive of a case with its own key is sealed with that key, not with the PC key, and shows that key's "Key ending xxxx". The case key has to be open to archive the case. The file opens anywhere with the case key alone, and the PC key does not open it. A freed case with its own key stays locked until you enter its key; Restore as a new case then reads the file. If the key was changed after the archive, Verify, Free and Restore say "This file can only be opened with the key it was made with."; type the key the file was made with. The reset warning counts only the freed archives sealed with the PC key, never the ones sealed with a case key.
+
 Screens: `p4-case-key-create` is the name step with the key fields. `p4-case-key-unlock` is the page that opens a locked case. The demo's keyed case is "Payroll run discrepancy, 14 October", and the picture types its demo key into the field without pressing the button.
 
 ![Create a case with its own key](../screenshots/P4/p4-case-key-create-light.png)
