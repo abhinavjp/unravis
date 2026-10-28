@@ -376,8 +376,8 @@ func TestP06_RestoreTheSameFileTwice(t *testing.T) {
 		var d caseDTO
 		decodeBody(t, res, &d)
 		got = append(got, d.ID)
-		if d.Closed != nil {
-			t.Errorf("restored case #%d is closed", i+1)
+		if d.Closed == nil {
+			t.Errorf("restored case #%d is open, want closed (every restore ends Closed)", i+1)
 		}
 	}
 	if got[0] == got[1] {

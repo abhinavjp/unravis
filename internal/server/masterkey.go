@@ -865,6 +865,7 @@ func (h *handler) masterKeyLock(w http.ResponseWriter, r *http.Request) {
 	// every open handle (zeroing the case keys) before answering.
 	h.stopSamplerAll()
 	h.jobs.cancelAll()
+	h.caseFiles().jobs.stopAll()
 	h.mk.lock(h.closeCaseHandles)
 	writeJSON(w, http.StatusOK, masterKeyStatus{State: h.mk.State()}, 4096)
 }
@@ -928,6 +929,9 @@ func (h *handler) masterKeyRewrap(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, info := range list {
+			if info.Missing || info.Archive.Freed() {
+				continue // no working copy, no key file to protect
+			}
 			ids = append(ids, info.ID)
 		}
 	} else {

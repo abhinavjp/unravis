@@ -790,13 +790,20 @@ func RestoreCaseFile(ctx context.Context, st RestoreStore, lookup ProtectorLooku
 // so a file sealed under the key this PC already holds opens without a typed
 // passphrase.
 func RestoreCaseFileWith(ctx context.Context, st RestoreStore, lookup ProtectorLookup, path string, derive KeyDeriver) (CaseInfo, error) {
+	info, _, err := RestoreCaseFileFull(ctx, st, lookup, path, derive)
+	return info, err
+}
+
+// RestoreCaseFileFull is RestoreCaseFileWith that also returns what the file's
+// header said (the original case id, title and dates), for the story of the new case.
+func RestoreCaseFileFull(ctx context.Context, st RestoreStore, lookup ProtectorLookup, path string, derive KeyDeriver) (CaseInfo, CaseFileInfo, error) {
 	base, err := lookup(KindMasterKey)
 	if err != nil || base == nil {
-		return CaseInfo{}, ErrLocked
+		return CaseInfo{}, CaseFileInfo{}, ErrLocked
 	}
 	cf, err := OpenCaseFileWith(path, derive)
 	if err != nil {
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	defer cf.Close()
 	info := cf.Info()
@@ -806,20 +813,20 @@ func RestoreCaseFileWith(ctx context.Context, st RestoreStore, lookup ProtectorL
 	root := st.Root()
 	var tag [8]byte
 	if _, err := rand.Read(tag[:]); err != nil {
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	stage := filepath.Join(root, "restore-"+hex.EncodeToString(tag[:])+".part")
 	if err := cf.ExtractDB(ctx, stage); err != nil {
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	defer os.Remove(stage)
 
 	created, err := st.Create(ctx, info.Title)
 	if err != nil {
 		if errors.Is(err, ErrBadTitle) {
-			return CaseInfo{}, ErrCaseFile
+			return CaseInfo{}, CaseFileInfo{}, ErrCaseFile
 		}
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	id := created.ID
 	ok := false
@@ -837,37 +844,37 @@ func RestoreCaseFileWith(ctx context.Context, st RestoreStore, lookup ProtectorL
 	}()
 	dir := filepath.Join(root, string(id))
 	if err := RejectReparse(root, dir); err != nil {
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	dbPath := filepath.Join(dir, "case.db")
 	for _, suffix := range []string{"-wal", "-shm"} {
 		_ = os.Remove(dbPath + suffix)
 	}
 	if err := sealedfile.Replace(stage, dbPath); err != nil {
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	keys := cf.Keys(string(id))
 	defer keys.Zero()
 	if err := WriteKeyFileKind(filepath.Join(dir, KeyFileName), KindMasterKey, base, keys); err != nil {
-		return CaseInfo{}, err
+		return CaseInfo{}, CaseFileInfo{}, err
 	}
 	if _, err := RebindCaseDB(ctx, dbPath, keys.DB, info.CaseID, string(id)); err != nil {
 		if ctx.Err() != nil {
-			return CaseInfo{}, ctx.Err()
+			return CaseInfo{}, CaseFileInfo{}, ctx.Err()
 		}
-		return CaseInfo{}, ErrCaseFile
+		return CaseInfo{}, CaseFileInfo{}, ErrCaseFile
 	}
 	c, err := st.Open(ctx, id)
 	if err != nil {
 		if errors.Is(err, ErrLocked) || ctx.Err() != nil {
-			return CaseInfo{}, err
+			return CaseInfo{}, CaseFileInfo{}, err
 		}
-		return CaseInfo{}, ErrCaseFile
+		return CaseInfo{}, CaseFileInfo{}, ErrCaseFile
 	}
 	out := c.Info()
 	if err := c.Close(); err != nil {
-		return CaseInfo{}, fmt.Errorf("closing restored case: %w", err)
+		return CaseInfo{}, CaseFileInfo{}, fmt.Errorf("closing restored case: %w", err)
 	}
 	ok = true
-	return out, nil
+	return out, info, nil
 }
