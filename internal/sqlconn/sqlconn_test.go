@@ -114,6 +114,57 @@ func TestBlankPasswordKeepsRememberedOne(t *testing.T) {
 	}
 }
 
+// A blank-password re-save keeps the stored password only when encryption stays as strict: otherwise anyone able to re-save the entry
+// (in the shared keeper, any person on the PC) could send that password over a weaker or unchecked channel.
+func TestBlankPasswordNeverWeakensEncryption(t *testing.T) {
+	s, _ := service(t)
+	in := ssms()
+	in.Encrypt, in.TrustServerCertificate, in.RememberPassword = EncryptStrict, false, true
+	if _, err := s.Save(in); err != nil {
+		t.Fatal(err)
+	}
+	in.Password = ""
+	for name, weaker := range map[string]func(*Input){
+		"optional":         func(i *Input) { i.Encrypt = EncryptOptional },
+		"mandatory":        func(i *Input) { i.Encrypt = EncryptMandatory },
+		"trust any cert":   func(i *Input) { i.TrustServerCertificate = true },
+		"optional + trust": func(i *Input) { i.Encrypt, i.TrustServerCertificate = EncryptOptional, true },
+	} {
+		w := in
+		weaker(&w)
+		if _, err := s.Save(w); !errors.Is(err, ErrPasswordAgain) {
+			t.Fatalf("%s: want ErrPasswordAgain, got %v", name, err)
+		}
+	}
+	got, err := s.Resolve(mustID(t, s))
+	if err != nil || got.Encrypt != EncryptStrict || got.TrustServerCertificate || got.Password != "hunter2-secret" {
+		t.Fatalf("the saved entry must be untouched: %+v %v", got, err)
+	}
+	// The same settings, or typing the password again, still work.
+	if rec, err := s.Save(in); err != nil || !rec.HasPassword {
+		t.Fatalf("same settings: %+v %v", rec, err)
+	}
+	w := in
+	w.Encrypt, w.Password = EncryptOptional, "hunter2-secret"
+	if rec, err := s.Save(w); err != nil || !rec.HasPassword || rec.Encrypt != EncryptOptional {
+		t.Fatalf("password typed again: %+v %v", rec, err)
+	}
+	// From the weaker entry, a stricter re-save keeps the password.
+	w.Encrypt, w.Password = EncryptMandatory, ""
+	if rec, err := s.Save(w); err != nil || !rec.HasPassword {
+		t.Fatalf("stricter: %+v %v", rec, err)
+	}
+}
+
+func mustID(t *testing.T, s *Service) string {
+	t.Helper()
+	items, err := s.List()
+	if err != nil || len(items) != 1 {
+		t.Fatalf("list: %+v %v", items, err)
+	}
+	return items[0].ID
+}
+
 func TestWindowsAuthDropsLogin(t *testing.T) {
 	s, _ := service(t)
 	rec, err := s.Save(Input{Server: "db1", Auth: AuthWindows, Username: "ignored", Password: "x", RememberPassword: true})

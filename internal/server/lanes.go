@@ -170,6 +170,11 @@ func refuseClosedCase(w http.ResponseWriter, c casestore.Case) bool {
 
 // laneSave keeps a finished lane run in the case and answers like a health run does.
 func laneSave(w http.ResponseWriter, r *http.Request, hs casestore.HealthStore, kind, server string, report dbhealth.Report) {
+	if report.Lane == nil {
+		// A reply without the day's windows (a keeper answer that lost them) cannot be kept under a day key.
+		writeError(w, http.StatusServiceUnavailable, "The result came back incomplete. Nothing was kept. Try again.")
+		return
+	}
 	enc, err := json.Marshal(report)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "The result could not be prepared.")
@@ -227,6 +232,10 @@ func (h *handler) caseLaneSQL(w http.ResponseWriter, r *http.Request, raw string
 	if !ok {
 		return
 	}
+	k, ref, ok := h.heldSQL(w, body.sqlRequest)
+	if !ok {
+		return
+	}
 	if _, valid := dbhealth.QuoteIdent(target.Database); !valid {
 		writeError(w, http.StatusBadRequest, laneNoDatabase)
 		return
@@ -256,6 +265,19 @@ func (h *handler) caseLaneSQL(w http.ResponseWriter, r *http.Request, raw string
 		return
 	}
 	defer healthBusy.Unlock()
+	if k != nil && !h.demo {
+		// The saved password is in the key keeper: the lane reads run there.
+		ref.Database = target.Database
+		report, err := k.LaneSaved(ctx, *ref, label, req)
+		if err != nil {
+			if !writeKeeperError(w, err) {
+				writeConnectFailure(w, err)
+			}
+			return
+		}
+		laneSave(w, r, hs, "sql", serverID, report)
+		return
+	}
 	// The demo answers from canned rows and never opens a connection.
 	var q healthQueryer
 	if h.demo {
@@ -291,12 +313,18 @@ func (h *handler) caseLaneMongo(w http.ResponseWriter, r *http.Request, raw stri
 	if refuseClosedCase(w, c) {
 		return
 	}
-	input, ok := h.resolveConnection(w, body.ConnectionInput)
+	k, ok := h.heldMongo(w, body.ConnectionInput)
 	if !ok {
 		return
 	}
+	input := body.ConnectionInput // a keeper-held link: the address only, the password stays in the keeper
+	if k == nil {
+		if input, ok = h.resolveConnection(w, body.ConnectionInput); !ok {
+			return
+		}
+	}
 	opener, canOpen := h.repo.(mongoCommandOpener)
-	if !canOpen && !h.demo {
+	if !canOpen && !h.demo && k == nil {
 		writeError(w, http.StatusBadRequest, "MongoDB checks are unavailable for this repository.")
 		return
 	}
@@ -322,6 +350,16 @@ func (h *handler) caseLaneMongo(w http.ResponseWriter, r *http.Request, raw stri
 		return
 	}
 	defer healthBusy.Unlock()
+	if k != nil && !h.demo {
+		// The saved password is in the key keeper: the lane reads run there.
+		report, err := k.LaneSaved(ctx, body.ConnectionInput, laneMongoLabel, req)
+		if err != nil {
+			writeHeldMongoFailure(w, err)
+			return
+		}
+		laneSave(w, r, hs, "mongo", serverID, report)
+		return
+	}
 	// The demo answers from canned documents and never opens a connection.
 	var run store.MongoCommandFunc
 	if h.demo {

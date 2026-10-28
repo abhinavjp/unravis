@@ -1,5 +1,6 @@
 import type { SavedSqlConnection, SqlConnectionInput, SqlTestRequest, SqlTestResult,Analysis,Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile, VersionInfo } from './types';
 import { signalIfAppLocked } from './lockSignal';
+import type { KeeperStatus } from './keeper';
 import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
 
 const base = '/api';
@@ -115,6 +116,10 @@ export const api = {
   saveSqlConnection: (input: SqlConnectionInput) => request<SavedSqlConnection>('/sql-connections', json(input)),
   testSqlConnection: (input: SqlTestRequest, signal?: AbortSignal) => request<SqlTestResult>('/sql-connections/test', json(input), signal),
   forgetSqlConnection: (id: string) => request<void>('/sql-connections/' + encodeURIComponent(id), { method: 'DELETE' }),
+  /** The key keeper (P14): whether it runs and what still waits to be moved. preview is answered only in the demo. */
+  keeperStatus: (preview = '') => request<KeeperStatus>('/keeper/status' + (preview ? '?preview=' + encodeURIComponent(preview) : '')),
+  keeperMigrate: () => request<KeeperStatus>('/keeper/migrate', json({})),
+  keeperRemoveOld: (confirmDuplicates = false) => request<KeeperStatus>('/keeper/remove-old', json({ confirm: true, confirmDuplicates })),
   testConnection: (input: ConnectionInput, signal?: AbortSignal) => request<ConnectionTestResult>('/connections/test', {
     method: 'POST', body: JSON.stringify(input)
   }, signal),

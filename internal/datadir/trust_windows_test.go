@@ -1,0 +1,97 @@
+//go:build windows
+
+package datadir
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// The real file IDs (no registry involved: the record is a fake): a rename keeps the folder's ID, so the record also names the path; a
+// copy is a new folder with a new ID. A record naming this person's own folder still fails on its owner.
+func TestFolderIDSurvivesRenameNotCopy(t *testing.T) {
+	base := t.TempDir()
+	orig := filepath.Join(base, "Unravis")
+	mk := func() {
+		for _, d := range []string{orig, filepath.Join(orig, "cases")} {
+			if err := os.Mkdir(d, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	mk()
+	a, err := ReadFolderSecurity(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := ReadFolderSecurity(filepath.Join(orig, "cases"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ID == "" || a.ID == c.ID {
+		t.Fatalf("IDs %q and %q", a.ID, c.ID)
+	}
+	rec := record(orig, a.ID, c.ID)
+	if err := TrustSharedFolder(orig, ReadFolderSecurity, rec); err == nil || !strings.Contains(err.Error(), "owned by") {
+		t.Fatalf("the recorded folder should get as far as the owner check: %v", err)
+	}
+	moved := filepath.Join(base, "Moved")
+	if err := os.Rename(orig, moved); err != nil {
+		t.Fatal(err)
+	}
+	m, err := ReadFolderSecurity(moved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.ID != a.ID {
+		t.Fatalf("a rename changed the ID: %q -> %q", a.ID, m.ID)
+	}
+	refused(t, "moved folder", TrustSharedFolder(moved, ReadFolderSecurity, rec))
+	mk() // a copy (a new folder) under the recorded name
+	cp, err := ReadFolderSecurity(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cp.ID == a.ID {
+		t.Fatal("a new folder under the same name kept the old ID")
+	}
+	if err := TrustSharedFolder(orig, ReadFolderSecurity, rec); err == nil || !strings.Contains(err.Error(), "moved, copied or replaced") {
+		t.Fatalf("copy under the recorded name: %v", err)
+	}
+}
+
+// The real reader on real folders, read only: a folder this test makes belongs to the person running it, which is exactly what a
+// planted shared folder looks like; C:\ProgramData itself is owned by the system and gives people no control.
+func TestReadFolderSecurityOnThisPC(t *testing.T) {
+	dir := t.TempDir()
+	fs, err := ReadFolderSecurity(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckFolder(dir, fs); err == nil {
+		t.Fatalf("a folder a person made must not be trusted: %+v", fs)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "cases"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := TrustSharedFolder(dir, ReadFolderSecurity, noRecord); err == nil || errors.Is(err, ErrNotShared) {
+		t.Fatalf("planted folder: %v", err)
+	}
+	if _, err := ReadFolderSecurity(filepath.Join(dir, "absent")); !errors.Is(err, ErrNotShared) {
+		t.Fatalf("absent: %v", err)
+	}
+	pd := os.Getenv("ProgramData")
+	if pd == "" {
+		t.Skip("no ProgramData")
+	}
+	fs, err = ReadFolderSecurity(pd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckFolder(pd, fs); err != nil {
+		t.Fatalf("%s should pass the owner and ACL check: %v (%+v)", pd, err, fs)
+	}
+}

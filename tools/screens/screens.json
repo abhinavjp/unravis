@@ -1083,6 +1083,48 @@
         {"click": "role=button[name=/^Open case Case demountr/]"},
         {"waitFor": "text=This case cannot be opened."}
       ]
+    },
+    {
+      "id": "p14-connection-saved", "phase": "P14", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"goto": "#keeper=saved"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"waitFor": "[data-keeper-held]"},
+        {"scrollTo": "#conn-head"}
+      ]
+    },
+    {
+      "id": "p14-keeper-stopped", "phase": "P14", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"goto": "#keeper=stopped"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"waitFor": "[data-keeper=stopped]"},
+        {"scrollTo": "#conn-head"}
+      ]
+    },
+    {
+      "id": "p14-migrate", "phase": "P14", "doc": "sources.md", "narrow": false,
+      "steps": [
+        {"goto": "/"},
+        {"goto": "#keeper=migrate"},
+        {"when": "wide", "click": "role=button[name=\"Home\"s]"},
+        {"when": "narrow", "click": "role=button[name=/^More/]"},
+        {"when": "narrow", "click": "role=menuitem[name=\"Home\"s]"},
+        {"click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"},
+        {"waitFor": "#home-sources"},
+        {"waitFor": "[data-keeper=migrate]"},
+        {"scrollTo": "#conn-head"}
+      ]
     }
   ]
 }

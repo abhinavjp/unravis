@@ -22,7 +22,9 @@ const healthRunTimeout = 150 * time.Second
 // The drivers are called through these so a test can stand in for a real server.
 var (
 	testSQLFn = dbhealth.TestSQL
-	openSQLFn = func(ctx context.Context, t dbhealth.SQLTarget) (healthQueryer, error) { return dbhealth.OpenSQL(ctx, t) }
+	openSQLFn = func(ctx context.Context, t dbhealth.SQLTarget) (healthQueryer, error) {
+		return dbhealth.OpenSQL(ctx, t)
+	}
 )
 
 type healthQueryer interface {
@@ -67,6 +69,9 @@ func (h *handler) resolveSQL(w http.ResponseWriter, req sqlRequest) (dbhealth.SQ
 		if err != nil {
 			if errors.Is(err, sqlconn.ErrNotFound) {
 				writeError(w, http.StatusNotFound, "Saved connection was not found.")
+				return dbhealth.SQLTarget{}, "", false
+			}
+			if writeKeeperError(w, err) {
 				return dbhealth.SQLTarget{}, "", false
 			}
 			writeError(w, http.StatusServiceUnavailable, "Saved SQL Server connections could not be read.")
@@ -116,14 +121,26 @@ func (h *handler) testSQLConnection(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	k, ref, ok := h.heldSQL(w, req)
+	if !ok {
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 	// The demo answers with canned details and never connects.
 	var res dbhealth.TestResult
 	var err error
-	if h.demo {
+	listErr := ""
+	switch {
+	case h.demo:
 		res = demoTestResult()
-	} else {
+	case k != nil:
+		// The saved password is in the key keeper: the test runs there.
+		res, listErr, err = k.TestSaved(ctx, *ref)
+		if writeKeeperError(w, err) {
+			return
+		}
+	default:
 		res, err = testSQLFn(ctx, target)
 	}
 	out := struct {
@@ -143,6 +160,9 @@ func (h *handler) testSQLConnection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out.ListError = ce.Message
+	}
+	if listErr != "" {
+		out.ListError = listErr
 	}
 	writeJSON(w, http.StatusOK, out, maxResponseBytes)
 }
@@ -238,6 +258,10 @@ func (h *handler) caseHealthRun(w http.ResponseWriter, r *http.Request, raw stri
 		if !ok {
 			return
 		}
+		k, ref, ok := h.heldSQL(w, *body.SQL)
+		if !ok {
+			return
+		}
 		if !healthBusy.TryLock() {
 			writeError(w, http.StatusConflict, healthBusyText)
 			return
@@ -245,6 +269,17 @@ func (h *handler) caseHealthRun(w http.ResponseWriter, r *http.Request, raw stri
 		defer healthBusy.Unlock()
 		ctx, cancel := context.WithTimeout(r.Context(), healthRunTimeout)
 		defer cancel()
+		if k != nil {
+			// The saved password is in the key keeper: the fixed checks run there.
+			var err error
+			if report, err = k.HealthSaved(ctx, *ref, label); err != nil {
+				if !writeKeeperError(w, err) {
+					writeConnectFailure(w, err)
+				}
+				return
+			}
+			break
+		}
 		q, err := openSQLFn(ctx, target)
 		if err != nil {
 			writeConnectFailure(w, err)
@@ -256,6 +291,26 @@ func (h *handler) caseHealthRun(w http.ResponseWriter, r *http.Request, raw stri
 		if body.Mongo == nil || !okMongoName(body.Mongo.Database, 64, false) || (body.Mongo.Collection != "" && !okMongoName(body.Mongo.Collection, 120, true)) {
 			writeError(w, http.StatusBadRequest, "Pick the MongoDB database to check.")
 			return
+		}
+		k, ok := h.heldMongo(w, body.Mongo.ConnectionInput)
+		if !ok {
+			return
+		}
+		if k != nil {
+			if !healthBusy.TryLock() {
+				writeError(w, http.StatusConflict, healthBusyText)
+				return
+			}
+			defer healthBusy.Unlock()
+			ctx, cancel := context.WithTimeout(r.Context(), healthRunTimeout)
+			defer cancel()
+			// The saved password is in the key keeper: the fixed checks run there.
+			var err error
+			if report, err = k.HealthSaved(ctx, body.Mongo.ConnectionInput, body.Mongo.Database, body.Mongo.Collection); err != nil {
+				writeHeldMongoFailure(w, err)
+				return
+			}
+			break
 		}
 		input, ok := h.resolveConnection(w, body.Mongo.ConnectionInput)
 		if !ok {

@@ -395,3 +395,55 @@ func newID() (string, error) {
 	}
 	return "bb-" + hex.EncodeToString(raw[:]), nil
 }
+
+// Record is one saved Blackbox with its sealed read key. Only the move into the key keeper (P14) handles it; it is never sent to the page.
+type Record = stored
+
+// Export returns every entry, key included, for the move into the key keeper.
+func (s *Store) Export() ([]Record, error) {
+	v, err := s.read()
+	if err != nil {
+		return nil, err
+	}
+	return v.Records, nil
+}
+
+// Import adds entries, keeping their ids. An entry whose id or whose place or recorder is already listed is skipped. It returns how many
+// were added. ErrTooMany means the result would hold more than MaxEntries; nothing is written then.
+func (s *Store) Import(records []Record) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := sealedfile.Lock(s.path)
+	if err != nil {
+		return 0, ErrUnavailable
+	}
+	defer unlock()
+	v, err := s.readLocked()
+	if err != nil {
+		return 0, err
+	}
+	added := 0
+next:
+	for _, rec := range records {
+		if rec.ID == "" || len(rec.ID) > 64 || rec.Canon == "" || rec.HasKey != (rec.Key != "") {
+			return 0, ErrInvalid
+		}
+		for _, prior := range v.Records {
+			if prior.ID == rec.ID || same(prior.Entry, rec.Canon, rec.RecorderHost, rec.RecorderName) {
+				continue next
+			}
+		}
+		v.Records = append(v.Records, rec)
+		added++
+	}
+	if len(v.Records) > MaxEntries {
+		return 0, ErrTooMany
+	}
+	if added == 0 {
+		return 0, nil
+	}
+	return added, s.write(v)
+}
+
+// Path is the sealed file this store reads.
+func (s *Store) Path() string { return s.path }

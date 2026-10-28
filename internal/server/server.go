@@ -35,22 +35,22 @@ const (
 )
 
 type handler struct {
-	repo    audit.Repository
-	assets  fs.FS
-	index   []byte
-	token   string
-	demo    bool
+	repo   audit.Repository
+	assets fs.FS
+	index  []byte
+	token  string
+	demo   bool
 	// captureCases is set only by the demo's capture-only cases (see WithCaptureCases).
 	captureCases bool
-	history savedHistory
-	sqlConns savedSQL
-	ledger  ledger.Store
-	tests   connectionTestLimiter
-	adds    connectionTestLimiter
-	proofs  connectionTestLimiter
-	repeats analyzeRepeats
-	launch  launchState
-	rollups rollupCache
+	history      savedHistory
+	sqlConns     savedSQL
+	ledger       ledger.Store
+	tests        connectionTestLimiter
+	adds         connectionTestLimiter
+	proofs       connectionTestLimiter
+	repeats      analyzeRepeats
+	launch       launchState
+	rollups      rollupCache
 	// mongoTests holds the database names of recent connection tests (names
 	// only) so a classification can be checked against them.
 	mongoTests mongoTests
@@ -58,6 +58,8 @@ type handler struct {
 	mk *MasterKeySession
 	// bb is the Blackbox pages (nil when not wired, see WithBlackbox).
 	bb *blackboxHub
+	// keeper is the key keeper wiring for the shared layout (nil in the per-user layout, see WithKeeper).
+	keeper *KeeperHub
 
 	casesState
 
@@ -295,6 +297,12 @@ func (h *handler) testConnection(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
+	if k, ok := h.heldMongo(w, input); !ok {
+		return
+	} else if k != nil {
+		h.testHeldMongo(w, r, k, input)
+		return
+	}
 	resolved, ok := h.resolveConnection(w, input)
 	if !ok {
 		return
@@ -333,6 +341,9 @@ func (h *handler) listRecent(w http.ResponseWriter) {
 	}
 	items, err := h.history.List()
 	if err != nil {
+		if writeKeeperError(w, err) {
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "Saved connections could not be read. The saved file was left unchanged.")
 		return
 	}
@@ -354,6 +365,11 @@ func (h *handler) rememberConnection(w http.ResponseWriter, r *http.Request) {
 		RememberPassword bool                  `json:"rememberPassword"`
 	}
 	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if k, isKeeper := h.history.(keeperMongo); isKeeper {
+		// The keeper resolves a saved id and validates the settings itself, so a stored password is never fetched here.
+		h.rememberInKeeper(w, r, k, input.Label, input.Connection, input.Collection, input.RememberPassword)
 		return
 	}
 	savedConnectionID := input.Connection.SavedConnectionID
@@ -380,18 +396,25 @@ func (h *handler) rememberConnection(w http.ResponseWriter, r *http.Request) {
 	connection.SavedConnectionID = savedConnectionID
 	item, err := h.history.Remember(input.Label, connection, input.Collection, input.RememberPassword)
 	if err != nil {
-		if errors.Is(err, history.ErrFull) {
-			writeError(w, http.StatusConflict, "You already have 20 saved MongoDB connections. Remove one first, then save this one. Nothing was removed for you.")
-			return
-		}
-		if errors.Is(err, audit.ErrInvalidInput) || errors.Is(err, history.ErrNotFound) {
-			writeError(w, http.StatusBadRequest, "Saved connection details are invalid.")
-			return
-		}
-		writeError(w, http.StatusServiceUnavailable, "Saved connection could not be written. The existing history was left unchanged.")
+		writeRememberError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, item, maxResponseBytes)
+}
+
+func writeRememberError(w http.ResponseWriter, err error) {
+	if writeKeeperError(w, err) || writeConnectionError(w, err) {
+		return
+	}
+	if errors.Is(err, history.ErrFull) {
+		writeError(w, http.StatusConflict, "You already have 20 saved MongoDB connections. Remove one first, then save this one. Nothing was removed for you.")
+		return
+	}
+	if errors.Is(err, audit.ErrInvalidInput) || errors.Is(err, history.ErrNotFound) {
+		writeError(w, http.StatusBadRequest, "Saved connection details are invalid.")
+		return
+	}
+	writeError(w, http.StatusServiceUnavailable, "Saved connection could not be written. The existing history was left unchanged.")
 }
 
 func writeConnectionError(w http.ResponseWriter, err error) bool {
@@ -422,6 +445,9 @@ func (h *handler) deleteRecent(w http.ResponseWriter, r *http.Request, id string
 			writeError(w, http.StatusNotFound, "Saved connection was not found.")
 			return
 		}
+		if writeKeeperError(w, err) {
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "Saved connection could not be removed.")
 		return
 	}
@@ -438,11 +464,9 @@ func (h *handler) resolveConnection(w http.ResponseWriter, input audit.Connectio
 	}
 	resolved, err := h.history.Resolve(input)
 	if err != nil {
-		if errors.Is(err, history.ErrCorrupt) || errors.Is(err, history.ErrUnavailable) {
-			writeError(w, http.StatusServiceUnavailable, "Saved connections could not be read. The saved file was left unchanged.")
-			return audit.ConnectionInput{}, false
+		if !writeKeeperError(w, err) {
+			writeSavedMongoError(w, err)
 		}
-		writeError(w, http.StatusBadRequest, "Saved connection no longer matches these settings. Select it again or enter the password.")
 		return audit.ConnectionInput{}, false
 	}
 	return resolved, true
@@ -460,10 +484,10 @@ func (h *handler) info(w http.ResponseWriter) {
 		}
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Demo   bool `json:"demo"`
+		Demo bool `json:"demo"`
 		// CaptureCases is left out of the answer unless the demo has capture cases.
 		CaptureCases bool `json:"captureCases,omitempty"`
-		Limits struct {
+		Limits       struct {
 			MaxSources     int `json:"maxSources"`
 			MaxPageSize    int `json:"maxPageSize"`
 			MaxSummaryRows int `json:"maxSummaryRows"`
@@ -501,7 +525,7 @@ func (h *handler) addSource(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	resolved, ok := h.resolveConnection(w, audit.ConnectionInput{URI: input.URI, Username: input.Username, Password: input.Password, AuthSource: input.AuthSource, TLSMode: input.TLSMode, CACertificate: input.CACertificate, SavedConnectionID: input.SavedConnectionID})
+	resolved, ok := h.resolveSourceConnection(w, audit.ConnectionInput{URI: input.URI, Username: input.Username, Password: input.Password, AuthSource: input.AuthSource, TLSMode: input.TLSMode, CACertificate: input.CACertificate, SavedConnectionID: input.SavedConnectionID})
 	if !ok {
 		return
 	}

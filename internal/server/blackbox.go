@@ -15,6 +15,7 @@ import (
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/investigate"
+	"api-audit-explorer/internal/keeper"
 )
 
 // Blackbox in Unravis (P9). The saved list (sealed, with read keys), the add flow,
@@ -264,6 +265,10 @@ func (b *blackboxHub) source(e bbsaved.Entry) (blackbox.Source, error) {
 	}
 	key := ""
 	if loc.NeedsKey() {
+		if kb, held := b.deps.Store.(keeperBB); held {
+			// The read key is in the key keeper (owner ruling B19): the keyed reads go through it.
+			return kb.KeyedSource(e.ID, loc), nil
+		}
 		k, kerr := b.deps.Store.Key(e.ID)
 		if kerr != nil || k == "" {
 			return nil, readFail(blackbox.ReadKeyRefused, "No read key could be opened for this Blackbox. Type the read key again.")
@@ -355,6 +360,12 @@ func (h *handler) bbReady(w http.ResponseWriter) bool {
 
 func bbStoreFailure(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, keeper.ErrNotRunning):
+		writeJSON(w, http.StatusServiceUnavailable, bbFailure{Error: keeperStoppedText, Reason: "keeper-stopped"}, 4096)
+	case errors.Is(err, keeper.ErrImpostor):
+		writeJSON(w, http.StatusServiceUnavailable, bbFailure{Error: keeperImpostorText, Reason: "keeper-impostor"}, 4096)
+	case errors.Is(err, keeper.ErrKeeperHeld):
+		writeJSON(w, http.StatusForbidden, bbFailure{Error: "The key keeper holds this read key and never gives it out.", Reason: "keeper-held", Next: "On a PC set up for everyone, Unravis never shows a saved read key. Ask the person who looks after this PC."}, 4096)
 	case errors.Is(err, bbsaved.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, bbFailure{Error: err.Error(), Reason: "not-listed"}, 4096)
 	case errors.Is(err, bbsaved.ErrCorrupt):

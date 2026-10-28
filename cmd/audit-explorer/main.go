@@ -25,12 +25,9 @@ import (
 	explorer "api-audit-explorer"
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
-	"api-audit-explorer/internal/history"
 	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/mcp"
-	"api-audit-explorer/internal/sealedfile"
 	"api-audit-explorer/internal/server"
-	"api-audit-explorer/internal/sqlconn"
 	"api-audit-explorer/internal/store"
 	"api-audit-explorer/internal/version"
 )
@@ -154,17 +151,14 @@ func run(args []string, getenv func(string) string) error {
 
 	var repo audit.Repository
 	var serverOptions []server.Option
+	var saved savedWiring
 	if *demo {
 		// The shipped demo carries a little unfinished work so the incomplete panel has something to show.
 		repo = audit.NewDemoWithPatterns(demoCfg.now)
 	} else {
 		repo = store.New(storeOptions(f)...)
-		if savedHistory, historyErr := history.NewDefault(getenv); historyErr == nil {
-			serverOptions = append(serverOptions, server.WithHistory(savedHistory))
-		}
-		if savedSQL, sqlErr := sqlconn.NewDefault(getenv); sqlErr == nil {
-			serverOptions = append(serverOptions, server.WithSQLConnections(savedSQL))
-		}
+		saved = wireSaved(getenv, storageFor(getenv))
+		serverOptions = append(serverOptions, saved.options...)
 	}
 	hypotheses, ledgerErr := openLedger(*demo, getenv)
 	if ledgerErr != nil {
@@ -183,7 +177,7 @@ func run(args []string, getenv func(string) string) error {
 		return casesErr
 	}
 	serverOptions = append(serverOptions, caseOptions...)
-	serverOptions = append(serverOptions, wireBlackbox(*demo, demoCfg, getenv)...)
+	serverOptions = append(serverOptions, wireBlackbox(*demo, demoCfg, getenv, saved.bb)...)
 	defer closeCases()
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -326,22 +320,23 @@ func shutdownOnSignal(removeSession func(), server shutdowner) error {
 }
 
 // openLedger opens the hypothesis ledger. Demo mode keeps it in memory; live
-// mode keeps it sealed for the current user (ledger.dat) beside the saved
-// connections (same application folder). An older plain ledger.json is migrated
-// on first start. Without a sealing backend the ledger is unavailable rather
-// than written in plaintext.
+// mode keeps it sealed (ledger.dat) in the base folder: per user, beside the
+// saved connections, sealed for the current user; shared, in the data folder,
+// sealed for this PC. An older plain ledger.json is migrated on first start.
+// Without a sealing backend the ledger is unavailable rather than written in
+// plaintext.
 func openLedger(demo bool, getenv func(string) string) (ledger.Store, error) {
 	if demo {
 		return ledger.Open("")
 	}
-	// Same folder as saved connections and the session file; see history.NewDefault.
-	base, err := mcp.SessionDir(getenv)
+	st := storageFor(getenv)
+	base, err := st.base(getenv)
 	if err != nil {
 		return nil, err
 	}
-	protector, err := sealedfile.CurrentUser()
+	protector, err := st.protector()
 	if err != nil {
-		return nil, fmt.Errorf("encrypted storage is unavailable on this platform")
+		return nil, err
 	}
 	return ledger.OpenSealed(filepath.Join(base, "ledger.dat"), filepath.Join(base, "ledger.json"), protector)
 }

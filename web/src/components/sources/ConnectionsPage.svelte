@@ -4,12 +4,14 @@
   import {
     CONNECTION_LIMIT, canSaveAnother, mongoRow, sqlRow, type ConnectionRow, type ConnectionWord
   } from '../../lib/lanes';
-  import { CONN_TEXT, HUB_TEXT, NUTSHELL } from '../../lib/copy/sourcesCopy';
+  import { CONN_TEXT, HUB_TEXT, KEEPER_TEXT, NUTSHELL } from '../../lib/copy/sourcesCopy';
+  import { isKeeperDown, keeperPreview, keeperView, type KeeperStatus } from '../../lib/keeper';
   import { connectedText } from '../../lib/copy/healthCopy';
   import { sqlTestInput, formFromSaved } from '../../lib/sqlConnection';
   import type { RecentConnection, SavedSqlConnection } from '../../lib/types';
   import SqlConnectionForm from './SqlConnectionForm.svelte';
   import StateSticker from './StateSticker.svelte';
+  import KeeperCard from './KeeperCard.svelte';
   import './sources.css';
 
   // Screens 52 and 53: every saved connection in one list, SQL Server and MongoDB. Test says only Works, Failed or Not tested, and the last
@@ -17,7 +19,7 @@
   // Forget asks once. At 20 SQL connections the server refuses the 21st (409); this page says so first and disables the add button.
   // primary: the one button this page may offer as the main action. It is outlined by default, so a case home that already has its own main
   // button keeps a single one; the guided shell passes primary where this page is the whole screen.
-  let { onMongoAdd, primary = false, readOnly = false }: { onMongoAdd?: () => void; primary?: boolean; readOnly?: boolean } = $props();
+  let { onMongoAdd, primary: promoted = false, readOnly = false }: { onMongoAdd?: () => void; primary?: boolean; readOnly?: boolean } = $props();
 
   let sql = $state.raw<SavedSqlConnection[]>([]);
   let mongo = $state.raw<RecentConnection[]>([]);
@@ -31,22 +33,35 @@
   let adding = $state(false);
   let note = $state('');
   let askedMongo = $state(false);
+  // The key keeper (P14): null until asked, and on a PC without it the status says "user" and nothing about the keeper shows.
+  let keeper = $state.raw<KeeperStatus | null>(null);
+  let moveLater = $state(false);
 
   const rows = $derived<ConnectionRow[]>([
     ...sql.map(item => sqlRow(item, tests['sql:' + item.id])),
     ...mongo.map(item => mongoRow(item, tests['mongo:' + item.id]))
   ]);
   const full = $derived(!canSaveAnother(sql.length));
+  const shared = $derived(keeper?.mode === 'shared');
+  const kView = $derived(keeperView(keeper));
+  // While the move card shows, it holds the page's one main button.
+  const offerMove = $derived(kView === 'migrate' && !moveLater);
+  // The add button is the main one only where the shell promotes this page and no move card holds that place.
+  const primary = $derived(promoted && !offerMove);
   const pwText = (p: ConnectionRow['password']) => (p === 'saved' ? CONN_TEXT.pwSaved : p === 'none' ? CONN_TEXT.pwNone : CONN_TEXT.pwNotNeeded);
 
-  async function load() {
+  // withKeeper false keeps the keeper status the last move or removal answered (in the demo the preview would otherwise put the old state back).
+  async function load(withKeeper = true) {
     loadFailed = false;
-    const [a, b] = await Promise.allSettled([api.sqlConnections(), api.recentConnections()]);
+    const [a, b, k] = await Promise.allSettled([api.sqlConnections(), api.recentConnections(), withKeeper ? api.keeperStatus(keeperPreview()) : Promise.resolve(keeper)]);
     if (a.status === 'fulfilled' && Array.isArray(a.value)) sql = a.value;
     if (b.status === 'fulfilled' && Array.isArray(b.value)) mongo = b.value;
+    keeper = k.status === 'fulfilled' && k.value && typeof k.value === 'object' ? k.value : null;
+    // A stopped or untrusted keeper also answers 503: that is the keeper card's to say, not the demo's.
+    const keeperDown = [a, b].some(r => r.status === 'rejected' && isKeeperDown(r.reason));
     const refused = (r: PromiseSettledResult<unknown>) => r.status === 'rejected' && (r.reason as { status?: number } | null)?.status === 503;
-    demo = refused(a) && refused(b);
-    loadFailed = a.status === 'rejected' && b.status === 'rejected' && !demo;
+    demo = refused(a) && refused(b) && !keeperDown;
+    loadFailed = a.status === 'rejected' && b.status === 'rejected' && !demo && !keeperDown;
     loaded = true;
   }
   onMount(() => { void load(); });
@@ -101,11 +116,17 @@
     adding = editing !== null;
   }
   function saved() { adding = false; editing = null; void load(); }
+  async function keeperChanged(next: KeeperStatus) { keeper = next; await load(false); }
+  // A stopped or untrusted keeper cannot use a saved password, so the row says so instead of only "held".
+  const keeperUnusable = $derived(kView === 'stopped' || kView === 'impostor');
 </script>
 
 <section class="src" aria-labelledby="conn-head">
   <div class="nutshell"><b>{NUTSHELL}</b><p>{CONN_TEXT.intro}</p></div>
   <h3 id="conn-head">{CONN_TEXT.heading}</h3>
+
+  <KeeperCard primary={promoted} status={offerMove || kView !== 'migrate' ? keeper : null} onStatus={(next) => void keeperChanged(next)} onRetry={() => load()} onLater={() => { moveLater = true; }} />
+  {#if moveLater && kView === 'migrate'}<div class="actions" data-keeper-later><span class="hint">{KEEPER_TEXT.notNowNote}</span><button type="button" class="btn" onclick={() => { moveLater = false; }}>{KEEPER_TEXT.notNowUndo}</button></div>{/if}
 
   {#if adding}
     <SqlConnectionForm initial={editing} onSaved={saved} onCancel={() => { adding = false; editing = null; }} />
@@ -133,7 +154,12 @@
         <li data-kind={row.kind}>
           <span class="what">
             <span class="name">{row.label}</span>
-            <span class="hint">{row.detail} · {pwText(row.password)}</span>
+            {#if shared && row.password === 'saved'}
+              <span class="hint">{row.detail}</span>
+              <span><span class="src-sticker held" class:down={keeperUnusable} data-keeper-held>{keeperUnusable ? KEEPER_TEXT.heldDown : KEEPER_TEXT.held}</span></span>
+            {:else}
+              <span class="hint">{row.detail} · {pwText(row.password)}</span>
+            {/if}
             {#if row.problem !== '' && row.word === 'Failed'}<span class="hint" role="status">{row.problem}</span>{/if}
             {#if row.word === 'Works' && row.problem !== ''}<span class="hint">{row.problem}</span>{/if}
           </span>
@@ -158,5 +184,5 @@
   {/if}
 
   <p class="hint">{CONN_TEXT.wordsNote}</p>
-  <p class="hint">{CONN_TEXT.origin}</p>
+  <p class="hint">{shared ? KEEPER_TEXT.origin : CONN_TEXT.origin}</p>
 </section>

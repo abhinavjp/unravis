@@ -400,3 +400,48 @@ func newID() (string, error) {
 	}
 	return hex.EncodeToString(raw[:]), nil
 }
+
+// Record is one saved link with its stored password. Only the move into the key keeper (P14) handles it; it is never sent to the browser.
+type Record = storedRecord
+
+// Export returns every saved link, password included, for the move into the key keeper.
+func (s *Service) Export() ([]Record, error) {
+	v, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	return v.Records, nil
+}
+
+// Import adds links, keeping their ids, so a page that holds an old id still finds it. A link whose id or whose address is already saved is
+// skipped. It returns how many were added. ErrFull means the result would hold more than MaxRecords; nothing is written then.
+func (s *Service) Import(records []Record) (int, error) {
+	added := 0
+	err := s.mutate(func(v *vault) error {
+	next:
+		for _, rec := range records {
+			if rec.ID == "" || len(rec.ID) > 64 || rec.Label == "" || len(rec.Label) > maxLabelLength || strings.TrimSpace(rec.Collection) == "" ||
+				!safeAddress(audit.ConnectionInput{URI: rec.URI}) || rec.HasCredentials != (rec.Password != "") {
+				return audit.ErrInvalidInput
+			}
+			for _, prior := range v.Records {
+				if prior.ID == rec.ID || sameAddress(prior.Recent, rec.Recent) {
+					continue next
+				}
+			}
+			v.Records = append(v.Records, rec)
+			added++
+		}
+		if len(v.Records) > MaxRecords {
+			return ErrFull
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return added, nil
+}
+
+// Path is the sealed file this service reads.
+func (s *Service) Path() string { return s.path }

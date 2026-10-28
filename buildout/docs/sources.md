@@ -34,6 +34,27 @@ Screen `p7-connections` lists every saved connection, SQL Server and MongoDB, in
 - A wrong password shows Failed with the server's own message. It never shows the password.
 - The demo has a sample SQL Server and a sample MongoDB already saved, and it keeps what you add only while it runs. It never opens a real connection and never keeps a password. Type the database name AuditDb to read a day that works, NoGrantDb to see the grant script, EmptyDb to see Nothing read, and for MongoDB ProfilerOffDb to see the profiler guide.
 
+### Saved connections on a PC set up for everyone (the key keeper)
+
+When Unravis is installed for everyone on a PC, saved passwords live in the Unravis Key Keeper service, not in Unravis (see "Saved passwords on a PC set up for everyone" in the Security page). The connections list looks the same, with three differences.
+
+Screen `p14-connection-saved`: a row whose password is saved says "Password held by the key keeper". Test, the fixed checks and Add data still work with it: the keeper runs them and sends back only the result. The note under the list says where passwords are kept.
+
+![A saved connection held by the key keeper, dark](../screenshots/P14/p14-connection-saved-dark.png)
+![A saved connection held by the key keeper, light](../screenshots/P14/p14-connection-saved-light.png)
+
+Screen `p14-keeper-stopped`: when the keeper service is not running, the page says so above the list and offers Check again. Nothing that needs a saved password runs until it is back. Connections that need no password still work. The page does not mistake this for the demo.
+
+![The key keeper is not running, dark](../screenshots/P14/p14-keeper-stopped-dark.png)
+![The key keeper is not running, light](../screenshots/P14/p14-keeper-stopped-light.png)
+
+Screen `p14-migrate`: saved connections you made before the PC was set up for everyone are still in your own folder. The page counts them and offers Move them, or Not now. After the move, the page offers Remove old copies, which asks once. The old files are removed only then, and only once every one of them is in the keeper. Where this page is the whole screen, Move them is its main button and + SQL Server is outlined while the card shows; on case home, which has its own main button, both are outlined.
+
+![Move saved connections to the key keeper, dark](../screenshots/P14/p14-migrate-dark.png)
+![Move saved connections to the key keeper, light](../screenshots/P14/p14-migrate-light.png)
+
+The demo shows these three states only for the pictures. It never runs a keeper and never keeps a password.
+
 Screen `p7-sql-form` is the form for one SQL Server connection. Save, Test and Cancel are all outlined while the form sits on case home, because case home already has its main button. Leave the password box empty on an edit to keep the saved password.
 
 ![The SQL Server connection form, dark](../screenshots/P7/p7-sql-form-dark.png)

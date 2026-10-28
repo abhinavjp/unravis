@@ -46,6 +46,12 @@ export function shownText(shown: number, total: number): string {
   return shown + ' of ' + total + ' cases shown.';
 }
 
+/** The start-screen note on a PC set up for everyone, when the person still has cases from before in their own folder (P14). */
+export function oldCasesText(n: number): string {
+  return (n === 1 ? '1 case from before this PC was set up for everyone is' : n + ' cases from before this PC was set up for everyone are') +
+    ' still in your own Windows folder, sealed for you alone. Unravis here does not show or move them, and it has not deleted them. Ask the person who looks after this PC before you remove that folder.';
+}
+
 /** The label a screen reader hears on a case row's button. */
 export const openLabel = (title: string): string => 'Open case ' + title;
 
@@ -54,5 +60,7 @@ export const startLintEntries = (): LintEntry[] => [
   ...Object.entries(START_TEXT).map(([id, text]) => ({ id: 'start.' + id, text })),
   { id: 'start.sample.shown', text: shownText(50, 500) },
   { id: 'start.sample.imports', text: importsText(3) },
-  { id: 'start.sample.sources', text: sourcesText(2) }
+  { id: 'start.sample.sources', text: sourcesText(2) },
+  { id: 'start.sample.oldCases', text: oldCasesText(3) },
+  { id: 'start.sample.oldCase', text: oldCasesText(1) }
 ];
