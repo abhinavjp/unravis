@@ -235,3 +235,16 @@ export const help: Record<string, { plain: string; simple: string }> = {
     simple: 'It is like unlocking the filing cabinet once when you arrive. You only do it again the next time you start the app.'
   }
 };
+
+/**
+ * Words for the user guide inside the Help drawer. The guide pages themselves are the Markdown files in docs/user.
+ * These keys sit here, next to the other help copy, and the copy lint applies to every string.
+ * (HELP_TEXT in screenCopy.ts holds the drawer title and the start steps.)
+ */
+export const HELP_GUIDE_TEXT = {
+  guideButton: 'Open the user guide',
+  guideBack: 'Back to help',
+  guideContents: 'Pages',
+  guideImage: 'Picture: ',
+  guideMissing: 'This page is not available.'
+} as const;

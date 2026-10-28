@@ -8,6 +8,8 @@
   import { updateCheckNote, updateCheckState, updatePreviewNow, isOwnReleaseUrl } from '../lib/updateCheck';
   import type { UpdateCheckReply } from '../lib/types';
   import Drawer from './Drawer.svelte';
+  import HelpGuide from './HelpGuide.svelte';
+  import { HELP_GUIDE_TEXT } from '../lib/copy/helpCopy';
 
   // The glossary drawer: every term in the copy deck, alphabetical, with a plain text filter. It opens from the Help button in the header.
   // Esc closes it and the page gives focus back to the button. Tab stays inside the panel while it is open, like the Connections drawer.
@@ -16,6 +18,14 @@
   let query = $state('');
   let drawer = $state<HTMLElement>();
   let search = $state<HTMLInputElement>();
+  // The user guide: when set, it replaces the help parts below. Back returns to them and puts focus on the button that opened it.
+  let guide = $state<{ slug: string; anchor: string } | null>(null);
+  let guideOpen = $state<HTMLButtonElement>();
+  async function closeGuide() {
+    guide = null;
+    await tick();
+    guideOpen?.focus();
+  }
   const results = $derived(searchTerms(query));
   const summary = $derived(glossaryCount(results.length, query));
   // Which build this is, quietly, at the foot of the panel. If the call fails the line is simply absent.
@@ -56,33 +66,39 @@
 </script>
 
 <Drawer class="glossary-drawer" title={HELP_TEXT.title} titleId="glossary-title" closeLabel="Close help and glossary" focusable={'button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])'} bind:element={drawer} {onClose}>
-  <section class="help-start" aria-labelledby="help-start-title">
-    <h3 id="help-start-title">{HELP_TEXT.startHeading}</h3>
-    <p>{HELP_TEXT.startIntro}</p>
-    <ol>
-      {#each HELP_STEPS as step (step)}<li>{step}</li>{/each}
-    </ol>
-  </section>
-  <h3 class="glossary-heading">{HELP_TEXT.termsHeading}</h3>
-  <div class="glossary-search">
-    <label for="glossary-filter">Search terms</label>
-    <input id="glossary-filter" type="search" bind:this={search} bind:value={query} autocomplete="off" spellcheck="false" aria-describedby="glossary-count" />
-    <span id="glossary-count" class="glossary-count" role="status" aria-live="polite">{summary}</span>
-  </div>
-  <dl class="glossary-list">
-    {#each results as term (term.id)}
-      <div class="glossary-entry" class:glossary-focused={term.id === focusTerm} id={'glossary-' + term.id} tabindex="-1">
-        <dt>{term.term}</dt>
-        <dd class="glossary-hint">{term.hint}</dd>
-        <dd>{term.definition}</dd>
-        <dd class="glossary-not"><span>What it does not mean</span>{term.notMeaning}</dd>
-        {#if term.aliases?.length}<dd class="glossary-alias"><span>Also called</span>{term.aliases.join(', ')}</dd>{/if}
-      </div>
-    {/each}
-  </dl>
-  {#if build}<p class="build-line" data-testid="build-line">{build}</p>{/if}
-  <div class="update-check"><button type="button" class="update-button" data-testid="update-check-button" aria-disabled={checking} onclick={checkForUpdates}>{checking ? 'Checking...' : 'Check for updates'}</button>
-    <div role="status" aria-live="polite" aria-busy={checking}>{#if update}{#key checkId}<p class="update-note" data-testid="update-check-result" data-state={updateCheckState(update)}>{updateCheckNote(update)}{#if update.status === 'available' && update.url && isOwnReleaseUrl(update.url)}{' '}<a data-testid="update-check-link" href={update.url} target="_blank" rel="noopener noreferrer">Open the release page</a>{/if}</p>{/key}{/if}</div></div>
+  {#if guide}
+    <div class="guide-top"><button type="button" class="update-button" data-testid="guide-back" onclick={closeGuide}>{HELP_GUIDE_TEXT.guideBack}</button></div>
+    <HelpGuide slug={guide.slug} anchor={guide.anchor} onNavigate={(slug, anchor) => { guide = { slug, anchor }; }} onBack={closeGuide} />
+  {:else}
+    <section class="help-start" aria-labelledby="help-start-title">
+      <h3 id="help-start-title">{HELP_TEXT.startHeading}</h3>
+      <p>{HELP_TEXT.startIntro}</p>
+      <ol>
+        {#each HELP_STEPS as step (step)}<li>{step}</li>{/each}
+      </ol>
+      <button type="button" class="update-button guide-open" data-testid="guide-open" bind:this={guideOpen} onclick={() => { guide = { slug: 'index', anchor: '' }; }}>{HELP_GUIDE_TEXT.guideButton}</button>
+    </section>
+    <h3 class="glossary-heading">{HELP_TEXT.termsHeading}</h3>
+    <div class="glossary-search">
+      <label for="glossary-filter">Search terms</label>
+      <input id="glossary-filter" type="search" bind:this={search} bind:value={query} autocomplete="off" spellcheck="false" aria-describedby="glossary-count" />
+      <span id="glossary-count" class="glossary-count" role="status" aria-live="polite">{summary}</span>
+    </div>
+    <dl class="glossary-list">
+      {#each results as term (term.id)}
+        <div class="glossary-entry" class:glossary-focused={term.id === focusTerm} id={'glossary-' + term.id} tabindex="-1">
+          <dt>{term.term}</dt>
+          <dd class="glossary-hint">{term.hint}</dd>
+          <dd>{term.definition}</dd>
+          <dd class="glossary-not"><span>What it does not mean</span>{term.notMeaning}</dd>
+          {#if term.aliases?.length}<dd class="glossary-alias"><span>Also called</span>{term.aliases.join(', ')}</dd>{/if}
+        </div>
+      {/each}
+    </dl>
+    {#if build}<p class="build-line" data-testid="build-line">{build}</p>{/if}
+    <div class="update-check"><button type="button" class="update-button" data-testid="update-check-button" aria-disabled={checking} onclick={checkForUpdates}>{checking ? 'Checking...' : 'Check for updates'}</button>
+      <div role="status" aria-live="polite" aria-busy={checking}>{#if update}{#key checkId}<p class="update-note" data-testid="update-check-result" data-state={updateCheckState(update)}>{updateCheckNote(update)}{#if update.status === 'available' && update.url && isOwnReleaseUrl(update.url)}{' '}<a data-testid="update-check-link" href={update.url} target="_blank" rel="noopener noreferrer">Open the release page</a>{/if}</p>{/key}{/if}</div></div>
+  {/if}
 </Drawer>
 
 <style>
@@ -105,6 +121,8 @@
   .build-line { margin: 14px 0 0; color: var(--text-2); font: 12px var(--mono); }
   .update-check { margin-top: 10px; display: grid; gap: 8px; justify-items: start; }
   .update-button { border: 1px solid var(--control-line); background: transparent; color: var(--text); padding: 6px 12px; border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
+  .guide-open { margin-top: 10px; }
+  .guide-top { margin: 13px 0 12px; }
   .update-button:hover { background: var(--surface-2); }
   .update-button:focus-visible { outline: 2px solid var(--focus); }
   .update-button[aria-disabled='true'] { opacity: .6; cursor: default; }
