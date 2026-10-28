@@ -75,6 +75,7 @@
    */
   async function show(next: View) {
     const fromList = view.kind === 'list';
+    const leavingStatus = view.kind === 'status' ? view.id : '';
     view = next;
     actionNote = '';
     actionError = '';
@@ -82,7 +83,11 @@
     newKey = '';
     await tick();
     drawerEl?.scrollTo?.({ top: 0 });
-    const target = body?.querySelector<HTMLElement>('h3[tabindex="-1"]') ?? drawerEl?.querySelector<HTMLElement>('h2');
+    // Back from a status: return to the row that was opened (D-C-22). If it is gone, use the usual target.
+    const row = next.kind === 'list' && leavingStatus
+      ? Array.from(body?.querySelectorAll<HTMLElement>('[data-open-for]') ?? []).find((el) => el.dataset.openFor === leavingStatus)
+      : undefined;
+    const target = row ?? body?.querySelector<HTMLElement>('h3[tabindex="-1"]') ?? drawerEl?.querySelector<HTMLElement>('h2');
     target?.focus({ preventScroll: true });
     if (fromList && next.kind === 'status') void refreshOpened(next.id);
   }
@@ -246,6 +251,7 @@
         <p class="bb-ready"><strong>{item.state.readiness}</strong></p>
         <p>{item.state.detail}</p>
         <p class="bb-note">{T.stateNext[item.state.state]}</p>
+        {#if !item.thisPc}<p class="bb-note">{T.statusReadOnly}</p>{/if}
         <dl class="bb-facts">
           <div><dt>{T.rowReachedBy}</dt><dd>{kindWord(item)}: {item.location}</dd></div>
           <div><dt>{T.lastSample}</dt><dd>{shownTime(item.facts?.lastSample)}</dd></div>
@@ -348,7 +354,7 @@
               </div>
               <p class="bb-note">{kindWord(item)}: {item.location}</p>
               <p class="bb-note">{T.lastSample}: {shownTime(item.facts?.lastSample)}{#if item.facts}. {T.samplesEvery} {item.facts.intervalSeconds} {T.seconds}{#if item.facts.freePercent != null}. {T.diskFree} {item.facts.freePercent} %{/if}{/if}</p>
-              <div class="bb-actions"><button type="button" class="secondary-button" onclick={() => show({ kind: 'status', id: item.id })} aria-label={T.openStatus + ': ' + item.name}>{T.openStatus}</button></div>
+              <div class="bb-actions"><button type="button" class="secondary-button" data-open-for={item.id} onclick={() => show({ kind: 'status', id: item.id })} aria-label={T.openStatus + ': ' + item.name}>{T.openStatus}</button></div>
             </li>
           {/each}
         </ul>

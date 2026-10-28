@@ -261,6 +261,7 @@ export const BB_TEXT = {
     'Key refused. The address answered but the read key was not accepted. Type the new key and look again.'
   ],
   addNothingChanged: 'Nothing was changed on that server.',
+  statusReadOnly: 'Unravis only reads here. Nothing was changed on that server.',
   duplicateTitle: 'That Blackbox is already in the list',
   duplicateText: (name: string) => 'It is listed as ' + name + '. It was not added a second time.',
   duplicateOpen: 'Open the one in the list',

@@ -73,3 +73,25 @@ test('D-C-01: the Read key box handles keeper-held with one calm line and keeps 
   assert.match(T.keyHeld, /key keeper/);
   assert.doesNotMatch(T.keyHeld, /[–—]| - |error|failed/i);
 });
+
+test('D-B-43 pin: the page says the plain install command, with no --name', () => {
+  assert.match(T.packSteps[3], /^Run: unravis-blackbox\.exe install\./);
+  assert.doesNotMatch(T.packSteps[3], /--name/);
+});
+
+test('D-B-45: the other-server status view shows the short read-only line', () => {
+  assert.equal(T.statusReadOnly, 'Unravis only reads here. Nothing was changed on that server.');
+  const panel = read('src/components/BlackboxPanel.svelte');
+  assert.match(panel, /\{#if !item\.thisPc\}<p class="bb-note">\{T\.statusReadOnly\}<\/p>\{\/if\}/);
+  // It sits in the top block of the status view, before the facts list.
+  assert.ok(panel.indexOf('T.statusReadOnly') < panel.indexOf('<dl class="bb-facts">'));
+});
+
+test('D-C-22: Back in the status view returns focus to the opened row', () => {
+  const panel = read('src/components/BlackboxPanel.svelte');
+  assert.match(panel, /data-open-for=\{item\.id\}/);
+  assert.match(panel, /const leavingStatus = view\.kind === 'status' \? view\.id : '';/);
+  assert.match(panel, /el\.dataset\.openFor === leavingStatus/);
+  assert.match(panel, /const target = row \?\? body\?\.querySelector<HTMLElement>\('h3\[tabindex="-1"\]'\)/);
+  assert.match(panel, /if \(fromList && next\.kind === 'status'\) void refreshOpened\(next\.id\)/);
+});
