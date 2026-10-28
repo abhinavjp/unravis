@@ -409,6 +409,10 @@ type masterKeyStatus struct {
 	// They are refused (409 reason "untrusted-case"), cannot be re-wrapped, and are
 	// not in DPAPICases; they can still be erased. Omitted when 0 (always while locked).
 	UntrustedCases int `json:"untrustedCases,omitempty"`
+	// Reset is present only while the key file is damaged: what starting over with
+	// a new master key would do to the cases (key_reset.go). The page says it
+	// before the person ticks the box.
+	Reset *resetImpact `json:"reset,omitempty"`
 }
 
 const needsRewrapText = "This case was only partly protected with the master key. Protect older cases to finish it."
@@ -707,7 +711,11 @@ func (h *handler) legacyCandidates(ctx context.Context) []string {
 func (h *handler) masterKeyReply(w http.ResponseWriter, r *http.Request) {
 	st := h.masterKeyState()
 	n, half, bad := h.dpapiCaseCount(r.Context())
-	writeJSON(w, http.StatusOK, masterKeyStatus{State: st, DPAPICases: n, NeedsRewrap: half, UntrustedCases: bad}, 4096)
+	out := masterKeyStatus{State: st, DPAPICases: n, NeedsRewrap: half, UntrustedCases: bad}
+	if st == MasterKeyDamaged {
+		out.Reset = h.masterKeyResetImpact(r.Context())
+	}
+	writeJSON(w, http.StatusOK, out, 4096)
 }
 
 func (h *handler) masterKeySetup(w http.ResponseWriter, r *http.Request) {
@@ -995,6 +1003,8 @@ type resetDamagedReply struct {
 	// KeptAs is the file name (no folder) the damaged item was moved to, next to
 	// where it was. Nothing is deleted: put it back under its old name to undo.
 	KeptAs string `json:"keptAs"`
+	// Reset is what the reset left unreadable and what it left alone (counts).
+	Reset *resetImpact `json:"reset,omitempty"`
 }
 
 // masterKeyResetDamaged is the one recovery from a damaged masterkey.dat. It is
@@ -1033,6 +1043,8 @@ func (h *handler) masterKeyResetDamaged(w http.ResponseWriter, r *http.Request) 
 			"Confirm that cases protected by the old master key will stay unreadable.")
 		return
 	}
+	// Counted before the file moves, so the answer names what the reset affected.
+	impact := h.masterKeyResetImpact(r.Context())
 	from := masterkey.Path(s.dir)
 	keptAs := masterkey.FileName + ".damaged-" + time.Now().UTC().Format("20060102T150405.000000000Z")
 	// Judge the file again immediately before moving it: a good key file put back
@@ -1048,5 +1060,5 @@ func (h *handler) masterKeyResetDamaged(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	n, _, _ := h.dpapiCaseCount(r.Context())
-	writeJSON(w, http.StatusOK, resetDamagedReply{State: s.State(), DPAPICases: n, KeptAs: keptAs}, 4096)
+	writeJSON(w, http.StatusOK, resetDamagedReply{State: s.State(), DPAPICases: n, KeptAs: keptAs, Reset: impact}, 4096)
 }

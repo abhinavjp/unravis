@@ -14,7 +14,23 @@ export const LOCK_STATES: readonly LockState[] = ['none', 'locked', 'unlocked', 
 export const closesCases = (state: LockState | 'unknown' | null): boolean => state === 'locked' || state === 'damaged';
 
 /** `dpapiCases` is how many cases are still protected the older way, so they could be re-wrapped. */
-export interface KeyStatus { state: LockState; dpapiCases: number }
+export interface KeyStatus { state: LockState; dpapiCases: number; reset?: ResetImpact }
+
+/**
+ * What starting over with a new master key would do (present only while the key file is damaged): cases sealed with the old master
+ * key stay unreadable, cases with their own key are left alone, and archived cases whose working copy is freed can only be opened
+ * with the old key (M12). Counts only.
+ */
+export interface ResetImpact { masterKeyCases: number; ownKeyCases: number; archiveOnly: number }
+
+const whole = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0);
+
+/** Reads the reset block of a status answer. Null when it is absent or not an object. */
+export function parseResetImpact(raw: unknown): ResetImpact | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const body = raw as { masterKeyCases?: unknown; ownKeyCases?: unknown; archiveOnly?: unknown };
+  return { masterKeyCases: whole(body.masterKeyCases), ownKeyCases: whole(body.ownKeyCases), archiveOnly: whole(body.archiveOnly) };
+}
 
 export const MIN_PASSPHRASE_CHARS = 12;
 export const MAX_PASSPHRASE_BYTES = 1024;
@@ -27,10 +43,10 @@ export const isLockState = (value: unknown): value is LockState => typeof value 
 /** Reads a status answer. Null when it is not one, so a strange answer is never taken as "unlocked". */
 export function parseStatus(raw: unknown): KeyStatus | null {
   if (!raw || typeof raw !== 'object') return null;
-  const body = raw as { state?: unknown; dpapiCases?: unknown };
+  const body = raw as { state?: unknown; dpapiCases?: unknown; reset?: unknown };
   if (!isLockState(body.state)) return null;
-  const count = typeof body.dpapiCases === 'number' && Number.isFinite(body.dpapiCases) && body.dpapiCases > 0 ? Math.floor(body.dpapiCases) : 0;
-  return { state: body.state, dpapiCases: count };
+  const reset = parseResetImpact(body.reset);
+  return { state: body.state, dpapiCases: whole(body.dpapiCases), ...(reset ? { reset } : {}) };
 }
 
 /** Characters as a person counts them (one emoji is one), not UTF-16 units. */

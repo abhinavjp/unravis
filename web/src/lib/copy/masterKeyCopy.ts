@@ -147,6 +147,7 @@ export const DAMAGED_TEXT = {
   option: 'If you cannot put the file back from a backup, you can start over with a new master key.',
   keptAside: 'The damaged file is kept aside, not deleted. If it turns out to be fine, it can be put back under its old name.',
   warning: 'Cases protected by the old master key will stay unreadable after a new one is set.',
+  impactLabel: 'What starting over would do',
   ackLabel: 'I understand that cases protected by the old master key will stay unreadable.',
   reset: 'Start over with a new master key',
   resetting: 'Setting the file aside…',
@@ -155,6 +156,34 @@ export const DAMAGED_TEXT = {
   doneNext: 'Next, set a new master key for this PC.',
   continue: 'Set a new master key'
 } as const;
+
+/** The M12 sentence: archived cases that can only be opened with the old key. */
+export function archiveOnlyText(count: number): string {
+  return count === 1
+    ? '1 archived case can only be opened with the old key.'
+    : count + ' archived cases can only be opened with the old key.';
+}
+
+/**
+ * What a start-over would do, in counts, said before the box is ticked. A case with its own key is left alone, so it is named as safe
+ * and never counted as lost. Empty when the server gave no counts.
+ */
+export function resetImpactLines(impact: { masterKeyCases: number; ownKeyCases: number; archiveOnly: number } | null | undefined): string[] {
+  if (!impact) return [];
+  const lines: string[] = [];
+  if (impact.masterKeyCases > 0) {
+    lines.push(impact.masterKeyCases === 1
+      ? '1 case on this PC is protected by the old master key and will stay unreadable.'
+      : impact.masterKeyCases + ' cases on this PC are protected by the old master key and will stay unreadable.');
+  }
+  if (impact.ownKeyCases > 0) {
+    lines.push(impact.ownKeyCases === 1
+      ? '1 case with its own key is not affected. It still opens with its own key.'
+      : impact.ownKeyCases + ' cases with their own key are not affected. They still open with their own key.');
+  }
+  if (impact.archiveOnly > 0) lines.push(archiveOnlyText(impact.archiveOnly));
+  return lines;
+}
 
 export type ResetFailureKind = 'acknowledgement-required' | 'not-damaged' | 'failed' | 'unavailable' | 'network' | 'other';
 
@@ -214,6 +243,8 @@ export function masterKeyLintEntries(): LintEntry[] {
     { id: 'masterkey.sample.rewrapActionOne', text: rewrapAction(1) },
     { id: 'masterkey.sample.rewrapActionMany', text: rewrapAction(5) },
     { id: 'masterkey.sample.rewrapDone', text: rewrapDone(4, 1) },
-    { id: 'masterkey.sample.rewrapDoneAll', text: rewrapDone(1, 0) }
+    { id: 'masterkey.sample.rewrapDoneAll', text: rewrapDone(1, 0) },
+    ...resetImpactLines({ masterKeyCases: 1, ownKeyCases: 1, archiveOnly: 1 }).map((text, i) => ({ id: 'masterkey.sample.impactOne' + i, text })),
+    ...resetImpactLines({ masterKeyCases: 4, ownKeyCases: 2, archiveOnly: 3 }).map((text, i) => ({ id: 'masterkey.sample.impactMany' + i, text }))
   ];
 }

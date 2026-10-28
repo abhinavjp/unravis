@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -15,11 +16,13 @@ import (
 	"api-audit-explorer/internal/casestore/sqlite"
 	"api-audit-explorer/internal/casestore/storetest"
 	"api-audit-explorer/internal/importer"
+	"api-audit-explorer/internal/masterkey"
 )
 
 const (
 	ckPass  = "first case key phrase"
 	ckPass2 = "second case key phrase"
+	mkPass2 = "a second master key phrase"
 )
 
 // newCKEnv is newMKEnv with small Argon2 costs for the per-case keys.
@@ -363,4 +366,78 @@ func TestCaseKeyRoutesRefuseOtherShapes(t *testing.T) {
 		t.Fatalf("bad id = %d %s", res.Code, res.Body)
 	}
 	e.wantKeyFail(e.do(http.MethodGet, "/api/cases/abcdefghijklmnopqrstuvwxyz/key", ""), http.StatusNotFound, "case-not-found")
+}
+
+// A master key reset says first what it will do (M12) and leaves a case with its
+// own key readable and uncounted.
+func TestCaseKeyResetLeavesOwnKeyCasesAlone(t *testing.T) {
+	e := newCKEnv(t)
+	legacy := e.newCase("made before the key") // DPAPI-sealed
+	if res := e.do(http.MethodPost, "/api/master-key/setup", setupBody(mkPass, mkPass, true)); res.Code != http.StatusOK {
+		t.Fatalf("setup = %d %s", res.Code, res.Body)
+	}
+	mk1, mk2 := e.newCase("master one"), e.newCase("master two")
+	keyed := e.newKeyedCase("own key")
+	e.keyCall(keyed.ID, "lock", `{}`)
+	e.do(http.MethodPost, "/api/master-key/lock", "")
+	if err := os.WriteFile(masterkey.Path(e.dir), []byte("garbage"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.h.(*handler).archiveOnly = func(context.Context) int { return 3 }
+
+	// The status carries the impact before anything is changed.
+	type statusOut struct {
+		State string       `json:"state"`
+		Reset *resetImpact `json:"reset"`
+	}
+	var st statusOut
+	decodeBody(t, e.do(http.MethodGet, "/api/master-key/status", ""), &st)
+	want := resetImpact{MasterKeyCases: 2, OwnKeyCases: 1, ArchiveOnly: 3}
+	if st.State != "damaged" || st.Reset == nil || *st.Reset != want {
+		t.Fatalf("status = %+v %+v, want %+v", st, st.Reset, want)
+	}
+	// Outside the damaged state the status holds no such block.
+	res := e.do(http.MethodPost, "/api/master-key/reset-damaged", `{"acknowledged":true}`)
+	if res.Code != http.StatusOK {
+		t.Fatalf("reset = %d %s", res.Code, res.Body)
+	}
+	var out struct {
+		State string       `json:"state"`
+		Reset *resetImpact `json:"reset"`
+	}
+	decodeBody(t, res, &out)
+	if out.State != "none" || out.Reset == nil || *out.Reset != want {
+		t.Fatalf("reset reply = %+v %+v", out, out.Reset)
+	}
+	var after statusOut
+	decodeBody(t, e.do(http.MethodGet, "/api/master-key/status", ""), &after)
+	if after.Reset != nil {
+		t.Fatalf("status after the reset still carries an impact: %+v", after.Reset)
+	}
+
+	// A new master key: the case with its own key still opens with its key and
+	// is untouched; the cases sealed under the old key do not open.
+	if res := e.do(http.MethodPost, "/api/master-key/setup", setupBody(mkPass2, mkPass2, true)); res.Code != http.StatusOK {
+		t.Fatalf("setup after reset = %d %s", res.Code, res.Body)
+	}
+	if res := e.keyCall(keyed.ID, "unlock", unlockBody(ckPass)); res.Code != http.StatusOK {
+		t.Fatalf("own-key case after the reset = %d %s", res.Code, res.Body)
+	}
+	if res := e.do(http.MethodGet, "/api/cases/"+keyed.ID, ""); res.Code != http.StatusOK {
+		t.Fatalf("open own-key case = %d %s", res.Code, res.Body)
+	}
+	for _, id := range []string{mk1, mk2} {
+		if res := e.do(http.MethodGet, "/api/cases/"+id, ""); res.Code == http.StatusOK {
+			t.Fatalf("a case sealed under the old master key opened after the reset: %s", id)
+		}
+	}
+	// The legacy (DPAPI) case is not part of the reset at all.
+	if res := e.do(http.MethodGet, "/api/cases/"+legacy, ""); res.Code != http.StatusOK {
+		t.Fatalf("legacy case after the reset = %d %s", res.Code, res.Body)
+	}
+	// The keyed case is still counted as its own, never as a master key case.
+	impact := e.h.(*handler).masterKeyResetImpact(context.Background())
+	if impact.OwnKeyCases != 1 || impact.MasterKeyCases != 2 {
+		t.Fatalf("impact after the reset = %+v", impact)
+	}
 }

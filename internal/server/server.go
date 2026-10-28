@@ -56,6 +56,8 @@ type handler struct {
 	mongoTests mongoTests
 	// mk is the master-key session (nil when the feature is not wired).
 	mk *MasterKeySession
+	// archiveOnly counts the archived, freed cases sealed under the master key (M12); nil means 0.
+	archiveOnly func(ctx context.Context) int
 
 	casesState
 
