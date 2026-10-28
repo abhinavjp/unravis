@@ -163,7 +163,7 @@ Settings are in `blackbox.json`. Before install it sits next to the program in t
 | `record.logsCatalogue` | true | Record the log file catalogue |
 | `record.copyLogsOnSnapshot` | false | Include log files in a snapshot |
 | `logPaths` | IIS log folder | Folders searched for log files |
-| `probe.enabled` | false | Reserved. The SQL probe is not built yet; leave it off |
+| `probe.enabled` | false | Reserved. The SQL probe is not in release 1; leave it off |
 
 ## Install
 

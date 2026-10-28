@@ -107,25 +107,25 @@ The audit and the IIS logs can show retried calls (the same client calling the s
 
 > **In a nutshell:** We check SQL Server against its own data: waits, blocking and plans. Until that data is imported, this step says Cannot test yet.
 
-This version reads only the audit and the IIS logs, so this step reports Cannot test yet and lists what to import. The seam for the SQL Server data is in place, so the later phase fills it in without changing the other steps.
+This step reads one day of a SQL Server with four fixed read-only checks: server start and thread pool, the error log, Query Store, and Agent jobs and backups. A check that cannot run says Cannot test yet and lists what is missing. With no SQL Server read in the case, the whole step says Cannot test yet and lists what to add. See [Sources](sources.md).
 
 ## Step 8. Mongo
 
 > **In a nutshell:** We check MongoDB against its own data: slow operations, cache and disk. Until that data is imported, this step says Cannot test yet.
 
-Same as Step 7. Even with MongoDB data, this step stays at Partly ready in the first release.
+The step reads the slow operations the profiler recorded and when they began. Other Mongo questions are not read yet and are listed as Cannot test yet. Even with MongoDB data, this step stays at Partly ready in the first release.
 
 ## Step 9. Host
 
 > **In a nutshell:** We check the host against its own counters: CPU, memory, disk and network. Until that data is imported, this step says Cannot test yet.
 
-Same as Step 7. Even with host data, this step stays at Partly ready in the first release.
+This step reads the CPU, memory, disk and network counters of a Blackbox. With no Blackbox in the case it says Cannot test yet. Even with host data, this step stays at Partly ready in the first release.
 
 ## Step 10. Origin
 
 > **In a nutshell:** We line up when each tier first moved. The earliest is the origin and the others followed or amplified it. If they moved together, we say there is no clear origin.
 
-Each tier that can be dated gets a start minute: the arrival rate, audit set-up, the action, outside time, and later the SQL, Mongo and host lanes. The engine then reads them in order:
+Each tier that can be dated gets a start minute: the arrival rate, audit set-up, the action, outside time, and the SQL, Mongo and host lanes when the case holds their data. The engine then reads them in order:
 
 - One tier clearly first (more than a minute and a second ahead of the others): that tier is the origin, the others are victims or amplifiers.
 - Tiers within a minute and a second of each other: they moved together, and the engine says there is no clear origin.

@@ -3,7 +3,7 @@
 ## What Unravis never does
 
 - It never changes your SQL Server, your MongoDB or your logs. It only reads.
-- It never sends anything over the internet. It listens on your own computer only.
+- It never sends anything over the internet by itself. It listens on your own computer only. The one time it contacts the internet is when you press Check for updates (see [Upgrade and uninstall](upgrade-and-uninstall.md)).
 - It never shows a saved password in the screens, in its log or in a case file. On a PC set up for everyone, it does not even hold one: the key keeper does (see below).
 
 ## How you open it
@@ -62,4 +62,4 @@ When the installer sets Unravis up for everyone on a PC, it makes the shared dat
 
 ## Where a probe login is kept
 
-Coming in P10.
+This is not in release 1.
