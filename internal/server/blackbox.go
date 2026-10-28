@@ -175,6 +175,8 @@ type bbFacts struct {
 	Files           int        `json:"files"`
 	Samples         int        `json:"samples"`
 	Gaps            int        `json:"gaps"`
+	// LongestGapSeconds is the length of the longest gap in the manifest, so the status can say how long it was (D-B-51).
+	LongestGapSeconds int `json:"longestGapSeconds,omitempty"`
 	// Unread is the number of recording files that could not be read to the end. It is what makes a Blackbox Incomplete.
 	Unread      int      `json:"unread,omitempty"`
 	FreePercent *float64 `json:"freePercent,omitempty"`
@@ -233,6 +235,11 @@ func (b *blackboxHub) facts(rd *blackbox.Reading, rep *blackbox.ReadReport) *bbF
 	}
 	for _, fe := range m.Files {
 		f.Samples += fe.Samples
+	}
+	for _, g := range m.Gaps {
+		if g.Seconds > f.LongestGapSeconds {
+			f.LongestGapSeconds = g.Seconds
+		}
 	}
 	if rep != nil {
 		f.Unread = len(rep.Dropped) + len(rep.Missing)

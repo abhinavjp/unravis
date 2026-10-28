@@ -49,6 +49,8 @@ export interface Facts {
   files: number;
   samples: number;
   gaps: number;
+  /** Length in seconds of the longest gap. Absent when there is none (or from an older server). */
+  longestGapSeconds?: number;
   /** Recording files that were not read to the end (dropped or missing). Absent when none. */
   unread?: number;
   freePercent?: number;

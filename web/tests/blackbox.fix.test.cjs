@@ -88,7 +88,7 @@ test('review 6 and 7: the facts say files and samples in words, and unread files
   assert.equal(T.gapsText(1, 3), '1 gap. 3 recording files were not read to the end');
   const panel = read('src/components/BlackboxPanel.svelte');
   assert.match(panel, /T\.filesAndSamples\(item\.facts\.files, item\.facts\.samples\)/);
-  assert.match(panel, /T\.gapsText\(item\.facts\.gaps, item\.facts\.unread \?\? 0\)/);
+  assert.match(panel, /T\.gapsText\(item\.facts\.gaps, item\.facts\.unread \?\? 0, item\.facts\.longestGapSeconds \?\? 0\)/);
   assert.doesNotMatch(panel, /\{item\.facts\.files\}, \{item\.facts\.samples\}/);
 });
 

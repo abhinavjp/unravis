@@ -34,6 +34,9 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8').re
 const bb = loadTypeScript('src/lib/blackbox.ts');
 const { BB_TEXT: T } = loadTypeScript('src/lib/copy/blackboxCopy.ts');
 const keyLib = loadTypeScript('src/lib/blackboxKey.ts');
+const { blackboxCopyEntries } = loadTypeScript('src/lib/copy/blackboxCopy.ts');
+const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
+const { deck } = loadTypeScript('src/lib/copy/deck.ts');
 
 // D-C-01: a keeper-held answer is told apart, copyKeyOnce does not write to the clipboard for it, and the box shows one calm line.
 test('D-C-01: isKeeperHeldError matches only a refusal whose reason is keeper-held', () => {
@@ -94,4 +97,29 @@ test('D-C-22: Back in the status view returns focus to the opened row', () => {
   assert.match(panel, /el\.dataset\.openFor === leavingStatus/);
   assert.match(panel, /const target = row \?\? body\?\.querySelector<HTMLElement>\('h3\[tabindex="-1"\]'\)/);
   assert.match(panel, /if \(fromList && next\.kind === 'status'\) void refreshOpened\(next\.id\)/);
+});
+
+test('D-B-51: the gaps fact says how long the longest gap was and what the rule is', () => {
+  assert.equal(T.gapsText(1, 0, 90), '1 gap of 90 seconds. This is a warning only. Missing minutes are never counted as zero');
+  assert.equal(T.gapsText(2, 0, 100), '2 gaps, the longest is 100 seconds. This is a warning only. Missing minutes are never counted as zero');
+  assert.equal(T.gapsText(1, 0, 300), '1 gap of 5 minutes. The minutes inside it are Cannot test yet');
+  assert.equal(T.gapsText(3, 1, 1800), '3 gaps, the longest is 30 minutes. The minutes inside it are Cannot test yet. 1 recording file was not read to the end');
+  // No length: the old text, unchanged.
+  assert.equal(T.gapsText(0, 0, 0), 'none');
+  assert.equal(T.gapsText(2, 0), '2 gaps');
+  assert.equal(T.gapsText(1, 3, 0), '1 gap. 3 recording files were not read to the end');
+  // 120 seconds is still short; 121 is long.
+  assert.match(T.gapsText(1, 0, 120), /warning only/);
+  assert.match(T.gapsText(1, 0, 121), /Cannot test yet/);
+});
+
+test('D-B-51: the panel and the facts type carry the length, and the lint reads the new sentences', () => {
+  const panel = read('src/components/BlackboxPanel.svelte');
+  assert.match(panel, /T\.gapsText\(item\.facts\.gaps, item\.facts\.unread \?\? 0, item\.facts\.longestGapSeconds \?\? 0\)/);
+  assert.match(read('src/lib/blackbox.ts'), /longestGapSeconds\?: number;/);
+  const entries = blackboxCopyEntries();
+  for (const id of ['short', 'shorts', 'long', 'longs']) {
+    assert.ok(entries.some((entry) => entry.id === 'blackbox.gapsText.' + id), 'the lint reads gapsText.' + id);
+  }
+  assert.deepEqual(lintScreenStrings(entries, deck.terms), []);
 });

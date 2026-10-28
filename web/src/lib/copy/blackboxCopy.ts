@@ -109,9 +109,19 @@ export const BB_TEXT = {
   // "4 files and 960 samples", never "4, 960", which reads as 4,960.
   filesAndSamples: (files: number, samples: number) => files + (files === 1 ? ' file' : ' files') + ' and ' + samples + (samples === 1 ? ' sample' : ' samples'),
   // The Gaps row. Files that could not be read to the end are what make a Blackbox Incomplete, so they show here too.
-  gapsText: (gaps: number, unread: number) => {
+  // With the length of the longest gap it says how long, and whether the gap only warns (2 minutes or less) or makes its minutes Cannot test yet.
+  gapsText: (gaps: number, unread: number, longestSeconds = 0) => {
     const parts: string[] = [];
-    if (gaps > 0) parts.push(gaps + (gaps === 1 ? ' gap' : ' gaps'));
+    if (gaps > 0) {
+      let text = gaps + (gaps === 1 ? ' gap' : ' gaps');
+      if (longestSeconds > 0) {
+        const short = longestSeconds <= 120;
+        const length = short ? longestSeconds + (longestSeconds === 1 ? ' second' : ' seconds') : Math.round(longestSeconds / 60) + ' minutes';
+        text = (gaps === 1 ? '1 gap of ' + length : gaps + ' gaps, the longest is ' + length)
+          + (short ? '. This is a warning only. Missing minutes are never counted as zero' : '. The minutes inside it are Cannot test yet');
+      }
+      parts.push(text);
+    }
     if (unread > 0) parts.push(unread + (unread === 1 ? ' recording file was' : ' recording files were') + ' not read to the end');
     return parts.length ? parts.join('. ') : 'none';
   },
@@ -374,7 +384,10 @@ export function blackboxCopyEntries(): LintEntry[] {
       else if (key === 'hostReadNote') add(key, fn(2, 240));
       else if (key === 'reviewKeepsText') add(key, fn(7, 2, 10));
       else if (key === 'filesAndSamples') { add(key + '.1', fn(1, 1)); add(key + '.2', fn(4, 960)); }
-      else if (key === 'gapsText') { add(key + '.none', fn(0, 0)); add(key + '.gaps', fn(2, 0)); add(key + '.unread', fn(0, 1)); add(key + '.both', fn(1, 3)); }
+      else if (key === 'gapsText') {
+        add(key + '.none', fn(0, 0)); add(key + '.gaps', fn(2, 0)); add(key + '.unread', fn(0, 1)); add(key + '.both', fn(1, 3));
+        add(key + '.short', fn(1, 0, 90)); add(key + '.shorts', fn(2, 0, 100)); add(key + '.long', fn(1, 0, 300)); add(key + '.longs', fn(3, 1, 1800));
+      }
     }
   }
   for (const id of STATE_IDS) add('stateNext.' + id, T.stateNext[id]);

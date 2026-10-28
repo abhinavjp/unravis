@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/keeper"
@@ -120,5 +121,29 @@ func TestScn1L8RevealKeyKeeperAnswers(t *testing.T) {
 	wrap.fail(nil)
 	if res := b.post("/api/blackbox/"+it.ID+"/reveal-key", ""); res.Code != http.StatusOK || !strings.Contains(res.Body.String(), sealed) {
 		t.Fatalf("reveal after the keeper answers = %d %s", res.Code, res.Body)
+	}
+}
+
+// D-B-51: the facts carry the length of the longest gap, so the status can show it.
+func TestScn1L8FactsCarryTheLongestGapLength(t *testing.T) {
+	b := newBBEnv(t, nil)
+	b.world.put(share, bbRec("web-b", nil))
+	if it := b.mustAdd(share, ""); it.Facts == nil || it.Facts.Gaps != 0 || it.Facts.LongestGapSeconds != 0 {
+		t.Fatalf("a whole recording shows a gap: %+v", it.Facts)
+	}
+	one := [][2]time.Time{{invT0.Add(110 * time.Minute), invT0.Add(111 * time.Minute)}}
+	b.world.put(`\\web-g\Blackbox`, bbRec("web-g", func(r *simRec) { r.Skip = one }))
+	short := b.mustAdd(`\\web-g\Blackbox`, "")
+	three := [][2]time.Time{{invT0.Add(100 * time.Minute), invT0.Add(103 * time.Minute)}}
+	b.world.put(`\\web-h\Blackbox`, bbRec("web-h", func(r *simRec) { r.Skip = three }))
+	long := b.mustAdd(`\\web-h\Blackbox`, "")
+	if short.Facts == nil || short.Facts.Gaps != 1 || short.Facts.LongestGapSeconds <= 0 {
+		t.Fatalf("short gap facts = %+v", short.Facts)
+	}
+	if long.Facts == nil || long.Facts.Gaps != 1 || long.Facts.LongestGapSeconds <= short.Facts.LongestGapSeconds {
+		t.Fatalf("a 3 minute skip must be longer than a 1 minute skip: short %+v long %+v", short.Facts, long.Facts)
+	}
+	if long.Facts.LongestGapSeconds <= 120 {
+		t.Fatalf("a 3 minute skip is a long gap, got %d seconds", long.Facts.LongestGapSeconds)
 	}
 }
