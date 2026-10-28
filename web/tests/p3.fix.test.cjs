@@ -108,3 +108,32 @@ test('the archived list opens a case with its theories held back, and nothing el
   assert.match(read('src/lib/appState.svelte.ts'), /holdLedger\(id, options\.archived === true\)/);
   assert.match(read('src/lib/ledgerStore.svelte.ts'), /if \(held\.has\(caseId\)\) return Promise\.resolve\(\);/);
 });
+
+// F7 and UI major 3: with no master key set up there is nothing to unlock. Free and Restore as new say so before the check or the typing, and
+// offer the one way forward. The failure text is "Set a master key first" (the server's own sentence), never "Unlock it first".
+test('no master key: the wording says set one, not unlock', () => {
+  const { ARCHIVE_TEXT, archiveReasonText } = copy;
+  assert.match(ARCHIVE_TEXT.noMasterKey, /Set a master key first/);
+  assert.doesNotMatch(ARCHIVE_TEXT.noMasterKey, /unlock/i);
+  assert.equal(archiveReasonText('no-master-key', 409), ARCHIVE_TEXT.noMasterKey);
+  for (const key of ['noMasterKeyFree', 'noMasterKeyRestore']) assert.match(ARCHIVE_TEXT[key], /Set a master key first/, key);
+  const entries = copy.archiveLintEntries().map((entry) => entry.text);
+  for (const key of ['noMasterKey', 'noMasterKeyFree', 'noMasterKeyRestore', 'noMasterKeySetup', 'noMasterKeyLater']) assert.ok(entries.includes(ARCHIVE_TEXT[key]), key + ' is in the copy lint');
+});
+
+test('Free and Restore as new look at the master key state on open and show the way to set one', () => {
+  for (const [name, what] of [['FreeDrawer', 'free'], ['RestoreDrawer', 'restore']]) {
+    const text = read('src/lib/components/' + name + '.svelte');
+    assert.match(text, /getMasterKeyStatus\(\)\)\.state === 'none'\) noKey = true/, name + ' reads the key state');
+    assert.match(text, new RegExp('<NoMasterKey what="' + what + '" onSetup=\{setUpKey\}'), name + ' shows the message');
+    assert.match(text, /function setUpKey\(\) \{[^}]*onClose\(\); openKeySetup\(\);/, name + ' closes and goes to the set up screen');
+    assert.match(text, /reason === 'no-master-key'\) noKey = true/, name + ' also falls back on the server answer');
+  }
+  const free = read('src/lib/components/FreeDrawer.svelte');
+  assert.ok(free.indexOf('{#if noKey && stage !== 3}') < free.indexOf('{:else if stage === 1}'), 'the message replaces the check form');
+  assert.match(read('src/lib/components/RestoreDrawer.svelte'), /mode === 'as-new' && noKey/, 'Restore in place is not blocked');
+  const small = read('src/lib/components/NoMasterKey.svelte');
+  assert.match(small, /ARCHIVE_TEXT\.noMasterKeySetup/);
+  assert.match(small, /class="primary-button"/);
+  assert.match(small, /class="secondary-button"/);
+});

@@ -1,5 +1,9 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import Drawer from '../../components/Drawer.svelte';
+  import NoMasterKey from './NoMasterKey.svelte';
+  import { getMasterKeyStatus } from '../masterKeyApi';
+  import { openKeySetup } from '../appState.svelte';
   import { restoreAsNew, restoreInPlace } from '../archiveApi';
   import { keyEndingOf, passphraseOk, type ArchiveFile } from '../archiveModel';
   import { CaseApiError, believedState, caseCode, isCaseChanged, isCaseGone, type CaseInfo } from '../cases';
@@ -26,6 +30,9 @@
   let problem = $state('');
   let made = $state.raw<CaseInfo | null>(null);
   let placed = $state(false);
+  // Restore as a new case seals the new case with the master key of this computer; with none set up there is nothing to unlock.
+  let noKey = $state(false);
+  const blocked = $derived(mode === 'as-new' && noKey);
 
   const needsKey = $derived(mode === 'as-new' && file?.keyKind === 'typed');
   const ending = $derived(keyEndingOf(file));
@@ -33,10 +40,18 @@
   const title = $derived(mode === 'in-place' ? ARCHIVE_TEXT.restoreInPlaceTitle : ARCHIVE_TEXT.restoreNewTitle);
   const intro = $derived(mode === 'in-place' ? ARCHIVE_TEXT.restoreInPlaceIntro : ARCHIVE_TEXT.restoreNewIntro);
 
+  function setUpKey() { passphrase = ''; onClose(); openKeySetup(); }
+
+  onMount(() => {
+    if (mode !== 'as-new') return;
+    void (async () => { try { if ((await getMasterKeyStatus()).state === 'none') noKey = true; } catch { /* the server says so on submit */ } })();
+  });
+
   function failedCall(error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') return;
     if (isCaseGone(error)) { onGone(); return; }
     if (isCaseChanged(error)) onChanged();
+    if (mode === 'as-new' && error instanceof CaseApiError && error.reason === 'no-master-key') noKey = true;
     problem = error instanceof CaseApiError ? archiveReasonText(error.reason, error.status) : archiveReasonText('unreachable', 0);
   }
 
@@ -78,6 +93,8 @@
     {:else if placed}
       <p class="done" role="status">{ARCHIVE_TEXT.restoreInPlaceDone}</p>
       <div class="actions"><button type="button" class="primary-button" onclick={onClose}>{ARCHIVE_TEXT.restoreClose}</button></div>
+    {:else if blocked}
+      <NoMasterKey what="restore" onSetup={setUpKey} {onClose} />
     {:else}
       <form class="form" onsubmit={submit}>
         {#if needsKey}
@@ -91,7 +108,7 @@
         </div>
       </form>
     {/if}
-    <div aria-live="polite">{#if problem}<p class="inline-error" role="alert">{problem}</p>{/if}</div>
+    <div aria-live="polite">{#if problem && !blocked}<p class="inline-error" role="alert">{problem}</p>{/if}</div>
   </div>
 </Drawer>
 

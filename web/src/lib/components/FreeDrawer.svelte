@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Drawer from '../../components/Drawer.svelte';
+  import NoMasterKey from './NoMasterKey.svelte';
+  import { getMasterKeyStatus } from '../masterKeyApi';
+  import { openKeySetup } from '../appState.svelte';
   import { cancelVerify, freeCase, getVerify, startVerify } from '../archiveApi';
   import { freeConfirmed, jobRunning, keyEndingOf, passphraseOk, type ArchiveFile, type FileJob } from '../archiveModel';
   import { CaseApiError, JOB_MAX_UNREACHABLE, JOB_POLL_MS, believedState, caseCode, isCaseChanged, isCaseGone, type CaseInfo } from '../cases';
@@ -27,6 +30,8 @@
   let freed = $state(false);
   let unreachable = $state(0);
   let verified = $state(false);
+  // No master key is set up yet: Free cannot go through, so the drawer says so up front instead of at the last step.
+  let noKey = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let alive = true;
 
@@ -37,10 +42,13 @@
   const codeOk = $derived(freeConfirmed(typedCode, info.id));
   const ending = $derived(keyEndingOf(file));
 
+  function setUpKey() { passphrase = ''; onClose(); openKeySetup(); }
+
   function failedCall(error: unknown) {
     if (error instanceof DOMException && error.name === 'AbortError') return;
     if (isCaseGone(error)) { onGone(); return; }
     if (isCaseChanged(error)) onChanged();
+    if (error instanceof CaseApiError && error.reason === 'no-master-key') noKey = true;
     problem = error instanceof CaseApiError ? archiveReasonText(error.reason, error.status) : archiveReasonText('unreachable', 0);
   }
 
@@ -110,6 +118,8 @@
   // A check that is already running, or one that already passed for this file, is shown at once.
   onMount(() => {
     void (async () => {
+      try { if ((await getMasterKeyStatus()).state === 'none') noKey = true; } catch { /* the server says so at the last step */ }
+      if (!alive || noKey) return;
       try {
         const now = await getVerify(info.id);
         if (!alive) return;
@@ -128,7 +138,9 @@
       <li class:current={stage === 2} aria-current={stage === 2 ? 'step' : undefined}>{ARCHIVE_TEXT.freeStage2}</li>
     </ol>
 
-    {#if stage === 1}
+    {#if noKey && stage !== 3}
+      <NoMasterKey what="free" onSetup={setUpKey} {onClose} />
+    {:else if stage === 1}
       {#if running}
         <section class="running">
           <p class="progress-line" role="status">{ARCHIVE_TEXT.freeCheckRunning} {job?.percent ?? 0}%</p>
@@ -164,7 +176,7 @@
       <p class="done" role="status">{ARCHIVE_TEXT.freeDone}</p>
       <div class="actions"><button type="button" class="primary-button" onclick={onClose}>{ARCHIVE_TEXT.freeClose}</button></div>
     {/if}
-    <div aria-live="polite">{#if problem}<p class="inline-error" role="alert">{problem}</p>{/if}</div>
+    <div aria-live="polite">{#if problem && !noKey}<p class="inline-error" role="alert">{problem}</p>{/if}</div>
   </div>
 </Drawer>
 
