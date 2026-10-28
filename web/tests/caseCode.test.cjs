@@ -20,7 +20,7 @@ function loadTypeScript(relativePath) {
 }
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-const { normaliseCode, resolveCode, CODE_NOT_FOUND, CODE_PATTERN } = loadTypeScript('src/lib/caseCode.ts');
+const { normaliseCode, resolveCode, CODE_NOT_FOUND, CODE_PATTERN, codeIsEmpty } = loadTypeScript('src/lib/caseCode.ts');
 const { ENTER_TEXT, RESTORE_FAILED, enterLintEntries } = loadTypeScript('src/lib/copy/enterCopy.ts');
 const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
@@ -167,4 +167,15 @@ test('the start screen gets the card through the enter slot, and the old "not re
   assert.match(landing, /import EnterCase from '\.\/EnterCase\.svelte'/);
   assert.match(landing, /\{#snippet enter\(\)\}<EnterCase onOpen=\{openCase\} onSetup=\{openKeySetup\} \/>\{\/snippet\}/);
   assert.ok(RESTORE_FAILED.length > 0);
+});
+
+test('an empty code field disables the button and shows no sentence; a typed wrong code still gets the one sentence (D-A-04)', async () => {
+  for (const blank of ['', ' ', '  \t', '---', ' - - ', '​']) assert.equal(codeIsEmpty(blank), true, JSON.stringify(blank));
+  for (const typed of ['a', 'abc', 'z'.repeat(26)]) assert.equal(codeIsEmpty(typed), false, typed);
+  const outcome = await resolveCode('abc', async () => { throw new Error('never asked'); });
+  assert.deepEqual(outcome, { ok: false, message: CODE_NOT_FOUND });
+  const card = read('src/components/EnterCase.svelte');
+  assert.match(card, /disabled=\{codeBusy \|\| codeIsEmpty\(code\)\}/);
+  assert.match(card, /if \(codeBusy\) return;\s*if \(codeIsEmpty\(code\)\) return;/);
+  assert.doesNotMatch(read('src/lib/caseCode.ts'), /archived/i, 'the code box never says a case is archived');
 });

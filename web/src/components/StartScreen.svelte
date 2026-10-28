@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { Snippet } from 'svelte';
-  import { clearErasedLine } from '../lib/cases';
+  import { CaseApiError, caseCode, clearErasedLine, eraseCase, eraseConfirmed, isCaseGone } from '../lib/cases';
   import type { CaseInfo, ErasedLine } from '../lib/cases';
   import { ERASE_TEXT } from '../lib/copy/eraseCopy';
   import { listCasesPage } from '../lib/archiveApi';
-  import { archivedToggleText } from '../lib/copy/archiveCopy';
+  import { ARCHIVE_TEXT, archiveReasonText, archivedToggleText } from '../lib/copy/archiveCopy';
+  import { ERASE_DONE, IMPORT_TEXT, erasePrompt } from '../lib/copy/importCopy';
   import ArchivedList from '../lib/components/ArchivedList.svelte';
   import { getMasterKeyStatus } from '../lib/masterKeyApi';
   import { closesCases, offersRewrap } from '../lib/masterKey';
@@ -13,7 +14,7 @@
   import { KEY_TEXT } from '../lib/copy/masterKeyCopy';
   import { START_TEXT, oldCasesText, openLabel } from '../lib/copy/startCopy';
   import { startView } from '../lib/startScreen';
-  import { app, noteKeyStatus, noteLocked } from '../lib/appState.svelte';
+  import { app, caseErased, noteKeyStatus, noteLocked } from '../lib/appState.svelte';
   import HelpNote from './HelpNote.svelte';
   import RewrapNotice from './RewrapNotice.svelte';
 
@@ -43,6 +44,13 @@
   let oldCases = $state(0);
   let showArchived = $state(false);
   let controller: AbortController | null = null;
+  // Erase for a case whose working copy is gone (D-A-16): the same type-the-code step the archived list uses.
+  let eraseId = $state('');
+  let typed = $state('');
+  let erasing = $state(false);
+  let eraseProblem = $state('');
+  let eraseNote = $state('');
+  const confirmed = $derived(eraseId !== '' && eraseConfirmed(typed, eraseId));
 
   const view = $derived(startView(lock, cases, pages, erased));
 
@@ -83,6 +91,26 @@
       if (error instanceof DOMException && error.name === 'AbortError') return;
       clearProblem = ERASE_TEXT.clearFailed;
     }
+  }
+
+  function askErase(id: string) { eraseId = id; typed = ''; eraseProblem = ''; eraseNote = ''; }
+  function cancelErase() { eraseId = ''; typed = ''; }
+
+  async function erase(event: SubmitEvent) {
+    event.preventDefault();
+    if (!confirmed || erasing) return;
+    const id = eraseId;
+    erasing = true; eraseProblem = '';
+    try {
+      await eraseCase(id);
+      cases = cases.filter((c) => c.id !== id);
+      eraseId = ''; typed = '';
+      caseErased(id);
+      eraseNote = ERASE_DONE;
+    } catch (error) {
+      if (isCaseGone(error)) { cases = cases.filter((c) => c.id !== id); eraseId = ''; typed = ''; }
+      else eraseProblem = error instanceof CaseApiError ? archiveReasonText(error.reason, error.status) : archiveReasonText('unreachable', 0);
+    } finally { erasing = false; }
   }
 
   onMount(() => {
@@ -134,8 +162,21 @@
                   <span class="case-closed" role="note">{row.archivingLabel}</span>
                 {:else if row.missing}
                   <span class="case-closed" role="note">{row.missingLabel}</span>
+                  <button type="button" class="secondary-button" aria-label={ARCHIVE_TEXT.erase + ': ' + row.fullTitle} onclick={() => askErase(row.id)}>{ARCHIVE_TEXT.erase}</button>
                 {:else}
                   <button type="button" class="secondary-button" aria-label={openLabel(row.fullTitle)} onclick={() => onOpen(row.id)}>{START_TEXT.open}</button>
+                {/if}
+                {#if eraseId === row.id}
+                  <form class="erase" onsubmit={erase}>
+                    <p>{ARCHIVE_TEXT.eraseWarning}</p>
+                    <label for={'erase-' + row.id}>{erasePrompt(caseCode(row.id))}</label>
+                    <input id={'erase-' + row.id} type="text" bind:value={typed} autocomplete="off" spellcheck="false" />
+                    <div class="buttons">
+                      <button type="submit" class="primary-button danger-fill" disabled={erasing || !confirmed}>{erasing ? IMPORT_TEXT.erasing : ARCHIVE_TEXT.eraseConfirmButton}</button>
+                      <button type="button" class="secondary-button" disabled={erasing} onclick={cancelErase}>{ARCHIVE_TEXT.eraseCancel}</button>
+                    </div>
+                    {#if eraseProblem}<p class="inline-error" role="alert">{eraseProblem}</p>{/if}
+                  </form>
                 {/if}
               </li>
             {/each}
@@ -145,6 +186,7 @@
             <button type="button" class="quiet-button" onclick={() => (pages += 1)}>{START_TEXT.showMore}</button>
           {/if}
         {/if}
+        {#if eraseNote && !showArchived}<p class="card-note" role="status">{eraseNote}</p>{/if}
         {#if phase === 'ready' && oldCases > 0}<p class="card-note" role="note" data-old-cases>{oldCasesText(oldCases)}</p>{/if}
         {#if phase === 'ready' && !showArchived && archivedTotal > 0}
           <button type="button" class="quiet-button archived-toggle" onclick={() => (showArchived = true)}>{archivedToggleText(archivedTotal)}</button>
@@ -197,7 +239,10 @@
   .card-text, .card-note { margin: 0; color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
   .card :global(.primary-button), .card :global(.secondary-button) { justify-self: start; }
   .cases { display: grid; gap: var(--space-2); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
-  .case-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-width: 0; padding: var(--space-2) var(--space-3); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  .case-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); min-width: 0; padding: var(--space-2) var(--space-3); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  .erase { display: grid; flex-basis: 100%; gap: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--line); }
+  .erase p { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
+  .buttons { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .case-info { display: grid; gap: 2px; min-width: 0; }
   .case-title { font-size: var(--fs-3); font-weight: 600; overflow-wrap: anywhere; }
   .case-meta { color: var(--text-2); font-size: var(--fs-2); }

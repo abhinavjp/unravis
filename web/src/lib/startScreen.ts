@@ -73,7 +73,7 @@ export function caseCounts(c: Pick<StartCase, 'imports' | 'sources'>): string {
 
 export function caseRow(c: StartCase): CaseRow {
   // A case that is locked, or that cannot be opened, is named by its short code: its title is not read.
-  const byCode = c.keyLocked === true || c.untrusted === true;
+  const byCode = needsAttention(c);
   const named = byCode ? 'Case ' + caseCode(c.id) : '';
   return {
     id: c.id,
@@ -128,6 +128,14 @@ export function erasedRow(line: ErasedLine): ErasedRow {
 /** How many rows to show for a "Show more" count: the first page, then a page more each time. */
 export const visibleCount = (pages: number): number => CASE_PAGE_SIZE * Math.max(1, Math.floor(Number.isFinite(pages) ? pages : 1));
 
+/** True when a row needs the person's attention before it can be used: an older-version case or one whose own key is not entered. */
+export const needsAttention = (c: Pick<StartCase, 'keyLocked' | 'untrusted'>): boolean => c.keyLocked === true || c.untrusted === true;
+
+/** Working cases first, rows that need attention after them. A stable sort, so the server's order is kept inside each group. */
+export function orderedCases<T extends Pick<StartCase, 'keyLocked' | 'untrusted'>>(cases: readonly T[]): T[] {
+  return [...cases].sort((a, b) => Number(needsAttention(a)) - Number(needsAttention(b)));
+}
+
 /**
  * Everything the screen shows, from the key state and the case list. A locked key returns no rows, no titles and no counts, even
  * if a list is passed in. `lock` of null means the status has not been read yet: show the cards without the setup link.
@@ -138,7 +146,7 @@ export function startView(lock: LockState | null, cases: readonly StartCase[], p
   }
   const total = cases.length;
   const limit = visibleCount(pages);
-  const rows = cases.slice(0, limit).map(caseRow);
+  const rows = orderedCases(cases).slice(0, limit).map(caseRow);
   const hidden = Math.max(0, total - rows.length);
   return {
     locked: false,

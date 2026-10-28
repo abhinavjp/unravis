@@ -176,3 +176,13 @@ test('D-A-07: appState marks screens through the history, ignores key screens an
   assert.match(go, /try \{ if \(!go\(wanted\)\) marker\.markScreen\(screen, true\); \} finally \{ poppingScreen = false; \}/);
   assert.match(state, /if \(drawerHistory\?\.pop\(\)\) return;\s*const target = viewHistory\?\.pop\(\);\s*if \(target === undefined\) return;/);
 });
+
+test('D-A-03/04/16: start list order, Erase on a missing row, empty code field', () => {
+  const view = loadTypeScript('src/lib/startScreen.ts');
+  const ids = view.startView('unlocked', [{ id: 'a', title: 'A', created: '', closed: null, imports: 0, untrusted: true }, { id: 'b', title: 'B', created: '2026-10-24T15:19:37Z', closed: null, imports: 0 }]).rows.map((r) => r.id);
+  assert.deepEqual(ids, ['b', 'a']);
+  const start = read('src/components/StartScreen.svelte');
+  assert.match(start, /\{:else if row\.missing\}[\s\S]*?askErase\(row\.id\)/);
+  assert.match(start, /\{#if row\.untrusted\}<span class="case-closed" role="note">\{row\.untrustedLabel\}<\/span>\{\/if\}/, 'untrusted rows keep their Open button');
+  assert.equal(loadTypeScript('src/lib/caseCode.ts').codeIsEmpty(''), true);
+});

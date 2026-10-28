@@ -23,6 +23,11 @@ export function normaliseCode(input: string): string | null {
   return CODE_PATTERN.test(code) ? code : null;
 }
 
+/** True when the field holds nothing a person typed (blank or only spaces and dashes): the button waits, and no sentence is shown. */
+export function codeIsEmpty(input: string): boolean {
+  return typeof input !== 'string' || input.replace(IGNORED, '') === '';
+}
+
 export type CodeOutcome = { ok: true; id: string } | { ok: false; message: string };
 
 /**
