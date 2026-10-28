@@ -1597,8 +1597,8 @@ test('the evidence frame always keeps Slowest, and comparison-wide contexts keep
   assert.deepEqual(ids({}), ['failures', 'slowest', 'breakdown']);
   assert.deepEqual(ids({ scoped: false }), ['slowest']);
   assert.deepEqual(ids({ operation: true, group: true, phases: true, failed: 3, unfinished: 2 }), ['timeline', 'phases', 'failures', 'incomplete', 'slowest', 'breakdown']);
-  assert.deepEqual(ids({ operation: true, group: true }), ['timeline', 'slowest', 'breakdown']);
-  assert.deepEqual(ids({ group: true, failed: 1 }), ['timeline', 'failures', 'slowest', 'breakdown']);
+  assert.deepEqual(ids({ operation: true, group: true }), ['timeline', 'phases', 'slowest', 'breakdown']);
+  assert.deepEqual(ids({ group: true, failed: 1 }), ['timeline', 'phases', 'failures', 'slowest', 'breakdown']);
   assert.ok(ids({ operation: true }).includes('slowest'));
 });
 
