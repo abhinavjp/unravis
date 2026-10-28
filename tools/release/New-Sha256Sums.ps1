@@ -36,5 +36,5 @@ $lines = foreach ($name in $Names) {
     "$hash  $name"
 }
 
-$lines | Set-Content -Encoding utf8 -LiteralPath $OutFile
+[System.IO.File]::WriteAllText($OutFile, (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
 Write-Host "Wrote $OutFile ($($Names.Count) file(s))"
