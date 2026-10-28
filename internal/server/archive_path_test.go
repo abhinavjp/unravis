@@ -104,11 +104,6 @@ func TestArchiveFolderAccepts(t *testing.T) {
 	if !strings.EqualFold(got, dir) && !strings.EqualFold(got, mustEval(t, dir)) {
 		t.Fatalf("resolved = %q, want %q", got, dir)
 	}
-	// The prefix form is accepted and stripped.
-	got2, err := testEnv(nil).resolveArchiveFolder(`\\?\`+dir, data)
-	if err != nil || strings.HasPrefix(got2, `\\`) {
-		t.Fatalf("prefixed folder = %q, %v", got2, err)
-	}
 	// The probe file is gone.
 	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
 		t.Fatalf("the writable probe left %d files", len(ents))
@@ -122,6 +117,19 @@ func mustEval(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	return r
+}
+
+func TestArchiveFolderRefusesLongPrefix(t *testing.T) {
+	needWindows(t)
+	dir := t.TempDir()
+	data := t.TempDir()
+	env := testEnv(nil)
+	for _, p := range []string{`\\?\` + dir, `\\?\C:\x`, `\\.\C:\x`, `//?/` + dir} {
+		_, err := env.resolveArchiveFolder(p, data)
+		if !errors.Is(err, errArchiveFolder) || err.Error() != "archive folder refused: long-prefix" {
+			t.Errorf("%q: err = %v, want a long-prefix refusal", p, err)
+		}
+	}
 }
 
 func TestArchiveFolderRefusals(t *testing.T) {

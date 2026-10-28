@@ -133,6 +133,11 @@ func checkArchiveShape(typed string) (string, error) {
 // folders sit in); the result may not be one of them or inside one, whichever
 // name or link reached it.
 func (e archiveEnv) resolveArchiveFolder(typed string, own ...string) (string, error) {
+	// A typed long or device prefix is not a folder a person types on purpose (D-A-11).
+	// checkArchiveShape keeps accepting the prefix because the resolved path can carry it.
+	if n := strings.ReplaceAll(typed, "/", `\`); strings.HasPrefix(n, `\\?\`) || strings.HasPrefix(n, `\\.\`) {
+		return "", refuseFolder("long-prefix")
+	}
 	clean, err := checkArchiveShape(typed)
 	if err != nil {
 		return "", err
