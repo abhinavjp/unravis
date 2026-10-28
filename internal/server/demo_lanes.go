@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,23 +68,24 @@ func (s *demoSQLStore) Resolve(id string) (sqlconn.Input, error) {
 }
 
 func (s *demoSQLStore) Save(in sqlconn.Input) (sqlconn.Recent, error) {
-	in.Server = strings.TrimSpace(in.Server)
-	if in.Server == "" || len(in.Server) > 300 || (in.Auth != sqlconn.AuthSQL && in.Auth != sqlconn.AuthWindows) {
-		return sqlconn.Recent{}, sqlconn.ErrInvalid
-	}
-	host, port := in.Server, 1433
-	if h, p, err := net.SplitHostPort(in.Server); err == nil {
-		if n, perr := strconv.Atoi(p); perr == nil && n > 0 && n < 65536 {
-			host, port = h, n
-		}
+	rec, err := sqlconn.Normalize(in)
+	if err != nil {
+		return sqlconn.Recent{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rec := sqlconn.Recent{Label: in.Label, Server: in.Server, Host: host, Port: port, Auth: in.Auth, Username: in.Username, Database: in.Database,
-		Encrypt: in.Encrypt, TrustServerCertificate: in.TrustServerCertificate, HasPassword: in.Auth == sqlconn.AuthSQL && in.RememberPassword && in.Password != "", SavedAt: time.Now().UTC()}
+	rec.SavedAt = time.Now().UTC()
 	for i, prior := range s.items {
 		if prior.Host == rec.Host && prior.Port == rec.Port && prior.Username == rec.Username && prior.Auth == rec.Auth && strings.EqualFold(prior.Database, rec.Database) {
 			rec.ID = prior.ID
+			// Like the real store: a blank password with "Remember password" still ticked keeps the saved one, but only while encryption
+			// stays as strict. The demo keeps no password, only the fact that one is saved. This check comes before the prior is removed.
+			if !rec.HasPassword && in.RememberPassword && rec.Auth == sqlconn.AuthSQL && prior.HasPassword {
+				if !sqlconn.KeepsPassword(rec, prior) {
+					return sqlconn.Recent{}, sqlconn.ErrPasswordAgain
+				}
+				rec.HasPassword = true
+			}
 			s.items = append(s.items[:i], s.items[i+1:]...)
 			break
 		}
