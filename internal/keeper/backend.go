@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -366,6 +367,64 @@ func (b *Backend) mongoResolve(in audit.ConnectionInput) (audit.ConnectionInput,
 	return out, nil
 }
 
+// errMongoOwnUnravis is the one refusal for a MongoDB link the keeper will not open under its own Windows account.
+func errMongoOwnUnravis() error {
+	return &WireError{Code: CodeRefused, Message: "This MongoDB link runs in your own Unravis, not in the key keeper."}
+}
+
+// mongoNamesFiles reports whether a MongoDB link names a file on this PC in its options (a CA, a client certificate, a key or its
+// password file, a revocation list). The driver opens such files itself, so in the keeper it would read them as the keeper's own
+// account. A pasted CA certificate (custom TLS mode) is text, not a file, and is fine.
+func mongoNamesFiles(uri string) bool {
+	raw := uri
+	if !strings.Contains(raw, "://") {
+		raw = "mongodb://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return true
+	}
+	q, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return true
+	}
+	for name := range q {
+		n := strings.ToLower(name)
+		if (strings.HasPrefix(n, "tls") || strings.HasPrefix(n, "ssl")) && (strings.Contains(n, "file") || strings.Contains(n, "password") || strings.Contains(n, "key")) {
+			return true
+		}
+	}
+	return false
+}
+
+// keeperMongoAllowed is what the keeper checks before it opens a saved MongoDB link itself: a user name and the stored password, a
+// password sign-in (SCRAM, the default), and no option that names a file. Anything else (Kerberos, X.509, AWS, LDAP, a link with no
+// credentials) would sign in or read files as the keeper's own account, so it runs in the person's own Unravis instead.
+func keeperMongoAllowed(in audit.ConnectionInput) error {
+	if in.Username == "" || in.Password == "" || mongoNamesFiles(in.URI) {
+		return errMongoOwnUnravis()
+	}
+	raw := in.URI
+	if !strings.Contains(raw, "://") {
+		raw = "mongodb://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return errMongoOwnUnravis()
+	}
+	for name, values := range u.Query() {
+		if !strings.EqualFold(name, "authMechanism") {
+			continue
+		}
+		for _, v := range values {
+			if !strings.EqualFold(v, "SCRAM-SHA-1") && !strings.EqualFold(v, "SCRAM-SHA-256") {
+				return errMongoOwnUnravis()
+			}
+		}
+	}
+	return nil
+}
+
 func (b *Backend) mongoRemember(_ context.Context, c *Call) (any, error) {
 	var a MongoRememberArgs
 	if err := c.Decode(&a); err != nil {
@@ -378,6 +437,10 @@ func (b *Backend) mongoRemember(_ context.Context, c *Call) (any, error) {
 		if conn, err = b.mongoResolve(a.Connection); err != nil {
 			return nil, err
 		}
+	}
+	if mongoNamesFiles(conn.URI) {
+		// Even checking such a link would make the driver open the named files as the keeper's account.
+		return nil, &WireError{Code: CodeRefused, Message: "A MongoDB link that names certificate files on this PC cannot be saved in the shared install. Paste the CA certificate instead."}
 	}
 	if err := b.Runner.ValidateMongo(conn); err != nil {
 		return nil, err
@@ -420,6 +483,9 @@ func (b *Backend) mongoTest(ctx context.Context, c *Call) (any, error) {
 	c.Record = a.Connection.SavedConnectionID
 	in, err := b.mongoResolve(a.Connection)
 	if err != nil {
+		return nil, err
+	}
+	if err := keeperMongoAllowed(in); err != nil {
 		return nil, err
 	}
 	res, err := b.Runner.TestMongo(ctx, in)
@@ -466,6 +532,9 @@ func (b *Backend) mongoRun(ctx context.Context, c *Call, lane bool) (any, error)
 	}
 	in, err := b.mongoResolve(a.Connection)
 	if err != nil {
+		return nil, err
+	}
+	if err := keeperMongoAllowed(in); err != nil {
 		return nil, err
 	}
 	if !b.claim("mongo:" + a.Connection.SavedConnectionID) {

@@ -627,6 +627,66 @@ func TestMongoSavedLinksStayInTheKeeper(t *testing.T) {
 	h.noSecrets()
 }
 
+// The keeper opens a saved MongoDB link only with its stored user name and password over a password sign-in, and never with an option
+// that names a file: anything else would sign in or read files as the keeper's own Windows account.
+func TestMongoLinksThatWouldUseTheKeepersAccountAreRefused(t *testing.T) {
+	h := newHarness(t, nil)
+	m := NewMongoStore(h.client)
+	ctx := context.Background()
+	save := func(uri, password string) audit.ConnectionInput {
+		t.Helper()
+		link := audit.ConnectionInput{URI: uri, Username: "reader", Password: password, AuthSource: "admin", TLSMode: "uri"}
+		rec, err := m.Remember("x", link, "events", true)
+		if err != nil {
+			t.Fatalf("remember %s: %v", uri, err)
+		}
+		link.Password, link.SavedConnectionID = "", rec.ID
+		return link
+	}
+	refused := func(name string, ref audit.ConnectionInput) {
+		t.Helper()
+		before := len(h.runner.mongoSeen)
+		if _, err := m.TestSaved(ctx, ref); wireCode(err) != CodeRefused {
+			t.Errorf("%s test: %v", name, err)
+		}
+		if _, err := m.HealthSaved(ctx, ref, "audit", "events"); wireCode(err) != CodeRefused {
+			t.Errorf("%s health: %v", name, err)
+		}
+		if _, err := m.LaneSaved(ctx, ref, "Audit", lane()); wireCode(err) != CodeRefused {
+			t.Errorf("%s lane: %v", name, err)
+		}
+		if len(h.runner.mongoSeen) != before {
+			t.Errorf("%s reached the driver", name)
+		}
+	}
+	refused("no stored password", save("mongodb://m1.example.test:27017", ""))
+	refused("X.509", save("mongodb://m2.example.test:27017/?authMechanism=MONGODB-X509&tls=true", mongoSecret))
+	refused("Kerberos", save("mongodb://m3.example.test:27017/?authMechanism=GSSAPI", mongoSecret))
+	refused("AWS", save("mongodb://m4.example.test:27017/?authmechanism=mongodb-aws", mongoSecret))
+	refused("LDAP", save("mongodb://m5.example.test:27017/?authMechanism=PLAIN", mongoSecret))
+
+	for _, ok := range []string{"mongodb://m6.example.test:27017", "mongodb://m7.example.test:27017/?authMechanism=SCRAM-SHA-256&tls=true"} {
+		if _, err := m.TestSaved(ctx, save(ok, mongoSecret)); err != nil {
+			t.Errorf("%s: %v", ok, err)
+		}
+	}
+
+	// A link naming files on this PC is not even checked in the keeper (the driver would open them while checking).
+	for _, opt := range []string{"tlsCAFile=C:/ProgramData/Unravis/keeper/connections.dat", "tlsCertificateKeyFile=C:/k.pem", "tlsCertificateKeyFilePassword=x", "sslCAFile=C:/a.pem", "SSLPEMKeyFile=C:/a.pem", "tlsCRLFile=C:/a.crl"} {
+		link := audit.ConnectionInput{URI: "mongodb://m8.example.test:27017/?tls=true&" + opt, Username: "reader", Password: mongoSecret, TLSMode: "uri"}
+		if _, err := m.Remember("files", link, "events", true); wireCode(err) != CodeRefused {
+			t.Errorf("%s: %v", opt, err)
+		}
+	}
+	// One stored before this check (an older file) is refused when used.
+	stored, err := h.backend.Mongo.Remember("old", audit.ConnectionInput{URI: "mongodb://m9.example.test:27017/?tlsCAFile=C:/a.pem", Username: "reader", Password: mongoSecret, TLSMode: "uri"}, "events", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused("file option stored earlier", audit.ConnectionInput{URI: "mongodb://m9.example.test:27017/?tlsCAFile=C:/a.pem", Username: "reader", TLSMode: "uri", SavedConnectionID: stored.ID})
+	h.noSecrets()
+}
+
 func TestResolveForSourceTemporaryAdapter(t *testing.T) {
 	h := newHarness(t, nil)
 	legacy, err := history.New(filepath.Join(t.TempDir(), "connections.dat"), xorProtector{})
