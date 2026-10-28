@@ -143,8 +143,13 @@ func (s *Store) Mark(ctx context.Context, id casestore.CaseID) (string, error) {
 // the create are one step under createMu, so two presses of Create with the same
 // id make one case; a restart is covered because the id is in the manifest.
 func (s *Store) CreateFor(ctx context.Context, title, requestID string) (casestore.CaseInfo, bool, error) {
+	return s.createFor(ctx, title, requestID, nil)
+}
+
+// createFor is CreateFor, sealing the new case under its own key when pass is not nil.
+func (s *Store) createFor(ctx context.Context, title, requestID string, pass []byte) (casestore.CaseInfo, bool, error) {
 	if requestID == "" {
-		info, err := s.Create(ctx, title)
+		info, err := s.createWith(ctx, title, "", pass)
 		return info, false, err
 	}
 	if !casestore.ValidRequestID(requestID) {
@@ -165,7 +170,7 @@ func (s *Store) CreateFor(ctx context.Context, title, requestID string) (casesto
 		}
 		return info, true, nil
 	}
-	info, err := s.create(ctx, title, requestID)
+	info, err := s.createWith(ctx, title, requestID, pass)
 	return info, false, err
 }
 

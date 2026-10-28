@@ -133,6 +133,7 @@ func (c *Case) Info() casestore.CaseInfo {
 		Bytes: manifestBytes(c.man), Imports: len(c.man.Imports),
 		Envs: int(c.tagEnvs.Load()), Sources: int(c.tagSources.Load()),
 		Mark: c.man.Mark, RequestID: c.man.RequestID, History: historyOf(c.man),
+		OwnKey: c.ownKey(), KeyEnding: c.keyEnding(),
 	}
 }
 
