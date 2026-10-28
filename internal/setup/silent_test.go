@@ -171,3 +171,84 @@ func TestSilentRunEndToEnd(t *testing.T) {
 		t.Fatal("recordings stay unless the file said true")
 	}
 }
+
+// JSON null is "keep", the same as false or leaving the key out: this is the owner's ruling for D-C-14, and the install guide says so.
+func TestSilentUninstallNullMeansKeep(t *testing.T) {
+	for _, body := range []string{
+		`{"uninstall":null}`,
+		`{"uninstall":{"deleteCases":null}}`,
+		`{"uninstall":{"deleteRecordings":null}}`,
+		`{"uninstall":{"deleteCases":null,"deleteRecordings":null}}`,
+		`{"uninstall":{"deleteCases":false,"deleteRecordings":false}}`,
+		"{\"uninstall\":{\"deleteCases\":\n null ,\"deleteRecordings\": false}}",
+	} {
+		cfg, err := ParseSilentConfig([]byte(body))
+		if err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		req, err := cfg.Request(OpUninstall)
+		if err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if req.Uninstall.DeleteCases || req.Uninstall.DeleteRecordings || req.Uninstall.ConfirmCases != "" || req.Uninstall.ConfirmRecordings != "" {
+			t.Errorf("%s: a null or false deletion would delete data: %+v", body, req.Uninstall)
+		}
+		if !req.Silent || req.Op != OpUninstall {
+			t.Errorf("%s: request = %+v", body, req)
+		}
+	}
+	// null for the whole object is also fine in an install: it is the same as leaving it out.
+	cfg, err := ParseSilentConfig([]byte(`{"scope":"user","uninstall":null}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.Request(OpInstall); err != nil {
+		t.Errorf("a null uninstall object in an install: %v", err)
+	}
+}
+
+// Mistakes in the uninstall object each get a sentence that names the key (INST-14 to INST-16, INST-20).
+func TestSilentUninstallObjectMistakes(t *testing.T) {
+	cases := []struct {
+		name, json string
+		op         Op
+		want       string
+	}{
+		{"unknown key inside uninstall", `{"uninstall":{"deleteCase":true}}`, OpUninstall, `"deleteCase" inside "uninstall"`},
+		{"wrong case inside uninstall", `{"uninstall":{"DeleteCases":true}}`, OpUninstall, `"DeleteCases" inside "uninstall"`},
+		{"quoted deleteRecordings", `{"uninstall":{"deleteRecordings":"yes"}}`, OpUninstall, `uninstall.deleteRecordings must be true or false (without quotes), not "yes"`},
+		{"zero is not false", `{"uninstall":{"deleteCases":0}}`, OpUninstall, `uninstall.deleteCases must be true or false (without quotes), not 0`},
+		{"uninstall as text", `{"uninstall":"yes"}`, OpUninstall, `"uninstall" must be`},
+		{"uninstall object in a repair", `{"scope":"user","uninstall":{"deleteCases":true}}`, OpRepair, `"uninstall" object`},
+		{"uninstall object in an upgrade", `{"scope":"user","uninstall":{}}`, OpUpgrade, `"uninstall" object`},
+	}
+	for _, c := range cases {
+		cfg, err := ParseSilentConfig([]byte(c.json))
+		if err == nil {
+			_, err = cfg.Request(c.op)
+		}
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: got %v, want it to mention %q", c.name, err, c.want)
+		}
+	}
+}
+
+// The recordings confirmation is filled in only when there is a Blackbox to name (silent.go FillRecordingsConfirmation).
+func TestSilentFillRecordingsConfirmationNeedsABlackbox(t *testing.T) {
+	cfg, err := ParseSilentConfig([]byte(`{"uninstall":{"deleteRecordings":true}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := cfg.Request(OpUninstall)
+	if err != nil {
+		t.Fatal(err)
+	}
+	FillRecordingsConfirmation(&req, nil) // nothing installed: must not panic
+	if req.Uninstall.ConfirmRecordings != "" {
+		t.Errorf("confirmation without an install = %q", req.Uninstall.ConfirmRecordings)
+	}
+	FillRecordingsConfirmation(&req, &Installed{}) // installed without a Blackbox
+	if req.Uninstall.ConfirmRecordings != "" {
+		t.Errorf("confirmation without a Blackbox = %q", req.Uninstall.ConfirmRecordings)
+	}
+}
