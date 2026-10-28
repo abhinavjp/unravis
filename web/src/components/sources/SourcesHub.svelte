@@ -10,7 +10,8 @@
 
   // One place for the SQL Server and MongoDB sources of the open case: saved connections, Step 7, Step 8, Add data, Add another day and the
   // combinations table. The guided shell mounts SqlStepPanel and MongoStepPanel directly; this hub keeps the lanes reachable from the case page.
-  let { caseId, readOnly = false, onGone }: { caseId: string; readOnly?: boolean; onGone?: () => void } = $props();
+  // onAddFiles and onAddBlackbox open the pages that add those sources. A card is offered only when its page is handed in.
+  let { caseId, readOnly = false, onGone, onAddFiles, onAddBlackbox }: { caseId: string; readOnly?: boolean; onGone?: () => void; onAddFiles?: () => void; onAddBlackbox?: () => void } = $props();
   type Tab = 'connections' | 'sql' | 'mongo' | 'add' | 'day' | 'combos';
   let tab = $state<Tab>('connections');
   const tabs: { id: Tab; label: string }[] = [
@@ -21,7 +22,8 @@
     if (what === 'sql') tab = 'sql';
     else if (what === 'mongo') tab = 'mongo';
     else if (what === 'day') tab = 'day';
-    else tab = 'add';
+    else if (what === 'files') onAddFiles?.();
+    else if (what === 'blackbox') onAddBlackbox?.();
   }
 </script>
 
@@ -39,7 +41,7 @@
     {:else if tab === 'mongo'}
       <MongoStepPanel {caseId} {readOnly} {onGone} onAddData={() => { tab = 'add'; }} />
     {:else if tab === 'add'}
-      <AddDataPanel {caseId} {readOnly} onChoose={choose} />
+      <AddDataPanel {caseId} {readOnly} files={!!onAddFiles} blackbox={!!onAddBlackbox} onChoose={choose} />
     {:else if tab === 'day'}
       <AddAnotherDay {caseId} {readOnly} {onGone} onCancel={() => { tab = 'add'; }} />
     {:else}

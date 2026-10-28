@@ -177,7 +177,7 @@ test('Step 8 and Add another day: MongoDB is Not by day with the reason', () => 
 test('the case page mounts the hub additively', () => {
   const home = read('src/lib/components/CaseHome.svelte');
   assert.match(home, /SourcesHub/);
-  assert.match(home, /<SourcesHub \{caseId\} \{readOnly\} onGone=\{gone\} \/>/);
+  assert.match(home, /<SourcesHub \{caseId\} \{readOnly\} onGone=\{gone\} onAddFiles=\{openCaseImport\} \/>/);
   const hub = comp('SourcesHub');
   for (const name of ['ConnectionsPage', 'SqlStepPanel', 'MongoStepPanel', 'AddDataPanel', 'AddAnotherDay', 'SourceCombinations']) assert.match(hub, new RegExp(name));
   assert.match(hub, /role="tablist"/);
