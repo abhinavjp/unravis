@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -26,6 +27,16 @@ const (
 	investigationMaxLabel    = 200
 	investigationMaxPool     = 100000
 	investigationIISSource   = "iis-w3c"
+)
+
+// investigationAuditBudget and investigationCaseBudget split the request's
+// overall timeout in two: the audit paging gets its own budget so a slow
+// source cannot starve the case-side reads (openCase, the IIS rows, the
+// Blackbox lane) that follow it. Tests shrink these to force the slow-audit
+// path without waiting out the real budget.
+var (
+	investigationAuditBudget = 3 * time.Minute
+	investigationCaseBudget  = 2 * time.Minute
 )
 
 type investigationWindow struct {
@@ -172,27 +183,42 @@ func (h *handler) runInvestigation(w http.ResponseWriter, r *http.Request, raw s
 		}
 		queries = append(queries, q)
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
-	defer cancel()
+	auditCtx, cancelAudit := context.WithTimeout(r.Context(), investigationAuditBudget)
+	defer cancelAudit()
 
-	// Audit first, so a failing source answers before the case is opened.
-	rows, read, status, err := h.readInvestigationRanges(ctx, queries)
+	// Audit first, so a failing source answers before the case is opened. The
+	// audit read has its own budget: a slow source running past it must not cost
+	// the case-side reads below the whole request (and so answer 504 even though
+	// the client is still waiting).
+	rows, read, status, err := h.readInvestigationRanges(auditCtx, queries)
 	if err != nil {
-		writeTraceRepoError(w, err)
-		return none, read, nil, false
+		if auditCtx.Err() != nil && errors.Is(auditCtx.Err(), context.DeadlineExceeded) && r.Context().Err() == nil {
+			// Our own audit budget ran out, not the client leaving: answer with an
+			// audit-failed result instead of a timeout.
+			status = investigate.AuditFailed
+			rows = nil
+			read.Requests = 0
+			read.Warnings = append(read.Warnings, "Reading the audit calls took too long, so none were used. Shorten the windows or try again.")
+		} else {
+			writeTraceRepoError(w, err)
+			return none, read, nil, false
+		}
 	}
 	_, c, ok := h.openCase(w, r, raw)
 	if !ok {
 		return none, read, nil, false
 	}
 
-	in, err := buildInvestigationInput(ctx, c, body, rows, status, &read)
+	caseCtx, cancelCase := context.WithTimeout(r.Context(), investigationCaseBudget)
+	defer cancelCase()
+
+	in, err := buildInvestigationInput(caseCtx, c, body, rows, status, &read)
 	if err != nil {
 		c.Close()
 		writeStoreError(w, err)
 		return none, read, nil, false
 	}
-	h.applyBlackboxLane(ctx, c, &in, &read)
+	h.applyBlackboxLane(caseCtx, c, &in, &read)
 	res := investigate.Analyze(in)
 	if read.Warnings == nil {
 		read.Warnings = []string{}

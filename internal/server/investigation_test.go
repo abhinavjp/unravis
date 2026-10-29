@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -339,5 +340,81 @@ func TestInvestigationIISIsReadPerWindow(t *testing.T) {
 	}
 	if len(c.queries) != 2 || !in.IISPresent || len(in.IIS) != 1 {
 		t.Errorf("queries %d present %v rows %d", len(c.queries), in.IISPresent, len(in.IIS))
+	}
+}
+
+// blockingRepo's Requests call waits for its context to end instead of
+// answering, the way a stalled source would on a slow real audit.
+type blockingRepo struct {
+	*fakeRepository
+}
+
+func (b *blockingRepo) Requests(ctx context.Context, _ audit.PageInput) (audit.Page, error) {
+	<-ctx.Done()
+	return audit.Page{}, ctx.Err()
+}
+
+// shrinkInvestigationAuditBudget lowers investigationAuditBudget for one test
+// and restores it afterwards, so a slow-audit path can be forced without
+// waiting out the real budget.
+func shrinkInvestigationAuditBudget(t *testing.T, d time.Duration) {
+	t.Helper()
+	old := investigationAuditBudget
+	investigationAuditBudget = d
+	t.Cleanup(func() { investigationAuditBudget = old })
+}
+
+// A slow audit source must not cost the whole request: once its own budget
+// runs out the run answers 200 with an audit-failed result, not a 504.
+func TestInvestigationSlowAuditAnswersAuditFailedNot504(t *testing.T) {
+	shrinkInvestigationAuditBudget(t, 50*time.Millisecond)
+	e := tagEnv(t, casestore.NewMemory(), &blockingRepo{fakeRepository: &fakeRepository{}})
+	id := e.newCase("inv")
+	res := e.json(http.MethodPost, "/api/cases/"+id+"/investigation", invPost(""))
+	if res.Code != http.StatusOK {
+		t.Fatalf("code = %d %s", res.Code, res.Body)
+	}
+	var out investigationAnswer
+	decodeBody(t, res, &out)
+	if out.Read.Requests != 0 {
+		t.Errorf("requests = %d", out.Read.Requests)
+	}
+	found := false
+	for _, w := range out.Read.Warnings {
+		if strings.Contains(w, "took too long") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings = %v, want the audit-timeout warning", out.Read.Warnings)
+	}
+	if out.Result.Steps[0].Readiness != investigate.CannotTestYet && out.Result.Steps[0].Readiness != investigate.Failed {
+		t.Errorf("step 0 = %q after a timed-out audit", out.Result.Steps[0].Readiness)
+	}
+}
+
+// The same slow audit source, but the client leaves instead of the budget
+// running out: the request still answers 400 canceled, not 200 or 504.
+func TestInvestigationSlowAuditStillHonoursClientCancellation(t *testing.T) {
+	e := tagEnv(t, casestore.NewMemory(), &blockingRepo{fakeRepository: &fakeRepository{}})
+	id := e.newCase("inv")
+	path := "/api/cases/" + id + "/investigation"
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(invPost("")))
+	req.Host = "127.0.0.1:8765"
+	req.Header.Set("X-Audit-Token", testToken)
+	req.Header.Set("Content-Type", "application/json")
+	ctx, cancel := context.WithCancel(req.Context())
+	req = req.WithContext(ctx)
+	res := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		e.h.ServeHTTP(res, req)
+		close(done)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d %s", res.Code, res.Body)
 	}
 }
