@@ -2,7 +2,7 @@ import { NO_SESSION_MESSAGE, readSessionToken } from './api';
 import { parseCaseKeyStatus } from './caseKey';
 import type { CaseKeyStatus } from './caseKey';
 import { isCaseId } from './cases';
-import { LOCKED_STATUS, isCaseKeyReason, signalCasesLocked } from './lockSignal';
+import { LOCKED_STATUS, WRONG_CASE_KEY_REASON, isCaseKeyReason, signalCasesLocked } from './lockSignal';
 
 /**
  * The per-case key calls (server: internal/server/case_key.go). Every request carries X-Audit-Token.
@@ -14,7 +14,7 @@ import { LOCKED_STATUS, isCaseKeyReason, signalCasesLocked } from './lockSignal'
  *   POST /api/cases/{id}/key/remove   {passphrase}                                -> the status (no key)
  *
  * Secret handling: a case key appears only in the body of these calls. It is never put in a URL, a header, storage, the console or an
- * error. A wrong case key is a 423 (reason "wrong-case-key"), which must not be read as "the whole app is locked": these calls do not use
+ * error. A wrong case key is a 401 (reason "wrong-case-key"); a locked case is a 423 (reason "case-locked"), which must not be read as "the whole app is locked": these calls do not use
  * cases.ts `send`, and the error carries only a status, a reason and a wait time. The message is fixed text and never the server's.
  */
 
@@ -99,6 +99,6 @@ export async function removeCaseKey(id: string, current: string, signal?: AbortS
   return statusOf(await call(path(id, '/remove'), 'POST', { passphrase: current }, signal));
 }
 
-/** True for the two 423 reasons that belong to a case key (and never raise the app lock screen). */
+/** True for the answers that belong to a case key and never raise the app lock screen: 423 case-locked and 401 wrong-case-key. */
 export const isCaseKeyRefusal = (error: unknown): boolean =>
-  error instanceof CaseKeyApiError && error.status === 423 && isCaseKeyReason(error.reason);
+  error instanceof CaseKeyApiError && ((error.status === 423 && isCaseKeyReason(error.reason)) || (error.status === 401 && error.reason === WRONG_CASE_KEY_REASON));

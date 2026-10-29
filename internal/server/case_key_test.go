@@ -134,8 +134,8 @@ func TestCaseKeyCreateLockUnlock(t *testing.T) {
 		t.Fatalf("locked row = %+v", got)
 	}
 
-	// Wrong key: 423 wrong-case-key, still locked. Right key: opens.
-	e.wantKeyFail(e.keyCall(c.ID, "unlock", unlockBody("not the key at all")), http.StatusLocked, "wrong-case-key")
+	// Wrong key: 401 wrong-case-key, still locked. Right key: opens.
+	e.wantKeyFail(e.keyCall(c.ID, "unlock", unlockBody("not the key at all")), http.StatusUnauthorized, "wrong-case-key")
 	e.wantKeyFail(e.do(http.MethodGet, "/api/cases/"+c.ID, ""), http.StatusLocked, "case-locked")
 	if res := e.keyCall(c.ID, "unlock", unlockBody(ckPass)); res.Code != http.StatusOK {
 		t.Fatalf("unlock = %d %s", res.Code, res.Body)
@@ -171,7 +171,7 @@ func TestCaseKeyWrongKeysAnswerTheSame(t *testing.T) {
 	var first string
 	for i, w := range wrong {
 		res := e.keyCall(c.ID, "unlock", unlockBody(w))
-		e.wantKeyFail(res, http.StatusLocked, "wrong-case-key")
+		e.wantKeyFail(res, http.StatusUnauthorized, "wrong-case-key")
 		body := res.Body.String()
 		if strings.Contains(body, w) {
 			t.Fatalf("the answer echoes the key: %s", body)
@@ -218,7 +218,7 @@ func TestCaseKeyThrottle(t *testing.T) {
 	h.keyTh.now = func() time.Time { return now }
 	e.keyCall(c.ID, "lock", `{}`)
 	for i := 0; i < 5; i++ {
-		e.wantKeyFail(e.keyCall(c.ID, "unlock", unlockBody("wrong key number "+string(rune('a'+i)))), http.StatusLocked, "wrong-case-key")
+		e.wantKeyFail(e.keyCall(c.ID, "unlock", unlockBody("wrong key number "+string(rune('a'+i)))), http.StatusUnauthorized, "wrong-case-key")
 	}
 	// The sixth try is refused without being judged, even with the right key.
 	f := e.wantKeyFail(e.keyCall(c.ID, "unlock", unlockBody(ckPass)), http.StatusTooManyRequests, "throttled")
@@ -244,7 +244,7 @@ func TestCaseKeyChangeAndRemove(t *testing.T) {
 	change := func(cur, next, confirm string) *httptest.ResponseRecorder {
 		return e.keyCall(c.ID, "change", `{"passphrase":`+q(cur)+`,"newPassphrase":`+q(next)+`,"confirm":`+q(confirm)+`}`)
 	}
-	e.wantKeyFail(change("wrong current key", ckPass2, ckPass2), http.StatusLocked, "wrong-case-key")
+	e.wantKeyFail(change("wrong current key", ckPass2, ckPass2), http.StatusUnauthorized, "wrong-case-key")
 	e.wantKeyFail(change(ckPass, ckPass2, "different one here"), http.StatusBadRequest, "mismatch")
 	e.wantKeyFail(change(ckPass, "short", "short"), http.StatusBadRequest, "too-short")
 	res := change(ckPass, ckPass2, ckPass2)
@@ -252,12 +252,12 @@ func TestCaseKeyChangeAndRemove(t *testing.T) {
 		t.Fatalf("change = %d %s", res.Code, res.Body)
 	}
 	e.keyCall(c.ID, "lock", `{}`)
-	e.wantKeyFail(e.keyCall(c.ID, "unlock", unlockBody(ckPass)), http.StatusLocked, "wrong-case-key")
+	e.wantKeyFail(e.keyCall(c.ID, "unlock", unlockBody(ckPass)), http.StatusUnauthorized, "wrong-case-key")
 	if res := e.keyCall(c.ID, "unlock", unlockBody(ckPass2)); res.Code != http.StatusOK {
 		t.Fatalf("unlock with the new key = %d %s", res.Code, res.Body)
 	}
 	// Remove: the wrong key changes nothing, the right one returns the case to the PC key.
-	e.wantKeyFail(e.keyCall(c.ID, "remove", unlockBody(ckPass)), http.StatusLocked, "wrong-case-key")
+	e.wantKeyFail(e.keyCall(c.ID, "remove", unlockBody(ckPass)), http.StatusUnauthorized, "wrong-case-key")
 	if st := e.keyStatus(c.ID); !st.OwnKey {
 		t.Fatalf("a wrong key removed the key: %+v", st)
 	}
