@@ -2,7 +2,9 @@ package investigate
 
 import (
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"time"
 
 	"api-audit-explorer/internal/audit"
@@ -254,7 +256,7 @@ func (p *prep) parts() {
 		if pt.Dominant == "" && qualifying == 0 {
 			pt.DominantWhy = "No single part holds half of the extra time with a change of the size the mark needs."
 			// One part holds half or more but its change is under the mark: name it, with the qualifier.
-			// The share is a ratio like the Step 3 findings (no percent sign in generated text).
+			// The share is shown to people as a whole percentage (percentOf), not as a raw ratio.
 			over := 0
 			var big PartFacts
 			for _, it := range pt.Items {
@@ -264,7 +266,7 @@ func (p *prep) parts() {
 				}
 			}
 			if over == 1 {
-				pt.DominantWhy = fmt.Sprintf("Part %s holds %.2f of the extra time, which is under the change mark.", big.Name, *big.Share)
+				pt.DominantWhy = fmt.Sprintf("Part %s holds %s of the extra time, which is under the change mark.", big.Name, percentOf(*big.Share))
 			}
 		}
 	}
@@ -637,4 +639,9 @@ func (p *prep) series() {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
 	p.facts.Series = out
+}
+
+// percentOf shows a share (a ratio from 0 to 1) as a whole percentage, "73%", for generated text.
+func percentOf(share float64) string {
+	return strconv.Itoa(int(math.Round(share*100))) + "%"
 }

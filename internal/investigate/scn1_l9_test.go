@@ -56,7 +56,7 @@ func TestScn1Step3NamesAPartUnderTheMark(t *testing.T) {
 	if d.Dominant != "" {
 		t.Errorf("dominant = %q, want none", d.Dominant)
 	}
-	re := regexp.MustCompile(`^Part C holds 0\.\d{2} of the extra time, which is under the change mark\. `)
+	re := regexp.MustCompile(`^Part C holds \d{1,3}% of the extra time, which is under the change mark\. `)
 	if !re.MatchString(d.DominantWhy) {
 		t.Errorf("DominantWhy = %q", d.DominantWhy)
 	}

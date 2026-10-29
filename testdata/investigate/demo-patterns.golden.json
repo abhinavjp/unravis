@@ -338,7 +338,7 @@
       ],
       "coverage": 1,
       "dominant": "",
-      "dominantWhy": "Part C holds 0.73 of the extra time, which is under the change mark. Outside time was not tested, so the shares cover A, C and P only.",
+      "dominantWhy": "Part C holds 73% of the extra time, which is under the change mark. Outside time was not tested, so the shares cover A, C and P only.",
       "oTested": false,
       "oWhy": "There is no IIS source in this case, so outside time cannot be tested.",
       "iisMatched": 0
@@ -574,11 +574,11 @@
       ],
       "nutshell": "Each call's time is split into audit set-up, the work itself and time outside the app. The part that grew most shows where to look first.",
       "findings": [
-        "A: share of the extra time 0.18.",
-        "C: share of the extra time 0.73.",
-        "P: share of the extra time 0.09.",
+        "A: share of the extra time 18%.",
+        "C: share of the extra time 73%.",
+        "P: share of the extra time 9%.",
         "O: not tested.",
-        "Part C holds 0.73 of the extra time, which is under the change mark. Outside time was not tested, so the shares cover A, C and P only.",
+        "Part C holds 73% of the extra time, which is under the change mark. Outside time was not tested, so the shares cover A, C and P only.",
         "Outside time was not tested, so the shares cover A, C and P only."
       ]
     },

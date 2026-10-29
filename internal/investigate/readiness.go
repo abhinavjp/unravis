@@ -205,7 +205,7 @@ func Steps(in Input, f Facts, s Signals, th Thresholds) []Step {
 			st.Findings = append(st.Findings, fmt.Sprintf("%d documents read, %d with no start time, %d not completed, %d with a clock anomaly.", f.Counts.Read, f.Counts.NoStart, f.Counts.Incomplete, f.Counts.Anomalous))
 		}
 		if f.Coverage.IncShare != nil && f.Coverage.RefShare != nil {
-			st.Findings = append(st.Findings, fmt.Sprintf("Audit share of IIS requests: %.2f in the reference window, %.2f in the incident window.", *f.Coverage.RefShare, *f.Coverage.IncShare))
+			st.Findings = append(st.Findings, fmt.Sprintf("Audit share of IIS requests: %s in the reference window, %s in the incident window.", percentOf(*f.Coverage.RefShare), percentOf(*f.Coverage.IncShare)))
 		}
 		if len(f.Gaps) > 0 {
 			st.Findings = append(st.Findings, gapNote(f))
@@ -286,7 +286,7 @@ func Steps(in Input, f Facts, s Signals, th Thresholds) []Step {
 				case p.Share == nil:
 					st.Findings = append(st.Findings, p.Name+": no share of the extra time.")
 				default:
-					st.Findings = append(st.Findings, fmt.Sprintf("%s: share of the extra time %.2f.", p.Name, *p.Share))
+					st.Findings = append(st.Findings, fmt.Sprintf("%s: share of the extra time %s.", p.Name, percentOf(*p.Share)))
 				}
 			}
 			if f.Parts.Dominant != "" {

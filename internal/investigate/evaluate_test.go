@@ -2,6 +2,7 @@ package investigate
 
 import (
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -248,7 +249,10 @@ func walkStrings(v reflect.Value, path string, out map[string]string) {
 	}
 }
 
-// assertWording fails on a causal word or a percent sign in any generated text.
+// wholePercent is the one percent form generated text may hold: a share such as "73%".
+var wholePercent = regexp.MustCompile(`\b[0-9]{1,3}%`)
+
+// assertWording fails on a causal word or a stray percent sign (only whole percentages such as "73%" are allowed) in any generated text.
 func assertWording(t *testing.T, name string, r Result) {
 	t.Helper()
 	strs := map[string]string{}
@@ -257,7 +261,7 @@ func assertWording(t *testing.T, name string, r Result) {
 		if err := evidence.LintCausal(s); err != nil {
 			t.Errorf("%s %s: %q: %v", name, path, s, err)
 		}
-		if strings.Contains(s, "%") {
+		if strings.Contains(wholePercent.ReplaceAllString(s, ""), "%") {
 			t.Errorf("%s %s: %q holds a percent sign", name, path, s)
 		}
 	}
