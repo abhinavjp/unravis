@@ -2,6 +2,9 @@
   Filled in by tools/release/New-ReleaseNotes.ps1 from a tag, the plain git log since the
   previous tag, and whether SIGNPATH was set for this run. A person edits the result before
   publishing the draft (see installer-and-releases.md section 9, "Release notes").
+  The "What changed" list also gets a collapsed "Build and test changes" block for "CI:" commits;
+  the signing note ends with "Not yet verified on a clean PC." unless CLEAN_VM_VERIFIED is true.
+  (Do not write the double-brace placeholder names in this comment: the generator replaces them everywhere.)
 -->
 # Unravis {{VERSION}}
 
