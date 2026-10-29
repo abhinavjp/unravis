@@ -543,6 +543,7 @@ func (h *handler) postDiscoverScan(w http.ResponseWriter, r *http.Request) {
 	ds.mu.Unlock()
 
 	go h.runScan(ctx, cfg, env, rec, wrapped)
+	h.event(r, "discover_run", "detectors", len(wrapped))
 	writeJSON(w, http.StatusAccepted, scanStarted{ScanID: rec.id}, 4096)
 }
 

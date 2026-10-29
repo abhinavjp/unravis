@@ -280,6 +280,7 @@ func (h *handler) archiveCase(w http.ResponseWriter, r *http.Request, raw string
 	st.jobs.put(job)
 	started = true
 	go h.runArchive(ctx, job, run)
+	h.event(r, "case_archive_started")
 	writeJSON(w, http.StatusAccepted, job.dto(), 4096)
 }
 

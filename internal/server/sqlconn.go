@@ -68,6 +68,7 @@ func (h *handler) saveSQLConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "The SQL Server connection could not be saved. The existing file was left unchanged.")
 		return
 	}
+	h.event(r, "source_saved", "kind", "sql")
 	writeJSON(w, http.StatusOK, item, maxResponseBytes)
 }
 
@@ -92,5 +93,6 @@ func (h *handler) deleteSQLConnection(w http.ResponseWriter, id string) {
 		writeError(w, http.StatusServiceUnavailable, "The saved connection could not be removed.")
 		return
 	}
+	h.logEvent("connection_forgotten", "kind", "sql")
 	w.WriteHeader(http.StatusNoContent)
 }

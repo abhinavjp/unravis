@@ -23,6 +23,8 @@ var routeCases = []routeCase{
 	{"/", "/", "GET, HEAD"},
 	{launchPath, launchPath, "GET"},
 	{sessionproof.Path, sessionproof.Path, "GET"},
+	{"/api/client-log", "/api/client-log", "POST"},
+	{"/api/logs/info", "/api/logs/info", "GET"},
 	{"/api/connections/recent", "/api/connections/recent", "GET"},
 	{"/api/connections/recent/{id}", "/api/connections/recent/c1", "DELETE"},
 	{"/api/sql-connections", "/api/sql-connections", "GET, POST"},

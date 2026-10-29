@@ -279,6 +279,7 @@ func (h *handler) caseWorkspacePut(w http.ResponseWriter, r *http.Request, raw s
 		writeWorkspaceError(w, err)
 		return
 	}
+	h.event(r, "settings_changed", "setting", "case_workspace")
 	h.writeWorkspace(w, http.StatusOK, stored)
 }
 

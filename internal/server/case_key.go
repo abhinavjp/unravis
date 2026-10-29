@@ -339,10 +339,12 @@ func (h *handler) caseKeyUnlock(w http.ResponseWriter, r *http.Request, raw stri
 		th.fail()
 	}
 	if err != nil {
+		h.eventWarn(r, "case_key_unlock", "outcome", "failed")
 		writeCaseKeyError(w, err)
 		return
 	}
 	th.reset()
+	h.event(r, "case_key_unlock", "outcome", "ok")
 	// A mark left on the case (an erase that was cut short) is finished now that
 	// its key is here.
 	if h.recoverer != nil {
@@ -390,6 +392,7 @@ func (h *handler) caseKeyLock(w http.ResponseWriter, r *http.Request, raw string
 		return
 	}
 	info.Locked = true
+	h.event(r, "lock", "scope", "case_key")
 	caseKeyReply(w, info)
 }
 

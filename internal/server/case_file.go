@@ -436,6 +436,7 @@ func (h *handler) restoreCaseFile(w http.ResponseWriter, r *http.Request) {
 		if fi, serr := os.Stat(src); serr == nil {
 			made = fi.ModTime()
 		}
+		h.event(r, "case_restored", "mode", "from_file")
 		writeJSON(w, http.StatusCreated, toCaseDTO(h.afterRestore(r.Context(), info, from, made)), maxResponseBytes)
 	case errors.Is(err, casestore.ErrCaseFile):
 		notOpened()

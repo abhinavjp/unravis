@@ -209,6 +209,7 @@ func (h *handler) freeCase(w http.ResponseWriter, r *http.Request, raw string) {
 		writeStoreError(w, err)
 		return
 	}
+	h.event(r, "case_freed")
 	writeJSON(w, http.StatusOK, recordView(done), maxResponseBytes)
 }
 
