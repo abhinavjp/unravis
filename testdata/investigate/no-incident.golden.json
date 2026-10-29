@@ -342,7 +342,7 @@
       ],
       "coverage": 1,
       "dominant": "",
-      "dominantWhy": "Part C holds 0.85 of the extra time, which is under the change mark.",
+      "dominantWhy": "Part C holds 85% of the extra time, which is under the change mark.",
       "oTested": true,
       "oWhy": "",
       "iisMatched": 4500,
@@ -555,7 +555,7 @@
       "nutshell": "Before reading any number we check that the data can be trusted: clocks agree, no call is cut off, and nothing is missing.",
       "findings": [
         "4500 documents read, 0 with no start time, 0 not completed, 0 with a clock anomaly.",
-        "Audit share of IIS requests: 1.00 in the reference window, 1.00 in the incident window."
+        "Audit share of IIS requests: 100% in the reference window, 100% in the incident window."
       ]
     },
     {
@@ -578,10 +578,10 @@
       "nutshell": "Each call's time is split into audit set-up, the work itself and time outside the app. The part that grew most shows where to look first.",
       "findings": [
         "A: no share of the extra time.",
-        "C: share of the extra time 0.85.",
+        "C: share of the extra time 85%.",
         "P: no share of the extra time.",
-        "O: share of the extra time 0.15.",
-        "Part C holds 0.85 of the extra time, which is under the change mark."
+        "O: share of the extra time 15%.",
+        "Part C holds 85% of the extra time, which is under the change mark."
       ]
     },
     {

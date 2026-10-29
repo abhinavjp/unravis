@@ -2,7 +2,7 @@
 import { test, expect } from '../support/fixtures';
 import { createCase, demoId } from '../support/api';
 
-// The server answers a wrong case key with 423 and reason wrong-case-key (the scenario text says 401).
+// The server answers a wrong case key with 401 and reason wrong-case-key; a locked case with no key tried is 423 case-locked.
 const DEMO_KEY = 'unravis demo case key';
 
 test('KEY-01: a case key must be at least 12 characters and typed twice the same', async ({ api }) => {
@@ -40,7 +40,7 @@ test('KEY-03: one wrong key changes nothing and the right key still opens the ca
   const id = demoId('demokeye');
   await api('POST', `/api/cases/${id}/key/lock`);
   const wrong = await api('POST', `/api/cases/${id}/key/unlock`, { passphrase: 'this is not the key' });
-  expect(wrong.status).toBe(423);
+  expect(wrong.status).toBe(401);
   expect(wrong.json.reason).toBe('wrong-case-key');
   expect(wrong.text).not.toContain('this is not the key');
   const row = ((await api('GET', '/api/cases')).json.cases as any[]).find((c) => c.id === id);
@@ -58,7 +58,7 @@ test('KEY-05: add, change and remove a case key on an open case', async ({ api }
   const again = await api('POST', `/api/cases/${id}/key/set`, { passphrase: 'qa case key 0009', confirm: 'qa case key 0009' });
   expect(again.status).toBeGreaterThanOrEqual(400);
   const wrongCurrent = await api('POST', `/api/cases/${id}/key/change`, { passphrase: 'wrong current key', newPassphrase: 'qa case key 0003', confirm: 'qa case key 0003' });
-  expect(wrongCurrent.status).toBe(423);
+  expect(wrongCurrent.status).toBe(401);
   expect((await api('GET', `/api/cases/${id}/key`)).json.ending).toBe(first);
   const change = await api('POST', `/api/cases/${id}/key/change`, { passphrase: 'qa case key 0002', newPassphrase: 'qa case key 0003', confirm: 'qa case key 0003' });
   expect(change.status).toBe(200);
@@ -73,7 +73,7 @@ test('KEY-04: five wrong keys, then a wait that covers even the right key', asyn
   await api('POST', `/api/cases/${id}/key/lock`);
   for (let i = 0; i < 5; i++) {
     const r = await api('POST', `/api/cases/${id}/key/unlock`, { passphrase: 'wrong one ' + i });
-    expect(r.status, 'try ' + i).toBe(423);
+    expect(r.status, 'try ' + i).toBe(401);
     expect(r.json.reason).toBe('wrong-case-key');
   }
   const sixth = await api('POST', `/api/cases/${id}/key/unlock`, { passphrase: 'wrong six' });

@@ -119,6 +119,10 @@ jobs:
           Copy-Item -LiteralPath 'dist/unravis-setup.exe' -Destination "dist/unravis-setup-v${{ steps.tag.outputs.version }}-windows-x64.exe" -Force
 
       - name: Build dist\unravis-blackbox.exe and its zip
+        # The Blackbox is built twice on purpose for now: build.ps1 builds it for the installer payload
+        # (stamped with internal/version only), and this script rebuilds it with -trimpath and
+        # -X main.version so the zip's exe reports the release version. Reusing the first build would
+        # make the zip's exe print "dev". See .dev/reports/release-hardening.md for the proper fix.
         run: ./build-blackbox.ps1 -Version "${{ steps.tag.outputs.version }}"
 
       - name: Sign the binaries (SignPath)
@@ -128,7 +132,16 @@ jobs:
         if: ${{ steps.signgate.outputs.enabled == 'true' }}
         shell: pwsh
         run: |
-          Write-Host '::error::SIGNPATH is set but the SignPath client call is not wired up yet. Refusing to ship a release that claims to be signed.'
+          # %0A is how a workflow annotation carries a line break.
+          $lines = @(
+            'The SIGNPATH repository secret is set, but this workflow has no SignPath signing step yet, so nothing was signed and the build is stopped on purpose.',
+            'Shipping now would mark the release as signed when it is not.',
+            'The owner must do ONE of these, then re-run this workflow (Actions > Release > Run workflow, enter the same tag):',
+            '1. Ship unsigned: delete the SIGNPATH secret (repository Settings > Secrets and variables > Actions > Repository secrets). The notes then carry the "not signed" notice.',
+            '2. Ship signed: add the SignPath signing step (buildout/plan/installer-and-releases.md section 8) so it signs dist/unravis-setup.exe, dist/unravis.exe and dist/unravis-blackbox.exe before packaging, and set SIGNED to true in the "Write the release notes" step.'
+          )
+          Write-Host ('::error title=SignPath is set but signing is not wired up::' + ($lines -join '%0A'))
+          $lines | ForEach-Object { Write-Host $_ }
           exit 1
 
       - name: Package the portable zip
@@ -195,6 +208,12 @@ jobs:
         env:
           # Becomes true only when the sign step really signs (it fails the build today).
           SIGNED: 'false'
+          # The notes say "Not yet verified on a clean PC." unless this repository variable (Settings >
+          # Secrets and variables > Actions > Variables) is the text true. Set it only after a person
+          # has run the installer on a clean machine for this release.
+          CLEAN_VM_VERIFIED: ${{ vars.CLEAN_VM_VERIFIED }}
+        # The generator treats "no earlier tag" (the first release) as normal and lists the whole log.
+        # The checkout above fetched all history and tags, which the previous-tag lookup needs.
         run: |
           ./tools/release/New-ReleaseNotes.ps1 `
             -Tag '${{ steps.tag.outputs.tag }}' `
@@ -284,10 +303,16 @@ jobs:
           }
 
           $isRc = $tag.Contains('-')
-          $json = gh release view $tag --json isDraft 2>$null
-          $exists = ($LASTEXITCODE -eq 0)
+          # "gh release view <tag>" does not reliably find a draft (a draft has no public tag page), so
+          # the lookup lists releases instead; the list includes drafts for a token with contents: write.
+          # A failed listing stops the job rather than being read as "no such release".
+          $listJson = gh release list --limit 200 --json tagName,isDraft
+          if ($LASTEXITCODE -ne 0) { throw "gh release list failed with exit code $LASTEXITCODE" }
+          $found = @(($listJson -join "`n") | ConvertFrom-Json | Where-Object { $_.tagName -eq $tag })
+          if ($found.Count -gt 1) { throw "More than one release is listed for tag $tag. Delete the extra one by hand and re-run." }
+          $exists = ($found.Count -eq 1)
           if ($exists) {
-            $isDraft = [bool](($json | ConvertFrom-Json).isDraft)
+            $isDraft = [bool]$found[0].isDraft
             if (-not $isDraft) { throw "Release $tag is already published. Refusing to change a published release; delete it by hand first if you really mean to rebuild it." }
             Write-Host "Draft $tag exists. Replacing its assets and keeping its notes."
             gh release upload $tag @assetPaths --clobber

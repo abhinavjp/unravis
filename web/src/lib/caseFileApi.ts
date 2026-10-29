@@ -1,6 +1,6 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
 import { casePath, isCaseId } from './cases';
-import { LOCKED_STATUS, isCaseKeyReason, signalCasesLocked } from './lockSignal';
+import { LOCKED_STATUS, WRONG_CASE_KEY_REASON, isCaseKeyReason, signalCasesLocked } from './lockSignal';
 import { retryAfterOf } from './restoreCase';
 
 /**
@@ -48,7 +48,7 @@ async function call(path: string, body: Record<string, string>, signal?: AbortSi
     const fields = parsed && typeof parsed === 'object' ? parsed as { reason?: unknown; retryAfterSeconds?: unknown } : {};
     const reason = typeof fields.reason === 'string' ? fields.reason : '';
     // A 401 that is not a wrong export key is the dashboard refusing the token: forget it, as every other case route does.
-    if (response.status === 401 && reason !== 'wrong-key') {
+    if (response.status === 401 && reason !== 'wrong-key' && reason !== WRONG_CASE_KEY_REASON) {
       forgetSession();
       throw new CaseFileApiError(NO_SESSION_MESSAGE, 401, 'no_session');
     }

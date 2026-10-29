@@ -350,7 +350,7 @@ Jobs:
    - package assets and write `SHA256SUMS.txt`;
    - upload assets as a workflow artifact.
 2. `smoke` (needs `build`), matrix `windows-2022`, `windows-2025`: see section 11.
-3. `draft` (needs `smoke`): create or update a draft GitHub Release for the tag with `gh release create --draft --verify-tag`, attach the assets, and write the release notes.
+3. `draft` (needs `smoke`): create or update a draft GitHub Release for the tag with `gh release create --draft --verify-tag`, attach the assets, and write the release notes. An existing draft is found with `gh release list --json tagName,isDraft` (not `gh release view`, which does not reliably see drafts); a re-run replaces its assets and keeps its notes, and a published release is never touched.
 4. Publishing is a person pressing Publish on the draft. No job publishes automatically.
 
 Permissions: `contents: write` only on the `draft` job; everything else read-only. All actions pinned to a commit SHA.
@@ -368,7 +368,10 @@ The compatibility copy `api-audit-explorer.exe` is not a release asset.
 
 ### Release notes
 
-- Built from `.github/release-notes-template.md`: version, date, a "What changed" list from merged pull request titles since the last tag (via `gh api` generate-notes), an "Upgrade notes" block, a "Verify your download" block with the checksum command, and a signed or unsigned note.
+- Built from `.github/release-notes-template.md` by `tools/release/New-ReleaseNotes.ps1`: version, date, a "What changed" list, an "Upgrade notes" block, a "Verify your download" block with the checksum command, and a signed or unsigned note. No GitHub API call is made.
+- "What changed" is the plain git log between the previous tag and this tag (one bullet per commit, oldest first). Commits whose subject starts with `CI:` go into a collapsed "Build and test changes" block at the end of the list. A stable tag is compared with the previous stable tag (release candidates in between are included); a prerelease tag is compared with the nearest earlier tag; the first release lists the whole log and says so. It works in Windows PowerShell 5.1 and PowerShell 7 (`tools/release/Test-Release.ps1` checks both).
+- The notes end with "Not yet verified on a clean PC." until the repository variable `CLEAN_VM_VERIFIED` is set to `true` (do that only after a person has run the installer on a clean machine for that release).
+- If the `SIGNPATH` secret is set while the workflow has no signing step, the build stops with a message that says what the owner must do (delete the secret to ship unsigned, or wire the signing step).
 - The draft is edited by a person before publishing.
 
 ### Version stamping

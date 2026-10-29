@@ -95,7 +95,7 @@ test('the key ending sticker is shown only for four hex digits', () => {
 
 test('a failed key call is reduced to a small set of kinds', () => {
   const kind = (e) => caseKey.caseKeyFailureOf(e).kind;
-  assert.equal(kind({ status: 423, reason: 'wrong-case-key' }), 'wrong-key');
+  assert.equal(kind({ status: 401, reason: 'wrong-case-key' }), 'wrong-key');
   assert.equal(kind({ status: 423, reason: 'case-locked' }), 'app-locked', 'only the two key reasons are read as a case key answer');
   assert.equal(kind({ status: 429, reason: 'throttled', retryAfterSeconds: 4 }), 'throttled');
   assert.equal(caseKey.caseKeyFailureOf({ status: 429, reason: 'throttled', retryAfterSeconds: 4 }).retryAfterSeconds, 4);
@@ -155,10 +155,10 @@ test('the key calls send the key in the body only: never in the URL or a header'
 });
 
 test('a wrong case key keeps its reason, throws fixed text, and never echoes the key', async () => {
-  await withApi([{ status: 423, body: { error: 'ignored server wording ' + PASS, reason: 'wrong-case-key' } }], async () => {
+  await withApi([{ status: 401, body: { error: 'ignored server wording ' + PASS, reason: 'wrong-case-key' } }], async () => {
     const api = loadTypeScript('src/lib/caseKeyApi.ts');
     await assert.rejects(() => api.unlockCase(ID, PASS), (error) => {
-      assert.equal(error.status, 423);
+      assert.equal(error.status, 401);
       assert.equal(error.reason, 'wrong-case-key');
       assert.ok(!error.message.includes(PASS), 'the message does not hold the key');
       assert.ok(!error.message.includes('ignored server wording'), 'the server wording is not shown');
@@ -179,7 +179,7 @@ test('a bad case id never reaches the network', async () => {
 });
 
 test('five wrong tries then a wait: the sixth is a throttle with the seconds the server named', async () => {
-  const wrong = { status: 423, body: { reason: 'wrong-case-key' } };
+  const wrong = { status: 401, body: { reason: 'wrong-case-key' } };
   await withApi([wrong, wrong, wrong, wrong, wrong, { status: 429, body: { reason: 'throttled', retryAfterSeconds: 1 } }], async () => {
     const api = loadTypeScript('src/lib/caseKeyApi.ts');
     const kinds = [];
@@ -262,7 +262,7 @@ test('the case-in-use and being-erased reasons have their own sentences', () => 
   const text = (reason, status = 409) => copy.errorText({ status, reason, message: 'server wording' });
   assert.equal(text('case-in-use'), 'The case is in use. Close its other tabs, then try again.');
   assert.equal(text('case-locked', 423), 'This case has its own key. Enter it to open the case.');
-  assert.match(text('wrong-case-key', 423), /nothing changed/i);
+  assert.match(text('wrong-case-key', 401), /nothing changed/i);
   assert.match(text('untrusted-case'), /older version/);
   assert.ok(!/server wording/.test(text('throttled', 429)));
 });
@@ -273,7 +273,7 @@ test('entering the code of a keyed case counts as found', async () => {
   assert.deepEqual({ ...locked }, { ok: true, id: 'k7m2qx4aabcdefghijklmnopqr' });
   const missing = await resolveCode('k7m2qx4aabcdefghijklmnopqr', async () => { throw { status: 404, reason: 'case-not-found' }; });
   assert.equal(missing.ok, false);
-  const wrongKey = await resolveCode('k7m2qx4aabcdefghijklmnopqr', async () => { throw { status: 423, reason: 'wrong-case-key' }; });
+  const wrongKey = await resolveCode('k7m2qx4aabcdefghijklmnopqr', async () => { throw { status: 401, reason: 'wrong-case-key' }; });
   assert.equal(wrongKey.ok, false, 'only "locked" proves the case exists');
 });
 
