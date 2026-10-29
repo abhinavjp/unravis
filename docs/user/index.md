@@ -13,6 +13,7 @@ Unravis helps you find out what went wrong in production. It reads your audit lo
 | [Install](install.md) | The one-file installer |
 | [Upgrade and uninstall](upgrade-and-uninstall.md) | Move to a new version, or remove Unravis |
 | [Troubleshooting](troubleshooting.md) | Common problems and what to do |
+| [Logs](logs.md) | Where the app's log lives, what it records, what it never records, and how to send it |
 | [Security](security.md) | What Unravis reads, what it keeps, and what it never does |
 | [Screenshots](screenshots.md) | How the pictures in these pages are made (for contributors) |
 

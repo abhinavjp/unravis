@@ -3,6 +3,7 @@
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
   import { SHELL_TEXT as S } from '../../copy/guidedShellCopy';
   import { storeFor } from '../../guided/guided.svelte';
+  import { reportAction } from '../../clientLog';
   import { nextTabIndex, railItems, stepOf, stickerFor } from '../../guided/stepModel';
   import { caseSourceIds, type SourceNeed } from '../../guided/tools';
   import { app } from '../../appState.svelte';
@@ -37,6 +38,7 @@
     const wanted = store.titleFocus;
     if (wanted === seenFocus) return;
     seenFocus = wanted;
+    reportAction('guided', 'step_reached', String(store.step)); // journey log: the step number only
     if (untrack(() => store.mode !== 'guided' || panel !== 'main')) return;
     void tick().then(() => document.getElementById('step-title-' + store.step)?.focus());
   });
