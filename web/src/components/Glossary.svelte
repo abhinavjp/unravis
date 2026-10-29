@@ -33,6 +33,16 @@
   onMount(() => {
     void api.version().then((info) => { build = versionLine(info); }).catch(() => { build = ''; });
   });
+  // Support logs: where the journey/error log lives, for sending to a developer. Absent when the call fails.
+  let logs = $state<{ dir: string } | null>(null);
+  let logPathCopied = $state(false);
+  onMount(() => {
+    void api.logsInfo().then((info) => { if (info && info.dir) logs = { dir: info.dir }; }).catch(() => { logs = null; });
+  });
+  async function copyLogFolderPath() {
+    if (!logs) return;
+    try { await navigator.clipboard.writeText(logs.dir); logPathCopied = true; } catch { logPathCopied = false; }
+  }
   // The manual update check: only runs when the button is pressed, never by itself.
   let checking = $state(false);
   let update = $state<UpdateCheckReply | null>(null);
@@ -96,6 +106,13 @@
       {/each}
     </dl>
     {#if build}<p class="build-line" data-testid="build-line">{build}</p>{/if}
+    <section class="support-logs" aria-labelledby="support-logs-title">
+      <h3 id="support-logs-title">Support logs</h3>
+      <p>Unravis keeps a log of what it did and what went wrong, so a problem can be traced afterwards.</p>
+      {#if logs}<p class="log-path" data-testid="log-folder-path">{logs.dir}</p>
+      <button type="button" class="update-button" data-testid="copy-log-folder" onclick={copyLogFolderPath}>Copy folder path</button>{#if logPathCopied}<span class="log-copied" role="status">Copied</span>{/if}{/if}
+      <p>Send the newest unravis.log to your contact; it contains no passwords or case data.</p>
+    </section>
     <div class="update-check"><button type="button" class="update-button" data-testid="update-check-button" aria-disabled={checking} onclick={checkForUpdates}>{checking ? 'Checking...' : 'Check for updates'}</button>
       <div role="status" aria-live="polite" aria-busy={checking}>{#if update}{#key checkId}<p class="update-note" data-testid="update-check-result" data-state={updateCheckState(update)}>{updateCheckNote(update)}{#if update.status === 'available' && update.url && isOwnReleaseUrl(update.url)}{' '}<a data-testid="update-check-link" href={update.url} target="_blank" rel="noopener noreferrer">Open the release page</a>{/if}</p>{/key}{/if}</div></div>
   {/if}
@@ -119,6 +136,11 @@
   .glossary-entry dt { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
   .glossary-entry dd { margin: 5px 0 0; font-size: 13px; overflow-wrap: anywhere; }
   .build-line { margin: 14px 0 0; color: var(--text-2); font: 12px var(--mono); }
+  .support-logs { margin-top: 14px; font-size: 13px; }
+  .support-logs h3 { margin: 0 0 6px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+  .support-logs p { margin: 0 0 6px; color: var(--text-2); }
+  .support-logs .log-path { color: var(--text); font: 12px var(--mono); overflow-wrap: anywhere; }
+  .support-logs .log-copied { margin-left: 8px; color: var(--text-2); font-size: 12px; }
   .update-check { margin-top: 10px; display: grid; gap: 8px; justify-items: start; }
   .update-button { border: 1px solid var(--control-line); background: transparent; color: var(--text); padding: 6px 12px; border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
   .guide-open { margin-top: 10px; }

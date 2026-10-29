@@ -4,6 +4,7 @@
 // startApp() must be called once from App.svelte's script: it registers the effects and the mount work, which need a component.
 import { onMount, tick, untrack } from 'svelte';
 import { api, ApiError, hasSessionToken } from './api';
+import { installClientErrorHandlers, reportNav } from './clientLog';
 import { createDrawerHistory } from './drawerHistory';
 import { classifyStartupFailure } from './copy/startupCopy';
 import { bumpEpoch } from './evidenceMemo';
@@ -285,6 +286,7 @@ const currentView = $derived(describeView({
 
 // Registers the effects and the mount work in the order App.svelte declared them. Call once, from App.svelte's script.
 export function startApp() {
+  installClientErrorHandlers();
   initialView = typeof location === 'undefined' ? null : parseViewHash(location.hash);
   $effect(() => {
     const signature = connectionSignature;
@@ -488,6 +490,7 @@ export function go(to: Screen): boolean {
   if (leavesCaseWork(move.screen) && sidePanel) void closeSidePanel();
   screen = move.screen;
   if (move.screen !== 'setup') setupOrigin = null;
+  reportNav(move.screen); // the journey log gets the screen name only, never an id or a query
   if (!poppingScreen) noteScreenHistory(from, move.screen);
   // Arriving at the case or the analysis with a case open: bring back what the case saved, once (see restoreCaseWorkspace).
   if ((move.screen === 'running' || move.screen === 'case') && activeCaseId && restoredCaseId !== activeCaseId && restorePhase === 'idle' && info && !info.demo) void restoreCaseWorkspace(activeCaseId);

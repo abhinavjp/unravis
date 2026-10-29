@@ -154,6 +154,7 @@ func (h *handler) exportPreview(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
+	h.event(r, "export_started", "kind", "evidence")
 	if body.CaseID != "" {
 		h.caseExportPreview(w, r, body.CaseID)
 		return
@@ -360,5 +361,6 @@ func (h *handler) exportConfirm(w http.ResponseWriter, r *http.Request) {
 		resp.EventsCSV = string(it.csv)
 		resp.EventsCSVSHA256 = hex.EncodeToString(sum[:])
 	}
+	h.event(r, "export_finished", "kind", "evidence", "size", len(it.canonical)+len(it.csv))
 	writeJSON(w, http.StatusOK, resp, maxResponseBytes)
 }

@@ -257,6 +257,7 @@ func (h *handler) putEnvironments(w http.ResponseWriter, r *http.Request, raw st
 		writeTagError(w, err, tagEnvCapText)
 		return
 	}
+	h.event(r, "settings_changed", "setting", "environments", "count", len(body.Environments))
 	// Answer with what was stored: trimmed, de-duplicated, in order.
 	envs, err := t.Envs(ctx)
 	if err != nil {

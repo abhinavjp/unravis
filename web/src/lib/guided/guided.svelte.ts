@@ -1,5 +1,6 @@
 import { CaseApiError, casePath, json, listImports, send } from '../cases';
 import { api } from '../api';
+import { reportAction } from '../clientLog';
 import { parseWorkspace, type WorkspaceDatabase } from '../caseWorkspace';
 import { CHECKLIST_ERRORS, GUIDED_TEXT, SAVED_VIEW_ERRORS, refusalText } from '../copy/guidedCopy';
 import { SHELL_TEXT } from '../copy/guidedShellCopy';
@@ -174,6 +175,7 @@ export class GuidedStore {
   async run(sourceIds: readonly string[]): Promise<boolean> {
     const request = toRequest(this.frame, sourceIds, true);
     if (!request) return false;
+    reportAction('guided', this.phase === 'failed' ? 'retry' : 'run');
     this.cancel();
     const mine = ++this.#run;
     const controller = new AbortController();

@@ -8,7 +8,7 @@ export type HelpTarget =
 
 export const PAGE_ORDER: readonly string[] = [
   'index', 'getting-started', 'install', 'cases', 'sources', 'blackbox',
-  'guided-analysis', 'manual-tools', 'upgrade-and-uninstall', 'troubleshooting', 'security',
+  'guided-analysis', 'manual-tools', 'upgrade-and-uninstall', 'troubleshooting', 'security', 'logs',
 ];
 
 const NONE: HelpTarget = { kind: 'none' };

@@ -101,6 +101,7 @@ func (h *handler) restoreInPlace(w http.ResponseWriter, r *http.Request, raw str
 		return
 	}
 	defer c.Close()
+	h.event(r, "case_restored")
 	writeJSON(w, http.StatusOK, h.viewOf(r.Context(), c), maxResponseBytes)
 }
 
@@ -211,6 +212,7 @@ func (h *handler) restoreAsNew(w http.ResponseWriter, r *http.Request, raw strin
 			}
 		}
 		out := h.afterRestore(r.Context(), newInfo, from, cur.Made)
+		h.event(r, "case_restored", "mode", "as_new")
 		writeJSON(w, http.StatusCreated, toCaseDTO(out), maxResponseBytes)
 	case errors.Is(err, casestore.ErrCaseFile):
 		if typed {

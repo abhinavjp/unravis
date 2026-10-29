@@ -22,6 +22,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"api-audit-explorer/internal/applog"
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/hosts"
@@ -762,6 +763,7 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 		kc := bytes.Clone(key)
 		defer clear(kc)
 		info, existed, err = ck.CreateWithKey(r.Context(), title, requestID, kc)
+		applog.RegisterSecret(string(kc)) // never logged; registered so the sanitizer strips it everywhere
 	} else if _, stray := body.secrets["caseKeyConfirm"]; stray {
 		writeCaseKeyFail(w, http.StatusBadRequest, "bad-request", "The request body is invalid.")
 		return
@@ -778,6 +780,7 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	h.event(r, "case_created", "existed", existed)
 	status := http.StatusCreated
 	if existed {
 		status = http.StatusOK
@@ -909,6 +912,7 @@ func (h *handler) closeCase(w http.ResponseWriter, r *http.Request, raw string) 
 		return
 	}
 	defer c.Close()
+	h.event(r, "case_closed")
 	writeJSON(w, http.StatusOK, h.viewOf(r.Context(), c), maxResponseBytes)
 }
 
@@ -1000,6 +1004,7 @@ func (h *handler) eraseCase(w http.ResponseWriter, r *http.Request, raw string) 
 		}
 	}
 	h.pending.remove(id)
+	h.event(r, "case_erased")
 	h.noteErased(id)
 	h.noteFreedArchives(context.Background()) // an erased freed archive is no longer counted by M12
 	w.WriteHeader(http.StatusNoContent)
@@ -1381,6 +1386,7 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 	}
 	query := r.URL.Query()
 	preview := query.Get("preview") == "1"
+	h.event(r, "import_started", "preview", preview)
 	var imp importer.Importer
 	if name := query.Get("importer"); name != "" {
 		found, ok := h.registry.ByName(name)
@@ -1636,6 +1642,7 @@ func (h *handler) importFileWith(ctx context.Context, w http.ResponseWriter, id 
 			return
 		}
 		answer.Report = toReportDTO(res.Report)
+		h.logEvent("import_finished", "preview", true, "rows", res.Report.Rows, "emitted", res.Report.Emitted, "rejected", res.Report.Rejected)
 		writeJSON(w, http.StatusOK, answer, maxResponseBytes)
 		return
 	}
@@ -1650,6 +1657,7 @@ func (h *handler) importFileWith(ctx context.Context, w http.ResponseWriter, id 
 	record := toRecordDTO(res.Record)
 	answer.Report = toReportDTO(res.Report)
 	answer.Record = &record
+	h.logEvent("import_finished", "preview", false, "rows", res.Report.Rows, "emitted", res.Report.Emitted, "rejected", res.Report.Rejected)
 	writeJSON(w, http.StatusCreated, answer, maxResponseBytes)
 }
 
@@ -1935,5 +1943,6 @@ func (h *handler) putHosts(w http.ResponseWriter, r *http.Request) {
 		writeCaseFailure(w, http.StatusInternalServerError, "hosts-error", "The host map was saved but could not be read back.")
 		return
 	}
+	h.event(r, "settings_changed", "setting", "hosts")
 	writeJSON(w, http.StatusOK, json.RawMessage(doc), maxResponseBytes)
 }

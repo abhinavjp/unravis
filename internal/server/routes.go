@@ -171,6 +171,8 @@ var routes = []route{
 	{pattern: "/api/master-key/lock", match: exactPath("/api/master-key/lock"), methods: post((*handler).masterKeyLock)},
 	{pattern: "/api/master-key/rewrap", match: exactPath("/api/master-key/rewrap"), methods: post((*handler).masterKeyRewrap)},
 	{pattern: "/api/master-key/reset-damaged", match: exactPath("/api/master-key/reset-damaged"), methods: post((*handler).masterKeyResetDamaged)},
+	{pattern: "/api/client-log", match: exactPath("/api/client-log"), methods: post((*handler).clientLog)},
+	{pattern: "/api/logs/info", match: exactPath("/api/logs/info"), methods: get((*handler).logsInfo)},
 	{pattern: "/api/info", match: exactPath("/api/info"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, _ *http.Request, _ string) { h.info(w) },
 	}},

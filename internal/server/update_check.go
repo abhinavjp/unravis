@@ -112,11 +112,14 @@ func (h *handler) updateCheck(w http.ResponseWriter, r *http.Request) {
 	state.mu.Unlock()
 	if demo {
 		if reply, ok := updateCheckDemoReply(r.URL.Query().Get("preview")); ok {
+			h.event(r, "update_check", "status", reply.Status)
 			writeJSON(w, http.StatusOK, reply, 4096)
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, state.check(r.Context()), 4096)
+	reply := state.check(r.Context())
+	h.event(r, "update_check", "status", reply.Status)
+	writeJSON(w, http.StatusOK, reply, 4096)
 }
 
 func (s *updateCheckState) check(ctx context.Context) updateCheckReply {

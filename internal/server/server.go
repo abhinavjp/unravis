@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -48,9 +49,15 @@ type handler struct {
 	tests        connectionTestLimiter
 	adds         connectionTestLimiter
 	proofs       connectionTestLimiter
-	repeats      analyzeRepeats
-	launch       launchState
-	rollups      rollupCache
+	// clientLogs caps POST /api/client-log per minute (see clientlog.go).
+	clientLogs connectionTestLimiter
+	// logger and logDir are the journey log wiring (see httplog.go); logger nil
+	// means silent, logDir "" means /api/logs/info has no file to name.
+	logger  *slog.Logger
+	logDir  string
+	repeats analyzeRepeats
+	launch  launchState
+	rollups rollupCache
 	// mongoTests holds the database names of recent connection tests (names
 	// only) so a classification can be checked against them.
 	mongoTests mongoTests
@@ -90,6 +97,7 @@ func New(repo audit.Repository, assets fs.FS, token string, demo bool, options .
 	h.tests.limit = connectionTestsPerWindow
 	h.adds.limit = sourceAddsPerWindow
 	h.proofs.limit = sessionProofsPerWindow
+	h.clientLogs.limit = clientLogPerMinute
 	for _, option := range options {
 		if option != nil {
 			option(h)
@@ -170,7 +178,12 @@ func (l *connectionTestLimiter) allow() bool {
 	return true
 }
 
+// ServeHTTP is the logging middleware (httplog.go) around serve.
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.serveHTTP(w, r)
+}
+
+func (h *handler) serve(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w)
 	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == launchPath {
 		// No API reply is cached, whatever its status: a 204 or 404 carries no
@@ -317,6 +330,7 @@ func (h *handler) testConnection(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	result, err := tester.TestConnection(ctx, input)
 	if err != nil {
+		h.eventWarn(r, "source_connection_test", "kind", "mongo", "outcome", "failed")
 		if writeConnectionError(w, err) {
 			return
 		}
@@ -331,6 +345,7 @@ func (h *handler) testConnection(w http.ResponseWriter, r *http.Request) {
 		result.Databases = []string{}
 	}
 	h.mongoTests.record(result.Databases)
+	h.event(r, "source_connection_test", "kind", "mongo", "outcome", "ok", "databases", len(result.Databases))
 	writeJSON(w, http.StatusOK, result, maxResponseBytes)
 }
 
@@ -399,6 +414,7 @@ func (h *handler) rememberConnection(w http.ResponseWriter, r *http.Request) {
 		writeRememberError(w, err)
 		return
 	}
+	h.event(r, "source_saved", "kind", "mongo")
 	writeJSON(w, http.StatusOK, item, maxResponseBytes)
 }
 
@@ -451,6 +467,7 @@ func (h *handler) deleteRecent(w http.ResponseWriter, r *http.Request, id string
 		writeError(w, http.StatusServiceUnavailable, "Saved connection could not be removed.")
 		return
 	}
+	h.event(r, "connection_forgotten", "kind", "mongo")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -561,6 +578,7 @@ func (h *handler) addSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.rollups.clear()
+	h.event(r, "source_added", "source_id", item.ID)
 	writeJSON(w, http.StatusCreated, item, maxResponseBytes)
 }
 
@@ -581,6 +599,7 @@ func (h *handler) deleteSource(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	h.rollups.clear()
+	h.event(r, "source_removed", "source_id", decoded)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -868,6 +887,7 @@ func (h *handler) export(w http.ResponseWriter, r *http.Request) {
 	var output boundedBuffer
 	output.limit = maxResponseBytes
 	usedBytes := 0
+	h.event(r, "export_started", "kind", "csv")
 	if !writeCSVRow(&output, []string{"id", "sourceId", "controller", "action", "kind", "outcome", "status", "url", "initiatedAt", "completedAt", "durationMs", "apiTimeMs", "auditCreateTimeMs", "payloadRecordTimeMs", "requestKB", "responseKB", "userId", "userAgent", "uiVersion", "createdOn", "updatedOn", "pollingTypeRaw"}, &usedBytes) {
 		return
 	}
@@ -925,6 +945,7 @@ func (h *handler) export(w http.ResponseWriter, r *http.Request) {
 	if truncated {
 		w.Header().Set("X-Export-Truncated", "true")
 	}
+	h.event(r, "export_finished", "kind", "csv", "size", output.Len(), "rows", rows)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(output.Bytes())
 }

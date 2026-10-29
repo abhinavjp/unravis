@@ -93,6 +93,7 @@ func (h *handler) serveLaunch(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, launchGonePage)
 		return
 	}
+	h.event(r, "session_launch")
 	w.Header().Set("Location", "/#t="+url.QueryEscape(h.token))
 	w.WriteHeader(http.StatusFound)
 }

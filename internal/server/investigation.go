@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"api-audit-explorer/internal/applog"
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/evidence"
@@ -147,6 +149,11 @@ func (h *handler) caseInvestigation(w http.ResponseWriter, r *http.Request, raw 
 		writeError(w, http.StatusBadRequest, problem)
 		return
 	}
+	started := time.Now()
+	h.event(r, "investigation_started",
+		"sources", strings.Join(body.SourceIDs, ","),
+		"incident_hours", body.Incident.End.Sub(body.Incident.Start).Hours(),
+		"reference_hours", body.Reference.End.Sub(body.Reference.Start).Hours())
 	res, read, c, ok := h.runInvestigation(w, r, raw, body)
 	if !ok {
 		return
@@ -155,6 +162,10 @@ func (h *handler) caseInvestigation(w http.ResponseWriter, r *http.Request, raw 
 	if !body.IncludeSeries {
 		res = res.Compact()
 	}
+	h.event(r, "investigation_finished",
+		"duration_ms", time.Since(started).Milliseconds(),
+		"requests", read.Requests, "iis_rows", read.IISRows,
+		"truncated", read.Truncated, "warnings", len(read.Warnings))
 	writeJSON(w, http.StatusOK, investigationAnswer{Result: res, Read: read}, maxResponseBytes)
 }
 
@@ -191,8 +202,14 @@ func (h *handler) runInvestigation(w http.ResponseWriter, r *http.Request, raw s
 	// the case-side reads below the whole request (and so answer 504 even though
 	// the client is still waiting).
 	rows, read, status, err := h.readInvestigationRanges(auditCtx, queries)
+	if status != "" && status != investigate.AuditPresent {
+		// The audit_failure cause, in the log: this is the line that answers
+		// "why could the audit source not be read" without guessing.
+		h.eventWarn(r, "investigation_audit_failed", "cause", string(status), "warnings", len(read.Warnings))
+	}
 	if err != nil {
 		if auditCtx.Err() != nil && errors.Is(auditCtx.Err(), context.DeadlineExceeded) && r.Context().Err() == nil {
+			h.eventWarn(r, "investigation_audit_failed", "cause", "timeout", "budget", "audit", "budget_ms", investigationAuditBudget.Milliseconds())
 			// Our own audit budget ran out, not the client leaving: answer with an
 			// audit-failed result instead of a timeout.
 			status = investigate.AuditFailed
@@ -258,15 +275,53 @@ func (h *handler) readInvestigationAudit(ctx context.Context, q audit.Query) ([]
 	read := investigationRead{Warnings: []string{}}
 	status := investigate.AuditPresent
 	cursor := ""
+	// Per-source diagnostics: a start line and a finish line per source, so a
+	// failed read names the source, its error code and its sanitized reason.
+	start := time.Now()
+	counts := map[string]int{}
+	results := map[string]audit.SourceResult{}
+	for _, id := range q.SourceIDs {
+		h.log().Info("audit_source_start", "source_id", id, "kind", "audit",
+			"window_start", q.Start.UTC().Format(time.RFC3339), "window_end", q.End.UTC().Format(time.RFC3339))
+	}
+	finish := func(err error) {
+		for _, id := range q.SourceIDs {
+			attrs := []any{"source_id", id, "kind", "audit",
+				"window_hours", q.End.Sub(q.Start).Hours(),
+				"rows", counts[id], "duration_ms", time.Since(start).Milliseconds()}
+			if sr, seen := results[id]; seen {
+				attrs = append(attrs, "ok", sr.OK)
+				if !sr.OK {
+					attrs = append(attrs, "error_code", sr.ErrorCode, "error", applog.Sanitize(sr.Error))
+				}
+			} else if err != nil {
+				attrs = append(attrs, "ok", false, "error", applog.Sanitize(err.Error()))
+				if errors.Is(err, context.DeadlineExceeded) {
+					attrs = append(attrs, "error_code", "timeout", "budget", "audit")
+				}
+			} else {
+				attrs = append(attrs, "ok", true)
+			}
+			h.log().Info("audit_source_read", attrs...)
+		}
+	}
 	for {
 		page, err := h.repo.Requests(ctx, audit.PageInput{Query: q, Cursor: cursor, Limit: audit.MaxPageSize, Order: audit.OrderNewest})
 		if err != nil {
+			finish(err)
 			return nil, read, "", err
+		}
+		for _, s := range page.Sources {
+			results[s.SourceID] = s
+		}
+		for _, row := range page.Rows {
+			counts[row.SourceID]++
 		}
 		for _, s := range page.Sources {
 			if !s.OK {
 				status = investigate.AuditFailed
 				read.Warnings = append(read.Warnings, "One or more audit sources could not be queried.")
+				finish(nil)
 				return nil, read, status, nil
 			}
 		}
@@ -289,6 +344,7 @@ func (h *handler) readInvestigationAudit(ctx context.Context, q audit.Query) ([]
 		rows = nil
 	}
 	read.Requests = len(rows)
+	finish(nil)
 	return rows, read, status, nil
 }
 

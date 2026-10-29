@@ -156,6 +156,7 @@ func (h *handler) testSQLConnection(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		ce := dbhealth.ClassifyConnect(err)
 		if ce.Code != "list" {
+			h.eventWarn(r, "source_connection_test", "kind", "sql", "outcome", "failed", "code", ce.Code)
 			writeConnectFailure(w, err)
 			return
 		}
@@ -164,6 +165,7 @@ func (h *handler) testSQLConnection(w http.ResponseWriter, r *http.Request) {
 	if listErr != "" {
 		out.ListError = listErr
 	}
+	h.event(r, "source_connection_test", "kind", "sql", "outcome", "ok", "databases", len(out.Databases))
 	writeJSON(w, http.StatusOK, out, maxResponseBytes)
 }
 

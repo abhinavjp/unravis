@@ -1,5 +1,6 @@
 import type { SavedSqlConnection, SqlConnectionInput, SqlTestRequest, SqlTestResult,Analysis,Breakdown, BreakdownDim, ConnectionInput, ConnectionTestResult, CoverageRefused, CoverageReport, Info, Page, Payload, Query, RecentConnection, RecordDetail, RememberConnectionInput, Source, SourceInput, PatternInput, PatternReport, EndpointDaily, Hypothesis, HypothesisInput, ExportPreviewInput, ExportPreview, ExportFile, VersionInfo, UpdateCheckReply } from './types';
 import { signalIfAppLocked } from './lockSignal';
+import { configureClientLog, dropClientLog, reportAction, reportError } from './clientLog';
 import { noticeKeeperRefusal, type KeeperStatus } from './keeper';
 import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
 
@@ -12,6 +13,9 @@ const SESSION_KEY = 'unravis.session';
 function storage(): Storage | null {
   try { return typeof sessionStorage === 'undefined' ? null : sessionStorage; } catch { return null; }
 }
+
+/** How this tab got its token: 'link' for a fresh launch, 'stored' for a resumed session, '' for none. */
+let sessionOrigin: '' | 'link' | 'stored' = '';
 
 /**
  * The dashboard never writes its session token into the page. The launch link
@@ -30,19 +34,34 @@ export function readSessionToken(): string {
   } catch { /* an unreadable fragment is the same as none */ }
   const store = storage();
   if (fromLink) {
+    sessionOrigin = 'link';
     try { store?.setItem(SESSION_KEY, fromLink); } catch { /* the token still works for this page */ }
     return fromLink;
   }
-  try { return store?.getItem(SESSION_KEY) ?? ''; } catch { return ''; }
+  try {
+    const stored = store?.getItem(SESSION_KEY) ?? '';
+    if (stored) sessionOrigin = 'stored';
+    return stored;
+  } catch { return ''; }
 }
 
 let token = readSessionToken();
+
+// The journey log (clientLog.ts) sends with this tab's token, and the session
+// itself is its first entry: a launch from the link, or a resume from storage.
+configureClientLog(() => token);
+if (token) reportAction('session', (sessionOrigin as string) === 'link' ? 'launch' : 'resume');
 
 /** Whether this tab holds a session token right now. A refused token is dropped, so read this before a call to know what the tab had. */
 export const hasSessionToken = (): boolean => token !== '';
 
 /** Drops the token this tab holds, in memory and in sessionStorage, once the dashboard has refused it. */
 export function forgetSession() {
+  // Every caller of forgetSession is a refused-token path: the token is dead,
+  // so queued journey entries could not be delivered with it anyway. Drop
+  // them (and never send the refused token again); the refusal itself is in
+  // the server's own request log.
+  dropClientLog();
   token = '';
   try { storage()?.removeItem(SESSION_KEY); } catch { /* nothing stored */ }
 }
@@ -74,13 +93,22 @@ export class ApiError extends Error {
 
 const ledgerBase = (caseId: string): string => (caseId ? '/cases/' + encodeURIComponent(caseId) + '/ledger' : '/ledger');
 
+/** The request id the server stamped on this response, when the response carries one. */
+function responseRequestId(response: Response): string | undefined {
+  try { return response.headers?.get('X-Request-Id') ?? undefined; } catch { return undefined; }
+}
+
 async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<T> {
   if (!token) throw noSession();
   const headers = new Headers(init.headers);
   headers.set('X-Audit-Token', token);
   if (init.body) headers.set('Content-Type', 'application/json');
   const response = await fetch(base + path, { ...init, headers, credentials: 'same-origin', signal });
+  // The server gives every request an id; an error entry quotes it so a user
+  // can name it and the developer can find the exact server line.
+  const reqId = responseRequestId(response);
   if (response.status === 401) {
+    reportError({ status: 401, code: 'no_session', message: NO_SESSION_MESSAGE, reqId });
     forgetSession();
     throw noSession();
   }
@@ -99,6 +127,9 @@ async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSi
       if (Array.isArray(body.reasons)) reasons = body.reasons;
     } catch { /* keep status message */ }
     const failure = new ApiError(plainApiMessage(response.status, message), code, stage, response.status, reasons);
+    // Every ApiError is reported: it is, by construction, an error the caller
+    // is about to show the user.
+    reportError({ status: failure.status, code: failure.code, stage: failure.stage, message: failure.message, reqId });
     noticeKeeperRefusal(failure); // any read the key keeper refused makes the page read the source list again, not only an analysis
     throw failure;
   }
@@ -107,9 +138,14 @@ async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSi
 }
 
 const json = (value: unknown): RequestInit => ({ method: 'POST', body: JSON.stringify(value) });
+
+/** Where the support log file is, how big it is, and when its newest entry was written. */
+export interface LogsInfo { path: string; dir: string; size: number; newest: string }
+
 export const api = {
   info: () => request<Info>('/info'),
   version: () => request<VersionInfo>('/version'),
+  logsInfo: () => request<LogsInfo>('/logs/info'),
   /** preview: a demo-only canned answer (latest, available, offline). Ignored by a real build. */
   updateCheck: (preview = '') => request<UpdateCheckReply>('/update-check' + (preview ? '?preview=' + encodeURIComponent(preview) : ''), { method: 'POST' }),
   /** preview: a keeper screenshot preview (saved or stopped), answered only in the demo. */
@@ -160,7 +196,7 @@ export const api = {
   /** Replaces the case's workspace. The server refuses any key that looks like a password, address or user name (400). */
   saveCaseWorkspace: (caseId: string, workspace: object) => request<unknown>('/cases/' + encodeURIComponent(caseId) + '/workspace', { method: 'PUT', body: JSON.stringify(workspace) }),
   exportPreview: (input: ExportPreviewInput) => request<ExportPreview>('/export/preview', json(input)),
-  exportConfirm: (previewId: string) => request<ExportFile>('/export/confirm', json({ previewId })),
+  exportConfirm: (previewId: string) => { reportAction('evidence', 'export'); return request<ExportFile>('/export/confirm', json({ previewId })); },
   /** The daily table and the hour grid: one read of the sources each, cached for a minute by the server. */
   daily: (params: RollupParams, signal?: AbortSignal) => request<DailyResponse>(rollupPath('daily', params), {}, signal),
   hourGrid: (params: RollupParams, signal?: AbortSignal) => request<HourGridResponse>(rollupPath('hourgrid', params), {}, signal),
@@ -180,19 +216,24 @@ export const api = {
   callTrace: (input: import('./callTrace').CallTraceRequest, caseId = '', signal?: AbortSignal) => request<import('./callTrace').CallTraceResult>((caseId ? '/cases/' + encodeURIComponent(caseId) : '') + '/call-trace', json(input), signal),
   export: async (query: Query, apiKey: string, signal?: AbortSignal, state = '', order = '') => {
     if (!token) throw noSession();
+    reportAction('analysis', 'export');
     const response = await fetch(base + '/export', {
       method: 'POST', credentials: 'same-origin', signal,
       headers: { 'X-Audit-Token': token, 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, apiKey, cursor: '', limit: 100, state, ...(order ? { order } : {}) })
     });
+    const reqId = responseRequestId(response);
     if (response.status === 401) {
+      reportError({ status: 401, code: 'no_session', message: NO_SESSION_MESSAGE, reqId });
       forgetSession();
       throw noSession();
     }
     if (!response.ok) {
       let message = 'Export failed (' + response.status + ')';
       try { message = ((await response.json()) as { error?: string }).error ?? message; } catch { /* status is enough */ }
-      throw new Error(plainApiMessage(response.status, message));
+      const mapped = plainApiMessage(response.status, message);
+      reportError({ status: response.status, message: mapped, reqId });
+      throw new Error(mapped);
     }
     return { blob: await response.blob(), limited: response.headers.get('X-Export-Truncated') === 'true' };
   }

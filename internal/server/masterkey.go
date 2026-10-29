@@ -935,6 +935,7 @@ func (h *handler) masterKeyUnlock(w http.ResponseWriter, r *http.Request) {
 	s.loadLegacy(ring, false, func() []string { return h.legacyCandidates(r.Context()) })
 	s.install(ring)
 	h.recoverAll(r.Context())
+	h.event(r, "unlock", "scope", "master_key")
 	h.masterKeyReply(w, r)
 }
 
@@ -956,6 +957,7 @@ func (h *handler) masterKeyLock(w http.ResponseWriter, r *http.Request) {
 	if ck, ok := h.cases.(casestore.CaseKeyer); ok {
 		ck.LockAllCaseKeys()
 	}
+	h.event(r, "lock", "scope", "master_key")
 	writeJSON(w, http.StatusOK, masterKeyStatus{State: h.mk.State()}, 4096)
 }
 
