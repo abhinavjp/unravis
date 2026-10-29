@@ -71,8 +71,18 @@ export const test = base.extend<Fixtures, { reaper: void }>({
     await use(makeApi(demo.base, demo.token));
   },
 
-  page: async ({ page, demo }, use) => {
-    await page.goto(demo.base + '/#t=' + demo.token);
+  page: async ({ page, demo }, use, testInfo) => {
+    // Windows now and then answers a local connection with ERR_NO_BUFFER_SPACE (a full socket buffer on the test PC, not an app
+    // fault). Only that one error is tried again, and only before the test has done anything.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await page.goto(demo.base + '/#t=' + demo.token);
+        break;
+      } catch (err) {
+        if (attempt >= 3 || !/ERR_NO_BUFFER_SPACE/.test(String(err))) throw err;
+        testInfo.annotations.push({ type: 'nav-retry', description: 'ERR_NO_BUFFER_SPACE on the first page load, loaded again' });
+      }
+    }
     await use(page);
   },
 
@@ -107,6 +117,8 @@ export const test = base.extend<Fixtures, { reaper: void }>({
         const why = r.failure()?.errorText ?? '';
         // A request the page itself cancelled (navigation, reload, closing a view) is not a failure.
         if (/ERR_ABORTED/.test(why)) return;
+        // The one page load that was tried again (see the page fixture) is not an app failure either.
+        if (/ERR_NO_BUFFER_SPACE/.test(why) && testInfo.annotations.some((a) => a.type === 'nav-retry')) return;
         seen.push({ kind: 'requestfailed', text: why + ' | ' + pathOf(r.url()) });
       });
 
