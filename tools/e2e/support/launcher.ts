@@ -19,6 +19,8 @@ export interface Demo {
   configDir: string;
   /** Scratch folder for things the test writes (archive folder, downloads). Inside dataDir. */
   scratch: string;
+  /** Everything the demo has printed so far (stdout and stderr). */
+  log(): string;
   stop(): Promise<void>;
 }
 
@@ -135,5 +137,5 @@ export async function startDemo(opts: StartOptions = {}): Promise<Demo> {
     await stop();
     throw new Error('The launch link did not hand over a session (status ' + res.status + ').');
   }
-  return { base: new URL(link).origin, token, link, dataDir, configDir, scratch, stop };
+  return { base: new URL(link).origin, token, link, dataDir, configDir, scratch, log: () => log, stop };
 }
