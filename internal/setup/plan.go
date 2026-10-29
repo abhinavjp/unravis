@@ -97,7 +97,7 @@ func (r *Runner) NewPlan(op Op, opts Options, un UninstallOptions, old *Installe
 		}
 	}
 	p.Layout = NewLayout(p.Opts, r.Dirs)
-	p.Elevated = NeedsAdmin(p.Opts)
+	p.Elevated = NeedsAdminFor(r.Sys.Svc, p.Opts)
 	if op == OpUninstall {
 		p.Steps = uninstallSteps(p)
 	} else {
@@ -185,11 +185,24 @@ func (p *Plan) closeApp(ctx context.Context, t *Txn) error {
 
 func (p *Plan) stopServices(ctx context.Context, t *Txn) error {
 	for _, name := range []string{keeper.ServiceName, blackbox.ServiceName} {
+		// A service that is not installed or already stopped needs no rights at all to see that (Services.State is read-only); only
+		// a real stop failure below needs administrator rights.
 		if _, err := t.StopService(name); err != nil {
-			return &StepError{Msg: "The service " + name + " did not stop: " + err.Error() + ".", Fix: "Restart the PC, then run setup again.", Err: err}
+			return stopServiceError(name, err)
 		}
 	}
 	return nil
+}
+
+// stopServiceError turns a failed stop into the screen's message and fix. Windows answers access-denied when setup is not elevated
+// even though the service is really there; the fix for that is the UAC prompt, not a restart.
+func stopServiceError(name string, err error) *StepError {
+	if errors.Is(err, ErrAccessDenied) {
+		return &StepError{Msg: "The service " + name + " did not stop: Windows refused access.",
+			Fix: "Run setup again and choose Yes on the administrator prompt.", Err: err}
+	}
+	return &StepError{Msg: "The service " + name + " did not stop: " + strings.TrimSuffix(err.Error(), ".") + ".",
+		Fix: "Close other programs using the service, or restart the PC, then run setup again.", Err: err}
 }
 
 func (p *Plan) programFolder(ctx context.Context, t *Txn) error {

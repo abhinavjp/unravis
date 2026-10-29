@@ -274,7 +274,7 @@ func runSilent(o options, e env) int {
 		opts = old.State.Options() // upgrade, repair, uninstall and a second install keep the choices of the install
 	}
 	var res setup.Result
-	if setup.NeedsAdmin(opts) && !r.Sys.Mach.IsAdmin() {
+	if setup.NeedsAdminFor(r.Sys.Svc, opts) && !r.Sys.Mach.IsAdmin() {
 		u := d.User()
 		req.User = &u
 		say("This needs administrator approval; Windows will ask.")

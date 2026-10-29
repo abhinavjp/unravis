@@ -1104,3 +1104,136 @@ func TestExitCodes(t *testing.T) {
 		}
 	}
 }
+
+// ---- NeedsAdminFor: the UAC prompt has to come up front, even when the saved state does not ask for it ----
+
+// newTestTxn is a Txn backed by a real journal, so a step that journals an undo (StopService does, for a service that is really
+// running) does not hit the nil *Journal that a bare &Txn{sys: sys} would.
+func newTestTxn(t *testing.T, sys *System) *Txn {
+	t.Helper()
+	j, err := NewJournal(filepath.Join(t.TempDir(), JournalName), OpUpgrade, "1.0.0", sys.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Txn{sys: sys, j: j, log: func(string) {}}
+}
+
+// A service an earlier machine-scope install left behind still needs an administrator, even though this run's own options (or the
+// absent/just-for-me state setup can read) say otherwise: the bug was Access denied discovered mid-run, not asked for up front.
+func TestNeedsAdminForALeftoverServiceEvenWhenTheOptionsDoNot(t *testing.T) {
+	e := newEnv(t, "1.0.0")
+	o := e.userOpts()
+	if NeedsAdmin(o) {
+		t.Fatal("a just-for-me install should not need admin by itself")
+	}
+	if NeedsAdminFor(e.sys.Svc, o) {
+		t.Fatal("a clean PC should not need admin for a just-for-me install")
+	}
+	e.f.Svc.Put(KeeperSpec(`C:\Program Files\Unravis\unravis-keeper.exe`), blackbox.SvcRunning)
+	if !NeedsAdminFor(e.sys.Svc, o) {
+		t.Fatal("a leftover keeper service should still ask for administrator approval")
+	}
+}
+
+// recordingElevator is Elevator with nothing behind the pipe: just enough to see whether LocalBackend.Run asked to elevate at all.
+type recordingElevator struct{ started bool }
+
+func (e *recordingElevator) Start(context.Context) (io.ReadWriteCloser, error) {
+	e.started = true
+	return nil, errors.New("no worker in this test")
+}
+
+// (a) Unelevated, with a leftover keeper service and options that by themselves need no approval: LocalBackend.Run still asks for
+// elevation up front (the worker is started) instead of running the steps unelevated and failing later at "Stop the Unravis
+// services".
+func TestLocalBackendElevatesForALeftoverServiceEvenUnelevated(t *testing.T) {
+	e := newEnv(t, "1.0.0")
+	e.f.Svc.Put(KeeperSpec(`C:\Program Files\Unravis\unravis-keeper.exe`), blackbox.SvcRunning)
+	o := e.userOpts()
+	el := &recordingElevator{}
+	be := &LocalBackend{R: e.r, Mode: OpInstall, IsAdmin: false, Elev: el}
+	if !be.Changes(WorkRequest{Op: OpInstall, Options: o}).NeedsAdmin {
+		t.Fatal("the approval screen should ask for admin because of the leftover service")
+	}
+	before := e.snapshot()
+	res := be.Run(context.Background(), WorkRequest{Op: OpInstall, Options: o}, func(StepEvent) {}, func(string) {})
+	if !el.started {
+		t.Fatal("LocalBackend.Run should have started the elevated worker, not run the steps in this process")
+	}
+	if res.Outcome != OutcomeRolledBack || e.snapshot() != before {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// (d) The approval screen and a fresh plan both say admin is needed when only a leftover service makes that true.
+func TestDescribeChangesAndPlanNeedAdminForALeftoverService(t *testing.T) {
+	e := newEnv(t, "1.0.0")
+	e.f.Svc.Put(KeeperSpec(`C:\Program Files\Unravis\unravis-keeper.exe`), blackbox.SvcRunning)
+	o := e.userOpts()
+	ch := DescribeChanges(WorkRequest{Op: OpInstall, Options: o}, nil, e.dirs, e.sys.Svc, false)
+	if !ch.NeedsAdmin {
+		t.Fatal("DescribeChanges should ask for admin because of the leftover service")
+	}
+	p, err := e.r.NewPlan(OpInstall, o, UninstallOptions{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Elevated {
+		t.Fatal("the plan should be marked elevated because of the leftover service")
+	}
+}
+
+// (b) A service that is not installed, or already stopped, needs no rights at all to see that: the step succeeds and never calls
+// Stop (which is the call that needs to be elevated).
+func TestStopServicesSkipsAServiceThatIsNotThere(t *testing.T) {
+	e := newEnv(t, "1.0.0")
+	e.f.Svc.Put(KeeperSpec(`C:\Program Files\Unravis\unravis-keeper.exe`), blackbox.SvcStopped) // already stopped
+	// blackbox.ServiceName is never installed in this env.
+	p := &Plan{r: e.r, Opts: e.machineOpts()}
+	if err := p.stopServices(t0ctx(), newTestTxn(t, e.sys)); err != nil {
+		t.Fatalf("stopServices: %v", err)
+	}
+	if len(e.f.Svc.Log) != 0 {
+		t.Errorf("Stop should never be called when nothing needs stopping: %v", e.f.Svc.Log)
+	}
+}
+
+// (c) A real stop failure gets exactly one period and a fix that matches the cause: the UAC prompt for access-denied, a restart (or
+// closing whatever else is using the service) for anything else.
+func TestStopServiceErrorMessagesHaveOnePeriodAndTheRightFix(t *testing.T) {
+	cases := []struct {
+		name    string
+		fault   error
+		wantMsg string
+		wantFix string
+	}{
+		{name: "access denied asks for the UAC prompt", fault: ErrAccessDenied,
+			wantMsg: "The service " + keeper.ServiceName + " did not stop: Windows refused access.",
+			wantFix: "Run setup again and choose Yes on the administrator prompt."},
+		{name: "another error keeps its own text, trimmed once", fault: errors.New("the device is not ready."),
+			wantMsg: "The service " + keeper.ServiceName + " did not stop: the device is not ready.",
+			wantFix: "Close other programs using the service, or restart the PC, then run setup again."},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t, "1.0.0")
+			e.f.Svc.Put(KeeperSpec(`C:\Program Files\Unravis\unravis-keeper.exe`), blackbox.SvcRunning)
+			e.f.Faults.Set("svc.Stop:"+keeper.ServiceName, c.fault)
+			p := &Plan{r: e.r, Opts: e.machineOpts()}
+			err := p.stopServices(t0ctx(), newTestTxn(t, e.sys))
+			var se *StepError
+			if !errors.As(err, &se) {
+				t.Fatalf("not a StepError: %v", err)
+			}
+			if se.Msg != c.wantMsg {
+				t.Errorf("msg = %q, want %q", se.Msg, c.wantMsg)
+			}
+			if n := strings.Count(se.Msg, "."); n != 1 {
+				t.Errorf("message has %d periods, want exactly 1: %q", n, se.Msg)
+			}
+			if se.Fix != c.wantFix {
+				t.Errorf("fix = %q, want %q", se.Fix, c.wantFix)
+			}
+		})
+	}
+}

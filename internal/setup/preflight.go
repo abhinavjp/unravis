@@ -143,13 +143,13 @@ func (r *Runner) Preflight(in PreflightInput) []Check {
 		}
 	}
 
-	add(checkAdmin(sys.Mach, in, opts))
+	add(checkAdmin(sys.Mach, sys.Svc, in, opts))
 
 	if sys.Mach.PendingReboot() {
 		add(Check{ID: "reboot", Title: "Restart", Status: CheckPartly, Detail: "Windows is waiting for a restart from an earlier update.", Fix: "Setup can go on. If a step fails, restart the PC and run setup again."})
 	}
 
-	elevated := NeedsAdmin(opts) || in.Op == OpUninstall && (in.Old != nil && in.Old.Root == HKLM)
+	elevated := NeedsAdminFor(sys.Svc, opts) || in.Op == OpUninstall && (in.Old != nil && in.Old.Root == HKLM)
 	if _, err := os.Stat(filepath.Join(r.journalDir(elevated), JournalName)); err == nil {
 		add(Check{ID: "journal", Title: "Earlier setup", Status: CheckPartly, Detail: "An earlier setup did not finish. Setup puts back what it changed before it starts."})
 	}
@@ -351,9 +351,9 @@ func checkRecordingsFolder(m Machine, folder string) Check {
 	return c
 }
 
-func checkAdmin(m Machine, in PreflightInput, opts Options) Check {
+func checkAdmin(m Machine, svc Services, in PreflightInput, opts Options) Check {
 	c := Check{ID: "admin", Title: "Administrator approval", Status: CheckReady}
-	need := NeedsAdmin(opts) || in.Op == OpUninstall && in.Old != nil && in.Old.Root == HKLM
+	need := NeedsAdminFor(svc, opts) || in.Op == OpUninstall && in.Old != nil && in.Old.Root == HKLM
 	switch {
 	case !need:
 		c.Detail = "Not needed for this install."

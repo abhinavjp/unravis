@@ -271,26 +271,40 @@ func daclProtected(sddl string) bool {
 
 type osServices struct{}
 
+// withService opens the SC manager and the service with full rights, for the calls (Create goes through mgr.Connect directly,
+// Config, SetConfig and Delete here) that really need to change or remove the service.
 func withService(name string, f func(s *mgr.Service) error) error {
-	m, err := mgr.Connect()
+	return withServiceAccess(windows.SC_MANAGER_ALL_ACCESS, windows.SERVICE_ALL_ACCESS, name, f)
+}
+
+// withServiceAccess is withService but with exactly the rights the caller asks for (mgr.Connect and mgr.OpenService always ask for
+// ALL_ACCESS, which an unelevated process is refused even to look at a service that a machine-scope install left behind). State asks
+// only SC_MANAGER_CONNECT and SERVICE_QUERY_STATUS, so it still works unelevated; Stop and Start ask for a little more.
+func withServiceAccess(scAccess, svcAccess uint32, name string, f func(s *mgr.Service) error) error {
+	h, err := windows.OpenSCManager(nil, nil, scAccess)
 	if err != nil {
 		return err
 	}
-	defer m.Disconnect()
-	s, err := m.OpenService(name)
+	defer windows.CloseServiceHandle(h)
+	namePtr, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return err
+	}
+	sh, err := windows.OpenService(h, namePtr, svcAccess)
 	if err != nil {
 		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 			return ErrNotFound
 		}
 		return err
 	}
+	s := &mgr.Service{Name: name, Handle: sh}
 	defer s.Close()
 	return f(s)
 }
 
 func (osServices) State(name string) (blackbox.SvcState, error) {
 	st := blackbox.SvcNotInstalled
-	err := withService(name, func(s *mgr.Service) error {
+	err := withServiceAccess(windows.SC_MANAGER_CONNECT, windows.SERVICE_QUERY_STATUS, name, func(s *mgr.Service) error {
 		q, err := s.Query()
 		if err != nil {
 			return err
@@ -377,23 +391,31 @@ func (osServices) SetConfig(spec ServiceSpec) error {
 }
 
 func (osServices) Start(name string) error {
-	return withService(name, func(s *mgr.Service) error {
+	err := withServiceAccess(windows.SC_MANAGER_CONNECT, windows.SERVICE_START|windows.SERVICE_QUERY_STATUS, name, func(s *mgr.Service) error {
 		err := s.Start()
 		if errors.Is(err, windows.ERROR_SERVICE_ALREADY_RUNNING) {
 			return nil
 		}
 		return err
 	})
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return ErrAccessDenied
+	}
+	return err
 }
 
 func (osServices) Stop(name string) error {
-	return withService(name, func(s *mgr.Service) error {
+	err := withServiceAccess(windows.SC_MANAGER_CONNECT, windows.SERVICE_STOP|windows.SERVICE_QUERY_STATUS, name, func(s *mgr.Service) error {
 		_, err := s.Control(svc.Stop)
 		if errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
 			return nil
 		}
 		return err
 	})
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return ErrAccessDenied
+	}
+	return err
 }
 
 func (osServices) Delete(name string) error {

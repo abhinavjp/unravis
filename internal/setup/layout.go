@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"api-audit-explorer/internal/blackbox"
+	"api-audit-explorer/internal/keeper"
 )
 
 // Dirs are the folders of this PC that setup works with. The real ones come from Windows (Known Folders); tests point them at a
@@ -153,3 +154,19 @@ func (l Layout) BlackboxPaths() (exe, config, key string) {
 
 // NeedsAdmin reports whether the options need administrator approval.
 func NeedsAdmin(o Options) bool { return o.Scope == ScopeMachine || o.Blackbox != nil }
+
+// NeedsAdminFor is NeedsAdmin plus one more case: a Unravis service from an earlier machine-scope install is still on this PC. That
+// matters when what setup can read about the PC (a missing or just-for-me state) says otherwise - the service can still only be
+// stopped as an administrator, so the approval must be asked for up front, not discovered as an "Access is denied" mid-run. svc.State
+// is read-only and works without administrator rights, so this check is safe to make before anything is elevated.
+func NeedsAdminFor(svc Services, o Options) bool {
+	if NeedsAdmin(o) {
+		return true
+	}
+	for _, name := range []string{keeper.ServiceName, blackbox.ServiceName} {
+		if st, err := svc.State(name); err == nil && st != blackbox.SvcNotInstalled {
+			return true
+		}
+	}
+	return false
+}

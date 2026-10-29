@@ -430,7 +430,7 @@ func TestInstallChangesNameTheShortcutAndTheInstalledAppsEntry(t *testing.T) {
 		{"upgrade", OpUpgrade, Options{Scope: ScopeUser, Location: DefaultLocation(ScopeUser, d)}},
 	}
 	for _, c := range cases {
-		ch := DescribeChanges(WorkRequest{Op: c.op, Options: c.opts}, nil, d, false)
+		ch := DescribeChanges(WorkRequest{Op: c.op, Options: c.opts}, nil, d, &FakeServices{}, false)
 		var shortcut, arp int
 		for _, line := range ch.WillChange {
 			switch line {
@@ -453,7 +453,7 @@ func TestInstallChangesNameTheShortcutAndTheInstalledAppsEntry(t *testing.T) {
 func TestUninstallChangesStillNameTheShortcutAndTheEntry(t *testing.T) {
 	d := captureDirs()
 	o := Options{Scope: ScopeUser, Location: DefaultLocation(ScopeUser, d)}
-	ch := DescribeChanges(WorkRequest{Op: OpUninstall, Options: o}, nil, d, false)
+	ch := DescribeChanges(WorkRequest{Op: OpUninstall, Options: o}, nil, d, &FakeServices{}, false)
 	found := false
 	for _, line := range ch.WillChange {
 		if line == "Remove the Start menu shortcut and the Installed apps entry" {

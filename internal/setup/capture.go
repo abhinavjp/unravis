@@ -34,7 +34,7 @@ func (b *ScriptedBackend) Changes(req WorkRequest) UIChanges {
 			old.State.Blackbox = &bb
 		}
 	}
-	return DescribeChanges(req, old, d, false)
+	return DescribeChanges(req, old, d, &FakeServices{}, false) // the screenshot build never touches a real service
 }
 
 func (b *ScriptedBackend) Run(ctx context.Context, req WorkRequest, onEvent func(StepEvent), onLog func(string)) Result {

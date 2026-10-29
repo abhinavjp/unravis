@@ -409,18 +409,20 @@ func (b *LocalBackend) version() string {
 
 // Changes lists what the run will change for the Admin approval screen.
 func (b *LocalBackend) Changes(req WorkRequest) UIChanges {
-	return DescribeChanges(req, b.installed(), b.R.Dirs, b.IsAdmin)
+	return DescribeChanges(req, b.installed(), b.R.Dirs, b.R.Sys.Svc, b.IsAdmin)
 }
 
-// DescribeChanges is the Admin approval screen's two lists. Upgrade, repair and uninstall keep the choices of the install.
-func DescribeChanges(req WorkRequest, old *Installed, d Dirs, isAdmin bool) UIChanges {
+// DescribeChanges is the Admin approval screen's two lists. Upgrade, repair and uninstall keep the choices of the install. svc is
+// read (never changed) so the screen says Windows will ask for approval when a leftover service makes that true even though o does
+// not ask for it.
+func DescribeChanges(req WorkRequest, old *Installed, d Dirs, svc Services, isAdmin bool) UIChanges {
 	o := req.Options
 	if req.Op != OpInstall && old != nil {
 		o = old.State.Options()
 	} else if old != nil {
 		o.Scope = old.State.Scope
 	}
-	c := UIChanges{NeedsAdmin: NeedsAdmin(o) && !isAdmin}
+	c := UIChanges{NeedsAdmin: NeedsAdminFor(svc, o) && !isAdmin}
 	l := NewLayout(o, d)
 	if req.Op == OpUninstall {
 		c.WillChange = append(c.WillChange, "Remove the program folder "+l.InstallDir, "Remove the Start menu shortcut and the Installed apps entry")
@@ -483,9 +485,10 @@ func (b *LocalBackend) Run(ctx context.Context, req WorkRequest, onEvent func(St
 	if req.Op == OpInstall && old != nil {
 		o = old.State.Options() // a second install over an install keeps its choices
 	}
-	if NeedsAdmin(o) && !b.IsAdmin {
+	if NeedsAdminFor(b.R.Sys.Svc, o) && !b.IsAdmin {
 		if b.Elev == nil {
-			return Result{Outcome: OutcomeRolledBack, Op: req.Op, Message: "This choice needs administrator approval, which this setup cannot ask for. Nothing was changed."}
+			return Result{Outcome: OutcomeRolledBack, Op: req.Op, Message: "Nothing was changed.",
+				Fix: "Setup needs administrator approval; run it again and choose Yes on the Windows prompt."}
 		}
 		u := b.R.Dirs.User()
 		req.User = &u // the worker checks these against the profile Windows names for this account

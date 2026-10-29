@@ -37,6 +37,9 @@ var (
 	ErrAlreadyRunning = errors.New("setup is already running")
 	// ErrCancelled is the person saying No at the Windows approval prompt, or pressing Cancel.
 	ErrCancelled = errors.New("cancelled")
+	// ErrAccessDenied is a service change Windows refused because setup is not elevated (osServices.Stop and Start map their
+	// ERROR_ACCESS_DENIED to it), so plan.go can tell "ask for the UAC prompt" apart from "try again later".
+	ErrAccessDenied = errors.New("access denied")
 )
 
 // Registry is the Windows registry. HKLM is always the 64-bit view, the one datadir.ReadAnchor reads.
