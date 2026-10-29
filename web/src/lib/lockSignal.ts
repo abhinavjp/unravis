@@ -18,9 +18,13 @@ export function signalCasesLocked(): void {
 /** The status a case route uses when the master key is locked. */
 export const LOCKED_STATUS = 423;
 
+/** A wrong case key is a 401 with this reason (a locked case with no key attempt is a 423 `case-locked`). The token is fine, so the session stays. */
+export const WRONG_CASE_KEY_REASON = 'wrong-case-key';
+
 /**
- * A 423 can also mean one case's own key is not unlocked (reason `case-locked`) or was typed wrong (`wrong-case-key`). Those
- * belong to the case's key card, not to the lock screen of the whole app.
+ * A 423 can also mean one case's own key is not unlocked (reason `case-locked`). A wrong key (`wrong-case-key`) is a 401, and stays
+ * listed here so an older 423 answer is still read as the case's. Those belong to the case's key card, not to the lock screen of the
+ * whole app.
  */
 export const CASE_KEY_REASONS: ReadonlySet<string> = new Set(['case-locked', 'wrong-case-key']);
 

@@ -219,7 +219,7 @@
     {/if}
   {/if}
 
-  <div class="actions"><button type="button" class="primary-button" disabled={busy !== '' || !picked || demo} onclick={run}>{busy === 'run' ? HEALTH_TEXT.running : HEALTH_TEXT.run}</button>{#if demo}<span class="note" data-demo>{HEALTH_TEXT.demo}</span>{/if}</div>
+  <div class="actions"><button type="button" class="secondary-button" disabled={busy !== '' || !picked || demo} onclick={run}>{busy === 'run' ? HEALTH_TEXT.running : HEALTH_TEXT.run}</button>{#if demo}<span class="note" data-demo>{HEALTH_TEXT.demo}</span>{/if}</div>
   <div aria-live="polite">{#if problem}<div class="inline-error" role="alert">{problem}</div>{/if}</div>
 
   {#if report}

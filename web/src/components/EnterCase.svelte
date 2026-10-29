@@ -118,7 +118,7 @@
 
   <form class="part" onsubmit={openByCode}>
     <label for="{uid}-code">{ENTER_TEXT.codeLabel}</label>
-    <input id="{uid}-code" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" bind:this={codeField} bind:value={code} disabled={codeBusy} aria-describedby={uid + '-code-hint' + (codeProblem ? ' ' + uid + '-code-problem' : '')} aria-invalid={codeProblem ? true : undefined} />
+    <input id="{uid}-code" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" bind:this={codeField} bind:value={code} oninput={() => { codeProblem = ''; }} disabled={codeBusy} aria-describedby={uid + '-code-hint' + (codeProblem ? ' ' + uid + '-code-problem' : '')} aria-invalid={codeProblem ? true : undefined} />
     <p class="hint" id="{uid}-code-hint">{ENTER_TEXT.codeHint}</p>
     <button type="submit" class="secondary-button" disabled={codeBusy || codeIsEmpty(code)}>{codeBusy ? ENTER_TEXT.codeChecking : ENTER_TEXT.codeButton}</button>
     <p class="inline-error" id="{uid}-code-problem" role="alert" hidden={!codeProblem}>{codeProblem}</p>

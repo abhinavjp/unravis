@@ -88,8 +88,10 @@ func writeCaseLocked(w http.ResponseWriter) {
 	writeCaseKeyFail(w, http.StatusLocked, "case-locked", caseLockedText)
 }
 
+// writeWrongCaseKey answers a wrong case key. It is 401, as a wrong key is a failed
+// credential; 423 stays for a locked case where no key was tried (writeCaseLocked).
 func writeWrongCaseKey(w http.ResponseWriter) {
-	writeCaseKeyFail(w, http.StatusLocked, "wrong-case-key", wrongCaseKeyTxt)
+	writeCaseKeyFail(w, http.StatusUnauthorized, "wrong-case-key", wrongCaseKeyTxt)
 }
 
 func writeCaseKeyThrottled(w http.ResponseWriter, wait time.Duration) {

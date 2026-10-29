@@ -260,7 +260,7 @@ export function reasonText(reason: string): string | null {
  * The server's own message is shown only for a missing session, because that text is written for the screen.
  */
 export function errorText(error: Pick<CaseApiError, 'status' | 'reason' | 'column' | 'importId' | 'message'>): string {
-  if (error.reason === 'no_session' || error.status === 401) return error.message;
+  if (error.reason === 'no_session' || (error.status === 401 && error.reason !== 'wrong-case-key')) return error.message;
   if (error.reason === 'duplicate') return error.importId ? 'This file was already imported (import #' + error.importId + ').' : 'This file was already imported.';
   const base = reasonText(error.reason) ?? GENERIC_ERROR;
   return error.column ? base + ' Column: ' + error.column + '.' : base;

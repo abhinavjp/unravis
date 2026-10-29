@@ -67,8 +67,8 @@ async function withApi(responses, fn) {
 const shared = new Map();
 const lockSignal = loadTypeScript('src/lib/lockSignal.ts', false, shared);
 
-test('a wrong case key (423 wrong-case-key) does not tell the app the master key is locked', async () => {
-  await withApi([{ status: 423, body: { reason: 'wrong-case-key' } }, { status: 423, body: { reason: 'case-locked' } }, { status: 423, body: { reason: 'locked' } }], async () => {
+test('a wrong case key (401 wrong-case-key) does not tell the app the master key is locked', async () => {
+  await withApi([{ status: 401, body: { reason: 'wrong-case-key' } }, { status: 423, body: { reason: 'case-locked' } }, { status: 423, body: { reason: 'locked' } }], async () => {
     let signals = 0;
     lockSignal.onCasesLocked(() => { signals++; });
     const api = loadTypeScript('src/lib/caseKeyApi.ts', false, shared);

@@ -574,7 +574,7 @@
       "nutshell": "Each call's time is split into audit set-up, the work itself and time outside the app. The part that grew most shows where to look first.",
       "findings": [
         "A: no share of the extra time.",
-        "C: share of the extra time 1.00.",
+        "C: share of the extra time 100%.",
         "P: no share of the extra time.",
         "O: not tested.",
         "The part that grew most is C.",

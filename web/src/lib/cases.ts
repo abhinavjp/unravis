@@ -1,5 +1,5 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
-import { signalIfAppLocked } from './lockSignal';
+import { WRONG_CASE_KEY_REASON, signalIfAppLocked } from './lockSignal';
 import { parseTimelineView, type TimelineView } from './timeline';
 import { parseResource, parseSeries, type ResourceView, type SeriesView } from './resource';
 import { parseCollect, type CollectItem } from './collect';
@@ -196,6 +196,9 @@ export async function send(path: string, init: RequestInit = {}, signal?: AbortS
     throw new CaseApiError('The server could not be reached.', 0, 'unreachable');
   }
   if (response.status === 401) {
+    // A wrong case key is also a 401 (reason wrong-case-key): the token is fine, so it is kept and the refusal goes to the caller.
+    const refused = await refusal(response);
+    if (refused.reason === WRONG_CASE_KEY_REASON) throw refused;
     // The dashboard refused the token: forget it so nothing keeps sending it, and show the usual message.
     forgetSession();
     throw new CaseApiError(NO_SESSION_MESSAGE, 401, 'no_session');
