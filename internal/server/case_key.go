@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"api-audit-explorer/internal/applog"
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/masterkey"
 )
@@ -334,6 +335,9 @@ func (h *handler) caseKeyUnlock(w http.ResponseWriter, r *http.Request, raw stri
 	}
 	pc := bytes.Clone(b.secret("passphrase"))
 	defer clear(pc)
+	// The key itself is registered with the log sanitizer (never logged), so
+	// no later error message can carry it into the log file.
+	applog.RegisterSecret(string(pc))
 	err := ck.UnlockCase(r.Context(), id, pc)
 	if errors.Is(err, casestore.ErrWrongCaseKey) {
 		th.fail()

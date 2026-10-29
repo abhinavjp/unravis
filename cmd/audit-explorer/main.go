@@ -24,8 +24,10 @@ import (
 	"unicode/utf8"
 
 	explorer "api-audit-explorer"
+	"api-audit-explorer/internal/applog"
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/datadir"
 	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/server"
@@ -150,6 +152,23 @@ func run(args []string, getenv func(string) string) error {
 	}
 	debug.SetMemoryLimit(memorySoftLimit)
 
+	// The journey log: one rotating file in the per-user logs folder, kept so
+	// the owner can send it to a developer when something goes wrong. If it
+	// cannot be opened the dashboard still runs; it just has no file to send.
+	logFile, logErr := applog.Open(applog.DefaultDir(getenv), applog.LevelFromEnv(getenv), casestore.SecureFile)
+	if logErr != nil {
+		log.Printf("Support log unavailable: %v", logErr)
+		logFile = nil
+	} else {
+		defer logFile.Close()
+		// The session token is registered so the sanitizer strips it wherever
+		// it might turn up in an error message. It is never logged on purpose.
+		applog.RegisterSecret(token)
+		// The lines Unravis already prints keep going to the console, and to
+		// the file as well.
+		log.SetOutput(io.MultiWriter(os.Stderr, logFile.Writer()))
+	}
+
 	var repo audit.Repository
 	var serverOptions []server.Option
 	var saved savedWiring
@@ -209,6 +228,9 @@ func run(args []string, getenv func(string) string) error {
 		return err
 	}
 	serverOptions = append(serverOptions, server.WithLaunchCode(code, time.Now().Add(codeLife)))
+	if logFile != nil {
+		serverOptions = append(serverOptions, server.WithLogger(logFile.Logger), server.WithLogDir(logFile.Dir))
+	}
 	served := server.New(repo, explorer.Assets(), token, *demo, serverOptions...)
 	defer server.LogAnalyzeRepeats(served)
 	// Registered after the case store's close, so it runs first: background
@@ -244,6 +266,26 @@ func run(args []string, getenv func(string) string) error {
 	}
 	for _, line := range startupLines(localURL, code, codeLife, *demo, opened) {
 		log.Print(line)
+	}
+	if logFile != nil {
+		// The start line: what is running, where, and how the user gets in.
+		// The launch code itself is never written, only its outcome.
+		layout := datadir.Default(getenv)
+		dataDir := layout.Base
+		if layout.Root != "" {
+			dataDir = layout.Root
+		}
+		launch := "link_printed"
+		if opened {
+			launch = "browser_opened"
+		}
+		logFile.Logger.Info("start",
+			"version", version.Version,
+			"os", runtime.GOOS+"/"+runtime.GOARCH,
+			"port", listener.Addr().(*net.TCPAddr).Port,
+			"data_dir", dataDir,
+			"demo", *demo,
+			"launch", launch)
 	}
 
 	select {

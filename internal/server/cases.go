@@ -22,6 +22,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"api-audit-explorer/internal/applog"
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/hosts"
@@ -762,6 +763,7 @@ func (h *handler) createCase(w http.ResponseWriter, r *http.Request) {
 		kc := bytes.Clone(key)
 		defer clear(kc)
 		info, existed, err = ck.CreateWithKey(r.Context(), title, requestID, kc)
+		applog.RegisterSecret(string(kc)) // never logged; registered so the sanitizer strips it everywhere
 	} else if _, stray := body.secrets["caseKeyConfirm"]; stray {
 		writeCaseKeyFail(w, http.StatusBadRequest, "bad-request", "The request body is invalid.")
 		return
