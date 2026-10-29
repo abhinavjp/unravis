@@ -71,13 +71,14 @@ test('KEY-06a: a locked case shows its code and key ending on the start screen, 
 });
 
 test('KEY-06b: a wrong key on the unlock page says nothing was opened and keeps the page', async ({ page, api, allow }) => {
-  allow(/423/, 'a wrong case key is answered 423 on purpose');
+  allow(/423|401/, 'a wrong case key is answered 401 and a locked case 423, both on purpose');
   const k = await keyedCase(api, 'QA Wrong Key Page');
   await lockViaPage(page, 'QA Wrong Key Page');
   await page.getByLabel('Case key').fill('a different wrong key');
   await page.getByRole('button', { name: 'Open case' }).click();
   await expect(page.getByText('That key did not open this case. Nothing was opened or changed.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'This case has its own key' })).toBeVisible();
+  expect((await api('POST', `/api/cases/${k.id}/key/unlock`, { passphrase: 'another wrong key' })).status).toBe(401);
   expect((await api('GET', `/api/cases/${k.id}`)).status).toBe(423);
   await page.getByLabel('Case key').fill('');
   await page.getByRole('button', { name: 'Open case' }).click();
