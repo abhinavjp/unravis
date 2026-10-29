@@ -104,5 +104,11 @@ func writeManifest(dir string, p sealedfile.Protector, m manifest) error {
 	if err != nil {
 		return errors.New("sealing case manifest failed")
 	}
-	return sealedfile.WriteAtomic(filepath.Join(dir, manifestName), "manifest.*.tmp", sealed)
+	path := filepath.Join(dir, manifestName)
+	// The replace below can race a cold Open's lock-free half-rewrap peek at this
+	// same file (see isTransientWindowsFileErr); retried, it is this process's own
+	// write finishing, not a conflict with the case's real state.
+	return retryTransient(func() error {
+		return sealedfile.WriteAtomic(path, "manifest.*.tmp", sealed)
+	})
 }
