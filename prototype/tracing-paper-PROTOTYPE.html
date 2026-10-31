@@ -88,7 +88,7 @@ label.f { display:grid; gap:2px; font-size:12px; color:var(--text-2); }
 .lane .hd { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:4px; }
 .lane .hd b { font-size:14px; }
 svg.chart { width:100%; height:64px; display:block; background:var(--bg); border-radius:var(--r); }
-svg.chart .bk { cursor:pointer; } svg.chart .bk:hover rect.hit { fill:var(--grey-soft); }
+svg.chart .bk { cursor:pointer; outline:none; } svg.chart .bk:focus-visible rect.hit { stroke:var(--focus); stroke-width:2; vector-effect:non-scaling-stroke; fill:var(--grey-soft); } svg.chart .bk:hover rect.hit { fill:var(--grey-soft); }
 .axis { position:relative; height:16px; margin-top:2px; font-size:11px; color:var(--text-2); font-family:var(--mono); }
 .axis span { position:absolute; transform:translateX(-50%); white-space:nowrap; } .axis span:first-child { transform:none; } .axis span:last-child { transform:translateX(-100%); }
 .leg { display:inline-block; width:10px; height:10px; vertical-align:-1px; margin-right:4px; }
@@ -151,6 +151,7 @@ const SRC = [
   { id:'cs_audit', lane:'audit', kind:'audit-mongo', label:'Orders API audit (Mongo)',        mode:'live' },
   { id:'cs_sql',   lane:'sql',   kind:'sql-xe',      label:'SQL Server PROD-01 (Query Store)', mode:'pull' },
   { id:'cs_iis',   lane:'iis',   kind:'iis-w3c',     label:'IIS site A (W3C logs)',            mode:'file' },
+  { id:'cs_iis2',  lane:'iis',   kind:'iis-w3c',     label:'IIS site B (W3C logs)',            mode:'file' },
 ];
 const LANES = ['audit','sql','iis'];
 const LANE_LABEL = { audit:'API audit', sql:'SQL', iis:'IIS' };
@@ -279,10 +280,10 @@ function fresh() {
     clock: NOW0, seq: 0, screen: 'case',
     case: { id:'case_demo', name:'Orders.Create slowdown, 1 Sep', revision:0, scrub:true, cookieAllow:['session'] },
     window: { start: NOW0 - H, end: NOW0 }, winRaw: { start: iso(NOW0 - H), end: iso(NOW0) }, winErr: null,
-    chosen: { cs_audit:true, cs_sql:true, cs_iis:true },
+    chosen: { cs_audit:true, cs_sql:true, cs_iis:true, cs_iis2:false },
     sqlFilter: 'all',
     imports: [], nextImportId: 1, attempts: [], nextAttemptId: 1,
-    remote: { cs_sql:{ late:0, restated:0 }, cs_iis:{ late:0, restated:0 } },
+    remote: { cs_sql:{ late:0, restated:0 }, cs_iis:{ late:0, restated:0 }, cs_iis2:{ late:0, restated:0 } },
     auditTick: 0, requestSeq: 0,
     sim: { auditOver:false, edgeOver:false, fail:'none' },
     last: { pull:null, tracing:null, preview:null, confirm:null },
@@ -376,8 +377,8 @@ function unionGaps(intervals, from, to) {
 function getCoverage() {                                                  // reads case.db only, never fills gaps, never carries allLanesStored
   const w = S.window, entries = coverageEntries(), gaps = [];
   if (!windowProblem(w)) {
-    for (const lane of ['sql', 'iis']) {
-      const sid = laneSrc(lane).id, fp = fingerprint(sid, lane, lane === 'sql' ? 'all' : 'file');
+    for (const x of SRC.filter(x => x.mode !== 'live' && S.chosen[x.id])) {          // gaps are reported for the chosen saved sources
+      const sid = x.id, lane = x.lane, fp = fingerprint(sid, lane, lane === 'sql' ? 'all' : 'file');
       const iv = S.imports.filter(i => i.sourceId === sid && (lane === 'iis' || i.fingerprint === fp));
       for (const g of unionGaps(iv, w.start, w.end)) gaps.push({ source:sid, lane, from:iso(g.from), to:iso(g.to) });
     }
@@ -401,8 +402,8 @@ function doTrace() {
   if (prob) return { status:400, error:prob, summary:'400 ' + prob };
   const ax = axis(w.start, w.end);
   const lanes = LANES.map(key => {
-    const s = laneSrc(key), chosen = S.chosen[s.id];
-    const base = { key, label:LANE_LABEL[key], sources: chosen ? [{ sourceId:s.id, kind:s.kind, label:s.label, readKind: s.mode === 'live' ? 'live' : 'saved' }] : [], truncated:false, hidden:0 };
+    const chs = SRC.filter(x => x.lane === key && S.chosen[x.id]), chosen = chs.length > 0;
+    const base = { key, label:LANE_LABEL[key], sources: chs.map(x => ({ sourceId:x.id, kind:x.kind, label:x.label, readKind: x.mode === 'live' ? 'live' : 'saved' })), truncated:false, hidden:0 };
     if (!chosen) return Object.assign(base, { state:'no-data', reason:'This case has no file for this source', origin:'case', asOf:iso(S.clock), consistency:'stored-as-of', complete:true, scanned:0, total:0, buckets:null });
     if (key === 'audit') {
       S.auditTick++;
@@ -413,7 +414,7 @@ function doTrace() {
       }
       return Object.assign(base, { state:'events', reason:'', origin:'live', asOf:iso(S.clock), consistency:'live-non-snapshot', complete:true, scanned:ts.length, total:ts.length, buckets:counts, note:'Read began at ' + iso(S.clock) + '. Not a snapshot; rows inserted during the read may be included.' });
     }
-    const imps = S.imports.filter(i => i.lane === key);
+    const imps = S.imports.filter(i => i.lane === key && S.chosen[i.sourceId]);   // only the sources the user chose
     const asOf = imps.length ? iso(Math.max(...imps.map(i => i.at))) : iso(S.clock);
     const common = { origin:'case', asOf, consistency:'stored-as-of' };
     if (!imps.length) return Object.assign(base, common, { state:'no-data', reason:'This case has no file for this source', complete:true, scanned:0, total:0, buckets:null });
@@ -487,7 +488,7 @@ function act(label, fn) {
 }
 const A = {
   pull() { return act('POST /pulls  SQL  ' + FILTERS[S.sqlFilter], () => (S.last.pull = doPull('cs_sql', S.sqlFilter, Object.assign({}, S.window)))); },
-  importIis() { return act('Import IIS file', () => (S.last.pull = doImportFile('cs_iis', Object.assign({}, S.window)))); },
+  importIis(sid) { sid = sid || 'cs_iis'; return act('Import IIS file · ' + sid, () => (S.last.pull = doImportFile(sid, Object.assign({}, S.window)))); },
   trace() { return act('POST /tracing', () => (S.last.tracing = doTrace())); },
   preview() { return act('POST export preview', doPreview); },
   confirm(blank) { return act(blank ? 'POST export confirm (blank previewId)' : 'POST export confirm', () => doConfirm(blank)); },
@@ -509,10 +510,10 @@ const PRESETS = {
 };
 function applyPreset(k) { const p = PRESETS[k]; A.setWindow(ISO(p.s), ISO(p.e), p.label); }
 function readWindow(a, b) {
-  const norm = t => { t = t.trim(); if (/^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d)?$/.test(t)) t = t.replace(' ', 'T') + (t.length === 16 ? ':00' : '') + 'Z'; return Date.parse(t); };
+  const norm = t => { t = t.trim(); return /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?(Z|[+-]\d\d:\d\d)$/.test(t) ? Date.parse(t) : NaN; };
   S.winRaw = { start:a, end:b };
   const x = norm(a), y = norm(b);
-  if (isNaN(x) || isNaN(y)) { S.winErr = 'Could not read that time. Use UTC like 2026-09-01T10:07:00Z.'; render(); return; }
+  if (isNaN(x) || isNaN(y)) { S.winErr = 'Each time needs a zone. Use UTC like 2026-09-01T10:07:00Z, or an offset like 2026-09-01T12:07:00+02:00 (shown back in UTC). Nothing was changed.'; render(); return; }
   S.winErr = null; A.setWindow(x, y, 'typed');
 }
 
@@ -520,7 +521,7 @@ function readWindow(a, b) {
    9. Rendering
    ==================================================================================== */
 const stk = (t, c) => '<span class="sticker ' + (c || '') + '">' + esc(t) + '</span>';
-const btn = (act, label, o = {}) => '<button class="btn ' + (o.primary ? 'primary ' : '') + (o.s ? 's ' : '') + (o.next ? 'next ' : '') + '" data-act="' + act + '"' + Object.entries(o.d || {}).map(([k, v]) => ' data-' + k + '="' + esc(v) + '"').join('') + (o.disabled ? ' disabled' : '') + (o.title ? ' title="' + esc(o.title) + '"' : '') + (o.pressed !== undefined ? ' aria-pressed="' + o.pressed + '"' : '') + '>' + label + '</button>';
+const btn = (act, label, o = {}) => '<button class="btn ' + (o.primary ? 'primary ' : '') + (o.s ? 's ' : '') + (o.next ? 'next ' : '') + '" data-act="' + act + '"' + Object.entries(o.d || {}).map(([k, v]) => ' data-' + k + '="' + esc(v) + '"').join('') + (o.disabled ? ' disabled' : '') + (o.title ? ' title="' + esc(o.title) + '"' : '') + (o.pressed !== undefined ? ' aria-pressed="' + o.pressed + '"' : '') + (o.id ? ' id="' + o.id + '"' : '') + '>' + label + '</button>';
 
 function windowPicker() {
   const prob = windowProblem(S.window);
@@ -562,22 +563,22 @@ function resultCard(r) {
 }
 
 function screenEvidence() {
-  const imps = S.imports.map(i => '<tr><td class="mono">#' + i.id + '</td><td>' + LANE_LABEL[i.lane] + '</td><td class="mono sm">' + short(i.from) + ' → ' + short(i.to) + '</td><td>' + i.rows.length + '</td><td>' + (i.observationKey ? 'pull' : 'file ' + esc(i.fileName)) + '</td><td class="mono sm">' + i.digest.slice(0, 8) + (i.supersedesImportId ? ' · replaced #' + i.supersedesImportId : '') + '</td></tr>').join('');
+  const imps = S.imports.map(i => '<tr><td class="mono">#' + i.id + '</td><td>' + esc(src(i.sourceId).label.split(' (')[0]) + '</td><td class="mono sm">' + short(i.from) + ' → ' + short(i.to) + '</td><td>' + i.rows.length + '</td><td>' + (i.observationKey ? 'pull' : 'file ' + esc(i.fileName)) + '</td><td class="mono sm">' + i.digest.slice(0, 8) + (i.supersedesImportId ? ' · replaced #' + i.supersedesImportId : '') + '</td></tr>').join('');
   const prob = windowProblem(S.window);
   return windowPicker() +
     '<div class="card"><h3>API audit · live</h3><p class="dim">Read live when you press Start tracing. A live aggregate, not a snapshot, and never saved to the case.</p></div>' +
     '<div class="card"><h3>SQL · pull live, save into the case</h3><p class="dim" style="margin:2px 0 8px">Saves exactly the window above as one observation. Pressing again re-reads the same window.</p>' +
     '<div class="row"><label class="f">Filter (part of the fingerprint)<select data-chg="filter">' + Object.keys(FILTERS).map(k => '<option value="' + k + '"' + (S.sqlFilter === k ? ' selected' : '') + '>' + FILTERS[k] + '</option>').join('') + '</select></label>' +
     btn('pull', 'Pull this exact window', { disabled:!!prob, title:prob || '' }) + '</div></div>' +
-    '<div class="card"><h3>IIS · import a log file</h3><p class="dim" style="margin:2px 0 8px">Imports a (fake) W3C file that covers the window above. The same file twice is ignored.</p>' + btn('importIis', 'Import IIS file for this window', { disabled:!!prob, title:prob || '' }) + '</div>' +
+    SRC.filter(x => x.mode === 'file').map(x => '<div class="card"><h3>IIS · import a log file · ' + esc(x.label.split(' (')[0]) + '</h3><p class="dim" style="margin:2px 0 8px">Imports a (fake) W3C file for this site covering the window above. The same file twice is ignored.</p>' + btn('importIis', 'Import ' + esc(x.label.split(' (')[0]) + ' file for this window', { disabled:!!prob, title:prob || '', d:{ sid:x.id } }) + '</div>').join('') +
     resultCard(S.last.pull) +
-    '<div class="card"><h3>Stored in this case</h3>' + (imps ? '<table><tr><th>Id</th><th>Lane</th><th>Window (UTC)</th><th>Events</th><th>How</th><th>Digest</th></tr>' + imps + '</table>' : '<p class="dim">Nothing stored yet.</p>') + '</div>' +
+    '<div class="card"><h3>Stored in this case</h3>' + (imps ? '<table><tr><th>Id</th><th>Source</th><th>Window (UTC)</th><th>Events</th><th>How</th><th>Digest</th></tr>' + imps + '</table>' : '<p class="dim">Nothing stored yet.</p>') + '</div>' +
     '<div class="proto"><div class="tag">PROTOTYPE CONTROLS · not in the real app: make the outside world misbehave</div><div class="row">' +
     btn('upstream', 'SQL upstream: a late row arrives', { s:true, d:{ sid:'cs_sql', kind:'late' } }) +
     btn('upstream', 'SQL upstream: durations restated (same ids and times)', { s:true, d:{ sid:'cs_sql', kind:'restated' } }) +
-    btn('upstream', 'IIS upstream: log file regenerated (late row)', { s:true, d:{ sid:'cs_iis', kind:'late' } }) +
+    btn('upstream', 'IIS site A upstream: log file regenerated', { s:true, d:{ sid:'cs_iis', kind:'late' } }) + btn('upstream', 'IIS site B upstream: log file regenerated', { s:true, d:{ sid:'cs_iis2', kind:'late' } }) +
     '<label class="f">Failure injection<select data-chg="fail">' + [['none', 'none'], ['fetch', 'source drops during the read'], ['midtx', 'write fails mid-replacement']].map(([v, t]) => '<option value="' + v + '"' + (S.sim.fail === v ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></label></div>' +
-    '<p class="dim sm" style="margin-top:6px">Upstream knobs so far: SQL late ' + S.remote.cs_sql.late + ', restated ' + S.remote.cs_sql.restated + ' · IIS late ' + S.remote.cs_iis.late + '.</p></div>';
+    '<p class="dim sm" style="margin-top:6px">Upstream knobs so far: SQL late ' + S.remote.cs_sql.late + ', restated ' + S.remote.cs_sql.restated + ' · IIS A late ' + S.remote.cs_iis.late + ' · IIS B late ' + S.remote.cs_iis2.late + '.</p></div>';
 }
 
 function screenCoverage() {
@@ -597,13 +598,13 @@ function screenCoverage() {
 }
 
 function laneChart(l, ax, sel) {
-  const color = 'var(--lane-' + l.key + ')', slot = 1000 / ax.n, max = Math.max(1, ...(l.buckets || [0]));
+  const firstIn = (ax.slots.find(x => !x.empty) || { k:0 }).k, color = 'var(--lane-' + l.key + ')', slot = 1000 / ax.n, max = Math.max(1, ...(l.buckets || [0]));
   let g = '';
   ax.slots.forEach(sl => {
     const x = sl.k * slot, c = l.buckets ? l.buckets[sl.k] : 0;
     const tipTxt = short(sl.s) + ' → ' + short(sl.e) + (sl.empty ? ' · outside the window (empty intersection)' : ' · ' + c + ' event' + (c === 1 ? '' : 's') + (sl.clipped ? ' · clipped to window edge' : '') + (l.state === 'incomplete' && ((l.key === 'audit' && l.incompleteFrom !== undefined && sl.k >= l.incompleteFrom) || (l.key !== 'audit' && sl.frag)) ? ' · NOT complete' : ''));
     const incomplete = !sl.empty && l.state === 'incomplete' && ((l.key === 'audit' && sl.k >= l.incompleteFrom) || (l.key !== 'audit' && sl.frag));
-    g += '<g class="bk" data-act="sel" data-lane="' + l.key + '" data-k="' + sl.k + '" data-tip="' + esc(tipTxt) + '"><rect class="hit" x="' + x + '" y="0" width="' + slot + '" height="64" fill="transparent"/>';
+    g += '<g class="bk" role="button" tabindex="' + ((sel && sel.lane === l.key ? sel.k === sl.k : sl.k === firstIn) && !sl.empty ? 0 : -1) + '" aria-label="' + esc(l.label + ' ' + tipTxt) + '" data-act="sel" data-lane="' + l.key + '" data-k="' + sl.k + '" data-tip="' + esc(tipTxt) + '"><rect class="hit" x="' + x + '" y="0" width="' + slot + '" height="64" fill="transparent"/>';
     if (sl.empty) g += '<rect x="' + x + '" y="60" width="' + Math.max(0.5, slot - 0.6) + '" height="3" fill="var(--pending)" opacity=".35"/>';
     else {
       const h = c ? Math.max(2, Math.round(54 * c / max)) : 0;
@@ -642,7 +643,7 @@ function screenTrace() {
         (l.coverageGaps && l.coverageGaps.length ? '<p class="warnc sm">Stored coverage has gaps in this window: ' + esc(l.coverageGaps.join('; ')) + '</p>' : '') +
         body + (l.buckets ? axisLabels(ax) : '') + '</div>';
     }).join('');
-    const sel = S.sel && ax.slots[S.sel.k] ? (() => { const sl = ax.slots[S.sel.k], l = t.lanes.find(x => x.key === S.sel.lane); return '<div class="note ok" style="margin-top:8px"><b>Bucket selected:</b> ' + LANE_LABEL[S.sel.lane] + ', <span class="mono">' + iso(sl.s) + ' → ' + iso(sl.e) + '</span> · ' + (sl.empty ? 'outside the window' : (l.buckets ? l.buckets[sl.k] : 0) + ' events' + (sl.clipped ? ' · clipped to the window edge (geometry, not missing data)' : '')) + ' · ' + btn('', 'Open Run analysis for this bucket', { s:true, disabled:true, title:'Hand-off is not part of this prototype' }) + '</div>'; })() : '';
+    const sel = S.sel && ax.slots[S.sel.k] ? (() => { const sl = ax.slots[S.sel.k], l = t.lanes.find(x => x.key === S.sel.lane); return '<div class="note ok" style="margin-top:8px"><b>Bucket selected:</b> ' + LANE_LABEL[S.sel.lane] + ', <span class="mono">' + iso(sl.s) + ' → ' + iso(sl.e) + '</span> · ' + (sl.empty ? 'outside the window' : (l.buckets ? l.buckets[sl.k] : 0) + ' events' + (sl.clipped ? ' · clipped to the window edge (geometry, not missing data)' : '')) + ' · ' + btn('analysis', 'Open Run analysis for this bucket', { s:true, disabled:sl.empty, title:sl.empty ? 'This slot is outside the window' : '' }) + '</div>'; })() : '';
     const sc = ax.scans.length ? ax.scans.map(f => '<li>' + f.name + ': <span class="mono sm">' + iso(f.from) + ' → ' + iso(f.to) + '</span></li>').join('') : '';
     const vacuous = t.allLanesStored && !anyEv;
     out = '<div class="card"><div class="kpi"><div><small>Bucket size shown</small><span class="big">' + fmtDur(ax.W) + '</span></div><div><small>Buckets on the aligned axis</small><span class="big">' + ax.n + '</span> <small>(' + ax.inWindow + ' inside the window)</small></div><div><small>Boundary raw scans (saved lanes)</small><span class="big">' + ax.scans.length + '</span></div></div>' +
@@ -680,11 +681,21 @@ function screenExport() {
     '<p class="dim sm" style="margin-top:6px">Case revision now: <b>' + S.case.revision + '</b>. Unchanged re-pulls, refused pulls and rolled-back pulls do not move it.</p></div>';
 }
 
+function screenAnalysis() {
+  const t = S.last.tracing, sel = S.sel, back = btn('back', 'Back to trace', { id:'back-btn' });
+  if (!t || !sel || !t._axis.slots[sel.k]) return '<div class="card"><p>No bucket selected.</p>' + back + '</div>';
+  const sl = t._axis.slots[sel.k], lo = Math.max(sl.s, S.window.start), hi = Math.min(sl.e, S.window.end), l = t.lanes.find(x => x.key === sel.lane);
+  return '<div class="card"><h3>Run analysis <span class="sticker warn">simulated destination</span></h3>' +
+    '<p style="margin:6px 0">Sub-window <b class="mono">' + iso(lo) + ' → ' + iso(hi) + '</b> (' + fmtSpan(hi - lo) + ')' + (lo > sl.s || hi < sl.e ? ' <span class="dim">· the bucket ' + short(sl.s) + ' → ' + short(sl.e) + ' was clipped to your window</span>' : '') + '</p>' +
+    '<p class="dim">Opened from the ' + esc(LANE_LABEL[sel.lane]) + ' lane (' + (l.buckets ? l.buckets[sel.k] : 0) + ' events in this bucket). The trace is still behind this screen: window, chosen sources and result are kept.</p>' +
+    '<p class="dim sm" style="margin-top:6px">Chosen sources: ' + Object.keys(S.chosen).filter(k => S.chosen[k]).map(k => esc(src(k).label)).join(', ') + '. The real Run analysis would run here (TR-09, WP-61).</p>' +
+    '<div class="row" style="margin-top:10px">' + back + '</div></div>';
+}
 const SCREENS = [['case', 'Case'], ['evidence', 'Get evidence'], ['coverage', 'Coverage'], ['trace', 'Start tracing'], ['export', 'Export']];
 function renderApp() {
-  const nav = '<div class="appnav" role="tablist">' + SCREENS.map(([k, t]) => '<button role="tab" data-act="screen" data-s="' + k + '" aria-selected="' + (S.screen === k) + '">' + t + '</button>').join('') + '</div>';
+  const nav = S.screen === 'analysis' ? '' : '<div class="appnav" role="tablist">' + SCREENS.map(([k, t]) => '<button role="tab" data-act="screen" data-s="' + k + '" aria-selected="' + (S.screen === k) + '">' + t + '</button>').join('') + '</div>';
   const bar = '<div class="bar"><b>' + esc(S.case.name) + '</b><span class="dim">Window ' + esc(short(S.window.start)) + ' → ' + esc(short(S.window.end)) + ' UTC</span><span class="sp"></span><span class="dim sm">Case revision ' + S.case.revision + '</span></div>';
-  const body = { case:screenCase, evidence:screenEvidence, coverage:screenCoverage, trace:screenTrace, export:screenExport }[S.screen]();
+  const body = { case:screenCase, evidence:screenEvidence, coverage:screenCoverage, trace:screenTrace, export:screenExport, analysis:screenAnalysis }[S.screen]();
   document.getElementById('app').innerHTML = bar + nav + '<div class="stack">' + body + '</div>';
 }
 
@@ -861,7 +872,7 @@ document.addEventListener('click', e => {
     case 'applywin': readWindow(document.getElementById('w-start').value, document.getElementById('w-end').value); break;
     case 'chosen': act('Toggle source ' + d.sid, () => { S.chosen[d.sid] = !S.chosen[d.sid]; return { summary:d.sid + ' ' + (S.chosen[d.sid] ? 'chosen' : 'removed') }; }); break;
     case 'pull': A.pull(); break;
-    case 'importIis': A.importIis(); break;
+    case 'importIis': A.importIis(d.sid); break;
     case 'trace': A.trace(); break;
     case 'preview': A.preview(); break;
     case 'confirm': A.confirm(false); break;
@@ -870,7 +881,9 @@ document.addEventListener('click', e => {
     case 'scrub': A.scrub(); break;
     case 'cookie': A.cookie(); break;
     case 'del': A.del(+d.id); break;
-    case 'sel': S.sel = { lane:d.lane, k:+d.k }; render(); break;
+    case 'sel': selectBucket(d.lane, +d.k); break;
+    case 'analysis': S.screen = 'analysis'; render(); document.getElementById('back-btn').focus(); window.scrollTo({ top:document.getElementById('app').offsetTop - 70 }); break;
+    case 'back': S.screen = 'trace'; render(); { const el = S.sel && document.querySelector('g.bk[data-lane="' + S.sel.lane + '"][data-k="' + S.sel.k + '"]'); if (el) el.focus(); } break;
     case 'axisrow': traceThisWindow(+d.i); toApp(); break;
     case 'gstep': { const g = GUIDES[UI.tab], i = +d.i; UI.guideDone[UI.tab + i] = true; UI.lastStep = UI.tab + i; g.steps[i].run(); render(); toApp(); } break;
   }
@@ -881,6 +894,17 @@ document.addEventListener('change', e => {
   if (c === 'fail') { S.sim.fail = e.target.value; render(); }
   if (c === 'auditOver') { S.sim.auditOver = e.target.checked; render(); }
   if (c === 'edgeOver') { S.sim.edgeOver = e.target.checked; render(); }
+});
+function selectBucket(lane, k) { S.sel = { lane, k }; render(); const el = document.querySelector('g.bk[data-lane="' + lane + '"][data-k="' + k + '"]'); if (el) el.focus(); }
+document.addEventListener('keydown', e => {                                    // bucket bars: roving tabindex, arrows move, Enter/Space select
+  const g = e.target.closest && e.target.closest('g.bk'); if (!g) return;
+  const lane = g.dataset.lane, k = +g.dataset.k;
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectBucket(lane, k); }
+  else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    e.preventDefault(); const d = e.key === 'ArrowRight' ? 1 : -1, slots = S.last.tracing._axis.slots; let nk = k + d;
+    while (slots[nk] && slots[nk].empty) nk += d;
+    if (slots[nk]) selectBucket(lane, nk);
+  }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.target.id === 'w-start' || e.target.id === 'w-end')) readWindow(document.getElementById('w-start').value, document.getElementById('w-end').value); });
 const tip = document.getElementById('tip');
@@ -903,7 +927,8 @@ const ASSUMPTIONS = [
   'A lane with no chosen source, or nothing stored, is "no-data" with the sentence "This case has no file for this source". Such lanes carry origin "case". allLanesStored is computed literally (every lane origin is "case").',
   'The boundary raw scan count is shown for saved lanes even though rollups are MVP-2 and the MVP-1 tracing page reads events directly (see question 6).',
   'Failure codes the spec does not list: a write failing mid-replacement returns 500; a dropped source connection returns 502 (listed). The audit lane accepts up to 30 days because the spec gives no separate audit limit.',
-  'Not modelled: time-zone rule gate, reference window, 50k row cap and truncation, closed or locked case, 400/423/503 error pages, hydration, Layer 4, zoom and brush, percentile selector, tooltip dictionary, demo mode, Run analysis hand-off (the button is disabled).',
+  'Not modelled: time-zone rule gate, reference window, 50k row cap and truncation, closed or locked case (and the 423/503 pages), loading states, hydration, Layer 4, zoom and brush, percentile selector, tooltip dictionary, demo mode. Run analysis is a simulated destination that only shows the clipped sub-window and a way back.',
+  'Two IIS sites (A and B) exist so source selection can be checked: a lane only counts imports from the sources you chose, and coverage gaps are reported for the chosen saved sources. Site B is off by default. Typed times must carry a zone (Z or an offset).',
   'Fonts: IBM Plex is not bundled in this offline file, so system fonts stand in. Colours and shapes follow the brand tokens.',
 ];
 const QUESTIONS = [
