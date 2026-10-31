@@ -1,0 +1,13 @@
+var EVIMPACT = (typeof EVIMPACT === 'object' && EVIMPACT) || {};
+EVIMPACT['GS-01-host-cpu-ok'] = 'People using the system were not waiting: the processor had plenty of spare time at 39 percent busy.';
+EVIMPACT['GS-02-host-disk-ok'] = 'Reads and writes were not held up for users, because the disk answered quickly at 5.6 ms.';
+EVIMPACT['GS-03-host-mem-ok'] = 'Nothing was pushed out to disk for users, because the machine still had 11.7 GB of free memory.';
+EVIMPACT['GS-04-host-cpu-watch'] = 'Users may start to feel waits soon, because the processor was getting busy at 76 percent.';
+EVIMPACT['GS-05-host-disk-watch'] = 'Users may start to feel lag soon, because the disk was slower than usual at 20 ms.';
+EVIMPACT['GS-06-host-net-watch'] = 'Users may start to feel slow transfers soon, because the network was close to its limit at 9.2 MB/s.';
+EVIMPACT['GS-07-host-cpu-red'] = 'Users likely felt slow work, because the processor was maxed out at 92 percent for 6 minutes.';
+EVIMPACT['GS-08-host-mem-red'] = 'Users likely felt slow or stopped programs, because free memory fell to 0.2 GB and 1 process was killed.';
+EVIMPACT['GS-09-host-disk-red'] = 'Users likely felt stalled work, because the disk was overloaded at 53 ms with a queue of 13.';
+EVIMPACT['GS-10-host-runqueue-gray'] = 'We cannot say how many tasks waited for the processor because performance counters are not readable.';
+EVIMPACT['GS-11-host-tcp-gray'] = 'We cannot say whether network connections were failing because performance counters are not readable.';
+EVIMPACT['GS-12-host-swap-gray'] = 'We cannot say whether memory spilled to disk because performance counters are not readable.';

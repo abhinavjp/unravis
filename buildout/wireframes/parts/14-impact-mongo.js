@@ -1,0 +1,13 @@
+var EVIMPACT = (typeof EVIMPACT === 'object' && EVIMPACT) || {};
+EVIMPACT['MG-BAD-SLOWOPS'] = 'Many database operations ran slowly, so pages that wait on them likely felt slow to users.';
+EVIMPACT['MG-BAD-TICKETS'] = 'The database ran out of free working slots, so new requests likely had to queue.';
+EVIMPACT['MG-BAD-REPLAG'] = 'The backup copy fell behind, so reads from it may show old data and a failover would lose recent writes.';
+EVIMPACT['MG-WATCH-CACHE'] = 'The working memory is filling up, so the database may start reading from disk and slow down.';
+EVIMPACT['MG-WATCH-CONNS'] = 'Many connections are open, so new clients may soon be refused.';
+EVIMPACT['MG-WATCH-GLOCK'] = 'The database spent more time locked than usual, so some requests may start to wait.';
+EVIMPACT['MG-OK-SLOWOPS'] = 'Operations ran at their usual speed, so users were not held up by the database.';
+EVIMPACT['MG-OK-TICKETS'] = 'The database always had free working slots, so requests did not queue.';
+EVIMPACT['MG-OK-REPLAG'] = 'The backup copy kept up, so reads and failover were safe.';
+EVIMPACT['MG-NONE-COLLSCAN'] = 'We cannot say whether queries read whole collections because the profiler is off.';
+EVIMPACT['MG-NONE-INDEX'] = 'We cannot say whether indexes are missing because the profiler is off.';
+EVIMPACT['MG-NONE-OPLOG'] = 'We cannot say how much recovery history is kept because the oplog cannot be read.';

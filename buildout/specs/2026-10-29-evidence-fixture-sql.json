@@ -1,0 +1,1005 @@
+[
+ {
+  "id": "sql-waits-benign",
+  "label": "Top wait types (delta)",
+  "verdict": "ok",
+  "rule": "Green: benign background waits hold most of the delta and no bottleneck wait is both 30 % larger and 100 ms per task worse than the reference window.",
+  "chart": "stackedArea",
+  "series": [
+   {
+    "name": "SLEEP_TASK",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 62
+     },
+     {
+      "t": 30,
+      "v": 64
+     }
+    ]
+   },
+   {
+    "name": "SLEEP_TASK",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 61
+     },
+     {
+      "t": 90,
+      "v": 63
+     },
+     {
+      "t": 119,
+      "v": 62
+     }
+    ]
+   },
+   {
+    "name": "LAZYWRITER",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 22
+     },
+     {
+      "t": 30,
+      "v": 21
+     }
+    ]
+   },
+   {
+    "name": "LAZYWRITER",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 23
+     },
+     {
+      "t": 90,
+      "v": 22
+     },
+     {
+      "t": 119,
+      "v": 22
+     }
+    ]
+   },
+   {
+    "name": "PAGEIOLATCH_SH",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 3
+     },
+     {
+      "t": 30,
+      "v": 3
+     }
+    ]
+   },
+   {
+    "name": "PAGEIOLATCH_SH",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 4
+     },
+     {
+      "t": 90,
+      "v": 3
+     },
+     {
+      "t": 119,
+      "v": 3
+     }
+    ]
+   }
+  ],
+  "table": {
+   "cols": [
+    "Wait type",
+    "Delta share",
+    "Delta ms per task"
+   ],
+   "rows": [
+    [
+     "SLEEP_TASK",
+     "62%",
+     "1.1"
+    ],
+    [
+     "LAZYWRITER",
+     "22%",
+     "0.4"
+    ],
+    [
+     "PAGEIOLATCH_SH",
+     "3%",
+     "0.9"
+    ],
+    [
+     "CHKPT",
+     "2%",
+     "0.3"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Benign background waits dominate; no bottleneck wait grew in the incident window.",
+   "steps": [
+    "Delta wait_time_ms between the last reference snapshot and each incident snapshot.",
+    "Compare each wait's delta share and per-task ms with the reference window.",
+    "No wait is both 30 % larger and 100 ms per task worse, so the row is green."
+   ],
+   "dataNote": "Wait stats are cumulative and delta'd across snapshots taken every 60 s; spikes between samples can be missed."
+  },
+  "sampled": true
+ },
+ {
+  "id": "sql-topqueries-orders",
+  "label": "Top queries by duration",
+  "verdict": "ok",
+  "rule": "Green: every query is under the 400 ms hard SLA and within 30 % and 100 ms of its reference duration.",
+  "chart": "bars",
+  "series": [
+   {
+    "name": "Orders.Create p95 ms",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 180
+     },
+     {
+      "t": 15,
+      "v": 176
+     },
+     {
+      "t": 30,
+      "v": 182
+     }
+    ]
+   },
+   {
+    "name": "Orders.Create p95 ms",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 190
+     },
+     {
+      "t": 90,
+      "v": 188
+     },
+     {
+      "t": 119,
+      "v": 185
+     }
+    ]
+   }
+  ],
+  "table": {
+   "cols": [
+    "Query",
+    "Calls",
+    "Avg ms",
+    "p95 ms"
+   ],
+   "rows": [
+    [
+     "Orders.Create insert",
+     "1,204",
+     "142",
+     "190"
+    ],
+    [
+     "OrderLines select",
+     "3,318",
+     "31",
+     "58"
+    ],
+    [
+     "Stock lookup",
+     "2,907",
+     "12",
+     "26"
+    ],
+    [
+     "Audit write",
+     "1,204",
+     "9",
+     "21"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "The slowest query in the window, Orders.Create, stays under SLA and barely moves between windows.",
+   "steps": [
+    "Read total_elapsed_time and wait_time for in-flight requests each snapshot.",
+    "Grouped by query text and took avg and p95 over the window.",
+    "All values are below the hard SLA, so the row is green."
+   ],
+   "dataNote": "sys.dm_exec_requests is a point-in-time gauge; only requests alive at a sample appear."
+  },
+  "sampled": true
+ },
+ {
+  "id": "sql-log-growth",
+  "label": "Log growth",
+  "verdict": "ok",
+  "rule": "Green: log used stays under 70 % and no autogrowth event falls inside the window.",
+  "chart": "line",
+  "series": [
+   {
+    "name": "Log used %",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 41
+     },
+     {
+      "t": 20,
+      "v": 41
+     },
+     {
+      "t": 40,
+      "v": 42
+     }
+    ]
+   },
+   {
+    "name": "Log used %",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 42
+     },
+     {
+      "t": 80,
+      "v": 43
+     },
+     {
+      "t": 100,
+      "v": 44
+     }
+    ]
+   }
+  ],
+  "table": {
+   "cols": [
+    "Metric",
+    "Reference",
+    "Incident"
+   ],
+   "rows": [
+    [
+     "Log used %",
+     "41-42",
+     "42-44"
+    ],
+    [
+     "VLF count",
+     "312",
+     "312"
+    ],
+    [
+     "Autogrowth events",
+     "0",
+     "0"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "The log grew a little but stayed far under 70 % and never had to autogrow.",
+   "steps": [
+    "Read total_log_size and used_log_space each snapshot.",
+    "Counted autogrow events in the default trace for both windows.",
+    "Used % is below 70 % and no growth event fired, so the row is green."
+   ],
+   "dataNote": "sys.dm_db_log_space_usage is a gauge; autogrow events come from the default trace, which rolls over."
+  },
+  "sampled": false
+ },
+ {
+  "id": "sql-lock-waits-rising",
+  "label": "Lock waits by resource",
+  "verdict": "watch",
+  "rule": "Watch: one secondary wait is rising (LCK_M_X is at least 15 % and 50 ms per task worse than reference) but no sessions are queued behind it.",
+  "chart": "stackedArea",
+  "series": [
+   {
+    "name": "LCK_M_S",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 41
+     },
+     {
+      "t": 30,
+      "v": 40
+     }
+    ]
+   },
+   {
+    "name": "LCK_M_S",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 52
+     },
+     {
+      "t": 90,
+      "v": 55
+     },
+     {
+      "t": 119,
+      "v": 54
+     }
+    ]
+   },
+   {
+    "name": "LCK_M_X",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 8
+     },
+     {
+      "t": 30,
+      "v": 9
+     }
+    ]
+   },
+   {
+    "name": "LCK_M_X",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 27
+     },
+     {
+      "t": 90,
+      "v": 31
+     },
+     {
+      "t": 119,
+      "v": 29
+     }
+    ]
+   },
+   {
+    "name": "LCK_M_IX",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 5
+     },
+     {
+      "t": 30,
+      "v": 5
+     }
+    ]
+   },
+   {
+    "name": "LCK_M_IX",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 9
+     },
+     {
+      "t": 90,
+      "v": 10
+     },
+     {
+      "t": 119,
+      "v": 9
+     }
+    ]
+   }
+  ],
+  "table": {
+   "cols": [
+    "Lock wait",
+    "Delta ms",
+    "Resource"
+   ],
+   "rows": [
+    [
+     "LCK_M_X",
+     "1,840",
+     "Orders (key)"
+    ],
+    [
+     "LCK_M_S",
+     "1,510",
+     "Orders (page)"
+    ],
+    [
+     "LCK_M_IX",
+     "320",
+     "Orders (key)"
+    ],
+    [
+     "LCK_M_U",
+     "70",
+     "OrderLines (key)"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "X and S lock waits on the Orders object roughly doubled in the incident window, but nothing is queueing yet.",
+   "steps": [
+    "Delta LCK_M_* from sys.dm_os_wait_stats between snapshots.",
+    "Grouped the delta by resource_description.",
+    "The rise passes the watch test (half of red) but not red, and no session is blocked, so the row is amber."
+   ],
+   "dataNote": "dm_os_wait_stats is a cumulative delta; the per-resource split needs a waiting_tasks sample."
+  },
+  "sampled": true
+ },
+ {
+  "id": "sql-memory-grants",
+  "label": "Memory grants",
+  "verdict": "watch",
+  "rule": "Watch: RESOURCE_SEMAPHORE waits appear occasionally (at least 15 % and 50 ms per task worse than reference) but no request sits in the grant queue at the end of the window.",
+  "chart": "line",
+  "series": [
+   {
+    "name": "RESOURCE_SEMAPHORE delta ms",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 0
+     },
+     {
+      "t": 20,
+      "v": 0
+     },
+     {
+      "t": 40,
+      "v": 20
+     }
+    ]
+   },
+   {
+    "name": "RESOURCE_SEMAPHORE delta ms",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 210
+     },
+     {
+      "t": 80,
+      "v": 180
+     },
+     {
+      "t": 100,
+      "v": 90
+     }
+    ]
+   },
+   {
+    "name": "Grant queue depth",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 0
+     },
+     {
+      "t": 20,
+      "v": 0
+     },
+     {
+      "t": 40,
+      "v": 0
+     }
+    ]
+   },
+   {
+    "name": "Grant queue depth",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 2
+     },
+     {
+      "t": 80,
+      "v": 1
+     },
+     {
+      "t": 100,
+      "v": 0
+     }
+    ]
+   }
+  ],
+  "table": {
+   "cols": [
+    "Metric",
+    "Reference",
+    "Incident"
+   ],
+   "rows": [
+    [
+     "RESOURCE_SEMAPHORE ms",
+     "0",
+     "480"
+    ],
+    [
+     "Peak grant queue",
+     "0",
+     "2"
+    ],
+    [
+     "Granted vs requested",
+     "1.0x",
+     "0.8x"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "A few sorts waited briefly for memory grants in the incident window, but the queue drained on its own.",
+   "steps": [
+    "Delta the RESOURCE_SEMAPHORE wait from dm_os_wait_stats.",
+    "Sampled dm_exec_query_memory_grants for outstanding grants.",
+    "Waits are occasional and the queue clears, so the row is amber, not red."
+   ],
+   "dataNote": "The wait delta is durable; the queue depth is a snapshot and can miss a short queue."
+  },
+  "sampled": true
+ },
+ {
+  "id": "sql-index-maintenance",
+  "label": "Index maintenance overlap",
+  "verdict": "watch",
+  "rule": "Watch: a rebuild or reorg job overlaps the window (at least 15 % and 50 ms per task worse on the affected file) but no bottleneck wait shares its timestamp.",
+  "chart": "bars",
+  "series": [
+   {
+    "name": "Maintenance job in window",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 0
+     },
+     {
+      "t": 30,
+      "v": 0
+     }
+    ]
+   },
+   {
+    "name": "Maintenance job in window",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 42
+     },
+     {
+      "t": 90,
+      "v": 35
+     },
+     {
+      "t": 119,
+      "v": 0
+     }
+    ]
+   }
+  ],
+  "table": {
+   "cols": [
+    "Job",
+    "Window",
+    "Overlap min",
+    "Fragmentation after"
+   ],
+   "rows": [
+    [
+     "IX_Orders_Cust_rebuild",
+     "09:00-10:00",
+     "42",
+     "2 %"
+    ],
+    [
+     "IX_Lines_Order_reorg",
+     "09:20-09:55",
+     "35",
+     "8 %"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "An index rebuild ran inside the incident window and added mild I/O, but no wait spike lines up with it.",
+   "steps": [
+    "Read msdb job history for maintenance jobs overlapping the window.",
+    "Read fragmentation from dm_db_index_physical_stats.",
+    "The overlap is real but not tied to a bottleneck wait, so the row is amber."
+   ],
+   "dataNote": "Job history is durable; fragmentation is a gauge from the last scan."
+  },
+  "sampled": false
+ },
+ {
+  "id": "sql-waits-bottleneck",
+  "label": "Top wait types (delta)",
+  "verdict": "bad",
+  "rule": "Bad: PAGEIOLATCH_SH and WRITELOG hold at least 30 % of the wait delta and are at least 100 ms per task worse than reference, and both scale with load.",
+  "chart": "stackedArea",
+  "series": [
+   {
+    "name": "PAGEIOLATCH_SH",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 14
+     },
+     {
+      "t": 30,
+      "v": 15
+     }
+    ]
+   },
+   {
+    "name": "PAGEIOLATCH_SH",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 44
+     },
+     {
+      "t": 90,
+      "v": 51
+     },
+     {
+      "t": 119,
+      "v": 48
+     }
+    ]
+   },
+   {
+    "name": "WRITELOG",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 9
+     },
+     {
+      "t": 30,
+      "v": 10
+     }
+    ]
+   },
+   {
+    "name": "WRITELOG",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 27
+     },
+     {
+      "t": 90,
+      "v": 30
+     },
+     {
+      "t": 119,
+      "v": 28
+     }
+    ]
+   },
+   {
+    "name": "SLEEP_TASK",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 58
+     },
+     {
+      "t": 30,
+      "v": 57
+     }
+    ]
+   },
+   {
+    "name": "SLEEP_TASK",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 22
+     },
+     {
+      "t": 90,
+      "v": 14
+     },
+     {
+      "t": 119,
+      "v": 17
+     }
+    ]
+   }
+  ],
+  "table": {
+   "cols": [
+    "Wait type",
+    "Reference share",
+    "Incident share",
+    "Per-task delta"
+   ],
+   "rows": [
+    [
+     "PAGEIOLATCH_SH",
+     "14%",
+     "44%",
+     "+124 ms"
+    ],
+    [
+     "WRITELOG",
+     "9%",
+     "31%",
+     "+104 ms"
+    ],
+    [
+     "SLEEP_TASK",
+     "58%",
+     "16%",
+     "-3 ms"
+    ],
+    [
+     "CXPACKET",
+     "4%",
+     "9%",
+     "+21 ms"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Storage and log waits take over the incident window and replace the benign background waits.",
+   "steps": [
+    "Delta dm_os_wait_stats between the reference and incident snapshots.",
+    "Compare the share of the delta and the ms per waiting task.",
+    "Both bottleneck waits pass the red test (30 % and 100 ms) and grow with load, so the row is red."
+   ],
+   "dataNote": "Cumulative deltas are durable; the per-resource split needs a matching waiting_tasks sample."
+  },
+  "sampled": true
+ },
+ {
+  "id": "sql-blocking-chain",
+  "label": "Head blocker / blocking chains",
+  "verdict": "bad",
+  "rule": "Bad: a head blocker is itself waiting on LCK_M_* or PAGEIOLATCH_* and the chain is sustained at least 30 % of the window and 100 ms longer than reference.",
+  "chart": "bars",
+  "series": [
+   {
+    "name": "Blocked seconds by session",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 38
+     },
+     {
+      "t": 75,
+      "v": 52
+     },
+     {
+      "t": 90,
+      "v": 61
+     },
+     {
+      "t": 105,
+      "v": 58
+     },
+     {
+      "t": 119,
+      "v": 55
+     }
+    ]
+   }
+  ],
+  "table": {
+   "cols": [
+    "Session",
+    "Blocked by",
+    "Wait",
+    "Blocked s"
+   ],
+   "rows": [
+    [
+     "spid 78",
+     "spid 61",
+     "LCK_M_X",
+     "61"
+    ],
+    [
+     "spid 84",
+     "spid 61",
+     "LCK_M_X",
+     "54"
+    ],
+    [
+     "spid 61 (head)",
+     "-",
+     "PAGEIOLATCH_SH",
+     "48"
+    ],
+    [
+     "spid 90",
+     "spid 78",
+     "LCK_M_S",
+     "22"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "A chain forms with a head blocker that is itself waiting on I/O, and it lasts most of the window.",
+   "steps": [
+    "Sampled dm_exec_requests.blocking_session_id and dm_os_waiting_tasks.",
+    "Walked the chain to its head and timed each hop.",
+    "The head blocker is waiting, not running, and the chain is sustained, so the row is red."
+   ],
+   "dataNote": "Only visible if a snapshot landed during the window; blocking that started and ended between samples is missed."
+  },
+  "sampled": true
+ },
+ {
+  "id": "sql-tempdb-contention",
+  "label": "tempdb allocation contention",
+  "verdict": "bad",
+  "rule": "Bad: PAGELATCH_UP or PAGELATCH_EX on tempdb allocation pages (2:x:1/2/3) is sustained at least 30 % and 100 ms per task worse than reference.",
+  "chart": "line",
+  "series": [
+   {
+    "name": "PAGELATCH_UP delta ms",
+    "win": "normal",
+    "pts": [
+     {
+      "t": 0,
+      "v": 0
+     },
+     {
+      "t": 20,
+      "v": 5
+     },
+     {
+      "t": 40,
+      "v": 12
+     }
+    ]
+   },
+   {
+    "name": "PAGELATCH_UP delta ms",
+    "win": "incident",
+    "pts": [
+     {
+      "t": 60,
+      "v": 420
+     },
+     {
+      "t": 80,
+      "v": 510
+     },
+     {
+      "t": 100,
+      "v": 470
+     }
+    ]
+   }
+  ],
+  "table": {
+   "cols": [
+    "Wait resource",
+    "Delta ms",
+    "Pages"
+   ],
+   "rows": [
+    [
+     "2:1:1",
+     "610",
+     "PFS"
+    ],
+    [
+     "2:3:2",
+     "280",
+     "GAM"
+    ],
+    [
+     "2:4:3",
+     "120",
+     "SGAM"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Waits pile up on tempdb allocation pages, the classic few-files signature.",
+   "steps": [
+    "Delta PAGELATCH_* from dm_os_wait_stats.",
+    "Grouped by resource_description to find the tempdb file:page.",
+    "Waits concentrate on 2:x:1/2/3 and stay high, so the row is red."
+   ],
+   "dataNote": "Durable as a delta; the file:page split needs a waiting_tasks sample in the window."
+  },
+  "sampled": true
+ },
+ {
+  "id": "sql-plan-regression",
+  "label": "Plan regressions (Query Store)",
+  "verdict": "none",
+  "rule": "Gray, not collected yet: Query Store is off, so no plan history was captured for this case. Absent evidence, not a pass.",
+  "chart": "none",
+  "series": [],
+  "table": {
+   "cols": [
+    "Query",
+    "plan_id",
+    "Avg ms"
+   ],
+   "rows": []
+  },
+  "why": {
+   "summary": "Cannot tell yet whether Orders.Create changed plan, because Query Store is not enabled on this database.",
+   "steps": [
+    "Check sys.database_query_store_options for the case database.",
+    "Result: enabled = 0, so there is no runtime stats or plan history to read.",
+    "The row is shown gray and labelled not collected yet; turning Query Store on and re-running would fill it."
+   ],
+   "dataNote": "Query Store persists across restarts; without it, plan changes leave no trace in the snapshots."
+  },
+  "sampled": false
+ },
+ {
+  "id": "sql-deadlocks",
+  "label": "Deadlocks (system_health XE)",
+  "verdict": "none",
+  "rule": "Gray, not collected yet: the system_health session is not writing to a persisted event file, so the deadlock report cannot be read. Absent evidence, not a pass.",
+  "chart": "none",
+  "series": [],
+  "table": {
+   "cols": [
+    "Time",
+    "Victim",
+    "Resources"
+   ],
+   "rows": []
+  },
+  "why": {
+   "summary": "Cannot tell yet whether deadlocks fired in the window, because system_health has no persisted event file to read.",
+   "steps": [
+    "Look for xml_deadlock_report entries in the system_health XE target.",
+    "Result: no file target, so only the ring buffer exists and it holds recent events only.",
+    "The row is shown gray and labelled not collected yet; enabling a file target would fill it."
+   ],
+   "dataNote": "system_health survives snapshots; without a file target, deadlock graphs are lost once they leave the ring buffer."
+  },
+  "sampled": false
+ }
+]

@@ -1,0 +1,14 @@
+[
+ {"file":"wireframes/parts/14-scenarios.js","after":"sql-waits-bottleneck","from":"\"27%\"","to":"\"31%\""},
+ {"file":"wireframes/parts/14-scenarios.js","after":"sql-waits-bottleneck","from":"\"+96 ms\"","to":"\"+104 ms\""},
+ {"file":"wireframes/parts/14-scenarios.js","after":"sql-waits-bottleneck","from":"\"22%\"","to":"\"16%\""},
+ {"file":"packets/data/sql-cards.json","after":"sql-waits-bottleneck","from":"\"27%\"","to":"\"31%\""},
+ {"file":"packets/data/sql-cards.json","after":"sql-waits-bottleneck","from":"\"+96 ms\"","to":"\"+104 ms\""},
+ {"file":"packets/data/sql-cards.json","after":"sql-waits-bottleneck","from":"\"22%\"","to":"\"16%\""},
+ {"file":"specs/2026-10-29-evidence-fixture-sql.json","after":"sql-waits-bottleneck","from":"\"27%\"","to":"\"31%\""},
+ {"file":"specs/2026-10-29-evidence-fixture-sql.json","after":"sql-waits-bottleneck","from":"\"+96 ms\"","to":"\"+104 ms\""},
+ {"file":"specs/2026-10-29-evidence-fixture-sql.json","after":"sql-waits-bottleneck","from":"\"22%\"","to":"\"16%\""},
+ {"file":"wireframes/parts/14-scenarios.js","all":true,"from":"bytes swapped per second","to":"pages swapped per second"},
+ {"file":"packets/data/host-cards.json","all":true,"from":"bytes swapped per second","to":"pages swapped per second"},
+ {"file":"specs/2026-10-29-evidence-fixture-host.json","all":true,"from":"bytes swapped per second","to":"pages swapped per second"}
+]

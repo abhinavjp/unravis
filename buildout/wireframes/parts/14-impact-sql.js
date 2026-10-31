@@ -1,0 +1,12 @@
+var EVIMPACT = (typeof EVIMPACT === 'object' && EVIMPACT) || {};
+EVIMPACT['sql-waits-benign'] = 'The server only waited on normal background tasks, so users were not held up.';
+EVIMPACT['sql-topqueries-orders'] = 'The busiest queries ran at their usual speed, so order requests were not slowed.';
+EVIMPACT['sql-log-growth'] = 'The transaction log grew normally, so writes were not at risk of stalling.';
+EVIMPACT['sql-lock-waits-rising'] = 'Queries are waiting on each other more than usual, so some requests may start to feel slower.';
+EVIMPACT['sql-memory-grants'] = 'Some queries had to wait for memory before starting, so a heavy report could delay others.';
+EVIMPACT['sql-index-maintenance'] = 'Index upkeep ran during a busy time and may have slowed work while it was running.';
+EVIMPACT['sql-waits-bottleneck'] = 'The server spent its time waiting on one bottleneck, so users likely saw slow responses.';
+EVIMPACT['sql-blocking-chain'] = 'One stuck query held up a line of others, so many requests likely hung together.';
+EVIMPACT['sql-tempdb-contention'] = 'Work queued up for the shared scratch area, so many requests were likely slowed at once.';
+EVIMPACT['sql-plan-regression'] = 'We cannot tell if a query got slower because the query history is not available.';
+EVIMPACT['sql-deadlocks'] = 'We cannot say whether queries were killed by deadlocks because live capture is stopped.';

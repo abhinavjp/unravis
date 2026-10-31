@@ -1,0 +1,450 @@
+[
+ {
+  "id": "GS-01-host-cpu-ok",
+  "label": "CPU busy time is normal",
+  "verdict": "ok",
+  "rule": "Green when CPU stays under 70% on both sides of the window; amber at 70-85% or clearly rising; red at saturation (90%+ for 5 minutes) or iowait/steal dominating. Unit: percent of host CPU.",
+  "chart": "stackedArea",
+  "seriesNames": [
+   "CPU used (user+sys)"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "CPU used",
+    "Vs reference"
+   ],
+   "rows": [
+    [
+     "08:00-08:59",
+     "32%",
+     "reference"
+    ],
+    [
+     "09:00-09:59",
+     "39%",
+     "+7 points"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "CPU rose a little but stayed far below the amber line, so it is ruled out.",
+   "steps": [
+    "Incident CPU averages 39% against 32% in the reference hour.",
+    "The amber line is 70% CPU, or half of the red gap.",
+    "Neither line is crossed, so this row is green."
+   ],
+   "dataNote": "Sampled every 30s from Windows performance counters (Processor _Total % Processor Time)."
+  },
+  "sampled": true
+ },
+ {
+  "id": "GS-02-host-disk-ok",
+  "label": "Disk is fast with no queue",
+  "verdict": "ok",
+  "rule": "Green when disk latency stays under 10 ms on SSDs and the queue is near zero; amber when latency or queue clearly rises; red for a sustained queue with high latency. Unit: milliseconds per transfer, queue depth in requests.",
+  "chart": "line",
+  "seriesNames": [
+   "Avg disk sec/transfer"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "Sec/transfer",
+    "Queue"
+   ],
+   "rows": [
+    [
+     "08:00-08:59",
+     "4 ms",
+     "0.2"
+    ],
+    [
+     "09:00-09:59",
+     "5.6 ms",
+     "0.4"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Latency stayed well under 10 ms and no queue built up.",
+   "steps": [
+    "Incident latency averages 5.6 ms against 4 ms, both under the 10 ms green line.",
+    "Queue depth stayed near zero.",
+    "Disk I/O is not the bottleneck."
+   ],
+   "dataNote": "Sampled every 30s from performance counters (PhysicalDisk Avg. Disk sec/Transfer and Current Disk Queue Length)."
+  },
+  "sampled": true
+ },
+ {
+  "id": "GS-03-host-mem-ok",
+  "label": "Memory has headroom",
+  "verdict": "ok",
+  "rule": "Green when available memory keeps headroom and nothing is swapped; amber when headroom is low; red when the host thrashes or an OOM kill happens. Unit: bytes free, pages swapped per second.",
+  "chart": "line",
+  "seriesNames": [
+   "Available memory"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "Available",
+    "Swap in/out"
+   ],
+   "rows": [
+    [
+     "08:00-08:59",
+     "12.3 GB",
+     "0"
+    ],
+    [
+     "09:00-09:59",
+     "11.7 GB",
+     "0"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Available memory dropped only slightly and no swap was used.",
+   "steps": [
+    "Incident memory averages 11.7 GB free against 12.3 GB.",
+    "Swap stayed at zero.",
+    "There is no pressure, so this row is green."
+   ],
+   "dataNote": "Sampled every 30s (Memory Available MBytes / Committed Bytes). Values in GB here."
+  },
+  "sampled": true
+ },
+ {
+  "id": "GS-04-host-cpu-watch",
+  "label": "CPU climbed into the amber band",
+  "verdict": "watch",
+  "rule": "Green under 70%; amber at 70-85% or rising; red at saturation (90%+ for 5 minutes) or iowait/steal dominating. Amber starts at half the red gap: at least 15% and 7.5 points worse than reference. Unit: percent of host CPU.",
+  "chart": "stackedArea",
+  "seriesNames": [
+   "CPU used (user+sys)"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "CPU used",
+    "Vs reference"
+   ],
+   "rows": [
+    [
+     "08:00-08:59",
+     "62%",
+     "reference"
+    ],
+    [
+     "09:00-09:59",
+     "76%",
+     "+14 points (23% worse)"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "CPU rose about 23% above the reference, past the amber half-gap but under the 30% red gap.",
+   "steps": [
+    "Incident CPU averages 76% against 62%.",
+    "23% is at least half of the red 30% gap, so amber.",
+    "It does not reach the 30% and 15-point red test, so it is not red."
+   ],
+   "dataNote": "Sampled every 30s from Processor _Total % Processor Time."
+  },
+  "sampled": true
+ },
+ {
+  "id": "GS-05-host-disk-watch",
+  "label": "Disk latency rising",
+  "verdict": "watch",
+  "rule": "Green under 10 ms on SSD; amber when latency or queue clearly rises; red for a sustained queue with high latency. Amber starts at half the red gap (at least 15% and 7.5 points worse). Unit: milliseconds per transfer.",
+  "chart": "line",
+  "seriesNames": [
+   "Avg disk sec/transfer"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "Sec/transfer",
+    "Queue"
+   ],
+   "rows": [
+    [
+     "08:00-08:59",
+     "8 ms",
+     "0.5"
+    ],
+    [
+     "09:00-09:59",
+     "20 ms",
+     "1.1"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Latency more than doubled, into the amber band, but no deep sustained queue formed.",
+   "steps": [
+    "Incident latency averages 20 ms against 8 ms, well past the amber half-gap.",
+    "Queue depth only reached about 1, so the red queue test is not met.",
+    "This is a watch item, not the bottleneck yet."
+   ],
+   "dataNote": "Sampled every 30s (Avg. Disk sec/Transfer, Current Disk Queue Length)."
+  },
+  "sampled": true
+ },
+ {
+  "id": "GS-06-host-net-watch",
+  "label": "Network throughput rising",
+  "verdict": "watch",
+  "rule": "Green when errors, drops and retransmits stay near zero; amber when they are occasional; red when they are sustained with impact. This row is partial: only throughput and bytes are collected, not retransmits. Unit: bytes per second; retransmits in counts.",
+  "chart": "line",
+  "seriesNames": [
+   "Network bytes/sec"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "Bytes/sec",
+    "Retransmits"
+   ],
+   "rows": [
+    [
+     "08:00-08:59",
+     "4.2 MB/s",
+     "not collected"
+    ],
+    [
+     "09:00-09:59",
+     "9.2 MB/s",
+     "not collected"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Traffic more than doubled, but the error and retransmit counters are not read today, so this can only be an amber watch.",
+   "steps": [
+    "Incident throughput averages 9.2 MB/s against 4.2 MB/s.",
+    "Error and retransmit counters are not collected, so impact cannot be confirmed.",
+    "Treat as a watch item and confirm with a manual netstat -s."
+   ],
+   "dataNote": "Sampled every 30s (Network Interface Bytes Total/sec). Retransmits are not in the collector."
+  },
+  "sampled": true
+ },
+ {
+  "id": "GS-07-host-cpu-red",
+  "label": "CPU saturated",
+  "verdict": "bad",
+  "rule": "Red at the named saturation level: CPU above 90% for 5 minutes or more. Green under 70%; amber at 70-85%. Unit: percent of host CPU.",
+  "chart": "stackedArea",
+  "seriesNames": [
+   "CPU used (user+sys)"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "CPU used",
+    "Vs reference"
+   ],
+   "rows": [
+    [
+     "08:00-08:59",
+     "45%",
+     "reference"
+    ],
+    [
+     "09:00-09:59",
+     "92%",
+     "+47 points (104% worse); 92% for 6 minutes"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "CPU hit 92% and stayed above 90% for six minutes, the named saturation level.",
+   "steps": [
+    "Incident CPU averages 92% against 45%, a 104% increase.",
+    "It stays above 90% for six minutes, the research's saturation test.",
+    "The red rule is met, so CPU is the prime suspect."
+   ],
+   "dataNote": "Sampled every 30s from Processor _Total % Processor Time."
+  },
+  "sampled": true
+ },
+ {
+  "id": "GS-08-host-mem-red",
+  "label": "Memory exhausted, host thrashing",
+  "verdict": "bad",
+  "rule": "Red when the host thrashes or an OOM kill happens; amber when headroom is low. Unit: bytes free, pages swapped per second.",
+  "chart": "line",
+  "seriesNames": [
+   "Available memory",
+   "Swap out/sec"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "Available",
+    "Swap out/sec"
+   ],
+   "rows": [
+    [
+     "08:00-08:59",
+     "11.8 GB",
+     "0"
+    ],
+    [
+     "09:00-09:59",
+     "0.2 GB",
+     "1,300"
+    ],
+    [
+     "OOM kills",
+     "1 process",
+     "-"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Available memory fell to about 200 MB and the host swapped heavily, with one OOM kill.",
+   "steps": [
+    "Available memory dropped from 11.8 GB to under 300 MB.",
+    "Swap out climbed to about 1,300 pages per second, a thrash pattern.",
+    "One OOM kill was recorded, so the red rule is met."
+   ],
+   "dataNote": "Sampled every 30s (Memory Available MBytes, Pages/sec). Values in GB here."
+  },
+  "sampled": true
+ },
+ {
+  "id": "GS-09-host-disk-red",
+  "label": "Disk queue saturated",
+  "verdict": "bad",
+  "rule": "Red for a sustained queue with high latency; green under 10 ms on SSD with a near-zero queue; amber when both rise. Unit: milliseconds per transfer, queue depth in requests.",
+  "chart": "line",
+  "seriesNames": [
+   "Avg disk sec/transfer",
+   "Disk queue length"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "Sec/transfer",
+    "Queue"
+   ],
+   "rows": [
+    [
+     "08:00-08:59",
+     "10 ms",
+     "1"
+    ],
+    [
+     "09:00-09:59",
+     "53 ms",
+     "13"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Latency rose five-fold with a queue of about 13 requests held for the hour.",
+   "steps": [
+    "Incident latency averages 53 ms against 10 ms.",
+    "Queue depth stayed near 13, a sustained backlog.",
+    "Both the latency and the sustained-queue tests are met, so red."
+   ],
+   "dataNote": "Sampled every 30s (PhysicalDisk Avg. Disk sec/Transfer, Current Disk Queue Length)."
+  },
+  "sampled": true
+ },
+ {
+  "id": "GS-10-host-runqueue-gray",
+  "label": "CPU run queue (not collected)",
+  "verdict": "none",
+  "rule": "Gray means the collector does not read this today, so absence is not a clean bill of health. Would be red for a sustained runnable queue, amber for transient. Unit: threads waiting for CPU.",
+  "chart": "none",
+  "seriesNames": [],
+  "table": {
+   "cols": [
+    "What would be shown",
+    "Why absent"
+   ],
+   "rows": [
+    [
+     "Runnable threads / run-queue length over the window",
+     "No sampler probe reads a host run-queue counter today"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "A run queue would confirm CPU pressure, but no collector reads it, so no verdict is possible.",
+   "steps": [
+    "GetSystemTimes gives CPU busy time but no run-queue counter.",
+    "Until a probe is added this stays gray.",
+    "Read it manually with vmstat (r column) or PerfMon System\\Processor Queue Length."
+   ],
+   "dataNote": "Not collected. Needs a new sampler probe: PerfMon System\\Processor Queue Length or vmstat r."
+  },
+  "sampled": false
+ },
+ {
+  "id": "GS-11-host-tcp-gray",
+  "label": "TCP connection counts (not collected)",
+  "verdict": "none",
+  "rule": "Gray means the collector does not read this today. Would be red at connection exhaustion with waits, amber when approaching a limit. Unit: open connection count.",
+  "chart": "none",
+  "seriesNames": [],
+  "table": {
+   "cols": [
+    "What would be shown",
+    "Why absent"
+   ],
+   "rows": [
+    [
+     "Open TCP connections and time-wait counts over the window",
+     "No sampler probe reads netstat connection counts today"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Connection exhaustion can cause slowdowns, but nothing samples TCP connection counts here.",
+   "steps": [
+    "The collector reads host CPU, memory, disk and network bytes only.",
+    "There is no connection-count series to judge.",
+    "Read it manually with netstat -an or netstat -s."
+   ],
+   "dataNote": "Not collected. Needs a new probe for netstat/GetTcpStatistics connection counts."
+  },
+  "sampled": false
+ },
+ {
+  "id": "GS-12-host-swap-gray",
+  "label": "Swap activity (not collected)",
+  "verdict": "none",
+  "rule": "Gray means the collector does not read this today. Would be red for active thrashing, amber for occasional paging. Unit: pages swapped in/out per second.",
+  "chart": "none",
+  "seriesNames": [],
+  "table": {
+   "cols": [
+    "What would be shown",
+    "Why absent"
+   ],
+   "rows": [
+    [
+     "Swap in and swap out per second over the window",
+     "No sampler probe reads swap counters today"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Swap thrashing is a classic red sign, but the collector reads available and committed memory only, not swap paging.",
+   "steps": [
+    "Without a swap series, memory pressure can only be inferred from available memory.",
+    "Until a probe is added this stays gray.",
+    "Read it manually with vmstat (si/so) or PerfMon Paging File counters."
+   ],
+   "dataNote": "Not collected. Needs a new probe for swap in/out (vmstat si/so, or Paging File)."
+  },
+  "sampled": false
+ }
+]

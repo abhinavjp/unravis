@@ -1,0 +1,447 @@
+[
+ {
+  "id": "MG-BAD-SLOWOPS",
+  "label": "Slow ops by namespace (Orders.Create)",
+  "verdict": "bad",
+  "rule": "Red: incident p95 is at least 30% and at least 100 ms worse than reference. 191 ms vs 41 ms is +366% and +150 ms.",
+  "chart": "line",
+  "seriesNames": [
+   "p95 op latency (ms)"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "p95 ms",
+    "slow ops/min"
+   ],
+   "rows": [
+    [
+     "Reference 08:00-09:00",
+     "41",
+     "3"
+    ],
+    [
+     "Incident 09:00-10:00",
+     "191",
+     "48"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Orders.Create operations stayed well under slowms in the reference hour, then ran long and queued during the incident hour.",
+   "steps": [
+    "Profiler/slow-log groups ops past slowms by namespace; Orders.Create keeps a steady backlog.",
+    "p95 rises through the hour and is still climbing at 10:00, so this is a sustained queue, not one spike.",
+    "Same namespace and same API as the report, so this slow-op row is the primary confirmation."
+   ],
+   "dataNote": "Slow ops come from periodic profiler samples, so counts are a sample of activity, not a full capture."
+  },
+  "sampled": true
+ },
+ {
+  "id": "MG-BAD-TICKETS",
+  "label": "WiredTiger read/write tickets",
+  "verdict": "bad",
+  "rule": "Red: tickets out is at least 30% and at least 25 tickets worse than reference. 126 vs 25 of 128 is +404% and +101 tickets.",
+  "chart": "line",
+  "seriesNames": [
+   "tickets out (of 128)"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "tickets out",
+    "available",
+    "total"
+   ],
+   "rows": [
+    [
+     "Reference 08:00-09:00",
+     "25",
+     "103",
+     "128"
+    ],
+    [
+     "Incident 09:00-10:00",
+     "126",
+     "2",
+     "128"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "WiredTiger's concurrent transaction tickets were almost all in use, so operations queued for a free ticket instead of running.",
+   "steps": [
+    "serverStatus.wiredTiger.concurrentTransactions shows 126 of 128 tickets out during the incident.",
+    "With only 2 tickets left, new reads and writes wait, which shows up as rising slow ops.",
+    "Ticket pressure is near the ceiling for the whole hour, so this is exhaustion, not a transient peak."
+   ],
+   "dataNote": "Ticket counts are point-in-time snapshots sampled every minute, so short sub-minute peaks can be missed."
+  },
+  "sampled": true
+ },
+ {
+  "id": "MG-BAD-REPLAG",
+  "label": "Replication lag",
+  "verdict": "bad",
+  "rule": "Red: lag is at least 30% and at least 5 s worse than reference (5 s replaces the 100 ms unit). 22 s vs 1.3 s is +1592% and +20.7 s.",
+  "chart": "line",
+  "seriesNames": [
+   "replica lag (s)"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "member",
+    "lag s",
+    "oplog window h"
+   ],
+   "rows": [
+    [
+     "Reference 08:00-09:00",
+     "rs0/secondary",
+     "1.3",
+     "48"
+    ],
+    [
+     "Incident 09:00-10:00",
+     "rs0/secondary",
+     "22",
+     "6"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "The secondary fell tens of seconds behind the primary and the oplog window shrank, so reads served from it were stale.",
+   "steps": [
+    "replSetGetStatus shows per-member lag growing from about 1 s to over 20 s across the hour.",
+    "The oplog window dropped from about 48 h to 6 h, so the replica was applying slower than the primary wrote.",
+    "Lag was still high at 10:00, which matches a sustained write backlog, not a brief blip."
+   ],
+   "dataNote": "Lag is sampled from replSetGetStatus every minute; the true peak between samples can be higher."
+  },
+  "sampled": true
+ },
+ {
+  "id": "MG-WATCH-CACHE",
+  "label": "WiredTiger cache pressure",
+  "verdict": "watch",
+  "rule": "Amber: cache used is at least 15% and at least 10 percentage points worse than reference (10 pp replaces the 100 ms unit). 74% vs 61.5% is +20% and +12.5 pp.",
+  "chart": "line",
+  "seriesNames": [
+   "cache used (% of max)"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "cache used %",
+    "evictions/min",
+    "dirty %"
+   ],
+   "rows": [
+    [
+     "Reference 08:00-09:00",
+     "61.5",
+     "900",
+     "4.1"
+    ],
+    [
+     "Incident 09:00-10:00",
+     "74",
+     "2600",
+     "4.8"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "The cache moved well into the pressure zone and eviction more than doubled, but it did not reach the max and dirty pages stayed low.",
+   "steps": [
+    "serverStatus.wiredTiger.cache shows used bytes rising from about 61% to 74% of max.",
+    "Eviction rose from about 900 to 2600 pages per minute, so some reads missed cache and went to disk.",
+    "Cache stayed under max and did not force application threads to evict, which is why this is amber, not red."
+   ],
+   "dataNote": "Cache gauges are sampled each minute; the eviction rate is a delta between samples."
+  },
+  "sampled": true
+ },
+ {
+  "id": "MG-WATCH-CONNS",
+  "label": "Connection count",
+  "verdict": "watch",
+  "rule": "Amber: current connections is at least 15% and at least 20 connections worse than reference (20 replaces the 100 ms unit). 149 vs 120 is +24% and +29 connections.",
+  "chart": "line",
+  "seriesNames": [
+   "current connections"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "current",
+    "available",
+    "totalCreated"
+   ],
+   "rows": [
+    [
+     "Reference 08:00-09:00",
+     "120",
+     "580",
+     "3120"
+    ],
+    [
+     "Incident 09:00-10:00",
+     "149",
+     "551",
+     "3890"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "More clients connected during the incident and totalCreated rose, but the pool still had plenty of available connections.",
+   "steps": [
+    "serverStatus.connections shows current rising from about 120 to 149 of a 700 limit.",
+    "available stayed above 550, so the pool never ran out; connecting clients just took slots.",
+    "There is real headroom left, so this is a warning, not exhaustion."
+   ],
+   "dataNote": "Connection counts are sampled each minute; churn between samples is not visible."
+  },
+  "sampled": true
+ },
+ {
+  "id": "MG-WATCH-GLOCK",
+  "label": "Global lock write queue",
+  "verdict": "watch",
+  "rule": "Amber: queued writers is at least 15% and at least 2 ops worse than reference (2 replaces the 100 ms unit). 3.7 vs 0.4 is +825% and +3.3, above watch, below the 5-op red line.",
+  "chart": "stackedArea",
+  "seriesNames": [
+   "readers queued",
+   "writers queued"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "writers queued (avg)",
+    "readers queued (avg)"
+   ],
+   "rows": [
+    [
+     "Reference 08:00-09:00",
+     "0.4",
+     "0.3"
+    ],
+    [
+     "Incident 09:00-10:00",
+     "3.7",
+     "1.5"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "A small but steady queue of writers built up behind the global lock, without reaching the level of a hard stall.",
+   "steps": [
+    "serverStatus.globalLock.currentQueue shows writers queued rising from near zero to around four.",
+    "Readers queued moved a little, so the pressure is mostly on writes.",
+    "The queue stays modest and no writer waits long enough to be red, so this is a watch."
+   ],
+   "dataNote": "Queue depth is sampled each minute; the true peak between samples can be higher."
+  },
+  "sampled": true
+ },
+ {
+  "id": "MG-OK-SLOWOPS",
+  "label": "Slow ops by namespace (Orders.Create)",
+  "verdict": "ok",
+  "rule": "Green: incident p95 is neither 30%+ nor 100 ms worse than reference. 44 ms vs 41 ms is +7% and +3 ms.",
+  "chart": "line",
+  "seriesNames": [
+   "p95 op latency (ms)"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "p95 ms",
+    "slow ops/min"
+   ],
+   "rows": [
+    [
+     "Reference 08:00-09:00",
+     "41",
+     "3"
+    ],
+    [
+     "Incident 09:00-10:00",
+     "44",
+     "4"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Orders.Create operation latency was flat across both hours, so slow ops do not explain the reported slowdown.",
+   "steps": [
+    "p95 moved from 41 ms to 44 ms, within normal minute-to-minute noise.",
+    "Slow ops per minute stayed in single digits.",
+    "This row rules the namespace out rather than pointing at it."
+   ],
+   "dataNote": "Slow ops come from periodic profiler samples, so counts are a sample of activity, not a full capture."
+  },
+  "sampled": true
+ },
+ {
+  "id": "MG-OK-TICKETS",
+  "label": "WiredTiger read/write tickets",
+  "verdict": "ok",
+  "rule": "Green: tickets out is neither 30%+ nor 25 tickets worse than reference. 26.5 vs 25 of 128 is +6% and +1.5 tickets.",
+  "chart": "line",
+  "seriesNames": [
+   "tickets out (of 128)"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "tickets out",
+    "available",
+    "total"
+   ],
+   "rows": [
+    [
+     "Reference 08:00-09:00",
+     "25",
+     "103",
+     "128"
+    ],
+    [
+     "Incident 09:00-10:00",
+     "26.5",
+     "101.5",
+     "128"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "Plenty of WiredTiger tickets stayed free, so operations never queued for one.",
+   "steps": [
+    "Tickets out stayed around 26 of 128 for both hours.",
+    "More than 100 tickets were available at all times.",
+    "Ticket contention is not part of the slowdown."
+   ],
+   "dataNote": "Ticket counts are point-in-time snapshots sampled every minute."
+  },
+  "sampled": true
+ },
+ {
+  "id": "MG-OK-REPLAG",
+  "label": "Replication lag",
+  "verdict": "ok",
+  "rule": "Green: lag is neither 30%+ nor 5 s worse than reference. 1.3 s vs 1.2 s is +8% and +0.1 s.",
+  "chart": "line",
+  "seriesNames": [
+   "replica lag (s)"
+  ],
+  "table": {
+   "cols": [
+    "Window",
+    "member",
+    "lag s",
+    "oplog window h"
+   ],
+   "rows": [
+    [
+     "Reference 08:00-09:00",
+     "rs0/secondary",
+     "1.2",
+     "48"
+    ],
+    [
+     "Incident 09:00-10:00",
+     "rs0/secondary",
+     "1.3",
+     "47"
+    ]
+   ]
+  },
+  "why": {
+   "summary": "The replica kept up with the primary through the incident hour and the oplog window stayed wide.",
+   "steps": [
+    "replSetGetStatus lag stayed at about one second, bouncing between 1 and 2.",
+    "The oplog window was roughly 48 hours in both windows.",
+    "Replication is not the cause of the reported slowdown."
+   ],
+   "dataNote": "Lag is sampled from replSetGetStatus every minute."
+  },
+  "sampled": true
+ },
+ {
+  "id": "MG-NONE-COLLSCAN",
+  "label": "Collection scans (COLLSCAN)",
+  "verdict": "none",
+  "rule": "Gray: not collected. Needs the database profiler turned on (profiling level 0 is the default), which this deployment does not run.",
+  "chart": "none",
+  "seriesNames": [],
+  "table": {
+   "cols": [
+    "Window",
+    "COLLSCAN/min"
+   ],
+   "rows": []
+  },
+  "why": {
+   "summary": "No collection-scan numbers are shown because the profiler was off for the whole window.",
+   "steps": [
+    "COLLSCAN counts come from system.profile, which only fills when profiling is enabled.",
+    "Profiling level here is 0 (off), so nothing was written for 08:00 to 10:00.",
+    "This is absent data, not evidence that no scans happened."
+   ],
+   "dataNote": "To collect this, enable the profiler (or sample with a slowms threshold) before the next occurrence."
+  },
+  "sampled": false
+ },
+ {
+  "id": "MG-NONE-INDEX",
+  "label": "Index usage (IXSCAN vs COLLSCAN)",
+  "verdict": "none",
+  "rule": "Gray: not collected. Needs profiler output or the $indexStats privilege, neither of which is granted to this read-only collector.",
+  "chart": "none",
+  "seriesNames": [],
+  "table": {
+   "cols": [
+    "Window",
+    "index hit ratio"
+   ],
+   "rows": []
+  },
+  "why": {
+   "summary": "Index-usage numbers are missing because the collector cannot read profiler output or $indexStats on this deployment.",
+   "steps": [
+    "Index activity is derived from system.profile or the $indexStats aggregation.",
+    "The read-only role does not hold that privilege and the profiler is off.",
+    "So the window was never sampled; the row is blank, not green."
+   ],
+   "dataNote": "Grant $indexStats (or enable sampling) and this row can be filled next time."
+  },
+  "sampled": false
+ },
+ {
+  "id": "MG-NONE-OPLOG",
+  "label": "Oplog window",
+  "verdict": "none",
+  "rule": "Gray: not collected. Needs the clusterMonitor role (or local-database read) to run rs.printReplicationInfo, which is not granted here.",
+  "chart": "none",
+  "seriesNames": [],
+  "table": {
+   "cols": [
+    "Window",
+    "oplog window h"
+   ],
+   "rows": []
+  },
+  "why": {
+   "summary": "The oplog window is not shown because the collector has no permission to read it on this deployment.",
+   "steps": [
+    "rs.printReplicationInfo requires clusterMonitor or access to the local database.",
+    "The read-only account here has neither, so the command was never run.",
+    "Missing permission means no sample, so the state is gray rather than green."
+   ],
+   "dataNote": "Replication *lag* may still appear on its own row if replSetGetStatus is permitted; only the oplog-window row is blind here."
+  },
+  "sampled": false
+ }
+]

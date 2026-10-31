@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tracing paper — visual spec</title>
+<style>
+:root {
+  --bg: #f6f7f9; --surface: #fff; --text: #1a1f26; --muted: #5c6570;
+  --accent: #2563eb; --border: #d8dee6;
+  --ok: #15803d; --partial: #b45309; --bad: #b91c1c; --unk: #6b7280;
+  --chip-bg: #eef2f7; --focus: #2563eb;
+  --bar: #3b82f6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1419; --surface: #1a222c; --text: #e8edf4; --muted: #9aa5b3;
+    --accent: #60a5fa; --border: #2d3845; --chip-bg: #243040;
+    --ok: #4ade80; --partial: #fbbf24; --bad: #f87171; --unk: #9ca3af;
+    --bar: #60a5fa;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { font-size: 18px; scroll-behavior: smooth; }
+body {
+  margin: 0; font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.55;
+}
+.wrap { max-width: 62ch; margin: 0 auto; padding: 1rem 1rem 6rem; }
+@media (min-width: 480px) { .wrap { padding: 1.25rem 1.5rem 6rem; } }
+
+.top-bar {
+  position: sticky; top: 0; z-index: 10; background: var(--bg);
+  border-bottom: 1px solid var(--border); padding: 0.5rem 0 0.75rem;
+}
+.progress-track { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--accent); width: 11%; transition: width 150ms ease; }
+@media (prefers-reduced-motion: reduce) { .progress-fill { transition: none; } }
+.meta { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.5rem; font-size: 0.78rem; color: var(--muted); }
+.spec-tag { background: var(--chip-bg); padding: 0.15rem 0.45rem; border-radius: 4px; }
+.dots { display: flex; gap: 6px; margin-left: auto; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); border: none; padding: 0; cursor: pointer; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; background-clip: content-box; }
+.dot[aria-current="true"] { background-color: var(--accent); }
+.dot:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.screen { display: none; opacity: 0; }
+.screen.active { display: block; animation: fadeIn 150ms ease forwards; }
+@keyframes fadeIn { to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .screen.active { animation: none; opacity: 1; }
+}
+body.scroll-mode .screen { display: block !important; opacity: 1 !important; animation: none; margin-bottom: 2.5rem; padding-bottom: 2rem; border-bottom: 1px solid var(--border); }
+body.scroll-mode .nav-row, body.scroll-mode .dots { display: none; }
+body.scroll-mode .progress-fill { width: 100%; }
+
+h1 { font-size: 1.35rem; margin: 0 0 0.75rem; line-height: 1.3; text-align: left; }
+.lead { font-size: 0.95rem; max-width: 62ch; margin: 0 0 1rem; }
+.lead strong { font-weight: 700; }
+.figure { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; }
+.caption { font-size: 0.82rem; color: var(--muted); margin: 0.5rem 0 0; text-align: center; }
+.schematic-label { font-size: 0.72rem; color: var(--muted); text-align: center; margin-bottom: 0.35rem; }
+
+.flow-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0.35rem; }
+.box { background: var(--chip-bg); border: 2px solid var(--accent); border-radius: 6px; padding: 0.5rem 0.65rem; font-size: 0.85rem; font-weight: 600; text-align: center; min-width: 5.5rem; }
+.arrow { color: var(--muted); font-size: 1.1rem; }
+.lanes-mini { display: flex; flex-direction: column; gap: 4px; margin-top: 0.75rem; }
+.lane-bar { height: 14px; border-radius: 3px; font-size: 0.65rem; display: flex; align-items: center; padding-left: 6px; color: #fff; }
+.lane-a { background: #3b82f6; } .lane-s { background: #059669; } .lane-i { background: #7c3aed; }
+
+.chip-cols { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
+@media (min-width: 520px) { .chip-cols { grid-template-columns: repeat(3, 1fr); } }
+.chip-col h3 { font-size: 0.8rem; margin: 0 0 0.4rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.chip { font-size: 0.72rem; background: var(--chip-bg); border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.5rem; }
+
+.status-group { margin-bottom: 1rem; }
+.status-group h3 { font-size: 0.85rem; margin: 0 0 0.5rem; display: flex; align-items: center; gap: 0.35rem; }
+.grid { display: grid; gap: 0.5rem; }
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.65rem 0.75rem; font-size: 0.85rem;
+}
+.card.gap-highlight { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad); }
+.card-name { font-weight: 600; }
+.card-phrase { color: var(--muted); font-size: 0.8rem; margin-top: 0.15rem; }
+.st-ok { color: var(--ok); } .st-part { color: var(--partial); } .st-bad { color: var(--bad); } .st-unk { color: var(--unk); }
+
+.stepper { display: flex; flex-wrap: wrap; gap: 0.5rem; counter-reset: step; }
+.step {
+  flex: 1 1 140px; min-width: 120px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 0.5rem; position: relative;
+}
+.step-num {
+  display: inline-flex; width: 1.5rem; height: 1.5rem; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff; border-radius: 50%; font-size: 0.75rem; font-weight: 700; margin-bottom: 0.35rem;
+}
+.step-title { font-size: 0.82rem; font-weight: 600; }
+details { margin-top: 0.35rem; font-size: 0.78rem; }
+summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--accent); }
+summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.ladder { display: flex; flex-direction: column; gap: 0.5rem; }
+.rung {
+  display: grid; grid-template-columns: 1fr auto auto; gap: 0.5rem; align-items: center;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.65rem; font-size: 0.8rem;
+}
+.rung.mvp { border-left: 4px solid var(--ok); }
+.rung.later { border-left: 4px solid var(--partial); opacity: 0.92; }
+.effort { font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 4px; background: var(--chip-bg); }
+.risk-dot { width: 10px; height: 10px; border-radius: 50%; }
+.risk-s { background: var(--ok); } .risk-m { background: var(--partial); } .risk-l { background: var(--bad); }
+
+.cols4 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; }
+@media (min-width: 520px) { .cols4 { grid-template-columns: repeat(4, 1fr); } }
+.col-head { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: var(--muted); margin-bottom: 0.35rem; }
+
+.decision-card { margin-bottom: 0.75rem; }
+.decision-card fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 0.65rem; margin: 0; }
+.decision-card legend { font-weight: 600; font-size: 0.9rem; padding: 0 0.25rem; }
+.opt { display: flex; align-items: flex-start; gap: 0.5rem; min-height: 44px; padding: 0.25rem 0; font-size: 0.82rem; }
+.opt input { margin-top: 0.35rem; width: 1.1rem; height: 1.1rem; }
+.rec { font-size: 0.7rem; background: var(--ok); color: #fff; padding: 0.05rem 0.35rem; border-radius: 4px; margin-left: 0.35rem; }
+@media (prefers-color-scheme: dark) { .rec { color: #052e16; } }
+.dec-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 1rem; font-size: 0.85rem; }
+.btn {
+  min-height: 44px; min-width: 44px; padding: 0.5rem 1rem; font-size: 0.85rem;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer;
+}
+.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.risk-list { list-style: none; padding: 0; margin: 0; }
+.risk-item { margin-bottom: 0.65rem; font-size: 0.82rem; }
+.risk-bar-wrap { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin: 0.25rem 0; }
+.risk-bar { height: 100%; background: var(--bar); border-radius: 4px; }
+.risk-rank { font-weight: 700; color: var(--muted); font-size: 0.75rem; }
+
+.ol-backlog { padding-left: 1.25rem; font-size: 0.85rem; }
+.ol-backlog li { margin-bottom: 0.35rem; }
+.ac-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; margin-top: 1rem; font-size: 0.82rem; }
+
+.nav-row { display: flex; justify-content: space-between; gap: 0.5rem; margin-top: 1.25rem; }
+.hint { font-size: 0.72rem; color: var(--muted); margin-top: 1rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top-bar">
+    <div class="progress-track" aria-hidden="true"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="meta">
+      <span id="screenMeta">Screen 1 of 9 · 25 sec</span>
+      <span class="spec-tag" id="specTag">spec §0, §1</span>
+      <div class="dots" id="dots" role="tablist" aria-label="Screen progress"></div>
+    </div>
+  </div>
+
+  <!-- Screen 1 -->
+  <section class="screen active" data-i="0" data-time="25 sec" data-spec="spec §0, §1" aria-labelledby="t1">
+    <h1 id="t1">Tracing paper in 20 seconds</h1>
+    <p class="lead"><strong>One shared timeline</strong> after sources and Start tracing—three lanes on one axis.</p>
+    <div class="figure" role="img" aria-label="Schematic flow diagram">
+      <p class="schematic-label">Schematic, not a design</p>
+      <div class="flow-row">
+        <div class="box">Add sources</div><span class="arrow" aria-hidden="true">→</span>
+        <div class="box">Start tracing</div><span class="arrow" aria-hidden="true">→</span>
+        <div class="box">One timeline</div>
+      </div>
+      <div class="lanes-mini" aria-hidden="true">
+        <div class="lane-bar lane-a">API audit</div>
+        <div class="lane-bar lane-s">SQL</div>
+        <div class="lane-bar lane-i">IIS</div>
+      </div>
+      <p class="caption">Case-first: tag data, run read-only trace, read lanes together.</p>
+    </div>
+    <div class="chip-cols">
+      <div class="chip-col"><h3>In MVP</h3><div class="chips">
+        <span class="chip">Case + sources</span><span class="chip">Start tracing</span><span class="chip">3 lanes chart</span>
+        <span class="chip">Zoom / drill-down</span><span class="chip">Empty lane words</span>
+      </div></div>
+      <div class="chip-col"><h3>Later</h3><div class="chips">
+        <span class="chip">Recurrence heatmap</span><span class="chip">Host lane</span><span class="chip">Call trace UI</span>
+        <span class="chip">Evidence cards</span><span class="chip">Estimate bar</span>
+      </div></div>
+      <div class="chip-col"><h3>Never</h3><div class="chips">
+        <span class="chip">Write queries to customer DBs</span><span class="chip">Auto culprit score</span>
+        <span class="chip">Broad live scans</span><span class="chip">Replace ledger/export</span>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- Screen 2 -->
+  <section class="screen" data-i="1" data-time="45 sec" data-spec="spec §2" aria-labelledby="t2">
+    <h1 id="t2">What works today</h1>
+    <p class="lead">Backend pieces exist; <strong>two product gaps</strong> block the owner one-shot chart.</p>
+    <div class="status-group">
+      <h3><span class="st-ok" aria-hidden="true">✔</span> Working <span class="st-ok">Working</span></h3>
+      <div class="grid">
+        <div class="card"><span class="card-name">Case + Sources</span><div class="card-phrase">Tags before trace run</div></div>
+        <div class="card"><span class="card-name">IIS / SQL import</span><div class="card-phrase">Events for lanes</div></div>
+        <div class="card"><span class="card-name">Run analysis</span><div class="card-phrase">Audit drill-down today</div></div>
+        <div class="card"><span class="card-name">Audit charts</span><div class="card-phrase">Reuse buckets, not duplicate</div></div>
+        <div class="card"><span class="card-name">MultiTimeline</span><div class="card-phrase">Audit-only compare</div></div>
+        <div class="card"><span class="card-name">Guided + tabs</span><div class="card-phrase">Separate from tracing MVP</div></div>
+        <div class="card"><span class="card-name">Join + TZ + caps</span><div class="card-phrase">Align windows safely</div></div>
+        <div class="card"><span class="card-name">Collect suggestions</span><div class="card-phrase">Feeds add sources</div></div>
+      </div>
+    </div>
+    <div class="status-group">
+      <h3><span class="st-part">◐</span> Partial <span class="st-part">Partial</span></h3>
+      <div class="grid">
+        <div class="card"><span class="card-name">Text timeline</span><div class="card-phrase">Backend rows, no chart UI</div></div>
+        <div class="card"><span class="card-name">Call trace lanes</span><div class="card-phrase">Model matches tracing</div></div>
+        <div class="card"><span class="card-name">Nearby activity</span><div class="card-phrase">Audit rows only in UI</div></div>
+      </div>
+    </div>
+    <div class="status-group">
+      <h3><span class="st-bad">✕</span> Not built / wired</h3>
+      <div class="grid">
+        <div class="card gap-highlight"><span class="card-name">Unified API+SQL+IIS chart</span><div class="card-phrase">✕ Not built — explicit gap</div></div>
+        <div class="card gap-highlight"><span class="card-name">Call trace in UI</span><div class="card-phrase">✕ Not wired — backend ready</div></div>
+      </div>
+    </div>
+    <div class="status-group">
+      <h3><span class="st-unk">?</span> Unknown <span class="st-unk">Unknown</span></h3>
+      <div class="card"><span class="card-name">IIS time field</span><div class="card-phrase">Semantics unverified — alignment risk</div></div>
+    </div>
+  </section>
+
+  <!-- Screen 3 -->
+  <section class="screen" data-i="2" data-time="40 sec" data-spec="spec §3" aria-labelledby="t3">
+    <h1 id="t3">The new flow</h1>
+    <p class="lead">Six user-visible steps ending in <strong>drill-down to existing surfaces</strong>.</p>
+    <p class="schematic-label">Schematic stepper, not a design</p>
+    <div class="stepper">
+      <div class="step"><span class="step-num">1</span><div class="step-title">Create or open case</div>
+        <details><summary>What can go wrong</summary>423 locked key; closed case read-only; failed imports listed.</details></div>
+      <div class="step"><span class="step-num">2</span><div class="step-title">Add sources</div>
+        <details><summary>What can go wrong</summary>Mongo name missing; tag removal keeps events; IIS missing time-taken.</details></div>
+      <div class="step"><span class="step-num">3</span><div class="step-title">Open tracing paper</div>
+        <details><summary>What can go wrong</summary>No audit → lane disabled; single importer may disable builder.</details></div>
+      <div class="step"><span class="step-num">4</span><div class="step-title">Start tracing</div>
+        <details><summary>What can go wrong</summary>50k truncate; overlap warn; &gt;7 days rejected.</details></div>
+      <div class="step"><span class="step-num">5</span><div class="step-title">Read one timeline</div>
+        <details><summary>What can go wrong</summary>Clock unchecked; IIS 1s resolution; empty window messaging.</details></div>
+      <div class="step"><span class="step-num">6</span><div class="step-title">Drill down</div>
+        <details><summary>What can go wrong</summary>Stale analysis if windows differ from export pattern.</details></div>
+    </div>
+  </section>
+
+  <!-- Screen 4 -->
+  <section class="screen" data-i="3" data-time="35 sec" data-spec="spec §5" aria-labelledby="t4">
+    <h1 id="t4">The one timeline</h1>
+    <p class="lead"><strong>Stacked lanes</strong> share UTC axis, bucket label, gray missing lane, click to analyze.</p>
+    <div class="figure">
+      <p class="schematic-label">Schematic, not a design</p>
+      <svg viewBox="0 0 320 200" width="100%" height="auto" role="img" aria-label="Three stacked timeline lanes with shared time axis">
+        <text x="160" y="14" text-anchor="middle" font-size="9" fill="currentColor" opacity="0.7">Bucket: 5 min · counts + p95 (example)</text>
+        <line x1="40" y1="180" x2="300" y2="180" stroke="currentColor" stroke-width="1.5"/>
+        <text x="40" y="195" font-size="8" fill="currentColor" opacity="0.6">UTC →</text>
+        <text x="295" y="195" text-anchor="end" font-size="8" fill="currentColor" opacity="0.6">Local toggle (display)</text>
+        <rect x="40" y="28" width="260" height="42" fill="#3b82f6" opacity="0.25" stroke="#3b82f6"/>
+        <text x="48" y="52" font-size="10" fill="currentColor">Audit — volume + P95</text>
+        <rect x="40" y="78" width="260" height="42" fill="#059669" opacity="0.25" stroke="#059669"/>
+        <text x="48" y="102" font-size="10" fill="currentColor">SQL — events / wait</text>
+        <rect x="40" y="128" width="260" height="42" fill="#7c3aed" opacity="0.25" stroke="#7c3aed"/>
+        <text x="48" y="152" font-size="10" fill="currentColor">IIS — requests + status</text>
+        <rect x="200" y="78" width="100" height="42" fill="#888" opacity="0.35"/>
+        <text x="205" y="96" font-size="7" fill="currentColor">Missing lane</text>
+        <text x="205" y="108" font-size="7" fill="currentColor">gray + reason</text>
+        <circle cx="120" cy="49" r="5" fill="#ef4444"/><text x="128" y="52" font-size="7" fill="currentColor">Click bucket → Run analysis</text>
+      </svg>
+      <p class="caption">Limits: 7-day window · 120 buckets · 50k events · zoom from Pulse pattern.</p>
+    </div>
+    <details><summary>Lane empty-state phrases (spec)</summary>
+      <ul style="font-size:0.8rem;margin:0.5rem 0;padding-left:1.2rem">
+        <li>No source tag for lane</li><li>Nothing in window</li><li>TZ rule not checked</li><li>Truncated read</li>
+      </ul>
+    </details>
+  </section>
+
+  <!-- Screen 5 -->
+  <section class="screen" data-i="4" data-time="30 sec" data-spec="spec §6" aria-labelledby="t5">
+    <h1 id="t5">Which charts first</h1>
+    <p class="lead">MVP rungs are <strong>audit + SQL + IIS lanes</strong>; heavier charts stay on Later.</p>
+    <div class="ladder">
+      <div class="rung mvp"><span>Request volume / P95 (audit)</span><span class="effort">S</span><span class="risk-dot risk-s" title="Risk S"></span></div>
+      <div class="rung mvp"><span>SQL wait / blocking</span><span class="effort">M</span><span class="risk-dot risk-m"></span></div>
+      <div class="rung mvp"><span>IIS request / status</span><span class="effort">M</span><span class="risk-dot risk-m"></span></div>
+      <div class="rung mvp"><span>Error markers 4xx/5xx</span><span class="effort">S</span><span class="risk-dot risk-s"></span></div>
+      <div class="rung later"><span>Slow-call markers</span><span class="effort">S</span><span class="risk-dot risk-s"></span></div>
+      <div class="rung later"><span>Deploy markers</span><span class="effort">M</span><span class="risk-dot risk-m"></span></div>
+      <div class="rung later"><span>Host CPU / memory</span><span class="effort">L</span><span class="risk-dot risk-l"></span></div>
+      <div class="rung later"><span>Per-call trace overlay</span><span class="effort">M</span><span class="risk-dot risk-m"></span></div>
+    </div>
+  </section>
+
+  <!-- Screen 6 -->
+  <section class="screen" data-i="5" data-time="35 sec" data-spec="spec §7" aria-labelledby="t6">
+    <h1 id="t6">What happens to existing features</h1>
+    <p class="lead"><strong>Fold Run analysis</strong> into tracing drill-down; hide call trace UI for MVP.</p>
+    <div class="cols4">
+      <div><div class="col-head">Keep</div><div class="chips">
+        <span class="chip">Manual tools</span><span class="chip">Patterns</span><span class="chip">Checklist</span>
+        <span class="chip">After fix</span><span class="chip">Export</span><span class="chip">Ledger</span><span class="chip">Collect</span>
+        <span class="chip">Guided (checklist users)</span>
+      </div></div>
+      <div><div class="col-head">Fold</div><div class="chips">
+        <span class="chip">Run analysis → drill-down</span><span class="chip">Nearby → lanes Later</span>
+      </div></div>
+      <div><div class="col-head">Hide</div><div class="chips">
+        <span class="chip">Guided primary for tracing users Later</span><span class="chip">Call trace UI</span>
+      </div></div>
+      <div><div class="col-head">Retire / Later</div><div class="chips">
+        <span class="chip">Wireframe rail 0–13 MVP</span><span class="chip">Evidence cards Later</span>
+        <span class="chip">Text timeline UI Later</span>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- Screen 7 -->
+  <section class="screen" data-i="6" data-time="60 sec" data-spec="spec §11" aria-labelledby="t7">
+    <h1 id="t7">Your decisions</h1>
+    <p class="lead">Pick options for <strong>D-1 … D-7</strong>; recommendations match the spec.</p>
+    <div class="dec-bar">
+      <span id="decCounter">0 of 7 decided</span>
+      <button type="button" class="btn btn-primary" id="copyAnswers">Copy my answers</button>
+    </div>
+    <div class="decision-card"><fieldset data-d="D-1"><legend>D-1 Chart layout</legend>
+      <label class="opt"><input type="radio" name="D-1" value="A"> A) Single canvas</label>
+      <label class="opt"><input type="radio" name="D-1" value="B"> B) Stacked lanes <span class="rec">Recommended</span></label>
+    </fieldset></div>
+    <div class="decision-card"><fieldset data-d="D-2"><legend>D-2 Guided vs tracing entry</legend>
+      <label class="opt"><input type="radio" name="D-2" value="A"> A) Tracing replaces guided</label>
+      <label class="opt"><input type="radio" name="D-2" value="B"> B) Both equal</label>
+      <label class="opt"><input type="radio" name="D-2" value="C"> C) Tracing primary on home <span class="rec">Recommended</span></label>
+    </fieldset></div>
+    <div class="decision-card"><fieldset data-d="D-3"><legend>D-3 IIS lane content</legend>
+      <label class="opt"><input type="radio" name="D-3" value="A"> A) Counts only</label>
+      <label class="opt"><input type="radio" name="D-3" value="B"> B) Counts + status + duration <span class="rec">Recommended</span></label>
+    </fieldset></div>
+    <div class="decision-card"><fieldset data-d="D-4"><legend>D-4 Max time window</legend>
+      <label class="opt"><input type="radio" name="D-4" value="A"> A) 7 days hard cap <span class="rec">Recommended</span></label>
+      <label class="opt"><input type="radio" name="D-4" value="B"> B) Shorter default 24h only</label>
+    </fieldset></div>
+    <div class="decision-card"><fieldset data-d="D-5"><legend>D-5 Audit data source</legend>
+      <label class="opt"><input type="radio" name="D-5" value="A"> A) Live Mongo only</label>
+      <label class="opt"><input type="radio" name="D-5" value="B"> B) Case rows only</label>
+      <label class="opt"><input type="radio" name="D-5" value="C"> C) Both, prefer live <span class="rec">Recommended</span></label>
+    </fieldset></div>
+    <div class="decision-card"><fieldset data-d="D-6"><legend>D-6 API shape</legend>
+      <label class="opt"><input type="radio" name="D-6" value="A"> A) POST …/tracing <span class="rec">Recommended</span></label>
+      <label class="opt"><input type="radio" name="D-6" value="B"> B) Extend /timeline body</label>
+    </fieldset></div>
+    <div class="decision-card"><fieldset data-d="D-7"><legend>D-7 SQL lane metric</legend>
+      <label class="opt"><input type="radio" name="D-7" value="A"> A) Event count MVP <span class="rec">Recommended</span></label>
+      <label class="opt"><input type="radio" name="D-7" value="B"> B) Sum wait ms Later</label>
+      <label class="opt"><input type="radio" name="D-7" value="C"> C) Both toggle</label>
+    </fieldset></div>
+  </section>
+
+  <!-- Screen 8 -->
+  <section class="screen" data-i="7" data-time="30 sec" data-spec="spec §12" aria-labelledby="t8">
+    <h1 id="t8">What could go wrong</h1>
+    <p class="lead">Ranked risks — <strong>IIS timestamp semantics</strong> is #1.</p>
+    <ol class="risk-list">
+      <li class="risk-item"><span class="risk-rank">1</span> IIS timestamp semantics unverified<div class="risk-bar-wrap"><div class="risk-bar" style="width:100%"></div></div>Label approximate; test owner files</li>
+      <li class="risk-item"><span class="risk-rank">2</span> Tracing vs Run analysis diverge<div class="risk-bar-wrap"><div class="risk-bar" style="width:88%"></div></div>Same analyze query on click-through</li>
+      <li class="risk-item"><span class="risk-rank">3</span> 50k cap hides spikes<div class="risk-bar-wrap"><div class="risk-bar" style="width:76%"></div></div>Show truncated + narrow window</li>
+      <li class="risk-item"><span class="risk-rank">4</span> No live SQL in MVP<div class="risk-bar-wrap"><div class="risk-bar" style="width:64%"></div></div>Imports-only copy</li>
+      <li class="risk-item"><span class="risk-rank">5</span> TZ skew not auto-fixed<div class="risk-bar-wrap"><div class="risk-bar" style="width:52%"></div></div>Disable until rules validated</li>
+      <li class="risk-item"><span class="risk-rank">6</span> Wireframe scope creep<div class="risk-bar-wrap"><div class="risk-bar" style="width:40%"></div></div>Later backlog + MVP sign-off</li>
+      <li class="risk-item"><span class="risk-rank">7</span> Call trace expectations<div class="risk-bar-wrap"><div class="risk-bar" style="width:28%"></div></div>Do not advertise unwired UI</li>
+      <li class="risk-item"><span class="risk-rank">8</span> 7-day performance<div class="risk-bar-wrap"><div class="risk-bar" style="width:16%"></div></div>Coarsen buckets + timeout</li>
+    </ol>
+  </section>
+
+  <!-- Screen 9 -->
+  <section class="screen" data-i="8" data-time="35 sec" data-spec="spec §10, §9" aria-labelledby="t9">
+    <h1 id="t9">Later backlog &amp; how we know it works</h1>
+    <p class="lead"><strong>10 ordered Later items</strong>; MVP proof uses 15 acceptance checks (AC-01…AC-15).</p>
+    <ol class="ol-backlog">
+      <li>Wire Call trace UI (Evidence / tracing click)</li>
+      <li>Fourth Host lane</li>
+      <li>Release/deploy markers</li>
+      <li>Estimate line before run (GL-31)</li>
+      <li>Recurrence panel (GL-32–37)</li>
+      <li>Guided layout variant A rail 0–13</li>
+      <li>Evidence cards steps 7–9</li>
+      <li>Background job + cancel</li>
+      <li>Persist tracing window on workspace</li>
+      <li>Text timeline view toggle</li>
+    </ol>
+    <div class="ac-box">
+      <p><strong>15 acceptance criteria</strong> (AC-01 through AC-15) linked to TR-xx.</p>
+      <p style="margin-top:0.5rem"><strong>Example checks:</strong></p>
+      <ul style="margin:0.35rem 0;padding-left:1.2rem">
+        <li><strong>AC-01</strong> — Audit + IIS lanes render; SQL shows no source.</li>
+        <li><strong>AC-07</strong> — Bucket click opens Run analysis sub-window.</li>
+        <li><strong>AC-15</strong> — No Call trace navigation in MVP (TR-12).</li>
+      </ul>
+    </div>
+  </section>
+
+  <div class="nav-row">
+    <button type="button" class="btn" id="btnBack">Back</button>
+    <button type="button" class="btn btn-primary" id="btnNext">Next</button>
+  </div>
+  <p class="hint">Keyboard: ← → move screens · <kbd>a</kbd> toggles show-all scroll mode</p>
+</div>
+<script>
+(function(){
+  var screens = document.querySelectorAll('.screen');
+  var n = screens.length;
+  var idx = 0;
+  var scrollMode = false;
+  var fill = document.getElementById('progressFill');
+  var meta = document.getElementById('screenMeta');
+  var specTag = document.getElementById('specTag');
+  var dotsEl = document.getElementById('dots');
+  var LS_KEY = 'tracing-spec-decisions-v1';
+
+  for (var d = 0; d < n; d++) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'dot';
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-label', 'Screen ' + (d + 1));
+    b.dataset.go = d;
+    dotsEl.appendChild(b);
+  }
+  var dots = dotsEl.querySelectorAll('.dot');
+
+  function show(i) {
+    if (i < 0) i = 0;
+    if (i >= n) i = n - 1;
+    idx = i;
+    if (!scrollMode) {
+      screens.forEach(function(s, j) {
+        s.classList.toggle('active', j === idx);
+      });
+    }
+    dots.forEach(function(dot, j) {
+      dot.setAttribute('aria-current', j === idx ? 'true' : 'false');
+    });
+    var s = screens[idx];
+    var t = s.getAttribute('data-time') || '';
+    var sp = s.getAttribute('data-spec') || '';
+    meta.textContent = 'Screen ' + (idx + 1) + ' of ' + n + ' · ' + t;
+    specTag.textContent = sp;
+    fill.style.width = (((idx + 1) / n) * 100) + '%';
+    document.getElementById('btnBack').disabled = idx === 0;
+    document.getElementById('btnNext').textContent = idx === n - 1 ? 'Done' : 'Next';
+  }
+
+  function toggleScroll() {
+    scrollMode = !scrollMode;
+    document.body.classList.toggle('scroll-mode', scrollMode);
+    if (scrollMode) fill.style.width = '100%';
+    else show(idx);
+  }
+
+  document.getElementById('btnBack').addEventListener('click', function(){ if (!scrollMode) show(idx - 1); });
+  document.getElementById('btnNext').addEventListener('click', function(){ if (!scrollMode) show(idx + 1); });
+  dots.forEach(function(dot) {
+    dot.addEventListener('click', function(){ if (!scrollMode) show(+dot.dataset.go); });
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.target.closest('summary') || e.target.closest('input')) return;
+    if (e.key === 'a' || e.key === 'A') { e.preventDefault(); toggleScroll(); return; }
+    if (scrollMode) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); show(idx - 1); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); show(idx + 1); }
+  });
+
+  function loadDecisions() {
+    try {
+      var raw = localStorage.getItem(LS_KEY);
+      if (!raw) return;
+      var o = JSON.parse(raw);
+      Object.keys(o).forEach(function(name) {
+        var el = document.querySelector('input[name="' + name + '"][value="' + o[name] + '"]');
+        if (el) el.checked = true;
+      });
+    } catch (e) {}
+  }
+  function saveDecisions() {
+    try {
+      var o = {};
+      for (var i = 1; i <= 7; i++) {
+        var name = 'D-' + i;
+        var c = document.querySelector('input[name="' + name + '"]:checked');
+        if (c) o[name] = c.value;
+      }
+      localStorage.setItem(LS_KEY, JSON.stringify(o));
+    } catch (e) {}
+  }
+  function updateCounter() {
+    var count = 0;
+    for (var i = 1; i <= 7; i++) {
+      if (document.querySelector('input[name="D-' + i + '"]:checked')) count++;
+    }
+    document.getElementById('decCounter').textContent = count + ' of 7 decided';
+  }
+  document.querySelectorAll('.decision-card input[type=radio]').forEach(function(r) {
+    r.addEventListener('change', function(){ saveDecisions(); updateCounter(); });
+  });
+  document.getElementById('copyAnswers').addEventListener('click', function() {
+    var lines = ['Tracing spec decisions'];
+    for (var i = 1; i <= 7; i++) {
+      var name = 'D-' + i;
+      var c = document.querySelector('input[name="' + name + '"]:checked');
+      lines.push(name + ': ' + (c ? c.value : '(not chosen)'));
+    }
+    var text = lines.join('\n');
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(fallback);
+    } else fallback();
+  });
+
+  loadDecisions();
+  updateCounter();
+  show(0);
+})();
+</script>
+</body>
+</html>

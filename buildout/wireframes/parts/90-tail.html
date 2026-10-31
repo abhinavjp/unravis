@@ -1,0 +1,20 @@
+<script>
+(function boot(){
+  var q = {};
+  try {
+    (location.search || '').replace(/^\?/, '').split('&').forEach(function(p){
+      if (!p) return;
+      var kv = p.split('=');
+      q[decodeURIComponent(kv[0] || '')] = decodeURIComponent((kv[1] || '').replace(/\+/g, ' '));
+    });
+  } catch (e) {}
+  if (q.variant === 'A' || q.variant === 'B' || q.variant === 'C') W.variant = q.variant;
+  if (q.mode === 'manual' || q.mode === 'guided') W.mode = q.mode;
+  var n = parseInt(q.step, 10);
+  if (W.mode === 'guided' && n >= 0 && n <= 13) { W.step = n; W.openFold = n; }
+  if (W.mode === 'manual' && q.tool && toolById(q.tool)) W.tool = q.tool;
+  render();
+})();
+</script>
+</body>
+</html>
