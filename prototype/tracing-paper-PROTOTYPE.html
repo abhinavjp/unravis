@@ -106,6 +106,29 @@ pre.json { margin:0; padding:8px; background:var(--bg); border:1px solid var(--l
 .drawer { position:fixed; left:50%; bottom:122px; transform:translateX(-50%); z-index:49; width:min(980px, calc(100vw - 24px)); max-height:52vh; overflow:auto; background:var(--surface); border:1px solid var(--control-line); border-radius:var(--r); padding:12px 16px; box-shadow:0 6px 24px rgb(0 0 0 / 45%); }
 .drawer .cols3 { display:grid; grid-template-columns:1fr 1fr; gap:12px; } @media (max-width:900px){ .drawer .cols3 { grid-template-columns:1fr; } }
 @media (max-width:700px) { .hdr { padding:0 12px; gap:8px; } .crumb, .hdr .sticker.grey { display:none; } .notes .nh { flex-wrap:wrap; padding:8px 12px; } .notes .cols2 { padding:0 12px 12px; } .main { padding:16px 12px 250px; } .rail { padding:8px 12px 0; } .tc { grid-template-columns:104px minmax(0,1fr); } .tc .lab { padding-right:6px; } .dock .strip .delta { display:none; } .card { padding:12px; } .rib { grid-template-columns:1fr; } }
+
+.pkwrap { position:relative; display:inline-block; max-width:100%; }
+.pkbtn { display:flex; align-items:center; gap:10px; padding:8px 12px; border:1px solid var(--control-line); border-radius:var(--r); background:var(--bg); text-align:left; line-height:1.3; }
+.pkbtn:hover, .pkbtn[aria-expanded="true"] { border-color:var(--accent); }
+.pk { position:absolute; z-index:40; top:calc(100% + 6px); left:0; width:min(700px, 92vw); display:grid; grid-template-columns:150px 250px minmax(0,1fr); background:var(--surface); border:1px solid var(--control-line); border-radius:var(--r); box-shadow:0 12px 32px rgb(0 0 0 / 50%); }
+.pkc { padding:12px; } .pkc + .pkc { border-left:1px solid var(--line); }
+.qr { display:grid; gap:2px; margin-top:6px; } .qr .quiet { text-align:left; }
+.calh { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+.cal { display:grid; grid-template-columns:repeat(7,1fr); gap:2px; } .cal.dow { color:var(--text-2); font-size:11px; text-align:center; margin-bottom:2px; }
+.day { aspect-ratio:1; border:0; background:transparent; border-radius:var(--r); padding:0; } .day:hover { background:var(--surface-2); }
+.day.in { background:var(--ok-soft); } .day.end { background:var(--accent); color:var(--accent-ink); font-weight:600; } .day.today { box-shadow:inset 0 0 0 1px var(--text-2); }
+.tb { display:inline-flex; align-items:center; gap:4px; } .tn { width:3.4em; text-align:center; background:var(--bg); border:1px solid var(--control-line); border-radius:var(--r); padding:5px 2px; }
+@media (max-width:760px) { .pk { grid-template-columns:1fr; } .pkc + .pkc { border-left:0; border-top:1px solid var(--line); } .qr { grid-template-columns:1fr 1fr; } }
+.sum { color:var(--text-2); } .sum b { color:var(--text); }
+.wb { display:grid; grid-template-columns:290px minmax(0,1fr); gap:20px; align-items:start; }
+.wb-side { position:sticky; top:72px; border:1px solid var(--line); background:var(--surface); padding:16px; border-radius:var(--r); }
+.lrows { display:grid; gap:4px; margin-top:8px; } .lrow-btn { display:flex; gap:10px; text-align:left; padding:8px; border:1px solid var(--line); border-radius:var(--r); background:transparent; width:100%; } .lrow-btn[aria-pressed="true"] { border-color:var(--accent); background:var(--surface-2); } .lrow-btn[disabled] { opacity:.5; }
+.wb .tall .tc .plot { min-height:140px; } .wb .tall .tc .plot svg { height:140px; }
+@media (max-width:1000px) { .wb { grid-template-columns:1fr; } .wb-side { position:static; } }
+table.ledger td { vertical-align:middle; } table.ledger tr.lr.on td { background:var(--surface-2); } table.ledger tr.lx > td { padding:8px 0 0; }
+.spark { min-width:220px; } .spark svg { height:38px; width:100%; display:block; }
+.axisrow2 { position:relative; height:14px; font:11px var(--mono); color:var(--text-2); min-width:220px; } .axisrow2 span { position:absolute; transform:translateX(-50%); white-space:nowrap; } .axisrow2 span:first-child { transform:none; } .axisrow2 span:last-child { transform:translateX(-100%); }
+.vpill { margin-bottom:0; }
 @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
 </style>
 </head>
@@ -246,7 +269,7 @@ const fingerprint = (sid, lane, filter) => hex('unravis-coverage-v1\0' + sid + '
 /* ====================================================================================
    3. State (in memory only)
    ==================================================================================== */
-let UI = { theme:'dark', notesOpen:true, stateOpen:false };
+let UI = { theme:'dark', notesOpen:true, stateOpen:false, variant:'A', pk:null, expLane:null };
 let S;
 function fresh() {
   return {
@@ -480,13 +503,6 @@ const A = {
   window(w, label) { return act('Window · ' + label, () => { S.window = { start:w.start, end:w.end }; S.winErr = null; return { summary:'window ' + win(w.start, w.end) }; }); },
   choose(sid) { return act('Source · ' + src(sid).label.split(' (')[0] + (S.chosen[sid] ? ' removed' : ' chosen'), () => { S.chosen[sid] = !S.chosen[sid]; return { summary:sid + (S.chosen[sid] ? ' chosen' : ' removed') }; }); },
 };
-function applyWinInputs() {
-  const g = id => document.getElementById(id).value, p = (d, t) => { if (!d || !t) return NaN; return Date.parse(d + 'T' + (t.length === 5 ? t + ':00' : t) + 'Z'); };
-  const a = p(g('ws-d'), g('ws-t')), b = p(g('we-d'), g('we-t'));
-  if (isNaN(a) || isNaN(b)) { S.winErr = 'Choose a date and a time for both ends.'; render(); return; }
-  A.window({ start:a, end:b }, 'typed');
-}
-
 /* ====================================================================================
    9. Scenarios: ready-made situations per screen (the bottom switcher)
    ==================================================================================== */
@@ -550,7 +566,8 @@ function loadScenario(screen, id) {
   act('Scenario loaded · ' + sc.label, () => ({ summary:'case replaced by a prepared situation' }));
   setHash();
 }
-function setHash() { const sc = S.scen && S.scen.screen === S.screen ? S.scen.id : ''; try { history.replaceState(null, '', '#screen=' + S.screen + (sc ? '&scenario=' + sc : '')); } catch (e) { } }
+function setHash() { const sc = S.scen && S.scen.screen === S.screen ? S.scen.id : ''; try { history.replaceState(null, '', '#screen=' + S.screen + (sc ? '&scenario=' + sc : '') + (S.screen === 'tracing' ? '&variant=' + UI.variant : '')); } catch (e) { } }
+function cycleVariant(d) { const i = VARIANTS.findIndex(v => v.k === UI.variant); UI.variant = VARIANTS[(i + d + VARIANTS.length) % VARIANTS.length].k; render(); setHash(); }
 function go(screen) { S.screen = screen; S.sel = null; render(); setHash(); window.scrollTo(0, 0); }
 function cycleScenario(d) {
   const list = scenList(S.screen); if (!list.length) return;
@@ -584,14 +601,45 @@ function storedSummary(sid) {
   return { events:imps.reduce((a, i) => a + i.rows.length, 0), n:imps.length, from:Math.min(...imps.map(i => i.from)), to:Math.max(...imps.map(i => i.to)) };
 }
 
-function winPicker(note) {
-  const w = S.window, p = windowProblem(w), d = ms => iso(ms).slice(0, 10), t = ms => iso(ms).slice(11, 19);
-  return '<div class="card"><h3>Incident window <span class="dim sm">· UTC · the end is not included</span></h3><div class="row g16" style="margin-top:8px;align-items:flex-end">' +
-    '<fieldset class="dt"><legend>Start</legend><input type="date" id="ws-d" data-win value="' + d(w.start) + '"> <input type="time" step="1" id="ws-t" data-win value="' + t(w.start) + '"></fieldset>' +
-    '<fieldset class="dt"><legend>End</legend><input type="date" id="we-d" data-win value="' + d(w.end) + '"> <input type="time" step="1" id="we-t" data-win value="' + t(w.end) + '"></fieldset>' +
-    btn('lasthour', 'Last hour', { s:true }) + '<span class="dim">' + (w.end > w.start ? 'Span ' + esc(fmtSpan(w.end - w.start)) : '') + '</span></div>' +
-    (S.winErr ? '<p class="err" style="margin-top:6px">' + esc(S.winErr) + '</p>' : '') + (p ? '<p class="err" style="margin-top:6px">' + esc(p) + ' Nothing will be read.</p>' : '') + (note ? '<p class="dim sm" style="margin-top:6px">' + note + '</p>' : '') + '</div>';
+/* ---- Date-time range picker (everything UTC) ---- */
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const dayStart = ms => Math.floor(ms / DAY) * DAY;
+const tparts = ms => { const d = new Date(ms), hr = d.getUTCHours(); return { h:((hr + 11) % 12) + 1, m:d.getUTCMinutes(), s:d.getUTCSeconds(), ap:hr >= 12 ? 'PM' : 'AM' }; };
+const toMs = (day, t) => day + (((+t.h % 12) + (t.ap === 'PM' ? 12 : 0)) * 3600 + (+t.m) * 60 + (+t.s)) * 1000;
+const fmtT = ms => { const p = tparts(ms); return p.h + ':' + String(p.m).padStart(2, '0') + (p.s ? ':' + String(p.s).padStart(2, '0') : '') + ' ' + p.ap; };
+const fmtD = ms => MONTHS[new Date(ms).getUTCMonth()].slice(0, 3) + ' ' + new Date(ms).getUTCDate() + ', ' + new Date(ms).getUTCFullYear();
+const fmtRange = w => dayStart(w.start) === dayStart(w.end) ? fmtD(w.start) + ' · ' + fmtT(w.start) + ' → ' + fmtT(w.end) : fmtD(w.start) + ' ' + fmtT(w.start) + ' → ' + fmtD(w.end) + ' ' + fmtT(w.end);
+const QUICK = [['Last 15 minutes', 15 * MIN], ['Last hour', H], ['Last 6 hours', 6 * H], ['Last 24 hours', DAY], ['Last 7 days', 7 * DAY], ['Last 30 days', 30 * DAY]];
+function pkOpen() { const w = S.window, d = new Date(w.start); UI.pk = { open:true, y:d.getUTCFullYear(), m:d.getUTCMonth(), sd:dayStart(w.start), ed:dayStart(w.end), st:tparts(w.start), et:tparts(w.end), pick:false, err:'' }; }
+function pkRange() { const k = UI.pk; return k.sd == null || k.ed == null ? null : { start:toMs(k.sd, k.st), end:toMs(k.ed, k.et) }; }
+function pkReadout() {
+  const r = pkRange(); if (!r) return '<span class="dim">Click a start day, then an end day.</span>';
+  if (r.end <= r.start) return '<span class="err">The end must be after the start.</span>';
+  return '<b>' + esc(fmtRange(r)) + '</b> <span class="dim">UTC · ' + esc(fmtSpan(r.end - r.start)) + '</span>' + (r.end - r.start > 30 * DAY ? '<div class="warnc sm">The longest window is 30 days; this one will be refused.</div>' : '');
 }
+function pkTime(id, label, t) {
+  const n = (f, lo, hi, v) => '<input type="number" class="tn" min="' + lo + '" max="' + hi + '" data-pk="' + id + '.' + f + '" value="' + v + '" aria-label="' + label + ' ' + { h:'hour', m:'minute', s:'second' }[f] + '">';
+  return '<fieldset class="dt"><legend>' + label + '</legend><span class="tb">' + n('h', 1, 12, t.h) + '<b>:</b>' + n('m', 0, 59, String(t.m).padStart(2, '0')) + '<b>:</b>' + n('s', 0, 59, String(t.s).padStart(2, '0')) +
+    '<select data-pk="' + id + '.ap" aria-label="' + label + ' AM or PM"><option' + (t.ap === 'AM' ? ' selected' : '') + '>AM</option><option' + (t.ap === 'PM' ? ' selected' : '') + '>PM</option></select></span></fieldset>';
+}
+function pkCal() {
+  const k = UI.pk, lead = new Date(Date.UTC(k.y, k.m, 1)).getUTCDay(), n = new Date(Date.UTC(k.y, k.m + 1, 0)).getUTCDate(), today = dayStart(NOW0);
+  let cells = ''; for (let i = 0; i < lead; i++) cells += '<span></span>';
+  for (let d = 1; d <= n; d++) {
+    const ms = Date.UTC(k.y, k.m, d), s = ms === k.sd, e = ms === k.ed, inr = k.sd != null && k.ed != null && ms > k.sd && ms < k.ed;
+    cells += '<button class="day' + (s || e ? ' end' : inr ? ' in' : '') + (ms === today ? ' today' : '') + '" data-act="pkday" data-d="' + ms + '" aria-pressed="' + (s || e) + '" aria-label="' + MONTHS[k.m] + ' ' + d + ', ' + k.y + (s ? ', start' : e ? ', end' : '') + '">' + d + '</button>';
+  }
+  return '<div class="calh"><button class="quiet" data-act="pkmonth" data-d="-1" aria-label="Previous month">‹</button><b>' + MONTHS[k.m] + ' ' + k.y + '</b><button class="quiet" data-act="pkmonth" data-d="1" aria-label="Next month">›</button></div>' +
+    '<div class="cal dow">' + ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(x => '<span>' + x + '</span>').join('') + '</div><div class="cal">' + cells + '</div><p class="dim sm" style="margin-top:6px">' + (UI.pk.pick ? 'Now click the end day.' : 'Click the start day, then the end day.') + '</p>';
+}
+function winTrigger() {
+  const w = S.window, k = UI.pk, open = k && k.open;
+  const pop = open ? '<div class="pk" role="dialog" aria-label="Choose the incident window (UTC)"><div class="pkc"><h4>Quick ranges</h4><div class="qr">' + QUICK.map(([t, d], i) => '<button class="quiet" data-act="pkquick" data-i="' + i + '">' + t + '</button>').join('') + '</div><p class="dim sm" style="margin-top:8px">Counted back from the fake "now", 12:00 PM UTC.</p></div>' +
+    '<div class="pkc">' + pkCal() + '</div><div class="pkc"><h4>Times · UTC</h4><div class="stack" style="margin-top:6px">' + pkTime('st', 'Start', k.st) + pkTime('et', 'End (not included)', k.et) + '<div id="pk-read" aria-live="polite">' + pkReadout() + '</div>' + (k.err ? '<p class="err sm">' + esc(k.err) + '</p>' : '') + '<div class="row"><button class="btn" data-act="pkcancel">Cancel</button><button class="btn primary" data-act="pkapply">Apply window</button></div></div></div></div>' : '';
+  return '<div class="pkwrap"><button class="pkbtn" id="pk-trigger" data-act="pkopen" aria-haspopup="dialog" aria-expanded="' + !!open + '"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="3" width="13" height="11.5" rx="1" fill="none" stroke="currentColor"/><path d="M1.5 6.5h13M5 1.5v3M11 1.5v3" stroke="currentColor" fill="none"/></svg><span><b>' + esc(w.end > w.start ? fmtRange(w) : 'Choose a window') + '</b><br><span class="dim sm">UTC' + (w.end > w.start ? ' · ' + esc(fmtSpan(w.end - w.start)) : '') + ' · the end is not included</span></span></button>' + pop + '</div>';
+}
+function winMsgs() { const p = windowProblem(S.window); return p ? '<p class="err" style="margin-top:6px">' + esc(p) + ' Nothing will be read.</p>' : ''; }
+function winPicker() { return '<div class="card"><h3>Incident window <span class="dim sm">· UTC</span></h3><div class="row" style="margin-top:8px">' + winTrigger() + btn('lasthour', 'Last hour', { s:true }) + '</div>' + winMsgs() + '</div>'; }
 
 /* ---- Screen 1: Case home ---- */
 function screenCase() {
@@ -695,11 +743,11 @@ function laneRow(l, ax, i) {
   if (l.buckets) return lab + '<div class="plot" style="grid-column:2;' + gr + '">' + laneSVG(l, ax) + '</div>';
   return lab + '<div class="plot empty" style="grid-column:2;' + gr + '"><span>' + esc(l.reason) + '</span></div>';
 }
-function chartHTML(t) {
-  const ax = t._axis, n = ax.n, slot = 100 / n, sel = S.selBucket;
+function chartHTML(t, only) {
+  const ax = t._axis, n = ax.n, slot = 100 / n, sel = S.selBucket, lanes = only ? t.lanes.filter(l => l.key === only) : t.lanes;
   const ticks = [0, 1, 2, 3, 4].map(i => '<span style="left:' + i * 25 + '%">' + short(ax.axisStart + Math.round(n * i / 4) * ax.W) + '</span>').join('');
-  return '<div class="tc" id="tc">' + t.lanes.map((l, i) => laneRow(l, ax, i)).join('') + '<div class="axisrow" style="grid-column:2;grid-row:' + (t.lanes.length + 1) + '">' + ticks + '</div>' +
-    '<div class="ov" id="ov" tabindex="0" role="group" aria-roledescription="bucket selector" aria-label="Time buckets. Left and right arrow keys move, Enter opens Run analysis for the selected bucket." style="grid-column:2;grid-row:1 / span ' + t.lanes.length + '"><div class="hov"></div>' +
+  return '<div class="tc" id="tc">' + lanes.map((l, i) => laneRow(l, ax, i)).join('') + '<div class="axisrow" style="grid-column:2;grid-row:' + (lanes.length + 1) + '">' + ticks + '</div>' +
+    '<div class="ov" id="ov" tabindex="0" role="group" aria-roledescription="bucket selector" aria-label="Time buckets. Left and right arrow keys move, Enter opens Run analysis for the selected bucket." style="grid-column:2;grid-row:1 / span ' + lanes.length + '"><div class="hov"></div>' +
     (sel != null ? '<div class="selc" style="left:' + sel * slot + '%;width:' + slot + '%"></div>' : '') + '</div></div>';
 }
 function bucketPanel(t) {
@@ -724,26 +772,61 @@ function traceDetails(t) {
     '<table class="sm" style="margin-top:8px"><tr><th>Lane</th><th>origin</th><th>consistency</th><th>complete</th><th>asOf</th><th>sources</th></tr>' + t.lanes.map(l => '<tr><td>' + l.label + '</td><td>' + l.origin + '</td><td>' + l.consistency + '</td><td>' + l.complete + '</td><td class="mono">' + hh(l.asOf) + '</td><td>' + (l.sources.map(x => esc(x.label.split(' (')[0])).join(', ') || '–') + '</td></tr>').join('') + '</table>' +
     '<p class="dim sm" style="margin-top:6px"><span class="mono">complete: true</span> means the read finished within its budget. It does not mean the source was a stable snapshot.</p></details>';
 }
-function screenTracing() {
-  const t = S.last.tracing, closed = S.case.closed, prob = windowProblem(S.window), t0 = t && t.status === 200 && !t.disabled;
-  const chips = SRC.map(s => btn('choose', esc(LANE_LABEL[s.lane]) + ' · ' + esc(srcShort(s.id)), { s:true, d:{ sid:s.id }, pressed:!!S.chosen[s.id], disabled:closed })).join(' ');
-  let out = '';
-  if (t && t.status === 409) out = '<div class="note grey">' + esc(t.error) + '</div>';
-  else if (t && t.status === 400) out = '<div class="note bad"><b>' + esc(t.error) + '</b> The chart is not drawn.</div>';
-  else if (t && t.disabled) out = '<div class="note bad"><b>' + esc(t.reason) + '.</b> The chart is switched off as a whole until every chosen source has a validated time-zone rule. No lane plots any point.</div>';
-  else if (t) {
+const VARIANTS = [{ k:'A', name:'Report' }, { k:'B', name:'Workbench' }, { k:'C', name:'Lane ledger' }];
+function trParts() {
+  const t = S.last.tracing, closed = S.case.closed, prob = windowProblem(S.window), ok = !!(t && t.status === 200 && !t.disabled), P = { t, closed, prob, ok };
+  P.chips = SRC.map(s => btn('choose', esc(LANE_LABEL[s.lane]) + ' · ' + esc(srcShort(s.id)), { s:true, d:{ sid:s.id }, pressed:!!S.chosen[s.id], disabled:closed })).join(' ');
+  P.start = btn('trace', ok ? 'Trace again' : 'Start tracing', { primary:true, disabled:closed || !!prob, title:closed ? 'This case is closed. You can read it, but nothing can be added.' : prob || '' });
+  if (!t) P.msg = '<div class="card dim">Choose sources and a window, then press Start tracing.</div>';
+  else if (t.status === 409) P.msg = '<div class="note grey">' + esc(t.error) + '</div>';
+  else if (t.status === 400) P.msg = '<div class="note bad"><b>' + esc(t.error) + '</b> The chart is not drawn.</div>';
+  else if (t.disabled) P.msg = '<div class="note bad"><b>' + esc(t.reason) + '.</b> The chart is switched off as a whole until every chosen source has a validated time-zone rule. No lane plots any point.</div>';
+  if (ok) {
     const ax = t._axis;
-    out = '<div class="card"><div class="kpi"><div><small>Bucket size</small><span class="big">' + fmtDur(ax.W) + '</span></div><div><small>Buckets on the axis</small><span class="big">' + ax.n + '</span></div><div><small>Window</small><span class="big">' + fmtSpan(ax.span) + '</span></div></div>' +
+    P.ax = ax;
+    P.kpi = '<div class="card"><div class="kpi"><div><small>Bucket size</small><span class="big">' + fmtDur(ax.W) + '</span></div><div><small>Buckets on the axis</small><span class="big">' + ax.n + '</span></div><div><small>Window</small><span class="big">' + fmtSpan(ax.span) + '</span></div></div>' +
       (ax.span > 24 * H ? '<p class="dim sm" style="margin-top:8px">Longer windows use coarser buckets.</p>' : '') +
-      (ax.n > ax.inWindow ? '<p class="dim sm" style="margin-top:8px">The axis is fixed to whole UTC hours and never re-anchored, so ' + plural(ax.n - ax.inWindow, 'slot') + ' at the ends sit outside your window (thin grey ticks).</p>' : '') + '</div>' +
-      (t.mixedConsistency ? '<div class="note" role="note"><b>Live and saved lanes are read at different times; totals across lanes are not a conservation check.</b> <span class="dim">This note cannot be dismissed.</span></div>' : '') +
-      (t.lanes.some(l => l.state === 'incomplete') ? '<div class="note bad" role="status">' + t.lanes.filter(l => l.state === 'incomplete').map(l => '<div><b>' + l.label + ':</b> ' + esc(l.reason) + (l.key === 'audit' ? '' : ' Hatched buckets are not exact and are never drawn as complete.') + '</div>').join('') + '</div>' : '') +
-      '<div class="card">' + chartHTML(t) + '</div>' + bucketPanel(t) + traceDetails(t);
-  } else out = '<div class="card dim">Choose sources and a window, then press Start tracing.</div>';
-  return '<div class="page-h"><h1>Tracing</h1></div><p class="lede">One UTC timeline, three lanes: the live API audit next to the saved SQL and IIS evidence.</p><div class="stack">' + scenCallout() + winPicker() +
-    '<div class="card"><h3>Sources</h3><div class="row" style="margin-top:8px">' + chips + '</div><div class="row" style="margin-top:12px">' + btn('trace', t0 ? 'Trace again' : 'Start tracing', { primary:true, disabled:closed || !!prob, title:closed ? 'This case is closed. You can read it, but nothing can be added.' : prob || '' }) + (closed ? '<span class="dim sm">This case is closed.</span>' : '') + '<span class="sp"></span>' + btn('go', 'Add evidence', { s:true, d:{ s:'evidence' }, disabled:closed }) + '</div></div>' + out +
-    '<div class="row"><span class="sp"></span>' + btn('go', 'Continue to export', { d:{ s:'export' } }) + '</div></div>';
+      (ax.n > ax.inWindow ? '<p class="dim sm" style="margin-top:8px">The axis is fixed to whole UTC hours and never re-anchored, so ' + plural(ax.n - ax.inWindow, 'slot') + ' at the ends sit outside your window (thin grey ticks).</p>' : '') + '</div>';
+    P.sum = '<div class="sum"><b>' + fmtDur(ax.W) + ' buckets</b> · ' + ax.n + ' on the axis · window ' + fmtSpan(ax.span) + (ax.span > 24 * H ? ' · longer windows use coarser buckets' : '') + (ax.n > ax.inWindow ? ' · ' + (ax.n - ax.inWindow) + ' end slots outside the window' : '') + '</div>';
+    P.banners = (t.mixedConsistency ? '<div class="note" role="note"><b>Live and saved lanes are read at different times; totals across lanes are not a conservation check.</b> <span class="dim">This note cannot be dismissed.</span></div>' : '') +
+      (t.lanes.some(l => l.state === 'incomplete') ? '<div class="note bad" role="status">' + t.lanes.filter(l => l.state === 'incomplete').map(l => '<div><b>' + l.label + ':</b> ' + esc(l.reason) + (l.key === 'audit' ? '' : ' Hatched buckets are not exact and are never drawn as complete.') + '</div>').join('') + '</div>' : '');
+    P.bucket = bucketPanel(t); P.details = traceDetails(t);
+  }
+  return P;
 }
+const trHead = (sub) => '<div class="page-h"><h1>Tracing</h1><span class="dim sm">Layout ' + UI.variant + ' · ' + VARIANTS.find(v => v.k === UI.variant).name + '</span></div><p class="lede">' + sub + '</p>';
+const trNext = () => '<div class="row"><span class="sp"></span>' + btn('go', 'Continue to export', { d:{ s:'export' } }) + '</div>';
+/* Layout A: Report. Setup form on top, then result, top to bottom. */
+function trA(P) {
+  return trHead('One UTC timeline, three lanes: the live API audit next to the saved SQL and IIS evidence.') + '<div class="stack">' + scenCallout() + winPicker() +
+    '<div class="card"><h3>Sources</h3><div class="row" style="margin-top:8px">' + P.chips + '</div><div class="row" style="margin-top:12px">' + P.start + (P.closed ? '<span class="dim sm">This case is closed.</span>' : '') + '<span class="sp"></span>' + btn('go', 'Add evidence', { s:true, d:{ s:'evidence' }, disabled:P.closed }) + '</div></div>' +
+    (P.ok ? P.kpi + P.banners + '<div class="card">' + chartHTML(P.t) + '</div>' + P.bucket + P.details : P.msg) + trNext() + '</div>';
+}
+/* Layout B: Workbench. Persistent setup rail on the left, the chart owns the page. */
+function trB(P) {
+  const rows = SRC.map(s => { const sm = storedSummary(s.id), sub = s.mode === 'live' ? 'Live read, never saved' : sm ? plural(sm.events, 'event') + ' stored' : 'nothing stored'; return '<button class="lrow-btn" data-act="choose" data-sid="' + s.id + '" aria-pressed="' + !!S.chosen[s.id] + '"' + (P.closed ? ' disabled' : '') + '><span class="leg" style="background:var(--lane-' + s.lane + ');margin-top:5px"></span><span><b>' + esc(srcShort(s.id)) + '</b><br><span class="dim sm">' + LANE_LABEL[s.lane] + ' · ' + sub + '</span></span></button>'; }).join('');
+  const side = '<aside class="wb-side"><h3>Window</h3><div style="margin-top:8px">' + winTrigger() + '</div><div class="row" style="margin-top:6px">' + btn('lasthour', 'Last hour', { s:true }) + '</div>' + winMsgs() + '<h3 style="margin-top:20px">Sources</h3><div class="lrows">' + rows + '</div><div style="margin-top:16px;display:grid">' + P.start + '</div><div style="margin-top:8px">' + btn('go', 'Add evidence', { s:true, d:{ s:'evidence' }, disabled:P.closed }) + '</div></aside>';
+  const main = '<section class="wb-main stack">' + (P.ok ? P.sum + P.banners + '<div class="card tall">' + chartHTML(P.t) + '</div><div class="grid2"><div>' + P.bucket + '</div><div class="stack">' + P.details + '</div></div>' : P.msg) + '</section>';
+  return trHead('Setup stays on the left; the chart takes the page.') + '<div class="stack">' + scenCallout() + '<div class="wb">' + side + main + '</div>' + trNext() + '</div>';
+}
+/* Layout C: Lane ledger. A trust table first, with a sparkline per lane; one lane expands to the full chart. */
+function trC(P) {
+  const bar = '<div class="card"><div class="row g16">' + winTrigger() + btn('lasthour', 'Last hour', { s:true }) + '<span class="sp"></span>' + P.start + '</div><div class="row" style="margin-top:10px"><span class="dim sm">Sources</span>' + P.chips + btn('go', 'Add evidence', { s:true, d:{ s:'evidence' }, disabled:P.closed }) + '</div>' + winMsgs() + '</div>';
+  let body = P.msg || '';
+  if (P.ok) {
+    const t = P.t, ax = P.ax, withData = t.lanes.filter(l => l.buckets), exp = withData.some(l => l.key === UI.expLane) ? UI.expLane : (withData[0] && withData[0].key);
+    const ticks = [0, 2, 4].map(i => '<span style="left:' + i * 25 + '%">' + short(ax.axisStart + Math.round(ax.n * i / 4) * ax.W) + '</span>').join('');
+    const rows = t.lanes.map(l => {
+      const on = l.key === exp, trust = [stateSticker(l), stk(l.origin === 'live' ? 'Live read' : 'Stored', l.origin === 'live' ? 'warn' : ''), stk(l.consistency, l.consistency === 'live-non-snapshot' ? 'warn' : 'grey'), stk('complete: ' + l.complete, l.complete ? '' : 'bad')].join(' ');
+      return '<tr class="lr' + (on ? ' on' : '') + '"><td>' + (l.buckets ? '<button class="quiet" data-act="explane" data-lane="' + l.key + '" aria-expanded="' + on + '" style="padding:0;color:var(--text)">' + (on ? '▾' : '▸') + ' <span class="leg" style="background:var(--lane-' + l.key + ')"></span> <b>' + esc(l.label) + '</b></button>' : '<span class="leg" style="background:var(--lane-' + l.key + ')"></span> <b>' + esc(l.label) + '</b>') + '<div class="dim sm">' + (l.sources.map(x => esc(x.label.split(' (')[0])).join(', ') || 'no source chosen') + '</div></td>' +
+        '<td>' + trust + '<div class="dim sm" style="margin-top:2px">' + (l.origin === 'live' ? 'read began ' : 'as of ') + hh(l.asOf) + (l.coverageGaps && l.coverageGaps.length ? ' · <span class="warnc">gap in stored data</span>' : '') + '</div></td><td class="mono">' + l.total + '</td>' +
+        '<td>' + (l.buckets ? '<div class="spark">' + laneSVG(l, ax) + '</div>' : '<span class="dim sm">' + esc(l.reason) + '</span>') + '</td></tr>' + (on ? '<tr class="lx"><td colspan="4">' + chartHTML(t, l.key) + '</td></tr>' : '');
+    }).join('');
+    body = P.sum + P.banners + '<div class="card"><table class="ledger"><thead><tr><th>Lane</th><th>Trust</th><th>Events</th><th><div class="axisrow2">' + ticks + '</div></th></tr></thead><tbody>' + rows + '</tbody></table><p class="dim sm" style="margin-top:6px">Pick a lane to open its full chart. Hovering still shows every lane for that bucket.</p></div>' + P.bucket + P.details;
+  }
+  return trHead('Compare how far to trust each lane first, then open one lane for the detail.') + '<div class="stack">' + scenCallout() + bar + body + trNext() + '</div>';
+}
+function screenTracing() { const P = trParts(); return { A:trA, B:trB, C:trC }[UI.variant](P); }
 
 /* ---- Screen 3b: Run analysis (simulated hand-off) ---- */
 function screenAnalysis() {
@@ -809,10 +892,11 @@ function dockHTML() {
     pill = '<div class="pill" role="group" aria-label="Scenario switcher"><button data-act="prev" aria-label="Previous scenario">‹</button><select data-chg="scen" aria-label="Scenario for this screen">' + (cur ? '' : '<option value="">Pick a scenario for this screen…</option>') +
       groups.map(g => '<optgroup label="' + g + '">' + list.filter(x => x.group === g).map(x => '<option value="' + x.id + '"' + (x.id === cur ? ' selected' : '') + '>' + esc(x.label) + '</option>').join('') + '</optgroup>').join('') + '</select><span class="cnt">' + (i + 1) + '/' + list.length + '</span><button data-act="next" aria-label="Next scenario">›</button></div>';
   } else pill = '<div class="pill"><span style="padding:4px 12px;font-weight:600">Run analysis is a simulated destination</span></div>';
+  if (S.screen === 'tracing') { const v = VARIANTS.find(x => x.k === UI.variant); pill = '<div class="pill vpill" role="group" aria-label="Layout switcher"><button data-act="vprev" aria-label="Previous layout">‹</button><span style="font-weight:600;padding:0 8px;min-width:210px;text-align:center">Layout ' + v.k + ' · ' + v.name + '</span><span class="cnt">' + (VARIANTS.indexOf(v) + 1) + '/' + VARIANTS.length + '</span><button data-act="vnext" aria-label="Next layout">›</button></div>' + pill; }
   const wi = (WHATIF[S.screen] || []).map(([k, t]) => btn('whatif', esc(t), { s:true, d:{ k }, pressed:whatIfOn(k) })).join(' ');
   const strip = '<div class="strip">' + (wi ? '<span class="lbl">What if:</span>' + wi : '') + '<span class="delta" title="' + esc(S.lastAction + ' · ' + (S.delta.join(' · ') || 'no stored state changed')) + '"><b style="color:var(--text)">' + esc(S.lastAction) + '</b> · ' + (S.delta.length ? esc(S.delta.join(' · ')) : 'no stored state changed') + '</span>' +
     btn('state', UI.stateOpen ? 'Hide state' : 'Show full state', { s:true, pressed:UI.stateOpen }) + btn('reset', 'New case', { s:true, title:'Throw everything away and start a new empty case' }) + '</div>';
-  return '<div class="dock">' + pill + strip + '</div>';
+  return '<div class="dock" style="' + (S.screen === 'tracing' ? 'bottom:12px' : '') + '">' + pill + strip + '</div>';
 }
 function drawerHTML() {
   if (!UI.stateOpen) return '';
@@ -853,6 +937,8 @@ function render() {
 function selectBucket(k, focus) { S.selBucket = k; S.focusOv = focus !== false; render(); }
 function openAnalysis() { S.screen = 'analysis'; render(); setHash(); const b = document.getElementById('back-btn'); if (b) b.focus(); window.scrollTo(0, 0); }
 document.addEventListener('click', e => {
+  const b0 = e.target.closest('[data-act]');
+  if (UI.pk && UI.pk.open && !e.target.closest('.pk') && !e.target.closest('#pk-trigger')) { UI.pk.open = false; if (!b0) render(); }
   const ov = e.target.closest('#ov');
   if (ov && S.last.tracing && S.last.tracing._axis) { const r = ov.getBoundingClientRect(), n = S.last.tracing._axis.n; selectBucket(clamp(Math.floor((e.clientX - r.left) / r.width * n), 0, n - 1)); return; }
   const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
@@ -867,6 +953,15 @@ document.addEventListener('click', e => {
     case 'next': cycleScenario(1); break;
     case 'whatif': toggleWhatIf(d.k); break;
     case 'lasthour': A.window(W1, 'last hour'); break;
+    case 'pkopen': if (UI.pk && UI.pk.open) UI.pk.open = false; else pkOpen(); render(); break;
+    case 'pkcancel': UI.pk.open = false; render(); { const t = document.getElementById('pk-trigger'); if (t) t.focus(); } break;
+    case 'pkquick': { const q = QUICK[+d.i]; UI.pk.open = false; A.window({ start:NOW0 - q[1], end:NOW0 }, q[0].toLowerCase()); } break;
+    case 'pkmonth': { const k = UI.pk; k.m += +d.d; if (k.m < 0) { k.m = 11; k.y--; } if (k.m > 11) { k.m = 0; k.y++; } render(); } break;
+    case 'pkday': { const k = UI.pk, ms = +d.d; if (!k.pick) { k.sd = ms; k.ed = null; k.pick = true; } else { if (ms < k.sd) { k.ed = k.sd; k.sd = ms; } else k.ed = ms; k.pick = false; } k.err = ''; render(); } break;
+    case 'pkapply': { const r = pkRange(); if (!r) UI.pk.err = 'Click a start day and an end day first.'; else if (r.end <= r.start) UI.pk.err = 'The end must be after the start.'; else { UI.pk.open = false; A.window(r, 'picked'); break; } render(); } break;
+    case 'vprev': cycleVariant(-1); break;
+    case 'vnext': cycleVariant(1); break;
+    case 'explane': UI.expLane = d.lane; render(); break;
     case 'choose': A.choose(d.sid); break;
     case 'pull': A.pull(); break;
     case 'importIis': A.importIis(d.sid); break;
@@ -884,12 +979,21 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('change', e => {
   const t = e.target;
-  if (t.dataset.win !== undefined) applyWinInputs();
+  if (t.dataset.pk) {
+    const [o, f] = t.dataset.pk.split('.'); let v = t.value;
+    if (f !== 'ap') { v = clamp(Math.round(+v || 0), f === 'h' ? 1 : 0, f === 'h' ? 12 : 59); t.value = f === 'h' ? v : String(v).padStart(2, '0'); }
+    UI.pk[o][f] = v; UI.pk.err = ''; document.getElementById('pk-read').innerHTML = pkReadout();
+  }
   else if (t.dataset.chg === 'filter') { S.sqlFilter = t.value; render(); }
   else if (t.dataset.chg === 'scen' && t.value) loadScenario(S.screen, t.value);
 });
+document.addEventListener('input', e => {                                   // keep the readout live while typing time fields
+  const t = e.target; if (!t.dataset || !t.dataset.pk || t.dataset.pk.endsWith('.ap')) return;
+  const [o, f] = t.dataset.pk.split('.'); UI.pk[o][f] = clamp(Math.round(+t.value || 0), f === 'h' ? 1 : 0, f === 'h' ? 12 : 59); UI.pk.err = ''; document.getElementById('pk-read').innerHTML = pkReadout();
+});
 document.addEventListener('keydown', e => {
   const t = e.target;
+  if (e.key === 'Escape' && UI.pk && UI.pk.open) { UI.pk.open = false; render(); const tr = document.getElementById('pk-trigger'); if (tr) tr.focus(); return; }
   if (t.id === 'ov' && S.last.tracing && S.last.tracing._axis) {
     const slots = S.last.tracing._axis.slots; let k = S.selBucket;
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
@@ -898,7 +1002,7 @@ document.addEventListener('keydown', e => {
     else if ((e.key === 'Enter' || e.key === ' ') && k != null && !slots[k].empty) { e.preventDefault(); openAnalysis(); }
     return;
   }
-  if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !/^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName) && !t.isContentEditable) cycleScenario(e.key === 'ArrowRight' ? 1 : -1);
+  if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !/^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName) && !t.isContentEditable && !(UI.pk && UI.pk.open)) { if (S.screen === 'tracing') cycleVariant(e.key === 'ArrowRight' ? 1 : -1); else cycleScenario(e.key === 'ArrowRight' ? 1 : -1); }
 });
 const tip = document.getElementById('tip');
 document.addEventListener('mousemove', e => {
@@ -926,6 +1030,8 @@ const ASSUMPTIONS = [
   'Boundary raw scans are shown for saved lanes even though rollups are MVP-2 (see question 6). The audit lane accepts up to 30 days (the spec gives no separate limit). A write failing mid-replacement returns 500; a dropped connection returns 502.',
   'Closed case: Start tracing and all pulls and imports are disabled, export is still allowed. Locked key: the key card replaces every screen. Time-zone gate: a "what if" switch disables the whole chart.',
   'Not modelled: reference window, 50k row cap and truncation, loading and 503 states, hydration, Layer 4, zoom and brush, percentile selector, tooltip dictionary, demo mode. Run analysis is a simulated destination.',
+  'Tracing has three layouts (A Report, B Workbench, C Lane ledger), switched by the upper pill, the ← → keys on that screen, or #variant=. They differ in structure and hierarchy, share the same data and state, and are for choosing between; the scenario pill still works in all three.',
+  'Date-time picker: one popover with quick ranges (counted back from the fake now), a UTC calendar for the start and end day, and 12-hour time fields. Seconds are shown only when not zero.',
   'Fonts: IBM Plex is not bundled in this offline file, so system fonts stand in. Colours, shapes and the left step rail follow the brand tokens.',
 ];
 const QUESTIONS = [
@@ -948,6 +1054,7 @@ const QUESTIONS = [
    ==================================================================================== */
 function fromHash() {
   const p = new URLSearchParams((location.hash || location.search).replace(/^[#?]/, ''));
+  if (['A', 'B', 'C'].includes(p.get('variant'))) UI.variant = p.get('variant');
   const screen = ['case', 'evidence', 'tracing', 'export'].includes(p.get('screen')) ? p.get('screen') : 'case', sc = p.get('scenario');
   if (sc && scenList(screen).some(x => x.id === sc)) { if (!(S.scen && S.scen.id === sc && S.screen === screen)) loadScenario(screen, sc); }
   else if (S.screen !== screen) { S.screen = screen; render(); }
