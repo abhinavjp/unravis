@@ -1,0 +1,928 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tracing paper end-to-end PROTOTYPE (Unravis)</title>
+<!--
+  THROWAWAY PROTOTYPE. Fake data, in-memory state only, no network, no build, no persistence.
+  It shows the INTENDED flow and state behaviour from the tracing-paper spec (branch docs/tracing-paper-spec-round6,
+  commit 1396fd6). It does NOT prove the software works. Delete it once the flow question is answered.
+  Layout follows buildout/wireframes (Variant A shell: 56 px header, case bar, one working region); tokens follow
+  buildout/brand/unravis-brand.md. IBM Plex is not bundled here (offline single file), so system fonts stand in.
+-->
+<style>
+:root { color-scheme: dark; --bg:#050807; --surface:#0a0f0d; --surface-2:#101714; --line:#1a2621; --line-soft:#131c18; --control-line:#6b8478;
+  --text:#eef3f1; --text-2:#93a39b; --accent:#3fd6b0; --accent-ink:#03130e; --warn:#e3b341; --bad:#ff7b72; --pending:#8fa39a; --focus:#7ff0d0; --scrim:rgb(2 5 9 / 62%);
+  --lane-audit:#6ea8ff; --lane-sql:#c58bd6; --lane-iis:#e3a23c;
+  --ok-soft:rgb(63 178 127 / 16%); --warn-soft:rgb(227 179 65 / 16%); --bad-soft:rgb(255 123 114 / 16%); --grey-soft:rgb(143 163 154 / 16%);
+  --hatch:repeating-linear-gradient(135deg, rgb(143 163 154 / 35%) 0 2px, transparent 2px 6px); }
+:root[data-theme="light"] { color-scheme: light; --bg:#f5f5f3; --surface:#ffffff; --surface-2:#eeeeeb; --line:#d9d9d4; --line-soft:#e8e8e4; --control-line:#74808f;
+  --text:#16191d; --text-2:#4a525c; --accent:#0b6b57; --accent-ink:#ffffff; --warn:#96600a; --bad:#b02a3d; --pending:#5b6878; --focus:#0b6b57; --scrim:rgb(20 24 30 / 40%);
+  --lane-audit:#2457c5; --lane-sql:#9956a1; --lane-iis:#ad6511;
+  --ok-soft:rgb(31 122 79 / 12%); --warn-soft:rgb(154 84 8 / 12%); --bad-soft:rgb(176 42 61 / 12%); --grey-soft:rgb(91 104 120 / 12%); }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]):not([data-theme="light"]) { color-scheme: light; } }
+:root { --font:"IBM Plex Sans","Segoe UI Variable Text",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,"Cascadia Code",Consolas,monospace; --r:2px; --dur:180ms; --ease:cubic-bezier(.2,.7,.2,1); }
+* { box-sizing:border-box; }
+html,body { margin:0; }
+body { background:var(--bg); color:var(--text); font:13px/1.45 var(--font); font-feature-settings:"tnum" 1; min-width:320px; }
+button,input,select { font:inherit; color:inherit; }
+button { cursor:pointer; }
+h1,h2,h3,h4,p { margin:0; } h1,h2,h3,h4 { font-weight:600; letter-spacing:-.01em; }
+h2 { font-size:16px; } h3 { font-size:14px; } h4 { font-size:13px; }
+:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+.mono { font-family:var(--mono); } .dim { color:var(--text-2); } .sm { font-size:12px; }
+.hdr { height:56px; display:flex; align-items:center; gap:16px; padding:0 24px; border-bottom:1px solid var(--line); background:var(--surface); position:sticky; top:0; z-index:5; }
+.brand { display:flex; align-items:center; gap:10px; font-weight:600; font-size:16px; }
+.brand-mark { width:26px; height:26px; border:1px solid var(--line); background:var(--surface-2); padding:5px; display:flex; align-items:flex-end; gap:2px; border-radius:var(--r); }
+.brand-mark span { flex:1; background:var(--accent); display:block; } .brand-mark span:nth-child(1){height:7px;opacity:.55} .brand-mark span:nth-child(2){height:14px} .brand-mark span:nth-child(3){height:10px;opacity:.8}
+.hdr nav { display:flex; gap:4px; margin-left:12px; } .hdr nav span { padding:6px 10px; color:var(--text-2); } .hdr nav span.on { color:var(--text); box-shadow:inset 0 -2px 0 var(--accent); }
+.sp { flex:1; }
+.banner { padding:8px 24px; background:var(--warn-soft); border-bottom:1px solid var(--line); color:var(--text); }
+.wrap { padding:16px 24px 48px; max-width:1500px; margin:0 auto; }
+.btn { padding:6px 12px; background:transparent; border:1px solid var(--line); border-radius:var(--r); transition:background var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+.btn:hover:not([disabled]) { border-color:var(--text-2); background:var(--surface-2); }
+.btn.primary { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:600; }
+.btn.primary:hover:not([disabled]) { background:var(--accent); filter:brightness(1.08); }
+.btn.next { border-color:var(--accent); }
+.btn[disabled] { background:var(--surface-2); border-color:var(--control-line); color:var(--text-2); cursor:not-allowed; }
+.btn.s { padding:3px 8px; font-size:12px; }
+.btn[aria-pressed="true"] { border-color:var(--accent); }
+.quiet { background:none; border:0; color:var(--text-2); padding:3px 8px; border-radius:var(--r); }
+.quiet:hover { background:var(--surface-2); color:var(--text); }
+.sticker { display:inline-block; padding:1px 8px; border-radius:var(--r); font-size:12px; font-weight:600; white-space:nowrap; background:var(--surface-2); }
+.sticker.ok { background:var(--ok-soft); } .sticker.warn { background:var(--warn-soft); } .sticker.bad { background:var(--bad-soft); } .sticker.grey { background:var(--grey-soft); }
+.sticker.hatch { background:var(--hatch), var(--surface-2); }
+.card { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:12px 16px; }
+.card + .card, .stack > * + * { margin-top:12px; }
+.proto { border:1px dashed var(--control-line); border-radius:var(--r); padding:10px 12px; background:transparent; }
+.proto > .tag { font-size:12px; color:var(--warn); font-weight:600; margin-bottom:6px; }
+.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.cols { display:grid; grid-template-columns:minmax(0,1fr) minmax(320px,440px); gap:16px; align-items:start; }
+@media (max-width: 1100px) { .cols, .grid2 { grid-template-columns:1fr; } }
+details.top { border:1px solid var(--line); background:var(--surface); border-radius:var(--r); margin-bottom:12px; }
+details.top > summary { padding:8px 16px; cursor:pointer; font-weight:600; }
+details.top .inner { padding:0 16px 12px; } details.top ol, details.top ul { margin:6px 0 0; padding-left:20px; } details.top li { margin:3px 0; }
+.scrollbox { max-height:230px; overflow:auto; }
+#app { scroll-margin-top:72px; }
+.tabs { display:flex; gap:2px; flex-wrap:wrap; border-bottom:1px solid var(--line); margin-bottom:12px; }
+.tabs button { background:none; border:0; padding:8px 12px; color:var(--text-2); border-radius:0; }
+.tabs button[aria-selected="true"] { color:var(--text); box-shadow:inset 0 -2px 0 var(--accent); }
+.tabs button:hover { background:var(--surface-2); }
+.steps { list-style:none; margin:8px 0 0; padding:0; }
+.steps li { display:grid; grid-template-columns:24px 1fr auto; gap:8px; padding:6px 0; border-top:1px solid var(--line-soft); }
+.steps .n { color:var(--text-2); font-family:var(--mono); } .steps .exp { grid-column:2 / 4; color:var(--text-2); font-size:12px; margin-top:2px; }
+.bar { display:flex; align-items:center; gap:12px; padding:8px 16px; border:1px solid var(--line); background:var(--surface); border-radius:var(--r); margin-bottom:12px; flex-wrap:wrap; }
+.appnav { display:flex; gap:2px; flex-wrap:wrap; margin-bottom:12px; border-bottom:1px solid var(--line); }
+.appnav button { background:none; border:0; padding:6px 12px; color:var(--text-2); } .appnav button[aria-selected="true"] { color:var(--text); box-shadow:inset 0 -2px 0 var(--accent); }
+table { border-collapse:collapse; width:100%; } th,td { text-align:left; padding:4px 8px; border-top:1px solid var(--line-soft); vertical-align:top; } th { font-weight:600; color:var(--text-2); border-top:0; }
+input[type=text], select { background:var(--bg); border:1px solid var(--control-line); border-radius:var(--r); padding:4px 8px; }
+input[type=text] { width:23ch; font-family:var(--mono); font-size:12px; }
+label.f { display:grid; gap:2px; font-size:12px; color:var(--text-2); }
+.err { color:var(--bad); } .warnc { color:var(--warn); }
+.note { border:1px solid var(--line); border-left:3px solid var(--warn); background:var(--warn-soft); padding:8px 12px; border-radius:var(--r); }
+.note.bad { border-left-color:var(--bad); background:var(--bad-soft); } .note.ok { border-left-color:var(--accent); background:var(--ok-soft); } .note.grey { border-left-color:var(--pending); background:var(--grey-soft); }
+.lane { border:1px solid var(--line); border-radius:var(--r); background:var(--surface); padding:8px 12px; }
+.lane + .lane { margin-top:8px; }
+.lane .hd { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:4px; }
+.lane .hd b { font-size:14px; }
+svg.chart { width:100%; height:64px; display:block; background:var(--bg); border-radius:var(--r); }
+svg.chart .bk { cursor:pointer; } svg.chart .bk:hover rect.hit { fill:var(--grey-soft); }
+.axis { position:relative; height:16px; margin-top:2px; font-size:11px; color:var(--text-2); font-family:var(--mono); }
+.axis span { position:absolute; transform:translateX(-50%); white-space:nowrap; } .axis span:first-child { transform:none; } .axis span:last-child { transform:translateX(-100%); }
+.leg { display:inline-block; width:10px; height:10px; vertical-align:-1px; margin-right:4px; }
+pre.json { margin:0; padding:8px; background:var(--bg); border:1px solid var(--line-soft); border-radius:var(--r); font:12px/1.4 var(--mono); max-height:340px; overflow:auto; white-space:pre-wrap; word-break:break-word; }
+details.sec { border:1px solid var(--line); border-radius:var(--r); background:var(--surface); margin-bottom:8px; }
+details.sec > summary { padding:6px 12px; cursor:pointer; font-weight:600; } details.sec > div { padding:0 12px 10px; }
+.inspector { position:sticky; top:72px; max-height:calc(100vh - 88px); overflow:auto; }
+#tip { position:fixed; z-index:20; pointer-events:none; display:none; background:var(--surface-2); border:1px solid var(--control-line); padding:4px 8px; border-radius:var(--r); font-size:12px; max-width:340px; }
+.big { font-size:20px; font-weight:600; }
+.kpi { display:flex; gap:24px; flex-wrap:wrap; }
+.kpi div { display:grid; } .kpi small { color:var(--text-2); }
+@media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="transparent"/><line x1="0" y1="0" x2="0" y2="6" stroke="#8fa39a" stroke-width="2" opacity=".7"/></pattern>
+</defs></svg>
+<div class="hdr">
+  <span class="brand"><span class="brand-mark"><span></span><span></span><span></span></span>Unravis</span>
+  <nav><span>Cases</span><span class="on">Tracing</span></nav>
+  <span class="sp"></span>
+  <span class="sticker warn">PROTOTYPE · fake data</span>
+  <button class="btn s" data-act="theme">Light / dark</button>
+</div>
+<div class="banner"><b>Throwaway prototype.</b> Everything here is invented and lives in memory; reload and it is gone. It shows the <i>intended</i> flow and state rules from the spec. It does not prove the software works.</div>
+
+<div class="wrap">
+  <div class="grid2" style="align-items:start">
+  <details class="top" open>
+    <summary>Assumptions (where the spec was silent I picked the simplest option)</summary>
+    <div class="inner scrollbox"><ol class="sm" id="assumptions"></ol></div>
+  </details>
+  <details class="top" open>
+    <summary>Questions this prototype raised (spec ids in brackets)</summary>
+    <div class="inner scrollbox"><ol class="sm" id="questions"></ol></div>
+  </details>
+  </div>
+
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <div class="cols">
+    <section>
+      <div id="guide" class="card" style="margin-bottom:12px"></div>
+      <div id="app"></div>
+    </section>
+    <aside class="inspector" id="inspector" aria-label="Full state after every action"></aside>
+  </div>
+</div>
+<div id="tip"></div>
+
+<script>
+'use strict';
+/* ====================================================================================
+   0. Constants, helpers
+   ==================================================================================== */
+const MIN = 60000, H = 3600000, DAY = 86400000;
+const NOW0 = Date.parse('2026-09-01T12:00:00Z');        // fake "now"
+const RUNGS = [60,300,600,900,3600,7200,14400,21600,28800,43200,86400].map(s => s * 1000);
+const SRC = [
+  { id:'cs_audit', lane:'audit', kind:'audit-mongo', label:'Orders API audit (Mongo)',        mode:'live' },
+  { id:'cs_sql',   lane:'sql',   kind:'sql-xe',      label:'SQL Server PROD-01 (Query Store)', mode:'pull' },
+  { id:'cs_iis',   lane:'iis',   kind:'iis-w3c',     label:'IIS site A (W3C logs)',            mode:'file' },
+];
+const LANES = ['audit','sql','iis'];
+const LANE_LABEL = { audit:'API audit', sql:'SQL', iis:'IIS' };
+const FILTERS = { all:'All events', slow:'Slow queries only (> 1000 ms)' };
+const src = id => SRC.find(s => s.id === id);
+const laneSrc = lane => SRC.find(s => s.lane === lane);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const iso = ms => new Date(ms).toISOString().replace('.000Z', 'Z');
+const short = ms => iso(ms).slice(5, 16).replace('T', ' ');          // MM-DD HH:MM
+const win = (a, b) => iso(a) + ' → ' + iso(b);
+
+function h53(str, seed = 0) {                                           // prototype hash (stands in for SHA-256)
+  let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+  for (let i = 0, ch; i < str.length; i++) { ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+const hex = s => h53(s).toString(16).padStart(14, '0');
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+function fmtDur(ms) {
+  if (ms < H) { const m = ms / MIN; return m >= 1 ? (m + (m === 1 ? ' minute' : ' minutes')) : (ms / 1000 + ' seconds'); }
+  if (ms < DAY) { const h = ms / H; return h + (h === 1 ? ' hour' : ' hours'); }
+  const d = ms / DAY; return d + (d === 1 ? ' day' : ' days');
+}
+function fmtSpan(ms) {
+  const d = Math.floor(ms / DAY), h = Math.floor(ms % DAY / H), m = Math.floor(ms % H / MIN), s = Math.floor(ms % MIN / 1000);
+  return [d && d + ' d', h && h + ' h', m && m + ' min', s && s + ' s'].filter(Boolean).join(' ') || '0';
+}
+
+/* ====================================================================================
+   1. Axis math (spec 4.5 / 7: one UTC floor-aligned, never-re-anchored presentation axis)
+   ==================================================================================== */
+function ladderWidth(span) {
+  if (span <= 2 * H) return 60000;
+  if (span <= 24 * H) return [300000, 600000, 900000].find(w => Math.ceil(span / w) <= 120);
+  if (span <= 5 * DAY) return 3600000;
+  if (span <= 10 * DAY) return 7200000;
+  if (span <= 20 * DAY) return 14400000;
+  if (span <= 30 * DAY) return 21600000;
+  return null;                                                           // > 30 d: refused with 400
+}
+function axis(start, end) {
+  const span = end - start;
+  const L = ladderWidth(span);
+  if (L === null || span <= 0) return null;
+  const axisStart = Math.floor(start / H) * H, axisEnd = Math.ceil(end / H) * H;
+  const aligned = RUNGS.find(w => Math.ceil((axisEnd - axisStart) / w) <= 120);
+  const W = Math.max(L, aligned);
+  const n = Math.ceil((axisEnd - axisStart) / W);
+  // boundary raw scans: zero when aligned, one when exactly one edge is set or both share a grain-hour, else two
+  const sEdge = start % H !== 0, eEdge = end % H !== 0;
+  let scans = [], why;
+  if (!sEdge && !eEdge) { why = 'both edges are on a UTC hour: rollup rows only, no raw scan'; }
+  else if (sEdge && eEdge && Math.floor(start / H) === Math.floor(end / H)) { scans = [{ name:'shared fragment', from:start, to:end }]; why = 'both edges sit inside the same UTC hour: one shared raw query'; }
+  else if (sEdge && eEdge) { scans = [{ name:'start fragment', from:start, to:Math.ceil(start / H) * H }, { name:'end fragment', from:Math.floor(end / H) * H, to:end }]; why = 'both edges are off the hour and in different hours: two raw queries'; }
+  else if (sEdge) { scans = [{ name:'start fragment', from:start, to:Math.min(end, Math.ceil(start / H) * H) }]; why = 'exactly one edge is off the hour: one raw query'; }
+  else { scans = [{ name:'end fragment', from:Math.max(start, Math.floor(end / H) * H), to:end }]; why = 'exactly one edge is off the hour: one raw query'; }
+  const slots = [];
+  for (let k = 0; k < n; k++) {
+    const s = axisStart + k * W, e = s + W, lo = Math.max(s, start), hi = Math.min(e, end);
+    const empty = hi <= lo;
+    slots.push({ k, s, e, empty, clipped: !empty && (lo > s || hi < e), frag: !empty && scans.some(f => f.from < hi && lo < f.to) });
+  }
+  return { start, end, span, axisStart, axisEnd, ladder: L, alignedRung: aligned, W, n, inWindow: slots.filter(x => !x.empty).length, scans, scanWhy: why, slots };
+}
+function windowProblem(w) {
+  if (!(w.end > w.start)) return 'The end must be after the start.';
+  if (w.end - w.start > 30 * DAY) return 'The longest window is 30 days.';
+  return null;
+}
+
+/* ====================================================================================
+   2. Fake world: rows, content digest (R6-01), fingerprint
+   ==================================================================================== */
+function genRows(sid, from, to, rk, filterKey) {
+  const lane = src(sid).lane, span = to - from;
+  const n = clamp(Math.round(span / MIN / 2), 24, 400);
+  const rnd = mulberry32(h53(sid + '|' + from + '|' + to) >>> 0);
+  const rows = [];
+  for (let i = 0; i < n; i++) {
+    const u = rnd() < 0.6 ? rnd() : clamp(0.62 + (rnd() + rnd() + rnd() - 1.5) * 0.18, 0, 0.999);
+    const ts = from + Math.floor(u * span / 1000) * 1000;
+    let dur = Math.round(15 + Math.exp(rnd() * 6.8) * (u > 0.55 && u < 0.7 ? 3 : 1));
+    const r2 = rnd(), r3 = Math.floor(rnd() * 250);
+    let status = lane === 'iis' ? (r2 < 0.82 ? 200 : r2 < 0.93 ? 404 : 500) : (r2 < 0.9 ? 'ok' : r2 < 0.97 ? 'timeout' : 'deadlock');
+    if (rk.restated && i % 3 === 0) { dur = Math.round(dur * (1 + 0.4 * rk.restated)); if (i % 6 === 0) status = lane === 'iis' ? 500 : 'timeout'; }
+    const attrs = lane === 'iis'
+      ? { 'client-ip': '203.0.113.' + r3, referer: 'https://shop.example.test/cart', 'cookie:session': hex('ck' + sid + i).slice(0, 32) }
+      : { db: 'orders', query: 'Orders.Create' };
+    rows.push({ id: sid + '-' + String(i).padStart(4, '0'), ts, durationMs: dur, status, value: null, severity: (status === 500 || status === 'deadlock') ? 'error' : (status === 'timeout' || status === 404) ? 'warn' : '', attrs });
+  }
+  for (let k = 1; k <= rk.late; k++) {
+    const ts = Math.min(to - 1000, from + Math.floor(span * 0.9 / 1000) * 1000 + k * 1000);
+    rows.push({ id: sid + '-late-' + k, ts, durationMs: 120 + k, status: lane === 'iis' ? 200 : 'ok', value: null, severity: '', attrs: lane === 'iis' ? { 'client-ip': '203.0.113.9', referer: 'https://shop.example.test/cart', 'cookie:session': hex('late' + k).slice(0, 32) } : { db: 'orders', query: 'Orders.Create' } });
+  }
+  rows.sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : 1));
+  return filterKey === 'slow' ? rows.filter(r => r.durationMs > 1000) : rows;
+}
+function genAuditTimes(from, to, tick) {                                  // live lane: counts only, never stored
+  const span = to - from, n = clamp(Math.round(span / MIN * 1.5), 60, 700);
+  const rnd = mulberry32(h53('audit|' + from + '|' + to) >>> 0), out = [];
+  for (let i = 0; i < n; i++) { const u = rnd() < 0.55 ? rnd() : clamp(0.62 + (rnd() + rnd() + rnd() - 1.5) * 0.2, 0, 0.999); out.push(from + Math.floor(u * span / 1000) * 1000); }
+  const r2 = mulberry32(h53('late-audit') >>> 0);
+  for (let i = 0; i < tick * 3; i++) out.push(Math.max(from, to - 1000 - Math.floor(r2() * span * 0.05 / 1000) * 1000));   // rows inserted while we read
+  return out;
+}
+const tagv = v => v === undefined ? 'x' : v === null ? 'n' : (typeof v === 'number' ? 'i' : 's') + String(v).length + ':' + v;
+function canonRow(r) {                                                    // type-tagged, length-prefixed, null != absent
+  const ak = r.attrs === undefined ? 'x' : Object.keys(r.attrs).sort().map(k => tagv(k) + tagv(r.attrs[k])).join('|');
+  return [tagv(r.id), tagv(r.ts), tagv(r.durationMs), tagv(r.status), tagv(r.value), tagv(r.severity), '{' + ak + '}'].join(';');
+}
+const contentDigest = rows => hex('content_digest_v1\n' + rows.map(canonRow).join('\n'));
+const legacyDigest = rows => hex('LEGACY id+timestamp only\n' + rows.map(r => r.id + '@' + r.ts).join('\n'));   // pre-R6-01 idea, shown for contrast
+const fingerprint = (sid, lane, filter) => hex('unravis-coverage-v1\0' + sid + '\0' + lane + '\0' + filter);
+
+/* ====================================================================================
+   3. State (in memory only)
+   ==================================================================================== */
+let UI = { tab:'free', theme:'dark', guideDone:{}, lastStep:null };
+let S;
+function fresh() {
+  return {
+    clock: NOW0, seq: 0, screen: 'case',
+    case: { id:'case_demo', name:'Orders.Create slowdown, 1 Sep', revision:0, scrub:true, cookieAllow:['session'] },
+    window: { start: NOW0 - H, end: NOW0 }, winRaw: { start: iso(NOW0 - H), end: iso(NOW0) }, winErr: null,
+    chosen: { cs_audit:true, cs_sql:true, cs_iis:true },
+    sqlFilter: 'all',
+    imports: [], nextImportId: 1, attempts: [], nextAttemptId: 1,
+    remote: { cs_sql:{ late:0, restated:0 }, cs_iis:{ late:0, restated:0 } },
+    auditTick: 0, requestSeq: 0,
+    sim: { auditOver:false, edgeOver:false, fail:'none' },
+    last: { pull:null, tracing:null, preview:null, confirm:null },
+    preview: null, sel: null, delta: [], lastAction: '(none yet)', log: [],
+  };
+}
+S = fresh();
+
+const activeRows = lane => S.imports.filter(i => i.lane === lane).flatMap(i => i.rows);
+const coverageEntries = () => S.imports.map(i => ({ source:i.sourceId, lane:i.lane, from:iso(i.from), to:iso(i.to), rowsRead:i.rows.length, pagesRead:Math.max(1, Math.ceil(i.rows.length / 50)), complete:true, note: i.fileName || '', contentDigest:i.digest, contentDigestV:1, at:iso(i.at), fingerprint:i.fingerprint, fingerprintV:1, importId:i.id }));
+function bump() { S.case.revision++; }
+
+/* ====================================================================================
+   4. Pulls and imports (spec 5.3 / R6-03)
+   ==================================================================================== */
+function mkImport(sid, win, rows, fp, digest, extra) {
+  const lane = src(sid).lane;
+  return Object.assign({ id: S.nextImportId++, sourceId: sid, lane, kind: src(sid).kind, from: win.start, to: win.end, fingerprint: fp, digest, rows, at: S.clock, observationKey: null, fileName: null, supersedesImportId: null }, extra || {});
+}
+function doPull(sid, filter, w) {                                         // POST /api/cases/{id}/pulls (SQL only in this prototype)
+  const prob = windowProblem(w);
+  if (prob) return { status:400, outcome:'bad-window', error:prob, summary:'400 ' + prob };
+  const lane = src(sid).lane, fp = fingerprint(sid, lane, filter);
+  const attempt = { id:S.nextAttemptId++, source:sid, source_label:src(sid).label, fingerprint:fp, from:iso(w.start), to:iso(w.end), started_at:iso(S.clock), outcome:'requested', error:null };
+  S.attempts.push(attempt);
+  if (S.sim.fail === 'fetch') { attempt.outcome = 'incomplete'; attempt.error = 'source connection dropped after page 2'; return { status:502, outcome:'incomplete', attemptId:attempt.id, error:attempt.error, note:'Nothing was written. An attempt row is kept but never counts as coverage.', summary:'502 source unreachable' }; }
+  const rows = genRows(sid, w.start, w.end, S.remote[sid], filter);
+  const digest = contentDigest(rows), legacy = legacyDigest(rows);
+  const same = S.imports.filter(i => i.observationKey && i.sourceId === sid && i.fingerprint === fp);
+  const exact = same.find(i => i.from === w.start && i.to === w.end);
+  if (exact && exact.digest === digest) {
+    attempt.outcome = 'unchanged';
+    return { status:200, outcome:'unchanged', attemptId:attempt.id, eventsWritten:0, coverageAdded:0, note:'Same content digest for the same exact window: nothing is written, the case revision does not move (StatusDuplicate).', digest, summary:'200 unchanged' };
+  }
+  if (!exact) {
+    const ov = same.find(i => i.from < w.end && w.start < i.to);
+    if (ov) {
+      attempt.outcome = 'incomplete'; attempt.error = '409 window-overlap';
+      return { status:409, outcome:'refused', attemptId:attempt.id, error:'409 window-overlap; re-pull the exact stored window or import a disjoint window', note:'Stored window: ' + win(ov.from, ov.to) + '. Nothing was changed.', summary:'409 window-overlap' };
+    }
+  }
+  const snap = { imports:S.imports.slice(), rev:S.case.revision, nextImportId:S.nextImportId };       // transaction snapshot
+  try {
+    let removed = null;
+    if (exact) { S.imports = S.imports.filter(i => i !== exact); removed = exact; }                   // delete superseded import (cascade rows + coverage)
+    if (S.sim.fail === 'midtx') throw new Error('write failed mid-transaction (after the old import was deleted)');
+    const imp = mkImport(sid, w, rows, fp, digest, { observationKey: [sid, lane, fp, w.start, w.end].join('|'), supersedesImportId: removed ? removed.id : null });
+    S.imports.push(imp); bump();
+    attempt.outcome = removed ? 'changed' : 'completed';
+    const res = { status:200, outcome: attempt.outcome, attemptId:attempt.id, eventsWritten:rows.length, coverageAdded:1, importId:imp.id, digest, rollupsRebuilt:{ bucket_60s:new Set(rows.map(r => Math.floor(r.ts / MIN))).size, bucket_1h:new Set(rows.map(r => Math.floor(r.ts / H))).size }, summary:'200 ' + attempt.outcome };
+    if (removed) {
+      res.superseded = { importId:removed.id, eventsRemoved:removed.rows.length };
+      res.note = 'One transaction: validate new data, delete import #' + removed.id + ' (' + removed.rows.length + ' events), insert import #' + imp.id + ' (' + rows.length + ' events), rebuild rollups, commit. Totals do not double-count.';
+      if (legacy === legacyDigest(removed.rows)) res.legacyWouldSayUnchanged = 'An id+timestamp-only fingerprint (the pre-R6-01 idea) would have called this "unchanged" and silently dropped the new evidence.';
+    } else res.note = 'New observation stored: one import, its events, one coverage row, rebuilt rollups.';
+    return res;
+  } catch (e) {
+    S.imports = snap.imports; S.case.revision = snap.rev; S.nextImportId = snap.nextImportId;                // rollback whole
+    attempt.outcome = 'incomplete'; attempt.error = e.message;
+    return { status:500, outcome:'incomplete', attemptId:attempt.id, error:e.message, note:'Rolled back whole: the previous observation is still stored and the revision did not move.', summary:'500 rolled back' };
+  }
+}
+function doImportFile(sid, w) {                                           // file import (IIS): dedup by content digest only, no window replacement
+  const prob = windowProblem(w);
+  if (prob) return { status:400, outcome:'bad-window', error:prob, summary:'400 ' + prob };
+  const rows = genRows(sid, w.start, w.end, S.remote[sid], 'all');
+  const digest = contentDigest(rows), fp = fingerprint(sid, 'iis', 'file');
+  const fileName = 'u_ex' + iso(w.start).slice(2, 10).replace(/-/g, '') + '_' + iso(w.start).slice(11, 16).replace(':', '') + '-' + iso(w.end).slice(11, 16).replace(':', '') + (S.remote[sid].restated || S.remote[sid].late ? '_v' + (1 + S.remote[sid].restated + S.remote[sid].late) : '') + '.log';
+  if (S.imports.some(i => i.sourceId === sid && i.digest === digest)) return { status:200, outcome:'duplicate', eventsWritten:0, note:'Same file content already imported (StatusDuplicate). Nothing written, revision unchanged.', summary:'200 duplicate' };
+  const overlap = S.imports.filter(i => i.sourceId === sid && i.from < w.end && w.start < i.to);
+  const imp = mkImport(sid, w, rows, fp, digest, { fileName }); S.imports.push(imp); bump();
+  const res = { status:200, outcome:'imported', importId:imp.id, fileName, eventsWritten:rows.length, coverageAdded:1, summary:'200 imported' };
+  if (overlap.length) res.warning = 'This file overlaps import #' + overlap.map(i => i.id).join(', #') + '. File imports have no observation key, so nothing was replaced: those events now count twice. The spec is silent on this (see question 4).';
+  return res;
+}
+function seed(w) {                                                        // silent helper for guided scenarios: same code paths as the buttons
+  const a = doPull('cs_sql', 'all', w), b = doImportFile('cs_iis', w);
+  return [a.summary, b.summary];
+}
+
+/* ====================================================================================
+   5. Coverage (GET /api/cases/{id}/coverage)
+   ==================================================================================== */
+function unionGaps(intervals, from, to) {
+  const iv = intervals.filter(i => i.to > from && i.from < to).sort((a, b) => a.from - b.from), gaps = [];
+  let cur = from;
+  for (const i of iv) { if (i.from > cur) gaps.push({ from:cur, to:Math.min(i.from, to) }); cur = Math.max(cur, i.to); if (cur >= to) break; }
+  if (cur < to) gaps.push({ from:cur, to });
+  return gaps;
+}
+function getCoverage() {                                                  // reads case.db only, never fills gaps, never carries allLanesStored
+  const w = S.window, entries = coverageEntries(), gaps = [];
+  if (!windowProblem(w)) {
+    for (const lane of ['sql', 'iis']) {
+      const sid = laneSrc(lane).id, fp = fingerprint(sid, lane, lane === 'sql' ? 'all' : 'file');
+      const iv = S.imports.filter(i => i.sourceId === sid && (lane === 'iis' || i.fingerprint === fp));
+      for (const g of unionGaps(iv, w.start, w.end)) gaps.push({ source:sid, lane, from:iso(g.from), to:iso(g.to) });
+    }
+  }
+  const out = { entries, asOf: iso(S.clock), gaps, provenance: 'case-ledger' };
+  if (entries.length === 0) out.state = 'no-coverage';
+  return out;
+}
+
+/* ====================================================================================
+   6. Tracing (POST /api/cases/{id}/tracing)
+   ==================================================================================== */
+function bucketize(tsList, ax) {
+  const c = new Array(ax.n).fill(0);
+  for (const t of tsList) { const k = Math.floor((t - ax.axisStart) / ax.W); if (k >= 0 && k < ax.n) c[k]++; }
+  return c;
+}
+function doTrace() {
+  const w = S.window, prob = windowProblem(w);
+  S.requestSeq++;
+  if (prob) return { status:400, error:prob, summary:'400 ' + prob };
+  const ax = axis(w.start, w.end);
+  const lanes = LANES.map(key => {
+    const s = laneSrc(key), chosen = S.chosen[s.id];
+    const base = { key, label:LANE_LABEL[key], sources: chosen ? [{ sourceId:s.id, kind:s.kind, label:s.label, readKind: s.mode === 'live' ? 'live' : 'saved' }] : [], truncated:false, hidden:0 };
+    if (!chosen) return Object.assign(base, { state:'no-data', reason:'This case has no file for this source', origin:'case', asOf:iso(S.clock), consistency:'stored-as-of', complete:true, scanned:0, total:0, buckets:null });
+    if (key === 'audit') {
+      S.auditTick++;
+      const ts = genAuditTimes(w.start, w.end, S.auditTick), counts = bucketize(ts, ax);
+      if (S.sim.auditOver) {
+        const cut = Math.floor(ax.n * 0.4), part = counts.map((c, k) => (k < cut ? c : 0));
+        return Object.assign(base, { state:'incomplete', reason:'timeout: The audit read reached its time or row limit; nothing was shortened.', origin:'live', asOf:iso(S.clock), consistency:'live-non-snapshot', complete:false, scanned:part.reduce((a, b) => a + b, 0), total:part.reduce((a, b) => a + b, 0), buckets:part, incompleteFrom:cut });
+      }
+      return Object.assign(base, { state:'events', reason:'', origin:'live', asOf:iso(S.clock), consistency:'live-non-snapshot', complete:true, scanned:ts.length, total:ts.length, buckets:counts, note:'Read began at ' + iso(S.clock) + '. Not a snapshot; rows inserted during the read may be included.' });
+    }
+    const imps = S.imports.filter(i => i.lane === key);
+    const asOf = imps.length ? iso(Math.max(...imps.map(i => i.at))) : iso(S.clock);
+    const common = { origin:'case', asOf, consistency:'stored-as-of' };
+    if (!imps.length) return Object.assign(base, common, { state:'no-data', reason:'This case has no file for this source', complete:true, scanned:0, total:0, buckets:null });
+    const cov = imps.filter(i => i.to > w.start && i.from < w.end);
+    if (!cov.length) return Object.assign(base, common, { state:'out-of-range', reason:'Files do not cover this time', complete:true, scanned:0, total:0, buckets:null });
+    const rows = imps.flatMap(i => i.rows).filter(r => r.ts >= w.start && r.ts < w.end);
+    const gaps = unionGaps(imps, w.start, w.end);
+    const counts = bucketize(rows.map(r => r.ts), ax);
+    const edgeBad = S.sim.edgeOver && ax.scans.length > 0;
+    const lane = Object.assign(base, common, { reason:'', complete:!edgeBad, scanned:rows.length, total:rows.length, buckets:counts, coverageGaps:gaps.map(g => win(g.from, g.to)) });
+    if (!rows.length) { lane.state = 'none-seen'; lane.reason = 'Files cover this time and nothing was seen'; lane.buckets = null; }
+    else if (edgeBad) { lane.state = 'incomplete'; lane.reason = 'rowcap: a boundary fragment went over MaxEdgeScanRows (50,000); affected buckets are not exact'; }
+    else lane.state = 'events';
+    return lane;
+  });
+  const res = {
+    window:{ start:iso(w.start), end:iso(w.end) }, bucketSeconds:ax.W / 1000, bucketCount:ax.n, disabled:null, lanes,
+    allLanesStored: lanes.every(l => l.origin === 'case'),                      // exists ONLY on this POST response
+    mixedConsistency: lanes.some(l => l.consistency === 'live-non-snapshot'),
+    warnings:[], truncated:false, requestSeq:S.requestSeq, _axis:ax,
+  };
+  res.summary = '200 · ' + lanes.map(l => l.key + ':' + l.state).join(' · ');
+  res.status = 200;
+  return res;
+}
+
+/* ====================================================================================
+   7. Export (preview / confirm against a revision counter, spec 5.2)
+   ==================================================================================== */
+const previewIdFor = (rev, scrub) => hex('unravis-preview-v1|' + S.case.id + '|' + rev + '|' + scrub + '|1');
+function buildBundle(scrub) {
+  const proj = r => { const a = Object.assign({}, r.attrs); if (scrub) Object.keys(a).forEach(k => { if (k === 'client-ip' || k === 'referer' || k.startsWith('cookie:')) delete a[k]; }); return { id:r.id, ts:iso(r.ts), durationMs:r.durationMs, status:r.status, attrs:a }; };
+  return { case:S.case.id, caseRevision:S.case.revision, scrubSensitive:scrub, projectionVersion:1, createdAt:iso(S.clock), lanes:{ sql:activeRows('sql').map(proj), iis:activeRows('iis').map(proj) } };
+}
+function doPreview() {
+  S.preview = { previewId:previewIdFor(S.case.revision, S.case.scrub), revision:S.case.revision, scrubSensitive:S.case.scrub, rejected:false };
+  const p = { status:200, scrubSensitive:S.case.scrub, previewId:S.preview.previewId, projectionVersion:1, summarizesBytes:false, summary:'200 preview ' + S.preview.previewId.slice(0, 8), counts:{ sql:activeRows('sql').length, iis:activeRows('iis').length } };
+  S.last.preview = p; return p;
+}
+function doConfirm(blank) {
+  const sent = blank ? '' : (S.preview ? S.preview.previewId : '');
+  const expected = previewIdFor(S.case.revision, S.case.scrub);               // recomputed from the CURRENT revision + the scrub in the request
+  let res;
+  if (!sent || sent !== expected) {
+    if (S.preview) S.preview.rejected = true;
+    res = { status:409, error:'the preview changed; run the preview again', sentPreviewId: sent || '(blank)', recomputedPreviewId:expected, note:'Revision now ' + S.case.revision + (S.preview ? ' (preview was taken at revision ' + S.preview.revision + ', scrub ' + (S.preview.scrubSensitive ? 'on' : 'off') + ')' : '') + '. No bytes were produced.', summary:'409 preview changed' };
+  } else {
+    const bundle = buildBundle(S.case.scrub), bytes = JSON.stringify(bundle);
+    res = { status:200, sha256:hex(bytes) + '…(prototype hash)', byteLength:bytes.length, caseRevision:S.case.revision, scrubSensitive:S.case.scrub, sampleIisRow: bundle.lanes.iis[0] || null, summary:'200 exported ' + bytes.length + ' bytes' };
+  }
+  S.last.confirm = res; return res;
+}
+
+/* ====================================================================================
+   8. act(): every user action goes through here, so state is printed after each one
+   ==================================================================================== */
+function metrics() {
+  return { 'case revision':S.case.revision, 'imports':S.imports.length, 'SQL events stored':activeRows('sql').length, 'IIS events stored':activeRows('iis').length, 'coverage rows':S.imports.length, 'import_attempts':S.attempts.length, 'audit live reads':S.auditTick };
+}
+function act(label, fn) {
+  const before = metrics(); S.clock += 5000; S.seq++;
+  let res; try { res = fn(); } catch (e) { res = { status:500, summary:'prototype error: ' + e.message }; console.error(e); }
+  const after = metrics();
+  S.delta = Object.keys(after).filter(k => after[k] !== before[k]).map(k => k + ': ' + before[k] + ' → ' + after[k]);
+  S.lastAction = label;
+  S.log.unshift({ n:S.seq, at:iso(S.clock).slice(11, 19), label, result: res && res.summary });
+  S.log.length = Math.min(S.log.length, 25);
+  render();
+  console.log('[state after #' + S.seq + ' ' + label + ']', JSON.parse(JSON.stringify(view(), replacer)));
+  return res;
+}
+const A = {
+  pull() { return act('POST /pulls  SQL  ' + FILTERS[S.sqlFilter], () => (S.last.pull = doPull('cs_sql', S.sqlFilter, Object.assign({}, S.window)))); },
+  importIis() { return act('Import IIS file', () => (S.last.pull = doImportFile('cs_iis', Object.assign({}, S.window)))); },
+  trace() { return act('POST /tracing', () => (S.last.tracing = doTrace())); },
+  preview() { return act('POST export preview', doPreview); },
+  confirm(blank) { return act(blank ? 'POST export confirm (blank previewId)' : 'POST export confirm', () => doConfirm(blank)); },
+  upstream(sid, kind) { return act('Upstream change · ' + src(sid).lane + ' · ' + kind, () => { S.remote[sid][kind]++; return { summary: kind === 'late' ? 'a late row now exists upstream' : 'durations/status restated upstream (same ids and times)' }; }); },
+  scrub() { return act('Toggle scrub for export', () => { S.case.scrub = !S.case.scrub; return { summary:'scrub ' + (S.case.scrub ? 'on' : 'off') + ' (not stored; sent with preview and confirm)' }; }); },
+  del(id) { return act('Delete import #' + id, () => { const before = S.imports.length; S.imports = S.imports.filter(i => i.id !== id); if (S.imports.length < before) bump(); return { summary:'import #' + id + ' deleted (events + coverage cascade), revision bumped' }; }); },
+  cookie() { return act('Change cookie allowlist', () => { S.case.cookieAllow = S.case.cookieAllow.length > 1 ? ['session'] : ['session', 'cart']; bump(); return { summary:'allowlist now [' + S.case.cookieAllow + '], revision bumped' }; }); },
+  setWindow(startMs, endMs, label) { S.window = { start:startMs, end:endMs }; S.winRaw = { start:iso(startMs), end:iso(endMs) }; S.winErr = null; return act('Set window' + (label ? ' · ' + label : ''), () => ({ summary:'window ' + win(startMs, endMs) })); },
+};
+const ISO = s => Date.parse(s);
+const PRESETS = {
+  last1h:   { label:'Last hour (default)',         s:'2026-09-01T11:00:00Z', e:'2026-09-01T12:00:00Z' },
+  half:     { label:'11:30–12:00 (inside)',         s:'2026-09-01T11:30:00Z', e:'2026-09-01T12:00:00Z' },
+  prev1h:   { label:'10:00–11:00 (adjacent)',       s:'2026-09-01T10:00:00Z', e:'2026-09-01T11:00:00Z' },
+  off1h:    { label:'Off-hour 1 h (10:07–11:07)',   s:'2026-09-01T10:07:00Z', e:'2026-09-01T11:07:00Z' },
+  d30:      { label:'30 d, hour-aligned',           s:'2026-08-02T00:00:00Z', e:'2026-09-01T00:00:00Z' },
+  d30off:   { label:'30 d, start 00:01',            s:'2026-08-02T00:01:00Z', e:'2026-09-01T00:01:00Z' },
+  d30plus:  { label:'30 d + 1 s (refused)',         s:'2026-08-02T00:00:00Z', e:'2026-09-01T00:00:01Z' },
+};
+function applyPreset(k) { const p = PRESETS[k]; A.setWindow(ISO(p.s), ISO(p.e), p.label); }
+function readWindow(a, b) {
+  const norm = t => { t = t.trim(); if (/^\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d)?$/.test(t)) t = t.replace(' ', 'T') + (t.length === 16 ? ':00' : '') + 'Z'; return Date.parse(t); };
+  S.winRaw = { start:a, end:b };
+  const x = norm(a), y = norm(b);
+  if (isNaN(x) || isNaN(y)) { S.winErr = 'Could not read that time. Use UTC like 2026-09-01T10:07:00Z.'; render(); return; }
+  S.winErr = null; A.setWindow(x, y, 'typed');
+}
+
+/* ====================================================================================
+   9. Rendering
+   ==================================================================================== */
+const stk = (t, c) => '<span class="sticker ' + (c || '') + '">' + esc(t) + '</span>';
+const btn = (act, label, o = {}) => '<button class="btn ' + (o.primary ? 'primary ' : '') + (o.s ? 's ' : '') + (o.next ? 'next ' : '') + '" data-act="' + act + '"' + Object.entries(o.d || {}).map(([k, v]) => ' data-' + k + '="' + esc(v) + '"').join('') + (o.disabled ? ' disabled' : '') + (o.title ? ' title="' + esc(o.title) + '"' : '') + (o.pressed !== undefined ? ' aria-pressed="' + o.pressed + '"' : '') + '>' + label + '</button>';
+
+function windowPicker() {
+  const prob = windowProblem(S.window);
+  const presets = Object.keys(PRESETS).map(k => btn('preset', esc(PRESETS[k].label), { d:{ k }, s:true })).join(' ');
+  return '<div class="card"><div class="row" style="align-items:flex-end">' +
+    '<label class="f">Start (UTC)<input type="text" id="w-start" value="' + esc(S.winRaw.start) + '"></label>' +
+    '<label class="f">End (UTC, not included)<input type="text" id="w-end" value="' + esc(S.winRaw.end) + '"></label>' +
+    btn('applywin', 'Apply window', { s:true }) +
+    '<span class="dim">Span ' + (S.window.end > S.window.start ? esc(fmtSpan(S.window.end - S.window.start)) : '—') + '. Times are UTC.</span></div>' +
+    (S.winErr ? '<p class="err" style="margin-top:6px">' + esc(S.winErr) + '</p>' : '') +
+    (prob ? '<p class="err" style="margin-top:6px">' + esc(prob) + ' Nothing will be read.</p>' : '') +
+    '<div class="row" style="margin-top:8px"><span class="dim">Quick windows:</span> ' + presets + '</div></div>';
+}
+
+function screenCase() {
+  const rows = SRC.map(s => {
+    const imps = S.imports.filter(i => i.sourceId === s.id), ev = imps.reduce((a, i) => a + i.rows.length, 0);
+    const where = s.mode === 'live' ? stk('Live read', 'grey') + ' <span class="dim">read when you start tracing; nothing is saved</span>' : imps.length ? stk('Stored', 'ok') + ' <span class="dim">' + ev + ' events in ' + imps.length + ' import' + (imps.length > 1 ? 's' : '') + '</span>' : stk('Nothing stored', 'grey') + ' <span class="dim">no file or pull yet</span>';
+    return '<tr><td><b>' + esc(s.label) + '</b><br><span class="dim mono sm">' + s.id + ' · ' + s.kind + '</span></td><td>' + LANE_LABEL[s.lane] + '</td><td>' + where + '</td></tr>';
+  }).join('');
+  return '<div class="card"><h2>' + esc(S.case.name) + '</h2><p class="dim" style="margin:4px 0 8px">In a nutshell: line up the web log, the database log and the API log on one clock for one incident window. Unravis only reads.</p>' +
+    '<table><tr><th>Source</th><th>Lane</th><th>In this case</th></tr>' + rows + '</table>' +
+    '<div class="row" style="margin-top:12px">' + btn('screen', 'Start tracing', { primary:true, d:{ s:'trace' } }) + btn('screen', 'Add data (pull or import)', { d:{ s:'evidence' } }) + btn('screen', 'Coverage', { d:{ s:'coverage' } }) + '<span class="dim">Guided analysis is no longer offered here (D-2 = A).</span></div></div>';
+}
+
+function resultCard(r) {
+  if (!r) return '';
+  const cls = r.status === 200 ? (r.outcome === 'unchanged' || r.outcome === 'duplicate' ? 'grey' : 'ok') : r.status === 409 ? 'warn' : 'bad';
+  const lines = [];
+  lines.push('<div class="row">' + stk(r.status + ' · ' + r.outcome, cls) + (r.importId ? '<span class="dim">import #' + r.importId + '</span>' : '') + '</div>');
+  if (r.error) lines.push('<p class="' + (r.status === 409 ? 'warnc' : 'err') + '"><b>' + esc(r.error) + '</b></p>');
+  if (r.note) lines.push('<p>' + esc(r.note) + '</p>');
+  if (r.warning) lines.push('<p class="warnc">' + esc(r.warning) + '</p>');
+  if (r.legacyWouldSayUnchanged) lines.push('<p class="warnc">' + esc(r.legacyWouldSayUnchanged) + '</p>');
+  const bits = ['eventsWritten', 'coverageAdded', 'attemptId'].filter(k => r[k] !== undefined).map(k => k + ' ' + r[k]);
+  if (r.superseded) bits.push('superseded import #' + r.superseded.importId + ' (' + r.superseded.eventsRemoved + ' events removed)');
+  if (bits.length) lines.push('<p class="dim mono sm">' + esc(bits.join(' · ')) + '</p>');
+  return '<div class="card"><h4>Result of the last pull or import</h4>' + lines.join('') + '</div>';
+}
+
+function screenEvidence() {
+  const imps = S.imports.map(i => '<tr><td class="mono">#' + i.id + '</td><td>' + LANE_LABEL[i.lane] + '</td><td class="mono sm">' + short(i.from) + ' → ' + short(i.to) + '</td><td>' + i.rows.length + '</td><td>' + (i.observationKey ? 'pull' : 'file ' + esc(i.fileName)) + '</td><td class="mono sm">' + i.digest.slice(0, 8) + (i.supersedesImportId ? ' · replaced #' + i.supersedesImportId : '') + '</td></tr>').join('');
+  const prob = windowProblem(S.window);
+  return windowPicker() +
+    '<div class="card"><h3>API audit · live</h3><p class="dim">Read live when you press Start tracing. A live aggregate, not a snapshot, and never saved to the case.</p></div>' +
+    '<div class="card"><h3>SQL · pull live, save into the case</h3><p class="dim" style="margin:2px 0 8px">Saves exactly the window above as one observation. Pressing again re-reads the same window.</p>' +
+    '<div class="row"><label class="f">Filter (part of the fingerprint)<select data-chg="filter">' + Object.keys(FILTERS).map(k => '<option value="' + k + '"' + (S.sqlFilter === k ? ' selected' : '') + '>' + FILTERS[k] + '</option>').join('') + '</select></label>' +
+    btn('pull', 'Pull this exact window', { disabled:!!prob, title:prob || '' }) + '</div></div>' +
+    '<div class="card"><h3>IIS · import a log file</h3><p class="dim" style="margin:2px 0 8px">Imports a (fake) W3C file that covers the window above. The same file twice is ignored.</p>' + btn('importIis', 'Import IIS file for this window', { disabled:!!prob, title:prob || '' }) + '</div>' +
+    resultCard(S.last.pull) +
+    '<div class="card"><h3>Stored in this case</h3>' + (imps ? '<table><tr><th>Id</th><th>Lane</th><th>Window (UTC)</th><th>Events</th><th>How</th><th>Digest</th></tr>' + imps + '</table>' : '<p class="dim">Nothing stored yet.</p>') + '</div>' +
+    '<div class="proto"><div class="tag">PROTOTYPE CONTROLS · not in the real app: make the outside world misbehave</div><div class="row">' +
+    btn('upstream', 'SQL upstream: a late row arrives', { s:true, d:{ sid:'cs_sql', kind:'late' } }) +
+    btn('upstream', 'SQL upstream: durations restated (same ids and times)', { s:true, d:{ sid:'cs_sql', kind:'restated' } }) +
+    btn('upstream', 'IIS upstream: log file regenerated (late row)', { s:true, d:{ sid:'cs_iis', kind:'late' } }) +
+    '<label class="f">Failure injection<select data-chg="fail">' + [['none', 'none'], ['fetch', 'source drops during the read'], ['midtx', 'write fails mid-replacement']].map(([v, t]) => '<option value="' + v + '"' + (S.sim.fail === v ? ' selected' : '') + '>' + t + '</option>').join('') + '</select></label></div>' +
+    '<p class="dim sm" style="margin-top:6px">Upstream knobs so far: SQL late ' + S.remote.cs_sql.late + ', restated ' + S.remote.cs_sql.restated + ' · IIS late ' + S.remote.cs_iis.late + '.</p></div>';
+}
+
+function screenCoverage() {
+  const c = getCoverage(), p = windowProblem(S.window);
+  const failed = SRC.filter(s => s.mode === 'pull').map(s => { const a = S.attempts.filter(x => x.source === s.id).slice(-1)[0]; return a && a.outcome === 'incomplete' && a.error !== '409 window-overlap' ? { s, a } : null; }).filter(Boolean);
+  let head;
+  if (c.state === 'no-coverage') head = '<div class="note grey"><b>No coverage.</b> Nothing has been read and stored for this case, so there is nothing to call "stored". The window below is entirely a gap.</div>';
+  else if (c.gaps.length) head = '<div class="note"><b>Partly covered.</b> ' + c.gaps.length + ' gap' + (c.gaps.length > 1 ? 's' : '') + ' in the window. Coverage means "completely read as of ' + c.asOf + '", not "current".</div>';
+  else head = '<div class="note ok"><b>Covered.</b> Stored coverage spans the whole window as of ' + c.asOf + '. That is "completely read as of then", not "current".</div>';
+  return windowPicker() + '<div class="card"><h3>Coverage ledger <span class="dim sm">· GET /coverage · reads the case only, never fills gaps</span></h3>' + head +
+    failed.map(f => '<div class="note bad" style="margin-top:8px"><b>Last attempt failed</b> for ' + esc(f.s.label) + ': ' + esc(f.a.error) + '. A failed attempt never counts as coverage.</div>').join('') +
+    '<table style="margin-top:8px"><tr><th>Source</th><th>Window [from, to)</th><th>Rows</th><th>Complete</th><th>Digest</th><th>At</th></tr>' +
+    (c.entries.length ? c.entries.map(e => '<tr><td>' + esc(src(e.source).label) + '</td><td class="mono sm">' + e.from.slice(5, 16) + ' → ' + e.to.slice(5, 16) + '</td><td>' + e.rowsRead + '</td><td>' + (e.complete ? 'yes' : 'no') + '</td><td class="mono sm">' + e.contentDigest.slice(0, 8) + '</td><td class="mono sm">' + e.at.slice(11, 19) + '</td></tr>').join('') : '<tr><td colspan="6" class="dim">entries: [ ]</td></tr>') + '</table>' +
+    '<h4 style="margin-top:12px">Gaps in the window' + (p ? ' <span class="err">(window not valid)</span>' : '') + '</h4>' +
+    (c.gaps.length ? '<ul style="margin:4px 0 0;padding-left:20px">' + c.gaps.map(g => '<li>' + esc(src(g.source).label) + ': <span class="mono sm">' + g.from.slice(5, 16) + ' → ' + g.to.slice(5, 16) + '</span></li>').join('') + '</ul>' : '<p class="dim">none</p>') +
+    '<p class="dim sm" style="margin-top:8px">provenance: ' + c.provenance + ' · asOf ' + c.asOf + ' · this response has no allLanesStored field.</p></div>';
+}
+
+function laneChart(l, ax, sel) {
+  const color = 'var(--lane-' + l.key + ')', slot = 1000 / ax.n, max = Math.max(1, ...(l.buckets || [0]));
+  let g = '';
+  ax.slots.forEach(sl => {
+    const x = sl.k * slot, c = l.buckets ? l.buckets[sl.k] : 0;
+    const tipTxt = short(sl.s) + ' → ' + short(sl.e) + (sl.empty ? ' · outside the window (empty intersection)' : ' · ' + c + ' event' + (c === 1 ? '' : 's') + (sl.clipped ? ' · clipped to window edge' : '') + (l.state === 'incomplete' && ((l.key === 'audit' && l.incompleteFrom !== undefined && sl.k >= l.incompleteFrom) || (l.key !== 'audit' && sl.frag)) ? ' · NOT complete' : ''));
+    const incomplete = !sl.empty && l.state === 'incomplete' && ((l.key === 'audit' && sl.k >= l.incompleteFrom) || (l.key !== 'audit' && sl.frag));
+    g += '<g class="bk" data-act="sel" data-lane="' + l.key + '" data-k="' + sl.k + '" data-tip="' + esc(tipTxt) + '"><rect class="hit" x="' + x + '" y="0" width="' + slot + '" height="64" fill="transparent"/>';
+    if (sl.empty) g += '<rect x="' + x + '" y="60" width="' + Math.max(0.5, slot - 0.6) + '" height="3" fill="var(--pending)" opacity=".35"/>';
+    else {
+      const h = c ? Math.max(2, Math.round(54 * c / max)) : 0;
+      if (incomplete) g += '<rect x="' + x + '" y="6" width="' + Math.max(0.5, slot - 0.6) + '" height="56" fill="url(#hatch)"/>';
+      if (h) g += '<rect x="' + x + '" y="' + (62 - h) + '" width="' + Math.max(0.5, slot - 0.6) + '" height="' + h + '" fill="' + color + '" opacity="' + (incomplete ? .55 : 1) + '"' + (sl.clipped ? ' stroke="var(--warn)" stroke-dasharray="2 1" stroke-width="1"' : '') + '/>';
+      else g += '<rect x="' + x + '" y="61" width="' + Math.max(0.5, slot - 0.6) + '" height="1.5" fill="var(--text-2)" opacity=".5"/>';
+    }
+    if (sel && sel.lane === l.key && sel.k === sl.k) g += '<rect x="' + x + '" y="1" width="' + Math.max(1.5, slot) + '" height="62" fill="none" stroke="var(--accent)" stroke-width="2"/>';
+    g += '</g>';
+  });
+  return '<svg class="chart" viewBox="0 0 1000 64" preserveAspectRatio="none" role="img" aria-label="' + esc(l.label) + ' lane, ' + l.total + ' events">' + g + '</svg>';
+}
+function axisLabels(ax) {
+  let h = '';
+  for (let i = 0; i <= 4; i++) { const t = ax.axisStart + Math.round(ax.n * i / 4) * ax.W; h += '<span style="left:' + (i * 25) + '%">' + short(t) + '</span>'; }
+  return '<div class="axis">' + h + '</div>';
+}
+function stateSticker(l) {
+  const m = { events:['Events', 'ok'], 'no-data':['No data', 'grey'], 'none-seen':['None seen', 'grey'], 'out-of-range':['Out of range', 'grey'], incomplete:['Incomplete', 'hatch'] }[l.state] || [l.state, ''];
+  return stk(m[0], m[1]);
+}
+function screenTrace() {
+  const prob = windowProblem(S.window), t = S.last.tracing;
+  const chips = SRC.map(s => btn('chosen', esc(LANE_LABEL[s.lane]) + ' · ' + esc(s.label.split(' (')[0]), { s:true, d:{ sid:s.id }, pressed:!!S.chosen[s.id] })).join(' ');
+  let out = '';
+  if (t && t.status === 400) out = '<div class="note bad"><b>' + esc(t.error) + '</b> The chart is not drawn.</div>';
+  else if (t) {
+    const ax = t._axis, anyEv = t.lanes.some(l => l.state === 'events' || (l.state === 'incomplete' && l.total));
+    const mixed = t.mixedConsistency ? '<div class="note" role="note"><b>Live and saved lanes are read at different times; totals across lanes are not a conservation check.</b> <span class="dim">(Non-dismissible. <span class="mono">complete:true</span> means the read finished, not that it is a stable snapshot.)</span></div>' : '';
+    const lanesHtml = t.lanes.map(l => {
+      const body = l.buckets ? laneChart(l, ax, S.sel) : '<p class="dim" style="padding:10px 0">' + esc(l.reason) + '</p>';
+      return '<div class="lane"><div class="hd"><b><span class="leg" style="background:var(--lane-' + l.key + ')"></span>' + esc(l.label) + '</b>' + stateSticker(l) + stk(l.origin === 'live' ? 'Live read' : 'Stored', l.origin === 'live' ? 'warn' : '') + stk(l.consistency, l.consistency === 'live-non-snapshot' ? 'warn' : 'grey') + stk('complete: ' + l.complete, l.complete ? '' : 'bad') +
+        '<span class="sp"></span><span class="mono sm">' + l.total + ' events · asOf ' + l.asOf.slice(11, 19) + '</span></div>' +
+        (l.state === 'incomplete' ? '<p class="warnc sm">' + esc(l.reason.replace(/\.?$/, '.')) + ' Hatched buckets are not exact and are never drawn as complete.</p>' : '') +
+        (l.note ? '<p class="dim sm">' + esc(l.note) + '</p>' : '') +
+        (l.coverageGaps && l.coverageGaps.length ? '<p class="warnc sm">Stored coverage has gaps in this window: ' + esc(l.coverageGaps.join('; ')) + '</p>' : '') +
+        body + (l.buckets ? axisLabels(ax) : '') + '</div>';
+    }).join('');
+    const sel = S.sel && ax.slots[S.sel.k] ? (() => { const sl = ax.slots[S.sel.k], l = t.lanes.find(x => x.key === S.sel.lane); return '<div class="note ok" style="margin-top:8px"><b>Bucket selected:</b> ' + LANE_LABEL[S.sel.lane] + ', <span class="mono">' + iso(sl.s) + ' → ' + iso(sl.e) + '</span> · ' + (sl.empty ? 'outside the window' : (l.buckets ? l.buckets[sl.k] : 0) + ' events' + (sl.clipped ? ' · clipped to the window edge (geometry, not missing data)' : '')) + ' · ' + btn('', 'Open Run analysis for this bucket', { s:true, disabled:true, title:'Hand-off is not part of this prototype' }) + '</div>'; })() : '';
+    const sc = ax.scans.length ? ax.scans.map(f => '<li>' + f.name + ': <span class="mono sm">' + iso(f.from) + ' → ' + iso(f.to) + '</span></li>').join('') : '';
+    const vacuous = t.allLanesStored && !anyEv;
+    out = '<div class="card"><div class="kpi"><div><small>Bucket size shown</small><span class="big">' + fmtDur(ax.W) + '</span></div><div><small>Buckets on the aligned axis</small><span class="big">' + ax.n + '</span> <small>(' + ax.inWindow + ' inside the window)</small></div><div><small>Boundary raw scans (saved lanes)</small><span class="big">' + ax.scans.length + '</span></div></div>' +
+      (ax.span > 24 * H ? '<p class="dim sm" style="margin-top:6px">Longer windows use coarser buckets.</p>' : '') +
+      (ax.n > ax.inWindow ? '<p class="dim sm" style="margin-top:6px">The axis is fixed to whole UTC hours and never re-anchored, so ' + (ax.n - ax.inWindow) + ' slot' + (ax.n - ax.inWindow > 1 ? 's' : '') + ' at the ends fall outside your window and are drawn as thin grey ticks.</p>' : '') + '</div>' +
+      mixed + '<div style="margin-top:8px">' + lanesHtml + '</div>' + sel +
+      '<div class="card" style="margin-top:12px"><h4>Axis arithmetic <span class="dim sm">(UTC floor-aligned, never re-anchored)</span></h4><table class="sm">' +
+      '<tr><td>window [start, end)</td><td class="mono">' + iso(ax.start) + ' → ' + iso(ax.end) + ' (' + fmtSpan(ax.span) + ')</td></tr>' +
+      '<tr><td>axisStart / axisEnd</td><td class="mono">' + iso(ax.axisStart) + ' → ' + iso(ax.axisEnd) + '</td></tr>' +
+      '<tr><td>ladderWidth(span)</td><td class="mono">' + ax.ladder / 1000 + ' s</td></tr><tr><td>alignedRung(axis)</td><td class="mono">' + ax.alignedRung / 1000 + ' s (first rung with ≤120 aligned buckets)</td></tr>' +
+      '<tr><td>W = max(ladder, aligned)</td><td class="mono">' + ax.W / 1000 + ' s → ceil(' + (ax.axisEnd - ax.axisStart) / 1000 + ' / ' + ax.W / 1000 + ') = ' + ax.n + ' buckets</td></tr>' +
+      '<tr><td>boundary raw scans</td><td><b>' + ax.scans.length + '</b> · ' + esc(ax.scanWhy) + (sc ? '<ul style="margin:2px 0 0;padding-left:18px">' + sc + '</ul>' : '') + '<span class="dim">For rollup-backed saved lanes. The audit lane is a live aggregate and has no raw scan.</span></td></tr></table></div>' +
+      '<div class="card" style="margin-top:12px"><h4>Response flags</h4><div class="row">' + stk('allLanesStored: ' + t.allLanesStored, t.allLanesStored ? '' : 'warn') + stk('mixedConsistency: ' + t.mixedConsistency, t.mixedConsistency ? 'warn' : '') + '</div>' +
+      (vacuous ? '<p class="warnc sm" style="margin-top:6px">allLanesStored is literally true here (every lane has origin "case"), but no lane has any stored events. The UI must not read this as "everything is stored". See question 1.</p>' : '') +
+      (!t.allLanesStored ? '<p class="dim sm" style="margin-top:6px">false because at least one lane is a live read.</p>' : '') + '</div>';
+  } else out = '<div class="card dim">Choose lanes and a window, then press Start tracing.</div>';
+  return windowPicker() + '<div class="card"><div class="row"><span class="dim">Sources:</span> ' + chips + '<span class="sp"></span>' + btn('trace', 'Start tracing', { primary:true, disabled:!!prob, title:prob || '' }) + '</div>' +
+    '<div class="row" style="margin-top:8px"><label><input type="checkbox" data-chg="auditOver"' + (S.sim.auditOver ? ' checked' : '') + '> <span class="warnc sm">PROTOTYPE: audit read exceeds its budget</span></label><label><input type="checkbox" data-chg="edgeOver"' + (S.sim.edgeOver ? ' checked' : '') + '> <span class="warnc sm">PROTOTYPE: boundary raw scan exceeds 50,000 rows</span></label></div></div>' + out;
+}
+
+function screenExport() {
+  const pill = S.preview ? (S.preview.scrubSensitive ? 'Export hides IP, referer and cookie hash' : 'Export includes IP, referer and cookie hash (scrub is off)') : 'Default: export hides IP, referer and cookie hash';
+  const pv = S.preview, valid = pv && !pv.rejected;
+  const stale = pv && pv.rejected;
+  const c = S.last.confirm;
+  return '<div class="card"><h3>Export <span class="dim sm">· preview, then confirm</span></h3>' +
+    '<div class="row" style="margin:8px 0">' + btn('scrub', 'Scrub IP, referer, cookie hash', { s:true, pressed:S.case.scrub }) + stk(pill, S.case.scrub ? '' : 'warn') + '</div>' +
+    '<div class="row">' + btn('preview', pv ? 'Run preview again' : 'Preview', { next:!valid }) + btn('confirm', 'Confirm export', { primary:true, disabled:!valid, d:{ blank:'0' }, title: valid ? '' : 'Run a preview first' }) + btn('confirmBlank', 'PROTOTYPE: confirm with blank previewId', { s:true }) + '</div>' +
+    (pv ? '<div class="card" style="margin-top:10px"><h4>Preview</h4><p class="mono sm">previewId ' + pv.previewId + ' · taken at case revision ' + pv.revision + ' · scrub ' + (pv.scrubSensitive ? 'on' : 'off') + '</p><p class="dim sm">The preview is a summary, not the bytes (summarizesBytes: false). It would export ' + activeRows('sql').length + ' SQL and ' + activeRows('iis').length + ' IIS events.</p></div>' : '<p class="dim" style="margin-top:8px">No preview yet.</p>') +
+    (stale ? '<div class="note bad" style="margin-top:10px"><b>409 · the preview changed; run the preview again.</b> Confirm is switched off until you do. Nothing was exported.</div>' : '') +
+    (c && c.status === 200 && !stale ? '<div class="note ok" style="margin-top:10px"><b>Exported.</b> ' + c.byteLength + ' bytes · sha256 <span class="mono">' + c.sha256 + '</span> · case revision ' + c.caseRevision + ' · scrub ' + (c.scrubSensitive ? 'on' : 'off') + '<pre class="json" style="margin-top:6px">first IIS row as exported:\n' + esc(JSON.stringify(c.sampleIisRow, null, 1)) + '</pre></div>' : '') + '</div>' +
+    '<div class="proto"><div class="tag">PROTOTYPE CONTROLS · things that change the case between preview and confirm</div><div class="row">' +
+    btn('pull', 'Re-pull SQL (same window)', { s:true }) + btn('upstream', 'SQL upstream: a late row arrives', { s:true, d:{ sid:'cs_sql', kind:'late' } }) + btn('cookie', 'Change cookie allowlist', { s:true }) +
+    (S.imports.length ? btn('del', 'Delete import #' + S.imports[S.imports.length - 1].id, { s:true, d:{ id:S.imports[S.imports.length - 1].id } }) : '') + '</div>' +
+    '<p class="dim sm" style="margin-top:6px">Case revision now: <b>' + S.case.revision + '</b>. Unchanged re-pulls, refused pulls and rolled-back pulls do not move it.</p></div>';
+}
+
+const SCREENS = [['case', 'Case'], ['evidence', 'Get evidence'], ['coverage', 'Coverage'], ['trace', 'Start tracing'], ['export', 'Export']];
+function renderApp() {
+  const nav = '<div class="appnav" role="tablist">' + SCREENS.map(([k, t]) => '<button role="tab" data-act="screen" data-s="' + k + '" aria-selected="' + (S.screen === k) + '">' + t + '</button>').join('') + '</div>';
+  const bar = '<div class="bar"><b>' + esc(S.case.name) + '</b><span class="dim">Window ' + esc(short(S.window.start)) + ' → ' + esc(short(S.window.end)) + ' UTC</span><span class="sp"></span><span class="dim sm">Case revision ' + S.case.revision + '</span></div>';
+  const body = { case:screenCase, evidence:screenEvidence, coverage:screenCoverage, trace:screenTrace, export:screenExport }[S.screen]();
+  document.getElementById('app').innerHTML = bar + nav + '<div class="stack">' + body + '</div>';
+}
+
+/* ====================================================================================
+   10. State inspector: full relevant state after every action
+   ==================================================================================== */
+function replacer(k, v) {
+  if (k === '_axis') return undefined;
+  if (Array.isArray(v) && v.length > 16 && typeof v[0] === 'number') return '<' + v.length + ' bucket counts · sum ' + v.reduce((a, b) => a + b, 0) + ' · max ' + Math.max(...v) + '>';
+  return v;
+}
+function view() {
+  const roll = {};
+  ['sql', 'iis'].forEach(l => { const r = activeRows(l); roll[l] = { bucket_60000_rows:new Set(r.map(x => Math.floor(x.ts / MIN))).size, bucket_3600000_rows:new Set(r.map(x => Math.floor(x.ts / H))).size }; });
+  return {
+    clock: iso(S.clock), lastAction: S.lastAction,
+    case: { id:S.case.id, revision:S.case.revision, scrubSensitive:S.case.scrub, cookieAllowlist:S.case.cookieAllow },
+    window: { start:iso(S.window.start), end:iso(S.window.end), span: fmtSpan(S.window.end - S.window.start), problem: windowProblem(S.window) },
+    chosenSources: Object.keys(S.chosen).filter(k => S.chosen[k]),
+    caseDb: {
+      imports: S.imports.map(i => ({ id:i.id, source:i.sourceId, lane:i.lane, kind:i.kind, observationKey: i.observationKey ? i.observationKey.replace(/\|[0-9a-f]{14}\|/, '|fp:' + i.fingerprint.slice(0, 6) + '|') : null, fileName:i.fileName, window:win(i.from, i.to), events:i.rows.length, contentDigest:i.digest, supersedesImportId:i.supersedesImportId })),
+      coverageRows: S.imports.length, rollups: roll, import_attempts: S.attempts.map(a => ({ id:a.id, source:a.source, window:a.from.slice(5, 16) + ' → ' + a.to.slice(5, 16), outcome:a.outcome, error:a.error })),
+    },
+    coverageGET: getCoverage(),
+    upstreamKnobs: S.remote, simulate: S.sim, auditLiveReads: S.auditTick,
+    lastResponses: { pull: S.last.pull, tracing: S.last.tracing ? Object.assign({}, S.last.tracing, { lanes: S.last.tracing.lanes && S.last.tracing.lanes.map(l => Object.assign({}, l)) }) : null, exportPreview: S.last.preview, exportConfirm: S.last.confirm && Object.assign({}, S.last.confirm, { sampleIisRow:undefined }) },
+  };
+}
+function renderInspector() {
+  const v = view(), j = o => esc(JSON.stringify(o, replacer, 2));
+  const log = S.log.map(l => '<tr><td class="mono">#' + l.n + '</td><td class="mono sm">' + l.at + '</td><td>' + esc(l.label) + '</td><td class="sm">' + esc(l.result || '') + '</td></tr>').join('');
+  document.getElementById('inspector').innerHTML =
+    '<details class="sec" open><summary>What the last action changed</summary><div><p class="sm"><b>' + esc(S.lastAction) + '</b></p>' + (S.delta.length ? '<ul class="sm" style="margin:4px 0 0;padding-left:18px">' + S.delta.map(d => '<li class="mono">' + esc(d) + '</li>').join('') + '</ul>' : '<p class="dim sm">No stored state changed. (Case revision unchanged.)</p>') + '</div></details>' +
+    '<details class="sec" open><summary>Action log</summary><div>' + (log ? '<table class="sm">' + log + '</table>' : '<p class="dim sm">No actions yet.</p>') + '</div></details>' +
+    '<details class="sec" open><summary>Case store (case.db)</summary><div><pre class="json">' + j({ case:v.case, window:v.window, chosenSources:v.chosenSources, caseDb:v.caseDb }) + '</pre></div></details>' +
+    '<details class="sec" open><summary>GET /coverage as it would answer now</summary><div><pre class="json">' + j(v.coverageGET) + '</pre></div></details>' +
+    '<details class="sec" open><summary>Last API responses</summary><div><pre class="json">' + j(v.lastResponses) + '</pre></div></details>' +
+    '<details class="sec"><summary>Prototype knobs (upstream, failures)</summary><div><pre class="json">' + j({ upstreamKnobs:v.upstreamKnobs, simulate:v.simulate, auditLiveReads:v.auditLiveReads, fakeClock:v.clock }) + '</pre></div></details>';
+}
+
+/* ====================================================================================
+   11. Guided tabs
+   ==================================================================================== */
+function toApp() { const a = document.getElementById('app'); if (a.getBoundingClientRect().top > innerHeight * 0.6 || a.getBoundingClientRect().top < 0) a.scrollIntoView({ block:'start' }); }
+function resetCase(setup) { S = fresh(); UI.guideDone = {}; UI.lastStep = null; if (setup) setup(); render(); }
+const go = s => { S.screen = s; };
+function step(tab, i) { UI.guideDone[tab + i] = true; }
+
+const TABS = [
+  { id:'free', title:'Free play' },
+  { id:'happy', title:'1 · Happy path' },
+  { id:'repull', title:'2 · Re-pull rules' },
+  { id:'axis', title:'3 · Off-hour 30-day axis' },
+  { id:'mixed', title:'4 · Mixed live + saved' },
+  { id:'empty', title:'5 · Empty coverage' },
+  { id:'export', title:'6 · Export conflict' },
+];
+const GUIDES = {
+  happy: { intro:'A non-developer walk from an empty case to an export. Press "Run" on each step in order, or click around the app yourself.', setup:() => {},
+    steps:[
+      { t:'Open the case. Three sources are attached, nothing is stored.', run:() => { go('case'); render(); }, x:'SQL and IIS say "Nothing stored". The audit source is a live read.' },
+      { t:'Choose the window: the last hour (11:00 to 12:00 UTC, the default).', run:() => { go('evidence'); applyPreset('last1h'); }, x:'Window set. It is a half-open interval: 11:00:00 is in, 12:00:00 is out.' },
+      { t:'Pull the SQL evidence for exactly this window.', run:() => { go('evidence'); A.pull(); }, x:'200 completed: one import, its events, one coverage row, rebuilt rollups. Case revision goes up by one.' },
+      { t:'Import the IIS log file for the same window.', run:() => { go('evidence'); A.importIis(); }, x:'200 imported. File imports have no observation key.' },
+      { t:'Check coverage.', run:() => { go('coverage'); render(); }, x:'Two entries, no gaps. "Covered" means read completely as of the time shown, not current.' },
+      { t:'Start tracing with all three lanes.', run:() => { go('trace'); A.trace(); }, x:'One UTC axis, three lanes, 60 second buckets, 60 buckets. The audit lane is a live read; SQL and IIS are stored. The mixed-consistency note appears and cannot be dismissed.' },
+      { t:'Click a bucket on any lane.', run:() => { S.sel = { lane:'sql', k:35 }; go('trace'); render(); }, x:'The bucket is outlined and the hand-off hint appears (the hand-off itself is not in this prototype).' },
+      { t:'Export: run the preview, then confirm.', run:() => { go('export'); A.preview(); A.confirm(false); }, x:'200 with a byte count and sha256. Scrub is on, so the sample IIS row has no client-ip, referer or cookie hash.' },
+    ] },
+  repull: { intro:'One SQL window, pulled several times. Watch the case revision, the import ids and the result card.', setup:() => { S.window = { start:ISO(PRESETS.last1h.s), end:ISO(PRESETS.last1h.e) }; S.winRaw = { start:PRESETS.last1h.s, end:PRESETS.last1h.e }; go('evidence'); },
+    steps:[
+      { t:'Pull SQL for 11:00–12:00.', run:() => { go('evidence'); A.pull(); }, x:'completed. Import #1 exists.' },
+      { t:'Pull the same window again.', run:() => A.pull(), x:'unchanged: same content digest, nothing written, revision does not move.' },
+      { t:'Upstream, a late row arrives. Then pull the same window.', run:() => { A.upstream('cs_sql', 'late'); A.pull(); }, x:'changed: atomic whole replacement. Import #1 is deleted, import #2 inserted, events are 1 higher, no double counting.' },
+      { t:'Upstream, durations are restated (same ids, same timestamps). Then pull again.', run:() => { A.upstream('cs_sql', 'restated'); A.pull(); }, x:'changed. The result card shows that an id+timestamp-only fingerprint would have called this unchanged (R6-01).' },
+      { t:'Change the window to 11:30–12:00 (inside the stored one) and pull.', run:() => { applyPreset('half'); A.pull(); }, x:'409 window-overlap; re-pull the exact stored window or import a disjoint window. Nothing changed.' },
+      { t:'Change the window to 10:00–11:00 (touches 11:00, no overlap) and pull.', run:() => { applyPreset('prev1h'); A.pull(); }, x:'completed. Half-open windows that only touch are disjoint, so a second observation is stored.' },
+      { t:'Make the next write fail halfway, go back to 11:00–12:00, change upstream, pull.', run:() => { S.sim.fail = 'midtx'; applyPreset('last1h'); A.upstream('cs_sql', 'late'); A.pull(); }, x:'500 rolled back whole: the previous observation is still stored and the revision did not move.' },
+      { t:'Turn failure injection off and pull again.', run:() => { S.sim.fail = 'none'; A.pull(); }, x:'changed: the replacement now goes through.' },
+      { t:'Optional spec gap: switch the filter to "Slow queries only" and pull 11:00–12:00.', run:() => { S.sqlFilter = 'slow'; A.pull(); }, x:'A different fingerprint, so it is a separate observation that overlaps the first. Both stay active and slow events now count twice in SQL totals. See question 3.' },
+    ] },
+  axis: { intro:'The window arithmetic for the UTC floor-aligned axis. Each row is computed live. "Trace this window" resets the case, seeds fake stored SQL and IIS data for exactly that window, and draws it.', setup:() => { go('trace'); }, custom:true },
+  mixed: { intro:'One live lane next to two saved lanes. Saved data is seeded for 11:00–12:00.', setup:() => { seed({ start:ISO(PRESETS.last1h.s), end:ISO(PRESETS.last1h.e) }); S.sel = null; go('trace'); },
+    steps:[
+      { t:'Start tracing with all three lanes.', run:() => { go('trace'); A.trace(); }, x:'mixedConsistency true, allLanesStored false. The note is shown and cannot be closed.' },
+      { t:'Start tracing again.', run:() => A.trace(), x:'The audit total moved (rows arrived during the read) while SQL and IIS stayed put. That is why cross-lane totals are not a conservation check.' },
+      { t:'Make the audit read exceed its budget, then trace.', run:() => { S.sim.auditOver = true; A.trace(); }, x:'Audit lane is incomplete (complete:false, reason timeout), hatched, and says nothing was shortened. SQL and IIS keep exact local counts.' },
+      { t:'Turn that off and drop the audit lane, then trace.', run:() => { S.sim.auditOver = false; S.chosen.cs_audit = false; A.trace(); }, x:'Both remaining lanes are stored: mixedConsistency false, no note, allLanesStored true.' },
+      { t:'Keep only the audit lane, then trace.', run:() => { S.chosen = { cs_audit:true, cs_sql:false, cs_iis:false }; A.trace(); }, x:'Only one lane, yet the "different times" note still appears because the rule is "any lane live". See question 9.' },
+    ] },
+  empty: { intro:'A case with sources attached and nothing read yet.', setup:() => { go('coverage'); },
+    steps:[
+      { t:'Open Coverage for the default window.', run:() => { go('coverage'); render(); }, x:'entries [], state "no-coverage", a non-empty gap for each saved source. It never says "stored".' },
+      { t:'Trace SQL and IIS only (no audit lane).', run:() => { S.chosen = { cs_audit:false, cs_sql:true, cs_iis:true }; go('trace'); A.trace(); }, x:'Both lanes: "This case has no file for this source". allLanesStored is literally true yet nothing is stored; the page warns about it. See question 1.' },
+      { t:'Pull SQL for the window.', run:() => { go('evidence'); A.pull(); }, x:'completed.' },
+      { t:'Open Coverage again.', run:() => { go('coverage'); render(); }, x:'One entry; "Partly covered" because IIS still has a gap.' },
+      { t:'Trace again.', run:() => { go('trace'); A.trace(); }, x:'SQL shows events; IIS still shows "no file".' },
+    ] },
+  export: { intro:'Preview, something changes, confirm. Stored data for 11:00–12:00 is seeded.', setup:() => { seed({ start:ISO(PRESETS.last1h.s), end:ISO(PRESETS.last1h.e) }); go('export'); },
+    steps:[
+      { t:'Run the preview (scrub on).', run:() => { go('export'); A.preview(); }, x:'previewId stamped with the current case revision.' },
+      { t:'Re-pull SQL with no upstream change.', run:() => A.pull(), x:'unchanged. Revision did not move, so the preview is still valid.' },
+      { t:'Confirm.', run:() => A.confirm(false), x:'200. Preview and confirm are stateless, so confirming again is fine too.' },
+      { t:'A colleague changes upstream and re-pulls (a real change).', run:() => { A.upstream('cs_sql', 'late'); A.pull(); }, x:'changed. Revision goes up by one.' },
+      { t:'Confirm using the old preview.', run:() => A.confirm(false), x:'409 the preview changed; run the preview again. Confirm is now switched off.' },
+      { t:'Run the preview again.', run:() => A.preview(), x:'New previewId. Confirm is available again.' },
+      { t:'Switch scrub off, then confirm without a new preview.', run:() => { A.scrub(); A.confirm(false); }, x:'409 again: the scrub choice is part of the stamp.' },
+      { t:'Preview again, then confirm.', run:() => { A.preview(); A.confirm(false); }, x:'200 with scrub off: the sample IIS row now carries client-ip, referer and cookie hash.' },
+    ] },
+};
+
+const AXIS_CASES = [
+  ['1 h, on the hour', '2026-09-01T10:00:00Z', '2026-09-01T11:00:00Z', 'SC-API-09: 60 s, 60 buckets, 0 scans'],
+  ['1 h, off the hour', '2026-09-01T10:07:00Z', '2026-09-01T11:07:00Z', 'R6-02: 60 s at 120 aligned buckets, 2 scans'],
+  ['Both edges in one hour', '2026-09-01T10:07:00Z', '2026-09-01T10:50:00Z', 'R6-04: 1 shared scan'],
+  ['Only the start off the hour', '2026-09-01T10:07:00Z', '2026-09-01T12:00:00Z', '1 scan'],
+  ['Exactly 2 h, on the hour', '2026-09-01T10:00:00Z', '2026-09-01T12:00:00Z', 'SC-API-10: 60 s, 120 buckets'],
+  ['Exactly 2 h, off the hour', '2026-09-01T10:07:00Z', '2026-09-01T12:07:00Z', 'R6-02: forced off 60 s'],
+  ['2 h + 1 s', '2026-09-01T10:00:00Z', '2026-09-01T12:00:01Z', 'SC-API-11: 300 s'],
+  ['Exactly 24 h', '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z', 'SC-API-12: 900 s, 96 buckets'],
+  ['Exactly 5 d', '2026-09-01T00:00:00Z', '2026-09-06T00:00:00Z', 'hourly, 120'],
+  ['30 d, on the hour (00:00)', '2026-08-02T00:00:00Z', '2026-09-01T00:00:00Z', '6 h, 120 buckets, 0 scans'],
+  ['30 d, start 00:01', '2026-08-02T00:01:00Z', '2026-09-01T00:01:00Z', 'R6-02: 8 h, 91 buckets, 2 scans'],
+  ['30 d + 1 s', '2026-08-02T00:00:00Z', '2026-09-01T00:00:01Z', 'refused 400'],
+];
+function traceThisWindow(i) {
+  const keep = S.sim.edgeOver, [, a, b] = AXIS_CASES[i], w = { start:ISO(a), end:ISO(b) };
+  S = fresh(); S.sim.edgeOver = keep; UI.guideDone = {}; UI.lastStep = null; S.window = w; S.winRaw = { start:a, end:b };
+  const prob = windowProblem(w); let seeded = ['skipped (window refused)'];
+  if (!prob) seeded = seed(w);
+  S.screen = 'trace';
+  act('Axis case: ' + AXIS_CASES[i][0] + ' (seeded: ' + seeded.join(', ') + ')', () => (S.last.tracing = doTrace()));
+}
+function axisGuide() {
+  const rows = AXIS_CASES.map((c, i) => {
+    const ax = axis(ISO(c[1]), ISO(c[2]));
+    return '<tr><td>' + esc(c[0]) + '<br><span class="dim sm mono">' + c[1].slice(5, 16) + ' → ' + c[2].slice(5, 16) + '</span></td>' +
+      (ax ? '<td><b>' + fmtDur(ax.W) + '</b></td><td>' + ax.n + ' <span class="dim">(' + ax.inWindow + ' in window)</span></td><td>' + ax.scans.length + '</td>' : '<td class="err" colspan="3">refused: the longest window is 30 days</td>') +
+      '<td class="dim sm">' + esc(c[3]) + '</td><td>' + btn('axisrow', 'Trace this window', { s:true, d:{ i } }) + '</td></tr>';
+  }).join('');
+  return '<table class="sm"><tr><th>Window</th><th>Bucket size</th><th>Buckets</th><th>Raw scans</th><th>Expect</th><th></th></tr>' + rows + '</table>' +
+    '<div class="row" style="margin-top:8px"><label><input type="checkbox" data-chg="edgeOver"' + (S.sim.edgeOver ? ' checked' : '') + '> <span class="warnc sm">PROTOTYPE: boundary raw scans exceed their 50,000-row budget</span></label><span class="dim sm">Try it on the off-hour rows (hatched edge buckets) and on an on-the-hour row (no scan, so nothing can go over).</span></div>';
+}
+function renderGuide() {
+  const g = GUIDES[UI.tab], el = document.getElementById('guide');
+  if (!g) { el.innerHTML = '<h3>Free play</h3><p class="dim">Use the five screens below and the dashed PROTOTYPE controls. Every click prints the full state on the right. Pick a numbered tab above for a guided walk-through.</p><div class="row" style="margin-top:8px">' + btn('reset', 'Reset everything', { s:true }) + '</div>'; return; }
+  let h = '<div class="row"><h3>' + esc(TABS.find(t => t.id === UI.tab).title) + '</h3><span class="sp"></span>' + btn('reset', 'Reset this scenario', { s:true }) + '</div><p class="dim" style="margin-top:4px">' + esc(g.intro) + '</p>';
+  if (g.custom) h += axisGuide();
+  else {
+    const firstUndone = g.steps.findIndex((s, i) => !UI.guideDone[UI.tab + i]);
+    h += '<ol class="steps">' + g.steps.map((s, i) => '<li><span class="n">' + (i + 1) + '</span><span>' + esc(s.t) + (UI.guideDone[UI.tab + i] ? ' ' + stk('done', 'ok') : '') + '</span>' + btn('gstep', 'Run', { s:true, next:i === firstUndone, d:{ i } }) + (UI.lastStep === UI.tab + i ? ' ' : '') + '</li>').join('') + '</ol>';
+    const ls = g.steps.findIndex((s, i) => UI.lastStep === UI.tab + i);
+    if (ls >= 0) h += '<div class="note ok" style="margin-top:8px"><b>What you should see (step ' + (ls + 1) + '):</b> ' + esc(g.steps[ls].x) + '</div>';
+  }
+  el.innerHTML = h;
+}
+function renderTabs() {
+  document.getElementById('tabs').innerHTML = TABS.map(t => '<button role="tab" data-act="tab" data-t="' + t.id + '" aria-selected="' + (UI.tab === t.id) + '">' + esc(t.title) + '</button>').join('');
+}
+function render() { renderTabs(); renderGuide(); renderApp(); renderInspector(); }
+
+/* ====================================================================================
+   12. Events
+   ==================================================================================== */
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+  const d = b.dataset;
+  switch (d.act) {
+    case 'theme': UI.theme = UI.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = UI.theme; break;
+    case 'tab': UI.tab = d.t; { const g = GUIDES[d.t]; resetCase(g && g.setup); } break;
+    case 'reset': { const g = GUIDES[UI.tab]; resetCase(g && g.setup); } break;
+    case 'screen': S.screen = d.s; render(); break;
+    case 'preset': applyPreset(d.k); break;
+    case 'applywin': readWindow(document.getElementById('w-start').value, document.getElementById('w-end').value); break;
+    case 'chosen': act('Toggle source ' + d.sid, () => { S.chosen[d.sid] = !S.chosen[d.sid]; return { summary:d.sid + ' ' + (S.chosen[d.sid] ? 'chosen' : 'removed') }; }); break;
+    case 'pull': A.pull(); break;
+    case 'importIis': A.importIis(); break;
+    case 'trace': A.trace(); break;
+    case 'preview': A.preview(); break;
+    case 'confirm': A.confirm(false); break;
+    case 'confirmBlank': A.confirm(true); break;
+    case 'upstream': A.upstream(d.sid, d.kind); break;
+    case 'scrub': A.scrub(); break;
+    case 'cookie': A.cookie(); break;
+    case 'del': A.del(+d.id); break;
+    case 'sel': S.sel = { lane:d.lane, k:+d.k }; render(); break;
+    case 'axisrow': traceThisWindow(+d.i); toApp(); break;
+    case 'gstep': { const g = GUIDES[UI.tab], i = +d.i; UI.guideDone[UI.tab + i] = true; UI.lastStep = UI.tab + i; g.steps[i].run(); render(); toApp(); } break;
+  }
+});
+document.addEventListener('change', e => {
+  const c = e.target.dataset && e.target.dataset.chg; if (!c) return;
+  if (c === 'filter') { S.sqlFilter = e.target.value; render(); }
+  if (c === 'fail') { S.sim.fail = e.target.value; render(); }
+  if (c === 'auditOver') { S.sim.auditOver = e.target.checked; render(); }
+  if (c === 'edgeOver') { S.sim.edgeOver = e.target.checked; render(); }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.target.id === 'w-start' || e.target.id === 'w-end')) readWindow(document.getElementById('w-start').value, document.getElementById('w-end').value); });
+const tip = document.getElementById('tip');
+document.addEventListener('mouseover', e => { const g = e.target.closest('[data-tip]'); if (g) { tip.textContent = g.dataset.tip; tip.style.display = 'block'; } });
+document.addEventListener('mousemove', e => { if (tip.style.display === 'block') { tip.style.left = Math.min(e.clientX + 12, innerWidth - 360) + 'px'; tip.style.top = (e.clientY + 14) + 'px'; } });
+document.addEventListener('mouseout', e => { if (e.target.closest('[data-tip]')) tip.style.display = 'none'; });
+
+/* ====================================================================================
+   13. Assumptions and questions (shown at the top)
+   ==================================================================================== */
+const ASSUMPTIONS = [
+  'Fake clock: "now" is 2026-09-01T12:00:00Z and each action moves it 5 s. Everything is shown in UTC; the UTC/Local toggle (TR-05) is not modelled.',
+  'One case, three fixed sources: API audit (live only, never pulled or saved, as in MVP-1), SQL (live pull saved into the case, MVP-2), IIS (file import). Pulls are SQL only; IIS only has file import.',
+  'Fake rows are capped at 400 per pull or file. The content digest uses a small stand-in hash instead of SHA-256 but follows the spec shape: ordered rows, type-tagged and length-prefixed fields, null distinct from absent.',
+  'Fingerprint = source + lane + filter. The only filters are "all" and "slow only". File imports use a fixed "file" fingerprint.',
+  'A pull whose window is not exactly equal to a stored window of the same fingerprint, but intersects it (partly, inside, or around), gets 409 window-overlap. Windows that only touch (half-open) are disjoint and allowed.',
+  'File (IIS) imports have no observation key: deduplicated by content digest only, overlapping or regenerated files are simply added. File imports also write a coverage row (otherwise "out-of-range" could never occur).',
+  'Case revision goes up on: a completed or changed pull, a non-duplicate file import, a deleted import, a cookie allowlist change. It does not move on: unchanged, duplicate, 409-refused or rolled-back pulls. The scrub toggle is not stored but is part of the preview stamp.',
+  'Coverage gaps are computed as a union, so two touching windows count as covered, for the SQL "all events" fingerprint and the IIS file source. A non-empty ledger has no state field; the page derives its own label.',
+  'A lane with no chosen source, or nothing stored, is "no-data" with the sentence "This case has no file for this source". Such lanes carry origin "case". allLanesStored is computed literally (every lane origin is "case").',
+  'The boundary raw scan count is shown for saved lanes even though rollups are MVP-2 and the MVP-1 tracing page reads events directly (see question 6).',
+  'Failure codes the spec does not list: a write failing mid-replacement returns 500; a dropped source connection returns 502 (listed). The audit lane accepts up to 30 days because the spec gives no separate audit limit.',
+  'Not modelled: time-zone rule gate, reference window, 50k row cap and truncation, closed or locked case, 400/423/503 error pages, hydration, Layer 4, zoom and brush, percentile selector, tooltip dictionary, demo mode, Run analysis hand-off (the button is disabled).',
+  'Fonts: IBM Plex is not bundled in this offline file, so system fonts stand in. Colours and shapes follow the brand tokens.',
+];
+const QUESTIONS = [
+  '<b>allLanesStored is vacuously true on a trace.</b> §5.1/§7 say "true iff every lane has origin:\'case\'". With no audit lane and nothing stored, every lane is "no-data" with origin "case", so the flag is true. R6-06 fixed this for GET coverage only. Tab 5, step 2.',
+  '<b>Sub-window pulls: skip or 409?</b> §5.3 says "a stored interval satisfies a request when it contains the requested interval" and "a repeat of the same canonical query is otherwise skipped", while R6-03 says any window not exactly equal to a stored one is refused 409. I chose 409. Tab 2, step 5.',
+  '<b>Does adjacency count as covered?</b> The same §5.3 "contains" rule suggests one stored interval must contain the request; the prototype unions touching intervals. Which is intended?',
+  '<b>Different filters overlap and double count.</b> §4.3 keeps rows with different filters from merging, and R6-03 de-duplicates only per (source, lane, fingerprint, window). A "slow only" pull over the same window is a second active observation, and §4.5 sums "all active events". Tab 2, step 9.',
+  '<b>Regenerated IIS file double counts.</b> R6-03 protects pulls only; file imports have a NULL observation key, so a corrected log for the same window is added next to the old one. Free play: import, then "IIS upstream", then import again.',
+  '<b>Boundary scans in MVP-1.</b> §5.1 says MVP-1 SQL/IIS lanes read case events and "only aligned saved SQL/IIS windows use rollups", yet SC-UI-07 and §7 assert the zero/one/two scan count on the MVP-1 page. Is the count visible to users at all?',
+  '<b>Empty slots on off-hour windows.</b> A 10:07–11:07 window gets 120 aligned slots and only 60 hold your window. "At most 120 buckets" counts slots, not buckets with data. Does a non-developer understand thin grey ticks at both ends (WS-26, WS-280 only say to label the width)?',
+  '<b>What is the user confirming at export?</b> The preview is a summary (summarizesBytes:false) and the 409 says only "the preview changed", not what changed. Should it name the cause (re-import, source edit, scrub change)? Tab 6, steps 5 and 7.',
+  '<b>Mixed-consistency note with a single lane.</b> §7 says "when any lane is live", so a trace with only the audit lane still shows "live and saved lanes are read at different times". Tab 4, step 5.',
+  '<b>Fixing a gap is two screens away.</b> A lane that says "Files do not cover this time" has no "pull this window" shortcut because GET coverage and tracing never fill gaps. Is a button on the lane row allowed, given pulls are the only reader of remote SQL?',
+  '<b>Replacement has no confirmation step.</b> A changed pull deletes the previous observation immediately (no history is kept, per R6-03). Should the user be asked first, or shown "replaces import #1, 28 events"?',
+  '<b>Audit lane window limit.</b> §5.1/§7 mention "its own source window limit" but never give a number, so the prototype cannot show that refusal.',
+];
+document.getElementById('assumptions').innerHTML = ASSUMPTIONS.map(a => '<li>' + esc(a) + '</li>').join('');
+document.getElementById('questions').innerHTML = QUESTIONS.map(q => '<li>' + q + '</li>').join('');
+render();
+</script>
+</body>
+</html>
