@@ -27,5 +27,8 @@ In IT operations "tracing" means distributed tracing (OpenTelemetry, W3C Trace C
 ## Fallback
 "Timeline" alone (shortest, most familiar, less specific). Runner-up descriptive name: "Unified Timeline" (rejected as primary because Verkada already uses the exact name, in physical-security software). Rejected: Tracing, Incident Timeline, Evidence Timeline.
 
+## Related term: Investigation window
+The period you inspect is now the **investigation window** (it was "Problem period (incident window)"). It matches the feature name; the helper text says "When was the problem happening?" so it is not read as "how long I have been investigating". The comparison stays **comparison period** ("Compare it with"). The spec term "incident window" remains in the specs and in the Run analysis screen, which is out of scope for now.
+
 ## Where it was applied
 Screen title, case-home block and button, buttons (Show / Refresh timeline, Back to the timeline, Compare in the Investigation Timeline), "Timeline details", prepared-situation groups, notes in the prototype panel, `TRACING-SCREEN-EXPLAINER.md`, `FLOW-COVERAGE.md`, browser checks.

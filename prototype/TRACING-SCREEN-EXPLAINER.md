@@ -81,8 +81,8 @@ Shows "Investigation Timeline", the case title, the layout name, and **← Case 
 ### ② Range chips
 **Last 15 min · Last hour (default) · Last 4 hours · Last 24 hours · Last 7 days · Last 30 days.** A chip sets the incident window to that period ending "now" and the comparison period to **the equal-length period right before it**. The chip that matches the current windows is highlighted. [Code; Owner asked for the same chips as the analysis, plus 30 days]
 
-### ③ Problem period and Compare it with cards
-Headings are now plain English with the spec term in brackets: **Problem period (incident window)** ("When was the problem happening?") and **Compare it with (comparison period)** ("This earlier period is only used for comparison. It may not have been healthy."). Each card holds a button showing the dates in the chosen zone, the length (e.g. "UTC · 2 h 30 min") and, beneath it, the UTC form `UTC 2026-10-20T09:00:00Z – …`. The two buttons sit on the same line. [Owner]
+### ③ Investigation window and Compare it with cards
+Headings are now plain English: **Investigation window** (the spec calls it the "incident window"; helper: "When was the problem happening?") and **Compare it with (comparison period)** ("This earlier period is only used for comparison. It may not have been healthy."). Each card holds a button showing the dates in the chosen zone, the length (e.g. "UTC · 2 h 30 min") and, beneath it, the UTC form `UTC 2026-10-20T09:00:00Z – …`. The two buttons sit on the same line. [Owner]
 
 Pressing a button opens a **date-time range picker** with three parts: quick ranges, a calendar (click a start day, then an end day) and start/end times in the chosen zone, with Apply and Cancel. It closes on an outside click. [Owner]
 - Incident quick ranges: the six chips above plus **"The slowdown in the demo data"** (09:00–12:00 on 20 Oct).
@@ -118,7 +118,7 @@ A card above the figures that reads the same data in plain words (observation, m
 
 ## 4. The seven overall figure cards (⑦)
 
-One row of cards sits above the charts, titled "Overall figures: problem period against the comparison period". Each card has a lane-coloured dot, a **plain-English title**, a big value, a one-line **meaning**, a comparison line and the technical term in grey brackets. Plain titles: Requests to the application · Slow-request time (P95, estimated) · Application server errors (5xx) · Web server errors (IIS 5xx) · Slow web requests (IIS P95, estimated) · Slow database calls (over 1 s) · Database errors and blocking. The table below keeps the technical names.
+One row of cards sits above the charts, titled "Overall figures: investigation window against the comparison period". Each card has a lane-coloured dot, a **plain-English title**, a big value, a one-line **meaning**, a comparison line and the technical term in grey brackets. Plain titles: Requests to the application · Slow-request time (P95, estimated) · Application server errors (5xx) · Web server errors (IIS 5xx) · Slow web requests (IIS P95, estimated) · Slow database calls (over 1 s) · Database errors and blocking. The table below keeps the technical names.
 
 | Card | Value | How it is computed [Code] | Comparison line | Turns red when |
 |---|---|---|---|---|
@@ -300,7 +300,7 @@ Still open, please test:
 8. **Provenance lines (live/stored, as-of time)** are in the collapsed Timeline details. [Code]
 9. **Colour is the only carrier** of the 2xx/4xx/5xx split in the IIS bars (the legend names them). Accessibility not audited. [Code]
 10. **Layout:** Report (A) is still the default; Workbench (B) was recommended by the review but not validated with users, so the default was not changed. [Owner decision]
-11. **Terminology compromises:** "Problem period (incident window)" and "API requests (audit log)" keep the spec/source terms in brackets; renaming them outright would split the vocabulary between the Investigation Timeline and Run analysis. [Owner decision]
+11. **Terminology compromises:** "Investigation window" and "API requests (audit log)" keep the spec/source terms in brackets; renaming them outright would split the vocabulary between the Investigation Timeline and Run analysis. [Owner decision]
 12. **The reading aid's layer thresholds** (1.5 times, 2%, 25%) are prototype defaults. [Inference]
 
 ## 12. Review checklist (for the other agent)
