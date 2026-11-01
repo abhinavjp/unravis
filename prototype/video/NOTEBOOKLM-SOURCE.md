@@ -8,7 +8,7 @@ Upload this file to NotebookLM as a source, together with the ten images listed 
 - **Feature in the video:** the **Investigation Timeline** screen (earlier working name: "tracing"; do not use that name).
 - **Audience:** beginners. Support engineers, implementation consultants, junior developers. They do not know IIS, P95, Query Store or HTTP.sys. Explain meaning first, jargon second.
 - **Tone:** calm, plain, short sentences. No hype.
-- **Length:** about 6 minutes.
+- **Length:** no fixed length. Cover each part fully; a series of chapter videos is fine. The ten scenes in section 4 are the core tour; the other sources in the notebook (flows guide, calculations, data sources, screenshot galleries) supply the depth.
 - **Status of what is shown:** a clickable prototype. All numbers are made-up demo data. The video must say so near the start and near the end. It must never say the software "works", "proves", "finds the root cause" or "uses AI".
 
 ## 1. The story in one breath
@@ -120,6 +120,11 @@ The real product's rule catalog has 44 entries (42 active suspects). The prototy
 
 ## 7. Honest limits (say them)
 
+These come from checking the real code against the prototype:
+- The real app calculates percentiles by the nearest-rank method. P95 needs at least 20 requests and P99 at least 100. The prototype's window P95 is only an estimate (an average of per-minute P95s), so its cards say "estimated".
+- Some evidence the prototype's suspects use is **not yet read by the shipped importers**: SQL calls over one second, blocked-process reports and per-file disk latency (the shipped SQL importer reads only the `system_health` events), Mongo `usedDisk` and `connections.rejected`, and Mongo `top`. The prototype shows how those suspects would behave once that data is collected.
+- The time split of one request into application, compute, payload and outside time, and the shape of a slowdown (step, ramp, periodic), exist in the real app's guided analysis but are not computed by this prototype.
+
 - Prototype with synthetic data; not proof the software works.
 - P95 on the cards is an approximation, labelled "estimated".
 - 25 of 42 active suspects are shown. Some need data the product does not collect yet (host counters, .NET counters, change history); those stay grey.
@@ -144,6 +149,10 @@ Do not say: "tracing", "root cause", "proves", "AI", "machine learning", "guaran
 | 08-suspects-what-if-and-see-all.png | "See all" expanded; a switched-on example (HTTP.sys receive timeout, orange) |
 | 09-seven-days-with-gaps.png | Seven days, hatched gaps with labels |
 | 10-no-history-mostly-grey.png | The "no history" situation: nothing red, most suspects grey with what is needed |
+
+## 9b. More sources in the same notebook
+
+`FLOWS-GUIDE.md` (every flow: start, create a case, open a case, add files, analysis, export, timeline), `HOW-THINGS-ARE-CALCULATED.md` (every formula, with worked examples), `WHAT-EACH-DATA-SOURCE-BRINGS.md` (what each log or counter tells you), `TRACING-SCREEN-EXPLAINER.md` (the long explainer), and ten gallery PDFs with 257 captioned screenshots of every state.
 
 ## 10. For humans: where everything lives
 
