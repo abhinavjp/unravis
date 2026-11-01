@@ -1,0 +1,1287 @@
+[
+ {
+  "file": "001-launch-start-screen.png",
+  "what": "The start screen on a normal launch: three cards.",
+  "how": "Open the file with the key unlocked (prototype panel > Launch the app as > Normal)."
+ },
+ {
+  "file": "002-key-locked-unlock-screen.png",
+  "what": "Master key locked: the unlock screen comes first, no case titles or counts.",
+  "how": "Scenario s-locked (Launch conditions: Master key locked at launch)."
+ },
+ {
+  "file": "003-key-wrong-first-try.png",
+  "what": "A wrong master key: one sentence, nothing revealed.",
+  "how": "Unlock screen: type any wrong text, press Unlock."
+ },
+ {
+  "file": "004-key-wrong-throttled.png",
+  "what": "After 3 wrong tries the screen asks to wait a few seconds.",
+  "how": "Press Unlock with a wrong key 3 times in a row."
+ },
+ {
+  "file": "005-key-right-after-wait.png",
+  "what": "Waited, typed the right key: back on the start screen.",
+  "how": "Wait about 6 seconds, type orange-sunrise-2026 (test aid), press Unlock."
+ },
+ {
+  "file": "006-key-file-damaged.png",
+  "what": "The master key file is damaged: the only way forward is to start over.",
+  "how": "Scenario s-damaged (Launch conditions: Master key file damaged)."
+ },
+ {
+  "file": "007-key-file-damaged-ticked.png",
+  "what": "The start-over choice, with the acknowledgement box ticked.",
+  "how": "Tick the box on the damaged-key screen."
+ },
+ {
+  "file": "008-key-file-set-aside.png",
+  "what": "After Start over: the old file is set aside (kept, not deleted) and the screen offers Set a new master key.",
+  "how": "Press Start over with a new master key."
+ },
+ {
+  "file": "009-key-set-new-key-button-does-nothing.png",
+  "what": "After pressing Set a new master key the prototype stays on this screen: its own move rules refuse the step from the unlock screen to the set-up form (a prototype gap; the fresh-PC route, Launch the app as Fresh PC, reaches the form).",
+  "how": "Press Set a new master key (nothing visible happens)."
+ },
+ {
+  "file": "010-fresh-pc-start-screen.png",
+  "what": "First launch on a new PC: the start screen offers to protect cases with a master key.",
+  "how": "Scenario s-fresh (Launch conditions: Fresh PC)."
+ },
+ {
+  "file": "011-master-key-setup-form.png",
+  "what": "The set-up form for a master key.",
+  "how": "Press Protect your cases with a master key."
+ },
+ {
+  "file": "012-master-key-too-short.png",
+  "what": "A master key that is too short is explained at once.",
+  "how": "Type 3 characters in the first field."
+ },
+ {
+  "file": "013-master-key-mismatch.png",
+  "what": "The two entries differ: the form says so.",
+  "how": "Type a long key in the first field and a different one in the second."
+ },
+ {
+  "file": "014-master-key-set-done.png",
+  "what": "Key set: back on the start screen (the header now shows Lock cases).",
+  "how": "Make both fields equal, tick the confirmation box if shown, press Set master key."
+ },
+ {
+  "file": "015-start-three-cards.png",
+  "what": "The start screen: Use an existing case, Enter an existing case, Create a new one.",
+  "how": "Launch normally."
+ },
+ {
+  "file": "016-start-card-existing-list.png",
+  "what": "The case list with the different row states: open, closed, own key, needs another try, working copy missing, legacy, erased.",
+  "how": "Start screen, left card."
+ },
+ {
+  "file": "017-start-card-enter.png",
+  "what": "The Enter an existing case card: code field, Open case, Restore from a case file.",
+  "how": "Start screen, middle card."
+ },
+ {
+  "file": "018-start-card-create.png",
+  "what": "The Create a new one card.",
+  "how": "Start screen, right card."
+ },
+ {
+  "file": "019-start-erase-missing-copy.png",
+  "what": "Erasing a case whose working copy is missing asks for its code.",
+  "how": "Press Erase: Case whose files were moved."
+ },
+ {
+  "file": "020-start-erase-typed-code.png",
+  "what": "The erase prompt with the code typed: Type movedcop to confirm.",
+  "how": "Type movedcop in the box."
+ },
+ {
+  "file": "021-start-erased-line-after-erase.png",
+  "what": "After Erase this case: only one line is left, saying the case was erased, with Clear.",
+  "how": "Press Erase this case."
+ },
+ {
+  "file": "022-start-erased-lines-cleared.png",
+  "what": "Clear removes the erased lines from the list.",
+  "how": "Press Clear."
+ },
+ {
+  "file": "023-start-archived-list.png",
+  "what": "The Archived cases toggle opened.",
+  "how": "Press Archived cases (2)."
+ },
+ {
+  "file": "024-start-no-cases-yet.png",
+  "what": "A new user: the list says there are no cases yet; the three cards are still there.",
+  "how": "Scenario s-empty (No cases yet)."
+ },
+ {
+  "file": "025-start-list-fails.png",
+  "what": "The case list could not be loaded, with Try again.",
+  "how": "Scenario s-fail (Case list fails to load, then works)."
+ },
+ {
+  "file": "026-start-list-after-retry.png",
+  "what": "Try again works the second time.",
+  "how": "Press Try again."
+ },
+ {
+  "file": "027-start-list-paging.png",
+  "what": "Long list: 50 shown, with Show more cases.",
+  "how": "Scenario s-many (120 cases). Only the bottom of the long list is shown."
+ },
+ {
+  "file": "028-start-list-show-more.png",
+  "what": "After Show more cases.",
+  "how": "Press Show more cases. Only the bottom of the long list is shown."
+ },
+ {
+  "file": "029-start-older-cases-note.png",
+  "what": "The note about older cases left in the user folder.",
+  "how": "Scenario s-old (Older cases left in the user folder)."
+ },
+ {
+  "file": "030-start-case-archiving.png",
+  "what": "A case being archived shows Archiving 45% and has no Open button.",
+  "how": "Scenario s-archiving."
+ },
+ {
+  "file": "031-enter-code-invalid.png",
+  "what": "A code that is not a code: the one not-found sentence.",
+  "how": "Type \"not a code\" in the code field, press Open case."
+ },
+ {
+  "file": "032-enter-code-short-refused.png",
+  "what": "The 8-character code shown in lists is refused (the card asks for the full code).",
+  "how": "Type payrollr, press Open case."
+ },
+ {
+  "file": "033-enter-code-full-opens-case.png",
+  "what": "The full code (spaces, dashes and case ignored) opens the case home.",
+  "how": "Prototype panel > Show the full case code, type it, press Open case."
+ },
+ {
+  "file": "034-enter-code-keyed-case-key-card.png",
+  "what": "A code for a case with its own key lands on the case key card.",
+  "how": "Type the full code of the Vendor portal case, press Open case."
+ },
+ {
+  "file": "035-restore-card-open.png",
+  "what": "Restore from a case file: path and master key fields.",
+  "how": "Press Restore from a case file."
+ },
+ {
+  "file": "036-restore-empty-path.png",
+  "what": "Empty path refused.",
+  "how": "Press Restore as a new case with nothing typed."
+ },
+ {
+  "file": "037-restore-wrong-extension.png",
+  "what": "The file name must end in .unravis-case.",
+  "how": "Path C:\\Cases\\x.txt, any key, Restore as a new case."
+ },
+ {
+  "file": "038-restore-network-path.png",
+  "what": "Network paths are not accepted.",
+  "how": "Path \\\\server\\share\\a.unravis-case, Restore as a new case."
+ },
+ {
+  "file": "039-restore-wrong-key.png",
+  "what": "Wrong master key: the single failure sentence.",
+  "how": "Valid path C:\\Cases\\orders-slowdown.unravis-case with the key \"wrong\"."
+ },
+ {
+  "file": "040-restore-success-new-case.png",
+  "what": "Restore always makes a NEW case and opens it.",
+  "how": "Same path, key \"correct horse battery staple\", Restore as a new case."
+ },
+ {
+  "file": "041-restore-scenario-card.png",
+  "what": "Scenario with the restore card already open and a hint for the test values.",
+  "how": "Scenario s-restore."
+ },
+ {
+  "file": "042-restore-needs-master-key.png",
+  "what": "On a fresh PC, restoring needs a master key first (set-up link).",
+  "how": "Scenario s-fresh, press Restore from a case file."
+ },
+ {
+  "file": "043-create-name-step-empty.png",
+  "what": "Step 1 of 3: Name. Next stays off until the name is valid.",
+  "how": "Start screen > Create a new case."
+ },
+ {
+  "file": "044-create-name-too-short.png",
+  "what": "A one-letter name: at least 2 characters.",
+  "how": "Type \"a\" in the name field."
+ },
+ {
+  "file": "045-create-name-too-long.png",
+  "what": "A name over 80 characters is refused at once.",
+  "how": "Type 81 letters."
+ },
+ {
+  "file": "046-create-environments-deduplicated.png",
+  "what": "Environments typed with a duplicate: the duplicate is left out and the note says so.",
+  "how": "Name \"Checkout slowdown\", environments \"Production, production, Staging\"."
+ },
+ {
+  "file": "047-create-own-case-key-too-short.png",
+  "what": "Own case key switched on, too short.",
+  "how": "Tick the own-key box, type \"short\"."
+ },
+ {
+  "file": "048-create-own-case-key-mismatch.png",
+  "what": "The two key entries differ.",
+  "how": "Type a long key, then a different repeat."
+ },
+ {
+  "file": "049-create-name-step-valid.png",
+  "what": "Name step filled in correctly: Next is on.",
+  "how": "Make the repeat equal to the key."
+ },
+ {
+  "file": "050-create-sources-this-computer-start.png",
+  "what": "Step 2 of 3: Sources. Four methods across the top; This computer is first.",
+  "how": "Press Next."
+ },
+ {
+  "file": "051-create-sources-scan-results.png",
+  "what": "Scan results: ready sources, needs-an-export and unreadable places.",
+  "how": "Press Scan this computer."
+ },
+ {
+  "file": "052-create-sources-where-is-it.png",
+  "what": "The Where is it? helper next to a place that could not be used (look in a folder yourself).",
+  "how": "Press Where is it? beside the place that could not be used."
+ },
+ {
+  "file": "053-create-sources-one-found-added.png",
+  "what": "One found source added with its Add button; it appears in Sources in this case on the right.",
+  "how": "Press Add on IIS web log \u00b7 Default Web Site (W3SVC1)."
+ },
+ {
+  "file": "054-create-sources-add-all-ready.png",
+  "what": "Add all ready sources adds every source that is ready in one go.",
+  "how": "Press Add all N ready sources."
+ },
+ {
+  "file": "055-create-sources-mongo-empty.png",
+  "what": "MongoDB method: saved connection list, address, user, TLS, password, Test and list databases, and the roles script.",
+  "how": "Tab MongoDB."
+ },
+ {
+  "file": "056-create-mongo-saved-connection.png",
+  "what": "Choosing a saved connection fills in the address.",
+  "how": "Pick Payroll audit Mongo (password saved) in the saved-connection list."
+ },
+ {
+  "file": "057-create-mongo-address-no-port.png",
+  "what": "An address with no scheme and no port: the default port 27017 is used and shown.",
+  "how": "Type audit-mongo in the address field."
+ },
+ {
+  "file": "058-create-mongo-bad-port.png",
+  "what": "A bad port is named in words.",
+  "how": "Type host:99999."
+ },
+ {
+  "file": "059-create-mongo-databases-listed.png",
+  "what": "After Test and list databases: a database checklist with a profiler chip each; system databases left out.",
+  "how": "Address audit-mongo, press Test and list databases."
+ },
+ {
+  "file": "060-create-mongo-databases-ticked.png",
+  "what": "Two databases ticked; an audit-named one defaults to audit data, the other to application data; each can be both.",
+  "how": "Tick PayrollAudit and PayrollApp, then also tick application data on PayrollAudit."
+ },
+ {
+  "file": "061-create-mongo-added.png",
+  "what": "The two databases added as sources from one connection.",
+  "how": "Press Add 2 databases."
+ },
+ {
+  "file": "062-create-mongo-permission-script.png",
+  "what": "The MongoDB permission script (roles) that Unravis shows but never runs.",
+  "how": "MongoDB tab, scroll to the roles script."
+ },
+ {
+  "file": "063-create-sql-form-empty.png",
+  "what": "SQL Server method: where it runs, authentication, encrypt, trust certificate, remember password.",
+  "how": "Tab SQL Server."
+ },
+ {
+  "file": "064-create-sql-no-port.png",
+  "what": "Server name with no port: the usual port 1433 is used.",
+  "how": "Type db1 in the server field."
+ },
+ {
+  "file": "065-create-sql-azure-flavor.png",
+  "what": "Where it runs: Azure SQL Database (one connection per database).",
+  "how": "Choose Azure SQL Database in the where-it-runs list."
+ },
+ {
+  "file": "066-create-sql-windows-auth.png",
+  "what": "Windows Authentication hides the user and password fields.",
+  "how": "Choose Windows Authentication."
+ },
+ {
+  "file": "067-create-sql-encrypt-trust-remember.png",
+  "what": "Encrypt options, Trust server certificate and Remember password.",
+  "how": "SQL authentication, Encrypt Strict, tick Trust server certificate and Remember password."
+ },
+ {
+  "file": "068-create-sql-saved-connection.png",
+  "what": "Choosing a saved SQL connection fills the form.",
+  "how": "Pick PROD-SQL-01 (orders) (password saved) in the saved list."
+ },
+ {
+  "file": "069-create-sql-login-failed.png",
+  "what": "A wrong login is refused in words.",
+  "how": "New connection, server db1, user unravis_reader, password wrong, Test and list databases."
+ },
+ {
+  "file": "070-create-sql-databases-listed.png",
+  "what": "After a good Test: database checklist with Query Store chips; system databases hidden.",
+  "how": "Correct password \"secret\", Test and list databases."
+ },
+ {
+  "file": "071-create-sql-databases-ticked.png",
+  "what": "Two databases ticked; Add button counts them.",
+  "how": "Tick orders and PayrollApp."
+ },
+ {
+  "file": "072-create-sql-added-grouped.png",
+  "what": "One connection, two databases, added together and grouped in the sources panel.",
+  "how": "Press Add 2 databases and keep details."
+ },
+ {
+  "file": "073-create-sql-permission-script.png",
+  "what": "The SQL permission script (per server and per database), with a version switch and Copy.",
+  "how": "SQL Server tab, scroll to the permission script."
+ },
+ {
+  "file": "074-create-files-method-empty.png",
+  "what": "Import files method: folder or file location, Look here, and a drop zone.",
+  "how": "Tab Import files."
+ },
+ {
+  "file": "075-create-files-drag-drop-file.png",
+  "what": "A dropped file is recognised: suggested type and, where needed, a time-zone choice.",
+  "how": "Drop (or choose in the drop zone) a file named HTTPERR1.log."
+ },
+ {
+  "file": "076-create-files-timezone-chosen.png",
+  "what": "HTTPERR writes server local time, so the time zone must be chosen; Add 1 file is then available.",
+  "how": "Choose a time zone (+04:00) for the dropped file."
+ },
+ {
+  "file": "077-create-files-added.png",
+  "what": "The file lands in the sources panel.",
+  "how": "Press Add 1 file."
+ },
+ {
+  "file": "078-create-files-by-folder.png",
+  "what": "A folder location lists its files, each with a suggested type; unrecognised ones are left out; compressed ones are refused.",
+  "how": "Tab Import files, type C:\\inetpub\\logs\\LogFiles\\W3SVC1, press Look here."
+ },
+ {
+  "file": "079-create-files-folder-adjusted.png",
+  "what": "The user switches one suggestion off and gives an unrecognised file a type and a time zone.",
+  "how": "Change the type and time-zone selects in the list."
+ },
+ {
+  "file": "080-create-files-folder-added.png",
+  "what": "The chosen files added in one go; the rest are reported as left out.",
+  "how": "Press Add N files."
+ },
+ {
+  "file": "081-create-files-by-one-file.png",
+  "what": "A single file location selects just that file.",
+  "how": "Type C:\\inetpub\\logs\\LogFiles\\W3SVC1\\u_ex261020.log, Look here."
+ },
+ {
+  "file": "082-create-files-relative-path-refused.png",
+  "what": "A relative path is refused with an example.",
+  "how": "Type logs\\x, Look here."
+ },
+ {
+  "file": "083-create-chosen-sources-summary.png",
+  "what": "The chosen-sources panel as a short collapsed summary.",
+  "how": "After adding sources, look at the right-hand panel."
+ },
+ {
+  "file": "084-create-chosen-sources-edit-all.png",
+  "what": "Edit all opens every source with its environment pills, portal and API choices and Remove.",
+  "how": "Press Edit all."
+ },
+ {
+  "file": "085-create-chosen-sources-env-pills.png",
+  "what": "Environment is free text: several pills per source, with suggestions from earlier names.",
+  "how": "In the first source, type \"Client A Staging\", Enter, \"Client B Live\", Enter."
+ },
+ {
+  "file": "086-create-chosen-sources-collapsed-again.png",
+  "what": "Collapse all returns to the summary.",
+  "how": "Press Collapse all."
+ },
+ {
+  "file": "087-create-review-step.png",
+  "what": "Step 3 of 3: Review lists what will be made, with the admin notice and how far back.",
+  "how": "Press Next."
+ },
+ {
+  "file": "088-create-review-admin-notice-ticked.png",
+  "what": "Review: some sources need administrator rights; the notice box must be ticked before Create case is on (until then the page says Tick the box above to confirm the notice).",
+  "how": "Tick the administrator notice box."
+ },
+ {
+  "file": "089-create-leave-guide-asks.png",
+  "what": "Leaving a draft with entries asks first: Keep working or Leave and discard.",
+  "how": "Press Leave the guide."
+ },
+ {
+  "file": "090-create-creating-progress.png",
+  "what": "Creation progress: the case, environments and each source read in turn.",
+  "how": "Press Keep working, then Create case (the screen is brief; captured as soon as it appears)."
+ },
+ {
+  "file": "091-create-failed-source-open-anyway.png",
+  "what": "One source could not be read; the case was kept; Open the case anyway.",
+  "how": "Wait for the progress to end."
+ },
+ {
+  "file": "092-create-opened-with-retry-list.png",
+  "what": "The new case home with Needs another try (the failed source).",
+  "how": "Press Open the case anyway."
+ },
+ {
+  "file": "093-create-retry-fails-once.png",
+  "what": "Try again fails the first time and stays listed (simulated).",
+  "how": "Press Try again."
+ },
+ {
+  "file": "094-create-retry-succeeds.png",
+  "what": "Second Try again succeeds; the list is gone.",
+  "how": "Press Try again again."
+ },
+ {
+  "file": "095-create-resume-draft-banner.png",
+  "what": "A left-behind draft is offered again, with Start over.",
+  "how": "Scenario w-resumed (Resume an earlier draft)."
+ },
+ {
+  "file": "096-create-review-empty-case.png",
+  "what": "Review with a name and no sources: the button says Create empty case.",
+  "how": "Scenario w-empty."
+ },
+ {
+  "file": "097-create-review-one-source-will-fail.png",
+  "what": "Review where one source will fail to read.",
+  "how": "Scenario w-review."
+ },
+ {
+  "file": "098-open-case-from-list.png",
+  "what": "The list row to press: Open case.",
+  "how": "Start screen, left card."
+ },
+ {
+  "file": "099-case-home-full.png",
+  "what": "Case home, whole page: header, Analysis, Investigation Timeline, Databases, Story so far, Theories, Health checks, Saved connections, Files, Case key, Erase.",
+  "how": "Press Open case on Payroll.Run slowdown, 20 Oct."
+ },
+ {
+  "file": "100-case-home-header.png",
+  "what": "The case header: title, counts, All cases and Archive this case.",
+  "how": "Case home, top."
+ },
+ {
+  "file": "101-case-block-analysis.png",
+  "what": "Analysis block: Open the analysis.",
+  "how": "Case home."
+ },
+ {
+  "file": "102-case-block-timeline.png",
+  "what": "Investigation Timeline block: Open the Investigation Timeline.",
+  "how": "Case home."
+ },
+ {
+  "file": "103-case-block-databases.png",
+  "what": "Databases block: grouped by connection, with environment and history chip.",
+  "how": "Case home."
+ },
+ {
+  "file": "104-case-block-story.png",
+  "what": "Story so far.",
+  "how": "Case home."
+ },
+ {
+  "file": "105-case-block-theories.png",
+  "what": "Theories block.",
+  "how": "Case home."
+ },
+ {
+  "file": "106-case-block-health.png",
+  "what": "Health checks block.",
+  "how": "Case home."
+ },
+ {
+  "file": "107-case-health-checks-run.png",
+  "what": "Health checks after Run checks, with history.",
+  "how": "Press Run checks."
+ },
+ {
+  "file": "108-case-block-saved-connections.png",
+  "what": "Saved connections: SQL Server and MongoDB, with Test, Edit, Forget, + SQL Server, + MongoDB, Refresh.",
+  "how": "Case home."
+ },
+ {
+  "file": "109-case-saved-connection-test.png",
+  "what": "Testing a saved connection.",
+  "how": "Press Test on the first connection."
+ },
+ {
+  "file": "110-case-saved-connection-forget-asks.png",
+  "what": "Forgetting a saved connection asks first.",
+  "how": "Press Forget."
+ },
+ {
+  "file": "111-case-block-files.png",
+  "what": "Files block: what is in the case and Add a file.",
+  "how": "Case home."
+ },
+ {
+  "file": "112-case-block-case-key.png",
+  "what": "Case key block: Add a case key.",
+  "how": "Case home."
+ },
+ {
+  "file": "113-case-block-erase.png",
+  "what": "Erase this case block.",
+  "how": "Case home."
+ },
+ {
+  "file": "114-theories-ledger-drawer.png",
+  "what": "The theories (ledger) drawer.",
+  "how": "Press Open the theories."
+ },
+ {
+  "file": "115-theories-after-add.png",
+  "what": "A theory added, with its state.",
+  "how": "Type a theory, press Add."
+ },
+ {
+  "file": "116-connections-drawer.png",
+  "what": "Adding a saved connection from the case home (+ SQL Server).",
+  "how": "Press + SQL Server."
+ },
+ {
+  "file": "117-case-key-add-page.png",
+  "what": "Add a case key: the form.",
+  "how": "Press Add a case key."
+ },
+ {
+  "file": "118-erase-case-page.png",
+  "what": "Erase this case: you must type the case code.",
+  "how": "Press Erase this case."
+ },
+ {
+  "file": "119-case-needs-another-try.png",
+  "what": "A failed import and an unsaved source name on the Needs another try list.",
+  "how": "Scenario c-failed."
+ },
+ {
+  "file": "120-case-retry-add-file-again.png",
+  "what": "Add the file again opens the import drawer.",
+  "how": "Press Add the file again."
+ },
+ {
+  "file": "121-case-closed.png",
+  "what": "A closed case: read-only, the Timeline and add buttons are off with the reason; Reopen this case.",
+  "how": "Scenario c-closed."
+ },
+ {
+  "file": "122-case-reopened.png",
+  "what": "Reopen this case: everything is on again.",
+  "how": "Press Reopen this case."
+ },
+ {
+  "file": "123-case-key-card.png",
+  "what": "A case with its own key: the key card replaces the page.",
+  "how": "Scenario c-keyed."
+ },
+ {
+  "file": "124-case-key-wrong.png",
+  "what": "A wrong case key.",
+  "how": "Type a wrong key, press Open case."
+ },
+ {
+  "file": "125-case-key-throttled.png",
+  "what": "Three wrong tries: wait.",
+  "how": "Repeat twice more."
+ },
+ {
+  "file": "126-case-key-right.png",
+  "what": "Right key (vendor-case-key-01, test aid): the case opens.",
+  "how": "Wait, type the key, press Open case."
+ },
+ {
+  "file": "127-case-archived.png",
+  "what": "Archived case: only the record, the case file and the restore choices.",
+  "how": "Scenario c-archived."
+ },
+ {
+  "file": "128-case-legacy.png",
+  "what": "Legacy case that cannot be opened: Restore from a case file or Erase.",
+  "how": "Scenario c-untrusted."
+ },
+ {
+  "file": "129-case-legacy-restore-intent.png",
+  "what": "Restore from a case file takes you to the start screen with the restore card open.",
+  "how": "Press Restore from a case file."
+ },
+ {
+  "file": "130-case-loading.png",
+  "what": "Opening the case...",
+  "how": "Scenario c-loading."
+ },
+ {
+  "file": "131-case-load-failed.png",
+  "what": "The case could not be opened, with Try again.",
+  "how": "Scenario c-loadfail."
+ },
+ {
+  "file": "132-case-gone.png",
+  "what": "The case could not be found; it may have been erased.",
+  "how": "Scenario c-gone."
+ },
+ {
+  "file": "133-case-changed-in-another-tab.png",
+  "what": "Page is out of date; changes are off until Reload.",
+  "how": "Scenario c-changed."
+ },
+ {
+  "file": "134-start-missing-working-copy-row.png",
+  "what": "A case whose working copy is missing, with Erase.",
+  "how": "Start screen list (row: Case whose files were moved)."
+ },
+ {
+  "file": "135-archive-drawer.png",
+  "what": "Archive this case: folder, sealed-with choice, passphrase, Archive the case.",
+  "how": "Press Archive this case."
+ },
+ {
+  "file": "136-archive-progress.png",
+  "what": "Archiving: folder and passphrase filled in, Archive the case pressed; the screen shows progress.",
+  "how": "Fill the folder and passphrase, press Archive the case."
+ },
+ {
+  "file": "137-archive-result-case-home.png",
+  "what": "The case after archiving: read-only, with Restore, Restore as a new case, Free the working copy.",
+  "how": "After the progress ends."
+ },
+ {
+  "file": "138-archive-restore-drawer.png",
+  "what": "Restore: the case goes back to open exactly as archived.",
+  "how": "Press Restore on an archived case."
+ },
+ {
+  "file": "139-archive-restored-case-home.png",
+  "what": "After Restore this case: the case is open again.",
+  "how": "Press Restore this case."
+ },
+ {
+  "file": "140-archive-restore-as-new-drawer.png",
+  "what": "Restore as a new case: a second case is made from the case file; this one stays as it is.",
+  "how": "Press Restore as a new case."
+ },
+ {
+  "file": "141-archive-restore-as-new-done.png",
+  "what": "A line says Restored as a new case with a new code; this archived case is left as it was.",
+  "how": "Press Restore as a new case in the drawer."
+ },
+ {
+  "file": "142-archive-free-working-copy-drawer.png",
+  "what": "Free the working copy: gives back disk space; the case file stays the only copy.",
+  "how": "Press Free the working copy."
+ },
+ {
+  "file": "143-archive-free-working-copy-done.png",
+  "what": "After freeing: the case is archived with no working copy.",
+  "how": "Press Free the working copy in the drawer."
+ },
+ {
+  "file": "144-import-drawer-open.png",
+  "what": "Import files drawer on an existing case: Choose a file, host list, Preview, and the history of imports.",
+  "how": "Press Add a file in the Files block."
+ },
+ {
+  "file": "145-import-file-chosen.png",
+  "what": "A file chosen: Unravis says what it looks like and asks which host it came from.",
+  "how": "Choose u_ex261020_siteB.log in Choose a file."
+ },
+ {
+  "file": "146-import-preview-no-timezone-rule.png",
+  "what": "Preview: rows read, kept and rejected, time covered. This file has no time-zone rule, so the timeline cannot line it up.",
+  "how": "Press Preview."
+ },
+ {
+  "file": "147-import-file-imported.png",
+  "what": "After Import file: the file is added to the history table.",
+  "how": "Press Import file."
+ },
+ {
+  "file": "148-import-sql-error-log-preview.png",
+  "what": "A SQL Server error log previewed with a validated UTC time-zone rule.",
+  "how": "Choose sql_errorlog_2026-10-20.txt, press Preview."
+ },
+ {
+  "file": "149-import-duplicate-file.png",
+  "what": "A copy of a file already imported is refused as a duplicate.",
+  "how": "Choose u_ex261020_copy.log, Preview, Import file."
+ },
+ {
+  "file": "150-import-empty-file.png",
+  "what": "An empty file is refused.",
+  "how": "Choose empty.log."
+ },
+ {
+  "file": "151-import-too-big-file.png",
+  "what": "A file over the size limit is refused with its size and the limit.",
+  "how": "Choose huge_export_2026.log."
+ },
+ {
+  "file": "152-import-compressed-file.png",
+  "what": "A compressed file is refused: extract it first.",
+  "how": "Choose logs-october.zip."
+ },
+ {
+  "file": "153-import-close-case-button.png",
+  "what": "Close case lives in this drawer: a closed case is erased 30 days after it was closed.",
+  "how": "Press Close case in the Import drawer."
+ },
+ {
+  "file": "154-header-import-and-ledger.png",
+  "what": "The case header buttons: Home, Ledger, Import.",
+  "how": "Case home, top bar."
+ },
+ {
+  "file": "155-analysis-open-from-case-home.png",
+  "what": "The analysis as it opens from the case home: last hour against the equal period right before it.",
+  "how": "Case home > Open the analysis."
+ },
+ {
+  "file": "156-analysis-scope-bar.png",
+  "what": "The scope bar: quick ranges, Type, More filters and Run analysis.",
+  "how": "Analysis, top."
+ },
+ {
+  "file": "157-analysis-more-filters-when.png",
+  "what": "More filters opened: Investigate From/To and Reference From/To with the time zone and UTC echo.",
+  "how": "Press More filters."
+ },
+ {
+  "file": "158-analysis-quick-range-4-hours.png",
+  "what": "A quick range chip re-runs the analysis at once.",
+  "how": "Press Last 4 hours."
+ },
+ {
+  "file": "159-analysis-slowdown-pulse.png",
+  "what": "Pulse for the slowdown against a good earlier hour: five figures with change against the reference, headline, chart.",
+  "how": "Scenario a-slow."
+ },
+ {
+  "file": "160-analysis-kind-filter-async.png",
+  "what": "Type filter: only one kind of request.",
+  "how": "Press Async in the scope bar."
+ },
+ {
+  "file": "161-analysis-reference-overlap-blocked.png",
+  "what": "The analysis refuses a comparison period that overlaps the investigated period; Run analysis is off and the hint says why.",
+  "how": "Scenario a-overlap."
+ },
+ {
+  "file": "162-analysis-window-over-7-days.png",
+  "what": "Each window can be at most 7 days here (the timeline allows 30).",
+  "how": "Scenario a-long."
+ },
+ {
+  "file": "163-analysis-reference-no-data.png",
+  "what": "The comparison period has no data: no deltas, ratios or headline.",
+  "how": "Scenario a-sparse."
+ },
+ {
+  "file": "164-analysis-reference-half-covered.png",
+  "what": "The comparison period is only partly covered: deltas stay off, the note says why.",
+  "how": "Scenario a-partial."
+ },
+ {
+  "file": "165-analysis-no-data-in-period.png",
+  "what": "No requests in the investigated period.",
+  "how": "Scenario a-empty."
+ },
+ {
+  "file": "166-analysis-source-failed-banner.png",
+  "what": "A banner names the failing source; the figures use the others.",
+  "how": "Scenario a-srcfail."
+ },
+ {
+  "file": "167-analysis-sources-popover.png",
+  "what": "The sources button opens the list of sources used.",
+  "how": "Press the sources button (the dot and the number of sources) in the sub-bar."
+ },
+ {
+  "file": "168-analysis-without-a-case.png",
+  "what": "Analysis of the demo audit source with no case behind it: no Case home button and no timeline.",
+  "how": "Start screen > Go to the analysis (scenario a-nocase)."
+ },
+ {
+  "file": "169-where-is-it-view.png",
+  "what": "Where is it?: operations ranked by lens, with comparison to the earlier period.",
+  "how": "Analysis > Where is it?"
+ },
+ {
+  "file": "170-where-is-it-biggest-change.png",
+  "what": "Ranking by Biggest change.",
+  "how": "Press Biggest change."
+ },
+ {
+  "file": "171-evidence-rows-for-operation.png",
+  "what": "Evidence: slowest requests for one operation, with Export CSV, Inspect and Nearby.",
+  "how": "Press the Payroll.Run row."
+ },
+ {
+  "file": "172-record-detail.png",
+  "what": "Record detail: stored fields and fields derived by Unravis.",
+  "how": "Press Inspect record on a row."
+ },
+ {
+  "file": "173-nearby-activity.png",
+  "what": "Nearby activity: one call beside what SQL, Mongo and IIS did. Call trace is not wired (the screen says so).",
+  "how": "Back to the evidence, press Nearby."
+ },
+ {
+  "file": "174-analysis-breadcrumb-back.png",
+  "what": "The breadcrumb and Back return up one level.",
+  "how": "Press Pulse in the breadcrumb."
+ },
+ {
+  "file": "175-drawer-patterns.png",
+  "what": "Patterns drawer (three canned entries in the prototype).",
+  "how": "Press Patterns in the top bar."
+ },
+ {
+  "file": "176-drawer-ledger.png",
+  "what": "Ledger drawer from the top bar (theories).",
+  "how": "Press Ledger in the top bar."
+ },
+ {
+  "file": "177-drawer-glossary.png",
+  "what": "Glossary from the header.",
+  "how": "Press Glossary."
+ },
+ {
+  "file": "178-drawer-blackbox.png",
+  "what": "Blackbox from the header (stub in the prototype).",
+  "how": "Press Blackbox."
+ },
+ {
+  "file": "179-export-drawer-ready.png",
+  "what": "Export drawer: window, options, scrub on by default, Preview.",
+  "how": "Analysis > Export."
+ },
+ {
+  "file": "180-export-preview-scrub-on.png",
+  "what": "After Preview: what will be left out (client IP, referer, cookie hash) and the Save the export button.",
+  "how": "Press Preview."
+ },
+ {
+  "file": "181-export-saved.png",
+  "what": "After Save the export: Saved.",
+  "how": "Press Save the export."
+ },
+ {
+  "file": "182-export-changed-409.png",
+  "what": "The case changed after the preview: Save the export gives 409 and a new preview is needed.",
+  "how": "Scenario x-changed, press Save the export."
+ },
+ {
+  "file": "183-export-preview-again.png",
+  "what": "Preview again after a 409.",
+  "how": "Press Preview again."
+ },
+ {
+  "file": "184-export-scrub-switched-409.png",
+  "what": "Scrub switched after the preview also gives 409.",
+  "how": "Scenario x-scrub, press Save the export."
+ },
+ {
+  "file": "185-timeline-opens-by-itself-loading.png",
+  "what": "The timeline opens by itself: the chart is drawn and the Suspects rail starts checking one suspect at a time.",
+  "how": "Case home > Open the Investigation Timeline (captured a moment after the click)."
+ },
+ {
+  "file": "186-timeline-default-last-hour-full.png",
+  "what": "The whole screen with the default window: last hour against the hour before, all three lanes, the rail finished.",
+  "how": "Wait a few seconds after opening; nothing else pressed."
+ },
+ {
+  "file": "187-timeline-controls-card.png",
+  "what": "The controls card: quick ranges, Investigation window, Compare it with, Sources chips, Add evidence, Refresh timeline.",
+  "how": "Timeline, top."
+ },
+ {
+  "file": "188-timeline-quick-range-4-hours.png",
+  "what": "A quick range chip sets the window to that period ending now and the comparison period to the equal period right before.",
+  "how": "Press Last 4 hours."
+ },
+ {
+  "file": "189-timeline-picker-investigation-window.png",
+  "what": "The Investigation window picker: quick ranges, calendar, start and end times in the chosen zone, Apply and Cancel.",
+  "how": "Press the Investigation window button."
+ },
+ {
+  "file": "190-timeline-picker-applied.png",
+  "what": "After choosing \"The slowdown in the demo data\": the window reads 09:00 to 12:00 UTC.",
+  "how": "In the picker press The slowdown in the demo data."
+ },
+ {
+  "file": "191-timeline-picker-comparison-period.png",
+  "what": "The Compare it with picker: The equal period right before the incident, Same time yesterday.",
+  "how": "Press the comparison period button."
+ },
+ {
+  "file": "192-timeline-picker-closed-by-outside-click.png",
+  "what": "A click outside the picker closes it without changing anything.",
+  "how": "Click anywhere outside the picker."
+ },
+ {
+  "file": "193-timeline-sources-chip-off.png",
+  "what": "Sources chips: switching IIS off leaves two lanes to draw.",
+  "how": "Press the IIS chip, then Refresh timeline."
+ },
+ {
+  "file": "194-timeline-refresh-timeline.png",
+  "what": "Refresh timeline re-reads and redraws after the windows or sources changed.",
+  "how": "Press Refresh timeline."
+ },
+ {
+  "file": "195-timeline-slowdown-full.png",
+  "what": "The slowdown with a real comparison (09:00 to 11:30 against the 2.5 hours before): the whole screen.",
+  "how": "Scenario t-slow (The slowdown, with a real comparison)."
+ },
+ {
+  "file": "196-timeline-summary-line-and-mixed-note.png",
+  "what": "The summary line (bar size, bars on the axis, window) and the mixed-time note that cannot be dismissed.",
+  "how": "Timeline, under the controls."
+ },
+ {
+  "file": "197-timeline-figure-cards.png",
+  "what": "The seven overall figure cards: requests, P95, 5xx, IIS 5xx, IIS P95, slow SQL calls, errors and blocking.",
+  "how": "Timeline, above the charts."
+ },
+ {
+  "file": "198-timeline-what-unravis-sees.png",
+  "what": "The reading aid: Application, Web server, Database tiles in plain words.",
+  "how": "Timeline, under the chart."
+ },
+ {
+  "file": "199-timeline-board-three-lanes.png",
+  "what": "The trace board: three lanes on one shared time axis with titled panels and legends.",
+  "how": "Timeline, the big chart card."
+ },
+ {
+  "file": "200-timeline-hover-bucket.png",
+  "what": "Hovering a bar shows one line per lane for that moment.",
+  "how": "Move the pointer over the chart."
+ },
+ {
+  "file": "201-timeline-select-bucket.png",
+  "what": "Clicking a bar selects that bucket across all lanes and fills the bucket panel.",
+  "how": "Click a bar."
+ },
+ {
+  "file": "202-timeline-bucket-panel.png",
+  "what": "The bucket panel: the chosen time, what each lane saw, and Open Run analysis for this bucket.",
+  "how": "After selecting a bar."
+ },
+ {
+  "file": "203-timeline-keyboard-arrow.png",
+  "what": "Left and Right arrow keys move the selection; Home and End jump to the ends.",
+  "how": "Press the Right arrow key."
+ },
+ {
+  "file": "204-timeline-handoff-to-analysis.png",
+  "what": "Open Run analysis for this bucket: the analysis opens with a strip saying it came from the Investigation Timeline and shows both windows.",
+  "how": "Press Open Run analysis for this bucket."
+ },
+ {
+  "file": "205-timeline-handoff-back.png",
+  "what": "Back to the timeline keeps both windows and the selection.",
+  "how": "Press Back to the timeline."
+ },
+ {
+  "file": "206-timeline-details-sections.png",
+  "what": "Three folded sections: What each lane shows, How this axis was worked out, Timeline details; plus Words used on this screen.",
+  "how": "Scroll to the bottom of the timeline."
+ },
+ {
+  "file": "207-timeline-details-axis-open.png",
+  "what": "How this axis was worked out, opened: start and end you chose, axis start and end, bucket size, raw scans.",
+  "how": "Open How this axis was worked out."
+ },
+ {
+  "file": "208-timeline-layout-a-report.png",
+  "what": "Layout A (Report): one column, top to bottom.",
+  "how": "Prototype controls (bottom bar): layout pill, choose A."
+ },
+ {
+  "file": "209-timeline-layout-b-workbench.png",
+  "what": "Layout B (Workbench): windows and sources in a side panel, figures and a taller chart on the right.",
+  "how": "Prototype controls: layout pill, choose B."
+ },
+ {
+  "file": "210-timeline-layout-c-lane-ledger.png",
+  "what": "Layout C (Lane ledger): one row per lane with trust stickers, event count and a sparkline; open a lane for its panels.",
+  "how": "Prototype controls: layout pill, choose C."
+ },
+ {
+  "file": "211-suspects-rail-top-five.png",
+  "what": "The Suspects rail: legend, summary line, and the top five suspects (red first, then orange, then grey).",
+  "how": "Timeline, right side."
+ },
+ {
+  "file": "212-suspects-rail-see-all.png",
+  "what": "See all expands in place: every suspect, red then orange then grey, green ones folded as Ruled out by the data.",
+  "how": "Press See all."
+ },
+ {
+  "file": "213-suspects-show-on-chart.png",
+  "what": "Show on chart selects the bucket where that suspect first moved.",
+  "how": "Press Show on chart on the red suspect."
+ },
+ {
+  "file": "214-suspects-ruled-out-folded.png",
+  "what": "Green suspects are folded away under Ruled out by the data.",
+  "how": "Open the Ruled out by the data fold at the bottom of the list."
+ },
+ {
+  "file": "215-suspects-show-fewer.png",
+  "what": "Show fewer returns to the top five.",
+  "how": "Press Show fewer."
+ },
+ {
+  "file": "216-suspects-card-open-evidence.png",
+  "what": "One suspect opened: evidence rows (signal, Must or Expect, yes, no or unknown, why), the cheapest check and what would overturn it.",
+  "how": "Open the evidence on a suspect card."
+ },
+ {
+  "file": "217-evidence-card-folded.png",
+  "what": "The Where does the evidence point card, folded: title and strength chip only.",
+  "how": "Scroll below the chart."
+ },
+ {
+  "file": "218-evidence-card-open-one-environment.png",
+  "what": "Opened: The problem appears isolated to Production, with the server block and the by-database table.",
+  "how": "Open the folded card."
+ },
+ {
+  "file": "219-evidence-scope-all-databases.png",
+  "what": "Scope switch: All databases on this server, with an unnamed Other databases row.",
+  "how": "Press All databases on this server."
+ },
+ {
+  "file": "220-evidence-scope-show-names.png",
+  "what": "Show their names reveals the unpicked databases, with a warning to hide them before sharing an export.",
+  "how": "Press Show their names."
+ },
+ {
+  "file": "221-evidence-scope-server-only.png",
+  "what": "Scope switch: Server only.",
+  "how": "Press Server only."
+ },
+ {
+  "file": "222-evidence-verdict-whole-server.png",
+  "what": "The whole database server appears affected (every picked database slowed, disk saturated).",
+  "how": "Scenario a-server (Investigation Timeline: where does the evidence point)."
+ },
+ {
+  "file": "223-evidence-verdict-noisy-neighbour.png",
+  "what": "Another database may be affecting yours (unpicked databases take most of the disk).",
+  "how": "Scenario a-noisy (Investigation Timeline: where does the evidence point)."
+ },
+ {
+  "file": "224-evidence-verdict-not-enough-evidence.png",
+  "what": "There is not enough evidence to narrow it down (Query Store off, no samples).",
+  "how": "Scenario a-blind (Investigation Timeline: where does the evidence point)."
+ },
+ {
+  "file": "225-evidence-verdict-quiet-window.png",
+  "what": "No clear performance problem in this period.",
+  "how": "Scenario a-quiet (Investigation Timeline: where does the evidence point)."
+ },
+ {
+  "file": "226-timeline-no-history-full.png",
+  "what": "No history (nothing kept): most suspects are grey with a Needs line, nothing is red.",
+  "how": "Scenario a-blind: the whole screen."
+ },
+ {
+  "file": "227-suspects-rail-no-history.png",
+  "what": "Suspects rail in the no-history situation.",
+  "how": "Scenario a-blind."
+ },
+ {
+  "file": "228-timeline-one-environment-full.png",
+  "what": "One environment: D1 blocking chain is the only red suspect.",
+  "how": "Scenario a-env."
+ },
+ {
+  "file": "229-timeline-seven-days-gaps.png",
+  "what": "Last 7 days: 2-hour bars, SQL and IIS say there are no logs for most of the window (hatched, with exact range), the audit outage is a thin gap.",
+  "how": "Press Last 7 days."
+ },
+ {
+  "file": "230-timeline-seven-days-board.png",
+  "what": "Close-up of the seven-day board with the gap labels.",
+  "how": "Same screen, chart card."
+ },
+ {
+  "file": "231-timeline-seven-days-show-all-panels.png",
+  "what": "A lane with logs for under 15% of the window folds to one short panel; Show all panels expands it.",
+  "how": "Press Show all panels on a folded lane."
+ },
+ {
+  "file": "232-timeline-seven-days-evidence-card.png",
+  "what": "Evidence card in the seven-day situation.",
+  "how": "Same screen, open the evidence card."
+ },
+ {
+  "file": "233-timeline-overlap-notice.png",
+  "what": "The two windows overlap: a non-blocking notice. The timeline still runs.",
+  "how": "Scenario w-overlap."
+ },
+ {
+  "file": "234-timeline-overlap-fix.png",
+  "what": "Move it to just before the investigation window fixes the overlap in one press.",
+  "how": "Press Move it to just before the investigation window."
+ },
+ {
+  "file": "235-timeline-30-day-limit-refused.png",
+  "what": "A window of 30 days and 1 second is refused; Show timeline is off.",
+  "how": "Scenario w-30dx."
+ },
+ {
+  "file": "236-timeline-30-days-8-hour-bars.png",
+  "what": "30 days starting at 00:01: bars coarsen to 8 hours, 91 on the axis, two boundary raw scans.",
+  "how": "Scenario w-30d."
+ },
+ {
+  "file": "237-timeline-no-comparison-sparse.png",
+  "what": "The comparison period has no data: cards say Cannot compare with the earlier period.",
+  "how": "Scenario w-sparse."
+ },
+ {
+  "file": "238-timeline-sparse-lanes.png",
+  "what": "Each lane says No comparison with the reason.",
+  "how": "Same screen, chart card."
+ },
+ {
+  "file": "239-timeline-closed-case.png",
+  "what": "A closed case: Show timeline is off with the reason; nothing is drawn.",
+  "how": "Scenario t-closed."
+ },
+ {
+  "file": "240-timeline-timezone-gate.png",
+  "what": "A file with no checked time zone switches the multi-source chart off as a whole.",
+  "how": "Scenario t-tz, Show timeline."
+ },
+ {
+  "file": "241-timeline-nothing-stored.png",
+  "what": "A case with nothing stored: SQL and IIS say this case has no file for this source.",
+  "how": "Scenario t-empty, Show timeline."
+ },
+ {
+  "file": "242-timeline-half-stored.png",
+  "what": "Only half the window is stored for SQL: a gap is labelled on that lane.",
+  "how": "Scenario t-partial, Show timeline."
+ },
+ {
+  "file": "243-timeline-saved-lanes-only.png",
+  "what": "Saved lanes only (audit removed): nothing is a live read, so no mixed-time note.",
+  "how": "Scenario t-saved, Show timeline."
+ },
+ {
+  "file": "244-whatif-audit-over-budget.png",
+  "what": "What if: audit read exceeds its budget: the lane is flagged incomplete and nothing is shortened.",
+  "how": "Prototype controls > What if > Audit read exceeds its budget, then Refresh timeline."
+ },
+ {
+  "file": "245-whatif-audit-unreachable.png",
+  "what": "What if: audit source unreachable.",
+  "how": "Prototype controls > What if > Audit source unreachable, then Refresh timeline."
+ },
+ {
+  "file": "246-whatif-boundary-scan-over.png",
+  "what": "What if: boundary scan exceeds 50,000 rows.",
+  "how": "Prototype controls > What if > Boundary scan exceeds 50,000 rows, then Refresh timeline."
+ },
+ {
+  "file": "247-whatif-suspect-d16-sql-timeouts.png",
+  "what": "What if: SQL commands time out (D16) turns that suspect orange or red.",
+  "how": "Prototype controls > What if > SQL commands time out (D16)."
+ },
+ {
+  "file": "248-whatif-suspect-s10-app-pool-offline.png",
+  "what": "What if: app pool goes offline (S10).",
+  "how": "Prototype controls > What if > App pool goes offline (S10)."
+ },
+ {
+  "file": "249-whatif-suspect-m12-mongo-rejects.png",
+  "what": "What if: MongoDB rejects connections (M12).",
+  "how": "Prototype controls > What if > MongoDB rejects connections (M12)."
+ },
+ {
+  "file": "250-mvp2-coverage-ledger-no-coverage.png",
+  "what": "MVP-2 (planned): coverage ledger says no coverage and offers Pull this window.",
+  "how": "Scenario m-first (prototype panel: MVP-1 + MVP-2)."
+ },
+ {
+  "file": "251-mvp2-first-pull-done.png",
+  "what": "MVP-2: a pull saves the incident window.",
+  "how": "Press Pull this window."
+ },
+ {
+  "file": "252-mvp2-overlap-409.png",
+  "what": "MVP-2: a window that partly overlaps a stored pull is refused (409) with the remedy.",
+  "how": "Scenario m-overlap, press Pull this window."
+ },
+ {
+  "file": "253-prototype-dock-bottom-bar-timeline.png",
+  "what": "The prototype-only bottom bar on the timeline: layout pill, prepared-situation picker, What if switches, last action, Prototype and State buttons.",
+  "how": "Always visible at the bottom of the prototype page."
+ },
+ {
+  "file": "254-prototype-panel-launch-and-stage.png",
+  "what": "The Prototype panel: launch the app as Normal, Key locked, Key damaged or Fresh PC; release stage MVP-1 or MVP-2; test aids; assumptions and questions.",
+  "how": "Press Prototype in the bottom bar."
+ },
+ {
+  "file": "255-prototype-state-panel.png",
+  "what": "The State panel: full state after every action and the action log.",
+  "how": "Press State in the bottom bar."
+ },
+ {
+  "file": "256-narrow-timeline-phone-width.png",
+  "what": "The timeline at phone width: single column, rail below the chart, no sideways scroll.",
+  "how": "Resize the window to 390 pixels wide."
+ },
+ {
+  "file": "257-narrow-case-home-phone-width.png",
+  "what": "The case home at phone width.",
+  "how": "Resize the window to 390 pixels wide, open the case."
+ }
+]
