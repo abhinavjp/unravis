@@ -3,6 +3,7 @@
 **Screen:** `tracing-paper-PROTOTYPE.html#/tracing/<case code>` (the Payroll.Run slowdown demo case)
 **Branch:** `prototype/tracing-paper-e2e`
 **Status of everything described here:** a throwaway prototype. All data is synthetic. Nothing here proves that the real software works.
+**Revision:** after the design review (`unravis-tracing-wireframe-review.md`): plain-English labels, a "What Unravis sees" reading aid, evidence-strength wording, one evidence model, and honest empty states.
 
 ## 0. How to use this document
 
@@ -63,15 +64,16 @@ Everything on the screen is a function of these facts, so the lanes agree with e
 ├ ④ Time-zone note, overlap/blocking notices
 ├ ⑤ Sources chips + Start tracing / Trace again + Add evidence
 ├ ⑥ Summary line + banners
+├ ⑥b "What Unravis sees" reading aid (new)
 ├ ⑦ Overall figures (7 cards)
 ├ ⑧ Trace board (three lanes, shared time axis)
 ├ ⑨ Bucket panel (hover/select a bucket, open Run analysis)
-├ ⑩ "Where is it coming from?" card
+├ ⑩ "Where does the evidence point?" card
 ├ ⑪ Three collapsed detail sections
 └ ⑫ Open the analysis · Export
 ```
 
-Items ⑥–⑩ appear only **after** Start tracing has run.
+Items ⑥–⑩ appear only **after** Start tracing has run. Section 3b below describes ⑥b.
 
 ### ① Title and back link
 Shows "Tracing", the case title, the layout name, and **← Case home**. [Code]
@@ -79,8 +81,8 @@ Shows "Tracing", the case title, the layout name, and **← Case home**. [Code]
 ### ② Range chips
 **Last 15 min · Last hour (default) · Last 4 hours · Last 24 hours · Last 7 days · Last 30 days.** A chip sets the incident window to that period ending "now" and the comparison period to **the equal-length period right before it**. The chip that matches the current windows is highlighted. [Code; Owner asked for the same chips as the analysis, plus 30 days]
 
-### ③ Incident and reference window cards
-Each card holds a button showing the dates in the chosen zone, the length (e.g. "UTC · 2 h 30 min") and, beneath it, the UTC form `UTC 2026-10-20T09:00:00Z – …`. The two buttons sit on the same line. [Owner]
+### ③ Problem period and Compare it with cards
+Headings are now plain English with the spec term in brackets: **Problem period (incident window)** ("When was the problem happening?") and **Compare it with (comparison period)** ("This earlier period is only used for comparison. It may not have been healthy."). Each card holds a button showing the dates in the chosen zone, the length (e.g. "UTC · 2 h 30 min") and, beneath it, the UTC form `UTC 2026-10-20T09:00:00Z – …`. The two buttons sit on the same line. [Owner]
 
 Pressing a button opens a **date-time range picker** with three parts: quick ranges, a calendar (click a start day, then an end day) and start/end times in the chosen zone, with Apply and Cancel. It closes on an outside click. [Owner]
 - Incident quick ranges: the six chips above plus **"The slowdown in the demo data"** (09:00–12:00 on 20 Oct).
@@ -108,21 +110,27 @@ Chips toggle which sources are traced (API audit, IIS, SQL). Database connection
 - **Incomplete banner** (red): a lane hit its time/row limit or a boundary scan went over its cap; hatched buckets are not exact. [Spec WS-18–25]
 - **Overlap grey note** when the windows overlap: comparison figures are less meaningful.
 
+### 3b. "What Unravis sees" (⑥b): the reading aid
+A card above the figures that reads the same data in plain words (observation, meaning, confidence, next step). It is a reading aid; the figures and charts below remain the evidence. [Owner review]
+- **Three layer tiles** (Application, Web server, Database), each with a status and one detail line. Rules (prototype defaults [Inference]): Application "Slower than usual" when P95 is at least 1.5 times the comparison period, "Returning errors" at 2% or more 5xx; Web server "Returning errors" at 2% or more 5xx and/or "slower responses" at 1.5 times; Database "Many slow calls" at 25% or more calls over 1 s and/or "blocking" when any blocked-process or deadlock report exists. Where the comparison period is not covered the tile says "Cannot compare with the earlier period" instead of judging.
+- **Where the evidence points:** the same conclusion as card ⑩ (database and environment named) with a strength chip: Strong evidence / Some evidence / Not enough evidence.
+- **Next step:** one sentence from the same model, plus a button **Look at <time> →** that selects the busiest moment (most slow database calls, or the highest API P95 if there is no SQL lane) in the chart.
+
 ## 4. The seven overall figure cards (⑦)
 
-One row of cards sits above the charts, titled "Overall figures: incident window against the comparison period". Each card has a lane-coloured dot, a label, a big value, a comparison line and a one-line hint.
+One row of cards sits above the charts, titled "Overall figures: problem period against the comparison period". Each card has a lane-coloured dot, a **plain-English title**, a big value, a one-line **meaning**, a comparison line and the technical term in grey brackets. Plain titles: Requests to the application · Slow-request time (P95, estimated) · Application server errors (5xx) · Web server errors (IIS 5xx) · Slow web requests (IIS P95, estimated) · Slow database calls (over 1 s) · Database errors and blocking. The table below keeps the technical names.
 
 | Card | Value | How it is computed [Code] | Comparison line | Turns red when |
 |---|---|---|---|---|
 | **API requests** | Count of audit requests in the incident window | Sum over the window of the audit generator's per-minute counts | "N.Nx the comparison period" = (events per minute now) ÷ (events per minute in the comparison period) | never (volume is neutral) |
-| **API P95 time** | Observed API time, ms | Call-weighted mean of per-minute P95 (**approximation**) | incident P95 ÷ comparison P95 | ratio > 1.5 |
+| **API P95 time** | Observed API time, ms | Call-weighted mean of per-minute P95. **Labelled "estimated"** with a hover note; the product must compute it from every request's duration | incident P95 ÷ comparison P95 | ratio > 1.5 |
 | **API 5xx** | Count of 5xx responses | Sum of per-minute 5xx; hint shows % of requests | per-minute ratio vs comparison | ratio > 1.5 |
 | **IIS 5xx responses** | Count of 5xx in IIS logs | Sum of per-minute 5xx; hint "x% of N requests" | per-minute ratio | ratio > 1.5 |
 | **IIS P95 time taken** | ms as logged | Weighted mean of per-minute P95; the request start is not verified | ratio vs comparison | ratio > 1.5 |
 | **SQL slow calls** | Calls longer than 1 s | Sum of per-minute slow calls; hint "x% of N calls over 1 s" | per-minute ratio | ratio > 1.5 |
 | **SQL errors and blocking** | "errors · reports" | Failed calls, then blocked-process reports plus deadlocks | none shown | — |
 
-**When a comparison is withheld.** A lane shows "no comparison" when the comparison period has fewer than **30 events** or is less than **80% covered** by data. The reason is spelled out in the lane label (e.g. "the comparison period is only 40% covered"). [Inference: 30 events and 80% are prototype thresholds, not in any spec]
+**When a comparison is withheld.** The comparison text reads "Cannot compare with the earlier period" (reason on hover, "earlier period not covered" visible). It appears when the comparison period has fewer than **30 events** or is less than **80% covered** by data. The reason is spelled out in the lane label (e.g. "the comparison period is only 40% covered"). [Inference: 30 events and 80% are prototype thresholds, not in any spec]
 
 **If a lane has no data** its cards collapse into one muted card showing "–" and the reason (e.g. "This case has no file for this source").
 
@@ -137,7 +145,7 @@ One row of cards sits above the charts, titled "Overall figures: incident window
 - **X axis (bottom, shared by all panels):** up to 6 ticks labelled with date and time in the chosen zone, plus a caption: **"Time (UTC). Each bar covers 5 minutes, starting at the time on its left edge; every panel uses the same time axis."**
 - **Grey dashes** along the baseline mark slots outside the window; **amber dashed outlines** mark bars clipped by a window edge. A clipped bar is geometry, not missing data.
 
-### 5.2 Lane 1: API audit (one panel)
+### 5.2 Lane 1: "API requests (audit log)" (one panel)
 Reproduces the analysis hero chart. [Owner: "I want that exact chart"] [Code: mirrors `heroChart`]
 | Element | Meaning |
 |---|---|
@@ -145,7 +153,7 @@ Reproduces the analysis hero chart. [Owner: "I want that exact chart"] [Code: mi
 | Solid green line (right axis, ms) | P95 observed API time per bucket (API time = AuditCreateTime + ApiTime) |
 | Grey dashed horizontal line, labelled "comparison period P95" | The P95 of the comparison period as one level, so you can see whether the line sits above it |
 
-### 5.3 Lane 2: SQL (three panels)
+### 5.3 Lane 2: "Database (SQL Server)" (three panels)
 | Panel | Plots | Why [Inference unless noted] |
 |---|---|---|
 | Slow calls (over 1 s) and errors per bucket | Stacked bars: amber = slow calls, rose = errors | Shows only the problem calls; total volume is in the cards |
@@ -154,20 +162,24 @@ Reproduces the analysis hero chart. [Owner: "I want that exact chart"] [Code: mi
 
 Source of the data: SQL Server extended-event files, the error log and Query Store exports stored in the case. [Spec F-API-11; research]
 
-### 5.4 Lane 3: IIS (three panels)
+### 5.4 Lane 3: "Web server (IIS)" (three panels)
 | Panel | Plots | Source |
 |---|---|---|
 | Requests per bucket by status | Stacked bars: grey 2xx/3xx, amber 4xx, rose 5xx | [Spec D-3, F-API-09] status class |
 | P95 time taken per bucket (as logged) | Line, ms, dashed comparison P95 | [Spec F-API-08]: time-taken is kept separate and the request start is **not** verified |
 | HTTP.sys error rows per bucket | Small bars, rose | [Spec F-API-07]: reasons such as Timer_ConnectionIdle or Connection_Dropped |
 
-### 5.5 Gaps (equal timeline for all lanes)
+Panel titles are plain English: *How many requests, and how slow they were* (API); *Slow database calls (over 1 s) and failed calls*, *How long database calls took (P95)*, *Database blocking and deadlocks* (SQL); *Web-server requests by result (OK / client error 4xx / server error 5xx)*, *How long web requests took (P95, as logged)*, *Web connection errors (HTTP.sys)* (IIS). Each lane's left column starts with a question: "Was the application slow or failing?", "Were database calls slow, blocked or failing?", "Were web requests slow or failing before reaching the app?". Lane keys and the tooltip still say "API audit".
+
+### 5.5 Gaps (equal timeline for all lanes) and real zeros
 Every lane is plotted across the **whole** window. Time with no log data is a **labelled hatched band**:
 - Label text: "No logs for this time" + exact range + length, e.g. `13 Oct 12:00 → 20 Oct 08:00 · 6 d 20 h`. Bands narrower than about 7% of the width carry no text; the left-column line and the tooltip still say so.
 - Sources of gaps: before a file's first row, after its last row, a hole between files, and the audit source's recording outage (19 Oct 02:00–04:00).
 - P95 lines **break** at a gap instead of joining across it.
 - A lane with no file at all is one hatched band over the same timeline: "No log data for the whole window".
-- Hovering inside a gap reads "no log data for this time". [Owner request, last round]
+- Hovering inside a gap reads "no log data for this time". [Owner request]
+- **Zero events is not a gap.** A lane whose logs cover the whole window but contain no events draws normal panels with a flat zero baseline (no hatching) and the note "Logs cover this whole period and contain no events"; its tooltip says "no events". Hatching means only "unknown or unavailable". [Review fix 3.5]
+- **Long gaps collapse.** When a lane has no log data for more than 85% of the window, it shrinks to one short panel (with a ribbon such as "Logs only for the last 4 h of this period") and a **Show all panels** button, on the same x axis. [Review fix 3.8]
 
 ### 5.6 Hover, selection, keyboard
 - **Hover** any bar position: a tooltip lists the bucket's time range and one line per lane, e.g. `IIS: 118 requests (0 4xx, 6 5xx) · P95 time-taken 1100 ms · 1 HTTP.sys error`.
@@ -185,7 +197,7 @@ Use prototype panel → **"The slowdown, with a real comparison"**, then Start t
 | Warnings | none (windows touch but do not overlap) |
 | API requests | 2,464 (1.0x the comparison rate) |
 | API P95 | 505 ms, **2.2x** the comparison period's 228 ms (shown red) |
-| API 5xx | 0 (no comparison) |
+| API 5xx | 108 = 4.4% of requests (the earlier period had none, so no comparison) |
 | IIS 5xx | 132 = 4.7% of 2,809 requests; no comparison |
 | IIS P95 time taken | 1,050 ms; no comparison |
 | SQL slow calls | 605 = 39% of 1,552 calls over 1 s; no comparison |
@@ -194,7 +206,7 @@ Use prototype panel → **"The slowdown, with a real comparison"**, then Start t
 
 **How to read it:** the API doubled its P95 while request volume stayed the same; the web server returned more 5xx and slower responses; SQL shows a large share of slow calls and 15 blocking/deadlock reports. All three lanes bend at **09:14**. The only lane with a usable comparison is API audit, because it keeps data from 13 Oct.
 
-**Where is it coming from?** Verdict **"One environment: Production"** (`orders ×24.6`; `PayrollApp` flat; disk 4.9 ms and CPU 45% not saturated). See §8.
+**Where does the evidence point?** **"The problem appears isolated to Production"** (`orders ×25.1`; `PayrollApp` flat; disk 4.9 ms and CPU 45% not saturated). See §8.
 
 ### 6.2 The default window (what a user sees first)
 Last hour (11:00–12:00) vs 10:00–11:00. 60 one-minute bars. API 1,042 requests, P95 367 ms (0.7x). IIS 5xx 28 (0.5x). SQL slow calls 140 (0.5x). Ratios are **below 1** because the comparison hour was itself inside the slowdown (it ended 11:30). This is a good teaching moment: **the comparison period is only a comparison, not a baseline**.
@@ -204,42 +216,44 @@ Bars are 2 hours, 84 on the axis. API audit shows the daily rhythm and a hatched
 
 ## 7. Lane states (the sticker under the lane name)
 
-| Sticker | Meaning [Spec WS-18–25] | What is drawn |
+| Sticker (new wording; internal state in brackets) | Meaning [Spec WS-18–25] | What is drawn |
 |---|---|---|
-| **Events** | Data seen in the window | Panels |
-| **No data** | The case has no file for this source | Hatched band: "No log data for the whole window" |
-| **None seen** | Files cover the window and nothing happened in it | Hatched band |
-| **Out of range** | Files exist but do not cover this time | Hatched band |
-| **Clock unchecked** | A file has no validated time-zone rule | Hatched band; if more than one source is chosen **the whole chart is switched off** and no lane plots a point |
-| **Incomplete** (hatched) | Time/row budget exceeded, or a boundary scan went over 50,000 rows | Bars drawn, affected buckets hatched and flagged "not exact" |
+| **Events found** (`events`) | Data seen in the window | Panels |
+| **No logs** (`no-data`) | The case has no file for this source | Hatched band: "No logs cover this time" |
+| **No events found** (`none-seen`) | Files cover the window and nothing happened in it | **Normal zero panels, not hatched** |
+| **No logs cover this time** (`out-of-range`) | Files exist but not for this period | Hatched band |
+| **Log time zone needs checking** (`clock-unchecked`) | A file has no validated time-zone rule | Hatched band; if more than one source is chosen **the whole chart is switched off** |
+| **Some data could not be read** (`incomplete`) | Time/row budget exceeded, or a boundary scan went over 50,000 rows | Bars drawn, affected buckets hatched and flagged "not exact" |
 
-## 8. "Where is it coming from?" (⑩)
+## 8. "Where does the evidence point?" (⑩)
 
-**Purpose.** One SQL Server or MongoDB connection can hold several environments. When something is slow, this card says whether one environment, the whole server, or databases you did not pick are responsible, and says plainly when it **cannot tell**. [Owner; research round 7]
+**Purpose.** One SQL Server or MongoDB connection can hold several environments. When something is slow, this card says where the evidence points: one environment, the whole server, or databases you did not pick. It states how strong the evidence is and says plainly when there is **not enough evidence**. It no longer claims a root cause or uses the word "Provable". [Review fix 3.3] [Owner; research round 7]
 
 ### 8.1 Controls
-- **Scope** (segmented): *This environment* (default; with an environment picker when there are several), *All databases on this server*, *Server only*. The verdict is always computed from everything picked; the scope changes only which tables are shown.
+- **View evidence for** (segmented, formerly "Scope"): *This environment* (default), *All databases on this server*, *Server only*. A hint says it changes only what is shown below, not the conclusion. [Review fix 3.4]
 - **Show their names / Hide their names** (in All databases): the share of databases you did **not** pick appears as one unnamed row; names appear only on request, with a warning to hide them before sharing an export. [Owner option (a)]
 
 ### 8.2 Verdict box
-| Verdict | Rule [Inference; thresholds sourced as noted] |
+Each box shows: what we saw (observation), what it means, an evidence-strength chip (Strong evidence / Some evidence / Not enough evidence), and what to check next. Per-database evidence is capped at "Some evidence" when Query Store keeps steps longer than the window, and the box says so ("History … comes in 60-minute steps").
+| Verdict (new title) | Rule [Inference; thresholds sourced as noted] |
 |---|---|
-| **One environment: X** | At least one picked database slowed (P95 ≥ 2x its comparison), no shared resource saturated |
-| **Server-wide** | Every picked database slowed (at least two are picked) and a shared resource is saturated |
-| **Noisy neighbour** | A picked database slowed, a shared resource is saturated, and databases you did not pick hold ≥ 50% of file I/O and ≥ 1.5x their earlier share |
-| **Cannot tell** | No picked database kept history for the window (Query Store off or full), **or** only some slowed under saturation, **or** only one database is picked and the server is saturated |
-| **Nothing stands out** | Nothing slowed and nothing saturated |
+| **The problem appears isolated to X** (`env`) | At least one picked database slowed (P95 ≥ 2x its comparison), no shared resource saturated |
+| **The whole database server appears affected** (`server`) | Every picked database slowed (at least two are picked) and a shared resource is saturated |
+| **Another database may be affecting yours** (`noisy`) | A picked database slowed, a shared resource is saturated, and databases you did not pick hold ≥ 50% of file I/O and ≥ 1.5x their earlier share |
+| **There isn't enough evidence to narrow it down** (`blind`) | No picked database kept history for the window (Query Store off or full), **or** only some slowed under saturation, **or** only one database is picked and the server is saturated |
+| **No clear performance problem was found in this period** (`quiet`) | Nothing slowed and nothing saturated (strength "Some evidence": absence of a problem is not proof) |
+| **The server is under pressure, but your databases do not appear unusually slow** (`server`) | Saturation without a slowed database |
 
-Saturated means **disk latency ≥ 15 ms** (Microsoft: sustained 10–15 ms is an I/O bottleneck) **or CPU ≥ 80%** (Microsoft guidance for Managed Instance, applied to every edition by inference). Confidence chips say "Provable (Query Store)" or "Indicative"; **Cannot tell** lists what to switch on.
+Saturated means **disk latency ≥ 15 ms** (Microsoft: sustained 10–15 ms is an I/O bottleneck) **or CPU ≥ 80%** (Microsoft guidance for Managed Instance, applied to every edition by inference). The not-enough-evidence box lists **What you can still do** (review the API and web-server lanes, inspect the logs that exist) and **For the next incident** (switch on Query Store, start recording server counters).
 
 ### 8.3 Tables
-1. **The server as a whole** (instance-wide; cannot be split by database): disk latency, CPU, memory grants waiting, top wait. Values are samples; wait counters count from the last restart, so only differences between samples mean anything. With no samples the card shows no numbers and says so.
-2. **By database:** database, environment, P95 incident vs comparison, change (×), share of file I/O (comparison in brackets), a **history chip** (Query Store on · 60 min steps / off / full). In All databases an unnamed **Other databases** row shows the unpicked share.
+1. **The server as a whole** (instance-wide; cannot be split by database): disk latency, CPU, memory grants waiting, top wait. Every block carries a **Source** line (in the demo: "Blackbox sampler, running in this demo since 19 Oct"); with no sampler it shows no numbers and says so. Wait counters count from the last restart, so only differences between samples mean anything. [Review fix 4.3]
+2. **By database:** database, environment, P95 incident vs comparison, change (×), share of file I/O (comparison in brackets), a **Numbers from** column (stored SQL events, the same figures as the SQL lane, or Query Store history; when the lane's comparison is withheld and Query Store is off the row says "cannot compare"), a **history chip** (Query Store on · 60 min steps / off / full). In All databases an unnamed **Other databases** row shows the unpicked share.
 3. **MongoDB:** queued operations and replication lag (server signals), then per database slow operations per hour and a profiler chip. Notes: cache and connections are shared by all databases; the server's own diagnostic capture is a file on disk that cannot be read over a connection; on MongoDB 8.0 the slow-query threshold ignores time spent waiting for locks.
 4. A **Coarse** note when the window is shorter than a Query Store step: the card can only say what happened in the step that contains the window.
-5. **Where each rule comes from:** separates sourced rules from prototype inference.
+5. **Rules used (defaults, not universal laws):** every threshold, tagged "from vendor guidance" or "prototype default", with a note that they may differ by platform and version and would be adjustable in the product. [Review fix 4.5]
 
-**Five prepared situations** (prototype panel): One environment, Whole server, Noisy neighbour, Nothing kept, A quiet window. Numbers come from a scenario table, not from the lane data (see §11, item 4).
+**Five prepared situations** (prototype panel): One environment, Whole server, Noisy neighbour, Nothing kept, A quiet window. Where the SQL lane has a stored comparison the card uses the lane's own figures (one evidence model); server counters and databases without lane evidence come from the scenario table and are labelled with their source.
 
 ## 9. ⑪⑫ Collapsed details and exits
 
@@ -250,6 +264,8 @@ Saturated means **disk latency ≥ 15 ms** (Microsoft: sustained 10–15 ms is a
 | **Trace details** | Flags: `allLanesStored`, `mixedConsistency`, `requestSeq`; per lane: origin (live/case), consistency, complete, as-of time, sources. A warning when `allLanesStored` is vacuously true with nothing stored |
 | **Open the analysis** | Opens Run analysis with the current windows |
 | **Export** | Opens the Export drawer (preview and confirm stamped with the case revision) |
+
+**Hand-off to Run analysis (changed).** Run analysis needs the comparison period to end before the selected period starts and to be at most 7 days. When a bucket (or the whole period) is opened and the comparison period does not meet that, **Unravis moves it to just before the selected period** and the analysis banner says so, with the original range. **Open the analysis** is switched off for a period longer than 7 days, with the reason shown. The analysis screen itself still refuses an invalid range typed there. [Prototype decision; was open decision 3/4]
 
 **Bucket-size ladder** [Spec §4.5, R6-02]: window ≤ 2 h → 1 min; ≤ 24 h → 5/10/15 min (smallest that keeps ≤ 120 bars); ≤ 5 d → 1 h; ≤ 10 d → 2 h; ≤ 20 d → 4 h; ≤ 30 d → 6 h; the axis is then rounded out to whole UTC hours and the size is raised to the smallest standard size that keeps ≤ 120 bars. A 30-day window that starts off the hour becomes 8-hour bars (91 on the axis).
 
@@ -265,22 +281,27 @@ Saturated means **disk latency ≥ 15 ms** (Microsoft: sustained 10–15 ms is a
 | Layer | Origin |
 |---|---|
 | Lanes, window rules, bucket ladder, comparison naming, hand-off, mixed-consistency note, lane states, export stamp | [Spec] (ids above) |
-| Three charts' specific panels, stat cards, gap bands, one-connection-many-databases, "Where is it coming from?" | [Owner] requests, built by the prototype |
+| Three charts' specific panels, stat cards, gap bands, one-connection-many-databases, "Where does the evidence point?", "What Unravis sees" | [Owner] requests, built by the prototype |
 | 30-event and 80%-coverage rule, 1.5x red, 2x slowed, 1.5x neighbour share, verdict combination | [Inference] |
 | Disk ≥ 15 ms, CPU ≥ 80%, Query Store/profiler/log facts | Vendor documentation read in the owner's separate research (not re-opened by the prototype author) |
 
-## 11. Known weak spots (for the reviewer: please test these)
+## 11. Known weak spots (after the review fixes)
 
-1. **API 5xx shows 0 while IIS shows 132 in the same slowdown.** The synthetic audit data produces essentially no 5xx here. This looks inconsistent to a viewer. [Code; cause is a data-generator choice, not verified in detail]
-2. **P95 on the cards is a call-weighted mean of per-minute P95s**, not a true window P95. It is labelled "P95". A true P95 needs the raw durations. [Code, certain]
-3. **The comparison period is not a baseline.** In the default window both periods overlap the slowdown, so ratios below 1 read as "improvement". [Code]
-4. **The attribution card and the cards above are not wired together.** The card's numbers come from a scenario table (e.g. `orders ×24.6`), while the SQL card computes 39% slow calls from the lane data. In the default window the SQL card shows 24% slow calls and the verdict says "Nothing stands out". [Code, certain]
-5. **Server-wide signals in MVP-1.** MVP-1 reads files only; disk/CPU/wait numbers need a live read (MVP-2) or a sampler (Blackbox). The card labels them "Samples" and notes this, but the spec does not say where they come from. [Owner question]
+Fixed since the first version of this document: API 5xx shown as 0 (the demo now shows 108 5xx against IIS's 132); P95 presented as exact (now "estimated"); attribution numbers disagreeing with the lane figures (one evidence model for the SQL database with stored events); server counters without a source; "Provable" wording; the misleading "Scope" label; zero events drawn like missing data; large hatched areas on long windows; hand-off landing on a refusal.
+
+Still open, please test:
+1. **Estimated P95** is still a call-weighted mean of per-minute P95s in the prototype; only the label changed. [Code]
+2. **The comparison period is not a baseline.** In the default window both periods overlap the slowdown, so ratios below 1 read as "improvement". [Code]
+3. **API 5xx comparison says "Cannot compare" when the earlier period had none.** "None in the earlier period" would be more accurate. [Code]
+4. **Only the `orders` database has lane evidence.** Other picked databases and all server counters come from a scenario table, labelled as such; the demo cannot show a fully real model. [Code]
+5. **Server-wide signals in MVP-1** still need a live read (MVP-2) or a sampler (Blackbox); the demo assumes a sampler. [Owner question]
 6. **The 80% CPU rule** is documented for Managed Instance and applied to every SQL Server edition by inference. [Inference]
-7. **Hiding other databases' names is display-only.** The server-wide grant (VIEW SERVER STATE) exposes them to the account. [Research]
-8. **Provenance lines (Live read / Stored, as-of time) are hidden** in the collapsed Trace details to keep lane labels short. A reviewer may want them back. [Code]
-9. **Colour is the only carrier** of the 2xx/4xx/5xx split in the IIS bars (legend text names them). Accessibility not audited. [Code]
-10. **Tick labels** follow the UTC/Local switch while the stored windows are UTC; the caption states the zone. [Code]
+7. **Hiding other databases' names is display-only.** [Research]
+8. **Provenance lines (live/stored, as-of time)** are in the collapsed Trace details. [Code]
+9. **Colour is the only carrier** of the 2xx/4xx/5xx split in the IIS bars (the legend names them). Accessibility not audited. [Code]
+10. **Layout:** Report (A) is still the default; Workbench (B) was recommended by the review but not validated with users, so the default was not changed. [Owner decision]
+11. **Terminology compromises:** "Problem period (incident window)" and "API requests (audit log)" keep the spec/source terms in brackets; renaming them outright would split the vocabulary between Tracing and Run analysis. [Owner decision]
+12. **The reading aid's layer thresholds** (1.5 times, 2%, 25%) are prototype defaults. [Inference]
 
 ## 12. Review checklist (for the other agent)
 
@@ -302,14 +323,14 @@ Recording notes: use a 1440x900 window; hide the bottom dock ("Hide"); load situ
 | 1 | The problem (0:30) | Case home → Tracing block, press **Start tracing** | "When production slows down you have three places to look: the API audit log, the web server and the database. Tracing puts them on one timeline." |
 | 2 | Choose the period (0:45) | Range chips; open the incident picker; show the reference card | "Pick the period you care about. Unravis also picks a comparison period: by default the equal period just before. It is only a comparison, not a promise that it was healthy." Show overlap notice and the 30-day limit. |
 | 3 | Start tracing (0:30) | Press **Start tracing**; summary line | "Each bar is one bucket. Here each bar is five minutes. Longer windows use bigger bars so the chart stays readable." |
-| 4 | The figures (0:50) | Scenario "The slowdown, with a real comparison"; pan across the 7 cards | Use the §6.1 numbers: "API P95 doubled: 505 milliseconds against 228. IIS returned 132 server errors. SQL shows 605 calls over one second and 15 blocking reports. Where the comparison period isn't covered, the card says 'no comparison' instead of guessing." |
+| 4 | What Unravis sees, then the figures (1:00) | Scenario "The slowdown, with a real comparison"; start with the reading aid, then pan across the 7 cards | Use the §6.1 numbers: "The reading aid says the application is slower, the web server is returning errors and the database has many slow calls. The slow-request time roughly doubled: about 505 milliseconds against 228. IIS returned 132 server errors. SQL shows 605 calls over one second and 15 blocking reports. Where the comparison period isn't covered, the card says 'no comparison' instead of guessing." |
 | 5 | Read the chart (1:15) | Scroll the board; point at axes, legend, panel titles | "Every panel says what it plots. The API chart is the one you know from the analysis: bars are requests, the line is P95, the dashed line is the comparison period. SQL shows slow calls and errors, call duration and blocking. IIS shows status codes, time taken and HTTP.sys errors. All panels share one time axis." |
 | 6 | Hover and drill (0:30) | Hover, click a bar, press **Open Run analysis for this bucket** | "Hover to read one moment across all three sources. Click a bar to open the analysis for exactly that bucket." |
 | 7 | Gaps (0:40) | Range chip **Last 7 days** | "Seven days means seven days for every source. Where a source has no logs, the chart says so, with the exact range, instead of drawing zeros." |
-| 8 | Where is it coming from? (1:00) | Load each situation: One environment → Whole server → Noisy neighbour → Nothing kept | "One server can host several environments. This card says whether the slowdown is one environment, the whole server, or a neighbouring database, and when it can't tell, it says what to switch on." Show the **Other databases** row staying unnamed until you ask. |
+| 8 | Where does the evidence point? (1:00) | Load each situation: One environment → Whole server → Noisy neighbour → Nothing kept | "One server can host several environments. This card says where the evidence points: one environment, the whole server, or a neighbouring database, how strong that evidence is, and when there isn't enough, what to switch on." Show the **Other databases** row staying unnamed until you ask. |
 | 9 | Close (0:20) | Open the collapsed details; show **Export** | "Everything here is prototype data. Open the details to see how the axis was worked out and what each lane read." |
 
-**Fact sheet for narration (verified in the prototype):** 2,464 API requests; API P95 505 ms vs 228 ms (2.2x); IIS 5xx 132 (4.7% of 2,809); SQL slow calls 605 (39% of 1,552); blocking/deadlock reports 15; slowdown 09:14–11:30; verdict "One environment: Production", `orders` ×24.6.
+**Fact sheet for narration (verified in the prototype):** 2,464 API requests; API P95 (estimated) 505 ms vs 228 ms (2.2 times); API 5xx 108 (4.4%); IIS 5xx 132 (4.7% of 2,809); SQL slow calls 605 (39% of 1,552); blocking/deadlock reports 15; slowdown 09:14–11:30; reading aid: Application slower than usual, Web server returning errors, Database many slow calls and blocking; evidence points to "The problem appears isolated to Production" (`orders` ×25.1), Strong evidence.
 
 ## 14. Reproduce the screens
 
