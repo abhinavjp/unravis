@@ -153,7 +153,7 @@ pre.json { margin:0; padding:8px; background:var(--bg); border:1px solid var(--l
 .tc2 .pn.cp, .tc2 .yax.cp { height:auto !important; min-height:56px !important; } .tc2 .pn.cp svg { position:absolute; inset:0; } .tc2 .pn.cp .cap { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .tc2 .pn.cp .gaplab { top:auto; bottom:3px; transform:none; } .tc2 .lab.cp .lgs { display:none; }
 @media (max-width:700px) { .tc2 .lab.cp .lask, .tc2 .lab.cp .evn { display:none; } .tc2 .pn .cap { font-size:10px; } }
 .tc2 .axisrow { height:24px; } .tc2 .axcap { font-size:11px; color:var(--text-2); padding:4px 0 2px; } .tc2 .plot { display:none; }
-.tc2 .gaplab { position:absolute; top:50%; transform:translateY(-50%); z-index:1; text-align:center; font:600 11px var(--mono); color:var(--text-2); pointer-events:none; line-height:1.4; } .tc2 .lg i.gapsw { background:repeating-linear-gradient(135deg, #8fa39a 0 2px, transparent 2px 5px), var(--surface-2) !important; border:1px solid var(--line); } .tscroll { overflow-x:auto; max-width:100%; } .attr, .attr > .stack, .attr .tscroll { min-width:0; } .attr > .stack { display:grid; grid-template-columns:minmax(0, 1fr); } .dbrow { display:grid; gap:4px; padding:var(--s2) 0; border-bottom:1px solid var(--line); } .dbrow:last-of-type { border-bottom:0; }
+.tc2 .gaplab { position:absolute; top:50%; transform:translateY(-50%); z-index:1; text-align:center; font:600 11px var(--mono); color:var(--text-2); pointer-events:none; line-height:1.4; } .tc2 .lg i.gapsw { background:repeating-linear-gradient(135deg, #8fa39a 0 2px, transparent 2px 5px), var(--surface-2) !important; border:1px solid var(--line); } .tscroll { overflow-x:auto; max-width:100%; } .sus { display:grid; gap:var(--s2); min-width:0; align-content:start; background:var(--surface); border:1px solid var(--line); padding:var(--s3); --sus-green:#1f7a4f; } :root[data-theme="dark"] .sus { --sus-green:#3fb27f; } @media (prefers-color-scheme:dark) { :root:not([data-theme="light"]) .sus { --sus-green:#3fb27f; } } .sus h3 { margin:0; } .sus .note { margin:0; } .sus .dot { display:inline-block; width:10px; height:10px; border-radius:50%; flex:none; margin-right:6px; } .sus .dot.red { background:var(--bad); } .sus .dot.orange { background:var(--warn); } .sus .dot.green { background:var(--sus-green); } .sus .dot.grey { background:var(--pending); } .sus .susleg { display:grid; gap:2px; margin:0; padding:0; list-style:none; font-size:12px; color:var(--text-2); } .sus .sid { font:600 11px var(--mono); padding:1px 5px; margin-right:6px; background:var(--surface-2); border:1px solid var(--line); } .sus .susprog { display:grid; gap:4px; font-size:12px; color:var(--text-2); } .sus .susbar { display:block; height:4px; background:var(--surface-2); } .sus .susbar i { display:block; height:100%; background:var(--accent); } .sus .suschk { margin:0; padding:0; list-style:none; display:grid; gap:2px; font-size:12px; } .sus .susc { display:grid; gap:4px; min-width:0; padding:var(--s2) var(--s3); border:1px solid var(--line-soft); border-left:4px solid var(--pending); background:var(--surface); } .sus .susc.red { border-left-color:var(--bad); } .sus .susc.orange { border-left-color:var(--warn); } .sus .susc.green { border-left-color:var(--sus-green); } .sus .susc header { display:flex; align-items:center; flex-wrap:wrap; } .sus .susc p { margin:0; } .sus .sttl { overflow-wrap:anywhere; } .sus .susev { width:100%; } .sus .susev td, .sus .susev th { text-align:left; vertical-align:top; padding:2px 6px 2px 0; } .sus details > summary { cursor:pointer; } .sus .susgreen { display:grid; gap:var(--s2); } .attr, .attr > .stack, .attr .tscroll { min-width:0; } .attr > .stack { display:grid; grid-template-columns:minmax(0, 1fr); } .dbrow { display:grid; gap:4px; padding:var(--s2) 0; border-bottom:1px solid var(--line); } .dbrow:last-of-type { border-bottom:0; }
 .verdict { border:1px solid var(--line); border-left-width:6px; border-radius:var(--r); padding:var(--s3); background:var(--surface); display:grid; gap:6px; } .verdict h4 { margin:0; font-size:17px; } .verdict.env { border-left-color:var(--lane-sql); } .verdict.server { border-left-color:var(--bad); } .verdict.noisy { border-left-color:var(--warn); } .verdict.blind { border-left-color:var(--text-2); } .verdict.quiet { border-left-color:var(--ok); }
 .shbar { display:inline-block; height:8px; border-radius:2px; background:var(--lane-sql); vertical-align:middle; min-width:2px; } .shbar.oth { background:var(--warn); }
 .num { font-variant-numeric:tabular-nums; text-align:right; }
@@ -259,12 +259,14 @@ function referenceState(ref, kind = 'all') {                          // honest 
 }
 /* SQL and IIS lanes. What each can show comes from what the importers read (see READS): IIS W3C gives status, sub-status, win32 status and time-taken per request, HTTP.sys error rows give
    reasons (markers); SQL extended events give completed calls with duration, errors, blocked-process reports and deadlock graphs. Only stored imports expose them. */
+const LANE_LEAD = { sql:3 * MIN, iis:-1 * MIN };                  // the slowdown reaches each tier at a slightly different moment: SQL about 3 min before the API audit, IIS about 1 min after
+const inIncLane = (lane, m) => m * MIN >= INC.start - (LANE_LEAD[lane] || 0) && m * MIN < INC.end;
 function metricMinute(lane, m) {
   const inOut = m * MIN >= OUTAGE[0] && m * MIN < OUTAGE[1]; if (!available(m) && !inOut) return null;
   let a = OPS.reduce((s, op) => { const v = opMinute(op, m); return s + (v ? v.n : 0); }, 0); if (inOut) a = 9;
-  const inc = inInc(m), u = k => unit(lane + k, m);
-  if (lane === 'iis') { const n = Math.max(0, Math.round(a * 1.25 * (0.85 + 0.3 * u('l')) * (inc ? 0.9 : 1))), c5 = Math.round(n * (0.004 + (inc ? 0.045 : 0)) * (0.5 + u('e'))), c4 = Math.round(n * 0.012 * (0.5 + u('f'))); return { n, c4, c5, slow:0, err:0, p95:(inc ? 1150 : 260) * (0.9 + 0.2 * u('p')), mark:inc ? (u('h') < 0.18 ? 1 : 0) : (u('h') < 0.01 ? 1 : 0) }; }
-  const n = Math.max(0, Math.round(a * 0.5 * (0.85 + 0.3 * u('l')) * (inc ? 1.3 : 1))); return { n, c4:0, c5:0, slow:Math.round(n * (inc ? 0.42 : 0.03) * (0.6 + 0.8 * u('s'))), err:Math.round(n * (inc ? 0.025 : 0.002) * (0.5 + u('e'))), p95:(inc ? 1900 : 70) * (0.9 + 0.2 * u('p')), mark:(inc && u('b') < 0.1 ? 1 : 0) + (inc && u('d') < 0.015 ? 1 : 0) };
+  const inc = inIncLane(lane, m), u = k => unit(lane + k, m);
+  if (lane === 'iis') { const n = Math.max(0, Math.round(a * 1.25 * (0.85 + 0.3 * u('l')) * (inc ? 0.9 : 1))), c5 = Math.round(n * (0.004 + (inc ? 0.045 : 0)) * (0.5 + u('e'))), c4 = Math.round(n * 0.012 * (0.5 + u('f'))); return { n, c4, c5, slow:0, err:0, p95:(inc ? 1150 : 260) * (0.9 + 0.2 * u('p')), mark:inc ? (u('h') < 0.18 ? 1 : 0) : (u('h') < 0.01 ? 1 : 0), blk:0, dl:0 }; }
+  const n = Math.max(0, Math.round(a * 0.5 * (0.85 + 0.3 * u('l')) * (inc ? 1.3 : 1))); return { n, c4:0, c5:0, slow:Math.round(n * (inc ? 0.42 : 0.03) * (0.6 + 0.8 * u('s'))), err:Math.round(n * (inc ? 0.025 : 0.002) * (0.5 + u('e'))), p95:(inc ? 1900 : 70) * (0.9 + 0.2 * u('p')), mark:(inc && u('b') < 0.1 ? 1 : 0) + (inc && u('d') < 0.015 ? 1 : 0), blk:(inc && u('b') < 0.1 ? 1 : 0), dl:(inc && u('d') < 0.015 ? 1 : 0) };
 }
 const laneMinute = (lane, m) => { const v = metricMinute(lane, m); return v ? v.n : 0; };
 function laneBuckets(lane, imports, ax) {
@@ -344,7 +346,7 @@ const REF_LABEL = 'Comparison period';
 const DB_KEY = 'unravis-prototype-db-v4', SESSION_KEY = 'unravis-prototype-session-v3';
 const IMPORTER_LABELS = { 'iis-w3c':'IIS web log', 'iis-httperr':'HTTP.sys error log', 'sql-xe':'SQL Server extended events', 'sql-errorlog':'SQL Server error log', 'sql-querystore':'SQL Server Query Store export', 'win-events':'Windows event log' };
 const laneOfImporter = i => (i.startsWith('iis') ? 'iis' : i.startsWith('sql') ? 'sql' : null);
-const W_SEED = { from:Date.parse('2026-10-20T08:00:00Z'), to:Date.parse('2026-10-20T12:00:00Z') };
+const W_SEED = { from:Date.parse('2026-10-20T06:00:00Z'), to:Date.parse('2026-10-20T12:00:00Z') };
 const mkImport = (id, sourceId, importer, fileName, rows, tz, win = W_SEED, extra = {}) => Object.assign({ id, sourceId, importer, fileName, rows, rejected:rows > 5000 ? 12 : 0, bytes:rows * 190, from:win.from, to:win.to, tz, status:'ok', params:{ late:0, restated:0 }, observationKey:null, digest:hex(sourceId + win.from + win.to + fileName), at:win.to + 6 * MIN }, extra);
 function seedCase(name, o = {}) {
   const id = idOf(name), c = Object.assign({ id, title:name, created:Date.parse('2026-10-20T08:02:00Z'), state:'open', envs:['Production'], ownKey:false, key:null, keyEnding:'', untrusted:false, missing:false,
@@ -1348,6 +1350,7 @@ function trParts(c) {
   P.cov = RT.stage === 'mvp2' ? coverageCard(c) : '';
   P.attr = ok ? attrFolded(c, t) : '';
   P.detrow = ok ? '<div class="detrow">' + P.details + P.gloss + '</div>' : '';
+  P.rail = ok ? suspectsRail(c, t) : '';
   P.stats = ok ? traceStats(t) : '';
   P.see = ok ? traceSeen(c, t) : '';
   return P;
@@ -1465,6 +1468,185 @@ function attrSummary(c, t) {                                          // pure: t
   const win = { start:Date.parse(t.window.start), end:Date.parse(t.window.end) }, ref = { start:Date.parse(t.reference.start), end:Date.parse(t.reference.end) }, v = attrVerdict(attrModel(c, win, ref, t));
   return v ? { verdictKey:v.k, title:v.title, strength:v.strength, weakDb:v.weakDb, weakEnv:v.weakEnv, nextText:v.next } : { verdictKey:null, title:'', strength:'none', weakDb:null, weakEnv:null, nextText:'' };
 }
+/* ---- Suspects. A deterministic port of the catalog and the colour rules of the real engine (internal/investigate/catalog.go, evaluate.go): named signals read yes / no / unknown, each suspect says which
+   signals it Must have and which it Expects, and the colour comes from the result and from whose slowdown clearly started first. No score, no cause is named, nothing here is learned or asked of an LLM. ---- */
+const SUS_STEP_MS = 140;                                              // one suspect is revealed per step while the rail loads; RT.susStep overrides it (tests set 0)
+const SUS_TH = { chgPct:0.3, chgMs:100, loadPct:0.3, onsetFactor:2, onsetRun:5, onsetMinSamples:5, bucketMs:60000, clockMs:1000, scopeFewMax:3, scopeAllShare:0.8, auditDipShare:0.3, changeLeadMin:30, diskMs:15, cpuPct:80, memGrants:10, mongoQueue:5, otherShare:50, otherRise:1.5, blockMin:3, deadlockMin:5, scanMaxDays:3 };
+const SUS_SIG = {
+  arrivalsUp:'Calls per minute up 30% or more', auditUp:'API slow-request time (P95) up meaningfully', iisUp:'Web server time taken (P95) up meaningfully', sqlUp:'Database call time (P95) up meaningfully',
+  scopeNarrow:'The rise sits on a few routes (3 or fewer)', scopeAll:'The rise is on nearly every route (80% or more)', p50Flat:'The typical call (median) did not slow', outsideLarge:'Time outside the application, between the web server and the audit, is large and up',
+  httpSys:'HTTP.sys error rows rose', blocking:'Blocked-process reports rose', deadlocks:'Deadlock storm (5 or more reports, and twice the earlier rate)', lockWait:'The top server wait is a lock wait', memGrant:'Queries waiting for a memory grant',
+  diskSlow:'Disk latency at or over the bottleneck line (15 ms)', cpuHigh:'CPU saturated (80% or more)', cpuUp:'CPU up 30% or more from the comparison period', mongoQueue:'MongoDB operations queued', mongoSlow:'Slow audit writes (MongoDB slow operations up)',
+  otherShare:'Other databases’ share of file I/O up', allSlow:'The API, the web server and the database all slowed', sameMoment:'All three moved at the same moment', auditDip:'The audit share of web requests fell', changesLead:'A listed change sits just before the start',
+};
+const SUS_NEEDS = { sql:'Stored SQL Server events for the incident window and the comparison period.', iis:'IIS log rows for the incident window and the comparison period.', audit:'The API audit for the incident window and the comparison period.', sampler:'Server performance samples (the Blackbox sampler) for the window.', profiler:'MongoDB profiler switched on, so slow operations are kept.', mongo:'A MongoDB connection in the case.', changes:'The list of releases and changes, typed in.', short:'A window of three days or less, so each tier can be dated to the minute.' };
+const SUS_TIER = { sql:'SQL', audit:'the API audit', iis:'IIS', mongo:'MongoDB', host:'the host' };
+const SUS_CAT = [
+  { id:'Q2', group:'Q', title:'Audit coverage gap or survivorship', must:['auditDip'], check:'Audit count per minute divided by the IIS request count for the same paths.', overturn:'Audit and IIS counts agree.', needs:'IIS log rows for the incident and reference windows.' },
+  { id:'L1', group:'L', title:'Traffic surge', must:['arrivalsUp'], check:'Calls per minute against the reference; a per-call service time that did not move early separates a surge from a slowdown.', overturn:'Calls per second flat or down.', needs:'' },
+  { id:'L2', group:'L', title:'Mix shift: one route or client dominates', tier:'audit', must:['auditUp', 'scopeNarrow'], expect:['p50Flat'], check:'Group the slow calls by route, client and body size.', overturn:'The rise is spread across routes.', needs:'' },
+  { id:'S1', group:'S', title:'HTTP.sys or IIS queue backup', tier:'iis', must:['outsideLarge'], expect:['httpSys'], check:'HTTP.sys counters and the HTTPERR log against the audit duration.', overturn:'The queue length stays at zero.', needs:'IIS log rows; HTTPERR and queue counters for a direct reading.' },
+  { id:'S2', group:'S', title:'.NET thread-pool starvation', tier:'iis', tier2:'audit', must:['outsideLarge'], check:'Thread-pool queue length and thread count; latency of a trivial route.', overturn:'Thread-pool queue length flat at zero.', needs:'IIS log rows; .NET counters for a direct reading.' },
+  { id:'S5', group:'S', title:'Audit-write coupling', tier:'audit', must:['auditUp', 'mongoSlow'], expect:['scopeAll'], check:'Server-side latency of inserts on the audit collection only; confirm the write is awaited inside the request.', overturn:'A is small.', needs:'MongoDB slow-operation lines to separate set-up from the insert.' },
+  { id:'D1', group:'D', title:'Blocking chain (head blocker or open transaction)', tier:'sql', must:['sqlUp', 'blocking'], expect:['lockWait'], check:'Head blocker in the blocking snapshot or blocked-process report.', overturn:'No lock waits.', needs:'SQL Server wait, blocking or Query Store snapshots for the incident window.' },
+  { id:'D2', group:'D', title:'Deadlock storm and retries', tier:'sql', must:['sqlUp', 'deadlocks'], check:'system_health deadlock events.', overturn:'No deadlocks logged.', needs:'SQL Server wait, blocking or Query Store snapshots for the incident window.' },
+  { id:'D6', group:'D', title:'Memory pressure or grant waits', tier:'sql', must:['sqlUp', 'memGrant'], check:'Memory grants with a null grant time.', overturn:'No grant waits.', needs:'SQL Server wait, blocking or Query Store snapshots for the incident window.' },
+  { id:'D9', group:'D', title:'Disk IO latency', tier:'sql', must:['sqlUp', 'diskSlow'], check:'Per-file IO stall deltas.', overturn:'Normal IO latency.', needs:'SQL Server wait, blocking or Query Store snapshots for the incident window.' },
+  { id:'D10', group:'D', title:'SQL CPU saturation or parallelism', tier:'sql', must:['sqlUp', 'cpuHigh'], check:'SQL CPU against OS CPU.', overturn:'CPU is low.', needs:'SQL Server wait, blocking or Query Store snapshots for the incident window.' },
+  { id:'M5', group:'M', title:'Ticket or lock queue', tier:'mongo', must:['auditUp', 'mongoQueue'], check:'Duration minus working time; global lock queue.', overturn:'Both equal.', needs:'MongoDB slow-operation lines or server status for the incident window.' },
+  { id:'M10', group:'M', title:'Shared mongod: another tenant or maintenance job', tier:'mongo', must:['auditUp', 'otherShare'], check:'Slow lines grouped by database; current operations by namespace.', overturn:'Other databases flat while this one is slow.', needs:'MongoDB slow-operation lines or server status for the incident window.' },
+  { id:'H1', group:'H', title:'Host CPU contention', tier:'host', must:['cpuHigh'], expect:['cpuUp'], check:'CPU by process.', overturn:'Process CPU accounts for it.', needs:'Host performance counters for the incident window.' },
+  { id:'H6', group:'H', title:'Shared effect across tiers (VM, hypervisor, storage, network)', tier:'host', must:['allSlow'], expect:['sameMoment'], check:'Whether trivial, unrelated operations slow at the same moment on every tier.', overturn:'Only one tier is slow.', needs:'Host performance counters for the incident window.' },
+  { id:'C1', group:'C', title:'Deploy, configuration or infrastructure change', must:['changesLead'], check:'Change calendar against t0: a lead, not an overlap.', overturn:'No change listed within the lead window before t0.', needs:'The list of releases and changes, typed in.' },
+];
+function susScan(c, t, key, start, end) {                              // per-minute rows of one tier inside [start, end): count, P95, blocked-process and deadlock reports
+  const l = t.lanes.find(x => x.key === key), out = new Map(); if (!l) return out;
+  if (key === 'audit') { for (let m = Math.ceil(start / MIN); m * MIN < end; m++) { let n = 0, w = 0; for (const op of OPS) { const v = opMinute(op, m); if (v) { n += v.n; w += v.p95 * v.n; } } if (n) out.set(m, { n, p95:w / n, blk:0, dl:0 }); } return out; }
+  for (const im of (l.sources || []).flatMap(s => importsOfSource(c, s.sourceId))) for (let m = Math.ceil(Math.max(im.from, start) / MIN); m * MIN < Math.min(im.to, end); m++) { if (out.has(m)) continue; const v = metricMinute(key, m); if (v) out.set(m, { n:v.n, p95:v.p95, blk:v.blk || 0, dl:v.dl || 0 }); }
+  return out;
+}
+function susOnset(rows, start, end, refP95) {                          // the engine's rule: the first minute whose P95 stays above 2x the reference P95 for 5 minutes in a row (a minute with fewer than 5 events breaks the run)
+  let run = 0, first = 0;
+  for (let m = Math.ceil(start / MIN); m * MIN < end; m++) { const r = rows.get(m);
+    if (r && r.n >= SUS_TH.onsetMinSamples && r.p95 > SUS_TH.onsetFactor * refP95) { if (!run) first = m; run++; if (run >= SUS_TH.onsetRun) return first * MIN; } else run = 0; }
+  return null;
+}
+function evaluateSuspects(c, t) {                                      // pure: the same data the Investigation Timeline holds, read against the catalog; returns every suspect with a colour
+  const win = { start:Date.parse(t.window.start), end:Date.parse(t.window.end) }, ref = { start:Date.parse(t.reference.start), end:Date.parse(t.reference.end) }, m = attrModel(c, win, ref, t), TH = SUS_TH;
+  const L = k => t.lanes.find(l => l.key === k), Y = why => ({ v:'yes', why }), N = why => ({ v:'no', why }), UK = (why, miss) => ({ v:'unknown', why, miss: miss || '' }), r0 = x => Math.round(x);
+  const laneName = { audit:'The API audit', sql:'The SQL lane', iis:'The IIS lane' };
+  const laneRead = k => { const l = L(k); if (!l || !l.stats) return UK(laneName[k] + ' has no source in this timeline.', k); if (l.state === 'no-data') return UK(laneName[k] + ' has no file in this case.', k); if (l.state !== 'events') return UK(laneName[k] + ': ' + (l.reason || 'not read in full') + '.', k); return null; };
+  const cmpRead = k => laneRead(k) || (L(k).cmp && L(k).cmp.rate != null && L(k).stats.ref.p95 != null ? null : UK(laneName[k] + ' has no usable comparison: ' + ((L(k).cmp && L(k).cmp.why) || 'the comparison period is not covered') + '.', k));
+  const chg = (a, b) => b > 0 && a >= b * (1 + SUS_TH.chgPct) && a - b >= SUS_TH.chgMs;
+  const short = win.end - win.start <= TH.scanMaxDays * DAY && ref.end - ref.start <= TH.scanMaxDays * DAY, shortUK = k => UK('The window is longer than ' + TH.scanMaxDays + ' days, so the ' + SUS_TIER[k] + ' tier is not dated to the minute.', 'short');
+  const sg = {}, p95 = {}, scan = {}, onset = {};
+  for (const k of ['audit', 'iis', 'sql']) {
+    const bad = cmpRead(k); if (bad) { sg[k + 'Up'] = bad; onset[k] = { at:null, why:bad.why }; continue; }
+    const s = L(k).stats, a = s.inc.p95, b = s.ref.p95; p95[k] = { a, b };
+    sg[k + 'Up'] = chg(a, b) ? Y(laneName[k] + ' P95 is ' + r0(a) + ' ms against ' + r0(b) + ' ms (x' + (a / b).toFixed(1) + '); a change counts at 30% and 100 ms.') : N(laneName[k] + ' P95 is ' + r0(a) + ' ms against ' + r0(b) + ' ms; not a meaningful change (30% and 100 ms).');
+    if (!short) { onset[k] = { at:null, why:shortUK(k).why }; continue; }
+    scan[k] = { inc:susScan(c, t, k, win.start, win.end), ref:susScan(c, t, k, ref.start, ref.end) };
+    const at = susOnset(scan[k].inc, win.start, win.end, b); onset[k] = at ? { at } : { at:null, why:'No minute of the window stayed above twice the comparison P95 for 5 minutes in a row.' };
+  }
+  const au = L('audit'), aud = cmpRead('audit'), iis = cmpRead('iis'), sq = cmpRead('sql');
+  // load and mix (audit only)
+  if (aud) { sg.arrivalsUp = aud; sg.scopeNarrow = aud; sg.scopeAll = aud; sg.p50Flat = aud; }
+  else { const r = au.cmp.rate; sg.arrivalsUp = r >= 1 + TH.loadPct ? Y('Calls per minute are x' + r.toFixed(2) + ' the comparison period.') : N('Calls per minute are x' + r.toFixed(2) + ' the comparison period; a surge counts at x1.3.');
+    if (!short) sg.scopeNarrow = sg.scopeAll = sg.p50Flat = shortUK('audit');
+    else { const ai = auditWindow(win.start, win.end), ar = auditWindow(ref.start, ref.end), ops = OPS.filter(o => ai.per[o.k].n >= 5 && ar.per[o.k].n >= 5), up = ops.filter(o => chg(ai.per[o.k].p95, ar.per[o.k].p95));
+      if (!ops.length) sg.scopeNarrow = sg.scopeAll = UK('Too few calls per route to tell which routes slowed.', 'audit');
+      else { const nm = up.map(o => o.k).join(', '), share = up.length / ops.length; sg.scopeNarrow = up.length >= 1 && up.length <= TH.scopeFewMax && share < TH.scopeAllShare ? Y(up.length + ' of ' + ops.length + ' routes slowed (' + nm + ').') : N(up.length + ' of ' + ops.length + ' routes slowed' + (nm ? ' (' + nm + ')' : '') + '.'); sg.scopeAll = share >= TH.scopeAllShare ? Y(up.length + ' of ' + ops.length + ' routes slowed.') : N(up.length + ' of ' + ops.length + ' routes slowed; nearly all would be 80%.'); }
+      sg.p50Flat = ai.p50 != null && ar.p50 != null ? (chg(ai.p50, ar.p50) ? N('The median call also slowed: ' + r0(ai.p50) + ' ms against ' + r0(ar.p50) + ' ms.') : Y('The median call stayed at about ' + r0(ai.p50) + ' ms (earlier ' + r0(ar.p50) + ' ms).')) : UK('No median could be read.', 'audit'); } }
+  // outside the application pipeline: IIS time taken minus the audit duration
+  if (aud || iis) sg.outsideLarge = aud || iis;
+  else { const oi = Math.max(0, p95.iis.a - p95.audit.a), orf = Math.max(0, p95.iis.b - p95.audit.b); sg.outsideLarge = oi - orf >= SUS_TH.chgMs && oi >= (1 + SUS_TH.chgPct) * Math.max(orf, 1) ? Y('Web server time taken exceeds the audit duration by ' + r0(oi) + ' ms (earlier ' + r0(orf) + ' ms).') : N('Web server time taken exceeds the audit duration by ' + r0(oi) + ' ms (earlier ' + r0(orf) + ' ms); not a meaningful rise.'); }
+  if (iis) sg.httpSys = iis; else { const s = L('iis').stats, ri = s.inc.mark / ((win.end - win.start) / MIN), rr = s.ref.mark / ((ref.end - ref.start) / MIN); sg.httpSys = s.inc.mark >= 3 && ri >= 2 * rr ? Y(s.inc.mark + ' HTTP.sys error rows in the window against ' + s.ref.mark + ' in the comparison period.') : N(s.inc.mark + ' HTTP.sys error rows in the window against ' + s.ref.mark + ' in the comparison period.'); }
+  // SQL markers: blocked-process and deadlock reports, counted separately
+  const mk = (key, min, word) => { if (sq) return sq; if (!short) return shortUK('sql'); let a = 0, b = 0; scan.sql.inc.forEach(r => { a += r[key]; }); scan.sql.ref.forEach(r => { b += r[key]; }); const ra = a / ((win.end - win.start) / MIN), rb = b / ((ref.end - ref.start) / MIN);
+    return a >= min && ra >= 2 * rb ? Y(a + ' ' + word + ' in the window against ' + b + ' in the comparison period.') : N(a + ' ' + word + ' in the window against ' + b + ' in the comparison period.'); };
+  sg.blocking = mk('blk', TH.blockMin, 'blocked-process reports'); sg.deadlocks = mk('dl', TH.deadlockMin, 'deadlock reports');
+  // server counters (a sampler is needed: counters count from the last restart, so a past window has no numbers without one)
+  const nos = 'No samples were kept for this window (no sampler), so the server counters cannot describe it.', S = m.srv;
+  sg.lockWait = !S.usable ? UK(nos, 'sampler') : /^LCK_/.test(S.wait) ? Y('The top wait in the window is ' + S.wait + '.') : N('The top wait in the window is ' + S.wait + ', not a lock wait.');
+  sg.memGrant = !S.usable ? UK(nos, 'sampler') : S.mem[0] >= TH.memGrants ? Y(r0(S.mem[0]) + ' queries waiting for memory (earlier ' + r0(S.mem[1]) + '); 10 or more is flagged.') : N(r0(S.mem[0]) + ' queries waiting for memory (earlier ' + r0(S.mem[1]) + '); 10 or more is flagged.');
+  sg.diskSlow = !S.usable ? UK(nos, 'sampler') : S.io[0] >= TH.diskMs ? Y('Disk latency ' + r1(S.io[0]) + ' ms (earlier ' + r1(S.io[1]) + ' ms); 15 ms or more is a bottleneck.') : N('Disk latency ' + r1(S.io[0]) + ' ms (earlier ' + r1(S.io[1]) + ' ms); under the 15 ms line.');
+  sg.cpuHigh = !S.usable ? UK(nos, 'sampler') : S.cpu[0] >= TH.cpuPct ? Y('CPU ' + r0(S.cpu[0]) + '% (earlier ' + r0(S.cpu[1]) + '%); 80% or more is saturated.') : N('CPU ' + r0(S.cpu[0]) + '% (earlier ' + r0(S.cpu[1]) + '%); under 80%.');
+  sg.cpuUp = !S.usable ? UK(nos, 'sampler') : S.cpu[0] >= S.cpu[1] * (1 + TH.chgPct) ? Y('CPU rose from ' + r0(S.cpu[1]) + '% to ' + r0(S.cpu[0]) + '%.') : N('CPU went from ' + r0(S.cpu[1]) + '% to ' + r0(S.cpu[0]) + '%; not up by 30%.');
+  const hasMg = m.mg.length > 0, Q = m.mgs;
+  sg.mongoQueue = !hasMg ? UK('This case has no MongoDB connection.', 'mongo') : !Q.usable ? UK(nos, 'sampler') : Q.q[0] >= TH.mongoQueue && Q.q[0] > Q.q[1] ? Y(r0(Q.q[0]) + ' operations queued (earlier ' + r0(Q.q[1]) + ').') : N(r0(Q.q[0]) + ' operations queued (earlier ' + r0(Q.q[1]) + '); queueing counts from 5.');
+  const prof = m.mg.filter(d => d.ready && d.ready.prof === 'slow');
+  sg.mongoSlow = !hasMg ? UK('This case has no MongoDB connection.', 'mongo') : !prof.length ? UK('The MongoDB profiler is off for ' + m.mg.map(d => d.db).join(', ') + ', so only the slow-query log exists and it cannot separate the insert.', 'profiler') : !Q.usable ? UK(nos, 'sampler')
+    : (() => { const a = sum(prof.map(d => d.slowi)), b = sum(prof.map(d => d.slowr)); return a >= 2 * b && a - b >= 5 ? Y(r0(a) + ' slow operations per hour (earlier ' + r0(b) + ').') : N(r0(a) + ' slow operations per hour (earlier ' + r0(b) + '); not twice the earlier rate.'); })();
+  sg.otherShare = !m.dbs.length ? UK('No SQL Server database is picked, so the server’s share cannot be split.', 'sql') : !S.usable ? UK(nos, 'sampler') : m.oth.i >= TH.otherShare && m.oth.i >= TH.otherRise * m.oth.r ? Y('Databases you did not pick took ' + r0(m.oth.i) + '% of file I/O (earlier ' + r0(m.oth.r) + '%).') : N('Databases you did not pick took ' + r0(m.oth.i) + '% of file I/O (earlier ' + r0(m.oth.r) + '%).');
+  // the three tiers together
+  const ups = [sg.auditUp, sg.iisUp, sg.sqlUp], names = ['API', 'web server', 'database'], dated = ['audit', 'iis', 'sql'].map(k => onset[k] && onset[k].at);
+  sg.allSlow = ups.some(x => x.v === 'no') ? N('Not every tier slowed: ' + names.filter((n, i) => ups[i].v === 'no').join(' and ') + ' did not.') : ups.some(x => x.v === 'unknown') ? UK(ups.find(x => x.v === 'unknown').why, ups.find(x => x.v === 'unknown').miss) : Y('The API, the web server and the database all slowed.');
+  sg.sameMoment = dated.some(x => !x) ? UK('At least one tier could not be dated to the minute.', 'short') : Math.max(...dated) - Math.min(...dated) < TH.bucketMs + TH.clockMs ? Y('The three tiers moved within one minute of each other.') : N('The tiers moved up to ' + Math.round((Math.max(...dated) - Math.min(...dated)) / MIN) + ' minutes apart, which is more than one minute plus the clock tolerance.');
+  // audit share of web requests (data quality)
+  if (aud || iis) sg.auditDip = aud || iis; else { const ai = L('audit').stats, ii = L('iis').stats, si = ii.inc.n ? ai.inc.n / ii.inc.n : null, sr = ii.ref.n ? ai.ref.n / ii.ref.n : null; sg.auditDip = si == null || !sr ? UK('Too few web requests to compare shares.', 'iis') : si <= sr * (1 - TH.auditDipShare) ? Y('The audit holds ' + Math.round(si * 100) + '% as many calls as IIS, against ' + Math.round(sr * 100) + '% earlier.') : N('The audit holds ' + Math.round(si * 100) + '% as many calls as IIS, against ' + Math.round(sr * 100) + '% earlier.'); }
+  // changes: a typed list only; the demo has none
+  const chs = (c.changes || []).filter(x => Number.isFinite(+x.at)), first = Math.min(...['audit', 'iis', 'sql'].map(k => (onset[k] && onset[k].at) || Infinity));
+  sg.changesLead = !chs.length ? UK('No change list was entered, so a change cannot be compared with the start.', 'changes') : !Number.isFinite(first) ? UK('The start of the slowdown could not be dated.', 'short') : chs.some(x => first - x.at >= 0 && first - x.at <= TH.changeLeadMin * MIN) ? Y('A listed change sits within ' + TH.changeLeadMin + ' minutes before the start.') : N('No listed change sits within ' + TH.changeLeadMin + ' minutes before the start.');
+  // is there anything to explain?
+  const anyOnset = ['audit', 'iis', 'sql'].some(k => onset[k] && onset[k].at), anyUp = ups.some(x => x.v === 'yes'), explain = anyOnset || anyUp;
+  // the unread tiers: a tier that could not be read in every minute may have moved first, so nobody is called first
+  const unread = []; for (const k of ['audit', 'sql', 'iis']) { const l = L(k); if (!l || l.state !== 'events' || (l.gapIv && l.gapIv.length) || (l.gapFrac || 0) > 0 ) unread.push(SUS_TIER[k]); }
+  if (hasMg && !Q.usable) unread.push('MongoDB'); if (!S.usable) unread.push('the host');
+  const out = CAT_EVAL();
+  function CAT_EVAL() {
+    return SUS_CAT.map((e, i) => { const sp = { id:e.id, group:e.group, title:e.title, colour:'', result:'', why:'', evidence:[], check:e.check, overturn:e.overturn, needs:e.needs, tier:e.tier || null, onsetAt:null, order:i };
+      if (e.tier) { const a = onset[e.tier] && onset[e.tier].at, b = e.tier2 && onset[e.tier2] && onset[e.tier2].at; sp.onsetAt = a && b ? Math.min(a, b) : (a || b || null); if (a && b && b < a) sp.tier = e.tier2; }
+      const ev = (n, role) => { const s = sg[n]; sp.evidence.push({ signal:SUS_SIG[n], role, value:s.v, why:s.why }); return s; };
+      const mustS = (e.must || []).map(n => ev(n, 'must')), expS = (e.expect || []).map(n => ev(n, 'expect'));
+      const set = (res, col, why) => { sp.result = res; sp.colour = col; sp.why = why; };
+      const noM = mustS.find(x => x.v === 'no'), unM = mustS.find(x => x.v === 'unknown' && x.miss), unO = mustS.find(x => x.v === 'unknown' && !x.miss), noE = expS.find(x => x.v === 'no');
+      const needFor = x => { const base = e.needs || SUS_NEEDS[x && x.miss] || ''; return base; };
+      if (e.id === 'Q2') { const x = mustS[0]; if (x.v === 'yes') set('Consistent', 'orange', 'The audit share of IIS requests fell in the incident window, so some calls may be missing from the audit.'); else if (x.v === 'no') set('Contradicted', 'green', 'The audit share of IIS requests held between the two windows.'); else set('Cannot test yet', 'grey', 'Needs IIS rows with enough requests in both windows.'); }
+      else if (e.id === 'C1') { const x = mustS[0]; if (x.v === 'yes') set('Consistent', '', 'A listed change sits just before the start. A change before the start is a lead, not proof.'); else if (x.v === 'no') set('Partly consistent', 'grey', 'No listed change sits just before the start. A missing entry does not rule a change out.'); else set('Cannot test yet', 'grey', 'No change list was entered, or the start of the change was not dated.'); }
+      else if (noM) set('Contradicted', 'green', 'A reading it needs did not appear in the data: ' + noM.why);
+      else if (unM) { set('Cannot test yet', 'grey', 'Missing data: ' + unM.why); sp.needs = needFor(unM); }
+      else if (unO) { set('Partly consistent', 'grey', 'A reading it needs is unknown: ' + unO.why); sp.needs = needFor(unO); }
+      else if (noE) set('Partly consistent', 'orange', 'The main reading fits, but one that normally goes with it does not: ' + noE.why);
+      else set('Consistent', '', 'Every reading it needs is present. ' + mustS[mustS.length - 1].why);
+      return sp; });
+  }
+  // colours (the engine's rule): only the earliest tier among the consistent suspects is red, and only when it is clearly first
+  if (!explain) out.forEach(sp => { if (sp.group === 'Q') return; if (sp.result === 'Consistent' || sp.result === 'Partly consistent') sp.why += ' No meaningful slowdown was found in the window, so this is not ranked.'; sp.colour = 'grey'; sp.notRanked = true; });
+  else {
+    const sep = TH.bucketMs + TH.clockMs, comp = out.filter(sp => sp.result === 'Consistent' && !sp.colour && sp.group !== 'Q'), dates = comp.map(sp => sp.onsetAt).filter(x => x), earliest = dates.length ? Math.min(...dates) : null, near = new Set();
+    if (earliest != null) comp.forEach(sp => { if (sp.onsetAt != null && sp.onsetAt - earliest < sep) near.add(sp.tier); });
+    comp.forEach(sp => { const first = earliest != null && sp.onsetAt != null && sp.onsetAt - earliest < sep;
+      if (first && near.size === 1 && unread.length) { sp.colour = 'orange'; sp.why += ' Its tier moved first of those that could be dated, but ' + unread.join(' and ') + ' could not be read in every minute, so it is not called the first.'; }
+      else if (first && near.size === 1) { sp.colour = 'red'; sp.why += ' Its tier moved first.'; }
+      else if (first) { sp.colour = 'orange'; sp.why += ' Its tier moved at about the same time as another, so they cannot be told apart.'; }
+      else { sp.colour = 'orange'; if (earliest != null && sp.onsetAt != null) sp.why += ' Its tier moved after an earlier one.'; } });
+    out.forEach(sp => { if (sp.result === 'Consistent' && !sp.colour) sp.colour = 'orange'; });
+  }
+  return out;
+}
+const susYes = sp => sp.evidence.filter(e => e.value === 'yes').length;
+function susSorted(res) {
+  const rank = { red:0, orange:1, grey:2 }, cards = res.filter(s => s.colour !== 'green').sort((a, b) => rank[a.colour] - rank[b.colour] || susYes(b) - susYes(a) || a.order - b.order);
+  return { cards, green:res.filter(s => s.colour === 'green').sort((a, b) => a.order - b.order) };
+}
+const susStepMs = () => (RT.susStep != null ? RT.susStep : SUS_STEP_MS);
+const susKey = (c, t) => [c.id, t.requestSeq, t.window.start, t.window.end, t.reference.start, t.reference.end, RT.attrScen || 'env'].join('|');
+function susTick() {
+  const u = U.sus; if (!u) return; u.timer = 0; const c = curCase(), t = U.tr.result; if (!c || !t || !t.lanes || susKey(c, t) !== u.key) return;
+  if (u.shown < u.total) u.shown++; const html = suspectsRail(c, t), el = document.getElementById('sus-rail'); if (el) el.outerHTML = html;
+}
+function susState(c, t) {                                              // keyed by the timeline request: a re-render never restarts or flickers the reveal; a new request starts it again
+  const key = susKey(c, t), sig = JSON.stringify(c.sources.map(s => s.ready || 0)) + '|' + c.imports.length + '|' + (c.changes || []).length; let u = U.sus;
+  if (!u || u.key !== key) { if (u && u.timer) clearTimeout(u.timer); u = U.sus = { key, shown:0, total:SUS_CAT.length, timer:0, open:{}, greenOpen:false, sig:'', res:null }; }
+  if (!u.res || u.sig !== sig) { u.res = evaluateSuspects(c, t); u.sig = sig; u.total = u.res.length; }
+  const step = susStepMs(); if (step <= 0) u.shown = u.total; else if (u.shown < u.total && !u.timer) u.timer = setTimeout(susTick, step);
+  return u;
+}
+const SUS_WORD = { red:'Red', orange:'Orange', green:'Green', grey:'Grey' };
+const SUS_MEAN = { red:'most likely (its tier clearly moved first).', orange:'likely.', green:'ruled out by the data we have.', grey:'not sure. It could not be tested, or does not apply. Grey is never a pass.' };
+const susDot = col => '<span class="dot ' + col + '" aria-hidden="true"></span>';
+function susCard(sp, u, t) {
+  const col = sp.colour, ev = sp.evidence.map(e => '<tr><td>' + esc(e.signal) + '</td><td>' + (e.role === 'must' ? 'Must' : 'Expect') + '</td><td><b>' + ({ yes:'Yes', no:'No', unknown:'Unknown' }[e.value]) + '</b></td><td class="dim">' + esc(e.why) + '</td></tr>').join('');
+  const slot = sp.onsetAt != null && t._axis ? t._axis.slots.find(s => !s.empty && s.s <= sp.onsetAt && sp.onsetAt < s.e) : null;
+  return '<article class="susc ' + col + '" data-sus="' + sp.id + '" data-colour="' + col + '"><header class="row">' + susDot(col) + '<span class="sid">' + sp.id + '</span><b class="sttl">' + esc(sp.title) + '</b></header>' +
+    '<p class="sm"><b>' + SUS_WORD[col] + ' · ' + (sp.notRanked ? 'Not ranked' : sp.result) + '.</b> ' + esc(sp.why) + '</p>' + (col === 'grey' && sp.needs ? '<p class="sm susneeds"><b>Needs:</b> ' + esc(sp.needs) + '</p>' : '') +
+    (sp.onsetAt != null ? '<p class="sm dim">Its tier (' + esc(SUS_TIER[sp.tier] || sp.tier) + ') first moved at ' + esc(fmtDT(sp.onsetAt)) + '.' + (slot ? '' : ' That time is outside the chart.') + '</p>' : '') +
+    '<details data-susd="' + sp.id + '"' + (u.open[sp.id] ? ' open' : '') + '><summary class="sm">Evidence and checks</summary><div class="tscroll"><table class="sm susev"><tr><th>Signal</th><th>Role</th><th>Reading</th><th>Why</th></tr>' + ev + '</table></div><p class="sm"><b>Cheapest check:</b> ' + esc(sp.check) + '</p><p class="sm"><b>What would overturn it:</b> ' + esc(sp.overturn) + '</p>' + '</details>' +
+    (slot ? '<div class="row">' + B('secondary-button sm', 'Show on chart', 'susShow', { id:sp.id }, 'aria-label="Show ' + sp.id + ' on the chart"') + '</div>' : '') + '</article>';
+}
+function suspectsRail(c, t) {                                          // the right-rail panel; loads by itself when the timeline result appears
+  if (!c || !t || !t.lanes || t.status !== 200 || t.disabled) return '';
+  const u = susState(c, t), done = u.shown >= u.total, head = '<h3>Suspects</h3><p class="note"><b>Suspects, not causes.</b> Nothing here says why it happened.</p>' + (u.res.some(x => x.notRanked) ? '<p class="note">No meaningful slowdown was found in this window, so no suspect is ranked.</p>' : '') +
+    '<ul class="susleg" aria-label="What the colours mean">' + ['red', 'orange', 'green', 'grey'].map(k => '<li>' + susDot(k) + '<b>' + SUS_WORD[k] + ':</b> ' + esc(SUS_MEAN[k]) + '</li>').join('') + '</ul>';
+  if (!done) { const shown = u.res.slice(0, u.shown);
+    return '<aside class="sus" id="sus-rail" aria-label="Suspects" data-state="loading">' + head + '<div class="susprog" aria-live="off"><span>Checking ' + u.total + ' suspects… ' + u.shown + ' of ' + u.total + '</span><span class="susbar"><i style="width:' + Math.round(100 * u.shown / u.total) + '%"></i></span></div>' +
+      '<ul class="suschk">' + shown.map(sp => '<li>' + susDot(sp.colour || 'grey') + '<span class="sid">' + sp.id + '</span> ' + esc(sp.title) + '</li>').join('') + '</ul></aside>'; }
+  const { cards, green } = susSorted(u.res), n = k => u.res.filter(s => s.colour === k).length;
+  return '<aside class="sus" id="sus-rail" aria-label="Suspects" data-state="done">' + head + '<p class="sm" role="status">Checked ' + u.total + ' suspects: ' + n('red') + ' red, ' + n('orange') + ' orange, ' + n('grey') + ' grey, ' + n('green') + ' ruled out (green).</p>' +
+    cards.map(sp => susCard(sp, u, t)).join('') + (green.length ? '<details class="susgreen" data-susd="green"' + (u.greenOpen ? ' open' : '') + '><summary><b>Ruled out by the data (' + green.length + ')</b></summary>' + green.map(sp => susCard(sp, u, t)).join('') + '</details>' : '') + '</aside>';
+}
+ACT.susShow = d => act('Show the suspect on the chart', () => { const u = U.sus, t = U.tr.result, sp = u && u.res && u.res.find(s => s.id === d.id), slot = sp && sp.onsetAt != null && t && t._axis ? t._axis.slots.find(s => !s.empty && s.s <= sp.onsetAt && sp.onsetAt < s.e) : null; if (!slot) return { summary:'no chart moment for ' + d.id }; RT.selBucket = slot.k; RT.focusOv = true; setTimeout(() => { const el = document.getElementById('tc'); if (el) el.scrollIntoView({ block:'center' }); }, 30); return { summary:'selected bucket ' + slot.k + ' for ' + d.id }; });
+document.addEventListener('toggle', e => { const el = e.target, u = U.sus; if (!u || !el.dataset || !el.dataset.susd) return; if (el.dataset.susd === 'green') u.greenOpen = el.open; else u.open[el.dataset.susd] = el.open; }, true);
 const pctChg = d => (d.ratio >= 2 ? '<b style="color:var(--bad)">×' + r1(d.ratio) + '</b>' : '×' + r1(d.ratio));
 const SRC_EVENTS = 'stored SQL events (same figures as the SQL lane)', SRC_QS = 'Query Store history, synthetic';
 const dbSource = d => (d.from === 'events' ? 'from ' + SRC_EVENTS : d.from === 'qs' ? 'from ' + SRC_QS : d.from === 'qs-mixed' ? 'incident from ' + SRC_EVENTS + '; comparison and change from ' + SRC_QS : d.lane ? 'incident from ' + SRC_EVENTS + '; ' + d.laneWhy + ' and no Query Store history, so cannot compare' : 'no history kept');
@@ -1586,10 +1768,10 @@ const SC = {
     { id:'a-env', group:'Investigation Timeline · where does the evidence point', label:'One environment (Production slow, Staging flat)', what:'The orders database slowed about 27 times; PayrollApp did not; disk and CPU are normal. Query Store is on for both.', try:'Read the verdict, then switch between This environment, All databases on this server and Server only. In All databases, press Show their names.', setup() { jump('tracing', ID.orders); setQ(D1 + '09:00:00Z', D1 + '11:30:00Z', D1 + '06:30:00Z', D1 + '09:00:00Z'); RT.attrScen = 'env'; U.attr = null; U.tr.chosen = null; U.tr.result = doTrace(findCase(ID.orders)); } },
     { id:'a-server', group:'Investigation Timeline · where does the evidence point', label:'The whole server (every database slowed, disk saturated)', what:'Both picked databases slowed and disk latency is far over the bottleneck line. Server counters cannot say which database started it.', try:'Read the verdict, then switch between This environment, All databases on this server and Server only. In All databases, press Show their names.', setup() { jump('tracing', ID.orders); setQ(D1 + '09:00:00Z', D1 + '11:30:00Z', D1 + '06:30:00Z', D1 + '09:00:00Z'); RT.attrScen = 'server'; U.attr = null; U.tr.chosen = null; U.tr.result = doTrace(findCase(ID.orders)); } },
     { id:'a-noisy', group:'Investigation Timeline · where does the evidence point', label:'A noisy neighbour (databases you did not pick take 70% of file I/O)', what:'Your databases slowed because other databases on the same server took most of the disk. They are shown unnamed unless you ask.', try:'Read the verdict, then switch between This environment, All databases on this server and Server only. In All databases, press Show their names.', setup() { jump('tracing', ID.orders); setQ(D1 + '09:00:00Z', D1 + '11:30:00Z', D1 + '06:30:00Z', D1 + '09:00:00Z'); RT.attrScen = 'noisy'; U.attr = null; U.tr.chosen = null; U.tr.result = doTrace(findCase(ID.orders)); } },
-    { id:'a-blind', group:'Investigation Timeline · where does the evidence point', label:'Nothing kept (Query Store off, no samples)', what:'No history exists for the window, so the conclusion is Not enough evidence, and the card lists what you can still do, what would give stronger evidence and what to switch on for the next incident.', try:'Read the verdict, then switch between This environment, All databases on this server and Server only. In All databases, press Show their names.', setup() { jump('tracing', ID.orders); setQ(D1 + '09:00:00Z', D1 + '11:30:00Z', D1 + '06:30:00Z', D1 + '09:00:00Z'); RT.attrScen = 'blind'; U.attr = null; U.tr.chosen = null; U.tr.result = doTrace(findCase(ID.orders)); } },
+    { id:'a-blind', group:'Investigation Timeline · where does the evidence point', label:'Nothing kept (Query Store off, no samples)', what:'No history exists for the window (the comparison period is before the SQL and IIS files start, 04:00–06:30), so the conclusion is Not enough evidence, and the card lists what you can still do, what would give stronger evidence and what to switch on for the next incident.', try:'Read the verdict, then switch between This environment, All databases on this server and Server only. In All databases, press Show their names.', setup() { jump('tracing', ID.orders); setQ(D1 + '09:00:00Z', D1 + '11:30:00Z', D1 + '04:00:00Z', D1 + '06:30:00Z'); RT.attrScen = 'blind'; U.attr = null; U.tr.chosen = null; U.tr.result = doTrace(findCase(ID.orders)); } },
     { id:'a-quiet', group:'Investigation Timeline · where does the evidence point', label:'A quiet window (06:30–07:30)', what:'Outside the slowdown: nothing stands out.', try:'Read the verdict, then switch between This environment, All databases on this server and Server only. In All databases, press Show their names.', setup() { jump('tracing', ID.orders); setQ(D1 + '06:30:00Z', D1 + '07:30:00Z', D1 + '05:30:00Z', D1 + '06:30:00Z'); RT.attrScen = 'env'; U.attr = null; U.tr.chosen = null; U.tr.result = doTrace(findCase(ID.orders)); } },
     { id:'t-all', group:'Investigation Timeline · lanes', label:'All three lanes (live audit + stored SQL and IIS)', what:'The common case. Audit is a live read; SQL and IIS come from the files in the case. The slowdown at 09:14 shows in all three.', try:'Set the incident to "The slowdown in the demo data" in the picker, Show timeline, hover, click a bucket, open Run analysis, then come back.', setup() { jump('tracing', ID.orders); } },
-    { id:'t-slow', group:'Investigation Timeline · lanes', label:'The slowdown, with a real comparison', what:'Incident 09:00–11:30 against the 2.5 hours before. Rates show real differences per lane; the SQL and IIS files only start at 08:00, so their comparison period is only partly covered.', try:'Show timeline and read the lane labels.', setup() { jump('tracing', ID.orders); setQ(D1 + '09:00:00Z', D1 + '11:30:00Z', D1 + '06:30:00Z', D1 + '09:00:00Z'); } },
+    { id:'t-slow', group:'Investigation Timeline · lanes', label:'The slowdown, with a real comparison', what:'Incident 09:00–11:30 against the 2.5 hours before. Rates show real differences per lane; the SQL and IIS files start at 06:00, so their comparison period is fully covered.', try:'Show timeline and read the lane labels.', setup() { jump('tracing', ID.orders); setQ(D1 + '09:00:00Z', D1 + '11:30:00Z', D1 + '06:30:00Z', D1 + '09:00:00Z'); } },
     { id:'t-saved', group:'Investigation Timeline · lanes', label:'Saved lanes only (audit removed)', what:'Only SQL and IIS are chosen, so nothing is a live read and there is no mixed-time note.', try:'Show timeline.', setup() { jump('tracing', ID.orders); const c = findCase(ID.orders); U.tr.chosen = c.sources.filter(s => s.lane !== 'audit').map(s => s.id); } },
     { id:'t-empty', group:'Investigation Timeline · lanes', label:'A case with nothing stored', what:'The case has an audit source and SQL and IIS sources but no files. SQL and IIS say "no file", never a zero line.', try:'Show timeline; open Timeline details.', setup() { const c = findCase(ID.orders); c.imports = []; saveDB(); jump('tracing', ID.orders); } },
     { id:'t-partial', group:'Investigation Timeline · lanes', label:'Only half the window is stored', what:'SQL covers 08:00–10:00 only; the incident is 09:00–11:00. The SQL lane shows a gap.', try:'Show timeline.', setup() { const c = findCase(ID.orders); c.imports[1] = mkImport(2, 's_sql', 'sql-xe', 'orders_xe_part.xel.csv', 5000, 'validated', { from:Z(D1 + '08:00:00Z'), to:Z(D1 + '10:00:00Z') }); saveDB(); jump('tracing', ID.orders); setQ(D1 + '09:00:00Z', D1 + '11:00:00Z', D1 + '07:00:00Z', D1 + '09:00:00Z'); } },
@@ -1649,7 +1831,7 @@ function stateDrawer() { const v = view(), j = o => esc(JSON.stringify(o, null, 
 const ASSUMPTIONS = [
   'The real app could be run here only in demo mode (its case store needs Windows data protection). Start screen, create guide, case home and their sub-screens are reproduced from the Svelte sources and copy files, not from a live walk. Fidelity per row is in FLOW-COVERAGE.md.',
   'Cases persist in this browser (localStorage) so a reload behaves like cases kept on disk; the unlocked state, current screen and windows survive a reload through sessionStorage, like the real tab-resume exception. "Reset prototype data" wipes both. Real encryption, files and servers are not touched.',
-  'The prototype clock stands still at 2026-10-20 12:00 UTC. The audit source keeps data from 13 Oct, was not recording 19 Oct 02:00–04:00, and shows a slowdown on Payroll.Run from 09:14 to 11:30. SQL and IIS files in the seed case cover 08:00–12:00. Everything else derives from these, so analysis and the timeline agree.',
+  'The prototype clock stands still at 2026-10-20 12:00 UTC. The audit source keeps data from 13 Oct, was not recording 19 Oct 02:00–04:00, and shows a slowdown on Payroll.Run from 09:14 to 11:30. SQL and IIS files in the seed case cover 06:00–12:00. Everything else derives from these, so analysis and the timeline agree.',
   'The app starts with the PC key already unlocked. Use the prototype panel to launch with the key locked, damaged or never set. The unlock, throttle (3 wrong tries) and set-up screens use the real wording where the copy files give it.',
   'A case code locates a case and a case key unlocks it. The real app shows only an 8-character code in lists but asks for 26 characters in the Enter card. That is preserved; a test-aid button in the prototype panel reveals the full code.',
   'Reference window: the existing analysis requires it to end at or before the investigated period starts and limits each window to 7 days. The tracing specs only warn on overlap and allow 30 days. Both rules are kept, each on its own surface, and the hand-off from the timeline to analysis shows the difference.',
