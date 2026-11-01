@@ -33,7 +33,7 @@ It replaces the "Guided" block on the case home. [Spec D-2 = A] The specs call i
 | Audit source keeps data from | 13 Oct 2026, 00:00 UTC |
 | Audit source was **not recording** | 19 Oct 02:00–04:00 UTC (a 2-hour outage) |
 | The slowdown (Payroll.Run) | 20 Oct 09:14–11:30 UTC |
-| SQL and IIS files in the case cover | 20 Oct 08:00–12:00 UTC only |
+| SQL and IIS files in the case cover | 20 Oct 06:00–12:00 UTC only. Per-lane onset of the slowdown: SQL 09:11, API audit 09:14, IIS 09:15 (so the suspects engine can find a lane that moved first) |
 | SQL source | PROD-SQL-01, databases `orders` (Production) and `PayrollApp` (Staging), both with Query Store on |
 | Mongo source | `audit-mongo:27017`, database `PayrollAudit` (Production), profiler off |
 
@@ -68,7 +68,8 @@ Everything on the screen is a function of these facts, so the lanes agree with e
 ├ ⑦ Overall figures (7 cards)
 ├ ⑧ Trace board (three lanes, shared time axis)
 ├ ⑨ Bucket panel (hover/select a bucket, open Run analysis)
-├ ⑩ "Where does the evidence point?" card
+├ ⑩ "Where does the evidence point?" card (folded; closed by default)
+├ Right rail: Suspects (new, sticky, loads by itself)
 ├ ⑪ Three collapsed detail sections
 └ ⑫ Open the analysis · Export
 ```
@@ -115,6 +116,18 @@ A card above the figures that reads the same data in plain words (observation, m
 - **Three layer tiles** (Application, Web server, Database), each with a status and one detail line. Rules (prototype defaults [Inference]): Application "Slower than usual" when P95 is at least 1.5 times the comparison period, "Returning errors" at 2% or more 5xx; Web server "Returning errors" at 2% or more 5xx and/or "slower responses" at 1.5 times; Database "Many slow calls" at 25% or more calls over 1 s and/or "blocking" when any blocked-process or deadlock report exists. Where the comparison period is not covered the tile says "Cannot compare with the earlier period" instead of judging.
 - **Where the evidence points:** the same conclusion as card ⑩ (database and environment named) with a strength chip: Strong evidence / Some evidence / Not enough evidence.
 - **Next step:** one sentence from the same model, plus a button **Look at <time> →** that selects the busiest moment (most slow database calls, or the highest API P95 if there is no SQL lane) in the chart.
+
+### 3c. Suspects rail (right side, new)
+A slim sticky rail (about 380 px) beside the charts. **It is the existing guided-analysis suspect engine's idea**: `internal/investigate` (catalog, signals, colours). The prototype re-implements 16 of its suspects deterministically over the demo data; there is no AI anywhere. [Spec: guided-analysis, `catalog.go`, `evaluate.go`]
+- **Colours (the app's own words):** Red = most likely (its tier moved first, clearly: more than 61 seconds before any other tier); Orange = likely; Green = ruled out by the data we have; Grey = not sure (could not be tested, or does not apply; grey is never a pass).
+- **Loads by itself** when the timeline appears: "Checking 16 suspects… 6 of 16", one suspect revealed about every 140 ms, then a summary ("Checked 16 suspects: 1 red, 4 orange, 2 grey, 9 ruled out"). Re-rendering never restarts it.
+- **List order:** red, orange, grey; green suspects are folded under "Ruled out by the data".
+- **Each card:** colour dot with the colour word, id badge (for example D1), title, one-sentence reading, expandable evidence rows (signal, Must/Expect, yes/no/unknown, why), cheapest check, what would overturn it, and for grey a "Needs" line. **Show on chart** selects the bucket where that suspect's tier first moved.
+- **Suspects, not causes.** The header says so; nothing in the rail states why anything happened.
+- **Suspects in the prototype (16 of the catalog's 54):** Q2 audit coverage, L1 traffic surge, L2 mix shift, S1 HTTP.sys/IIS queue backup, S2 thread-pool starvation, S5 audit-write coupling, D1 blocking chain, D2 deadlock storm, D6 memory pressure, D9 disk latency, D10 CPU saturation, M5 Mongo ticket/lock queue, M10 shared mongod, H1 host CPU, H6 shared effect across tiers, C1 change (grey until a change list is typed in).
+- **Rules:** a signal is yes, no or unknown. Unknown is never a pass: no data, a withheld comparison, no sampler or Mongo profiler off makes the signal unknown and the suspect grey with its Needs line. Thresholds are the engine's: a change counts at 30% and 100 ms or more; onset = P95 above 2 times the comparison for 5 minutes in a row.
+- **Demo outcomes by prepared situation:** one environment: D1 blocking chain is red; whole server: D6, D9 and D10 are red; noisy neighbour: D9 red, M10 orange; no history: nothing is red, mostly grey.
+- **Layout:** the rail appears only after the timeline has been shown. Under 1180 px it moves below the chart.
 
 ## 4. The seven overall figure cards (⑦)
 
@@ -198,11 +211,11 @@ Use prototype panel → **"The slowdown, with a real comparison"**, then Show ti
 | API requests | 2,464 (1.0x the comparison rate) |
 | API P95 | 505 ms, **2.2x** the comparison period's 228 ms (shown red) |
 | API 5xx | 108 = 4.4% of requests (the earlier period had none, so no comparison) |
-| IIS 5xx | 132 = 4.7% of 2,809 requests; no comparison |
-| IIS P95 time taken | 1,050 ms; no comparison |
-| SQL slow calls | 605 = 39% of 1,552 calls over 1 s; no comparison |
+| IIS 5xx | 131 = 4.7% of 2,811 requests; "Cannot compare" (the earlier period had none) |
+| IIS P95 time taken | 1,044 ms, 4.0 times the comparison period |
+| SQL slow calls | 620 = 40% of 1,559 calls over 1 s; "Cannot compare" (none in the earlier period) |
 | SQL errors · blocking | 0 · 15 |
-| Why "no comparison" for SQL and IIS | the files start at 08:00, so the 06:30–09:00 comparison period is only 40% covered |
+| Why some cards say "Cannot compare" | a count that was zero in the earlier period has no ratio; the SQL and IIS files now start at 06:00, so the whole comparison period is covered |
 
 **How to read it:** the API doubled its P95 while request volume stayed the same; the web server returned more 5xx and slower responses; SQL shows a large share of slow calls and 15 blocking/deadlock reports. All three lanes bend at **09:14**. The only lane with a usable comparison is API audit, because it keeps data from 13 Oct.
 
@@ -212,7 +225,7 @@ Use prototype panel → **"The slowdown, with a real comparison"**, then Show ti
 Last hour (11:00–12:00) vs 10:00–11:00. 60 one-minute bars. API 1,042 requests, P95 367 ms (0.7x). IIS 5xx 28 (0.5x). SQL slow calls 140 (0.5x). Ratios are **below 1** because the comparison hour was itself inside the slowdown (it ended 11:30). This is a good teaching moment: **the comparison period is only a comparison, not a baseline**.
 
 ### 6.3 Seven days (13 Oct 12:00 → 20 Oct 12:00)
-Bars are 2 hours, 84 on the axis. API audit shows the daily rhythm and a hatched sliver for the 19 Oct outage. SQL and IIS show **"No logs for this time, 13 Oct 12:00 → 20 Oct 08:00, 6 d 20 h"** and only the last four hours drawn. 98% of those lanes' window is a gap, stated in each lane label.
+Bars are 2 hours, 84 on the axis. API audit shows the daily rhythm and a hatched sliver for the 19 Oct outage. SQL and IIS show **"No logs for this time, 13 Oct 12:00 → 20 Oct 06:00, 6 d 18 h"** and only the last six hours drawn. Most of those lanes' window is a gap, stated in each lane label.
 
 ## 7. Lane states (the sticker under the lane name)
 
@@ -290,6 +303,9 @@ Saturated means **disk latency ≥ 15 ms** (Microsoft: sustained 10–15 ms is a
 Fixed since the first version of this document: API 5xx shown as 0 (the demo now shows 108 5xx against IIS's 132); P95 presented as exact (now "estimated"); attribution numbers disagreeing with the lane figures (one evidence model for the SQL database with stored events); server counters without a source; "Provable" wording; the misleading "Scope" label; zero events drawn like missing data; large hatched areas on long windows; hand-off landing on a refusal.
 
 Still open, please test:
+0. **The suspects are a subset.** 16 of the app's 54 catalog entries; IIS-only and cross-source rules are thin (see the research prompt for deterministic rules). [Owner]
+0b. **The timeline is shown only after pressing Show timeline**, so the rail also waits for that press. Open question: run it automatically when the screen opens. [Owner]
+0c. **The demo world was changed so a lane can move first** (SQL 3 minutes before the audit). That is a demo choice, not a finding. [Code]
 1. **Estimated P95** is still a call-weighted mean of per-minute P95s in the prototype; only the label changed. [Code]
 2. **The comparison period is not a baseline.** In the default window both periods overlap the slowdown, so ratios below 1 read as "improvement". [Code]
 3. **API 5xx comparison says "Cannot compare" when the earlier period had none.** "None in the earlier period" would be more accurate. [Code]
@@ -330,7 +346,7 @@ Recording notes: use a 1440x900 window; hide the bottom dock ("Hide"); load situ
 | 8 | Where does the evidence point? (1:00) | Load each situation: One environment → Whole server → Noisy neighbour → Nothing kept | "One server can host several environments. This card says where the evidence points: one environment, the whole server, or a neighbouring database, how strong that evidence is, and when there isn't enough, what to switch on." Show the **Other databases** row staying unnamed until you ask. |
 | 9 | Close (0:20) | Open the collapsed details; show **Export** | "Everything here is prototype data. Open the details to see how the axis was worked out and what each lane read." |
 
-**Fact sheet for narration (verified in the prototype):** 2,464 API requests; API P95 (estimated) 505 ms vs 228 ms (2.2 times); API 5xx 108 (4.4%); IIS 5xx 132 (4.7% of 2,809); SQL slow calls 605 (39% of 1,552); blocking/deadlock reports 15; slowdown 09:14–11:30; reading aid: Application slower than usual, Web server returning errors, Database many slow calls and blocking; evidence points to "The problem appears isolated to Production" (`orders` ×25.1), Strong evidence.
+**Fact sheet for narration (verified in the prototype):** 2,464 API requests; API P95 (estimated) 505 ms vs 228 ms (2.2 times); API 5xx 108 (4.4%); IIS 5xx 131 (4.7% of 2,811); IIS P95 1,044 ms (4.0 times); SQL slow calls 620 (40% of 1,559); suspects rail: D1 blocking chain red; blocking/deadlock reports 15; slowdown 09:14–11:30; reading aid: Application slower than usual, Web server returning errors, Database many slow calls and blocking; evidence points to "The problem appears isolated to Production" (`orders` ×25.1), Strong evidence.
 
 ## 14. Reproduce the screens
 
