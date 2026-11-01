@@ -1,6 +1,6 @@
-# Tracing screen: explainer
+# Investigation Timeline screen: explainer
 
-**Screen:** `tracing-paper-PROTOTYPE.html#/tracing/<case code>` (the Payroll.Run slowdown demo case)
+**Screen:** `tracing-paper-PROTOTYPE.html#/tracing/<case code>` (the Payroll.Run slowdown demo case). The route and file names keep the old working name "tracing"; the screen is now called the **Investigation Timeline** (see `NAMING-DECISION.md`).
 **Branch:** `prototype/tracing-paper-e2e`
 **Status of everything described here:** a throwaway prototype. All data is synthetic. Nothing here proves that the real software works.
 **Revision:** after the design review (`unravis-tracing-wireframe-review.md`): plain-English labels, a "What Unravis sees" reading aid, evidence-strength wording, one evidence model, and honest empty states.
@@ -16,14 +16,14 @@ Evidence tags used below: **[Code]** read from the prototype source, **[Spec]** 
 
 ## 1. What the screen is for
 
-Tracing answers one question during an incident: **"What did my API, my web server and my database do, side by side, over the period I care about, and how does that compare with an earlier period?"**
+The Investigation Timeline answers one question during an incident: **"What did my API, my web server and my database do, side by side, over the period I care about, and how does that compare with an earlier period?"**
 
 - It draws three **lanes** on one shared time axis: **API audit** (live read of the audit database), **SQL** (SQL Server events from files stored in the case) and **IIS** (web-server logs from files stored in the case). [Spec TR-01, D-3, D-5]
 - It compares an **incident window** (the period you inspect) with a **reference window**, always called the **comparison period** in the interface. [Spec TR-08; Owner]
 - It adds one card that tries to say **where** a slowdown comes from: one environment, the whole server, or a neighbouring database. [Owner; not in any spec]
 - A click on a bar opens the existing Run analysis for that bucket. [Spec TR-09, WP-61]
 
-It replaces the "Guided" block on the case home. [Spec D-2 = A]
+It replaces the "Guided" block on the case home. [Spec D-2 = A] The specs call it "tracing" (ids TR-xx, WP-xx); that is only the old working name.
 
 ### The demo world (all synthetic) [Code]
 
@@ -62,7 +62,7 @@ Everything on the screen is a function of these facts, so the lanes agree with e
 ├ ② Range chips
 ├ ③ Incident window card | Reference window card
 ├ ④ Time-zone note, overlap/blocking notices
-├ ⑤ Sources chips + Start tracing / Trace again + Add evidence
+├ ⑤ Sources chips + Show timeline / Refresh timeline + Add evidence
 ├ ⑥ Summary line + banners
 ├ ⑥b "What Unravis sees" reading aid (new)
 ├ ⑦ Overall figures (7 cards)
@@ -73,10 +73,10 @@ Everything on the screen is a function of these facts, so the lanes agree with e
 └ ⑫ Open the analysis · Export
 ```
 
-Items ⑥–⑩ appear only **after** Start tracing has run. Section 3b below describes ⑥b.
+Items ⑥–⑩ appear only **after** Show timeline has run. Section 3b below describes ⑥b.
 
 ### ① Title and back link
-Shows "Tracing", the case title, the layout name, and **← Case home**. [Code]
+Shows "Investigation Timeline", the case title, the layout name, and **← Case home**. [Code]
 
 ### ② Range chips
 **Last 15 min · Last hour (default) · Last 4 hours · Last 24 hours · Last 7 days · Last 30 days.** A chip sets the incident window to that period ending "now" and the comparison period to **the equal-length period right before it**. The chip that matches the current windows is highlighted. [Code; Owner asked for the same chips as the analysis, plus 30 days]
@@ -91,18 +91,18 @@ Pressing a button opens a **date-time range picker** with three parts: quick ran
 ### ④ Rules shown as notices
 | Condition | What the screen does | Source |
 |---|---|---|
-| A window is missing its start or end | Blocking notice; Start tracing is switched off | [Code] |
+| A window is missing its start or end | Blocking notice; Show timeline is switched off | [Code] |
 | A window ends before it starts | Blocking notice | [Code] |
 | A window is longer than 30 days | Blocking notice: "The longest window is 30 days" | [Spec D-4] |
-| The two windows **overlap** | **Non-blocking** notice, with a button "Move it to just before the incident". Tracing still runs. | [Spec TR-08, WP-22] |
-| Case is closed | Start tracing is off with the reason | [Code] |
+| The two windows **overlap** | **Non-blocking** notice, with a button "Move it to just before the incident". The timeline still runs. | [Spec TR-08, WP-22] |
+| Case is closed | Show timeline is off with the reason | [Code] |
 
 Run analysis behaves differently: it **refuses** an overlapping reference and allows at most 7 days. After a bucket hand-off a user can therefore land on a refusal. This mismatch is open question 3 in `FLOW-COVERAGE.md`.
 
-A note states that times are shown in the zone chosen by the **UTC / Local** switch while tracing always reads and stores UTC.
+A note states that times are shown in the zone chosen by the **UTC / Local** switch while the timeline always reads and stores UTC.
 
 ### ⑤ Sources and the Start button
-Chips toggle which sources are traced (API audit, IIS, SQL). Database connections added in the wizard (SQL `orders`, `PayrollApp`, Mongo `PayrollAudit`) are **not** chips: they feed card ⑩, not a lane. **Start tracing** becomes **Trace again** once a trace exists. **Add evidence** opens the import drawer.
+Chips toggle which sources are traced (API audit, IIS, SQL). Database connections added in the wizard (SQL `orders`, `PayrollApp`, Mongo `PayrollAudit`) are **not** chips: they feed card ⑩, not a lane. **Show timeline** becomes **Refresh timeline** once a trace exists. **Add evidence** opens the import drawer.
 
 ### ⑥ Summary line and banners
 - **"Each bar = 5 minutes · 36 bars on the axis · window 2 h 30 min · 6 end slots outside the window"** (longer windows add "longer windows use coarser buckets"). Slots outside the window exist because the axis is rounded out to whole UTC hours. [Code, Spec §4.5]
@@ -189,7 +189,7 @@ Every lane is plotted across the **whole** window. Time with no log data is a **
 ## 6. Worked example with real numbers
 
 ### 6.1 The slowdown, incident 09:00–11:30 vs comparison 06:30–09:00 (20 Oct)
-Use prototype panel → **"The slowdown, with a real comparison"**, then Start tracing. [Code]
+Use prototype panel → **"The slowdown, with a real comparison"**, then Show timeline. [Code]
 
 | Item | Value |
 |---|---|
@@ -261,7 +261,7 @@ Saturated means **disk latency ≥ 15 ms** (Microsoft: sustained 10–15 ms is a
 |---|---|
 | **What each lane shows** | Per lane: which files were read and what the importer takes from them; how the lane is drawn |
 | **How this axis was worked out** | The start/end you chose; axis start/end (whole UTC hours); the bucket size the window asks for; the smallest size that keeps the axis at ≤ 120 bars; the larger of the two (the one shown); the **boundary raw scans** (0, 1 or 2) and why |
-| **Trace details** | Flags: `allLanesStored`, `mixedConsistency`, `requestSeq`; per lane: origin (live/case), consistency, complete, as-of time, sources. A warning when `allLanesStored` is vacuously true with nothing stored |
+| **Timeline details** | Flags: `allLanesStored`, `mixedConsistency`, `requestSeq`; per lane: origin (live/case), consistency, complete, as-of time, sources. A warning when `allLanesStored` is vacuously true with nothing stored |
 | **Open the analysis** | Opens Run analysis with the current windows |
 | **Export** | Opens the Export drawer (preview and confirm stamped with the case revision) |
 
@@ -297,10 +297,10 @@ Still open, please test:
 5. **Server-wide signals in MVP-1** still need a live read (MVP-2) or a sampler (Blackbox); the demo assumes a sampler. [Owner question]
 6. **The 80% CPU rule** is documented for Managed Instance and applied to every SQL Server edition by inference. [Inference]
 7. **Hiding other databases' names is display-only.** [Research]
-8. **Provenance lines (live/stored, as-of time)** are in the collapsed Trace details. [Code]
+8. **Provenance lines (live/stored, as-of time)** are in the collapsed Timeline details. [Code]
 9. **Colour is the only carrier** of the 2xx/4xx/5xx split in the IIS bars (the legend names them). Accessibility not audited. [Code]
 10. **Layout:** Report (A) is still the default; Workbench (B) was recommended by the review but not validated with users, so the default was not changed. [Owner decision]
-11. **Terminology compromises:** "Problem period (incident window)" and "API requests (audit log)" keep the spec/source terms in brackets; renaming them outright would split the vocabulary between Tracing and Run analysis. [Owner decision]
+11. **Terminology compromises:** "Problem period (incident window)" and "API requests (audit log)" keep the spec/source terms in brackets; renaming them outright would split the vocabulary between the Investigation Timeline and Run analysis. [Owner decision]
 12. **The reading aid's layer thresholds** (1.5 times, 2%, 25%) are prototype defaults. [Inference]
 
 ## 12. Review checklist (for the other agent)
@@ -320,9 +320,9 @@ Recording notes: use a 1440x900 window; hide the bottom dock ("Hide"); load situ
 
 | # | Scene (≈ time) | On screen | Narration (draft) |
 |---|---|---|---|
-| 1 | The problem (0:30) | Case home → Tracing block, press **Start tracing** | "When production slows down you have three places to look: the API audit log, the web server and the database. Tracing puts them on one timeline." |
+| 1 | The problem (0:30) | Case home → Investigation Timeline block, press **Open the Investigation Timeline**, then **Show timeline** | "When production slows down you have three places to look: the API audit log, the web server and the database. The Investigation Timeline puts them on one time axis." |
 | 2 | Choose the period (0:45) | Range chips; open the incident picker; show the reference card | "Pick the period you care about. Unravis also picks a comparison period: by default the equal period just before. It is only a comparison, not a promise that it was healthy." Show overlap notice and the 30-day limit. |
-| 3 | Start tracing (0:30) | Press **Start tracing**; summary line | "Each bar is one bucket. Here each bar is five minutes. Longer windows use bigger bars so the chart stays readable." |
+| 3 | Show timeline (0:30) | Press **Show timeline**; summary line | "Each bar is one bucket. Here each bar is five minutes. Longer windows use bigger bars so the chart stays readable." |
 | 4 | What Unravis sees, then the figures (1:00) | Scenario "The slowdown, with a real comparison"; start with the reading aid, then pan across the 7 cards | Use the §6.1 numbers: "The reading aid says the application is slower, the web server is returning errors and the database has many slow calls. The slow-request time roughly doubled: about 505 milliseconds against 228. IIS returned 132 server errors. SQL shows 605 calls over one second and 15 blocking reports. Where the comparison period isn't covered, the card says 'no comparison' instead of guessing." |
 | 5 | Read the chart (1:15) | Scroll the board; point at axes, legend, panel titles | "Every panel says what it plots. The API chart is the one you know from the analysis: bars are requests, the line is P95, the dashed line is the comparison period. SQL shows slow calls and errors, call duration and blocking. IIS shows status codes, time taken and HTTP.sys errors. All panels share one time axis." |
 | 6 | Hover and drill (0:30) | Hover, click a bar, press **Open Run analysis for this bucket** | "Hover to read one moment across all three sources. Click a bar to open the analysis for exactly that bucket." |
@@ -336,10 +336,10 @@ Recording notes: use a 1440x900 window; hide the bottom dock ("Hide"); load situ
 
 | Screen | How |
 |---|---|
-| Default tracing | Open the HTML, open the case "Payroll.Run slowdown, 20 Oct", press **Start tracing** |
-| Slowdown with comparison | Prototype panel → Tracing · lanes → "The slowdown, with a real comparison" |
-| Attribution scenarios | Prototype panel → Tracing · where is it coming from |
-| Seven days | Range chip **Last 7 days**, **Start tracing** |
+| Default timeline | Open the HTML, open the case "Payroll.Run slowdown, 20 Oct", press **Show timeline** |
+| Slowdown with comparison | Prototype panel → Investigation Timeline · lanes → "The slowdown, with a real comparison" |
+| Attribution scenarios | Prototype panel → Investigation Timeline · where does the evidence point |
+| Seven days | Range chip **Last 7 days**, **Show timeline** |
 | Screenshots in `prototype/screenshots/` | `08b` trace board (2.5 h), `08c` seven days with gaps, `13` narrow, `14a`–`14f` attribution and case-home databases |
 | Automated checks | `NODE_PATH=/opt/node22/lib/node_modules node prototype/flow-check.cjs` (150 checks; they test the prototype, not the product) |
 
