@@ -1095,6 +1095,59 @@ func (c *Case) Events(ctx context.Context, q casestore.EventQuery) ([]evidence.E
 const selectEvents = `SELECT evidence_id, source, kind, host, ts_ms, te_ms, duration_ms, value, unit, severity, line, tz_rule,
 	attrs_json FROM events`
 
+// BucketCounts answers q with one GROUP BY over events, independent of the
+// 50 000-row cap of Events (casestore.BucketCounter). The window is q's
+// half-open [From, To): unlike Events, an event at exactly To is not counted.
+func (c *Case) BucketCounts(ctx context.Context, q casestore.BucketQuery) (casestore.BucketResult, error) {
+	if err := q.Check(); err != nil {
+		return casestore.BucketResult{}, fmt.Errorf("%w: bucket query", ErrInvalid)
+	}
+	db, err := c.handle()
+	if err != nil {
+		return casestore.BucketResult{}, err
+	}
+	where := []string{"ts_ms >= ?", "ts_ms < ?"}
+	args := []any{q.AxisStart.UnixMilli(), q.WidthMs, q.From.UnixMilli(), q.To.UnixMilli()}
+	if len(q.Sources) > maxFilter {
+		return casestore.BucketResult{}, fmt.Errorf("%w: too many source filters", ErrInvalid)
+	}
+	where = append(where, "source IN ("+strings.TrimSuffix(strings.Repeat("?,", len(q.Sources)), ",")+")")
+	for _, v := range q.Sources {
+		args = append(args, v)
+	}
+	if len(q.Kinds) > 0 {
+		if len(q.Kinds) > maxFilter {
+			return casestore.BucketResult{}, fmt.Errorf("%w: too many kind filters", ErrInvalid)
+		}
+		where = append(where, "kind IN ("+strings.TrimSuffix(strings.Repeat("?,", len(q.Kinds)), ",")+")")
+		for _, v := range q.Kinds {
+			args = append(args, v)
+		}
+	}
+	// No LIMIT: at most MaxSeriesBuckets cells times the case's number of imports.
+	query := "SELECT (ts_ms - ?) / ? AS b, source, import_id, COUNT(*) FROM events WHERE " +
+		strings.Join(where, " AND ") + " GROUP BY b, source, import_id ORDER BY b, source, import_id"
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return casestore.BucketResult{}, err
+	}
+	defer rows.Close()
+	var res casestore.BucketResult
+	for rows.Next() {
+		var bc casestore.BucketCount
+		if err := rows.Scan(&bc.Index, &bc.Source, &bc.ImportID, &bc.Count); err != nil {
+			return casestore.BucketResult{}, err
+		}
+		res.Counts = append(res.Counts, bc)
+		res.Total += bc.Count
+	}
+	if err := rows.Err(); err != nil {
+		return casestore.BucketResult{}, err
+	}
+	res.Scanned = res.Total
+	return res, nil
+}
+
 // eventFilter builds the WHERE clause (with its leading space, or empty) and the
 // arguments for q's window and Kinds, Sources and Hosts filters.
 func eventFilter(q casestore.EventQuery) (string, []any, error) {

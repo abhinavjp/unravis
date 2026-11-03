@@ -132,12 +132,8 @@ func TestW3CGood(t *testing.T) {
 	if e.DurationMs == nil || *e.DurationMs != 125 {
 		t.Fatalf("duration: %v", e.DurationMs)
 	}
-	if w3cTimeIsEnd {
-		if !e.End.Equal(ts) || !e.Start.Equal(ts.Add(-125*time.Millisecond)) {
-			t.Fatalf("w3cTimeIsEnd: start %v end %v", e.Start, e.End)
-		}
-	} else if !e.Start.Equal(ts) || !e.End.Equal(ts.Add(125*time.Millisecond)) {
-		t.Fatalf("start semantics: start %v end %v", e.Start, e.End)
+	if !e.Start.Equal(ts) || !e.End.Equal(ts) {
+		t.Fatalf("point at the logged time: start %v end %v", e.Start, e.End)
 	}
 	want := map[string]string{"method": "GET", "stem": "/api/v1/orders/{id}", "status": "200", "substatus": "0",
 		"win32": "0", "port": "443", "site": "W3SVC1", "user": "user-0001",
@@ -176,8 +172,9 @@ func TestW3CGood(t *testing.T) {
 	if rep.FieldRules["date+time"] != clock.RuleUTCField {
 		t.Errorf("field rules %v", rep.FieldRules)
 	}
-	// coverage starts at the earliest request start: row 2 ends 04:05:07 after 3000 ms
-	if rep.Quality.CoverageFirst == nil || !rep.First.Equal(time.Date(2001, 2, 3, 4, 5, 4, 0, time.UTC)) || !rep.Last.Equal(time.Date(2001, 2, 3, 4, 6, 1, 0, time.UTC)) {
+	// coverage runs from the earliest to the latest logged timestamp: each
+	// event is a point, so no row's time-taken shifts it outside that range
+	if rep.Quality.CoverageFirst == nil || !rep.First.Equal(time.Date(2001, 2, 3, 4, 5, 6, 0, time.UTC)) || !rep.Last.Equal(time.Date(2001, 2, 3, 4, 6, 1, 0, time.UTC)) {
 		t.Errorf("coverage %v %v", rep.First, rep.Last)
 	}
 	if len(rep.ObservedHosts) != 1 || rep.ObservedHosts[0] != "WEB-A" {
@@ -193,6 +190,44 @@ func TestW3CGood(t *testing.T) {
 	if e.EvidenceID != evidence.EventID(baseOpts().CaseID, "iis-w3c", "nonce-1", 5, 0) {
 		t.Errorf("event id %s", e.EvidenceID)
 	}
+}
+
+func TestW3CRequestIsPointWithDuration(t *testing.T) {
+	evs, _ := mustParse(t, NewW3C(), fixture(t, "w3c_good.log"), baseOpts())
+	wantDur := map[int]float64{0: 125, 1: 3000, 3: 7, 4: 40, 5: 15}
+	for i, want := range wantDur {
+		e := evs[i]
+		if !e.Start.Equal(e.End) {
+			t.Errorf("event %d: start %v != end %v", i, e.Start, e.End)
+		}
+		if e.DurationMs == nil || *e.DurationMs != want {
+			t.Errorf("event %d duration = %v, want %v", i, e.DurationMs, want)
+		}
+	}
+	// the dash row ("time-taken" is "-") has no duration but is still a point
+	if evs[2].DurationMs != nil || !evs[2].Start.Equal(evs[2].End) {
+		t.Errorf("dash row: %+v", evs[2])
+	}
+}
+
+func TestW3CPointSurvivesLongDuration(t *testing.T) {
+	t.Run("max time-taken", func(t *testing.T) {
+		evs, _ := mustParse(t, NewW3C(), w3cFile(0, "2001-02-03 04:05:06 WEB-A GET /x 200 4294967295"), baseOpts())
+		ts := time.Date(2001, 2, 3, 4, 5, 6, 0, time.UTC)
+		if len(evs) != 1 || !evs[0].Start.Equal(ts) || !evs[0].End.Equal(ts) {
+			t.Fatalf("event: %+v", evs[0])
+		}
+	})
+	t.Run("first of month", func(t *testing.T) {
+		evs, _ := mustParse(t, NewW3C(), w3cFile(0, "2001-03-01 00:00:00 WEB-A GET /x 200 5000"), baseOpts())
+		ts := time.Date(2001, 3, 1, 0, 0, 0, 0, time.UTC)
+		if len(evs) != 1 || !evs[0].Start.Equal(ts) || !evs[0].End.Equal(ts) {
+			t.Fatalf("event: %+v", evs[0])
+		}
+		if evs[0].DurationMs == nil || *evs[0].DurationMs != 5000 {
+			t.Fatalf("duration: %v", evs[0].DurationMs)
+		}
+	})
 }
 
 func TestW3CDropsServerIPUserAgentQueryAndRawCookies(t *testing.T) {

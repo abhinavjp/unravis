@@ -37,6 +37,23 @@ var httperrReasons = func() map[string]string {
 	return m
 }()
 
+// KnownHTTPERRReason reports whether s is a reason this importer itself can
+// produce: one of the canonical values of httperrReasons, compared exactly
+// and case-sensitively, or the literal "other". It exists so a caller outside
+// this package (the tracing server) can show a stored reason only when the
+// importer, not the raw log file, is its source.
+func KnownHTTPERRReason(s string) bool {
+	if s == "other" {
+		return true
+	}
+	for _, canon := range httperrReasons {
+		if s == canon {
+			return true
+		}
+	}
+	return false
+}
+
 // HTTPERR imports HTTP.sys error logs.
 type HTTPERR struct{}
 

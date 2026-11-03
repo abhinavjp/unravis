@@ -71,6 +71,9 @@ var (
 	demoCaseArchivedID = demoCaseID("demoarchived")
 	demoCaseFreedID    = demoCaseID("demofreed")
 	demoCaseMissingID  = demoCaseID("demomissing")
+	// WP-25: a case whose saved data fills the SQL and IIS lanes of the tracing
+	// view (screen phase 04 pairs with the audit lane, WP-17).
+	demoCaseTracingID = demoCaseID("demotracing")
 )
 
 // demoCaseKeyPassphrase is the demo-only passphrase of the keyed demo case. It protects nothing
@@ -84,7 +87,7 @@ const demoCaseKeySalt = "unravis-demo-key"
 // demoCaseIDs lists the IDs above.
 func demoCaseIDs() []casestore.CaseID {
 	return []casestore.CaseID{demoCaseOpenID, demoCaseClosedID, demoCaseFailedID, demoCaseStaleID, demoCaseUntrustedID, demoCaseKeyedID,
-		demoCaseArchivedID, demoCaseFreedID, demoCaseMissingID}
+		demoCaseArchivedID, demoCaseFreedID, demoCaseMissingID, demoCaseTracingID}
 }
 
 // demoSettings is what the two capture-only variables ask for.
@@ -386,6 +389,12 @@ func (d demoSeeder) seed(ctx context.Context) error {
 			func(ctx context.Context, c casestore.Case, created time.Time) error {
 				return d.importOK(ctx, c, "keyed-1", created.Add(10*time.Minute))
 			}},
+		// WP-25: the SQL and IIS lanes of the tracing view, for the hour
+		// 09:00-10:00 UTC the day before the demo clock.
+		{demoCaseTracingID, "Orders API stall, 19 October", 1 * day,
+			func(ctx context.Context, c casestore.Case, created time.Time) error {
+				return d.importTracing(ctx, c, created)
+			}},
 	}
 	for _, step := range steps {
 		if have[step.id] {
@@ -486,11 +495,17 @@ func (d demoSeeder) laneDayNothingRead(ctx context.Context, c casestore.Case, at
 	return err
 }
 
-func demoMeta(file string) casestore.ImportMeta {
+// demoMetaFor is demoMeta, parameterized on the importer: every demo import
+// shares the same host, time-zone rule and acknowledgement banner.
+func demoMetaFor(importerName, file string) casestore.ImportMeta {
 	return casestore.ImportMeta{
-		Importer: demoImporter, FileName: file, HostLabel: demoHost, TZRule: clock.RuleUTCField,
+		Importer: importerName, FileName: file, HostLabel: demoHost, TZRule: clock.RuleUTCField,
 		AckGating: true, AckText: demoAckText,
 	}
+}
+
+func demoMeta(file string) casestore.ImportMeta {
+	return demoMetaFor(demoImporter, file)
 }
 
 func demoBody(label string) io.Reader {
@@ -536,6 +551,114 @@ func (d demoSeeder) importOK(ctx context.Context, c casestore.Case, label string
 		return rep, nil
 	})
 	return err
+}
+
+// demoTracingSQLEvents builds the 18 slow-op events of the WP-25 tracing case:
+// one every 3 minutes from base+5m, with every sixth a warning-severity
+// 1800ms outlier. No randomness, so a second run gives the same events.
+func demoTracingSQLEvents(caseID casestore.CaseID, base time.Time) []evidence.Event {
+	const sqlImporter, file = "sql-xe", "demo-xe-sql-a.xel"
+	out := make([]evidence.Event, 18)
+	for i := range out {
+		line := int64(i + 2)
+		start := base.Add(5*time.Minute + time.Duration(i)*3*time.Minute)
+		duration := float64(250 + (i%6)*150)
+		severity := ""
+		if i%6 == 5 {
+			duration = 1800
+			severity = "warning"
+		}
+		out[i] = evidence.Event{
+			EvidenceID: evidence.EventID(string(caseID), sqlImporter, file, line, 0),
+			Source:     sqlImporter, Kind: "slow-op", Host: demoHost,
+			Start: start, End: start.Add(time.Duration(duration) * time.Millisecond),
+			DurationMs: &duration, Unit: "ms", Severity: severity, Line: line, TZRule: clock.RuleUTCField,
+		}
+	}
+	return out
+}
+
+// demoTracingIISEvents builds the 48 request events of the WP-25 tracing
+// case: one every minute from base+5m (the point model of WP-20, Start ==
+// End), with every twelfth a 503 that also carries a win32 code.
+func demoTracingIISEvents(caseID casestore.CaseID, base time.Time) []evidence.Event {
+	const iisImporter, file = "iis-w3c", "demo-access-web-a.log"
+	out := make([]evidence.Event, 48)
+	for i := range out {
+		line := int64(i + 2)
+		at := base.Add(5*time.Minute + time.Duration(i)*time.Minute)
+		duration := float64(120 + (i%7)*40)
+		attrs := map[string]string{"status": "200", "method": "GET", "stem": "/api/v1/orders/{id}"}
+		if i%12 == 11 {
+			attrs["status"] = "503"
+			attrs["win32"] = "64"
+		}
+		out[i] = evidence.Event{
+			EvidenceID: evidence.EventID(string(caseID), iisImporter, file, line, 0),
+			Source:     iisImporter, Kind: "request", Host: demoHost,
+			Start: at, End: at, DurationMs: &duration, Unit: "ms", Line: line, TZRule: clock.RuleUTCField,
+			Attrs: attrs,
+		}
+	}
+	return out
+}
+
+// demoTracingHTTPErrEvents builds the 3 HTTP.sys error markers of the WP-25
+// tracing case, each a point event (Start == End, the point model of WP-20).
+func demoTracingHTTPErrEvents(caseID casestore.CaseID, base time.Time) []evidence.Event {
+	const httperrImporter, file = "iis-httperr", "demo-httperr-web-a.log"
+	offsets := []time.Duration{20 * time.Minute, 21 * time.Minute, 40 * time.Minute}
+	reasons := []string{"QueueFull", "QueueFull", "Connection_Dropped"}
+	out := make([]evidence.Event, len(offsets))
+	for i, off := range offsets {
+		line := int64(i + 2)
+		at := base.Add(off)
+		out[i] = evidence.Event{
+			EvidenceID: evidence.EventID(string(caseID), httperrImporter, file, line, 0),
+			Source:     httperrImporter, Kind: "httperr", Host: demoHost,
+			Start: at, End: at, Unit: "ms", Line: line, TZRule: clock.RuleUTCField,
+			Attrs: map[string]string{"reason": reasons[i], "status": "503"},
+		}
+	}
+	return out
+}
+
+// importTracingFile is importOK's one-c.Import pattern, parameterized on the
+// importer and its fixed events.
+func (d demoSeeder) importTracingFile(ctx context.Context, c casestore.Case, importerName, file string, events []evidence.Event, at time.Time) error {
+	d.clock.set(at)
+	_, err := c.Import(ctx, demoMetaFor(importerName, file), demoBody(file), func(r io.Reader, emit func(evidence.Event) error) (importer.Report, error) {
+		rep := importer.Report{Importer: importerName, KnownGaps: []string{"synthetic demo data"}}
+		if _, err := io.Copy(io.Discard, r); err != nil {
+			return rep, err
+		}
+		for _, e := range events {
+			rep.Rows++
+			if err := emit(e); err != nil {
+				return rep, err
+			}
+			rep.Emitted++
+		}
+		return rep, nil
+	})
+	return err
+}
+
+// importTracing (WP-25) fills the SQL and IIS lanes of the tracing view for
+// the hour starting at base = created.Truncate(time.Hour) (09:00 UTC on the
+// day before the demo clock). Three imports, in this fixed order so the first
+// import ids are 1, 2, 3 in a fresh case: sql-xe, iis-w3c, iis-httperr.
+func (d demoSeeder) importTracing(ctx context.Context, c casestore.Case, created time.Time) error {
+	base := created.Truncate(time.Hour)
+	at := created.Add(10 * time.Minute)
+	caseID := c.Info().ID
+	if err := d.importTracingFile(ctx, c, "sql-xe", "demo-xe-sql-a.xel", demoTracingSQLEvents(caseID, base), at); err != nil {
+		return err
+	}
+	if err := d.importTracingFile(ctx, c, "iis-w3c", "demo-access-web-a.log", demoTracingIISEvents(caseID, base), at); err != nil {
+		return err
+	}
+	return d.importTracingFile(ctx, c, "iis-httperr", "demo-httperr-web-a.log", demoTracingHTTPErrEvents(caseID, base), at)
 }
 
 func (d demoSeeder) importRefused(ctx context.Context, c casestore.Case, label string, at time.Time) error {

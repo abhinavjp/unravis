@@ -286,6 +286,9 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/investigation", match: caseSubpath("/investigation"), methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseInvestigation(w, r, id) },
 	}},
+	{pattern: "/api/cases/{id}/tracing", match: caseSubpath("/tracing"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseTracing(w, r, id) },
+	}},
 	// Guided analysis: a case's saved views and checklist, and the report.
 	{pattern: "/api/cases/{id}/views", match: caseSubpath("/views"), methods: map[string]routeFunc{
 		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.caseViewsList(w, r, id) },

@@ -289,11 +289,13 @@ func TestRecycleGapCoversEveryVersion(t *testing.T) {
 
 // ---------------------------------------------------------------- coverage
 
-func TestW3CCoverageIncludesRequestStart(t *testing.T) {
+// Requests are points at the logged time (WP-20), so time-taken no longer
+// pulls coverage back to the request start.
+func TestW3CCoverageIsLoggedTimestamp(t *testing.T) {
 	data := []byte("#Fields: date time s-computername cs-method time-taken\n" +
 		"2001-02-03 04:05:06 WEB-A GET 305000\n")
 	_, rep := mustParse(t, NewW3C(), data, baseOpts())
-	wantFirst := time.Date(2001, 2, 3, 4, 0, 1, 0, time.UTC)
+	wantFirst := time.Date(2001, 2, 3, 4, 5, 6, 0, time.UTC)
 	wantLast := time.Date(2001, 2, 3, 4, 5, 6, 0, time.UTC)
 	if !rep.First.Equal(wantFirst) || !rep.Last.Equal(wantLast) {
 		t.Fatalf("coverage %v %v", rep.First, rep.Last)

@@ -17,6 +17,8 @@ const (
 	MaxTimeBuckets  = 120
 	MaxPayloadBytes = 262144
 	MaxInterval     = 7 * 24 * time.Hour
+	// MaxTraceWindow is the longest incident window the tracing route accepts.
+	MaxTraceWindow  = 30 * 24 * time.Hour
 	MaxFilterLength = 200
 	// Record filter list bounds.
 	MaxStatusCodes  = 20

@@ -66,26 +66,37 @@ type Call struct {
 	Parts        []Part     `json:"parts"` // audit, api, other (in that order); payload last when known
 }
 
+// SourceRef names a case source by its tracing wire id (cs_<tag id> or
+// imp_<import id>) and a display label.
+type SourceRef struct {
+	SourceID string `json:"sourceId"`
+	Label    string `json:"label"`
+}
+
 // LaneEvent is one imported event worth plotting. No attributes and no file
 // names leave the server; Label is a plain phrase.
 type LaneEvent struct {
-	ID         string    `json:"id"`     // evidence id
-	Source     string    `json:"source"` // importer name
-	Label      string    `json:"label"`  // plain phrase, e.g. "lock wait"
-	Start      time.Time `json:"start"`
-	End        time.Time `json:"end"`
-	DurationMs *float64  `json:"durationMs,omitempty"`
-	Severity   string    `json:"severity,omitempty"`
+	ID          string    `json:"id"`     // evidence id
+	Source      string    `json:"source"` // importer name
+	SourceID    string    `json:"sourceId,omitempty"`
+	Label       string    `json:"label"` // plain phrase, e.g. "lock wait"
+	Start       time.Time `json:"start"`
+	End         time.Time `json:"end"`
+	DurationMs  *float64  `json:"durationMs,omitempty"`
+	Severity    string    `json:"severity,omitempty"`
+	StatusClass string    `json:"statusClass,omitempty"`
+	Win32       *int64    `json:"win32,omitempty"`
 }
 
 // Lane is one row of the trace.
 type Lane struct {
-	Key     string      `json:"key"`
-	Label   string      `json:"label"`
-	State   string      `json:"state"`
-	Sources []string    `json:"sources"` // importer names present in the case for this lane
-	Events  []LaneEvent `json:"events"`  // at most MaxLaneEvents, longest first, then sorted by Start
-	Hidden  int         `json:"hidden"`  // qualifying events beyond MaxLaneEvents
+	Key        string      `json:"key"`
+	Label      string      `json:"label"`
+	State      string      `json:"state"`
+	Sources    []string    `json:"sources"`              // importer names present in the case for this lane
+	SourceRefs []SourceRef `json:"sourceRefs,omitempty"` // case-source ids for the sources above, sorted by SourceID
+	Events     []LaneEvent `json:"events"`               // at most MaxLaneEvents, longest first, then sorted by Start
+	Hidden     int         `json:"hidden"`               // qualifying events beyond MaxLaneEvents
 }
 
 // MaxLaneEvents bounds the events of one lane in one trace.

@@ -3,6 +3,7 @@ package calltrace
 import (
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,10 +14,14 @@ import (
 // SourceInfo is an importer present in the case. Validated is true when every
 // file of that importer has a validated time zone rule. From and To are the
 // first and last event time its files cover; a zero value means unknown.
+// SourceID and Label are the tracing wire id (cs_<tag id> or imp_<import id>)
+// and display name of the case source; /call-trace callers leave both empty.
 type SourceInfo struct {
 	Name      string
 	Validated bool
 	From, To  time.Time
+	SourceID  string
+	Label     string
 }
 
 // windowSlack is the tolerance applied to both ends of the window.
@@ -148,6 +153,10 @@ func EventLabel(e evidence.Event) string {
 		s = "process exit window"
 	case "app-session":
 		s = "session marker"
+	case "request":
+		s = "web request"
+	case "httperr":
+		s = "HTTP.sys error"
 	case "wait":
 		s = "wait"
 		switch w := e.Attrs["wait_class"]; w {
@@ -236,6 +245,35 @@ func BuildLanes(win Window, haveCase bool, sources []SourceInfo, evs []evidence.
 		keys = append(keys, LaneOther)
 	}
 
+	// refsByLane collects the case-source ids of each lane, de-duplicated by
+	// SourceID. idsByName collects the distinct SourceIDs seen for one
+	// importer name, so an event can be attributed only when that name is
+	// unambiguous (evidence.Event carries no import id of its own).
+	refsByLane := map[string]map[string]SourceRef{}
+	idsByName := map[string]map[string]bool{}
+	for _, s := range sources {
+		if s.SourceID == "" {
+			continue
+		}
+		k := LaneOf(s.Name)
+		if refsByLane[k] == nil {
+			refsByLane[k] = map[string]SourceRef{}
+		}
+		refsByLane[k][s.SourceID] = SourceRef{SourceID: s.SourceID, Label: s.Label}
+		if idsByName[s.Name] == nil {
+			idsByName[s.Name] = map[string]bool{}
+		}
+		idsByName[s.Name][s.SourceID] = true
+	}
+	idByName := map[string]string{} // importer name -> SourceID; absent when ambiguous
+	for name, ids := range idsByName {
+		if len(ids) == 1 {
+			for id := range ids {
+				idByName[name] = id
+			}
+		}
+	}
+
 	from, to := win.From.Add(-windowSlack), win.To.Add(windowSlack)
 	qualifying := map[string][]evidence.Event{}
 	for _, e := range evs {
@@ -262,6 +300,14 @@ func BuildLanes(win Window, haveCase bool, sources []SourceInfo, evs []evidence.
 	for _, k := range keys {
 		l := Lane{Key: k, Label: laneLabel(k), Sources: append([]string{}, names[k]...), Events: []LaneEvent{}}
 		sort.Strings(l.Sources)
+		if m := refsByLane[k]; len(m) > 0 {
+			refs := make([]SourceRef, 0, len(m))
+			for _, r := range m {
+				refs = append(refs, r)
+			}
+			sort.Slice(refs, func(i, j int) bool { return refs[i].SourceID < refs[j].SourceID })
+			l.SourceRefs = refs
+		}
 		switch {
 		case !haveCase:
 			l.State = StateNoCase
@@ -275,7 +321,7 @@ func BuildLanes(win Window, haveCase bool, sources []SourceInfo, evs []evidence.
 			l.State = StateNoneSeen
 		default:
 			l.State = StateEvents
-			l.Events, l.Hidden = laneEvents(qualifying[k])
+			l.Events, l.Hidden = laneEvents(qualifying[k], idByName)
 		}
 		lanes = append(lanes, l)
 	}
@@ -302,9 +348,45 @@ func (c *coverage) add(s SourceInfo) {
 	}
 }
 
+// statusClass reduces attrs["status"] to its HTTP status class, e.g. "4xx".
+// Anything other than exactly three ASCII digits with a leading 2-5 (empty,
+// "-", 1xx, non-numeric) returns "".
+func statusClass(attrs map[string]string) string {
+	v := attrs["status"]
+	if len(v) != 3 {
+		return ""
+	}
+	for _, c := range v {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+	switch v[0] {
+	case '2', '3', '4', '5':
+		return string(v[0]) + "xx"
+	}
+	return ""
+}
+
+// win32Code parses attrs["win32"] as a Win32 error code (0..4294967295).
+// Anything else, including a negative number, a number out of range, or a
+// value that does not parse, returns nil.
+func win32Code(attrs map[string]string) *int64 {
+	v, ok := attrs["win32"]
+	if !ok {
+		return nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n < 0 || n > 4294967295 {
+		return nil
+	}
+	return &n
+}
+
 // laneEvents keeps the MaxLaneEvents longest events (ties: earlier start, then
-// id), sorted by start then id. It returns how many were left out.
-func laneEvents(in []evidence.Event) ([]LaneEvent, int) {
+// id), sorted by start then id. It returns how many were left out. idByName
+// maps an importer name to its case-source id, when unambiguous.
+func laneEvents(in []evidence.Event, idByName map[string]string) ([]LaneEvent, int) {
 	evs := append([]evidence.Event(nil), in...)
 	hidden := 0
 	if len(evs) > MaxLaneEvents {
@@ -330,9 +412,13 @@ func laneEvents(in []evidence.Event) ([]LaneEvent, int) {
 	out := make([]LaneEvent, len(evs))
 	for i, e := range evs {
 		out[i] = LaneEvent{
-			ID: e.EvidenceID, Source: e.Source, Label: EventLabel(e),
+			ID: e.EvidenceID, Source: e.Source, SourceID: idByName[e.Source], Label: EventLabel(e),
 			Start: e.Start.UTC(), End: e.End.UTC(),
 			DurationMs: copyMs(e.DurationMs), Severity: severityOf(e.Severity),
+		}
+		if e.Kind == "request" || e.Kind == "httperr" {
+			out[i].StatusClass = statusClass(e.Attrs)
+			out[i].Win32 = win32Code(e.Attrs)
 		}
 	}
 	return out, hidden

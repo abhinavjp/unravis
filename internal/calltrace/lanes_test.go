@@ -1,6 +1,7 @@
 package calltrace
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"reflect"
@@ -11,6 +12,8 @@ import (
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/evidence"
 )
+
+func i64p(v int64) *int64 { return &v }
 
 var t0 = time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
 
@@ -183,6 +186,8 @@ func TestEventLabel(t *testing.T) {
 		{"proxy-command", evidence.Event{Kind: "proxy-command"}, "slow proxy command"},
 		{"process-gone", evidence.Event{Kind: "process-gone"}, "process exit window"},
 		{"app-session", evidence.Event{Kind: "app-session"}, "session marker"},
+		{"request", evidence.Event{Kind: "request"}, "web request"},
+		{"httperr", evidence.Event{Kind: "httperr"}, "HTTP.sys error"},
 		{"wait lock", evidence.Event{Kind: "wait", Attrs: map[string]string{"wait_class": "lock"}}, "lock wait"},
 		{"wait latch", evidence.Event{Kind: "wait", Attrs: map[string]string{"wait_class": "latch"}}, "latch wait"},
 		{"wait preemptive", evidence.Event{Kind: "wait", Attrs: map[string]string{"wait_class": "preemptive"}}, "preemptive wait"},
@@ -456,5 +461,180 @@ func TestBuildLanesSeverityAllowlist(t *testing.T) {
 	}
 	if l.Events[0].Label != "slow operation" {
 		t.Errorf("label = %q", l.Events[0].Label)
+	}
+}
+
+// TestBuildLanesSQLXEEvent proves a saved sql-xe event inside the window
+// lands in the sql lane in state events, so the tracing route can reuse
+// BuildLanes with no new lane code (Appendix P5, TR-02).
+func TestBuildLanesSQLXEEvent(t *testing.T) {
+	win := Window{From: t0, To: t0.Add(time.Minute)}
+	t.Run("event inside the window", func(t *testing.T) {
+		e := ev("xe1", "sql-xe", t0.Add(10*time.Second), 250)
+		lane := laneByKey(t, BuildLanes(win, true, []SourceInfo{{Name: "sql-xe", Validated: true}}, []evidence.Event{e}), LaneSQL)
+		if lane.State != StateEvents {
+			t.Errorf("state = %s, want %s", lane.State, StateEvents)
+		}
+		if len(lane.Events) != 1 {
+			t.Fatalf("events = %d, want 1", len(lane.Events))
+		}
+		if lane.Events[0].ID != "xe1" {
+			t.Errorf("id = %q, want %q", lane.Events[0].ID, "xe1")
+		}
+		if lane.Events[0].Source != "sql-xe" {
+			t.Errorf("source = %q, want %q", lane.Events[0].Source, "sql-xe")
+		}
+		if lane.Events[0].Label != "slow operation" {
+			t.Errorf("label = %q, want %q", lane.Events[0].Label, "slow operation")
+		}
+		if lane.Events[0].DurationMs == nil || *lane.Events[0].DurationMs != 250 {
+			t.Errorf("durationMs = %v, want 250", lane.Events[0].DurationMs)
+		}
+		if lane.Hidden != 0 {
+			t.Errorf("hidden = %d, want 0", lane.Hidden)
+		}
+		if want := []string{"sql-xe"}; !reflect.DeepEqual(lane.Sources, want) {
+			t.Errorf("sources = %v, want %v", lane.Sources, want)
+		}
+	})
+	t.Run("event outside the window", func(t *testing.T) {
+		e := ev("xe1", "sql-xe", t0.Add(time.Hour), 250)
+		lane := laneByKey(t, BuildLanes(win, true, []SourceInfo{{Name: "sql-xe", Validated: true}}, []evidence.Event{e}), LaneSQL)
+		if lane.State != StateNoneSeen {
+			t.Errorf("state = %s, want %s", lane.State, StateNoneSeen)
+		}
+		if len(lane.Events) != 0 {
+			t.Errorf("events = %d, want 0", len(lane.Events))
+		}
+	})
+}
+
+// TestBuildLanesSourceRefs proves a lane's SourceRefs carry the case-source
+// ids of its SourceInfo entries, de-duplicated and sorted, while Lane.Sources
+// (importer names) is untouched; a lane with no ids gets no sourceRefs key.
+func TestBuildLanesSourceRefs(t *testing.T) {
+	win := Window{From: t0, To: t0.Add(time.Minute)}
+	src := []SourceInfo{
+		{Name: "iis-w3c", Validated: true, SourceID: "cs_7", Label: "web-a"},
+		{Name: "sql-xe", Validated: true, SourceID: "imp_3", Label: "xe import"},
+		{Name: "redis-slowlog", Validated: true},
+	}
+	ls := BuildLanes(win, true, src, nil)
+
+	iis := laneByKey(t, ls, LaneIIS)
+	if want := []SourceRef{{SourceID: "cs_7", Label: "web-a"}}; !reflect.DeepEqual(iis.SourceRefs, want) {
+		t.Errorf("iis sourceRefs = %+v, want %+v", iis.SourceRefs, want)
+	}
+	if want := []string{"iis-w3c"}; !reflect.DeepEqual(iis.Sources, want) {
+		t.Errorf("iis sources = %v, want %v", iis.Sources, want)
+	}
+
+	sql := laneByKey(t, ls, LaneSQL)
+	if want := []SourceRef{{SourceID: "imp_3", Label: "xe import"}}; !reflect.DeepEqual(sql.SourceRefs, want) {
+		t.Errorf("sql sourceRefs = %+v, want %+v", sql.SourceRefs, want)
+	}
+
+	red := laneByKey(t, ls, LaneRedis)
+	if red.SourceRefs != nil {
+		t.Errorf("redis sourceRefs = %+v, want nil", red.SourceRefs)
+	}
+	b, err := json.Marshal(red)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "sourceRefs") {
+		t.Errorf("redis lane JSON has a sourceRefs key: %s", b)
+	}
+}
+
+// TestBuildLanesEventSourceID proves a lane event only gets a SourceID when
+// its importer name maps to exactly one case-source id; a name shared by two
+// ids is ambiguous (evidence.Event carries no import id of its own).
+func TestBuildLanesEventSourceID(t *testing.T) {
+	win := Window{From: t0, To: t0.Add(time.Minute)}
+	t.Run("unique id", func(t *testing.T) {
+		src := []SourceInfo{{Name: "sql-errorlog", Validated: true, SourceID: "cs_7"}}
+		e := ev("e1", "sql-errorlog", t0.Add(time.Second), 10)
+		l := laneByKey(t, BuildLanes(win, true, src, []evidence.Event{e}), LaneSQL)
+		if len(l.Events) != 1 || l.Events[0].SourceID != "cs_7" {
+			t.Fatalf("events = %+v", l.Events)
+		}
+	})
+	t.Run("ambiguous name", func(t *testing.T) {
+		src := []SourceInfo{
+			{Name: "sql-errorlog", Validated: true, SourceID: "cs_7"},
+			{Name: "sql-errorlog", Validated: true, SourceID: "cs_8"},
+		}
+		e := ev("e1", "sql-errorlog", t0.Add(time.Second), 10)
+		l := laneByKey(t, BuildLanes(win, true, src, []evidence.Event{e}), LaneSQL)
+		if len(l.Events) != 1 || l.Events[0].SourceID != "" {
+			t.Fatalf("events = %+v", l.Events)
+		}
+	})
+}
+
+// TestLaneEventStatusAndWin32 covers statusClass and win32Code directly, then
+// proves a kind other than "request"/"httperr" never gets StatusClass even
+// when attrs["status"] is set.
+func TestLaneEventStatusAndWin32(t *testing.T) {
+	statusTests := []struct {
+		status string
+		want   string
+	}{
+		{"200", "2xx"}, {"302", "3xx"}, {"404", "4xx"}, {"503", "5xx"},
+		{"100", ""}, {"20", ""}, {"2000", ""}, {"-", ""}, {"", ""},
+	}
+	for _, tt := range statusTests {
+		if got := statusClass(map[string]string{"status": tt.status}); got != tt.want {
+			t.Errorf("statusClass(%q) = %q, want %q", tt.status, got, tt.want)
+		}
+	}
+
+	win32Tests := []struct {
+		win32 string
+		want  *int64
+	}{
+		{"0", i64p(0)}, {"64", i64p(64)}, {"4294967295", i64p(4294967295)},
+		{"4294967296", nil}, {"-1", nil}, {"x", nil}, {"", nil},
+	}
+	for _, tt := range win32Tests {
+		got := win32Code(map[string]string{"win32": tt.win32})
+		if (got == nil) != (tt.want == nil) || (got != nil && *got != *tt.want) {
+			t.Errorf("win32Code(%q) = %v, want %v", tt.win32, got, tt.want)
+		}
+	}
+
+	win := Window{From: t0, To: t0.Add(time.Minute)}
+	e := ev("e1", "sql-xe", t0.Add(time.Second), 10)
+	e.Attrs = map[string]string{"status": "500"}
+	l := laneByKey(t, BuildLanes(win, true, []SourceInfo{{Name: "sql-xe", Validated: true}}, []evidence.Event{e}), LaneSQL)
+	if len(l.Events) != 1 || l.Events[0].StatusClass != "" {
+		t.Fatalf("non-request kind carried a status class: %+v", l.Events)
+	}
+}
+
+// TestLaneEventsNeverCarryPrivateAttrs proves no lane event, once marshalled,
+// carries an attribute other than status/win32 (TR-18: no new attribute
+// leaves the server).
+func TestLaneEventsNeverCarryPrivateAttrs(t *testing.T) {
+	win := Window{From: t0, To: t0.Add(time.Minute)}
+	e := ev("e1", "iis-w3c", t0.Add(time.Second), 10)
+	e.Kind = "request"
+	e.Attrs = map[string]string{
+		"status":         "200",
+		"client-ip":      "10.0.0.1",
+		"referer":        "https://example.com/secret-path",
+		"cookie:session": "abc123secret",
+	}
+	l := laneByKey(t, BuildLanes(win, true, []SourceInfo{{Name: "iis-w3c", Validated: true}}, []evidence.Event{e}), LaneIIS)
+	b, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, bad := range []string{"client-ip", "referer", "cookie:session", "10.0.0.1", "example.com/secret-path", "abc123secret"} {
+		if strings.Contains(s, bad) {
+			t.Errorf("lane JSON leaked %q: %s", bad, s)
+		}
 	}
 }

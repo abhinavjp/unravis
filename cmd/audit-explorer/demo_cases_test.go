@@ -242,8 +242,8 @@ func TestDemoCasesSeedSixCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	for _, c := range list {
 		byID[c["id"].(string)] = c
 	}
-	if len(list) != 7 {
-		t.Fatalf("got %d cases, want 7 (the Missing one and the keyed one are listed with the others): %v", len(list), list)
+	if len(list) != 8 {
+		t.Fatalf("got %d cases, want 8 (the Missing one and the keyed one are listed with the others): %v", len(list), list)
 	}
 	want := func(id, title string, created time.Time, closed *time.Time, imports float64) {
 		t.Helper()
@@ -279,6 +279,7 @@ func TestDemoCasesSeedSixCasesWithFixedIDsTitlesAndTimes(t *testing.T) {
 	want(string(demoCaseFailedID), "Report export timeouts, 18 October", demoTestNow.Add(-2*day), nil, 1)
 	staleClosedAt := demoTestNow.Add(-3 * day)
 	want(string(demoCaseStaleID), "Ledger posting lag, 12 October", demoTestNow.Add(-8*day), &staleClosedAt, 1)
+	want(string(demoCaseTracingID), "Orders API stall, 19 October", demoTestNow.Add(-1*day), nil, 3)
 	if u := byID[string(demoCaseUntrustedID)]; u == nil || u["untrusted"] != true {
 		t.Errorf("the untrusted demo case = %v, want untrusted", u)
 	}
@@ -684,6 +685,148 @@ func TestDemoCasesSeedOneNothingReadLaneDay(t *testing.T) {
 		}
 		if n != want {
 			t.Errorf("case %s holds %d lane days, want %d", id, n, want)
+		}
+	}
+}
+
+// demoTracingBody is the WP-25 demo tracing case's fixed incident window (the
+// hour before the demo clock) and its three fixed imports, in the order
+// importTracing makes them.
+const demoTracingBody = `{"sourceIds":["imp_1","imp_2","imp_3"],"incident":{"start":"2026-10-19T09:00:00Z","end":"2026-10-19T10:00:00Z"}}`
+
+// postTracing posts the tracing body of a case with the same headers the
+// demo's other POST requests use.
+func postTracing(t *testing.T, h http.Handler, id, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/cases/"+id+"/tracing", strings.NewReader(body))
+	req.Host = "127.0.0.1:8765"
+	req.Header.Set("X-Audit-Token", demoTestToken)
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	h.ServeHTTP(res, req)
+	return res
+}
+
+// The shape this test reads from the tracing answer; WP-19's marker kind and
+// the full tracing contract are not asserted here.
+type demoTracingLane struct {
+	Key     string `json:"key"`
+	State   string `json:"state"`
+	Origin  string `json:"origin"`
+	Buckets []struct {
+		Count int64 `json:"count"`
+	} `json:"buckets"`
+	Events []struct {
+		Kind        string `json:"kind"`
+		StatusClass string `json:"statusClass"`
+	} `json:"events"`
+}
+
+type demoTracingResponse struct {
+	Lanes            []demoTracingLane `json:"lanes"`
+	AllLanesStored   bool              `json:"allLanesStored"`
+	MixedConsistency bool              `json:"mixedConsistency"`
+}
+
+// The WP-25 demo case fills the sql and iis lanes of the tracing view: 18
+// SQL Server slow-op events, 48 IIS requests (some 5xx with a win32 code) and
+// 3 HTTP.sys error markers, all stored (not live) and all one consistency.
+func TestDemoTracingCaseFillsSQLAndIISLanes(t *testing.T) {
+	h, closeCases := seededServer(t, t.TempDir())
+	defer closeCases()
+	res := postTracing(t, h, string(demoCaseTracingID), demoTracingBody)
+	if res.Code != http.StatusOK {
+		t.Fatalf("tracing = %d %s", res.Code, res.Body)
+	}
+	var out demoTracingResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v: %s", err, res.Body)
+	}
+	if len(out.Lanes) != 2 || out.Lanes[0].Key != "sql" || out.Lanes[1].Key != "iis" {
+		t.Fatalf("lanes %+v", out.Lanes)
+	}
+	wantSums := map[string]int64{"sql": 18, "iis": 51}
+	for _, lane := range out.Lanes {
+		if lane.State != "events" || lane.Origin != "case" {
+			t.Errorf("%s: state %q origin %q, want events and case", lane.Key, lane.State, lane.Origin)
+		}
+		var sum int64
+		for _, b := range lane.Buckets {
+			sum += b.Count
+		}
+		if sum != wantSums[lane.Key] {
+			t.Errorf("%s: bucket sum %d, want %d", lane.Key, sum, wantSums[lane.Key])
+		}
+	}
+	iis := out.Lanes[1]
+	found5xx := false
+	for _, ev := range iis.Events {
+		if ev.StatusClass == "5xx" {
+			found5xx = true
+		}
+	}
+	markers := 0
+	for _, ev := range iis.Events {
+		if ev.Kind == "iis-httperr" {
+			markers++
+		}
+	}
+	if markers != 3 {
+		t.Errorf("iis lane has %d HTTP.sys error markers, want 3", markers)
+	}
+	if !found5xx {
+		t.Errorf("iis lane has no 5xx event: %+v", iis.Events)
+	}
+	if !out.AllLanesStored || out.MixedConsistency {
+		t.Errorf("allLanesStored = %v, mixedConsistency = %v, want true and false", out.AllLanesStored, out.MixedConsistency)
+	}
+}
+
+// Two starts on fresh folders give the same lanes, apart from the per-request
+// asOf stamps.
+func TestDemoTracingCaseIsStable(t *testing.T) {
+	get := func(dir string) map[string]any {
+		h, closeCases := seededServer(t, dir)
+		defer closeCases()
+		res := postTracing(t, h, string(demoCaseTracingID), demoTracingBody)
+		if res.Code != http.StatusOK {
+			t.Fatalf("tracing = %d %s", res.Code, res.Body)
+		}
+		var out map[string]any
+		if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v: %s", err, res.Body)
+		}
+		delete(out, "asOf")
+		delete(out, "requestSeq")
+		if lanes, ok := out["lanes"].([]any); ok {
+			for _, l := range lanes {
+				if lane, ok := l.(map[string]any); ok {
+					delete(lane, "asOf")
+				}
+			}
+		}
+		return out
+	}
+	a := get(t.TempDir())
+	b := get(t.TempDir())
+	if !reflect.DeepEqual(a, b) {
+		t.Errorf("two runs differ:\n%v\n%v", a, b)
+	}
+}
+
+// The demo's tracing answer carries none of the private attributes a real
+// IIS log could: no client address, referer or cookie digest.
+func TestDemoTracingCaseHasNoPrivateAttrs(t *testing.T) {
+	h, closeCases := seededServer(t, t.TempDir())
+	defer closeCases()
+	res := postTracing(t, h, string(demoCaseTracingID), demoTracingBody)
+	if res.Code != http.StatusOK {
+		t.Fatalf("tracing = %d %s", res.Code, res.Body)
+	}
+	raw := res.Body.String()
+	for _, bad := range []string{"client-ip", "referer", "cookie:"} {
+		if strings.Contains(raw, bad) {
+			t.Errorf("the tracing answer carries %q: %s", bad, raw)
 		}
 	}
 }

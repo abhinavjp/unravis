@@ -18,6 +18,12 @@ import (
 // why the end reading is used, but no sample from the target servers has
 // confirmed it; the IIS owner must confirm before this is flipped or the gap
 // below is dropped (wave plan section 5).
+//
+// The event is always placed at the logged timestamp (Start == End == time),
+// so this constant no longer affects where the request is drawn; it only
+// selects which of the two known-gap sentences below is reported, since
+// either reading of `time` still leaves the request's start or end relative
+// to the log line unverified.
 const w3cTimeIsEnd = true
 
 const (
@@ -211,12 +217,6 @@ func w3cRow(c *rowCtx) (evidence.Event, importer.Reason, error) {
 		}
 		ms := float64(n)
 		ev.DurationMs = &ms
-		taken := time.Duration(n) * time.Millisecond
-		if w3cTimeIsEnd {
-			ev.Start = ts.Add(-taken)
-		} else {
-			ev.End = ts.Add(taken)
-		}
 	}
 	return ev, "", nil
 }
