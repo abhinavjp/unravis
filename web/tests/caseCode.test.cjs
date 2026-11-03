@@ -175,7 +175,7 @@ test('an empty code field disables the button and shows no sentence; a typed wro
   const outcome = await resolveCode('abc', async () => { throw new Error('never asked'); });
   assert.deepEqual(outcome, { ok: false, message: CODE_NOT_FOUND });
   const card = read('src/components/EnterCase.svelte');
-  assert.match(card, /disabled=\{codeBusy \|\| codeIsEmpty\(code\)\}/);
-  assert.match(card, /if \(codeBusy\) return;\s*if \(codeIsEmpty\(code\)\) return;/);
+  assert.match(card, /disabled=\{codeBusy \|\| codeIsEmpty\(code\) \|\| shape !== 'ok'\}/);
+  assert.match(card, /if \(codeBusy\) return;\s*if \(codeIsEmpty\(code\) \|\| shape !== 'ok'\) return;/);
   assert.doesNotMatch(read('src/lib/caseCode.ts'), /archived/i, 'the code box never says a case is archived');
 });

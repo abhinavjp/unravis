@@ -28,6 +28,19 @@ export function codeIsEmpty(input: string): boolean {
   return typeof input !== 'string' || input.replace(IGNORED, '') === '';
 }
 
+/** What is wrong with the typed text before anything is asked of the server: nothing typed, a character no code uses, too short, too long, or nothing (ok). */
+export type CodeFormat = 'ok' | 'empty' | 'chars' | 'short' | 'long';
+
+export function codeFormat(input: string): CodeFormat {
+  if (codeIsEmpty(input)) return 'empty';
+  if (input.length > MAX_TYPED) return 'long';
+  const code = input.normalize('NFKC').replace(IGNORED, '').toLowerCase();
+  if (/[^a-z2-7]/.test(code)) return 'chars';
+  if (code.length < 26) return 'short';
+  if (code.length > 26) return 'long';
+  return 'ok';
+}
+
 export type CodeOutcome = { ok: true; id: string } | { ok: false; message: string };
 
 /**

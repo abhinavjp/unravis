@@ -27,6 +27,11 @@ const (
 	clientLogMaxBatch  = 20
 	clientLogMaxField  = 64
 	clientLogMaxMsg    = 300
+	// clientLogPreSanitize bounds the text handed to applog.Sanitize so its
+	// regexp work never runs on an attacker-sized string. It is a multiple of
+	// clientLogMaxMsg, not equal to it, so a secret that straddles the final cut
+	// is still redacted whole before the cut.
+	clientLogPreSanitize = clientLogMaxMsg * 4
 )
 
 // clientLogEntry is the allow-listed shape of one UI entry. Unknown fields
@@ -52,6 +57,21 @@ func validClientKind(kind string) bool {
 		return true
 	}
 	return false
+}
+
+// truncRunes returns s cut to at most n runes, unchanged when it already fits.
+func truncRunes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	i := 0
+	for pos := range s {
+		if i == n {
+			return s[:pos]
+		}
+		i++
+	}
+	return s
 }
 
 func capField(s string, max int) string {
@@ -105,7 +125,7 @@ func (h *handler) clientLog(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, e := range entries {
-		msg := applog.Sanitize(e.Message)
+		msg := applog.Sanitize(truncRunes(e.Message, clientLogPreSanitize))
 		if utf8.RuneCountInString(msg) > clientLogMaxMsg {
 			msg = string([]rune(msg)[:clientLogMaxMsg])
 		}

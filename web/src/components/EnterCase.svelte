@@ -2,11 +2,11 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { app } from '../lib/appState.svelte';
   import { listImports } from '../lib/cases';
-  import { codeIsEmpty, resolveCode } from '../lib/caseCode';
+  import { codeFormat, codeIsEmpty, resolveCode } from '../lib/caseCode';
   import { restoreCaseFile } from '../lib/caseFileApi';
-  import { takeRestoreIntent } from '../lib/restoreIntent';
+  import { onRestoreRequest, takeRestoreIntent } from '../lib/restoreIntent';
   import { checkRestoreInput, restoreFailureOf, restoreNeedsKey, restoreView } from '../lib/restoreCase';
-  import { ENTER_TEXT } from '../lib/copy/enterCopy';
+  import { ENTER_TEXT, codeShapeText } from '../lib/copy/enterCopy';
   import { KEY_TEXT } from '../lib/copy/masterKeyCopy';
   import HelpNote from './HelpNote.svelte';
 
@@ -26,11 +26,16 @@
   let codeBusy = $state(false);
   let codeProblem = $state('');
   let codeField = $state<HTMLInputElement>();
+  // The shape of what was typed is checked here: Open case waits for a code that can be one. "Too short" waits until the field is left.
+  let codeTouched = $state(false);
+  const shape = $derived(codeFormat(code));
+  const shapeProblem = $derived(shape === 'chars' || shape === 'long' || (codeTouched && shape === 'short') ? codeShapeText(shape) : '');
+  const shownProblem = $derived(codeProblem || shapeProblem);
 
   async function openByCode(event: SubmitEvent) {
     event.preventDefault();
     if (codeBusy) return;
-    if (codeIsEmpty(code)) return;
+    if (codeIsEmpty(code) || shape !== 'ok') return;
     codeBusy = true;
     codeProblem = '';
     try {
@@ -61,7 +66,11 @@
   let keyField = $state<HTMLInputElement>();
   const needsKey = $derived(restoreNeedsKey(app.lockState));
 
-  onMount(() => { if (open && !needsKey) void tick().then(() => pathField?.focus()); });
+  onMount(() => {
+    if (open && !needsKey) void tick().then(() => pathField?.focus());
+    // "Restore from a case file" on a case card that has lost its working copy opens this part while the card is already on screen.
+    return onRestoreRequest(() => { open = true; void tick().then(() => (needsKey ? undefined : pathField?.focus())); });
+  });
 
   async function toggle() {
     open = !open;
@@ -118,10 +127,10 @@
 
   <form class="part" onsubmit={openByCode}>
     <label for="{uid}-code">{ENTER_TEXT.codeLabel}</label>
-    <input id="{uid}-code" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" bind:this={codeField} bind:value={code} oninput={() => { codeProblem = ''; }} disabled={codeBusy} aria-describedby={uid + '-code-hint' + (codeProblem ? ' ' + uid + '-code-problem' : '')} aria-invalid={codeProblem ? true : undefined} />
+    <input id="{uid}-code" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" bind:this={codeField} bind:value={code} oninput={() => { codeProblem = ''; }} onblur={() => { codeTouched = true; }} disabled={codeBusy} aria-describedby={uid + '-code-hint' + (shownProblem ? ' ' + uid + '-code-problem' : '')} aria-invalid={shownProblem ? true : undefined} />
     <p class="hint" id="{uid}-code-hint">{ENTER_TEXT.codeHint}</p>
-    <button type="submit" class="secondary-button" disabled={codeBusy || codeIsEmpty(code)}>{codeBusy ? ENTER_TEXT.codeChecking : ENTER_TEXT.codeButton}</button>
-    <p class="inline-error" id="{uid}-code-problem" role="alert" hidden={!codeProblem}>{codeProblem}</p>
+    <button type="submit" class="secondary-button" disabled={codeBusy || codeIsEmpty(code) || shape !== 'ok'}>{codeBusy ? ENTER_TEXT.codeChecking : ENTER_TEXT.codeButton}</button>
+    <p class="inline-error" id="{uid}-code-problem" role="alert" hidden={!shownProblem}>{shownProblem}</p>
   </form>
 
   <div class="part restore">
@@ -162,6 +171,6 @@
   .hint { margin: 0; color: var(--text-2); font-size: var(--fs-2); overflow-wrap: anywhere; }
   .inline-error { margin: 0; overflow-wrap: anywhere; }
   .inline-error[hidden] { display: none; }
-  .link-button { padding: 0; color: var(--accent); background: transparent; border: 0; font: inherit; font-size: var(--fs-3); text-align: start; text-decoration: underline; cursor: pointer; }
+  .link-button { display: inline-flex; align-items: center; min-height: 24px; padding: 0; color: var(--accent); background: transparent; border: 0; font: inherit; font-size: var(--fs-3); text-align: start; text-decoration: underline; cursor: pointer; }
   .link-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 </style>

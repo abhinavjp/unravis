@@ -314,3 +314,19 @@ func serve(h http.Handler, req *http.Request) *httptest.ResponseRecorder {
 	h.ServeHTTP(res, req)
 	return res
 }
+
+func TestTruncRunes(t *testing.T) {
+	if got := truncRunes("short", 10); got != "short" {
+		t.Errorf("under limit changed: %q", got)
+	}
+	if got := truncRunes("héllo wörld", 5); got != "héllo" {
+		t.Errorf("rune cut = %q", got)
+	}
+	if got := truncRunes("日本語日本語", 3); got != "日本語" {
+		t.Errorf("multibyte cut = %q", got)
+	}
+	huge := strings.Repeat("a", 100000)
+	if got := truncRunes(huge, clientLogPreSanitize); len(got) != clientLogPreSanitize {
+		t.Errorf("huge input kept %d bytes", len(got))
+	}
+}

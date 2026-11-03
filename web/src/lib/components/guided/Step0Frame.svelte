@@ -1,6 +1,6 @@
 <script lang="ts">
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
-  import { MAX_RELEASES, frameProblems, widenIncident, windowMinutes } from '../../guided/frame';
+  import { MAX_RELEASES, frameProblems, widenIncident, windowMinutes, windowsUsable } from '../../guided/frame';
   import type { GuidedStore } from '../../guided/guided.svelte';
   import { fmtCount, fmtWhen } from '../../guided/stepModel';
 
@@ -8,11 +8,13 @@
   let { store }: { store: GuidedStore } = $props();
 
   const problems = $derived(frameProblems(store.frame));
+  // While a window is unusable the answer from an earlier run says nothing about it: only the window error is shown (no scope, onset or "out of date" text).
+  const usable = $derived(windowsUsable(store.frame));
   const result = $derived(store.result);
   const onset = $derived(result?.facts.onset);
   const routes = $derived(result ? result.facts.routes.map((r) => r.route) : []);
   const scope = $derived.by(() => {
-    if (!result) return '';
+    if (!result || !usable) return '';
     const inc = windowMinutes(store.frame.incidentStart, store.frame.incidentEnd);
     const ref = windowMinutes(store.frame.referenceStart, store.frame.referenceEnd);
     return T.scope(fmtCount(result.facts.counts.used), inc ? inc + ' minutes' : 'not set', ref ? ref + ' minutes' : 'not set');
@@ -84,7 +86,9 @@
 
   <div class="onset">
     <strong>{T.onset}</strong>
-    {#if !result}
+    {#if !usable}
+      <!-- Nothing here while a window is unusable: the window error below is the only thing said. -->
+    {:else if !result}
       <p class="note">{T.onsetNotRun}</p>
     {:else if onset?.status === 'found'}
       <p>{T.onsetFound(fmtWhen(onset.t0))}</p>

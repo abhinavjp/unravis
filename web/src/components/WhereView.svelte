@@ -35,6 +35,15 @@
     const menu = (event.currentTarget as HTMLElement).closest('details');
     if (menu) { menu.open = false; menu.querySelector('summary')?.focus(); }
   }
+  // Esc closes only the Split by menu while it is open, and puts focus back on its button. With no menu open, Esc is left to the page (one level up).
+  function menuKey(event: KeyboardEvent) {
+    if (event.key !== 'Escape') return;
+    const menu = event.currentTarget as HTMLDetailsElement;
+    if (!menu.open) return;
+    event.preventDefault(); event.stopPropagation();
+    menu.open = false;
+    menu.querySelector<HTMLElement>('summary')?.focus();
+  }
 </script>
 
 <div class="view" class:off={depth === 0 || depth === 3} class:under={depth === 2}>
@@ -43,7 +52,8 @@
     <div class="view-tools">
       <button type="button" class="chip" onclick={openComparison}>All operations</button>
       <button type="button" class="chip" aria-pressed={compare} onclick={() => navigation.compare = !navigation.compare}>Compare to earlier</button><Hint termId="reference-period" />
-      <details class="menu">
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <details class="menu" onkeydown={menuKey}>
         <summary>{splitDim ? 'Split by ' + (breakdownDims.find(item => item.dim === splitDim)?.label ?? '') : 'Split by…'}</summary>
         <div class="menu-list">
           {#each breakdownDims as item (item.dim)}<button type="button" aria-pressed={splitDim === item.dim} onclick={(event) => pickSplit(item.dim, event)}>{item.label}</button>{/each}

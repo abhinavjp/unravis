@@ -49,6 +49,9 @@ type handler struct {
 	tests        connectionTestLimiter
 	adds         connectionTestLimiter
 	proofs       connectionTestLimiter
+	// launchTries is the one-time /launch link's own limiter, apart from proofs,
+	// so a flood on one route cannot lock out the other.
+	launchTries connectionTestLimiter
 	// clientLogs caps POST /api/client-log per minute (see clientlog.go).
 	clientLogs connectionTestLimiter
 	// logger and logDir are the journey log wiring (see httplog.go); logger nil
@@ -97,6 +100,7 @@ func New(repo audit.Repository, assets fs.FS, token string, demo bool, options .
 	h.tests.limit = connectionTestsPerWindow
 	h.adds.limit = sourceAddsPerWindow
 	h.proofs.limit = sessionProofsPerWindow
+	h.launchTries.limit = launchTriesPerWindow
 	h.clientLogs.limit = clientLogPerMinute
 	for _, option := range options {
 		if option != nil {
@@ -144,6 +148,7 @@ const (
 	connectionTestsPerWindow = 10
 	sourceAddsPerWindow      = 20
 	sessionProofsPerWindow   = 600
+	launchTriesPerWindow     = 600
 	connectionTestWindow     = time.Minute
 )
 

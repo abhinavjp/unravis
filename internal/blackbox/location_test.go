@@ -79,6 +79,9 @@ func TestParseLocationRefusals(t *testing.T) {
 		{`\\web-b`, ErrLocationBadShare},
 		{`\\web-b\`, ErrLocationBadShare},
 		{`\\web b\share`, ErrLocationBadShare},
+		{`\\?\UNC\server\share`, ErrLocationUnsafePath}, // extended-length UNC form is never taken
+		{`\\?\C:\bb`, ErrLocationUnsafePath},
+		{`\\.\pipe\x`, ErrLocationBadShare}, // device namespace
 		{`D:\bb\..\x`, ErrLocationUnsafePath},
 		{`D:\b|b`, ErrLocationUnsafePath},
 		{"relative\\folder", ErrLocationBadPath},

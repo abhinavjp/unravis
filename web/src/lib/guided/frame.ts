@@ -89,6 +89,17 @@ export function frameProblems(frame: Frame): string[] {
   return out;
 }
 
+/** False while either window is unusable (missing, reversed, too long or overlapping): what a run read earlier then says nothing about the windows on screen. */
+export function windowsUsable(frame: Frame): boolean {
+  const ok = (start: string, end: string) => {
+    const s = parseLocalUtc(start);
+    const e = parseLocalUtc(end);
+    return Number.isFinite(s) && Number.isFinite(e) && e > s && e - s <= MAX_SPAN_MS;
+  };
+  if (!ok(frame.incidentStart, frame.incidentEnd) || !ok(frame.referenceStart, frame.referenceEnd)) return false;
+  return !(parseLocalUtc(frame.incidentStart) < parseLocalUtc(frame.referenceEnd) && parseLocalUtc(frame.referenceStart) < parseLocalUtc(frame.incidentEnd));
+}
+
 const iso = (value: string) => new Date(parseLocalUtc(value)).toISOString();
 
 /** The request body for the engine, or null when the windows cannot be used. `includeSeries` asks for the per-minute rows the charts draw. */

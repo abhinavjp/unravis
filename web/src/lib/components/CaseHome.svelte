@@ -100,13 +100,25 @@
       else if (kind === 'restore-as-new' && made) archiveNote = restoredNewNotice(made.title || caseCode(made.id), caseCode(made.id));
     })();
   }
+  // The button that opened the drawer: Esc or Close puts focus back on it (the drawer also tries, but this works whichever way the drawer closed).
+  let drawerOpener: HTMLElement | null = null;
+  function openArchiveDrawer(kind: ArchiveDrawerKind, opener: HTMLElement) {
+    drawerOpener = opener;
+    archiveNote = '';
+    archiveDrawer = kind;
+  }
   // The drawer hands focus back to the button that opened it. When that button is gone (an archive finished, the page changed) the case name takes it.
   function closeArchiveDrawer() {
     const was = archiveDrawer;
     archiveDrawer = null;
     // Closed while the archive runs: read the case again so the page shows that it is being archived (and keeps showing how far it has got).
     if (was === 'archive' && caseId) void load(caseId, true);
-    void tick().then(() => { const now = document.activeElement; if (!now || now === document.body) headingEl?.focus(); });
+    const opener = drawerOpener;
+    drawerOpener = null;
+    void tick().then(() => {
+      if (opener?.isConnected && !(opener as HTMLButtonElement).disabled) { opener.focus(); return; }
+      const now = document.activeElement; if (!now || now === document.body) headingEl?.focus();
+    });
   }
   function archiveChanged() { archiveDrawer = null; changed = true; void tick().then(() => reloadEl?.focus()); }
 
@@ -395,15 +407,15 @@
         {#if currentFile}<p class="note">{ARCHIVE_TEXT.caseFileLine}: {currentFile.name}{currentFile.folder ? ' ' + ARCHIVE_TEXT.inFolder + ' ' + currentFile.folder : ''}{currentFile.keyEnding ? ' · ' + ARCHIVE_TEXT.keyEnding + ' ' + currentFile.keyEnding : ''}</p>{/if}
       {:else if archivingNow}
         <p class="notice" role="status">{ARCHIVE_TEXT.archivingNote}{info?.percent !== undefined ? ' ' + info.percent + '%' : ''}</p>
-        <div class="actions"><button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={() => { archiveNote = ''; archiveDrawer = 'archive'; }}>{ARCHIVE_TEXT.showProgress}</button></div>
+        <div class="actions"><button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={(e) => openArchiveDrawer('archive', e.currentTarget)}>{ARCHIVE_TEXT.showProgress}</button></div>
       {:else if info && believedState(info) === 'closed'}<p class="notice" role="status">{CASE_HOME_TEXT.closedNote}</p>{/if}
       {#if archiveNote}<p class="notice" role="status">{archiveNote}</p>{/if}
       {#if archiveState !== 'hidden' || isArchived}
         <div class="actions">
-          {#if archiveState !== 'hidden'}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={archiveState !== 'enabled' || stale} onclick={() => { archiveNote = ''; archiveDrawer = 'archive'; }}>{ARCHIVE_TEXT.archiveButton}</button>{/if}
-          {#if archivedMoves?.restoreInPlace}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={() => { archiveNote = ''; archiveDrawer = 'restore-in-place'; }}>{ARCHIVE_TEXT.restore}</button>{/if}
-          {#if archivedMoves?.restoreAsNew}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={() => { archiveNote = ''; archiveDrawer = 'restore-as-new'; }}>{ARCHIVE_TEXT.restoreAsNewMenu}</button>{/if}
-          {#if archivedMoves?.free}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={() => { archiveNote = ''; archiveDrawer = 'free'; }}>{ARCHIVE_TEXT.freeMenu}</button>{/if}
+          {#if archiveState !== 'hidden'}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={archiveState !== 'enabled' || stale} onclick={(e) => openArchiveDrawer('archive', e.currentTarget)}>{ARCHIVE_TEXT.archiveButton}</button>{/if}
+          {#if archivedMoves?.restoreInPlace}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={(e) => openArchiveDrawer('restore-in-place', e.currentTarget)}>{ARCHIVE_TEXT.restore}</button>{/if}
+          {#if archivedMoves?.restoreAsNew}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={(e) => openArchiveDrawer('restore-as-new', e.currentTarget)}>{ARCHIVE_TEXT.restoreAsNewMenu}</button>{/if}
+          {#if archivedMoves?.free}<button type="button" class="secondary-button" aria-haspopup="dialog" disabled={stale} onclick={(e) => openArchiveDrawer('free', e.currentTarget)}>{ARCHIVE_TEXT.freeMenu}</button>{/if}
         </div>
       {/if}
       {#if reopenState !== 'hidden'}

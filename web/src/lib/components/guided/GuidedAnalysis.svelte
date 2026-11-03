@@ -6,6 +6,7 @@
   import { reportAction } from '../../clientLog';
   import { nextTabIndex, railItems, stepOf, stickerFor } from '../../guided/stepModel';
   import { caseSourceIds, type SourceNeed } from '../../guided/tools';
+  import { windowsUsable } from '../../guided/frame';
   import { app } from '../../appState.svelte';
   import AfterFix from './AfterFix.svelte';
   import Checklist from './Checklist.svelte';
@@ -52,7 +53,7 @@
   const sourcesFailed = $derived(!demo && store.sourcesState === 'failed');
   // SQL, Mongo and host files have no importer yet, so only the audit source and the IIS file can be present.
   const have = $derived<ReadonlySet<SourceNeed>>(new Set<SourceNeed>([...(sourceIds.length > 0 ? ['audit' as const] : []), ...(hasIis ? ['iis' as const] : [])]));
-  const stale = $derived(store.outOfDate(sourceIds));
+  const stale = $derived(store.outOfDate(sourceIds) && windowsUsable(store.frame));
   const rail = $derived(railItems(store.result, store.phase, store.step, stale));
   const engineStep = $derived(stepOf(store.result, store.step));
   const sticker = $derived(stickerFor(store.result, store.step, store.phase, stale && store.step > 0));
@@ -160,7 +161,7 @@
 <style>
   .guided { display: grid; gap: 16px; min-width: 0; }
   .top { display: flex; }
-  .head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 16px; }
+  .head { position: relative; display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 16px; }
   .titles { display: grid; gap: 4px; min-width: 0; flex: 1 1 260px; }
   h2 { margin: 0; font-size: 22px; }
   .note { margin: 0; color: var(--text-2); font-size: 14px; }
@@ -171,9 +172,13 @@
   .tab.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
   .tab:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .panel { min-width: 0; }
+  .head :global(.menu-list) { max-width: calc(100vw - 32px); }
+  .head :global(.menu-list button) { white-space: normal; overflow-wrap: anywhere; }
   .steps { display: grid; grid-template-columns: minmax(200px, 240px) minmax(0, 1fr); gap: 16px; align-items: start; }
   .page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
   @media (max-width: 760px) {
     .steps { grid-template-columns: minmax(0, 1fr); }
+    .head :global(.menu) { position: static; }
+    .head :global(.menu-list) { left: 0; right: 0; min-width: 0; max-width: none; }
   }
 </style>

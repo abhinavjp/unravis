@@ -5,7 +5,18 @@
  */
 let requested = false;
 
-export function requestRestore(): void { requested = true; }
+const listeners = new Set<() => void>();
+
+/** A card that is already on screen listens here; a request then reaches it at once instead of waiting for the next time the card appears. */
+export function onRestoreRequest(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
+export function requestRestore(): void {
+  if (listeners.size === 0) { requested = true; return; }
+  for (const fn of [...listeners]) fn();
+}
 
 export function takeRestoreIntent(): boolean {
   const was = requested;

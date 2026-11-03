@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { listArchivedCases } from '../archiveApi';
   import { archivedActions, archivedChips, keyEndingOf, type ArchiveDrawerKind } from '../archiveModel';
   import { caseErased } from '../appState.svelte';
@@ -75,11 +75,28 @@
   }
   function restore(c: CaseInfo, menu?: HTMLElement | null) { open(archivedActions(c).restoreInPlace ? 'restore-in-place' : 'restore-as-new', c, menu); }
   function closeDrawer() { drawer = null; drawerCase = null; void load('again'); }
-  function askErase(c: CaseInfo, menu?: HTMLElement | null) {
-    menu?.closest('details')?.removeAttribute('open');
+  // Where focus goes back to when the Erase step is closed: the More button the Erase item was in.
+  let eraseOpener: HTMLElement | null = null;
+  async function askErase(c: CaseInfo, menu?: HTMLElement | null) {
+    const details = menu?.closest('details');
+    eraseOpener = details?.querySelector<HTMLElement>('summary') ?? null;
+    details?.removeAttribute('open');
     eraseId = c.id; typed = ''; problem = ''; note = '';
+    await tick();
+    document.getElementById('erase-' + c.id)?.focus();
   }
-  function cancelErase() { eraseId = ''; typed = ''; }
+  function cancelErase() {
+    eraseId = ''; typed = '';
+    const opener = eraseOpener;
+    eraseOpener = null;
+    void tick().then(() => { if (opener?.isConnected) opener.focus(); });
+  }
+  // Escape closes the Erase step and gives focus back to its opener, without leaving the list.
+  function eraseKey(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || erasing) return;
+    event.preventDefault(); event.stopPropagation();
+    cancelErase();
+  }
   // One More menu at a time (D-A-13): opening one closes the others in this list.
   function moreToggled(event: Event) {
     const opened = event.currentTarget as HTMLDetailsElement;
@@ -165,16 +182,17 @@
                 <div class="menu">
                   {#if actions.restoreInPlace && actions.restoreAsNew}<button type="button" class="quiet-button" onclick={(e) => open('restore-as-new', c, e.currentTarget)}>{ARCHIVE_TEXT.restoreAsNewMenu}</button>{/if}
                   {#if actions.free}<button type="button" class="quiet-button" onclick={(e) => open('free', c, e.currentTarget)}>{ARCHIVE_TEXT.freeMenu}</button>{/if}
-                  <button type="button" class="quiet-button" onclick={(e) => askErase(c, e.currentTarget)}>{ARCHIVE_TEXT.erase}</button>
+                  <button type="button" class="quiet-button" onclick={(e) => void askErase(c, e.currentTarget)}>{ARCHIVE_TEXT.erase}</button>
                 </div>
               </details>
             </div>
           </div>
           {#if eraseId === c.id}
-            <form class="erase" onsubmit={erase}>
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <form class="erase" onsubmit={erase} onkeydown={eraseKey}>
               <p>{ARCHIVE_TEXT.eraseWarning}</p>
               <label for={'erase-' + c.id}>{erasePrompt(caseCode(c.id))}</label>
-              <input id={'erase-' + c.id} type="text" bind:value={typed} autocomplete="off" spellcheck="false" />
+              <input id={'erase-' + c.id} type="text" aria-label={erasePrompt(caseCode(c.id))} bind:value={typed} autocomplete="off" spellcheck="false" />
               <div class="buttons">
                 <button type="submit" class="primary-button danger-fill" disabled={erasing || !confirmed}>{erasing ? IMPORT_TEXT.erasing : ARCHIVE_TEXT.eraseConfirmButton}</button>
                 <button type="button" class="secondary-button" disabled={erasing} onclick={cancelErase}>{ARCHIVE_TEXT.eraseCancel}</button>

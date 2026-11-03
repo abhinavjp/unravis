@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import type { Snippet } from 'svelte';
   import { CaseApiError, believedState, caseCode, clearErasedLine, eraseCase, eraseConfirmed, isCaseGone } from '../lib/cases';
   import type { CaseInfo, ErasedLine } from '../lib/cases';
@@ -17,6 +17,7 @@
   import { app, caseErased, noteKeyStatus, noteLocked } from '../lib/appState.svelte';
   import HelpNote from './HelpNote.svelte';
   import RewrapNotice from './RewrapNotice.svelte';
+  import { requestRestore } from '../lib/restoreIntent';
 
   // The first screen of a launch: three cards, always shown. Use an existing case, enter an existing case (a slot for the code field), create a new one.
   // It reads the master key status first. A locked key shows no titles and no counts and hands over to the unlock screen; the case list is never asked for.
@@ -93,8 +94,26 @@
     }
   }
 
-  function askErase(id: string) { eraseId = id; typed = ''; eraseProblem = ''; eraseNote = ''; }
-  function cancelErase() { eraseId = ''; typed = ''; }
+  // Where focus goes back to when the Erase step is closed.
+  let eraseOpener: HTMLElement | null = null;
+  async function askErase(id: string, opener?: HTMLElement | null) {
+    eraseOpener = opener ?? null;
+    eraseId = id; typed = ''; eraseProblem = ''; eraseNote = '';
+    await tick();
+    document.getElementById('erase-' + id)?.focus();
+  }
+  function cancelErase() {
+    eraseId = ''; typed = '';
+    const opener = eraseOpener;
+    eraseOpener = null;
+    void tick().then(() => { if (opener?.isConnected) opener.focus(); });
+  }
+  // Escape closes the Erase step and gives focus back to the Erase button, without leaving the screen.
+  function eraseKey(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || erasing) return;
+    event.preventDefault(); event.stopPropagation();
+    cancelErase();
+  }
 
   async function erase(event: SubmitEvent) {
     event.preventDefault();
@@ -163,15 +182,19 @@
                   <span class="case-closed" role="note">{row.archivingLabel}</span>
                 {:else if row.missing}
                   <span class="case-closed" role="note">{row.missingLabel}</span>
-                  <button type="button" class="secondary-button" aria-label={ARCHIVE_TEXT.erase + ': ' + row.fullTitle} onclick={() => askErase(row.id)}>{ARCHIVE_TEXT.erase}</button>
+                  <button type="button" class="secondary-button" aria-label={ARCHIVE_TEXT.erase + ': ' + row.fullTitle} onclick={(e) => void askErase(row.id, e.currentTarget)}>{ARCHIVE_TEXT.erase}</button>
                 {:else}
                   <button type="button" class="secondary-button" aria-label={openLabel(row.fullTitle)} onclick={() => onOpen(row.id, { held: row.keyLocked || row.untrusted })}>{START_TEXT.open}</button>
                 {/if}
+                {#if row.missing && !row.archiving}
+                  <p class="missing-help">{START_TEXT.missingHelp} <button type="button" class="link-button" onclick={requestRestore}>{START_TEXT.missingRestore}</button></p>
+                {/if}
                 {#if eraseId === row.id}
-                  <form class="erase" onsubmit={erase}>
+                  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                  <form class="erase" onsubmit={erase} onkeydown={eraseKey}>
                     <p>{ARCHIVE_TEXT.eraseWarning}</p>
                     <label for={'erase-' + row.id}>{erasePrompt(caseCode(row.id))}</label>
-                    <input id={'erase-' + row.id} type="text" bind:value={typed} autocomplete="off" spellcheck="false" />
+                    <input id={'erase-' + row.id} type="text" aria-label={erasePrompt(caseCode(row.id))} bind:value={typed} autocomplete="off" spellcheck="false" />
                     <div class="buttons">
                       <button type="submit" class="primary-button danger-fill" disabled={erasing || !confirmed}>{erasing ? IMPORT_TEXT.erasing : ARCHIVE_TEXT.eraseConfirmButton}</button>
                       <button type="button" class="secondary-button" disabled={erasing} onclick={cancelErase}>{ARCHIVE_TEXT.eraseCancel}</button>
@@ -241,6 +264,7 @@
   .card :global(.primary-button), .card :global(.secondary-button) { justify-self: start; }
   .cases { display: grid; gap: var(--space-2); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
   .case-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); min-width: 0; padding: var(--space-2) var(--space-3); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  .missing-help { flex-basis: 100%; margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .erase { display: grid; flex-basis: 100%; gap: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--line); }
   .erase p { margin: 0; color: var(--text-2); font-size: var(--fs-3); }
   .buttons { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
@@ -250,7 +274,7 @@
   .case-closed { justify-self: start; padding: 0 var(--space-1); color: var(--text-2); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font-size: var(--fs-2); }
   .case-row :global(.secondary-button) { flex-shrink: 0; }
   .start-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
-  .link-button { padding: 0; color: var(--accent); background: transparent; border: 0; font: inherit; font-size: var(--fs-3); text-decoration: underline; cursor: pointer; }
+  .link-button { display: inline-flex; align-items: center; min-height: 24px; padding: 0; color: var(--accent); background: transparent; border: 0; font: inherit; font-size: var(--fs-3); text-decoration: underline; cursor: pointer; }
   .link-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   @media (max-width: 960px) { .cards { grid-template-columns: minmax(0, 1fr); } }
 </style>

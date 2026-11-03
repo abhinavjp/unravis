@@ -193,10 +193,10 @@ test('a missing row has an Erase button and no Open button, and the form asks fo
   assert.equal(row.missing, true);
   const src = read('src/components/StartScreen.svelte');
   const missing = src.slice(src.indexOf('{:else if row.missing}'), src.indexOf('{:else}', src.indexOf('{:else if row.missing}')));
-  assert.match(missing, /askErase\(row\.id\)/);
+  assert.match(missing, /askErase\(row\.id/);
   assert.match(missing, /ARCHIVE_TEXT\.erase\b/);
   assert.doesNotMatch(missing, /onOpen\(/);
-  assert.match(src, /<form class="erase" onsubmit=\{erase\}>/);
+  assert.match(src, /<form class="erase" onsubmit=\{erase\} onkeydown=\{eraseKey\}>/);
   assert.match(src, /erasePrompt\(caseCode\(row\.id\)\)/);
   assert.match(src, /disabled=\{erasing \|\| !confirmed\}/);
   assert.match(src, /const confirmed = \$derived\(eraseId !== '' && eraseConfirmed\(typed, eraseId\)\);/);

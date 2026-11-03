@@ -9,7 +9,7 @@ export const CASE_HOME_TEXT = {
   intro: 'Everything about this case is here. See what happened, your theories, the health checks, the analysis and the files.',
   back: 'All cases',
   backLabel: 'All cases: back to the start screen',
-  navButton: 'Case home',
+  navButton: 'This case',
   navLabel: 'Back to the home page of this case',
   loading: 'Opening the case…',
   gone: 'This case could not be found. It may have been erased.',

@@ -78,9 +78,9 @@ p{font-size:1rem;line-height:1.5;margin:0}
 `
 
 // serveLaunch answers GET /launch?c=<code>. It is public (the browser has no
-// token yet) and rate limited with the other unauthenticated route.
+// token yet) and rate limited on its own bucket, apart from the session-proof route.
 func (h *handler) serveLaunch(w http.ResponseWriter, r *http.Request) {
-	if h.token == "" || !h.proofs.allow() {
+	if h.token == "" || !h.launchTries.allow() {
 		http.NotFound(w, r)
 		return
 	}

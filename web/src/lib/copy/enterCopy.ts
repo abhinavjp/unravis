@@ -19,6 +19,9 @@ export const ENTER_TEXT = {
   codeHint: 'A case code has 26 letters and numbers. Spaces and dashes are fine.',
   codeButton: 'Open case',
   codeChecking: 'Looking for the case…',
+  codeShort: 'That is too short. A case code has 26 letters and numbers.',
+  codeLong: 'That is too long. A case code has 26 letters and numbers.',
+  codeChars: 'That has a character a case code never uses. Codes use letters and the numbers 2 to 7.',
 
   // The case file
   restoreToggle: 'Restore from a case file',
@@ -49,6 +52,11 @@ export const ENTER_TEXT = {
 } as const;
 
 /** The text for a throttled restore: the same first sentence for everyone, then how long to wait. */
+/** The sentence for a typed code that cannot be a case code, or an empty string when its shape is fine. */
+export function codeShapeText(shape: 'ok' | 'empty' | 'chars' | 'short' | 'long'): string {
+  return shape === 'short' ? ENTER_TEXT.codeShort : shape === 'long' ? ENTER_TEXT.codeLong : shape === 'chars' ? ENTER_TEXT.codeChars : '';
+}
+
 export const throttledText = (seconds: number): string => ENTER_TEXT.throttled + ' ' + waitText(seconds);
 
 /** Every fixed sentence and a sample of each built one, for the copy lint. */

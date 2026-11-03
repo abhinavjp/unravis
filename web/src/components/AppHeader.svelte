@@ -65,6 +65,16 @@
     return () => query.removeEventListener('change', sync);
   });
 
+  // Skip link: moves focus to the main landmark without touching the address (the page uses it for its own routing).
+  function skipToMain(event: MouseEvent) {
+    event.preventDefault();
+    const main = document.getElementById('main-content') ?? document.querySelector<HTMLElement>('main');
+    if (!main) return;
+    if (!main.hasAttribute('tabindex')) main.setAttribute('tabindex', '-1');
+    main.focus();
+    main.scrollIntoView({ block: 'start' });
+  }
+
   const menuItems = () => [...(menuWrap?.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemcheckbox"]') ?? [])];
   async function toggleMenu() {
     menuOpen = !menuOpen;
@@ -93,6 +103,7 @@
   });
 </script>
 
+<a class="skip-link" href="#main-content" onclick={skipToMain}>Skip to main content</a>
 <header class="topbar">
   <div class="brand-lockup"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><h1>Unravis</h1></div>
   {#if !compact && working}
@@ -158,6 +169,9 @@
 {/if}
 
 <style>
+  /* Hidden until it has keyboard focus, then it sits over the top bar. */
+  .skip-link { position: absolute; z-index: 100; left: 8px; top: -48px; padding: 8px 14px; color: var(--text); background: var(--surface-2); border: 1px solid var(--accent); border-radius: var(--radius-sm); font-size: 14px; text-decoration: none; }
+  .skip-link:focus, .skip-link:focus-visible { top: 8px; outline: 2px solid var(--focus); outline-offset: 2px; }
   /* One row while it fits. From 721px a crowded bar wraps its right hand group to a second row (see the media block below) so no button is pushed off screen; at 720px and below it stays one row. */
   .topbar { flex-wrap: nowrap; gap: 12px; }
   .brand-lockup { min-width: 0; }
@@ -206,6 +220,13 @@
     .crumbbar { position: sticky; top: var(--header-h); padding: 2px 14px; }
   }
   @media (max-width: 599px) { .more-label { display: none; } .more-button { padding: 6px 9px; } }
+  /* At 320px the single row ran 35px past the edge; tighter gaps keep it inside without hiding anything. */
+  @media (max-width: 359px) {
+    .topbar { padding: 0 8px; gap: 4px; }
+    .actions { gap: 4px; }
+    .utilities { padding-left: 4px; gap: 2px; }
+    .utilities > :global(.zone-toggle) { margin: 0; }
+  }
   @media (max-width: 400px) {
     /* Keeps the brand mark and gives the Sources button the room; the heading stays for screen readers. */
     .brand-lockup h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

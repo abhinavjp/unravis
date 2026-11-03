@@ -6,36 +6,47 @@
   import AppHeader from './components/AppHeader.svelte';
   import SubBar from './components/SubBar.svelte';
   import Landing from './components/Landing.svelte';
-  import CaseReconnect from './components/CaseReconnect.svelte';
-  import ConnectionsDrawer from './components/ConnectionsDrawer.svelte';
-  import CoverageDrawer from './components/CoverageDrawer.svelte';
-  import Glossary from './components/Glossary.svelte';
-  import PatternsPanel from './components/PatternsPanel.svelte';
-  import LedgerPanel from './components/LedgerPanel.svelte';
-  import ExportPanel from './components/ExportPanel.svelte';
-  import ImportPanel from './lib/components/ImportPanel.svelte';
-  import BlackboxPanel from './components/BlackboxPanel.svelte';
-  import CaseHome from './lib/components/CaseHome.svelte';
-  import Pulse from './components/Pulse.svelte';
-  import RollupView from './components/RollupView.svelte';
-  import WhereView from './components/WhereView.svelte';
-  import EvidenceView from './components/EvidenceView.svelte';
-  import RecordDetailPanel from './components/RecordDetail.svelte';
-  import ZoomStrip from './components/ZoomStrip.svelte';
-  import ProvenanceNote from './components/ProvenanceNote.svelte';
   import { zoomView } from './lib/zoomView.svelte';
   import { timeZone } from './lib/timeZone.svelte';
   import { backLabel, investigateState } from './lib/promote';
   import { requestDiscover } from './lib/discoverIntent';
+  import { lazyComponent } from './lib/lazy';
 
   // The page shell. The state and the logic live in lib/appState.svelte.ts; each region of the page is its own component.
   // startApp registers the effects and the mount work (theme, first load, the glossary event) for this component.
   startApp();
 
+  // Everything past the first screen is fetched on first use, so the code (and the copy text) of the panels, drawers and analysis views
+  // stays out of the entry bundle. The shell and the Landing screens (the first paint) are static imports above.
+  const CaseReconnect = lazyComponent(() => import('./components/CaseReconnect.svelte'));
+  const ConnectionsDrawer = lazyComponent(() => import('./components/ConnectionsDrawer.svelte'));
+  const CoverageDrawer = lazyComponent(() => import('./components/CoverageDrawer.svelte'));
+  const Glossary = lazyComponent(() => import('./components/Glossary.svelte'));
+  const PatternsPanel = lazyComponent(() => import('./components/PatternsPanel.svelte'));
+  const LedgerPanel = lazyComponent(() => import('./components/LedgerPanel.svelte'));
+  const ExportPanel = lazyComponent(() => import('./components/ExportPanel.svelte'));
+  const ImportPanel = lazyComponent(() => import('./lib/components/ImportPanel.svelte'));
+  const BlackboxPanel = lazyComponent(() => import('./components/BlackboxPanel.svelte'));
+  const CaseHome = lazyComponent(() => import('./lib/components/CaseHome.svelte'));
+  const analysisViews = [
+    () => import('./components/Pulse.svelte'), () => import('./components/RollupView.svelte'), () => import('./components/WhereView.svelte'), () => import('./components/EvidenceView.svelte'),
+    () => import('./components/RecordDetail.svelte'), () => import('./components/ZoomStrip.svelte'), () => import('./components/ProvenanceNote.svelte')
+  ] as const;
+  const [pulseModule, rollupModule, whereModule, evidenceModule, recordModule, zoomModule, provenanceModule] = analysisViews;
+  const Pulse = lazyComponent(pulseModule);
+  const RollupView = lazyComponent(rollupModule);
+  const WhereView = lazyComponent(whereModule);
+  const EvidenceView = lazyComponent(evidenceModule);
+  const RecordDetailPanel = lazyComponent(recordModule);
+  const ZoomStrip = lazyComponent(zoomModule);
+  const ProvenanceNote = lazyComponent(provenanceModule);
+
   const info = $derived(app.info);
   const analysis = $derived(results.analysis);
   const loading = $derived(results.loading);
   const depth = $derived(navigation.depth);
+  // Once a run starts (or an analysis is on screen) the analysis views are fetched, so they are ready by the time the figures arrive.
+  $effect(() => { if (loading || analysis) for (const importView of analysisViews) void importView().catch(() => {}); });
   const zone = $derived(scope.zone);
   const sourceLabels = $derived(app.sourceLabels);
   const failingSources = $derived(results.failingSources);

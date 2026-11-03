@@ -9,8 +9,8 @@ import type { LintEntry } from './copylint';
 
 export const ARCHIVE_TEXT = {
   // The archive drawer (screen 127)
-  archiveButton: 'Archive this case',
-  archiveTitle: 'Archive this case',
+  archiveButton: 'Save case file',
+  archiveTitle: 'Save case file',
   archiveIntro: 'Save the whole case in one file you can keep, copy or move. You do not need to close the case first.',
   folderLabel: 'Folder for the case file',
   folderHint: 'A drive path you can write to. Not a network drive, not a relative path, and not inside Unravis\u2019s own data folder.',
@@ -23,16 +23,16 @@ export const ARCHIVE_TEXT = {
   sealedCaseHint: 'The file opens with the case key, on this or any computer. Keep the key: without it the file cannot be opened.',
   passphraseLabel: 'Passphrase for this file',
   passphraseHint: 'At least 12 characters. Keep it: without it the file cannot be opened.',
-  archiveSubmit: 'Archive the case',
+  archiveSubmit: 'Save the case file',
   archiveCancel: 'Cancel',
-  archiveClose: 'Close archive',
+  archiveClose: 'Close',
   // Running (screen 128)
   archiveRunning: 'Writing the case file',
   archiveChecking: 'Checking the case file',
-  archiveStop: 'Cancel archiving',
+  archiveStop: 'Cancel saving',
   archiveStopping: 'Stopping\u2026',
-  archiveDone: 'Archived.',
-  progressLabel: 'Archive progress',
+  archiveDone: 'Case file saved.',
+  progressLabel: 'Saving progress',
   // Check
   verifyRunning: 'Checking the case file',
   verifyStop: 'Cancel the check',
@@ -42,7 +42,7 @@ export const ARCHIVE_TEXT = {
   verifyStart: 'Start the check',
 
   // The archived case page (screen 122)
-  archivedNote: 'This case is archived. It is read-only here.',
+  archivedNote: 'This case is saved to a case file. It is read-only here.',
   freedNote: 'The working copy was freed. The case file is the only copy.',
   archivedWork: 'To read the analysis, check the sources or add files, restore the case first.',
   filesMade: 'Case files made earlier',
@@ -52,16 +52,16 @@ export const ARCHIVE_TEXT = {
   code: 'code',
 
   // The archived list (screen 129)
-  listHeading: 'Archived cases',
-  listToggle: 'Archived cases',
+  listHeading: 'Saved cases',
+  listToggle: 'Saved cases',
   listBack: 'Back to the working list',
-  listEmpty: 'No archived cases.',
-  listLoading: 'Loading the archived cases\u2026',
-  listFailed: 'The archived cases could not be loaded.',
+  listEmpty: 'No saved cases.',
+  listLoading: 'Loading the saved cases\u2026',
+  listFailed: 'The saved cases could not be loaded.',
   listRetry: 'Try again',
-  listMore: 'Show more archived cases',
-  archivedOn: 'Archived on',
-  chipArchived: 'Archived',
+  listMore: 'Show more saved cases',
+  archivedOn: 'Saved on',
+  chipArchived: 'Saved',
   chipKept: 'Working copy kept',
   chipFreed: 'Space freed',
   chipMissing: 'Missing',
@@ -125,7 +125,7 @@ export const ARCHIVE_TEXT = {
   m2: 'This case changed in another tab. Reload.',
   m3: 'An archive is already running.',
   m4: 'The case is in use. Close its other tabs, then try again.',
-  m6: 'Archived cases are in the Archived list on the start screen.',
+  m6: 'Saved cases are in the Saved cases list on the start screen.',
   m8: 'The folder cannot be used. Choose a folder on this computer that you can write to.',
   m9: 'There is not enough free space for the archive.',
   m10: 'The archive file could not be checked. Nothing was changed. Try again.',
@@ -217,7 +217,7 @@ export const keyEndingText = (ending: string): string => (ending ? ARCHIVE_TEXT.
 /** "Writing the case file, 42%". */
 export const runningText = (phase: string, percent: number): string => (phase === 'check' ? ARCHIVE_TEXT.archiveChecking : ARCHIVE_TEXT.archiveRunning) + ', ' + percent + '%';
 
-/** "Archived. The case file is <name> in <folder>. Key ending xxxx." */
+/** "Case file saved. The case file is <name> in <folder>. Key ending xxxx." */
 export function archivedNotice(name: string, folder: string, ending: string): string {
   const base = ARCHIVE_TEXT.archiveDone + ' The case file is ' + name + (folder ? ' ' + ARCHIVE_TEXT.inFolder + ' ' + folder : '') + '.';
   return ending ? base + ' ' + keyEndingText(ending) + '.' : base;
@@ -230,7 +230,7 @@ export const restoredNewNotice = (title: string, code: string): string => 'A new
 export const archiveCounts = (imports: number, sources: number): string => imports + (imports === 1 ? ' import' : ' imports') + ' \u00b7 ' + sources + (sources === 1 ? ' source' : ' sources');
 
 /** "n of n archived cases shown." */
-export const archivedShownText = (shown: number, total: number): string => shown + ' of ' + total + ' archived cases shown.';
+export const archivedShownText = (shown: number, total: number): string => shown + ' of ' + total + ' saved cases shown.';
 
 /** "Archived cases (3)". */
 export const archivedToggleText = (total: number): string => ARCHIVE_TEXT.listToggle + ' (' + total + ')';

@@ -1222,6 +1222,39 @@ func TestSessionProofRejectsBadNoncesMethodsAndIsRateLimited(t *testing.T) {
 	}
 }
 
+// TestLaunchAndSessionProofLimitersAreIndependent is the L1 regression: a flood
+// on /launch must not lock out the session-proof route, and the reverse.
+func TestLaunchAndSessionProofLimitersAreIndependent(t *testing.T) {
+	h := New(audit.NewDemo(time.Now()), nil, testToken, true).(*handler)
+	local := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8765}
+	nonce, _ := sessionproof.NewNonce()
+	clock := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	h.proofs.now = func() time.Time { return clock }
+	h.launchTries.now = func() time.Time { return clock }
+	launch := func() int {
+		return request(h, http.MethodGet, launchPath+"?c=wrong", "", false).Code
+	}
+	for i := 0; i < launchTriesPerWindow; i++ {
+		launch()
+	}
+	if proofRequest(h, nonce, local).Code != http.StatusOK {
+		t.Fatal("session proof locked out by launch attempts")
+	}
+	if launch() != http.StatusNotFound {
+		t.Fatal("launch is not refused once its own limit is spent")
+	}
+	for i := 0; i < sessionProofsPerWindow; i++ {
+		proofRequest(h, nonce, local)
+	}
+	if res := proofRequest(h, nonce, local); res.Code != http.StatusTooManyRequests {
+		t.Fatalf("session proof not limited: %d", res.Code)
+	}
+	clock = clock.Add(connectionTestWindow)
+	if launch() != http.StatusNotFound {
+		t.Fatal("launch with a wrong code must still answer 404 after the window")
+	}
+}
+
 // TestSourceAddsAreRateLimited is the L-C regression: adding a source dials the
 // server, so it is capped like connection tests.
 func TestSourceAddsAreRateLimited(t *testing.T) {

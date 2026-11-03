@@ -92,7 +92,7 @@
 
 {#if term}
   <span class="hint-wrap">
-    <button type="button" class="hint-button" bind:this={trigger} aria-label={'What does ' + term.term + ' mean?'} aria-expanded={open} aria-controls={open ? popId : undefined} onclick={toggle} onfocusout={leave}><span aria-hidden="true">?</span></button>
+    <button type="button" class="hint-button" bind:this={trigger} aria-label={'What does ' + term.term + ' mean?'} aria-expanded={open} aria-controls={open ? popId : undefined} onclick={toggle} onfocusout={leave}><span class="hint-glyph" aria-hidden="true">?</span></button>
   </span>
   {#if open}
     <div class="hint-popover" id={popId} role="dialog" aria-labelledby={titleId} tabindex="-1" bind:this={pop} use:portal onfocusout={leave} onkeydown={popKey} style:left={pos.left + 'px'} style:top={pos.top + 'px'}>
@@ -107,10 +107,10 @@
 
 <style>
   .hint-wrap { display: inline-flex; vertical-align: middle; margin-left: 4px; font-weight: 400; text-transform: none; letter-spacing: 0; }
-  .hint-button { position: relative; display: inline-grid; place-items: center; width: 16px; height: 16px; padding: 0; color: var(--text-2); background: transparent; border: 1px solid var(--control-line); border-radius: 50%; font-size: 10px; font-weight: 600; line-height: 1; }
-  /* The visible circle stays small; the tap target reaches 24px. */
-  .hint-button::after { content: ""; position: absolute; inset: -4px; }
-  .hint-button:hover, .hint-button[aria-expanded="true"] { color: var(--text); border-color: var(--accent); background: var(--surface-2); }
+  /* The button is 24px square for the tap target; the circle you see is the 16px glyph inside it. */
+  .hint-button { display: inline-grid; place-items: center; width: 24px; height: 24px; margin: -4px; padding: 0; color: var(--text-2); background: transparent; border: 0; border-radius: 50%; font-size: 10px; font-weight: 600; line-height: 1; }
+  .hint-glyph { display: grid; place-items: center; width: 16px; height: 16px; border: 1px solid var(--control-line); border-radius: 50%; }
+  .hint-button:hover .hint-glyph, .hint-button[aria-expanded="true"] .hint-glyph { color: var(--text); border-color: var(--accent); background: var(--surface-2); }
   .hint-popover { position: fixed; z-index: 60; width: min(340px, calc(100vw - 24px)); max-height: calc(100vh - 16px); overflow: auto; padding: 12px 14px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 12px 32px color-mix(in srgb, var(--bg) 70%, transparent); font-size: 13px; font-weight: 400; line-height: 1.45; text-align: left; text-transform: none; letter-spacing: 0; white-space: normal; animation: reveal var(--dur) var(--ease); }
   .hint-popover p { margin: 6px 0 0; }
   .hint-term { font-size: 13px; font-weight: 600; }

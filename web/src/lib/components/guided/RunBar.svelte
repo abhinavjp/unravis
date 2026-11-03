@@ -1,7 +1,7 @@
 <script lang="ts">
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
   import { SHELL_TEXT as S } from '../../copy/guidedShellCopy';
-  import { frameProblems } from '../../guided/frame';
+  import { frameProblems, windowsUsable } from '../../guided/frame';
   import type { GuidedStore } from '../../guided/guided.svelte';
   import { runIsPrimary } from '../../guided/stepModel';
 
@@ -11,7 +11,7 @@
 
   const problems = $derived(frameProblems(store.frame));
   const running = $derived(store.phase === 'running');
-  const stale = $derived(store.outOfDate(sourceIds));
+  const stale = $derived(store.outOfDate(sourceIds) && windowsUsable(store.frame));
   const hasAnswer = $derived(!!store.answer);
   const label = $derived(store.phase === 'failed' ? T.retry : hasAnswer ? T.rerun : T.run);
 </script>

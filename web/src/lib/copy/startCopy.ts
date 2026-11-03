@@ -23,6 +23,8 @@ export const START_TEXT = {
   untrustedLabel: 'Legacy case from an older version',
   showMore: 'Show more cases',
   untitled: 'Untitled case',
+  missingHelp: 'The working copy of this case is missing on this computer. If you have a case file for it, you can restore the case from that file.',
+  missingRestore: 'Restore from a case file',
 
   enterTitle: 'Enter an existing case',
   enterText: 'Type a case code to open a case on this computer, or restore one from a case file.',

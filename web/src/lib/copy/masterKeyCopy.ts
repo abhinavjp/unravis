@@ -48,7 +48,7 @@ export const KEY_TEXT = {
   lock: 'Lock',
   lockLabel: 'Lock cases',
   lockFailed: 'The cases could not be locked. Try again.',
-  home: 'Home',
+  home: 'All cases',
   homeLabel: 'Back to the start screen'
 } as const;
 
