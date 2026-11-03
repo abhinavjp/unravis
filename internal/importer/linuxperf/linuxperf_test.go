@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -538,7 +539,9 @@ func TestPidstatNeverStoresArguments(t *testing.T) {
 		if err != nil || len(evs) != 6 {
 			t.Fatalf("%d events, %v", len(evs), err)
 		}
-		all := strings.ToLower(fmt.Sprintf("%+v %+v", evs, rep))
+		// JSON, not %+v: %+v prints pointer addresses, which can contain a banned hex string by chance.
+		dump, _ := json.Marshal([]any{evs, rep})
+		all := strings.ToLower(string(dump))
 		for _, banned := range []string{"sentinel", "7f3a", "payroll", "acme", "api.dll", "--token", "requirepass", "weird", "6379", "worker"} {
 			if strings.Contains(all, banned) {
 				t.Errorf("%q is stored: %.300s", banned, all)
