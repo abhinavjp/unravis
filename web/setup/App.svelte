@@ -507,8 +507,9 @@
 </div>
 
 <style>
-  .page { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
-  .frame { width: min(880px, 100%); height: 600px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+  /* The setup window is the card: it fills the window at any size, so there is no dead band around it. */
+  .page { box-sizing: border-box; height: 100vh; }
+  .frame { box-sizing: border-box; width: 100%; height: 100%; min-height: 480px; display: flex; flex-direction: column; background: var(--surface); overflow: hidden; }
   header { flex: 0 0 56px; height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 1px solid var(--line); }
   .version { font-size: 12px; color: var(--text-2); }
   .body { flex: 1; min-height: 0; display: grid; grid-template-columns: 200px minmax(0, 1fr); }
@@ -552,6 +553,7 @@
     .body { grid-template-columns: minmax(0, 1fr); }
     .stepline { display: block; }
     aside { display: none; }
+    .page { height: auto; min-height: 100vh; }
     .frame { height: auto; min-height: 600px; }
     .grid { grid-template-columns: 1fr 1fr; }
     .grid .wide { grid-column: span 2; }

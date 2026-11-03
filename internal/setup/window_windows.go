@@ -16,7 +16,13 @@ import (
 // OpenWindow shows url. browser is from Machine.Browser ("" for the default browser).
 func OpenWindow(browser, url string) error {
 	if browser != "" {
-		cmd := exec.Command(browser, "--app="+url, "--window-size=1024,768", "--no-first-run")
+		// A private profile folder makes this its own browser process, so --window-size is honoured instead of the size
+		// the person's everyday Edge or Chrome last had, and no extension or sign-in of theirs touches the setup page.
+		args := []string{"--app=" + url, "--window-size=1024,768", "--no-first-run"}
+		if base := os.Getenv("LOCALAPPDATA"); base != "" {
+			args = append(args, "--user-data-dir="+filepath.Join(base, "Unravis", "setup-window"))
+		}
+		cmd := exec.Command(browser, args...)
 		if err := cmd.Start(); err == nil {
 			go cmd.Wait()
 			return nil
