@@ -10,6 +10,7 @@
   import HealthPanel from './HealthPanel.svelte';
   import type { Span } from '../resourceSpan';
   import { results } from '../appState.svelte';
+  import { exportScrub } from '../exportScrub.svelte';
   import { DISCOVER_TEXT } from '../copy/discoverCopy';
   import DiscoverEntry from '../../components/DiscoverEntry.svelte';
 
@@ -93,7 +94,11 @@
     controller = mine;
     try {
       const result = await previewCaseExport(caseId, mine.signal);
-      if (!mine.signal.aborted) phase = { kind: 'preview', preview: result };
+      if (!mine.signal.aborted) {
+        phase = { kind: 'preview', preview: result };
+        const scrub = (result.export as { scrubSensitive?: unknown }).scrubSensitive;
+        exportScrub.set(typeof scrub === 'boolean' ? scrub : null);
+      }
     } catch (error) {
       if (mine.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return;
       phase = { kind: 'idle' };

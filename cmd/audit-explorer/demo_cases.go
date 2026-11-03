@@ -649,7 +649,7 @@ func (d demoSeeder) importTracingFile(ctx context.Context, c casestore.Case, imp
 // day before the demo clock). Three imports, in this fixed order so the first
 // import ids are 1, 2, 3 in a fresh case: sql-xe, iis-w3c, iis-httperr.
 func (d demoSeeder) importTracing(ctx context.Context, c casestore.Case, created time.Time) error {
-	base := created.Truncate(time.Hour)
+	base := created.UTC().Truncate(time.Hour)
 	at := created.Add(10 * time.Minute)
 	caseID := c.Info().ID
 	if err := d.importTracingFile(ctx, c, "sql-xe", "demo-xe-sql-a.xel", demoTracingSQLEvents(caseID, base), at); err != nil {

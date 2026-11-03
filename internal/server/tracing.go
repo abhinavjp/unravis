@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -18,8 +19,9 @@ import (
 )
 
 // The tracing route: POST /api/cases/{id}/tracing. It is read-only: it writes
-// nothing to the case, and this shell opens no live audit connection (the audit
-// lane arrives with its own packet and reads the live repository itself).
+// nothing to the case. The audit lane reads the live audit repository itself
+// (one aggregate Rollup per request, see tracing_audit.go); the sql and iis
+// lanes read only what the case already stores.
 
 const (
 	tracingMaxSources   = 50
@@ -745,6 +747,14 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 		writeCaseFailure(w, fail.Status, fail.Reason, fail.Message)
 		return
 	}
+	// Audit sources are checked against the listing before anything is read. An
+	// unlisted explicit id is a 404; a listing failure only drops the audit lane
+	// (a warning below). No id or error text is kept.
+	auditRefs, auditWarn, auditErr := selectAuditSources(ctx, h.repo, sel.Explicit, sel.AuditIDs)
+	if errors.Is(auditErr, errUnknownAuditSource) {
+		writeCaseFailure(w, http.StatusNotFound, "unknown-source", tracingUnknownMsg)
+		return
+	}
 	start, end := req.Incident.Start.UTC(), req.Incident.End.UTC()
 	axis := newTracingAxis(start, end)
 	win := tracingWindow{Start: start, End: end, AxisStart: axis.AxisStart, AxisEnd: axis.AxisEnd,
@@ -767,6 +777,24 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 		appendLane(&resp, lane)
 	}
 	resp.Warnings = append(append([]string{}, sel.Warnings...), warns...)
+	switch {
+	case auditErr != nil:
+		resp.Warnings = append(resp.Warnings, tracingAuditListWarn)
+	case len(auditRefs) > 0:
+		if auditWarn != "" {
+			resp.Warnings = append(resp.Warnings, auditWarn)
+		}
+		auditIDs := make([]string, len(auditRefs))
+		for i, ref := range auditRefs {
+			auditIDs[i] = ref.SourceID
+		}
+		reader, _ := h.repo.(audit.RollupReader)
+		read := readAuditLane(ctx, reader, auditIDs, axis, time.Now)
+		if r.Context().Err() != nil {
+			return // the client went away; nothing to write
+		}
+		appendLane(&resp, auditLaneToWire(read, auditRefs))
+	}
 	finishTracingMeta(&resp)
 	writeJSON(w, http.StatusOK, resp, maxResponseBytes)
 }

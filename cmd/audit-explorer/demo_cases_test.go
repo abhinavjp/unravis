@@ -830,3 +830,32 @@ func TestDemoTracingCaseHasNoPrivateAttrs(t *testing.T) {
 		}
 	}
 }
+
+// A demo started without UNRAVIS_DEMO_NOW takes the machine clock, which is not UTC; the tracing case's
+// events must still be written in UTC or its imports are refused and no demo case is seeded.
+func TestDemoTracingCaseSeedsOnANonUTCClock(t *testing.T) {
+	getenv := envOf(map[string]string{"AUDIT_CONFIG_DIR": t.TempDir(), envDemoCases: "1"})
+	cfg, _, err := demoEnv(true, getenv, time.Now().In(time.FixedZone("half-hour", 5*3600+1800)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, closeCases, err := wireCases(true, cfg, getenv, newDemoLedger(t))
+	if err != nil {
+		if strings.Contains(err.Error(), "unavailable on this platform") {
+			t.Skip("encrypted storage is not available on this platform")
+		}
+		t.Fatal(err)
+	}
+	h := demoServer(t, options)
+	defer closeCases()
+	_, list := listCases(t, h)
+	found := false
+	for _, c := range list {
+		if c["id"] == string(demoCaseTracingID) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the tracing demo case was not seeded: %v", list)
+	}
+}

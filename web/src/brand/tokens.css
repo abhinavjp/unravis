@@ -12,6 +12,9 @@
 */
 :root {
   color-scheme: dark;
+  --lane-audit: #3fd6b0;
+  --lane-sql: #c58bd6;
+  --lane-iis: #e3a23c;
   --bg: #050807;
   --surface: #0a0f0d;
   --surface-2: #101714;
@@ -60,6 +63,9 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     color-scheme: light;
+    --lane-audit: #0b6b57;
+    --lane-sql: #9956a1;
+    --lane-iis: #ad6511;
     --bg: #f5f5f3;
     --surface: #ffffff;
     --surface-2: #eeeeeb;
@@ -108,6 +114,9 @@
 }
 :root[data-theme="light"] {
   color-scheme: light;
+  --lane-audit: #0b6b57;
+  --lane-sql: #9956a1;
+  --lane-iis: #ad6511;
   --bg: #f5f5f3;
   --surface: #ffffff;
   --surface-2: #eeeeeb;

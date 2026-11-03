@@ -24,6 +24,10 @@ import (
 // live audit connection fails. Later tracing tests reuse it.
 type noRepo struct{ audit.Repository }
 
+// Sources lists nothing, so the default tracing call needs no live read; every
+// other method still panics.
+func (noRepo) Sources(context.Context) ([]audit.Source, error) { return []audit.Source{}, nil }
+
 // seedTracingTag adds one source tag to a case and returns it with its id.
 func seedTracingTag(t *testing.T, store casestore.Store, caseID string, tag casestore.SourceTag) casestore.SourceTag {
 	t.Helper()
@@ -203,10 +207,16 @@ func TestTracingStrictRequest(t *testing.T) {
 				t.Errorf("%s says %q, want %q", c.name, got, c.text)
 			}
 		}
-		// A repeated id is dropped silently (and an audit-looking id needs no case source).
+		// A repeated audit id collapses to one: the listing has audit-a, so the
+		// request is 200 and the audit read names it once (WP-17a).
+		dupRepo := &auditFake{sources: auditSources("audit-a")}
+		dupEnv := tagEnv(t, e.store, dupRepo)
 		dup := tracingBody(`"sourceIds":["audit-a","audit-a"]`)
-		if res := e.json(http.MethodPost, tracingPath(id), dup); res.Code != http.StatusOK {
+		if res := dupEnv.json(http.MethodPost, tracingPath(id), dup); res.Code != http.StatusOK {
 			t.Errorf("duplicate ids = %d %s", res.Code, res.Body)
+		}
+		if len(dupRepo.plans) != 1 || strings.Join(dupRepo.plans[0].SourceIDs, ",") != "audit-a" {
+			t.Errorf("duplicate ids read %+v, want one read of audit-a", dupRepo.plans)
 		}
 		// Wrong Content-Type.
 		req := httptest.NewRequest(http.MethodPost, tracingPath(id), strings.NewReader(tracingBody("")))
@@ -316,10 +326,11 @@ func TestTracingSourceIDs(t *testing.T) {
 		if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 			t.Fatalf("sources = %+v, want %+v", got, want)
 		}
-		// An audit-looking id is kept for the audit lane; it adds no source here.
-		got = tracingSourcesOf(t, e.json(http.MethodPost, tracingPath(id), tracingBody(`"sourceIds":["demo-west"]`)))
-		if len(got) != 0 {
-			t.Errorf("audit id changed sources: %+v", got)
+		// An audit-looking id is checked against the listed audit sources (WP-17a);
+		// noRepo lists none, so it is an unknown source.
+		res := e.json(http.MethodPost, tracingPath(id), tracingBody(`"sourceIds":["demo-west"]`))
+		if res.Code != http.StatusNotFound || failureOf(t, res).Reason != "unknown-source" {
+			t.Errorf("demo-west = %d %s, want 404 unknown-source", res.Code, res.Body)
 		}
 	})
 }

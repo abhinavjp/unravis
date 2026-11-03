@@ -16,6 +16,8 @@
   import { GUIDED_TEXT } from '../copy/guidedCopy';
   import { guidedOpenFor } from '../guided/stepModel';
   import GuidedAnalysis from './guided/GuidedAnalysis.svelte';
+  import { TRACING_TEXT } from '../copy/tracingCopy';
+  import { lazyComponent } from '../lazy';
   import { formatTime } from '../time';
   import { timeZone } from '../timeZone.svelte';
   import { getCaseKeyStatus } from '../caseKeyApi';
@@ -30,6 +32,8 @@
   import HealthPanel from './HealthPanel.svelte';
   import SourcesHub from '../../components/sources/SourcesHub.svelte';
   import { HUB_TEXT } from '../copy/sourcesCopy';
+
+  const TracingPaper = lazyComponent(() => import('../../components/TracingPaper.svelte'));
 
   // One page per case: the story (what happened, in order), the theories, the health checks, the analysis and the files.
   // Everything here is read from what the case already saved. Nothing runs by itself.
@@ -62,6 +66,9 @@
   // The case the guided view was opened on. Another case starts at its own home.
   let guidedFor = $state('');
   const guidedOpen = $derived(guidedOpenFor(guidedFor, caseId));
+  // The case the Investigation Timeline was opened on, same shape as guidedFor/guidedOpen above.
+  let tracingFor = $state('');
+  const tracingOpen = $derived(tracingFor === caseId);
   let controller: AbortController | null = null;
   let loadedFor = '';
 
@@ -264,6 +271,12 @@
 
   function gone() { phase = 'gone'; }
 
+  // The Investigation Timeline closes back onto this page; focus goes back to the button that opened it.
+  function closeTracing() {
+    tracingFor = '';
+    void tick().then(() => document.getElementById('home-tracing-open')?.focus());
+  }
+
   // A move on the case sends what this page believes about it. If another tab moved the case first, the server says so (409, M2): the page
   // shows that and offers a reload, and changes nothing by itself.
   function lifeFailed(error: unknown) {
@@ -383,6 +396,10 @@
     </section>
   {:else if view === 'key'}
     <CaseKeyPage {caseId} status={keyStatus} masterState={app.lockState} onChanged={keyChanged} onCancel={() => void backFromDialog()} />
+  {:else if tracingOpen}
+    {#key caseId}
+      <TracingPaper {caseId} closed={!!info?.closed} {readOnly} onClose={closeTracing} />
+    {/key}
   {:else if guidedOpen}
     {#key caseId}
       <GuidedAnalysis {caseId} closed={!!info?.closed} {readOnly} {hasIis} onAddData={openCaseImport} onClose={() => (guidedFor = '')} />
@@ -467,6 +484,13 @@
       <p class="note">{CASE_HOME_TEXT.analysisText}</p>
       <div><button type="button" class="primary-button" onclick={openAnalysis}>{CASE_HOME_TEXT.analysisButton}</button></div>
       <p class="note">{CASE_HOME_TEXT.analysisHint}</p>
+    </section>
+
+    <section class="block" aria-labelledby="home-tracing">
+      <h3 id="home-tracing">{TRACING_TEXT.heading}</h3>
+      <p class="note">{TRACING_TEXT.entryNote}</p>
+      <div><button id="home-tracing-open" type="button" class="secondary-button" disabled={!!info?.closed} onclick={() => (tracingFor = caseId)}>{TRACING_TEXT.entryButton}</button></div>
+      {#if info?.closed}<p class="note">{TRACING_TEXT.closedReason}</p>{/if}
     </section>
 
     <section class="block" aria-labelledby="home-guided">
