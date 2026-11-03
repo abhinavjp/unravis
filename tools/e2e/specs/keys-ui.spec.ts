@@ -91,13 +91,13 @@ test('KEY-07: a keyed case is archived sealed with its own key, with no passphra
   mkdirSync(folder);
   await goHome(page);
   await openCase(page, 'QA Archive Keyed');
-  await page.getByRole('button', { name: 'Archive this case' }).click();
+  await page.getByRole('button', { name: 'Save case file' }).click();
   const drawer = page.getByRole('dialog');
   await expect(drawer.getByText('The case key of this case')).toBeVisible();
   await expect(drawer.getByText('The file opens with the case key, on this or any computer. Keep the key: without it the file cannot be opened.')).toBeVisible();
   await expect(drawer.getByLabel('Passphrase for this file')).toHaveCount(0);
   await drawer.getByLabel('Folder for the case file').fill(folder);
-  await drawer.getByRole('button', { name: 'Archive the case' }).click();
+  await drawer.getByRole('button', { name: 'Save the case file' }).click();
   await expect(page.getByText('Key ending ' + k.ending).first()).toBeVisible();
   await expect.poll(() => readdirSync(folder).length).toBe(1);
   expect(readdirSync(folder)[0]).toMatch(/\.unravis-case$/);

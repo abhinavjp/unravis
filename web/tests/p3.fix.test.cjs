@@ -97,7 +97,7 @@ test('the archived home hides the analysis, the checks, the sources, the theorie
   const story = at('aria-labelledby="home-story"');
   const open2 = home.indexOf('{#if offersWork}', open1 + 1);
   assert.ok(open1 > 0 && open2 > story, 'two guarded runs, one before the story and one after');
-  for (const id of ['home-analysis', 'home-guided']) assert.ok(at(id) > open1 && at(id) < story, id);
+  for (const id of ['home-analysis', 'home-tracing']) assert.ok(at('aria-labelledby="' + id + '"') > open1 && at('aria-labelledby="' + id + '"') < story, id);
   for (const id of ['home-theories', 'home-health', 'home-sources', 'home-files']) assert.ok(at(id) > open2, id);
   assert.match(home, /ARCHIVE_TEXT\.archivedWork/);
   assert.ok(copy.archiveLintEntries().some((entry) => entry.text === copy.ARCHIVE_TEXT.archivedWork), 'the new sentence is in the copy lint');

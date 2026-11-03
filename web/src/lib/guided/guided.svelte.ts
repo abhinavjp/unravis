@@ -1,3 +1,4 @@
+// Guided analysis is kept and maintained but unlisted (see docs/guided-unlisted.md). Do not delete.
 import { CaseApiError, casePath, json, listImports, send } from '../cases';
 import { api } from '../api';
 import { reportAction } from '../clientLog';

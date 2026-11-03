@@ -1,7 +1,6 @@
 // Reports and exports: the CSV and HTML report, the shared export, and what must never be in them.
-import { test, expect, type Page } from '../support/fixtures';
+import { test, expect } from '../support/fixtures';
 import { createCase, demoId, type ApiFn } from '../support/api';
-import { goHome, openCase } from '../support/ui';
 
 const WIN = {
   sourceIds: ['demo-west', 'demo-east'],
@@ -111,18 +110,6 @@ test('EXP-04: a report before any run says nothing was analysed and invents no f
   const html = await report(api, id, 'html', false);
   expect(html.mime).toContain('text/html');
   expect(html.content).toContain('Nothing has been analysed in this case yet.');
-});
-
-async function openExportTab(page: Page) {
-  await goHome(page);
-  await openCase(page, 'Checkout slowdown, 17 October');
-  await page.getByRole('button', { name: 'Open guided analysis' }).click();
-  await page.getByRole('tab', { name: 'Export' }).click();
-}
-
-test('EXP-04a: the Export tab before any run says so in one sentence', async ({ page }) => {
-  await openExportTab(page);
-  await expect(page.getByText('Nothing has been analysed yet. The report will say so and hold only the checklist, if you include it.')).toBeVisible();
 });
 
 test('EXP-06: a bad case id, a bad format and a wrong method are refused plainly with no report body', async ({ api }) => {

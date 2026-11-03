@@ -28,7 +28,7 @@ test('CASE-01: three cards, and one filled accent button only', async ({ page })
 
 test('CASE-02: rows, stickers and the archived and erased lists', async ({ page, api }) => {
   const list = await api('GET', '/api/cases');
-  expect(list.json.cases).toHaveLength(7);
+  expect(list.json.cases).toHaveLength(8);
   expect(list.json.archivedTotal).toBe(2);
   const card = page.getByRole('region', { name: 'Use an existing case' });
   await expect(card.getByRole('button', { name: 'Open case Checkout slowdown, 17 October' })).toBeVisible();
@@ -38,7 +38,7 @@ test('CASE-02: rows, stickers and the archived and erased lists', async ({ page,
   await expect(card).toContainText('Legacy case from an older version');
   await expect(card).toContainText('Key ending');
   await expect(card).not.toContainText('Payroll run discrepancy');
-  await expect(card.getByRole('button', { name: 'Archived cases (2)' })).toBeVisible();
+  await expect(card.getByRole('button', { name: 'Saved cases (2)' })).toBeVisible();
   await expect(card).toContainText('Erased case k7m2qx4a');
   await expect(card).toContainText('Erased case q2w7exak');
   await expect(card.getByRole('button', { name: 'Show more cases' })).toHaveCount(0);
@@ -68,12 +68,24 @@ test('CASE-04: a case code is accepted in any layout and refused with one senten
   await open.click();
   await expect(page.getByRole('button', { name: /^All cases/ })).toBeVisible();
   await page.getByRole('button', { name: 'All cases' }).click();
-  for (const bad of ['demoopen', demoId('demoopen') + 'a', 'demoopen1aaaaaaaaaaaaaaaaaa', demoId('k7m2qx4a')]) {
+  // A code of the wrong shape is refused on the page, with its own sentence, and Open case stays off.
+  const shapes: [string, string][] = [
+    ['demoopen', 'That is too short. A case code has 26 letters and numbers.'],
+    [demoId('demoopen') + 'a', 'That is too long. A case code has 26 letters and numbers.'],
+    ['demoopen1aaaaaaaaaaaaaaaaaa', 'That has a character a case code never uses. Codes use letters and the numbers 2 to 7.']
+  ];
+  for (const [bad, sentence] of shapes) {
     await page.getByLabel('Case code').fill(bad);
-    await open.click();
-    await expect(refused, bad).toBeVisible();
+    await field.blur();
+    await expect(page.getByText(sentence), bad).toBeVisible();
+    await expect(open, bad).toBeDisabled();
     expect(page.url(), 'the typed code is not put in the address').not.toContain(bad);
   }
+  // A code of the right shape that matches no case on this computer (an erased one) is asked about and refused with one sentence.
+  await page.getByLabel('Case code').fill(demoId('k7m2qx4a'));
+  await open.click();
+  await expect(refused).toBeVisible();
+  expect(page.url(), 'the typed code is not put in the address').not.toContain(demoId('k7m2qx4a'));
   // An empty field is not asked about (D-A-04): the button is off.
   await page.getByLabel('Case code').fill('');
   await expect(open).toBeDisabled();
@@ -99,7 +111,7 @@ test('CASE-05: the wizard makes an empty case that appears in the list', async (
 test('CASE-08: a closed case is read-only and reopens once, only from closed', async ({ page, api }) => {
   const id = demoId('democlos');
   await openCase(page, 'Night batch overrun, 10 October');
-  await expect(page.getByText('This case is closed. You can read it, but nothing can be added.')).toBeVisible();
+  await expect(page.getByText('This case is closed. You can read it, but nothing can be added.').first()).toBeVisible();
   const reopen = page.getByRole('button', { name: 'Reopen this case' });
   await reopen.click();
   await expect(page.getByText('Case reopened').first()).toBeVisible();

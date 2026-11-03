@@ -180,7 +180,7 @@
     tipStyle = `left:${Math.min(80, leftPct(localSelected))}%;top:4px`;
   }
 
-  // Drag across the chart to zoom into those bars (WP-23). Pointer capture keeps the drag alive outside the overlay.
+  // Drag across the chart to zoom into those bars (WP-23). Pointer capture (taken once the drag leaves its first bucket) keeps it alive outside the overlay.
   let dragFrom = $state<number | null>(null);
   let dragTo = $state<number | null>(null);
   let swallowClick = false;
@@ -199,7 +199,6 @@
     dragFrom = slot;
     dragTo = slot;
     hideTip();
-    try { overlayEl?.setPointerCapture(event.pointerId); } catch { /* a synthetic pointer cannot be captured */ }
   }
 
   function endDrag(commit: boolean) {
@@ -217,7 +216,15 @@
     const rect = overlayEl.getBoundingClientRect();
     if (rect.width <= 0) return;
     const slot = absoluteSlot(range, (event.clientX - rect.left) / rect.width);
-    if (dragFrom != null) { if (slot >= 0) dragTo = slot; hideTip(); return; }
+    if (dragFrom != null) {
+      if (slot >= 0) dragTo = slot;
+      // Capture only once the pointer leaves the bucket it went down on, so a plain click still reaches the column.
+      if (slot >= 0 && slot !== dragFrom) {
+        try { overlayEl.setPointerCapture(event.pointerId); } catch { /* a synthetic pointer cannot be captured */ }
+      }
+      hideTip();
+      return;
+    }
     if (slot < 0) { hideTip(); return; }
     let hovered: TracingLaneKey | null = null;
     overlayEl.parentElement?.querySelectorAll<HTMLElement>('.panel[data-lane]').forEach((panel) => {
@@ -267,20 +274,20 @@
       {@const max = barMax(bars)}
       {@const drawBars = drawsBars(lane, allBars)}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="lane-label" tabindex="0" aria-describedby="tc-hint-{lane.key}" data-truncated={lane.truncated ? 'true' : undefined} style="grid-row:{laneIndex + 1}">
+      <div class="lane-label" tabindex="0" aria-describedby="tc-hint-{lane.key}" data-truncated={lane.truncated ? 'true' : undefined} style="--row:{laneIndex + 1}">
         <span class="swatch" style={SWATCH_STYLE[lane.key]} aria-hidden="true"></span>
         <strong>{LANE_NAME[lane.key]}</strong>
         <small>{LANE_ASK[lane.key]}</small>
         <small class="origin">{lane.origin === 'live' ? 'Read just now' : 'From saved logs'} · {formatTime(lane.asOf, { zone, precision: 'minute' })}</small>
         <span id="tc-hint-{lane.key}" role="tooltip" class="hint">{laneHint(lane.key)}</span>
       </div>
-      <div class="axis axis-left" style="grid-row:{laneIndex + 1}">
+      <div class="axis axis-left" style="--row:{laneIndex + 1}">
         {#if drawBars}
           <span class="tick tick-top">{max}</span>
           <span class="tick tick-bottom">0</span>
         {/if}
       </div>
-      <div class="panel" data-lane={lane.key} data-state={lane.state} data-disabled={lane.disabled ?? undefined} style="grid-row:{laneIndex + 1}">
+      <div class="panel" data-lane={lane.key} data-state={lane.state} data-disabled={lane.disabled ?? undefined} style="--row:{laneIndex + 1}">
         <p class="panel-title">{PANEL_TITLE[lane.key]}</p>
         {#if drawBars}
           <div class="bars">
@@ -318,11 +325,11 @@
           <p class="lane-note">{laneNote(lane)}</p>
         {/if}
       </div>
-      <div class="axis axis-right" style="grid-row:{laneIndex + 1}"></div>
+      <div class="axis axis-right" style="--row:{laneIndex + 1}"></div>
     {/each}
 
     {#if grid}
-      <div class="axisrow" style="grid-row:{orderedLanes.length + 1}">
+      <div class="axisrow" style="--row:{orderedLanes.length + 1}">
         {#each tickIndexes as i (i)}
           <span class="axtick" style="left:{leftPct(i)}%">{formatTime(slotStartMs(grid, i), { zone, precision: 'minute' })}</span>
         {/each}
@@ -338,7 +345,7 @@
       aria-describedby="tc-tip"
       tabindex="0"
       class="overlay"
-      style="grid-row:1 / {Math.max(2, orderedLanes.length + 1)}"
+      style="--end:{Math.max(2, orderedLanes.length + 1)}"
       bind:this={overlayEl}
       onkeydown={onOverlayKey}
       onpointerdown={onOverlayDown}
@@ -392,6 +399,7 @@
 
   .lanes-grid { position: relative; display: grid; grid-template-columns: auto 3.5rem 1fr 3.5rem; column-gap: var(--space-3); row-gap: var(--space-2); align-items: stretch; min-width: 0; }
 
+  .lane-label, .axis, .panel, .axisrow { grid-row: var(--row); }
   .lane-label { grid-column: 1; display: grid; gap: 2px; align-content: start; min-width: 0; }
   .lane-label .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: var(--space-1); }
   .lane-label small { color: var(--text-2); font-size: var(--fs-2); }
@@ -411,6 +419,9 @@
   .panel-title { margin: 0; padding: 0 var(--space-2); color: var(--text-2); font-size: var(--fs-2); }
   .bars { position: relative; height: 54px; margin-top: var(--space-1); }
   .bar { position: absolute; bottom: 0; background: var(--accent); border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+  .panel[data-lane='audit'] .bar { background: var(--lane-audit); }
+  .panel[data-lane='sql'] .bar { background: var(--lane-sql); }
+  .panel[data-lane='iis'] .bar { background: var(--lane-iis); }
   .bar-err { position: absolute; bottom: 0; left: 0; right: 0; background: var(--bad); }
   .outside-dash { position: absolute; bottom: 0; height: 2px; background: var(--line); opacity: .6; }
   .lane-note { margin: var(--space-1) var(--space-2) 0; color: var(--text-2); font-size: var(--fs-3); text-align: center; }
@@ -419,9 +430,10 @@
   .axisrow { grid-column: 3; position: relative; height: var(--space-5); font-size: var(--fs-1); color: var(--text-2); }
   .axtick { position: absolute; top: 0; white-space: nowrap; transform: translateX(-50%); }
 
-  .overlay { grid-column: 3; position: relative; }
+  .overlay { grid-column: 3; grid-row: 1 / var(--end); position: relative; }
   .overlay:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .tip { position: absolute; z-index: 4; display: grid; gap: var(--space-2); width: max-content; max-width: 22rem; padding: var(--space-2) var(--space-3); color: var(--text); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); pointer-events: none; }
+  .tip[hidden] { display: none; }
   .tip-group { display: grid; gap: 2px; }
   .column { position: absolute; top: 0; bottom: 0; margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer; }
   .column.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); outline: 1px solid var(--accent); }
@@ -444,5 +456,11 @@
     .panel { grid-column: 2; }
     .axis-right { grid-column: 3; }
     .axisrow, .overlay { grid-column: 2; }
+    /* Each lane takes two rows: its label, then its panel. The overlay spans them all; the labels stay above it. */
+    .lane-label { grid-row: calc(var(--row) * 2 - 1); z-index: 5; }
+    .axis, .panel { grid-row: calc(var(--row) * 2); }
+    .axisrow { grid-row: calc(var(--row) * 2 - 1); }
+    .overlay { grid-row: 1 / calc(var(--end) * 2 - 1); }
+    .axtick:not(:nth-child(5n+1)) { display: none; }
   }
 </style>

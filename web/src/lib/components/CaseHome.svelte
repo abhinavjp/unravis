@@ -13,7 +13,6 @@
   import { stateLabel } from '../ledger';
   import { holdLedger, ledger, refreshLedger } from '../ledgerStore.svelte';
   import { buildStory, shortText } from '../story';
-  import { GUIDED_TEXT } from '../copy/guidedCopy';
   import { guidedOpenFor } from '../guided/stepModel';
   import GuidedAnalysis from './guided/GuidedAnalysis.svelte';
   import { TRACING_TEXT } from '../copy/tracingCopy';
@@ -491,12 +490,6 @@
       <p class="note">{TRACING_TEXT.entryNote}</p>
       <div><button id="home-tracing-open" type="button" class="secondary-button" disabled={!!info?.closed} onclick={() => (tracingFor = caseId)}>{TRACING_TEXT.entryButton}</button></div>
       {#if info?.closed}<p class="note">{TRACING_TEXT.closedReason}</p>{/if}
-    </section>
-
-    <section class="block" aria-labelledby="home-guided">
-      <h3 id="home-guided">{GUIDED_TEXT.heading}</h3>
-      <p class="note">{GUIDED_TEXT.openGuidedNote}</p>
-      <div><button type="button" class="secondary-button" onclick={() => (guidedFor = caseId)}>{GUIDED_TEXT.openGuided}</button></div>
     </section>
 
     {/if}

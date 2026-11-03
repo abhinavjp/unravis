@@ -78,7 +78,7 @@ async function withPreview(page: Page, preview: string): Promise<void> {
   await page.evaluate((x) => {
     location.hash = '#keeper=' + x;
   }, preview);
-  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'All cases', exact: true }).click();
   await page.getByRole('button', { name: 'Open case ' + CASE }).click();
   await expect(page.locator('#home-sources')).toBeVisible();
 }
@@ -114,7 +114,7 @@ test('A11Y-01a: Esc with the add form open and a click on the scrim both close t
 test('A11Y-01b: reloading with the drawer open lands on the start of the app with the drawer closed', async ({ page }) => {
   await openBlackbox(page);
   await page.reload();
-  await expect(page.getByRole('button', { name: 'Home', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'All cases', exact: true })).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 

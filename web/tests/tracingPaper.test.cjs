@@ -12,7 +12,7 @@ const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 const home = () => read('src/lib/components/CaseHome.svelte');
 const paper = () => read('src/components/TracingPaper.svelte');
 
-test('case home offers the timeline entry and keeps the Guided and Analysis blocks', () => {
+test('case home offers the timeline entry and keeps the Analysis block and the guided mount', () => {
   const src = home();
   for (const needle of [
     'home-tracing',
@@ -23,7 +23,7 @@ test('case home offers the timeline entry and keeps the Guided and Analysis bloc
   ]) {
     assert.ok(src.includes(needle), 'CaseHome.svelte must contain ' + needle);
   }
-  for (const needle of ['home-guided', 'home-analysis', 'GuidedAnalysis']) {
+  for (const needle of ['home-analysis', 'GuidedAnalysis']) {
     assert.ok(src.includes(needle), 'CaseHome.svelte must still contain ' + needle);
   }
 });

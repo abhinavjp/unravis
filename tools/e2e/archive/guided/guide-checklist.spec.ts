@@ -1,7 +1,7 @@
 // The guided Checklist tab. Items are stored on the case, so this file has its own demo and the
 // order matters: GUIDE-14 first (each test leaves the list empty again), then GUIDE-13.
-import { test, expect, type Page } from '../support/fixtures';
-import { openGuided, runSteps, gotoStep } from '../support/ui';
+import { test, expect, type Page } from '../../support/fixtures';
+import { openGuided, runSteps, gotoStep } from './support';
 
 const CLOSED_CASE = 'Night batch overrun, 10 October';
 const LISTS = ['Need to do', 'Working on', 'What we learned', 'Ruled out'];

@@ -1,6 +1,6 @@
 // Guided analysis (steps 0 to 10) and the manual tools, with fixed windows on the demo day.
-import { test, expect, type Page } from '../support/fixtures';
-import { goHome, openCase } from '../support/ui';
+import { test, expect, type Page } from '../../support/fixtures';
+import { goHome, openCase } from '../../support/ui';
 
 async function openGuided(page: Page) {
   await goHome(page);

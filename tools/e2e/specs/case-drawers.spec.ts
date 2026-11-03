@@ -7,21 +7,21 @@ test.beforeEach(async ({ page }) => {
 });
 
 async function archivedList(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: /^Archived cases/ }).click();
-  await expect(page.getByText('Loading the archived cases')).toHaveCount(0);
-  return page.getByRole('region', { name: /^Archived cases/ });
+  await page.getByRole('button', { name: /^Saved cases/ }).click();
+  await expect(page.getByText('Loading the saved cases')).toHaveCount(0);
+  return page.getByRole('region', { name: /^Saved cases/ });
 }
 
 test('CASE-16: the archived list shows kept and freed rows with the right actions, and goes back', async ({ page }) => {
   const list = await archivedList(page);
-  await expect(list.getByRole('heading', { name: 'Archived cases (2)' })).toBeVisible();
-  await expect(list).toContainText('Archived on 6 Oct 2026');
+  await expect(list.getByRole('heading', { name: 'Saved cases (2)' })).toBeVisible();
+  await expect(list).toContainText('Saved on 6 Oct 2026');
   await expect(list).toContainText('Working copy kept');
   await expect(list).toContainText('Space freed');
   await expect(list).toContainText('Key ending 7c3e');
-  await expect(list.getByText('2 of 2 archived cases shown.')).toBeVisible();
+  await expect(list.getByText('2 of 2 saved cases shown.')).toBeVisible();
   await expect(list.getByRole('button', { name: /^Restore: Month-end batch stall/ })).toBeVisible();
-  await expect(list.getByRole('button', { name: 'Show more archived cases' })).toHaveCount(0);
+  await expect(list.getByRole('button', { name: 'Show more saved cases' })).toHaveCount(0);
   await list.getByRole('button', { name: 'Back to the working list' }).click();
   await expect(page.getByRole('button', { name: 'Open case Checkout slowdown, 17 October' })).toBeVisible();
 });

@@ -1,8 +1,8 @@
 // Manual tools: the thirteen cards, the tool frame, the two filters, notes and saved views.
 // This file has its own demo. The read-only tests come first; the ones that add a note or a saved view
 // remove it again before they finish so the next test starts from an empty list.
-import { test, expect, type Page } from '../support/fixtures';
-import { INC, REF, openGuided, setWindows, stepRail } from '../support/ui';
+import { test, expect, type Page } from '../../support/fixtures';
+import { INC, REF, openGuided, setWindows, stepRail } from './support';
 
 const CLOSED_CASE = 'Night batch overrun, 10 October';
 const CARDS: Array<[string, string]> = [
@@ -91,7 +91,7 @@ test('MAN-01b: the mode is remembered for the case in this browser after a reloa
 });
 
 async function openGuidedAgain(page: Page, caseTitle = 'Checkout slowdown, 17 October') {
-  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'All cases', exact: true }).click();
   await page.getByRole('button', { name: 'Open case ' + caseTitle }).click();
   await page.getByRole('button', { name: 'Open guided analysis' }).click();
 }
@@ -399,7 +399,7 @@ test('MAN-08b: opening a saved view runs nothing', async ({ page }) => {
   await saveView(page, 'No run on open');
   await expect(page.getByRole('heading', { name: 'Saved views (1)' })).toBeVisible();
   await page.reload();
-  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'All cases', exact: true }).click();
   await page.getByRole('button', { name: 'Open case Checkout slowdown, 17 October' }).click();
   await page.getByRole('button', { name: 'Open guided analysis' }).click();
   await expect(page.locator('#tools-title')).toHaveText('Manual tools');

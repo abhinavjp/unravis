@@ -6,7 +6,7 @@ import { test, expect, type Page } from '../support/fixtures';
 import { exePath } from '../support/launcher';
 
 const ROOT = resolve(__dirname, '..', '..', '..');
-const SLUGS = ['index', 'getting-started', 'install', 'cases', 'sources', 'blackbox', 'guided-analysis', 'manual-tools', 'upgrade-and-uninstall', 'troubleshooting', 'security'];
+const SLUGS = ['index', 'getting-started', 'install', 'cases', 'sources', 'blackbox', 'guided-analysis', 'manual-tools', 'upgrade-and-uninstall', 'troubleshooting', 'security', 'logs'];
 
 async function openHelp(page: Page) {
   await page.getByRole('button', { name: 'Glossary', exact: true }).click();
@@ -55,11 +55,11 @@ test('HELP-03: the build line holds a version and no folder, user name or secret
   expect(line).not.toMatch(/[A-Za-z]:\\|\/Users\/|token|password|key/i);
 });
 
-test('HELP-04: the guide has the 11 pages in order, the current one is marked, and no screenshots page', async ({ page }) => {
+test('HELP-04: the guide has the 12 pages in order, the current one is marked, and no screenshots page', async ({ page }) => {
   const dialog = await openHelp(page);
   await dialog.getByTestId('guide-open').click();
   const nav = dialog.locator('[data-testid^="guide-nav-"]');
-  await expect(nav).toHaveCount(11);
+  await expect(nav).toHaveCount(12);
   const ids = await nav.evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')));
   expect(ids).toEqual(SLUGS.map((s) => 'guide-nav-' + s));
   await expect(dialog.getByTestId('guide-nav-index')).toHaveAttribute('aria-current', 'page');

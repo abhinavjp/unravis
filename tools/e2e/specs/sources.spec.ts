@@ -12,7 +12,7 @@ async function openSources(page: Page) {
 }
 
 async function openCaseHome(page: Page) {
-  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'All cases', exact: true }).click();
   await page.getByRole('button', { name: 'Open case ' + CASE }).click();
   await expect(page.locator('#home-sources')).toBeVisible();
 }

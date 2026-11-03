@@ -2,7 +2,7 @@
 import { test, expect, type Page } from '../support/fixtures';
 
 async function savedConnections(page: Page) {
-  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'All cases', exact: true }).click();
   await page.getByRole('button', { name: 'Open case Checkout slowdown, 17 October' }).click();
   const block = page.getByRole('region', { name: 'Saved connections' });
   await expect(block).toBeVisible();

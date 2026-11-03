@@ -1,8 +1,8 @@
 // The Export tab of the guided analysis and the Export evidence drawer in the header. Nothing here changes
 // demo data (a report only reads), so the tests may run in any order.
 import { createHash } from 'node:crypto';
-import { test, expect, type Page } from '../support/fixtures';
-import { openGuided, runSteps, setWindows } from '../support/ui';
+import { test, expect, type Page } from '../../support/fixtures';
+import { openGuided, runSteps, setWindows } from './support';
 
 const CLOSED_CASE = 'Night batch overrun, 10 October';
 const STALE = 'The windows or lists changed after the last run. The report holds the earlier run, as it is on screen.';

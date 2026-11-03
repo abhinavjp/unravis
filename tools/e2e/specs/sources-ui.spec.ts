@@ -5,7 +5,7 @@ import { test, expect, type Page } from '../support/fixtures';
 const CASE = 'Checkout slowdown, 17 October';
 
 async function openCaseHome(page: Page) {
-  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'All cases', exact: true }).click();
   await page.getByRole('button', { name: 'Open case ' + CASE }).click();
   await expect(page.locator('#home-sources')).toBeVisible();
 }

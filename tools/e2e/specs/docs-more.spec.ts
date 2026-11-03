@@ -80,9 +80,9 @@ test('DOC-01a: in a scratch copy a renamed picture, a dropped screen and a wrong
 
 test('DOC-04: the page list of the in-app guide and the files in docs/user agree', async () => {
   const order = pageOrder();
-  expect(order).toHaveLength(11);
+  expect(order).toHaveLength(12);
   const files = mdFiles();
-  expect(files).toHaveLength(12);
+  expect(files).toHaveLength(13);
   for (const slug of order) expect(files, `${slug}.md exists`).toContain(slug + '.md');
   expect(files.filter((f) => !order.includes(f.replace(/\.md$/, ''))), 'only screenshots.md is outside the guide').toEqual(['screenshots.md']);
   // The guide reads the same folder, so a new page would join it by name.

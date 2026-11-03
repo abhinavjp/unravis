@@ -8,6 +8,8 @@
   import { allLanesVisible, toggleLane } from '../lib/tracing/toolbar';
   import { exportScrub } from '../lib/exportScrub.svelte';
   import { timeZone } from '../lib/timeZone.svelte';
+  import { handOffBucket, slotToBucket, HANDOFF_TEXT } from '../lib/tracing/handoff';
+  import { setWindowFromHour, openAnalysis } from '../lib/appState.svelte';
 
   // The Investigation Timeline screen shell (WP-16b): one request on open, a loading state with Cancel, a plain
   // error with Try again, and four stable regions (windows, toolbar, chart, notes) that later packets fill in.
@@ -21,6 +23,8 @@
   // Which rows the chart shows (WP-11): kept across re-runs and zoom, never sent to the server.
   let visible = $state(allLanesVisible());
   let errorText = $state('');
+  // The plain sentence shown when a clicked bar has nothing to analyse (WP-61).
+  let handoffNote = $state('');
   let latestSeq = 0;
   let controller: AbortController | null = null;
 
@@ -36,6 +40,7 @@
       return;
     }
     if (!body) return;
+    handoffNote = '';
     controller?.abort();
     const mine = new AbortController();
     controller = mine;
@@ -122,11 +127,13 @@
       {#if result.sources.length === 0 && result.lanes.length === 0}
         <p role="status">{TRACING_TEXT.emptyNoSources}</p>
       {:else}
-        <TracingChart response={result} zone={timeZone.zone} {visible} />
+        <TracingChart response={result} zone={timeZone.zone} {visible} onSelect={(i) => { handoffNote = ''; const ok = result ? handOffBucket(slotToBucket(result, visible, i), { setWindow: setWindowFromHour, open: openAnalysis }) : false; if (!ok) handoffNote = HANDOFF_TEXT.empty; }} />
       {/if}
     {/if}
   </div>
-  <div data-region="notes"></div>
+  <div data-region="notes">
+    {#if handoffNote}<p role="status">{handoffNote}</p>{/if}
+  </div>
 </section>
 
 <style>

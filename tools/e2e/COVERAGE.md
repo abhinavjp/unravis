@@ -8,8 +8,9 @@ The catalogue is in `.dev/scenarios/groups` (g01 to g12). Status words:
 - manual-only: not automatable here, with the reason.
 - not yet automated: reachable in the demo but no spec written yet.
 
-Totals: 179 covered, 2 expected-fail, 54 manual-only, 0 not yet automated, 235 scenarios.
+Totals: 179 covered, 2 expected-fail, 54 manual-only, 0 not yet automated, 235 scenarios. The main suite declares 326 tests in `specs/` (plus the guided ones in `archive/guided/`); a full run executes 329 because some tests are generated in a loop. Checked 2026-11-03: 329 run, 0 unexpected.
 Extra ids with no catalogue entry (IMP-01 to IMP-04, the file import fixtures) are in `specs/imports.spec.ts`.
+Extra ids TRACE-01 to TRACE-16 (the timeline screen) are in `specs/tracing-screen.spec.ts`; HAND-01 to HAND-19 (guided unlisted, timeline bar hand-off) are in `specs/tracing-handoff.spec.ts`. All 35 run live; none is `test.fixme`. They have no catalogue entry, so they are not in the scenario totals.
 A scenario id with a letter after it (for example SRC-07a) is an extra check that belongs to the same scenario; it has its own row under the scenario and is not counted in the totals. A "covered (...)" status names the part of the scenario that cannot be run in the demo; the reasons are in `.dev/reports/e2e-ui-2.md`.
 
 ## How to run
@@ -21,12 +22,20 @@ powershell -File run-e2e.ps1                      # everything
 powershell -File run-e2e.ps1 -Only CASE-10,SEC-08 # chosen ids (an id with a letter, such as SRC-07a, is its own id)
 powershell -File run-e2e.ps1 -Exe D:/path/unravis-demo.exe
 powershell -File run-e2e.ps1 -Headed
+powershell -File run-e2e.ps1 -Archive   # the archived guided specs, report/archive.json
 npm run e2e -- -Only HELP-03                      # the same through npm
+npm run e2e:guided                                # the archived guided specs through npm
 ```
 
 The exe is `UNRAVIS_EXE` if set, else the prebuilt demo named in `support/launcher.ts`. Each spec file starts its own demo
 on port 0 with a new empty data folder and a fixed clock, and stops it at the end. The JSON report is `report/results.json`
 (git-ignored). Retries are off, so a flaky test shows as a failure.
+
+## Archived guided specs
+
+The specs for the unlisted Guided analysis live in `archive/guided/` (owner decision D-2); rows served by them read `covered (archive)`.
+A test id is in exactly one of `specs/` and `archive/guided/`, so these rows stay counted as covered in the totals.
+The archive suite runs before a release and on a schedule, not in the default run.
 
 ## How to add a scenario
 
@@ -156,49 +165,49 @@ on port 0 with a new empty data folder and a fixed clock, and stops it at the en
 | MCP-06 | - | manual-only: needs the MCP bridge process, not started by the demo |
 | MCP-07 | - | manual-only: needs the MCP bridge process, not started by the demo |
 | MCP-08 | - | manual-only: needs the MCP bridge process, not started by the demo |
-| GUIDE-01 | guide-steps.spec.ts | covered |
-| GUIDE-01a | guide-steps.spec.ts | covered |
-| GUIDE-01b | guide-steps.spec.ts | covered |
-| GUIDE-02 | guided.spec.ts | covered |
-| GUIDE-03 | guide-steps.spec.ts | covered |
-| GUIDE-03a | guide-steps.spec.ts | covered |
-| GUIDE-03b | guide-steps.spec.ts | covered |
-| GUIDE-04 | guided.spec.ts | covered |
-| GUIDE-05 | guide-steps.spec.ts | covered |
-| GUIDE-05a | guide-steps.spec.ts | covered |
-| GUIDE-05b | guide-steps.spec.ts | covered |
-| GUIDE-06 | guide-steps.spec.ts | covered |
-| GUIDE-06a | guide-steps.spec.ts | covered |
-| GUIDE-07 | guide-steps.spec.ts | covered |
-| GUIDE-08 | guide-steps.spec.ts | covered |
-| GUIDE-09 | guide-steps.spec.ts | covered |
-| GUIDE-09a | guide-steps.spec.ts | covered |
-| GUIDE-10 | guide-steps.spec.ts | covered |
-| GUIDE-10a | guide-steps.spec.ts | covered |
-| GUIDE-11 | guide-steps.spec.ts | covered |
-| GUIDE-11a | guide-steps.spec.ts | covered |
-| GUIDE-11b | guide-steps.spec.ts | covered |
-| GUIDE-11c | guide-steps.spec.ts | covered |
+| GUIDE-01 | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-01a | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-01b | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-02 | archive/guided/guided.spec.ts | covered (archive) |
+| GUIDE-03 | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-03a | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-03b | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-04 | archive/guided/guided.spec.ts | covered (archive) |
+| GUIDE-05 | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-05a | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-05b | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-06 | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-06a | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-07 | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-08 | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-09 | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-09a | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-10 | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-10a | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-11 | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-11a | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-11b | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-11c | archive/guided/guide-steps.spec.ts | covered (archive) |
 | GUIDE-12 | - | manual-only: not reachable in the demo |
-| GUIDE-13 | guide-checklist.spec.ts | covered |
-| GUIDE-13a | guide-checklist.spec.ts | covered |
-| GUIDE-13b | guide-checklist.spec.ts | covered |
-| GUIDE-13c | guide-checklist.spec.ts | covered |
-| GUIDE-13d | guide-checklist.spec.ts | covered |
-| GUIDE-14 | guide-checklist.spec.ts | covered |
-| GUIDE-14a | guide-checklist.spec.ts | covered |
-| GUIDE-14b | guide-checklist.spec.ts | covered |
-| GUIDE-14c | guide-checklist.spec.ts | covered |
-| GUIDE-14d | guide-checklist.spec.ts | covered |
+| GUIDE-13 | archive/guided/guide-checklist.spec.ts | covered (archive) |
+| GUIDE-13a | archive/guided/guide-checklist.spec.ts | covered (archive) |
+| GUIDE-13b | archive/guided/guide-checklist.spec.ts | covered (archive) |
+| GUIDE-13c | archive/guided/guide-checklist.spec.ts | covered (archive) |
+| GUIDE-13d | archive/guided/guide-checklist.spec.ts | covered (archive) |
+| GUIDE-14 | archive/guided/guide-checklist.spec.ts | covered (archive) |
+| GUIDE-14a | archive/guided/guide-checklist.spec.ts | covered (archive) |
+| GUIDE-14b | archive/guided/guide-checklist.spec.ts | covered (archive) |
+| GUIDE-14c | archive/guided/guide-checklist.spec.ts | covered (archive) |
+| GUIDE-14d | archive/guided/guide-checklist.spec.ts | covered (archive) |
 | GUIDE-15 | plan.spec.ts | covered |
 | GUIDE-15a | plan.spec.ts | covered |
 | GUIDE-15b | plan.spec.ts | covered |
-| GUIDE-16 | guide-steps.spec.ts | covered |
-| GUIDE-17 | guide-steps.spec.ts | covered |
-| GUIDE-17a | guide-steps.spec.ts | covered |
-| GUIDE-18 | guide-steps.spec.ts | covered |
-| GUIDE-19 | guided.spec.ts | covered |
-| GUIDE-19a | guided.spec.ts | covered |
+| GUIDE-16 | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-17 | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-17a | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-18 | archive/guided/guide-steps.spec.ts | covered (archive) |
+| GUIDE-19 | archive/guided/guided.spec.ts | covered (archive) |
+| GUIDE-19a | archive/guided/guided.spec.ts | covered (archive) |
 | GUIDE-20 | - | manual-only: not reachable in the demo |
 | GUIDE-21 | sources-steps.spec.ts | covered (the Out of date mark after adding data cannot be seen) |
 | GUIDE-21a | sources-steps.spec.ts | covered |
@@ -219,61 +228,61 @@ on port 0 with a new empty data folder and a fixed clock, and stops it at the en
 | GUIDE-24 | sources-steps.spec.ts | covered |
 | GUIDE-24a | sources-steps.spec.ts | covered |
 | GUIDE-25 | - | manual-only: needs real data (the demo has no second day to compare) |
-| MAN-01 | manual-tools.spec.ts | covered |
-| MAN-01a | manual-tools.spec.ts | covered |
-| MAN-01b | manual-tools.spec.ts | covered |
-| MAN-01c | manual-tools.spec.ts | covered |
-| MAN-02 | manual-tools.spec.ts | covered |
-| MAN-03 | manual-tools.spec.ts | covered |
-| MAN-03a | manual-tools.spec.ts | covered |
-| MAN-04 | guided.spec.ts | covered |
-| MAN-04a | guided.spec.ts | covered |
-| MAN-05 | manual-tools.spec.ts | covered |
-| MAN-05a | manual-tools.spec.ts | covered |
-| MAN-05b | manual-tools.spec.ts | covered |
-| MAN-05c | manual-tools.spec.ts | covered |
-| MAN-06 | manual-tools.spec.ts | covered |
-| MAN-06a | manual-tools.spec.ts | covered |
-| MAN-06b | manual-tools.spec.ts | covered |
-| MAN-07 | manual-tools.spec.ts | covered |
-| MAN-07a | manual-tools.spec.ts | covered |
-| MAN-07b | manual-tools.spec.ts | covered |
-| MAN-08 | manual-tools.spec.ts | covered |
-| MAN-08a | manual-tools.spec.ts | covered |
-| MAN-08b | manual-tools.spec.ts | covered |
-| MAN-08c | manual-tools.spec.ts | covered |
+| MAN-01 | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-01a | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-01b | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-01c | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-02 | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-03 | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-03a | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-04 | archive/guided/guided.spec.ts | covered (archive) |
+| MAN-04a | archive/guided/guided.spec.ts | covered (archive) |
+| MAN-05 | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-05a | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-05b | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-05c | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-06 | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-06a | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-06b | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-07 | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-07a | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-07b | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-08 | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-08a | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-08b | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-08c | archive/guided/manual-tools.spec.ts | covered (archive) |
 | MAN-09 | plan.spec.ts | covered |
 | MAN-09a | plan.spec.ts | covered |
 | MAN-09b | plan.spec.ts | covered |
 | MAN-09c | plan.spec.ts | covered |
-| MAN-10 | manual-tools.spec.ts | covered |
-| MAN-10a | manual-tools.spec.ts | covered |
-| MAN-10b | manual-tools.spec.ts | covered |
-| EXP-01 | export-ui.spec.ts | covered |
-| EXP-01a | export-ui.spec.ts | covered |
-| EXP-01b | export-ui.spec.ts | covered |
-| EXP-02 | export-ui.spec.ts | covered |
-| EXP-02a | export-ui.spec.ts | covered |
-| EXP-02b | export-ui.spec.ts | covered |
+| MAN-10 | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-10a | archive/guided/manual-tools.spec.ts | covered (archive) |
+| MAN-10b | archive/guided/manual-tools.spec.ts | covered (archive) |
+| EXP-01 | archive/guided/export-ui.spec.ts | covered (archive) |
+| EXP-01a | archive/guided/export-ui.spec.ts | covered (archive) |
+| EXP-01b | archive/guided/export-ui.spec.ts | covered (archive) |
+| EXP-02 | archive/guided/export-ui.spec.ts | covered (archive) |
+| EXP-02a | archive/guided/export-ui.spec.ts | covered (archive) |
+| EXP-02b | archive/guided/export-ui.spec.ts | covered (archive) |
 | EXP-03 | exports.spec.ts | covered |
 | EXP-03a | exports.spec.ts | covered |
 | EXP-03b | exports.spec.ts | covered |
 | EXP-03c | exports.spec.ts | covered |
 | EXP-04 | exports.spec.ts | covered |
-| EXP-04a | exports.spec.ts | covered |
-| EXP-05 | export-ui.spec.ts | covered |
-| EXP-05a | export-ui.spec.ts | covered |
+| EXP-04a | archive/guided/exports-guided.spec.ts | covered (archive) |
+| EXP-05 | archive/guided/export-ui.spec.ts | covered (archive) |
+| EXP-05a | archive/guided/export-ui.spec.ts | covered (archive) |
 | EXP-06 | exports.spec.ts | covered |
 | EXP-06a | exports.spec.ts | covered |
-| EXP-07 | export-ui.spec.ts | covered |
-| EXP-07a | export-ui.spec.ts | covered |
-| EXP-07b | export-ui.spec.ts | covered |
+| EXP-07 | archive/guided/export-ui.spec.ts | covered (archive) |
+| EXP-07a | archive/guided/export-ui.spec.ts | covered (archive) |
+| EXP-07b | archive/guided/export-ui.spec.ts | covered (archive) |
 | EXP-08 | exports.spec.ts | covered |
 | EXP-08a | exports.spec.ts | covered |
 | EXP-09 | exports.spec.ts | covered |
 | EXP-09a | exports.spec.ts | covered |
-| EXP-10 | export-ui.spec.ts | covered |
-| EXP-10a | export-ui.spec.ts | covered |
+| EXP-10 | archive/guided/export-ui.spec.ts | covered (archive) |
+| EXP-10a | archive/guided/export-ui.spec.ts | covered (archive) |
 | BB-01 | blackbox.spec.ts | covered |
 | BB-01a | blackbox.spec.ts | covered |
 | BB-02 | blackbox.spec.ts | covered |
@@ -356,7 +365,7 @@ on port 0 with a new empty data folder and a fixed clock, and stops it at the en
 | UPD-05a | keeper-update.spec.ts | covered |
 | UPD-05b | keeper-update.spec.ts | covered |
 | UPD-06 | update.spec.ts | covered |
-| UPD-07 | keeper-update.spec.ts | covered |
+| UPD-07 | archive/guided/keeper-update-guided.spec.ts | covered (archive) |
 | UPD-07a | keeper-update.spec.ts | covered |
 | UPD-08 | - | manual-only: a Go test scenario, no path through the demo (the Go tests cover it) |
 | UPD-09 | - | manual-only: needs the real release feed |
@@ -464,3 +473,38 @@ on port 0 with a new empty data folder and a fixed clock, and stops it at the en
 | DOC-10a | docs.spec.ts | covered |
 | DOC-11 | docs-more.spec.ts | covered |
 | DOC-11a | docs-more.spec.ts | covered |
+| TRACE-01 | tracing-screen.spec.ts | covered |
+| TRACE-02 | tracing-screen.spec.ts | covered |
+| TRACE-03 | tracing-screen.spec.ts | covered |
+| TRACE-04 | tracing-screen.spec.ts | covered |
+| TRACE-05 | tracing-screen.spec.ts | covered |
+| TRACE-06 | tracing-screen.spec.ts | covered |
+| TRACE-07 | tracing-screen.spec.ts | covered |
+| TRACE-08 | tracing-screen.spec.ts | covered |
+| TRACE-09 | tracing-screen.spec.ts | covered (latency line uses a mocked answer: the audit rollup sends no P50/P95 yet) |
+| TRACE-10 | tracing-screen.spec.ts | covered |
+| TRACE-11 | tracing-screen.spec.ts | covered |
+| TRACE-12 | tracing-screen.spec.ts | covered (503 and the slow read are mocked) |
+| TRACE-13 | tracing-screen.spec.ts | covered (empty source list is mocked) |
+| TRACE-14 | tracing-screen.spec.ts | covered |
+| TRACE-15 | tracing-screen.spec.ts | covered |
+| TRACE-16 | tracing-screen.spec.ts | covered (hidden tooltip box is not drawn) |
+| HAND-01 | tracing-handoff.spec.ts | covered |
+| HAND-02 | tracing-handoff.spec.ts | covered |
+| HAND-03 | tracing-handoff.spec.ts | covered |
+| HAND-04 | tracing-handoff.spec.ts | covered |
+| HAND-05 | tracing-handoff.spec.ts | covered |
+| HAND-06 | tracing-handoff.spec.ts | covered |
+| HAND-07 | tracing-handoff.spec.ts | covered |
+| HAND-08 | tracing-handoff.spec.ts | covered |
+| HAND-09 | tracing-handoff.spec.ts | covered |
+| HAND-10 | tracing-handoff.spec.ts | covered |
+| HAND-11 | tracing-handoff.spec.ts | covered |
+| HAND-12 | tracing-handoff.spec.ts | covered |
+| HAND-13 | tracing-handoff.spec.ts | covered |
+| HAND-14 | tracing-handoff.spec.ts | covered |
+| HAND-15 | tracing-handoff.spec.ts | covered |
+| HAND-16 | tracing-handoff.spec.ts | covered |
+| HAND-17 | tracing-handoff.spec.ts | covered |
+| HAND-18 | tracing-handoff.spec.ts | covered (a real mouse click on a bar reaches the column) |
+| HAND-19 | tracing-handoff.spec.ts | covered (under 480px lane labels do not overlap their panels) |

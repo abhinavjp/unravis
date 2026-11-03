@@ -1,3 +1,4 @@
+<!-- Guided analysis is kept and maintained but unlisted: the case home no longer opens it (Start tracing replaced the Guided section). Do not delete it. See docs/guided-unlisted.md. -->
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';

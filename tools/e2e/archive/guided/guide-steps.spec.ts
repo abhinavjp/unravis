@@ -1,7 +1,7 @@
 // Guided analysis, step by step (steps 0 to 10) on the demo day. The guided state lives in the
 // page only, so nothing here changes the case on the server and the tests can run in any order.
-import { test, expect, type Page } from '../support/fixtures';
-import { INC, REF, openGuided, setWindows, runSteps, gotoStep, stepRail } from '../support/ui';
+import { test, expect, type Page } from '../../support/fixtures';
+import { INC, REF, openGuided, setWindows, runSteps, gotoStep, stepRail } from './support';
 
 const NO_CALLS_INC: [string, string] = ['2026-10-17T10:30', '2026-10-17T11:00'];
 const NO_CALLS_REF: [string, string] = ['2026-10-17T09:30', '2026-10-17T10:30'];

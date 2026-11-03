@@ -8,7 +8,7 @@ async function withPreview(page: Page, preview: string): Promise<void> {
   await page.evaluate((x) => {
     location.hash = '#keeper=' + x;
   }, preview);
-  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'All cases', exact: true }).click();
   await page.getByRole('button', { name: 'Open case ' + CASE }).click();
   await expect(page.locator('#home-sources')).toBeVisible();
 }

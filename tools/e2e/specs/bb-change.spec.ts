@@ -6,7 +6,7 @@ const CASE = 'Checkout slowdown, 17 October';
 const CLOSED_CASE = 'Night batch overrun, 10 October';
 
 async function openCase(page: Page, title: string) {
-  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'All cases', exact: true }).click();
   await page.getByRole('button', { name: 'Open case ' + title }).click();
   await expect(page.locator('#home-sources')).toBeVisible();
 }

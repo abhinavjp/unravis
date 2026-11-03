@@ -8,7 +8,7 @@ test.describe('with demo cases', () => {
   });
 
   test('CASE-24: the restore toggle opens the intro, and the demo says a master key is needed first', async ({ page }) => {
-    const toggle = page.getByRole('button', { name: 'Restore from a case file' });
+    const toggle = page.getByRole('button', { name: 'Restore from a case file' }).and(page.locator('[aria-expanded]'));
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
@@ -21,7 +21,7 @@ test.describe('with demo cases', () => {
   });
 
   test('CASE-24a: the toggle closes and opens again, and nothing about it reaches the address bar', async ({ page }) => {
-    const toggle = page.getByRole('button', { name: 'Restore from a case file' });
+    const toggle = page.getByRole('button', { name: 'Restore from a case file' }).and(page.locator('[aria-expanded]'));
     const intro = page.getByText('Restoring it always makes a new case.');
     await toggle.click();
     await expect(intro).toBeVisible();
@@ -53,7 +53,7 @@ test.describe('a demo without cases', () => {
   test('CASE-23: there is no start screen and the case routes answer 503 cases-unavailable', async ({ page, api }) => {
     await expect(page.getByRole('button', { name: 'Create a new case' })).toHaveCount(0);
     await expect(page.getByText('Your cases could not be loaded.')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Home' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'All cases', exact: true })).toHaveCount(0);
     // The explorer opens instead.
     await expect(page.getByRole('button', { name: 'Run analysis' })).toBeVisible();
     const list = await api('GET', '/api/cases');

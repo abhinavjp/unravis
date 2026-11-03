@@ -64,7 +64,7 @@ test('SEC-01: no saved key or secret text on the start screen, the sources, the 
   await expectClean(page, 'sources');
   await page.keyboard.press('Escape');
 
-  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'All cases', exact: true }).click();
   await page.getByRole('button', { name: 'Open case ' + CASE }).click();
   await expect(page.locator('#home-sources')).toBeVisible();
   await expectClean(page, 'case home with the keeper');
@@ -207,7 +207,7 @@ function allFiles(dir: string): string[] {
 }
 
 test('SEC-04: using a Blackbox in a case and saving a typed key leave no key in any file of the config folder', async ({ page, demo }) => {
-  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'All cases', exact: true }).click();
   await page.getByRole('button', { name: 'Open case ' + CASE }).click();
   await expect(page.locator('#home-sources')).toBeVisible();
   const a = await openStatus(page, 'web-a');
@@ -293,7 +293,7 @@ test('SEC-11: the words on the Blackbox screens and the key keeper cards avoid t
     if (hit) seen.push(where + ': "' + hit[0] + '"');
   };
   await preview(page, 'saved');
-  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'All cases', exact: true }).click();
   await page.getByRole('button', { name: 'Open case ' + CASE }).click();
   await expect(page.locator('#home-sources')).toBeVisible();
   await check('case home', page.locator('#home-sources'));

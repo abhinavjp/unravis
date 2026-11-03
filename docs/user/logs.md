@@ -1,7 +1,7 @@
 # Logs
 
 Unravis keeps a plain-text log of what it did and what went wrong, so a
-problem can be traced afterwards — when a read failed, you can see which
+problem can be traced afterwards, so when a read failed, you can see which
 source, which stage and why, without re-running anything.
 
 The log lives in the app's own data folder, in a `logs` subfolder
@@ -25,7 +25,7 @@ exact folder and a button that copies its path.
 - Every error the app or this page shows, with a short class (for example
   `source_unreachable` or `validation`) and a cleaned-up message.
 - Per source during an investigation: when the read started and finished,
-  how long it took, how much came back, and — when it failed — the reason,
+  how long it took, how much came back, and, when it failed, the reason,
   including which time budget ran out.
 
 ## What is never logged
@@ -36,7 +36,7 @@ exact folder and a button that copies its path.
   base64 secret before it can reach the file, and file paths under your
   profile are written as `%USERPROFILE%`.
 - Request and response bodies, audit rows and payloads, and anything typed
-  into a field. The page reports screens by name and actions by name — never
+  into a field. The page reports screens by name and actions by name, never
   ids, searches or field contents.
 
 ## Sending the log

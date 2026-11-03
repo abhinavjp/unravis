@@ -297,7 +297,7 @@ test('HELP-14: Help opens over Home, over an open case and over the Sources list
   await expect(page.getByRole('dialog', { name: 'Help and glossary' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'Scope' }), 'sources: the screen is still there').toBeVisible();
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('button', { name: 'All cases', exact: true }).click();
   await round(page.locator('#start-title'), 'home');
   await page.getByRole('button', { name: 'Open case ' + CASE }).click();
   await expect(page.getByRole('button', { name: /^All cases/ })).toBeVisible();
