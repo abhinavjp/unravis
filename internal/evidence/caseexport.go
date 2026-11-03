@@ -7,6 +7,8 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"fmt"
+	"net/netip"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -60,6 +62,10 @@ type CaseInput struct {
 	// the labels of this export and nothing else, and is never written to the
 	// file; the caller should zero it after the call.
 	Key []byte
+	// IncludeSensitive says scrubbing was turned off. False is the default and
+	// drops client-ip, referer and cookie:* from every event; true keeps them
+	// in the reduced form of exportSensitivePolicy, for iis-w3c only.
+	IncludeSensitive bool
 }
 
 // Fixed text that replaces cleaned free text which still looks risky.
@@ -89,6 +95,10 @@ const (
 	rulePerson                       // a person: keyed pseudonym, all or nothing by the thin-cell rule
 )
 
+// ruleSensitive: client-ip, referer or cookie digest, kept only in the checked
+// shape the sensitive field names (see exportSensitivePolicy).
+const ruleSensitive = rulePerson + 1
+
 type attrPolicy struct {
 	rule   attrRule
 	prefix string            // pseudonym prefix for ruleName and rulePerson
@@ -97,6 +107,9 @@ type attrPolicy struct {
 	enum   map[string]string // ruleEnum, ruleEnumList: lower-case -> exported spelling
 	canon  map[string]bool   // exported spellings of enum
 	extra  map[string]bool   // ruleNumber: literals allowed besides a number
+	// sensitive names the shape of a ruleSensitive value: sensitiveIP,
+	// sensitiveReferer or sensitiveCookie.
+	sensitive string
 }
 
 var polNum = attrPolicy{rule: ruleNumber}
@@ -261,6 +274,94 @@ func withPolicy(base, over map[string]attrPolicy) map[string]attrPolicy {
 	return out
 }
 
+// Shapes of the sensitive attributes, kept only when scrubbing is off.
+const (
+	sensitiveIP           = "client-ip"
+	sensitiveReferer      = "referer"
+	sensitiveCookie       = "cookie"
+	sensitiveCookiePrefix = "cookie:"
+)
+
+var (
+	cookieNameShape   = regexp.MustCompile(`^[a-z0-9_.-]{1,64}$`)
+	cookieDigestShape = regexp.MustCompile(`^[0-9a-f]{32}$`)
+)
+
+// exportSensitivePolicy holds the attributes of a case export that are kept
+// only when scrubbing is off. It is separate from exportPolicy on purpose: the
+// drift test over exportPolicy and ExportAttrNames never sees these, and a
+// scrubbed export cannot reach them. Only iis-w3c has an entry; the client
+// addresses of the HTTP error log stay out (exportDropped). A "cookie:<name>"
+// key is matched by sensitivePolicyFor, not listed here.
+var exportSensitivePolicy = map[string]map[string]attrPolicy{
+	"iis-w3c": {
+		"client-ip": {rule: ruleSensitive, sensitive: sensitiveIP},
+		"referer":   {rule: ruleSensitive, sensitive: sensitiveReferer},
+	},
+}
+
+var cookiePolicy = attrPolicy{rule: ruleSensitive, sensitive: sensitiveCookie}
+
+// sensitivePolicyFor returns the policy of a sensitive attribute of one source:
+// client-ip and referer by name, and "cookie:<name>" for a name of 1 to 64 of
+// a-z, 0-9, underscore, dot and hyphen. Any other cookie: key has no policy.
+func sensitivePolicyFor(source, key string) (attrPolicy, bool) {
+	pol := exportSensitivePolicy[source]
+	if pol == nil {
+		return attrPolicy{}, false
+	}
+	if p, ok := pol[key]; ok {
+		return p, true
+	}
+	if name, ok := strings.CutPrefix(key, sensitiveCookiePrefix); ok && cookieNameShape.MatchString(name) {
+		return cookiePolicy, true
+	}
+	return attrPolicy{}, false
+}
+
+// policyFor is the one lookup the builder and the verifier share: the export
+// policy first, then, when scrubbing is off, the sensitive policy.
+func policyFor(source, key string, includeSensitive bool) (attrPolicy, bool) {
+	if p, ok := exportPolicy[source][key]; ok {
+		return p, true
+	}
+	if includeSensitive {
+		return sensitivePolicyFor(source, key)
+	}
+	return attrPolicy{}, false
+}
+
+// sensitiveShapeOK reports whether v has the shape its sensitive attribute may
+// be shown in. No raw cookie value, query string or zone-bearing address does.
+func sensitiveShapeOK(shape, v string) bool {
+	switch shape {
+	case sensitiveIP:
+		a, err := netip.ParseAddr(v)
+		return err == nil && a.Zone() == ""
+	case sensitiveReferer:
+		if len(v) > MaxEventAttrValue || !(strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://")) {
+			return false
+		}
+		for i := 0; i < len(v); i++ {
+			if c := v[i]; c <= ' ' || c == 0x7f || c == '?' || c == '#' || c == '@' || c == ';' {
+				return false
+			}
+		}
+		// A server address says which machine the visitor came from; none is kept.
+		u, err := url.Parse(v)
+		if err != nil {
+			return false
+		}
+		if _, err := netip.ParseAddr(u.Hostname()); err == nil {
+			return false
+		}
+		return true
+	case sensitiveCookie:
+		return cookieDigestShape.MatchString(v)
+	}
+	return false
+}
+
 // ExportAttrNames returns the attribute names the case export keeps for one
 // source, or nil for a source the export leaves out. Importer tests compare
 // it with their own allowlist.
@@ -288,6 +389,10 @@ var (
 func claimFree(text string) bool {
 	return LintCausal(text) == nil && !containsProven(text) && !containsStrong(text)
 }
+
+// ClaimFree reports text that names no cause, no "proven" and no "strong
+// correlation": the check a case export applies to every value it writes.
+func ClaimFree(text string) bool { return claimFree(text) }
 
 // keyedLabel is prefix + "-" + the first labelHex hex characters of
 // HMAC-SHA256(key, prefix NUL value). The prefix is in the MAC, so the same
@@ -361,6 +466,15 @@ func exportAttr(key []byte, p attrPolicy, v string) string {
 		return keyedLabel(key, p.prefix, v)
 	case rulePerson:
 		return v
+	case ruleSensitive:
+		if sensitiveShapeOK(p.sensitive, v) && claimFree(v) {
+			if p.sensitive == sensitiveCookie {
+				// Re-key per export: the stored digest is one case-wide HMAC, and
+				// the same value would link two exports of the case.
+				return strings.TrimPrefix(keyedLabelN(key, sensitiveCookie, v, len(v)), sensitiveCookie+"-")
+			}
+			return v
+		}
 	}
 	return removedText
 }
@@ -391,6 +505,8 @@ func attrValueOK(p attrPolicy, v string) bool {
 		return p.keptAsIs(v) || labelOK(p.prefix, v, labelHex)
 	case rulePerson:
 		return labelOK(p.prefix, v, labelHex)
+	case ruleSensitive:
+		return v == removedText || sensitiveShapeOK(p.sensitive, v)
 	}
 	return false
 }
@@ -450,7 +566,7 @@ func BuildCase(in CaseInput) (Export, error) {
 	if err != nil {
 		return Export{}, err
 	}
-	events, err := exportEvents(in.Key, in.Events, &w)
+	events, err := exportEvents(in.Key, in.Events, &w, in.IncludeSensitive)
 	if err != nil {
 		return Export{}, err
 	}
@@ -460,7 +576,7 @@ func BuildCase(in CaseInput) (Export, error) {
 			SchemaVersion: CaseSchemaVersion,
 			ToolVersion:   exportVersion(in.ToolVersion),
 			CreatedAt:     in.Now.UTC(),
-			Masking:       Masking{Statements: caseStatements(w)},
+			Masking:       Masking{Statements: caseStatements(w, in.IncludeSensitive)},
 			Imports:       manifestImports,
 		},
 		Body: Body{Records: []Record{}, Imports: bodyImports, Events: events},
@@ -574,12 +690,11 @@ func cleanQuality(q SourceQuality) SourceQuality {
 
 // exportEvents converts, filters and sorts the events, then applies the
 // person rule.
-func exportEvents(key []byte, events []Event, w *caseWithholding) ([]ExportEvent, error) {
+func exportEvents(key []byte, events []Event, w *caseWithholding, includeSensitive bool) ([]ExportEvent, error) {
 	out := make([]ExportEvent, 0, len(events))
 	seen := make(map[string]bool, len(events))
 	for i, ev := range events {
-		pol := exportPolicy[ev.Source]
-		if pol == nil {
+		if exportPolicy[ev.Source] == nil {
 			w.unlisted = true
 			continue
 		}
@@ -618,8 +733,13 @@ func exportEvents(key []byte, events []Event, w *caseWithholding) ([]ExportEvent
 			x.Value = &v
 		}
 		for k, v := range ev.Attrs {
-			p, ok := pol[k]
+			p, ok := policyFor(ev.Source, k, includeSensitive)
 			if !ok || v == "" {
+				continue
+			}
+			// A cookie name is part of the key; a name that reads as a claim
+			// would fail the whole-file lint, so the attribute is left out.
+			if p.rule == ruleSensitive && !claimFree(k) {
 				continue
 			}
 			if x.Attrs == nil {
@@ -746,11 +866,25 @@ func applyPersonRule(key []byte, events []ExportEvent, w *caseWithholding) {
 	}
 }
 
-func caseStatements(w caseWithholding) []string {
+// The scrubbing statements. Plain ASCII without digits, "@" or "://", so each
+// passes verifyStatements untouched. verifyCase reads scrubOffStatement to know
+// the file was built with scrubbing off, and scrubOnStatement to know it was not.
+const (
+	scrubOnStatement     = "Client IP addresses, referers and cookie digests are not in this file."
+	caseHeadlineScrubOn  = "This file holds the imported events and import summaries of one case. File names, file hashes, raw host names, IP addresses, URLs and paths, query and SQL text, user agents, cookies, referers, messages, raw user names and source line numbers are not in it. Each imported file is named by its importer only."
+	caseHeadlineScrubOff = "This file holds the imported events and import summaries of one case. File names, file hashes, server IP addresses, query and SQL text, user agents, messages, raw user names and source line numbers are not in it. Referer web addresses, which may name hosts and paths but have no IP host, parameters or query string, and cookie names with keyed digests of their values, may be in it. Each imported file is named by its importer only."
+	scrubOffStatement    = "This file holds client IP addresses, referers and cookie digests since scrubbing was turned off. They come from the IIS web server log (W3C) only; client addresses of the HTTP error log are not in this file. Cookie values are digests, never raw values. Server IP addresses and query strings are not in this file."
+)
+
+func caseStatements(w caseWithholding, includeSensitive bool) []string {
 	s := []string{
-		"This file holds the imported events and import summaries of one case. File names, file hashes, raw host names, IP addresses, URLs and paths, query and SQL text, user agents, cookies, referers, messages, raw user names and source line numbers are not in it. Each imported file is named by its importer only.",
+		caseHeadlineScrubOn,
+		scrubOnStatement,
 		fmt.Sprintf("An event attribute is kept only when its source's export policy lists it and its value is a number, a term from a fixed list (an HTTP method, a status, a counter or wait name and the like) or a keyed pseudonym; any other value is shown as \"%s\". Every other attribute, and every event from a source without a policy, is left out. An event kind comes from a fixed list per source; any other kind is shown as \"%s\".", removedText, otherKind),
 		fmt.Sprintf("Event ids, hosts, sites, application pools, queues, jobs, namespaces, query hashes, counter instances, process names, application loggers and Redis client names are shown as keyed pseudonyms (a prefix such as host- followed by %d hex characters, %d for event ids). The key is made for this export only and is used for nothing else, so the same name gets a different label in any other export. A label hides the name, not the fact that two events share it.", labelHex, eventLabelHex),
+	}
+	if includeSensitive {
+		s[0], s[1] = caseHeadlineScrubOff, scrubOffStatement
 	}
 	shown, held := sortedKeys(w.personShown), sortedKeys(w.personHeld)
 	for _, p := range shown {

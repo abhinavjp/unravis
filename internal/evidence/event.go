@@ -29,6 +29,31 @@ const (
 	maxEventEvidenceID = 128
 )
 
+// CookieAttrPrefix starts the attribute keys of allowlisted cookie digests;
+// CookieAttrWildcard is the sentinel an importer lists in its allowed attrs to
+// permit them. The sentinel is a permission only, never an event key.
+const (
+	CookieAttrPrefix   = "cookie:"
+	CookieAttrWildcard = "cookie:*"
+)
+
+// cookieAttrAllowed reports whether k is a cookie digest key the importer has
+// opted into: the wildcard is allowed, k is "cookie:" plus a non-empty name,
+// and every byte of the name is in the casestore.CleanCookieNames charset
+// (a-z 0-9 _ . -), so digest keys can never carry free text.
+func cookieAttrAllowed(allowed map[string]bool, k string) bool {
+	if !allowed[CookieAttrWildcard] || !strings.HasPrefix(k, CookieAttrPrefix) || len(k) <= len(CookieAttrPrefix) {
+		return false
+	}
+	for i := len(CookieAttrPrefix); i < len(k); i++ {
+		c := k[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '.' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // ValidImporterLabel reports whether label may be written by an importer or a
 // join: only Symptom and Correlation. Strong correlation stays a ledger
 // decision, and "Proven cause" is never written (rulings §0.6).
@@ -85,7 +110,8 @@ func finite(p *float64) bool {
 // attribute allowlist: UTC times, End >= Start, bounded strings, finite
 // numbers, a known severity and time-zone rule, and attributes that are
 // allowlisted, at most 16, each value at most 256 bytes of valid UTF-8.
-// A nil allowlist permits no attributes. Line is 1-based (provenance anchor)
+// A nil allowlist permits no attributes; "cookie:*" in it is a prefix
+// permission for cookie:<name> keys. Line is 1-based (provenance anchor)
 // and TZRule is required: every event says how its time became UTC.
 func (e Event) Validate(allowedAttrs map[string]bool) error {
 	if e.EvidenceID == "" || len(e.EvidenceID) > maxEventEvidenceID {
@@ -134,7 +160,7 @@ func (e Event) Validate(allowedAttrs map[string]bool) error {
 		return invalidEvent("more than %d attributes", MaxEventAttrs)
 	}
 	for k, v := range e.Attrs {
-		if k == "" || len(k) > maxEventAttrKey || !allowedAttrs[k] {
+		if k == "" || len(k) > maxEventAttrKey || k == CookieAttrWildcard || !(allowedAttrs[k] || cookieAttrAllowed(allowedAttrs, k)) {
 			return invalidEvent("attribute key not on the importer allowlist")
 		}
 		if len(v) > MaxEventAttrValue || !utf8.ValidString(v) {

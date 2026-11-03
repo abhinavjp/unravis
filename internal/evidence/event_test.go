@@ -186,3 +186,52 @@ func TestJoinIDAndPrefixes(t *testing.T) {
 		t.Fatal("prefix does not cover IDs")
 	}
 }
+
+func TestEventValidateCookieWildcard(t *testing.T) {
+	with := func(attrs map[string]string) Event {
+		e := goodEvent()
+		e.Attrs = attrs
+		return e
+	}
+	allow := map[string]bool{"status": true, "cookie:*": true}
+	digest := "0123456789abcdef0123456789abcdef"
+
+	if err := with(map[string]string{"cookie:sid": digest}).Validate(allow); err != nil {
+		t.Errorf("cookie:sid with sentinel rejected: %v", err)
+	}
+	if err := with(map[string]string{"cookie:a.b_c-1": digest}).Validate(allow); err != nil {
+		t.Errorf("cookie:a.b_c-1 with sentinel rejected: %v", err)
+	}
+	err := with(map[string]string{"cookie:sid": digest}).Validate(map[string]bool{"status": true})
+	if err == nil || !errors.Is(err, ErrEventInvalid) {
+		t.Errorf("cookie:sid without sentinel = %v, want ErrEventInvalid", err)
+	}
+	for _, k := range []string{"cookie:", "cookie:UP", "cookie:a b", "cookie:a;b", "cookie:*", "cookiex:sid", "other", "cookie:\u00e9"} {
+		err := with(map[string]string{k: digest}).Validate(allow)
+		if err == nil || !errors.Is(err, ErrEventInvalid) {
+			t.Errorf("key %q with sentinel = %v, want ErrEventInvalid", k, err)
+		}
+	}
+
+	k64 := CookieAttrPrefix + strings.Repeat("a", maxEventAttrKey-len(CookieAttrPrefix))
+	if len(k64) != 64 {
+		t.Fatalf("test key length %d", len(k64))
+	}
+	if err := with(map[string]string{k64: digest}).Validate(allow); err != nil {
+		t.Errorf("64-byte cookie key rejected: %v", err)
+	}
+	if err := with(map[string]string{k64 + "a": digest}).Validate(allow); !errors.Is(err, ErrEventInvalid) {
+		t.Errorf("65-byte cookie key = %v, want ErrEventInvalid", err)
+	}
+
+	many := map[string]string{}
+	for i := 0; i < MaxEventAttrs+1; i++ {
+		many["cookie:c"+strings.Repeat("a", i)] = digest
+	}
+	if err := with(many).Validate(allow); !errors.Is(err, ErrEventInvalid) {
+		t.Errorf("17 cookie attrs = %v, want ErrEventInvalid", err)
+	}
+	if err := with(map[string]string{"cookie:sid": strings.Repeat("x", MaxEventAttrValue+1)}).Validate(allow); !errors.Is(err, ErrEventInvalid) {
+		t.Errorf("long cookie value = %v, want ErrEventInvalid", err)
+	}
+}

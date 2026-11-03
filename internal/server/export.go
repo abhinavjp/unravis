@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,7 +30,17 @@ const (
 	exportPreviewTTL   = 15 * time.Minute
 	exportGoneMessage  = "That preview is no longer available. Run the preview again."
 	exportDefaultLabel = "source"
+
+	// A case export preview is stateless: its id is derived from the case, its
+	// revision and the scrub setting, so nothing is stored between preview and confirm.
+	exportProjectionVersion = "p1"
+	exportChangedMessage    = "the preview changed; run the preview again"
+	exportPreviewDomain     = "unravis-preview-v1"
 )
+
+// The case export snapshot hook is a test seam: nil in production, called with
+// "after-reads" inside buildCaseExport after the reads and before the build.
+var caseExportSnapshotHook func(stage string)
 
 type exportPreviewRequest struct {
 	SourceIDs         []string  `json:"sourceIds"`
@@ -43,10 +54,16 @@ type exportPreviewRequest struct {
 	// CaseID, when set, previews the redacted export of that case instead of
 	// the pattern findings; the other fields are then ignored.
 	CaseID string `json:"caseId,omitempty"`
+	// ScrubSensitive is the case export's scrub setting; absent means on.
+	ScrubSensitive *bool `json:"scrubSensitive,omitempty"`
 }
 
 type exportConfirmRequest struct {
 	PreviewID string `json:"previewId"`
+	// CaseID, when set, confirms a case export preview (stateless); absent means
+	// the findings export, whose preview is held in memory.
+	CaseID         string `json:"caseId,omitempty"`
+	ScrubSensitive *bool  `json:"scrubSensitive,omitempty"`
 }
 
 type exportPreviewResponse struct {
@@ -56,6 +73,10 @@ type exportPreviewResponse struct {
 	// outside the file because the file leaves an empty list out.
 	LedgerIncluded     bool `json:"ledgerIncluded,omitempty"`
 	PseudonymsIncluded bool `json:"pseudonymsIncluded,omitempty"`
+	// ScrubSensitive and SummarizesBytes are set by the case preview only, so the
+	// findings preview JSON is unchanged.
+	ScrubSensitive  *bool `json:"scrubSensitive,omitempty"`
+	SummarizesBytes *bool `json:"summarizesBytes,omitempty"`
 }
 
 type exportConfirmResponse struct {
@@ -68,6 +89,18 @@ type exportConfirmResponse struct {
 	EventsCSV         string `json:"eventsCsv,omitempty"`
 	EventsCSVSHA256   string `json:"eventsCsvSha256,omitempty"`
 }
+
+// casePreviewID is the advisory id of a case export preview: the lowercase hex
+// SHA-256 of the domain, case id, revision, scrub flag and projection version,
+// each separated by a single zero byte.
+func casePreviewID(caseID string, revision int64, scrub bool) string {
+	parts := []string{exportPreviewDomain, caseID, strconv.FormatInt(revision, 10), strconv.FormatBool(scrub), exportProjectionVersion}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:])
+}
+
+// resolveScrub is the scrub setting of a request: on unless it says false.
+func resolveScrub(p *bool) bool { return p == nil || *p }
 
 type storedExport struct {
 	canonical []byte
@@ -156,7 +189,7 @@ func (h *handler) exportPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	h.event(r, "export_started", "kind", "evidence")
 	if body.CaseID != "" {
-		h.caseExportPreview(w, r, body.CaseID)
+		h.caseExportPreview(w, r, body.CaseID, body.ScrubSensitive)
 		return
 	}
 	input := audit.PatternInput{SourceIDs: body.SourceIDs, Start: body.Start, End: body.End}
@@ -344,23 +377,33 @@ func (h *handler) exportConfirm(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
+	if body.CaseID != "" {
+		h.caseExportConfirm(w, r, body)
+		return
+	}
 	it, ok := h.exports().take(body.PreviewID)
 	if !ok {
 		writeError(w, http.StatusNotFound, exportGoneMessage)
 		return
 	}
+	h.writeConfirmed(w, r, it.canonical, it.sha256, it.csv)
+}
+
+// writeConfirmed answers a confirmed export: the JSON file, the events CSV when
+// there is one, and the finished event. sha is the hash of canonical.
+func (h *handler) writeConfirmed(w http.ResponseWriter, r *http.Request, canonical []byte, sha string, csv []byte) {
 	stamp := time.Now().UTC().Format("20060102-150405")
 	resp := exportConfirmResponse{
 		Filename: "unravis-evidence-" + stamp + ".json",
-		Content:  string(it.canonical),
-		SHA256:   it.sha256,
+		Content:  string(canonical),
+		SHA256:   sha,
 	}
-	if len(it.csv) > 0 {
-		sum := sha256.Sum256(it.csv)
+	if len(csv) > 0 {
+		sum := sha256.Sum256(csv)
 		resp.EventsCSVFilename = "unravis-events-" + stamp + ".csv"
-		resp.EventsCSV = string(it.csv)
+		resp.EventsCSV = string(csv)
 		resp.EventsCSVSHA256 = hex.EncodeToString(sum[:])
 	}
-	h.event(r, "export_finished", "kind", "evidence", "size", len(it.canonical)+len(it.csv))
+	h.event(r, "export_finished", "kind", "evidence", "size", len(canonical)+len(csv))
 	writeJSON(w, http.StatusOK, resp, maxResponseBytes)
 }

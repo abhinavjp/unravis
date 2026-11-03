@@ -498,6 +498,78 @@ func TestQuerystoreWaitCategories(t *testing.T) {
 	}
 }
 
+// avg_duration, max_duration and avg_cpu_time are microseconds and are
+// divided by 1000; avg_query_wait_time is already milliseconds and is not.
+func TestQuerystoreMicrosecondsToMilliseconds(t *testing.T) {
+	cases := []struct {
+		dur     string
+		wantDur float64
+	}{
+		{"1250000", 1250},
+		{"1500", 1.5},
+		{"1", 0.001},                // microsecond resolution survives the rounding
+		{"0", 0},                    // a non-nil pointer to zero
+		{"604800000000", 604800000}, // exactly qsMaxMicros: the ceiling itself is accepted
+	}
+	for _, c := range cases {
+		evs, _, err := qsParse(t, qsHeader+qsRow(1, c.dur))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("dur %q: err %v events %d", c.dur, err, len(evs))
+		}
+		first := evs[0]
+		if first.DurationMs == nil {
+			t.Fatalf("dur %q: duration is nil", c.dur)
+		}
+		if *first.DurationMs != c.wantDur {
+			t.Errorf("dur %q: duration %v, want %v", c.dur, *first.DurationMs, c.wantDur)
+		}
+		if c.dur == "1250000" {
+			if first.Attrs["max_duration_ms"] != "2000" || first.Attrs["avg_cpu_ms"] != "500" || first.Unit != "ms" {
+				t.Errorf("attrs %v unit %q, want max_duration_ms=2000 avg_cpu_ms=500 unit=ms", first.Attrs, first.Unit)
+			}
+		}
+	}
+
+	// One microsecond over qsMaxMicros is rejected outright, not divided
+	// and kept.
+	evs, rep, err := qsParse(t, qsHeader+qsBulk(40)+qsRow(99, "604800000001"))
+	if err != nil || len(evs) != 40 || rep.Rejected != 1 {
+		t.Fatalf("over the runtime ceiling: err %v events %d rejected %d", err, len(evs), rep.Rejected)
+	}
+	for _, e := range evs {
+		if e.Attrs["query_id"] == "99" {
+			t.Errorf("query 99, one microsecond over the ceiling, was emitted")
+		}
+	}
+
+	// The wait column is milliseconds already: 5 stays 5, not 0.005.
+	waitHdr := "start_time,query_id,wait_category_desc,avg_query_wait_time\n"
+	evs, _, err = qsParse(t, waitHdr+"2001-06-15 02:00:00,1,lock,5\n")
+	if err != nil || len(evs) != 1 || evs[0].Kind != KindWait {
+		t.Fatalf("wait row: err %v events %v", err, shapes(evs))
+	}
+	if evs[0].DurationMs == nil || *evs[0].DurationMs != 5 {
+		t.Fatalf("wait duration %v, want 5", evs[0].DurationMs)
+	}
+
+	// The wait ceiling, qsMaxMillis, is 1000x smaller than the runtime
+	// ceiling, qsMaxMicros: one millisecond over qsMaxMillis is rejected...
+	var waitBulk strings.Builder
+	for n := 1; n <= 40; n++ {
+		fmt.Fprintf(&waitBulk, "2001-06-15 02:00:00,%d,lock,5\n", n)
+	}
+	_, rep, err = qsParse(t, waitHdr+waitBulk.String()+"2001-06-15 02:00:00,99,lock,604800001\n")
+	if err != nil || rep.Rejected != 1 {
+		t.Fatalf("over the wait ceiling: err %v rejected %d", err, rep.Rejected)
+	}
+	// ...while the same number of microseconds in a runtime column, 1000x
+	// the wait ceiling, is comfortably inside qsMaxMicros.
+	evs, _, err = qsParse(t, qsHeader+qsRow(1, "604800001"))
+	if err != nil || len(evs) != 1 || evs[0].DurationMs == nil || *evs[0].DurationMs != 604800.001 {
+		t.Fatalf("runtime at 1000x the wait ceiling: err %v events %v", err, shapes(evs))
+	}
+}
+
 func TestQuerystoreDetect(t *testing.T) {
 	imp := NewQuerystore()
 	cases := map[string]struct {

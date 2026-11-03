@@ -767,6 +767,9 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 	if _, err := tx.ExecContext(ctx, indexSQL); err != nil {
 		return casestore.ImportResult{Report: rep}, c.mapDBErr(err)
 	}
+	if err := bumpCaseRevision(ctx, tx); err != nil {
+		return casestore.ImportResult{Report: rep}, c.mapDBErr(err)
+	}
 	if err := tx.Commit(); err != nil {
 		done = true
 		return casestore.ImportResult{Report: rep}, c.mapDBErr(err)

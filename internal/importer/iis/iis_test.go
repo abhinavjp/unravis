@@ -3,6 +3,7 @@ package iis
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -139,7 +140,8 @@ func TestW3CGood(t *testing.T) {
 		t.Fatalf("start semantics: start %v end %v", e.Start, e.End)
 	}
 	want := map[string]string{"method": "GET", "stem": "/api/v1/orders/{id}", "status": "200", "substatus": "0",
-		"win32": "0", "port": "443", "site": "W3SVC1", "user": "user-0001"}
+		"win32": "0", "port": "443", "site": "W3SVC1", "user": "user-0001",
+		"client-ip": "192.0.2.77", "referer": "http://ref.example.test/landing"}
 	for k, v := range want {
 		if e.Attrs[k] != v {
 			t.Errorf("attr %s = %q, want %q", k, e.Attrs[k], v)
@@ -193,22 +195,344 @@ func TestW3CGood(t *testing.T) {
 	}
 }
 
-func TestW3CDropsSensitiveColumns(t *testing.T) {
+func TestW3CDropsServerIPUserAgentQueryAndRawCookies(t *testing.T) {
 	evs, rep := mustParse(t, NewW3C(), fixture(t, "w3c_good.log"), baseOpts())
 	out := dump(evs, rep)
-	for _, banned := range []string{sentinel, "192.0.2.", "Mozilla", "curl/", "session=", "ref.example.test", "alice", "bob", "WEB-A", "q="} {
+	for _, banned := range []string{sentinel, "192.0.2.10", "Mozilla", "curl/", "session=", "alice", "bob", "WEB-A", "q=", "frag"} {
 		if strings.Contains(out, banned) {
 			t.Errorf("output contains %q", banned)
 		}
 	}
+	// the client IP and referer (origin + path only) are kept by design
+	for _, kept := range []string{"192.0.2.77", "http://ref.example.test/landing"} {
+		if !strings.Contains(out, kept) {
+			t.Errorf("output lacks %q", kept)
+		}
+	}
+	// no CookiePolicy: no cookie attr is ever emitted, even as a digest
+	for _, e := range evs {
+		for k := range e.Attrs {
+			if strings.HasPrefix(k, "cookie:") {
+				t.Errorf("cookie attr %q without a CookiePolicy", k)
+			}
+		}
+	}
+}
+
+func TestW3CNoPseudonymiserDropsUser(t *testing.T) {
 	// without a pseudonymiser the username is dropped, never stored raw
 	o := baseOpts()
 	o.Pseudonymize = nil
-	evs, _ = mustParse(t, NewW3C(), fixture(t, "w3c_good.log"), o)
+	evs, _ := mustParse(t, NewW3C(), fixture(t, "w3c_good.log"), o)
 	for _, e := range evs {
 		if _, ok := e.Attrs["user"]; ok {
 			t.Fatalf("user kept without pseudonymiser: %v", e.Attrs)
 		}
+	}
+}
+
+func parseRaw(t testing.TB, data []byte, opts importer.Options) []evidence.Event {
+	t.Helper()
+	var evs []evidence.Event
+	_, err := NewW3C().Parse(context.Background(), bytes.NewReader(data), opts, func(e evidence.Event) error {
+		evs = append(evs, e)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	return evs
+}
+
+// cookieFile builds a W3C file with client IP, referer and cookie columns;
+// rows are written verbatim, one per line.
+func cookieFile(rows ...string) []byte {
+	var b strings.Builder
+	b.WriteString("#Software: Microsoft Internet Information Services 10.0\n")
+	b.WriteString("#Fields: date time s-computername cs-method cs-uri-stem sc-status time-taken c-ip cs(Referer) cs(Cookie)\n")
+	for _, r := range rows {
+		b.WriteString(r + "\n")
+	}
+	return []byte(b.String())
+}
+
+func marshalAll(t testing.TB, evs []evidence.Event) string {
+	t.Helper()
+	var sb strings.Builder
+	for _, e := range evs {
+		j, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sb.Write(j)
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+func cookieKeys(e evidence.Event) []string {
+	var ks []string
+	for k := range e.Attrs {
+		if strings.HasPrefix(k, "cookie:") {
+			ks = append(ks, k)
+		}
+	}
+	return ks
+}
+
+func isLowerHex32(s string) bool {
+	if len(s) != 32 {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func TestW3CStoresClientIPAndReferer(t *testing.T) {
+	data := cookieFile(
+		"2001-02-03 04:05:06 WEB-A GET /a 200 5 192.0.2.77 http://ref.example.test/landing?q="+sentinel+"#frag -",
+		"2001-02-03 04:05:07 WEB-A GET /a 200 5 - - -",
+		"2001-02-03 04:05:08 WEB-A GET /a 200 5 not-an-ip - -",
+	)
+	evs := parseRaw(t, data, baseOpts())
+	if len(evs) != 3 {
+		t.Fatalf("events = %d, want 3", len(evs))
+	}
+	if evs[0].Attrs["client-ip"] != "192.0.2.77" || evs[0].Attrs["referer"] != "http://ref.example.test/landing" {
+		t.Errorf("event 0 attrs %v", evs[0].Attrs)
+	}
+	for _, k := range []string{"client-ip", "referer"} {
+		if _, ok := evs[1].Attrs[k]; ok {
+			t.Errorf("dash row has %s", k)
+		}
+	}
+	if _, ok := evs[2].Attrs["client-ip"]; ok {
+		t.Errorf("bad ip stored: %v", evs[2].Attrs)
+	}
+	if strings.Contains(marshalAll(t, evs), sentinel) {
+		t.Errorf("sentinel reached an event")
+	}
+}
+
+func TestW3CCookieHash(t *testing.T) {
+	pol := testPolicy("sid", "theme")
+	o := baseOpts()
+	o.CookiePolicy = pol
+	row := "2001-02-03 04:05:06 WEB-A GET /a 200 5 - - "
+	evs := parseRaw(t, cookieFile(row+"sid=abc123;+theme=dark;+other=zzz", row+"sid=abc123;+theme=dark",
+		row+"sid=first;+sid=second"), o)
+	if len(evs) != 3 {
+		t.Fatalf("events = %d", len(evs))
+	}
+	e := evs[0]
+	if len(cookieKeys(e)) != 2 {
+		t.Fatalf("cookie attrs %v", e.Attrs)
+	}
+	for name, val := range map[string]string{"sid": "abc123", "theme": "dark"} {
+		got := e.Attrs["cookie:"+name]
+		if !isLowerHex32(got) || got != HashCookie(pol, name, val) {
+			t.Errorf("cookie:%s = %q, want %q", name, got, HashCookie(pol, name, val))
+		}
+	}
+	if _, ok := e.Attrs["cookie:other"]; ok {
+		t.Errorf("non-allowlisted cookie stored")
+	}
+	if evs[1].Attrs["cookie:sid"] != e.Attrs["cookie:sid"] {
+		t.Errorf("same value gave different digests")
+	}
+	other := baseOpts()
+	other.CookiePolicy = &importer.CookiePolicy{Allowed: []string{"sid", "theme"}, HMACKey: make([]byte, 32)}
+	ev2 := parseRaw(t, cookieFile(row+"sid=abc123"), other)
+	if ev2[0].Attrs["cookie:sid"] == e.Attrs["cookie:sid"] || ev2[0].Attrs["cookie:sid"] == "" {
+		t.Errorf("different key gave %q", ev2[0].Attrs["cookie:sid"])
+	}
+	if evs[2].Attrs["cookie:sid"] != HashCookie(pol, "sid", "first") {
+		t.Errorf("duplicate name did not keep first: %v", evs[2].Attrs)
+	}
+	five := baseOpts()
+	five.CookiePolicy = testPolicy("a", "b", "c", "d", "e")
+	ev5 := parseRaw(t, cookieFile(row+"a=1;+b=2;+c=3;+d=4;+e=5"), five)
+	if n := len(cookieKeys(ev5[0])); n != maxCookieAttrs {
+		t.Errorf("five cookies gave %d attrs, want %d", n, maxCookieAttrs)
+	}
+	if len(ev5[0].Attrs) > evidence.MaxEventAttrs {
+		t.Errorf("attrs %d exceed max", len(ev5[0].Attrs))
+	}
+}
+
+func TestW3CCookieRawNeverStored(t *testing.T) {
+	row := "2001-02-03 04:05:06 WEB-A GET /a 200 5 - - sid=abc123;+theme=dark"
+	o := baseOpts()
+	o.CookiePolicy = testPolicy("sid", "theme")
+	out := marshalAll(t, parseRaw(t, cookieFile(row), o))
+	for _, raw := range []string{"abc123", "dark"} {
+		if strings.Contains(out, raw) {
+			t.Errorf("raw cookie value %q in output", raw)
+		}
+	}
+	for name, pol := range map[string]*importer.CookiePolicy{
+		"nil":   nil,
+		"empty": testPolicy(),
+	} {
+		o := baseOpts()
+		o.CookiePolicy = pol
+		evs := parseRaw(t, cookieFile(row), o)
+		if len(evs) != 1 || len(cookieKeys(evs[0])) != 0 {
+			t.Errorf("%s policy stored cookie attrs: %v", name, evs[0].Attrs)
+		}
+		if s := marshalAll(t, evs); strings.Contains(s, "abc123") || strings.Contains(s, "dark") {
+			t.Errorf("%s policy leaked raw value", name)
+		}
+	}
+}
+
+// privacyRuleSentinelFile builds a W3C file whose header orders the
+// server-ip, query, user-agent, cookie and referer columns to match the
+// privacy rule's drop list; the sentinel is planted in every column the
+// rule must strip, including the referer's userinfo, query and fragment.
+func privacyRuleSentinelFile() []byte {
+	var b strings.Builder
+	b.WriteString("#Software: Microsoft Internet Information Services 10.0\n")
+	b.WriteString("#Fields: date time s-computername cs-method cs-uri-stem sc-status time-taken s-ip c-ip cs-uri-query cs(User-Agent) cs(Cookie) cs(Referer)\n")
+	row := "WEB-A GET /a 200 5 192.0.2.10 192.0.2.77 x=" + sentinel + " Mozilla/5.0+" + sentinel +
+		" keep=rawvalue-9x;+other=" + sentinel + " http://user:" + sentinel + "@ref.example.test/p?x=" + sentinel + "#" + sentinel
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&b, "2001-02-03 04:05:%02d %s\n", i%60, row)
+	}
+	return []byte(b.String())
+}
+
+func TestW3CPrivacyRuleSentinels(t *testing.T) {
+	data := privacyRuleSentinelFile()
+	pol := testPolicy("keep")
+	o := baseOpts()
+	o.CookiePolicy = pol
+
+	rawEvs := parseRaw(t, data, o)
+	if len(rawEvs) != 40 {
+		t.Fatalf("parseRaw events = %d, want 40", len(rawEvs))
+	}
+	evs, rep := mustParse(t, NewW3C(), data, o)
+	if len(evs) != 40 {
+		t.Fatalf("mustParse events = %d, want 40", len(evs))
+	}
+
+	out := marshalAll(t, evs) + dump(evs, rep)
+	for _, banned := range []string{sentinel, "192.0.2.10", "cookie:other", "rawvalue-9x"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("output contains %q", banned)
+		}
+	}
+	want := HashCookie(pol, "keep", "rawvalue-9x")
+	for _, e := range evs {
+		if e.Attrs["client-ip"] != "192.0.2.77" {
+			t.Errorf("client-ip = %q", e.Attrs["client-ip"])
+		}
+		if e.Attrs["referer"] != "http://ref.example.test/p" {
+			t.Errorf("referer = %q", e.Attrs["referer"])
+		}
+		if got := e.Attrs["cookie:keep"]; !isLowerHex32(got) || got != want {
+			t.Errorf("cookie:keep = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestW3CNoCookieAttrsWithoutPolicy(t *testing.T) {
+	data := privacyRuleSentinelFile()
+	for name, pol := range map[string]*importer.CookiePolicy{
+		"nil policy":   nil,
+		"empty policy": testPolicy(),
+	} {
+		o := baseOpts()
+		o.CookiePolicy = pol
+		evs, _ := mustParse(t, NewW3C(), data, o)
+		for _, e := range evs {
+			for k := range e.Attrs {
+				if strings.HasPrefix(k, "cookie:") {
+					t.Errorf("%s: cookie attr %q present", name, k)
+				}
+			}
+			if e.Attrs["client-ip"] != "192.0.2.77" {
+				t.Errorf("%s: client-ip = %q", name, e.Attrs["client-ip"])
+			}
+			if e.Attrs["referer"] != "http://ref.example.test/p" {
+				t.Errorf("%s: referer = %q", name, e.Attrs["referer"])
+			}
+		}
+	}
+}
+
+func TestW3CCookieAttrBudget(t *testing.T) {
+	// a policy allowing six names is wider than the four the store allows
+	pol := testPolicy("a", "b", "c", "d", "e", "f")
+	o := baseOpts()
+	o.CookiePolicy = pol
+	row := "2001-02-03 04:05:06 WEB-A GET /a 200 5 - - a=1;+b=2;+c=3;+d=4;+e=5;+f=6"
+	evs := parseRaw(t, cookieFile(row), o)
+	if len(evs) != 1 {
+		t.Fatalf("events = %d, want 1", len(evs))
+	}
+	e := evs[0]
+	if err := e.Validate(NewW3C().AllowedAttrs()); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if len(e.Attrs) > 16 {
+		t.Errorf("attrs %d exceed 16: %v", len(e.Attrs), e.Attrs)
+	}
+	if n := len(cookieKeys(e)); n > maxCookieAttrs {
+		t.Errorf("cookie attrs %d exceed %d", n, maxCookieAttrs)
+	}
+}
+
+func TestW3CStillDropsUserAgentAndQuery(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("#Software: Microsoft Internet Information Services 10.0\n")
+	b.WriteString("#Fields: date time s-computername s-ip cs-method cs-uri-stem cs-uri-query sc-status time-taken c-ip cs(Referer) cs(User-Agent) cs(Cookie)\n")
+	b.WriteString("2001-02-03 04:05:06 WEB-A 192.0.2.10 GET /a q=" + sentinel + " 200 5 192.0.2.77 http://ref.example.test/x Mozilla/5.0+" + sentinel + " sid=abc123\n")
+	o := baseOpts()
+	o.CookiePolicy = testPolicy("sid")
+	evs := parseRaw(t, []byte(b.String()), o)
+	if len(evs) != 1 {
+		t.Fatalf("events = %d", len(evs))
+	}
+	allowed := NewW3C().AllowedAttrs()
+	for k := range evs[0].Attrs {
+		if strings.HasPrefix(k, "cookie:") {
+			continue
+		}
+		if !allowed[k] {
+			t.Errorf("attr %q not in AllowedAttrs", k)
+		}
+	}
+	out := marshalAll(t, evs)
+	for _, banned := range []string{sentinel, "192.0.2.10", "Mozilla"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("output contains %q", banned)
+		}
+	}
+}
+
+func TestW3CDuplicatePrivacyColumnImports(t *testing.T) {
+	data := []byte("#Software: Microsoft Internet Information Services 10.0\n" +
+		"#Fields: date time s-computername cs-method cs-uri-stem sc-status c-ip c-ip cs(Referer) cs(Referer)\n" +
+		"2001-02-03 04:05:06 WEB-A GET /a 200 192.0.2.1 192.0.2.2 http://first.example.test/p http://second.example.test/q\n")
+	evs, rep, err := parse(t, NewW3C(), data, baseOpts())
+	if err != nil {
+		t.Fatalf("duplicate privacy columns quarantined: %v", err)
+	}
+	if len(evs) != 1 || rep.Rejected != 0 {
+		t.Fatalf("events %d rejected %d", len(evs), rep.Rejected)
+	}
+	if evs[0].Attrs["client-ip"] != "192.0.2.1" || evs[0].Attrs["referer"] != "http://first.example.test/p" {
+		t.Errorf("attrs %v", evs[0].Attrs)
+	}
+	out := marshalAll(t, evs)
+	if strings.Contains(out, "192.0.2.2") || strings.Contains(out, "second.example") {
+		t.Errorf("second column value stored: %s", out)
 	}
 }
 
@@ -473,13 +797,13 @@ func TestHTTPERRGood(t *testing.T) {
 		t.Fatalf("event 0: %+v", e)
 	}
 	want := map[string]string{"reason": "QueueFull", "method": "GET", "stem": "/api/v1/orders/{id}",
-		"status": "503", "siteid": "1", "queue": "DefaultAppPool"}
+		"status": "503", "siteid": "1", "queue": "DefaultAppPool", "client-ip": "192.0.2.50"}
 	for k, v := range want {
 		if e.Attrs[k] != v {
 			t.Errorf("attr %s = %q want %q", k, e.Attrs[k], v)
 		}
 	}
-	if evs[1].Attrs["reason"] != "Connection_Dropped" || len(evs[1].Attrs) != 1 {
+	if evs[1].Attrs["reason"] != "Connection_Dropped" || len(evs[1].Attrs) != 2 || evs[1].Attrs["client-ip"] != "192.0.2.51" {
 		t.Errorf("event 1 attrs %v", evs[1].Attrs)
 	}
 	if evs[2].Attrs["reason"] != "other" || evs[2].Attrs["stem"] != "/api/v1/items/{id}" {
@@ -489,7 +813,7 @@ func TestHTTPERRGood(t *testing.T) {
 		t.Errorf("case-insensitive reason: %v", evs[3].Attrs)
 	}
 	out := dump(evs, rep)
-	for _, banned := range []string{sentinel, "192.0.2.", "51000", "Made_Up_Reason", "HTTP/1.1"} {
+	for _, banned := range []string{sentinel, "192.0.2.10", "51000", "Made_Up_Reason", "HTTP/1.1"} {
 		if strings.Contains(out, banned) {
 			t.Errorf("output contains %q", banned)
 		}
@@ -609,5 +933,38 @@ func TestRecycleGap(t *testing.T) {
 		if g != recycleGapTextLegacy || !strings.Contains(g, "Time, Memory and PrivateMemory") {
 			t.Errorf("RecycleGap(%q) = %q", rt, g)
 		}
+	}
+}
+
+func TestW3CAllowedAttrsHasCookieWildcard(t *testing.T) {
+	a := NewW3C().AllowedAttrs()
+	for _, k := range []string{"cookie:*", "client-ip", "referer"} {
+		if !a[k] {
+			t.Errorf("W3C allowlist lacks %q", k)
+		}
+	}
+	if len(a) > evidence.MaxEventAttrs {
+		t.Errorf("W3C allowlist size %d exceeds %d", len(a), evidence.MaxEventAttrs)
+	}
+	if NewHTTPERR().AllowedAttrs()["cookie:*"] {
+		t.Error("HTTPERR allowlist has cookie:*")
+	}
+}
+
+func TestW3CCookieAttrsPassCollect(t *testing.T) {
+	o := baseOpts()
+	o.CookiePolicy = testPolicy("sid", "theme")
+	row := "2001-02-03 04:05:06 WEB-A GET /a 200 5 - - sid=abc123;+theme=dark"
+	evs, rep := mustParse(t, NewW3C(), cookieFile(row), o)
+	if len(evs) != 1 {
+		t.Fatalf("events = %d, want 1", len(evs))
+	}
+	for _, k := range []string{"cookie:sid", "cookie:theme"} {
+		if evs[0].Attrs[k] == "" {
+			t.Errorf("event lacks %s: %v", k, evs[0].Attrs)
+		}
+	}
+	if rep.Rejected != 0 {
+		t.Errorf("rejected rows = %d, want 0", rep.Rejected)
 	}
 }

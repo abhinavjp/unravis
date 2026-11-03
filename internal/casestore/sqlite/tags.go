@@ -83,6 +83,10 @@ func (c *Case) SetEnvs(ctx context.Context, names []string) error {
 			return c.mapDBErr(err)
 		}
 	}
+	if err := bumpCaseRevision(ctx, tx); err != nil {
+		_ = tx.Rollback()
+		return c.mapDBErr(err)
+	}
 	if err := tx.Commit(); err != nil {
 		return c.mapDBErr(err)
 	}
@@ -131,19 +135,34 @@ func (c *Case) AddSource(ctx context.Context, s casestore.SourceTag) (casestore.
 	}
 	// The count test and the insert are one statement, so the cap holds however
 	// many writers there are.
-	res, err := db.ExecContext(ctx, `INSERT INTO case_sources(import_id, kind, label, env, portal, api, classification, created_ms)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM case_sources) < ?`,
-		importID, clean.Kind, clean.Label, clean.Env, clean.Portal, clean.API, clean.Classification, clean.Created.UnixMilli(), casestore.MaxSources)
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return casestore.SourceTag{}, c.mapDBErr(err)
 	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO case_sources(import_id, kind, label, env, portal, api, classification, created_ms)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM case_sources) < ?`,
+		importID, clean.Kind, clean.Label, clean.Env, clean.Portal, clean.API, clean.Classification, clean.Created.UnixMilli(), casestore.MaxSources)
+	if err != nil {
+		_ = tx.Rollback()
+		return casestore.SourceTag{}, c.mapDBErr(err)
+	}
 	if n, err := res.RowsAffected(); err != nil {
-		return casestore.SourceTag{}, err
+		_ = tx.Rollback()
+		return casestore.SourceTag{}, c.mapDBErr(err)
 	} else if n == 0 {
+		_ = tx.Rollback()
 		return casestore.SourceTag{}, casestore.ErrCapExceeded
 	}
 	if clean.ID, err = res.LastInsertId(); err != nil {
-		return casestore.SourceTag{}, err
+		_ = tx.Rollback()
+		return casestore.SourceTag{}, c.mapDBErr(err)
+	}
+	if err := bumpCaseRevision(ctx, tx); err != nil {
+		_ = tx.Rollback()
+		return casestore.SourceTag{}, c.mapDBErr(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return casestore.SourceTag{}, c.mapDBErr(err)
 	}
 	_ = c.countTags(ctx, db) // best effort: Info's counts catch up on the next write
 	return clean, nil
@@ -185,7 +204,27 @@ func (c *Case) RemoveSource(ctx context.Context, id int64) error {
 		return err
 	}
 	defer release()
-	if _, err := db.ExecContext(ctx, "DELETE FROM case_sources WHERE id=?", id); err != nil {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return c.mapDBErr(err)
+	}
+	res, err := tx.ExecContext(ctx, "DELETE FROM case_sources WHERE id=?", id)
+	if err != nil {
+		_ = tx.Rollback()
+		return c.mapDBErr(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		_ = tx.Rollback()
+		return c.mapDBErr(err)
+	}
+	if n > 0 {
+		if err := bumpCaseRevision(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			return c.mapDBErr(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return c.mapDBErr(err)
 	}
 	_ = c.countTags(ctx, db)

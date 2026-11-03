@@ -162,6 +162,7 @@ export const IMPORT_TEXT = {
   exportSaving: 'Saving…',
   exportSaveNote: 'Saving downloads two files: the case as JSON, and its events as a spreadsheet file.',
   exportMismatch: 'A file did not match the SHA-256 the server sent, so nothing was saved. Preview it again.',
+  exportChanged: 'The case changed after the preview, so nothing was saved. Preview it again.',
   exportShowFile: 'Show the JSON file content',
   exportEventsHeading: 'Events in the file'
 } as const;
@@ -264,6 +265,15 @@ export function errorText(error: Pick<CaseApiError, 'status' | 'reason' | 'colum
   if (error.reason === 'duplicate') return error.importId ? 'This file was already imported (import #' + error.importId + ').' : 'This file was already imported.';
   const base = reasonText(error.reason) ?? GENERIC_ERROR;
   return error.column ? base + ' Column: ' + error.column + '.' : base;
+}
+
+/**
+ * The sentence for a refused case export. A 409 from the confirm route means the case (or the scrub choice) is no longer what the
+ * preview showed; the generic refusal text would hide that, so it gets its own words. Anything else uses errorText.
+ */
+export function exportErrorText(error: Pick<CaseApiError, 'status' | 'reason' | 'column' | 'importId' | 'message'>): string {
+  if (error.status === 409 && error.reason !== 'duplicate') return IMPORT_TEXT.exportChanged;
+  return errorText(error);
 }
 
 /**

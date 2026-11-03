@@ -745,3 +745,373 @@ func TestBuildCaseKeepsUnknownSQLSeverity(t *testing.T) {
 		t.Errorf("CSV lacks sql_severity=unknown")
 	}
 }
+
+// ---- WP-07b: the case export with scrubbing turned off ----
+
+const (
+	scrubCanaryIP      = "192.0.2.77"
+	scrubCanaryReferer = "https://ref.example.test/a"
+	scrubCanaryCookie  = "0123456789abcdef0123456789abcdef"
+)
+
+// scrubEvents are three iis-w3c events that each carry the three sensitive
+// attributes, plus a site name for the whole-file checks.
+func scrubEvents() []Event {
+	var out []Event
+	for n := 0; n < 3; n++ {
+		out = append(out, caseEvent("iis-w3c", "request", n, map[string]string{"method": "GET", "status": "200",
+			"site": "Default Web Site", "client-ip": scrubCanaryIP, "referer": scrubCanaryReferer, "cookie:sid": scrubCanaryCookie}))
+	}
+	return out
+}
+
+// scrubCookieDigest is the digest an export made with caseKey(b) shows for
+// scrubCanaryCookie: re-keyed per export, 32 hex characters.
+func scrubCookieDigest(b byte) string {
+	return strings.TrimPrefix(keyedLabelN(caseKey(b), "cookie", scrubCanaryCookie, 32), "cookie-")
+}
+
+func scrubInput(sensitive bool, events []Event) CaseInput {
+	return CaseInput{Imports: caseImports(), Events: events, ToolVersion: "0.13.0-test", Now: testNow,
+		Key: caseKey(7), IncludeSensitive: sensitive}
+}
+
+func scrubHasStatement(e Export, s string) bool { return contains(e.Manifest.Masking.Statements, s) }
+
+func TestBuildCaseScrubDefaultOn(t *testing.T) {
+	ev := append(scrubEvents(), caseEvent("iis-httperr", "httperr", 1000,
+		map[string]string{"reason": "Timer_ConnectionIdle", "client-ip": "192.0.2.78"}))
+	e, raw := mustBuildCase(t, scrubInput(false, ev))
+	assertAbsent(t, raw, scrubCanaryIP, scrubCanaryReferer, scrubCanaryCookie, "192.0.2.78", `"client-ip"`, `"referer"`, "cookie:")
+	assertAbsent(t, mustCSV(t, e), scrubCanaryIP, scrubCanaryReferer, scrubCanaryCookie, "client-ip=", "referer=", "cookie:")
+	if !scrubHasStatement(e, scrubOnStatement) || scrubHasStatement(e, scrubOffStatement) {
+		t.Errorf("statements: scrub-on %v, scrub-off %v", scrubHasStatement(e, scrubOnStatement), scrubHasStatement(e, scrubOffStatement))
+	}
+	if err := verifyCase(e, raw); err != nil {
+		t.Errorf("verifyCase: %v", err)
+	}
+}
+
+func TestBuildCaseScrubOff(t *testing.T) {
+	ev := append(scrubEvents(), caseEvent("iis-httperr", "httperr", 1000,
+		map[string]string{"reason": "Timer_ConnectionIdle", "client-ip": "192.0.2.78"}))
+	e, raw := mustBuildCase(t, scrubInput(true, ev))
+	if !scrubHasStatement(e, scrubOffStatement) || scrubHasStatement(e, scrubOnStatement) {
+		t.Errorf("statements: scrub-on %v, scrub-off %v", scrubHasStatement(e, scrubOnStatement), scrubHasStatement(e, scrubOffStatement))
+	}
+	if e.Manifest.Masking.Statements[0] != caseHeadlineScrubOff {
+		t.Errorf("the headline is not the scrub-off headline")
+	}
+	for n := 0; n < 3; n++ {
+		x := eventByID(t, e, 7, caseEvID("iis-w3c", n))
+		want := map[string]string{"client-ip": scrubCanaryIP, "referer": scrubCanaryReferer, "cookie:sid": scrubCookieDigest(7)}
+		for k, v := range want {
+			if x.Attrs[k] != v {
+				t.Errorf("event %d: %s = %q, want %q", n, k, x.Attrs[k], v)
+			}
+		}
+	}
+	x := eventByID(t, e, 7, caseEvID("iis-httperr", 1000))
+	if _, found := x.Attrs["client-ip"]; found {
+		t.Errorf("an HTTP error log client-ip reached the file")
+	}
+	assertAbsent(t, raw, "192.0.2.78", scrubCanaryCookie)
+	assertAbsent(t, mustCSV(t, e), "192.0.2.78", scrubCanaryCookie)
+	if err := verifyCase(e, raw); err != nil {
+		t.Errorf("verifyCase: %v", err)
+	}
+}
+
+// Two scrub-off exports of one case show different digests for the same cookie
+// value; inside one export the same value always has the same digest.
+func TestBuildCaseScrubOffRekeysCookieDigests(t *testing.T) {
+	other := scrubCanaryCookie[:31] + "e"
+	ev := scrubEvents()
+	ev[2].Attrs["cookie:sid"] = other
+	in1, in2 := scrubInput(true, ev), scrubInput(true, ev)
+	in2.Key = caseKey(9)
+	e1, raw1 := mustBuildCase(t, in1)
+	e2, raw2 := mustBuildCase(t, in2)
+	d := func(e Export, b byte, n int) string {
+		return eventByID(t, e, b, caseEvID("iis-w3c", n)).Attrs["cookie:sid"]
+	}
+	if d(e1, 7, 0) != d(e1, 7, 1) || d(e1, 7, 0) == d(e1, 7, 2) {
+		t.Errorf("one export: digests %q %q %q are not consistent", d(e1, 7, 0), d(e1, 7, 1), d(e1, 7, 2))
+	}
+	if d(e1, 7, 0) == d(e2, 9, 0) || d(e1, 7, 2) == d(e2, 9, 2) {
+		t.Errorf("two exports show the same digest for the same cookie value")
+	}
+	if !cookieDigestShape.MatchString(d(e1, 7, 0)) || !cookieDigestShape.MatchString(d(e2, 9, 0)) {
+		t.Errorf("a re-keyed digest is not 32 hex characters")
+	}
+	assertAbsent(t, raw1, scrubCanaryCookie, other)
+	assertAbsent(t, raw2, scrubCanaryCookie, other)
+	for _, raw := range [][]byte{raw1, raw2} {
+		if err := Verify(raw); err != nil {
+			t.Errorf("Verify: %v", err)
+		}
+	}
+}
+
+// A referer path and a cookie name that read as claims are kept out of a
+// scrub-off export, and the file still verifies.
+func TestBuildCaseScrubOffClaimWordsInSensitiveValues(t *testing.T) {
+	ev := []Event{
+		caseEvent("iis-w3c", "request", 0, map[string]string{"method": "GET", "referer": "https://x.example.test/help/proof-of-income", "cookie:cause": scrubCanaryCookie}),
+		caseEvent("iis-w3c", "request", 1, map[string]string{"method": "GET", "referer": "https://x.example.test/ok", "cookie:proof": scrubCanaryCookie}),
+	}
+	e, raw := mustBuildCase(t, scrubInput(true, ev))
+	x0, x1 := eventByID(t, e, 7, caseEvID("iis-w3c", 0)), eventByID(t, e, 7, caseEvID("iis-w3c", 1))
+	if x0.Attrs["referer"] != removedText {
+		t.Errorf("claim-wording referer = %q, want %q", x0.Attrs["referer"], removedText)
+	}
+	if _, found := x0.Attrs["cookie:cause"]; found {
+		t.Errorf("a cookie named cause reached the file")
+	}
+	if _, found := x1.Attrs["cookie:proof"]; found {
+		t.Errorf("a cookie named proof reached the file")
+	}
+	if x1.Attrs["referer"] != "https://x.example.test/ok" {
+		t.Errorf("a clean referer = %q", x1.Attrs["referer"])
+	}
+	assertAbsent(t, raw, "proof-of-income", "cookie:cause", "cookie:proof")
+	if err := verifyCase(e, raw); err != nil {
+		t.Errorf("verifyCase: %v", err)
+	}
+	if err := Verify(raw); err != nil {
+		t.Errorf("Verify: %v", err)
+	}
+	// A planted claim in a sensitive value or key is refused by the verifier.
+	for _, plant := range []func(a map[string]string){
+		func(a map[string]string) { a["referer"] = "https://x.example.test/help/proof-of-income" },
+		func(a map[string]string) { a["cookie:cause"] = scrubCanaryCookie },
+	} {
+		bad := e
+		bad.Body.Events = append([]ExportEvent(nil), e.Body.Events...)
+		attrs := map[string]string{}
+		for k, v := range bad.Body.Events[1].Attrs {
+			attrs[k] = v
+		}
+		plant(attrs)
+		bad.Body.Events[1].Attrs = attrs
+		if err := verifyCase(bad, mustRaw(t, bad)); err == nil {
+			t.Errorf("a sensitive attribute with claim wording was accepted")
+		}
+	}
+}
+
+// A matrix parameter or an IP-literal host never reaches a scrub-off export.
+func TestBuildCaseScrubOffRefererShape(t *testing.T) {
+	for _, ref := range []string{
+		"http://10.0.0.5/payroll;jsessionid=ABC123",
+		"http://app.example.test/payroll;jsessionid=ABC123",
+		"http://10.0.0.5/payroll",
+		"http://[2001:db8::1]:8443/payroll",
+	} {
+		if sensitiveShapeOK(sensitiveReferer, ref) {
+			t.Errorf("sensitiveShapeOK accepts %q", ref)
+		}
+		e, raw := mustBuildCase(t, scrubInput(true, []Event{caseEvent("iis-w3c", "request", 0, map[string]string{"method": "GET", "referer": ref})}))
+		if got := eventByID(t, e, 7, caseEvID("iis-w3c", 0)).Attrs["referer"]; got != removedText {
+			t.Errorf("referer %q exported as %q", ref, got)
+		}
+		assertAbsent(t, raw, "ABC123", "10.0.0.5", "2001:db8")
+	}
+	if !sensitiveShapeOK(sensitiveReferer, "https://app.example.test:8443/payroll") {
+		t.Errorf("a plain referer is refused")
+	}
+}
+
+// The headline and the scrubbing statement are one pair per variant.
+func TestVerifyCaseHeadlineStatementPair(t *testing.T) {
+	for _, sensitive := range []bool{true, false} {
+		e, _ := mustBuildCase(t, scrubInput(sensitive, scrubEvents()))
+		if sensitive {
+			if err := verifyCase(e, mustRaw(t, e)); err != nil {
+				t.Fatalf("sensitive=%v: %v", sensitive, err)
+			}
+		}
+		bad := e
+		ss := append([]string(nil), e.Manifest.Masking.Statements...)
+		if sensitive {
+			ss[0] = caseHeadlineScrubOn
+		} else {
+			ss[0] = caseHeadlineScrubOff
+		}
+		bad.Manifest.Masking = Masking{Statements: ss}
+		err := verifyCase(bad, mustRaw(t, bad))
+		if err == nil || !strings.Contains(err.Error(), "scrubbing statements disagree") {
+			t.Errorf("sensitive=%v: a mismatched headline gave %v", sensitive, err)
+		}
+	}
+}
+
+func mustRaw(t *testing.T, e Export) []byte {
+	t.Helper()
+	raw, err := Canonical(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestBuildCaseScrubOffReducesBadShapes(t *testing.T) {
+	bad := []struct {
+		key, val string
+		dropped  bool
+	}{
+		{"client-ip", "not-an-ip", false},
+		{"client-ip", "fe80::1%eth0", false},
+		{"referer", "https://ref.example.test/a?token=x", false},
+		{"referer", "ftp://ref.example.test/a", false},
+		{"referer", "https://u:p@ref.example.test/a", false},
+		{"referer", "https://ref.example.test/a b", false},
+		{"cookie:Bad Name", scrubCanaryCookie, true},
+		{"cookie:sid", "SESSIONID=abc", false},
+	}
+	var ev []Event
+	for i, b := range bad {
+		ev = append(ev, caseEvent("iis-w3c", "request", i, map[string]string{"method": "GET", b.key: b.val}))
+	}
+	e, raw := mustBuildCase(t, scrubInput(true, ev))
+	for i, b := range bad {
+		x := eventByID(t, e, 7, caseEvID("iis-w3c", i))
+		got, present := x.Attrs[b.key]
+		switch {
+		case b.dropped && present:
+			t.Errorf("%s = %q, want the attribute dropped", b.key, got)
+		case !b.dropped && got != removedText:
+			t.Errorf("%s = %q for %q, want %q", b.key, got, b.val, removedText)
+		}
+	}
+	assertAbsent(t, raw, "token", "SESSIONID", "ref.example.test", "not-an-ip", "fe80", "Bad Name")
+}
+
+func TestSensitivePolicyReferer256Boundary(t *testing.T) {
+	p, ok := sensitivePolicyFor("iis-w3c", "referer")
+	if !ok {
+		t.Fatal("iis-w3c referer has no sensitive policy")
+	}
+	key := make([]byte, 32)
+	v256 := "https://" + strings.Repeat("a", 256-len("https://"))
+	v257 := v256 + "a"
+	if len(v256) != 256 || len(v257) != 257 {
+		t.Fatalf("test values are %d and %d bytes", len(v256), len(v257))
+	}
+	if got := exportAttr(key, p, v256); got != v256 {
+		t.Errorf("a 256 byte referer was not kept")
+	}
+	if got := exportAttr(key, p, v257); got != removedText {
+		t.Errorf("a 257 byte referer = %q, want %q", got, removedText)
+	}
+	if attrValueOK(p, v257) || !attrValueOK(p, v256) {
+		t.Errorf("attrValueOK: 257 bytes %v, 256 bytes %v", attrValueOK(p, v257), attrValueOK(p, v256))
+	}
+}
+
+func TestVerifyCaseScrubOffStillRejectsOtherAddresses(t *testing.T) {
+	for _, sensitive := range []bool{true, false} {
+		evs := scrubEvents()
+		if !sensitive {
+			for i := range evs {
+				delete(evs[i].Attrs, "client-ip")
+				delete(evs[i].Attrs, "referer")
+				delete(evs[i].Attrs, "cookie:sid")
+			}
+		}
+		e, raw := mustBuildCase(t, scrubInput(sensitive, evs))
+		if err := verifyCase(e, raw); err != nil {
+			t.Fatalf("sensitive=%v: clean file: %v", sensitive, err)
+		}
+		for _, planted := range []string{"10.1.2.3", "a@b.test"} {
+			bad := e
+			bad.Body.Events = append([]ExportEvent(nil), e.Body.Events...)
+			attrs := map[string]string{}
+			for k, v := range bad.Body.Events[0].Attrs {
+				attrs[k] = v
+			}
+			attrs["site"] = planted
+			bad.Body.Events[0].Attrs = attrs
+			badRaw, err := Canonical(bad)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyCase(bad, badRaw); err == nil {
+				t.Errorf("sensitive=%v: a site value %q was accepted", sensitive, planted)
+			}
+		}
+	}
+}
+
+func TestVerifyCaseScrubStatementsMustAgree(t *testing.T) {
+	e, _ := mustBuildCase(t, scrubInput(true, scrubEvents()))
+	withStatements := func(drop string, add ...string) ([]string, Export) {
+		var ss []string
+		for _, s := range e.Manifest.Masking.Statements {
+			if s != drop {
+				ss = append(ss, s)
+			}
+		}
+		ss = append(ss, add...)
+		bad := e
+		bad.Manifest.Masking = Masking{Statements: ss}
+		return ss, bad
+	}
+	for name, mk := range map[string]func() Export{
+		"only the scrub-on statement": func() Export { _, b := withStatements(scrubOffStatement, scrubOnStatement); return b },
+		"both statements":             func() Export { _, b := withStatements("", scrubOnStatement); return b },
+		"neither statement":           func() Export { _, b := withStatements(scrubOffStatement); return b },
+	} {
+		bad := mk()
+		raw, err := Canonical(bad)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = verifyCase(bad, raw)
+		if err == nil || !strings.Contains(err.Error(), "scrubbing statements disagree") {
+			t.Errorf("%s: verifyCase = %v, want scrubbing statements disagree", name, err)
+		}
+	}
+}
+
+func TestExportAttrNamesExcludeSensitive(t *testing.T) {
+	names := ExportAttrNames("iis-w3c")
+	if len(names) == 0 {
+		t.Fatal("iis-w3c has no export attributes")
+	}
+	for k := range names {
+		if k == "client-ip" || k == "referer" || strings.HasPrefix(k, "cookie:") {
+			t.Errorf("ExportAttrNames lists %q", k)
+		}
+	}
+}
+
+func TestScrubStatementsPassCausalLint(t *testing.T) {
+	for name, s := range map[string]string{"scrubOn": scrubOnStatement, "scrubOff": scrubOffStatement, "headline": caseHeadlineScrubOff} {
+		switch {
+		case LintCausal(s) != nil:
+			t.Errorf("%s: LintCausal rejects it: %v", name, LintCausal(s))
+		case !claimFree(s):
+			t.Errorf("%s: claimFree is false", name)
+		case scrubText(s) != s:
+			t.Errorf("%s: scrubText changes it", name)
+		case residualRisk(s):
+			t.Errorf("%s: residualRisk is true", name)
+		case len(s) > maxStatement:
+			t.Errorf("%s: %d bytes, over %d", name, len(s), maxStatement)
+		}
+	}
+	for _, sensitive := range []bool{false, true} {
+		ss := caseStatements(caseWithholding{}, sensitive)
+		if err := verifyStatements(ss); err != nil {
+			t.Errorf("sensitive=%v: verifyStatements: %v", sensitive, err)
+		}
+		if len(ss) >= maxStatements {
+			t.Errorf("sensitive=%v: %d statements", sensitive, len(ss))
+		}
+	}
+	e, raw := mustBuildCase(t, scrubInput(true, scrubEvents()))
+	if err := verifyCase(e, raw); err != nil {
+		t.Errorf("verifyCase on a scrub-off case: %v", err)
+	}
+}

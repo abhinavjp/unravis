@@ -2,17 +2,24 @@
 // classifies WAS application pool events. Parsers are built and tested on
 // synthetic files only (importer wave plan section 4).
 //
-// Drop at parse: client and server IPs, query strings, user agents, cookies and
-// referers are never read into any value. Every field not named in a spec's
-// keep list is skipped, so an unknown or sensitive column cannot leak.
+// The W3C parser keeps c-ip as client-ip, cs(referer) as referer without query
+// or fragment, and allowlisted cookies as HMAC digests; server IPs, query strings,
+// user agents and all other cookies are dropped at parse. Every field not named
+// in a spec's keep list is skipped, so an unknown or sensitive column cannot leak.
 package iis
 
 import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
+	"net"
+	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +35,21 @@ const (
 	ctxCheckEvery    = 256
 	maxHostNameBytes = 256
 )
+
+// Bounds for the privacy helpers. The stored referer is at most
+// evidence.MaxEventAttrValue (256) bytes.
+const (
+	maxIPBytes         = 64
+	maxRefererBytes    = 512 // input
+	maxCookiePairs     = 20
+	maxCookiePairBytes = 512
+	maxCookieAttrs     = 4
+	cookieDigestPrefix = "unravis-cookie-v1\x00"
+)
+
+// dupIgnoredColumns are privacy columns kept at their first occurrence when a
+// #Fields line repeats them; the later ones are ignored, not quarantined.
+var dupIgnoredColumns = map[string]bool{"c-ip": true, "cs(referer)": true, "cs(cookie)": true}
 
 // spec describes one fielded W3C-style log format.
 type spec struct {
@@ -332,6 +354,9 @@ func declare(text string, sp *spec, lim importer.Limits, st *runState) (map[stri
 			continue
 		}
 		if _, dup := col[n]; dup {
+			if dupIgnoredColumns[n] {
+				continue // first occurrence wins
+			}
 			return nil, 0, quarantine(importer.ReasonFieldCount, n)
 		}
 		col[n] = i
@@ -613,4 +638,92 @@ func headerInfo(head []byte) (software string, fields map[string]bool) {
 
 func isHTTPERRHeader(software string, fields map[string]bool) bool {
 	return strings.Contains(software, "Microsoft HTTP API") || fields["s-reason"] || fields["s-queuename"]
+}
+
+// validIPv4or6 reports whether s is a plain IPv4 or IPv6 address. The caller
+// stores s unchanged.
+func validIPv4or6(s string) bool {
+	if len(s) == 0 || len(s) > maxIPBytes || strings.ContainsAny(s, " /") {
+		return false
+	}
+	return net.ParseIP(s) != nil
+}
+
+// safeReferer returns scheme://host/path of an http or https referer, with
+// userinfo, query and fragment dropped. It returns "", false when the value is
+// unusable or the cleaned result exceeds evidence.MaxEventAttrValue; it never
+// truncates.
+func safeReferer(v string) (string, bool) {
+	if len(v) > maxRefererBytes || !utf8.ValidString(v) {
+		return "", false
+	}
+	u, err := url.Parse(v)
+	if err != nil {
+		return "", false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", false
+	}
+	if u.Host == "" {
+		return "", false
+	}
+	// A server address says which machine the visitor came from; store nothing.
+	if _, err := netip.ParseAddr(u.Hostname()); err == nil {
+		return "", false
+	}
+	// Matrix parameters (";jsessionid=...") can carry a session id.
+	path, _, _ := strings.Cut(u.EscapedPath(), ";")
+	out := u.Scheme + "://" + u.Host + path
+	if !utf8.ValidString(out) || len(out) > evidence.MaxEventAttrValue {
+		return "", false
+	}
+	return out, true
+}
+
+type cookiePair struct{ Name, Value string }
+
+// splitCookiePairs splits a logged cs(cookie) value into name/value pairs. W3C
+// logs encode a space as "+", so "sid=a; theme=b" is logged as "sid=a;+theme=b".
+// Names are lower-cased; values are kept exactly as logged.
+func splitCookiePairs(v string) []cookiePair {
+	var out []cookiePair
+	for _, raw := range strings.Split(v, ";") {
+		if len(out) >= maxCookiePairs {
+			break
+		}
+		pair := strings.TrimLeft(raw, " +")
+		if pair == "" || len(pair) > maxCookiePairBytes {
+			continue
+		}
+		name, value, ok := strings.Cut(pair, "=")
+		if !ok || name == "" {
+			continue
+		}
+		out = append(out, cookiePair{Name: strings.ToLower(name), Value: value})
+	}
+	return out
+}
+
+// HashCookie returns a keyed 32-hex-character digest of an allowlisted cookie,
+// or "" when the policy is missing, its key is not 32 bytes or the cookie name
+// is not allowed. The digest is a pseudonym, not an anonymous value; the export
+// scrub handles it. The raw value is never stored or logged.
+func HashCookie(p *importer.CookiePolicy, name, value string) string {
+	if p == nil || len(p.HMACKey) != 32 {
+		return ""
+	}
+	n := strings.ToLower(name)
+	allowed := false
+	for _, a := range p.Allowed {
+		if a == n {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return ""
+	}
+	m := hmac.New(sha256.New, p.HMACKey)
+	m.Write([]byte(cookieDigestPrefix + n + "\x00" + value))
+	return hex.EncodeToString(m.Sum(nil))[:32]
 }

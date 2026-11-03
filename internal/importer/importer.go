@@ -67,6 +67,15 @@ type Options struct {
 	Window                        Window
 	Pseudonymize                  func(kind, value string) string // keyed per case; kind "user" | "client"
 	Supplied                      map[string]string               // owner-supplied quality, e.g. "slowms": "100"
+	CookiePolicy                  *CookiePolicy                   // nil: no cookie value is ever stored, even as a digest
+}
+
+// CookiePolicy is the case's cookie allowlist and the key used to digest
+// their values. Allowed holds lower-cased cookie names whose values may be
+// stored as digests; HMACKey is exactly 32 bytes; the zero value stores nothing.
+type CookiePolicy struct {
+	Allowed []string
+	HMACKey []byte
 }
 
 // MaxReportErrors is how many row errors a Report keeps.

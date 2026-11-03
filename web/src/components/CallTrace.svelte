@@ -8,6 +8,7 @@
  } from '../lib/callTrace';
  import { clearNotice, removeFromTray, tray } from '../lib/callTraceTray.svelte';
  import { CALL_TRACE_TEXT as T, callName, callsAre, hiddenMore, LANE_STATE_TEXT, marginOption, statusIcon, statusText } from '../lib/copy/callTraceCopy';
+ import { explain } from '../lib/copy/dictionary';
  import { formatDuration } from '../lib/format';
  import { formatTime } from '../lib/time';
  let { zone, onclose }: { zone: string; onclose: () => void } = $props();
@@ -118,7 +119,7 @@
        {@const boxes = laneBoxes(lane, trace)}
        {@const rows = packRows(boxes)}
        {@const depth = Math.max(0, ...rows) + 1}
-       <div class="ct-lane-head"><strong>{lane.label}</strong>{#if lane.state !== 'events'}<span class="ct-state">{LANE_STATE_TEXT[lane.state] ?? lane.state}</span>{/if}</div>
+       <div class="ct-lane-head" title={explain('lane.' + lane.key) || undefined}><strong>{lane.label}</strong>{#if lane.state !== 'events'}<span class="ct-state">{LANE_STATE_TEXT[lane.state] ?? lane.state}</span>{/if}</div>
        {#if lane.state === 'events'}
         <div class="ct-track ct-events" style:height={depth * 22 + 6 + 'px'}>
          <div class="ct-guide" style:left={startPct(axis, mode, trace.call) + '%'}></div>

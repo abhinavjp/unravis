@@ -18,8 +18,8 @@ import (
 // purpose: the IIS URL stem, and the Application Insights operation name (a URL
 // path) and operation id (a join key into the client's telemetry).
 var exportDropped = map[string]map[string]bool{
-	"iis-w3c":     {"stem": true},
-	"iis-httperr": {"stem": true},
+	"iis-w3c":     {"stem": true, "client-ip": true, "referer": true, "cookie:*": true},
+	"iis-httperr": {"stem": true, "client-ip": true},
 	"iis-freb":    {"stem": true},
 	"appinsights": {"name": true, "operation_Id": true},
 

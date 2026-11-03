@@ -455,13 +455,23 @@ test('case export: preview posts the case id, confirm posts the preview id, and 
   const preview = await cases.previewCaseExport(CASE_ID);
   assert.equal(preview.previewId, 'p-1');
   assert.deepEqual(JSON.parse(calls[0].body), { caseId: CASE_ID });
-  const file = await cases.confirmCaseExport('p-1');
-  assert.deepEqual(JSON.parse(calls[1].body), { previewId: 'p-1' });
+  const file = await cases.confirmCaseExport('p-1', CASE_ID);
+  assert.deepEqual(JSON.parse(calls[1].body), { previewId: 'p-1', caseId: CASE_ID });
   assert.deepEqual(Object.keys(file).sort(), ['content', 'eventsCsv', 'eventsCsvFilename', 'eventsCsvSha256', 'filename', 'sha256']);
   assert.equal(importCopy.caseExportSavedText(file.sha256), 'Saved two files. SHA-256 of the JSON file: ' + 'c'.repeat(64));
   await assert.rejects(cases.previewCaseExport('../x'), (e) => e.reason === 'bad-case-id');
+  await assert.rejects(cases.confirmCaseExport('p-1', '../x'), (e) => e.reason === 'bad-case-id');
   mockServer(() => ({ body: { export: exportBody(1, 1) } }));
   await assert.rejects(cases.previewCaseExport(CASE_ID), (e) => e.reason === 'unreadable', 'a preview with no id cannot be confirmed');
+});
+
+test('case export: a 409 on confirm is shown as a stale preview', async () => {
+  mockServer((call) => {
+    if (call.url === '/api/export/confirm') return { status: 409, body: { error: 'the preview changed; run the preview again' } };
+    return { status: 404, body: { reason: 'not-found' } };
+  });
+  await assert.rejects(cases.confirmCaseExport('p-1', CASE_ID), (e) => e.status === 409);
+  assert.match(read('src/lib/components/CaseTools.svelte'), /status === 409/);
 });
 
 test('host roles have words, and an unknown role is shown as sent', () => {

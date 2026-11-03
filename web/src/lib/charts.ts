@@ -8,6 +8,7 @@ import { axisDuration, niceHistogram } from './chartScale';
 import { gapBridge, heroOutliers, type HeroSlot } from './chartHero';
 import { MIN_SAMPLE } from './thresholds';
 import { lightFallback } from '../brand/fallback';
+import { explain } from './copy/dictionary';
 
 echarts.use([LineChart, BarChart, HeatmapChart, ScatterChart, GridComponent, TooltipComponent, DataZoomComponent, VisualMapComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
 export { echarts };
@@ -117,7 +118,7 @@ export const failureTrendOption = (analysis: Analysis, zone: string, cohortKeys:
         const index = items[0]?.dataIndex ?? 0;
         return (points[index] ? tooltipTimestamp(points[index].at, zone) + '<br/>' : '') +
           '4xx client errors: ' + text(client[index] ?? null) + '<br/>5xx server errors and failed jobs: ' + text(server[index] ?? null) +
-          ((incomplete[index] ?? 0) > 0 ? '<br/>Missing timing (not a failure): ' + (incomplete[index] ?? 0).toLocaleString() : '');
+          ((incomplete[index] ?? 0) > 0 ? '<br/>' + escapeHTML(explain('incomplete')) + ': ' + (incomplete[index] ?? 0).toLocaleString() : '');
       }
     },
     legend: { type: 'scroll', orient: 'horizontal', top: 2, left: 76, right: 12, itemGap: 10, pageIconSize: 9, textStyle: { color: p.text2, fontSize: 12 } },
@@ -162,7 +163,8 @@ export const heroOption = (windows: HeroSlot[], zone: string, withLatency: boole
         if (!window) return '';
         return tooltipTimestamp(window.at, zone) + '<br/>Requests: ' + window.count.toLocaleString() +
           (withLatency ? '<br/>P95: ' + (window.latency == null ? 'no timed requests' : '≈ ' + heroDuration(window.latency)) +
-            (window.max != null ? '<br/>Slowest request: ' + heroDuration(window.max) + (flagged.has(index) ? ' (far above the usual P95)' : '') : '') : '');
+            (window.max != null ? '<br/>Slowest request: ' + heroDuration(window.max) + (flagged.has(index) ? ' (far above the usual P95)' : '') : '') +
+            '<br/>' + escapeHTML(explain('latency.p95')) : '');
       }
     },
     xAxis: { type: 'category', data: labels, axisTick: { show: false }, axisLabel: { color: axis, interval: 0, hideOverlap: true }, axisLine: { lineStyle: { color: p.axisLine } } },

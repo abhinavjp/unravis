@@ -46,7 +46,8 @@ func (W3C) DefaultLimits() importer.Limits {
 func (W3C) AllowedAttrs() map[string]bool {
 	return map[string]bool{"method": true, "stem": true, "status": true, "substatus": true,
 		"win32": true, "port": true, "site": true, "user": true,
-		"bytes-out": true, "bytes-in": true}
+		"bytes-out": true, "bytes-in": true, "client-ip": true, "referer": true,
+		"cookie:*": true}
 }
 
 // Detect scores W3C extended logs. IIS-format (comma separated) and NCSA
@@ -74,7 +75,8 @@ var w3cSpec = &spec{
 	limits:   W3C{}.DefaultLimits(),
 	zoneRule: clock.RuleUTCField,
 	keep: []string{"date", "time", "cs-method", "cs-uri-stem", "sc-status", "sc-substatus",
-		"sc-win32-status", "time-taken", "s-port", "s-sitename", "s-computername", "cs-username", "sc-bytes", "cs-bytes"},
+		"sc-win32-status", "time-taken", "s-port", "s-sitename", "s-computername", "cs-username", "sc-bytes", "cs-bytes",
+			"c-ip", "cs(referer)", "cs(cookie)"},
 	required: []string{"date", "time"},
 	row:      w3cRow,
 	gaps: func(st *runState, rep *importer.Report) []string {
@@ -112,7 +114,7 @@ func w3cRow(c *rowCtx) (evidence.Event, importer.Reason, error) {
 		return ev, reason, err
 	}
 
-	attrs := make(map[string]string, 8)
+	attrs := make(map[string]string, 16)
 	if v, ok := c.get("cs-method"); ok {
 		if m, ok := cleanToken(v, 20); ok {
 			attrs["method"] = m
@@ -170,6 +172,35 @@ func w3cRow(c *rowCtx) (evidence.Event, importer.Reason, error) {
 	}
 	if v, ok := c.get("cs-username"); ok && c.opts.Pseudonymize != nil {
 		attrs["user"] = c.opts.Pseudonymize("user", v)
+	}
+	// A bad IP or referer never rejects the row; the value is just not stored.
+	if v, ok := c.get("c-ip"); ok && validIPv4or6(v) {
+		attrs["client-ip"] = v
+	}
+	if v, ok := c.get("cs(referer)"); ok {
+		if r, ok := safeReferer(v); ok {
+			attrs["referer"] = r
+		}
+	}
+	// Cookies: only allowlisted names, only as keyed digests; the first
+	// occurrence of a name wins and at most maxCookieAttrs are stored.
+	if c.opts.CookiePolicy != nil {
+		if v, ok := c.get("cs(cookie)"); ok {
+			n := 0
+			for _, pair := range splitCookiePairs(v) {
+				if n >= maxCookieAttrs {
+					break
+				}
+				key := "cookie:" + pair.Name
+				if _, dup := attrs[key]; dup {
+					continue
+				}
+				if d := HashCookie(c.opts.CookiePolicy, pair.Name, pair.Value); d != "" {
+					attrs[key] = d
+					n++
+				}
+			}
+		}
 	}
 
 	ev = evidence.Event{Kind: "request", Host: host, Start: ts, End: ts, Attrs: attrs}

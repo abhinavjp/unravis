@@ -1,7 +1,7 @@
 <script lang="ts">
   import { CaseApiError, canSaveCaseExport, isCaseGone, caseExportSummary, confirmCaseExport, fetchCollect, fetchTimeline, previewCaseExport, type CaseExportPreview } from '../cases';
   import { collectRows, type CollectRow } from '../collect';
-  import { IMPORT_TEXT, caseExportSavedText, errorText } from '../copy/importCopy';
+  import { IMPORT_TEXT, caseExportSavedText, errorText, exportErrorText } from '../copy/importCopy';
   import { contentMatches, describeCount, downloadName } from '../export';
   import type { TimelineView } from '../timeline';
   import type { Query } from '../types';
@@ -26,7 +26,9 @@
   type Phase = { kind: 'idle' } | { kind: 'previewing' } | { kind: 'preview'; preview: CaseExportPreview } | { kind: 'saving'; preview: CaseExportPreview } | { kind: 'saved'; preview: CaseExportPreview; sha256: string };
   let phase = $state.raw<Phase>({ kind: 'idle' });
   let exportProblem = $state('');
+  // One controller per job: starting a preview must not abort a timeline in flight (it would stay busy), and the reverse.
   let controller: AbortController | null = null;
+  let timelineController: AbortController | null = null;
 
   const hasSource = $derived(query.sourceIds.length > 0);
   // The API P95 line on the resource panel is read from the analysis already on screen; nothing more is asked for it.
@@ -40,7 +42,7 @@
   let collectPhase = $state.raw<CollectPhase>({ kind: 'idle' });
   let collectController: AbortController | null = null;
 
-  $effect(() => () => { controller?.abort(); collectController?.abort(); });
+  $effect(() => () => { controller?.abort(); timelineController?.abort(); collectController?.abort(); });
 
   async function loadCollect() {
     if (collectPhase.kind === 'loading' || collectPhase.kind === 'ready') return;
@@ -61,16 +63,16 @@
     if ((event.currentTarget as HTMLDetailsElement).open) void loadCollect();
   }
 
-  function failure(error: unknown): string {
+  function failure(error: unknown, text: typeof errorText = errorText): string {
     if (isCaseGone(error)) onGone?.();
-    return error instanceof CaseApiError ? errorText(error) : errorText({ status: 0, reason: 'unreachable', message: '' });
+    return error instanceof CaseApiError ? text(error) : errorText({ status: 0, reason: 'unreachable', message: '' });
   }
 
   async function buildTimeline() {
     if (timelineBusy || !hasSource) return;
-    controller?.abort();
-    controller = new AbortController();
-    const mine = controller;
+    timelineController?.abort();
+    timelineController = new AbortController();
+    const mine = timelineController;
     timelineBusy = true; timelineProblem = '';
     try {
       const view = await fetchTimeline(caseId, query, mine.signal);
@@ -95,7 +97,7 @@
     } catch (error) {
       if (mine.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return;
       phase = { kind: 'idle' };
-      exportProblem = failure(error);
+      exportProblem = failure(error, exportErrorText);
     }
   }
 
@@ -121,11 +123,16 @@
     const shown = phase.preview;
     exportProblem = '';
     phase = { kind: 'saving', preview: shown };
+    // Aborted when this copy of the component goes away (another case opened): nothing is downloaded for a case no longer on screen.
+    const mine = new AbortController();
+    controller?.abort();
+    controller = mine;
     try {
-      const file = await confirmCaseExport(shown.previewId);
-      // Confirming used the preview up, so on a mismatch nothing is saved and a new preview is needed.
+      const file = await confirmCaseExport(shown.previewId, caseId, mine.signal);
+      // On a mismatch nothing is saved and a new preview is needed.
       const jsonOk = await contentMatches(file.content, file.sha256);
       const csvOk = await contentMatches(file.eventsCsv ?? '', file.eventsCsvSha256 ?? '');
+      if (mine.signal.aborted) return;
       if (!jsonOk || !csvOk) {
         exportProblem = IMPORT_TEXT.exportMismatch;
         phase = { kind: 'idle' };
@@ -136,8 +143,9 @@
       download(file.eventsCsv ?? '', csvName === 'evidence-export.json' ? 'unravis-events.csv' : csvName, 'text/csv');
       phase = { kind: 'saved', preview: shown, sha256: file.sha256 };
     } catch (error) {
-      exportProblem = failure(error);
-      phase = { kind: 'preview', preview: shown };
+      if (mine.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return;
+      exportProblem = failure(error, exportErrorText);
+      phase = error instanceof CaseApiError && error.status === 409 ? { kind: 'idle' } : { kind: 'preview', preview: shown };
     }
   }
 </script>

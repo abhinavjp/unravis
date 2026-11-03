@@ -143,7 +143,7 @@ func TestIntegrationImportTimelineExportErase(t *testing.T) {
 			Kind string `json:"kind"`
 		} `json:"rows"`
 		Sources []struct {
-			Name   string `json:"name"`
+			Name    string   `json:"name"`
 			TZRules []string `json:"tzRules"`
 		} `json:"sources"`
 	}
@@ -175,7 +175,7 @@ func TestIntegrationImportTimelineExportErase(t *testing.T) {
 	if preview.PreviewID == "" {
 		t.Fatalf("no preview id: %s", res.Body)
 	}
-	res = e.json(http.MethodPost, "/api/export/confirm", `{"previewId":"`+preview.PreviewID+`"}`)
+	res = e.json(http.MethodPost, "/api/export/confirm", `{"previewId":"`+preview.PreviewID+`","caseId":"`+id+`"}`)
 	if res.Code != http.StatusOK {
 		t.Fatalf("confirm = %d %s", res.Code, res.Body)
 	}
@@ -195,9 +195,9 @@ func TestIntegrationImportTimelineExportErase(t *testing.T) {
 	if !json.Valid([]byte(confirmed.Content)) {
 		t.Errorf("export is not JSON")
 	}
-	// A preview is confirmed once.
-	if res = e.json(http.MethodPost, "/api/export/confirm", `{"previewId":"`+preview.PreviewID+`"}`); res.Code != http.StatusNotFound {
-		t.Errorf("second confirm = %d", res.Code)
+	// A case preview is stateless: an unchanged case confirms again.
+	if res = e.json(http.MethodPost, "/api/export/confirm", `{"previewId":"`+preview.PreviewID+`","caseId":"`+id+`"}`); res.Code != http.StatusOK {
+		t.Errorf("second confirm of an unchanged case = %d", res.Code)
 	}
 
 	// An unconfirmed preview does not survive the erase of its case.
@@ -211,7 +211,7 @@ func TestIntegrationImportTimelineExportErase(t *testing.T) {
 	if res = e.json(http.MethodDelete, "/api/cases/"+id, `{"confirm":"`+id+`"}`); res.Code != http.StatusNoContent {
 		t.Fatalf("erase = %d %s", res.Code, res.Body)
 	}
-	if res = e.json(http.MethodPost, "/api/export/confirm", `{"previewId":"`+preview.PreviewID+`"}`); res.Code != http.StatusNotFound {
+	if res = e.json(http.MethodPost, "/api/export/confirm", `{"previewId":"`+preview.PreviewID+`","caseId":"`+id+`"}`); res.Code != http.StatusNotFound {
 		t.Errorf("confirm after erase = %d, want 404", res.Code)
 	}
 	list, err := e.ledger.List()
@@ -318,8 +318,8 @@ func TestSpreadsheetSafeIsTheEvidenceCell(t *testing.T) {
 // case, or exports a case that holds nothing. None of these may panic or leak.
 func TestCaseExportClumsyUse(t *testing.T) {
 	e := newIntEnv(t, intRepo())
-	confirm := func(previewID string) int {
-		return e.json(http.MethodPost, "/api/export/confirm", `{"previewId":"`+previewID+`"}`).Code
+	confirm := func(caseID, previewID string) int {
+		return e.json(http.MethodPost, "/api/export/confirm", `{"previewId":"`+previewID+`","caseId":"`+caseID+`"}`).Code
 	}
 	preview := func(id string) string {
 		res := e.json(http.MethodPost, "/api/export/preview", `{"caseId":"`+id+`"}`)
@@ -335,16 +335,16 @@ func TestCaseExportClumsyUse(t *testing.T) {
 
 	empty := e.newCase("Nothing imported")
 	pid := preview(empty)
-	if got := confirm(pid); got != http.StatusOK {
+	if got := confirm(empty, pid); got != http.StatusOK {
 		t.Errorf("confirm of an empty case export = %d", got)
 	}
-	if got := confirm(pid); got != http.StatusNotFound {
-		t.Errorf("second confirm of the same preview = %d, want 404", got)
+	if got := confirm(empty, pid); got != http.StatusOK {
+		t.Errorf("second confirm of an unchanged case = %d, want 200", got)
 	}
 
 	for _, bad := range []string{"", "x", strings.Repeat("z", 5000)} {
-		if got := confirm(bad); got != http.StatusNotFound {
-			t.Errorf("confirm of %d-byte token = %d, want 404", len(bad), got)
+		if got := confirm(empty, bad); got != http.StatusConflict {
+			t.Errorf("confirm of %d-byte token = %d, want 409", len(bad), got)
 		}
 	}
 
@@ -354,7 +354,7 @@ func TestCaseExportClumsyUse(t *testing.T) {
 	if res := e.json(http.MethodDelete, "/api/cases/"+gone, `{"confirm":"`+gone+`"}`); res.Code != http.StatusNoContent {
 		t.Fatalf("erase = %d %s", res.Code, res.Body)
 	}
-	if got := confirm(pid); got != http.StatusNotFound {
+	if got := confirm(gone, pid); got != http.StatusNotFound {
 		t.Errorf("confirm after the case was erased = %d, want 404", got)
 	}
 	if res := e.json(http.MethodPost, "/api/export/preview", `{"caseId":"`+gone+`"}`); res.Code != http.StatusNotFound {

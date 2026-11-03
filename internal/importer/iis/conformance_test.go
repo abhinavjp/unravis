@@ -19,7 +19,8 @@ func w3cFixtures(t testing.TB) importertest.Fixtures {
 		Bad:     w3cFile(40, "2001-02-03 04:05:59 WEB-A GET /a "+importertest.Sentinel+" 5"),
 		Options: baseOpts(),
 		// every attribute is a typed token, number, allowlisted word, normalised
-		// route or pseudonym; none is free text from the file
+		// route, pseudonym, a validated IP, a scheme+host+path referer or a
+		// keyed digest; none is free text from the file
 		NoFreeText: true,
 		// s-sitename is kept as a token by design, so a fuzzed row can move the
 		// sentinel into a kept column
@@ -42,6 +43,16 @@ func httperrFixtures(t testing.TB) importertest.Fixtures {
 
 func TestW3CConformance(t *testing.T) {
 	importertest.Run(t, NewW3C(), w3cFixtures(t))
+}
+
+// TestW3CConformanceWithCookiePolicy runs the harness with a CookiePolicy in
+// play: the fixture's first row carries a session= cookie (its sentinel
+// already swapped for a clean value by w3cFixtures), so a conforming run
+// must turn it into a keyed digest, not keep or drop it as free text.
+func TestW3CConformanceWithCookiePolicy(t *testing.T) {
+	fx := w3cFixtures(t)
+	fx.Options.CookiePolicy = testPolicy("session")
+	importertest.Run(t, NewW3C(), fx)
 }
 
 func TestHTTPERRConformance(t *testing.T) {

@@ -1,6 +1,7 @@
 package evidence
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -34,12 +35,43 @@ func verifyCase(e Export, raw []byte) error {
 	if err := verifyImports(e); err != nil {
 		return err
 	}
-	if err := verifyEvents(e.Body.Events); err != nil {
+	// The statements say which variant the file is. A file with sensitive
+	// attributes must say scrubbing was turned off, and no file says both.
+	st := e.Manifest.Masking.Statements
+	scrubOff := contains(st, scrubOffStatement)
+	if scrubOff && contains(st, scrubOnStatement) {
+		return caseInvalid("scrubbing statements disagree")
+	}
+	if !scrubOff && hasSensitiveAttrs(e.Body.Events) {
+		return caseInvalid("scrubbing statements disagree")
+	}
+	// The headline and the scrubbing statement come as one pair per variant: a
+	// headline that denies what the file holds must not sit beside the other
+	// variant's statement.
+	headline, statement := caseHeadlineScrubOn, scrubOnStatement
+	if scrubOff {
+		headline, statement = caseHeadlineScrubOff, scrubOffStatement
+	}
+	if len(st) < 2 || st[0] != headline || st[1] != statement {
+		return caseInvalid("scrubbing statements disagree")
+	}
+	if err := verifyEvents(e.Body.Events, scrubOff); err != nil {
 		return err
 	}
 	// Whole-file checks: nothing may name a cause, say "proven" or "strong
 	// correlation", or carry an address or link, wherever it sits.
 	text := string(raw)
+	if scrubOff {
+		// The checked client-ip, referer and cookie attributes may hold an
+		// address or a link, and the exporter lints each of them on its own
+		// (verifyEvents does the same); everything else in the file is read
+		// whole, for claims and for addresses.
+		b, err := json.Marshal(withoutSensitiveAttrs(e))
+		if err != nil {
+			return caseInvalid("the file cannot be encoded")
+		}
+		text = string(b)
+	}
 	if !claimFree(text) {
 		return caseInvalid("the file carries a causal or proven claim")
 	}
@@ -47,6 +79,53 @@ func verifyCase(e Export, raw []byte) error {
 		return caseInvalid("the file carries an address or link")
 	}
 	return nil
+}
+
+func contains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// isSensitiveAttr reports a client-ip, referer or cookie:* attribute of a
+// source that can carry one.
+func isSensitiveAttr(source, key string) bool {
+	_, ok := sensitivePolicyFor(source, key)
+	return ok
+}
+
+func hasSensitiveAttrs(events []ExportEvent) bool {
+	for _, ev := range events {
+		for k := range ev.Attrs {
+			if isSensitiveAttr(ev.Source, k) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// withoutSensitiveAttrs returns a copy of the export whose events carry no
+// client-ip, referer or cookie:* attribute. The input is not changed.
+func withoutSensitiveAttrs(e Export) Export {
+	events := make([]ExportEvent, len(e.Body.Events))
+	for i, ev := range e.Body.Events {
+		if ev.Attrs != nil {
+			attrs := make(map[string]string, len(ev.Attrs))
+			for k, v := range ev.Attrs {
+				if !isSensitiveAttr(ev.Source, k) {
+					attrs[k] = v
+				}
+			}
+			ev.Attrs = attrs
+		}
+		events[i] = ev
+	}
+	e.Body.Events = events
+	return e
 }
 
 func caseInvalid(format string, a ...any) error {
@@ -126,7 +205,7 @@ func verifyCount(c Count, isRows bool) error {
 	return nil
 }
 
-func verifyEvents(events []ExportEvent) error {
+func verifyEvents(events []ExportEvent, includeSensitive bool) error {
 	seen := make(map[string]bool, len(events))
 	for i, ev := range events {
 		pol := exportPolicy[ev.Source]
@@ -173,9 +252,12 @@ func verifyEvents(events []ExportEvent) error {
 			return caseInvalid("event has too many attributes")
 		}
 		for k, v := range ev.Attrs {
-			p, ok := pol[k]
+			p, ok := policyFor(ev.Source, k, includeSensitive)
 			if !ok || v == "" || len(v) > MaxEventAttrValue || !attrValueOK(p, v) {
 				return caseInvalid("event attribute is not allowed or its value breaks its rule")
+			}
+			if p.rule == ruleSensitive && (!claimFree(k) || !claimFree(v)) {
+				return caseInvalid("a sensitive attribute carries a causal or proven claim")
 			}
 		}
 	}

@@ -204,6 +204,11 @@ func parseSelector(s string) (selector, error) {
 			if !selectorAttrName.MatchString(an) {
 				return bad("attribute name")
 			}
+			// client-ip, referer and cookie:* never leave through a view that
+			// ProjectEventAttrs would have filtered.
+			if evidence.IsSensitiveAttr(strings.ToLower(an)) {
+				return bad("attribute name")
+			}
 			if len(sel.attrs) >= maxSelectorAttrs {
 				return bad("too many attributes")
 			}

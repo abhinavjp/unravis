@@ -3,6 +3,7 @@ package iis
 import (
 	"context"
 	"io"
+	"net"
 	"strings"
 	"time"
 
@@ -51,7 +52,7 @@ func (HTTPERR) DefaultLimits() importer.Limits {
 
 func (HTTPERR) AllowedAttrs() map[string]bool {
 	return map[string]bool{"reason": true, "status": true, "method": true, "stem": true,
-		"queue": true, "siteid": true}
+		"queue": true, "siteid": true, "client-ip": true}
 }
 
 func (HTTPERR) Detect(head []byte, fileName string) int {
@@ -70,7 +71,7 @@ var httperrSpec = &spec{
 	limits:   HTTPERR{}.DefaultLimits(),
 	zoneRule: clock.RuleUTCField,
 	keep: []string{"date", "time", "cs-method", "cs-uri", "sc-status", "s-siteid",
-		"s-reason", "s-queuename"},
+		"s-reason", "s-queuename", "c-ip"},
 	required: []string{"date", "time"},
 	// HTTPERR rows carry no machine name, so the picked host labels them.
 	preflight: func(opts importer.Options) error {
@@ -81,13 +82,30 @@ var httperrSpec = &spec{
 	},
 	row: httperrRow,
 	gaps: func(st *runState, rep *importer.Report) []string {
-		return []string{gapW3CResolution}
+		gaps := []string{gapW3CResolution}
+		if !st.declared["c-ip"] {
+			gaps = append(gaps, gapHTTPERRNoClientIP)
+		}
+		return gaps
 	},
 }
+
+// gapHTTPERRNoClientIP holds when the file's #Fields header has no c-ip
+// column, so no event can carry a client-ip attribute.
+const gapHTTPERRNoClientIP = "HTTP error log has no client IP column; client addresses are not available for this file."
 
 func (HTTPERR) Parse(ctx context.Context, r io.Reader, opts importer.Options,
 	emit func(evidence.Event) error) (importer.Report, error) {
 	return run(ctx, r, opts, emit, httperrSpec)
+}
+
+// httperrClientIP reports whether s is usable as a client-ip attribute. It
+// has its own limit rather than sharing one with the W3C importer's IP check.
+func httperrClientIP(s string) bool {
+	if len(s) == 0 || len(s) > 64 || strings.ContainsAny(s, " /") {
+		return false
+	}
+	return net.ParseIP(s) != nil
 }
 
 func httperrRow(c *rowCtx) (evidence.Event, importer.Reason, error) {
@@ -105,7 +123,7 @@ func httperrRow(c *rowCtx) (evidence.Event, importer.Reason, error) {
 		return ev, reason, err
 	}
 
-	attrs := make(map[string]string, 6)
+	attrs := make(map[string]string, 8)
 	sreason := "other"
 	if v, ok := c.get("s-reason"); ok {
 		if canon, ok := httperrReasons[strings.ToLower(v)]; ok {
@@ -140,6 +158,9 @@ func httperrRow(c *rowCtx) (evidence.Event, importer.Reason, error) {
 		if q, ok := cleanToken(v, 64); ok {
 			attrs["queue"] = q
 		}
+	}
+	if v, ok := c.get("c-ip"); ok && httperrClientIP(v) {
+		attrs["client-ip"] = v
 	}
 	return evidence.Event{Kind: "httperr", Host: host, Start: ts, End: ts, Attrs: attrs}, "", nil
 }

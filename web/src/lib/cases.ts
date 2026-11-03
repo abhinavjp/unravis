@@ -658,9 +658,10 @@ export async function previewCaseExport(id: string, signal?: AbortSignal): Promi
   return { previewId: body.previewId, export: exp };
 }
 
-/** Using the preview up: the server answers once, with the JSON file and the events CSV, each with its SHA-256. */
-export async function confirmCaseExport(previewId: string, signal?: AbortSignal): Promise<ExportFile> {
-  const file = await json<Partial<ExportFile>>(await send('/export/confirm', { method: 'POST', body: JSON.stringify({ previewId }) }, signal));
+/** The server rebuilds the files from the case as it is now and answers with the JSON file and the events CSV, each with its SHA-256. A 409 means the case changed after the preview. */
+export async function confirmCaseExport(previewId: string, caseId: string, signal?: AbortSignal): Promise<ExportFile> {
+  if (!isCaseId(caseId)) throw new CaseApiError('That is not a case id.', 400, 'bad-case-id');
+  const file = await json<Partial<ExportFile>>(await send('/export/confirm', { method: 'POST', body: JSON.stringify({ previewId, caseId }) }, signal));
   return { filename: asString(file.filename), content: asString(file.content), sha256: asString(file.sha256), eventsCsvFilename: asString(file.eventsCsvFilename), eventsCsv: asString(file.eventsCsv), eventsCsvSha256: asString(file.eventsCsvSha256) };
 }
 

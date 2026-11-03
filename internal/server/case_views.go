@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -163,45 +162,68 @@ func auditInterval(r audit.RequestRecord) (join.Interval, bool) {
 
 /* ---------------------------------------------------------- case export */
 
-// caseExportPreview builds the redacted export of one case and keeps it for
-// /api/export/confirm, exactly as the findings export does. The pseudonym key
-// is fresh for each preview, handed to the builder and zeroed; it is never
-// stored, so a re-export shares no pseudonym with this one. The file holds no
-// file names (BuildCase never reads them).
-func (h *handler) caseExportPreview(w http.ResponseWriter, r *http.Request, raw string) {
-	id, ok := caseIDOf(w, raw)
-	if !ok || !h.casesAvailable(w) {
-		return
+// caseRevisionOf reads the case revision, 0 for a case that keeps none (the
+// memory store). The read-share wrapper embeds Case and does not promote
+// Revision, so it is unwrapped first or a wrapped handle would report 0.
+func caseRevisionOf(ctx context.Context, c casestore.Case) (int64, error) {
+	c = innerCase(c)
+	rv, ok := c.(interface {
+		Revision(context.Context) (int64, error)
+	})
+	if !ok {
+		return 0, nil
 	}
-	// Held so an erase cannot finish between the read and the stored preview,
-	// which would leave an export of an erased case behind. The case is opened
-	// after the gate is taken, so an erase that ran first answers 404.
-	release, err := h.gates.acquire(r.Context(), id)
+	return rv.Revision(ctx)
+}
+
+// caseExportResult is a built case export: the document, its canonical bytes and
+// the events CSV.
+type caseExportResult struct {
+	export    evidence.Export
+	canonical []byte
+	csv       []byte
+	// revisionBefore and revisionAfter bracket the reads of the build. They are
+	// not serialized; a confirm answers 409 when either differs from the revision
+	// its preview id was made from.
+	revisionBefore int64
+	revisionAfter  int64
+}
+
+// buildCaseExport builds the redacted export of one case. The pseudonym key is
+// fresh for each build, handed to the builder and zeroed; it is never stored, so
+// a re-export shares no pseudonym with this one. The file holds no file names
+// (BuildCase never reads them). On false the answer has been written.
+func (h *handler) buildCaseExport(w http.ResponseWriter, r *http.Request, c casestore.Case, scrub bool) (caseExportResult, bool) {
+	before, err := caseRevisionOf(r.Context(), c)
 	if err != nil {
 		writeStoreError(w, err)
-		return
+		return caseExportResult{}, false
 	}
-	defer release()
-	_, c, ok := h.openCaseForWrite(w, r, raw)
-	if !ok {
-		return
-	}
-	defer c.Close()
 	imports, err := c.Imports(r.Context())
 	if err != nil {
 		writeStoreError(w, err)
-		return
+		return caseExportResult{}, false
 	}
 	events, err := c.Events(r.Context(), casestore.EventQuery{Limit: casestore.MaxEventQuery})
 	if err != nil {
 		writeStoreError(w, err)
-		return
+		return caseExportResult{}, false
+	}
+	if caseExportSnapshotHook != nil {
+		caseExportSnapshotHook("after-reads")
+	}
+	after, err := caseRevisionOf(r.Context(), c)
+	if err != nil {
+		writeStoreError(w, err)
+		return caseExportResult{}, false
 	}
 	in := evidence.CaseInput{
 		Events:          events,
 		EventsTruncated: len(events) >= casestore.MaxEventQuery,
 		ToolVersion:     exportToolVersion,
 		Now:             time.Now().UTC(),
+		// Scrubbing off keeps client-ip, referer and cookie digests (iis-w3c only).
+		IncludeSensitive: !scrub,
 	}
 	for _, rec := range imports {
 		in.Imports = append(in.Imports, evidence.CaseImport{
@@ -213,7 +235,7 @@ func (h *handler) caseExportPreview(w http.ResponseWriter, r *http.Request, raw 
 	key, err := newExportKey()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Internal server error.")
-		return
+		return caseExportResult{}, false
 	}
 	in.Key = key
 	export, err := evidence.BuildCase(in)
@@ -222,25 +244,99 @@ func (h *handler) caseExportPreview(w http.ResponseWriter, r *http.Request, raw 
 	}
 	if err != nil {
 		writeExportBuildError(w, err)
-		return
+		return caseExportResult{}, false
 	}
 	canonical, err := canonicalExport(export)
 	if err != nil {
 		writeExportBuildError(w, err)
-		return
+		return caseExportResult{}, false
 	}
 	csv, err := evidence.EventsCSV(export)
 	if err != nil {
 		writeExportBuildError(w, err)
+		return caseExportResult{}, false
+	}
+	return caseExportResult{export: export, canonical: canonical, csv: csv, revisionBefore: before, revisionAfter: after}, true
+}
+
+// caseExportPreview answers the redacted export of one case for display. It
+// stores nothing: the preview id is derived from the case, its revision and the
+// scrub setting, and confirm recomputes it.
+func (h *handler) caseExportPreview(w http.ResponseWriter, r *http.Request, raw string, scrub *bool) {
+	id, ok := caseIDOf(w, raw)
+	if !ok || !h.casesAvailable(w) {
 		return
 	}
-	raw16 := make([]byte, 16)
-	if _, err := rand.Read(raw16); err != nil {
-		writeError(w, http.StatusInternalServerError, "Internal server error.")
+	// Held so an erase cannot finish between the read and the answer. The case is
+	// opened after the gate is taken, so an erase that ran first answers 404.
+	release, err := h.gates.acquire(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
 		return
 	}
-	previewID := hex.EncodeToString(raw16)
-	sum := sha256.Sum256(canonical)
-	h.exports().put(previewID, storedExport{canonical: canonical, sha256: hex.EncodeToString(sum[:]), csv: csv, caseID: string(id)})
-	writeJSON(w, http.StatusOK, exportPreviewResponse{PreviewID: previewID, Export: export}, maxResponseBytes)
+	defer release()
+	_, c, ok := h.openCaseForWrite(w, r, raw)
+	if !ok {
+		return
+	}
+	defer c.Close()
+	rev, err := caseRevisionOf(r.Context(), c)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	resolved, summarizes := resolveScrub(scrub), false
+	res, ok := h.buildCaseExport(w, r, c, resolved)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, exportPreviewResponse{
+		PreviewID:      casePreviewID(string(id), rev, resolved),
+		Export:         res.export,
+		ScrubSensitive: &resolved, SummarizesBytes: &summarizes,
+	}, maxResponseBytes)
+}
+
+// caseExportConfirm builds the files of a case export when the preview id still
+// matches the case revision and the scrub setting, and the case did not change
+// while it was read; otherwise it answers 409. The build runs again, so two
+// confirms of one preview are not promised the same bytes.
+func (h *handler) caseExportConfirm(w http.ResponseWriter, r *http.Request, body exportConfirmRequest) {
+	id, ok := caseIDOf(w, body.CaseID)
+	if !ok || !h.casesAvailable(w) {
+		return
+	}
+	release, err := h.gates.acquire(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	defer release()
+	_, c, ok := h.openCaseForWrite(w, r, body.CaseID)
+	if !ok {
+		return
+	}
+	defer c.Close()
+	rev, err := caseRevisionOf(r.Context(), c)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if body.PreviewID != casePreviewID(string(id), rev, resolveScrub(body.ScrubSensitive)) {
+		writeError(w, http.StatusConflict, exportChangedMessage)
+		return
+	}
+	res, ok := h.buildCaseExport(w, r, c, resolveScrub(body.ScrubSensitive))
+	if !ok {
+		return
+	}
+	// The build read the case between two revision reads. A write that landed in
+	// between (a handler that takes no gate, a second process) changed the number,
+	// so the files may mix two states: answer 409 before any byte or log line.
+	if res.revisionBefore != rev || res.revisionAfter != rev {
+		writeError(w, http.StatusConflict, exportChangedMessage)
+		return
+	}
+	sum := sha256.Sum256(res.canonical)
+	h.writeConfirmed(w, r, res.canonical, hex.EncodeToString(sum[:]), res.csv)
 }

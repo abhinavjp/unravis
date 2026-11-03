@@ -626,11 +626,8 @@ type eventDTO struct {
 	Attrs      map[string]string `json:"attrs"`
 }
 
-func toEventDTO(e evidence.Event) eventDTO {
-	attrs := make(map[string]string, len(e.Attrs))
-	for k, v := range e.Attrs {
-		attrs[k] = v
-	}
+func toEventDTO(e evidence.Event, includeSensitive bool) eventDTO {
+	attrs := evidence.ProjectEventAttrs(e.Attrs, includeSensitive)
 	return eventDTO{
 		EvidenceID: e.EvidenceID, Source: e.Source, Kind: e.Kind, Host: e.Host, Start: e.Start.UTC(), End: e.End.UTC(),
 		DurationMs: e.DurationMs, Value: e.Value, Unit: e.Unit, Severity: e.Severity, Line: e.Line, TZRule: e.TZRule, Attrs: attrs,
@@ -1616,6 +1613,16 @@ func (h *handler) importFileWith(ctx context.Context, w http.ResponseWriter, id 
 		Hosts: h.hostsNow().Lookup, Pseudonymize: c.Pseudonymize,
 		Supplied: supplied, Window: win,
 	}
+	if cp, ok := innerCase(c).(casestore.CookiePolicyStore); ok {
+		pol, perr := cp.CookiePolicy(ctx)
+		if perr != nil {
+			writeCaseFailure(w, http.StatusInternalServerError, "import-failed", "The import could not start.")
+			return
+		}
+		if len(pol.Allowed) > 0 && len(pol.HMACKey) == casestore.CookieKeyBytes {
+			opts.CookiePolicy = &pol
+		}
+	}
 	meta := casestore.ImportMeta{
 		Importer: imp.Name(), FileName: fileName, AckGating: ackGating, AckText: ackText, AllowedAttrs: imp.AllowedAttrs(),
 		Supplied: supplied,
@@ -1877,9 +1884,11 @@ func (h *handler) caseEvents(w http.ResponseWriter, r *http.Request, raw string)
 		writeStoreError(w, err)
 		return
 	}
+	// Only the exact text 1 opts in to client-ip, referer and cookie:* attributes.
+	include := query.Get("includeSensitive") == "1"
 	out := make([]eventDTO, 0, len(events))
 	for _, e := range events {
-		out = append(out, toEventDTO(e))
+		out = append(out, toEventDTO(e, include))
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Events    []eventDTO `json:"events"`

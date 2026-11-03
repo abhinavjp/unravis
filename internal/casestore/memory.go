@@ -71,6 +71,10 @@ type memData struct {
 	plan *memPlan
 	retries   []RetryItem // the needs-another-try list (see RetryStore)
 	nextRetry int64
+	// cookieAllow is the cookie-name allowlist; cookieKey is its HMAC key,
+	// created once on first non-empty SetCookieAllowlist (see CookiePolicyStore).
+	cookieAllow []string
+	cookieKey   []byte
 	// refs counts open handles, so Free can refuse a case that is in use (P3).
 	refs int
 	// missing marks a case whose folder is gone, as a demo or test seeds it (P3).

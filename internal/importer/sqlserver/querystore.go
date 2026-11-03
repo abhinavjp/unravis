@@ -39,6 +39,7 @@ import (
 //	                       duration in milliseconds (value / 1000).
 //	max_duration           MICROSECONDS; attribute max_duration_ms (value / 1000).
 //	avg_cpu_time           MICROSECONDS; attribute avg_cpu_ms (value / 1000).
+//	VF-01h: UNMEASURED. no real sample or paired capture on this machine (looked in UNRAVIS_VF01_SAMPLES and .dev/samples/vf01); the division above is kept as coded.
 //	avg_logical_io_reads   8 KB pages, a number; attribute avg_logical_reads.
 //	avg_rowcount           rows, a number; attribute avg_rows.
 //	last_execution_time    datetimeoffset, UTC; attribute last_execution.
