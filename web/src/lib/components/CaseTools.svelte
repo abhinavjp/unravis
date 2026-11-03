@@ -43,6 +43,9 @@
   let collectPhase = $state.raw<CollectPhase>({ kind: 'idle' });
   let collectController: AbortController | null = null;
 
+  // A setting seen for another case is dropped when this case's tools open.
+  $effect(() => { exportScrub.keepOnlyFor(caseId); });
+
   $effect(() => () => { controller?.abort(); timelineController?.abort(); collectController?.abort(); });
 
   async function loadCollect() {
@@ -97,7 +100,7 @@
       if (!mine.signal.aborted) {
         phase = { kind: 'preview', preview: result };
         const scrub = (result.export as { scrubSensitive?: unknown }).scrubSensitive;
-        exportScrub.set(typeof scrub === 'boolean' ? scrub : null);
+        exportScrub.set(typeof scrub === 'boolean' ? scrub : null, caseId);
       }
     } catch (error) {
       if (mine.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) return;

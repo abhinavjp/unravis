@@ -77,8 +77,6 @@ export function slotGrid(window: TracingWindow): SlotGrid | null {
   return { firstMs, widthMs, n, windowStartMs, windowEndMs };
 }
 
-export const slotLeftPct = (g: SlotGrid, i: number): number => (100 * i) / g.n;
-export const slotWidthPct = (g: SlotGrid): number => 100 / g.n;
 export const slotStartMs = (g: SlotGrid, i: number): number => g.firstMs + i * g.widthMs;
 
 /** True when the slot starts before the request window or ends after it: it exists only to fill out the server's axis. */
@@ -118,6 +116,60 @@ export function barsFor(g: SlotGrid, buckets: TracingBucket[]): Bar[] {
 }
 
 export const barMax = (bars: Bar[]): number => bars.reduce((max, bar) => Math.max(max, bar.count), 0);
+
+/** A bar's height as a share of the tallest bar, 0 to 100; 0 for an empty bucket or a scale with no height. */
+export function barHeightPct(count: number, max: number): number {
+  if (!(count > 0) || !(max > 0)) return 0;
+  return Math.min(100, (count / max) * 100);
+}
+
+/**
+ * True when the lane draws bars. Events lanes always do; an incomplete lane only when `barCount` bars (default: its
+ * buckets) exist; every other state, and any disabled lane, draws nothing. The one rule shared by chart and hand-off.
+ */
+export function laneDrawsBars(lane: TracingLane, barCount: number = lane.buckets.length): boolean {
+  if (lane.disabled) return false;
+  if (lane.state === 'events') return true;
+  if (lane.state === 'incomplete') return barCount > 0;
+  return false;
+}
+
+/** A row is hidden only when its flag is exactly false. */
+export function isLaneVisible(visible: Partial<Record<TracingLaneKey, boolean>>, key: TracingLaneKey): boolean {
+  return visible[key] !== false;
+}
+
+/** False when the lane has no file for its source: it read nothing, so a "from saved logs" line would claim a read that did not happen. */
+export function showsProvenance(lane: TracingLane): boolean {
+  return lane.state !== 'no-data';
+}
+
+export const NO_EVENTS_PERIOD = 'No events in this period';
+
+/** The one sentence a lane that draws no bars shows in its panel and in its hover text ('' when it draws bars). */
+export function laneStatusLine(lane: TracingLane): string {
+  if (lane.state === 'none-seen' && !lane.disabled) return NO_EVENTS_PERIOD;
+  return laneNote(lane);
+}
+
+/** True when any lane that draws bars has a bucket with events in it: the chart controls only make sense then. */
+export function hasAnyData(g: SlotGrid | null, lanes: TracingLane[]): boolean {
+  if (!g) return false;
+  return lanes.some((lane) => {
+    if (lane.disabled) return false;
+    const bars = barsFor(g, lane.buckets);
+    return laneDrawsBars(lane, bars.length) && bars.some((bar) => bar.count > 0);
+  });
+}
+
+/**
+ * The slots in [from, to) that only fill out the server's axis. Only the first and last slot of the axis can be
+ * outside the request window (the server floors the start and ceils the end), so only those two are tested.
+ */
+export function outsideSlots(g: SlotGrid, from: number, to: number): number[] {
+  const edges = g.n > 1 ? [0, g.n - 1] : [0];
+  return edges.filter((i) => i >= from && i < to && slotOutside(g, i));
+}
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Wording: the bar width in plain words, the axis caption, and the one-line note under a lane that is not drawing a full set of bars.

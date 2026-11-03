@@ -27,11 +27,17 @@ import (
 //
 // Sources names the importers to count, 1 to 200 of them (required). Kinds
 // is an optional filter, 0 to 200 entries.
+//
+// CountErrors asks for BucketCount.Errors too: the events of a cell whose
+// attrs["status"] is exactly three ASCII digits starting with 5 (a 5xx HTTP
+// status). Events without such a status (for instance HTTP.sys error markers)
+// are counted in Count but never in Errors. Left false, Errors stays 0.
 type BucketQuery struct {
 	AxisStart, From, To time.Time
 	WidthMs             int64
 	Sources             []string
 	Kinds               []string
+	CountErrors         bool
 }
 
 // BucketCount is the count of one cell for one importer.
@@ -42,6 +48,15 @@ type BucketCount struct {
 	// cannot tell (the scan fallback).
 	ImportID int64
 	Count    int64
+	// Errors is how many of Count have a 5xx status; it is filled only when the
+	// query set CountErrors.
+	Errors int64
+}
+
+// IsServerErrorStatus reports whether v is a 5xx HTTP status: exactly three
+// ASCII digits, the first one 5. It is the one definition both bucket paths use.
+func IsServerErrorStatus(v string) bool {
+	return len(v) == 3 && v[0] == '5' && v[1] >= '0' && v[1] <= '9' && v[2] >= '0' && v[2] <= '9'
 }
 
 // BucketResult is the answer to a BucketQuery. Counts is sorted by Index,
@@ -116,6 +131,7 @@ func CountBucketsScan(ctx context.Context, c Case, q BucketQuery) (BucketResult,
 		source string
 	}
 	counts := map[cell]int64{}
+	errCounts := map[cell]int64{}
 	fromMs, toMs, axisMs := q.From.UnixMilli(), q.To.UnixMilli(), q.AxisStart.UnixMilli()
 	var scanned int64
 	eq := EventQuery{
@@ -129,7 +145,11 @@ func CountBucketsScan(ctx context.Context, c Case, q BucketQuery) (BucketResult,
 		if ts < fromMs || ts >= toMs {
 			return nil
 		}
-		counts[cell{index: int((ts - axisMs) / q.WidthMs), source: ev.Source}]++
+		k := cell{index: int((ts - axisMs) / q.WidthMs), source: ev.Source}
+		counts[k]++
+		if q.CountErrors && IsServerErrorStatus(ev.Attrs["status"]) {
+			errCounts[k]++
+		}
 		return nil
 	})
 	partial := false
@@ -154,7 +174,7 @@ func CountBucketsScan(ctx context.Context, c Case, q BucketQuery) (BucketResult,
 	res := BucketResult{Counts: make([]BucketCount, len(cells)), Scanned: scanned, Partial: partial}
 	for i, k := range cells {
 		n := counts[k]
-		res.Counts[i] = BucketCount{Index: k.index, Source: k.source, Count: n}
+		res.Counts[i] = BucketCount{Index: k.index, Source: k.source, Count: n, Errors: errCounts[k]}
 		res.Total += n
 	}
 	return res, nil

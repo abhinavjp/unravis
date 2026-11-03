@@ -228,6 +228,11 @@ export function createViewHistory(loc: LocationLike, hist: HistoryLike) {
       index++; stack.length = index; marks.length = index; stack[index] = loc.hash; marks[index] = name;
       hist.pushState(stamp(name), '', url(loc.hash));
     },
+    /** Leaves the current entry by going back one step when the entry before was made for screen `name` at the same address (the browser's Back, started by the page). Returns false and does nothing otherwise. */
+    stepBack(name: string): boolean {
+      if (!name || index <= 0 || marks[index - 1] !== name || stack[index - 1] !== loc.hash) return false;
+      ownBacks++; index--; shown = name; hist.back(); return true;
+    },
     /** Call on popstate. Returns the view to show, null for the first screen, or undefined when the event was this module's own Back. `screen` then names the entry's screen. */
     pop(): View | null | undefined {
       index = indexOf(hist.state);

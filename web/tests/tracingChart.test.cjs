@@ -38,8 +38,9 @@ const { deck } = loadTypeScript('src/lib/copy/deck.ts');
 
 const {
   LANE_NAME, LANE_ASK, PANEL_TITLE, LANE_STATE_TEXT, INCOMPLETE_TEXT, MIXED_NOTE, TRUNCATED_NOTE,
-  slotGrid, slotLeftPct, slotWidthPct, slotOutside, slotStartMs,
-  barsFor, barMax, widthLabel, axisCaption, laneNote
+  slotGrid, slotOutside, slotStartMs,
+  barsFor, barMax, widthLabel, axisCaption, laneNote,
+  barHeightPct, laneDrawsBars, isLaneVisible, showsProvenance, laneStatusLine, NO_EVENTS_PERIOD, hasAnyData, outsideSlots
 } = lanes;
 
 function window(overrides = {}) {
@@ -198,8 +199,8 @@ test('chart zoom, brush and row visibility stay absolute-indexed (WP-23b)', () =
   const src = read('src/components/TracingChart.svelte');
   for (const needle of [
     'role="toolbar"', 'CANVAS_TEXT.zoomIn', 'CANVAS_TEXT.zoomOut', 'CANVAS_TEXT.resetZoom', 'aria-live="polite"',
-    'absoluteSlot(', 'clampArrow(', 'rangeFromDrag(', 'visible[key] !== false', 'CANVAS_TEXT.allHidden',
-    'onpointerdown={onOverlayDown}', 'onpointermove={onOverlayMove}', 'onpointerleave={hideTip}'
+    'absoluteSlot(', 'stepSlot(', 'edgeSlot(', 'rangeFromDrag(', 'isLaneVisible(visible', 'CANVAS_TEXT.allHidden',
+    'onpointerdown={onOverlayDown}', 'onpointermove={onOverlayMove}', 'onpointerleave={onOverlayLeave}'
   ]) {
     assert.ok(src.includes(needle), 'TracingChart.svelte must contain ' + needle);
   }
@@ -210,8 +211,77 @@ test('chart zoom, brush and row visibility stay absolute-indexed (WP-23b)', () =
 
 test('latency line is plain svg with a P50/P95 selector (WP-23c)', () => {
   const src = read('src/components/TracingChart.svelte');
-  for (const needle of ['<polyline', 'aria-pressed={percentile === option}', 'PERCENTILE_LABEL[option]', 'CANVAS_TEXT.noLatency', 'formatDuration(', 'hasLatency(', 'percentileValue(']) {
+  for (const needle of ['<polyline', 'aria-pressed={percentile === option}', 'PERCENTILE_LABEL[option]', 'CANVAS_TEXT.noLatency', 'formatDuration(', 'hasLatency(', 'latencySegments(']) {
     assert.ok(src.includes(needle), 'TracingChart.svelte must contain ' + needle);
   }
   assert.doesNotMatch(src, /echarts|from '\.\.\/lib\/charts'/i);
+});
+
+const laneOf = (extra = {}) => ({ key: 'audit', state: 'events', origin: 'live', asOf: '2026-10-01T00:05:00Z', buckets: [], truncated: false, ...extra });
+
+test('bar heights: zero only for an empty bucket, capped at 100 (UI-R1-02)', () => {
+  assert.equal(barHeightPct(0, 10), 0);
+  assert.equal(barHeightPct(5, 10), 50);
+  assert.equal(barHeightPct(1, 60000) > 0, true);
+  assert.equal(barHeightPct(20, 10), 100);
+  assert.equal(barHeightPct(3, 0), 0);
+  const src = read('src/components/TracingChart.svelte');
+  assert.match(src, /\.bar\.nonzero \{ min-height: 2px/, 'any non-empty bucket keeps a visible bar');
+});
+
+test('lane rules shared by chart and tooltip', () => {
+  assert.equal(laneDrawsBars(laneOf()), true);
+  assert.equal(laneDrawsBars(laneOf({ disabled: true })), false);
+  assert.equal(laneDrawsBars(laneOf({ state: 'none-seen' })), false);
+  assert.equal(laneDrawsBars(laneOf({ state: 'incomplete' }), 0), false);
+  assert.equal(laneDrawsBars(laneOf({ state: 'incomplete' }), 2), true);
+  assert.equal(isLaneVisible({}, 'sql'), true);
+  assert.equal(isLaneVisible({ sql: false }, 'sql'), false);
+  assert.equal(isLaneVisible({ sql: false }, 'iis'), true);
+  assert.equal(laneStatusLine(laneOf({ state: 'none-seen' })), NO_EVENTS_PERIOD);
+  assert.equal(laneStatusLine(laneOf({ state: 'no-data' })), LANE_STATE_TEXT['no-data']);
+  assert.equal(laneStatusLine(laneOf()), '');
+});
+
+test('no provenance line for a lane with no file (UI-R1-08)', () => {
+  assert.equal(showsProvenance(laneOf({ state: 'no-data' })), false);
+  for (const state of ['events', 'none-seen', 'incomplete', 'out-of-range', 'clock-unchecked']) assert.equal(showsProvenance(laneOf({ state })), true);
+  const src = read('src/components/TracingChart.svelte');
+  assert.ok(src.includes('{#if showsProvenance(lane)}'));
+});
+
+test('chart controls need data (UI-R1-18)', () => {
+  const g = slotGrid(window());
+  const lane = laneOf({ buckets: [{ start: '2026-10-01T00:10:00Z', count: 3, errors: 0 }] });
+  assert.equal(hasAnyData(g, [lane]), true);
+  assert.equal(hasAnyData(g, [laneOf()]), false);
+  assert.equal(hasAnyData(g, [laneOf({ buckets: [{ start: '2026-10-01T00:10:00Z', count: 0, errors: 0 }] })]), false);
+  assert.equal(hasAnyData(g, [{ ...lane, disabled: true }]), false);
+  assert.equal(hasAnyData(null, [lane]), false);
+  const src = read('src/components/TracingChart.svelte');
+  assert.ok(src.includes('{#if grid && hasData}'), 'the toolbar is hidden without data');
+});
+
+test('outside slots are only the axis edges', () => {
+  const wide = slotGrid(window({ start: '2026-10-01T00:00:30Z', end: '2026-10-01T00:59:30Z' }));
+  assert.deepEqual(outsideSlots(wide, 0, wide.n), [0, wide.n - 1]);
+  assert.deepEqual(outsideSlots(wide, 1, wide.n - 1), []);
+  assert.deepEqual(outsideSlots(wide, 0, 1), [0]);
+  const exact = slotGrid(window());
+  assert.deepEqual(outsideSlots(exact, 0, exact.n), []);
+});
+
+test('the chart keeps the axis baseline, tab stops and ticks honest (UI-R1-07/10/15/17, WEB-R1)', () => {
+  const src = read('src/components/TracingChart.svelte');
+  const noteAt = src.indexOf('class="lane-note bad"');
+  const barsAt = src.indexOf('<div class="bars">');
+  assert.ok(noteAt > 0 && barsAt > noteAt, 'the incomplete note sits above the bars, so it cannot move the baseline');
+  assert.ok(src.includes('class="scale"'), 'the y scale is its own bar-height box');
+  assert.ok(src.includes('{formatCount(max)}'), 'axis ticks use the tooltip number format');
+  assert.ok(src.includes('role="group" aria-label={LANE_NAME[lane.key]}'), 'lane labels are named groups');
+  assert.ok(src.includes("event.key === 'Home'") && src.includes("event.key === 'End'"));
+  assert.ok(src.includes('tickOffsets(shown, plotW'), 'time labels are thinned to the measured plot');
+  assert.ok(src.includes('bind:clientWidth={plotW}'));
+  assert.match(src, /@media \(max-width: 768px\)/);
+  assert.ok(!src.includes('onclick={() => select'), 'no per-column click closures');
 });

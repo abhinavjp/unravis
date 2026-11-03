@@ -4,7 +4,7 @@ import type { LockState } from './masterKey';
  * Which screen the app shows, and the moves between them. Pure: no DOM, no fetch, no state of its own.
  * appState.svelte.ts holds the current screen and asks `go` whether a move is allowed.
  *
- *   loading -> unlock | start | running
+ *   loading -> unlock | start | running | case  (case: a reload on a case page goes back to it)
  *   unlock  -> start | running | create | case  (after the right key; back to the work it interrupted: the analysis, the case home, or the create guide)
  *   setup   -> start | unlock | case   (case: only when set-up was opened from a case page, so it can go back there)
  *   start   -> setup | create | running | unlock | case
@@ -19,7 +19,7 @@ export type Screen = 'loading' | 'unlock' | 'setup' | 'start' | 'create' | 'runn
 export const SCREENS: readonly Screen[] = ['loading', 'unlock', 'setup', 'start', 'create', 'running', 'case'];
 
 const MOVES: Readonly<Record<Screen, readonly Screen[]>> = {
-  loading: ['unlock', 'start', 'running'],
+  loading: ['unlock', 'start', 'running', 'case'],
   unlock: ['start', 'running', 'create', 'case'],
   setup: ['start', 'unlock', 'case'],
   start: ['setup', 'create', 'running', 'unlock', 'case'],
@@ -50,13 +50,16 @@ export interface StartFacts {
   resume: boolean;
   /** The master key state, or 'unknown' when the status could not be read. */
   lock: LockState | 'unknown';
+  /** This tab was on a case page (the case home or its timeline) and still remembers which case, so a reload goes back to that page. */
+  caseView?: boolean;
 }
 
 /** The first screen once the app has started. A locked key comes first; demo data, a link and a remembered investigation skip the start screen. */
 export function initialScreen(facts: StartFacts): Screen {
-  if (facts.demo) return 'running';
-  if (facts.lock === 'locked' || facts.lock === 'damaged') return 'unlock';
-  if (facts.deepLink || facts.resume) return 'running';
+  if (facts.lock === 'locked' || facts.lock === 'damaged') return facts.demo ? 'running' : 'unlock';
+  if (facts.deepLink) return 'running';
+  if (facts.caseView) return 'case';
+  if (facts.demo || facts.resume) return 'running';
   return 'start';
 }
 
@@ -110,4 +113,12 @@ export function historyStep(from: Screen, to: Screen, shown: string): HistorySte
   if (from === 'create' && to === 'case') return 'replace';
   if (shown === '' && (from === 'loading' || from === 'unlock' || from === 'setup')) return 'replace';
   return 'push';
+}
+
+/** History mark of the case page while its Investigation Timeline is open, so Back returns to the case page and Forward to the timeline. */
+export const CASE_TRACING_MARK = 'case/tracing';
+
+/** Reads a history mark: the screen it stands for and whether the case page shows its timeline. */
+export function parseScreenMark(mark: string): { screen: string; tracing: boolean } {
+  return mark === CASE_TRACING_MARK ? { screen: 'case', tracing: true } : { screen: mark, tracing: false };
 }

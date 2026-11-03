@@ -29,7 +29,7 @@ test('toolbar is mounted only by the timeline screen', () => {
 
 test('timeline screen wires toggles, scrub state and chart visibility', () => {
   const src = read('src/components/TracingPaper.svelte');
-  for (const needle of ['<TraceToolbar', 'toggleLane(', 'exportScrub.value', '{visible}', 'data-region="toolbar"']) {
+  for (const needle of ['<TraceToolbar', 'toggleLane(', 'exportScrub.forCase(caseId)', '{visible}', 'data-region="toolbar"']) {
     assert.ok(src.includes(needle), 'TracingPaper.svelte must contain ' + needle);
   }
   assert.match(src, /<TracingChart[^>]*\{visible\}/);

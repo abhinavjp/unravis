@@ -31,7 +31,7 @@ function loadTypeScript(relativePath) {
 }
 
 const { explain, DICTIONARY } = loadTypeScript('src/lib/copy/dictionary.ts');
-const { LANE_DICT_ID, laneHint, barTipLines, slotAtFraction, tooltipCopyEntries } = loadTypeScript('src/lib/tracing/tooltip.ts');
+const { LANE_DICT_ID, formatCount, laneHint, barTipLines, slotAtFraction, tooltipCopyEntries } = loadTypeScript('src/lib/tracing/tooltip.ts');
 const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
 
@@ -153,7 +153,7 @@ test('the chart wires lane hints and the bucket tooltip for hover and keyboard',
   assert.match(chartSource, /id="tc-hint-\{lane\.key\}"/);
   assert.match(chartSource, /class="lane-label" tabindex="0"/);
   assert.match(chartSource, /onpointermove=\{onOverlayMove\}/);
-  assert.match(chartSource, /onpointerleave=\{hideTip\}/);
+  assert.match(chartSource, /onpointerleave=\{onOverlayLeave\}/);
   assert.match(chartSource, /event\.key === 'Escape'/);
   assert.match(chartSource, /:focus-within \.hint/);
 });
@@ -162,4 +162,17 @@ test('the chart tooltip is plain text only and stays out of the old chart code',
   assert.doesNotMatch(chartSource, /\{@html/);
   assert.doesNotMatch(chartSource, /\btitle=/);
   assert.doesNotMatch(chartSource, /echarts|callTrace|CallTrace|guided/i);
+});
+
+test('counts use thousands separators, the same as the axis (UI-R1-10)', () => {
+  assert.equal(formatCount(60000), '60,000');
+  assert.equal(formatCount(999), '999');
+  assert.equal(formatCount(0), '0');
+  assert.ok(barTipLines(bar({ count: 60000, errors: 1250 })).includes('1,250 server errors (5xx)'));
+});
+
+test('the time zone is named once in the range line (UI-R1-11)', () => {
+  assert.equal(barTipLines(bar({ startText: '19 Oct 10:20 UTC', endText: '19 Oct 10:25 UTC' }))[0], '19 Oct 10:20 UTC to 19 Oct 10:25 UTC');
+  assert.equal(barTipLines(bar({ startText: '19 Oct 10:20', endText: '19 Oct 10:25' }))[0], '19 Oct 10:20 to 19 Oct 10:25 (UTC)');
+  assert.equal(barTipLines(bar({ zoneName: '' }))[0], '10:00 to 10:01');
 });

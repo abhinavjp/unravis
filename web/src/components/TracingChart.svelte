@@ -5,20 +5,21 @@
   import type { TracingLane, TracingLaneKey, TracingResponse } from '../lib/tracing/model';
   import {
     LANE_ASK, LANE_NAME, LANE_ORDER, MIXED_NOTE, PANEL_TITLE, TRUNCATED_NOTE,
-    axisCaption, barMax, barsFor, laneNote, slotGrid, slotOutside, slotStartMs
+    axisCaption, barHeightPct, barMax, barsFor, hasAnyData, isLaneVisible, laneDrawsBars, laneNote, laneStatusLine,
+    outsideSlots, showsProvenance, slotGrid, slotOutside, slotStartMs, type Bar
   } from '../lib/tracing/lanes';
   import { formatTime } from '../lib/time';
   import { formatDuration } from '../lib/format';
-  import { barTipLines, laneHint } from '../lib/tracing/tooltip';
+  import { TOOLTIP_TEXT, barTipLines, formatCount, laneHint } from '../lib/tracing/tooltip';
   import {
-    CANVAS_TEXT, MIN_ZOOM_SLOTS, PERCENTILES, PERCENTILE_LABEL, absoluteSlot, clampArrow, clampRange, fullRange, hasLatency,
-    isZoomed, percentileValue, rangeFromDrag, zoomIn, zoomOut, zoomedText, type Percentile, type ZoomRange
+    CANVAS_TEXT, MIN_ZOOM_SLOTS, PERCENTILES, PERCENTILE_LABEL, absoluteSlot, clampRange, edgeSlot, fullRange, hasLatency,
+    isZoomed, latencySegments, rangeFromDrag, stepSlot, tickOffsets, zoomFocus, zoomIn, zoomOut, zoomedText,
+    type Percentile, type ZoomRange
   } from '../lib/tracing/canvas';
 
-  let { response, zone, selected = null, onSelect, visible = {} }: {
+  let { response, zone, onSelect, visible = {} }: {
     response: TracingResponse;
     zone: string;
-    selected?: number | null;
     onSelect?: (slotIndex: number) => void;
     // A row is hidden only when its flag is exactly false (WP-23); WP-11 passes the toolbar's choices.
     visible?: Partial<Record<TracingLaneKey, boolean>>;
@@ -30,106 +31,96 @@
     iis: 'background: var(--lane-iis)'
   };
 
+  const at = (value: string | number): string => formatTime(value, { zone, precision: 'minute' });
+
   const grid = $derived(slotGrid(response.window));
   const orderedLanes = $derived(
-    LANE_ORDER.filter((key) => visible[key] !== false)
+    LANE_ORDER.filter((key) => isLaneVisible(visible, key))
       .map((key) => response.lanes.find((lane) => lane.key === key))
       .filter((lane): lane is TracingLane => !!lane)
   );
   const anyHidden = $derived(Object.values(visible).some((flag) => flag === false));
-  const zoneName = $derived(zone === 'UTC' ? 'UTC' : zone);
+
+  // Each lane's bars, built once per response: drawing, tooltips and the zoom focus all read this map.
+  const laneBars = $derived.by(() => {
+    const map = new Map<TracingLaneKey, { bars: Bar[]; byIndex: Map<number, Bar> }>();
+    if (grid) {
+      for (const lane of response.lanes) {
+        const bars = barsFor(grid, lane.buckets);
+        map.set(lane.key, { bars, byIndex: new Map(bars.map((bar) => [bar.index, bar])) });
+      }
+    }
+    return map;
+  });
+  function drawsBars(lane: TracingLane): boolean {
+    return !!grid && laneDrawsBars(lane, laneBars.get(lane.key)?.bars.length ?? 0);
+  }
+  const hasData = $derived(hasAnyData(grid, response.lanes));
+
   // Zoom (WP-23): every slot index in this file is ABSOLUTE into the full grid; `range` only picks which ones are drawn.
-  let zoom = $state<ZoomRange | null>(null);
-  $effect(() => { void response; zoom = null; });
+  // The zoom belongs to one response, so a new response starts unzoomed without an effect.
+  let zoomState = $state.raw<{ response: TracingResponse; range: ZoomRange } | null>(null);
+  const zoom = $derived(zoomState && zoomState.response === response ? zoomState.range : null);
   const range = $derived<ZoomRange>(grid ? (zoom ? clampRange(zoom, grid.n) : fullRange(grid.n)) : { from: 0, to: 0 });
   const shown = $derived(range.to - range.from);
   const zoomed = $derived(grid ? isZoomed(range, grid.n) : false);
   const slotIndexes = $derived(Array.from({ length: shown }, (_, k) => range.from + k));
   const widthPct = $derived(shown > 0 ? 100 / shown : 0);
   function leftPct(index: number): number { return (index - range.from) * widthPct; }
+  function inRange(index: number): boolean { return index >= range.from && index < range.to; }
 
   // Latency line (WP-23c): the audit lane's per-bucket P50 or P95, drawn as plain SVG over the bars. Null buckets leave a gap.
   let percentile = $state<Percentile>('p95');
   const auditLane = $derived(response.lanes.find((lane) => lane.key === 'audit'));
   const latencyAvailable = $derived(!!auditLane && hasLatency(auditLane.buckets, percentile));
-  const latencySegments = $derived.by(() => {
-    if (!grid || !auditLane) return { segments: [] as string[], max: 0 };
-    const values = new Map<number, number>();
-    for (const bucket of auditLane.buckets) {
-      const value = percentileValue(bucket, percentile);
-      const startMs = Date.parse(bucket.start);
-      if (value === null || !Number.isFinite(startMs)) continue;
-      const index = Math.floor((startMs - grid.firstMs) / grid.widthMs);
-      if (index >= range.from && index < range.to) values.set(index, Math.max(values.get(index) ?? 0, value));
-    }
-    const max = Math.max(0, ...values.values());
-    const segments: string[] = [];
-    let run: string[] = [];
-    for (const index of slotIndexes) {
-      const value = values.get(index);
-      if (value === undefined) {
-        if (run.length > 0) segments.push(run.join(' '));
-        run = [];
-        continue;
-      }
-      const x = leftPct(index) + widthPct / 2;
-      const y = max > 0 ? 100 - (value / max) * 100 : 100;
-      run.push(x.toFixed(2) + ',' + y.toFixed(2));
-    }
-    if (run.length > 0) segments.push(run.join(' '));
-    return { segments, max };
-  });
-  function inRange(index: number): boolean { return index >= range.from && index < range.to; }
-  const anyOutside = $derived(grid ? slotIndexes.some((i) => slotOutside(grid, i)) : false);
-  const tickStep = $derived(Math.max(1, Math.ceil(shown / 6)));
-  const tickIndexes = $derived(slotIndexes.filter((i) => (i - range.from) % tickStep === 0));
-  const caption = $derived(grid ? axisCaption(zoneName, response.window.bucketSeconds, anyOutside) : '');
+  const latency = $derived(grid && auditLane ? latencySegments(auditLane.buckets, grid, range, percentile) : { segments: [] as string[], max: 0 });
 
-  function drawsBars(lane: TracingLane, bars: ReturnType<typeof barsFor>): boolean {
-    if (!grid || lane.disabled) return false;
-    if (lane.state === 'events') return true;
-    if (lane.state === 'incomplete') return bars.length > 0;
-    return false;
-  }
+  // Axis: the grey "outside your window" dashes and the time labels, thinned to the measured plot width so they never overlap.
+  const outside = $derived(grid ? outsideSlots(grid, range.from, range.to) : []);
+  let plotW = $state(0);
+  const tickLabelChars = $derived(grid && shown > 0 ? at(slotStartMs(grid, range.from)).length : 0);
+  const tickIndexes = $derived(tickOffsets(shown, plotW, tickLabelChars).map((k) => range.from + k));
+  const caption = $derived(grid ? axisCaption(zone, response.window.bucketSeconds, outside.length > 0) : '');
 
-  let localSelected = $state<number | null>(null);
-  $effect(() => { localSelected = selected ?? null; });
-
-  // A selection that scrolls out of the zoomed range is dropped, not left pointing at a hidden bar.
-  $effect(() => {
-    if (localSelected != null && !inRange(localSelected)) localSelected = null;
-  });
+  // The selected bucket; one that scrolls out of the zoomed range is dropped, not left pointing at a hidden bar.
+  let selectedSlot = $state<number | null>(null);
+  const current = $derived(selectedSlot != null && inRange(selectedSlot) ? selectedSlot : null);
 
   function clampIndex(index: number): number {
     return Math.min(range.to - 1, Math.max(range.from, index));
   }
+  function isOutside(slot: number): boolean { return !!grid && slotOutside(grid, slot); }
 
-  function move(delta: number) {
-    if (!grid) return;
-    localSelected = clampArrow(range, localSelected ?? range.from, delta);
+  function applyZoom(next: ZoomRange | null) {
+    zoomState = next ? { response, range: next } : null;
+    if (selectedSlot != null && next && (selectedSlot < next.from || selectedSlot >= next.to)) selectedSlot = null;
   }
-
   function doZoomIn() {
     if (!grid) return;
-    zoom = zoomIn(range, grid.n, localSelected ?? undefined);
+    const drawn = orderedLanes.flatMap((lane) => (drawsBars(lane) ? laneBars.get(lane.key)?.bars ?? [] : []));
+    applyZoom(zoomIn(range, grid.n, zoomFocus(range, current, drawn)));
   }
   function doZoomOut() {
     if (!grid) return;
     const next = zoomOut(range, grid.n);
-    zoom = isZoomed(next, grid.n) ? next : null;
+    applyZoom(isZoomed(next, grid.n) ? next : null);
   }
-  function resetZoom() { zoom = null; }
+  function resetZoom() { applyZoom(null); }
 
   function selectAt(index: number) {
-    localSelected = clampIndex(index);
-    onSelect?.(localSelected);
+    selectedSlot = clampIndex(index);
+    onSelect?.(selectedSlot);
   }
 
   function onOverlayKey(event: KeyboardEvent) {
     if (!grid) return;
-    if (event.key === 'ArrowLeft') { event.preventDefault(); move(-1); }
-    else if (event.key === 'ArrowRight') { event.preventDefault(); move(1); }
-    else if (event.key === 'Enter') { event.preventDefault(); if (localSelected != null) onSelect?.(localSelected); }
+    // Browser shortcuts (page zoom with Ctrl or Cmd and + - 0, Alt navigation) are not ours.
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === 'ArrowLeft') { event.preventDefault(); selectedSlot = stepSlot(range, current ?? range.from, -1, isOutside); }
+    else if (event.key === 'ArrowRight') { event.preventDefault(); selectedSlot = stepSlot(range, current ?? range.from, 1, isOutside); }
+    else if (event.key === 'Home') { event.preventDefault(); selectedSlot = edgeSlot(range, 'first', isOutside); }
+    else if (event.key === 'End') { event.preventDefault(); selectedSlot = edgeSlot(range, 'last', isOutside); }
+    else if (event.key === 'Enter') { event.preventDefault(); if (current != null) onSelect?.(current); }
     else if (event.key === 'Escape' && tipSlot != null) { event.preventDefault(); event.stopPropagation(); hideTip(); return; }
     else if (event.key === '+' || event.key === '=') { event.preventDefault(); doZoomIn(); return; }
     else if (event.key === '-' || event.key === '_') { event.preventDefault(); doZoomOut(); return; }
@@ -142,24 +133,31 @@
   // shows every lane that draws bars for the selected bucket. All lines come from tooltip.ts as plain text.
   let tipSlot = $state<number | null>(null);
   let tipLane = $state<TracingLaneKey | null>(null);
+  let tipFromKeyboard = $state(false);
   let tipStyle = $state('');
   let overlayEl: HTMLDivElement | undefined;
+  let tipEl: HTMLDivElement | undefined;
 
-  function hideTip() { tipSlot = null; tipLane = null; }
+  function hideTip() { tipSlot = null; tipLane = null; tipFromKeyboard = false; }
 
   function linesFor(lane: TracingLane, slot: number): string[] {
     if (!grid) return [];
-    const bar = barsFor(grid, lane.buckets).find((b) => b.index === slot);
+    // A lane that draws nothing says why instead of claiming "no events in this bucket".
+    if (!drawsBars(lane)) {
+      const status = laneStatusLine(lane);
+      return status ? [status] : [];
+    }
+    const bar = laneBars.get(lane.key)?.byIndex.get(slot);
     const start = slotStartMs(grid, slot);
     return barTipLines({
       key: lane.key,
-      startText: formatTime(start, { zone, precision: 'minute' }),
-      endText: formatTime(start + grid.widthMs, { zone, precision: 'minute' }),
-      zoneName,
+      startText: at(start),
+      endText: at(start + grid.widthMs),
+      zoneName: zone,
       count: bar?.count ?? 0,
       errors: bar?.errors ?? 0,
       origin: lane.origin,
-      asOfText: formatTime(lane.asOf, { zone, precision: 'minute' }),
+      asOfText: showsProvenance(lane) ? at(lane.asOf) : '',
       note: lane.state === 'incomplete' ? laneNote(lane) : ''
     });
   }
@@ -169,23 +167,27 @@
     const slot = tipSlot;
     const lanes = tipLane
       ? orderedLanes.filter((lane) => lane.key === tipLane)
-      : orderedLanes.filter((lane) => drawsBars(lane, grid ? barsFor(grid, lane.buckets) : []));
+      : orderedLanes.filter((lane) => drawsBars(lane));
     return lanes.map((lane) => ({ key: lane.key, name: LANE_NAME[lane.key], lines: linesFor(lane, slot) }));
   });
+  // Screen readers do not re-read a changed tooltip description, so keyboard moves are also spoken through one polite live region.
+  const liveText = $derived(tipFromKeyboard ? tipGroups.map((group) => group.name + '. ' + group.lines.join('. ')).join(' ') : '');
 
   function showKeyboardTip() {
-    if (!grid || localSelected == null) return;
+    if (!grid || current == null) return;
     tipLane = null;
-    tipSlot = localSelected;
-    tipStyle = `left:${Math.min(80, leftPct(localSelected))}%;top:4px`;
+    tipSlot = current;
+    tipFromKeyboard = true;
+    tipStyle = `left:${Math.min(80, leftPct(current))}%;top:4px`;
   }
 
-  // Drag across the chart to zoom into those bars (WP-23). Pointer capture (taken once the drag leaves its first bucket) keeps it alive outside the overlay.
+  // Drag across the chart to zoom into those bars (WP-23). The overlay captures the pointer on press, so the drag survives
+  // leaving it; clicks and drags share the overlay's own handlers (no per-bucket click closures).
   let dragFrom = $state<number | null>(null);
   let dragTo = $state<number | null>(null);
-  let swallowClick = false;
+  let suppressClick = false;
 
-  function slotAt(event: PointerEvent): number {
+  function slotAt(event: { clientX: number }): number {
     if (!overlayEl) return -1;
     const rect = overlayEl.getBoundingClientRect();
     if (rect.width <= 0) return -1;
@@ -193,35 +195,64 @@
   }
 
   function onOverlayDown(event: PointerEvent) {
-    if (!grid || event.button !== 0) return;
+    if (!grid || event.button !== 0 || !overlayEl) return;
+    suppressClick = false;
     const slot = slotAt(event);
     if (slot < 0) return;
     dragFrom = slot;
     dragTo = slot;
     hideTip();
+    try { overlayEl.setPointerCapture(event.pointerId); } catch { /* a synthetic pointer cannot be captured */ }
   }
 
   function endDrag(commit: boolean) {
+    flushMove();
     if (dragFrom != null && dragTo != null && commit && grid && dragFrom !== dragTo) {
-      zoom = rangeFromDrag(grid.n, dragFrom, dragTo);
-      swallowClick = true;
-      setTimeout(() => { swallowClick = false; }, 0);
+      applyZoom(rangeFromDrag(grid.n, dragFrom, dragTo));
+      suppressClick = true;
     }
     dragFrom = null;
     dragTo = null;
   }
 
+  function onOverlayClick(event: MouseEvent) {
+    if (suppressClick) { suppressClick = false; return; }
+    if (!grid) return;
+    const column = (event.target as Element | null)?.closest?.('.column') as HTMLElement | null;
+    const fromColumn = column ? Number(column.dataset.slot) : Number.NaN;
+    const slot = Number.isInteger(fromColumn) ? fromColumn : slotAt(event);
+    if (slot >= 0) selectAt(slot);
+  }
+
+  // Pointer moves are coalesced to one pass per frame: the last position wins, so layout is read once per frame, not once per event.
+  let frame = 0;
+  let pendingMove: { x: number; y: number } | null = null;
+
   function onOverlayMove(event: PointerEvent) {
     if (!grid || !overlayEl) return;
+    pendingMove = { x: event.clientX, y: event.clientY };
+    if (!frame) frame = requestAnimationFrame(() => { frame = 0; processMove(); });
+  }
+  function flushMove() {
+    if (frame) { cancelAnimationFrame(frame); frame = 0; }
+    processMove();
+  }
+  function cancelMove() {
+    if (frame) cancelAnimationFrame(frame);
+    frame = 0;
+    pendingMove = null;
+  }
+  $effect(() => cancelMove);
+
+  function processMove() {
+    const point = pendingMove;
+    pendingMove = null;
+    if (!point || !grid || !overlayEl) return;
     const rect = overlayEl.getBoundingClientRect();
     if (rect.width <= 0) return;
-    const slot = absoluteSlot(range, (event.clientX - rect.left) / rect.width);
+    const slot = absoluteSlot(range, (point.x - rect.left) / rect.width);
     if (dragFrom != null) {
       if (slot >= 0) dragTo = slot;
-      // Capture only once the pointer leaves the bucket it went down on, so a plain click still reaches the column.
-      if (slot >= 0 && slot !== dragFrom) {
-        try { overlayEl.setPointerCapture(event.pointerId); } catch { /* a synthetic pointer cannot be captured */ }
-      }
       hideTip();
       return;
     }
@@ -229,13 +260,17 @@
     let hovered: TracingLaneKey | null = null;
     overlayEl.parentElement?.querySelectorAll<HTMLElement>('.panel[data-lane]').forEach((panel) => {
       const box = panel.getBoundingClientRect();
-      if (event.clientY >= box.top && event.clientY <= box.bottom) hovered = panel.dataset.lane as TracingLaneKey;
+      if (point.y >= box.top && point.y <= box.bottom) hovered = panel.dataset.lane as TracingLaneKey;
     });
     tipSlot = slot;
     tipLane = hovered;
-    const x = Math.min(event.clientX - rect.left, rect.width - 220);
-    tipStyle = `left:${Math.max(0, x)}px;top:${Math.max(0, event.clientY - rect.top + 14)}px`;
+    tipFromKeyboard = false;
+    const tipWidth = tipEl?.offsetWidth || 220;
+    const x = Math.min(point.x - rect.left, rect.width - tipWidth);
+    tipStyle = `left:${Math.max(0, x)}px;top:${Math.max(0, point.y - rect.top + 14)}px`;
   }
+
+  function onOverlayLeave() { cancelMove(); hideTip(); }
 </script>
 
 <div class="tracing-chart">
@@ -247,7 +282,7 @@
     </div>
   {/if}
 
-  {#if grid}
+  {#if grid && hasData}
     <div class="canvas-bar" role="toolbar" aria-label={CANVAS_TEXT.ariaLabel}>
       <button type="button" class="secondary-button" onclick={doZoomIn} disabled={shown <= Math.min(MIN_ZOOM_SLOTS, grid.n)}>{CANVAS_TEXT.zoomIn}</button>
       <button type="button" class="secondary-button" onclick={doZoomOut} disabled={!zoomed}>{CANVAS_TEXT.zoomOut}</button>
@@ -267,62 +302,63 @@
     <p role="status" class="lane-note">{CANVAS_TEXT.allHidden}</p>
   {/if}
 
+  {#if !grid && response.lanes.length > 0}
+    <p role="status" class="lane-note">{CANVAS_TEXT.noAxis}</p>
+  {/if}
+
   <div class="lanes-grid">
     {#each orderedLanes as lane, laneIndex (lane.key)}
-      {@const allBars = grid ? barsFor(grid, lane.buckets) : []}
+      {@const allBars = laneBars.get(lane.key)?.bars ?? []}
       {@const bars = allBars.filter((bar) => inRange(bar.index))}
       {@const max = barMax(bars)}
-      {@const drawBars = drawsBars(lane, allBars)}
+      {@const drawBars = drawsBars(lane)}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="lane-label" tabindex="0" aria-describedby="tc-hint-{lane.key}" data-truncated={lane.truncated ? 'true' : undefined} style="--row:{laneIndex + 1}">
+      <div class="lane-label" tabindex="0" role="group" aria-label={LANE_NAME[lane.key]} aria-describedby="tc-hint-{lane.key}" data-truncated={lane.truncated ? 'true' : undefined} style="--row:{laneIndex + 1}">
         <span class="swatch" style={SWATCH_STYLE[lane.key]} aria-hidden="true"></span>
         <strong>{LANE_NAME[lane.key]}</strong>
         <small>{LANE_ASK[lane.key]}</small>
-        <small class="origin">{lane.origin === 'live' ? 'Read just now' : 'From saved logs'} · {formatTime(lane.asOf, { zone, precision: 'minute' })}</small>
+        {#if showsProvenance(lane)}
+          <small class="origin">{lane.origin === 'live' ? TOOLTIP_TEXT.readJustNow : TOOLTIP_TEXT.fromSavedLogs} · {at(lane.asOf)}</small>
+        {/if}
         <span id="tc-hint-{lane.key}" role="tooltip" class="hint">{laneHint(lane.key)}</span>
       </div>
       <div class="axis axis-left" style="--row:{laneIndex + 1}">
         {#if drawBars}
-          <span class="tick tick-top">{max}</span>
-          <span class="tick tick-bottom">0</span>
+          <div class="scale">
+            <span class="tick tick-top">{formatCount(max)}</span>
+            <span class="tick tick-bottom">0</span>
+          </div>
         {/if}
       </div>
       <div class="panel" data-lane={lane.key} data-state={lane.state} data-disabled={lane.disabled ?? undefined} style="--row:{laneIndex + 1}">
         <p class="panel-title">{PANEL_TITLE[lane.key]}</p>
         {#if drawBars}
-          <div class="bars">
-            {#if grid}
-              {#each slotIndexes as i (i)}
-                {#if slotOutside(grid, i)}
-                  <div class="outside-dash" style="left:{leftPct(i)}%;width:{widthPct}%"></div>
-                {/if}
-              {/each}
-            {/if}
-            {#each bars as bar (bar.index)}
-              {#if grid}
-                <div class="bar" style="left:{leftPct(bar.index)}%;width:calc({widthPct}% - 1px);height:{max > 0 ? (bar.count / max) * 100 : 0}%">
-                  {#if bar.count > 0 && bar.errors > 0}
-                    <div class="bar-err" style="height:{(bar.errors / bar.count) * 100}%"></div>
-                  {/if}
-                </div>
-              {/if}
-            {/each}
-            {#if lane.key === 'audit' && latencySegments.segments.length > 0}
-              <svg class="latency" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" data-percentile={percentile}>
-                {#each latencySegments.segments as points, k (k)}
-                  <polyline {points} fill="none" vector-effect="non-scaling-stroke" />
-                {/each}
-              </svg>
-              <span class="latency-max">{PERCENTILE_LABEL[percentile]}: up to {formatDuration(latencySegments.max)}</span>
-            {/if}
-          </div>
+          <!-- The note sits above the bars so the bars stay at the panel's bottom, level with the axis "0". -->
           {#if lane.state === 'incomplete'}
             <p role="status" class="lane-note bad">{laneNote(lane)}</p>
           {/if}
-        {:else if lane.state === 'none-seen'}
-          <p class="lane-note">No events in this period</p>
+          <div class="bars">
+            {#each outside as i (i)}
+              <div class="outside-dash" style="left:{leftPct(i)}%;width:{widthPct}%"></div>
+            {/each}
+            {#each bars as bar (bar.index)}
+              <div class="bar" class:nonzero={bar.count > 0} style="left:{leftPct(bar.index)}%;width:calc({widthPct}% - 1px);height:{barHeightPct(bar.count, max)}%">
+                {#if bar.count > 0 && bar.errors > 0}
+                  <div class="bar-err" style="height:{(bar.errors / bar.count) * 100}%"></div>
+                {/if}
+              </div>
+            {/each}
+            {#if lane.key === 'audit' && latency.segments.length > 0}
+              <svg class="latency" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" data-percentile={percentile}>
+                {#each latency.segments as points, k (k)}
+                  <polyline {points} fill="none" vector-effect="non-scaling-stroke" />
+                {/each}
+              </svg>
+              <span class="latency-max">{PERCENTILE_LABEL[percentile]}: up to {formatDuration(latency.max)}</span>
+            {/if}
+          </div>
         {:else}
-          <p class="lane-note">{laneNote(lane)}</p>
+          <p class="lane-note">{laneStatusLine(lane)}</p>
         {/if}
       </div>
       <div class="axis axis-right" style="--row:{laneIndex + 1}"></div>
@@ -331,7 +367,7 @@
     {#if grid}
       <div class="axisrow" style="--row:{orderedLanes.length + 1}">
         {#each tickIndexes as i (i)}
-          <span class="axtick" style="left:{leftPct(i)}%">{formatTime(slotStartMs(grid, i), { zone, precision: 'minute' })}</span>
+          <span class="axtick" style="left:{leftPct(i)}%">{at(slotStartMs(grid, i))}</span>
         {/each}
       </div>
     {/if}
@@ -341,21 +377,23 @@
     <div
       role="group"
       aria-roledescription="bucket selector"
-      aria-label="Time buckets. Left and right arrow keys move, Enter opens Run analysis for the selected bucket."
+      aria-label="Time buckets. Left and right arrow keys move, Home and End jump to the first and last bucket, Enter opens Run analysis for the selected bucket."
       aria-describedby="tc-tip"
       tabindex="0"
       class="overlay"
       style="--end:{Math.max(2, orderedLanes.length + 1)}"
       bind:this={overlayEl}
+      bind:clientWidth={plotW}
       onkeydown={onOverlayKey}
       onpointerdown={onOverlayDown}
       onpointermove={onOverlayMove}
       onpointerup={() => endDrag(true)}
       onpointercancel={() => endDrag(false)}
-      onpointerleave={hideTip}
+      onpointerleave={onOverlayLeave}
+      onclick={onOverlayClick}
       onblur={hideTip}
     >
-      <div id="tc-tip" role="tooltip" class="tip" style={tipStyle} hidden={tipGroups.length === 0}>
+      <div id="tc-tip" role="tooltip" class="tip" style={tipStyle} hidden={tipGroups.length === 0} bind:this={tipEl}>
         {#each tipGroups as group (group.key)}
           <div class="tip-group">
             <strong>{group.name}</strong>
@@ -365,14 +403,7 @@
       </div>
       {#if grid}
         {#each slotIndexes as i (i)}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="column"
-            class:selected={localSelected === i}
-            style="left:{leftPct(i)}%;width:{widthPct}%"
-            onclick={() => { if (!swallowClick) selectAt(i); }}
-          ></div>
+          <div class="column" class:selected={current === i} data-slot={i} aria-hidden="true" style="left:{leftPct(i)}%;width:{widthPct}%"></div>
         {/each}
         {#if dragFrom != null && dragTo != null}
           <div class="brush" style="left:{leftPct(Math.min(dragFrom, dragTo))}%;width:{(Math.abs(dragTo - dragFrom) + 1) * widthPct}%"></div>
@@ -380,6 +411,8 @@
       {/if}
     </div>
   </div>
+
+  <span class="sr-only" aria-live="polite" aria-atomic="true">{liveText}</span>
 
   {#if grid}
     <p class="axcap">{caption}</p>
@@ -396,8 +429,10 @@
   .notice p { margin: 0; }
   .mixed-title { font-size: var(--fs-4); }
   .muted { color: var(--text-2); }
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
-  .lanes-grid { position: relative; display: grid; grid-template-columns: auto 3.5rem 1fr 3.5rem; column-gap: var(--space-3); row-gap: var(--space-2); align-items: stretch; min-width: 0; }
+  /* The label column is capped so the plot gets the rest; the right gutter is only breathing room for the last time label. */
+  .lanes-grid { --bars-h: 54px; position: relative; display: grid; grid-template-columns: minmax(8rem, 13rem) 3rem minmax(0, 1fr) var(--space-2); column-gap: var(--space-3); row-gap: var(--space-2); align-items: stretch; min-width: 0; }
 
   .lane-label, .axis, .panel, .axisrow { grid-row: var(--row); }
   .lane-label { grid-column: 1; display: grid; gap: 2px; align-content: start; min-width: 0; }
@@ -411,14 +446,18 @@
 
   .axis { position: relative; grid-column: 2; min-height: 72px; font-size: var(--fs-1); color: var(--text-2); }
   .axis-right { grid-column: 4; }
+  /* The scale box is as tall as the bars and sits on the panel's bottom padding, so "0" is level with the bars' baseline. */
+  .axis .scale { position: absolute; left: 0; right: 0; bottom: calc(var(--space-1) + var(--hairline-width)); height: var(--bars-h); }
   .axis .tick { position: absolute; right: var(--space-1); }
   .axis .tick-top { top: 0; }
   .axis .tick-bottom { bottom: 0; }
 
-  .panel { grid-column: 3; position: relative; min-height: 72px; padding: var(--space-1) 0; background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
-  .panel-title { margin: 0; padding: 0 var(--space-2); color: var(--text-2); font-size: var(--fs-2); }
-  .bars { position: relative; height: 54px; margin-top: var(--space-1); }
+  .panel { grid-column: 3; position: relative; min-height: 72px; display: flex; flex-direction: column; justify-content: flex-end; padding: var(--space-1) 0; background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+  .panel-title { margin: 0 0 auto; padding: 0 var(--space-2); color: var(--text-2); font-size: var(--fs-2); }
+  .bars { position: relative; flex: none; height: var(--bars-h); margin-top: var(--space-1); }
   .bar { position: absolute; bottom: 0; background: var(--accent); border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+  /* Any bucket with events stays visible next to a huge spike. */
+  .bar.nonzero { min-height: 2px; }
   .panel[data-lane='audit'] .bar { background: var(--lane-audit); }
   .panel[data-lane='sql'] .bar { background: var(--lane-sql); }
   .panel[data-lane='iis'] .bar { background: var(--lane-iis); }
@@ -426,13 +465,14 @@
   .outside-dash { position: absolute; bottom: 0; height: 2px; background: var(--line); opacity: .6; }
   .lane-note { margin: var(--space-1) var(--space-2) 0; color: var(--text-2); font-size: var(--fs-3); text-align: center; }
   .lane-note.bad { color: var(--bad); text-align: left; }
+  .panel > .lane-note:not(.bad) { margin-top: auto; margin-bottom: auto; }
 
   .axisrow { grid-column: 3; position: relative; height: var(--space-5); font-size: var(--fs-1); color: var(--text-2); }
   .axtick { position: absolute; top: 0; white-space: nowrap; transform: translateX(-50%); }
 
-  .overlay { grid-column: 3; grid-row: 1 / var(--end); position: relative; }
+  .overlay { grid-column: 3; grid-row: 1 / var(--end); position: relative; touch-action: pan-y; }
   .overlay:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-  .tip { position: absolute; z-index: 4; display: grid; gap: var(--space-2); width: max-content; max-width: 22rem; padding: var(--space-2) var(--space-3); color: var(--text); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); pointer-events: none; }
+  .tip { position: absolute; z-index: 4; display: grid; gap: var(--space-2); width: max-content; max-width: min(22rem, 100%); padding: var(--space-2) var(--space-3); color: var(--text); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); pointer-events: none; }
   .tip[hidden] { display: none; }
   .tip-group { display: grid; gap: 2px; }
   .column { position: absolute; top: 0; bottom: 0; margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer; }
@@ -449,8 +489,9 @@
   .axcap { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
   .foot { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
 
-  @media (max-width: 480px) {
-    .lanes-grid { grid-template-columns: 3.5rem 1fr 3.5rem; }
+  /* Narrow screens: each lane's label sits above its panel, so the plot gets the whole width less the scale gutter. */
+  @media (max-width: 768px) {
+    .lanes-grid { grid-template-columns: 3rem minmax(0, 1fr) var(--space-2); column-gap: var(--space-2); }
     .lane-label { grid-column: 1 / -1; }
     .axis { grid-column: 1; }
     .panel { grid-column: 2; }
@@ -461,6 +502,5 @@
     .axis, .panel { grid-row: calc(var(--row) * 2); }
     .axisrow { grid-row: calc(var(--row) * 2 - 1); }
     .overlay { grid-row: 1 / calc(var(--end) * 2 - 1); }
-    .axtick:not(:nth-child(5n+1)) { display: none; }
   }
 </style>

@@ -16,7 +16,7 @@ import { forgetSavedRecord, forgetSourceSaved, registerSourceSaved, resolveSaved
 import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './types';
 import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './breakdown';
 import type { RunningImport } from './cases';
-import { afterUnlock, createRoute, go as moveScreen, historyStep, initialScreen, isHistoryScreen, leavesCaseWork, setupReturn, type Screen } from './screenFlow';
+import { afterUnlock, CASE_TRACING_MARK, createRoute, go as moveScreen, historyStep, initialScreen, isHistoryScreen, leavesCaseWork, parseScreenMark, setupReturn, type Screen } from './screenFlow';
 import { onCasesLocked } from './lockSignal';
 import { requestCase } from './startIntent';
 import { CASE_RESTORE_TEXT } from './copy/caseRestoreCopy';
@@ -103,6 +103,19 @@ function storedCase(write?: string): string {
   return '';
 }
 let activeCaseId = $state(storedCase());
+// Which page of the case this tab was on ('case' or 'tracing'), so a reload goes back to the case page, or its timeline, instead of the first screen.
+// The case id itself stays in ACTIVE_CASE_KEY; this holds only the word. Written while the case page shows and cleared when the work moves elsewhere.
+const CASE_VIEW_KEY = 'unravis.caseView';
+function storedCaseView(write?: 'case' | 'tracing' | ''): string {
+  try {
+    if (typeof sessionStorage === 'undefined') return '';
+    if (write === undefined) { const value = sessionStorage.getItem(CASE_VIEW_KEY); return value === 'case' || value === 'tracing' ? value : ''; }
+    if (write) sessionStorage.setItem(CASE_VIEW_KEY, write); else sessionStorage.removeItem(CASE_VIEW_KEY);
+  } catch { /* storage blocked: the page is simply not remembered */ }
+  return '';
+}
+// The case whose Investigation Timeline is open on the case page ('' when none). Lives here, not in the page, so Back and Forward can open and close it.
+let tracingCase = $state('');
 // Opening a case restores what it saved: its MongoDB connection and databases, then its filters (see caseWorkspace.ts). 'working' is the quiet
 // reconnect; the others wait for the person. Saves of the case workspace stay off until the case's own workspace has been read and applied.
 type RestorePhase = 'idle' | 'working' | 'signin' | 'unreachable' | 'missing' | 'failed';
@@ -334,7 +347,7 @@ export function startApp() {
       if (drawerHistory?.pop()) return;
       const target = viewHistory?.pop();
       if (target === undefined) return;
-      stepScreenFromHistory(viewHistory?.screen ?? '');
+      followHistoryMark(viewHistory?.screen ?? '');
       void applyView(target);
     };
     window.addEventListener('popstate', onPop);
@@ -427,8 +440,8 @@ export async function initialize() {
   initCanRetry = true;
   try {
     info = await api.info();
-    // A reload keeps the case this tab was working in, so its theories stay in view. The demo has no cases.
-    if (info.demo) setActiveCase(''); else if (activeCaseId) setLedgerCase(activeCaseId);
+    // A reload keeps the case this tab was working in, so its theories stay in view (the demo has a case of its own).
+    if (activeCaseId) setLedgerCase(activeCaseId);
     pendingInvestigation =readInvestigationSnapshot(undefined, info.demo ? 'demo' : 'live');
     const asked = keeperPreview();
     const loaded = (await api.sources(asked)) ?? [];
@@ -490,11 +503,17 @@ export function go(to: Screen): boolean {
   if (leavesCaseWork(move.screen) && sidePanel) void closeSidePanel();
   screen = move.screen;
   if (move.screen !== 'setup') setupOrigin = null;
+  noteCaseView(move.screen);
   reportNav(move.screen); // the journey log gets the screen name only, never an id or a query
   if (!poppingScreen) noteScreenHistory(from, move.screen);
   // Arriving at the case or the analysis with a case open: bring back what the case saved, once (see restoreCaseWorkspace).
   if ((move.screen === 'running' || move.screen === 'case') && activeCaseId && restoredCaseId !== activeCaseId && restorePhase === 'idle' && info && !info.demo) void restoreCaseWorkspace(activeCaseId);
   return true;
+}
+// The case page is remembered for a reload; the other working screens forget it. The key screens (unlock, set-up) keep it, as they return to the case.
+function noteCaseView(to: Screen) {
+  if (to === 'case') storedCaseView(tracingCase ? 'tracing' : 'case');
+  else if (to === 'start' || to === 'create' || to === 'running') { tracingCase = ''; storedCaseView(''); }
 }
 // A move to start, case, create or the analysis gets a browser history entry once no drawer entry is open (see lib/screenFlow.ts historyStep).
 function noteScreenHistory(from: Screen, to: Screen) {
@@ -504,6 +523,8 @@ function noteScreenHistory(from: Screen, to: Screen) {
     if (screen !== to || viewHistory !== marker) return;
     const step = historyStep(from, to, marker.screen);
     if (step !== 'none') marker.markScreen(to, step === 'replace');
+    // A reload on the timeline: the case entry is marked first, then the timeline gets its own, so Back returns to the case page.
+    if (to === 'case' && tracingCase && tracingCase === activeCaseId) marker.markScreen(CASE_TRACING_MARK);
   });
 }
 // Back or Forward landed on an entry marked with another screen: go there through the same move table. Key screens are never stepped onto or off.
@@ -515,6 +536,37 @@ function stepScreenFromHistory(wanted: string) {
   poppingScreen = true;
   try { if (!go(wanted)) marker.markScreen(screen, true); } finally { poppingScreen = false; }
 }
+// Back or Forward landed on an entry marked for a screen (and, on the case page, whether its timeline is open): follow both.
+function followHistoryMark(mark: string) {
+  const { screen: wanted, tracing } = parseScreenMark(mark);
+  stepScreenFromHistory(wanted);
+  // The case page shows its timeline exactly when the entry says so.
+  if (wanted === 'case' && screen === 'case') setTracing(tracing && activeCaseId ? activeCaseId : '');
+}
+function setTracing(id: string) {
+  if (tracingCase === id) return;
+  tracingCase = id;
+  if (screen === 'case') storedCaseView(id ? 'tracing' : 'case');
+}
+/** From the case page to its Investigation Timeline. It takes a history step, so Back returns to the case page and Forward to the timeline. */
+export function openTracing() {
+  if (screen !== 'case' || !activeCaseId) return;
+  setTracing(activeCaseId);
+  const marker = viewHistory, drawers = drawerHistory;
+  if (!marker || !drawers) return;
+  drawers.whenClear(() => { if (viewHistory === marker && screen === 'case' && tracingCase) marker.markScreen(CASE_TRACING_MARK); });
+}
+/** Closes the timeline back onto the case page: one step back when the entry before is that page, otherwise a new entry for it. */
+export function closeTracing() {
+  if (!tracingCase) return;
+  setTracing('');
+  const marker = viewHistory, drawers = drawerHistory;
+  if (!marker || !drawers) return;
+  drawers.whenClear(() => {
+    if (viewHistory !== marker || screen !== 'case' || tracingCase || marker.screen !== CASE_TRACING_MARK) return;
+    if (!marker.stepBack('case')) marker.markScreen('case');
+  });
+}
 // Reads the key state once the app info is in, then picks the first screen. A status that cannot be read is treated as "no key" for routing.
 async function chooseFirstScreen(demo: boolean, resume: boolean) {
   let lock: LockState | 'unknown' = 'unknown';
@@ -522,8 +574,12 @@ async function chooseFirstScreen(demo: boolean, resume: boolean) {
     try { noteKeyStatus(await getMasterKeyStatus()); lock = lockState; } catch { lockState = 'unknown'; }
   }
   const deepLink = initialView != null;
-  const target = initialScreen({ demo, deepLink, resume, lock });
-  if (lock === 'locked' || lock === 'damaged') unlockOrigin = initialScreen({ demo, deepLink, resume, lock: 'unlocked' });
+  // A reload on a case page (or its timeline) goes back there while the tab still remembers the case.
+  const remembered = activeCaseId ? storedCaseView() : '';
+  const caseView = remembered !== '';
+  if (remembered === 'tracing' && !deepLink) tracingCase = activeCaseId;
+  const target = initialScreen({ demo, deepLink, resume, lock, caseView });
+  if (lock === 'locked' || lock === 'damaged') unlockOrigin = initialScreen({ demo, deepLink, resume, lock: 'unlocked', caseView });
   go(target);
 }
 /** Takes in a status the server reported. */
@@ -753,6 +809,7 @@ export function setActiveCase(id: string, options: { restore?: boolean } = {}) {
   restoredCaseId = ''; workspaceBaseline = null; pendingRestore = null; restoreRun = null;
   setRestore('idle');
   activeCaseId = id;
+  if (tracingCase !== id) tracingCase = '';
   storedCase(id);
   setLedgerCase(id);
   // Already on the case or the analysis (the import drawer picks a case here), so no screen change will start the restore: start it now.
@@ -1621,6 +1678,7 @@ export const app = {
   get initCanRetry() { return initCanRetry; },
   get screen() { return screen; },
   get activeCaseId() { return activeCaseId; },
+  get tracingCase() { return tracingCase; },
   get lockState() { return lockState; },
   get dpapiCases() { return dpapiCases; },
   get lockError() { return lockError; }, set lockError(value) { lockError = value; },

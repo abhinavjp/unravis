@@ -33,7 +33,7 @@ const { slotToBucket, bucketToWindow, handOffBucket, handoffCopyEntries } = load
 const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
 
-const lane = (key, buckets) => ({ key, buckets });
+const lane = (key, buckets, extra = {}) => ({ key, state: 'events', buckets, ...extra });
 const response = (lanes, windowStart = '2026-10-20T09:00:00Z') => ({
   window: { start: windowStart, end: '2026-10-20T10:00:00Z', axisStart: '2026-10-20T09:00:00Z', axisEnd: '2026-10-20T10:00:00Z', bucketSeconds: 300 },
   lanes
@@ -55,6 +55,29 @@ test("a hidden lane's bars do not count", () => {
   const r = response([lane('sql', [bucket])]);
   assert.equal(slotToBucket(r, { sql: false }, 1), null);
   assert.deepEqual(slotToBucket(r, {}, 1), { start: '2026-10-20T09:05:00.000Z', end: '2026-10-20T09:10:00.000Z' });
+});
+
+test('a disabled lane or one that does not draw bars cannot hand off', () => {
+  const disabled = response([lane('sql', [bucket], { disabled: 'tz-rule' })]);
+  assert.equal(slotToBucket(disabled, {}, 1), null);
+  const noData = response([lane('iis', [bucket], { state: 'no-data' })]);
+  assert.equal(slotToBucket(noData, {}, 1), null);
+  const partial = response([lane('iis', [bucket], { state: 'incomplete' })]);
+  assert.notEqual(slotToBucket(partial, {}, 1), null, 'an incomplete lane still draws the bars it has');
+  const both = response([lane('sql', [bucket], { disabled: 'tz-rule' }), lane('audit', [bucket])]);
+  assert.notEqual(slotToBucket(both, {}, 1), null, 'another lane that does draw it still counts');
+});
+
+test('laneDrawsBars and isLaneVisible follow the chart rule', () => {
+  const { laneDrawsBars, isLaneVisible } = loadTypeScript('src/lib/tracing/handoff.ts');
+  assert.equal(laneDrawsBars({ state: 'events' }, []), true);
+  assert.equal(laneDrawsBars({ state: 'events', disabled: 'tz-rule' }, [{}]), false);
+  assert.equal(laneDrawsBars({ state: 'incomplete' }, []), false);
+  assert.equal(laneDrawsBars({ state: 'incomplete' }, [{}]), true);
+  assert.equal(laneDrawsBars({ state: 'no-data' }, [{}]), false);
+  assert.equal(isLaneVisible({}, 'sql'), true);
+  assert.equal(isLaneVisible({ sql: false }, 'sql'), false);
+  assert.equal(isLaneVisible({ sql: false }, 'iis'), true);
 });
 
 test('bucketToWindow returns the start and end of a valid bucket', () => {

@@ -1125,7 +1125,14 @@ func (c *Case) BucketCounts(ctx context.Context, q casestore.BucketQuery) (cases
 		}
 	}
 	// No LIMIT: at most MaxSeriesBuckets cells times the case's number of imports.
-	query := "SELECT (ts_ms - ?) / ? AS b, source, import_id, COUNT(*) FROM events WHERE " +
+	// Errors: a status stored as exactly three digits starting with 5 (the same
+	// rule as casestore.IsServerErrorStatus). GLOB is NULL for a missing status,
+	// SUM skips NULLs, and COALESCE turns an all-NULL group into 0.
+	errCol := "0"
+	if q.CountErrors {
+		errCol = "COALESCE(SUM(json_extract(attrs_json,'$.status') GLOB '5[0-9][0-9]'), 0)"
+	}
+	query := "SELECT (ts_ms - ?) / ? AS b, source, import_id, COUNT(*), " + errCol + " FROM events WHERE " +
 		strings.Join(where, " AND ") + " GROUP BY b, source, import_id ORDER BY b, source, import_id"
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -1135,7 +1142,7 @@ func (c *Case) BucketCounts(ctx context.Context, q casestore.BucketQuery) (cases
 	var res casestore.BucketResult
 	for rows.Next() {
 		var bc casestore.BucketCount
-		if err := rows.Scan(&bc.Index, &bc.Source, &bc.ImportID, &bc.Count); err != nil {
+		if err := rows.Scan(&bc.Index, &bc.Source, &bc.ImportID, &bc.Count, &bc.Errors); err != nil {
 			return casestore.BucketResult{}, err
 		}
 		res.Counts = append(res.Counts, bc)

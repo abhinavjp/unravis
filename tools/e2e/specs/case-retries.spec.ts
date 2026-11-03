@@ -11,6 +11,12 @@ test.beforeEach(async ({ page }) => {
   await openCase(page, CASE);
 });
 
+// A reload keeps the tab on the case page it was on (UI-R1-14), so there is no need to go home and open the case again.
+async function reloadOnCase(page: import('@playwright/test').Page) {
+  await page.reload();
+  await expect(page.getByRole('heading', { name: CASE })).toBeVisible();
+}
+
 const section = (page: import('@playwright/test').Page) => page.locator('section.block').filter({ has: page.locator('#home-retries') });
 
 test('CASE-11: the list shows two items with different stickers and no secrets', async ({ page }) => {
@@ -52,9 +58,7 @@ test('CASE-11c: on a closed case the list says reopen first and Remove is off, t
   const id = demoId('demofail');
   const closed = await api('POST', `/api/cases/${id}/close`, undefined, 'open');
   expect(closed.status).toBe(200);
-  await page.reload();
-  await goHome(page);
-  await openCase(page, CASE);
+  await reloadOnCase(page);
   const list = section(page);
   await expect(list.getByText('This case is closed. Reopen it to try again.').first()).toBeVisible();
   await expect(list.getByRole('button', { name: 'Try again' })).toHaveCount(0);
@@ -62,9 +66,7 @@ test('CASE-11c: on a closed case the list says reopen first and Remove is off, t
   for (const b of await list.getByRole('button', { name: 'Remove from list' }).all()) await expect(b).toBeDisabled();
   const open = await api('POST', `/api/cases/${id}/reopen`, undefined, 'closed');
   expect(open.status).toBe(200);
-  await page.reload();
-  await goHome(page);
-  await openCase(page, CASE);
+  await reloadOnCase(page);
   await expect(section(page).getByRole('listitem')).toHaveCount(2);
 });
 
@@ -78,9 +80,7 @@ test('CASE-11d: Remove drops one item, the count falls and a reload keeps it gon
   const id = demoId('demofail');
   const res = await api('GET', `/api/cases/${id}`);
   expect(JSON.stringify(res.json.retries ?? [])).not.toContain('demo-access-web-b.log');
-  await page.reload();
-  await goHome(page);
-  await openCase(page, CASE);
+  await reloadOnCase(page);
   await expect(section(page).getByRole('listitem')).toHaveCount(1);
 });
 

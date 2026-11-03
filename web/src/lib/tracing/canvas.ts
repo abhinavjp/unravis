@@ -4,6 +4,7 @@
  * takes its inputs and returns a value, so the chart component stays a thin shell over this module.
  */
 import type { TracingBucket } from './model';
+import type { SlotGrid } from './lanes';
 import type { LintEntry } from '../copy/copylint';
 import { slotAtFraction } from './tooltip';
 
@@ -90,6 +91,92 @@ export function clampArrow(range: ZoomRange, index: number, delta: number): numb
   return Math.min(range.to - 1, Math.max(range.from, index + delta));
 }
 
+/**
+ * Where "Zoom in" should centre. A selected bucket inside the range wins. Otherwise the data decides, so repeated
+ * zooming never walks away to an empty stretch: the middle of the span of non-empty buckets when that span fits
+ * the narrower window, else the tallest bucket. Undefined (zoom on the range middle) when the range holds no data.
+ */
+export function zoomFocus(
+  range: ZoomRange,
+  selected: number | null | undefined,
+  bars: ReadonlyArray<{ index: number; count: number }>
+): number | undefined {
+  if (selected != null && selected >= range.from && selected < range.to) return selected;
+  const totals = new Map<number, number>();
+  for (const bar of bars) {
+    if (bar.index < range.from || bar.index >= range.to || !(bar.count > 0)) continue;
+    totals.set(bar.index, (totals.get(bar.index) ?? 0) + bar.count);
+  }
+  if (totals.size === 0) return undefined;
+  const indexes = [...totals.keys()];
+  const low = Math.min(...indexes);
+  const high = Math.max(...indexes);
+  const width = range.to - range.from;
+  const nextWidth = Math.min(width, Math.max(MIN_ZOOM_SLOTS, Math.floor(width / 2)));
+  if (high - low + 1 <= nextWidth) return (low + high) / 2;
+  let peak = low;
+  for (const [index, total] of totals) {
+    const best = totals.get(peak) ?? 0;
+    if (total > best || (total === best && index < peak)) peak = index;
+  }
+  return peak;
+}
+
+/**
+ * The next slot from `index` in the direction of `delta` that is not `outside` (a slot that only fills out the axis),
+ * kept inside the range. Stays on `index` (kept in range) when nothing further that way is inside the window.
+ */
+export function stepSlot(range: ZoomRange, index: number, delta: number, outside: (slot: number) => boolean): number {
+  const dir = delta < 0 ? -1 : 1;
+  for (let slot = index + dir; slot >= range.from && slot < range.to; slot += dir) {
+    if (!outside(slot)) return slot;
+  }
+  return Math.min(range.to - 1, Math.max(range.from, index));
+}
+
+/** The first (Home) or last (End) slot of the range that is not `outside`; the range edge itself when every slot is. */
+export function edgeSlot(range: ZoomRange, edge: 'first' | 'last', outside: (slot: number) => boolean): number {
+  if (edge === 'first') {
+    for (let slot = range.from; slot < range.to; slot += 1) if (!outside(slot)) return slot;
+    return range.from;
+  }
+  for (let slot = range.to - 1; slot >= range.from; slot -= 1) if (!outside(slot)) return slot;
+  return range.to - 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// Time-axis ticks. At most about six labels, thinned further whenever the measured plot is too narrow for them.
+
+const MAX_TICKS = 6;
+const LABEL_PX_PER_CHAR = 7;
+const LABEL_GAP_PX = 12;
+const LABEL_OVERHANG_PX = 8;
+
+/** The slot spacing between two tick labels: about MAX_TICKS labels, widened until labels of `labelChars` characters fit in `widthPx`. */
+export function tickStep(shown: number, widthPx: number, labelChars: number): number {
+  const base = Math.max(1, Math.ceil(shown / MAX_TICKS));
+  if (!(widthPx > 0) || shown < 1) return base;
+  const slotPx = widthPx / shown;
+  const needPx = Math.max(0, labelChars) * LABEL_PX_PER_CHAR + LABEL_GAP_PX;
+  return Math.max(base, Math.ceil(needPx / slotPx));
+}
+
+/**
+ * Offsets (0-based within the visible range) that get a time label. The first slot always has one; a later label that
+ * would hang past the right edge of the plot is dropped. `widthPx` 0 means "not measured yet": only the count rule applies.
+ */
+export function tickOffsets(shown: number, widthPx: number, labelChars: number): number[] {
+  if (shown < 1) return [];
+  const step = tickStep(shown, widthPx, labelChars);
+  const half = (Math.max(0, labelChars) * LABEL_PX_PER_CHAR) / 2;
+  const offsets: number[] = [];
+  for (let k = 0; k < shown; k += step) {
+    if (widthPx > 0 && k > 0 && (k / shown) * widthPx + half > widthPx + LABEL_OVERHANG_PX) break;
+    offsets.push(k);
+  }
+  return offsets;
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Latency percentiles. The server may send p50Ms/p95Ms on a bucket or leave them out; the helpers below
 // are the one place that decides whether a value is fit to draw.
@@ -116,6 +203,46 @@ export function hasLatency(buckets: TracingBucket[], percentile: Percentile): bo
   return buckets.some((bucket) => percentileValue(bucket, percentile) !== null);
 }
 
+/**
+ * The latency line for the visible `range`: runs of "x,y" points in a 0..100 box (x across the range, y 0 at the top),
+ * one run per stretch of consecutive buckets with a value, so a bucket without one leaves a gap. `max` is the tallest
+ * visible value (what y = 0 stands for). Buckets that land in the same slot keep the larger value.
+ */
+export function latencySegments(
+  buckets: TracingBucket[],
+  grid: Pick<SlotGrid, 'firstMs' | 'widthMs'>,
+  range: ZoomRange,
+  percentile: Percentile
+): { segments: string[]; max: number } {
+  const shown = range.to - range.from;
+  if (shown < 1) return { segments: [], max: 0 };
+  const values = new Map<number, number>();
+  for (const bucket of buckets) {
+    const value = percentileValue(bucket, percentile);
+    const startMs = Date.parse(bucket.start);
+    if (value === null || !Number.isFinite(startMs)) continue;
+    const index = Math.floor((startMs - grid.firstMs) / grid.widthMs);
+    if (index >= range.from && index < range.to) values.set(index, Math.max(values.get(index) ?? 0, value));
+  }
+  const max = Math.max(0, ...values.values());
+  const widthPct = 100 / shown;
+  const segments: string[] = [];
+  let run: string[] = [];
+  for (let index = range.from; index < range.to; index += 1) {
+    const value = values.get(index);
+    if (value === undefined) {
+      if (run.length > 0) segments.push(run.join(' '));
+      run = [];
+      continue;
+    }
+    const x = (index - range.from) * widthPct + widthPct / 2;
+    const y = max > 0 ? 100 - (value / max) * 100 : 100;
+    run.push(x.toFixed(2) + ',' + y.toFixed(2));
+  }
+  if (run.length > 0) segments.push(run.join(' '));
+  return { segments, max };
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Control copy. Every fixed sentence the chart controls can put on screen, in one place for the copy lint.
 
@@ -127,7 +254,8 @@ export const CANVAS_TEXT = {
   latencyLabel: 'Latency line',
   noLatency: 'No latency figures were returned for this window.',
   allHidden: 'All rows are hidden. Turn a row on to see it.',
-  dragHint: 'Drag across the chart to zoom into those bars.'
+  dragHint: 'Drag across the chart to zoom into those bars.',
+  noAxis: 'The time axis could not be drawn for this window. Try a shorter period.'
 } as const;
 
 /** The status line under the chart while zoomed. */
@@ -146,6 +274,7 @@ export function canvasCopyEntries(): LintEntry[] {
     { id: 'trace-canvas.noLatency', text: CANVAS_TEXT.noLatency },
     { id: 'trace-canvas.allHidden', text: CANVAS_TEXT.allHidden },
     { id: 'trace-canvas.dragHint', text: CANVAS_TEXT.dragHint },
+    { id: 'trace-canvas.noAxis', text: CANVAS_TEXT.noAxis },
     { id: 'trace-canvas.zoomedText', text: zoomedText(60, 120) }
   ];
 }

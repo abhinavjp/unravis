@@ -229,3 +229,40 @@ test('Back climbs a drill list and a Patterns record one level at a time', () =>
   assert.equal(g.sync(describeView(screen({ depth: 3, record: { sourceId: 's', id: 'r' } }))), 'push');
   assert.equal(g.sync(null), 'back');
 });
+
+test('the timeline is a history step: Back returns to the case page, Forward to the timeline', () => {
+  const b = fakeBrowser();
+  const h = createViewHistory(b.loc, b.hist);
+  h.markScreen('start', true);
+  h.markScreen('case');
+  h.markScreen('case/tracing');
+  assert.equal(b.entries.length, 3);
+  assert.equal(h.screen, 'case/tracing');
+  // The browser's Back: the entry says 'case'.
+  b.pop(1);
+  assert.equal(h.pop(), null);
+  assert.equal(h.screen, 'case');
+  // Forward again: the entry says 'case/tracing'.
+  b.pop(2);
+  assert.equal(h.pop(), null);
+  assert.equal(h.screen, 'case/tracing');
+});
+
+test('stepBack closes the timeline with one Back when the entry before is the case page, and not otherwise', () => {
+  const b = fakeBrowser('#x'); // an address with a fragment: the fake cannot rebuild an empty one
+  const h = createViewHistory(b.loc, b.hist);
+  h.markScreen('case', true);
+  h.markScreen('case/tracing');
+  assert.equal(h.stepBack('start'), false, 'the entry before is another screen');
+  assert.equal(h.stepBack(''), false);
+  assert.equal(h.stepBack('case'), true);
+  assert.deepEqual(b.calls.slice(-1), ['back']);
+  b.pop(0);
+  assert.equal(h.pop(), undefined, 'the page started that Back, so the event is not a view change');
+  assert.equal(h.screen, 'case');
+  // Nothing before the first entry.
+  const c = fakeBrowser('#x');
+  const g = createViewHistory(c.loc, c.hist);
+  g.markScreen('case/tracing', true);
+  assert.equal(g.stepBack('case'), false);
+});

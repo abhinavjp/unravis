@@ -746,13 +746,118 @@ func TestTracingSQLIILanes(t *testing.T) {
 		if !out.AllLanesStored || out.MixedConsistency || out.Truncated {
 			t.Errorf("meta stored=%v mixed=%v truncated=%v", out.AllLanesStored, out.MixedConsistency, out.Truncated)
 		}
-		if strings.Contains(raw, `"errors"`) {
-			t.Errorf("a bucket carries errors: %s", raw)
+		// The iis lane carries errors on every bucket (the five rows are all 503);
+		// the sql lane never does.
+		var iisErrs int64
+		for _, b := range tracingLaneOf(t, out, "iis").Buckets {
+			if b.Errors == nil {
+				t.Fatalf("iis bucket without errors: %+v", b)
+			}
+			iisErrs += *b.Errors
+		}
+		if iisErrs != 5 {
+			t.Errorf("iis errors %d, want 5", iisErrs)
+		}
+		for _, b := range tracingLaneOf(t, out, "sql").Buckets {
+			if b.Errors != nil {
+				t.Errorf("sql bucket carries errors: %+v", b)
+			}
 		}
 		if len(out.Warnings) != 0 {
 			t.Errorf("warnings %v", out.Warnings)
 		}
+		_ = raw
 	})
+}
+
+// TestTracingIISBucketErrors checks the per-bucket errors of the iis lane on both
+// stores: only 5xx rows count (exactly three digits, first 5), 4xx, 200 and a row
+// without a status do not, an HTTP.sys marker with a 503 does not, and a bucket
+// without errors still says 0. The sql lane has no errors key at all.
+func TestTracingIISBucketErrors(t *testing.T) {
+	forEachTracingStore(t, func(t *testing.T, e *caseEnv, id string) {
+		at := func(min int, status string) evidence.Event {
+			ev := evidence.Event{Kind: "request", Host: "web-a", Start: tracingLaneT0.Add(time.Duration(min) * time.Minute), TZRule: clock.RuleUTCField}
+			ev.End = ev.Start
+			if status != "" {
+				ev.Attrs = map[string]string{"status": status}
+			}
+			return ev
+		}
+		rows := []evidence.Event{
+			at(1, "200"), at(1, "503"), at(1, "500"), at(1, "404"), // minute 1: 4 rows, 2 errors
+			at(2, "502"), at(2, ""), at(2, "5xx"), at(2, "5000"), // minute 2: 4 rows, 1 error
+			at(30, "301"), // minute 30: 1 row, 0 errors
+		}
+		iisImp := seedTracingImport(t, e.store, id, "iis-w3c", "w.log", rows)
+		marker := at(1, "503")
+		marker.Kind = "httperr"
+		marker.Attrs["reason"] = "Timer_ConnectionIdle"
+		errImp := seedTracingImport(t, e.store, id, "iis-httperr", "h.log", []evidence.Event{marker})
+		sqlImp := seedTracingImport(t, e.store, id, "sql-xel", "s.xel", tracingKindEvents("slow-op", tracingLaneT0.Add(time.Minute), 2, time.Second, map[string]string{"status": "503"}))
+		out, _ := tracingPost(t, e, id, tracingLaneBody(tracingImportID(iisImp.ID), tracingImportID(errImp.ID), tracingImportID(sqlImp.ID)))
+
+		iis := tracingLaneOf(t, out, "iis")
+		got := map[int]int64{}
+		var total, errTotal int64
+		for _, b := range iis.Buckets {
+			if b.Errors == nil {
+				t.Fatalf("iis bucket without errors key: %+v", b)
+			}
+			if *b.Errors > b.Count {
+				t.Errorf("errors %d above count %d", *b.Errors, b.Count)
+			}
+			got[int(b.Start.Sub(tracingLaneT0)/time.Minute)] = *b.Errors
+			total += b.Count
+			errTotal += *b.Errors
+		}
+		if total != 10 { // 9 requests and 1 marker
+			t.Errorf("iis count %d, want 10", total)
+		}
+		if errTotal != 3 || got[1] != 2 || got[2] != 1 || got[30] != 0 {
+			t.Errorf("iis errors by minute %v total %d, want minute1=2 minute2=1 total=3", got, errTotal)
+		}
+		for _, b := range tracingLaneOf(t, out, "sql").Buckets {
+			if b.Errors != nil {
+				t.Errorf("sql bucket carries errors: %+v", b)
+			}
+		}
+	})
+}
+
+// TestTracingRowCapIsPerLane: a 60 000 row iis lane must not starve the sql lane
+// of its 3 001 events or flag it incomplete; only the iis lane (whose own rows
+// passed the cap) is truncated.
+func TestTracingRowCapIsPerLane(t *testing.T) {
+	if testing.Short() {
+		t.Skip("imports 63 001 events")
+	}
+	e, id := sqliteTracingEnv(t)
+	const iisN, sqlN = 60000, 3001
+	iisImp := seedTracingImport(t, e.store, id, "iis-w3c", "big.log", tracingKindEvents("request", tracingLaneT0.Add(time.Minute), iisN, time.Millisecond, map[string]string{"status": "200"}))
+	sqlImp := seedTracingImport(t, e.store, id, "sql-xel", "s.xel", tracingKindEvents("slow-op", tracingLaneT0.Add(30*time.Minute), sqlN, time.Millisecond, nil))
+	out, _ := tracingPost(t, e, id, tracingLaneBody(tracingImportID(sqlImp.ID), tracingImportID(iisImp.ID)))
+
+	sql := tracingLaneOf(t, out, "sql")
+	if sql.State != "events" || sql.Truncated || sql.ReasonCode != "" || sql.Reason != "" || !sql.Complete {
+		t.Errorf("sql lane flagged: %+v", sql)
+	}
+	if sql.Scanned != sqlN || tracingBucketSum(sql) != sqlN {
+		t.Errorf("sql scanned %d bucket sum %d, want %d", sql.Scanned, tracingBucketSum(sql), sqlN)
+	}
+	if len(sql.Events) == 0 || len(sql.Events) > calltrace.MaxLaneEvents || len(sql.Events)+sql.Hidden != sqlN {
+		t.Errorf("sql lists %d events and hides %d, want %d together", len(sql.Events), sql.Hidden, sqlN)
+	}
+	iis := tracingLaneOf(t, out, "iis")
+	if !iis.Truncated || iis.ReasonCode != "rowcap" {
+		t.Errorf("iis lane not flagged: %+v", iis)
+	}
+	if iis.Scanned != iisN || tracingBucketSum(iis) != iisN {
+		t.Errorf("iis scanned %d bucket sum %d, want %d", iis.Scanned, tracingBucketSum(iis), iisN)
+	}
+	if !out.Truncated {
+		t.Error("top-level truncated is false")
+	}
 }
 
 // TestTracingBucketsUseGroupBy proves the counts come from the store's own

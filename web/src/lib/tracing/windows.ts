@@ -18,6 +18,8 @@ export interface WindowFields {
 
 export interface WindowCheck {
   errors: string[];
+  /** The picker fields the errors are about, so the screen can mark exactly those inputs invalid. */
+  invalid: (keyof WindowFields)[];
   overlap: boolean;
   body: {
     incident: { start: string; end: string };
@@ -43,6 +45,16 @@ export function parseFieldUtc(value: string): number {
   return toFieldUtc(ms) === value ? ms : NaN;
 }
 
+/**
+ * The moment the default window counts back from: the app's own data reference time in demo mode (so the picker
+ * matches the demo data), the real clock otherwise or when the reference time does not parse.
+ */
+export function windowNow(info: { demo?: boolean; now?: string } | null | undefined, realNowMs: number): number {
+  if (!info?.demo || typeof info.now !== 'string') return realNowMs;
+  const ms = Date.parse(info.now);
+  return Number.isFinite(ms) ? ms : realNowMs;
+}
+
 /** The default picker values: the incident is the hour before now (floored to the minute), the comparison the hour before that. */
 export function defaultWindows(nowMs: number): WindowFields {
   const end = Math.floor(nowMs / MINUTE_MS) * MINUTE_MS;
@@ -61,23 +73,29 @@ export function checkWindows(f: WindowFields): WindowCheck {
   const rS = parseFieldUtc(f.referenceStart);
   const rE = parseFieldUtc(f.referenceEnd);
   const errors: string[] = [];
-  const check = (label: 'incident' | 'reference', start: number, end: number): boolean => {
+  const invalid: (keyof WindowFields)[] = [];
+  // The names are the picker's own labels ("Incident window", "Comparison period"), not the internal word "reference".
+  const check = (name: string, keys: [keyof WindowFields, keyof WindowFields], start: number, end: number): boolean => {
     if (Number.isNaN(start) || Number.isNaN(end)) {
-      errors.push(`The ${label} window needs a start and an end, in UTC.`);
+      errors.push(`The ${name} needs a start and an end, in UTC.`);
+      if (Number.isNaN(start)) invalid.push(keys[0]);
+      if (Number.isNaN(end)) invalid.push(keys[1]);
       return false;
     }
     if (end <= start) {
-      errors.push(`The ${label} window ends before it starts.`);
+      errors.push(`The ${name} end must be later than the start.`);
+      invalid.push(...keys);
       return false;
     }
     if (end - start > MAX_TRACE_SPAN_MS) {
-      errors.push(`The longest window is 30 days. Shorten the ${label} window.`);
+      errors.push(`The longest window is 30 days. Shorten the ${name}.`);
+      invalid.push(...keys);
       return false;
     }
     return true;
   };
-  const incidentOk = check('incident', iS, iE);
-  const referenceOk = check('reference', rS, rE);
+  const incidentOk = check('incident window', ['incidentStart', 'incidentEnd'], iS, iE);
+  const referenceOk = check('comparison period', ['referenceStart', 'referenceEnd'], rS, rE);
   const overlap = incidentOk && referenceOk && iS < rE && rS < iE;
   const body = errors.length > 0
     ? null
@@ -85,7 +103,7 @@ export function checkWindows(f: WindowFields): WindowCheck {
         incident: { start: new Date(iS).toISOString(), end: new Date(iE).toISOString() },
         reference: { start: new Date(rS).toISOString(), end: new Date(rE).toISOString() }
       };
-  return { errors, overlap, body };
+  return { errors, invalid, overlap, body };
 }
 
 /** Every fixed string the window picker shows. */
@@ -97,8 +115,19 @@ export const WINDOW_TEXT = {
   startTracing: 'Start tracing',
   overlap: 'The two windows overlap. Pick a normal period that does not share any time with the incident.',
   overlapFix: 'Move comparison period before the incident',
-  utcNote: 'Times are typed in UTC.'
+  utcNote: 'Times are typed in UTC.',
+  endNote: 'A window includes its start and stops just before its end.',
+  keptPrevious: 'The chart still shows the previous window.',
+  noEvents: 'No events in this window. Try a wider one.',
+  cancelledNone: 'Cancelled. Press Start tracing to read the window again.',
+  cancelledKept: 'Cancelled. The chart still shows the previous result.'
 } as const;
+
+/** True when at least one lane was read and every lane that was read has no events at all (the window itself is empty). */
+export function windowIsEmpty(lanes: { state: string; buckets: { count: number }[] }[]): boolean {
+  const read = lanes.filter((lane) => lane.state === 'events' || lane.state === 'incomplete');
+  return read.length > 0 && lanes.every((lane) => lane.buckets.every((bucket) => !(bucket.count > 0)));
+}
 
 export const windowCopyEntries = (): LintEntry[] =>
   Object.entries(WINDOW_TEXT).map(([id, text]) => ({ id: 'tracingWindow.' + id, text }));

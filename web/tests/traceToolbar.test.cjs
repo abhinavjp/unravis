@@ -63,7 +63,8 @@ test('toolbar component has real buttons and live announcements', () => {
   assert.match(source, /aria-expanded/);
   assert.match(source, /aria-live="polite"/);
   assert.match(source, /scrubPillText\(/);
-  assert.ok((source.match(/<button/g) || []).length >= 4);
+  // Two button templates: one per lane (looped over the lane order) and the pill.
+  assert.equal((source.match(/<button/g) || []).length, 2);
   assert.ok(!/callTrace/.test(source));
 });
 
@@ -76,6 +77,43 @@ test('swatches read the shared lane variables', () => {
   assert.ok(!source.includes('--lane-sql:'));
   assert.ok(!source.includes('--lane-iis:'));
   assert.match(source, /import type \{ TracingLaneKey \} from '\.\.\/lib\/tracing\/model'/);
+});
+
+test('lane toggles come from the single lane order and stay 32 px high on a phone', () => {
+  const source = read('src/components/TraceToolbar.svelte');
+  assert.match(source, /\{#each LANE_ORDER as key/);
+  assert.ok(!/ as TracingLaneKey\)/.test(source));
+  assert.deepEqual(toolbar.LANE_ORDER, ['audit', 'sql', 'iis']);
+  assert.equal(toolbar.LANE_ORDER, loadTypeScript('src/lib/tracing/lanes.ts').LANE_ORDER);
+  for (const key of toolbar.LANE_ORDER) assert.equal(typeof toolbar.TOOLBAR_TEXT[key], 'string');
+  const phone = source.replace(/\r\n/g, '\n').match(/@media \(max-width: 480px\) \{([\s\S]*?)\n \}/);
+  assert.ok(phone, 'phone rule present');
+  assert.match(phone[1], /\.tt-lane/);
+  assert.match(phone[1], /\.pill/);
+  assert.match(phone[1], /min-height: var\(--space-8\)/);
+  // Spacing and radius come from tokens, not literal px (the swatch dot size and the visually hidden rule are the fixed sizes).
+  const css = source.slice(source.indexOf('<style>'), source.indexOf('.sr-only {'));
+  assert.ok(!/\b(?:padding|gap|margin|border-radius|min-height)\s*:[^;]*\d+px/.test(css));
+});
+
+test('export scrub setting belongs to the case that previewed it', () => {
+  const { exportScrub } = loadTypeScript('src/lib/exportScrub.svelte.ts');
+  assert.equal(exportScrub.forCase('a'), null);
+  exportScrub.set(false, 'a');
+  assert.equal(exportScrub.value, false);
+  assert.equal(exportScrub.forCase('a'), false);
+  assert.equal(exportScrub.forCase('b'), null);
+  // Opening the same case again keeps it; opening another case drops it.
+  exportScrub.keepOnlyFor('a');
+  assert.equal(exportScrub.value, false);
+  exportScrub.keepOnlyFor('b');
+  assert.equal(exportScrub.value, null);
+  assert.equal(exportScrub.forCase('a'), null);
+  // A value stored with no case is left alone (nothing to compare it with).
+  exportScrub.set(true);
+  exportScrub.keepOnlyFor('c');
+  assert.equal(exportScrub.value, true);
+  exportScrub.set(null);
 });
 
 test('toolbar copy passes the screen-string lint', () => {

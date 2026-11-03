@@ -181,7 +181,7 @@ test('every drawer in the page state reaches the history through the one module'
 
 test('D-A-07: popstate steps screens through go() and key screens get no history entry', () => {
   const state = read('src/lib/appState.svelte.ts');
-  assert.match(state, /stepScreenFromHistory\(viewHistory\?\.screen \?\? ''\);\s*void applyView\(target\);/);
+  assert.match(state, /followHistoryMark\(viewHistory\?\.screen \?\? ''\);\s*void applyView\(target\);/);
   assert.match(state, /if \(!poppingScreen\) noteScreenHistory\(from, move\.screen\);/);
   const step = state.slice(state.indexOf('function stepScreenFromHistory'), state.indexOf('// Reads the key state once the app info is in'));
   assert.match(step, /!isHistoryScreen\(screen\)/, 'a key screen is never left by Back');
@@ -257,7 +257,7 @@ test('the shell shows Retry only when retrying can help', () => {
 const { SCREENS: SCREEN_LIST, canGo, go: moveScreen, initialScreen, afterUnlock, createRoute, leavesCaseWork, WIZARD_READY } = loadTypeScript('src/lib/screenFlow.ts');
 
 const LEGAL_MOVES = {
-  loading: ['unlock', 'start', 'running'],
+  loading: ['unlock', 'start', 'running', 'case'],
   unlock: ['start', 'running', 'create', 'case'],
   setup: ['start', 'unlock', 'case'],
   start: ['setup', 'create', 'running', 'unlock', 'case'],
@@ -305,6 +305,8 @@ test('the first screen: demo runs, a locked key unlocks, a link or remembered ta
   assert.equal(initialScreen(facts({ lock: 'none' })), 'start');
   assert.equal(initialScreen(facts({ lock: 'unknown' })), 'start');
   assert.equal(initialScreen(facts()), 'start');
+  assert.equal(initialScreen(facts({ caseView: true })), 'case', 'a reload on a case page goes back to it');
+  assert.equal(moveScreen('loading', 'case').ok, true, 'the first screen may be the case page');
 });
 
 test('after unlock the person returns to the work that was interrupted, else the start screen', () => {

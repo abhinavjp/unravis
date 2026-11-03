@@ -128,6 +128,85 @@ func TestBucketCountsMatchesScan(t *testing.T) {
 	}
 }
 
+// With CountErrors the GROUP BY and the scan fallback agree on Errors too: only
+// a status of exactly three digits starting with 5 counts, and without
+// CountErrors every Errors is 0.
+func TestBucketCountsErrorsMatchScan(t *testing.T) {
+	s, _ := newTestStore(t)
+	info := mustCreate(t, s, "err-buckets")
+	c := mustOpen(t, s, info.ID)
+	evs := tEvents(c, "e", 40)
+	statuses := []string{"200", "503", "404", "500", "", "5xx", "5000", "599", "-"}
+	var wantErrors int64
+	for i := range evs {
+		evs[i].Source = "imp-e"
+		evs[i].EvidenceID = evidence.EventID(string(c.Info().ID), "imp-e", "e", evs[i].Line, 0)
+		st := statuses[i%len(statuses)]
+		if st != "" {
+			evs[i].Attrs = map[string]string{"status": st}
+		} else {
+			evs[i].Attrs = nil
+		}
+		if casestore.IsServerErrorStatus(st) {
+			wantErrors++
+		}
+	}
+	meta := tMeta("e.csv")
+	meta.Importer = "imp-e"
+	if _, err := c.Import(context.Background(), meta, tBody("e"), tRun(evs)); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	q := casestore.BucketQuery{
+		AxisStart: testBase, From: testBase, To: testBase.Add(40 * time.Second), WidthMs: 10_000,
+		Sources: []string{"imp-e"}, CountErrors: true,
+	}
+	got, err := c.BucketCounts(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, err := casestore.CountBucketsScan(ctx, c, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	strip := func(cs []casestore.BucketCount) []casestore.BucketCount {
+		out := make([]casestore.BucketCount, len(cs))
+		for i, bc := range cs {
+			bc.ImportID = 0
+			out[i] = bc
+		}
+		return out
+	}
+	if !reflect.DeepEqual(strip(got.Counts), strip(scan.Counts)) {
+		t.Fatalf("BucketCounts = %+v, CountBucketsScan = %+v", got.Counts, scan.Counts)
+	}
+	var sum int64
+	for _, bc := range got.Counts {
+		sum += bc.Errors
+	}
+	if sum != wantErrors || wantErrors == 0 {
+		t.Fatalf("errors = %d, want %d", sum, wantErrors)
+	}
+
+	q.CountErrors = false
+	off, err := c.BucketCounts(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offScan, err := casestore.CountBucketsScan(ctx, c, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range [][]casestore.BucketCount{off.Counts, offScan.Counts} {
+		for _, bc := range r {
+			if bc.Errors != 0 {
+				t.Fatalf("Errors = %d without CountErrors: %+v", bc.Errors, bc)
+			}
+		}
+	}
+}
+
 // A Kinds filter and a Sources filter each drop the other rows; an unknown
 // source gives an empty result, not an error.
 func TestBucketCountsFilters(t *testing.T) {

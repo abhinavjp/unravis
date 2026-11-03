@@ -66,9 +66,45 @@ test('an empty value, a day that does not exist and reversed times are refused w
   assert.deepEqual(badDay.errors, ['The incident window needs a start and an end, in UTC.']);
   const reversed = windows.checkWindows(fields('2026-01-15T11:00', '2026-01-15T10:00', '2026-01-15T09:00', '2026-01-15T08:00'));
   assert.deepEqual(reversed.errors, [
-    'The incident window ends before it starts.',
-    'The reference window ends before it starts.'
+    'The incident window end must be later than the start.',
+    'The comparison period end must be later than the start.'
   ]);
+});
+
+test('equal start and end is refused with the same plain sentence, in the pickers own words', () => {
+  const equal = windows.checkWindows(fields('2026-01-15T10:00', '2026-01-15T10:00', '2026-01-15T08:00', '2026-01-15T09:00'));
+  assert.deepEqual(equal.errors, ['The incident window end must be later than the start.']);
+  assert.doesNotMatch(equal.errors.join(' '), /reference/i);
+});
+
+test('check names the inputs each refusal is about, so the screen can mark them invalid', () => {
+  const ok = windows.checkWindows(fields('2026-01-15T10:00', '2026-01-15T11:00', '2026-01-15T08:00', '2026-01-15T09:00'));
+  assert.deepEqual(ok.invalid, []);
+  const missing = windows.checkWindows(fields('2026-01-15T10:00', '2026-01-15T11:00', '', '2026-01-15T09:00'));
+  assert.deepEqual(missing.invalid, ['referenceStart']);
+  assert.deepEqual(missing.errors, ['The comparison period needs a start and an end, in UTC.']);
+  const reversed = windows.checkWindows(fields('2026-01-15T11:00', '2026-01-15T10:00', '2026-01-15T08:00', '2026-01-15T09:00'));
+  assert.deepEqual(reversed.invalid, ['incidentStart', 'incidentEnd']);
+  const long = windows.checkWindows(fields('2026-01-01T00:00', '2026-01-31T00:01', '2026-01-15T08:00', '2026-01-15T09:00'));
+  assert.deepEqual(long.invalid, ['incidentStart', 'incidentEnd']);
+});
+
+test('windowNow uses the demo reference time in demo mode and the real clock otherwise', () => {
+  const real = Date.UTC(2026, 10, 3, 22, 0);
+  assert.equal(windows.windowNow({ demo: true, now: '2026-10-20T09:00:00Z' }, real), Date.UTC(2026, 9, 20, 9, 0));
+  assert.equal(windows.windowNow({ demo: false, now: '2026-10-20T09:00:00Z' }, real), real);
+  assert.equal(windows.windowNow({ demo: true, now: 'not a time' }, real), real);
+  assert.equal(windows.windowNow(null, real), real);
+  assert.equal(windows.windowNow(undefined, real), real);
+});
+
+test('windowIsEmpty is true only when a read lane has no events and no lane has any', () => {
+  const lane = (state, counts) => ({ state, buckets: counts.map((count) => ({ count })) });
+  assert.equal(windows.windowIsEmpty([lane('events', [0, 0]), lane('events', [])]), true);
+  assert.equal(windows.windowIsEmpty([lane('events', [0]), lane('events', [3])]), false);
+  assert.equal(windows.windowIsEmpty([lane('no-data', [0]), lane('none-seen', [])]), false, 'lanes that explain themselves need no extra hint');
+  assert.equal(windows.windowIsEmpty([lane('incomplete', [0]), lane('no-data', [])]), true);
+  assert.equal(windows.windowIsEmpty([]), false);
 });
 
 test('overlapping windows warn but are not an error, and touching windows do not overlap', () => {
@@ -103,13 +139,18 @@ const paperSource = fs.readFileSync(path.join(root, 'src/components/TracingPaper
 
 test('TracingPaper fills the windows region from windows.ts and sends only the checked body', () => {
   assert.match(paperSource, /from '\.\.\/lib\/tracing\/windows'/);
-  assert.match(paperSource, /defaultWindows\(Date\.now\(\)\)/);
+  assert.match(paperSource, /defaultWindows\(windowNow\(app\.info, Date\.now\(\)\)\)/);
   assert.match(paperSource, /checkWindows\(fields\)/);
-  assert.match(paperSource, /fetchTracing\(caseId, body, seq, mine\.signal\)/);
+  assert.match(paperSource, /fetchTracing\(caseId, body, nextRequestSeq\(\), mine\.signal\)/);
   assert.equal((paperSource.match(/type="datetime-local"/g) || []).length, 4);
   assert.match(paperSource, /role="alert"/);
   assert.match(paperSource, /WINDOW_TEXT\.overlapFix/);
   assert.match(paperSource, /fixOverlap\(fields\)/);
+  assert.equal((paperSource.match(/aria-invalid=\{invalidIf\(/g) || []).length, 4, 'every picker input can be marked invalid');
+  assert.equal((paperSource.match(/aria-describedby=\{describedBy\}/g) || []).length, 4, 'every picker input points at the error list');
+  assert.match(paperSource, /id="tp-problems"/);
+  assert.match(paperSource, /WINDOW_TEXT\.keptPrevious/);
+  assert.match(paperSource, /WINDOW_TEXT\.endNote/);
   assert.doesNotMatch(paperSource, /initialWindows|floorToHour/);
   assert.doesNotMatch(paperSource, /\{@html|guided/);
 });

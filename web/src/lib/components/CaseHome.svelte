@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../api';
-  import { app, caseErased, goHome, openAnalysis, openCase, openCaseImport, openConnections, openSidePanel, panels } from '../appState.svelte';
+  import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openConnections, openSidePanel, openTracing, panels } from '../appState.svelte';
   import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
   import { archiveButton, readsCaseData, reopenButton, retryAction } from '../caseLifecycle';
   import { archiveFilePath, archivedActions, type ArchiveDrawerKind } from '../archiveModel';
@@ -65,9 +65,8 @@
   // The case the guided view was opened on. Another case starts at its own home.
   let guidedFor = $state('');
   const guidedOpen = $derived(guidedOpenFor(guidedFor, caseId));
-  // The case the Investigation Timeline was opened on, same shape as guidedFor/guidedOpen above.
-  let tracingFor = $state('');
-  const tracingOpen = $derived(tracingFor === caseId);
+  // The case the Investigation Timeline is open on. The app holds it (not this page) so the browser's Back and Forward and a reload can open and close it.
+  const tracingOpen = $derived(!!caseId && app.tracingCase === caseId);
   let controller: AbortController | null = null;
   let loadedFor = '';
 
@@ -271,8 +270,8 @@
   function gone() { phase = 'gone'; }
 
   // The Investigation Timeline closes back onto this page; focus goes back to the button that opened it.
-  function closeTracing() {
-    tracingFor = '';
+  function leaveTracing() {
+    closeTracing();
     void tick().then(() => document.getElementById('home-tracing-open')?.focus());
   }
 
@@ -397,7 +396,7 @@
     <CaseKeyPage {caseId} status={keyStatus} masterState={app.lockState} onChanged={keyChanged} onCancel={() => void backFromDialog()} />
   {:else if tracingOpen}
     {#key caseId}
-      <TracingPaper {caseId} closed={!!info?.closed} {readOnly} onClose={closeTracing} />
+      <TracingPaper {caseId} closed={!!info?.closed} {readOnly} onClose={leaveTracing} />
     {/key}
   {:else if guidedOpen}
     {#key caseId}
@@ -488,7 +487,7 @@
     <section class="block" aria-labelledby="home-tracing">
       <h3 id="home-tracing">{TRACING_TEXT.heading}</h3>
       <p class="note">{TRACING_TEXT.entryNote}</p>
-      <div><button id="home-tracing-open" type="button" class="secondary-button" disabled={!!info?.closed} onclick={() => (tracingFor = caseId)}>{TRACING_TEXT.entryButton}</button></div>
+      <div><button id="home-tracing-open" type="button" class="secondary-button" disabled={!!info?.closed} onclick={openTracing}>{TRACING_TEXT.entryButton}</button></div>
       {#if info?.closed}<p class="note">{TRACING_TEXT.closedReason}</p>{/if}
     </section>
 

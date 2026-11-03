@@ -25,6 +25,11 @@ export function laneHint(key: string): string {
   return explain(LANE_DICT_ID[key as TracingLaneKey]);
 }
 
+/** A count with thousands separators, the one format used on axis labels and in tooltips. */
+export function formatCount(count: number): string {
+  return count.toLocaleString('en-GB');
+}
+
 /** What one chart bar tells the user, before any trimming. */
 export interface BarTipInput {
   /** The lane the bar sits in. */
@@ -45,14 +50,16 @@ export interface BarTipInput {
 
 /** The tooltip lines for one chart bar, in reading order; empty lines are dropped. */
 export function barTipLines(input: BarTipInput): string[] {
-  const lines: string[] = [`${input.startText} to ${input.endText} (${input.zoneName})`];
+  // The zone is added only when the formatted times do not already end with it ("... 10:25 UTC (UTC)" says it twice).
+  const zoneStated = input.zoneName === '' || input.endText.endsWith(input.zoneName);
+  const lines: string[] = [`${input.startText} to ${input.endText}${zoneStated ? '' : ` (${input.zoneName})`}`];
   if (input.count === 0) {
     lines.push(TOOLTIP_TEXT.noEvents);
   } else {
     const noun = input.key === 'sql' ? 'call' : 'request';
-    lines.push(`${input.count.toLocaleString('en-GB')} ${noun}${input.count === 1 ? '' : 's'}`);
+    lines.push(`${formatCount(input.count)} ${noun}${input.count === 1 ? '' : 's'}`);
     if (input.key === 'audit' && input.errors > 0) {
-      lines.push(`${input.errors.toLocaleString('en-GB')} server error${input.errors === 1 ? '' : 's'} (5xx)`);
+      lines.push(`${formatCount(input.errors)} server error${input.errors === 1 ? '' : 's'} (5xx)`);
       lines.push(explain('status.5xx'));
     }
     if (input.key === 'iis') lines.push(explain('iis.point'));

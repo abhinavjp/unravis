@@ -7,9 +7,10 @@
  */
 import type { LintEntry } from '../copy/copylint';
 import type { TracingLaneKey } from './model';
+import { LANE_ORDER } from './lanes';
 
-/** Lane order (audit, sql, iis) matches the tracing model everywhere else. */
-export const LANE_ORDER: readonly TracingLaneKey[] = ['audit', 'sql', 'iis'];
+/** Lane order (audit, sql, iis) comes from lanes.ts, the one place it is defined; re-exported for the toolbar. */
+export { LANE_ORDER };
 
 export type LaneVisibility = Record<TracingLaneKey, boolean>;
 

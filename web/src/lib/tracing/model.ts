@@ -64,7 +64,6 @@ export interface TracingLane {
   hidden: number;
   sources: TracingSourceRef[];
   buckets: TracingBucket[];
-  events: unknown[];
 }
 
 export interface TracingResponse {
@@ -191,8 +190,7 @@ function parseLane(value: unknown): TracingLane | null {
     scanned: isNumber(value.scanned) ? value.scanned : 0,
     hidden: isNumber(value.hidden) ? value.hidden : 0,
     sources: parseSourceRefs(value.sources),
-    buckets,
-    events: Array.isArray(value.events) ? value.events : []
+    buckets
   };
 }
 

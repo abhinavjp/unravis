@@ -54,6 +54,12 @@ function lane(overrides = {}) {
   };
 }
 
+test('parseTracing does not keep the server event list on a lane', () => {
+  const parsed = parseTracing({ window: WINDOW, lanes: [lane({ events: [{ big: 'payload' }] })], allLanesStored: true });
+  assert.equal('events' in parsed.lanes[0], false);
+  assert.deepEqual(parsed.lanes[0].buckets, [{ start: INCIDENT.start, count: 3, errors: 0 }]);
+});
+
 test('requestSeq is strictly increasing and stale responses are ignored', () => {
   const a = nextRequestSeq();
   const b = nextRequestSeq();

@@ -473,14 +473,20 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 	if err != nil {
 		return nil, nil, err
 	}
-	evs, capped, err := readLaneEvents(ctx, c, axis, src.readNames)
-	if err != nil {
-		return nil, nil, err
+	// Each lane has its own row-cap budget: a lane with many rows must not starve
+	// the other one, and only a lane whose own read hit the cap is flagged.
+	// Memory stays bounded: at most 2 x MaxEventQuery events are held at once.
+	var evs []evidence.Event
+	cappedBy := map[string]bool{}
+	for _, key := range []string{calltrace.LaneSQL, calltrace.LaneIIS} {
+		got, capped, err := readLaneEvents(ctx, c, axis, src.laneNames[key])
+		if err != nil {
+			return nil, nil, err
+		}
+		cappedBy[key] = capped
+		evs = append(evs, got...)
 	}
 	built := calltrace.BuildLanes(calltrace.Window{From: axis.Start, To: axis.End}, true, src.infos, evs)
-	if capped {
-		built = calltrace.MarkIncomplete(built)
-	}
 	reasonByID := httperrReasonsByID(evs)
 
 	lanes := make([]tracingLane, 0, 2)
@@ -490,6 +496,10 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 			if l.Key == key {
 				bl = l
 			}
+		}
+		if cappedBy[key] {
+			// A lane that came back with no event proves nothing when its read hit the cap.
+			bl = calltrace.MarkIncomplete([]calltrace.Lane{bl})[0]
 		}
 		lane := buildLane(key, bl, src.asOf, reasonByID, now)
 		if src.unchecked[key] {
@@ -502,7 +512,7 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 			continue
 		}
 		if names := src.laneNames[key]; len(names) > 0 {
-			if err := bucketLane(ctx, c, axis, &lane, names, src.selectedIDs, capped); err != nil {
+			if err := bucketLane(ctx, c, axis, &lane, names, src.selectedIDs, cappedBy[key]); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -521,7 +531,6 @@ type laneSources struct {
 	unchecked   map[string]bool      // lane key -> a selected file has no confirmed rule
 	asOf        map[string]time.Time // lane key -> latest Imported
 	selectedIDs map[int64]bool
-	readNames   []string // laneNames in lane order (sql, iis), each sorted
 }
 
 // resolveLaneSources maps the selected sources to imports and works out, per
@@ -621,14 +630,14 @@ func resolveLaneSources(ctx context.Context, c casestore.Case, sel tracingSelect
 	}
 	for _, lane := range []string{calltrace.LaneSQL, calltrace.LaneIIS} {
 		sort.Strings(out.laneNames[lane])
-		out.readNames = append(out.readNames, out.laneNames[lane]...)
 	}
 	return out, warnings, nil
 }
 
-// readLaneEvents reads the events of the named importers in the axis window,
-// start-based and half open. capped is true when the read hit the row cap, so
-// events may be missing. No names reads nothing.
+// readLaneEvents reads the events of the named importers of ONE lane in the axis
+// window, start-based and half open. capped is true when the read hit the row
+// cap (casestore.MaxEventQuery, one budget per call), so events of these names
+// may be missing. No names reads nothing.
 func readLaneEvents(ctx context.Context, c casestore.Case, axis tracingAxis, names []string) (evs []evidence.Event, capped bool, err error) {
 	if len(names) == 0 {
 		return nil, false, nil
@@ -706,27 +715,39 @@ func buildLane(key string, bl calltrace.Lane, asOf map[string]time.Time, reasonB
 
 // bucketLane sets lane.Scanned, lane.Buckets and the truncation fields from the
 // store's bucket counts for the importer names of the lane. Only imports in
-// selectedIDs are counted. capped is the row-cap result of the event read.
+// selectedIDs are counted. capped is the row-cap result of this lane's own event
+// read. The iis lane also gets errors on every bucket: the rows whose status is
+// 5xx (zero where there are none). HTTP.sys error markers (source iis-httperr) are
+// counted as events but never as errors. The sql lane leaves errors out.
 func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *tracingLane, names []string, selectedIDs map[int64]bool, capped bool) error {
+	withErrors := lane.Key == calltrace.LaneIIS
 	// c must be the unwrapped handle: a *sharedCase hides BucketCounter and
 	// CountBuckets would fall back to the 50 000 row scan.
 	res, err := tracingCountBuckets(ctx, c, casestore.BucketQuery{
 		AxisStart: axis.AxisStart, From: axis.Start, To: axis.End, WidthMs: axis.WidthMs, Sources: names,
+		CountErrors: withErrors,
 	})
 	if err != nil {
 		return err
 	}
 	perCell := map[int]int64{}
+	errCell := map[int]int64{}
 	var total int64
 	for _, bc := range res.Counts {
 		if bc.ImportID != 0 && !selectedIDs[bc.ImportID] {
 			continue
 		}
 		perCell[bc.Index] += bc.Count
+		if bc.Source != "iis-httperr" { // an HTTP.sys marker is not a request, so never an error
+			errCell[bc.Index] += bc.Errors
+		}
 		total += bc.Count
 	}
 	lane.Scanned = total
-	lane.Buckets = tracingBuckets(axis, perCell)
+	if !withErrors {
+		errCell = nil
+	}
+	lane.Buckets = tracingBuckets(axis, perCell, errCell)
 	if capped {
 		lane.Truncated = true
 		lane.ReasonCode = tracingReasonRowCap
@@ -761,15 +782,22 @@ func httperrLabel(reason string) string {
 	return prefix
 }
 
-// tracingBuckets is one bucket per usable cell of the axis, zero-filled.
-func tracingBuckets(axis tracingAxis, perCell map[int]int64) []tracingBucket {
+// tracingBuckets is one bucket per usable cell of the axis, zero-filled. A
+// non-nil errCell adds errors to every bucket (0 where the cell has none); nil
+// leaves the key out.
+func tracingBuckets(axis tracingAxis, perCell, errCell map[int]int64) []tracingBucket {
 	out := make([]tracingBucket, 0, axis.Buckets)
 	for k := 0; k < axis.Buckets; k++ {
 		from, to, clipped, ok := axis.Bucket(k)
 		if !ok {
 			continue
 		}
-		out = append(out, tracingBucket{Start: from, End: to, Count: perCell[k], Clipped: clipped, Complete: true})
+		b := tracingBucket{Start: from, End: to, Count: perCell[k], Clipped: clipped, Complete: true}
+		if errCell != nil {
+			n := errCell[k]
+			b.Errors = &n
+		}
+		out = append(out, b)
 	}
 	return out
 }

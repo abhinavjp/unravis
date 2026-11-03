@@ -88,9 +88,14 @@ test('TRACE-02: three lanes in order with plain labels, one shared UTC axis and 
   await expect(page.locator('.panel[data-lane=audit] .panel-title')).toHaveText('How many requests, and how slow they were');
   await expect(page.locator('.panel[data-lane=sql] .panel-title')).toHaveText('Slow database calls (over 1 s) and failed calls');
   await expect(page.locator('.panel[data-lane=iis] .panel-title')).toHaveText('Web-server requests (errors shown darker)');
-  // One axis for all lanes: 3 h in 5 minute bars = 36 columns, six ticks, the UTC caption, no "outside the window" dashes.
+  // One axis for all lanes: 3 h in 5 minute bars = 36 columns, at most six time labels (thinned to the measured plot width so
+  // none overlap), the UTC caption, no "outside the window" dashes.
   await expect(page.locator('.overlay .column')).toHaveCount(36);
-  await expect(page.locator('.axtick')).toHaveCount(6);
+  const ticks = page.locator('.axtick');
+  expect(await ticks.count()).toBeGreaterThanOrEqual(3);
+  expect(await ticks.count()).toBeLessThanOrEqual(6);
+  const boxes = await ticks.evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return [r.left, r.right]; }));
+  for (let i = 1; i < boxes.length; i++) expect(boxes[i][0]).toBeGreaterThanOrEqual(boxes[i - 1][1]);
   await expect(page.locator('.axtick').first()).toHaveText('19 Oct 15:00 UTC');
   await expect(page.locator('.axcap')).toContainText('Time (UTC). Each bar covers 5 minutes, starting at the time on its left edge; every panel uses the same time axis.');
   await expect(page.locator('.outside-dash')).toHaveCount(0);
@@ -291,11 +296,14 @@ test('TRACE-09: P50 / P95 selector: a note without latency figures, and a line w
   await expect(page.getByText('No latency figures were returned for this window.')).toHaveCount(0);
   const line = page.locator('svg.latency');
   await expect(line).toHaveCount(1);
+  // The chart stays mounted across a re-run, so the choice made above (Typical, P50) is kept.
+  await expect(line).toHaveAttribute('data-percentile', 'p50');
+  await expect(page.locator('.latency-max')).toHaveText('Typical (P50): up to 200 ms');
+  await group.getByRole('button', { name: 'Slow end (P95)' }).click();
   await expect(line).toHaveAttribute('data-percentile', 'p95');
   await expect(page.locator('.latency-max')).toHaveText('Slow end (P95): up to 900 ms');
   await group.getByRole('button', { name: 'Typical (P50)' }).click();
   await expect(line).toHaveAttribute('data-percentile', 'p50');
-  await expect(page.locator('.latency-max')).toHaveText('Typical (P50): up to 200 ms');
   expect(await line.locator('polyline').count()).toBeGreaterThan(0);
   // The line colour is the text token, not a literal.
   const stroke = await page.evaluate(() => {
@@ -320,7 +328,7 @@ test('TRACE-10: hover and keyboard tooltips come from the dictionary; lane heads
   const tip = page.locator('#tc-tip');
   await expect(tip).toBeVisible();
   await expect(tip).toContainText('Database (SQL Server)');
-  await expect(tip).toContainText('19 Oct 09:05 UTC to 19 Oct 09:10 UTC (UTC)');
+  await expect(tip).toContainText('19 Oct 09:05 UTC to 19 Oct 09:10 UTC');
   await expect(tip).toContainText(/\d+ calls?/);
   await expect(tip).toContainText('From saved logs (as of ');
   await expect(tip).not.toContainText('API requests (audit log)');
@@ -360,7 +368,7 @@ test('TRACE-11: bad windows are refused in plain words with no request; an overl
   // Ends before it starts.
   await fillWindows(page, ['2026-10-19T18:00', '2026-10-19T15:00', '2026-10-19T12:00', '2026-10-19T15:00']);
   await start.click();
-  await expect(page.getByRole('alert')).toContainText('The incident window ends before it starts.');
+  await expect(page.getByRole('alert')).toContainText('The incident window end must be later than the start.');
   // 30 days and one minute.
   await fillWindows(page, ['2026-09-01T00:00', '2026-10-01T00:01', '2026-08-01T00:00', '2026-09-01T00:00']);
   await start.click();
@@ -368,7 +376,7 @@ test('TRACE-11: bad windows are refused in plain words with no request; an overl
   // A missing time.
   await page.locator('input[type=datetime-local]').nth(2).fill('');
   await start.click();
-  await expect(page.getByRole('alert')).toContainText('The comparison window needs a start and an end, in UTC.'.replace('comparison', 'reference'));
+  await expect(page.getByRole('alert')).toContainText('The comparison period needs a start and an end, in UTC.');
   expect(posts, 'a refused window sends nothing').toBe(0);
   // Overlap: a warning, the run goes ahead, and one button moves the comparison period before the incident.
   await fillWindows(page, ['2026-10-19T15:00', '2026-10-19T18:00', '2026-10-19T16:00', '2026-10-19T17:00']);

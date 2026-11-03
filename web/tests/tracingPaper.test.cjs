@@ -58,9 +58,11 @@ test('TracingPaper has the four regions and the request guards', () => {
   for (const needle of ['data-region="windows"', '"toolbar"', '"chart"', '"notes"']) {
     assert.ok(src.includes(needle), 'TracingPaper.svelte must contain ' + needle);
   }
-  for (const needle of ['new AbortController', 'nextRequestSeq', 'isStale', 'TRACING_TEXT.cancel', 'TRACING_TEXT.retry']) {
+  for (const needle of ['new AbortController', 'nextRequestSeq', 'TRACING_TEXT.cancel', 'TRACING_TEXT.retry']) {
     assert.ok(src.includes(needle), 'TracingPaper.svelte must contain ' + needle);
   }
+  // One stale-answer guard: the aborted signal (the second, sequence-based check was redundant).
+  assert.doesNotMatch(src, /isStale|latestSeq/);
   assert.doesNotMatch(src, /from '.*(guided|callTrace)/);
 });
 
@@ -73,6 +75,45 @@ test('empty case shows the no-sources sentence', () => {
   assert.match(chart, /sources\.length === 0/);
   const copy = read('src/lib/copy/tracingCopy.ts');
   assert.match(copy, /No files have been added to this case yet\. Add a source first\./);
+});
+
+test('Cancel on a re-run keeps the previous chart or says what happened, never an empty region', () => {
+  const src = paper();
+  const cancel = src.slice(src.indexOf('function cancel()'), src.indexOf('function onBarSelect'));
+  assert.match(cancel, /status = result \? 'ready' : 'idle'/);
+  assert.match(cancel, /cancelled = true/);
+  assert.match(src, /WINDOW_TEXT\.cancelledKept/);
+  assert.match(src, /WINDOW_TEXT\.cancelledNone/);
+  const copy = read('src/lib/tracing/windows.ts');
+  assert.match(copy, /cancelledKept: 'Cancelled\. The chart still shows the previous result\.'/);
+});
+
+test('a re-run keeps the old chart under a veil of the same height instead of swapping in a short block', () => {
+  const src = paper();
+  const chart = src.slice(src.indexOf('data-region="chart"'), src.indexOf('data-region="notes"'));
+  assert.match(chart, /status === 'loading' && !result/, 'the short block is for a first load only');
+  assert.match(chart, /class="chart-veil"/);
+  assert.match(chart, /inert=\{status === 'loading'\}/);
+  assert.match(src, /\.chart-hold \{ position: relative; \}/);
+});
+
+test('Try again repeats the request that failed, not the boxes as they are now', () => {
+  const src = paper();
+  assert.match(src, /run\(lastBody \?\? undefined\)/);
+  assert.match(src, /lastBody = body/);
+});
+
+test('an empty window shows one hint, and typing in a box clears the refusal', () => {
+  const src = paper();
+  assert.match(src, /windowIsEmpty\(result\.lanes\)/);
+  assert.match(src, /WINDOW_TEXT\.noEvents/);
+  assert.equal((src.match(/oninput=\{clearProblems\}/g) || []).length, 4);
+});
+
+test('the read-only no-op effect is gone and readOnly still disables the inputs', () => {
+  const src = paper();
+  assert.doesNotMatch(src, /void readOnly/);
+  assert.ok((src.match(/disabled=\{readOnly \|\| closed\}/g) || []).length >= 5);
 });
 
 test('CallTrace stays untouched', () => {
