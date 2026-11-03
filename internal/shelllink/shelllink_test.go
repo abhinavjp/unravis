@@ -2,7 +2,10 @@ package shelllink
 
 import (
 	"bytes"
+	"errors"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"testing"
 	"unicode/utf16"
 )
@@ -100,4 +103,63 @@ func utf16Bytes(s string) []byte {
 		out = append(out, byte(c), byte(c>>8))
 	}
 	return out
+}
+
+func TestSamePathIgnoresCaseAndRefusesEmpty(t *testing.T) {
+	if !SamePath(`C:\Unravis\unravis.exe`, `c:\UNRAVIS\.\unravis.exe`) {
+		t.Error("case and dots should not matter")
+	}
+	if SamePath(`C:\a.exe`, `C:\b.exe`) || SamePath("", "") || SamePath(`C:\a.exe`, "") {
+		t.Error("different or empty paths matched")
+	}
+}
+
+func TestTargetIsOnlyForAShortcutToThatExe(t *testing.T) {
+	exe := `C:\Unravis\unravis.exe`
+	ours, err := Shortcut{Target: exe, Args: BackgroundArg}.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := Shortcut{Target: `C:\Other\other.exe`}.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !TargetIs(ours, exe) || TargetIs(other, exe) || TargetIs([]byte("garbage"), exe) || TargetIs(nil, exe) {
+		t.Error("TargetIs gave the wrong answer")
+	}
+}
+
+func TestReadFileGuards(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.lnk")
+	if err := os.WriteFile(good, []byte("abc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := ReadFile(good, nil); err != nil || string(data) != "abc" {
+		t.Fatalf("good = %q %v", data, err)
+	}
+	if _, err := ReadFile(filepath.Join(dir, "missing.lnk"), nil); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("missing: %v", err)
+	}
+	big := filepath.Join(dir, "big.lnk")
+	if err := os.WriteFile(big, make([]byte, MaxFileSize+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	read := func(string) ([]byte, error) { t.Fatal("a file that must be refused was read"); return nil, nil }
+	if _, err := ReadFile(big, read); !errors.Is(err, ErrNotShortcutFile) {
+		t.Errorf("oversized: %v", err)
+	}
+	if _, err := ReadFile(dir, read); !errors.Is(err, ErrNotShortcutFile) {
+		t.Errorf("directory: %v", err)
+	}
+	// A file that grows between the stat and the read is still refused.
+	grown := func(string) ([]byte, error) { return make([]byte, MaxFileSize+1), nil }
+	if _, err := ReadFile(good, grown); !errors.Is(err, ErrNotShortcutFile) {
+		t.Errorf("grown: %v", err)
+	}
+	// A read error comes back as it is.
+	boom := errors.New("boom")
+	if _, err := ReadFile(good, func(string) ([]byte, error) { return nil, boom }); !errors.Is(err, boom) {
+		t.Errorf("read error: %v", err)
+	}
 }

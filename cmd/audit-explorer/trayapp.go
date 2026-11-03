@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 
 	"api-audit-explorer/internal/applog"
 	"api-audit-explorer/internal/autostart"
@@ -60,14 +61,14 @@ func trayOnSelect(d trayDeps) func(uint32) {
 	}
 }
 
-// windowsFile returns the full path of a file in the Windows folder, so the
+// windowsFile returns the full path of a file under the Windows folder (parts are joined below it), so the
 // program is never looked up through PATH or the current folder.
-func windowsFile(name string) string {
+func windowsFile(parts ...string) string {
 	root := os.Getenv("SystemRoot")
 	if root == "" {
 		root = `C:\Windows`
 	}
-	return filepath.Join(root, name)
+	return filepath.Join(append([]string{root}, parts...)...)
 }
 
 // productionTrayDeps wires the menu to the real log folder and Startup folder.
@@ -82,16 +83,26 @@ var runProgram = func(name string, arg string) error {
 }
 
 func trayDepsWith(reopen, quit func(), warn func(title, text string), run func(name, arg string) error) trayDeps {
-	startup := func() (exe, dir string, ok bool) {
-		exe, err := os.Executable()
-		if err != nil {
-			return "", "", false
-		}
-		dir, err = autostart.StartupDir()
-		if err != nil {
-			return "", "", false
-		}
-		return exe, dir, true
+	// The exe path and the Startup folder do not change while the app runs, so each menu action reads them once, not on every call from
+	// the tray thread.
+	var (
+		once          sync.Once
+		startExe, dir string
+		startOK       bool
+	)
+	startup := func() (string, string, bool) {
+		once.Do(func() {
+			exe, err := os.Executable()
+			if err != nil {
+				return
+			}
+			d, err := autostart.StartupDir()
+			if err != nil {
+				return
+			}
+			startExe, dir, startOK = exe, d, true
+		})
+		return startExe, dir, startOK
 	}
 	return trayDeps{
 		reopen: reopen,

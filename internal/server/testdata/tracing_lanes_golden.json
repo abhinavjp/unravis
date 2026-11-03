@@ -1,0 +1,5250 @@
+{
+  "mixed": {
+    "lanes": [
+      {
+        "key": "sql",
+        "label": "SQL Server",
+        "state": "events",
+        "origin": "case",
+        "asOf": "2026-03-10T09:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 3,
+        "consistency": "stored-as-of",
+        "sources": [
+          {
+            "sourceId": "imp_1",
+            "label": "sql-xel"
+          }
+        ],
+        "buckets": [
+          {
+            "start": "2026-03-10T10:00:00Z",
+            "end": "2026-03-10T10:01:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:01:00Z",
+            "end": "2026-03-10T10:02:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:02:00Z",
+            "end": "2026-03-10T10:03:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:03:00Z",
+            "end": "2026-03-10T10:04:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:04:00Z",
+            "end": "2026-03-10T10:05:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:05:00Z",
+            "end": "2026-03-10T10:06:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:06:00Z",
+            "end": "2026-03-10T10:07:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:07:00Z",
+            "end": "2026-03-10T10:08:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:08:00Z",
+            "end": "2026-03-10T10:09:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:09:00Z",
+            "end": "2026-03-10T10:10:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:11:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:11:00Z",
+            "end": "2026-03-10T10:12:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:12:00Z",
+            "end": "2026-03-10T10:13:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:13:00Z",
+            "end": "2026-03-10T10:14:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:14:00Z",
+            "end": "2026-03-10T10:15:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:15:00Z",
+            "end": "2026-03-10T10:16:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:16:00Z",
+            "end": "2026-03-10T10:17:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:17:00Z",
+            "end": "2026-03-10T10:18:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:18:00Z",
+            "end": "2026-03-10T10:19:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:19:00Z",
+            "end": "2026-03-10T10:20:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:20:00Z",
+            "end": "2026-03-10T10:21:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:21:00Z",
+            "end": "2026-03-10T10:22:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:22:00Z",
+            "end": "2026-03-10T10:23:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:23:00Z",
+            "end": "2026-03-10T10:24:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:24:00Z",
+            "end": "2026-03-10T10:25:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:25:00Z",
+            "end": "2026-03-10T10:26:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:26:00Z",
+            "end": "2026-03-10T10:27:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:27:00Z",
+            "end": "2026-03-10T10:28:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:28:00Z",
+            "end": "2026-03-10T10:29:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:29:00Z",
+            "end": "2026-03-10T10:30:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:30:00Z",
+            "end": "2026-03-10T10:31:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:31:00Z",
+            "end": "2026-03-10T10:32:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:32:00Z",
+            "end": "2026-03-10T10:33:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:33:00Z",
+            "end": "2026-03-10T10:34:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:34:00Z",
+            "end": "2026-03-10T10:35:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:35:00Z",
+            "end": "2026-03-10T10:36:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:36:00Z",
+            "end": "2026-03-10T10:37:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:37:00Z",
+            "end": "2026-03-10T10:38:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:38:00Z",
+            "end": "2026-03-10T10:39:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:39:00Z",
+            "end": "2026-03-10T10:40:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:40:00Z",
+            "end": "2026-03-10T10:41:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:41:00Z",
+            "end": "2026-03-10T10:42:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:42:00Z",
+            "end": "2026-03-10T10:43:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:43:00Z",
+            "end": "2026-03-10T10:44:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:44:00Z",
+            "end": "2026-03-10T10:45:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:45:00Z",
+            "end": "2026-03-10T10:46:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:46:00Z",
+            "end": "2026-03-10T10:47:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:47:00Z",
+            "end": "2026-03-10T10:48:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:48:00Z",
+            "end": "2026-03-10T10:49:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:49:00Z",
+            "end": "2026-03-10T10:50:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:50:00Z",
+            "end": "2026-03-10T10:51:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:51:00Z",
+            "end": "2026-03-10T10:52:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:52:00Z",
+            "end": "2026-03-10T10:53:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:53:00Z",
+            "end": "2026-03-10T10:54:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:54:00Z",
+            "end": "2026-03-10T10:55:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:55:00Z",
+            "end": "2026-03-10T10:56:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:56:00Z",
+            "end": "2026-03-10T10:57:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:57:00Z",
+            "end": "2026-03-10T10:58:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:58:00Z",
+            "end": "2026-03-10T10:59:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:59:00Z",
+            "end": "2026-03-10T11:00:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          }
+        ],
+        "events": [
+          {
+            "id": "s1",
+            "sourceId": "imp_1",
+            "label": "slow operation",
+            "start": "2026-03-10T10:05:00Z",
+            "end": "2026-03-10T10:05:01.2Z",
+            "durationMs": 1200,
+            "severity": "",
+            "statusClass": "",
+            "win32": null
+          },
+          {
+            "id": "s2",
+            "sourceId": "imp_1",
+            "label": "event",
+            "start": "2026-03-10T10:06:00Z",
+            "end": "2026-03-10T10:06:00Z",
+            "durationMs": null,
+            "severity": "error",
+            "statusClass": "",
+            "win32": null
+          },
+          {
+            "id": "s3",
+            "sourceId": "imp_1",
+            "label": "slow operation",
+            "start": "2026-03-10T10:59:59Z",
+            "end": "2026-03-10T10:59:59.3Z",
+            "durationMs": 300,
+            "severity": "",
+            "statusClass": "",
+            "win32": null
+          }
+        ],
+        "hidden": 0
+      },
+      {
+        "key": "iis",
+        "label": "IIS",
+        "state": "events",
+        "origin": "case",
+        "asOf": "2026-03-10T11:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 6,
+        "consistency": "stored-as-of",
+        "sources": [
+          {
+            "sourceId": "imp_2",
+            "label": "iis-w3c"
+          },
+          {
+            "sourceId": "imp_3",
+            "label": "iis-httperr"
+          }
+        ],
+        "buckets": [
+          {
+            "start": "2026-03-10T10:00:00Z",
+            "end": "2026-03-10T10:01:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:01:00Z",
+            "end": "2026-03-10T10:02:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:02:00Z",
+            "end": "2026-03-10T10:03:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:03:00Z",
+            "end": "2026-03-10T10:04:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:04:00Z",
+            "end": "2026-03-10T10:05:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:05:00Z",
+            "end": "2026-03-10T10:06:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:06:00Z",
+            "end": "2026-03-10T10:07:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:07:00Z",
+            "end": "2026-03-10T10:08:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:08:00Z",
+            "end": "2026-03-10T10:09:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:09:00Z",
+            "end": "2026-03-10T10:10:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:11:00Z",
+            "count": 2,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:11:00Z",
+            "end": "2026-03-10T10:12:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:12:00Z",
+            "end": "2026-03-10T10:13:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:13:00Z",
+            "end": "2026-03-10T10:14:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:14:00Z",
+            "end": "2026-03-10T10:15:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:15:00Z",
+            "end": "2026-03-10T10:16:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:16:00Z",
+            "end": "2026-03-10T10:17:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:17:00Z",
+            "end": "2026-03-10T10:18:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:18:00Z",
+            "end": "2026-03-10T10:19:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:19:00Z",
+            "end": "2026-03-10T10:20:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:20:00Z",
+            "end": "2026-03-10T10:21:00Z",
+            "count": 2,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:21:00Z",
+            "end": "2026-03-10T10:22:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:22:00Z",
+            "end": "2026-03-10T10:23:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:23:00Z",
+            "end": "2026-03-10T10:24:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:24:00Z",
+            "end": "2026-03-10T10:25:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:25:00Z",
+            "end": "2026-03-10T10:26:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:26:00Z",
+            "end": "2026-03-10T10:27:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:27:00Z",
+            "end": "2026-03-10T10:28:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:28:00Z",
+            "end": "2026-03-10T10:29:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:29:00Z",
+            "end": "2026-03-10T10:30:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:30:00Z",
+            "end": "2026-03-10T10:31:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:31:00Z",
+            "end": "2026-03-10T10:32:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:32:00Z",
+            "end": "2026-03-10T10:33:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:33:00Z",
+            "end": "2026-03-10T10:34:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:34:00Z",
+            "end": "2026-03-10T10:35:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:35:00Z",
+            "end": "2026-03-10T10:36:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:36:00Z",
+            "end": "2026-03-10T10:37:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:37:00Z",
+            "end": "2026-03-10T10:38:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:38:00Z",
+            "end": "2026-03-10T10:39:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:39:00Z",
+            "end": "2026-03-10T10:40:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:40:00Z",
+            "end": "2026-03-10T10:41:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:41:00Z",
+            "end": "2026-03-10T10:42:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:42:00Z",
+            "end": "2026-03-10T10:43:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:43:00Z",
+            "end": "2026-03-10T10:44:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:44:00Z",
+            "end": "2026-03-10T10:45:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:45:00Z",
+            "end": "2026-03-10T10:46:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:46:00Z",
+            "end": "2026-03-10T10:47:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:47:00Z",
+            "end": "2026-03-10T10:48:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:48:00Z",
+            "end": "2026-03-10T10:49:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:49:00Z",
+            "end": "2026-03-10T10:50:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:50:00Z",
+            "end": "2026-03-10T10:51:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:51:00Z",
+            "end": "2026-03-10T10:52:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:52:00Z",
+            "end": "2026-03-10T10:53:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:53:00Z",
+            "end": "2026-03-10T10:54:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:54:00Z",
+            "end": "2026-03-10T10:55:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:55:00Z",
+            "end": "2026-03-10T10:56:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:56:00Z",
+            "end": "2026-03-10T10:57:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:57:00Z",
+            "end": "2026-03-10T10:58:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:58:00Z",
+            "end": "2026-03-10T10:59:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:59:00Z",
+            "end": "2026-03-10T11:00:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          }
+        ],
+        "events": [
+          {
+            "id": "i1",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:10:00.08Z",
+            "durationMs": 80,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "i2",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:10:05Z",
+            "durationMs": 5000,
+            "severity": "",
+            "statusClass": "5xx",
+            "win32": null
+          },
+          {
+            "id": "h1",
+            "sourceId": "imp_3",
+            "label": "HTTP.sys error: other",
+            "start": "2026-03-10T10:20:00Z",
+            "end": "2026-03-10T10:20:00Z",
+            "durationMs": null,
+            "severity": "",
+            "statusClass": "5xx",
+            "win32": null,
+            "kind": "iis-httperr"
+          },
+          {
+            "id": "h2",
+            "sourceId": "imp_3",
+            "label": "HTTP.sys error",
+            "start": "2026-03-10T10:20:00Z",
+            "end": "2026-03-10T10:20:00Z",
+            "durationMs": null,
+            "severity": "",
+            "statusClass": "",
+            "win32": null,
+            "kind": "iis-httperr"
+          },
+          {
+            "id": "i3",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:30:00Z",
+            "end": "2026-03-10T10:30:00.012Z",
+            "durationMs": 12,
+            "severity": "",
+            "statusClass": "4xx",
+            "win32": null
+          },
+          {
+            "id": "h3",
+            "sourceId": "imp_3",
+            "label": "HTTP.sys error",
+            "start": "2026-03-10T10:40:00Z",
+            "end": "2026-03-10T10:40:00Z",
+            "durationMs": null,
+            "severity": "",
+            "statusClass": "",
+            "win32": null,
+            "kind": "iis-httperr"
+          }
+        ],
+        "hidden": 0
+      }
+    ],
+    "warnings": [
+      "A selected source has no file yet, so it shows nothing.",
+      "A selected source is not an SQL or IIS source, so it is not shown."
+    ],
+    "queries": [
+      "sources=[sql-xel iis-httperr iis-w3c] limit=50000 from=2026-03-10T10:00:00Z to=2026-03-10T11:00:00Z"
+    ]
+  },
+  "sql-only": {
+    "lanes": [
+      {
+        "key": "sql",
+        "label": "SQL Server",
+        "state": "events",
+        "origin": "case",
+        "asOf": "2026-03-10T09:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 3,
+        "consistency": "stored-as-of",
+        "sources": [
+          {
+            "sourceId": "imp_1",
+            "label": "sql-xel"
+          }
+        ],
+        "buckets": [
+          {
+            "start": "2026-03-10T10:00:00Z",
+            "end": "2026-03-10T10:01:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:01:00Z",
+            "end": "2026-03-10T10:02:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:02:00Z",
+            "end": "2026-03-10T10:03:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:03:00Z",
+            "end": "2026-03-10T10:04:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:04:00Z",
+            "end": "2026-03-10T10:05:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:05:00Z",
+            "end": "2026-03-10T10:06:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:06:00Z",
+            "end": "2026-03-10T10:07:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:07:00Z",
+            "end": "2026-03-10T10:08:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:08:00Z",
+            "end": "2026-03-10T10:09:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:09:00Z",
+            "end": "2026-03-10T10:10:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:11:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:11:00Z",
+            "end": "2026-03-10T10:12:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:12:00Z",
+            "end": "2026-03-10T10:13:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:13:00Z",
+            "end": "2026-03-10T10:14:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:14:00Z",
+            "end": "2026-03-10T10:15:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:15:00Z",
+            "end": "2026-03-10T10:16:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:16:00Z",
+            "end": "2026-03-10T10:17:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:17:00Z",
+            "end": "2026-03-10T10:18:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:18:00Z",
+            "end": "2026-03-10T10:19:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:19:00Z",
+            "end": "2026-03-10T10:20:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:20:00Z",
+            "end": "2026-03-10T10:21:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:21:00Z",
+            "end": "2026-03-10T10:22:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:22:00Z",
+            "end": "2026-03-10T10:23:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:23:00Z",
+            "end": "2026-03-10T10:24:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:24:00Z",
+            "end": "2026-03-10T10:25:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:25:00Z",
+            "end": "2026-03-10T10:26:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:26:00Z",
+            "end": "2026-03-10T10:27:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:27:00Z",
+            "end": "2026-03-10T10:28:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:28:00Z",
+            "end": "2026-03-10T10:29:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:29:00Z",
+            "end": "2026-03-10T10:30:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:30:00Z",
+            "end": "2026-03-10T10:31:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:31:00Z",
+            "end": "2026-03-10T10:32:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:32:00Z",
+            "end": "2026-03-10T10:33:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:33:00Z",
+            "end": "2026-03-10T10:34:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:34:00Z",
+            "end": "2026-03-10T10:35:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:35:00Z",
+            "end": "2026-03-10T10:36:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:36:00Z",
+            "end": "2026-03-10T10:37:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:37:00Z",
+            "end": "2026-03-10T10:38:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:38:00Z",
+            "end": "2026-03-10T10:39:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:39:00Z",
+            "end": "2026-03-10T10:40:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:40:00Z",
+            "end": "2026-03-10T10:41:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:41:00Z",
+            "end": "2026-03-10T10:42:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:42:00Z",
+            "end": "2026-03-10T10:43:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:43:00Z",
+            "end": "2026-03-10T10:44:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:44:00Z",
+            "end": "2026-03-10T10:45:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:45:00Z",
+            "end": "2026-03-10T10:46:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:46:00Z",
+            "end": "2026-03-10T10:47:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:47:00Z",
+            "end": "2026-03-10T10:48:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:48:00Z",
+            "end": "2026-03-10T10:49:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:49:00Z",
+            "end": "2026-03-10T10:50:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:50:00Z",
+            "end": "2026-03-10T10:51:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:51:00Z",
+            "end": "2026-03-10T10:52:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:52:00Z",
+            "end": "2026-03-10T10:53:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:53:00Z",
+            "end": "2026-03-10T10:54:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:54:00Z",
+            "end": "2026-03-10T10:55:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:55:00Z",
+            "end": "2026-03-10T10:56:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:56:00Z",
+            "end": "2026-03-10T10:57:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:57:00Z",
+            "end": "2026-03-10T10:58:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:58:00Z",
+            "end": "2026-03-10T10:59:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:59:00Z",
+            "end": "2026-03-10T11:00:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          }
+        ],
+        "events": [
+          {
+            "id": "s1",
+            "sourceId": "imp_1",
+            "label": "slow operation",
+            "start": "2026-03-10T10:05:00Z",
+            "end": "2026-03-10T10:05:01.2Z",
+            "durationMs": 1200,
+            "severity": "",
+            "statusClass": "",
+            "win32": null
+          },
+          {
+            "id": "s2",
+            "sourceId": "imp_1",
+            "label": "event",
+            "start": "2026-03-10T10:06:00Z",
+            "end": "2026-03-10T10:06:00Z",
+            "durationMs": null,
+            "severity": "error",
+            "statusClass": "",
+            "win32": null
+          },
+          {
+            "id": "s3",
+            "sourceId": "imp_1",
+            "label": "slow operation",
+            "start": "2026-03-10T10:59:59Z",
+            "end": "2026-03-10T10:59:59.3Z",
+            "durationMs": 300,
+            "severity": "",
+            "statusClass": "",
+            "win32": null
+          }
+        ],
+        "hidden": 0
+      },
+      {
+        "key": "iis",
+        "label": "IIS",
+        "state": "no-data",
+        "origin": "case",
+        "asOf": "2026-03-10T12:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 0,
+        "consistency": "stored-as-of",
+        "sources": [],
+        "buckets": [],
+        "events": [],
+        "hidden": 0
+      }
+    ],
+    "warnings": [],
+    "queries": [
+      "sources=[sql-xel] limit=50000 from=2026-03-10T10:00:00Z to=2026-03-10T11:00:00Z"
+    ]
+  },
+  "nothing-selected": {
+    "lanes": [
+      {
+        "key": "sql",
+        "label": "SQL Server",
+        "state": "no-data",
+        "origin": "case",
+        "asOf": "2026-03-10T12:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 0,
+        "consistency": "stored-as-of",
+        "sources": [],
+        "buckets": [],
+        "events": [],
+        "hidden": 0
+      },
+      {
+        "key": "iis",
+        "label": "IIS",
+        "state": "no-data",
+        "origin": "case",
+        "asOf": "2026-03-10T12:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 0,
+        "consistency": "stored-as-of",
+        "sources": [],
+        "buckets": [],
+        "events": [],
+        "hidden": 0
+      }
+    ],
+    "warnings": [],
+    "queries": null
+  },
+  "unknown-import-id": {
+    "lanes": [
+      {
+        "key": "sql",
+        "label": "SQL Server",
+        "state": "no-data",
+        "origin": "case",
+        "asOf": "2026-03-10T12:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 0,
+        "consistency": "stored-as-of",
+        "sources": [],
+        "buckets": [],
+        "events": [],
+        "hidden": 0
+      },
+      {
+        "key": "iis",
+        "label": "IIS",
+        "state": "no-data",
+        "origin": "case",
+        "asOf": "2026-03-10T12:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 0,
+        "consistency": "stored-as-of",
+        "sources": [],
+        "buckets": [],
+        "events": [],
+        "hidden": 0
+      }
+    ],
+    "warnings": [],
+    "queries": null
+  },
+  "duplicate-import-ids": {
+    "lanes": [
+      {
+        "key": "sql",
+        "label": "SQL Server",
+        "state": "no-data",
+        "origin": "case",
+        "asOf": "2026-03-10T12:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 0,
+        "consistency": "stored-as-of",
+        "sources": [],
+        "buckets": [],
+        "events": [],
+        "hidden": 0
+      },
+      {
+        "key": "iis",
+        "label": "IIS",
+        "state": "events",
+        "origin": "case",
+        "asOf": "2026-03-10T10:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 3,
+        "consistency": "stored-as-of",
+        "sources": [
+          {
+            "sourceId": "imp_2",
+            "label": "iis-w3c"
+          }
+        ],
+        "buckets": [
+          {
+            "start": "2026-03-10T10:00:00Z",
+            "end": "2026-03-10T10:01:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:01:00Z",
+            "end": "2026-03-10T10:02:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:02:00Z",
+            "end": "2026-03-10T10:03:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:03:00Z",
+            "end": "2026-03-10T10:04:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:04:00Z",
+            "end": "2026-03-10T10:05:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:05:00Z",
+            "end": "2026-03-10T10:06:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:06:00Z",
+            "end": "2026-03-10T10:07:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:07:00Z",
+            "end": "2026-03-10T10:08:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:08:00Z",
+            "end": "2026-03-10T10:09:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:09:00Z",
+            "end": "2026-03-10T10:10:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:11:00Z",
+            "count": 2,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:11:00Z",
+            "end": "2026-03-10T10:12:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:12:00Z",
+            "end": "2026-03-10T10:13:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:13:00Z",
+            "end": "2026-03-10T10:14:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:14:00Z",
+            "end": "2026-03-10T10:15:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:15:00Z",
+            "end": "2026-03-10T10:16:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:16:00Z",
+            "end": "2026-03-10T10:17:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:17:00Z",
+            "end": "2026-03-10T10:18:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:18:00Z",
+            "end": "2026-03-10T10:19:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:19:00Z",
+            "end": "2026-03-10T10:20:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:20:00Z",
+            "end": "2026-03-10T10:21:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:21:00Z",
+            "end": "2026-03-10T10:22:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:22:00Z",
+            "end": "2026-03-10T10:23:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:23:00Z",
+            "end": "2026-03-10T10:24:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:24:00Z",
+            "end": "2026-03-10T10:25:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:25:00Z",
+            "end": "2026-03-10T10:26:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:26:00Z",
+            "end": "2026-03-10T10:27:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:27:00Z",
+            "end": "2026-03-10T10:28:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:28:00Z",
+            "end": "2026-03-10T10:29:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:29:00Z",
+            "end": "2026-03-10T10:30:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:30:00Z",
+            "end": "2026-03-10T10:31:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:31:00Z",
+            "end": "2026-03-10T10:32:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:32:00Z",
+            "end": "2026-03-10T10:33:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:33:00Z",
+            "end": "2026-03-10T10:34:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:34:00Z",
+            "end": "2026-03-10T10:35:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:35:00Z",
+            "end": "2026-03-10T10:36:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:36:00Z",
+            "end": "2026-03-10T10:37:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:37:00Z",
+            "end": "2026-03-10T10:38:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:38:00Z",
+            "end": "2026-03-10T10:39:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:39:00Z",
+            "end": "2026-03-10T10:40:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:40:00Z",
+            "end": "2026-03-10T10:41:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:41:00Z",
+            "end": "2026-03-10T10:42:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:42:00Z",
+            "end": "2026-03-10T10:43:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:43:00Z",
+            "end": "2026-03-10T10:44:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:44:00Z",
+            "end": "2026-03-10T10:45:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:45:00Z",
+            "end": "2026-03-10T10:46:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:46:00Z",
+            "end": "2026-03-10T10:47:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:47:00Z",
+            "end": "2026-03-10T10:48:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:48:00Z",
+            "end": "2026-03-10T10:49:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:49:00Z",
+            "end": "2026-03-10T10:50:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:50:00Z",
+            "end": "2026-03-10T10:51:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:51:00Z",
+            "end": "2026-03-10T10:52:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:52:00Z",
+            "end": "2026-03-10T10:53:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:53:00Z",
+            "end": "2026-03-10T10:54:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:54:00Z",
+            "end": "2026-03-10T10:55:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:55:00Z",
+            "end": "2026-03-10T10:56:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:56:00Z",
+            "end": "2026-03-10T10:57:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:57:00Z",
+            "end": "2026-03-10T10:58:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:58:00Z",
+            "end": "2026-03-10T10:59:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:59:00Z",
+            "end": "2026-03-10T11:00:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          }
+        ],
+        "events": [
+          {
+            "id": "i1",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:10:00.08Z",
+            "durationMs": 80,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "i2",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:10:05Z",
+            "durationMs": 5000,
+            "severity": "",
+            "statusClass": "5xx",
+            "win32": null
+          },
+          {
+            "id": "i3",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:30:00Z",
+            "end": "2026-03-10T10:30:00.012Z",
+            "durationMs": 12,
+            "severity": "",
+            "statusClass": "4xx",
+            "win32": null
+          }
+        ],
+        "hidden": 0
+      }
+    ],
+    "warnings": [],
+    "queries": [
+      "sources=[iis-w3c] limit=50000 from=2026-03-10T10:00:00Z to=2026-03-10T11:00:00Z"
+    ]
+  },
+  "ambiguous-two-files": {
+    "lanes": [
+      {
+        "key": "sql",
+        "label": "SQL Server",
+        "state": "no-data",
+        "origin": "case",
+        "asOf": "2026-03-10T12:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 0,
+        "consistency": "stored-as-of",
+        "sources": [],
+        "buckets": [],
+        "events": [],
+        "hidden": 0
+      },
+      {
+        "key": "iis",
+        "label": "IIS",
+        "state": "events",
+        "origin": "case",
+        "asOf": "2026-03-10T13:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 3,
+        "consistency": "stored-as-of",
+        "sources": [
+          {
+            "sourceId": "imp_2",
+            "label": "iis-w3c"
+          },
+          {
+            "sourceId": "imp_6",
+            "label": "iis-w3c b"
+          }
+        ],
+        "buckets": [
+          {
+            "start": "2026-03-10T10:00:00Z",
+            "end": "2026-03-10T10:01:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:01:00Z",
+            "end": "2026-03-10T10:02:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:02:00Z",
+            "end": "2026-03-10T10:03:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:03:00Z",
+            "end": "2026-03-10T10:04:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:04:00Z",
+            "end": "2026-03-10T10:05:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:05:00Z",
+            "end": "2026-03-10T10:06:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:06:00Z",
+            "end": "2026-03-10T10:07:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:07:00Z",
+            "end": "2026-03-10T10:08:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:08:00Z",
+            "end": "2026-03-10T10:09:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:09:00Z",
+            "end": "2026-03-10T10:10:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:11:00Z",
+            "count": 2,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:11:00Z",
+            "end": "2026-03-10T10:12:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:12:00Z",
+            "end": "2026-03-10T10:13:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:13:00Z",
+            "end": "2026-03-10T10:14:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:14:00Z",
+            "end": "2026-03-10T10:15:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:15:00Z",
+            "end": "2026-03-10T10:16:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:16:00Z",
+            "end": "2026-03-10T10:17:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:17:00Z",
+            "end": "2026-03-10T10:18:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:18:00Z",
+            "end": "2026-03-10T10:19:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:19:00Z",
+            "end": "2026-03-10T10:20:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:20:00Z",
+            "end": "2026-03-10T10:21:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:21:00Z",
+            "end": "2026-03-10T10:22:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:22:00Z",
+            "end": "2026-03-10T10:23:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:23:00Z",
+            "end": "2026-03-10T10:24:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:24:00Z",
+            "end": "2026-03-10T10:25:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:25:00Z",
+            "end": "2026-03-10T10:26:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:26:00Z",
+            "end": "2026-03-10T10:27:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:27:00Z",
+            "end": "2026-03-10T10:28:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:28:00Z",
+            "end": "2026-03-10T10:29:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:29:00Z",
+            "end": "2026-03-10T10:30:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:30:00Z",
+            "end": "2026-03-10T10:31:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:31:00Z",
+            "end": "2026-03-10T10:32:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:32:00Z",
+            "end": "2026-03-10T10:33:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:33:00Z",
+            "end": "2026-03-10T10:34:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:34:00Z",
+            "end": "2026-03-10T10:35:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:35:00Z",
+            "end": "2026-03-10T10:36:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:36:00Z",
+            "end": "2026-03-10T10:37:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:37:00Z",
+            "end": "2026-03-10T10:38:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:38:00Z",
+            "end": "2026-03-10T10:39:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:39:00Z",
+            "end": "2026-03-10T10:40:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:40:00Z",
+            "end": "2026-03-10T10:41:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:41:00Z",
+            "end": "2026-03-10T10:42:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:42:00Z",
+            "end": "2026-03-10T10:43:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:43:00Z",
+            "end": "2026-03-10T10:44:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:44:00Z",
+            "end": "2026-03-10T10:45:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:45:00Z",
+            "end": "2026-03-10T10:46:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:46:00Z",
+            "end": "2026-03-10T10:47:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:47:00Z",
+            "end": "2026-03-10T10:48:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:48:00Z",
+            "end": "2026-03-10T10:49:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:49:00Z",
+            "end": "2026-03-10T10:50:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:50:00Z",
+            "end": "2026-03-10T10:51:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:51:00Z",
+            "end": "2026-03-10T10:52:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:52:00Z",
+            "end": "2026-03-10T10:53:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:53:00Z",
+            "end": "2026-03-10T10:54:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:54:00Z",
+            "end": "2026-03-10T10:55:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:55:00Z",
+            "end": "2026-03-10T10:56:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:56:00Z",
+            "end": "2026-03-10T10:57:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:57:00Z",
+            "end": "2026-03-10T10:58:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:58:00Z",
+            "end": "2026-03-10T10:59:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:59:00Z",
+            "end": "2026-03-10T11:00:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          }
+        ],
+        "events": [
+          {
+            "id": "i1",
+            "sourceId": "",
+            "label": "web request",
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:10:00.08Z",
+            "durationMs": 80,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "i2",
+            "sourceId": "",
+            "label": "web request",
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:10:05Z",
+            "durationMs": 5000,
+            "severity": "",
+            "statusClass": "5xx",
+            "win32": null
+          },
+          {
+            "id": "i3",
+            "sourceId": "",
+            "label": "web request",
+            "start": "2026-03-10T10:30:00Z",
+            "end": "2026-03-10T10:30:00.012Z",
+            "durationMs": 12,
+            "severity": "",
+            "statusClass": "4xx",
+            "win32": null
+          }
+        ],
+        "hidden": 0
+      }
+    ],
+    "warnings": [
+      "Events from iis-w3c cannot be tied to one source because two selected files use it."
+    ],
+    "queries": [
+      "sources=[iis-w3c] limit=50000 from=2026-03-10T10:00:00Z to=2026-03-10T11:00:00Z"
+    ]
+  },
+  "iis-clock-unchecked": {
+    "lanes": [
+      {
+        "key": "sql",
+        "label": "SQL Server",
+        "state": "events",
+        "origin": "case",
+        "asOf": "2026-03-10T12:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 3,
+        "consistency": "stored-as-of",
+        "sources": [
+          {
+            "sourceId": "imp_1",
+            "label": "sql-xel"
+          }
+        ],
+        "buckets": [
+          {
+            "start": "2026-03-10T10:00:00Z",
+            "end": "2026-03-10T10:01:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:01:00Z",
+            "end": "2026-03-10T10:02:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:02:00Z",
+            "end": "2026-03-10T10:03:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:03:00Z",
+            "end": "2026-03-10T10:04:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:04:00Z",
+            "end": "2026-03-10T10:05:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:05:00Z",
+            "end": "2026-03-10T10:06:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:06:00Z",
+            "end": "2026-03-10T10:07:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:07:00Z",
+            "end": "2026-03-10T10:08:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:08:00Z",
+            "end": "2026-03-10T10:09:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:09:00Z",
+            "end": "2026-03-10T10:10:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:11:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:11:00Z",
+            "end": "2026-03-10T10:12:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:12:00Z",
+            "end": "2026-03-10T10:13:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:13:00Z",
+            "end": "2026-03-10T10:14:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:14:00Z",
+            "end": "2026-03-10T10:15:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:15:00Z",
+            "end": "2026-03-10T10:16:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:16:00Z",
+            "end": "2026-03-10T10:17:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:17:00Z",
+            "end": "2026-03-10T10:18:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:18:00Z",
+            "end": "2026-03-10T10:19:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:19:00Z",
+            "end": "2026-03-10T10:20:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:20:00Z",
+            "end": "2026-03-10T10:21:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:21:00Z",
+            "end": "2026-03-10T10:22:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:22:00Z",
+            "end": "2026-03-10T10:23:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:23:00Z",
+            "end": "2026-03-10T10:24:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:24:00Z",
+            "end": "2026-03-10T10:25:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:25:00Z",
+            "end": "2026-03-10T10:26:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:26:00Z",
+            "end": "2026-03-10T10:27:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:27:00Z",
+            "end": "2026-03-10T10:28:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:28:00Z",
+            "end": "2026-03-10T10:29:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:29:00Z",
+            "end": "2026-03-10T10:30:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:30:00Z",
+            "end": "2026-03-10T10:31:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:31:00Z",
+            "end": "2026-03-10T10:32:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:32:00Z",
+            "end": "2026-03-10T10:33:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:33:00Z",
+            "end": "2026-03-10T10:34:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:34:00Z",
+            "end": "2026-03-10T10:35:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:35:00Z",
+            "end": "2026-03-10T10:36:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:36:00Z",
+            "end": "2026-03-10T10:37:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:37:00Z",
+            "end": "2026-03-10T10:38:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:38:00Z",
+            "end": "2026-03-10T10:39:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:39:00Z",
+            "end": "2026-03-10T10:40:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:40:00Z",
+            "end": "2026-03-10T10:41:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:41:00Z",
+            "end": "2026-03-10T10:42:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:42:00Z",
+            "end": "2026-03-10T10:43:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:43:00Z",
+            "end": "2026-03-10T10:44:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:44:00Z",
+            "end": "2026-03-10T10:45:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:45:00Z",
+            "end": "2026-03-10T10:46:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:46:00Z",
+            "end": "2026-03-10T10:47:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:47:00Z",
+            "end": "2026-03-10T10:48:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:48:00Z",
+            "end": "2026-03-10T10:49:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:49:00Z",
+            "end": "2026-03-10T10:50:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:50:00Z",
+            "end": "2026-03-10T10:51:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:51:00Z",
+            "end": "2026-03-10T10:52:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:52:00Z",
+            "end": "2026-03-10T10:53:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:53:00Z",
+            "end": "2026-03-10T10:54:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:54:00Z",
+            "end": "2026-03-10T10:55:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:55:00Z",
+            "end": "2026-03-10T10:56:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:56:00Z",
+            "end": "2026-03-10T10:57:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:57:00Z",
+            "end": "2026-03-10T10:58:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:58:00Z",
+            "end": "2026-03-10T10:59:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:59:00Z",
+            "end": "2026-03-10T11:00:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          }
+        ],
+        "events": [
+          {
+            "id": "s1",
+            "sourceId": "imp_1",
+            "label": "slow operation",
+            "start": "2026-03-10T10:05:00Z",
+            "end": "2026-03-10T10:05:01.2Z",
+            "durationMs": 1200,
+            "severity": "",
+            "statusClass": "",
+            "win32": null
+          },
+          {
+            "id": "s2",
+            "sourceId": "imp_1",
+            "label": "event",
+            "start": "2026-03-10T10:06:00Z",
+            "end": "2026-03-10T10:06:00Z",
+            "durationMs": null,
+            "severity": "error",
+            "statusClass": "",
+            "win32": null
+          },
+          {
+            "id": "s3",
+            "sourceId": "imp_1",
+            "label": "slow operation",
+            "start": "2026-03-10T10:59:59Z",
+            "end": "2026-03-10T10:59:59.3Z",
+            "durationMs": 300,
+            "severity": "",
+            "statusClass": "",
+            "win32": null
+          }
+        ],
+        "hidden": 0
+      },
+      {
+        "key": "iis",
+        "label": "IIS",
+        "state": "clock-unchecked",
+        "origin": "case",
+        "asOf": "2026-03-10T12:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "The time zone rule of a file is not confirmed, so its events are not placed on the timeline.",
+        "scanned": 0,
+        "consistency": "stored-as-of",
+        "disabled": "tz-rule",
+        "sources": [
+          {
+            "sourceId": "imp_2",
+            "label": "iis-w3c"
+          }
+        ],
+        "buckets": [],
+        "events": [],
+        "hidden": 0
+      }
+    ],
+    "warnings": [],
+    "queries": [
+      "sources=[sql-xel] limit=50000 from=2026-03-10T10:00:00Z to=2026-03-10T11:00:00Z"
+    ]
+  },
+  "unchecked-file-in-valid-name": {
+    "lanes": [
+      {
+        "key": "sql",
+        "label": "SQL Server",
+        "state": "no-data",
+        "origin": "case",
+        "asOf": "2026-03-10T12:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 0,
+        "consistency": "stored-as-of",
+        "sources": [],
+        "buckets": [],
+        "events": [],
+        "hidden": 0
+      },
+      {
+        "key": "iis",
+        "label": "IIS",
+        "state": "clock-unchecked",
+        "origin": "case",
+        "asOf": "2026-03-10T12:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "The time zone rule of a file is not confirmed, so its events are not placed on the timeline.",
+        "scanned": 0,
+        "consistency": "stored-as-of",
+        "disabled": "tz-rule",
+        "sources": [
+          {
+            "sourceId": "imp_2",
+            "label": "iis-w3c"
+          },
+          {
+            "sourceId": "imp_6",
+            "label": "iis-w3c b"
+          }
+        ],
+        "buckets": [],
+        "events": [],
+        "hidden": 0
+      }
+    ],
+    "warnings": [
+      "Events from iis-w3c cannot be tied to one source because two selected files use it."
+    ],
+    "queries": null
+  },
+  "row-cap": {
+    "lanes": [
+      {
+        "key": "sql",
+        "label": "SQL Server",
+        "state": "no-data",
+        "origin": "case",
+        "asOf": "2026-03-10T12:00:00Z",
+        "complete": true,
+        "truncated": false,
+        "reasonCode": "",
+        "reason": "",
+        "scanned": 0,
+        "consistency": "stored-as-of",
+        "sources": [],
+        "buckets": [],
+        "events": [],
+        "hidden": 0
+      },
+      {
+        "key": "iis",
+        "label": "IIS",
+        "state": "events",
+        "origin": "case",
+        "asOf": "2026-03-10T12:00:00Z",
+        "complete": true,
+        "truncated": true,
+        "reasonCode": "rowcap",
+        "reason": "Only the first 50,000 saved events were listed; the bucket counts cover every saved event.",
+        "scanned": 50010,
+        "consistency": "stored-as-of",
+        "sources": [
+          {
+            "sourceId": "imp_2",
+            "label": "iis-w3c"
+          }
+        ],
+        "buckets": [
+          {
+            "start": "2026-03-10T10:00:00Z",
+            "end": "2026-03-10T10:01:00Z",
+            "count": 50010,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:01:00Z",
+            "end": "2026-03-10T10:02:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:02:00Z",
+            "end": "2026-03-10T10:03:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:03:00Z",
+            "end": "2026-03-10T10:04:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:04:00Z",
+            "end": "2026-03-10T10:05:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:05:00Z",
+            "end": "2026-03-10T10:06:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:06:00Z",
+            "end": "2026-03-10T10:07:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:07:00Z",
+            "end": "2026-03-10T10:08:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:08:00Z",
+            "end": "2026-03-10T10:09:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:09:00Z",
+            "end": "2026-03-10T10:10:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:11:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:11:00Z",
+            "end": "2026-03-10T10:12:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:12:00Z",
+            "end": "2026-03-10T10:13:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:13:00Z",
+            "end": "2026-03-10T10:14:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:14:00Z",
+            "end": "2026-03-10T10:15:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:15:00Z",
+            "end": "2026-03-10T10:16:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:16:00Z",
+            "end": "2026-03-10T10:17:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:17:00Z",
+            "end": "2026-03-10T10:18:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:18:00Z",
+            "end": "2026-03-10T10:19:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:19:00Z",
+            "end": "2026-03-10T10:20:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:20:00Z",
+            "end": "2026-03-10T10:21:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:21:00Z",
+            "end": "2026-03-10T10:22:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:22:00Z",
+            "end": "2026-03-10T10:23:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:23:00Z",
+            "end": "2026-03-10T10:24:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:24:00Z",
+            "end": "2026-03-10T10:25:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:25:00Z",
+            "end": "2026-03-10T10:26:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:26:00Z",
+            "end": "2026-03-10T10:27:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:27:00Z",
+            "end": "2026-03-10T10:28:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:28:00Z",
+            "end": "2026-03-10T10:29:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:29:00Z",
+            "end": "2026-03-10T10:30:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:30:00Z",
+            "end": "2026-03-10T10:31:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:31:00Z",
+            "end": "2026-03-10T10:32:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:32:00Z",
+            "end": "2026-03-10T10:33:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:33:00Z",
+            "end": "2026-03-10T10:34:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:34:00Z",
+            "end": "2026-03-10T10:35:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:35:00Z",
+            "end": "2026-03-10T10:36:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:36:00Z",
+            "end": "2026-03-10T10:37:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:37:00Z",
+            "end": "2026-03-10T10:38:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:38:00Z",
+            "end": "2026-03-10T10:39:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:39:00Z",
+            "end": "2026-03-10T10:40:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:40:00Z",
+            "end": "2026-03-10T10:41:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:41:00Z",
+            "end": "2026-03-10T10:42:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:42:00Z",
+            "end": "2026-03-10T10:43:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:43:00Z",
+            "end": "2026-03-10T10:44:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:44:00Z",
+            "end": "2026-03-10T10:45:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:45:00Z",
+            "end": "2026-03-10T10:46:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:46:00Z",
+            "end": "2026-03-10T10:47:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:47:00Z",
+            "end": "2026-03-10T10:48:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:48:00Z",
+            "end": "2026-03-10T10:49:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:49:00Z",
+            "end": "2026-03-10T10:50:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:50:00Z",
+            "end": "2026-03-10T10:51:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:51:00Z",
+            "end": "2026-03-10T10:52:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:52:00Z",
+            "end": "2026-03-10T10:53:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:53:00Z",
+            "end": "2026-03-10T10:54:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:54:00Z",
+            "end": "2026-03-10T10:55:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:55:00Z",
+            "end": "2026-03-10T10:56:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:56:00Z",
+            "end": "2026-03-10T10:57:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:57:00Z",
+            "end": "2026-03-10T10:58:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:58:00Z",
+            "end": "2026-03-10T10:59:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:59:00Z",
+            "end": "2026-03-10T11:00:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          }
+        ],
+        "events": [
+          {
+            "id": "c0",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00Z",
+            "end": "2026-03-10T10:00:00.001Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c1",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.001Z",
+            "end": "2026-03-10T10:00:00.002Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c2",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.002Z",
+            "end": "2026-03-10T10:00:00.003Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c3",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.003Z",
+            "end": "2026-03-10T10:00:00.004Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c4",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.004Z",
+            "end": "2026-03-10T10:00:00.005Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c5",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.005Z",
+            "end": "2026-03-10T10:00:00.006Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c6",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.006Z",
+            "end": "2026-03-10T10:00:00.007Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c7",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.007Z",
+            "end": "2026-03-10T10:00:00.008Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c8",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.008Z",
+            "end": "2026-03-10T10:00:00.009Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c9",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.009Z",
+            "end": "2026-03-10T10:00:00.01Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c10",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.01Z",
+            "end": "2026-03-10T10:00:00.011Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c11",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.011Z",
+            "end": "2026-03-10T10:00:00.012Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c12",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.012Z",
+            "end": "2026-03-10T10:00:00.013Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c13",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.013Z",
+            "end": "2026-03-10T10:00:00.014Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c14",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.014Z",
+            "end": "2026-03-10T10:00:00.015Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c15",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.015Z",
+            "end": "2026-03-10T10:00:00.016Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c16",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.016Z",
+            "end": "2026-03-10T10:00:00.017Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c17",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.017Z",
+            "end": "2026-03-10T10:00:00.018Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c18",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.018Z",
+            "end": "2026-03-10T10:00:00.019Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c19",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.019Z",
+            "end": "2026-03-10T10:00:00.02Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c20",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.02Z",
+            "end": "2026-03-10T10:00:00.021Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c21",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.021Z",
+            "end": "2026-03-10T10:00:00.022Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c22",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.022Z",
+            "end": "2026-03-10T10:00:00.023Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c23",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.023Z",
+            "end": "2026-03-10T10:00:00.024Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c24",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.024Z",
+            "end": "2026-03-10T10:00:00.025Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c25",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.025Z",
+            "end": "2026-03-10T10:00:00.026Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c26",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.026Z",
+            "end": "2026-03-10T10:00:00.027Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c27",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.027Z",
+            "end": "2026-03-10T10:00:00.028Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c28",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.028Z",
+            "end": "2026-03-10T10:00:00.029Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c29",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.029Z",
+            "end": "2026-03-10T10:00:00.03Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c30",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.03Z",
+            "end": "2026-03-10T10:00:00.031Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c31",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.031Z",
+            "end": "2026-03-10T10:00:00.032Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c32",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.032Z",
+            "end": "2026-03-10T10:00:00.033Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c33",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.033Z",
+            "end": "2026-03-10T10:00:00.034Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c34",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.034Z",
+            "end": "2026-03-10T10:00:00.035Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c35",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.035Z",
+            "end": "2026-03-10T10:00:00.036Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c36",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.036Z",
+            "end": "2026-03-10T10:00:00.037Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c37",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.037Z",
+            "end": "2026-03-10T10:00:00.038Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c38",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.038Z",
+            "end": "2026-03-10T10:00:00.039Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c39",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.039Z",
+            "end": "2026-03-10T10:00:00.04Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c40",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.04Z",
+            "end": "2026-03-10T10:00:00.041Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c41",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.041Z",
+            "end": "2026-03-10T10:00:00.042Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c42",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.042Z",
+            "end": "2026-03-10T10:00:00.043Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c43",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.043Z",
+            "end": "2026-03-10T10:00:00.044Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c44",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.044Z",
+            "end": "2026-03-10T10:00:00.045Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c45",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.045Z",
+            "end": "2026-03-10T10:00:00.046Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c46",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.046Z",
+            "end": "2026-03-10T10:00:00.047Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c47",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.047Z",
+            "end": "2026-03-10T10:00:00.048Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c48",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.048Z",
+            "end": "2026-03-10T10:00:00.049Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c49",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.049Z",
+            "end": "2026-03-10T10:00:00.05Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c50",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.05Z",
+            "end": "2026-03-10T10:00:00.051Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c51",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.051Z",
+            "end": "2026-03-10T10:00:00.052Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c52",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.052Z",
+            "end": "2026-03-10T10:00:00.053Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c53",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.053Z",
+            "end": "2026-03-10T10:00:00.054Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c54",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.054Z",
+            "end": "2026-03-10T10:00:00.055Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c55",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.055Z",
+            "end": "2026-03-10T10:00:00.056Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c56",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.056Z",
+            "end": "2026-03-10T10:00:00.057Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c57",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.057Z",
+            "end": "2026-03-10T10:00:00.058Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c58",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.058Z",
+            "end": "2026-03-10T10:00:00.059Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "c59",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:00:00.059Z",
+            "end": "2026-03-10T10:00:00.06Z",
+            "durationMs": 1,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          }
+        ],
+        "hidden": 49940
+      }
+    ],
+    "warnings": [],
+    "queries": [
+      "sources=[iis-w3c] limit=50000 from=2026-03-10T10:00:00Z to=2026-03-10T11:00:00Z"
+    ]
+  },
+  "scan-budget-partial": {
+    "lanes": [
+      {
+        "key": "sql",
+        "label": "SQL Server",
+        "state": "events",
+        "origin": "case",
+        "asOf": "2026-03-10T09:00:00Z",
+        "complete": false,
+        "truncated": true,
+        "reasonCode": "scan-budget",
+        "reason": "The scan of saved events stopped early, so the counts may be too low.",
+        "scanned": 3,
+        "consistency": "stored-as-of",
+        "sources": [
+          {
+            "sourceId": "imp_1",
+            "label": "sql-xel"
+          }
+        ],
+        "buckets": [
+          {
+            "start": "2026-03-10T10:00:00Z",
+            "end": "2026-03-10T10:01:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:01:00Z",
+            "end": "2026-03-10T10:02:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:02:00Z",
+            "end": "2026-03-10T10:03:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:03:00Z",
+            "end": "2026-03-10T10:04:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:04:00Z",
+            "end": "2026-03-10T10:05:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:05:00Z",
+            "end": "2026-03-10T10:06:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:06:00Z",
+            "end": "2026-03-10T10:07:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:07:00Z",
+            "end": "2026-03-10T10:08:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:08:00Z",
+            "end": "2026-03-10T10:09:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:09:00Z",
+            "end": "2026-03-10T10:10:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:11:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:11:00Z",
+            "end": "2026-03-10T10:12:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:12:00Z",
+            "end": "2026-03-10T10:13:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:13:00Z",
+            "end": "2026-03-10T10:14:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:14:00Z",
+            "end": "2026-03-10T10:15:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:15:00Z",
+            "end": "2026-03-10T10:16:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:16:00Z",
+            "end": "2026-03-10T10:17:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:17:00Z",
+            "end": "2026-03-10T10:18:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:18:00Z",
+            "end": "2026-03-10T10:19:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:19:00Z",
+            "end": "2026-03-10T10:20:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:20:00Z",
+            "end": "2026-03-10T10:21:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:21:00Z",
+            "end": "2026-03-10T10:22:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:22:00Z",
+            "end": "2026-03-10T10:23:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:23:00Z",
+            "end": "2026-03-10T10:24:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:24:00Z",
+            "end": "2026-03-10T10:25:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:25:00Z",
+            "end": "2026-03-10T10:26:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:26:00Z",
+            "end": "2026-03-10T10:27:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:27:00Z",
+            "end": "2026-03-10T10:28:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:28:00Z",
+            "end": "2026-03-10T10:29:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:29:00Z",
+            "end": "2026-03-10T10:30:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:30:00Z",
+            "end": "2026-03-10T10:31:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:31:00Z",
+            "end": "2026-03-10T10:32:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:32:00Z",
+            "end": "2026-03-10T10:33:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:33:00Z",
+            "end": "2026-03-10T10:34:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:34:00Z",
+            "end": "2026-03-10T10:35:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:35:00Z",
+            "end": "2026-03-10T10:36:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:36:00Z",
+            "end": "2026-03-10T10:37:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:37:00Z",
+            "end": "2026-03-10T10:38:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:38:00Z",
+            "end": "2026-03-10T10:39:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:39:00Z",
+            "end": "2026-03-10T10:40:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:40:00Z",
+            "end": "2026-03-10T10:41:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:41:00Z",
+            "end": "2026-03-10T10:42:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:42:00Z",
+            "end": "2026-03-10T10:43:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:43:00Z",
+            "end": "2026-03-10T10:44:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:44:00Z",
+            "end": "2026-03-10T10:45:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:45:00Z",
+            "end": "2026-03-10T10:46:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:46:00Z",
+            "end": "2026-03-10T10:47:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:47:00Z",
+            "end": "2026-03-10T10:48:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:48:00Z",
+            "end": "2026-03-10T10:49:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:49:00Z",
+            "end": "2026-03-10T10:50:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:50:00Z",
+            "end": "2026-03-10T10:51:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:51:00Z",
+            "end": "2026-03-10T10:52:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:52:00Z",
+            "end": "2026-03-10T10:53:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:53:00Z",
+            "end": "2026-03-10T10:54:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:54:00Z",
+            "end": "2026-03-10T10:55:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:55:00Z",
+            "end": "2026-03-10T10:56:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:56:00Z",
+            "end": "2026-03-10T10:57:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:57:00Z",
+            "end": "2026-03-10T10:58:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:58:00Z",
+            "end": "2026-03-10T10:59:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:59:00Z",
+            "end": "2026-03-10T11:00:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          }
+        ],
+        "events": [
+          {
+            "id": "s1",
+            "sourceId": "imp_1",
+            "label": "slow operation",
+            "start": "2026-03-10T10:05:00Z",
+            "end": "2026-03-10T10:05:01.2Z",
+            "durationMs": 1200,
+            "severity": "",
+            "statusClass": "",
+            "win32": null
+          },
+          {
+            "id": "s2",
+            "sourceId": "imp_1",
+            "label": "event",
+            "start": "2026-03-10T10:06:00Z",
+            "end": "2026-03-10T10:06:00Z",
+            "durationMs": null,
+            "severity": "error",
+            "statusClass": "",
+            "win32": null
+          },
+          {
+            "id": "s3",
+            "sourceId": "imp_1",
+            "label": "slow operation",
+            "start": "2026-03-10T10:59:59Z",
+            "end": "2026-03-10T10:59:59.3Z",
+            "durationMs": 300,
+            "severity": "",
+            "statusClass": "",
+            "win32": null
+          }
+        ],
+        "hidden": 0
+      },
+      {
+        "key": "iis",
+        "label": "IIS",
+        "state": "events",
+        "origin": "case",
+        "asOf": "2026-03-10T10:00:00Z",
+        "complete": false,
+        "truncated": true,
+        "reasonCode": "scan-budget",
+        "reason": "The scan of saved events stopped early, so the counts may be too low.",
+        "scanned": 3,
+        "consistency": "stored-as-of",
+        "sources": [
+          {
+            "sourceId": "imp_2",
+            "label": "iis-w3c"
+          }
+        ],
+        "buckets": [
+          {
+            "start": "2026-03-10T10:00:00Z",
+            "end": "2026-03-10T10:01:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:01:00Z",
+            "end": "2026-03-10T10:02:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:02:00Z",
+            "end": "2026-03-10T10:03:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:03:00Z",
+            "end": "2026-03-10T10:04:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:04:00Z",
+            "end": "2026-03-10T10:05:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:05:00Z",
+            "end": "2026-03-10T10:06:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:06:00Z",
+            "end": "2026-03-10T10:07:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:07:00Z",
+            "end": "2026-03-10T10:08:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:08:00Z",
+            "end": "2026-03-10T10:09:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:09:00Z",
+            "end": "2026-03-10T10:10:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:11:00Z",
+            "count": 2,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:11:00Z",
+            "end": "2026-03-10T10:12:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:12:00Z",
+            "end": "2026-03-10T10:13:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:13:00Z",
+            "end": "2026-03-10T10:14:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:14:00Z",
+            "end": "2026-03-10T10:15:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:15:00Z",
+            "end": "2026-03-10T10:16:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:16:00Z",
+            "end": "2026-03-10T10:17:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:17:00Z",
+            "end": "2026-03-10T10:18:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:18:00Z",
+            "end": "2026-03-10T10:19:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:19:00Z",
+            "end": "2026-03-10T10:20:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:20:00Z",
+            "end": "2026-03-10T10:21:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:21:00Z",
+            "end": "2026-03-10T10:22:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:22:00Z",
+            "end": "2026-03-10T10:23:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:23:00Z",
+            "end": "2026-03-10T10:24:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:24:00Z",
+            "end": "2026-03-10T10:25:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:25:00Z",
+            "end": "2026-03-10T10:26:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:26:00Z",
+            "end": "2026-03-10T10:27:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:27:00Z",
+            "end": "2026-03-10T10:28:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:28:00Z",
+            "end": "2026-03-10T10:29:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:29:00Z",
+            "end": "2026-03-10T10:30:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:30:00Z",
+            "end": "2026-03-10T10:31:00Z",
+            "count": 1,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:31:00Z",
+            "end": "2026-03-10T10:32:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:32:00Z",
+            "end": "2026-03-10T10:33:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:33:00Z",
+            "end": "2026-03-10T10:34:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:34:00Z",
+            "end": "2026-03-10T10:35:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:35:00Z",
+            "end": "2026-03-10T10:36:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:36:00Z",
+            "end": "2026-03-10T10:37:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:37:00Z",
+            "end": "2026-03-10T10:38:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:38:00Z",
+            "end": "2026-03-10T10:39:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:39:00Z",
+            "end": "2026-03-10T10:40:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:40:00Z",
+            "end": "2026-03-10T10:41:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:41:00Z",
+            "end": "2026-03-10T10:42:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:42:00Z",
+            "end": "2026-03-10T10:43:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:43:00Z",
+            "end": "2026-03-10T10:44:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:44:00Z",
+            "end": "2026-03-10T10:45:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:45:00Z",
+            "end": "2026-03-10T10:46:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:46:00Z",
+            "end": "2026-03-10T10:47:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:47:00Z",
+            "end": "2026-03-10T10:48:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:48:00Z",
+            "end": "2026-03-10T10:49:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:49:00Z",
+            "end": "2026-03-10T10:50:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:50:00Z",
+            "end": "2026-03-10T10:51:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:51:00Z",
+            "end": "2026-03-10T10:52:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:52:00Z",
+            "end": "2026-03-10T10:53:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:53:00Z",
+            "end": "2026-03-10T10:54:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:54:00Z",
+            "end": "2026-03-10T10:55:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:55:00Z",
+            "end": "2026-03-10T10:56:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:56:00Z",
+            "end": "2026-03-10T10:57:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:57:00Z",
+            "end": "2026-03-10T10:58:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:58:00Z",
+            "end": "2026-03-10T10:59:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          },
+          {
+            "start": "2026-03-10T10:59:00Z",
+            "end": "2026-03-10T11:00:00Z",
+            "count": 0,
+            "clipped": false,
+            "complete": true
+          }
+        ],
+        "events": [
+          {
+            "id": "i1",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:10:00.08Z",
+            "durationMs": 80,
+            "severity": "",
+            "statusClass": "2xx",
+            "win32": null
+          },
+          {
+            "id": "i2",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:10:00Z",
+            "end": "2026-03-10T10:10:05Z",
+            "durationMs": 5000,
+            "severity": "",
+            "statusClass": "5xx",
+            "win32": null
+          },
+          {
+            "id": "i3",
+            "sourceId": "imp_2",
+            "label": "web request",
+            "start": "2026-03-10T10:30:00Z",
+            "end": "2026-03-10T10:30:00.012Z",
+            "durationMs": 12,
+            "severity": "",
+            "statusClass": "4xx",
+            "win32": null
+          }
+        ],
+        "hidden": 0
+      }
+    ],
+    "warnings": [],
+    "queries": [
+      "sources=[sql-xel iis-w3c] limit=50000 from=2026-03-10T10:00:00Z to=2026-03-10T11:00:00Z"
+    ]
+  }
+}

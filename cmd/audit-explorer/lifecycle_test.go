@@ -189,12 +189,20 @@ func TestMainStartsTheTrayOnlyWhenInteractive(t *testing.T) {
 	if strings.Count(text, "startTray(") != 1 {
 		t.Fatal("startTray is called more than once in main.go")
 	}
-	open := strings.LastIndex(text[:i], "\n\tif interactive {")
+	// startTray lives in startInteractive, which run calls once, only inside its `if interactive` block.
+	if fn := strings.LastIndex(text[:i], "\nfunc "); fn < 0 || !strings.HasPrefix(text[fn:], "\nfunc startInteractive(") {
+		t.Fatal("startTray is not inside startInteractive")
+	}
+	if strings.Count(text, "defer startInteractive(appCtx") != 1 {
+		t.Fatal("run must call startInteractive exactly once")
+	}
+	call := strings.Index(text, "defer startInteractive(appCtx")
+	open := strings.LastIndex(text[:call], "\n\tif interactive {")
 	if open < 0 {
-		t.Fatal("startTray is not inside an `if interactive` block")
+		t.Fatal("startInteractive is not inside an `if interactive` block")
 	}
 	// The block ends at the first line that is just a tab and a closing brace.
-	if end := strings.Index(text[open+1:], "\n\t}\n"); end < 0 || open+1+end < i {
-		t.Fatal("startTray is after the end of the `if interactive` block")
+	if end := strings.Index(text[open+1:], "\n\t}\n"); end < 0 || open+1+end < call {
+		t.Fatal("startInteractive is after the end of the `if interactive` block")
 	}
 }

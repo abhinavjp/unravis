@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"runtime/debug"
 	"sync"
 
 	"golang.org/x/sys/windows"
@@ -72,22 +74,35 @@ func (l *listener) run(onOpen, onQuit func()) {
 		case windows.WAIT_OBJECT_0:
 			return
 		case windows.WAIT_OBJECT_0 + 1:
-			callSafely(onOpen)
+			callSafely("open", onOpen)
 		case windows.WAIT_OBJECT_0 + 2:
-			callSafely(onQuit)
+			callSafely("quit", onQuit)
 		default:
 			return
 		}
 	}
 }
 
-// callSafely runs f and swallows a panic so one bad callback cannot end the
-// listener or the process.
-func callSafely(f func()) {
+// reportPanic records a recovered callback panic. The default writes to the
+// standard logger, which the app routes into its sanitized log file. A seam so
+// tests can observe it.
+var reportPanic = func(what string, v any, stack []byte) {
+	log.Printf("instance: the %s callback panicked: %v\n%s", what, v, stack)
+}
+
+// callSafely runs f and recovers a panic so one bad callback cannot end the
+// listener or the process. The panic is reported, never silently dropped: a
+// broken Open handler would otherwise make "open Unravis" do nothing with no
+// trace. what names the callback in the report.
+func callSafely(what string, f func()) {
 	if f == nil {
 		return
 	}
-	defer func() { _ = recover() }()
+	defer func() {
+		if v := recover(); v != nil {
+			reportPanic(what, v, debug.Stack())
+		}
+	}()
 	f()
 }
 
@@ -206,8 +221,8 @@ func Signal(names Names, k Kind) error {
 		return fmt.Errorf("instance: open event: %w", err)
 	}
 	defer windows.CloseHandle(h)
-	if ok, oerr := ownerCheck(h); oerr != nil || !ok {
-		return ErrNameHeldByOther
+	if err := requireOwner(h); err != nil {
+		return err
 	}
 	if err := windows.SetEvent(h); err != nil {
 		return fmt.Errorf("instance: signal event: %w", err)

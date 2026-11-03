@@ -629,3 +629,16 @@ func TestAuditSourceIDsListingFailure(t *testing.T) {
 		t.Errorf("52 sources: plans %d warnings %v", len(f.plans), out.Warnings)
 	}
 }
+
+// auditSourceIDs is selectAuditSources reduced to the ids. Only the tests use it.
+func auditSourceIDs(ctx context.Context, repo audit.Repository, explicit bool, ids []string) (out []string, warning string, err error) {
+	refs, warning, err := selectAuditSources(ctx, repo, explicit, ids)
+	if err != nil {
+		return nil, "", err
+	}
+	out = make([]string, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, r.SourceID)
+	}
+	return out, warning, nil
+}

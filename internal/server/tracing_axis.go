@@ -22,7 +22,7 @@ var longRungs = []int64{3600000, 7200000, 14400000, 21600000, 28800000, 43200000
 
 // allRungs is every allowed bucket width in order: 60 s, 300 s, 600 s, 900 s,
 // 1 h, 2 h, 4 h, 6 h, 8 h, 12 h, 24 h.
-var allRungs = []int64{60000, 300000, 600000, 900000, 3600000, 7200000, 14400000, 21600000, 28800000, 43200000, 86400000}
+var allRungs = append(append([]int64{}, shortRungs...), longRungs...)
 
 // floorMs rounds ms down to a multiple of step (toward negative infinity, so
 // it is right before 1970 too). step must be positive.

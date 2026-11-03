@@ -2,6 +2,7 @@ package setup
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -142,7 +143,10 @@ func TestApplyProfileLinksListsAWriteFailureAndKeepsTheOutcome(t *testing.T) {
 	e := newEnv(t, "1.0.0")
 	opts := userOpts(e, true)
 	l := NewLayout(opts, e.dirs)
-	writeFile(t, filepath.Join(l.StartupLink, "keep.txt"), "x")
+	// The temporary file path is a folder, so the Startup link cannot be written.
+	if err := os.MkdirAll(l.StartupLink+".tmp", 0o755); err != nil {
+		t.Fatal(err)
+	}
 	var logs []string
 	res := &Result{Outcome: OutcomeDone, Op: OpInstall, AppExe: l.AppExe}
 	e.r.ApplyProfileLinks(opts, res, func(s string) { logs = append(logs, s) })

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"api-audit-explorer/internal/shelllink"
 )
 
 // All tests here use the fake PC of newEnv: temporary folders only, never the real Desktop, Start menu or Startup folder.
@@ -85,10 +87,43 @@ func TestWriteProfileLinksKeepsAForeignDesktopLink(t *testing.T) {
 	}
 }
 
-func TestWriteProfileLinksReplacesAnExistingStartupLink(t *testing.T) {
+func TestWriteProfileLinksKeepsAForeignStartupLink(t *testing.T) {
 	e := newEnv(t, "1.0.0")
 	l := machineLayout(e)
 	putLink(t, l.StartupLink, filepath.Join(e.root, "Other", "other.exe"), "")
+	before, _ := os.ReadFile(l.StartupLink)
+	var logged []string
+	if err := e.r.WriteProfileLinks(l, true, func(s string) { logged = append(logged, s) }); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(l.StartupLink)
+	if string(before) != string(after) {
+		t.Fatal("the foreign Startup link was overwritten")
+	}
+	if len(logged) != 1 || !strings.Contains(logged[0], "skipped") {
+		t.Fatalf("log = %q", logged)
+	}
+	if !exists(l.DesktopLink) {
+		t.Fatal("the Desktop link was not written")
+	}
+}
+
+func TestWriteProfileLinksKeepsAnUnreadableStartupFile(t *testing.T) {
+	e := newEnv(t, "1.0.0")
+	l := machineLayout(e)
+	writeFile(t, l.StartupLink, "garbage")
+	if err := e.r.WriteProfileLinks(l, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(l.StartupLink); string(got) != "garbage" {
+		t.Fatal("a Startup file that is not a shortcut was overwritten")
+	}
+}
+
+func TestWriteProfileLinksReplacesAnOlderStartupLinkOfOurs(t *testing.T) {
+	e := newEnv(t, "1.0.0")
+	l := machineLayout(e)
+	putLink(t, l.StartupLink, l.AppExe, "")
 	if err := e.r.WriteProfileLinks(l, true, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -137,8 +172,10 @@ func TestWriteProfileLinksMachineScopeLeavesStartMenuAndQuitToTheWorker(t *testi
 func TestWriteProfileLinksRemovesItsTmpFileOnFailure(t *testing.T) {
 	e := newEnv(t, "1.0.0")
 	l := machineLayout(e)
-	// The Startup link path is a non-empty folder, so the rename over it fails.
-	writeFile(t, filepath.Join(l.StartupLink, "keep.txt"), "x")
+	// The temporary file path is an empty folder, so writing the temporary file fails (and its cleanup removes the folder).
+	if err := os.MkdirAll(l.StartupLink+".tmp", 0o755); err != nil {
+		t.Fatal(err)
+	}
 	err := e.r.WriteProfileLinks(l, true, nil)
 	if err == nil {
 		t.Fatal("want the write error")
@@ -205,7 +242,7 @@ func TestRemoveProfileLinksUserScopeRemovesStartMenuAndQuit(t *testing.T) {
 func TestLinkIsOursIsFalseForAnOversizedFile(t *testing.T) {
 	e := newEnv(t, "1.0.0")
 	l := machineLayout(e)
-	writeFile(t, l.DesktopLink, strings.Repeat("x", maxLinkSize+1))
+	writeFile(t, l.DesktopLink, strings.Repeat("x", shelllink.MaxFileSize+1))
 	if ex, ours := linkIsOurs(l.DesktopLink, l.AppExe); !ex || ours {
 		t.Fatalf("exists %v ours %v", ex, ours)
 	}
@@ -214,7 +251,7 @@ func TestLinkIsOursIsFalseForAnOversizedFile(t *testing.T) {
 func TestLinkTargetDoesNotReadAnOversizedFile(t *testing.T) {
 	e := newEnv(t, "1.0.0")
 	l := machineLayout(e)
-	writeFile(t, l.DesktopLink, strings.Repeat("x", maxLinkSize+1))
+	writeFile(t, l.DesktopLink, strings.Repeat("x", shelllink.MaxFileSize+1))
 	old := readLinkFile
 	readLinkFile = func(string) ([]byte, error) {
 		t.Fatal("an oversized link was read")

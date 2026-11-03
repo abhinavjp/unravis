@@ -133,7 +133,34 @@ func looksLikeSecret(s string) bool {
 // profileDirs lists the spellings of the user's profile folder: the OS home
 // directory and the USERPROFILE/HOME variables, each with both slash forms,
 // longest first so the most specific spelling wins.
+//
+// The sorted list is cached per set of inputs: Sanitize runs on every log line,
+// and the home directory and the two variables do not change while the app
+// runs. The inputs are read each time, so a test that sets USERPROFILE or HOME
+// sees its own value.
 func profileDirs() []string {
+	home, _ := os.UserHomeDir()
+	userProfile, homeEnv := os.Getenv("USERPROFILE"), os.Getenv("HOME")
+	key := home + "\x00" + userProfile + "\x00" + homeEnv
+	profileMu.Lock()
+	defer profileMu.Unlock()
+	if profileCache.key != key || !profileCache.ok {
+		profileCache.dirs = buildProfileDirs(home, userProfile, homeEnv)
+		profileCache.key, profileCache.ok = key, true
+	}
+	return profileCache.dirs
+}
+
+var (
+	profileMu    sync.Mutex
+	profileCache struct {
+		key  string
+		ok   bool
+		dirs []string
+	}
+)
+
+func buildProfileDirs(home, userProfile, homeEnv string) []string {
 	seen := map[string]bool{}
 	var dirs []string
 	add := func(dir string) {
@@ -144,11 +171,9 @@ func profileDirs() []string {
 			}
 		}
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		add(home)
-	}
-	add(os.Getenv("USERPROFILE"))
-	add(os.Getenv("HOME"))
+	add(home)
+	add(userProfile)
+	add(homeEnv)
 	// Longest first, so a longer spelling is replaced before a prefix of it.
 	for i := 0; i < len(dirs); i++ {
 		for j := i + 1; j < len(dirs); j++ {

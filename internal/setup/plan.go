@@ -685,7 +685,7 @@ func (p *Plan) shortcuts(ctx context.Context, t *Txn) error {
 	// never fails the install and never touches the other links.
 	write := func(link string, s Shortcut, guard bool) error {
 		if guard {
-			if err := p.r.refuseLinkedFolder(filepath.Dir(link)); err != nil {
+			if err := p.r.refuseLink(filepath.Dir(link)); err != nil {
 				t.Logf("shortcut skipped: %v", err)
 				return nil
 			}
@@ -715,16 +715,19 @@ func (p *Plan) shortcuts(ctx context.Context, t *Txn) error {
 		return nil
 	}
 	// A Desktop link that points to another program is left alone.
-	if l.DesktopLink != "" {
-		if exists, ours := linkIsOurs(l.DesktopLink, l.AppExe); !exists || ours {
-			if err := write(l.DesktopLink, open, true); err != nil {
-				return err
-			}
+	if l.DesktopLink != "" && mayWriteLink(l.DesktopLink, l.AppExe) {
+		if err := write(l.DesktopLink, open, true); err != nil {
+			return err
 		}
 	}
 	// On an upgrade or a reinstall with "Start at sign-in" still on, this also replaces an older Startup link that lacks
 	// --background with the current one.
+	// A Startup link that points to another program is left alone too.
 	if p.Opts.StartAtSignIn && l.StartupLink != "" {
+		if !mayWriteLink(l.StartupLink, l.AppExe) {
+			t.Logf("shortcut skipped: %s belongs to something else", l.StartupLink)
+			return nil
+		}
 		return write(l.StartupLink, startup, true)
 	}
 	return nil

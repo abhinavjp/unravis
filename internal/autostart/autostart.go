@@ -17,10 +17,7 @@ import (
 const LinkName = "Unravis.lnk"
 
 // Arg is the argument the shortcut passes so the app starts in the background (tray only, no browser).
-const Arg = "--background"
-
-// maxLinkSize is the largest file read as a shortcut; a real one is a few hundred bytes.
-const maxLinkSize = 64 << 10
+const Arg = shelllink.BackgroundArg
 
 const (
 	exeName   = "unravis.exe"
@@ -48,39 +45,20 @@ var (
 // LinkPath is the full path of the Startup shortcut.
 func LinkPath(startupDir string) string { return filepath.Join(startupDir, LinkName) }
 
-func samePath(a, b string) bool {
-	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
-}
-
-// readLink reads the shortcut at path when it is a regular file (not a link or directory) of at most 64 KiB.
+// readLink reads the shortcut at path when it is a regular file (not a link or directory) of at most shelllink.MaxFileSize. A file that
+// is not a plain small file is ErrNotOurs; it is never read.
 func readLink(path string) ([]byte, error) {
-	fi, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !fi.Mode().IsRegular() || fi.Size() > maxLinkSize {
+	data, err := shelllink.ReadFile(path, nil)
+	if errors.Is(err, shelllink.ErrNotShortcutFile) {
 		return nil, ErrNotOurs
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > maxLinkSize {
-		return nil, ErrNotOurs
-	}
-	return data, nil
-}
-
-// isOurs reports whether data is a shortcut whose target is exe.
-func isOurs(data []byte, exe string) bool {
-	target, err := shelllink.ReadShortcutTarget(data)
-	return err == nil && samePath(target, exe)
+	return data, err
 }
 
 // Enabled reports whether the Startup shortcut points at exe with the --background argument. Any error gives false.
 func Enabled(startupDir, exe string) bool {
 	data, err := readLink(LinkPath(startupDir))
-	if err != nil || !isOurs(data, exe) {
+	if err != nil || !shelllink.TargetIs(data, exe) {
 		return false
 	}
 	args, err := shelllink.ReadShortcutArgs(data)
@@ -121,7 +99,7 @@ func Enable(startupDir, exe string) error {
 			}
 			return fmt.Errorf("autostart: read the existing shortcut: %w", rerr)
 		}
-		if !isOurs(data, exe) {
+		if !shelllink.TargetIs(data, exe) {
 			return ErrNotOurs
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -158,12 +136,25 @@ func Enable(startupDir, exe string) error {
 		return fmt.Errorf("autostart: write the temp file: %w", cerr)
 	}
 	if err := renameFile(tmpName, link); err != nil {
-		// For example the temp folder is on another volume: remove the temp file and write straight to the shortcut.
+		// For example the temp folder is on another volume: drop the temp file and place the shortcut from the Startup folder itself.
 		_ = os.Remove(tmpName)
-		if err := os.WriteFile(link, data, 0o600); err != nil {
-			_ = os.Remove(link) // our own path (new, or an older shortcut of ours): do not leave a half file
-			return fmt.Errorf("autostart: write the shortcut: %w", err)
-		}
+		return writeBeside(link, data)
+	}
+	return nil
+}
+
+// writeBeside is the fallback when the temp file cannot be renamed over the link: the data goes to a temp name next to the link and is
+// renamed once (same volume, so a crash leaves the old shortcut, not a truncated one). Only when that rename also fails is the link
+// written in place, and a failed in-place write removes the half file; the link is our own path (new, or an older shortcut of ours).
+func writeBeside(link string, data []byte) error {
+	side := link + ".partial"
+	if os.WriteFile(side, data, 0o600) == nil && renameFile(side, link) == nil {
+		return nil
+	}
+	_ = os.Remove(side)
+	if err := os.WriteFile(link, data, 0o600); err != nil {
+		_ = os.Remove(link)
+		return fmt.Errorf("autostart: write the shortcut: %w", err)
 	}
 	return nil
 }
@@ -185,7 +176,7 @@ func Disable(startupDir, exe string) error {
 		}
 		return fmt.Errorf("autostart: read the shortcut: %w", err)
 	}
-	if !isOurs(data, exe) {
+	if !shelllink.TargetIs(data, exe) {
 		return ErrNotOurs
 	}
 	if err := os.Remove(link); err != nil && !errors.Is(err, os.ErrNotExist) {

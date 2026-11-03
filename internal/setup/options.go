@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"api-audit-explorer/internal/blackbox"
+	"api-audit-explorer/internal/shelllink"
 )
 
 // Scope is who the install is for.
@@ -343,6 +344,4 @@ func insideFolder(p, dir string) bool {
 }
 
 // samePath compares two Windows paths the way the file system does.
-func samePath(a, b string) bool {
-	return a != "" && b != "" && strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
-}
+func samePath(a, b string) bool { return shelllink.SamePath(a, b) }

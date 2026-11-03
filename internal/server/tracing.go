@@ -469,6 +469,65 @@ func finishTracingMeta(resp *tracingResponse) {
 // imports only; in that same-importer case the lane can list more events than
 // scanned.
 func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis, sel tracingSelection, now time.Time) ([]tracingLane, []string, error) {
+	src, warnings, err := resolveLaneSources(ctx, c, sel)
+	if err != nil {
+		return nil, nil, err
+	}
+	evs, capped, err := readLaneEvents(ctx, c, axis, src.readNames)
+	if err != nil {
+		return nil, nil, err
+	}
+	built := calltrace.BuildLanes(calltrace.Window{From: axis.Start, To: axis.End}, true, src.infos, evs)
+	if capped {
+		built = calltrace.MarkIncomplete(built)
+	}
+	reasonByID := httperrReasonsByID(evs)
+
+	lanes := make([]tracingLane, 0, 2)
+	for _, key := range []string{calltrace.LaneSQL, calltrace.LaneIIS} {
+		var bl calltrace.Lane
+		for _, l := range built {
+			if l.Key == key {
+				bl = l
+			}
+		}
+		lane := buildLane(key, bl, src.asOf, reasonByID, now)
+		if src.unchecked[key] {
+			lane.State = calltrace.StateClockUnchecked
+			lane.Disabled = tracingDisabledTZ
+			lane.Reason = tracingClockMsg
+			lane.Hidden = 0
+			lane.Events = []tracingEvent{} // an unconfirmed clock plots nothing
+			lanes = append(lanes, lane)
+			continue
+		}
+		if names := src.laneNames[key]; len(names) > 0 {
+			if err := bucketLane(ctx, c, axis, &lane, names, src.selectedIDs, capped); err != nil {
+				return nil, nil, err
+			}
+		}
+		lanes = append(lanes, lane)
+	}
+	return lanes, warnings, nil
+}
+
+// laneSources is what the selection says about the two lanes: the source
+// infos for calltrace, the importer names to read per lane, the lanes whose
+// clock is unconfirmed, the latest import time per lane and the import ids
+// that count.
+type laneSources struct {
+	infos       []calltrace.SourceInfo
+	laneNames   map[string][]string  // lane key -> importer names to read
+	unchecked   map[string]bool      // lane key -> a selected file has no confirmed rule
+	asOf        map[string]time.Time // lane key -> latest Imported
+	selectedIDs map[int64]bool
+	readNames   []string // laneNames in lane order (sql, iis), each sorted
+}
+
+// resolveLaneSources maps the selected sources to imports and works out, per
+// lane, what to read. The warnings are the no-file, not-a-lane and ambiguous
+// ones, in that order; the slice is never nil.
+func resolveLaneSources(ctx context.Context, c casestore.Case, sel tracingSelection) (laneSources, []string, error) {
 	warnings := []string{}
 	refByImport := map[int64]tracingRef{}
 	noFile := false
@@ -490,16 +549,16 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 	if len(refByImport) > 0 {
 		var err error
 		if recs, err = c.Imports(ctx); err != nil {
-			return nil, nil, err
+			return laneSources{}, nil, err
 		}
 	}
 
-	var infos []calltrace.SourceInfo
+	var out laneSources
 	nameValid := map[string]bool{}  // importer name -> every selected file of it has a confirmed rule
 	nameLane := map[string]string{} // importer name -> lane key
 	nameIDs := map[string]map[string]bool{}
-	asOf := map[string]time.Time{} // lane key -> latest Imported
-	selectedIDs := map[int64]bool{}
+	out.asOf = map[string]time.Time{}
+	out.selectedIDs = map[int64]bool{}
 	notLane := false
 	for _, rec := range recs {
 		ref, picked := refByImport[rec.ID]
@@ -516,8 +575,8 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 		if first != nil && last != nil && !first.IsZero() && !last.IsZero() && !last.Before(*first) {
 			info.From, info.To = first.UTC(), last.UTC()
 		}
-		infos = append(infos, info)
-		selectedIDs[rec.ID] = true
+		out.infos = append(out.infos, info)
+		out.selectedIDs[rec.ID] = true
 		nameLane[rec.Importer] = lane
 		if v, seen := nameValid[rec.Importer]; !seen {
 			nameValid[rec.Importer] = info.Validated
@@ -528,8 +587,8 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 			nameIDs[rec.Importer] = map[string]bool{}
 		}
 		nameIDs[rec.Importer][ref.SourceID] = true
-		if t := rec.Imported.UTC(); t.After(asOf[lane]) {
-			asOf[lane] = t
+		if t := rec.Imported.UTC(); t.After(out.asOf[lane]) {
+			out.asOf[lane] = t
 		}
 	}
 	if notLane {
@@ -548,53 +607,56 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 
 	// Per lane: the importer names to read, and whether a clock is unconfirmed.
 	// A lane with an unconfirmed clock plots nothing, so it reads nothing.
-	unchecked := map[string]bool{}
-	laneNames := map[string][]string{}
+	out.unchecked = map[string]bool{}
+	out.laneNames = map[string][]string{}
 	for name, lane := range nameLane {
 		if !nameValid[name] {
-			unchecked[lane] = true
+			out.unchecked[lane] = true
 		}
 	}
 	for name, lane := range nameLane {
-		if !unchecked[lane] {
-			laneNames[lane] = append(laneNames[lane], name)
+		if !out.unchecked[lane] {
+			out.laneNames[lane] = append(out.laneNames[lane], name)
 		}
 	}
-	var readNames []string
 	for _, lane := range []string{calltrace.LaneSQL, calltrace.LaneIIS} {
-		sort.Strings(laneNames[lane])
-		readNames = append(readNames, laneNames[lane]...)
+		sort.Strings(out.laneNames[lane])
+		out.readNames = append(out.readNames, out.laneNames[lane]...)
 	}
+	return out, warnings, nil
+}
 
-	var evs []evidence.Event
-	capped := false
-	if len(readNames) > 0 {
-		got, err := c.Events(ctx, casestore.EventQuery{
-			Window:  importer.Window{From: axis.Start, To: axis.End},
-			Sources: readNames,
-			Limit:   casestore.MaxEventQuery,
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-		capped = len(got) >= casestore.MaxEventQuery
-		// The store window is inclusive at the end; tracing is half open.
-		evs = make([]evidence.Event, 0, len(got))
-		for _, e := range got {
-			if e.Start.Before(axis.End) {
-				evs = append(evs, e)
-			}
+// readLaneEvents reads the events of the named importers in the axis window,
+// start-based and half open. capped is true when the read hit the row cap, so
+// events may be missing. No names reads nothing.
+func readLaneEvents(ctx context.Context, c casestore.Case, axis tracingAxis, names []string) (evs []evidence.Event, capped bool, err error) {
+	if len(names) == 0 {
+		return nil, false, nil
+	}
+	got, err := c.Events(ctx, casestore.EventQuery{
+		Window:  importer.Window{From: axis.Start, To: axis.End},
+		Sources: names,
+		Limit:   casestore.MaxEventQuery,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	capped = len(got) >= casestore.MaxEventQuery
+	// The store window is inclusive at the end; tracing is half open.
+	evs = make([]evidence.Event, 0, len(got))
+	for _, e := range got {
+		if e.Start.Before(axis.End) {
+			evs = append(evs, e)
 		}
 	}
-	built := calltrace.BuildLanes(calltrace.Window{From: axis.Start, To: axis.End}, true, infos, evs)
-	if capped {
-		built = calltrace.MarkIncomplete(built)
-	}
+	return evs, capped, nil
+}
 
-	// reasonByID carries only the reasons the importer itself produced
-	// (iis.KnownHTTPERRReason), keyed by EvidenceID so the lookup below
-	// reaches the right event even when several HTTP.sys error rows share a
-	// timestamp. No other attribute of an iis-httperr event is read here.
+// httperrReasonsByID carries only the reasons the importer itself produced
+// (iis.KnownHTTPERRReason), keyed by EvidenceID so the lookup reaches the right
+// event even when several HTTP.sys error rows share a timestamp. No other
+// attribute of an iis-httperr event is read here.
+func httperrReasonsByID(evs []evidence.Event) map[string]string {
 	reasonByID := map[string]string{}
 	for _, e := range evs {
 		if e.Source != "iis-httperr" {
@@ -604,85 +666,79 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 			reasonByID[e.EvidenceID] = r
 		}
 	}
+	return reasonByID
+}
 
-	lanes := make([]tracingLane, 0, 2)
-	for _, key := range []string{calltrace.LaneSQL, calltrace.LaneIIS} {
-		var bl calltrace.Lane
-		for _, l := range built {
-			if l.Key == key {
-				bl = l
-			}
+// buildLane makes the wire lane for key from the calltrace lane bl (the zero
+// Lane when calltrace made none): label, sources and event markers. Buckets
+// stay empty; bucketLane fills them. An unconfirmed clock is applied by the
+// caller.
+func buildLane(key string, bl calltrace.Lane, asOf map[string]time.Time, reasonByID map[string]string, now time.Time) tracingLane {
+	lane := tracingLane{
+		Key: key, Label: bl.Label, State: bl.State,
+		Origin: tracingOriginCase, AsOf: now.UTC(), Complete: true, Consistency: tracingConsStored,
+		Sources: make([]tracingRef, 0, len(bl.SourceRefs)), Buckets: []tracingBucket{}, Events: []tracingEvent{},
+		Hidden: bl.Hidden,
+	}
+	if lane.Label == "" {
+		lane.Label = key
+	}
+	if t, ok := asOf[key]; ok {
+		lane.AsOf = t
+	}
+	for _, r := range bl.SourceRefs {
+		lane.Sources = append(lane.Sources, tracingRef{SourceID: r.SourceID, Label: r.Label})
+	}
+	for _, e := range bl.Events {
+		te := tracingEvent{
+			ID: e.ID, SourceID: e.SourceID, Label: e.Label, Start: e.Start, End: e.End,
+			DurationMs: e.DurationMs, Severity: e.Severity, StatusClass: e.StatusClass, Win32: e.Win32,
 		}
-		lane := tracingLane{
-			Key: key, Label: bl.Label, State: bl.State,
-			Origin: tracingOriginCase, AsOf: now.UTC(), Complete: true, Consistency: tracingConsStored,
-			Sources: make([]tracingRef, 0, len(bl.SourceRefs)), Buckets: []tracingBucket{}, Events: []tracingEvent{},
-			Hidden: bl.Hidden,
+		if key == calltrace.LaneIIS && e.Source == "iis-httperr" {
+			te.Kind = "iis-httperr"
+			te.End = te.Start
+			te.Label = httperrLabel(reasonByID[e.ID])
 		}
-		if lane.Label == "" {
-			lane.Label = key
-		}
-		if t, ok := asOf[key]; ok {
-			lane.AsOf = t
-		}
-		for _, r := range bl.SourceRefs {
-			lane.Sources = append(lane.Sources, tracingRef{SourceID: r.SourceID, Label: r.Label})
-		}
-		if unchecked[key] {
-			lane.State = calltrace.StateClockUnchecked
-			lane.Disabled = tracingDisabledTZ
-			lane.Reason = tracingClockMsg
-			lane.Hidden = 0
-			lanes = append(lanes, lane)
+		lane.Events = append(lane.Events, te)
+	}
+	return lane
+}
+
+// bucketLane sets lane.Scanned, lane.Buckets and the truncation fields from the
+// store's bucket counts for the importer names of the lane. Only imports in
+// selectedIDs are counted. capped is the row-cap result of the event read.
+func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *tracingLane, names []string, selectedIDs map[int64]bool, capped bool) error {
+	// c must be the unwrapped handle: a *sharedCase hides BucketCounter and
+	// CountBuckets would fall back to the 50 000 row scan.
+	res, err := tracingCountBuckets(ctx, c, casestore.BucketQuery{
+		AxisStart: axis.AxisStart, From: axis.Start, To: axis.End, WidthMs: axis.WidthMs, Sources: names,
+	})
+	if err != nil {
+		return err
+	}
+	perCell := map[int]int64{}
+	var total int64
+	for _, bc := range res.Counts {
+		if bc.ImportID != 0 && !selectedIDs[bc.ImportID] {
 			continue
 		}
-		for _, e := range bl.Events {
-			te := tracingEvent{
-				ID: e.ID, SourceID: e.SourceID, Label: e.Label, Start: e.Start, End: e.End,
-				DurationMs: e.DurationMs, Severity: e.Severity, StatusClass: e.StatusClass, Win32: e.Win32,
-			}
-			if key == calltrace.LaneIIS && e.Source == "iis-httperr" {
-				te.Kind = "iis-httperr"
-				te.End = te.Start
-				te.Label = httperrLabel(reasonByID[e.ID])
-			}
-			lane.Events = append(lane.Events, te)
-		}
-		if names := laneNames[key]; len(names) > 0 {
-			// c must be the unwrapped handle: a *sharedCase hides BucketCounter and
-			// CountBuckets would fall back to the 50 000 row scan.
-			res, err := tracingCountBuckets(ctx, c, casestore.BucketQuery{
-				AxisStart: axis.AxisStart, From: axis.Start, To: axis.End, WidthMs: axis.WidthMs, Sources: names,
-			})
-			if err != nil {
-				return nil, nil, err
-			}
-			perCell := map[int]int64{}
-			var total int64
-			for _, bc := range res.Counts {
-				if bc.ImportID != 0 && !selectedIDs[bc.ImportID] {
-					continue
-				}
-				perCell[bc.Index] += bc.Count
-				total += bc.Count
-			}
-			lane.Scanned = total
-			lane.Buckets = tracingBuckets(axis, perCell)
-			if capped {
-				lane.Truncated = true
-				lane.ReasonCode = tracingReasonRowCap
-				lane.Reason = tracingRowCapMsg
-			}
-			if res.Partial {
-				lane.Complete = false
-				lane.Truncated = true
-				lane.ReasonCode = tracingReasonBudget
-				lane.Reason = tracingScanBudget
-			}
-		}
-		lanes = append(lanes, lane)
+		perCell[bc.Index] += bc.Count
+		total += bc.Count
 	}
-	return lanes, warnings, nil
+	lane.Scanned = total
+	lane.Buckets = tracingBuckets(axis, perCell)
+	if capped {
+		lane.Truncated = true
+		lane.ReasonCode = tracingReasonRowCap
+		lane.Reason = tracingRowCapMsg
+	}
+	if res.Partial {
+		lane.Complete = false
+		lane.Truncated = true
+		lane.ReasonCode = tracingReasonBudget
+		lane.Reason = tracingScanBudget
+	}
+	return nil
 }
 
 // httperrLabel builds the label for an HTTP.sys error marker. reason is ""
@@ -755,6 +811,7 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 		writeCaseFailure(w, http.StatusNotFound, "unknown-source", tracingUnknownMsg)
 		return
 	}
+	now := time.Now().UTC()
 	start, end := req.Incident.Start.UTC(), req.Incident.End.UTC()
 	axis := newTracingAxis(start, end)
 	win := tracingWindow{Start: start, End: end, AxisStart: axis.AxisStart, AxisEnd: axis.AxisEnd,
@@ -762,13 +819,12 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 	resp := tracingResponse{
 		CaseID:     string(caseID),
 		RequestSeq: req.RequestSeq,
-		AsOf:       time.Now().UTC(),
+		AsOf:       now,
 		Window:     win,
-		Warnings:   sel.Warnings,
 		Sources:    sel.Refs,
 		Lanes:      []tracingLane{},
 	}
-	lanes, warns, err := tracingSQLIISLanes(ctx, unwrapCase(c), axis, sel, resp.AsOf)
+	lanes, warns, err := tracingSQLIISLanes(ctx, unwrapCase(c), axis, sel, now)
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -776,7 +832,8 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 	for _, lane := range lanes {
 		appendLane(&resp, lane)
 	}
-	resp.Warnings = append(append([]string{}, sel.Warnings...), warns...)
+	// The selection warnings come first, then the lane ones, then the audit ones.
+	resp.Warnings = append(append(make([]string, 0, len(sel.Warnings)+len(warns)+2), sel.Warnings...), warns...)
 	switch {
 	case auditErr != nil:
 		resp.Warnings = append(resp.Warnings, tracingAuditListWarn)
@@ -789,6 +846,8 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 			auditIDs[i] = ref.SourceID
 		}
 		reader, _ := h.repo.(audit.RollupReader)
+		// The live lane stamps its own read time (time.Now, not now): it is read
+		// after the case lanes, and its asOf says when the live data was fresh.
 		read := readAuditLane(ctx, reader, auditIDs, axis, time.Now)
 		if r.Context().Err() != nil {
 			return // the client went away; nothing to write

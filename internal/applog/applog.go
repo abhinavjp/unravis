@@ -12,8 +12,11 @@ package applog
 
 import (
 	"context"
+	"encoding"
+	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -203,6 +206,20 @@ func sanitizeAttr(a slog.Attr) slog.Attr {
 			return slog.String(a.Key, Sanitize(v))
 		case error:
 			return slog.String(a.Key, Sanitize(v.Error()))
+		case url.URL:
+			return slog.String(a.Key, Sanitize(v.String()))
+		case []byte:
+			return slog.String(a.Key, Sanitize(string(v)))
+		case encoding.TextMarshaler:
+			if text, err := v.MarshalText(); err == nil {
+				return slog.String(a.Key, Sanitize(string(text)))
+			}
+			return slog.String(a.Key, Sanitize(fmt.Sprintf("%+v", v)))
+		default:
+			// The handler would format any other value itself, unsanitized (a
+			// Stringer, a URL, a slice, a map, a struct). Render it the way the
+			// text handler does and clean the result.
+			return slog.String(a.Key, Sanitize(fmt.Sprintf("%+v", v)))
 		}
 	}
 	return a

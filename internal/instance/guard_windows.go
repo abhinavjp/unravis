@@ -28,6 +28,16 @@ func utf16Name(name string) (*uint16, error) {
 	return p, nil
 }
 
+// requireOwner is the one owner refusal every named-object check shares: nil
+// when the object is owned by the current user, ErrNameHeldByOther when it is
+// not or when the owner cannot be read (refuse rather than trust).
+func requireOwner(h windows.Handle) error {
+	if ok, err := ownerCheck(h); err != nil || !ok {
+		return ErrNameHeldByOther
+	}
+	return nil
+}
+
 // Acquire takes the named mutex in names. first is true for the first copy,
 // which must call release when it exits. A second copy gets first=false and a
 // nil error. A mutex that exists but is owned by someone else yields
@@ -47,10 +57,10 @@ func Acquire(names Names) (release func(), first bool, err error) {
 		return func() { once.Do(func() { _ = windows.CloseHandle(h) }) }, true, nil
 	case errors.Is(err, windows.ERROR_ALREADY_EXISTS):
 		// h is a handle to somebody's mutex, never one this process created.
-		ok, ownErr := ownerCheck(h)
+		ownErr := requireOwner(h)
 		_ = windows.CloseHandle(h)
-		if ownErr != nil || !ok {
-			return noop, false, ErrNameHeldByOther
+		if ownErr != nil {
+			return noop, false, ownErr
 		}
 		return noop, false, nil
 	case errors.Is(err, windows.ERROR_ACCESS_DENIED):

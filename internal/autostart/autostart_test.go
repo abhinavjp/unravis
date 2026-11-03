@@ -75,7 +75,7 @@ func TestEnableCreatesTheShortcutWithBackgroundArg(t *testing.T) {
 		t.Fatal(err)
 	}
 	target, args := readBack(t, startup)
-	if !samePath(target, exe) || args != "--background" {
+	if !shelllink.SamePath(target, exe) || args != "--background" {
 		t.Fatalf("target %q args %q", target, args)
 	}
 	if !Enabled(startup, exe) {
@@ -225,6 +225,45 @@ func TestEnableRemovesItsTempFileWhenTheRenameFails(t *testing.T) {
 	}
 	if entries(t, tmp) != 0 {
 		t.Fatal("temp file left behind")
+	}
+}
+
+func TestEnableFallsBackToASameFolderTempAndRenamesOnce(t *testing.T) {
+	startup, exe, tmp := setup(t)
+	calls := 0
+	var second string
+	renameFile = func(from, to string) error {
+		calls++
+		if calls == 1 {
+			return errors.New("cross-volume")
+		}
+		second = from
+		return os.Rename(from, to)
+	}
+	if err := Enable(startup, exe); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || !strings.EqualFold(filepath.Clean(filepath.Dir(second)), filepath.Clean(startup)) {
+		t.Fatalf("rename calls = %d, second source %q: want a retry from the Startup folder", calls, second)
+	}
+	if !Enabled(startup, exe) {
+		t.Fatal("the shortcut was not made")
+	}
+	if entries(t, tmp) != 0 || entries(t, startup) != 1 {
+		t.Fatal("a temp file was left behind")
+	}
+}
+
+func TestEnabledRefusesAShortcutThatIsADirectory(t *testing.T) {
+	startup, exe, _ := setup(t)
+	if err := os.Mkdir(LinkPath(startup), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if Enabled(startup, exe) {
+		t.Fatal("a directory counted as the shortcut")
+	}
+	if err := Enable(startup, exe); !errors.Is(err, ErrNotOurs) {
+		t.Fatalf("Enable over a directory = %v", err)
 	}
 }
 

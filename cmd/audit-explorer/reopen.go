@@ -1,8 +1,6 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,13 +17,7 @@ const (
 // system32File returns the full path of a file in the Windows System32 folder,
 // so a planted file of the same name in the current folder or on PATH is never
 // started.
-func system32File(name string) string {
-	root := os.Getenv("SystemRoot")
-	if root == "" {
-		root = `C:\Windows`
-	}
-	return filepath.Join(root, "System32", name)
-}
+func system32File(name string) string { return windowsFile("System32", name) }
 
 // reopener answers "open Unravis" requests (a second launch or the tray): it
 // mints a fresh one-time launch code, re-arms the running server with it and

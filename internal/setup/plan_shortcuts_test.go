@@ -213,3 +213,23 @@ func TestUpgradeWithSignInOffLeavesTheStartupFolderAlone(t *testing.T) {
 		t.Fatal("an upgrade with the option off wrote a Startup link")
 	}
 }
+
+func TestInstallKeepsAnExistingStartupLinkThatPointsElsewhere(t *testing.T) {
+	e := newEnv(t, "1.2.0")
+	o := e.userOpts()
+	o.StartAtSignIn = true
+	l := NewLayout(o, e.dirs)
+	putLink(t, l.StartupLink, filepath.Join(e.root, "Other", "other.exe"), "")
+	before, err := os.ReadFile(l.StartupLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.mustRun(OpInstall, o, UninstallOptions{})
+	after, err := os.ReadFile(l.StartupLink)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("the foreign Startup link changed (err %v)", err)
+	}
+	if !exists(l.StartMenuLink) || !exists(l.QuitLink) {
+		t.Fatal("the other links were not written")
+	}
+}

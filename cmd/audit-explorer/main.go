@@ -141,6 +141,8 @@ func storeOptions(f runFlags) []store.Option {
 	return []store.Option{store.WithBroadScans(f.allowBroadScans), store.WithDocsExaminedBudget(f.docsExaminedBudget)}
 }
 
+// run is the whole program after the command line is parsed. Each step is a small named function below; run keeps their order and the
+// defers that undo them (they run last-in first-out, so the session file goes before the server, the server before the stores).
 func run(args []string, getenv func(string) string) error {
 	f, err := parseFlags(args)
 	if err != nil {
@@ -156,37 +158,25 @@ func run(args []string, getenv func(string) string) error {
 		}
 		return nil
 	}
-	demo, port, noBrowser, mcpMode := &f.demo, &f.port, &f.noBrowser, &f.mcp
-	demoCfg, demoNotes, err := demoEnv(*demo, getenv, time.Now())
+	demoCfg, demoNotes, err := demoEnv(f.demo, getenv, time.Now())
 	if err != nil {
 		return err
 	}
 	for _, note := range demoNotes {
 		log.Print(note)
 	}
-	if *mcpMode {
-		options := []mcp.Option{mcp.WithIdentifiers(f.mcpAllowIdentifiers), mcp.WithToken(getenv("AUDIT_SESSION_TOKEN"))}
-		if path, pathErr := mcp.SessionFilePath(getenv); pathErr == nil {
-			options = append(options, mcp.WithSessionFile(path))
-		}
-		bridge, err := mcp.New(*port, options...)
-		if err != nil {
-			return err
-		}
-		debug.SetMemoryLimit(memorySoftLimit)
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		return bridge.Serve(ctx, os.Stdin, os.Stdout)
+	if f.mcp {
+		return runMCP(f, getenv)
 	}
 	// One interactive copy per user. --no-browser (the e2e launcher) never
 	// reaches the gate: no mutex, no events. --mcp, --version and --quit have
 	// already returned.
-	interactive := !*noBrowser && hostOS == "windows"
+	interactive := !f.noBrowser && hostOS == "windows"
 	background := f.background
 	openBrowser := interactive && !background
 	var instanceNames instance.Names
 	if interactive {
-		gate, err := enterSingleInstance(*demo, background, productionGateDeps())
+		gate, err := enterSingleInstance(f.demo, background, productionGateDeps())
 		if err != nil {
 			return err
 		}
@@ -202,60 +192,20 @@ func run(args []string, getenv func(string) string) error {
 	}
 	debug.SetMemoryLimit(memorySoftLimit)
 
-	// The journey log: one rotating file in the per-user logs folder, kept so
-	// the owner can send it to a developer when something goes wrong. If it
-	// cannot be opened the dashboard still runs; it just has no file to send.
-	logFile, logErr := applog.Open(applog.DefaultDir(getenv), applog.LevelFromEnv(getenv), casestore.SecureFile)
-	if logErr != nil {
-		log.Printf("Support log unavailable: %v", logErr)
-		logFile = nil
-	} else {
+	logFile := openSupportLog(getenv, token)
+	if logFile != nil {
 		defer logFile.Close()
-		// The session token is registered so the sanitizer strips it wherever
-		// it might turn up in an error message. It is never logged on purpose.
-		applog.RegisterSecret(token)
-		// The lines Unravis already prints keep going to the console, and to
-		// the file as well.
-		log.SetOutput(applog.Tee(os.Stderr, logFile.Writer()))
 	}
 
-	var repo audit.Repository
-	var serverOptions []server.Option
-	var saved savedWiring
-	if *demo {
-		// The shipped demo carries a little unfinished work so the incomplete panel has something to show.
-		repo = audit.NewDemoWithPatterns(demoCfg.now)
-	} else {
-		saved = wireSaved(getenv, storageFor(getenv))
-		repo = saved.auditRepo(store.New(storeOptions(f)...))
-		serverOptions = append(serverOptions, saved.options...)
+	wired, err := wireData(f, demoCfg, getenv)
+	if err != nil {
+		return err
 	}
-	hypotheses, ledgerErr := openLedger(*demo, getenv)
-	if ledgerErr != nil {
-		log.Printf("Hypothesis ledger unavailable: %v", ledgerErr)
-		hypotheses = nil
-	} else {
-		serverOptions = append(serverOptions, server.WithLedger(hypotheses))
-	}
-	// Imported cases (the importer wave) are live-mode only: demo mode runs on
-	// illustrative data and writes nothing to disk, so its case and host routes
-	// answer 503 "not available" rather than keep a case store nobody asked for.
-	// The one exception is the screenshot harness: --demo with UNRAVIS_DEMO_CASES=1
-	// and AUDIT_CONFIG_DIR opens a seeded store under that folder.
-	caseOptions, closeCases, casesErr := wireCases(*demo, demoCfg, getenv, hypotheses)
-	if casesErr != nil {
-		return casesErr
-	}
-	serverOptions = append(serverOptions, caseOptions...)
-	serverOptions = append(serverOptions, wireBlackbox(*demo, demoCfg, getenv, saved.bb)...)
-	defer closeCases()
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = repo.Close(ctx)
-	}()
+	defer wired.closeCases()
+	defer wired.closeRepo()
+	serverOptions := wired.options
 
-	listener, err := listenLoopback(*port)
+	listener, err := listenLoopback(f.port)
 	if err != nil {
 		return err
 	}
@@ -287,68 +237,21 @@ func run(args []string, getenv func(string) string) error {
 	if logFile != nil {
 		serverOptions = append(serverOptions, server.WithLogger(logFile.Logger), server.WithLogDir(logFile.Dir))
 	}
-	served := server.New(repo, explorer.Assets(), token, *demo, serverOptions...)
-	reo := &reopener{
-		base:    localURL,
-		rearm:   func(c string, u time.Time) bool { return server.Rearm(served, c, u) },
-		newCode: mintLaunchCode,
-		open:    openInBrowser,
-		warn:    showMessage,
-		now:     time.Now,
-		link:    func(c string) string { return launchLink(localURL, c) },
-	}
+	served := server.New(wired.repo, explorer.Assets(), token, f.demo, serverOptions...)
+	reo := newReopener(served, localURL)
 	defer server.LogAnalyzeRepeats(served)
 	// Registered after the case store's close, so it runs first: background
 	// imports stop and roll back before the store closes.
 	defer server.CancelImports(served)
-	httpServer := &http.Server{
-		Handler:           served,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       httpReadTimeout,
-		WriteTimeout:      httpWriteTimeout,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    16 << 10,
-	}
+	httpServer := newHTTPServer(served)
 	serveDone := make(chan error, 1)
 	go func() { serveDone <- httpServer.Serve(listener) }()
 
-	sessionPath, sessionErr := mcp.SessionFilePath(getenv)
-	if sessionErr == nil {
-		// The file is restricted to this user before the token is written to it.
-		sessionErr = mcp.WriteSessionFileSecured(sessionPath, listener.Addr().(*net.TCPAddr).Port, token, casestore.SecureFile)
-	}
-	removeSession := func() {}
-	if sessionErr != nil {
-		log.Printf("Session file not written; --mcp needs --port and AUDIT_SESSION_TOKEN to reach this dashboard")
-	} else {
-		removeSession = func() { _ = mcp.RemoveSessionFile(sessionPath, token) }
-		defer removeSession()
-	}
+	removeSession := writeSessionFile(getenv, listener, token)
+	defer removeSession()
 
 	if interactive {
-		// Other copies reach this one through the instance events: "open" re-arms a
-		// launch code and opens the browser, "quit" cancels appCtx.
-		stopListen, lerr := instance.Listen(appCtx, instanceNames, reo.Reopen, cancel)
-		if lerr != nil {
-			log.Printf("Second launches cannot reach this copy: %v", lerr)
-		} else {
-			defer stopListen()
-		}
-	}
-	if interactive {
-		// The tray icon. Quit and an end-session cancel appCtx, which runs the same
-		// shutdown as Ctrl+C. If the tray cannot start the app still runs.
-		deps := productionTrayDeps(reo.Reopen, cancel, showMessage)
-		opts := tray.Options{
-			Tooltip:      "Unravis",
-			Menu:         func() []tray.Item { return trayMenu(deps) },
-			OnSelect:     trayOnSelect(deps),
-			OnOpen:       reo.Reopen,
-			OnEndSession: endSessionHandler(cancel, &endingSession, runDone, endSessionGuard),
-			Logf:         log.Printf,
-		}
-		trayDone := startTray(appCtx, tray.Run, opts, log.Printf)
-		defer stopTray(cancel, &endingSession, trayDone, trayExitGuard)
+		defer startInteractive(appCtx, cancel, reo, instanceNames)()
 	}
 
 	opened := false
@@ -357,33 +260,198 @@ func run(args []string, getenv func(string) string) error {
 	}
 	printed := false
 	if code == "" {
-		log.Printf("%s running in the tray at %s (demo=%t)", version.Short(), localURL, *demo)
+		log.Printf("%s running in the tray at %s (demo=%t)", version.Short(), localURL, f.demo)
 	} else {
-		printed = printStartup(startupLines(localURL, code, codeLife, *demo, opened), opened, func(s string) { log.Print(s) }, os.Stderr)
+		printed = printStartup(startupLines(localURL, code, codeLife, f.demo, opened), opened, func(s string) { log.Print(s) }, os.Stderr)
 	}
 	if logFile != nil {
-		// The start line: what is running, where, and how the user gets in.
-		// The launch code itself is never written, only its outcome.
-		layout := datadir.Default(getenv)
-		dataDir := layout.Base
-		if layout.Root != "" {
-			dataDir = layout.Root
-		}
-		launch := "none"
-		if opened {
-			launch = "browser_opened"
-		} else if printed {
-			launch = "link_printed"
-		}
-		logFile.Logger.Info("start",
-			"version", version.Version,
-			"os", runtime.GOOS+"/"+runtime.GOARCH,
-			"port", listener.Addr().(*net.TCPAddr).Port,
-			"data_dir", dataDir,
-			"demo", *demo,
-			"launch", launch)
+		logStart(logFile, getenv, listener, f.demo, launchOutcome(opened, printed))
 	}
+	return awaitShutdown(signalContext, serveDone, removeSession, httpServer)
+}
 
+// runMCP serves the read-only MCP bridge over stdio, against the dashboard another copy already runs.
+func runMCP(f runFlags, getenv func(string) string) error {
+	options := []mcp.Option{mcp.WithIdentifiers(f.mcpAllowIdentifiers), mcp.WithToken(getenv("AUDIT_SESSION_TOKEN"))}
+	if path, pathErr := mcp.SessionFilePath(getenv); pathErr == nil {
+		options = append(options, mcp.WithSessionFile(path))
+	}
+	bridge, err := mcp.New(f.port, options...)
+	if err != nil {
+		return err
+	}
+	debug.SetMemoryLimit(memorySoftLimit)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return bridge.Serve(ctx, os.Stdin, os.Stdout)
+}
+
+// openSupportLog opens the journey log: one rotating file in the per-user logs folder, kept so the owner can send it to a developer
+// when something goes wrong. If it cannot be opened the dashboard still runs (nil result); it just has no file to send. The caller
+// closes a non-nil log.
+func openSupportLog(getenv func(string) string, token string) *applog.File {
+	logFile, logErr := applog.Open(applog.DefaultDir(getenv), applog.LevelFromEnv(getenv), casestore.SecureFile)
+	if logErr != nil {
+		log.Printf("Support log unavailable: %v", logErr)
+		return nil
+	}
+	// The session token is registered so the sanitizer strips it wherever
+	// it might turn up in an error message. It is never logged on purpose.
+	applog.RegisterSecret(token)
+	// The lines Unravis already prints keep going to the console, and to
+	// the file as well.
+	log.SetOutput(applog.Tee(os.Stderr, logFile.Writer()))
+	return logFile
+}
+
+// dataWiring is what the audit data, the hypothesis ledger, the case store and the Blackbox contribute to the server.
+type dataWiring struct {
+	repo    audit.Repository
+	options []server.Option
+	// closeCases closes the case store; closeRepo closes the audit repository. The caller defers closeCases first, then closeRepo.
+	closeCases func()
+	closeRepo  func()
+}
+
+// wireData opens the audit repository (demo data or the saved sources), the ledger, the cases and the Blackbox, in that order.
+func wireData(f runFlags, demoCfg demoSettings, getenv func(string) string) (dataWiring, error) {
+	var repo audit.Repository
+	var serverOptions []server.Option
+	var saved savedWiring
+	if f.demo {
+		// The shipped demo carries a little unfinished work so the incomplete panel has something to show.
+		repo = audit.NewDemoWithPatterns(demoCfg.now)
+	} else {
+		saved = wireSaved(getenv, storageFor(getenv))
+		repo = saved.auditRepo(store.New(storeOptions(f)...))
+		serverOptions = append(serverOptions, saved.options...)
+	}
+	hypotheses, ledgerErr := openLedger(f.demo, getenv)
+	if ledgerErr != nil {
+		log.Printf("Hypothesis ledger unavailable: %v", ledgerErr)
+		hypotheses = nil
+	} else {
+		serverOptions = append(serverOptions, server.WithLedger(hypotheses))
+	}
+	// Imported cases (the importer wave) are live-mode only: demo mode runs on
+	// illustrative data and writes nothing to disk, so its case and host routes
+	// answer 503 "not available" rather than keep a case store nobody asked for.
+	// The one exception is the screenshot harness: --demo with UNRAVIS_DEMO_CASES=1
+	// and AUDIT_CONFIG_DIR opens a seeded store under that folder.
+	caseOptions, closeCases, casesErr := wireCases(f.demo, demoCfg, getenv, hypotheses)
+	if casesErr != nil {
+		return dataWiring{}, casesErr
+	}
+	serverOptions = append(serverOptions, caseOptions...)
+	serverOptions = append(serverOptions, wireBlackbox(f.demo, demoCfg, getenv, saved.bb)...)
+	return dataWiring{
+		repo:       repo,
+		options:    serverOptions,
+		closeCases: closeCases,
+		closeRepo: func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = repo.Close(ctx)
+		},
+	}, nil
+}
+
+// newReopener builds the "open Unravis" handler for the running server.
+func newReopener(served http.Handler, localURL string) *reopener {
+	return &reopener{
+		base:    localURL,
+		rearm:   func(c string, u time.Time) bool { return server.Rearm(served, c, u) },
+		newCode: mintLaunchCode,
+		open:    openInBrowser,
+		warn:    showMessage,
+		now:     time.Now,
+		link:    func(c string) string { return launchLink(localURL, c) },
+	}
+}
+
+// newHTTPServer wraps the dashboard handler with the server's limits.
+func newHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       httpReadTimeout,
+		WriteTimeout:      httpWriteTimeout,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
+}
+
+// writeSessionFile writes the session file --mcp reads (port and token) and returns the function that removes it. When the file
+// cannot be written it logs that and returns a no-op.
+func writeSessionFile(getenv func(string) string, listener net.Listener, token string) (remove func()) {
+	sessionPath, sessionErr := mcp.SessionFilePath(getenv)
+	if sessionErr == nil {
+		// The file is restricted to this user before the token is written to it.
+		sessionErr = mcp.WriteSessionFileSecured(sessionPath, listener.Addr().(*net.TCPAddr).Port, token, casestore.SecureFile)
+	}
+	if sessionErr != nil {
+		log.Printf("Session file not written; --mcp needs --port and AUDIT_SESSION_TOKEN to reach this dashboard")
+		return func() {}
+	}
+	return func() { _ = mcp.RemoveSessionFile(sessionPath, token) }
+}
+
+// startInteractive wires the parts of an interactive (single-instance, Windows) start: the instance events other copies reach this one
+// through ("open" re-arms a launch code and opens the browser, "quit" cancels appCtx) and the tray icon. Quit and an end-session cancel
+// appCtx, which runs the same shutdown as Ctrl+C. If either cannot start the app still runs. The result stops the tray, then the
+// instance listener; the caller defers it.
+func startInteractive(appCtx context.Context, cancel context.CancelFunc, reo *reopener, names instance.Names) (stop func()) {
+	stopListen := func() {}
+	if stopFn, lerr := instance.Listen(appCtx, names, reo.Reopen, cancel); lerr != nil {
+		log.Printf("Second launches cannot reach this copy: %v", lerr)
+	} else {
+		stopListen = stopFn
+	}
+	deps := productionTrayDeps(reo.Reopen, cancel, showMessage)
+	opts := tray.Options{
+		Tooltip:      "Unravis",
+		Menu:         func() []tray.Item { return trayMenu(deps) },
+		OnSelect:     trayOnSelect(deps),
+		OnOpen:       reo.Reopen,
+		OnEndSession: endSessionHandler(cancel, &endingSession, runDone, endSessionGuard),
+		Logf:         log.Printf,
+	}
+	trayDone := startTray(appCtx, tray.Run, opts, log.Printf)
+	return func() {
+		stopTray(cancel, &endingSession, trayDone, trayExitGuard)
+		stopListen()
+	}
+}
+
+// launchOutcome names how the user gets in, for the start line. The launch code itself is never written, only this outcome.
+func launchOutcome(opened, printed bool) string {
+	switch {
+	case opened:
+		return "browser_opened"
+	case printed:
+		return "link_printed"
+	}
+	return "none"
+}
+
+// logStart writes the start line to the support log: what is running, where, and how the user gets in.
+func logStart(logFile *applog.File, getenv func(string) string, listener net.Listener, demo bool, launch string) {
+	layout := datadir.Default(getenv)
+	dataDir := layout.Base
+	if layout.Root != "" {
+		dataDir = layout.Root
+	}
+	logFile.Logger.Info("start",
+		"version", version.Version,
+		"os", runtime.GOOS+"/"+runtime.GOARCH,
+		"port", listener.Addr().(*net.TCPAddr).Port,
+		"data_dir", dataDir,
+		"demo", demo,
+		"launch", launch)
+}
+
+// awaitShutdown blocks until the server stops by itself or a quit signal arrives, then shuts it down cleanly.
+func awaitShutdown(signalContext context.Context, serveDone <-chan error, removeSession func(), httpServer shutdowner) error {
 	select {
 	case err := <-serveDone:
 		if errors.Is(err, http.ErrServerClosed) {

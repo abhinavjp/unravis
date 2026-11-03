@@ -24,6 +24,12 @@ type rotateWriter struct {
 	f        *os.File
 	size     int64
 	closed   bool // set by Close: later writes are refused, never reopen the file
+
+	// A rotation that fails (the file is held open by a viewer or a scanner)
+	// must not eat the older backups, so the writer keeps appending and tries
+	// again only once the pending write would pass noRotateBelow.
+	noRotateBelow int64
+	lastRotateErr error // the most recent failed rotation; nil after a good one
 }
 
 func newRotateWriter(dir, name string, maxSize int64, maxFiles int, secure func(string) error) (*rotateWriter, error) {
@@ -68,24 +74,59 @@ func (w *rotateWriter) open() error {
 	return nil
 }
 
+// stagingPath is where the current file waits while the backups shift, so the
+// oldest backup is only deleted once the current file is known to be movable.
+func (w *rotateWriter) stagingPath() string { return w.path() + ".rotating" }
+
 // rotate shifts every backup one place older, dropping the oldest, and starts
-// a fresh current file.
+// a fresh current file. When the current file cannot be moved (another program
+// holds it open), nothing is deleted or shifted: the writer reopens the same
+// file, records the error and backs off for one more maxSize of data.
 func (w *rotateWriter) rotate() error {
 	if w.f != nil {
 		_ = w.f.Close()
 		w.f = nil
 	}
-	if w.maxFiles > 1 {
-		// Remove before rename: Windows refuses to rename over an existing file.
-		_ = os.Remove(w.backup(w.maxFiles - 1))
-		for i := w.maxFiles - 2; i >= 1; i-- {
-			_ = os.Rename(w.backup(i), w.backup(i+1))
-		}
-		_ = os.Rename(w.path(), w.backup(1))
+	if err := w.shiftBackups(); err != nil {
+		w.lastRotateErr = err
+		w.noRotateBelow = w.size + w.maxSize
 	} else {
-		_ = os.Remove(w.path())
+		w.lastRotateErr = nil
+		w.noRotateBelow = 0
 	}
 	return w.open()
+}
+
+// shiftBackups moves the current file out of the way first and only then drops
+// the oldest backup and shifts the rest. A failure puts the current file back.
+func (w *rotateWriter) shiftBackups() error {
+	if w.maxFiles <= 1 {
+		if err := os.Remove(w.path()); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	staging := w.stagingPath()
+	_ = os.Remove(staging) // a leftover from a crashed rotation; Windows will not rename over it
+	if err := os.Rename(w.path(), staging); err != nil {
+		return err
+	}
+	// Remove before rename: Windows refuses to rename over an existing file.
+	if err := os.Remove(w.backup(w.maxFiles - 1)); err != nil && !os.IsNotExist(err) {
+		_ = os.Rename(staging, w.path())
+		return err
+	}
+	for i := w.maxFiles - 2; i >= 1; i-- {
+		if err := os.Rename(w.backup(i), w.backup(i+1)); err != nil && !os.IsNotExist(err) {
+			_ = os.Rename(staging, w.path())
+			return err
+		}
+	}
+	if err := os.Rename(staging, w.backup(1)); err != nil {
+		_ = os.Rename(staging, w.path())
+		return err
+	}
+	return nil
 }
 
 func (w *rotateWriter) Write(p []byte) (int, error) {
@@ -99,7 +140,7 @@ func (w *rotateWriter) Write(p []byte) (int, error) {
 			return 0, err
 		}
 	}
-	if w.size > 0 && w.size+int64(len(p)) > w.maxSize {
+	if next := w.size + int64(len(p)); w.size > 0 && next > w.maxSize && next > w.noRotateBelow {
 		if err := w.rotate(); err != nil {
 			return 0, err
 		}
