@@ -3,7 +3,6 @@ package iis
 import (
 	"context"
 	"io"
-	"net"
 	"strings"
 	"time"
 
@@ -46,12 +45,9 @@ func KnownHTTPERRReason(s string) bool {
 	if s == "other" {
 		return true
 	}
-	for _, canon := range httperrReasons {
-		if s == canon {
-			return true
-		}
-	}
-	return false
+	// Keys are the lowercase form of each canonical value, so one lookup decides.
+	canon, ok := httperrReasons[strings.ToLower(s)]
+	return ok && canon == s
 }
 
 // HTTPERR imports HTTP.sys error logs.
@@ -116,15 +112,6 @@ func (HTTPERR) Parse(ctx context.Context, r io.Reader, opts importer.Options,
 	return run(ctx, r, opts, emit, httperrSpec)
 }
 
-// httperrClientIP reports whether s is usable as a client-ip attribute. It
-// has its own limit rather than sharing one with the W3C importer's IP check.
-func httperrClientIP(s string) bool {
-	if len(s) == 0 || len(s) > 64 || strings.ContainsAny(s, " /") {
-		return false
-	}
-	return net.ParseIP(s) != nil
-}
-
 func httperrRow(c *rowCtx) (evidence.Event, importer.Reason, error) {
 	var ev evidence.Event
 	d, _ := c.get("date")
@@ -176,7 +163,7 @@ func httperrRow(c *rowCtx) (evidence.Event, importer.Reason, error) {
 			attrs["queue"] = q
 		}
 	}
-	if v, ok := c.get("c-ip"); ok && httperrClientIP(v) {
+	if v, ok := c.get("c-ip"); ok && validIPv4or6(v) {
 		attrs["client-ip"] = v
 	}
 	return evidence.Event{Kind: "httperr", Host: host, Start: ts, End: ts, Attrs: attrs}, "", nil

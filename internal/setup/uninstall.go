@@ -201,7 +201,9 @@ func (p *Plan) removeProgramFiles(ctx context.Context, t *Txn) error {
 	if ents, err := os.ReadDir(dir); err == nil {
 		for _, e := range ents {
 			if e.IsDir() && (strings.HasPrefix(e.Name(), ".setup-staging-") || strings.HasPrefix(e.Name(), ".setup-backup-")) {
-				_ = os.RemoveAll(filepath.Join(dir, e.Name()))
+				if rerr := os.RemoveAll(filepath.Join(dir, e.Name())); rerr != nil {
+					p.leftf("Folder %s (%v)", filepath.Join(dir, e.Name()), rerr)
+				}
 			}
 		}
 	}

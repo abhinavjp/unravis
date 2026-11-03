@@ -3,6 +3,7 @@
 package tray
 
 import (
+	"runtime"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -61,16 +62,20 @@ func buildMenu(items []Item) (windows.Handle, error) {
 	}
 	menu := windows.Handle(h)
 	for _, it := range items {
-		var text uintptr
+		// p stays a typed pointer until the Call expression converts it, and
+		// KeepAlive pins the UTF-16 buffer past the call, so the GC cannot free it
+		// while AppendMenuW reads it. A separator has no text (nil, passed as 0).
+		var p *uint16
 		if !it.Separator {
-			p, perr := windows.UTF16PtrFromString(it.Text)
+			var perr error
+			p, perr = windows.UTF16PtrFromString(it.Text)
 			if perr != nil {
 				destroyMenu(menu)
 				return 0, perr
 			}
-			text = uintptr(unsafe.Pointer(p))
 		}
-		r, _, aerr := procAppendMenu.Call(h, uintptr(menuFlags(it)), uintptr(it.ID), text)
+		r, _, aerr := procAppendMenu.Call(h, uintptr(menuFlags(it)), uintptr(it.ID), uintptr(unsafe.Pointer(p)))
+		runtime.KeepAlive(p)
 		if r == 0 {
 			destroyMenu(menu)
 			return 0, aerr

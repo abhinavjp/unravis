@@ -668,7 +668,7 @@ func readLaneEvents(ctx context.Context, c casestore.Case, axis tracingAxis, nam
 func httperrReasonsByID(evs []evidence.Event) map[string]string {
 	reasonByID := map[string]string{}
 	for _, e := range evs {
-		if e.Source != "iis-httperr" {
+		if e.Source != sourceHTTPErr {
 			continue
 		}
 		if r := e.Attrs["reason"]; iis.KnownHTTPERRReason(r) {
@@ -703,8 +703,8 @@ func buildLane(key string, bl calltrace.Lane, asOf map[string]time.Time, reasonB
 			ID: e.ID, SourceID: e.SourceID, Label: e.Label, Start: e.Start, End: e.End,
 			DurationMs: e.DurationMs, Severity: e.Severity, StatusClass: e.StatusClass, Win32: e.Win32,
 		}
-		if key == calltrace.LaneIIS && e.Source == "iis-httperr" {
-			te.Kind = "iis-httperr"
+		if key == calltrace.LaneIIS && e.Source == sourceHTTPErr {
+			te.Kind = sourceHTTPErr
 			te.End = te.Start
 			te.Label = httperrLabel(reasonByID[e.ID])
 		}
@@ -726,6 +726,9 @@ func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *t
 	res, err := tracingCountBuckets(ctx, c, casestore.BucketQuery{
 		AxisStart: axis.AxisStart, From: axis.Start, To: axis.End, WidthMs: axis.WidthMs, Sources: names,
 		CountErrors: withErrors,
+		// An HTTP.sys marker is not a request, so it is never an error; the store
+		// skips these rows when counting errors.
+		ErrorExcludeSources: []string{sourceHTTPErr},
 	})
 	if err != nil {
 		return err
@@ -738,9 +741,7 @@ func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *t
 			continue
 		}
 		perCell[bc.Index] += bc.Count
-		if bc.Source != "iis-httperr" { // an HTTP.sys marker is not a request, so never an error
-			errCell[bc.Index] += bc.Errors
-		}
+		errCell[bc.Index] += bc.Errors
 		total += bc.Count
 	}
 	lane.Scanned = total

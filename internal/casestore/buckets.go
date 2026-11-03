@@ -30,14 +30,19 @@ import (
 //
 // CountErrors asks for BucketCount.Errors too: the events of a cell whose
 // attrs["status"] is exactly three ASCII digits starting with 5 (a 5xx HTTP
-// status). Events without such a status (for instance HTTP.sys error markers)
-// are counted in Count but never in Errors. Left false, Errors stays 0.
+// status). Events without such a status are counted in Count but never in
+// Errors. ErrorExcludeSources names importers whose events never count in
+// Errors even when they carry such a status (0 to 200 entries): the store does
+// not read their status at all. A caller uses it for rows that are markers, not
+// requests (HTTP.sys error rows keep the status of the failed request but are
+// not themselves a request outcome). Left false, Errors stays 0.
 type BucketQuery struct {
 	AxisStart, From, To time.Time
 	WidthMs             int64
 	Sources             []string
 	Kinds               []string
 	CountErrors         bool
+	ErrorExcludeSources []string
 }
 
 // BucketCount is the count of one cell for one importer.
@@ -96,6 +101,8 @@ func (q BucketQuery) Check() error {
 		return fmt.Errorf("%w: Sources", ErrBadBucketQuery)
 	case len(q.Kinds) > 200:
 		return fmt.Errorf("%w: Kinds", ErrBadBucketQuery)
+	case len(q.ErrorExcludeSources) > 200:
+		return fmt.Errorf("%w: ErrorExcludeSources", ErrBadBucketQuery)
 	}
 	return nil
 }
@@ -132,6 +139,10 @@ func CountBucketsScan(ctx context.Context, c Case, q BucketQuery) (BucketResult,
 	}
 	counts := map[cell]int64{}
 	errCounts := map[cell]int64{}
+	excluded := make(map[string]bool, len(q.ErrorExcludeSources))
+	for _, s := range q.ErrorExcludeSources {
+		excluded[s] = true
+	}
 	fromMs, toMs, axisMs := q.From.UnixMilli(), q.To.UnixMilli(), q.AxisStart.UnixMilli()
 	var scanned int64
 	eq := EventQuery{
@@ -147,7 +158,7 @@ func CountBucketsScan(ctx context.Context, c Case, q BucketQuery) (BucketResult,
 		}
 		k := cell{index: int((ts - axisMs) / q.WidthMs), source: ev.Source}
 		counts[k]++
-		if q.CountErrors && IsServerErrorStatus(ev.Attrs["status"]) {
+		if q.CountErrors && !excluded[ev.Source] && IsServerErrorStatus(ev.Attrs["status"]) {
 			errCounts[k]++
 		}
 		return nil

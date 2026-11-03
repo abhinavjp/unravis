@@ -1107,7 +1107,8 @@ func (c *Case) BucketCounts(ctx context.Context, q casestore.BucketQuery) (cases
 		return casestore.BucketResult{}, err
 	}
 	where := []string{"ts_ms >= ?", "ts_ms < ?"}
-	args := []any{q.AxisStart.UnixMilli(), q.WidthMs, q.From.UnixMilli(), q.To.UnixMilli()}
+	selArgs := []any{q.AxisStart.UnixMilli(), q.WidthMs}
+	args := []any{q.From.UnixMilli(), q.To.UnixMilli()}
 	if len(q.Sources) > maxFilter {
 		return casestore.BucketResult{}, fmt.Errorf("%w: too many source filters", ErrInvalid)
 	}
@@ -1127,14 +1128,27 @@ func (c *Case) BucketCounts(ctx context.Context, q casestore.BucketQuery) (cases
 	// No LIMIT: at most MaxSeriesBuckets cells times the case's number of imports.
 	// Errors: a status stored as exactly three digits starting with 5 (the same
 	// rule as casestore.IsServerErrorStatus). GLOB is NULL for a missing status,
-	// SUM skips NULLs, and COALESCE turns an all-NULL group into 0.
+	// SUM skips NULLs, and COALESCE turns an all-NULL group into 0. The sources in
+	// ErrorExcludeSources are filtered by a CASE guard first: CASE is lazy in
+	// SQLite, so their attrs_json is never parsed.
 	errCol := "0"
 	if q.CountErrors {
-		errCol = "COALESCE(SUM(json_extract(attrs_json,'$.status') GLOB '5[0-9][0-9]'), 0)"
+		statusIs5xx := "json_extract(attrs_json,'$.status') GLOB '5[0-9][0-9]'"
+		if len(q.ErrorExcludeSources) > 0 {
+			if len(q.ErrorExcludeSources) > maxFilter {
+				return casestore.BucketResult{}, fmt.Errorf("%w: too many error-exclude filters", ErrInvalid)
+			}
+			statusIs5xx = "CASE WHEN source NOT IN (" + strings.TrimSuffix(strings.Repeat("?,", len(q.ErrorExcludeSources)), ",") +
+				") THEN " + statusIs5xx + " END"
+			for _, v := range q.ErrorExcludeSources {
+				selArgs = append(selArgs, v)
+			}
+		}
+		errCol = "COALESCE(SUM(" + statusIs5xx + "), 0)"
 	}
 	query := "SELECT (ts_ms - ?) / ? AS b, source, import_id, COUNT(*), " + errCol + " FROM events WHERE " +
 		strings.Join(where, " AND ") + " GROUP BY b, source, import_id ORDER BY b, source, import_id"
-	rows, err := db.QueryContext(ctx, query, args...)
+	rows, err := db.QueryContext(ctx, query, append(selArgs, args...)...)
 	if err != nil {
 		return casestore.BucketResult{}, err
 	}

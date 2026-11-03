@@ -47,6 +47,7 @@ func TestBucketQueryCheck(t *testing.T) {
 		}(), true},
 		{"no sources", func() casestore.BucketQuery { q := valid; q.Sources = nil; return q }(), true},
 		{"201 sources", func() casestore.BucketQuery { q := valid; q.Sources = manySources; return q }(), true},
+		{"201 error-exclude sources", func() casestore.BucketQuery { q := valid; q.ErrorExcludeSources = manySources; return q }(), true},
 		{"valid", valid, false},
 	}
 	for _, c := range cases {
@@ -90,6 +91,31 @@ func TestCountBucketsScanHalfOpen(t *testing.T) {
 	want := []casestore.BucketCount{
 		{Index: 0, Source: "src", Count: 2},
 		{Index: 1, Source: "src", Count: 1},
+	}
+	if !reflect.DeepEqual(res.Counts, want) {
+		t.Fatalf("counts = %+v, want %+v", res.Counts, want)
+	}
+}
+
+// A source named in ErrorExcludeSources keeps its Count but never adds to Errors,
+// even for a 5xx status; other sources still do.
+func TestCountBucketsScanErrorExclude(t *testing.T) {
+	g := &genCase{n: 4, make: func(i int) evidence.Event {
+		src := []string{"req", "marker"}[i%2]
+		return evidence.Event{Kind: "k", Source: src, Start: bucketT0.Add(time.Duration(i) * time.Millisecond),
+			Attrs: map[string]string{"status": "503"}, Value: fl(1)}
+	}}
+	q := casestore.BucketQuery{
+		AxisStart: bucketT0, From: bucketT0, To: bucketT0.Add(time.Second), WidthMs: 1000,
+		Sources: []string{"req", "marker"}, CountErrors: true, ErrorExcludeSources: []string{"marker"},
+	}
+	res, err := casestore.CountBucketsScan(context.Background(), g, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []casestore.BucketCount{
+		{Index: 0, Source: "marker", Count: 2, Errors: 0},
+		{Index: 0, Source: "req", Count: 2, Errors: 2},
 	}
 	if !reflect.DeepEqual(res.Counts, want) {
 		t.Fatalf("counts = %+v, want %+v", res.Counts, want)

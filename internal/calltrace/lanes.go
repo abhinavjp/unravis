@@ -390,18 +390,30 @@ func laneEvents(in []evidence.Event, idByName map[string]string) ([]LaneEvent, i
 	evs := append([]evidence.Event(nil), in...)
 	hidden := 0
 	if len(evs) > MaxLaneEvents {
-		sort.SliceStable(evs, func(i, j int) bool {
-			a, b := eventLenMs(evs[i]), eventLenMs(evs[j])
-			if a != b {
-				return a > b
+		// Compute each duration once and sort an index slice on it, so the
+		// comparator does no work per compare and the events are not moved.
+		lens := make([]float64, len(evs))
+		order := make([]int, len(evs))
+		for i := range evs {
+			lens[i] = eventLenMs(evs[i])
+			order[i] = i
+		}
+		sort.SliceStable(order, func(i, j int) bool {
+			x, y := order[i], order[j]
+			if lens[x] != lens[y] {
+				return lens[x] > lens[y]
 			}
-			if !evs[i].Start.Equal(evs[j].Start) {
-				return evs[i].Start.Before(evs[j].Start)
+			if !evs[x].Start.Equal(evs[y].Start) {
+				return evs[x].Start.Before(evs[y].Start)
 			}
-			return evs[i].EvidenceID < evs[j].EvidenceID
+			return evs[x].EvidenceID < evs[y].EvidenceID
 		})
 		hidden = len(evs) - MaxLaneEvents
-		evs = evs[:MaxLaneEvents]
+		kept := make([]evidence.Event, MaxLaneEvents)
+		for i, idx := range order[:MaxLaneEvents] {
+			kept[i] = evs[idx]
+		}
+		evs = kept
 	}
 	sort.SliceStable(evs, func(i, j int) bool {
 		if !evs[i].Start.Equal(evs[j].Start) {

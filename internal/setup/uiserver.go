@@ -94,7 +94,6 @@ type UIServer struct {
 	running bool
 	cancel  context.CancelFunc
 	events  []StepEvent
-	lines   int
 	result  *Result
 	// keyShown is set once the read key has been handed to the page: it is shown once and never again.
 	keyShown bool
@@ -229,9 +228,16 @@ func (s *UIServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case "POST /api/open-log-folder":
-		dir := filepath.Dir(be.State().LogPath)
-		if s.OpenFolder != nil && dir != "." {
-			_ = s.OpenFolder(dir)
+		dir := filepath.Dir(logFileOf(be))
+		if dir == "." {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "This run has no log folder."})
+			return
+		}
+		if s.OpenFolder != nil {
+			if err := s.OpenFolder(dir); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "The log folder could not be opened: " + err.Error()})
+				return
+			}
 		}
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	case "POST /api/close":
@@ -251,6 +257,18 @@ func (s *UIServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// logFiler is implemented by a backend that knows its log file without building
+// the full State (which walks the data folders for their sizes).
+type logFiler interface{ LogFile() string }
+
+// logFileOf is the backend's log path, read cheaply when the backend allows it.
+func logFileOf(be UIBackend) string {
+	if lf, ok := be.(logFiler); ok {
+		return lf.LogFile()
+	}
+	return be.State().LogPath
+}
+
 func (s *UIServer) startRun(w http.ResponseWriter, be UIBackend, req WorkRequest) {
 	s.mu.Lock()
 	if s.running {
@@ -266,11 +284,7 @@ func (s *UIServer) startRun(w http.ResponseWriter, be UIBackend, req WorkRequest
 			s.mu.Lock()
 			s.events = append(s.events, e)
 			s.mu.Unlock()
-		}, func(string) {
-			s.mu.Lock()
-			s.lines++
-			s.mu.Unlock()
-		})
+		}, func(string) {})
 		res.ReadKey = strings.TrimSpace(res.ReadKey)
 		s.mu.Lock()
 		s.running, s.cancel, s.result = false, nil, &res
@@ -322,6 +336,9 @@ type LocalBackend struct {
 	// AllowDowngrade is --allow-downgrade: the only way to install an older version over a newer one.
 	AllowDowngrade bool
 }
+
+// LogFile is the path of this process's log file, without the folder walks State does.
+func (b *LocalBackend) LogFile() string { return b.LogPath }
 
 func (b *LocalBackend) installed() *Installed {
 	old, err := Detect(b.R.Sys.Reg)
@@ -425,41 +442,52 @@ func DescribeChanges(req WorkRequest, old *Installed, d Dirs, svc Services, isAd
 	c := UIChanges{NeedsAdmin: NeedsAdminFor(svc, o) && !isAdmin}
 	l := NewLayout(o, d)
 	if req.Op == OpUninstall {
-		c.WillChange = append(c.WillChange, "Remove the program folder "+l.InstallDir, "Remove the Start menu shortcut and the Installed apps entry",
-				"Remove the Quit Unravis shortcut from the Start menu")
-			if l.DesktopLink != "" {
-				c.WillChange = append(c.WillChange, "Remove the Desktop shortcut (only if it points to Unravis)")
-			}
-		if o.Scope == ScopeMachine {
-			c.WillChange = append(c.WillChange, "Remove the key keeper service")
-		}
-		if o.Blackbox != nil {
-			c.WillChange = append(c.WillChange, "Remove the Blackbox service "+blackbox.ServiceName)
-		}
+		describeUninstall(&c, o, l, req.Uninstall)
+		return c
+	}
+	describeInstall(&c, o, l, d)
+	return c
+}
+
+// describeUninstall fills c for an uninstall of o. A ticked deletion is named in the first list, so the approval screen never
+// hides what goes.
+func describeUninstall(c *UIChanges, o Options, l Layout, u UninstallOptions) {
+	c.WillChange = append(c.WillChange, "Remove the program folder "+l.InstallDir, "Remove the Start menu shortcut and the Installed apps entry",
+		"Remove the Quit Unravis shortcut from the Start menu")
+	if l.DesktopLink != "" {
+		c.WillChange = append(c.WillChange, "Remove the Desktop shortcut (only if it points to Unravis)")
+	}
+	if o.Scope == ScopeMachine {
+		c.WillChange = append(c.WillChange, "Remove the key keeper service")
+	}
+	if o.Blackbox != nil {
+		c.WillChange = append(c.WillChange, "Remove the Blackbox service "+blackbox.ServiceName)
+		// The firewall rule is named by the Blackbox port; a damaged state with a rule and no Blackbox entry names no port.
 		if o.Firewall != nil {
 			c.WillChange = append(c.WillChange, "Remove the firewall rule for port "+strconv.Itoa(o.Blackbox.Port))
 		}
-		// A ticked deletion is named in the first list, so the approval screen never hides what goes.
-		u := req.Uninstall
-		if u.DeleteCases {
-			if o.Scope == ScopeMachine {
-				c.WillChange = append(c.WillChange, "Delete the cases and saved connections of everyone on this PC in "+l.SharedRoot)
-			} else {
-				c.WillChange = append(c.WillChange, "Delete your cases and saved connections in "+strings.Join(l.UserData, ", "))
-			}
-		} else {
-			c.WillNotChange = append(c.WillNotChange, "Cases and saved connections")
-		}
-		if o.Blackbox != nil {
-			if u.DeleteRecordings {
-				c.WillChange = append(c.WillChange, "Delete the Blackbox recordings in "+o.Blackbox.Folder)
-			} else {
-				c.WillNotChange = append(c.WillNotChange, "Blackbox recordings in "+o.Blackbox.Folder)
-			}
-		}
-		c.WillNotChange = append(c.WillNotChange, "Other programs and services", "Any database or server")
-		return c
 	}
+	if u.DeleteCases {
+		if o.Scope == ScopeMachine {
+			c.WillChange = append(c.WillChange, "Delete the cases and saved connections of everyone on this PC in "+l.SharedRoot)
+		} else {
+			c.WillChange = append(c.WillChange, "Delete your cases and saved connections in "+strings.Join(l.UserData, ", "))
+		}
+	} else {
+		c.WillNotChange = append(c.WillNotChange, "Cases and saved connections")
+	}
+	if o.Blackbox != nil {
+		if u.DeleteRecordings {
+			c.WillChange = append(c.WillChange, "Delete the Blackbox recordings in "+o.Blackbox.Folder)
+		} else {
+			c.WillNotChange = append(c.WillNotChange, "Blackbox recordings in "+o.Blackbox.Folder)
+		}
+	}
+	c.WillNotChange = append(c.WillNotChange, "Other programs and services", "Any database or server")
+}
+
+// describeInstall fills c for an install, upgrade or repair of o.
+func describeInstall(c *UIChanges, o Options, l Layout, d Dirs) {
 	c.WillChange = append(c.WillChange, "Program files in "+l.InstallDir)
 	if o.Scope == ScopeMachine {
 		c.WillChange = append(c.WillChange, "Shared data folder "+filepath.Join(d.ProgramData, SharedFolderName)+" (everyone on this PC reads it; only Unravis and the key keeper change it)",
@@ -478,7 +506,6 @@ func DescribeChanges(req WorkRequest, old *Installed, d Dirs, svc Services, isAd
 	}
 	c.WillChange = append(c.WillChange, "Installed apps entry")
 	c.WillNotChange = []string{"Your cases and saved connections", "Saved passwords (they stay sealed as they are)", "Other programs and services", "Any database or server"}
-	return c
 }
 
 // Run runs the request, through the elevated worker when it needs administrator rights.

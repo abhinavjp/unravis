@@ -467,3 +467,50 @@ func TestUninstallChangesStillNameTheShortcutAndTheEntry(t *testing.T) {
 		t.Errorf("uninstall list = %q", ch.WillChange)
 	}
 }
+
+// A damaged setup-state.json can hold a firewall entry with no Blackbox entry: the uninstall list must not panic, and names no rule
+// because there is no port to name.
+func TestUninstallChangesFirewallWithoutBlackboxIsSafe(t *testing.T) {
+	d := captureDirs()
+	o := Options{Scope: ScopeUser, Location: DefaultLocation(ScopeUser, d), Firewall: &FirewallOptions{RemoteAddresses: []string{"10.0.0.1"}}}
+	ch := DescribeChanges(WorkRequest{Op: OpUninstall, Options: o}, nil, d, &FakeServices{}, false)
+	for _, line := range ch.WillChange {
+		if strings.Contains(line, "firewall") || strings.Contains(line, "Firewall") {
+			t.Errorf("firewall line without a Blackbox entry: %q", line)
+		}
+	}
+	if len(ch.WillChange) == 0 {
+		t.Fatal("empty uninstall list")
+	}
+}
+
+// pathBackend is a UIBackend whose State must not be called by the open-log-folder route when it offers LogFile.
+type pathBackend struct {
+	UIBackend
+	log        string
+	stateCalls int
+}
+
+func (p *pathBackend) State() UIState   { p.stateCalls++; return UIState{LogPath: p.log} }
+func (p *pathBackend) LogFile() string { return p.log }
+
+func TestOpenLogFolderReportsFailuresAndSkipsTheStateWalk(t *testing.T) {
+	be := &pathBackend{log: filepath.Join("C:", "logs", "setup.log")}
+	c := newUIClient(t, be)
+	var opened string
+	c.s.OpenFolder = func(dir string) error { opened = dir; return nil }
+	if code, out := c.do("POST", "/api/open-log-folder", "", nil); code != 200 || out["ok"] != true || opened != filepath.Dir(be.log) {
+		t.Fatalf("ok path: %d %v opened %q", code, out, opened)
+	}
+	if be.stateCalls != 0 {
+		t.Fatalf("State was called %d times for a button click", be.stateCalls)
+	}
+	c.s.OpenFolder = func(string) error { return http.ErrNotSupported }
+	if code, out := c.do("POST", "/api/open-log-folder", "", nil); code != http.StatusInternalServerError || out["error"] == nil {
+		t.Fatalf("failed open: %d %v", code, out)
+	}
+	be.log = ""
+	if code, out := c.do("POST", "/api/open-log-folder", "", nil); code != http.StatusNotFound || out["error"] == nil {
+		t.Fatalf("no log: %d %v", code, out)
+	}
+}

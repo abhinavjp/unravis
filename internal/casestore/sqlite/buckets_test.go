@@ -207,6 +207,58 @@ func TestBucketCountsErrorsMatchScan(t *testing.T) {
 	}
 }
 
+// ErrorExcludeSources: the GROUP BY and the scan fallback agree, the excluded
+// source keeps its Count but has zero Errors, and the other source still counts
+// its 5xx rows.
+func TestBucketCountsErrorExcludeMatchScan(t *testing.T) {
+	s, _ := newTestStore(t)
+	info := mustCreate(t, s, "err-exclude-buckets")
+	c := mustOpen(t, s, info.ID)
+	for _, src := range []string{"imp-req", "imp-mark"} {
+		evs := tEvents(c, src, 20)
+		for i := range evs {
+			evs[i].Source = src
+			evs[i].EvidenceID = evidence.EventID(string(c.Info().ID), src, src, evs[i].Line, 0)
+			evs[i].Attrs = map[string]string{"status": []string{"503", "200"}[i%2]}
+		}
+		meta := tMeta(src + ".csv")
+		meta.Importer = src
+		if _, err := c.Import(context.Background(), meta, tBody(src), tRun(evs)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.Background()
+	q := casestore.BucketQuery{
+		AxisStart: testBase, From: testBase, To: testBase.Add(20 * time.Second), WidthMs: 10_000,
+		Sources: []string{"imp-req", "imp-mark"}, CountErrors: true, ErrorExcludeSources: []string{"imp-mark"},
+	}
+	got, err := c.BucketCounts(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, err := casestore.CountBucketsScan(ctx, c, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reqErrs, markErrs, markCount int64
+	for i, bc := range got.Counts {
+		sc := scan.Counts[i]
+		if bc.Index != sc.Index || bc.Source != sc.Source || bc.Count != sc.Count || bc.Errors != sc.Errors {
+			t.Fatalf("BucketCounts %+v differs from scan %+v", bc, sc)
+		}
+		if bc.Source == "imp-req" {
+			reqErrs += bc.Errors
+		} else {
+			markErrs += bc.Errors
+			markCount += bc.Count
+		}
+	}
+	if len(got.Counts) != len(scan.Counts) || reqErrs != 10 || markErrs != 0 || markCount != 20 {
+		t.Fatalf("req errors %d (want 10), marker errors %d (want 0), marker count %d (want 20), cells %d vs %d",
+			reqErrs, markErrs, markCount, len(got.Counts), len(scan.Counts))
+	}
+}
+
 // A Kinds filter and a Sources filter each drop the other rows; an unknown
 // source gives an empty result, not an error.
 func TestBucketCountsFilters(t *testing.T) {

@@ -266,9 +266,7 @@ func run(ctx context.Context, r io.Reader, opts importer.Options,
 			if err := lim.CheckRows(rep.Rows + directives); err != nil {
 				return fin(err)
 			}
-			if !utf8.Valid(line) {
-				continue
-			}
+			// The line reader has already refused bad UTF-8 and NUL.
 			text := string(line)
 			switch {
 			case hasDirective(text, "#Fields:"):
@@ -291,10 +289,8 @@ func run(ctx context.Context, r io.Reader, opts importer.Options,
 		if !sawHdr {
 			return fin(quarantine(importer.ReasonUnsupportedFormat, ""))
 		}
-		if !utf8.Valid(line) {
-			reject(no, importer.ReasonEncoding)
-			continue
-		}
+		// One string copy per row; the fields below are slices of it. The line
+		// reader has already refused bad UTF-8 and NUL, so no second pass here.
 		vals := strings.Split(string(line), " ")
 		if len(vals) != width {
 			reject(no, importer.ReasonFieldCount)

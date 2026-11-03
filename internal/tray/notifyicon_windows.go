@@ -33,7 +33,7 @@ const (
 	lrShared      = 0x8000
 	smCxSmIcon    = 49
 	smCySmIcon    = 50
-	idiApplicaton = 32512
+	idiApplication = 32512
 	exeIconRes    = 1
 )
 
@@ -142,6 +142,6 @@ func exeIcon() windows.Handle {
 			return windows.Handle(h)
 		}
 	}
-	h, _, _ := procLoadIcon.Call(0, uintptr(idiApplicaton))
+	h, _, _ := procLoadIcon.Call(0, uintptr(idiApplication))
 	return windows.Handle(h)
 }
