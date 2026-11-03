@@ -107,7 +107,7 @@
   </div>
 
   {#if problems.length > 0}
-    <ul class="problems" role="alert">{#each problems as problem (problem)}<li>{problem}</li>{/each}</ul>
+    <div role="alert"><ul class="problems">{#each problems as problem (problem)}<li>{problem}</li>{/each}</ul></div>
     <p class="note">{T.fixWindows}</p>
   {/if}
   <p class="note">{T.windowsKept}</p>

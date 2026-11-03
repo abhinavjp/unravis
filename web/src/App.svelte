@@ -11,6 +11,7 @@
   import { backLabel, investigateState } from './lib/promote';
   import { requestDiscover } from './lib/discoverIntent';
   import { lazyComponent } from './lib/lazy';
+  import { readSubbarHint, writeSubbarHint } from './lib/subbarHint';
 
   // The page shell. The state and the logic live in lib/appState.svelte.ts; each region of the page is its own component.
   // startApp registers the effects and the mount work (theme, first load, the glossary event) for this component.
@@ -58,6 +59,16 @@
   // "Investigate this window" is offered once zoomed. "Back to ..." shows while the queried window is the one the last promotion made.
   const investigate = $derived(investigateState({ isRoot: zoomModel?.isRoot ?? true, runLoading: loading, stale: results.displayedRunIsStale }));
   const windowBackLabel = $derived(results.windowBack ? backLabel(results.windowBack) : null);
+  // Holds the scope bar's space while the first load runs, so the page does not jump when the bar appears.
+  const subbarHint = readSubbarHint(window.innerWidth);
+  const subbarShown = $derived(!!info && !app.firstRun && app.screen === 'running');
+  $effect(() => {
+    if (!subbarShown) return;
+    const measure = () => writeSubbarHint(window.innerWidth, document.querySelector('section.scope')?.getBoundingClientRect().height ?? 0);
+    const frame = requestAnimationFrame(measure);
+    window.addEventListener('resize', measure);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener('resize', measure); };
+  });
   // Opens the Import drawer with the "This computer" scan showing, so server data can be added without leaving the analysis.
   function addData() { requestDiscover(); openSidePanel('import'); }
 </script>
@@ -72,7 +83,7 @@
 
   {#if app.lockError}<div class="banner error-banner" role="alert"><span>{app.lockError}</span><button class="quiet-button" onclick={() => { app.lockError = ''; }}>Dismiss</button></div>{/if}
 
-  {#if info && !app.firstRun && app.screen === 'running'}<SubBar />{/if}
+  {#if subbarShown}<SubBar />{:else if (!info || app.screen === 'loading') && subbarHint > 0}<div class="subbar-reserve" style:height="{subbarHint}px" aria-hidden="true"></div>{/if}
 
     {#if panels.connectionsOpen}<ConnectionsDrawer />{/if}
 
@@ -152,6 +163,7 @@
 </div>
 
 <style>
+  .subbar-reserve { flex: 0 0 auto; }
   /* Back is a real button (B8): it sits at the left of the record rather than stretching across it. */
   .record-view > .back-button { justify-self: start; align-self: flex-start; }
 </style>

@@ -27,12 +27,8 @@ export default defineConfig(({ command }) => {
     build: {
       rollupOptions: {
         output: {
-          // ECharts and its canvas layer (zrender) dominate the bundle and change rarely; keeping
-          // them in their own chunk lets the app code reload without re-downloading them.
-          manualChunks(id: string) {
-            if (id.includes('/node_modules/echarts/') || id.includes('/node_modules/zrender/')) return 'vendor-echarts';
-            return undefined;
-          }
+          // No manual vendor chunk for ECharts: with lazily loaded panels it made the vendor chunk
+          // and the charts chunk import each other, so evaluation threw and the chart panels were blank.
         }
       }
     }
