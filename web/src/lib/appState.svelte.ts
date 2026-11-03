@@ -116,6 +116,8 @@ function storedCaseView(write?: 'case' | 'tracing' | ''): string {
 }
 // The case whose Investigation Timeline is open on the case page ('' when none). Lives here, not in the page, so Back and Forward can open and close it.
 let tracingCase = $state('');
+// The bar the Investigation Timeline handed to the analysis, with a sentence for an empty analysis ('' when there is none to say).
+let tracingHandoff = $state.raw<{ start: number; end: number; text: string } | null>(null);
 // Opening a case restores what it saved: its MongoDB connection and databases, then its filters (see caseWorkspace.ts). 'working' is the quiet
 // reconnect; the others wait for the person. Saves of the case workspace stay off until the case's own workspace has been read and applied.
 type RestorePhase = 'idle' | 'working' | 'signin' | 'unreachable' | 'missing' | 'failed';
@@ -1517,7 +1519,12 @@ export function onWindowKey(event: KeyboardEvent) {
 // A scope change (range chip, request type, source, filter) only marks the analysis on screen as out of date (runHint); the Run analysis button starts the run.
 export function onScopeChange() { error = ''; }
 /** A chosen hour of the hour grid becomes the primary window, with the hour before it as the reference. */
-export function setWindowFromHour(window: RollupWindow) { Object.assign(query, hourWindowQuery(window)); controlsResetKey++; onScopeChange(); }
+export function setWindowFromHour(window: RollupWindow) { tracingHandoff = null; Object.assign(query, hourWindowQuery(window)); controlsResetKey++; onScopeChange(); }
+/** Remember what to say if the analysis on this just-set bar window is empty. Call after setWindowFromHour; an empty text clears it. */
+export function setTracingHandoff(window: RollupWindow, text: string) {
+  const start = Date.parse(window.start), end = Date.parse(window.end);
+  tracingHandoff = text && Number.isFinite(start) && Number.isFinite(end) ? { start, end, text } : null;
+}
 /**
  * Make the zoomed window the queried window and rerun the full analysis on it. The window fields come from the analysis on screen, so
  * the lens edges and the root agree. A refusal (root, run in progress, unapplied changes, unusable window) is said in the strip and
@@ -1679,6 +1686,7 @@ export const app = {
   get screen() { return screen; },
   get activeCaseId() { return activeCaseId; },
   get tracingCase() { return tracingCase; },
+  get tracingHandoff() { return tracingHandoff; },
   get lockState() { return lockState; },
   get dpapiCases() { return dpapiCases; },
   get lockError() { return lockError; }, set lockError(value) { lockError = value; },

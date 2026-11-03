@@ -8,7 +8,10 @@ import { slotGrid, slotStartMs, slotOutside, barsFor, type Bar } from './lanes';
 export interface HandoffBucket { start: string; end: string }
 
 export const HANDOFF_TEXT = {
-  empty: 'Nothing was recorded in that bar, so there is nothing to analyse. Pick a bar with events.'
+  empty: 'Nothing was recorded in that bar, so there is nothing to analyse. Pick a bar with events.',
+  onlySql: 'No API audit requests in this period. The timeline showed SQL calls here.',
+  onlyIis: 'No API audit requests in this period. The timeline showed IIS requests here.',
+  sqlAndIis: 'No API audit requests in this period. The timeline showed SQL calls and IIS requests here.'
 };
 
 export const handoffCopyEntries = (): LintEntry[] =>
@@ -41,6 +44,27 @@ export function slotToBucket(response: TracingResponse, visible: Partial<Record<
   if (!hasEvents) return null;
   const startMs = slotStartMs(g, slotIndex);
   return { start: new Date(startMs).toISOString(), end: new Date(startMs + g.widthMs).toISOString() };
+}
+
+/**
+ * The sentence for an analysis that opens on a bar with SQL or IIS events but no API audit requests, or '' when the audit lane
+ * has requests in that bar or the other shown lanes have none. Uses only the counts the timeline already holds.
+ */
+export function otherLanesNote(response: TracingResponse, visible: Partial<Record<TracingLaneKey, boolean>>, slotIndex: number): string {
+  const g = slotGrid(response.window);
+  if (!g || !Number.isInteger(slotIndex)) return '';
+  const countAt = (key: TracingLaneKey): number => {
+    const lane = response.lanes.find((candidate) => candidate.key === key);
+    if (!lane) return 0;
+    const bars = barsFor(g, lane.buckets);
+    return laneDrawsBars(lane, bars) ? bars.find((bar) => bar.index === slotIndex)?.count ?? 0 : 0;
+  };
+  if (countAt('audit') > 0) return '';
+  const sql = isLaneVisible(visible, 'sql') && countAt('sql') > 0;
+  const iis = isLaneVisible(visible, 'iis') && countAt('iis') > 0;
+  if (sql && iis) return HANDOFF_TEXT.sqlAndIis;
+  if (sql) return HANDOFF_TEXT.onlySql;
+  return iis ? HANDOFF_TEXT.onlyIis : '';
 }
 
 /** Same rule as `cellWindow` in rollup.ts: both ends parse and start is before end. */

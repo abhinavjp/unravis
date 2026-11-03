@@ -205,3 +205,11 @@ test('kept windows that are malformed, or storage that fails, give nothing and n
   assert.equal(windows.loadWindows('c', broken), null);
   assert.doesNotThrow(() => windows.saveWindows('c', fields('', '', '', ''), broken));
 });
+
+test('windowHasNoData is true only when lanes came back and every bucket is empty (UI-R3-02)', () => {
+  assert.equal(windows.windowHasNoData([]), false);
+  assert.equal(windows.windowHasNoData([{ buckets: [] }, { buckets: [] }]), true);
+  assert.equal(windows.windowHasNoData([{ buckets: [{ count: 0 }] }, { buckets: [{ count: 0 }] }]), true);
+  assert.equal(windows.windowHasNoData([{ buckets: [{ count: 0 }] }, { buckets: [{ count: 2 }] }]), false);
+  assert.match(windows.WINDOW_TEXT.noData, /Add log files to the case/);
+});

@@ -44,7 +44,7 @@ export const ARCHIVE_TEXT = {
   // The archived case page (screen 122)
   archivedNote: 'This case is saved to a case file. It is read-only here.',
   freedNote: 'The working copy was freed. The case file is the only copy.',
-  archivedWork: 'To read the analysis, check the sources or add files, restore the case first.',
+  archivedWork: 'The analysis, the Investigation Timeline and the source checks are not available. You cannot add files. Restore the case first.',
   filesMade: 'Case files made earlier',
   caseFileLine: 'Case file',
   inFolder: 'in',

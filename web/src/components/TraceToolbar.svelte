@@ -48,7 +48,7 @@
  .pill-off { outline: var(--hairline-width) solid var(--line); outline-offset: 2px; }
  .tt-hint { flex-basis: 100%; margin: var(--space-1) 0 0; color: var(--text-2); }
  /* Touch targets on a phone, a tablet and any touch screen: 40 px high, never under 32. */
- @media (max-width: 768px), (pointer: coarse) {
+ @media (max-width: 1024px), (pointer: coarse) {
   .tt-lane, .pill { min-height: var(--space-10); }
  }
  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

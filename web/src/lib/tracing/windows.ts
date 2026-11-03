@@ -122,6 +122,7 @@ export const WINDOW_TEXT = {
   endNote: 'A window includes its start and stops just before its end.',
   keptPrevious: 'The chart still shows the previous window.',
   noEvents: 'No events in this window. Try a wider one.',
+  noData: 'Nothing was found in this window. Add log files to the case, or try a wider window.',
   cancelledNone: 'Cancelled. Press Start tracing to read the window again.',
   cancelledKept: 'Cancelled. The chart still shows the previous result.'
 } as const;
@@ -130,6 +131,11 @@ export const WINDOW_TEXT = {
 export function windowIsEmpty(lanes: { state: string; buckets: { count: number }[] }[]): boolean {
   const read = lanes.filter((lane) => lane.state === 'events' || lane.state === 'incomplete');
   return read.length > 0 && lanes.every((lane) => lane.buckets.every((bucket) => !(bucket.count > 0)));
+}
+
+/** True when lanes came back and none of them holds an event: the chart has nothing to draw, whatever the lane states say. */
+export function windowHasNoData(lanes: { buckets: { count: number }[] }[]): boolean {
+  return lanes.length > 0 && lanes.every((lane) => lane.buckets.every((bucket) => !(bucket.count > 0)));
 }
 
 const STORAGE_KEY = 'unravis.tracing.windows.';

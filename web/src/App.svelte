@@ -55,6 +55,12 @@
   // The time charts follow a view window inside the queried one. A new analysis on screen is a new top of the zoom steps.
   $effect(() => { zoomView.follow(analysis ?? null); });
   const zoomModel = $derived(zoomView.model);
+  // A hand-off from the timeline explains an empty strip (SQL or IIS events but no API requests), only while the analysis shows that same bar.
+  const emptyNote = $derived.by(() => {
+    const handoff = app.tracingHandoff;
+    const brush = zoomModel?.brush;
+    return handoff && brush && Math.abs(handoff.start - brush.rootStart) < 1000 && Math.abs(handoff.end - brush.rootEnd) < 1000 ? handoff.text : '';
+  });
   const zoomRead = $derived(zoomView.viewAnalysis);
   // "Investigate this window" is offered once zoomed. "Back to ..." shows while the queried window is the one the last promotion made.
   const investigate = $derived(investigateState({ isRoot: zoomModel?.isRoot ?? true, runLoading: loading, stale: results.displayedRunIsStale }));
@@ -127,7 +133,7 @@
               </div>
             {/if}
             {#if zoomModel && depth !== 3}
-              <ZoomStrip model={zoomModel} zone={timeZone.zone} announcement={zoomView.announcement} {investigate} backLabel={windowBackLabel} onInvestigate={investigateWindow} onWindowBack={backToPreviousWindow} onBrush={win => zoomView.setWindow(win)} onBack={() => zoomView.back()} onEarlier={() => zoomView.earlier()} onLater={() => zoomView.later()} onZoomIn={() => zoomView.zoomIn()} onZoomOut={() => zoomView.zoomOut()} onReset={() => zoomView.reset()} onJump={index => zoomView.jumpTo(index)} />
+              <ZoomStrip model={zoomModel} {emptyNote} zone={timeZone.zone} announcement={zoomView.announcement} {investigate} backLabel={windowBackLabel} onInvestigate={investigateWindow} onWindowBack={backToPreviousWindow} onBrush={win => zoomView.setWindow(win)} onBack={() => zoomView.back()} onEarlier={() => zoomView.earlier()} onLater={() => zoomView.later()} onZoomIn={() => zoomView.zoomIn()} onZoomOut={() => zoomView.zoomOut()} onReset={() => zoomView.reset()} onJump={index => zoomView.jumpTo(index)} />
               {#if zoomRead}<ProvenanceNote provenance={zoomRead.provenance} {sourceLabels} />{/if}
             {/if}
             <div class="stage-views" inert={loading}>

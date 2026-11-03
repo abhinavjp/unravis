@@ -31,7 +31,7 @@ function loadTypeScript(relativePath) {
 }
 
 const { explain, DICTIONARY } = loadTypeScript('src/lib/copy/dictionary.ts');
-const { LANE_DICT_ID, formatCount, laneHint, barTipLines, slotAtFraction, tooltipCopyEntries } = loadTypeScript('src/lib/tracing/tooltip.ts');
+const { LANE_DICT_ID, TOOLTIP_TEXT, formatCount, laneHint, barTipLines, isTouchPointer, slotAtFraction, tooltipCopyEntries } = loadTypeScript('src/lib/tracing/tooltip.ts');
 const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
 
@@ -188,7 +188,32 @@ test('counts use thousands separators, the same as the axis (UI-R1-10)', () => {
 });
 
 test('the time zone is named once in the range line (UI-R1-11)', () => {
-  assert.equal(barTipLines(bar({ startText: '19 Oct 10:20 UTC', endText: '19 Oct 10:25 UTC' }))[0], '19 Oct 10:20 UTC to 19 Oct 10:25 UTC');
+  assert.equal(barTipLines(bar({ startText: '19 Oct 10:20 UTC', endText: '19 Oct 10:25 UTC' }))[0], '19 Oct 10:20 to 19 Oct 10:25 UTC');
   assert.equal(barTipLines(bar({ startText: '19 Oct 10:20', endText: '19 Oct 10:25' }))[0], '19 Oct 10:20 to 19 Oct 10:25 (UTC)');
   assert.equal(barTipLines(bar({ zoneName: '' }))[0], '10:00 to 10:01');
+});
+
+test('a zone shared by both times is named once, also in Local (UI-R3-04)', () => {
+  const local = barTipLines(bar({ startText: '19 Oct 14:20 GMT+4', endText: '19 Oct 14:25 GMT+4', zoneName: 'Asia/Dubai' }))[0];
+  assert.equal(local, '19 Oct 14:20 to 19 Oct 14:25 GMT+4');
+  assert.equal((local.match(/GMT/g) || []).length, 1);
+  assert.ok(!local.includes('Asia/Dubai'));
+  // Times with no letters in the last word keep the old rule: the zone name is added once.
+  assert.equal(barTipLines(bar({ startText: '10:20', endText: '10:25' }))[0], '10:20 to 10:25 (UTC)');
+});
+
+test('a finger or a pen is a touch pointer, a mouse never is (UI-R3-06)', () => {
+  assert.equal(isTouchPointer('touch', false), true);
+  assert.equal(isTouchPointer('pen', false), true);
+  assert.equal(isTouchPointer('mouse', false), false);
+  assert.equal(isTouchPointer('mouse', true), false);
+  assert.equal(isTouchPointer('', true), true);
+  assert.equal(isTouchPointer(undefined, true), true);
+  assert.equal(isTouchPointer('', false), false);
+  assert.equal(isTouchPointer(undefined, false), false);
+});
+
+test('the tap-again line is plain copy and is in the lint list (UI-R3-06)', () => {
+  assert.match(TOOLTIP_TEXT.tapAgain, /^Tap this bar again/);
+  assert.ok(tooltipCopyEntries().some((entry) => entry.text === TOOLTIP_TEXT.tapAgain));
 });

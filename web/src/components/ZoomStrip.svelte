@@ -9,8 +9,8 @@
   // It is always visible. Top row: Back to ..., the trail, Back, Zoom in, Zoom out, Reset. Under it, the zoomed window in words and, once
   // zoomed, "Investigate this window". Then the navigator: the whole period as a strip with the zoomed part marked. Drag the marked part to
   // move it, drag its edges to resize it, click the strip to centre on a point. Earlier and Later sit on its two ends.
-  let { model, zone = 'UTC', announcement = '', investigate, backLabel = null, onBack, onEarlier, onLater, onZoomIn, onZoomOut, onReset, onJump, onBrush, onInvestigate, onWindowBack }: {
-    model: StripModel; zone?: string; announcement?: string;
+  let { model, zone = 'UTC', announcement = '', emptyNote = '', investigate, backLabel = null, onBack, onEarlier, onLater, onZoomIn, onZoomOut, onReset, onJump, onBrush, onInvestigate, onWindowBack }: {
+    model: StripModel; zone?: string; announcement?: string; emptyNote?: string;
     investigate: { enabled: boolean; reason: string }; backLabel?: string | null;
     onBack: () => void; onEarlier: () => void; onLater: () => void; onZoomIn: () => void; onZoomOut: () => void; onReset: () => void; onJump: (index: number) => void;
     onBrush: (win: ZoomWindow) => void; onInvestigate: () => void; onWindowBack: () => void;
@@ -173,7 +173,7 @@
       </div>
       <button type="button" class="quiet-button nav-later" disabled={!model.canLater} onclick={onLater}>{zoomCopy.later}</button>
     </div>
-    {#if !model.overview.hasData}<p class="zoom-note overview-empty">{zoomCopy.overviewEmpty}</p>{/if}
+    {#if !model.overview.hasData}<p class="zoom-note overview-empty">{emptyNote || zoomCopy.overviewEmpty}</p>{/if}
   </div>
 
   <p class="zoom-note hint">{model.hint}</p>

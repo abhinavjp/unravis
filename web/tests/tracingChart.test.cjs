@@ -339,3 +339,27 @@ test('the chart keeps the axis baseline, tab stops and ticks honest (UI-R1-07/10
   assert.match(src, /@media \(max-width: 768px\)/);
   assert.ok(!src.includes('onclick={() => select'), 'no per-column click closures');
 });
+
+test('a tap shows the tooltip and keeps it, a second tap on the same bar opens it; a mouse click still opens at once (UI-R3-06)', () => {
+  const src = read('src/components/TracingChart.svelte');
+  const down = src.slice(src.indexOf('function onOverlayDown'), src.indexOf('function onOverlayClick'));
+  // A press from a finger or pen keeps the tooltip; only a mouse press hides it first, as before.
+  assert.match(down, /downTouch = isTouchPointer\(event\.pointerType, coarsePointer\(\)\)/);
+  assert.match(down, /if \(!downTouch\) hideTip\(\);/);
+  const click = src.slice(src.indexOf('function onOverlayClick'), src.indexOf('function showTouchTip'));
+  assert.match(click, /if \(touch && !\(tipFromTouch && tipSlot === slot\)\) \{ showTouchTip\(slot, event\); return; \}\s*selectAt\(slot\);/);
+  assert.ok(click.indexOf('showTouchTip(') < click.indexOf('selectAt(slot)'), 'the touch branch comes before the hand-off');
+  // The touch flag only comes from isTouchPointer, so a mouse press is never touch.
+  assert.equal((src.match(/downTouch = /g) || []).length, 3, 'set on press, cleared on click, declared once');
+  // Moving the pointer is hover or drag: it clears the touch flag. Leaving by finger keeps the tip; leaving by mouse hides it.
+  assert.match(src, /tipFromTouch = false;\s*placeTip\(point\.x, point\.y\);/);
+  assert.match(src, /if \(tipFromTouch && event\.pointerType !== 'mouse'\) return;/);
+  assert.match(src, /function hideTip\(\) \{[^}]*tipFromTouch = false;/);
+  // The hint is shown only for a touch tooltip, and the sentence is in the lint list.
+  assert.match(src, /\{#if tipOpenable\}<span class="tip-action">\{TOOLTIP_TEXT\.tapAgain\}<\/span>\{\/if\}/);
+});
+
+test('the chart toolbar and hint are hidden while there is nothing to show (UI-R3-02)', () => {
+  const src = read('src/components/TracingChart.svelte');
+  assert.match(src, /\{#if grid && hasData\}/);
+});

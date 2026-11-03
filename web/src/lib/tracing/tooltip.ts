@@ -16,8 +16,23 @@ export const LANE_DICT_ID: Record<TracingLaneKey, string> = {
 export const TOOLTIP_TEXT = {
   noEvents: 'No events in this bucket',
   readJustNow: 'Read just now',
-  fromSavedLogs: 'From saved logs'
+  fromSavedLogs: 'From saved logs',
+  tapAgain: 'Tap this bar again to open it in the analysis.'
 } as const;
+
+/** True for a finger or a pen (or an unknown pointer on a coarse-pointer screen); a mouse never is. */
+export function isTouchPointer(pointerType: string | undefined, coarse: boolean): boolean {
+  if (pointerType === 'touch' || pointerType === 'pen') return true;
+  return pointerType !== 'mouse' && coarse;
+}
+
+/** The trailing word two formatted times share when it holds a letter ("UTC", "GMT+4"); '' when they do not share one. */
+function sharedZoneWord(a: string, b: string): string {
+  const pattern = /\s(\S*[A-Za-z]\S*)$/;
+  const first = pattern.exec(a);
+  const second = pattern.exec(b);
+  return first && second && first[1] === second[1] ? first[1] : '';
+}
 
 /** The plain hint shown on a lane head; '' when the key is not a lane. */
 export function laneHint(key: string): string {
@@ -50,9 +65,12 @@ export interface BarTipInput {
 
 /** The tooltip lines for one chart bar, in reading order; empty lines are dropped. */
 export function barTipLines(input: BarTipInput): string[] {
-  // The zone is added only when the formatted times do not already end with it ("... 10:25 UTC (UTC)" says it twice).
-  const zoneStated = input.zoneName === '' || input.endText.endsWith(input.zoneName);
-  const lines: string[] = [`${input.startText} to ${input.endText}${zoneStated ? '' : ` (${input.zoneName})`}`];
+  // The zone is named once. Both times carry the same zone word ("... 10:20 to ... 10:25 UTC", "... GMT+4"): it stays on the end only.
+  // Otherwise the zone name is added only when the times do not already end with it.
+  const shared = sharedZoneWord(input.startText, input.endText);
+  const zoneStated = shared !== '' || input.zoneName === '' || input.endText.endsWith(input.zoneName);
+  const startText = shared ? input.startText.slice(0, input.startText.length - shared.length - 1) : input.startText;
+  const lines: string[] = [`${startText} to ${input.endText}${zoneStated ? '' : ` (${input.zoneName})`}`];
   if (input.count === 0) {
     lines.push(TOOLTIP_TEXT.noEvents);
   } else {
@@ -87,6 +105,7 @@ export function tooltipCopyEntries(): Array<{ id: string; text: string }> {
     { id: 'tooltip.no-events', text: TOOLTIP_TEXT.noEvents },
     { id: 'tooltip.read-just-now', text: TOOLTIP_TEXT.readJustNow },
     { id: 'tooltip.from-saved-logs', text: TOOLTIP_TEXT.fromSavedLogs },
+    { id: 'tooltip.tap-again', text: TOOLTIP_TEXT.tapAgain },
     { id: 'tooltip.requests', text: '1,200 requests' },
     { id: 'tooltip.request-one', text: '1 request' },
     { id: 'tooltip.calls', text: '1,200 calls' },

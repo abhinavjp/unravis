@@ -743,6 +743,12 @@ th.numeric { text-align: right; }
   .more-filters[open] > .more-body { max-height: min(72vh, calc(100dvh - var(--header-h) - 120px)); overflow-y: auto; overscroll-behavior: contain; }
 }
 
+/* Tablet widths and touch screens: the main buttons are at least 40px tall (the rule below makes them 44px on a phone). */
+@media (max-width: 1024px), (pointer: coarse) {
+  .header-button, .menu > summary, .primary-button, .secondary-button, .quiet-button { min-height: 40px; }
+  .theme-toggle { min-width: 40px; }
+}
+
 /* Tap targets: 44px tall on touch screens and narrow windows. The desktop sizes above are unchanged. */
 @media (pointer: coarse), (max-width: 720px) {
   .header-button, .chip, .segmented button, .more-filters > summary, .filter-chip, .menu > summary, .primary-button, .secondary-button, .quiet-button { min-height: 44px; }

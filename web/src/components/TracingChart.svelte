@@ -10,7 +10,7 @@
   } from '../lib/tracing/lanes';
   import { formatTime } from '../lib/time';
   import { formatDuration } from '../lib/format';
-  import { TOOLTIP_TEXT, barTipLines, formatCount, laneHint } from '../lib/tracing/tooltip';
+  import { TOOLTIP_TEXT, barTipLines, formatCount, isTouchPointer, laneHint } from '../lib/tracing/tooltip';
   import {
     CANVAS_TEXT, MIN_ZOOM_SLOTS, PERCENTILES, PERCENTILE_LABEL, absoluteSlot, clampRange, edgeSlot, fullRange, hasLatency,
     isZoomed, latencySegments, rangeFromDrag, stepSlot, tickOffsets, zoomFocus, zoomIn, zoomOut, zoomedText,
@@ -135,11 +135,13 @@
   let tipSlot = $state<number | null>(null);
   let tipLane = $state<TracingLaneKey | null>(null);
   let tipFromKeyboard = $state(false);
+  // A tooltip left on screen by a tap (finger or pen): the same bar tapped again opens the analysis. A mouse click never sets this.
+  let tipFromTouch = $state(false);
   let tipStyle = $state('');
   let overlayEl: HTMLDivElement | undefined;
   let tipEl: HTMLDivElement | undefined;
 
-  function hideTip() { tipSlot = null; tipLane = null; tipFromKeyboard = false; }
+  function hideTip() { tipSlot = null; tipLane = null; tipFromKeyboard = false; tipFromTouch = false; }
 
   function linesFor(lane: TracingLane, slot: number): string[] {
     if (!grid) return [];
@@ -171,6 +173,10 @@
       : orderedLanes.filter((lane) => drawsBars(lane));
     return lanes.map((lane) => ({ key: lane.key, name: LANE_NAME[lane.key], lines: linesFor(lane, slot) }));
   });
+  // The tap hint is only worth saying when the tapped bar has events to open.
+  const tipOpenable = $derived(
+    tipFromTouch && tipSlot != null && orderedLanes.some((lane) => drawsBars(lane) && (laneBars.get(lane.key)?.byIndex.get(tipSlot as number)?.count ?? 0) > 0)
+  );
   // Screen readers do not re-read a changed tooltip description, so keyboard moves are also spoken through one polite live region.
   const liveText = $derived(tipFromKeyboard ? tipGroups.map((group) => group.name + '. ' + group.lines.join('. ')).join(' ') : '');
 
@@ -187,6 +193,9 @@
   let dragFrom = $state<number | null>(null);
   let dragTo = $state<number | null>(null);
   let suppressClick = false;
+  // Whether the press that precedes the next click came from a finger or a pen.
+  let downTouch = false;
+  const coarsePointer = (): boolean => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
 
   function slotAt(event: { clientX: number }): number {
     if (!overlayEl) return -1;
@@ -198,11 +207,13 @@
   function onOverlayDown(event: PointerEvent) {
     if (!grid || event.button !== 0 || !overlayEl) return;
     suppressClick = false;
+    downTouch = isTouchPointer(event.pointerType, coarsePointer());
     const slot = slotAt(event);
     if (slot < 0) return;
     dragFrom = slot;
     dragTo = slot;
-    hideTip();
+    // A tap keeps the tooltip it is about to confirm; a drag clears it on the first move.
+    if (!downTouch) hideTip();
     try { overlayEl.setPointerCapture(event.pointerId); } catch { /* a synthetic pointer cannot be captured */ }
   }
 
@@ -229,12 +240,43 @@
   }
 
   function onOverlayClick(event: MouseEvent) {
+    const touch = downTouch;
+    downTouch = false;
     if (suppressClick) { suppressClick = false; return; }
     if (!grid) return;
     const column = (event.target as Element | null)?.closest?.('.column') as HTMLElement | null;
     const fromColumn = column ? Number(column.dataset.slot) : Number.NaN;
     const slot = Number.isInteger(fromColumn) ? fromColumn : slotAt(event);
-    if (slot >= 0) selectAt(slot);
+    if (slot < 0) return;
+    // Finger or pen: the first tap on a bar shows its counts and keeps them; tapping the same bar again opens the analysis.
+    if (touch && !(tipFromTouch && tipSlot === slot)) { showTouchTip(slot, event); return; }
+    selectAt(slot);
+  }
+
+  function showTouchTip(slot: number, event: { clientX: number; clientY: number }) {
+    selectedSlot = clampIndex(slot);
+    tipSlot = slot;
+    tipLane = laneAtY(event.clientY);
+    tipFromKeyboard = false;
+    tipFromTouch = true;
+    placeTip(event.clientX, event.clientY);
+  }
+
+  function laneAtY(y: number): TracingLaneKey | null {
+    let hovered: TracingLaneKey | null = null;
+    overlayEl?.parentElement?.querySelectorAll<HTMLElement>('.panel[data-lane]').forEach((panel) => {
+      const box = panel.getBoundingClientRect();
+      if (y >= box.top && y <= box.bottom) hovered = panel.dataset.lane as TracingLaneKey;
+    });
+    return hovered;
+  }
+
+  function placeTip(clientX: number, clientY: number) {
+    if (!overlayEl) return;
+    const rect = overlayEl.getBoundingClientRect();
+    const tipWidth = tipEl?.offsetWidth || 220;
+    const x = Math.min(clientX - rect.left, rect.width - tipWidth);
+    tipStyle = `left:${Math.max(0, x)}px;top:${Math.max(0, clientY - rect.top + 14)}px`;
   }
 
   // Pointer moves are coalesced to one pass per frame: the last position wins, so layout is read once per frame, not once per event.
@@ -270,20 +312,19 @@
       return;
     }
     if (slot < 0) { hideTip(); return; }
-    let hovered: TracingLaneKey | null = null;
-    overlayEl.parentElement?.querySelectorAll<HTMLElement>('.panel[data-lane]').forEach((panel) => {
-      const box = panel.getBoundingClientRect();
-      if (point.y >= box.top && point.y <= box.bottom) hovered = panel.dataset.lane as TracingLaneKey;
-    });
     tipSlot = slot;
-    tipLane = hovered;
+    tipLane = laneAtY(point.y);
     tipFromKeyboard = false;
-    const tipWidth = tipEl?.offsetWidth || 220;
-    const x = Math.min(point.x - rect.left, rect.width - tipWidth);
-    tipStyle = `left:${Math.max(0, x)}px;top:${Math.max(0, point.y - rect.top + 14)}px`;
+    tipFromTouch = false;
+    placeTip(point.x, point.y);
   }
 
-  function onOverlayLeave() { cancelMove(); hideTip(); }
+  // A finger lifting leaves the chart; the tooltip it just opened stays until another tap, a drag, Escape or leaving the chart by focus.
+  function onOverlayLeave(event: PointerEvent) {
+    if (tipFromTouch && event.pointerType !== 'mouse') return;
+    cancelMove();
+    hideTip();
+  }
 </script>
 
 <svelte:window onkeydown={onWindowKey} />
@@ -415,6 +456,7 @@
             {#each group.lines as line, i (i)}<span>{line}</span>{/each}
           </div>
         {/each}
+        {#if tipOpenable}<span class="tip-action">{TOOLTIP_TEXT.tapAgain}</span>{/if}
       </div>
       {#if grid}
         {#each slotIndexes as i (i)}
@@ -490,6 +532,7 @@
   .tip { position: absolute; z-index: 4; display: grid; gap: var(--space-2); width: max-content; max-width: min(22rem, 100%); padding: var(--space-2) var(--space-3); color: var(--text); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); pointer-events: none; }
   .tip[hidden] { display: none; }
   .tip-group { display: grid; gap: 2px; }
+  .tip-action { color: var(--text-2); }
   .column { position: absolute; top: 0; bottom: 0; margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer; }
   .column.selected { background: color-mix(in srgb, var(--accent) 18%, transparent); outline: 1px solid var(--accent); }
 

@@ -1,15 +1,15 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
   import { fetchTracing, nextRequestSeq, tracingErrorText, type TracingResponse } from '../lib/tracing/model';
-  import { WINDOW_TEXT, checkWindows, defaultWindows, fixOverlap, windowIsEmpty, windowNow, loadWindows, saveWindows, type WindowFields } from '../lib/tracing/windows';
+  import { WINDOW_TEXT, checkWindows, defaultWindows, fixOverlap, windowHasNoData, windowIsEmpty, windowNow, loadWindows, saveWindows, type WindowFields } from '../lib/tracing/windows';
   import { TRACING_TEXT } from '../lib/copy/tracingCopy';
   import TracingChart from './TracingChart.svelte';
   import TraceToolbar from './TraceToolbar.svelte';
   import { allLanesVisible, toggleLane } from '../lib/tracing/toolbar';
   import { exportScrub } from '../lib/exportScrub.svelte';
   import { timeZone } from '../lib/timeZone.svelte';
-  import { handOffBucket, slotToBucket, HANDOFF_TEXT } from '../lib/tracing/handoff';
-  import { app, setWindowFromHour, openAnalysis } from '../lib/appState.svelte';
+  import { handOffBucket, otherLanesNote, slotToBucket, HANDOFF_TEXT } from '../lib/tracing/handoff';
+  import { app, setTracingHandoff, setWindowFromHour, openAnalysis } from '../lib/appState.svelte';
 
   // The Investigation Timeline screen shell (WP-16b): one request on open, a loading state with Cancel, a plain
   // error with Try again, and four stable regions (windows, toolbar, chart, notes) that later packets fill in.
@@ -41,6 +41,8 @@
   const invalidIf = (name: keyof WindowFields): true | undefined => (invalidFields.includes(name) ? true : undefined);
   const describedBy = $derived(problems.length > 0 ? 'tp-problems' : undefined);
   const emptyWindow = $derived(result ? windowIsEmpty(result.lanes) : false);
+  // Lanes came back but none holds an event (for example a case with no files in the window): one line says what to do.
+  const noData = $derived(result ? windowHasNoData(result.lanes) : false);
 
   async function run(body = checkWindows(fields).body) {
     if (closed) {
@@ -121,7 +123,14 @@
   function onBarSelect(index: number) {
     handoffNote = '';
     cancelled = false;
-    const ok = result ? handOffBucket(slotToBucket(result, visible, index), { setWindow: setWindowFromHour, open: openAnalysis }) : false;
+    const shown = result;
+    const ok = shown
+      ? handOffBucket(slotToBucket(shown, visible, index), {
+          // The note is set after the window, which clears any earlier one; it says why the analysis may be empty.
+          setWindow: (window) => { setWindowFromHour(window); setTracingHandoff(window, otherLanesNote(shown, visible, index)); },
+          open: openAnalysis
+        })
+      : false;
     if (!ok) handoffNote = HANDOFF_TEXT.empty;
   }
 
@@ -168,7 +177,7 @@
       <TraceToolbar {visible} onToggle={(key) => (visible = toggleLane(visible, key))} scrub={exportScrub.forCase(caseId)} />
     {/if}
   </div>
-  <div data-region="chart" class="chart-region" tabindex="-1" bind:this={chartRegion}>
+  <div data-region="chart" class="chart-region" role="region" aria-label={TRACING_TEXT.chartLabel} tabindex="-1" bind:this={chartRegion}>
     {#if status === 'error'}
       <div class="error-panel">
         <span class="error-icon" aria-hidden="true">!</span>
@@ -185,7 +194,7 @@
         {#if result.sources.length === 0 && result.lanes.length === 0}
           <p role="status">{TRACING_TEXT.emptyNoSources}</p>
         {:else}
-          {#if emptyWindow}<p class="empty-hint">{WINDOW_TEXT.noEvents}</p>{/if}
+          {#if emptyWindow}<p class="empty-hint">{WINDOW_TEXT.noEvents}</p>{:else if noData}<p class="empty-hint">{WINDOW_TEXT.noData}</p>{/if}
           <!-- A re-run keeps the old chart at its own height under a veil, so nothing below it jumps. -->
           <div class="chart-hold" aria-busy={status === 'loading' ? 'true' : undefined}>
             <div inert={status === 'loading'}>
@@ -226,6 +235,8 @@
   .window-problems p { margin: var(--space-1) 0 0; }
   .window-overlap { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: 0; font-size: var(--fs-2); }
   .cancel-note, .empty-hint { margin: 0 0 var(--space-2); color: var(--text-2); font-size: var(--fs-2); }
+  /* Touch targets on a tablet, a phone and any touch screen: the date boxes are 40 px high too. */
+  @media (max-width: 1024px), (pointer: coarse) { .window-field input { min-height: 40px; } }
   .chart-region:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .error-panel { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3) var(--space-4); background: var(--surface-2); border: var(--hairline-width) solid var(--bad); border-left-width: var(--space-1); border-radius: var(--radius-sm); }
   .error-icon { flex: none; width: var(--space-5); height: var(--space-5); border-radius: 50%; background: var(--bad); color: var(--bg); font-weight: 700; line-height: var(--space-5); text-align: center; }

@@ -15,6 +15,7 @@ export const TRACING_TEXT = {
   retry: 'Try again',
   cancel: 'Cancel',
   tracing: 'Tracing...',
+  chartLabel: 'Timeline chart',
   emptyNoSources: 'No files have been added to this case yet. Add a source first.',
   closedReason: CLOSED_REASON,
 

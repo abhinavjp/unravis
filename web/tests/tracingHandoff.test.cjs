@@ -29,7 +29,7 @@ function loadTypeScript(relativePath) {
 }
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-const { slotToBucket, bucketToWindow, handOffBucket, handoffCopyEntries } = loadTypeScript('src/lib/tracing/handoff.ts');
+const { slotToBucket, bucketToWindow, handOffBucket, handoffCopyEntries, otherLanesNote, HANDOFF_TEXT } = loadTypeScript('src/lib/tracing/handoff.ts');
 const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
 
@@ -127,4 +127,35 @@ test('the hand-off imports nothing from the guided folders', () => {
 
 test('hand-off copy passes the screen-string lint', () => {
   assert.deepEqual(lintScreenStrings(handoffCopyEntries(), deck.terms), []);
+});
+
+test('otherLanesNote says why an analysis may be empty when only SQL or IIS had events (UI-R3-07)', () => {
+  const sql = lane('sql', [bucket]);
+  const iis = lane('iis', [bucket]);
+  const audit = lane('audit', [bucket]);
+  const noAudit = lane('audit', []);
+  assert.equal(otherLanesNote(response([noAudit, sql]), {}, 1), HANDOFF_TEXT.onlySql);
+  assert.equal(otherLanesNote(response([noAudit, iis]), {}, 1), HANDOFF_TEXT.onlyIis);
+  assert.equal(otherLanesNote(response([noAudit, sql, iis]), {}, 1), HANDOFF_TEXT.sqlAndIis);
+  // API audit rows in that bar: nothing to explain.
+  assert.equal(otherLanesNote(response([audit, sql, iis]), {}, 1), '');
+  // A hidden lane, an empty slot, a bad slot or a lane that draws nothing gives no note.
+  assert.equal(otherLanesNote(response([noAudit, sql]), { sql: false }, 1), '');
+  assert.equal(otherLanesNote(response([noAudit, sql]), {}, 2), '');
+  assert.equal(otherLanesNote(response([noAudit, sql]), {}, 1.5), '');
+  assert.equal(otherLanesNote(response([noAudit, lane('sql', [bucket], { disabled: 'tz-rule' })]), {}, 1), '');
+  assert.equal(otherLanesNote(response([noAudit, lane('iis', [bucket], { state: 'no-data' })]), {}, 1), '');
+  for (const text of [HANDOFF_TEXT.onlySql, HANDOFF_TEXT.onlyIis, HANDOFF_TEXT.sqlAndIis]) assert.ok(text.startsWith('No API audit requests'));
+});
+
+test('the paper keeps the other-lanes note with the hand-off window (UI-R3-07)', () => {
+  const paper = read('src/components/TracingPaper.svelte');
+  assert.match(paper, /otherLanesNote\(/);
+  assert.match(paper, /setTracingHandoff\(/);
+  const app = read('src/lib/appState.svelte.ts');
+  assert.match(app, /export function setTracingHandoff/);
+  assert.match(app, /export function setWindowFromHour\(window: RollupWindow\) \{ tracingHandoff = null;/);
+  const strip = read('src/components/ZoomStrip.svelte');
+  assert.match(strip, /emptyNote \|\| zoomCopy\.overviewEmpty/);
+  assert.match(read('src/App.svelte'), /<ZoomStrip model=\{zoomModel\} \{emptyNote\}/);
 });

@@ -328,7 +328,7 @@ test('TRACE-10: hover and keyboard tooltips come from the dictionary; lane heads
   const tip = page.locator('#tc-tip');
   await expect(tip).toBeVisible();
   await expect(tip).toContainText('Database (SQL Server)');
-  await expect(tip).toContainText('19 Oct 09:05 UTC to 19 Oct 09:10 UTC');
+  await expect(tip).toContainText('19 Oct 09:05 to 19 Oct 09:10 UTC');
   await expect(tip).toContainText(/\d+ calls?/);
   await expect(tip).toContainText('From saved logs (as of ');
   await expect(tip).not.toContainText('API requests (audit log)');

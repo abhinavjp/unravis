@@ -86,13 +86,13 @@ test('lane toggles come from the single lane order and stay at least 32 px high 
   assert.deepEqual(toolbar.LANE_ORDER, ['audit', 'sql', 'iis']);
   assert.equal(toolbar.LANE_ORDER, loadTypeScript('src/lib/tracing/lanes.ts').LANE_ORDER);
   for (const key of toolbar.LANE_ORDER) assert.equal(typeof toolbar.TOOLBAR_TEXT[key], 'string');
-  const phone = source.replace(/\r\n/g, '\n').match(/@media \(max-width: 768px\), \(pointer: coarse\) \{([\s\S]*?)\n \}/);
+  const phone = source.replace(/\r\n/g, '\n').match(/@media \(max-width: 1024px\), \(pointer: coarse\) \{([\s\S]*?)\n \}/);
   assert.ok(phone, 'phone rule present');
   assert.match(phone[1], /\.tt-lane/);
   assert.match(phone[1], /\.pill/);
   assert.match(phone[1], /min-height: var\(--space-10\)/);
   const zone = read('src/components/TimeZoneToggle.svelte');
-  assert.match(zone, /@media \(max-width: 768px\), \(pointer: coarse\) \{ \.zone-toggle button \{ min-height: 40px; \} \}/, 'UTC and Local reach 40 px too (UI-R2-08)');
+  assert.match(zone, /@media \(max-width: 1024px\), \(pointer: coarse\) \{ \.zone-toggle button \{ min-height: 40px; \} \}/, 'UTC and Local reach 40 px too, up to tablet width (UI-R2-08, UI-R3-05)');
   // Spacing and radius come from tokens, not literal px (the swatch dot size and the visually hidden rule are the fixed sizes).
   const css = source.slice(source.indexOf('<style>'), source.indexOf('.sr-only {'));
   assert.ok(!/\b(?:padding|gap|margin|border-radius|min-height)\s*:[^;]*\d+px/.test(css));

@@ -70,3 +70,7 @@ Unstamped gate exe rebuilt after the round-1 fixes (commit 45cb98e). Full e2e: 3
 ## UI loop round 2 (2026-11-04)
 
 Build: unstamped plain `go build` after Go sweep round 2 (`5eb00ea`) and UI-R2-01..12 web fixes. TRACE, CASE and HAND subset: 81 of 81 pass. First run had CASE-02 fail on a Windows `ERR_NO_BUFFER_SPACE` asset load; re-run of CASE-02 and HAND-17 passed. HAND-17 is flaky (measures right after first paint). UI-R2-13 (demo-only provenance time) skipped; UI-R2-03 (closed-case timeline) awaits owner decision.
+
+## UI loop round 3 (2026-11-04)
+
+Fresh unstamped exe after UI-R3 fixes. Full run: 326 pass, 3 fail: DOC-02 and KEEP-09 (known defects) and HAND-17 (flaky, passes on re-run). Unit: 2165 node tests pass.

@@ -141,7 +141,7 @@ test('TracingPaper is only reached through lazyComponent', () => {
 
 test('Try again and Cancel give keyboard focus to the chart region instead of dropping it (UI-R2-02)', () => {
   const src = paper();
-  assert.match(src, /<div data-region="chart" class="chart-region" tabindex="-1" bind:this=\{chartRegion\}>/);
+  assert.match(src, /<div data-region="chart" class="chart-region" role="region" aria-label=\{TRACING_TEXT\.chartLabel\} tabindex="-1" bind:this=\{chartRegion\}>/);
   const fn = src.slice(src.indexOf('async function keepFocusInChart'), src.indexOf('function cancel()'));
   assert.match(fn, /chartRegion\.contains\(document\.activeElement\)/);
   assert.match(fn, /await tick\(\)/);
@@ -181,4 +181,12 @@ test('a closed case still explains why the timeline button is off, to assistive 
   const src = read('src/lib/components/CaseHome.svelte');
   assert.match(src, /aria-describedby=\{info\?\.closed \? 'home-tracing-closed' : undefined\}/);
   assert.match(src, /<p id="home-tracing-closed" class="note">\{TRACING_TEXT\.closedReason\}<\/p>/);
+});
+
+test('the chart region has a role and a name, and a case with no events says how to fix it (UI-R3-02, UI-R3-03)', () => {
+  const src = read('src/components/TracingPaper.svelte');
+  assert.match(src, /data-region="chart" class="chart-region" role="region" aria-label=\{TRACING_TEXT\.chartLabel\}/);
+  assert.match(src, /windowHasNoData\(result\.lanes\)/);
+  assert.match(src, /\{:else if noData\}<p class="empty-hint">\{WINDOW_TEXT\.noData\}<\/p>/);
+  assert.match(src, /@media \(max-width: 1024px\), \(pointer: coarse\) \{ \.window-field input \{ min-height: 40px; \} \}/);
 });
