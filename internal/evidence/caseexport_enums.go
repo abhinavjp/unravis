@@ -137,6 +137,8 @@ const customBannerID = "custom-not-exported"
 // section on real client exports). Compared after trimming and collapsing
 // white space.
 var knownBanners = []string{
+	"Parsers are built and tested on synthetic files only. Importing real client exports needs: the original export preserved, a content review before output is shared, client approval for any AI tool near case data, a DBA dry run (SQL files), Mongo access (MongoDB logs), and an agreed retention period.",
+	// Earlier wording (R-codes), still accepted so acknowledgements already on file stay valid.
 	"Parsers are built and tested on synthetic files only. Importing real client exports needs: R2 preservation, R8 content review, R11 AI/MCP approval, R12 DBA dry run (SQL files), R13 Mongo access, R16 retention.",
 }
 

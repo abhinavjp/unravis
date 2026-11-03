@@ -9,7 +9,7 @@ import type { LintEntry } from './copylint';
  */
 
 /** The notice that is always on screen. Verbatim from the importer wave plan (UI card); do not reword it here. */
-export const GATING_BANNER = 'Parsers are built and tested on synthetic files only. Importing real client exports needs: R2 preservation, R8 content review, R11 AI/MCP approval, R12 DBA dry run (SQL files), R13 Mongo access, R16 retention.';
+export const GATING_BANNER = 'Parsers are built and tested on synthetic files only. Importing real client exports needs: the original export preserved, a content review before output is shared, client approval for any AI tool near case data, a DBA dry run (SQL files), Mongo access (MongoDB logs), and an agreed retention period.';
 
 /** The checkbox that must be ticked for each import. The banner above is what gets sent as ackText (see ackTextFor). */
 export const ACK_LABEL = 'I confirm this file meets the conditions in the notice above.';

@@ -340,7 +340,7 @@ Every card: work in a worktree on the named branch; `go test ./...` (and `npm te
 - **Files:** `web/src/lib/components/ImportPanel.svelte`, `CasePanel.svelte`, `web/src/lib/cases.ts`, `web/src/lib/copy/importCopy.ts` (copy-linted), `web/tests/import.test.cjs`.
 - **Not touched:** `App.svelte`, `types.ts`, `deck.ts`, `wordings.ts`.
 - **Flow:** create or pick a case; pick a file (size checked against the cap); see the detected importer (picker on a tie) and the host picker; preview rows, rejected, reasons, gaps and coverage; commit. An unknown host shows "unknown host" and blocks commit.
-- **Gating banner, always visible:** "Parsers are built and tested on synthetic files only. Importing real client exports needs: R2 preservation, R8 content review, R11 AI/MCP approval, R12 DBA dry run (SQL files), R13 Mongo access, R16 retention." A per-import checkbox enables commit, and its text is sent as `ackText`.
+- **Gating banner, always visible:** "Parsers are built and tested on synthetic files only. Importing real client exports needs: the original export preserved, a content review before output is shared, client approval for any AI tool near case data, a DBA dry run (SQL files), Mongo access (MongoDB logs), and an agreed retention period." A per-import checkbox enables commit, and its text is sent as `ackText`.
 - **Erase** needs a typed confirmation and shows the storage doc's sentence.
 - Tests mock `fetch` against the API contract.
 

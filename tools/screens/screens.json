@@ -28,7 +28,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -36,7 +36,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "waitFor": "#start-title"
@@ -57,7 +57,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -65,7 +65,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -86,7 +86,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -94,7 +94,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Create a new case\"]"
@@ -115,7 +115,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -123,7 +123,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -210,7 +210,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -218,7 +218,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Night batch overrun, 10 October\"]"
@@ -242,7 +242,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -250,7 +250,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Night batch overrun, 10 October\"]"
@@ -271,7 +271,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -279,7 +279,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Report export timeouts, 18 October\"]"
@@ -303,7 +303,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -311,7 +311,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Ledger posting lag, 12 October\"]"
@@ -326,7 +326,7 @@
             },
             {
               "when": "wide",
-              "click": "role=button[name=\"Home\"s]"
+              "click": "role=button[name=\"All cases\"s]"
             },
             {
               "when": "narrow",
@@ -334,7 +334,7 @@
             },
             {
               "when": "narrow",
-              "click": "role=menuitem[name=\"Home\"s]"
+              "click": "role=menuitem[name=\"All cases\"s]"
             },
             {
               "click": "role=button[name=\"Open case Ledger posting lag, 12 October\"]"
@@ -1149,7 +1149,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1157,7 +1157,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1184,7 +1184,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1192,7 +1192,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1219,7 +1219,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1227,7 +1227,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1278,7 +1278,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1286,7 +1286,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1319,7 +1319,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1327,7 +1327,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1360,7 +1360,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1368,7 +1368,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1398,7 +1398,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1406,7 +1406,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1436,7 +1436,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1444,7 +1444,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1474,7 +1474,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1482,7 +1482,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Report export timeouts, 18 October\"]"
@@ -1512,7 +1512,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1520,7 +1520,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1571,7 +1571,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1579,7 +1579,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1639,7 +1639,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1647,7 +1647,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1707,7 +1707,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1715,7 +1715,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1775,7 +1775,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1783,7 +1783,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1843,7 +1843,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1851,7 +1851,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1911,7 +1911,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1919,7 +1919,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -1979,7 +1979,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -1987,7 +1987,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -2047,7 +2047,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2055,7 +2055,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -2115,7 +2115,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2123,7 +2123,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -2183,7 +2183,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2191,7 +2191,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -2251,7 +2251,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2259,7 +2259,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -2319,7 +2319,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2327,7 +2327,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -2357,7 +2357,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2365,7 +2365,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -2425,7 +2425,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2433,7 +2433,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -2502,7 +2502,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2510,7 +2510,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -2543,7 +2543,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2551,7 +2551,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -2620,7 +2620,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2628,7 +2628,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -2667,7 +2667,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2675,7 +2675,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -2705,7 +2705,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2713,7 +2713,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -2776,7 +2776,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2784,16 +2784,16 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
         },
         {
-          "waitFor": "role=button[name=\"Archive this case\"]"
+          "waitFor": "role=button[name=\"Save case file\"]"
         },
         {
-          "click": "role=button[name=\"Archive this case\"]"
+          "click": "role=button[name=\"Save case file\"]"
         },
         {
           "waitFor": "role=dialog"
@@ -2811,7 +2811,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2819,10 +2819,10 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
-          "click": "role=button[name=/^Archived cases/]"
+          "click": "role=button[name=/^Saved cases/]"
         },
         {
           "waitFor": "#archived-title"
@@ -2840,7 +2840,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2848,10 +2848,10 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
-          "click": "role=button[name=/^Archived cases/]"
+          "click": "role=button[name=/^Saved cases/]"
         },
         {
           "waitFor": "#archived-title"
@@ -2860,7 +2860,7 @@
           "click": "role=button[name=\"Open case Month-end batch stall, 2 October\"]"
         },
         {
-          "waitFor": "text=This case is archived. It is read-only here."
+          "waitFor": "text=This case is saved to a case file. It is read-only here."
         }
       ]
     },
@@ -2875,7 +2875,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2883,10 +2883,10 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
-          "click": "role=button[name=/^Archived cases/]"
+          "click": "role=button[name=/^Saved cases/]"
         },
         {
           "waitFor": "#archived-title"
@@ -2895,7 +2895,7 @@
           "click": "role=button[name=\"Open case Month-end batch stall, 2 October\"]"
         },
         {
-          "waitFor": "text=This case is archived. It is read-only here."
+          "waitFor": "text=This case is saved to a case file. It is read-only here."
         },
         {
           "click": "role=button[name=\"Restore\"s]"
@@ -2916,7 +2916,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2924,10 +2924,10 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
-          "click": "role=button[name=/^Archived cases/]"
+          "click": "role=button[name=/^Saved cases/]"
         },
         {
           "waitFor": "#archived-title"
@@ -2936,7 +2936,7 @@
           "click": "role=button[name=\"Open case Month-end batch stall, 2 October\"]"
         },
         {
-          "waitFor": "text=This case is archived. It is read-only here."
+          "waitFor": "text=This case is saved to a case file. It is read-only here."
         },
         {
           "click": "role=button[name=\"Restore from the case file as a new case\"]"
@@ -2957,7 +2957,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -2965,10 +2965,10 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
-          "click": "role=button[name=/^Archived cases/]"
+          "click": "role=button[name=/^Saved cases/]"
         },
         {
           "waitFor": "#archived-title"
@@ -2977,7 +2977,7 @@
           "click": "role=button[name=\"Open case Month-end batch stall, 2 October\"]"
         },
         {
-          "waitFor": "text=This case is archived. It is read-only here."
+          "waitFor": "text=This case is saved to a case file. It is read-only here."
         },
         {
           "click": "role=button[name=\"Free the space\"]"
@@ -2998,7 +2998,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -3006,7 +3006,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Create a new case\"]"
@@ -3045,7 +3045,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -3053,7 +3053,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=/^Open case Case demokeye/]"
@@ -3080,7 +3080,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -3088,7 +3088,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Report export timeouts, 18 October\"]"
@@ -3115,7 +3115,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -3123,7 +3123,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Report export timeouts, 18 October\"]"
@@ -3156,7 +3156,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -3164,7 +3164,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "waitFor": "#start-title"
@@ -3188,7 +3188,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -3196,7 +3196,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=/^Open case Case demountr/]"
@@ -3220,7 +3220,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -3228,7 +3228,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -3258,7 +3258,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -3266,7 +3266,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
@@ -3296,7 +3296,7 @@
         },
         {
           "when": "wide",
-          "click": "role=button[name=\"Home\"s]"
+          "click": "role=button[name=\"All cases\"s]"
         },
         {
           "when": "narrow",
@@ -3304,7 +3304,7 @@
         },
         {
           "when": "narrow",
-          "click": "role=menuitem[name=\"Home\"s]"
+          "click": "role=menuitem[name=\"All cases\"s]"
         },
         {
           "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"

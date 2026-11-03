@@ -29,7 +29,7 @@ const { lintCopy } = loadTypeScript('src/lib/copy/copylint.ts');
 const CASE_ID = 'abcd2345abcd2345abcd234567';
 const OTHER_ID = 'zzzz2222zzzz2222zzzz222233';
 const TOKEN = 'session-token-1';
-const BANNER = 'Parsers are built and tested on synthetic files only. Importing real client exports needs: R2 preservation, R8 content review, R11 AI/MCP approval, R12 DBA dry run (SQL files), R13 Mongo access, R16 retention.';
+const BANNER = 'Parsers are built and tested on synthetic files only. Importing real client exports needs: the original export preserved, a content review before output is shared, client approval for any AI tool near case data, a DBA dry run (SQL files), Mongo access (MongoDB logs), and an agreed retention period.';
 const ERASE_SENTENCE = 'Case data deleted and its encryption key destroyed. Remaining fragments on disk are unreadable.';
 
 /* ------------------------------------------------------------------ a mocked server for the API contract */

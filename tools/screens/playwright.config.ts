@@ -9,7 +9,10 @@ const common = {
   timezoneId: 'UTC',
   locale: 'en-GB',
   reducedMotion: 'reduce' as const,
-  browserName: 'chromium' as const
+  browserName: 'chromium' as const,
+  // A step that cannot find its button (a renamed label) fails in 10 seconds, not after the whole 60-second test timeout.
+  actionTimeout: 10_000,
+  navigationTimeout: 15_000
 };
 const narrow = { ...common, viewport: { width: 390, height: 844 } };
 

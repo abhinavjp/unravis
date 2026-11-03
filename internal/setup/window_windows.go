@@ -16,7 +16,7 @@ import (
 // OpenWindow shows url. browser is from Machine.Browser ("" for the default browser).
 func OpenWindow(browser, url string) error {
 	if browser != "" {
-		cmd := exec.Command(browser, "--app="+url, "--window-size=880,640", "--no-first-run")
+		cmd := exec.Command(browser, "--app="+url, "--window-size=1024,768", "--no-first-run")
 		if err := cmd.Start(); err == nil {
 			go cmd.Wait()
 			return nil

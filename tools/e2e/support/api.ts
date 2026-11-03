@@ -47,7 +47,7 @@ export function makeApi(base: string, token: string): ApiFn {
 
 /** The standard acknowledgement text the import route compares against. */
 export const BANNER =
-  'Parsers are built and tested on synthetic files only. Importing real client exports needs: R2 preservation, R8 content review, R11 AI/MCP approval, R12 DBA dry run (SQL files), R13 Mongo access, R16 retention.';
+  'Parsers are built and tested on synthetic files only. Importing real client exports needs: the original export preserved, a content review before output is shared, client approval for any AI tool near case data, a DBA dry run (SQL files), Mongo access (MongoDB logs), and an agreed retention period.';
 
 /** The host label the demo imports use. It has to exist in the host map first. */
 export const HOST = 'web-a';

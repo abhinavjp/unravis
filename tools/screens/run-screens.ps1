@@ -10,6 +10,8 @@
   -Update: write new pictures. Only the CI runner is the reference renderer, so do not
            commit pictures made on a developer PC unless the team agreed that PC is the reference.
   -Only:   one screen id, or several separated by commas (for example p1-home,p1-glossary).
+  -MaxFailures: stop the compare after this many failed screens (default 5; 0 = never stop). A broken suite then
+           fails in minutes, not after every screen has been tried. Not used with -Update.
 
   The setup-window screens (p11-*) run against the screenshot build of unravis-setup: this script builds it
   with Go (go build -tags capture) into the temporary folder and starts it with --capture, which fakes every
@@ -18,6 +20,7 @@
 param(
     [switch]$Update,
     [string]$Only = '',
+    [int]$MaxFailures = 5,
     [int]$Port = 0
 )
 
@@ -197,6 +200,7 @@ public static class UnravisJob {
 
     $Args2 = @('playwright', 'test')
     if ($Update) { $Args2 += '--update-snapshots' }
+    elseif ($MaxFailures -gt 0) { $Args2 += "--max-failures=$MaxFailures" }
     Push-Location $Here
     # Node prints warnings on stderr. Windows PowerShell 5.1 would turn that into a stop, so only the exit code counts here.
     $ErrorActionPreference = 'Continue'
