@@ -87,7 +87,7 @@ test('TRACE-02: three lanes in order with plain labels, one shared UTC axis and 
   // Panel titles name what is plotted.
   await expect(page.locator('.panel[data-lane=audit] .panel-title')).toHaveText('How many requests, and how slow they were');
   await expect(page.locator('.panel[data-lane=sql] .panel-title')).toHaveText('Slow database calls (over 1 s) and failed calls');
-  await expect(page.locator('.panel[data-lane=iis] .panel-title')).toHaveText('Web-server requests (errors shown darker)');
+  await expect(page.locator('.panel[data-lane=iis] .panel-title')).toHaveText('Web-server requests (errors shown striped)');
   // One axis for all lanes: 3 h in 5 minute bars = 36 columns, at most six time labels (thinned to the measured plot width so
   // none overlap), the UTC caption, no "outside the window" dashes.
   await expect(page.locator('.overlay .column')).toHaveCount(36);
@@ -317,7 +317,7 @@ test('TRACE-09: P50 / P95 selector: a note without latency figures, and a line w
   expect(stroke.got).toBe(stroke.want);
 });
 
-test('TRACE-10: hover and keyboard tooltips come from the dictionary; lane heads show their hint on focus', async ({ page }) => {
+test('TRACE-10: hover and keyboard tooltips come from the dictionary; lane heads show their hint on hover and are not tab stops', async ({ page }) => {
   await openTracing(page);
   await trace(page, WIN_B);
   const overlay = (await page.locator('.overlay').boundingBox())!;
@@ -351,12 +351,14 @@ test('TRACE-10: hover and keyboard tooltips come from the dictionary; lane heads
   await expect(tip).toContainText('No events in this bucket');
   await page.keyboard.press('Escape');
   await expect(tip).toHaveText('');
-  // Lane heads are focusable and reveal the dictionary hint.
+  // Lane heads have no action, so they are not tab stops (UI-R2-07); the dictionary hint shows on hover and stays
+  // available to assistive technology through aria-describedby.
+  await expect(page.locator('.lane-label[tabindex]')).toHaveCount(0);
   const head = page.locator('.lane-label').first();
-  await head.focus();
+  await head.hover();
   await expect(head.getByRole('tooltip')).toBeVisible();
   await expect(head.getByRole('tooltip')).toContainText('Requests recorded in the API audit log.');
-  await page.locator('.lane-label').nth(2).focus();
+  await page.locator('.lane-label').nth(2).hover();
   await expect(page.locator('.lane-label').nth(2).getByRole('tooltip')).toContainText('Requests recorded in the web server log.');
 });
 
@@ -419,6 +421,8 @@ test('TRACE-12: a window with no events, a failed read (Try again) and Cancel wh
   fail = false;
   await page.getByRole('button', { name: 'Try again' }).click();
   await expect(bars(page, 'audit')).toHaveCount(11);
+  // Focus stays in the chart region instead of dropping to the page (UI-R2-02).
+  await expect(page.locator('[data-region=chart]')).toBeFocused();
 
   // Cancel while the read is slow: the loading line goes and nothing is drawn.
   await page.unroute('**/api/cases/*/tracing');

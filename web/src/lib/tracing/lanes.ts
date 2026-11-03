@@ -23,7 +23,7 @@ export const LANE_ASK: Record<TracingLaneKey, string> = {
 export const PANEL_TITLE: Record<TracingLaneKey, string> = {
   audit: 'How many requests, and how slow they were',
   sql: 'Slow database calls (over 1 s) and failed calls',
-  iis: 'Web-server requests (errors shown darker)'
+  iis: 'Web-server requests (errors shown striped)'
 };
 
 /** The lane-state sentences, worded as on the older call screen, for the states this lane carries. */
@@ -48,6 +48,13 @@ export const MIXED_NOTE = {
 } as const;
 
 export const TRUNCATED_NOTE = 'The list of events was cut at its limit. The counts in the bars are not affected.';
+
+/** The truncation note naming the lane(s) that were cut; the plain note when the response flags no lane. */
+export function truncatedNote(lanes: TracingLane[]): string {
+  const names = LANE_ORDER.filter((key) => lanes.some((lane) => lane.key === key && lane.truncated)).map((key) => LANE_NAME[key]);
+  if (names.length === 0) return TRUNCATED_NOTE;
+  return `The list of events for ${names.join(' and ')} was cut at its limit. The counts in the bars are not affected.`;
+}
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 // The slot grid: built only from the server's axis (`window.axisStart`/`axisEnd`/`bucketSeconds`). The server has

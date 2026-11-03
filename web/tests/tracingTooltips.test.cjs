@@ -74,6 +74,21 @@ test('one error is worded in the singular', () => {
   assert.ok(!lines.includes('1 server errors (5xx)'));
 });
 
+test('an IIS bar with 5xx answers lists the count and what 5xx means, as the audit lane does (UI-R2-01)', () => {
+  const lines = barTipLines(bar({ key: 'iis', count: 17, errors: 3, origin: 'case' }));
+  assert.deepEqual(lines, [
+    '10:00 to 10:01 (UTC)',
+    '17 requests',
+    '3 server errors (5xx)',
+    explain('status.5xx'),
+    explain('iis.point'),
+    'From saved logs (as of 10:05)'
+  ]);
+  assert.ok(barTipLines(bar({ key: 'iis', count: 2, errors: 1 })).includes('1 server error (5xx)'));
+  assert.ok(!barTipLines(bar({ key: 'iis', count: 2, errors: 0 })).some((line) => line.includes('5xx')));
+  assert.ok(!barTipLines(bar({ key: 'sql', count: 2, errors: 1 })).some((line) => line.includes('5xx')), 'SQL has no 5xx count');
+});
+
 test('an IIS bar explains its points; a sql bar counts calls, and one call is singular', () => {
   const iis = barTipLines(bar({ key: 'iis', count: 2, errors: 0 }));
   assert.ok(iis.includes(explain('iis.point')));
@@ -151,7 +166,8 @@ test('the chart wires lane hints and the bucket tooltip for hover and keyboard',
   assert.match(chartSource, /aria-describedby="tc-tip"/);
   assert.match(chartSource, /aria-describedby="tc-hint-\{lane\.key\}"/);
   assert.match(chartSource, /id="tc-hint-\{lane\.key\}"/);
-  assert.match(chartSource, /class="lane-label" tabindex="0"/);
+  assert.match(chartSource, /class="lane-label" role="group"/);
+  assert.doesNotMatch(chartSource, /class="lane-label"[^>]*tabindex/, 'a lane head has no action, so it is not a tab stop (UI-R2-07)');
   assert.match(chartSource, /onpointermove=\{onOverlayMove\}/);
   assert.match(chartSource, /onpointerleave=\{onOverlayLeave\}/);
   assert.match(chartSource, /event\.key === 'Escape'/);

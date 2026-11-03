@@ -63,7 +63,8 @@ test('an empty value, a day that does not exist and reversed times are refused w
   assert.deepEqual(empty.errors, ['The incident window needs a start and an end, in UTC.']);
   assert.equal(empty.body, null);
   const badDay = windows.checkWindows(fields('2026-02-31T10:00', '2026-03-01T10:00', '2026-01-15T08:00', '2026-01-15T09:00'));
-  assert.deepEqual(badDay.errors, ['The incident window needs a start and an end, in UTC.']);
+  assert.deepEqual(badDay.errors, ['The incident window start (2026-02-31T10:00) is not a date that can be used. Check the year.']);
+  assert.deepEqual(badDay.invalid, ['incidentStart']);
   const reversed = windows.checkWindows(fields('2026-01-15T11:00', '2026-01-15T10:00', '2026-01-15T09:00', '2026-01-15T08:00'));
   assert.deepEqual(reversed.errors, [
     'The incident window end must be later than the start.',
@@ -158,4 +159,49 @@ test('TracingPaper fills the windows region from windows.ts and sends only the c
 test('TracingPaper starts exactly one request on open and one per Start tracing', () => {
   assert.equal((paperSource.match(/fetchTracing\(/g) || []).length, 1);
   assert.match(paperSource, /onMount\(\(\) => \{ void run\(\); \}\)/);
+});
+
+test('a date with year 0001 is named, not reported as missing (UI-R2-10)', () => {
+  const check = windows.checkWindows(fields('0001-01-01T00:00', '0001-01-01T01:00', '2026-01-15T08:00', '2026-01-15T09:00'));
+  assert.deepEqual(check.errors, [
+    'The incident window start (0001-01-01T00:00) is not a date that can be used. Check the year.',
+    'The incident window end (0001-01-01T01:00) is not a date that can be used. Check the year.'
+  ]);
+  assert.deepEqual(check.invalid, ['incidentStart', 'incidentEnd']);
+  assert.equal(check.body, null);
+  // One box empty, one unusable: both facts are said.
+  const mixed = windows.checkWindows(fields('', '0001-01-01T01:00', '2026-01-15T08:00', '2026-01-15T09:00'));
+  assert.deepEqual(mixed.errors, [
+    'The incident window needs a start and an end, in UTC.',
+    'The incident window end (0001-01-01T01:00) is not a date that can be used. Check the year.'
+  ]);
+});
+
+function memory() {
+  const map = new Map();
+  return { map, getItem: (key) => (map.has(key) ? map.get(key) : null), setItem: (key, value) => { map.set(key, String(value)); } };
+}
+
+test('typed windows are kept per case and come back after a reload (UI-R2-11)', () => {
+  const store = memory();
+  const typed = fields('2026-10-19T09:00', '2026-10-19T11:00', '2026-10-19T07:00', '2026-10-19T09:00');
+  assert.equal(windows.loadWindows('case-1', store), null, 'nothing kept yet');
+  windows.saveWindows('case-1', typed, store);
+  assert.deepEqual(windows.loadWindows('case-1', store), typed);
+  assert.equal(windows.loadWindows('case-2', store), null, 'another case does not see them');
+  // A half-typed box is kept as it is.
+  const partial = fields('2026-10-19T09:00', '', '2026-10-19T07:00', '2026-10-19T09:00');
+  windows.saveWindows('case-1', partial, store);
+  assert.deepEqual(windows.loadWindows('case-1', store), partial);
+});
+
+test('kept windows that are malformed, or storage that fails, give nothing and never throw (UI-R2-11)', () => {
+  const store = memory();
+  for (const bad of ['', 'not json', 'null', '[]', '{"incidentStart":1}', JSON.stringify({ incidentStart: 'x', incidentEnd: '', referenceStart: '', referenceEnd: '' })]) {
+    store.map.set('unravis.tracing.windows.c', bad);
+    assert.equal(windows.loadWindows('c', store), null, JSON.stringify(bad));
+  }
+  const broken = { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } };
+  assert.equal(windows.loadWindows('c', broken), null);
+  assert.doesNotThrow(() => windows.saveWindows('c', fields('', '', '', ''), broken));
 });

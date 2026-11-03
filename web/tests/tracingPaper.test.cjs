@@ -107,7 +107,8 @@ test('an empty window shows one hint, and typing in a box clears the refusal', (
   const src = paper();
   assert.match(src, /windowIsEmpty\(result\.lanes\)/);
   assert.match(src, /WINDOW_TEXT\.noEvents/);
-  assert.equal((src.match(/oninput=\{clearProblems\}/g) || []).length, 4);
+  assert.equal((src.match(/oninput=\{onFieldInput\}/g) || []).length, 4);
+  assert.match(src, /function onFieldInput\(\) \{\s*edited = true;\s*clearProblems\(\);/);
 });
 
 test('the read-only no-op effect is gone and readOnly still disables the inputs', () => {
@@ -136,4 +137,48 @@ test('TracingPaper is only reached through lazyComponent', () => {
     const src = fs.readFileSync(file, 'utf8');
     assert.doesNotMatch(src, /^\s*import\s+TracingPaper\b/m, path.relative(root, file) + ' imports TracingPaper statically');
   }
+});
+
+test('Try again and Cancel give keyboard focus to the chart region instead of dropping it (UI-R2-02)', () => {
+  const src = paper();
+  assert.match(src, /<div data-region="chart" class="chart-region" tabindex="-1" bind:this=\{chartRegion\}>/);
+  const fn = src.slice(src.indexOf('async function keepFocusInChart'), src.indexOf('function cancel()'));
+  assert.match(fn, /chartRegion\.contains\(document\.activeElement\)/);
+  assert.match(fn, /await tick\(\)/);
+  assert.match(fn, /active === document\.body\) chartRegion\?\.focus\(\)/);
+  assert.equal((src.match(/keepFocusInChart\(/g) || []).length, 4, 'defined once, used by Try again and by both Cancel buttons');
+  assert.match(src, /keepFocusInChart\(\(\) => void run\(lastBody \?\? undefined\)\)/);
+  assert.equal((src.match(/keepFocusInChart\(cancel\)/g) || []).length, 2);
+  assert.doesNotMatch(src, /onclick=\{cancel\}/);
+});
+
+test('the failed read is a styled error panel with the same sentence and Try again (UI-R2-09)', () => {
+  const src = paper();
+  const chart = src.slice(src.indexOf('data-region="chart"'), src.indexOf('data-region="notes"'));
+  const panel = chart.slice(chart.indexOf('class="error-panel"'), chart.indexOf('{:else if status'));
+  assert.match(panel, /class="error-icon" aria-hidden="true"/);
+  assert.match(panel, /<p role="status">\{errorText\}<\/p>/);
+  assert.match(panel, /TRACING_TEXT\.retry/);
+  assert.match(src, /\.error-panel \{[^}]*border: var\(--hairline-width\) solid var\(--bad\)/);
+});
+
+test('Cancelled is said in the notes region below the chart, so the chart never moves (UI-R2-12)', () => {
+  const src = paper();
+  const chart = src.slice(src.indexOf('data-region="chart"'), src.indexOf('data-region="notes"'));
+  assert.doesNotMatch(chart, /cancel-note|cancelledKept|cancelledNone/);
+  const notes = src.slice(src.indexOf('data-region="notes"'), src.indexOf('</section>'));
+  assert.match(notes, /class="cancel-note">\{result \? WINDOW_TEXT\.cancelledKept : WINDOW_TEXT\.cancelledNone\}/);
+});
+
+test('typed windows are restored on open and kept after the first edit only (UI-R2-11)', () => {
+  const src = paper();
+  assert.match(src, /loadWindows\(caseId\) \?\? defaultWindows\(windowNow\(app\.info, Date\.now\(\)\)\)/);
+  assert.match(src, /if \(edited\) saveWindows\(caseId,/);
+  assert.match(src, /edited = true;\s*clearProblems\(\);\s*\}\s*\n\s*\n/);
+});
+
+test('a closed case still explains why the timeline button is off, to assistive technology too (UI-R2-03)', () => {
+  const src = read('src/lib/components/CaseHome.svelte');
+  assert.match(src, /aria-describedby=\{info\?\.closed \? 'home-tracing-closed' : undefined\}/);
+  assert.match(src, /<p id="home-tracing-closed" class="note">\{TRACING_TEXT\.closedReason\}<\/p>/);
 });

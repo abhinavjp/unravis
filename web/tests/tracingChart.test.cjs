@@ -40,7 +40,7 @@ const {
   LANE_NAME, LANE_ASK, PANEL_TITLE, LANE_STATE_TEXT, INCOMPLETE_TEXT, MIXED_NOTE, TRUNCATED_NOTE,
   slotGrid, slotOutside, slotStartMs,
   barsFor, barMax, widthLabel, axisCaption, laneNote,
-  barHeightPct, laneDrawsBars, isLaneVisible, showsProvenance, laneStatusLine, NO_EVENTS_PERIOD, hasAnyData, outsideSlots
+  truncatedNote, barHeightPct, laneDrawsBars, isLaneVisible, showsProvenance, laneStatusLine, NO_EVENTS_PERIOD, hasAnyData, outsideSlots
 } = lanes;
 
 function window(overrides = {}) {
@@ -269,6 +269,60 @@ test('outside slots are only the axis edges', () => {
   assert.deepEqual(outsideSlots(wide, 0, 1), [0]);
   const exact = slotGrid(window());
   assert.deepEqual(outsideSlots(exact, 0, exact.n), []);
+});
+
+test('the truncation note names the lane that was cut, in lane order (UI-R2-06)', () => {
+  const sql = lane({ key: 'sql', truncated: true });
+  const iis = lane({ key: 'iis', truncated: true });
+  const audit = lane({ key: 'audit', truncated: false });
+  assert.equal(truncatedNote([audit, sql, lane({ key: 'iis' })]), 'The list of events for Database (SQL Server) was cut at its limit. The counts in the bars are not affected.');
+  assert.equal(truncatedNote([iis, sql]), 'The list of events for Database (SQL Server) and Web server (IIS) was cut at its limit. The counts in the bars are not affected.');
+  assert.equal(truncatedNote([audit]), TRUNCATED_NOTE, 'no lane flagged: the plain note');
+  assert.equal(truncatedNote([]), TRUNCATED_NOTE);
+  assert.match(read('src/components/TracingChart.svelte'), /\{truncatedNote\(response\.lanes\)\}/);
+});
+
+test('Escape during a brush drag drops the selection and swallows the click that follows (UI-R2-05)', () => {
+  const src = read('src/components/TracingChart.svelte');
+  const start = src.indexOf('function cancelDrag()');
+  assert.ok(start > 0, 'cancelDrag exists');
+  const body = src.slice(start, src.indexOf('function onOverlayClick'));
+  assert.match(body, /dragFrom = null;\s*dragTo = null;\s*suppressClick = true;/);
+  assert.match(src, /event\.key === 'Escape' && dragFrom != null\) \{ event\.preventDefault\(\); event\.stopPropagation\(\); cancelDrag\(\)/);
+  assert.match(src, /<svelte:window onkeydown=\{onWindowKey\} \/>/);
+  // The drag branch comes before the tooltip branch, so one Escape does one thing.
+  assert.ok(src.indexOf("event.key === 'Escape' && dragFrom != null") < src.indexOf("event.key === 'Escape' && tipSlot != null"));
+});
+
+function luminance(hex) {
+  const channel = (value) => { const c = value / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const n = parseInt(hex.slice(1), 16);
+  return 0.2126 * channel((n >> 16) & 255) + 0.7152 * channel((n >> 8) & 255) + 0.0722 * channel(n & 255);
+}
+const contrast = (a, b) => { const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+
+test('the error overlay differs from the bar by pattern and by at least 3:1 lightness, in both themes (UI-R2-04)', () => {
+  const css = read('src/brand/tokens.css');
+  const values = (name) => [...css.matchAll(new RegExp('--' + name + ': *(#[0-9a-fA-F]{6})', 'g'))].map((match) => match[1]);
+  const bg = values('bg');
+  assert.equal(bg.length, 3, 'dark, light by media, light forced');
+  for (const lane of ['lane-audit', 'lane-sql', 'lane-iis']) {
+    const colours = values(lane);
+    assert.equal(colours.length, 3);
+    colours.forEach((colour, theme) => {
+      assert.ok(contrast(colour, bg[theme]) >= 3, lane + ' against the stripe colour, theme ' + theme + ': ' + contrast(colour, bg[theme]).toFixed(2));
+    });
+  }
+  const src = read('src/components/TracingChart.svelte');
+  const rule = src.slice(src.indexOf('.bar-err {'), src.indexOf('}', src.indexOf('.bar-err {')));
+  assert.match(rule, /repeating-linear-gradient\([^)]*var\(--bad\)[^)]*var\(--bg\)/);
+  assert.equal(PANEL_TITLE.iis, 'Web-server requests (errors shown striped)');
+});
+
+test('the lane heads are not tab stops and keep a name (UI-R2-07)', () => {
+  const src = read('src/components/TracingChart.svelte');
+  assert.match(src, /<div class="lane-label" role="group" aria-label=\{LANE_NAME\[lane\.key\]\} aria-describedby="tc-hint-\{lane\.key\}"/);
+  assert.doesNotMatch(src, /lane-label[^\n]*tabindex/);
 });
 
 test('the chart keeps the axis baseline, tab stops and ticks honest (UI-R1-07/10/15/17, WEB-R1)', () => {

@@ -62,3 +62,11 @@ Exe: `dist\unravis.exe` from `build.ps1` (GUI subsystem, stamped `v0.1.0-rc.10-5
 The 5 stamped-build failures: the UPD-04/05/05a/06 specs expect a development build (`data-state` "dev") and get "unreachable" because a stamped version tries the network update check; HELP-03 compares the build line "(build abc, date)" to `--version` "(commit abc, built date)". The same 5 specs pass on an unstamped build, and none touches Phase 07 code. Known defects DOC-02 and KEEP-09 stay expected-fail; the archive suite was not run (cannot run, see above).
 
 Smoke notes: `tools/e2e/phase07-smoke.ps1 [-Exe <path>]`. `--no-browser` never reaches the single-instance gate (main.go), so checks b, c, d use `--background` for the first and second copy. The script uses a temp `AUDIT_CONFIG_DIR` and `--port 0`, and removes its processes and temp dir. If another Unravis already holds the per-user instance name, it marks b, c, d, e BLOCKED instead of running `--quit` against that copy. Manual tray, shortcut and sign-in checks were not run here and stay PENDING in `docs/background-run-acceptance.md`.
+
+## UI loop round 1 (2026-11-04)
+
+Unstamped gate exe rebuilt after the round-1 fixes (commit 45cb98e). Full e2e: 327 of 329 pass; 2 flaky (KEY-07 archive-folder race, HAND-17 geometry) pass alone 3 of 3 each. TRACE/CASE/HAND subset 81 of 81. Go `go test ./...` and Linux vet clean; web check 0 errors, 2143 node tests, build and distChunks pass. Findings table: `ui-loop/review-r1-scenarios.md`. Known defects DOC-02, KEEP-09 unchanged.
+
+## UI loop round 2 (2026-11-04)
+
+Build: unstamped plain `go build` after Go sweep round 2 (`5eb00ea`) and UI-R2-01..12 web fixes. TRACE, CASE and HAND subset: 81 of 81 pass. First run had CASE-02 fail on a Windows `ERR_NO_BUFFER_SPACE` asset load; re-run of CASE-02 and HAND-17 passed. HAND-17 is flaky (measures right after first paint). UI-R2-13 (demo-only provenance time) skipped; UI-R2-03 (closed-case timeline) awaits owner decision.

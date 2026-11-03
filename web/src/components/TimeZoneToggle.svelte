@@ -20,4 +20,6 @@
   .zone-toggle button[aria-pressed='true'] { color: var(--text); background: var(--surface-2); box-shadow: inset 0 -2px 0 var(--accent); }
   .zone-toggle button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
   @media (max-width: 1100px) { .zone-name { display: none; } }
+  /* Touch targets on a phone, a tablet and any touch screen: 40 px high, never under 32. */
+  @media (max-width: 768px), (pointer: coarse) { .zone-toggle button { min-height: 40px; } }
 </style>

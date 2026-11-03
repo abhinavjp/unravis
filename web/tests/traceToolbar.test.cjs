@@ -79,18 +79,20 @@ test('swatches read the shared lane variables', () => {
   assert.match(source, /import type \{ TracingLaneKey \} from '\.\.\/lib\/tracing\/model'/);
 });
 
-test('lane toggles come from the single lane order and stay 32 px high on a phone', () => {
+test('lane toggles come from the single lane order and stay at least 32 px high on a phone and a tablet', () => {
   const source = read('src/components/TraceToolbar.svelte');
   assert.match(source, /\{#each LANE_ORDER as key/);
   assert.ok(!/ as TracingLaneKey\)/.test(source));
   assert.deepEqual(toolbar.LANE_ORDER, ['audit', 'sql', 'iis']);
   assert.equal(toolbar.LANE_ORDER, loadTypeScript('src/lib/tracing/lanes.ts').LANE_ORDER);
   for (const key of toolbar.LANE_ORDER) assert.equal(typeof toolbar.TOOLBAR_TEXT[key], 'string');
-  const phone = source.replace(/\r\n/g, '\n').match(/@media \(max-width: 480px\) \{([\s\S]*?)\n \}/);
+  const phone = source.replace(/\r\n/g, '\n').match(/@media \(max-width: 768px\), \(pointer: coarse\) \{([\s\S]*?)\n \}/);
   assert.ok(phone, 'phone rule present');
   assert.match(phone[1], /\.tt-lane/);
   assert.match(phone[1], /\.pill/);
-  assert.match(phone[1], /min-height: var\(--space-8\)/);
+  assert.match(phone[1], /min-height: var\(--space-10\)/);
+  const zone = read('src/components/TimeZoneToggle.svelte');
+  assert.match(zone, /@media \(max-width: 768px\), \(pointer: coarse\) \{ \.zone-toggle button \{ min-height: 40px; \} \}/, 'UTC and Local reach 40 px too (UI-R2-08)');
   // Spacing and radius come from tokens, not literal px (the swatch dot size and the visually hidden rule are the fixed sizes).
   const css = source.slice(source.indexOf('<style>'), source.indexOf('.sr-only {'));
   assert.ok(!/\b(?:padding|gap|margin|border-radius|min-height)\s*:[^;]*\d+px/.test(css));

@@ -38,7 +38,7 @@ export interface BarTipInput {
   startText: string;
   endText: string;
   zoneName: string;
-  /** How many events the bucket holds, and (audit only) how many were 5xx answers. */
+  /** How many events the bucket holds, and (audit and IIS only) how many were 5xx answers. */
   count: number;
   errors: number;
   /** Where the events came from, and for a saved read how fresh it is ('' when unknown). */
@@ -58,7 +58,8 @@ export function barTipLines(input: BarTipInput): string[] {
   } else {
     const noun = input.key === 'sql' ? 'call' : 'request';
     lines.push(`${formatCount(input.count)} ${noun}${input.count === 1 ? '' : 's'}`);
-    if (input.key === 'audit' && input.errors > 0) {
+    // The API audit and IIS lanes both count 5xx answers; SQL has no such count.
+    if ((input.key === 'audit' || input.key === 'iis') && input.errors > 0) {
       lines.push(`${formatCount(input.errors)} server error${input.errors === 1 ? '' : 's'} (5xx)`);
       lines.push(explain('status.5xx'));
     }

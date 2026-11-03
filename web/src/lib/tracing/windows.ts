@@ -77,9 +77,12 @@ export function checkWindows(f: WindowFields): WindowCheck {
   // The names are the picker's own labels ("Incident window", "Comparison period"), not the internal word "reference".
   const check = (name: string, keys: [keyof WindowFields, keyof WindowFields], start: number, end: number): boolean => {
     if (Number.isNaN(start) || Number.isNaN(end)) {
-      errors.push(`The ${name} needs a start and an end, in UTC.`);
-      if (Number.isNaN(start)) invalid.push(keys[0]);
-      if (Number.isNaN(end)) invalid.push(keys[1]);
+      // A box that holds text which is not a usable date (year 0001, say) is named with its value; an empty box is just missing.
+      const sides = [{ key: keys[0], word: 'start', bad: Number.isNaN(start) }, { key: keys[1], word: 'end', bad: Number.isNaN(end) }].filter((side) => side.bad);
+      const typed = sides.filter((side) => f[side.key].trim() !== '');
+      if (typed.length < sides.length) errors.push(`The ${name} needs a start and an end, in UTC.`);
+      for (const side of typed) errors.push(`The ${name} ${side.word} (${f[side.key].trim()}) is not a date that can be used. Check the year.`);
+      for (const side of sides) invalid.push(side.key);
       return false;
     }
     if (end <= start) {
@@ -127,6 +130,35 @@ export const WINDOW_TEXT = {
 export function windowIsEmpty(lanes: { state: string; buckets: { count: number }[] }[]): boolean {
   const read = lanes.filter((lane) => lane.state === 'events' || lane.state === 'incomplete');
   return read.length > 0 && lanes.every((lane) => lane.buckets.every((bucket) => !(bucket.count > 0)));
+}
+
+const STORAGE_KEY = 'unravis.tracing.windows.';
+const STORED_VALUE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})?$/;
+
+/** Reads the windows last typed for this case in this browser tab; null when none are kept, they are malformed, or storage is unavailable. */
+export function loadWindows(caseId: string, storage?: Pick<Storage, 'getItem'>): WindowFields | null {
+  try {
+    const raw = (storage ?? window.sessionStorage).getItem(STORAGE_KEY + caseId);
+    const value: unknown = raw ? JSON.parse(raw) : null;
+    if (typeof value !== 'object' || value === null) return null;
+    const read = (name: keyof WindowFields): string | null => {
+      const field = (value as Record<string, unknown>)[name];
+      return typeof field === 'string' && STORED_VALUE.test(field) ? field : null;
+    };
+    const fields = { incidentStart: read('incidentStart'), incidentEnd: read('incidentEnd'), referenceStart: read('referenceStart'), referenceEnd: read('referenceEnd') };
+    return Object.values(fields).every((field) => field !== null) ? (fields as WindowFields) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Keeps the typed windows for this case in this browser tab, so a reload shows them again. Never throws. */
+export function saveWindows(caseId: string, fields: WindowFields, storage?: Pick<Storage, 'setItem'>): void {
+  try {
+    (storage ?? window.sessionStorage).setItem(STORAGE_KEY + caseId, JSON.stringify({
+      incidentStart: fields.incidentStart, incidentEnd: fields.incidentEnd, referenceStart: fields.referenceStart, referenceEnd: fields.referenceEnd
+    }));
+  } catch { /* unavailable storage only means the windows are not kept */ }
 }
 
 export const windowCopyEntries = (): LintEntry[] =>

@@ -10,3 +10,11 @@
 
 Mechanics: scratch branch hub/pNN-wN in .dev/wt/hub-pNN; hub patches applied locally; hand-off = `git diff <base> hub/...` applied to main tree, explicit-path commit, churn check (`--numstat` vs scratch).
 Open items for the owner (surface at the end): see delegation.md plus: saved export hash differs from preview hash (WP-65 rebuild by design); numeric-form referer hosts (2130706433, 0x7f.0.0.1) are kept; preview id is deterministic/replayable; Escape with a tooltip open closes the whole Import dialog; no scrub toggle in the UI; allowlisted cookie >512 B or past the 20th pair is dropped silently; flaky TestV3CaseStillOpensWhenAMasterKeyExistsButIsNotApplied under load; int_test.go commit carries one pre-existing gofmt alignment line.
+
+## UI loop and quality sweep (2026-11-04)
+- Round 1 UI review: 19 findings (UI-R1-01..19). Fixed in 45cb98e: IIS error bars (new `errors` wire field), per-lane 50,000 row cap, zoom focus, min bar height, axis tick format, cancel and re-run behaviour, window validation a11y, timeline history entry and reload. Go sweep round 1 in b9bc42d.
+- Open: WEB-R1-25 closed-case branch (owner decision), UI-R1-16 touch targets, tests fixer (WEB-R1-08/24), round 2 review of areas R1 did not cover.
+
+## UI loop round 2 and Go sweep round 2 (2026-11-04)
+
+Go round 2 committed (`5eb00ea`). Web UI-R2-01..12 fixed (see ui-loop/review-r2-scenarios.md "Fix results"); gates: check 0 errors, 2156 node tests pass, build + distChunks pass, e2e subset 81/81. Open: UI-R2-03 owner decision, UI-R2-13 server-side, GO-R2-14/15/17/18.

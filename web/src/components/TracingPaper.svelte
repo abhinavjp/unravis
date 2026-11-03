@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { fetchTracing, nextRequestSeq, tracingErrorText, type TracingResponse } from '../lib/tracing/model';
-  import { WINDOW_TEXT, checkWindows, defaultWindows, fixOverlap, windowIsEmpty, windowNow, type WindowFields } from '../lib/tracing/windows';
+  import { WINDOW_TEXT, checkWindows, defaultWindows, fixOverlap, windowIsEmpty, windowNow, loadWindows, saveWindows, type WindowFields } from '../lib/tracing/windows';
   import { TRACING_TEXT } from '../lib/copy/tracingCopy';
   import TracingChart from './TracingChart.svelte';
   import TraceToolbar from './TraceToolbar.svelte';
@@ -32,7 +32,9 @@
 
   // The window picker (WP-22): times are typed in UTC; the server gets the checked ISO strings only.
   // In demo mode the default window counts back from the data reference time, not the real clock.
-  let fields = $state<WindowFields>(defaultWindows(windowNow(app.info, Date.now())));
+  // Windows typed earlier for this case in this tab come back after a reload; only typing keeps them, so the defaults still move with the clock.
+  const startingWindows = (): WindowFields => loadWindows(caseId) ?? defaultWindows(windowNow(app.info, Date.now()));
+  let fields = $state<WindowFields>(startingWindows());
   let problems = $state<string[]>([]);
   let invalidFields = $state<(keyof WindowFields)[]>([]);
   let overlapping = $state(false);
@@ -79,10 +81,34 @@
     if (problems.length > 0) { problems = []; invalidFields = []; }
   }
 
+  // Kept after the first edit, not on open: untouched defaults must keep following the clock. An effect saves, so it sees the bound value.
+  let edited = false;
+  function onFieldInput() {
+    edited = true;
+    clearProblems();
+  }
+  $effect(() => {
+    const { incidentStart, incidentEnd, referenceStart, referenceEnd } = fields;
+    if (edited) saveWindows(caseId, { incidentStart, incidentEnd, referenceStart, referenceEnd });
+  });
+
   function moveReference() {
     fields = fixOverlap(fields);
     overlapping = checkWindows(fields).overlap;
+    edited = true;
     clearProblems();
+  }
+
+  // Try again and Cancel remove the button that was pressed. When the keyboard was on it, focus moves to the chart region
+  // (which stays in place) instead of dropping to the page, so the next Tab continues from here.
+  let chartRegion: HTMLDivElement | undefined;
+  async function keepFocusInChart(action: () => void) {
+    const hadFocus = !!chartRegion && chartRegion.contains(document.activeElement);
+    action();
+    if (!hadFocus) return;
+    await tick();
+    const active = document.activeElement;
+    if (!active || active === document.body) chartRegion?.focus();
   }
 
   // Cancel keeps the previous chart when there is one; with none, the region says so rather than staying empty.
@@ -111,13 +137,13 @@
     <form class="window-form" onsubmit={(event) => { event.preventDefault(); startTracing(); }}>
       <fieldset class="window-set">
         <legend>{WINDOW_TEXT.incidentLabel}</legend>
-        <label class="window-field"><span>{WINDOW_TEXT.start}</span><input type="datetime-local" bind:value={fields.incidentStart} oninput={clearProblems} aria-invalid={invalidIf('incidentStart')} aria-describedby={describedBy} disabled={readOnly || closed} /></label>
-        <label class="window-field"><span>{WINDOW_TEXT.end}</span><input type="datetime-local" bind:value={fields.incidentEnd} oninput={clearProblems} aria-invalid={invalidIf('incidentEnd')} aria-describedby={describedBy} disabled={readOnly || closed} /></label>
+        <label class="window-field"><span>{WINDOW_TEXT.start}</span><input type="datetime-local" bind:value={fields.incidentStart} oninput={onFieldInput} aria-invalid={invalidIf('incidentStart')} aria-describedby={describedBy} disabled={readOnly || closed} /></label>
+        <label class="window-field"><span>{WINDOW_TEXT.end}</span><input type="datetime-local" bind:value={fields.incidentEnd} oninput={onFieldInput} aria-invalid={invalidIf('incidentEnd')} aria-describedby={describedBy} disabled={readOnly || closed} /></label>
       </fieldset>
       <fieldset class="window-set">
         <legend>{WINDOW_TEXT.referenceLabel}</legend>
-        <label class="window-field"><span>{WINDOW_TEXT.start}</span><input type="datetime-local" bind:value={fields.referenceStart} oninput={clearProblems} aria-invalid={invalidIf('referenceStart')} aria-describedby={describedBy} disabled={readOnly || closed} /></label>
-        <label class="window-field"><span>{WINDOW_TEXT.end}</span><input type="datetime-local" bind:value={fields.referenceEnd} oninput={clearProblems} aria-invalid={invalidIf('referenceEnd')} aria-describedby={describedBy} disabled={readOnly || closed} /></label>
+        <label class="window-field"><span>{WINDOW_TEXT.start}</span><input type="datetime-local" bind:value={fields.referenceStart} oninput={onFieldInput} aria-invalid={invalidIf('referenceStart')} aria-describedby={describedBy} disabled={readOnly || closed} /></label>
+        <label class="window-field"><span>{WINDOW_TEXT.end}</span><input type="datetime-local" bind:value={fields.referenceEnd} oninput={onFieldInput} aria-invalid={invalidIf('referenceEnd')} aria-describedby={describedBy} disabled={readOnly || closed} /></label>
       </fieldset>
       <div class="window-actions">
         <button type="submit" class="primary-button" disabled={readOnly || closed || status === 'loading'}>{WINDOW_TEXT.startTracing}</button>
@@ -142,15 +168,19 @@
       <TraceToolbar {visible} onToggle={(key) => (visible = toggleLane(visible, key))} scrub={exportScrub.forCase(caseId)} />
     {/if}
   </div>
-  <div data-region="chart">
+  <div data-region="chart" class="chart-region" tabindex="-1" bind:this={chartRegion}>
     {#if status === 'error'}
-      <p role="status">{errorText}</p>
-      <button type="button" class="secondary-button" onclick={() => void run(lastBody ?? undefined)}>{TRACING_TEXT.retry}</button>
+      <div class="error-panel">
+        <span class="error-icon" aria-hidden="true">!</span>
+        <div class="error-body">
+          <p role="status">{errorText}</p>
+          <button type="button" class="secondary-button" onclick={() => void keepFocusInChart(() => void run(lastBody ?? undefined))}>{TRACING_TEXT.retry}</button>
+        </div>
+      </div>
     {:else if status === 'loading' && !result}
       <p role="status">{TRACING_TEXT.readingWindow}</p>
-      <button type="button" class="secondary-button" onclick={cancel}>{TRACING_TEXT.cancel}</button>
+      <button type="button" class="secondary-button" onclick={() => void keepFocusInChart(cancel)}>{TRACING_TEXT.cancel}</button>
     {:else}
-      {#if cancelled}<p role="status" class="cancel-note">{result ? WINDOW_TEXT.cancelledKept : WINDOW_TEXT.cancelledNone}</p>{/if}
       {#if result}
         {#if result.sources.length === 0 && result.lanes.length === 0}
           <p role="status">{TRACING_TEXT.emptyNoSources}</p>
@@ -164,7 +194,7 @@
             {#if status === 'loading'}
               <div class="chart-veil">
                 <p role="status">{TRACING_TEXT.readingWindow}</p>
-                <button type="button" class="secondary-button" onclick={cancel}>{TRACING_TEXT.cancel}</button>
+                <button type="button" class="secondary-button" onclick={() => void keepFocusInChart(cancel)}>{TRACING_TEXT.cancel}</button>
               </div>
             {/if}
           </div>
@@ -173,6 +203,8 @@
     {/if}
   </div>
   <div data-region="notes">
+    <!-- Below the chart, so saying "Cancelled" never pushes the chart down. -->
+    {#if cancelled && status !== 'loading' && status !== 'error'}<p role="status" class="cancel-note">{result ? WINDOW_TEXT.cancelledKept : WINDOW_TEXT.cancelledNone}</p>{/if}
     {#if handoffNote}<p role="status">{handoffNote}</p>{/if}
   </div>
 </section>
@@ -194,6 +226,11 @@
   .window-problems p { margin: var(--space-1) 0 0; }
   .window-overlap { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: 0; font-size: var(--fs-2); }
   .cancel-note, .empty-hint { margin: 0 0 var(--space-2); color: var(--text-2); font-size: var(--fs-2); }
+  .chart-region:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .error-panel { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3) var(--space-4); background: var(--surface-2); border: var(--hairline-width) solid var(--bad); border-left-width: var(--space-1); border-radius: var(--radius-sm); }
+  .error-icon { flex: none; width: var(--space-5); height: var(--space-5); border-radius: 50%; background: var(--bad); color: var(--bg); font-weight: 700; line-height: var(--space-5); text-align: center; }
+  .error-body { display: grid; gap: var(--space-2); justify-items: start; min-width: 0; }
+  .error-body p { margin: 0; color: var(--text); }
   .chart-hold { position: relative; }
   .chart-veil { position: absolute; inset: 0; display: flex; flex-wrap: wrap; align-content: flex-start; gap: var(--space-2); align-items: center; padding: var(--space-3); background: color-mix(in srgb, var(--bg) 72%, transparent); }
   .chart-veil p { margin: 0; }

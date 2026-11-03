@@ -4,9 +4,9 @@
   // or recomputes the axis. WP-17c adds hover/focus text; WP-61 reads the bucket selector's onSelect.
   import type { TracingLane, TracingLaneKey, TracingResponse } from '../lib/tracing/model';
   import {
-    LANE_ASK, LANE_NAME, LANE_ORDER, MIXED_NOTE, PANEL_TITLE, TRUNCATED_NOTE,
+    LANE_ASK, LANE_NAME, LANE_ORDER, MIXED_NOTE, PANEL_TITLE,
     axisCaption, barHeightPct, barMax, barsFor, hasAnyData, isLaneVisible, laneDrawsBars, laneNote, laneStatusLine,
-    outsideSlots, showsProvenance, slotGrid, slotOutside, slotStartMs, type Bar
+    outsideSlots, showsProvenance, slotGrid, slotOutside, slotStartMs, truncatedNote, type Bar
   } from '../lib/tracing/lanes';
   import { formatTime } from '../lib/time';
   import { formatDuration } from '../lib/format';
@@ -116,6 +116,7 @@
     if (!grid) return;
     // Browser shortcuts (page zoom with Ctrl or Cmd and + - 0, Alt navigation) are not ours.
     if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === 'Escape' && dragFrom != null) { event.preventDefault(); event.stopPropagation(); cancelDrag(); return; }
     if (event.key === 'ArrowLeft') { event.preventDefault(); selectedSlot = stepSlot(range, current ?? range.from, -1, isOutside); }
     else if (event.key === 'ArrowRight') { event.preventDefault(); selectedSlot = stepSlot(range, current ?? range.from, 1, isOutside); }
     else if (event.key === 'Home') { event.preventDefault(); selectedSlot = edgeSlot(range, 'first', isOutside); }
@@ -215,6 +216,18 @@
     dragTo = null;
   }
 
+  // Escape during a drag drops the selection: nothing zooms, and the click that follows the release is swallowed.
+  function cancelDrag() {
+    if (dragFrom == null) return;
+    cancelMove();
+    dragFrom = null;
+    dragTo = null;
+    suppressClick = true;
+  }
+  function onWindowKey(event: KeyboardEvent) {
+    if (event.key === 'Escape' && dragFrom != null) { event.preventDefault(); cancelDrag(); }
+  }
+
   function onOverlayClick(event: MouseEvent) {
     if (suppressClick) { suppressClick = false; return; }
     if (!grid) return;
@@ -273,6 +286,8 @@
   function onOverlayLeave() { cancelMove(); hideTip(); }
 </script>
 
+<svelte:window onkeydown={onWindowKey} />
+
 <div class="tracing-chart">
   {#if response.mixedConsistency}
     <div role="note" class="notice">
@@ -312,8 +327,8 @@
       {@const bars = allBars.filter((bar) => inRange(bar.index))}
       {@const max = barMax(bars)}
       {@const drawBars = drawsBars(lane)}
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="lane-label" tabindex="0" role="group" aria-label={LANE_NAME[lane.key]} aria-describedby="tc-hint-{lane.key}" data-truncated={lane.truncated ? 'true' : undefined} style="--row:{laneIndex + 1}">
+      <!-- Not a tab stop: it has no action. The name and the hint stay available to screen readers, and the hint shows on hover. -->
+      <div class="lane-label" role="group" aria-label={LANE_NAME[lane.key]} aria-describedby="tc-hint-{lane.key}" data-truncated={lane.truncated ? 'true' : undefined} style="--row:{laneIndex + 1}">
         <span class="swatch" style={SWATCH_STYLE[lane.key]} aria-hidden="true"></span>
         <strong>{LANE_NAME[lane.key]}</strong>
         <small>{LANE_ASK[lane.key]}</small>
@@ -419,7 +434,7 @@
   {/if}
 
   {#if response.truncated}
-    <p class="foot">{TRUNCATED_NOTE}</p>
+    <p class="foot">{truncatedNote(response.lanes)}</p>
   {/if}
 </div>
 
@@ -439,7 +454,6 @@
   .lane-label .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: var(--space-1); }
   .lane-label small { color: var(--text-2); font-size: var(--fs-2); }
   .lane-label { position: relative; }
-  .lane-label:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .hint { display: none; position: absolute; left: 0; top: 100%; z-index: 3; width: max-content; max-width: 22rem; padding: var(--space-2); color: var(--text); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); }
   .lane-label:hover .hint, .lane-label:focus-within .hint { display: block; }
   .lane-label .origin { color: var(--text-2); }
@@ -461,7 +475,8 @@
   .panel[data-lane='audit'] .bar { background: var(--lane-audit); }
   .panel[data-lane='sql'] .bar { background: var(--lane-sql); }
   .panel[data-lane='iis'] .bar { background: var(--lane-iis); }
-  .bar-err { position: absolute; bottom: 0; left: 0; right: 0; background: var(--bad); }
+  /* Errors differ from the bar by pattern and lightness, not hue alone: stripes of the page background (at least 3:1 against every lane colour, both themes) and --bad. */
+  .bar-err { position: absolute; bottom: 0; left: 0; right: 0; min-height: 2px; background: repeating-linear-gradient(135deg, var(--bad) 0 2px, var(--bg) 2px 4px); }
   .outside-dash { position: absolute; bottom: 0; height: 2px; background: var(--line); opacity: .6; }
   .lane-note { margin: var(--space-1) var(--space-2) 0; color: var(--text-2); font-size: var(--fs-3); text-align: center; }
   .lane-note.bad { color: var(--bad); text-align: left; }

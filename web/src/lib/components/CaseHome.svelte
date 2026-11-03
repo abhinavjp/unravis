@@ -487,8 +487,8 @@
     <section class="block" aria-labelledby="home-tracing">
       <h3 id="home-tracing">{TRACING_TEXT.heading}</h3>
       <p class="note">{TRACING_TEXT.entryNote}</p>
-      <div><button id="home-tracing-open" type="button" class="secondary-button" disabled={!!info?.closed} onclick={openTracing}>{TRACING_TEXT.entryButton}</button></div>
-      {#if info?.closed}<p class="note">{TRACING_TEXT.closedReason}</p>{/if}
+      <div><button id="home-tracing-open" type="button" class="secondary-button" disabled={!!info?.closed} aria-describedby={info?.closed ? 'home-tracing-closed' : undefined} onclick={openTracing}>{TRACING_TEXT.entryButton}</button></div>
+      {#if info?.closed}<p id="home-tracing-closed" class="note">{TRACING_TEXT.closedReason}</p>{/if}
     </section>
 
     {/if}
