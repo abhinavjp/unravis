@@ -109,6 +109,9 @@ type Runner struct {
 	BeforeStep func(step string)
 	// BeforeCommit is for tests: it runs once every step is done, before the journal is retired.
 	BeforeCommit func(j *Journal)
+	// NoProfileLinks is set in the elevated worker: it must not write or remove any link inside the user's profile; the window process
+	// does that after the worker commits (WP-74i).
+	NoProfileLinks bool
 }
 
 func (r *Runner) logf(format string, a ...any) {

@@ -145,6 +145,7 @@ func ServeWorker(ctx context.Context, rw io.ReadWriter, r *Runner, prepare func(
 		return finish(Result{Outcome: OutcomeInvalid, Op: req.Op, Message: fmt.Sprintf("The worker does not accept the action %q. Nothing was changed.", req.Op)})
 	}
 	w := *r
+	w.NoProfileLinks = true // the elevated worker never touches a link inside the user's profile; the window does (WP-74i/74j)
 	if prepare != nil {
 		if err := prepare(&req, &w); err != nil {
 			return finish(Result{Outcome: OutcomeInvalid, Op: req.Op, Message: "The worker refused the request: " + err.Error() + ". Nothing was changed."})
@@ -192,6 +193,7 @@ func WorkerPrepare(sid, profile string) func(*WorkRequest, *Runner) error {
 			return errors.New("the folders sent are not the profile of the person running setup")
 		}
 		r.Dirs = r.Dirs.WithUser(*req.User)
+		r.NoProfileLinks = true
 		if sid != "" {
 			r.UserSID = sid
 		}

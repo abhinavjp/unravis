@@ -425,7 +425,11 @@ func DescribeChanges(req WorkRequest, old *Installed, d Dirs, svc Services, isAd
 	c := UIChanges{NeedsAdmin: NeedsAdminFor(svc, o) && !isAdmin}
 	l := NewLayout(o, d)
 	if req.Op == OpUninstall {
-		c.WillChange = append(c.WillChange, "Remove the program folder "+l.InstallDir, "Remove the Start menu shortcut and the Installed apps entry")
+		c.WillChange = append(c.WillChange, "Remove the program folder "+l.InstallDir, "Remove the Start menu shortcut and the Installed apps entry",
+				"Remove the Quit Unravis shortcut from the Start menu")
+			if l.DesktopLink != "" {
+				c.WillChange = append(c.WillChange, "Remove the Desktop shortcut (only if it points to Unravis)")
+			}
 		if o.Scope == ScopeMachine {
 			c.WillChange = append(c.WillChange, "Remove the key keeper service")
 		}
@@ -468,7 +472,11 @@ func DescribeChanges(req WorkRequest, old *Installed, d Dirs, svc Services, isAd
 		}
 	}
 	// The last steps of every install, upgrade and repair (plan.go: "shortcuts" and "arp"); the approval screen names them too.
-	c.WillChange = append(c.WillChange, "Start menu shortcut", "Installed apps entry")
+	c.WillChange = append(c.WillChange, "Start menu shortcut", "Quit Unravis shortcut in the Start menu")
+	if l.DesktopLink != "" {
+		c.WillChange = append(c.WillChange, "Desktop shortcut")
+	}
+	c.WillChange = append(c.WillChange, "Installed apps entry")
 	c.WillNotChange = []string{"Your cases and saved connections", "Saved passwords (they stay sealed as they are)", "Other programs and services", "Any database or server"}
 	return c
 }
@@ -485,6 +493,7 @@ func (b *LocalBackend) Run(ctx context.Context, req WorkRequest, onEvent func(St
 	if req.Op == OpInstall && old != nil {
 		o = old.State.Options() // a second install over an install keeps its choices
 	}
+	op := ResolveOp(req.Op, old, b.version())
 	if NeedsAdminFor(b.R.Sys.Svc, o) && !b.IsAdmin {
 		if b.Elev == nil {
 			return Result{Outcome: OutcomeRolledBack, Op: req.Op, Message: "Nothing was changed.",
@@ -492,9 +501,21 @@ func (b *LocalBackend) Run(ctx context.Context, req WorkRequest, onEvent func(St
 		}
 		u := b.R.Dirs.User()
 		req.User = &u // the worker checks these against the profile Windows names for this account
+		// The worker never touches a link inside the user's profile (WP-74i). This window, as the user, decides the sign-in value
+		// before the request is sent and writes or removes those links after the worker has committed.
+		r := *b.R
+		r.DeriveStartAtSignIn(op, o, &req.Options)
 		res := RunWorker(ctx, b.Elev, req, onEvent, func(s string) {
 			if b.Log != nil {
 				b.Log("worker: " + s)
+			}
+			onLog(s)
+		})
+		opts := o
+		opts.StartAtSignIn = req.Options.StartAtSignIn
+		r.ApplyProfileLinks(opts, &res, func(s string) {
+			if b.Log != nil {
+				b.Log("links: " + s)
 			}
 			onLog(s)
 		})

@@ -68,6 +68,23 @@ $Commit = Get-GitText @('rev-parse', 'HEAD')
 $BuildDate = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
 $VersionPackage = 'api-audit-explorer/internal/version'
 $LdFlags = "-X $VersionPackage.Version=$Version -X $VersionPackage.Commit=$Commit -X $VersionPackage.Date=$BuildDate"
+# The app is a windowless (GUI) program: no console window opens when it is double-clicked.
+$GuiLdFlags = "$LdFlags -H=windowsgui"
+
+function Get-PeSubsystem([string]$Path) {
+    # PE layout: the int32 at 0x3C is the offset of the 'PE' header; the optional header starts 24 bytes in,
+    # and its Subsystem field is 68 bytes into that. 2 = Windows GUI, 3 = Windows console.
+    $Stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $Reader = New-Object System.IO.BinaryReader($Stream)
+        $Stream.Position = 0x3C
+        $PeOffset = $Reader.ReadInt32()
+        $Stream.Position = $PeOffset + 24 + 68
+        return [int]$Reader.ReadUInt16()
+    } finally {
+        $Stream.Dispose()
+    }
+}
 
 function Invoke-Checked {
     param([string]$Executable, [string[]]$CommandArgs)
@@ -99,7 +116,7 @@ try {
     Invoke-Checked $GoExe @('test', './...')
     Invoke-Checked $GoExe @('vet', './...')
     New-Item -ItemType Directory -Force -Path (Join-Path $UtilityRoot 'dist') | Out-Null
-    Invoke-Checked $GoExe @('build', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis.exe'), './cmd/audit-explorer')
+    Invoke-Checked $GoExe @('build', '-ldflags', $GuiLdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis.exe'), './cmd/audit-explorer')
     # Compatibility copy for MCP client configs that still point at dist\api-audit-explorer.exe.
     # Remove this copy and the MCP.md note after 2026-12-31 (one release after the rename).
     Copy-Item -LiteralPath (Join-Path $UtilityRoot 'dist\unravis.exe') -Destination (Join-Path $UtilityRoot 'dist\api-audit-explorer.exe') -Force
@@ -125,6 +142,15 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $PayloadDir 'manifest.json'), $Manifest, (New-Object System.Text.UTF8Encoding($false)))
     try {
         Invoke-Checked $GoExe @('build', '-ldflags', $LdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis-setup.exe'), './cmd/unravis-setup')
+        # Subsystem check: the app must be GUI (2) so it opens no console; every other program built here stays console (3).
+        $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis.exe')
+        if ($Subsystem -ne 2) { throw "unravis.exe: PE subsystem $Subsystem, expected 2" }
+        $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis-keeper.exe')
+        if ($Subsystem -ne 3) { throw "unravis-keeper.exe: PE subsystem $Subsystem, expected 3" }
+        $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis-blackbox.exe')
+        if ($Subsystem -ne 3) { throw "unravis-blackbox.exe: PE subsystem $Subsystem, expected 3" }
+        $Subsystem = Get-PeSubsystem (Join-Path $UtilityRoot 'dist\unravis-setup.exe')
+        if ($Subsystem -ne 3) { throw "unravis-setup.exe: PE subsystem $Subsystem, expected 3" }
     } finally {
         # The programs stay in dist; the copies in the source tree go, so a later `go test` does not carry them.
         Get-ChildItem -LiteralPath $PayloadDir -Force | Where-Object { $_.Name -ne 'README.txt' } | Remove-Item -Recurse -Force

@@ -146,7 +146,24 @@ func (p *Plan) removeKeeper(ctx context.Context, t *Txn) error {
 }
 
 func (p *Plan) removeShortcuts(ctx context.Context, t *Txn) error {
-	for _, l := range []string{p.Layout.StartMenuLink, p.Layout.StartupLink} {
+	// Only a link whose target is this installation's program is removed; any other is kept and listed. In the elevated worker no link
+	// inside the user's profile is touched (the setup window or silent mode removes those afterwards, WP-74j).
+	links := []string{p.Layout.StartMenuLink, p.Layout.QuitLink}
+	if !p.r.NoProfileLinks {
+		links = append(links, p.Layout.StartupLink, p.Layout.DesktopLink)
+	}
+	for _, l := range links {
+		if l == "" || (p.r.NoProfileLinks && p.r.isProfileLink(l)) {
+			continue
+		}
+		exists, ours := linkIsOurs(l, p.Layout.AppExe)
+		if !exists {
+			continue
+		}
+		if !ours {
+			p.leftf("Shortcut %s (kept: it points to another program)", l)
+			continue
+		}
 		if err := os.Remove(l); err != nil && !errors.Is(err, os.ErrNotExist) {
 			p.leftf("Shortcut %s (%v)", l, err)
 		}

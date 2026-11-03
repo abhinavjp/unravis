@@ -28,10 +28,12 @@ import (
 	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/casestore"
 	"api-audit-explorer/internal/datadir"
+	"api-audit-explorer/internal/instance"
 	"api-audit-explorer/internal/ledger"
 	"api-audit-explorer/internal/mcp"
 	"api-audit-explorer/internal/server"
 	"api-audit-explorer/internal/store"
+	"api-audit-explorer/internal/tray"
 	"api-audit-explorer/internal/version"
 )
 
@@ -49,8 +51,16 @@ const (
 var stdout io.Writer = os.Stdout
 
 func main() {
-	if err := run(os.Args[1:], os.Getenv); err != nil {
-		log.Fatal(err)
+	// The console shim comes first: a windowless build has no console until it
+	// attaches to its parent's, and stdout was captured before that.
+	attachParentConsole()
+	stdout = os.Stdout
+	err := run(os.Args[1:], os.Getenv)
+	// run has returned: its cleanup (session file, server, tray icon) is done, so
+	// an end-session handler waiting on runDone can let Windows go on.
+	close(runDone)
+	if err != nil {
+		reportFatal(err)
 	}
 }
 
@@ -64,6 +74,8 @@ type runFlags struct {
 	allowBroadScans     bool
 	docsExaminedBudget  int64
 	version             bool
+	quit                bool
+	background          bool
 }
 
 // parseFlags parses and validates the command line. Every privacy and
@@ -80,6 +92,8 @@ func parseFlags(args []string) (runFlags, error) {
 	flags.BoolVar(&f.allowBroadScans, "allow-broad-scans", false, "dashboard only: allow checks that read every record in a window on a live source (off by default)")
 	flags.Int64Var(&f.docsExaminedBudget, "docs-examined-budget", 0, "dashboard only: cap on records examined per query; 0 leaves it unset")
 	flags.BoolVar(&f.version, "version", false, "print the version and exit")
+	flags.BoolVar(&f.quit, "quit", false, "ask the running Unravis to quit")
+	flags.BoolVar(&f.background, "background", false, "start in the tray without opening a browser; used by start at sign-in")
 	if err := flags.Parse(args); err != nil {
 		return runFlags{}, err
 	}
@@ -89,6 +103,18 @@ func parseFlags(args []string) (runFlags, error) {
 	}
 	if flags.NArg() != 0 {
 		return runFlags{}, fmt.Errorf("unexpected positional arguments")
+	}
+	if f.quit && flags.NFlag() > 1 {
+		return runFlags{}, fmt.Errorf("--quit cannot be combined with other options")
+	}
+	if f.background && hostOS != "windows" {
+		return runFlags{}, fmt.Errorf("--background is only available on Windows")
+	}
+	if f.background && f.noBrowser {
+		return runFlags{}, fmt.Errorf("--background and --no-browser cannot be combined")
+	}
+	if f.background && f.mcp {
+		return runFlags{}, fmt.Errorf("--background starts the dashboard; do not combine it with --mcp")
 	}
 	if f.port < 0 || f.port > 65535 {
 		return runFlags{}, fmt.Errorf("port must be between 0 and 65535")
@@ -124,6 +150,12 @@ func run(args []string, getenv func(string) string) error {
 		_, err := fmt.Fprintln(stdout, version.String())
 		return err
 	}
+	if f.quit {
+		if code := runQuit(os.Stderr, quitSignal); code != 0 {
+			exitProcess(code)
+		}
+		return nil
+	}
 	demo, port, noBrowser, mcpMode := &f.demo, &f.port, &f.noBrowser, &f.mcp
 	demoCfg, demoNotes, err := demoEnv(*demo, getenv, time.Now())
 	if err != nil {
@@ -146,6 +178,24 @@ func run(args []string, getenv func(string) string) error {
 		defer stop()
 		return bridge.Serve(ctx, os.Stdin, os.Stdout)
 	}
+	// One interactive copy per user. --no-browser (the e2e launcher) never
+	// reaches the gate: no mutex, no events. --mcp, --version and --quit have
+	// already returned.
+	interactive := !*noBrowser && hostOS == "windows"
+	background := f.background
+	openBrowser := interactive && !background
+	var instanceNames instance.Names
+	if interactive {
+		gate, err := enterSingleInstance(*demo, background, productionGateDeps())
+		if err != nil {
+			return err
+		}
+		if !gate.proceed {
+			return nil
+		}
+		defer gate.release()
+		instanceNames = gate.names
+	}
 	token, err := sessionToken(getenv)
 	if err != nil {
 		return err
@@ -166,7 +216,7 @@ func run(args []string, getenv func(string) string) error {
 		applog.RegisterSecret(token)
 		// The lines Unravis already prints keep going to the console, and to
 		// the file as well.
-		log.SetOutput(io.MultiWriter(os.Stderr, logFile.Writer()))
+		log.SetOutput(applog.Tee(os.Stderr, logFile.Writer()))
 	}
 
 	var repo audit.Repository
@@ -211,27 +261,42 @@ func run(args []string, getenv func(string) string) error {
 	}
 	// Listen for Ctrl+C before the session file exists, so an early interrupt
 	// still takes the clean path that removes it.
-	signalContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// appCtx is cancelled by a quit signal from another copy (--quit, the tray);
+	// the signal context below is its child, so it runs the same shutdown as Ctrl+C.
+	appCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	signalContext, stop := signal.NotifyContext(appCtx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	localURL := "http://" + listener.Addr().String()
 	// The session token never goes on a command line or into a log line. The
 	// browser is opened on a single-use /launch link; the server answers it with
 	// a redirect that carries the token in the fragment, which the browser never
 	// sends back. The page reads the fragment and removes it from the address bar.
-	openBrowser := !*noBrowser && runtime.GOOS == "windows"
 	codeLife := launchCodeLifeManual
 	if openBrowser {
 		codeLife = launchCodeLifeBrowser
 	}
-	code, err := newLaunchCode()
+	// A --background start mints no code: one is made only when someone asks to open.
+	code, err := startupCode(background, mintLaunchCode)
 	if err != nil {
 		return err
 	}
-	serverOptions = append(serverOptions, server.WithLaunchCode(code, time.Now().Add(codeLife)))
+	if code != "" {
+		serverOptions = append(serverOptions, server.WithLaunchCode(code, time.Now().Add(codeLife)))
+	}
 	if logFile != nil {
 		serverOptions = append(serverOptions, server.WithLogger(logFile.Logger), server.WithLogDir(logFile.Dir))
 	}
 	served := server.New(repo, explorer.Assets(), token, *demo, serverOptions...)
+	reo := &reopener{
+		base:    localURL,
+		rearm:   func(c string, u time.Time) bool { return server.Rearm(served, c, u) },
+		newCode: mintLaunchCode,
+		open:    openInBrowser,
+		warn:    showMessage,
+		now:     time.Now,
+		link:    func(c string) string { return launchLink(localURL, c) },
+	}
 	defer server.LogAnalyzeRepeats(served)
 	// Registered after the case store's close, so it runs first: background
 	// imports stop and roll back before the store closes.
@@ -260,12 +325,41 @@ func run(args []string, getenv func(string) string) error {
 		defer removeSession()
 	}
 
+	if interactive {
+		// Other copies reach this one through the instance events: "open" re-arms a
+		// launch code and opens the browser, "quit" cancels appCtx.
+		stopListen, lerr := instance.Listen(appCtx, instanceNames, reo.Reopen, cancel)
+		if lerr != nil {
+			log.Printf("Second launches cannot reach this copy: %v", lerr)
+		} else {
+			defer stopListen()
+		}
+	}
+	if interactive {
+		// The tray icon. Quit and an end-session cancel appCtx, which runs the same
+		// shutdown as Ctrl+C. If the tray cannot start the app still runs.
+		deps := productionTrayDeps(reo.Reopen, cancel, showMessage)
+		opts := tray.Options{
+			Tooltip:      "Unravis",
+			Menu:         func() []tray.Item { return trayMenu(deps) },
+			OnSelect:     trayOnSelect(deps),
+			OnOpen:       reo.Reopen,
+			OnEndSession: endSessionHandler(cancel, &endingSession, runDone, endSessionGuard),
+			Logf:         log.Printf,
+		}
+		trayDone := startTray(appCtx, tray.Run, opts, log.Printf)
+		defer stopTray(cancel, &endingSession, trayDone, trayExitGuard)
+	}
+
 	opened := false
 	if openBrowser {
-		opened = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", launchLink(localURL, code)).Start() == nil
+		opened = openInBrowser(launchLink(localURL, code)) == nil
 	}
-	for _, line := range startupLines(localURL, code, codeLife, *demo, opened) {
-		log.Print(line)
+	printed := false
+	if code == "" {
+		log.Printf("%s running in the tray at %s (demo=%t)", version.Short(), localURL, *demo)
+	} else {
+		printed = printStartup(startupLines(localURL, code, codeLife, *demo, opened), opened, func(s string) { log.Print(s) }, os.Stderr)
 	}
 	if logFile != nil {
 		// The start line: what is running, where, and how the user gets in.
@@ -275,9 +369,11 @@ func run(args []string, getenv func(string) string) error {
 		if layout.Root != "" {
 			dataDir = layout.Root
 		}
-		launch := "link_printed"
+		launch := "none"
 		if opened {
 			launch = "browser_opened"
+		} else if printed {
+			launch = "link_printed"
 		}
 		logFile.Logger.Info("start",
 			"version", version.Version,
@@ -303,6 +399,12 @@ func run(args []string, getenv func(string) string) error {
 		}
 		return nil
 	}
+}
+
+// openInBrowser opens url in the default browser. rundll32 is started by full
+// path, so a planted rundll32.exe in the current folder or on PATH is never found.
+func openInBrowser(url string) error {
+	return exec.Command(system32File("rundll32.exe"), "url.dll,FileProtocolHandler", url).Start()
 }
 
 // listenLoopback opens the dashboard's listening socket on 127.0.0.1. When the port is taken it says so in plain words and names the

@@ -37,9 +37,10 @@ func newEnv(t *testing.T, version string) *testEnv {
 		UserProfile: prof, LocalAppData: filepath.Join(prof, "AppData", "Local"), AppData: filepath.Join(prof, "AppData", "Roaming"),
 		Programs: filepath.Join(prof, "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs"),
 		Startup:  filepath.Join(prof, "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "Startup"),
+		Desktop:  filepath.Join(prof, "Desktop"),
 	}
 	// root\D stands for a second drive's root (the Blackbox recordings go to root\D\UnravisBlackbox), which setup never makes.
-	for _, p := range []string{filepath.Join(root, "D"), d.Windows, d.ProgramFiles, d.ProgramData, d.CommonPrograms, d.Temp, d.LocalAppData, d.AppData, d.Programs, d.Startup} {
+	for _, p := range []string{filepath.Join(root, "D"), d.Windows, d.ProgramFiles, d.ProgramData, d.CommonPrograms, d.Temp, d.LocalAppData, d.AppData, d.Programs, d.Startup, d.Desktop} {
 		if err := os.MkdirAll(p, 0o755); err != nil {
 			t.Fatal(err)
 		}

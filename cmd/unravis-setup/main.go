@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -278,7 +277,17 @@ func runSilent(o options, e env) int {
 		u := d.User()
 		req.User = &u
 		say("This needs administrator approval; Windows will ask.")
+		// The worker never touches a link inside the user's profile (WP-74i); this process, as the user, does it after the worker
+		// has committed, through the same two functions the setup window uses.
+		payloadVersion := ""
+		if r.Payload != nil {
+			payloadVersion = r.Payload.Manifest.Version
+		}
+		r.DeriveStartAtSignIn(setup.ResolveOp(req.Op, old, payloadVersion), opts, &req.Options)
 		res = setup.RunWorker(context.Background(), e.elevator(r.SetupExe), req, nil, func(s string) { l.Line("worker: " + s) })
+		o2 := opts
+		o2.StartAtSignIn = req.Options.StartAtSignIn
+		r.ApplyProfileLinks(o2, &res, func(s string) { l.Line("links: " + s) })
 	} else {
 		res = r.Perform(context.Background(), req)
 	}
@@ -341,17 +350,14 @@ func runWorker(o options, e env) int {
 		return setup.OutcomeInvalid.ExitCode()
 	}
 	defer wp.Conn.Close()
-	// The worker's own log goes next to the window's, in the person's folder (by the profile Windows names, not by the request).
-	l, _ := openLog(o, e, filepath.Join(wp.Profile, "AppData", "Local"), true)
-	defer closeLog(l)
-	r.Log = l.Line
+	// The worker writes no log file: it must not create or append to anything under the person's profile. ServeWorker sends each
+	// line to the window as MsgLog, and the window (or silent mode) writes the one log, as the user, as "worker: ...".
+	r.Log = nil
 	r.UserSID = ""
 	if p, err := e.payload(); err == nil {
 		r.Payload = p
 	}
-	l.Line("worker started by " + version.Short())
 	res := setup.ServeWorker(context.Background(), wp.Conn, r, setup.WorkerPrepare(wp.SID, wp.Profile))
-	l.Line("worker finished: " + string(res.Outcome))
 	return res.Outcome.ExitCode()
 }
 

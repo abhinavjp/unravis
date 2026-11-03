@@ -147,6 +147,9 @@ const UnknownOwner = "unknown"
 type Processes interface {
 	List() ([]Process, error)
 	Terminate(pid uint32) error
+	// TerminateIf ends the process only when its program image path is exe (a reused PID is never ended by mistake); ErrNotFound
+	// otherwise.
+	TerminateIf(pid uint32, exe string) error
 }
 
 // WindowsVersion is the version of Windows.
@@ -191,6 +194,9 @@ type System struct {
 	RunVersion func(exe string) (string, error)
 	// DeleteLater removes a file at the next restart (a running setup cannot delete itself).
 	DeleteLater func(path string) error
+	// AskQuit asks the running app of the same user to quit; nil means unsupported. It takes no exe path on purpose: it never starts
+	// a program.
+	AskQuit func() error
 	// Lock takes the one-setup-at-a-time lock; ErrAlreadyRunning when another setup holds it.
 	Lock  func() (release func(), err error)
 	Sleep func(time.Duration)

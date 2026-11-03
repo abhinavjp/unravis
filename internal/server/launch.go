@@ -34,6 +34,22 @@ func WithLaunchCode(code string, until time.Time) Option {
 	}
 }
 
+// Rearm gives a running server a fresh one-time launch code valid until until.
+// The previous code is discarded at once. It returns false, changing nothing,
+// when h is not the server's handler or the code is shorter than 16 or longer
+// than 256 characters. The code is never logged here; the caller registers it
+// as a secret.
+func Rearm(h http.Handler, code string, until time.Time) bool {
+	hh, ok := h.(*handler)
+	if !ok || hh == nil || len(code) < 16 || len(code) > 256 {
+		return false
+	}
+	hh.launch.mu.Lock()
+	hh.launch.code, hh.launch.until = code, until
+	hh.launch.mu.Unlock()
+	return true
+}
+
 // take consumes the code when got matches it and it has not expired.
 func (l *launchState) take(got string) bool {
 	l.mu.Lock()

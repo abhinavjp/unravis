@@ -141,6 +141,19 @@ So an Unravis-only install for one user needs no UAC at all.
 - Never deletes a `.unravis-case` file outside the data folder (A18).
 - Case data deletion is a plain delete after the typed DELETE confirmation, and is logged. It does not go to the Recycle Bin: encrypted case folders exceed Recycle Bin limits and would be deleted outright anyway (ruling F5, 2026-10-28, owner to confirm).
 
+### Background run
+
+Unravis runs as a windowless tray app. These rules are what the installer writes for it. The code is in `internal/setup`, `internal/autostart` and `internal/shelllink`; what needs a real desktop is checked by hand in `docs/background-run-acceptance.md`.
+
+- Links. For the installing user: a Desktop shortcut `Unravis.lnk` (only when the person has a Desktop folder) and, while "Start Unravis when I sign in" is on, a Startup shortcut `Unravis.lnk`. The Start-menu entries are `Unravis.lnk` and `Quit Unravis.lnk` (runs `unravis.exe --quit`). For an all-users install they sit in the all-users Start menu; for a just-for-me install, in the user's own Start menu.
+- Who writes them. The elevated worker never reads, writes or removes a link inside the user's profile. After the worker commits, the setup window (or silent mode) writes the Desktop and Startup links as the user, and for a just-for-me install also the Start-menu and Quit links. The worker writes no log file of its own; its lines reach the one setup log as `worker: ...`.
+- Startup shortcut. Its target is `unravis.exe --background`, so sign-in starts the tray without a browser. Installer default: on. An upgrade or reinstall reads the setting from the Startup folder, not from the saved option (a link that is ours means on; a missing or foreign link means off). When the setting stays on, it rewrites an older Startup shortcut of ours that lacks `--background`. A `Unravis.lnk` in the Startup folder that is not provably ours is left alone.
+- Install failure. A failed install leaves none of these. The machine-scope Start-menu and Quit entries are rolled back with the rest of the install, and every link inside the user's profile is written only after a successful install.
+- Uninstall removes all of them. Repair re-creates the Desktop and Start-menu links, and the Startup link when the setting is on; a user who turned the setting off gets no Startup link back.
+- Upgrade with Unravis running. After the user agrees to close it, setup asks the running copy to quit (the same quit signal as `--quit`) and waits a bounded time. Only what is still running after that is terminated, and only a process whose program path is still the installed `unravis.exe`, so a reused process id is never killed by mistake.
+- Known limit. If the setup window is closed or crashes between the worker's commit and the removal of the Startup link during an uninstall, an orphan Startup link to a deleted `unravis.exe` can remain. It fails at sign-in. Delete it by hand from the Startup folder.
+- Single instance. The names are `Local\UnravisApp.<SID>` for the mutex, with `.Open` and `.Quit` events, so each Windows account has its own copy (demo runs use `UnravisDemoApp`). A SID is public, so another account could create an object with the same name first. That is detected, not prevented: Unravis checks the owner of the object, and when the owner is not the current user it shows its own "another process holds Unravis's name" message and exits. A copy owned by another account, or running as administrator, is reported as "another Windows account or as administrator".
+
 ## 6. Silent mode, logging, rollback
 
 ### Silent mode

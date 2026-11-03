@@ -24,6 +24,7 @@ import (
 
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/datadir"
+	"api-audit-explorer/internal/instance"
 )
 
 // The real System. None of this runs in tests: it changes the registry, services, firewall and permissions of the PC it runs on.
@@ -32,7 +33,7 @@ import (
 // NewOSSystem is the System of this PC.
 func NewOSSystem() (*System, error) {
 	m := osMachine{}
-	return &System{
+	s := &System{
 		Reg: osRegistry{}, Svc: osServices{}, FW: osFirewall{}, Sec: osSecurity{}, Proc: osProcesses{}, Mach: m,
 		Disk:        blackbox.OSDisk{},
 		Paths:       osPaths{},
@@ -41,12 +42,26 @@ func NewOSSystem() (*System, error) {
 		RunVersion:  runVersion,
 		DeleteLater: deleteLater,
 		Lock:        setupLock,
-	}, nil
+	}
+	// A token that cannot be read leaves AskQuit nil: setup then ends the app after the person's yes, as before.
+	if names, err := instance.CurrentNames(instance.DefaultApp); err == nil {
+		s.AskQuit = askQuitFor(names)
+	}
+	return s, nil
+}
+
+// askQuitFor sends the quit signal to the running Unravis of the user the names belong to. It returns the error of instance.Signal
+// unchanged: instance.ErrNoInstance means there was nothing to ask. The names come from the token of this process, so an elevated
+// worker run by another administrator never reaches the window user's app; setup then falls through to the verified TerminateIf.
+func askQuitFor(names instance.Names) func() error {
+	return func() error { return instance.Signal(names, instance.Quit) }
 }
 
 // OSDirs are this PC's folders for the signed-in account (Windows known folders, never environment variables).
 func OSDirs() (Dirs, error) {
-	get := func(id *windows.KNOWNFOLDERID) (string, error) { return windows.KnownFolderPath(id, windows.KF_FLAG_DEFAULT) }
+	get := func(id *windows.KNOWNFOLDERID) (string, error) {
+		return windows.KnownFolderPath(id, windows.KF_FLAG_DEFAULT)
+	}
 	var d Dirs
 	var err error
 	for _, f := range []struct {
@@ -62,8 +77,17 @@ func OSDirs() (Dirs, error) {
 			return d, fmt.Errorf("Windows did not say where a usual folder is: %w", err)
 		}
 	}
+	// The Desktop is taken only when it lies inside the profile (a Desktop redirected outside is ignored); a failed lookup leaves it empty.
+	if p, derr := get(windows.FOLDERID_Desktop); derr == nil && desktopInsideProfile(d.UserProfile, p) {
+		d.Desktop = p
+	}
 	d.Temp = os.TempDir()
 	return d, nil
+}
+
+// desktopInsideProfile reports whether the Desktop folder is a full path strictly inside the profile.
+func desktopInsideProfile(profile, desktop string) bool {
+	return filepath.IsAbs(desktop) && insideFolder(desktop, profile) && !samePath(desktop, profile)
 }
 
 // CurrentUserSID is the account this process runs as.
@@ -493,7 +517,9 @@ func (osFirewall) Remove(name string) error {
 
 type osSecurity struct{}
 
-func (osSecurity) Read(path string) (datadir.FolderSecurity, error) { return datadir.ReadFolderSecurity(path) }
+func (osSecurity) Read(path string) (datadir.FolderSecurity, error) {
+	return datadir.ReadFolderSecurity(path)
+}
 
 func (osSecurity) SDDL(path string) (string, error) {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
@@ -689,6 +715,31 @@ func (osProcesses) Terminate(pid uint32) error {
 		return err
 	}
 	defer windows.CloseHandle(h)
+	if err := windows.TerminateProcess(h, 1); err != nil {
+		return err
+	}
+	_, err = windows.WaitForSingleObject(h, 10000)
+	return err
+}
+
+// TerminateIf ends the process only when the program image of that exact process still is exe: the open handle pins the process, so
+// the check and the kill are about the same one. Accepted residual: the check is the image path only, not the owner or the creation
+// time, so in a machine-scope install a PID that another user's unravis.exe receives between the caller's fresh list and this open
+// could be ended; the caller only passes PIDs of the current user's own processes from a list rebuilt a moment before.
+func (osProcesses) TerminateIf(pid uint32, exe string) error {
+	h, err := windows.OpenProcess(windows.PROCESS_TERMINATE|windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(h)
+	buf := make([]uint16, windows.MAX_LONG_PATH)
+	n := uint32(len(buf))
+	if windows.QueryFullProcessImageName(h, 0, &buf[0], &n) != nil {
+		return ErrNotFound
+	}
+	if got := windows.UTF16ToString(buf[:n]); got == "" || !samePath(got, exe) {
+		return ErrNotFound
+	}
 	if err := windows.TerminateProcess(h, 1); err != nil {
 		return err
 	}

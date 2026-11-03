@@ -13,5 +13,7 @@ if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
 $Arguments = @('--port', [string]$Port)
 if ($Demo) { $Arguments += '--demo' }
 if ($NoBrowser) { $Arguments += '--no-browser' }
-& $Executable @Arguments
-if ($LASTEXITCODE -ne 0) { throw "Unravis exited with code $LASTEXITCODE." }
+# unravis.exe is a windowless (GUI) program; & would not wait for it.
+$quoted = $Arguments | ForEach-Object { '"{0}"' -f $_ }
+$p = Start-Process -FilePath $Executable -ArgumentList $quoted -Wait -PassThru
+if ($p.ExitCode -ne 0) { throw "Unravis exited with code $($p.ExitCode)." }

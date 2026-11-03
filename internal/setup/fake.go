@@ -114,7 +114,9 @@ type FakeRegistry struct {
 	Faults *Faults
 }
 
-func regPath(root Root, key string) string { return strings.ToLower(root.String() + `\` + strings.Trim(key, `\`)) }
+func regPath(root Root, key string) string {
+	return strings.ToLower(root.String() + `\` + strings.Trim(key, `\`))
+}
 
 func (r *FakeRegistry) key(root Root, key string) *fakeKey {
 	if r.keys == nil {
@@ -602,6 +604,25 @@ func (p *FakeProcesses) Terminate(pid uint32) error {
 	return ErrNotFound
 }
 
+// TerminateIf is Terminate for a process whose exe is still exe; any other exe under that PID is ErrNotFound and stays in the list.
+func (p *FakeProcesses) TerminateIf(pid uint32, exe string) error {
+	if err := p.Faults.check(fmt.Sprintf("proc.Terminate:%d", pid)); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i, q := range p.List_ {
+		if q.PID == pid {
+			if !samePath(q.Exe, exe) {
+				return ErrNotFound
+			}
+			p.List_ = append(p.List_[:i], p.List_[i+1:]...)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
 // Run adds a running program.
 func (p *FakeProcesses) Run(exe string) uint32 {
 	p.mu.Lock()
@@ -674,9 +695,16 @@ type Fakes struct {
 	ProbeErr error
 	// LaterDeleted lists files DeleteLater was asked to remove.
 	LaterDeleted []string
-	locked       bool
-	lockMu       sync.Mutex
-	version      string
+	// AskQuitCalls counts the calls of the AskQuit that UseAskQuit installs; AskQuitErr is what it returns (nil: success).
+	AskQuitCalls int
+	AskQuitErr   error
+	// QuitRemovesApps makes a successful AskQuit end every process of the current user, as a quitting app would.
+	QuitRemovesApps bool
+	// UserSID is the account of the fake person: processes with it (or with no SID) are "mine".
+	UserSID string
+	locked  bool
+	lockMu  sync.Mutex
+	version string
 }
 
 // NewFakeSystem returns a System whose machine is all fakes: a Windows 11 64-bit PC where the person is an administrator, with Edge
@@ -688,7 +716,7 @@ func NewFakeSystem(version string) (*System, *Fakes) {
 		Sec: &FakeSecurity{Faults: faults}, Proc: &FakeProcesses{Faults: faults},
 		Mach: &FakeMachine{Version: WindowsVersion{Major: 10, Build: 22631, Is64: true}, BrowserPath: `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`,
 			HasWebView2: true, Admin: true, Elevate: true},
-		Faults: faults, Versions: map[string]string{}, version: version,
+		Faults: faults, Versions: map[string]string{}, version: version, UserSID: "S-1-5-21-1000",
 	}
 	s := &System{Reg: f.Reg, Svc: f.Svc, FW: f.FW, Sec: f.Sec, Proc: f.Proc, Mach: f.Mach, Disk: fakeDisk{f.Mach},
 		Trust: TrustWith(f.Sec, f.Reg),
@@ -719,6 +747,29 @@ func NewFakeSystem(version string) (*System, *Fakes) {
 		Now:   func() time.Time { return time.Date(2026, 10, 28, 9, 30, 0, 0, time.UTC) },
 	}
 	return s, f
+}
+
+// UseAskQuit gives s an AskQuit that counts its calls, fails with AskQuitErr when set and, with QuitRemovesApps, ends the current
+// user's processes (picked like Runner.splitApps does) and leaves other users'.
+func (f *Fakes) UseAskQuit(s *System) {
+	s.AskQuit = func() error {
+		f.Proc.mu.Lock()
+		defer f.Proc.mu.Unlock()
+		f.AskQuitCalls++
+		if f.AskQuitErr != nil {
+			return f.AskQuitErr
+		}
+		if f.QuitRemovesApps {
+			kept := f.Proc.List_[:0:0]
+			for _, q := range f.Proc.List_ {
+				if q.SID != "" && !strings.EqualFold(q.SID, f.UserSID) {
+					kept = append(kept, q)
+				}
+			}
+			f.Proc.List_ = kept
+		}
+		return nil
+	}
 }
 
 // Snapshot is the whole fake machine as text: registry, services, firewall and permissions.

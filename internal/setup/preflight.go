@@ -291,7 +291,7 @@ func (r *Runner) checkRunningApp(in PreflightInput, l Layout, opts Options) (Che
 	case opts.CloseRunningApp:
 		c.Status, c.Detail = CheckPartly, "Unravis is open. Setup closes it, and opens it again when it is done."
 	case in.Silent:
-		c.Status, c.Detail, c.Fix = CheckFailed, "Unravis is open.", "Close Unravis, or set \"closeRunningApp\": true in the config file."
+		c.Status, c.Detail, c.Fix = CheckFailed, "Unravis is open.", "Silent mode cannot close Unravis. Quit it first (tray menu \"Quit Unravis\", or unravis.exe --quit), then run setup again."
 	default:
 		c.Status, c.Detail, c.Fix = CheckFailed, "Unravis is open.", "Close Unravis, or tick “Close Unravis for me”."
 	}

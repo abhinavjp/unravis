@@ -86,7 +86,7 @@ func captureDirs() Dirs {
 		CommonPrograms: `C:\ProgramData\Microsoft\Windows\Start Menu\Programs`, Temp: prof + `\AppData\Local\Temp`, UserProfile: prof,
 		LocalAppData: prof + `\AppData\Local`, AppData: prof + `\AppData\Roaming`,
 		Programs: prof + `\AppData\Roaming\Microsoft\Windows\Start Menu\Programs`,
-		Startup:  prof + `\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup`}
+		Startup:  prof + `\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup`, Desktop: prof + `\Desktop`}
 }
 
 func ev(id, title string, st StepState, detail string) StepEvent {

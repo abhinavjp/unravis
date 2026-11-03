@@ -435,7 +435,7 @@ func TestWorkerServesOneRequestOverItsPipe(t *testing.T) {
 		t.Fatalf("worker exit %d", got)
 	}
 	logs, _ := filepath.Glob(filepath.Join(rg.dirs.LocalAppData, "Unravis", "setup-logs", "*-admin.log"))
-	if len(logs) != 1 {
+	if len(logs) != 0 { // the worker writes no log file of its own (WP-74j): the window logs its lines
 		t.Fatalf("worker logs %v", logs)
 	}
 }

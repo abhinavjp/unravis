@@ -97,7 +97,17 @@ func (r *Runner) NewPlan(op Op, opts Options, un UninstallOptions, old *Installe
 		}
 	}
 	p.Layout = NewLayout(p.Opts, r.Dirs)
-	p.Elevated = NeedsAdminFor(r.Sys.Svc, p.Opts)
+	if op == OpUpgrade || op == OpRepair {
+		// The tray toggle can change start at sign-in between installs, so the Startup folder is the truth, not the saved option. The
+		// elevated worker never reads the user's Startup folder: it takes the value the window or silent mode already derived.
+		if r.NoProfileLinks {
+			p.Opts.StartAtSignIn = opts.StartAtSignIn
+		} else if _, _, err := linkTarget(p.Layout.StartupLink); err == nil {
+			_, ours := linkIsOurs(p.Layout.StartupLink, p.Layout.AppExe)
+			p.Opts.StartAtSignIn = ours
+		}
+	}
+	p.Elevated =NeedsAdminFor(r.Sys.Svc, p.Opts)
 	if op == OpUninstall {
 		p.Steps = uninstallSteps(p)
 	} else {
@@ -172,15 +182,58 @@ func (p *Plan) closeApp(ctx context.Context, t *Txn) error {
 	if !p.Opts.CloseRunningApp {
 		return ErrAppRunning
 	}
-	// Unravis has no way to be asked to close from outside, so the person's own copies are ended, after their yes.
-	for _, q := range mine {
+	// After the person's yes the app is first asked to quit (it finishes its work and removes its tray icon). Whatever is still there
+	// after a bounded wait is ended; if asking is not possible or fails, that is the whole story.
+	left := mine
+	if p.r.Sys.AskQuit != nil && len(mine) > 0 {
+		if err := p.r.Sys.AskQuit(); err != nil {
+			t.Logf("close-app: asking Unravis to quit failed (%v); ending it instead", err)
+		} else {
+			for round := 0; round < askQuitRounds; round++ {
+				p.r.Sys.sleep(askQuitPause)
+				now, err := p.runningApps()
+				if err != nil {
+					return err
+				}
+				latestMine, _ := p.r.splitApps(now)
+				left = stillRunning(mine, latestMine)
+				if len(left) == 0 {
+					break
+				}
+			}
+		}
+	}
+	// Only what is left is ended, and only if the program at that PID is still the one that was found (TerminateIf checks the path on
+	// the opened process).
+	for _, q := range left {
 		t.Logf("close-app: closing Unravis (process %d)", q.PID)
-		if err := p.r.Sys.Proc.Terminate(q.PID); err != nil && !errors.Is(err, ErrNotFound) {
+		if err := p.r.Sys.Proc.TerminateIf(q.PID, q.Exe); err != nil && !errors.Is(err, ErrNotFound) {
 			return &StepError{Msg: "Unravis could not be closed: " + err.Error() + ".", Fix: "Close Unravis yourself, then try again.", Err: err}
 		}
 	}
 	p.appWasRunning = true
 	return nil
+}
+
+// askQuitRounds and askQuitPause bound the wait for Unravis to go after it was asked to quit (5 seconds in all).
+const (
+	askQuitRounds = 20
+	askQuitPause  = 250 * time.Millisecond
+)
+
+// stillRunning returns the entries of latest that are the same program as an entry of original: same PID and same program path. A PID
+// that Windows has given to another program since is not in the result.
+func stillRunning(original, latest []Process) []Process {
+	var out []Process
+	for _, l := range latest {
+		for _, o := range original {
+			if l.PID == o.PID && samePath(l.Exe, o.Exe) {
+				out = append(out, l)
+				break
+			}
+		}
+	}
+	return out
 }
 
 func (p *Plan) stopServices(ctx context.Context, t *Txn) error {
@@ -623,22 +676,56 @@ func sameRule(a, b FirewallRule) bool {
 }
 
 func (p *Plan) shortcuts(ctx context.Context, t *Txn) error {
-	link := Shortcut{Target: p.Layout.AppExe, WorkDir: p.Layout.InstallDir, Description: "Unravis: read-only audit investigations", Icon: p.Layout.AppExe}
-	data, err := link.Bytes()
-	if err != nil {
-		return err
-	}
-	links := []string{p.Layout.StartMenuLink}
-	if p.Opts.StartAtSignIn {
-		links = append(links, p.Layout.StartupLink)
-	}
-	for _, l := range links {
-		if err := t.MkdirAll(filepath.Dir(l)); err != nil {
+	l := p.Layout
+	open := Shortcut{Target: l.AppExe, WorkDir: l.InstallDir, Description: "Unravis: read-only audit investigations", Icon: l.AppExe}
+	quit := Shortcut{Target: l.AppExe, Args: quitLinkArg, WorkDir: l.InstallDir, Description: "Quit Unravis", Icon: l.AppExe}
+	startup := open
+	startup.Args = startupLinkArg
+	// write puts one link in place. A link inside a folder that is itself a junction or link (guard) is skipped with a log line; it
+	// never fails the install and never touches the other links.
+	write := func(link string, s Shortcut, guard bool) error {
+		if guard {
+			if err := p.r.refuseLinkedFolder(filepath.Dir(link)); err != nil {
+				t.Logf("shortcut skipped: %v", err)
+				return nil
+			}
+		}
+		data, err := s.Bytes()
+		if err != nil {
 			return err
 		}
-		if err := t.WriteFile(l, data, "shortcut"); err != nil {
+		if err := t.MkdirAll(filepath.Dir(link)); err != nil {
 			return err
 		}
+		return t.WriteFile(link, data, "shortcut")
+	}
+	// The elevated worker leaves every link inside the user's profile to the setup window (WP-74i).
+	for _, c := range []struct {
+		link string
+		s    Shortcut
+	}{{l.StartMenuLink, open}, {l.QuitLink, quit}} {
+		if c.link == "" || (p.r.NoProfileLinks && p.r.isProfileLink(c.link)) {
+			continue
+		}
+		if err := write(c.link, c.s, false); err != nil {
+			return err
+		}
+	}
+	if p.r.NoProfileLinks {
+		return nil
+	}
+	// A Desktop link that points to another program is left alone.
+	if l.DesktopLink != "" {
+		if exists, ours := linkIsOurs(l.DesktopLink, l.AppExe); !exists || ours {
+			if err := write(l.DesktopLink, open, true); err != nil {
+				return err
+			}
+		}
+	}
+	// On an upgrade or a reinstall with "Start at sign-in" still on, this also replaces an older Startup link that lacks
+	// --background with the current one.
+	if p.Opts.StartAtSignIn && l.StartupLink != "" {
+		return write(l.StartupLink, startup, true)
 	}
 	return nil
 }

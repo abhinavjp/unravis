@@ -24,6 +24,7 @@ type Dirs struct {
 	AppData      string `json:"appData"`
 	Programs     string `json:"programs"` // the person's Start menu
 	Startup      string `json:"startup"`  // the person's start-at-sign-in folder
+	Desktop      string `json:"desktop"`  // the person's Desktop folder ("" on a PC without one)
 }
 
 // UserDirs are the person's own folders in Dirs.
@@ -33,16 +34,17 @@ type UserDirs struct {
 	AppData      string `json:"appData"`
 	Programs     string `json:"programs"`
 	Startup      string `json:"startup"`
+	Desktop      string `json:"desktop"`
 }
 
 // User returns the person's folders.
 func (d Dirs) User() UserDirs {
-	return UserDirs{UserProfile: d.UserProfile, LocalAppData: d.LocalAppData, AppData: d.AppData, Programs: d.Programs, Startup: d.Startup}
+	return UserDirs{UserProfile: d.UserProfile, LocalAppData: d.LocalAppData, AppData: d.AppData, Programs: d.Programs, Startup: d.Startup, Desktop: d.Desktop}
 }
 
 // WithUser replaces the person's folders.
 func (d Dirs) WithUser(u UserDirs) Dirs {
-	d.UserProfile, d.LocalAppData, d.AppData, d.Programs, d.Startup = u.UserProfile, u.LocalAppData, u.AppData, u.Programs, u.Startup
+	d.UserProfile, d.LocalAppData, d.AppData, d.Programs, d.Startup, d.Desktop = u.UserProfile, u.LocalAppData, u.AppData, u.Programs, u.Startup, u.Desktop
 	return d
 }
 
@@ -72,6 +74,12 @@ func CheckUserDirs(u UserDirs) error {
 			return err
 		}
 	}
+	// The Desktop folder may be missing (an older record, a PC without one); when it is there it has to be a usual one.
+	if u.Desktop != "" {
+		if err := check(u.Desktop, `\Desktop`); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -82,7 +90,9 @@ const (
 	SetupExeName  = "unravis-setup.exe"
 	StateFileName = "setup-state.json"
 	ShortcutName  = "Unravis.lnk"
-	ProductName   = "Unravis"
+	// QuitShortcutName is the Start-menu entry that asks the running Unravis to quit.
+	QuitShortcutName = "Quit Unravis.lnk"
+	ProductName      = "Unravis"
 	// ARPKey is the Add/Remove Programs entry, under HKLM (for everyone) or HKCU (just for me).
 	ARPKey = `Software\Microsoft\Windows\CurrentVersion\Uninstall\Unravis`
 	// BlackboxProgramFolder is the folder under Program Files that holds the Blackbox program and its settings.
@@ -119,7 +129,10 @@ type Layout struct {
 	BlackboxDir   string
 	StartMenuLink string
 	StartupLink   string
-	ARPRoot       Root
+	// DesktopLink is the Desktop shortcut ("" when the person has no Desktop folder); QuitLink sits next to StartMenuLink.
+	DesktopLink string
+	QuitLink    string
+	ARPRoot     Root
 }
 
 // NewLayout works out the layout for the options.
@@ -143,6 +156,10 @@ func NewLayout(o Options, d Dirs) Layout {
 		// The same folders datadir uses in per-user mode: the config folder and the cases folder.
 		l.UserData = []string{filepath.Join(d.AppData, "APIAuditExplorer"), filepath.Join(d.LocalAppData, "APIAuditExplorer")}
 	}
+	if d.Desktop != "" {
+		l.DesktopLink = filepath.Join(d.Desktop, ShortcutName)
+	}
+	l.QuitLink = filepath.Join(filepath.Dir(l.StartMenuLink), QuitShortcutName)
 	return l
 }
 

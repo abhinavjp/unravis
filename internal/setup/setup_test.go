@@ -904,7 +904,7 @@ func TestRunningAppStopsUnlessThePersonSaysClose(t *testing.T) {
 	e.f.Proc.Run(filepath.Join(e.root, "elsewhere", AppExeName)) // another copy, not ours: left alone
 
 	c, _ := checkByID(e.r.Preflight(PreflightInput{Op: OpUpgrade, Old: mustDetect(t, e), Silent: true}), "app-running")
-	if c.Status != CheckFailed || !strings.Contains(c.Fix, "closeRunningApp") {
+	if c.Status != CheckFailed || !strings.Contains(c.Fix, "--quit") {
 		t.Fatalf("silent preflight %+v", c)
 	}
 	before := e.snapshot()

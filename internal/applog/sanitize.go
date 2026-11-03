@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // Sanitize is the one helper every log line passes through. The log file is
@@ -13,7 +14,7 @@ import (
 //
 //   - connection strings and URLs with credentials (user:pass@host),
 //   - password=/pwd=/secret=/token=/key= values (and the JSON "key": "value" form),
-//   - bearer tokens,
+//   - bearer tokens and Authorization: Basic credentials,
 //   - any value registered with RegisterSecret (the session token, case keys),
 //   - anything that looks like a base64 secret longer than 24 characters,
 //   - paths under the user profile, replaced with %USERPROFILE%.
@@ -21,11 +22,15 @@ import (
 // It is deliberately blunt: when a value might be a secret, it goes.
 var (
 	reBearer     = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+`)
-	reJSONSecret = regexp.MustCompile(`(?i)("(?:password|passwd|pwd|secret|token|api[-_]?key|key)"\s*:\s*")[^"]*"`)
+	reBasicAuth  = regexp.MustCompile(`(?i)(\bauthorization\s*[:=]\s*)basic\s+[A-Za-z0-9._~+/=-]+`)
+	reJSONSecret = regexp.MustCompile(`(?i)("(?:password|passwd|pwd|secret|token|api[-_]?key|accountkey|sharedaccesskey|key)"\s*:\s*")[^"]*"`)
 	reURLCreds   = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*)://[^\s/@:]+:[^\s/@]*@`)
 	reBareCreds  = regexp.MustCompile(`\b[^\s/:@]+:[^\s/@]+@`)
-	reKVSecret   = regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|token|api[-_]?key|key)\s*=\s*[^\s&;,]+`)
-	reLongToken  = regexp.MustCompile(`[A-Za-z0-9+/_-]{25,}={0,2}`)
+	// A quoted or braced value is cut at its closing quote or brace (or the end
+	// of the text when it never closes), so a value with spaces or semicolons
+	// goes whole. AccountKey/SharedAccessKey need no word boundary before them.
+	reKVSecret  = regexp.MustCompile(`(?i)(\b(?:password|passwd|pwd|secret|token|api[-_]?key|key)|accountkey|sharedaccesskey)\s*=\s*(?:"[^"]*"?|'[^']*'?|\{[^}]*\}?|[^\s&;,]+)`)
+	reLongToken = regexp.MustCompile(`[A-Za-z0-9+/_-]{25,}={0,2}`)
 )
 
 const redacted = "[redacted]"
@@ -33,7 +38,11 @@ const redacted = "[redacted]"
 var (
 	secretsMu sync.RWMutex
 	secrets   []string
+	ephemeral []string
 )
+
+// maxEphemeral is how many RegisterEphemeralSecret values are kept.
+const maxEphemeral = 8
 
 // RegisterSecret adds a value that must never appear in the log (the session
 // token, a case key). Short values are ignored: replacing a tiny string would
@@ -52,6 +61,27 @@ func RegisterSecret(value string) {
 	secrets = append(secrets, value)
 }
 
+// RegisterEphemeralSecret is RegisterSecret for a value minted again and again
+// (the launch code made on every Open): only the last 8 are kept, so a
+// long-running app cannot grow the list, and the cost of every log line, without
+// bound. Short and repeated values are ignored.
+func RegisterEphemeralSecret(value string) {
+	if len(value) < 8 {
+		return
+	}
+	secretsMu.Lock()
+	defer secretsMu.Unlock()
+	for _, s := range ephemeral {
+		if s == value {
+			return
+		}
+	}
+	ephemeral = append(ephemeral, value)
+	if len(ephemeral) > maxEphemeral {
+		ephemeral = append([]string(nil), ephemeral[len(ephemeral)-maxEphemeral:]...)
+	}
+}
+
 // Sanitize returns text with every known secret shape removed.
 func Sanitize(text string) string {
 	if text == "" {
@@ -62,11 +92,15 @@ func Sanitize(text string) string {
 	for _, s := range secrets {
 		out = strings.ReplaceAll(out, s, redacted)
 	}
+	for _, s := range ephemeral {
+		out = strings.ReplaceAll(out, s, redacted)
+	}
 	secretsMu.RUnlock()
 	for _, dir := range profileDirs() {
 		out = replaceFold(out, dir, "%USERPROFILE%")
 	}
 	out = reBearer.ReplaceAllString(out, "Bearer "+redacted)
+	out = reBasicAuth.ReplaceAllString(out, "${1}Basic "+redacted)
 	out = reJSONSecret.ReplaceAllString(out, "${1}"+redacted+`"`)
 	out = reURLCreds.ReplaceAllString(out, "${1}://"+redacted+"@")
 	out = reBareCreds.ReplaceAllString(out, redacted+"@")
@@ -126,22 +160,48 @@ func profileDirs() []string {
 	return dirs
 }
 
-// replaceFold replaces every case-insensitive occurrence of old in s.
+// replaceFold replaces every case-insensitive occurrence of old in s. It
+// compares rune by rune on s itself and never reuses offsets from a lowered
+// copy: lowering changes byte lengths (invalid UTF-8, U+0130, U+023A), which
+// would misalign the slices and could leak part of a path or panic.
 func replaceFold(s, old, repl string) string {
 	if old == "" {
 		return s
 	}
-	lower, needle := strings.ToLower(s), strings.ToLower(old)
 	var b strings.Builder
-	for {
-		i := strings.Index(lower, needle)
-		if i < 0 {
-			b.WriteString(s)
-			return b.String()
+	for i := 0; i < len(s); {
+		if n := matchFold(s[i:], old); n > 0 {
+			b.WriteString(repl)
+			i += n
+			continue
 		}
-		b.WriteString(s[:i])
-		b.WriteString(repl)
-		s = s[i+len(old):]
-		lower = lower[i+len(old):]
+		_, w := utf8.DecodeRuneInString(s[i:])
+		b.WriteString(s[i : i+w])
+		i += w
 	}
+	return b.String()
+}
+
+// matchFold returns how many bytes of s a case-insensitive match of the whole
+// of old consumes from the start of s, or 0 when s does not begin with old.
+func matchFold(s, old string) int {
+	n := 0
+	for len(old) > 0 {
+		if n >= len(s) {
+			return 0
+		}
+		ro, wo := utf8.DecodeRuneInString(old)
+		rs, ws := utf8.DecodeRuneInString(s[n:])
+		if ro == utf8.RuneError && wo == 1 || rs == utf8.RuneError && ws == 1 {
+			// Invalid bytes only match the identical byte.
+			if wo != ws || old[0] != s[n] {
+				return 0
+			}
+		} else if ro != rs && !strings.EqualFold(old[:wo], s[n:n+ws]) {
+			return 0
+		}
+		old = old[wo:]
+		n += ws
+	}
+	return n
 }

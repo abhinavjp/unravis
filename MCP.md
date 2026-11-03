@@ -62,6 +62,8 @@ Claude Code `.mcp.json` entry (merge with existing servers):
 }
 ```
 
+`unravis.exe` is built as a windowless (GUI) program, so starting it from a client opens no console window. That does not change the MCP command: `unravis.exe --mcp` still reads requests from standard input and writes responses to standard output, using the pipes the client passes. `--mcp` does not start the dashboard; it connects to the Unravis already running for this Windows user (see below).
+
 Codex trusted-project `.codex/config.toml` entry:
 
 ```toml
@@ -74,7 +76,7 @@ tool_timeout_sec = 310
 
 ### How MCP finds the dashboard
 
-The dashboard picks a free loopback port each time it starts (unless you pass `--port`) and creates a random session token. It writes both to `session.json` in the per-user application folder: `%APPDATA%\APIAuditExplorer\session.json`, or `%AUDIT_CONFIG_DIR%\session.json` when that variable is set. The file is written owner-only, records the dashboard's process id, and is removed when the dashboard shuts down cleanly or receives Ctrl+C, a stop signal or a console-window close. `--mcp` reads it on every request, so it follows a dashboard restart without reconfiguration. If several dashboards run, the most recently started one owns the file.
+The dashboard picks a free loopback port each time it starts (unless you pass `--port`) and creates a random session token. It writes both to `session.json` in the per-user application folder: `%APPDATA%\APIAuditExplorer\session.json`, or `%AUDIT_CONFIG_DIR%\session.json` when that variable is set. The file is written owner-only, records the dashboard's process id, and is removed when Unravis quits: from the tray menu, with `unravis.exe --quit`, or on Ctrl+C, a stop signal or a console-window close. Because the file is gone once Unravis quits, an MCP client started while no Unravis is running reports that Unravis is not running for this Windows user. `--mcp` reads it on every request, so it follows a dashboard restart without reconfiguration. If several dashboards run, the most recently started one owns the file.
 
 - If the file is missing, or the process it names has exited, the tools answer that Unravis is not running for this Windows user; a stale file is deleted.
 - On Windows, if another process holds the file's port, MCP refuses to connect.

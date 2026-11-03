@@ -87,10 +87,27 @@ type File struct {
 	writer *rotateWriter
 }
 
-// Writer is the rotating file writer on its own, so the caller can also send
-// the standard library's log lines (the ones Unravis already prints) to the
-// same file.
-func (f *File) Writer() io.Writer { return f.writer }
+// Writer is the log file as a plain writer, so the caller can also send the
+// standard library's log lines (the ones Unravis already prints) to the same
+// file. Every write is sanitized first, exactly like the slog path, so a
+// registered secret or credential in a log.Printf line never reaches the file.
+// After Close, writes fail instead of reopening the file.
+func (f *File) Writer() io.Writer { return sanitizeWriter{w: f.writer} }
+
+// sanitizeWriter runs each write through Sanitize before passing it on. The
+// standard library logger issues one write per line, so a secret is never
+// split across two writes. It reports the caller's byte count, not the length
+// of the sanitized text.
+type sanitizeWriter struct {
+	w io.Writer
+}
+
+func (s sanitizeWriter) Write(p []byte) (int, error) {
+	if _, err := s.w.Write([]byte(Sanitize(string(p)))); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
 
 func (f *File) Close() error {
 	if f == nil || f.writer == nil {
@@ -111,7 +128,7 @@ func Open(dir string, level slog.Level, secure func(string) error) (*File, error
 	if err != nil {
 		return nil, err
 	}
-	out := io.MultiWriter(os.Stderr, rw)
+	out := Tee(os.Stderr, rw)
 	handler := sanitizeHandler{inner: slog.NewTextHandler(out, &slog.HandlerOptions{Level: level})}
 	return &File{Logger: slog.New(handler), Dir: dir, Path: filepath.Join(dir, FileName), writer: rw}, nil
 }

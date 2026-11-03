@@ -44,7 +44,7 @@ A **Failed** check stops the install and says what to do. Fix it, then press **C
 - **Just for me** installs into `%LOCALAPPDATA%\Programs\Unravis`. It needs no administrator approval, unless you also place a Blackbox.
 - **For everyone on this PC** installs into `C:\Program Files\Unravis`. It also makes the shared data folder `C:\ProgramData\Unravis`, records it under `HKLM\SOFTWARE\Unravis`, and sets up the key keeper service (`UnravisKeeper`) that holds saved connections for everyone. This needs administrator approval.
 - **Folder.** You can type another folder. Spaces and letters such as é are fine. There is no Browse button. A name cannot end with a dot or a space, because Windows would drop it. Short names such as `PROGRA~1` are read as the real folder before anything is checked. For everyone on this PC the folder cannot be inside a person's profile (such as `C:\Users\Ana`).
-- **Start Unravis when I sign in** is ticked by default.
+- **Start Unravis when I sign in** is ticked by default. When it is on, Windows starts Unravis at each sign-in in the tray, with no browser window. The tray menu item **Start at sign-in** turns it on or off later. Setup does not start Unravis by itself; see [After install](#after-install).
 - **Close Unravis for me** appears only when Unravis is open. It is ticked by default. When Unravis is not open the option is not shown.
 - **Also place a Blackbox recorder on this PC** installs the Blackbox service (`UnravisBlackbox`) in `C:\Program Files\Unravis Blackbox`. It uses the same settings as the Place a Blackbox wizard: **Name**, **Folder**, **Keep (days)**, **Max (GB)**, **Keep free (%)** and **Port**. See [Unravis Blackbox](blackbox.md).
 - **Allow other PCs to read it (firewall rule)** is shown under the Blackbox choices. It adds a Windows firewall rule, `Unravis Blackbox (TCP <port>)`, open only to the addresses you list in **Addresses**. Without it no rule is added.
@@ -86,9 +86,36 @@ When you placed a Blackbox, the Done screen shows its read key **once**. Unravis
 ![Unravis is installed, with the read key, dark](screenshots/P11/p11-done-dark.png)
 ![Unravis is installed, with the read key, light](screenshots/P11/p11-done-light.png)
 
+## After install
+
+Setup does not start Unravis by itself. Press **Open Unravis** on the Done screen to start it. That start opens a browser tab, and the Unravis icon appears in the notification area of the taskbar. Unravis keeps running there until you choose **Quit Unravis** from the tray menu. Closing the browser tab does not quit it.
+
+The tray menu has four items: **Open Unravis**, **Open log folder**, **Start at sign-in** (shown only for an installed copy, ticked while it is on) and **Quit Unravis**. If the icon is not visible, see [I do not see the Unravis icon](troubleshooting.md#i-do-not-see-the-unravis-icon).
+
+Setup adds these shortcuts for the Windows account that runs it:
+
+| Shortcut | Where | What it does |
+|---|---|---|
+| Unravis | Desktop (only when the account has a Desktop folder) | Opens Unravis. A Desktop shortcut that already exists and points to another program is left alone. |
+| Unravis | Start menu | Opens Unravis. |
+| Quit Unravis | Start menu, next to Unravis | Asks the running Unravis to quit. |
+| Unravis | Startup folder (only when the sign-in box is ticked) | Starts Unravis in the tray at sign-in, with no browser window. |
+
+### Clean-machine check
+
+> NOT RUN: needs a clean VM. None of these steps has run on a clean machine yet. Each one stays unverified until `docs/background-run-acceptance.md` records it as done. That file comes with the acceptance run and does not exist yet.
+
+1. NOT RUN: Install with the sign-in box ticked (the default). Expect the four shortcuts above and, after **Open Unravis**, the icon in the notification area.
+2. NOT RUN: Close the browser tab. Expect Unravis to keep running with its icon in the tray.
+3. NOT RUN: Sign out and sign in again. Expect the icon in the tray and no browser window.
+4. NOT RUN: Start Unravis from the Start menu while it is running. Expect a new browser tab in the running copy and no second icon.
+5. NOT RUN: Choose **Quit Unravis** from the tray menu. Expect the icon to go and no `unravis.exe` process left in Task Manager.
+
 ## When it fails
 
 If a step fails, setup stops, puts back every step before it in reverse order, and says which step failed and what to do. The heading says whether everything was put back. If something could not be put back, it is listed by name with its path, and the log has the details. After a failed install, **Back to Options** lets you change a choice, for example the port, and run again. After a failed upgrade or repair, **Try again** runs it again (it is off when something could not be put back: read the log first).
+
+A failed install leaves no new shortcut behind. The shortcuts are part of the same run, so a failed run puts them back with everything else.
 
 ![Install did not finish, everything put back, dark](screenshots/P11/p11-failed-rolled-back-dark.png)
 ![Install did not finish, everything put back, light](screenshots/P11/p11-failed-rolled-back-light.png)

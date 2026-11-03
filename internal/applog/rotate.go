@@ -23,6 +23,7 @@ type rotateWriter struct {
 	secure   func(string) error // restricts the fresh file to this user; may be nil
 	f        *os.File
 	size     int64
+	closed   bool // set by Close: later writes are refused, never reopen the file
 }
 
 func newRotateWriter(dir, name string, maxSize int64, maxFiles int, secure func(string) error) (*rotateWriter, error) {
@@ -90,6 +91,9 @@ func (w *rotateWriter) rotate() error {
 func (w *rotateWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.closed {
+		return 0, os.ErrClosed
+	}
 	if w.f == nil {
 		if err := w.open(); err != nil {
 			return 0, err
@@ -108,6 +112,7 @@ func (w *rotateWriter) Write(p []byte) (int, error) {
 func (w *rotateWriter) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.closed = true
 	if w.f == nil {
 		return nil
 	}

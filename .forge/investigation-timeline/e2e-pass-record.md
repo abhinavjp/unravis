@@ -43,3 +43,22 @@ Bar click lost to pointer capture, hidden tooltip box still drawn (`.tip[hidden]
 - [gate-checklist-phase05.md](gate-checklist-phase05.md)
 - [wireframe-match-tracing.md](wireframe-match-tracing.md)
 - [wireframe-gap-triage.md](wireframe-gap-triage.md)
+
+## Phase 07 (background-run)
+
+Exe: `dist\unravis.exe` from `build.ps1` (GUI subsystem, stamped `v0.1.0-rc.10-5-g3a3fe96-dirty`). Build ran the web check/build, `go test ./...` and `go vet ./...` clean and passed the PE subsystem checks. Branch feat/investigation-timeline. Nothing committed.
+
+| Check | Result | Date |
+|---|---|---|
+| `build.ps1` (npm ci, check, build, go test, go vet, five exes, subsystem check) | PASS | 2026-11-03 |
+| Main + tracing e2e, `run-e2e.ps1 -Exe dist\unravis.exe` (--demo --no-browser) | 324 of 329 pass; 5 fail, all because this exe is version-stamped, not Phase 07 (see below) | 2026-11-03 |
+| Re-run of those 5 ids (HELP-03, UPD-04, UPD-05, UPD-05a, UPD-06) on an unstamped GUI build of the same tree (`-Only`) | 5 of 5 PASS | 2026-11-03 |
+| Smoke a: `--version` prints and exits 0 (redirected stdout, 21 ms) | PASS | 2026-11-03 |
+| Smoke e: `--background` starts, listens, writes session.json, no browser child process, support log says `launch=none` | PASS | 2026-11-03 |
+| Smoke b: second `--background` exits 0 in 17 ms, no new server or process, session port unchanged | PASS | 2026-11-03 |
+| Smoke c: `--quit` from a second process: exit 0, first copy exits 0 within 10 s, session.json removed | PASS | 2026-11-03 |
+| Smoke d: `--quit` with nothing running: exit 0 and "Unravis is not running." | PASS | 2026-11-03 |
+
+The 5 stamped-build failures: the UPD-04/05/05a/06 specs expect a development build (`data-state` "dev") and get "unreachable" because a stamped version tries the network update check; HELP-03 compares the build line "(build abc, date)" to `--version` "(commit abc, built date)". The same 5 specs pass on an unstamped build, and none touches Phase 07 code. Known defects DOC-02 and KEEP-09 stay expected-fail; the archive suite was not run (cannot run, see above).
+
+Smoke notes: `tools/e2e/phase07-smoke.ps1 [-Exe <path>]`. `--no-browser` never reaches the single-instance gate (main.go), so checks b, c, d use `--background` for the first and second copy. The script uses a temp `AUDIT_CONFIG_DIR` and `--port 0`, and removes its processes and temp dir. If another Unravis already holds the per-user instance name, it marks b, c, d, e BLOCKED instead of running `--quit` against that copy. Manual tray, shortcut and sign-in checks were not run here and stay PENDING in `docs/background-run-acceptance.md`.
