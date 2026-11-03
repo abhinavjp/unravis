@@ -80,7 +80,7 @@ func tierLabel(t string) string {
 // amplified the slowness.
 func ComputeOrigin(in Input, f Facts, s Signals, th Thresholds) Origin {
 	o := Origin{Roles: []TierRole{}}
-	sep := time.Duration(th.OriginBucketSeconds)*time.Second + time.Duration(th.ClockToleranceMs*float64(time.Millisecond))
+	sep := pairSep(th, "", "")
 	o.ClockNote = fmt.Sprintf("Hosts may differ by up to %.0f s, and onsets are read by the minute, so onsets less than %.0f s apart are not put in order.", th.ClockToleranceMs/1000, sep.Seconds())
 
 	type dated struct {
@@ -95,6 +95,12 @@ func ComputeOrigin(in Input, f Facts, s Signals, th Thresholds) Origin {
 		}
 	}
 	sort.SliceStable(ds, func(i, j int) bool { return ds[i].at.Before(ds[j].at) })
+	for _, d := range ds {
+		if isLane(d.tier) {
+			o.ClockNote += " Lane clocks (SQL, Mongo, host) are read at ±" + fmt.Sprintf("%.0f", th.LaneClockToleranceMs/1000) + " s."
+			break
+		}
+	}
 
 	switch {
 	case in.Audit != AuditPresent || f.Onset.Status != "found":
@@ -109,7 +115,11 @@ func ComputeOrigin(in Input, f Facts, s Signals, th Thresholds) Origin {
 	case len(ds) < 2:
 		o.Status = OriginNotEnough
 		if len(ds) == 1 {
-			o.Note = "Only " + tierLabel(ds[0].tier) + " could be dated, and another tier could not be read in every minute, so no origin is named."
+			if unread, dropped := heldBackTiers(f); len(unread) == 0 && len(dropped) > 0 {
+				o.Note = "Only " + tierLabel(ds[0].tier) + " could be dated, and another tier's onset was set aside because it did not stay up, so no origin is named."
+			} else {
+				o.Note = "Only " + tierLabel(ds[0].tier) + " could be dated, and another tier could not be read in every minute, so no origin is named."
+			}
 		} else {
 			o.Note = "No tier could be dated, so no origin is named."
 		}
@@ -117,7 +127,7 @@ func ComputeOrigin(in Input, f Facts, s Signals, th Thresholds) Origin {
 		first := ds[0]
 		together := 0
 		for _, d := range ds {
-			if d.at.Sub(first.at) < sep {
+			if d.at.Sub(first.at) < pairSep(th, first.tier, d.tier) {
 				together++
 				near[d.tier] = true
 			}
@@ -125,16 +135,25 @@ func ComputeOrigin(in Input, f Facts, s Signals, th Thresholds) Origin {
 		if together > 1 {
 			o.Status = OriginNone
 			o.Note = "Several tiers moved at about the same time, so the data does not show which moved first. " + noOriginClockNote
-		} else if unread := unreadTiers(f); len(unread) > 0 {
+		} else if unread, dropped := heldBackTiers(f); len(unread)+len(dropped) > 0 {
 			// A tier whose own data was not read in every minute could have moved
 			// before the first dated one, so nothing is named (as for a lone tier).
 			o.Status = OriginNotEnough
-			o.Note = tierLabel(first.tier) + " is the earliest tier that could be dated, but " + joinLabels(unread) + " could not be read in every minute, so one of them may have moved earlier and no origin is named."
+			o.Note = tierLabel(first.tier) + " is the earliest tier that could be dated, but " + heldBackClause(unread, dropped) + ", so one of them may have moved earlier and no origin is named."
 		} else {
 			o.Status = OriginNamed
 			o.Tier, o.Label, o.At = first.tier, tierLabel(first.tier), ptrTime(first.at)
 			o.Note = o.Label + " moved first, at " + fmtT(first.at) + "."
 		}
+	}
+
+	// Load that follows retries or errors is clients retrying, not new demand, so
+	// the arrival rate is not named as the origin (the tier stays "close").
+	if o.Status == OriginNamed && o.Tier == tierLoad && loadFollowsRetries(s, f) {
+		o.Status = OriginNone
+		o.Tier, o.Label, o.At = "", "", nil
+		near[tierLoad] = true
+		o.Note = "Load rose after clients started retrying or failing; that is retrying, not new demand."
 	}
 
 	arrivals := s.Flags[SigArrivalsUp].Value == Yes
@@ -166,6 +185,23 @@ func ComputeOrigin(in Input, f Facts, s Signals, th Thresholds) Origin {
 		o.Roles = append(o.Roles, r)
 	}
 	return o
+}
+
+// isLane says whether a tier name is one of the database or host lanes, whose
+// clocks are read with the wider LaneClockToleranceMs.
+func isLane(name string) bool {
+	return name == "sql" || name == "mongo" || name == "host"
+}
+
+// pairSep is how far apart two tiers must be before the earlier one can be named;
+// a and b are tier names. When either is a lane the lane clock margin is used in
+// place of the application clock margin.
+func pairSep(th Thresholds, a, b string) time.Duration {
+	tol := th.ClockToleranceMs
+	if isLane(a) || isLane(b) {
+		tol = th.LaneClockToleranceMs
+	}
+	return time.Duration(th.OriginBucketSeconds)*time.Second + time.Duration(tol*float64(time.Millisecond))
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
@@ -305,16 +341,61 @@ func Headline(f Facts, o Origin, sps []Suspect) string {
 	return h
 }
 
-// unreadTiers lists the tiers with no onset whose own data was not read in every
-// incident minute: any of them might have moved first.
-func unreadTiers(f Facts) []string {
-	var out []string
+// heldBackTiers lists the tiers with no onset that might have moved first. unread
+// are those whose own data was not read in every incident minute; dropped are those
+// whose onset was found but set aside because it did not stay up.
+func heldBackTiers(f Facts) (unread, dropped []string) {
 	for _, t := range f.Tiers {
-		if t.At == nil && !t.Tested {
-			out = append(out, t.Tier)
+		if t.At != nil || t.Tested {
+			continue
+		}
+		if t.Why == notPersistedWhy {
+			dropped = append(dropped, t.Tier)
+		} else {
+			unread = append(unread, t.Tier)
 		}
 	}
-	return out
+	return unread, dropped
+}
+
+// heldBackClause says in plain words why those tiers cannot be ruled out: an unread
+// tier "could not be read in every minute", a dropped one "had its onset set aside".
+func heldBackClause(unread, dropped []string) string {
+	var parts []string
+	if len(unread) > 0 {
+		parts = append(parts, joinLabels(unread)+" could not be read in every minute")
+	}
+	switch len(dropped) {
+	case 0:
+	case 1:
+		parts = append(parts, joinLabels(dropped)+" had its onset set aside because it did not stay up")
+	default:
+		parts = append(parts, joinLabels(dropped)+" had their onsets set aside because they did not stay up")
+	}
+	return strings.Join(parts, ", and ")
+}
+
+// loadFollowsRetries says whether load is explained by clients retrying or failing:
+// retried calls rose, or the first server error came at or before the load tier's
+// onset (by the minute). Errors that only start after load moved do not explain it.
+// When the load onset is unknown the errors half keeps its signal as it stands (the
+// first server error at or before t0). origin and colour both use this.
+func loadFollowsRetries(s Signals, f Facts) bool {
+	if s.Flags[SigRetriesUp].Value == Yes {
+		return true
+	}
+	if s.Flags[SigErrorsPrecede].Value != Yes {
+		return false
+	}
+	if f.Errors.FirstIncServer == nil {
+		return true
+	}
+	for _, t := range f.Tiers {
+		if t.Tier == tierLoad && t.At != nil {
+			return !minuteOf(*f.Errors.FirstIncServer).After(minuteOf(*t.At))
+		}
+	}
+	return true
 }
 
 func joinLabels(tiers []string) string {

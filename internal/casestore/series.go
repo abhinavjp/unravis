@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
+	"api-audit-explorer/internal/audit"
 	"api-audit-explorer/internal/evidence"
 	"api-audit-explorer/internal/importer"
 )
@@ -24,10 +26,13 @@ import (
 const (
 	MaxSeriesBuckets = 2000
 	MaxSeriesCount   = 50
-	maxSelectorTerms = 8
-	maxSelectorAttrs = 4
-	maxSelectorValue = 64
-	maxSelectorBytes = 512
+	// MaxSeriesQuantile is the number of selectors with q= per request (memory
+	// bound: 4 x 2000 buckets x 194 bins x 8 bytes is about 12 MB worst case).
+	MaxSeriesQuantile = 4
+	maxSelectorTerms  = 8
+	maxSelectorAttrs  = 4
+	maxSelectorValue  = 64
+	maxSelectorBytes  = 512
 )
 
 // Series error reasons. They are the reason codes the API returns.
@@ -63,8 +68,11 @@ func seriesErr(reason, format string, a ...any) error {
 //	host=<label>           optional
 //	attr.<name>=<value>    optional, up to 4, exact match on an event attribute
 //	field=value|duration   which number to aggregate; default value
+//	q=50|90|95|99          optional, needs field=duration; adds a per-bucket quantile
+//	group=statusclass      optional; adds per-bucket counts by the "status" attribute's class
 //
-// An event without the chosen number is skipped.
+// An event without the chosen number is skipped. For a pure count by status
+// class use field=duration on request events (they all carry a duration).
 type SeriesQuery struct {
 	From, To time.Time
 	BucketMs int64
@@ -83,6 +91,10 @@ type SeriesPoint struct {
 	Mean  float64 `json:"mean"`
 	Max   float64 `json:"max"`
 	Count int64   `json:"count"`
+	// Q is the per-bucket quantile asked for with q=, read from log-1.1 bins.
+	Q *float64 `json:"q,omitempty"`
+	// ByClass counts the bucket's events by status class (group=statusclass).
+	ByClass map[string]int64 `json:"byClass,omitempty"`
 }
 
 // SeriesOut is the answer for one selector.
@@ -111,6 +123,8 @@ type selector struct {
 	kind, source, host string
 	attrs              [][2]string
 	duration           bool
+	q                  float64 // 0 = none
+	byClass            bool
 }
 
 var (
@@ -172,6 +186,19 @@ func parseSelector(s string) (selector, error) {
 			default:
 				return bad("field is value or duration")
 			}
+		case name == "q":
+			switch value {
+			case "50", "90", "95", "99":
+				n, _ := strconv.Atoi(value)
+				sel.q = float64(n) / 100
+			default:
+				return bad("q is 50, 90, 95 or 99")
+			}
+		case name == "group":
+			if value != "statusclass" {
+				return bad("group is statusclass")
+			}
+			sel.byClass = true
 		case strings.HasPrefix(name, "attr."):
 			an := strings.TrimPrefix(name, "attr.")
 			if !selectorAttrName.MatchString(an) {
@@ -187,6 +214,9 @@ func parseSelector(s string) (selector, error) {
 	}
 	if sel.kind == "" {
 		return bad("kind is required")
+	}
+	if sel.q > 0 && !sel.duration {
+		return bad("q needs field=duration")
 	}
 	return sel, nil
 }
@@ -227,6 +257,50 @@ type seriesAgg struct {
 	unitSet  bool
 	mixed    bool
 	total    int64
+	bins     [][]int64          // per bucket, seriesBins long; only with q=
+	classes  []map[string]int64 // per bucket; only with group=statusclass
+}
+
+// seriesBins is the number of log-1.1 bins: the audit overflow bin 193, plus one.
+const seriesBins = 194
+
+// statusClass maps an HTTP status text to "1xx".."5xx", or "other".
+func statusClass(s string) string {
+	if len(s) == 3 && s[0] >= '1' && s[0] <= '5' && s[1] >= '0' && s[1] <= '9' && s[2] >= '0' && s[2] <= '9' {
+		return string(s[0]) + "xx"
+	}
+	return "other"
+}
+
+// binQuantile returns the q-quantile of n values held in bins (nearest rank):
+// the upper bound of the bin holding the rank (the lower bound for the
+// overflow bin), clamped to [min, max] of the bucket.
+func binQuantile(bins []int64, n int64, q, min, max float64) float64 {
+	r := int64(math.Ceil(q*float64(n) - 1e-9))
+	if r < 1 {
+		r = 1
+	}
+	var cum int64
+	out := max
+	for k, c := range bins {
+		cum += c
+		if c > 0 && cum >= r {
+			lo, hi := audit.BinBounds(k)
+			if hi != nil {
+				out = *hi
+			} else {
+				out = lo
+			}
+			break
+		}
+	}
+	if out < min {
+		out = min
+	}
+	if out > max {
+		out = max
+	}
+	return out
 }
 
 // Series aggregates the events c holds for q. It checks the query first (every
@@ -258,6 +332,7 @@ func Series(ctx context.Context, c Case, q SeriesQuery) (SeriesResult, error) {
 		return res, seriesErr(SeriesTooManySeries, "At most %d series per request.", MaxSeriesCount)
 	}
 	sels := make([]selector, len(q.Sel))
+	nq := 0
 	// A selector that names a series key (an attribute a store indexes) is read
 	// by a pass of its own, the store returning only the events of that series.
 	// The others share one pass over their kinds, as before.
@@ -268,11 +343,18 @@ func Series(ctx context.Context, c Case, q SeriesQuery) (SeriesResult, error) {
 			return res, err
 		}
 		sels[i] = p
+		if p.q > 0 {
+			nq++
+		}
 		if p.hasIndexedAttr() {
 			own = append(own, i)
 		} else {
 			shared = append(shared, i)
 		}
+	}
+
+	if nq > MaxSeriesQuantile {
+		return res, seriesErr(SeriesTooManySeries, "At most %d quantile series per request.", MaxSeriesQuantile)
 	}
 
 	aggs := make([]seriesAgg, len(sels))
@@ -307,6 +389,29 @@ func Series(ctx context.Context, c Case, q SeriesQuery) (SeriesResult, error) {
 			}
 		}
 		a.count[b]++
+		if sel.q > 0 {
+			if a.bins == nil {
+				a.bins = make([][]int64, nb)
+			}
+			if a.bins[b] == nil {
+				a.bins[b] = make([]int64, seriesBins)
+			}
+			// A negative duration is binned as the lowest bin, so the bins always add up to the bucket count.
+			k := audit.BinIndex(v)
+			if k < 0 {
+				k = 0
+			}
+			a.bins[b][k]++
+		}
+		if sel.byClass {
+			if a.classes == nil {
+				a.classes = make([]map[string]int64, nb)
+			}
+			if a.classes[b] == nil {
+				a.classes[b] = map[string]int64{}
+			}
+			a.classes[b][statusClass(ev.Attrs["status"])]++
+		}
 		a.sum[b] += v
 		a.total++
 		if !a.unitSet {
@@ -442,10 +547,18 @@ func Series(ctx context.Context, c Case, q SeriesQuery) (SeriesResult, error) {
 			if a.count[b] == 0 {
 				continue
 			}
-			out.Points = append(out.Points, SeriesPoint{
+			pt := SeriesPoint{
 				T: fromMs + int64(b)*q.BucketMs, Min: a.min[b], Max: a.max[b],
 				Mean: a.sum[b] / float64(a.count[b]), Count: a.count[b],
-			})
+			}
+			if sels[i].q > 0 && a.bins != nil && a.bins[b] != nil {
+				qv := binQuantile(a.bins[b], a.count[b], sels[i].q, a.min[b], a.max[b])
+				pt.Q = &qv
+			}
+			if a.classes != nil && a.classes[b] != nil {
+				pt.ByClass = a.classes[b]
+			}
+			out.Points = append(out.Points, pt)
 		}
 		res.Series[i] = out
 	}

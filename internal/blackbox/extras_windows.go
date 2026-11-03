@@ -34,6 +34,7 @@ var (
 const (
 	pdhFmtDouble      = 0x00000200
 	diskQueuePath     = `\PhysicalDisk(_Total)\Current Disk Queue Length`
+	diskLatencyPath   = `\PhysicalDisk(_Total)\Avg. Disk sec/Transfer`
 	ifTypeLoopback    = 24
 	ifOperStatusUp    = 1
 	ifFlagHardwareBit = 0x01
@@ -48,6 +49,9 @@ type pdhFmtCounterValue struct {
 
 type winExtras struct {
 	query, counter uintptr
+	latency        uintptr
+	latencyOK      bool
+	lastCollect    error
 	opened         bool
 	err            error
 }
@@ -68,6 +72,10 @@ func newWinExtras() *winExtras {
 		w.err = fmt.Errorf("PdhAddEnglishCounter: 0x%x", r)
 		return w
 	}
+	lp, _ := windows.UTF16PtrFromString(diskLatencyPath)
+	if r, _, _ := procPdhAddEnglishCounter.Call(w.query, uintptr(unsafe.Pointer(lp)), 0, uintptr(unsafe.Pointer(&w.latency))); r == 0 {
+		w.latencyOK = true
+	}
 	w.opened = true
 	procPdhCollectQueryData.Call(w.query)
 	return w
@@ -77,9 +85,12 @@ func (w *winExtras) DiskQueue() (float64, error) {
 	if !w.opened {
 		return 0, w.err
 	}
-	if r, _, _ := procPdhCollectQueryData.Call(w.query); r != 0 {
-		return 0, fmt.Errorf("PdhCollectQueryData: 0x%x", r)
+	r, _, _ := procPdhCollectQueryData.Call(w.query)
+	if r != 0 {
+		w.lastCollect = fmt.Errorf("PdhCollectQueryData: 0x%x", r)
+		return 0, w.lastCollect
 	}
+	w.lastCollect = nil
 	var v pdhFmtCounterValue
 	if r, _, _ := procPdhGetFormattedCtrValue.Call(w.counter, pdhFmtDouble, 0, uintptr(unsafe.Pointer(&v))); r != 0 {
 		return 0, fmt.Errorf("PdhGetFormattedCounterValue: 0x%x", r)
@@ -88,6 +99,28 @@ func (w *winExtras) DiskQueue() (float64, error) {
 		return 0, fmt.Errorf("disk queue counter status 0x%x", v.CStatus)
 	}
 	return v.Double, nil
+}
+
+// DiskLatencyMs reads the latency counter from the collect DiskQueue just made;
+// it never collects again, so the two readings share one interval.
+func (w *winExtras) DiskLatencyMs() (float64, error) {
+	if !w.opened {
+		return 0, w.err
+	}
+	if !w.latencyOK {
+		return 0, errors.New("disk latency counter not available")
+	}
+	if w.lastCollect != nil {
+		return 0, w.lastCollect
+	}
+	var v pdhFmtCounterValue
+	if r, _, _ := procPdhGetFormattedCtrValue.Call(w.latency, pdhFmtDouble, 0, uintptr(unsafe.Pointer(&v))); r != 0 {
+		return 0, fmt.Errorf("PdhGetFormattedCounterValue: 0x%x", r)
+	}
+	if v.CStatus != 0 {
+		return 0, fmt.Errorf("disk latency counter status 0x%x", v.CStatus)
+	}
+	return v.Double * 1000, nil
 }
 
 // Network sums the byte counters of the physical interfaces that are up. When

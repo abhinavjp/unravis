@@ -29,6 +29,7 @@ var serverStatusMetrics = []ssMetric{
 	{"uptime", []string{"uptime"}, "count", 1},
 	{"connections.current", []string{"connections", "current"}, "count", 1},
 	{"connections.available", []string{"connections", "available"}, "count", 1},
+	{"connections.rejected", []string{"connections", "rejected"}, "count", 1},
 	{"globalLock.currentQueue.total", []string{"globalLock", "currentQueue", "total"}, "count", 1},
 	{"globalLock.currentQueue.readers", []string{"globalLock", "currentQueue", "readers"}, "count", 1},
 	{"globalLock.currentQueue.writers", []string{"globalLock", "currentQueue", "writers"}, "count", 1},

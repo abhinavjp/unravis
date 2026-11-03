@@ -46,7 +46,7 @@ func TestW2FExportVocabulary(t *testing.T) {
 		{"redis-log", "family role", "aof-fsync-slow aof-rewrite-done aof-rewrite-start bgsave-done bgsave-fail " +
 			"bgsave-start client-buffer-closed config-warning redis-start redis-stop replication-event"},
 		{"mongo-profile", "command docsExamined keysExamined ns nreturned numYields planSummary queryHash " +
-			"responseLength type workingMs", "slow-op"},
+			"responseLength type usedDisk workingMs", "slow-op"},
 		{"mongo-currentop", "ns numYields op planSummary waitingForLock", "inflight-op"},
 		{"mongo-serverstatus", "metric", "metric mongod-start"},
 		{"mongostat-json", "metric", "metric"},

@@ -47,7 +47,7 @@ Each suspect also shows the cheapest next check that would tell it apart from it
 
 ### Names that never change
 
-Every number the engine compares against sits in one table of named thresholds. The table has a version, and the version travels with every result, so an answer can always be read against the rules it was made under. Changing a threshold means changing the version; a test fails otherwise. The current version is 2026-10-27.
+Every number the engine compares against sits in one table of named thresholds. The table has a version, and the version travels with every result, so an answer can always be read against the rules it was made under. Changing a threshold means changing the version; a test fails otherwise. The current version is 2026-11-03.
 
 The values that matter most:
 
@@ -56,6 +56,16 @@ The values that matter most:
 - A group needs 20 calls before its P95 is shown and 100 before its P99 is shown.
 - Clocks on different hosts may differ by up to 1 second, so onsets less than a minute and a second apart are not put in order.
 - A gap of 2 minutes or less in the data is a warning and the step runs on the minutes that exist. A longer gap makes those minutes Cannot test yet. Missing minutes are never counted as zero.
+
+## When a comparison is greyed out
+
+A comparison shows grey instead of a number when the data is too thin to trust it.
+
+- A rate is compared only if the reference window has at least 60 events and the incident window at least 20.
+- A reference P95 is compared only if the reference has at least 100 events.
+- The reference events must be spread over the window. If nearly all fall in one or two minutes, the comparison is greyed out. At very low traffic (under one event per minute on average) this spread check is skipped.
+- Rates are counted over minutes that have data on both sides. Minutes with missing data are left out, not counted as zero.
+- P95 values come from a histogram and are within about 10 in 100 of the exact value.
 
 ## Step 0. Frame
 

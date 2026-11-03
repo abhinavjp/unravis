@@ -61,7 +61,7 @@ var exportKinds = map[string]map[string]bool{
 		"scheduler-fault"),
 	"appinsights": set("record", "request", "dependency", "exception", "trace", "pageview", "availability",
 		"custom-event"),
-	"sql-xe":         set("wait", "diagnostics", "error", "non-yielding", "deadlock"),
+	"sql-xe":         set("wait", "diagnostics", "error", "non-yielding", "deadlock", "call", "blocked-process", "attention"),
 	"sql-errorlog":   set("io-stall", "start", "stop", "login-failed", "non-yielding"),
 	"sql-querystore": set("query-interval", "wait"),
 	// Wave 2 (W2-b, W2-c, W2-d, W2-j): app logs.
@@ -269,7 +269,7 @@ var (
 	successValues = fold("true", "false", "unknown")
 	xeEvents      = fold("wait_info", "wait_info_external", "sp_server_diagnostics_component_result", "error_reported",
 		"scheduler_monitor_non_yielding_ring_buffer_recorded", "scheduler_monitor_non_yielding_iocp_ring_buffer_recorded",
-		"scheduler_monitor_non_yielding_rm_ring_buffer_recorded", "xml_deadlock_report")
+		"scheduler_monitor_non_yielding_rm_ring_buffer_recorded", "xml_deadlock_report", "rpc_completed", "sql_batch_completed", "blocked_process_report", "attention")
 	xeWaitClasses = fold("lock", "latch", "preemptive", "other")
 	xeComponents  = fold("system", "resource", "query_processing", "io_subsystem", "events")
 	xeStates      = fold("clean", "warning", "error", "unknown")
@@ -522,7 +522,7 @@ var (
 	mongoOps   = fold("none", "update", "insert", "query", "getmore", "remove", "killcursors", "command")
 	boolValues = fold("true", "false")
 	// serverStatusMetrics are the dotted serverStatus paths the W2-k recipe projects.
-	serverStatusMetrics = fold("uptime", "connections.current", "connections.available",
+	serverStatusMetrics = fold("uptime", "connections.current", "connections.available", "connections.rejected",
 		"globalLock.currentQueue.total", "globalLock.currentQueue.readers", "globalLock.currentQueue.writers",
 		"globalLock.activeClients.readers", "globalLock.activeClients.writers", "opcounters.query",
 		"opcounters.insert", "opcounters.update", "opcounters.delete", "opcounters.getmore", "opcounters.command",

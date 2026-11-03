@@ -2,7 +2,9 @@ package investigate
 
 import (
 	"fmt"
+	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -32,6 +34,11 @@ const (
 	// hostMinCoverage is the share of the incident window's minutes that must hold
 	// a CPU reading before the lane reads at all.
 	hostMinCoverage = 0.5
+
+	// Disk latency marks for D9 (FETCHABILITY-AUDIT 6c), local to this lane.
+	hostDiskSlowMs  = 15.0
+	hostDiskRiseMs  = 5.0
+	hostDiskRisePct = 0.3
 )
 
 // HostProc is one process row of a sample: its name and its CPU share.
@@ -43,9 +50,11 @@ type HostProc struct {
 // HostSample is one Blackbox sample, reduced to what the lane reads. A value the
 // recorder could not read is nil and is never treated as zero.
 type HostSample struct {
-	T     time.Time
-	CPU   *float64
-	Procs []HostProc
+	T   time.Time
+	CPU *float64
+	// DiskMs is the average ms per disk transfer; nil when not recorded.
+	DiskMs *float64
+	Procs  []HostProc
 }
 
 // HostInput is a Blackbox recording as the engine sees it.
@@ -60,7 +69,8 @@ type HostInput struct {
 
 // HostResult is what the host lane concludes.
 type HostResult struct {
-	// Lanes holds H1 only: the Blackbox has no counters for the other host suspects.
+	// Lanes holds H1, and D9 and D10 when the recording is on the SQL Server machine;
+	// the Blackbox has no counters for H2–H6.
 	Lanes map[string]Tri
 	// Onset is when host CPU first stayed busy in the incident window (nil if never,
 	// or not readable).
@@ -297,7 +307,83 @@ func HostLane(in Input, h HostInput) HostResult {
 			res.Note = "Host CPU was neither clearly busy nor clearly flat."
 		}
 	}
+	if onSQLHost(h.Samples, in.Incident) {
+		hostSQLLanes(&res, in, h, total)
+	}
 	return res
+}
+
+// hostSQLLanes answers D9 and D10 for a recording made on the SQL Server machine.
+// D9 is Yes when the incident mean disk latency is slow and rose against the
+// reference (or there is no reference); with enough disk coverage anything else
+// is No. A steady slow disk, for example 20 ms in both windows, therefore reads
+// No: it did not start the slowdown. D10 follows H1 when sqlservr is the busiest
+// process.
+func hostSQLLanes(res *HostResult, in Input, h HostInput, total int) {
+	if m, n, ok := diskMean(h.Samples, in.Incident); ok {
+		r, _, rok := diskMean(h.Samples, in.Reference)
+		rose := !rok || (m >= r*(1+hostDiskRisePct) && m-r >= hostDiskRiseMs)
+		switch {
+		case m >= hostDiskSlowMs && rose:
+			res.Lanes["D9"] = Yes
+		case total > 0 && float64(n)/float64(total) >= hostMinCoverage:
+			res.Lanes["D9"] = No
+		}
+	}
+	switch res.Lanes["H1"] {
+	case Yes:
+		if isSQLProc(res.TopProcess) {
+			res.Lanes["D10"] = Yes
+		}
+	case No:
+		res.Lanes["D10"] = No
+	}
+}
+
+// onSQLHost is true when any incident sample lists a process named sqlservr.
+func onSQLHost(ss []HostSample, w Window) bool {
+	for _, s := range ss {
+		if !w.Contains(s.T.UTC()) {
+			continue
+		}
+		for _, p := range s.Procs {
+			if isSQLProc(p.Name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isSQLProc folds case and drops ".exe": "SQLSERVR.EXE" → true.
+func isSQLProc(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	n = strings.TrimSuffix(n, ".exe")
+	return n == "sqlservr"
+}
+
+// diskMean is the mean DiskMs of samples in w and the number of distinct
+// minutes that hold a reading.
+func diskMean(ss []HostSample, w Window) (mean float64, minutes int, ok bool) {
+	var sum float64
+	var n int
+	seen := map[time.Time]bool{}
+	for _, s := range ss {
+		if s.DiskMs == nil || !w.Contains(s.T.UTC()) {
+			continue
+		}
+		// A latency that is NaN, infinite or negative is not a reading; it must not read as a fast or slow disk.
+		if v := *s.DiskMs; math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+			continue
+		}
+		sum += *s.DiskMs
+		n++
+		seen[minuteOf(s.T)] = true
+	}
+	if n == 0 {
+		return 0, 0, false
+	}
+	return sum / float64(n), len(seen), true
 }
 
 func topProcess(inc map[time.Time]*minuteStat, minutes []time.Time, busy func(float64) bool) string {
@@ -327,6 +413,9 @@ func (in *Input) ApplyHost(h HostInput) HostResult {
 		in.Lanes = map[string]Tri{}
 	}
 	for id, v := range res.Lanes {
+		if id != "H1" && (v == Unknown || in.Lanes[id] == Yes) {
+			continue
+		}
 		in.Lanes[id] = v
 	}
 	if res.Onset != nil {

@@ -362,3 +362,67 @@ func TestMongoLaneOpenCursorIsACutShortRead(t *testing.T) {
 		t.Fatalf("summary = %s", checkByID(t, r, CheckMongoProfiler).Summary)
 	}
 }
+
+func profDocMs(t time.Time, ns, plan string, ms float64, usedDisk bool) map[string]any {
+	d := profDoc(t, ns, plan)
+	d["millis"] = ms
+	if usedDisk {
+		d["usedDisk"] = true
+	}
+	return d
+}
+
+// m11Docs builds n reference docs at refMs and n incident docs at incMs, the first spills of them spilled to disk.
+func m11Docs(n int, refMs, incMs float64, spills int) []map[string]any {
+	var docs []map[string]any
+	for i := 0; i < n; i++ {
+		docs = append(docs, profDocMs(at(19, 10, i), "AuditDb.Logs", "IXSCAN { ts: 1 }", refMs, false))
+	}
+	for i := 0; i < n; i++ {
+		docs = append(docs, profDocMs(at(20, 10, i), "AuditDb.Logs", "IXSCAN { ts: 1 }", incMs, i < spills))
+	}
+	return docs
+}
+
+func TestEvalLaneProfilerM11Yes(t *testing.T) {
+	o := evalLaneProfiler(100, at(1, 0, 0), m11Docs(25, 200, 900, 4), false, mreq())
+	if o.m11 != AnswerYes {
+		t.Fatalf("m11 = %q", o.m11)
+	}
+	if !strings.Contains(o.check.Summary, "4 operations spilled to disk") {
+		t.Errorf("summary = %s", o.check.Summary)
+	}
+	r := RunMongoLane(context.Background(), newProf(at(1, 0, 0), m11Docs(25, 200, 900, 4)...), "Mongo", mreq(), fixedNow)
+	if r.Lane.Answers["M11"] != AnswerYes {
+		t.Errorf("answers = %v", r.Lane.Answers)
+	}
+}
+
+func TestEvalLaneProfilerM11NoSpills(t *testing.T) {
+	o := evalLaneProfiler(100, at(1, 0, 0), m11Docs(25, 200, 900, 0)[25:], false, mreq())
+	if o.m11 != AnswerNo {
+		t.Fatalf("m11 = %q", o.m11)
+	}
+}
+
+func TestEvalLaneProfilerM11FlatTime(t *testing.T) {
+	o := evalLaneProfiler(100, at(1, 0, 0), m11Docs(25, 900, 900, 4), false, mreq())
+	if o.m11 != AnswerNo {
+		t.Fatalf("m11 = %q", o.m11)
+	}
+}
+
+func TestEvalLaneProfilerM11Truncated(t *testing.T) {
+	o := evalLaneProfiler(100, at(1, 0, 0), m11Docs(25, 200, 900, 0)[25:], true, mreq())
+	if o.m11 != "" {
+		t.Fatalf("m11 = %q", o.m11)
+	}
+}
+
+func TestEvalLaneProfilerM11PartCover(t *testing.T) {
+	docs := m11Docs(5, 200, 900, 0)[5:]
+	o := evalLaneProfiler(100, at(20, 10, 2), docs, false, mreq())
+	if o.m11 != "" {
+		t.Fatalf("m11 = %q", o.m11)
+	}
+}

@@ -212,3 +212,79 @@ func TestStep9WithoutBlackboxIsUnchanged(t *testing.T) {
 		t.Fatalf("step = %+v", st)
 	}
 }
+
+// sqlHostSamples makes samples every 15 s from hostT0 to 60 minutes: the given
+// process at procPct, host CPU from cpu, and disk latency incMs in the incident
+// window and refMs in the reference window (nil for none).
+func sqlHostSamples(proc string, cpu float64, refMs, incMs *float64) []HostSample {
+	inc := hostInput().Incident
+	var out []HostSample
+	for t := hostT0; t.Before(hostT0.Add(60 * time.Minute)); t = t.Add(15 * time.Second) {
+		s := HostSample{T: t, CPU: f64(cpu), Procs: []HostProc{{Name: proc, CPUPct: f64(80)}}}
+		if inc.Contains(t) {
+			s.DiskMs = incMs
+		} else {
+			s.DiskMs = refMs
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func TestHostLaneD9D10(t *testing.T) {
+	cases := []struct {
+		name          string
+		proc          string
+		cpu           float64
+		ref, inc      *float64
+		h1, d9, d10   Tri
+		hasD9, hasD10 bool
+	}{
+		{"slow and risen", "sqlservr.exe", 95, f64(4), f64(25), Yes, Yes, Yes, true, true},
+		{"fast disk", "sqlservr.exe", 95, f64(4), f64(6), Yes, No, Yes, true, true},
+		{"slow but steady", "sqlservr.exe", 95, f64(16), f64(18), Yes, No, Yes, true, true},
+		{"no disk readings", "sqlservr.exe", 95, nil, nil, Yes, Unknown, Yes, false, true},
+		{"flat cpu", "sqlservr.exe", 30, f64(4), f64(6), No, No, No, true, true},
+		{"not the sql machine", "w3wp", 95, f64(4), f64(25), Yes, Unknown, Unknown, false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res := HostLane(hostInput(), hostH(sqlHostSamples(c.proc, c.cpu, c.ref, c.inc)))
+			if res.Lanes["H1"] != c.h1 {
+				t.Fatalf("H1 = %v, want %v (%s)", res.Lanes["H1"], c.h1, res.Note)
+			}
+			d9, ok9 := res.Lanes["D9"]
+			if ok9 != c.hasD9 || (ok9 && d9 != c.d9) {
+				t.Fatalf("D9 = %v (present %v), want %v (present %v)", d9, ok9, c.d9, c.hasD9)
+			}
+			d10, ok10 := res.Lanes["D10"]
+			if ok10 != c.hasD10 || (ok10 && d10 != c.d10) {
+				t.Fatalf("D10 = %v (present %v), want %v (present %v)", d10, ok10, c.d10, c.hasD10)
+			}
+		})
+	}
+}
+
+func TestApplyHostNeverOverwritesAnotherReadersYes(t *testing.T) {
+	in := hostInput()
+	in.Lanes = map[string]Tri{"D9": Yes}
+	// The recording reads D9 as No (steady disk).
+	res := in.ApplyHost(hostH(sqlHostSamples("sqlservr", 95, f64(16), f64(18))))
+	if res.Lanes["D9"] != No {
+		t.Fatalf("recording D9 = %v, want no", res.Lanes["D9"])
+	}
+	if in.Lanes["D9"] != Yes {
+		t.Fatalf("D9 = %v, another reader's yes must stay", in.Lanes["D9"])
+	}
+	if in.Lanes["D10"] != Yes || in.Lanes["H1"] != Yes {
+		t.Fatalf("lanes = %v", in.Lanes)
+	}
+}
+
+func TestIsSQLProc(t *testing.T) {
+	for name, want := range map[string]bool{"sqlservr": true, "SQLSERVR.EXE": true, "sqlservr.exe": true, "w3wp": false, "": false} {
+		if isSQLProc(name) != want {
+			t.Fatalf("isSQLProc(%q) != %v", name, want)
+		}
+	}
+}

@@ -91,7 +91,7 @@ test('INV-13a: a good request reads both sources and carries the version', async
   const id = await createCase(api, 'QA Investigation Good');
   const r = await api('POST', `/api/cases/${id}/investigation`, WIN);
   expect(r.status).toBe(200);
-  expect(r.json.result.version).toBe('2026-10-27');
+  expect(r.json.result.version).toBe('2026-11-03');
   expect(r.json.read.requests).toBeGreaterThan(0);
   expect(r.json.read.truncated).toBe(false);
   expect(Array.isArray(r.json.read.warnings)).toBe(true);

@@ -1131,3 +1131,21 @@ func TestBlackboxIncompleteFactsCountTheUnreadFiles(t *testing.T) {
 		t.Fatalf("a whole read has unread files: %+v", whole.Facts)
 	}
 }
+
+func TestHostSamplesDisk(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	f := 7.5
+	got := hostSamples([]blackbox.Sample{{T: t0, DiskMs: &f}, {T: t0.Add(time.Minute)}})
+	if len(got) != 2 {
+		t.Fatalf("len = %d", len(got))
+	}
+	if got[0].DiskMs == nil || *got[0].DiskMs != 7.5 {
+		t.Fatalf("first DiskMs = %v, want 7.5", got[0].DiskMs)
+	}
+	if got[0].DiskMs == &f {
+		t.Fatal("DiskMs must be a copy, not the same pointer")
+	}
+	if got[1].DiskMs != nil {
+		t.Fatal("second DiskMs must be nil")
+	}
+}

@@ -1,7 +1,7 @@
 {
-  "version": "2026-10-27",
+  "version": "2026-11-03",
   "thresholds": {
-    "version": "2026-10-27",
+    "version": "2026-11-03",
     "arrivalRatePerSec": 40,
     "groupSizeP95": 20,
     "groupSizeP99": 100,
@@ -38,7 +38,21 @@
     "retryWindowSeconds": 10,
     "retryMinCalls": 5,
     "retryMinShare": 0.02,
-    "originBucketSeconds": 60
+    "originBucketSeconds": 60,
+    "gateRefMinEvents": 60,
+    "gateRefMinEventsP95": 100,
+    "gateIncMinEvents": 20,
+    "gateSpreadMinShare": 0.5,
+    "gateSpreadMaxMinuteShare": 0.25,
+    "gateSpreadSkipBelowPerMin": 1,
+    "laneClockToleranceMs": 5000,
+    "originPersistShare": 0.5,
+    "burstMin5": 3,
+    "burstShare": 0.01,
+    "burstMinRequests": 100,
+    "burstRise": 1.3,
+    "filterMin": 3,
+    "filterRise": 1.3
   },
   "headline": "No meaningful slowdown was found: the incident window is not clearly slower than the reference window.",
   "facts": {
@@ -420,6 +434,11 @@
         "value": "no",
         "why": "Mean and slow end of this part compared with the change mark."
       },
+      "app_pool_fail": {
+        "value": "unknown",
+        "missing": "httperr",
+        "why": "No HTTPERR log was imported for these windows."
+      },
       "arrivals_up": {
         "value": "no",
         "why": "Calls per second did not rise by the rate mark."
@@ -440,9 +459,19 @@
         "value": "no",
         "why": "Calls that end before they start, or last longer than the clock limit."
       },
+      "drain": {
+        "value": "unknown",
+        "missing": "httperr",
+        "why": "No HTTPERR log was imported, and time outside the application does not show a slow client alone."
+      },
       "errors_precede": {
         "value": "no",
         "why": "No server error in the incident window."
+      },
+      "filter_reject": {
+        "value": "unknown",
+        "missing": "substatus",
+        "why": "The IIS rows carry no sub-status, so request-filtering rejections cannot be told from other 404s."
       },
       "l_at_limit": {
         "value": "unknown",
@@ -469,10 +498,24 @@
         "value": "no",
         "why": "Mean and slow end of this part compared with the change mark."
       },
+      "payload_up": {
+        "value": "no",
+        "why": "PayloadRecordTime P95 went from 5 ms to 5 ms, under the change mark."
+      },
       "pool_would_fill": {
         "value": "unknown",
         "missing": "pool limit",
         "why": "No pool limit was entered, so load cannot be set against a limit."
+      },
+      "queue_burst": {
+        "value": "unknown",
+        "missing": "httperr",
+        "why": "No HTTPERR log was imported for these windows."
+      },
+      "recv_timeout": {
+        "value": "unknown",
+        "missing": "httperr",
+        "why": "No HTTPERR log was imported for these windows."
       },
       "retries_up": {
         "value": "no",
@@ -633,7 +676,7 @@
       ],
       "nutshell": "We check SQL Server against its own data: waits, blocking and plans. Until that data is imported, this step says Cannot test yet.",
       "findings": [
-        "Suspects with a reading: 0 of 15."
+        "Suspects with a reading: 0 of 17."
       ]
     },
     {
@@ -645,7 +688,7 @@
       ],
       "nutshell": "We check MongoDB against its own data: slow operations, cache and disk. Until that data is imported, this step says Cannot test yet.",
       "findings": [
-        "Suspects with a reading: 0 of 8."
+        "Suspects with a reading: 0 of 10."
       ]
     },
     {
@@ -700,6 +743,90 @@
       "rank": 1
     },
     {
+      "id": "S9",
+      "group": "S",
+      "title": "IIS request-filtering rejection",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Missing data: The IIS rows carry no sub-status, so request-filtering rejections cannot be told from other 404s. (the IIS rows carry no sub-status)",
+      "tier": "o",
+      "evidence": [
+        {
+          "signal": "filter_reject",
+          "role": "must",
+          "value": "unknown",
+          "why": "The IIS rows carry no sub-status, so request-filtering rejections cannot be told from other 404s."
+        }
+      ],
+      "nextCheck": "Count IIS rows by status and sub-status (404.5 to 404.8, 404.11, 404.12, 404.14, 404.15, 404.18, 404.19, 413.1, 431) against the comparison period.",
+      "overturn": "Those sub-status counts are unchanged.",
+      "needs": "IIS logs that record sc-substatus, for the incident and comparison windows.",
+      "rank": 2
+    },
+    {
+      "id": "S10",
+      "group": "S",
+      "title": "Application pool unavailable or worker failure",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Missing data: No HTTPERR log was imported for these windows. (no HTTPERR log imported)",
+      "tier": "o",
+      "evidence": [
+        {
+          "signal": "app_pool_fail",
+          "role": "must",
+          "value": "unknown",
+          "why": "No HTTPERR log was imported for these windows."
+        }
+      ],
+      "nextCheck": "HTTPERR rows with AppOffline, AppShutdown, AppPoolTimer or Connection_Abandoned_By_AppPool, against the application-pool events of the host.",
+      "overturn": "None of those reasons appear in a complete HTTPERR log.",
+      "needs": "HTTPERR log files for the incident and comparison windows.",
+      "rank": 3
+    },
+    {
+      "id": "S11",
+      "group": "S",
+      "title": "HTTP.sys header or body receive timeout",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Missing data: No HTTPERR log was imported for these windows. (no HTTPERR log imported)",
+      "tier": "o",
+      "evidence": [
+        {
+          "signal": "recv_timeout",
+          "role": "must",
+          "value": "unknown",
+          "why": "No HTTPERR log was imported for these windows."
+        }
+      ],
+      "nextCheck": "HTTPERR rows with Timer_HeaderWait or Timer_EntityBody per 5 minutes, by client address.",
+      "overturn": "Those rows are rare, or no higher than the comparison period.",
+      "needs": "HTTPERR log files for the incident and comparison windows.",
+      "rank": 4
+    },
+    {
+      "id": "S12",
+      "group": "S",
+      "title": "Slow client or proxy: response drain or disconnect",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Missing data: No HTTPERR log was imported, and time outside the application does not show a slow client alone. (no HTTPERR log imported)",
+      "tier": "o",
+      "evidence": [
+        {
+          "signal": "drain",
+          "role": "must",
+          "value": "unknown",
+          "why": "No HTTPERR log was imported, and time outside the application does not show a slow client alone."
+        }
+      ],
+      "nextCheck": "HTTPERR rows with Timer_MinBytesPerSecond or Connection_Dropped per 5 minutes; otherwise IIS time taken minus the audit duration against the application time.",
+      "overturn": "No such rows, and time outside the application did not rise.",
+      "needs": "HTTPERR log files and IIS log rows for the incident and comparison windows.",
+      "rank": 5
+    },
+    {
       "id": "C1",
       "group": "C",
       "title": "Deploy, configuration or infrastructure change",
@@ -717,7 +844,7 @@
       "nextCheck": "Change calendar against t0: a lead, not an overlap.",
       "overturn": "No change listed within the lead window before t0.",
       "needs": "The list of releases and changes, typed in.",
-      "rank": 2
+      "rank": 6
     },
     {
       "id": "S4",
@@ -738,7 +865,7 @@
       "nextCheck": "Driver check-out wait against the command duration.",
       "overturn": "Check-out wait is normal.",
       "needs": "Driver pool events or a pool-wait log classifier.",
-      "rank": 3
+      "rank": 7
     },
     {
       "id": "S6",
@@ -759,7 +886,7 @@
       "nextCheck": "Timing by route and by outbound call.",
       "overturn": "SQL or Mongo time accounts for C.",
       "needs": "Timings of outbound calls.",
-      "rank": 4
+      "rank": 8
     },
     {
       "id": "S7",
@@ -780,7 +907,7 @@
       "nextCheck": "The permission filter's own timing from PreActionFilterTimings, then the service behind it.",
       "overturn": "The filter takes under a millisecond or is missing from the timings.",
       "needs": "PreActionFilterTimings in the audit documents.",
-      "rank": 5
+      "rank": 9
     },
     {
       "id": "D1",
@@ -801,7 +928,7 @@
       "nextCheck": "Head blocker in the blocking snapshot or blocked-process report.",
       "overturn": "No lock waits.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 6
+      "rank": 10
     },
     {
       "id": "D2",
@@ -822,7 +949,7 @@
       "nextCheck": "system_health deadlock events.",
       "overturn": "No deadlocks logged.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 7
+      "rank": 11
     },
     {
       "id": "D3",
@@ -843,7 +970,7 @@
       "nextCheck": "Plan history of the affected query.",
       "overturn": "The plan did not change.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 8
+      "rank": 12
     },
     {
       "id": "D4",
@@ -864,7 +991,7 @@
       "nextCheck": "Statistics last-updated time against t0.",
       "overturn": "No statistics update near t0.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 9
+      "rank": 13
     },
     {
       "id": "D5",
@@ -885,7 +1012,7 @@
       "nextCheck": "SQL Server start time and the error log.",
       "overturn": "Page life expectancy steady and no restart.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 10
+      "rank": 14
     },
     {
       "id": "D6",
@@ -906,7 +1033,7 @@
       "nextCheck": "Memory grants with a null grant time.",
       "overturn": "No grant waits.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 11
+      "rank": 15
     },
     {
       "id": "D7",
@@ -927,7 +1054,7 @@
       "nextCheck": "Waiting-task resource descriptions starting 2:.",
       "overturn": "No latch waits on tempdb.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 12
+      "rank": 16
     },
     {
       "id": "D8",
@@ -948,7 +1075,7 @@
       "nextCheck": "Log-file write stall per IO.",
       "overturn": "WRITELOG wait flat.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 13
+      "rank": 17
     },
     {
       "id": "D9",
@@ -969,7 +1096,7 @@
       "nextCheck": "Per-file IO stall deltas.",
       "overturn": "Normal IO latency.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 14
+      "rank": 18
     },
     {
       "id": "D10",
@@ -990,7 +1117,7 @@
       "nextCheck": "SQL CPU against OS CPU.",
       "overturn": "CPU is low.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 15
+      "rank": 19
     },
     {
       "id": "D11",
@@ -1011,7 +1138,7 @@
       "nextCheck": "Job history and backup history against t0, in UTC.",
       "overturn": "No job overlaps t0.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 16
+      "rank": 20
     },
     {
       "id": "D12",
@@ -1032,7 +1159,7 @@
       "nextCheck": "Wait delta and availability-group health.",
       "overturn": "No availability group.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 17
+      "rank": 21
     },
     {
       "id": "D13",
@@ -1053,7 +1180,7 @@
       "nextCheck": "THREADPOOL wait delta.",
       "overturn": "Zero THREADPOOL wait.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 18
+      "rank": 22
     },
     {
       "id": "D14",
@@ -1074,7 +1201,7 @@
       "nextCheck": "Onset against the time Query Store was enabled; its state and size.",
       "overturn": "Store healthy and onset unrelated to the enable time.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 19
+      "rank": 23
     },
     {
       "id": "D15",
@@ -1095,7 +1222,49 @@
       "nextCheck": "Multi-day reads-per-execution trend.",
       "overturn": "A sudden step with no history of growth.",
       "needs": "SQL Server wait, blocking or Query Store snapshots for the incident window.",
-      "rank": 20
+      "rank": 24
+    },
+    {
+      "id": "D16",
+      "group": "D",
+      "title": "SQL command timeout or cancellation burst",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: Stored SQL Server events that include attention events for the window.",
+      "tier": "sql",
+      "evidence": [
+        {
+          "signal": "c_large",
+          "role": "must",
+          "value": "no",
+          "why": "Mean and slow end of this part compared with the change mark."
+        }
+      ],
+      "nextCheck": "Extended Events attention events per 5 minutes, with the statements they cancelled.",
+      "overturn": "Fewer than 3 attention events in any 5 minutes, and under 2 in 100 calls.",
+      "needs": "Stored SQL Server events that include attention events for the window.",
+      "rank": 25
+    },
+    {
+      "id": "D17",
+      "group": "D",
+      "title": "SQL login or authentication storm",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: The SQL Server error log, with failed logins, for the window.",
+      "tier": "sql",
+      "evidence": [
+        {
+          "signal": "c_large",
+          "role": "must",
+          "value": "no",
+          "why": "Mean and slow end of this part compared with the change mark."
+        }
+      ],
+      "nextCheck": "Error 18456 and login attempts per 5 minutes, by client and state.",
+      "overturn": "Login attempts are near the comparison period.",
+      "needs": "The SQL Server error log, with failed logins, for the window.",
+      "rank": 26
     },
     {
       "id": "M1",
@@ -1116,7 +1285,7 @@
       "nextCheck": "Cache and eviction series.",
       "overturn": "Cache steady.",
       "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 21
+      "rank": 27
     },
     {
       "id": "M2",
@@ -1130,7 +1299,7 @@
       "nextCheck": "Disk latency series.",
       "overturn": "No regular cadence.",
       "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 22
+      "rank": 28
     },
     {
       "id": "M5",
@@ -1151,7 +1320,7 @@
       "nextCheck": "Duration minus working time; global lock queue.",
       "overturn": "Both equal.",
       "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 23
+      "rank": 29
     },
     {
       "id": "M6",
@@ -1172,7 +1341,7 @@
       "nextCheck": "Plan summary in the slow lines.",
       "overturn": "Index scan in use.",
       "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 24
+      "rank": 30
     },
     {
       "id": "M7",
@@ -1193,7 +1362,7 @@
       "nextCheck": "Log lines for TTL and index builds.",
       "overturn": "None present.",
       "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 25
+      "rank": 31
     },
     {
       "id": "M8",
@@ -1214,7 +1383,7 @@
       "nextCheck": "Correlation of A or P with body size.",
       "overturn": "Uniform sizes.",
       "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 26
+      "rank": 32
     },
     {
       "id": "M9",
@@ -1235,7 +1404,7 @@
       "nextCheck": "Connections created, per minute.",
       "overturn": "Steady.",
       "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 27
+      "rank": 33
     },
     {
       "id": "M10",
@@ -1256,7 +1425,49 @@
       "nextCheck": "Slow lines grouped by database; current operations by namespace.",
       "overturn": "Other databases flat while this one is slow.",
       "needs": "MongoDB slow-operation lines or server status for the incident window.",
-      "rank": 28
+      "rank": 34
+    },
+    {
+      "id": "M11",
+      "group": "M",
+      "title": "MongoDB spill to disk",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: MongoDB profiler switched on, so usedDisk is kept.",
+      "tier": "mongo",
+      "evidence": [
+        {
+          "signal": "a_large",
+          "role": "must",
+          "value": "no",
+          "why": "Mean and slow end of this part compared with the change mark."
+        }
+      ],
+      "nextCheck": "Profiler entries with usedDisk set, by query shape.",
+      "overturn": "usedDisk on fewer than 3 operations, or operation time flat.",
+      "needs": "MongoDB profiler switched on, so usedDisk is kept.",
+      "rank": 35
+    },
+    {
+      "id": "M12",
+      "group": "M",
+      "title": "MongoDB incoming-connection rejection",
+      "result": "Cannot test yet",
+      "colour": "grey",
+      "why": "Not checked: its own data has not been read, and the audit cannot test it. It needs: MongoDB 6.3 or later with server status sampled (connections.rejected).",
+      "tier": "mongo",
+      "evidence": [
+        {
+          "signal": "a_large",
+          "role": "must",
+          "value": "no",
+          "why": "Mean and slow end of this part compared with the change mark."
+        }
+      ],
+      "nextCheck": "Server status connections.rejected between samples, with the connection limit.",
+      "overturn": "connections.rejected did not move.",
+      "needs": "MongoDB 6.3 or later with server status sampled (connections.rejected).",
+      "rank": 36
     },
     {
       "id": "H1",
@@ -1270,7 +1481,7 @@
       "nextCheck": "CPU by process.",
       "overturn": "Process CPU accounts for it.",
       "needs": "Host performance counters for the incident window.",
-      "rank": 29
+      "rank": 37
     },
     {
       "id": "H2",
@@ -1284,7 +1495,7 @@
       "nextCheck": "GC pause counters.",
       "overturn": "GC time flat.",
       "needs": "Host performance counters for the incident window.",
-      "rank": 30
+      "rank": 38
     },
     {
       "id": "H3",
@@ -1298,7 +1509,7 @@
       "nextCheck": "Recycle event times.",
       "overturn": "No recycle.",
       "needs": "Host performance counters for the incident window.",
-      "rank": 31
+      "rank": 39
     },
     {
       "id": "H4",
@@ -1312,7 +1523,7 @@
       "nextCheck": "Retransmit counter and port-exhaustion events.",
       "overturn": "Retransmits flat.",
       "needs": "Host performance counters for the incident window.",
-      "rank": 32
+      "rank": 40
     },
     {
       "id": "H5",
@@ -1326,7 +1537,7 @@
       "nextCheck": "Timing mode of the first call.",
       "overturn": "No bimodal slowness.",
       "needs": "Host performance counters for the incident window.",
-      "rank": 33
+      "rank": 41
     },
     {
       "id": "H6",
@@ -1340,7 +1551,7 @@
       "nextCheck": "Whether trivial, unrelated operations slow at the same moment on every tier.",
       "overturn": "Only one tier is slow.",
       "needs": "Host performance counters for the incident window.",
-      "rank": 34
+      "rank": 42
     },
     {
       "id": "L1",
@@ -1360,7 +1571,7 @@
       ],
       "nextCheck": "Calls per minute against the reference; a per-call service time that did not move early separates a surge from a slowdown.",
       "overturn": "Calls per second flat or down.",
-      "rank": 35
+      "rank": 43
     },
     {
       "id": "L2",
@@ -1392,7 +1603,7 @@
       ],
       "nextCheck": "Group the slow calls by route, client and body size.",
       "overturn": "The rise is spread across routes.",
-      "rank": 36
+      "rank": 44
     },
     {
       "id": "L3",
@@ -1418,7 +1629,7 @@
       ],
       "nextCheck": "Group by client and route; compare the first failure with the start of the surge.",
       "overturn": "No failures before the surge.",
-      "rank": 37
+      "rank": 45
     },
     {
       "id": "Q2",
@@ -1438,7 +1649,7 @@
       "nextCheck": "Audit count per minute divided by the IIS request count for the same paths.",
       "overturn": "Audit and IIS counts agree.",
       "needs": "IIS log rows for the incident and reference windows.",
-      "rank": 38
+      "rank": 46
     },
     {
       "id": "S1",
@@ -1454,12 +1665,18 @@
           "role": "must",
           "value": "no",
           "why": "Mean and slow end of this part compared with the change mark."
+        },
+        {
+          "signal": "queue_burst",
+          "role": "expect",
+          "value": "unknown",
+          "why": "No HTTPERR log was imported for these windows."
         }
       ],
       "nextCheck": "HTTP.sys counters and the HTTPERR log against the audit duration.",
       "overturn": "The queue length stays at zero.",
       "needs": "IIS log rows; HTTPERR and queue counters for a direct reading.",
-      "rank": 39
+      "rank": 47
     },
     {
       "id": "S2",
@@ -1480,7 +1697,7 @@
       "nextCheck": "Thread-pool queue length and thread count; latency of a trivial route.",
       "overturn": "Thread-pool queue length flat at zero.",
       "needs": "IIS log rows; .NET counters for a direct reading.",
-      "rank": 40
+      "rank": 48
     },
     {
       "id": "S3",
@@ -1507,7 +1724,7 @@
       "nextCheck": "Pool counters and pool-timeout log lines against the running-request count on SQL Server.",
       "overturn": "Free connections remain and no pool timeouts appear.",
       "needs": "The SqlClient pool limit (entered), and pool counters for a direct reading.",
-      "rank": 41
+      "rank": 49
     },
     {
       "id": "S5",
@@ -1534,7 +1751,28 @@
       "nextCheck": "Server-side latency of inserts on the audit collection only; confirm the write is awaited inside the request.",
       "overturn": "A is small.",
       "needs": "MongoDB slow-operation lines to separate set-up from the insert.",
-      "rank": 42
+      "rank": 50
+    },
+    {
+      "id": "S8",
+      "group": "S",
+      "title": "Payload capture or response-body handling slowdown",
+      "result": "Contradicted",
+      "colour": "grey",
+      "why": "A reading it needs did not appear in the data: PayloadRecordTime P95 went from 5 ms to 5 ms, under the change mark.",
+      "tier": "a",
+      "evidence": [
+        {
+          "signal": "payload_up",
+          "role": "must",
+          "value": "no",
+          "why": "PayloadRecordTime P95 went from 5 ms to 5 ms, under the change mark."
+        }
+      ],
+      "nextCheck": "Audit PayloadRecordTime (P95) by route against the comparison period, then body size on the slowest routes.",
+      "overturn": "PayloadRecordTime flat while the audit duration rose.",
+      "needs": "The API audit with PayloadRecordTime for the incident and comparison windows.",
+      "rank": 51
     }
   ],
   "notApplicable": [
@@ -1608,6 +1846,8 @@
       "D13",
       "D14",
       "D15",
+      "D16",
+      "D17",
       "D2",
       "D3",
       "D4",
@@ -1627,6 +1867,8 @@
       "L3",
       "M1",
       "M10",
+      "M11",
+      "M12",
       "M2",
       "M5",
       "M6",
@@ -1635,12 +1877,17 @@
       "M9",
       "Q1",
       "S1",
+      "S10",
+      "S11",
+      "S12",
       "S2",
       "S3",
       "S4",
       "S5",
       "S6",
-      "S7"
+      "S7",
+      "S8",
+      "S9"
     ],
     "overturn": "Import a source with its own clock for the tier that moved first, and see whether it moved at the same time."
   },

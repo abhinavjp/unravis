@@ -13,6 +13,8 @@ import (
 // out of the sample and names it in Missing.
 type Extras interface {
 	DiskQueue() (float64, error)
+	// DiskLatencyMs: average seconds per transfer of all disks, in ms, from the same collect as DiskQueue; call it right after DiskQueue.
+	DiskLatencyMs() (float64, error)
 	Network() (in, out uint64, err error)
 	Close() error
 }
@@ -21,6 +23,7 @@ type Extras interface {
 type NoExtras struct{}
 
 func (NoExtras) DiskQueue() (float64, error)      { return 0, errors.New("not available") }
+func (NoExtras) DiskLatencyMs() (float64, error)  { return 0, errors.New("not available") }
 func (NoExtras) Network() (uint64, uint64, error) { return 0, 0, errors.New("not available") }
 func (NoExtras) Close() error                     { return nil }
 
@@ -118,6 +121,11 @@ func (h *HostCollector) Collect(now time.Time) (Sample, error) {
 		s.DiskQueue = &q
 	} else {
 		s.Missing = append(s.Missing, "diskQueue")
+	}
+	if ms, err := h.extras.DiskLatencyMs(); err == nil {
+		s.DiskMs = &ms
+	} else {
+		s.Missing = append(s.Missing, "diskMs")
 	}
 	if in, out, err := h.extras.Network(); err == nil {
 		s.NetIn, s.NetOut = &in, &out

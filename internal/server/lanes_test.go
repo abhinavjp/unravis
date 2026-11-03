@@ -668,3 +668,44 @@ func TestLaneAndHealthRunsOnAClosedCaseOpenNoConnection(t *testing.T) {
 		t.Fatalf("a closed case opened %d SQL and %d Mongo connections", len(*seen), repo.opened)
 	}
 }
+
+func TestLaneUnreadIsSet(t *testing.T) {
+	inc := dbhealth.Window{Start: lday(20, 10), End: lday(20, 11)}
+	// A day that only touches the incident and gives no onset.
+	part := dbhealth.Window{Start: lday(20, 10).Add(50 * time.Minute), End: lday(20, 12)}
+	c := &healthyCase{stubTraceCase: &stubTraceCase{}}
+	c.runs = []casestore.HealthRun{
+		laneReportJSON(t, "sql", "AuditDb", part, map[string]string{"D5": "no"}, nil),
+		// A whole-cover run with only yes answers and no onset reads nothing usable either.
+		laneReportJSON(t, "mongo", "AuditDb", inc, map[string]string{"M6": "yes"}, nil),
+	}
+	in := investigate.Input{Incident: investigate.Window{Start: inc.Start, End: inc.End}}
+	applyLaneRuns(context.Background(), c, &in, &investigationRead{})
+	if in.LaneUnread["sql"] != "configured but does not cover the incident window" {
+		t.Errorf("sql unread = %q", in.LaneUnread["sql"])
+	}
+	if in.LaneUnread["mongo"] != "configured but gave no readable onset" {
+		t.Errorf("mongo unread = %q", in.LaneUnread["mongo"])
+	}
+}
+
+func TestLaneUnreadNotSetWhenAnswered(t *testing.T) {
+	inc := dbhealth.Window{Start: lday(20, 10), End: lday(20, 11)}
+	early := lday(20, 10).Add(7 * time.Minute)
+	c := &healthyCase{stubTraceCase: &stubTraceCase{}}
+	c.runs = []casestore.HealthRun{
+		laneReportJSON(t, "sql", "AuditDb", inc, map[string]string{"D5": "yes"}, &early),
+		laneReportJSON(t, "mongo", "AuditDb", inc, map[string]string{"M6": "no"}, nil),
+	}
+	in := investigate.Input{Incident: investigate.Window{Start: inc.Start, End: inc.End}}
+	applyLaneRuns(context.Background(), c, &in, &investigationRead{})
+	if len(in.LaneUnread) != 0 {
+		t.Errorf("unread = %v", in.LaneUnread)
+	}
+	// A kind with no configured run at all is absent, not unread.
+	in = investigate.Input{Incident: investigate.Window{Start: inc.Start, End: inc.End}}
+	applyLaneRuns(context.Background(), &healthyCase{stubTraceCase: &stubTraceCase{}}, &in, &investigationRead{})
+	if in.LaneUnread != nil {
+		t.Errorf("unread = %v", in.LaneUnread)
+	}
+}

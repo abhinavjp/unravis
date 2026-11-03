@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -58,7 +59,7 @@ func TestSeriesReadsPastTheEventsCap(t *testing.T) {
 				T: testBase.UnixMilli() + int64(b)*100_000, Min: float64(100*b + first), Max: float64(100*b + 98 + first),
 				Mean: float64(100*b + 49 + first), Count: 50,
 			}
-			if p != want {
+			if !reflect.DeepEqual(p, want) {
 				t.Fatalf("series %d bucket %d: %+v, want %+v", si, b, p, want)
 			}
 		}

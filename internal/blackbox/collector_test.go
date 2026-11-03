@@ -46,11 +46,12 @@ func (f *fakeSource) Processes(dst []sampler.ProcSample) ([]sampler.ProcSample, 
 func (f *fakeSource) Close() error { f.closed = true; return nil }
 
 type fakeExtras struct {
-	qErr, nErr error
-	closed     bool
+	qErr, nErr, latErr error
+	closed             bool
 }
 
-func (f *fakeExtras) DiskQueue() (float64, error) { return 1.5, f.qErr }
+func (f *fakeExtras) DiskQueue() (float64, error)     { return 1.5, f.qErr }
+func (f *fakeExtras) DiskLatencyMs() (float64, error) { return 4.5, f.latErr }
 func (f *fakeExtras) Network() (uint64, uint64, error) {
 	return 100, 200, f.nErr
 }
@@ -106,7 +107,7 @@ func TestHostCollectorFirstSampleWithoutPrimeHasNoCPU(t *testing.T) {
 
 func TestHostCollectorMissingCountersAreOmitted(t *testing.T) {
 	src := &fakeSource{cores: 1, host: []sampler.HostSample{{}, {}}}
-	c := NewHostCollector(src, &fakeExtras{qErr: errors.New("x"), nErr: errors.New("y")}, false)
+	c := NewHostCollector(src, &fakeExtras{qErr: errors.New("x"), nErr: errors.New("y"), latErr: errors.New("z")}, false)
 	now := time.Now()
 	_ = c.Prime(now)
 	s, err := c.Collect(now.Add(time.Second))
@@ -120,7 +121,7 @@ func TestHostCollectorMissingCountersAreOmitted(t *testing.T) {
 	if s.CPU != nil {
 		t.Fatal("cpu with no time delta must be absent")
 	}
-	want := map[string]bool{"cpu": true, "diskQueue": true, "network": true}
+	want := map[string]bool{"cpu": true, "diskQueue": true, "diskMs": true, "network": true}
 	for _, m := range s.Missing {
 		delete(want, m)
 	}
@@ -128,10 +129,45 @@ func TestHostCollectorMissingCountersAreOmitted(t *testing.T) {
 		t.Fatalf("missing = %v", s.Missing)
 	}
 	line, _ := jsonLine(s)
-	for _, bad := range []string{`"diskQueue":0`, `"netIn":0`, `"cpu":0`} {
+	for _, bad := range []string{`"diskQueue":0`, `"diskMs":0`, `"netIn":0`, `"cpu":0`} {
 		if contains(line, bad) {
 			t.Fatalf("line has %s: %s", bad, line)
 		}
+	}
+}
+
+func TestCollectDiskLatency(t *testing.T) {
+	newSrc := func() *fakeSource {
+		return &fakeSource{cores: 1, host: []sampler.HostSample{{}, {}}}
+	}
+	c := NewHostCollector(newSrc(), &fakeExtras{}, false)
+	s, err := c.Collect(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.DiskMs == nil || *s.DiskMs != 4.5 {
+		t.Fatalf("DiskMs = %v, want 4.5", s.DiskMs)
+	}
+
+	c = NewHostCollector(newSrc(), &fakeExtras{latErr: errors.New("x")}, false)
+	s, err = c.Collect(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.DiskMs != nil {
+		t.Fatal("failed latency must be absent, not zero")
+	}
+	if s.DiskQueue == nil {
+		t.Fatal("disk queue must survive a latency failure")
+	}
+	found := false
+	for _, m := range s.Missing {
+		if m == "diskMs" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing = %v, want diskMs", s.Missing)
 	}
 }
 

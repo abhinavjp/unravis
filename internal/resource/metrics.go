@@ -14,47 +14,49 @@ import (
 
 // Metric ids (plan §4.2).
 const (
-	HostCPU           = "host.cpu"
-	HostMemAvailable  = "host.mem.available"
-	HostMemCommitted  = "host.mem.committed"
-	HostPages         = "host.pages"
-	HostDiskSecPerTx  = "host.disk.sec_per_transfer"
-	HostDiskQueue     = "host.disk.queue"
-	HostNetBytes      = "host.net.bytes"
-	ProcCPU           = "proc.cpu"
-	ProcWS            = "proc.ws"
-	ProcPrivate       = "proc.private"
-	ProcHandles       = "proc.handles"
-	ProcThreads       = "proc.threads"
-	CLRGen2           = "clr.gen2"
-	CLRGCTime         = "clr.gc_time"
-	ASPNetQueued      = "aspnet.queued"
-	ASPNetCurrent     = "aspnet.current"
-	ASPNetWaitMs      = "aspnet.wait_ms"
-	IISWPActive       = "iis.wp.active"
-	NetTPQueue        = "net.tp.queue"
-	NetTPThreads      = "net.tp.threads"
-	NetGCPause        = "net.gc_pause"
-	KestrelQueued     = "kestrel.queued"
-	RedisMem          = "redis.mem"
-	RedisClients      = "redis.clients"
-	RedisBlocked      = "redis.blocked"
-	RedisOps          = "redis.ops"
-	MongoQueue        = "mongo.queue"
-	MongoConns        = "mongo.conns"
-	MongoWTDirty      = "mongo.wt.dirty"
-	unitKeep          = "" // a rule with this unit keeps the event's own unit
-	sourceWinCounters = "win-counters"
-	sourceSQLPDH      = "sql-pdh"
-	sourceProcSnap    = "win-procsnap"
-	sourceWinLive     = "win-live"
-	sourceDotnet      = "dotnet-counters"
-	sourceRedisInfo   = "redis-info"
-	sourceSadf        = "linux-sadf"
-	sourcePidstat     = "linux-pidstat"
-	sourceVmstat      = "linux-vmstat"
-	sourceMongoSS     = "mongo-serverstatus"
-	sourceMongostat   = "mongostat-json"
+	HostCPU             = "host.cpu"
+	HostMemAvailable    = "host.mem.available"
+	HostMemCommitted    = "host.mem.committed"
+	HostPages           = "host.pages"
+	HostDiskSecPerTx    = "host.disk.sec_per_transfer"
+	HostDiskQueue       = "host.disk.queue"
+	HostNetBytes        = "host.net.bytes"
+	ProcCPU             = "proc.cpu"
+	ProcWS              = "proc.ws"
+	ProcPrivate         = "proc.private"
+	ProcHandles         = "proc.handles"
+	ProcThreads         = "proc.threads"
+	CLRGen2             = "clr.gen2"
+	CLRGCTime           = "clr.gc_time"
+	ASPNetQueued        = "aspnet.queued"
+	ASPNetCurrent       = "aspnet.current"
+	ASPNetWaitMs        = "aspnet.wait_ms"
+	IISWPActive         = "iis.wp.active"
+	NetTPQueue          = "net.tp.queue"
+	NetTPThreads        = "net.tp.threads"
+	NetGCPause          = "net.gc_pause"
+	KestrelQueued       = "kestrel.queued"
+	RedisMem            = "redis.mem"
+	RedisClients        = "redis.clients"
+	RedisBlocked        = "redis.blocked"
+	RedisOps            = "redis.ops"
+	MongoQueue          = "mongo.queue"
+	MongoConns          = "mongo.conns"
+	MongoConnsRejected  = "mongo.conns_rejected" // incoming connections the server refused (cumulative, 6.3 and later)
+	MongoWTDirty        = "mongo.wt.dirty"
+	SQLMemGrantsPending = "sql.mem.grants_pending"
+	unitKeep            = "" // a rule with this unit keeps the event's own unit
+	sourceWinCounters   = "win-counters"
+	sourceSQLPDH        = "sql-pdh"
+	sourceProcSnap      = "win-procsnap"
+	sourceWinLive       = "win-live"
+	sourceDotnet        = "dotnet-counters"
+	sourceRedisInfo     = "redis-info"
+	sourceSadf          = "linux-sadf"
+	sourcePidstat       = "linux-pidstat"
+	sourceVmstat        = "linux-vmstat"
+	sourceMongoSS       = "mongo-serverstatus"
+	sourceMongostat     = "mongostat-json"
 )
 
 // Metric is what one event becomes in the catalogue: the metric id, the unit of
@@ -121,6 +123,12 @@ func attrIs(key string, vals ...string) cond {
 func objectASPNET(a map[string]string) bool {
 	o := strings.ToLower(a["object"])
 	return o == "asp.net" || strings.HasPrefix(o, "asp.net v")
+}
+
+// objectSQLMemMgr holds for "SQLServer:Memory Manager" and a named instance's
+// "MSSQL$NAME:Memory Manager".
+func objectSQLMemMgr(a map[string]string) bool {
+	return strings.HasSuffix(strings.ToLower(a["object"]), ":memory manager")
 }
 
 // objectCLRMemory holds for ".NET CLR Memory".
@@ -223,8 +231,12 @@ var rules = []rule{
 	{id: MongoQueue, sources: mongostat, kind: "metric", unit: "count", when: []cond{metricIs("qr", "qw")}},
 	{id: MongoConns, sources: mongoSS, kind: "metric", unit: "count", when: []cond{metricIs("connections.current")}},
 	{id: MongoConns, sources: mongostat, kind: "metric", unit: "count", when: []cond{metricIs("conn")}},
+	{id: MongoConnsRejected, sources: mongoSS, kind: "metric", unit: "count", cumulative: true, when: []cond{metricIs("connections.rejected")}},
 	{id: MongoWTDirty, sources: mongoSS, kind: "metric", unit: "bytes", when: []cond{metricIs("wiredTiger.cache.tracked dirty bytes in the cache")}},
 	{id: MongoWTDirty, sources: mongostat, kind: "metric", unit: unitKeep, when: []cond{metricIs("dirty")}},
+
+	// SQL Server memory grants waiting (D6).
+	{id: SQLMemGrantsPending, sources: pdh, kind: "counter", unit: "count", when: []cond{objectSQLMemMgr, counter("Memory Grants Pending")}},
 
 	// Live sampler (win-live) host metrics. Its process metrics are in the
 	// procsnap rules above.

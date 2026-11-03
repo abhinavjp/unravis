@@ -2,9 +2,11 @@ package casestore_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -83,7 +85,7 @@ func TestSeriesThreeMillionEventsGiveExactBucketStatistics(t *testing.T) {
 			T: seriesT0.UnixMilli() + int64(b)*bucket, Min: float64(b) * 10, Max: 999 + float64(b)*10,
 			Mean: 499.5 + float64(b)*10, Count: bucket,
 		}
-		if p != want {
+		if !reflect.DeepEqual(p, want) {
 			t.Fatalf("bucket %d: %+v, want %+v", b, p, want)
 		}
 	}
@@ -404,5 +406,113 @@ func TestSeriesOverTheMemoryStore(t *testing.T) {
 		if pts[b].Mean != sum[b]/float64(n[b]) {
 			t.Errorf("bucket %d mean %v, want %v", b, pts[b].Mean, sum[b]/float64(n[b]))
 		}
+	}
+}
+
+func seriesReason(t *testing.T, err error) string {
+	t.Helper()
+	var se *casestore.SeriesError
+	if !errors.As(err, &se) {
+		t.Fatalf("error %v is not a SeriesError", err)
+	}
+	return se.Reason
+}
+
+func TestSeriesQuantileParse(t *testing.T) {
+	c := &sliceCase{}
+	run := func(sel ...string) error {
+		_, err := casestore.Series(context.Background(), c, seriesQuery(1000, 1000, sel...))
+		return err
+	}
+	if err := run("kind=request;field=duration;q=95"); err != nil {
+		t.Fatalf("valid q refused: %v", err)
+	}
+	if got := seriesReason(t, run("kind=request;q=95")); got != casestore.SeriesBadSelector {
+		t.Fatalf("q without duration: %s", got)
+	}
+	if got := seriesReason(t, run("kind=request;field=duration;q=97")); got != casestore.SeriesBadSelector {
+		t.Fatalf("q=97: %s", got)
+	}
+	five := make([]string, 5)
+	for i := range five {
+		five[i] = "kind=request;field=duration;q=95;attr.n=" + string(rune('a'+i))
+	}
+	if got := seriesReason(t, run(five...)); got != casestore.SeriesTooManySeries {
+		t.Fatalf("five q selectors: %s", got)
+	}
+	if err := run(five[:4]...); err != nil {
+		t.Fatalf("four q selectors refused: %v", err)
+	}
+}
+
+func TestSeriesQuantileValue(t *testing.T) {
+	var evs []evidence.Event
+	for i := 1; i <= 100; i++ {
+		evs = append(evs, evidence.Event{Kind: "request", Start: seriesT0.Add(time.Duration(i) * time.Millisecond), DurationMs: fl(float64(i))})
+	}
+	evs = append(evs, evidence.Event{Kind: "request", Start: seriesT0.Add(5 * time.Second), DurationMs: fl(42)})
+	res, err := casestore.Series(context.Background(), &sliceCase{events: evs},
+		seriesQuery(9999, 1000, "kind=request;field=duration;q=95"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pts := res.Series[0].Points
+	if len(pts) != 2 {
+		t.Fatalf("points = %d", len(pts))
+	}
+	p := pts[0]
+	if p.Q == nil {
+		t.Fatal("no Q")
+	}
+	if *p.Q < 95 || *p.Q > 95*1.1+1e-6 || *p.Q < p.Min || *p.Q > p.Max {
+		t.Fatalf("Q = %v for min=%v max=%v", *p.Q, p.Min, p.Max)
+	}
+	if pts[1].Q == nil || *pts[1].Q != pts[1].Min {
+		t.Fatalf("one-event bucket Q = %v, want Min %v", pts[1].Q, pts[1].Min)
+	}
+}
+
+func TestSeriesNoQuantileUnchanged(t *testing.T) {
+	evs := []evidence.Event{{Kind: "request", Start: seriesT0, DurationMs: fl(10), Attrs: map[string]string{"status": "200"}}}
+	res, err := casestore.Series(context.Background(), &sliceCase{events: evs}, seriesQuery(1000, 1000, "kind=request;field=duration"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range res.Series[0].Points {
+		if p.Q != nil || p.ByClass != nil {
+			t.Fatalf("unexpected Q/ByClass: %+v", p)
+		}
+		b, _ := json.Marshal(p)
+		if strings.Contains(string(b), `"q"`) || strings.Contains(string(b), "byClass") {
+			t.Fatalf("json has q/byClass: %s", b)
+		}
+	}
+}
+
+func TestSeriesStatusClass(t *testing.T) {
+	var evs []evidence.Event
+	for i, st := range []string{"200", "503", "503", ""} {
+		e := evidence.Event{Kind: "request", Start: seriesT0.Add(time.Duration(i) * time.Millisecond), DurationMs: fl(5)}
+		if st != "" {
+			e.Attrs = map[string]string{"status": st}
+		}
+		evs = append(evs, e)
+	}
+	res, err := casestore.Series(context.Background(), &sliceCase{events: evs},
+		seriesQuery(999, 1000, "kind=request;field=duration;group=statusclass"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := res.Series[0].Points[0].ByClass
+	if len(got) != 3 || got["2xx"] != 1 || got["5xx"] != 2 || got["other"] != 1 {
+		t.Fatalf("byClass = %v", got)
+	}
+	_, err = casestore.Series(context.Background(), &sliceCase{}, seriesQuery(999, 1000, "kind=request;group=foo"))
+	if seriesReason(t, err) != casestore.SeriesBadSelector {
+		t.Fatalf("group=foo: %v", err)
+	}
+	b, _ := json.Marshal(casestore.SeriesPoint{T: 1})
+	if strings.Contains(string(b), "byClass") {
+		t.Fatalf("json: %s", b)
 	}
 }

@@ -44,6 +44,8 @@ type CatalogEntry struct {
 	Overturn        string `json:"overturn"`
 	// Needs is what to import or enable to test it; empty when the audit suffices.
 	Needs string `json:"needs,omitempty"`
+	// Cap is the highest colour the entry may take ("orange"); empty means no cap.
+	Cap string `json:"cap,omitempty"`
 }
 
 // Catalog returns the entries in catalog order.
@@ -77,6 +79,7 @@ func Catalog() []CatalogEntry {
 			Overturn: "No failures before the surge."},
 
 		{ID: "S1", Group: GroupS, Title: "HTTP.sys or IIS queue backup", Tier: "o", Must: []string{SigOLarge},
+			Expect:   []string{SigQueueBurst},
 			Check:    "HTTP.sys counters and the HTTPERR log against the audit duration.",
 			Overturn: "The queue length stays at zero.",
 			Needs:    "IIS log rows; HTTPERR and queue counters for a direct reading."},
@@ -104,6 +107,31 @@ func Catalog() []CatalogEntry {
 			"The permission filter's own timing from PreActionFilterTimings, then the service behind it.",
 			"The filter takes under a millisecond or is missing from the timings.",
 			"PreActionFilterTimings in the audit documents.", SigCLarge),
+		{ID: "S8", Group: GroupS, Title: "Payload capture or response-body handling slowdown", Tier: "a",
+			Must:     []string{SigPayloadUp},
+			Check:    "Audit PayloadRecordTime (P95) by route against the comparison period, then body size on the slowest routes.",
+			Overturn: "PayloadRecordTime flat while the audit duration rose.",
+			Needs:    "The API audit with PayloadRecordTime for the incident and comparison windows."},
+		{ID: "S9", Group: GroupS, Title: "IIS request-filtering rejection", Tier: "o", Cap: "orange",
+			Must:     []string{SigFilterReject},
+			Check:    "Count IIS rows by status and sub-status (404.5 to 404.8, 404.11, 404.12, 404.14, 404.15, 404.18, 404.19, 413.1, 431) against the comparison period.",
+			Overturn: "Those sub-status counts are unchanged.",
+			Needs:    "IIS logs that record sc-substatus, for the incident and comparison windows."},
+		{ID: "S10", Group: GroupS, Title: "Application pool unavailable or worker failure", Tier: "o",
+			Must:     []string{SigAppPoolFail},
+			Check:    "HTTPERR rows with AppOffline, AppShutdown, AppPoolTimer or Connection_Abandoned_By_AppPool, against the application-pool events of the host.",
+			Overturn: "None of those reasons appear in a complete HTTPERR log.",
+			Needs:    "HTTPERR log files for the incident and comparison windows."},
+		{ID: "S11", Group: GroupS, Title: "HTTP.sys header or body receive timeout", Tier: "o",
+			Must:     []string{SigRecvTimeout},
+			Check:    "HTTPERR rows with Timer_HeaderWait or Timer_EntityBody per 5 minutes, by client address.",
+			Overturn: "Those rows are rare, or no higher than the comparison period.",
+			Needs:    "HTTPERR log files for the incident and comparison windows."},
+		{ID: "S12", Group: GroupS, Title: "Slow client or proxy: response drain or disconnect", Tier: "o",
+			Must:     []string{SigDrain},
+			Check:    "HTTPERR rows with Timer_MinBytesPerSecond or Connection_Dropped per 5 minutes; otherwise IIS time taken minus the audit duration against the application time.",
+			Overturn: "No such rows, and time outside the application did not rise.",
+			Needs:    "HTTPERR log files and IIS log rows for the incident and comparison windows."},
 	}
 	// SQL Server
 	d := []struct{ id, title, check, overturn string }{
@@ -126,6 +154,16 @@ func Catalog() []CatalogEntry {
 	for _, e := range d {
 		out = append(out, lane(e.id, GroupD, e.title, "sql", e.check, e.overturn, sqlNeeds, SigCLarge))
 	}
+	out = append(out,
+		lane("D16", GroupD, "SQL command timeout or cancellation burst", "sql",
+			"Extended Events attention events per 5 minutes, with the statements they cancelled.",
+			"Fewer than 3 attention events in any 5 minutes, and under 2 in 100 calls.",
+			"Stored SQL Server events that include attention events for the window.", SigCLarge),
+		lane("D17", GroupD, "SQL login or authentication storm", "sql",
+			"Error 18456 and login attempts per 5 minutes, by client and state.",
+			"Login attempts are near the comparison period.",
+			"The SQL Server error log, with failed logins, for the window.", SigCLarge),
+	)
 	m := []struct{ id, title, check, overturn, must string }{
 		{"M1", "WiredTiger cache pressure or application-thread eviction", "Cache and eviction series.", "Cache steady.", SigALarge},
 		{"M2", "Disk IO saturation or checkpoint stall", "Disk latency series.", "No regular cadence.", SigALarge},
@@ -139,6 +177,16 @@ func Catalog() []CatalogEntry {
 	for _, e := range m {
 		out = append(out, lane(e.id, GroupM, e.title, "mongo", e.check, e.overturn, mongoNeeds, e.must))
 	}
+	out = append(out,
+		lane("M11", GroupM, "MongoDB spill to disk", "mongo",
+			"Profiler entries with usedDisk set, by query shape.",
+			"usedDisk on fewer than 3 operations, or operation time flat.",
+			"MongoDB profiler switched on, so usedDisk is kept.", SigALarge),
+		lane("M12", GroupM, "MongoDB incoming-connection rejection", "mongo",
+			"Server status connections.rejected between samples, with the connection limit.",
+			"connections.rejected did not move.",
+			"MongoDB 6.3 or later with server status sampled (connections.rejected).", SigALarge),
+	)
 	h := []struct{ id, title, check, overturn string }{
 		{"H1", "Host CPU contention", "CPU by process.", "Process CPU accounts for it."},
 		{"H2", "GC pause (gen 2 or large object heap)", "GC pause counters.", "GC time flat."},

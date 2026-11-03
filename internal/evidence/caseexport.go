@@ -210,7 +210,7 @@ var exportPolicy = map[string]map[string]attrPolicy{
 	"redis-latency": {"event": polEnum(redisLatencyEvents)},
 	"redis-info":    {"metric": polEnum(redisInfoMetrics), "role": polEnum(redisRoles)},
 	"redis-log":     {"role": polEnum(redisRoles), "family": polEnum(redisLogFamilies)},
-	"mongo-profile": withPolicy(mongoOpPolicy, map[string]attrPolicy{"responseLength": polNum}),
+	"mongo-profile": withPolicy(mongoOpPolicy, map[string]attrPolicy{"responseLength": polNum, "usedDisk": polEnum(boolValues)}),
 	"mongo-currentop": {"op": polEnum(mongoOps), "ns": polName("ns"), "waitingForLock": polEnum(boolValues),
 		"numYields": polNum, "planSummary": polList(mongoStages)},
 	"mongo-serverstatus": {"metric": polEnum(serverStatusMetrics)},

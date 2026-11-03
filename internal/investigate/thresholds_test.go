@@ -84,8 +84,8 @@ func TestThresholdsHistory(t *testing.T) {
 }
 
 func TestThresholdsVersionLiteral(t *testing.T) {
-	if Version != "2026-10-27" {
-		t.Fatalf("Version = %q; the first table is 2026-10-27", Version)
+	if Version != "2026-11-03" {
+		t.Fatalf("Version = %q; the current table is 2026-11-03", Version)
 	}
 	if Current().Version != Version {
 		t.Fatal("Current().Version must repeat Version")
@@ -145,6 +145,20 @@ func TestThresholdsMatchDecisions(t *testing.T) {
 		{"A24 factor", c.OnsetFactor, 2},
 		{"A24 minutes", float64(c.OnsetRunMinutes), 5},
 		{"A35 gap warn", float64(c.GapWarnMinutes), 2},
+		{"R1 gate ref min", float64(c.GateRefMinEvents), 60},
+		{"R2 gate ref min P95", float64(c.GateRefMinEventsP95), 100},
+		{"R1 gate inc min", float64(c.GateIncMinEvents), 20},
+		{"R1 spread min share", c.GateSpreadMinShare, 0.5},
+		{"R1 spread max minute share", c.GateSpreadMaxMinuteShare, 0.25},
+		{"R1 spread skip per min", c.GateSpreadSkipBelowPerMin, 1},
+		{"R6 lane clock ms", c.LaneClockToleranceMs, 5000},
+		{"R5 persist share", c.OriginPersistShare, 0.5},
+		{"R11 burst in 5 minutes", float64(c.BurstMin5), 3},
+		{"R11 burst share", c.BurstShare, 0.01},
+		{"R11 burst min requests", float64(c.BurstMinRequests), 100},
+		{"R11 burst rise", c.BurstRise, 1.3},
+		{"R11 filter min", float64(c.FilterMin), 3},
+		{"R11 filter rise", c.FilterRise, 1.3},
 	}
 	for _, k := range checks {
 		if k.got != k.want {

@@ -450,6 +450,9 @@ func applyLaneRuns(ctx context.Context, c casestore.Case, in *investigate.Input,
 	}
 	incident := dbhealth.Window{Start: in.Incident.Start, End: in.Incident.End}
 	seenSource := map[string]bool{}
+	// Per lane kind: a run overlapped the incident, a run covered it whole, and a covering run answered no.
+	type laneSeen struct{ overlapped, covered, answeredNo bool }
+	seen := map[string]*laneSeen{}
 	for _, l := range freshestLaneRuns(held) {
 		lane := l.Report.Lane
 		if !lane.Incident.Overlaps(incident) {
@@ -457,11 +460,21 @@ func applyLaneRuns(ctx context.Context, c casestore.Case, in *investigate.Input,
 		}
 		// A day that only touches the incident can show something happened (yes) but cannot rule anything out for all of it.
 		whole := laneCovers(lane.Incident, incident)
+		ls := seen[l.Run.Kind]
+		if ls == nil {
+			ls = &laneSeen{}
+			seen[l.Run.Kind] = ls
+		}
+		ls.overlapped = true
+		ls.covered = ls.covered || whole
 		for id, v := range lane.Answers {
 			switch v {
 			case dbhealth.AnswerYes:
 				ensureLanes(in)[id] = investigate.Yes
 			case dbhealth.AnswerNo:
+				if whole {
+					ls.answeredNo = true
+				}
 				if whole && in.Lanes[id] != investigate.Yes {
 					ensureLanes(in)[id] = investigate.No
 				}
@@ -482,6 +495,20 @@ func applyLaneRuns(ctx context.Context, c casestore.Case, in *investigate.Input,
 				in.LaneSources = append(in.LaneSources, s)
 			}
 		}
+	}
+	// A configured lane that gave neither an onset nor a covering "no" is unread: a later tier must not be named the origin past it.
+	for kind, ls := range seen {
+		if _, has := in.LaneOnsets[kind]; has || (ls.covered && ls.answeredNo) {
+			continue
+		}
+		reason := "configured but gave no readable onset"
+		if !ls.covered {
+			reason = "configured but does not cover the incident window"
+		}
+		if in.LaneUnread == nil {
+			in.LaneUnread = map[string]string{}
+		}
+		in.LaneUnread[kind] = reason
 	}
 }
 

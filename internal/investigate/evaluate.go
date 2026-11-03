@@ -127,7 +127,7 @@ func Evaluate(in Input, f Facts, s Signals, th Thresholds) []Suspect {
 		evaluateOne(&sp, e, in, s)
 		out = append(out, sp)
 	}
-	colour(out, in, f, th)
+	colour(out, in, f, s, th)
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i], out[j]
 		if ra, rb := stateRank(a.Result), stateRank(b.Result); ra != rb {
@@ -284,6 +284,14 @@ func missingWord(src string) string {
 		return "no pool limit entered"
 	case "releases":
 		return "no change list entered"
+	case "httperr":
+		return "no HTTPERR log imported"
+	case "substatus":
+		return "the IIS rows carry no sub-status"
+	case "payload":
+		return "no PayloadRecordTime in the audit"
+	case "window":
+		return "a window is not a readable period"
 	}
 	return "missing " + src
 }
@@ -293,7 +301,7 @@ func missingWord(src string) string {
 // whose onsets are closer than the bucket plus the clock tolerance cannot be told
 // apart (guard 16), so none of them is red. A nothing-to-explain case makes every
 // suspect grey. Data-quality suspects (group Q) never compete for red.
-func colour(sps []Suspect, in Input, f Facts, th Thresholds) {
+func colour(sps []Suspect, in Input, f Facts, sig Signals, th Thresholds) {
 	if f.Onset.Status != "found" && !(f.Change.Known && f.Change.Meaningful) {
 		// Nothing meaningful to explain: no suspect is ranked.
 		for i := range sps {
@@ -307,7 +315,6 @@ func colour(sps []Suspect, in Input, f Facts, th Thresholds) {
 		}
 		return
 	}
-	sep := time.Duration(th.OriginBucketSeconds)*time.Second + time.Duration(th.ClockToleranceMs*float64(time.Millisecond))
 	var comp []int
 	for i := range sps {
 		if sps[i].Result == ResConsistent && sps[i].Colour == "" && sps[i].Group != GroupQ {
@@ -316,32 +323,49 @@ func colour(sps []Suspect, in Input, f Facts, th Thresholds) {
 	}
 	// Earliest known onset among the competitors, and the tiers close to it.
 	var earliest *time.Time
+	earliestTier := ""
 	for _, i := range comp {
 		if t := sps[i].OnsetAt; t != nil && (earliest == nil || t.Before(*earliest)) {
-			earliest = t
+			earliest, earliestTier = t, sps[i].Tier
 		}
+	}
+	// near says whether a suspect's tier cannot be told apart from the earliest one.
+	near := func(sp *Suspect) bool {
+		return earliest != nil && sp.OnsetAt != nil && sp.OnsetAt.Sub(*earliest) < pairSep(th, earliestTier, sp.Tier)
 	}
 	nearTiers := map[string]bool{}
 	if earliest != nil {
 		for _, i := range comp {
-			if t := sps[i].OnsetAt; t != nil && t.Sub(*earliest) < sep {
+			if near(&sps[i]) {
 				nearTiers[sps[i].Tier] = true
 			}
 		}
 	}
-	unread := unreadTiers(f)
+	unread, dropped := heldBackTiers(f)
+	// Load that follows retries or errors is clients retrying, not new demand, so a
+	// load suspect is never red (the origin rule says the same).
+	retriesFirst := loadFollowsRetries(sig, f)
+	caps := catalogIndex()
 	for _, i := range comp {
 		sp := &sps[i]
 		switch {
-		case earliest != nil && sp.OnsetAt != nil && sp.OnsetAt.Sub(*earliest) < sep && len(nearTiers) == 1 && len(unread) > 0:
+		case near(sp) && len(nearTiers) == 1 && len(unread)+len(dropped) > 0:
 			// A tier whose own data was not read could have moved first, so no tier is
 			// clearly first and none is red (the origin says the same).
 			sp.Colour = Orange
-			sp.Why += " Its tier moved first of those that could be dated, but " + joinLabels(unread) + " could not be read in every minute, so it is not called the first."
-		case earliest != nil && sp.OnsetAt != nil && sp.OnsetAt.Sub(*earliest) < sep && len(nearTiers) == 1:
+			sp.Why += " Its tier moved first of those that could be dated, but " + heldBackClause(unread, dropped) + ", so it is not called the first."
+		case near(sp) && len(nearTiers) == 1 && sp.Tier == tierLoad && retriesFirst:
+			sp.Colour = Orange
+			sp.Why += " Its tier moved first, but load follows retries; not new demand."
+		case near(sp) && len(nearTiers) == 1 && caps[sp.ID].Cap == "orange":
+			// Counted rows alone do not date a start, so this suspect is never called
+			// the first (catalogue Cap).
+			sp.Colour = Orange
+			sp.Why += " Its tier moved first, but counted rows alone do not date a start, so it is not called the first."
+		case near(sp) && len(nearTiers) == 1:
 			sp.Colour = Red
 			sp.Why += " Its tier moved first."
-		case earliest != nil && sp.OnsetAt != nil && sp.OnsetAt.Sub(*earliest) < sep:
+		case near(sp):
 			sp.Colour = Orange
 			sp.Why += " Its tier moved at about the same time as another, so they cannot be told apart."
 		default:

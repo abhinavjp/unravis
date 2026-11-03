@@ -389,3 +389,108 @@ func FuzzParseXE(f *testing.F) {
 	f.Add(readFixture(f, "xe_bad_no_timestamp.csv"))
 	importertest.FuzzParse(f, NewXE(), fx)
 }
+
+// xeHostOpts maps the server_instance_name column of the call, blocked and
+// attention fixtures to the picked host.
+func xeHostOpts(t testing.TB) importer.Options {
+	o := testOpts(t)
+	o.Hosts = func(raw string) (importer.HostHint, bool) {
+		if raw == "sql-a" {
+			return importer.HostHint{Label: "sql-a"}, true
+		}
+		return importer.HostHint{}, false
+	}
+	return o
+}
+
+// TestXECallKind: completed-call events read their duration only from the
+// microsecond column; the scrub list is unchanged.
+func TestXECallKind(t *testing.T) {
+	csv := "timestamp_utc,name,duration_us,server_instance_name\n" +
+		"2001-06-15 02:00:10,rpc_completed,2500000,sql-a\n" +
+		"2001-06-15 02:00:20,sql_batch_completed,1500,sql-a\n"
+	evs, _, err := collect(t, NewXE(), []byte(csv), xeHostOpts(t))
+	if err != nil || len(evs) != 2 {
+		t.Fatalf("events %d, err %v", len(evs), err)
+	}
+	want := []struct {
+		ms         float64
+		start, end time.Time
+	}{
+		{2500, time.Date(2001, 6, 15, 2, 0, 7, 500e6, time.UTC), time.Date(2001, 6, 15, 2, 0, 10, 0, time.UTC)},
+		{1.5, time.Date(2001, 6, 15, 2, 0, 19, 998500e3, time.UTC), time.Date(2001, 6, 15, 2, 0, 20, 0, time.UTC)},
+	}
+	for i, w := range want {
+		e := evs[i]
+		if e.Kind != KindCall || e.DurationMs == nil || *e.DurationMs != w.ms || e.Unit != "ms" {
+			t.Errorf("event %d = %+v", i, e)
+			continue
+		}
+		if !e.Start.Equal(w.start) || !e.End.Equal(w.end) {
+			t.Errorf("event %d span = %v .. %v, want %v .. %v", i, e.Start, e.End, w.start, w.end)
+		}
+	}
+	if evs[0].Attrs["event"] != "rpc_completed" || evs[1].Attrs["event"] != "sql_batch_completed" {
+		t.Errorf("attrs = %v, %v", evs[0].Attrs, evs[1].Attrs)
+	}
+
+	// A negative duration rejects the row with a fixed reason.
+	o := testOpts(t)
+	o.Limits = NewXE().DefaultLimits()
+	o.Limits.MaxRejectFraction = 1
+	bad := "timestamp_utc,name,duration_us\n2001-06-15 02:00:10,rpc_completed,-1\n"
+	evs, rep, err := collect(t, NewXE(), []byte(bad), o)
+	if err != nil || len(evs) != 0 || rep.Rejected != 1 || rep.Errors[0] != (importer.RowError{Line: 2, Reason: importer.ReasonBadNumber}) {
+		t.Errorf("negative duration: err %v, events %d, errors %+v", err, len(evs), rep.Errors)
+	}
+
+	// The scrub is unchanged: a sql_text column still quarantines the file.
+	scrub := "timestamp_utc,name,duration_us,sql_text\n2001-06-15 02:00:10,rpc_completed,1000,x\n"
+	_, _, err = collect(t, NewXE(), []byte(scrub), testOpts(t))
+	var q *importer.QuarantineError
+	if !errors.As(err, &q) || q.Reason != importer.ReasonUnscrubbedColumn {
+		t.Errorf("sql_text header: got %v, want unscrubbed-column", err)
+	}
+}
+
+// TestXEBlockedCountOnly: blocked-process rows are kept as a count with no
+// report body and no duration; a report/XML column still quarantines the file.
+func TestXEBlockedCountOnly(t *testing.T) {
+	csv := "timestamp_utc,name,server_instance_name\n" +
+		"2001-06-15 02:00:10,blocked_process_report,sql-a\n" +
+		"2001-06-15 02:00:20,blocked_process_report,sql-a\n"
+	evs, _, err := collect(t, NewXE(), []byte(csv), xeHostOpts(t))
+	if err != nil || len(evs) != 2 {
+		t.Fatalf("events %d, err %v", len(evs), err)
+	}
+	for i, e := range evs {
+		if e.Kind != KindBlocked || e.DurationMs != nil || fmt.Sprint(e.Attrs) != fmt.Sprint(map[string]string{"event": "blocked_process_report"}) {
+			t.Errorf("event %d = %+v", i, e)
+		}
+	}
+	for _, col := range []string{"blocked_process_report_xml", "xml_report"} {
+		scrub := "timestamp_utc,name," + col + "\n2001-06-15 02:00:10,blocked_process_report,x\n"
+		_, _, err = collect(t, NewXE(), []byte(scrub), testOpts(t))
+		var q *importer.QuarantineError
+		if !errors.As(err, &q) || q.Reason != importer.ReasonUnscrubbedColumn {
+			t.Errorf("%s column: got %v, want unscrubbed-column", col, err)
+		}
+	}
+}
+
+// TestXEAttentionKind: attention events are kept as a count, no duration.
+func TestXEAttentionKind(t *testing.T) {
+	csv := "timestamp_utc,name,server_instance_name\n" +
+		"2001-06-15 02:00:10,attention,sql-a\n" +
+		"2001-06-15 02:00:20,attention,sql-a\n" +
+		"2001-06-15 02:00:30,attention,sql-a\n"
+	evs, _, err := collect(t, NewXE(), []byte(csv), xeHostOpts(t))
+	if err != nil || len(evs) != 3 {
+		t.Fatalf("events %d, err %v", len(evs), err)
+	}
+	for i, e := range evs {
+		if e.Kind != KindAttention || e.DurationMs != nil || fmt.Sprint(e.Attrs) != fmt.Sprint(map[string]string{"event": "attention"}) {
+			t.Errorf("event %d = %+v", i, e)
+		}
+	}
+}

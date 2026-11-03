@@ -226,6 +226,8 @@ func TestLookupMapsTheMergedImporterEvents(t *testing.T) {
 			resource.Metric{ID: resource.MongoQueue, Unit: "count", Scale: 1}, true},
 		{"mongo conns", metric("mongo-serverstatus", "mongo-a", tm, 3, "count", "metric", "connections.current"),
 			resource.Metric{ID: resource.MongoConns, Unit: "count", Scale: 1}, true},
+		{"mongo conns rejected", metric("mongo-serverstatus", "mongo-a", tm, 3, "count", "metric", "connections.rejected"),
+			resource.Metric{ID: resource.MongoConnsRejected, Unit: "count", Scale: 1, Cumulative: true}, true},
 		{"mongo dirty", metric("mongo-serverstatus", "mongo-a", tm, 3, "bytes", "metric", "wiredTiger.cache.tracked dirty bytes in the cache"),
 			resource.Metric{ID: resource.MongoWTDirty, Unit: "bytes", Scale: 1}, true},
 		{"mongostat qw", metric("mongostat-json", "mongo-a", tm, 3, "count", "metric", "qw"), resource.Metric{ID: resource.MongoQueue, Unit: "count", Scale: 1}, true},
@@ -236,6 +238,12 @@ func TestLookupMapsTheMergedImporterEvents(t *testing.T) {
 		{"redis blocked (pending)", metric("redis-info", "redis-a", tm, 3, "count", "metric", "blocked_clients"),
 			resource.Metric{ID: resource.RedisBlocked, Unit: "count", Scale: 1}, true},
 		{"another source's metric attr", metric("win-procsnap", "web-a", tm, 3, "count", "metric", "blocked_clients"), resource.Metric{}, false},
+		{"sql grants pending", pdh("sql-a", tm, "SQLServer:Memory Manager", "", "Memory Grants Pending", 12, ""),
+			resource.Metric{ID: resource.SQLMemGrantsPending, Unit: "count", Scale: 1}, true},
+		{"sql grants pending named", pdh("sql-a", tm, "MSSQL$PAYROLL:Memory Manager", "", "Memory Grants Pending", 0, ""),
+			resource.Metric{ID: resource.SQLMemGrantsPending, Unit: "count", Scale: 1}, true},
+		{"sql grants outstanding not mapped", pdh("sql-a", tm, "SQLServer:Memory Manager", "", "Memory Grants Outstanding", 3, ""),
+			resource.Metric{}, false},
 		{"sql counter", pdh("sql-a", tm, "SQLServer:Wait Statistics", "Average wait time (ms)", "Lock waits", 3, ""), resource.Metric{}, false},
 	}
 	for _, tc := range cases {
@@ -251,9 +259,9 @@ func TestLookupMapsTheMergedImporterEvents(t *testing.T) {
 func TestMetricsListEveryPlanIDAndThePendingSources(t *testing.T) {
 	want := []string{"aspnet.current", "aspnet.queued", "aspnet.wait_ms", "clr.gc_time", "clr.gen2",
 		"host.cpu", "host.disk.queue", "host.disk.sec_per_transfer", "host.mem.available", "host.mem.committed",
-		"host.net.bytes", "host.pages", "iis.wp.active", "kestrel.queued", "mongo.conns", "mongo.queue",
+		"host.net.bytes", "host.pages", "iis.wp.active", "kestrel.queued", "mongo.conns", "mongo.conns_rejected", "mongo.queue",
 		"mongo.wt.dirty", "net.gc_pause", "net.tp.queue", "net.tp.threads", "proc.cpu", "proc.handles",
-		"proc.private", "proc.threads", "proc.ws", "redis.blocked", "redis.clients", "redis.mem", "redis.ops"}
+		"proc.private", "proc.threads", "proc.ws", "redis.blocked", "redis.clients", "redis.mem", "redis.ops", "sql.mem.grants_pending"}
 	var got []string
 	pending := map[string]string{}
 	for _, mi := range resource.Metrics() {
@@ -422,6 +430,21 @@ func TestCumulativeCounterResetIsNotANegativeDelta(t *testing.T) {
 			}
 			assertDeltas(t, ss[0], tc.want)
 		})
+	}
+}
+
+func TestMongoConnsRejectedDeltas(t *testing.T) {
+	h := newHarness(t)
+	for i, v := range []float64{0, 5} {
+		h.add(metric("mongo-serverstatus", "mongo-a", at(time.Duration(i)*time.Minute), v, "count", "metric", "connections.rejected"))
+	}
+	x := h.catalogue(importer.Window{})
+	ss := x.Series(resource.MongoConnsRejected, resource.Filter{})
+	if len(ss) != 1 || len(ss[0].Samples) != 2 {
+		t.Fatalf("series %+v", ss)
+	}
+	if s := ss[0].Samples[1]; !s.HasDelta || s.Delta != 5 || s.Reset {
+		t.Errorf("second sample %+v, want delta 5, no reset", s)
 	}
 }
 

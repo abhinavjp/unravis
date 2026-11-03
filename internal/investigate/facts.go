@@ -25,6 +25,8 @@ type Facts struct {
 	Clock    ClockFacts   `json:"clock"`
 	Coverage Coverage     `json:"coverage"`
 	Gaps     []Span       `json:"gaps,omitempty"`
+	// Gate says whether the reference can be compared against. Computed in groups(); never serialized.
+	Gate Gate `json:"-"`
 	Tiers    []TierOnset  `json:"tiers"`
 	// Series is the per-minute data behind the charts. It is large, so a caller that
 	// only wants the verdict can drop it.
@@ -581,7 +583,21 @@ func (p *prep) groups() {
 	}
 	fill(&p.facts.Incident, p.inc, p.incBins)
 	fill(&p.facts.Ref, p.ref, p.refBins)
+	counts := make([]int, 0, len(p.refBins))
+	for _, b := range p.refBins {
+		if b.gap == "" {
+			counts = append(counts, b.n())
+		}
+	}
 	f := &p.facts
+	f.Gate = evaluateGate(f.Ref.N, f.Incident.N, counts, p.th)
+	if !f.Gate.RateOK {
+		f.Ref.PerSec = nil
+		f.Incident.PerSec = nil
+	}
+	if !f.Gate.P95OK {
+		f.Ref.P95 = nil
+	}
 	f.Change.P50 = compareMs(f.Ref.P50, f.Incident.P50, p.th)
 	f.Change.P95 = compareMs(f.Ref.P95, f.Incident.P95, p.th)
 	f.Change.Mean = compareMs(f.Ref.MeanMs, f.Incident.MeanMs, p.th)

@@ -295,3 +295,319 @@ func TestGeneratedWordingIsNonCausal(t *testing.T) {
 		assertWording(t, name, Analyze(in))
 	}
 }
+
+func TestTiersSixtySecondsApartAreTogether(t *testing.T) {
+	in := withLimit(stepScenario(mod{from: at(10, 20), to: at(11, 30), addC: 400}), 1000)
+	in.LaneOnsets = map[string]time.Time{"sql": at(10, 20).Add(60 * time.Second)}
+	r := Analyze(in)
+	if r.Origin.Status != OriginNone {
+		t.Fatalf("origin = %+v", r.Origin)
+	}
+	if !strings.Contains(r.Origin.ClockNote, "1 s") {
+		t.Errorf("clock note = %q", r.Origin.ClockNote)
+	}
+	for _, s := range r.Suspects {
+		if s.Colour == Red && s.Group != GroupQ {
+			t.Errorf("%s is red although the tiers cannot be separated", s.ID)
+		}
+	}
+}
+
+func TestTiersTwoMinutesApartAreSeparable(t *testing.T) {
+	in := withLimit(stepScenario(mod{from: at(10, 20), to: at(11, 30), addC: 400}), 1000)
+	in.LaneOnsets = map[string]time.Time{"sql": at(10, 20).Add(120 * time.Second)}
+	r := Analyze(in)
+	if r.Origin.Status != OriginNamed || r.Origin.Tier != "c" {
+		t.Errorf("origin = %+v", r.Origin)
+	}
+}
+
+func TestUnreadLaneBlocksALaterOrigin(t *testing.T) {
+	in := withLimit(stepScenario(mod{from: at(10, 20), to: at(11, 30), addC: 400}), 1000)
+	in.Lanes = map[string]Tri{"D1": Yes, "H2": Yes}
+	in.LaneSources = []string{"sql-snapshots"}
+	// Without the unread lane, the application tier is the earliest and is named.
+	base := Analyze(in)
+	if base.Origin.Status != OriginNamed || base.Origin.Tier != "c" {
+		t.Fatalf("baseline origin = %+v", base.Origin)
+	}
+	in.LaneUnread = map[string]string{"sql": "configured but gave no readable onset"}
+	r := Analyze(in)
+	if r.Origin.Status == OriginNamed {
+		t.Fatalf("origin named although a configured lane was not read: %+v", r.Origin)
+	}
+	if r.Origin.Status != OriginNotEnough {
+		t.Errorf("origin status = %s, want %s", r.Origin.Status, OriginNotEnough)
+	}
+	for _, s := range r.Suspects {
+		if s.Colour == Red && s.Group != GroupQ {
+			t.Errorf("%s is red although a configured lane was not read", s.ID)
+		}
+	}
+}
+
+func TestUnreadLaneNeedsAConfiguredLane(t *testing.T) {
+	in := withLimit(stepScenario(mod{from: at(10, 20), to: at(11, 30), addC: 400}), 1000)
+	in.LaneOnsets = map[string]time.Time{"sql": at(10, 14)}
+	in.LaneSources = []string{"sql-snapshots"}
+	want := Analyze(in)
+	in.LaneUnread = map[string]string{}
+	if got := Analyze(in); !reflect.DeepEqual(got, want) {
+		t.Error("an empty LaneUnread changed the result")
+	}
+	// A lane that has an onset is not unread even if the map names it.
+	in.LaneUnread = map[string]string{"sql": "stale"}
+	if got := Analyze(in); !reflect.DeepEqual(got, want) {
+		t.Error("a dated lane was turned into an unread tier")
+	}
+}
+
+func TestLaneAndAppTierThreeSecondsApartAreTogether(t *testing.T) {
+	in := withLimit(stepScenario(mod{from: at(10, 20), to: at(11, 30), addC: 400}), 1000)
+	in.LaneOnsets = map[string]time.Time{"sql": at(10, 20).Add(3 * time.Second)}
+	r := Analyze(in)
+	if r.Origin.Status != OriginNone {
+		t.Fatalf("origin = %+v", r.Origin)
+	}
+	if !strings.Contains(r.Origin.ClockNote, "1 s") || !strings.Contains(r.Origin.ClockNote, "Lane clocks (SQL, Mongo, host) are read at ±5 s.") {
+		t.Errorf("clock note = %q", r.Origin.ClockNote)
+	}
+}
+
+// A lane onset 63 s after an app-tier onset is together with the lane margin
+// (60 s bucket + 5 s) but would have been separable with the app margin (61 s).
+func TestLaneMarginIsWiderThanTheAppMargin(t *testing.T) {
+	in := withLimit(stepScenario(mod{from: at(10, 20), to: at(11, 30), addC: 400}), 1000)
+	in.LaneOnsets = map[string]time.Time{"sql": at(10, 20).Add(63 * time.Second)}
+	r := Analyze(in)
+	if r.Origin.Status != OriginNone {
+		t.Fatalf("origin = %+v", r.Origin)
+	}
+	for _, s := range r.Suspects {
+		if s.Colour == Red && s.Group != GroupQ {
+			t.Errorf("%s is red although the tiers cannot be separated", s.ID)
+		}
+	}
+	th := Current()
+	if got := pairSep(th, "c", "a"); got != 61*time.Second {
+		t.Errorf("app pair separation = %v, want 61s", got)
+	}
+	for _, pair := range [][2]string{{"sql", "c"}, {"c", "mongo"}, {"host", "load"}} {
+		if got := pairSep(th, pair[0], pair[1]); got != 65*time.Second {
+			t.Errorf("pairSep(%s, %s) = %v, want 65s", pair[0], pair[1], got)
+		}
+	}
+}
+
+func TestTwoAppTiersThreeSecondsApartStayOrdered(t *testing.T) {
+	// App-tier onsets are read by the minute, so the closest two app tiers can sit is
+	// one minute apart; two minutes apart they stay ordered exactly as before.
+	ref, inc := stdWindows()
+	in := gen(genCfg{seed: 1, ref: ref, inc: inc, perMin: 30, iis: true, mods: []mod{
+		{from: at(10, 20), to: at(11, 30), addA: 300},
+		{from: at(10, 22), to: at(11, 30), addC: 400},
+	}})
+	r := Analyze(withLimit(in, 1000))
+	if r.Origin.Status != OriginNamed || r.Origin.Tier != "a" {
+		t.Fatalf("origin = %+v", r.Origin)
+	}
+	if strings.Contains(r.Origin.ClockNote, "Lane clocks") {
+		t.Errorf("clock note mentions lanes with no lane dated: %q", r.Origin.ClockNote)
+	}
+}
+
+// loadFirstScenario has the arrival rate moving first (three times the calls from
+// 10:10) and the action time ten minutes later. With retries on, half of the calls
+// repeat themselves 2 s later from 10:10.
+func loadFirstScenario(retries bool) Input {
+	ref, inc := stdWindows()
+	cfg := genCfg{seed: 7, ref: ref, inc: inc, perMin: 30, iis: true, clients: 5000,
+		mods: []mod{{from: at(10, 10), to: at(11, 30), countMul: 3}, {from: at(10, 20), to: at(11, 30), addC: 400}}}
+	if retries {
+		cfg.retryEvery = 2
+		cfg.retryWindow = Window{at(10, 10), at(11, 30)}
+	}
+	return withLimit(gen(cfg), 1000)
+}
+
+func TestRetriesBeforeLoadAreNotNamedAsLoad(t *testing.T) {
+	r := Analyze(loadFirstScenario(true))
+	if r.Signals.Flags[SigRetriesUp].Value != Yes {
+		t.Fatalf("retries signal = %+v", r.Signals.Flags[SigRetriesUp])
+	}
+	if r.Origin.Status != OriginNone || r.Origin.Tier != "" || r.Origin.Label != "" || r.Origin.At != nil {
+		t.Fatalf("origin = %+v", r.Origin)
+	}
+	if !strings.Contains(r.Origin.Note, "Load rose after clients started retrying or failing; that is retrying, not new demand.") {
+		t.Errorf("note = %q", r.Origin.Note)
+	}
+	for _, tr := range r.Origin.Roles {
+		if tr.Role == RoleOrigin {
+			t.Errorf("%s is still the origin", tr.Tier)
+		}
+		if tr.Tier == "load" && tr.Role != RoleTogether {
+			t.Errorf("load role = %s, want %s", tr.Role, RoleTogether)
+		}
+	}
+}
+
+func TestLoadStillNamedWithoutRetries(t *testing.T) {
+	r := Analyze(loadFirstScenario(false))
+	if r.Signals.Flags[SigRetriesUp].Value == Yes || r.Signals.Flags[SigErrorsPrecede].Value == Yes {
+		t.Fatalf("flags = %+v / %+v", r.Signals.Flags[SigRetriesUp], r.Signals.Flags[SigErrorsPrecede])
+	}
+	if r.Origin.Status != OriginNamed || r.Origin.Tier != "load" {
+		t.Errorf("origin = %+v", r.Origin)
+	}
+}
+
+func TestRetriesBeforeLoadGiveOrangeNotRed(t *testing.T) {
+	r := Analyze(loadFirstScenario(true))
+	orange := 0
+	for _, s := range r.Suspects {
+		if s.Tier != "load" || s.Result != ResConsistent {
+			continue
+		}
+		if s.Colour == Red {
+			t.Errorf("%s (load) is red although retries came first", s.ID)
+		}
+		if s.Colour == Orange {
+			orange++
+		}
+	}
+	if orange == 0 {
+		t.Error("no consistent load suspect was found to check")
+	}
+	wantSuspect(t, r, "L1", ResConsistent, Orange)
+}
+
+func TestLoadSuspectStillRedWithoutRetries(t *testing.T) {
+	r := Analyze(loadFirstScenario(false))
+	wantSuspect(t, r, "L1", ResConsistent, Red)
+}
+
+// loadFirstErrors is loadFirstScenario without retries, with every call from errFrom
+// on a server error: errors, not retries, are the only thing that could explain load.
+func loadFirstErrors(errFrom time.Time) Input {
+	ref, inc := stdWindows()
+	cfg := genCfg{seed: 7, ref: ref, inc: inc, perMin: 30, iis: true, clients: 5000, serverErrorFrom: errFrom,
+		mods: []mod{{from: at(10, 10), to: at(11, 30), countMul: 3}, {from: at(10, 20), to: at(11, 30), addC: 400}}}
+	return withLimit(gen(cfg), 1000)
+}
+
+// The errors half of the guard stands on its own: with retries off, a first server
+// error before the load onset still means load is not named as the origin.
+func TestErrorsBeforeLoadAreNotNamedAsLoad(t *testing.T) {
+	r := Analyze(loadFirstErrors(at(10, 5)))
+	if r.Signals.Flags[SigRetriesUp].Value == Yes {
+		t.Fatalf("retries signal = %+v, want not yes", r.Signals.Flags[SigRetriesUp])
+	}
+	if r.Signals.Flags[SigErrorsPrecede].Value != Yes {
+		t.Fatalf("errors signal = %+v", r.Signals.Flags[SigErrorsPrecede])
+	}
+	if r.Origin.Status != OriginNone || r.Origin.Tier != "" || r.Origin.At != nil {
+		t.Fatalf("origin = %+v", r.Origin)
+	}
+	if !strings.Contains(r.Origin.Note, "Load rose after clients started retrying or failing; that is retrying, not new demand.") {
+		t.Errorf("note = %q", r.Origin.Note)
+	}
+	wantSuspect(t, r, "L1", ResConsistent, Orange)
+}
+
+// A first server error after the load onset (but before t0) does not explain load:
+// load moved first and stays the origin, and its suspect stays red.
+func TestErrorsAfterLoadOnsetStillNameLoad(t *testing.T) {
+	r := Analyze(loadFirstErrors(at(10, 15)))
+	if r.Signals.Flags[SigErrorsPrecede].Value != Yes {
+		t.Fatalf("errors signal = %+v, want yes (first error is before t0)", r.Signals.Flags[SigErrorsPrecede])
+	}
+	if r.Origin.Status != OriginNamed || r.Origin.Tier != "load" {
+		t.Fatalf("origin = %+v", r.Origin)
+	}
+	wantSuspect(t, r, "L1", ResConsistent, Red)
+}
+
+// L3 needs retries up, so when it is consistent load follows retries and it is
+// orange, never red.
+func TestRetryStormSuspectIsNeverRed(t *testing.T) {
+	r := Analyze(loadFirstScenario(true))
+	s := suspect(t, r, "L3")
+	if s.Result == ResConsistent && s.Colour == Red {
+		t.Errorf("L3 is red although it needs retries: %s", s.Why)
+	}
+	if s.Result == ResConsistent {
+		wantSuspect(t, r, "L3", ResConsistent, Orange)
+	}
+	if loadFollowsRetries(r.Signals, r.Facts) != true {
+		t.Error("loadFollowsRetries = false with retries up")
+	}
+}
+
+func TestLoadFollowsRetriesErrorsHalf(t *testing.T) {
+	yes := func(v Tri) Signals {
+		return Signals{Flags: map[string]Signal{SigRetriesUp: {Value: No}, SigErrorsPrecede: {Value: v}}}
+	}
+	load, first := at(10, 10), at(10, 5)
+	f := Facts{Tiers: []TierOnset{{Tier: tierLoad, At: &load}}}
+	f.Errors.FirstIncServer = &first
+	if !loadFollowsRetries(yes(Yes), f) {
+		t.Error("error before load onset should explain load")
+	}
+	late := at(10, 12)
+	f.Errors.FirstIncServer = &late
+	if loadFollowsRetries(yes(Yes), f) {
+		t.Error("error after load onset should not explain load")
+	}
+	sameMinute := load.Add(30 * time.Second)
+	f.Errors.FirstIncServer = &sameMinute
+	if !loadFollowsRetries(yes(Yes), f) {
+		t.Error("error in the same minute as the load onset should count as at or before")
+	}
+	f.Tiers[0].At = nil
+	f.Errors.FirstIncServer = &late
+	if !loadFollowsRetries(yes(Yes), f) {
+		t.Error("unknown load onset should keep the signal as it stands")
+	}
+	if loadFollowsRetries(yes(No), f) {
+		t.Error("errors signal no should not explain load")
+	}
+}
+
+func TestHeldBackWordingSeparatesDroppedFromUnread(t *testing.T) {
+	f := Facts{Tiers: []TierOnset{
+		{Tier: "load", Why: notPersistedWhy},
+		{Tier: "a", Why: "gap"},
+		{Tier: "c", Why: "tested", Tested: true},
+	}}
+	unread, dropped := heldBackTiers(f)
+	if len(unread) != 1 || unread[0] != "a" || len(dropped) != 1 || dropped[0] != "load" {
+		t.Fatalf("unread = %v, dropped = %v", unread, dropped)
+	}
+	if got := heldBackClause(nil, dropped); got != "Arrival rate had its onset set aside because it did not stay up" {
+		t.Errorf("dropped clause = %q", got)
+	}
+	if got := heldBackClause(unread, nil); !strings.HasSuffix(got, "could not be read in every minute") || strings.Contains(got, "set aside") {
+		t.Errorf("unread clause = %q", got)
+	}
+	both := heldBackClause(unread, dropped)
+	if !strings.Contains(both, "could not be read in every minute, and") || !strings.Contains(both, "set aside") {
+		t.Errorf("mixed clause = %q", both)
+	}
+}
+
+func TestDroppedOnsetNoteSaysSetAside(t *testing.T) {
+	// One dated tier, one other whose onset was dropped: the note must not say it
+	// "could not be read".
+	c := at(10, 20)
+	f := Facts{Onset: Onset{Status: "found"}, Tiers: []TierOnset{
+		{Tier: "c", At: &c},
+		{Tier: "load", Why: notPersistedWhy},
+	}}
+	o := ComputeOrigin(Input{Audit: AuditPresent}, f, Signals{Flags: map[string]Signal{}}, Current())
+	if o.Status != OriginNotEnough {
+		t.Fatalf("origin = %+v", o)
+	}
+	if strings.Contains(o.Note, "could not be read") || !strings.Contains(o.Note, "set aside") {
+		t.Errorf("note = %q", o.Note)
+	}
+}

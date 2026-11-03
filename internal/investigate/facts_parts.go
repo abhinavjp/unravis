@@ -535,7 +535,7 @@ func (p *prep) metricOnset(f func(*call) *float64) (*time.Time, string, bool) {
 		return nil, "The reference window holds too few readings of this part to set a baseline.", false
 	}
 	refMed, _ := median(rv)
-	idx, ok := findRun(p.incBins, p.th.OnsetRunMinutes, func(b *bin) minStatus {
+	status := func(b *bin) minStatus {
 		v := valuesOf(b.calls, f)
 		if len(v) < p.th.OnsetMinSamples {
 			return stSkip
@@ -545,10 +545,14 @@ func (p *prep) metricOnset(f func(*call) *float64) (*time.Time, string, bool) {
 			return stHit
 		}
 		return stMiss
-	})
+	}
+	idx, ok := findRun(p.incBins, p.th.OnsetRunMinutes, status)
 	if !ok {
 		full := readAll(p.incBins, func(b *bin) bool { return len(valuesOf(b.calls, f)) < p.th.OnsetMinSamples })
 		return nil, "This part did not stay above its reference for the run of minutes the rule needs.", full
+	}
+	if persistShare(p.incBins, idx, status) < p.th.OriginPersistShare-floatEps {
+		return nil, notPersistedWhy, false
 	}
 	t := p.incBins[idx].at
 	return &t, "This part stayed above its reference for the run of minutes the rule needs.", true
@@ -569,18 +573,53 @@ func (p *prep) loadOnset() (*time.Time, string, bool) {
 		return nil, "The reference window holds too few calls per minute to read a change in arrivals.", false
 	}
 	factor := 1 + p.th.LoadChangePercent/100
-	idx, found := findRun(p.incBins, p.th.OnsetRunMinutes, func(b *bin) minStatus {
+	status := func(b *bin) minStatus {
 		if float64(b.n()) >= factor*refMed-floatEps {
 			return stHit
 		}
 		return stMiss
-	})
+	}
+	idx, found := findRun(p.incBins, p.th.OnsetRunMinutes, status)
 	if !found {
 		full := readAll(p.incBins, func(*bin) bool { return false })
 		return nil, "Arrivals did not stay above the reference for the run of minutes the rule needs.", full
 	}
+	if persistShare(p.incBins, idx, status) < p.th.OriginPersistShare-floatEps {
+		return nil, notPersistedWhy, false
+	}
 	t := p.incBins[idx].at
 	return &t, "Arrivals stayed above the reference for the run of minutes the rule needs.", true
+}
+
+// notPersistedWhy is the reason given for an onset that was found but did not stay
+// up, so it is not put in the race for the earliest tier.
+const notPersistedWhy = "moved briefly but did not stay up"
+
+// persistShare is the share of the minutes from bins[from:] that stay above the
+// limit. It takes the same per-minute status that findRun reads: a gap minute and
+// a thin minute (stSkip) are ignored, a stHit counts as above and a stMiss as not.
+// With nothing to count, or from outside the bins, it returns 1 (no evidence that
+// the move did not last).
+func persistShare(bins []*bin, from int, status func(*bin) minStatus) float64 {
+	if from < 0 || from >= len(bins) {
+		return 1
+	}
+	hits, misses := 0, 0
+	for _, b := range bins[from:] {
+		if b.gap != "" {
+			continue
+		}
+		switch status(b) {
+		case stHit:
+			hits++
+		case stMiss:
+			misses++
+		}
+	}
+	if hits+misses == 0 {
+		return 1
+	}
+	return float64(hits) / float64(hits+misses)
 }
 
 func (p *prep) tiers() {
@@ -607,6 +646,18 @@ func (p *prep) tiers() {
 	for _, k := range names {
 		t := p.in.LaneOnsets[k].UTC()
 		add(k, &t, "From the "+k+" lane's own data.", true)
+	}
+	// A configured lane that gave no usable reading is an unread tier, so a later
+	// tier cannot be named the origin past it.
+	unread := make([]string, 0, len(p.in.LaneUnread))
+	for k := range p.in.LaneUnread {
+		if _, dated := p.in.LaneOnsets[k]; !dated {
+			unread = append(unread, k)
+		}
+	}
+	sort.Strings(unread)
+	for _, k := range unread {
+		add(k, nil, p.in.LaneUnread[k], false)
 	}
 }
 

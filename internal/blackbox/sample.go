@@ -32,6 +32,7 @@ type Sample struct {
 	MemAvail    *uint64  `json:"memAvail,omitempty"`    // bytes
 	MemCommit   *uint64  `json:"memCommit,omitempty"`   // bytes
 	DiskQueue   *float64 `json:"diskQueue,omitempty"`   // current disk queue length, all disks
+	DiskMs      *float64 `json:"diskMs,omitempty"`      // average ms per disk transfer, all disks
 	NetIn       *uint64  `json:"netIn,omitempty"`       // cumulative bytes received, all interfaces
 	NetOut      *uint64  `json:"netOut,omitempty"`      // cumulative bytes sent
 	DiskFreePct *float64 `json:"diskFreePct,omitempty"` // free space of the recordings volume

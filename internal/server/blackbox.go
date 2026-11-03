@@ -1054,6 +1054,10 @@ func hostSamples(in []blackbox.Sample) []investigate.HostSample {
 			v := *s.CPU
 			hs.CPU = &v
 		}
+		if s.DiskMs != nil {
+			v := *s.DiskMs
+			hs.DiskMs = &v
+		}
 		for _, p := range s.Procs {
 			hp := investigate.HostProc{Name: p.Name}
 			if p.CPUPct != nil {

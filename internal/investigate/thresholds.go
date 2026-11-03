@@ -22,7 +22,7 @@ import (
 // fingerprint of the table with the history in testdata/investigate and fails
 // when a fingerprint changes under the same Version. The result of every run
 // carries Version and the whole table, so a saved answer says which rules made it.
-const Version = "2026-10-27"
+const Version = "2026-11-03"
 
 // Thresholds is the one table of named limits the engine reads. No other file
 // holds a number that decides a signal. The comment on each field names the
@@ -141,50 +141,95 @@ type Thresholds struct {
 	// OriginBucketSeconds is the minute bucket of the charts; onsets closer than the
 	// bucket plus the clock tolerance are "not separable".
 	OriginBucketSeconds int `json:"originBucketSeconds"`
+	// GateRefMinEvents is the fewest reference events before a rate is compared.
+	GateRefMinEvents int `json:"gateRefMinEvents"`
+	// GateRefMinEventsP95 is the fewest reference events before a reference P95 is compared.
+	GateRefMinEventsP95 int `json:"gateRefMinEventsP95"`
+	// GateIncMinEvents is the fewest incident events before a rate is compared.
+	GateIncMinEvents int `json:"gateIncMinEvents"`
+	// GateSpreadMinShare is the share of covered reference minutes that must hold an event.
+	GateSpreadMinShare float64 `json:"gateSpreadMinShare"`
+	// GateSpreadMaxMinuteShare is the largest share of reference events one minute may hold.
+	GateSpreadMaxMinuteShare float64 `json:"gateSpreadMaxMinuteShare"`
+	// GateSpreadSkipBelowPerMin is the mean events per covered reference minute below
+	// which the spread rule is skipped.
+	GateSpreadSkipBelowPerMin float64 `json:"gateSpreadSkipBelowPerMin"`
+	// LaneClockToleranceMs is the clock margin used when either tier is a lane (SQL,
+	// Mongo, host). Used by Phase 02.
+	LaneClockToleranceMs float64 `json:"laneClockToleranceMs"`
+	// OriginPersistShare is the share of minutes after an onset that must stay above
+	// the limit for the onset to count. Used by Phase 02.
+	OriginPersistShare float64 `json:"originPersistShare"`
+	// BurstMin5 is the rows in any 5 minutes that make a burst.
+	BurstMin5 int `json:"burstMin5"`
+	// BurstShare is the share of the incident IIS requests that also makes a burst ...
+	BurstShare float64 `json:"burstShare"`
+	// BurstMinRequests is the least IIS requests the incident must hold for the share rule.
+	BurstMinRequests int `json:"burstMinRequests"`
+	// BurstRise is the times the reference rate, for signals that must rise.
+	BurstRise float64 `json:"burstRise"`
+	// FilterMin is the request-filtering rejections in the incident (S9).
+	FilterMin int `json:"filterMin"`
+	// FilterRise is the times the reference rate (S9).
+	FilterRise float64 `json:"filterRise"`
 }
 
 // Current returns the table in force. It is a function, not a variable, so a
 // caller cannot change a threshold at run time.
 func Current() Thresholds {
 	return Thresholds{
-		Version:               Version,
-		ArrivalRatePerSec:     40,
-		GroupSizeP95:          20,
-		GroupSizeP99:          100,
-		ClockToleranceMs:      1000,
-		ChangeMinPercent:      30,
-		ChangeMinMs:           100,
-		LoadChangePercent:     30,
-		OnsetFactor:           2,
-		OnsetRunMinutes:       5,
-		OnsetMinSamples:       5,
-		StepRiseMinutes:       2,
-		StepRampBelowFactor:   1.5,
-		PeriodicMinExcursions: 3,
-		PeriodicShortMinutes:  15,
-		PeriodicLongMinutes:   60,
-		PeriodicToleranceMin:  2,
-		ScopeFewMaxRoutes:     3,
-		ScopeAllShare:         0.8,
-		GapWarnMinutes:        2,
-		GapRefMinPerMinute:    5,
-		ClockMaxSpanHours:     6,
-		ClockAnomalyShare:     0.01,
-		DominantMinShare:      0.5,
-		PartsMinCoverage:      0.8,
-		IISMatchToleranceMs:   3000,
-		IISMatchMinRate:       0.5,
-		IISOffsetClusterShare: 0.8,
-		AuditDipShare:         0.3,
-		FlatTopMinutes:        3,
-		FlatTopTolerance:      0.05,
-		FlatTopMinLevel:       5,
-		PoolFullShare:         0.95,
-		ChangeLeadMinutes:     30,
-		RetryWindowSeconds:    10,
-		RetryMinCalls:         5,
-		RetryMinShare:         0.02,
-		OriginBucketSeconds:   60,
+		Version:                   Version,
+		ArrivalRatePerSec:         40,
+		GroupSizeP95:              20,
+		GroupSizeP99:              100,
+		ClockToleranceMs:          1000,
+		ChangeMinPercent:          30,
+		ChangeMinMs:               100,
+		LoadChangePercent:         30,
+		OnsetFactor:               2,
+		OnsetRunMinutes:           5,
+		OnsetMinSamples:           5,
+		StepRiseMinutes:           2,
+		StepRampBelowFactor:       1.5,
+		PeriodicMinExcursions:     3,
+		PeriodicShortMinutes:      15,
+		PeriodicLongMinutes:       60,
+		PeriodicToleranceMin:      2,
+		ScopeFewMaxRoutes:         3,
+		ScopeAllShare:             0.8,
+		GapWarnMinutes:            2,
+		GapRefMinPerMinute:        5,
+		ClockMaxSpanHours:         6,
+		ClockAnomalyShare:         0.01,
+		DominantMinShare:          0.5,
+		PartsMinCoverage:          0.8,
+		IISMatchToleranceMs:       3000,
+		IISMatchMinRate:           0.5,
+		IISOffsetClusterShare:     0.8,
+		AuditDipShare:             0.3,
+		FlatTopMinutes:            3,
+		FlatTopTolerance:          0.05,
+		FlatTopMinLevel:           5,
+		PoolFullShare:             0.95,
+		ChangeLeadMinutes:         30,
+		RetryWindowSeconds:        10,
+		RetryMinCalls:             5,
+		RetryMinShare:             0.02,
+		OriginBucketSeconds:       60,
+		GateRefMinEvents:          60,
+		GateRefMinEventsP95:       100,
+		GateIncMinEvents:          20,
+		GateSpreadMinShare:        0.5,
+		GateSpreadMaxMinuteShare:  0.25,
+		GateSpreadSkipBelowPerMin: 1,
+		LaneClockToleranceMs:      5000,
+		OriginPersistShare:        0.5,
+		BurstMin5:                 3,
+		BurstShare:                0.01,
+		BurstMinRequests:          100,
+		BurstRise:                 1.3,
+		FilterMin:                 3,
+		FilterRise:                1.3,
 	}
 }
 
@@ -239,6 +284,20 @@ func (t Thresholds) Entries() []Entry {
 		i("retryMinCalls", t.RetryMinCalls),
 		f("retryMinShare", t.RetryMinShare),
 		i("originBucketSeconds", t.OriginBucketSeconds),
+		i("gateRefMinEvents", t.GateRefMinEvents),
+		i("gateRefMinEventsP95", t.GateRefMinEventsP95),
+		i("gateIncMinEvents", t.GateIncMinEvents),
+		f("gateSpreadMinShare", t.GateSpreadMinShare),
+		f("gateSpreadMaxMinuteShare", t.GateSpreadMaxMinuteShare),
+		f("gateSpreadSkipBelowPerMin", t.GateSpreadSkipBelowPerMin),
+		f("laneClockToleranceMs", t.LaneClockToleranceMs),
+		f("originPersistShare", t.OriginPersistShare),
+		i("burstMin5", t.BurstMin5),
+		f("burstShare", t.BurstShare),
+		i("burstMinRequests", t.BurstMinRequests),
+		f("burstRise", t.BurstRise),
+		i("filterMin", t.FilterMin),
+		f("filterRise", t.FilterRise),
 	}
 }
 

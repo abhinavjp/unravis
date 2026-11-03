@@ -88,10 +88,29 @@ type Request struct {
 // IISRow is one IIS log row, reduced to what the engine reads. Start and End are
 // the request start and end as the importer derives them; TakenMs is time-taken.
 type IISRow struct {
-	Start   time.Time `json:"start"`
-	End     time.Time `json:"end"`
-	TakenMs float64   `json:"takenMs"`
-	Path    string    `json:"path"`
+	Start     time.Time `json:"start"`
+	End       time.Time `json:"end"`
+	TakenMs   float64   `json:"takenMs"`
+	Path      string    `json:"path"`
+	Status    string    `json:"status,omitempty"`    // sc-status, e.g. "404"
+	SubStatus string    `json:"subStatus,omitempty"` // sc-substatus, e.g. "5"
+}
+
+// SQLEvent is one imported SQL Server event row (XE or error log), reduced to
+// its time and kind: "deadlock", "call", "blocked-process", "attention" or
+// "login-failed". DurationMs is set for "call" rows that carry one.
+type SQLEvent struct {
+	T          time.Time `json:"t"`
+	Kind       string    `json:"kind"`
+	DurationMs *float64  `json:"durationMs,omitempty"`
+}
+
+// HTTPErrRow is one imported HTTPERR row: its time, its reason phrase
+// (e.g. "Timer_HeaderWait") and its status, which may be empty.
+type HTTPErrRow struct {
+	T      time.Time `json:"t"`
+	Reason string    `json:"reason"`
+	Status string    `json:"status,omitempty"`
 }
 
 // Release is one change the user typed into the change list (Step 5).
@@ -121,6 +140,21 @@ type Input struct {
 	IISPresent bool     `json:"iisPresent"`
 	IIS        []IISRow `json:"iis,omitempty"`
 
+	// SQLPresent is true when a validated SQL Server event source (sql-xe or
+	// sql-errorlog) is in the case; SQLEvents are its rows in the windows.
+	SQLPresent bool       `json:"sqlPresent,omitempty"`
+	SQLEvents  []SQLEvent `json:"sqlEvents,omitempty"`
+	// SQLKinds names the event kinds the SQL sources can hold at all (for
+	// example "attention" only when an XE file listed it), so an absent kind
+	// reads unknown, not zero.
+	SQLKinds map[string]bool `json:"sqlKinds,omitempty"`
+	// HTTPErrPresent is true when a validated iis-httperr source is in the case;
+	// HTTPErr are its rows in the windows.
+	HTTPErrPresent bool         `json:"httpErrPresent,omitempty"`
+	HTTPErr        []HTTPErrRow `json:"httpErr,omitempty"`
+	// IISSubStatus is true when the IIS rows carry sc-substatus at all.
+	IISSubStatus bool `json:"iisSubStatus,omitempty"`
+
 	// Releases is the change list; ReleasesEntered is true once the user has
 	// entered it (an empty list entered on purpose reads "no change listed").
 	Releases        []Release `json:"releases,omitempty"`
@@ -142,6 +176,8 @@ type Input struct {
 	// windows (rule A35). A short gap warns; a long one cannot be tested. Only the
 	// host lane fills it in this release (see ApplyHost).
 	LaneGaps map[string][]Span `json:"laneGaps,omitempty"`
+	// LaneUnread names a configured lane (kind → reason) that gave no usable reading, so it must not be skipped over when naming an origin.
+	LaneUnread map[string]string `json:"laneUnread,omitempty"`
 }
 
 // NormalizePath lower-cases a request path, drops a query string and a trailing

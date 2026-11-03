@@ -2,6 +2,8 @@ package dbhealth
 
 import (
 	"context"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +19,15 @@ const (
 )
 
 const mongoMaxProfileDocs = 5000
+
+// M11 marks (spill to disk), local to this lane.
+const (
+	mongoSpillMin     = 3    // spilled operations in the incident
+	mongoSpillShare   = 0.05 // or this share of incident operations
+	mongoOpTimeMinN   = 20   // operations per side before P95 is compared
+	mongoOpTimeRise   = 0.3  // P95 rise, as a fraction of the reference
+	mongoOpTimeRiseMs = 100.0
+)
 
 type mongoLane struct {
 	m   Mongo
@@ -39,7 +50,7 @@ func RunMongoLane(ctx context.Context, m Mongo, label string, req LaneRequest, n
 			version = v
 			return c
 		}},
-		{CheckMongoProfiler, "Slow operations (profiler)", []string{"M6"}, l.checkProfiler},
+		{CheckMongoProfiler, "Slow operations (profiler)", []string{"M6", "M11"}, l.checkProfiler},
 	}
 	for _, st := range steps {
 		var c LaneCheck
@@ -88,6 +99,7 @@ func (l *mongoLane) checkServer(ctx context.Context) (LaneCheck, string) {
 type profileOutcome struct {
 	check  LaneCheck
 	answer string // M6
+	m11    string // M11
 	onset  *time.Time
 }
 
@@ -99,7 +111,7 @@ func profileFind(req LaneRequest, limit int, ascending bool) string {
 	// Built by hand, not marshalled: ReadOnlyCommand reads the first key as the command name, and a marshalled map sorts its keys.
 	return `{"find":"system.profile","filter":{"ts":{"$gte":{"$date":"` + req.Reference.Start.UTC().Format(time.RFC3339) +
 		`"},"$lt":{"$date":"` + req.Incident.End.UTC().Format(time.RFC3339) + `"}}},"sort":{"ts":` + strconv.Itoa(sortDir) +
-		`},"limit":` + strconv.Itoa(limit) + `,"batchSize":` + strconv.Itoa(limit) + `,"projection":{"op":1,"ns":1,"millis":1,"planSummary":1,"ts":1}}`
+		`},"limit":` + strconv.Itoa(limit) + `,"batchSize":` + strconv.Itoa(limit) + `,"projection":{"op":1,"ns":1,"millis":1,"planSummary":1,"ts":1,"usedDisk":1}}`
 }
 
 const profileOldest = `{"find":"system.profile","filter":{},"sort":{"ts":1},"limit":1,"projection":{"ts":1}}`
@@ -125,7 +137,8 @@ func evalLaneProfiler(slowms float64, oldest time.Time, docs []map[string]any, t
 		}
 		return strings.HasPrefix(n, req.Database+".") && !strings.HasPrefix(n, req.Database+".system.")
 	}
-	refN, incN, scans, indexed := 0, 0, 0, 0
+	refN, incN, scans, indexed, spills := 0, 0, 0, 0, 0
+	var incMs, refMs []float64
 	perMinute := map[time.Time]int{}
 	for _, d := range docs {
 		t, ok := jdate(d["ts"])
@@ -136,6 +149,10 @@ func evalLaneProfiler(slowms float64, oldest time.Time, docs []map[string]any, t
 		switch {
 		case req.Incident.Contains(t):
 			incN++
+			incMs = append(incMs, jnum(d["millis"]))
+			if used, _ := d["usedDisk"].(bool); used {
+				spills++
+			}
 			perMinute[t.Truncate(time.Minute)]++
 			plan := text(d["planSummary"])
 			if strings.HasPrefix(plan, "COLLSCAN") {
@@ -145,6 +162,7 @@ func evalLaneProfiler(slowms float64, oldest time.Time, docs []map[string]any, t
 			}
 		case req.Reference.Contains(t):
 			refN++
+			refMs = append(refMs, jnum(d["millis"]))
 		}
 	}
 	// The profiler covers the whole incident only when it was already recording when the incident began.
@@ -164,6 +182,18 @@ func evalLaneProfiler(slowms float64, oldest time.Time, docs []map[string]any, t
 	case indexed > 0 && wholeIncident && !truncated:
 		o.answer = AnswerNo
 		parts = append(parts, "Every slow operation used an index.")
+	}
+	opUp, opKnown := false, len(incMs) >= mongoOpTimeMinN && len(refMs) >= mongoOpTimeMinN
+	if opKnown {
+		pi, pr := p95(incMs), p95(refMs)
+		opUp = pi >= pr*(1+mongoOpTimeRise) && pi-pr >= mongoOpTimeRiseMs
+	}
+	switch {
+	case spills >= mongoSpillMin && opUp:
+		o.m11 = AnswerYes
+		parts = append(parts, plural(spills, "operation", "operations")+" spilled to disk in the incident window, and operation time rose.")
+	case !truncated && ((spills < mongoSpillMin && float64(spills) < mongoSpillShare*float64(incN) && wholeIncident && incN > 0) || (opKnown && !opUp)):
+		o.m11 = AnswerNo
 	}
 	if truncated {
 		parts = append(parts, "The read was cut short at "+fmtInt(float64(mongoMaxProfileDocs))+" records, so later slow operations were not read. These counts are lower bounds, and no answer of No or start time is given. Try a shorter reference window.")
@@ -237,9 +267,22 @@ func (l *mongoLane) checkProfiler(ctx context.Context) LaneCheck {
 		if o.answer != "" {
 			l.b.answer("M6", o.answer)
 		}
+		if o.m11 != "" {
+			l.b.answer("M11", o.m11)
+		}
 		if o.onset != nil {
 			l.b.setOnset(*o.onset)
 		}
 	}
 	return o.check
+}
+
+// p95 is the nearest-rank 95th percentile of v (0 when v is empty). v is not changed.
+func p95(v []float64) float64 {
+	if len(v) == 0 {
+		return 0
+	}
+	c := append([]float64(nil), v...)
+	sort.Float64s(c)
+	return c[int(math.Ceil(0.95*float64(len(c))))-1]
 }

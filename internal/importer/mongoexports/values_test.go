@@ -226,6 +226,9 @@ func TestServerStatusValues(t *testing.T) {
 	if e := byMetric(2, "connections.current"); e == nil || *e.Value != 44 {
 		t.Errorf("$numberInt connections.current: %+v", e)
 	}
+	if e := byMetric(2, "connections.rejected"); e == nil || e.Value == nil || *e.Value != 5 || e.Unit != "count" {
+		t.Errorf("connections.rejected: %+v", e)
+	}
 	// Line 3 has fewer paths: only those present are emitted.
 	if e := byMetric(3, "wiredTiger.cache.maximum bytes configured"); e != nil {
 		t.Errorf("absent path emitted: %+v", e)

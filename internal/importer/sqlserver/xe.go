@@ -38,9 +38,14 @@ const (
 	KindError       = "error"
 	KindNonYielding = "non-yielding"
 	KindDeadlock    = "deadlock"
+	KindCall        = "call"
+	KindBlocked     = "blocked-process"
+	KindAttention   = "attention"
 )
 
-// xeKinds is the allowlist of system_health event names. Any other event name
+// xeKinds is the allowlist of system_health event names, plus two completed-call
+// events (rpc_completed, sql_batch_completed) that system_health does not
+// capture; they come only from a custom session export. Any other event name
 // is counted (Rows) but not imported.
 var xeKinds = map[string]string{
 	"wait_info":                              KindWait,
@@ -50,7 +55,11 @@ var xeKinds = map[string]string{
 	"scheduler_monitor_non_yielding_ring_buffer_recorded":      KindNonYielding,
 	"scheduler_monitor_non_yielding_iocp_ring_buffer_recorded": KindNonYielding,
 	"scheduler_monitor_non_yielding_rm_ring_buffer_recorded":   KindNonYielding,
-	"xml_deadlock_report": KindDeadlock,
+	"xml_deadlock_report":    KindDeadlock,
+	"rpc_completed":          KindCall,
+	"sql_batch_completed":    KindCall,
+	"blocked_process_report": KindBlocked,
+	"attention":              KindAttention,
 }
 
 // xeScrubFragments: a header whose letters and digits contain any of these
@@ -69,20 +78,22 @@ var xeScrubFragments = []string{
 // xeRoles maps a normalised header (lower case, runs of other characters
 // collapsed to "_") to the field it fills. Every other column is dropped.
 var xeRoles = map[string]string{
-	"timestamp_utc":        "ts",
-	"name":                 "event",
-	"event_name":           "event",
-	"event":                "event",
-	"wait_type":            "wait_type",
-	"duration":             "duration",
-	"duration_ms":          "duration",
-	"component":            "component",
-	"state":                "state",
-	"state_desc":           "state",
-	"error_number":         "error",
-	"error":                "error",
-	"severity":             "severity",
-	"server_instance_name": "host",
+	"timestamp_utc":         "ts",
+	"name":                  "event",
+	"event_name":            "event",
+	"event":                 "event",
+	"wait_type":             "wait_type",
+	"duration":              "duration",
+	"duration_ms":           "duration",
+	"duration_us":           "duration_us",
+	"duration_microseconds": "duration_us",
+	"component":             "component",
+	"state":                 "state",
+	"state_desc":            "state",
+	"error_number":          "error",
+	"error":                 "error",
+	"severity":              "severity",
+	"server_instance_name":  "host",
 }
 
 var xeAttrs = map[string]bool{
@@ -218,6 +229,9 @@ func parseUTCField(v string) (time.Time, bool) {
 		}
 		if _, off := t.Zone(); off != 0 {
 			return time.Time{}, false // a "UTC" field carrying a non-zero offset is not trusted
+		}
+		if t.IsZero() {
+			return time.Time{}, false // 0001-01-01 00:00:00 is the unset time
 		}
 		return t.UTC(), true
 	}
@@ -445,10 +459,31 @@ func (x xeImporter) Parse(ctx context.Context, r io.Reader, opts importer.Option
 				e.Attrs["sql_severity"] = "unknown"
 				noSeverity = true
 			}
+		case KindCall:
+			e.Severity = "info"
+			if d := cell(rec, "duration_us"); d != "" {
+				us, err := strconv.ParseFloat(d, 64)
+				if err != nil || us < 0 || math.IsNaN(us) || math.IsInf(us, 0) || us > 7*24*3600*1e6 {
+					s.reject(line, importer.ReasonBadNumber)
+					continue
+				}
+				ms := us / 1000
+				e.DurationMs, e.Unit = ptr(ms), "ms"
+				e.Start = ts.Add(-time.Duration(ms * float64(time.Millisecond)))
+			}
+		case KindBlocked:
+			e.Severity = "warning"
+		case KindAttention:
+			e.Severity = "warning"
 		case KindNonYielding:
 			e.Severity = "error"
 		case KindDeadlock:
 			e.Severity = "warning"
+		}
+		// A start that falls on the zero time reads as unset and would abort the import.
+		if e.Start.IsZero() {
+			s.reject(line, importer.ReasonBadTime)
+			continue
 		}
 		// Coverage grows with the row time only. The start of a wait is derived from a
 		// duration the importer cannot check, so it never widens coverage.

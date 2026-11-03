@@ -28,7 +28,7 @@ const (
 // case-export policy lists it, but this importer never writes it: the namespace is
 // dropped at parse.
 var profileAttrs = []string{"type", "ns", "command", "planSummary", "keysExamined", "docsExamined", "nreturned",
-	"numYields", "queryHash", "workingMs", "responseLength"}
+	"numYields", "queryHash", "workingMs", "responseLength", "usedDisk"}
 
 // NewProfile returns the importer for a system.profile export (mongoexport, one JSON
 // document per line).
@@ -75,7 +75,7 @@ func (p *profileLiner) begin(lim importer.Limits, opts importer.Options, rep *im
 // else of the line is kept: names, filters, commands and addresses are dropped.
 type opFields struct {
 	op, cmd, plan, qhash, host string
-	wait                       string
+	wait, usedDisk             string
 	counts                     map[string]string
 	ts                         json.RawMessage
 	durMs                      float64
@@ -129,6 +129,12 @@ func (p *profileLiner) line(line []byte, no int64, _ time.Time, opts importer.Op
 			} else {
 				f.bad = true
 			}
+		case "usedDisk":
+			if v, ok := boolean(raw); ok {
+				f.usedDisk = v
+			} else {
+				f.bad = true
+			}
 		case "ts":
 			f.ts = raw
 		}
@@ -170,6 +176,9 @@ func (p *profileLiner) line(line []byte, no int64, _ time.Time, opts importer.Op
 	}
 	if f.qhash != "" {
 		attrs["queryHash"] = f.qhash
+	}
+	if f.usedDisk != "" {
+		attrs["usedDisk"] = f.usedDisk
 	}
 	ev := newEvent(opts, NameProfile, KindSlowOp, label, no, 0, start, end, rule)
 	ev.DurationMs, ev.Unit, ev.Attrs = &d, "ms", attrs

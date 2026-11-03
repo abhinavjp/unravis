@@ -26,6 +26,12 @@ const (
 	SigClockAnomaly  = "clock_anomaly"   // calls end before they start
 	SigAuditDip      = "audit_dip"       // the audit share of IIS requests fell
 	SigChangesLead   = "changes_lead"    // a listed change sits just before t0
+	SigQueueBurst    = "queue_burst"     // HTTPERR queue-full or app-pool-timer rows came in a burst
+	SigPayloadUp     = "payload_up"      // PayloadRecordTime P95 rose by the change mark
+	SigFilterReject  = "filter_reject"   // IIS request-filtering rejections rose
+	SigAppPoolFail   = "app_pool_fail"   // HTTPERR rows show the app pool unavailable
+	SigRecvTimeout   = "recv_timeout"    // HTTPERR header or body receive timeouts rose
+	SigDrain         = "drain"           // slow-client rows, or time outside the app rose alone
 )
 
 // Signal is one yes, no or unknown with the reason, and, when unknown for want of
@@ -245,6 +251,12 @@ func ComputeSignals(in Input, f Facts, th Thresholds) Signals {
 	if s.Timeline.Verdict == Unknown && !in.ReleasesEntered {
 		fl[SigChangesLead] = missing("releases", s.Timeline.Why)
 	}
+	fl[SigQueueBurst] = sigQueueBurst(in, f, th, fl)
+	fl[SigPayloadUp] = sigPayloadUp(in, f, th, fl)
+	fl[SigFilterReject] = sigFilterReject(in, f, th, fl)
+	fl[SigAppPoolFail] = sigAppPoolFail(in, f, th, fl)
+	fl[SigRecvTimeout] = sigRecvTimeout(in, f, th, fl)
+	fl[SigDrain] = sigDrain(in, f, th, fl)
 	return s
 }
 

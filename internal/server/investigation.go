@@ -373,6 +373,10 @@ func buildInvestigationInput(ctx context.Context, c casestore.Case, body investi
 	if err != nil {
 		return in, err
 	}
+	if err := readImportedEvents(ctx, c, body, sources, &in, read); err != nil {
+		return in, err
+	}
+	readMetricLanes(ctx, c, &in, read)
 	readable := false
 	for _, s := range sources {
 		if s.Name == investigationIISSource && s.Validated {
@@ -418,7 +422,10 @@ func buildInvestigationInput(ctx context.Context, c casestore.Case, body investi
 		if end.Before(e.Start) {
 			end = e.Start
 		}
-		in.IIS = append(in.IIS, investigate.IISRow{Start: e.Start.UTC(), End: end.UTC(), TakenMs: *e.DurationMs, Path: investigate.NormalizePath(e.Attrs["stem"])})
+		in.IIS = append(in.IIS, investigate.IISRow{Start: e.Start.UTC(), End: end.UTC(), TakenMs: *e.DurationMs, Path: investigate.NormalizePath(e.Attrs["stem"]), Status: e.Attrs["status"], SubStatus: e.Attrs["substatus"]})
+		if e.Attrs["substatus"] != "" {
+			in.IISSubStatus = true
+		}
 	}
 	read.IISRows = len(in.IIS)
 	return in, nil

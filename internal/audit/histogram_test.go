@@ -2,6 +2,8 @@ package audit
 
 import (
 	"math"
+	"math/rand"
+	"sort"
 	"testing"
 )
 
@@ -160,5 +162,65 @@ func TestP99NilWhenCountBelow100(t *testing.T) {
 	}
 	if uniformHistogram(t, 100).stats().P99 == nil {
 		t.Fatal("p99 should be defined at exactly 100 samples")
+	}
+}
+
+// seededLogNormal returns 2000 reproducible durations (ms): a log-normal spread around ~55 ms.
+func seededLogNormal() []float64 {
+	r := rand.New(rand.NewSource(42))
+	values := make([]float64, 2000)
+	for i := range values {
+		values[i] = math.Exp(r.NormFloat64()*0.8 + 4)
+	}
+	return values
+}
+
+func exactNearestRank(values []float64, p float64) float64 {
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+	return sorted[int(math.Ceil(p*float64(len(sorted))))-1]
+}
+
+func TestHistogramP95WithinTenPercentOfExact(t *testing.T) {
+	values := seededLogNormal()
+	h := newHistogramAccumulator()
+	for _, ms := range values {
+		if err := h.add(BinIndex(ms), 1, ms, ms, ms); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stats := h.stats()
+	if stats.P95 == nil || stats.P95.ValueMs == nil {
+		t.Fatalf("p95 missing: %#v", stats.P95)
+	}
+	got, exact := *stats.P95.ValueMs, exactNearestRank(values, .95)
+	if math.Abs(got-exact)/exact > 0.10 {
+		t.Fatalf("histogram p95 %g is not within 10%% of exact %g", got, exact)
+	}
+}
+
+func TestHistogramP95SurvivesMerge(t *testing.T) {
+	values := seededLogNormal()
+	all, even, odd := newHistogramAccumulator(), newHistogramAccumulator(), newHistogramAccumulator()
+	for i, ms := range values {
+		part := even
+		if i%2 == 1 {
+			part = odd
+		}
+		for _, h := range []*histogramAccumulator{all, part} {
+			if err := h.add(BinIndex(ms), 1, ms, ms, ms); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := even.merge(odd); err != nil {
+		t.Fatal(err)
+	}
+	merged, single := even.stats(), all.stats()
+	if merged.P95 == nil || merged.P95.ValueMs == nil || single.P95 == nil || single.P95.ValueMs == nil {
+		t.Fatalf("p95 missing: merged %#v single %#v", merged.P95, single.P95)
+	}
+	if math.Abs(*merged.P95.ValueMs-*single.P95.ValueMs) > 1e-9 {
+		t.Fatalf("merged p95 %g differs from single-histogram p95 %g", *merged.P95.ValueMs, *single.P95.ValueMs)
 	}
 }

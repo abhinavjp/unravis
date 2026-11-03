@@ -155,9 +155,14 @@ func TestFactsGuardsOnSmallGroups(t *testing.T) {
 	ref, inc := stdWindows()
 	in := gen(genCfg{seed: 6, ref: ref, inc: inc, perMin: 1})
 	f := ComputeFacts(in, Current())
-	// 60 reference calls: P95 shown, P99 withheld.
-	if f.Ref.P95 == nil || f.Ref.P99 != nil {
+	// 60 reference calls: below the P95 gate (100), so P95 and P99 are both withheld.
+	if f.Ref.P95 != nil || f.Ref.P99 != nil {
 		t.Errorf("guards: %+v", f.Ref.Percentiles)
+	}
+	// 100 or more reference calls: P95 shown.
+	big := ComputeFacts(gen(genCfg{seed: 6, ref: ref, inc: inc, perMin: 2}), Current())
+	if big.Ref.P95 == nil {
+		t.Errorf("a P95 was withheld for %d reference calls: %+v", big.Ref.N, big.Ref.Percentiles)
 	}
 	small := Input{Incident: inc, Reference: ref, Audit: AuditPresent, Requests: in.Requests[:10]}
 	f = ComputeFacts(small, Current())
@@ -176,5 +181,12 @@ func TestFactsIISMissingLeavesOUntested(t *testing.T) {
 		if it.Name == "O" && (it.Tested || it.ExcessMs != nil || it.Share != nil) {
 			t.Errorf("O was filled without IIS: %+v", it)
 		}
+	}
+}
+
+func TestFactsGateIsComputed(t *testing.T) {
+	f := ComputeFacts(stepScenario(mod{}), Current())
+	if f.Gate.RefEvents != f.Ref.N || f.Gate.IncEvents != f.Incident.N || f.Gate.RefEvents <= 0 {
+		t.Errorf("gate = %+v, ref N %d, incident N %d", f.Gate, f.Ref.N, f.Incident.N)
 	}
 }
