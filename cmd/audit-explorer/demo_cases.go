@@ -80,6 +80,9 @@ var (
 // real: the case holds synthetic events and lives only in a capture run's own folder.
 const demoCaseKeyPassphrase = "unravis demo case key"
 
+// demoSeedTimeout bounds seeding the demo cases; slow, memory-limited CI runners need far more than a dev machine.
+const demoSeedTimeout = 10 * time.Minute
+
 // demoCaseKeySalt is the 16-byte salt of a case key made in the demo, fixed so the key ending
 // on screen is the same on every run.
 const demoCaseKeySalt = "unravis-demo-key"
@@ -226,7 +229,7 @@ func openDemoCases(getenv func(string) string, hypotheses ledger.Store, now time
 	if err != nil {
 		return nil, fmt.Errorf("demo cases could not be opened: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), demoSeedTimeout)
 	defer cancel()
 	seeder := demoSeeder{store: wiring.store, ar: wiring.store, root: root, clock: clk, setID: ids.force, now: now, erased: wiring.erased}
 	seedErr := seeder.seed(ctx)

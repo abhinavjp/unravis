@@ -1051,15 +1051,25 @@ func tiny(t *testing.T, imp importer.Importer, fx Fixtures) {
 }
 
 // endless yields the same bytes forever, ending with EOF after a safety
-// deadline so a parser that ignores its context cannot spin for ever.
+// deadline, or a byte budget, so a parser that ignores its context cannot spin
+// for ever or fill a small machine's memory while it does.
 type endless struct {
 	chunk    []byte
 	off      int
 	deadline time.Time
+	left     int64
+}
+
+// endlessBudget is the most bytes an endless source yields. It is far more than
+// a parser that honours cancellation reads in the 50ms before the test cancels.
+const endlessBudget = 256 << 20
+
+func newEndless(chunk []byte) *endless {
+	return &endless{chunk: chunk, deadline: time.Now().Add(10 * time.Second), left: endlessBudget}
 }
 
 func (e *endless) Read(p []byte) (int, error) {
-	if time.Now().After(e.deadline) {
+	if e.left <= 0 || time.Now().After(e.deadline) {
 		return 0, io.EOF
 	}
 	if e.off >= len(e.chunk) {
@@ -1067,6 +1077,7 @@ func (e *endless) Read(p []byte) (int, error) {
 	}
 	n := copy(p, e.chunk[e.off:])
 	e.off += n
+	e.left -= int64(n)
 	return n, nil
 }
 
@@ -1093,7 +1104,7 @@ func cancellation(t *testing.T, imp importer.Importer, fx Fixtures) {
 				done <- result{err: fmt.Errorf("panic: %v", r)}
 			}
 		}()
-		body := &endless{chunk: chunk, deadline: time.Now().Add(10 * time.Second)}
+		body := newEndless(chunk)
 		evs, _, err := importer.Collect(ctx, imp, body, o)
 		done <- result{err: err, n: len(evs)}
 	}()
@@ -1155,7 +1166,7 @@ func cancellationInParse(t *testing.T, imp importer.Importer, fx Fixtures) {
 					done <- fmt.Errorf("panic: %v", r)
 				}
 			}()
-			body, o, err := importer.Prepare(imp, &endless{chunk: chunk, deadline: time.Now().Add(10 * time.Second)}, o)
+			body, o, err := importer.Prepare(imp, newEndless(chunk), o)
 			if err != nil {
 				done <- err
 				return

@@ -237,6 +237,16 @@ func allZero(b []byte) bool {
 	return true
 }
 
+// damagedUnlessCancelled is ErrDamaged, unless the context is done: a query that
+// failed because the caller gave up says nothing about the case, so the context's
+// own error is returned instead.
+func damagedUnlessCancelled(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return ErrDamaged
+}
+
 // verify is the open-time check: quick_check, schema version, and the manifest
 // against the database. A database that is missing something the manifest
 // records is damaged. A database that is ahead of the manifest (a crash between
@@ -256,11 +266,11 @@ func (c *Case) verify(ctx context.Context) (err error) {
 	// under a key that was copied along with it.
 	var dbCase string
 	if err := c.db.QueryRowContext(ctx, "SELECT v FROM meta WHERE k='case_id'").Scan(&dbCase); err != nil || dbCase != string(c.id) {
-		return ErrDamaged
+		return damagedUnlessCancelled(ctx)
 	}
 	var version string
 	if err := c.db.QueryRowContext(ctx, "SELECT v FROM meta WHERE k='schema_version'").Scan(&version); err != nil {
-		return ErrDamaged
+		return damagedUnlessCancelled(ctx)
 	}
 	v, err := strconv.Atoi(version)
 	if err != nil {
@@ -277,7 +287,7 @@ func (c *Case) verify(ctx context.Context) (err error) {
 	}
 	dbImports, err := c.dbManifestImports(ctx)
 	if err != nil {
-		return ErrDamaged
+		return damagedUnlessCancelled(ctx)
 	}
 	for i, want := range c.man.Imports {
 		if i >= len(dbImports) || !sameImport(dbImports[i], want) {

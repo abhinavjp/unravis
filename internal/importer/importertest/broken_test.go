@@ -174,6 +174,11 @@ var wantFail = map[string]string{
 
 const childEnv = "IMPORTERTEST_BROKEN_CASE"
 
+const (
+	brokenChildLimit   = 4               // child test binaries running at once
+	brokenChildTimeout = 5 * time.Minute // one child may run no longer than this
+)
+
 func TestBrokenChild(t *testing.T) {
 	name := os.Getenv(childEnv)
 	if name == "" {
@@ -190,11 +195,17 @@ func TestHarnessCatchesBrokenImporters(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns the test binary")
 	}
+	// At most brokenChildLimit child test binaries run at once, so a small CI runner is not swamped.
+	slots := make(chan struct{}, brokenChildLimit)
 	for name := range brokenImporters() {
 		name := name
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			cmd := exec.Command(os.Args[0], "-test.run=^TestBrokenChild$", "-test.v")
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			ctx, cancel := context.WithTimeout(context.Background(), brokenChildTimeout)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestBrokenChild$", "-test.v")
 			cmd.Env = append(os.Environ(), childEnv+"="+name)
 			out, err := cmd.CombinedOutput()
 			if err == nil {
