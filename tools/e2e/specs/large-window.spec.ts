@@ -8,6 +8,7 @@
 // The demo clock is 2026-10-20T09:00:00Z. Nothing here changes demo data, so the tests may run in any order.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
+import { fillWindows } from '../support/window-picker';
 
 const CASE_TITLE = 'Orders API stall, 19 October';
 const WIN_A = ['2026-10-19T15:00', '2026-10-19T18:00', '2026-10-19T12:00', '2026-10-19T15:00'] as const;
@@ -20,11 +21,6 @@ async function openTracing(page: Page) {
   await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
   await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
   await expect(page.locator('.tracing-chart')).toBeVisible();
-}
-
-async function fillWindows(page: Page, w: readonly string[]) {
-  const inputs = page.locator('input[type=datetime-local]');
-  for (let i = 0; i < 4; i++) await inputs.nth(i).fill(w[i]);
 }
 
 /** Shortens the request time limit seen by the page. Only the limit changes; the app code is the same. */

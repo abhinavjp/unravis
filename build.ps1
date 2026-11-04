@@ -129,7 +129,7 @@ try {
     # payload that was changed after the build. The payload folder is cleared first and is not committed (see its README.txt).
     # Nothing is signed here; signing is a release step (docs: installer-and-releases.md).
     $PayloadDir = Join-Path $UtilityRoot 'cmd\unravis-setup\payload'
-    Get-ChildItem -LiteralPath $PayloadDir -Force | Where-Object { $_.Name -ne 'README.txt' } | Remove-Item -Recurse -Force
+    Get-ChildItem -LiteralPath $PayloadDir -Force | Where-Object { $_.Name -notin @('README.txt', '.gitignore') } | Remove-Item -Recurse -Force
     $PayloadFiles = @()
     foreach ($Name in @('unravis.exe', 'unravis-keeper.exe', 'unravis-blackbox.exe')) {
         $Source = Join-Path $UtilityRoot "dist\$Name"
@@ -155,7 +155,7 @@ try {
         if ($Subsystem -ne 3) { throw "unravis-setup.exe: PE subsystem $Subsystem, expected 3" }
     } finally {
         # The programs stay in dist; the copies in the source tree go, so a later `go test` does not carry them.
-        Get-ChildItem -LiteralPath $PayloadDir -Force | Where-Object { $_.Name -ne 'README.txt' } | Remove-Item -Recurse -Force
+        Get-ChildItem -LiteralPath $PayloadDir -Force | Where-Object { $_.Name -notin @('README.txt', '.gitignore') } | Remove-Item -Recurse -Force
     }
 } finally {
     Pop-Location

@@ -2,6 +2,7 @@
 // The demo case "Orders API stall, 19 October" has 11 audit bars in 36 five-minute slots (15:00 to 18:00 UTC, 19 Oct); SQL and IIS are empty.
 import { test, expect } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
+import { fillWindows, pickerButton } from '../support/window-picker';
 import type { Page } from '@playwright/test';
 
 const CASE = 'Orders API stall, 19 October';
@@ -27,12 +28,8 @@ function showing(slot: number): string {
 async function startTracing(page: Page, title = CASE): Promise<void> {
   await openCase(page, title);
   await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  const inputs = page.locator('input[type=datetime-local]');
-  await expect(inputs).toHaveCount(4);
-  await inputs.nth(0).fill('2026-10-19T15:00');
-  await inputs.nth(1).fill('2026-10-19T18:00');
-  await inputs.nth(2).fill('2026-10-19T12:00');
-  await inputs.nth(3).fill('2026-10-19T15:00');
+  await expect(pickerButton(page, 'incident')).toBeVisible();
+  await fillWindows(page, ['2026-10-19T15:00', '2026-10-19T18:00', '2026-10-19T12:00', '2026-10-19T15:00']);
   await page.getByRole('button', { name: 'Start tracing' }).click();
   await expect(page.locator('.tracing-chart')).toBeVisible();
   await expect(columns(page)).toHaveCount(SLOTS);
@@ -217,13 +214,10 @@ test('HAND-09: 375px wide, nothing scrolls sideways and the hand-off still works
   await expect(page.locator('#home-analysis')).toBeVisible();
   await noHorizontalScroll(page, 'case home');
   await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
-  await expect(page.locator('input[type=datetime-local]')).toHaveCount(4);
+  await expect(pickerButton(page, 'incident')).toBeVisible();
   await noHorizontalScroll(page, 'timeline windows');
-  const inputs = page.locator('input[type=datetime-local]');
-  await inputs.nth(0).fill('2026-10-19T15:00');
-  await inputs.nth(1).fill('2026-10-19T18:00');
-  await inputs.nth(2).fill('2026-10-19T12:00');
-  await inputs.nth(3).fill('2026-10-19T15:00');
+  await fillWindows(page, ['2026-10-19T15:00', '2026-10-19T18:00', '2026-10-19T12:00', '2026-10-19T15:00']);
+  await noHorizontalScroll(page, 'timeline windows after the pickers were used');
   await page.getByRole('button', { name: 'Start tracing' }).click();
   await expect(columns(page)).toHaveCount(SLOTS);
   await noHorizontalScroll(page, 'tracing chart');

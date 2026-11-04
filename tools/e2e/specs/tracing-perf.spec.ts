@@ -10,6 +10,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { startLive, type Live } from '../support/live-launcher';
+import { fillWindows } from '../support/window-picker';
 
 const CFG = process.env.UNRAVIS_PERF_CFG ?? '';
 const BUDGET_MS = Number(process.env.UNRAVIS_PERF_BUDGET_MS || 90_000);
@@ -27,13 +28,8 @@ function manifest(): Manifest {
   return JSON.parse(readFileSync(join(dirname(resolve(CFG)), 'manifest.json'), 'utf8')) as Manifest;
 }
 
-/** YYYY-MM-DDTHH:mm in UTC, the form a datetime-local box takes. */
+/** YYYY-MM-DDTHH:mm in UTC, the form the picker's date and time boxes make together. */
 const box = (ms: number) => new Date(ms).toISOString().slice(0, 16);
-
-async function fillWindows(page: Page, w: readonly string[]) {
-  const inputs = page.locator('input[type=datetime-local]');
-  for (let i = 0; i < 4; i++) await inputs.nth(i).fill(w[i]);
-}
 
 async function openTracing(page: Page, title: string) {
   await page.getByRole('button', { name: 'Open case ' + title }).click();

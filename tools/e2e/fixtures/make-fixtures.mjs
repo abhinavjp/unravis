@@ -63,5 +63,30 @@ const csv = [
 ];
 writeFileSync(join(out, 'report-empty.csv'), bom + csv.join('\n') + '\n', 'utf8');
 
+// Files for the "Import files" panel of the wizard: an IIS W3C log (UTC), an HTTP.sys error log (server local time) and a text file no kind fits.
+const iisHead = [
+  '#Software: Microsoft Internet Information Services 10.0',
+  '#Version: 1.0',
+  '#Date: 2026-10-20 08:00:00',
+  '#Fields: date time s-sitename s-computername cs-method cs-uri-stem cs-uri-query s-port cs-username sc-status sc-substatus sc-win32-status time-taken'
+].join('\n') + '\n';
+const w3c = Array.from({ length: 12 }, (_, i) => {
+  const p = pick(i);
+  return `2026-10-20 08:00:${String(6 + i * 2).padStart(2, '0')} W3SVC1 WEB-A ${p[0]} ${p[1].split('?')[0]} - 443 - ${p[2]} 0 0 ${Math.round(Number(p[4]) * 1000)}`;
+});
+writeFileSync(join(out, 'u_ex261020.log'), iisHead + w3c.join('\n') + '\n');
+const httperrHead = [
+  '#Software: Microsoft HTTP API 2.0',
+  '#Version: 1.0',
+  '#Date: 2026-10-20 08:00:00',
+  '#Fields: date time c-ip c-port s-ip s-port cs-version cs-method cs-uri sc-status s-siteid s-reason s-queuename'
+].join('\n') + '\n';
+writeFileSync(join(out, 'httperr1.log'), httperrHead + [
+  '2026-10-20 08:00:10 192.0.2.50 51000 192.0.2.10 443 HTTP/1.1 GET /api/v1/orders/42 503 1 QueueFull DefaultAppPool',
+  '2026-10-20 08:00:20 192.0.2.51 51001 192.0.2.10 443 HTTP/1.1 - - - - Connection_Dropped -',
+  '2026-10-20 08:00:30 192.0.2.52 51002 192.0.2.10 443 HTTP/1.1 POST /api/v1/orders 400 2 BadRequest DefaultAppPool'
+].join('\n') + '\n');
+writeFileSync(join(out, 'notes.txt'), 'Notes from the call. Nothing here is a log.\n');
+
 writeFileSync(join(out, 'README.txt'), 'Made by make-fixtures.mjs. Do not edit by hand.\n');
 console.log('fixtures written to ' + out);

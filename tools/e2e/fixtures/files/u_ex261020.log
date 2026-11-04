@@ -1,0 +1,16 @@
+#Software: Microsoft Internet Information Services 10.0
+#Version: 1.0
+#Date: 2026-10-20 08:00:00
+#Fields: date time s-sitename s-computername cs-method cs-uri-stem cs-uri-query s-port cs-username sc-status sc-substatus sc-win32-status time-taken
+2026-10-20 08:00:06 W3SVC1 WEB-A GET /api/v1/orders/12345 - 443 - 200 0 0 125
+2026-10-20 08:00:08 W3SVC1 WEB-A POST /api/v1/orders - 443 - 201 0 0 310
+2026-10-20 08:00:10 W3SVC1 WEB-A GET /api/v1/orders/12346 - 443 - 200 0 0 98
+2026-10-20 08:00:12 W3SVC1 WEB-A GET /api/v1/customers/77 - 443 - 200 0 0 45
+2026-10-20 08:00:14 W3SVC1 WEB-A GET /api/v1/orders/12347 - 443 - 404 0 0 12
+2026-10-20 08:00:16 W3SVC1 WEB-A PUT /api/v1/orders/12345 - 443 - 200 0 0 220
+2026-10-20 08:00:18 W3SVC1 WEB-A GET /api/v1/customers/78 - 443 - 200 0 0 51
+2026-10-20 08:00:20 W3SVC1 WEB-A GET /api/v1/orders/12348 - 443 - 200 0 0 640
+2026-10-20 08:00:22 W3SVC1 WEB-A POST /api/v1/orders - 443 - 500 0 0 1250
+2026-10-20 08:00:24 W3SVC1 WEB-A GET /api/v1/orders/12349 - 443 - 200 0 0 101
+2026-10-20 08:00:26 W3SVC1 WEB-A GET /api/v1/customers/79 - 443 - 200 0 0 47
+2026-10-20 08:00:28 W3SVC1 WEB-A DELETE /api/v1/orders/12350 - 443 - 204 0 0 60

@@ -101,6 +101,10 @@ test('GUIDE-21: the Add data tab has five cards with their counts and each butto
   await expect(page.getByRole('tab', { name: 'Step 7: SQL Server', exact: true })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('tab', { name: 'Add data', exact: true }).click();
   await card('mongo').getByRole('button', { name: 'Add Mongo source' }).click();
+  // The Mongo card now adds an API audit database from a saved connection; the Step 8 profiler is its own tab, reached by a separate button.
+  await expect(panel.getByText('Add an API audit database', { exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Add data', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await panel.getByRole('button', { name: 'Open Step 8: MongoDB' }).click();
   await expect(page.getByRole('tab', { name: 'Step 8: MongoDB', exact: true })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('tab', { name: 'Add data', exact: true }).click();
   await card('files').getByRole('button', { name: 'Add files' }).click();

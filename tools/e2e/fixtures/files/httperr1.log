@@ -1,0 +1,7 @@
+#Software: Microsoft HTTP API 2.0
+#Version: 1.0
+#Date: 2026-10-20 08:00:00
+#Fields: date time c-ip c-port s-ip s-port cs-version cs-method cs-uri sc-status s-siteid s-reason s-queuename
+2026-10-20 08:00:10 192.0.2.50 51000 192.0.2.10 443 HTTP/1.1 GET /api/v1/orders/42 503 1 QueueFull DefaultAppPool
+2026-10-20 08:00:20 192.0.2.51 51001 192.0.2.10 443 HTTP/1.1 - - - - Connection_Dropped -
+2026-10-20 08:00:30 192.0.2.52 51002 192.0.2.10 443 HTTP/1.1 POST /api/v1/orders 400 2 BadRequest DefaultAppPool

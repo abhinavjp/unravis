@@ -9,6 +9,7 @@
 // Nothing here changes demo data, so the tests may run in any order.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
+import { fillWindows, pickerButton, primeWindows, windowValues } from '../support/window-picker';
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -26,11 +27,6 @@ async function openTracing(page: Page) {
   await expect(page.locator('.tracing-chart')).toBeVisible();
 }
 
-async function fillWindows(page: Page, w: readonly string[]) {
-  const inputs = page.locator('input[type=datetime-local]');
-  for (let i = 0; i < 4; i++) await inputs.nth(i).fill(w[i]);
-}
-
 /** Types the four times, presses Start tracing and waits for the answer to that very request. */
 async function trace(page: Page, w: readonly string[]) {
   await fillWindows(page, w);
@@ -46,19 +42,22 @@ const note = (page: Page) => page.locator('.canvas-bar .zoom-note');
 
 test('TRACE-01: the screen opens with the picker, toolbar, chart and notes regions in that order', async ({ page }) => {
   await openTracing(page);
-  await expect(page.locator('[data-region]')).toHaveCount(4);
-  expect(await page.locator('[data-region]').evaluateAll((els) => els.map((e) => e.getAttribute('data-region')))).toEqual(['windows', 'toolbar', 'chart', 'notes']);
-  // Picker: incident first, then comparison, four boxes, UTC note, one start button, a way back.
+  await expect(page.locator('[data-region]')).toHaveCount(5);
+  // The Sources traced row sits between the pickers and the toolbar.
+  expect(await page.locator('[data-region]').evaluateAll((els) => els.map((e) => e.getAttribute('data-region')))).toEqual(['windows', 'sources', 'toolbar', 'chart', 'notes']);
+  // Pickers: incident first, then comparison (one button each, no browser date box), UTC note, one start button, a way back.
   const sets = page.locator('[data-region=windows] fieldset');
   await expect(sets).toHaveCount(2);
   await expect(sets.nth(0).locator('legend')).toHaveText('Incident window (UTC)');
   await expect(sets.nth(1).locator('legend')).toHaveText('Comparison period (UTC)');
-  await expect(page.locator('input[type=datetime-local]')).toHaveCount(4);
+  await expect(page.locator('input[type=datetime-local]')).toHaveCount(0);
+  await expect(pickerButton(page, 'incident')).toBeVisible();
+  await expect(pickerButton(page, 'comparison')).toBeVisible();
   await expect(page.getByText('Times are typed in UTC.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start tracing' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Back to the case' })).toBeVisible();
   // The defaults are the hour before now, and the hour before that (real clock, so only the shape is checked).
-  const vals = await page.locator('input[type=datetime-local]').evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value));
+  const vals = await windowValues(page);
   expect(vals.every((v) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v))).toBe(true);
   expect(vals[0]).toBe(vals[3]);
   // Toolbar: three lane buttons in lane order, all on, then the export-scrub pill.
@@ -367,8 +366,8 @@ test('TRACE-11: bad windows are refused in plain words with no request; an overl
   let posts = 0;
   page.on('request', (r) => { if (r.url().includes('/tracing') && r.method() === 'POST') posts++; });
   const start = page.getByRole('button', { name: 'Start tracing' });
-  // Ends before it starts.
-  await fillWindows(page, ['2026-10-19T18:00', '2026-10-19T15:00', '2026-10-19T12:00', '2026-10-19T15:00']);
+  // Ends before it starts. The picker will not apply that, so it arrives the way a reloaded tab brings it back.
+  await primeWindows(page, ['2026-10-19T18:00', '2026-10-19T15:00', '2026-10-19T12:00', '2026-10-19T15:00']);
   await start.click();
   await expect(page.getByRole('alert')).toContainText('The incident window end must be later than the start.');
   // 186 days and one minute.
@@ -376,7 +375,7 @@ test('TRACE-11: bad windows are refused in plain words with no request; an overl
   await start.click();
   await expect(page.getByRole('alert')).toContainText('The longest window is 186 days. Shorten the incident window.');
   // A missing time.
-  await page.locator('input[type=datetime-local]').nth(2).fill('');
+  await primeWindows(page, ['2026-04-01T00:00', '2026-04-01T01:00', '', '2026-04-01T00:00']);
   await start.click();
   await expect(page.getByRole('alert')).toContainText('The comparison period needs a start and an end, in UTC.');
   expect(posts, 'a refused window sends nothing').toBe(0);
@@ -390,8 +389,7 @@ test('TRACE-11: bad windows are refused in plain words with no request; an overl
   await expect(warn).toContainText('Pick a normal period that does not share any time with the incident.');
   await expect(start).toBeEnabled();
   await warn.getByRole('button', { name: 'Move comparison period before the incident' }).click();
-  const inputs = page.locator('input[type=datetime-local]');
-  expect(await inputs.evaluateAll((els) => els.map((e) => (e as HTMLInputElement).value))).toEqual(['2026-10-19T15:00', '2026-10-19T18:00', '2026-10-19T12:00', '2026-10-19T15:00']);
+  expect(await windowValues(page)).toEqual(['2026-10-19T15:00', '2026-10-19T18:00', '2026-10-19T12:00', '2026-10-19T15:00']);
   await expect(page.getByText('The two windows overlap.')).toHaveCount(0);
   expect(posts).toBe(1);
 });
@@ -514,10 +512,10 @@ test.describe('time zone', () => {
     const group = page.getByRole('group', { name: 'Show times in' });
     await group.getByRole('button', { name: /^Local/ }).click();
     await expect(page.locator('.axcap')).not.toContainText('Time (UTC).');
-    await expect(page.locator('.axtick').first()).toHaveText(/^19 Oct 20:30 /);
+    await expect(page.locator('.axtick').first()).toHaveText(/^19 Oct 21:00 /);
     // The picker still says UTC and still holds the UTC times typed.
     await expect(page.getByText('Times are typed in UTC.')).toBeVisible();
-    await expect(page.locator('input[type=datetime-local]').first()).toHaveValue('2026-10-19T15:00');
+    await expect(pickerButton(page, 'incident')).toContainText('19 Oct 2026 15:00 → 18:00');
     await expect(bars(page, 'audit')).toHaveCount(11);
     await group.getByRole('button', { name: 'UTC', exact: true }).click();
     await expect(page.locator('.axtick').first()).toHaveText('19 Oct 15:00 UTC');

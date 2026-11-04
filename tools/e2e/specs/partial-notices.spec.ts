@@ -6,6 +6,7 @@
 // Nothing here changes demo data, so the tests may run in any order.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
+import { fillWindows } from '../support/window-picker';
 
 const CASE_TITLE = 'Orders API stall, 19 October';
 const WIN_B = ['2026-10-19T08:00', '2026-10-19T12:00', '2026-10-19T04:00', '2026-10-19T08:00'] as const;
@@ -107,15 +108,16 @@ test('PART-03: a lane the server cut short with reasonCode timeout shows the cut
     audit.reasonCode = 'timeout';
     await route.fulfill({ response, json: body });
   });
-  const inputs = page.locator('input[type=datetime-local]');
-  for (let i = 0; i < 4; i++) await inputs.nth(i).fill(WIN_B[i]);
+  await fillWindows(page, WIN_B);
   const answered = page.waitForResponse((r) => r.url().includes('/tracing') && r.request().method() === 'POST' && (r.request().postData() ?? '').includes(WIN_B[0] + ':00.000Z'));
   await page.getByRole('button', { name: 'Start tracing' }).click();
   await answered;
 
   const line = page.locator('[data-testid=lanes-cut-short]');
   await expect(line).toBeVisible();
-  await expect(line).toHaveText('Some lanes were cut short. Their bars show only part of the events. Try a shorter window.');
+  await expect(line).toContainText('Some lanes were not read in full. What was read is drawn; the rest is marked not read.');
+  // It also says which lane, and what was read of it.
+  await expect(line).toContainText('API requests (audit log)');
   // The other lanes are still drawn.
   await expect(page.locator('.panel[data-lane=sql]')).toBeVisible();
   await expect(page.locator('.panel[data-lane=iis]')).toBeVisible();

@@ -26,18 +26,29 @@ async function openStatus(page: Page, name: string) {
   return { dialog, region };
 }
 
+/**
+ * Types one window ("YYYY-MM-DDTHH:MM" start and end, UTC) into the inline picker of the Step 9 block. The inline picker has a start date,
+ * a start time and an end time; the end date box only exists while "Ends on a different day" is ticked, so it is ticked for a window that
+ * crosses midnight and left alone otherwise (the popover helper in support/window-picker.ts opens a dialog, which this form does not have).
+ */
+async function setInlineWindow(details: Locator, name: 'Incident' | 'Reference', [start, end]: [string, string]) {
+  const group = details.getByRole('group', { name: `${name} window (UTC)` });
+  const box = (part: string) => group.getByRole('textbox', { name: `${name} window ${part}`, exact: true });
+  const [startDate = '', startTime = ''] = start.split('T');
+  const [endDate = '', endTime = ''] = end.split('T');
+  await box('start date').fill(startDate);
+  await box('start time').fill(startTime);
+  await group.getByRole('checkbox', { name: 'Ends on a different day' }).setChecked(endDate !== startDate);
+  if (endDate !== startDate) await box('end date').fill(endDate);
+  await box('end time').fill(endTime);
+}
+
 /** Set the four datetime fields of the Step 9 block (UTC, "YYYY-MM-DDTHH:MM") and read. */
 async function readHost(region: Locator, incident: [string, string], reference?: [string, string]) {
   const details = region.locator('details', { hasText: 'Read for a case window' });
   if ((await details.getAttribute('open')) === null) await details.locator('summary').click();
-  const inc = details.getByRole('group', { name: 'Incident window (UTC)' });
-  await inc.getByRole('textbox', { name: 'Start' }).fill(incident[0]);
-  await inc.getByRole('textbox', { name: 'End' }).fill(incident[1]);
-  if (reference) {
-    const ref = details.getByRole('group', { name: 'Reference window (UTC)' });
-    await ref.getByRole('textbox', { name: 'Start' }).fill(reference[0]);
-    await ref.getByRole('textbox', { name: 'End' }).fill(reference[1]);
-  }
+  await setInlineWindow(details, 'Incident', incident);
+  if (reference) await setInlineWindow(details, 'Reference', reference);
   await details.getByRole('button', { name: 'Read the host for these windows' }).click();
 }
 
@@ -133,7 +144,7 @@ test('BB-12b: empty windows and a window longer than seven days are refused the 
   await readHost(region, ['2026-10-01T00:00', '2026-10-20T08:10']);
   await expect(region.getByText(WINDOW_PROBLEM)).toBeVisible();
   const inc = details.getByRole('group', { name: 'Incident window (UTC)' });
-  await inc.getByRole('textbox', { name: 'Start' }).fill('');
+  await inc.getByRole('textbox', { name: 'Incident window start date', exact: true }).fill('');
   await details.getByRole('button', { name: 'Read the host for these windows' }).click();
   await expect(region.getByText(WINDOW_PROBLEM)).toBeVisible();
 });
