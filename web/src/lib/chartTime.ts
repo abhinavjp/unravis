@@ -73,13 +73,36 @@ export function zoneOffsetMs(ms: number, zone: string): number {
   return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(ms / 1000) * 1000;
 }
 
+/** The instant at which the zone's wall clock reads `local` (the wall time written as if it were UTC); read twice more so a clock change in between is followed. */
+function wallToMs(local: number, zone: string, guessOffset: number): number {
+  let at = local - guessOffset;
+  for (let pass = 0; pass < 2; pass++) at = local - zoneOffsetMs(at, zone);
+  return at;
+}
+
 /** Round clock times (in the display zone) inside [startMs, endMs], stepped by stepMs. */
 export function roundTicks(startMs: number, endMs: number, stepMs: number, zone: string): number[] {
   const ticks: number[] = [];
   const offset = zoneOffsetMs(startMs, zone);
   for (let local = Math.ceil((startMs + offset) / stepMs) * stepMs; ticks.length < 1000; local += stepMs) {
-    const at = local - zoneOffsetMs(local - offset, zone);
+    const at = wallToMs(local, zone, offset);
     if (at > endMs) break;
+    if (at >= startMs) ticks.push(at);
+  }
+  return ticks;
+}
+
+/**
+ * Midnights in the display zone inside [startMs, endMs), every `days` calendar days counted from the first midnight at or after startMs.
+ * Calendar days, not 24 hour blocks, so a clock change never moves a label off midnight.
+ */
+export function dayTicks(startMs: number, endMs: number, days: number, zone: string): number[] {
+  const ticks: number[] = [];
+  if (!(days >= 1)) return ticks;
+  const offset = zoneOffsetMs(startMs, zone);
+  for (let day = Math.ceil((startMs + offset) / DAY); ticks.length < 1000; day += Math.floor(days)) {
+    const at = wallToMs(day * DAY, zone, offset);
+    if (at >= endMs) break;
     if (at >= startMs) ticks.push(at);
   }
   return ticks;

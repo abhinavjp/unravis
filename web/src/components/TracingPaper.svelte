@@ -135,12 +135,19 @@
     if (!ok) handoffNote = HANDOFF_TEXT.empty;
   }
 
-  onMount(() => { void run(); });
+  // The screen takes focus once when it opens (the button that opened it is gone), so a keyboard or screen-reader user starts at its heading.
+  // Only when nothing else holds focus: later runs, Try again and Cancel never move it.
+  let headingEl: HTMLHeadingElement | undefined;
+  onMount(() => {
+    const active = document.activeElement;
+    if (!active || active === document.body) headingEl?.focus();
+    void run();
+  });
   onDestroy(() => { controller?.abort(); });
 </script>
 
 <section class="tracing-paper" aria-labelledby="tp-title">
-  <h2 id="tp-title">{TRACING_TEXT.heading}</h2>
+  <h2 id="tp-title" tabindex="-1" bind:this={headingEl}>{TRACING_TEXT.heading}</h2>
   {#if title}<p class="case-name" data-testid="tp-case-name">{title}</p>{/if}
   <div class="actions"><button type="button" class="secondary-button" onclick={onClose}>{TRACING_TEXT.backToCase}</button></div>
 

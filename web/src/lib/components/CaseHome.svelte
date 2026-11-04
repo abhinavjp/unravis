@@ -16,6 +16,7 @@
   import { guidedOpenFor } from '../guided/stepModel';
   import GuidedAnalysis from './guided/GuidedAnalysis.svelte';
   import { TRACING_TEXT } from '../copy/tracingCopy';
+  import { setDocTitle } from '../docTitle';
   import { lazyComponent } from '../lazy';
   import { formatTime } from '../time';
   import { timeZone } from '../timeZone.svelte';
@@ -67,8 +68,11 @@
   const guidedOpen = $derived(guidedOpenFor(guidedFor, caseId));
   // The case the Investigation Timeline is open on. The app holds it (not this page) so the browser's Back and Forward and a reload can open and close it.
   const tracingOpen = $derived(!!caseId && app.tracingCase === caseId);
-  // An archived case has no timeline (its files cannot be read). A reload or Back and Forward that lands on its timeline returns to the case page.
-  $effect(() => { if (phase === 'ready' && tracingOpen && isArchived) closeTracing(); });
+  // An archived case has no timeline (its files cannot be read) and a closed one has nothing to read (the case page's Timeline button is off for it).
+  // A reload or Back and Forward that lands on such a case's timeline returns to the case page.
+  $effect(() => { if (phase === 'ready' && tracingOpen && (isArchived || isClosed)) closeTracing(); });
+  // The tab title names the screen: the timeline, else the case. The cleanup puts the plain app title back.
+  $effect(() => { if (phase === 'ready') return setDocTitle(timelineShown ? TRACING_TEXT.heading : info?.title || caseCode(caseId)); });
   let controller: AbortController | null = null;
   let loadedFor = '';
 
@@ -92,6 +96,8 @@
   let archiveNote = $state('');
   const archiveState = $derived(info ? archiveButton(info) : 'hidden');
   const isArchived = $derived(!!info && believedState(info) === 'archived');
+  const isClosed = $derived(!!info && believedState(info) === 'closed');
+  const timelineShown = $derived(tracingOpen && !isArchived && !isClosed);
   const archivedMoves = $derived(info ? archivedActions(info) : null);
   const madeCount = $derived(info?.archive?.files?.length || info?.filesMade || 0);
   const currentFile = $derived(info?.archive?.current ?? null);
@@ -366,7 +372,7 @@
   const kindLabel = { case: CASE_HOME_TEXT.kindCase, file: CASE_HOME_TEXT.kindFile, health: CASE_HOME_TEXT.kindHealth, theory: CASE_HOME_TEXT.kindTheory } as const;
 </script>
 
-<div class="case-home" class:wide={tracingOpen && !isArchived}>
+<div class="case-home" class:wide={timelineShown}>
   <div class="top">
     <button type="button" class="secondary-button" aria-label={CASE_HOME_TEXT.backLabel} onclick={goHome}>&larr; {CASE_HOME_TEXT.back}</button>
   </div>
@@ -396,7 +402,7 @@
     </section>
   {:else if view === 'key'}
     <CaseKeyPage {caseId} status={keyStatus} masterState={app.lockState} onChanged={keyChanged} onCancel={() => void backFromDialog()} />
-  {:else if tracingOpen && !isArchived}
+  {:else if timelineShown}
     {#key caseId}
       <TracingPaper {caseId} title={info?.title || caseCode(caseId)} closed={!!info?.closed} {readOnly} onClose={leaveTracing} />
     {/key}

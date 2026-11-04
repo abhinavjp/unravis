@@ -158,7 +158,9 @@ test('TracingPaper fills the windows region from windows.ts and sends only the c
 
 test('TracingPaper starts exactly one request on open and one per Start tracing', () => {
   assert.equal((paperSource.match(/fetchTracing\(/g) || []).length, 1);
-  assert.match(paperSource, /onMount\(\(\) => \{ void run\(\); \}\)/);
+  // The mount also moves focus to the heading (UI-R5-01) before its one request.
+  assert.match(paperSource, /onMount\(\(\) => \{[^}]*headingEl\?\.focus\(\);\s*void run\(\);\s*\}\)/);
+  assert.equal((paperSource.match(/void run\(\);/g) || []).length, 1);
 });
 
 test('a date with year 0001 is named, not reported as missing (UI-R2-10)', () => {

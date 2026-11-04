@@ -14,7 +14,7 @@
   import { TOOLTIP_TEXT, barTipLines, formatCount, isTouchPointer, laneHint } from '../lib/tracing/tooltip';
   import {
     CANVAS_TEXT, MIN_ZOOM_SLOTS, PERCENTILES, PERCENTILE_LABEL, absoluteSlot, clampRange, edgeSlot, fullRange, hasLatency,
-    isZoomed, latencySegments, rangeFromDrag, stepSlot, tickOffsets, zoomFocus, zoomIn, zoomOut, zoomedText,
+    isZoomed, latencySegments, rangeFromDrag, stepSlot, axisTicks, zoomFocus, zoomIn, zoomOut, zoomedText,
     type Percentile, type ZoomRange
   } from '../lib/tracing/canvas';
 
@@ -81,7 +81,7 @@
   const outside = $derived(grid ? outsideSlots(grid, range.from, range.to) : []);
   let plotW = $state(0);
   const tickLabelChars = $derived(grid && shown > 0 ? at(slotStartMs(grid, range.from)).length : 0);
-  const tickIndexes = $derived(tickOffsets(shown, plotW, tickLabelChars, grid && shown > 0 ? { startMs: slotStartMs(grid, range.from), widthMs: grid.widthMs, zone } : undefined).map((k) => range.from + k));
+  const ticks = $derived(axisTicks(shown, plotW, tickLabelChars, grid && shown > 0 ? { startMs: slotStartMs(grid, range.from), widthMs: grid.widthMs, zone } : undefined));
   const caption = $derived(grid ? axisCaption(zone, response.window.bucketSeconds, outside.length > 0) : '');
 
   // The selected bucket; one that scrolls out of the zoomed range is dropped, not left pointing at a hidden bar.
@@ -372,8 +372,7 @@
       {@const drawBars = drawsBars(lane)}
       <!-- Not a tab stop: it has no action. The name and the hint stay available to screen readers, and the hint shows on hover. -->
       <div class="lane-label" role="group" aria-label={LANE_NAME[lane.key]} aria-describedby="tc-hint-{lane.key}" data-truncated={lane.truncated ? 'true' : undefined} style="--row:{laneIndex + 1}">
-        <span class="swatch" style={SWATCH_STYLE[lane.key]} aria-hidden="true"></span>
-        <strong>{LANE_NAME[lane.key]}</strong>
+        <span class="lane-title"><span class="swatch" style={SWATCH_STYLE[lane.key]} aria-hidden="true"></span><strong>{LANE_NAME[lane.key]}</strong></span>
         <small>{LANE_ASK[lane.key]}</small>
         {#if showsProvenance(lane)}
           <small class="origin">{lane.origin === 'live' ? TOOLTIP_TEXT.readJustNow : TOOLTIP_TEXT.fromSavedLogs} · {at(lane.asOf)}</small>
@@ -424,8 +423,8 @@
 
     {#if grid}
       <div class="axisrow" style="--row:{orderedLanes.length + 1}">
-        {#each tickIndexes as i (i)}
-          <span class="axtick" style="left:{leftPct(i)}%">{at(slotStartMs(grid, i))}</span>
+        {#each ticks as tick (tick.ms)}
+          <span class="axtick" style="left:{tick.offset * widthPct}%">{at(tick.ms)}</span>
         {/each}
       </div>
     {/if}
@@ -496,7 +495,8 @@
 
   .lane-label, .axis, .panel, .axisrow { grid-row: var(--row); }
   .lane-label { grid-column: 1; display: grid; gap: 2px; align-content: start; min-width: 0; }
-  .lane-label .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: var(--space-1); }
+  .lane-label .lane-title { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+  .lane-label .swatch { flex: none; width: 10px; height: 10px; border-radius: 50%; }
   .lane-label small { color: var(--text-2); font-size: var(--fs-2); }
   .lane-label { position: relative; }
   .hint { display: none; position: absolute; left: 0; top: 100%; z-index: 3; width: max-content; max-width: 22rem; padding: var(--space-2); color: var(--text); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); }

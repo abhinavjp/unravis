@@ -112,8 +112,9 @@ test('a clock change inside the range keeps labels on local round hours', () => 
 // UI-R4-01
 test('an archived case restored into the timeline returns to the case page', () => {
   const home = read('src/lib/components/CaseHome.svelte');
-  assert.match(home, /\$effect\(\(\) => \{ if \(phase === 'ready' && tracingOpen && isArchived\) closeTracing\(\); \}\);/);
-  assert.match(home, /\{:else if tracingOpen && !isArchived\}/);
+  assert.match(home, /\$effect\(\(\) => \{ if \(phase === 'ready' && tracingOpen && \(isArchived \|\| isClosed\)\) closeTracing\(\); \}\);/);
+  assert.match(home, /const timelineShown = \$derived\(tracingOpen && !isArchived && !isClosed\);/);
+  assert.match(home, /\{:else if timelineShown\}/);
 });
 test('a closed case keeps its read-only timeline and has no Try again', () => {
   const paper = read('src/components/TracingPaper.svelte');
@@ -155,7 +156,7 @@ test('the header count and the reload do not ask for theories before the case pa
 // UI-R4-04
 test('only the timeline gets the wide column and the note banner has the amber edge', () => {
   const home = read('src/lib/components/CaseHome.svelte');
-  assert.match(home, /<div class="case-home" class:wide=\{tracingOpen && !isArchived\}>/);
+  assert.match(home, /<div class="case-home" class:wide=\{timelineShown\}>/);
   assert.match(home, /\.case-home \{[^}]*max-width: 880px/);
   assert.match(home, /\.case-home\.wide \{ max-width: 1232px; \}/);
   const chart = read('src/components/TracingChart.svelte');

@@ -334,7 +334,7 @@ test('the chart keeps the axis baseline, tab stops and ticks honest (UI-R1-07/10
   assert.ok(src.includes('{formatCount(max)}'), 'axis ticks use the tooltip number format');
   assert.ok(src.includes('role="group" aria-label={LANE_NAME[lane.key]}'), 'lane labels are named groups');
   assert.ok(src.includes("event.key === 'Home'") && src.includes("event.key === 'End'"));
-  assert.ok(src.includes('tickOffsets(shown, plotW'), 'time labels are thinned to the measured plot');
+  assert.ok(src.includes('axisTicks(shown, plotW'), 'time labels are thinned to the measured plot');
   assert.ok(src.includes('bind:clientWidth={plotW}'));
   assert.match(src, /@media \(max-width: 768px\)/);
   assert.ok(!src.includes('onclick={() => select'), 'no per-column click closures');

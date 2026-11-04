@@ -7,7 +7,7 @@ import type { TracingBucket } from './model';
 import type { SlotGrid } from './lanes';
 import type { LintEntry } from '../copy/copylint';
 import { slotAtFraction } from './tooltip';
-import { zoneOffsetMs } from '../chartTime';
+import { dayTicks, roundTicks, zoneOffsetMs } from '../chartTime';
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Zoom ranges. A ZoomRange is a half-open span of absolute bucket slot indices [from, to) into the lane's
@@ -199,16 +199,60 @@ function roundOffsets(shown: number, step: number, align: TickAlign): number[] {
   return offsets;
 }
 
+/** A time label: `offset` is its position in slots from the left of the visible range (a fraction when the time falls inside a slot), `ms` the time it names. */
+export interface AxisTick { offset: number; ms: number }
+
+const DAY_MS = 24 * HOUR_MS;
+/** Round clock steps for a window of a day or more, shortest first; longer gaps count whole calendar days from the first midnight. */
+const CLOCK_STEPS_MS = [3 * HOUR_MS, 6 * HOUR_MS, 12 * HOUR_MS];
+const DAY_STEPS = [1, 2, 3, 4, 7, 14, 28, 56, 112];
+
 /**
- * Offsets (0-based within the visible range) that get a time label. A later label that would hang past the right edge of the plot is dropped.
- * `widthPx` 0 means "not measured yet": only the count rule applies. With `align` the labels sit on round clock times (08:00, 09:00 ...) when the
- * slot width allows it; otherwise the first slot and every Nth slot after it carry one.
+ * Labels for a window of a day or more. Bars are whole buckets on an hour grid that rarely starts at midnight, so the labels are not tied
+ * to bar edges: each names a round time in the display zone (every 3, 6 or 12 hours, then midnight every 1, 2, 3, 4, 7 ... days) and sits where
+ * that time falls. The step is the smallest one at least `step` slots wide, so labels never crowd. Empty when no step is wide enough.
  */
-export function tickOffsets(shown: number, widthPx: number, labelChars: number, align?: TickAlign): number[] {
+function longTicks(shown: number, step: number, align: TickAlign): AxisTick[] {
+  const { startMs, widthMs, zone } = align;
+  const endMs = startMs + shown * widthMs;
+  const gapMs = step * widthMs;
+  const clock = CLOCK_STEPS_MS.find((ms) => ms >= gapMs);
+  let times: number[];
+  if (clock) times = roundTicks(startMs, endMs, clock, zone);
+  else {
+    const days = DAY_STEPS.find((d) => d * DAY_MS >= gapMs);
+    if (!days) return [];
+    times = dayTicks(startMs, endMs, days, zone);
+  }
+  return times.filter((ms) => ms >= startMs && ms < endMs).map((ms) => ({ offset: (ms - startMs) / widthMs, ms }));
+}
+
+/**
+ * The time labels, each with its position and the time it names. A later label that would hang past the right edge of the plot is dropped.
+ * `widthPx` 0 means "not measured yet": only the count rule applies. With `align`, labels sit on round clock times in the display zone:
+ * on bar edges below a day, on the round time itself (not tied to a bar edge) from a day up.
+ */
+export function axisTicks(shown: number, widthPx: number, labelChars: number, align?: TickAlign): AxisTick[] {
   if (shown < 1) return [];
   const step = tickStep(shown, widthPx, labelChars);
   const half = (Math.max(0, labelChars) * LABEL_PX_PER_CHAR) / 2;
   const fits = (k: number) => !(widthPx > 0 && k > 0 && (k / shown) * widthPx + half > widthPx + LABEL_OVERHANG_PX);
+  if (align && align.widthMs > 0 && shown * align.widthMs >= DAY_MS) {
+    const long = longTicks(shown, step, align).filter((tick) => fits(tick.offset));
+    if (long.length > 0) return long;
+  }
+  const startMs = align?.startMs ?? 0, widthMs = align?.widthMs ?? 0;
+  return slotTicks(shown, step, fits, align).map((k) => ({ offset: k, ms: startMs + k * widthMs }));
+}
+
+/** The slot offsets (0-based within the visible range) that get a time label; a label that lands inside a slot counts for that slot. */
+export function tickOffsets(shown: number, widthPx: number, labelChars: number, align?: TickAlign): number[] {
+  const slots = axisTicks(shown, widthPx, labelChars, align).map((tick) => Math.floor(tick.offset));
+  return slots.filter((slot, i) => i === 0 || slot !== slots[i - 1]);
+}
+
+/** Labels on bar edges: round clock slots when `align` allows it, otherwise the first slot and every Nth slot after it. */
+function slotTicks(shown: number, step: number, fits: (k: number) => boolean, align?: TickAlign): number[] {
   const round = align ? roundOffsets(shown, step, align) : [];
   if (round.length > 0) {
     const kept = round.filter(fits);
