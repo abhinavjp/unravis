@@ -7,6 +7,7 @@ import type { TracingBucket } from './model';
 import type { SlotGrid } from './lanes';
 import type { LintEntry } from '../copy/copylint';
 import { slotAtFraction } from './tooltip';
+import { zoneOffsetMs } from '../chartTime';
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 // Zoom ranges. A ZoomRange is a half-open span of absolute bucket slot indices [from, to) into the lane's
@@ -161,17 +162,61 @@ export function tickStep(shown: number, widthPx: number, labelChars: number): nu
   return Math.max(base, Math.ceil(needPx / slotPx));
 }
 
+/** Where the visible slots sit in time, so labels can land on round clock times in the display zone. */
+export interface TickAlign { startMs: number; widthMs: number; zone: string }
+
+const MINUTE_MS = 60_000, HOUR_MS = 60 * MINUTE_MS;
+/** Round clock steps a label may land on, shortest first (a day is the longest: later steps have no natural boundary). */
+const ROUND_STEPS_MS = [MINUTE_MS, 2 * MINUTE_MS, 5 * MINUTE_MS, 10 * MINUTE_MS, 15 * MINUTE_MS, 30 * MINUTE_MS, HOUR_MS, 2 * HOUR_MS, 3 * HOUR_MS, 6 * HOUR_MS, 12 * HOUR_MS, 24 * HOUR_MS];
+
 /**
- * Offsets (0-based within the visible range) that get a time label. The first slot always has one; a later label that
- * would hang past the right edge of the plot is dropped. `widthPx` 0 means "not measured yet": only the count rule applies.
+ * The slots (0-based within the visible range) whose start falls on a round clock time, with at least `step` slots between labels.
+ * The round step is the smallest one that is wide enough and is a whole number of slots. Empty when there is none.
  */
-export function tickOffsets(shown: number, widthPx: number, labelChars: number): number[] {
+function roundOffsets(shown: number, step: number, align: TickAlign): number[] {
+  const { startMs, widthMs, zone } = align;
+  if (!(widthMs > 0)) return [];
+  const unit = ROUND_STEPS_MS.find((ms) => ms >= step * widthMs && ms % widthMs === 0);
+  if (!unit) return [];
+  const lastMs = startMs + (shown - 1) * widthMs;
+  const firstOffset = zoneOffsetMs(startMs, zone);
+  const steady = firstOffset === zoneOffsetMs(lastMs, zone);
+  // The window starts on a whole hour (or on the step itself) that the step's own grid misses (15:00 with a 2 hour step):
+  // keep the label on the start and count the step from there, so the start is never left unlabeled.
+  if (steady && ((firstOffset + startMs) % unit + unit) % unit !== 0 && ((firstOffset + startMs) % Math.min(unit, HOUR_MS) + Math.min(unit, HOUR_MS)) % Math.min(unit, HOUR_MS) === 0) {
+    const gap = unit / widthMs;
+    const anchored: number[] = [];
+    for (let k = 0; k < shown; k += gap) anchored.push(k);
+    return anchored;
+  }
+  const offsets: number[] = [];
+  for (let k = 0; k < shown; k += 1) {
+    const at = startMs + k * widthMs;
+    // A clock change inside the range moves the local time, so each slot is read in the zone then.
+    const local = at + (steady ? firstOffset : zoneOffsetMs(at, zone));
+    if (((local % unit) + unit) % unit === 0) offsets.push(k);
+  }
+  return offsets;
+}
+
+/**
+ * Offsets (0-based within the visible range) that get a time label. A later label that would hang past the right edge of the plot is dropped.
+ * `widthPx` 0 means "not measured yet": only the count rule applies. With `align` the labels sit on round clock times (08:00, 09:00 ...) when the
+ * slot width allows it; otherwise the first slot and every Nth slot after it carry one.
+ */
+export function tickOffsets(shown: number, widthPx: number, labelChars: number, align?: TickAlign): number[] {
   if (shown < 1) return [];
   const step = tickStep(shown, widthPx, labelChars);
   const half = (Math.max(0, labelChars) * LABEL_PX_PER_CHAR) / 2;
+  const fits = (k: number) => !(widthPx > 0 && k > 0 && (k / shown) * widthPx + half > widthPx + LABEL_OVERHANG_PX);
+  const round = align ? roundOffsets(shown, step, align) : [];
+  if (round.length > 0) {
+    const kept = round.filter(fits);
+    if (kept.length > 0) return kept;
+  }
   const offsets: number[] = [];
   for (let k = 0; k < shown; k += step) {
-    if (widthPx > 0 && k > 0 && (k / shown) * widthPx + half > widthPx + LABEL_OVERHANG_PX) break;
+    if (!fits(k)) break;
     offsets.push(k);
   }
   return offsets;

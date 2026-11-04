@@ -70,6 +70,33 @@ async function token(page: Page, name: string): Promise<string> {
   }, name);
 }
 
+/**
+ * Wait until the chart layout has settled: bars and lane heads are visible, fonts are loaded, and the overlay, panel and column
+ * geometry is identical across two consecutive samples, each taken two animation frames apart. No fixed sleeps, no timing limits.
+ */
+async function layoutSettled(page: Page): Promise<void> {
+  await expect(page.locator('.panel[data-lane=audit] .bar').first()).toBeVisible();
+  await expect(page.locator('.lane-label').first()).toBeVisible();
+  await expect(columns(page)).toHaveCount(SLOTS);
+  let previous = '';
+  await expect.poll(async () => {
+    const signature = await page.evaluate(async () => {
+      await document.fonts.ready;
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      const r2 = (e: Element) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.width, r.height].map((n) => n.toFixed(2)).join(','); };
+      const overlay = document.querySelector('.overlay');
+      return JSON.stringify({
+        overlay: overlay ? r2(overlay) : '',
+        panels: Array.from(document.querySelectorAll('.panel[data-lane]')).map(r2),
+        cols: Array.from(document.querySelectorAll('.overlay .column')).map(r2)
+      });
+    });
+    const same = signature === previous;
+    previous = signature;
+    return same;
+  }, { message: 'the timeline layout settles' }).toBe(true);
+}
+
 const selectedIndex = (page: Page) => page.evaluate(() => Array.from(document.querySelectorAll('.overlay .column')).findIndex((c) => c.classList.contains('selected')));
 
 test.beforeEach(async ({ page }) => {
@@ -345,6 +372,7 @@ test('HAND-16: case home matches the wireframe order and button styles', async (
 
 test('HAND-17: the timeline screen matches the wireframe: region order, lane order, shared time axis, token colours', async ({ page }) => {
   await startTracing(page);
+  await layoutSettled(page);
   // Top to bottom: windows, toolbar, canvas bar, the three lanes, time axis, caption.
   const order = ['[data-region=windows]', '[data-region=toolbar]', '.canvas-bar', '.panel[data-lane=audit]', '.panel[data-lane=sql]', '.panel[data-lane=iis]', '.axisrow', '.axcap'];
   const ys = await page.evaluate((sels) => sels.map((s) => document.querySelector(s)?.getBoundingClientRect().top ?? -1), order);

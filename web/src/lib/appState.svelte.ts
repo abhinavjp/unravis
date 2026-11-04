@@ -443,7 +443,8 @@ export async function initialize() {
   try {
     info = await api.info();
     // A reload keeps the case this tab was working in, so its theories stay in view (the demo has a case of its own).
-    if (activeCaseId) setLedgerCase(activeCaseId);
+    // When the tab was on the case page, that page reads the theories itself once it knows the case is not archived (an archived case answers 409).
+    if (activeCaseId) setLedgerCase(activeCaseId, storedCaseView() === '');
     pendingInvestigation =readInvestigationSnapshot(undefined, info.demo ? 'demo' : 'live');
     const asked = keeperPreview();
     const loaded = (await api.sources(asked)) ?? [];

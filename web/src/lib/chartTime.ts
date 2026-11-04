@@ -2,7 +2,7 @@
  * Every timestamp a chart draws goes through this file. When the shared formatter in lib/time.ts (formatTime) lands, swap the body of
  * chartTime here and nothing else changes: charts, tooltips and the text under them all call chartTime / chartRange.
  */
-import { zoneAbbreviation } from './time';
+import { timeParts, zoneAbbreviation } from './time';
 export interface ChartTimeOptions { /** Print the day and month. Default true. */ date?: boolean; /** Print seconds. Default true. */ seconds?: boolean; /** Print the zone after the time. Default true. */ zone?: boolean; /** Print the clock. Default true; false gives the day only. */ time?: boolean }
 
 const formatters = new Map<string, Intl.DateTimeFormat>();
@@ -28,6 +28,16 @@ export function chartTime(value: number | string | Date, zone: string, options: 
   const label = withZone ? ' ' + zoneAbbreviation(zone, ms) : '';
   if (!time) return part.day + ' ' + part.month + label;
   return (date ? part.day + ' ' + part.month + ' ' : '') + clock + label;
+}
+
+/**
+ * True when a chart's labels should print the year: the span crosses a year boundary in the zone, or it sits in a year other than the current one.
+ * `endMs` is the last instant shown (pass the exclusive end minus one). Anything unreadable gives false (the compact form).
+ */
+export function needsYear(startMs: number, endMs: number, zone: string, nowMs: number = Date.now()): boolean {
+  const first = timeParts(startMs, zone, 'minute'), last = timeParts(endMs, zone, 'minute'), now = timeParts(nowMs, zone, 'minute');
+  if (!first || !last || !now) return false;
+  return first.year !== last.year || first.year !== now.year;
 }
 
 const dayKey = (ms: number, zone: string) => { const p = partsFormatter(zone, false).formatToParts(new Date(ms)); return p.find(i => i.type === 'day')?.value + ' ' + p.find(i => i.type === 'month')?.value; };

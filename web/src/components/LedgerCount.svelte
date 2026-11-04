@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ledger, refreshLedger } from '../lib/ledgerStore.svelte';
+  import { app } from '../lib/appState.svelte';
 
   // The small count shown on the header Ledger button once there is at least one hypothesis.
-  onMount(() => { if (!ledger.loaded) refreshLedger().catch(() => {}); });
+  // On a case page the page reads the theories itself (an archived case answers 409, so the header does not ask first).
+  onMount(() => { if (!ledger.loaded && app.screen !== 'case') refreshLedger().catch(() => {}); });
   const count = $derived(ledger.items.length);
 </script>
 

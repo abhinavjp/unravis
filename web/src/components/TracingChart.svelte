@@ -9,6 +9,7 @@
     outsideSlots, showsProvenance, slotGrid, slotOutside, slotStartMs, truncatedNote, type Bar
   } from '../lib/tracing/lanes';
   import { formatTime } from '../lib/time';
+  import { needsYear } from '../lib/chartTime';
   import { formatDuration } from '../lib/format';
   import { TOOLTIP_TEXT, barTipLines, formatCount, isTouchPointer, laneHint } from '../lib/tracing/tooltip';
   import {
@@ -31,9 +32,10 @@
     iis: 'background: var(--lane-iis)'
   };
 
-  const at = (value: string | number): string => formatTime(value, { zone, precision: 'minute' });
-
   const grid = $derived(slotGrid(response.window));
+  // The year is printed when the window is not in the current year or spans two years; otherwise the compact form stays.
+  const showYear = $derived(grid ? needsYear(grid.firstMs, grid.firstMs + grid.n * grid.widthMs - 1, zone) : false);
+  const at = (value: string | number): string => formatTime(value, { zone, precision: 'minute', year: showYear });
   const orderedLanes = $derived(
     LANE_ORDER.filter((key) => isLaneVisible(visible, key))
       .map((key) => response.lanes.find((lane) => lane.key === key))
@@ -79,7 +81,7 @@
   const outside = $derived(grid ? outsideSlots(grid, range.from, range.to) : []);
   let plotW = $state(0);
   const tickLabelChars = $derived(grid && shown > 0 ? at(slotStartMs(grid, range.from)).length : 0);
-  const tickIndexes = $derived(tickOffsets(shown, plotW, tickLabelChars).map((k) => range.from + k));
+  const tickIndexes = $derived(tickOffsets(shown, plotW, tickLabelChars, grid && shown > 0 ? { startMs: slotStartMs(grid, range.from), widthMs: grid.widthMs, zone } : undefined).map((k) => range.from + k));
   const caption = $derived(grid ? axisCaption(zone, response.window.bucketSeconds, outside.length > 0) : '');
 
   // The selected bucket; one that scrolls out of the zoomed range is dropped, not left pointing at a hidden bar.
@@ -482,9 +484,10 @@
 
 <style>
   .tracing-chart { display: grid; gap: var(--space-3); min-width: 0; }
-  .notice { display: grid; gap: var(--space-1); margin: 0; padding: var(--space-3); color: var(--text); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-3); }
+  /* The note banner follows the wireframe: a warm tint, a thick amber edge on the left, a bold lead line. */
+  .notice { display: grid; gap: var(--space-1); margin: 0; padding: var(--space-3) var(--space-4); color: var(--text); background: color-mix(in srgb, var(--warn) 9%, var(--surface)); border: var(--hairline-width) solid var(--line); border-left: var(--space-1) solid var(--warn); border-radius: var(--radius-sm); font-size: var(--fs-3); }
   .notice p { margin: 0; }
-  .mixed-title { font-size: var(--fs-4); }
+  .mixed-title { font-size: var(--fs-4); font-weight: 700; }
   .muted { color: var(--text-2); }
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 

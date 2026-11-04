@@ -14,7 +14,8 @@
   // The Investigation Timeline screen shell (WP-16b): one request on open, a loading state with Cancel, a plain
   // error with Try again, and four stable regions (windows, toolbar, chart, notes) that later packets fill in.
   // `readOnly` disables the window inputs and Start tracing (read in the template below).
-  let { caseId, closed = false, readOnly = false, onClose }: { caseId: string; closed?: boolean; readOnly?: boolean; onClose: () => void } = $props();
+  // `title` names the case being traced (shown as text under the heading).
+  let { caseId, title = '', closed = false, readOnly = false, onClose }: { caseId: string; title?: string; closed?: boolean; readOnly?: boolean; onClose: () => void } = $props();
 
   type Status = 'idle' | 'loading' | 'ready' | 'error';
   let status = $state<Status>('idle');
@@ -140,6 +141,7 @@
 
 <section class="tracing-paper" aria-labelledby="tp-title">
   <h2 id="tp-title">{TRACING_TEXT.heading}</h2>
+  {#if title}<p class="case-name" data-testid="tp-case-name">{title}</p>{/if}
   <div class="actions"><button type="button" class="secondary-button" onclick={onClose}>{TRACING_TEXT.backToCase}</button></div>
 
   <div data-region="windows" class="windows">
@@ -183,7 +185,8 @@
         <span class="error-icon" aria-hidden="true">!</span>
         <div class="error-body">
           <p role="status">{errorText}</p>
-          <button type="button" class="secondary-button" onclick={() => void keepFocusInChart(() => void run(lastBody ?? undefined))}>{TRACING_TEXT.retry}</button>
+          <!-- A closed case sends no request, so there is nothing to try again. -->
+          {#if !closed}<button type="button" class="secondary-button" onclick={() => void keepFocusInChart(() => void run(lastBody ?? undefined))}>{TRACING_TEXT.retry}</button>{/if}
         </div>
       </div>
     {:else if status === 'loading' && !result}
@@ -223,6 +226,7 @@
     display: grid;
     gap: 16px;
   }
+  .case-name { margin: calc(var(--space-1) * -1) 0 0; color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
   .windows { display: grid; gap: var(--space-2); }
   .window-form { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
   .window-set { display: flex; flex-wrap: wrap; gap: var(--space-2); min-width: 0; margin: 0; padding: var(--space-2) var(--space-3); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
@@ -237,6 +241,12 @@
   .cancel-note, .empty-hint { margin: 0 0 var(--space-2); color: var(--text-2); font-size: var(--fs-2); }
   /* Touch targets on a tablet, a phone and any touch screen: the date boxes are 40 px high too. */
   @media (max-width: 1024px), (pointer: coarse) { .window-field input { min-height: 40px; } }
+  /* A phone: each date box fills the row, level with the buttons below it. */
+  @media (max-width: 720px) {
+    .window-set { flex: 1 1 100%; }
+    .window-field { flex: 1 1 100%; }
+    .window-field input { width: 100%; box-sizing: border-box; }
+  }
   .chart-region:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .error-panel { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3) var(--space-4); background: var(--surface-2); border: var(--hairline-width) solid var(--bad); border-left-width: var(--space-1); border-radius: var(--radius-sm); }
   .error-icon { flex: none; width: var(--space-5); height: var(--space-5); border-radius: 50%; background: var(--bad); color: var(--bg); font-weight: 700; line-height: var(--space-5); text-align: center; }

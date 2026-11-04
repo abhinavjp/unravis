@@ -67,6 +67,8 @@
   const guidedOpen = $derived(guidedOpenFor(guidedFor, caseId));
   // The case the Investigation Timeline is open on. The app holds it (not this page) so the browser's Back and Forward and a reload can open and close it.
   const tracingOpen = $derived(!!caseId && app.tracingCase === caseId);
+  // An archived case has no timeline (its files cannot be read). A reload or Back and Forward that lands on its timeline returns to the case page.
+  $effect(() => { if (phase === 'ready' && tracingOpen && isArchived) closeTracing(); });
   let controller: AbortController | null = null;
   let loadedFor = '';
 
@@ -364,7 +366,7 @@
   const kindLabel = { case: CASE_HOME_TEXT.kindCase, file: CASE_HOME_TEXT.kindFile, health: CASE_HOME_TEXT.kindHealth, theory: CASE_HOME_TEXT.kindTheory } as const;
 </script>
 
-<div class="case-home">
+<div class="case-home" class:wide={tracingOpen && !isArchived}>
   <div class="top">
     <button type="button" class="secondary-button" aria-label={CASE_HOME_TEXT.backLabel} onclick={goHome}>&larr; {CASE_HOME_TEXT.back}</button>
   </div>
@@ -394,9 +396,9 @@
     </section>
   {:else if view === 'key'}
     <CaseKeyPage {caseId} status={keyStatus} masterState={app.lockState} onChanged={keyChanged} onCancel={() => void backFromDialog()} />
-  {:else if tracingOpen}
+  {:else if tracingOpen && !isArchived}
     {#key caseId}
-      <TracingPaper {caseId} closed={!!info?.closed} {readOnly} onClose={leaveTracing} />
+      <TracingPaper {caseId} title={info?.title || caseCode(caseId)} closed={!!info?.closed} {readOnly} onClose={leaveTracing} />
     {/key}
   {:else if guidedOpen}
     {#key caseId}
@@ -592,6 +594,8 @@
 
 <style>
   .case-home { display: grid; gap: 20px; max-width: 880px; margin: 0 auto; padding: 8px 0 48px; }
+  /* The Investigation Timeline needs room for its plot; the other pages of the case keep the narrow column. */
+  .case-home.wide { max-width: 1232px; }
   .top { display: flex; }
   .head h2 { margin: 2px 0 6px; font-size: 24px; overflow-wrap: anywhere; }
   .eyebrow { margin: 0; color: var(--text-2); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; }

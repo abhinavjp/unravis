@@ -28,7 +28,7 @@ export function holdLedger(caseId: string, hold: boolean): void {
  * Points the ledger at another case's theories. The list, the drafts and the open entry belong to one case, so they are put away; the new
  * case's theories are read in the background. Pointing at the same case again does nothing.
  */
-export function setLedgerCase(caseId: string): void {
+export function setLedgerCase(caseId: string, read = true): void {
   if (ledger.caseId === caseId) return;
   ledger.caseId = caseId;
   ledger.items = [];
@@ -37,7 +37,7 @@ export function setLedgerCase(caseId: string): void {
   ledger.openId = null;
   ledger.newText = '';
   inflight = null;
-  if (caseId) void refreshLedger().catch(() => { /* the panel that shows the theories asks again and shows the reason */ });
+  if (caseId && read) void refreshLedger().catch(() => { /* the panel that shows the theories asks again and shows the reason */ });
 }
 
 /** Reads the saved entries. Existing drafts are kept; entries with no draft get a fresh editor. Rejects with the API error. */
