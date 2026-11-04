@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"testing"
 
+	"api-audit-explorer/internal/calltrace"
 	"api-audit-explorer/internal/casestore"
 )
 
@@ -34,6 +35,10 @@ func TestTracingWarningsKeepEveryGroup(t *testing.T) {
 				if l := tracingLaneOf(t, out, key); !l.AsOf.Equal(out.AsOf) {
 					t.Errorf("%s asOf %v differs from the answer asOf %v", key, l.AsOf, out.AsOf)
 				}
+			}
+			// The listing failure keeps an incomplete audit lane in the answer.
+			if l := tracingLaneOf(t, out, "audit"); l.State != calltrace.StateIncomplete || l.Complete || l.ReasonCode != "error" {
+				t.Errorf("audit lane %+v, want incomplete with reason code error", l)
 			}
 		})
 	}

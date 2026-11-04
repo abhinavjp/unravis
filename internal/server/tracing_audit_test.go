@@ -115,16 +115,15 @@ func TestAuditLaneBucketsFromRollup(t *testing.T) {
 
 func TestAuditLaneOneAggregateCall(t *testing.T) {
 	short := newTracingAxis(auditT0, auditT0.Add(time.Hour))
-	longStart := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
-	long := newTracingAxis(longStart, longStart.Add(29*24*time.Hour))
-	if long.WidthMs != 6*3600000 {
-		t.Fatalf("long axis width %d", long.WidthMs)
+	day := newTracingAxis(auditT0, auditT0.Add(24*time.Hour))
+	if day.WidthMs > 3600000 {
+		t.Fatalf("24 h axis width %d", day.WidthMs)
 	}
 	for _, c := range []struct {
 		name string
 		axis tracingAxis
 		want time.Duration
-	}{{"60 s", short, time.Minute}, {"6 h", long, time.Hour}} {
+	}{{"60 s", short, time.Minute}, {"24 h", day, time.Duration(day.WidthMs) * time.Millisecond}} {
 		f := &auditFake{}
 		ids := []string{"a1", "a2", "a3"}
 		readAuditLane(context.Background(), f, ids, c.axis, auditClock(auditT0))
@@ -143,6 +142,22 @@ func TestAuditLaneOneAggregateCall(t *testing.T) {
 		}
 		if p.SlowMs != audit.DefaultRollupSlowMs {
 			t.Errorf("%s: slowMs %v", c.name, p.SlowMs)
+		}
+	}
+	// A window over 24 h reads one hour-slot chunk of at most 24 h at a time.
+	longStart := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	long := newTracingAxis(longStart, longStart.Add(29*24*time.Hour))
+	if long.WidthMs != 6*3600000 {
+		t.Fatalf("long axis width %d", long.WidthMs)
+	}
+	f := &auditFake{}
+	readAuditLane(context.Background(), f, []string{"a1", "a2", "a3"}, long, auditClock(auditT0))
+	if len(f.plans) != 29 {
+		t.Fatalf("29 d: %d Rollup calls, want 29", len(f.plans))
+	}
+	for i, p := range f.plans {
+		if p.Width != time.Hour || p.To.Sub(p.From) > 24*time.Hour || strings.Join(p.SourceIDs, ",") != "a1,a2,a3" {
+			t.Errorf("29 d call %d: %+v", i, p)
 		}
 	}
 }
@@ -589,7 +604,7 @@ func TestTracingCancelledRequestLeaksNoLaneError(t *testing.T) {
 }
 
 func TestAuditSourceIDsListingFailure(t *testing.T) {
-	const warning = "The audit sources could not be listed, so the audit lane is not shown."
+	const warning = "The audit sources could not be listed, so the audit lane was not read."
 	f := &auditFake{listErr: errors.New("mongodb://u:hunter2@host")}
 	e, id := auditHandlerEnv(t, f)
 	for _, body := range []string{tracingBody(""), tracingBody(`"sourceIds":["a1"]`)} {
@@ -600,8 +615,12 @@ func TestAuditSourceIDsListingFailure(t *testing.T) {
 				found = true
 			}
 		}
-		if !found || laneKeys(out) != "sql,iis" || len(f.plans) != 0 || strings.Contains(raw, "hunter2") {
+		if !found || laneKeys(out) != "audit,sql,iis" || len(f.plans) != 0 || strings.Contains(raw, "hunter2") {
 			t.Errorf("%s: warnings %v lanes %s plans %d", body, out.Warnings, laneKeys(out), len(f.plans))
+		}
+		lane := tracingLaneOf(t, out, "audit")
+		if lane.State != calltrace.StateIncomplete || lane.Complete || lane.ReasonCode != "error" || lane.Reason != warning || len(lane.Buckets) != 0 {
+			t.Errorf("%s: audit lane %+v", body, lane)
 		}
 	}
 	// An empty listing: no lane, no warning.

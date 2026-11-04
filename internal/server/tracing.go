@@ -184,6 +184,10 @@ type tracingSelection struct {
 	AuditIDs []string
 	Explicit bool
 	Warnings []string
+	// SavedAudit are the names of the audit-class Mongo databases the case saved
+	// (tags with no file behind them), in saved order. Only read when the request
+	// reads tags or names an audit source; they are never refs.
+	SavedAudit []string
 }
 
 type tracingFailure struct {
@@ -235,6 +239,8 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 			needTags = true
 		case "imp":
 			needImports = true
+		default:
+			needTags = true // an audit id: the saved audit databases are listed too
 		}
 	}
 
@@ -249,6 +255,9 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 			}
 			for _, t := range tags {
 				tagByID[t.ID] = t
+				if t.Kind == mongoDatabaseKind && t.Classification == casestore.ClassAudit && strings.TrimSpace(t.Label) != "" {
+					sel.SavedAudit = append(sel.SavedAudit, t.Label)
+				}
 			}
 		}
 		// A case that cannot hold tags has none: a cs_ id then falls through to
@@ -297,6 +306,11 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 	linked := map[int64]bool{}
 	refs := make([]tracingRef, 0, len(tags)+len(imports))
 	for _, t := range tags {
+		if t.Kind == mongoDatabaseKind {
+			// A saved audit database is not a file: it is listed with the live audit
+			// sources (SavedAudit), and is never a "source with no file yet".
+			continue
+		}
 		sid := tracingTagID(t.ID)
 		refs = append(refs, tracingRef{SourceID: sid, Label: tracingLabel(t.Label, t.Kind)})
 		sel.ImportOf[sid] = t.ImportID
@@ -376,6 +390,19 @@ type tracingLane struct {
 	Buckets     []tracingBucket `json:"buckets"`
 	Events      []tracingEvent  `json:"events"`
 	Hidden      int             `json:"hidden"`
+	// ChunksTotal, ChunksRead and ReadThrough are set only on an audit lane whose
+	// window was read in chunks of at most one day (a window over 24 hours).
+	// ChunksRead of ChunksTotal chunks finished (a missing ChunksRead is 0);
+	// ReadThrough is the end of the last finished chunk, set when the read stopped
+	// early. Cells that end after it carry complete false.
+	ChunksTotal int        `json:"chunksTotal,omitempty"`
+	ChunksRead  int        `json:"chunksRead,omitempty"`
+	ReadThrough *time.Time `json:"readThrough,omitempty"`
+	// SourcesRead are the live audit sources this lane read to the end (the audit
+	// lane only). SavedNotConnected are the audit databases the case saved that no
+	// open connection carries, by saved name (the audit lane only).
+	SourcesRead       []tracingRef `json:"sourcesRead,omitempty"`
+	SavedNotConnected []string     `json:"savedNotConnected,omitempty"`
 }
 
 type tracingResponse struct {
@@ -389,6 +416,12 @@ type tracingResponse struct {
 	Warnings         []string      `json:"warnings"`
 	Sources          []tracingRef  `json:"sources"`
 	Lanes            []tracingLane `json:"lanes"`
+	// AuditSources are the live audit sources open in the process (the whole
+	// listing, not only the ones this request read); SavedNotConnected are the
+	// audit databases the case saved that no open connection carries. Both are left
+	// out when the request did not list audit sources.
+	AuditSources      []tracingRef `json:"auditSources,omitempty"`
+	SavedNotConnected []string     `json:"savedNotConnected,omitempty"`
 }
 
 // tracingLaneRank orders lanes in the answer: audit, sql, iis, then any other.
@@ -874,9 +907,9 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 		return
 	}
 	// Audit sources are checked against the listing before anything is read. An
-	// unlisted explicit id is a 404; a listing failure only drops the audit lane
-	// (a warning below). No id or error text is kept.
-	auditRefs, auditWarn, auditErr := selectAuditSources(ctx, h.repo, sel.Explicit, sel.AuditIDs)
+	// unlisted explicit id is a 404; a listing failure gives an incomplete audit
+	// lane plus a warning (below). No id or error text is kept.
+	auditRefs, auditItems, auditWarn, auditErr := selectAuditSourcesListed(ctx, h.repo, sel.Explicit, sel.AuditIDs)
 	if errors.Is(auditErr, errUnknownAuditSource) {
 		writeCaseFailure(w, http.StatusNotFound, "unknown-source", tracingUnknownMsg)
 		return
@@ -902,11 +935,24 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 	for _, lane := range lanes {
 		appendLane(&resp, lane)
 	}
+	// The open audit sources and the saved audit databases no open connection
+	// carries. Both need the audit listing, so a request that made no listing call
+	// (only case files named) leaves them out.
+	var savedNot []string
+	if auditErr == nil && (auditItems != nil || !sel.Explicit) {
+		resp.AuditSources = auditListingRefs(auditItems)
+		savedNot = savedNotConnectedNames(sel.SavedAudit, auditItems)
+		resp.SavedNotConnected = savedNot
+	}
 	// The selection warnings come first, then the lane ones, then the audit ones.
 	resp.Warnings = append(append(make([]string, 0, len(sel.Warnings)+len(warns)+2), sel.Warnings...), warns...)
 	switch {
 	case auditErr != nil:
 		resp.Warnings = append(resp.Warnings, tracingAuditListWarn)
+		// The lane stays in the answer, empty and incomplete, so the window is not
+		// mistaken for one that simply found nothing.
+		lane := auditLaneToWire(auditFailure(time.Now().UTC(), auditCodeError, tracingAuditListWarn), nil)
+		appendLane(&resp, lane)
 	case len(auditRefs) > 0:
 		if auditWarn != "" {
 			resp.Warnings = append(resp.Warnings, auditWarn)
@@ -922,7 +968,13 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 		if r.Context().Err() != nil {
 			return // the client went away; nothing to write
 		}
-		appendLane(&resp, auditLaneToWire(read, auditRefs))
+		lane := auditLaneToWire(read, auditRefs)
+		lane.SavedNotConnected = savedNot
+		appendLane(&resp, lane)
+	case len(savedNot) > 0:
+		// The case saved audit databases but none is open: the lane says so instead
+		// of leaving the audit rows out as if nothing had been asked.
+		appendLane(&resp, auditSavedOnlyLane(now, savedNot))
 	}
 	finishTracingMeta(&resp)
 	writeJSON(w, http.StatusOK, resp, maxResponseBytes)
