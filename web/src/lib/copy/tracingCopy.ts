@@ -17,7 +17,7 @@ export const TRACING_TEXT = {
   tracing: 'Tracing...',
   chartLabel: 'Timeline chart',
   emptyNoSources: 'No files have been added to this case yet. Add a source first.',
-  closedReason: CLOSED_REASON,
+  closedView: 'This case is closed. You can look at the timeline but not change the case.',
 
   errBadWindow: 'The window or bucket size is not allowed.',
   errLocked: 'Unlock the case key to trace.',

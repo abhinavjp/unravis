@@ -363,3 +363,8 @@ test('the chart toolbar and hint are hidden while there is nothing to show (UI-R
   const src = read('src/components/TracingChart.svelte');
   assert.match(src, /\{#if grid && hasData\}/);
 });
+
+test('the SQL panel title claims only slow calls, because SQL data carries no errors (UI-R3-01)', () => {
+  assert.equal(PANEL_TITLE.sql, 'Slow database calls (over 1 s)');
+  assert.doesNotMatch(PANEL_TITLE.sql, /failed/i);
+});

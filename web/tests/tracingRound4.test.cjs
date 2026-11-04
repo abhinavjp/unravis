@@ -112,14 +112,15 @@ test('a clock change inside the range keeps labels on local round hours', () => 
 // UI-R4-01
 test('an archived case restored into the timeline returns to the case page', () => {
   const home = read('src/lib/components/CaseHome.svelte');
-  assert.match(home, /\$effect\(\(\) => \{ if \(phase === 'ready' && tracingOpen && \(isArchived \|\| isClosed\)\) closeTracing\(\); \}\);/);
-  assert.match(home, /const timelineShown = \$derived\(tracingOpen && !isArchived && !isClosed\);/);
+  assert.match(home, /\$effect\(\(\) => \{ if \(phase === 'ready' && tracingOpen && isArchived\) closeTracing\(\); \}\);/);
+  assert.match(home, /const timelineShown = \$derived\(tracingOpen && !isArchived\);/);
   assert.match(home, /\{:else if timelineShown\}/);
 });
-test('a closed case keeps its read-only timeline and has no Try again', () => {
+test('a closed case reads the timeline like an open one: it still has Try again and sends the request (UI-R2-03)', () => {
   const paper = read('src/components/TracingPaper.svelte');
-  assert.match(paper, /\{#if !closed\}<button.*>\{TRACING_TEXT\.retry\}<\/button>\{\/if\}/);
-  assert.match(paper, /if \(closed\) \{\s*status = 'error';/);
+  assert.match(paper, /<button type="button" class="secondary-button" onclick=\{\(\) => void keepFocusInChart\(\(\) => void run\(lastBody \?\? undefined\)\)\}>\{TRACING_TEXT\.retry\}<\/button>/);
+  assert.doesNotMatch(paper, /\{#if !closed\}<button/);
+  assert.doesNotMatch(paper, /if \(closed\) \{\s*status = 'error';/);
 });
 
 // UI-R4-08

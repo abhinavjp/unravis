@@ -1,12 +1,13 @@
-import { CODE_NOT_FOUND } from './copy/enterCopy';
+import { CODE_ARCHIVED, CODE_NOT_FOUND } from './copy/enterCopy';
 
 /**
  * Entering a case by its code. Pure: no DOM; the one request is passed in. The 26-character case id is the code.
  * Every code that does not open a case (too short, too long, wrong characters, unknown, erased, locked, no network) reads as the same
  * sentence, so the screen never reveals which case ids exist on this computer.
+ * The one exception (UI-R5-03): the server answers 409 case-archived to the code of an archived case, and then the screen says so.
  */
 
-export { CODE_NOT_FOUND };
+export { CODE_ARCHIVED, CODE_NOT_FOUND };
 
 /** The case id shape (the same as cases.ts CASE_ID_PATTERN, kept here so this file stays free of the request code). */
 export const CODE_PATTERN = /^[a-z2-7]{26}$/;
@@ -59,6 +60,8 @@ export async function resolveCode(input: string, check: (id: string) => Promise<
     // A legacy case an older version made answers "untrusted-case": the code is right, and its page offers Restore and Erase.
     const reason = error && typeof error === 'object' ? (error as { reason?: unknown }).reason : undefined;
     if (reason === 'case-locked' || reason === 'untrusted-case') return { ok: true, id };
+    // An archived case answers 409: the code is right, but the case opens from the Saved cases list, not from here.
+    if (reason === 'case-archived') return { ok: false, message: CODE_ARCHIVED };
     return { ok: false, message: CODE_NOT_FOUND };
   }
 }

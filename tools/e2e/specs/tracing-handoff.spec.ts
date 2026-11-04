@@ -315,13 +315,17 @@ test('HAND-12: keyboard only, arrows move between slots, Enter hands off the sel
   await expect(page.getByText(showing(12), { exact: true }).first()).toBeVisible();
 });
 
-test('HAND-13: a closed case keeps Analysis, the timeline entry is disabled and says why', async ({ page }) => {
+test('HAND-13: a closed case keeps Analysis and opens the timeline as a viewer with one closed line (UI-R2-03)', async ({ page }) => {
   await openCase(page, 'Night batch overrun, 10 October');
   await expect(page.locator('#home-analysis')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open the analysis' })).toBeEnabled();
   await expect(page.locator('#home-tracing')).toBeVisible();
-  await expect(page.locator('#home-tracing-open')).toBeDisabled();
-  await expect(page.locator('section[aria-labelledby=home-tracing]')).toContainText('This case is closed. You can read it, but nothing can be added.');
+  await expect(page.locator('#home-tracing-open')).toBeEnabled();
+  await page.locator('#home-tracing-open').click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Investigation Timeline' })).toBeVisible();
+  await expect(page.getByTestId('tp-closed-line')).toHaveText('This case is closed. You can look at the timeline but not change the case.');
+  await expect(page.getByRole('button', { name: 'Back to the case' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to the case' }).click();
   await expect(page.getByRole('heading', { name: /guided/i })).toHaveCount(0);
 });
 

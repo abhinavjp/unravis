@@ -664,7 +664,8 @@ func safeReferer(v string) (string, bool) {
 		return "", false
 	}
 	// A server address says which machine the visitor came from; store nothing.
-	if _, err := netip.ParseAddr(u.Hostname()); err == nil {
+	host := u.Hostname()
+	if _, err := netip.ParseAddr(host); err == nil || numericHost(host) {
 		return "", false
 	}
 	// Matrix parameters (";jsessionid=...") can carry a session id.
@@ -674,6 +675,23 @@ func safeReferer(v string) (string, bool) {
 		return "", false
 	}
 	return out, true
+}
+
+// numericHost reports whether host would be read by a browser as an IPv4
+// address in a non-canonical form ("2130706433", "0x7f.1", "0177.0.0.1",
+// "127.1", "1.2.3"). A real hostname's last label is never all digits or a
+// 0x-prefixed hex number, so that label is the test. A single trailing dot is
+// ignored.
+func numericHost(host string) bool {
+	host = strings.TrimSuffix(host, ".")
+	last := host[strings.LastIndexByte(host, '.')+1:]
+	if last == "" {
+		return false
+	}
+	if rest, ok := strings.CutPrefix(strings.ToLower(last), "0x"); ok {
+		return strings.Trim(rest, "0123456789abcdef") == ""
+	}
+	return strings.Trim(last, "0123456789") == ""
 }
 
 type cookiePair struct{ Name, Value string }

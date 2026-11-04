@@ -86,7 +86,7 @@ test('TRACE-02: three lanes in order with plain labels, one shared UTC axis and 
   await expect(heads.nth(2).locator('.origin')).toContainText('From saved logs');
   // Panel titles name what is plotted.
   await expect(page.locator('.panel[data-lane=audit] .panel-title')).toHaveText('How many requests, and how slow they were');
-  await expect(page.locator('.panel[data-lane=sql] .panel-title')).toHaveText('Slow database calls (over 1 s) and failed calls');
+  await expect(page.locator('.panel[data-lane=sql] .panel-title')).toHaveText('Slow database calls (over 1 s)');
   await expect(page.locator('.panel[data-lane=iis] .panel-title')).toHaveText('Web-server requests (errors shown striped)');
   // One axis for all lanes: 3 h in 5 minute bars = 36 columns, at most six time labels (thinned to the measured plot width so
   // none overlap), the UTC caption, no "outside the window" dashes.

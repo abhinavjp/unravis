@@ -178,13 +178,14 @@ test('the tab title names the screen and goes back to the app name', () => {
 });
 
 // UI-R5-04
-test('a closed case restored into the timeline falls back to the case page like an archived one', () => {
+test('only an archived case falls back to the case page; a closed case stays on its timeline as a viewer (UI-R2-03)', () => {
   const home = read('src/lib/components/CaseHome.svelte');
   assert.match(home, /const isClosed = \$derived\(!!info && believedState\(info\) === 'closed'\);/);
-  assert.match(home, /\(isArchived \|\| isClosed\)\) closeTracing\(\)/);
+  assert.match(home, /tracingOpen && isArchived\) closeTracing\(\)/);
+  assert.doesNotMatch(home, /isArchived \|\| isClosed/);
+  assert.match(home, /const timelineShown = \$derived\(tracingOpen && !isArchived\);/);
   assert.match(home, /\{:else if timelineShown\}/);
-  // The case page button stays disabled for a closed case (UI-R2-03 is still open).
-  assert.match(home, /id="home-tracing-open"[^>]*disabled=\{!!info\?\.closed\}/);
+  assert.doesNotMatch(home, /id="home-tracing-open"[^>]*disabled=/);
 });
 
 // UI-R5-05

@@ -22,7 +22,7 @@ export const LANE_ASK: Record<TracingLaneKey, string> = {
 
 export const PANEL_TITLE: Record<TracingLaneKey, string> = {
   audit: 'How many requests, and how slow they were',
-  sql: 'Slow database calls (over 1 s) and failed calls',
+  sql: 'Slow database calls (over 1 s)',
   iis: 'Web-server requests (errors shown striped)'
 };
 

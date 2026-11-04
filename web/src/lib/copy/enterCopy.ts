@@ -10,6 +10,9 @@ import { waitText } from './masterKeyCopy';
 /** The one sentence for a code that is malformed, unknown, erased, or one the server could not answer. The screen never says which. */
 export const CODE_NOT_FOUND = 'That code does not match a case on this computer.';
 
+/** The sentence for a code that belongs to an archived case: the one exception to the single not-found sentence (UI-R5-03). */
+export const CODE_ARCHIVED = 'That case is archived. Open it from Saved cases on this screen.';
+
 /** The one sentence for a case file that does not open: a wrong master key, a wrong path, a damaged file, or anything else about the file. */
 export const RESTORE_FAILED = 'That file could not be opened with that master key. Check the path and the master key, then try again.';
 
@@ -62,6 +65,7 @@ export const throttledText = (seconds: number): string => ENTER_TEXT.throttled +
 /** Every fixed sentence and a sample of each built one, for the copy lint. */
 export const enterLintEntries = (): LintEntry[] => [
   { id: 'enter.codeNotFound', text: CODE_NOT_FOUND },
+  { id: 'enter.codeArchived', text: CODE_ARCHIVED },
   { id: 'enter.restoreFailed', text: RESTORE_FAILED },
   ...Object.entries(ENTER_TEXT).map(([id, text]) => ({ id: 'enter.' + id, text })),
   { id: 'enter.sample.throttled', text: throttledText(4) },

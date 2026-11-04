@@ -13,7 +13,7 @@
 
   // The Investigation Timeline screen shell (WP-16b): one request on open, a loading state with Cancel, a plain
   // error with Try again, and four stable regions (windows, toolbar, chart, notes) that later packets fill in.
-  // `readOnly` disables the window inputs and Start tracing (read in the template below).
+  // `readOnly` disables the window inputs and Start tracing (read in the template below). `closed` only adds the one line saying the case cannot be changed: the timeline reads, so a closed case is a viewer, not locked.
   // `title` names the case being traced (shown as text under the heading).
   let { caseId, title = '', closed = false, readOnly = false, onClose }: { caseId: string; title?: string; closed?: boolean; readOnly?: boolean; onClose: () => void } = $props();
 
@@ -46,11 +46,6 @@
   const noData = $derived(result ? windowHasNoData(result.lanes) : false);
 
   async function run(body = checkWindows(fields).body) {
-    if (closed) {
-      status = 'error';
-      errorText = TRACING_TEXT.closedReason;
-      return;
-    }
     if (!body) return;
     lastBody = body;
     handoffNote = '';
@@ -150,21 +145,23 @@
   <h2 id="tp-title" tabindex="-1" bind:this={headingEl}>{TRACING_TEXT.heading}</h2>
   {#if title}<p class="case-name" data-testid="tp-case-name">{title}</p>{/if}
   <div class="actions"><button type="button" class="secondary-button" onclick={onClose}>{TRACING_TEXT.backToCase}</button></div>
+  <!-- A closed case opens here as a viewer: the route only reads, so only the one line tells the reader nothing can be changed. -->
+  {#if closed}<p class="closed-line" role="status" data-testid="tp-closed-line">{TRACING_TEXT.closedView}</p>{/if}
 
   <div data-region="windows" class="windows">
     <form class="window-form" onsubmit={(event) => { event.preventDefault(); startTracing(); }}>
       <fieldset class="window-set">
         <legend>{WINDOW_TEXT.incidentLabel}</legend>
-        <label class="window-field"><span>{WINDOW_TEXT.start}</span><input type="datetime-local" bind:value={fields.incidentStart} oninput={onFieldInput} aria-invalid={invalidIf('incidentStart')} aria-describedby={describedBy} disabled={readOnly || closed} /></label>
-        <label class="window-field"><span>{WINDOW_TEXT.end}</span><input type="datetime-local" bind:value={fields.incidentEnd} oninput={onFieldInput} aria-invalid={invalidIf('incidentEnd')} aria-describedby={describedBy} disabled={readOnly || closed} /></label>
+        <label class="window-field"><span>{WINDOW_TEXT.start}</span><input type="datetime-local" bind:value={fields.incidentStart} oninput={onFieldInput} aria-invalid={invalidIf('incidentStart')} aria-describedby={describedBy} disabled={readOnly} /></label>
+        <label class="window-field"><span>{WINDOW_TEXT.end}</span><input type="datetime-local" bind:value={fields.incidentEnd} oninput={onFieldInput} aria-invalid={invalidIf('incidentEnd')} aria-describedby={describedBy} disabled={readOnly} /></label>
       </fieldset>
       <fieldset class="window-set">
         <legend>{WINDOW_TEXT.referenceLabel}</legend>
-        <label class="window-field"><span>{WINDOW_TEXT.start}</span><input type="datetime-local" bind:value={fields.referenceStart} oninput={onFieldInput} aria-invalid={invalidIf('referenceStart')} aria-describedby={describedBy} disabled={readOnly || closed} /></label>
-        <label class="window-field"><span>{WINDOW_TEXT.end}</span><input type="datetime-local" bind:value={fields.referenceEnd} oninput={onFieldInput} aria-invalid={invalidIf('referenceEnd')} aria-describedby={describedBy} disabled={readOnly || closed} /></label>
+        <label class="window-field"><span>{WINDOW_TEXT.start}</span><input type="datetime-local" bind:value={fields.referenceStart} oninput={onFieldInput} aria-invalid={invalidIf('referenceStart')} aria-describedby={describedBy} disabled={readOnly} /></label>
+        <label class="window-field"><span>{WINDOW_TEXT.end}</span><input type="datetime-local" bind:value={fields.referenceEnd} oninput={onFieldInput} aria-invalid={invalidIf('referenceEnd')} aria-describedby={describedBy} disabled={readOnly} /></label>
       </fieldset>
       <div class="window-actions">
-        <button type="submit" class="primary-button" disabled={readOnly || closed || status === 'loading'}>{WINDOW_TEXT.startTracing}</button>
+        <button type="submit" class="primary-button" disabled={readOnly || status === 'loading'}>{WINDOW_TEXT.startTracing}</button>
         <small>{WINDOW_TEXT.utcNote}</small>
         <small>{WINDOW_TEXT.endNote}</small>
       </div>
@@ -177,7 +174,7 @@
     {/if}
     {#if overlapping && problems.length === 0}
       <p role="status" class="window-overlap">{WINDOW_TEXT.overlap}
-        <button type="button" class="secondary-button" onclick={moveReference} disabled={readOnly || closed}>{WINDOW_TEXT.overlapFix}</button>
+        <button type="button" class="secondary-button" onclick={moveReference} disabled={readOnly}>{WINDOW_TEXT.overlapFix}</button>
       </p>
     {/if}
   </div>
@@ -192,8 +189,7 @@
         <span class="error-icon" aria-hidden="true">!</span>
         <div class="error-body">
           <p role="status">{errorText}</p>
-          <!-- A closed case sends no request, so there is nothing to try again. -->
-          {#if !closed}<button type="button" class="secondary-button" onclick={() => void keepFocusInChart(() => void run(lastBody ?? undefined))}>{TRACING_TEXT.retry}</button>{/if}
+          <button type="button" class="secondary-button" onclick={() => void keepFocusInChart(() => void run(lastBody ?? undefined))}>{TRACING_TEXT.retry}</button>
         </div>
       </div>
     {:else if status === 'loading' && !result}
@@ -233,6 +229,7 @@
     display: grid;
     gap: 16px;
   }
+  .closed-line { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
   .case-name { margin: calc(var(--space-1) * -1) 0 0; color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
   .windows { display: grid; gap: var(--space-2); }
   .window-form { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }

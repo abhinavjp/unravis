@@ -20,7 +20,7 @@ function loadTypeScript(relativePath) {
 }
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-const { normaliseCode, resolveCode, CODE_NOT_FOUND, CODE_PATTERN, codeIsEmpty } = loadTypeScript('src/lib/caseCode.ts');
+const { normaliseCode, resolveCode, CODE_NOT_FOUND, CODE_ARCHIVED, CODE_PATTERN, codeIsEmpty } = loadTypeScript('src/lib/caseCode.ts');
 const { ENTER_TEXT, RESTORE_FAILED, enterLintEntries } = loadTypeScript('src/lib/copy/enterCopy.ts');
 const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
@@ -177,5 +177,22 @@ test('an empty code field disables the button and shows no sentence; a typed wro
   const card = read('src/components/EnterCase.svelte');
   assert.match(card, /disabled=\{codeBusy \|\| codeIsEmpty\(code\) \|\| shape !== 'ok'\}/);
   assert.match(card, /if \(codeBusy\) return;\s*if \(codeIsEmpty\(code\) \|\| shape !== 'ok'\) return;/);
-  assert.doesNotMatch(read('src/lib/caseCode.ts'), /archived/i, 'the code box never says a case is archived');
+  assert.match(read('src/lib/caseCode.ts'), /message: CODE_ARCHIVED/, 'only the archived case gets its own sentence (UI-R5-03)');
+});
+
+test('the code of an archived case says it is archived and points to Saved cases; other refusals keep the one sentence (UI-R5-03)', async () => {
+  const code = 'abcdefghij' + 'klmnopqrst' + 'uvwxy2';
+  const archived = await resolveCode(code, async () => { throw { status: 409, reason: 'case-archived' }; });
+  assert.deepEqual(archived, { ok: false, message: CODE_ARCHIVED });
+  assert.notEqual(archived.message, CODE_NOT_FOUND);
+  assert.match(CODE_ARCHIVED, /archived/);
+  assert.match(CODE_ARCHIVED, /Saved cases/);
+  assert.doesNotMatch(CODE_ARCHIVED, /case-archived|409/, 'no internal code on screen');
+  assert.ok(enterLintEntries().some((e) => e.id === 'enter.codeArchived' && e.text === CODE_ARCHIVED), 'the sentence is in the copy lint');
+  // Any other 409 or unknown reason still reads as the generic sentence.
+  for (const refusal of [{ status: 409, reason: 'case-closed' }, { status: 409, reason: '' }, { status: 404, reason: 'case-not-found' }]) {
+    assert.deepEqual(await resolveCode(code, async () => { throw refusal; }), { ok: false, message: CODE_NOT_FOUND }, JSON.stringify(refusal));
+  }
+  // A locked or untrusted case still opens.
+  assert.deepEqual(await resolveCode(code, async () => { throw { status: 423, reason: 'case-locked' }; }), { ok: true, id: code });
 });

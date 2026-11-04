@@ -74,6 +74,13 @@ func TestSafeReferer(t *testing.T) {
 		{"http://a.test", "http://a.test"},
 		{"http://a.test/payroll;jsessionid=ABC123", "http://a.test/payroll"},
 		{"http://a.test/a;x=1/b", "http://a.test/a"},
+		{"https://example.com/x", "https://example.com/x"},
+		{"https://a.b.example.co.uk/x", "https://a.b.example.co.uk/x"},
+		{"http://localhost/x", "http://localhost/x"},
+		{"http://localhost:8080/x", "http://localhost:8080/x"},
+		{"https://1host.example.com/x", "https://1host.example.com/x"},
+		{"https://xn--bcher-kva.example/x", "https://xn--bcher-kva.example/x"},
+		{"https://0xample.com/x", "https://0xample.com/x"},
 	}
 	for _, c := range ok {
 		got, valid := safeReferer(c.in)
@@ -86,6 +93,10 @@ func TestSafeReferer(t *testing.T) {
 		"http://a.test/" + strings.Repeat("a", 600),
 		"http://a.test/" + strings.Repeat("a", 300),
 		"http://10.0.0.5/payroll;jsessionid=ABC123", "https://192.0.2.1/x", "http://[2001:db8::1]:8443/x", "http://[::1]/",
+		// non-canonical IPv4 forms that browsers resolve as addresses
+		"http://2130706433/x", "http://0x7f.1/x", "http://0177.0.0.1/x", "http://127.1/x",
+		"http://1.2.3/x", "http://0x7f000001/x", "http://0X7F.0.0.1/x", "http://127.0.0.1./x",
+		"http://10.1/x", "http://a.test.0x1/x",
 	}
 	for _, in := range drop {
 		if got, valid := safeReferer(in); valid || got != "" {

@@ -28,11 +28,14 @@ test('case home offers the timeline entry and keeps the Analysis block and the g
   }
 });
 
-test('entry is disabled for a closed case', () => {
+test('entry is enabled for a closed case, which opens the timeline as a viewer (UI-R2-03 option A)', () => {
   const src = home();
   const line = src.split('\n').find((row) => row.includes('id="home-tracing-open"'));
   assert.ok(line, 'the entry button line must exist');
-  assert.match(line, /disabled=\{!!info\?\.closed\}/);
+  assert.doesNotMatch(line, /disabled=/);
+  assert.doesNotMatch(src, /home-tracing-closed/);
+  assert.doesNotMatch(src, /closedReason/);
+  assert.match(src, /<TracingPaper \{caseId\} title=\{info\?\.title \|\| caseCode\(caseId\)\} closed=\{isClosed\} readOnly=\{readOnly && !isClosed\}/);
 });
 
 test('entry button is outlined, not a second primary', () => {
@@ -111,10 +114,11 @@ test('an empty window shows one hint, and typing in a box clears the refusal', (
   assert.match(src, /function onFieldInput\(\) \{\s*edited = true;\s*clearProblems\(\);/);
 });
 
-test('the read-only no-op effect is gone and readOnly still disables the inputs', () => {
+test('the read-only no-op effect is gone and readOnly still disables the inputs (a closed case does not)', () => {
   const src = paper();
   assert.doesNotMatch(src, /void readOnly/);
-  assert.ok((src.match(/disabled=\{readOnly \|\| closed\}/g) || []).length >= 5);
+  assert.ok((src.match(/disabled=\{readOnly\}/g) || []).length >= 5);
+  assert.doesNotMatch(src, /readOnly \|\| closed/);
 });
 
 test('CallTrace stays untouched', () => {
@@ -177,10 +181,10 @@ test('typed windows are restored on open and kept after the first edit only (UI-
   assert.match(src, /edited = true;\s*clearProblems\(\);\s*\}\s*\n\s*\n/);
 });
 
-test('a closed case still explains why the timeline button is off, to assistive technology too (UI-R2-03)', () => {
-  const src = read('src/lib/components/CaseHome.svelte');
-  assert.match(src, /aria-describedby=\{info\?\.closed \? 'home-tracing-closed' : undefined\}/);
-  assert.match(src, /<p id="home-tracing-closed" class="note">\{TRACING_TEXT\.closedReason\}<\/p>/);
+test('a closed case shows one plain line at the top of the timeline, announced as a status (UI-R2-03)', () => {
+  const src = paper();
+  assert.match(src, /\{#if closed\}<p class="closed-line" role="status" data-testid="tp-closed-line">\{TRACING_TEXT\.closedView\}<\/p>\{\/if\}/);
+  assert.match(read('src/lib/copy/tracingCopy.ts'), /closedView: 'This case is closed\. You can look at the timeline but not change the case\.'/);
 });
 
 test('the chart region has a role and a name, and a case with no events says how to fix it (UI-R3-02, UI-R3-03)', () => {

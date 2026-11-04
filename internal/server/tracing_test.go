@@ -1321,3 +1321,24 @@ func TestTracingHTTPERRUnknownReasonHidden(t *testing.T) {
 		}
 	})
 }
+
+// A closed case may open the Investigation Timeline as a viewer (owner ruling UI-R2-03):
+// the route only reads, so a closed case answers 200 with its lanes and nothing changes.
+func TestTracingClosedCaseReads(t *testing.T) {
+	store, _ := tagStores(t)["sqlite"]()
+	e := tracingEnv(t, store)
+	id := e.newCase("closed-read")
+	imp := seedTracingImport(t, store, id, "iis-w3c", "e.log", tracingEvents(3))
+	seedTracingTag(t, store, id, casestore.SourceTag{Kind: "iis", Label: "web-a", ImportID: imp.ID})
+	if res := e.json(http.MethodPost, "/api/cases/"+id+"/close", ""); res.Code != http.StatusOK && res.Code != http.StatusNoContent {
+		t.Fatalf("close = %d %s", res.Code, res.Body)
+	}
+	before := tracingFingerprint(t, store, id)
+	out, _ := tracingPost(t, e, id, tracingBody(`"requestSeq":1`))
+	if len(out.Sources) == 0 || len(out.Lanes) == 0 {
+		t.Fatalf("closed case read gave no sources or lanes: %+v", out)
+	}
+	if after := tracingFingerprint(t, store, id); after != before {
+		t.Fatalf("a tracing read changed the closed case:\nbefore %s\nafter  %s", before, after)
+	}
+}

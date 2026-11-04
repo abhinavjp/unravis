@@ -68,9 +68,9 @@
   const guidedOpen = $derived(guidedOpenFor(guidedFor, caseId));
   // The case the Investigation Timeline is open on. The app holds it (not this page) so the browser's Back and Forward and a reload can open and close it.
   const tracingOpen = $derived(!!caseId && app.tracingCase === caseId);
-  // An archived case has no timeline (its files cannot be read) and a closed one has nothing to read (the case page's Timeline button is off for it).
-  // A reload or Back and Forward that lands on such a case's timeline returns to the case page.
-  $effect(() => { if (phase === 'ready' && tracingOpen && (isArchived || isClosed)) closeTracing(); });
+  // An archived case has no timeline (its files cannot be read). A reload or Back and Forward that lands on its timeline returns to the case page.
+  // A closed case keeps its timeline as a viewer (UI-R2-03): it only reads, so closing the case in another tab does not send this page back.
+  $effect(() => { if (phase === 'ready' && tracingOpen && isArchived) closeTracing(); });
   // The tab title names the screen: the timeline, else the case. The cleanup puts the plain app title back.
   $effect(() => { if (phase === 'ready') return setDocTitle(timelineShown ? TRACING_TEXT.heading : info?.title || caseCode(caseId)); });
   let controller: AbortController | null = null;
@@ -97,7 +97,7 @@
   const archiveState = $derived(info ? archiveButton(info) : 'hidden');
   const isArchived = $derived(!!info && believedState(info) === 'archived');
   const isClosed = $derived(!!info && believedState(info) === 'closed');
-  const timelineShown = $derived(tracingOpen && !isArchived && !isClosed);
+  const timelineShown = $derived(tracingOpen && !isArchived);
   const archivedMoves = $derived(info ? archivedActions(info) : null);
   const madeCount = $derived(info?.archive?.files?.length || info?.filesMade || 0);
   const currentFile = $derived(info?.archive?.current ?? null);
@@ -404,7 +404,7 @@
     <CaseKeyPage {caseId} status={keyStatus} masterState={app.lockState} onChanged={keyChanged} onCancel={() => void backFromDialog()} />
   {:else if timelineShown}
     {#key caseId}
-      <TracingPaper {caseId} title={info?.title || caseCode(caseId)} closed={!!info?.closed} {readOnly} onClose={leaveTracing} />
+      <TracingPaper {caseId} title={info?.title || caseCode(caseId)} closed={isClosed} readOnly={readOnly && !isClosed} onClose={leaveTracing} />
     {/key}
   {:else if guidedOpen}
     {#key caseId}
@@ -495,8 +495,7 @@
     <section class="block" aria-labelledby="home-tracing">
       <h3 id="home-tracing">{TRACING_TEXT.heading}</h3>
       <p class="note">{TRACING_TEXT.entryNote}</p>
-      <div><button id="home-tracing-open" type="button" class="secondary-button" disabled={!!info?.closed} aria-describedby={info?.closed ? 'home-tracing-closed' : undefined} onclick={openTracing}>{TRACING_TEXT.entryButton}</button></div>
-      {#if info?.closed}<p id="home-tracing-closed" class="note">{TRACING_TEXT.closedReason}</p>{/if}
+      <div><button id="home-tracing-open" type="button" class="secondary-button" onclick={openTracing}>{TRACING_TEXT.entryButton}</button></div>
     </section>
 
     {/if}
