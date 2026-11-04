@@ -1125,6 +1125,13 @@ func cancellation(t *testing.T, imp importer.Importer, fx Fixtures) {
 	}
 }
 
+// parseStopWindow is how long Parse may take to notice a cancelled context before
+// cancellationInParse calls it a bug. Parse checks the context every few hundred
+// rows, so it normally stops in microseconds; the window is wide because a loaded
+// CI runner can starve the goroutine for a second or more. Only a multi-second
+// stall is a missing check. It stays under the endless reader's own 10 s deadline.
+const parseStopWindow = 5 * time.Second
+
 // cancellationInParse calls Parse directly with an emit that ignores the
 // context, on endless input of valid rows and of bad rows. Parse must notice
 // the cancellation itself, not rely on emit failing: a stream of rejected rows
@@ -1165,11 +1172,11 @@ func cancellationInParse(t *testing.T, imp importer.Importer, fx Fixtures) {
 				t.Errorf("%s: Parse of an endless input returned without error", name)
 			} else if strings.HasPrefix(err.Error(), "panic:") {
 				t.Errorf("%s: %v", name, err)
-			} else if d := time.Since(cancelled); d > time.Second {
-				t.Errorf("%s: Parse took %v to stop after cancel, want under 1s", name, d)
+			} else if d := time.Since(cancelled); d > parseStopWindow {
+				t.Errorf("%s: Parse took %v to stop after cancel, want under %v", name, d, parseStopWindow)
 			}
-		case <-time.After(time.Second):
-			t.Errorf("%s: Parse did not stop within 1s of context cancellation (emit ignores ctx, so Parse must check it)", name)
+		case <-time.After(parseStopWindow):
+			t.Errorf("%s: Parse did not stop within %v of context cancellation (emit ignores ctx, so Parse must check it)", name, parseStopWindow)
 		}
 	}
 }

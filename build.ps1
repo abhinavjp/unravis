@@ -1,6 +1,8 @@
 param(
     [string]$GoPath,
     [switch]$SkipWeb,
+    # Skip `go test ./...` for a caller that has already run it (CI does, in an earlier step). Default: tests run.
+    [switch]$SkipTests,
     # Stamped into the program (shown by --version and /api/version). Default: git describe, else "dev".
     [string]$Version
 )
@@ -113,7 +115,7 @@ if (-not $SkipWeb) {
 
 Push-Location $UtilityRoot
 try {
-    Invoke-Checked $GoExe @('test', './...')
+    if (-not $SkipTests) { Invoke-Checked $GoExe @('test', './...') }
     Invoke-Checked $GoExe @('vet', './...')
     New-Item -ItemType Directory -Force -Path (Join-Path $UtilityRoot 'dist') | Out-Null
     Invoke-Checked $GoExe @('build', '-ldflags', $GuiLdFlags, '-o', (Join-Path $UtilityRoot 'dist\unravis.exe'), './cmd/audit-explorer')

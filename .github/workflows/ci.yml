@@ -91,8 +91,8 @@ jobs:
         run: ./tools/release/Test-Release.ps1
 
       - name: Build dist\unravis.exe
-        # The web step above already built web/dist, so it is skipped here.
-        run: ./build.ps1 -SkipWeb -Version "ci-$($env:GITHUB_SHA.Substring(0, 7))"
+        # The web step above already built web/dist, so it is skipped here; the Go tests step above already ran go test, so they are skipped too.
+        run: ./build.ps1 -SkipWeb -SkipTests -Version "ci-$($env:GITHUB_SHA.Substring(0, 7))"
 
       - name: Screenshots - install
         working-directory: tools/screens

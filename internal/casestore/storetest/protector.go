@@ -39,18 +39,24 @@ func RandomProtector() *Protector {
 	return p
 }
 
+// magic is the first byte of every blob: fixed, and never '{', so a blob is not
+// mistaken for the JSON header of a v2 case file (the nonce that follows is random
+// and could start with '{' one time in 256).
+const magic byte = 0x01
+
 func (p *Protector) Protect(plain []byte) ([]byte, error) {
-	nonce := make([]byte, p.aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
+	nonce := make([]byte, 1+p.aead.NonceSize())
+	nonce[0] = magic
+	if _, err := rand.Read(nonce[1:]); err != nil {
 		return nil, err
 	}
-	return p.aead.Seal(nonce, nonce, plain, nil), nil
+	return p.aead.Seal(nonce, nonce[1:], plain, nil), nil
 }
 
 func (p *Protector) Unprotect(sealed []byte) ([]byte, error) {
-	n := p.aead.NonceSize()
-	if len(sealed) < n {
-		return nil, errors.New("sealed blob too short")
+	n := 1 + p.aead.NonceSize()
+	if len(sealed) < n || sealed[0] != magic {
+		return nil, errors.New("sealed blob too short or not from this protector")
 	}
-	return p.aead.Open(nil, sealed[:n], sealed[n:], nil)
+	return p.aead.Open(nil, sealed[1:n], sealed[n:], nil)
 }

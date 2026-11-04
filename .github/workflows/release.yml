@@ -111,11 +111,11 @@ jobs:
         run: ./tools/release/Test-Release.ps1
 
       - name: Build the programs and the installer
-        # The web step above already built web/dist, so it is skipped here (same as ci.yml).
+        # The web step above already built web/dist, so it is skipped here (same as ci.yml); the Go tests step above already ran go test, so -SkipTests.
         # build.ps1 also builds the keeper, the Blackbox and the installer with its embedded payload.
         shell: pwsh
         run: |
-          ./build.ps1 -SkipWeb -Version "${{ steps.tag.outputs.version }}"
+          ./build.ps1 -SkipWeb -SkipTests -Version "${{ steps.tag.outputs.version }}"
           Copy-Item -LiteralPath 'dist/unravis-setup.exe' -Destination "dist/unravis-setup-v${{ steps.tag.outputs.version }}-windows-x64.exe" -Force
 
       - name: Build dist\unravis-blackbox.exe and its zip

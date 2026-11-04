@@ -1181,7 +1181,7 @@ func eraseFiles(dir string) error {
 		errs = append(errs, errors.New("destroying the case key failed"))
 	}
 	for _, name := range []string{dbName, dbName + "-wal", dbName + "-shm", manifestName} {
-		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := removeFile(filepath.Join(dir, name)); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -1198,6 +1198,20 @@ func eraseFiles(dir string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// removeFile deletes one file. A file that is already gone is success. On Windows
+// a reader that has only just been told to stop (an Erase that interrupts a scan)
+// can still hold the database or its -wal/-shm open for a few milliseconds, and the
+// delete then fails with a sharing violation or access denied; retryTransient
+// repeats it for up to two seconds, for those errors only. Elsewhere it is one try.
+func removeFile(path string) error {
+	return retryTransient(func() error {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	})
 }
 
 // Sweep erases every case closed more than 30 days before now, and finishes any
