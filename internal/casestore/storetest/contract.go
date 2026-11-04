@@ -867,6 +867,20 @@ func capsTest(t *testing.T, f Factory) {
 	unchanged("at case cap", 15, 2)
 }
 
+// retryImportRunning calls do until it stops answering the typed fail-fast
+// ErrImportRunning (a queued import waited too long for the case), for at most
+// a minute; any other result, including success, is returned as is.
+func retryImportRunning(do func() error) error {
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		err := do()
+		if !errors.Is(err, casestore.ErrImportRunning) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // serial: imports into one case run one at a time, also when every caller has
 // its own handle (a fresh Open per goroutine, as the web layer does).
 func serial(t *testing.T, f Factory, caps casestore.Caps) {
@@ -901,7 +915,12 @@ func serial(t *testing.T, f Factory, caps casestore.Caps) {
 				atomic.AddInt32(&running, -1)
 				return importer.Report{Rows: 1}, err
 			}
-			_, errs[i] = h.Import(e.ctx, meta(), bytes.NewReader([]byte(fmt.Sprintf("body %d", i))), run)
+			// A queued import may fail fast with ErrImportRunning when the wait for
+			// the case is long (a slow CI runner); retry it until it is accepted.
+			errs[i] = retryImportRunning(func() error {
+				_, err := h.Import(e.ctx, meta(), bytes.NewReader([]byte(fmt.Sprintf("body %d", i))), run)
+				return err
+			})
 		}(i)
 	}
 	wg.Wait()
@@ -942,7 +961,10 @@ func sameBytesRace(t *testing.T, f Factory, caps casestore.Caps) {
 				return
 			}
 			defer h.Close()
-			_, errs[i] = h.Import(e.ctx, meta(), strings.NewReader("the very same bytes"), emitAll(ev(h, fmt.Sprintf("g%d", i), "k", "h", 0)))
+			errs[i] = retryImportRunning(func() error { // see serial: a slow runner may answer ErrImportRunning
+				_, err := h.Import(e.ctx, meta(), strings.NewReader("the very same bytes"), emitAll(ev(h, fmt.Sprintf("g%d", i), "k", "h", 0)))
+				return err
+			})
 		}(i)
 	}
 	wg.Wait()

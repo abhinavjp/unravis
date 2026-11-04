@@ -571,6 +571,12 @@ func TestConcurrentImportsAreSerialised(t *testing.T) {
 }
 
 func TestTwoStoresImportAtOnce(t *testing.T) {
+	// Checks serialisation, not the queue timeout: on a slow runner the last of
+	// four queued imports can wait longer than the product's 1 s bound.
+	oldWait := importWaitMax
+	importWaitMax = time.Minute
+	t.Cleanup(func() { importWaitMax = oldWait })
+
 	ctx := context.Background()
 	s1, root := newTestStore(t)
 	info := mustCreate(t, s1, "Case")
