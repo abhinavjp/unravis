@@ -494,6 +494,7 @@ func (s *Store) createWith(ctx context.Context, title, requestID string, pass []
 // createDB builds the schema in a new database, then turns page checksums on
 // while the file is still empty (it needs a VACUUM to retrofit).
 func (s *Store) createDB(ctx context.Context, dir string, keys casestore.Keys, id casestore.CaseID, now time.Time) error {
+	verified.drop(dir) // a new file: nothing checked before applies
 	db, err := s.openDB(ctx, dir, keys, true)
 	if err != nil {
 		return err
@@ -729,6 +730,7 @@ func (s *Store) load(ctx context.Context, id casestore.CaseID) (*caseState, erro
 	}
 	db, err := s.openDB(ctx, dir, keys, false)
 	if err != nil {
+		verified.drop(dir) // an open error: trust nothing earlier about this file
 		keys.Zero()
 		return nil, err
 	}
@@ -743,6 +745,13 @@ func (s *Store) load(ctx context.Context, id casestore.CaseID) (*caseState, erro
 		// the background, so the first series query does not stall on a large case;
 		// a query that arrives meanwhile waits for the same build.
 		go (&Case{caseState: st}).ensureAttrIndexes()
+	}
+	if timelineIndexesMissing(ctx, db) {
+		// A case from before the timeline indexes (ev_src_ts, ev_err_ts): build them
+		// in the background. Opening does not wait; timeline queries work, slower,
+		// until the build ends (startTimelineBuild says how it is held and cancelled,
+		// and skips a case whose build already failed in this process).
+		st.startTimelineBuild()
 	}
 	return st, nil
 }
@@ -846,6 +855,16 @@ func (s *Store) CloseCase(ctx context.Context, id casestore.CaseID) error {
 	}
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return casestore.ErrNotFound
+	}
+	// An import on this Store holds the folder lock for its whole run: say so at
+	// once instead of waiting for it. s.mu is only tried (Open may hold it while it
+	// waits for that same lock).
+	if s.mu.TryLock() {
+		busy := s.open[id] != nil && s.open[id].importRun.Load()
+		s.mu.Unlock()
+		if busy {
+			return casestore.ErrImportRunning
+		}
 	}
 	release, h, _, err := s.lockCase(dir, id)
 	if err != nil {
@@ -1068,6 +1087,7 @@ func (s *Store) Erase(ctx context.Context, id casestore.CaseID) error {
 		h.mu.Unlock()
 		_ = h.shutdown()
 	}
+	verified.drop(dir) // after the shutdown stamped the file; the case is going away
 	if s.opt.duringErase != nil {
 		s.opt.duringErase()
 	}
@@ -1155,6 +1175,7 @@ func removeMarkerAndDir(dir string) error {
 // failure later leaves only ciphertext behind. Everything in the folder goes
 // except the pending-erase marker, which the caller removes last.
 func eraseFiles(dir string) error {
+	verified.drop(dir)
 	var errs []error
 	if err := casestore.EraseKeyFile(filepath.Join(dir, keyName)); err != nil {
 		errs = append(errs, errors.New("destroying the case key failed"))

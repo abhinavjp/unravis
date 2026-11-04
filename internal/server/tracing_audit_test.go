@@ -156,7 +156,7 @@ func TestAuditLaneFailureReasons(t *testing.T) {
 		code   string
 		reason string
 	}{
-		{"broad scan", fmt.Errorf("%s: %w", secret, audit.ErrBroadScanRefused), "error", "The audit source reads at most 24 hours unless broad scans are allowed, so this window was not read."},
+		{"broad scan", fmt.Errorf("%s: %w", secret, audit.ErrBroadScanRefused), "broad-scan", "The audit source reads at most 24 hours unless broad scans are allowed, so this window was not read."},
 		{"group limit", fmt.Errorf("%s: %w", secret, audit.ErrRollupGroupLimit), "rowcap", "The audit read reached its row limit; nothing was shortened."},
 		{"limit", fmt.Errorf("%s: %w", secret, audit.ErrLimit), "rowcap", "The audit read reached its row limit; nothing was shortened."},
 		{"deadline", fmt.Errorf("%s: %w", secret, context.DeadlineExceeded), "timeout", "The audit read ran out of time; nothing was shortened."},

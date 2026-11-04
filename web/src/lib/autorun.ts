@@ -1,5 +1,6 @@
 import { bucketForWindows, countEpochBuckets } from './time';
 import type { Query } from './types';
+import { WAIT_TEXT } from './copy/waitCopy';
 
 /**
  * Scope changes (a range chip, a request type, a source, a filter) run the analysis by themselves. These helpers decide when that is
@@ -18,6 +19,9 @@ export const AUDIT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
 export const auditIdProblem = (value: string | undefined): string | null =>
   !value || AUDIT_ID_PATTERN.test(value) ? null : 'An audit ID is exactly 24 hexadecimal characters.';
 
+/** The refusal for a window over 7 days, with the way forward for a longer period. */
+export const SEVEN_DAY_TEXT = 'Each window can be at most 7 days. ' + WAIT_TEXT.longerPeriods;
+
 /** The first reason the scope cannot be analysed, in the words the run button reports; null when it can run. Same checks, same order as a manual run. */
 export function scopeProblem(query: ScopeShape, datesValid: boolean): string | null {
   if (!datesValid) return 'Complete every date and time with a valid local value before running a comparison.';
@@ -25,7 +29,7 @@ export function scopeProblem(query: ScopeShape, datesValid: boolean): string | n
   const start = new Date(query.start).getTime(), end = new Date(query.end).getTime();
   const baselineStart = new Date(query.baselineStart).getTime(), baselineEnd = new Date(query.baselineEnd).getTime();
   if (!(start < end) || !(baselineStart < baselineEnd)) return 'Each window needs a start time earlier than its end time.';
-  if (end - start > 7 * DAY_MS || baselineEnd - baselineStart > 7 * DAY_MS) return 'Each window can be at most 7 days.';
+  if (end - start > 7 * DAY_MS || baselineEnd - baselineStart > 7 * DAY_MS) return SEVEN_DAY_TEXT;
   if (baselineEnd > start) return 'The reference window must end at or before the current window starts.';
   if (!(Number.isInteger(query.bucketSeconds) && query.bucketSeconds >= 10 && query.bucketSeconds <= 86400)) return 'Bucket size must be a whole number between 10 and 86,400 seconds.';
   if (countEpochBuckets(start, end, query.bucketSeconds) > 120 || countEpochBuckets(baselineStart, baselineEnd, query.bucketSeconds) > 120) return 'This bucket size creates more than 120 time points. Increase the bucket size or shorten a window.';
@@ -40,7 +44,7 @@ export function scopeHint(query: ScopeShape, datesValid: boolean): string {
   const start = new Date(query.start).getTime(), end = new Date(query.end).getTime();
   const baselineStart = new Date(query.baselineStart).getTime(), baselineEnd = new Date(query.baselineEnd).getTime();
   if (!(start < end) || !(baselineStart < baselineEnd)) return 'Each window must start before it ends.';
-  if (end - start > 7 * DAY_MS || baselineEnd - baselineStart > 7 * DAY_MS) return 'Each window can be at most 7 days.';
+  if (end - start > 7 * DAY_MS || baselineEnd - baselineStart > 7 * DAY_MS) return SEVEN_DAY_TEXT;
   if (baselineEnd > start) return 'The reference window must end at or before the current window starts.';
   if (!(Number.isInteger(query.bucketSeconds) && query.bucketSeconds >= 10 && query.bucketSeconds <= 86400)) return 'Bucket size must be 10 to 86,400 seconds.';
   if (countEpochBuckets(start, end, query.bucketSeconds) > 120 || countEpochBuckets(baselineStart, baselineEnd, query.bucketSeconds) > 120) return 'That bucket size makes over 120 time points; use a larger bucket or a shorter window.';

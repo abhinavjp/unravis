@@ -500,6 +500,13 @@ func TestSweepBoundary(t *testing.T) {
 }
 
 func TestConcurrentImportsAreSerialised(t *testing.T) {
+	// This test checks serialisation, not the queue timeout (a separate test
+	// proves the typed answer after importWaitMax): under suite load the last of
+	// six queued imports can wait longer than the product's 1 s bound.
+	oldWait := importWaitMax
+	importWaitMax = time.Minute
+	t.Cleanup(func() { importWaitMax = oldWait })
+
 	ctx := context.Background()
 	s, root := newTestStore(t)
 	info := mustCreate(t, s, "Case")

@@ -43,11 +43,43 @@ CREATE TABLE IF NOT EXISTS case_sources(id INTEGER PRIMARY KEY, import_id INTEGE
 CREATE TABLE IF NOT EXISTS case_envs(name TEXT PRIMARY KEY, ord INTEGER);
 `
 
-const indexSQL = `
+const coreIndexSQL = `
 CREATE INDEX IF NOT EXISTS ev_ts ON events(ts_ms);
 CREATE INDEX IF NOT EXISTS ev_kind_ts ON events(kind, ts_ms);
 CREATE INDEX IF NOT EXISTS ev_import ON events(import_id);
 ` + attrIndexSQL
+
+// indexSQL is every index an import makes in its own transaction. The timeline
+// indexes are left out of it for a case that already holds events without them (see
+// timelineLate): those are built after the commit, best effort.
+const indexSQL = coreIndexSQL + timelineIndexSQL
+
+// statusIs5xxExpr is the test BucketCounts uses for a server error (a status
+// stored as exactly three digits starting with 5, the same rule as
+// casestore.IsServerErrorStatus). It is written once so that the partial index
+// below and the query carry the identical expression, which is how SQLite
+// recognises that the index serves the query. The pattern must stay a literal.
+const statusIs5xxExpr = `json_extract(attrs_json,'$.status') GLOB '5[0-9][0-9]'`
+
+// timelineIndexSQL are the two indexes the investigation timeline reads. They
+// carry no schema-version bump: a case without them is correct, only slow, and
+// they are built in the background when such a case is opened
+// (Case.ensureTimelineIndexes) or by the next import.
+//
+// ev_src_ts serves the per-lane window reads and the bucket counts, which filter
+// by source and a time range: without it every row in the range costs a random
+// lookup in the (WITHOUT ROWID) table, whatever its source. import_id is last so
+// the grouped count is answered from the index alone.
+//
+// ev_err_ts is partial: only the server-error rows are in it, so it is small, and
+// the error count of a bucket reads it instead of parsing attrs_json per row.
+const timelineIndexSQL = `
+CREATE INDEX IF NOT EXISTS ev_src_ts ON events(source, ts_ms, import_id);
+CREATE INDEX IF NOT EXISTS ev_err_ts ON events(source, ts_ms, import_id) WHERE ` + statusIs5xxExpr + `;
+`
+
+// timelineIndexNames lists the indexes of timelineIndexSQL.
+var timelineIndexNames = []string{"ev_src_ts", "ev_err_ts"}
 
 // attrIndexSQL is the schema-3 addition: the series key of a counter or a metric
 // event, so a query for one series reads only its events. They are partial

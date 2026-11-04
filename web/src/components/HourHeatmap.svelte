@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { HOURS_PER_ROW, cellLabel, cellValue, cellWindow, dayLabel, gridMax, gridMetrics, gridRows, moveInGrid, rollupCopy, shadeLevel, slowNote, type GridMetric, type HourGridResponse, type RollupWindow } from '../lib/rollup';
+  import { GRID_TEXT } from '../lib/copy/waitCopy';
   let { grid, zone, onChoose }: { grid: HourGridResponse; zone: string; onChoose: (window: RollupWindow) => void } = $props();
 
   let metric = $state<GridMetric>('p95');
@@ -34,7 +35,7 @@
 
 <div class="hm" bind:this={root}>
   <div class="hm-head">
-    <div class="hm-metric" role="group" aria-label="Shade squares by">
+    <div class="hm-metric" role="group" aria-label={GRID_TEXT.shadeBy}>
       {#each gridMetrics as item (item.id)}
         <button type="button" class="chip" aria-pressed={metric === item.id} class:on={metric === item.id} onclick={() => metric = item.id}>{item.label}</button>
       {/each}
@@ -43,16 +44,16 @@
   </div>
   {#if rows.length}
     <div class="table-scroll hm-scroll">
-      <div class="hm-grid" role="grid" aria-label={'Requests by hour, shaded by ' + gridMetrics.find(item => item.id === metric)?.label.toLowerCase()} aria-rowcount={rows.length}>
+      <div class="hm-grid" role="grid" aria-label={GRID_TEXT.gridLabelPrefix + gridMetrics.find(item => item.id === metric)?.label.toLowerCase()} aria-rowcount={rows.length}>
         <div class="hm-row hm-marks" role="row">
-          <span class="hm-day" role="columnheader"><span class="sr-only">Day</span></span>
+          <span class="hm-day" role="columnheader"><span class="sr-only">{GRID_TEXT.day}</span></span>
           {#each Array(HOURS_PER_ROW) as _, hour}
             <span class="hm-mark" role="columnheader"><span class:sr-only={!hourMarks.includes(hour)}>{hour}</span></span>
           {/each}
         </div>
         {#each rows as row, r (row.date)}
           <div class="hm-row" role="row">
-            <span class="hm-day" role="rowheader">{dayLabel(row.date)}{#if row.partial}<span class="hm-partial" title={rollupCopy.partial}>partial</span>{/if}</span>
+            <span class="hm-day" role="rowheader">{dayLabel(row.date)}{#if row.partial}<span class="hm-partial" title={rollupCopy.partial}>{GRID_TEXT.partialTag}</span>{/if}</span>
             {#each row.cells as cell, c}
               {#if cell}
                 {@const level = shadeLevel(cellValue(cell, metric), max)}
@@ -66,7 +67,7 @@
                     onclick={() => choose(r, c)}></button>
                 </span>
               {:else}
-                <span role="gridcell" class="hm-cell-wrap"><span class="hm-gap" aria-label="No such hour on this day"></span></span>
+                <span role="gridcell" class="hm-cell-wrap"><span class="hm-gap" aria-label={GRID_TEXT.noSuchHour}></span></span>
               {/if}
             {/each}
           </div>
@@ -74,10 +75,10 @@
       </div>
     </div>
     <div class="hm-legend" aria-hidden="true">
-      <span>Lower</span>
+      <span>{GRID_TEXT.lower}</span>
       {#each [1, 2, 3, 4] as level}<span class="hm-swatch level-{level}"></span>{/each}
-      <span>Higher</span>
-      <span class="hm-swatch noise"></span><span>Few requests</span>
+      <span>{GRID_TEXT.higher}</span>
+      <span class="hm-swatch noise"></span><span>{GRID_TEXT.fewRequests}</span>
       <span class="hm-swatch empty"></span><span>None</span>
     </div>
   {:else}

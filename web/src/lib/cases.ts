@@ -1,5 +1,6 @@
 import { NO_SESSION_MESSAGE, forgetSession, readSessionToken } from './api';
 import { WRONG_CASE_KEY_REASON, signalIfAppLocked } from './lockSignal';
+import { guardSignal, isAbortLike, READ_TIMEOUT_MS, TIMEOUT_CODE, timeoutMessage } from './requestTimeout';
 import { parseTimelineView, type TimelineView } from './timeline';
 import { parseResource, parseSeries, type ResourceView, type SeriesView } from './resource';
 import { parseCollect, type CollectItem } from './collect';
@@ -181,7 +182,23 @@ export const EXPECT_STATE_HEADER = 'X-Expect-State';
 
 /* ------------------------------------------------------------------ requests */
 
-export async function send(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<Response> {
+/** `options.timeoutMs`: how long a read may run before it is stopped with a plain sentence. Reads (GET) get the read limit unless told otherwise; null means no limit (a job poll or a download). */
+export interface SendOptions { timeoutMs?: number | null }
+
+export async function send(path: string, init: RequestInit = {}, signal?: AbortSignal, options: SendOptions = {}): Promise<Response> {
+  const method = (init.method ?? 'GET').toUpperCase();
+  const timeoutMs = options.timeoutMs === undefined ? (method === 'GET' ? READ_TIMEOUT_MS : null) : options.timeoutMs;
+  // Only the wait for the answer is limited: the guard is released as soon as the response head is here, because the body is read by the caller.
+  const guard = guardSignal(signal, timeoutMs);
+  try {
+    return await sendOnce(path, init, guard.signal);
+  } catch (cause) {
+    if (guard.timedOut() && isAbortLike(cause)) throw new CaseApiError(timeoutMessage(), 0, TIMEOUT_CODE);
+    throw cause;
+  } finally { guard.done(); }
+}
+
+async function sendOnce(path: string, init: RequestInit, signal: AbortSignal | undefined): Promise<Response> {
   const token = readSessionToken();
   if (!token) throw new CaseApiError(NO_SESSION_MESSAGE, 401, 'no_session');
   const headers = new Headers(init.headers);
@@ -192,7 +209,7 @@ export async function send(path: string, init: RequestInit = {}, signal?: AbortS
   try {
     response = await fetch(base + path, { ...init, headers, credentials: 'same-origin', signal });
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    if (isAbortLike(error)) throw error;
     throw new CaseApiError('The server could not be reached.', 0, 'unreachable');
   }
   if (response.status === 401) {
@@ -225,8 +242,15 @@ async function refusal(response: Response): Promise<CaseApiError> {
   return new CaseApiError(message, response.status, reason, column, importId);
 }
 
+/** True for the error the time limit (AbortSignal.timeout) leaves behind; a cancel by the person is an AbortError instead. */
+export const isTimeLimit = (cause: unknown): boolean => typeof cause === 'object' && cause !== null && (cause as { name?: unknown }).name === 'TimeoutError';
+
 export async function json<T>(response: Response): Promise<T> {
-  try { return await response.json() as T; } catch { throw new CaseApiError('The server sent an answer that could not be read.', response.status, 'unreadable'); }
+  try { return await response.json() as T; } catch (cause) {
+    // The time limit can end a read while its body is still arriving: that is a timeout, not a damaged answer.
+    if (isTimeLimit(cause)) throw new CaseApiError(timeoutMessage(), 0, TIMEOUT_CODE);
+    throw new CaseApiError('The server sent an answer that could not be read.', response.status, 'unreadable');
+  }
 }
 
 export function casePath(id: string, tail = ''): string {
@@ -582,7 +606,7 @@ export async function startCommitJob(request: ImportRequest & { importer: string
 }
 
 export async function fetchImportJob(caseId: string, jobId: string, signal?: AbortSignal): Promise<ImportJob> {
-  return readJob(await send(jobPath(caseId, jobId), {}, signal));
+  return readJob(await send(jobPath(caseId, jobId), {}, signal, { timeoutMs: null }));
 }
 
 /** Stops a running job, or lets the server forget a finished one. */
@@ -641,7 +665,7 @@ export async function waitForImportJob(caseId: string, first: ImportJob, options
  * intervals itself; the answer is checked against the shape before it is used, and a bad shape is refused, not shown.
  */
 export async function fetchTimeline(id: string, query: Query, signal?: AbortSignal): Promise<TimelineView> {
-  const response = await send(casePath(id, '/timeline'), { method: 'POST', body: JSON.stringify({ query }) }, signal);
+  const response = await send(casePath(id, '/timeline'), { method: 'POST', body: JSON.stringify({ query }) }, signal, { timeoutMs: READ_TIMEOUT_MS });
   const view = parseTimelineView(await json<unknown>(response));
   if (!view) throw new CaseApiError('The server sent an answer that could not be read.', response.status, 'unreadable');
   return view;

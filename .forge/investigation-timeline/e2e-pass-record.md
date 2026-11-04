@@ -74,3 +74,28 @@ Build: unstamped plain `go build` after Go sweep round 2 (`5eb00ea`) and UI-R2-0
 ## UI loop round 3 (2026-11-04)
 
 Fresh unstamped exe after UI-R3 fixes. Full run: 326 pass, 3 fail: DOC-02 and KEEP-09 (known defects) and HAND-17 (flaky, passes on re-run). Unit: 2165 node tests pass.
+
+## Perf sweep gate (2026-11-04)
+
+Full release gate on the dirty working tree (branch feat/investigation-timeline), unstamped `go build ./cmd/audit-explorer` exe, web built first.
+- Web: `npm run check` 414 files, 0 errors, 0 warnings. `node --test tests/*.test.cjs` 2237 of 2237 pass. `npm run build` ok; `distChunks.test.cjs` 2 of 2 pass.
+- Go: `go vet ./internal/... ./cmd/...` clean; Linux vet clean (no output). `go test ./... -count=1`: 70 packages ok, 0 failures, 4 with no test files. No timing-flaky test failed; no re-run needed. UNRAVIS_STRESS_DIR tests skipped (env not set).
+- e2e (`npx playwright test`, 1 worker): 338 tests, 336 passed, 2 skipped, 0 failed, 0 flaky, 4.3 min. The 2 skipped are PERF-01 and PERF-02 in tracing-perf.spec.ts (need UNRAVIS_LIVE_EXE / UNRAVIS_PERF_CFG; not run in the gate). DOC-02 and KEEP-09 print as "x" but are counted as passed (known-defect specs); re-run alone: 2 passed. All 16 Investigation Timeline specs in tracing-screen.spec.ts (TRACE-01..16) pass; HAND-01..19 pass; partial-notices and large-window specs pass. HELP-08, CASE-02, KEY-07, HAND-17 did not flake this run.
+- Cleanup: gate exe removed; no stray unravis*.exe in the repo root.
+
+## Loop 3 re-gate (2026-11-04)
+
+After the internal/casestore/sqlite change (perf-sweep/fix-loop3.md). Same dirty tree, fresh `go build ./cmd/audit-explorer` gate exe, web already built.
+- Vet: `go vet ./internal/... ./cmd/...` clean; Linux vet clean (no output).
+- `go test ./... -count=1`: 69 packages ok, 1 FAIL on the first run: internal/casestore/sqlite TestConcurrentImportsAreSerialised ("import 0: an import is running on this case", 1.16 s). Re-run of the package alone: ok (21.5 s); the test alone x10: ok; whole package -count=2: ok. Not a listed flake. Cause: 6 imports queue on one case and the last waiter hits importWaitMax (1 s) while the package ran beside all other packages; lockImport polls every 5 ms with no queue order, so under CPU load a waiter can run out its second. Test timing risk, not a data fault. No other failures.
+- e2e (`npx playwright test`, 1 worker): 338 tests, 336 passed, 2 skipped (PERF-01, PERF-02 need a dataset), 0 failed, 0 flaky, 4.2 min.
+- Perf on copies (originals untouched), TestTracingStress, 28-29 calls each, sums = manifest, responses under 55 KB, no 5xx:
+  | set | median | max | 1 d | 186 d | timeouts | first call |
+  |---|---|---|---|---|---|---|
+  | S (2.0M rows) | 2.4 s | 7.7 s | 0.8-7.7 s | 2.4-2.8 s | 0 (was 21 of 28) | 7.7 s (1d-end) |
+  | M (6.0M) | 6.4 s | 18.2 s | 5.3-18.2 s | 6.3-6.5 s | 0 (was 22 of 29) | 18.2 s (1d-end) |
+  | L (12.1M) | 7.1 s | 27.3 s | 7.7-27.3 s | 11.3-11.7 s | 1 (7d-end, IIS lane, 27.2 s) | 27.3 s (1d-end) |
+  Lanes now report rowcap (IIS, plus SQL on 90 d and wider on M and L) instead of timeout. The slowest calls are the first ones on a cold file (1d-end, 7d-end, 14d-end on L).
+- Playwright tracing-perf.spec.ts on S: 2 passed (PERF-01 186 d 4.9 s, PERF-02 7 d 1.3 s; was 33 s and 17 s).
+- L through the real exe (default 4 GiB cap): the case opens (about 18 s) and the 186 d timeline draws (10.8 s, HTTP 200, 49.6 KB), but PERF-01 fails its "no browser errors" check: the page's PUT /api/cases/<id>/workspace answers 413 (the case file, 4.78 GB, is over MaxDBBytes so the SQLite page cap refuses the write). No refusal to open. PERF-02 did not run (serial after the failure). The stress test sets the cap high, so it did not meet this.
+- Cleanup: copies, .dev\run\gate and stray test temp dirs removed; no exe in repo root; .dev\perf-data originals kept; C: untouched.

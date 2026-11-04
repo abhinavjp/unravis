@@ -33,6 +33,9 @@ func (c *Case) retryGate(ctx context.Context) (*sql.DB, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	if c.importRun.Load() {
+		return nil, nil, casestore.ErrImportRunning // do not wait for the import's folder lock
+	}
 	release, err := sealedfile.Lock(c.dir)
 	if err != nil {
 		return nil, nil, err

@@ -52,6 +52,14 @@ type caseState struct {
 	refs int // open handles; guarded by mu
 
 	importMu sync.Mutex
+	// importRun is true while an Import holds importMu (not while an index build or
+	// a shutdown does). The other writers read it to fail fast with
+	// casestore.ErrImportRunning instead of waiting for the folder lock.
+	importRun atomic.Bool
+	// importPend counts Imports inside lockImport. It is raised before the first
+	// TryLock, so an Import that loses that race always finds the winner either
+	// pending or already in importRun, never in the gap between the two.
+	importPend atomic.Int32
 
 	mu     sync.Mutex // guards the fields below
 	db     *sql.DB
@@ -76,6 +84,13 @@ type caseState struct {
 	// idxPending is set when open migrated a case from before schema 3: the
 	// load then builds the indexes in the background (see Store.load).
 	idxPending bool
+	// bg is the background timeline index build of this open case, if one is running
+	// (guarded by mu). It holds a reference of its own (see startTimelineBuild).
+	bg *tlBuild
+
+	// gate is this handle pool's hold on the process-wide quick_check cache (see
+	// verify_cache.go); set by verify, released by shutdown.
+	gate *verifyEntry
 
 	// tagEnvs and tagSources cache the row counts of case_envs and case_sources
 	// for Info (see tags.go); the tag writes keep them current.
@@ -183,6 +198,9 @@ func (c *caseState) shutdown() error {
 	}
 	_, _ = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	err := db.Close()
+	// The file is at rest now (checkpointed and closed): stamp it for the next open.
+	verified.release(c.gate, err == nil)
+	c.gate = nil
 	c.mu.Lock()
 	c.keys.Zero()
 	c.mu.Unlock()
@@ -223,25 +241,16 @@ func allZero(b []byte) bool {
 // against the database. A database that is missing something the manifest
 // records is damaged. A database that is ahead of the manifest (a crash between
 // commit and mirror) is accepted and the manifest is rebuilt from it.
-func (c *Case) verify(ctx context.Context) error {
-	rows, err := c.db.QueryContext(ctx, "PRAGMA quick_check")
-	if err != nil {
-		return mapOpenErr(err)
+func (c *Case) verify(ctx context.Context) (err error) {
+	if err := c.quickCheckOnce(ctx); err != nil {
+		return err
 	}
-	ok := false
-	for i := 0; rows.Next(); i++ {
-		var line string
-		if err := rows.Scan(&line); err != nil || line != "ok" || i > 0 {
-			_ = rows.Close()
-			return ErrDamaged
+	defer func() {
+		if err != nil {
+			verified.abort(c.gate) // any failure to open: the case is not trusted
+			c.gate = nil
 		}
-		ok = true
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil || !ok {
-		return ErrDamaged
-	}
+	}()
 	// The database must belong to this folder's case. The key blob and manifest
 	// were already matched in readCaseFiles; this catches a database swapped in
 	// under a key that was copied along with it.
@@ -278,6 +287,50 @@ func (c *Case) verify(ctx context.Context) error {
 	if len(dbImports) > len(c.man.Imports) {
 		c.man.Imports = dbImports
 		c.rebuildManifest()
+	}
+	return nil
+}
+
+// quickCheckOnce runs PRAGMA quick_check unless this process already passed it on
+// this file (rule in verify_cache.go). A skipped check still reads the database
+// once, so a wrong key or an unreadable file answers the same errors as before.
+func (c *Case) quickCheckOnce(ctx context.Context) error {
+	e, skipped, err := verified.acquire(c.dir, sha256.Sum256(c.keys.DB), func() error { return c.quickCheck(ctx) })
+	if err != nil {
+		return err
+	}
+	c.gate = e
+	if skipped {
+		var n int
+		if err := c.db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master").Scan(&n); err != nil {
+			verified.abort(e)
+			c.gate = nil
+			return mapOpenErr(err)
+		}
+	}
+	return nil
+}
+
+// quickCheck is the full PRAGMA quick_check.
+func (c *Case) quickCheck(ctx context.Context) error {
+	quickCheckRuns.Add(1)
+	rows, err := c.db.QueryContext(ctx, "PRAGMA quick_check")
+	if err != nil {
+		return mapOpenErr(err)
+	}
+	ok := false
+	for i := 0; rows.Next(); i++ {
+		var line string
+		if err := rows.Scan(&line); err != nil || line != "ok" || i > 0 {
+			_ = rows.Close()
+			return ErrDamaged
+		}
+		ok = true
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil || !ok {
+		return ErrDamaged
 	}
 	return nil
 }
@@ -357,7 +410,10 @@ func (c *Case) dbManifestImports(ctx context.Context) ([]manifestImport, error) 
 
 // IntegrityCheck runs the full PRAGMA integrity_check (the maintenance menu
 // item). Anything but "ok" is ErrDamaged.
-func (c *Case) IntegrityCheck(ctx context.Context) error {
+func (c *Case) IntegrityCheck(ctx context.Context) (err error) {
+	// A case reported damaged is no longer trusted: drop the cached quick_check so
+	// the file is not stamped as verified at shutdown (see noteDamage).
+	defer func() { _ = c.noteDamage(err) }()
 	db, err := c.handle()
 	if err != nil {
 		return err
@@ -381,7 +437,62 @@ func (c *Case) IntegrityCheck(ctx context.Context) error {
 	return nil
 }
 
-func capErr(what string) error { return fmt.Errorf("%w: %s", casestore.ErrCapExceeded, what) }
+// capErr is ErrCapExceeded for what, in the narrowest kind: the cap of one file
+// ("file size", "file rows") is ErrFileCapExceeded, the cap of the case ("case
+// size", "case database size") is ErrCaseCapExceeded, the rest plain
+// ErrCapExceeded.
+func capErr(what string) error {
+	base := casestore.ErrCapExceeded
+	switch what {
+	case "file size", "file rows":
+		base = casestore.ErrFileCapExceeded
+	case "case size", "case database size":
+		base = casestore.ErrCaseCapExceeded
+	}
+	return fmt.Errorf("%w: %s", base, what)
+}
+
+// importWaitMax is how long a second Import waits for a running one before it
+// answers casestore.ErrImportRunning. A variable so a test can shorten it.
+var importWaitMax = time.Second
+
+// lockImport takes importMu for an Import. When another Import holds it, it waits
+// at most importWaitMax and then answers ErrImportRunning; when an index build or
+// a shutdown holds it, it waits for them (they end on their own) but gives up with
+// ctx's error as soon as ctx ends.
+func (c *caseState) lockImport(ctx context.Context) error {
+	c.importPend.Add(1)
+	defer c.importPend.Add(-1)
+	if c.importMu.TryLock() {
+		c.importRun.Store(true)
+		return nil
+	}
+	// The holder is an Import when another one is pending (its own raise came
+	// before its TryLock) or has already published importRun; that is judged
+	// before every wait, so the bound starts as soon as the holder is known to be
+	// an Import.
+	var deadline <-chan time.Time
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if deadline == nil && (c.importPend.Load() >= 2 || c.importRun.Load()) {
+			t := time.NewTimer(importWaitMax)
+			defer t.Stop()
+			deadline = t.C
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline:
+			return casestore.ErrImportRunning
+		case <-tick.C:
+			if c.importMu.TryLock() {
+				c.importRun.Store(true)
+				return nil
+			}
+		}
+	}
+}
 
 // cleanText drops control characters and cuts to max runes.
 func cleanText(s string, max int) string {
@@ -577,8 +688,17 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 	if body == nil || run == nil {
 		return casestore.ImportResult{}, fmt.Errorf("%w: missing body or importer", ErrInvalid)
 	}
-	c.importMu.Lock()
-	defer c.importMu.Unlock()
+	if err := c.lockImport(ctx); err != nil {
+		return casestore.ImportResult{}, err
+	}
+	buildAfter := false // set when the commit left the timeline indexes to the background build
+	defer func() {
+		c.importRun.Store(false)
+		c.importMu.Unlock()
+		if buildAfter {
+			c.startTimelineBuild() // needs importMu, so only after it is released
+		}
+	}()
 	db, err := c.handle()
 	if err != nil {
 		return casestore.ImportResult{}, err
@@ -764,7 +884,16 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 		}
 		return casestore.ImportResult{Report: rep}, c.mapDBErr(err)
 	}
-	if _, err := tx.ExecContext(ctx, indexSQL); err != nil {
+	// The timeline indexes of a case that has earlier events and lacks them are not
+	// made here: that is a scan of the whole case, and it could fail on a case near
+	// its size cap or a full disk, failing an import that needs only a few pages.
+	// The background build makes them after the commit.
+	lateTimeline := timelineLate(ctx, tx, importID)
+	idxSQL := indexSQL
+	if lateTimeline {
+		idxSQL = coreIndexSQL
+	}
+	if _, err := tx.ExecContext(ctx, idxSQL); err != nil {
 		return casestore.ImportResult{Report: rep}, c.mapDBErr(err)
 	}
 	if err := bumpCaseRevision(ctx, tx); err != nil {
@@ -775,6 +904,7 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 		return casestore.ImportResult{Report: rep}, c.mapDBErr(err)
 	}
 	done = true
+	buildAfter = lateTimeline
 
 	rec := casestore.ImportRecord{
 		ID: importID, Importer: meta.Importer, FileName: meta.FileName, SHA256: sum,
@@ -883,12 +1013,22 @@ func sameImport(a, b manifestImport) bool {
 }
 
 // mapDBErr maps a full database to ErrCapExceeded and leaves other errors alone.
+// SQLite reports a full disk the same way as the page cap (max_page_count), so a
+// volume with next to no free space stays the plain ErrCapExceeded instead of
+// being called the case-size cap.
 func (c *Case) mapDBErr(err error) error {
-	if errors.Is(err, sqlite3.FULL) {
-		return capErr("case size")
+	if !errors.Is(err, sqlite3.FULL) {
+		return c.noteDamage(err)
 	}
-	return err
+	if free, ferr := freeBytes(c.s.root); ferr == nil && free < diskFullBytes {
+		return capErr("database full")
+	}
+	return capErr("case size")
 }
+
+// diskFullBytes is the free space on the case volume under which a full database
+// is taken for a full disk.
+const diskFullBytes = 16 << 20
 
 // duplicate answers an import whose hash is already in the case.
 func (c *Case) duplicate(ctx context.Context, db queryer, sum string) (casestore.ImportResult, error) {
@@ -1076,26 +1216,77 @@ func (c *Case) Events(ctx context.Context, q casestore.EventQuery) ([]evidence.E
 	}
 	query := selectEvents + where + " ORDER BY ts_ms, evidence_id LIMIT ?"
 	args = append(args, limit)
-	rows, err := db.QueryContext(ctx, query, args...)
+
+	// A caller that sets q.MaxScanTime gets a time budget: when it passes, the
+	// events read so far (the oldest ones, the order is by start time) come back
+	// with casestore.ErrScanBudget. Without it there is no budget, only ctx.
+	qctx := ctx
+	var timedOut atomic.Bool
+	if q.MaxScanTime > 0 {
+		d := q.MaxScanTime
+		if d > casestore.MaxScanTime {
+			d = casestore.MaxScanTime
+		}
+		var cancel context.CancelFunc
+		qctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		timer := time.AfterFunc(d, func() {
+			timedOut.Store(true)
+			cancel()
+		})
+		defer timer.Stop()
+	}
+	// stopped maps a failure to ErrScanBudget when only the budget caused it.
+	stopped := func(err error) error {
+		if err != nil && timedOut.Load() && ctx.Err() == nil {
+			return casestore.ErrScanBudget
+		}
+		return c.noteDamage(err)
+	}
+	if len(q.Sources) > 1 && len(q.Attrs) == 0 {
+		// Several sources: per-source key queries on ev_src_ts, merged (see eventsBySource).
+		out, err := c.eventsBySource(qctx, db, q, limit, stopped)
+		if errors.Is(err, casestore.ErrScanBudget) {
+			return out, err
+		}
+		if err != nil {
+			return nil, err
+		}
+		return out, nil
+	}
+	if queryHook != nil {
+		queryHook(query, args)
+	}
+	rows, err := db.QueryContext(qctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, stopped(err)
 	}
 	defer rows.Close()
 	var out []evidence.Event
 	for rows.Next() {
 		e, err := scanEvent(rows)
 		if err != nil {
-			return nil, err
+			return out, stopped(err)
 		}
 		out = append(out, e)
+		if eventRowHook != nil {
+			eventRowHook(len(out))
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		if serr := stopped(err); serr != err {
+			return out, serr
+		}
+		return nil, err
+	}
+	return out, nil
 }
 
 const selectEvents = `SELECT evidence_id, source, kind, host, ts_ms, te_ms, duration_ms, value, unit, severity, line, tz_rule,
 	attrs_json FROM events`
 
-// BucketCounts answers q with one GROUP BY over events, independent of the
+// BucketCounts answers q with GROUP BY queries over events, one per chunk of the
+// axis and each within the time budget, independent of the
 // 50 000-row cap of Events (casestore.BucketCounter). The window is q's
 // half-open [From, To): unlike Events, an event at exactly To is not counted.
 func (c *Case) BucketCounts(ctx context.Context, q casestore.BucketQuery) (casestore.BucketResult, error) {
@@ -1126,47 +1317,175 @@ func (c *Case) BucketCounts(ctx context.Context, q casestore.BucketQuery) (cases
 		}
 	}
 	// No LIMIT: at most MaxSeriesBuckets cells times the case's number of imports.
-	// Errors: a status stored as exactly three digits starting with 5 (the same
-	// rule as casestore.IsServerErrorStatus). GLOB is NULL for a missing status,
-	// SUM skips NULLs, and COALESCE turns an all-NULL group into 0. The sources in
-	// ErrorExcludeSources are filtered by a CASE guard first: CASE is lazy in
-	// SQLite, so their attrs_json is never parsed.
-	errCol := "0"
+	// The count is one query (answered from ev_src_ts alone). Errors are a second,
+	// separate query over the same cells: the rows whose status is stored as
+	// exactly three digits starting with 5 (the same rule as
+	// casestore.IsServerErrorStatus), written with the very expression of the
+	// partial index ev_err_ts so SQLite reads that small index instead of parsing
+	// attrs_json per row. The sources in ErrorExcludeSources never count. Cells
+	// with no error keep Errors 0.
+	query := "SELECT (ts_ms - ?) / ? AS b, source, import_id, COUNT(*), 0 FROM events WHERE " +
+		strings.Join(where, " AND ") + " GROUP BY b, source, import_id ORDER BY b, source, import_id"
+	var errQuery string
+	var errTail []any // the ErrorExcludeSources arguments, after the where arguments
 	if q.CountErrors {
-		statusIs5xx := "json_extract(attrs_json,'$.status') GLOB '5[0-9][0-9]'"
+		errWhere := append(append([]string(nil), where...), statusIs5xxExpr)
 		if len(q.ErrorExcludeSources) > 0 {
 			if len(q.ErrorExcludeSources) > maxFilter {
 				return casestore.BucketResult{}, fmt.Errorf("%w: too many error-exclude filters", ErrInvalid)
 			}
-			statusIs5xx = "CASE WHEN source NOT IN (" + strings.TrimSuffix(strings.Repeat("?,", len(q.ErrorExcludeSources)), ",") +
-				") THEN " + statusIs5xx + " END"
+			errWhere = append(errWhere, "source NOT IN ("+strings.TrimSuffix(strings.Repeat("?,", len(q.ErrorExcludeSources)), ",")+")")
 			for _, v := range q.ErrorExcludeSources {
-				selArgs = append(selArgs, v)
+				errTail = append(errTail, v)
 			}
 		}
-		errCol = "COALESCE(SUM(" + statusIs5xx + "), 0)"
+		errQuery = "SELECT (ts_ms - ?) / ? AS b, source, import_id, COUNT(*), COUNT(*) FROM events WHERE " +
+			strings.Join(errWhere, " AND ") + " GROUP BY b, source, import_id ORDER BY b, source, import_id"
 	}
-	query := "SELECT (ts_ms - ?) / ? AS b, source, import_id, COUNT(*), " + errCol + " FROM events WHERE " +
-		strings.Join(where, " AND ") + " GROUP BY b, source, import_id ORDER BY b, source, import_id"
-	rows, err := db.QueryContext(ctx, query, append(selArgs, args...)...)
+
+	// Time budget. A GROUP BY hands out no row before it has read its whole
+	// range, so the window is read in chunks of whole cells, oldest first: when
+	// the budget passes, the chunks already counted are a valid partial answer
+	// (res.DoneTo marks where they stop) instead of a failed request. The caller's
+	// own context ending (a dropped request) is not a timeout; it is returned.
+	budget := casestore.MaxScanTime
+	if q.MaxTime > 0 && q.MaxTime < budget {
+		budget = q.MaxTime
+	}
+	qctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var timedOut atomic.Bool
+	timer := time.AfterFunc(budget, func() {
+		timedOut.Store(true)
+		cancel()
+	})
+	defer timer.Stop()
+	if c.stop != nil {
+		go func() {
+			select {
+			case <-c.stop:
+				cancel()
+			case <-qctx.Done():
+			}
+		}()
+	}
+
+	// One read transaction (one connection, one snapshot) for every chunk and both
+	// queries of each, so an import that commits meanwhile is seen by none of them
+	// and the error cell of a bucket always belongs to the same rows as its count.
+	tx, err := db.BeginTx(qctx, nil)
 	if err != nil {
-		return casestore.BucketResult{}, err
+		switch {
+		case ctx.Err() != nil:
+			return casestore.BucketResult{}, ctx.Err()
+		case timedOut.Load():
+			return casestore.BucketResult{Partial: true, TimedOut: true, DoneTo: q.From.UTC()}, nil
+		}
+		if _, herr := c.handle(); herr != nil {
+			return casestore.BucketResult{}, herr
+		}
+		return casestore.BucketResult{}, c.noteDamage(err)
 	}
-	defer rows.Close()
+	defer func() { _ = tx.Rollback() }()
+
+	axisMs, fromMs, toMs := q.AxisStart.UnixMilli(), q.From.UnixMilli(), q.To.UnixMilli()
+	first, last := (fromMs-axisMs)/q.WidthMs, (toMs-1-axisMs)/q.WidthMs
+	if last < first {
+		last = first
+	}
+	per := (last - first + bucketChunks) / bucketChunks // cells per chunk, so at most bucketChunks chunks
+	if per < 1 {
+		per = 1
+	}
+	all := append(selArgs, args...)
+	errArgs := append(append([]any(nil), all...), errTail...)
+	fromIdx := len(selArgs) // all[fromIdx], all[fromIdx+1] are the window bounds
 	var res casestore.BucketResult
-	for rows.Next() {
-		var bc casestore.BucketCount
-		if err := rows.Scan(&bc.Index, &bc.Source, &bc.ImportID, &bc.Count, &bc.Errors); err != nil {
+	for lo, n := first, 0; lo <= last; lo, n = lo+per, n+1 {
+		hi := lo + per - 1
+		if hi > last {
+			hi = last
+		}
+		cFrom, cTo := axisMs+lo*q.WidthMs, axisMs+(hi+1)*q.WidthMs
+		if cFrom < fromMs {
+			cFrom = fromMs
+		}
+		if cTo > toMs {
+			cTo = toMs
+		}
+		if bucketChunkHook != nil {
+			bucketChunkHook(n)
+		}
+		all[fromIdx], all[fromIdx+1] = cFrom, cTo
+		counts, err := c.bucketChunk(qctx, tx, query, all)
+		if err == nil && errQuery != "" {
+			errArgs[fromIdx], errArgs[fromIdx+1] = cFrom, cTo
+			var errs []casestore.BucketCount
+			if errs, err = c.bucketChunk(qctx, tx, errQuery, errArgs); err == nil {
+				mergeBucketErrors(counts, errs)
+			}
+		}
+		if err != nil {
+			switch {
+			case ctx.Err() != nil:
+				return casestore.BucketResult{}, ctx.Err()
+			case timedOut.Load():
+				res.Partial, res.TimedOut = true, true
+				res.DoneTo = time.UnixMilli(cFrom).UTC()
+				res.Scanned = res.Total
+				return res, nil
+			}
+			if _, herr := c.handle(); herr != nil {
+				return casestore.BucketResult{}, herr
+			}
 			return casestore.BucketResult{}, err
 		}
-		res.Counts = append(res.Counts, bc)
-		res.Total += bc.Count
-	}
-	if err := rows.Err(); err != nil {
-		return casestore.BucketResult{}, err
+		for _, bc := range counts {
+			res.Counts = append(res.Counts, bc)
+			res.Total += bc.Count
+		}
 	}
 	res.Scanned = res.Total
 	return res, nil
+}
+
+// bucketChunks is the most chunks one BucketCounts call splits its window into.
+const bucketChunks = 24
+
+// bucketChunkHook, when set (tests only), runs before each chunk of a
+// BucketCounts call with the chunk number.
+var bucketChunkHook func(chunk int)
+
+// eventRowHook, when set (tests only), runs after each row Events reads, with
+// the number of rows read so far.
+var eventRowHook func(n int)
+
+// queryHook, when set (tests only), sees the SQL and arguments of each Events
+// and BucketCounts query before it runs, so a test can ask SQLite for its plan.
+var queryHook func(query string, args []any)
+
+// bucketChunk runs the grouped query for one chunk and reads all its rows.
+func (c *Case) bucketChunk(ctx context.Context, db queryer, query string, args []any) ([]casestore.BucketCount, error) {
+	if queryHook != nil {
+		queryHook(query, args)
+	}
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, c.noteDamage(err)
+	}
+	defer rows.Close()
+	var out []casestore.BucketCount
+	for rows.Next() {
+		var bc casestore.BucketCount
+		if err := rows.Scan(&bc.Index, &bc.Source, &bc.ImportID, &bc.Count, &bc.Errors); err != nil {
+			return nil, c.noteDamage(err)
+		}
+		out = append(out, bc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, c.noteDamage(err)
+	}
+	return out, nil
 }
 
 // eventFilter builds the WHERE clause (with its leading space, or empty) and the
@@ -1420,7 +1739,7 @@ func (c *Case) Each(ctx context.Context, q casestore.EventQuery, fn func(evidenc
 		if err != nil && strings.Contains(err.Error(), "malformed JSON") {
 			return ErrDamaged // an attribute filter met a row whose attrs_json is not JSON
 		}
-		return err
+		return c.noteDamage(err)
 	}
 
 	hint := c.attrIndexHint(q)

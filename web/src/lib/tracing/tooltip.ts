@@ -3,7 +3,8 @@
  * built from the tooltip dictionary behind `explain`. Pure strings only: no DOM, no HTML, no state.
  */
 import { explain } from '../copy/dictionary';
-import type { TracingLaneKey } from './model';
+import type { TracingLane, TracingLaneKey } from './model';
+import { laneCutShort, laneNote } from './lanes';
 
 /** The dictionary id behind each lane's head hint. */
 export const LANE_DICT_ID: Record<TracingLaneKey, string> = {
@@ -38,6 +39,16 @@ function sharedZoneWord(a: string, b: string): string {
 export function laneHint(key: string): string {
   if (typeof key !== 'string' || !Object.hasOwn(LANE_DICT_ID, key)) return '';
   return explain(LANE_DICT_ID[key as TracingLaneKey]);
+}
+
+/**
+ * The hint on a lane head: the plain lane hint, then (for a lane the server cut short) the sentence that says why and what to do.
+ * The same dictionary text as the lane note and the tooltip.
+ */
+export function laneHeadHint(lane: TracingLane): string {
+  const base = laneHint(lane.key);
+  const cut = laneCutShort(lane) ? laneNote(lane) : '';
+  return cut ? `${base} ${cut}`.trim() : base;
 }
 
 /** A count with thousands separators, the one format used on axis labels and in tooltips. */

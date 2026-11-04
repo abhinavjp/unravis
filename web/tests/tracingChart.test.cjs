@@ -116,9 +116,10 @@ test('lane wording is verbatim', () => {
     'out-of-range': 'Files do not cover this time'
   });
   assert.deepEqual(INCOMPLETE_TEXT, {
-    timeout: 'The audit read ran out of time; nothing was shortened.',
+    timeout: 'Showing part of this lane: the read hit its time limit. Try a shorter window.',
     rowcap: 'The audit read reached its row limit; nothing was shortened.',
-    error: 'The audit read failed; nothing was shortened.'
+    error: 'The audit read failed; nothing was shortened.',
+    'broad-scan': 'This window is longer than the live audit source reads, so no API requests are drawn. Choose 24 hours or less, or start Unravis with --allow-broad-scans.'
   });
   assert.deepEqual(MIXED_NOTE, {
     title: 'Some data was collected at different times.',
@@ -327,7 +328,7 @@ test('the lane heads are not tab stops and keep a name (UI-R2-07)', () => {
 
 test('the chart keeps the axis baseline, tab stops and ticks honest (UI-R1-07/10/15/17, WEB-R1)', () => {
   const src = read('src/components/TracingChart.svelte');
-  const noteAt = src.indexOf('class="lane-note bad"');
+  const noteAt = src.indexOf('class="lane-note {laneNoteTone(lane)}"');
   const barsAt = src.indexOf('<div class="bars">');
   assert.ok(noteAt > 0 && barsAt > noteAt, 'the incomplete note sits above the bars, so it cannot move the baseline');
   assert.ok(src.includes('class="scale"'), 'the y scale is its own bar-height box');

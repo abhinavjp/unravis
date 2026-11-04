@@ -465,7 +465,7 @@ export const discoverClient: DiscoverClient = {
     return id;
   },
   async getScan(scanId, signal) {
-    const response = await send(scanPath(scanId), {}, signal);
+    const response = await send(scanPath(scanId), {}, signal, { timeoutMs: null });
     const scan = parseScan(await json<unknown>(response));
     if (!scan) throw unreadable(response.status);
     return scan;
@@ -496,7 +496,7 @@ export const discoverClient: DiscoverClient = {
     return parseSampler(await json<unknown>(response)) ?? { state: 'recording', since: '', samples: 0, stopReason: '' };
   },
   async getSampler(caseId, signal) {
-    const response = await send(casePath(caseId, '/sampler'), {}, signal);
+    const response = await send(casePath(caseId, '/sampler'), {}, signal, { timeoutMs: null });
     const status = parseSampler(await json<unknown>(response));
     if (!status) throw unreadable(response.status);
     return status;

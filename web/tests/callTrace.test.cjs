@@ -296,7 +296,11 @@ test('fetchCallTrace keeps the server message on an error and passes the abort s
   await assert.rejects(api.fetchCallTrace([{ sourceId: 's', id: '1' }], 2, 2, ''), (error) => error.message === 'That call was not found.' && error.status === 404);
   const controller = new AbortController();
   globalThis.fetch = async (_url, init = {}) => {
-    assert.equal(init.signal, controller.signal);
+    // The request gets a signal that follows the caller's: it is not aborted now and is aborted the moment the caller cancels.
+    assert.ok(init.signal instanceof AbortSignal);
+    assert.equal(init.signal.aborted, false);
+    controller.abort();
+    assert.equal(init.signal.aborted, true);
     throw new DOMException('Aborted', 'AbortError');
   };
   await assert.rejects(api.fetchCallTrace([{ sourceId: 's', id: '1' }], 2, 2, '', controller.signal), (error) => error.name === 'AbortError');

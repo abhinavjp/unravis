@@ -193,6 +193,11 @@ export const REASON_TEXT: Record<string, string> = {
   'reject-fraction': 'Too many rows were rejected, so the whole file was refused.',
   limit: 'The file is over the size limit for its type.',
   'cap-exceeded': 'There is not enough room for this file. Erase a closed case and try again.',
+  // 413 split: one file is too big, or the case itself is full. The server names the cap that was hit.
+  'file-cap': 'This file is larger than one import allows. Split it or import a shorter period.',
+  'case-cap': 'This case is full. Free space by removing older imports or archive it.',
+  // 409 from every writer (import, workspace save, close case, discovery pull) while an import is running on the case.
+  'case-import-running': 'An import is running on this case. Try again when it finishes.',
   'ack-required': 'Tick the box to confirm the notice before importing.',
   'not-found': 'That case was not found.',
   'bad-case-id': 'That is not a valid case id.',

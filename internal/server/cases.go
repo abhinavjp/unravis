@@ -396,6 +396,13 @@ type caseFailure struct {
 
 // untrustedCaseText is the message for a Windows sealed case folder that was not on
 // this PC when the master key was set up.
+// Texts of the import-running 409 and the two 413 caps (file and case).
+const (
+	caseImportRunningText = "An import is running on this case. Try again when it finishes."
+	fileCapText           = "The file is over the size or row cap for one file. Choose a shorter time window or a smaller file."
+	caseCapText           = "The case is over its size cap. Erase a closed case or start a new one, then try again."
+)
+
 const untrustedCaseText = "This case folder is not protected by the master key and was not on this PC when the master key was set up, so it is not opened. You can erase it."
 
 func writeCaseFailure(w http.ResponseWriter, status int, reason, message string) {
@@ -445,6 +452,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeCaseFailure(w, http.StatusConflict, "needs-rewrap", needsRewrapText)
 	case errors.Is(err, casestore.ErrCaseClosed):
 		writeCaseFailure(w, http.StatusConflict, "case-closed", "The case is closed. Nothing can be imported into it.")
+	case errors.Is(err, casestore.ErrImportRunning):
+		writeCaseFailure(w, http.StatusConflict, "case-import-running", caseImportRunningText)
 	case errors.Is(err, casestore.ErrCaseChanged):
 		writeCaseFailure(w, http.StatusConflict, "case-changed", caseChangedText)
 	case errors.Is(err, casestore.ErrArchiveRunning):
@@ -1707,6 +1716,12 @@ func (h *handler) writeImportError(w http.ResponseWriter, err error, body *track
 		writeCaseFailure(w, http.StatusConflict, "case-closed", "The case is closed. Nothing can be imported into it.")
 	case errors.As(err, &duplicate):
 		writeJSON(w, http.StatusConflict, caseFailure{Error: "These bytes are already imported into this case.", Reason: "duplicate", ImportID: duplicate.Existing.ID}, 4096)
+	case errors.Is(err, casestore.ErrImportRunning):
+		writeCaseFailure(w, http.StatusConflict, "case-import-running", caseImportRunningText)
+	case errors.Is(err, casestore.ErrFileCapExceeded):
+		writeCaseFailure(w, http.StatusRequestEntityTooLarge, "file-cap", fileCapText)
+	case errors.Is(err, casestore.ErrCaseCapExceeded):
+		writeCaseFailure(w, http.StatusRequestEntityTooLarge, "case-cap", caseCapText)
 	case errors.Is(err, casestore.ErrCapExceeded):
 		writeCaseFailure(w, http.StatusRequestEntityTooLarge, "cap-exceeded", "The file or the case is over its size or row cap.")
 	case errors.As(err, &limit):

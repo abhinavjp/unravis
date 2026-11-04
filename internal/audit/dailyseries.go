@@ -227,22 +227,47 @@ func dayQuery(sourceIDs []string, w dayWindow, operation string) Query {
 // source (docsExamined is not measured) is allowed at most liveMaxDays days:
 // past that the read is refused, after the first day shows what the source is.
 // Any other read error stops the series; the caller decides what to say.
-func readDays(ctx context.Context, repo Repository, sourceIDs []string, days []dayWindow, operation string, liveMaxDays int) ([]dayRead, []Provenance, error) {
+//
+// Time budget (PF-B-04). When ctx has a deadline the read stops starting new days
+// once seriesSoftShare (80 percent) of the time left at the start has passed, and
+// a day that fails because the deadline passed ends the read the same way: the
+// days finished so far (the oldest ones) come back with partial true and no
+// error, so a long series shows what it has instead of failing as a whole. At
+// least the first day must finish; a series with no finished day is an error. A
+// context that was cancelled (a dropped request) is still an error.
+func readDays(ctx context.Context, repo Repository, sourceIDs []string, days []dayWindow, operation string, liveMaxDays int) (reads []dayRead, merged []Provenance, partial bool, err error) {
 	if len(days) == 0 {
-		return nil, nil, nil
+		return nil, nil, false, nil
 	}
-	reads := make([]dayRead, 0, len(days))
+	reads = make([]dayRead, 0, len(days))
 	var prov []Provenance
+	var softStop time.Time
+	if dl, ok := ctx.Deadline(); ok {
+		now := seriesNow()
+		softStop = now.Add(time.Duration(float64(dl.Sub(now)) * seriesSoftShare))
+	}
 	for i, w := range days {
 		if err := ctx.Err(); err != nil {
-			return nil, nil, err
+			if errors.Is(err, context.DeadlineExceeded) && len(reads) > 0 {
+				partial = true
+				break
+			}
+			return nil, nil, false, err
+		}
+		if i > 0 && !softStop.IsZero() && !seriesNow().Before(softStop) {
+			partial = true
+			break
 		}
 		analysis, err := repo.Analyze(ctx, dayQuery(sourceIDs, w, operation))
 		if err != nil {
-			return nil, nil, err
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) && len(reads) > 0 {
+				partial = true // this day ran out of time: keep the finished ones
+				break
+			}
+			return nil, nil, false, err
 		}
 		if i == 0 && isLiveRead(analysis.Provenance) && len(days) > liveMaxDays {
-			return nil, nil, fmt.Errorf("%w: a daily series reads one day at a time, so on a live source it covers at most %d days", ErrBroadScanRefused, liveMaxDays)
+			return nil, nil, false, fmt.Errorf("%w: a daily series reads one day at a time, so on a live source it covers at most %d days", ErrBroadScanRefused, liveMaxDays)
 		}
 		read := dayRead{day: w, ops: map[string]*dayHist{}}
 		for _, c := range analysis.APIs {
@@ -265,12 +290,19 @@ func readDays(ctx context.Context, repo Repository, sourceIDs []string, days []d
 		prov = append(prov, dailyProvenance(analysis.Provenance)...)
 		reads = append(reads, read)
 	}
-	merged := mergeGapProvenance(prov, false)
+	merged = mergeGapProvenance(prov, false)
 	for i := range merged {
-		merged[i].Start, merged[i].End = days[0].Start, days[len(days)-1].End
+		merged[i].Start, merged[i].End = reads[0].day.Start, reads[len(reads)-1].day.End
 	}
-	return reads, merged, nil
+	return reads, merged, partial, nil
 }
+
+// seriesSoftShare is the share of the context deadline after which readDays
+// starts no new day.
+const seriesSoftShare = 0.8
+
+// seriesNow is the clock of the soft deadline. A variable so a test can step it.
+var seriesNow = time.Now
 
 // dailyProvenance keeps the current-window rows of one day's read.
 func dailyProvenance(prov []Provenance) []Provenance {

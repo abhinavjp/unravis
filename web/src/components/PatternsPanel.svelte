@@ -6,6 +6,7 @@
   import { activeRangeId } from '../lib/depth';
   import { app, closeSidePanel, onScopeChange, scope, showRecord } from '../lib/appState.svelte';
   import { citeInLedger } from '../lib/citeInLedger';
+  import { WAIT_TEXT } from '../lib/copy/waitCopy';
   import { formatElapsed } from '../lib/provenance';
   import {
     DEFAULT_EPISODE_GAP_SECONDS, DEFAULT_STALL_SECONDS, DEFAULT_STEP_DAYS, PATTERNS_TEXT, PATTERN_RANGES, STEP_DAY_CHOICES, STEP_TEXT, auditSeriesSection, auditStallLine, citeLabel, type SplitPatch, concentrationSection, coverageLine,
@@ -23,7 +24,7 @@
   // Summary first (verdict, findings, counts), then the episode table, which opens one episode at a time.
   // The range chips change the page's own range. A slow request or a slow audit save opens its record (and closes this drawer).
   let { query, zone, sourceLabels, onClose }: { query: Query; zone: string; sourceLabels: Map<string, string>; onClose: () => void } = $props();
-  type State = { kind: 'idle' } | { kind: 'running' } | { kind: 'done'; report: PatternReport; key: string; idleAsked: boolean; stepAsked: boolean; auditAsked: boolean } | { kind: 'error'; text: string };
+  type State = { kind: 'idle' } | { kind: 'running' } | { kind: 'done'; report: PatternReport; key: string; idleAsked: boolean; stepAsked: boolean; stepPlanned: number; auditAsked: boolean } | { kind: 'error'; text: string };
   let phase = $state<State>({ kind: 'idle' });
   let stallSec = $state(String(DEFAULT_STALL_SECONDS));
   let gapSec = $state(String(DEFAULT_EPISODE_GAP_SECONDS));
@@ -76,7 +77,7 @@
     stepOn = (saved.stepDays ?? 0) > 0;
     if (stepOn) stepDays = String(saved.stepDays);
     auditSeries = !!saved.auditAsked;
-    phase = { kind: 'done', report: saved.report, key: saved.key, idleAsked: saved.idleAsked, stepAsked: stepOn, auditAsked: auditSeries };
+    phase = { kind: 'done', report: saved.report, key: saved.key, idleAsked: saved.idleAsked, stepAsked: stepOn, stepPlanned: stepOn ? Number(saved.stepDays) : 0, auditAsked: auditSeries };
     savedAt = saved.savedAt;
     now = Date.now();
   });
@@ -100,6 +101,7 @@
   async function run() {
     if (phase.kind === 'running') return;
     const stepAsked = stepOn, auditAsked = auditSeries;
+    const stepPlanned = stepAsked ? Number(stepDays) : 0;
     const built = windowInputSeconds(query, stallSec, gapSec, idleGaps, { stepDays: stepAsked ? Number(stepDays) : 0, auditSeries: auditAsked, zone });
     const idleAsked = idleGaps;
     if ('error' in built) { thresholdError = built.error; return; }
@@ -119,7 +121,7 @@
       const report = await api.patterns(built.input, mine.signal);
       if (mine.signal.aborted) return;
       savePatterns({ ...saveAs, report });
-      phase = { kind: 'done', report, key, idleAsked, stepAsked, auditAsked };
+      phase = { kind: 'done', report, key, idleAsked, stepAsked, stepPlanned, auditAsked };
     } catch (cause) {
       if (mine.signal.aborted) return;
       if (cause instanceof ApiError && cause.status === 401) clearDrawerResults();
@@ -401,7 +403,7 @@
         </section>
       {/if}
 
-      {@const step = stepSection(report, phase.stepAsked)}
+      {@const step = stepSection(report, phase.stepAsked, phase.stepPlanned)}
       {#if step.kind !== 'hidden'}
         <section class="patterns-detail" aria-label={STEP_TEXT.stepTitle}>
           <h3>{STEP_TEXT.stepTitle}</h3>
@@ -428,6 +430,12 @@
               </table>
             </div>
             <p class="patterns-note">{step.daysLine}</p>
+            {#if step.partial}
+              <div class="notice step-partial" role="status" data-testid="step-partial">
+                <span>{step.partial}</span>
+                <button type="button" class="secondary-button" title={WAIT_TEXT.retryTitle} onclick={() => void run()}>{WAIT_TEXT.retry}</button>
+              </div>
+            {/if}
             {#if step.split && step.scope}
               {@const patch = step.scope}
               <div class="split-offer" bind:this={splitBox}>
@@ -499,6 +507,7 @@
 </Drawer>
 
 <style>
+  .step-partial { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
   :global(.connections-drawer.patterns-drawer) { overflow-x: hidden; gap: var(--space-3); }
   .patterns-window { display: grid; gap: 10px; margin-top: 13px; min-width: 0; }
   .range-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }

@@ -83,7 +83,7 @@ test('INV-02: the date and time fields are plain boxes and refuse bad windows', 
   await toTime.fill('09:00:00.000');
   const fromDate = investigate.getByRole('group', { name: 'From' }).getByRole('textbox', { name: 'Date' });
   await fromDate.fill('2026-10-10');
-  await expect(page.getByText('Each window can be at most 7 days.')).toBeVisible();
+  await expect(page.getByText('Each window can be at most 7 days. Use the Timeline or the Daily view for longer periods.')).toBeVisible();
   await run_.click();
   await expect(page.getByText('Comparison not run: fix the filter first')).toBeVisible();
   expect(sent, 'analysis requests sent for refused windows').toBe(0);

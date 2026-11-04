@@ -7,6 +7,8 @@
   import HourHeatmap from './HourHeatmap.svelte';
   import DayOverlay from './DayOverlay.svelte';
   import { overlayCopy } from '../lib/rollupOverlay';
+  import { WAIT_TEXT } from '../lib/copy/waitCopy';
+  import { createSlowRead } from '../lib/slowRead.svelte';
 
   // Closed until asked: opening it is what reads the sources, so a closed view never scans anything.
   let open = $state(false);
@@ -16,6 +18,9 @@
   let loading = $state(false);
   let error = $state('');
   let refused = $state(false);
+  // Set by Cancel, cleared by the next read: the view then says what happened instead of going quiet.
+  let cancelled = $state(false);
+  const waiting = createSlowRead(() => loading);
   let controller: AbortController | undefined;
   let sequence = 0;
 
@@ -31,12 +36,10 @@
     const range = rollupRanges.find(item => item.id === rangeId) ?? rollupRanges[1];
     const base = new Date(app.info?.now ?? '');
     const params = rollupParams(range, Number.isFinite(base.getTime()) ? base : new Date(), zone, [...sourceIds]);
-    loading = true; error = ''; refused = false;
+    loading = true; error = ''; refused = false; cancelled = false;
     try {
-      // One after the other: the second answer comes from the server's one-minute copy of the first read.
-      const days = await api.daily(params, controller.signal);
-      if (run !== sequence) return;
-      const hours = await api.hourGrid(params, controller.signal);
+      // Both reads start together: they ask the same question of the same sources and do not depend on each other.
+      const [days, hours] = await Promise.all([api.daily(params, controller.signal), api.hourGrid(params, controller.signal)]);
       if (run !== sequence) return;
       daily = days; grid = hours;
     } catch (cause) {
@@ -47,11 +50,15 @@
     } finally { if (run === sequence) loading = false; }
   }
 
+  function cancel() {
+    sequence++; controller?.abort(); loading = false; cancelled = true;
+  }
+
   $effect(() => {
     const key = requestKey;
     untrack(() => {
-      if (!open) { sequence++; controller?.abort(); loading = false; return; }
-      if (!sourceIds.length) { sequence++; controller?.abort(); daily = null; grid = null; loading = false; error = ''; return; }
+      if (!open) { sequence++; controller?.abort(); loading = false; cancelled = false; return; }
+      if (!sourceIds.length) { sequence++; controller?.abort(); daily = null; grid = null; loading = false; error = ''; cancelled = false; return; }
       void key;
       void load();
     });
@@ -67,7 +74,7 @@
     <div class="rollup-body" id="rollup-body">
       <p class="rollup-intro">{rollupCopy.intro}</p>
       <div class="rollup-controls">
-        <label for="rollup-range">Span</label>
+        <label for="rollup-range">{rollupCopy.spanLabel}</label>
         <select id="rollup-range" bind:value={rangeId}>
           {#each rollupRanges as item (item.id)}<option value={item.id}>{item.label}</option>{/each}
         </select>
@@ -76,8 +83,21 @@
       {#if !sourceIds.length}
         <p class="table-empty">Choose at least one source to see this view.</p>
       {:else}
-        <div aria-live="polite" class="rollup-status">{#if loading}Reading the sources…{/if}</div>
-        {#if error}<div class="inline-error" role="alert">{error}{#if refused} {rollupCopy.refusedHelp}{/if}</div>{/if}
+        <div aria-live="polite" class="rollup-status">
+          {#if loading}
+            <span>{waiting.slow ? WAIT_TEXT.stillReading : rollupCopy.reading}</span>
+            <button type="button" class="secondary-button" title={WAIT_TEXT.cancelTitle} onclick={cancel}>{WAIT_TEXT.cancel}</button>
+          {:else if cancelled}
+            <span>{WAIT_TEXT.cancelledRead}</span>
+            <button type="button" class="secondary-button" title={WAIT_TEXT.retryTitle} onclick={() => void load()}>{WAIT_TEXT.retry}</button>
+          {/if}
+        </div>
+        {#if error}
+          <div class="inline-error" role="alert">
+            <span>{error}{#if refused} {rollupCopy.refusedHelp}{/if}</span>
+            <button type="button" class="secondary-button" title={WAIT_TEXT.retryTitle} onclick={() => void load()}>{WAIT_TEXT.retry}</button>
+          </div>
+        {/if}
         {#if failing.length}<div class="inline-error" role="alert">{#each failing as source}<span>{app.sourceLabels.get(source.sourceId) ?? source.sourceId}: {source.error || 'This source did not answer.'} </span>{/each}</div>{/if}
         {#if daily && grid}
           <div class="rollup-block" aria-busy={loading}>
@@ -102,7 +122,8 @@
   .rollup-intro { margin: 0; color: var(--text-2); font-size: 13px; max-width: 70ch; }
   .rollup-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
   .rollup-zone { color: var(--text-2); font-size: 12px; }
-  .rollup-status { min-height: 1.2em; color: var(--text-2); font-size: 12px; }
+  .rollup-status { min-height: 1.2em; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text-2); font-size: 12px; }
+  .rollup-body :global(.inline-error) { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .rollup-block { display: flex; flex-direction: column; gap: var(--space-2, 8px); }
   .rollup-block h4 { margin: 8px 0 0; font-size: 13px; font-weight: 600; }
 </style>

@@ -139,7 +139,11 @@ test('fetchCollect passes the abort signal on', async () => {
   const controller = new AbortController();
   globalThis.sessionStorage = { getItem: () => 'session-token-1', setItem() {}, removeItem() {} };
   globalThis.fetch = async (_url, init = {}) => {
-    assert.equal(init.signal, controller.signal);
+    // The request gets a signal that follows the caller's: it is not aborted now and is aborted the moment the caller cancels.
+    assert.ok(init.signal instanceof AbortSignal);
+    assert.equal(init.signal.aborted, false);
+    controller.abort();
+    assert.equal(init.signal.aborted, true);
     throw new DOMException('Aborted', 'AbortError');
   };
   await assert.rejects(cases.fetchCollect(CASE_ID, controller.signal), (error) => error instanceof DOMException && error.name === 'AbortError');

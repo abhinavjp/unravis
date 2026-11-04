@@ -4,6 +4,7 @@
   import { api, ApiError } from '../api';
   import { CaseApiError, isCaseGone } from '../cases';
   import { fetchHealthRuns, runHealth, sortedFindings, countByStatus, type HealthRun, type HealthReport, type HealthTarget } from '../health';
+  import { reasonText } from '../copy/importCopy';
   import { HEALTH_TEXT, HEALTH_STATUS_LABEL, HEALTH_STATUS_MARK, overallText, connectedText } from '../copy/healthCopy';
   import { DEFAULT_COLLECTION } from '../wizardConnections';
   import type { RecentConnection, SavedSqlConnection, SqlTestRequest } from '../types';
@@ -99,6 +100,7 @@
   function failure(error: unknown): string {
     if (isCaseGone(error)) onGone?.();
     const status = error instanceof CaseApiError || error instanceof ApiError ? error.status : 0;
+    if (status === 409 && (error instanceof CaseApiError || error instanceof ApiError) && error.reason === 'case-import-running') return reasonText('case-import-running') ?? HEALTH_TEXT.busy;
     if (status === 409) return HEALTH_TEXT.busy;
     if (status === 429) return HEALTH_TEXT.limited;
     if (status === 423) return HEALTH_TEXT.locked;

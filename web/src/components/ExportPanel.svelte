@@ -47,7 +47,7 @@
     problem = '';
     phase = { kind: 'previewing' };
     try {
-      const result = await api.exportPreview(exportInput(query, includePseudonyms, includeLedger, ledger.caseId));
+      const result = await api.exportPreview(exportInput(query, includePseudonyms, includeLedger, ledger.caseId), mine.signal);
       if (mine.signal.aborted) return;
       phase = { kind: 'preview', preview: result };
     } catch (cause) {

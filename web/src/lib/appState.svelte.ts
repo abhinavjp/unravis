@@ -11,7 +11,7 @@ import { bumpEpoch } from './evidenceMemo';
 import { defaultQuery } from './time';
 import { initialComparison, kindLabel, queryFingerprint, resultNotes, rankComparisons, stateLabel } from './presentation';
 import { clearInvestigationSnapshot, createInvestigationSnapshot, forgetInvestigationSource, hasUnresolvedKnownSources, readInvestigationSnapshot, restoreInvestigation, serializeRecordFilters, shouldSelectAddedSource, writeInvestigationSnapshot, type InvestigationSnapshot } from './investigation';
-import { buildWorkspace, classifyRestoreFailure, createWorkspaceSaver, parseWorkspace, planRestore, pruneWorkspace, queueWorkspace, RESTORE_TIMEOUT_MS, sourceMatches, workspaceSaveAllowed, type Workspace, type WorkspaceDatabase } from './caseWorkspace';
+import { buildWorkspace, classifyRestoreFailure, createWorkspaceSaver, parseWorkspace, planRestore, pruneWorkspace, queueWorkspace, RESTORE_TIMEOUT_MS, sourceMatches, workspaceFailureNote, workspaceSaveAllowed, type Workspace, type WorkspaceDatabase } from './caseWorkspace';
 import { forgetSavedRecord, forgetSourceSaved, registerSourceSaved, resolveSavedRecent, savedIdFor, suggestedConnectionLabel } from './sourceSaved';
 import type { Analysis, BreakdownDim, BreakdownFilter, BreakdownRow, Comparison, ConnectionInput, ConnectionTestResult, Info, Page, Query, RecentConnection, RecordDetail, RecordFilters, RequestRecord, Rollup, Source, SourceInput, TLSMode } from './types';
 import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } from './breakdown';
@@ -87,6 +87,8 @@ let screen = $state<Screen>('loading');
 let lockState = $state<LockState | 'unknown'>('unknown');
 let dpapiCases = $state(0);
 let lockError = $state('');
+// A quiet status line when the case's workspace could not be saved because an import is running on it; cleared by the next save that goes through.
+let workspaceNote = $state('');
 // Where a successful unlock returns to: the screen that was interrupted, or the first screen the person would have had.
 let unlockOrigin: Screen | null = null;
 // Where set-up was opened from ('case' returns there; anything else returns to the start screen). Read once on the way out of set-up.
@@ -653,7 +655,8 @@ const saveAllowed = (caseId: string): boolean =>
 const workspaceSaver = createWorkspaceSaver({
   send: (caseId, workspace) => api.saveCaseWorkspace(caseId, workspace),
   allowed: saveAllowed,
-  sent: (caseId, workspace) => { if (caseId === activeCaseId) workspaceBaseline = workspace; }
+  sent: (caseId, workspace) => { if (caseId === activeCaseId) { workspaceBaseline = workspace; workspaceNote = ''; } },
+  failed: (caseId, cause) => { if (caseId === activeCaseId) { const note = workspaceFailureNote(cause); if (note) workspaceNote = note; } }
 });
 /** Saves the case's workspace after a quiet pause. Does nothing in the demo, with no case, or until the case's own workspace was read. */
 function queueWorkspaceSave() {
@@ -1691,6 +1694,7 @@ export const app = {
   get lockState() { return lockState; },
   get dpapiCases() { return dpapiCases; },
   get lockError() { return lockError; }, set lockError(value) { lockError = value; },
+  get workspaceNote() { return workspaceNote; }, set workspaceNote(value) { workspaceNote = value; },
   get firstRun() { return firstRun; },
   get maxSources() { return maxSources; },
   get remainingSourceSlots() { return remainingSourceSlots; },

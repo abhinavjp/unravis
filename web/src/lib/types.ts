@@ -255,7 +255,8 @@ export interface AuditSeries {
 }
 /** GET /api/endpoint-daily. One entry for each whole local day. `low` is a day with fewer than 20 timed requests, `partial` a day cut by the window or the row cap. */
 export interface EndpointDailyDay { date: string; start: string; end: string; count: number; p50Ms: number | null; p95Ms: number | null; low?: boolean; partial?: boolean }
-export interface EndpointDaily { operation: string; zone: string; days: EndpointDailyDay[]; provenance?: Provenance[]; warnings: string[] }
+/** `partial` is true (omitted when false) when the read ran out of time and `days` holds only the oldest finished days; `daysPlanned` is how many days it set out to read. */
+export interface EndpointDaily { operation: string; zone: string; days: EndpointDailyDay[]; provenance?: Provenance[]; warnings: string[]; partial?: boolean; daysPlanned?: number }
 export interface PatternCoverage { run: boolean; requestInitiatedAtPct?: number; accountIdPct?: number; note: string }
 export interface PatternReport {
   params: PatternParams; stalls: PatternStall[]; episodes: PatternEpisode[]; volleys: PatternVolley[]; auditStalls: PatternAuditStall[];

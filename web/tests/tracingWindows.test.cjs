@@ -42,18 +42,18 @@ test('the defaults are the last hour for the incident and the hour before for th
   assert.deepEqual(f, fields('2026-01-15T09:30', '2026-01-15T10:30', '2026-01-15T08:30', '2026-01-15T09:30'));
 });
 
-test('exactly 30 days is allowed and the body holds both windows as ISO strings', () => {
-  const check = windows.checkWindows(fields('2026-01-01T00:00', '2026-01-31T00:00', '2025-12-01T00:00', '2025-12-02T00:00'));
+test('exactly 186 days is allowed and the body holds both windows as ISO strings', () => {
+  const check = windows.checkWindows(fields('2026-01-01T00:00', '2026-07-06T00:00', '2025-12-01T00:00', '2025-12-02T00:00'));
   assert.deepEqual(check.errors, []);
   assert.deepEqual(check.body, {
-    incident: { start: '2026-01-01T00:00:00.000Z', end: '2026-01-31T00:00:00.000Z' },
+    incident: { start: '2026-01-01T00:00:00.000Z', end: '2026-07-06T00:00:00.000Z' },
     reference: { start: '2025-12-01T00:00:00.000Z', end: '2025-12-02T00:00:00.000Z' }
   });
 });
 
-test('30 days plus one minute is refused with the exact sentence and no body', () => {
-  const check = windows.checkWindows(fields('2026-01-01T00:00', '2026-01-31T00:01', '2025-12-01T00:00', '2025-12-02T00:00'));
-  assert.deepEqual(check.errors, ['The longest window is 30 days. Shorten the incident window.']);
+test('186 days plus one minute is refused with the exact sentence and no body', () => {
+  const check = windows.checkWindows(fields('2026-01-01T00:00', '2026-07-06T00:01', '2025-12-01T00:00', '2025-12-02T00:00'));
+  assert.deepEqual(check.errors, ['The longest window is 186 days. Shorten the incident window.']);
   assert.equal(check.body, null);
 });
 
@@ -86,7 +86,7 @@ test('check names the inputs each refusal is about, so the screen can mark them 
   assert.deepEqual(missing.errors, ['The comparison period needs a start and an end, in UTC.']);
   const reversed = windows.checkWindows(fields('2026-01-15T11:00', '2026-01-15T10:00', '2026-01-15T08:00', '2026-01-15T09:00'));
   assert.deepEqual(reversed.invalid, ['incidentStart', 'incidentEnd']);
-  const long = windows.checkWindows(fields('2026-01-01T00:00', '2026-01-31T00:01', '2026-01-15T08:00', '2026-01-15T09:00'));
+  const long = windows.checkWindows(fields('2026-01-01T00:00', '2026-07-06T00:01', '2026-01-15T08:00', '2026-01-15T09:00'));
   assert.deepEqual(long.invalid, ['incidentStart', 'incidentEnd']);
 });
 

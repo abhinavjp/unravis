@@ -2,6 +2,7 @@ import type { SavedSqlConnection, SqlConnectionInput, SqlTestRequest, SqlTestRes
 import { signalIfAppLocked } from './lockSignal';
 import { configureClientLog, dropClientLog, reportAction, reportError } from './clientLog';
 import { noticeKeeperRefusal, type KeeperStatus } from './keeper';
+import { guardSignal, isAbortLike, READ_TIMEOUT_MS, TIMEOUT_CODE, timeoutMessage } from './requestTimeout';
 import { rollupPath, type DailyResponse, type HourGridResponse, type RollupParams } from './rollup';
 
 const base = '/api';
@@ -81,13 +82,16 @@ export class ApiError extends Error {
   readonly status?: number;
   /** Plain-language reasons a guard blocked a ledger change (422, code guard_blocked). */
   readonly reasons?: string[];
-  constructor(message: string, code?: string, stage?: string, status?: number, reasons?: string[]) {
+  /** The short reason name a case route sends beside its message (for example `case-import-running`); absent on older routes. */
+  readonly reason?: string;
+  constructor(message: string, code?: string, stage?: string, status?: number, reasons?: string[], reason?: string) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.stage = stage;
     this.status = status;
     this.reasons = reasons;
+    this.reason = reason;
   }
 }
 
@@ -98,8 +102,24 @@ function responseRequestId(response: Response): string | undefined {
   try { return response.headers?.get('X-Request-Id') ?? undefined; } catch { return undefined; }
 }
 
-async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSignal): Promise<T> {
+/** `timeoutMs` null means no time limit (a job poll or a download). The default is the read limit. */
+async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSignal, timeoutMs: number | null = READ_TIMEOUT_MS): Promise<T> {
   if (!token) throw noSession();
+  const guard = guardSignal(signal, timeoutMs);
+  try {
+    return await requestOnce<T>(path, init, guard.signal);
+  } catch (cause) {
+    // A read stopped by the time limit (not by the person) says so in plain words; a cancel keeps its own abort error.
+    if (guard.timedOut() && isAbortLike(cause)) {
+      const failure = new ApiError(timeoutMessage(), TIMEOUT_CODE, undefined, 0);
+      reportError({ status: 0, code: TIMEOUT_CODE, message: failure.message });
+      throw failure;
+    }
+    throw cause;
+  } finally { guard.done(); }
+}
+
+async function requestOnce<T>(path: string, init: RequestInit, signal: AbortSignal | undefined): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set('X-Audit-Token', token);
   if (init.body) headers.set('Content-Type', 'application/json');
@@ -119,14 +139,16 @@ async function request<T>(path: string, init: RequestInit = {}, signal?: AbortSi
     let code: string | undefined;
     let stage: string | undefined;
     let reasons: string[] | undefined;
+    let reason: string | undefined;
     try {
-      const body = await response.json() as { error?: string; code?: string; stage?: string; reasons?: string[] };
+      const body = await response.json() as { error?: string; code?: string; stage?: string; reasons?: string[]; reason?: string };
       if (body.error) message = body.error;
       if (body.code) code = body.code;
       if (body.stage) stage = body.stage;
       if (Array.isArray(body.reasons)) reasons = body.reasons;
+      if (typeof body.reason === 'string' && body.reason) reason = body.reason;
     } catch { /* keep status message */ }
-    const failure = new ApiError(plainApiMessage(response.status, message), code, stage, response.status, reasons);
+    const failure = new ApiError(plainApiMessage(response.status, message), code, stage, response.status, reasons, reason);
     // Every ApiError is reported: it is, by construction, an error the caller
     // is about to show the user.
     reportError({ status: failure.status, code: failure.code, stage: failure.stage, message: failure.message, reqId });
@@ -195,8 +217,8 @@ export const api = {
   caseWorkspace: (caseId: string, signal?: AbortSignal) => request<unknown>('/cases/' + encodeURIComponent(caseId) + '/workspace', {}, signal),
   /** Replaces the case's workspace. The server refuses any key that looks like a password, address or user name (400). */
   saveCaseWorkspace: (caseId: string, workspace: object) => request<unknown>('/cases/' + encodeURIComponent(caseId) + '/workspace', { method: 'PUT', body: JSON.stringify(workspace) }),
-  exportPreview: (input: ExportPreviewInput) => request<ExportPreview>('/export/preview', json(input)),
-  exportConfirm: (previewId: string) => { reportAction('evidence', 'export'); return request<ExportFile>('/export/confirm', json({ previewId })); },
+  exportPreview: (input: ExportPreviewInput, signal?: AbortSignal) => request<ExportPreview>('/export/preview', json(input), signal),
+  exportConfirm: (previewId: string, signal?: AbortSignal) => { reportAction('evidence', 'export'); return request<ExportFile>('/export/confirm', json({ previewId }), signal, null); },
   /** The daily table and the hour grid: one read of the sources each, cached for a minute by the server. */
   daily: (params: RollupParams, signal?: AbortSignal) => request<DailyResponse>(rollupPath('daily', params), {}, signal),
   hourGrid: (params: RollupParams, signal?: AbortSignal) => request<HourGridResponse>(rollupPath('hourgrid', params), {}, signal),

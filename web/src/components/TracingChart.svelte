@@ -5,13 +5,14 @@
   import type { TracingLane, TracingLaneKey, TracingResponse } from '../lib/tracing/model';
   import {
     LANE_ASK, LANE_NAME, LANE_ORDER, MIXED_NOTE, PANEL_TITLE,
-    axisCaption, barHeightPct, barMax, barsFor, hasAnyData, isLaneVisible, laneDrawsBars, laneNote, laneStatusLine,
+    anyLaneCutShort, axisCaption, barHeightPct, barMax, barsFor, hasAnyData, isLaneVisible, laneCutShort, laneDrawsBars, laneNote, laneNoteTone, laneStatusLine,
     outsideSlots, showsProvenance, slotGrid, slotOutside, slotStartMs, truncatedNote, type Bar
   } from '../lib/tracing/lanes';
   import { formatTime } from '../lib/time';
   import { needsYear } from '../lib/chartTime';
   import { formatDuration } from '../lib/format';
-  import { TOOLTIP_TEXT, barTipLines, formatCount, isTouchPointer, laneHint } from '../lib/tracing/tooltip';
+  import { TOOLTIP_TEXT, barTipLines, formatCount, isTouchPointer, laneHeadHint } from '../lib/tracing/tooltip';
+  import { WAIT_TEXT } from '../lib/copy/waitCopy';
   import {
     CANVAS_TEXT, MIN_ZOOM_SLOTS, PERCENTILES, PERCENTILE_LABEL, absoluteSlot, clampRange, edgeSlot, fullRange, hasLatency,
     isZoomed, latencySegments, rangeFromDrag, stepSlot, axisTicks, zoomFocus, zoomIn, zoomOut, zoomedText,
@@ -163,7 +164,7 @@
       errors: bar?.errors ?? 0,
       origin: lane.origin,
       asOfText: showsProvenance(lane) ? at(lane.asOf) : '',
-      note: lane.state === 'incomplete' ? laneNote(lane) : ''
+      note: lane.state === 'incomplete' || laneCutShort(lane) ? laneNote(lane) : ''
     });
   }
 
@@ -340,6 +341,10 @@
     </div>
   {/if}
 
+  {#if anyLaneCutShort(response.lanes)}
+    <p role="status" class="notice cut-short" data-testid="lanes-cut-short">{WAIT_TEXT.lanesCutShort}</p>
+  {/if}
+
   {#if grid && hasData}
     <div class="canvas-bar" role="toolbar" aria-label={CANVAS_TEXT.ariaLabel}>
       <button type="button" class="secondary-button" onclick={doZoomIn} disabled={shown <= Math.min(MIN_ZOOM_SLOTS, grid.n)}>{CANVAS_TEXT.zoomIn}</button>
@@ -377,7 +382,7 @@
         {#if showsProvenance(lane)}
           <small class="origin">{lane.origin === 'live' ? TOOLTIP_TEXT.readJustNow : TOOLTIP_TEXT.fromSavedLogs} · {at(lane.asOf)}</small>
         {/if}
-        <span id="tc-hint-{lane.key}" role="tooltip" class="hint">{laneHint(lane.key)}</span>
+        <span id="tc-hint-{lane.key}" role="tooltip" class="hint">{laneHeadHint(lane)}</span>
       </div>
       <div class="axis axis-left" style="--row:{laneIndex + 1}">
         {#if drawBars}
@@ -391,8 +396,8 @@
         <p class="panel-title">{PANEL_TITLE[lane.key]}</p>
         {#if drawBars}
           <!-- The note sits above the bars so the bars stay at the panel's bottom, level with the axis "0". -->
-          {#if lane.state === 'incomplete'}
-            <p role="status" class="lane-note bad">{laneNote(lane)}</p>
+          {#if lane.state === 'incomplete' || laneCutShort(lane)}
+            <p role="status" class="lane-note {laneNoteTone(lane)}">{laneNote(lane)}</p>
           {/if}
           <div class="bars">
             {#each outside as i (i)}
@@ -525,7 +530,9 @@
   .outside-dash { position: absolute; bottom: 0; height: 2px; background: var(--line); opacity: .6; }
   .lane-note { margin: var(--space-1) var(--space-2) 0; color: var(--text-2); font-size: var(--fs-3); text-align: center; }
   .lane-note.bad { color: var(--bad); text-align: left; }
-  .panel > .lane-note:not(.bad) { margin-top: auto; margin-bottom: auto; }
+  /* A lane cut short or capped is partial, not failed: the warm edge of the note banner, normal text colour. */
+  .lane-note.warn { color: var(--text); text-align: left; padding-left: var(--space-2); border-left: var(--space-1) solid var(--warn); }
+  .panel > .lane-note:not(.bad):not(.warn) { margin-top: auto; margin-bottom: auto; }
 
   .axisrow { grid-column: 3; position: relative; height: var(--space-5); font-size: var(--fs-1); color: var(--text-2); }
   .axtick { position: absolute; top: 0; white-space: nowrap; transform: translateX(-50%); }

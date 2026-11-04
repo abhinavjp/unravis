@@ -1,8 +1,9 @@
 import { auditCreate, notObservedGap } from './copy/wordings';
+import { partialDaysText } from './copy/waitCopy';
 import { MIN_SAMPLE } from './thresholds';
 import { bucketForWindows } from './time';
 import type {
-  AuditSeriesDay, EndpointDailyDay, EvidenceLabel, PatternAuditStall, PatternConcentration, PatternCoverage, PatternEpisode, PatternInput, PatternOnsetMinute,
+  AuditSeriesDay, EndpointDaily, EndpointDailyDay, EvidenceLabel, PatternAuditStall, PatternConcentration, PatternCoverage, PatternEpisode, PatternInput, PatternOnsetMinute,
   PatternIdleBand, PatternIdleGaps, PatternRepeat, PatternReport, PatternStall, PatternVolley, Query, StallBand, StepChange, SuggestedSplit
 } from './types';
 
@@ -701,17 +702,29 @@ export const stepDaysLine = (step: Pick<StepChange, 'daysRead' | 'daysLeftOut'>)
 export type StepSection =
   | { kind: 'hidden' }
   | { kind: 'note'; text: string }
-  | { kind: 'rows'; rows: StepRow[]; date: string; daysLine: string; split: SuggestedSplit | null; scope: ReturnType<typeof splitScope> };
+  | { kind: 'rows'; rows: StepRow[]; date: string; daysLine: string; split: SuggestedSplit | null; scope: ReturnType<typeof splitScope>; partial: string };
+
+/**
+ * The notice for a step-change read that ran out of time, or '' when it did not. The result's `partial` flag is also true when days were
+ * left out because they were read only in part, so a cut read is told apart by what it covers: no day left out, or fewer days than asked.
+ * `planned` is the number of days asked for, when the page knows it.
+ */
+export function stepPartialNotice(step: Pick<StepChange, 'partial' | 'daysRead' | 'daysLeftOut'>, planned?: number): string {
+  if (!step.partial) return '';
+  const known = typeof planned === 'number' && Number.isFinite(planned) && planned > 0;
+  const cut = step.daysLeftOut === 0 || (known && step.daysRead + step.daysLeftOut < (planned as number));
+  return cut ? partialDaysText(step.daysRead, known ? planned : undefined) : '';
+}
 
 /**
  * What the step section shows. Hidden unless it was asked for. Asked for and not run gives the standard absence line.
- * The split is offered only when a date was shared and the page can use both ranges.
+ * The split is offered only when a date was shared and the page can use both ranges. `planned` is the number of days asked for.
  */
-export function stepSection(report: Pick<PatternReport, 'stepChange'>, asked: boolean): StepSection {
+export function stepSection(report: Pick<PatternReport, 'stepChange'>, asked: boolean, planned?: number): StepSection {
   const step = report.stepChange;
   if (!step) return asked ? { kind: 'note', text: notObservedGap(STEP_TEXT.stepNotRun) } : { kind: 'hidden' };
   const scope = step.date ? splitScope(step.split) : null;
-  return { kind: 'rows', rows: stepRows(step), date: step.date ?? '', daysLine: stepDaysLine(step), split: scope ? step.split ?? null : null, scope };
+  return { kind: 'rows', rows: stepRows(step), date: step.date ?? '', daysLine: stepDaysLine(step), split: scope ? step.split ?? null : null, scope, partial: stepPartialNotice(step, planned) };
 }
 
 export interface AuditDayRow { key: string; date: string; n: number; median: string; slowest: string; share: string; partDay: boolean }
@@ -780,6 +793,16 @@ export function dailyChartRuns(rows: ReadonlyArray<Pick<DailyRow, 'slowestMs'>>,
   });
   if (run.length) runs.push(run);
   return runs;
+}
+
+/** The notice for a daily read that ran out of time, or '' when it finished. Counts the days drawn against the days planned. */
+export function dailyPartialNotice(daily: Pick<EndpointDaily, 'partial' | 'days' | 'daysPlanned'>): string {
+  return daily.partial ? partialDaysText((daily.days ?? []).length, daily.daysPlanned) : '';
+}
+
+/** The daily read's warnings without the cut-short warning once the notice says the same thing in the dictionary words. */
+export function dailyWarnings(daily: Pick<EndpointDaily, 'partial' | 'warnings'>): string[] {
+  return (daily.warnings ?? []).filter((warning) => !(daily.partial && /^The read ran out of time after /.test(warning)));
 }
 
 /** The window of the daily view: the last `days` days up to the end of the page's range. */

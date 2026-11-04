@@ -42,6 +42,12 @@ type EndpointDaily struct {
 	Days       []EndpointDailyDay `json:"days"`
 	Provenance []Provenance       `json:"provenance,omitempty"`
 	Warnings   []string           `json:"warnings"`
+	// Partial is true when the read ran out of time and stopped before the last
+	// day: Days then holds the oldest days that were finished, DaysPlanned the
+	// number the window holds. Both are left out of the JSON when the series is
+	// complete.
+	Partial     bool `json:"partial,omitempty"`
+	DaysPlanned int  `json:"daysPlanned,omitempty"`
 }
 
 // ValidateEndpointDaily checks sources, the operation, the zone and the window.
@@ -88,11 +94,15 @@ func RunEndpointDaily(ctx context.Context, repo Repository, in EndpointDailyInpu
 	}
 	loc, _ := LoadZone(in.TimeZone)
 	days := localDays(in.Start, in.End, loc, MaxSeriesDays)
-	reads, prov, err := readDays(ctx, repo, in.SourceIDs, days, in.Operation, liveSeriesMaxDays)
+	reads, prov, cut, err := readDays(ctx, repo, in.SourceIDs, days, in.Operation, liveSeriesMaxDays)
 	if err != nil {
 		return EndpointDaily{}, err
 	}
 	out := EndpointDaily{Operation: in.Operation, Zone: loc.String(), Days: make([]EndpointDailyDay, 0, len(reads)), Provenance: prov, Warnings: []string{}}
+	if cut {
+		out.Partial, out.DaysPlanned = true, len(days)
+		out.Warnings = append(out.Warnings, fmt.Sprintf("The read ran out of time after %d of %d days, so only the oldest %d are shown. Choose a shorter span to see them all.", len(reads), len(days), len(reads)))
+	}
 	partial, low := 0, 0
 	for _, d := range reads {
 		row := EndpointDailyDay{Date: d.day.Date, Start: d.day.Start, End: d.day.End}

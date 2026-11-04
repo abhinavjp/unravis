@@ -1,3 +1,4 @@
+import { ROLLUP_RANGE_LABELS } from './copy/waitCopy';
 import type { Query, Quantile, SourceResult, Provenance } from './types';
 import { bucketForWindows, formatTimeRange } from './time';
 
@@ -34,12 +35,12 @@ const DAY_MS = 86_400_000;
 export interface RollupRange { id: string; label: string; days: number }
 /** The spans the view offers. Each ends now. Over 24 hours a live source may refuse (the server says so). */
 export const rollupRanges: RollupRange[] = [
-  { id: '1d', label: 'Last 24 hours', days: 1 },
-  { id: '7d', label: 'Last 7 days', days: 7 },
-  { id: '30d', label: 'Last 30 days', days: 30 },
-  { id: '60d', label: 'Last 60 days', days: 60 },
-  { id: '90d', label: 'Last 90 days', days: 90 },
-  { id: '120d', label: 'Last 120 days', days: MAX_ROLLUP_DAYS }
+  { id: '1d', label: ROLLUP_RANGE_LABELS['1d'], days: 1 },
+  { id: '7d', label: ROLLUP_RANGE_LABELS['7d'], days: 7 },
+  { id: '30d', label: ROLLUP_RANGE_LABELS['30d'], days: 30 },
+  { id: '60d', label: ROLLUP_RANGE_LABELS['60d'], days: 60 },
+  { id: '90d', label: ROLLUP_RANGE_LABELS['90d'], days: 90 },
+  { id: '120d', label: ROLLUP_RANGE_LABELS['120d'], days: MAX_ROLLUP_DAYS }
 ];
 
 /** The request parameters for a span that ends at `now`. A span is never longer than the server accepts. */
@@ -73,7 +74,9 @@ export const rollupCopy = {
   refusedHelp: 'You can choose a shorter span.',
   csvButton: 'Download CSV',
   csvName: 'daily-view.csv',
-  error: 'The daily and hourly view could not be read.'
+  error: 'The daily and hourly view could not be read.',
+  spanLabel: 'Span',
+  reading: 'Reading the sources…'
 };
 
 export const zoneNote = (zone: string): string => 'Days and hours follow ' + (zone === 'UTC' ? 'UTC' : zone + ' time') + '.';

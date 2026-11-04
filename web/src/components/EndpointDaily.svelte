@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ApiError, api } from '../lib/api';
-  import { DAILY_DAY_CHOICES, DEFAULT_DAILY_DAYS, STEP_TEXT, dailyChartRuns, dailyRows, dailyWindow } from '../lib/patterns';
+  import { DAILY_DAY_CHOICES, DEFAULT_DAILY_DAYS, STEP_TEXT, dailyChartRuns, dailyPartialNotice, dailyRows, dailyWarnings, dailyWindow } from '../lib/patterns';
+  import { WAIT_TEXT } from '../lib/copy/waitCopy';
   import type { EndpointDaily } from '../lib/types';
 
   // The daily response times of one operation: a small chart and a table, one row for each whole local day.
@@ -10,6 +11,8 @@
   type Phase = { kind: 'loading' } | { kind: 'error'; text: string } | { kind: 'done'; daily: EndpointDaily };
   let phase = $state<Phase>({ kind: 'loading' });
   let days = $state(String(DEFAULT_DAILY_DAYS));
+  // Bumped by Try again: the effect reads it, so the same span is read once more.
+  let attempt = $state(0);
   let heading = $state<HTMLHeadingElement>();
 
   const rows = $derived(phase.kind === 'done' ? dailyRows(phase.daily.days) : []);
@@ -18,6 +21,7 @@
 
   onMount(() => { heading?.focus(); });
   $effect(() => {
+    void attempt;
     const span = dailyWindow({ end }, Number(days));
     const ids = [...sourceIds];
     const controller = new AbortController();
@@ -51,7 +55,13 @@
     {:else if phase.kind === 'error'}
       <div class="inline-error" role="alert">{phase.text}</div>
     {:else}
-      {#each phase.daily.warnings ?? [] as warning (warning)}<div class="notice" role="status">{warning}</div>{/each}
+      {#each dailyWarnings(phase.daily) as warning (warning)}<div class="notice" role="status">{warning}</div>{/each}
+      {#if phase.daily.partial}
+        <div class="notice daily-partial" role="status" data-testid="daily-partial">
+          <span>{dailyPartialNotice(phase.daily)}</span>
+          <button type="button" class="secondary-button" title={WAIT_TEXT.retryTitle} onclick={() => { attempt += 1; }}>{WAIT_TEXT.retry}</button>
+        </div>
+      {/if}
       {#if rows.length === 0}
         <p class="daily-note">{STEP_TEXT.dailyEmpty}</p>
       {:else}
@@ -108,6 +118,7 @@
   @media (max-width: 720px) {
     .daily-table td:nth-child(2) { grid-column: auto; }
   }
+  .daily-partial { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
   .daily-flag { color: var(--text-2); font-size: var(--fs-1); }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 </style>

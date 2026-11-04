@@ -4,7 +4,8 @@
  * the buckets the server returned (no summing, no estimates), and every lane sentence for a missing or partial
  * state. No Svelte here; `TracingChart.svelte` imports from this file and from `./model` for types only.
  */
-import type { TracingBucket, TracingLane, TracingLaneKey, TracingWindow } from './model';
+import { WAIT_TEXT } from '../copy/waitCopy';
+import type { TracingBucket, TracingLane, TracingLaneKey, TracingReason, TracingWindow } from './model';
 
 export const LANE_ORDER: TracingLaneKey[] = ['audit', 'sql', 'iis'];
 
@@ -35,11 +36,28 @@ export const LANE_STATE_TEXT: Record<string, string> = {
   'out-of-range': 'Files do not cover this time'
 };
 
-export const INCOMPLETE_TEXT: Record<'timeout' | 'rowcap' | 'error', string> = {
-  timeout: 'The audit read ran out of time; nothing was shortened.',
+export const INCOMPLETE_TEXT: Record<TracingReason, string> = {
+  timeout: WAIT_TEXT.laneTimeout,
   rowcap: 'The audit read reached its row limit; nothing was shortened.',
-  error: 'The audit read failed; nothing was shortened.'
+  error: 'The audit read failed; nothing was shortened.',
+  'broad-scan': WAIT_TEXT.laneBroadScan
 };
+
+/** The reasons whose dictionary sentence replaces the server's own text, because it says what to do next. */
+const ACTIONABLE_REASONS: readonly TracingReason[] = ['timeout', 'broad-scan'];
+
+/** True for a lane the server cut short (it ran out of time, or the live source would not read the window). A disabled lane is not. */
+export function laneCutShort(lane: TracingLane): boolean {
+  return !lane.disabled && !!lane.incompleteReason && ACTIONABLE_REASONS.includes(lane.incompleteReason);
+}
+
+/** True when a run finished with any lane cut short: the one status line under the toolbar is shown. */
+export const anyLaneCutShort = (lanes: TracingLane[]): boolean => lanes.some(laneCutShort);
+
+/** "warn" (the partial style, as for a row limit) for a cut or capped lane; "bad" for a read that failed or has no known reason. */
+export function laneNoteTone(lane: TracingLane): 'warn' | 'bad' {
+  return lane.incompleteReason === 'timeout' || lane.incompleteReason === 'rowcap' || lane.incompleteReason === 'broad-scan' ? 'warn' : 'bad';
+}
 
 export const MIXED_NOTE = {
   title: 'Some data was collected at different times.',
@@ -155,7 +173,7 @@ export const NO_EVENTS_PERIOD = 'No events in this period';
 
 /** The one sentence a lane that draws no bars shows in its panel and in its hover text ('' when it draws bars). */
 export function laneStatusLine(lane: TracingLane): string {
-  if (lane.state === 'none-seen' && !lane.disabled) return NO_EVENTS_PERIOD;
+  if (lane.state === 'none-seen' && !lane.disabled && !laneCutShort(lane)) return NO_EVENTS_PERIOD;
   return laneNote(lane);
 }
 
@@ -198,8 +216,10 @@ export function axisCaption(zoneName: string, bucketSeconds: number, hasOutside:
 }
 
 export function laneNote(lane: TracingLane): string {
-  if (lane.state === 'events') return '';
   if (lane.disabled) return lane.reason || LANE_STATE_TEXT['clock-unchecked'];
+  // A lane cut short by a time limit can still carry the state "events" with the bars it did read; it says so all the same.
+  if (laneCutShort(lane) && (lane.state === 'incomplete' || lane.state === 'events' || lane.state === 'none-seen')) return INCOMPLETE_TEXT[lane.incompleteReason as TracingReason];
+  if (lane.state === 'events') return '';
   if (lane.state === 'incomplete') {
     if (lane.reason) return lane.reason;
     if (lane.incompleteReason) return INCOMPLETE_TEXT[lane.incompleteReason];

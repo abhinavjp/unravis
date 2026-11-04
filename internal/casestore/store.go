@@ -12,6 +12,7 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"errors"
+	"fmt"
 	"io"
 	"regexp"
 	"strings"
@@ -246,6 +247,11 @@ type EventQuery struct {
 
 	// MaxScan and MaxScanTime lower the scan budget of one Each call. Zero, or a
 	// value above the default, means MaxScanEvents / MaxScanTime.
+	//
+	// Events uses MaxScanTime too, but only when it is set (above zero, up to
+	// MaxScanTime): without it Events has no time budget. When the budget passes,
+	// the SQLite store returns the events read so far (oldest first) together
+	// with ErrScanBudget; a caller treats that as a partial answer.
 	MaxScan     int64
 	MaxScanTime time.Duration
 }
@@ -399,6 +405,18 @@ type Case interface {
 
 var (
 	ErrCapExceeded  = errors.New("case cap exceeded")
+	// ErrFileCapExceeded is ErrCapExceeded for the cap of one file (its bytes or
+	// its rows); ErrCaseCapExceeded is ErrCapExceeded for the cap of the case (the
+	// bytes it holds or the size of its database). Both satisfy
+	// errors.Is(err, ErrCapExceeded), so a caller that does not tell them apart
+	// keeps working. Other caps (free disk space, all cases) are plain
+	// ErrCapExceeded.
+	ErrFileCapExceeded = fmt.Errorf("%w: file", ErrCapExceeded)
+	ErrCaseCapExceeded = fmt.Errorf("%w: case", ErrCapExceeded)
+	// ErrImportRunning is returned at once (a second import after about a second)
+	// by a write to a case while an import holds it, instead of waiting for the
+	// import to finish. The write was not made; try again when the import ends.
+	ErrImportRunning = errors.New("an import is running on this case")
 	ErrNotFound     = errors.New("case not found")
 	ErrDuplicate    = errors.New("file already imported")
 	ErrAckRequired  = errors.New("acknowledgement required")

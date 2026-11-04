@@ -2,7 +2,8 @@
   import { comparisonLabel, STARTUP_TITLE } from './lib/copy/startupCopy';
   import { scopeProblem } from './lib/autorun';
   import { VALIDATION_MESSAGE } from './lib/api';
-  import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeSidePanel, onWindowKey, openSidePanel, panels, resetInvestigation, restore, results, scope, startApp } from './lib/appState.svelte';
+  import { WAIT_TEXT } from './lib/copy/waitCopy';
+  import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeSidePanel, onWindowKey, openSidePanel, panels, resetInvestigation, restore, results, runAnalysis, scope, startApp } from './lib/appState.svelte';
   import AppHeader from './components/AppHeader.svelte';
   import SubBar from './components/SubBar.svelte';
   import Landing from './components/Landing.svelte';
@@ -89,6 +90,8 @@
 
   {#if app.lockError}<div class="banner error-banner" role="alert"><span>{app.lockError}</span><button class="quiet-button" onclick={() => { app.lockError = ''; }}>Dismiss</button></div>{/if}
 
+  {#if app.workspaceNote}<div class="notice" role="status" data-testid="workspace-note"><span>{app.workspaceNote}</span> <button class="quiet-button" onclick={() => { app.workspaceNote = ''; }}>Dismiss</button></div>{/if}
+
   {#if subbarShown}<SubBar />{:else if (!info || app.screen === 'loading') && subbarHint > 0}<div class="subbar-reserve" style:height="{subbarHint}px" aria-hidden="true"></div>{/if}
 
     {#if panels.connectionsOpen}<ConnectionsDrawer />{/if}
@@ -124,7 +127,7 @@
           <Landing mode="connect" />
         {:else if info}
           {#if restore.needsAttention || restore.working}<CaseReconnect compact />{/if}
-          {#if results.error}<div class="banner error-banner" role="alert"><strong>{comparisonLabel(results.error, [VALIDATION_MESSAGE, scopeProblem(scope.query, scope.dateInputsValid)])}</strong><span>{results.error}</span></div>{/if}
+          {#if results.error}<div class="banner error-banner" role="alert"><strong>{comparisonLabel(results.error, [VALIDATION_MESSAGE, scopeProblem(scope.query, scope.dateInputsValid)])}</strong><span>{results.error}</span>{#if results.error === WAIT_TEXT.timeout && !loading}<button type="button" class="secondary-button" title={WAIT_TEXT.retryTitle} onclick={() => runAnalysis()}>{WAIT_TEXT.retry}</button>{/if}</div>{/if}
           {#if analysis}
             {#if results.displayedRunIsStale && !loading}<div class="notice frozen-run-note" role="status">The figures below are from the last run. Press <strong>Run analysis</strong> to apply your changes.</div>{/if}
             {#if failingSources.length}

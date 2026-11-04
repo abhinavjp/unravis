@@ -7,7 +7,9 @@ import type { LintEntry } from '../copy/copylint';
  */
 
 export const MINUTE_MS = 60_000;
-export const MAX_TRACE_SPAN_MS = 30 * 24 * 3600 * 1000;
+/** The longest window the picker accepts: 6 months (186 days). The server accepts the same length. */
+export const MAX_TRACE_DAYS = 186;
+export const MAX_TRACE_SPAN_MS = MAX_TRACE_DAYS * 24 * 3600 * 1000;
 
 export interface WindowFields {
   incidentStart: string;
@@ -66,6 +68,9 @@ export function defaultWindows(nowMs: number): WindowFields {
   };
 }
 
+/** The refusal for a window longer than the cap; `name` is the picker's own label for the window. */
+export const tooLongText = (name: string): string => `The longest window is ${MAX_TRACE_DAYS} days. Shorten the ${name}.`;
+
 /** Validates both windows. One sentence per problem, incident first. Overlap is a warning, not an error. */
 export function checkWindows(f: WindowFields): WindowCheck {
   const iS = parseFieldUtc(f.incidentStart);
@@ -91,7 +96,7 @@ export function checkWindows(f: WindowFields): WindowCheck {
       return false;
     }
     if (end - start > MAX_TRACE_SPAN_MS) {
-      errors.push(`The longest window is 30 days. Shorten the ${name}.`);
+      errors.push(tooLongText(name));
       invalid.push(...keys);
       return false;
     }
@@ -167,8 +172,11 @@ export function saveWindows(caseId: string, fields: WindowFields, storage?: Pick
   } catch { /* unavailable storage only means the windows are not kept */ }
 }
 
-export const windowCopyEntries = (): LintEntry[] =>
-  Object.entries(WINDOW_TEXT).map(([id, text]) => ({ id: 'tracingWindow.' + id, text }));
+export const windowCopyEntries = (): LintEntry[] => [
+  ...Object.entries(WINDOW_TEXT).map(([id, text]) => ({ id: 'tracingWindow.' + id, text })),
+  { id: 'tracingWindow.tooLongIncident', text: tooLongText('incident window') },
+  { id: 'tracingWindow.tooLongComparison', text: tooLongText('comparison period') }
+];
 
 /** Keeps the incident and moves the comparison period to the same length, ending exactly where the incident starts. */
 export function fixOverlap(f: WindowFields): WindowFields {

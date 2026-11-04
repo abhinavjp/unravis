@@ -6,7 +6,8 @@
  * Field names are copied letter for letter from the WP-14 response contract (server: internal/server/tracing.go).
  * If that contract and this file ever disagree, this file is wrong, not the server.
  */
-import { send, casePath, CaseApiError, isCaseLocked } from '../cases';
+import { send, casePath, CaseApiError, isCaseLocked, isTimeLimit } from '../cases';
+import { isTimeoutError, READ_TIMEOUT_MS, TIMEOUT_CODE, timeoutMessage } from '../requestTimeout';
 import { TRACING_TEXT } from '../copy/tracingCopy';
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -14,7 +15,7 @@ import { TRACING_TEXT } from '../copy/tracingCopy';
 
 export type TracingLaneKey = 'audit' | 'sql' | 'iis';
 export type TracingLaneState = 'events' | 'no-data' | 'clock-unchecked' | 'out-of-range' | 'none-seen' | 'incomplete';
-export type TracingReason = 'timeout' | 'rowcap' | 'error';
+export type TracingReason = 'timeout' | 'rowcap' | 'error' | 'broad-scan';
 export type TracingConsistency = 'live-non-snapshot' | 'stored-as-of' | 'snapshot';
 export type TracingOrigin = 'live' | 'case';
 
@@ -125,7 +126,7 @@ const isLaneKey = (value: unknown): value is TracingLaneKey => isText(value) && 
 const LANE_STATES: readonly string[] = ['events', 'no-data', 'clock-unchecked', 'out-of-range', 'none-seen', 'incomplete'];
 const asLaneState = (value: unknown): TracingLaneState => (isText(value) && LANE_STATES.includes(value) ? (value as TracingLaneState) : 'incomplete');
 
-const REASON_CODES: readonly string[] = ['timeout', 'rowcap', 'error'];
+const REASON_CODES: readonly string[] = ['timeout', 'rowcap', 'error', 'broad-scan'];
 const asReasonCode = (value: unknown): TracingReason | undefined => (isText(value) && REASON_CODES.includes(value) ? (value as TracingReason) : undefined);
 
 const CONSISTENCIES: readonly string[] = ['live-non-snapshot', 'stored-as-of', 'snapshot'];
@@ -237,9 +238,12 @@ export function parseTracing(raw: unknown): TracingResponse {
 // The request.
 
 export async function fetchTracing(caseId: string, req: TracingRequest, seq: number, signal?: AbortSignal): Promise<TracingResponse> {
-  const response = await send(casePath(caseId, '/tracing'), { method: 'POST', body: buildTracingBody(req, seq) }, signal);
+  const response = await send(casePath(caseId, '/tracing'), { method: 'POST', body: buildTracingBody(req, seq) }, signal, { timeoutMs: READ_TIMEOUT_MS });
   let raw: unknown;
-  try { raw = await response.json(); } catch { throw unreadable(); }
+  try { raw = await response.json(); } catch (cause) {
+    if (isTimeLimit(cause)) throw new CaseApiError(timeoutMessage(), 0, TIMEOUT_CODE);
+    throw unreadable();
+  }
   return parseTracing(raw);
 }
 
@@ -247,6 +251,7 @@ export async function fetchTracing(caseId: string, req: TracingRequest, seq: num
 // Errors. Never the server's own text, a URL or an id: one fixed sentence per refusal kind.
 
 export function tracingErrorText(error: unknown): string {
+  if (isTimeoutError(error)) return timeoutMessage();
   if (isCaseLocked(error)) return TRACING_TEXT.errLocked;
   if (error instanceof CaseApiError) {
     switch (error.status) {

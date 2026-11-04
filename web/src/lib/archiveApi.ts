@@ -3,6 +3,8 @@
  * (X-Expect-State). A passphrase travels only in a JSON body, never in a URL, and is never kept here.
  */
 import { send, json, casePath, toCase, toErased, believedState, EXPECT_STATE_HEADER, CaseApiError, type CaseInfo, type CaseState, type ErasedLine } from './cases';
+// A job status poll is asked again and again; it never gets the read time limit.
+const NO_LIMIT = { timeoutMs: null } as const;
 import { parseFileJob, parseOrphans, type FileJob, type FileJobKind, type OrphanReport } from './archiveModel';
 
 const expecting = (believed?: CaseState): Record<string, string> => (believed ? { [EXPECT_STATE_HEADER]: believed } : {});
@@ -54,7 +56,7 @@ export async function startArchive(id: string, believed: CaseState, folder: stri
 }
 
 export async function getArchiveJob(id: string, signal?: AbortSignal): Promise<FileJob> {
-  return asJob(await json(await send(casePath(id, '/archive'), {}, signal)), 'archive');
+  return asJob(await json(await send(casePath(id, '/archive'), {}, signal, NO_LIMIT)), 'archive');
 }
 
 export async function cancelArchive(id: string, signal?: AbortSignal): Promise<void> {
@@ -70,7 +72,7 @@ export async function startVerify(id: string, believed: CaseState, passphrase?: 
 }
 
 export async function getVerify(id: string, signal?: AbortSignal): Promise<FileJob> {
-  return asJob(await json(await send(casePath(id, '/verify'), {}, signal)), 'verify');
+  return asJob(await json(await send(casePath(id, '/verify'), {}, signal, NO_LIMIT)), 'verify');
 }
 
 export async function cancelVerify(id: string, signal?: AbortSignal): Promise<void> {

@@ -404,6 +404,12 @@ func (p *discoverPull) failErr(err error) {
 		p.fail(http.StatusNotImplemented, string(discover.ReasonNotSupportedOS), "Host discovery is not available on this computer.")
 	case errors.Is(err, evtx.ErrChannelRefused):
 		p.fail(http.StatusUnprocessableEntity, "channel-refused", "That event log cannot be read.")
+	case errors.Is(err, casestore.ErrImportRunning):
+		p.fail(http.StatusConflict, "case-import-running", caseImportRunningText)
+	case errors.Is(err, casestore.ErrFileCapExceeded):
+		p.fail(http.StatusRequestEntityTooLarge, "file-cap", fileCapText)
+	case errors.Is(err, casestore.ErrCaseCapExceeded):
+		p.fail(http.StatusRequestEntityTooLarge, "case-cap", caseCapText)
 	case errors.Is(err, casestore.ErrCapExceeded):
 		p.fail(http.StatusRequestEntityTooLarge, "cap-exceeded", "The file or the case is over its size or row cap.")
 	default:

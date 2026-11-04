@@ -1,5 +1,6 @@
 import { ApiError } from './api';
 import { CaseApiError, casePath, isCaseGone, json, send } from './cases';
+import { reasonText } from './copy/importCopy';
 import { RUN_TEXT } from './copy/sourcesCopy';
 import type { SavedSqlConnection, SqlTestRequest } from './types';
 
@@ -269,6 +270,8 @@ export function runProblem(error: unknown): { text: string; gone: boolean } {
   if (error instanceof CaseApiError && error.reason === 'case-closed') return { text: RUN_TEXT.closed, gone };
   // No session token (or a refused one) is not a failed read: the page has to be reopened, and the sentence says how.
   if (error instanceof CaseApiError && (error.reason === 'no_session' || error.status === 401)) return { text: RUN_TEXT.signedOut, gone };
+  // An import running on the case holds the case; the sentence says to try again when it finishes.
+  if (status === 409 && (error instanceof CaseApiError || error instanceof ApiError) && error.reason === 'case-import-running') return { text: reasonText('case-import-running') ?? RUN_TEXT.busy, gone };
   if (status === 409) return { text: /already/i.test(message) ? message : RUN_TEXT.busy, gone };
   if (status === 429) return { text: RUN_TEXT.limited, gone };
   if (status === 423) return { text: RUN_TEXT.locked, gone };

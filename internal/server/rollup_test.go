@@ -362,3 +362,125 @@ func TestRollupSourceParamsAreEscapedNotTrusted(t *testing.T) {
 		t.Errorf("sources = %v, want blanks dropped and names trimmed", seen)
 	}
 }
+
+func rollupCachePlan(t *testing.T, day int) audit.RollupPlan {
+	t.Helper()
+	p, err := audit.PlanRollup(audit.RollupInput{SourceIDs: []string{"a"}, From: time.Date(2026, 1, day, 0, 0, 0, 0, time.UTC), To: time.Date(2026, 1, day+1, 0, 0, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// slotsWithGroups is a read that holds n groups.
+func slotsWithGroups(n int) audit.RollupSlots {
+	b := audit.NewRollupBuilder(time.Hour)
+	for i := 0; i < n; i++ {
+		b.AddCounts(int64(i)*3600, audit.RollupCounts{Total: 1})
+	}
+	return audit.RollupSlots{Builder: b}
+}
+
+// put drops the entries that are past their TTL, so a cache nobody reads from
+// does not keep old reads in memory (PF-B-03).
+func TestRollupCachePutPrunesExpiredEntries(t *testing.T) {
+	now := time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC)
+	c := rollupCache{now: func() time.Time { return now }}
+	c.put(rollupCachePlan(t, 1), audit.RollupSlots{})
+	c.put(rollupCachePlan(t, 2), audit.RollupSlots{})
+	now = now.Add(rollupCacheTTL - time.Second)
+	c.put(rollupCachePlan(t, 3), audit.RollupSlots{})
+	if len(c.entries) != 3 {
+		t.Fatalf("inside the TTL: %d entries, want 3", len(c.entries))
+	}
+	now = now.Add(2 * time.Second) // days 1 and 2 are now past the TTL, day 3 is not
+	c.put(rollupCachePlan(t, 4), audit.RollupSlots{})
+	if len(c.entries) != 2 {
+		t.Fatalf("after the TTL: %d entries, want 2 (days 3 and 4)", len(c.entries))
+	}
+	for _, e := range c.entries {
+		if now.Sub(e.at) >= rollupCacheTTL {
+			t.Errorf("an expired entry is still held: %v", e.at)
+		}
+	}
+}
+
+// The groups all the entries hold together are capped: the oldest entries go
+// first, and a read over the cap by itself is not held at all.
+func TestRollupCacheCapsTotalGroups(t *testing.T) {
+	var c rollupCache
+	third := rollupCacheGroups / 3
+	c.put(rollupCachePlan(t, 1), slotsWithGroups(third))
+	c.put(rollupCachePlan(t, 2), slotsWithGroups(third))
+	c.put(rollupCachePlan(t, 3), slotsWithGroups(third))
+	if len(c.entries) != 3 {
+		t.Fatalf("three reads under the cap: %d entries", len(c.entries))
+	}
+	// A fourth read of the same size pushes the total over the cap: day 1, the
+	// oldest, is dropped.
+	c.put(rollupCachePlan(t, 4), slotsWithGroups(third))
+	if _, hit := c.get(rollupCachePlan(t, 1)); hit {
+		t.Error("the oldest read must go when the cap is passed")
+	}
+	if _, hit := c.get(rollupCachePlan(t, 4)); !hit {
+		t.Error("the newest read must be held")
+	}
+	var total int64
+	for _, e := range c.entries {
+		total += e.groups
+	}
+	if total > rollupCacheGroups {
+		t.Errorf("held %d groups, cap %d", total, rollupCacheGroups)
+	}
+	// One read over the cap alone is not held, and the others stay.
+	before := len(c.entries)
+	c.put(rollupCachePlan(t, 5), slotsWithGroups(rollupCacheGroups+1))
+	if _, hit := c.get(rollupCachePlan(t, 5)); hit {
+		t.Error("a read over the cap by itself must not be held")
+	}
+	if len(c.entries) != before {
+		t.Errorf("entries = %d, want the %d already held", len(c.entries), before)
+	}
+}
+
+// When a new read does not fit beside the newest kept entries, it and every older
+// entry go: eviction is oldest first, not packing by size (PF-B-03).
+func TestRollupCacheEvictsOldestFirstNotBySize(t *testing.T) {
+	var c rollupCache
+	c.put(rollupCachePlan(t, 1), slotsWithGroups(rollupCacheGroups/4))
+	c.put(rollupCachePlan(t, 2), slotsWithGroups(rollupCacheGroups*2/3))
+	if len(c.entries) != 2 {
+		t.Fatalf("two reads under the cap: %d entries", len(c.entries))
+	}
+	// Day 3 does not fit beside day 2, the newer of the two, but would fit beside
+	// day 1: day 1 must not be kept in place of day 2.
+	c.put(rollupCachePlan(t, 3), slotsWithGroups(rollupCacheGroups/2))
+	if _, hit := c.get(rollupCachePlan(t, 3)); !hit {
+		t.Error("the new read must be kept")
+	}
+	if _, hit := c.get(rollupCachePlan(t, 2)); hit {
+		t.Error("day 2 does not fit beside day 3 and must be dropped")
+	}
+	if _, hit := c.get(rollupCachePlan(t, 1)); hit {
+		t.Error("day 1 is older than the entry that did not fit and must be dropped too")
+	}
+}
+
+// A read built row by row (the Go scan path) counts the slots and bins it holds,
+// so it is bounded by the cache cap like a read merged from an aggregation.
+func TestRollupGroupsCountsRowsAndBins(t *testing.T) {
+	b := audit.NewRollupBuilder(time.Hour)
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	fast, slow := 5.0, 5000.0
+	b.AddRow(at, "synchronous", "valid", "", &fast, 1000)
+	b.AddRow(at, "synchronous", "valid", "", &slow, 1000)
+	b.AddRow(at.Add(2*time.Hour), "synchronous", "valid", "", &fast, 1000)
+	// Two slots and three slot-bin pairs.
+	if got := b.Groups(); got < 5 {
+		t.Errorf("Groups = %d, want at least the 2 slots and 3 bins held", got)
+	}
+	b.AddBin(at.Add(4*time.Hour).Unix(), 3, 1, 10, 10, 10)
+	if got := slotGroups(audit.RollupSlots{Builder: b}); got < 7 {
+		t.Errorf("slotGroups = %d after an extra slot and bin, want at least 7", got)
+	}
+}

@@ -1518,7 +1518,7 @@ test('the run hint also explains a window, reference, bucket or point-count prob
   assert.equal(hint({ baselineEnd: base.end }), 'The reference window must end at or before the current window starts.');
   assert.equal(hint({ bucketSeconds: 5 }), 'Bucket size must be 10 to 86,400 seconds.');
   assert.match(hint({ bucketSeconds: 10, start: '2026-10-22T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-10-21T12:00:00Z', baselineEnd: '2026-10-22T00:00:00Z' }), /over 120 time points/);
-  assert.equal(hint({ start: '2026-10-01T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-09-01T00:00:00Z', baselineEnd: '2026-10-01T00:00:00Z' }), 'Each window can be at most 7 days.');
+  assert.equal(hint({ start: '2026-10-01T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-09-01T00:00:00Z', baselineEnd: '2026-10-01T00:00:00Z' }), 'Each window can be at most 7 days. Use the Timeline or the Daily view for longer periods.');
   // Whenever scopeProblem blocks a run with a valid source and dates, the hint says why; when it does not, the hint is empty.
   for (const extra of [{}, { start: base.end, end: base.start }, { baselineEnd: base.end }, { bucketSeconds: 5 }, { bucketSeconds: 10, start: '2026-10-22T00:00:00Z', end: '2026-10-22T12:00:00Z', baselineStart: '2026-10-21T12:00:00Z', baselineEnd: '2026-10-22T00:00:00Z' }]) {
     assert.equal(Boolean(autorun.scopeProblem(scopeAt(extra), true)), Boolean(hint(extra)));
@@ -1631,7 +1631,7 @@ test('the redesign keeps its contrast, status and navigation fixes in the source
 
 test('the run hint is a persistent status region tied to the run button, the back link has a full label, and no screen says "Run comparison"', () => {
   const app = appSource();
-  assert.match(app, /<span class="run-hint"[^>]* id="run-hint" role="status">\{runHint\}<\/span>/);
+  assert.match(app, /<span class="run-hint"[^>]* id="run-hint" role="status">\{loading && waiting\.slow \? WAIT_TEXT\.stillReading : runHint\}<\/span>/);
   assert.doesNotMatch(app, /\{#if runHint\}/);
   assert.match(app, /class="primary-button" aria-describedby="run-hint"/);
   assert.match(fs.readFileSync(path.join(root, 'src/components/Breadcrumb.svelte'), 'utf8'), /aria-label=\{'Back to ' \+ crumb\.label\}/);

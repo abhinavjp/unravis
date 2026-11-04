@@ -549,11 +549,13 @@ func tracingWindowBodyFor(start, end string) string {
 }
 
 func TestTracingWindowLimit(t *testing.T) {
-	const tooLong = "A time window can be at most 30 days long."
+	const tooLong = "The longest window is 186 days. Shorten the start or end."
 	forEachTracingStore(t, func(t *testing.T, e *caseEnv, id string) {
 		ok := []struct{ name, start, end string }{
-			{"exactly 30 days", "2026-03-10T00:00:00Z", "2026-04-09T00:00:00Z"},
-			{"29 days 23 h 59 m", "2026-03-10T00:00:00Z", "2026-04-08T23:59:00Z"},
+			{"exactly 186 days", "2026-03-10T00:00:00Z", "2026-09-12T00:00:00Z"},
+			{"185 days 23 h 59 m", "2026-03-10T00:00:00Z", "2026-09-11T23:59:00Z"},
+			{"6 calendar months", "2026-07-01T00:00:00Z", "2027-01-01T00:00:00Z"},
+			{"3 calendar months", "2026-07-01T00:00:00Z", "2026-10-01T00:00:00Z"},
 			{"30 days across a US clock change", "2026-03-01T00:00:00Z", "2026-03-31T00:00:00Z"},
 		}
 		for _, c := range ok {
@@ -563,11 +565,11 @@ func TestTracingWindowLimit(t *testing.T) {
 			}
 		}
 		bad := []struct{ name, body, text string }{
-			{"30 days and 1 s", tracingWindowBodyFor("2026-03-10T00:00:00Z", "2026-04-09T00:00:01Z"), tooLong},
+			{"186 days and 1 s", tracingWindowBodyFor("2026-03-10T00:00:00Z", "2026-09-12T00:00:01Z"), tooLong},
 			{"a year", tracingWindowBodyFor("2025-03-10T00:00:00Z", "2026-03-10T00:00:00Z"), tooLong},
 			{"zero span", tracingWindowBodyFor("2026-03-10T00:00:00Z", "2026-03-10T00:00:00Z"), tracingWindowText},
 			{"negative span", tracingWindowBodyFor("2026-03-10T00:00:00Z", "2026-03-09T00:00:00Z"), tracingWindowText},
-			{"reference over 30 days", `{"incident":{"start":"2026-03-10T00:00:00Z","end":"2026-03-10T01:00:00Z"},"reference":{"start":"2026-02-01T00:00:00Z","end":"2026-03-10T00:00:00Z"}}`, tooLong},
+			{"reference over 186 days", `{"incident":{"start":"2026-03-10T00:00:00Z","end":"2026-03-10T01:00:00Z"},"reference":{"start":"2025-09-01T00:00:00Z","end":"2026-03-10T00:00:00Z"}}`, tooLong},
 		}
 		for _, c := range bad {
 			res := e.json(http.MethodPost, tracingPath(id), c.body)
@@ -579,10 +581,10 @@ func TestTracingWindowLimit(t *testing.T) {
 				t.Errorf("%s says %q, want %q", c.name, got, c.text)
 			}
 		}
-		// A reference of exactly 30 days is fine.
-		res := e.json(http.MethodPost, tracingPath(id), `{"incident":{"start":"2026-03-10T00:00:00Z","end":"2026-03-10T01:00:00Z"},"reference":{"start":"2026-02-08T00:00:00Z","end":"2026-03-10T00:00:00Z"}}`)
+		// A reference of exactly 186 days is fine.
+		res := e.json(http.MethodPost, tracingPath(id), `{"incident":{"start":"2026-03-10T00:00:00Z","end":"2026-03-10T01:00:00Z"},"reference":{"start":"2025-09-05T00:00:00Z","end":"2026-03-10T00:00:00Z"}}`)
 		if res.Code != http.StatusOK {
-			t.Errorf("reference of 30 days = %d %s", res.Code, res.Body)
+			t.Errorf("reference of 186 days = %d %s", res.Code, res.Body)
 		}
 	})
 }

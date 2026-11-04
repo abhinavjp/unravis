@@ -1,4 +1,5 @@
 import { casePath, json, send } from '../cases';
+import { READ_TIMEOUT_MS } from '../requestTimeout';
 import { normalizeAnswer, normalizeItem, normalizeReport, normalizeView } from './normalize';
 import type {
   ChecklistInput, ChecklistItem, InvestigationAnswer, InvestigationRequest, ReportAnswer, ReportInclude, SavedView, SavedViewInput
@@ -11,7 +12,7 @@ import type {
  */
 
 export async function runInvestigation(caseId: string, request: InvestigationRequest, signal?: AbortSignal): Promise<InvestigationAnswer> {
-  return normalizeAnswer(await json<unknown>(await send(casePath(caseId, '/investigation'), { method: 'POST', body: JSON.stringify(request) }, signal)));
+  return normalizeAnswer(await json<unknown>(await send(casePath(caseId, '/investigation'), { method: 'POST', body: JSON.stringify(request) }, signal, { timeoutMs: READ_TIMEOUT_MS })));
 }
 
 export async function listViews(caseId: string, signal?: AbortSignal): Promise<SavedView[]> {
@@ -49,5 +50,5 @@ export async function buildReport(
   caseId: string, format: 'html' | 'csv', include: ReportInclude, request?: InvestigationRequest, signal?: AbortSignal
 ): Promise<ReportAnswer> {
   const body = { format, include, ...(request ? { request } : {}) };
-  return normalizeReport(await json<unknown>(await send(casePath(caseId, '/report'), { method: 'POST', body: JSON.stringify(body) }, signal)));
+  return normalizeReport(await json<unknown>(await send(casePath(caseId, '/report'), { method: 'POST', body: JSON.stringify(body) }, signal, { timeoutMs: READ_TIMEOUT_MS })));
 }

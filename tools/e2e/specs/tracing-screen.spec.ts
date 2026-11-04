@@ -371,10 +371,10 @@ test('TRACE-11: bad windows are refused in plain words with no request; an overl
   await fillWindows(page, ['2026-10-19T18:00', '2026-10-19T15:00', '2026-10-19T12:00', '2026-10-19T15:00']);
   await start.click();
   await expect(page.getByRole('alert')).toContainText('The incident window end must be later than the start.');
-  // 30 days and one minute.
-  await fillWindows(page, ['2026-09-01T00:00', '2026-10-01T00:01', '2026-08-01T00:00', '2026-09-01T00:00']);
+  // 186 days and one minute.
+  await fillWindows(page, ['2026-04-01T00:00', '2026-10-04T00:01', '2026-03-01T00:00', '2026-04-01T00:00']);
   await start.click();
-  await expect(page.getByRole('alert')).toContainText('The longest window is 30 days. Shorten the incident window.');
+  await expect(page.getByRole('alert')).toContainText('The longest window is 186 days. Shorten the incident window.');
   // A missing time.
   await page.locator('input[type=datetime-local]').nth(2).fill('');
   await start.click();

@@ -32,7 +32,7 @@ const (
 	tracingTooManyMsg   = "Pick at most 50 sources."
 	tracingBadSeqMsg    = "The request number is not valid."
 	tracingCappedWarn   = "Only the first 50 sources are shown."
-	tracingTooLongMsg   = "A time window can be at most 30 days long."
+	tracingTooLongMsg   = "The longest window is 186 days. Shorten the start or end."
 	tracingUnknownMsg   = "That source is not part of this case."
 
 	tracingNoFileWarn   = "A selected source has no file yet, so it shows nothing."
@@ -40,17 +40,27 @@ const (
 	tracingClockMsg     = "The time zone rule of a file is not confirmed, so its events are not placed on the timeline."
 	tracingRowCapMsg    = "Only the first 50,000 saved events were listed; the bucket counts cover every saved event."
 	tracingScanBudget   = "The scan of saved events stopped early, so the counts may be too low."
+	tracingTimeoutMsg   = "Reading the saved events ran out of time, so the counts and events may be too low. Shorten the window to see all of it."
 	tracingConsStored   = "stored-as-of"
 	tracingOriginCase   = "case"
 	tracingOriginLive   = "live"
 	tracingReasonRowCap = "rowcap"
 	tracingReasonBudget = "scan-budget"
+	// tracingReasonTimeout is the lane reason code when a saved-event read passed
+	// its time budget (tracingLaneBudget); the lane keeps what was read so far.
+	tracingReasonTimeout = "timeout"
 	tracingDisabledTZ   = "tz-rule"
 )
 
 // tracingCountBuckets is the bucket aggregate behind the SQL and IIS lanes. It is
 // a package variable only so a test can watch the handle it is given.
 var tracingCountBuckets = casestore.CountBuckets
+
+// tracingLaneBudget is the time one saved-event read of a lane (the event list,
+// and the bucket counts) may take before the lane is answered partial with
+// reason "timeout". Each read has its own budget, so one slow lane never fails
+// the others. A package variable only so a test can shorten it.
+var tracingLaneBudget = casestore.MaxScanTime
 
 // tracingRequest is the body. There is deliberately no route field: a body
 // that has one is refused by decodeJSON as an unknown field. Reference is
@@ -478,12 +488,14 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 	// Memory stays bounded: at most 2 x MaxEventQuery events are held at once.
 	var evs []evidence.Event
 	cappedBy := map[string]bool{}
+	timedOutBy := map[string]bool{}
 	for _, key := range []string{calltrace.LaneSQL, calltrace.LaneIIS} {
-		got, capped, err := readLaneEvents(ctx, c, axis, src.laneNames[key])
+		got, capped, timedOut, err := readLaneEvents(ctx, c, axis, src.laneNames[key])
 		if err != nil {
 			return nil, nil, err
 		}
 		cappedBy[key] = capped
+		timedOutBy[key] = timedOut
 		evs = append(evs, got...)
 	}
 	built := calltrace.BuildLanes(calltrace.Window{From: axis.Start, To: axis.End}, true, src.infos, evs)
@@ -497,8 +509,9 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 				bl = l
 			}
 		}
-		if cappedBy[key] {
-			// A lane that came back with no event proves nothing when its read hit the cap.
+		if cappedBy[key] || timedOutBy[key] {
+			// A lane that came back with no event proves nothing when its read hit the
+			// cap or ran out of time.
 			bl = calltrace.MarkIncomplete([]calltrace.Lane{bl})[0]
 		}
 		lane := buildLane(key, bl, src.asOf, reasonByID, now)
@@ -512,7 +525,7 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 			continue
 		}
 		if names := src.laneNames[key]; len(names) > 0 {
-			if err := bucketLane(ctx, c, axis, &lane, names, src.selectedIDs, cappedBy[key]); err != nil {
+			if err := bucketLane(ctx, c, axis, &lane, names, src.selectedIDs, cappedBy[key], timedOutBy[key]); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -637,18 +650,24 @@ func resolveLaneSources(ctx context.Context, c casestore.Case, sel tracingSelect
 // readLaneEvents reads the events of the named importers of ONE lane in the axis
 // window, start-based and half open. capped is true when the read hit the row
 // cap (casestore.MaxEventQuery, one budget per call), so events of these names
-// may be missing. No names reads nothing.
-func readLaneEvents(ctx context.Context, c casestore.Case, axis tracingAxis, names []string) (evs []evidence.Event, capped bool, err error) {
+// may be missing. timedOut is true when the read passed tracingLaneBudget: evs
+// then holds the oldest events read so far, and events after them may be
+// missing. No names reads nothing.
+func readLaneEvents(ctx context.Context, c casestore.Case, axis tracingAxis, names []string) (evs []evidence.Event, capped, timedOut bool, err error) {
 	if len(names) == 0 {
-		return nil, false, nil
+		return nil, false, false, nil
 	}
 	got, err := c.Events(ctx, casestore.EventQuery{
-		Window:  importer.Window{From: axis.Start, To: axis.End},
-		Sources: names,
-		Limit:   casestore.MaxEventQuery,
+		Window:      importer.Window{From: axis.Start, To: axis.End},
+		Sources:     names,
+		Limit:       casestore.MaxEventQuery,
+		MaxScanTime: tracingLaneBudget,
 	})
+	if errors.Is(err, casestore.ErrScanBudget) && ctx.Err() == nil {
+		timedOut, err = true, nil // keep the events read so far
+	}
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	capped = len(got) >= casestore.MaxEventQuery
 	// The store window is inclusive at the end; tracing is half open.
@@ -658,7 +677,7 @@ func readLaneEvents(ctx context.Context, c casestore.Case, axis tracingAxis, nam
 			evs = append(evs, e)
 		}
 	}
-	return evs, capped, nil
+	return evs, capped, timedOut, nil
 }
 
 // httperrReasonsByID carries only the reasons the importer itself produced
@@ -719,7 +738,12 @@ func buildLane(key string, bl calltrace.Lane, asOf map[string]time.Time, reasonB
 // read. The iis lane also gets errors on every bucket: the rows whose status is
 // 5xx (zero where there are none). HTTP.sys error markers (source iis-httperr) are
 // counted as events but never as errors. The sql lane leaves errors out.
-func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *tracingLane, names []string, selectedIDs map[int64]bool, capped bool) error {
+// eventsTimedOut is true when this lane's own event read ran out of time.
+//
+// When the count passes its time budget the lane keeps the cells counted so far:
+// those buckets stay complete, the later ones are marked incomplete, and the lane
+// is partial with reason "timeout".
+func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *tracingLane, names []string, selectedIDs map[int64]bool, capped, eventsTimedOut bool) error {
 	withErrors := lane.Key == calltrace.LaneIIS
 	// c must be the unwrapped handle: a *sharedCase hides BucketCounter and
 	// CountBuckets would fall back to the 50 000 row scan.
@@ -729,6 +753,7 @@ func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *t
 		// An HTTP.sys marker is not a request, so it is never an error; the store
 		// skips these rows when counting errors.
 		ErrorExcludeSources: []string{sourceHTTPErr},
+		MaxTime:             tracingLaneBudget,
 	})
 	if err != nil {
 		return err
@@ -754,11 +779,27 @@ func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *t
 		lane.ReasonCode = tracingReasonRowCap
 		lane.Reason = tracingRowCapMsg
 	}
+	if eventsTimedOut {
+		lane.Complete = false
+		lane.Truncated = true
+		lane.ReasonCode = tracingReasonTimeout
+		lane.Reason = tracingTimeoutMsg
+	}
 	if res.Partial {
 		lane.Complete = false
 		lane.Truncated = true
 		lane.ReasonCode = tracingReasonBudget
 		lane.Reason = tracingScanBudget
+		if res.TimedOut {
+			lane.ReasonCode = tracingReasonTimeout
+			lane.Reason = tracingTimeoutMsg
+			// Cells from DoneTo on were not counted: do not call them complete.
+			for i := range lane.Buckets {
+				if !lane.Buckets[i].Start.Before(res.DoneTo) {
+					lane.Buckets[i].Complete = false
+				}
+			}
+		}
 	}
 	return nil
 }

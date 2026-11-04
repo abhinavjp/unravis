@@ -119,6 +119,7 @@ func (s *Store) Entry(ctx context.Context, id casestore.CaseID) (casestore.CaseI
 
 // BeginArchive stamps MarkArchiving with the pending facts, in one manifest write.
 func (s *Store) BeginArchive(ctx context.Context, id casestore.CaseID, believed casestore.State, p casestore.ArchivePending) (casestore.State, error) {
+	s.stopTimelineBuild(ctx, id) // before the folder lock: the build's own close takes the case locks
 	var prior casestore.State
 	err := s.mutate(ctx, id, func(m *manifest) (bool, error) {
 		if err := casestore.CheckMark(m.Mark); err != nil {
@@ -213,6 +214,7 @@ func (s *Store) RestoreInPlace(ctx context.Context, id casestore.CaseID, believe
 
 // BeginFree stamps MarkFreeing after checking the case is Archived, kept and idle.
 func (s *Store) BeginFree(ctx context.Context, id casestore.CaseID, believed casestore.State) error {
+	s.stopTimelineBuild(ctx, id) // the background build holds a reference; let it go first
 	return s.mutateH(ctx, id, func(m *manifest, h *caseState) (bool, error) {
 		if err := casestore.CheckMark(m.Mark); err != nil {
 			return false, err
@@ -233,6 +235,7 @@ func (s *Store) BeginFree(ctx context.Context, id casestore.CaseID, believed cas
 
 // FinishFree removes the working copy, then keeps the entry as Freed.
 func (s *Store) FinishFree(ctx context.Context, id casestore.CaseID) error {
+	s.stopTimelineBuild(ctx, id)
 	err := s.mutateH(ctx, id, func(m *manifest, h *caseState) (bool, error) {
 		if freed(*m) && m.Mark == "" {
 			return false, nil // already done
@@ -266,6 +269,7 @@ func (s *Store) FinishFree(ctx context.Context, id casestore.CaseID) error {
 // key goes first, so a failure after it leaves only ciphertext. It is safe to run
 // again and never touches a case file outside the folder.
 func removeWorkingCopy(dir string) error {
+	verified.drop(dir)
 	var errs []error
 	if err := casestore.EraseKeyFile(filepath.Join(dir, keyName)); err != nil {
 		errs = append(errs, errors.New("destroying the case key failed"))

@@ -1,5 +1,6 @@
 import { createInvestigationSnapshot, parseInvestigationSnapshot, type InvestigationSnapshot } from './investigation';
 import type { Query, RecentConnection, Source } from './types';
+import { reasonText } from './copy/importCopy';
 
 /**
  * The case workspace: what a case needs to open the way it was left. Which saved MongoDB connection and databases it used, and the
@@ -218,11 +219,13 @@ export interface WorkspaceSaverOptions {
   clearTimer?: (timer: Timer) => void;
   /** Told after a send went through. */
   sent?: (caseId: string, workspace: Workspace) => void;
+  /** Told after a send failed, with what it threw. The save is still not retried by the saver; the next change tries again. */
+  failed?: (caseId: string, cause: unknown) => void;
 }
 
 /**
  * A quiet, debounced saver. The last write wins: scheduling again replaces what is waiting. A workspace equal to the last one sent for
- * that case is skipped. A failed send is ignored, and nothing here ever throws or blocks.
+ * that case is skipped. A failed send is reported to `failed` (if given) and not retried, and nothing here ever throws or blocks.
  */
 export function createWorkspaceSaver(options: WorkspaceSaverOptions) {
   const delay = options.delayMs ?? SAVE_DELAY_MS;
@@ -245,7 +248,10 @@ export function createWorkspaceSaver(options: WorkspaceSaverOptions) {
       void Promise.resolve(options.send(job.caseId, job.workspace)).then(() => {
         lastSent = { caseId: job.caseId, text };
         options.sent?.(job.caseId, job.workspace);
-      }, () => { /* a failed save is ignored; the next change tries again */ });
+      }, (cause: unknown) => {
+        // A failed save is not retried here; the next change tries again. The listener may say why (for example an import is running).
+        try { options.failed?.(job.caseId, cause); } catch { /* a listener never breaks the saver */ }
+      });
     } catch { /* the same */ }
   }
   return {
@@ -263,6 +269,15 @@ export function createWorkspaceSaver(options: WorkspaceSaverOptions) {
     forget() { lastSent = { caseId: '', text: '' }; },
     get waiting() { return pending !== null; }
   };
+}
+
+/**
+ * The sentence to show when a workspace save was refused because an import is running on the case ('' for any other failure, which stays
+ * quiet: the next change tries again). Reads the short reason name the server sends beside its message.
+ */
+export function workspaceFailureNote(cause: unknown): string {
+  const reason = cause && typeof cause === 'object' ? (cause as { reason?: unknown }).reason : undefined;
+  return reason === 'case-import-running' ? (reasonText('case-import-running') ?? '') : '';
 }
 
 /**

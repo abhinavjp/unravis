@@ -257,7 +257,7 @@ func buildStepChange(ctx context.Context, repo Repository, in PatternInput, r Pa
 		return nil, nil, nil, []string{"Step dating reads the log one day at a time and is not run on a live source. Run it on a restored copy."}, nil
 	}
 	days := localDays(sc.Start, sc.End, loc, MaxSeriesDays)
-	reads, prov, err := readDays(ctx, repo, in.SourceIDs, days, "", 0)
+	reads, prov, cut, err := readDays(ctx, repo, in.SourceIDs, days, "", 0)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, nil, nil, nil, ctx.Err()
@@ -270,6 +270,12 @@ func buildStepChange(ctx context.Context, repo Repository, in PatternInput, r Pa
 
 	result, warnings := stepChangeFrom(reads, loc)
 	result.Start, result.End = days[0].Start, days[len(days)-1].End
+	if cut {
+		// The read ran out of time: the newest days are missing from the fit.
+		result.Partial = true
+		result.End = reads[len(reads)-1].day.End
+		warnings = append(warnings, fmt.Sprintf("The read ran out of time after %d of %d days, so step dating used only the oldest %d.", len(reads), len(days), len(reads)))
+	}
 	return result, stepFindings(in, result), prov, warnings, nil
 }
 

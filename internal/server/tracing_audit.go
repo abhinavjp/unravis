@@ -30,6 +30,9 @@ const (
 	auditCodeTimeout = "timeout"
 	auditCodeRowCap  = "rowcap"
 	auditCodeError   = "error"
+	// auditCodeBroadScan is the reason code of a window the live source refuses
+	// without allowed broad scans (audit.ErrBroadScanRefused).
+	auditCodeBroadScan = "broad-scan"
 )
 
 // errUnknownAuditSource is returned by selectAuditSources when an explicit id is
@@ -44,7 +47,7 @@ type auditBucket struct {
 }
 
 // auditLaneRead is what readAuditLane found. ReasonCode is timeout, rowcap,
-// error or empty. Truncated is always false: counts are aggregates. Sources
+// broad-scan, error or empty. Truncated is always false: counts are aggregates. Sources
 // holds the per-source outcome without any error text.
 type auditLaneRead struct {
 	Buckets             []auditBucket
@@ -113,7 +116,7 @@ func readAuditLane(ctx context.Context, reader audit.RollupReader, sourceIDs []s
 		case errors.Is(err, audit.ErrRollupGroupLimit), errors.Is(err, audit.ErrLimit):
 			return auditFailure(asOf, auditCodeRowCap, tracingAuditRowCapMsg)
 		case errors.Is(err, audit.ErrBroadScanRefused):
-			return auditFailure(asOf, auditCodeError, tracingAuditBroadMsg)
+			return auditFailure(asOf, auditCodeBroadScan, tracingAuditBroadMsg)
 		case errors.Is(err, context.Canceled):
 			// The request was dropped; the handler writes nothing for it. A cancel
 			// the request did not cause is an ordinary read failure.

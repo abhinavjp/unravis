@@ -257,9 +257,19 @@ func (b *RollupBuilder) AddRow(at time.Time, kind, state, class string, duration
 	}
 }
 
-// Groups is the number of aggregated groups merged so far (rows read from a
-// server-side aggregation).
-func (b *RollupBuilder) Groups() int64 { return b.groups }
+// Groups is the number of groups the builder reports against the cache cap: the
+// larger of the aggregated rows merged so far (AddCounts) and the time slots and
+// latency bins it holds, so a read built through AddRow or AddBin is counted too.
+func (b *RollupBuilder) Groups() int64 {
+	held := int64(len(b.slots))
+	for _, s := range b.slots {
+		held += int64(len(s.bins))
+	}
+	if held > b.groups {
+		return held
+	}
+	return b.groups
+}
 
 // Merge folds another builder of the same width into b.
 func (b *RollupBuilder) Merge(o *RollupBuilder) {

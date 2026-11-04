@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -354,5 +355,257 @@ func TestBucketCountsCancel(t *testing.T) {
 	}
 	if _, err := c.BucketCounts(ctx, q); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+// When the time budget passes, BucketCounts returns the cells it counted so
+// far with Partial, TimedOut and DoneTo, not an error (PF-B-01).
+func TestBucketCountsTimeoutIsPartial(t *testing.T) {
+	s, _ := newTestStore(t)
+	info := mustCreate(t, s, "timeout-buckets")
+	c := mustOpen(t, s, info.ID)
+	mustImportAs(t, c, "imp-a", "a", 20)
+
+	// 20 one-second cells, one per chunk. The hook uses up the budget before chunk 3.
+	bucketChunkHook = func(n int) {
+		if n == 3 {
+			time.Sleep(300 * time.Millisecond)
+		}
+	}
+	t.Cleanup(func() { bucketChunkHook = nil })
+	q := casestore.BucketQuery{
+		AxisStart: testBase, From: testBase, To: testBase.Add(20 * time.Second), WidthMs: 1000,
+		Sources: []string{"imp-a"}, MaxTime: 100 * time.Millisecond,
+	}
+	res, err := c.BucketCounts(context.Background(), q)
+	if err != nil {
+		t.Fatalf("a timeout must be a partial answer, got error %v", err)
+	}
+	if !res.Partial || !res.TimedOut {
+		t.Fatalf("Partial %v TimedOut %v, want both true", res.Partial, res.TimedOut)
+	}
+	if want := testBase.Add(3 * time.Second); !res.DoneTo.Equal(want) {
+		t.Errorf("DoneTo = %v, want %v", res.DoneTo, want)
+	}
+	if res.Total != 3 || len(res.Counts) != 3 {
+		t.Errorf("total %d in %d cells, want the 3 cells before DoneTo", res.Total, len(res.Counts))
+	}
+	for i, bc := range res.Counts {
+		if bc.Index != i {
+			t.Errorf("cell %d has index %d", i, bc.Index)
+		}
+	}
+
+	// The same query without a stall is complete and not partial.
+	bucketChunkHook = nil
+	q.MaxTime = 0
+	full, err := c.BucketCounts(context.Background(), q)
+	if err != nil || full.Partial || full.TimedOut || !full.DoneTo.IsZero() || full.Total != 20 {
+		t.Fatalf("full = %+v, %v", full, err)
+	}
+}
+
+// A window split into chunks gives the same counts as the whole GROUP BY, also
+// when the window starts and ends inside a cell.
+func TestBucketCountsChunksMatchWhole(t *testing.T) {
+	s, _ := newTestStore(t)
+	info := mustCreate(t, s, "chunk-buckets")
+	c := mustOpen(t, s, info.ID)
+	mustImportAs(t, c, "imp-a", "a", 500)
+
+	ctx := context.Background()
+	q := casestore.BucketQuery{
+		AxisStart: testBase, From: testBase.Add(7*time.Second + 250*time.Millisecond), To: testBase.Add(490*time.Second + 10*time.Millisecond),
+		WidthMs: 4000, Sources: []string{"imp-a"},
+	}
+	got, err := c.BucketCounts(ctx, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan, err := casestore.CountBucketsScan(ctx, c, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	strip := func(cs []casestore.BucketCount) []casestore.BucketCount {
+		out := make([]casestore.BucketCount, len(cs))
+		for i, bc := range cs {
+			bc.ImportID = 0
+			out[i] = bc
+		}
+		return out
+	}
+	if !reflect.DeepEqual(strip(got.Counts), strip(scan.Counts)) {
+		t.Fatalf("chunked = %+v\nscan = %+v", got.Counts, scan.Counts)
+	}
+	if got.Partial || got.Total != scan.Total {
+		t.Fatalf("partial %v total %d, scan total %d", got.Partial, got.Total, scan.Total)
+	}
+}
+
+// A dropped request (its context ends) stops BucketCounts between and inside
+// chunks; it is the context error, never a partial answer.
+func TestBucketCountsStopsWhenRequestEnds(t *testing.T) {
+	s, _ := newTestStore(t)
+	info := mustCreate(t, s, "cancel-buckets")
+	c := mustOpen(t, s, info.ID)
+	mustImportAs(t, c, "imp-a", "a", 20)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ran := 0
+	bucketChunkHook = func(n int) {
+		ran++
+		if n == 2 {
+			cancel() // the client closed the tab
+		}
+	}
+	t.Cleanup(func() { bucketChunkHook = nil })
+	q := casestore.BucketQuery{
+		AxisStart: testBase, From: testBase, To: testBase.Add(20 * time.Second), WidthMs: 1000, Sources: []string{"imp-a"},
+	}
+	res, err := c.BucketCounts(ctx, q)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v (result %+v), want context.Canceled", err, res)
+	}
+	if res.Partial || ran > 3 {
+		t.Errorf("partial %v, %d chunks started: the scan went on after the request ended", res.Partial, ran)
+	}
+}
+
+// Events with a time budget returns the oldest events read so far together with
+// ErrScanBudget; a dropped request is the context error instead.
+func TestEventsTimeBudgetAndCancel(t *testing.T) {
+	s, _ := newTestStore(t)
+	info := mustCreate(t, s, "events-budget")
+	c := mustOpen(t, s, info.ID)
+	mustImportAs(t, c, "imp-a", "a", 40)
+
+	eventRowHook = func(n int) {
+		if n == 5 {
+			time.Sleep(300 * time.Millisecond)
+		}
+	}
+	t.Cleanup(func() { eventRowHook = nil })
+	got, err := c.Events(context.Background(), casestore.EventQuery{Sources: []string{"imp-a"}, MaxScanTime: 100 * time.Millisecond})
+	if !errors.Is(err, casestore.ErrScanBudget) {
+		t.Fatalf("err = %v, want ErrScanBudget", err)
+	}
+	if len(got) < 5 || len(got) >= 40 {
+		t.Fatalf("got %d events, want the few read before the budget passed", len(got))
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i].Start.Before(got[i-1].Start) {
+			t.Fatal("partial events are not in start order")
+		}
+	}
+
+	// Without a budget the same stall changes nothing.
+	all, err := c.Events(context.Background(), casestore.EventQuery{Sources: []string{"imp-a"}})
+	if err != nil || len(all) != 40 {
+		t.Fatalf("no budget: %d events, %v", len(all), err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	eventRowHook = func(n int) {
+		if n == 5 {
+			cancel()
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	got, err = c.Events(ctx, casestore.EventQuery{Sources: []string{"imp-a"}, MaxScanTime: time.Minute})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled: err = %v, want context.Canceled", err)
+	}
+	if len(got) >= 40 {
+		t.Fatal("the read went on after the request ended")
+	}
+}
+
+// A larger case: the answer is exact, or partial with a consistent DoneTo. Set
+// UNRAVIS_PERF=1 for 3 000 000 rows; the default is 120 000.
+func TestBucketCountsLargeCase(t *testing.T) {
+	if testing.Short() {
+		t.Skip("imports a large case")
+	}
+	n := 120_000
+	if os.Getenv("UNRAVIS_PERF") == "1" {
+		n = 3_000_000
+	}
+	s, _ := newTestStore(t, func(o *Options) { o.MaxFileRows = int64(n) + 1 })
+	info := mustCreate(t, s, "large-buckets")
+	c := mustOpen(t, s, info.ID)
+	mustImportAs(t, c, "imp-a", "a", n)
+
+	q := casestore.BucketQuery{
+		AxisStart: testBase, From: testBase, To: testBase.Add(time.Duration(n) * time.Second),
+		WidthMs: int64(n) * 1000 / 100, Sources: []string{"imp-a"}, CountErrors: true, MaxTime: 3 * time.Second,
+	}
+	start := time.Now()
+	res, err := c.BucketCounts(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > 8*time.Second {
+		t.Errorf("took %v with a 3 s budget", took)
+	}
+	switch {
+	case !res.Partial && res.Total != int64(n):
+		t.Errorf("complete answer counted %d of %d", res.Total, n)
+	case res.Partial && (res.DoneTo.IsZero() || res.Total >= int64(n)):
+		t.Errorf("partial answer: total %d, DoneTo %v", res.Total, res.DoneTo)
+	}
+}
+
+// Fix loop 3: an error cell never counts more than its event cell.
+func TestMergeBucketErrorsClampsToCount(t *testing.T) {
+	counts := []casestore.BucketCount{
+		{Index: 0, Source: "a", ImportID: 1, Count: 3},
+		{Index: 1, Source: "a", ImportID: 1, Count: 5},
+	}
+	errs := []casestore.BucketCount{
+		{Index: 0, Source: "a", ImportID: 1, Count: 7}, // more errors than events (rows moved between the queries)
+		{Index: 1, Source: "a", ImportID: 1, Count: 2},
+		{Index: 9, Source: "z", ImportID: 4, Count: 1}, // no event cell: ignored
+	}
+	mergeBucketErrors(counts, errs)
+	if counts[0].Errors != 3 || counts[1].Errors != 2 {
+		t.Fatalf("errors = %d, %d; want 3, 2", counts[0].Errors, counts[1].Errors)
+	}
+}
+
+// The count and error queries of every chunk read one snapshot: rows deleted by a
+// writer between the chunks are still seen by the rest of the same call.
+func TestBucketCountsReadOneSnapshot(t *testing.T) {
+	s, _ := newTestStore(t)
+	c := mustOpen(t, s, mustCreate(t, s, "snap").ID)
+	importStatuses(t, c, "imp-a", 120)
+	q := casestore.BucketQuery{
+		AxisStart: testBase, From: testBase, To: testBase.Add(120 * time.Second), WidthMs: 1000,
+		Sources: []string{"imp-a"}, CountErrors: true,
+	}
+	want, err := c.BucketCounts(context.Background(), q)
+	if err != nil || want.Total != 120 {
+		t.Fatalf("baseline = %+v, %v", want, err)
+	}
+	bucketChunkHook = func(n int) {
+		if n == 1 {
+			if _, err := c.db.Exec("DELETE FROM events"); err != nil {
+				t.Errorf("concurrent delete: %v", err)
+			}
+		}
+	}
+	t.Cleanup(func() { bucketChunkHook = nil })
+	got, err := c.BucketCounts(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucketChunkHook = nil
+	if !reflect.DeepEqual(got.Counts, want.Counts) || got.Total != want.Total {
+		t.Fatalf("a writer between chunks changed the answer: total %d, want %d", got.Total, want.Total)
+	}
+	for _, bc := range got.Counts {
+		if bc.Errors > bc.Count {
+			t.Fatalf("cell %+v has more errors than events", bc)
+		}
 	}
 }

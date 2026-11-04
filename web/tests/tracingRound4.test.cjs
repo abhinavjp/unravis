@@ -118,7 +118,7 @@ test('an archived case restored into the timeline returns to the case page', () 
 });
 test('a closed case reads the timeline like an open one: it still has Try again and sends the request (UI-R2-03)', () => {
   const paper = read('src/components/TracingPaper.svelte');
-  assert.match(paper, /<button type="button" class="secondary-button" onclick=\{\(\) => void keepFocusInChart\(\(\) => void run\(lastBody \?\? undefined\)\)\}>\{TRACING_TEXT\.retry\}<\/button>/);
+  assert.match(paper, /<button type="button" class="secondary-button" title=\{WAIT_TEXT\.retryTitle\} onclick=\{\(\) => void keepFocusInChart\(\(\) => void run\(lastBody \?\? undefined\)\)\}>\{TRACING_TEXT\.retry\}<\/button>/);
   assert.doesNotMatch(paper, /\{#if !closed\}<button/);
   assert.doesNotMatch(paper, /if \(closed\) \{\s*status = 'error';/);
 });

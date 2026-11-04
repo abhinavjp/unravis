@@ -44,6 +44,9 @@ func (c *Case) tagGate(ctx context.Context) (db *sql.DB, release func(), err err
 	if err != nil {
 		return nil, nil, err
 	}
+	if c.importRun.Load() {
+		return nil, nil, casestore.ErrImportRunning // do not wait for the import's folder lock
+	}
 	release, err = sealedfile.Lock(c.dir)
 	if err != nil {
 		return nil, nil, err

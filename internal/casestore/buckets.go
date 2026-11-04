@@ -43,6 +43,10 @@ type BucketQuery struct {
 	Kinds               []string
 	CountErrors         bool
 	ErrorExcludeSources []string
+	// MaxTime lowers the time budget of the store's own GROUP BY (default and
+	// ceiling MaxScanTime, 10 s). Zero means the default. When it passes, the
+	// answer holds the cells counted so far and sets Partial and TimedOut.
+	MaxTime time.Duration
 }
 
 // BucketCount is the count of one cell for one importer.
@@ -66,12 +70,19 @@ func IsServerErrorStatus(v string) bool {
 
 // BucketResult is the answer to a BucketQuery. Counts is sorted by Index,
 // then Source, then ImportID; an empty cell is absent. Total is the sum of
-// every Count. Partial is true only when the scan fallback hit ErrScanBudget.
+// every Count. Partial is true when the scan fallback hit ErrScanBudget or the
+// store's GROUP BY ran out of time (TimedOut is then also true). After a
+// timeout the store reads the window from its start in whole cells, so DoneTo
+// is the instant from which no event was counted: every event before DoneTo is
+// in Counts, none at or after it. DoneTo is zero when the answer is complete or
+// when the store cannot say.
 type BucketResult struct {
-	Counts  []BucketCount
-	Total   int64
-	Scanned int64
-	Partial bool
+	Counts   []BucketCount
+	Total    int64
+	Scanned  int64
+	Partial  bool
+	TimedOut bool
+	DoneTo   time.Time
 }
 
 // ErrBadBucketQuery is the refusal of a BucketQuery that breaks its limits.

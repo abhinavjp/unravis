@@ -52,7 +52,7 @@ func TestTracingAxisTable(t *testing.T) {
 func TestTracingAxisInvariants(t *testing.T) {
 	spans := []time.Duration{10 * time.Second, 59 * time.Second, time.Minute, 7 * time.Minute, time.Hour, 2 * time.Hour,
 		2*time.Hour + time.Second, 10 * time.Hour, 24 * time.Hour, 25 * time.Hour, 5 * 24 * time.Hour, 10 * 24 * time.Hour,
-		20 * 24 * time.Hour, 30 * 24 * time.Hour}
+		20 * 24 * time.Hour, 30 * 24 * time.Hour, 31 * 24 * time.Hour, 60 * 24 * time.Hour, 61 * 24 * time.Hour, 93 * 24 * time.Hour, 120 * 24 * time.Hour, 121 * 24 * time.Hour, 186 * 24 * time.Hour}
 	offsets := []time.Duration{0, time.Minute, 5*time.Hour + 59*time.Minute, 23*time.Hour + 59*time.Minute}
 	day := time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC)
 	for _, span := range spans {
@@ -190,7 +190,9 @@ func TestTracingLadderEdges(t *testing.T) {
 		{20 * time.Hour, 600}, {20*time.Hour + time.Second, 900}, {24 * time.Hour, 900}, {24*time.Hour + time.Second, 3600},
 		{5 * 24 * time.Hour, 3600}, {5*24*time.Hour + time.Second, 7200}, {10 * 24 * time.Hour, 7200},
 		{10*24*time.Hour + time.Second, 14400}, {20 * 24 * time.Hour, 14400}, {20*24*time.Hour + time.Second, 21600},
-		{30 * 24 * time.Hour, 21600},
+		{30 * 24 * time.Hour, 21600}, {30*24*time.Hour + time.Second, 28800}, {60 * 24 * time.Hour, 43200},
+		{60*24*time.Hour + time.Second, 86400}, {93 * 24 * time.Hour, 86400}, {120 * 24 * time.Hour, 86400},
+		{120*24*time.Hour + time.Second, 172800}, {186 * 24 * time.Hour, 172800},
 	}
 	for _, c := range cases {
 		if got := ladderWidth(c.span.Milliseconds()); got != c.want*1000 {

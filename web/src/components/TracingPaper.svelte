@@ -3,6 +3,8 @@
   import { fetchTracing, nextRequestSeq, tracingErrorText, type TracingResponse } from '../lib/tracing/model';
   import { WINDOW_TEXT, checkWindows, defaultWindows, fixOverlap, windowHasNoData, windowIsEmpty, windowNow, loadWindows, saveWindows, type WindowFields } from '../lib/tracing/windows';
   import { TRACING_TEXT } from '../lib/copy/tracingCopy';
+  import { WAIT_TEXT } from '../lib/copy/waitCopy';
+  import { createSlowRead } from '../lib/slowRead.svelte';
   import TracingChart from './TracingChart.svelte';
   import TraceToolbar from './TraceToolbar.svelte';
   import { allLanesVisible, toggleLane } from '../lib/tracing/toolbar';
@@ -27,6 +29,8 @@
   let handoffNote = $state('');
   // Set by Cancel, cleared by the next run: the chart region then says what happened instead of going blank.
   let cancelled = $state(false);
+  // After a few seconds the plain reading line gives way to one that says a large window can take a minute.
+  const waiting = createSlowRead(() => status === 'loading');
   let controller: AbortController | null = null;
   // The last body that was sent, so Try again repeats that request and not whatever the boxes say now.
   let lastBody: ReturnType<typeof checkWindows>['body'] = null;
@@ -189,12 +193,12 @@
         <span class="error-icon" aria-hidden="true">!</span>
         <div class="error-body">
           <p role="status">{errorText}</p>
-          <button type="button" class="secondary-button" onclick={() => void keepFocusInChart(() => void run(lastBody ?? undefined))}>{TRACING_TEXT.retry}</button>
+          <button type="button" class="secondary-button" title={WAIT_TEXT.retryTitle} onclick={() => void keepFocusInChart(() => void run(lastBody ?? undefined))}>{TRACING_TEXT.retry}</button>
         </div>
       </div>
     {:else if status === 'loading' && !result}
-      <p role="status">{TRACING_TEXT.readingWindow}</p>
-      <button type="button" class="secondary-button" onclick={() => void keepFocusInChart(cancel)}>{TRACING_TEXT.cancel}</button>
+      <p role="status">{waiting.slow ? WAIT_TEXT.stillReading : TRACING_TEXT.readingWindow}</p>
+      <button type="button" class="secondary-button" title={WAIT_TEXT.cancelTitle} onclick={() => void keepFocusInChart(cancel)}>{TRACING_TEXT.cancel}</button>
     {:else}
       {#if result}
         {#if result.sources.length === 0 && result.lanes.length === 0}
@@ -208,8 +212,8 @@
             </div>
             {#if status === 'loading'}
               <div class="chart-veil">
-                <p role="status">{TRACING_TEXT.readingWindow}</p>
-                <button type="button" class="secondary-button" onclick={() => void keepFocusInChart(cancel)}>{TRACING_TEXT.cancel}</button>
+                <p role="status">{waiting.slow ? WAIT_TEXT.stillReading : TRACING_TEXT.readingWindow}</p>
+                <button type="button" class="secondary-button" title={WAIT_TEXT.cancelTitle} onclick={() => void keepFocusInChart(cancel)}>{TRACING_TEXT.cancel}</button>
               </div>
             {/if}
           </div>

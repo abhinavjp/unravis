@@ -6,11 +6,15 @@
   import FilterChips from './FilterChips.svelte';
   import QueryControls from './QueryControls.svelte';
   import { intervalNote } from '../lib/intervalNote.svelte';
+  import { RUN_TEXT, WAIT_TEXT } from '../lib/copy/waitCopy';
+  import { createSlowRead } from '../lib/slowRead.svelte';
 
   // The scope row under the top bar: period and request type, More filters, the run hint and button, and the active filter chips.
   const runHint = $derived(scope.runHint);
   const moreCount = $derived(scope.moreCount);
   const loading = $derived(results.loading);
+  // A large window can take a minute: after a few seconds the hint says so and Cancel run stays beside it.
+  const waiting = createSlowRead(() => results.loading);
   const groupNames = $derived((results.analysis?.apis ?? []).map(row => row.controller + '.' + row.action));
   // While the panel is open its own header shows the chips, so the outer row hides (no chip ever appears twice).
   let moreOpen = $state(false);
@@ -33,7 +37,7 @@
         {#key scope.controlsResetKey}<QueryControls bind:query={scope.query} bind:targetMs={scope.targetMs} bind:dateInputsValid={scope.dateInputsValid} bind:activeGroup={panelGroup} part="panel" {groupNames} now={app.info?.now ?? ''} {onScopeChange} />{/key}
       </div>
     </details>
-    <div class="run-actions"><span class="run-hint" class:stale={results.displayedRunIsStale && !loading} id="run-hint" role="status">{runHint}</span>{#if loading}<button class="quiet-button" onclick={cancelAnalysis}>Cancel run</button>{/if}<button class="primary-button" aria-describedby="run-hint" disabled={loading || !scope.query.sourceIds.length || !scope.dateInputsValid} onclick={() => runAnalysis()}>{loading ? 'Comparing…' : 'Run analysis'}</button></div>
+    <div class="run-actions"><span class="run-hint" class:stale={results.displayedRunIsStale && !loading} id="run-hint" role="status">{loading && waiting.slow ? WAIT_TEXT.stillReading : runHint}</span>{#if loading}<button class="quiet-button" title={RUN_TEXT.cancelRunTitle} onclick={cancelAnalysis}>{RUN_TEXT.cancelRun}</button>{/if}<button class="primary-button" aria-describedby="run-hint" disabled={loading || !scope.query.sourceIds.length || !scope.dateInputsValid} onclick={() => runAnalysis()}>{loading ? RUN_TEXT.running : RUN_TEXT.run}</button></div>
   </div>
   {#if intervalNote.text}<p class="interval-note" role="status">{intervalNote.text}</p>{/if}
   {#if !moreOpen}<FilterChips chips={scope.filterChipList} onRemove={removeChip} onClear={clearChips} onEmpty={() => summaryEl?.focus()} />{/if}

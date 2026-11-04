@@ -23,6 +23,11 @@ const (
 	// (the table and the grid share one aggregation) and for a quick repeat.
 	rollupCacheTTL     = time.Minute
 	rollupCacheEntries = 8
+	// rollupCacheGroups caps the aggregated groups (time slot x latency bin) all
+	// the cached reads hold together, so eight wide windows cannot pin gigabytes
+	// (PF-B-03). The oldest entries go first; one read over the cap by itself is
+	// not cached.
+	rollupCacheGroups = 2 * audit.MaxRollupGroups
 )
 
 type rollupCacheEntry struct {
@@ -30,6 +35,15 @@ type rollupCacheEntry struct {
 	at      time.Time
 	slots   audit.RollupSlots
 	planned audit.RollupPlan
+	groups  int64
+}
+
+// slotGroups is the number of groups a read holds.
+func slotGroups(s audit.RollupSlots) int64 {
+	if s.Builder == nil {
+		return 0
+	}
+	return s.Builder.Groups()
 }
 
 // rollupCache holds the last few completed rollup reads. Only a read in which
@@ -74,15 +88,34 @@ func (c *rollupCache) get(plan audit.RollupPlan) (audit.RollupSlots, bool) {
 	return found, hit
 }
 
+// put keeps the read as the newest entry. Entries past their TTL are dropped
+// here too (not only by get, which may never be called again), and the oldest
+// entries go while the entries are more than rollupCacheEntries or hold more than
+// rollupCacheGroups groups together.
 func (c *rollupCache) put(plan audit.RollupPlan, slots audit.RollupSlots) {
 	key := rollupCacheKey(plan)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	entries := []rollupCacheEntry{{key: key, at: c.clock(), slots: slots}}
+	now := c.clock()
+	fresh := c.entries[:0:0]
 	for _, e := range c.entries {
-		if e.key != key && len(entries) < rollupCacheEntries {
-			entries = append(entries, e)
+		if now.Sub(e.at) < rollupCacheTTL && e.key != key {
+			fresh = append(fresh, e)
 		}
+	}
+	n := slotGroups(slots)
+	if n > rollupCacheGroups {
+		c.entries = fresh // too large to hold: keep the others, drop any old copy
+		return
+	}
+	entries := []rollupCacheEntry{{key: key, at: now, slots: slots, groups: n}}
+	total := n
+	for _, e := range fresh { // newest first
+		if len(entries) >= rollupCacheEntries || total+e.groups > rollupCacheGroups {
+			break // this one and every older one go: oldest out first, no packing by size
+		}
+		entries = append(entries, e)
+		total += e.groups
 	}
 	c.entries = entries
 }
