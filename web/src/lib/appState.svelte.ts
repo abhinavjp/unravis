@@ -18,9 +18,11 @@ import { applyDrill, hasRecordFilter, mergeRecordFilter, recordFilterChips } fro
 import type { RunningImport } from './cases';
 import { afterUnlock, CASE_TRACING_MARK, createRoute, go as moveScreen, historyStep, initialScreen, isHistoryScreen, leavesCaseWork, parseScreenMark, setupReturn, type Screen } from './screenFlow';
 import { onCasesLocked } from './lockSignal';
-import { requestCase } from './startIntent';
+import { requestCase, requestFilesView } from './startIntent';
 import { CASE_RESTORE_TEXT } from './copy/caseRestoreCopy';
 import { holdLedger, setLedgerCase } from './ledgerStore.svelte';
+import { forgetSources } from './tracing/sources';
+import { forgetWindows } from './tracing/windows';
 import { getMasterKeyStatus, lockMasterKey } from './masterKeyApi';
 import type { KeyStatus, LockState } from './masterKey';
 import { KEY_TEXT } from './copy/masterKeyCopy';
@@ -823,6 +825,8 @@ export function setActiveCase(id: string, options: { restore?: boolean } = {}) {
 }
 /** A case was erased. If it was the one being worked in, it stops being active and its page gives way to the start screen. */
 export function caseErased(id: string) {
+  // The tracing choice and windows kept for the case go too, whether or not it is the active one.
+  if (id) { forgetSources(id); forgetWindows(id); }
   if (!id || activeCaseId !== id) return;
   setActiveCase('');
   if (screen === 'case') go('start');
@@ -847,6 +851,7 @@ export function openAnalysis() { go('running'); }
 export function openCaseImport() {
   if (!activeCaseId) return;
   requestCase(activeCaseId);
+  requestFilesView();
   openSidePanel('import');
 }
 /**
@@ -871,7 +876,7 @@ export async function openCreatedCase(id: string) {
     }
     hasSources = loaded.length > 0;
   } catch { /* the list could not be read: the analysis screen still opens and its own connect step can add sources */ }
-  if (go('case') && !hasSources) openSidePanel('import');
+  if (go('case') && !hasSources) { requestFilesView(); openSidePanel('import'); }
 }
 /** "Create a new one": the guided flow when it exists, otherwise the import panel over the working screen. */
 export function startCreate() {
@@ -1214,6 +1219,25 @@ export async function addSource(event: SubmitEvent) {
   if (addedCount) { completePendingRestore(); queueWorkspaceSave(); }
   // A fully successful add is done: close the drawer and show the result in the source list. A partial failure stays open so the failed databases can be retried.
   if (allAdded) await closeConnections();
+}
+/**
+ * Connects one database of a saved connection to the open case (Add data > MongoDB on a case that already exists). It takes the same steps as
+ * addSource above: api.addSource, the page's source list and selection, the case's record of the saved connection, then the workspace save.
+ * Returns the added source; a failure is thrown for the caller to word, and nothing is added.
+ */
+export async function addDatabaseSource(connection: ConnectionInput, target: { label: string; connectionLabel: string; database: string; collection: string }): Promise<Source> {
+  if (remainingSourceSlots < 1) throw new Error(`Only ${maxSources} source profiles fit. Remove one in Connections first.`);
+  // The case that was open when Add was pressed. Sources belong to the server, so the list always gets the new one; the case's own choice of
+  // sources and its saved workspace are only touched while that case is still the open one.
+  const origin = activeCaseId;
+  const added = await api.addSource({ ...connection, label: target.label.slice(0, 100), connectionLabel: target.connectionLabel, database: target.database, collection: target.collection });
+  const sameCase = activeCaseId === origin;
+  if (sameCase && shouldSelectAddedSource(added, investigationIntent)) query.sourceIds = [...query.sourceIds, added.id];
+  sources = [...sources, added];
+  if (sameCase && !hasUnresolvedKnownSources(investigationIntent, sources)) investigationIntent = null;
+  if (!info?.demo) await noteSavedConnection([added], connection, target.connectionLabel, target.collection);
+  if (sameCase && activeCaseId === origin) { completePendingRestore(); queueWorkspaceSave(); }
+  return added;
 }
 export async function deleteSource(source: Source) {
   sourceError = ''; busyDelete = source.id;

@@ -140,7 +140,8 @@ test('on a phone the date boxes fill the fieldset', () => {
   assert.ok(start > 0);
   const block = paper.slice(start, paper.indexOf('.chart-region:focus-visible'));
   assert.match(block, /\.window-set \{ flex: 1 1 100%; \}/);
-  assert.match(block, /\.window-field input \{ width: 100%; box-sizing: border-box; \}/);
+  const picker = read('src/lib/components/WindowPicker.svelte');
+  assert.match(picker, /@media \(max-width: 760px\) \{[\s\S]*?\.pkbtn \{ width: 100%; box-sizing: border-box; \}/, 'the picker button fills the fieldset on a phone');
 });
 
 // UI-R4-06

@@ -2,7 +2,7 @@
   import { wizard } from '../../lib/wizard.svelte';
   import { classifyMongo, removeConnection, sourcesView, testMongo } from '../../lib/wizardSources.svelte';
   import { DEFAULT_COLLECTION, heldCollection, heldConnection } from '../../lib/wizardConnections';
-  import { databaseClass } from '../../lib/wizardSources';
+  import { classFromTicks, databaseClass, defaultAuditDatabases } from '../../lib/wizardSources';
   import type { ConnectionInput, RecentConnection, TLSMode } from '../../lib/types';
   import { conn } from '../../lib/appState.svelte';
   import { SOURCES_TEXT, classSummaryText, databaseProblemText, testedText } from '../../lib/copy/wizardSourcesCopy';
@@ -31,24 +31,26 @@
   let line = $state('');
   let failed = $state(false);
   let uriField = $state<HTMLInputElement>();
-  // The databases the person set aside on purpose, by "connection id/database". The draft does not keep them.
-  let setAside = $state<Record<string, boolean>>({});
+  // The databases the person set aside on purpose, the second tick of a database, and the ticks the name set on, by "connection id/database":
+  // they live in sourcesView (setAside, alsoApp, suggested), so opening another form and coming back does not lose them and an untick sticks.
   let problems = $state<Record<string, string>>({});
   let retesting = $state<Record<string, boolean>>({});
   let retestLine = $state<Record<string, string>>({});
-
-  const CLASS_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-    { value: '', label: SOURCES_TEXT.classUnset },
-    { value: 'audit', label: SOURCES_TEXT.classAudit },
-    { value: 'other', label: SOURCES_TEXT.classOther },
-    { value: 'unused', label: SOURCES_TEXT.classUnused }
-  ];
 
   const counts = (id: string): { audit: number; other: number } => {
     const own = wizard.sources.filter((s) => s.kind === 'mongo-database' && s.ref.startsWith('mongo:' + id + '/'));
     return { audit: own.filter((s) => s.classification === 'audit').length, other: own.filter((s) => s.classification === 'other').length };
   };
-  const valueOf = (id: string, database: string): string => databaseClass(wizard.sources, id, database) || (setAside[id + '/' + database] ? 'unused' : '');
+  const auditOn = (id: string, database: string): boolean => databaseClass(wizard.sources, id, database) === 'audit';
+  const appOn = (id: string, database: string): boolean => databaseClass(wizard.sources, id, database) === 'other' || (auditOn(id, database) && !!sourcesView.alsoApp[id + '/' + database]);
+
+  // A database that looks like an audit log starts with the audit tick on, unless the person already decided about it.
+  function tickAuditByName(id: string) {
+    const databases = sourcesView.connections.find((c) => c.id === id)?.databases ?? [];
+    for (const database of defaultAuditDatabases(databases, (d) => databaseClass(wizard.sources, id, d) !== '' || !!sourcesView.setAside[id + '/' + d])) {
+      if (classifyMongo(id, database, 'audit') === null) sourcesView.suggested[id + '/' + database] = true;
+    }
+  }
 
   function useSaved(id: string) {
     const recent: RecentConnection | undefined = conn.recentConnections.find((r) => r.id === id);
@@ -84,6 +86,7 @@
     password = '';
     connectedTo = uri.trim();
     line = testedText(result.databases);
+    tickAuditByName(result.id);
     onDone?.();
   }
 
@@ -94,14 +97,23 @@
     const result = await testMongo(input, id, undefined, heldCollection(id));
     retesting[id] = false;
     retestLine[id] = result.ok ? testedText(result.databases) : (result.text !== '' ? result.text : SOURCES_TEXT.mongoFailed);
+    if (result.ok) tickAuditByName(id);
   }
 
-  function choose(id: string, database: string, value: string) {
+  // The two ticks of a database. API audit logs is a source of the analysis; Application data is named and kept; neither reads nothing.
+  // A refused change (the list is full) puts the box back as it was.
+  function tick(event: Event, id: string, database: string, which: 'audit' | 'app') {
+    const box = event.currentTarget as HTMLInputElement;
     const key = id + '/' + database;
+    const audit = which === 'audit' ? box.checked : auditOn(id, database);
+    const app = which === 'app' ? box.checked : appOn(id, database);
     problems[key] = '';
-    setAside[key] = value === 'unused';
-    const problem = classifyMongo(id, database, value === '' ? 'unused' : value);
-    if (problem) problems[key] = databaseProblemText(problem);
+    sourcesView.suggested[key] = false;
+    const value = classFromTicks(audit, app);
+    sourcesView.setAside[key] = value === 'unused';
+    const problem = classifyMongo(id, database, value);
+    if (problem) { problems[key] = databaseProblemText(problem); box.checked = which === 'audit' ? auditOn(id, database) : appOn(id, database); return; }
+    sourcesView.alsoApp[key] = audit && app;
   }
 
   function onKey(event: KeyboardEvent) {
@@ -185,14 +197,20 @@
         <p class="hint">{SOURCES_TEXT.mongoClassifyHelp} {SOURCES_TEXT.mongoAuditOptional}</p>
         <p class="hint">{SOURCES_TEXT.mongoChecksHint}</p>
         <ul class="dbs">
-          {#each connection.databases as database (database)}
-            {@const rowId = uid + '-' + connection.id + '-' + database.replace(/[^A-Za-z0-9_-]/g, '_')}
+          {#each connection.databases as database, i (database)}
+            {@const rowId = uid + '-' + connection.id + '-' + i}
+            {@const audit = auditOn(connection.id, database)}
+            {@const app = appOn(connection.id, database)}
             <li class="db">
-              <label for="{rowId}-class" class="db-name">{database}<span class="visually-hidden">: {SOURCES_TEXT.classLabel}</span></label>
-              <select id="{rowId}-class" value={valueOf(connection.id, database)} aria-describedby={problems[connection.id + '/' + database] ? rowId + '-problem' : undefined}
-                aria-invalid={problems[connection.id + '/' + database] ? true : undefined} onchange={(event) => choose(connection.id, database, event.currentTarget.value)}>
-                {#each CLASS_OPTIONS as option (option.value)}<option value={option.value}>{option.label}</option>{/each}
-              </select>
+              <fieldset class="db-set" aria-describedby={problems[connection.id + '/' + database] ? rowId + '-problem' : undefined}>
+                <legend class="db-name">{database}</legend>
+                <span class="hint">{SOURCES_TEXT.mongoWhatIsIn}</span>
+                <label class="tick" for="{rowId}-audit"><input id="{rowId}-audit" type="checkbox" checked={audit} onchange={(event) => tick(event, connection.id, database, 'audit')} /> {SOURCES_TEXT.mongoTickAudit} <span class="hint">{SOURCES_TEXT.mongoTickAuditNote}</span></label>
+                <label class="tick" for="{rowId}-app"><input id="{rowId}-app" type="checkbox" checked={app} onchange={(event) => tick(event, connection.id, database, 'app')} /> {SOURCES_TEXT.mongoTickApp} <span class="hint">{SOURCES_TEXT.mongoTickAppNote}</span></label>
+                {#if audit && sourcesView.suggested[connection.id + '/' + database]}<p class="hint">{SOURCES_TEXT.mongoAuditSuggested}</p>{/if}
+                {#if audit && app}<p class="hint">{SOURCES_TEXT.mongoBothTicked}</p>{/if}
+                {#if !audit && !app}<p class="hint">{SOURCES_TEXT.mongoNeitherTicked}</p>{/if}
+              </fieldset>
               <p class="inline-error" id="{rowId}-problem" role="alert" hidden={!problems[connection.id + '/' + database]}>{problems[connection.id + '/' + database] ?? ''}</p>
             </li>
           {/each}
@@ -209,9 +227,9 @@
   .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--space-3); }
   .field { display: grid; gap: var(--space-1); align-content: start; min-width: 0; }
   .field label { font-size: var(--fs-3); font-weight: 600; }
-  .field input, .field select, .db select { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 44px; padding: 8px 10px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-4); }
-  .field input:focus-visible, .field select:focus-visible, .db select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-  .field input[aria-invalid='true'], .db select[aria-invalid='true'] { border-color: var(--bad); }
+  .field input, .field select { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 44px; padding: 8px 10px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-4); }
+  .field input:focus-visible, .field select:focus-visible, .tick input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .field input[aria-invalid='true'] { border-color: var(--bad); }
   .hint { margin: 0; color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .line { margin: 0; color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
@@ -222,8 +240,10 @@
   .conn-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
   .conn-top h5 { margin: 0; font-size: var(--fs-4); font-weight: 600; overflow-wrap: anywhere; }
   .dbs { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-  .db { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 240px); align-items: center; gap: var(--space-3); }
-  .db-name { font-size: var(--fs-3); overflow-wrap: anywhere; }
-  .db .inline-error { grid-column: 1 / -1; margin: 0; }
-  @media (max-width: 520px) { .db { grid-template-columns: minmax(0, 1fr); } }
+  .db { display: grid; gap: var(--space-1); min-width: 0; }
+  .db-set { display: grid; gap: var(--space-1); min-width: 0; margin: 0; padding: var(--space-2) var(--space-3); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  .db-name { padding: 0 var(--space-1); font-size: var(--fs-4); font-weight: 600; overflow-wrap: anywhere; }
+  .tick { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-height: 44px; font-size: var(--fs-3); }
+  .tick input { width: 20px; height: 20px; margin: 0; }
+  .db .inline-error { margin: 0; }
 </style>

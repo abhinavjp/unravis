@@ -1,4 +1,6 @@
 import type { LintEntry } from '../copy/copylint';
+import { laneNotFullyRead } from './lanes';
+import type { TracingLane } from './model';
 
 /**
  * Window rules for the tracing screen's time picker (WP-22a). Pure module, no Svelte: the incident window and
@@ -121,6 +123,18 @@ export const WINDOW_TEXT = {
   start: 'Start',
   end: 'End',
   startTracing: 'Start tracing',
+  quickRow: 'Quick range',
+  quickRowTitle: 'Trace this period and compare it with the period right before it.',
+  incidentHeading: 'Investigation window',
+  incidentHelp: 'When did the problem happen? Up to 6 months; the default is the last hour.',
+  referenceHeading: 'Compare it with',
+  referenceHeadingNote: '(comparison period)',
+  referenceHelp: 'This earlier period is only used for comparison. It may not have been healthy.',
+  refresh: 'Refresh timeline',
+  refreshTitle: 'Read the timeline again for the windows and sources shown now.',
+  stale: 'The windows changed since this timeline was drawn. Press Refresh timeline to update it.',
+  addEvidence: 'Add evidence',
+  addEvidenceTitle: 'Add files to this case, then read the timeline again.',
   overlap: 'The two windows overlap. Pick a normal period that does not share any time with the incident.',
   overlapFix: 'Move comparison period before the incident',
   utcNote: 'Times are typed in UTC.',
@@ -132,14 +146,25 @@ export const WINDOW_TEXT = {
   cancelledKept: 'Cancelled. The chart still shows the previous result.'
 } as const;
 
-/** True when at least one lane was read and every lane that was read has no events at all (the window itself is empty). */
-export function windowIsEmpty(lanes: { state: string; buckets: { count: number }[] }[]): boolean {
-  const read = lanes.filter((lane) => lane.state === 'events' || lane.state === 'incomplete');
+/** The part of a lane the two window checks read. */
+type LaneRead = Pick<TracingLane, 'state' | 'buckets'> & Partial<Pick<TracingLane, 'disabled' | 'incompleteReason' | 'chunksTotal' | 'chunksRead'>>;
+
+/**
+ * True when at least one lane was read and every lane that was read has no events at all (the window itself is empty).
+ * Never true while any lane was not read in full (refused, cut short, or stopped part-way): what that lane did not read is unknown,
+ * and "no events" would claim it was empty. The chart says what was and was not read instead.
+ */
+export function windowIsEmpty(lanes: LaneRead[]): boolean {
+  if (lanes.some((lane) => laneNotFullyRead(lane))) return false;
+  const read = lanes.filter((lane) => lane.state === 'events');
   return read.length > 0 && lanes.every((lane) => lane.buckets.every((bucket) => !(bucket.count > 0)));
 }
 
-/** True when lanes came back and none of them holds an event: the chart has nothing to draw, whatever the lane states say. */
-export function windowHasNoData(lanes: { buckets: { count: number }[] }[]): boolean {
+/** True when lanes came back, none holds an event, and every lane was read in full: the chart has nothing to draw, whatever the lane
+ * states say. A warning means something was not read in full, so "nothing was found" is never said on top of it. */
+export function windowHasNoData(lanes: (Pick<TracingLane, 'buckets'> & Partial<LaneRead>)[], warnings: readonly string[] = []): boolean {
+  if (warnings.length > 0) return false;
+  if (lanes.some((lane) => lane.state !== undefined && laneNotFullyRead({ state: lane.state, buckets: lane.buckets, disabled: lane.disabled, incompleteReason: lane.incompleteReason, chunksTotal: lane.chunksTotal, chunksRead: lane.chunksRead }))) return false;
   return lanes.length > 0 && lanes.every((lane) => lane.buckets.every((bucket) => !(bucket.count > 0)));
 }
 
@@ -170,6 +195,14 @@ export function saveWindows(caseId: string, fields: WindowFields, storage?: Pick
       incidentStart: fields.incidentStart, incidentEnd: fields.incidentEnd, referenceStart: fields.referenceStart, referenceEnd: fields.referenceEnd
     }));
   } catch { /* unavailable storage only means the windows are not kept */ }
+}
+
+/** Drops the windows kept for a case that was erased. Never throws. */
+export function forgetWindows(caseId: string, storage?: Pick<Storage, 'removeItem'>): void {
+  if (!caseId) return;
+  try {
+    (storage ?? window.sessionStorage).removeItem(STORAGE_KEY + caseId);
+  } catch { /* unavailable storage only means the windows are not dropped */ }
 }
 
 export const windowCopyEntries = (): LintEntry[] => [

@@ -1,6 +1,7 @@
 import type { LintEntry } from './copylint';
 import type { Failure, StepState } from '../wizardSubmit';
 import { rowOutcomeText } from './discoverCopy';
+import { isCatalogKind } from '../fileKinds';
 
 /**
  * Every fixed sentence of the review step and the "creating your case" screen (TSK-19), and the small helpers that build the rest.
@@ -32,6 +33,7 @@ export const CREATE_TEXT = {
   noticeLabel: 'Notice',
   needAck: 'Tick the box above to confirm the notice.',
   needFiles: 'Choose a file for each file source, or go back and take it off the list.',
+  needHost: 'Pick the computer for each file below that asks for one, or take that file off the list. The case cannot be made until each has one.',
   needWindow: 'Choose how far back to read.',
   keepNote: 'If something cannot be read, the case is still kept. You will see which source failed, and you can try it again from Add more data.',
 
@@ -63,7 +65,31 @@ export const CREATE_TEXT = {
   openAnyway: 'Open the case anyway',
   retryHint: 'The case was kept. Open it and use Add more data to try the failed sources again.',
   allDone: 'Your case is ready. Opening it now.',
-  tryAgain: 'Try again'
+  tryAgain: 'Try again',
+
+  filesHeading: 'What was read from each file',
+  filesCaption: 'The result for each file',
+  colFile: 'File',
+  colKind: 'Type',
+  colRows: 'Rows read',
+  colSkipped: 'Skipped',
+  colResult: 'Result',
+  noCount: '–',
+  statusRead: 'Read',
+  statusNothing: 'Nothing new',
+  statusNot: 'Not read',
+  statusReading: 'Reading',
+  statusWaiting: 'Waiting',
+  readyStay: 'Your case is ready. Here is what was read from each file.',
+  skippedHint: 'Skipped rows were in the file but could not be used, such as a line with a time that could not be read.',
+  hostFix: 'Pick the computer that wrote this file, then try the file again.',
+  openTimeline: 'Open the timeline',
+  openCaseHome: 'Open the case',
+  retryFailed: 'Try the failed files again',
+  addMore: 'Add more files',
+  rowTry: 'Try again',
+  rowLeaveOut: 'Leave this file out',
+  leftOutNote: 'The file was left out. The case keeps what it already has.'
 } as const;
 
 const plural = (n: number, one: string, many: string): string => n + ' ' + (n === 1 ? one : many);
@@ -84,13 +110,16 @@ export const createButtonText = (sources: number, busy: boolean): string => (bus
 /** "What happens to this source", from its kind and classification. */
 export function whatHappens(source: { kind: string; classification: string }): string {
   if (source.kind === 'discover') return CREATE_TEXT.kindScan;
-  if (['iis-logs', 'app-log', 'hangfire-csv', 'redis-slowlog-csv', 'file'].includes(source.kind)) return CREATE_TEXT.kindFile;
+  if (['iis-logs', 'app-log', 'hangfire-csv', 'redis-slowlog-csv', 'file'].includes(source.kind) || isCatalogKind(source.kind)) return CREATE_TEXT.kindFile;
   if (source.kind === 'mongo-database') return source.classification === 'audit' ? CREATE_TEXT.kindAudit : CREATE_TEXT.kindDatabaseOther;
   return CREATE_TEXT.kindOnly;
 }
 
 /** "File chosen: u_ex010911.log". The name is the person's own file name. */
 export const fileChosenText = (name: string): string => 'File chosen: ' + name;
+
+/** "File chosen: u_ex010911.log (4 KB)". The size is shown for a file held from the Import files panel. */
+export const fileHeldText = (name: string, size: string): string => 'File chosen: ' + name + ' (' + size + ')';
 
 export const chooseFileLabel = (label: string): string => 'Choose the file for ' + label;
 
@@ -120,6 +149,25 @@ const REASONS: Readonly<Record<string, string>> = {
 
 export const reasonLine = (reason: string): string => REASONS[reason] ?? 'The server could not finish it.';
 
+/** The refusals that a different computer (or a time zone for it) can mend. The result table offers the picker for these. */
+export const HOST_REASONS: readonly string[] = ['unknown-host', 'tz-unlabelled', 'tz-mismatch'];
+export const isHostReason = (reason: string): boolean => HOST_REASONS.includes(reason);
+
+export const tryAgainLabel = (name: string): string => 'Try ' + name + ' again';
+export const leaveOutLabel = (name: string): string => 'Leave ' + name + ' out';
+
+/** The word in the result column's status badge, so the result is never told by colour alone. */
+export function fileStatusText(row: { status: string; outcome: { kind: string } | null }): string {
+  if (row.outcome?.kind === 'added') return CREATE_TEXT.statusRead;
+  if (row.outcome?.kind === 'duplicate') return CREATE_TEXT.statusNothing;
+  if (row.status === 'running') return CREATE_TEXT.statusReading;
+  if (row.status === 'failed' || row.status === 'skipped') return CREATE_TEXT.statusNot;
+  return CREATE_TEXT.statusWaiting;
+}
+
+/** The count in a table cell: a number for a file that was read, a dash otherwise. */
+export const countCell = (value: number | undefined | null): string => (typeof value === 'number' ? new Intl.NumberFormat('en-US').format(value) : CREATE_TEXT.noCount);
+
 /** One line for something that did not go through, naming the source. */
 export function failureText(failure: Failure, outcomeText?: string): string {
   const what = failure.step === 'case' ? '' : failure.step === 'environments' ? 'The environment names were not saved. ' : failure.step === 'tag' ? failure.label + ': its names were not saved. ' : failure.step === 'audit-source' ? failure.label + ': it was not added to the analysis. ' : failure.label + ': ';
@@ -139,8 +187,8 @@ export function stateText(state: Pick<StepState, 'status'>): string {
 }
 
 /** The line at the end of a run: how many sources were read and what to do about the rest. */
-export function resultText(imported: number, total: number, failures: number): string {
-  if (failures === 0) return CREATE_TEXT.allDone;
+export function resultText(imported: number, total: number, failures: number, stay = false): string {
+  if (failures === 0) return stay ? CREATE_TEXT.readyStay : CREATE_TEXT.allDone;
   return 'Your case was kept. ' + imported + ' of ' + total + (total === 1 ? ' source was read. ' : ' sources were read. ') + plural(failures, 'thing needs', 'things need') + ' another try. ' + CREATE_TEXT.retryHint;
 }
 
@@ -168,6 +216,15 @@ export const wizardCreateCopyEntries = (): LintEntry[] => [
   { id: 'wizard.create.sample.fail.audit', text: failureText({ step: 'audit-source', key: 'k', label: 'orders', reason: 'unreachable' }) },
   { id: 'wizard.create.sample.fail.import', text: failureText({ step: 'import', key: 'k', label: 'W3SVC1', reason: 'no-file' }) },
   { id: 'wizard.create.sample.fail.case', text: failureText({ step: 'case', key: '', label: '', reason: 'unreachable' }) },
+  { id: 'wizard.create.sample.result.stay', text: resultText(2, 2, 0, true) },
+  { id: 'wizard.create.sample.try', text: tryAgainLabel('httperr1.log') },
+  { id: 'wizard.create.sample.leave', text: leaveOutLabel('httperr1.log') },
+  { id: 'wizard.create.sample.count', text: countCell(41200) },
+  { id: 'wizard.create.sample.status.read', text: fileStatusText({ status: 'done', outcome: { kind: 'added' } }) },
+  { id: 'wizard.create.sample.status.dup', text: fileStatusText({ status: 'done', outcome: { kind: 'duplicate' } }) },
+  { id: 'wizard.create.sample.status.not', text: fileStatusText({ status: 'failed', outcome: null }) },
+  { id: 'wizard.create.sample.status.reading', text: fileStatusText({ status: 'running', outcome: null }) },
+  { id: 'wizard.create.sample.status.waiting', text: fileStatusText({ status: 'waiting', outcome: null }) },
   { id: 'wizard.create.sample.reading', text: readingText(40) },
   { id: 'wizard.create.sample.reading0', text: readingText(null) }
 ];

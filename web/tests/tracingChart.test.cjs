@@ -119,7 +119,7 @@ test('lane wording is verbatim', () => {
     timeout: 'Showing part of this lane: the read hit its time limit. Try a shorter window.',
     rowcap: 'The audit read reached its row limit; nothing was shortened.',
     error: 'The audit read failed; nothing was shortened.',
-    'broad-scan': 'This window is longer than the live audit source reads, so no API requests are drawn. Choose 24 hours or less, or start Unravis with --allow-broad-scans.'
+    'broad-scan': 'The live audit source would not read a window this long, so no API requests were read. This is not the same as no traffic. Choose a window of 24 hours or less.'
   });
   assert.deepEqual(MIXED_NOTE, {
     title: 'Some data was collected at different times.',

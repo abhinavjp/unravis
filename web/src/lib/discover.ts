@@ -380,7 +380,7 @@ export interface JobRef { findingId: string; jobId: string }
 
 /** What happened to one ticked source. */
 export type RowOutcome =
-  | { kind: 'added'; rows: number }
+  | { kind: 'added'; rows: number; skipped?: number }
   | { kind: 'duplicate' }
   | { kind: 'refused'; reason: string }
   | { kind: 'needs-admin' }
@@ -401,7 +401,8 @@ export function outcomeFromJob(job: ImportJob): RowOutcome | null {
   if (job.state === 'done' && job.answer) {
     const record = job.answer.record;
     if (record && record.status && record.status !== 'ok') return { kind: 'refused', reason: record.status };
-    return { kind: 'added', rows: record?.rows ?? 0 };
+    const skipped = record?.rejected ?? 0;
+    return skipped > 0 ? { kind: 'added', rows: record?.rows ?? 0, skipped } : { kind: 'added', rows: record?.rows ?? 0 };
   }
   if (job.state === 'failed') return outcomeFromError(job.failure);
   return null;

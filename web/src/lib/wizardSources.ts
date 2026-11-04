@@ -1,6 +1,7 @@
 import { groupOf, isSelectable } from './discover';
 import type { Finding, GroupId, ProbeResult } from './discover';
 import type { DraftSource } from './wizardFlow';
+import { FILE_KIND_IDS } from './fileKinds';
 
 /**
  * The pure model of the sources step of the create wizard (TSK-18): what may be ticked, how a source is named and tagged
@@ -26,7 +27,7 @@ export type AddressKind = typeof ADDRESS_KINDS[number];
 export const DEFAULT_PORT: Readonly<Record<AddressKind | 'mongo', number>> = { 'sql-server': 1433, redis: 6379, mongo: 27017 };
 
 /** Kinds that are files the person copied or exported from another computer. The file itself is chosen when the case is made. */
-export const FILE_KINDS = ['iis-logs', 'app-log', 'hangfire-csv', 'redis-slowlog-csv', 'file'] as const;
+export const FILE_KINDS = ['iis-logs', 'hangfire-csv', 'redis-slowlog-csv', 'file', ...FILE_KIND_IDS] as const;
 export type FileKind = typeof FILE_KINDS[number];
 
 /** The server takes at most this many sources, with these text limits (see the tag routes). */
@@ -390,6 +391,23 @@ export const removeConnectionSources = (list: readonly DraftSource[], connection
 
 /** How many Mongo databases are chosen as API audit logs. */
 export const auditDatabaseCount = (list: readonly DraftSource[]): number => list.filter((s) => s.kind === 'mongo-database' && s.classification === 'audit').length;
+
+/** True when a database name reads like it holds API audit logs: "ApiAuditLog", "Sandbox API Audit logs DB", "api_request_log". Case, spaces and punctuation do not matter. */
+export function looksLikeAuditDatabase(name: string): boolean {
+  const flat = String(name ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return flat.includes('audit') || flat.includes('apilog') || flat.includes('requestlog');
+}
+
+/** The databases of a listed connection that start with the audit tick on: the ones that look like audit logs and that the person has not decided yet. */
+export const defaultAuditDatabases = (databases: readonly string[], decided: (database: string) => boolean): string[] =>
+  databases.filter((d) => looksLikeAuditDatabase(d) && !decided(d));
+
+/** What the two ticks of a database mean. Both ticked is saved as API audit logs: the case keeps one choice per database. Neither ticked reads nothing. */
+export const classFromTicks = (audit: boolean, application: boolean): 'audit' | 'other' | 'unused' => (audit ? 'audit' : application ? 'other' : 'unused');
+
+/** True when a MongoDB connection was tested (or a database is chosen) but no database is an API audit source, so the review must say that nothing will be read. */
+export const noAuditSourceChosen = (list: readonly DraftSource[], testedConnections: number): boolean =>
+  (testedConnections > 0 || list.some((s) => s.kind === 'mongo-database')) && auditDatabaseCount(list) === 0;
 
 /**
  * The host part of a connection address for the screen: scheme, user name, password and path left off. "mongodb://u:p@db1:27017,db2/x?y" gives

@@ -3,6 +3,7 @@
   import { api } from '../../api';
   import { GUIDED_TEXT as T } from '../../copy/guidedCopy';
   import type { GuidedStore } from '../../guided/guided.svelte';
+  import StampField from '../StampField.svelte';
   import { defaultAround, durationBand, NEARBY_ROWS, nearbyWindow, QUICK_SPANS, type DurationBand } from '../../guided/nearby';
   import { fmtMs } from '../../guided/stepModel';
   import type { RequestRecord } from '../../types';
@@ -58,7 +59,7 @@
     <p class="notice">{T.nearbyNoCase}</p>
   {:else}
     <div class="form">
-      <label>{T.around} (UTC)<input type="datetime-local" bind:value={around} oninput={() => (touched = true)} /></label>
+      <div class="stampbox" role="group" aria-label={`${T.around} (UTC)`}><span class="lbl">{T.around} (UTC)</span><StampField bind:value={around} label={`${T.around} (UTC)`} onchange={() => (touched = true)} /></div>
       <label>{T.before}<input type="number" min="0" max="120" step="1" bind:value={before} oninput={() => (touched = true)} /></label>
       <label>{T.after}<input type="number" min="0" max="120" step="1" bind:value={after} oninput={() => (touched = true)} /></label>
     </div>
@@ -114,6 +115,8 @@
   .note { color: var(--text-2); font-size: 12px; }
   .form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: 8px; }
   .form label { display: grid; gap: 4px; font-size: 13px; }
+  .stampbox { display: grid; gap: 4px; min-width: 0; }
+  .lbl { color: var(--text-2); font-size: 12px; font-weight: 500; }
   .picks { display: flex; flex-wrap: wrap; gap: 8px; }
   .lanes { display: grid; gap: 12px; }
   .lane { display: grid; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }

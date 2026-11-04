@@ -3,6 +3,8 @@
   import { MAX_RELEASES, frameProblems, widenIncident, windowMinutes, windowsUsable } from '../../guided/frame';
   import type { GuidedStore } from '../../guided/guided.svelte';
   import { fmtCount, fmtWhen } from '../../guided/stepModel';
+  import WindowPicker from '../WindowPicker.svelte';
+  import StampField from '../StampField.svelte';
 
   // Step 0: the question. Two windows in UTC, an optional API, an optional pool limit and the change list. The onset found by a run is shown here.
   let { store }: { store: GuidedStore } = $props();
@@ -21,6 +23,12 @@
   });
   let carryOn = $state(false);
 
+  // The quick pick that is in force: it stays pressed only while the incident window is still the one it set.
+  type Pick = Parameters<GuidedStore['pick']>[0];
+  let picked = $state<{ id: Pick; start: string; end: string } | null>(null);
+  const pressed = (id: Pick) => picked?.id === id && picked.start === store.frame.incidentStart && picked.end === store.frame.incidentEnd;
+  const quick = (id: Pick) => { store.pick(id, Date.now()); picked = { id, start: store.frame.incidentStart, end: store.frame.incidentEnd }; };
+
   const addChange = () => { if (store.frame.releases.length < MAX_RELEASES) store.frame.releases.push({ at: '', label: '' }); };
   const removeChange = (i: number) => { store.frame.releases.splice(i, 1); };
 </script>
@@ -28,30 +36,27 @@
 <div class="frame">
   <p class="lead">{T.frameLead}</p>
 
-  <fieldset>
-    <legend>{T.incidentWindow}</legend>
-    <div class="pair">
-      <label>{T.from}<input type="datetime-local" bind:value={store.frame.incidentStart} /></label>
-      <label>{T.to}<input type="datetime-local" bind:value={store.frame.incidentEnd} /></label>
+  <div class="pair windows">
+    <div class="col">
+      <fieldset>
+        <legend>{T.incidentWindow}</legend>
+        <WindowPicker variant="inline" label={T.incidentWindow} bind:start={store.frame.incidentStart} bind:end={store.frame.incidentEnd} />
+      </fieldset>
+      <div class="picks" role="group" aria-label={T.quickPick}>
+        <span class="note" aria-hidden="true">{T.quickPick}</span>
+        <button type="button" class="secondary-button" aria-pressed={pressed('last-hour')} onclick={() => quick('last-hour')}>{T.lastHour}</button>
+        <button type="button" class="secondary-button" aria-pressed={pressed('today')} onclick={() => quick('today')}>{T.today}</button>
+        <button type="button" class="secondary-button" aria-pressed={pressed('yesterday')} onclick={() => quick('yesterday')}>{T.yesterday}</button>
+      </div>
+      <p class="note">{T.quickNote} {T.utcNote}</p>
     </div>
-  </fieldset>
-
-  <fieldset>
-    <legend>{T.referenceWindow}</legend>
-    <div class="pair">
-      <label>{T.from}<input type="datetime-local" bind:value={store.frame.referenceStart} /></label>
-      <label>{T.to}<input type="datetime-local" bind:value={store.frame.referenceEnd} /></label>
+    <div class="col">
+      <fieldset>
+        <legend>{T.referenceWindow}</legend>
+        <WindowPicker variant="inline" label={T.referenceWindow} bind:start={store.frame.referenceStart} bind:end={store.frame.referenceEnd} hint={T.referenceNote} />
+      </fieldset>
     </div>
-    <p class="note">{T.referenceNote}</p>
-  </fieldset>
-
-  <div class="picks" role="group" aria-label={T.quickPick}>
-    <span class="note">{T.quickPick}</span>
-    <button type="button" class="secondary-button" onclick={() => store.pick('last-hour', Date.now())}>{T.lastHour}</button>
-    <button type="button" class="secondary-button" onclick={() => store.pick('today', Date.now())}>{T.today}</button>
-    <button type="button" class="secondary-button" onclick={() => store.pick('yesterday', Date.now())}>{T.yesterday}</button>
   </div>
-  <p class="note">{T.quickNote} {T.utcNote}</p>
 
   <div class="pair">
     <label>{T.focus}
@@ -70,7 +75,7 @@
     {#if store.frame.releases.length === 0}<p class="note">{T.noChanges}</p>{/if}
     {#each store.frame.releases as release, i (i)}
       <div class="change">
-        <label>{T.changeAt}<input type="datetime-local" bind:value={release.at} /></label>
+        <div class="stampbox" role="group" aria-label={T.changeAt}><span class="lbl">{T.changeAt}</span><StampField bind:value={release.at} label={T.changeAt} /></div>
         <label>{T.changeLabel}<input type="text" maxlength="200" bind:value={release.label} /></label>
         <button type="button" class="quiet-button" onclick={() => removeChange(i)}>{T.removeChange}</button>
       </div>
@@ -102,7 +107,7 @@
         <button type="button" class="secondary-button" aria-pressed={carryOn} onclick={() => { carryOn = true; store.goTo(1); }}>{T.carryOn}</button>
       </div>
     {/if}
-    <label>{T.myOnset}<input type="datetime-local" bind:value={store.myOnset} /></label>
+    <div class="stampbox" role="group" aria-label={T.myOnset}><span class="lbl">{T.myOnset}</span><StampField bind:value={store.myOnset} label={T.myOnset} /></div>
     {#if scope}<p class="note">{scope}</p>{/if}
   </div>
 
@@ -120,8 +125,12 @@
   fieldset { display: grid; gap: 8px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); min-width: 0; }
   legend { padding: 0 6px; font-size: 13px; font-weight: 600; }
   .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 12px; }
+  .pair.windows { grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); align-items: start; }
+  .col { display: grid; gap: 8px; min-width: 0; }
+  .stampbox { display: grid; gap: 4px; min-width: 0; }
+  .lbl { color: var(--text-2); font-size: 12px; font-weight: 500; }
   label { display: grid; gap: 4px; color: var(--text-2); font-size: 12px; font-weight: 500; min-width: 0; }
-  input[type='datetime-local'], input[type='text'] { width: 100%; font-variant-numeric: tabular-nums; }
+  label input[type='text'] { width: 100%; font-variant-numeric: tabular-nums; }
   .picks, .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .change { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)) auto; align-items: end; gap: 8px; }
   .check { display: flex; align-items: center; gap: 6px; }

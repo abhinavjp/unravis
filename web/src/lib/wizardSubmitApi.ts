@@ -68,13 +68,20 @@ export const wizardSubmitApi: SubmitApi = {
   startImports: (caseId, request) => discoverClient.startImports(caseId, request),
   watchJob: (caseId, ref, onProgress) => watchJob(discoverClient, caseId, ref, { onUpdate: (watch) => { if (watch.job) onProgress(percentOf(watch.job)); } }),
 
-  /** Detects the type with a preview that keeps nothing, then keeps the file with the notice text. A tie or an unknown type is a refusal for this row. */
-  async importFile(caseId, file, onProgress): Promise<RowOutcome> {
+  /**
+   * Detects the type with a preview that keeps nothing, then keeps the file with the notice text. A tie or an unknown type is a refusal for
+   * this row. When the person chose the type (`chosen`), that type is used and the preview is skipped.
+   */
+  async importFile(caseId, file, onProgress, chosen, host): Promise<RowOutcome> {
     try {
-      const first = await startPreviewJob({ caseId, file });
-      const preview = await waitForImportJob(caseId, first, { onUpdate: (job) => onProgress(percentOf(job)) });
-      if (!preview.importer) return { kind: 'refused', reason: preview.tied.length > 1 ? 'needs-type' : 'unknown-type' };
-      const started = await startCommitJob({ caseId, file, importer: preview.importer, ackText: ackTextFor() });
+      let importer = chosen ?? '';
+      if (importer === '') {
+        const first = await startPreviewJob({ caseId, file, ...(host ? { host } : {}) });
+        const preview = await waitForImportJob(caseId, first, { onUpdate: (job) => onProgress(percentOf(job)) });
+        if (!preview.importer) return { kind: 'refused', reason: preview.tied.length > 1 ? 'needs-type' : 'unknown-type' };
+        importer = preview.importer;
+      }
+      const started = await startCommitJob({ caseId, file, importer, ackText: ackTextFor(), ...(host ? { host } : {}) });
       let last: ImportJob = started;
       await waitForImportJob(caseId, started, { onUpdate: (job) => { last = job; onProgress(percentOf(job)); } });
       return outcomeFromJob(last) ?? { kind: 'failed', reason: 'unreachable' };

@@ -287,7 +287,8 @@ test('B-33: the bad-entry message waits for a touch, and a second press is ignor
   assert.match(src, /let touched = \$state\(false\);/);
   assert.match(src, /\{#if touched && !win\}<p class="note" role="status">\{T\.nearbyBad\}<\/p>\{\/if\}/);
   assert.ok(!/\{#if !win\}/.test(src), 'the message no longer shows on open');
-  assert.equal((src.match(/oninput=\{\(\) => \(touched = true\)\}/g) ?? []).length, 3, 'moment, before and after each mark the entry as touched');
+  assert.equal((src.match(/oninput=\{\(\) => \(touched = true\)\}/g) ?? []).length, 2, 'before and after each mark the entry as touched');
+  assert.equal((src.match(/onchange=\{\(\) => \(touched = true\)\}/g) ?? []).length, 1, 'the moment (a picker field) marks the entry as touched');
   assert.match(src, /before = b; after = a; touched = true;/);
   assert.match(src, /\r?\n  let busy = false;\r?\n/, 'a plain flag, set in the same step as the press');
   assert.match(src, /async function run\(\) \{\r?\n    if \(busy\) return;/);

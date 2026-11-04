@@ -267,9 +267,9 @@ export const blockedText = (block: string): string => (has(DISCOVER_TEXT.importB
 const number = (n: number): string => n.toLocaleString('en-US');
 
 /** The line for one source after its import: what was added, or why not. */
-export function rowOutcomeText(outcome: { kind: string; rows?: number; reason?: string }): string {
+export function rowOutcomeText(outcome: { kind: string; rows?: number; skipped?: number; reason?: string }): string {
   switch (outcome.kind) {
-    case 'added': return 'Added ' + number(outcome.rows ?? 0) + (outcome.rows === 1 ? ' row' : ' rows');
+    case 'added': return 'Added ' + number(outcome.rows ?? 0) + (outcome.rows === 1 ? ' row' : ' rows') + (outcome.skipped ? ', ' + number(outcome.skipped) + ' skipped' : '');
     case 'duplicate': return 'Nothing new to add';
     case 'needs-admin': return 'Needs administrator';
     case 'cancelled': return 'Cancelled';
@@ -414,6 +414,7 @@ export function discoverCopyEntries(): LintEntry[] {
     { id: 'discover.sample.import.one', text: importButtonText(1) },
     { id: 'discover.sample.import.many', text: importButtonText(3) },
     { id: 'discover.sample.row.added', text: rowOutcomeText({ kind: 'added', rows: 41200 }) },
+    { id: 'discover.sample.row.added.skipped', text: rowOutcomeText({ kind: 'added', rows: 41200, skipped: 3 }) },
     { id: 'discover.sample.row.added.one', text: rowOutcomeText({ kind: 'added', rows: 1 }) },
     { id: 'discover.sample.import.none', text: importButtonText(0) },
     { id: 'discover.sample.row.duplicate', text: rowOutcomeText({ kind: 'duplicate' }) },

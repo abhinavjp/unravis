@@ -5,6 +5,7 @@
  * state. No Svelte here; `TracingChart.svelte` imports from this file and from `./model` for types only.
  */
 import { WAIT_TEXT } from '../copy/waitCopy';
+import type { LintEntry } from '../copy/copylint';
 import type { TracingBucket, TracingLane, TracingLaneKey, TracingReason, TracingWindow } from './model';
 
 export const LANE_ORDER: TracingLaneKey[] = ['audit', 'sql', 'iis'];
@@ -51,8 +52,105 @@ export function laneCutShort(lane: TracingLane): boolean {
   return !lane.disabled && !!lane.incompleteReason && ACTIONABLE_REASONS.includes(lane.incompleteReason);
 }
 
-/** True when a run finished with any lane cut short: the one status line under the toolbar is shown. */
-export const anyLaneCutShort = (lanes: TracingLane[]): boolean => lanes.some(laneCutShort);
+/** Fixed words for what was read and what was not. The SQL and IIS lanes read imported files only. */
+export const READ_TEXT = {
+  notRead: 'not read',
+  noFile: 'This case has no file for this source. The SQL and IIS lanes read imported files only, not live connections.',
+  addFiles: 'Add files',
+  tipUnread: 'This period was not read. That is not the same as no traffic.'
+} as const;
+
+/**
+ * True when the server did not read the lane in full: it was refused, cut short, capped or failed, or a chunked read stopped before
+ * its last day. A lane like that must never be taken for "no events": what it did not read is unknown. A lane switched off for its
+ * time zone is not counted (it has its own note).
+ */
+export function laneNotFullyRead(lane: Pick<TracingLane, 'state' | 'disabled' | 'incompleteReason' | 'chunksTotal' | 'chunksRead' | 'buckets'>): boolean {
+  if (lane.disabled) return false;
+  if (lane.state === 'incomplete' || !!lane.incompleteReason) return true;
+  if (lane.chunksTotal !== undefined && (lane.chunksRead ?? 0) < lane.chunksTotal) return true;
+  return lane.buckets.some((bucket) => bucket.complete === false);
+}
+
+/** True when a run finished with any lane not read in full: the status block under the toolbar is shown. */
+export const anyLaneCutShort = (lanes: TracingLane[]): boolean => lanes.some(laneNotFullyRead);
+
+/** "Read 4 of 11 days" (and " through 15 Oct 00:00" when the read stopped early). '' for a lane read in one piece. */
+export function laneChunkLine(lane: TracingLane, through: (iso: string) => string): string {
+  if (lane.chunksTotal === undefined || lane.chunksTotal < 2) return '';
+  const read = Math.min(lane.chunksRead ?? 0, lane.chunksTotal);
+  const base = `Read ${read} of ${lane.chunksTotal} days`;
+  return lane.readThrough && read < lane.chunksTotal ? `${base}, through ${through(lane.readThrough)}` : base;
+}
+
+/** One sentence for the status block: what this lane read and what it did not. */
+export function laneReadLine(lane: TracingLane, through: (iso: string) => string): string {
+  const name = LANE_NAME[lane.key];
+  if (lane.chunksTotal !== undefined && lane.chunksTotal >= 2 && (lane.chunksRead ?? 0) < lane.chunksTotal) {
+    if ((lane.chunksRead ?? 0) === 0) return `${name}: none of the ${lane.chunksTotal} days were read. That is not the same as no traffic.`;
+    return `${name}: ${laneChunkLine(lane, through)}. The days after that are marked ${READ_TEXT.notRead}.`;
+  }
+  const why = laneNote(lane) || LANE_STATE_TEXT.incomplete;
+  if (lane.state === 'incomplete' && lane.buckets.length === 0) return `${name}: ${READ_TEXT.notRead}. ${why}`;
+  return `${name}: read in part. ${why}`;
+}
+
+/** The lines of the status block, one per lane that was not read in full (lane order). */
+export function readSummary(lanes: TracingLane[], through: (iso: string) => string): string[] {
+  return LANE_ORDER.map((key) => lanes.find((lane) => lane.key === key)).filter((lane): lane is TracingLane => !!lane && laneNotFullyRead(lane)).map((lane) => laneReadLine(lane, through));
+}
+
+/**
+ * The slots the lane did not read. A cell the server marked incomplete, any cell ending after `readThrough`, and every cell when a
+ * chunked read finished no day at all. Their count of 0 means "not read", never "no traffic".
+ */
+export function unreadSlots(g: SlotGrid, lane: TracingLane): Set<number> {
+  const out = new Set<number>();
+  if (lane.disabled) return out;
+  for (const bucket of lane.buckets) {
+    if (bucket.complete !== false) continue;
+    const index = Math.floor((Date.parse(bucket.start) - g.firstMs) / g.widthMs);
+    if (index >= 0 && index < g.n) out.add(index);
+  }
+  const through = lane.readThrough ? Date.parse(lane.readThrough) : NaN;
+  const none = lane.chunksTotal !== undefined && (lane.chunksRead ?? 0) === 0 && lane.chunksTotal >= 2;
+  for (let i = 0; i < g.n && (Number.isFinite(through) || none); i++) {
+    if (none || (Number.isFinite(through) && slotStartMs(g, i) + g.widthMs > through)) out.add(i);
+  }
+  return out;
+}
+
+/** The unread slots as runs of neighbours, clipped to the drawn range [from, to): one hatched block and one label per run. */
+export function unreadRuns(slots: ReadonlySet<number>, from: number, to: number): Array<{ from: number; to: number }> {
+  const runs: Array<{ from: number; to: number }> = [];
+  for (let i = from; i < to; i++) {
+    if (!slots.has(i)) continue;
+    const last = runs[runs.length - 1];
+    if (last && last.to === i) last.to = i + 1;
+    else runs.push({ from: i, to: i + 1 });
+  }
+  return runs;
+}
+
+/** The sentence for a lane whose sources are all switched off in the picker. */
+export function laneStatusLineFor(lane: TracingLane, unselected: readonly TracingLaneKey[], unselectedText: string): string {
+  return unselected.includes(lane.key) ? unselectedText : laneStatusLine(lane);
+}
+
+export const laneCopyEntries = (): LintEntry[] => {
+  const lane: TracingLane = {
+    key: 'audit', label: 'API', state: 'incomplete', reason: '', incompleteReason: 'timeout', origin: 'live', asOf: '2026-10-01T00:00:00Z', consistency: 'live-non-snapshot',
+    complete: false, truncated: false, scanned: 0, hidden: 0, sources: [], buckets: [], chunksTotal: 11, chunksRead: 4, readThrough: '2026-10-05T00:00:00Z'
+  };
+  const at = () => '5 Oct 00:00';
+  return [
+    ...Object.entries(READ_TEXT).map(([id, text]) => ({ id: 'tracingRead.' + id, text })),
+    { id: 'tracingRead.chunkLine', text: laneChunkLine(lane, at) },
+    { id: 'tracingRead.partial', text: laneReadLine(lane, at) },
+    { id: 'tracingRead.none', text: laneReadLine({ ...lane, chunksRead: 0, readThrough: undefined }, at) },
+    { id: 'tracingRead.refused', text: laneReadLine({ ...lane, chunksTotal: undefined, chunksRead: undefined, readThrough: undefined, incompleteReason: 'broad-scan' }, at) }
+  ];
+};
 
 /** "warn" (the partial style, as for a row limit) for a cut or capped lane; "bad" for a read that failed or has no known reason. */
 export function laneNoteTone(lane: TracingLane): 'warn' | 'bad' {
@@ -217,6 +315,8 @@ export function axisCaption(zoneName: string, bucketSeconds: number, hasOutside:
 
 export function laneNote(lane: TracingLane): string {
   if (lane.disabled) return lane.reason || LANE_STATE_TEXT['clock-unchecked'];
+  // The SQL and IIS lanes read imported files only: with none, say so plainly rather than the server's short phrase.
+  if (lane.state === 'no-data' && lane.key !== 'audit') return READ_TEXT.noFile;
   // A lane cut short by a time limit can still carry the state "events" with the bars it did read; it says so all the same.
   if (laneCutShort(lane) && (lane.state === 'incomplete' || lane.state === 'events' || lane.state === 'none-seen')) return INCOMPLETE_TEXT[lane.incompleteReason as TracingReason];
   if (lane.state === 'events') return '';

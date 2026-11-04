@@ -25,7 +25,7 @@ function loadTypeScript(relativePath) {
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 const PARTIAL_SENTENCE = (shown, planned) => `Showing ${shown} of ${planned} days; the read ran out of time. Shorten the window or Try again.`;
-const BROAD_SCAN = 'This window is longer than the live audit source reads, so no API requests are drawn. Choose 24 hours or less, or start Unravis with --allow-broad-scans.';
+const BROAD_SCAN = 'The live audit source would not read a window this long, so no API requests were read. This is not the same as no traffic. Choose a window of 24 hours or less.';
 const TIMEOUT = 'Showing part of this lane: the read hit its time limit. Try a shorter window.';
 
 const lane = (extra = {}) => ({
@@ -141,7 +141,9 @@ test('a broad-scan lane says the window is too long for the live source and how 
   assert.equal(lanes.laneCutShort(broad), true);
   assert.equal(lanes.INCOMPLETE_TEXT['broad-scan'], BROAD_SCAN);
   assert.ok(tooltip.laneHeadHint(broad).endsWith(BROAD_SCAN));
-  assert.match(BROAD_SCAN, /Choose 24 hours or less/);
+  assert.match(BROAD_SCAN, /Choose a window of 24 hours or less.$/);
+  assert.doesNotMatch(BROAD_SCAN, /allow-broad-scans/, 'no command-line advice on this screen');
+  assert.match(BROAD_SCAN, /not the same as no traffic/);
   // A lane that saw nothing but was never read does not claim "no events".
   assert.equal(lanes.laneStatusLine(lane({ state: 'none-seen', incompleteReason: 'broad-scan' })), BROAD_SCAN);
   assert.equal(lanes.laneStatusLine(lane({ state: 'none-seen' })), 'No events in this period');
@@ -169,12 +171,17 @@ test('the status line shows when any lane was cut short and not otherwise', () =
   const { WAIT_TEXT } = loadTypeScript('src/lib/copy/waitCopy.ts');
   assert.equal(lanes.anyLaneCutShort([lane(), lane({ key: 'sql', incompleteReason: 'timeout' })]), true);
   assert.equal(lanes.anyLaneCutShort([lane({ incompleteReason: 'broad-scan' })]), true);
-  assert.equal(lanes.anyLaneCutShort([lane({ incompleteReason: 'rowcap' }), lane({ state: 'events' })]), false);
+  // A capped or failed lane was not read in full either: the status block names it (before, only timeout and broad-scan did).
+  assert.equal(lanes.anyLaneCutShort([lane({ incompleteReason: 'rowcap' }), lane({ state: 'events' })]), true);
+  assert.equal(lanes.anyLaneCutShort([lane({ incompleteReason: 'error' })]), true);
+  assert.equal(lanes.anyLaneCutShort([lane({ state: 'events' }), lane({ key: 'sql', state: 'no-data' })]), false);
   assert.equal(lanes.anyLaneCutShort([]), false);
-  assert.equal(WAIT_TEXT.lanesCutShort, 'Some lanes were cut short. Their bars show only part of the events. Try a shorter window.');
+  assert.equal(WAIT_TEXT.lanesCutShort, 'Some lanes were not read in full. What was read is drawn; the rest is marked not read.');
   const chart = read('src/components/TracingChart.svelte');
   assert.match(chart, /anyLaneCutShort\(response\.lanes\)/);
-  assert.match(chart, /role="status" class="notice cut-short" data-testid="lanes-cut-short">\{WAIT_TEXT\.lanesCutShort\}/);
+  assert.match(chart, /role="status" class="notice cut-short" data-testid="lanes-cut-short"/);
+  assert.match(chart, /<strong>\{WAIT_TEXT\.lanesCutShort\}<\/strong>/);
+  assert.match(chart, /readSummary\(response\.lanes, at\)/);
   assert.match(chart, /class="lane-note \{laneNoteTone\(lane\)\}"/);
   assert.match(chart, /\.lane-note\.warn/);
 });

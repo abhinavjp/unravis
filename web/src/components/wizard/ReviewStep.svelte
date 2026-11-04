@@ -1,15 +1,18 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { draftSnapshot, wizard } from '../../lib/wizard.svelte';
-  import { scanIsStale } from '../../lib/wizardSources.svelte';
-  import { REVIEW_WINDOWS, blockers, chooseWindow, createView, loadTitles, pickFile, pickedFile, setAck, titleRepeats } from '../../lib/wizardCreate.svelte';
+  import { scanIsStale, sourcesView } from '../../lib/wizardSources.svelte';
+  import { REVIEW_WINDOWS, blockers, chooseWindow, createView, loadTitles, pickFile, pickHost, pickedFile, pickedHost, setAck, titleRepeats } from '../../lib/wizardCreate.svelte';
   import { filesMissing, importPlan, isFileSource, reviewCounts } from '../../lib/wizardSubmit';
-  import { sourceKey } from '../../lib/wizardSources';
-  import { kindLabel } from '../../lib/copy/wizardSourcesCopy';
+  import { noAuditSourceChosen, sourceKey } from '../../lib/wizardSources';
+  import { SOURCES_TEXT, kindLabel } from '../../lib/copy/wizardSourcesCopy';
   import { ACK_LABEL, GATING_BANNER } from '../../lib/copy/importCopy';
   import { windowChoiceLabel } from '../../lib/copy/discoverCopy';
-  import { CREATE_TEXT, chooseFileLabel, failureText, fileChosenText, summaryText, tagLine, whatHappens } from '../../lib/copy/wizardCreateCopy';
+  import { CREATE_TEXT, chooseFileLabel, failureText, fileHeldText, summaryText, tagLine, whatHappens } from '../../lib/copy/wizardCreateCopy';
+  import { formatBytes } from '../../lib/copy/importCopy';
+  import { hostNeed } from '../../lib/fileKinds';
   import HelpNote from '../HelpNote.svelte';
+  import ZoneChoice from './ZoneChoice.svelte';
 
   // Step 3 of the create guide: what will be made, and the notice that must be ticked before anything is read. Nothing here talks to the
   // server except the list of case names (to warn about a repeat). The button that makes the case is in the footer of the frame (Landing.svelte), after this notice.
@@ -23,6 +26,8 @@
   const repeats = $derived(titleRepeats(draft.title));
   const pending = $derived(blockers());
   const scanGone = $derived(pending.includes('scan-busy'));
+  // A MongoDB connection was tested but no database is an API audit source: say so, so a database is never dropped without a word.
+  const noAudit = $derived(noAuditSourceChosen(draft.sources, sourcesView.connections.length));
   const caseProblem = $derived(createView.result && !createView.result.caseId && createView.result.failures.length > 0 ? createView.result.failures[0] : null);
 
   onMount(() => { void loadTitles(); });
@@ -70,14 +75,20 @@
             <p class="hint">{whatHappens(source)}</p>
             {#if isFileSource(source)}
               {@const picked = pickedFile(key)}
-              <label class="pick" for="{uid}-f-{key}">{chooseFileLabel(source.label || kindLabel(source.kind))}</label>
-              <input id="{uid}-f-{key}" type="file" onchange={(event) => chosen(key, event)} />
-              <p class="hint">{picked ? fileChosenText(picked.name) : CREATE_TEXT.fileNone}</p>
+              {#if picked}
+                <p class="hint held">{fileHeldText(picked.name, formatBytes(picked.size))}</p>
+                {#if hostNeed(source.kind) !== 'none'}<ZoneChoice kind={source.kind} host={pickedHost(key)} name={picked.name} onChange={(label) => pickHost(key, label)} />{/if}
+              {:else}
+                <label class="pick" for="{uid}-f-{key}">{chooseFileLabel(source.label || kindLabel(source.kind))}</label>
+                <input id="{uid}-f-{key}" type="file" onchange={(event) => chosen(key, event)} />
+                <p class="hint">{CREATE_TEXT.fileNone}</p>
+              {/if}
             {/if}
           </li>
         {/each}
       </ul>
     {/if}
+    {#if noAudit}<p class="hint no-audit" role="status">{SOURCES_TEXT.reviewNoAuditSource}</p>{/if}
   </section>
 
   {#if plan.scan > 0}
@@ -95,6 +106,7 @@
   {#if scanGone}<p class="problem" role="alert">{CREATE_TEXT.scanBusy}</p>{/if}
   {#if stale}<p class="problem" role="alert">{CREATE_TEXT.scanStale}</p>{/if}
   {#if plan.files > 0 && missing > 0}<p class="hint" role="status">{CREATE_TEXT.needFiles}</p>{/if}
+  {#if pending.includes('zone')}<p class="problem" role="alert">{CREATE_TEXT.needHost}</p>{/if}
 
   {#if needsNotice}
     <div class="notice">

@@ -4,27 +4,33 @@
   // or recomputes the axis. WP-17c adds hover/focus text; WP-61 reads the bucket selector's onSelect.
   import type { TracingLane, TracingLaneKey, TracingResponse } from '../lib/tracing/model';
   import {
-    LANE_ASK, LANE_NAME, LANE_ORDER, MIXED_NOTE, PANEL_TITLE,
-    anyLaneCutShort, axisCaption, barHeightPct, barMax, barsFor, hasAnyData, isLaneVisible, laneCutShort, laneDrawsBars, laneNote, laneNoteTone, laneStatusLine,
-    outsideSlots, showsProvenance, slotGrid, slotOutside, slotStartMs, truncatedNote, type Bar
+    LANE_ASK, LANE_NAME, LANE_ORDER, MIXED_NOTE, PANEL_TITLE, READ_TEXT,
+    anyLaneCutShort, axisCaption, barHeightPct, barMax, barsFor, hasAnyData, isLaneVisible, laneChunkLine, laneCutShort, laneDrawsBars, laneNote, laneNoteTone, laneStatusLineFor,
+    outsideSlots, readSummary, showsProvenance, slotGrid, slotOutside, slotStartMs, truncatedNote, unreadRuns, unreadSlots, type Bar
   } from '../lib/tracing/lanes';
   import { formatTime } from '../lib/time';
   import { needsYear } from '../lib/chartTime';
   import { formatDuration } from '../lib/format';
   import { TOOLTIP_TEXT, barTipLines, formatCount, isTouchPointer, laneHeadHint } from '../lib/tracing/tooltip';
   import { WAIT_TEXT } from '../lib/copy/waitCopy';
+  import { SOURCES_TEXT } from '../lib/tracing/sources';
   import {
     CANVAS_TEXT, MIN_ZOOM_SLOTS, PERCENTILES, PERCENTILE_LABEL, absoluteSlot, clampRange, edgeSlot, fullRange, hasLatency,
     isZoomed, latencySegments, rangeFromDrag, stepSlot, axisTicks, zoomFocus, zoomIn, zoomOut, zoomedText,
     type Percentile, type ZoomRange
   } from '../lib/tracing/canvas';
 
-  let { response, zone, onSelect, visible = {} }: {
+  let { response, zone, onSelect, visible = {}, unselected = [], readOnly = false, onAddFiles }: {
     response: TracingResponse;
     zone: string;
     onSelect?: (slotIndex: number) => void;
     // A row is hidden only when its flag is exactly false (WP-23); WP-11 passes the toolbar's choices.
     visible?: Partial<Record<TracingLaneKey, boolean>>;
+    // Lanes whose files are all switched off in the "Sources traced" row: they say so instead of "this case has no file".
+    unselected?: TracingLaneKey[];
+    readOnly?: boolean;
+    // Opens the case's Add data panel. Without it (or on a case that cannot be changed) a lane with no file offers no button.
+    onAddFiles?: () => void;
   } = $props();
 
   const SWATCH_STYLE: Record<TracingLaneKey, string> = {
@@ -55,6 +61,14 @@
     }
     return map;
   });
+  // The slots each lane did not read (a chunked read that stopped, a refused or failed cell): drawn hatched and labelled, never as zero.
+  const unreadByLane = $derived.by(() => {
+    const map = new Map<TracingLaneKey, Set<number>>();
+    if (grid) for (const lane of response.lanes) map.set(lane.key, unreadSlots(grid, lane));
+    return map;
+  });
+  const readLines = $derived(readSummary(response.lanes, at));
+  const statusLine = (lane: TracingLane): string => laneStatusLineFor(lane, unselected, SOURCES_TEXT.laneUnselected);
   function drawsBars(lane: TracingLane): boolean {
     return !!grid && laneDrawsBars(lane, laneBars.get(lane.key)?.bars.length ?? 0);
   }
@@ -150,11 +164,12 @@
     if (!grid) return [];
     // A lane that draws nothing says why instead of claiming "no events in this bucket".
     if (!drawsBars(lane)) {
-      const status = laneStatusLine(lane);
+      const status = statusLine(lane);
       return status ? [status] : [];
     }
     const bar = laneBars.get(lane.key)?.byIndex.get(slot);
     const start = slotStartMs(grid, slot);
+    if (unreadByLane.get(lane.key)?.has(slot)) return [`${at(start)} to ${at(start + grid.widthMs)}`, READ_TEXT.tipUnread];
     return barTipLines({
       key: lane.key,
       startText: at(start),
@@ -342,7 +357,10 @@
   {/if}
 
   {#if anyLaneCutShort(response.lanes)}
-    <p role="status" class="notice cut-short" data-testid="lanes-cut-short">{WAIT_TEXT.lanesCutShort}</p>
+    <div role="status" class="notice cut-short" data-testid="lanes-cut-short">
+      <p><strong>{WAIT_TEXT.lanesCutShort}</strong></p>
+      <ul class="read-list">{#each readLines as line (line)}<li>{line}</li>{/each}</ul>
+    </div>
   {/if}
 
   {#if grid && hasData}
@@ -375,12 +393,22 @@
       {@const bars = allBars.filter((bar) => inRange(bar.index))}
       {@const max = barMax(bars)}
       {@const drawBars = drawsBars(lane)}
+      {@const unreadRunList = unreadRuns(unreadByLane.get(lane.key) ?? new Set<number>(), range.from, range.to)}
+      {@const chunkLine = laneChunkLine(lane, at)}
+      {@const noFile = lane.key !== 'audit' && lane.state === 'no-data' && !lane.disabled && !unselected.includes(lane.key)}
       <!-- Not a tab stop: it has no action. The name and the hint stay available to screen readers, and the hint shows on hover. -->
       <div class="lane-label" role="group" aria-label={LANE_NAME[lane.key]} aria-describedby="tc-hint-{lane.key}" data-truncated={lane.truncated ? 'true' : undefined} style="--row:{laneIndex + 1}">
         <span class="lane-title"><span class="swatch" style={SWATCH_STYLE[lane.key]} aria-hidden="true"></span><strong>{LANE_NAME[lane.key]}</strong></span>
         <small>{LANE_ASK[lane.key]}</small>
         {#if showsProvenance(lane)}
           <small class="origin">{lane.origin === 'live' ? TOOLTIP_TEXT.readJustNow : TOOLTIP_TEXT.fromSavedLogs} · {at(lane.asOf)}</small>
+        {/if}
+        {#if chunkLine}<small class="chunk-line" data-testid="chunk-line" data-lane={lane.key}>{chunkLine}</small>{/if}
+        {#if lane.sourcesRead && lane.sourcesRead.length > 0}
+          <small class="read-from" data-testid="lane-sources-read" data-lane={lane.key}>{SOURCES_TEXT.readLabel}: {lane.sourcesRead.map((ref) => ref.label || ref.sourceId).join(', ')}</small>
+        {/if}
+        {#if lane.savedNotConnected && lane.savedNotConnected.length > 0}
+          <small class="read-from" data-testid="lane-saved" data-lane={lane.key}>{SOURCES_TEXT.savedLabel}: {lane.savedNotConnected.join(', ')}</small>
         {/if}
         <span id="tc-hint-{lane.key}" role="tooltip" class="hint">{laneHeadHint(lane)}</span>
       </div>
@@ -403,6 +431,9 @@
             {#each outside as i (i)}
               <div class="outside-dash" style="left:{leftPct(i)}%;width:{widthPct}%"></div>
             {/each}
+            {#each unreadRunList as run (run.from)}
+              <div class="unread" data-testid="unread-run" style="left:{leftPct(run.from)}%;width:{(run.to - run.from) * widthPct}%"><span>{READ_TEXT.notRead}</span></div>
+            {/each}
             {#each bars as bar (bar.index)}
               <div class="bar" class:nonzero={bar.count > 0} style="left:{leftPct(bar.index)}%;width:calc({widthPct}% - 1px);height:{barHeightPct(bar.count, max)}%">
                 {#if bar.count > 0 && bar.errors > 0}
@@ -420,7 +451,10 @@
             {/if}
           </div>
         {:else}
-          <p class="lane-note">{laneStatusLine(lane)}</p>
+          <p class="lane-note" data-testid="lane-status">{statusLine(lane)}</p>
+          {#if noFile && onAddFiles && !readOnly}
+            <button type="button" class="secondary-button add-files" data-testid="lane-add-files" onclick={onAddFiles}>{READ_TEXT.addFiles}</button>
+          {/if}
         {/if}
       </div>
       <div class="axis axis-right" style="--row:{laneIndex + 1}"></div>
@@ -527,6 +561,14 @@
   .panel[data-lane='iis'] .bar { background: var(--lane-iis); }
   /* Errors differ from the bar by pattern and lightness, not hue alone: stripes of the page background (at least 3:1 against every lane colour, both themes) and --bad. */
   .bar-err { position: absolute; bottom: 0; left: 0; right: 0; min-height: 2px; background: repeating-linear-gradient(135deg, var(--bad) 0 2px, var(--bg) 2px 4px); }
+  /* A period that was not read: hatched in the panel's own colours and labelled, so it can never be taken for a quiet one. */
+  .unread { position: absolute; top: 0; bottom: 0; display: grid; place-items: center; overflow: hidden; color: var(--text-2); background: repeating-linear-gradient(135deg, var(--line) 0 1px, transparent 1px 6px); border-left: var(--hairline-width) dashed var(--line); border-right: var(--hairline-width) dashed var(--line); font-size: var(--fs-2); pointer-events: none; }
+  .unread span { padding: 0 var(--space-1); background: var(--surface-2); white-space: nowrap; }
+  .lane-label .chunk-line { color: var(--text); font-weight: 600; }
+  .lane-label .read-from { overflow-wrap: anywhere; }
+  .read-list { margin: 0; padding-left: var(--space-4); }
+  /* Above the bucket-selector overlay, which covers every lane: without a stacking order of its own the button could not be clicked. */
+  .add-files { position: relative; z-index: 2; align-self: center; margin: var(--space-1) 0 var(--space-2); }
   .outside-dash { position: absolute; bottom: 0; height: 2px; background: var(--line); opacity: .6; }
   .lane-note { margin: var(--space-1) var(--space-2) 0; color: var(--text-2); font-size: var(--fs-3); text-align: center; }
   .lane-note.bad { color: var(--bad); text-align: left; }

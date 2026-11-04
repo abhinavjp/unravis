@@ -596,7 +596,7 @@ test('a case made by the create guide adopts its new sources and starts the anal
   assert.match(fn, /api\.sources\(\)/, 'reloads the source list the guide changed on the server');
   assert.match(fn, /query\.sourceIds = /, 'selects the new sources');
   assert.match(fn, /autoRan = false/, 'lets the landing run start by itself');
-  assert.match(fn, /!hasSources\) openSidePanel\('import'\)/, 'opens the import drawer only when there is nothing to analyse');
+  assert.match(fn, /!hasSources\) \{ requestFilesView\(\); openSidePanel\('import'\)/, 'opens the import drawer only when there is nothing to analyse');
   const landing = fs.readFileSync(path.join(root, 'src/components/Landing.svelte'), 'utf8');
   assert.match(landing, /openCreatedCase\(id\)/);
 });
@@ -723,4 +723,66 @@ test('health: the panel runs checks only on a press and sends no free-text query
 test('health: its copy passes the screen-text lint', () => {
   assert.deepEqual(lintScreenStrings(healthCopy.healthCopyEntries()), []);
   assert.deepEqual(lintScreenStrings([{ id: 'wizard.sources.mongoChecksHint', text: copy.SOURCES_TEXT.mongoChecksHint }]), []);
+});
+
+// ---- the audit-database decision (a saved connection's database is never dropped without a word)
+
+test('audit-database: names that read like an audit log are recognised, others are not', () => {
+  for (const name of ['ApiAuditLog', 'Sandbox API Audit logs DB', 'api_audit', 'AUDIT-prod', 'ApiLogs', 'request_log_2026']) assert.equal(model.looksLikeAuditDatabase(name), true, name);
+  for (const name of ['PayrollApp', 'orders', 'admin', '', 'Reports', 'catalogue']) assert.equal(model.looksLikeAuditDatabase(name), false, name);
+  assert.equal(model.looksLikeAuditDatabase(undefined), false);
+});
+
+test('audit-database: only undecided audit-looking databases start with the audit tick on', () => {
+  const dbs = ['Sandbox API Audit logs DB', 'PayrollApp', 'ApiAuditLog'];
+  assert.deepEqual(model.defaultAuditDatabases(dbs, () => false), ['Sandbox API Audit logs DB', 'ApiAuditLog']);
+  assert.deepEqual(model.defaultAuditDatabases(dbs, (d) => d === 'ApiAuditLog'), ['Sandbox API Audit logs DB']);
+  assert.deepEqual(model.defaultAuditDatabases([], () => false), []);
+});
+
+test('audit-database: the two ticks give one choice, and neither reads nothing', () => {
+  assert.equal(model.classFromTicks(true, false), 'audit');
+  assert.equal(model.classFromTicks(false, true), 'other');
+  assert.equal(model.classFromTicks(true, true), 'audit');
+  assert.equal(model.classFromTicks(false, false), 'unused');
+});
+
+test('audit-database: ticking audit on a listed database makes it a source, unticking removes it, a database the test did not list is refused', () => {
+  const connection = { id: 'abc123def', databases: ['Sandbox API Audit logs DB', 'PayrollApp'] };
+  const on = model.classifyDatabase([], connection, 'Sandbox API Audit logs DB', model.classFromTicks(true, false));
+  assert.equal(on.ok, true);
+  assert.equal(model.auditDatabaseCount(on.list), 1);
+  assert.equal(model.databaseClass(on.list, 'abc123def', 'Sandbox API Audit logs DB'), 'audit');
+  const off = model.classifyDatabase(on.list, connection, 'Sandbox API Audit logs DB', model.classFromTicks(false, false));
+  assert.equal(off.ok, true);
+  assert.equal(off.list.length, 0);
+  assert.deepEqual(model.classifyDatabase([], connection, 'Missing', 'audit'), { ok: false, reason: 'not-tested' });
+});
+
+test('audit-database: the review says so when a connection was tested and no database is an audit source', () => {
+  const connection = { id: 'abc123def', databases: ['A', 'B'] };
+  assert.equal(model.noAuditSourceChosen([], 0), false, 'no MongoDB at all: nothing to say');
+  assert.equal(model.noAuditSourceChosen([], 1), true, 'tested, nothing ticked');
+  const app = model.classifyDatabase([], connection, 'A', 'other');
+  assert.equal(model.noAuditSourceChosen(app.list, 1), true, 'only application data');
+  const audit = model.classifyDatabase(app.list, connection, 'B', 'audit');
+  assert.equal(model.noAuditSourceChosen(audit.list, 1), false);
+});
+
+test('audit-database: the copy no longer says a database is left out or that audit logs are optional, and it passes the lint', () => {
+  const all = Object.values(copy.SOURCES_TEXT).join(' ');
+  assert.doesNotMatch(all, /is left out|are optional/);
+  assert.match(copy.SOURCES_TEXT.reviewNoAuditSource, /^No API audit source will be read/);
+  assert.match(copy.SOURCES_TEXT.mongoTickAudit + ' ' + copy.SOURCES_TEXT.mongoTickAuditNote, /API audit logs \(added to the analysis\)/);
+  assert.equal(copy.SOURCES_TEXT.mongoTickApp, 'Application data');
+  assert.deepEqual(lintScreenStrings(copy.wizardSourcesCopyEntries(), deck.terms), []);
+});
+
+test('audit-database: the components wire the ticks, the name default and the review line', () => {
+  const classify = read('src/components/wizard/MongoClassify.svelte');
+  assert.match(classify, /type="checkbox"/);
+  assert.match(classify, /tickAuditByName\(result\.id\)/);
+  assert.match(classify, /SOURCES_TEXT\.mongoNeitherTicked/);
+  assert.match(read('src/components/wizard/ReviewStep.svelte'), /noAuditSourceChosen\(/);
+  assert.match(read('src/components/wizard/ReviewStep.svelte'), /SOURCES_TEXT\.reviewNoAuditSource/);
 });

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { blackboxApi, gapSummary, refusalText, shownTime, type BlackboxItem, type HostAnswer } from '../lib/blackbox';
   import { BB_REFUSAL, BB_TEXT as T } from '../lib/copy/blackboxCopy';
+  import WindowPicker from '../lib/components/WindowPicker.svelte';
 
   // Step 9, host and network, read from one Blackbox for two windows. A gap of 2 minutes or less warns and the check
   // runs on the minutes that exist. A longer gap makes the minutes inside it Cannot test yet. Missing minutes are never zero.
@@ -60,12 +61,10 @@
     <summary>{T.hostRead}: {item.name}</summary>
     <div class="bb-grid">
       <fieldset><legend>{T.hostIncident} (UTC)</legend>
-        <label class="bb-field"><span>{T.hostStart}</span><input type="datetime-local" bind:value={incStart} /></label>
-        <label class="bb-field"><span>{T.hostEnd}</span><input type="datetime-local" bind:value={incEnd} /></label>
+        <WindowPicker variant="inline" label={`${T.hostIncident} (UTC)`} bind:start={incStart} bind:end={incEnd} />
       </fieldset>
       <fieldset><legend>{T.hostReference} (UTC)</legend>
-        <label class="bb-field"><span>{T.hostStart}</span><input type="datetime-local" bind:value={refStart} /></label>
-        <label class="bb-field"><span>{T.hostEnd}</span><input type="datetime-local" bind:value={refEnd} /></label>
+        <WindowPicker variant="inline" label={`${T.hostReference} (UTC)`} bind:start={refStart} bind:end={refEnd} />
       </fieldset>
     </div>
     <button type="button" class="secondary-button" disabled={busy} onclick={read}>{busy ? T.hostRunning : T.hostRun}</button>
@@ -113,8 +112,6 @@
   .bb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--space-3); margin: var(--space-2) 0; }
   .bb-grid fieldset { display: grid; gap: var(--space-2); margin: 0; padding: 0; border: 0; min-width: 0; }
   .bb-grid legend { padding: 0 0 4px; font-size: 13px; font-weight: 500; }
-  .bb-field { display: grid; gap: 2px; font-size: 12px; color: var(--text-2); }
-  .bb-field input { padding: 5px 8px; font: inherit; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-sizing: border-box; max-width: 100%; }
   .bb-step { display: grid; gap: var(--space-2); min-width: 0; }
   .bb-ready { margin: 0; font-size: 15px; }
   .bb-nutshell { margin: 0; padding: var(--space-2) var(--space-3); font-size: 13px; background: var(--surface-2); border-radius: var(--radius-sm); }

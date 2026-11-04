@@ -38,3 +38,15 @@ export async function postSourceTag(caseId: string, tag: SourceTagInput, signal?
     env: String(raw.env ?? ''), portal: String(raw.portal ?? ''), api: String(raw.api ?? ''), classification: String(raw.classification ?? '')
   };
 }
+
+/** The case's source tags: GET /api/cases/{id}/sources. Anything the server sends in a wrong shape is left out; a missing field reads as empty. */
+export async function listSourceTags(caseId: string, signal?: AbortSignal): Promise<SourceTag[]> {
+  const body = await json<{ sources?: unknown }>(await send(casePath(caseId, '/sources'), {}, signal));
+  const list = Array.isArray(body.sources) ? body.sources : [];
+  return list.flatMap((entry) => {
+    const raw = (entry && typeof entry === 'object' ? entry : {}) as Partial<Record<keyof SourceTag, unknown>>;
+    if (typeof raw.id !== 'number') return [];
+    const text = (value: unknown): string => (typeof value === 'string' ? value : '');
+    return [{ id: raw.id, importId: typeof raw.importId === 'number' ? raw.importId : 0, kind: text(raw.kind), label: text(raw.label), env: text(raw.env), portal: text(raw.portal), api: text(raw.api), classification: text(raw.classification) }];
+  });
+}

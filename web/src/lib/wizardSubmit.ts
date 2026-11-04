@@ -3,7 +3,7 @@ import { CaseApiError } from './cases';
 import { MAX_FINDINGS_PER_CALL, outcomeFromError, windowProblem } from './discover';
 import type { DiscoverImportRequest, JobRef, RowOutcome, ScanHost, TimeWindow } from './discover';
 import type { SourceTagInput } from './caseTagsApi';
-import { parseDatabaseRef, sourceKey } from './wizardSources';
+import { FILE_KINDS, parseDatabaseRef, sourceKey } from './wizardSources';
 import type { DraftSource } from './wizardFlow';
 import type { RetryInput } from './cases';
 import { requestIdFor } from './createRequest';
@@ -67,8 +67,14 @@ export interface SubmitInput {
   window: TimeWindow | null;
   scanId: string;
   host: ScanHost | null;
-  /** The files picked on the review step, by source key. */
+  /** The files held for each file source, by source key (chosen on the sources step, or on the review step as a fallback). */
   files: Readonly<Record<string, File>>;
+  /** The importer name the person chose for a file, by source key. A key with none (or a blank) lets the server decide from the file. */
+  importers?: Readonly<Record<string, string>>;
+  /** The label of the computer the person named for a file, by source key (from the host list). A key with none sends no computer. */
+  hosts?: Readonly<Record<string, string>>;
+  /** Only these sources are tried (a retry of the files that failed). Left out, every source that is not done is tried. */
+  only?: readonly string[];
   /** The notice the person ticked, sent with every import. */
   ackText: string;
   /** The case's own key and its repeat, only when the person asked for one. Used for the create call alone; never kept in the run state. */
@@ -91,8 +97,8 @@ export interface SubmitApi {
   startImports(caseId: string, request: DiscoverImportRequest): Promise<JobRef[]>;
   /** Follows one job to its end. Resolves with the outcome; never throws for a refusal. */
   watchJob(caseId: string, ref: JobRef, onProgress: (percent: number | null) => void): Promise<RowOutcome>;
-  /** Detects the file's type, then keeps it. Resolves with the outcome; never throws for a refusal. */
-  importFile(caseId: string, file: File, onProgress: (percent: number | null) => void): Promise<RowOutcome>;
+  /** Detects the file's type (or uses `importer` when the person chose one), then keeps it. Resolves with the outcome; never throws for a refusal. */
+  importFile(caseId: string, file: File, onProgress: (percent: number | null) => void, importer?: string, host?: string): Promise<RowOutcome>;
 }
 
 export type FailureStep = 'case' | 'environments' | 'tag' | 'audit-source' | 'import';
@@ -110,8 +116,8 @@ export interface SubmitResult {
 
 /* ------------------------------------------------------------------ what a source needs */
 
-/** Kinds that are read from a file the person picks here. */
-const FILE_SOURCE_KINDS: readonly string[] = ['iis-logs', 'app-log', 'hangfire-csv', 'redis-slowlog-csv', 'file'];
+/** Kinds that are read from a file the person picked (the same list the sources step adds). */
+const FILE_SOURCE_KINDS: readonly string[] = FILE_KINDS;
 
 export const isFileSource = (source: Pick<DraftSource, 'kind'>): boolean => FILE_SOURCE_KINDS.includes(source.kind);
 export const isScanSource = (source: Pick<DraftSource, 'kind'>): boolean => source.kind === 'discover';
@@ -339,7 +345,8 @@ async function execute(input: SubmitInput, api: SubmitApi, state: SubmitState): 
 }
 
 async function importAll(input: SubmitInput, api: SubmitApi, state: SubmitState, caseId: string): Promise<void> {
-  const todo = input.sources.filter((source) => isImportable(source) && state.imports[sourceKey(source)].status !== 'done');
+  const only = input.only ? new Set(input.only) : null;
+  const todo = input.sources.filter((source) => isImportable(source) && state.imports[sourceKey(source)].status !== 'done' && (only === null || only.has(sourceKey(source))));
   const scan = todo.filter(isScanSource);
   const files = todo.filter(isFileSource);
   const rowOf = (source: DraftSource): ImportRow => state.imports[sourceKey(source)];
@@ -399,7 +406,7 @@ async function importAll(input: SubmitInput, api: SubmitApi, state: SubmitState,
       if (!file) { row.status = 'skipped'; row.reason = 'no-file'; continue; }
       row.status = 'running';
       try {
-        settle(row, await api.importFile(caseId, file, (percent) => { row.percent = percent; }), state);
+        settle(row, await api.importFile(caseId, file, (percent) => { row.percent = percent; }, input.importers?.[sourceKey(source)] || undefined, input.hosts?.[sourceKey(source)] || undefined), state);
       } catch (error) {
         if (isAbort(error)) { row.status = 'waiting'; continue; }
         settle(row, outcomeFromError(error), state);

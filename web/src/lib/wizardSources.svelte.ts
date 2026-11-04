@@ -48,12 +48,22 @@ export interface SourcesView {
   /** Source keys being checked right now. */
   checking: string[];
   connections: ConnectionView[];
+  /** Databases the person set aside on purpose, by "connection id/database". Kept here so a remount of the Mongo form does not re-tick them. */
+  setAside: Record<string, boolean>;
+  /** The second tick of a database (Application data next to API audit logs), remembered to show it ticked. */
+  alsoApp: Record<string, boolean>;
+  /** The databases whose audit tick was set on by the name, so the screen can say why. */
+  suggested: Record<string, boolean>;
 }
 
 const blankView = (): SourcesView => ({
   phase: 'idle', entry: { kind: 'loading' }, scanId: '', startedAt: '', findings: [], gaps: [], host: null, progress: [], cancelling: false,
-  info: '', problem: '', reach: {}, checking: [], connections: []
+  info: '', problem: '', reach: {}, checking: [], connections: [], setAside: {}, alsoApp: {}, suggested: {}
 });
+
+/** The record without the keys of one connection or of dropped databases. A new object: nothing is mutated while it is read. */
+const withoutKeys = (record: Record<string, boolean>, gone: (key: string) => boolean): Record<string, boolean> =>
+  Object.fromEntries(Object.entries(record).filter(([key]) => !gone(key)));
 
 export const sourcesView = $state<SourcesView>(blankView());
 
@@ -292,10 +302,16 @@ export async function testMongo(input: ConnectionInput, existingId = '', given?:
   if (id === '') {
     sourcesView.connections = [...sourcesView.connections, view];
   } else {
+    // A database that the new list no longer has cannot stay a source, and its ticks go with it.
+    const gone = new Set((sourcesView.connections.find((c) => c.id === id)?.databases ?? []).filter((d) => !databases.includes(d)).map((d) => id + '/' + d));
     sourcesView.connections = sourcesView.connections.map((c) => (c.id === id ? view : c));
-    // A database that the new list no longer has cannot stay a source.
     const prefix = 'mongo:' + id + '/';
     setSources(wizard.sources.filter((s) => s.kind !== 'mongo-database' || !s.ref.startsWith(prefix) || databases.includes(s.ref.slice(prefix.length))));
+    if (gone.size > 0) {
+      sourcesView.setAside = withoutKeys(sourcesView.setAside, (key) => gone.has(key));
+      sourcesView.alsoApp = withoutKeys(sourcesView.alsoApp, (key) => gone.has(key));
+      sourcesView.suggested = withoutKeys(sourcesView.suggested, (key) => gone.has(key));
+    }
   }
   return { ok: true, id: connectionId, databases: databases.length };
 }
@@ -315,6 +331,11 @@ export function removeConnection(connectionId: string): void {
   setSources(removeConnectionSources(wizard.sources, connectionId));
   releaseConnection(connectionId);
   sourcesView.connections = sourcesView.connections.filter((c) => c.id !== connectionId);
+  // The ticks of its databases go with it, so a connection made again later starts undecided.
+  const prefix = connectionId + '/';
+  sourcesView.setAside = withoutKeys(sourcesView.setAside, (key) => key.startsWith(prefix));
+  sourcesView.alsoApp = withoutKeys(sourcesView.alsoApp, (key) => key.startsWith(prefix));
+  sourcesView.suggested = withoutKeys(sourcesView.suggested, (key) => key.startsWith(prefix));
 }
 
 /* ------------------------------------------------------------------ clearing */

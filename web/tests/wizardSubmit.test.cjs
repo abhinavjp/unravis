@@ -362,6 +362,26 @@ test('every failure line names its source and never leaks a raw code', () => {
   assert.equal(copy.reasonLine('something-new'), 'The server could not finish it.');
 });
 
+test('a kind the person set by hand is sent as the importer; a suggestion from the name is not', async () => {
+  const api = fakeApi();
+  const seen = [];
+  api.importFile = async (id, f, onProgress, importer) => { seen.push(f.name + '=' + (importer ?? '')); return { kind: 'added', rows: 5 }; };
+  const a = file('A', 'file:iis-w3c:1', 'iis-w3c');
+  const b = file('B', 'file:iis-httperr:1', 'iis-httperr');
+  const inp = input({
+    sources: [a, b],
+    files: { [sources.sourceKey(a)]: FILE_A, [sources.sourceKey(b)]: FILE_B },
+    importers: { [sources.sourceKey(b)]: 'iis-httperr' }
+  });
+  const { result } = await run(inp, api);
+  // SubmitResult has no `stopped`; what proves the run went through is that it did not lock, finished, and both imports counted.
+  assert.equal(result.locked, false);
+  assert.equal(result.finished, true);
+  assert.equal(result.imported, 2);
+  assert.deepEqual(result.failures, []);
+  assert.deepEqual(seen.sort(), ['a.log=', 'b.log=iis-httperr']);
+});
+
 test('the copy passes the copy lint', () => {
   const entries = copy.wizardCreateCopyEntries();
   assert.ok(entries.length > 30);

@@ -23,9 +23,9 @@ export const WAIT_TEXT = {
   /** Said after Cancel in the daily and hourly view, with a Try again button beside it. */
   cancelledRead: 'Cancelled. Choose Try again to read the sources again.',
   /** A live audit lane over 24 hours is not read unless broad scans are allowed. */
-  laneBroadScan: 'This window is longer than the live audit source reads, so no API requests are drawn. Choose 24 hours or less, or start Unravis with --allow-broad-scans.',
+  laneBroadScan: 'The live audit source would not read a window this long, so no API requests were read. This is not the same as no traffic. Choose a window of 24 hours or less.',
   /** Said once under the toolbar when a run finished and at least one lane was cut short. */
-  lanesCutShort: 'Some lanes were cut short. Their bars show only part of the events. Try a shorter window.',
+  lanesCutShort: 'Some lanes were not read in full. What was read is drawn; the rest is marked not read.',
   /** The daily view or step dating when the read ran out of time and only the oldest days were read. Used when the number planned is unknown. */
   daysPartialUnknown: 'Showing only some of the days; the read ran out of time. Shorten the window or Try again.'
 } as const;

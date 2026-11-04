@@ -247,9 +247,11 @@ test('every new string passes the copy lint', () => {
   const { SEVEN_DAY_TEXT } = loadTypeScript('src/lib/autorun.ts');
   const { INCOMPLETE_TEXT } = loadTypeScript('src/lib/tracing/lanes.ts');
   const { windowCopyEntries } = loadTypeScript('src/lib/tracing/windows.ts');
+  const { pickerCopyEntries } = loadTypeScript('src/lib/copy/pickerCopy.ts');
   const entries = [
     ...waitCopyEntries(),
     ...windowCopyEntries(),
+    ...pickerCopyEntries(),
     { id: 'autorun.sevenDays', text: SEVEN_DAY_TEXT },
     { id: 'lanes.incomplete.timeout', text: INCOMPLETE_TEXT.timeout },
     ...Object.entries(rollupCopy).map(([id, text]) => ({ id: 'rollup.' + id, text }))

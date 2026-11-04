@@ -660,6 +660,156 @@ export async function waitForImportJob(caseId: string, first: ImportJob, options
   }
 }
 
+/* ------------------------------------------------------------------ a batch of files */
+// Many files go in one after another. A file that fails never stops the next one, and every file ends as a row with a verdict.
+
+export type BatchVerdict = 'used' | 'partly' | 'rejected';
+
+/** How one file ended. Reasons are codes (REASON_TEXT keys, or 'duplicate'); the screen turns them into words. No file content is in here. */
+export interface BatchOutcome {
+  verdict: BatchVerdict;
+  /** Why the whole file was refused, or ''. */
+  reason: string;
+  /** The most common reason rows were left out of a file that was used in part, or ''. */
+  rowReason: string;
+  rows: number;
+  rejected: number;
+  importer: string;
+  importId?: number;
+  column?: string;
+  /** The same file may pass on another try: the server was busy, did not answer, or was out of time. */
+  transient: boolean;
+}
+
+const TRANSIENT_REASONS = new Set(['unreachable', 'timeout', 'case-import-running', 'import-busy', 'store-error', 'case-freeing', 'throttled']);
+/** Refusals that mean "another import holds the case right now". The queue waits and tries the same file again. */
+const BUSY_REASONS = new Set(['case-import-running', 'import-busy']);
+
+export const isBusyRefusal = (error: unknown): boolean => error instanceof CaseApiError && BUSY_REASONS.has(error.reason);
+
+/** The verdict for an answer. Used: every row was kept. Partly used: some rows were left out. Rejected: the file was not kept, or nothing in it was. */
+export function classifyAnswer(answer: ImportAnswer): BatchOutcome {
+  const record = answer.record;
+  const importer = record?.importer || answer.importer || '';
+  const rowReason = answer.report ? (reasonCounts(answer.report.errors)[0]?.reason ?? '') : '';
+  if (!record) return { verdict: 'rejected', reason: 'import-failed', rowReason: '', rows: 0, rejected: 0, importer, transient: false };
+  if (record.status === 'duplicate') return { verdict: 'rejected', reason: 'duplicate', rowReason: '', rows: 0, rejected: 0, importer, importId: record.id, transient: false };
+  if (record.status !== 'ok') return { verdict: 'rejected', reason: record.reason || 'import-failed', rowReason: '', rows: record.rows, rejected: record.rejected, importer, importId: record.id, transient: false };
+  if (record.rows <= 0) return { verdict: 'rejected', reason: 'no-rows', rowReason, rows: 0, rejected: record.rejected, importer, importId: record.id, transient: false };
+  if (record.rejected > 0) return { verdict: 'partly', reason: '', rowReason, rows: record.rows, rejected: record.rejected, importer, importId: record.id, transient: false };
+  return { verdict: 'used', reason: '', rowReason: '', rows: record.rows, rejected: 0, importer, importId: record.id, transient: false };
+}
+
+/** The verdict for a request that was refused or never answered. */
+export function classifyFailure(error: unknown): BatchOutcome {
+  if (error instanceof CaseApiError) {
+    const reason = error.reason || 'import-failed';
+    return {
+      verdict: 'rejected', reason, rowReason: '', rows: 0, rejected: 0, importer: '', importId: error.importId, column: error.column,
+      transient: TRANSIENT_REASONS.has(reason) || error.status >= 500
+    };
+  }
+  return { verdict: 'rejected', reason: 'unreachable', rowReason: '', rows: 0, rejected: 0, importer: '', transient: true };
+}
+
+/** One file to send: what the person chose for it. An empty importer asks the server to detect the type. */
+export interface BatchItem {
+  key: string;
+  file: File;
+  importer: string;
+  host: string;
+  supplied?: Record<string, string>;
+}
+
+/** Sends one file and answers with the server's answer. Throws a CaseApiError when refused. */
+export type BatchRun = (item: BatchItem, signal?: AbortSignal) => Promise<ImportAnswer>;
+
+export interface QueueOptions {
+  signal?: AbortSignal;
+  onStart?: (key: string) => void;
+  onDone?: (key: string, outcome: BatchOutcome) => void;
+  /** How many times a file is sent again after the case said another import was running. */
+  busyRetries?: number;
+  busyWaitMs?: number;
+  /** For tests. */
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+}
+
+export const BATCH_BUSY_RETRIES = 4;
+export const BATCH_BUSY_WAIT_MS = 1500;
+
+const isAbortError = (error: unknown): boolean => error instanceof DOMException && error.name === 'AbortError';
+
+/**
+ * Sends the files one at a time, in the order given. A file that is refused, or whose request fails, becomes a rejected outcome and the
+ * queue moves on. When the case says another import is running, the same file waits a moment and goes again. Aborting the signal stops
+ * the queue after the file being sent: a file whose request itself is aborted gets no outcome, a file that fails for another reason after
+ * the signal was aborted is still recorded, and the files after it are not started. Returns the outcomes of the files that finished.
+ */
+export async function runImportQueue(items: readonly BatchItem[], run: BatchRun, options: QueueOptions = {}): Promise<Array<{ key: string; outcome: BatchOutcome }>> {
+  const sleep = options.sleep ?? sleepFor;
+  const retries = options.busyRetries ?? BATCH_BUSY_RETRIES;
+  const done: Array<{ key: string; outcome: BatchOutcome }> = [];
+  for (const item of items) {
+    if (options.signal?.aborted) break;
+    options.onStart?.(item.key);
+    let outcome: BatchOutcome | null = null;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        outcome = classifyAnswer(await run(item, options.signal));
+        break;
+      } catch (error) {
+        if (isAbortError(error)) return done;
+        if (isBusyRefusal(error) && attempt < retries) {
+          try { await sleep(options.busyWaitMs ?? BATCH_BUSY_WAIT_MS, options.signal); } catch { return done; }
+          continue;
+        }
+        outcome = classifyFailure(error);
+        break;
+      }
+    }
+    done.push({ key: item.key, outcome });
+    options.onDone?.(item.key, outcome);
+  }
+  return done;
+}
+
+/** What the list shows for one file of a batch: waiting its turn, being sent, or how it ended. A file with no entry has not been started. */
+export type RowResult = { state: 'waiting' } | { state: 'sending' } | { state: 'done'; outcome: BatchOutcome };
+
+/** How many files ended each way. */
+export function tallyBatch(outcomes: readonly Pick<BatchOutcome, 'verdict'>[]): Record<BatchVerdict, number> {
+  const tally: Record<BatchVerdict, number> = { used: 0, partly: 0, rejected: 0 };
+  for (const outcome of outcomes) tally[outcome.verdict]++;
+  return tally;
+}
+
+/**
+ * The runner the screen uses: read the file once without keeping it to find its type (or confirm the one the person chose), then keep it
+ * with the notice acknowledged. The same two steps as the single file flow, so a file is never kept as a type the server did not accept.
+ */
+export function importRunner(caseId: string, ackText: string, onJob?: (key: string, job: ImportJob) => void): BatchRun {
+  return async (item, signal) => {
+    const base = { caseId, file: item.file, host: item.host, supplied: item.supplied };
+    const tooBig = fileSizeProblem(item.file.size, item.importer);
+    if (tooBig) throw new CaseApiError('File is not allowed', 413, tooBig.kind === 'empty' ? 'file-missing' : 'file-cap');
+    const first = await startPreviewJob({ ...base, importer: item.importer }, signal);
+    let preview: ImportAnswer;
+    try {
+      preview = await waitForImportJob(caseId, first, { signal, onUpdate: (job) => onJob?.(item.key, job) });
+    } catch (error) {
+      // Stopped while only reading: nothing is kept, so the server is told to let it go.
+      if (isAbortError(error)) void cancelImportJob(caseId, first.id).catch(() => {});
+      throw error;
+    }
+    const importer = item.importer || preview.importer;
+    if (!importer || (!item.importer && preview.tied.length > 1)) throw new CaseApiError('Choose a file type', 422, 'importer-required');
+    const job = await startCommitJob({ ...base, importer, ackText }, signal);
+    const answer = await waitForImportJob(caseId, job, { signal, onUpdate: (next) => onJob?.(item.key, next) });
+    return { ...answer, report: answer.report ?? preview.report };
+  };
+}
+
 /**
  * Builds the timeline of one case against the audit window on screen. The server reads the case's events and the audit
  * intervals itself; the answer is checked against the shape before it is used, and a bad shape is refused, not shown.

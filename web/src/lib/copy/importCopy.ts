@@ -1,4 +1,4 @@
-import type { CaseApiError, CaseInfo, ImportRecord, ImportReport, SuppliedProblem, SuppliedSpec } from '../cases';
+import type { BatchOutcome, CaseApiError, CaseInfo, ImportRecord, ImportReport, SuppliedProblem, SuppliedSpec } from '../cases';
 import { formatTimeRange } from '../time';
 import type { LintEntry } from './copylint';
 
@@ -51,7 +51,7 @@ export const IMPORT_TEXT = {
 
   fileHeading: 'File',
   fileLabel: 'Choose a file',
-  fileHelp: 'Text and CSV exports only. Compressed files are refused, so extract them first.',
+  fileHelp: 'Text and CSV exports only. For a .zip, or for many files, use Many files at once below.',
   pickerLabel: 'File type',
   pickerTie: 'More than one file type fits this file. Choose the right one.',
   pickerPlaceholder: 'Choose a file type',
@@ -199,6 +199,8 @@ export const REASON_TEXT: Record<string, string> = {
   // 409 from every writer (import, workspace save, close case, discovery pull) while an import is running on the case.
   'case-import-running': 'An import is running on this case. Try again when it finishes.',
   'ack-required': 'Tick the box to confirm the notice before importing.',
+  // A lost session during a batch: the Result column has no server message to show, so this stands in for it.
+  no_session: 'The session ended. Open Unravis again from the link it printed when it started, or restart it.',
   'not-found': 'That case was not found.',
   'bad-case-id': 'That is not a valid case id.',
   unreachable: 'The server could not be reached. Try again.',
@@ -229,6 +231,7 @@ export const REASON_TEXT: Record<string, string> = {
   'bad-form': 'The upload could not be read.',
   'file-missing': 'No file was sent.',
   'import-failed': 'The import could not be completed. Nothing was kept.',
+  'no-rows': 'No rows could be read from this file, so nothing was kept.',
   'duplicate-event': 'The file repeats an event this case already holds.',
   'invalid-event': 'A row of the file made an event that failed its checks, so the file was refused.',
   'store-error': 'The case could not be read or written. Try again.',
@@ -266,7 +269,7 @@ export function reasonText(reason: string): string | null {
  * The server's own message is shown only for a missing session, because that text is written for the screen.
  */
 export function errorText(error: Pick<CaseApiError, 'status' | 'reason' | 'column' | 'importId' | 'message'>): string {
-  if (error.reason === 'no_session' || (error.status === 401 && error.reason !== 'wrong-case-key')) return error.message;
+  if (error.reason === 'no_session' || (error.status === 401 && error.reason !== 'wrong-case-key')) return error.message !== '' ? error.message : REASON_TEXT.no_session;
   if (error.reason === 'duplicate') return error.importId ? 'This file was already imported (import #' + error.importId + ').' : 'This file was already imported.';
   const base = reasonText(error.reason) ?? GENERIC_ERROR;
   return error.column ? base + ' Column: ' + error.column + '.' : base;
@@ -516,6 +519,69 @@ export const caseExportSavedText = (jsonSha256: string): string => 'Saved two fi
 /** The word for a host role, or the role as sent when it is not one the screen knows. */
 export const hostRoleLabel = (role: string): string => (Object.prototype.hasOwnProperty.call(IMPORT_TEXT.hostRoles, role) ? IMPORT_TEXT.hostRoles[role] : role);
 
+/* ------------------------------------------------------------------ many files at once */
+
+/** The words of the "Many files at once" part of the import drawer: the list, the result of each file, and the summary. */
+export const BATCH_TEXT = {
+  heading: 'Many files at once',
+  intro: 'Choose several files, a folder, or a .zip of logs. You can also drag and drop them here. Unravis suggests what each one is. Files go in one after the other, and a file that fails does not stop the rest.',
+  listHelp: 'Change the type if it is wrong, or choose “Don’t use this file”. Nothing is kept until you tick the box and press Import.',
+  zipReading: 'Opening the zip…',
+  zipEmpty: 'This zip holds no files.',
+  zipNotZip: 'This does not look like a zip file, so it was left out.',
+  zipDamaged: 'This zip is damaged, or is one that Unravis cannot open. It was left out.',
+  zipTooBig: 'The files in this zip are too big to open here. Extract it and choose the files.',
+  zipTruncated: 'The zip holds more than 1000 files. Only the first 1000 were listed.',
+  colResult: 'Result',
+  waiting: 'Waiting',
+  sending: 'Importing…',
+  used: 'Used',
+  partly: 'Partly used',
+  rejected: 'Rejected',
+  tryAgain: 'Try again',
+  importNone: 'Import files',
+  importing: 'Importing…',
+  stop: 'Stop after this file',
+  stopping: 'Stopping…',
+  stopped: 'Stopped. The files that were not started are still on the list.',
+  ackFirst: 'Tick the box to confirm the notice, then import.',
+  ack: 'I confirm these files meet the conditions in the notice above.',
+  noCase: 'Choose a case first.',
+  supported: 'Text and CSV exports. A .zip of them is opened here.'
+} as const;
+
+export const batchImportText = (count: number): string => (count > 0 ? 'Import ' + count + (count === 1 ? ' file' : ' files') : BATCH_TEXT.importNone);
+
+export const batchHostWarnText = (count: number): string =>
+  count + (count === 1 ? ' file needs' : ' files need') + ' a computer named. Pick one in the list. Without it the file is rejected.';
+
+export const batchProgressText = (index: number, total: number): string => 'Importing file ' + index + ' of ' + total + '…';
+
+export const zipSkippedText = (count: number): string => (count === 1 ? '1 file in the zip could not be opened and was left out.' : count + ' files in the zip could not be opened and were left out.');
+
+export const verdictLabel = (verdict: BatchOutcome['verdict']): string => BATCH_TEXT[verdict];
+
+/** "Finished: 3 used, 1 partly used, 1 rejected." Only the parts that are not zero. */
+export function batchSummaryText(tally: Record<BatchOutcome['verdict'], number>): string {
+  const parts: string[] = [];
+  if (tally.used > 0) parts.push(tally.used + ' used');
+  if (tally.partly > 0) parts.push(tally.partly + ' partly used');
+  if (tally.rejected > 0) parts.push(tally.rejected + ' rejected');
+  return parts.length === 0 ? '' : 'Finished: ' + parts.join(', ') + '.';
+}
+
+const rowsWord = (count: number): string => count + (count === 1 ? ' row' : ' rows');
+
+/** The plain reason shown with a file's verdict. */
+export function batchReasonText(outcome: Pick<BatchOutcome, 'verdict' | 'reason' | 'rowReason' | 'rows' | 'rejected' | 'importId' | 'column'>): string {
+  if (outcome.verdict === 'used') return 'Kept ' + rowsWord(outcome.rows) + '.';
+  if (outcome.verdict === 'partly') {
+    const why = outcome.rowReason ? reasonText(outcome.rowReason) : null;
+    return 'Kept ' + rowsWord(outcome.rows) + '. ' + rowsWord(outcome.rejected) + (outcome.rejected === 1 ? ' was' : ' were') + ' left out.' + (why ? ' ' + why : '');
+  }
+  return errorText({ status: 0, reason: outcome.reason, column: outcome.column, importId: outcome.importId, message: '' });
+}
+
 /**
  * Every fixed sentence, plus one sample of each built sentence, for the copy lint. A new string added above must reach this list
  * (the test checks that every string in IMPORT_TEXT and REASON_TEXT is linted).
@@ -537,13 +603,26 @@ export function importCopyEntries(): LintEntry[] {
     { id: 'import.sample.progress.queued', text: jobProgressText('queued', null) },
     { id: 'import.sample.progress.unknown', text: jobProgressText('running', null) },
     { id: 'import.sample.progress.percent', text: jobProgressText('running', 40) },
-    { id: 'import.sample.progress.last', text: jobProgressText('running', 100) }
+    { id: 'import.sample.progress.last', text: jobProgressText('running', 100) },
+    { id: 'import.sample.batch.import', text: batchImportText(3) },
+    { id: 'import.sample.batch.import1', text: batchImportText(1) },
+    { id: 'import.sample.batch.host', text: batchHostWarnText(2) },
+    { id: 'import.sample.batch.host1', text: batchHostWarnText(1) },
+    { id: 'import.sample.batch.progress', text: batchProgressText(2, 5) },
+    { id: 'import.sample.batch.zip', text: zipSkippedText(2) },
+    { id: 'import.sample.batch.summary', text: batchSummaryText({ used: 3, partly: 1, rejected: 2 }) },
+    { id: 'import.sample.batch.used', text: batchReasonText({ verdict: 'used', reason: '', rowReason: '', rows: 120, rejected: 0 }) },
+    { id: 'import.sample.batch.partly', text: batchReasonText({ verdict: 'partly', reason: '', rowReason: 'bad-time', rows: 118, rejected: 2 }) },
+    { id: 'import.sample.batch.partly1', text: batchReasonText({ verdict: 'partly', reason: '', rowReason: '', rows: 1, rejected: 1 }) },
+    { id: 'import.sample.batch.rejected', text: batchReasonText({ verdict: 'rejected', reason: 'unknown-host', rowReason: '', rows: 0, rejected: 0 }) },
+    { id: 'import.sample.batch.duplicate', text: batchReasonText({ verdict: 'rejected', reason: 'duplicate', rowReason: '', rows: 0, rejected: 0, importId: 4 }) }
   ];
   const walk = (prefix: string, value: unknown) => {
     if (typeof value === 'string') entries.push({ id: prefix, text: value });
     else if (value && typeof value === 'object') for (const [key, inner] of Object.entries(value)) walk(prefix + '.' + key, inner);
   };
   walk('import.text', IMPORT_TEXT);
+  walk('import.batch', BATCH_TEXT);
   walk('import.reason', REASON_TEXT);
   walk('import.importer', IMPORTER_LABELS);
   walk('import.help', IMPORTER_HELP);

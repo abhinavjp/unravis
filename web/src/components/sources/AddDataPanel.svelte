@@ -12,7 +12,13 @@
   // screen that finishes the add, never by itself.
   export type AddChoice = 'sql' | 'mongo' | 'blackbox' | 'files' | 'day';
   // files says whether the page that adds files exists in this build. A card whose page is missing is switched off, never a dead click. The Blackbox page is always there.
-  let { caseId, readOnly = false, files = false, onChoose }: { caseId: string; readOnly?: boolean; files?: boolean; onChoose?: (what: AddChoice) => void } = $props();
+  // In the import drawer (scope 'drawer') the same cards open over the case page, which has this panel too: the ids and the card marks differ so the two never collide.
+  // staged is how many files the drawer holds that are not imported yet; busy is an import sending now (nothing else starts, and the card says why).
+  let { caseId, readOnly = false, files = false, scope = 'hub', staged = 0, busy = false, onChoose }: { caseId: string; readOnly?: boolean; files?: boolean; scope?: 'hub' | 'drawer'; staged?: number; busy?: boolean; onChoose?: (what: AddChoice) => void } = $props();
+  const drawer = $derived(scope === 'drawer');
+  const mark = (id: string): Record<string, string> => (drawer ? { 'data-drawer-card': id } : { 'data-card': id });
+  const headId = $derived(drawer ? 'drawer-add-head' : 'add-head');
+  const off = $derived(readOnly || busy);
 
   let days = $state.raw<LaneDay[]>([]);
   let sqlSaved = $state(0);
@@ -37,44 +43,46 @@
     })();
     return () => mine.abort();
   });
-  const choose = (what: AddChoice) => onChoose?.(what);
+  const choose = (what: AddChoice) => { if (!busy) onChoose?.(what); };
 </script>
 
-<section class="src" aria-labelledby="add-head">
-  <div class="nutshell"><b>{NUTSHELL}</b><p>{ADD_TEXT.lead}</p></div>
-  <h3 id="add-head">{ADD_TEXT.heading}</h3>
+<section class="src" aria-labelledby={headId}>
+  <div class="nutshell"><b>{NUTSHELL}</b><p>{drawer ? ADD_TEXT.drawerLead : ADD_TEXT.lead}</p></div>
+  <h3 id={headId}>{ADD_TEXT.heading}</h3>
   {#if readOnly}<p class="hint" data-read-only>{HUB_TEXT.readOnlyWhy}</p>{/if}
+  {#if busy}<p class="hint" data-busy role="status">{ADD_TEXT.busy}</p>{/if}
   <div class="cards">
-    <div class="card" data-card="sql">
+    <div class="card" {...mark('sql')}>
       <h4>{ADD_TEXT.sqlTitle}</h4>
       <p class="hint">{ADD_TEXT.sqlBody}</p>
       <p class="hint">{ADD_TEXT.connReady(sqlSaved)}</p>
       <p class="hint">{ADD_TEXT.held(sqlHeld)}</p>
-      <div class="actions"><button type="button" class="btn" disabled={readOnly} onclick={() => choose('sql')}>{ADD_TEXT.addSql}</button></div>
+      <div class="actions"><button type="button" class="btn" disabled={off} onclick={() => choose('sql')}>{ADD_TEXT.addSql}</button></div>
     </div>
-    <div class="card" data-card="mongo">
+    <div class="card" {...mark('mongo')}>
       <h4>{ADD_TEXT.mongoTitle}</h4>
       <p class="hint">{ADD_TEXT.mongoBody}</p>
       <p class="hint">{ADD_TEXT.connReady(mongoSaved)}</p>
       <p class="hint">{ADD_TEXT.held(mongoHeld)}</p>
-      <div class="actions"><button type="button" class="btn" disabled={readOnly} onclick={() => choose('mongo')}>{ADD_TEXT.addMongo}</button></div>
+      <div class="actions"><button type="button" class="btn" disabled={off} onclick={() => choose('mongo')}>{ADD_TEXT.addMongo}</button></div>
     </div>
-    <div class="card" data-card="blackbox">
+    <div class="card" {...mark('blackbox')}>
       <h4>{ADD_TEXT.blackboxTitle}</h4>
       <p class="hint">{ADD_TEXT.blackboxBody}</p>
       <p class="hint">{ADD_TEXT.held(blackboxHeld)}</p>
-      <div class="actions"><button type="button" class="btn" disabled={readOnly} onclick={() => choose('blackbox')}>{ADD_TEXT.addBlackbox}</button></div>
+      <div class="actions"><button type="button" class="btn" disabled={off} onclick={() => choose('blackbox')}>{ADD_TEXT.addBlackbox}</button></div>
     </div>
-    <div class="card" data-card="files">
+    <div class="card" {...mark('files')}>
       <h4>{ADD_TEXT.filesTitle}</h4>
       <p class="hint">{ADD_TEXT.filesBody}</p>
-      <div class="actions"><button type="button" class="btn" disabled={readOnly || !files} onclick={() => choose('files')}>{ADD_TEXT.addFiles}</button></div>
+      {#if drawer && staged > 0}<p class="hint" data-staged>{ADD_TEXT.staged(staged)}</p>{/if}
+      <div class="actions"><button type="button" class="btn" disabled={off || !files} onclick={() => choose('files')}>{ADD_TEXT.addFiles}</button></div>
     </div>
-    <div class="card" data-card="day">
+    <div class="card" {...mark('day')}>
       <h4>{ADD_TEXT.dayTitle}</h4>
       <p class="hint">{ADD_TEXT.dayBody}</p>
       <p class="hint">{ADD_TEXT.byDay(byDay, sources.length)}</p>
-      <div class="actions"><button type="button" class="btn" disabled={readOnly || byDay === 0} onclick={() => choose('day')}>{ADD_TEXT.addDay}</button></div>
+      <div class="actions"><button type="button" class="btn" disabled={off || byDay === 0} onclick={() => choose('day')}>{ADD_TEXT.addDay}</button></div>
     </div>
   </div>
   <p class="hint">{ADD_TEXT.outOfDate}</p>

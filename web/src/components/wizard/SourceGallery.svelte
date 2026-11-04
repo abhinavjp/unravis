@@ -2,14 +2,17 @@
   import { onMount, tick } from 'svelte';
   import { wizard } from '../../lib/wizard.svelte';
   import {
-    addFile, cancelScan, clearInfo, isChosen, loadEntry, reconcileEnvironments, scanIsStale, sourcesView, startScan, tickFinding
+    cancelScan, clearInfo, isChosen, loadEntry, reconcileEnvironments, scanIsStale, sourcesView, startScan, tickFinding
   } from '../../lib/wizardSources.svelte';
-  import { FILE_KINDS, galleryGroups, sourceKey } from '../../lib/wizardSources';
-  import type { FileKind, GalleryEntry } from '../../lib/wizardSources';
+  import { galleryGroups, sourceKey } from '../../lib/wizardSources';
+  import { foundReadiness } from '../../lib/readiness';
+  import type { GalleryEntry } from '../../lib/wizardSources';
+  import { releaseOrphanFiles } from '../../lib/wizardFiles.svelte';
   import { GROUPS, ageMinutes, cancelAllowed, effectiveCost } from '../../lib/discover';
   import { DISCOVER_TEXT, detectorLine, foundText, gapReasonText, hostNameText, howText, rowMetaText, showsText } from '../../lib/copy/discoverCopy';
-  import { FILE_KIND_OPTIONS, SOURCES_TEXT, addFindingLabel, adminNote, locateOkText, notReadableText, yourSourcesText } from '../../lib/copy/wizardSourcesCopy';
+  import { SOURCES_TEXT, addFindingLabel, adminNote, chipTipText, locateOkText, notReadableText, yourSourcesText } from '../../lib/copy/wizardSourcesCopy';
   import HelpNote from '../HelpNote.svelte';
+  import ImportFilesPanel from './ImportFilesPanel.svelte';
   import LocateFolder from './LocateFolder.svelte';
   import MongoClassify from './MongoClassify.svelte';
   import ReachableCheck from './ReachableCheck.svelte';
@@ -21,13 +24,8 @@
   // are shown greyed with the reason and a way to point at the right place. The scan and the connections live in lib/wizardSources.svelte.ts so
   // they survive Back and Next.
   const uid = $props.id();
-  const FILE_IDS = new Set<string>(FILE_KINDS);
 
   let openForm = $state<'' | 'mongo' | 'sql' | 'redis' | 'files'>('');
-  let fileKind = $state<FileKind>('iis-logs');
-  let fileLabel = $state('');
-  let fileLine = $state('');
-  let fileFailed = $state(false);
   let statusNote = $state('');
   let scanClickedAt = $state(0);
   let listHeading = $state<HTMLElement>();
@@ -70,25 +68,8 @@
     document.getElementById(uid + '-f-' + id)?.focus();
   }
 
-  function submitFile() {
-    fileLine = '';
-    fileFailed = false;
-    if (!FILE_IDS.has(fileKind)) return;
-    const result = addFile(fileKind, fileLabel);
-    if (!result.ok) {
-      fileFailed = true;
-      fileLine = result.problem === 'full' ? SOURCES_TEXT.limitFull : SOURCES_TEXT.alreadyChosen;
-      return;
-    }
-    fileLabel = '';
-    fileLine = SOURCES_TEXT.fileAdded;
-  }
-
-  function onFileKey(event: KeyboardEvent) {
-    if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); event.stopPropagation(); submitFile(); }
-  }
-
   async function afterRemoved() {
+    releaseOrphanFiles();
     await tick();
     listHeading?.focus();
   }
@@ -162,7 +143,7 @@
                           <label class="name" for={rowId}>{addFindingLabel(f.display)}</label>
                         {/if}
                         <ul class="chips" aria-label="{f.display}">
-                          <li class="chip">{entry.state === 'ready' ? SOURCES_TEXT.chipReady : entry.state === 'unverified' ? SOURCES_TEXT.chipNotChecked : SOURCES_TEXT.chipSteps}</li>
+                          <li class="chip" title={chipTipText(entry.state)}>{foundReadiness(entry.state)}</li>
                           {#if f.needsAdmin}<li class="chip">{SOURCES_TEXT.chipAdmin}</li>{/if}
                           {#if effectiveCost(f) === 'large'}<li class="chip">{SOURCES_TEXT.chipLarge}</li>{/if}
                         </ul>
@@ -213,23 +194,7 @@
     {:else if openForm === 'redis'}
       <div class="panel" id="{uid}-redis"><ReachableCheck kind="redis" /></div>
     {:else if openForm === 'files'}
-      <div class="panel" id="{uid}-files">
-        <h5>{SOURCES_TEXT.fileHeading}</h5>
-        <p class="hint">{SOURCES_TEXT.fileIntro}</p>
-        <div class="field">
-          <label for="{uid}-fk">{SOURCES_TEXT.fileKind}</label>
-          <select id="{uid}-fk" bind:value={fileKind}>
-            {#each FILE_KIND_OPTIONS as option (option.kind)}<option value={option.kind}>{option.label}</option>{/each}
-          </select>
-        </div>
-        <div class="field">
-          <label for="{uid}-fn">{SOURCES_TEXT.fileName}</label>
-          <input id="{uid}-fn" type="text" bind:value={fileLabel} maxlength="80" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="{uid}-fn-hint" onkeydown={onFileKey} />
-          <p class="hint" id="{uid}-fn-hint">{SOURCES_TEXT.fileNameHint}</p>
-        </div>
-        <div class="actions"><button type="button" class="primary-button" onclick={submitFile}>{SOURCES_TEXT.fileAdd}</button></div>
-        <p class="hint" class:bad={fileFailed} role="status" hidden={fileLine === ''}>{fileLine}</p>
-      </div>
+      <div class="panel" id="{uid}-files"><ImportFilesPanel /></div>
     {/if}
   </section>
 
@@ -254,7 +219,7 @@
   .lead { margin: 0; max-width: 64ch; color: var(--text-2); font-size: var(--fs-5); overflow-wrap: anywhere; }
   .notices { display: grid; gap: var(--space-2); }
   .notice { margin: 0; padding: var(--space-2) var(--space-3); color: var(--text); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-3); overflow-wrap: anywhere; }
-  .notice[hidden], .inline-error[hidden], .hint[hidden] { display: none; }
+  .notice[hidden], .inline-error[hidden] { display: none; }
   .inline-error { margin: 0; }
   .part { display: grid; gap: var(--space-3); align-content: start; min-width: 0; }
   .part h4 { margin: 0; font-size: var(--fs-5); font-weight: 600; }
@@ -263,7 +228,6 @@
   .group { display: grid; gap: var(--space-2); min-width: 0; }
   .group h5, .panel h5 { margin: 0; font-size: var(--fs-4); font-weight: 600; }
   .hint { margin: 0; color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
-  .hint.bad { color: var(--text); }
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .progress { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; color: var(--text-2); font-size: var(--fs-3); }
   .rows, .gaps, .mine { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; min-width: 0; }
@@ -279,10 +243,6 @@
   .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
   .chip { padding: 0 var(--space-2); color: var(--text-2); background: var(--surface-2); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font-size: var(--fs-2); }
   .panel { display: grid; gap: var(--space-3); min-width: 0; padding: var(--space-3); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
-  .field { display: grid; gap: var(--space-1); max-width: 640px; min-width: 0; }
-  .field label { font-size: var(--fs-3); font-weight: 600; }
-  .field input, .field select { box-sizing: border-box; width: 100%; max-width: 100%; min-height: 44px; padding: 8px 10px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-4); }
-  .field input:focus-visible, .field select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
   .link-button { padding: 0; color: var(--accent); background: transparent; border: 0; font: inherit; font-size: var(--fs-3); text-decoration: underline; cursor: pointer; }
   .link-button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 </style>

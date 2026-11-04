@@ -599,7 +599,7 @@ th.numeric { text-align: right; }
 .mode-badge, .updated-label, .count-badge, .figure-label, .figure-value, .where-rank, .where-value strong, .where-value small, .where-delta,
 .overview-tile strong, .overview-tile span, .overview-tile small, .overview-rate, .quality-strip > div strong, .quality-strip > div span,
 .failure-summary strong, .selected-api-stats, .pagination-row, .estimate-tag, .state-pill, .state-badge, .saved-badge, .error-stage,
-.activity-axis, .activity-row-label small, table, th, td, input[type="number"], input[type="date"], input[type="time"], input[type="datetime-local"] { font-family: var(--mono); }
+.activity-axis, .activity-row-label small, table, th, td, input[type="number"], input[type="date"], input[type="time"] { font-family: var(--mono); }
 .figure-label, .overview-tile span, .quality-strip > div span { font-size: 12px; }
 .figure-value { font-weight: 500; }
 /* Panel and group titles: mono, 12px, medium, with a decorative "//" that assistive technology does not read. */

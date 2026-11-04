@@ -1,6 +1,6 @@
 <script lang="ts">
   import { landingMayAutoRun } from '../lib/autorun';
-  import { app, go, goHome, openCase, openConnections, openCreatedCase, openKeySetup, openSidePanel, restore, runAnalysis, scope, startCreate, startNewConnection } from '../lib/appState.svelte';
+  import { app, go, goHome, openCase, openCaseImport, openConnections, openCreatedCase, openKeySetup, openSidePanel, openTracing, restore, runAnalysis, scope, startCreate, startNewConnection } from '../lib/appState.svelte';
   import { resetWizard, wizard } from '../lib/wizard.svelte';
   import { blockers, caseMade, createNow, createView } from '../lib/wizardCreate.svelte';
   import { createButtonText } from '../lib/copy/wizardCreateCopy';
@@ -28,6 +28,9 @@
   function openDiscover() { requestDiscover(); openSidePanel('import'); }
   // The case is made and kept on the server. The draft is done with, so it is cleared, then the case opens on its home page.
   function openCreated(id: string) { resetWizard(); void openCreatedCase(id); }
+  // The same, then straight to the timeline (the screen the files were added for), or to the import drawer to add more files.
+  function openTimeline(id: string) { resetWizard(); void openCreatedCase(id).then(() => openTracing()); }
+  function addMore(id: string) { resetWizard(); void openCreatedCase(id).then(() => openCaseImport()); }
 </script>
 
 {#if mode === 'loading'}
@@ -41,7 +44,7 @@
 {:else if mode === 'create'}
   <CreateWizard onLeave={goHome} busy={createView.running || caseMade()}>
     {#snippet sources()}<SourceGallery />{/snippet}
-    {#snippet review()}{#if createView.running || caseMade()}<CreateProgress onOpen={openCreated} />{:else}<ReviewStep />{/if}{/snippet}
+    {#snippet review()}{#if createView.running || caseMade()}<CreateProgress onOpen={openCreated} onTimeline={openTimeline} onAddMore={addMore} />{:else}<ReviewStep />{/if}{/snippet}
     {#snippet finish()}{#if !caseMade()}<button type="button" class="primary-button" disabled={createView.running || blockers().length > 0} onclick={() => void createNow()}>{createButtonText(wizard.sources.length, createView.running)}</button>{/if}{/snippet}
   </CreateWizard>
 {:else if mode === 'unlock'}

@@ -66,6 +66,8 @@ test('TracingPaper has the four regions and the request guards', () => {
   }
   // One stale-answer guard: the aborted signal (the second, sequence-based check was redundant).
   assert.doesNotMatch(src, /isStale|latestSeq/);
+  // A superseded read can fail as an ordinary error (the body read is a CaseApiError), so the signal is checked first (C2).
+  assert.match(src, /catch \(error\) \{\s*if \(mine\.signal\.aborted\) return;/);
   assert.doesNotMatch(src, /from '.*(guided|callTrace)/);
 });
 
@@ -110,14 +112,14 @@ test('an empty window shows one hint, and typing in a box clears the refusal', (
   const src = paper();
   assert.match(src, /windowIsEmpty\(result\.lanes\)/);
   assert.match(src, /WINDOW_TEXT\.noEvents/);
-  assert.equal((src.match(/oninput=\{onFieldInput\}/g) || []).length, 4);
+  assert.equal((src.match(/onchange=\{onFieldInput\}/g) || []).length, 2, 'both pickers report an edit');
   assert.match(src, /function onFieldInput\(\) \{\s*edited = true;\s*clearProblems\(\);/);
 });
 
 test('the read-only no-op effect is gone and readOnly still disables the inputs (a closed case does not)', () => {
   const src = paper();
   assert.doesNotMatch(src, /void readOnly/);
-  assert.ok((src.match(/disabled=\{readOnly\}/g) || []).length >= 5);
+  assert.ok((src.match(/disabled=\{readOnly\}/g) || []).length >= 3, 'both pickers, the overlap button and Start tracing');
   assert.doesNotMatch(src, /readOnly \|\| closed/);
 });
 
@@ -159,7 +161,7 @@ test('Try again and Cancel give keyboard focus to the chart region instead of dr
 test('the failed read is a styled error panel with the same sentence and Try again (UI-R2-09)', () => {
   const src = paper();
   const chart = src.slice(src.indexOf('data-region="chart"'), src.indexOf('data-region="notes"'));
-  const panel = chart.slice(chart.indexOf('class="error-panel"'), chart.indexOf('{:else if status'));
+  const panel = chart.slice(chart.indexOf('class="error-panel"'), chart.indexOf("{:else if status === 'loading'"));
   assert.match(panel, /class="error-icon" aria-hidden="true"/);
   assert.match(panel, /<p role="status">\{errorText\}<\/p>/);
   assert.match(panel, /TRACING_TEXT\.retry/);
@@ -190,7 +192,16 @@ test('a closed case shows one plain line at the top of the timeline, announced a
 test('the chart region has a role and a name, and a case with no events says how to fix it (UI-R3-02, UI-R3-03)', () => {
   const src = read('src/components/TracingPaper.svelte');
   assert.match(src, /data-region="chart" class="chart-region" role="region" aria-label=\{TRACING_TEXT\.chartLabel\}/);
-  assert.match(src, /windowHasNoData\(result\.lanes\)/);
+  assert.match(src, /windowHasNoData\(result\.lanes, result\.warnings\)/);
   assert.match(src, /\{:else if noData\}<p class="empty-hint">\{WINDOW_TEXT\.noData\}<\/p>/);
-  assert.match(src, /@media \(max-width: 1024px\), \(pointer: coarse\) \{ \.window-field input \{ min-height: 40px; \} \}/);
+  assert.match(read('src/lib/components/WindowPicker.svelte'), /@media \(max-width: 1024px\), \(pointer: coarse\) \{/, 'the picker has bigger touch targets');
+});
+
+test('erasing a case drops its kept tracing choice and windows before the active-case guard (P5)', () => {
+  const src = read('src/lib/appState.svelte.ts');
+  assert.match(src, /import \{ forgetSources \} from '\.\/tracing\/sources';/);
+  assert.match(src, /import \{ forgetWindows \} from '\.\/tracing\/windows';/);
+  const body = src.slice(src.indexOf('export function caseErased'), src.indexOf('export function openCase('));
+  assert.match(body, /forgetSources\(id\); forgetWindows\(id\);/);
+  assert.ok(body.indexOf('forgetSources(id)') < body.indexOf('activeCaseId !== id'), 'the stored keys go before the active-case guard');
 });

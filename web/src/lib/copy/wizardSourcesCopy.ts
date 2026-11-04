@@ -1,6 +1,8 @@
 import type { LintEntry } from './copylint';
 import { DISCOVER_TEXT, locateReasonText, probeReasonText, unreadableText } from './discoverCopy';
 import type { AddressProblem, DatabaseProblem, TagProblem } from '../wizardSources';
+import { FILE_KIND_LABELS } from './fileKindsCopy';
+import type { FoundState } from '../readiness';
 
 /**
  * Every fixed sentence of the sources step of the create wizard, and the small builders for the rest.
@@ -25,8 +27,12 @@ export const SOURCES_TEXT = {
   gapsHeading: DISCOVER_TEXT.gapsHeading,
 
   chipReady: 'Ready',
-  chipNotChecked: 'Not checked',
-  chipSteps: 'Needs an export',
+  chipPartly: 'Partly ready',
+  chipCannot: 'Cannot test yet',
+  chipFailed: 'Failed',
+  chipTipReady: 'Unravis opened a sample of it and can read it.',
+  chipTipUnverified: 'No check ran. Unravis found it but cannot read it yet.',
+  chipTipSteps: 'No check ran. It needs an export first.',
   chipAdmin: DISCOVER_TEXT.tagAdmin,
   chipLarge: DISCOVER_TEXT.tagLarge,
   unverifiedLead: 'Found, but Unravis cannot read it yet.',
@@ -59,7 +65,7 @@ export const SOURCES_TEXT = {
   addMongo: 'Connect to MongoDB',
   addSql: 'SQL Server by address',
   addRedis: 'Redis by address',
-  addFiles: 'A file or export',
+  addFiles: 'Import files',
   close: 'Close',
 
   mongoHeading: 'MongoDB',
@@ -93,8 +99,17 @@ export const SOURCES_TEXT = {
   mongoNeedsAddress: 'Type the connection address first.',
   mongoNow: 'A connection shows MongoDB as it is now. Earlier hours come from its log files.',
   mongoListHeading: 'Databases found',
-  mongoClassifyHelp: 'Choose what each database is. A database you do not choose is left out.',
-  mongoAuditOptional: 'API audit logs are optional. You can make the case without any.',
+  mongoClassifyHelp: 'Tick what is in each database. A database with neither tick is not read.',
+  mongoAuditOptional: 'Tick API audit logs for the database that holds the request log. It is then added to the analysis. Without one, the timeline has no API audit logs.',
+  mongoWhatIsIn: 'What is in it (tick both if it has both)',
+  mongoTickAudit: 'API audit logs',
+  mongoTickAuditNote: '(added to the analysis)',
+  mongoTickApp: 'Application data',
+  mongoTickAppNote: '(slow operations and load, nothing else is read)',
+  mongoAuditSuggested: 'Ticked first, as the name looks like an API audit log. Untick it if it is not.',
+  mongoNeitherTicked: 'Neither is ticked, so nothing is read from this database.',
+  mongoBothTicked: 'Both are ticked. The case keeps one choice for a database, so it is saved as API audit logs.',
+  reviewNoAuditSource: 'No API audit source will be read. The timeline will have no API audit logs. Go back to the sources step and tick one, or add one after the case is made.',
   mongoNoDatabases: 'Connected, but no databases were listed.',
   mongoRemove: 'Remove this connection',
   mongoTestAgain: 'Test again',
@@ -158,14 +173,6 @@ export const SOURCES_TEXT = {
   sqlNoPassword: 'no password kept',
   sqlWindowsLogin: 'Windows login',
 
-  fileHeading: 'A file or export',
-  fileIntro: 'Choose the kind of file you copied or exported from the other computer. You pick the file itself on the last step.',
-  fileKind: 'Kind of file',
-  fileName: 'A short name for it',
-  fileNameHint: 'For example: Orders API log, March.',
-  fileAdd: 'Add',
-  fileAdded: 'Added to your sources.',
-
   limitFull: 'You can choose at most 200 sources.',
   alreadyChosen: 'That source is already chosen.'
 } as const;
@@ -176,20 +183,11 @@ export const KIND_LABELS: Readonly<Record<string, string>> = {
   'sql-server': 'SQL Server',
   redis: 'Redis',
   'iis-logs': 'IIS web server logs',
-  'app-log': 'App log',
   'hangfire-csv': 'Hangfire jobs (CSV)',
   'redis-slowlog-csv': 'Redis slow log (CSV)',
-  file: 'File or export'
+  file: 'File or export',
+  ...FILE_KIND_LABELS
 };
-
-/** Names for the file kinds in the choice list. */
-export const FILE_KIND_OPTIONS: ReadonlyArray<{ kind: string; label: string }> = [
-  { kind: 'iis-logs', label: 'IIS web server logs' },
-  { kind: 'app-log', label: 'App log (log4net, NLog or similar)' },
-  { kind: 'hangfire-csv', label: 'Hangfire jobs (CSV export)' },
-  { kind: 'redis-slowlog-csv', label: 'Redis slow log (CSV export)' },
-  { kind: 'file', label: 'Another file or export' }
-];
 
 const own = (table: Record<string, string>, key: string): boolean => Object.prototype.hasOwnProperty.call(table, key);
 
@@ -263,6 +261,9 @@ export const scanDroppedText = (count: number): string =>
   count + (count === 1 ? ' source was' : ' sources were') + ' taken off your list, as the new scan could not read ' + (count === 1 ? 'it.' : 'them.');
 
 /** The tick box description for a source that needs administrator rights while Unravis runs as a standard user. */
+/** The tooltip of the readiness chip of a found source: why it has that word. */
+export const chipTipText = (state: FoundState): string => (state === 'ready' ? SOURCES_TEXT.chipTipReady : state === 'unverified' ? SOURCES_TEXT.chipTipUnverified : SOURCES_TEXT.chipTipSteps);
+
 export const adminNote = 'Reading this may need administrator rights.';
 
 /** A message from the server, made safe: the typed address, user name and password are removed, and it is cut short. Falls back to a fixed line. */
@@ -278,7 +279,6 @@ export function safeServerLine(message: string, secrets: readonly string[]): str
 export const wizardSourcesCopyEntries = (): LintEntry[] => [
   ...Object.entries(SOURCES_TEXT).map(([id, text]) => ({ id: 'wizard.sources.' + id, text })),
   ...Object.entries(KIND_LABELS).map(([id, text]) => ({ id: 'wizard.sources.kind.' + id, text })),
-  ...FILE_KIND_OPTIONS.map((option) => ({ id: 'wizard.sources.fileKind.' + option.kind, text: option.label })),
   ...(Object.keys(ADDRESS_PROBLEMS) as AddressProblem[]).map((id) => ({ id: 'wizard.sources.address.' + id, text: ADDRESS_PROBLEMS[id] })),
   ...(Object.keys(DATABASE_PROBLEMS) as DatabaseProblem[]).map((id) => ({ id: 'wizard.sources.database.' + id, text: DATABASE_PROBLEMS[id] })),
   { id: 'wizard.sources.sample.yours', text: yourSourcesText(3) },

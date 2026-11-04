@@ -84,9 +84,10 @@ test('M2: a closed case offers no read, add, test, edit or forget, and says why'
   assert.equal((page.match(/disabled=\{readOnly\}/g) ?? []).length, 2, 'edit and forget are off');
   assert.match(page, /disabled=\{full \|\| readOnly\}/);
   const add = comp('AddDataPanel');
-  assert.match(add, /disabled=\{readOnly\} onclick=\{\(\) => choose\('sql'\)\}/);
-  assert.match(add, /disabled=\{readOnly\} onclick=\{\(\) => choose\('mongo'\)\}/);
-  assert.match(add, /disabled=\{readOnly \|\| byDay === 0\}/);
+  assert.match(add, /disabled=\{off\} onclick=\{\(\) => choose\('sql'\)\}/);
+  assert.match(add, /const off = \$derived\(readOnly \|\| busy\)/, 'off is read-only, plus busy while the drawer sends');
+  assert.match(add, /disabled=\{off\} onclick=\{\(\) => choose\('mongo'\)\}/);
+  assert.match(add, /disabled=\{off \|\| byDay === 0\}/);
   const step = comp('SourceStep');
   assert.equal((step.match(/data-read-only/g) ?? []).length, 2, 'both places the step would read say why they do not');
   assert.match(step, /onAddDay=\{readableByDay\(kind\) && !readOnly/);
@@ -110,8 +111,8 @@ test('M3: Add data never clicks into nothing: Files opens the import page, Black
   assert.match(hub, /what === 'blackbox'\) onAddBlackbox\?\.\(\)/);
   assert.match(hub, /files=\{!!onAddFiles\} onChoose/, 'the Files card is on only when its page was handed in');
   const add = comp('AddDataPanel');
-  assert.match(add, /disabled=\{readOnly\} onclick=\{\(\) => choose\('blackbox'\)\}/, 'the Blackbox card is on unless the case is closed');
-  assert.match(add, /disabled=\{readOnly \|\| !files\} onclick=\{\(\) => choose\('files'\)\}/);
+  assert.match(add, /disabled=\{off\} onclick=\{\(\) => choose\('blackbox'\)\}/, 'the Blackbox card is on unless the case is closed (or an import is sending)');
+  assert.match(add, /disabled=\{off \|\| !files\} onclick=\{\(\) => choose\('files'\)\}/);
   assert.doesNotMatch(add, /data-unavailable="blackbox"|blackboxLater/, 'no until-P9 note is left');
   assert.equal(copy.ADD_TEXT.blackboxLater, undefined);
   const home = read('src/lib/components/CaseHome.svelte');

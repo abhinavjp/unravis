@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { takeDiscoverIntent } from '../discoverIntent';
-  import { takeCaseIntent } from '../startIntent';
+  import { takeCaseIntent, takeFilesViewIntent } from '../startIntent';
+  import { requestSourcesTab } from '../sourcesNav.svelte';
+  import AddDataPanel, { type AddChoice } from '../../components/sources/AddDataPanel.svelte';
+  import { ADD_TEXT } from '../copy/sourcesCopy';
   import DiscoverPanel from '../../components/DiscoverPanel.svelte';
   import {
     CaseApiError, cancelImportJob, caseCode, checkAllSupplied, commitBlock, fetchImportJob, fileSizeProblem, importProgressPercent, isCaseGone, listHosts, listImporters, listImports,
@@ -12,7 +15,7 @@
     jobProgressText, qualityDetails, reasonText, sizeProblemText, statusLabel, suppliedPairs
   } from '../copy/importCopy';
   import { importWork, setActiveCase } from '../appState.svelte';
-  import { goHome } from '../appState.svelte';
+  import { goHome, openCaseHome, openSidePanel } from '../appState.svelte';
   import { formatTime } from '../time';
   import { caseSpan } from '../resourceSpan';
   import Drawer from '../../components/Drawer.svelte';
@@ -20,6 +23,7 @@
   import CasePanel from './CasePanel.svelte';
   import CaseTools from './CaseTools.svelte';
   import HostsEditor from './HostsEditor.svelte';
+  import ImportBatch from './ImportBatch.svelte';
   import SuppliedSettings from './SuppliedSettings.svelte';
   import HelpNote from '../../components/HelpNote.svelte';
 
@@ -31,6 +35,16 @@
   // The query and zone are the audit window on screen: the timeline uses them to pick its sources and show its times.
   let { onClose, onImported, query, zone = 'UTC' }: { onClose: () => void; onImported?: (record: ImportRecord) => void; query: Query; zone?: string } = $props();
 
+  // Screen 112: unless whoever opened the drawer already chose files (a one-time note), it opens on the Add data cards of the open case. Files opens the
+  // file list below; the other cards go to the pages that add them (the case page's Sources, or the Blackbox panel). The file list stays mounted
+  // while the cards show, so files staged there are not lost by going back and forth.
+  const discoverAtOpen = untrack(() => takeDiscoverIntent());
+  let view = $state<'grid' | 'files'>(untrack(() => (takeFilesViewIntent() || discoverAtOpen ? 'files' : 'grid')));
+  let caseSeen = '';
+  // Files staged in the drawer and not imported yet, and a leave question that waits for an answer.
+  let staged = $state(0);
+  let leaveAsk = $state<(() => void) | null>(null);
+  let fileHeadingEl = $state<HTMLElement>();
   let cases = $state<CaseInfo[]>([]);
   // The case a person chose on the start screen or the case home (taken once) wins; otherwise the case an import is already running on.
   let selectedId = $state(untrack(() => takeCaseIntent() || importWork.running?.caseId || ''));
@@ -55,6 +69,8 @@
   let unknownHost = $state(false);
   let acknowledged = $state(false);
   let phase = $state<'idle' | 'previewing' | 'importing'>('idle');
+  // A batch of files is being sent from the drawer below: the single-file controls wait for it, as a case runs one import at a time.
+  let batchBusy = $state(false);
   let problem = $state('');
   let result = $state('');
   let controller: AbortController | null = null;
@@ -67,6 +83,10 @@
 
   const selected = $derived(cases.find((c) => c.id === selectedId) ?? null);
   const caseOpen = $derived(selected !== null && !selected.closed);
+  const showGrid = $derived(caseOpen && view === 'grid');
+  const heldFiles = $derived(staged + (file ? 1 : 0));
+  const sending = $derived(phase !== 'idle' || batchBusy);
+  const drawerTitle = $derived(showGrid && selected ? ADD_TEXT.drawerTitle(caseCode(selected.id)) : IMPORT_TEXT.title);
   const specs = $derived(importerInfos.find((info) => info.name === importer)?.supplied ?? []);
   const checkedSettings = $derived(checkAllSupplied(specs, drafts));
   const supplied = $derived(checkedSettings.values);
@@ -74,7 +94,7 @@
   const pickable = $derived(importerInfos.filter((info) => info.supplied.length > 0).map((info) => info.name));
   const pickerNames = $derived(tied.length > 1 ? tied : undetected ? pickable : []);
   const currentKey = $derived(previewKey(file, importer, host, supplied));
-  const block = $derived(commitBlock({ caseOpen, previewedKey, currentKey, importer, report, unknownHost, acknowledged, busy: phase !== 'idle', settingsProblem }));
+  const block = $derived(commitBlock({ caseOpen, previewedKey, currentKey, importer, report, unknownHost, acknowledged, busy: phase !== 'idle' || batchBusy, settingsProblem }));
   // What time the case's kept files cover, for the resource panel's notice when the window on screen holds nothing.
   const span = $derived(caseSpan(imports));
   const reasons = $derived(report ? reasonCounts(report.errors) : []);
@@ -88,6 +108,37 @@
   let discoverOpen = $state(false);
   let discoverFocus = $state(false);
 
+  // Leaving with files that are not imported asks first; nothing to lose goes straight through.
+  // Keep editing puts the focus back where the person was, else on the drawer, so the Escape key still reaches it.
+  let leaveFrom: HTMLElement | null = null;
+  function keepEditing() {
+    leaveAsk = null;
+    void tick().then(() => (leaveFrom && leaveFrom.isConnected ? leaveFrom : drawer)?.focus());
+  }
+  function leaveThen(action: () => void) {
+    if (heldFiles === 0) { action(); return; }
+    leaveFrom = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    leaveAsk = action;
+    void tick().then(() => drawer?.querySelector<HTMLElement>('[data-leave] button')?.focus());
+  }
+  const requestClose = () => leaveThen(onClose);
+  function chooseCard(what: AddChoice) {
+    if (what === 'files') {
+      view = 'files';
+      void tick().then(() => fileHeadingEl?.focus());
+      return;
+    }
+    leaveThen(() => {
+      if (what === 'blackbox') { openSidePanel('blackbox'); return; }
+      requestSourcesTab(what === 'sql' ? 'sql' : what === 'mongo' ? 'mongo-add' : 'day');
+      openCaseHome();
+      onClose();
+    });
+  }
+  function backToCards() {
+    view = 'grid';
+    void tick().then(() => drawer?.querySelector<HTMLElement>('[data-drawer-card="files"] button')?.focus());
+  }
   function openDiscover() { discoverFocus = true; discoverOpen = true; }
   function closeDiscover() { discoverOpen = false; discoverFocus = false; void tick().then(() => drawer?.focus()); }
   // Files added from a scan change what the case holds, so the history and the case counts are read again.
@@ -96,7 +147,7 @@
   onMount(() => {
     // Focus starts inside the dialog. Left on the button that opened it, Tab would walk the page behind the panel and the Tab trap would never start.
     drawer?.focus();
-    if (takeDiscoverIntent()) discoverOpen = true;
+    if (discoverAtOpen) discoverOpen = true;
     listHosts().then((labels) => { hosts = labels; }).catch(() => { hosts = []; });
     // A server without the list, or one that cannot be reached, simply offers no settings.
     listImporters().then((list) => { importerInfos = list; }).catch(() => { importerInfos = []; });
@@ -107,7 +158,12 @@
   // Picking another case starts the form over and loads that case's imports.
   $effect(() => {
     const id = selectedId;
-    untrack(() => { resetForm(); result = ''; });
+    untrack(() => {
+      resetForm();
+      result = '';
+      // Another case (not the first one picked) starts on its cards again.
+      if (id !== caseSeen) { if (caseSeen !== '') view = 'grid'; caseSeen = id; }
+    });
     imports = [];
     if (id) {
       loadImports(id);
@@ -331,33 +387,50 @@
   const at = (value: string) => formatTime(value, { zone: 'UTC', year: true });
 </script>
 
-<Drawer class="import-drawer" title={IMPORT_TEXT.title} titleId="import-title" intro={IMPORT_TEXT.intro} closeLabel={IMPORT_TEXT.closeLabel} bind:element={drawer} {onClose}>
+<Drawer class="import-drawer" title={drawerTitle} titleId="import-title" intro={IMPORT_TEXT.intro} closeLabel={IMPORT_TEXT.closeLabel} bind:element={drawer} onClose={requestClose}>
 <HelpNote id="import" />
   <p class="gate" role="note" aria-label={IMPORT_TEXT.noticeLabel}>{GATING_BANNER}</p>
 
   <CasePanel bind:this={casePanel} bind:cases bind:selectedId onClosed={goHome} />
 
   <!-- Outside the {#key} below, so a new import does not close the panel or reset its checklist. -->
+  {#if leaveAsk}
+    <div class="leave" role="alertdialog" aria-labelledby="leave-head" aria-describedby="leave-text" data-leave>
+      <h3 id="leave-head">{ADD_TEXT.leaveHeading}</h3>
+      <p id="leave-text" class="note">{ADD_TEXT.leaveText(heldFiles)}</p>
+      <div class="actions">
+        <button type="button" class="secondary-button" onclick={keepEditing}>{ADD_TEXT.keepEditing}</button>
+        <button type="button" class="quiet-button" onclick={() => { const go = leaveAsk; leaveAsk = null; go?.(); }}>{ADD_TEXT.leave}</button>
+      </div>
+    </div>
+  {/if}
+
+  {#if showGrid && selected}
+    {#key selected.id}<AddDataPanel scope="drawer" caseId={selected.id} files staged={heldFiles} busy={sending} onChoose={chooseCard} />{/key}
+  {/if}
+
+  <div class="files-view" hidden={showGrid}>
   {#if discoverOpen}
     <DiscoverPanel caseId={selectedId} {caseOpen} {query} {zone} focusOnOpen={discoverFocus} onClose={closeDiscover} onImported={discovered} />
   {/if}
 
   {#if selected}
     <section class="step" aria-labelledby="file-heading">
-      <h3 id="file-heading">{IMPORT_TEXT.fileHeading}</h3>
+      {#if caseOpen}<div class="actions"><button type="button" class="link" data-back-to-cards onclick={backToCards}>{ADD_TEXT.backToData}</button></div>{/if}
+      <h3 id="file-heading" tabindex="-1" bind:this={fileHeadingEl}>{IMPORT_TEXT.fileHeading}</h3>
       {#if selected.closed}
         <p class="note">{IMPORT_TEXT.closedCase}</p>
       {:else}
         <div class="field">
           <label for="import-file">{IMPORT_TEXT.fileLabel}</label>
-          <input id="import-file" type="file" bind:this={fileInput} disabled={phase === 'importing'} onchange={onFile} />
+          <input id="import-file" type="file" bind:this={fileInput} disabled={phase === 'importing' || batchBusy} onchange={onFile} />
           <p class="note">{IMPORT_TEXT.fileHelp}</p>
         </div>
 
         {#if file}
           <div class="field">
             <label for="import-host">{IMPORT_TEXT.hostLabel}</label>
-            <select id="import-host" value={host} disabled={phase !== 'idle'} onchange={(event) => pickHost(event.currentTarget.value)}>
+            <select id="import-host" value={host} disabled={phase !== 'idle' || batchBusy} onchange={(event) => pickHost(event.currentTarget.value)}>
               <option value="">{IMPORT_TEXT.hostNone}</option>
               {#each hosts as label (label)}<option value={label}>{label}</option>{/each}
             </select>
@@ -368,7 +441,7 @@
         {#if pickerNames.length > 0}
           <div class="field">
             <label for="import-type">{IMPORT_TEXT.pickerLabel}</label>
-            <select id="import-type" value={importer} disabled={phase !== 'idle'} onchange={(event) => pickImporter(event.currentTarget.value)}>
+            <select id="import-type" value={importer} disabled={phase !== 'idle' || batchBusy} onchange={(event) => pickImporter(event.currentTarget.value)}>
               <option value="" disabled>{IMPORT_TEXT.pickerPlaceholder}</option>
               {#each pickerNames as name (name)}<option value={name}>{importerLabel(name)}</option>{/each}
             </select>
@@ -385,6 +458,13 @@
         {/if}
       {/if}
     </section>
+  {/if}
+
+  <!-- Many files at once. Keyed by the case so a list built for one case is never sent to another. -->
+  {#if selected && !selected.closed}
+    {#key selected.id}
+      <ImportBatch caseId={selected.id} disabled={phase !== 'idle'} bind:busy={batchBusy} bind:staged onFinished={() => void Promise.all([loadImports(selected.id), casePanel?.refresh()])} />
+    {/key}
   {/if}
 
   {#if phase !== 'idle'}
@@ -448,7 +528,7 @@
   {#if selected && !selected.closed && file}
     <section class="step commit" aria-label={IMPORT_TEXT.importButton}>
       <label class="ack">
-        <input type="checkbox" bind:checked={acknowledged} disabled={phase !== 'idle'} />
+        <input type="checkbox" bind:checked={acknowledged} disabled={phase !== 'idle' || batchBusy} />
         <span>{ACK_LABEL}</span>
       </label>
       <div class="actions">
@@ -507,10 +587,16 @@
       {/if}
     </section>
   {/if}
+  </div>
 </Drawer>
 
 <style>
   :global(.connections-drawer.import-drawer) { overflow-x: hidden; gap: var(--space-4); width: min(640px, calc(100vw - 24px)); }
+  .files-view { display: grid; gap: var(--space-4); min-width: 0; }
+  .files-view[hidden] { display: none; }
+  #file-heading:focus { outline: none; }
+  #file-heading:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .leave { display: grid; gap: var(--space-2); padding: 10px 12px; border: 1px solid var(--warn); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 9%, var(--surface)); }
   .gate { margin: var(--space-3) 0 0; padding: 10px 12px; font-size: var(--fs-3); line-height: 1.5; border: 1px solid var(--warn); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--warn) 9%, var(--surface)); overflow-wrap: anywhere; }
   .step { display: grid; gap: var(--space-2); min-width: 0; padding-top: var(--space-4); border-top: 1px solid var(--hairline); }
   h3 { margin: 0; font-size: var(--fs-4); font-weight: 600; letter-spacing: -.01em; }

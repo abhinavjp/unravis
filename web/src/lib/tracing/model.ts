@@ -36,12 +36,16 @@ export interface TracingSourceRef { sourceId: string; label: string }
 
 /**
  * The server bucket is `{start,count,errors?}`; SQL and IIS have no 5xx, so `errors` is absent there and
- * `parseTracing` fills it with 0. The server also sends `end`, `clipped` and `complete`; this client ignores them.
+ * `parseTracing` fills it with 0. The server also sends `end` and `clipped`; this client ignores them. `complete`
+ * is kept: a cell the server did not read to the end (a chunked audit read that stopped early) is `complete: false`
+ * and its count of 0 means "not read", never "no traffic".
  */
 export interface TracingBucket {
   start: string;
   count: number;
   errors: number;
+  /** False only when the server said so: the cell was not read to the end. A missing field is read as complete. */
+  complete?: boolean;
   p50Ms?: number;
   p95Ms?: number;
 }
@@ -65,6 +69,15 @@ export interface TracingLane {
   hidden: number;
   sources: TracingSourceRef[];
   buckets: TracingBucket[];
+  /** A window over 24 hours is read one day at a time: `chunksRead` of `chunksTotal` days finished (absent = a single read). */
+  chunksTotal?: number;
+  chunksRead?: number;
+  /** RFC3339: the end of the last finished day, set when the read stopped early. Cells after it were not read. */
+  readThrough?: string;
+  /** The audit sources this lane read, by name (the audit lane only). */
+  sourcesRead?: TracingSourceRef[];
+  /** Audit databases the case saved that no open connection carries, by saved name (the audit lane only). */
+  savedNotConnected?: string[];
 }
 
 export interface TracingResponse {
@@ -76,6 +89,10 @@ export interface TracingResponse {
   /** Server-derived (true when any lane is truncated); `parseTracing` only falls back when the field is missing. */
   truncated: boolean;
   warnings: string[];
+  /** The live audit sources open in the process (the whole listing); empty when the request did not list them. */
+  auditSources: TracingSourceRef[];
+  /** Audit databases the case saved that no open connection carries; empty when the request did not list them. */
+  savedNotConnected: string[];
   /** Echoed only when it was sent, so the caller compares it with the seq it sent, not with a field it may lack. */
   requestSeq?: number;
 }
@@ -150,11 +167,17 @@ function parseSourceRefs(value: unknown): TracingSourceRef[] {
   return out;
 }
 
+/** Defaults to `[]`: only non-empty text entries are kept. */
+function parseNames(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => isText(item) && item.trim() !== '') : [];
+}
+
 function parseBucket(value: unknown): TracingBucket | null {
   if (!isObject(value) || !isText(value.start) || !isNumber(value.count)) return null;
   const bucket: TracingBucket = { start: value.start, count: value.count, errors: isNumber(value.errors) ? value.errors : 0 };
   if (isNumber(value.p50Ms)) bucket.p50Ms = value.p50Ms;
   if (isNumber(value.p95Ms)) bucket.p95Ms = value.p95Ms;
+  if (value.complete === false) bucket.complete = false;
   return bucket;
 }
 
@@ -176,7 +199,7 @@ function parseLane(value: unknown): TracingLane | null {
   const origin: TracingOrigin = value.origin === 'case' ? 'case' : 'live';
   const consistency = isConsistency(value.consistency) ? value.consistency : (origin === 'live' ? 'live-non-snapshot' : 'stored-as-of');
   const disabled = isText(value.disabled) && value.disabled !== '' ? value.disabled : undefined;
-  return {
+  const lane: TracingLane = {
     key: value.key,
     label: value.label,
     state: asLaneState(value.state),
@@ -193,6 +216,15 @@ function parseLane(value: unknown): TracingLane | null {
     sources: parseSourceRefs(value.sources),
     buckets
   };
+  // The optional fields stay off the lane when the server did not send them, so a lane read in one piece is unchanged.
+  if (isNumber(value.chunksTotal) && value.chunksTotal > 0) lane.chunksTotal = Math.floor(value.chunksTotal);
+  if (lane.chunksTotal !== undefined) lane.chunksRead = isNumber(value.chunksRead) && value.chunksRead > 0 ? Math.min(Math.floor(value.chunksRead), lane.chunksTotal) : 0;
+  if (isText(value.readThrough) && isParseableDate(value.readThrough)) lane.readThrough = value.readThrough;
+  const read = parseSourceRefs(value.sourcesRead);
+  if (read.length > 0) lane.sourcesRead = read;
+  const saved = parseNames(value.savedNotConnected);
+  if (saved.length > 0) lane.savedNotConnected = saved;
+  return lane;
 }
 
 function parseWindow(value: unknown): TracingWindow | null {
@@ -230,6 +262,8 @@ export function parseTracing(raw: unknown): TracingResponse {
     mixedConsistency,
     truncated,
     warnings: Array.isArray(raw.warnings) ? raw.warnings.filter(isText) : [],
+    auditSources: parseSourceRefs(raw.auditSources),
+    savedNotConnected: parseNames(raw.savedNotConnected),
     requestSeq: isNumber(raw.requestSeq) ? raw.requestSeq : undefined
   };
 }

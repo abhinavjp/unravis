@@ -104,7 +104,11 @@ test('windowIsEmpty is true only when a read lane has no events and no lane has 
   assert.equal(windows.windowIsEmpty([lane('events', [0, 0]), lane('events', [])]), true);
   assert.equal(windows.windowIsEmpty([lane('events', [0]), lane('events', [3])]), false);
   assert.equal(windows.windowIsEmpty([lane('no-data', [0]), lane('none-seen', [])]), false, 'lanes that explain themselves need no extra hint');
-  assert.equal(windows.windowIsEmpty([lane('incomplete', [0]), lane('no-data', [])]), true);
+  // A lane that was refused or cut short was not read: the window is never called empty on its account (the banner said both before).
+  assert.equal(windows.windowIsEmpty([lane('incomplete', [0]), lane('no-data', [])]), false);
+  assert.equal(windows.windowIsEmpty([{ state: 'events', buckets: [{ count: 0 }], incompleteReason: 'timeout' }, lane('events', [0])]), false);
+  assert.equal(windows.windowIsEmpty([{ state: 'events', buckets: [{ count: 0, complete: false }] }, lane('events', [0])]), false);
+  assert.equal(windows.windowIsEmpty([{ state: 'events', buckets: [], chunksTotal: 11, chunksRead: 4 }, lane('events', [0])]), false);
   assert.equal(windows.windowIsEmpty([]), false);
 });
 
@@ -142,13 +146,15 @@ test('TracingPaper fills the windows region from windows.ts and sends only the c
   assert.match(paperSource, /from '\.\.\/lib\/tracing\/windows'/);
   assert.match(paperSource, /defaultWindows\(windowNow\(app\.info, Date\.now\(\)\)\)/);
   assert.match(paperSource, /checkWindows\(fields\)/);
-  assert.match(paperSource, /fetchTracing\(caseId, body, nextRequestSeq\(\), mine\.signal\)/);
-  assert.equal((paperSource.match(/type="datetime-local"/g) || []).length, 4);
+  assert.match(paperSource, /fetchTracing\(caseId, \{ \.\.\.body, sourceIds: wanted\.ids \}, nextRequestSeq\(\), mine\.signal\)/);
+  assert.equal((paperSource.match(/<WindowPicker/g) || []).length, 2, 'the two windows use the picker');
+  assert.doesNotMatch(paperSource, /datetime-local/);
   assert.match(paperSource, /role="alert"/);
   assert.match(paperSource, /WINDOW_TEXT\.overlapFix/);
   assert.match(paperSource, /fixOverlap\(fields\)/);
-  assert.equal((paperSource.match(/aria-invalid=\{invalidIf\(/g) || []).length, 4, 'every picker input can be marked invalid');
-  assert.equal((paperSource.match(/aria-describedby=\{describedBy\}/g) || []).length, 4, 'every picker input points at the error list');
+  assert.equal((paperSource.match(/invalidStart=\{isInvalid\(/g) || []).length, 2, 'every picker can mark its start invalid');
+  assert.equal((paperSource.match(/invalidEnd=\{isInvalid\(/g) || []).length, 2, 'every picker can mark its end invalid');
+  assert.equal((paperSource.match(/describedby=\{describedBy\}/g) || []).length, 2, 'every picker points at the error list');
   assert.match(paperSource, /id="tp-problems"/);
   assert.match(paperSource, /WINDOW_TEXT\.keptPrevious/);
   assert.match(paperSource, /WINDOW_TEXT\.endNote/);
@@ -213,5 +219,23 @@ test('windowHasNoData is true only when lanes came back and every bucket is empt
   assert.equal(windows.windowHasNoData([{ buckets: [] }, { buckets: [] }]), true);
   assert.equal(windows.windowHasNoData([{ buckets: [{ count: 0 }] }, { buckets: [{ count: 0 }] }]), true);
   assert.equal(windows.windowHasNoData([{ buckets: [{ count: 0 }] }, { buckets: [{ count: 2 }] }]), false);
+  // A warning means something was not read in full, so "nothing was found" is never said on top of it (C1).
+  assert.equal(windows.windowHasNoData([{ buckets: [] }], ['The audit sources could not be listed, so the audit lane was not read.']), false);
+  assert.equal(windows.windowHasNoData([{ buckets: [] }], []), true);
+  assert.equal(windows.windowHasNoData([{ state: 'incomplete', buckets: [] }]), false, 'an incomplete lane alone keeps the sentence off');
   assert.match(windows.WINDOW_TEXT.noData, /Add log files to the case/);
+});
+
+test('erasing a case drops its kept windows, and only its own (P5)', () => {
+  const store = new Map();
+  const storage = { removeItem: (key) => store.delete(key) };
+  store.set('unravis.tracing.windows.c1', '{}');
+  store.set('unravis.tracing.windows.c2', '{}');
+  store.set('unravis.tracing.sources.c1', '{}');
+  windows.forgetWindows('c1', storage);
+  assert.equal(store.has('unravis.tracing.windows.c1'), false);
+  assert.equal(store.has('unravis.tracing.windows.c2'), true, 'another case keeps its windows');
+  assert.equal(store.has('unravis.tracing.sources.c1'), true, 'only the windows key goes');
+  assert.doesNotThrow(() => windows.forgetWindows('c1', { removeItem: () => { throw new Error('blocked'); } }));
+  assert.doesNotThrow(() => windows.forgetWindows('', storage), 'an empty id removes nothing');
 });
