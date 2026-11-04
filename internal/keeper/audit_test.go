@@ -535,7 +535,7 @@ func TestAuditOperationsAreNamedAndReadOnly(t *testing.T) {
 	}
 	want := map[string]bool{OpAuditAdd: true, OpAuditSources: true, OpAuditDelete: true, OpAuditClose: true, OpAuditAnalyze: true,
 		OpAuditRequests: true, OpAuditPayload: true, OpAuditRecord: true, OpAuditActivity: true, OpAuditBreakdown: true,
-		OpAuditCoverage: true, OpAuditSlowest: true, OpAuditRollup: true, OpAuditSchema: true}
+		OpAuditCoverage: true, OpAuditStats: true, OpAuditSlowest: true, OpAuditRollup: true, OpAuditSchema: true}
 	if len(audits) != len(want) {
 		t.Fatalf("audit operations = %v", audits)
 	}

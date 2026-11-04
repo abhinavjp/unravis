@@ -61,7 +61,7 @@ test('hostProblem: what each kind still needs', () => {
   assert.equal(zone.hostProblem('iis-httperr', 'GONE', null), '', 'the list is not known yet: a pick is trusted');
   assert.equal(zone.hostProblem('sql-errorlog', 'WEB02', list), 'no-zone', 'a local-clock kind needs the computer zone');
   assert.equal(zone.hostProblem('sql-errorlog', 'WEB01', list), '');
-  assert.equal(zone.hostProblem('app-log', '', list), '', 'optional');
+  assert.equal(zone.hostProblem('app-log', '', list), 'pick', 'an app log needs a computer: the server refuses it without one');
 });
 
 test('labelProblem and zoneNameProblem use the server rules', () => {
@@ -84,7 +84,7 @@ test('HTTPERR is UTC (the importer labels it) and still needs a computer', () =>
   assert.equal(kinds.hostNeed('iis-httperr'), 'host');
   assert.equal(kinds.hostNeed('iis-logs'), 'none');
   assert.equal(kinds.hostNeed('sql-errorlog'), 'host-tz');
-  assert.equal(kinds.hostNeed('app-log'), 'optional');
+  assert.equal(kinds.hostNeed('app-log'), 'host');
 });
 
 test('needingHost lists only usable staged files that still lack a computer', () => {
@@ -192,9 +192,11 @@ test('the result-table words: status badge, counts, reasons and the host kinds',
   assert.equal(copy.fileStatusText({ status: 'failed', outcome: { kind: 'refused', reason: 'unknown-host' } }), copy.CREATE_TEXT.statusNot);
   assert.equal(copy.fileStatusText({ status: 'skipped', outcome: null }), copy.CREATE_TEXT.statusNot);
   assert.equal(copy.fileStatusText({ status: 'waiting', outcome: null }), copy.CREATE_TEXT.statusWaiting);
-  assert.equal(copy.countCell(1234), '1,234');
-  assert.equal(copy.countCell(0), '0');
-  assert.equal(copy.countCell(null), copy.CREATE_TEXT.noCount);
+  // Wireframe w38: the chips are Used, Partly used and Rejected. Skipped rows make a read file Partly used.
+  assert.equal(copy.fileStatusText({ status: 'done', outcome: { kind: 'added', rows: 4, skipped: 2 } }), 'Partly used');
+  assert.equal(copy.fileStatusText({ status: 'done', outcome: { kind: 'added', rows: 4 } }), 'Used');
+  assert.equal(copy.fileStatusText({ status: 'failed', outcome: null }), 'Rejected');
+  assert.equal(copy.fileStatusText({ status: 'done', outcome: { kind: 'duplicate' } }), 'Rejected');
   assert.equal(copy.isHostReason('unknown-host'), true);
   assert.equal(copy.isHostReason('tz-unlabelled'), true);
   assert.equal(copy.isHostReason('tz-mismatch'), true);
@@ -409,7 +411,7 @@ test('the entries are taken before anything is awaited', async () => {
 
 test('the progress screen has the table, the row actions and the four actions, and the panel and review have the choice', () => {
   const progress = read('src/components/wizard/CreateProgress.svelte');
-  for (const text of ['CREATE_TEXT.colFile', 'CREATE_TEXT.colKind', 'CREATE_TEXT.colRows', 'CREATE_TEXT.colSkipped', 'CREATE_TEXT.colResult', 'CREATE_TEXT.rowTry', 'CREATE_TEXT.rowLeaveOut', 'CREATE_TEXT.openTimeline', 'CREATE_TEXT.retryFailed', 'CREATE_TEXT.addMore']) {
+  for (const text of ['CREATE_TEXT.colFile', 'CREATE_TEXT.colKind', 'CREATE_TEXT.colResult', 'CREATE_TEXT.colWhy', 'CREATE_TEXT.removeRejected', 'CREATE_TEXT.rowTry', 'CREATE_TEXT.rowLeaveOut', 'CREATE_TEXT.openTimeline', 'CREATE_TEXT.retryFailed', 'CREATE_TEXT.addMore']) {
     assert.ok(progress.includes(text), text);
   }
   assert.match(progress, /<table aria-label=/);

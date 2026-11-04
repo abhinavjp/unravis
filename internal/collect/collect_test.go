@@ -205,7 +205,7 @@ func TestEveryFamilyIsCovered(t *testing.T) {
 		"HTTPERR":  {iisHTTPERR},
 		"WAS":      {winEvents},
 		"events":   {winEvents},
-		"log4net":  {"log4net-text", "log4net-xml"},
+		"log4net":  {"log4net-text", "log4net-xml", "log4net-blocks"},
 		"Serilog":  {"serilog-clef", "serilog-text"},
 		"NLog":     {"nlog-text"},
 		"MEL":      {"mel-console", "mel-json"},

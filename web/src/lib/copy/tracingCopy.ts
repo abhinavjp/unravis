@@ -10,7 +10,7 @@ export const TRACING_TEXT = {
   heading: 'Investigation Timeline',
   entryNote: 'See the API audit, SQL and IIS on one timeline for your time window, next to a period to compare with.',
   entryButton: 'Open the Investigation Timeline',
-  backToCase: 'Back to the case',
+  backToCase: 'Case home',
   readingWindow: 'Reading the window…',
   retry: 'Try again',
   cancel: 'Cancel',

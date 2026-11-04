@@ -86,6 +86,14 @@ export interface ListedSource {
   host: string;
   tz: TzView | null;
   isFile: boolean;
+  /** The tag behind the row, or 0 for a file nobody has tagged yet (the first edit makes the tag). */
+  tagId: number;
+  /** What a new tag for a file row is made of: the import, the kind (the importer) and the label (the file name, cleaned). Unused when tagId is set. */
+  importId: number;
+  tagKind: string;
+  tagLabel: string;
+  /** The MongoDB database of an audit database row, else ''. Its size line is read by this name. */
+  database: string;
 }
 
 /** True when a tag kind fits an import: the same name, or an app-log tag against the importer the server detected in the file (any name that is not a catalog kind itself, such as 'serilog-clef'). */
@@ -146,12 +154,14 @@ export function buildSourceList(tags: readonly ListTag[], imports: readonly List
     const tag = claimed.get(rec.id);
     rows.push({
       key: 'f' + rec.id, name: rec.fileName, kindText: kindTextOfImporter(rec.importer), sticker: stickerOfImporter(rec.importer), env: tag?.env ?? '', portal: tag?.portal ?? '', api: tag?.api ?? '',
-      host: rec.hostLabel.trim(), tz: tzOfImport(rec, hosts), isFile: true
+      host: rec.hostLabel.trim(), tz: tzOfImport(rec, hosts), isFile: true,
+      tagId: tag?.id ?? 0, importId: rec.id, tagKind: tag?.kind ?? rec.importer, tagLabel: tag?.label ?? cleanTag(rec.fileName, LABEL_MAX), database: ''
     });
   }
   for (const tag of rest) {
     rows.push({
-      key: 't' + tag.id, name: tag.label, kindText: kindTextOfTag(tag.kind), sticker: stickerOfTag(tag), env: tag.env, portal: tag.portal, api: tag.api, host: '', tz: tzOfTag(tag), isFile: false
+      key: 't' + tag.id, name: tag.label, kindText: kindTextOfTag(tag.kind), sticker: stickerOfTag(tag), env: tag.env, portal: tag.portal, api: tag.api, host: '', tz: tzOfTag(tag), isFile: false,
+      tagId: tag.id, importId: tag.importId, tagKind: tag.kind, tagLabel: tag.label, database: tag.kind === 'mongo-database' && tag.classification === 'audit' ? tag.label : ''
     });
   }
   const order: LaneSticker[] = ['API audit', 'SQL', 'IIS', 'Windows events', 'App data', 'Blackbox', ''];

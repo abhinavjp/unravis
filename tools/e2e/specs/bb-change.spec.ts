@@ -1,6 +1,7 @@
 // Blackbox actions that change the demo list or a case. The demo keeps its state for the whole
 // file, so the order matters: the tests that need all nine rows come first, Forget and Remove last.
 import { test, expect, type Page, type Locator } from '../support/fixtures';
+import { fillTimeIn } from '../support/window-picker';
 
 const CASE = 'Checkout slowdown, 17 October';
 const CLOSED_CASE = 'Night batch overrun, 10 October';
@@ -37,10 +38,10 @@ async function setInlineWindow(details: Locator, name: 'Incident' | 'Reference',
   const [startDate = '', startTime = ''] = start.split('T');
   const [endDate = '', endTime = ''] = end.split('T');
   await box('start date').fill(startDate);
-  await box('start time').fill(startTime);
+  await fillTimeIn(group, `${name} window start time`, startTime);
   await group.getByRole('checkbox', { name: 'Ends on a different day' }).setChecked(endDate !== startDate);
   if (endDate !== startDate) await box('end date').fill(endDate);
-  await box('end time').fill(endTime);
+  await fillTimeIn(group, `${name} window end time`, endTime);
 }
 
 /** Set the four datetime fields of the Step 9 block (UTC, "YYYY-MM-DDTHH:MM") and read. */

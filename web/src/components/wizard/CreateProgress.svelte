@@ -9,7 +9,7 @@
   import { fileKindLabel } from '../../lib/copy/fileKindsCopy';
   import { kindLabel } from '../../lib/copy/wizardSourcesCopy';
   import { rowOutcomeText } from '../../lib/copy/discoverCopy';
-  import { CREATE_TEXT, countCell, failureText, fileStatusText, isHostReason, leaveOutLabel, resultText, rowText, stateText, tryAgainLabel } from '../../lib/copy/wizardCreateCopy';
+  import { CREATE_TEXT, failureText, fileStatusText, isHostReason, leaveOutLabel, resultText, rowText, stateText, tryAgainLabel } from '../../lib/copy/wizardCreateCopy';
   import ZoneChoice from './ZoneChoice.svelte';
 
   // The last screen of the create guide: what the run is doing, source by source, and what to do about anything that did not go through.
@@ -84,8 +84,15 @@
     await createNow(undefined, []);
   }
 
+  // Wireframe w38: one button takes every rejected file off the list. The case keeps what it already has.
+  async function removeRejected() {
+    for (const key of failedKeys) leaveOutFile(key);
+    note = CREATE_TEXT.leftOutNote;
+    await createNow(undefined, []);
+  }
+
   const tone = (row: { status: string; outcome: { kind: string } | null } | undefined): string =>
-    !row ? 'waiting' : row.outcome?.kind === 'added' ? 'good' : row.outcome?.kind === 'duplicate' ? 'neutral' : row.status === 'failed' || row.status === 'skipped' ? 'bad' : row.status === 'running' ? 'run' : 'waiting';
+    !row ? 'waiting' : row.outcome?.kind === 'added' ? ((row.outcome as { skipped?: number }).skipped ? 'warn' : 'good') : row.outcome?.kind === 'duplicate' ? 'neutral' : row.status === 'failed' || row.status === 'skipped' ? 'bad' : row.status === 'running' ? 'run' : 'waiting';
   const canFixHost = (kind: string, row: { status: string; reason: string } | undefined): boolean =>
     !!row && (row.status === 'failed' || row.status === 'skipped') && hostNeed(kind) !== 'none' && (isHostReason(row.reason) || hostNeed(kind) !== 'optional');
 </script>
@@ -131,23 +138,19 @@
             <tr>
               <th scope="col">{CREATE_TEXT.colFile}</th>
               <th scope="col">{CREATE_TEXT.colKind}</th>
-              <th scope="col" class="num">{CREATE_TEXT.colRows}</th>
-              <th scope="col" class="num">{CREATE_TEXT.colSkipped}</th>
               <th scope="col">{CREATE_TEXT.colResult}</th>
+              <th scope="col">{CREATE_TEXT.colWhy}</th>
             </tr>
           </thead>
           <tbody>
             {#each fileRows as item (item.key)}
               {@const row = item.row}
-              {@const added = row?.outcome?.kind === 'added' ? row.outcome : null}
               {@const failed = !!row && (row.status === 'failed' || row.status === 'skipped')}
               <tr data-status={row?.status ?? 'waiting'} data-tone={tone(row)} data-key={item.key}>
                 <th scope="row" class="file"><span class="file-name">{item.name}</span></th>
                 <td data-label={CREATE_TEXT.colKind}>{fileKindLabel(item.kind) || kindLabel(item.kind)}</td>
-                <td class="num" data-label={CREATE_TEXT.colRows}>{countCell(added ? added.rows : row?.outcome?.kind === 'duplicate' ? 0 : null)}</td>
-                <td class="num" data-label={CREATE_TEXT.colSkipped}>{countCell(added ? added.skipped ?? 0 : null)}</td>
-                <td class="result">
-                  <span class="badge" data-tone={tone(row)}>{row ? fileStatusText(row) : CREATE_TEXT.statusWaiting}</span>
+                <td data-label={CREATE_TEXT.colResult}><span class="badge" data-tone={tone(row)}>{row ? fileStatusText(row) : CREATE_TEXT.statusWaiting}</span></td>
+                <td class="result" data-label={CREATE_TEXT.colWhy}>
                   <span class="reason">{row ? rowText(row) : CREATE_TEXT.waiting}</span>
                   {#if row?.status === 'running' && row.percent !== null}<progress max="100" value={row.percent} aria-label={item.name}></progress>{/if}
                   {#if failed && !busy}
@@ -188,6 +191,7 @@
       <button type="button" class={summary.imported > 0 && onTimeline ? 'secondary-button' : 'primary-button'} onclick={() => { opened = true; onOpen(submit.caseId); }}>{openLabel}</button>
       {#if failedKeys.length > 0}
         <button type="button" class="secondary-button" disabled={busy} onclick={() => void retryAll()}>{CREATE_TEXT.retryFailed}</button>
+        <button type="button" class="quiet-button" disabled={busy} onclick={() => void removeRejected()}>{CREATE_TEXT.removeRejected}</button>
       {/if}
       {#if onAddMore}
         <button type="button" class="quiet-button" onclick={() => { opened = true; onAddMore(submit.caseId); }}>{CREATE_TEXT.addMore}</button>
@@ -224,11 +228,11 @@
   thead th { color: var(--text-2); background: var(--surface-2); font-size: var(--fs-2); font-weight: 600; white-space: nowrap; }
   tbody th.file { min-width: 140px; font-weight: 400; }
   .file-name { font-family: var(--mono); font-size: var(--fs-2); overflow-wrap: anywhere; }
-  .num { text-align: right; white-space: nowrap; }
-  .result { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); min-width: 180px; max-width: 36ch; }
+  .result { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); min-width: 180px; max-width: 44ch; }
   .badge { justify-self: start; padding: 0 var(--space-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); font-weight: 600; }
-  .badge[data-tone='good'] { border-color: var(--accent); }
-  .badge[data-tone='bad'] { border-color: var(--bad); }
+  .badge[data-tone='good'] { border-color: var(--ok, var(--accent)); background: color-mix(in srgb, var(--ok, var(--accent)) 14%, var(--surface)); }
+  .badge[data-tone='warn'] { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, var(--surface)); }
+  .badge[data-tone='bad'] { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--surface)); }
   .reason { color: var(--text-2); font-size: var(--fs-2); overflow-wrap: anywhere; }
   .fix { margin: 0; font-size: var(--fs-2); overflow-wrap: anywhere; }
   .row-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
@@ -243,7 +247,6 @@
     tbody th.file { min-width: 0; padding-bottom: 0; border-bottom: 0; background: transparent; }
     th, td { border-bottom: 0; padding-top: var(--space-1); padding-bottom: var(--space-1); }
     td[data-label]::before { content: attr(data-label) ': '; color: var(--text-2); }
-    .num { text-align: left; }
     .result { min-width: 0; max-width: none; }
   }
 </style>

@@ -184,6 +184,26 @@ func tagsContract(t *testing.T, f Factory, caps casestore.Caps) {
 
 	// Remove: the right one goes, a missing id is not an error, ids are not reused
 	// for a live row.
+	// Update: only Environment, Portal and API change; a bad text or a missing id
+	// is refused and changes nothing.
+	upd, err := ta.UpdateSourceTags(ctx, second.ID, "  Edited env ", "", "Edited api")
+	if err != nil {
+		t.Fatalf("UpdateSourceTags: %v", err)
+	}
+	if upd.ID != second.ID || upd.Kind != second.Kind || upd.Label != second.Label || upd.Env != "Edited env" || upd.Portal != "" || upd.API != "Edited api" || !upd.Created.Equal(second.Created) {
+		t.Errorf("updated tag = %+v, was %+v", upd, second)
+	}
+	if got, _ := ta.Sources(ctx); len(got) != 2 || got[1].Env != "Edited env" || got[1].API != "Edited api" {
+		t.Errorf("update was not stored: %v", got)
+	}
+	if _, err := ta.UpdateSourceTags(ctx, second.ID, "bad\x07env", "", ""); !errors.Is(err, casestore.ErrBadTag) {
+		t.Errorf("bad text: %v, want ErrBadTag", err)
+	}
+	if _, err := ta.UpdateSourceTags(ctx, 987654, "x", "", ""); !errors.Is(err, casestore.ErrNotFound) {
+		t.Errorf("missing id: %v, want ErrNotFound", err)
+	}
+	second = upd
+
 	if err := ta.RemoveSource(ctx, first.ID); err != nil {
 		t.Fatal(err)
 	}

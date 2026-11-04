@@ -71,13 +71,13 @@ export const CREATE_TEXT = {
   filesCaption: 'The result for each file',
   colFile: 'File',
   colKind: 'Type',
-  colRows: 'Rows read',
-  colSkipped: 'Skipped',
   colResult: 'Result',
-  noCount: '–',
-  statusRead: 'Read',
-  statusNothing: 'Nothing new',
-  statusNot: 'Not read',
+  colWhy: 'Why',
+  statusRead: 'Used',
+  statusPartly: 'Partly used',
+  statusNothing: 'Rejected',
+  statusNot: 'Rejected',
+  removeRejected: 'Remove rejected files',
   statusReading: 'Reading',
   statusWaiting: 'Waiting',
   readyStay: 'Your case is ready. Here is what was read from each file.',
@@ -157,16 +157,13 @@ export const tryAgainLabel = (name: string): string => 'Try ' + name + ' again';
 export const leaveOutLabel = (name: string): string => 'Leave ' + name + ' out';
 
 /** The word in the result column's status badge, so the result is never told by colour alone. */
-export function fileStatusText(row: { status: string; outcome: { kind: string } | null }): string {
-  if (row.outcome?.kind === 'added') return CREATE_TEXT.statusRead;
+export function fileStatusText(row: { status: string; outcome: { kind: string; skipped?: number } | null }): string {
+  if (row.outcome?.kind === 'added') return row.outcome.skipped ? CREATE_TEXT.statusPartly : CREATE_TEXT.statusRead;
   if (row.outcome?.kind === 'duplicate') return CREATE_TEXT.statusNothing;
   if (row.status === 'running') return CREATE_TEXT.statusReading;
   if (row.status === 'failed' || row.status === 'skipped') return CREATE_TEXT.statusNot;
   return CREATE_TEXT.statusWaiting;
 }
-
-/** The count in a table cell: a number for a file that was read, a dash otherwise. */
-export const countCell = (value: number | undefined | null): string => (typeof value === 'number' ? new Intl.NumberFormat('en-US').format(value) : CREATE_TEXT.noCount);
 
 /** One line for something that did not go through, naming the source. */
 export function failureText(failure: Failure, outcomeText?: string): string {
@@ -219,7 +216,7 @@ export const wizardCreateCopyEntries = (): LintEntry[] => [
   { id: 'wizard.create.sample.result.stay', text: resultText(2, 2, 0, true) },
   { id: 'wizard.create.sample.try', text: tryAgainLabel('httperr1.log') },
   { id: 'wizard.create.sample.leave', text: leaveOutLabel('httperr1.log') },
-  { id: 'wizard.create.sample.count', text: countCell(41200) },
+  { id: 'wizard.create.sample.status.partly', text: fileStatusText({ status: 'done', outcome: { kind: 'added', skipped: 3 } }) },
   { id: 'wizard.create.sample.status.read', text: fileStatusText({ status: 'done', outcome: { kind: 'added' } }) },
   { id: 'wizard.create.sample.status.dup', text: fileStatusText({ status: 'done', outcome: { kind: 'duplicate' } }) },
   { id: 'wizard.create.sample.status.not', text: fileStatusText({ status: 'failed', outcome: null }) },

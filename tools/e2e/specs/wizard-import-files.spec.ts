@@ -17,8 +17,8 @@ async function openPanel(page: Page, title: string) {
   await page.getByLabel('Case name').fill(title);
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
-  await page.getByRole('button', { name: 'Import files', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Import files', level: 5 })).toBeVisible();
+  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toBeVisible();
 }
 
 const row = (page: Page, name: string) => page.getByRole('row').filter({ has: page.getByText(name, { exact: true }) });
@@ -26,8 +26,9 @@ const row = (page: Page, name: string) => page.getByRole('row').filter({ has: pa
 test('FILES-01: two IIS files and one unknown file show their kinds, the guide is there, and the files are held for the last step', async ({ page }) => {
   await openPanel(page, 'QA Import Files');
 
-  // The guide is part of the panel and open.
-  await expect(page.getByText('Before you add IIS logs: what has to be on')).toBeVisible();
+  // The IIS guide is part of the panel (one guide, not two).
+  await expect(page.getByText('Guide: IIS time-taken')).toBeVisible();
+  await expect(page.getByText('Before you add IIS logs: what has to be on')).toHaveCount(0);
   await expect(page.getByText('time-taken').first()).toBeVisible();
 
   await page.getByLabel('Choose files to import').setInputFiles([W3C, HTTPERR, NOTES]);
@@ -61,16 +62,19 @@ test('FILES-01: two IIS files and one unknown file show their kinds, the guide i
   await expect(page.getByText('Choose a file for each file source')).toHaveCount(0);
 });
 
-test('FILES-02: a kind can be changed, a compressed file is refused, and Clear empties the list', async ({ page }) => {
+test('FILES-02: a kind can be changed, a zip that is not a zip is left out with a note, and Clear empties the list', async ({ page }) => {
   await openPanel(page, 'QA Import Files Change');
   await page.getByLabel('Choose files to import').setInputFiles([
     { name: 'notes.txt', mimeType: 'text/plain', buffer: readFileSync(NOTES) },
     { name: 'logs-october.zip', mimeType: 'application/zip', buffer: Buffer.from('PK') },
     { name: 'u_ex261021.log', mimeType: 'text/plain', buffer: Buffer.alloc(0) }
   ]);
-  await expect(row(page, 'logs-october.zip')).toContainText('Compressed files are refused. Extract it first.');
+  // A real zip is opened in the page; this one is not, so it is left out and the note says so.
+  await expect(page.getByRole('status').filter({ hasText: 'logs-october.zip: This does not look like a zip file, so it was left out.' })).toBeVisible();
+  await expect(row(page, 'logs-october.zip')).toHaveCount(0);
   await expect(row(page, 'u_ex261021.log')).toContainText('This file is empty, so it is left out.');
-  await expect(page.getByRole('button', { name: 'Add files' })).toBeDisabled();
+  // The wizard's own Add files button (the card's button of the same name opens this panel, so the primary one is picked).
+  await expect(page.getByRole('button', { name: 'Add files', exact: true }).and(page.locator('.primary-button'))).toBeDisabled();
 
   // Choosing a kind by hand puts the unknown file back in.
   await row(page, 'notes.txt').getByRole('combobox').selectOption('app-log');
@@ -231,13 +235,12 @@ test('FILES-07: Create waits for a computer, and the computer named on the last 
   await expect(page.getByRole('button', { name: 'Create case' })).toBeEnabled();
   await page.getByRole('button', { name: 'Create case' }).click();
 
-  // The result table: file, type, rows read, rows skipped, and the result in words.
+  // The result table: file, type, the result (Used, Partly used or Rejected) and why.
   const table = page.getByRole('table', { name: /result for each file/i });
   await expect(table).toBeVisible();
-  for (const head of ['File', 'Type', 'Rows read', 'Skipped', 'Result']) await expect(table.getByRole('columnheader', { name: head })).toBeVisible();
+  for (const head of ['File', 'Type', 'Result', 'Why']) await expect(table.getByRole('columnheader', { name: head })).toBeVisible();
   const line = table.getByRole('row').filter({ hasText: 'httperr1.log' });
-  await expect(line).toContainText('Read');
-  await expect(line.getByRole('cell').nth(1)).toHaveText(/^\d[\d,]*$/);
+  await expect(line).toContainText('Used');
   await expect.poll(async () => ((await api('GET', '/api/cases')).json.cases as Array<{ title: string }>).some((c) => c.title === 'QA Files Host Sent'), { timeout: 15000 }).toBe(true);
   const made = (await api('GET', '/api/cases')).json.cases.find((c: { title: string }) => c.title === 'QA Files Host Sent');
   const recorded = JSON.stringify((await api('GET', `/api/cases/${made.id}/imports`)).json);
@@ -258,8 +261,9 @@ test('FILES-08: a file that was not read tells why and can be tried again, and t
   const table = page.getByRole('table', { name: /result for each file/i });
   const ok = table.getByRole('row').filter({ hasText: 'httperr1.log' });
   const bad = table.getByRole('row').filter({ hasText: 'u_ex261020.log' });
-  await expect(ok).toContainText('Read');
-  await expect(bad).toContainText('Not read');
+  await expect(ok).toContainText('Used');
+  await expect(bad).toContainText('Rejected');
+  await expect(page.getByRole('button', { name: 'Remove rejected files' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Try u_ex261020.log again' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Leave u_ex261020.log out' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Try the failed files again' })).toBeVisible();
@@ -269,8 +273,8 @@ test('FILES-08: a file that was not read tells why and can be tried again, and t
   // The person adds the missing computer (the list belongs to the server), then tries that file again.
   expect((await putHosts(api, ['WEB-H', 'WEB-A'])).status).toBe(200);
   await page.getByRole('button', { name: 'Try u_ex261020.log again' }).click();
-  await expect(bad).toContainText('Read');
-  await expect(bad).not.toContainText('Not read');
+  await expect(bad).toContainText('Used');
+  await expect(bad).not.toContainText('Rejected');
   await expect(page.getByRole('button', { name: 'Try the failed files again' })).toHaveCount(0);
 
   // The case has one import for each file, not two for the one that was tried again.
@@ -291,11 +295,11 @@ test('FILES-09: a file that was not read can be left out, and Add more files ope
   await page.getByRole('button', { name: 'Create case' }).click();
 
   const table = page.getByRole('table', { name: /result for each file/i });
-  await expect(table.getByRole('row').filter({ hasText: 'u_ex261020.log' })).toContainText('Not read');
+  await expect(table.getByRole('row').filter({ hasText: 'u_ex261020.log' })).toContainText('Rejected');
   await page.getByRole('button', { name: 'Leave u_ex261020.log out' }).click();
   await expect(page.getByText('The file was left out. The case keeps what it already has.')).toBeVisible();
   await expect(table.getByRole('row').filter({ hasText: 'u_ex261020.log' })).toHaveCount(0);
-  await expect(table.getByRole('row').filter({ hasText: 'httperr1.log' })).toContainText('Read');
+  await expect(table.getByRole('row').filter({ hasText: 'httperr1.log' })).toContainText('Used');
   await expect(page.getByRole('button', { name: 'Try the failed files again' })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Add more files' }).click();
@@ -316,7 +320,7 @@ test('FILES-10: a dropped folder is walked, nested folders included, and every f
       createReader() { let at = 0; return { readEntries(ok: (e: any[]) => void) { const part = kids.slice(at, at + 1); at += 1; ok(part); } }; }
     });
     const tree = dirEntry('logs', [fileEntry('notes.txt', 'hello'), dirEntry('W3SVC1', [fileEntry('u_ex261020.log', w3c)]), dirEntry('HTTPERR', [fileEntry('httperr1.log', httperr)])]);
-    const target = document.querySelector('.drop') as HTMLElement;
+    const target = document.querySelector('.files') as HTMLElement;
     const event = new Event('drop', { bubbles: true, cancelable: true });
     Object.defineProperty(event, 'dataTransfer', { value: { items: [{ kind: 'file', webkitGetAsEntry: () => tree }], files: [] } });
     target.dispatchEvent(event);

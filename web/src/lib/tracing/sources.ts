@@ -39,7 +39,9 @@ export const SOURCES_TEXT = {
   kindAudit: 'API audit',
   kindSql: 'SQL',
   kindIis: 'IIS',
-  kindFile: 'File'
+  kindFile: 'File',
+  capNote: 'At most 50 sources can be traced at once. Switch one off first.',
+  newNotOn: 'The new file’s source was not switched on. 50 sources are already on.'
 } as const;
 
 const KIND_WORD: Record<SourceKind, string> = {
@@ -80,14 +82,42 @@ export function selectionOf(on: string[], chips: SourceChip[]): SourceSelection 
 /** The longest explicit sourceIds list the server accepts; a longer one is refused with a 400. */
 export const MAX_EXPLICIT_SOURCES = 50;
 
-/** Flips one chip. Works from the chips that are listed, so "all" minus one becomes a list of the rest. A flip whose list reaches the
- * server's cap changes nothing: the request would be refused, so the chip stays as it is. */
-export function toggleSource(selection: SourceSelection, chips: SourceChip[], id: string): SourceSelection {
-  if (!chips.some((chip) => chip.id === id)) return selection;
+/** The result of pressing a chip: the selection that follows, and whether the press was refused because the list would pass the cap. */
+export function toggleOutcome(selection: SourceSelection, chips: SourceChip[], id: string): { selection: SourceSelection; refused: boolean } {
+  if (!chips.some((chip) => chip.id === id)) return { selection, refused: false };
   const on = chips.filter((chip) => isChipOn(selection, chip.id)).map((chip) => chip.id);
   const next = selectionOf(on.includes(id) ? on.filter((item) => item !== id) : [...on, id], chips);
-  if (next.mode === 'some' && next.ids.length > MAX_EXPLICIT_SOURCES) return selection;
-  return next;
+  if (next.mode === 'some' && next.ids.length > MAX_EXPLICIT_SOURCES) return { selection, refused: true };
+  return { selection: next, refused: false };
+}
+
+/** Flips one chip. Works from the chips that are listed, so "all" minus one becomes a list of the rest. A flip whose list reaches the
+ * server's cap changes nothing: the request would be refused, so the chip stays as it is (toggleOutcome says so, for the note). */
+export const toggleSource = (selection: SourceSelection, chips: SourceChip[], id: string): SourceSelection => toggleOutcome(selection, chips, id).selection;
+
+/**
+ * The ids of the file sources a case lists by default, as the server forms them: one `cs_<tag>` for every tag that is not a saved audit
+ * database, then one `imp_<import>` for every kept import no tag points at. Used to find the sources a file added meanwhile brought.
+ */
+export function fileSourceIds(tags: ReadonlyArray<{ id: number; kind: string; importId: number }>, imports: ReadonlyArray<{ id: number; status: string }>): string[] {
+  const own = tags.filter((tag) => tag.kind !== 'mongo-database');
+  const linked = new Set(own.map((tag) => tag.importId).filter((id) => id > 0));
+  return [
+    ...own.map((tag) => 'cs_' + tag.id),
+    ...imports.filter((rec) => (rec.status === 'ok' || rec.status === '') && !linked.has(rec.id)).sort((a, b) => a.id - b.id).map((rec) => 'imp_' + rec.id)
+  ];
+}
+
+/**
+ * After files were added: a hand-picked list ("some") also switches on the new sources, so the file just added is traced. "All" already
+ * includes them and "none" was the person's choice, so both stay. If the list would pass the cap nothing is added and `refused` is set.
+ */
+export function switchOnNew(selection: SourceSelection, fresh: readonly string[]): { selection: SourceSelection; refused: boolean } {
+  if (selection.mode !== 'some') return { selection, refused: false };
+  const add = fresh.filter((id) => !selection.ids.includes(id));
+  if (add.length === 0) return { selection, refused: false };
+  if (selection.ids.length + add.length > MAX_EXPLICIT_SOURCES) return { selection, refused: true };
+  return { selection: { mode: 'some', ids: [...selection.ids, ...add] }, refused: false };
 }
 
 /** What the request carries: `nothing` for no sources (no request at all), else the ids ([] = every source). */

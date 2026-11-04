@@ -668,3 +668,97 @@ func TestConnectionTestResponseIsUnchangedByTheRecord(t *testing.T) {
 		t.Fatalf("repository called %d times", repo.calls)
 	}
 }
+
+func TestPutSourceTagEditsOnlyTheThreeLabels(t *testing.T) {
+	forEachTagStore(t, func(t *testing.T, e *caseEnv, id string, _ string) {
+		add := e.json(http.MethodPost, "/api/cases/"+id+"/sources", `{"kind":"iis","label":"web-a logs","env":"Staging","portal":"Admin","api":"Orders"}`)
+		if add.Code != http.StatusCreated {
+			t.Fatalf("post source = %d %s", add.Code, add.Body)
+		}
+		var tag sourceTagDTO
+		decodeBody(t, add, &tag)
+		path := "/api/cases/" + id + "/sources/" + strconv.FormatInt(tag.ID, 10)
+
+		res := e.json(http.MethodPut, path, `{"env":" Production ","portal":"","api":"Billing"}`)
+		if res.Code != http.StatusOK {
+			t.Fatalf("put = %d %s", res.Code, res.Body)
+		}
+		var got sourceTagDTO
+		decodeBody(t, res, &got)
+		if got.ID != tag.ID || got.Kind != "iis" || got.Label != "web-a logs" || got.Env != "Production" || got.Portal != "" || got.API != "Billing" {
+			t.Fatalf("put answered %+v", got)
+		}
+		if list := sourcesOf(t, e, "/api/cases/"+id+"/sources"); len(list) != 1 || list[0] != got {
+			t.Fatalf("sources = %+v, want [%+v]", list, got)
+		}
+
+		if res := e.json(http.MethodPut, path+"9", `{"env":"x"}`); res.Code != http.StatusNotFound {
+			t.Fatalf("missing id = %d %s", res.Code, res.Body)
+		}
+		if res := e.json(http.MethodPut, "/api/cases/"+id+"/sources/abc", `{"env":"x"}`); res.Code != http.StatusNotFound {
+			t.Fatalf("non-numeric id = %d", res.Code)
+		}
+		if res := e.json(http.MethodPut, path, `{"env":"x","kind":"other"}`); res.Code != http.StatusBadRequest {
+			t.Fatalf("unknown field = %d %s", res.Code, res.Body)
+		}
+		long := strings.Repeat("a", 500)
+		bad := e.json(http.MethodPut, path, `{"env":"`+long+`"}`)
+		if bad.Code != http.StatusUnprocessableEntity || strings.Contains(bad.Body.String(), long) {
+			t.Fatalf("too long = %d %s", bad.Code, bad.Body)
+		}
+		if after := sourcesOf(t, e, "/api/cases/"+id+"/sources"); len(after) != 1 || after[0] != got {
+			t.Fatalf("a refused edit changed the tag: %+v", after)
+		}
+	})
+}
+
+func TestPutMongoSourceTagCannotDuplicateAnIdentity(t *testing.T) {
+	for name, mk := range tagStores(t) {
+		t.Run(name, func(t *testing.T) {
+			store, _ := mk()
+			e, _, _ := mongoEnv(t, store, "auditdb", "appdata")
+			id := e.newCase("mongo")
+			testMongo(t, e)
+			put := func(tagID int64, env string) *httptest.ResponseRecorder {
+				return e.json(http.MethodPut, "/api/cases/"+id+"/sources/"+strconv.FormatInt(tagID, 10), `{"env":"`+env+`"}`)
+			}
+			add := func(db, env string) sourceTagDTO {
+				res := classify(e, id, db, "audit", env)
+				if res.Code != http.StatusCreated {
+					t.Fatalf("classify %s/%s = %d %s", db, env, res.Code, res.Body)
+				}
+				var tag sourceTagDTO
+				decodeBody(t, res, &tag)
+				return tag
+			}
+			prod, staging, other := add("auditdb", "Production"), add("auditdb", "Staging"), add("appdata", "Production")
+
+			for _, env := range []string{"Production", " production "} {
+				res := put(staging.ID, env)
+				if res.Code != http.StatusConflict || failureOf(t, res).Reason != "duplicate-source" {
+					t.Fatalf("put env %q onto an existing identity = %d %s", env, res.Code, res.Body)
+				}
+			}
+			after := sourcesOf(t, e, "/api/cases/"+id+"/sources")
+			if len(after) != 3 {
+				t.Fatalf("sources = %+v", after)
+			}
+			for _, s := range after {
+				if s.ID == staging.ID && s.Env != "Staging" {
+					t.Fatalf("a refused edit changed the tag: %+v", s)
+				}
+			}
+			// Saving a tag with its own environment, another database's
+			// environment, or a free environment is fine.
+			if res := put(staging.ID, "Staging"); res.Code != http.StatusOK {
+				t.Fatalf("put own env = %d %s", res.Code, res.Body)
+			}
+			if res := put(other.ID, "Staging"); res.Code != http.StatusOK {
+				t.Fatalf("put on another database = %d %s", res.Code, res.Body)
+			}
+			if res := put(prod.ID, "QA"); res.Code != http.StatusOK {
+				t.Fatalf("put free env = %d %s", res.Code, res.Body)
+			}
+		})
+	}
+}

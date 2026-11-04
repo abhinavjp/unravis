@@ -353,3 +353,169 @@ The one failure, timeline-parity TLPAR-06 (screenshots, light and dark, 1280 and
 Screenshots (light theme, 1280 and 375 px) of the wizard Import files step (empty and with staged files), the case drawer card grid, the Sources list and the Investigation Timeline, plus renders of wireframe screens 37, 38 and 112: .dev/gate3-shots. Checked in the browser: staged files survive switching add-source forms, every kind select returns to "Don't use this file", Remove and Clear empty the list.
 
 Note: `build.ps1` clears everything in cmd/unravis-setup/payload except README.txt (before and after the installer build), which deletes the tracked payload/.gitignore; that is why it shows as deleted. Restore it (git checkout) or make the clear skip it before committing.
+
+## log4net importer
+
+Agent C. A generic importer for application logs written as log4net text blocks: each entry is a few labelled lines (Logger name, Type, Server Time, UTC Time, Application URL, User IP), then the message and, for an error, the exception text. Importer kind: `log4net-blocks`. The single-line default layouts stay with `log4net-text`; the new importer does not claim them. The label spellings were taken from a one-line description, not from a real file, so the importer accepts common variants and anything else is a limit (see below).
+
+What was built:
+- internal/importer/log4net/blocks.go: Detect scores 90 / 70 / 0 so it never takes a file another kind owns. Time: UTC Time first; Server Time only when there is no readable UTC Time, with the host zone (known or unknown zone handling the same as log4net-text). Level, logger, exception types are read; message, exception text, URL and user IP are used to delimit the block but never stored (the app-log privacy rule). Bounded memory and a 64 KiB line limit; a block with no readable time is one rejected row, so Partly used / Rejected follow the usual 5 percent rule.
+- Wiring: importer/all, supplied keys, collect, discover (content detection), evidence export names, resource rules (rc345 app-log sources), server discover-locate, timeline names.
+- Web: importCopy labels and help, cases.ts 2 GiB cap, fileKindsCopy (app-log text, app card guide), fileKinds.ts suggests an app log for log.txt, log.txt.N, app-log.txt and the like.
+- Tests: internal/importer/log4net/blocks_test.go (conformance harness, fixtures, time shapes, DST, limits, privacy), all/log4net_detect_test.go (auto-detect picks it and nothing else; the default layout still goes to log4net-text; prose is not claimed), prober and golden-stall cases for the new kind, discover content test, web/tests/log4net.kinds.test.cjs (7 tests), e2e spec L4N-01..04.
+- E2E: tools/e2e/specs/log4net-import.spec.ts with fixture tools/e2e/fixtures/files/app-log4net.txt (synthetic, 40 blocks, one with an unreadable time so the file is Partly used, a Redis timeout warning and a SQL timeout error block). L4N-01 case drawer, chosen as app log, Partly used, imports list names log4net-blocks and holds no URL or IP. L4N-02 a file named log.txt is suggested as app-log, a prose file chosen as app log is Rejected. L4N-03 create wizard Application logs card, case made, file read as log4net-blocks. L4N-04 Investigation Timeline lists the chip "File - log4net-blocks" under Sources traced.
+
+Fixture lesson: one bad block in eight is 12.5 percent and the whole file is refused ("Too many rows were rejected"); the limit is 5 percent, so a Partly used fixture needs at least 20 blocks per bad one. The first fixture version also had a generator bug (minute 60 and over), which the importer correctly rejected.
+
+Results (all on the current tree, Windows, PowerShell 5.1, GOTOOLCHAIN=local, no race detector available):
+| Check | Result |
+|---|---|
+| go build ./..., go vet ./internal/... ./cmd/..., GOOS=linux go vet | clean, cross-vet printed nothing |
+| go test -p 2 -timeout 25m ./internal/... | 56 package lines ok, none failed (internal/server also passed on this run) |
+| log4net package | 86 top-level tests pass |
+| web npm run check | 0 errors, 0 warnings |
+| web node --test tests/*.test.cjs | 2562 of 2562 pass |
+| web build then distChunks.test.cjs | 2 of 2 pass |
+| Playwright log4net-import | 4 of 4 pass |
+| Playwright imports, sources-list, timeline-sources, import-drawer, import-grid | 47 of 47 pass |
+| Playwright wizard-import-files + wizard-cards | 13 pass, 6 fail (see below) |
+
+The 6 wizard failures (WCARD-01, FILES-02, FILES-07, FILES-08, FILES-09, FILES-10) are not from this work: they fail on assertions about the wizard Import files markup (compressed-file row text, the "Rows read" results table, dropped-folder drop target). The same 6 failed on an exe rebuilt from the current tree, and the files that own that markup (ImportFilesPanel.svelte, CreateProgress.svelte, SourceGallery.svelte, FileGuides.svelte) are in agent A's uncommitted work. The log4net edits touch none of them. I did not re-run those 6 against a clean checkout, so this is a judgement from the diff, not a bisect. Known flakes were not seen.
+
+Limitations:
+- Label spellings are guessed. A file that uses other labels is not recognised and falls to the other importers or is Rejected.
+- URL and user IP are recognised only to delimit blocks; they are not stored or shown.
+- There is no application-log lane on the Investigation Timeline (lanes are audit, SQL and IIS). The file shows as a Sources traced chip; its events feed timeline.Build overlap, resource rules and evidence export.
+- A text log has no machine name: the server refuses the file without a computer (ErrUnknownHost), the same as log4net-text, although the web catalog calls the computer "optional" for app logs. The e2e picks web-a. Not changed here.
+- The log.txt name rule in fileKinds.ts is a convenience guess; the server still reads the content.
+- go test -fuzz on the new importer stalls at 0 execs/sec in this environment, as it does for the existing importers, so it was not used as evidence.
+- Screenshots: .dev/l4n-shots (drawer before/after, names, wizard card, timeline sources). Exe: .dev/run/l4n/audit-explorer.exe.
+
+## Timeline gaps closed (2026-11-04)
+
+Owner order: clear the remaining Investigation Timeline gaps against prototype/tracing-paper-PROTOTYPE.html, tested from the UI. The 6-month cap, its "up to 6 months" wording and the chunked 24h reads are unchanged.
+
+| Gap | What changed |
+|---|---|
+| 1 One card | Quick range, both windows, the UTC readout, the Sources traced row, Add evidence and Refresh timeline now sit in one card (section.trctl). The 375px Sources traced indentation is fixed (grids use minmax(0,1fr); the UTC echo wraps under 720px). |
+| 2 Readout and 12-hour boxes | A UTC readout sits under the pickers. Time boxes are three selects (hour 1-12, minute 00-59, AM/PM) over the same 24-hour value; typed 24-hour and 12-hour text is still read. Choosing "--" for hour or minute clears the whole time. |
+| 3 Bar size | "Each bar = 1 minute" line from the drawn grid; longer periods say that they group more time into each bar. |
+| 4 Suspects rail | Client-side (web/src/lib/tracing/suspects.ts, SuspectsRail.svelte), no second request. Beside the chart at 1280 (sticky 380px), below it at 375. Works for the live API-audit lane and the case-stored SQL and IIS lanes. Pinned Q2 plus top 5, See all, ruled-out list, Show on chart (focuses the bucket selector, shows the tooltip), honest empty states. Limits: counts only, first versus second half, so nothing is red and most cards are grey. |
+| 5 Look here typed path | Not built, on purpose. It is the wizard Import files control (another agent's panel), not the Timeline, and the real app never reads a typed server-side path. |
+| 6 TLPAR-06 | Settle fixed with expect.poll after two animation frames. AppHeader needed no change: it does not overflow at 375px. |
+| 7 Other differences | Compared at 1280 and 375, light and dark (.dev/tlgap-shots/proto-* against timeline-*). |
+
+Remaining differences from the prototype (not closed): Start tracing, Select all, Clear all and "Tracing all N sources" stay in the card (the prototype has only Add evidence and Refresh timeline); page heading chrome differs (All cases / Back to the case against Case home); the lower prototype sections (Overall figures tiles, What Unravis sees, Where does the evidence point, comparison rows, 4xx/5xx/HTTP.sys panels, P95 axis) are not on the Timeline screen and need server data; the chart is not inside a .card.chartcard and has no loading-reveal animation; the rail has no red tier because the timeline holds no call times.
+
+Spec fixes caused by the new layout: TRACE-01 now expects six regions (suspects last); TRACE-07 scrolls the chart into view before the mouse drag.
+
+Results:
+| Check | Result |
+|---|---|
+| web npm run check | 0 errors, 0 warnings |
+| web node --test tests/*.test.cjs | 2562 of 2562 pass (new: timelineE.suspects 14, timelineE.controls 6) |
+| web build then distChunks.test.cjs | 2 of 2 pass |
+| go build, go vet, GOOS=linux go vet | clean, cross-vet printed nothing |
+| go test ./internal/server -p 2 -timeout 25m | ok |
+| Playwright timeline-gaps (TLGAP-01..09) | 9 of 9 pass |
+| Playwright investigate, timeline-parity, timeline-sources, tracing-screen, tracing-handoff, tracing-perf, large-window, partial-notices, bb-change, window-picker | first pass: 104 pass, 2 skipped, 3 fail (TRACE-01, TRACE-07, PICK-08); after the fixes tracing-screen, window-picker, timeline-gaps and bb-change: 51 of 51 pass |
+
+Exe: .dev/run/tlgap/audit-explorer.exe. Screenshots: .dev/tlgap-shots.
+
+## Source-side gaps closed
+
+Agent A, branch feat/investigation-timeline, nothing committed. Exe used for every check: .dev/run/srcgap/unravis.exe (demo build). Pictures: .dev/srcgap-shots.
+
+| Gap | What changed | Covered by |
+|---|---|---|
+| 1 Wizard files step (screens 37 and 38) | One card per file type with what it gives, where it sits and what it takes, a Choose files route, staged files, per-file result | wizard-cards, wizard-import-files, wizard-two-iis |
+| 2 Case drawer Add data grid (screen 112) | Five cards, Files card says how many files the case holds, Another day card is on when a source can be read by day | import-grid (GRID-06 at 375 px, GRID-07 the enabled Another day route) |
+| 3 Sources list | Document count and age per audit database (GET /api/sources/{id}/stats), inline Edit labels (PUT /api/cases/{id}/sources/{sourceId}), computer time zone edit for files that write local time | source-gaps SRCGAP-01..03, sources-list, hubfixE.sourcelist test, Go tests in audit, store, server, casestore |
+| 4 Timeline after the drawer | A hand-picked list also switches on the file just added when the drawer closes. A switch past 50 is refused with a short note | source-gaps SRCGAP-04 and 05 |
+| 5 Sideways scroll at 375 px | Wizard gallery step and the page behind the drawer do not scroll sideways; WCARD-05 and GRID-06 now assert it | wizard-cards, import-grid |
+| 6 Screens and docs | screens.json: p1-create-files, p7-import-drawer, p7-sources-list, with pictures and text in docs/user/cases.md and sources.md. PENDING in docs-check is unchanged | docs-check: 13 pages, 94 screens |
+
+Results:
+| Check | Result |
+|---|---|
+| web npm run check | 0 errors, 0 warnings |
+| web node --test tests/*.test.cjs | 2562 of 2562 pass |
+| web build then distChunks.test.cjs | 2 of 2 pass |
+| go build, go vet, GOOS=linux go vet | clean, cross-vet printed nothing |
+| go test -p 2 audit, store, keeper, casestore, casestore/sqlite, server | all ok; TestA1_FolderRulesGiveM8AndChangeNothing fails only with the long temp path of the dev PC (path length 240) and passes with a short TEMP |
+| Playwright sources-steps, sources-list, timeline-sources, wizard-cards, wizard-import-files, wizard-two-iis, import-grid, source-gaps | 71 of 72 pass on the first combined run; the one failure (GUIDE-21, now expects 1 found here) was fixed and sources-steps re-ran 19 of 19 |
+
+Limits: Manage sources (screen 51) not built, the owner said Not now. A file whose time rule was fixed at import (no rule or no computer) cannot have its zone edited in place; the row offers Add files. The Import files heading is kept where the wireframe says Add files. SRCGAP-03 and SRCGAP-05 answer part of the data in the page because the demo has no MongoDB and few sources. The new pictures were made on a developer PC, not the reference renderer.
+
+## Leftover gaps closed
+
+Order: clear every gap against the wireframes and the prototype, test from the real UI, cover with e2e. Wireframe wording wins, except that the owner's 6-month cap wording stays and Manage sources is not built.
+
+| Item | What changed |
+|---|---|
+| Failing tests | WCARD-01, FILES-02, FILES-07..10 all pass on a fresh exe (the earlier failures came from a stale dist at build time). WCARD-03 and FILES-02 now scope the disabled Add files check to the wizard's primary button, because the card button has the same name. TestA1_FolderRulesGiveM8AndChangeNothing builds its folder to fit a long TEMP path and passes with the default long TEMP |
+| Add files | Heading and wizard label read Add files (fileKindsCopy, wizardSourcesCopy, AddDataPanel eyebrow removed). Specs updated |
+| Wizard card and guide order | Per wireframe 37; app-log guide step 1 asks for the folder the app writes logs to |
+| Drawer (screen 112) | Add data grid shows no gate notice and no case list; a Use another case link opens the list. The files view keeps the list |
+| Files card, Blackbox, Another day | None yet / N found here, per wireframe |
+| Sources list rows | Quiet sticker and quiet button styling in sources.css |
+| App-log computer | Every app-log importer (log4net, serilog, nlog, mel) refuses a file with no computer, so fileKinds.ts marks app-log as host required; node tests cover needsHost, offersHost and hostProblem |
+| Timeline | Back link reads Case home; Start tracing, Select all, Clear all and Tracing all N sources sit in the Sources traced box (Select all and Clear all inside the disclosure); Refresh timeline is secondary; chart sits in a card with a short reveal |
+| Look here typed path | Not built. Wireframe 37 says Drop files or pick a folder; the typed path is prototype only and the server has no folder-scan endpoint |
+
+Results:
+| Check | Result |
+|---|---|
+| web npm run check | 0 errors, 0 warnings |
+| web node --test tests/*.test.cjs | 2562 of 2562 pass |
+| web build then distChunks.test.cjs | 2 of 2 pass |
+| go build, go vet, GOOS=linux go vet | clean |
+| go test -p 2 internal/server and internal/importer/... | all ok |
+| Playwright, full suite on the fresh exe | 438 passed, 2 skipped (PERF), 0 failed |
+
+## Gate 4 2026-11-05
+
+Dirty working tree on feat/investigation-timeline (HEAD d34cc29), nothing staged, committed or fixed by the verifier. Fresh `go build` demo exe at .dev/run/gate4/audit-explorer.exe (built after the last source edit), web built first. Commit set: 122 paths in .dev/gate4-commit-paths.txt, checked on a throwaway index (5418 insertions, 318 deletions, no line-ending churn, no secrets or forbidden content).
+
+| Stage | Result |
+|---|---|
+| Go build, vet, Linux cross-vet | clean, cross-vet printed nothing |
+| go test -p 2 -timeout 25m ./... | 70 packages ok, 4 without test files, 0 failed |
+| web npm run check | 0 errors, 0 warnings (447 files) |
+| web node --test tests/*.test.cjs | 2562 of 2562 pass |
+| web build then distChunks.test.cjs | 2 of 2 pass |
+| Playwright full suite on the gate4 exe | 440 tests: 438 passed, 2 skipped (PERF-01, PERF-02 need a generated dataset), 0 failed, 0 flaky, 7.5 min |
+| New tools/e2e/specs/gate4-break.spec.ts | 3 tests: G4-01 and G4-03 expected failures (test.fail), G4-02 test.fixme; exit 0 |
+
+Flakes: none; no test needed a re-run. Failures: none.
+
+Break-it pass on the gate4 exe (double clicks, Escape in every dialog, rapid source toggles, empty, garbage, huge and duplicate files, 12-hour picker edge input, Suspects rail by keyboard, back, forward and reload, 375 px sideways scroll on every screen, light and dark): no blocker. Every chip, All and None, calendar day and file kind select can be put back; a double click on a chip returns it to its start state; a 186-day window runs, a 187-day window is refused with the owner wording and keeps the old chart; hour or minute `--` keeps the picker open; a reversed or zero-length window is refused; across-midnight and one-minute windows are accepted; a 30 MB IIS log is recognised in about 3 s; a log4net file with no computer cannot be created (wizard Review keeps Create case off, drawer keeps Import off). No sideways scroll at 375 px on home, case home, wizard (all steps), drawer, Timeline, picker, Suspects See all and Add evidence. Minor defects, each with a test in gate4-break.spec.ts: G4-01 the same file chosen twice is listed twice and becomes two sources (the server then refuses the second as "Nothing new to add", so nothing is double counted); G4-02 a double click on Remove drops two files (judgement call, fixme); G4-03 a second Escape does not answer the drawer's Keep editing / Leave question.
+
+Wireframe comparison (screens 37, 38, 112 and the prototype Timeline) at 1280 and 375 px, light and dark: no blocking difference. Remaining visible differences: the Timeline has no overall-figures strip, per-lane KPI chips or "What Unravis sees" panel of the prototype; the file result table shows the reason under the Result pill and ends with Open the timeline / Open the case / Add more files instead of Continue / Choose the files again / Remove rejected files; the Add data drawer is a slide-over, not a tab; the window help reads Up to 6 months by the owner's ruling.
+
+Screenshots (wireframe, prototype and real app, light and dark, 1280 and 375 px, plus the break-it states): .dev/gate4-shots.
+
+## Gate 4 fixes 2026-11-05
+
+Web and e2e only (no Go). Items 1-7 and 9 were written on the remote hub (droid-az-fw-kimi-k3, job 37945), reviewed and applied; the rest was done here. Nothing committed or staged; the build dirties tracked web/dist and cmd/unravis-setup/ui/assets, which stay unstaged.
+
+- Fixed: riseOf dates a rise from the whole series (an early onset reads slot 3, not 6); a failed collection read marks the database size unknown instead of dropping the part; the size lines sit in a Map ("constructor" no longer renders a function); Enter on an hour, minute or AM/PM drop-down no longer applies the window (text boxes still do); the AM/PM box has "--" and choosing it clears the time; SourceEdit focuses the first field on open and returns focus to the Edit button on close or save; the environment input is maxlength 60 (server limit); "Show on chart" also switches the suspect's lane on; connReady has its plural back (held is a count, so it is unchanged); the wizard shows one IIS guide (the card guide); the supported line no longer says to extract a zip (a .zip is opened for you).
+- Gate 4: G4-01 (the same file chosen twice in the wizard is listed once, with a quiet "already in the list" note; matched by name, size and last-modified), G4-02 (a double click on Remove removes one file: clicks with detail above 1 are ignored), G4-03 (a second Escape on the Import drawer's leave question counts as Keep editing). The two test.fail lines are gone and G4-02 is no longer fixme.
+- Plausible items: the bar-size line now says bars group more time whenever a bar holds more than a minute, as the axis caption does (it waited for a window over 24 h). Not changed: the chart focus effect (the grid only changes with a new response, which also clears the focus, so nothing is lost), the "See all (26)" count and the Local-zone metaline wording (tests lock the text and the reading is a wording choice, not a bug).
+- Specs updated for the new behaviour: PICK-10 (Enter on a drop-down leaves the picker open and starts no read; Enter on the end date box applies), WCARD-02 (the auto-detect picker gets a differently named copy, since the same file twice is now listed once), FILES-01 (one IIS guide).
+- Results: `npm run check` 0 errors; `node --test tests/*.test.cjs` 2577 of 2577 (new `gate4fix.test.cjs`, 7 tests); `npm run build` and `distChunks.test.cjs` 2 of 2. Playwright full suite against `.dev/run/fix2/audit-explorer.exe`: 439 passed, 2 skipped, 2 failed on the first run (PICK-10 and WCARD-02, both stale specs, fixed and re-run with the gate4, PICK and WCARD specs: 18 of 18 pass); DOC-02 and KEEP-09 print as failed and are the known-defect specs. No known flake failed.
+
+## Final gate 2026-11-05
+
+Dirty working tree on feat/investigation-timeline (HEAD d34cc29), after the Gate 4 fixes; the verifier fixed no product source. Web built first, then a fresh unstamped `go build ./cmd/audit-explorer` demo exe at .dev/run/final/audit-explorer.exe. Commit set: 127 paths in .dev/final-commit-paths.txt, checked on a throwaway index (6153 insertions, 331 deletions, no line-ending churn, no secrets; the only `password=` literals are obvious fake test fixtures).
+
+| Stage | Result |
+|---|---|
+| web npm run check | 0 errors, 0 warnings (447 files) |
+| web node --test tests/*.test.cjs | 2577 of 2577 pass |
+| web build then distChunks.test.cjs | 2 of 2 pass |
+| Go build ./..., vet ./..., GOOS=linux vet ./... | clean, cross-vet printed nothing |
+| go test -p 2 -timeout 25m ./... | 70 packages ok, 4 without test files, 0 failed |
+| Playwright full suite on the final exe (1 worker) | 443 tests: 441 passed, 2 skipped (PERF-01, PERF-02 need a generated dataset), 0 failed, 0 flaky, 7.9 min |
+
+DOC-02 and KEEP-09 print as failed and are the known-defect specs, counted as passed. No known flake failed; nothing needed a re-run.

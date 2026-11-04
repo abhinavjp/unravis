@@ -468,6 +468,13 @@ func (b *Backend) registerAudit(s *Server) {
 		}
 		return reader.Coverage(ctx, in)
 	}))
+	s.Handle(OpAuditStats, classAudit, auditQueryTimeout, auditRead(b, func(ctx context.Context, r HostedRepo, in audit.StatsInput) (any, error) {
+		reader, ok := r.(audit.SourceStatter)
+		if !ok {
+			return nil, errAuditUnavailable
+		}
+		return reader.Stats(ctx, in)
+	}))
 	s.Handle(OpAuditSlowest, classAudit, auditQueryTimeout, auditRead(b, func(ctx context.Context, r HostedRepo, in audit.PageInput) (any, error) {
 		reader, ok := r.(audit.SlowestReader)
 		if !ok {

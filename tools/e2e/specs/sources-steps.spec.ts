@@ -2,6 +2,7 @@
 // the reads come first, then the days are added to the open case, and the closed case is only looked at.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
+import { createCase } from '../support/api';
 
 const OPEN = 'Checkout slowdown, 17 October';
 const NOTHING = 'Report export timeouts, 18 October';
@@ -86,11 +87,15 @@ test('GUIDE-24a: the case that read nothing says so on Step 7, never that a chec
 test('GUIDE-21: the Add data tab has five cards with their counts and each button leads where it says', async ({ page }) => {
   const panel = await hub(page, OPEN, 'Add data');
   const card = (id: string) => panel.locator('[data-card=' + id + ']');
-  await expect(card('sql')).toContainText('1 saved connection ready');
-  await expect(card('sql')).toContainText('None yet');
-  await expect(card('mongo')).toContainText('1 saved connection ready');
-  await expect(card('mongo')).toContainText('None yet');
-  await expect(card('blackbox')).toContainText('None yet');
+  await expect(card('sql')).toContainText('Saved connection ready');
+  await expect(card('mongo')).toContainText('Saved connection ready');
+  // Only the Files card says None yet; a source with nothing in this case shows no extra line.
+  await expect(card('sql')).not.toContainText('None yet');
+  await expect(card('mongo')).not.toContainText('None yet');
+  await expect(card('blackbox')).not.toContainText('None yet');
+  // The open demo case already holds one file, which the Files card counts; the Files card of a case with none says None yet (GUIDE-21b).
+  await expect(card('files')).toContainText('1 found here');
+  await expect(card('files')).not.toContainText('None yet');
   await expect(card('files')).toBeVisible();
   await expect(card('day')).toContainText('0 of 0 sources can be read by day');
   await expect(card('day').getByRole('button', { name: 'Add another day' })).toBeDisabled();
@@ -126,6 +131,12 @@ test('GUIDE-21a: on a closed case every Add data button is off and the note says
   for (const name of ['Add SQL source', 'Add Mongo source', 'Add a Blackbox', 'Add files', 'Add another day']) {
     await expect(panel.getByRole('button', { name }), name).toBeDisabled();
   }
+});
+
+test('GUIDE-21b: the Files card of a case that holds no file says None yet', async ({ page, api }) => {
+  await createCase(api, 'QA Add Data Empty');
+  const panel = await hub(page, 'QA Add Data Empty', 'Add data');
+  await expect(panel.locator('[data-card=files]')).toContainText('None yet');
 });
 
 test('GUIDE-23a: with no SQL day in the case, Add another day says to read one first', async ({ page }) => {

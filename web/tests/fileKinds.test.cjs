@@ -176,10 +176,12 @@ test('the components exist and keep their hooks', () => {
 test('which kinds need a computer picked: HTTPERR and Query Store need a host, the error log and event log need a host with a time zone', () => {
   assert.deepEqual(kinds.FILE_KIND_IDS.map((id) => [id, kinds.hostNeed(id)]), [
     ['iis-w3c', 'none'], ['iis-httperr', 'host'], ['iis-freb', 'none'], ['sql-xe', 'optional'],
-    ['sql-errorlog', 'host-tz'], ['sql-querystore', 'host'], ['win-events', 'host-tz'], ['app-log', 'optional']
+    ['sql-errorlog', 'host-tz'], ['sql-querystore', 'host'], ['win-events', 'host-tz'], ['app-log', 'host']
   ]);
-  for (const id of ['iis-httperr', 'sql-querystore', 'sql-errorlog', 'win-events']) assert.equal(kinds.needsHost(id), true, id);
-  for (const id of ['iis-w3c', 'iis-freb', 'sql-xe', 'app-log', 'nonsense']) assert.equal(kinds.needsHost(id), false, id);
+  for (const id of ['iis-httperr', 'sql-querystore', 'sql-errorlog', 'win-events', 'app-log']) assert.equal(kinds.needsHost(id), true, id);
+  for (const id of ['iis-w3c', 'iis-freb', 'sql-xe', 'nonsense']) assert.equal(kinds.needsHost(id), false, id);
+  // The server refuses log4net-blocks and log4net-text (and the other app-log importers) without a computer, so the page must not call it optional.
+  assert.equal(kinds.offersHost('app-log'), false);
   assert.equal(kinds.offersHost('sql-xe'), true);
   assert.equal(kinds.offersHost('iis-httperr'), false);
   assert.equal(kinds.hostNeed('nonsense'), 'none');

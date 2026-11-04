@@ -318,8 +318,8 @@ test('HAND-13: a closed case keeps Analysis and opens the timeline as a viewer w
   await page.locator('#home-tracing-open').click();
   await expect(page.getByRole('heading', { level: 2, name: 'Investigation Timeline' })).toBeVisible();
   await expect(page.getByTestId('tp-closed-line')).toHaveText('This case is closed. You can look at the timeline but not change the case.');
-  await expect(page.getByRole('button', { name: 'Back to the case' })).toBeVisible();
-  await page.getByRole('button', { name: 'Back to the case' }).click();
+  await expect(page.getByRole('button', { name: 'Case home', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Case home', exact: true }).click();
   await expect(page.getByRole('heading', { name: /guided/i })).toHaveCount(0);
 });
 

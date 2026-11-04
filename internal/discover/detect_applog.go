@@ -405,9 +405,9 @@ func (r *appRun) log4netSink(n *configparse.Node) {
 			dateRe = tmplRegex(dateTmpl)
 		}
 	}
-	cands := []string{"log4net-text", "log4net-xml"}
+	cands := []string{"log4net-text", "log4net-xml", "log4net-blocks"}
 	if xml {
-		cands = []string{"log4net-xml", "log4net-text"}
+		cands = []string{"log4net-xml", "log4net-text", "log4net-blocks"}
 	}
 	r.addSink(&sink{src: "log4net", dir: dir, res: []*regexp.Regexp{rollingRe(base, dateRe, true)}, label: label, cands: cands})
 }

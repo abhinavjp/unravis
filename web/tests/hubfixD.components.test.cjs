@@ -55,7 +55,7 @@ test('D: the other cards go to existing flows', () => {
 });
 
 test('D: leaving with staged files asks first, through Close, Escape, the scrim and the leaving cards', () => {
-  assert.match(panel, /const requestClose = \(\) => leaveThen\(onClose\);/);
+  assert.match(panel, /const requestClose = \(\) => \{ if \(leaveAsk\) keepEditing\(\); else leaveThen\(onClose\); \};/, 'a second Escape while the question shows keeps editing');
   assert.match(panel, /onClose=\{requestClose\}/);
   assert.match(panel, /if \(heldFiles === 0\) \{ action\(\); return; \}/);
   assert.match(panel, /role="alertdialog" aria-labelledby="leave-head" aria-describedby="leave-text" data-leave/);

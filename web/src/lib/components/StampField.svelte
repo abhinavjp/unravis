@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-import { PICKER_TEXT } from '../copy/pickerCopy';
+  import { PICKER_TEXT } from '../copy/pickerCopy';
+  import TimeBox from './TimeBox.svelte';
   import { readParts, splitStamp, syncParts } from '../tracing/pickerModel';
 
   // One moment in UTC as two text boxes, a date and a time, bound to a `YYYY-MM-DDTHH:mm` string (the shape the screens already check).
@@ -61,20 +62,13 @@ import { PICKER_TEXT } from '../copy/pickerCopy';
     date = splitStamp(value).date;
     badDate = false;
   }
-  function settleTime() {
-    if (!badTime) return;
-    time = splitStamp(value).time;
-    badTime = false;
-  }
 </script>
 
 <span class="stamp">
   <input class="d" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="10" placeholder={PICKER_TEXT.datePlaceholder}
     aria-label={`${label} date`} aria-invalid={invalid || badDate ? true : undefined} aria-describedby={describedAll} disabled={off}
     value={date} oninput={(e) => { date = e.currentTarget.value; read(); }} onblur={settleDate} />
-  <input class="t" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="5" placeholder={PICKER_TEXT.timePlaceholder}
-    aria-label={`${label} time`} aria-invalid={invalid || badTime ? true : undefined} aria-describedby={describedAll} disabled={off}
-    value={time} oninput={(e) => { time = e.currentTarget.value; read(); }} onblur={settleTime} />
+  <TimeBox label={`${label} time`} invalid={invalid || badTime} describedby={describedAll} disabled={off} value={time} onchange={(next) => { time = next; read(); }} />
   <span class="tz">{PICKER_TEXT.zone}</span>
   {#if badDate || badTime}<span class="err" id={problemId} role="alert">{badDate ? PICKER_TEXT.badDate : PICKER_TEXT.badTime}</span>{/if}
 </span>
@@ -83,7 +77,7 @@ import { PICKER_TEXT } from '../copy/pickerCopy';
   .stamp { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; max-width: 100%; }
   input { width: auto; min-width: 0; min-height: 34px; padding: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; font-family: var(--mono); }
   input.d { width: 118px; }
-  input.t { width: 68px; }
+
   input[aria-invalid='true'] { border-color: var(--bad); }
   .tz { color: var(--text-2); font-size: 12px; font-family: var(--mono); }
   .err { flex: 1 1 100%; color: var(--bad); font-size: 12px; }

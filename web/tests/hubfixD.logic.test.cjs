@@ -199,3 +199,13 @@ test('D: the five cards keep the wireframe words', () => {
   assert.deepEqual([t.sqlTitle, t.mongoTitle, t.blackboxTitle, t.filesTitle, t.dayTitle], ['SQL Server', 'MongoDB', 'Blackbox', 'Files', 'Another day']);
   assert.deepEqual([t.addSql, t.addMongo, t.addBlackbox, t.addFiles, t.addDay], ['Add SQL source', 'Add Mongo source', 'Add a Blackbox', 'Add files', 'Add another day']);
 });
+
+test('D: the saved-connection line has its plural back and passes the copy lint', () => {
+  assert.equal(sourcesCopy.ADD_TEXT.connReady(0), 'No saved connection yet');
+  assert.equal(sourcesCopy.ADD_TEXT.connReady(1), 'Saved connection ready');
+  assert.equal(sourcesCopy.ADD_TEXT.connReady(3), '3 saved connections ready');
+  assert.equal(sourcesCopy.ADD_TEXT.held(2), '2 found here', 'held is unchanged');
+  const { lintScreenStrings } = loadTypeScript('src/lib/copy/copylint.ts');
+  const { deck } = loadTypeScript('src/lib/copy/deck.ts');
+  assert.deepEqual(lintScreenStrings([{ id: 'add.connReady', text: sourcesCopy.ADD_TEXT.connReady(3) }], deck.terms), []);
+});

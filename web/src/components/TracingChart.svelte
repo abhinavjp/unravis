@@ -2,10 +2,11 @@
   // The Investigation Timeline chart (WP-17b): one stacked row per lane (API audit, SQL, IIS) on one shared,
   // server-floored UTC axis. Bars are exactly the buckets the server returned; nothing here sums, estimates
   // or recomputes the axis. WP-17c adds hover/focus text; WP-61 reads the bucket selector's onSelect.
+  import { tick, untrack } from 'svelte';
   import type { TracingLane, TracingLaneKey, TracingResponse } from '../lib/tracing/model';
   import {
     LANE_ASK, LANE_NAME, LANE_ORDER, MIXED_NOTE, PANEL_TITLE, READ_TEXT,
-    anyLaneCutShort, axisCaption, barHeightPct, barMax, barsFor, hasAnyData, isLaneVisible, laneChunkLine, laneCutShort, laneDrawsBars, laneNote, laneNoteTone, laneStatusLineFor,
+    anyLaneCutShort, axisCaption, barHeightPct, barMax, barSizeParts, barsFor, hasAnyData, isLaneVisible, laneChunkLine, laneCutShort, laneDrawsBars, laneNote, laneNoteTone, laneStatusLineFor,
     outsideSlots, readSummary, showsProvenance, slotGrid, slotOutside, slotStartMs, truncatedNote, unreadRuns, unreadSlots, type Bar
   } from '../lib/tracing/lanes';
   import { formatTime } from '../lib/time';
@@ -20,10 +21,12 @@
     type Percentile, type ZoomRange
   } from '../lib/tracing/canvas';
 
-  let { response, zone, onSelect, visible = {}, unselected = [], readOnly = false, onAddFiles }: {
+  let { response, zone, onSelect, focus = null, visible = {}, unselected = [], readOnly = false, onAddFiles }: {
     response: TracingResponse;
     zone: string;
     onSelect?: (slotIndex: number) => void;
+    // A bar another part of the screen asks to be shown (the Suspects rail's "Show on chart"): the chart selects it and shows its text, and does not open Run analysis. A new object (new `token`) asks again.
+    focus?: { slot: number; token: number } | null;
     // A row is hidden only when its flag is exactly false (WP-23); WP-11 passes the toolbar's choices.
     visible?: Partial<Record<TracingLaneKey, boolean>>;
     // Lanes whose files are all switched off in the "Sources traced" row: they say so instead of "this case has no file".
@@ -98,6 +101,7 @@
   const tickLabelChars = $derived(grid && shown > 0 ? at(slotStartMs(grid, range.from)).length : 0);
   const ticks = $derived(axisTicks(shown, plotW, tickLabelChars, grid && shown > 0 ? { startMs: slotStartMs(grid, range.from), widthMs: grid.widthMs, zone } : undefined));
   const caption = $derived(grid ? axisCaption(zone, response.window.bucketSeconds, outside.length > 0) : '');
+  const barSize = $derived(grid ? barSizeParts(grid, response.window.bucketSeconds) : null);
 
   // The selected bucket; one that scrolls out of the zoomed range is dropped, not left pointing at a hidden bar.
   let selectedSlot = $state<number | null>(null);
@@ -128,6 +132,22 @@
     selectedSlot = clampIndex(index);
     onSelect?.(selectedSlot);
   }
+
+  // Show one bar on request: zoom back out when it is hidden by a zoom, select it, show its text (spoken through the live region too),
+  // scroll the chart into view and put keyboard focus on the bucket selector, so the arrow keys carry on from that bar.
+  function revealSlot(slot: number) {
+    if (!grid || slot < 0 || slot >= grid.n) return;
+    if (!inRange(slot)) applyZoom(null);
+    selectedSlot = clampIndex(slot);
+    showKeyboardTip();
+    overlayEl?.focus({ preventScroll: true });
+    overlayEl?.scrollIntoView?.({ block: 'center', behavior: 'auto' });
+  }
+  $effect(() => {
+    const target = focus;
+    if (!target || !grid) return;
+    untrack(() => revealSlot(target.slot));
+  });
 
   function onOverlayKey(event: KeyboardEvent) {
     if (!grid) return;
@@ -204,7 +224,19 @@
     tipSlot = current;
     tipFromKeyboard = true;
     tipStyle = `left:${Math.min(80, leftPct(current))}%;top:4px`;
+    // On a narrow plot the box is wider than what is left of the plot: once it is drawn, pull it back inside (the pointer tip does the same).
+    void tick().then(() => {
+      if (!overlayEl || !tipEl || tipSlot == null || !tipFromKeyboard) return;
+      const width = overlayEl.getBoundingClientRect().width;
+      const x = Math.min((Math.min(80, leftPct(tipSlot)) / 100) * width, width - tipEl.offsetWidth);
+      tipStyle = `left:${Math.max(0, x)}px;top:4px`;
+    });
   }
+  // A resize changes the plot's width: a keyboard tip left where it was drawn would stick out of a narrower plot, so it is placed again.
+  $effect(() => {
+    void plotW;
+    untrack(() => { if (tipFromKeyboard && tipSlot != null) showKeyboardTip(); });
+  });
 
   // Drag across the chart to zoom into those bars (WP-23). The overlay captures the pointer on press, so the drag survives
   // leaving it; clicks and drags share the overlay's own handlers (no per-bucket click closures).
@@ -348,6 +380,7 @@
 <svelte:window onkeydown={onWindowKey} />
 
 <div class="tracing-chart">
+  {#if barSize}<p class="bar-size" data-testid="bar-size"><b>{barSize.lead}</b>{barSize.rest}</p>{/if}
   {#if response.mixedConsistency}
     <div role="note" class="notice">
       <p class="mixed-title"><strong>{MIXED_NOTE.title}</strong></p>
@@ -527,6 +560,8 @@
   .notice p { margin: 0; }
   .mixed-title { font-size: var(--fs-4); font-weight: 700; }
   .muted { color: var(--text-2); }
+  .bar-size { margin: 0; color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
+  .bar-size b { color: var(--text); font-weight: 600; }
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
   /* The label column is capped so the plot gets the rest; the right gutter is only breathing room for the last time label. */

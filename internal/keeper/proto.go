@@ -130,6 +130,7 @@ const (
 	OpAuditActivity  = "audit.activity"
 	OpAuditBreakdown = "audit.breakdown"
 	OpAuditCoverage  = "audit.coverage"
+	OpAuditStats     = "audit.stats"
 	OpAuditSlowest   = "audit.slowest"
 	OpAuditRollup    = "audit.rollup"
 	OpAuditSchema    = "audit.schema"

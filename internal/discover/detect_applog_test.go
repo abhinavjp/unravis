@@ -733,3 +733,22 @@ func TestQuartzPresenceFinding(t *testing.T) {
 		t.Fatalf("quartz finding: %+v", f)
 	}
 }
+
+const log4netBlocksText = "Logger name: Synthetic.Api.OrdersController\nType: INFO\nServer Time: 2001-10-25 14:02:30.950\nUTC Time: 2001-10-25 01:02:30.950\nApplication URL: https://app.example.test/api/orders/1\nUser IP: 192.0.2.10\nRequest handled\n\n" +
+	"Logger name: Synthetic.Api.OrdersController\nType: ERROR\nServer Time: 2001-10-25 14:02:31.400\nUTC Time: 2001-10-25 01:02:31.400\nApplication URL: https://app.example.test/api/orders/2\nUser IP: 192.0.2.11\nUnhandled error\n\n"
+
+// A log4net config whose file holds multi-line blocks is verified as the
+// block importer, not as the single-line one.
+func TestLog4netBlocksFileIsPickedByContent(t *testing.T) {
+	e := fake.New()
+	put(e, site+`\web.config`, log4netConfig, 0)
+	put(e, site+`\logs\app.log`, log4netBlocksText, 0)
+	fs, _ := detect(t, e)
+	f := mustOne(t, fs, "log4net-blocks")
+	if f.Kind != discover.KindLogSet && f.Kind != discover.KindLogFile {
+		t.Fatalf("kind=%s", f.Kind)
+	}
+	if f.Confidence < 70 {
+		t.Fatalf("confidence=%d, want at least 70", f.Confidence)
+	}
+}

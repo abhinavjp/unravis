@@ -22,3 +22,12 @@ func (*textImp) SuppliedKeys() map[string]importer.SuppliedSpec {
 // SuppliedKeys declares the app-request threshold, the only setting the XML
 // importer reads (its times are Unix epochs).
 func (*xmlImp) SuppliedKeys() map[string]importer.SuppliedSpec { return applog.SuppliedKeys() }
+
+// SuppliedKeys declares the settings the block importer reads: the app-request
+// threshold, the date order of slash dates and the owner's statement that
+// zone-less server times are UTC.
+func (*blocksImp) SuppliedKeys() map[string]importer.SuppliedSpec {
+	keys := applog.SuppliedKeysWithDateOrder()
+	keys[SuppliedLogTime] = importer.SuppliedSpec{Kind: importer.SuppliedEnum, Values: []string{"utc"}}
+	return keys
+}

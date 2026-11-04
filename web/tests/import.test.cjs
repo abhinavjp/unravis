@@ -304,14 +304,15 @@ test('reason counts are most common first', () => {
 const importPanel = read('src/lib/components/ImportPanel.svelte');
 const casePanel = read('src/lib/components/CasePanel.svelte');
 
-test('the notice is always rendered, outside every condition', () => {
+test('the notice is rendered outside every condition except the add-data grid, which has no notice in the wireframe (screen 112)', () => {
   const markup = importPanel.slice(importPanel.indexOf('<Drawer'));
   const notice = markup.indexOf('GATING_BANNER');
   assert.ok(notice > 0, 'the panel renders the banner');
   const before = markup.slice(0, notice);
-  const opens = (before.match(/\{#(?:if|each)\b/g) ?? []).length;
+  assert.match(before, /\{#if !showGrid\}<p class="gate"[^\n]*$/, 'the only condition is: not on the grid');
+  const opens = (before.match(/\{#(?:if|each)\b/g) ?? []).length - 1;
   const closes = (before.match(/\{\/(?:if|each)\}/g) ?? []).length;
-  assert.equal(opens, closes, 'no {#if} or {#each} block is open where the banner is rendered');
+  assert.equal(opens, closes, 'no other {#if} or {#each} block is open where the banner is rendered');
   assert.ok(notice < markup.indexOf('<CasePanel'), 'it comes before the case list');
 });
 
@@ -364,7 +365,7 @@ test('the importer names and caps are the ones the server registers', () => {
   const MiB = 1024 * 1024;
   const expected = { 'iis-w3c': 2048, 'iis-httperr': 64, 'iis-freb': 256, 'win-counters': 512, 'win-events': 256, 'schedule-hangfire': 16, 'schedule-agent': 16, 'schedule-quartz': 2048, 'sql-querystore': 512, appinsights: 512, 'mongod-json': 2048, 'sql-xe': 512, 'sql-errorlog': 256, 'sql-pdh': 512,
     // wave 2 (plan section 2.4), listed by W2-F before the importers ship
-    'log4net-text': 2048, 'log4net-xml': 2048, 'serilog-clef': 2048, 'serilog-text': 2048, 'nlog-text': 2048, 'nginx-access': 2048, 'apache-combined': 2048,'mel-console': 2048, 'mel-json': 2048,
+    'log4net-text': 2048, 'log4net-xml': 2048, 'log4net-blocks': 2048, 'serilog-clef': 2048, 'serilog-text': 2048, 'nlog-text': 2048, 'nginx-access': 2048, 'apache-combined': 2048,'mel-console': 2048, 'mel-json': 2048,
     'ancm-stdout': 256, 'node-jsonl': 2048, 'dotnet-counters': 512, 'win-procsnap': 256, 'redis-slowlog': 16, 'redis-latency': 4,
     'redis-info': 64, 'redis-log': 512, 'mongo-profile': 1024, 'mongo-currentop': 256, 'mongo-serverstatus': 512, 'mongostat-json': 256,
     'linux-sadf': 256, 'linux-pidstat': 256, 'linux-vmstat': 256 };

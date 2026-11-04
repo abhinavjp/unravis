@@ -36,6 +36,7 @@ const (
 	tagNotTestedText  = "That database was not in the last connection test. Test the connection and choose a database from the list it returned."
 	tagClassText      = "Choose whether the database holds audit logs, other data, or is not used."
 	tagRemovedText    = "The source tag was removed. Events already imported from it were not deleted."
+	tagDuplicateText  = "That database already has a choice for this environment. Edit or remove that one instead."
 )
 
 // credentialLike matches text that would carry a credential: a URI scheme of a
@@ -415,6 +416,92 @@ func caseSourcePath(path string) (string, bool) {
 }
 
 // deleteSource removes one source tag. It never deletes imported events.
+// sourceTagEditBody is the PUT body of one source tag: the three labels that
+// may be edited in place. Everything else about a tag is fixed when it is made.
+type sourceTagEditBody struct {
+	Env    string `json:"env"`
+	Portal string `json:"portal"`
+	API    string `json:"api"`
+}
+
+// putSourceTag answers PUT /api/cases/{id}/sources/{sourceId}: it replaces the
+// Environment, Portal and API of one tag and answers the tag.
+func (h *handler) putSourceTag(w http.ResponseWriter, r *http.Request, arg string) {
+	rawCase, rawID, _ := strings.Cut(arg, "/")
+	c, t, ok := h.tagCaseOf(w, r, rawCase)
+	if !ok {
+		return
+	}
+	defer c.Close()
+	id, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil || id < 1 {
+		writeCaseFailure(w, http.StatusNotFound, "source-not-found", "That source tag was not found.")
+		return
+	}
+	var body sourceTagEditBody
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if looksLikeCredential(body.Env, body.Portal, body.API) {
+		writeCaseFailure(w, http.StatusUnprocessableEntity, "bad-tag", tagCredentialText)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
+	// The check and the write share tagMu, as the Mongo replace on POST does.
+	tagMu.Lock()
+	defer tagMu.Unlock()
+	if dup, err := mongoEnvCollides(ctx, t, id, body.Env); err != nil {
+		writeTagError(w, err, tagSourceCapText)
+		return
+	} else if dup {
+		writeCaseFailure(w, http.StatusConflict, "duplicate-source", tagDuplicateText)
+		return
+	}
+	updated, err := t.UpdateSourceTags(ctx, id, body.Env, body.Portal, body.API)
+	if errors.Is(err, casestore.ErrNotFound) {
+		writeCaseFailure(w, http.StatusNotFound, "source-not-found", "That source tag was not found.")
+		return
+	}
+	if err != nil {
+		writeTagError(w, err, tagSourceCapText)
+		return
+	}
+	writeJSON(w, http.StatusOK, toSourceTagDTO(updated), maxResponseBytes)
+}
+
+// mongoEnvCollides reports whether giving tag id the environment env would make
+// it share its identity (label + environment, ignoring case) with another
+// mongo-database tag. A tag that is missing or is not a mongo-database one never
+// collides; the update itself then answers as it always did. An env the store
+// would refuse is left for the update to report.
+func mongoEnvCollides(ctx context.Context, t casestore.Tagger, id int64, env string) (bool, error) {
+	clean, err := casestore.CleanSource(casestore.SourceTag{Kind: "x", Env: env})
+	if err != nil {
+		return false, nil
+	}
+	list, err := t.Sources(ctx)
+	if err != nil {
+		return false, err
+	}
+	var self *casestore.SourceTag
+	for i := range list {
+		if list[i].ID == id {
+			self = &list[i]
+			break
+		}
+	}
+	if self == nil || self.Kind != mongoDatabaseKind {
+		return false, nil
+	}
+	for _, s := range list {
+		if s.ID != id && s.Kind == mongoDatabaseKind && s.Label == self.Label && strings.EqualFold(s.Env, clean.Env) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (h *handler) deleteSourceTag(w http.ResponseWriter, r *http.Request, arg string) {
 	rawCase, rawID, _ := strings.Cut(arg, "/")
 	c, t, ok := h.tagCaseOf(w, r, rawCase)

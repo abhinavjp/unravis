@@ -404,6 +404,18 @@ func (r *AuditRouter) Coverage(ctx context.Context, in audit.CoverageInput) (aud
 	return out, r.read(ctx, OpAuditCoverage, in, &out)
 }
 
+func (r *AuditRouter) Stats(ctx context.Context, in audit.StatsInput) (audit.SourceStats, error) {
+	if !r.isHeld(in.SourceID) {
+		reader, ok := r.local.(audit.SourceStatter)
+		if !ok {
+			return audit.SourceStats{}, errLocalCannot
+		}
+		return reader.Stats(ctx, in)
+	}
+	var out audit.SourceStats
+	return out, r.read(ctx, OpAuditStats, in, &out)
+}
+
 func (r *AuditRouter) Slowest(ctx context.Context, in audit.PageInput) (audit.Page, error) {
 	keeper, err := r.side(in.Query.SourceIDs)
 	if err != nil {

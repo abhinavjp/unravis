@@ -65,7 +65,7 @@ export const SOURCES_TEXT = {
   addMongo: 'Connect to MongoDB',
   addSql: 'SQL Server by address',
   addRedis: 'Redis by address',
-  addFiles: 'Import files',
+  addFiles: 'Add files',
   close: 'Close',
 
   mongoHeading: 'MongoDB',

@@ -30,7 +30,7 @@ func TestProberSet(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	want := []string{"iis-httperr", "iis-w3c", "log4net-text", "mel-json", "mongod-json", "nlog-text", "schedule-quartz", "serilog-clef", "serilog-text"}
+	want := []string{"iis-httperr", "iis-w3c", "log4net-blocks", "log4net-text", "mel-json", "mongod-json", "nlog-text", "schedule-quartz", "serilog-clef", "serilog-text"}
 	if len(got) != len(want) {
 		t.Fatalf("probers %v, want %v", got, want)
 	}
@@ -95,6 +95,13 @@ func TestProbeTime(t *testing.T) {
 		{"log4net utc stated", "log4net-text", "2001-10-25 14:02:30,950 [12] INFO  Synthetic.Api.A - x", utcStated, "2001-10-25T14:02:30.95Z"},
 		{"log4net no tz", "log4net-text", "2001-10-25 14:02:30,950 [12] INFO  Synthetic.Api.A - x", noTZ, ""},
 		{"log4net continuation", "log4net-text", "System.Exception: SENTINEL-7f3a", local, ""},
+
+		{"blocks utc time", "log4net-blocks", "UTC Time: 2001-10-25 01:02:30.950", none, "2001-10-25T01:02:30.95Z"},
+		{"blocks server local", "log4net-blocks", "Server Time: 2001-10-25 14:02:30.950", local, "2001-10-25T01:02:30.95Z"},
+		{"blocks server utc stated", "log4net-blocks", "Server Time: 2001-10-25 14:02:30.950", utcStated, "2001-10-25T14:02:30.95Z"},
+		{"blocks server no tz", "log4net-blocks", "Server Time: 2001-10-25 14:02:30.950", noTZ, ""},
+		{"blocks logger line", "log4net-blocks", "Logger name: Synthetic.Api.A", local, ""},
+		{"blocks body text", "log4net-blocks", "   at Synthetic.Api.A()", local, ""},
 
 		{"mel json offset", "mel-json", `{"Timestamp":"2001-10-25T14:02:30.123+13:00","EventId":0,"LogLevel":"Information","Category":"A","Message":"SENTINEL-7f3a"}`, none, "2001-10-25T01:02:30.123Z"},
 		{"mel json local", "mel-json", `{"Timestamp":"2001-10-25T14:02:30","EventId":0,"LogLevel":"Information","Category":"A"}`, local, "2001-10-25T01:02:30Z"},

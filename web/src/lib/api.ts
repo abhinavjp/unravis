@@ -188,6 +188,11 @@ export const api = {
   }, signal),
   addSource: (input: SourceInput) => request<Source>('/sources', json(input)),
   deleteSource: (id: string) => request<void>('/sources/' + encodeURIComponent(id), { method: 'DELETE' }),
+  /** The size line of one audit source: an estimated document count (-1 when unknown) and the time of the newest document. Cheap: no scan. */
+  sourceStats: async (sourceId: string, signal?: AbortSignal): Promise<{ docs: number; newestAt: string }> => {
+    const raw = await request<{ docs?: unknown; newestAt?: unknown }>('/sources/' + encodeURIComponent(sourceId) + '/stats', {}, signal);
+    return { docs: typeof raw.docs === 'number' ? raw.docs : -1, newestAt: typeof raw.newestAt === 'string' ? raw.newestAt : '' };
+  },
   /** The coverage census. It is never run by itself. A 409 means the server refused a broad scan on a live source, and that comes back as { refused }. */
   coverage: async (sourceId: string, start: string, end: string, signal?: AbortSignal): Promise<CoverageReport | CoverageRefused> => {
     try {

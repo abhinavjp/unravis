@@ -75,6 +75,13 @@
   }
 
   const toggleForm = (name: typeof openForm) => { openForm = openForm === name ? '' : name; };
+  let filesButton = $state<HTMLButtonElement>();
+  // Cancel on the files panel (wireframe w37) goes back to the buttons; the files already chosen stay in the draft's list.
+  async function closeFiles() {
+    openForm = '';
+    await tick();
+    filesButton?.focus();
+  }
   const metaOf = (entry: GalleryEntry): string => rowMetaText(entry.finding, ageMinutes(entry.finding.newest, Date.now()));
 </script>
 
@@ -184,7 +191,7 @@
       <button type="button" class="secondary-button" aria-expanded={openForm === 'mongo'} aria-controls="{uid}-mongo" onclick={() => toggleForm('mongo')}>{SOURCES_TEXT.addMongo}</button>
       <button type="button" class="secondary-button" aria-expanded={openForm === 'sql'} aria-controls="{uid}-sql" onclick={() => toggleForm('sql')}>{SOURCES_TEXT.addSql}</button>
       <button type="button" class="secondary-button" aria-expanded={openForm === 'redis'} aria-controls="{uid}-redis" onclick={() => toggleForm('redis')}>{SOURCES_TEXT.addRedis}</button>
-      <button type="button" class="secondary-button" aria-expanded={openForm === 'files'} aria-controls="{uid}-files" onclick={() => toggleForm('files')}>{SOURCES_TEXT.addFiles}</button>
+      <button type="button" class="secondary-button" bind:this={filesButton} aria-expanded={openForm === 'files'} aria-controls="{uid}-files" onclick={() => toggleForm('files')}>{SOURCES_TEXT.addFiles}</button>
     </div>
 
     {#if openForm === 'mongo'}
@@ -194,7 +201,7 @@
     {:else if openForm === 'redis'}
       <div class="panel" id="{uid}-redis"><ReachableCheck kind="redis" /></div>
     {:else if openForm === 'files'}
-      <div class="panel" id="{uid}-files"><ImportFilesPanel /></div>
+      <div class="panel" id="{uid}-files"><ImportFilesPanel onCancel={closeFiles} /></div>
     {/if}
   </section>
 

@@ -1,0 +1,30 @@
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2001-10-25 14:02:30.950
+UTC Time: 2001-10-25 01:02:30.950
+Application URL: https://app.example.test/api/orders/1
+User IP: 192.0.2.10
+Request handled for order-1
+
+Logger name: StackExchange.Redis.ConnectionMultiplexer
+Type: WARN
+Server Time: 2001-10-25 14:02:31.123
+UTC Time: 2001-10-25 01:02:31.123
+Application URL: https://app.example.test/api/session
+User IP: 192.0.2.11
+Timeout performing GET (5000ms), next: GET session:key-1, inst: 0, qu: 0, qs: 41, aw: False, bw: SpinningDown, rs: ReadAsync, ws: Idle, in: 8192, serverEndpoint: redis-a.example.test:6379, mgr: 10 of 10 available, IOCP: (Busy=0,Free=1000,Min=8,Max=1000), WORKER: (Busy=63,Free=32704,Min=8,Max=32767), v: 2.6.122.38350
+
+Logger name: Synthetic.Api.OrdersController
+Type: ERROR
+Server Time: 2001-10-25 14:02:31.400
+Application URL: https://app.example.test/api/orders/2
+User IP: 192.0.2.12
+Unhandled error for order-2
+System.TimeoutException: The operation has timed out. ---> System.Data.SqlClient.SqlException: Timeout expired.
+   at Synthetic.Api.OrdersController.Get(Int32 id) in C:\src\Synthetic\OrdersController.cs:line 42
+
+
+Logger name: Synthetic.Api.Global
+Type: FATAL
+UTC Time: 2001-10-25 01:02:35.500
+Application_End

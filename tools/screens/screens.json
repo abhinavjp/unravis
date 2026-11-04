@@ -3666,6 +3666,141 @@
         {"click": "[data-testid=guide-nav-getting-started]"},
         {"waitFor": "[data-testid=guide-nav-getting-started][aria-current=page]"}
       ]
+    },
+    {
+      "id": "p1-create-files",
+      "phase": "P1",
+      "doc": "cases.md",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=/^More/]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Create a new case\"]"
+        },
+        {
+          "waitFor": "text=Nothing is saved until the last step."
+        },
+        {
+          "fill": [
+            "role=textbox[name=\"Case name\"]",
+            "Checkout slowdown follow-up"
+          ]
+        },
+        {
+          "click": "role=button[name=\"Next\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Choose what to look at\"]"
+        },
+        {
+          "click": "role=button[name=\"Import files\"s]"
+        },
+        {
+          "waitFor": "role=heading[name=\"Add files by type\"]"
+        },
+        {
+          "scrollTo": "[data-file-card=\"iis\"]"
+        }
+      ]
+    },
+    {
+      "id": "p7-import-drawer",
+      "phase": "P7",
+      "doc": "sources.md",
+      "narrow": false,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=/^More/]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "#home-sources"
+        },
+        {
+          "click": "role=button[name=\"Open the analysis\"]"
+        },
+        {
+          "click": "role=button[name=\"Import\"s]"
+        },
+        {
+          "click": "role=button[name=\"Use this case: Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "#drawer-add-head"
+        },
+        {
+          "scrollTo": "[data-drawer-card=\"files\"]"
+        }
+      ]
+    },
+    {
+      "id": "p7-sources-list",
+      "phase": "P7",
+      "doc": "sources.md",
+      "narrow": true,
+      "steps": [
+        {
+          "goto": "/"
+        },
+        {
+          "when": "wide",
+          "click": "role=button[name=\"All cases\"s]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=button[name=/^More/]"
+        },
+        {
+          "when": "narrow",
+          "click": "role=menuitem[name=\"All cases\"s]"
+        },
+        {
+          "click": "role=button[name=\"Open case Checkout slowdown, 17 October\"]"
+        },
+        {
+          "waitFor": "#home-sources"
+        },
+        {
+          "click": "role=tab[name=\"Sources\"s]"
+        },
+        {
+          "waitFor": "[data-testid=srclist-rows]"
+        },
+        {
+          "click": "[data-sources-list] >> role=button[name=/^Details/]"
+        },
+        {
+          "scrollTo": "[data-sources-list]"
+        }
+      ]
     }
   ]
 }

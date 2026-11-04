@@ -194,7 +194,8 @@ test('TLPAR-06: screenshots of the timeline page, light and dark, 1280 and 375 p
       await page.setViewportSize({ width, height: 900 });
       await expect(quickRow(page)).toBeVisible();
       await expect(sourcesRow(page).getByRole('button', { name: 'Refresh timeline' })).toBeVisible();
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), `no sideways scroll at ${width} px, ${scheme}`).toBe(true);
+      // A resize reflows over a frame or two: wait for the layout to settle (two animation frames, then the check) instead of reading it the instant the viewport changes.
+      await expect.poll(() => page.evaluate(() => new Promise<boolean>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(document.documentElement.scrollWidth <= window.innerWidth + 1))))), { message: `no sideways scroll at ${width} px, ${scheme}`, timeout: 5000 }).toBe(true);
       await page.screenshot({ path: join(SHOTS, `app-${scheme}-${width}.png`) });
     }
   }

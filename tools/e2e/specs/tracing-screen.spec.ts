@@ -42,9 +42,9 @@ const note = (page: Page) => page.locator('.canvas-bar .zoom-note');
 
 test('TRACE-01: the screen opens with the picker, toolbar, chart and notes regions in that order', async ({ page }) => {
   await openTracing(page);
-  await expect(page.locator('[data-region]')).toHaveCount(5);
-  // The Sources traced row sits between the pickers and the toolbar.
-  expect(await page.locator('[data-region]').evaluateAll((els) => els.map((e) => e.getAttribute('data-region')))).toEqual(['windows', 'sources', 'toolbar', 'chart', 'notes']);
+  await expect(page.locator('[data-region]')).toHaveCount(6);
+  // The Sources traced row sits between the pickers and the toolbar; the Suspects rail follows once the opening read has come back.
+  expect(await page.locator('[data-region]').evaluateAll((els) => els.map((e) => e.getAttribute('data-region')))).toEqual(['windows', 'sources', 'toolbar', 'chart', 'notes', 'suspects']);
   // Pickers: incident first, then comparison (one button each, no browser date box), UTC note, one start button, a way back.
   const sets = page.locator('[data-region=windows] fieldset');
   await expect(sets).toHaveCount(2);
@@ -55,7 +55,7 @@ test('TRACE-01: the screen opens with the picker, toolbar, chart and notes regio
   await expect(pickerButton(page, 'comparison')).toBeVisible();
   await expect(page.getByText('Times are typed in UTC.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start tracing' })).toBeEnabled();
-  await expect(page.getByRole('button', { name: 'Back to the case' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Case home', exact: true })).toBeVisible();
   // The defaults are the hour before now, and the hour before that (real clock, so only the shape is checked).
   const vals = await windowValues(page);
   expect(vals.every((v) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v))).toBe(true);
@@ -65,8 +65,8 @@ test('TRACE-01: the screen opens with the picker, toolbar, chart and notes regio
   const lanes = tool.getByRole('group', { name: 'Show rows' }).getByRole('button');
   expect(await lanes.allInnerTexts()).toEqual(['API audit', 'SQL', 'IIS']);
   for (let i = 0; i < 3; i++) await expect(lanes.nth(i)).toHaveAttribute('aria-pressed', 'true');
-  // Back to the case returns focus to the open button.
-  await page.getByRole('button', { name: 'Back to the case' }).click();
+  // Case home returns focus to the open button.
+  await page.getByRole('button', { name: 'Case home', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Open the Investigation Timeline' })).toBeFocused();
 });
 
@@ -228,6 +228,8 @@ test('TRACE-06: zoom in, zoom out and reset by button and by keyboard (+, -, 0),
 test('TRACE-07: dragging across the bars shows a brush and zooms to those bars', async ({ page }) => {
   await openTracing(page);
   await trace(page, WIN_A);
+  // The mouse works in viewport pixels, so bring the chart on screen first (the controls card and the rail make the page taller than before).
+  await page.locator('.overlay').scrollIntoViewIfNeeded();
   const box = (await page.locator('.overlay').boundingBox())!;
   const colW = box.width / 36;
   const y = box.y + 20;

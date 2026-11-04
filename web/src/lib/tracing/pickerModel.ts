@@ -32,6 +32,10 @@ export function parseStamp(value: string): number {
   return Number.isFinite(ms) && formatStamp(ms) === value ? ms : NaN;
 }
 
+/** The hours (1 to 12) and minutes (0 to 59) a 12-hour time box offers. */
+export const HOURS_12: readonly number[] = Array.from({ length: 12 }, (_, i) => i + 1);
+export const MINUTES_60: readonly number[] = Array.from({ length: 60 }, (_, i) => i);
+
 const DATE_TEXT = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TIME_TEXT = /^(\d{2}):(\d{2})$/;
 
@@ -44,6 +48,37 @@ export function isDateText(text: string): boolean {
 export function isTimeText(text: string): boolean {
   const m = TIME_TEXT.exec(text);
   return !!m && +m[1] <= 23 && +m[2] <= 59;
+}
+
+const TIME_ANY = /^(\d{1,2}):(\d{2})\s*(?:([ap])\.?m?\.?)?$/i;
+
+/**
+ * Reads a time a person typed or pasted, as the 24-hour `HH:mm` the model keeps. It takes `22:30`, `9:30`, `10:30 PM`, `10:30pm` and `12:15 a.m.`.
+ * A 12-hour time needs an hour from 1 to 12. Anything else (`24:00`, `13:00 PM`, `ten`) gives null.
+ */
+export function parseTime(text: string): string | null {
+  const m = TIME_ANY.exec(text.trim());
+  if (!m) return null;
+  let hour = +m[1];
+  const minute = +m[2];
+  if (minute > 59) return null;
+  if (m[3]) {
+    if (hour < 1 || hour > 12) return null;
+    hour = hour % 12 + (m[3].toLowerCase() === 'p' ? 12 : 0);
+  } else if (hour > 23) return null;
+  return `${pad(hour)}:${pad(minute)}`;
+}
+
+/** The three parts a 12-hour time box shows for a 24-hour `HH:mm`: the hour 1 to 12, the minute, and whether it is PM. Null for an empty or unusable time. */
+export function timeParts(time: string): { hour: number; minute: number; pm: boolean } | null {
+  if (!isTimeText(time)) return null;
+  const h = +time.slice(0, 2);
+  return { hour: h % 12 === 0 ? 12 : h % 12, minute: +time.slice(3), pm: h >= 12 };
+}
+
+/** The 24-hour `HH:mm` for a 12-hour hour (1 to 12), a minute and AM or PM. */
+export function timeFromParts(hour: number, minute: number, pm: boolean): string {
+  return `${pad((hour % 12) + (pm ? 12 : 0))}:${pad(minute)}`;
 }
 
 /** The date part and the time part of a stamp. An empty or malformed stamp gives two empty strings. */
@@ -66,10 +101,11 @@ export function readParts(date: string, time: string, previous: string): Reading
   const d = date.trim();
   const t = time.trim();
   const badDate = d !== '' && !isDateText(d);
-  const badTime = t !== '' && !isTimeText(t);
+  const clock = t === '' ? '' : parseTime(t);
+  const badTime = t !== '' && clock === null;
   if (badDate || badTime) return { value: previous, badDate, badTime };
   if (d === '' || t === '') return { value: '', badDate: false, badTime: false };
-  return { value: `${d}T${t}`, badDate: false, badTime: false };
+  return { value: `${d}T${clock}`, badDate: false, badTime: false };
 }
 
 /**
@@ -261,7 +297,8 @@ export type DraftState = 'ok' | 'incomplete' | 'order';
 
 /** Reads a draft: the range when both ends are whole, and why not otherwise (`incomplete`, or `order` when the end is not after the start). */
 export function readDraft(text: DraftText): { state: DraftState; range: Range | null } {
-  const range: Range = { start: `${text.startDate.trim()}T${text.startTime.trim()}`, end: `${text.endDate.trim()}T${text.endTime.trim()}` };
+  const clock = (value: string): string => parseTime(value) ?? value.trim();
+  const range: Range = { start: `${text.startDate.trim()}T${clock(text.startTime)}`, end: `${text.endDate.trim()}T${clock(text.endTime)}` };
   const s = parseStamp(range.start);
   const e = parseStamp(range.end);
   if (!Number.isFinite(s) || !Number.isFinite(e)) return { state: 'incomplete', range: null };

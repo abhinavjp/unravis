@@ -96,7 +96,7 @@ test('review 8: the case Add data card says whether the case reads a Blackbox', 
   const card = read('src/components/sources/AddDataPanel.svelte');
   assert.match(card, /caseUseApi\.listTags\(caseId\)/);
   assert.match(card, /t\.kind === BLACKBOX_TAG_KIND/);
-  assert.match(card, /<p class="hint">\{ADD_TEXT\.held\(blackboxHeld\)\}<\/p>/);
+  assert.match(card, /<span class="pill" data-tone="warn">\{ADD_TEXT\.held\(blackboxHeld\)\}<\/span>/);
 });
 
 test('review 9: the host card has its own nutshell and never a lazy plural', () => {

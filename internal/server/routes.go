@@ -188,6 +188,9 @@ var routes = []route{
 	{pattern: "/api/sources/{id}/coverage", match: sourceSubpath("/coverage"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.coverage(w, r, id) },
 	}},
+	{pattern: "/api/sources/{id}/stats", match: sourceSubpath("/stats"), methods: map[string]routeFunc{
+		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.sourceStats(w, r, id) },
+	}},
 	{pattern: "/api/sources/{id}", match: prefixPath("/api/sources/"), methods: map[string]routeFunc{
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.deleteSource(w, r, id) },
 	}},
@@ -340,6 +343,7 @@ var routes = []route{
 	}},
 	{pattern: "/api/cases/{id}/sources/{sourceId}", match: caseSourcePath, methods: map[string]routeFunc{
 		http.MethodDelete: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.deleteSourceTag(w, r, arg) },
+		http.MethodPut:    func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.putSourceTag(w, r, arg) },
 	}},
 	{pattern: "/api/cases/{id}/mongo-sources", match: caseSubpath("/mongo-sources"), methods: map[string]routeFunc{
 		http.MethodGet: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.getMongoSources(w, r, id) },

@@ -66,7 +66,8 @@ const HOST_NEEDS: Readonly<Record<CatalogKind, HostNeed>> = {
   'sql-querystore': 'host',
   'sql-errorlog': 'host-tz',
   'win-events': 'host-tz',
-  'app-log': 'optional'
+  // Every app-log importer (log4net blocks, text and XML, NLog, Serilog, Microsoft.Extensions.Logging) refuses a file with no computer given (ErrUnknownHost).
+  'app-log': 'host'
 };
 
 export const hostNeed = (kind: string): HostNeed => (isCatalogKind(kind) ? HOST_NEEDS[kind] : 'none');
@@ -115,6 +116,8 @@ export function detectKind(name: string): CatalogKind | '' {
   if (/\.evtx$/.test(n) || /event.?log/.test(n) || /^win.?events?/.test(n)) return 'win-events';
   if (/^errorlog(?:\.\d+)?$/.test(n) || /error.?log/.test(n)) return 'sql-errorlog';
   if (/^u_(?:ex|extend|inetsv)\d*/.test(n) || /w3svc/.test(n) || /(?:^|[^a-z])iis(?:[^a-z]|$)/.test(n)) return 'iis-w3c';
+  // The text log an app keeps in its logs folder: log.txt, app-log.txt and a rolled log.txt.2 (log4net block logs are named like this).
+  if (/^(?:[\w.-]*[-_.])?log\.txt(?:\.\d+)?$/.test(n)) return 'app-log';
   return '';
 }
 

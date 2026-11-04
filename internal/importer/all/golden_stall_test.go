@@ -2,9 +2,10 @@ package all_test
 
 // Golden stall test (wave 2 plan section 6, INT2). One synthetic stall,
 // 2001-10-25T01:02:31Z (14:02:31 local on web-a, Pacific/Auckland, +13:00), is
-// written into seven fixtures in seven different time forms:
+// written into eight fixtures in seven different time forms:
 //
 //	log4net-text     host-local, no zone in the file
+//	log4net-blocks   host-local, no zone in the file
 //	serilog-clef     UTC ("Z")
 //	redis-slowlog    Unix epoch
 //	win-counters     PDH header bias -780
@@ -91,6 +92,28 @@ func log4netBody(shift time.Duration) []byte {
 				stall.Add(123*time.Millisecond).Add(shift).In(nzdt).Format(l))
 		}
 		fmt.Fprintf(&b, "%s [12] INFO  Synthetic.Api.OrdersController - Request handled\n", t.Add(shift).In(nzdt).Format(l))
+	})
+	return []byte(b.String())
+}
+
+// blocksBody is the same stall as log4netBody, written as log4net blocks with
+// a "Server Time:" label only (host-local, no zone in the file).
+func blocksBody(shift time.Duration) []byte {
+	var b strings.Builder
+	const l = "2006-01-02 15:04:05.000"
+	block := func(logger, level string, t time.Time, msg string) {
+		fmt.Fprintf(&b, "Logger name: %s\nType: %s\nServer Time: %s\nApplication URL: https://app.example.test/api/orders/1\nUser IP: 192.0.2.10\n%s\n\n",
+			logger, level, t.Add(shift).In(nzdt).Format(l), msg)
+	}
+	ticks(180*time.Second, 60*time.Second, 10*time.Second, func(t time.Time) {
+		if t.After(stall) && !t.After(stall.Add(5*time.Second)) {
+			return
+		}
+		if !t.After(stall) && t.After(stall.Add(-10*time.Second)) {
+			block("StackExchange.Redis.ConnectionMultiplexer", "WARN", stall.Add(123*time.Millisecond),
+				"Timeout performing GET (5000ms), next: GET key-1, inst: 0, qu: 0, qs: 41, in: 8192, serverEndpoint: redis-a.example.test:6379, v: 2.6.122.38350")
+		}
+		block("Synthetic.Api.OrdersController", "INFO", t, "Request handled")
 	})
 	return []byte(b.String())
 }
@@ -184,6 +207,8 @@ func isKind(kind string) func(evidence.Event) bool {
 func goldenSources() []gsrc {
 	return []gsrc{
 		{name: "log4net-text", file: "app.log", body: log4netBody, host: hostWeb, tol: time.Second,
+			mark: func(e evidence.Event) bool { return e.Kind == "log-entry" && e.Attrs["family"] == "redis-timeout" }},
+		{name: "log4net-blocks", file: "log.txt", body: blocksBody, host: hostWeb, tol: time.Second,
 			mark: func(e evidence.Event) bool { return e.Kind == "log-entry" && e.Attrs["family"] == "redis-timeout" }},
 		{name: "serilog-clef", file: "app.clef", body: clefBody, host: hostWeb, tol: time.Second,
 			mark: isKind("app-request"), overlap: true},
@@ -372,7 +397,8 @@ func TestGoldenStall(t *testing.T) {
 	t.Run("swapped-zone-rule", func(t *testing.T) {
 		swaps := map[string]func(*gsrc){
 			// The owner states the zone-less times are UTC, but they are local.
-			"log4net-text": func(g *gsrc) { g.supplied = map[string]string{"log-time": "utc"} },
+			"log4net-text":   func(g *gsrc) { g.supplied = map[string]string{"log-time": "utc"} },
+			"log4net-blocks": func(g *gsrc) { g.supplied = map[string]string{"log-time": "utc"} },
 			// The host zone is taken as UTC instead of Pacific/Auckland.
 			"dotnet-counters": func(g *gsrc) { g.host = utcHost(hostWeb) },
 			"sql-errorlog":    func(g *gsrc) { g.host = utcHost(hostSQL) },
@@ -420,7 +446,7 @@ func TestGoldenStall(t *testing.T) {
 // its time form. This pins the rule each fixture is read under.
 func TestGoldenStallRules(t *testing.T) {
 	want := map[string]string{
-		"log4net-text": clock.RuleHostLocal, "serilog-clef": clock.RuleUTCField,
+		"log4net-text": clock.RuleHostLocal, "log4net-blocks": clock.RuleHostLocal, "serilog-clef": clock.RuleUTCField,
 		"redis-slowlog": clock.RuleUTCField, "win-counters": clock.RuleHeaderBias,
 		"dotnet-counters": clock.RuleHostLocal, "win-procsnap": clock.RuleUTCField, "sql-errorlog": clock.RuleHostLocal,
 	}

@@ -201,6 +201,12 @@ test('TSRC-04: a source can be switched off and on again; each click sends the m
   expect(left.length, 'all sources on keeps nothing').toBe(0);
 });
 
+// Select all and Clear all wait in a disclosure under the chips (the prototype's Sources row has only the chips and the buttons).
+async function openMore(page: Page) {
+  const more = page.getByTestId('sources-more');
+  if (!(await more.evaluate((el) => (el as HTMLDetailsElement).open))) await more.locator('summary').click();
+}
+
 test('TSRC-05: with every source switched off nothing is read and the screen says so; a reload keeps it; Select all reads again', async ({ page }) => {
   await openTimeline(page);
   await expect(page.locator('.tracing-chart')).toBeVisible();
@@ -234,6 +240,7 @@ test('TSRC-05: with every source switched off nothing is read and the screen say
   expect(traces.count()).toBe(sentBeforeReload);
 
   // Select all reads everything again with no sourceIds (the existing contract for "all").
+  await openMore(page);
   const all = await clickAndRead(page, () => page.locator('[data-testid=sources-all]').click());
   expect(all.sourceIds ?? []).toEqual([]);
   await expect(none).toHaveCount(0);
@@ -242,6 +249,7 @@ test('TSRC-05: with every source switched off nothing is read and the screen say
 
   // Clear all is one click: it also reads nothing.
   const afterAll = traces.count();
+  await openMore(page);
   await page.locator('[data-testid=sources-none]').click();
   await expect(none).toBeVisible();
   await page.waitForTimeout(300);

@@ -28,8 +28,27 @@ export const SOURCES_LIST_TEXT = {
   notNamed: 'not named yet',
   fixHelp: 'Its time zone was fixed when the file was read. To change it, add the file again with the right computer and time zone.',
   addFiles: 'Add files again',
-  refresh: 'Read the list again'
+  refresh: 'Read the list again',
+  editLabels: 'Edit labels',
+  save: 'Save',
+  saving: 'Saving…',
+  cancel: 'Cancel',
+  labelsSaved: 'Saved.',
+  labelsFailed: 'The labels could not be saved. Try again.',
+  labelsBad: 'A label was too long, or looked like a password.',
+  labelsClosed: 'This case is closed, so its labels cannot be changed.',
+  labelsLocked: 'The master key is locked. Unlock it, then save again.',
+  labelsGone: 'This source is no longer in the case. Read the list again.',
+  zoneLabel: 'Time zone of that computer',
+  zoneSave: 'Save time zone',
+  zoneSaved: 'Saved.',
+  zoneFailed: 'The time zone could not be saved. Try again.',
+  zoneLocked: 'The master key is locked. Unlock it, then save again.',
+  sizeLabel: 'Size'
 } as const;
+
+/** Said under the computer's time zone box: the zone belongs to the computer, so it changes for every file from it. */
+export const zoneSharedText = (host: string): string => 'This is the time zone of ' + host + ', so it applies to every file from it.';
 
 export const TZ_STATE_LABEL: Readonly<Record<TzState, string>> = {
   known: 'Time zone known',
@@ -75,6 +94,7 @@ export const sourcesListCopyEntries = (): LintEntry[] => [
   { id: 'srclist.why.host', text: tzWhyText({ state: 'known', why: 'host', zone: 'Asia/Dubai', host: 'WEB01' }) },
   { id: 'srclist.why.gone', text: tzWhyText({ state: 'needs-check', why: 'host-gone', zone: '', host: 'WEB01' }) },
   { id: 'srclist.why.nozone', text: tzWhyText({ state: 'needs-check', why: 'no-zone', zone: '', host: 'WEB01' }) },
+  { id: 'srclist.zone.shared', text: zoneSharedText('WEB01') },
   { id: 'srclist.counts', text: countsText({ known: 2, assumed: 1, needs: 1 }) },
   { id: 'srclist.notice.title', text: TZ_NOTICE_TEXT.title },
   { id: 'srclist.notice.lead', text: TZ_NOTICE_TEXT.lead(['SQL', 'IIS']) },

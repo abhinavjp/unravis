@@ -50,3 +50,12 @@ export async function listSourceTags(caseId: string, signal?: AbortSignal): Prom
     return [{ id: raw.id, importId: typeof raw.importId === 'number' ? raw.importId : 0, kind: text(raw.kind), label: text(raw.label), env: text(raw.env), portal: text(raw.portal), api: text(raw.api), classification: text(raw.classification) }];
   });
 }
+
+/** Replaces the Environment, Portal and API of one tag: PUT /api/cases/{id}/sources/{tagId}. Resolves with the tag as the server kept it. */
+export async function putSourceTag(caseId: string, tagId: number, labels: { env: string; portal: string; api: string }, signal?: AbortSignal): Promise<SourceTag> {
+  const raw = await json<Partial<SourceTag>>(await send(casePath(caseId, '/sources/' + tagId), { method: 'PUT', body: JSON.stringify(labels) }, signal));
+  return {
+    id: typeof raw.id === 'number' ? raw.id : tagId, importId: typeof raw.importId === 'number' ? raw.importId : 0, kind: String(raw.kind ?? ''), label: String(raw.label ?? ''),
+    env: String(raw.env ?? ''), portal: String(raw.portal ?? ''), api: String(raw.api ?? ''), classification: String(raw.classification ?? '')
+  };
+}

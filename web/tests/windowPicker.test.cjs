@@ -234,7 +234,7 @@ test('wiring: the picker keeps its keyboard and screen-reader contract', () => {
   assert.match(picker, /max-width: 760px/);
   const stamp = read('src/lib/components/StampField.svelte');
   assert.match(stamp, /aria-label=\{`\$\{label\} date`\}/);
-  assert.match(stamp, /aria-label=\{`\$\{label\} time`\}/);
+  assert.ok(stamp.includes('<TimeBox label={`${label} time`}'));
   assert.match(stamp, /aria-invalid/);
 });
 
@@ -248,4 +248,13 @@ test('wiring: Escape closes the popover from anywhere, the boxes allow : and -, 
     assert.ok(source.includes('inputmode="text"'));
   }
   assert.equal(picker.match(/id=\{hintId\}/g).length, 2, 'the hint element exists in the popover branch and the inline branch');
+});
+
+test('wiring: Enter applies the draft from a text box only; on a select it is left to the select', () => {
+  const picker = read('src/lib/components/WindowPicker.svelte');
+  const fn = /function onDialogKey\(event: KeyboardEvent\) \{([\s\S]*?)\n  \}/.exec(picker);
+  assert.ok(fn, 'onDialogKey exists');
+  assert.match(fn[1], /event\.key === 'Enter' && event\.target instanceof HTMLInputElement/);
+  assert.ok(!fn[1].includes('HTMLSelectElement'), 'Enter on a select is no longer intercepted');
+  assert.match(fn[1], /event\.key !== 'Escape'/, 'the Escape handling stands');
 });

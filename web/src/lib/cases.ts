@@ -978,6 +978,7 @@ export const IMPORT_CAPS: Record<string, number> = {
   // Wave 2 (wave-2 plan section 2.4), listed before the importers ship.
   'log4net-text': 2 * GiB,
   'log4net-xml': 2 * GiB,
+  'log4net-blocks': 2 * GiB,
   'serilog-clef': 2 * GiB,
   'serilog-text': 2 * GiB,
   'nlog-text': 2 * GiB,

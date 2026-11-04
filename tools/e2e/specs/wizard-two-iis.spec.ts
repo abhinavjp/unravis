@@ -16,8 +16,8 @@ async function openFilesPanel(page: Page, title: string) {
   await page.getByLabel('Case name').fill(title);
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
-  await page.getByRole('button', { name: 'Import files', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Import files', level: 5 })).toBeVisible();
+  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toBeVisible();
 }
 
 test('TWOIIS-01: two IIS logs tagged Production and UAT keep their own environment on the Sources tab', async ({ page, api }) => {
@@ -56,7 +56,7 @@ test('TWOIIS-01: two IIS logs tagged Production and UAT keep their own environme
 
   // The Sources tab: two rows (not four), each with its own environment.
   await page.getByRole('button', { name: 'Open the timeline' }).click();
-  await page.getByRole('button', { name: 'Back to the case' }).click();
+  await page.getByRole('button', { name: 'Case home', exact: true }).click();
   await page.getByRole('tab', { name: 'Sources', exact: true }).click();
   const list = page.locator('[data-sources-list]');
   await expect(list.getByTestId('srclist-rows')).toBeVisible();
@@ -92,5 +92,5 @@ test('TWOIIS-02: removing a row moves the focus to the next Remove, else the one
 
   // The only row goes: the button that chooses files takes the focus.
   await remove('u_ex261020.log').click();
-  await expect(page.getByRole('button', { name: 'Choose files…', exact: true })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Choose files', exact: true })).toBeFocused();
 });

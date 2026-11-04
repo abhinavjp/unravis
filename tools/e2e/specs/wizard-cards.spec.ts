@@ -1,12 +1,13 @@
-// Hub fixes A, B and C on the "Import files" step of the create-a-case wizard (screens 37 and 38 of the wireframe):
+// Hub fixes A, B and C on the "Add files" step of the create-a-case wizard (screens 37 and 38 of the wireframe):
 //   WCARD-01  the four per-type cards carry the wireframe words, each with its own Add button and its own named file input.
 //   WCARD-02  a card sets the kind of its files, shows only its own files, and counts them; "not sure" files go to Other files.
 //   WCARD-03  the restored kinds (Hangfire jobs, Redis slow log, Another file or export) are in the select, and every choice can be undone.
-//   WCARD-04  staged rows, their kinds and computers survive switching add-source forms and closing and opening Import files (F37);
+//   WCARD-04  staged rows, their kinds and computers survive switching add-source forms and closing and opening Add files (F37);
 //             Remove and Clear still work.
 //   WCARD-05  the step fits at 375 px with no sideways scroll.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome } from '../support/ui';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const FILES = join(__dirname, '..', 'fixtures', 'files');
@@ -21,8 +22,26 @@ async function openPanel(page: Page, title: string) {
   await page.getByLabel('Case name').fill(title);
   await page.getByRole('button', { name: 'Next' }).click();
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
-  await page.getByRole('button', { name: 'Import files', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Import files', level: 5 })).toBeVisible();
+  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toBeVisible();
+}
+
+// Sideways scroll, measured the way a finger would meet it: the page's own widths, a real attempt to scroll across, and every box on the page.
+async function noSidewaysScroll(page: Page) {
+  await expect.poll(() => page.evaluate(() => {
+    const doc = document.documentElement;
+    return Math.max(doc.scrollWidth, document.body.scrollWidth) - doc.clientWidth;
+  })).toBeLessThanOrEqual(0);
+  const moved = await page.evaluate(() => { window.scrollTo(300, 0); document.documentElement.scrollLeft = 300; return window.scrollX + document.documentElement.scrollLeft; });
+  expect(moved).toBe(0);
+  const wide = await page.evaluate(() => {
+    const vw = document.documentElement.clientWidth;
+    return Array.from(document.querySelectorAll('body *')).filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.right > vw + 1 && getComputedStyle(el).position !== 'fixed';
+    }).slice(0, 5).map((el) => el.tagName + '.' + String(el.className).slice(0, 40));
+  });
+  expect(wide).toEqual([]);
 }
 
 const row = (page: Page, name: string) => page.getByRole('row').filter({ has: page.getByText(name, { exact: true }) });
@@ -33,7 +52,9 @@ test('WCARD-01: the four cards keep the wireframe words and each has its own Add
   await openPanel(page, 'QA Cards Words');
 
   await expect(page.getByRole('heading', { name: 'Add files by type', level: 6 })).toBeVisible();
-  await expect(page.getByText('For servers Unravis cannot reach: bring IIS logs, application logs, a Query Store export and an audit export.')).toBeVisible();
+  // The wireframe has no lead sentence over the cards: the intro and the cards are the whole panel.
+  await expect(page.getByText('Choose a folder or files, or drag and drop files here. Unravis suggests what each one is. Nothing is read until the case is made.')).toBeVisible();
+  await expect(page.getByText('For servers Unravis cannot reach')).toHaveCount(0);
 
   const iis = card(page, 'iis');
   await expect(iis).toContainText('IIS logs (W3C)');
@@ -81,7 +102,8 @@ test('WCARD-02: a card sets the kind of its files and shows only its own, and th
   await expect(page.getByLabel('What httperr1.log is')).toHaveValue('app-log');
 
   // The auto-detect picker is still there: a file added here is suggested by its name and goes to Other files.
-  await page.getByLabel('Choose files to import').setInputFiles([join(FILES, 'u_ex261020.log')]);
+  // (A second copy of a file already chosen through a card is listed once, so this one has its own name.)
+  await page.getByLabel('Choose files to import').setInputFiles([{ name: 'u_ex261021.log', mimeType: 'text/plain', buffer: readFileSync(join(FILES, 'u_ex261020.log')) }]);
   await expect(page.getByRole('heading', { level: 6, name: /^Other files/ })).toBeVisible();
 
   // Clear empties every card.
@@ -111,7 +133,8 @@ test('WCARD-03: the restored kinds are in the select and every choice can be und
   // Unselect: back to Don't use this file, and nothing is left to add.
   await kind.selectOption({ label: 'Don’t use this file' });
   await expect(kind).toHaveValue('');
-  await expect(page.getByRole('button', { name: 'Add files' })).toBeDisabled();
+  // The wizard's own Add files button (the card's button of the same name opens this panel, so the primary one is picked).
+  await expect(page.getByRole('button', { name: 'Add files', exact: true }).and(page.locator('.primary-button'))).toBeDisabled();
 
   // Choose again, add, and the file is held for the last step.
   await kind.selectOption({ label: 'Hangfire jobs (CSV export)' });
@@ -128,19 +151,19 @@ test('WCARD-04: staged rows survive switching add-source forms and closing Impor
 
   // Another add-source form replaces this one: the rows are still staged when it comes back.
   await page.getByRole('button', { name: 'Connect to MongoDB' }).click();
-  await expect(page.getByRole('heading', { name: 'Import files', level: 5 })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toHaveCount(0);
   await page.getByRole('button', { name: 'SQL Server by address' }).click();
-  await page.getByRole('button', { name: 'Import files', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Import files', level: 5 })).toBeVisible();
+  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toBeVisible();
   await expect(row(page, 'u_ex261020.log')).toBeVisible();
   await expect(row(page, 'httperr1.log')).toBeVisible();
   await expect(page.getByLabel('What notes.txt is')).toHaveValue('file');
   await expect(count(page, 'iis')).toHaveText('1 file chosen');
 
   // Closing and opening the files form does not lose them either.
-  await page.getByRole('button', { name: 'Import files', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Import files', level: 5 })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Import files', exact: true }).click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Add files', level: 5 })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add files', exact: true }).click();
   await expect(row(page, 'httperr1.log')).toBeVisible();
   await expect(page.getByLabel('What notes.txt is')).toHaveValue('file');
 
@@ -151,7 +174,7 @@ test('WCARD-04: staged rows survive switching add-source forms and closing Impor
   await page.getByRole('button', { name: 'Clear' }).click();
   await expect(page.getByRole('row')).toHaveCount(0);
   await page.getByRole('button', { name: 'Connect to MongoDB' }).click();
-  await page.getByRole('button', { name: 'Import files', exact: true }).click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).click();
   await expect(page.getByRole('row')).toHaveCount(0);
 });
 
@@ -160,7 +183,7 @@ test('WCARD-05: the cards fit at 375 px wide with no sideways scroll', async ({ 
   await page.setViewportSize({ width: 375, height: 800 });
   await expect(card(page, 'audit')).toBeVisible();
   // The step is checked as it stands once the narrow layout has settled: the files form must add no sideways scroll of its own.
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await noSidewaysScroll(page);
   for (const id of ['iis', 'app', 'querystore', 'audit']) {
     const box = await card(page, id).boundingBox();
     expect(box && box.x >= 0 && box.x + box.width <= 376).toBe(true);

@@ -145,6 +145,27 @@ The MongoDB profiler is how slow operations are seen. It is off by default. The 
 
 Screen: Add data tab. It has five cards: SQL Server, MongoDB, Blackbox, Files and Another day. **Add a Blackbox** opens the Blackbox page, the same one the header opens, where a Blackbox is added and then used in this case. It is off in a closed case. Each card says how many saved connections are ready and how many reads the case already holds. Adding reads the new data on its own and does not touch what is there. A step that ran before the new data arrived is marked Out of date, rerun. It does not change by itself.
 
+The same five cards open from the header's Import button, in the drawer. The Files card says how many files the case already holds. The Another day card says how many sources can be read by day, and is off when there are none.
+
+![Add data in the Import drawer, dark](screenshots/P7/p7-import-drawer-dark.png)
+![Add data in the Import drawer, light](screenshots/P7/p7-import-drawer-light.png)
+
+When the drawer closes on the Investigation Timeline and the sources there were picked by hand, a file that was just added is switched on too. A source you switched off stays off. At most 50 sources can be traced at once. If a switch would go past that, it is not made and a short note says to switch one off first.
+
+### The Sources list
+
+The Sources tab lists every source in the case. Each row shows the file or database name, the lane it feeds, whether its time zone is known, and its Environment, Portal and API. An audit database row also says how many documents it holds and how old the newest one is. The environment buttons above the list show one environment at a time.
+
+**Details** opens a row. **Edit labels** changes its Environment, Portal and API, and the first save makes the labels when the file had none. For a file that writes the clock of its computer, such as an application log, the row also has a field for that computer's time zone. It applies to every file from that computer. A file whose time rule was fixed when it was read is corrected by adding it again.
+
+![The Sources list with one row open, dark](screenshots/P7/p7-sources-list-dark.png)
+![The Sources list with one row open, light](screenshots/P7/p7-sources-list-light.png)
+
+On a narrow window the rows stack.
+
+![The Sources list on a narrow window, dark](screenshots/P7/p7-sources-list-dark-narrow.png)
+![The Sources list on a narrow window, light](screenshots/P7/p7-sources-list-light-narrow.png)
+
 ### Add another day
 
 Add another day reads more hours of a SQL Server the case already holds, for example the day after a fix. The times start as the same hours on the next day and are UTC. They are read as typed and strictly: a time that cannot be read is refused, not guessed.

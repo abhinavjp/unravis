@@ -84,6 +84,10 @@
   const selected = $derived(cases.find((c) => c.id === selectedId) ?? null);
   const caseOpen = $derived(selected !== null && !selected.closed);
   const showGrid = $derived(caseOpen && view === 'grid');
+  // The list of cases (and the new-case title) stays out of the way once an open case is chosen: the wireframe's Add data screen has only the cards.
+  // Use another case brings the list back. Until a case is chosen, or when the chosen one is closed, the list is simply there.
+  let casesOpen = $state(false);
+  const caseListShown = $derived(!showGrid || casesOpen);
   const heldFiles = $derived(staged + (file ? 1 : 0));
   const sending = $derived(phase !== 'idle' || batchBusy);
   const drawerTitle = $derived(showGrid && selected ? ADD_TEXT.drawerTitle(caseCode(selected.id)) : IMPORT_TEXT.title);
@@ -121,7 +125,8 @@
     leaveAsk = action;
     void tick().then(() => drawer?.querySelector<HTMLElement>('[data-leave] button')?.focus());
   }
-  const requestClose = () => leaveThen(onClose);
+  // Escape (or the close button) while the question is showing answers it: Keep editing, so the question never stacks or gets stuck.
+  const requestClose = () => { if (leaveAsk) keepEditing(); else leaveThen(onClose); };
   function chooseCard(what: AddChoice) {
     if (what === 'files') {
       view = 'files';
@@ -389,10 +394,6 @@
 
 <Drawer class="import-drawer" title={drawerTitle} titleId="import-title" intro={IMPORT_TEXT.intro} closeLabel={IMPORT_TEXT.closeLabel} bind:element={drawer} onClose={requestClose}>
 <HelpNote id="import" />
-  <p class="gate" role="note" aria-label={IMPORT_TEXT.noticeLabel}>{GATING_BANNER}</p>
-
-  <CasePanel bind:this={casePanel} bind:cases bind:selectedId onClosed={goHome} />
-
   <!-- Outside the {#key} below, so a new import does not close the panel or reset its checklist. -->
   {#if leaveAsk}
     <div class="leave" role="alertdialog" aria-labelledby="leave-head" aria-describedby="leave-text" data-leave>
@@ -408,6 +409,14 @@
   {#if showGrid && selected}
     {#key selected.id}<AddDataPanel scope="drawer" caseId={selected.id} files staged={heldFiles} busy={sending} onChoose={chooseCard} />{/key}
   {/if}
+
+  <!-- Screen 112 has only the cards and the hint lines: the notice belongs to the file list (where the tick is), and the case list waits behind Use another case. -->
+  {#if !showGrid}<p class="gate" role="note" aria-label={IMPORT_TEXT.noticeLabel}>{GATING_BANNER}</p>{/if}
+
+  {#if showGrid}
+    <div class="actions"><button type="button" class="link" data-other-case aria-expanded={casesOpen} onclick={() => (casesOpen = !casesOpen)}>{casesOpen ? ADD_TEXT.hideCases : ADD_TEXT.otherCase}</button></div>
+  {/if}
+  <div hidden={!caseListShown}><CasePanel bind:this={casePanel} bind:cases bind:selectedId onClosed={goHome} /></div>
 
   <div class="files-view" hidden={showGrid}>
   {#if discoverOpen}

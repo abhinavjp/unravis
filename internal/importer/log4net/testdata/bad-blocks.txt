@@ -1,0 +1,14 @@
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2001-10-25 14:02:30.950
+Request handled for order-1
+
+Logger name: Synthetic.Api.OrdersController
+Type: ERROR
+Server Time: SENTINEL-7f3a
+Message: SENTINEL-7f3a
+
+Logger name: Synthetic.Api.Global
+Type: WARN
+Server Time: 2001-10-25 14:02:35.500
+Application_End

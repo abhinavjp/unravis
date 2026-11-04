@@ -126,7 +126,7 @@ func locatableKind(k discover.Kind) bool {
 // names an importer keeps it first; one with none (or one of the log4net/NLog
 // family) may be completed by any of the family.
 func locateCandidates(current string) []string {
-	family := []string{"log4net-text", "log4net-xml", "nlog-text"}
+	family := []string{"log4net-text", "log4net-xml", "log4net-blocks", "nlog-text"}
 	inFamily := current == ""
 	for _, n := range family {
 		if n == current {

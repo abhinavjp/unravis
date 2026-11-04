@@ -30,6 +30,7 @@ func TestW2FExportVocabulary(t *testing.T) {
 	cases := []struct{ source, attrs, kinds string }{
 		{"log4net-text", appAttrs, appKinds},
 		{"log4net-xml", appAttrs, appKinds},
+		{"log4net-blocks", appAttrs, appKinds},
 		{"serilog-clef", appAttrs, appKinds},
 		{"serilog-text", appAttrs, appKinds},
 		{"nlog-text", appAttrs, appKinds},

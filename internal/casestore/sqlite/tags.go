@@ -201,6 +201,53 @@ func (c *Case) Sources(ctx context.Context) ([]casestore.SourceTag, error) {
 	return out, rows.Err()
 }
 
+func (c *Case) UpdateSourceTags(ctx context.Context, id int64, env, portal, api string) (casestore.SourceTag, error) {
+	clean, err := casestore.CleanSource(casestore.SourceTag{Kind: "x", Env: env, Portal: portal, API: api})
+	if err != nil {
+		return casestore.SourceTag{}, err
+	}
+	db, release, err := c.tagGate(ctx)
+	if err != nil {
+		return casestore.SourceTag{}, err
+	}
+	defer release()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return casestore.SourceTag{}, c.mapDBErr(err)
+	}
+	res, err := tx.ExecContext(ctx, "UPDATE case_sources SET env=?, portal=?, api=? WHERE id=?", clean.Env, clean.Portal, clean.API, id)
+	if err != nil {
+		_ = tx.Rollback()
+		return casestore.SourceTag{}, c.mapDBErr(err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		_ = tx.Rollback()
+		return casestore.SourceTag{}, c.mapDBErr(err)
+	} else if n == 0 {
+		_ = tx.Rollback()
+		return casestore.SourceTag{}, casestore.ErrNotFound
+	}
+	var t casestore.SourceTag
+	var imp, ms sql.NullInt64
+	var label, e, p, a, class sql.NullString
+	row := tx.QueryRowContext(ctx, `SELECT id, import_id, kind, label, env, portal, api, classification, created_ms FROM case_sources WHERE id=?`, id)
+	if err := row.Scan(&t.ID, &imp, &t.Kind, &label, &e, &p, &a, &class, &ms); err != nil {
+		_ = tx.Rollback()
+		return casestore.SourceTag{}, c.mapDBErr(err)
+	}
+	if err := bumpCaseRevision(ctx, tx); err != nil {
+		_ = tx.Rollback()
+		return casestore.SourceTag{}, c.mapDBErr(err)
+	}
+	if err := tx.Commit(); err != nil {
+		return casestore.SourceTag{}, c.mapDBErr(err)
+	}
+	t.ImportID = imp.Int64
+	t.Label, t.Env, t.Portal, t.API, t.Classification = label.String, e.String, p.String, a.String, class.String
+	t.Created = time.UnixMilli(ms.Int64).UTC()
+	return t, nil
+}
+
 func (c *Case) RemoveSource(ctx context.Context, id int64) error {
 	db, release, err := c.tagGate(ctx)
 	if err != nil {

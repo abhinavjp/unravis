@@ -179,14 +179,15 @@ func TestRevisionNonExportWritesDoNotBump(t *testing.T) {
 }
 
 // A write that changes what an export contains must call bumpCaseRevision. The
-// tree has no import delete or source update today; if one appears, this test
-// fails until its author adds the bump and extends the list of sites.
+// tree has no import delete today; if one appears, this test fails until its
+// author adds the bump and extends the list of sites. The one source-tag update
+// (UpdateSourceTags, env/portal/api only) bumps, and the mutator matrix checks it.
 func TestRevisionEveryExportedWriteHasABump(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil || len(files) == 0 {
 		t.Fatalf("glob: %v (%d files)", err, len(files))
 	}
-	banned := []string{"DELETE FROM imports", "DELETE FROM events", "UPDATE case_sources", "UPDATE case_envs"}
+	banned := []string{"DELETE FROM imports", "DELETE FROM events", "UPDATE case_envs"}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue

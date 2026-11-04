@@ -7,6 +7,7 @@
 import { WAIT_TEXT } from '../copy/waitCopy';
 import type { LintEntry } from '../copy/copylint';
 import type { TracingBucket, TracingLane, TracingLaneKey, TracingReason, TracingWindow } from './model';
+import { formatSpan } from './pickerModel';
 
 export const LANE_ORDER: TracingLaneKey[] = ['audit', 'sql', 'iis'];
 
@@ -304,6 +305,22 @@ export function widthLabel(seconds: number): string {
   }
   const hours = Math.round(seconds / 3600);
   return hours + ' hour' + (hours === 1 ? '' : 's');
+}
+
+/**
+ * The line above the chart (the wireframe's "Each bar = 1 minute · 60 bars on the axis · window 1 h"). `lead` is the part drawn bold:
+ * how much time one bar holds. `rest` says how many bars the axis has, how long the window is, and (only when it is true) that a
+ * long window groups more time into each bar and that the axis has end slots outside the window. Every figure comes from the grid
+ * the chart draws on, so the line can never disagree with the bars.
+ */
+export function barSizeParts(g: SlotGrid, bucketSeconds: number): { lead: string; rest: string } {
+  const spanMs = g.windowEndMs - g.windowStartMs;
+  let outside = 0;
+  for (let i = 0; i < g.n; i++) if (slotOutside(g, i)) outside++;
+  let rest = ` · ${g.n} ${g.n === 1 ? 'bar' : 'bars'} on the axis · window ${formatSpan(spanMs)}`;
+  if (bucketSeconds > 60) rest += ' · longer periods group more time into each bar so the chart stays readable';
+  if (outside > 0) rest += ` · ${outside} end ${outside === 1 ? 'slot' : 'slots'} outside the window`;
+  return { lead: 'Each bar = ' + widthLabel(bucketSeconds), rest };
 }
 
 export function axisCaption(zoneName: string, bucketSeconds: number, hasOutside: boolean): string {

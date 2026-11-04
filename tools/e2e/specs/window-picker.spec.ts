@@ -14,7 +14,7 @@
 //   PICK-10  keyboard: Tab and Enter open it, arrows move over the days, Enter in a box applies and does not start a read
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
-import { fillWindows, openPicker, pickerBox, pickerButton, pickerDialog, primeWindows, readWindow, setWindow, typeRange, windowValues } from '../support/window-picker';
+import { fillTime, fillWindows, openPicker, pickerBox, pickerButton, pickerDialog, pickerTime, primeWindows, readTime, readWindow, setWindow, typeRange, windowValues } from '../support/window-picker';
 
 const CASE_TITLE = 'Orders API stall, 19 October';
 
@@ -60,8 +60,8 @@ test('PICK-02: the calendar takes a start day then an end day (an earlier second
   await openTracing(page);
   const dialog = await openPicker(page, 'incident');
   await expect(dialog.getByText('Click the start day, then the end day.')).toBeVisible();
-  const startTime = await pickerBox(page, 'incident', 'start time').inputValue();
-  const endTime = await pickerBox(page, 'incident', 'end time').inputValue();
+  const startTime = await readTime(page, 'incident', 'start time');
+  const endTime = await readTime(page, 'incident', 'end time');
   await day(page, 'incident', 'October 12, 2026').click();
   await expect(day(page, 'incident', 'October 12, 2026')).toHaveAttribute('aria-pressed', 'true');
   await expect(day(page, 'incident', 'October 12, 2026')).toHaveAccessibleName('October 12, 2026, start');
@@ -72,8 +72,8 @@ test('PICK-02: the calendar takes a start day then an end day (an earlier second
   await expect(pickerBox(page, 'incident', 'start date')).toHaveValue('2026-10-12');
   await expect(pickerBox(page, 'incident', 'end date')).toHaveValue('2026-10-15');
   // The calendar picks days; the times already in the boxes stay.
-  await expect(pickerBox(page, 'incident', 'start time')).toHaveValue(startTime);
-  await expect(pickerBox(page, 'incident', 'end time')).toHaveValue(endTime);
+  expect(await readTime(page, 'incident', 'start time')).toBe(startTime);
+  expect(await readTime(page, 'incident', 'end time')).toBe(endTime);
   await expect(note(page, 'incident')).toContainText(`12 Oct 2026 ${startTime} → 15 Oct 2026 ${endTime}`);
   // The button still shows the old window until Apply.
   await expect(pickerButton(page, 'incident')).not.toContainText('12 Oct 2026');
@@ -125,7 +125,7 @@ test('PICK-04: a typed time updates the live summary and, after Apply, the butto
   await openTracing(page);
   const dialog = await typeRange(page, 'incident', '2026-10-19T10:30', '2026-10-19T11:00');
   await expect(note(page, 'incident')).toHaveText('19 Oct 2026 10:30 → 11:00 · 30 min');
-  await pickerBox(page, 'incident', 'end time').fill('12:45');
+  await fillTime(page, 'incident', 'end time', '12:45');
   await expect(note(page, 'incident')).toHaveText('19 Oct 2026 10:30 → 12:45 · 2 h 15 min');
   // The calendar follows the typed date.
   await pickerBox(page, 'incident', 'start date').fill('2026-09-30');
@@ -143,12 +143,12 @@ test('PICK-05: an end before the start is explained in the picker and refused by
   const wait = posts(page);
   const dialog = await typeRange(page, 'incident', '2026-10-19T18:00', '2026-10-19T15:00');
   await expect(note(page, 'incident')).toHaveText('The end must be after the start.');
-  await expect(pickerBox(page, 'incident', 'end time')).toHaveAttribute('aria-invalid', 'true');
+  await expect(pickerTime(page, 'incident', 'end time').getByRole('combobox').first()).toHaveAttribute('aria-invalid', 'true');
   await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(dialog, 'Apply refuses it and the picker stays open').toBeVisible();
   await expect(note(page, 'incident')).toHaveText('The end must be after the start.');
   // End equal to the start is refused too.
-  await pickerBox(page, 'incident', 'end time').fill('18:00');
+  await fillTime(page, 'incident', 'end time', '18:00');
   await expect(note(page, 'incident')).toHaveText('The end must be after the start.');
   await page.keyboard.press('Escape');
   // A reloaded tab can still bring such a value back; Start tracing says so in the screen's own words and sends nothing.
@@ -206,9 +206,10 @@ test('PICK-08: bad text marks the box and keeps the last good value; an emptied 
   await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(dialog, 'bad text is not applied').toBeVisible();
   await pickerBox(page, 'incident', 'start date').fill('2026-10-19');
-  await pickerBox(page, 'incident', 'start time').fill('25:00');
-  await expect(pickerBox(page, 'incident', 'start time')).toHaveAttribute('aria-invalid', 'true');
-  await expect(note(page, 'incident')).toHaveText('Use a time from 00:00 to 23:59, written like 10:30.');
+  // A 12-hour time box cannot hold an impossible time: the hour and the minute only offer real values, and clearing both is the "no time" state.
+  await fillTime(page, 'incident', 'start time', '');
+  await expect(note(page, 'incident')).toHaveText('Pick a start and an end first.');
+  await fillTime(page, 'incident', 'start time', '15:00');
   await page.keyboard.press('Escape');
   expect(await readWindow(page, 'incident'), 'the last good value is still there').toEqual(['2026-10-19T15:00', '2026-10-19T18:00']);
   // An empty box is not something the picker can apply, so it arrives the way a reloaded tab brings it back.
@@ -265,9 +266,14 @@ test('PICK-10: the keyboard reaches everything; arrows move over the days; Enter
   await expect(day(page, 'incident', 'October 26, 2026')).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(day(page, 'incident', 'October 26, 2026')).toHaveAttribute('aria-pressed', 'true');
-  // Enter in a text box applies the draft; it does not submit the form behind the picker.
+  // Enter on an hour, minute or AM/PM drop-down is the drop-down's own: it does not apply the draft and does not start a read.
   await typeRange(page, 'incident', '2026-10-19T10:00', '2026-10-19T10:30');
-  await pickerBox(page, 'incident', 'end time').press('Enter');
+  await pickerTime(page, 'incident', 'end time').getByRole('combobox', { name: 'Incident window end time minute', exact: true }).press('Enter');
+  await expect(dialog).toBeVisible();
+  await expect(button).not.toContainText('19 Oct 2026 10:00 → 10:30');
+  expect(wait.n, 'no read was started by Enter on a drop-down').toBe(0);
+  // Enter in a text box applies the draft; it does not submit the form behind the picker.
+  await pickerBox(page, 'incident', 'end date').press('Enter');
   await expect(dialog).toBeHidden();
   await expect(button).toContainText('19 Oct 2026 10:00 → 10:30');
   expect(wait.n, 'no read was started').toBe(0);

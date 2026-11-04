@@ -36,6 +36,10 @@
 .src-sticker.cannot, .src-sticker.untested { border-color: var(--pending); background-image: var(--hatch); background-blend-mode: soft-light; }
 .src-sticker.held { margin-top: var(--space-1); border-color: var(--accent); font-weight: 500; white-space: normal; }
 .src-sticker.held.down { border-color: var(--pending); background-image: var(--hatch); background-blend-mode: soft-light; }
+/* The Sources list keeps its lane sticker, time-zone badge and Details button, but quiet: plain text weight and a hairline, colour only when the time zone needs a look. */
+.srclist .src-sticker { padding: 0 6px; font-size: var(--fs-2); font-weight: 400; color: var(--text-2); background: transparent; border-color: var(--line); }
+.srclist .src-sticker.ready { border-color: var(--line); }
+.srclist .srow .btn.quiet { border-color: transparent; background: transparent; color: var(--text-2); text-decoration: underline; }
 .src .keeper-card.down { border-left: 3px solid var(--bad); }
 .src .say { padding: var(--space-2) var(--space-3); color: var(--text-2); font-size: var(--fs-3); border-left: 3px solid var(--line); overflow-wrap: anywhere; }
 .src .say.bad { color: var(--text); border-left-color: var(--bad); }
@@ -67,6 +71,21 @@
 .src .tabs button[aria-selected='true']:hover,
 .src .tabs button[aria-pressed='true']:hover { background: color-mix(in srgb, var(--accent) 14%, var(--surface-2)); }
 .src .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-3); }
+/* Screen 112: three cards across, then two; one column on a narrow screen. */
+.src.add-data .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 860px) { .src.add-data .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .src.add-data .cards { grid-template-columns: minmax(0, 1fr); } }
+.src .head { display: grid; gap: 4px; }
+.src .head .eyebrow { margin: 0; }
+.src .head h2 { margin: 0; }
+.src .card-text { margin: 0; color: var(--text-2); font-size: var(--fs-3); overflow-wrap: break-word; }
+.src .chipline { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+/* A status chip with a coloured dot; the word carries the meaning, the dot is only a cue. */
+.src .pill { display: inline-flex; align-items: center; gap: 6px; padding: 0 var(--space-2); border: var(--hairline-width, 1px) solid var(--line); border-radius: 999px; background: var(--surface); font-size: var(--fs-2); font-weight: 500; line-height: 1.6; }
+.src .pill::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--text-2); }
+.src .pill[data-tone='good']::before { background: var(--ok, var(--accent)); }
+.src .pill[data-tone='warn']::before { background: var(--warn); }
+.src .pill[data-tone='none'] { color: var(--text-2); }
 .src .card { display: grid; align-content: start; gap: var(--space-2); padding: var(--space-3); background: var(--surface); border: var(--hairline-width, 1px) solid var(--line); border-radius: var(--radius-sm); }
 .src .empty { display: grid; gap: var(--space-2); padding: var(--space-4); border: 1px dashed var(--line); border-radius: var(--radius-sm); }
 @media (prefers-reduced-motion: no-preference) {

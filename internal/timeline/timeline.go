@@ -92,6 +92,7 @@ var displayNames = map[string]string{
 	// Wave 2 (pre-landed by W2-F).
 	"log4net-text":       "log4net log",
 	"log4net-xml":        "log4net XML log",
+	"log4net-blocks":     "log4net block log",
 	"nlog-text":          "NLog log",
 	"nginx-access":       "nginx access log",
 	"apache-combined":    "Apache access log",

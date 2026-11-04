@@ -62,6 +62,14 @@ func revisionRules() map[string]revisionRule {
 				mustNoErr(t, "AddSource", err)
 			}
 		}},
+		"UpdateSourceTags": {true, "source tags are part of the case", func(t *testing.T, c *Case) func() {
+			src, err := c.AddSource(ctx, casestore.SourceTag{Kind: "iis"})
+			mustNoErr(t, "AddSource", err)
+			return func() {
+				_, err := c.UpdateSourceTags(ctx, src.ID, "Production", "", "")
+				mustNoErr(t, "UpdateSourceTags", err)
+			}
+		}},
 		"RemoveSource": {true, "source tags are part of the case", func(t *testing.T, c *Case) func() {
 			src, err := c.AddSource(ctx, casestore.SourceTag{Kind: "iis"})
 			mustNoErr(t, "AddSource", err)

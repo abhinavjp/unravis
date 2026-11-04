@@ -398,7 +398,7 @@ func digitTail(s string) string {
 // then by its detector, so a detector that emits several tiers sorts correctly.
 var importerWeight = map[string]int{
 	"win-counters": 10,
-	"log4net-text": 20, "log4net-xml": 20, "serilog-clef": 20, "serilog-text": 20,
+	"log4net-text": 20, "log4net-xml": 20, "log4net-blocks": 20, "serilog-clef": 20, "serilog-text": 20,
 	"nlog-text": 20, "mel-console": 20, "mel-json": 20, "ancm-stdout": 20, "appinsights": 20,
 	"iis-w3c": 25, "iis-freb": 25,
 	"iis-httperr":  26,

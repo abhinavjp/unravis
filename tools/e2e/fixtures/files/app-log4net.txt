@@ -1,0 +1,321 @@
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:57:07.013
+UTC Time: 2026-10-19 09:57:07.013
+Application URL: https://app.example.test/api/orders/1
+User IP: 192.0.2.11
+Request handled for order-1
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:57:14.026
+UTC Time: 2026-10-19 09:57:14.026
+Application URL: https://app.example.test/api/orders/2
+User IP: 192.0.2.12
+Request handled for order-2
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:57:21.039
+UTC Time: 2026-10-19 09:57:21.039
+Application URL: https://app.example.test/api/orders/3
+User IP: 192.0.2.13
+Request handled for order-3
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:57:28.052
+UTC Time: 2026-10-19 09:57:28.052
+Application URL: https://app.example.test/api/orders/4
+User IP: 192.0.2.14
+Request handled for order-4
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:57:35.065
+UTC Time: 2026-10-19 09:57:35.065
+Application URL: https://app.example.test/api/orders/5
+User IP: 192.0.2.10
+Request handled for order-5
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:57:42.078
+UTC Time: 2026-10-19 09:57:42.078
+Application URL: https://app.example.test/api/orders/6
+User IP: 192.0.2.11
+Request handled for order-6
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:57:49.091
+UTC Time: 2026-10-19 09:57:49.091
+Application URL: https://app.example.test/api/orders/7
+User IP: 192.0.2.12
+Request handled for order-7
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:57:56.104
+UTC Time: 2026-10-19 09:57:56.104
+Application URL: https://app.example.test/api/orders/8
+User IP: 192.0.2.13
+Request handled for order-8
+
+Logger name: StackExchange.Redis.ConnectionMultiplexer
+Type: WARN
+Server Time: 2026-10-19 09:58:03.117
+UTC Time: 2026-10-19 09:58:03.117
+Application URL: https://app.example.test/api/orders/9
+User IP: 192.0.2.14
+Timeout performing GET (5000ms), next: GET session:key-9, inst: 0, qu: 0, qs: 41, in: 8192, serverEndpoint: redis-a.example.test:6379, v: 2.6.122.38350
+
+Logger name: Synthetic.Api.OrdersController
+Type: ERROR
+Server Time: 2026-10-19 09:58:10.130
+UTC Time: 2026-10-19 09:58:10.130
+Application URL: https://app.example.test/api/orders/10
+User IP: 192.0.2.13
+Unhandled error for order-10
+System.TimeoutException: The operation has timed out. ---> System.Data.SqlClient.SqlException: Timeout expired.
+   at Synthetic.Api.OrdersController.Get(Int32 id) in C:\src\Synthetic\OrdersController.cs:line 42
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:58:17.143
+UTC Time: 2026-10-19 09:58:17.143
+Application URL: https://app.example.test/api/orders/11
+User IP: 192.0.2.11
+Request handled for order-11
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:58:24.156
+UTC Time: 2026-10-19 09:58:24.156
+Application URL: https://app.example.test/api/orders/12
+User IP: 192.0.2.12
+Request handled for order-12
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:58:31.169
+UTC Time: 2026-10-19 09:58:31.169
+Application URL: https://app.example.test/api/orders/13
+User IP: 192.0.2.13
+Request handled for order-13
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:58:38.182
+UTC Time: 2026-10-19 09:58:38.182
+Application URL: https://app.example.test/api/orders/14
+User IP: 192.0.2.14
+Request handled for order-14
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:58:45.195
+UTC Time: 2026-10-19 09:58:45.195
+Application URL: https://app.example.test/api/orders/15
+User IP: 192.0.2.10
+Request handled for order-15
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:58:52.208
+UTC Time: 2026-10-19 09:58:52.208
+Application URL: https://app.example.test/api/orders/16
+User IP: 192.0.2.11
+Request handled for order-16
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:58:59.221
+UTC Time: 2026-10-19 09:58:59.221
+Application URL: https://app.example.test/api/orders/17
+User IP: 192.0.2.12
+Request handled for order-17
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:59:06.234
+UTC Time: 2026-10-19 09:59:06.234
+Application URL: https://app.example.test/api/orders/18
+User IP: 192.0.2.13
+Request handled for order-18
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:59:13.247
+UTC Time: 2026-10-19 09:59:13.247
+Application URL: https://app.example.test/api/orders/19
+User IP: 192.0.2.14
+Request handled for order-19
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:59:20.260
+UTC Time: 2026-10-19 09:59:20.260
+Application URL: https://app.example.test/api/orders/20
+User IP: 192.0.2.10
+Request handled for order-20
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:59:27.273
+UTC Time: 2026-10-19 09:59:27.273
+Application URL: https://app.example.test/api/orders/21
+User IP: 192.0.2.11
+Request handled for order-21
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:59:34.286
+UTC Time: 2026-10-19 09:59:34.286
+Application URL: https://app.example.test/api/orders/22
+User IP: 192.0.2.12
+Request handled for order-22
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: not a time at all
+UTC Time: not a time at all
+Application URL: https://app.example.test/api/orders/23
+User IP: 192.0.2.14
+Block with a time nobody can read
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:59:48.312
+UTC Time: 2026-10-19 09:59:48.312
+Application URL: https://app.example.test/api/orders/24
+User IP: 192.0.2.14
+Request handled for order-24
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 09:59:55.325
+UTC Time: 2026-10-19 09:59:55.325
+Application URL: https://app.example.test/api/orders/25
+User IP: 192.0.2.10
+Request handled for order-25
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:00:02.338
+UTC Time: 2026-10-19 10:00:02.338
+Application URL: https://app.example.test/api/orders/26
+User IP: 192.0.2.11
+Request handled for order-26
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:00:09.351
+UTC Time: 2026-10-19 10:00:09.351
+Application URL: https://app.example.test/api/orders/27
+User IP: 192.0.2.12
+Request handled for order-27
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:00:16.364
+UTC Time: 2026-10-19 10:00:16.364
+Application URL: https://app.example.test/api/orders/28
+User IP: 192.0.2.13
+Request handled for order-28
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:00:23.377
+UTC Time: 2026-10-19 10:00:23.377
+Application URL: https://app.example.test/api/orders/29
+User IP: 192.0.2.14
+Request handled for order-29
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:00:30.390
+UTC Time: 2026-10-19 10:00:30.390
+Application URL: https://app.example.test/api/orders/30
+User IP: 192.0.2.10
+Request handled for order-30
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:00:37.403
+UTC Time: 2026-10-19 10:00:37.403
+Application URL: https://app.example.test/api/orders/31
+User IP: 192.0.2.11
+Request handled for order-31
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:00:44.416
+UTC Time: 2026-10-19 10:00:44.416
+Application URL: https://app.example.test/api/orders/32
+User IP: 192.0.2.12
+Request handled for order-32
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:00:51.429
+UTC Time: 2026-10-19 10:00:51.429
+Application URL: https://app.example.test/api/orders/33
+User IP: 192.0.2.13
+Request handled for order-33
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:00:58.442
+UTC Time: 2026-10-19 10:00:58.442
+Application URL: https://app.example.test/api/orders/34
+User IP: 192.0.2.14
+Request handled for order-34
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:01:05.455
+UTC Time: 2026-10-19 10:01:05.455
+Application URL: https://app.example.test/api/orders/35
+User IP: 192.0.2.10
+Request handled for order-35
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:01:12.468
+UTC Time: 2026-10-19 10:01:12.468
+Application URL: https://app.example.test/api/orders/36
+User IP: 192.0.2.11
+Request handled for order-36
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:01:19.481
+UTC Time: 2026-10-19 10:01:19.481
+Application URL: https://app.example.test/api/orders/37
+User IP: 192.0.2.12
+Request handled for order-37
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:01:26.494
+UTC Time: 2026-10-19 10:01:26.494
+Application URL: https://app.example.test/api/orders/38
+User IP: 192.0.2.13
+Request handled for order-38
+
+Logger name: Synthetic.Api.OrdersController
+Type: INFO
+Server Time: 2026-10-19 10:01:33.507
+UTC Time: 2026-10-19 10:01:33.507
+Application URL: https://app.example.test/api/orders/39
+User IP: 192.0.2.14
+Request handled for order-39
+
+Logger name: Synthetic.Api.Global
+Type: FATAL
+Server Time: 2026-10-19 10:01:40.520
+UTC Time: 2026-10-19 10:01:40.520
+Application URL: https://app.example.test/api/orders/40
+User IP: 192.0.2.16
+Application_End

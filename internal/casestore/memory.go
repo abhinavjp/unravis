@@ -855,6 +855,31 @@ func (c *memCase) Sources(ctx context.Context) ([]SourceTag, error) {
 	return append([]SourceTag{}, c.d.sources...), nil
 }
 
+func (c *memCase) UpdateSourceTags(ctx context.Context, id int64, env, portal, api string) (SourceTag, error) {
+	clean, err := CleanSource(SourceTag{Kind: "x", Env: env, Portal: portal, API: api})
+	if err != nil {
+		return SourceTag{}, err
+	}
+	if err := c.tagWrite(ctx); err != nil {
+		return SourceTag{}, err
+	}
+	c.d.mu.Lock()
+	defer c.d.mu.Unlock()
+	if c.d.erased {
+		return SourceTag{}, ErrNotFound
+	}
+	if c.d.info.Closed != nil {
+		return SourceTag{}, ErrCaseClosed
+	}
+	for i := range c.d.sources {
+		if c.d.sources[i].ID == id {
+			c.d.sources[i].Env, c.d.sources[i].Portal, c.d.sources[i].API = clean.Env, clean.Portal, clean.API
+			return c.d.sources[i], nil
+		}
+	}
+	return SourceTag{}, ErrNotFound
+}
+
 func (c *memCase) RemoveSource(ctx context.Context, id int64) error {
 	if err := c.tagWrite(ctx); err != nil {
 		return err

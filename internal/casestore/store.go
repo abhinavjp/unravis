@@ -550,6 +550,11 @@ type Tagger interface {
 	Sources(ctx context.Context) ([]SourceTag, error)
 	// RemoveSource deletes one tag. Removing an ID that is not there is not an error.
 	RemoveSource(ctx context.Context, id int64) error
+	// UpdateSourceTags replaces the Environment, Portal and API of one tag and
+	// returns the tag as stored. The kind, label, import and classification do
+	// not change. The text rules of AddSource apply (ErrBadTag); an ID that is not
+	// there is ErrNotFound.
+	UpdateSourceTags(ctx context.Context, id int64, env, portal, api string) (SourceTag, error)
 }
 
 // cleanTagText trims s and reports whether it is plain, bounded text: valid

@@ -143,22 +143,28 @@ func TestA1_FolderRulesGiveM8AndChangeNothing(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// A folder that exists, is long, but leaves too little room for the file name.
-	long := good
+	// A folder that exists, is long, but leaves too little room for the file name. It is always longer than the temp folder it sits in, so a
+	// temp folder that is long already (a deep TEMP path) still gives a folder that is too long.
+	long := filepath.Join(good, strings.Repeat("d", 20))
 	for len(long) < 215 {
 		long = filepath.Join(long, strings.Repeat("d", 20))
 	}
 	if err := os.MkdirAll(long, 0o700); err != nil {
 		t.Skipf("cannot make a long folder here: %v", err)
 	}
-	// A folder of exactly 241 characters.
+	// A folder of exactly 241 characters. When the temp folder is so deep that 241 is out of reach (it needs two more characters for a "\" and a
+	// name), the folder is two characters longer than the temp folder: it is refused for the same reason, and the test no longer depends on TEMP.
+	target := 241
+	if len(good)+2 > target {
+		target = len(good) + 2
+	}
 	exact := good
-	for len(exact) < 241-21 {
+	for target-len(exact) > 22 {
 		exact = filepath.Join(exact, strings.Repeat("e", 20))
 	}
-	exact = filepath.Join(exact, strings.Repeat("f", 241-len(exact)-1))
-	if len(exact) != 241 {
-		t.Fatalf("test path length = %d", len(exact))
+	exact = filepath.Join(exact, strings.Repeat("f", target-len(exact)-1))
+	if len(exact) != target {
+		t.Fatalf("test path length = %d, want %d", len(exact), target)
 	}
 	_ = os.MkdirAll(exact, 0o700)
 	_ = os.MkdirAll(filepath.Join(a.dir, "sub"), 0o700)

@@ -1,8 +1,9 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
   import { PICKER_TEXT, dayLabel, dialogLabel, partLabel, triggerLabel } from '../copy/pickerCopy';
+  import TimeBox from './TimeBox.svelte';
   import {
-    DAY_MS, daysInMonth, dayName, dayRole, draftFrom, draftWithDays, formatStamp, isDateText, isTimeText, monthGrid, parseStamp, pickDay,
+    DAY_MS, daysInMonth, dayName, dayRole, draftFrom, draftWithDays, formatStamp, isDateText, monthGrid, parseStamp, parseTime, pickDay,
     rangeSpanText, rangeText, readDraft, readParts, shiftMonth, splitStamp, syncParts, type DraftText, type QuickRange
   } from '../tracing/pickerModel';
 
@@ -80,7 +81,7 @@
     return grid.days[0].date;
   });
   const badDate = (text: string) => text.trim() !== '' && !isDateText(text.trim());
-  const badTime = (text: string) => text.trim() !== '' && !isTimeText(text.trim());
+  const badTime = (text: string) => text.trim() !== '' && parseTime(text) === null;
   const note = $derived.by((): { text: string; bad: boolean } => {
     if (badDate(draft.startDate) || badDate(draft.endDate)) return { text: PICKER_TEXT.badDate, bad: true };
     if (badTime(draft.startTime) || badTime(draft.endTime)) return { text: PICKER_TEXT.badTime, bad: true };
@@ -151,7 +152,8 @@
   }
 
   function onDialogKey(event: KeyboardEvent) {
-    // Enter in a text box applies the draft; it must never reach the form around the picker and start a read.
+    // Enter in a text box applies the draft; it must never reach the form around the picker and start a read. Enter in one of the time
+    // selects is left to the select itself (it confirms the highlighted choice); a select does not submit a form, so nothing is done for it.
     if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
       event.preventDefault();
       event.stopPropagation();
@@ -324,8 +326,7 @@
             <span class="pair">
               <input class="d" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="10" placeholder={PICKER_TEXT.datePlaceholder} aria-label={partLabel(label, 'start date')}
                 aria-invalid={badDate(draft.startDate) ? true : undefined} value={draft.startDate} oninput={(e) => { draft.startDate = e.currentTarget.value; draftTyped(draft.startDate); }} />
-              <input class="t" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="5" placeholder={PICKER_TEXT.timePlaceholder} aria-label={partLabel(label, 'start time')}
-                aria-invalid={badTime(draft.startTime) ? true : undefined} value={draft.startTime} oninput={(e) => { draft.startTime = e.currentTarget.value; draftTyped(); }} />
+              <TimeBox label={partLabel(label, 'start time')} invalid={badTime(draft.startTime)} value={draft.startTime} onchange={(next) => { draft.startTime = next; draftTyped(); }} />
             </span>
           </div>
           <div class="trow">
@@ -333,8 +334,7 @@
             <span class="pair">
               <input class="d" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="10" placeholder={PICKER_TEXT.datePlaceholder} aria-label={partLabel(label, 'end date')}
                 aria-invalid={badDate(draft.endDate) || reading.state === 'order' ? true : undefined} value={draft.endDate} oninput={(e) => { draft.endDate = e.currentTarget.value; draftTyped(draft.endDate); }} />
-              <input class="t" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="5" placeholder={PICKER_TEXT.timePlaceholder} aria-label={partLabel(label, 'end time')}
-                aria-invalid={badTime(draft.endTime) || reading.state === 'order' ? true : undefined} value={draft.endTime} oninput={(e) => { draft.endTime = e.currentTarget.value; draftTyped(); }} />
+              <TimeBox label={partLabel(label, 'end time')} invalid={badTime(draft.endTime) || reading.state === 'order'} value={draft.endTime} onchange={(next) => { draft.endTime = next; draftTyped(); }} />
             </span>
           </div>
           <p class="pk-note" class:err={note.bad} aria-live="polite" data-testid="picker-note">{note.text}</p>
@@ -351,15 +351,13 @@
   <div class="dtr">
     <input class="d" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="10" placeholder={PICKER_TEXT.datePlaceholder} aria-label={partLabel(label, 'start date')}
       aria-invalid={invalidStart || badSd ? true : undefined} aria-describedby={inlineDescribed} disabled={off} value={sd} oninput={(e) => { sd = e.currentTarget.value; readInline(); }} onblur={() => settle('sd')} />
-    <input class="t" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="5" placeholder={PICKER_TEXT.timePlaceholder} aria-label={partLabel(label, 'start time')}
-      aria-invalid={invalidStart || badSt ? true : undefined} aria-describedby={inlineDescribed} disabled={off} value={st} oninput={(e) => { st = e.currentTarget.value; readInline(); }} onblur={() => settle('st')} />
+    <TimeBox label={partLabel(label, 'start time')} invalid={invalidStart || badSt} describedby={inlineDescribed} disabled={off} value={st} onchange={(next) => { st = next; readInline(); }} />
     <span class="sep">{PICKER_TEXT.to}</span>
     {#if otherDay}
       <input class="d" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="10" placeholder={PICKER_TEXT.datePlaceholder} aria-label={partLabel(label, 'end date')}
         aria-invalid={invalidEnd || badEd ? true : undefined} aria-describedby={inlineDescribed} disabled={off} value={ed} oninput={(e) => { ed = e.currentTarget.value; readInline(); }} onblur={() => settle('ed')} />
     {/if}
-    <input class="t" type="text" inputmode="text" autocomplete="off" spellcheck="false" maxlength="5" placeholder={PICKER_TEXT.timePlaceholder} aria-label={partLabel(label, 'end time')}
-      aria-invalid={invalidEnd || badEt ? true : undefined} aria-describedby={inlineDescribed} disabled={off} value={et} oninput={(e) => { et = e.currentTarget.value; readInline(); }} onblur={() => settle('et')} />
+    <TimeBox label={partLabel(label, 'end time')} invalid={invalidEnd || badEt} describedby={inlineDescribed} disabled={off} value={et} onchange={(next) => { et = next; readInline(); }} />
     <span class="tz">{PICKER_TEXT.zone}</span>
   </div>
   <label class="other"><input type="checkbox" bind:checked={otherDay} disabled={off} onchange={toggleOtherDay} /> {PICKER_TEXT.otherDay}</label>
@@ -403,7 +401,7 @@
   .row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .pk input[type='text'], .dtr input[type='text'] { width: auto; min-width: 0; min-height: 34px; padding: 4px 8px; font-size: 13px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
   .pk input.d, .dtr input.d { width: 118px; }
-  .pk input.t, .dtr input.t { width: 68px; }
+
   input[aria-invalid='true'] { border-color: var(--bad); }
   .err { color: var(--bad); }
 

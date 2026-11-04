@@ -172,7 +172,7 @@ test('Cancelled is said in the notes region below the chart, so the chart never 
   const src = paper();
   const chart = src.slice(src.indexOf('data-region="chart"'), src.indexOf('data-region="notes"'));
   assert.doesNotMatch(chart, /cancel-note|cancelledKept|cancelledNone/);
-  const notes = src.slice(src.indexOf('data-region="notes"'), src.indexOf('</section>'));
+  const notes = src.slice(src.indexOf('data-region="notes"'), src.lastIndexOf('</section>'));
   assert.match(notes, /class="cancel-note">\{result \? WINDOW_TEXT\.cancelledKept : WINDOW_TEXT\.cancelledNone\}/);
 });
 

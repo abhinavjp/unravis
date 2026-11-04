@@ -25,9 +25,16 @@ export const PICKER_TEXT = {
   /** Under a date box that holds text that is not a real day. */
   badDate: 'Use a real date, written like 2026-10-26.',
   /** Under a time box that holds text that is not a time. */
-  badTime: 'Use a time from 00:00 to 23:59, written like 10:30.',
+  badTime: 'Use a time like 10:30 PM. A 24-hour time such as 22:30 also works.',
   datePlaceholder: 'YYYY-MM-DD',
   timePlaceholder: 'HH:mm',
+  /** The three parts of a 12-hour time box, and what an empty hour or minute shows. */
+  hourWord: 'hour',
+  minuteWord: 'minute',
+  periodWord: 'AM or PM',
+  unset: '--',
+  am: 'AM',
+  pm: 'PM',
   otherDay: 'Ends on a different day',
   to: 'to',
   weekdays: ['S', 'M', 'T', 'W', 'T', 'F', 'S'],

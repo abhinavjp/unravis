@@ -18,6 +18,16 @@ Press Create a new case. The guide walks you through the steps. Step 1 asks what
 ![Create a case, step 1, dark](screenshots/P1/p1-create-1-dark.png)
 ![Create a case, step 1, light](screenshots/P1/p1-create-1-light.png)
 
+Step 2 is Sources. It can be skipped, and data can be added after the case is made. **Import files** opens one card for each type of file: IIS logs, Application logs, Query Store export and the others. Each card says what the file gives, where such files usually sit, and which kinds of file it takes. Press the card's button, or drag files onto the page. Nothing is read until the case is made.
+
+![Create a case, step 2, the cards for each type of file, dark](screenshots/P1/p1-create-files-dark.png)
+![Create a case, step 2, the cards for each type of file, light](screenshots/P1/p1-create-files-light.png)
+
+On a narrow window the cards stack in one column, and the page does not scroll sideways.
+
+![Create a case, step 2, the cards for each type of file, dark, narrow](screenshots/P1/p1-create-files-dark-narrow.png)
+![Create a case, step 2, the cards for each type of file, light, narrow](screenshots/P1/p1-create-files-light-narrow.png)
+
 ### Pressing Create twice, reloading, or closing the window
 
 Each run of the guide has its own request number, kept in this browser tab. Unravis makes one case for one request number. So these all end with one case, not two:

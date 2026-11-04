@@ -8,7 +8,7 @@
   import { isZipName, readZip } from '../../lib/zipRead';
   import { BATCH_TEXT, batchHostWarnText, batchImportText, batchReasonText, formatBytes, sizeProblemText, verdictLabel, zipSkippedText } from '../../lib/copy/importCopy';
   import {
-    CARDS_TEXT, FILES_TEXT, FILE_CARDS, FILE_KIND_LABELS, EXTRA_KIND_LABELS, addFilesText, cardCountText, cardGroupHeading, cardInputLabel, addedText, chosenKindText, dropUnreadableText, hostWarnText, kindSelectLabel, removeRowLabel, looksLikeText, readsText, skippedText, supportedText, zoneText, zoneWarnText
+    CARDS_TEXT, FILES_TEXT, FILE_CARDS, FILE_KIND_LABELS, EXTRA_KIND_LABELS, addFilesText, cardCountText, cardGroupHeading, cardInputLabel, addedText, alreadyListedText, chosenKindText, dropUnreadableText, hostWarnText, kindSelectLabel, removeRowLabel, looksLikeText, readsText, skippedText, zoneText, zoneWarnText
   } from '../../lib/copy/fileKindsCopy';
   import type { FileCard } from '../../lib/copy/fileKindsCopy';
   import IisGuide from './IisGuide.svelte';
@@ -22,7 +22,7 @@
   // The same panel serves the import drawer of an open case (packet P9) when `drawer` is set. There, a .zip is opened in the page, the button
   // hands the rows to `onImport` instead of adding sources, the list stays after the import, and a Result column shows how each file ended
   // (Used, Partly used or Rejected, with a plain reason and Try again). `results` is keyed by row id. A row being sent cannot be changed.
-  let { drawer = false, busy = false, canImport = true, results = {}, pending = $bindable(0), onImport, onRetry, onListChange, footer }: {
+  let { drawer = false, busy = false, canImport = true, results = {}, pending = $bindable(0), onImport, onRetry, onListChange, onCancel, footer }: {
     drawer?: boolean;
     /** Drawer only: how many listed files have no result yet (staged, not imported), for the Add data cards and the leave question. */
     pending?: number;
@@ -35,6 +35,8 @@
     onRetry?: (row: StagedFile) => void;
     /** Files were added to the list or the list was cleared: whatever the person confirmed for the old list no longer covers this one. */
     onListChange?: () => void;
+    /** Wizard only: the Cancel button at the foot of the panel (wireframe w37). The files already chosen stay in the draft's list. */
+    onCancel?: () => void;
     /** Drawn above the buttons: the notice the person confirms. */
     footer?: Snippet;
   } = $props();
@@ -96,9 +98,9 @@
   // Try again is for a file that is meant to go: one set to "Don't use this file", or refused here, is not sent by it.
   const canRetry = (item: StagedFile): boolean => item.choice !== '' && !refused(item);
 
-  /** In the drawer a .zip is opened here and its files take its place in the list. Returns what to tell the person. */
+  /** A .zip is opened here (wizard and drawer) and its files take its place in the list. Returns what to tell the person. */
   async function expand(picked: File[], mine: number): Promise<{ files: File[]; says: string[] }> {
-    if (!drawer || !picked.some((file) => isZipName(file.name))) return { files: picked, says: [] };
+    if (!picked.some((file) => isZipName(file.name))) return { files: picked, says: [] };
     const files: File[] = [];
     const says: string[] = [];
     note = BATCH_TEXT.zipReading;
@@ -119,17 +121,33 @@
     return { files, says };
   }
 
+  const sameFile = (a: File, b: File): boolean => (a.webkitRelativePath || a.name) === (b.webkitRelativePath || b.name) && a.size === b.size && a.lastModified === b.lastModified;
+  /** The files that are not yet in the list (nor earlier in this same pick). */
+  function newFiles(files: File[]): File[] {
+    const seen: File[] = list.map((item) => item.file);
+    const out: File[] = [];
+    for (const file of files) {
+      if (seen.some((other) => sameFile(file, other))) continue;
+      seen.push(file);
+      out.push(file);
+    }
+    return out;
+  }
+
   async function take(files: ArrayLike<File> | null | undefined, folder: boolean, before: string[] = [], owner: number | null = null, card: FileCard | null = null) {
     // A drop hands its own read over, so the walk and the opening of a .zip count as one read.
     const mine = owner ?? staging.beginRead();
     const opened = await expand(Array.from(files ?? []), mine);
     if (!staging.current(mine)) return;
     const says = [...before, ...opened.says];
-    if (opened.files.length > 0) {
-      staging.append(opened.files, folder, card?.id, card?.kind);
+    // The wizard lists a file once: the same file (name, size and date) chosen again is left out, and the person is told in a quiet line.
+    const fresh = drawer ? opened.files : newFiles(opened.files);
+    const repeats = opened.files.length - fresh.length;
+    if (fresh.length > 0) {
+      staging.append(fresh, folder, card?.id, card?.kind);
       onListChange?.();
     }
-    note = says.join(' ');
+    note = [...says, ...(repeats > 0 ? [alreadyListedText(repeats)] : [])].join(' ');
     noteBad = says.length > 0;
     if (owner === null) staging.endRead(mine);
   }
@@ -188,6 +206,8 @@
     staging.endRead(mine);
   }
 
+  const dropHere = (event: DragEvent) => { void onDrop(event); };
+
   function setKind(id: number, value: string) {
     // The three extra choices are for the wizard; the drawer offers the importers only.
     const choice: PanelKind | '' = isPanelKind(value) && (!drawer || !(EXTRA_KIND_IDS as readonly string[]).includes(value)) ? value : '';
@@ -197,6 +217,13 @@
 
   function setHost(id: number, host: string) {
     staging.setList(list.map((item) => (item.id === id ? { ...item, host } : item)));
+  }
+
+  // The rows move up when one goes, so the second click of a double click would land on the next row's Remove and drop a second file. A click
+  // that is the second (or later) of a quick series is left alone; a keyboard press (detail 0) and a click on its own count as one remove.
+  function onRemoveClick(event: MouseEvent, id: number) {
+    if (event.detail > 1) return;
+    void removeRow(id);
   }
 
   async function removeRow(id: number) {
@@ -260,22 +287,22 @@
   const refused = (item: StagedFile): boolean => item.refusal !== '' || bigProblem(item) !== null;
 </script>
 
-<div class="files" class:in-drawer={drawer} bind:this={rootEl}>
+<!-- In the wizard the whole panel takes a drop (wireframe w37 has no drop box); the drawer keeps its own dashed zone below. -->
+<div class="files" class:in-drawer={drawer} class:over={!drawer && over} role="group" aria-labelledby="{uid}-h"
+  ondragover={drawer ? undefined : onDragOver} ondragenter={drawer ? undefined : onDragOver} ondragleave={drawer ? undefined : onDragLeave} ondrop={drawer ? undefined : dropHere} bind:this={rootEl}>
   <h5 id="{uid}-h">{drawer ? BATCH_TEXT.heading : FILES_TEXT.heading}</h5>
   <p class="hint">{drawer ? BATCH_TEXT.intro : FILES_TEXT.intro}</p>
 
   {#if !drawer}
     <section class="cards" aria-labelledby="{uid}-cards">
-      <h6 id="{uid}-cards">{CARDS_TEXT.heading}</h6>
-      <p class="hint">{CARDS_TEXT.lead}</p>
+      <h6 id="{uid}-cards" class="sr-only">{CARDS_TEXT.heading}</h6>
       <ul class="card-grid">
         {#each FILE_CARDS as card (card.id)}
           <li class="file-card" data-file-card={card.id}>
             <p class="card-title">{card.title}</p>
-            <p class="hint">{card.text}</p>
+            <p class="hint card-text">{card.text}</p>
             <p class="card-chips"><span class="chip">{card.chip}</span></p>
-            {#if card.note}<p class="hint">{card.note}</p>{/if}
-            <p class="hint card-count" data-card-count={card.id}>{cardCountText(cardCount(card))}</p>
+            <p class="sr-only" data-card-count={card.id}>{cardCountText(cardCount(card))}</p>
             <button type="button" class="secondary-button" onclick={() => cardInputs[card.id]?.click()}>{card.button}</button>
             <input bind:this={cardInputs[card.id]} class="pick-input" type="file" multiple tabindex="-1" aria-label={cardInputLabel(card)} onchange={(event) => onCardPick(event, card)} />
           </li>
@@ -284,18 +311,18 @@
       <p class="hint">{CARDS_TEXT.footer}</p>
     </section>
     <p class="hint unsure">{CARDS_TEXT.unsure}</p>
-  {/if}
-
-  <div class="drop" class:over role="group" aria-labelledby="{uid}-drop" ondragover={onDragOver} ondragenter={onDragOver} ondragleave={onDragLeave} ondrop={(event) => void onDrop(event)} aria-busy={reading}>
-    <p class="drop-title" id="{uid}-drop">{FILES_TEXT.dropTitle}</p>
-    <p class="hint">{FILES_TEXT.dropOr}</p>
-    <div class="actions">
-      <button type="button" class="secondary-button" bind:this={chooseButton} onclick={() => filesInput?.click()}>{FILES_TEXT.chooseFiles}</button>
-      <button type="button" class="secondary-button" onclick={() => folderInput?.click()}>{FILES_TEXT.chooseFolder}</button>
+  {:else}
+    <div class="drop" class:over role="group" aria-labelledby="{uid}-drop" ondragover={onDragOver} ondragenter={onDragOver} ondragleave={onDragLeave} ondrop={(event) => void onDrop(event)} aria-busy={reading}>
+      <p class="drop-title" id="{uid}-drop">{FILES_TEXT.dropTitle}</p>
+      <p class="hint">{FILES_TEXT.dropOr}</p>
+      <div class="actions">
+        <button type="button" class="secondary-button" bind:this={chooseButton} onclick={() => filesInput?.click()}>{FILES_TEXT.chooseFiles}</button>
+        <button type="button" class="secondary-button" onclick={() => folderInput?.click()}>{FILES_TEXT.chooseFolder}</button>
+      </div>
     </div>
-    <input bind:this={filesInput} class="pick-input" type="file" multiple tabindex="-1" aria-label={FILES_TEXT.filesInputLabel} onchange={(event) => onPick(event, false)} />
-    <input bind:this={folderInput} class="pick-input" type="file" webkitdirectory tabindex="-1" aria-label={FILES_TEXT.folderInputLabel} onchange={(event) => onPick(event, true)} />
-  </div>
+  {/if}
+  <input bind:this={filesInput} class="pick-input" type="file" multiple tabindex="-1" aria-label={FILES_TEXT.filesInputLabel} onchange={(event) => onPick(event, false)} />
+  <input bind:this={folderInput} class="pick-input" type="file" webkitdirectory tabindex="-1" aria-label={FILES_TEXT.folderInputLabel} onchange={(event) => onPick(event, true)} />
 
   <p class="note" class:bad={noteBad} role="status" tabindex="-1" bind:this={noteEl} hidden={note === ''}>{note}</p>
 
@@ -334,7 +361,7 @@
                     {#each FILE_KIND_IDS as id (id)}<option value={id}>{FILE_KIND_LABELS[id]}</option>{/each}
                     {#if !drawer}{#each EXTRA_KIND_IDS as id (id)}<option value={id}>{EXTRA_KIND_LABELS[id]}</option>{/each}{/if}
                   </select>
-                  <button type="button" class="quiet-button row-remove" data-remove-row disabled={locked(item)} aria-label={removeRowLabel(item.name)} onclick={() => void removeRow(item.id)}>{FILES_TEXT.removeRow}</button>
+                  <button type="button" class="quiet-button row-remove" data-remove-row disabled={locked(item)} aria-label={removeRowLabel(item.name)} onclick={(event) => onRemoveClick(event, item.id)}>{FILES_TEXT.removeRow}</button>
                 </td>
                 <td class="zone" data-label={FILES_TEXT.colComputer}>
                   {item.choice === '' || item.refusal !== '' ? FILES_TEXT.noZone : zoneText(item.choice)}
@@ -391,9 +418,19 @@
     </section>
   {/if}
 
-  <p class="hint supported">{drawer ? BATCH_TEXT.supported : supportedText()}</p>
-  <IisGuide />
+  {#if drawer}
+    <p class="hint supported">{BATCH_TEXT.supported}</p>
+    <IisGuide />
+  {/if}
+  <!-- The wizard shows the card guides (FileGuides, the IIS one among them) and no second IIS guide. -->
   {#if !drawer}<FileGuides />{/if}
+  {#if !drawer}
+    <div class="actions foot" aria-busy={reading}>
+      <button type="button" class="secondary-button" bind:this={chooseButton} onclick={() => filesInput?.click()}>{FILES_TEXT.chooseFiles}</button>
+      <button type="button" class="quiet-button" onclick={() => folderInput?.click()}>{FILES_TEXT.chooseFolder}</button>
+      <button type="button" class="quiet-button" data-cancel-files onclick={() => onCancel?.()}>{FILES_TEXT.cancel}</button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -403,7 +440,8 @@
   .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .cards { display: grid; gap: var(--space-2); min-width: 0; }
   .cards h6, .group-head { margin: 0; font-size: var(--fs-3); font-weight: 600; }
-  .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+  /* Wireframe w37: the four cards wrap three and one, each as tall as its own words (no equal-height empty gaps). */
+  .card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
   .file-card { display: grid; align-content: start; gap: var(--space-2); min-width: 0; padding: var(--space-3); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
   .file-card > * { margin: 0; }
   .file-card button { justify-self: start; }
@@ -411,6 +449,11 @@
   .file-card p, .file-card .chip { max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
   .chip { display: inline-block; padding: 0 var(--space-2); color: var(--text-2); background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-2); }
   .unsure { max-width: 80ch; }
+  /* A long word wraps only when it cannot fit a line alone, so the drive path of the IIS card is never cut in the middle of a name. */
+  .file-card p.card-text { overflow-wrap: break-word; }
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); border: 0; white-space: nowrap; }
+  .files.over { outline: 2px dashed var(--accent); outline-offset: 4px; }
+  .foot { align-items: center; }
   .drop { display: grid; justify-items: center; gap: var(--space-2); min-width: 0; padding: var(--space-5) var(--space-3); text-align: center; background: var(--bg); border: 2px dashed var(--control-line); border-radius: var(--radius-sm); }
   .drop.over { background: var(--surface-2); border-color: var(--accent); }
   .drop-title { margin: 0; font-size: var(--fs-4); font-weight: 600; }
@@ -435,7 +478,7 @@
   .zone { display: table-cell; min-width: 200px; color: var(--text-2); }
   .zone :global(.choice) { margin-top: var(--space-1); color: var(--text); }
   tr.refused .file-name { color: var(--text-2); text-decoration: line-through; }
-  select { box-sizing: border-box; width: 100%; min-width: 180px; max-width: 100%; min-height: 36px; padding: 4px 8px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-3); }
+  select { box-sizing: border-box; width: 100%; min-width: 230px; max-width: 100%; min-height: 36px; padding: 4px 8px; color: var(--text); background: var(--bg); border: var(--hairline-width) solid var(--control-line); border-radius: var(--radius-sm); font: inherit; font-size: var(--fs-3); }
   select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
   .reads { display: grid; gap: var(--space-1); }
   .reads-title { margin: 0; font-size: var(--fs-3); font-weight: 600; }
@@ -455,7 +498,11 @@
   .in-drawer select { min-width: 0; }
   .in-drawer .file-name { font-size: var(--fs-1, var(--fs-2)); }
   /* A phone is too narrow for four columns: each file becomes a stacked block, the labels come from the column heads. */
+  @media (max-width: 760px) {
+    .card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
   @media (max-width: 560px) {
+    .card-grid { grid-template-columns: minmax(0, 1fr); }
     .scroll { overflow-x: visible; border: 0; }
     table, tbody, tr, th, td { display: block; }
     thead { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); }

@@ -1,17 +1,19 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from 'svelte';
-  import { fetchTracing, nextRequestSeq, tracingErrorText, type TracingResponse } from '../lib/tracing/model';
+  import { fetchTracing, nextRequestSeq, tracingErrorText, type TracingLaneKey, type TracingResponse } from '../lib/tracing/model';
   import { WINDOW_TEXT, checkWindows, defaultWindows, fixOverlap, windowHasNoData, windowIsEmpty, windowNow, loadWindows, saveWindows, type WindowFields } from '../lib/tracing/windows';
   import { TRACING_TEXT } from '../lib/copy/tracingCopy';
   import { WAIT_TEXT } from '../lib/copy/waitCopy';
   import { createSlowRead } from '../lib/slowRead.svelte';
   import TracingChart from './TracingChart.svelte';
+  import SuspectsRail from './SuspectsRail.svelte';
   import WindowPicker from '../lib/components/WindowPicker.svelte';
   import { comparisonQuickRanges, equalPeriodBefore, incidentQuickChips, incidentQuickRanges, quickRangeIsActive, withQuickRange, type QuickRange } from '../lib/tracing/pickerModel';
   import TraceToolbar from './TraceToolbar.svelte';
   import TraceSources from './TraceSources.svelte';
-  import { CaseApiError } from '../lib/cases';
-  import { ALL_SOURCES, NO_SOURCES, SOURCES_TEXT, composeSourceIds, loadSources, mergeUniverse, saveSources, toggleSource, unselectedLanes, type SourceSelection, type SourceUniverse } from '../lib/tracing/sources';
+  import { CaseApiError, listImports } from '../lib/cases';
+  import { listSourceTags } from '../lib/caseTagsApi';
+  import { ALL_SOURCES, NO_SOURCES, SOURCES_TEXT, composeSourceIds, fileSourceIds, loadSources, mergeUniverse, saveSources, switchOnNew, toggleOutcome, unselectedLanes, type SourceSelection, type SourceUniverse } from '../lib/tracing/sources';
   import { allLanesVisible, toggleLane } from '../lib/tracing/toolbar';
   import { exportScrub } from '../lib/exportScrub.svelte';
   import { timeZone } from '../lib/timeZone.svelte';
@@ -34,6 +36,14 @@
   let errorText = $state('');
   // The plain sentence shown when a clicked bar has nothing to analyse (WP-61).
   let handoffNote = $state('');
+  // The bar the Suspects rail asked the chart to show ("Show on chart"). A new token asks again; a new read clears it so a stale bar is never selected.
+  let chartFocus = $state.raw<{ slot: number; token: number } | null>(null);
+  let focusToken = 0;
+  // A suspect's lane the person switched off is switched back on first, so the bar being shown is not left hidden.
+  const showOnChart = (slot: number, lane?: TracingLaneKey) => {
+    if (lane && !visible[lane]) visible = { ...visible, [lane]: true };
+    chartFocus = { slot, token: ++focusToken };
+  };
   // Set by Cancel, cleared by the next run: the chart region then says what happened instead of going blank.
   let cancelled = $state(false);
   // After a few seconds the plain reading line gives way to one that says a large window can take a minute.
@@ -77,10 +87,14 @@
     onFieldInput();
   }
   const describedBy = $derived(problems.length > 0 ? 'tp-problems' : undefined);
+  // The line under the two windows (the wireframe's UTC echo): what the boxes hold, in the one format the server is sent, so a typed 12-hour time is never a guess.
+  const echoUtc = (start: string, end: string): string => (start && end ? `UTC ${start}:00Z – ${end}:00Z` : `UTC ${WINDOW_TEXT.metaUnset}`);
   // The "Sources traced" choice (kept per case in this tab) and the sources the case is known to have. Nothing selected reads nothing.
   const startingSources = () => loadSources(caseId);
   let selection = $state.raw<SourceSelection>(startingSources()?.selection ?? ALL_SOURCES);
   let universe = $state.raw<SourceUniverse>(startingSources()?.universe ?? { chips: [], saved: [] });
+  // Said when a source cannot be switched on because 50 are on already; cleared by the next change of the choice.
+  let capNote = $state('');
   const nothingSelected = $derived(composeSourceIds(selection).nothing);
   const offLanes = $derived(unselectedLanes(selection, universe.chips));
   // A lane the server left empty for a time zone that was not checked (packet P11). The notice names the lanes and leads to the Sources list.
@@ -91,6 +105,8 @@
     await tick();
     requestAnimationFrame(() => document.getElementById('home-sources')?.scrollIntoView({ block: 'start' }));
   }
+  // The Suspects rail sits beside the chart once a read has come back with lanes in it (the wireframe's `hasrail`).
+  const showRail = $derived(!!result && !nothingSelected && status !== 'error' && result.lanes.length > 0);
   const emptyWindow = $derived(result ? windowIsEmpty(result.lanes) : false);
   // Lanes came back but none holds an event (for example a case with no files in the window): one line says what to do.
   const noData = $derived(result ? windowHasNoData(result.lanes, result.warnings) : false);
@@ -100,6 +116,7 @@
     controller?.abort();
     controller = null;
     result = null;
+    chartFocus = null;
     shownBody = null;
     status = 'idle';
     cancelled = false;
@@ -123,6 +140,7 @@
       universe = mergeUniverse(universe, res, wanted.ids.length === 0);
       saveSources(caseId, selection, universe);
       result = res;
+      chartFocus = null;
       shownBody = body;
       status = 'ready';
     } catch (error) {
@@ -164,14 +182,30 @@
     const open = panels.sidePanel === 'import';
     const closedNow = importWasOpen && !open;
     importWasOpen = open;
-    if (closedNow) untrack(() => { if (status !== 'loading' && !composeSourceIds(selection).nothing) void run(lastBody ?? undefined); });
+    if (closedNow) untrack(() => { if (status !== 'loading' && !composeSourceIds(selection).nothing) void readAfterAdd(); });
   });
+
+  // A hand-picked list also switches on the sources the drawer just added (a new file would otherwise be traced by no one), then reads.
+  // Which sources are new comes from the case's own tags and files; any failure here reads with the choice as it is.
+  async function readAfterAdd() {
+    if (selection.mode === 'some') {
+      try {
+        const [tags, imports] = await Promise.all([listSourceTags(caseId), listImports(caseId)]);
+        const known = new Set(universe.chips.map((chip) => chip.id));
+        const out = switchOnNew(selection, fileSourceIds(tags, imports).filter((id) => !known.has(id)));
+        capNote = out.refused ? SOURCES_TEXT.newNotOn : '';
+        if (out.selection !== selection) { selection = out.selection; saveSources(caseId, selection, universe); }
+      } catch { /* the choice stays as it is */ }
+    }
+    void run(lastBody ?? undefined);
+  }
 
   // A click on a source (or Select all / Clear all) keeps the choice and reads again with it, over the window of the last read.
   function changeSelection(next: SourceSelection) {
     selection = next;
     saveSources(caseId, next, universe);
     void run(lastBody ?? undefined);
+    capNote = '';
   }
 
   function clearProblems() {
@@ -243,10 +277,15 @@
 <section class="tracing-paper" aria-labelledby="tp-title">
   <h2 id="tp-title" tabindex="-1" bind:this={headingEl}>{TRACING_TEXT.heading}</h2>
   {#if title}<p class="case-name" data-testid="tp-case-name">{title}</p>{/if}
-  <div class="actions"><button type="button" class="secondary-button" onclick={onClose}>{TRACING_TEXT.backToCase}</button></div>
+  <div class="actions"><button type="button" class="secondary-button" data-testid="tp-case-home" onclick={onClose}><span aria-hidden="true">&larr;</span> {TRACING_TEXT.backToCase}</button></div>
   <!-- A closed case opens here as a viewer: the route only reads, so only the one line tells the reader nothing can be changed. -->
   {#if closed}<p class="closed-line" role="status" data-testid="tp-closed-line">{TRACING_TEXT.closedView}</p>{/if}
 
+  <div class="trgrid" class:hasrail={showRail}>
+  <div class="trtop">
+  <!-- One card for everything that chooses what the chart shows (the wireframe's `Choose what to show` card): the quick ranges, the two windows,
+       the UTC echo, the sources row with Add evidence and Refresh timeline, then the notices. -->
+  <section class="card trctl" aria-label={WINDOW_TEXT.controlsLabel} data-testid="tp-controls">
   <div data-region="windows" class="windows">
     <div class="quick-row" role="group" aria-label={WINDOW_TEXT.quickRow} data-testid="tp-quick-row">
       <span class="quick-label">{WINDOW_TEXT.quickRow}</span>
@@ -254,7 +293,7 @@
         <button type="button" class="chip" data-quick-id={quick.id} aria-pressed={quickPressed(quick)} title={WINDOW_TEXT.quickRowTitle} disabled={readOnly} onclick={() => applyQuickChip(quick.id)}>{quick.label}</button>
       {/each}
     </div>
-    <form class="window-form" onsubmit={(event) => { event.preventDefault(); startTracing(); }}>
+    <form class="window-form" id="tp-window-form" onsubmit={(event) => { event.preventDefault(); startTracing(); }}>
       <div class="win-pair">
         <div class="win-box">
           <h3>{WINDOW_TEXT.incidentHeading}</h3>
@@ -276,12 +315,27 @@
           </fieldset>
         </div>
       </div>
+      <p class="metaline" data-testid="tp-metaline"><span class="utc-echo" data-testid="utc-echo-incident">{echoUtc(fields.incidentStart, fields.incidentEnd)}</span> {WINDOW_TEXT.metaCompared} <span class="utc-echo" data-testid="utc-echo-reference">{echoUtc(fields.referenceStart, fields.referenceEnd)}</span> · {WINDOW_TEXT.metaZoneLead} <b>{timeZone.zone}</b> {WINDOW_TEXT.metaZoneTail}</p>
       <div class="window-actions">
-        <button type="submit" class="primary-button" disabled={readOnly || status === 'loading'}>{WINDOW_TEXT.startTracing}</button>
         <small>{WINDOW_TEXT.utcNote}</small>
         <small>{WINDOW_TEXT.endNote}</small>
       </div>
     </form>
+  </div>
+  <div data-region="sources">
+    <TraceSources chips={universe.chips} saved={universe.saved} {selection} disabled={readOnly}
+      onToggle={(id) => { const out = toggleOutcome(selection, universe.chips, id); if (out.refused) capNote = SOURCES_TEXT.capNote; else changeSelection(out.selection); }} onAll={() => changeSelection(ALL_SOURCES)} onNone={() => changeSelection(NO_SOURCES)}
+      onConnect={() => void openConnections('new')}>
+      {#snippet actions()}
+        <!-- Start tracing submits the windows form above (the form attribute), so Enter in a date box still starts it. -->
+        <button type="submit" form="tp-window-form" class="primary-button" disabled={readOnly || status === 'loading'}>{WINDOW_TEXT.startTracing}</button>
+        <button type="button" class="secondary-button" title={WINDOW_TEXT.addEvidenceTitle} aria-haspopup="dialog" disabled={closed || readOnly} onclick={openCaseImport}>{WINDOW_TEXT.addEvidence}</button>
+        <button type="button" class="secondary-button" title={WINDOW_TEXT.refreshTitle} disabled={!canRefresh} onclick={startTracing}>{WINDOW_TEXT.refresh}</button>
+      {/snippet}
+    </TraceSources>
+    {#if capNote !== ''}<p class="empty-hint" role="status" data-testid="tp-source-cap">{capNote}</p>{/if}
+  </div>
+  <div class="trctl-notices">
     {#if problems.length > 0}
       <div role="alert" id="tp-problems" class="window-problems">
         <ul>{#each problems as problem (problem)}<li>{problem}</li>{/each}</ul>
@@ -295,21 +349,14 @@
       </p>
     {/if}
   </div>
-  <div data-region="sources">
-    <TraceSources chips={universe.chips} saved={universe.saved} {selection} disabled={readOnly}
-      onToggle={(id) => changeSelection(toggleSource(selection, universe.chips, id))} onAll={() => changeSelection(ALL_SOURCES)} onNone={() => changeSelection(NO_SOURCES)}
-      onConnect={() => void openConnections('new')}>
-      {#snippet actions()}
-        <button type="button" class="secondary-button" title={WINDOW_TEXT.addEvidenceTitle} aria-haspopup="dialog" disabled={closed || readOnly} onclick={openCaseImport}>{WINDOW_TEXT.addEvidence}</button>
-        <button type="button" class="primary-button" title={WINDOW_TEXT.refreshTitle} disabled={!canRefresh} onclick={startTracing}>{WINDOW_TEXT.refresh}</button>
-      {/snippet}
-    </TraceSources>
-  </div>
+  </section>
   <div data-region="toolbar">
     {#if !(status === 'loading' && !result)}
       <TraceToolbar {visible} onToggle={(key) => (visible = toggleLane(visible, key))} scrub={exportScrub.forCase(caseId)} />
     {/if}
   </div>
+  </div>
+  <div class="trbot">
   <div data-region="chart" class="chart-region" role="region" aria-label={TRACING_TEXT.chartLabel} tabindex="-1" bind:this={chartRegion}>
     {#if nothingSelected}
       <p role="status" class="none-selected" data-testid="tp-none-selected">{SOURCES_TEXT.noneSelected}</p>
@@ -340,9 +387,10 @@
           {/if}
           {#if emptyWindow}<p class="empty-hint">{WINDOW_TEXT.noEvents}</p>{:else if noData}<p class="empty-hint">{WINDOW_TEXT.noData}</p>{/if}
           <!-- A re-run keeps the old chart at its own height under a veil, so nothing below it jumps. -->
+          <div class="card chartcard">
           <div class="chart-hold" aria-busy={status === 'loading' ? 'true' : undefined}>
             <div inert={status === 'loading'}>
-              <TracingChart response={result} zone={timeZone.zone} {visible} onSelect={onBarSelect} unselected={offLanes} {readOnly} onAddFiles={openCaseImport} />
+              <TracingChart response={result} zone={timeZone.zone} {visible} onSelect={onBarSelect} focus={chartFocus} unselected={offLanes} {readOnly} onAddFiles={openCaseImport} />
             </div>
             {#if status === 'loading'}
               <div class="chart-veil">
@@ -350,6 +398,7 @@
                 <button type="button" class="secondary-button" title={WAIT_TEXT.cancelTitle} onclick={() => void keepFocusInChart(cancel)}>{TRACING_TEXT.cancel}</button>
               </div>
             {/if}
+          </div>
           </div>
         {/if}
       {/if}
@@ -360,6 +409,11 @@
     {#if cancelled && status !== 'loading' && status !== 'error'}<p role="status" class="cancel-note">{result ? WINDOW_TEXT.cancelledKept : WINDOW_TEXT.cancelledNone}</p>{/if}
     {#if handoffNote}<p role="status">{handoffNote}</p>{/if}
   </div>
+  </div>
+  {#if showRail && result}
+    <div class="trrail" data-region="suspects"><SuspectsRail response={result} zone={timeZone.zone} onShow={showOnChart} /></div>
+  {/if}
+  </div>
 </section>
 
 <style>
@@ -367,13 +421,36 @@
     display: grid;
     gap: 16px;
   }
+  /* The wireframe's grid: the controls and the chart in one column; with the rail, a 380px column to their right that stays in view while the page scrolls. Below 1180px the rail follows the chart. */
+  .trgrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; min-width: 0; }
+  .trtop, .trbot { display: grid; gap: 24px; min-width: 0; align-content: start; grid-template-columns: minmax(0, 1fr); }
+  .trrail { min-width: 0; }
+  @media (min-width: 1180px) {
+    .trgrid.hasrail { grid-template-columns: minmax(0, 1fr) 380px; align-items: start; }
+    .hasrail .trtop { grid-column: 1; grid-row: 1; }
+    .hasrail .trbot { grid-column: 1; grid-row: 2; }
+    .hasrail .trrail { grid-column: 2; grid-row: 1 / span 2; align-self: start; position: sticky; top: 72px; max-height: calc(100vh - 96px); overflow: auto; padding-bottom: 120px; }
+  }
   .closed-line { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
   .case-name { margin: calc(var(--space-1) * -1) 0 0; color: var(--text-2); font-size: var(--fs-3); overflow-wrap: anywhere; }
+  /* The one controls card. Nothing inside it has a card of its own, so every row starts at the card's padding edge at every width. */
+  .trctl { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); min-width: 0; padding: var(--space-4); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  .trctl-notices { display: grid; gap: var(--space-2); min-width: 0; }
+  .trctl-notices:empty { display: none; }
+  .metaline { margin: 0; color: var(--text-2); font-size: var(--fs-2); overflow-wrap: anywhere; }
+  .utc-echo { font-family: var(--mono); white-space: nowrap; }
+  .metaline b { color: var(--text); font-weight: 600; }
   .windows { display: grid; gap: var(--space-2); }
   .quick-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .quick-label { color: var(--text-2); font-size: var(--fs-2); }
   .quick-row .chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .window-form { display: grid; gap: var(--space-3); }
+  /* The chart sits in its own card (the prototype's .card.chartcard) and fades in once, the first time a read comes back. */
+  .chartcard { min-width: 0; padding: var(--space-3); background: var(--surface); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); }
+  @media (prefers-reduced-motion: no-preference) {
+    .chartcard { animation: chart-reveal 320ms ease-out both; }
+  }
+  @keyframes chart-reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   .win-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); align-items: stretch; }
   .win-box { display: grid; gap: var(--space-2); align-content: start; min-width: 0; }
   .win-box h3 { margin: 0; font-size: var(--fs-3); font-weight: 600; }
@@ -398,6 +475,9 @@
   }
   @media (max-width: 720px) {
     .window-set { flex: 1 1 100%; }
+    .trctl { padding: var(--space-3); }
+    /* A full ISO stamp is wider than a phone card: let it wrap there instead of widening the whole card. */
+    .utc-echo { white-space: normal; overflow-wrap: anywhere; }
   }
   .chart-region:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .error-panel { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3) var(--space-4); background: var(--surface-2); border: var(--hairline-width) solid var(--bad); border-left-width: var(--space-1); border-radius: var(--radius-sm); }

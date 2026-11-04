@@ -16,6 +16,24 @@ const NOTES = join(FILES, 'notes.txt');
 const W3C = join(FILES, 'u_ex261020.log');
 
 const closeButton = (page: Page) => page.getByRole('dialog').getByRole('button', { name: 'Close import' });
+// Sideways scroll, measured the way a finger would meet it: the page's own widths, a real attempt to scroll across, and every box on the page.
+async function noSidewaysScroll(page: Page) {
+  await expect.poll(() => page.evaluate(() => {
+    const doc = document.documentElement;
+    return Math.max(doc.scrollWidth, document.body.scrollWidth) - doc.clientWidth;
+  })).toBeLessThanOrEqual(0);
+  const moved = await page.evaluate(() => { window.scrollTo(300, 0); document.documentElement.scrollLeft = 300; return window.scrollX + document.documentElement.scrollLeft; });
+  expect(moved).toBe(0);
+  const wide = await page.evaluate(() => {
+    const vw = document.documentElement.clientWidth;
+    return Array.from(document.querySelectorAll('body *')).filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.right > vw + 1 && getComputedStyle(el).position !== 'fixed';
+    }).slice(0, 5).map((el) => el.tagName + '.' + String(el.className).slice(0, 40));
+  });
+  expect(wide).toEqual([]);
+}
+
 const drawerCard = (page: Page, id: string) => page.locator('[data-drawer-card="' + id + '"]');
 
 // The header's Import is on the analysis screen, so the way there is the case page, then "Open the analysis". The page can be anywhere when this starts.
@@ -190,10 +208,38 @@ test('GRID-06: the cards fit at 375 px wide with no sideways scroll', async ({ p
   await openGrid(page, 'QA Grid Narrow');
   await page.setViewportSize({ width: 375, height: 800 });
   await expect(drawerCard(page, 'day')).toBeVisible();
-  // The drawer itself adds no sideways scroll (the page behind it is not the drawer's to fix).
-  await expect.poll(() => page.getByRole('dialog').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
+  // Neither the drawer nor the page behind it scrolls sideways.
+  await expect.poll(() => page.getByRole('dialog').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+  await noSidewaysScroll(page);
   for (const id of ['sql', 'mongo', 'blackbox', 'files', 'day']) {
     const b = await drawerCard(page, id).boundingBox();
     expect(b && b.x >= 0 && b.x + b.width <= 376).toBe(true);
   }
+});
+
+test('GRID-07: with one SQL day read, Another day counts it, is on, and opens the Add another day tab', async ({ page, api }) => {
+  await createCase(api, 'QA Grid Day');
+  await goHome(page);
+  await openCase(page, 'QA Grid Day');
+  await page.getByRole('tab', { name: 'Step 7: SQL Server', exact: true }).click();
+  const panel = page.getByRole('tabpanel');
+  const read = panel.getByRole('region', { name: 'Read from a server' });
+  await expect(read).toBeVisible();
+  await read.getByLabel('Audit database', { exact: true }).fill('AuditDb');
+  await read.getByLabel('Incident starts (UTC)', { exact: true }).fill('2026-10-20 08:45');
+  await read.getByLabel('Incident ends (UTC)', { exact: true }).fill('2026-10-20 09:00');
+  await read.getByLabel('Reference starts (UTC)', { exact: true }).fill('2026-10-20 08:30');
+  await read.getByLabel('Reference ends (UTC)', { exact: true }).fill('2026-10-20 08:45');
+  await read.getByRole('button', { name: 'Read this day' }).click();
+  await expect(panel.locator('[data-notice]')).toHaveText('Read and added to the case.');
+
+  await openGrid(page, 'QA Grid Day');
+  const day = drawerCard(page, 'day');
+  await expect(day).toContainText('1 of 1 sources can be read by day');
+  const add = day.getByRole('button', { name: 'Add another day' });
+  await expect(add).toBeEnabled();
+  await add.click();
+  await expect(page.locator('#import-title')).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Add another day', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { name: 'Add another day' }).first()).toBeVisible();
 });

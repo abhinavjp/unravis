@@ -55,6 +55,7 @@ func Importers() []importer.Importer {
 		mongoexports.NewMongostat(),
 		log4net.NewText(),
 		log4net.NewXML(),
+		log4net.NewBlocks(),
 		nlog.NewText(),
 		accesslog.NewNginx(),
 		accesslog.NewApache(),
