@@ -332,7 +332,7 @@ func (h *handler) sampleBatch(ctx context.Context, run *samplerRun, c casestore.
 		return errSamplerCaseShut
 	}
 	cw := &captureWriter{}
-	h.importFileWith(ctx, cw, run.caseID, c, imp, hint, nil, bytes.NewReader(body), false, true, ackText, name, importer.Window{})
+	h.importFileWith(ctx, cw, run.caseID, c, imp, hint, nil, bytes.NewReader(body), false, true, ackText, name, importer.Window{}, false)
 	switch st := cw.code(); {
 	case st == http.StatusCreated:
 		return nil

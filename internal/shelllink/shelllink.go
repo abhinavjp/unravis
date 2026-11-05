@@ -40,7 +40,7 @@ func (s Shortcut) Bytes() ([]byte, error) {
 	if len(target) < 3 || target[1] != ':' || target[2] != '\\' {
 		return nil, errors.New("a shortcut needs the full path of its program")
 	}
-	flags := uint32(lnkHasLinkInfo | lnkIsUnicode)
+	flags := uint32(lnkHasLinkTargetIDList | lnkHasLinkInfo | lnkIsUnicode)
 	var strs [][]uint16
 	add := func(flag uint32, v string) {
 		if v != "" {
@@ -70,6 +70,11 @@ func (s Shortcut) Bytes() ([]byte, error) {
 	w(uint32(0))
 	w(uint32(0))
 
+	idl, err := idList(target)
+	if err != nil {
+		return nil, err
+	}
+	b.Write(idl)
 	b.Write(linkInfo(target))
 
 	for _, u := range strs {
@@ -81,6 +86,95 @@ func (s Shortcut) Bytes() ([]byte, error) {
 	}
 	w(uint32(0)) // TerminalBlock
 	return b.Bytes(), nil
+}
+
+// idList is the LinkTargetIDList: IDListSize, then the item IDs (My Computer, the drive, one item per folder, the file) and the
+// terminal ID. Current Windows resolves TargetPath from this list; LinkInfo alone reads back as an empty target.
+func idList(path string) ([]byte, error) {
+	var items bytes.Buffer
+	// "My Computer": a root folder item holding the CLSID of This PC.
+	items.Write([]byte{20, 0, 0x1F, 0x50, 0xE0, 0x4F, 0xD0, 0x20, 0xEA, 0x3A, 0x69, 0x10, 0xA2, 0xD8, 0x08, 0x00, 0x2B, 0x30, 0x30, 0x9D})
+	// The drive, e.g. "C:\": type 0x2F, the name, padded to 25 bytes.
+	drive := make([]byte, 25)
+	binary.LittleEndian.PutUint16(drive, 25)
+	drive[2] = 0x2F
+	copy(drive[3:], path[:3])
+	items.Write(drive)
+
+	parts := strings.Split(path[3:], `\`)
+	for i, p := range parts {
+		if p == "" {
+			return nil, errors.New("a shortcut needs the full path of its program")
+		}
+		item := fileEntryItem(p, i == len(parts)-1)
+		if len(item) > 0xFFFF {
+			return nil, errors.New("a shortcut path is too long")
+		}
+		items.Write(item)
+	}
+	items.Write([]byte{0, 0}) // terminal ID
+	if items.Len() > 0xFFFF {
+		return nil, errors.New("a shortcut path is too long")
+	}
+	out := make([]byte, 2, 2+items.Len())
+	binary.LittleEndian.PutUint16(out, uint16(items.Len()))
+	return append(out, items.Bytes()...), nil
+}
+
+// fatDate and fatTime are a fixed timestamp (2020-01-01 00:00), so the bytes are the same every time.
+const (
+	fatDate = (2020-1980)<<9 | 1<<5 | 1
+	fatTime = 0
+)
+
+// fileEntryItem is a file-system item ID for a folder or a file: the ANSI name (non-ASCII characters as '?') and an extension block
+// 0xBEEF0004 (version 3) with the full Unicode name.
+func fileEntryItem(name string, isFile bool) []byte {
+	var b bytes.Buffer
+	w := func(v any) { _ = binary.Write(&b, binary.LittleEndian, v) }
+	w(uint16(0)) // size, set below
+	typ, attrs := byte(0x31), uint16(0x10)
+	if isFile {
+		typ, attrs = 0x32, 0x20
+	}
+	ascii := ansiPath(name) == name
+	if !ascii {
+		typ |= 0x04 // the primary name is Unicode
+	}
+	b.WriteByte(typ)
+	b.WriteByte(0)
+	w(uint32(0)) // file size: unknown
+	w(uint16(fatDate))
+	w(uint16(fatTime))
+	w(attrs)
+	uni := utf16.Encode([]rune(name))
+	if ascii {
+		b.WriteString(name)
+		b.WriteByte(0)
+		if b.Len()%2 != 0 {
+			b.WriteByte(0)
+		}
+	} else {
+		w(uni)
+		w(uint16(0))
+	}
+	extOff := b.Len()
+	extSize := 0x14 + 2*(len(uni)+1) + 2
+	w(uint16(extSize))
+	w(uint16(3))          // version
+	w(uint32(0xBEEF0004)) // signature
+	w(uint16(fatDate))    // created
+	w(uint16(fatTime))
+	w(uint16(fatDate)) // last accessed
+	w(uint16(fatTime))
+	w(uint16(0x14)) // offset of the long name in the block
+	w(uint16(0))
+	w(uni)
+	w(uint16(0))
+	w(uint16(extOff)) // offset of this block in the item
+	out := b.Bytes()
+	binary.LittleEndian.PutUint16(out, uint16(len(out)))
+	return out
 }
 
 // linkInfo is the LinkInfo structure for a file on a fixed local drive, with the Unicode path offsets (header size 0x24).
@@ -134,13 +228,24 @@ func ansiPath(p string) string {
 
 // ReadShortcutTarget reads back the Unicode target path of a shortcut Bytes wrote (for tests and for repair).
 func ReadShortcutTarget(data []byte) (string, error) {
-	if len(data) < 0x4C+0x24 || binary.LittleEndian.Uint32(data) != 0x4C || !bytes.Equal(data[4:20], lnkCLSID) {
+	if len(data) < 0x4C || binary.LittleEndian.Uint32(data) != 0x4C || !bytes.Equal(data[4:20], lnkCLSID) {
 		return "", errors.New("not a shortcut")
 	}
-	if binary.LittleEndian.Uint32(data[20:])&lnkHasLinkInfo == 0 {
+	flags := binary.LittleEndian.Uint32(data[20:])
+	if flags&lnkHasLinkInfo == 0 {
 		return "", errors.New("the shortcut has no local path")
 	}
-	li := data[0x4C:]
+	pos := 0x4C
+	if flags&lnkHasLinkTargetIDList != 0 {
+		if pos+2 > len(data) {
+			return "", errors.New("the shortcut is cut off")
+		}
+		pos += 2 + int(binary.LittleEndian.Uint16(data[pos:]))
+	}
+	if pos+0x24 > len(data) {
+		return "", errors.New("the shortcut is cut off")
+	}
+	li := data[pos:]
 	size := binary.LittleEndian.Uint32(li)
 	if int(size) > len(li) || binary.LittleEndian.Uint32(li[4:]) < 0x24 {
 		return "", errors.New("the shortcut has no Unicode path")

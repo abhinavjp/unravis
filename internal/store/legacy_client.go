@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -122,6 +121,10 @@ func (a *adaptiveMongoHandle) Probe(ctx context.Context, database, collection st
 	version, warning, err := a.modern.Probe(ctx, database, collection)
 	if err == nil {
 		return version, warning, nil
+	}
+	// A wrong collection name is a fact about the database, not about the server generation: do not probe for a legacy server.
+	if isSourceFact(err) {
+		return version, "", err
 	}
 	if switchErr := a.switchToLegacy(ctx, err); switchErr != nil {
 		return "", "", err
@@ -293,11 +296,21 @@ func (m *legacyMongoHandle) Probe(ctx context.Context, database, collection stri
 		return "", "", err
 	}
 	if !isMongo34(build.Version) {
-		return build.Version, "", fmt.Errorf("unsupported MongoDB server version")
+		return build.Version, "", errUnsupportedMongoVersion
 	}
 	readProbe := m.client.Database(database).Collection(collection).FindOne(ctx, bson.D{}, optionsv1.FindOne().SetProjection(bson.D{{Key: "_id", Value: 1}}))
-	if err := readProbe.Err(); err != nil && !errors.Is(err, mongov1.ErrNoDocuments) {
-		return build.Version, "", err
+	if err := readProbe.Err(); err != nil {
+		if !errors.Is(err, mongov1.ErrNoDocuments) {
+			if mongoCommandCodeIs(err, 13) {
+				names, listErr := m.client.Database(database).ListCollectionNames(ctx, bson.D{})
+				return build.Version, "", deniedCollection(err, names, listErr)
+			}
+			return build.Version, "", err
+		}
+		names, listErr := m.client.Database(database).ListCollectionNames(ctx, bson.D{})
+		if missing := missingCollection(database, collection, names, listErr); missing != nil {
+			return build.Version, "", missing
+		}
 	}
 	warning := ""
 	indexes, err := m.client.Database(database).Collection(collection).Indexes().List(ctx)

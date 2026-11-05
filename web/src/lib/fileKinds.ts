@@ -52,15 +52,18 @@ export const needsTimeZone = (kind: string): boolean => {
 };
 
 /**
- * Which computer the server needs to be told for a kind. `none`: the file says it (or no host is used). `optional`: only a file with no host
- * column needs one. `host`: a label from the host list is required (the file carries no machine name). `host-tz`: the label is required and
- * that host must also have a time zone, because the file writes that computer's local time. Read from the importers (internal/importer/*).
+ * Which computer the server needs to be told for a kind. `none`: the file says it (or no host is used). `optional`: the file names its own
+ * computer, so a pick is offered but not needed, and it is only used when the file names a computer the list does not hold (a sql-xe export
+ * may name no computer, so there the pick also gives the file its name). `host`: a label from the host list is required (the file carries
+ * no machine name). `host-tz`: the label is required and that host must also have a time zone, because the file writes that computer's
+ * local time. Read from the importers (internal/importer/*).
  */
 export type HostNeed = 'none' | 'optional' | 'host' | 'host-tz';
 
 const HOST_NEEDS: Readonly<Record<CatalogKind, HostNeed>> = {
-  'iis-w3c': 'none',
-  'iis-freb': 'none',
+  // The file names its own server. A name that is not in the host list is filed under the computer picked here, so the pick is offered but not required.
+  'iis-w3c': 'optional',
+  'iis-freb': 'optional',
   'iis-httperr': 'host',
   'sql-xe': 'optional',
   'sql-querystore': 'host',

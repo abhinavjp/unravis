@@ -885,8 +885,11 @@ func (c *Case) Import(ctx context.Context, meta casestore.ImportMeta, body io.Re
 		return casestore.ImportResult{Report: rep}, err
 	}
 	meta.TZRule = cleanText(meta.DerivedTZRule(rep), maxLabelRune)
-	if _, err := tx.ExecContext(ctx, `UPDATE imports SET sha256=?, bytes=?, rows=?, rejected=?, quality_json=?, gaps_json=?, tz_rule=?
-		WHERE id=?`, sum, cr.n, rep.Rows, rep.Rejected, string(qualityJSON), string(gapsJSON), meta.TZRule, importID); err != nil {
+	// The report says the label the rows really went to: one label replaces the
+	// picked one, several name none, and none falls back to the picked one.
+	meta.HostLabel = cleanText(meta.DerivedHostLabel(rep), maxLabelRune)
+	if _, err := tx.ExecContext(ctx, `UPDATE imports SET sha256=?, bytes=?, rows=?, rejected=?, quality_json=?, gaps_json=?, tz_rule=?, host_label=?
+		WHERE id=?`, sum, cr.n, rep.Rows, rep.Rejected, string(qualityJSON), string(gapsJSON), meta.TZRule, meta.HostLabel, importID); err != nil {
 		if errors.Is(err, sqlite3.CONSTRAINT_UNIQUE) {
 			_ = tx.Rollback()
 			done = true

@@ -444,11 +444,31 @@ func writeConnectionError(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	writeJSON(w, http.StatusBadRequest, struct {
-		Error string `json:"error"`
-		Code  string `json:"code"`
-		Stage string `json:"stage"`
-	}{Error: connectionError.Message, Code: connectionError.Code, Stage: connectionError.Stage}, 4096)
+		Error       string   `json:"error"`
+		Code        string   `json:"code"`
+		Stage       string   `json:"stage"`
+		Collections []string `json:"collections,omitempty"`
+	}{Error: connectionError.Message, Code: connectionError.Code, Stage: connectionError.Stage, Collections: connectionError.Collections}, 4096)
 	return true
+}
+
+// sourceExistsText answers adding a source that is already there. The wizard treats it as done, not as a failure.
+const sourceExistsText = "This database and collection are already added as a source."
+
+// writeSourceAddError answers a failed add of a source. A source that already exists is 409 "source-exists" (it is a conflict, not bad
+// input); a failed check of the new source is 400 with its fixed code (collection_missing, permission_denied, credentials_rejected,
+// unsupported_version, ...). Everything else is the generic repository answer.
+func writeSourceAddError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, audit.ErrDuplicate):
+		writeJSON(w, http.StatusConflict, struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}{sourceExistsText, "source-exists"}, 4096)
+	case writeConnectionError(w, err):
+	default:
+		writeRepoError(w, err)
+	}
 }
 
 func (h *handler) deleteRecent(w http.ResponseWriter, r *http.Request, id string) {
@@ -579,7 +599,7 @@ func (h *handler) addSource(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	item, err := h.repo.AddSource(ctx, input)
 	if err != nil {
-		writeRepoError(w, err)
+		writeSourceAddError(w, err)
 		return
 	}
 	h.rollups.clear()

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -91,11 +90,22 @@ func (m *mongoHandle) Probe(ctx context.Context, database, collection string) (s
 		return "", "", err
 	}
 	if !supportedMongoVersion(build.Version) {
-		return build.Version, "", fmt.Errorf("unsupported MongoDB server version")
+		return build.Version, "", errUnsupportedMongoVersion
 	}
 	readProbe := m.client.Database(database).Collection(collection).FindOne(ctx, bson.D{}, options.FindOne().SetProjection(bson.D{{Key: "_id", Value: 1}}))
-	if err := readProbe.Err(); err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
-		return build.Version, "", err
+	if err := readProbe.Err(); err != nil {
+		if !errors.Is(err, mongo.ErrNoDocuments) {
+			if mongoCommandCodeIs(err, 13) {
+				names, listErr := m.client.Database(database).ListCollectionNames(ctx, bson.D{}, options.ListCollections().SetAuthorizedCollections(true))
+				return build.Version, "", deniedCollection(err, names, listErr)
+			}
+			return build.Version, "", err
+		}
+		// No documents: an empty real collection is fine, a collection that does not exist is a wrong name.
+		names, listErr := m.client.Database(database).ListCollectionNames(ctx, bson.D{}, options.ListCollections().SetAuthorizedCollections(true))
+		if missing := missingCollection(database, collection, names, listErr); missing != nil {
+			return build.Version, "", missing
+		}
 	}
 	warning := ""
 	indexes, err := m.client.Database(database).Collection(collection).Indexes().List(ctx)

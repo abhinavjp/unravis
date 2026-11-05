@@ -258,10 +258,119 @@ func TestXMLUnmappedMachineRefused(t *testing.T) {
 	}
 }
 
+// A machine name the host list does not know falls back to the host the person
+// picked, for one machine only, when the file was imported with the explicit
+// flag the wizard import sets.
+func TestXMLUnlistedMachineUsesPickedHost(t *testing.T) {
+	o := baseOpts(t)
+	o.Hosts = hostMap
+	o.AllowUnlistedHost = true
+	evs, rep, err := parse(t, NewXML(), []byte(ev("web-z", 0)+ev("WEB-Z", 1000)), o)
+	if err != nil || len(evs) == 0 || rep.Rows != 2 {
+		t.Fatalf("events %d rows %d err %v", len(evs), rep.Rows, err)
+	}
+	for _, e := range evs {
+		if e.Host != "web-a" {
+			t.Fatalf("host %q, want the picked label", e.Host)
+		}
+	}
+	// a listed machine keeps its listed label
+	evs, _, err = parse(t, NewXML(), []byte(ev("web-b", 0)), o)
+	if err != nil || len(evs) != 1 || evs[0].Host != "host-2" {
+		t.Fatalf("listed: %v %+v", err, evs)
+	}
+	// a second unlisted machine, or one listed machine beside it under the picked
+	// label, would merge machines: refused
+	for name, data := range map[string]string{
+		"two unlisted":    ev("web-z", 0) + ev("web-y", 1000),
+		"unlisted+listed": ev("web-z", 0) + ev("web-b", 1000),
+	} {
+		o2 := o
+		if name == "unlisted+listed" {
+			o2.Host = &importer.HostHint{Label: "host-2", Role: "app"}
+		}
+		if _, _, err := parse(t, NewXML(), []byte(data), o2); !errors.Is(err, importer.ErrUnknownHost) {
+			t.Fatalf("%s: err %v, want ErrUnknownHost", name, err)
+		}
+	}
+}
+
 func TestXMLNoMachineNeedsHost(t *testing.T) {
 	o := baseOpts(t)
 	o.Host = nil
 	_, _, err := parse(t, NewXML(), []byte(ev("", 0)), o)
+	if !errors.Is(err, importer.ErrUnknownHost) {
+		t.Fatalf("err %v, want ErrUnknownHost", err)
+	}
+}
+
+// wbHosts is a wired host list the way hosts.json is: the name is looked up
+// under its normalised key. It knows web-a and web-b only.
+func wbHosts(observed string) (importer.HostHint, bool) {
+	switch importer.HostKey(observed) {
+	case "web-a":
+		return importer.HostHint{Label: "host-1", Role: "app"}, true
+	case "web-b":
+		return importer.HostHint{Label: "host-2", Role: "app"}, true
+	}
+	return importer.HostHint{}, false
+}
+
+// A fully qualified spelling of a listed host resolves to the listed host, even
+// when the person picked another computer for the file; the raw name reaches
+// only the report.
+func TestXMLFullyQualifiedListedNameResolvesToIt(t *testing.T) {
+	o := baseOpts(t)
+	o.Host = &importer.HostHint{Label: "host-1", Role: "app"}
+	o.Hosts = wbHosts
+	evs, rep, err := parse(t, NewXML(), []byte(ev("WEB-B.corp.example.test", 0)), o)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("events %d err %v", len(evs), err)
+	}
+	if evs[0].Host != "host-2" {
+		t.Fatalf("host %q, want the listed label host-2", evs[0].Host)
+	}
+	if len(rep.ObservedHosts) != 1 || rep.ObservedHosts[0] != "WEB-B.corp.example.test" {
+		t.Fatalf("observed %v", rep.ObservedHosts)
+	}
+}
+
+// Names that differ in case, spaces or a trailing dot are one machine: the file
+// imports under the pick. A second distinct machine is refused.
+func TestXMLSpellingsAreOneMachine(t *testing.T) {
+	o := baseOpts(t)
+	o.Host = &importer.HostHint{Label: "host-pick", Role: "app"}
+	o.Hosts = wbHosts // no listed match for any spelling
+	o.AllowUnlistedHost = true
+	data := ev("WEB-X", 0) + ev("web-x.", 1000) + ev(" web-x ", 2000)
+	evs, rep, err := parse(t, NewXML(), []byte(data), o)
+	if err != nil || len(evs) == 0 { // the sink folds the repeats into fewer events
+		t.Fatalf("events %d err %v", len(evs), err)
+	}
+	for _, e := range evs {
+		if e.Host != "host-pick" {
+			t.Fatalf("host %q, want the picked label", e.Host)
+		}
+	}
+	for _, raw := range rep.ObservedHosts { // every raw spelling of the one machine
+		if importer.HostKey(raw) != "web-x" {
+			t.Fatalf("observed %v", rep.ObservedHosts)
+		}
+	}
+	if _, _, err = parse(t, NewXML(), []byte(ev("WEB-X", 0)+ev("web-y", 1000)), o); !errors.Is(err, importer.ErrUnknownHost) {
+		t.Fatalf("two machines: %v", err)
+	}
+}
+
+// Without the explicit-import flag (host discovery), a wired host list that
+// does not know the file's machine refuses the file even though a computer was
+// picked for it.
+func TestXMLUnlistedMachineWithoutTheFlagRefused(t *testing.T) {
+	o := baseOpts(t)
+	// wired host list, knows web-a and web-b only; a computer was picked
+	o.Hosts = hostMap
+	o.Host = &importer.HostHint{Label: "host-1", Role: "app"}
+	_, _, err := parse(t, NewXML(), []byte(ev("web-z", 0)), o)
 	if !errors.Is(err, importer.ErrUnknownHost) {
 		t.Fatalf("err %v, want ErrUnknownHost", err)
 	}

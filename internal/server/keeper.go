@@ -266,9 +266,9 @@ func writeHeldSourceError(w http.ResponseWriter, err error) {
 		}
 	}
 	switch {
-	case writeKeeperError(w, err), writeConnectionError(w, err):
+	case writeKeeperError(w, err):
 	default:
-		writeRepoError(w, err)
+		writeSourceAddError(w, err)
 	}
 }
 

@@ -39,3 +39,33 @@ func (m ImportMeta) DerivedTZRule(rep importer.Report) string {
 	sort.Strings(rules)
 	return rules[0]
 }
+
+// DerivedHostLabel is the label the import is recorded under. The store calls
+// it with the importer's report after the run: when every event of the file was
+// filed under one label, that label is recorded (the file may name computers
+// the person did not pick); when the events went to several labels, none is
+// recorded, so the record never names one machine among them; and when the
+// events carry no label at all (importers that tag no events), the host the
+// person picked stands as before.
+func (m ImportMeta) DerivedHostLabel(rep importer.Report) string {
+	first := ""
+	count := 0
+	for _, l := range rep.HostLabels {
+		if l == "" {
+			continue
+		}
+		switch {
+		case count == 0:
+			first, count = l, 1
+		case l != first:
+			count = 2
+		}
+	}
+	switch count {
+	case 0:
+		return m.HostLabel
+	case 1:
+		return first
+	}
+	return ""
+}

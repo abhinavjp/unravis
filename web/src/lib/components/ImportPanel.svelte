@@ -11,8 +11,8 @@
     previewKey, reasonCounts, startCommitJob, startPreviewJob, waitForImportJob, type CaseInfo, type ImportJob, type ImporterInfo, type ImportRecord, type ImportReport
   } from '../cases';
   import {
-    ACK_LABEL, GATING_BANNER, IMPORT_TEXT, ackTextFor, coverageText, detectedText, errorText, formatBytes, importedText, importerLabel, isUnknownHost,
-    jobProgressText, qualityDetails, reasonText, sizeProblemText, statusLabel, suppliedPairs
+    ACK_LABEL, GATING_BANNER, IMPORT_TEXT, ackTextFor, blockedNoteText, coverageText, detectedText, errorText, formatBytes, hostNoteText, importedText, importerLabel, isUnknownHost,
+    jobProgressText, qualityDetails, screenErrorText, screenReasonText, sizeProblemText, statusLabel, suppliedPairs
   } from '../copy/importCopy';
   import { importWork, setActiveCase } from '../appState.svelte';
   import { goHome, openCaseHome, openSidePanel } from '../appState.svelte';
@@ -102,6 +102,9 @@
   // What time the case's kept files cover, for the resource panel's notice when the window on screen holds nothing.
   const span = $derived(caseSpan(imports));
   const reasons = $derived(report ? reasonCounts(report.errors) : []);
+  // The computer names the preview of this very file saw. An unknown-host refusal calls a name out, so the "not in your list" words only fit
+  // when at least one name was seen; until this file's preview is in, the words for a named computer stay.
+  const sawComputerName = $derived(previewedKey === currentKey ? (report?.observedHosts.length ?? 0) > 0 : true);
   const details = $derived(report ? qualityDetails(report.quality) : []);
   const percent = $derived(job ? importProgressPercent(job) : null);
   const progress = $derived(job ? jobProgressText(job.state, percent) : '');
@@ -187,7 +190,7 @@
     if (error instanceof DOMException && error.name === 'AbortError') return;
     // An erased case drops out of the list, which also clears this form, so the case list says what happened.
     if (isCaseGone(error)) { void casePanel?.noteGone(); return; }
-    problem = error instanceof CaseApiError ? errorText(error) : errorText({ status: 0, reason: 'unreachable', message: '' });
+    problem = error instanceof CaseApiError ? screenErrorText(error, sawComputerName) : errorText({ status: 0, reason: 'unreachable', message: '' });
   }
 
   // Stops following the job. A preview that is still running is cancelled on the server, so it does not hold the case for nothing.
@@ -330,7 +333,7 @@
         onImported?.(record);
         resetForm();
       } else {
-        problem = errorText({ status: 200, reason: record?.status === 'duplicate' ? 'duplicate' : record?.reason ?? '', importId: record?.id, message: '' });
+        problem = screenErrorText({ status: 200, reason: record?.status === 'duplicate' ? 'duplicate' : record?.reason ?? '', importId: record?.id, message: '' }, sawComputerName);
         acknowledged = false;
       }
       await Promise.all([loadImports(caseId), casePanel?.refresh()]);
@@ -443,7 +446,7 @@
               <option value="">{IMPORT_TEXT.hostNone}</option>
               {#each hosts as label (label)}<option value={label}>{label}</option>{/each}
             </select>
-            <p class="note">{hosts.length === 0 ? IMPORT_TEXT.noHosts : IMPORT_TEXT.hostNote}</p>
+            <p class="note">{hosts.length === 0 ? IMPORT_TEXT.noHosts : hostNoteText(importer)}</p>
           </div>
         {/if}
 
@@ -512,7 +515,7 @@
         <p class="note">{IMPORT_TEXT.noRejected}</p>
       {:else}
         <ul class="plain">
-          {#each reasons as r (r.reason)}<li><strong>{r.count}</strong> {reasonText(r.reason) ?? r.reason}</li>{/each}
+          {#each reasons as r (r.reason)}<li><strong>{r.count}</strong> {screenReasonText(r.reason, sawComputerName) ?? r.reason}</li>{/each}
         </ul>
         <p class="note">{IMPORT_TEXT.reasonsSample}</p>
       {/if}
@@ -543,7 +546,7 @@
       <div class="actions">
         <button type="button" class="primary-button" disabled={block !== null} onclick={doImport}>{phase === 'importing' ? IMPORT_TEXT.importing : IMPORT_TEXT.importButton}</button>
       </div>
-      {#if block && block !== 'busy'}<p class="note">{IMPORT_TEXT.blocked[block]}</p>{/if}
+      {#if block && block !== 'busy'}<p class="note">{blockedNoteText(block, sawComputerName)}</p>{/if}
     </section>
   {/if}
 

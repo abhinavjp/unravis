@@ -793,7 +793,12 @@ func classify(err error) *WireError {
 	}
 	var ae *audit.ConnectionError
 	if errors.As(err, &ae) {
-		detail, _ := json.Marshal(map[string]string{"stage": ae.Stage, "code": ae.Code, "message": ae.Message})
+		detail, _ := json.Marshal(struct {
+			Stage       string   `json:"stage"`
+			Code        string   `json:"code"`
+			Message     string   `json:"message"`
+			Collections []string `json:"collections,omitempty"`
+		}{ae.Stage, ae.Code, ae.Message, ae.Collections})
 		return &WireError{Code: CodeMongoConnect, Message: ae.Message, Detail: detail}
 	}
 	var re *blackbox.ReadError

@@ -253,8 +253,7 @@ func (m *Map) Lookup(observed string) (importer.HostHint, bool) {
 	if m == nil {
 		return importer.HostHint{}, false
 	}
-	key := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(observed)), ".")
-	hint, ok := m.hints[key]
+	hint, ok := m.hints[importer.HostKey(observed)]
 	return hint, ok
 }
 

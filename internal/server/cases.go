@@ -1318,12 +1318,19 @@ func importRun(ctx context.Context, imp importer.Importer, opts importer.Options
 		windowed := !win.From.IsZero() || !win.To.IsZero()
 		var kept, dropped int64
 		var first, last time.Time
+		var hosts map[string]struct{} // distinct labels the kept events were filed under
 		wrapped := func(ev evidence.Event) error {
 			if windowed && !win.Overlaps(ev.Start, ev.End) {
 				dropped++
 				return nil
 			}
 			kept++
+			if ev.Host != "" {
+				if hosts == nil {
+					hosts = map[string]struct{}{}
+				}
+				hosts[ev.Host] = struct{}{}
+			}
 			if first.IsZero() || ev.Start.Before(first) {
 				first = ev.Start
 			}
@@ -1357,6 +1364,19 @@ func importRun(ctx context.Context, imp importer.Importer, opts importer.Options
 		}
 		if err != nil {
 			return fail(rep, err)
+		}
+		// The report says which labels the stored events carry: the record must
+		// name the computers the rows really went to, never one of several.
+		if len(hosts) > 0 {
+			labels := make([]string, 0, len(hosts))
+			for l := range hosts {
+				labels = append(labels, l)
+			}
+			sort.Strings(labels)
+			if len(labels) > importer.MaxObservedHosts {
+				labels = labels[:importer.MaxObservedHosts]
+			}
+			rep.HostLabels = labels
 		}
 		if preview {
 			if _, err := io.Copy(io.Discard, r); err != nil {
@@ -1569,12 +1589,15 @@ func (h *handler) postImport(w http.ResponseWriter, r *http.Request, raw string)
 // import, import_jobs.go, keeps the upload in an encrypted spool for the job
 // and runs this same function over it.)
 func (h *handler) importFile(ctx context.Context, w http.ResponseWriter, id casestore.CaseID, c casestore.Case, imp importer.Importer, hint *importer.HostHint, supplied map[string]string, part io.Reader, preview, ackGating bool, ackText, fileName string) {
-	h.importFileWith(ctx, w, id, c, imp, hint, supplied, part, preview, ackGating, ackText, fileName, importer.Window{})
+	h.importFileWith(ctx, w, id, c, imp, hint, supplied, part, preview, ackGating, ackText, fileName, importer.Window{}, true)
 }
 
 // importFileWith is importFile with a time window handed to the importer (the
-// zero window is open). Host discovery uses it for the files it reads locally.
-func (h *handler) importFileWith(ctx context.Context, w http.ResponseWriter, id casestore.CaseID, c casestore.Case, imp importer.Importer, hint *importer.HostHint, supplied map[string]string, part io.Reader, preview, ackGating bool, ackText, fileName string, win importer.Window) {
+// zero window is open). Host discovery uses it for the files it reads locally;
+// those calls pass allowUnlistedHost=false, so a file naming a computer the
+// host list does not know is refused there, while a person's explicit import
+// (true) files such a file under the computer they picked.
+func (h *handler) importFileWith(ctx context.Context, w http.ResponseWriter, id casestore.CaseID, c casestore.Case, imp importer.Importer, hint *importer.HostHint, supplied map[string]string, part io.Reader, preview, ackGating bool, ackText, fileName string, win importer.Window, allowUnlistedHost bool) {
 	if !preview && (!ackGating || ackText == "") {
 		writeCaseFailure(w, http.StatusBadRequest, "ack-required", "Send ackGating and ackText before the file.")
 		return
@@ -1620,7 +1643,7 @@ func (h *handler) importFileWith(ctx context.Context, w http.ResponseWriter, id 
 	opts := importer.Options{
 		CaseID: string(id), ImportNonce: nonce, FileName: fileName, Host: hint,
 		Hosts: h.hostsNow().Lookup, Pseudonymize: c.Pseudonymize,
-		Supplied: supplied, Window: win,
+		Supplied: supplied, Window: win, AllowUnlistedHost: allowUnlistedHost,
 	}
 	if cp, ok := innerCase(c).(casestore.CookiePolicyStore); ok {
 		pol, perr := cp.CookiePolicy(ctx)

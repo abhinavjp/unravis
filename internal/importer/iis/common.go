@@ -66,7 +66,9 @@ type spec struct {
 type runState struct {
 	rep         *importer.Report
 	hostCache   map[string]string
-	machines    map[string]struct{} // lower-cased names seen when no host map is wired
+	machines    map[string]struct{} // unlisted names (importer.HostKey) filed under the picked host
+	// listedAsPicked: a name the host list knows resolved to the picked host's label.
+	listedAsPicked bool
 	software    string
 	first, last time.Time
 	declared    map[string]bool // kept columns seen in any #Fields
@@ -94,16 +96,21 @@ func (c *rowCtx) get(name string) (string, bool) {
 	return v, true
 }
 
-// resolveHost maps the name observed inside the file (if any) through
-// opts.Hosts, else uses the host the user picked. Raw names reach only
-// Report.ObservedHosts, never an Event.
+// resolveHost maps the name observed inside the file (if any) through the host
+// map (opts.LookupHost). A name the host list does not know falls back to the
+// host the user picked for the file (opts.Host); the fallback needs a picked
+// host and opts.UnlistedFallback(), so only the explicit import (or the old
+// path with no host map wired) takes it: otherwise the file is refused
+// (ErrUnknownHost). Raw names reach only Report.ObservedHosts, never an Event.
 //
-// Without a host map the picked host may label one machine only: a second
-// distinct name refuses the file (ErrUnknownHost), so several machines are
-// never merged under one label. Names are compared without regard to case.
-// A name longer than maxHostNameBytes is never used or recorded; its row is
-// rejected with ReasonUnknownHost instead of falling back to the picked host.
-// A non-empty reason means "reject this row"; a non-nil error aborts the file.
+// The picked host may label one unlisted machine only: a second distinct
+// unlisted name refuses the file, so several machines are never merged under
+// one label. The same goes for an unlisted name in a file whose other names are
+// listed under the picked host's own label. Names are compared without regard
+// to case, spaces or one trailing dot (importer.HostKey). A name longer than
+// maxHostNameBytes is never used or recorded; its row is rejected with
+// ReasonUnknownHost instead of falling back to the picked host. A non-empty
+// reason means "reject this row"; a non-nil error aborts the file.
 func (c *rowCtx) resolveHost(observed string) (string, importer.Reason, error) {
 	if observed != "" {
 		if len(observed) > maxHostNameBytes {
@@ -115,20 +122,23 @@ func (c *rowCtx) resolveHost(observed string) (string, importer.Reason, error) {
 		if err := c.st.rep.Observe(observed); err != nil {
 			return "", "", err
 		}
-		if c.opts.Hosts != nil {
-			h, ok := c.opts.Hosts(observed)
-			if !ok || h.Label == "" {
-				return "", "", importer.ErrUnknownHost
+		picked := c.opts.Host != nil && c.opts.Host.Label != ""
+		if h, ok := c.opts.LookupHost(observed); ok {
+			if picked && h.Label == c.opts.Host.Label {
+				c.st.listedAsPicked = true
+				if len(c.st.machines) > 0 { // an unlisted machine already carries this label
+					return "", "", importer.ErrUnknownHost
+				}
 			}
 			c.st.hostCache[observed] = h.Label
 			return h.Label, "", nil
 		}
-		if c.opts.Host == nil || c.opts.Host.Label == "" {
+		if !picked || !c.opts.UnlistedFallback() {
 			return "", "", importer.ErrUnknownHost
 		}
-		key := strings.ToLower(observed)
+		key := importer.HostKey(observed)
 		if _, seen := c.st.machines[key]; !seen {
-			if len(c.st.machines) > 0 {
+			if len(c.st.machines) > 0 || c.st.listedAsPicked {
 				return "", "", importer.ErrUnknownHost
 			}
 			c.st.machines[key] = struct{}{}

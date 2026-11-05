@@ -58,7 +58,10 @@ export const IMPORT_TEXT = {
   pickerRefused: 'The file type was not found. If you know it, choose it to add the settings the owner gave you.',
   hostLabel: 'Host',
   hostNone: 'The file names its own hosts',
-  hostNote: 'Pick the host this file came from. A host that is not in the host list is refused.',
+  // The name is read from the file, so the pick only stands in for a name the list does not hold (a sql-xe export may name none at all).
+  hostNote: 'The computer is read from the log. Pick one from the list only if the name in the file is not in the list.',
+  // For the kinds whose file carries no computer name (HTTPERR, Query Store, the app log importers): a pick is needed.
+  hostPickNote: 'Pick the host this file came from. A host that is not in the host list is refused.',
   noHosts: 'The host list is empty, so a file that names a host is refused as an unknown host.',
   unknownHostBadge: 'unknown host',
 
@@ -95,7 +98,9 @@ export const IMPORT_TEXT = {
     busy: 'Working…',
     'no-preview': 'Choose a file and let the preview finish first.',
     stale: 'The file or its settings changed. A new preview is loading.',
-    'unknown-host': 'The host in this file does not match the host list or the host you picked, so it cannot be imported.',
+    'unknown-host': 'This file names a computer that is not in your list. Pick the computer that wrote it, or add it to the list. If you already picked one, check the host you picked is the right one.',
+    // The wording above needs a computer name in the file. A file that named no computer gets this one instead (ImportPanel picks between them).
+    'unknown-host-none': 'This file does not name a computer. Pick the computer that wrote it from the list, or add it to the list first.',
     nothing: 'The preview kept no rows, so there is nothing to import.',
     settings: 'A setting you typed is not valid. Fix it first.',
     ack: 'Tick the box to confirm the notice first.'
@@ -177,7 +182,9 @@ export const REASON_TEXT: Record<string, string> = {
   'bad-number': 'A number could not be read.',
   'line-too-long': 'A line was longer than the limit.',
   encoding: 'The text encoding could not be read.',
-  'unknown-host': 'The host in this file does not match the host list or the host you picked. Check the host you picked, or add the host in the file to the list, then try again.',
+  'unknown-host': 'This file names a computer that is not in your list. Pick the computer that wrote it, or add it to the list, then try again. If you already picked one, check the host you picked is the right one.',
+  // Same rule as above: this wording is for a file that named no computer at all.
+  'unknown-host-none': 'This file does not name a computer. Pick the computer that wrote it, or add it to the list, then try again.',
   'unscrubbed-column': 'The file has a column that may hold private text, so it was refused. Export it again without that column.',
   'unsupported-format': 'This file format is not supported.',
   'archive-extract-first': 'This is a compressed file. Extract it first, then choose the extracted file.',
@@ -282,6 +289,40 @@ export function errorText(error: Pick<CaseApiError, 'status' | 'reason' | 'colum
 export function exportErrorText(error: Pick<CaseApiError, 'status' | 'reason' | 'column' | 'importId' | 'message'>): string {
   if (error.status === 409 && error.reason !== 'duplicate') return IMPORT_TEXT.exportChanged;
   return errorText(error);
+}
+
+/**
+ * The note under the host select for one importer. The self-naming importers (IIS W3C, IIS FREB and the sql-xe export) read the computer's
+ * own name from the file, so their note says the pick only stands in for a name the list does not hold; a sql-xe export may name none, and
+ * there the pick gives the file its name. Every other importer reads a file with no computer in it, so there the pick is the ask itself.
+ */
+export function hostNoteText(importer: string): string {
+  return importer === 'iis-w3c' || importer === 'iis-freb' || importer === 'sql-xe' ? IMPORT_TEXT.hostNote : IMPORT_TEXT.hostPickNote;
+}
+
+/**
+ * The sentence for a refusal shown on this screen. An unknown-host refusal calls out the computer name in the file, so it is only used when
+ * the preview saw at least one computer name; a file that named no computer gets words that ask for a pick instead. `namedComputer` says what
+ * the file's own preview saw (true keeps the words right when nothing has been read yet).
+ */
+export function screenErrorText(error: Pick<CaseApiError, 'status' | 'reason' | 'column' | 'importId' | 'message'>, namedComputer: boolean): string {
+  if (error.reason === 'unknown-host' && !namedComputer) return errorText({ ...error, reason: 'unknown-host-none' });
+  return errorText(error);
+}
+
+/** The line for one rejected-row reason, with the unknown-host rule of screenErrorText: the "not in your list" words need a name in the file. */
+export function screenReasonText(reason: string, namedComputer: boolean): string | null {
+  if (reason === 'unknown-host' && !namedComputer) return REASON_TEXT['unknown-host-none'];
+  return reasonText(reason);
+}
+
+/**
+ * The note that holds Import file back. For 'unknown-host' the file must have shown a computer name for the "not in your list" words to fit;
+ * a file that named no computer gets the plain ask instead. Any other block code keeps its own wording.
+ */
+export function blockedNoteText(code: string, namedComputer: boolean): string {
+  if (code === 'unknown-host' && !namedComputer) return IMPORT_TEXT.blocked['unknown-host-none'];
+  return (IMPORT_TEXT.blocked as Record<string, string>)[code] ?? '';
 }
 
 /**

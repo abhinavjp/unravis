@@ -304,7 +304,8 @@ func (m *xmlImp) Parse(ctx context.Context, r io.Reader, opts importer.Options, 
 		return s
 	}
 	byName := map[string]*applog.Sink{} // observed machine name -> sink
-	machines := map[string]struct{}{}   // lower-cased names seen without a host map
+	machines := map[string]struct{}{}   // unlisted names (importer.HostKey) filed under the picked host
+	listedAsPicked := false             // a listed name resolved to the picked host's label
 	// resolve picks the sink for the machine name of one event. A non-empty
 	// reason rejects the event; a non-nil error ends the file.
 	resolve := func(name string) (*applog.Sink, importer.Reason, error) {
@@ -323,20 +324,26 @@ func (m *xmlImp) Parse(ctx context.Context, r io.Reader, opts importer.Options, 
 		if err := acc.Observe(name); err != nil {
 			return nil, "", err
 		}
+		picked := opts.Host != nil && opts.Host.Label != ""
 		var s *applog.Sink
-		if opts.Hosts != nil {
-			h, ok := opts.Hosts(name)
-			if !ok || h.Label == "" {
-				return nil, "", importer.ErrUnknownHost
+		if h, ok := opts.LookupHost(name); ok {
+			if picked && h.Label == opts.Host.Label {
+				listedAsPicked = true
+				if len(machines) > 0 { // an unlisted machine already carries this label
+					return nil, "", importer.ErrUnknownHost
+				}
 			}
 			s = sinkFor(h)
-		} else {
-			if opts.Host == nil || opts.Host.Label == "" {
+		}
+		if s == nil {
+			// The host list does not know this name: use the host the person
+			// picked, for one machine only, and only where the fallback is allowed.
+			if !picked || !opts.UnlistedFallback() {
 				return nil, "", importer.ErrUnknownHost
 			}
-			key := strings.ToLower(name)
+			key := importer.HostKey(name)
 			if _, seen := machines[key]; !seen {
-				if len(machines) > 0 { // a second machine would share one label
+				if len(machines) > 0 || listedAsPicked { // a second machine would share one label
 					return nil, "", importer.ErrUnknownHost
 				}
 				machines[key] = struct{}{}

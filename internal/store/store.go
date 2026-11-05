@@ -17,7 +17,7 @@ const maxSources = 8
 var (
 	errInvalidProfile = fmt.Errorf("%w: invalid source profile", audit.ErrInvalidInput)
 	errSourceLimit    = fmt.Errorf("%w: maximum source count reached", audit.ErrLimit)
-	errDuplicate      = fmt.Errorf("%w: source profile already exists", audit.ErrInvalidInput)
+	errDuplicate      = fmt.Errorf("%w: source profile already exists: %w", audit.ErrInvalidInput, audit.ErrDuplicate)
 	errSourceNotFound = fmt.Errorf("%w: source not found", audit.ErrNotFound)
 	errSourceBusy     = fmt.Errorf("%w: source is busy", audit.ErrBusy)
 )

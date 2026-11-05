@@ -91,3 +91,34 @@ test('audit-add: a closed or read-only case switches every control off', () => {
   assert.match(page, /const canAdd = \$derived\(!readOnly/);
   assert.ok((page.match(/readOnly \|\| busy/g) ?? []).length >= 4);
 });
+
+// ---- the wizard's audit step names a fallback once, and never keeps it as the collection of the next database
+
+test('audit-add in the wizard: two databases are each asked for the same default, and a fallback is only kept for its own saved link', async () => {
+  // M5: the fallback collection of one database must not become the default the next database is asked for.
+  assert.doesNotMatch(read('src/lib/wizardSubmitApi.ts'), /holdCollection\(/);
+  const apiMod = loadTypeScript('src/lib/api.ts');
+  const conns = loadTypeScript('src/lib/wizardConnections.ts');
+  const submitApiMod = loadTypeScript('src/lib/wizardSubmitApi.ts');
+  const calls = [];
+  const asked = new Set();
+  apiMod.api.addSource = async (input) => {
+    calls.push(input.collection);
+    if (!asked.has(input.database)) {
+      asked.add(input.database);
+      throw new apiMod.ApiError('no collection', 'collection_missing', 'source', 400, undefined, undefined, ['SystemApiAuditLog']);
+    }
+    return { id: 'src-' + input.database, label: input.label };
+  };
+  apiMod.api.recentConnections = async () => [];
+  apiMod.api.rememberConnection = async (args) => ({ id: 'rec-' + args.collection, label: args.label });
+  const connectionId = conns.holdConnection({ uri: 'mongodb://db.example.internal:27017', username: 'reader', password: '', authSource: 'admin', tlsMode: 'system', caCertificate: '' }, 'conn-test-01');
+  try {
+    const first = await submitApiMod.wizardSubmitApi.addAuditSource(connectionId, 'orders');
+    assert.match(first.note, /Used collection SystemApiAuditLog instead of ApiAuditLog\./);
+    const second = await submitApiMod.wizardSubmitApi.addAuditSource(connectionId, 'billing');
+    assert.match(second.note, /Used collection SystemApiAuditLog instead of ApiAuditLog\./, 'the second database is asked for the default again, and falls back on its own');
+  } finally { conns.releaseConnections(); }
+  assert.deepEqual(calls, ['ApiAuditLog', 'SystemApiAuditLog', 'ApiAuditLog', 'SystemApiAuditLog']);
+  assert.equal(conns.heldCollection(connectionId), 'ApiAuditLog');
+});

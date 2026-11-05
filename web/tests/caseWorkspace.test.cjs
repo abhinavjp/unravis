@@ -454,6 +454,35 @@ test('a refused login asks for the sign-in, a network or time-out failure says M
   assert.equal(W.classifyRestoreFailure([], false), 'failed');
 });
 
+test('a problem with the source itself is "failed", and an access refusal at the connection level still asks for the sign-in', () => {
+  const err = (props, name = 'ApiError') => Object.assign(new Error('x'), { name }, props);
+  assert.equal(W.classifyRestoreFailure([err({ stage: 'source', code: 'collection_missing', status: 400 })], true), 'failed');
+  assert.equal(W.classifyRestoreFailure([err({ stage: 'source', code: 'permission_denied', status: 400 })], false), 'failed');
+  assert.equal(W.classifyRestoreFailure([err({ stage: 'source', code: 'unsupported_version', status: 400 })], true), 'failed', 'a version problem is not a sign-in problem');
+  assert.equal(W.classifyRestoreFailure([err({ status: 403 })], true), 'signin', 'access refused at the connection level is the sign-in');
+});
+
+test('the failed strip names the collection, access or version problem the server gave, in the case copy', () => {
+  const err = (props) => Object.assign(new Error('x'), { name: 'ApiError' }, props);
+  assert.match(copy.restoreFailureNote([err({ stage: 'source', code: 'collection_missing' })]), /no collection with the audit log name/);
+  assert.match(copy.restoreFailureNote([err({ stage: 'source', code: 'permission_denied' })]), /read access/);
+  assert.match(copy.restoreFailureNote([err({ stage: 'source', code: 'unsupported_version' })]), /not supported/);
+  assert.equal(copy.restoreFailureNote([err({ stage: 'connection', code: 'collection_missing' })]), '', 'only a source answer gets the words');
+  assert.equal(copy.restoreFailureNote([err({ stage: 'source', code: 'something-else' })]), '');
+  assert.equal(copy.restoreFailureNote([]), '');
+});
+
+test('a source that is already on the server is the wanted end state: it is skipped, never kept as a failure', () => {
+  const state = read('src/lib/appState.svelte.ts');
+  const loop = state.slice(state.indexOf('for (const database of plan.databases)'), state.indexOf('if (added === 0)'));
+  assert.match(loop, /if \(isSourceExists\(cause\)\) continue; failures\.push\(cause\); continue;/);
+  assert.match(state, /if \(failures\.length === 0\) \{ investigationNotice = CASE_RESTORE_TEXT\.partial; finishRestore\(id, workspace, keepTab\); return; \}/);
+  const wait = state.slice(state.indexOf('function enterRestoreWait'), state.indexOf('function expireRestore'));
+  assert.match(wait, /causes: readonly unknown\[\] = \[\]/);
+  assert.match(wait, /if \(phase === 'failed'\) restoreNote = restoreFailureNote\(causes\)/);
+  assert.match(state, /get note\(\) \{ return restoreNote; \}/);
+});
+
 test('the restore has a time limit, a Cancel, a retry, and every way out lets the saved filters go on', () => {
   const state = read('src/lib/appState.svelte.ts');
   assert.match(state, /setTimeout\(\(\) => expireRestore\(run\), RESTORE_TIMEOUT_MS\)/);

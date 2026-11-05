@@ -81,15 +81,17 @@ func (s *Store) AddSource(ctx context.Context, in audit.SourceInput) (audit.Sour
 	}
 
 	s.mu.RLock()
-	if len(s.sources) >= maxSources {
-		s.mu.RUnlock()
-		return audit.Source{}, errSourceLimit
-	}
+	// A profile that already exists is a duplicate, not a "full list": re-adding
+	// it must be refused as one even at the limit, so the loop comes first.
 	for _, p := range s.sources {
 		if p.identity == identity {
 			s.mu.RUnlock()
 			return audit.Source{}, errDuplicate
 		}
+	}
+	if len(s.sources) >= maxSources {
+		s.mu.RUnlock()
+		return audit.Source{}, errSourceLimit
 	}
 	shared := s.clients[connectionKey]
 	s.mu.RUnlock()
@@ -102,7 +104,7 @@ func (s *Store) AddSource(ctx context.Context, in audit.SourceInput) (audit.Sour
 		}
 		client, err := s.newClient(ctx, validated.URI, tlsConfig)
 		if err != nil {
-			return audit.Source{}, fmt.Errorf("%w: could not connect to MongoDB source", audit.ErrInvalidInput)
+			return audit.Source{}, sourceAddFailure(validated.Database, validated.Collection, err)
 		}
 		publicID, idErr := newID()
 		if idErr != nil {
@@ -125,7 +127,7 @@ func (s *Store) AddSource(ctx context.Context, in audit.SourceInput) (audit.Sour
 		if ctx.Err() != nil {
 			return audit.Source{}, ctx.Err()
 		}
-		return audit.Source{}, fmt.Errorf("%w: MongoDB source validation failed; check the connection, permissions, and server version", audit.ErrInvalidInput)
+		return audit.Source{}, sourceAddFailure(validated.Database, validated.Collection, err)
 	}
 	if err := ctx.Err(); err != nil {
 		if newShared {

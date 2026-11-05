@@ -19,7 +19,8 @@ import type { RunningImport } from './cases';
 import { afterUnlock, CASE_TRACING_MARK, createRoute, go as moveScreen, historyStep, initialScreen, isHistoryScreen, leavesCaseWork, parseScreenMark, setupReturn, type Screen } from './screenFlow';
 import { onCasesLocked } from './lockSignal';
 import { requestCase, requestFilesView } from './startIntent';
-import { CASE_RESTORE_TEXT } from './copy/caseRestoreCopy';
+import { CASE_RESTORE_TEXT, restoreFailureNote } from './copy/caseRestoreCopy';
+import { isSourceExists } from './wizardAuditAdd';
 import { holdLedger, setLedgerCase } from './ledgerStore.svelte';
 import { forgetSources } from './tracing/sources';
 import { forgetWindows } from './tracing/windows';
@@ -129,6 +130,8 @@ let restorePhase = $state<RestorePhase>('idle');
 let restoreDatabases = $state<string[]>([]);
 let restoreRecentId = $state('');
 let restoreLabel = $state('');
+// The sentence under the failed heading that names the real problem (a collection or version that the database refused rather than the sign-in). Empty keeps the standard wording.
+let restoreNote = $state('');
 let restoredCaseId = '';
 let workspaceBaseline: Workspace | null = null;
 let restoreSequence = 0;
@@ -648,6 +651,7 @@ export function goHome() { go('start'); }
 // ---- The case workspace: saving it, and bringing it back when the case is opened (see lib/caseWorkspace.ts) ----
 function setRestore(phase: RestorePhase, databases: string[] = [], recentId = '', label = '') {
   restorePhase = phase; restoreDatabases = databases; restoreRecentId = recentId; restoreLabel = label;
+  if (phase !== 'failed') restoreNote = '';
   if (phase !== 'working' && restoreTimer !== null) { clearTimeout(restoreTimer); restoreTimer = null; }
 }
 /** The restore is waiting for the person (sign in, a new connection, a retry) rather than running. */
@@ -699,11 +703,13 @@ function completePendingRestore() {
 }
 const namesOf = (databases: readonly WorkspaceDatabase[]): string[] => databases.map(item => item.name);
 /** The restore stops and waits for the person. The saved filters are held back until they connect something or put the waiting aside. */
-function enterRestoreWait(ctx: RestoreRun, phase: 'signin' | 'unreachable' | 'missing' | 'failed', databases: readonly WorkspaceDatabase[], recent: RecentConnection | null) {
+function enterRestoreWait(ctx: RestoreRun, phase: 'signin' | 'unreachable' | 'missing' | 'failed', databases: readonly WorkspaceDatabase[], recent: RecentConnection | null, causes: readonly unknown[] = []) {
   pendingRestore = { workspace: ctx.workspace, keepTab: ctx.keepTab };
   if (!ctx.keepTab && ctx.workspace?.investigation) investigationIntent = ctx.workspace.investigation;
   restoreRun = null;
   setRestore(phase, namesOf(databases), recent?.id ?? '', recent?.label ?? '');
+  // A failed run names its database problem (a collection or version code) when the server gave one; the other waits keep the standard words.
+  if (phase === 'failed') restoreNote = restoreFailureNote(causes);
 }
 /** The time limit ran out: whatever the run still brings back is dropped, and MongoDB is reported as not reachable. */
 function expireRestore(run: number) {
@@ -765,7 +771,8 @@ async function restoreCaseWorkspace(id: string) {
       connectionLabel: recent.label, database: database.name, collection: database.collection || recent.collection || 'ApiAuditLog'
     };
     let source: Source;
-    try { source = await api.addSource(input); } catch (cause) { if (!alive()) return; failures.push(cause); continue; }
+    // A 409 source-exists answer says the source is already on the server: the wanted end state, so it is neither a failure nor counted as added.
+    try { source = await api.addSource(input); } catch (cause) { if (!alive()) return; if (isSourceExists(cause)) continue; failures.push(cause); continue; }
     // The case changed (or the restore was ended) while this was connecting: the result belongs to nobody here, so it is neither listed nor registered.
     if (!alive()) return;
     if (!sources.some(item => item.id === source.id)) sources = [...sources, source];
@@ -773,7 +780,11 @@ async function restoreCaseWorkspace(id: string) {
     if (keepTab && shouldSelectAddedSource(source, investigationIntent)) query.sourceIds = [...query.sourceIds, source.id];
     added++;
   }
-  if (added === 0) { enterRestoreWait(ctx, classifyRestoreFailure(failures, recent.username !== ''), plan.databases, recent); return; }
+  if (added === 0) {
+    if (failures.length === 0) { investigationNotice = CASE_RESTORE_TEXT.partial; finishRestore(id, workspace, keepTab); return; } // every answer was "already there"
+    enterRestoreWait(ctx, classifyRestoreFailure(failures, recent.username !== ''), plan.databases, recent, failures);
+    return;
+  }
   if (added < plan.databases.length) investigationNotice = CASE_RESTORE_TEXT.partial;
   finishRestore(id, workspace, keepTab);
 }
@@ -1868,6 +1879,7 @@ export const restore = {
   get needsAttention() { return restoreWaiting(restorePhase); },
   get databases() { return restoreDatabases; },
   get label() { return restoreLabel; },
+  get note() { return restoreNote; },
   reconnect: reconnectRestore,
   retry: retryRestore,
   cancel: cancelRestore,

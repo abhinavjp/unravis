@@ -197,6 +197,27 @@ func TestAddSourceEnforcesLimitAndCancellation(t *testing.T) {
 	}
 }
 
+// At the limit, a source that is already in the list is still refused as a
+// duplicate, not as a full list: the duplicate answer wins over the limit one.
+func TestAddSourceAtLimitReportsDuplicateForExistingSource(t *testing.T) {
+	s := newStore(func(context.Context, string, *tls.Config) (clientHandle, error) {
+		return &fakeClient{}, nil
+	})
+	for i := 0; i < maxSources; i++ {
+		in := input("mongodb://host", "db", "audit"+string(rune('a'+i)))
+		if _, err := s.AddSource(context.Background(), in); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	// the list is full, and the profile exists in it: this is a duplicate
+	if _, err := s.AddSource(context.Background(), input("mongodb://host", "db", "audit"+"a")); !errors.Is(err, errDuplicate) {
+		t.Fatalf("re-add at limit = %v, want errDuplicate", err)
+	}
+	if _, err := s.AddSource(context.Background(), input("mongodb://host", "db", "audit-z")); !errors.Is(err, errSourceLimit) {
+		t.Fatalf("new source at limit = %v, want errSourceLimit", err)
+	}
+}
+
 func TestSourceJSONNeverContainsURIOrCredentials(t *testing.T) {
 	s := newStore(func(context.Context, string, *tls.Config) (clientHandle, error) { return &fakeClient{}, nil })
 	source, err := s.AddSource(context.Background(), authenticatedInput("mongodb://host/db?authSource=admin", "user", "top-secret", "db", "audit"))

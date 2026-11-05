@@ -9,6 +9,7 @@ import (
 	"context"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	"api-audit-explorer/internal/evidence"
@@ -63,11 +64,53 @@ type Options struct {
 	CaseID, ImportNonce, FileName string                                 // FileName: sanitised base name, display only
 	Host                          *HostHint                              // host the user picked for this file, if any
 	Hosts                         func(observed string) (HostHint, bool) // hosts.json lookup for names inside the file
-	Limits                        Limits
-	Window                        Window
-	Pseudonymize                  func(kind, value string) string // keyed per case; kind "user" | "client"
-	Supplied                      map[string]string               // owner-supplied quality, e.g. "slowms": "100"
-	CookiePolicy                  *CookiePolicy                   // nil: no cookie value is ever stored, even as a digest
+	// AllowUnlistedHost is set by the explicit import only, where a person picked
+	// this file's computer: a file-named computer the host list does not know is
+	// then filed under the host the person picked (UnlistedFallback). Discovery
+	// leaves it false: an unlisted name there is refused with ErrUnknownHost. The
+	// old no-host-map path (Hosts == nil, importer unit tests) keeps the fallback.
+	AllowUnlistedHost            bool
+	Limits                       Limits
+	Window                       Window
+	Pseudonymize                 func(kind, value string) string // keyed per case; kind "user" | "client"
+	Supplied                     map[string]string               // owner-supplied quality, e.g. "slowms": "100"
+	CookiePolicy                 *CookiePolicy                   // nil: no cookie value is ever stored, even as a digest
+}
+
+// HostKey is the key a machine name is compared and counted under: lower-cased,
+// trimmed of surrounding spaces, with one trailing dot dropped. It is the same
+// normalisation hosts.Map.Lookup uses, so "WEB-X", "web-x " and "web-x." are one
+// machine.
+func HostKey(name string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+}
+
+// LookupHost maps one machine name observed inside a file through the host map.
+// It reports false when no host map is wired, when the map does not know the
+// name and when the found hint carries no label. A name with a domain part
+// ("web-b.corp.example.test") falls back to its short name ("web-b"), so a
+// fully qualified spelling of a listed host resolves to the listed hint.
+func (o Options) LookupHost(observed string) (HostHint, bool) {
+	if o.Hosts == nil {
+		return HostHint{}, false
+	}
+	if h, ok := o.Hosts(observed); ok && h.Label != "" {
+		return h, true
+	}
+	if i := strings.IndexByte(observed, '.'); i > 0 {
+		if h, ok := o.Hosts(observed[:i]); ok && h.Label != "" {
+			return h, true
+		}
+	}
+	return HostHint{}, false
+}
+
+// UnlistedFallback reports whether a machine name the host list does not know
+// may be filed under the host the person picked: yes when no host map is wired
+// (the importer unit-test path) and otherwise only when AllowUnlistedHost was
+// set by the explicit import.
+func (o Options) UnlistedFallback() bool {
+	return o.Hosts == nil || o.AllowUnlistedHost
 }
 
 // CookiePolicy is the case's cookie allowlist and the key used to digest
@@ -101,6 +144,7 @@ type Report struct {
 	Rows, Emitted, Rejected int64
 	Errors                  []RowError // first 100 only
 	ObservedHosts           []string   // raw names; the service maps or refuses them, never stores them
+	HostLabels              []string   // labels the emitted events were filed under (distinct, sorted); set by the server's import run, not by importers
 	First, Last             time.Time  // UTC coverage
 	Quality                 evidence.SourceQuality
 	FieldRules              map[string]string // field -> clock.Rule*

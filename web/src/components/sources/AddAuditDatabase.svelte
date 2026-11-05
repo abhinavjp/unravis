@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { api } from '../../lib/api';
+  import { api, ApiError } from '../../lib/api';
   import { addDatabaseSource, conn } from '../../lib/appState.svelte';
   import { CaseApiError } from '../../lib/cases';
   import { postSourceTag } from '../../lib/caseTagsApi';
   import { AUDIT_ADD_TEXT as T } from '../../lib/copy/sourcesCopy';
+  import { suggestionLine } from '../../lib/copy/wizardCreateCopy';
   import { safeServerLine } from '../../lib/copy/wizardSourcesCopy';
   import { classFromTicks, looksLikeAuditDatabase } from '../../lib/wizardSources';
   import { auditReady, cleanDatabases, collectionProblem, passwordForTest } from '../../lib/auditGap';
@@ -63,6 +64,11 @@
   const wording = (cause: unknown, input: ConnectionInput): string => {
     if (cause instanceof CaseApiError && cause.reason === 'case-closed') return T.closedCase;
     return safeServerLine(cause instanceof Error ? cause.message : '', secretsOf(input));
+  };
+  // A wrong or refused collection names the collections the server read in the database: they follow the words, so the person can pick one.
+  const withSuggestions = (text: string, cause: unknown): string => {
+    const line = suggestionLine(cause instanceof ApiError ? cause.collections : undefined);
+    return line === '' ? text : text + ' ' + line;
   };
 
   function resetFrom(id: string) {
@@ -135,7 +141,7 @@
         try {
           await addDatabaseSource(h, { label: database, connectionLabel: label, database, collection: collection.trim() || DEFAULT_COLLECTION });
           connected = true;
-        } catch (cause) { problem = wording(cause, h); return; }
+        } catch (cause) { problem = withSuggestions(wording(cause, h), cause); return; }
       }
       try {
         await tag(cls, h, id);

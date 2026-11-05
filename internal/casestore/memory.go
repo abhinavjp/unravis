@@ -665,7 +665,7 @@ func (c *memCase) record(meta ImportMeta, rep importer.Report, bytes int64, sha 
 	}
 	return ImportRecord{
 		Importer: name, FileName: meta.FileName, SHA256: sha, Bytes: bytes,
-		Rows: rep.Rows, Rejected: rep.Rejected, HostLabel: meta.HostLabel, TZRule: meta.DerivedTZRule(rep), AckText: meta.AckText,
+		Rows: rep.Rows, Rejected: rep.Rejected, HostLabel: meta.DerivedHostLabel(rep), TZRule: meta.DerivedTZRule(rep), AckText: meta.AckText,
 		Quality: rep.Quality, KnownGaps: append([]string(nil), rep.KnownGaps...),
 		Supplied: copySupplied(meta.Supplied),
 	}

@@ -23,6 +23,8 @@ interface Edge {
   tags: Array<Record<string, unknown>>;
   failTag: boolean;
   added: Array<Record<string, unknown>>;
+  /** Answers for the next POST /api/sources calls, in order. When empty the connect succeeds. */
+  replies: Array<{ status: number; json: Record<string, unknown> }>;
 }
 
 const bodyOf = (route: Route): Record<string, unknown> => {
@@ -31,7 +33,7 @@ const bodyOf = (route: Route): Record<string, unknown> => {
 
 /** Answers the Mongo test, the connect and the tag. Returns what each saw. */
 async function mockMongo(page: Page): Promise<Edge> {
-  const edge: Edge = { tests: [], connects: [], tags: [], failTag: false, added: [] };
+  const edge: Edge = { tests: [], connects: [], tags: [], failTag: false, added: [], replies: [] };
   await page.route('**/api/connections/test', async (route) => {
     if (route.request().method() !== 'POST') return route.fallback();
     edge.tests.push(bodyOf(route));
@@ -42,6 +44,8 @@ async function mockMongo(page: Page): Promise<Edge> {
     if (method === 'POST') {
       const body = bodyOf(route);
       edge.connects.push(body);
+      const reply = edge.replies.shift();
+      if (reply) return route.fulfill(reply);
       const source = { id: 'sandbox-audit', label: String(body.label ?? ''), database: String(body.database ?? ''), collection: String(body.collection ?? ''), connectionLabel: String(body.connectionLabel ?? '') };
       edge.added.push(source);
       return route.fulfill({ status: 201, json: source });
@@ -185,6 +189,7 @@ test('AUDIT-05: the create wizard ticks the audit-looking database by default, t
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
   await page.getByRole('button', { name: 'Connect to MongoDB' }).click();
   await page.getByLabel('Use a saved connection').selectOption({ index: 1 });
+  if (collection !== '') await page.getByLabel('Audit log collection').fill(collection);
   await page.getByRole('button', { name: 'Test and list databases' }).click();
   const auditDb = page.getByRole('group', { name: AUDIT_DB });
   const appDb = page.getByRole('group', { name: APP_DB });
@@ -211,4 +216,53 @@ test('AUDIT-05: the create wizard ticks the audit-looking database by default, t
   expect(edge.tags[0]).toMatchObject({ kind: 'mongo-database', label: AUDIT_DB, classification: 'audit' });
   expect(edge.connects.length).toBe(1);
   expect(edge.connects[0]).toMatchObject({ database: AUDIT_DB });
+});
+
+/** The create wizard, up to and including the click on Create case, with the audit database ticked. */
+async function createWizardCase(page: Page, name: string, collection = '') {
+  await goHome(page);
+  await page.getByRole('button', { name: 'Create a new case' }).click();
+  await page.getByLabel('Case name').fill(name);
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('button', { name: 'Connect to MongoDB' }).click();
+  await page.getByLabel('Use a saved connection').selectOption({ index: 1 });
+  if (collection !== '') await page.getByLabel('Audit log collection').fill(collection);
+  await page.getByRole('button', { name: 'Test and list databases' }).click();
+  await expect(page.getByRole('group', { name: AUDIT_DB }).getByRole('checkbox', { name: /API audit logs/ })).toBeChecked();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('button', { name: 'Create case', exact: true }).click();
+}
+
+test('AUDIT-06: the wizard retries once with the only audit-looking collection when the guessed name is not in the database', async ({ page, allow }) => {
+  allow(/400.*\/api\/sources/, 'the first connect is refused on purpose: wrong collection name');
+  const edge = await mockMongo(page);
+  edge.replies.push({ status: 400, json: { error: 'The database has no collection called ApiAuditLog.', code: 'collection_missing', stage: 'source', collections: ['SystemApiAuditLog'] } });
+  await createWizardCase(page, 'QA audit collection fallback', 'ApiAuditLog');
+  await expect.poll(() => edge.connects.length, { timeout: 30000 }).toBe(2);
+  expect(edge.connects[0]).toMatchObject({ database: AUDIT_DB, collection: 'ApiAuditLog' });
+  expect(edge.connects[1]).toMatchObject({ database: AUDIT_DB, collection: 'SystemApiAuditLog' });
+  expect(edge.tags[0]).toMatchObject({ kind: 'mongo-database', classification: 'audit' });
+  await expect(page.getByText('was not added to the analysis')).toHaveCount(0);
+});
+
+test('AUDIT-06b: a collection name the person saved or typed is never swapped for another; the failure names the audit-looking ones', async ({ page, allow }) => {
+  allow(/400.*\/api\/sources/, 'the connect is refused on purpose: the saved collection name is not in the database');
+  const edge = await mockMongo(page);
+  edge.replies.push({ status: 400, json: { error: 'The database has no collection called Logs.', code: 'collection_missing', stage: 'source', collections: ['SystemApiAuditLog'] } });
+  await createWizardCase(page, 'QA audit collection kept', 'Logs');
+  await expect(page.getByText('was not added to the analysis')).toBeVisible({ timeout: 30000 });
+  expect(edge.connects.length).toBe(1);
+  expect(edge.connects[0]).toMatchObject({ database: AUDIT_DB, collection: 'Logs' });
+});
+
+test('AUDIT-07: when the account may not read the audit collection, the last screen says so instead of the generic message', async ({ page, allow }) => {
+  allow(/400.*\/api\/sources/, 'the connect is refused on purpose: no access to the collection');
+  const edge = await mockMongo(page);
+  edge.replies.push({ status: 400, json: { error: 'The account is not allowed to read the collection Logs in the database.', code: 'permission_denied', stage: 'source', collections: ['AuditOne', 'AuditTwo'] } });
+  await createWizardCase(page, 'QA audit collection denied');
+  const problem = page.getByText('was not added to the analysis');
+  await expect(problem).toBeVisible({ timeout: 30000 });
+  await expect(page.getByText('not allowed to read the audit collection')).toBeVisible();
+  await expect(page.getByText('The server did not accept the details')).toHaveCount(0);
+  expect(edge.connects.length).toBe(1);
 });

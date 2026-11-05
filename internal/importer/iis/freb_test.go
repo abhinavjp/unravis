@@ -396,9 +396,18 @@ func TestFREBUnknownHostAborts(t *testing.T) {
 	x := strings.Replace(frebReqXML("a", `statusCode="500"`, frebEvent("2001-03-17T10:00:00Z", "")), "<Event>",
 		`<Event><System><Computer>other.example.test</Computer></System>`, 1)
 	x = strings.Replace(x, `</System></Event>`, `</System></Event>`, 1)
-	_, _, err := parse(t, NewFREB(), []byte(x), frebOpts())
-	if !errors.Is(err, importer.ErrUnknownHost) {
+	// no computer picked: an unlisted name still aborts the file
+	o := frebOpts()
+	o.Host = nil
+	if _, _, err := parse(t, NewFREB(), []byte(x), o); !errors.Is(err, importer.ErrUnknownHost) {
 		t.Fatalf("err = %v", err)
+	}
+	// a computer picked for the file stands in for the unlisted name
+	po := frebOpts()
+	po.AllowUnlistedHost = true
+	evs, _ := mustParse(t, NewFREB(), []byte(x), po)
+	if len(evs) == 0 || evs[0].Host != "web-a" {
+		t.Fatalf("picked host: %+v", evs)
 	}
 }
 

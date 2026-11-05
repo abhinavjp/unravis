@@ -43,7 +43,7 @@ var (
 	ErrMixedSources = errors.New("sources opened by the key keeper and by this Unravis cannot be read together")
 	// ErrHeldSourceGone is a source the keeper no longer has open: it was restarted, or the source sat unused for a long time.
 	ErrHeldSourceGone = fmt.Errorf("%w: the key keeper no longer has this audit source open", audit.ErrNotFound)
-	errHeldDuplicate  = fmt.Errorf("%w: source profile already exists", audit.ErrInvalidInput)
+	errHeldDuplicate  = fmt.Errorf("%w: source profile already exists: %w", audit.ErrInvalidInput, audit.ErrDuplicate)
 	errHeldLimit      = fmt.Errorf("%w: maximum source count reached", audit.ErrLimit)
 )
 

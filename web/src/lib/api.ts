@@ -84,7 +84,9 @@ export class ApiError extends Error {
   readonly reasons?: string[];
   /** The short reason name a case route sends beside its message (for example `case-import-running`); absent on older routes. */
   readonly reason?: string;
-  constructor(message: string, code?: string, stage?: string, status?: number, reasons?: string[], reason?: string) {
+  /** For code collection_missing: the collections of that database whose name looks like an audit log. */
+  readonly collections?: string[];
+  constructor(message: string, code?: string, stage?: string, status?: number, reasons?: string[], reason?: string, collections?: string[]) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
@@ -92,6 +94,7 @@ export class ApiError extends Error {
     this.status = status;
     this.reasons = reasons;
     this.reason = reason;
+    this.collections = collections;
   }
 }
 
@@ -140,15 +143,17 @@ async function requestOnce<T>(path: string, init: RequestInit, signal: AbortSign
     let stage: string | undefined;
     let reasons: string[] | undefined;
     let reason: string | undefined;
+    let collections: string[] | undefined;
     try {
-      const body = await response.json() as { error?: string; code?: string; stage?: string; reasons?: string[]; reason?: string };
+      const body = await response.json() as { error?: string; code?: string; stage?: string; reasons?: string[]; reason?: string; collections?: string[] };
       if (body.error) message = body.error;
       if (body.code) code = body.code;
       if (body.stage) stage = body.stage;
       if (Array.isArray(body.reasons)) reasons = body.reasons;
       if (typeof body.reason === 'string' && body.reason) reason = body.reason;
+      if (Array.isArray(body.collections)) collections = body.collections.filter((c) => typeof c === 'string');
     } catch { /* keep status message */ }
-    const failure = new ApiError(plainApiMessage(response.status, message), code, stage, response.status, reasons, reason);
+    const failure = new ApiError(plainApiMessage(response.status, message), code, stage, response.status, reasons, reason, collections);
     // Every ApiError is reported: it is, by construction, an error the caller
     // is about to show the user.
     reportError({ status: failure.status, code: failure.code, stage: failure.stage, message: failure.message, reqId });

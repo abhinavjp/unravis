@@ -28,6 +28,8 @@ const (
 
 var (
 	ErrInvalidInput       = errors.New("invalid input")
+	// ErrDuplicate is a source that is already open (same deployment, database and collection). It always travels with ErrInvalidInput.
+	ErrDuplicate          = errors.New("source already exists")
 	ErrNotFound           = errors.New("not found")
 	ErrLimit              = errors.New("limit exceeded")
 	ErrLegacyScanLimit    = errors.New("legacy metadata scan limit exceeded")
@@ -140,7 +142,13 @@ type ConnectionError struct {
 	Stage   string `json:"stage"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Collections names the likely audit collections of the database when the one asked for does not exist (code collection_missing).
+	// Collection names are not secret; at most MaxCollectionHints are listed.
+	Collections []string `json:"collections,omitempty"`
 }
+
+// MaxCollectionHints is how many collection names a collection_missing answer may list.
+const MaxCollectionHints = 8
 
 func (e *ConnectionError) Error() string { return e.Message }
 

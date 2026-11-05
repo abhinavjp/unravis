@@ -25,7 +25,14 @@ import { requestIdFor } from './createRequest';
 
 export type StepStatus = 'waiting' | 'running' | 'done' | 'failed' | 'skipped';
 
-export interface StepState { status: StepStatus; reason: string }
+export interface StepState {
+  status: StepStatus;
+  reason: string;
+  /** The collection names the server offered for a failed audit step, capped at five, for the "Did you mean" line. */
+  suggestions?: string[];
+  /** A note on a done step: it went through under another name than the one first tried (the audit step's fallback collection). */
+  note?: string;
+}
 
 /** One source that will be imported: a scan finding, or a file the person picked on the review step. */
 export interface ImportRow extends StepState {
@@ -103,7 +110,7 @@ export interface SubmitApi {
 
 export type FailureStep = 'case' | 'environments' | 'tag' | 'audit-source' | 'import';
 
-export interface Failure { step: FailureStep; key: string; label: string; reason: string }
+export interface Failure { step: FailureStep; key: string; label: string; reason: string; /** The collection names the server offered (an audit-source failure only). */ suggestions?: string[] }
 
 export interface SubmitResult {
   caseId: string;
@@ -150,12 +157,31 @@ export function reviewCounts(envs: readonly string[], sources: readonly Pick<Dra
 
 /* ------------------------------------------------------------------ small helpers */
 
+/** The server's fixed failure codes for adding a source, as the short reasons the screen has words for. */
+const REASON_OF_CODE: Readonly<Record<string, string>> = {
+  collection_missing: 'collection-missing',
+  permission_denied: 'no-access',
+  credentials_rejected: 'password-rejected',
+  unsupported_version: 'old-server',
+  dns_failure: 'db-unreachable',
+  network_timeout: 'db-unreachable',
+  connection_refused: 'db-unreachable',
+  network_failure: 'db-unreachable',
+  certificate_untrusted: 'db-unreachable',
+  hostname_mismatch: 'db-unreachable',
+  certificate_expired: 'db-unreachable',
+  handshake_failed: 'db-unreachable',
+  tls_failure: 'db-unreachable'
+};
+
 /** A short code for a failed step, never the server's own text. A reply from the server is not "unreachable"; only a call that got no reply is. */
 function reasonOf(error: unknown): string {
   if (error instanceof CaseApiError) return error.reason || 'failed';
   if (error instanceof ApiError) {
     if (error.status === 429) return 'rate-limited';
     if (error.status === 423) return 'locked';
+    const named = error.code ? REASON_OF_CODE[error.code] : undefined;
+    if (named) return named;
     if (error.status === 400 || error.status === 422) return 'bad-request';
     return typeof error.status === 'number' ? 'failed' : 'unreachable';
   }
@@ -166,11 +192,20 @@ const isAbort = (error: unknown): boolean => error instanceof DOMException && er
 
 class Locked extends Error {}
 
+/** The collection names the server offered for a failed audit step, capped at five, so the screen can ask "Did you mean". */
+function suggestionsOf(error: unknown): string[] {
+  if (!(error instanceof ApiError)) return [];
+  return (error.collections ?? []).filter((name) => name !== '').slice(0, 5);
+}
+
+/** The note a finished step may hand back (only the audit step does): it went through under another collection name. */
+const noteOf = (value: unknown): string => (value !== null && typeof value === 'object' && 'note' in value && typeof (value as { note?: unknown }).note === 'string' ? (value as { note: string }).note : '');
+
 async function guarded<T>(call: () => Promise<T>): Promise<T> {
   try { return await call(); } catch (error) { if (isLocked(error)) throw new Locked('locked'); throw error; }
 }
 
-const step = (status: StepStatus = 'waiting', reason = ''): StepState => ({ status, reason });
+const step = (status: StepStatus = 'waiting', reason = '', extra: Partial<StepState> = {}): StepState => ({ status, reason, ...extra });
 
 /** Gives every importable source a row, so the progress list shows them all at once. A row that exists is kept. */
 export function prepareState(input: Pick<SubmitInput, 'sources' | 'envs'>, state: SubmitState): void {
@@ -196,7 +231,7 @@ export function failuresOf(state: SubmitState, sources: readonly Pick<DraftSourc
     const tag = state.tags[key];
     if (tag?.status === 'failed') out.push({ step: 'tag', key, label: source.label, reason: tag.reason });
     const audit = state.audit[key];
-    if (audit?.status === 'failed') out.push({ step: 'audit-source', key, label: source.label, reason: audit.reason });
+    if (audit?.status === 'failed') out.push({ step: 'audit-source', key, label: source.label, reason: audit.reason, ...(audit.suggestions && audit.suggestions.length > 0 ? { suggestions: audit.suggestions } : {}) });
     const row = state.imports[key];
     if (row && (row.status === 'failed' || row.status === 'skipped')) out.push({ step: 'import', key, label: source.label, reason: row.reason });
   }
@@ -317,11 +352,13 @@ async function execute(input: SubmitInput, api: SubmitApi, state: SubmitState): 
         state.audit[key] = step('running');
         try {
           if (!ref) throw new CaseApiError('That database is not known.', 422, 'database-not-tested');
-          await guarded(() => api.addAuditSource(ref.connectionId, ref.database));
-          state.audit[key] = step('done');
+          const added = await guarded(() => api.addAuditSource(ref.connectionId, ref.database));
+          const note = noteOf(added);
+          state.audit[key] = step('done', '', note === '' ? {} : { note });
         } catch (error) {
           if (error instanceof Locked) { state.audit[key] = step(); throw error; }
-          state.audit[key] = step('failed', reasonOf(error));
+          const offered = suggestionsOf(error);
+          state.audit[key] = step('failed', reasonOf(error), offered.length > 0 ? { suggestions: offered } : {});
         }
       }
     }

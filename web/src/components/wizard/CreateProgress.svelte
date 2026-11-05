@@ -9,7 +9,7 @@
   import { fileKindLabel } from '../../lib/copy/fileKindsCopy';
   import { kindLabel } from '../../lib/copy/wizardSourcesCopy';
   import { rowOutcomeText } from '../../lib/copy/discoverCopy';
-  import { CREATE_TEXT, failureText, fileStatusText, isHostReason, leaveOutLabel, resultText, rowText, stateText, tryAgainLabel } from '../../lib/copy/wizardCreateCopy';
+  import { CREATE_TEXT, failureText, fileStatusText, isHostReason, leaveOutLabel, resultText, rowText, stateText, suggestionLine, tryAgainLabel } from '../../lib/copy/wizardCreateCopy';
   import ZoneChoice from './ZoneChoice.svelte';
 
   // The last screen of the create guide: what the run is doing, source by source, and what to do about anything that did not go through.
@@ -58,8 +58,13 @@
   const fileKeys = $derived(new Set(fileRows.map((item) => item.key)));
   const failures = $derived(summary.failures.filter((failure) => !(failure.step === 'import' && fileKeys.has(failure.key))).map((failure) => {
     const row = failure.step === 'import' ? submit.imports[failure.key] : undefined;
-    return { key: failure.step + ':' + failure.key, text: failureText(failure, row?.outcome ? rowOutcomeText(row.outcome) : undefined) };
+    const text = failureText(failure, row?.outcome ? rowOutcomeText(row.outcome) : undefined);
+    // A failed audit database names the collections the server offered, so the person can pick the right one from Add more data.
+    const offered = suggestionLine(failure.suggestions);
+    return { key: failure.step + ':' + failure.key, text: offered === '' ? text : text + ' ' + offered };
   }));
+  // A database the wizard read under a name other than the one it tried first says so once, when the run ends.
+  const auditNotes = $derived(Object.values(submit.audit).map((audit) => audit.note ?? '').filter((note) => note !== ''));
 
   // Everything went through and no file was read: open the analysis at once. With files, or after anything failed, the person reads it first.
   $effect(() => {
@@ -107,6 +112,7 @@
       <p>{CREATE_TEXT.working_status}</p>
     {:else if result && finished}
       <p>{resultText(summary.imported, summary.total, summary.failures.length, fileRows.length > 0)}</p>
+      {#each auditNotes as note, i (i)}<p class="note">{note}</p>{/each}
     {/if}
     {#if note !== '' && !createView.running}<p class="note">{note}</p>{/if}
   </div>

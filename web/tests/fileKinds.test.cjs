@@ -175,7 +175,7 @@ test('the components exist and keep their hooks', () => {
 
 test('which kinds need a computer picked: HTTPERR and Query Store need a host, the error log and event log need a host with a time zone', () => {
   assert.deepEqual(kinds.FILE_KIND_IDS.map((id) => [id, kinds.hostNeed(id)]), [
-    ['iis-w3c', 'none'], ['iis-httperr', 'host'], ['iis-freb', 'none'], ['sql-xe', 'optional'],
+    ['iis-w3c', 'optional'], ['iis-httperr', 'host'], ['iis-freb', 'optional'], ['sql-xe', 'optional'],
     ['sql-errorlog', 'host-tz'], ['sql-querystore', 'host'], ['win-events', 'host-tz'], ['app-log', 'host']
   ]);
   for (const id of ['iis-httperr', 'sql-querystore', 'sql-errorlog', 'win-events', 'app-log']) assert.equal(kinds.needsHost(id), true, id);
@@ -183,6 +183,9 @@ test('which kinds need a computer picked: HTTPERR and Query Store need a host, t
   // The server refuses log4net-blocks and log4net-text (and the other app-log importers) without a computer, so the page must not call it optional.
   assert.equal(kinds.offersHost('app-log'), false);
   assert.equal(kinds.offersHost('sql-xe'), true);
+  // A real IIS log names a server that may not be in the list: the pick is offered, and used for that name.
+  assert.equal(kinds.offersHost('iis-w3c'), true);
+  assert.equal(kinds.offersHost('iis-freb'), true);
   assert.equal(kinds.offersHost('iis-httperr'), false);
   assert.equal(kinds.hostNeed('nonsense'), 'none');
 });
@@ -193,4 +196,21 @@ test('a staged row starts with no computer, and needingHost drops a row once a c
   assert.deepEqual(kinds.needingHost(list).map((x) => x.name), ['httperr1.log']);
   list[0].host = 'WEB01';
   assert.deepEqual(kinds.needingHost(list), []);
+});
+
+test('the offered pick names the file\'s own computer for IIS, and keeps the plain ask for sql-xe', () => {
+  const zone = loadTypeScript('src/lib/copy/zoneChoiceCopy.ts');
+  const named = zone.optionalHelpText('iis-w3c');
+  assert.equal(named, zone.ZONE_CHOICE_TEXT.optionalHelpNamed, 'an IIS log reads the computer from the file');
+  assert.match(named, /read from the file/);
+  assert.match(named, /only if/);
+  assert.equal(zone.optionalHelpText('sql-xe'), zone.ZONE_CHOICE_TEXT.optionalHelp, 'a sql-xe export may name no computer, so its plain ask stays');
+  assert.notEqual(named, zone.optionalHelpText('sql-xe'));
+  for (const id of ['iis-w3c', 'iis-freb', 'sql-xe']) assert.equal(kinds.offersHost(id), true, id);
+  for (const id of ['iis-httperr', 'sql-querystore', 'sql-errorlog', 'win-events', 'app-log']) assert.equal(kinds.offersHost(id), false, id);
+  // Both help lines reach the copy lint through the zone-choice entry list.
+  const entries = zone.zoneChoiceCopyEntries();
+  const ids = new Set(entries.map((e) => e.id));
+  assert.ok(ids.has('zone.sample.optional.named') && ids.has('zone.sample.optional.xe'));
+  assert.deepEqual(lintScreenStrings(entries, deck.terms), []);
 });

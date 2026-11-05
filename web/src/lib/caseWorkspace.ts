@@ -327,11 +327,18 @@ export type RestoreFailure = 'signin' | 'unreachable' | 'failed';
 
 const stageOf = (cause: unknown): string => (cause && typeof cause === 'object' && 'stage' in cause ? String((cause as { stage?: unknown }).stage ?? '') : '');
 const statusOf = (cause: unknown): number => (cause && typeof cause === 'object' && 'status' in cause && typeof (cause as { status?: unknown }).status === 'number' ? (cause as { status: number }).status : 0);
+const codeOf = (cause: unknown): string => (cause && typeof cause === 'object' && 'code' in cause ? String((cause as { code?: unknown }).code ?? '') : '');
+
+/** The server's codes for a problem with the source itself (its audit collection, the account's access to it, its MongoDB version): that database did not open, and it is not a sign-in problem. */
+const SOURCE_CODES: readonly string[] = ['collection_missing', 'permission_denied', 'unsupported_version'];
 
 /**
  * What the failed reconnect means for the person, from the errors the server and the network gave. A refused login is "sign in"; a network
- * or time-out error (or a TLS one) is "could not reach MongoDB", where signing in again would not help; a refused setting is "failed".
- * With nothing to go on, a saved connection with a user name asks for the sign-in and one without a login is "failed".
+ * or time-out error (or a TLS one) is "could not reach MongoDB", where signing in again would not help; a refused setting is "failed"; and
+ * a server answer about a source itself (its audit collection, the account's access, its version) is "failed" too, with its own words
+ * (see restoreFailureNote in copy/caseRestoreCopy.ts). With nothing to go on, a saved connection with a user name asks for the sign-in and
+ * one without a login is "failed". A 409 "the source is already there" is the wanted end state, not a failure: the reconnect never hands
+ * one over, so nothing here has to make an exception for it.
  */
 export function classifyRestoreFailure(causes: readonly unknown[], hasLogin: boolean): RestoreFailure {
   if (causes.some(cause => stageOf(cause) === 'authentication' || statusOf(cause) === 401 || statusOf(cause) === 403)) return 'signin';
@@ -346,6 +353,7 @@ export function classifyRestoreFailure(causes: readonly unknown[], hasLogin: boo
     return status === 408 || status === 502 || status === 503 || status === 504;
   };
   if (causes.some(unreachable)) return 'unreachable';
+  if (causes.some(cause => stageOf(cause) === 'source' && SOURCE_CODES.includes(codeOf(cause)))) return 'failed';
   if (causes.some(cause => stageOf(cause) === 'validation' || stageOf(cause) === 'discovery')) return 'failed';
   return hasLogin ? 'signin' : 'failed';
 }

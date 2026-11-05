@@ -4,7 +4,7 @@
   import { hostsView, loadHosts, saveHost, saveHostZone } from '../../lib/wizardHosts.svelte';
   import { hostProblem, labelProblem, zoneNameProblem, zoneOf, zoneSuggestions } from '../../lib/zoneChoice';
   import {
-    ZONE_CHOICE_TEXT, hostOptionText, hostPickLabel, hostProblemText, labelProblemText, saveFailText, zoneProblemText
+    ZONE_CHOICE_TEXT, hostOptionText, hostPickLabel, hostProblemText, labelProblemText, optionalHelpText, saveFailText, zoneProblemText
   } from '../../lib/copy/zoneChoiceCopy';
 
   // "Which computer wrote it?" for one file (packet P4, wireframe w38 and the review step). The server keeps one list of computers; an import
@@ -100,7 +100,7 @@
   const hint = $derived(
     problem === 'pick' ? hostProblemText('pick', need) :
     problem === 'gone' || problem === 'no-zone' ? hostProblemText(problem, need) :
-    need === 'optional' && host === '' ? ZONE_CHOICE_TEXT.optionalHelp :
+    need === 'optional' && host === '' ? optionalHelpText(kind) :
     utc && host !== '' ? ZONE_CHOICE_TEXT.utcNote : ''
   );
 </script>

@@ -490,7 +490,7 @@ func truncateField(s string) string {
 // spool) and parses the answer.
 func (p *discoverPull) importPiece(body io.Reader, name string) (importAnswer, int, caseFailure, bool) {
 	sub := &captureWriter{}
-	p.h.importFileWith(p.ctx, sub, p.id, p.c, p.it.imp, p.hint, nil, body, false, true, p.ackText, name, p.win)
+	p.h.importFileWith(p.ctx, sub, p.id, p.c, p.it.imp, p.hint, nil, body, false, true, p.ackText, name, p.win, false)
 	status := sub.code()
 	if status == http.StatusCreated {
 		var ans importAnswer

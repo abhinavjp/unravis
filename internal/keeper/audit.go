@@ -225,7 +225,7 @@ func scrubbed(err error, secrets []string) error {
 		return nil
 	}
 	var ce *audit.ConnectionError
-	if errors.As(err, &ce) && leaks([]byte(ce.Stage+ce.Code+ce.Message), secrets) {
+	if errors.As(err, &ce) && leaks([]byte(ce.Stage+ce.Code+ce.Message+strings.Join(ce.Collections, ",")), secrets) {
 		return &audit.ConnectionError{Stage: "connect", Code: "connection_failed", Message: auditFailedText}
 	}
 	var we *WireError
@@ -354,6 +354,7 @@ var auditKinds = []struct {
 	{"busy", audit.ErrBusy},
 	{"limit", audit.ErrLimit},
 	{"not-found", audit.ErrNotFound},
+	{"source-exists", audit.ErrDuplicate},
 	{"invalid", audit.ErrInvalidInput},
 	{"timeout", context.DeadlineExceeded},
 	{"canceled", context.Canceled},

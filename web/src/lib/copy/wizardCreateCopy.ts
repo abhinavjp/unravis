@@ -134,6 +134,11 @@ const REASONS: Readonly<Record<string, string>> = {
   unreachable: 'The server could not be reached.',
   'rate-limited': 'The server is asking for a short pause after too many connection tests. Wait a minute, then add it from Add more data.',
   'bad-request': 'The server did not accept the details. Check the connection, then add it from Add more data.',
+  'collection-missing': 'The database has no collection with the audit log name that was tried. Open Add more data, choose the right collection, then add it again.',
+  'no-access': 'The account is not allowed to read the audit collection. Ask for read access to it, or choose another collection from Add more data.',
+  'password-rejected': 'The database refused the saved sign-in. Test the connection again with the right password, then add it from Add more data.',
+  'old-server': 'This MongoDB server version is not supported. Unravis reads MongoDB 3.4 and 4.4 or newer.',
+  'db-unreachable': 'The database server could not be reached, or its certificate was refused. Check the address and your network, then add it from Add more data.',
   'bad-tag': 'A name was empty, too long, or looked like a password.',
   'tag-cap-exceeded': 'The case already holds as many names as it can.',
   'case-closed': 'The case is closed.',
@@ -155,6 +160,15 @@ export const isHostReason = (reason: string): boolean => HOST_REASONS.includes(r
 
 export const tryAgainLabel = (name: string): string => 'Try ' + name + ' again';
 export const leaveOutLabel = (name: string): string => 'Leave ' + name + ' out';
+
+/** "Used collection AuditExporterApi instead of ApiAuditLog." for an audit database that went through under another name than the one tried first. */
+export const swappedCollectionText = (used: string, requested: string): string => 'Used collection ' + used + ' instead of ' + requested + '.';
+
+/** "Did you mean: AuditEvents, ApiAuditLog?" from the collection names the server offered. At most five names; '' when there are none. */
+export function suggestionLine(suggestions?: readonly string[]): string {
+  const names = (suggestions ?? []).filter((name) => name.trim() !== '').slice(0, 5);
+  return names.length === 0 ? '' : 'Did you mean: ' + names.join(', ') + '?';
+}
 
 /** The word in the result column's status badge, so the result is never told by colour alone. */
 export function fileStatusText(row: { status: string; outcome: { kind: string; skipped?: number } | null }): string {
@@ -216,6 +230,8 @@ export const wizardCreateCopyEntries = (): LintEntry[] => [
   { id: 'wizard.create.sample.result.stay', text: resultText(2, 2, 0, true) },
   { id: 'wizard.create.sample.try', text: tryAgainLabel('httperr1.log') },
   { id: 'wizard.create.sample.leave', text: leaveOutLabel('httperr1.log') },
+  { id: 'wizard.create.sample.swap', text: swappedCollectionText('SystemApiAuditLog', 'ApiAuditLog') },
+  { id: 'wizard.create.sample.suggest', text: suggestionLine(['AuditEvents', 'ApiAuditLog']) },
   { id: 'wizard.create.sample.status.partly', text: fileStatusText({ status: 'done', outcome: { kind: 'added', skipped: 3 } }) },
   { id: 'wizard.create.sample.status.read', text: fileStatusText({ status: 'done', outcome: { kind: 'added' } }) },
   { id: 'wizard.create.sample.status.dup', text: fileStatusText({ status: 'done', outcome: { kind: 'duplicate' } }) },

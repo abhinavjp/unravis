@@ -139,7 +139,7 @@ test('FILES-05: a file can be dropped from the list, and a source taken out late
   // Before adding: one row is taken off the list, another is set to "Don't use this file". The rest stay.
   await page.getByRole('button', { name: 'Remove httperr1.log from the list' }).click();
   await expect(row(page, 'httperr1.log')).toHaveCount(0);
-  await row(page, 'u_ex261022.log').getByRole('combobox').selectOption('');
+  await page.getByLabel('What u_ex261022.log is').selectOption('');
   await expect(page.getByRole('button', { name: 'Add 2 files' })).toBeEnabled();
   await page.getByRole('button', { name: 'Add 2 files' }).click();
   await expect(page.getByText('2 files were added to your sources. 1 file was left out.')).toBeVisible();
@@ -190,8 +190,8 @@ test('FILES-06: a file that needs a computer says so, a computer can be added fr
   expect((await putHosts(api, ['WEB-A'])).status).toBe(200);
   await holdFiles(page, 'QA Files Computer', [HTTPERR, W3C]);
 
-  // The W3C log names its own server, so it has no computer choice. HTTP.sys does not, so it has one, and it is UTC.
-  await expect(page.getByLabel('Which computer wrote u_ex261020.log')).toHaveCount(0);
+  // The W3C log names its own server, so its computer choice is optional and starts empty. HTTP.sys names none, so its choice is needed, and it is UTC.
+  await expect(page.getByLabel('Which computer wrote u_ex261020.log')).toHaveValue('');
   const pick = page.getByLabel('Which computer wrote httperr1.log');
   await expect(pick).toHaveValue('');
   await expect(row(page, 'httperr1.log')).toContainText('UTC (as this type writes it)');
@@ -211,9 +211,9 @@ test('FILES-06: a file that needs a computer says so, a computer can be added fr
   expect(saved).toContain('WEB-H');
   expect(saved).toContain('WEB-A');
 
-  // Changing the kind lets go of the pick: a type that needs no computer shows no choice.
+  // Changing the kind lets go of the pick: a type that names its own server shows an optional choice, empty.
   await page.getByLabel('What httperr1.log is').selectOption('iis-w3c');
-  await expect(page.getByLabel('Which computer wrote httperr1.log')).toHaveCount(0);
+  await expect(page.getByLabel('Which computer wrote httperr1.log')).toHaveValue('');
   await page.getByLabel('What httperr1.log is').selectOption('iis-httperr');
   await expect(page.getByLabel('Which computer wrote httperr1.log')).toHaveValue('');
   await page.getByLabel('Which computer wrote httperr1.log').selectOption('WEB-H');

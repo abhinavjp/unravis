@@ -5,7 +5,9 @@ import { discoverClient, outcomeFromError, outcomeFromJob, watchJob } from './di
 import type { RowOutcome } from './discover';
 import { putEnvironments, postSourceTag } from './caseTagsApi';
 import { ackTextFor } from './copy/importCopy';
-import { heldCollection, heldConnection } from './wizardConnections';
+import { DEFAULT_COLLECTION, heldCollection, heldConnection } from './wizardConnections';
+import { addAuditWithFallback } from './wizardAuditAdd';
+import { swappedCollectionText } from './copy/wizardCreateCopy';
 import type { SubmitApi } from './wizardSubmit';
 import { registerSourceSaved, resolveSavedRecent, suggestedConnectionLabel } from './sourceSaved';
 
@@ -58,10 +60,18 @@ export const wizardSubmitApi: SubmitApi = {
   async addAuditSource(connectionId, database) {
     const held = heldConnection(connectionId);
     if (!held) throw new CaseApiError('That connection is no longer held.', 422, 'connection-lost');
-    const collection = heldCollection(connectionId);
-    const source = await api.addSource({ ...held, label: database, database, collection });
-    await rememberForCase(held, collection, source);
-    return source;
+    const requestedCollection = heldCollection(connectionId);
+    // The default guess is the interface's own filler ('ApiAuditLog'), never the name the person typed: a typed name is never swapped for a
+    // different one (only its own spelling in the server's answer is), while an untyped default gives way to one audit-looking alternative.
+    const result = await addAuditWithFallback((collection) => api.addSource({ ...held, label: database, database, collection }), requestedCollection, DEFAULT_COLLECTION);
+    // The source is already there (an earlier run added it): the wanted end state, nothing more to do.
+    if (result.kind === 'exists') return {};
+    // The collection that worked is kept on the saved link for this source. It is never written back as the default for the connection: the
+    // other databases of the same connection are still asked for the name first chosen for them (or the default), never for this fallback.
+    await rememberForCase(held, result.collection, result.source);
+    // A fallback name the person never typed says so, once: "Used collection X instead of Y." The plain source return means the names agree.
+    if (result.collection !== result.requestedCollection) return { note: swappedCollectionText(result.collection, result.requestedCollection) };
+    return result.source;
   },
 
   confirmHost: (host) => discoverClient.confirmHost?.(host) ?? Promise.resolve(),

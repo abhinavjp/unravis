@@ -102,7 +102,7 @@ test('errorText names a duplicate import, a refused column header, and shows a m
   assert.equal(importCopy.errorText({ status: 401, reason: 'no_session', message: 'Open Unravis from the link it printed when it started, or restart it.' }), 'Open Unravis from the link it printed when it started, or restart it.');
   assert.match(importCopy.errorText({ status: 500, reason: '', message: 'SENTINEL-7f3a leaked' }), /^The server refused this request/, 'the server message is never echoed');
   assert.doesNotMatch(importCopy.errorText({ status: 500, reason: '', message: 'SENTINEL-7f3a leaked' }), /SENTINEL/);
-  assert.match(importCopy.errorText({ status: 422, reason: 'unknown-host', message: '' }), /host list or the host you picked/);
+  assert.match(importCopy.errorText({ status: 422, reason: 'unknown-host', message: '' }), /not in your list.*host you picked/);
 });
 
 test('small text helpers', () => {
@@ -567,4 +567,52 @@ test('a binary refusal from the server reaches the screen as its own sentence', 
     cases.previewImport({ caseId: CASE_ID, file: synthetic('counters.csv', 'PERF'), importer: 'win-counters' }),
     (e) => e.reason === 'binary-blg' && !e.column && importCopy.errorText(e) === importCopy.REASON_TEXT['binary-blg'] && !/counters.csv/.test(importCopy.errorText(e))
   );
+});
+
+// ---- L1: an unknown-host refusal names the computer only when the file showed one
+
+test('an unknown-host refusal calls out the computer name, and a file that named no computer gets the plain ask', () => {
+  const refusal = { status: 422, reason: 'unknown-host', message: '' };
+  assert.match(importCopy.screenErrorText(refusal, true), /not in your list/);
+  assert.match(importCopy.screenErrorText(refusal, true), /host you picked/);
+  const plain = importCopy.screenErrorText(refusal, false);
+  assert.match(plain, /does not name a computer/);
+  assert.match(plain, /Pick the computer that wrote it, or add it to the list, then try again\./);
+  assert.doesNotMatch(plain, /not in your list/);
+  // The row wording follows the same rule; other reasons pass through.
+  assert.equal(importCopy.screenReasonText('unknown-host', false), importCopy.REASON_TEXT['unknown-host-none']);
+  assert.equal(importCopy.screenReasonText('unknown-host', true), importCopy.REASON_TEXT['unknown-host']);
+  assert.equal(importCopy.screenReasonText('bad-time', true), importCopy.REASON_TEXT['bad-time']);
+  // So does the "holds the file back" note.
+  assert.equal(importCopy.blockedNoteText('unknown-host', false), importCopy.IMPORT_TEXT.blocked['unknown-host-none']);
+  assert.equal(importCopy.blockedNoteText('unknown-host', true), importCopy.IMPORT_TEXT.blocked['unknown-host']);
+  assert.equal(importCopy.blockedNoteText('stale', true), importCopy.IMPORT_TEXT.blocked.stale);
+});
+
+test('the host note under the select follows the importer: self-naming files offer, the rest require', () => {
+  assert.equal(importCopy.hostNoteText('iis-w3c'), importCopy.IMPORT_TEXT.hostNote);
+  assert.equal(importCopy.hostNoteText('iis-freb'), importCopy.IMPORT_TEXT.hostNote);
+  assert.equal(importCopy.hostNoteText('sql-xe'), importCopy.IMPORT_TEXT.hostNote);
+  assert.match(importCopy.IMPORT_TEXT.hostNote, /read from the log/);
+  assert.match(importCopy.IMPORT_TEXT.hostNote, /only if/);
+  for (const required of ['iis-httperr', 'sql-querystore', 'sql-errorlog', 'win-events', 'log4net-text', 'log4net-blocks', '']) {
+    assert.equal(importCopy.hostNoteText(required), importCopy.IMPORT_TEXT.hostPickNote, required || '(none)');
+  }
+  assert.equal(importCopy.IMPORT_TEXT.hostPickNote, 'Pick the host this file came from. A host that is not in the host list is refused.');
+});
+
+test('the import screen gates every unknown-host wording on what the file observed', () => {
+  const panel = read('src/lib/components/ImportPanel.svelte');
+  assert.match(panel, /sawComputerName/);
+  assert.match(panel, /screenErrorText\(error, sawComputerName\)/);
+  assert.match(panel, /screenReasonText\(r\.reason, sawComputerName\)/);
+  assert.match(panel, /blockedNoteText\(block, sawComputerName\)/);
+  assert.match(panel, /hostNoteText\(importer\)/);
+  assert.doesNotMatch(panel, /IMPORT_TEXT\.hostNote(?!s)/, 'the raw hostNote is never shown directly');
+  // Both new wordings are registered for the lint.
+  const entries = importCopy.importCopyEntries();
+  const ids = new Set(entries.map((e) => e.id));
+  assert.ok(ids.has('import.text.hostPickNote'));
+  assert.ok(ids.has('import.text.blocked.unknown-host-none'), 'the blocked wording for a file with no computer name is linted');
+  assert.ok(ids.has('import.reason.unknown-host-none'));
 });
