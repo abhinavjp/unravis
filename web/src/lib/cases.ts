@@ -532,10 +532,68 @@ export type ImportJobState = 'queued' | 'running' | 'done' | 'failed';
 export interface ImportJob {
   id: string;
   state: ImportJobState;
+  /** 'check' for a check-only job (nothing is kept); 'import' for a preview or a commit. */
+  kind: 'import' | 'check';
   bytesRead: number;
   bytesTotal: number;
   answer: ImportAnswer | null;
+  /** Set when a check job is done. */
+  checkReport: CheckReport | null;
   failure: CaseApiError | null;
+}
+
+/* ------------------------------------------------------------------ check (no import kept) */
+// The check reads each file the way a preview does and says what would happen to it. Nothing is kept.
+
+export type CheckVerdict = 'ready' | 'needs-computer' | 'needs-zone' | 'not-supported' | 'no-computer';
+
+/** The verdict for one file. `key` is the client's id for the file; `serverName` is the computer name the file names (needs-computer). */
+export interface CheckFileVerdict {
+  key: string;
+  name: string;
+  size: number;
+  verdict: CheckVerdict;
+  /** The detected kind, or '' when none was detected. */
+  importer: string;
+  /** Two or more kinds when the server could not choose one. */
+  tied: string[];
+  serverName: string;
+  needsZone: boolean;
+  /** The not-supported reason code, or ''. */
+  reason: string;
+  rows: number;
+  emitted: number;
+  rejected: number;
+}
+
+export interface CheckReport {
+  files: CheckFileVerdict[];
+  checkedAt: string;
+}
+
+const CHECK_VERDICTS: readonly string[] = ['ready', 'needs-computer', 'needs-zone', 'not-supported', 'no-computer'];
+const isCheckVerdict = (value: unknown): value is CheckVerdict => typeof value === 'string' && CHECK_VERDICTS.includes(value);
+
+function toCheckFile(raw: Record<string, unknown> | null): CheckFileVerdict | null {
+  if (!raw || typeof raw.key !== 'string' || typeof raw.name !== 'string' || !isCheckVerdict(raw.verdict)) return null;
+  return {
+    key: raw.key, name: raw.name, size: asNumber(raw.size), verdict: raw.verdict, importer: asString(raw.importer), tied: asStrings(raw.tied),
+    serverName: asString(raw.serverName), needsZone: raw.needsZone === true, reason: asString(raw.reason),
+    rows: asNumber(raw.rows), emitted: asNumber(raw.emitted), rejected: asNumber(raw.rejected)
+  };
+}
+
+/** A check answer checked against its shape. Any file that does not fit refuses the whole report (null), never a partial one. */
+export function parseCheckReport(body: unknown): CheckReport | null {
+  const raw = asObject(body);
+  if (!raw || !Array.isArray(raw.files)) return null;
+  const files: CheckFileVerdict[] = [];
+  for (const entry of raw.files) {
+    const file = toCheckFile(asObject(entry));
+    if (!file) return null;
+    files.push(file);
+  }
+  return { files, checkedAt: asString(raw.checkedAt) };
 }
 
 /** An import the person started that is still running. The screen keeps it outside the import drawer, so the drawer can show it again. */
@@ -553,11 +611,18 @@ const asObject = (value: unknown): Record<string, unknown> | null => (value && t
 export function parseImportJob(body: unknown): ImportJob | null {
   const raw = asObject(body);
   if (!raw || typeof raw.id !== 'string' || !isJobId(raw.id) || !isJobState(raw.state)) return null;
-  const job: ImportJob = { id: raw.id, state: raw.state, bytesRead: Math.max(0, asNumber(raw.bytesRead)), bytesTotal: Math.max(0, asNumber(raw.bytesTotal)), answer: null, failure: null };
+  // A job from an older server has no kind: it is an import.
+  const kind = raw.kind === 'check' ? 'check' : 'import';
+  const job: ImportJob = { id: raw.id, state: raw.state, kind, bytesRead: Math.max(0, asNumber(raw.bytesRead)), bytesTotal: Math.max(0, asNumber(raw.bytesTotal)), answer: null, checkReport: null, failure: null };
   if (job.state === 'done') {
     const result = asObject(raw.result);
     if (!result) return null;
-    job.answer = importAnswer(result as Parameters<typeof importAnswer>[0]);
+    if (kind === 'check') {
+      job.checkReport = parseCheckReport(result);
+      if (!job.checkReport) return null;
+    } else {
+      job.answer = importAnswer(result as Parameters<typeof importAnswer>[0]);
+    }
   } else if (job.state === 'failed') {
     const failure = asObject(raw.failure);
     const status = asNumber(raw.status);
@@ -605,6 +670,23 @@ export async function startCommitJob(request: ImportRequest & { importer: string
   return readJob(await send(casePath(request.caseId, '/imports') + importQuery(request, false, true), { method: 'POST', body: form }, signal));
 }
 
+/** The files to check, in the order the screen lists them. `key` is the screen's id for a file; it is sent before each file and comes back on that file's verdict. */
+export interface CheckRequest {
+  caseId: string;
+  files: { key: string; file: File }[];
+}
+
+/** Sends the files for a check that is read in the background. No importer, host or acknowledgement is sent, so nothing is kept.
+ *  Each file's `key` goes in a text field just before it; the server echoes it on that file's verdict. */
+export async function startCheckJob(request: CheckRequest, signal?: AbortSignal): Promise<ImportJob> {
+  const form = new FormData();
+  for (const { key, file } of request.files) {
+    form.append('key', key);
+    form.append('file', file, file.name);
+  }
+  return readJob(await send(casePath(request.caseId, '/imports/check') + '?async=1', { method: 'POST', body: form }, signal));
+}
+
 export async function fetchImportJob(caseId: string, jobId: string, signal?: AbortSignal): Promise<ImportJob> {
   return readJob(await send(jobPath(caseId, jobId), {}, signal, { timeoutMs: null }));
 }
@@ -647,6 +729,31 @@ export async function waitForImportJob(caseId: string, first: ImportJob, options
   options.onUpdate?.(job);
   for (;;) {
     if (job.state === 'done' && job.answer) return job.answer;
+    if (job.state === 'failed') throw job.failure ?? new CaseApiError('Request failed (500)', 500);
+    await sleep(options.intervalMs ?? JOB_POLL_MS, options.signal);
+    try {
+      job = await fetchImportJob(caseId, first.id, options.signal);
+      lost = 0;
+    } catch (error) {
+      if (error instanceof CaseApiError && error.reason === 'unreachable' && ++lost < JOB_MAX_UNREACHABLE) continue;
+      throw error;
+    }
+    options.onUpdate?.(job);
+  }
+}
+
+/**
+ * Asks about a check job until it is done or failed. Resolves with the check report, and throws the same CaseApiError a refused job
+ * would. Aborting the signal stops the asking at once and leaves the job running on the server.
+ */
+export async function waitForCheckJob(caseId: string, first: ImportJob, options: WaitOptions = {}): Promise<CheckReport> {
+  const sleep = options.sleep ?? sleepFor;
+  let job = first;
+  let lost = 0;
+  options.onUpdate?.(job);
+  for (;;) {
+    if (job.checkReport) return job.checkReport;
+    if (job.state === 'done') throw new CaseApiError('The server sent an answer that could not be read.', 200, 'unreadable');
     if (job.state === 'failed') throw job.failure ?? new CaseApiError('Request failed (500)', 500);
     await sleep(options.intervalMs ?? JOB_POLL_MS, options.signal);
     try {

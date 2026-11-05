@@ -42,6 +42,12 @@ import (
 // Job state holds counts, a state word, and the same body the synchronous call
 // answers (reasons and numbers, never file content). Nothing is logged.
 
+// Job kinds.
+const (
+	jobKindImport = "import"
+	jobKindCheck  = "check"
+)
+
 // Job states.
 const (
 	jobQueued  = "queued"
@@ -89,6 +95,7 @@ type importJob struct {
 	total  atomic.Int64
 
 	mu       sync.Mutex
+	kind     string // jobKindCheck for a check-only job; empty means an import
 	state    string
 	canceled bool
 	status   int
@@ -101,8 +108,11 @@ type importJob struct {
 // BytesRead counts the upload bytes the parser has taken in; it reaches
 // BytesTotal while the file is being committed. Status and Result (done) or
 // Failure (failed) are the status and body the synchronous call would answer.
+// Kind is "import" for an import and "check" for a check-only job (import_check.go),
+// whose Result is a checkReportDTO.
 type importJobDTO struct {
 	ID         string          `json:"id"`
+	Kind       string          `json:"kind,omitempty"`
 	State      string          `json:"state"`
 	BytesRead  int64           `json:"bytesRead"`
 	BytesTotal int64           `json:"bytesTotal"`
@@ -340,8 +350,12 @@ func (jb *importJob) finish(at time.Time, status int, body []byte) {
 func (jb *importJob) snapshot() importJobDTO {
 	jb.mu.Lock()
 	defer jb.mu.Unlock()
+	kind := jb.kind
+	if kind == "" {
+		kind = jobKindImport
+	}
 	return importJobDTO{
-		ID: jb.id, State: jb.state, BytesRead: jb.read.Load(), BytesTotal: jb.total.Load(),
+		ID: jb.id, Kind: kind, State: jb.state, BytesRead: jb.read.Load(), BytesTotal: jb.total.Load(),
 		Status: jb.status, Result: jb.result, Failure: jb.failure,
 	}
 }

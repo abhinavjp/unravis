@@ -88,10 +88,11 @@ test('the import panel moves focus into itself when it opens, so Tab stays insid
   assert.ok(mount.slice(0, mount.indexOf('listHosts()')).includes('drawer?.focus();'), 'it focuses the dialog before anything else');
 });
 
-test('a wrong host pick is explained as a mismatch, not as a missing list entry', () => {
+test('an unlisted computer is asked for in plain words, never as an unknown host', () => {
   const text = errorText({ status: 422, reason: 'unknown-host', message: '' });
-  assert.match(text, /host you picked/i, 'the host the user chose is named as a cause to check');
-  assert.match(IMPORT_TEXT.blocked['unknown-host'], /host you picked/i);
+  assert.match(text, /needs a computer/i, 'the file is said to need a computer');
+  assert.doesNotMatch(text, /unknown host/i);
+  assert.match(IMPORT_TEXT.blocked['unknown-host'], /needs a computer/i);
 });
 
 test('a pasted list longer than the server allows is cut to its first values and says so', () => {

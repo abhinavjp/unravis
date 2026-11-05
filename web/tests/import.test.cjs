@@ -102,7 +102,7 @@ test('errorText names a duplicate import, a refused column header, and shows a m
   assert.equal(importCopy.errorText({ status: 401, reason: 'no_session', message: 'Open Unravis from the link it printed when it started, or restart it.' }), 'Open Unravis from the link it printed when it started, or restart it.');
   assert.match(importCopy.errorText({ status: 500, reason: '', message: 'SENTINEL-7f3a leaked' }), /^The server refused this request/, 'the server message is never echoed');
   assert.doesNotMatch(importCopy.errorText({ status: 500, reason: '', message: 'SENTINEL-7f3a leaked' }), /SENTINEL/);
-  assert.match(importCopy.errorText({ status: 422, reason: 'unknown-host', message: '' }), /not in your list.*host you picked/);
+  assert.match(importCopy.errorText({ status: 422, reason: 'unknown-host', message: '' }), /needs a computer.*Add it to the list/);
 });
 
 test('small text helpers', () => {
@@ -325,10 +325,10 @@ test('the Import button is off while anything blocks it, and the checkbox text i
   assert.match(importPanel, /commitBlock\(/);
 });
 
-test('an unknown host shows "unknown host" and the screen feeds it into the commit block', () => {
+test('an unknown host shows "needs a computer" and the screen feeds it into the commit block', () => {
   assert.match(importPanel, /isUnknownHost\(error\)\) unknownHost = true/);
   assert.match(importPanel, /unknownHostBadge/);
-  assert.equal(importCopy.IMPORT_TEXT.unknownHostBadge, 'unknown host');
+  assert.equal(importCopy.IMPORT_TEXT.unknownHostBadge, 'needs a computer');
 });
 
 test('erase is typed: the confirm button needs eraseConfirmed, and the form cannot submit without it', () => {
@@ -573,12 +573,12 @@ test('a binary refusal from the server reaches the screen as its own sentence', 
 
 test('an unknown-host refusal calls out the computer name, and a file that named no computer gets the plain ask', () => {
   const refusal = { status: 422, reason: 'unknown-host', message: '' };
-  assert.match(importCopy.screenErrorText(refusal, true), /not in your list/);
-  assert.match(importCopy.screenErrorText(refusal, true), /host you picked/);
+  assert.match(importCopy.screenErrorText(refusal, true), /needs a computer/);
+  assert.match(importCopy.screenErrorText(refusal, true), /Add it to the list, then try again\./);
   const plain = importCopy.screenErrorText(refusal, false);
-  assert.match(plain, /does not name a computer/);
-  assert.match(plain, /Pick the computer that wrote it, or add it to the list, then try again\./);
-  assert.doesNotMatch(plain, /not in your list/);
+  assert.match(plain, /needs a computer/);
+  assert.match(plain, /Add it to the list, then try again\./);
+  assert.doesNotMatch(plain, /unknown host/i);
   // The row wording follows the same rule; other reasons pass through.
   assert.equal(importCopy.screenReasonText('unknown-host', false), importCopy.REASON_TEXT['unknown-host-none']);
   assert.equal(importCopy.screenReasonText('unknown-host', true), importCopy.REASON_TEXT['unknown-host']);

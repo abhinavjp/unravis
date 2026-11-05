@@ -414,6 +414,29 @@ export const deck: Deck = {
       definition: 'To import is to add a file exported from a server to a case. The copy stays on this computer and is encrypted, and you can erase it by erasing the case.',
       notMeaning: 'An import does not send the file anywhere, and it does not change the server it came from.',
       aliases: ['Imported', 'Add a file']
+    },
+    {
+      id: 'computer',
+      term: 'Computer',
+      hint: 'A server Unravis has been told about.',
+      definition: 'A computer is a server you added to your computer list. Unravis only accepts a log file from a computer on that list.',
+      notMeaning: 'Adding a computer does not connect to it, and it does not change anything on it.',
+      aliases: ['Host']
+    },
+    {
+      id: 'server-name',
+      term: 'Server name',
+      hint: 'The name a log file says wrote it.',
+      definition: 'A server name is the computer name written inside a log file. Unravis compares it with the names on your computer list.',
+      notMeaning: 'It does not show that the name is on your computer list, and Unravis does not guess it.',
+      aliases: ['Host name']
+    },
+    {
+      id: 'not-supported',
+      term: 'Not supported',
+      hint: 'Unravis cannot read this file as it is.',
+      definition: 'A file is not supported when Unravis cannot tell what kind of log it is, or it is not a text or CSV file. You can remove it from the list, or tell Unravis what it is.',
+      notMeaning: 'It does not mean the file is damaged or has nothing useful in it.'
     }
   ]
 };

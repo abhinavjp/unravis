@@ -1,6 +1,7 @@
 import type { BatchOutcome, CaseApiError, CaseInfo, ImportRecord, ImportReport, SuppliedProblem, SuppliedSpec } from '../cases';
 import { formatTimeRange } from '../time';
 import type { LintEntry } from './copylint';
+import { popupCopyEntries } from './importPopupCopy';
 
 /**
  * Every fixed sentence on the import screen, and the small helpers that build the rest.
@@ -62,8 +63,8 @@ export const IMPORT_TEXT = {
   hostNote: 'The computer is read from the log. Pick one from the list only if the name in the file is not in the list.',
   // For the kinds whose file carries no computer name (HTTPERR, Query Store, the app log importers): a pick is needed.
   hostPickNote: 'Pick the host this file came from. A host that is not in the host list is refused.',
-  noHosts: 'The host list is empty, so a file that names a host is refused as an unknown host.',
-  unknownHostBadge: 'unknown host',
+  noHosts: 'The computer list is empty. Files that name a computer need it added first.',
+  unknownHostBadge: 'needs a computer',
 
   previewHeading: 'Preview',
   previewing: 'Reading the file…',
@@ -98,9 +99,9 @@ export const IMPORT_TEXT = {
     busy: 'Working…',
     'no-preview': 'Choose a file and let the preview finish first.',
     stale: 'The file or its settings changed. A new preview is loading.',
-    'unknown-host': 'This file names a computer that is not in your list. Pick the computer that wrote it, or add it to the list. If you already picked one, check the host you picked is the right one.',
-    // The wording above needs a computer name in the file. A file that named no computer gets this one instead (ImportPanel picks between them).
-    'unknown-host-none': 'This file does not name a computer. Pick the computer that wrote it from the list, or add it to the list first.',
+    'unknown-host': 'This file needs a computer. Add it to the list, then try again.',
+    // A file that named no computer gets its own entry (ImportPanel picks between them), so the two can be worded apart later.
+    'unknown-host-none': 'This file needs a computer. Add it to the list, then try again.',
     nothing: 'The preview kept no rows, so there is nothing to import.',
     settings: 'A setting you typed is not valid. Fix it first.',
     ack: 'Tick the box to confirm the notice first.'
@@ -182,9 +183,9 @@ export const REASON_TEXT: Record<string, string> = {
   'bad-number': 'A number could not be read.',
   'line-too-long': 'A line was longer than the limit.',
   encoding: 'The text encoding could not be read.',
-  'unknown-host': 'This file names a computer that is not in your list. Pick the computer that wrote it, or add it to the list, then try again. If you already picked one, check the host you picked is the right one.',
-  // Same rule as above: this wording is for a file that named no computer at all.
-  'unknown-host-none': 'This file does not name a computer. Pick the computer that wrote it, or add it to the list, then try again.',
+  'unknown-host': 'This file needs a computer. Add it to the list, then try again.',
+  // Kept as its own key for a file that named no computer at all (screenReasonText picks between them).
+  'unknown-host-none': 'This file needs a computer. Add it to the list, then try again.',
   'unscrubbed-column': 'The file has a column that may hold private text, so it was refused. Export it again without that column.',
   'unsupported-format': 'This file format is not supported.',
   'archive-extract-first': 'This is a compressed file. Extract it first, then choose the extracted file.',
@@ -678,5 +679,6 @@ export function importCopyEntries(): LintEntry[] {
   for (const problem of ['not-a-number', 'not-whole', 'too-low', 'too-high', 'not-in-set', 'too-long', 'bad-characters'] as const) {
     entries.push({ id: 'import.sample.supplied.' + problem, text: suppliedProblemText(problem, problem === 'too-long' ? text : number) });
   }
+  entries.push(...popupCopyEntries());
   return entries;
 }

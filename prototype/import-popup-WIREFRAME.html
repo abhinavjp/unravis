@@ -1,0 +1,934 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Import popup wireframe — Unravis</title>
+<style>
+/* ===== Tokens (copied from web/src/brand/tokens.css) ===== */
+:root{
+  color-scheme:dark;
+  --lane-audit:#3fd6b0; --lane-sql:#c58bd6; --lane-iis:#e3a23c;
+  --bg:#050807; --surface:#0a0f0d; --surface-2:#101714;
+  --line:#1a2621; --line-soft:#131c18; --control-line:#6b8478;
+  --text:#eef3f1; --text-2:#93a39b;
+  --accent:#3fd6b0; --accent-ink:#03130e;
+  --warn:#e3b341; --bad:#ff7b72; --tone-ok:#3fb27f; --pending:#8fa39a;
+  --focus:#7ff0d0; --scrim:rgb(2 5 9 / 62%);
+  --font:"IBM Plex Sans","Segoe UI Variable Text",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"Cascadia Code",Consolas,monospace;
+  --radius:2px; --dur:180ms; --ease:cubic-bezier(.2,.7,.2,1);
+  --header-h:56px; --chrome-h:104px;
+  --hatch:repeating-linear-gradient(135deg,var(--pending) 0 2px,transparent 2px 6px);
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    color-scheme:light;
+    --lane-audit:#0b6b57; --lane-sql:#9956a1; --lane-iis:#ad6511;
+    --bg:#f5f5f3; --surface:#ffffff; --surface-2:#eeeeeb;
+    --line:#d9d9d4; --line-soft:#e8e8e4; --control-line:#74808f;
+    --text:#16191d; --text-2:#4a525c;
+    --accent:#0b6b57; --accent-ink:#ffffff;
+    --warn:#96600a; --bad:#b02a3d; --tone-ok:#176b43; --pending:#5b6878;
+    --focus:#0b6b57; --scrim:rgb(20 28 40 / 38%);
+  }
+}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --lane-audit:#0b6b57; --lane-sql:#9956a1; --lane-iis:#ad6511;
+  --bg:#f5f5f3; --surface:#ffffff; --surface-2:#eeeeeb;
+  --line:#d9d9d4; --line-soft:#e8e8e4; --control-line:#74808f;
+  --text:#16191d; --text-2:#4a525c;
+  --accent:#0b6b57; --accent-ink:#ffffff;
+  --warn:#96600a; --bad:#b02a3d; --tone-ok:#176b43; --pending:#5b6878;
+  --focus:#0b6b57; --scrim:rgb(20 28 40 / 38%);
+}
+
+*{box-sizing:border-box;}
+html,body{width:100%;min-height:100%;}
+body{
+  margin:0;min-width:320px;background:var(--bg);color:var(--text);
+  font-family:var(--font);font-size:14px;line-height:1.45;
+  font-feature-settings:"tnum" 1;-webkit-font-smoothing:antialiased;
+}
+button,input,select,textarea{font:inherit;color:inherit;}
+button{cursor:pointer;}
+button:disabled{cursor:not-allowed;}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:var(--radius);}
+::selection{background:color-mix(in srgb,var(--accent) 38%,transparent);color:var(--text);}
+h1,h2,h3,h4{font-weight:600;letter-spacing:-.01em;margin:0;}
+.mono{font-family:var(--mono);}
+
+/* ===== Chrome bar ===== */
+.chrome{position:sticky;top:0;z-index:60;background:var(--surface);border-bottom:1px solid var(--line);}
+.chrome-bar{display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;padding:8px 16px;min-height:48px;}
+.chrome-title{font-size:14px;font-weight:600;white-space:nowrap;display:flex;align-items:center;gap:8px;}
+.chrome-title .mk{width:22px;height:22px;padding:4px;display:flex;align-items:end;gap:2px;border-radius:2px;background:var(--surface-2);border:1px solid var(--line);}
+.chrome-title .mk span{display:block;flex:1;border-radius:1px;background:var(--accent);}
+.chrome-title .mk span:nth-child(1){height:6px;opacity:.55;}
+.chrome-title .mk span:nth-child(2){height:12px;}
+.chrome-title .mk span:nth-child(3){height:9px;opacity:.8;}
+.state-btns{display:flex;gap:2px;flex-wrap:wrap;}
+.state-btns button{
+  min-height:32px;padding:4px 10px;color:var(--text-2);background:transparent;
+  border:1px solid var(--line);border-radius:var(--radius);font-size:13px;font-weight:500;
+  transition:background var(--dur) var(--ease),color var(--dur) var(--ease),border-color var(--dur) var(--ease);
+}
+.state-btns button:hover{color:var(--text);background:var(--surface-2);border-color:var(--text-2);}
+.state-btns button.on{color:var(--text);background:var(--surface-2);border-color:var(--accent);}
+.chrome-spacer{flex:1 1 auto;}
+.chrome-toggle{
+  min-height:32px;padding:4px 10px;color:var(--text-2);background:transparent;
+  border:1px solid var(--line);border-radius:var(--radius);font-size:13px;font-weight:500;
+  display:inline-flex;align-items:center;gap:6px;
+}
+.chrome-toggle:hover{color:var(--text);background:var(--surface-2);border-color:var(--text-2);}
+.chrome-toggle.on{color:var(--text);border-color:var(--accent);background:var(--surface-2);}
+.chrome-caption{padding:6px 16px 8px;color:var(--text-2);font-size:12px;line-height:1.5;border-top:1px solid var(--line-soft);}
+.chrome-caption b{color:var(--text);font-weight:600;}
+.chrome-caption .retry{display:block;margin-top:2px;color:var(--text-2);}
+.chrome-caption .retry b{color:var(--text);}
+
+/* ===== Fake app background ===== */
+.app-bg{position:fixed;inset:0;z-index:0;padding:0;overflow:hidden;opacity:.55;pointer-events:none;}
+.app-topbar{display:flex;align-items:center;gap:10px;padding:0 24px;height:var(--header-h);background:var(--surface);border-bottom:1px solid var(--line);}
+.app-wordmark{font-size:16px;font-weight:600;}
+.app-case{color:var(--text-2);font-size:13px;}
+.app-scope{display:flex;gap:8px;flex-wrap:wrap;padding:12px 24px;background:var(--surface);border-bottom:1px solid var(--line);}
+.app-chip{display:inline-flex;align-items:center;min-height:28px;padding:3px 10px;color:var(--text-2);border:1px solid var(--line);border-radius:var(--radius);font-size:13px;}
+.app-tl{padding:20px 24px;display:grid;gap:10px;}
+.tl-row{display:grid;grid-template-columns:150px 1fr;align-items:center;gap:12px;}
+.tl-label{font-family:var(--mono);font-size:12px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tl-track{position:relative;height:18px;background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--radius);}
+.tl-bar{position:absolute;top:0;bottom:0;border-radius:1px;opacity:.7;}
+.tl-bar.audit{background:var(--lane-audit);} .tl-bar.sql{background:var(--lane-sql);} .tl-bar.iis{background:var(--lane-iis);}
+.tl-tick{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--accent);opacity:.5;}
+
+/* ===== Scrim ===== */
+.scrim{position:fixed;inset:0;z-index:40;background:var(--scrim);}
+.scrim.hidden{display:none;}
+
+/* ===== Popup ===== */
+.popup{
+  position:fixed;top:50%;left:50%;
+  transform:translate(-50%,calc(-50% + var(--chrome-h)/2));
+  width:min(960px,calc(100vw - 48px));
+  max-height:calc(100dvh - var(--chrome-h) - 32px);
+  display:flex;flex-direction:column;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:0 24px 64px color-mix(in srgb,var(--bg) 70%,transparent);
+  z-index:45;outline:none;
+}
+.popup.hidden{display:none;}
+.popup-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 20px 12px;border-bottom:1px solid var(--line);}
+.popup-titles{min-width:0;}
+.popup-head h2{font-size:18px;font-weight:600;}
+.case-chip{display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:2px 8px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius);font-size:12px;}
+.case-chip b{color:var(--text);font-weight:600;}
+.close-x{flex:0 0 auto;display:grid;place-items:center;width:32px;height:32px;padding:0;color:var(--text-2);background:transparent;border:1px solid transparent;border-radius:var(--radius);font-size:20px;line-height:1;}
+.close-x:hover{color:var(--text);background:var(--surface-2);}
+
+/* ===== Stepper ===== */
+.stepper{display:flex;align-items:center;gap:0;padding:10px 20px;border-bottom:1px solid var(--line-soft);}
+.stp{display:flex;align-items:center;gap:8px;background:none;border:0;padding:6px 0;color:var(--text-2);font-size:13px;font-weight:500;}
+.stp:not(:disabled){cursor:pointer;}
+.stp:not(:disabled):hover{color:var(--text);}
+.stp .n{display:grid;place-items:center;width:22px;height:22px;border:1px solid var(--line);border-radius:50%;font-family:var(--mono);font-size:12px;font-weight:600;}
+.stp.done{color:var(--text);}
+.stp.done .n{border-color:var(--accent);color:var(--accent);}
+.stp.cur{color:var(--text);}
+.stp.cur .n{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);}
+.stp-sep{flex:0 0 auto;width:28px;height:1px;background:var(--line);margin:0 8px;}
+.stp-sep.done{background:var(--accent);}
+.prog-line{padding:6px 20px 8px;color:var(--text-2);font-size:12px;border-bottom:1px solid var(--line);background:var(--surface-2);}
+.prog-line b{color:var(--text);}
+
+/* ===== Popup body ===== */
+.popup-body{flex:1 1 auto;overflow-y:auto;overscroll-behavior:contain;padding:18px 20px;scrollbar-width:thin;}
+
+/* ===== Buttons ===== */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:var(--radius);padding:8px 14px;font-size:13px;font-weight:600;transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease),color var(--dur) var(--ease);min-height:36px;}
+.btn-primary{color:var(--accent-ink);background:var(--accent);border:1px solid var(--accent);}
+.btn-primary:hover:not(:disabled){background:color-mix(in srgb,var(--accent) 88%,var(--text));}
+.btn-primary:disabled{color:var(--text-2);background:var(--surface-2);border-color:var(--control-line);}
+.btn-secondary{color:var(--text);background:transparent;border:1px solid var(--line);}
+.btn-secondary:hover:not(:disabled){border-color:var(--text-2);background:var(--surface-2);}
+.btn-quiet{color:var(--text-2);background:transparent;border:1px solid transparent;padding:6px 10px;font-size:12px;font-weight:500;}
+.btn-quiet:hover:not(:disabled){color:var(--text);background:var(--surface-2);}
+.linkbtn{background:none;border:0;color:var(--accent);font:inherit;font-size:13px;padding:0;text-decoration:underline;text-underline-offset:3px;cursor:pointer;}
+.linkbtn:hover{color:var(--text);}
+
+/* ===== Drop zone ===== */
+.drop{display:grid;justify-items:center;gap:10px;padding:28px 16px;text-align:center;background:var(--bg);border:2px dashed var(--control-line);border-radius:var(--radius);}
+.drop-title{font-size:15px;font-weight:600;}
+.drop-sub{color:var(--text-2);font-size:13px;margin:0;}
+.drop-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;}
+
+/* ===== Group lines ===== */
+.grp{border:1px solid var(--line);border-radius:var(--radius);margin-bottom:10px;background:var(--surface);}
+.grp-head{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;background:none;border:0;text-align:left;color:var(--text);font-size:13px;}
+.grp-head:hover{background:var(--surface-2);}
+.chev{flex:0 0 auto;width:8px;height:8px;border-right:1.5px solid var(--text-2);border-bottom:1.5px solid var(--text-2);transform:rotate(-45deg) translateY(-1px);transition:transform var(--dur) var(--ease);}
+.grp.open .chev{transform:rotate(45deg) translateY(-1px);}
+.grp-ic{flex:0 0 auto;display:grid;place-items:center;width:18px;height:18px;}
+.grp-name{font-weight:600;}
+.grp-meta{color:var(--text-2);font-size:12px;font-family:var(--mono);}
+.grp-badge{margin-left:auto;padding:2px 8px;border-radius:var(--radius);font-size:12px;font-weight:600;}
+.badge-ok{color:var(--tone-ok);background:color-mix(in srgb,var(--tone-ok) 14%,var(--surface));border:1px solid color-mix(in srgb,var(--tone-ok) 30%,transparent);}
+.badge-warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--warn) 30%,transparent);}
+.badge-bad{color:var(--bad);background:color-mix(in srgb,var(--bad) 12%,var(--surface));border:1px solid color-mix(in srgb,var(--bad) 30%,transparent);}
+.badge-muted{color:var(--text-2);background:var(--surface-2);border:1px solid var(--line);}
+.grp-files{border-top:1px solid var(--line-soft);padding:6px 8px 8px;}
+.grp-files .grp-all{display:flex;align-items:center;gap:8px;padding:5px 4px;color:var(--text-2);font-size:12px;border-bottom:1px solid var(--line-soft);margin-bottom:2px;}
+.grp-all input{accent-color:var(--accent);width:15px;height:15px;}
+.file-row{display:flex;align-items:center;gap:10px;padding:5px 4px;border-radius:var(--radius);}
+.file-row:hover{background:var(--surface-2);}
+.file-sel{display:flex;align-items:center;flex:0 0 auto;}
+.file-sel input{accent-color:var(--accent);width:15px;height:15px;}
+.file-name{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere;min-width:0;}
+.file-size{flex:0 0 auto;margin-left:auto;color:var(--text-2);font-family:var(--mono);font-size:12px;white-space:nowrap;}
+.file-tag{flex:0 0 auto;color:var(--text-2);font-size:12px;}
+.empty-hint{color:var(--text-2);font-size:12px;padding:5px 4px;}
+
+/* ===== Fix cards ===== */
+.fix{border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:var(--radius);margin-bottom:10px;background:color-mix(in srgb,var(--warn) 5%,var(--surface));}
+.fix.resolved{border-left-color:var(--tone-ok);background:color-mix(in srgb,var(--tone-ok) 5%,var(--surface));}
+.fix-head{padding:12px 14px 4px;}
+.fix-title{font-size:13px;font-weight:600;display:flex;align-items:flex-start;gap:8px;}
+.fix-help{margin:6px 0 0;color:var(--text-2);font-size:12px;line-height:1.5;}
+.fix-note{margin:8px 0 0;padding:6px 10px;color:var(--text-2);font-size:12px;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius);}
+.fix-body{padding:0 14px 12px;display:grid;gap:10px;}
+.fix-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.resolved-line{display:flex;align-items:center;gap:8px;color:var(--tone-ok);font-size:13px;font-weight:600;}
+.resolved-line svg{flex:0 0 auto;}
+.field{display:grid;gap:4px;}
+.field label{color:var(--text-2);font-size:12px;font-weight:500;}
+.field label.hint{color:var(--text-2);font-weight:400;}
+input[type=text],select{width:100%;min-width:0;color:var(--text);background:var(--bg);border:1px solid var(--control-line);border-radius:var(--radius);padding:7px 9px;font-size:13px;}
+input[type=text]:hover:not(:disabled),select:hover:not(:disabled){border-color:var(--text-2);}
+select{appearance:auto;}
+.tz-row{display:grid;grid-template-columns:1fr;gap:4px;}
+@media(min-width:560px){.tz-row{grid-template-columns:1fr 1fr;gap:10px;}}
+
+/* ===== Not supported ===== */
+.notsupp{border:1px solid var(--line);border-left:3px solid var(--bad);border-radius:var(--radius);margin-bottom:10px;background:color-mix(in srgb,var(--bad) 5%,var(--surface));}
+.notsupp-head{padding:12px 14px 8px;font-size:13px;font-weight:600;color:var(--bad);}
+.notsupp-row{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;padding:8px 14px;border-top:1px solid var(--line-soft);}
+.notsupp-row .file-name{flex:0 1 auto;}
+.notsupp-row .reason{flex:1 1 200px;color:var(--text-2);font-size:12px;min-width:0;}
+.notsupp-row .row-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.kind-pick{min-width:180px;}
+
+/* ===== Footer ===== */
+.popup-foot{flex:0 0 auto;padding:12px 20px;border-top:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:10px;}
+.foot-hint{color:var(--warn);font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;}
+.foot-hint.done{display:none;}
+.foot-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.ack{display:flex;align-items:flex-start;gap:8px;font-size:13px;font-weight:500;}
+.ack input{flex:0 0 auto;width:15px;height:15px;margin:3px 0 0;accent-color:var(--accent);}
+.ack span{min-width:0;}
+.foot-spacer{flex:1 1 auto;}
+.foot-note{color:var(--text-2);font-size:12px;flex-basis:100%;}
+
+/* ===== Discard confirm ===== */
+.discard-veil{position:absolute;inset:0;z-index:5;display:none;place-items:center;padding:20px;background:color-mix(in srgb,var(--bg) 50%,transparent);}
+.discard-veil.show{display:grid;}
+.discard-card{width:min(420px,100%);background:var(--surface);border:1px solid var(--warn);border-radius:var(--radius);padding:16px;box-shadow:0 12px 32px color-mix(in srgb,var(--bg) 60%,transparent);}
+.discard-card h3{font-size:15px;margin-bottom:6px;}
+.discard-card p{color:var(--text-2);font-size:13px;margin:0 0 12px;}
+.discard-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;}
+
+/* ===== Checking state ===== */
+.checking{display:grid;justify-items:center;gap:12px;padding:40px 16px;text-align:center;}
+.spinner{width:28px;height:28px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.checking p{color:var(--text-2);font-size:13px;margin:0;}
+
+/* ===== Importing ===== */
+.imp-bar-wrap{margin-bottom:14px;}
+.imp-line{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
+.imp-line .big{font-family:var(--mono);font-size:13px;font-weight:600;}
+.imp-line .sub{color:var(--text-2);font-size:12px;font-family:var(--mono);}
+.imp-track{height:6px;background:var(--line);border-radius:var(--radius);overflow:hidden;}
+.imp-fill{height:100%;background:var(--accent);transition:width 300ms var(--ease);}
+.imp-grp{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line-soft);font-size:13px;}
+.imp-grp:last-child{border-bottom:0;}
+.imp-grp .gname{font-weight:600;}
+.imp-grp .gcount{margin-left:auto;font-family:var(--mono);color:var(--text-2);font-size:12px;}
+.imp-grp .gcount.done{color:var(--tone-ok);}
+.imp-mini{flex:0 0 auto;width:80px;height:4px;background:var(--line);border-radius:var(--radius);overflow:hidden;}
+.imp-mini span{display:block;height:100%;background:var(--accent);}
+
+/* ===== Result ===== */
+.result-hero{padding:8px 0 16px;}
+.result-hero .num{font-size:28px;font-weight:600;letter-spacing:-.01em;font-family:var(--mono);}
+.result-hero .num small{font-size:15px;color:var(--text-2);font-weight:400;}
+.result-line{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:13px;}
+.result-line:last-child{border-bottom:0;}
+.result-line .rname{font-weight:600;}
+.result-line .rcount{margin-left:auto;font-family:var(--mono);color:var(--text-2);font-size:12px;}
+.result-section{margin-top:14px;}
+.result-section h4{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--text-2);}
+.result-section h4::before{content:"// ";color:var(--text-2);font-weight:400;}
+.computers-line{margin-top:14px;padding:10px 12px;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius);font-size:13px;color:var(--text-2);}
+.computers-line b{color:var(--text);font-family:var(--mono);}
+
+/* ===== Icons ===== */
+.ic{display:inline-block;vertical-align:middle;}
+
+/* ===== Phone width ===== */
+body.phone .popup{
+  top:0;left:50%;transform:translateX(-50%);
+  width:390px;max-width:100vw;
+  height:100dvh;max-height:100dvh;
+  border-radius:0;border-left:1px solid var(--line);border-right:1px solid var(--line);border-top:0;border-bottom:0;
+}
+body.phone .app-bg{width:390px;left:50%;transform:translateX(-50%);}
+body.phone .chrome-bar{font-size:12px;}
+
+/* ===== Touch targets ===== */
+@media(pointer:coarse),(max-width:720px){
+  .btn,.state-btns button,.chrome-toggle,.close-x{min-height:44px;}
+  .stp .n{width:24px;height:24px;}
+  .file-row{min-height:40px;}
+}
+
+@media(max-width:720px){
+  .popup{width:100vw;left:0;transform:none;top:0;height:100dvh;max-height:100dvh;border-radius:0;}
+}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;}
+}
+</style>
+</head>
+<body>
+
+<!-- ===== Chrome ===== -->
+<div class="chrome">
+  <div class="chrome-bar">
+    <span class="chrome-title"><span class="mk"><span></span><span></span><span></span></span>Import popup wireframe</span>
+    <div class="state-btns" id="stateBtns">
+      <button data-snap="1">1 Choose</button>
+      <button data-snap="2">2 Check</button>
+      <button data-snap="3">3 Fix open</button>
+      <button data-snap="4">4 Importing</button>
+      <button data-snap="5">5 Result</button>
+    </div>
+    <span class="chrome-spacer"></span>
+    <button class="chrome-toggle" id="themeBtn">Theme</button>
+    <button class="chrome-toggle" id="phoneBtn">Phone width</button>
+  </div>
+  <div class="chrome-caption" id="caption"></div>
+</div>
+
+<!-- ===== Fake app background ===== -->
+<div class="app-bg" id="appBg">
+  <div class="app-topbar">
+    <span class="mk" style="width:26px;height:26px;padding:5px;display:flex;align-items:end;gap:2px;border-radius:2px;background:var(--surface-2);border:1px solid var(--line);">
+      <span style="display:block;flex:1;border-radius:1px;background:var(--accent);height:7px;opacity:.55;"></span>
+      <span style="display:block;flex:1;border-radius:1px;background:var(--accent);height:14px;"></span>
+      <span style="display:block;flex:1;border-radius:1px;background:var(--accent);height:10px;opacity:.8;"></span>
+    </span>
+    <span class="app-wordmark">Unravis</span>
+    <span class="app-case">Case: Sandbox outage 21 Oct</span>
+  </div>
+  <div class="app-scope">
+    <span class="app-chip">21 Oct 09:40 – 11:20</span>
+    <span class="app-chip">All sources</span>
+    <span class="app-chip">UTC</span>
+  </div>
+  <div class="app-tl">
+    <div class="tl-row"><span class="tl-label">iis_sandboxapi</span><div class="tl-track"><div class="tl-bar iis" style="width:72%;left:4%;"></div><div class="tl-tick" style="left:38%;"></div></div></div>
+    <div class="tl-row"><span class="tl-label">sql-prod-2</span><div class="tl-track"><div class="tl-bar sql" style="width:45%;left:18%;"></div><div class="tl-tick" style="left:38%;"></div></div></div>
+    <div class="tl-row"><span class="tl-label">app-sandbox</span><div class="tl-track"><div class="tl-bar audit" style="width:60%;left:8%;"></div></div></div>
+    <div class="tl-row"><span class="tl-label">win-prod-1</span><div class="tl-track"><div class="tl-bar audit" style="width:30%;left:50%;opacity:.5;"></div></div></div>
+  </div>
+</div>
+
+<!-- ===== Scrim ===== -->
+<div class="scrim" id="scrim"></div>
+
+<!-- ===== Popup ===== -->
+<div class="popup hidden" id="popup" role="dialog" aria-modal="true" aria-labelledby="popTitle" tabindex="-1">
+  <div class="popup-head">
+    <div class="popup-titles">
+      <h2 id="popTitle">Import files</h2>
+      <span class="case-chip">Case: <b>Sandbox outage 21 Oct</b></span>
+    </div>
+    <button class="close-x" id="closeX" aria-label="Close import">×</button>
+  </div>
+
+  <div class="stepper" id="stepper"></div>
+  <div class="prog-line" id="progLine"></div>
+
+  <div class="popup-body" id="popBody"></div>
+  <div class="popup-foot" id="popFoot"></div>
+  <div class="discard-veil" id="discardVeil"></div>
+</div>
+
+<script>
+"use strict";
+
+/* ===== Fake data ===== */
+var FILES = {
+  iis: [
+    {name:"u_ex261021.log", size:"1.2 MB"},
+    {name:"u_ex261022.log", size:"1.4 MB"},
+    {name:"u_ex261023.log", size:"1.1 MB"},
+    {name:"u_ex261024.log", size:"1.3 MB"},
+    {name:"u_ex261025.log", size:"0.9 MB"},
+    {name:"u_ex261026.log", size:"1.5 MB"},
+    {name:"u_ex261027.log", size:"1.2 MB"},
+    {name:"u_ex261028.log", size:"0.8 MB"}
+  ],
+  log4net: [
+    {name:"app-sandbox.log", size:"4.2 MB"},
+    {name:"app-sandbox.1.log", size:"3.8 MB"}
+  ],
+  sql: [
+    {name:"ERRORLOG", size:"512 KB"},
+    {name:"ERRORLOG.1", size:"487 KB"},
+    {name:"ERRORLOG.2", size:"503 KB"}
+  ],
+  unsupp: [
+    {name:"app-backup.zip", size:"28.4 MB", reason:"Compressed archive. Unpack it first."},
+    {name:"server.log", size:"2 KB", reason:"Could not tell what this file is"}
+  ]
+};
+var KINDS = ["IIS web log","log4net","SQL error log","Windows event log","Hangfire","other"];
+var ZONES = ["UTC","Europe/London","Europe/Paris","America/New_York","America/Chicago","America/Denver","America/Los_Angeles","Asia/Dubai","Asia/Kolkata","Asia/Tokyo","Australia/Sydney"];
+var pcZone = "Europe/London";
+try { pcZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/London"; } catch(e){}
+
+/* ===== State ===== */
+var S = {
+  chrome:1, step:1, checking:false,
+  cardA:"open", cardB:"open",
+  ack:false, importing:false, importDone:false, importProgress:0,
+  expanded:{log4net:false, iis:false, sql:false, unsupp:true},
+  selected:{},
+  serverLogKind:"", serverLogRemoved:false, appBackupRemoved:false,
+  discard:false, closed:false, theme:"dark", phone:false
+};
+function initSelected(){
+  S.selected = {};
+  ["iis","log4net","sql"].forEach(function(g){ FILES[g].forEach(function(f){ S.selected[f.name]=true; }); });
+}
+initSelected();
+
+/* ===== Helpers ===== */
+function icCheck(){return '<svg class="ic" width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/><path d="M5.2 8.1l1.9 1.9 3.7-3.9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';}
+function icWarn(){return '<svg class="ic" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2.5l6 10.5H2L8 2.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 7v3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".8" fill="currentColor"/></svg>';}
+function icBad(){return '<svg class="ic" width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.3"/><path d="M8 5v3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.3" r=".8" fill="currentColor"/></svg>';}
+function icUndo(){return '<svg class="ic" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 6h6a3.5 3.5 0 010 7H6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 4L3 6l3 2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';}
+
+function fixesNeeded(){var n=0; if(S.cardA==="open")n++; if(S.cardB==="open")n++; return n;}
+function targetCount(){
+  var n = countSel("log4net");
+  if(S.cardA!=="leftout") n += countSel("iis");
+  if(S.cardB!=="leftout") n += countSel("sql");
+  return n;
+}
+function canImport(){ return fixesNeeded()===0 && S.ack; }
+function countSel(g){ return FILES[g].filter(function(f){return S.selected[f.name];}).length; }
+function groupAllChecked(g){ return FILES[g].every(function(f){return S.selected[f.name];}); }
+function groupNoneChecked(g){ return FILES[g].every(function(f){return !S.selected[f.name];}); }
+function listedFiles(){
+  var n = 8+2+3;
+  if(!S.appBackupRemoved) n++;
+  if(!S.serverLogRemoved) n++;
+  return n;
+}
+
+/* ===== Captions ===== */
+var CAPTIONS = {
+  1:"<b>Step 1 — Choose.</b> Add files or a folder, then Continue. Nothing is sent until you press Import.",
+  2:"<b>Step 2 — Check.</b> The server checks each file before import (nothing is imported). 2 fixes are needed before Import unlocks.",
+  3:"<b>Fix open.</b> Card A is resolved (Undo available). Card B is being edited — name field focused, time zone visible. 1 fix remains.",
+  4:"<b>Importing.</b> Progress per group. Cancel stops after the current file.",
+  5:"<b>Result.</b> What was imported and what was left out. Open timeline, or import more."
+};
+var RETRY = "<span class='retry'><b>Retry:</b> if a file failed only because a computer was missing, reopening the popup lands directly on its fix card.</span>";
+
+/* ===== Rendering ===== */
+var popup=document.getElementById("popup");
+var popBody=document.getElementById("popBody");
+var popFoot=document.getElementById("popFoot");
+var stepper=document.getElementById("stepper");
+var progLine=document.getElementById("progLine");
+var scrim=document.getElementById("scrim");
+var discardVeil=document.getElementById("discardVeil");
+var caption=document.getElementById("caption");
+var pendingFocus=null;
+var importTimer=null;
+
+function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+function render(){
+  if(S.closed){ popup.classList.add("hidden"); scrim.classList.add("hidden"); caption.innerHTML = "Popup closed. Click a state button to reopen. " + RETRY; renderChrome(); return; }
+  popup.classList.remove("hidden"); scrim.classList.remove("hidden");
+  caption.innerHTML = CAPTIONS[S.chrome] + RETRY;
+  renderStepper();
+  progLine.innerHTML = progLineText();
+  var scroll=popBody.scrollTop;
+  popBody.innerHTML = bodyHTML();
+  popFoot.innerHTML = footHTML();
+  popBody.scrollTop=scroll;
+  setIndeterminate();
+  renderDiscard();
+  renderChrome();
+  postFocus();
+}
+
+function renderChrome(){
+  var btns=document.querySelectorAll("#stateBtns button");
+  for(var i=0;i<btns.length;i++){ btns[i].classList.toggle("on", Number(btns[i].dataset.snap)===S.chrome); }
+}
+
+function renderStepper(){
+  var steps=[{n:1,t:"Choose",go:S.step>1},{n:2,t:"Check",go:S.step>2},{n:3,t:"Result",go:false}];
+  var h='';
+  for(var i=0;i<steps.length;i++){
+    var s=steps[i];
+    var cls = s.n===S.step ? "stp cur" : (S.step>s.n ? "stp done" : "stp");
+    var dis = (s.n===S.step) ? ' disabled' : (s.go ? '' : ' disabled');
+    h+='<button class="'+cls+'" data-go="'+s.n+'"'+dis+'><span class="n">'+s.n+'</span> '+s.t+'</button>';
+    if(i<steps.length-1){ var sepDone = S.step>s.n; h+='<span class="stp-sep'+(sepDone?' done':'')+'"></span>'; }
+  }
+  stepper.innerHTML=h;
+}
+
+function progLineText(){
+  if(S.step===1) return "<b>Step 1 of 3</b> · Choose files to import";
+  if(S.step===2) return "<b>Step 2 of 3</b> · Check files with the server before import";
+  if(S.step===3){
+    if(S.importing) return "<b>Step 3 of 3</b> · Importing — do not close";
+    if(S.importDone) return "<b>Step 3 of 3</b> · Result";
+    return "<b>Step 3 of 3</b> · Result";
+  }
+  return "";
+}
+
+function bodyHTML(){
+  if(S.step===1) return step1();
+  if(S.step===2) return S.checking ? step2Checking() : step2Results();
+  if(S.step===3) return S.importing ? step3Importing() : step3Result();
+  return "";
+}
+
+/* ----- Step 1 ----- */
+function step1(){
+  var h='<div class="drop"><div class="drop-title">Drop files or a folder here</div>';
+  h+='<p class="drop-sub">IIS web logs, log4net, SQL error logs, Windows event logs. Text and CSV only.</p>';
+  h+='<div class="drop-actions"><button class="btn btn-secondary" data-act="noop">Add files</button><button class="btn btn-secondary" data-act="noop">Add a folder</button></div></div>';
+  h+='<div style="margin-top:14px;">';
+  h+=grpLine("iis","IIS web logs","8 files","found",S.expanded.iis,false,"IIS web log");
+  h+=grpLine("log4net","log4net","2 files","found",S.expanded.log4net,false,"log4net");
+  h+=grpLine("sql","SQL error log","3 files · folder sql-prod-2","found",S.expanded.sql,false,"SQL error log");
+  h+=grpLine("unsupp","Not recognised yet","2 files","needs checking",S.expanded.unsupp,false,"");
+  h+='</div>';
+  return h;
+}
+
+/* ----- Step 2 checking ----- */
+function step2Checking(){
+  return '<div class="checking"><div class="spinner"></div><p>Checking 13 files with the server…</p><p style="font-size:12px;">Nothing is imported yet.</p></div>';
+}
+
+/* ----- Step 2 results ----- */
+function step2Results(){
+  var h="";
+  h+=grpLine("log4net","log4net","2 files, ready","ready",S.expanded.log4net,true,"log4net");
+  h+=fixCardA();
+  h+=fixCardB();
+  h+=notSuppGroup();
+  return h;
+}
+
+/* ----- Group line ----- */
+function grpLine(key,title,meta,badge,open,withCheck,kind){
+  var badgeCls = badge==="ready"?"badge-ok":badge==="found"?"badge-muted":badge==="needs checking"?"badge-muted":"badge-muted";
+  var ic = badge==="ready"?'<span style="color:var(--tone-ok)">'+icCheck()+'</span>':'';
+  var h='<div class="grp'+(open?' open':'')+'" data-grp="'+key+'">';
+  h+='<button class="grp-head" data-act="toggle" data-grp="'+key+'" data-focus="head-'+key+'">';
+  h+='<span class="chev"></span>'+ic+'<span class="grp-name">'+esc(title)+'</span>';
+  h+='<span class="grp-meta">'+esc(meta)+'</span>';
+  h+='<span class="grp-badge '+badgeCls+'">'+esc(badge)+'</span></button>';
+  if(open){
+    h+='<div class="grp-files">';
+    if(withCheck){
+      var all=groupAllChecked(key), none=groupNoneChecked(key);
+      h+='<label class="grp-all"><input type="checkbox" data-act="grpall" data-grp="'+key+'"'+(all?' checked':'')+'> <span>All '+FILES[key].length+' files</span></label>';
+    }
+    for(var i=0;i<FILES[key].length;i++){
+      var f=FILES[key][i];
+      var sel = S.selected[f.name];
+      h+='<div class="file-row">';
+      if(withCheck) h+='<label class="file-sel"><input type="checkbox" data-act="selfile" data-file="'+esc(f.name)+'"'+(sel?' checked':'')+'></label>';
+      else h+='<span style="width:15px;flex:0 0 auto;"></span>';
+      h+='<span class="file-name">'+esc(f.name)+'</span>';
+      h+='<span class="file-size">'+esc(f.size)+'</span>';
+      if(kind) h+='<span class="file-tag">'+esc(kind)+'</span>';
+      h+='</div>';
+    }
+    h+='</div>';
+  }
+  h+='</div>';
+  return h;
+}
+
+/* ----- Fix card A (IIS, missing computer) ----- */
+function fixCardA(){
+  var h='<div class="fix'+(S.cardA==="resolved"?" resolved":"")+'">';
+  if(S.cardA==="resolved"){
+    h+='<div class="fix-head"><div class="resolved-line">'+icCheck()+' Added iis_sandboxapi, 8 files accepted';
+    h+='</div></div><div class="fix-body"><div class="fix-actions"><button class="btn btn-quiet" data-act="undo-a" data-focus="undo-a">'+icUndo()+' Undo</button></div></div>';
+    h+=fileList("iis",true);
+    h+='</div>';
+    return h;
+  }
+  if(S.cardA==="leftout"){
+    h+='<div class="fix-head"><div class="fix-title"><span style="color:var(--text-2)">'+icWarn()+'</span> 8 IIS files left out</div>';
+    h+='<p class="fix-help">These files from iis_sandboxapi were not added. <button class="linkbtn" data-act="undo-a" data-focus="undo-a">Bring them back</button></p></div></div>';
+    return h;
+  }
+  /* open */
+  h+='<div class="fix-head"><div class="fix-title"><span style="color:var(--warn)">'+icWarn()+'</span> 8 IIS files come from iis_sandboxapi, which is not on your computer list.</div>';
+  h+='<p class="fix-help">Unravis will not guess which computer wrote a log. Add it once and every file from that server is accepted.</p>';
+  h+='<div class="fix-note">IIS logs are already UTC, no time zone needed.</div></div>';
+  h+='<div class="fix-body"><div class="fix-actions">';
+  h+='<button class="btn btn-primary" data-act="resolve-a" data-focus="undo-a">Add iis_sandboxapi as a computer and accept 8 files</button>';
+  h+='<button class="linkbtn" data-act="leaveout-a">Leave these 8 files out</button>';
+  h+='<button class="linkbtn" data-act="add-all">Add all 2 servers</button>';
+  h+='</div></div>';
+  h+=fileList("iis",true);
+  h+='</div>';
+  return h;
+}
+
+/* ----- Fix card B (SQL, no computer named) ----- */
+function fixCardB(){
+  var h='<div class="fix'+(S.cardB==="resolved"?" resolved":"")+'">';
+  if(S.cardB==="resolved"){
+    h+='<div class="fix-head"><div class="resolved-line">'+icCheck()+' Added sql-prod-2, 3 files accepted</div></div>';
+    h+='<div class="fix-body"><div class="fix-actions"><button class="btn btn-quiet" data-act="undo-b" data-focus="undo-b">'+icUndo()+' Undo</button></div></div>';
+    h+=fileList("sql",true);
+    h+='</div>';
+    return h;
+  }
+  if(S.cardB==="leftout"){
+    h+='<div class="fix-head"><div class="fix-title"><span style="color:var(--text-2)">'+icWarn()+'</span> 3 SQL files left out</div>';
+    h+='<p class="fix-help">These files were not given a computer. <button class="linkbtn" data-act="undo-b" data-focus="undo-b">Bring them back</button></p></div></div>';
+    return h;
+  }
+  /* open */
+  h+='<div class="fix-head"><div class="fix-title"><span style="color:var(--warn)">'+icWarn()+'</span> 3 SQL error log files do not say which computer wrote them.</div></div>';
+  h+='<div class="fix-body">';
+  h+='<div class="field"><label for="sqlname">Name of the computer</label>';
+  h+='<input type="text" id="sqlname" value="sql-prod-2" data-act="sqlname" data-focus="sqlname" aria-describedby="sqlname-h">';
+  h+='<label class="hint" id="sqlname-h">Suggested from the folder name. Change it if wrong.</label></div>';
+  h+='<div class="tz-row"><div class="field"><label for="sqltz">Time zone of its clock</label>';
+  h+='<select id="sqltz" data-act="sqltz">';
+  for(var i=0;i<ZONES.length;i++){ h+='<option'+(ZONES[i]===pcZone?" selected":"")+'>'+ZONES[i]+'</option>'; }
+  h+='</select></div></div>';
+  h+='<p class="fix-help">SQL error logs use the computer&#39;s own clock, so the time zone changes where events land on the timeline.</p>';
+  h+='<div class="fix-actions"><button class="btn btn-primary" data-act="resolve-b" data-focus="undo-b">Use sql-prod-2 and accept 3 files</button></div>';
+  h+='</div>';
+  h+=fileList("sql",true);
+  h+='</div>';
+  return h;
+}
+
+/* ----- File list (expandable within a card) ----- */
+function fileList(key,withCheck){
+  var open=S.expanded[key];
+  var h='<div class="grp'+(open?' open':'')+'" data-grp="'+key+'" style="border:0;border-top:1px solid var(--line-soft);margin:0;background:transparent;">';
+  h+='<button class="grp-head" data-act="toggle" data-grp="'+key+'" data-focus="head-'+key+'" style="padding:8px 14px;">';
+  h+='<span class="chev"></span><span class="grp-meta">'+FILES[key].length+' files</span></button>';
+  if(open){
+    h+='<div class="grp-files" style="border-top:0;">';
+    if(withCheck){
+      h+='<label class="grp-all"><input type="checkbox" data-act="grpall" data-grp="'+key+'"'+(groupAllChecked(key)?" checked":"")+'> <span>All '+FILES[key].length+' files</span></label>';
+    }
+    for(var i=0;i<FILES[key].length;i++){
+      var f=FILES[key][i]; var sel=S.selected[f.name];
+      h+='<div class="file-row">';
+      if(withCheck) h+='<label class="file-sel"><input type="checkbox" data-act="selfile" data-file="'+esc(f.name)+'"'+(sel?" checked":"")+'></label>';
+      else h+='<span style="width:15px;flex:0 0 auto;"></span>';
+      h+='<span class="file-name">'+esc(f.name)+'</span>';
+      h+='<span class="file-size">'+esc(f.size)+'</span></div>';
+    }
+    h+='</div>';
+  }
+  h+='</div>';
+  return h;
+}
+
+/* ----- Not supported group ----- */
+function notSuppGroup(){
+  var h='<div class="notsupp"><div class="notsupp-head">'+icBad()+' 2 files are not supported</div>';
+  if(!S.appBackupRemoved){
+    var f=FILES.unsupp[0];
+    h+='<div class="notsupp-row"><span class="file-name">'+esc(f.name)+'</span><span class="file-size">'+esc(f.size)+'</span>';
+    h+='<span class="reason">'+esc(f.reason)+'</span>';
+    h+='<div class="row-actions"><button class="btn btn-quiet" data-act="rm-backup">Remove from list</button></div></div>';
+  }
+  if(!S.serverLogRemoved){
+    var f2=FILES.unsupp[1];
+    h+='<div class="notsupp-row"><span class="file-name">'+esc(f2.name)+'</span><span class="file-size">'+esc(f2.size)+'</span>';
+    h+='<span class="reason">'+esc(f2.reason)+'</span>';
+    h+='<div class="row-actions">';
+    h+='<select class="kind-pick" data-act="kind-serverlog"><option value="">Tell us what this is</option>';
+    for(var i=0;i<KINDS.length;i++) h+='<option value="'+esc(KINDS[i])+'"'+(S.serverLogKind===KINDS[i]?" selected":"")+'>'+esc(KINDS[i])+'</option>';
+    h+='</select><button class="btn btn-quiet" data-act="rm-serverlog">Remove</button></div></div>';
+  }
+  if(S.appBackupRemoved && S.serverLogRemoved){
+    h+='<div class="notsupp-row"><span class="empty-hint">All unsupported files removed.</span></div>';
+  }
+  h+='</div>';
+  return h;
+}
+
+/* ----- Footer ----- */
+function footHTML(){
+  if(S.step===1){
+    return '<div class="foot-row"><span class="foot-spacer"></span>'+
+      '<span class="foot-note">Nothing is sent until you press Import.</span>'+
+      '<button class="btn btn-primary" data-act="continue" data-focus="continue">Continue</button></div>';
+  }
+  if(S.step===2 && !S.checking){
+    var fx=fixesNeeded();
+    var hint = fx>0 ? '<div class="foot-hint'+(fx===0?' done':'')+'">'+icWarn()+' '+fx+' fix'+(fx>1?'es':'')+' needed before you can import</div>' : '';
+    var ackDis = fx>0;
+    var impDis = !canImport();
+    var cnt=targetCount();
+    return hint+
+      '<div class="foot-row"><label class="ack"><input type="checkbox" data-act="ack" data-focus="ack"'+(S.ack?" checked":"")+(ackDis?" disabled":"")+' aria-label="Confirm read-only"><span>I understand this is read-only and nothing is changed on these computers</span></label>'+
+      '<span class="foot-spacer"></span>'+
+      '<button class="btn btn-primary" data-act="import"'+(impDis?' disabled':'')+' data-focus="import">Import '+cnt+' file'+(cnt===1?'':'s')+'</button></div>';
+  }
+  if(S.step===3 && S.importing){
+    return '<div class="foot-row"><span class="foot-spacer"></span><button class="btn btn-secondary" data-act="cancel-import">Cancel</button></div>';
+  }
+  if(S.step===3 && S.importDone){
+    return '<div class="foot-row"><span class="foot-spacer"></span>'+
+      '<button class="btn btn-secondary" data-act="import-more">Import more</button>'+
+      '<button class="btn btn-primary" data-act="open-timeline" data-focus="open-tl">Open timeline</button></div>';
+  }
+  return '';
+}
+
+/* ----- Step 3 importing ----- */
+function step3Importing(){
+  var p=S.importProgress, total=13;
+  var pct=Math.round(p/total*100);
+  var h='<div class="imp-bar-wrap"><div class="imp-line"><span class="big">Importing '+p+' of '+total+' files</span><span class="sub">'+pct+'%</span></div>';
+  h+='<div class="imp-track"><div class="imp-fill" style="width:'+pct+'%"></div></div></div>';
+  h+='<div class="imp-grp"><span class="gname">IIS web logs</span><div class="imp-mini"><span style="width:'+Math.min(100,Math.round(Math.max(0,p)/8*100))+'%"></span></div><span class="gcount'+(p>=8?' done':'')+'">'+Math.min(8,Math.max(0,p))+' of 8</span></div>';
+  h+='<div class="imp-grp"><span class="gname">log4net</span><div class="imp-mini"><span style="width:'+(p>8?Math.round((p-8)/2*100):0)+'%"></span></div><span class="gcount'+(p>=10?' done':'')+'">'+(p>8?Math.min(2,p-8):0)+' of 2</span></div>';
+  h+='<div class="imp-grp"><span class="gname">SQL error log</span><div class="imp-mini"><span style="width:'+(p>10?Math.round((p-10)/3*100):0)+'%"></span></div><span class="gcount'+(p>=13?' done':'')+'">'+(p>10?Math.min(3,p-10):0)+' of 3</span></div>';
+  return h;
+}
+
+/* ----- Step 3 result ----- */
+function step3Result(){
+  var h='<div class="result-hero"><div class="num">13 <small>files imported</small></div></div>';
+  h+='<div class="result-section"><h4>Imported</h4>';
+  h+='<div class="result-line"><span class="rname">IIS web logs</span><span class="rcount">8 files</span></div>';
+  h+='<div class="result-line"><span class="rname">log4net</span><span class="rcount">2 files</span></div>';
+  h+='<div class="result-line"><span class="rname">SQL error log</span><span class="rcount">3 files</span></div></div>';
+  h+='<div class="result-section"><h4>Not imported</h4>';
+  h+='<div class="result-line"><span class="rname">'+esc("app-backup.zip")+'</span><span class="rcount">Compressed archive. Unpack it first.</span></div>';
+  h+='<div class="result-line"><span class="rname">'+esc("server.log")+'</span><span class="rcount">No file type chosen</span></div></div>';
+  h+='<div class="computers-line">Added 2 computers: <b>iis_sandboxapi</b>, <b>sql-prod-2</b>. <button class="linkbtn" data-act="see-computers">See computers</button></div>';
+  return h;
+}
+
+/* ----- Discard confirm ----- */
+function renderDiscard(){
+  if(!S.discard){ discardVeil.innerHTML=""; discardVeil.classList.remove("show"); return; }
+  discardVeil.classList.add("show");
+  var n=listedFiles();
+  discardVeil.innerHTML='<div class="discard-card" role="alertdialog" aria-labelledby="dc-h" aria-describedby="dc-p">'+
+    '<h3 id="dc-h">Discard '+n+' file'+(n===1?'':'s')+'?</h3>'+
+    '<p id="dc-p">These files are still on the list. Discarding clears them and closes the popup.</p>'+
+    '<div class="discard-actions"><button class="btn btn-secondary" data-act="keep" data-focus="keep">Keep them</button>'+
+    '<button class="btn btn-primary" data-act="discard-now">Discard</button></div></div>';
+}
+
+/* ----- Indeterminate checkboxes ----- */
+function setIndeterminate(){
+  ["iis","log4net","sql"].forEach(function(g){
+    var els=popBody.querySelectorAll('[data-act="grpall"][data-grp="'+g+'"]');
+    for(var i=0;i<els.length;i++){
+      els[i].indeterminate = !(groupAllChecked(g)||groupNoneChecked(g));
+    }
+  });
+}
+
+/* ----- Focus management ----- */
+function postFocus(){
+  if(!pendingFocus){ return; }
+  var el=popup.querySelector('[data-focus="'+pendingFocus+'"]');
+  pendingFocus=null;
+  if(el){ try{ el.focus({preventScroll:true}); }catch(e){ el.focus(); } }
+}
+
+/* ===== Actions ===== */
+function act(name,src){
+  switch(name){
+    case "noop": break;
+    case "continue": S.step=2; S.checking=true; S.chrome=2; render(); setTimeout(function(){ if(S.checking){ S.checking=false; render(); } }, 950); break;
+    case "toggle": var g=src.getAttribute("data-grp"); S.expanded[g]=!S.expanded[g]; pendingFocus="head-"+g; render(); break;
+    case "resolve-a": S.cardA="resolved"; pendingFocus="undo-a"; render(); break;
+    case "leaveout-a": S.cardA="leftout"; render(); break;
+    case "undo-a": S.cardA="open"; pendingFocus="undo-a"; render(); break;
+    case "resolve-b": S.cardB="resolved"; pendingFocus="undo-b"; render(); break;
+    case "undo-b": S.cardB="open"; pendingFocus="undo-b"; render(); break;
+    case "add-all": S.cardA="resolved"; S.cardB="resolved"; pendingFocus="ack"; render(); break;
+    case "rm-backup": S.appBackupRemoved=true; render(); break;
+    case "rm-serverlog": S.serverLogRemoved=true; render(); break;
+    case "ack": S.ack=src.checked; render(); break;
+    case "import": if(canImport()){ startImport(true); } break;
+    case "cancel-import": cancelImport(); break;
+    case "import-more": applySnapshot(1); break;
+    case "open-timeline": S.closed=true; caption.innerHTML="<b>Timeline opened.</b> (Demo — would switch to the case timeline.) " + RETRY; render(); break;
+    case "see-computers": caption.innerHTML="<b>Computers panel.</b> (Demo — would open the computer list: iis_sandboxapi, sql-prod-2.) " + RETRY; break;
+    case "keep": S.discard=false; render(); break;
+    case "discard-now": S.discard=false; S.closed=true; initSelected(); render(); break;
+    case "go": var n=Number(src.getAttribute("data-go")); if(n<S.step){ S.step=n; if(n<3){ S.importing=false; S.importDone=false; } render(); } break;
+  }
+}
+
+popBody.addEventListener("click",function(e){
+  var t=e.target.closest("[data-act]");
+  if(!t) return;
+  var a=t.getAttribute("data-act");
+  if(a==="toggle"||a==="grpall"||a==="selfile") { if(a==="toggle"){ act(a,t); return; } }
+  if(a==="grpall"){ var g=t.getAttribute("data-grp"); var on=groupAllChecked(g); FILES[g].forEach(function(f){ S.selected[f.name]=!on; }); render(); return; }
+  if(a==="selfile"){ var fn=t.getAttribute("data-file"); S.selected[fn]=t.checked; render(); return; }
+  act(a,t);
+});
+popFoot.addEventListener("click",function(e){
+  var t=e.target.closest("[data-act]"); if(!t) return;
+  var a=t.getAttribute("data-act");
+  if(a==="ack"){ act(a,t); return; }
+  act(a,t);
+});
+stepper.addEventListener("click",function(e){
+  var t=e.target.closest("[data-go]"); if(!t||t.disabled) return; act("go",t);
+});
+discardVeil.addEventListener("click",function(e){
+  var t=e.target.closest("[data-act]"); if(!t) return; act(t.getAttribute("data-act"),t);
+});
+
+/* sql name / tz / kind changes */
+popBody.addEventListener("input",function(e){
+  var t=e.target;
+  if(t.getAttribute("data-act")==="sqlname"){ /* value kept in DOM */ }
+});
+popBody.addEventListener("change",function(e){
+  var t=e.target;
+  var a=t.getAttribute("data-act");
+  if(a==="sqltz"){ pcZone=t.value; }
+  if(a==="kind-serverlog"){ S.serverLogKind=t.value; }
+});
+
+/* ===== Close handling ===== */
+function handleClose(){
+  if(S.discard){ act("keep",{}); return; }
+  if(listedFiles()>0 && S.step!==3){ S.discard=true; pendingFocus="keep"; render(); }
+  else { S.closed=true; render(); }
+}
+document.getElementById("closeX").addEventListener("click",handleClose);
+scrim.addEventListener("click",handleClose);
+document.addEventListener("keydown",function(e){
+  if(S.closed) return;
+  if(e.key==="Escape"){ e.preventDefault(); handleClose(); return; }
+  if(e.key==="Tab" && !popup.classList.contains("hidden")){
+    var sel='button:not(:disabled), input:not(:disabled), select:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
+    var f=[].slice.call(popup.querySelectorAll(sel)).filter(function(el){return el.offsetParent!==null;});
+    if(!f.length) return;
+    var first=f[0], last=f[f.length-1];
+    if(e.shiftKey && document.activeElement===first){ e.preventDefault(); last.focus(); }
+    else if(!e.shiftKey && document.activeElement===last){ e.preventDefault(); first.focus(); }
+  }
+});
+
+/* ===== Import simulation ===== */
+function startImport(fromStep2){
+  if(importTimer) clearInterval(importTimer);
+  S.step=3; S.importing=true; S.importDone=false;
+  S.importProgress = fromStep2 ? 0 : 11;
+  S.chrome = fromStep2 ? S.chrome : 4;
+  render();
+  runImportTimer();
+}
+function runImportTimer(){
+  importTimer=setInterval(function(){
+    S.importProgress++;
+    if(S.importProgress>=13){
+      clearInterval(importTimer); importTimer=null;
+      S.importing=false; S.importDone=true; S.chrome=5;
+    }
+    render();
+  }, 520);
+}
+function cancelImport(){
+  if(importTimer){ clearInterval(importTimer); importTimer=null; }
+  S.importing=false; S.importDone=false; S.step=2; S.checking=false; S.chrome=2;
+  render();
+}
+
+/* ===== Snapshots ===== */
+function applySnapshot(n){
+  if(importTimer){ clearInterval(importTimer); importTimer=null; }
+  S.closed=false; S.discard=false; S.importDone=false; S.importing=false; S.checking=false;
+  S.serverLogKind=""; S.serverLogRemoved=false; S.appBackupRemoved=false;
+  S.expanded={log4net:false,iis:false,sql:false,unsupp:false};
+  S.ack=false; S.cardA="open"; S.cardB="open";
+  initSelected();
+  S.chrome=n;
+  if(n===1){ S.step=1; }
+  else if(n===2){ S.step=2; S.checking=true; render(); setTimeout(function(){ if(S.checking){ S.checking=false; render(); } },950); return; }
+  else if(n===3){ S.step=2; S.cardA="resolved"; S.expanded.sql=true; pendingFocus="sqlname"; }
+  else if(n===4){ S.step=3; S.cardA="resolved"; S.cardB="resolved"; S.ack=true; S.importing=true; S.importProgress=11; render(); runImportTimer(); return; }
+  else if(n===5){ S.step=3; S.cardA="resolved"; S.cardB="resolved"; S.ack=true; S.importDone=true; }
+  render();
+}
+
+document.getElementById("stateBtns").addEventListener("click",function(e){
+  var t=e.target.closest("[data-snap]"); if(!t) return; applySnapshot(Number(t.dataset.snap));
+});
+
+/* ===== Theme ===== */
+var themeBtn=document.getElementById("themeBtn");
+function setTheme(t){
+  S.theme=t;
+  document.documentElement.setAttribute("data-theme",t);
+  themeBtn.textContent = t==="dark" ? "Theme: dark" : "Theme: light";
+  themeBtn.classList.toggle("on", t==="light");
+}
+(function(){
+  var dark = true;
+  try { dark = !window.matchMedia || window.matchMedia("(prefers-color-scheme: dark)").matches; } catch(e){}
+  setTheme(dark?"dark":"light");
+})();
+themeBtn.addEventListener("click",function(){ setTheme(S.theme==="dark"?"light":"dark"); });
+
+/* ===== Phone toggle ===== */
+var phoneBtn=document.getElementById("phoneBtn");
+phoneBtn.addEventListener("click",function(){
+  S.phone=!S.phone;
+  document.body.classList.toggle("phone",S.phone);
+  phoneBtn.classList.toggle("on",S.phone);
+  phoneBtn.textContent = S.phone?"Phone: 390px":"Phone width";
+});
+
+/* ===== Init ===== */
+applySnapshot(1);
+popup.focus();
+</script>
+</body>
+</html>

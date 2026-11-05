@@ -260,6 +260,9 @@ var routes = []route{
 	{pattern: "/api/cases/{id}/retries/{retryId}/retry", match: caseRetryRunPath, methods: map[string]routeFunc{
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, arg string) { h.runRetry(w, r, arg) },
 	}},
+	{pattern: "/api/cases/{id}/imports/check", match: caseSubpath("/imports/check"), methods: map[string]routeFunc{
+		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.postImportCheck(w, r, id) },
+	}},
 	{pattern: "/api/cases/{id}/imports", match: caseSubpath("/imports"), methods: map[string]routeFunc{
 		http.MethodGet:  func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.listImports(w, r, id) },
 		http.MethodPost: func(h *handler, w http.ResponseWriter, r *http.Request, id string) { h.postImport(w, r, id) },
