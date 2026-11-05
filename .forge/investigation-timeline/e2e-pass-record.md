@@ -519,3 +519,10 @@ Dirty working tree on feat/investigation-timeline (HEAD d34cc29), after the Gate
 | Playwright full suite on the final exe (1 worker) | 443 tests: 441 passed, 2 skipped (PERF-01, PERF-02 need a generated dataset), 0 failed, 0 flaky, 7.9 min |
 
 DOC-02 and KEEP-09 print as failed and are the known-defect specs, counted as passed. No known flake failed; nothing needed a re-run.
+## rc.15 install smoke (2026-11-05)
+- Silent upgrade rc.14 -> rc.15 ok (exit 0); Desktop and Start Menu shortcuts resolve to unravis.exe and launch it.
+- Full e2e on the tree: 443 pass, 2 fail (AUDIT-06 stale spec, fixed and rerun green; SEC-07 environmental).
+
+## rc.16 - wizard file tags paired to imports
+TLWIZ-01/02 added: fail on the rc.15 server (warning 'A selected source has no file yet'), pass with server-side pairing. Regression subset (timeline, tracing, wizard specs) 85/85 pass; go test ./internal/server -run 'Tracing|PairFileTags' and ./internal/calltrace pass.
+

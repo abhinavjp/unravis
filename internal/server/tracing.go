@@ -223,7 +223,8 @@ func tracingImportID(id int64) string { return "imp_" + strconv.FormatInt(id, 10
 
 // resolveTracingSources turns the (de-duplicated) ids into a selection. c is
 // already unwrapped. It reads source tags only when a cs_ id is present or ids
-// is empty, and imports only when an imp_ id is present or ids is empty.
+// is empty, and imports whenever it reads tags (to pair them) or an imp_ id is
+// present.
 func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) (tracingSelection, *tracingFailure) {
 	sel := tracingSelection{
 		Refs:     []tracingRef{},
@@ -265,7 +266,8 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 	}
 	importByID := map[int64]casestore.ImportRecord{}
 	var imports []casestore.ImportRecord
-	if needImports {
+	if needImports || needTags {
+		// Tags are paired with imports (pairFileTags), so tags imply imports.
 		var err error
 		imports, err = c.Imports(ctx)
 		if err != nil {
@@ -274,6 +276,16 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 		for _, im := range imports {
 			importByID[im.ID] = im
 		}
+	}
+
+	// A tag the wizard saved before its file was imported has ImportID 0; the pairing
+	// gives it the import it belongs to.
+	paired := pairFileTags(tags, imports)
+	tagImport := func(t casestore.SourceTag) int64 {
+		if t.ImportID == 0 {
+			return paired[t.ID]
+		}
+		return t.ImportID
 	}
 
 	if len(ids) > 0 {
@@ -286,7 +298,7 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 					return sel, tracingUnknownSource()
 				}
 				sel.Refs = append(sel.Refs, tracingRef{SourceID: id, Label: tracingLabel(t.Label, t.Kind)})
-				sel.ImportOf[id] = t.ImportID
+				sel.ImportOf[id] = tagImport(t)
 			case "imp":
 				im, found := importByID[n]
 				if !found {
@@ -313,9 +325,10 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 		}
 		sid := tracingTagID(t.ID)
 		refs = append(refs, tracingRef{SourceID: sid, Label: tracingLabel(t.Label, t.Kind)})
-		sel.ImportOf[sid] = t.ImportID
-		if t.ImportID > 0 {
-			linked[t.ImportID] = true
+		imp := tagImport(t)
+		sel.ImportOf[sid] = imp
+		if imp > 0 {
+			linked[imp] = true
 		}
 	}
 	byID := make([]casestore.ImportRecord, len(imports))
