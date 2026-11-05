@@ -189,7 +189,6 @@ test('AUDIT-05: the create wizard ticks the audit-looking database by default, t
   await expect(page.getByRole('heading', { name: 'Choose what to look at' })).toBeVisible();
   await page.getByRole('button', { name: 'Connect to MongoDB' }).click();
   await page.getByLabel('Use a saved connection').selectOption({ index: 1 });
-  if (collection !== '') await page.getByLabel('Audit log collection').fill(collection);
   await page.getByRole('button', { name: 'Test and list databases' }).click();
   const auditDb = page.getByRole('group', { name: AUDIT_DB });
   const appDb = page.getByRole('group', { name: APP_DB });

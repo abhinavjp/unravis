@@ -50,7 +50,7 @@ test('HELP-03: the build line holds a version and no folder, user name or secret
   const dialog = await openHelp(page);
   const line = (await dialog.getByTestId('build-line').innerText()).trim();
   const run = spawnSync(exePath(), ['--version'], { encoding: 'utf8', windowsHide: true });
-  const version = run.stdout.replace(/^Unravis\s*/i, '').trim();
+  const version = run.stdout.replace(/^Unravis\s*/i, '').trim().split(/\s+/)[0];
   expect(line, 'the build line carries the same version as --version').toContain(version);
   expect(line).not.toMatch(/[A-Za-z]:\\|\/Users\/|token|password|key/i);
 });
