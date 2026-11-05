@@ -87,7 +87,8 @@
   // The list of cases (and the new-case title) stays out of the way once an open case is chosen: the wireframe's Add data screen has only the cards.
   // Use another case brings the list back. Until a case is chosen, or when the chosen one is closed, the list is simply there.
   let casesOpen = $state(false);
-  const caseListShown = $derived(!showGrid || casesOpen);
+  // The same holds on the file list: someone already in an open case (Add the file again, Add files) is never asked to pick a case again.
+  const caseListShown = $derived(!caseOpen || casesOpen);
   const heldFiles = $derived(staged + (file ? 1 : 0));
   const sending = $derived(phase !== 'idle' || batchBusy);
   const drawerTitle = $derived(showGrid && selected ? ADD_TEXT.drawerTitle(caseCode(selected.id)) : IMPORT_TEXT.title);
@@ -416,7 +417,7 @@
   <!-- Screen 112 has only the cards and the hint lines: the notice belongs to the file list (where the tick is), and the case list waits behind Use another case. -->
   {#if !showGrid}<p class="gate" role="note" aria-label={IMPORT_TEXT.noticeLabel}>{GATING_BANNER}</p>{/if}
 
-  {#if showGrid}
+  {#if caseOpen}
     <div class="actions"><button type="button" class="link" data-other-case aria-expanded={casesOpen} onclick={() => (casesOpen = !casesOpen)}>{casesOpen ? ADD_TEXT.hideCases : ADD_TEXT.otherCase}</button></div>
   {/if}
   <div hidden={!caseListShown}><CasePanel bind:this={casePanel} bind:cases bind:selectedId onClosed={goHome} /></div>

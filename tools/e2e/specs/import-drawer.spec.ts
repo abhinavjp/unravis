@@ -237,6 +237,8 @@ test('IMPORT-07: a closed case has no many-files part', async ({ page, api }) =>
   await createCase(api, 'QA Import Still Open');
   await goHome(page);
   await openDrawerFor(page, 'QA Import Still Open');
+  // The case list waits behind "Use another case" while an open case is being worked in.
+  await page.locator('[data-other-case]').click();
   await page.getByRole('button', { name: /^Use this case: .*QA Import Closed/ }).click();
   await expect(page.getByText('This case is closed. Choose or create another case to import files.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Many files at once' })).toHaveCount(0);
