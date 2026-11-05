@@ -157,7 +157,7 @@ test('the read key goes up in the add and key calls only, and is never kept or s
 });
 
 test('the panel is a header utility on every screen and is opened as a side panel', () => {
-  assert.match(read('src/lib/appState.svelte.ts'), /'import' \| 'blackbox' \| null/);
+  assert.match(read('src/lib/appState.svelte.ts'), /'export' \| 'blackbox' \| null/);
   assert.match(read('src/lib/appState.svelte.ts'), /openSidePanel\(which: [^)]*'blackbox'\)/);
   const header = read('src/components/AppHeader.svelte');
   assert.match(header, /id: 'blackbox', label: 'Blackbox', open: \(\) => openSidePanel\('blackbox'\)/);

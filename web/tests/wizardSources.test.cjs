@@ -596,7 +596,7 @@ test('a case made by the create guide adopts its new sources and starts the anal
   assert.match(fn, /api\.sources\(\)/, 'reloads the source list the guide changed on the server');
   assert.match(fn, /query\.sourceIds = /, 'selects the new sources');
   assert.match(fn, /autoRan = false/, 'lets the landing run start by itself');
-  assert.match(fn, /!hasSources\) \{ requestFilesView\(\); openSidePanel\('import'\)/, 'opens the import drawer only when there is nothing to analyse');
+  assert.match(fn, /!hasSources\) showImportPopup\(null\)/, 'opens the import popup only when there is nothing to analyse');
   const landing = fs.readFileSync(path.join(root, 'src/components/Landing.svelte'), 'utf8');
   assert.match(landing, /openCreatedCase\(id\)/);
 });

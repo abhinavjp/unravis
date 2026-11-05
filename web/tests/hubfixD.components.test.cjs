@@ -26,8 +26,8 @@ test('D: the drawer opens on the cards unless files were asked for, and the inte
 });
 
 test('D: the entry points that already chose files say so', () => {
-  assert.match(app, /requestCase\(activeCaseId\);\s+requestFilesView\(\);/);
-  assert.match(app, /requestFilesView\(\); openSidePanel\('import'\)/);
+  assert.match(app, /requestCase\(id\);\s+requestFilesView\(\);/);
+  assert.match(app, /function showImportPopup\(/);
 });
 
 test('D: the file list stays mounted while the cards show, so staged files are not lost', () => {

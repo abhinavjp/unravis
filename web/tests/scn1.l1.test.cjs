@@ -58,7 +58,7 @@ test('D-A-05: a case made by the create guide opens on Case home, import drawer 
   const state = read('src/lib/appState.svelte.ts');
   const body = state.slice(state.indexOf('export async function openCreatedCase'));
   const fn = body.slice(0, body.search(/\r?\n\}\r?\n/));
-  assert.match(fn, /if \(go\('case'\) && !hasSources\) \{ requestFilesView\(\); openSidePanel\('import'\); \}/);
+  assert.match(fn, /if \(go\('case'\) && !hasSources\) showImportPopup\(null\);/);
   assert.doesNotMatch(fn, /go\('running'\)/, 'no longer jumps to the analysis');
   assert.match(fn, /setActiveCase\(id, \{ restore: false \}\)/);
   assert.match(fn, /autoRan = false/);

@@ -192,8 +192,12 @@ let querySnapshot = '';
 let connectionsOpen = $state(false);
 let glossaryOpen = $state(false);
 // P2-lite drawers: incident patterns and the hypothesis ledger.
-let sidePanel = $state<'patterns' | 'ledger' | 'export' | 'import' | 'blackbox' | null>(null);
+let sidePanel = $state<'patterns' | 'ledger' | 'export' | 'blackbox' | null>(null);
 let sidePanelReturnFocus: HTMLElement | null = null;
+// The "Import files" popup, centred over the page. It is not a side panel, but `panels.sidePanel` still reads 'import' while it is open
+// (see `panels`), so the pages that re-read their files when the import closes keep working.
+let importPopup = $state<{ caseId: string; caseTitle: string; retryServerName: string | null } | null>(null);
+let importPopupReturnFocus: HTMLElement | null = null;
 // The file import the person started that is still running on the server. It lives here, not in the import drawer, so closing and reopening the drawer finds it again.
 let runningImport = $state.raw<RunningImport | null>(null);
 let glossaryTerm = $state<string | null>(null);
@@ -439,6 +443,7 @@ export function startApp() {
   // Each open drawer shares one history entry, so the browser's Back closes it. Closing from the page steps back over that entry.
   $effect(() => {
     const open = [connectionsOpen ? 'connections' : '', glossaryOpen ? 'glossary' : '', coverageSource ? 'coverage' : '', sidePanel ? 'side' : ''].filter(Boolean);
+  // The import popup is left out on purpose: Back must not throw away the files staged in it. Its own close asks first.
     untrack(() => { drawerHistory?.sync(open); });
   });
 }
@@ -511,6 +516,7 @@ export function go(to: Screen): boolean {
   if (move.screen === screen) return true;
   // Leaving the working screen puts away its case panel. The case itself stays open on the server; nothing is closed or erased.
   if (leavesCaseWork(move.screen) && sidePanel) void closeSidePanel();
+  if (leavesCaseWork(move.screen) && importPopup) void closeImportPopup();
   screen = move.screen;
   if (move.screen !== 'setup') setupOrigin = null;
   noteCaseView(move.screen);
@@ -858,16 +864,33 @@ export function openCaseHome() {
 }
 /** From the case home to the analysis. The case stays the active one. */
 export function openAnalysis() { go('running'); }
-/** From the case home to the import drawer for that case, over the case home. */
-export function openCaseImport() {
-  if (!activeCaseId) return;
-  requestCase(activeCaseId);
+function showImportPopup(retryServerName: string | null) {
+  const id = activeCaseId;
+  if (!id) return;
+  requestCase(id);
   requestFilesView();
-  openSidePanel('import');
+  if (!importPopup) importPopupReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  if (sidePanel) { sidePanel = null; sidePanelReturnFocus = null; }
+  // The popup opens at once under the short case code; the case's own title replaces it when the case is read.
+  importPopup = { caseId: id, caseTitle: importPopup?.caseId === id ? importPopup.caseTitle : id.slice(0, 8), retryServerName };
+  void import('./cases').then(({ getCaseView }) => getCaseView(id)).then((view) => {
+    if (importPopup?.caseId === id && view.title) importPopup.caseTitle = view.title;
+  }).catch(() => { /* the popup keeps the case code as its title */ });
+}
+/** From the case home to the import popup for that case, over the case home. */
+export function openCaseImport() { showImportPopup(null); }
+/** Opens the import popup on the Check step with this computer's fix card open, after a file was refused for an unknown computer. */
+export function openCaseImportRetry(serverName: string) { showImportPopup(serverName); }
+/** Puts the import popup away and gives the focus back to what opened it. */
+export async function closeImportPopup() {
+  importPopup = null;
+  await tick();
+  importPopupReturnFocus?.focus();
+  importPopupReturnFocus = null;
 }
 /**
  * A case just made by the create guide. The guide added its audit sources on the server directly, so this page's source list is stale:
- * reload it and select the new sources (the analysis starts by itself when the user opens it), then show Case home. The import drawer
+ * reload it and select the new sources (the analysis starts by itself when the user opens it), then show Case home. The import popup
  * opens over Case home only when there is still nothing to analyse (a case made from files alone).
  */
 export async function openCreatedCase(id: string) {
@@ -887,7 +910,7 @@ export async function openCreatedCase(id: string) {
     }
     hasSources = loaded.length > 0;
   } catch { /* the list could not be read: the analysis screen still opens and its own connect step can add sources */ }
-  if (go('case') && !hasSources) { requestFilesView(); openSidePanel('import'); }
+  if (go('case') && !hasSources) showImportPopup(null);
 }
 /** "Create a new one": the guided flow when it exists, otherwise the import panel over the working screen. */
 export function startCreate() {
@@ -1352,7 +1375,10 @@ export async function closeSidePanel() {
   sidePanelReturnFocus?.focus();
   sidePanelReturnFocus = null;
 }
+// 'import' is no longer a side panel: the header's Import button and the older callers that still ask for it get the popup.
 export function openSidePanel(which: 'patterns' | 'ledger' | 'export' | 'import' | 'blackbox') {
+  if (which === 'import') { showImportPopup(null); return; }
+  if (importPopup) return;
   sidePanelReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   sidePanel = which;
 }
@@ -1541,6 +1567,8 @@ function closeDrawerById(id: string) {
 }
 export function onWindowKey(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.defaultPrevented) return;
+  // The import popup handles its own Esc (it asks before it closes), so the page behind it must not step up.
+  if (importPopup) return;
   // A drawer closes on Esc even when focus is on the page itself (after a click on the page behind it); one with focus inside handles its own Esc.
   if (glossaryOpen) { void closeGlossary(); return; }
   if (coverageSource) { void closeCoverage(); return; }
@@ -1819,12 +1847,13 @@ export const importWork = {
 export const panels = {
   get connectionsOpen() { return connectionsOpen; }, set connectionsOpen(value) { connectionsOpen = value; },
   get glossaryOpen() { return glossaryOpen; }, set glossaryOpen(value) { glossaryOpen = value; },
-  get sidePanel() { return sidePanel; }, set sidePanel(value) { sidePanel = value; },
+  get sidePanel() { return sidePanel ?? (importPopup ? 'import' as const : null); }, set sidePanel(value) { sidePanel = value === 'import' ? null : value; },
+  get importPopup() { return importPopup; }, set importPopup(value) { if (value) importPopup = value; else void closeImportPopup(); },
   get glossaryTerm() { return glossaryTerm; }, set glossaryTerm(value) { glossaryTerm = value; },
   get connectionTab() { return connectionTab; }, set connectionTab(value) { connectionTab = value; },
   get drawerElement() { return drawerElement; }, set drawerElement(value) { drawerElement = value; },
   get coverage() { return coverageSource; },
-  get modalOpen() { return connectionsOpen || glossaryOpen || sidePanel != null || coverageSource != null; }
+  get modalOpen() { return connectionsOpen || glossaryOpen || sidePanel != null || importPopup != null || coverageSource != null; }
 };
 
 // The Connections drawer form, recent connections and source profile changes.

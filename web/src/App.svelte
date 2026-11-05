@@ -3,14 +3,13 @@
   import { scopeProblem } from './lib/autorun';
   import { VALIDATION_MESSAGE } from './lib/api';
   import { WAIT_TEXT } from './lib/copy/waitCopy';
-  import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeSidePanel, onWindowKey, openSidePanel, panels, resetInvestigation, restore, results, runAnalysis, scope, startApp } from './lib/appState.svelte';
+  import { app, backToPreviousWindow, closeCoverage, dropRecord, evidence, initialize, investigateWindow, navigation, openComparison, openWhere, closeGlossary, closeImportPopup, closeSidePanel, onWindowKey, openCaseHome, openCaseImport, openTracing, panels, resetInvestigation, restore, results, runAnalysis, scope, startApp } from './lib/appState.svelte';
   import AppHeader from './components/AppHeader.svelte';
   import SubBar from './components/SubBar.svelte';
   import Landing from './components/Landing.svelte';
   import { zoomView } from './lib/zoomView.svelte';
   import { timeZone } from './lib/timeZone.svelte';
   import { backLabel, investigateState } from './lib/promote';
-  import { requestDiscover } from './lib/discoverIntent';
   import { lazyComponent } from './lib/lazy';
   import { readSubbarHint, writeSubbarHint } from './lib/subbarHint';
 
@@ -27,7 +26,7 @@
   const PatternsPanel = lazyComponent(() => import('./components/PatternsPanel.svelte'));
   const LedgerPanel = lazyComponent(() => import('./components/LedgerPanel.svelte'));
   const ExportPanel = lazyComponent(() => import('./components/ExportPanel.svelte'));
-  const ImportPanel = lazyComponent(() => import('./lib/components/ImportPanel.svelte'));
+  const ImportPopup = lazyComponent(() => import('./lib/components/importPopup/ImportPopup.svelte'));
   const BlackboxPanel = lazyComponent(() => import('./components/BlackboxPanel.svelte'));
   const CaseHome = lazyComponent(() => import('./lib/components/CaseHome.svelte'));
   const analysisViews = [
@@ -76,8 +75,10 @@
     window.addEventListener('resize', measure);
     return () => { cancelAnimationFrame(frame); window.removeEventListener('resize', measure); };
   });
-  // Opens the Import drawer with the "This computer" scan showing, so server data can be added without leaving the analysis.
-  function addData() { requestDiscover(); openSidePanel('import'); }
+  // Opens the Import files popup, so data can be added without leaving the analysis.
+  function addData() { openCaseImport(); }
+  // "Open timeline" in the popup's result: the timeline lives on the case page, so the analysis screen goes there first.
+  function openTimeline() { if (app.screen !== 'case') openCaseHome(); openTracing(); }
 </script>
 
 <svelte:head><title>Unravis</title></svelte:head>
@@ -102,7 +103,7 @@
     {#if panels.sidePanel === 'patterns'}<PatternsPanel query={scope.query} {zone} {sourceLabels} onClose={closeSidePanel} />{/if}
     {#if panels.sidePanel === 'ledger'}<LedgerPanel onClose={closeSidePanel} />{/if}
     {#if panels.sidePanel === 'export'}<ExportPanel query={scope.query} {zone} {sourceLabels} onClose={closeSidePanel} />{/if}
-    {#if panels.sidePanel === 'import'}<ImportPanel query={scope.query} {zone} onClose={closeSidePanel} />{/if}
+    {#if panels.importPopup}<ImportPopup caseId={panels.importPopup.caseId} caseTitle={panels.importPopup.caseTitle} query={scope.query} {zone} retryServerName={panels.importPopup.retryServerName} onClose={() => void closeImportPopup()} onOpenTimeline={openTimeline} />{/if}
     {#if panels.sidePanel === 'blackbox'}<BlackboxPanel onClose={closeSidePanel} />{/if}
 
     <main class="stage" class:with-drawer={depth === 2 && analysis != null} aria-busy={loading} inert={panels.modalOpen}>
