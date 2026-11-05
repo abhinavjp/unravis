@@ -1,21 +1,29 @@
-// Hub fix D: screen 112 "Add data to an open case" is the entry view of the case's Import drawer, a grid of five cards.
-//   GRID-01  the header Import opens the five cards with the wireframe words, and the entries that chose files still open the list.
-//   GRID-02  Files opens the existing list (heading focused); Back to Add data returns to the cards; staged files are kept and counted.
-//   GRID-03  SQL Server, MongoDB and Another day go to the case's Sources tabs, Blackbox opens the Blackbox panel; Another day is off when
-//            nothing can be read by day, and says so.
-//   GRID-04  leaving with staged files asks first (Keep editing keeps them, Leave drops them), with no staged files nothing is asked.
-//   GRID-05  while an import is sending every card is off and says why.
-//   GRID-06  the cards fit at 375 px wide with no sideways scroll.
+// How the Import files popup is reached and left, and what it holds. It replaces the old Import drawer with its grid of five cards: the popup
+// takes files only (Choose, Check, Result), and SQL Server, MongoDB, the Blackbox and Another day are reached from the case page.
+//   GRID-01  the header Import and the case page's Add a file open the same popup, with the wireframe words and no cards.
+//   GRID-02  stepping back from Check to Choose keeps the staged files.
+//   GRID-03  the other kinds of data are not in the popup; the case page's Sources tabs still reach them.
+//   GRID-04  leaving with files listed asks first (Keep them keeps, Discard drops them); with no files nothing is asked.
+//   GRID-05  while an import is sending, the popup cannot be closed or stepped back, and says so.
+//   GRID-06  the popup fits at 375 px wide with no sideways scroll.
+//   GRID-07  with one SQL day read, the popup still takes files only.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
 import { createCase, ensureHost } from '../support/api';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const FILES = join(__dirname, '..', 'fixtures', 'files');
-const NOTES = join(FILES, 'notes.txt');
 const W3C = join(FILES, 'u_ex261020.log');
+// A server the host list never held (the list holds web-a only), so the Check step shows a fix card.
+const W3C_UNLISTED = readFileSync(W3C, 'utf8').replace(/\bWEB-A\b/g, 'ISS-PROD-07');
 
-const closeButton = (page: Page) => page.getByRole('dialog').getByRole('button', { name: 'Close import' });
+const payload = (name: string, buffer: Buffer) => ({ name, mimeType: 'text/plain', buffer });
+const popup = (page: Page) => page.getByRole('dialog', { name: 'Import files' });
+const closeButton = (page: Page) => popup(page).getByRole('button', { name: 'Close import' });
+const picker = (page: Page) => popup(page).getByLabel('Choose files to import', { exact: true });
+const ack = (page: Page) => popup(page).getByRole('checkbox', { name: 'Confirm read-only' });
+
 // Sideways scroll, measured the way a finger would meet it: the page's own widths, a real attempt to scroll across, and every box on the page.
 async function noSidewaysScroll(page: Page) {
   await expect.poll(() => page.evaluate(() => {
@@ -34,190 +42,190 @@ async function noSidewaysScroll(page: Page) {
   expect(wide).toEqual([]);
 }
 
-const drawerCard = (page: Page, id: string) => page.locator('[data-drawer-card="' + id + '"]');
-
 // The header's Import is on the analysis screen, so the way there is the case page, then "Open the analysis". The page can be anywhere when this starts.
-async function openGrid(page: Page, title: string) {
+async function openFromHeader(page: Page, title: string) {
   const header = page.getByRole('button', { name: 'Import', exact: true });
-  if (!(await header.isVisible())) {
+  const thisCase = page.getByRole('button', { name: 'This case', exact: true });
+  // The header Import needs a case to be open: the demo screen shows it too, but no case is active there.
+  if (!(await header.isVisible()) || !(await thisCase.isVisible())) {
     const analysis = page.getByRole('button', { name: 'Open the analysis' });
     if (!(await analysis.isVisible())) {
-      const thisCase = page.getByRole('button', { name: 'This case', exact: true });
       if (await thisCase.isVisible()) await thisCase.click();
       else { await goHome(page); await openCase(page, title); }
     }
     await analysis.click();
   }
   await header.click();
-  // From the header the drawer asks which case to use (it may already be on it).
-  const use = page.getByRole('button', { name: new RegExp('^Use this case: .*' + title) });
-  const grid = page.locator('#drawer-add-head');
-  await expect(use.or(grid)).toBeVisible();
-  if (await use.isVisible()) await use.click();
-  await expect(grid).toBeVisible();
+  await expect(popup(page)).toBeVisible();
 }
 
-async function stageOne(page: Page) {
-  await drawerCard(page, 'files').getByRole('button', { name: 'Add files' }).click();
-  await expect(page.locator('#import-file-heading, #file-heading')).toBeVisible();
-  await page.getByLabel('Choose files to import').setInputFiles([NOTES]);
-  await page.getByLabel('What notes.txt is').selectOption('app-log');
+/** Stages one file and presses Continue; the Check step is done once the read-only box is drawn. */
+async function stageAndCheck(page: Page, file: { name: string; mimeType: string; buffer: Buffer }) {
+  await picker(page).setInputFiles([file]);
+  await popup(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(ack(page)).toBeVisible({ timeout: 60_000 });
 }
 
 test.beforeEach(async ({ api }) => {
   await ensureHost(api);
 });
 
-test('GRID-01: the header Import opens the five cards with the wireframe words; Add a file still opens the list', async ({ page, api }) => {
+test('GRID-01: the header Import and Add a file open the same popup with the wireframe words and no cards', async ({ page, api }) => {
   await createCase(api, 'QA Grid Words');
-  await openGrid(page, 'QA Grid Words');
+  await openFromHeader(page, 'QA Grid Words');
 
-  await expect(page.locator('#import-title')).toContainText('Add data, case');
-  await expect(page.getByText('Add a source after the case was created. Same cards as at creation. New data is imported separately and does not touch what is there.')).toBeVisible();
-  await expect(page.locator('#drawer-add-head')).toHaveText('Add data');
-  const wanted: Array<[string, string, string]> = [
-    ['sql', 'SQL Server', 'Add SQL source'],
-    ['mongo', 'MongoDB', 'Add Mongo source'],
-    ['blackbox', 'Blackbox', 'Add a Blackbox'],
-    ['files', 'Files', 'Add files'],
-    ['day', 'Another day', 'Add another day']
-  ];
-  for (const [id, title, button] of wanted) {
-    await expect(drawerCard(page, id).getByRole('heading', { name: title, level: 4 })).toBeVisible();
-    await expect(drawerCard(page, id).getByRole('button', { name: button })).toBeVisible();
-  }
-  // SQL and Mongo stay on even with no saved connection; the list of files is not shown behind the grid.
-  await expect(drawerCard(page, 'sql').getByRole('button', { name: 'Add SQL source' })).toBeEnabled();
-  await expect(drawerCard(page, 'mongo').getByRole('button', { name: 'Add Mongo source' })).toBeEnabled();
-  await expect(page.getByLabel('Choose files to import')).toBeHidden();
+  const dlg = popup(page);
+  await expect(dlg.getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
+  await expect(dlg.locator('.case-chip')).toContainText('QA Grid Words');
+  await expect(dlg.locator('.stepper .stp')).toHaveText([/Choose/, /Check/, /Result/]);
+  await expect(dlg.locator('.stepper .stp.cur')).toContainText('Choose');
+  await expect(dlg.locator('.prog-line')).toContainText('Step 1 of 3 · Choose files to import');
+  await expect(dlg.getByText('Drop files or a folder here')).toBeVisible();
+  await expect(dlg.getByText('IIS web logs, log4net, SQL error logs, Windows event logs. Text and CSV only.')).toBeVisible();
+  await expect(dlg.getByRole('button', { name: 'Add files', exact: true })).toBeVisible();
+  await expect(dlg.getByRole('button', { name: 'Add a folder', exact: true })).toBeVisible();
+  await expect(dlg.getByText('Nothing is sent until you press Import.')).toBeVisible();
+  await expect(dlg.getByRole('button', { name: 'Continue', exact: true })).toBeDisabled();
+  // The cards of the old drawer are gone, and so is its heading.
+  await expect(page.locator('[data-drawer-card]')).toHaveCount(0);
+  await expect(page.locator('#drawer-add-head')).toHaveCount(0);
+  await expect(page.locator('#import-title')).toHaveCount(0);
 
-  // Close, then the "Add a file" entry goes straight to the files, as it always did.
+  // Close, then the "Add a file" entry opens the same popup.
   await closeButton(page).click();
+  await expect(popup(page)).toHaveCount(0);
   await page.getByRole('button', { name: 'This case', exact: true }).click();
   await page.getByRole('button', { name: 'Add a file' }).click();
-  await expect(page.locator('#import-title')).toHaveText('Import files');
-  await expect(page.locator('#drawer-add-head')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Many files at once', level: 5 })).toBeVisible();
+  await expect(dlg.getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
+  await expect(dlg.locator('.prog-line')).toContainText('Step 1 of 3 · Choose files to import');
+  await expect(page.locator('[data-drawer-card]')).toHaveCount(0);
 });
 
-test('GRID-02: Files opens the list, Back returns to the cards, and staged files are kept and counted', async ({ page, api }) => {
+test('GRID-02: stepping back from Check to Choose keeps the staged files', async ({ page, api }) => {
   await createCase(api, 'QA Grid Files');
-  await openGrid(page, 'QA Grid Files');
-  await expect(drawerCard(page, 'files').locator('[data-staged]')).toHaveCount(0);
+  await openFromHeader(page, 'QA Grid Files');
+  const dlg = popup(page);
 
-  await stageOne(page);
-  await expect(page.getByRole('row').filter({ has: page.getByText('notes.txt', { exact: true }) })).toBeVisible();
+  await stageAndCheck(page, payload('u_ex261020.log', readFileSync(W3C)));
+  await expect(dlg.locator('.prog-line')).toContainText('Step 2 of 3');
+  await expect(dlg.locator('.stepper .stp.cur')).toContainText('Check');
+  // Only back: the step ahead and the current step are not buttons that can be pressed.
+  await expect(dlg.locator('.stepper .stp').nth(1)).toBeDisabled();
+  await expect(dlg.locator('.stepper .stp').nth(2)).toBeDisabled();
 
-  await page.getByRole('button', { name: 'Back to Add data' }).click();
-  await expect(page.locator('#drawer-add-head')).toBeVisible();
-  await expect(drawerCard(page, 'files').locator('[data-staged]')).toHaveText('1 file staged, not imported');
-  await expect(page.getByLabel('Choose files to import')).toBeHidden();
-
-  // The list comes back as it was.
-  await drawerCard(page, 'files').getByRole('button', { name: 'Add files' }).click();
-  await expect(page.getByLabel('What notes.txt is')).toHaveValue('app-log');
-  await expect(page.getByLabel('Choose files to import')).toBeVisible();
+  await dlg.locator('.stepper .stp').first().click();
+  await expect(dlg.locator('.prog-line')).toContainText('Step 1 of 3 · Choose files to import');
+  const iis = dlg.locator('[data-grp="kind:iis-w3c"]');
+  await expect(iis).toContainText('IIS web logs');
+  await expect(iis).toContainText('1 file');
+  await expect(dlg.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
 });
 
-test('GRID-03: the other cards go to the Sources tabs and the Blackbox panel; Another day is off with nothing to read by day', async ({ page, api }) => {
+test('GRID-03: the other kinds of data are not in the popup; the case page still reaches them', async ({ page, api }) => {
   await createCase(api, 'QA Grid Routes');
-  await openGrid(page, 'QA Grid Routes');
-  await expect(drawerCard(page, 'day').getByRole('button', { name: 'Add another day' })).toBeDisabled();
-  await expect(drawerCard(page, 'day')).toContainText('0 of 0 sources can be read by day');
+  await openFromHeader(page, 'QA Grid Routes');
+  const dlg = popup(page);
+  await expect(dlg.getByRole('button', { name: /SQL source|Mongo source|Blackbox|another day/i })).toHaveCount(0);
+  await closeButton(page).click();
+  await expect(popup(page)).toHaveCount(0);
 
-  await drawerCard(page, 'sql').getByRole('button', { name: 'Add SQL source' }).click();
-  await expect(page.locator('#import-title')).toHaveCount(0);
+  await page.getByRole('button', { name: 'This case', exact: true }).click();
+  await page.getByRole('tab', { name: 'Step 7: SQL Server', exact: true }).click();
   await expect(page.getByRole('tab', { name: 'Step 7: SQL Server', exact: true })).toHaveAttribute('aria-selected', 'true');
-
-  await openGrid(page, 'QA Grid Routes');
-  await drawerCard(page, 'mongo').getByRole('button', { name: 'Add Mongo source' }).click();
-  await expect(page.locator('#import-title')).toHaveCount(0);
-  await expect(page.getByRole('tab', { name: 'Add data', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByText('Add an API audit database', { exact: true })).toBeVisible();
-
-  await openGrid(page, 'QA Grid Routes');
-  await drawerCard(page, 'blackbox').getByRole('button', { name: 'Add a Blackbox' }).click();
-  await expect(page.locator('#import-title')).toHaveCount(0);
-  await expect(page.locator('#blackbox-title')).toBeVisible();
 });
 
-test('GRID-04: leaving with staged files asks first; Keep editing keeps them, Leave drops them; nothing staged asks nothing', async ({ page, api }) => {
+test('GRID-04: leaving with files listed asks first; Keep them keeps them, Discard drops them; nothing listed asks nothing', async ({ page, api }) => {
   await createCase(api, 'QA Grid Leave');
-  await openGrid(page, 'QA Grid Leave');
+  await openFromHeader(page, 'QA Grid Leave');
+  const dlg = popup(page);
 
-  // Nothing staged: Close just closes.
+  // Nothing listed: Close just closes.
   await closeButton(page).click();
-  await expect(page.locator('#import-title')).toHaveCount(0);
+  await expect(popup(page)).toHaveCount(0);
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
 
-  await openGrid(page, 'QA Grid Leave');
-  await stageOne(page);
+  await openFromHeader(page, 'QA Grid Leave');
+  await picker(page).setInputFiles([payload('u_ex261020.log', readFileSync(W3C))]);
+  await expect(dlg.locator('[data-grp="kind:iis-w3c"]')).toContainText('1 file');
   await closeButton(page).click();
-  const ask = page.locator('[data-leave]');
+  const ask = page.getByRole('alertdialog', { name: 'Discard 1 file?' });
   await expect(ask).toBeVisible();
-  await expect(ask).toContainText('Leave without importing?');
-  await expect(ask).toContainText('1 file and unsaved fields will be lost.');
-  await ask.getByRole('button', { name: 'Keep editing' }).click();
+  await expect(ask).toContainText('These files are still on the list. Discarding clears them and closes the popup.');
+  await ask.getByRole('button', { name: 'Keep them' }).click();
   await expect(ask).toHaveCount(0);
-  await expect(page.getByLabel('What notes.txt is')).toHaveValue('app-log');
+  await expect(dlg.locator('[data-grp="kind:iis-w3c"]')).toContainText('1 file');
 
-  // Escape asks as well, and a card that leaves the drawer asks before it goes.
+  // Escape asks as well, and answers Keep them when the question is already open. A click outside the popup asks too.
   await page.keyboard.press('Escape');
   await expect(ask).toBeVisible();
-  await ask.getByRole('button', { name: 'Keep editing' }).click();
-  await page.getByRole('button', { name: 'Back to Add data' }).click();
-  await drawerCard(page, 'sql').getByRole('button', { name: 'Add SQL source' }).click();
+  await page.keyboard.press('Escape');
+  await expect(ask).toHaveCount(0);
+  await page.locator('button.scrim').click({ position: { x: 5, y: 5 } });
   await expect(ask).toBeVisible();
-  await ask.getByRole('button', { name: 'Keep editing' }).click();
-  await expect(drawerCard(page, 'sql')).toBeVisible();
+  await ask.getByRole('button', { name: 'Keep them' }).click();
 
   await closeButton(page).click();
-  await ask.getByRole('button', { name: 'Leave' }).click();
-  await expect(page.locator('#import-title')).toHaveCount(0);
+  await ask.getByRole('button', { name: 'Discard', exact: true }).click();
+  await expect(popup(page)).toHaveCount(0);
 
-  // Opened again, the staged file is gone.
-  await page.getByRole('button', { name: 'Import', exact: true }).click();
-  await expect(drawerCard(page, 'files').locator('[data-staged]')).toHaveCount(0);
+  // Opened again, the discarded file is gone.
+  await openFromHeader(page, 'QA Grid Leave');
+  await expect(dlg.locator('[data-grp]')).toHaveCount(0);
+  await expect(dlg.getByRole('button', { name: 'Continue', exact: true })).toBeDisabled();
 });
 
-test('GRID-05: while an import is sending, every card is off and says why', async ({ page, api }) => {
+test('GRID-05: while an import is sending, the popup cannot be closed or stepped back, and says so', async ({ page, api }) => {
   await createCase(api, 'QA Grid Busy');
   let release: () => void = () => {};
   const gate = new Promise<void>((resolve) => { release = resolve; });
   await page.route('**/api/cases/*/imports*', async (route) => {
-    if (route.request().method() !== 'POST') { await route.continue(); return; }
+    if (route.request().method() !== 'POST' || /\/imports\/check/.test(route.request().url())) { await route.continue(); return; }
     await gate;
     await route.continue();
   });
-  await openGrid(page, 'QA Grid Busy');
-  await drawerCard(page, 'files').getByRole('button', { name: 'Add files' }).click();
-  await page.getByLabel('Choose files to import').setInputFiles([W3C]);
-  const box = page.getByRole('combobox', { name: /^Which computer wrote/ });
-  if (await box.count()) await box.first().selectOption('web-a');
-  await page.getByLabel('I confirm these files meet the conditions in the notice above.').check();
-  await page.getByRole('button', { name: 'Import 1 file' }).click();
+  await openFromHeader(page, 'QA Grid Busy');
+  const dlg = popup(page);
+  await stageAndCheck(page, payload('u_ex261020.log', readFileSync(W3C)));
+  await ack(page).check();
+  await dlg.getByRole('button', { name: 'Import 1 file', exact: true }).click();
 
-  await page.getByRole('button', { name: 'Back to Add data' }).click();
-  await expect(page.locator('[data-busy]')).toHaveText('An import is already running. Stop it first.');
-  for (const id of ['sql', 'mongo', 'blackbox', 'files', 'day']) await expect(drawerCard(page, id).getByRole('button')).toBeDisabled();
+  await expect(dlg.locator('.prog-line')).toContainText('Step 3 of 3 · Importing — do not close');
+  await expect(dlg.getByText('Importing 0 of 1 files')).toBeVisible();
+  await expect(dlg.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
+  for (const index of [0, 1, 2]) await expect(dlg.locator('.stepper .stp').nth(index)).toBeDisabled();
+  // Close, Esc and a click outside wait until the import ends or Cancel is pressed.
+  await closeButton(page).click();
+  await page.keyboard.press('Escape');
+  await page.locator('button.scrim').click({ position: { x: 5, y: 5 } });
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  await expect(dlg).toBeVisible();
+
   release();
-  await expect(page.locator('[data-busy]')).toHaveCount(0, { timeout: 60_000 });
+  await expect(dlg.locator('.result-hero')).toContainText('1 files imported', { timeout: 60_000 });
+  await expect(dlg.locator('.prog-line')).toContainText('Step 3 of 3 · Result');
 });
 
-test('GRID-06: the cards fit at 375 px wide with no sideways scroll', async ({ page, api }) => {
+test('GRID-06: the popup fits at 375 px wide with no sideways scroll', async ({ page, api }) => {
   await createCase(api, 'QA Grid Narrow');
-  await openGrid(page, 'QA Grid Narrow');
+  await openFromHeader(page, 'QA Grid Narrow');
+  const dlg = popup(page);
   await page.setViewportSize({ width: 375, height: 800 });
-  await expect(drawerCard(page, 'day')).toBeVisible();
-  // Neither the drawer nor the page behind it scrolls sideways.
-  await expect.poll(() => page.getByRole('dialog').evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+  await expect(dlg.getByText('Drop files or a folder here')).toBeVisible();
+  await expect.poll(() => dlg.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
   await noSidewaysScroll(page);
-  for (const id of ['sql', 'mongo', 'blackbox', 'files', 'day']) {
-    const b = await drawerCard(page, id).boundingBox();
-    expect(b && b.x >= 0 && b.x + b.width <= 376).toBe(true);
-  }
+
+  // The Check step with a fix card is the widest thing the popup draws.
+  await stageAndCheck(page, payload('u_ex261030.log', Buffer.from(W3C_UNLISTED)));
+  await expect(dlg.locator('.fix')).toContainText('ISS-PROD-07');
+  await expect.poll(() => dlg.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+  await noSidewaysScroll(page);
+  const box = await dlg.boundingBox();
+  expect(box && box.x >= 0 && box.x + box.width <= 376).toBe(true);
+  const primary = await dlg.getByRole('button', { name: 'Add ISS-PROD-07 as a computer and accept 1 files', exact: true }).boundingBox();
+  expect(primary && primary.x >= 0 && primary.x + primary.width <= 376).toBe(true);
 });
 
-test('GRID-07: with one SQL day read, Another day counts it, is on, and opens the Add another day tab', async ({ page, api }) => {
+test('GRID-07: with one SQL day read, the popup still takes files only', async ({ page, api }) => {
   await createCase(api, 'QA Grid Day');
   await goHome(page);
   await openCase(page, 'QA Grid Day');
@@ -233,13 +241,10 @@ test('GRID-07: with one SQL day read, Another day counts it, is on, and opens th
   await read.getByRole('button', { name: 'Read this day' }).click();
   await expect(panel.locator('[data-notice]')).toHaveText('Read and added to the case.');
 
-  await openGrid(page, 'QA Grid Day');
-  const day = drawerCard(page, 'day');
-  await expect(day).toContainText('1 of 1 sources can be read by day');
-  const add = day.getByRole('button', { name: 'Add another day' });
-  await expect(add).toBeEnabled();
-  await add.click();
-  await expect(page.locator('#import-title')).toHaveCount(0);
-  await expect(page.getByRole('tab', { name: 'Add another day', exact: true })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('heading', { name: 'Add another day' }).first()).toBeVisible();
+  await openFromHeader(page, 'QA Grid Day');
+  const dlg = popup(page);
+  await expect(dlg.getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
+  await expect(dlg.getByRole('button', { name: /another day/i })).toHaveCount(0);
+  await expect(page.locator('[data-drawer-card]')).toHaveCount(0);
+  await expect(dlg.getByText('Drop files or a folder here')).toBeVisible();
 });

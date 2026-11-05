@@ -10,7 +10,7 @@
   // time zone; any other kind keeps the server name as it is. The card reports the group key of its file list as `serverName`.
   // `totalServers` is the number of open server cards, for the "Add all" shortcut (hidden below two).
   let {
-    card, kind, serverName, fileCount, files, selected = {}, needsZone = false, suggestedZone = 'UTC', expanded = false, totalServers = 1,
+    card, kind, serverName, fileCount, files, selected = {}, needsZone = false, askName = false, suggestedZone = 'UTC', expanded = false, totalServers = 1,
     onResolve, onLeaveOut, onUndo, onAddAll, onToggle, onGroupAll, onSelect
   }: {
     card: 'open' | 'resolved' | 'leftout';
@@ -20,6 +20,8 @@
     files: { key: string; name: string; size: string }[];
     selected?: Record<string, boolean>;
     needsZone?: boolean;
+    /** Asks for the computer's name even when the kind needs no time zone. */
+    askName?: boolean;
     suggestedZone?: string;
     expanded?: boolean;
     totalServers?: number;
@@ -52,11 +54,11 @@
   const name = $derived((typedName ?? serverName).trim());
   const zone = $derived(typedZone ?? suggestedZone);
   const zones = $derived(COMMON_ZONES.includes(zone) ? COMMON_ZONES : [...COMMON_ZONES, zone]);
-  const nameBad = $derived(touched && needsZone ? labelProblemText(labelProblem(name, null)) : '');
+  const nameBad = $derived(touched && (needsZone || askName) ? labelProblemText(labelProblem(name, null)) : '');
   const zoneBad = $derived(touched && needsZone ? zoneProblemText(zoneNameProblem(zone)) : '');
   const chosen = $derived(files.filter((file) => selected[file.key]).length);
   const word = $derived(files.length === 1 ? ' file' : ' files');
-  const leftOutHelp = $derived(needsZone ? 'These files were not given a computer.' : 'These files from ' + serverName + ' were not added.');
+  const leftOutHelp = $derived(needsZone || askName ? 'These files were not given a computer.' : 'These files from ' + serverName + ' were not added.');
 
   $effect(() => {
     if (allEl) allEl.indeterminate = chosen > 0 && chosen < files.length;
@@ -71,7 +73,8 @@
   async function resolve() {
     touched = true;
     failure = '';
-    if (needsZone && (labelProblem(name, null) !== '' || zoneNameProblem(zone) !== '')) return;
+    if ((needsZone || askName) && labelProblem(name, null) !== '') return;
+    if (needsZone && zoneNameProblem(zone) !== '') return;
     saving = true;
     const result = await saveHost(name, needsZone ? zone : '', !needsZone);
     saving = false;
@@ -134,7 +137,7 @@
       <div class="fix-title"><span class="muted">{@render warnIcon()}</span> {POPUP_TEXT.fixLeftOut(fileCount, kind)}</div>
       <p class="fix-help">{leftOutHelp} <button type="button" class="linkbtn" bind:this={undoEl} onclick={() => onUndo?.()}>{POPUP_TEXT.fixBringBack}</button></p>
     </div>
-  {:else if !needsZone}
+  {:else if !needsZone && !askName}
     <div class="fix-head">
       <div class="fix-title"><span class="warn">{@render warnIcon()}</span> {POPUP_TEXT.fixTitleNeedsComputer(fileCount, serverName, kind)}</div>
       <p class="fix-help">{POPUP_TEXT.fixHelpNeedsComputer}</p>
@@ -162,6 +165,7 @@
         <span class="hint" id={hintId}>{POPUP_TEXT.fixNameHint}</span>
         {#if nameBad}<span class="fail" role="alert">{nameBad}</span>{/if}
       </div>
+      {#if needsZone}
       <div class="tz-row">
         <div class="field">
           <label for={zoneId}>{POPUP_TEXT.fixZoneLabel}</label>
@@ -172,8 +176,9 @@
         </div>
       </div>
       <p class="fix-help">{POPUP_TEXT.fixZoneHelp}</p>
+      {/if}
       <div class="fix-actions">
-        <button type="button" class="btn btn-primary" bind:this={primaryEl} disabled={saving} onclick={resolve}>{POPUP_TEXT.fixUseName(name, fileCount)}</button>
+        <button type="button" class="btn btn-primary" bind:this={primaryEl} disabled={saving} onclick={resolve}>{needsZone || name === '' ? POPUP_TEXT.fixUseName(name, fileCount) : POPUP_TEXT.fixAccept(name, fileCount)}</button>
         <button type="button" class="linkbtn" disabled={saving} onclick={() => onLeaveOut?.()}>{POPUP_TEXT.fixLeaveOut(fileCount)}</button>
       </div>
       {#if failure}<p class="fail" role="alert">{failure}</p>{/if}

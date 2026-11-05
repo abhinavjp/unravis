@@ -2,7 +2,7 @@
 //   SRCGAP-01  Edit labels on a file's row saves its Environment, Portal and API (the first save makes the tag), and they stay after a reload.
 //   SRCGAP-02  The time zone of a file's computer is saved from its row, and the list says the computer's zone applies to every file from it.
 //   SRCGAP-03  An audit database row shows how many documents it holds and how old the newest one is.
-//   SRCGAP-04  A hand-picked list of sources on the timeline switches on the file the drawer added, once the drawer closes.
+//   SRCGAP-04  A hand-picked list of sources on the timeline switches on the file the Import files popup added, once the popup closes.
 //   SRCGAP-05  A switch that would leave more than 50 sources picked is refused, and a short note says so (the answer is changed to list 54 sources).
 import { test, expect, type Locator, type Page } from '../support/fixtures';
 import { createCase, ensureHost, importFile, HOST } from '../support/api';
@@ -120,7 +120,7 @@ test('SRCGAP-03: an audit database row shows its document count and the age of i
   await expect(size).toContainText(/docs · newest .+ ago/);
 });
 
-// ---------------------------------------------------------------- the timeline after the drawer
+// ---------------------------------------------------------------- the timeline after the popup
 
 const chip = (page: Page, sourceId: string) => page.locator('[data-testid=trace-sources] .chip[data-source-id="' + sourceId + '"]');
 
@@ -132,22 +132,26 @@ async function openTimeline(page: Page, title: string) {
   await expect(page.locator('[data-testid=trace-sources]')).toBeVisible();
 }
 
-/** Adds one more IIS file through the drawer that "Add files" on an empty SQL lane opens, then closes the drawer. */
-async function addThroughDrawer(page: Page, name: string, content: string) {
+/** Adds one more IIS file through the Import files popup that "Add files" on an empty SQL lane opens, then closes the popup. */
+async function addThroughPopup(page: Page, name: string, content: string) {
   await page.locator('.panel[data-lane=sql] [data-testid=lane-add-files]').click();
-  await expect(page.locator('#import-title')).toHaveText('Import files');
+  const popup = page.getByRole('dialog', { name: 'Import files' });
+  await expect(popup).toBeVisible();
   await page.getByLabel('Choose files to import').setInputFiles([{ name, mimeType: 'text/plain', buffer: Buffer.from(content) }]);
-  await page.getByLabel('What ' + name + ' is').selectOption('iis-w3c');
-  const computers = page.getByRole('combobox', { name: /^Which computer wrote/ });
-  for (let i = 0; i < (await computers.count()); i++) if ((await computers.nth(i).inputValue()) === '') await computers.nth(i).selectOption(HOST);
-  await page.getByLabel('I confirm these files meet the conditions in the notice above.').check();
-  await page.getByRole('button', { name: 'Import 1 file' }).click();
-  await expect(page.getByText(/^Finished: /)).toBeVisible({ timeout: 60_000 });
-  await page.getByRole('dialog').getByRole('button', { name: 'Close import' }).click();
-  await expect(page.locator('#import-title')).toHaveCount(0);
+  await popup.getByRole('button', { name: 'Continue' }).click();
+  const ack = popup.getByRole('checkbox', { name: 'Confirm read-only' });
+  await expect(ack).toBeVisible({ timeout: 60_000 });
+  // The demo host list holds the computer the file names, so no fix card is expected; if the server asks for one, the card's button answers it.
+  const fix = popup.getByRole('button', { name: /^Add .+ as a computer and accept \d+ files$/ });
+  if ((await fix.count()) > 0) await fix.first().click();
+  await ack.check();
+  await popup.getByRole('button', { name: 'Import 1 file' }).click();
+  await expect(popup.getByRole('button', { name: 'Open timeline' })).toBeVisible({ timeout: 60_000 });
+  await popup.getByRole('button', { name: 'Close import' }).click();
+  await expect(popup).toHaveCount(0);
 }
 
-test('SRCGAP-04: a hand-picked list also switches on the file the drawer added, once the drawer closes', async ({ page, api }) => {
+test('SRCGAP-04: a hand-picked list also switches on the file the popup added, once the popup closes', async ({ page, api }) => {
   const { id, importId } = await caseWithFile(api, 'QA Source New File');
   await openTimeline(page, 'QA Source New File');
   await expect(chip(page, 'imp_' + importId)).toHaveAttribute('aria-pressed', 'true');
@@ -156,7 +160,7 @@ test('SRCGAP-04: a hand-picked list also switches on the file the drawer added, 
   await expect(chip(page, 'demo-east')).toHaveAttribute('aria-pressed', 'false');
 
   const second = W3C.replace('2026-10-20 08:00:06', '2026-10-20 08:10:06');
-  await addThroughDrawer(page, 'u_ex261021.log', second);
+  await addThroughPopup(page, 'u_ex261021.log', second);
   const list = ((await api('GET', '/api/cases/' + id + '/imports')).json as Imports).imports;
   const added = list.find((item) => item.fileName === 'u_ex261021.log');
   expect(added).toBeTruthy();

@@ -1,7 +1,8 @@
 // A real IIS log names its own server in s-computername, and a server that was never put in the host list is the usual case.
 // The wizard has to take such a file under the computer the person picked for it, and to say plainly what to do when none was picked.
 //   UNLISTED-01  A W3C log whose server is not in the list, with a computer picked: it is read ("Used"), filed under the picked computer.
-//   UNLISTED-02  The same log with no computer picked: it is refused, and the reason tells the person to pick the computer or add it.
+//   UNLISTED-02  The same log with no computer picked: it is refused as needing a computer, and the row tells the person to pick the computer.
+// The same file in the Import files popup of an open case is covered by IMPORT-09 and IMPORT-10 (import-drawer.spec.ts): a fix card adds the computer.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome } from '../support/ui';
 import { readFileSync } from 'node:fs';
@@ -55,7 +56,7 @@ test('UNLISTED-01: an IIS log from a server that is not in the host list is read
   expect(recorded).not.toContain('ISS-PROD-07');
 });
 
-test('UNLISTED-02: the same log with no computer picked is refused, and the reason says to pick the computer or add it', async ({ page, api, allow }) => {
+test('UNLISTED-02: the same log with no computer picked is refused as needing a computer, and the row says to pick it', async ({ page, api, allow }) => {
   allow(/422|409/, 'a file the server refuses on purpose');
   expect((await api('PUT', '/api/hosts', { version: 1, hosts: [{ label: 'WEB-B', role: 'iis', tz: 'UTC' }] })).status).toBe(200);
   await holdFile(page, 'QA Unlisted Server Not Picked');
@@ -70,7 +71,7 @@ test('UNLISTED-02: the same log with no computer picked is refused, and the reas
   const table = page.getByRole('table', { name: /result for each file/i });
   const line = table.getByRole('row').filter({ hasText: 'u_ex261021.log' });
   await expect(line).toContainText('Rejected');
-  await expect(line).toContainText('not in your list');
-  await expect(line).toContainText('Pick the computer that wrote it');
+  await expect(line).toContainText('needs a computer');
+  await expect(line).toContainText('Pick the computer that wrote this file');
   await expect(line).not.toContainText('ISS-PROD-07');
 });

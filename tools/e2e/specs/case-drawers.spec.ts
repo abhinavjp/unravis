@@ -1,6 +1,8 @@
 // Archived list, the free and restore drawers without a master key, and erasing from the screen.
+// Importing files is not a drawer any more: CASE-21b checks that the Import files popup is a centred dialog.
 import { test, expect } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
+import { createCase } from '../support/api';
 
 test.beforeEach(async ({ page }) => {
   await goHome(page);
@@ -75,4 +77,38 @@ test('CASE-21: a case whose working copy is missing can be removed from the list
   const row = page.getByRole('listitem').filter({ hasText: 'Search index rebuild, 9 October' });
   await expect(row).toContainText('Working copy missing');
   await expect(row.getByRole('button', { name: /Erase/ })).toBeVisible();
+});
+
+test('CASE-21b: importing files opens a centred popup, not a side drawer', async ({ page, api }) => {
+  await createCase(api, 'QA Import Not Drawer');
+  await page.reload(); // the start screen was drawn before this case existed
+  await goHome(page);
+  await openCase(page, 'QA Import Not Drawer');
+  await page.getByRole('button', { name: 'Add a file' }).click();
+
+  const popup = page.getByRole('dialog', { name: 'Import files' });
+  await expect(popup).toBeVisible();
+  // None of the drawer's parts are there: its class, its scrim and close button, its heading id and the old wording.
+  await expect(popup).not.toHaveClass(/connections-drawer/);
+  await expect(page.locator('.drawer-scrim, .drawer-close, .import-drawer, #import-title')).toHaveCount(0);
+  await expect(page.getByText('Many files at once')).toHaveCount(0);
+  await expect(popup.locator('.stepper')).toBeVisible();
+
+  // A drawer is docked to the right edge. The popup is centred and clear of every edge.
+  const box = await popup.boundingBox();
+  const view = page.viewportSize();
+  expect(box && view).toBeTruthy();
+  if (box && view) {
+    expect(box.x).toBeGreaterThan(0);
+    expect(box.x + box.width).toBeLessThan(view.width);
+    expect(Math.abs(box.x + box.width / 2 - view.width / 2)).toBeLessThanOrEqual(2);
+  }
+
+  // It closes with its own button and with Escape, as one dialog.
+  await popup.getByRole('button', { name: 'Close import' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add a file' }).click();
+  await expect(popup).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });

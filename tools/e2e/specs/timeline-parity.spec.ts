@@ -7,10 +7,10 @@
 //             "Last 4 hours" sets 05:00-09:00 / 01:00-05:00, flips the pressed state and sends no trace; the popover keeps its own ranges.
 //   TLPAR-02  The two h3 headings and their help lines; the fieldset legends still name the groups "Incident window (UTC)" and
 //             "Comparison period (UTC)", and "UTC" is still on the page.
-//   TLPAR-03  Add evidence sits in the "Sources traced" row and opens the Import files drawer.
+//   TLPAR-03  Add evidence sits in the "Sources traced" row and opens the Import files popup.
 //   TLPAR-04  Refresh timeline is disabled during the first read, repeats the previous request, and after a chip click it reads the
 //             new window and the "windows changed" line goes away.
-//   TLPAR-05  Closing the Add evidence drawer reads the timeline again.
+//   TLPAR-05  Closing the Add evidence popup reads the timeline again.
 //   TLPAR-06  Screenshots for the review: light and dark at 1280 and 375 px wide, written to .dev/tlpar-shots.
 import { test, expect, type Page, type Request } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
@@ -116,13 +116,14 @@ test('TLPAR-02: the "Investigation window" and "Compare it with" headings with t
   await expect(page.getByText('Times are typed in UTC.', { exact: true })).toBeVisible();
 });
 
-test('TLPAR-03: Add evidence sits in the "Sources traced" row and opens the Import files drawer', async ({ page }) => {
+test('TLPAR-03: Add evidence sits in the "Sources traced" row and opens the Import files popup', async ({ page }) => {
   await openTimeline(page);
   await expect(sourcesRow(page).getByRole('heading', { name: 'Sources traced' })).toBeVisible();
   const add = sourcesRow(page).getByRole('button', { name: 'Add evidence' });
   await expect(add).toBeVisible();
   await add.click();
-  await expect(page.locator('#import-title')).toHaveText('Import files');
+  await expect(page.getByRole('dialog', { name: 'Import files' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
 });
 
 test('TLPAR-04: Refresh timeline is disabled during the first read, repeats the request, and reads the chip\'s new window', async ({ page }) => {
@@ -163,24 +164,25 @@ test('TLPAR-04: Refresh timeline is disabled during the first read, repeats the 
   await expect(stale).toBeHidden();
 });
 
-test('TLPAR-05: closing the Add evidence drawer reads the timeline again', async ({ page }) => {
+test('TLPAR-05: closing the Add evidence popup reads the timeline again', async ({ page }) => {
   await openTimeline(page);
   await expect(page.locator('.tracing-chart')).toBeVisible();
   const traces = countTraces(page);
   const before = traces.count();
 
+  const popup = page.getByRole('dialog', { name: 'Import files' });
   await sourcesRow(page).getByRole('button', { name: 'Add evidence' }).click();
-  await expect(page.locator('#import-title')).toHaveText('Import files');
+  await expect(popup).toBeVisible();
 
-  // Closing the drawer (Escape, or its Close button when Escape does not close it) makes the timeline read again.
+  // Closing the popup (Escape, or its Close import button when Escape does not close it) makes the timeline read again.
   const again = page.waitForRequest(isTrace);
   await page.keyboard.press('Escape');
-  if (await page.locator('#import-title').isVisible()) {
-    await page.getByRole('button', { name: 'Close', exact: true }).first().click();
+  if (await popup.isVisible()) {
+    await popup.getByRole('button', { name: 'Close import' }).click();
   }
-  await expect(page.locator('#import-title')).toBeHidden();
+  await expect(popup).toBeHidden();
   await again;
-  expect(traces.count(), 'the drawer closing reads the timeline again').toBe(before + 1);
+  expect(traces.count(), 'the popup closing reads the timeline again').toBe(before + 1);
   await expect(page.locator('.tracing-chart')).toBeVisible();
 });
 

@@ -2,7 +2,7 @@
 // Each test asserts the EXPECTED behaviour. All three defects are fixed, so no test is marked `test.fail` or `test.fixme` any more.
 //   G4-01  Choosing the same file twice must not list it twice (or must say it is already there).
 //   G4-02  A double click on Remove should drop one file, not two.
-//   G4-03  Escape on the drawer's "leave without importing?" question answers Keep editing, and the staged files stay.
+//   G4-03  Escape on the Import files popup's "Discard N files?" question answers Keep them, and the staged files stay.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
 import { createCase, ensureHost } from '../support/api';
@@ -52,21 +52,24 @@ test('G4-02: a double click on Remove drops one file, not two', async ({ page })
   await expect(rows).toHaveCount(before - 1);
 });
 
-test('G4-03: Escape on the drawer leave question answers Keep editing and the staged files stay', async ({ page, api }) => {
+test('G4-03: Escape on the popup discard question answers Keep them and the staged files stay', async ({ page, api }) => {
   await createCase(api, 'QA G4 escape prompt');
   await goHome(page);
   await openCase(page, 'QA G4 escape prompt');
   await page.getByRole('button', { name: 'Add a file' }).click();
-  await expect(page.locator('#import-title')).toHaveText('Import files');
-  const use = page.getByRole('button', { name: /^Use this case: .*QA G4 escape prompt/ });
-  if (await use.isVisible().catch(() => false)) await use.click();
+  const popup = page.getByRole('dialog', { name: 'Import files' });
+  await expect(popup).toBeVisible();
   await picker(page).setInputFiles([W3C]);
-  await expect(fileRows(page, 'u_ex261020.log')).toHaveCount(1);
+  const staged = popup.locator('[data-grp="kind:iis-w3c"]');
+  await expect(staged).toContainText('1 file');
 
   await page.keyboard.press('Escape');
-  const keep = page.getByRole('button', { name: 'Keep editing' });
+  const confirm = page.getByRole('alertdialog');
+  await expect(confirm.getByRole('heading', { name: 'Discard 1 file?' })).toBeVisible();
+  const keep = confirm.getByRole('button', { name: 'Keep them' });
   await expect(keep).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(keep).toBeHidden();
-  await expect(fileRows(page, 'u_ex261020.log')).toHaveCount(1);
+  await expect(confirm).toBeHidden();
+  await expect(popup).toBeVisible();
+  await expect(staged).toContainText('1 file');
 });

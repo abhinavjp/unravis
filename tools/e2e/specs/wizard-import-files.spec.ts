@@ -285,7 +285,7 @@ test('FILES-08: a file that was not read tells why and can be tried again, and t
   await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
 });
 
-test('FILES-09: a file that was not read can be left out, and Add more files opens the import drawer on the case', async ({ page, api, allow }) => {
+test('FILES-09: a file that was not read can be left out, and Add more files opens the Import files popup on the case', async ({ page, api, allow }) => {
   allow(/422|409/, 'a file the server refuses on purpose');
   expect((await putHosts(api, ['WEB-H'])).status).toBe(200);
   await holdFiles(page, 'QA Files Leave Out', [W3C, HTTPERR]);
@@ -303,7 +303,10 @@ test('FILES-09: a file that was not read can be left out, and Add more files ope
   await expect(page.getByRole('button', { name: 'Try the failed files again' })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Add more files' }).click();
-  await expect(page.getByRole('heading', { name: /import/i }).first()).toBeVisible();
+  const popup = page.getByRole('dialog', { name: 'Import files' });
+  await expect(popup).toBeVisible();
+  await expect(popup.getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
+  await expect(popup.locator('.case-chip')).toContainText('QA Files Leave Out');
 });
 
 test('FILES-10: a dropped folder is walked, nested folders included, and every file keeps the folder it came from', async ({ page }) => {

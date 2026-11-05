@@ -1,12 +1,13 @@
 // The log4net text-block application log (importer log4net-blocks): each entry is a few labelled lines (Logger name, Type, Server Time,
 // UTC Time, Application URL, User IP) followed by the message and, for an error, the exception text. The fixture is synthetic.
-//   L4N-01  Case drawer: the file is read by content (the name says nothing), one garbled block makes it Partly used, and the case lists it.
-//   L4N-02  Case drawer: a file named log.txt is suggested as an application log from its name alone, and a prose file is Rejected.
+//   L4N-01  Import files popup: the file is read by content (the name says nothing) and asks for a computer; sent with one, the garbled block is
+//           left out and the case lists it.
+//   L4N-02  Import files popup: a file named log.txt is suggested as an application log from its name alone, and a prose file is not supported.
 //   L4N-03  Create wizard: the Application logs card holds the file, the case is made with it, and the file was read as log4net blocks.
 //   L4N-04  The Investigation Timeline of the case lists the file among the Sources traced.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
-import { createCase, ensureHost } from '../support/api';
+import { createCase, ensureHost, importFile } from '../support/api';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -15,17 +16,13 @@ const L4N = join(FILES, 'app-log4net.txt');
 const NOTES = join(FILES, 'notes.txt');
 const SHOTS = join(__dirname, '..', '..', '..', '.dev', 'l4n-shots');
 
-const row = (page: Page, name: string) => page.getByRole('row').filter({ has: page.getByText(name, { exact: true }) });
-const tick = (page: Page) => page.getByLabel('I confirm these files meet the conditions in the notice above.');
-const picker = (page: Page) => page.getByLabel('Choose files to import');
+const popup = (page: Page) => page.getByRole('dialog', { name: 'Import files' });
+const ack = (page: Page) => popup(page).getByRole('checkbox', { name: 'Confirm read-only' });
 
-async function openDrawer(page: Page, title: string) {
+async function openPopup(page: Page, title: string) {
   await openCase(page, title);
   await page.getByRole('button', { name: 'Add a file' }).click();
-  await expect(page.locator('#import-title')).toHaveText('Import files');
-  const use = page.getByRole('button', { name: new RegExp('^Use this case: .*' + title) });
-  if (await use.isVisible().catch(() => false)) await use.click();
-  await expect(page.getByRole('heading', { name: 'Many files at once', level: 5 })).toBeVisible();
+  await expect(popup(page).getByRole('heading', { name: 'Import files', level: 2 })).toBeVisible();
 }
 
 /** Picks a computer for every row that asks for one. */
@@ -46,61 +43,61 @@ test.beforeEach(async ({ api }) => {
   await ensureHost(api);
 });
 
-test('L4N-01: a log4net block file is read by its content, the garbled block makes it Partly used, and the case lists it', async ({ page, api }) => {
-  await createCase(api, 'QA Log4net Drawer');
+test('L4N-01: a log4net block file is read by its content and asks for a computer; sent with one, the garbled block is left out and the case lists it', async ({ page, api }) => {
+  const caseId = await createCase(api, 'QA Log4net Popup');
   await goHome(page);
-  await openDrawer(page, 'QA Log4net Drawer');
+  await openPopup(page, 'QA Log4net Popup');
+  const dlg = popup(page);
 
-  // The name says nothing, so the person says it is an application log; the server then reads the content and finds the log4net layout.
-  await picker(page).setInputFiles([L4N]);
-  const kind = page.getByLabel('What app-log4net.txt is');
-  await expect(kind).toHaveValue('');
-  await kind.selectOption('app-log');
-  await chooseComputers(page);
-  await tick(page).check();
-  await shot(page, 'drawer-before');
-  await page.getByRole('button', { name: 'Import 1 file' }).click();
+  // The name says nothing, so the file waits in the group nobody recognised until the server reads its content.
+  await dlg.getByLabel('Choose files to import', { exact: true }).setInputFiles([{ name: 'app-log4net.txt', mimeType: 'text/plain', buffer: readFileSync(L4N) }]);
+  await expect(dlg.locator('[data-grp="unsupported"]')).toContainText('app-log4net.txt');
+  await shot(page, 'popup-before');
+  await dlg.getByRole('button', { name: 'Continue', exact: true }).click();
+  // The server found the log4net layout, so the file is not "not supported"; a log names no computer, so a card asks for one before it is sent.
+  await expect(dlg.getByText('1 fix needed before you can import')).toBeVisible({ timeout: 60_000 });
+  await expect(dlg.locator('.fix')).toHaveCount(1);
+  await expect(dlg.locator('.notsupp')).toHaveCount(0);
+  await expect(ack(page)).toBeDisabled();
+  await shot(page, 'popup-after');
 
-  await expect(page.getByText(/^Finished: /)).toBeVisible({ timeout: 60_000 });
-  const r = row(page, 'app-log4net.txt');
-  // Thirty-nine good blocks and one block whose time nobody can read (under the one-in-twenty limit): used, but only partly.
-  await expect(r).toContainText('Partly used');
-  await expect(r).not.toContainText('Rejected');
-  await expect(r).toContainText(/Kept \d+ rows?\./);
-  await shot(page, 'drawer-after');
-
-  // The case holds the import, and it is the log4net block importer that read it.
-  const caseId = (await api('GET', '/api/cases')).json.cases.find((c: { title: string }) => c.title === 'QA Log4net Drawer').id as string;
+  // With a computer, the block importer reads it: thirty-nine good blocks and one block whose time nobody can read (under the one-in-twenty limit).
+  const sent = await importFile(api, caseId, readFileSync(L4N), { name: 'app-log4net.txt', importer: 'log4net-blocks', host: 'web-a' });
+  expect(sent.status, sent.text).toBeLessThan(300);
   const imports = await api('GET', `/api/cases/${caseId}/imports`);
   expect(imports.status).toBe(200);
   const text = JSON.stringify(imports.json);
   expect(text).toContain('app-log4net.txt');
   expect(text).toContain('log4net-blocks');
+  expect(text).toMatch(/"rejected":\s*1\b/);
   // The privacy rule of the application-log reader: the URL and the user address in the file are never kept.
   expect(text).not.toContain('app.example.test');
   expect(text).not.toContain('192.0.2.');
 });
 
-test('L4N-02: a file named log.txt is suggested as an application log, and a prose file chosen as one is Rejected', async ({ page, api }) => {
+test('L4N-02: a file named log.txt is suggested as an application log, and a prose file is not supported', async ({ page, api }) => {
   await createCase(api, 'QA Log4net Names');
   await goHome(page);
-  await openDrawer(page, 'QA Log4net Names');
+  await openPopup(page, 'QA Log4net Names');
+  const dlg = popup(page);
 
   // The same content under the usual file name of a log4net block log: the list suggests the kind itself.
-  await picker(page).setInputFiles([{ name: 'log.txt', mimeType: 'text/plain', buffer: readFileSync(L4N) }, { name: 'notes.txt', mimeType: 'text/plain', buffer: readFileSync(NOTES) }]);
-  await expect(page.getByLabel('What log.txt is')).toHaveValue('app-log');
-  await expect(page.getByLabel('What notes.txt is')).toHaveValue('');
-  await page.getByLabel('What notes.txt is').selectOption('app-log');
-  await chooseComputers(page);
-  await tick(page).check();
-  await page.getByRole('button', { name: 'Import 2 files' }).click();
+  await dlg.getByLabel('Choose files to import', { exact: true }).setInputFiles([
+    { name: 'log.txt', mimeType: 'text/plain', buffer: readFileSync(L4N) },
+    { name: 'notes.txt', mimeType: 'text/plain', buffer: readFileSync(NOTES) }
+  ]);
+  const suggested = dlg.locator('[data-grp="kind:app-log"]');
+  await expect(suggested).toContainText('log4net');
+  await expect(suggested).toContainText('1 file');
+  await expect(dlg.locator('[data-grp="unsupported"]')).toContainText('notes.txt');
+  await dlg.getByRole('button', { name: 'Continue', exact: true }).click();
 
-  await expect(page.getByText(/^Finished: /)).toBeVisible({ timeout: 60_000 });
-  await expect(row(page, 'log.txt')).toContainText('Partly used');
-  // Prose is not a log: no importer claims it, and the file ends Rejected with a plain reason rather than a guess.
-  await expect(row(page, 'notes.txt')).toContainText('Rejected');
-  await expect(row(page, 'notes.txt')).not.toContainText('Used', { ignoreCase: false });
-  await shot(page, 'drawer-names');
+  // Prose is not a log: no importer claims it, so it is not supported rather than guessed. The log asks for a computer.
+  await expect(dlg.getByText('1 fix needed before you can import')).toBeVisible({ timeout: 60_000 });
+  await expect(dlg.locator('.notsupp')).toContainText('1 files are not supported');
+  await expect(dlg.locator('.notsupp-row').filter({ hasText: 'notes.txt' })).toBeVisible();
+  await expect(dlg.locator('.notsupp-row').filter({ hasText: 'log.txt' })).toHaveCount(0);
+  await shot(page, 'popup-names');
 });
 
 test('L4N-03: the create wizard holds the file from the Application logs card and reads it when the case is made', async ({ page, api }) => {

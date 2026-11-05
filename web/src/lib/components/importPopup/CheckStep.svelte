@@ -6,7 +6,7 @@
   import FixCard from './FixCard.svelte';
   import GroupedList from './GroupedList.svelte';
   import NotSupported, { type UnsupportedFile } from './NotSupported.svelte';
-  import { cardIdOf, groupOf, type CardState } from './popupState.svelte';
+  import { cardIdOf, fileKeyOf, groupOf, type CardState } from './popupState.svelte';
 
   // Step 2 of the "Import files" popup (wireframe: step2Checking and step2Results). While the server checks the files it shows a spinner.
   // Then, top to bottom: the groups that are ready, one fix card for each server name the computer list lacks, one card for each kind of
@@ -50,10 +50,11 @@
   const kindText = (importer: string): string => SHORT_KINDS[importer] ?? importerLabel(importer);
   const listed = (verdicts: CheckFileVerdict[]) => verdicts.map((verdict) => ({ key: verdict.key, name: verdict.name, size: formatBytes(verdict.size) }));
 
-  // A file picked from a folder carries the folder in its name; the folder is the best guess for the computer's name.
-  function folderOf(verdicts: CheckFileVerdict[]): string {
+  // A file picked from a folder carries the folder in its staged name; the folder is the best guess for the computer's name.
+  // The check only sends leaf names, so the folder is read from the staged file with the verdict's key.
+  function folderOf(verdicts: CheckFileVerdict[], staged: Map<string, StagedFile>): string {
     for (const verdict of verdicts) {
-      const parts = verdict.name.split(/[\\/]/);
+      const parts = (staged.get(verdict.key)?.name ?? verdict.name).split(/[\\/]/);
       if (parts.length > 1 && parts[parts.length - 2] !== '') return parts[parts.length - 2];
     }
     return '';
@@ -79,9 +80,10 @@
       id, verdicts, needsZone: false, suggested: id,
       kind: [...new Set(verdicts.map((verdict) => kindText(verdict.importer)))].join(', ')
     }));
+    const staged = new Map(files.map((item) => [fileKeyOf(item), item]));
     const unnamedCards: Card[] = [...unnamed].map(([id, verdicts]) => {
       const importer = verdicts[0].importer;
-      return { id, verdicts, kind: kindText(importer), suggested: folderOf(verdicts), needsZone: verdicts.some((verdict) => verdict.needsZone) || timeZoneRule(importer) === 'local' };
+      return { id, verdicts, kind: kindText(importer), suggested: folderOf(verdicts, staged), needsZone: verdicts.some((verdict) => verdict.needsZone) || timeZoneRule(importer) === 'local' };
     });
     return { ready: [...ready], serverCards, unnamedCards, unsupported };
   });
@@ -162,6 +164,7 @@
         files={listed(card.verdicts)}
         selected={tickedMap}
         needsZone={card.needsZone}
+        askName={parts.unnamedCards.includes(card)}
         suggestedZone={zone}
         expanded={expanded[card.id] === true}
         totalServers={serverTotal}
