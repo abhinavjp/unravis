@@ -56,7 +56,7 @@ export function laneCutShort(lane: TracingLane): boolean {
 /** Fixed words for what was read and what was not. The SQL and IIS lanes read imported files only. */
 export const READ_TEXT = {
   notRead: 'not read',
-  noFile: 'This case has no file for this source. The SQL and IIS lanes read imported files only, not live connections.',
+  noFile: 'This case has no file for this source. Add a file to see this lane. Reading it live is not built yet.',
   addFiles: 'Add files',
   tipUnread: 'This period was not read. That is not the same as no traffic.'
 } as const;
@@ -245,6 +245,25 @@ export const barMax = (bars: Bar[]): number => bars.reduce((max, bar) => Math.ma
 export function barHeightPct(count: number, max: number): number {
   if (!(count > 0) || !(max > 0)) return 0;
   return Math.min(100, (count / max) * 100);
+}
+
+/**
+ * Ascending whole-number ticks for a y axis that runs from 0 to `max` (the tallest bar's value): 0, the quarters and the
+ * top. Below 40 a quarter is kept only when it is a whole multiple of the quarter step (`floor(max / 4)`, at least 1), so a
+ * small axis never draws a tick between two whole numbers; from 40 up each quarter is rounded. The first tick is always 0 and
+ * the last is always `Math.round(max)`. `[0]` for a scale with no height.
+ */
+export function yTicks(max: number): number[] {
+  if (!Number.isFinite(max) || max <= 0) return [0];
+  const fractions = [0, 0.25, 0.5, 0.75, 1];
+  let ticks: number[];
+  if (max < 40) {
+    const step = Math.max(1, Math.floor(max / 4));
+    ticks = fractions.map((f) => max * f).filter((v) => Number.isInteger(v) && v % step === 0);
+  } else {
+    ticks = fractions.map((f) => Math.round(max * f));
+  }
+  return [...new Set([0, ...ticks, Math.round(max)])].sort((a, b) => a - b);
 }
 
 /**

@@ -7,7 +7,7 @@
 //   TSRC-04  A source can be switched off and on again: each click sends the matching request, the lane follows, "all on" sends no sourceIds.
 //   TSRC-05  Everything switched off: nothing is read, the screen says so (not "all"), the choice survives a reload, Select all reads again.
 //   TSRC-06  A saved audit database that is not connected is listed as "saved, not connected", on its lane too, and Connect opens the connect flow.
-//   TSRC-07  A SQL or IIS lane with no file says it reads imported files only, and Add files opens the Import files popup.
+//   TSRC-07  A SQL or IIS lane with no file says to add a file, and Add files opens the Import files popup.
 //   TSRC-08  Screenshots for the review: light, dark and 375 px wide, with the chunked read, the saved database and the empty SQL / IIS lanes.
 import { test, expect, type Page, type Request } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
@@ -275,13 +275,13 @@ test('TSRC-06: a saved audit database that is not connected is listed as "saved,
   await expect(page.getByRole('dialog', { name: 'Connections' })).toBeVisible();
 });
 
-test('TSRC-07: a SQL or IIS lane with no file says it reads imported files only, and Add files opens the Import files popup', async ({ page }) => {
+test('TSRC-07: a SQL or IIS lane with no file says to add a file, and Add files opens the Import files popup', async ({ page }) => {
   await answerWith(page, noSqlOrIisFile);
   await openTimeline(page);
   for (const lane of ['sql', 'iis']) {
     const status = page.locator(`.panel[data-lane=${lane}] [data-testid=lane-status]`);
     await expect(status).toContainText('This case has no file for this source.');
-    await expect(status).toContainText('imported files only, not live connections');
+    await expect(status).toContainText('Add a file to see this lane');
     await expect(page.locator(`.panel[data-lane=${lane}] [data-testid=lane-add-files]`)).toHaveText('Add files');
   }
   // The API lane is a live lane and has no such button.

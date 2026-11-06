@@ -216,5 +216,5 @@ test('the rail component is keyboard reachable, labelled, and never opens Run an
   const chart = read('src/components/TracingChart.svelte');
   assert.ok(chart.includes('focus?: { slot: number; token: number } | null;'));
   assert.ok(/function revealSlot\(slot: number\)[\s\S]*selectedSlot = clampIndex\(slot\);[\s\S]*showKeyboardTip\(\);[\s\S]*overlayEl\?\.focus/.test(chart));
-  assert.ok(paper.includes('min-width: 1180px') && paper.includes('380px'));
+  assert.ok(paper.includes('min-width: 1480px') && paper.includes('340px'));
 });

@@ -421,12 +421,12 @@
     display: grid;
     gap: 16px;
   }
-  /* The wireframe's grid: the controls and the chart in one column; with the rail, a 380px column to their right that stays in view while the page scrolls. Below 1180px the rail follows the chart. */
+  /* The wireframe's grid: the controls and the chart in one column; with the rail, a 340px column to their right that stays in view while the page scrolls. Below 1480px the rail follows the chart, so the chart keeps the full width on ordinary screens. */
   .trgrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; min-width: 0; }
   .trtop, .trbot { display: grid; gap: 24px; min-width: 0; align-content: start; grid-template-columns: minmax(0, 1fr); }
   .trrail { min-width: 0; }
-  @media (min-width: 1180px) {
-    .trgrid.hasrail { grid-template-columns: minmax(0, 1fr) 380px; align-items: start; }
+  @media (min-width: 1480px) {
+    .trgrid.hasrail { grid-template-columns: minmax(0, 1fr) 340px; align-items: start; }
     .hasrail .trtop { grid-column: 1; grid-row: 1; }
     .hasrail .trbot { grid-column: 1; grid-row: 2; }
     .hasrail .trrail { grid-column: 2; grid-row: 1 / span 2; align-self: start; position: sticky; top: 72px; max-height: calc(100vh - 96px); overflow: auto; padding-bottom: 120px; }

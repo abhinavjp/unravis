@@ -132,11 +132,12 @@ test('the wire carries the chunk and source fields through and leaves them off a
 
 /* ------------------------------------------------------------------ the SQL / IIS empty state */
 
-test('a SQL or IIS lane with no file says it reads imported files only and offers Add files', () => {
+test('a SQL or IIS lane with no file says so, offers Add files, and does not claim files are the only way', () => {
   const noFile = lane({ key: 'sql', state: 'no-data' });
   assert.equal(lanes.laneNote(noFile), lanes.READ_TEXT.noFile);
   assert.match(lanes.READ_TEXT.noFile, /^This case has no file for this source\./);
-  assert.match(lanes.READ_TEXT.noFile, /imported files only, not live connections/);
+  assert.doesNotMatch(lanes.READ_TEXT.noFile, /imported files only|not live connections/);
+  assert.match(lanes.READ_TEXT.noFile, /Add a file to see this lane\./);
   assert.equal(lanes.laneNote(lane({ key: 'iis', state: 'no-data' })), lanes.READ_TEXT.noFile);
   assert.equal(lanes.READ_TEXT.addFiles, 'Add files');
   // The audit lane has live sources; its empty answer keeps the server's words.
