@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { filesWord } from '../../copy/importPopupCopy';
+
   // One group line of the import popup: a head that expands on demand, and under it an "All N files" box and one row per file.
   // A "needs checking" group always shows its files and its head is not a toggle, so a problem file cannot be hidden.
   let {
@@ -74,7 +76,7 @@
       {#if selectable}
         <label class="grp-all">
           <input bind:this={allBox} type="checkbox" checked={allOn} onchange={() => onGroupAll?.(groupKey)} />
-          <span>All {files.length} files</span>
+          <span>All {files.length}{filesWord(files.length)}</span>
         </label>
       {/if}
       {#each files as f (f.key)}

@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { api, ApiError } from '../api';
-  import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openConnections, openSidePanel, openTracing, panels } from '../appState.svelte';
+  import { app, caseErased, closeTracing, goHome, openAnalysis, openCase, openCaseImport, openCaseImportRetry, openConnections, openSidePanel, openTracing, panels } from '../appState.svelte';
   import { JOB_POLL_MS, believedState, caseCode, CaseApiError, deleteRetry, getCaseView, isCaseChanged, isCaseGone, isCaseLocked, listImports, reopenCase, retryInPage, runRetry, type CaseInfo, type CaseView, type ImportRecord, type RetryItem } from '../cases';
-  import { archiveButton, readsCaseData, reopenButton, retryAction } from '../caseLifecycle';
+  import { archiveButton, readsCaseData, reopenButton, retryAction, retryServerName } from '../caseLifecycle';
   import { archiveFilePath, archivedActions, type ArchiveDrawerKind } from '../archiveModel';
   import { ARCHIVE_TEXT, filesMadeText, restoredNewNotice } from '../copy/archiveCopy';
   import ArchiveDrawers from './ArchiveDrawers.svelte';
@@ -327,7 +327,11 @@
   async function tryAgain(item: RetryItem) {
     const id = caseId;
     if (!info || tryingId !== 0 || stale) return;
-    if (retryAction(item, info) === 'add-file') { openCaseImport(); return; }
+    if (retryAction(item, info) === 'add-file') {
+      const serverName = retryServerName(item);
+      if (serverName) openCaseImportRetry(serverName); else openCaseImport();
+      return;
+    }
     const index = retries.findIndex(row => row.id === item.id);
     tryingId = item.id;
     retryNote = { ...retryNote, [item.id]: '' };

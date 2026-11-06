@@ -1,6 +1,6 @@
 <script lang="ts">
   import { landingMayAutoRun } from '../lib/autorun';
-  import { app, go, goHome, openCase, openCaseImport, openConnections, openCreatedCase, openKeySetup, openSidePanel, openTracing, restore, runAnalysis, scope, startCreate, startNewConnection } from '../lib/appState.svelte';
+  import { app, go, goHome, IMPORT_CASE_HINT, openCase, openCaseImport, openConnections, openCreatedCase, openKeySetup, openSidePanel, openTracing, restore, runAnalysis, scope, startCreate, startNewConnection } from '../lib/appState.svelte';
   import { resetWizard, wizard } from '../lib/wizard.svelte';
   import { blockers, caseMade, createNow, createView } from '../lib/wizardCreate.svelte';
   import { createButtonText } from '../lib/copy/wizardCreateCopy';
@@ -38,6 +38,7 @@
 {:else if mode === 'connect'}
   <div class="welcome-state no-connections-state"><h3>Connect an audit source</h3><p>Load saved settings or create a MongoDB connection, then choose databases that contain API audit logs.</p><div class="empty-actions"><button class="primary-button" onclick={startNewConnection}>New connection</button><button class="secondary-button" onclick={() => openConnections('saved')}>Saved connections</button><DiscoverEntry onOpen={openDiscover} /></div></div>
 {:else if mode === 'cases'}
+  {#if app.importCaseHint}<p class="import-hint" role="status">{IMPORT_CASE_HINT} <button type="button" class="quiet-button" onclick={() => { app.importCaseHint = false; }}>Dismiss</button></p>{/if}
   <StartScreen onCreate={startCreate} onOpen={openCase} onSetup={openKeySetup} onAnalysis={() => go('running')}>
     {#snippet enter()}<EnterCase onOpen={openCase} onSetup={openKeySetup} />{/snippet}
   </StartScreen>
@@ -78,4 +79,5 @@
 
 <style>
   .restoring-note { margin: 0; color: var(--muted, inherit); text-align: center; }
+  .import-hint { margin: 0; padding: 8px 16px; text-align: center; }
 </style>

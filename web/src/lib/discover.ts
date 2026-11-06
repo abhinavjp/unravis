@@ -382,7 +382,7 @@ export interface JobRef { findingId: string; jobId: string }
 export type RowOutcome =
   | { kind: 'added'; rows: number; skipped?: number }
   | { kind: 'duplicate' }
-  | { kind: 'refused'; reason: string }
+  | { kind: 'refused'; reason: string; serverName?: string }
   | { kind: 'needs-admin' }
   | { kind: 'failed'; reason: string }
   | { kind: 'cancelled' };

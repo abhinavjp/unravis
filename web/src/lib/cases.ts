@@ -94,6 +94,7 @@ export interface RetryItem {
   key: string;
   label: string;
   reason: string;
+  payload?: unknown;
   created: string;
 }
 
@@ -293,7 +294,7 @@ export function toCase(raw: Partial<CaseInfo>): CaseInfo {
 
 function toRetry(raw: Partial<RetryItem> | null | undefined): RetryItem | null {
   if (!raw || typeof raw !== 'object' || typeof raw.id !== 'number') return null;
-  return { id: raw.id, kind: asString(raw.kind), key: asString(raw.key), label: asString(raw.label), reason: asString(raw.reason), created: asString(raw.created) };
+  return { id: raw.id, kind: asString(raw.kind), key: asString(raw.key), label: asString(raw.label), reason: asString(raw.reason), ...(raw.payload !== undefined ? { payload: raw.payload } : {}), created: asString(raw.created) };
 }
 
 const toRetries = (raw: unknown): RetryItem[] => (Array.isArray(raw) ? raw.map(toRetry).filter((r): r is RetryItem => r !== null) : []);

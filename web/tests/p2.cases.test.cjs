@@ -178,6 +178,78 @@ test('p2: each retry item offers what the case state allows', () => {
   assert.equal(life.retryAction({ kind: 'tag' }, { state: 'open', closed: null, untrusted: true }), 'hidden');
 });
 
+test('IP-19: an unlisted file name survives the saved retry and names its fix card', async () => {
+  const source = src.makeSource('iis-w3c', 'file:1', 'u_ex261019.log');
+  const state = sub.blankSubmitState();
+  state.caseId = CASE_ID;
+  state.imports[src.sourceKey(source)] = {
+    status: 'failed', reason: 'unknown-host', percent: null,
+    outcome: { kind: 'refused', reason: 'unknown-host', serverName: 'iis_missing' }
+  };
+  const [item] = sub.retryItemsOf(state, { envs: [], sources: [source] });
+  assert.deepEqual(item.payload, { serverName: 'iis_missing' });
+  const saved = { ...item, id: 19, created: '2001-01-01T00:00:00Z' };
+  await withServer([{ status: 200, body: { retries: [saved] } }], async ({ calls }) => {
+    const [retry] = await cases.putRetries(CASE_ID, [item]);
+    assert.deepEqual(JSON.parse(calls[0].body).items, [item]);
+    assert.equal(life.retryServerName(retry), 'iis_missing');
+  });
+  assert.equal(life.retryServerName(cases.toView({ id: CASE_ID, retries: [saved] }).retries[0]), 'iis_missing');
+});
+
+test('IP-20: retries without a known unlisted name keep the ordinary file picker', () => {
+  const item = { kind: 'import', reason: 'unknown-host' };
+  for (const payload of [undefined, null, {}, [], 'iis_missing', { serverName: 19 }, { serverName: '  ' }]) {
+    assert.equal(life.retryServerName({ ...item, payload }), '');
+  }
+  assert.equal(life.retryServerName({ ...item, payload: { serverName: ' iis_missing ' } }), 'iis_missing');
+  assert.equal(life.retryServerName({ ...item, reason: 'unsupported-format', payload: { serverName: 'iis_missing' } }), '');
+  assert.equal(life.retryServerName({ ...item, kind: 'tag', payload: { serverName: 'iis_missing' } }), '');
+});
+
+test('IP-19: the file adapter uses the existing check to recover a refused file computer', async () => {
+  const { wizardSubmitApi } = load('src/lib/wizardSubmitApi.ts');
+  const refused = (reason) => ({ status: 202, body: { id: 'a'.repeat(32), state: 'failed', status: 422, failure: { reason } } });
+  const checked = (verdict, serverName) => ({ status: 202, body: {
+    id: 'b'.repeat(32), kind: 'check', state: 'done',
+    result: { files: [{ key: 'retry', name: 'u_ex261019.log', verdict, serverName }] }
+  } });
+  const file = new File(['synthetic'], 'u_ex261019.log');
+  await withServer([refused('unknown-host'), checked('needs-computer', 'iis_missing')], async ({ calls }) => {
+    assert.deepEqual(await wizardSubmitApi.importFile(CASE_ID, file, () => {}), { kind: 'refused', reason: 'unknown-host', serverName: 'iis_missing' });
+    assert.equal(calls.length, 2);
+    assert.match(calls[1].url, /\/imports\/check\?async=1$/);
+  });
+  for (const response of [checked('no-computer', ''), { status: 500, body: {} }]) {
+    await withServer([refused('unknown-host'), response], async () => {
+      assert.deepEqual(await wizardSubmitApi.importFile(CASE_ID, file, () => {}), { kind: 'refused', reason: 'unknown-host' });
+    });
+  }
+  await withServer([refused('unsupported-format')], async ({ calls }) => {
+    assert.deepEqual(await wizardSubmitApi.importFile(CASE_ID, file, () => {}), { kind: 'refused', reason: 'unsupported-format' });
+    assert.equal(calls.length, 1, 'other refusals do not start another check');
+  });
+});
+
+test('IP-19: a fresh retry popup opens Check immediately and returns to Choose after the fix', () => {
+  const { createPopupState } = load('src/lib/components/importPopup/popupState.svelte.ts');
+  const popup = createPopupState();
+  popup.openRetry('iis_missing');
+  assert.equal(popup.step, 2);
+  assert.equal(popup.report, null);
+  assert.deepEqual(popup.files, []);
+  assert.deepEqual(popup.cardIds(), ['iis_missing']);
+  assert.equal(popup.cards.iis_missing, 'open');
+  assert.equal(popup.expanded.iis_missing, true);
+  assert.equal(popup.focus, 'name:iis_missing');
+  assert.equal(popup.fixesNeeded(), 1);
+  assert.equal(popup.canImport(), false);
+  popup.resolveCard('iis_missing');
+  assert.equal(popup.step, 1);
+  assert.equal(popup.retryServerName, null);
+  popup.dispose();
+});
+
 /* ------------------------------------------------------------------ the story and the screens */
 
 test('p2: the story shows Closed and Reopened from the history, and ignores kinds it has no words for', () => {

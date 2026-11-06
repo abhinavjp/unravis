@@ -198,6 +198,10 @@ let sidePanelReturnFocus: HTMLElement | null = null;
 // (see `panels`), so the pages that re-read their files when the import closes keep working.
 let importPopup = $state<{ caseId: string; caseTitle: string; retryServerName: string | null } | null>(null);
 let importPopupReturnFocus: HTMLElement | null = null;
+// The one line the start screen shows after Import was asked for with no case open (see showImportPopup).
+// On until a case is opened (setActiveCase) or the line is dismissed on the start screen.
+export const IMPORT_CASE_HINT = 'Pick a case first, then choose Import files.';
+let importCaseHint = $state(false);
 // The file import the person started that is still running on the server. It lives here, not in the import drawer, so closing and reopening the drawer finds it again.
 let runningImport = $state.raw<RunningImport | null>(null);
 let glossaryTerm = $state<string | null>(null);
@@ -834,6 +838,7 @@ export function setActiveCase(id: string, options: { restore?: boolean } = {}) {
   restoredCaseId = ''; workspaceBaseline = null; pendingRestore = null; restoreRun = null;
   setRestore('idle');
   activeCaseId = id;
+  if (id) importCaseHint = false;
   if (tracingCase !== id) tracingCase = '';
   storedCase(id);
   setLedgerCase(id);
@@ -866,7 +871,11 @@ export function openCaseHome() {
 export function openAnalysis() { go('running'); }
 function showImportPopup(retryServerName: string | null) {
   const id = activeCaseId;
-  if (!id) return;
+  if (!id) {
+    // No case, so there is nothing to import into: lead to the start screen and say so there, instead of doing nothing.
+    if (go('start')) importCaseHint = true;
+    return;
+  }
   requestCase(id);
   requestFilesView();
   if (!importPopup) importPopupReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -1758,6 +1767,7 @@ export const app = {
   get dpapiCases() { return dpapiCases; },
   get lockError() { return lockError; }, set lockError(value) { lockError = value; },
   get workspaceNote() { return workspaceNote; }, set workspaceNote(value) { workspaceNote = value; },
+  get importCaseHint() { return importCaseHint; }, set importCaseHint(value) { importCaseHint = value; },
   get firstRun() { return firstRun; },
   get maxSources() { return maxSources; },
   get remainingSourceSlots() { return remainingSourceSlots; },

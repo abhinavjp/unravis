@@ -190,7 +190,7 @@ test('GRID-05: while an import is sending, the popup cannot be closed or stepped
   await dlg.getByRole('button', { name: 'Import 1 file', exact: true }).click();
 
   await expect(dlg.locator('.prog-line')).toContainText('Step 3 of 3 · Importing — do not close');
-  await expect(dlg.getByText('Importing 0 of 1 files')).toBeVisible();
+  await expect(dlg.getByText('Importing 0 of 1 file')).toBeVisible();
   await expect(dlg.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
   for (const index of [0, 1, 2]) await expect(dlg.locator('.stepper .stp').nth(index)).toBeDisabled();
   // Close, Esc and a click outside wait until the import ends or Cancel is pressed.
@@ -201,7 +201,7 @@ test('GRID-05: while an import is sending, the popup cannot be closed or stepped
   await expect(dlg).toBeVisible();
 
   release();
-  await expect(dlg.locator('.result-hero')).toContainText('1 files imported', { timeout: 60_000 });
+  await expect(dlg.locator('.result-hero')).toContainText('1 file imported', { timeout: 60_000 });
   await expect(dlg.locator('.prog-line')).toContainText('Step 3 of 3 · Result');
 });
 
@@ -221,7 +221,7 @@ test('GRID-06: the popup fits at 375 px wide with no sideways scroll', async ({ 
   await noSidewaysScroll(page);
   const box = await dlg.boundingBox();
   expect(box && box.x >= 0 && box.x + box.width <= 376).toBe(true);
-  const primary = await dlg.getByRole('button', { name: 'Add ISS-PROD-07 as a computer and accept 1 files', exact: true }).boundingBox();
+  const primary = await dlg.getByRole('button', { name: 'Add ISS-PROD-07 as a computer and accept 1 file', exact: true }).boundingBox();
   expect(primary && primary.x >= 0 && primary.x + primary.width <= 376).toBe(true);
 });
 

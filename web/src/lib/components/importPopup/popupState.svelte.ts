@@ -171,6 +171,7 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
   };
   const cardIds = (): string[] => {
     const ids: string[] = [];
+    if (!s.report && s.retryServerName) ids.push(s.retryServerName);
     for (const verdict of checked()) {
       const id = cardIdOf(verdict);
       if (id !== null && !ids.includes(id)) ids.push(id);
@@ -459,6 +460,7 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
     },
     resolveCard(name, label) {
       s.cards[name] = 'resolved'; s.labels[name] = label ?? name; s.focus = 'card-' + name;
+      if (!s.report && s.files.length === 0) { s.retryServerName = null; s.focus = null; s.goTo(1); return; }
       void recheck(filesOfServer(name), true);
     },
     leaveOut(name) { s.cards[name] = 'leftout'; },
@@ -495,13 +497,10 @@ export function createPopupState(api: PopupApi = realPopupApi): PopupState {
       if (kind === '') delete s.kinds[key];
       else s.kinds[key] = kind;
     },
-    // With nothing checked yet there is no card to open: the name is kept, and the card opens once the next check holds it.
+    // A saved retry can explain the missing computer before its file is picked again.
     openRetry(name) {
       s.retryServerName = name;
-      if (!s.report) {
-        if (s.files.length > 0) s.continueToCheck();
-        return;
-      }
+      if (!s.report && s.files.length > 0) { s.continueToCheck(); return; }
       s.step = 2; s.checking = false;
       s.cards[name] = 'open'; s.expanded[name] = true; s.focus = 'name:' + name;
     },

@@ -2,6 +2,8 @@
 //   IP-14  Two IIS logs, the second from a computer that is dropped from the list after it was added on the card. The first imports,
 //          the second is refused for the missing computer, and the popup returns to the Check step on that fix card, focused, with
 //          the first file already off the list. Adding the computer again lets the second file in, and the Result step counts both.
+//   IP-19  A wizard file refused for an unlisted computer saves that name. Try again on Case home opens Check on its fix card.
+//   IP-20  A retry with no computer name, or a different refusal, still opens Choose.
 import { test, expect, type Page } from '../support/fixtures';
 import type { Locator } from '@playwright/test';
 import { goHome, openCase } from '../support/ui';
@@ -45,9 +47,9 @@ test('IP-14: a file refused for a missing computer reopens the popup on that fix
   await dialog.getByRole('button', { name: 'Continue' }).click();
   await expect(ack(dialog)).toBeVisible({ timeout: 30_000 });
 
-  const add = dialog.getByRole('button', { name: 'Add iis_late as a computer and accept 1 files' });
+  const add = dialog.getByRole('button', { name: 'Add iis_late as a computer and accept 1 file' });
   await add.click();
-  await expect(dialog.getByText('Added iis_late, 1 files accepted')).toBeVisible();
+  await expect(dialog.getByText('Added iis_late, 1 file accepted')).toBeVisible();
   await ack(dialog).check();
   await expect(importButton(dialog, 2)).toBeEnabled();
 
@@ -58,7 +60,7 @@ test('IP-14: a file refused for a missing computer reopens the popup on that fix
 
   // Back on the Check step, on the card of the computer that is missing, with the first file already imported and gone from the list.
   await expect(dialog.locator('.prog-line')).toContainText('Step 2 of 3', { timeout: 90_000 });
-  await expect(dialog.getByText('1 IIS files come from iis_late, which is not on your computer list.')).toBeVisible();
+  await expect(dialog.getByText('1 IIS file comes from iis_late, which is not on your computer list.')).toBeVisible();
   await expect(add).toBeFocused();
   await expect(dialog.getByText('1 fix needed before you can import')).toBeVisible();
   await expect(dialog.locator('[data-grp="kind:iis-w3c"]')).toHaveCount(0);
@@ -68,7 +70,7 @@ test('IP-14: a file refused for a missing computer reopens the popup on that fix
 
   // The card works as before: add the computer, confirm, import the one file left.
   await add.click();
-  await expect(dialog.getByText('Added iis_late, 1 files accepted')).toBeVisible();
+  await expect(dialog.getByText('Added iis_late, 1 file accepted')).toBeVisible();
   if (!(await ack(dialog).isChecked())) await ack(dialog).check();
   await expect(importButton(dialog, 1)).toBeEnabled();
   await importButton(dialog, 1).click();
@@ -78,4 +80,70 @@ test('IP-14: a file refused for a missing computer reopens the popup on that fix
   await expect(dialog.locator('.result-hero')).toContainText('2 files imported');
   await expect(dialog.locator('.result-section').filter({ hasText: 'IIS web logs' })).toContainText('2 files');
   await expect.poll(() => importsOf(api, title), { timeout: 15_000 }).toBe(2);
+});
+
+test('IP-19: Try again on a saved unlisted-computer retry opens Check on its fix card', async ({ page, api, allow }) => {
+  test.setTimeout(150_000);
+  allow(/422|409/, 'a wizard file refused because its computer is not on the list');
+  const title = 'QA Saved Popup Retry';
+  const file = iis('u_ex261119.log', 'iis_missing');
+  await goHome(page);
+  await page.getByRole('button', { name: 'Create a new case' }).click();
+  await page.getByLabel('Case name').fill(title);
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('button', { name: 'Add files', exact: true }).click();
+  await page.getByLabel('Choose files to import').setInputFiles([file]);
+  await page.getByRole('button', { name: 'Add 1 file' }).click();
+  await page.getByRole('button', { name: 'Next' }).click();
+  await page.getByRole('checkbox', { name: /I confirm this file/ }).check();
+  await page.getByRole('button', { name: 'Create case' }).click();
+  await expect(page.getByRole('table', { name: /result for each file/i })).toContainText('Rejected', { timeout: 90_000 });
+
+  // Read the saved case, not a popup state supplied by the test. No files are held after leaving the wizard.
+  const made = (await api('GET', '/api/cases')).json.cases.find((c: { title: string }) => c.title === title);
+  expect(made).toBeTruthy();
+  await expect.poll(async () => (await api('GET', `/api/cases/${made.id}`)).json.retries, { timeout: 30_000 }).toEqual([
+    expect.objectContaining({ kind: 'import', reason: 'unknown-host', payload: { serverName: 'iis_missing' } })
+  ]);
+  await page.getByRole('button', { name: 'Open the case anyway', exact: true }).click();
+  await page.getByRole('button', { name: 'Add the file again', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Import files' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('.prog-line')).toContainText('Step 2 of 3');
+  await expect(dialog.locator('.fix[data-card="open"]')).toContainText('iis_missing is not on your computer list.');
+  await expect(dialog.getByText('Add this computer, then choose the file again.')).toBeVisible();
+  const add = dialog.getByRole('button', { name: 'Add iis_missing as a computer', exact: true });
+  await expect(add).toBeFocused();
+  await expect(ack(dialog)).toBeDisabled();
+
+  // Add the computer first, then pick the file again. The ordinary check now accepts it.
+  await add.click();
+  await expect(dialog.locator('.prog-line')).toContainText('Step 1 of 3');
+  await dialog.getByLabel('Choose files to import').setInputFiles([file]);
+  await dialog.getByRole('button', { name: 'Continue' }).click();
+  await expect(dialog.locator('[data-grp="kind:iis-w3c"]')).toContainText('1 file, ready', { timeout: 30_000 });
+  await expect(dialog.locator('.fix')).toHaveCount(0);
+  await ack(dialog).check();
+  await expect(importButton(dialog, 1)).toBeEnabled();
+});
+
+test('IP-20: a retry without an unlisted computer name still opens Choose', async ({ page, api }) => {
+  const title = 'QA Popup Retry Fallback';
+  const id = await createCase(api, title);
+  const saved = await api('PUT', `/api/cases/${id}/retries`, { items: [
+    { kind: 'import', key: 'file:1', label: 'No computer name', reason: 'unknown-host' },
+    { kind: 'import', key: 'file:2', label: 'Other refusal', reason: 'unsupported-format', payload: { serverName: 'iis_missing' } }
+  ] }, 'open');
+  expect(saved.status).toBe(200);
+  await goHome(page);
+  await openCase(page, title);
+  for (const label of ['No computer name', 'Other refusal']) {
+    await page.locator('li[data-retry]').filter({ hasText: label }).getByRole('button', { name: 'Add the file again', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Import files' });
+    await expect(dialog.locator('.prog-line')).toContainText('Step 1 of 3');
+    await expect(dialog.getByLabel('Choose files to import')).toBeAttached();
+    await expect(dialog.locator('.fix')).toHaveCount(0);
+    await dialog.getByRole('button', { name: 'Close import', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+  }
 });

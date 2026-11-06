@@ -38,6 +38,14 @@ export function retryAction(item: Pick<RetryItem, 'kind'>, c: Pick<CaseInfo, 'st
   return item.kind === 'audit-source' ? 'in-wizard' : 'retry';
 }
 
+/** Only an unlisted computer named by the refused file can reopen its fix card. Older items may have no name. */
+export function retryServerName(item: Pick<RetryItem, 'kind' | 'reason' | 'payload'>): string {
+  if (item.kind !== 'import' || item.reason !== 'unknown-host') return '';
+  const payload = item.payload;
+  if (!payload || typeof payload !== 'object' || !('serverName' in payload)) return '';
+  return typeof payload.serverName === 'string' ? payload.serverName.trim() : '';
+}
+
 /**
  * Archive is offered on an Open or a Closed case, without closing it first (A2). An archiving case is already being archived, an archived case is archived,
  * and an untrusted or missing one cannot be read, so the button is hidden for those. disabled: shown but off.

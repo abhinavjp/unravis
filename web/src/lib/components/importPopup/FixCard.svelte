@@ -139,21 +139,21 @@
     </div>
   {:else if !needsZone && !askName}
     <div class="fix-head">
-      <div class="fix-title"><span class="warn">{@render warnIcon()}</span> {POPUP_TEXT.fixTitleNeedsComputer(fileCount, serverName, kind)}</div>
-      <p class="fix-help">{POPUP_TEXT.fixHelpNeedsComputer}</p>
-      <div class="fix-note">{POPUP_TEXT.fixNoteIis}</div>
+      <div class="fix-title"><span class="warn">{@render warnIcon()}</span> {fileCount === 0 ? serverName + ' is not on your computer list.' : POPUP_TEXT.fixTitleNeedsComputer(fileCount, serverName, kind)}</div>
+      <p class="fix-help">{fileCount === 0 ? 'Add this computer, then choose the file again.' : POPUP_TEXT.fixHelpNeedsComputer}</p>
+      {#if fileCount > 0}<div class="fix-note">{POPUP_TEXT.fixNoteIis}</div>{/if}
     </div>
     <div class="fix-body">
       <div class="fix-actions">
-        <button type="button" class="btn btn-primary" bind:this={primaryEl} disabled={saving} onclick={resolve}>{POPUP_TEXT.fixAccept(serverName, fileCount)}</button>
-        <button type="button" class="linkbtn" disabled={saving} onclick={() => onLeaveOut?.()}>{POPUP_TEXT.fixLeaveOut(fileCount)}</button>
+        <button type="button" class="btn btn-primary" bind:this={primaryEl} disabled={saving} onclick={resolve}>{fileCount === 0 ? 'Add ' + serverName + ' as a computer' : POPUP_TEXT.fixAccept(serverName, fileCount)}</button>
+        {#if fileCount > 0}<button type="button" class="linkbtn" disabled={saving} onclick={() => onLeaveOut?.()}>{POPUP_TEXT.fixLeaveOut(fileCount)}</button>{/if}
         {#if totalServers > 1}
           <button type="button" class="linkbtn" disabled={saving} onclick={() => onAddAll?.()}>{POPUP_TEXT.fixAddAll(totalServers)}</button>
         {/if}
       </div>
       {#if failure}<p class="fail" role="alert">{failure}</p>{/if}
     </div>
-    {@render fileList()}
+    {#if fileCount > 0}{@render fileList()}{/if}
   {:else}
     <div class="fix-head">
       <div class="fix-title"><span class="warn">{@render warnIcon()}</span> {POPUP_TEXT.fixNoComputerTitle(fileCount, kind)}</div>

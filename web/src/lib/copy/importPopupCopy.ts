@@ -6,7 +6,7 @@ import type { LintEntry } from './copylint';
  * a server name is the name a log file says wrote it (see the glossary in deck.ts).
  */
 
-const filesWord = (n: number): string => (n === 1 ? ' file' : ' files');
+export const filesWord = (n: number): string => (n === 1 ? ' file' : ' files');
 
 export const POPUP_TEXT = {
   title: 'Import files',
@@ -25,27 +25,27 @@ export const POPUP_TEXT = {
   continueBtn: 'Continue',
   nothingSent: 'Nothing is sent until you press Import.',
 
-  checking: (n: number): string => 'Checking ' + n + ' files with the server…',
+  checking: (n: number): string => 'Checking ' + n + filesWord(n) + ' with the server…',
   checkingSub: 'Nothing is imported yet.',
 
-  fixTitleNeedsComputer: (n: number, name: string, kind: string): string => n + ' ' + kind + ' files come from ' + name + ', which is not on your computer list.',
+  fixTitleNeedsComputer: (n: number, name: string, kind: string): string => n + ' ' + kind + filesWord(n) + (n === 1 ? ' comes' : ' come') + ' from ' + name + ', which is not on your computer list.',
   fixHelpNeedsComputer: 'Unravis will not guess which computer wrote a log. Add it once and every file from that server is accepted.',
   fixNoteIis: 'IIS logs are already UTC, no time zone needed.',
-  fixAccept: (name: string, n: number): string => 'Add ' + name + ' as a computer and accept ' + n + ' files',
-  fixLeaveOut: (n: number): string => 'Leave these ' + n + ' files out',
+  fixAccept: (name: string, n: number): string => 'Add ' + name + ' as a computer and accept ' + n + filesWord(n),
+  fixLeaveOut: (n: number): string => 'Leave ' + (n === 1 ? 'this ' : 'these ') + n + filesWord(n) + ' out',
   fixAddAll: (n: number): string => 'Add all ' + n + ' servers',
-  fixResolved: (name: string, n: number): string => 'Added ' + name + ', ' + n + ' files accepted',
+  fixResolved: (name: string, n: number): string => 'Added ' + name + ', ' + n + filesWord(n) + ' accepted',
   fixUndo: 'Undo',
   fixBringBack: 'Bring them back',
-  fixLeftOut: (n: number, kind: string): string => n + ' ' + kind + ' files left out',
-  fixNoComputerTitle: (n: number, kind: string): string => n + ' ' + kind + ' files do not say which computer wrote them.',
+  fixLeftOut: (n: number, kind: string): string => n + ' ' + kind + filesWord(n) + ' left out',
+  fixNoComputerTitle: (n: number, kind: string): string => n + ' ' + kind + filesWord(n) + (n === 1 ? ' does not say which computer wrote it.' : ' do not say which computer wrote them.'),
   fixNameLabel: 'Name of the computer',
   fixNameHint: 'Suggested from the folder name. Change it if wrong.',
   fixZoneLabel: 'Time zone of its clock',
   fixZoneHelp: 'SQL error logs use the computer\u2019s own clock, so the time zone changes where events land on the timeline.',
-  fixUseName: (name: string, n: number): string => 'Use ' + name + ' and accept ' + n + ' files',
+  fixUseName: (name: string, n: number): string => 'Use ' + name + ' and accept ' + n + filesWord(n),
 
-  notSupportedHead: (n: number): string => n + ' files are not supported',
+  notSupportedHead: (n: number): string => n + filesWord(n) + (n === 1 ? ' is' : ' are') + ' not supported',
   notSupportedReason: 'This file is not supported',
   removeFromList: 'Remove from list',
   remove: 'Remove',
@@ -61,14 +61,14 @@ export const POPUP_TEXT = {
   discardKeep: 'Keep them',
   discardNow: 'Discard',
 
-  impLine: (p: number, total: number): string => 'Importing ' + p + ' of ' + total + ' files',
+  impLine: (p: number, total: number): string => 'Importing ' + p + ' of ' + total + filesWord(total),
   cancel: 'Cancel',
 
-  resultHero: (n: number): string => n + ' files imported',
+  resultHero: (n: number): string => n + filesWord(n) + ' imported',
   resultImported: 'Imported',
   resultNotImported: 'Not imported',
   resultNoType: 'No file type chosen',
-  computersLine: (n: number, names: string): string => 'Added ' + n + ' computers: ' + names + '.',
+  computersLine: (n: number, names: string): string => 'Added ' + n + (n === 1 ? ' computer: ' : ' computers: ') + names + '.',
   seeComputers: 'See computers',
   openTimeline: 'Open timeline',
   importMore: 'Import more',

@@ -20,9 +20,32 @@ function loadTypeScript(relativePath) {
 }
 
 const copy = loadTypeScript('src/lib/copy/screenCopy.ts');
+const { POPUP_TEXT: popup } = loadTypeScript('src/lib/copy/importPopupCopy.ts');
 const { deck } = loadTypeScript('src/lib/copy/deck.ts');
 const { lintCopy } = loadTypeScript('src/lib/copy/copylint.ts');
 const { findTerm, searchTerms } = loadTypeScript('src/lib/copy/lookup.ts');
+
+test('Import popup counts use singular nouns and verbs only for one', () => {
+  const sentences = [
+    [(n) => popup.checking(n), 'Checking 1 file with the server…', 'Checking 2 files with the server…', 'Checking 0 files with the server…'],
+    [(n) => popup.fixTitleNeedsComputer(n, 'web-a', 'IIS'), '1 IIS file comes from web-a, which is not on your computer list.', '2 IIS files come from web-a, which is not on your computer list.'],
+    [(n) => popup.fixAccept('web-a', n), 'Add web-a as a computer and accept 1 file', 'Add web-a as a computer and accept 2 files'],
+    [popup.fixLeaveOut, 'Leave this 1 file out', 'Leave these 2 files out'],
+    [(n) => popup.fixResolved('web-a', n), 'Added web-a, 1 file accepted', 'Added web-a, 2 files accepted'],
+    [(n) => popup.fixLeftOut(n, 'IIS'), '1 IIS file left out', '2 IIS files left out'],
+    [(n) => popup.fixNoComputerTitle(n, 'SQL error log'), '1 SQL error log file does not say which computer wrote it.', '2 SQL error log files do not say which computer wrote them.'],
+    [(n) => popup.fixUseName('sql-a', n), 'Use sql-a and accept 1 file', 'Use sql-a and accept 2 files'],
+    [popup.notSupportedHead, '1 file is not supported', '2 files are not supported', '0 files are not supported'],
+    [(n) => popup.impLine(0, n), 'Importing 0 of 1 file', 'Importing 0 of 2 files', 'Importing 0 of 0 files'],
+    [popup.resultHero, '1 file imported', '2 files imported', '0 files imported'],
+    [(n) => popup.computersLine(n, 'web-a'), 'Added 1 computer: web-a.', 'Added 2 computers: web-a.', 'Added 0 computers: web-a.']
+  ];
+  for (const [sentence, one, two, zero] of sentences) {
+    assert.equal(sentence(1), one);
+    assert.equal(sentence(2), two);
+    if (zero) assert.equal(sentence(0), zero);
+  }
+});
 
 test('p95Change compares with the earlier period and flags only a clear rise', () => {
   assert.equal(copy.p95Change(500, 100).text, '5.0x the earlier period');

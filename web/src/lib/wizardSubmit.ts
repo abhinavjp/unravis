@@ -252,6 +252,10 @@ export function retryItemsOf(state: SubmitState, input: Pick<SubmitInput, 'envs'
     if (failure.step === 'tag' && source && source.kind !== 'mongo-database') {
       item.payload = { importId: 0, kind: source.kind, label: source.label, env: source.env, portal: source.portal, api: source.api, classification: '' };
     }
+    const outcome = state.imports[failure.key]?.outcome;
+    if (failure.step === 'import' && failure.reason === 'unknown-host' && outcome?.kind === 'refused' && outcome.serverName) {
+      item.payload = { serverName: outcome.serverName };
+    }
     return item;
   });
 }

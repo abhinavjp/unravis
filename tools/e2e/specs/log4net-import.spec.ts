@@ -94,7 +94,7 @@ test('L4N-02: a file named log.txt is suggested as an application log, and a pro
 
   // Prose is not a log: no importer claims it, so it is not supported rather than guessed. The log asks for a computer.
   await expect(dlg.getByText('1 fix needed before you can import')).toBeVisible({ timeout: 60_000 });
-  await expect(dlg.locator('.notsupp')).toContainText('1 files are not supported');
+  await expect(dlg.locator('.notsupp')).toContainText('1 file is not supported');
   await expect(dlg.locator('.notsupp-row').filter({ hasText: 'notes.txt' })).toBeVisible();
   await expect(dlg.locator('.notsupp-row').filter({ hasText: 'log.txt' })).toHaveCount(0);
   await shot(page, 'popup-names');

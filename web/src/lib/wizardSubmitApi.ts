@@ -1,5 +1,5 @@
 import { api } from './api';
-import { CaseApiError, createCase, importProgressPercent, putRetries, startCommitJob, startPreviewJob, waitForImportJob } from './cases';
+import { CaseApiError, createCase, importProgressPercent, putRetries, startCheckJob, startCommitJob, startPreviewJob, waitForCheckJob, waitForImportJob } from './cases';
 import type { ImportJob } from './cases';
 import { discoverClient, outcomeFromError, outcomeFromJob, watchJob } from './discover';
 import type { RowOutcome } from './discover';
@@ -98,7 +98,17 @@ export const wizardSubmitApi: SubmitApi = {
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
       if (error instanceof CaseApiError && error.status === 423) throw error;
-      return outcomeFromError(error);
+      const outcome = outcomeFromError(error);
+      if (outcome.kind === 'refused' && outcome.reason === 'unknown-host') {
+        // The refusal carries no name. The existing check route can read it without changing the server API or keeping the file.
+        try {
+          const check = await startCheckJob({ caseId, files: [{ key: 'retry', file }] });
+          const report = await waitForCheckJob(caseId, check);
+          const verdict = report.files[0];
+          if (verdict?.verdict === 'needs-computer' && verdict.serverName) return { ...outcome, serverName: verdict.serverName };
+        } catch { /* Keep the original refusal when the name cannot be read. */ }
+      }
+      return outcome;
     }
   }
 };

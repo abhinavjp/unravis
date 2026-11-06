@@ -3,6 +3,7 @@
   import { POPUP_TEXT } from '../../copy/importPopupCopy';
   import { formatBytes, importerLabel, reasonText } from '../../copy/importCopy';
   import { timeZoneRule, type StagedFile } from '../../fileKinds';
+  import { tick } from 'svelte';
   import FixCard from './FixCard.svelte';
   import GroupedList from './GroupedList.svelte';
   import NotSupported, { type UnsupportedFile } from './NotSupported.svelte';
@@ -15,11 +16,12 @@
   // The footer (fix hint, acknowledgement, Import button) is drawn by the shell. `onResolve` is how the shell learns a fix was saved,
   // so it can check again and show a case the first check missed.
   let {
-    report, files, checking = false, cards = {}, expanded = {}, selected = {}, kinds = {}, zone = 'UTC', totalServers,
+    report, files, retryServerName = null, checking = false, cards = {}, expanded = {}, selected = {}, kinds = {}, zone = 'UTC', totalServers,
     onResolve, onLeaveOut, onUndo, onAddAll, onRemoveUnsupported, onPickKind, onToggle, onGroupAll, onSelect
   }: {
     report: CheckReport | null;
     files: StagedFile[];
+    retryServerName?: string | null;
     checking?: boolean;
     /** Keyed by card id. A card with no entry is open. */
     cards?: Record<string, CardState>;
@@ -80,6 +82,7 @@
       id, verdicts, needsZone: false, suggested: id,
       kind: [...new Set(verdicts.map((verdict) => kindText(verdict.importer)))].join(', ')
     }));
+    if (!report && retryServerName) serverCards.push({ id: retryServerName, verdicts: [], kind: '', needsZone: false, suggested: retryServerName });
     const staged = new Map(files.map((item) => [fileKeyOf(item), item]));
     const unnamedCards: Card[] = [...unnamed].map(([id, verdicts]) => {
       const importer = verdicts[0].importer;
@@ -112,6 +115,9 @@
   let named = $state<Record<string, string>>({});
   let fixRefs = $state<Record<string, { focus: () => Promise<void> } | undefined>>({});
 
+  // The card may have been drawn in the same pass as the focus request, so its handle is read one tick later.
+  const focusCard = (id: string) => void tick().then(() => fixRefs[id]?.focus());
+
   const allOn = (verdicts: CheckFileVerdict[]): boolean => verdicts.every((verdict) => ticked(verdict.key));
 
   const headOf = (host: HTMLElement) => host.parentElement?.querySelector<HTMLElement>('.grp-head')?.focus({ preventScroll: true });
@@ -128,7 +134,7 @@
     <p>{POPUP_TEXT.checking(files.length)}</p>
     <p class="sub">{POPUP_TEXT.checkingSub}</p>
   </div>
-{:else if report}
+{:else if report || retryServerName}
   {#each parts.ready as [group, verdicts] (group)}
     <div class="slot">
       {@render anchor('head-' + group, headOf)}
@@ -152,8 +158,8 @@
   {#each [...parts.serverCards, ...parts.unnamedCards] as card (card.id)}
     {@const cardState = cards[card.id] ?? 'open'}
     <div class="slot">
-      {@render anchor('card-' + card.id, () => void fixRefs[card.id]?.focus())}
-      {@render anchor('name:' + card.id, () => void fixRefs[card.id]?.focus())}
+      {@render anchor('card-' + card.id, () => focusCard(card.id))}
+      {@render anchor('name:' + card.id, () => focusCard(card.id))}
       {@render anchor('head-' + card.id, headOf)}
       <FixCard
         bind:this={fixRefs[card.id]}

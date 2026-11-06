@@ -118,14 +118,14 @@ test('IP-07: "Add all N servers" resolves every open fix card', async ({ page, a
   await runCheck(dialog);
 
   await expect(dialog.getByText('2 IIS files come from iis_alpha, which is not on your computer list.')).toBeVisible();
-  await expect(dialog.getByText('1 IIS files come from iis_beta, which is not on your computer list.')).toBeVisible();
+  await expect(dialog.getByText('1 IIS file comes from iis_beta, which is not on your computer list.')).toBeVisible();
   await expect(fixesHint(dialog, 2)).toBeVisible();
   // One link on each open card.
   await expect(dialog.getByRole('button', { name: 'Add all 2 servers' })).toHaveCount(2);
   await dialog.getByRole('button', { name: 'Add all 2 servers' }).first().click();
 
   await expect(dialog.getByText('Added iis_alpha, 2 files accepted')).toBeVisible();
-  await expect(dialog.getByText(/^Added iis_beta, 1 files? accepted$/)).toBeVisible();
+  await expect(dialog.getByText('Added iis_beta, 1 file accepted')).toBeVisible();
   await expect(fixesHint(dialog, 2)).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: /^Add all \d+ servers$/ })).toHaveCount(0);
   await expect(ack(dialog)).toBeFocused();
@@ -211,10 +211,12 @@ test('IP-10: the time zone field appears only for SQL error log and Windows even
   await expect(iisCard.getByLabel('Time zone of its clock')).toHaveCount(0);
   await expect(iisCard.getByLabel('Name of the computer')).toHaveCount(0);
 
-  const sqlCard = cards.filter({ hasText: 'SQL error log files do not say which computer wrote them.' });
+  const sqlCard = cards.filter({ hasText: '1 SQL error log file does not say which computer wrote it.' });
   await expect(sqlCard.getByLabel('Time zone of its clock')).toBeVisible();
   await expect(sqlCard.getByLabel('Name of the computer')).toBeVisible();
-  const winCard = cards.filter({ hasText: 'Windows event log files do not say which computer wrote them.' });
+  await sqlCard.getByLabel('Name of the computer').fill('sql-ip10');
+  await expect(sqlCard.getByRole('button', { name: 'Use sql-ip10 and accept 1 file', exact: true })).toBeVisible();
+  const winCard = cards.filter({ hasText: '1 Windows event log file does not say which computer wrote it.' });
   await expect(winCard).toHaveCount(1);
   await expect(winCard.getByLabel('Time zone of its clock')).toBeVisible();
 

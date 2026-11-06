@@ -127,7 +127,7 @@ test('IMPORT-01: several files at once each show a kind, the unknown one is not 
   await toCheck(page);
   await expect(dlg.locator('.prog-line')).toContainText('Step 2 of 3 · Check files with the server before import');
   await expect(group(page, 'kind:iis-w3c')).toContainText('2 files, ready');
-  await expect(dlg.locator('.notsupp')).toContainText('1 files are not supported');
+  await expect(dlg.locator('.notsupp')).toContainText('1 file is not supported');
   await expect(notSupportedRow(page, 'notes.txt')).toBeVisible();
   await expect(dlg.getByText('I understand this is read-only and nothing is changed on these computers')).toBeVisible();
   // The button waits for the read-only box and counts only files that will be sent.
@@ -262,7 +262,7 @@ test('IMPORT-05: a file already in the case is not sent again, and the new file 
   await picker(page).setInputFiles([w3c]);
   await toCheck(page);
   await importAll(page);
-  await expect(hero(page)).toContainText('1 files imported', { timeout: 60_000 });
+  await expect(hero(page)).toContainText('1 file imported', { timeout: 60_000 });
 
   await dlg.getByRole('button', { name: 'Import more', exact: true }).click();
   await picker(page).setInputFiles([w3c, payload('u_ex261021.log', Buffer.from(W3C_OTHER))]);
@@ -271,7 +271,7 @@ test('IMPORT-05: a file already in the case is not sent again, and the new file 
   await expect(notSupportedRow(page, 'u_ex261020.log')).toBeVisible();
   await expect(dlg.getByRole('button', { name: 'Import 1 file', exact: true })).toBeVisible();
   await importAll(page);
-  await expect(hero(page)).toContainText('1 files imported', { timeout: 60_000 });
+  await expect(hero(page)).toContainText('1 file imported', { timeout: 60_000 });
   await expect(dlg.locator('.result-line').filter({ hasText: 'u_ex261020.log' })).toBeVisible();
   await expect.poll(() => caseImports(api, 'QA Import Twice')).toBe(2);
 });
@@ -289,7 +289,7 @@ test('IMPORT-06: one file goes through the same three steps as many', async ({ p
   const send = dlg.getByRole('button', { name: 'Import 1 file', exact: true });
   await expect(send).toBeDisabled();
   await importAll(page);
-  await expect(hero(page)).toContainText('1 files imported', { timeout: 60_000 });
+  await expect(hero(page)).toContainText('1 file imported', { timeout: 60_000 });
   await expect.poll(() => caseImports(api, 'QA Import Single')).toBe(1);
 });
 
@@ -339,7 +339,7 @@ test('IMPORT-09: a file from a server the computer list lacks gets a fix card: l
   await toCheck(page);
 
   const card = dlg.locator('.fix');
-  await expect(card).toContainText('1 IIS files come from ISS-PROD-07, which is not on your computer list.');
+  await expect(card).toContainText('1 IIS file comes from ISS-PROD-07, which is not on your computer list.');
   await expect(card).toContainText('Unravis will not guess which computer wrote a log. Add it once and every file from that server is accepted.');
   await expect(card).toContainText('IIS logs are already UTC, no time zone needed.');
   // Nothing can be sent while the card is open.
@@ -348,24 +348,24 @@ test('IMPORT-09: a file from a server the computer list lacks gets a fix card: l
   await expect(dlg.getByRole('button', { name: 'Import 1 file', exact: true })).toBeDisabled();
 
   // Leave the file out, then bring it back.
-  await card.getByRole('button', { name: 'Leave these 1 files out', exact: true }).click();
-  await expect(card).toContainText('1 IIS files left out');
+  await card.getByRole('button', { name: 'Leave this 1 file out', exact: true }).click();
+  await expect(card).toContainText('1 IIS file left out');
   await expect(dlg.getByText('1 fix needed before you can import')).toHaveCount(0);
   await expect(dlg.getByRole('button', { name: 'Import 0 files', exact: true })).toBeDisabled();
   await card.getByRole('button', { name: 'Bring them back', exact: true }).click();
   await expect(dlg.getByText('1 fix needed before you can import')).toBeVisible();
 
   // Add the computer once, and the file is accepted.
-  await card.getByRole('button', { name: 'Add ISS-PROD-07 as a computer and accept 1 files', exact: true }).click();
-  await expect(card).toContainText('Added ISS-PROD-07, 1 files accepted');
+  await card.getByRole('button', { name: 'Add ISS-PROD-07 as a computer and accept 1 file', exact: true }).click();
+  await expect(card).toContainText('Added ISS-PROD-07, 1 file accepted');
   await expect(card.getByRole('button', { name: 'Undo', exact: true })).toBeVisible();
   const hosts = JSON.stringify((await api('GET', '/api/hosts')).json);
   expect(hosts).toContain('ISS-PROD-07');
   expect(hosts).toContain('web-a');
 
   await importAll(page);
-  await expect(hero(page)).toContainText('1 files imported', { timeout: 60_000 });
-  await expect(dlg.locator('.computers-line')).toContainText('Added 1 computers: ISS-PROD-07.');
+  await expect(hero(page)).toContainText('1 file imported', { timeout: 60_000 });
+  await expect(dlg.locator('.computers-line')).toContainText('Added 1 computer: ISS-PROD-07.');
   await expect.poll(() => caseImports(api, 'QA Import Fix Card')).toBe(1);
   // The case keeps the file under the computer that was just added.
   const recorded = JSON.stringify((await api('GET', `/api/cases/${id}/imports`)).json);
@@ -390,15 +390,15 @@ test('IMPORT-10: a computer that left the list after the check sends the person 
 
   // Back on the Check step, on the card of that server, which is open and focused.
   const card = dlg.locator('.fix');
-  await expect(card).toContainText('1 IIS files come from WEB-A, which is not on your computer list.', { timeout: 60_000 });
+  await expect(card).toContainText('1 IIS file comes from WEB-A, which is not on your computer list.', { timeout: 60_000 });
   await expect(dlg.locator('.prog-line')).toContainText('Step 2 of 3');
-  const add = card.getByRole('button', { name: 'Add WEB-A as a computer and accept 1 files', exact: true });
+  const add = card.getByRole('button', { name: 'Add WEB-A as a computer and accept 1 file', exact: true });
   await expect(add).toBeFocused();
   await add.click();
-  await expect(card).toContainText('Added WEB-A, 1 files accepted');
+  await expect(card).toContainText('Added WEB-A, 1 file accepted');
 
   await importAll(page);
-  await expect(hero(page)).toContainText('1 files imported', { timeout: 60_000 });
+  await expect(hero(page)).toContainText('1 file imported', { timeout: 60_000 });
   await expect.poll(() => caseImports(api, 'QA Import Retry')).toBe(1);
 });
 

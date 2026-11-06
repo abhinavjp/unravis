@@ -36,7 +36,7 @@
     onClose: () => void;
     /** Called just before onClose when the person chose "Open timeline". */
     onOpenTimeline?: () => void;
-    /** Opens the popup on the Check step with this server's fix card open, once the files are checked. */
+    /** Opens the popup on the Check step with this server's fix card open, even before its file is picked again. */
     retryServerName?: string | null;
     popup?: PopupState;
   } = $props();
@@ -157,6 +157,7 @@
       {:else}
         <CheckStep
           report={popup.report}
+          retryServerName={popup.retryServerName}
           files={popup.files}
           checking={popup.checking}
           cards={popup.cards}
