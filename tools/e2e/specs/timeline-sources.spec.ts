@@ -8,6 +8,7 @@
 //   TSRC-05  Everything switched off: nothing is read, the screen says so (not "all"), the choice survives a reload, Select all reads again.
 //   TSRC-06  A saved audit database that is not connected is listed as "saved, not connected", on its lane too, and Connect opens the connect flow.
 //   TSRC-07  A SQL or IIS lane with no file says to add a file, and Add files opens the Import files popup.
+//   TSRC-09  Files listed for a lane but never imported: the lane says they were not imported, and Add files still opens the Import files popup.
 //   TSRC-08  Screenshots for the review: light, dark and 375 px wide, with the chunked read, the saved database and the empty SQL / IIS lanes.
 import { test, expect, type Page, type Request } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
@@ -287,6 +288,23 @@ test('TSRC-07: a SQL or IIS lane with no file says to add a file, and Add files 
   // The API lane is a live lane and has no such button.
   await expect(page.locator('.panel[data-lane=audit] [data-testid=lane-add-files]')).toHaveCount(0);
   await page.locator('.panel[data-lane=sql] [data-testid=lane-add-files]').click();
+  await expect(page.getByRole('dialog', { name: 'Import files' })).toBeVisible();
+});
+
+test('TSRC-09: files listed for a SQL or IIS lane but never imported are called "not imported", not "no file"', async ({ page }) => {
+  const words = 'The files listed for this lane have not been imported into this case, so it holds none of their events. Import them to see this lane.';
+  await answerWith(page, (body) => {
+    noSqlOrIisFile(body);
+    for (const lane of body.lanes) if (lane.key !== 'audit') { lane.reasonCode = 'not-imported'; lane.reason = words; }
+  });
+  await openTimeline(page);
+  for (const lane of ['sql', 'iis']) {
+    const status = page.locator(`.panel[data-lane=${lane}] [data-testid=lane-status]`);
+    await expect(status).toContainText('have not been imported into this case');
+    await expect(status).not.toContainText('This case has no file for this source');
+    await expect(page.locator(`.panel[data-lane=${lane}] [data-testid=lane-add-files]`)).toBeVisible();
+  }
+  await page.locator('.panel[data-lane=iis] [data-testid=lane-add-files]').click();
   await expect(page.getByRole('dialog', { name: 'Import files' })).toBeVisible();
 });
 

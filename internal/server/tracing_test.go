@@ -251,7 +251,7 @@ func TestTracingOmittedSourceIdsMeansAll(t *testing.T) {
 		imp2 := seedTracingImport(t, e.store, id, "sql-xel", "b.xel", tracingEvents(2))
 		want := []tracingRef{
 			{SourceID: "cs_" + strconv.FormatInt(tagA.ID, 10), Label: "web-a logs"},
-			{SourceID: "cs_" + strconv.FormatInt(tagB.ID, 10), Label: "sql-trace"},
+			{SourceID: "cs_" + strconv.FormatInt(tagB.ID, 10), Label: "sql-trace", NoFile: true},
 			{SourceID: "imp_" + strconv.FormatInt(imp2.ID, 10), Label: "sql-xel"},
 		}
 		for _, body := range []string{tracingBody(""), tracingBody(`"sourceIds":null`), tracingBody(`"sourceIds":[]`)} {
@@ -322,7 +322,7 @@ func TestTracingSourceIDs(t *testing.T) {
 		impID := "imp_" + strconv.FormatInt(imp.ID, 10)
 		got := tracingSourcesOf(t, e.json(http.MethodPost, tracingPath(id),
 			tracingBody(`"sourceIds":["`+impID+`","`+tagID+`","`+impID+`"]`)))
-		want := []tracingRef{{SourceID: impID, Label: "sql-xel"}, {SourceID: tagID, Label: "web-a"}}
+		want := []tracingRef{{SourceID: impID, Label: "sql-xel"}, {SourceID: tagID, Label: "web-a", NoFile: true}}
 		if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 			t.Fatalf("sources = %+v, want %+v", got, want)
 		}

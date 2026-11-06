@@ -132,6 +132,19 @@ test('the wire carries the chunk and source fields through and leaves them off a
 
 /* ------------------------------------------------------------------ the SQL / IIS empty state */
 
+test('a SQL or IIS lane whose listed files were never imported says so in the server words', () => {
+  const words = 'The files listed for this lane have not been imported into this case, so it holds none of their events. Import them to see this lane.';
+  for (const key of ['sql', 'iis']) {
+    const notImported = lane({ key, state: 'no-data', reason: words, emptyBecause: 'not-imported' });
+    assert.equal(lanes.laneNote(notImported), words);
+    assert.notEqual(lanes.laneNote(notImported), lanes.READ_TEXT.noFile);
+  }
+  assert.equal(lanes.laneNote(lane({ key: 'sql', state: 'no-data', reason: 'Set aside.', emptyBecause: 'import-skipped' })), 'Set aside.');
+  // Without a reason code the lane keeps the plain no-file sentence, and "Reading it live is not built yet" is gone.
+  assert.equal(lanes.laneNote(lane({ key: 'sql', state: 'no-data', reason: 'x' })), lanes.READ_TEXT.noFile);
+  assert.doesNotMatch(lanes.READ_TEXT.noFile, /not built yet/);
+});
+
 test('a SQL or IIS lane with no file says so, offers Add files, and does not claim files are the only way', () => {
   const noFile = lane({ key: 'sql', state: 'no-data' });
   assert.equal(lanes.laneNote(noFile), lanes.READ_TEXT.noFile);

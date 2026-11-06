@@ -50,6 +50,12 @@ const (
 	// its time budget (tracingLaneBudget); the lane keeps what was read so far.
 	tracingReasonTimeout = "timeout"
 	tracingDisabledTZ   = "tz-rule"
+	// A no-data lane says why when the case knows: the file is listed but was never
+	// imported, or it was imported and then set aside.
+	tracingReasonNotImported = "not-imported"
+	tracingReasonSkipped     = "import-skipped"
+	tracingNotImportedMsg    = "The files listed for this lane have not been imported into this case, so it holds none of their events. Import them to see this lane."
+	tracingSkippedMsg        = "The files imported for this lane were set aside, so the case holds none of their events."
 )
 
 // tracingCountBuckets is the bucket aggregate behind the SQL and IIS lanes. It is
@@ -169,6 +175,9 @@ func unwrapCase(c casestore.Case) casestore.Case {
 type tracingRef struct {
 	SourceID string `json:"sourceId"`
 	Label    string `json:"label"`
+	// NoFile is true for a listed source whose file was never imported into the
+	// case (a tag the wizard saved, or a file that was only previewed).
+	NoFile bool `json:"noFile,omitempty"`
 }
 
 // tracingSelection is the sources one request reads. Refs are the resolved
@@ -184,6 +193,9 @@ type tracingSelection struct {
 	AuditIDs []string
 	Explicit bool
 	Warnings []string
+	// KindOf maps a cs_ source id to the importer name its tag was saved with, so a
+	// tag with no import can still be placed on its lane.
+	KindOf map[string]string
 	// SavedAudit are the names of the audit-class Mongo databases the case saved
 	// (tags with no file behind them), in saved order. Only read when the request
 	// reads tags or names an audit source; they are never refs.
@@ -229,6 +241,7 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 	sel := tracingSelection{
 		Refs:     []tracingRef{},
 		ImportOf: map[string]int64{},
+		KindOf:   map[string]string{},
 		AuditIDs: []string{},
 		Explicit: len(ids) > 0,
 		Warnings: []string{},
@@ -299,6 +312,7 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 				}
 				sel.Refs = append(sel.Refs, tracingRef{SourceID: id, Label: tracingLabel(t.Label, t.Kind)})
 				sel.ImportOf[id] = tagImport(t)
+				sel.KindOf[id] = t.Kind
 			case "imp":
 				im, found := importByID[n]
 				if !found {
@@ -310,6 +324,7 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 				sel.AuditIDs = append(sel.AuditIDs, id)
 			}
 		}
+		sel.markNoFile()
 		return sel, nil
 	}
 
@@ -327,6 +342,7 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 		refs = append(refs, tracingRef{SourceID: sid, Label: tracingLabel(t.Label, t.Kind)})
 		imp := tagImport(t)
 		sel.ImportOf[sid] = imp
+		sel.KindOf[sid] = t.Kind
 		if imp > 0 {
 			linked[imp] = true
 		}
@@ -350,7 +366,18 @@ func resolveTracingSources(ctx context.Context, c casestore.Case, ids []string) 
 		sel.Warnings = append(sel.Warnings, tracingCappedWarn)
 	}
 	sel.Refs = refs
+	sel.markNoFile()
 	return sel, nil
+}
+
+// markNoFile flags every listed source whose file was never imported, so the
+// panel can say so instead of listing it as traced.
+func (s *tracingSelection) markNoFile() {
+	for i := range s.Refs {
+		if s.ImportOf[s.Refs[i].SourceID] == 0 {
+			s.Refs[i].NoFile = true
+		}
+	}
 }
 
 // The response contract (phase 04 reads it by JSON path). Arrays are never null.
@@ -577,6 +604,9 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 			lanes = append(lanes, lane)
 			continue
 		}
+		if lane.State == calltrace.StateNoData {
+			lane.ReasonCode, lane.Reason = emptyLaneReason(key, src)
+		}
 		if names := src.laneNames[key]; len(names) > 0 {
 			if err := bucketLane(ctx, c, axis, &lane, names, src.selectedIDs, cappedBy[key], timedOutBy[key]); err != nil {
 				return nil, nil, err
@@ -585,6 +615,19 @@ func tracingSQLIISLanes(ctx context.Context, c casestore.Case, axis tracingAxis,
 		lanes = append(lanes, lane)
 	}
 	return lanes, warnings, nil
+}
+
+// emptyLaneReason says why a lane with the state no-data is empty, when the
+// selection knows: listed files that were never imported, or imports that were
+// set aside. Both are empty when the selection holds nothing for the lane.
+func emptyLaneReason(key string, src laneSources) (code, text string) {
+	switch {
+	case src.notImported[key] > 0:
+		return tracingReasonNotImported, tracingNotImportedMsg
+	case src.skipped[key] > 0:
+		return tracingReasonSkipped, tracingSkippedMsg
+	}
+	return "", ""
 }
 
 // laneSources is what the selection says about the two lanes: the source
@@ -597,6 +640,8 @@ type laneSources struct {
 	unchecked   map[string]bool      // lane key -> a selected file has no confirmed rule
 	asOf        map[string]time.Time // lane key -> latest Imported
 	selectedIDs map[int64]bool
+	notImported map[string]int // lane key -> selected sources whose file was never imported
+	skipped     map[string]int // lane key -> selected imports that were quarantined or failed
 }
 
 // resolveLaneSources maps the selected sources to imports and works out, per
@@ -606,10 +651,14 @@ func resolveLaneSources(ctx context.Context, c casestore.Case, sel tracingSelect
 	warnings := []string{}
 	refByImport := map[int64]tracingRef{}
 	noFile := false
+	notImported := map[string]int{}
 	for _, ref := range sel.Refs {
 		id := sel.ImportOf[ref.SourceID]
 		if id == 0 {
 			noFile = true
+			if lane := calltrace.LaneOf(sel.KindOf[ref.SourceID]); lane == calltrace.LaneSQL || lane == calltrace.LaneIIS {
+				notImported[lane]++
+			}
 			continue
 		}
 		if _, dup := refByImport[id]; !dup {
@@ -634,10 +683,18 @@ func resolveLaneSources(ctx context.Context, c casestore.Case, sel tracingSelect
 	nameIDs := map[string]map[string]bool{}
 	out.asOf = map[string]time.Time{}
 	out.selectedIDs = map[int64]bool{}
+	out.notImported = notImported
+	out.skipped = map[string]int{}
 	notLane := false
 	for _, rec := range recs {
 		ref, picked := refByImport[rec.ID]
-		if !picked || (rec.Status != casestore.StatusOK && rec.Status != "") {
+		if !picked {
+			continue
+		}
+		if rec.Status != casestore.StatusOK && rec.Status != "" {
+			if lane := calltrace.LaneOf(rec.Importer); lane == calltrace.LaneSQL || lane == calltrace.LaneIIS {
+				out.skipped[lane]++
+			}
 			continue
 		}
 		lane := calltrace.LaneOf(rec.Importer)

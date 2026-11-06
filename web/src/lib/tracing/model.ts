@@ -62,6 +62,8 @@ export interface TracingLane {
   reason: string;
   /** Read from the lane field `reasonCode` when present. */
   incompleteReason?: TracingReason;
+  /** Why an empty SQL or IIS lane is empty when files are listed for it: never imported, or set aside on import. `reason` carries the words. */
+  emptyBecause?: 'not-imported' | 'import-skipped';
   origin: TracingOrigin;
   asOf: string;
   consistency: TracingConsistency;
@@ -222,6 +224,7 @@ function parseLane(value: unknown): TracingLane | null {
     sources: parseSourceRefs(value.sources),
     buckets
   };
+  if (value.reasonCode === 'not-imported' || value.reasonCode === 'import-skipped') lane.emptyBecause = value.reasonCode;
   // The optional fields stay off the lane when the server did not send them, so a lane read in one piece is unchanged.
   if (isNumber(value.chunksTotal) && value.chunksTotal > 0) lane.chunksTotal = Math.floor(value.chunksTotal);
   if (lane.chunksTotal !== undefined) lane.chunksRead = isNumber(value.chunksRead) && value.chunksRead > 0 ? Math.min(Math.floor(value.chunksRead), lane.chunksTotal) : 0;

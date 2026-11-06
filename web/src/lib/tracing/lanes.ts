@@ -53,10 +53,10 @@ export function laneCutShort(lane: TracingLane): boolean {
   return !lane.disabled && !!lane.incompleteReason && ACTIONABLE_REASONS.includes(lane.incompleteReason);
 }
 
-/** Fixed words for what was read and what was not. The SQL and IIS lanes read imported files only. */
+/** Fixed words for what was read and what was not. */
 export const READ_TEXT = {
   notRead: 'not read',
-  noFile: 'This case has no file for this source. Add a file to see this lane. Reading it live is not built yet.',
+  noFile: 'This case has no file for this source. Add a file to see this lane.',
   addFiles: 'Add files',
   tipUnread: 'This period was not read. That is not the same as no traffic.'
 } as const;
@@ -351,7 +351,9 @@ export function axisCaption(zoneName: string, bucketSeconds: number, hasOutside:
 
 export function laneNote(lane: TracingLane): string {
   if (lane.disabled) return lane.reason || LANE_STATE_TEXT['clock-unchecked'];
-  // The SQL and IIS lanes read imported files only: with none, say so plainly rather than the server's short phrase.
+  // Files are listed for the lane but the case holds none of their events (never imported, or set aside): the server says which.
+  if (lane.state === 'no-data' && lane.emptyBecause && lane.reason) return lane.reason;
+  // A lane with no file at all: say so plainly rather than the server's short phrase.
   if (lane.state === 'no-data' && lane.key !== 'audit') return READ_TEXT.noFile;
   // A lane cut short by a time limit can still carry the state "events" with the bars it did read; it says so all the same.
   if (laneCutShort(lane) && (lane.state === 'incomplete' || lane.state === 'events' || lane.state === 'none-seen')) return INCOMPLETE_TEXT[lane.incompleteReason as TracingReason];
