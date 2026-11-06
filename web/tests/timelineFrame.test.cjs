@@ -53,6 +53,24 @@ test('from 40 up each quarter is rounded', () => {
   assert.deepEqual(lanes.yTicks(1250000), [0, 312500, 625000, 937500, 1250000]);
 });
 
+test('a tick sits at its share of the scale height, measured from the bottom', () => {
+  assert.equal(lanes.tickBottomPct(0, 100), 0);
+  assert.equal(lanes.tickBottomPct(50, 100), 50);
+  assert.equal(lanes.tickBottomPct(100, 100), 100);
+  assert.equal(lanes.tickBottomPct(25, 40), 62.5);
+});
+
+test('a scale with no height keeps every tick at the bottom', () => {
+  assert.equal(lanes.tickBottomPct(5, 0), 0);
+  assert.equal(lanes.tickBottomPct(5, -3), 0);
+  assert.equal(lanes.tickBottomPct(5, NaN), 0);
+});
+
+test('a tick outside the scale is clipped to it', () => {
+  assert.equal(lanes.tickBottomPct(150, 100), 100);
+  assert.equal(lanes.tickBottomPct(-2, 100), 0);
+});
+
 test('the ticks are strictly ascending from 0 to the rounded top', () => {
   for (const max of [4, 12, 40, 45, 100, 1250000]) {
     const ticks = lanes.yTicks(max);

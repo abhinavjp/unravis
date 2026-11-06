@@ -1,0 +1,135 @@
+// The Investigation Timeline chart frame (phase 1): a readable Y axis, gridlines, a wider centre lane, a reason panel for empty
+// lanes and the explanation block under the chart. The demo clock is 2026-10-20T09:00Z; 19 Oct 09:00-10:00 has events in all three lanes.
+//   TLF-01  The explanation block sits under the chart: "How to read this chart" is open, the other three are closed and open on click.
+//   TLF-02  The left axis shows several ticks and a unit title, and the plot has gridlines.
+//   TLF-05  With a slowness figure in the answer the API lane gets a right axis in milliseconds, hidden at 375 px.
+//   TLF-03  The centre lane takes most of the width at 1280, and the Suspects rail only appears beside the chart when the window is wide.
+//   TLF-04  A lane with nothing to draw shows a reason panel with the reason, and the page does not scroll sideways at 375 px.
+import { test, expect, type Page } from '../support/fixtures';
+import { goHome, openCase } from '../support/ui';
+import { fillWindows } from '../support/window-picker';
+
+const CASE_TITLE = 'Orders API stall, 19 October';
+const WIN_ALL = ['2026-10-19T09:00', '2026-10-19T10:00', '2026-10-19T08:00', '2026-10-19T09:00'] as const;
+const WIN_EMPTY = ['2026-09-01T00:00', '2026-09-01T01:00', '2026-08-31T23:00', '2026-09-01T00:00'] as const;
+
+const isTrace = (r: { url(): string; method(): string }) => r.url().includes('/tracing') && r.method() === 'POST';
+
+async function openTimeline(page: Page): Promise<void> {
+  await goHome(page);
+  await openCase(page, CASE_TITLE);
+  await page.getByRole('button', { name: 'Open the Investigation Timeline' }).click();
+  await expect(page.getByRole('heading', { name: 'Investigation Timeline' })).toBeVisible();
+  await expect(page.locator('.tracing-chart')).toBeVisible();
+}
+
+/** Sets the windows and presses Refresh timeline, then waits for the answer. */
+async function readWindow(page: Page, win: readonly [string, string, string, string]): Promise<void> {
+  await fillWindows(page, win);
+  const answered = page.waitForResponse((r) => isTrace(r.request()));
+  await page.getByTestId('trace-sources').getByRole('button', { name: 'Refresh timeline' }).click();
+  await answered;
+  await expect(page.locator('.tracing-chart')).toBeVisible();
+}
+
+test('TLF-01: the explanation block sits under the chart, with the reading steps open and three more sections closed', async ({ page }) => {
+  await openTimeline(page);
+  const block = page.locator('.tracing-explain');
+  await expect(block).toBeVisible();
+  const chartBox = (await page.locator('.tracing-chart .lanes-grid').boundingBox())!;
+  const blockBox = (await block.boundingBox())!;
+  expect(blockBox.y, 'the explanation is under the lanes').toBeGreaterThanOrEqual(chartBox.y + chartBox.height);
+
+  const read = page.getByTestId('explain-read');
+  await expect(read).toHaveAttribute('open', '');
+  await expect(read.locator('li')).toHaveCount(4);
+  for (const id of ['explain-lanes', 'explain-axis', 'explain-details']) {
+    const section = page.getByTestId(id);
+    await expect(section, id + ' starts closed').not.toHaveAttribute('open', '');
+    await section.locator('summary').click();
+    await expect(section).toHaveAttribute('open', '');
+  }
+  await expect(page.getByTestId('explain-lanes').locator('dt')).toHaveCount(3);
+  await expect(page.getByTestId('explain-axis').locator('li')).toHaveCount(3);
+  await expect(page.getByTestId('explain-details-row')).toHaveCount(3);
+});
+
+test('TLF-02: the left axis has several ticks and a unit title, and the plot has gridlines', async ({ page }) => {
+  await openTimeline(page);
+  await readWindow(page, WIN_ALL);
+  const audit = page.locator('.panel[data-lane="audit"]');
+  await expect(audit).toHaveAttribute('data-state', 'events');
+
+  const leftScale = page.locator('.axis-left .scale').first();
+  expect(await leftScale.locator('.tick').count(), 'five or fewer ticks, at least three').toBeGreaterThanOrEqual(3);
+  await expect(leftScale.locator('.tick-bottom')).toHaveText('0');
+  await expect(leftScale.locator('.tick-top')).toHaveCount(1);
+  await expect(page.locator('.axis-left .y-title').first()).toHaveText('events per slot');
+
+  // The server does not send a slowness figure yet (phase 2), so the right axis stays empty rather than inventing a scale.
+  await expect(page.locator('.axis-right .tick')).toHaveCount(0);
+
+  expect(await audit.locator('.hgrid > *').count(), 'horizontal gridlines').toBeGreaterThanOrEqual(2);
+  expect(await audit.locator('.vgrid > *').count(), 'vertical gridlines at the time ticks').toBeGreaterThanOrEqual(2);
+  const pointer = await audit.locator('.hgrid').evaluate((el) => getComputedStyle(el).pointerEvents);
+  expect(pointer, 'gridlines never take the pointer').toBe('none');
+});
+
+test('TLF-03: at 1280 the centre lane takes most of the width, and the rail only sits beside the chart on a wide window', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openTimeline(page);
+  const grid = (await page.locator('.tracing-chart .lanes-grid').boundingBox())!;
+  const panel = (await page.locator('.panel[data-lane="audit"]').boundingBox())!;
+  expect(panel.width / grid.width, 'the plot is at least 60% of the lane grid').toBeGreaterThan(0.6);
+  const label = (await page.locator('.lane-label').first().boundingBox())!;
+  expect(label.width, 'the label column is about 9.5rem at most').toBeLessThanOrEqual(160);
+
+  // 1280 px is under the 1480 px breakpoint, so the rail goes below the chart and the chart gets the full row.
+  const rail = page.getByTestId('sus-rail');
+  await expect(rail).toBeVisible();
+  const railBox = (await rail.boundingBox())!;
+  const chartBox = (await page.locator('.tracing-chart').boundingBox())!;
+  expect(railBox.y, 'the rail is below the chart at 1280').toBeGreaterThanOrEqual(chartBox.y + chartBox.height - 1);
+
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await expect.poll(async () => {
+    const r = (await rail.boundingBox())!;
+    const c = (await page.locator('.tracing-chart').boundingBox())!;
+    return r.x >= c.x + c.width - 1;
+  }, { message: 'the rail moves beside the chart at 1600' }).toBe(true);
+});
+
+test('TLF-04: a lane with nothing to draw shows a reason panel, and 375 px does not scroll sideways', async ({ page }) => {
+  await openTimeline(page);
+  await readWindow(page, WIN_EMPTY);
+  const reasons = page.locator('.panel .reason');
+  expect(await reasons.count(), 'at least one empty lane shows a reason panel').toBeGreaterThanOrEqual(1);
+  const first = reasons.first();
+  await expect(first.getByTestId('lane-status')).toBeVisible();
+  const box = (await first.boundingBox())!;
+  expect(box.height, 'the reason panel is a visible block').toBeGreaterThanOrEqual(70);
+  const bg = await first.evaluate((el) => getComputedStyle(el).backgroundImage);
+  expect(bg, 'hatched background').toContain('repeating-linear-gradient');
+
+  await page.setViewportSize({ width: 375, height: 900 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), { timeout: 5000 }).toBe(true);
+});
+
+test('TLF-05: when the answer carries a slowness figure the API lane gets a right axis in milliseconds', async ({ page }) => {
+  await page.route('**/tracing', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    const audit = body.lanes.find((lane: any) => lane.key === 'audit');
+    if (audit) audit.buckets.forEach((b: any, i: number) => { b.p95Ms = 200 + (i % 5) * 100; b.p50Ms = 80 + (i % 3) * 20; });
+    await route.fulfill({ response, json: body });
+  });
+  await openTimeline(page);
+  await readWindow(page, WIN_ALL);
+  const right = page.locator('.axis-right').first();
+  await expect(right.locator('.tick')).toHaveCount(3);
+  await expect(right.locator('.tick-bottom')).toHaveText(/^0\s?ms$|^0$/);
+  await expect(right.locator('.y-title')).toContainText('slowness');
+  await page.setViewportSize({ width: 375, height: 900 });
+  await expect(right).toBeHidden();
+});

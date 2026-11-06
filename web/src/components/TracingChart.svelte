@@ -7,7 +7,7 @@
   import {
     LANE_ASK, LANE_NAME, LANE_ORDER, MIXED_NOTE, PANEL_TITLE, READ_TEXT,
     anyLaneCutShort, axisCaption, barHeightPct, barMax, barSizeParts, barsFor, hasAnyData, isLaneVisible, laneChunkLine, laneCutShort, laneDrawsBars, laneNote, laneNoteTone, laneStatusLineFor,
-    outsideSlots, readSummary, showsProvenance, slotGrid, slotOutside, slotStartMs, truncatedNote, unreadRuns, unreadSlots, type Bar
+    outsideSlots, readSummary, showsProvenance, slotGrid, slotOutside, slotStartMs, tickBottomPct, truncatedNote, unreadRuns, unreadSlots, widthLabel, yTicks, type Bar
   } from '../lib/tracing/lanes';
   import { formatTime } from '../lib/time';
   import { needsYear } from '../lib/chartTime';
@@ -15,6 +15,7 @@
   import { TOOLTIP_TEXT, barTipLines, formatCount, isTouchPointer, laneHeadHint } from '../lib/tracing/tooltip';
   import { WAIT_TEXT } from '../lib/copy/waitCopy';
   import { SOURCES_TEXT } from '../lib/tracing/sources';
+  import TracingExplain from './TracingExplain.svelte';
   import {
     CANVAS_TEXT, MIN_ZOOM_SLOTS, PERCENTILES, PERCENTILE_LABEL, absoluteSlot, clampRange, edgeSlot, fullRange, hasLatency,
     isZoomed, latencySegments, rangeFromDrag, stepSlot, axisTicks, zoomFocus, zoomIn, zoomOut, zoomedText,
@@ -447,9 +448,17 @@
       </div>
       <div class="axis axis-left" style="--row:{laneIndex + 1}">
         {#if drawBars}
+          <span class="y-title">events per slot</span>
           <div class="scale">
-            <span class="tick tick-top">{formatCount(max)}</span>
-            <span class="tick tick-bottom">0</span>
+            {#each yTicks(max) as value (value)}
+              {#if value === 0}
+                <span class="tick tick-bottom">{formatCount(value)}</span>
+              {:else if value === max}
+                <span class="tick tick-top">{formatCount(max)}</span>
+              {:else}
+                <span class="tick" style="bottom:{tickBottomPct(value, max)}%">{formatCount(value)}</span>
+              {/if}
+            {/each}
           </div>
         {/if}
       </div>
@@ -461,6 +470,18 @@
             <p role="status" class="lane-note {laneNoteTone(lane)}">{laneNote(lane)}</p>
           {/if}
           <div class="bars">
+            <div class="hgrid" aria-hidden="true">
+              {#each yTicks(max) as value (value)}
+                {#if value > 0}
+                  <span style="bottom:{tickBottomPct(value, max)}%"></span>
+                {/if}
+              {/each}
+            </div>
+            <div class="vgrid" aria-hidden="true">
+              {#each ticks as tick (tick.ms)}
+                <span style="left:{tick.offset * widthPct}%"></span>
+              {/each}
+            </div>
             {#each outside as i (i)}
               <div class="outside-dash" style="left:{leftPct(i)}%;width:{widthPct}%"></div>
             {/each}
@@ -484,13 +505,24 @@
             {/if}
           </div>
         {:else}
-          <p class="lane-note" data-testid="lane-status">{statusLine(lane)}</p>
-          {#if noFile && onAddFiles && !readOnly}
-            <button type="button" class="secondary-button add-files" data-testid="lane-add-files" onclick={onAddFiles}>{READ_TEXT.addFiles}</button>
-          {/if}
+          <div class="reason">
+            <p class="lane-note" data-testid="lane-status">{statusLine(lane)}</p>
+            {#if noFile && onAddFiles && !readOnly}
+              <button type="button" class="secondary-button add-files" data-testid="lane-add-files" onclick={onAddFiles}>{READ_TEXT.addFiles}</button>
+            {/if}
+          </div>
         {/if}
       </div>
-      <div class="axis axis-right" style="--row:{laneIndex + 1}"></div>
+      <div class="axis axis-right" style="--row:{laneIndex + 1}">
+        {#if lane.key === 'audit' && latency.segments.length > 0}
+          <span class="y-title">slowness ({PERCENTILE_LABEL[percentile]})</span>
+          <div class="scale">
+            <span class="tick tick-top">{formatDuration(latency.max)}</span>
+            <span class="tick" style="bottom:50%">{formatDuration(latency.max / 2)}</span>
+            <span class="tick tick-bottom">{formatDuration(0)}</span>
+          </div>
+        {/if}
+      </div>
     {/each}
 
     {#if grid}
@@ -546,6 +578,7 @@
 
   {#if grid}
     <p class="axcap">{caption}</p>
+    <TracingExplain lanes={response.lanes} zoneName={zone} bucketLabel={widthLabel(response.window.bucketSeconds)} formatAt={at} />
   {/if}
 
   {#if response.truncated}
@@ -564,8 +597,8 @@
   .bar-size b { color: var(--text); font-weight: 600; }
   .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
-  /* The label column is capped so the plot gets the rest; the right gutter is only breathing room for the last time label. */
-  .lanes-grid { --bars-h: 54px; position: relative; display: grid; grid-template-columns: minmax(8rem, 13rem) 3rem minmax(0, 1fr) var(--space-2); column-gap: var(--space-3); row-gap: var(--space-2); align-items: stretch; min-width: 0; }
+  /* The label column is capped so the plot gets the rest; the right column holds the API lane's latency axis. */
+  .lanes-grid { --bars-h: 120px; position: relative; display: grid; grid-template-columns: minmax(7rem, 9.5rem) 4.2rem minmax(0, 1fr) 4.2rem; column-gap: var(--space-3); row-gap: var(--space-2); align-items: stretch; min-width: 0; }
 
   .lane-label, .axis, .panel, .axisrow { grid-row: var(--row); }
   .lane-label { grid-column: 1; display: grid; gap: 2px; align-content: start; min-width: 0; }
@@ -577,17 +610,23 @@
   .lane-label:hover .hint, .lane-label:focus-within .hint { display: block; }
   .lane-label .origin { color: var(--text-2); }
 
-  .axis { position: relative; grid-column: 2; min-height: 72px; font-size: var(--fs-1); color: var(--text-2); }
+  .axis { position: relative; grid-column: 2; min-height: 150px; font-size: var(--fs-1); color: var(--text-2); }
   .axis-right { grid-column: 4; }
   /* The scale box is as tall as the bars and sits on the panel's bottom padding, so "0" is level with the bars' baseline. */
   .axis .scale { position: absolute; left: 0; right: 0; bottom: calc(var(--space-1) + var(--hairline-width)); height: var(--bars-h); }
   .axis .tick { position: absolute; right: var(--space-1); }
   .axis .tick-top { top: 0; }
   .axis .tick-bottom { bottom: 0; }
+  .axis .y-title { position: absolute; left: 0; top: 50%; margin: 0; color: var(--text-2); font-size: var(--fs-1); white-space: nowrap; writing-mode: vertical-rl; transform: translateY(-50%) rotate(180deg); }
+  .axis-right .y-title { left: auto; right: 0; }
+  .axis-right .tick { right: auto; left: var(--space-1); color: var(--lane-audit); }
 
-  .panel { grid-column: 3; position: relative; min-height: 72px; display: flex; flex-direction: column; justify-content: flex-end; padding: var(--space-1) 0; background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+  .panel { grid-column: 3; position: relative; min-height: 150px; display: flex; flex-direction: column; justify-content: flex-end; padding: var(--space-1) 0; background: var(--surface-2); border: var(--hairline-width) solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
   .panel-title { margin: 0 0 auto; padding: 0 var(--space-2); color: var(--text-2); font-size: var(--fs-2); }
   .bars { position: relative; flex: none; height: var(--bars-h); margin-top: var(--space-1); }
+  .hgrid, .vgrid { position: absolute; inset: 0; pointer-events: none; }
+  .hgrid span { position: absolute; left: 0; right: 0; height: 1px; background: color-mix(in srgb, var(--line) 70%, transparent); }
+  .vgrid span { position: absolute; top: 0; bottom: 0; border-left: 1px dashed color-mix(in srgb, var(--line) 70%, transparent); }
   .bar { position: absolute; bottom: 0; background: var(--accent); border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
   /* Any bucket with events stays visible next to a huge spike. */
   .bar.nonzero { min-height: 2px; }
@@ -604,6 +643,7 @@
   .read-list { margin: 0; padding-left: var(--space-4); }
   /* Above the bucket-selector overlay, which covers every lane: without a stacking order of its own the button could not be clicked. */
   .add-files { position: relative; z-index: 2; align-self: center; margin: var(--space-1) 0 var(--space-2); }
+  .reason { display: grid; gap: var(--space-1); place-items: center; align-content: center; min-height: 76px; margin: auto var(--space-2) var(--space-2); padding: var(--space-1) 0; text-align: center; background: repeating-linear-gradient(135deg, var(--line) 0 1px, transparent 1px 8px); }
   .outside-dash { position: absolute; bottom: 0; height: 2px; background: var(--line); opacity: .6; }
   .lane-note { margin: var(--space-1) var(--space-2) 0; color: var(--text-2); font-size: var(--fs-3); text-align: center; }
   .lane-note.bad { color: var(--bad); text-align: left; }
@@ -636,11 +676,11 @@
 
   /* Narrow screens: each lane's label sits above its panel, so the plot gets the whole width less the scale gutter. */
   @media (max-width: 768px) {
-    .lanes-grid { grid-template-columns: 3rem minmax(0, 1fr) var(--space-2); column-gap: var(--space-2); }
+    .lanes-grid { grid-template-columns: 4.2rem minmax(0, 1fr) var(--space-2); column-gap: var(--space-2); }
     .lane-label { grid-column: 1 / -1; }
     .axis { grid-column: 1; }
     .panel { grid-column: 2; }
-    .axis-right { grid-column: 3; }
+    .axis-right { grid-column: 3; display: none; }
     .axisrow, .overlay { grid-column: 2; }
     /* Each lane takes two rows: its label, then its panel. The overlay spans them all; the labels stay above it. */
     .lane-label { grid-row: calc(var(--row) * 2 - 1); z-index: 5; }

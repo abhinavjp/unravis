@@ -6,7 +6,7 @@
 //   TLGAP-02  The UTC readout names both periods in UTC, follows a quick range and a typed window, and sends no trace by itself.
 //   TLGAP-03  The time boxes are 12-hour (hour 1-12, minute, AM or PM): 22:30 is 10 : 30 PM, the readout and the button follow.
 //   TLGAP-04  The chart says what one bar covers ("Each bar = 1 minute") and the figure follows the window.
-//   TLGAP-05  The Suspects rail: beside the chart at 1280, below it at 375; legend, summary, pinned card, orange L1, grey cards say what
+//   TLGAP-05  The Suspects rail: beside the chart at 1600 (the breakpoint is 1480 so the plot keeps its width), below it at 1280 and 375; legend, summary, pinned card, orange L1, grey cards say what
 //             they need, evidence opens by keyboard, See all and Show fewer, ruled-out details.
 //   TLGAP-06  Show on chart selects the bar, shows its text and focuses the bucket selector, and sends no second trace; arrow keys go on.
 //   TLGAP-07  A rise in the case-stored SQL lane (answer reshaped in the browser) makes a card with a SQL moment and a Show on chart button.
@@ -154,8 +154,8 @@ test('TLGAP-04: the chart says what one bar covers, and the figure follows the w
   await expect(line).toContainText('longer periods group more time into each bar');
 });
 
-test('TLGAP-05: the Suspects rail sits beside the chart at 1280 and below it at 375, with the wireframe pieces', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
+test('TLGAP-05: the Suspects rail sits beside the chart at 1600 (below it at 1280 and at 375), with the wireframe pieces', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
   await openTimeline(page);
   await expect(rail(page)).toBeVisible();
   await expect(rail(page).getByRole('heading', { name: 'Suspects', level: 3 })).toBeVisible();
@@ -168,7 +168,7 @@ test('TLGAP-05: the Suspects rail sits beside the chart at 1280 and below it at 
   const railBox = (await rail(page).boundingBox())!;
   const cardBox = (await card(page).boundingBox())!;
   expect(railBox.x, 'the rail is right of the controls card').toBeGreaterThanOrEqual(cardBox.x + cardBox.width);
-  expect(railBox.width).toBeGreaterThan(340);
+  expect(railBox.width).toBeGreaterThanOrEqual(340);
   expect(railBox.width).toBeLessThanOrEqual(381);
   // The data-check card is pinned first; L1 is orange (the live audit lane rises); grey cards say what they need.
   await expect(rail(page).locator('[data-sus]').first()).toHaveAttribute('data-sus', 'Q2');

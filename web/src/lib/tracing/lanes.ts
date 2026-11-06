@@ -363,3 +363,9 @@ export function laneNote(lane: TracingLane): string {
   }
   return lane.reason || LANE_STATE_TEXT[lane.state] || '';
 }
+
+/** A y-axis tick's position as a share of the scale height, 0 to 100 measured from the bottom; 0 for a scale with no height. */
+export function tickBottomPct(value: number, max: number): number {
+  if (!(max > 0)) return 0;
+  return Math.min(100, Math.max(0, (value / max) * 100));
+}
