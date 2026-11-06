@@ -21,6 +21,17 @@ export const HERO_TEXT = {
   tipNoTiming: 'No timed requests',
   tipSlowest: 'Slowest request:',
   tipOutlier: 'far above the usual P95',
+  // The SQL lane (saved Query Store figures): its line is the average time, never a percentile.
+  legendSqlStatements: 'Statements run per interval',
+  legendSqlAverage: 'Average time',
+  legendSqlSlowest: 'Slowest statement in the interval',
+  tipSqlAverage: 'Average time:',
+  tipSqlSlowest: 'Slowest statement:',
+  tipSqlOutlier: 'far above the usual',
+  sqlOutlierOne: (top: string): string =>
+    `One interval holds a statement far slower than usual, up to ${top}. It is marked with a red diamond. This shows when slow statements ran; it does not show which one or why.`,
+  sqlOutlierMany: (count: number, top: string): string =>
+    `${count} intervals hold a statement far slower than usual, up to ${top}. They are marked with a red diamond. This shows when slow statements ran; it does not show which one or why.`,
   empty: 'No timed requests in this view.',
   webRefused: (refused: number, total: number): string =>
     `${refused.toLocaleString('en-GB')} of ${total.toLocaleString('en-GB')} web-server requests in this view were refused or not found (4xx). The amber part of a bar shows when.`,
@@ -150,6 +161,13 @@ export function heroLayout(
     topFlaggedMs,
     typical: outliers.typical
   };
+}
+
+/** The same sentence for the SQL lane, which speaks of statements. */
+export function heroSqlSentence(layout: HeroLayout): string {
+  if (layout.flaggedCount === 0 || layout.topFlaggedMs === null) return '';
+  const top = axisDuration(layout.topFlaggedMs);
+  return layout.flaggedCount === 1 ? HERO_TEXT.sqlOutlierOne(top) : HERO_TEXT.sqlOutlierMany(layout.flaggedCount, top);
 }
 
 /** The sentence under the chart about the flagged diamonds; '' when nothing is flagged. */

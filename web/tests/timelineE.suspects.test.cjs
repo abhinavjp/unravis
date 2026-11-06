@@ -36,9 +36,9 @@ const START = Date.parse('2001-03-04T10:00:00Z');
 const BAR = 300; // seconds: 12 bars across one hour
 const iso = (ms) => new Date(ms).toISOString();
 const windowOf = (bars = 12) => ({ start: iso(START), end: iso(START + bars * BAR * 1000), axisStart: iso(START), axisEnd: iso(START + bars * BAR * 1000), bucketSeconds: BAR });
-const lane = (key, counts, extra = {}) => ({
+const lane = (key, counts, extra = {}, timing = null) => ({
   key, label: key, state: 'events', reason: '', origin: key === 'audit' ? 'live' : 'case', asOf: iso(START), consistency: 'point-in-time', complete: true, truncated: false,
-  scanned: 0, hidden: 0, sources: [], buckets: counts.map((count, i) => ({ start: iso(START + i * BAR * 1000), count, errors: 0 })), ...extra
+  scanned: 0, hidden: 0, sources: [], buckets: counts.map((count, i) => ({ start: iso(START + i * BAR * 1000), count, errors: 0, ...(timing ? timing(i, count) : {}) })), ...extra
 });
 const empty = (key, state) => lane(key, [], { state });
 const response = (lanes, bars = 12) => ({ window: windowOf(bars), lanes, sources: [], allLanesStored: false, mixedConsistency: false, truncated: false, warnings: [], auditSources: [] });
@@ -217,4 +217,71 @@ test('the rail component is keyboard reachable, labelled, and never opens Run an
   assert.ok(chart.includes('focus?: { slot: number; token: number } | null;'));
   assert.ok(/function revealSlot\(slot: number\)[\s\S]*selectedSlot = clampIndex\(slot\);[\s\S]*showKeyboardTip\(\);[\s\S]*overlayEl\?\.focus/.test(chart));
   assert.ok(paper.includes('min-width: 1480px') && paper.includes('340px'));
+});
+
+// Call times: the audit's P50/P95, the web server's P95 and the saved SQL day's average feed the same suspects.
+const timed = (field, values) => (i) => ({ [field]: values[i], timedCount: 10 });
+const pOf = (n, before, after) => step(n, before, after);
+
+test('saved SQL day: a rise in the average time reads yes, dated, and the moment says it is the time (not the count)', () => {
+  const sqlLane = lane('sql', flat(12, 10), {}, timed('avgMs', pOf(12, 100, 400)));
+  const list = evaluateSuspects(response([empty('audit', 'no-data'), sqlLane, empty('iis', 'no-data')]));
+  const d1 = byId(list, 'D1');
+  assert.equal(d1.colour, 'grey', 'blocking is still unknown, so D1 cannot be tested yet');
+  assert.equal(d1.momentLane, 'sql');
+  assert.equal(d1.momentWhat, 'time');
+  assert.equal(d1.momentSlot, 6);
+  assert.ok(d1.evidence.some((row) => row.value === 'yes' && row.why.includes('average')));
+});
+
+test('saved SQL day: a flat average time reads no, so the suspects that need a database rise go green', () => {
+  const sqlLane = lane('sql', flat(12, 10), {}, timed('avgMs', flat(12, 120)));
+  const list = evaluateSuspects(response([empty('audit', 'no-data'), sqlLane, empty('iis', 'no-data')]));
+  assert.equal(byId(list, 'D1').colour, 'green');
+  assert.equal(byId(list, 'D2').colour, 'green');
+});
+
+test('imported SQL slow-call events (no average time) still read by count', () => {
+  const list = evaluateSuspects(response([empty('audit', 'no-data'), lane('sql', step(12, 5, 20)), empty('iis', 'no-data')]));
+  const d1 = byId(list, 'D1');
+  assert.equal(d1.momentWhat, 'count');
+  assert.equal(d1.momentSlot, 6);
+});
+
+test('audit P95 rise reads yes; S5, M5 and M10 stay grey because their other readings are unknown', () => {
+  const audit = lane('audit', flat(12, 10), {}, timed('p95Ms', pOf(12, 200, 900)));
+  const list = evaluateSuspects(response([audit, empty('sql', 'no-data'), empty('iis', 'no-data')]));
+  for (const id of ['S5', 'M5', 'M10']) assert.equal(byId(list, id).colour, 'grey', id);
+  const s5 = byId(list, 'S5');
+  assert.equal(s5.momentLane, 'audit');
+  assert.equal(s5.momentWhat, 'time');
+});
+
+test('audit P95 flat makes S5, M5 and M10 green', () => {
+  const audit = lane('audit', flat(12, 10), {}, timed('p95Ms', flat(12, 300)));
+  const list = evaluateSuspects(response([audit, empty('sql', 'no-data'), empty('iis', 'no-data')]));
+  for (const id of ['S5', 'M5', 'M10']) assert.equal(byId(list, id).colour, 'green', id);
+});
+
+test('median: flat median satisfies p50Flat, a moved median contradicts it', () => {
+  const flatMedian = lane('audit', flat(12, 10), {}, (i) => ({ p50Ms: 100, p95Ms: i < 6 ? 200 : 900, timedCount: 10 }));
+  const movedMedian = lane('audit', flat(12, 10), {}, (i) => ({ p50Ms: i < 6 ? 100 : 400, p95Ms: i < 6 ? 200 : 900, timedCount: 10 }));
+  const rows = (a) => byId(evaluateSuspects(response([a, empty('sql', 'no-data'), empty('iis', 'no-data')])), 'L2').evidence.find((row) => row.signal === copy.SIGNAL_TEXT.p50Flat);
+  assert.equal(rows(flatMedian).value, 'yes');
+  assert.equal(rows(movedMedian).value, 'no');
+});
+
+test('all slow: needs the audit, web server and database each up; one that held says no', () => {
+  const up = (key, field) => lane(key, flat(12, 10), {}, timed(field, pOf(12, 100, 400)));
+  const flatIis = lane('iis', flat(12, 10), {}, timed('p95Ms', flat(12, 100)));
+  const row = (lanes) => byId(evaluateSuspects(response(lanes)), 'H6').evidence.find((r) => r.signal === copy.SIGNAL_TEXT.allSlow);
+  assert.equal(row([up('audit', 'p95Ms'), up('sql', 'avgMs'), up('iis', 'p95Ms')]).value, 'yes');
+  assert.equal(row([up('audit', 'p95Ms'), up('sql', 'avgMs'), flatIis]).value, 'no');
+  assert.equal(row([up('audit', 'p95Ms'), up('sql', 'avgMs'), empty('iis', 'no-data')]).value, 'unknown');
+});
+
+test('a lane that was not read in full gives no call-time reading', () => {
+  const audit = lane('audit', flat(12, 10), { incompleteReason: 'cut-short' }, timed('p95Ms', pOf(12, 200, 900)));
+  const list = evaluateSuspects(response([audit, empty('sql', 'no-data'), empty('iis', 'no-data')]));
+  assert.equal(byId(list, 'S5').evidence.find((r) => r.signal === copy.SIGNAL_TEXT.auditUp).value, 'unknown');
 });

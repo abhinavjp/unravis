@@ -49,7 +49,7 @@ const (
 	// tracingReasonTimeout is the lane reason code when a saved-event read passed
 	// its time budget (tracingLaneBudget); the lane keeps what was read so far.
 	tracingReasonTimeout = "timeout"
-	tracingDisabledTZ   = "tz-rule"
+	tracingDisabledTZ    = "tz-rule"
 	// A no-data lane says why when the case knows: the file is listed but was never
 	// imported, or it was imported and then set aside.
 	tracingReasonNotImported = "not-imported"
@@ -392,22 +392,25 @@ type tracingWindow struct {
 }
 
 type tracingBucket struct {
-	Start    time.Time `json:"start"`
-	End      time.Time `json:"end"`
-	Count    int64     `json:"count"`
-	Errors   *int64    `json:"errors,omitempty"`
+	Start  time.Time `json:"start"`
+	End    time.Time `json:"end"`
+	Count  int64     `json:"count"`
+	Errors *int64    `json:"errors,omitempty"`
 	// ClientErrors is how many requests of the bucket had a 4xx status (the iis
 	// lane only; omitted when there were none).
 	ClientErrors *int64 `json:"clientErrors,omitempty"`
 	// TimedCount is how many of the Count requests had a timing, and P50Ms,
 	// P95Ms and MaxMs their response times in milliseconds (the audit and web-server
 	// lanes). A bucket with no timed request omits all four.
-	TimedCount int64    `json:"timedCount,omitempty"`
-	P50Ms      *float64 `json:"p50Ms,omitempty"`
-	P95Ms      *float64 `json:"p95Ms,omitempty"`
-	MaxMs      *float64 `json:"maxMs,omitempty"`
-	Clipped    bool     `json:"clipped"`
-	Complete   bool     `json:"complete"`
+	TimedCount int64 `json:"timedCount,omitempty"`
+	// AvgMs is the average duration of the bucket's statements in milliseconds
+	// (the sql lane drawn from saved Query Store figures; p50 and p95 are then absent).
+	AvgMs    *float64 `json:"avgMs,omitempty"`
+	P50Ms    *float64 `json:"p50Ms,omitempty"`
+	P95Ms    *float64 `json:"p95Ms,omitempty"`
+	MaxMs    *float64 `json:"maxMs,omitempty"`
+	Clipped  bool     `json:"clipped"`
+	Complete bool     `json:"complete"`
 }
 
 type tracingEvent struct {
@@ -1045,6 +1048,11 @@ func (h *handler) caseTracing(w http.ResponseWriter, r *http.Request, raw string
 		return
 	}
 	for _, lane := range lanes {
+		if lane.Key == calltrace.LaneSQL && lane.State == calltrace.StateNoData && lane.Disabled == "" {
+			if held, ok := tracingHeldSQLLane(ctx, unwrapCase(c), axis, now); ok {
+				lane = held
+			}
+		}
 		appendLane(&resp, lane)
 	}
 	// The open audit sources and the saved audit databases no open connection

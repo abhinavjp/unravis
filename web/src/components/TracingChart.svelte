@@ -21,7 +21,7 @@
     isZoomed, rangeFromDrag, stepSlot, axisTicks, zoomFocus, zoomIn, zoomOut, zoomedText,
     type Percentile, type ZoomRange
   } from '../lib/tracing/canvas';
-  import { HERO_TEXT, heroLayout, heroSentence, type HeroLayout } from '../lib/tracing/auditHero';
+  import { HERO_TEXT, heroLayout, heroSentence, heroSqlSentence, type HeroLayout } from '../lib/tracing/auditHero';
   import { axisDuration } from '../lib/chartScale';
 
   let { response, zone, onSelect, focus = null, visible = {}, unselected = [], readOnly = false, onAddFiles }: {
@@ -102,14 +102,25 @@
   const hero = $derived(grid ? heroLayout(auditLane?.buckets ?? [], grid, range, percentile) : null);
   // The IIS lane gets the same layer from its own response times (time-taken); a lane without any draws none.
   const webHero = $derived(grid ? heroLayout(iisLane?.buckets ?? [], grid, range, percentile) : null);
+  // The SQL lane drawn from saved Query Store figures: bars are statements per interval and the line is their AVERAGE time
+  // (fed through the same layout as a P95 value, but always labelled "Average time", never as a percentile).
+  const sqlLane = $derived(response.lanes.find((lane) => lane.key === 'sql'));
+  const sqlHero = $derived(
+    grid && sqlLane?.buckets.some((b) => b.avgMs !== undefined)
+      ? heroLayout(sqlLane.buckets.map((b) => (b.avgMs === undefined ? b : { ...b, p95Ms: b.avgMs })), grid, range, 'p95')
+      : null
+  );
+  const sqlPeakMs = $derived(sqlHero && sqlHero.dots.length > 0 ? Math.max(...sqlHero.dots.map((dot) => dot.ms)) : 0);
   const heroPeakMs = $derived(hero && hero.dots.length > 0 ? Math.max(...hero.dots.map((dot) => dot.ms)) : 0);
   const webPeakMs = $derived(webHero && webHero.dots.length > 0 ? Math.max(...webHero.dots.map((dot) => dot.ms)) : 0);
   /** The hero layer a lane draws, or null when it draws none (no timed requests, or not a lane with one). */
   function heroOf(key: TracingLaneKey): HeroLayout | null {
-    const layout = key === 'audit' ? hero : key === 'iis' ? webHero : null;
+    const layout = key === 'audit' ? hero : key === 'iis' ? webHero : key === 'sql' ? sqlHero : null;
     return layout && layout.maxMs > 0 ? layout : null;
   }
-  function peakOf(key: TracingLaneKey): number { return key === 'iis' ? webPeakMs : heroPeakMs; }
+  function peakOf(key: TracingLaneKey): number { return key === 'iis' ? webPeakMs : key === 'sql' ? sqlPeakMs : heroPeakMs; }
+  /** The line's name: SQL draws an average, the others the chosen percentile. */
+  function lineName(key: TracingLaneKey): string { return key === 'sql' ? HERO_TEXT.legendSqlAverage : PERCENTILE_LABEL[percentile]; }
   // What the IIS lane's bars hold in the visible slots: the 4xx answers and 5xx answers, for the legend and the sentence under the chart.
   const webTotals = $derived.by(() => {
     const bars = laneBars.get('iis')?.bars ?? [];
@@ -232,8 +243,9 @@
     if (laneHero) {
       const dot = laneHero.dots.find((d) => d.index === slot);
       const mark = laneHero.marks.find((m) => m.index === slot);
-      const timing = [dot ? `${PERCENTILE_LABEL[percentile]}: ${axisDuration(dot.ms)}` : HERO_TEXT.tipNoTiming];
-      if (mark) timing.push(`${HERO_TEXT.tipSlowest} ${axisDuration(mark.ms)}${mark.flagged ? ` (${HERO_TEXT.tipOutlier})` : ''}`);
+      const isSql = lane.key === 'sql';
+      const timing = [dot ? `${isSql ? HERO_TEXT.tipSqlAverage : `${PERCENTILE_LABEL[percentile]}:`} ${axisDuration(dot.ms)}` : HERO_TEXT.tipNoTiming];
+      if (mark) timing.push(`${isSql ? HERO_TEXT.tipSqlSlowest : HERO_TEXT.tipSlowest} ${axisDuration(mark.ms)}${mark.flagged ? ` (${isSql ? HERO_TEXT.tipSqlOutlier : HERO_TEXT.tipOutlier})` : ''}`);
       // Right after the request count line (the time range is line 0, the count line 1).
       if ((bar?.count ?? 0) > 0) lines.splice(2, 0, ...timing);
     }
@@ -553,7 +565,7 @@
                   <span class="mark-label" aria-hidden="true" style="left:{mark.leftPct}%;bottom:{mark.bottomPct}%">{mark.text}</span>
                 {/if}
               {/each}
-              <span class="latency-max">{PERCENTILE_LABEL[percentile]}: up to {formatDuration(peakOf(lane.key) > 0 ? peakOf(lane.key) : h.maxMs)}</span>
+              <span class="latency-max">{lineName(lane.key)}: up to {formatDuration(peakOf(lane.key) > 0 ? peakOf(lane.key) : h.maxMs)}</span>
             {/if}
           </div>
         {:else}
@@ -568,7 +580,7 @@
       <div class="axis axis-right" data-lane={lane.key} style="--row:{laneIndex + 1}">
         {#if heroOf(lane.key)}
           {@const h = heroOf(lane.key) as HeroLayout}
-          <span class="y-title">slowness ({PERCENTILE_LABEL[percentile]})</span>
+          <span class="y-title">slowness ({lineName(lane.key)})</span>
           <div class="scale">
             {#each h.ticks as tick (tick.ms)}
               {#if tick.bottomPct === 100}
@@ -648,6 +660,16 @@
     {#if sentence}<p class="hero-note" data-testid="hero-note">{sentence}</p>{/if}
   {/if}
 
+  {#if heroOf('sql')}
+    {@const sqlSentence = heroSqlSentence(heroOf('sql') as HeroLayout)}
+    <div class="hero-legend sql-legend" data-testid="sql-legend">
+      <span><i class="swatch-bar swatch-sql" aria-hidden="true"></i>{HERO_TEXT.legendSqlStatements}</span>
+      <span><i class="swatch-line" aria-hidden="true"></i>{HERO_TEXT.legendSqlAverage}</span>
+      <span><i class="swatch-mark" aria-hidden="true"></i>{HERO_TEXT.legendSqlSlowest}</span>
+    </div>
+    {#if sqlSentence}<p class="hero-note" data-testid="sql-outlier-note">{sqlSentence}</p>{/if}
+  {/if}
+
   {#if heroOf('iis')}
     {@const webSentence = heroSentence(heroOf('iis') as HeroLayout)}
     <div class="hero-legend web-legend" data-testid="web-legend">
@@ -722,6 +744,7 @@
   .panel[data-lane='audit'] .bar { background: var(--lane-audit); }
   .panel[data-hero='true'] .bar { background: color-mix(in srgb, var(--lane-audit) 30%, transparent); }
   .panel[data-hero='true'][data-lane='iis'] .bar { background: color-mix(in srgb, var(--lane-iis) 30%, transparent); }
+  .panel[data-hero='true'][data-lane='sql'] .bar { background: color-mix(in srgb, var(--lane-sql) 30%, transparent); }
   .panel[data-lane='sql'] .bar { background: var(--lane-sql); }
   .panel[data-lane='iis'] .bar { background: var(--lane-iis); }
   /* Errors differ from the bar by pattern and lightness, not hue alone: stripes of the page background (at least 3:1 against every lane colour, both themes) and --bad. */
@@ -775,6 +798,7 @@
   .hero-legend .swatch-line { height: 0; width: 14px; border-radius: 0; border-top: 2px solid var(--accent); }
   .hero-legend .swatch-bridge { height: 0; width: 14px; border-radius: 0; border-top: 1.5px dashed var(--accent); opacity: .7; }
   .hero-legend .swatch-web { background: color-mix(in srgb, var(--lane-iis) 30%, transparent); }
+  .hero-legend .swatch-sql { background: color-mix(in srgb, var(--lane-sql) 30%, transparent); }
   .hero-legend .swatch-warn { border-radius: 2px; background: var(--warn); }
   .hero-legend .swatch-fail { border-radius: 2px; background: repeating-linear-gradient(135deg, var(--bad) 0 2px, var(--bg) 2px 4px); }
   .hero-legend .swatch-mark { width: 8px; height: 8px; border-radius: 0; background: var(--bad); transform: rotate(45deg); }

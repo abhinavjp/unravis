@@ -3,6 +3,7 @@ package dbhealth
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -55,6 +56,7 @@ func qLaneQSIntervals(req LaneRequest) string {
 	incStart := sqlOffsetLit(req.Incident.Start)
 	return `/* unravis:qs_intervals */ SELECT i.start_time, SUM(rs.count_executions) AS execs, ` +
 		`SUM(rs.avg_duration * rs.count_executions) / NULLIF(SUM(rs.count_executions), 0) / 1000.0 AS avg_ms, ` +
+		`MAX(rs.max_duration) / 1000.0 AS max_ms, ` +
 		`CASE WHEN i.start_time >= ` + incStart + ` THEN 'inc' ELSE 'ref' END AS win ` +
 		`FROM sys.query_store_runtime_stats rs JOIN sys.query_store_runtime_stats_interval i ON i.runtime_stats_interval_id = rs.runtime_stats_interval_id ` +
 		`WHERE (i.start_time >= ` + sqlOffsetLit(req.Reference.Start) + ` AND i.start_time < ` + sqlOffsetLit(req.Reference.End) + `) ` +
@@ -504,6 +506,26 @@ func reasonSuffix(reason string) string {
 	return " (" + clip(r, 60) + ")"
 }
 
+// seriesOf turns the Query Store interval rows into the saved series, skipping
+// rows without a usable start time or any executions.
+func seriesOf(intervals []Row) []LaneSeriesPoint {
+	out := make([]LaneSeriesPoint, 0, len(intervals))
+	for _, r := range intervals {
+		t, ok := rowTime(r["start_time"])
+		if !ok {
+			continue
+		}
+		n := num(r["execs"])
+		if n <= 0 {
+			continue
+		}
+		out = append(out, LaneSeriesPoint{T: t.UTC().Unix(), Execs: int64(n), AvgMs: round1(num(r["avg_ms"])), MaxMs: round1(num(r["max_ms"]))})
+	}
+	return out
+}
+
+func round1(v float64) float64 { return math.Round(v*10) / 10 }
+
 // qsOnset returns the start of the first incident interval whose average duration is at least twice the reference's.
 func qsOnset(intervals []Row, req LaneRequest) *time.Time {
 	var refMs, refN float64
@@ -571,6 +593,7 @@ func (s *sqlLane) checkQueryStore(ctx context.Context) LaneCheck {
 		return s.failed(CheckQueryStore, err, s.req.Database)
 	}
 	o := evalLaneQueryStore(opt, first, hasFirst, stats, intervals, s.req)
+	s.b.setSeries(seriesOf(intervals))
 	if o.check.State == StateReady {
 		for id, v := range o.answers {
 			s.b.answer(id, v)

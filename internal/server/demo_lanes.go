@@ -213,11 +213,12 @@ func demoSQLQueryer(req dbhealth.LaneRequest) healthQueryer {
 		return dbhealth.Row{"query_id": int64(1), "plan_id": int64(10), "win": win, "execs": int64(50), "avg_ms": ms, "avg_reads": reads}
 	}
 	rows := demoSQLRows{by: map[string][]dbhealth.Row{
-		"unravis:base":       {{"version": "16.0.1000.6", "edition": "Developer (demo)", "hadr": int64(0), "utc_offset_min": int64(0)}},
-		"unravis:server":     {{"started_local": ref.Start.Add(-24 * time.Hour), "threadpool_tasks": int64(0)}},
-		"unravis:qs_options": {{"actual_state_desc": "READ_WRITE", "desired_state_desc": "READ_WRITE", "readonly_reason": int64(0), "interval_length_minutes": int64(15)}},
-		"unravis:qs_first":   {{"first_start": ref.Start.Add(-48 * time.Hour)}},
-		"unravis:qs_stats":   {stat("ref", 10, 100), stat("inc", 11, 105)},
+		"unravis:base":         {{"version": "16.0.1000.6", "edition": "Developer (demo)", "hadr": int64(0), "utc_offset_min": int64(0)}},
+		"unravis:server":       {{"started_local": ref.Start.Add(-24 * time.Hour), "threadpool_tasks": int64(0)}},
+		"unravis:qs_options":   {{"actual_state_desc": "READ_WRITE", "desired_state_desc": "READ_WRITE", "readonly_reason": int64(0), "interval_length_minutes": int64(15)}},
+		"unravis:qs_first":     {{"first_start": ref.Start.Add(-48 * time.Hour)}},
+		"unravis:qs_stats":     {stat("ref", 10, 100), stat("inc", 11, 105)},
+		"unravis:qs_intervals": demoSQLIntervals(req),
 	}}
 	switch {
 	case demoNameHas(req.Database, "empty"):
@@ -227,6 +228,22 @@ func demoSQLQueryer(req dbhealth.LaneRequest) healthQueryer {
 		denied := errors.New("The SELECT permission was denied on the object 'database_query_store_options', database 'AuditDb'.")
 		rows.err = map[string]error{"unravis:qs_options": denied, "unravis:qs_first": denied, "unravis:qs_stats": denied}
 	}
+	return rows
+}
+
+// demoSQLIntervals gives the Query Store interval series the Timeline draws: a steady reference window and an incident window whose
+// statements run slower, one row per 15 minutes (at most 48 per window).
+func demoSQLIntervals(req dbhealth.LaneRequest) []dbhealth.Row {
+	var rows []dbhealth.Row
+	add := func(w dbhealth.Window, win string, avg float64) {
+		n := 0
+		for t := w.Start; t.Before(w.End) && n < 48; t = t.Add(15 * time.Minute) {
+			rows = append(rows, dbhealth.Row{"start_time": t, "execs": int64(40 + n%7), "avg_ms": avg, "max_ms": avg * 6, "win": win})
+			n++
+		}
+	}
+	add(req.Reference, "ref", 10)
+	add(req.Incident, "inc", 11)
 	return rows
 }
 

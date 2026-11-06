@@ -9,6 +9,7 @@
 //   TLGAP-05  The Suspects rail: beside the chart at 1600 (the breakpoint is 1480 so the plot keeps its width), below it at 1280 and 375; legend, summary, pinned card, orange L1, grey cards say what
 //             they need, evidence opens by keyboard, See all and Show fewer, ruled-out details.
 //   TLGAP-06  Show on chart selects the bar, shows its text and focuses the bucket selector, and sends no second trace; arrow keys go on.
+//   TLGAP-10  A rise in the saved SQL day's average time makes a card dated by call time ("time first rose at"), and a flat average rules D1 out.
 //   TLGAP-07  A rise in the case-stored SQL lane (answer reshaped in the browser) makes a card with a SQL moment and a Show on chart button.
 //   TLGAP-08  Honest empty states: a window with no events says so, and clearing every source hides the rail.
 //   TLGAP-09  Screenshots for the review: light and dark at 1280 and 375 px wide, written to .dev/tlgap-shots; no sideways scroll, header included.
@@ -271,6 +272,36 @@ test('TLGAP-07: a rise in the case-stored SQL lane makes a card with a SQL momen
   await expect(page.locator('.tracing-chart .overlay')).toBeFocused();
   await expect(page.locator('#tc-tip')).toContainText('Database (SQL Server)');
   expect(traces.count()).toBe(0);
+});
+
+test('TLGAP-10: a rise in the saved SQL day average time is dated by call time, and a flat one rules the database out', async ({ page }) => {
+  let rising = true;
+  await page.route('**/tracing', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    const sql = body.lanes.find((lane: any) => lane.key === 'sql');
+    if (sql) {
+      const start = Date.parse(body.window.axisStart);
+      const step = body.window.bucketSeconds * 1000;
+      const slots = Math.round((Date.parse(body.window.axisEnd) - start) / step);
+      sql.state = 'events';
+      sql.buckets = Array.from({ length: slots }, (_, i) => ({
+        start: new Date(start + i * step).toISOString(), count: 40, errors: 0, timedCount: 40,
+        avgMs: rising && i >= slots / 2 ? 120 : 20, maxMs: 300
+      }));
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await openTimeline(page);
+  await fillWindows(page, WIN_ALL);
+  await refreshAndWait(page);
+  await page.getByTestId('sus-all').click();
+  await expect(rail(page).locator('.susmoment', { hasText: 'Database (SQL Server) time first rose at' }).first()).toBeVisible();
+  rising = false;
+  await refreshAndWait(page);
+  if ((await page.getByTestId('sus-all').getAttribute('aria-expanded')) !== 'true') await page.getByTestId('sus-all').click();
+  await expect(rail(page).locator('.susmoment', { hasText: 'Database (SQL Server) time first rose at' })).toHaveCount(0);
 });
 
 test('TLGAP-08: a window with no events says so in the rail, and clearing every source hides the rail', async ({ page }) => {

@@ -50,6 +50,8 @@ export interface TracingBucket {
   complete?: boolean;
   p50Ms?: number;
   p95Ms?: number;
+  /** SQL lane drawn from saved Query Store figures only: the average time of the interval's statements (p50 and p95 are then absent). */
+  avgMs?: number;
   /** How many requests in the bucket carried a timing; absent when none did. */
   timedCount?: number;
   /** The slowest timed request in the bucket; absent when none did. */
@@ -186,6 +188,7 @@ function parseBucket(value: unknown): TracingBucket | null {
   if (isNumber(value.clientErrors) && value.clientErrors > 0) bucket.clientErrors = value.clientErrors;
   if (isNumber(value.p50Ms)) bucket.p50Ms = value.p50Ms;
   if (isNumber(value.p95Ms)) bucket.p95Ms = value.p95Ms;
+  if (isNumber(value.avgMs)) bucket.avgMs = value.avgMs;
   if (isNumber(value.timedCount)) bucket.timedCount = value.timedCount;
   if (isNumber(value.maxMs)) bucket.maxMs = value.maxMs;
   if (value.complete === false) bucket.complete = false;

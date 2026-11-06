@@ -5,6 +5,7 @@
 //   TLF-05  With a slowness figure in the answer the API lane gets a right axis in milliseconds, hidden at 375 px.
 //   TLF-03  The centre lane takes most of the width at 1280, and the Suspects rail only appears beside the chart when the window is wide.
 //   TLF-08  The web-server lane shows refused answers (amber), a response-time line and a red diamond with its own legend.
+//   TLF-09  The SQL lane (saved Query Store day) shows statements per interval, an average-time line, a red diamond and a legend.
 //   TLF-04  A lane with nothing to draw shows a reason panel with the reason, and the page does not scroll sideways at 375 px.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
@@ -241,4 +242,38 @@ test('TLF-08: the web-server lane shows refused answers, a response-time line an
   await expect(legend).toContainText('Slow end (P95)');
   await expect(page.getByTestId('web-note')).toContainText('were refused or not found (4xx)');
   await expect(page.getByTestId('web-outlier-note')).toContainText('45 s');
+});
+
+// TLF-09  The SQL lane drawn from a saved Query Store day: statements per interval (bars), an average-time line, a red diamond for
+//         the slowest statement, a legend and a sentence. The saved log is small, so the answer is reshaped in the browser.
+test('TLF-09: the SQL lane shows statements per interval, an average-time line and a red diamond with a legend', async ({ page }) => {
+  await page.route('**/tracing', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    const sql = body.lanes.find((lane: any) => lane.key === 'sql');
+    if (sql) {
+      const start = Date.parse(body.window.axisStart);
+      const step = body.window.bucketSeconds * 1000;
+      const slots = Math.round((Date.parse(body.window.axisEnd) - start) / step);
+      sql.state = 'events';
+      sql.buckets = Array.from({ length: slots }, (_, i) => ({
+        start: new Date(start + i * step).toISOString(), count: 40, errors: 0, timedCount: 40,
+        avgMs: i < slots / 2 ? 20 : 120, maxMs: i === slots - 1 ? 30000 : 400
+      }));
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await openTimeline(page);
+  await readWindow(page, WIN_ALL);
+  const sql = page.locator('.panel[data-lane="sql"]');
+  await expect(sql).toHaveAttribute('data-state', 'events');
+  await expect(sql).toHaveAttribute('data-hero', 'true');
+  expect(await sql.locator('svg.latency polyline.p95').count(), 'an average-time line').toBeGreaterThanOrEqual(1);
+  await expect(sql.locator('.mark.flagged')).toHaveCount(1);
+  const legend = page.getByTestId('sql-legend');
+  await expect(legend).toContainText('Statements run per interval');
+  await expect(legend).toContainText('Average time');
+  await expect(legend).toContainText('Slowest statement in the interval');
+  await expect(page.getByTestId('sql-outlier-note')).toContainText('30 s');
 });

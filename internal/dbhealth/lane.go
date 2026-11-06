@@ -82,7 +82,23 @@ type LaneResult struct {
 	Onset     *time.Time        `json:"onset,omitempty"`
 	Sources   []string          `json:"sources,omitempty"`
 	Guide     *ProfilerGuide    `json:"guide,omitempty"` // Mongo only: set when the profiler is off
+	// Series is the Query Store interval series of both windows (SQL only): the
+	// Timeline draws the SQL lane from it when no SQL file was imported.
+	Series []LaneSeriesPoint `json:"series,omitempty"`
 }
+
+// LaneSeriesPoint is one Query Store interval: when it started, how many
+// statements ran in it, and their average and slowest duration in milliseconds.
+// The field names are short because a 14-day window holds over a thousand of them.
+type LaneSeriesPoint struct {
+	T     int64   `json:"t"`           // interval start, Unix seconds
+	Execs int64   `json:"n"`           // executions
+	AvgMs float64 `json:"a"`           // average duration (ms), weighted by executions
+	MaxMs float64 `json:"m,omitempty"` // slowest single execution (ms)
+}
+
+// laneSeriesCap bounds the saved series so a report stays far under MaxHealthReport.
+const laneSeriesCap = 3000
 
 // State is the lane's readiness: Ready when every check ran, Partly ready when some did, otherwise Cannot test yet (or Failed when every check failed).
 func (l LaneResult) State() string {
@@ -133,6 +149,16 @@ func (b *laneBuilder) setOnset(t time.Time) {
 	if b.onset == nil || t.Before(*b.onset) {
 		b.onset = &t
 	}
+}
+
+// setSeries keeps the interval series for the saved report, oldest first and at
+// most laneSeriesCap points (the oldest are dropped).
+func (b *laneBuilder) setSeries(pts []LaneSeriesPoint) {
+	sort.Slice(pts, func(i, j int) bool { return pts[i].T < pts[j].T })
+	if len(pts) > laneSeriesCap {
+		pts = pts[len(pts)-laneSeriesCap:]
+	}
+	b.res.Series = pts
 }
 
 func (b *laneBuilder) source(name string) { b.sources[name] = true }
