@@ -66,8 +66,8 @@ test('TLF-02: the left axis has several ticks and a unit title, and the plot has
   await expect(leftScale.locator('.tick-top')).toHaveCount(1);
   await expect(page.locator('.axis-left .y-title').first()).toHaveText('events per slot');
 
-  // The server does not send a slowness figure yet (phase 2), so the right axis stays empty rather than inventing a scale.
-  await expect(page.locator('.axis-right .tick')).toHaveCount(0);
+  // The server now sends a slowness figure per interval, so the API lane gets a right axis in milliseconds.
+  expect(await page.locator('.axis-right .tick').count(), 'right axis ticks when timings exist').toBeGreaterThanOrEqual(3);
 
   expect(await audit.locator('.hgrid > *').count(), 'horizontal gridlines').toBeGreaterThanOrEqual(2);
   expect(await audit.locator('.vgrid > *').count(), 'vertical gridlines at the time ticks').toBeGreaterThanOrEqual(2);
@@ -132,4 +132,77 @@ test('TLF-05: when the answer carries a slowness figure the API lane gets a righ
   await expect(right.locator('.y-title')).toContainText('slowness');
   await page.setViewportSize({ width: 375, height: 900 });
   await expect(right).toBeHidden();
+});
+
+// TLF-06  The API lane draws the Run Analysis chart: pale bars, a P95 line with dots, a dashed bridge over a gap, a hollow dot
+//         per interval for its slowest request and a red diamond with its value where one is far above usual.
+//         A legend and one sentence sit under the chart, and the tooltip carries the timing lines.
+test('TLF-06: the API lane shows the Run Analysis chart with a legend, a red diamond and a sentence about it', async ({ page }) => {
+  await page.route('**/tracing', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    const audit = body.lanes.find((lane: any) => lane.key === 'audit');
+    if (audit) {
+      const withCount = audit.buckets.filter((b: any) => b.count > 0);
+      withCount.forEach((b: any, i: number) => {
+        // The third and fourth busy intervals have no timed requests, so the line breaks and a dashed bridge crosses them.
+        if (i === 2 || i === 3) { delete b.p95Ms; delete b.p50Ms; delete b.maxMs; delete b.timedCount; return; }
+        b.timedCount = b.count; b.p50Ms = 120; b.p95Ms = 300; b.maxMs = i === withCount.length - 1 ? 60000 : 800;
+      });
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await openTimeline(page);
+  await readWindow(page, WIN_ALL);
+  const audit = page.locator('.panel[data-lane="audit"]');
+  await expect(audit).toHaveAttribute('data-hero', 'true');
+  expect(await audit.locator('svg.latency polyline.p95').count(), 'a solid P95 line').toBeGreaterThanOrEqual(1);
+  expect(await audit.locator('svg.latency polyline.bridge').count(), 'a dashed bridge over the gap').toBeGreaterThanOrEqual(1);
+  expect(await audit.locator('.dot').count(), 'a dot per interval with a P95').toBeGreaterThanOrEqual(2);
+  expect(await audit.locator('.mark').count(), 'a mark per interval with a slowest request').toBeGreaterThanOrEqual(2);
+  await expect(audit.locator('.mark.flagged')).toHaveCount(1);
+  await expect(audit.locator('.mark-label')).toHaveText('60 s');
+
+  const legend = page.locator('.hero-legend');
+  await expect(legend).toContainText('Requests per interval');
+  await expect(legend).toContainText('Slow end (P95)');
+  await expect(legend).toContainText('No timed requests between');
+  await expect(legend).toContainText('Slowest request in the interval');
+  await expect(page.getByTestId('hero-note')).toContainText('red diamond');
+  await expect(page.getByTestId('hero-note')).toContainText('60 s');
+
+  await expect(page.locator('.axis-right .tick-top')).toHaveText(/ms|s/);
+  await expect(page.locator('.axis-right .y-title')).toContainText('slowness (Slow end (P95))');
+
+  // The tooltip names the slow end and the slowest request of the interval under the pointer.
+  const flagged = audit.locator('.mark.flagged');
+  await audit.scrollIntoViewIfNeeded();
+  const markBox = (await flagged.boundingBox())!;
+  const barsBox = (await audit.locator('.bars').boundingBox())!;
+  await page.mouse.move(markBox.x + markBox.width / 2, barsBox.y + barsBox.height / 2);
+  await page.mouse.move(markBox.x + markBox.width / 2 + 1, barsBox.y + barsBox.height / 2 + 1);
+  const tip = page.locator('#tc-tip');
+  await expect(tip).toBeVisible();
+  await expect(tip).toContainText('Slow end (P95)');
+  await expect(tip).toContainText('Slowest request: 60 s');
+  await expect(tip).toContainText('far above the usual P95');
+});
+
+test('TLF-07: with no timed requests the API lane draws bars only, without a legend or right axis', async ({ page }) => {
+  await page.route('**/tracing', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    const audit = body.lanes.find((lane: any) => lane.key === 'audit');
+    if (audit) audit.buckets.forEach((b: any) => { delete b.p95Ms; delete b.p50Ms; delete b.maxMs; delete b.timedCount; });
+    await route.fulfill({ response, json: body });
+  });
+  await openTimeline(page);
+  await readWindow(page, WIN_ALL);
+  const audit = page.locator('.panel[data-lane="audit"]');
+  await expect(audit).toHaveAttribute('data-state', 'events');
+  await expect(audit).not.toHaveAttribute('data-hero', 'true');
+  await expect(page.locator('.hero-legend')).toHaveCount(0);
+  await expect(page.locator('.axis-right .tick')).toHaveCount(0);
 });

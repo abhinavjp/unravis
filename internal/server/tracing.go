@@ -369,8 +369,15 @@ type tracingBucket struct {
 	End      time.Time `json:"end"`
 	Count    int64     `json:"count"`
 	Errors   *int64    `json:"errors,omitempty"`
-	Clipped  bool      `json:"clipped"`
-	Complete bool      `json:"complete"`
+	// TimedCount is how many of the Count requests had a timing, and P50Ms,
+	// P95Ms and MaxMs their response times in milliseconds (the audit lane
+	// only). A bucket with no timed request omits all four.
+	TimedCount int64    `json:"timedCount,omitempty"`
+	P50Ms      *float64 `json:"p50Ms,omitempty"`
+	P95Ms      *float64 `json:"p95Ms,omitempty"`
+	MaxMs      *float64 `json:"maxMs,omitempty"`
+	Clipped    bool     `json:"clipped"`
+	Complete   bool     `json:"complete"`
 }
 
 type tracingEvent struct {

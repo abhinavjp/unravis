@@ -18,9 +18,11 @@
   import TracingExplain from './TracingExplain.svelte';
   import {
     CANVAS_TEXT, MIN_ZOOM_SLOTS, PERCENTILES, PERCENTILE_LABEL, absoluteSlot, clampRange, edgeSlot, fullRange, hasLatency,
-    isZoomed, latencySegments, rangeFromDrag, stepSlot, axisTicks, zoomFocus, zoomIn, zoomOut, zoomedText,
+    isZoomed, rangeFromDrag, stepSlot, axisTicks, zoomFocus, zoomIn, zoomOut, zoomedText,
     type Percentile, type ZoomRange
   } from '../lib/tracing/canvas';
+  import { HERO_TEXT, heroLayout, heroSentence } from '../lib/tracing/auditHero';
+  import { axisDuration } from '../lib/chartScale';
 
   let { response, zone, onSelect, focus = null, visible = {}, unselected = [], readOnly = false, onAddFiles }: {
     response: TracingResponse;
@@ -90,11 +92,14 @@
   function leftPct(index: number): number { return (index - range.from) * widthPct; }
   function inRange(index: number): boolean { return index >= range.from && index < range.to; }
 
-  // Latency line (WP-23c): the audit lane's per-bucket P50 or P95, drawn as plain SVG over the bars. Null buckets leave a gap.
+  // Latency hero layer (WP-23c): the audit lane's per-bucket P50 or P95 as a solid line with a dot per slot, a dashed
+  // bridge across slots with no timed requests and a mark for each slot's slowest request. The line and bridge keep the
+  // "x,y" run format of latencySegments() in canvas.ts, drawn in the same 0..100 box over the bars.
   let percentile = $state<Percentile>('p95');
   const auditLane = $derived(response.lanes.find((lane) => lane.key === 'audit'));
   const latencyAvailable = $derived(!!auditLane && hasLatency(auditLane.buckets, percentile));
-  const latency = $derived(grid && auditLane ? latencySegments(auditLane.buckets, grid, range, percentile) : { segments: [] as string[], max: 0 });
+  const hero = $derived(grid ? heroLayout(auditLane?.buckets ?? [], grid, range, percentile) : null);
+  const heroPeakMs = $derived(hero && hero.dots.length > 0 ? Math.max(...hero.dots.map((dot) => dot.ms)) : 0);
 
   // Axis: the grey "outside your window" dashes and the time labels, thinned to the measured plot width so they never overlap.
   const outside = $derived(grid ? outsideSlots(grid, range.from, range.to) : []);
@@ -191,7 +196,7 @@
     const bar = laneBars.get(lane.key)?.byIndex.get(slot);
     const start = slotStartMs(grid, slot);
     if (unreadByLane.get(lane.key)?.has(slot)) return [`${at(start)} to ${at(start + grid.widthMs)}`, READ_TEXT.tipUnread];
-    return barTipLines({
+    const lines = barTipLines({
       key: lane.key,
       startText: at(start),
       endText: at(start + grid.widthMs),
@@ -202,6 +207,15 @@
       asOfText: showsProvenance(lane) ? at(lane.asOf) : '',
       note: lane.state === 'incomplete' || laneCutShort(lane) ? laneNote(lane) : ''
     });
+    if (lane.key === 'audit' && hero) {
+      const dot = hero.dots.find((d) => d.index === slot);
+      const mark = hero.marks.find((m) => m.index === slot);
+      const timing = [dot ? `${PERCENTILE_LABEL[percentile]}: ${axisDuration(dot.ms)}` : HERO_TEXT.tipNoTiming];
+      if (mark) timing.push(`${HERO_TEXT.tipSlowest} ${axisDuration(mark.ms)}${mark.flagged ? ` (${HERO_TEXT.tipOutlier})` : ''}`);
+      // Right after the request count line (the time range is line 0, the count line 1).
+      lines.splice(2, 0, ...timing);
+    }
+    return lines;
   }
 
   const tipGroups = $derived.by(() => {
@@ -462,7 +476,7 @@
           </div>
         {/if}
       </div>
-      <div class="panel" data-lane={lane.key} data-state={lane.state} data-disabled={lane.disabled ?? undefined} style="--row:{laneIndex + 1}">
+      <div class="panel" data-lane={lane.key} data-state={lane.state} data-disabled={lane.disabled ?? undefined} data-hero={lane.key === 'audit' && hero && hero.maxMs > 0 ? 'true' : undefined} style="--row:{laneIndex + 1}">
         <p class="panel-title">{PANEL_TITLE[lane.key]}</p>
         {#if drawBars}
           <!-- The note sits above the bars so the bars stay at the panel's bottom, level with the axis "0". -->
@@ -495,13 +509,25 @@
                 {/if}
               </div>
             {/each}
-            {#if lane.key === 'audit' && latency.segments.length > 0}
+            {#if lane.key === 'audit' && hero && hero.maxMs > 0}
               <svg class="latency" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" data-percentile={percentile}>
-                {#each latency.segments as points, k (k)}
-                  <polyline {points} fill="none" vector-effect="non-scaling-stroke" />
+                {#each hero.bridge as points, k (k)}
+                  <polyline class="bridge" {points} fill="none" />
+                {/each}
+                {#each hero.line as points, k (k)}
+                  <polyline class="p95" {points} fill="none" />
                 {/each}
               </svg>
-              <span class="latency-max">{PERCENTILE_LABEL[percentile]}: up to {formatDuration(latency.max)}</span>
+              {#each hero.dots as dot (dot.index)}
+                <span class="dot" aria-hidden="true" style="left:{dot.leftPct}%;bottom:{dot.bottomPct}%"></span>
+              {/each}
+              {#each hero.marks as mark (mark.index)}
+                <span class="mark" class:flagged={mark.flagged} aria-hidden="true" style="left:{mark.leftPct}%;bottom:{mark.bottomPct}%"></span>
+                {#if mark.labelled}
+                  <span class="mark-label" aria-hidden="true" style="left:{mark.leftPct}%;bottom:{mark.bottomPct}%">{mark.text}</span>
+                {/if}
+              {/each}
+              <span class="latency-max">{PERCENTILE_LABEL[percentile]}: up to {formatDuration(heroPeakMs > 0 ? heroPeakMs : hero.maxMs)}</span>
             {/if}
           </div>
         {:else}
@@ -514,12 +540,18 @@
         {/if}
       </div>
       <div class="axis axis-right" style="--row:{laneIndex + 1}">
-        {#if lane.key === 'audit' && latency.segments.length > 0}
+        {#if lane.key === 'audit' && hero && hero.maxMs > 0}
           <span class="y-title">slowness ({PERCENTILE_LABEL[percentile]})</span>
           <div class="scale">
-            <span class="tick tick-top">{formatDuration(latency.max)}</span>
-            <span class="tick" style="bottom:50%">{formatDuration(latency.max / 2)}</span>
-            <span class="tick tick-bottom">{formatDuration(0)}</span>
+            {#each hero.ticks as tick (tick.ms)}
+              {#if tick.bottomPct === 100}
+                <span class="tick tick-top">{axisDuration(tick.ms)}</span>
+              {:else if tick.bottomPct === 0}
+                <span class="tick tick-bottom">{axisDuration(tick.ms)}</span>
+              {:else}
+                <span class="tick" style="bottom:{tick.bottomPct}%">{axisDuration(tick.ms)}</span>
+              {/if}
+            {/each}
           </div>
         {/if}
       </div>
@@ -576,6 +608,19 @@
 
   <span class="sr-only" aria-live="polite" aria-atomic="true">{liveText}</span>
 
+  {#if hero && hero.maxMs > 0}
+    {@const sentence = heroSentence(hero)}
+    <div class="hero-legend">
+      <span><i class="swatch-bar" aria-hidden="true"></i>{HERO_TEXT.legendRequests}</span>
+      <span><i class="swatch-line" aria-hidden="true"></i>{PERCENTILE_LABEL[percentile]}</span>
+      {#if hero.bridge.length > 0}
+        <span><i class="swatch-bridge" aria-hidden="true"></i>{HERO_TEXT.legendBridge}</span>
+      {/if}
+      <span><i class="swatch-mark" aria-hidden="true"></i>{HERO_TEXT.legendSlowest}</span>
+    </div>
+    {#if sentence}<p class="hero-note" data-testid="hero-note">{sentence}</p>{/if}
+  {/if}
+
   {#if grid}
     <p class="axcap">{caption}</p>
     <TracingExplain lanes={response.lanes} zoneName={zone} bucketLabel={widthLabel(response.window.bucketSeconds)} formatAt={at} />
@@ -631,6 +676,7 @@
   /* Any bucket with events stays visible next to a huge spike. */
   .bar.nonzero { min-height: 2px; }
   .panel[data-lane='audit'] .bar { background: var(--lane-audit); }
+  .panel[data-hero='true'] .bar { background: color-mix(in srgb, var(--lane-audit) 30%, transparent); }
   .panel[data-lane='sql'] .bar { background: var(--lane-sql); }
   .panel[data-lane='iis'] .bar { background: var(--lane-iis); }
   /* Errors differ from the bar by pattern and lightness, not hue alone: stripes of the page background (at least 3:1 against every lane colour, both themes) and --bad. */
@@ -667,8 +713,22 @@
   .canvas-bar { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; font-size: var(--fs-2); }
   .canvas-group { display: inline-flex; gap: var(--space-1); }
   .latency { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-  .latency polyline { stroke: var(--text); stroke-width: 1.5; }
+  .latency .p95 { stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .latency .bridge { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 4; opacity: .7; vector-effect: non-scaling-stroke; }
   .latency-max { position: absolute; top: 0; right: var(--space-1); color: var(--text-2); font-size: var(--fs-2); pointer-events: none; }
+  .dot, .mark, .mark-label { position: absolute; pointer-events: none; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); transform: translate(-50%, 50%); }
+  .mark { width: 6px; height: 6px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--accent); background: transparent; transform: translate(-50%, 50%); }
+  .mark.flagged { width: 11px; height: 11px; border: 0; border-radius: 0; background: var(--bad); transform: translate(-50%, 50%) rotate(45deg); }
+  .mark-label { color: var(--text-2); font-size: var(--fs-2); white-space: nowrap; transform: translate(8px, calc(-100% - 6px)); }
+  .hero-legend { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); align-items: center; color: var(--text-2); font-size: var(--fs-2); }
+  .hero-legend span { display: inline-flex; gap: var(--space-1); align-items: center; }
+  .hero-legend i { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+  .hero-legend .swatch-bar { background: color-mix(in srgb, var(--lane-audit) 30%, transparent); border-radius: 2px; }
+  .hero-legend .swatch-line { height: 0; width: 14px; border-radius: 0; border-top: 2px solid var(--accent); }
+  .hero-legend .swatch-bridge { height: 0; width: 14px; border-radius: 0; border-top: 1.5px dashed var(--accent); opacity: .7; }
+  .hero-legend .swatch-mark { width: 8px; height: 8px; border-radius: 0; background: var(--bad); transform: rotate(45deg); }
+  .hero-note { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
   .zoom-note { color: var(--text-2); }
 
   .axcap { margin: 0; color: var(--text-2); font-size: var(--fs-2); }

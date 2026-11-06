@@ -268,6 +268,17 @@ test('TRACE-08: the scrub pill states the export setting in plain words and neve
 });
 
 test('TRACE-09: P50 / P95 selector: a note without latency figures, and a line when buckets carry them', async ({ page }) => {
+  // The server now sends figures for timed requests, so strip them to reach the no-figures state.
+  const strip = async (route: any) => {
+    const res = await route.fetch();
+    const json = await res.json();
+    for (const lane of json.lanes) {
+      if (lane.key !== 'audit') continue;
+      lane.buckets.forEach((b: any) => { delete b.p50Ms; delete b.p95Ms; delete b.maxMs; delete b.timedCount; });
+    }
+    await route.fulfill({ response: res, json });
+  };
+  await page.route('**/api/cases/*/tracing', strip);
   await openTracing(page);
   await trace(page, WIN_A);
   const group = page.getByRole('group', { name: 'Latency line' });
@@ -276,7 +287,7 @@ test('TRACE-09: P50 / P95 selector: a note without latency figures, and a line w
   expect(await group.getByRole('button').allInnerTexts()).toEqual(['Typical (P50)', 'Slow end (P95)']);
   await expect(p95).toHaveAttribute('aria-pressed', 'true');
   await expect(p50).toHaveAttribute('aria-pressed', 'false');
-  // The audit rollup returns counts only until benchmark BM-04, so the real answer carries no latency.
+  // With the figures stripped, the answer carries counts only.
   await expect(page.getByText('No latency figures were returned for this window.')).toBeVisible();
   await expect(page.locator('svg.latency')).toHaveCount(0);
   await p50.click();
@@ -284,12 +295,13 @@ test('TRACE-09: P50 / P95 selector: a note without latency figures, and a line w
   await expect(p95).toHaveAttribute('aria-pressed', 'false');
 
   // Same real answer, with latency figures added to the audit buckets on the way in.
+  await page.unroute('**/api/cases/*/tracing', strip);
   await page.route('**/api/cases/*/tracing', async (route) => {
     const res = await route.fetch();
     const json = await res.json();
     for (const lane of json.lanes) {
       if (lane.key !== 'audit') continue;
-      lane.buckets.forEach((b: any, i: number) => { b.p50Ms = 100 + i * 10; b.p95Ms = 400 + i * 50; });
+      lane.buckets.forEach((b: any, i: number) => { delete b.maxMs; b.p50Ms = 100 + i * 10; b.p95Ms = 400 + i * 50; });
     }
     await route.fulfill({ response: res, json });
   });
@@ -306,14 +318,14 @@ test('TRACE-09: P50 / P95 selector: a note without latency figures, and a line w
   await group.getByRole('button', { name: 'Typical (P50)' }).click();
   await expect(line).toHaveAttribute('data-percentile', 'p50');
   expect(await line.locator('polyline').count()).toBeGreaterThan(0);
-  // The line colour is the text token, not a literal.
+  // The line colour is the accent token (as in Run Analysis), not a literal.
   const stroke = await page.evaluate(() => {
     const d = document.createElement('div');
-    d.style.color = 'var(--text)';
+    d.style.color = 'var(--accent)';
     document.body.appendChild(d);
     const want = getComputedStyle(d).color;
     d.remove();
-    return { got: getComputedStyle(document.querySelector('svg.latency polyline')!).stroke, want };
+    return { got: getComputedStyle(document.querySelector('svg.latency polyline.p95')!).stroke, want };
   });
   expect(stroke.got).toBe(stroke.want);
 });

@@ -48,6 +48,10 @@ export interface TracingBucket {
   complete?: boolean;
   p50Ms?: number;
   p95Ms?: number;
+  /** How many requests in the bucket carried a timing; absent when none did. */
+  timedCount?: number;
+  /** The slowest timed request in the bucket; absent when none did. */
+  maxMs?: number;
 }
 
 export interface TracingLane {
@@ -177,6 +181,8 @@ function parseBucket(value: unknown): TracingBucket | null {
   const bucket: TracingBucket = { start: value.start, count: value.count, errors: isNumber(value.errors) ? value.errors : 0 };
   if (isNumber(value.p50Ms)) bucket.p50Ms = value.p50Ms;
   if (isNumber(value.p95Ms)) bucket.p95Ms = value.p95Ms;
+  if (isNumber(value.timedCount)) bucket.timedCount = value.timedCount;
+  if (isNumber(value.maxMs)) bucket.maxMs = value.maxMs;
   if (value.complete === false) bucket.complete = false;
   return bucket;
 }

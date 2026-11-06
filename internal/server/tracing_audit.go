@@ -46,11 +46,15 @@ const (
 // not one of the listed audit sources. It carries no id.
 var errUnknownAuditSource = errors.New("unknown audit source")
 
-// auditBucket is one axis cell of the audit lane (UTC).
+// auditBucket is one axis cell of the audit lane (UTC). Timed is how many of
+// the Count requests had a timing, and P50Ms, P95Ms and MaxMs their response
+// times (nil when none did).
 type auditBucket struct {
 	Start, End    time.Time
 	Clipped       bool
 	Count, Errors int64
+	Timed         int64
+	P50Ms, P95Ms, MaxMs *float64
 }
 
 // auditLaneRead is what readAuditLane found. ReasonCode is empty for a complete
@@ -237,7 +241,10 @@ func readAuditLane(ctx context.Context, reader audit.RollupReader, sourceIDs []s
 	}
 
 	out := auditLaneRead{Buckets: []auditBucket{}, AsOf: asOf, Sources: []audit.SourceResult{}, ChunksTotal: len(chunks)}
-	type cell struct{ count, errs int64 }
+	type cell struct {
+		count, errs int64
+		lat         latencyAcc
+	}
 	cells := map[int]*cell{}
 	axisStart := axis.AxisStart.Unix()
 	sourceAt := map[string]int{}
@@ -286,6 +293,7 @@ func readAuditLane(ctx context.Context, reader audit.RollupReader, sourceIDs []s
 				}
 				c.count += s.Counts.Total
 				c.errs += s.Counts.C5xx
+				c.lat.add(s.Bins)
 			}
 		}
 		seenNow := map[string]bool{}
@@ -342,7 +350,9 @@ func readAuditLane(ctx context.Context, reader audit.RollupReader, sourceIDs []s
 			}
 			c = &cell{}
 		}
-		out.Buckets = append(out.Buckets, auditBucket{Start: from, End: to, Clipped: clipped, Count: c.count, Errors: c.errs})
+		b := auditBucket{Start: from, End: to, Clipped: clipped, Count: c.count, Errors: c.errs}
+		b.Timed, b.P50Ms, b.P95Ms, b.MaxMs = c.lat.figures()
+		out.Buckets = append(out.Buckets, b)
 	}
 	return out
 }
@@ -382,6 +392,7 @@ func auditLaneToWire(read auditLaneRead, sourceLabels []tracingRef) tracingLane 
 		errs := b.Errors
 		lane.Buckets = append(lane.Buckets, tracingBucket{
 			Start: b.Start.UTC(), End: b.End.UTC(), Count: b.Count, Errors: &errs,
+			TimedCount: b.Timed, P50Ms: b.P50Ms, P95Ms: b.P95Ms, MaxMs: b.MaxMs,
 			Clipped: b.Clipped, Complete: read.Complete || !b.End.After(read.ReadThrough),
 		})
 	}
