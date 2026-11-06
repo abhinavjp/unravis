@@ -1,5 +1,10 @@
 package sqlite
 
+import (
+	"fmt"
+	"math"
+)
+
 // schemaVersion is stored in meta. A case written by a newer build is refused.
 // Version 2 added the host discovery tables (discoverSQL); a version 1 case is
 // migrated on open, adding the tables and nothing else. Version 3 added the two
@@ -59,7 +64,16 @@ const indexSQL = coreIndexSQL + timelineIndexSQL
 // casestore.IsServerErrorStatus). It is written once so that the partial index
 // below and the query carry the identical expression, which is how SQLite
 // recognises that the index serves the query. The pattern must stay a literal.
-const statusIs5xxExpr = `json_extract(attrs_json,'$.status') GLOB '5[0-9][0-9]'`
+const statusIs4xxExpr = `json_extract(attrs_json,'$.status') GLOB '4[0-9][0-9]'`
+
+// timingBinExpr is audit.BinIndex over duration_ms in SQL: bin 0 under 1 ms,
+// the overflow bin (193) from 1.1^192 up, else floor(ln(ms)/ln(1.1))+1. It may
+// differ from BinIndex by one bin at an exact boundary, which the reader of the
+// bins tolerates (it clips to the observed minimum and maximum).
+var timingBinExpr = fmt.Sprintf(`CASE WHEN duration_ms < 1 THEN 0 WHEN duration_ms >= %v THEN 193 `+
+	`ELSE CAST(ln(duration_ms) / %v AS INTEGER) + 1 END`, math.Pow(1.1, 192), math.Log(1.1))
+
+const statusIs5xxExpr =`json_extract(attrs_json,'$.status') GLOB '5[0-9][0-9]'`
 
 // timelineIndexSQL are the two indexes the investigation timeline reads. They
 // carry no schema-version bump: a case without them is correct, only slow, and

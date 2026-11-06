@@ -15,10 +15,15 @@ export const HERO_TEXT = {
   legendRequests: 'Requests per interval',
   legendBridge: 'No timed requests between',
   legendSlowest: 'Slowest request in the interval',
+  legendWebRequests: 'Web-server requests per interval',
+  legendRefused: 'Refused or not found (4xx)',
+  legendFailed: 'Failed (5xx)',
   tipNoTiming: 'No timed requests',
   tipSlowest: 'Slowest request:',
   tipOutlier: 'far above the usual P95',
   empty: 'No timed requests in this view.',
+  webRefused: (refused: number, total: number): string =>
+    `${refused.toLocaleString('en-GB')} of ${total.toLocaleString('en-GB')} web-server requests in this view were refused or not found (4xx). The amber part of a bar shows when.`,
   outlierOne: (top: string): string =>
     `One interval holds a request far slower than usual, up to ${top}. It is marked with a red diamond. This shows when slow requests happened; it does not show why.`,
   outlierMany: (count: number, top: string): string =>

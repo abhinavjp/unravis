@@ -86,7 +86,7 @@ test('TRACE-02: three lanes in order with plain labels, one shared UTC axis and 
   // Panel titles name what is plotted.
   await expect(page.locator('.panel[data-lane=audit] .panel-title')).toHaveText('How many requests, and how slow they were');
   await expect(page.locator('.panel[data-lane=sql] .panel-title')).toHaveText('Slow database calls (over 1 s)');
-  await expect(page.locator('.panel[data-lane=iis] .panel-title')).toHaveText('Web-server requests (errors shown striped)');
+  await expect(page.locator('.panel[data-lane=iis] .panel-title')).toHaveText('Web-server requests and how slow they were');
   // One axis for all lanes: 3 h in 5 minute bars = 36 columns, at most six time labels (thinned to the measured plot width so
   // none overlap), the UTC caption, no "outside the window" dashes.
   await expect(page.locator('.overlay .column')).toHaveCount(36);
@@ -289,7 +289,7 @@ test('TRACE-09: P50 / P95 selector: a note without latency figures, and a line w
   await expect(p50).toHaveAttribute('aria-pressed', 'false');
   // With the figures stripped, the answer carries counts only.
   await expect(page.getByText('No latency figures were returned for this window.')).toBeVisible();
-  await expect(page.locator('svg.latency')).toHaveCount(0);
+  await expect(page.locator('.panel[data-lane="audit"] svg.latency')).toHaveCount(0);
   await p50.click();
   await expect(p50).toHaveAttribute('aria-pressed', 'true');
   await expect(p95).toHaveAttribute('aria-pressed', 'false');
@@ -307,14 +307,14 @@ test('TRACE-09: P50 / P95 selector: a note without latency figures, and a line w
   });
   await trace(page, WIN_A);
   await expect(page.getByText('No latency figures were returned for this window.')).toHaveCount(0);
-  const line = page.locator('svg.latency');
+  const line = page.locator('.panel[data-lane="audit"] svg.latency');
   await expect(line).toHaveCount(1);
   // The chart stays mounted across a re-run, so the choice made above (Typical, P50) is kept.
   await expect(line).toHaveAttribute('data-percentile', 'p50');
-  await expect(page.locator('.latency-max')).toHaveText('Typical (P50): up to 200 ms');
+  await expect(page.locator('.panel[data-lane="audit"] .latency-max')).toHaveText('Typical (P50): up to 200 ms');
   await group.getByRole('button', { name: 'Slow end (P95)' }).click();
   await expect(line).toHaveAttribute('data-percentile', 'p95');
-  await expect(page.locator('.latency-max')).toHaveText('Slow end (P95): up to 900 ms');
+  await expect(page.locator('.panel[data-lane="audit"] .latency-max')).toHaveText('Slow end (P95): up to 900 ms');
   await group.getByRole('button', { name: 'Typical (P50)' }).click();
   await expect(line).toHaveAttribute('data-percentile', 'p50');
   expect(await line.locator('polyline').count()).toBeGreaterThan(0);
@@ -325,7 +325,7 @@ test('TRACE-09: P50 / P95 selector: a note without latency figures, and a line w
     document.body.appendChild(d);
     const want = getComputedStyle(d).color;
     d.remove();
-    return { got: getComputedStyle(document.querySelector('svg.latency polyline.p95')!).stroke, want };
+    return { got: getComputedStyle(document.querySelector('.panel[data-lane="audit"] svg.latency polyline.p95')!).stroke, want };
   });
   expect(stroke.got).toBe(stroke.want);
 });

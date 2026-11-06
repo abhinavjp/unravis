@@ -396,9 +396,12 @@ type tracingBucket struct {
 	End      time.Time `json:"end"`
 	Count    int64     `json:"count"`
 	Errors   *int64    `json:"errors,omitempty"`
+	// ClientErrors is how many requests of the bucket had a 4xx status (the iis
+	// lane only; omitted when there were none).
+	ClientErrors *int64 `json:"clientErrors,omitempty"`
 	// TimedCount is how many of the Count requests had a timing, and P50Ms,
-	// P95Ms and MaxMs their response times in milliseconds (the audit lane
-	// only). A bucket with no timed request omits all four.
+	// P95Ms and MaxMs their response times in milliseconds (the audit and web-server
+	// lanes). A bucket with no timed request omits all four.
 	TimedCount int64    `json:"timedCount,omitempty"`
 	P50Ms      *float64 `json:"p50Ms,omitempty"`
 	P95Ms      *float64 `json:"p95Ms,omitempty"`
@@ -859,7 +862,7 @@ func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *t
 	// CountBuckets would fall back to the 50 000 row scan.
 	res, err := tracingCountBuckets(ctx, c, casestore.BucketQuery{
 		AxisStart: axis.AxisStart, From: axis.Start, To: axis.End, WidthMs: axis.WidthMs, Sources: names,
-		CountErrors: withErrors,
+		CountErrors: withErrors, CountClientErrors: withErrors, CountTimings: withErrors,
 		// An HTTP.sys marker is not a request, so it is never an error; the store
 		// skips these rows when counting errors.
 		ErrorExcludeSources: []string{sourceHTTPErr},
@@ -870,6 +873,7 @@ func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *t
 	}
 	perCell := map[int]int64{}
 	errCell := map[int]int64{}
+	clientCell := map[int]int64{}
 	var total int64
 	for _, bc := range res.Counts {
 		if bc.ImportID != 0 && !selectedIDs[bc.ImportID] {
@@ -877,13 +881,44 @@ func bucketLane(ctx context.Context, c casestore.Case, axis tracingAxis, lane *t
 		}
 		perCell[bc.Index] += bc.Count
 		errCell[bc.Index] += bc.Errors
+		clientCell[bc.Index] += bc.ClientErrors
 		total += bc.Count
 	}
 	lane.Scanned = total
 	if !withErrors {
-		errCell = nil
+		errCell, clientCell = nil, nil
 	}
 	lane.Buckets = tracingBuckets(axis, perCell, errCell)
+	if withErrors {
+		timing := map[int]*latencyAcc{}
+		for _, bt := range res.Timings {
+			if bt.ImportID != 0 && !selectedIDs[bt.ImportID] {
+				continue
+			}
+			acc := timing[bt.Index]
+			if acc == nil {
+				acc = &latencyAcc{}
+				timing[bt.Index] = acc
+			}
+			acc.add([]audit.RollupWireBin{{Bin: bt.Bin, Count: bt.Count, Min: bt.Min, Max: bt.Max}})
+		}
+		// Buckets are in axis order but skip unusable cells, so find each by its start.
+		idx := map[time.Time]int{}
+		for k := 0; k < axis.Buckets; k++ {
+			if from, _, _, ok := axis.Bucket(k); ok {
+				idx[from] = k
+			}
+		}
+		for i := range lane.Buckets {
+			k := idx[lane.Buckets[i].Start]
+			if n := clientCell[k]; n > 0 {
+				lane.Buckets[i].ClientErrors = &n
+			}
+			if acc := timing[k]; acc != nil {
+				lane.Buckets[i].TimedCount, lane.Buckets[i].P50Ms, lane.Buckets[i].P95Ms, lane.Buckets[i].MaxMs = acc.figures()
+			}
+		}
+	}
 	if capped {
 		lane.Truncated = true
 		lane.ReasonCode = tracingReasonRowCap

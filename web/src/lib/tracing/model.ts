@@ -44,6 +44,8 @@ export interface TracingBucket {
   start: string;
   count: number;
   errors: number;
+  /** The IIS lane only: how many answers were 4xx (refused or not found); absent when none were. */
+  clientErrors?: number;
   /** False only when the server said so: the cell was not read to the end. A missing field is read as complete. */
   complete?: boolean;
   p50Ms?: number;
@@ -181,6 +183,7 @@ function parseNames(value: unknown): string[] {
 function parseBucket(value: unknown): TracingBucket | null {
   if (!isObject(value) || !isText(value.start) || !isNumber(value.count)) return null;
   const bucket: TracingBucket = { start: value.start, count: value.count, errors: isNumber(value.errors) ? value.errors : 0 };
+  if (isNumber(value.clientErrors) && value.clientErrors > 0) bucket.clientErrors = value.clientErrors;
   if (isNumber(value.p50Ms)) bucket.p50Ms = value.p50Ms;
   if (isNumber(value.p95Ms)) bucket.p95Ms = value.p95Ms;
   if (isNumber(value.timedCount)) bucket.timedCount = value.timedCount;

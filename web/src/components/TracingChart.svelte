@@ -21,7 +21,7 @@
     isZoomed, rangeFromDrag, stepSlot, axisTicks, zoomFocus, zoomIn, zoomOut, zoomedText,
     type Percentile, type ZoomRange
   } from '../lib/tracing/canvas';
-  import { HERO_TEXT, heroLayout, heroSentence } from '../lib/tracing/auditHero';
+  import { HERO_TEXT, heroLayout, heroSentence, type HeroLayout } from '../lib/tracing/auditHero';
   import { axisDuration } from '../lib/chartScale';
 
   let { response, zone, onSelect, focus = null, visible = {}, unselected = [], readOnly = false, onAddFiles }: {
@@ -97,9 +97,29 @@
   // "x,y" run format of latencySegments() in canvas.ts, drawn in the same 0..100 box over the bars.
   let percentile = $state<Percentile>('p95');
   const auditLane = $derived(response.lanes.find((lane) => lane.key === 'audit'));
+  const iisLane = $derived(response.lanes.find((lane) => lane.key === 'iis'));
   const latencyAvailable = $derived(!!auditLane && hasLatency(auditLane.buckets, percentile));
   const hero = $derived(grid ? heroLayout(auditLane?.buckets ?? [], grid, range, percentile) : null);
+  // The IIS lane gets the same layer from its own response times (time-taken); a lane without any draws none.
+  const webHero = $derived(grid ? heroLayout(iisLane?.buckets ?? [], grid, range, percentile) : null);
   const heroPeakMs = $derived(hero && hero.dots.length > 0 ? Math.max(...hero.dots.map((dot) => dot.ms)) : 0);
+  const webPeakMs = $derived(webHero && webHero.dots.length > 0 ? Math.max(...webHero.dots.map((dot) => dot.ms)) : 0);
+  /** The hero layer a lane draws, or null when it draws none (no timed requests, or not a lane with one). */
+  function heroOf(key: TracingLaneKey): HeroLayout | null {
+    const layout = key === 'audit' ? hero : key === 'iis' ? webHero : null;
+    return layout && layout.maxMs > 0 ? layout : null;
+  }
+  function peakOf(key: TracingLaneKey): number { return key === 'iis' ? webPeakMs : heroPeakMs; }
+  // What the IIS lane's bars hold in the visible slots: the 4xx answers and 5xx answers, for the legend and the sentence under the chart.
+  const webTotals = $derived.by(() => {
+    const bars = laneBars.get('iis')?.bars ?? [];
+    let total = 0, refused = 0, failed = 0;
+    for (const bar of bars) {
+      if (!inRange(bar.index)) continue;
+      total += bar.count; refused += bar.clientErrors; failed += bar.errors;
+    }
+    return { total, refused, failed };
+  });
 
   // Axis: the grey "outside your window" dashes and the time labels, thinned to the measured plot width so they never overlap.
   const outside = $derived(grid ? outsideSlots(grid, range.from, range.to) : []);
@@ -197,6 +217,7 @@
     const start = slotStartMs(grid, slot);
     if (unreadByLane.get(lane.key)?.has(slot)) return [`${at(start)} to ${at(start + grid.widthMs)}`, READ_TEXT.tipUnread];
     const lines = barTipLines({
+      clientErrors: bar?.clientErrors ?? 0,
       key: lane.key,
       startText: at(start),
       endText: at(start + grid.widthMs),
@@ -207,13 +228,14 @@
       asOfText: showsProvenance(lane) ? at(lane.asOf) : '',
       note: lane.state === 'incomplete' || laneCutShort(lane) ? laneNote(lane) : ''
     });
-    if (lane.key === 'audit' && hero) {
-      const dot = hero.dots.find((d) => d.index === slot);
-      const mark = hero.marks.find((m) => m.index === slot);
+    const laneHero = heroOf(lane.key);
+    if (laneHero) {
+      const dot = laneHero.dots.find((d) => d.index === slot);
+      const mark = laneHero.marks.find((m) => m.index === slot);
       const timing = [dot ? `${PERCENTILE_LABEL[percentile]}: ${axisDuration(dot.ms)}` : HERO_TEXT.tipNoTiming];
       if (mark) timing.push(`${HERO_TEXT.tipSlowest} ${axisDuration(mark.ms)}${mark.flagged ? ` (${HERO_TEXT.tipOutlier})` : ''}`);
       // Right after the request count line (the time range is line 0, the count line 1).
-      lines.splice(2, 0, ...timing);
+      if ((bar?.count ?? 0) > 0) lines.splice(2, 0, ...timing);
     }
     return lines;
   }
@@ -476,7 +498,7 @@
           </div>
         {/if}
       </div>
-      <div class="panel" data-lane={lane.key} data-state={lane.state} data-disabled={lane.disabled ?? undefined} data-hero={lane.key === 'audit' && hero && hero.maxMs > 0 ? 'true' : undefined} style="--row:{laneIndex + 1}">
+      <div class="panel" data-lane={lane.key} data-state={lane.state} data-disabled={lane.disabled ?? undefined} data-hero={heroOf(lane.key) ? 'true' : undefined} style="--row:{laneIndex + 1}">
         <p class="panel-title">{PANEL_TITLE[lane.key]}</p>
         {#if drawBars}
           <!-- The note sits above the bars so the bars stay at the panel's bottom, level with the axis "0". -->
@@ -504,30 +526,34 @@
             {/each}
             {#each bars as bar (bar.index)}
               <div class="bar" class:nonzero={bar.count > 0} style="left:{leftPct(bar.index)}%;width:calc({widthPct}% - 1px);height:{barHeightPct(bar.count, max)}%">
+                {#if bar.count > 0 && bar.clientErrors > 0}
+                  <div class="bar-warn" data-testid="bar-warn" style="height:{(bar.clientErrors / bar.count) * 100}%"></div>
+                {/if}
                 {#if bar.count > 0 && bar.errors > 0}
                   <div class="bar-err" style="height:{(bar.errors / bar.count) * 100}%"></div>
                 {/if}
               </div>
             {/each}
-            {#if lane.key === 'audit' && hero && hero.maxMs > 0}
+            {#if heroOf(lane.key)}
+              {@const h = heroOf(lane.key) as HeroLayout}
               <svg class="latency" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" data-percentile={percentile}>
-                {#each hero.bridge as points, k (k)}
+                {#each h.bridge as points, k (k)}
                   <polyline class="bridge" {points} fill="none" />
                 {/each}
-                {#each hero.line as points, k (k)}
+                {#each h.line as points, k (k)}
                   <polyline class="p95" {points} fill="none" />
                 {/each}
               </svg>
-              {#each hero.dots as dot (dot.index)}
+              {#each h.dots as dot (dot.index)}
                 <span class="dot" aria-hidden="true" style="left:{dot.leftPct}%;bottom:{dot.bottomPct}%"></span>
               {/each}
-              {#each hero.marks as mark (mark.index)}
+              {#each h.marks as mark (mark.index)}
                 <span class="mark" class:flagged={mark.flagged} aria-hidden="true" style="left:{mark.leftPct}%;bottom:{mark.bottomPct}%"></span>
                 {#if mark.labelled}
                   <span class="mark-label" aria-hidden="true" style="left:{mark.leftPct}%;bottom:{mark.bottomPct}%">{mark.text}</span>
                 {/if}
               {/each}
-              <span class="latency-max">{PERCENTILE_LABEL[percentile]}: up to {formatDuration(heroPeakMs > 0 ? heroPeakMs : hero.maxMs)}</span>
+              <span class="latency-max">{PERCENTILE_LABEL[percentile]}: up to {formatDuration(peakOf(lane.key) > 0 ? peakOf(lane.key) : h.maxMs)}</span>
             {/if}
           </div>
         {:else}
@@ -539,11 +565,12 @@
           </div>
         {/if}
       </div>
-      <div class="axis axis-right" style="--row:{laneIndex + 1}">
-        {#if lane.key === 'audit' && hero && hero.maxMs > 0}
+      <div class="axis axis-right" data-lane={lane.key} style="--row:{laneIndex + 1}">
+        {#if heroOf(lane.key)}
+          {@const h = heroOf(lane.key) as HeroLayout}
           <span class="y-title">slowness ({PERCENTILE_LABEL[percentile]})</span>
           <div class="scale">
-            {#each hero.ticks as tick (tick.ms)}
+            {#each h.ticks as tick (tick.ms)}
               {#if tick.bottomPct === 100}
                 <span class="tick tick-top">{axisDuration(tick.ms)}</span>
               {:else if tick.bottomPct === 0}
@@ -608,17 +635,34 @@
 
   <span class="sr-only" aria-live="polite" aria-atomic="true">{liveText}</span>
 
-  {#if hero && hero.maxMs > 0}
-    {@const sentence = heroSentence(hero)}
+  {#if heroOf('audit')}
+    {@const sentence = heroSentence(heroOf('audit') as HeroLayout)}
     <div class="hero-legend">
       <span><i class="swatch-bar" aria-hidden="true"></i>{HERO_TEXT.legendRequests}</span>
       <span><i class="swatch-line" aria-hidden="true"></i>{PERCENTILE_LABEL[percentile]}</span>
-      {#if hero.bridge.length > 0}
+      {#if hero && hero.bridge.length > 0}
         <span><i class="swatch-bridge" aria-hidden="true"></i>{HERO_TEXT.legendBridge}</span>
       {/if}
       <span><i class="swatch-mark" aria-hidden="true"></i>{HERO_TEXT.legendSlowest}</span>
     </div>
     {#if sentence}<p class="hero-note" data-testid="hero-note">{sentence}</p>{/if}
+  {/if}
+
+  {#if heroOf('iis')}
+    {@const webSentence = heroSentence(heroOf('iis') as HeroLayout)}
+    <div class="hero-legend web-legend" data-testid="web-legend">
+      <span><i class="swatch-bar swatch-web" aria-hidden="true"></i>{HERO_TEXT.legendWebRequests}</span>
+      {#if webTotals.refused > 0}
+        <span><i class="swatch-warn" aria-hidden="true"></i>{HERO_TEXT.legendRefused}</span>
+      {/if}
+      {#if webTotals.failed > 0}
+        <span><i class="swatch-fail" aria-hidden="true"></i>{HERO_TEXT.legendFailed}</span>
+      {/if}
+      <span><i class="swatch-line" aria-hidden="true"></i>{PERCENTILE_LABEL[percentile]}</span>
+      <span><i class="swatch-mark" aria-hidden="true"></i>{HERO_TEXT.legendSlowest}</span>
+    </div>
+    {#if webTotals.refused > 0}<p class="hero-note" data-testid="web-note">{HERO_TEXT.webRefused(webTotals.refused, webTotals.total)}</p>{/if}
+    {#if webSentence}<p class="hero-note" data-testid="web-outlier-note">{webSentence}</p>{/if}
   {/if}
 
   {#if grid}
@@ -677,9 +721,12 @@
   .bar.nonzero { min-height: 2px; }
   .panel[data-lane='audit'] .bar { background: var(--lane-audit); }
   .panel[data-hero='true'] .bar { background: color-mix(in srgb, var(--lane-audit) 30%, transparent); }
+  .panel[data-hero='true'][data-lane='iis'] .bar { background: color-mix(in srgb, var(--lane-iis) 30%, transparent); }
   .panel[data-lane='sql'] .bar { background: var(--lane-sql); }
   .panel[data-lane='iis'] .bar { background: var(--lane-iis); }
   /* Errors differ from the bar by pattern and lightness, not hue alone: stripes of the page background (at least 3:1 against every lane colour, both themes) and --bad. */
+  /* 4xx answers: an amber block at the foot of the bar; a 5xx stripe, when there is one, sits over it. */
+  .bar-warn { position: absolute; bottom: 0; left: 0; right: 0; min-height: 2px; background: var(--warn); }
   .bar-err { position: absolute; bottom: 0; left: 0; right: 0; min-height: 2px; background: repeating-linear-gradient(135deg, var(--bad) 0 2px, var(--bg) 2px 4px); }
   /* A period that was not read: hatched in the panel's own colours and labelled, so it can never be taken for a quiet one. */
   .unread { position: absolute; top: 0; bottom: 0; display: grid; place-items: center; overflow: hidden; color: var(--text-2); background: repeating-linear-gradient(135deg, var(--line) 0 1px, transparent 1px 6px); border-left: var(--hairline-width) dashed var(--line); border-right: var(--hairline-width) dashed var(--line); font-size: var(--fs-2); pointer-events: none; }
@@ -727,6 +774,9 @@
   .hero-legend .swatch-bar { background: color-mix(in srgb, var(--lane-audit) 30%, transparent); border-radius: 2px; }
   .hero-legend .swatch-line { height: 0; width: 14px; border-radius: 0; border-top: 2px solid var(--accent); }
   .hero-legend .swatch-bridge { height: 0; width: 14px; border-radius: 0; border-top: 1.5px dashed var(--accent); opacity: .7; }
+  .hero-legend .swatch-web { background: color-mix(in srgb, var(--lane-iis) 30%, transparent); }
+  .hero-legend .swatch-warn { border-radius: 2px; background: var(--warn); }
+  .hero-legend .swatch-fail { border-radius: 2px; background: repeating-linear-gradient(135deg, var(--bad) 0 2px, var(--bg) 2px 4px); }
   .hero-legend .swatch-mark { width: 8px; height: 8px; border-radius: 0; background: var(--bad); transform: rotate(45deg); }
   .hero-note { margin: 0; color: var(--text-2); font-size: var(--fs-2); }
   .zoom-note { color: var(--text-2); }

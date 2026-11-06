@@ -4,6 +4,7 @@
 //   TLF-02  The left axis shows several ticks and a unit title, and the plot has gridlines.
 //   TLF-05  With a slowness figure in the answer the API lane gets a right axis in milliseconds, hidden at 375 px.
 //   TLF-03  The centre lane takes most of the width at 1280, and the Suspects rail only appears beside the chart when the window is wide.
+//   TLF-08  The web-server lane shows refused answers (amber), a response-time line and a red diamond with its own legend.
 //   TLF-04  A lane with nothing to draw shows a reason panel with the reason, and the page does not scroll sideways at 375 px.
 import { test, expect, type Page } from '../support/fixtures';
 import { goHome, openCase } from '../support/ui';
@@ -126,7 +127,7 @@ test('TLF-05: when the answer carries a slowness figure the API lane gets a righ
   });
   await openTimeline(page);
   await readWindow(page, WIN_ALL);
-  const right = page.locator('.axis-right').first();
+  const right = page.locator('.axis-right[data-lane="audit"]');
   await expect(right.locator('.tick')).toHaveCount(3);
   await expect(right.locator('.tick-bottom')).toHaveText(/^0\s?ms$|^0$/);
   await expect(right.locator('.y-title')).toContainText('slowness');
@@ -164,7 +165,7 @@ test('TLF-06: the API lane shows the Run Analysis chart with a legend, a red dia
   await expect(audit.locator('.mark.flagged')).toHaveCount(1);
   await expect(audit.locator('.mark-label')).toHaveText('60 s');
 
-  const legend = page.locator('.hero-legend');
+  const legend = page.locator('.hero-legend:not(.web-legend)');
   await expect(legend).toContainText('Requests per interval');
   await expect(legend).toContainText('Slow end (P95)');
   await expect(legend).toContainText('No timed requests between');
@@ -172,8 +173,8 @@ test('TLF-06: the API lane shows the Run Analysis chart with a legend, a red dia
   await expect(page.getByTestId('hero-note')).toContainText('red diamond');
   await expect(page.getByTestId('hero-note')).toContainText('60 s');
 
-  await expect(page.locator('.axis-right .tick-top')).toHaveText(/ms|s/);
-  await expect(page.locator('.axis-right .y-title')).toContainText('slowness (Slow end (P95))');
+  await expect(page.locator('.axis-right[data-lane="audit"] .tick-top')).toHaveText(/ms|s/);
+  await expect(page.locator('.axis-right[data-lane="audit"] .y-title')).toContainText('slowness (Slow end (P95))');
 
   // The tooltip names the slow end and the slowest request of the interval under the pointer.
   const flagged = audit.locator('.mark.flagged');
@@ -203,6 +204,41 @@ test('TLF-07: with no timed requests the API lane draws bars only, without a leg
   const audit = page.locator('.panel[data-lane="audit"]');
   await expect(audit).toHaveAttribute('data-state', 'events');
   await expect(audit).not.toHaveAttribute('data-hero', 'true');
-  await expect(page.locator('.hero-legend')).toHaveCount(0);
-  await expect(page.locator('.axis-right .tick')).toHaveCount(0);
+  await expect(page.locator('.hero-legend:not(.web-legend)')).toHaveCount(0);
+  await expect(page.locator('.axis-right[data-lane="audit"] .tick')).toHaveCount(0);
+});
+
+// TLF-08  The web-server (IIS) lane draws what the logs hold beyond a count: an amber part of each bar for refused or
+//         not-found answers (4xx), a P95 line with dots, a red diamond for the slowest request, and a legend with a sentence.
+test('TLF-08: the web-server lane shows refused answers, a response-time line and a red diamond with a legend', async ({ page }) => {
+  await page.route('**/tracing', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    const iis = body.lanes.find((lane: any) => lane.key === 'iis');
+    if (iis) {
+      const busy = iis.buckets.filter((b: any) => b.count > 0);
+      busy.forEach((b: any, i: number) => {
+        b.clientErrors = Math.max(1, Math.floor(b.count / 3));
+        b.timedCount = b.count; b.p50Ms = 90; b.p95Ms = 2500; b.maxMs = i === busy.length - 1 ? 45000 : 6000;
+      });
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await openTimeline(page);
+  await readWindow(page, WIN_ALL);
+  const iis = page.locator('.panel[data-lane="iis"]');
+  await expect(iis).toHaveAttribute('data-state', 'events');
+  await expect(iis).toHaveAttribute('data-hero', 'true');
+  expect(await iis.locator('[data-testid="bar-warn"]').count(), 'an amber part on bars with refused answers').toBeGreaterThanOrEqual(1);
+  expect(await iis.locator('svg.latency polyline.p95').count(), 'a solid P95 line').toBeGreaterThanOrEqual(1);
+  await expect(iis.locator('.mark.flagged')).toHaveCount(1);
+  await expect(iis.locator('.mark-label')).toHaveText('45 s');
+
+  const legend = page.getByTestId('web-legend');
+  await expect(legend).toContainText('Web-server requests per interval');
+  await expect(legend).toContainText('Refused or not found (4xx)');
+  await expect(legend).toContainText('Slow end (P95)');
+  await expect(page.getByTestId('web-note')).toContainText('were refused or not found (4xx)');
+  await expect(page.getByTestId('web-outlier-note')).toContainText('45 s');
 });

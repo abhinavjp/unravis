@@ -137,6 +137,10 @@ test('every fixed string the hero layer can print passes the copy lint', () => {
     { id: 'hero.tipSlowest', text: HERO_TEXT.tipSlowest },
     { id: 'hero.tipOutlier', text: HERO_TEXT.tipOutlier },
     { id: 'hero.empty', text: HERO_TEXT.empty },
+    { id: 'hero.legendWebRequests', text: HERO_TEXT.legendWebRequests },
+    { id: 'hero.legendRefused', text: HERO_TEXT.legendRefused },
+    { id: 'hero.legendFailed', text: HERO_TEXT.legendFailed },
+    { id: 'hero.webRefused', text: HERO_TEXT.webRefused(12, 340) },
     { id: 'hero.outlierOne', text: HERO_TEXT.outlierOne('60 s') },
     { id: 'hero.outlierMany', text: HERO_TEXT.outlierMany(3, '60 s') }
   ];

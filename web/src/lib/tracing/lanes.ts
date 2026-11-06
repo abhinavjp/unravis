@@ -26,7 +26,7 @@ export const LANE_ASK: Record<TracingLaneKey, string> = {
 export const PANEL_TITLE: Record<TracingLaneKey, string> = {
   audit: 'How many requests, and how slow they were',
   sql: 'Slow database calls (over 1 s)',
-  iis: 'Web-server requests (errors shown striped)'
+  iis: 'Web-server requests and how slow they were'
 };
 
 /** The lane-state sentences, worded as on the older call screen, for the states this lane carries. */
@@ -219,6 +219,8 @@ export interface Bar {
   index: number;
   count: number;
   errors: number;
+  /** 4xx answers (the IIS lane); 0 when the lane has none. */
+  clientErrors: number;
 }
 
 export function barsFor(g: SlotGrid, buckets: TracingBucket[]): Bar[] {
@@ -232,8 +234,9 @@ export function barsFor(g: SlotGrid, buckets: TracingBucket[]): Bar[] {
     if (existing) {
       existing.count += bucket.count;
       existing.errors += bucket.errors;
+      existing.clientErrors += bucket.clientErrors ?? 0;
     } else {
-      byIndex.set(index, { index, count: bucket.count, errors: bucket.errors });
+      byIndex.set(index, { index, count: bucket.count, errors: bucket.errors, clientErrors: bucket.clientErrors ?? 0 });
     }
   }
   return [...byIndex.values()].sort((a, b) => a.index - b.index);
