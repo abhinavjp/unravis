@@ -10,11 +10,12 @@ import (
 type proc10FakeSource struct {
 	paths     []string
 	readings  []CounterReading
+	collects  int
 	refreshes int
 	closed    bool
 }
 
-func (f *proc10FakeSource) Collect() ([]CounterReading, error) { return f.readings, nil }
+func (f *proc10FakeSource) Collect() ([]CounterReading, error) { f.collects++; return f.readings, nil }
 func (f *proc10FakeSource) Close() error                       { f.closed = true; return nil }
 func (f *proc10FakeSource) Paths() []string                    { return f.paths }
 func (f *proc10FakeSource) RefreshInstances() error            { f.refreshes++; return nil }
@@ -264,6 +265,69 @@ func TestProc10RefreshOnChange(t *testing.T) {
 	}
 	if src.refreshes != 1 {
 		t.Fatalf("refreshes = %d, want no re-expand without a change", src.refreshes)
+	}
+}
+
+// A ')' inside the image name is legal (e.g. "Svc (x86)"): the instance must
+// split on the ")\\" separator, not the first ')' — otherwise the selected
+// target silently disappears.
+func TestProc10ParenInstance(t *testing.T) {
+	inst, counter, kind, ok := parseProc10Path(`\Process(Svc (x86))\Working Set`)
+	if !ok || inst != "Svc (x86)" || counter != "Working Set" || kind != KindGauge {
+		t.Fatalf("parse = (%q, %q, %v, %v), want (Svc (x86), Working Set, gauge, true)", inst, counter, kind, ok)
+	}
+	src := &proc10FakeSource{}
+	proc10Instance(src, "Svc (x86)", 7777, 20, 3000, 4000)
+	targets := []ResolvedTarget{{Key: "svc:x86", PID: 7777, Start: 1000, Runtime: 2}}
+	g := newProc10TestGroup(t, src, targets, nil)
+	grp := proc10Collect(t, g, 3)
+	if grp == nil || len(grp.Targets) != 1 {
+		t.Fatalf("targets = %+v, want the Svc (x86) instance matched", grp)
+	}
+	row := grp.Targets[0]
+	if row.Target != "svc:x86" {
+		t.Fatalf("target = %q, want svc:x86", row.Target)
+	}
+	if row.CPUPct == nil || *row.CPUPct != 20 {
+		t.Fatalf("CPUPct = %v, want 20", row.CPUPct)
+	}
+	if row.WorkingSet == nil || *row.WorkingSet != 3000 {
+		t.Fatalf("WorkingSet = %v, want 3000", row.WorkingSet)
+	}
+	if row.PrivateBytes == nil || *row.PrivateBytes != 4000 {
+		t.Fatalf("PrivateBytes = %v, want 4000", row.PrivateBytes)
+	}
+}
+
+// No selected targets: Collect short-circuits before sampling — the
+// machine-wide PDH query is never collected and no engine work runs (BL-122).
+func TestProc10NoTargetsNoSample(t *testing.T) {
+	src := &proc10FakeSource{}
+	proc10Instance(src, "dotnet", 7777, 50, 1000, 2000)
+	// nil Targets func, nil slice, empty slice: all short-circuit before sampling.
+	gNil, err := newProc10Group(GroupDeps{Source: src, Cores: 4})
+	if err != nil {
+		t.Fatalf("newProc10Group: %v", err)
+	}
+	for _, g := range []*proc10Group{
+		gNil.(*proc10Group),
+		newProc10TestGroup(t, src, nil, nil),
+		newProc10TestGroup(t, src, []ResolvedTarget{}, nil),
+	} {
+		if v, err := g.Collect(time.Unix(1000, 0), 15); err != nil || v != nil {
+			t.Fatalf("no targets: (%v, %v), want (nil, nil)", v, err)
+		}
+		if src.collects != 0 {
+			t.Fatalf("collects = %d, want 0 with no selected targets", src.collects)
+		}
+	}
+	// With a selection sampling resumes (proves the counter is real).
+	g := newProc10TestGroup(t, src, []ResolvedTarget{{Key: "pool:a", PID: 7777, Start: 1000, Runtime: 2}}, nil)
+	if _, err := g.Collect(time.Unix(1000, 0), 15); err != nil {
+		t.Fatal(err)
+	}
+	if src.collects != 1 {
+		t.Fatalf("collects = %d, want 1 once a target is selected", src.collects)
 	}
 }
 

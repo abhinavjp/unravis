@@ -91,8 +91,10 @@ func parseProcIOPath(path string) (inst, counter string, ok bool) {
 		return "", "", false
 	}
 	rest := path[len(procIOPrefix):]
-	end := strings.IndexByte(rest, ')')
-	if end < 0 || !strings.HasPrefix(rest[end+1:], `\`) {
+	// Split on ")\", not the first ')': an image name may contain ')'
+	// (e.g. "Svc (x86)"), same separator pattern as parseCLRPath.
+	end := strings.Index(rest, `)\`)
+	if end < 0 {
 		return "", "", false
 	}
 	return rest[:end], rest[end+2:], true
@@ -133,6 +135,9 @@ func (g *procIOGroup) refresh() error {
 }
 
 func (g *procIOGroup) Collect(now time.Time, _ float64) (any, error) {
+	if g.targets == nil || len(g.targets()) == 0 {
+		return nil, nil // nothing selected: nothing sampled, never machine-wide (BL-122)
+	}
 	if g.changed != nil && g.changed() {
 		if err := g.refresh(); err != nil {
 			return nil, err

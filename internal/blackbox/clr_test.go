@@ -10,11 +10,12 @@ import (
 type clrFakeSource struct {
 	paths     []string
 	readings  []CounterReading
+	collects  int
 	refreshes int
 	closed    bool
 }
 
-func (f *clrFakeSource) Collect() ([]CounterReading, error) { return f.readings, nil }
+func (f *clrFakeSource) Collect() ([]CounterReading, error) { f.collects++; return f.readings, nil }
 func (f *clrFakeSource) Close() error                       { f.closed = true; return nil }
 func (f *clrFakeSource) Paths() []string                    { return f.paths }
 func (f *clrFakeSource) RefreshInstances() error            { f.refreshes++; return nil }
@@ -312,6 +313,39 @@ func TestCLRRefreshOnChange(t *testing.T) {
 	}
 	if src.refreshes != 1 {
 		t.Fatalf("refreshes = %d, want no re-expand without a change", src.refreshes)
+	}
+}
+
+// No selected targets: Collect short-circuits before sampling — the
+// machine-wide PDH query is never collected and no engine work runs (BL-122).
+func TestCLRNoTargetsNoSample(t *testing.T) {
+	src := &clrFakeSource{paths: clrInstancePaths("w3wp")}
+	src.readings = []CounterReading{
+		clrReading(".NET CLR Memory", "w3wp", "Process ID", 100),
+		clrReading(".NET CLR Memory", "w3wp", "Gen 0 heap size", 1),
+	}
+	for _, targets := range []func() []ResolvedTarget{
+		nil,
+		func() []ResolvedTarget { return nil },
+		func() []ResolvedTarget { return []ResolvedTarget{} },
+	} {
+		g := newCLRTestGroup(t, src, targets, nil)
+		if v, err := g.Collect(time.Unix(1000, 0), 15); err != nil || v != nil {
+			t.Fatalf("no targets: (%v, %v), want (nil, nil)", v, err)
+		}
+		if src.collects != 0 {
+			t.Fatalf("collects = %d, want 0 with no selected targets", src.collects)
+		}
+	}
+	// With a selection sampling resumes (proves the counter is real).
+	g := newCLRTestGroup(t, src, func() []ResolvedTarget {
+		return []ResolvedTarget{{Key: "pool:a", PID: 100, Start: 1, Runtime: 1}}
+	}, nil)
+	if grp := clrCollect(t, g, time.Unix(1000, 0)); grp == nil {
+		t.Fatal("selected target: nil group")
+	}
+	if src.collects != 1 {
+		t.Fatalf("collects = %d, want 1 once a target is selected", src.collects)
 	}
 }
 

@@ -11,11 +11,12 @@ import (
 type procIOFakeSource struct {
 	paths     []string
 	readings  []CounterReading
+	collects  int
 	refreshes int
 	closed    bool
 }
 
-func (f *procIOFakeSource) Collect() ([]CounterReading, error) { return f.readings, nil }
+func (f *procIOFakeSource) Collect() ([]CounterReading, error) { f.collects++; return f.readings, nil }
 func (f *procIOFakeSource) Close() error                       { f.closed = true; return nil }
 func (f *procIOFakeSource) Paths() []string                    { return f.paths }
 func (f *procIOFakeSource) RefreshInstances() error            { f.refreshes++; return nil }
@@ -333,6 +334,68 @@ func TestProcIORefreshOnChange(t *testing.T) {
 	}
 	if src.refreshes != 1 {
 		t.Fatalf("refreshes = %d, want no re-expand without a change", src.refreshes)
+	}
+}
+
+// A ')' inside the image name is legal (e.g. "Svc (x86)"): the instance must
+// split on the ")\\" separator, not the first ')' — otherwise the selected
+// target silently disappears.
+func TestProcIOParenInstance(t *testing.T) {
+	inst, counter, ok := parseProcIOPath(`\Process(Svc (x86))\Page File Bytes`)
+	if !ok || inst != "Svc (x86)" || counter != "Page File Bytes" {
+		t.Fatalf("parse = (%q, %q, %v), want (Svc (x86), Page File Bytes, true)", inst, counter, ok)
+	}
+	src := &procIOFakeSource{}
+	procIOInstance(src, "Svc (x86)")
+	src.readings = []CounterReading{
+		procIOReading("Svc (x86)", "ID Process", 100),
+		procIOReading("Svc (x86)", "Elapsed Time", 100),
+		procIOReading("Svc (x86)", "Page File Bytes", 1000),
+	}
+	g := newProcIOTestGroup(t, src, func() []ResolvedTarget {
+		return []ResolvedTarget{{Key: "svc:x86", PID: 100, Start: 900}}
+	}, nil)
+	grp := collectProcIO(t, g, src, 1)
+	if grp == nil || len(grp.Targets) != 1 || grp.Targets[0].Target != "svc:x86" {
+		t.Fatalf("group = %+v, want the Svc (x86) instance matched", grp)
+	}
+	if pf := grp.Targets[0].PageFileBytes; pf == nil || *pf != 1000 {
+		t.Fatalf("PageFileBytes = %v, want 1000", pf)
+	}
+}
+
+// No selected targets: Collect short-circuits before sampling — the
+// machine-wide PDH query is never collected and no engine work runs (BL-122).
+func TestProcIONoTargetsNoSample(t *testing.T) {
+	src := &procIOFakeSource{}
+	procIOInstance(src, "w3wp")
+	src.readings = []CounterReading{
+		procIOReading("w3wp", "ID Process", 100),
+		procIOReading("w3wp", "Elapsed Time", 100),
+		procIOReading("w3wp", "Page File Bytes", 1000),
+	}
+	for _, targets := range []func() []ResolvedTarget{
+		nil,
+		func() []ResolvedTarget { return nil },
+		func() []ResolvedTarget { return []ResolvedTarget{} },
+	} {
+		g := newProcIOTestGroup(t, src, targets, nil)
+		if v, err := g.Collect(time.Unix(1000, 0), 15); err != nil || v != nil {
+			t.Fatalf("no targets: (%v, %v), want (nil, nil)", v, err)
+		}
+		if src.collects != 0 {
+			t.Fatalf("collects = %d, want 0 with no selected targets", src.collects)
+		}
+	}
+	// With a selection sampling resumes (proves the counter is real).
+	g := newProcIOTestGroup(t, src, func() []ResolvedTarget {
+		return []ResolvedTarget{{Key: "pool:a", PID: 100, Start: 900}}
+	}, nil)
+	if grp := collectProcIO(t, g, src, 1); grp == nil {
+		t.Fatal("selected target: nil group")
+	}
+	if src.collects != 1 {
+		t.Fatalf("collects = %d, want 1 once a target is selected", src.collects)
 	}
 }
 

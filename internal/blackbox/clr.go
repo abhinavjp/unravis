@@ -142,6 +142,9 @@ func (g *clrGroup) refresh() error {
 }
 
 func (g *clrGroup) Collect(now time.Time, _ float64) (any, error) {
+	if g.targets == nil || len(g.targets()) == 0 {
+		return nil, nil // nothing selected: nothing sampled, never machine-wide (BL-122)
+	}
 	if g.changed != nil && g.changed() {
 		if err := g.refresh(); err != nil {
 			return nil, err
