@@ -90,9 +90,15 @@ func dotnetChildren(procs []ProcInfo, parentPID uint32) []ProcInfo {
 type Resolver struct {
 	snapshotFn    func() ([]ProcInfo, error)
 	loadModulesFn func(pid uint32) ([]string, error)
+	instancesFn   func() ([]string, error)  // W3SVC_W3WP counter instances (BBX-1-11)
+	servicesFn    func() ([]svcProc, error) // running services with PIDs (BBX-1-11)
 
 	last   []procKey
 	cached map[procKey]uint8
+
+	mapLast []procKey // process set at the last instance/service enumeration
+	mapInst []string  // cached W3SVC_W3WP instances
+	mapSvc  []svcProc // cached running services
 }
 
 // NewResolver wires the platform process snapshot and module loader.
@@ -100,6 +106,8 @@ func NewResolver() *Resolver {
 	return &Resolver{
 		snapshotFn:    snapshotProcesses,
 		loadModulesFn: loadModules,
+		instancesFn:   enumW3WPInstances,
+		servicesFn:    enumServiceProcs,
 		cached:        make(map[procKey]uint8),
 	}
 }
