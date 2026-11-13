@@ -140,8 +140,13 @@ let tracingCase = $state('');
 let slowCall = $state<SlowCallTarget | null>(null);
 // The last call the screen showed, kept past Back and Esc so Browser Forward can reopen it. Cleared on a case switch, when the timeline closes, or when a new call opens.
 let lastSlowCall: SlowCallTarget | null = null;
+// One-shot: the Slow call hand-off asked for its own history entry to be replaced by the next screen, so the timeline entry below it is not duplicated (R2-01).
+// noteScreenHistory takes it, so a move that never reaches the history cannot leave it set for a later screen.
+let handoffReplacePending = false;
 // The bar the Investigation Timeline handed to the analysis, with a sentence for an empty analysis ('' when there is none to say).
 let tracingHandoff = $state.raw<{ start: number; end: number; text: string } | null>(null);
+// One-shot: the timeline handed a window over, so the analysis runs that window as soon as it opens instead of showing the last run (P46-01).
+let handoffRunPending = false;
 // Opening a case restores what it saved: its MongoDB connection and databases, then its filters (see caseWorkspace.ts). 'working' is the quiet
 // reconnect; the others wait for the person. Saves of the case workspace stay off until the case's own workspace has been read and applied.
 type RestorePhase = 'idle' | 'working' | 'signin' | 'unreachable' | 'missing' | 'failed';
@@ -558,11 +563,16 @@ function noteCaseView(to: Screen) {
 // A move to start, case, create or the analysis gets a browser history entry once no drawer entry is open (see lib/screenFlow.ts historyStep).
 function noteScreenHistory(from: Screen, to: Screen) {
   const marker = viewHistory, drawers = drawerHistory;
+  // Taken here, not in the callback: a move that never reaches the history must not leave the hand-off replace set for a later screen.
+  const replaceCallEntry = handoffReplacePending;
+  handoffReplacePending = false;
   if (!marker || !drawers || !isHistoryScreen(to)) return;
   drawers.whenClear(() => {
     if (screen !== to || viewHistory !== marker) return;
     const step = historyStep(from, to, marker.screen);
-    if (step !== 'none') marker.markScreen(to, step === 'replace');
+    // The Slow call hand-off replaces the call entry with this screen, so the timeline entry below it is not left as a duplicate dead step (R2-01).
+    if (replaceCallEntry && marker.screen === CASE_CALL_MARK) marker.markScreen(to, true);
+    else if (step !== 'none') marker.markScreen(to, step === 'replace');
     // A reload on the timeline: the case entry is marked first, then the timeline gets its own, so Back returns to the case page.
     if (to === 'case' && tracingCase && tracingCase === activeCaseId) marker.markScreen(CASE_TRACING_MARK);
     // A reload on the Slow call screen: the timeline entry is marked first, then the call gets its own, so Back climbs one level at a time.
@@ -589,12 +599,14 @@ function followHistoryMark(mark: string) {
     slowCall = slowCall ?? lastSlowCall ?? storedCallTarget();
     if (slowCall && slowCall.caseId !== activeCaseId) slowCall = null;
   } else slowCall = null;
-  if (screen === 'case') { storedCaseView(slowCall ? 'call' : tracingCase ? 'tracing' : 'case'); storedCallTarget(slowCall); }
+  // Back off the call entry keeps the stored target: the entry is still in the history, so Forward must be able to reopen it (R2-02).
+  if (screen === 'case') { storedCaseView(slowCall ? 'call' : tracingCase ? 'tracing' : 'case'); if (slowCall) storedCallTarget(slowCall); }
 }
 function setTracing(id: string) {
   if (tracingCase === id) return;
   tracingCase = id;
-  if (!id) { slowCall = null; lastSlowCall = null; storedCallTarget(null); }
+  // The stored call target stays for the same reason: closing the timeline does not remove the call entry from the history (R2-02).
+  if (!id) { slowCall = null; lastSlowCall = null; }
   if (screen === 'case') storedCaseView(id ? 'tracing' : 'case');
 }
 /** From the case page to its Investigation Timeline. It takes a history step, so Back returns to the case page and Forward to the timeline. */
@@ -631,19 +643,21 @@ export function openSlowCall(target: SlowCallTarget) {
 }
 /**
  * Leaves the Slow call screen for the timeline, one level up. By default it steps back one history entry (the browser's Back),
- * which is asynchronous. With `{ handoff: true }` it does not step back: the call entry is replaced in place by the timeline entry,
- * so the caller can open another view straight after without a pending back step racing it.
+ * which is asynchronous. With `{ handoff: true }` it does not step back and marks no timeline entry of its own: the next screen
+ * replaces the call entry in place (see noteScreenHistory), so the caller can open another view straight after without a pending
+ * back step racing it, and without leaving a second timeline entry behind.
  */
 export function closeSlowCall(options?: { handoff?: boolean }) {
   if (!slowCall) return;
   const handoff = options?.handoff === true;
   slowCall = null;
   if (handoff) lastSlowCall = null;
-  storedCallTarget(null);
+  // Only the hand-off forgets the call. A plain close (Esc, Back, crumb) keeps the stored target, so Forward can reopen the call (R2-02).
+  if (handoff) storedCallTarget(null);
   storedCaseView('tracing');
   const marker = viewHistory;
   if (!marker) return;
-  if (handoff) { marker.markScreen(CASE_TRACING_MARK, true); return; }
+  if (handoff) { handoffReplacePending = true; return; }
   if (!marker.stepBack(CASE_TRACING_MARK)) marker.markScreen(CASE_TRACING_MARK);
 }
 /** Remembers which call the screen found, so a reload does not search again. */
@@ -957,8 +971,17 @@ export function openCase(id: string, options: { archived?: boolean; held?: boole
 export function openCaseHome() {
   if (activeCaseId) go('case');
 }
-/** From the case home to the analysis. The case stays the active one. */
-export function openAnalysis() { go('running'); }
+/**
+ * From the case home to the analysis. The case stays the active one. A window the Investigation Timeline handed over is run at once,
+ * so the analysis opens on that bar instead of showing the last run's window (P46-01). The landing run only starts by itself once.
+ */
+export function openAnalysis() {
+  const runHandoff = handoffRunPending;
+  handoffRunPending = false;
+  if (!go('running') || !runHandoff) return;
+  dateInputsValid = true; // the hand-off wrote every window field itself, so an old date draft must not hold the run back
+  void runAnalysis(true);
+}
 function showImportPopup(retryServerName: string | null) {
   const id = activeCaseId;
   if (!id) {
@@ -1690,10 +1713,14 @@ export function onScopeChange() { error = ''; }
 /** A chosen hour of the hour grid becomes the primary window, with the hour before it as the reference. */
 export function setDrillOpen(v: boolean) { drillOpen = v; }
 export function setWindowFromHour(window: RollupWindow) { tracingHandoff = null; Object.assign(query, hourWindowQuery(window)); controlsResetKey++; onScopeChange(); }
-/** Remember what to say if the analysis on this just-set bar window is empty. Call after setWindowFromHour; an empty text clears it. */
+/**
+ * Remember what to say if the analysis on this just-set bar window is empty, and that the analysis must run on that window when it
+ * opens (openAnalysis). Call after setWindowFromHour; an empty text clears the note, never the run.
+ */
 export function setTracingHandoff(window: RollupWindow, text: string) {
   const start = Date.parse(window.start), end = Date.parse(window.end);
   tracingHandoff = text && Number.isFinite(start) && Number.isFinite(end) ? { start, end, text } : null;
+  handoffRunPending = true;
 }
 /**
  * Make the zoomed window the queried window and rerun the full analysis on it. The window fields come from the analysis on screen, so

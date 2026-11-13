@@ -125,8 +125,38 @@ Live evidence shot: `shots/live-timeline-lanes-1440x800.png` (three lanes, live 
 
 - The whole Slow call screen on LIVE data (blocked: the live case's API audit database is saved but not connected, so no
   audit red diamond exists; only audit diamonds open the screen). Owner action: connect the saved audit database.
-- Open in Analysis landing on the call's own slot (demo showed the default range instead) — follow-up defect candidate.
+- Open in Analysis landing on the call's own slot (demo showed the default range instead) — **now FIXED in rc.36 (P46-01); see "Fixer pass re-verification" below.**
 - The per-call Database number cross-checked against the record detail (the detail does not restate it).
 - The all-sources double-count when two saved days share an hour (deferred F-03 / SEC-01): not exercisable on the current
   live case or the demo; remains open.
-- The history dead-steps are confirmed present (R2-01, R2-02) but not fixed; they stay in deferred.md for a fixer pass.
+- The history dead-steps are confirmed present (R2-01, R2-02) but not fixed; they stay in deferred.md for a fixer pass. **Now FIXED in rc.36; see "Fixer pass re-verification" below. One sub-case (Back then reload) remains out of scope.**
+
+## Fixer pass re-verification (rc.36) — R2-01, R2-02, P46-01 now FIXED
+
+The three defects above (items 9 and 10) were fixed through the owning packet (appState.svelte.ts, P-23) by one bounded
+fixer, then re-verified by the coordinator in a real Chromium browser on the **rc.36 demo exe** (own temp config + free
+port; the live config/session was untouched; the launch token was read at runtime and never written to any report). The
+installed app was then silently upgraded rc.35 → rc.36 (cases preserved, 2 = 2). Gates re-run by the coordinator: targeted
+slowcall+drill 110 pass, svelte-check 0 errors, full npm test 3002 pass / 0 fail, Go build/vet/test exit 0.
+
+- **Item 9 — R2-01 (Open in Analysis then Back): FIXED.** A one-shot flag replaces the call's history entry with the
+  analysis entry instead of pushing a duplicate timeline. Real-browser Back sequence after Open in Analysis:
+  screen → analysis → timeline → analysis → cases. Every Back moves; no dead step on the timeline.
+- **Item 9 — R2-02 (Back, Back, Forward, Forward): FIXED.** The call target is kept in history and only re-stored when a
+  call is actually shown, so Forward reopens the screen. Real-browser sequence: screen → timeline → other → timeline →
+  screen (the second Forward reopens, no dead step). **Remaining limitation (out of scope, not fixed):** "Back *then
+  reload*" — a call entry written before a reload reads as an empty screen afterward (a per-page-load life mark in
+  wayfinding.ts), so Forward onto it is still a dead step. Fixing that needs wayfinding.ts/screenFlow.ts, outside this
+  fixer's write scope; it stays in deferred.md.
+- **Item 10 — P46-01 (Open in Analysis lands on the call's slot): FIXED.** A one-shot flag makes Open in Analysis run the
+  handed-off window. Real-browser analysis range line after Open in Analysis: **"Showing 20 Oct 08:00:00 to 08:01:00 UTC"**
+  — the call's 08:00 slot, not the 08:45-09:00 default — and the same line after a reload.
+- **Focus return (RB-4 unproven item): SEEN.** After the screen closes, focus lands on the chart overlay (a DIV), not the
+  document body.
+- **Reload after Forward (RB-4 unproven item): SEEN.** Forward reopened the screen, then a reload restored the same call
+  (same "About this call" facts and the same window line).
+
+Still demo-only: the live case's API audit database remains saved-but-not-connected (P46-03), so the screen is still
+unreachable on live data; all of the above is verified on the rc.36 demo. Owner action to enable live screen acceptance:
+connect the saved audit database, then re-run P-46 live. P46-02 (nearby per-call figure not restated in the Selected
+detail) remains open as recorded above.
