@@ -59,6 +59,12 @@ type Store struct {
 	priorClean bool
 	lastMax    time.Time // newest sample time written (by time, not by order)
 	manifestOK bool      // false when the last manifest write failed
+
+	// gapInterval is the interval in seconds that gap detection judges samples
+	// against. It starts at the configured interval; the recorder sets it to
+	// the budget's effective interval so a widened tick cadence is not
+	// mistaken for a gap. The manifest keeps the configured interval.
+	gapInterval int
 }
 
 // OpenStore opens (and when needed creates) the recordings folder. It repairs
@@ -72,7 +78,7 @@ func OpenStore(dir string, opt StoreOptions) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{dir: dir, opt: opt, now: opt.Now, firstOfRun: true, manifestOK: true}
+	s := &Store{dir: dir, opt: opt, now: opt.Now, firstOfRun: true, manifestOK: true, gapInterval: opt.IntervalSeconds}
 	now := s.now().UTC()
 
 	m, err := readManifest(dir)
@@ -304,6 +310,19 @@ func (s *Store) Event(kind, detail string) {
 	_ = s.writeManifestLocked(false)
 }
 
+// SetInterval sets the interval in seconds that gap detection judges samples
+// against. The recorder calls it with the budget's effective interval, so a
+// widened tick cadence does not fabricate gaps; without a budget the
+// configured interval from OpenStore stands. Values <= 0 are ignored.
+func (s *Store) SetInterval(seconds int) {
+	if seconds <= 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gapInterval = seconds
+}
+
 // Append writes one sample as one line, flushes it to disk, and updates the
 // manifest. causeHint names why a gap before this sample happened when the
 // recorder knows (for example "disk-low"); otherwise a gap inside a run is
@@ -351,7 +370,7 @@ func (s *Store) Append(smp Sample, causeHint string) error {
 			} else if cause == "" {
 				cause = CauseLate
 			}
-			if g, ok := GapBetween(s.lastMax, smp.T, s.opt.IntervalSeconds, cause); ok {
+			if g, ok := GapBetween(s.lastMax, smp.T, s.gapInterval, cause); ok {
 				s.m.Gaps = append(s.m.Gaps, g)
 				if len(s.m.Gaps) > maxGaps {
 					s.m.Gaps = s.m.Gaps[len(s.m.Gaps)-maxGaps:]

@@ -467,6 +467,51 @@ func TestRunResetsInterval(t *testing.T) {
 	}
 }
 
+// TestWidenedBudgetNoFalseGapOrLate: with the budget widened to 60 s (base
+// 15), samples 60 s apart are on time — no fabricated gap and no running-late.
+// Lateness and gaps are judged against the effective interval, not the base.
+func TestWidenedBudgetNoFalseGapOrLate(t *testing.T) {
+	g := newRig(t, nil) // base 15
+	b := NewBudget(15)
+	b.SelfUsage(5, 100<<20)
+	b.Cycle()
+	b.Cycle()
+	b.Cycle() // 15 -> 30 -> 60
+	if b.EffectiveInterval() != 60 {
+		t.Fatalf("precondition: effective = %d, want 60", b.EffectiveInterval())
+	}
+	g.r.o.Budget = b // SelfUsage stays nil: the widened interval holds
+	g.r.Tick(g.clk.t)
+	g.tick(60 * time.Second)
+	g.tick(60 * time.Second)
+	m := g.s.Manifest()
+	if m.SampleCount() != 3 || len(m.Gaps) != 0 {
+		t.Fatalf("samples %d gaps %+v, want 3 samples and no gap at the widened interval", m.SampleCount(), m.Gaps)
+	}
+	if st := g.r.Status(g.clk.t); st.State != StateRunning {
+		t.Fatalf("state %s, want running", st.State)
+	}
+	// A full widened interval past the newest sample is still on time.
+	if st := g.r.Status(g.clk.t.Add(60 * time.Second)); st.State != StateRunning {
+		t.Fatalf("state %s at +60 s, want running", st.State)
+	}
+}
+
+// TestBaseIntervalStillDetectsRealGap: without a budget (base 15), a real 60 s
+// hole still reads running-late and is recorded as a gap.
+func TestBaseIntervalStillDetectsRealGap(t *testing.T) {
+	g := newRig(t, nil) // base 15, no budget
+	g.r.Tick(g.clk.t)
+	if st := g.r.Status(g.clk.t.Add(60 * time.Second)); st.State != StateRunningLate {
+		t.Fatalf("state %s, want running-late at base 15 after 60 s", st.State)
+	}
+	g.tick(60 * time.Second)
+	m := g.s.Manifest()
+	if len(m.Gaps) != 1 || m.Gaps[0].Seconds != 60 || m.Gaps[0].Cause != CauseLate {
+		t.Fatalf("gaps %+v, want one 60 s late gap", m.Gaps)
+	}
+}
+
 // Review F6.5: the pass right after a forward clock jump keeps the history.
 func TestRecorderForwardClockJumpDoesNotAgeOutHistoryInThatPass(t *testing.T) {
 	old := t0.Add(-3 * 24 * time.Hour) // inside keepDays until the clock jumps

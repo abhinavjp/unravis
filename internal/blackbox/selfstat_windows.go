@@ -39,10 +39,12 @@ var selfStat struct {
 
 // SelfUsage reads the Blackbox's own process only (the current-process
 // pseudo-handle — no other process, no attach, no dump). cpuPctOfOneCore is
-// the kernel+user delta since the last call / wall delta / cores * 100;
-// wsBytes is the working set. ok=false on any failure or on the first call
-// (no delta yet): a missing reading is omitted, never 0-as-fact.
-func SelfUsage() (cpuPctOfOneCore float64, wsBytes uint64, ok bool) {
+// the kernel+user delta since the last call / wall delta * 100: percent of
+// ONE core (one full core = 100, no core-count division — the budget's 0.5
+// threshold is per core, not per machine). wsBytes is the working set.
+// ok=false on any failure or on the first call (no delta yet): a missing
+// reading is omitted, never 0-as-fact.
+func SelfUsage() (cpuPct float64, wsBytes uint64, ok bool) {
 	h := windows.CurrentProcess()
 	var creation, exit, kernel, user windows.Filetime
 	if err := windows.GetProcessTimes(h, &creation, &exit, &kernel, &user); err != nil {
@@ -63,8 +65,18 @@ func SelfUsage() (cpuPctOfOneCore float64, wsBytes uint64, ok bool) {
 	if dWall <= 0 {
 		return 0, 0, false
 	}
-	pct := float64(cpu-prevCPU) / 1e7 / dWall / float64(CoreCount()) * 100
+	pct := cpuPctOfOneCore(float64(cpu-prevCPU), dWall)
 	return pct, uint64(mem.workingSetSize), true
+}
+
+// cpuPctOfOneCore is the CPU percent of ONE core: cpuDelta100ns of kernel+user
+// time (100 ns ticks) spent over wallSeconds of wall time. One full core for
+// the whole wall second is 100. There is deliberately NO division by the core
+// count: Budget.SelfUsage judges against 0.5% of one core, so dividing by
+// cores (percent of the machine) would hide an over-budget recorder on any
+// multi-core server.
+func cpuPctOfOneCore(cpuDelta100ns, wallSeconds float64) float64 {
+	return cpuDelta100ns / 1e7 / wallSeconds * 100
 }
 
 // filetimeTicks is a FILETIME as 100 ns ticks.

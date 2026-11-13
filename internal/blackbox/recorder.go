@@ -168,6 +168,11 @@ func (r *Recorder) Tick(now time.Time) {
 	}
 
 	r.feedBudget()
+	if r.o.Budget != nil {
+		// Gaps are judged against the interval this run actually ticks at, so
+		// a widened budget does not fabricate a gap between on-time samples.
+		r.o.Store.SetInterval(effectiveInterval(r.o.Budget, r.o.Config.IntervalSeconds))
+	}
 
 	s, err := r.o.Collector.Collect(now)
 	if err != nil {
@@ -315,7 +320,7 @@ func (r *Recorder) Status(now time.Time) RecorderStatus {
 		st.State = StateStopped
 	case r.paused:
 		st.State = StateDiskLow
-	case IsLate(ref, now.UTC(), r.o.Config.IntervalSeconds):
+	case IsLate(ref, now.UTC(), effectiveInterval(r.o.Budget, r.o.Config.IntervalSeconds)):
 		st.State = StateRunningLate
 	default:
 		st.State = StateRunning
