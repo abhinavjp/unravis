@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +15,8 @@ import (
 	"api-audit-explorer/internal/bbsaved"
 	"api-audit-explorer/internal/blackbox"
 	"api-audit-explorer/internal/casestore"
+	"api-audit-explorer/internal/discover"
+	"api-audit-explorer/internal/discover/configparse"
 	"api-audit-explorer/internal/investigate"
 	"api-audit-explorer/internal/keeper"
 )
@@ -58,7 +61,10 @@ type BlackboxDeps struct {
 	Program blackbox.ProgramSource
 	// Open builds the reader of one place. nil uses the real folder and URL readers.
 	Open func(loc blackbox.Location, key string) blackbox.Source
-	Now  func() time.Time
+	// DetectTargets lists this PC's IIS app pools and running services for the
+	// install wizard. nil uses the real detection (Windows only). Tests give a fake.
+	DetectTargets func() (pools, services []TargetName, detected bool)
+	Now           func() time.Time
 }
 
 // WithBlackbox attaches the Blackbox pages.
@@ -147,6 +153,7 @@ func init() {
 		bbRoute("/api/blackbox/validate", bbExact("/api/blackbox/validate"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbValidate(w, r) })),
 		bbRoute("/api/blackbox/pack", bbExact("/api/blackbox/pack"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbPack(w, r) })),
 		bbRoute("/api/blackbox/this-pc", bbExact("/api/blackbox/this-pc"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbThisPCScan(w, r) })),
+		bbRoute("/api/blackbox/this-pc/targets", bbExact("/api/blackbox/this-pc/targets"), bbM(http.MethodGet, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbTargets(w, r) })),
 		bbRoute("/api/blackbox/this-pc/install", bbExact("/api/blackbox/this-pc/install"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbInstall(w, r) })),
 		bbRoute("/api/blackbox/this-pc/start", bbExact("/api/blackbox/this-pc/start"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbStartStop(w, r, true) })),
 		bbRoute("/api/blackbox/this-pc/stop", bbExact("/api/blackbox/this-pc/stop"), bbM(http.MethodPost, func(h *handler, w http.ResponseWriter, r *http.Request, _ string) { h.bbStartStop(w, r, false) })),
@@ -441,6 +448,142 @@ func (h *handler) bbThisPCScan(w http.ResponseWriter, _ *http.Request) {
 	}
 	found, scanErr := h.bb.scan()
 	writeJSON(w, http.StatusOK, h.bb.thisPCBlock(entries, found, scanErr), 16384)
+}
+
+/* ------------------------------------------------------- wizard targets */
+
+// TargetName is one detected install target: a name and its running state, and
+// nothing else. No command line, binary path, environment or account ever goes
+// into it (BBX-1-10).
+type TargetName struct {
+	Name    string `json:"name"`
+	Running bool   `json:"running"`
+}
+
+type bbTargetsAnswer struct {
+	AppPools []TargetName `json:"appPools"`
+	Services []TargetName `json:"services"`
+	Detected bool         `json:"detected"`
+}
+
+// bbMaxTargets caps each list the wizard is offered.
+const bbMaxTargets = 256
+
+// bbTargetList sorts by name, drops duplicates and empty names, and caps the
+// list. It always returns a non-nil slice so an empty list serializes as [].
+func bbTargetList(in []TargetName) []TargetName {
+	seen := make(map[string]bool, len(in))
+	out := make([]TargetName, 0, len(in))
+	for _, t := range in {
+		if t.Name == "" || seen[t.Name] {
+			continue
+		}
+		seen[t.Name] = true
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	if len(out) > bbMaxTargets {
+		out = out[:bbMaxTargets]
+	}
+	return out
+}
+
+func (b *blackboxHub) targets() ([]TargetName, []TargetName, bool) {
+	if b.deps.DetectTargets != nil {
+		return b.deps.DetectTargets()
+	}
+	return detectTargets()
+}
+
+// bbTargets offers the wizard the IIS app pools and running services detected on
+// this PC. It is a read-only GET: it runs the detection on demand, asks for no
+// elevation, and changes nothing. A PC where detection could not run answers
+// 200 with empty lists and detected=false, never an error and never a guess.
+func (h *handler) bbTargets(w http.ResponseWriter, _ *http.Request) {
+	if !h.bbReady(w) {
+		return
+	}
+	pools, services, detected := h.bb.targets()
+	if !detected {
+		pools, services = nil, nil
+	}
+	writeJSON(w, http.StatusOK, bbTargetsAnswer{
+		AppPools: bbTargetList(pools), Services: bbTargetList(services), Detected: detected,
+	}, 256<<10)
+}
+
+// detectTargets reads this PC through the existing discovery entry points: the
+// app pool names from applicationHost.config (configparse.ParseAppHost, the same
+// read IISSiteDirs does) and the running win32 services (Env.Services.List).
+// Off Windows, or when either source cannot be read, nothing is claimed:
+// detected=false with empty lists. Names only; the path and image fields the
+// discovery structs carry are dropped here and never serialized.
+func detectTargets() (pools, services []TargetName, detected bool) {
+	env, err := discover.NewSystemEnv()
+	if err != nil {
+		return nil, nil, false
+	}
+	pools, ok := bbAppPools(env)
+	if !ok {
+		return nil, nil, false
+	}
+	services, ok = bbRunningServices(env)
+	if !ok {
+		return nil, nil, false
+	}
+	return pools, services, true
+}
+
+// bbAppPools reads the pool names from applicationHost.config through env.FS,
+// the way discover.IISSiteDirs reads the same file. A missing, refused, oversized
+// or unparsable config is "not detected". applicationHost.config lists the
+// configured pools; a configured pool is offered as a target (running=true).
+func bbAppPools(env discover.Env) ([]TargetName, bool) {
+	if env.FS == nil {
+		return nil, false
+	}
+	roots := discover.DefaultIISRoots()
+	if w := os.Getenv("windir"); w != "" {
+		roots.WinDir = w
+	}
+	cfg := discover.WinJoin(roots.WinDir, `System32\inetsrv\config\applicationHost.config`)
+	fi, err := env.FS.Stat(cfg)
+	if err != nil || fi.IsDir || fi.Reparse || fi.Size > discover.MaxConfigBytes {
+		return nil, false
+	}
+	b, err := env.FS.Head(cfg, discover.MaxConfigBytes)
+	if err != nil {
+		return nil, false
+	}
+	ah, err := configparse.ParseAppHost(bytes.NewReader(b))
+	if err != nil || ah == nil {
+		return nil, false
+	}
+	out := make([]TargetName, 0, len(ah.Pools))
+	for _, p := range ah.Pools {
+		out = append(out, TargetName{Name: p.Name, Running: true})
+	}
+	return out, true
+}
+
+// bbRunningServices lists the running win32 services through Env.Services.List
+// (EnumServicesStatusEx on Windows). Only names and the running state are kept;
+// BinaryDir and Image are dropped.
+func bbRunningServices(env discover.Env) ([]TargetName, bool) {
+	if env.Services == nil {
+		return nil, false
+	}
+	list, err := env.Services.List()
+	if err != nil {
+		return nil, false
+	}
+	out := make([]TargetName, 0, len(list))
+	for _, s := range list {
+		if s.State == "running" {
+			out = append(out, TargetName{Name: s.Name, Running: true})
+		}
+	}
+	return out, true
 }
 
 /* ----------------------------------------------------------------- add */
