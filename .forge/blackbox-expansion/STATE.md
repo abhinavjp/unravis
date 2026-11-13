@@ -9,15 +9,15 @@ Reviewer: U = Ultimate, P = Performance. Tier: E = Efficient, P = Performance.
 ## Wave 1
 | Packet | Status | Tier | Wave | Review | Commit |
 |---|---|---|---|---|---|
-| BBX-1-01 budget | pending | P | 1 | — | — |
-| BBX-1-02 engine | pending | P | 1 | — | — |
-| BBX-1-03 config targets | pending | E | 1 | — | — |
-| BBX-1-04 group types | pending | E | 1 | — | — |
+| BBX-1-01 budget | committed | P | 1 | U: 1 HIGH livelock fixed + re-reviewed OK | 06add92 |
+| BBX-1-02 engine | committed | P | 1 | U: clean (CounterReading rename accepted) | f11137c |
+| BBX-1-03 config targets | committed | E | 1 | U: clean | cf63b04 |
+| BBX-1-04 group types | committed | E | 1 | U: clean | f11137c |
 
 ## Wave 2
-| BBX-1-05 group registry | pending | P | 2 | — | — |
-| BBX-1-06 PDH source | pending | P | 2 | — | — |
-| BBX-1-10 wizard endpoint | pending | P | 2 | — | — |
+| BBX-1-05 group registry | committed | P | 2 | U: clean | (wave 2 merge) |
+| BBX-1-06 PDH source | committed | P | 2 | U: 1 CRITICAL (PdhExpandWildCard 5th arg) fixed + arity re-verified | (wave 2 merge + fix) |
+| BBX-1-10 wizard endpoint | committed | P | 2 | U: clean (pool run-state is live check) | (wave 2 merge) |
 
 ## Wave 3
 | BBX-1-07 budget loop | pending | P | 3 | — | — |
@@ -82,3 +82,6 @@ Reviewer: U = Ultimate, P = Performance. Tier: E = Efficient, P = Performance.
 
 ## Log
 - 2026-11-13: repo cloned, branch created, docs read, surveys done, Go 1.27.3 installed, baseline green. PLAN.md, 44 packets, GRAPH.md, STATE.md written.
+- 2026-11-13: subagents created in .qoder/agents. NOTE: this session's Agent tool only exposes general-purpose/Explore/Plan; custom types not dispatchable and /agents reload not available as a tool. Dispatch uses general-purpose with the tier prompt embedded; per-dispatch model tier cannot be forced from here (agent files carry the intended tier for CLI use).
+- 2026-11-13: Wave 1 (1-01..1-04) implemented in worktrees, merged, Ultimate batch review found 1 HIGH (budget slow-group livelock) + 1 LOW; fix round applied (NoteSkipped + GroupTiming optional flag), re-review confirmed resolved. Committed 06add92. CounterReading rename propagated to packets 1-06/1-09; NoteSkipped wiring added to 1-05.
+- 2026-11-13: Wave 2 (1-05,1-06,1-10) implemented, merged, integration tests green. Ultimate review found 1 CRITICAL: PdhExpandWildCardPathW called with 4 args (missing dwFlags) → nondeterministic wildcard expansion. Fixed (5th arg 0 at pdh_windows.go:99,107); all PDH call arities re-verified against Win32 signatures; build/vet/tests pass.

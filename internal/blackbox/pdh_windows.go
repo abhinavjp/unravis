@@ -96,7 +96,7 @@ func expandWildCard(path string) ([]string, error) {
 		return nil, err
 	}
 	var n uint32
-	r, _, _ := procPdhExpandWildCard.Call(0, uintptr(unsafe.Pointer(cp)), 0, uintptr(unsafe.Pointer(&n)))
+	r, _, _ := procPdhExpandWildCard.Call(0, uintptr(unsafe.Pointer(cp)), 0, uintptr(unsafe.Pointer(&n)), 0)
 	if r != 0 && r != pdhMoreData {
 		return nil, fmt.Errorf("PdhExpandWildCardPath %q: 0x%x", path, r)
 	}
@@ -104,7 +104,7 @@ func expandWildCard(path string) ([]string, error) {
 		return nil, fmt.Errorf("PdhExpandWildCardPath %q: no instances", path)
 	}
 	buf := make([]uint16, n)
-	r, _, _ = procPdhExpandWildCard.Call(0, uintptr(unsafe.Pointer(cp)), uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&n)))
+	r, _, _ = procPdhExpandWildCard.Call(0, uintptr(unsafe.Pointer(cp)), uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&n)), 0)
 	if r != 0 {
 		return nil, fmt.Errorf("PdhExpandWildCardPath %q: 0x%x", path, r)
 	}
