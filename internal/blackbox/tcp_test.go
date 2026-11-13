@@ -10,15 +10,28 @@ import (
 
 // tcpFakeSource is a fake CounterSource with expansion bookkeeping: Paths
 // feeds the spec build, RefreshInstances records re-expansion calls.
+// resetStep, when non-zero, advances the cumulative Connections Reset
+// counters on every Collect (KindRate semantics: totals climb over time).
 type tcpFakeSource struct {
 	paths     []string
 	readings  []CounterReading
+	resetStep float64
 	refreshes int
 	closed    bool
 	err       error
 }
 
-func (f *tcpFakeSource) Collect() ([]CounterReading, error) { return f.readings, f.err }
+func (f *tcpFakeSource) Collect() ([]CounterReading, error) {
+	if f.resetStep != 0 {
+		for i := range f.readings {
+			switch f.readings[i].Path {
+			case `\TCPv4\Connections Reset`, `\TCPv6\Connections Reset`:
+				f.readings[i].Value += f.resetStep
+			}
+		}
+	}
+	return f.readings, f.err
+}
 func (f *tcpFakeSource) Close() error                       { f.closed = true; return nil }
 func (f *tcpFakeSource) Paths() []string                    { return f.paths }
 func (f *tcpFakeSource) RefreshInstances() error            { f.refreshes++; return nil }
@@ -41,8 +54,11 @@ func tcpTestReadings() []CounterReading {
 	return []CounterReading{
 		tcpReading(`\TCPv4\Segments Retransmitted/sec`, 1.5),
 		tcpReading(`\TCPv6\Segments Retransmitted/sec`, 2.5),
-		tcpReading(`\TCPv4\Connections Reset`, 0.25),
-		tcpReading(`\TCPv6\Connections Reset`, 0.75),
+		// Cumulative totals (KindRate), not per-second values. With
+		// resetStep 7.5 each family climbs 7.5 per 15 s tick: 0.5/s each,
+		// so the v4+v6 delta rate sums to 1/s.
+		tcpReading(`\TCPv4\Connections Reset`, 100),
+		tcpReading(`\TCPv6\Connections Reset`, 200),
 		tcpReading(`\Network Interface(eth0)\Output Queue Length`, 2),
 	}
 }
@@ -126,7 +142,7 @@ func TestTCPStateCountsNoAddresses(t *testing.T) {
 }
 
 func TestTCPRatesGated(t *testing.T) {
-	src := &tcpFakeSource{paths: tcpTestPaths(), readings: tcpTestReadings()}
+	src := &tcpFakeSource{paths: tcpTestPaths(), readings: tcpTestReadings(), resetStep: 7.5}
 	g := newTCPTestGroup(t, src, tcpOKCounts)
 	now := time.Unix(1000, 0)
 	for i := 0; i < 2; i++ {
@@ -155,8 +171,70 @@ func TestTCPRatesGated(t *testing.T) {
 	}
 }
 
-func TestTCPMissingOmitted(t *testing.T) {
+// TestTCPResetsIsRate locks the BBX-4-02 fix: Connections Reset is a
+// cumulative counter, so resetsPerSec must be the per-second delta
+// (KindRate), never the raw cumulative total that climbs with uptime.
+func TestTCPResetsIsRate(t *testing.T) {
 	src := &tcpFakeSource{paths: tcpTestPaths(), readings: tcpTestReadings()}
+	g := newTCPTestGroup(t, src, tcpOKCounts)
+	now := time.Unix(1000, 0)
+	setResets := func(v4, v6 float64) {
+		src.readings[2] = tcpReading(`\TCPv4\Connections Reset`, v4)
+		src.readings[3] = tcpReading(`\TCPv6\Connections Reset`, v6)
+	}
+	collect := func(sec int) *TCPGroup {
+		t.Helper()
+		v, err := g.Collect(now.Add(time.Duration(sec)*time.Second), 1)
+		if err != nil {
+			t.Fatalf("tick at +%ds: %v", sec, err)
+		}
+		grp, _ := v.(*TCPGroup)
+		if grp == nil {
+			t.Fatalf("tick at +%ds: nil group with valid input", sec)
+		}
+		return grp
+	}
+	// Two baselines at cumulative 100 (v4) / 200 (v6): nothing emitted yet.
+	setResets(100, 200)
+	if grp := collect(0); grp.ResetsPerSec != nil {
+		t.Fatalf("baseline 1 emitted resetsPerSec %v", *grp.ResetsPerSec)
+	}
+	if grp := collect(1); grp.ResetsPerSec != nil {
+		t.Fatalf("baseline 2 emitted resetsPerSec %v", *grp.ResetsPerSec)
+	}
+	// 100 -> 160 over 1 s: delta rate 60, NOT the raw cumulative total.
+	// v6 stays flat: a constant cumulative counter contributes 0, not 200.
+	setResets(160, 200)
+	grp := collect(2)
+	if grp.ResetsPerSec == nil || *grp.ResetsPerSec != 60 {
+		t.Fatalf("ResetsPerSec = %v, want 60 (delta rate, not the cumulative total)", grp.ResetsPerSec)
+	}
+	// Retransmit counters are true /sec PDH rates: still emitted as-is.
+	if grp.RetransmitsPerSec == nil || *grp.RetransmitsPerSec != 4 {
+		t.Fatalf("RetransmitsPerSec = %v, want 4 (PDH rate unchanged)", grp.RetransmitsPerSec)
+	}
+	// Second interval: 160 -> 250 over 1 s -> 90.
+	setResets(250, 200)
+	if grp := collect(3); grp.ResetsPerSec == nil || *grp.ResetsPerSec != 90 {
+		t.Fatalf("ResetsPerSec = %v, want 90 on the second interval", grp.ResetsPerSec)
+	}
+	// Counter reset: the cumulative value drops -> no negative rate, and
+	// the engine re-gates behind two fresh baselines before emitting again.
+	setResets(10, 200)
+	if grp := collect(4); grp.ResetsPerSec != nil {
+		t.Fatalf("counter reset emitted %v; want nil (never a negative rate)", *grp.ResetsPerSec)
+	}
+	if grp := collect(5); grp.ResetsPerSec != nil {
+		t.Fatalf("post-reset baseline emitted %v; want nil", *grp.ResetsPerSec)
+	}
+	setResets(40, 200)
+	if grp := collect(6); grp.ResetsPerSec == nil || *grp.ResetsPerSec != 30 {
+		t.Fatalf("ResetsPerSec = %v, want 30 after re-gating (40-10 over 1 s)", grp.ResetsPerSec)
+	}
+}
+
+func TestTCPMissingOmitted(t *testing.T) {
+	src := &tcpFakeSource{paths: tcpTestPaths(), readings: tcpTestReadings(), resetStep: 7.5}
 	// Invalid retransmit counters: the field must stay nil, never 0.
 	src.readings[0] = CounterReading{Path: src.paths[0], Value: 99, Status: 1, OK: false}
 	src.readings[1] = CounterReading{Path: src.paths[1], Value: 99, Status: 1, OK: false}
@@ -194,7 +272,7 @@ func TestTCPMissingOmitted(t *testing.T) {
 }
 
 func TestTCPSumV4V6(t *testing.T) {
-	src := &tcpFakeSource{paths: tcpTestPaths(), readings: tcpTestReadings()}
+	src := &tcpFakeSource{paths: tcpTestPaths(), readings: tcpTestReadings(), resetStep: 7.5}
 	// A second interface: the outbound queue is the sum over interfaces.
 	src.paths = append(src.paths, `\Network Interface(eth1)\Output Queue Length`)
 	src.readings = append(src.readings, tcpReading(`\Network Interface(eth1)\Output Queue Length`, 3))
@@ -202,8 +280,8 @@ func TestTCPSumV4V6(t *testing.T) {
 	if grp.RetransmitsPerSec == nil || *grp.RetransmitsPerSec != 4 { // 1.5 + 2.5
 		t.Fatalf("RetransmitsPerSec = %v, want 4 (v4+v6 summed)", grp.RetransmitsPerSec)
 	}
-	if grp.ResetsPerSec == nil || *grp.ResetsPerSec != 1 { // 0.25 + 0.75
-		t.Fatalf("ResetsPerSec = %v, want 1 (v4+v6 summed)", grp.ResetsPerSec)
+	if grp.ResetsPerSec == nil || *grp.ResetsPerSec != 1 { // (7.5 + 7.5) / 15 s
+		t.Fatalf("ResetsPerSec = %v, want 1 (v4+v6 delta rates summed)", grp.ResetsPerSec)
 	}
 	if grp.OutboundQueue == nil || *grp.OutboundQueue != 5 { // 2 + 3
 		t.Fatalf("OutboundQueue = %v, want 5 (sum over interfaces)", grp.OutboundQueue)

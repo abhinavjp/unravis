@@ -83,10 +83,13 @@ func (g *tcpGroup) rebuild(paths []string) {
 			specs = append(specs, CounterSpec{Path: p, Field: "retrans4", Kind: KindPDHRate})
 		case `\TCPv6\Segments Retransmitted/sec`:
 			specs = append(specs, CounterSpec{Path: p, Field: "retrans6", Kind: KindPDHRate})
+		// Connections Reset is a CUMULATIVE counter (live-verified), not a
+		// /sec counter: KindRate makes the engine emit the per-second delta
+		// with a counter-reset guard, never the raw uptime-climbing total.
 		case `\TCPv4\Connections Reset`:
-			specs = append(specs, CounterSpec{Path: p, Field: "reset4", Kind: KindPDHRate})
+			specs = append(specs, CounterSpec{Path: p, Field: "reset4", Kind: KindRate})
 		case `\TCPv6\Connections Reset`:
-			specs = append(specs, CounterSpec{Path: p, Field: "reset6", Kind: KindPDHRate})
+			specs = append(specs, CounterSpec{Path: p, Field: "reset6", Kind: KindRate})
 		default:
 			if strings.HasPrefix(p, tcpQueuePrefix) && strings.HasSuffix(p, tcpQueueSuffix) {
 				specs = append(specs, CounterSpec{Path: p, Field: p, Kind: KindGauge})
