@@ -67,10 +67,22 @@ Done means live-verified: a real server, a real reading, the number matches `per
 
 `service.go:274` and `service_windows.go:25-27` (recordings folder readable by BUILTIN\Users), `recorder.go:149-156` (Collect runs inline in the tick loop and writes `err.Error()`), `server.go:90-101` (plain HTTP), `service_windows.go:119-123` (no service account), `config.go:206-208` and `server.go:251` (`probe.enabled` refused: keep it that way until C1-C14 pass), `config.go:317` and `pack.go:122` (`blackbox.json` is world-readable and shipped in the pack: never put credentials in it). Do not copy `internal/dbhealth` as a SQL template (it reads query text and program names).
 
-## 9. Simple prompt to give the other harness
+## 9. Prompt for Qoder (or any IDE agent)
 
-> Work in the Unravis repo (`feat/investigation-timeline` branch). Read `docs/research/blackbox-expansion-handoff.md` first and follow it. Do not write code yet: read the files it lists, then give me a packet plan with a dependency graph for the foundation group (BL-122, BL-121, BL-117, BL-105), the tests for each packet, and anything you could not confirm. Wait for my go before building.
+Repo: https://github.com/abhinavjp/unravis (public). Branch with all the docs: `feat/investigation-timeline`. Go, Windows-first. Use Quest mode (or the agent's long-task mode) for the plan; use normal agent mode with checkpoints for the build.
+
+Paste this:
+
+> Clone https://github.com/abhinavjp/unravis and check out the branch `feat/investigation-timeline`:
+> `git clone -b feat/investigation-timeline https://github.com/abhinavjp/unravis.git`
+> Open the cloned `unravis` folder as the workspace and work only inside it. Create your own branch from it: `git switch -c feat/blackbox-expansion`. Do not push to `feat/investigation-timeline` and do not touch `master`.
 >
-> To start building (after I say go): "Build packet 1 of the foundation group from your plan. Tests first, keep within the footprint budget, report what was verified live and what was only tested with fakes."
+> Your job is the Blackbox expansion (Go, Windows service, code in `internal/blackbox/`). Read, in this order: `CLAUDE.md`, `docs/research/blackbox-expansion-handoff.md` (follow it), `docs/BACKLOG.md` (section "Blackbox expansion", BL-100 to BL-126), `docs/research/blackbox-expansion-prioritised.md`, `docs/research/blackbox-sql-security-review.md`.
 >
-> To review: "Review the Blackbox changes in the last commit against section 7 of `docs/research/blackbox-expansion-handoff.md`. List only real problems, ranked, with file and line."
+> Step 1, no code: give me a packet plan with a dependency graph for the foundation group (BL-122, BL-121, BL-117, BL-105), the tests for each packet, and anything you could not confirm. Stop and wait for my go.
+>
+> Step 2, after my go: build one packet at a time, tests first, within the footprint budget. Run `go build ./...` and `go test ./internal/blackbox/... -count=1` after each packet. In your report say what was verified on a real machine and what was only tested with fakes. Do not tick anything in `docs/BACKLOG.md` unless it was verified on real data.
+
+Review prompt (separate session):
+
+> In the cloned `unravis` repo, review the Blackbox changes on branch `feat/blackbox-expansion` against section 7 of `docs/research/blackbox-expansion-handoff.md`. List only real problems, ranked, with file and line. Do not change code.
