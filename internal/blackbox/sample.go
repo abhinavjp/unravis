@@ -13,8 +13,13 @@ const (
 	// LateIntervals: more than this many intervals without a sample is Running
 	// late (decision A36). The same count makes a gap in the recording.
 	LateIntervals = 3
-	// TopProcesses is how many processes each sample lists.
-	TopProcesses = 20
+	// TopCPU and TopMem are how many processes each sample lists: the busiest
+	// by CPU change and the largest by working set, merged without duplicates.
+	// Selected targets are listed on top of that, even when idle.
+	TopCPU = 10
+	TopMem = 5
+	// maxProcRows bounds the merged top lists (selected targets may add rows).
+	maxProcRows = TopCPU + TopMem
 	// MaxLogEntries bounds the logs catalogue in one sample.
 	MaxLogEntries = 200
 )

@@ -100,6 +100,10 @@ func RunHost(ctx context.Context, o HostOptions) error {
 			return rt
 		}
 	}
+	// The busiest-process list always includes the selected targets (BBX-4-05).
+	if hc, ok := col.(*HostCollector); ok {
+		hc.SetSelectedTargets(deps.Targets)
+	}
 	groups := BuildGroups(deps)
 	gate.inner = NewGroupCollector(col, groups, budget)
 	col = gate

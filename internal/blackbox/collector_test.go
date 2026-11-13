@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"api-audit-explorer/internal/investigate"
 	"api-audit-explorer/internal/sampler"
 )
 
@@ -200,7 +201,9 @@ func TestTopProcessesByCPUChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Procs) != TopProcesses {
+	// The memory top (equal working sets, tie by PID) sits inside the CPU top
+	// here, so the merged, deduped list holds TopCPU rows.
+	if len(s.Procs) != TopCPU {
 		t.Fatalf("procs = %d", len(s.Procs))
 	}
 	if s.Procs[0].PID != 7 {
@@ -224,6 +227,228 @@ func TestTopProcessesFirstSampleOrdersByCumulativeTime(t *testing.T) {
 	}
 	if s.Procs[0].CPUPct != nil {
 		t.Fatal("no change to take on the first sample, so no percent")
+	}
+}
+
+// shapeProcs builds n processes where PID i burns i CPU seconds per interval
+// and holds (n+1-i) MiB: the CPU top and the memory top are disjoint.
+func shapeProcs(n int) (first, second []sampler.ProcSample) {
+	for i := 1; i <= n; i++ {
+		first = append(first, proc(uint32(i), "p", 100))
+		p := proc(uint32(i), "p", 100+float64(i))
+		p.WorkingSet = uint64(n+1-i) << 20
+		second = append(second, p)
+	}
+	return first, second
+}
+
+func TestTopProcessesShape(t *testing.T) {
+	first, second := shapeProcs(20)
+	src := &fakeSource{cores: 2, host: []sampler.HostSample{{}, {}}, procs: [][]sampler.ProcSample{first, second}}
+	c := NewHostCollector(src, nil, true)
+	now := time.Now()
+	if err := c.Prime(now); err != nil {
+		t.Fatal(err)
+	}
+	s, err := c.Collect(now.Add(15 * time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Procs) != TopCPU+TopMem {
+		t.Fatalf("procs = %d, want %d", len(s.Procs), TopCPU+TopMem)
+	}
+	seen := map[uint32]bool{}
+	for i, r := range s.Procs {
+		if seen[r.PID] {
+			t.Fatalf("duplicate PID %d", r.PID)
+		}
+		seen[r.PID] = true
+		want := uint32(20 - i) // CPU top 10 first: 20..11
+		if i >= TopCPU {
+			want = uint32(i - TopCPU + 1) // then the memory top 5: 1..5
+		}
+		if r.PID != want {
+			t.Fatalf("row %d = PID %d, want %d", i, r.PID, want)
+		}
+	}
+	// Same reads as before: one full process read at Prime, one at Collect.
+	if src.pi != 2 {
+		t.Fatalf("process reads = %d, want 2", src.pi)
+	}
+}
+
+func TestTopProcessesIdleExcluded(t *testing.T) {
+	idle := proc(0, "idle", 9999)
+	idle.WorkingSet = 1 << 30 // tops both rankings, must still be left out
+	procs := []sampler.ProcSample{idle, proc(1, "a", 5), proc(2, "b", 50), proc(3, "c", 1)}
+	src := &fakeSource{cores: 1, host: []sampler.HostSample{{}}, procs: [][]sampler.ProcSample{procs}}
+	c := NewHostCollector(src, nil, true)
+	c.SetSelectedTargets(func() []ResolvedTarget { return []ResolvedTarget{{Key: "svc:x", PID: 0, Start: 1000}} })
+	s, err := c.Collect(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Procs) != 3 {
+		t.Fatalf("procs = %+v", s.Procs)
+	}
+	for _, r := range s.Procs {
+		if r.PID == 0 {
+			t.Fatal("Idle (PID 0) must never be listed")
+		}
+	}
+}
+
+func TestTopProcessesSelectedAlways(t *testing.T) {
+	first, second := shapeProcs(20)
+	// An idle web server outside both tops: no CPU change, tiny working set.
+	first = append(first, proc(100, "w3wp.exe", 50))
+	p := proc(100, "w3wp.exe", 50)
+	p.WorkingSet = 1 << 10
+	second = append(second, p)
+	src := &fakeSource{cores: 2, host: []sampler.HostSample{{}, {}}, procs: [][]sampler.ProcSample{first, second}}
+	c := NewHostCollector(src, nil, true)
+	c.SetSelectedTargets(func() []ResolvedTarget {
+		return []ResolvedTarget{
+			{Key: "pool:web", PID: 100, Start: 1000, Pool: "web"},
+			{Key: "pool:hot", PID: 20, Start: 1000, Pool: "hot"}, // already CPU top
+		}
+	})
+	now := time.Now()
+	if err := c.Prime(now); err != nil {
+		t.Fatal(err)
+	}
+	s, err := c.Collect(now.Add(15 * time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Procs) != TopCPU+TopMem+1 {
+		t.Fatalf("procs = %d, want the idle selected target appended", len(s.Procs))
+	}
+	last := s.Procs[len(s.Procs)-1]
+	if last.PID != 100 || last.Name != "w3wp.exe" {
+		t.Fatalf("last = %+v, want the idle selected target", last)
+	}
+	// A measured idle is a real reading: percent present and zero, not nil.
+	if last.CPUPct == nil || *last.CPUPct != 0 {
+		t.Fatalf("idle selected CPUPct = %v, want a measured 0", last.CPUPct)
+	}
+	n := 0
+	for _, r := range s.Procs {
+		if r.PID == 20 {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("selected target already in the top listed %d times", n)
+	}
+}
+
+func TestTopProcessesDedup(t *testing.T) {
+	first, second := shapeProcs(20)
+	// PID 5 leads both rankings: busiest CPU and largest working set.
+	second[4].CPUSeconds += 100
+	second[4].WorkingSet = 1000 << 20
+	src := &fakeSource{cores: 2, host: []sampler.HostSample{{}, {}}, procs: [][]sampler.ProcSample{first, second}}
+	c := NewHostCollector(src, nil, true)
+	now := time.Now()
+	if err := c.Prime(now); err != nil {
+		t.Fatal(err)
+	}
+	s, err := c.Collect(now.Add(15 * time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Procs) != TopCPU+TopMem-1 {
+		t.Fatalf("procs = %d, want the shared row deduped", len(s.Procs))
+	}
+	n := 0
+	for _, r := range s.Procs {
+		if r.PID == 5 {
+			n++
+		}
+	}
+	if n != 1 || s.Procs[0].PID != 5 {
+		t.Fatalf("PID 5 listed %d times, first = %d", n, s.Procs[0].PID)
+	}
+}
+
+func TestTopProcessesMissingFieldsNil(t *testing.T) {
+	denied := proc(9, "denied", 0)
+	denied.Have = 0 // access denied: name and threads only
+	procs := []sampler.ProcSample{proc(1, "a", 10), denied, proc(2, "b", 5)}
+	src := &fakeSource{cores: 1, host: []sampler.HostSample{{}}, procs: [][]sampler.ProcSample{procs}}
+	s, err := NewHostCollector(src, nil, true).Collect(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r *ProcRow
+	for i := range s.Procs {
+		if s.Procs[i].PID == 9 {
+			r = &s.Procs[i]
+		}
+	}
+	if r == nil {
+		t.Fatalf("denied process not listed: %+v", s.Procs)
+	}
+	if r.CPUSec != nil || r.CPUPct != nil || r.WS != nil || r.Private != nil || r.Handles != nil {
+		t.Fatalf("unreadable fields must stay nil: %+v", r)
+	}
+	if r.Name != "denied" || r.Start != 0 {
+		t.Fatalf("identity = %+v", r)
+	}
+	line, _ := jsonLine(s)
+	for _, bad := range []string{`"cpuSec":0`, `"cpuPct":0`, `"ws":0`, `"priv":0`, `"handles":0`} {
+		if contains(line, bad) {
+			t.Fatalf("line has %s: %s", bad, line)
+		}
+	}
+}
+
+func TestStep9StillFindsWebServer(t *testing.T) {
+	// Ten minutes of a busy web server: w3wp burns 12 s per 15 s on 2 cores
+	// (40 percent of the machine); 19 background processes barely move.
+	const steps = 40
+	host := make([]sampler.HostSample, steps+1)
+	procs := make([][]sampler.ProcSample, steps+1)
+	for k := 0; k <= steps; k++ {
+		host[k] = sampler.HostSample{Times: sampler.HostTimes{
+			Idle: uint64(100 + k), Kernel: uint64(100 + 19*k), User: uint64(100 + 19*k)}}
+		var ps []sampler.ProcSample
+		for i := 1; i <= 19; i++ {
+			ps = append(ps, proc(uint32(i), "bg", 100+0.1*float64(k)))
+		}
+		ps = append(ps, proc(1200, "w3wp.exe", 100+12*float64(k)))
+		procs[k] = ps
+	}
+	src := &fakeSource{cores: 2, host: host, procs: procs}
+	c := NewHostCollector(src, nil, true)
+	c.SetSelectedTargets(func() []ResolvedTarget {
+		return []ResolvedTarget{{Key: "pool:web", PID: 1200, Start: 1000, Pool: "web"}}
+	})
+	t0 := time.Date(2026, 10, 20, 8, 0, 0, 0, time.UTC)
+	if err := c.Prime(t0); err != nil {
+		t.Fatal(err)
+	}
+	var hs []investigate.HostSample
+	for k := 1; k <= steps; k++ {
+		now := t0.Add(time.Duration(k) * 15 * time.Second)
+		s, err := c.Collect(now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h := investigate.HostSample{T: now, CPU: s.CPU}
+		for _, p := range s.Procs {
+			h.Procs = append(h.Procs, investigate.HostProc{Name: p.Name, CPUPct: p.CPUPct})
+		}
+		hs = append(hs, h)
+	}
+	in := investigate.Input{Incident: investigate.Window{Start: t0, End: t0.Add(10 * time.Minute)}}
+	res := investigate.HostLane(in, investigate.HostInput{Name: "web-b", IntervalSeconds: 15, Samples: hs})
+	if res.Lanes["H1"] != investigate.Yes {
+		t.Fatalf("H1 = %v (%s)", res.Lanes["H1"], res.Note)
+	}
+	if res.TopProcess != "w3wp.exe" {
+		t.Fatalf("Step 9 top process = %q, want w3wp.exe", res.TopProcess)
 	}
 }
 
