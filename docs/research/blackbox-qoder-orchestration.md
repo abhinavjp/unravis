@@ -22,6 +22,13 @@ Written 2026-11-13. Read `docs/research/blackbox-expansion-handoff.md` first (ru
 
 Each packet carries `model: efficient|performance` and a one-line reason (complexity, impact, risk). A human may overrule any choice by editing the packet header before dispatch.
 
+### How to prompt each tier (context engineering)
+
+- **Ultimate (orchestrator, high-risk review)**: give goals, constraints and the reason behind each rule; let it choose the route. Ask for ranked, evidence-backed findings, not praise. Keep its context lean: it reads packet headers and reports, not code.
+- **Performance (standard implementer, normal review)**: one clear task, the exact files, the signatures to write, the tests to write first, and the checklist. State what "done" means in the first lines. Name the two or three rules most likely to be broken.
+- **Efficient (small implementer)**: short, literal, step-by-step. Give the exact edit (file, function, field names, a small example of the expected output) and a checklist of commands. No open design choices; if one appears it must stop and report instead of guessing.
+- All tiers: instructions first, then context, then the checklist last; positive wording ("write only IDs and numbers") before prohibitions; never paste the whole plan or chat history.
+
 ## 2. Step 1: plan (no code)
 
 Create `.forge/blackbox-expansion/PLAN.md` containing:
@@ -69,6 +76,7 @@ Write `.forge/blackbox-expansion/GRAPH.md`: a table (packet, depends on, files t
 - A packet is in wave N when all its dependencies are in earlier waves.
 - Packets in the same wave run in parallel **only if they touch disjoint files**. If two touch the same file, serialise them. Use separate git worktrees for parallel implementers; merge each wave into the PR branch before the next starts.
 - Mark the critical path and the packets that are blocked on a live-server check.
+- Every packet in the graph shows its tier. A human may change a packet's tier in its header before dispatch; the orchestrator re-reads the header at dispatch time.
 
 ## 5. Step 4: execute in waves
 
@@ -107,4 +115,4 @@ Keep `.forge/blackbox-expansion/STATE.md` (packet, status, tier, wave, review re
 >
 > Do these in order and write each result to `.forge/blackbox-expansion/`: (1) PLAN.md with technical dependencies, tools and skills used, and the risk table; (2) very small work packets with verification checklists, for every backlog item that can be written; (3) GRAPH.md with waves and what can run in parallel; (4) create the subagents in `.qoder/agents/` (implementer-efficient, implementer-performance, reviewer-performance, reviewer-ultimate) and run `/agents reload`; (5) execute wave by wave: Efficient or Performance implementers per packet (as marked), one batch review per wave (Performance, or Ultimate when a packet touches SQL, credentials, ACLs, the HTTP endpoint or the footprint budget), send findings back to the packet's implementer once, then commit; (6) open one PR per group into `feat/investigation-timeline`.
 >
-> Give each subagent only its packet and the files it names, never the whole history. Keep STATE.md up to date. Do not tick `docs/BACKLOG.md` items unless verified on real data. Never merge a PR or enable auto-merge: I will test on a real server and approve in writing. If something cannot be checked without a real server, say so in the packet and the PR.
+> Write each packet header with its tier (Efficient or Performance) and a one-line reason; I may change it before dispatch. Prompt each tier as section 1 says ("How to prompt each tier"). Give each subagent only its packet and the files it names, never the whole history. Keep STATE.md up to date. Do not tick `docs/BACKLOG.md` items unless verified on real data. Never merge a PR or enable auto-merge: I will test on a real server and approve in writing. If something cannot be checked without a real server, say so in the packet and the PR.
