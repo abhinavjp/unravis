@@ -82,6 +82,8 @@ Paste this:
 > Step 1, no code: give me a packet plan with a dependency graph for the foundation group (BL-122, BL-121, BL-117, BL-105), the tests for each packet, and anything you could not confirm. Stop and wait for my go.
 >
 > Step 2, after my go: build one packet at a time, tests first, within the footprint budget. Run `go build ./...` and `go test ./internal/blackbox/... -count=1` after each packet. In your report say what was verified on a real machine and what was only tested with fakes. Do not tick anything in `docs/BACKLOG.md` unless it was verified on real data.
+>
+> Step 3, delivery: push your branch `feat/blackbox-expansion` and open a pull request into `feat/investigation-timeline` (not `master`). In the PR body list: what changed, what was verified on a real machine, what was only tested with fakes, and the steps a human must run to test it. Never merge the PR, never enable auto-merge, and never push to another branch. Merging waits for my explicit written approval after I have tested it myself on a real server.
 
 Review prompt (separate session):
 
