@@ -18,8 +18,8 @@ type ResolvedTarget struct {
 	Pool    string // app pool name when Key is "pool:<name>"
 }
 
-// GroupDeps carries what a group factory needs. Targets and ProcessSetChanged
-// are nil until the resolver is wired.
+// GroupDeps carries what a group factory needs. RunHost wires Targets (nil
+// when no targets are selected) and ProcessSetChanged from the Resolver.
 type GroupDeps struct {
 	Source            CounterSource
 	Engine            *Engine

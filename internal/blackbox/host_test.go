@@ -216,3 +216,85 @@ func TestRunHostStopWhileWaitingForAPortReturns(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// gateCollector reads the shared change verdict three times in one cycle,
+// like three wildcard groups sharing GroupDeps.ProcessSetChanged.
+type gateCollector struct {
+	verdicts *[]bool
+	read     func() bool
+}
+
+func (c *gateCollector) Collect(time.Time) (Sample, error) {
+	for i := 0; i < 3; i++ {
+		*c.verdicts = append(*c.verdicts, c.read())
+	}
+	return Sample{}, nil
+}
+func (c *gateCollector) Close() error { return nil }
+
+// TestProcessChangeGateOneVerdictPerCycle guards the wiring: the resolver is
+// snapshotted ONCE per collection cycle and every group in the cycle sees the
+// same verdict; a set change reaches all groups on the next cycle, and a
+// stable set never re-expands.
+func TestProcessChangeGateOneVerdictPerCycle(t *testing.T) {
+	procs := []ProcInfo{{PID: 1, Start: 10}}
+	var snaps int
+	r := NewResolver()
+	r.snapshotFn = func() ([]ProcInfo, error) {
+		snaps++
+		out := make([]ProcInfo, len(procs))
+		copy(out, procs)
+		return out, nil
+	}
+	gate := &processChangeGate{resolver: r}
+	var verdicts []bool
+	gate.inner = &gateCollector{verdicts: &verdicts, read: func() bool { return gate.changed }}
+
+	cycle := func(want bool) {
+		t.Helper()
+		verdicts = nil
+		if _, err := gate.Collect(time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if len(verdicts) != 3 {
+			t.Fatalf("verdicts read = %d, want 3", len(verdicts))
+		}
+		for _, v := range verdicts {
+			if v != want {
+				t.Fatalf("mixed verdicts in one cycle: %v, want all %v", verdicts, want)
+			}
+		}
+	}
+	cycle(true)  // first cycle: no baseline yet
+	cycle(false) // stable set
+	procs = append(procs, ProcInfo{PID: 2, Start: 20})
+	cycle(true)  // the change reaches every group
+	cycle(false) // stable again
+	if snaps != 4 {
+		t.Fatalf("snapshots = %d, want 4 (one per cycle, not one per group)", snaps)
+	}
+}
+
+// TestRunHostWithSelectedTargetsRecordsCleanly guards the resolver wiring:
+// selected targets that do not exist never stop recording — machine-wide
+// groups still work and the run stops cleanly.
+func TestRunHostWithSelectedTargetsRecordsCleanly(t *testing.T) {
+	g := newHostRig(t)
+	g.cfg.Targets = []Target{{Kind: "appPool", Name: "No Such Pool"}, {Kind: "service", Name: "No Such Service"}}
+	g.start(t, g.opts())
+	select {
+	case <-g.ready:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never listened")
+	}
+	g.tick(t, time.Now())
+	g.tick(t, time.Now())
+	g.waitProcessed(t)
+	if err := g.stop(t); err != nil {
+		t.Fatal(err)
+	}
+	m, err := ReadManifest(g.cfg.Folder)
+	if err != nil || m.State != ManifestStopped || !g.col.closed {
+		t.Fatalf("%v %+v", err, m)
+	}
+}

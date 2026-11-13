@@ -11,19 +11,58 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Reuses the lazy pdh.dll (extras_windows.go) and pdhMoreData (pdh_windows.go);
-// only the enumeration proc is new.
+// Reuses the lazy pdh.dll (extras_windows.go), pdhMoreData (pdh_windows.go)
+// and procPdhEnumObjects (sqlhost_windows.go); only the items proc is new.
 var procPdhEnumObjectItems = pdh.NewProc("PdhEnumObjectItemsW")
 
 const pdhDetailWizard = 400 // PERF_DETAIL_WIZARD: enumerate every detail level
 
-// enumW3WPInstances lists the W3SVC_W3WP counter instances ("<PID>_<AppPool>")
-// via PdhEnumObjectItemsW: one size call, one buffered call. Only instance
-// names are kept; no process is opened, no command line is read.
+// enumW3WPInstances lists the W3SVC_W3WP counter instances ("<PID>_<AppPool>").
+// The PDH object cache is refreshed FIRST (PdhEnumObjectsW, bRefresh=TRUE):
+// per MSDN, PdhEnumObjectItemsW otherwise returns a stale cached list, so a
+// recycled pool's old <PID>_<Pool> instance could mis-target a reused PID.
+// Only instance names are kept; no process is opened, no command line is read.
 func enumW3WPInstances() ([]string, error) {
 	if err := pdh.Load(); err != nil {
 		return nil, err
 	}
+	if err := refreshW3WPObjects(); err != nil {
+		return nil, err
+	}
+	return enumW3WPItems()
+}
+
+// The two PDH steps are seams so tests can fake them without live counters.
+var (
+	refreshW3WPObjects = refreshW3WPObjectCache
+	enumW3WPItems      = enumW3WPObjectItems
+)
+
+// refreshW3WPObjectCache rebuilds the PDH object cache (all objects, including
+// W3SVC_W3WP) via PdhEnumObjectsW with bRefresh=TRUE: one size call, one
+// buffered call, both refreshing so the buffered read cannot see a stale
+// cache. The object list itself is discarded; only the refresh side effect is
+// wanted.
+func refreshW3WPObjectCache() error {
+	var n uint32
+	r, _, _ := procPdhEnumObjects.Call(0, 0, 0, uintptr(unsafe.Pointer(&n)), pdhDetailWizard, 1)
+	if r != 0 && r != pdhMoreData {
+		return fmt.Errorf("PdhEnumObjectsW: 0x%x", r)
+	}
+	if n == 0 {
+		return nil
+	}
+	buf := make([]uint16, n)
+	r, _, _ = procPdhEnumObjects.Call(0, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&n)), pdhDetailWizard, 1)
+	if r != 0 {
+		return fmt.Errorf("PdhEnumObjectsW: 0x%x", r)
+	}
+	return nil
+}
+
+// enumW3WPObjectItems lists the instances via PdhEnumObjectItemsW: one size
+// call, one buffered call. The caller refreshes the object cache first.
+func enumW3WPObjectItems() ([]string, error) {
 	obj, err := windows.UTF16PtrFromString("W3SVC_W3WP")
 	if err != nil {
 		return nil, err

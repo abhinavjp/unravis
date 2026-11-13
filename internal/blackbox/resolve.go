@@ -96,9 +96,12 @@ type Resolver struct {
 	last   []procKey
 	cached map[procKey]uint8
 
-	mapLast []procKey // process set at the last instance/service enumeration
-	mapInst []string  // cached W3SVC_W3WP instances
-	mapSvc  []svcProc // cached running services
+	mapLastInst []procKey // process set at the last W3SVC_W3WP enumeration attempt
+	mapLastSvc  []procKey // process set at the last service enumeration attempt
+	mapInst     []string  // cached W3SVC_W3WP instances (last good list)
+	mapSvc      []svcProc // cached running services (last good list)
+
+	changedLast []procKey // process set at the last ProcessSetChanged call
 }
 
 // NewResolver wires the platform process snapshot and module loader.
@@ -169,6 +172,27 @@ func (r *Resolver) Inventory() ([]ProcInfo, error) {
 	r.last = keys
 	r.cached = next
 	return procs, nil
+}
+
+// ProcessSetChanged reports whether the process set changed since the last
+// call: one snapshot, compared as (PID, Start) keys against the previous
+// call's keys (the first call reports true). No modules are read — change
+// detection needs identity only. A snapshot error reports false (no evidence
+// of change, never a guess) and keeps the baseline so the next call retries.
+// RunHost asks once per collection cycle and shares the verdict with every
+// group, so all wildcard groups re-expand together, never per tick.
+func (r *Resolver) ProcessSetChanged() bool {
+	procs, err := r.snapshotFn()
+	if err != nil {
+		return false
+	}
+	keys := make([]procKey, len(procs))
+	for i, p := range procs {
+		keys[i] = procKey{pid: p.PID, start: p.Start}
+	}
+	changed := processSetChanged(r.changedLast, keys)
+	r.changedLast = keys
+	return changed
 }
 
 // detectRuntime reads one process's modules and fills Modules/Runtime. A failed

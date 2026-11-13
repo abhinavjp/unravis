@@ -264,3 +264,100 @@ func TestResolveTargetsInventoryError(t *testing.T) {
 		t.Fatalf("got %+v / %v, want nil / [A B]", got, missing)
 	}
 }
+
+// TestResolveTargetsIndependentEnumCaches guards: a failing enumerator never
+// blocks the healthy one and never forces its re-enumeration. instancesFn
+// error + servicesFn success → services still resolve; the successful list
+// stays cached on an unchanged set, the failed enumerator retries on the next
+// set change (never every tick), and a later success replaces the cached list.
+// Symmetric for a failing servicesFn.
+func TestResolveTargetsIndependentEnumCaches(t *testing.T) {
+	cases := []struct {
+		name     string
+		failInst bool // which enumerator starts failing
+	}{
+		{"pools fail, services resolve", true},
+		{"services fail, pools resolve", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			procs := []ProcInfo{
+				{PID: 4321, ParentPID: 4, Start: 1000, Name: "w3wp.exe"},
+				{PID: 900, Start: 9000, Name: "sqlservr.exe"},
+			}
+			var instCalls, svcCalls int
+			instFail, svcFail := c.failInst, !c.failInst
+			r := newMapTestResolver(func() []ProcInfo { return procs },
+				map[uint32][]string{4321: {"clr.dll"}, 900: {"clr.dll"}})
+			r.instancesFn = func() ([]string, error) {
+				instCalls++
+				if instFail {
+					return nil, errors.New("no IIS")
+				}
+				return []string{"4321_Pool"}, nil
+			}
+			r.servicesFn = func() ([]svcProc, error) {
+				svcCalls++
+				if svcFail {
+					return nil, errors.New("scm denied")
+				}
+				return []svcProc{{name: "MSSQLSERVER", pid: 900}}, nil
+			}
+			targets := []Target{{Kind: "appPool", Name: "Pool"}, {Kind: "service", Name: "mssqlserver"}}
+			poolRT := ResolvedTarget{Key: "pool:Pool", PID: 4321, Start: 1000, Runtime: 1, Pool: "Pool"}
+			svcRT := ResolvedTarget{Key: "svc:mssqlserver", PID: 900, Start: 9000, Runtime: 1}
+			wantOK, wantMissing := []ResolvedTarget{svcRT}, []string{"Pool"}
+			if !c.failInst {
+				wantOK, wantMissing = []ResolvedTarget{poolRT}, []string{"mssqlserver"}
+			}
+
+			// Tick 1: the failing enumerator errors, the healthy one resolves.
+			got, missing := r.ResolveTargets(targets)
+			if !reflect.DeepEqual(got, wantOK) || !reflect.DeepEqual(missing, wantMissing) {
+				t.Fatalf("tick 1: got %+v / %v, want %+v / %v", got, missing, wantOK, wantMissing)
+			}
+			if instCalls != 1 || svcCalls != 1 {
+				t.Fatalf("tick 1: enumerated %d/%d times, want 1/1", instCalls, svcCalls)
+			}
+
+			// Tick 2, unchanged set: the healthy list stays cached; the failed
+			// enumerator waits for the next set change, never re-runs per tick.
+			got, missing = r.ResolveTargets(targets)
+			if !reflect.DeepEqual(got, wantOK) || !reflect.DeepEqual(missing, wantMissing) {
+				t.Fatalf("tick 2: got %+v / %v, want %+v / %v", got, missing, wantOK, wantMissing)
+			}
+			if instCalls != 1 || svcCalls != 1 {
+				t.Fatalf("unchanged set re-enumerated %d/%d times, want 1/1 (healthy cached, failure waits for change)", instCalls, svcCalls)
+			}
+
+			// Set change: the failed enumerator retries (still failing), the
+			// healthy one re-enumerates because the set changed.
+			procs = append(procs, ProcInfo{PID: 5000, Start: 5000, Name: "new.exe"})
+			got, missing = r.ResolveTargets(targets)
+			if !reflect.DeepEqual(got, wantOK) || !reflect.DeepEqual(missing, wantMissing) {
+				t.Fatalf("after change: got %+v / %v, want %+v / %v", got, missing, wantOK, wantMissing)
+			}
+			if instCalls != 2 || svcCalls != 2 {
+				t.Fatalf("changed set: enumerated %d/%d times, want 2/2 (failed one retries)", instCalls, svcCalls)
+			}
+
+			// Recovery on the next change: both resolve, then both stay cached.
+			instFail, svcFail = false, false
+			procs = append(procs, ProcInfo{PID: 5001, Start: 5001, Name: "newer.exe"})
+			got, missing = r.ResolveTargets(targets)
+			if !reflect.DeepEqual(got, []ResolvedTarget{poolRT, svcRT}) || len(missing) != 0 {
+				t.Fatalf("recovered: got %+v / %v, want both targets", got, missing)
+			}
+			if instCalls != 3 || svcCalls != 3 {
+				t.Fatalf("recovered: enumerated %d/%d times, want 3/3", instCalls, svcCalls)
+			}
+			got, missing = r.ResolveTargets(targets)
+			if !reflect.DeepEqual(got, []ResolvedTarget{poolRT, svcRT}) || len(missing) != 0 {
+				t.Fatalf("stable after recovery: got %+v / %v, want both targets", got, missing)
+			}
+			if instCalls != 3 || svcCalls != 3 {
+				t.Fatalf("stable after recovery re-enumerated %d/%d times, want 3/3", instCalls, svcCalls)
+			}
+		})
+	}
+}

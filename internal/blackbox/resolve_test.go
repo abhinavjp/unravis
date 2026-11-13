@@ -249,3 +249,62 @@ func TestResolverNoCacheWhenStartZero(t *testing.T) {
 		t.Fatalf("real-Start runtime = %d, want 1 (still cached)", got[1].Runtime)
 	}
 }
+
+// TestResolverProcessSetChanged guards the host's change signal: one snapshot
+// per call and NO module reads; first call true, stable set false,
+// added/removed/recycled (same PID, new start) true; a snapshot error reports
+// false (never a guess) and keeps the baseline so the next good call still
+// detects the change.
+func TestResolverProcessSetChanged(t *testing.T) {
+	procs := []ProcInfo{{PID: 1, Start: 10}, {PID: 2, Start: 20}}
+	var snaps int
+	fail := false
+	r := NewResolver()
+	r.snapshotFn = func() ([]ProcInfo, error) {
+		snaps++
+		if fail {
+			return nil, errors.New("denied")
+		}
+		out := make([]ProcInfo, len(procs))
+		copy(out, procs)
+		return out, nil
+	}
+	r.loadModulesFn = func(pid uint32) ([]string, error) {
+		t.Fatalf("change detection must not read modules (pid %d)", pid)
+		return nil, nil
+	}
+
+	if !r.ProcessSetChanged() {
+		t.Fatal("first call must report changed")
+	}
+	if r.ProcessSetChanged() {
+		t.Fatal("unchanged set must report false")
+	}
+	procs = append(procs, ProcInfo{PID: 3, Start: 30})
+	if !r.ProcessSetChanged() {
+		t.Fatal("added process must report changed")
+	}
+	if r.ProcessSetChanged() {
+		t.Fatal("stable set after add must report false")
+	}
+	procs[0].Start = 99 // recycled PID 1: same PID, new creation time
+	if !r.ProcessSetChanged() {
+		t.Fatal("recycled PID (new start) must report changed")
+	}
+	procs = procs[1:]
+	if !r.ProcessSetChanged() {
+		t.Fatal("removed process must report changed")
+	}
+	fail = true
+	if r.ProcessSetChanged() {
+		t.Fatal("snapshot error must report false (no evidence, never a guess)")
+	}
+	fail = false
+	procs = append(procs, ProcInfo{PID: 4, Start: 40})
+	if !r.ProcessSetChanged() {
+		t.Fatal("a change across a failed snapshot must still be detected")
+	}
+	if snaps != 8 {
+		t.Fatalf("snapshots = %d, want 8 (exactly one per call)", snaps)
+	}
+}

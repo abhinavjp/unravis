@@ -53,14 +53,23 @@ func (r *Resolver) ResolveTargets(targets []Target) ([]ResolvedTarget, []string)
 		byPID[p.PID] = p
 		keys[i] = procKey{pid: p.PID, start: p.Start}
 	}
-	if processSetChanged(r.mapLast, keys) {
-		inst, ierr := r.instancesFn()
-		svc, serr := r.servicesFn()
-		if ierr == nil && serr == nil {
-			r.mapInst, r.mapSvc, r.mapLast = inst, svc, keys
+	// Pools and services are cached INDEPENDENTLY: a failure of one enumerator
+	// never blocks the other (a host with no IIS still resolves services) and
+	// never forces re-enumeration of the healthy one. Each baseline advances
+	// with the attempt, so a persistent failure retries on the next process-set
+	// change, never every tick; the cached list advances only on success, so an
+	// error keeps the last good list. Unreadable means missing, never a guess.
+	if processSetChanged(r.mapLastInst, keys) {
+		r.mapLastInst = keys
+		if inst, ierr := r.instancesFn(); ierr == nil {
+			r.mapInst = inst
 		}
-		// On error keep the last good lists; mapLast stays behind so the
-		// next call retries. Unreadable means missing, never a guess.
+	}
+	if processSetChanged(r.mapLastSvc, keys) {
+		r.mapLastSvc = keys
+		if svc, serr := r.servicesFn(); serr == nil {
+			r.mapSvc = svc
+		}
 	}
 	var out []ResolvedTarget
 	for _, t := range targets {
