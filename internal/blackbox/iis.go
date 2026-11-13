@@ -9,8 +9,9 @@ import (
 
 // BBX-2-02 IIS worker counters for SELECTED app pools only: W3SVC_W3WP
 // active requests/threads and WAS_W3WP ping latency. Instances are
-// "<PID>_<AppPoolName>"; a worker is keyed to the resolver-confirmed
-// (PID, Start) of its selected pool. English paths only; the WAS counter
+// "<PID>_<AppPoolName>"; the instance IS the pool's w3wp worker, so workers
+// are keyed by pool name (the resolver may retarget the app PID to a child)
+// and carry the instance's worker PID. English paths only; the WAS counter
 // name is UNVERIFIED pending the live typeperf check.
 var iisPaths = []string{
 	`\W3SVC_W3WP(*)\Active Requests`,
@@ -101,8 +102,10 @@ func parseIISPath(path string) (pid uint32, pool, field string, ok bool) {
 			continue
 		}
 		rest := path[len(c.prefix):]
-		end := strings.IndexByte(rest, ')')
-		if end < 0 || rest[end+1:] != `\`+c.counter {
+		// The instance ends at the ')\' separator (clr.go pattern), not the
+		// first ')': pool names may contain parentheses ("MyApp (Staging)").
+		end := strings.Index(rest, `)\`)
+		if end < 0 || rest[end+2:] != c.counter {
 			continue
 		}
 		p, name, valid := parseW3WPInstance(rest[:end])
@@ -165,8 +168,8 @@ func (g *iisGroup) Collect(now time.Time, _ float64) (any, error) {
 		if !ok {
 			continue // missing stays nil, never 0
 		}
-		if !matchIISTarget(selected, c.pool, c.pid) {
-			continue // unselected pool or stale PID: omit, never a zero row
+		if !matchIISTarget(selected, c.pool) {
+			continue // unselected pool: omit, never a zero row
 		}
 		key := c.pool + "\x00" + strconv.FormatUint(uint64(c.pid), 10)
 		w := byWorker[key]
@@ -200,11 +203,14 @@ func (g *iisGroup) Collect(now time.Time, _ float64) (any, error) {
 }
 
 // matchIISTarget confirms the instance belongs to a selected pool by pool
-// name AND PID; the target's Start was confirmed by the resolver, so the
-// identity is (PID, creation time) — never PID alone.
-func matchIISTarget(targets []ResolvedTarget, pool string, pid uint32) bool {
+// name (case-insensitive, like the resolver). The W3SVC_W3WP instance IS the
+// pool's w3wp worker, so its PID is the worker PID — NOT the target PID: the
+// resolver retargets a runtime-0 w3wp to its runtime-2 child (out-of-process
+// .NET 10), so the target PID can be a child PID. Selection still requires
+// the resolver-confirmed Start — never PID alone.
+func matchIISTarget(targets []ResolvedTarget, pool string) bool {
 	for _, t := range targets {
-		if t.PID == pid && strings.EqualFold(t.Pool, pool) {
+		if strings.EqualFold(t.Pool, pool) {
 			return true
 		}
 	}

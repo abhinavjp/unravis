@@ -105,37 +105,90 @@ func TestIISGroupSelectedOnly(t *testing.T) {
 	}
 }
 
-// The instance PID must match the resolved target PID: a stale instance for
-// the same pool name but a different PID is ignored. Start confirms identity.
-func TestIISGroupPIDMatch(t *testing.T) {
+// Instances are matched by POOL NAME, not by the target PID: the resolver
+// may retarget the app PID to a child (out-of-process .NET 10), and the
+// instance PID is the w3wp worker PID. Every live instance of a selected
+// pool is emitted with its own worker PID; Start confirms selection.
+func TestIISGroupPoolMatch(t *testing.T) {
 	src := &iisFakeSource{}
-	src.paths = append(src.paths, iisPoolPaths("100_pool-a")...) // stale worker
-	src.paths = append(src.paths, iisPoolPaths("200_pool-a")...) // live worker
-	src.readings = append(src.readings, iisPoolReadings("100_pool-a", 99, 99, 99)...)
+	src.paths = append(src.paths, iisPoolPaths("100_pool-a")...)
+	src.paths = append(src.paths, iisPoolPaths("200_pool-a")...)
+	src.readings = append(src.readings, iisPoolReadings("100_pool-a", 1, 2, 3)...)
 	src.readings = append(src.readings, iisPoolReadings("200_pool-a", 7, 8, 9)...)
-	targets := []ResolvedTarget{{Key: "pool:pool-a", PID: 200, Start: 10, Pool: "pool-a"}}
+	// Target PID 999 is a retargeted child: neither instance PID equals it,
+	// yet both instances of the selected pool must be emitted.
+	targets := []ResolvedTarget{{Key: "pool:pool-a", PID: 999, Start: 10, Pool: "pool-a"}}
+	g := newIISTestGroup(t, src, targets, nil)
+	grp := collectIIS(t, g, time.Unix(1000, 0))
+	if grp == nil || len(grp.Workers) != 2 {
+		t.Fatalf("group = %+v, want 2 workers (pool-name match, not PID)", grp)
+	}
+	if grp.Workers[0].PID != 100 || grp.Workers[1].PID != 200 {
+		t.Fatalf("worker PIDs = %d/%d, want 100/200 (the instance w3wp PIDs)", grp.Workers[0].PID, grp.Workers[1].PID)
+	}
+	if grp.Workers[1].ActiveRequests == nil || *grp.Workers[1].ActiveRequests != 7 {
+		t.Fatalf("ActiveRequests = %v, want 7 from instance 200_pool-a", grp.Workers[1].ActiveRequests)
+	}
+	// A selected pool with no instance at all emits nothing.
+	gNone := newIISTestGroup(t, src, []ResolvedTarget{{Key: "pool:pool-z", PID: 300, Start: 10, Pool: "pool-z"}}, nil)
+	if grp := collectIIS(t, gNone, time.Unix(1000, 0)); grp != nil {
+		t.Fatalf("no instance: group = %+v, want nil", grp)
+	}
+	// Unconfirmed creation time (Start 0): never selected.
+	gNoStart := newIISTestGroup(t, src, []ResolvedTarget{{Key: "pool:pool-a", PID: 999, Start: 0, Pool: "pool-a"}}, nil)
+	if grp := collectIIS(t, gNoStart, time.Unix(1000, 0)); grp != nil {
+		t.Fatalf("Start 0: group = %+v, want nil (creation time unconfirmed)", grp)
+	}
+}
+
+// Out-of-process .NET 10: the resolver retargets the runtime-0 w3wp to its
+// runtime-2 child, so ResolvedTarget.PID is the CHILD PID while the
+// W3SVC_W3WP instance stays "<w3wpPID>_<pool>". Matching is by pool name;
+// the worker carries the instance's w3wp PID, never the child PID.
+func TestIISGroupOutOfProcess(t *testing.T) {
+	src := &iisFakeSource{paths: iisPoolPaths("1000_api")}
+	src.readings = iisPoolReadings("1000_api", 3, 4, 5)
+	// Child PID 2000 != instance PID 1000: must still match by pool name.
+	targets := []ResolvedTarget{{Key: "pool:api", PID: 2000, Start: 10, Runtime: 2, Pool: "api"}}
 	g := newIISTestGroup(t, src, targets, nil)
 	grp := collectIIS(t, g, time.Unix(1000, 0))
 	if grp == nil || len(grp.Workers) != 1 {
-		t.Fatalf("group = %+v, want 1 worker (stale PID ignored)", grp)
+		t.Fatalf("group = %+v, want 1 worker (out-of-process pool)", grp)
 	}
 	w := grp.Workers[0]
-	if w.PID != 200 {
-		t.Fatalf("worker PID = %d, want 200 (the resolved target)", w.PID)
+	if w.Pool != "api" || w.PID != 1000 {
+		t.Fatalf("worker = %q pid %d, want api pid 1000 (the w3wp instance)", w.Pool, w.PID)
 	}
-	if w.ActiveRequests == nil || *w.ActiveRequests != 7 {
-		t.Fatalf("ActiveRequests = %v, want 7 from the live instance (stale 99 ignored)", w.ActiveRequests)
+	if w.ActiveRequests == nil || *w.ActiveRequests != 3 ||
+		w.ActiveThreads == nil || *w.ActiveThreads != 4 ||
+		w.PingLatencyMs == nil || *w.PingLatencyMs != 5 {
+		t.Fatalf("worker fields = %+v, want 3/4/5", w)
 	}
-	// A target PID with no matching instance emits nothing, even though the
-	// pool name matches an instance.
-	gStale := newIISTestGroup(t, src, []ResolvedTarget{{Key: "pool:pool-a", PID: 300, Start: 10, Pool: "pool-a"}}, nil)
-	if grp := collectIIS(t, gStale, time.Unix(1000, 0)); grp != nil {
-		t.Fatalf("unmatched PID: group = %+v, want nil", grp)
+}
+
+// A pool name containing ')' is legal ("MyApp (Staging)"): the instance
+// terminator is the ')\' separator (clr.go pattern), not the first ')'.
+func TestIISGroupPoolNameWithParen(t *testing.T) {
+	pid, pool, field, ok := parseIISPath(iisW3WPPath("1234_MyApp (Staging)", "Active Requests"))
+	if !ok || pid != 1234 || pool != "MyApp (Staging)" || field != "activeRequests" {
+		t.Fatalf("parseIISPath = %d %q %q %v, want 1234 \"MyApp (Staging)\" activeRequests true", pid, pool, field, ok)
 	}
-	// Unconfirmed creation time (Start 0): never keyed on PID alone.
-	gNoStart := newIISTestGroup(t, src, []ResolvedTarget{{Key: "pool:pool-a", PID: 200, Start: 0, Pool: "pool-a"}}, nil)
-	if grp := collectIIS(t, gNoStart, time.Unix(1000, 0)); grp != nil {
-		t.Fatalf("Start 0: group = %+v, want nil (creation time unconfirmed)", grp)
+	src := &iisFakeSource{paths: iisPoolPaths("1234_MyApp (Staging)")}
+	src.readings = iisPoolReadings("1234_MyApp (Staging)", 6, 7, 8)
+	targets := []ResolvedTarget{{Key: "pool:MyApp (Staging)", PID: 1234, Start: 10, Pool: "MyApp (Staging)"}}
+	g := newIISTestGroup(t, src, targets, nil)
+	grp := collectIIS(t, g, time.Unix(1000, 0))
+	if grp == nil || len(grp.Workers) != 1 {
+		t.Fatalf("group = %+v, want 1 worker for the parenthesized pool", grp)
+	}
+	w := grp.Workers[0]
+	if w.Pool != "MyApp (Staging)" || w.PID != 1234 {
+		t.Fatalf("worker = %q pid %d, want \"MyApp (Staging)\" pid 1234", w.Pool, w.PID)
+	}
+	if w.ActiveRequests == nil || *w.ActiveRequests != 6 ||
+		w.ActiveThreads == nil || *w.ActiveThreads != 7 ||
+		w.PingLatencyMs == nil || *w.PingLatencyMs != 8 {
+		t.Fatalf("worker fields = %+v, want 6/7/8", w)
 	}
 }
 
