@@ -2,6 +2,7 @@ package blackbox
 
 import (
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
@@ -304,5 +305,61 @@ func TestBudgetCycleAllocatesNothing(t *testing.T) {
 	slow.GroupTiming("core", 2*time.Second, false) // exercises mandatorySlow + widen
 	if n := testing.AllocsPerRun(200, func() { slow.Cycle() }); n != 0 {
 		t.Fatalf("mandatory-slow Cycle allocated %v per call, want 0", n)
+	}
+}
+
+// TestBudgetEffectiveIntervalConcurrentReads models the real split: one tick
+// goroutine advances the budget (Cycle -> widen/stepBack write effective) while
+// many status-server goroutines read EffectiveInterval, as Recorder.Status does
+// from handleStatus. effective is an atomic.Int64, so this must not race. Run
+// with -race to detect a regression; without it (CGO off) the bounds assertion
+// still checks correctness under concurrent goroutines.
+func TestBudgetEffectiveIntervalConcurrentReads(t *testing.T) {
+	b := NewBudget(15)
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	// Readers: hammer EffectiveInterval like the HTTP status handlers.
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if v := b.EffectiveInterval(); v < 15 || v > 60 {
+					t.Errorf("effective interval %d outside the ladder bounds [15,60]", v)
+					return
+				}
+			}
+		}()
+	}
+
+	// The single tick goroutine: widen toward 60, then step back, repeatedly.
+	// All non-atomic Budget fields are touched only here, as in the real loop.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for round := 0; round < 400; round++ {
+			b.SelfUsage(0.9, wsBytes(10)) // over budget
+			for i := 0; i < 4; i++ {
+				b.Cycle() // widen 15 -> 30 -> 60
+			}
+			b.SelfUsage(0.1, wsBytes(1)) // back under budget
+			for i := 0; i < budgetCalmCycles; i++ {
+				b.Cycle() // step back down
+			}
+		}
+	}()
+
+	<-done
+	close(stop)
+	wg.Wait()
+
+	if v := b.EffectiveInterval(); v < 15 || v > 60 {
+		t.Fatalf("final effective interval %d outside [15,60]", v)
 	}
 }

@@ -2,6 +2,7 @@ package blackbox
 
 import (
 	"sort"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,12 +21,15 @@ const (
 var budgetLadder = [3]int{15, 30, 60}
 
 // Budget decides, each tick, whether to skip optional counter groups and how
-// wide the sampling interval is. It is tick-loop-only: every method must be
-// called from the single recorder goroutine, so no mutex is needed. Durations
-// and usage are passed in; it reads no clock and starts no goroutine.
+// wide the sampling interval is. Every method except EffectiveInterval must be
+// called from the single recorder goroutine, so the other fields need no mutex.
+// effective is an atomic.Int64 because EffectiveInterval is also read from the
+// status server's HTTP goroutines (Recorder.Status) while the tick loop widens
+// and steps it back; the atomic keeps that one field safe for concurrent reads.
+// Durations and usage are passed in; it reads no clock and starts no goroutine.
 type Budget struct {
 	base         int
-	effective    int
+	effective    atomic.Int64
 	calm         int
 	overBudget   bool
 	skipOptional bool
@@ -35,11 +39,12 @@ type Budget struct {
 // NewBudget starts effective at base. The widen ladder stays 15/30/60; the
 // effective interval never drops below base nor rises above 60.
 func NewBudget(baseInterval int) *Budget {
-	return &Budget{
-		base:      baseInterval,
-		effective: baseInterval,
-		slow:      make(map[string]bool),
+	b := &Budget{
+		base: baseInterval,
+		slow: make(map[string]bool),
 	}
+	b.effective.Store(int64(baseInterval))
+	return b
 }
 
 // GroupTiming records a group's last duration. Over budgetMaxGroup marks it
@@ -103,9 +108,10 @@ func (b *Budget) mandatorySlow() bool {
 
 // widen moves up to the next ladder rung above effective, capped at 60.
 func (b *Budget) widen() {
+	eff := b.effective.Load()
 	for _, rung := range budgetLadder {
-		if rung > b.effective {
-			b.effective = rung
+		if int64(rung) > eff {
+			b.effective.Store(int64(rung))
 			return
 		}
 	}
@@ -114,20 +120,23 @@ func (b *Budget) widen() {
 // stepBack moves down to the highest rung below effective, never below base.
 // When effective is already at the lowest rung it falls back to base.
 func (b *Budget) stepBack() {
-	next := b.base
+	eff := b.effective.Load()
+	next := int64(b.base)
 	for i := len(budgetLadder) - 1; i >= 0; i-- {
-		if rung := budgetLadder[i]; rung < b.effective && rung >= b.base {
+		if rung := int64(budgetLadder[i]); rung < eff && rung >= int64(b.base) {
 			next = rung
 			break
 		}
 	}
-	if next < b.effective {
-		b.effective = next
+	if next < eff {
+		b.effective.Store(next)
 	}
 }
 
-// EffectiveInterval is the sampling interval in seconds for this cycle.
-func (b *Budget) EffectiveInterval() int { return b.effective }
+// EffectiveInterval is the sampling interval in seconds for this cycle. It is
+// safe to call from any goroutine (the status server reads it concurrently with
+// the tick loop's widen/stepBack).
+func (b *Budget) EffectiveInterval() int { return int(b.effective.Load()) }
 
 // SkipOptional reports whether optional counter groups are being skipped.
 func (b *Budget) SkipOptional() bool { return b.skipOptional }

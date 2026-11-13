@@ -63,7 +63,8 @@ type Store struct {
 	// gapInterval is the interval in seconds that gap detection judges samples
 	// against. It starts at the configured interval; the recorder sets it to
 	// the budget's effective interval so a widened tick cadence is not
-	// mistaken for a gap. The manifest keeps the configured interval.
+	// mistaken for a gap. The manifest keeps the configured base interval and,
+	// separately, the effective interval for offline readers.
 	gapInterval int
 }
 
@@ -311,9 +312,13 @@ func (s *Store) Event(kind, detail string) {
 }
 
 // SetInterval sets the interval in seconds that gap detection judges samples
-// against. The recorder calls it with the budget's effective interval, so a
-// widened tick cadence does not fabricate gaps; without a budget the
-// configured interval from OpenStore stands. Values <= 0 are ignored.
+// against, and persists it as the manifest's effective interval so an offline
+// reader judges lateness against the same widened cadence. The recorder calls
+// it with the budget's effective interval, so a widened tick cadence neither
+// fabricates gaps nor looks running-late; without a budget the configured
+// interval from OpenStore stands. The base IntervalSeconds is left unchanged.
+// Values <= 0 are ignored. The manifest is rewritten only when the effective
+// interval actually changes, so a steady cadence adds no per-tick write.
 func (s *Store) SetInterval(seconds int) {
 	if seconds <= 0 {
 		return
@@ -321,6 +326,10 @@ func (s *Store) SetInterval(seconds int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.gapInterval = seconds
+	if s.m.EffectiveIntervalSeconds != seconds {
+		s.m.EffectiveIntervalSeconds = seconds
+		_ = s.writeManifestLocked(false)
+	}
 }
 
 // Append writes one sample as one line, flushes it to disk, and updates the
